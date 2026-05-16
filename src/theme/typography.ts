@@ -1,0 +1,51 @@
+export const typography = {
+  families: {
+    display: 'Nunito',
+    body: 'Nunito',
+    mono: 'monospace',
+  },
+  sizes: {
+    xs: 12,
+    sm: 14,
+    base: 16,
+    lg: 18,
+    xl: 20,
+    '2xl': 24,
+    '3xl': 30,
+    '4xl': 36,
+  },
+  radius: {
+    xs: 12,
+    sm: 16,
+    md: 20,
+    lg: 24,
+    xl: 30,
+    pill: 999,
+  },
+  spacing: {
+    '2xs': 4,
+    xs: 6,
+    sm: 8,
+    md: 12,
+    lg: 16,
+    xl: 20,
+    '2xl': 28,
+    '3xl': 36,
+  },
+  weights: {
+    regular: '400' as const,
+    medium: '500' as const,
+    semibold: '600' as const,
+    bold: '700' as const,
+  },
+  lineHeights: {
+    tight: 1.2,
+    normal: 1.5,
+    relaxed: 1.75,
+  },
+  tracking: {
+    tight: -0.7,
+    normal: 0,
+    wide: 0.5,
+  },
+}

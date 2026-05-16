@@ -1,0 +1,61 @@
+{
+  "expo": {
+    "name": "IsleMind",
+    "slug": "islemind",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "icon": "./assets/icon.png",
+    "userInterfaceStyle": "automatic",
+    "newArchEnabled": true,
+    "scheme": "islemind",
+    "splash": {
+      "image": "./assets/splash-icon.png",
+      "resizeMode": "contain",
+      "backgroundColor": "#0a0a0a"
+    },
+    "ios": {
+      "supportsTablet": true,
+      "bundleIdentifier": "com.islemind.app",
+      "infoPlist": {
+        "NSPhotoLibraryUsageDescription": "Allow IsleMind to access your photo library to send images in chat."
+      }
+    },
+    "android": {
+      "package": "com.islemind.app",
+      "versionCode": 100,
+      "permissions": [
+        "android.permission.REQUEST_INSTALL_PACKAGES"
+      ],
+      "adaptiveIcon": {
+        "foregroundImage": "./assets/adaptive-icon.png",
+        "backgroundColor": "#0a0a0a"
+      },
+      "edgeToEdgeEnabled": true,
+      "predictiveBackGestureEnabled": false
+    },
+    "plugins": [
+      "expo-router",
+      "expo-localization",
+      "expo-secure-store",
+      [
+        "expo-image-picker",
+        {
+          "photosPermission": "Allow IsleMind to access your photo library to send images in chat."
+        }
+      ],
+      [
+        "expo-document-picker",
+        {
+          "iCloudContainerEnvironment": "Production"
+        }
+      ]
+    ],
+    "extra": {
+      "router": {},
+      "eas": {
+        "projectId": "4c47bbec-d58a-453d-9019-c726b1fae4b6"
+      }
+    },
+    "owner": "domidoremi"
+  }
+}

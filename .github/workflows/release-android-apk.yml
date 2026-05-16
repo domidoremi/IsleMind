@@ -1,0 +1,156 @@
+name: Release Android APK
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Release tag. Defaults to package.json version, for example v1.1.0.
+        required: false
+        type: string
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  release-android-apk:
+    name: Build signed release APKs
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    env:
+      ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+      ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+      ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+      ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+      REQUESTED_TAG: ${{ github.event.inputs.tag }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Setup Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+
+      - name: Setup Gradle
+        uses: gradle/actions/setup-gradle@v4
+
+      - name: Resolve release metadata
+        id: meta
+        shell: bash
+        run: |
+          set -euo pipefail
+          PACKAGE_VERSION="$(node -p "require('./package.json').version")"
+          if [ "${GITHUB_REF_TYPE:-}" = "tag" ]; then
+            TAG="${GITHUB_REF_NAME}"
+          elif [ -n "${REQUESTED_TAG:-}" ]; then
+            TAG="${REQUESTED_TAG}"
+          else
+            TAG="v${PACKAGE_VERSION}"
+          fi
+          VERSION="${TAG#v}"
+          if [ "$VERSION" != "$PACKAGE_VERSION" ]; then
+            echo "::error::Release tag $TAG does not match package.json version $PACKAGE_VERSION."
+            exit 1
+          fi
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+
+      - name: Check Android signing secrets
+        shell: bash
+        run: |
+          set -euo pipefail
+          missing=0
+          for name in ANDROID_KEYSTORE_BASE64 ANDROID_KEY_ALIAS ANDROID_KEYSTORE_PASSWORD ANDROID_KEY_PASSWORD; do
+            if [ -z "${!name:-}" ]; then
+              echo "::error::$name is required for installable release APKs."
+              missing=1
+            fi
+          done
+          if [ "$missing" -ne 0 ]; then
+            exit 1
+          fi
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Type check
+        run: npm run type-check
+
+      - name: Generate Android project
+        run: CI=1 npx expo prebuild --platform android --clean
+
+      - name: Configure release signing and ABI splits
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "$ANDROID_KEYSTORE_BASE64" | base64 --decode > android/app/islemind-release.keystore
+          {
+            echo "ISLEMIND_UPLOAD_STORE_FILE=islemind-release.keystore"
+            echo "ISLEMIND_UPLOAD_KEY_ALIAS=$ANDROID_KEY_ALIAS"
+            echo "ISLEMIND_UPLOAD_STORE_PASSWORD=$ANDROID_KEYSTORE_PASSWORD"
+            echo "ISLEMIND_UPLOAD_KEY_PASSWORD=$ANDROID_KEY_PASSWORD"
+          } >> android/gradle.properties
+          node scripts/configure-android-release.js
+
+      - name: Build release APKs
+        working-directory: android
+        run: ./gradlew assembleRelease --no-daemon --stacktrace
+
+      - name: Collect release assets
+        shell: bash
+        run: |
+          set -euo pipefail
+          VERSION="${{ steps.meta.outputs.version }}"
+          mkdir -p dist-apk
+          shopt -s nullglob
+          for apk in android/app/build/outputs/apk/release/*.apk; do
+            base="$(basename "$apk")"
+            case "$base" in
+              *universal*) arch="universal" ;;
+              *arm64-v8a*) arch="arm64-v8a" ;;
+              *armeabi-v7a*) arch="armeabi-v7a" ;;
+              *x86_64*) arch="x86_64" ;;
+              *) continue ;;
+            esac
+            target="dist-apk/IsleMind-${VERSION}-android-${arch}.apk"
+            cp "$apk" "$target"
+            sha256sum "$target" > "${target}.sha256"
+          done
+          count="$(find dist-apk -type f -name '*.apk' | wc -l | tr -d ' ')"
+          if [ "$count" -lt 4 ]; then
+            echo "::error::Expected 4 APK assets, found $count."
+            find android/app/build/outputs/apk/release -type f -maxdepth 1 -print || true
+            exit 1
+          fi
+
+      - name: Upload APK artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: islemind-android-release-apks
+          path: dist-apk/*
+          if-no-files-found: error
+
+      - name: Publish GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          TAG="${{ steps.meta.outputs.tag }}"
+          TITLE="IsleMind ${{ steps.meta.outputs.version }}"
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            gh release edit "$TAG" --title "$TITLE" --latest
+          else
+            gh release create "$TAG" --title "$TITLE" --generate-notes --latest
+          fi
+          gh release upload "$TAG" dist-apk/* --clobber
