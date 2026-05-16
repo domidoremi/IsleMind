@@ -7,7 +7,7 @@
     "android": "expo start --android",
     "ios": "expo start --ios",
     "type-check": "tsc --noEmit",
-    "doctor": "expo-doctor"
+    "doctor": "npx --yes expo-doctor"
   },
   "dependencies": {
     "@react-native-async-storage/async-storage": "2.2.0",
