@@ -1,0 +1,54 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --color-surface: #fff8ea;
+  --color-surfaceSecondary: #f4ead7;
+  --color-surfaceTertiary: #eadcc4;
+  --color-primary: #4aa384;
+  --color-primaryForeground: #ffffff;
+  --color-secondary: #8bbdd0;
+  --color-accent: #e8a23a;
+  --color-border: rgba(76, 57, 35, 0.11);
+  --color-borderStrong: rgba(76, 57, 35, 0.2);
+  --color-text: #3b3024;
+  --color-textSecondary: #7e6d58;
+  --color-textTertiary: #a99780;
+  --color-success: #4aa384;
+  --color-warning: #e8a23a;
+  --color-error: #d85b47;
+  --color-backdrop: rgba(58, 48, 36, 0.36);
+  --color-island: #fffdf5;
+  --color-islandRaised: #fff5df;
+  --color-mintSoft: #d9f0dc;
+  --color-amberSoft: #f8dfad;
+
+  --font-sans: 'Nunito', 'SF Pro Rounded', system-ui, sans-serif;
+  --font-mono: 'SF Mono', 'JetBrains Mono', monospace;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --color-surface: #17130f;
+    --color-surfaceSecondary: #241d17;
+    --color-surfaceTertiary: #31271e;
+    --color-primary: #7cc9a8;
+    --color-primaryForeground: #ffffff;
+    --color-secondary: #85b8cc;
+    --color-accent: #e8b15a;
+    --color-border: rgba(255, 238, 211, 0.1);
+    --color-borderStrong: rgba(255, 238, 211, 0.22);
+    --color-text: #fff2dd;
+    --color-textSecondary: #c8b69f;
+    --color-textTertiary: #8f7c66;
+    --color-success: #7cc9a8;
+    --color-warning: #e8b15a;
+    --color-error: #f0715f;
+    --color-backdrop: rgba(0, 0, 0, 0.62);
+    --color-island: #211a14;
+    --color-islandRaised: #2b221a;
+    --color-mintSoft: #214438;
+    --color-amberSoft: #4c3920;
+  }
+}

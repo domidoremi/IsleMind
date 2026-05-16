@@ -1,0 +1,64 @@
+name: EAS Android APK
+
+on:
+  workflow_dispatch:
+
+jobs:
+  eas-android-apk:
+    name: Build APK with EAS
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    env:
+      EAS_TOKEN: ${{ secrets.EAS_TOKEN }}
+      EAS_PROJECT_ID: ${{ secrets.EAS_PROJECT_ID }}
+    steps:
+      - name: Check EAS configuration
+        id: eas-config
+        run: |
+          if [ -z "$EAS_TOKEN" ] || [ -z "$EAS_PROJECT_ID" ]; then
+            echo "configured=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::EAS_TOKEN and EAS_PROJECT_ID are not both configured; skipping the EAS cloud build."
+          else
+            echo "configured=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Checkout
+        if: steps.eas-config.outputs.configured == 'true'
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        if: steps.eas-config.outputs.configured == 'true'
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Setup Expo and EAS
+        if: steps.eas-config.outputs.configured == 'true'
+        uses: expo/expo-github-action@v8
+        with:
+          eas-version: latest
+          token: ${{ secrets.EAS_TOKEN }}
+
+      - name: Install dependencies
+        if: steps.eas-config.outputs.configured == 'true'
+        run: npm ci
+
+      - name: Type check
+        if: steps.eas-config.outputs.configured == 'true'
+        run: npm run type-check
+
+      - name: Ensure EAS project is linked
+        if: steps.eas-config.outputs.configured == 'true'
+        run: eas init --id "$EAS_PROJECT_ID" --non-interactive
+
+      - name: Start EAS APK build
+        if: steps.eas-config.outputs.configured == 'true'
+        run: eas build --platform android --profile preview --non-interactive --wait --json > eas-build-result.json
+
+      - name: Upload EAS build metadata
+        if: steps.eas-config.outputs.configured == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: eas-android-apk-build-result
+          path: eas-build-result.json

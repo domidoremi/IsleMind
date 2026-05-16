@@ -1,0 +1,80 @@
+{
+  "common": {
+    "back": "Back",
+    "cancel": "Cancel",
+    "confirm": "Confirm",
+    "delete": "Delete",
+    "done": "Done",
+    "edit": "Edit",
+    "save": "Save",
+    "search": "Search",
+    "send": "Send",
+    "share": "Share",
+    "retry": "Retry"
+  },
+  "chat": {
+    "newConversation": "New Chat",
+    "typeMessage": "Type a message...",
+    "noMessages": "Start a new conversation",
+    "thinking": "Thinking...",
+    "attachImage": "Image",
+    "attachFile": "File",
+    "attachCamera": "Camera",
+    "model": "Model",
+    "systemPrompt": "System Prompt",
+    "systemPromptPlaceholder": "Set the AI's role and behavior...",
+    "temperature": "Temperature",
+    "maxTokens": "Max Tokens",
+    "streamingEnabled": "Streaming",
+    "sendMessage": "Send message"
+  },
+  "conversation": {
+    "title": "Chats",
+    "searchConversations": "Search chats...",
+    "noConversations": "No conversations yet\nTap + to start",
+    "deleteConfirm": "Delete this conversation?",
+    "rename": "Rename",
+    "archive": "Archive"
+  },
+  "settings": {
+    "title": "Settings",
+    "appearance": "Appearance",
+    "theme": "Theme",
+    "themeLight": "Light",
+    "themeDark": "Dark",
+    "themeSystem": "System",
+    "language": "Language",
+    "fontSize": "Font Size",
+    "haptics": "Haptic Feedback",
+    "providers": "AI Providers",
+    "addProvider": "Add Provider",
+    "apiKey": "API Key",
+    "apiKeyPlaceholder": "Enter API Key...",
+    "baseUrl": "API Base URL",
+    "baseUrlPlaceholder": "https://api.openai.com/v1",
+    "models": "Available Models",
+    "about": "About",
+    "version": "Version",
+    "data": "Data",
+    "exportData": "Export Data",
+    "importData": "Import Data",
+    "clearData": "Clear All Data",
+    "clearDataConfirm": "This will permanently delete all conversations and settings. Continue?"
+  },
+  "provider": {
+    "openai": "OpenAI",
+    "anthropic": "Anthropic",
+    "google": "Google",
+    "apiKeyRequired": "API Key required",
+    "testConnection": "Test Connection",
+    "connecting": "Connecting...",
+    "connected": "Connected",
+    "connectionFailed": "Connection Failed"
+  },
+  "error": {
+    "networkError": "Network error",
+    "apiError": "API request failed",
+    "unknownError": "An unknown error occurred",
+    "fileTooLarge": "File too large"
+  }
+}

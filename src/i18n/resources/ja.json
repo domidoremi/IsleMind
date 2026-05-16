@@ -1,0 +1,80 @@
+{
+  "common": {
+    "back": "戻る",
+    "cancel": "キャンセル",
+    "confirm": "確認",
+    "delete": "削除",
+    "done": "完了",
+    "edit": "編集",
+    "save": "保存",
+    "search": "検索",
+    "send": "送信",
+    "share": "共有",
+    "retry": "再試行"
+  },
+  "chat": {
+    "newConversation": "新規チャット",
+    "typeMessage": "メッセージを入力...",
+    "noMessages": "新しい会話を始めましょう",
+    "thinking": "考え中...",
+    "attachImage": "画像",
+    "attachFile": "ファイル",
+    "attachCamera": "カメラ",
+    "model": "モデル",
+    "systemPrompt": "システムプロンプト",
+    "systemPromptPlaceholder": "AIの役割と動作を設定...",
+    "temperature": "温度",
+    "maxTokens": "最大トークン数",
+    "streamingEnabled": "ストリーミング",
+    "sendMessage": "メッセージを送信"
+  },
+  "conversation": {
+    "title": "チャット",
+    "searchConversations": "チャットを検索...",
+    "noConversations": "まだ会話がありません\n下部の + で開始",
+    "deleteConfirm": "この会話を削除しますか？",
+    "rename": "名前変更",
+    "archive": "アーカイブ"
+  },
+  "settings": {
+    "title": "設定",
+    "appearance": "外観",
+    "theme": "テーマ",
+    "themeLight": "ライト",
+    "themeDark": "ダーク",
+    "themeSystem": "システム",
+    "language": "言語",
+    "fontSize": "フォントサイズ",
+    "haptics": "触覚フィードバック",
+    "providers": "AI プロバイダー",
+    "addProvider": "プロバイダー追加",
+    "apiKey": "API キー",
+    "apiKeyPlaceholder": "API キーを入力...",
+    "baseUrl": "API ベース URL",
+    "baseUrlPlaceholder": "https://api.openai.com/v1",
+    "models": "利用可能なモデル",
+    "about": "について",
+    "version": "バージョン",
+    "data": "データ",
+    "exportData": "データをエクスポート",
+    "importData": "データをインポート",
+    "clearData": "すべてのデータを消去",
+    "clearDataConfirm": "すべての会話と設定が完全に削除されます。続行しますか？"
+  },
+  "provider": {
+    "openai": "OpenAI",
+    "anthropic": "Anthropic",
+    "google": "Google",
+    "apiKeyRequired": "APIキーが必要です",
+    "testConnection": "接続テスト",
+    "connecting": "接続中...",
+    "connected": "接続済み",
+    "connectionFailed": "接続失敗"
+  },
+  "error": {
+    "networkError": "ネットワークエラー",
+    "apiError": "APIリクエストに失敗しました",
+    "unknownError": "不明なエラーが発生しました",
+    "fileTooLarge": "ファイルが大きすぎます"
+  }
+}

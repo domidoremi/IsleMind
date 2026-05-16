@@ -1,0 +1,80 @@
+{
+  "common": {
+    "back": "返回",
+    "cancel": "取消",
+    "confirm": "确认",
+    "delete": "删除",
+    "done": "完成",
+    "edit": "编辑",
+    "save": "保存",
+    "search": "搜索",
+    "send": "发送",
+    "share": "分享",
+    "retry": "重试"
+  },
+  "chat": {
+    "newConversation": "新对话",
+    "typeMessage": "输入消息...",
+    "noMessages": "开始一段新对话",
+    "thinking": "思考中...",
+    "attachImage": "图片",
+    "attachFile": "文件",
+    "attachCamera": "拍照",
+    "model": "模型",
+    "systemPrompt": "系统提示词",
+    "systemPromptPlaceholder": "设定 AI 的角色和行为...",
+    "temperature": "温度",
+    "maxTokens": "最大 Token 数",
+    "streamingEnabled": "流式输出",
+    "sendMessage": "发送消息"
+  },
+  "conversation": {
+    "title": "对话",
+    "searchConversations": "搜索对话...",
+    "noConversations": "还没有对话\n点击右下角开始",
+    "deleteConfirm": "确定要删除这个对话吗？",
+    "rename": "重命名",
+    "archive": "归档"
+  },
+  "settings": {
+    "title": "设置",
+    "appearance": "外观",
+    "theme": "主题",
+    "themeLight": "浅色",
+    "themeDark": "深色",
+    "themeSystem": "跟随系统",
+    "language": "语言",
+    "fontSize": "字体大小",
+    "haptics": "触觉反馈",
+    "providers": "AI 服务商",
+    "addProvider": "添加服务商",
+    "apiKey": "API Key",
+    "apiKeyPlaceholder": "输入 API Key...",
+    "baseUrl": "API 地址",
+    "baseUrlPlaceholder": "https://api.openai.com/v1",
+    "models": "可用模型",
+    "about": "关于",
+    "version": "版本",
+    "data": "数据",
+    "exportData": "导出对话数据",
+    "importData": "导入对话数据",
+    "clearData": "清除所有数据",
+    "clearDataConfirm": "此操作将删除所有对话和设置，不可恢复。确定继续？"
+  },
+  "provider": {
+    "openai": "OpenAI",
+    "anthropic": "Anthropic",
+    "google": "Google",
+    "apiKeyRequired": "请输入 API Key",
+    "testConnection": "测试连接",
+    "connecting": "连接中...",
+    "connected": "已连接",
+    "connectionFailed": "连接失败"
+  },
+  "error": {
+    "networkError": "网络连接失败",
+    "apiError": "API 请求出错",
+    "unknownError": "发生未知错误",
+    "fileTooLarge": "文件过大"
+  }
+}
