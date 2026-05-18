@@ -32,7 +32,7 @@ export function ConversationRow({ conversation, index }: ConversationRowProps) {
   function confirmDelete() {
     void dialog.confirm({
       title: '删除对话',
-      message: '这个操作不会删除 API Key，但会移除本地对话记录。',
+      message: '确认删除这个对话？',
       tone: 'danger',
       confirmLabel: '删除',
       cancelLabel: '取消',

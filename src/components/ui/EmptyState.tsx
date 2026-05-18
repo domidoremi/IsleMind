@@ -9,7 +9,7 @@ import { motionTokens } from '@/theme/animation'
 
 interface EmptyStateProps {
   title: string
-  description: string
+  description?: string
   actionLabel?: string
   onAction?: () => void
 }
@@ -40,9 +40,11 @@ export function EmptyState({ title, description, actionLabel, onAction }: EmptyS
       </MotiView>
       <IslandPanel elevated={false} style={{ borderRadius: 28, maxWidth: 320 }} contentStyle={{ padding: 18 }}>
         <Text style={{ color: colors.text, fontSize: 24, fontWeight: '900', textAlign: 'center' }}>{title}</Text>
-        <Text style={{ color: colors.textSecondary, fontSize: 15, lineHeight: 22, textAlign: 'center', marginTop: 8 }}>
-          {description}
-        </Text>
+        {description ? (
+          <Text style={{ color: colors.textSecondary, fontSize: 15, lineHeight: 22, textAlign: 'center', marginTop: 8 }}>
+            {description}
+          </Text>
+        ) : null}
       </IslandPanel>
       {actionLabel && onAction ? (
         <IslandButton label={actionLabel} tone="primary" onPress={onAction} style={{ marginTop: 22, minHeight: 48, borderRadius: 24 }} />

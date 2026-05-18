@@ -60,7 +60,7 @@ class RenderGuardBoundary extends Component<RenderGuardBoundaryProps, RenderGuar
           <View style={{ flex: 1, minWidth: 0 }}>
             <Text style={{ color: colors.text, fontSize: 13, lineHeight: 18, fontWeight: '900' }}>{title}</Text>
             <Text numberOfLines={this.props.compact ? 2 : 4} style={{ color: colors.textSecondary, fontSize: 11, lineHeight: 16, marginTop: 3 }}>
-              已切到安全视图，不会影响继续对话。
+              可以重试渲染，或复制原文继续处理。
             </Text>
             <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 7, marginTop: 10 }}>
               <IslandButton compact label="重试渲染" icon={<RotateCcw color={colors.textSecondary} size={13} strokeWidth={2} />} onPress={this.reset} />

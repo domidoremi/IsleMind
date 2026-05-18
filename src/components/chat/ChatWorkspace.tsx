@@ -18,7 +18,7 @@ import { FlashList, type FlashListRef } from '@shopify/flash-list'
 import * as Clipboard from 'expo-clipboard'
 import * as Linking from 'expo-linking'
 import { router } from 'expo-router'
-import { AlertTriangle, BookOpen, ChevronLeft, GitBranchPlus, History, KeyRound, ListEnd, Settings2, ShieldCheck, Split, X } from 'lucide-react-native'
+import { AlertTriangle, BookOpen, ChevronLeft, GitBranchPlus, History, KeyRound, ListEnd, Settings2, Split, X } from 'lucide-react-native'
 import { MotiView } from 'moti'
 import { Screen } from '@/components/ui/Screen'
 import { PressableScale } from '@/components/ui/PressableScale'
@@ -81,6 +81,12 @@ export function ChatWorkspace({ conversation, showBack = false }: ChatWorkspaceP
   const autoScrollTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
   const lastAutoScrollAt = useRef(0)
   const provider = providers.find((item) => item.id === conversation?.providerId)
+  const enabledProviders = useMemo(() => providers.filter((item) => item.id !== 'local-setup' && item.enabled), [providers])
+  const hasEnabledProvider = enabledProviders.length > 0
+  const hasAvailableModel = enabledProviders.some((item) => item.models.length > 0)
+  const homeProvider = enabledProviders.find((item) => item.models.length > 0)
+  const emptyHeaderTitle = !hasEnabledProvider ? '未连接服务商' : hasAvailableModel ? homeProvider?.name ?? '供应商' : '无可用模型'
+  const emptyHeaderSubtitle = homeProvider?.models[0] ? getModelName(homeProvider.models[0]) : undefined
   const providerHealthKey = useMemo(() => provider ? [
     provider.id,
     provider.enabled ? 'on' : 'off',
@@ -191,10 +197,12 @@ export function ChatWorkspace({ conversation, showBack = false }: ChatWorkspaceP
               <History color={colors.text} size={18} strokeWidth={1.8} />
             </PressableScale>
             <View style={{ flex: 1 }}>
-              <Text style={{ color: colors.text, fontSize: 18, fontWeight: '800' }}>IsleMind</Text>
-              <Text numberOfLines={1} style={{ color: colors.textSecondary, fontSize: 12, marginTop: 2 }}>
-                零配置安全模式 · 未连接任何服务商
-              </Text>
+              <Text style={{ color: colors.text, fontSize: 18, fontWeight: '800' }}>{emptyHeaderTitle}</Text>
+              {emptyHeaderSubtitle ? (
+                <Text numberOfLines={1} style={{ color: colors.textSecondary, fontSize: 12, marginTop: 2 }}>
+                  {emptyHeaderSubtitle}
+                </Text>
+              ) : null}
             </View>
             <PressableScale
               haptic
@@ -208,7 +216,6 @@ export function ChatWorkspace({ conversation, showBack = false }: ChatWorkspaceP
           <ScrollView style={{ flex: 1 }} contentContainerStyle={{ paddingHorizontal: 20, paddingTop: 10, paddingBottom: Math.max(insets.bottom, 10) + CHAT_BOTTOM_FLOATING_SPACE }}>
             <EmptyState
               title="连接一个模型"
-              description="添加服务商，或先导入本机知识。"
               actionLabel="配置服务商"
               onAction={() => router.push('/settings')}
             />
@@ -216,19 +223,11 @@ export function ChatWorkspace({ conversation, showBack = false }: ChatWorkspaceP
               <OnboardingCard
                 icon={<KeyRound color={colors.text} size={18} />}
                 title="配置服务商"
-                description="保存 Key、Base URL 和模型，再做一次轻量测试。"
                 onPress={() => router.push('/settings')}
               />
               <OnboardingCard
                 icon={<BookOpen color={colors.text} size={18} />}
                 title="导入知识"
-                description="先把资料放进本机索引，之后随时接入模型。"
-                onPress={() => router.push('/settings')}
-              />
-              <OnboardingCard
-                icon={<ShieldCheck color={colors.text} size={18} />}
-                title="隐私边界"
-                description="Key 只存在本机；未连接服务商时不会发起模型请求。"
                 onPress={() => router.push('/settings')}
               />
             </View>
@@ -397,6 +396,7 @@ export function ChatWorkspace({ conversation, showBack = false }: ChatWorkspaceP
               markChromeActive()
               setShowOptions((value) => !value)
             }}
+            onCloseOptions={() => setShowOptions(false)}
             onSettings={() => {
               markChromeActive()
               router.push('/settings')
@@ -482,6 +482,7 @@ function FloatingChrome({
   onBack,
   onRestore,
   onToggleOptions,
+  onCloseOptions,
   onSettings,
   onTestModel,
   onSwitchModel,
@@ -502,6 +503,7 @@ function FloatingChrome({
   onBack: () => void
   onRestore: () => void
   onToggleOptions: () => void
+  onCloseOptions: () => void
   onSettings: () => void
   onTestModel: () => void
   onSwitchModel: (provider: AIProvider, model: string) => void
@@ -510,19 +512,27 @@ function FloatingChrome({
   switchableProviders: AIProvider[]
   optionsPanelHeight: number
 }) {
-  const title = conversation.title || 'IsleMind'
-  const modelLabel = conversation.providerId === 'local-setup' ? '本地配置向导' : `${provider?.name ?? '未配置服务商'} · ${getModelName(conversation.model)}`
+  const header = getProviderHeaderState(conversation, provider, switchableProviders, metrics, providerHealth)
+  const modelLabel = conversation.providerId === 'local-setup' ? '本地配置向导' : getModelName(conversation.model)
   const shellStyle: StyleProp<ViewStyle> = [
     {
       position: 'absolute',
       top: 0,
       left: 0,
       right: 0,
-      zIndex: 40,
+      bottom: showOptions ? 0 : undefined,
+      zIndex: showOptions ? 70 : 40,
     },
   ]
   return (
     <View pointerEvents="box-none" style={shellStyle}>
+      {showOptions ? (
+        <Pressable
+          accessibilityLabel="关闭模型小窗"
+          onPress={onCloseOptions}
+          style={{ position: 'absolute', top: 0, right: 0, bottom: 0, left: 0, backgroundColor: 'transparent', zIndex: 0 }}
+        />
+      ) : null}
       {collapsed ? (
         <Pressable
           onPress={onRestore}
@@ -535,7 +545,7 @@ function FloatingChrome({
         pointerEvents={collapsed ? 'none' : 'auto'}
         animate={{ opacity: collapsed ? 0 : 1, translateY: collapsed ? -(insets.top + 78) : 0 }}
         transition={{ type: 'timing', duration: collapsed ? 150 : 210 }}
-        style={{ paddingTop: 6, paddingHorizontal: 12, paddingBottom: 8 }}
+        style={{ paddingTop: 6, paddingHorizontal: 12, paddingBottom: 8, zIndex: 1 }}
       >
         <MotiView
           from={{ opacity: 0, translateY: -8 }}
@@ -543,8 +553,8 @@ function FloatingChrome({
           transition={{ type: 'spring', damping: 22, stiffness: 190 }}
         >
           <IslandHeader
-            title={title}
-            subtitle={providerHealth?.code ? `${providerHealth.title} · ${modelLabel}` : `${modelLabel} · ${formatHeaderMeta(conversation, provider, metrics)}`}
+            title={header.title}
+            subtitle={header.subtitle}
             leading={
               <IslandIconButton label="返回" onPress={onBack}>
                 {showOptions ? <ChevronLeft color={colors.text} size={18} strokeWidth={1.9} /> : <History color={colors.text} size={18} strokeWidth={1.8} />}
@@ -574,15 +584,17 @@ function FloatingChrome({
           ) : null}
 
           {showOptions ? (
-            <FloatingOptionsPanel
-              conversation={conversation}
-              provider={provider}
-              switchableProviders={switchableProviders}
-              colors={colors}
-              maxHeight={optionsPanelHeight}
-              onSwitchModel={onSwitchModel}
-              onCopyLink={onCopyLink}
-            />
+            <Pressable onPress={(event) => event.stopPropagation()}>
+              <FloatingOptionsPanel
+                conversation={conversation}
+                provider={provider}
+                switchableProviders={switchableProviders}
+                colors={colors}
+                maxHeight={optionsPanelHeight}
+                onSwitchModel={onSwitchModel}
+                onCopyLink={onCopyLink}
+              />
+            </Pressable>
           ) : null}
         </MotiView>
       </MotiView>
@@ -873,7 +885,6 @@ function EmptyConversationState() {
     <View style={{ paddingTop: 36, gap: 14 }}>
       <EmptyState
         title="新对话"
-        description="写下要处理的事。"
       />
       <View style={{ flexDirection: 'row', gap: 8, flexWrap: 'wrap', justifyContent: 'center' }}>
         <QuickStartAction label="配置服务商" onPress={() => router.push('/settings')} />
@@ -932,12 +943,11 @@ function previewPendingText(content: string, attachments: Attachment[]): string 
   return attachments.length ? `${label} · ${attachments.length} 个附件` : label
 }
 
-function OnboardingCard({ icon, title, description, onPress }: { icon: ReactNode; title: string; description: string; onPress: () => void }) {
+function OnboardingCard({ icon, title, onPress }: { icon: ReactNode; title: string; onPress: () => void }) {
   const { colors } = useAppTheme()
   return (
     <IslandListItem
       title={title}
-      description={description}
       onPress={onPress}
       leading={<View style={{ width: 40, height: 40, borderRadius: 20, alignItems: 'center', justifyContent: 'center', backgroundColor: colors.mintSoft }}>{icon}</View>}
     />
@@ -1050,7 +1060,7 @@ function ConversationHealthBanner({
           {!compact ? <Text style={{ color: colors.textSecondary, fontSize: 12, lineHeight: 17, marginTop: 3 }}>{health.description}</Text> : null}
           {health.inheritedExpired && !compact ? (
             <Text style={{ color: colors.error, fontSize: 11, lineHeight: 16, marginTop: 5 }}>
-              这是历史自动继承配置失效，不是刚刚手动选错；IsleMind 不会替你静默跳到别的模型。
+              请手动选择一个可用模型。
             </Text>
           ) : null}
         </View>
@@ -1107,6 +1117,34 @@ function formatHeaderMeta(conversation: Conversation, provider: AIProvider | und
     metrics.durationMs ? `累计 ${formatDuration(metrics.durationMs)}` : '',
   ].filter(Boolean)
   return parts.join(' · ')
+}
+
+function getProviderHeaderState(
+  conversation: Conversation,
+  provider: AIProvider | undefined,
+  providers: AIProvider[],
+  metrics: ReturnType<typeof localDataStore.getConversationMetrics>,
+  providerHealth: ConversationHealth | null
+): { title: string; subtitle?: string } {
+  const enabledProviders = providers.filter((item) => item.id !== 'local-setup' && item.enabled)
+  const hasEnabledProvider = enabledProviders.length > 0
+  const hasAvailableModel = enabledProviders.some((item) => item.models.length > 0)
+  if (!hasEnabledProvider) return { title: '未连接服务商' }
+  if (!hasAvailableModel) return { title: '无可用模型' }
+  if (conversation.providerId === 'local-setup') {
+    const fallbackProvider = enabledProviders.find((item) => item.models.length > 0)
+    return {
+      title: fallbackProvider?.name ?? '供应商',
+      subtitle: fallbackProvider?.models[0] ? getModelName(fallbackProvider.models[0]) : undefined,
+    }
+  }
+  const modelLabel = getModelName(conversation.model)
+  return {
+    title: provider?.name ?? '供应商',
+    subtitle: providerHealth?.code
+      ? `${providerHealth.title} · ${modelLabel}`
+      : `${modelLabel} · ${formatHeaderMeta(conversation, provider, metrics)}`,
+  }
 }
 
 function formatDuration(ms: number): string {

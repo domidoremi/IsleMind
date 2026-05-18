@@ -17,6 +17,8 @@ interface SettingsState {
   setLanguage: (language: Language) => void
   addProvider: (provider: AIProvider) => Promise<void>
   updateProvider: (id: string, updates: Partial<AIProvider>) => Promise<void>
+  updateProviders: (ids: string[], updates: Partial<AIProvider>) => Promise<void>
+  reorderProviders: (providerIds: string[]) => void
   removeProvider: (id: string) => Promise<void>
   setProviderApiKey: (id: string, apiKey: string) => Promise<void>
   getSecureApiKey: (id: string) => Promise<string | null>
@@ -141,7 +143,7 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
     }
     await persistCredentialGroupKeys(provider.id, provider.credentialGroups)
     set((state) => {
-      const updated = [...state.providers, normalizeProvider({ ...provider, apiKey: '' } as AIProvider)]
+      const updated = [normalizeProvider({ ...provider, apiKey: '' } as AIProvider), ...state.providers]
       saveData('PROVIDERS', updated)
       if (!state.settings.defaultProvider) {
         get().updateSettings({ defaultProvider: provider.id })
@@ -155,12 +157,38 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
       await SecureStore.setItemAsync(secureProviderKey(id), updates.apiKey)
     }
     if (updates.credentialGroups) {
+      const previous = get().providers.find((provider) => provider.id === id)?.credentialGroups ?? []
+      const nextIds = new Set(updates.credentialGroups.map((group) => group.id))
+      await Promise.all(previous
+        .filter((group) => !nextIds.has(group.id))
+        .map((group) => SecureStore.deleteItemAsync(secureProviderGroupKey(id, group.id)))
+      )
       await persistCredentialGroupKeys(id, updates.credentialGroups)
     }
     set((state) => {
       const updated = state.providers.map((p) =>
         p.id === id ? normalizeProvider({ ...p, ...updates, apiKey: '' } as AIProvider) : p
       )
+      saveData('PROVIDERS', updated)
+      return { providers: updated }
+    })
+  },
+
+  updateProviders: async (ids: string[], updates: Partial<AIProvider>) => {
+    const uniqueIds = Array.from(new Set(ids))
+    if (!uniqueIds.length) return
+    await Promise.all(uniqueIds.map((id) => get().updateProvider(id, updates)))
+  },
+
+  reorderProviders: (providerIds: string[]) => {
+    set((state) => {
+      const byId = new Map(state.providers.map((provider) => [provider.id, provider]))
+      const ordered = providerIds
+        .map((id) => byId.get(id))
+        .filter((provider): provider is AIProvider => !!provider)
+      const seen = new Set(ordered.map((provider) => provider.id))
+      const rest = state.providers.filter((provider) => !seen.has(provider.id))
+      const updated = [...ordered, ...rest]
       saveData('PROVIDERS', updated)
       return { providers: updated }
     })
@@ -301,15 +329,18 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
 }))
 
 function mergeProviders(saved: AIProvider[]): AIProvider[] {
-  const byId = new Map<string, AIProvider>()
-  for (const provider of DEFAULT_PROVIDERS) {
-    byId.set(provider.id, provider)
-  }
+  const defaultsById = new Map(DEFAULT_PROVIDERS.map((provider) => [provider.id, provider]))
+  const savedIds = new Set<string>()
+  const merged: AIProvider[] = []
   for (const provider of saved) {
-    const base = byId.get(provider.id)
-    byId.set(provider.id, normalizeProvider({ ...base, ...provider, apiKey: '' } as AIProvider))
+    const base = defaultsById.get(provider.id)
+    merged.push(normalizeProvider({ ...base, ...provider, apiKey: '' } as AIProvider))
+    savedIds.add(provider.id)
   }
-  return Array.from(byId.values()).map(normalizeProvider)
+  for (const provider of DEFAULT_PROVIDERS) {
+    if (!savedIds.has(provider.id)) merged.push(normalizeProvider(provider))
+  }
+  return merged
 }
 
 function normalizeProvider(provider: AIProvider): AIProvider {

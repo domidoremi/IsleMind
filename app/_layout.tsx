@@ -48,7 +48,7 @@ export function ErrorBoundary({ error, retry }: ErrorBoundaryProps) {
               页面暂时无法显示
             </Text>
             <Text style={{ color: colors.textSecondary, fontSize: 13, lineHeight: 19, marginTop: 8 }}>
-              已进入安全回退，不会删除本机对话。可以重试当前页面，或返回上一页继续操作。
+              可以重试当前页面，或返回上一页继续操作。
             </Text>
             {__DEV__ ? (
               <Text selectable numberOfLines={5} style={{ color: colors.textTertiary, fontSize: 11, lineHeight: 16, marginTop: 10 }}>

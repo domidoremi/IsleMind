@@ -50,7 +50,6 @@ export default function ConversationsScreen() {
       <View style={{ paddingHorizontal: 16, paddingTop: 10, paddingBottom: 14 }}>
         <IslandHeader
           title="历史对话"
-          subtitle="IsleMind"
           trailing={
             <View style={{ flexDirection: 'row', gap: 8 }}>
               <IslandIconButton label="设置" size="lg" onPress={() => router.push('/settings')}>
@@ -103,8 +102,8 @@ export default function ConversationsScreen() {
         contentContainerStyle={{ flexGrow: 1, paddingHorizontal: 20, paddingBottom: 30 }}
         ListEmptyComponent={
           query.trim()
-            ? <EmptyState title="没有找到" description="换一个关键词试试；会搜索对话标题、消息正文和模型 ID。" />
-            : <EmptyState title="还没有历史" description="配置服务商后，新建对话会在这里出现。" actionLabel="新建对话" onAction={() => void createConversation()} />
+            ? <EmptyState title="没有找到" />
+            : <EmptyState title="还没有历史" actionLabel="新建对话" onAction={() => void createConversation()} />
         }
         renderItem={({ item, index }) => <ConversationRow conversation={item} index={index} />}
       />
