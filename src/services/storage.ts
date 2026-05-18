@@ -148,6 +148,8 @@ function normalizeConversation(conversation: Conversation): Conversation {
     providerModelMode: conversation.providerModelMode ?? 'inherited',
     systemPrompt: conversation.systemPrompt ?? '',
     temperature: Number.isFinite(conversation.temperature) ? conversation.temperature : 0.7,
+    topP: Number.isFinite(conversation.topP) ? conversation.topP : 1,
+    reasoningEffort: conversation.reasoningEffort ?? 'medium',
     maxTokens: Number.isFinite(conversation.maxTokens) ? conversation.maxTokens : 4096,
     messages: conversation.messages.map((message) => ({
       ...message,

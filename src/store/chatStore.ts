@@ -81,6 +81,8 @@ export const useChatStore = create<ChatState>((set, get) => ({
       providerModelMode: 'inherited',
       systemPrompt: '',
       temperature: settings.defaultTemperature ?? 0.7,
+      topP: 1,
+      reasoningEffort: 'medium',
       maxTokens: settings.defaultMaxTokens ?? modelConfig.defaultMaxTokens,
       messages: [],
       createdAt: Date.now(),
@@ -173,6 +175,8 @@ export const useChatStore = create<ChatState>((set, get) => ({
           providerModelMode: 'manual' as const,
           maxTokens: nextMaxTokens || modelConfig.defaultMaxTokens,
           temperature: Math.min(c.temperature, modelConfig.maxTemperature ?? 2),
+          topP: c.topP ?? 1,
+          reasoningEffort: c.reasoningEffort ?? 'medium',
           updatedAt: Date.now(),
         }
       })

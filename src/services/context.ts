@@ -12,6 +12,7 @@ import {
 } from '@/services/contextStore'
 import { localDataStore } from '@/services/localDataStore'
 import { useSettingsStore } from '@/store/settingsStore'
+import { searchWeb as searchWebWithAdapters } from '@/services/searchAdapters'
 
 const TEXT_MIME_HINTS = ['text/', 'application/json', 'application/javascript', 'application/xml', 'text/xml', 'text/csv']
 const MAX_CONTEXT_ITEMS = 8
@@ -181,36 +182,7 @@ async function searchKnowledgeSafely(
 }
 
 export async function searchWeb(query: string, limit = 5): Promise<RetrievalSource[]> {
-  const apiKey = await useSettingsStore.getState().getTavilyApiKey()
-  if (!apiKey || !query.trim()) return []
-  const response = await fetch('https://api.tavily.com/search', {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      Authorization: `Bearer ${apiKey}`,
-    },
-    body: JSON.stringify({
-      query,
-      max_results: limit,
-      search_depth: 'basic',
-      include_answer: true,
-      include_raw_content: false,
-    }),
-  })
-  if (!response.ok) {
-    throw new Error(`Tavily 搜索失败：${response.status}`)
-  }
-  const data = await response.json()
-  const results = Array.isArray(data.results) ? data.results : []
-  return results.slice(0, limit).map((item: { title?: string; url?: string; content?: string; score?: number }, index: number) => ({
-    id: item.url || `tavily-${Date.now()}-${index}`,
-    type: 'web',
-    title: item.title || item.url || '网页来源',
-    content: item.content || '',
-    excerpt: item.content,
-    url: item.url,
-    score: item.score,
-  }))
+  return searchWebWithAdapters(query, limit)
 }
 
 export function formatContextPrompt(sources: RetrievalSource[]): string {

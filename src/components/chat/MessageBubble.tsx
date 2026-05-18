@@ -4,7 +4,7 @@ import { Text, View } from 'react-native'
 import { MotiView } from 'moti'
 import { router } from 'expo-router'
 import * as Haptics from 'expo-haptics'
-import { Copy, Database, ExternalLink, Globe2, ListChecks, MoreHorizontal, RefreshCcw, RotateCcw, Settings2, Sparkles, Trash2, Zap } from 'lucide-react-native'
+import { Copy, Database, ExternalLink, Globe2, ListChecks, MoreHorizontal, RefreshCcw, RotateCcw, Settings2, Sparkles, Trash2, Volume2, Zap } from 'lucide-react-native'
 import { Gesture, GestureDetector } from 'react-native-gesture-handler'
 import Animated, { runOnJS, useAnimatedStyle, useSharedValue, withSequence, withSpring, withTiming } from 'react-native-reanimated'
 import type { ChatErrorCode, Message, MessageCitation } from '@/types'
@@ -26,6 +26,7 @@ interface MessageBubbleProps {
   onCopy?: (message: Message) => void
   onRetry?: (message: Message) => void
   onRegenerate?: () => void
+  onSpeak?: (message: Message) => void
   onDelete?: (message: Message) => void
   onConfigure?: (message: Message) => void
   onTestModel?: (message: Message) => void
@@ -33,7 +34,7 @@ interface MessageBubbleProps {
 
 const DELETE_THRESHOLD = 82
 
-export function MessageBubble({ conversationId, message, index, isLastAssistant = false, onCopy, onRetry, onRegenerate, onDelete, onConfigure, onTestModel }: MessageBubbleProps) {
+export function MessageBubble({ conversationId, message, index, isLastAssistant = false, onCopy, onRetry, onRegenerate, onSpeak, onDelete, onConfigure, onTestModel }: MessageBubbleProps) {
   const { colors } = useAppTheme()
   const motion = useMotionPreference()
   const hapticsEnabled = useSettingsStore((state) => state.settings.hapticsEnabled)
@@ -191,6 +192,7 @@ export function MessageBubble({ conversationId, message, index, isLastAssistant 
               actionsOpen={actionsOpen}
               onToggle={() => setActionsOpen((value) => !value)}
               onCopy={() => onCopy?.(message)}
+              onSpeak={() => onSpeak?.(message)}
               onConfigure={() => onConfigure?.(message)}
               onTestModel={() => onTestModel?.(message)}
               onRetry={() => onRetry?.(message)}
@@ -211,6 +213,7 @@ function MessageActionRow({
   actionsOpen,
   onToggle,
   onCopy,
+  onSpeak,
   onConfigure,
   onTestModel,
   onRetry,
@@ -223,6 +226,7 @@ function MessageActionRow({
   actionsOpen: boolean
   onToggle: () => void
   onCopy: () => void
+  onSpeak: () => void
   onConfigure: () => void
   onTestModel: () => void
   onRetry: () => void
@@ -262,6 +266,11 @@ function MessageActionRow({
         {actionsOpen && canCopy ? (
           <ActionButton label="复制" onPress={onCopy} compact>
             <Copy color={colors.textTertiary} size={13} strokeWidth={2} />
+          </ActionButton>
+        ) : null}
+        {actionsOpen && canCopy && !isUser ? (
+          <ActionButton label="朗读" onPress={onSpeak} compact>
+            <Volume2 color={colors.textTertiary} size={13} strokeWidth={2} />
           </ActionButton>
         ) : null}
         {actionsOpen && canRegenerate ? (
