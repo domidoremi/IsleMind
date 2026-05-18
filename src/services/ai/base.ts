@@ -2,6 +2,7 @@ import { fetch as expoFetch } from 'expo/fetch'
 import type { AIModel, Attachment, AIProvider, MessageCitation, MessageUsage, ProcessTrace, ProviderOperationCode, ProviderType, RetrievalSource, WebSearchMode } from '@/types'
 import { getModelConfig, getProviderConfigIssue, getProviderEffectiveBaseUrl, mergeModelConfig, sortModelConfigs } from '@/types'
 import { getSecureApiKey } from './secureKey'
+import { chooseCredentialForModel, runCredentialGroupModelSync, updateCredentialGroupHealth } from './providerCredentials'
 
 export type StreamCallback = (chunk: string) => void
 export type DoneCallback = (result: ChatCompletionResult) => void
@@ -9,11 +10,16 @@ export type CitationCallback = (citations: MessageCitation[]) => void
 export type TraceCallback = (trace: ProcessTrace) => void
 export type ErrorCallback = (error: Error) => void
 
+export interface ProviderRuntimeError extends Error {
+  credentialGroupId?: string
+}
+
 export interface ChatCompletionResult {
   text: string
   usage?: MessageUsage
   citations?: MessageCitation[]
   traces?: ProcessTrace[]
+  credentialGroupId?: string
 }
 
 export interface StreamHandle {
@@ -32,6 +38,7 @@ export interface ProviderOperationResult<T = undefined> {
   code: ProviderOperationCode
   message: string
   data?: T
+  credentialGroupId?: string
 }
 
 export interface ChatRequest {
@@ -43,6 +50,8 @@ export interface ChatRequest {
   }[]
   systemPrompt?: string
   temperature?: number
+  topP?: number
+  reasoningEffort?: 'minimal' | 'low' | 'medium' | 'high'
   maxTokens?: number
   attachments?: Attachment[]
   contextPrompt?: string
@@ -50,6 +59,21 @@ export interface ChatRequest {
   webSearchMode?: WebSearchMode
   stream?: boolean
   signal?: AbortSignal
+}
+
+export interface ProviderAudioTranscriptionRequest {
+  provider: AIProvider
+  audioBase64: string
+  mimeType: string
+  fileName?: string
+  model?: string
+}
+
+export interface ProviderSpeechRequest {
+  provider: AIProvider
+  text: string
+  model?: string
+  voice?: string
 }
 
 export interface ContentPart {
@@ -155,6 +179,10 @@ function buildOpenAIBody(req: ChatRequest) {
   if (temperature !== undefined) {
     body.temperature = temperature
   }
+  if (req.topP !== undefined) body.top_p = clamp01(req.topP)
+  if (req.reasoningEffort && supportsReasoningEffort(req)) {
+    body.reasoning_effort = req.reasoningEffort
+  }
 
   const maxTokensKey = req.provider.type === 'xiaomi-mimo' || isOpenAIReasoningModel(req.model) ? 'max_completion_tokens' : 'max_tokens'
   body[maxTokensKey] = clampMaxTokens(req)
@@ -218,6 +246,7 @@ function buildAnthropicBody(req: ChatRequest) {
     messages,
     max_tokens: req.maxTokens ?? 4096,
     temperature: req.temperature ?? 0.7,
+    top_p: req.topP ?? 1,
     stream: req.stream ?? true,
     ...(req.webSearchMode === 'native' ? { tools: [{ type: 'web_search_20250305', name: 'web_search', max_uses: 3 }] } : {}),
   }
@@ -260,6 +289,7 @@ function buildGoogleBody(req: ChatRequest) {
     systemInstruction,
     generationConfig: {
       temperature: req.temperature ?? 0.7,
+      topP: req.topP ?? 1,
       maxOutputTokens: req.maxTokens ?? 4096,
     },
     ...(req.webSearchMode === 'native' ? { tools: [{ google_search: {} }] } : {}),
@@ -303,6 +333,8 @@ function buildOpenAIResponsesBody(req: ChatRequest) {
     model: req.model,
     input,
     ...(normalizeTemperature(req) === undefined ? {} : { temperature: normalizeTemperature(req) }),
+    ...(req.topP === undefined ? {} : { top_p: clamp01(req.topP) }),
+    ...(req.reasoningEffort && supportsReasoningEffort(req) ? { reasoning: { effort: req.reasoningEffort } } : {}),
     max_output_tokens: clampMaxTokens(req),
     stream: req.stream ?? true,
     ...(req.webSearchMode === 'native' ? { tools: [{ type: 'web_search_preview' }] } : {}),
@@ -908,6 +940,16 @@ function sumOptional(...values: (number | undefined)[]): number | undefined {
   return known.length ? known.reduce((sum, value) => sum + value, 0) : undefined
 }
 
+function withCredentialGroup(result: ChatCompletionResult, credentialGroupId: string | undefined): ChatCompletionResult {
+  return credentialGroupId ? { ...result, credentialGroupId } : result
+}
+
+function providerRuntimeError(message: string, credentialGroupId?: string): ProviderRuntimeError {
+  const error = new Error(message) as ProviderRuntimeError
+  error.credentialGroupId = credentialGroupId
+  return error
+}
+
 export async function streamChat(
   req: ChatRequest,
   onChunk: StreamCallback,
@@ -917,9 +959,18 @@ export async function streamChat(
   onTrace?: TraceCallback
 ): Promise<StreamHandle> {
   const controller = new AbortController()
-  const issue = getProviderConfigIssue(req.provider, req.provider.apiKey)
+  const credential = chooseCredentialForModel(req.provider, req.model)
+  const runtimeReq = {
+    ...req,
+    provider: {
+      ...req.provider,
+      apiKey: credential.apiKey || req.provider.apiKey,
+    },
+  }
+  const issue = getProviderConfigIssue(runtimeReq.provider, runtimeReq.provider.apiKey)
   if (issue) {
-    const error = new Error(`${issue.code}: ${issue.message}`)
+    req.provider = updateCredentialGroupHealth(req.provider, credential.credentialGroupId, false)
+    const error = providerRuntimeError(`${issue.code}: ${issue.message}`, credential.credentialGroupId)
     const done = Promise.resolve().then(() => onError(error))
     return { controller, done }
   }
@@ -927,14 +978,19 @@ export async function streamChat(
     req.signal.addEventListener('abort', () => controller.abort(), { once: true })
   }
   const stream = req.stream ?? true
+  if (!runtimeReq.provider.apiKey.trim()) {
+    req.provider = updateCredentialGroupHealth(req.provider, credential.credentialGroupId, false)
+    const done = Promise.resolve().then(() => onError(providerRuntimeError('missing_key', credential.credentialGroupId)))
+    return { controller, done }
+  }
   const url =
-    req.provider.type === 'google'
-      ? getGoogleEndpoint(req.provider, req.model, stream)
-      : usesOpenAIResponses(req)
-        ? getOpenAIResponsesEndpoint(req.provider)
-      : getAPIEndpoint(req.provider)
-  const headers = getHeaders(req.provider)
-  const body = JSON.stringify(getBody({ ...req, stream }))
+    runtimeReq.provider.type === 'google'
+      ? getGoogleEndpoint(runtimeReq.provider, runtimeReq.model, stream)
+      : usesOpenAIResponses(runtimeReq)
+        ? getOpenAIResponsesEndpoint(runtimeReq.provider)
+      : getAPIEndpoint(runtimeReq.provider)
+  const headers = getHeaders(runtimeReq.provider)
+  const body = JSON.stringify(getBody({ ...runtimeReq, stream }))
 
   const response = await fetchChatStreamWithTimeout(url, {
     method: 'POST',
@@ -945,18 +1001,19 @@ export async function streamChat(
 
   if (!response.ok) {
     const errorText = await safeResponseText(response)
-    const done = Promise.resolve().then(() => onError(new Error(`API Error ${response.status}: ${errorText}`)))
+    req.provider = updateCredentialGroupHealth(req.provider, credential.credentialGroupId, false)
+    const done = Promise.resolve().then(() => onError(providerRuntimeError(`API Error ${response.status}: ${errorText}`, credential.credentialGroupId)))
     return { controller, done }
   }
 
   if (!stream) {
     const done = runStreamTask(async () => {
-      const result = await parseNonStreamingResponse(response, req)
+      const result = await parseNonStreamingResponse(response, runtimeReq)
       if (result.text) onChunk(result.text)
       if (result.citations?.length) onCitations?.(result.citations)
       result.traces?.forEach(onTrace ?? (() => undefined))
-      onDone(result)
-    }, onError)
+      onDone(withCredentialGroup(result, credential.credentialGroupId))
+    }, onError, credential.credentialGroupId)
     return { controller, done }
   }
 
@@ -965,17 +1022,17 @@ export async function streamChat(
     const done = runStreamTask(async () => {
       onTrace?.(createStreamModeTrace('fallback', '当前运行环境没有暴露可逐段读取的响应正文，已明确切换为整段缓冲；这次回复不会伪装成实时流式。'))
       const raw = await safeResponseText(response)
-      const result = parseBufferedStreamResponse(raw, req, getWireProviderType(req.provider))
+      const result = parseBufferedStreamResponse(raw, runtimeReq, getWireProviderType(runtimeReq.provider))
       if (result.text) {
         onChunk(result.text)
         if (result.citations?.length) onCitations?.(result.citations)
         result.traces?.forEach(onTrace ?? (() => undefined))
-        onDone(result)
+        onDone(withCredentialGroup(result, credential.credentialGroupId))
       } else {
         onTrace?.(createStreamModeTrace('buffered', '服务商没有返回可解析的流式正文，正在尝试非流式请求兜底。'))
-        await retryWithoutStreaming(req, onChunk, onDone, onError, onCitations, onTrace)
+        await retryWithoutStreaming(runtimeReq, onChunk, onDone, onError, onCitations, onTrace, credential.credentialGroupId)
       }
-    }, onError)
+    }, onError, credential.credentialGroupId)
     return { controller, done }
   }
 
@@ -987,7 +1044,7 @@ export async function streamChat(
   let providerCitations: MessageCitation[] = []
   let providerTraces: ProcessTrace[] = []
   let providerUsage: MessageUsage | undefined
-  const wireProviderType = getWireProviderType(req.provider)
+  const wireProviderType = getWireProviderType(runtimeReq.provider)
 
   async function readStream() {
     while (true) {
@@ -1001,9 +1058,9 @@ export async function streamChat(
         providerTraces = dedupeTraces([...providerTraces, ...finalParsed.traces])
         finalParsed.traces.forEach(onTrace ?? (() => undefined))
         providerUsage = finalParsed.usage ?? providerUsage
-        const citations = dedupeCitations([...extractCitationsFromText(fullText, req.retrievalSources), ...providerCitations])
+        const citations = dedupeCitations([...extractCitationsFromText(fullText, runtimeReq.retrievalSources), ...providerCitations])
         if (citations.length) onCitations?.(citations)
-        onDone({ text: fullText, citations, traces: providerTraces, usage: providerUsage })
+        onDone(withCredentialGroup({ text: fullText, citations, traces: providerTraces, usage: providerUsage }, credential.credentialGroupId))
         return
       }
       buffer += decoder.decode(value, { stream: true })
@@ -1023,12 +1080,13 @@ export async function streamChat(
     }
   }
 
-  return { controller, done: runStreamTask(readStream, onError) }
+  return { controller, done: runStreamTask(readStream, onError, credential.credentialGroupId) }
 }
 
-function runStreamTask(task: () => Promise<void>, onError: ErrorCallback): Promise<void> {
+function runStreamTask(task: () => Promise<void>, onError: ErrorCallback, credentialGroupId?: string): Promise<void> {
   return task().catch((error: unknown) => {
-    const err = error instanceof Error ? error : new Error('请求失败，请稍后重试。')
+    const err = error instanceof Error ? error as ProviderRuntimeError : providerRuntimeError('请求失败，请稍后重试。')
+    err.credentialGroupId = err.credentialGroupId ?? credentialGroupId
     if (err.name !== 'AbortError') {
       onError(err)
     }
@@ -1041,7 +1099,8 @@ async function retryWithoutStreaming(
   onDone: DoneCallback,
   onError: ErrorCallback,
   onCitations?: CitationCallback,
-  onTrace?: TraceCallback
+  onTrace?: TraceCallback,
+  credentialGroupId?: string
 ): Promise<void> {
   try {
     const fallbackReq = { ...req, stream: false }
@@ -1061,7 +1120,7 @@ async function retryWithoutStreaming(
       CHAT_REQUEST_TIMEOUT_MS
     )
     if (!response.ok) {
-      onError(new Error(`API Error ${response.status}: ${await safeResponseText(response)}`))
+      onError(providerRuntimeError(`API Error ${response.status}: ${await safeResponseText(response)}`, credentialGroupId))
       return
     }
     const result = await parseNonStreamingResponse(response, fallbackReq)
@@ -1069,9 +1128,11 @@ async function retryWithoutStreaming(
     if (result.text) onChunk(result.text)
     if (result.citations?.length) onCitations?.(result.citations)
     result.traces?.forEach(onTrace ?? (() => undefined))
-    onDone(result)
+    onDone(withCredentialGroup(result, credentialGroupId))
   } catch (error) {
-    onError(error instanceof Error ? error : new Error('请求失败，请稍后重试。'))
+    const runtimeError = error instanceof Error ? error as ProviderRuntimeError : providerRuntimeError('请求失败，请稍后重试。')
+    runtimeError.credentialGroupId = runtimeError.credentialGroupId ?? credentialGroupId
+    onError(runtimeError)
   }
 }
 
@@ -1122,6 +1183,8 @@ export async function testProviderModelDetailed(provider: AIProvider, model: str
   if (!apiKey.trim()) {
     return failure('missing_key', '请先保存 API Key。')
   }
+  const selected = chooseCredentialForModel(provider, model)
+  const selectedGroupId = selected.apiKey === apiKey ? selected.credentialGroupId : findCredentialGroupIdForKey(provider, apiKey)
   const p = { ...provider, apiKey: apiKey.trim() }
   const issue = getProviderConfigIssue(p, apiKey)
   if (issue) {
@@ -1147,15 +1210,15 @@ export async function testProviderModelDetailed(provider: AIProvider, model: str
     const response = await fetchWithTimeout(url, { method: 'POST', headers, body }, MODEL_TEST_TIMEOUT_MS)
     if (!response.ok) {
       const errorText = await safeResponseText(response)
-      return failure(classifyHttpStatus(response.status, errorText, model), formatProviderHttpError(response.status, errorText, provider, model))
+      return failure(classifyHttpStatus(response.status, errorText, model), formatProviderHttpError(response.status, errorText, provider, model), undefined, selectedGroupId)
     }
     const text = await parseNonStreamingText(response, getWireProviderType(p))
     if (!text.trim()) {
-      return failure('unknown', '模型返回为空，请检查模型是否支持文本对话或当前账号权限。')
+      return failure('unknown', '模型返回为空，请检查模型是否支持文本对话或当前账号权限。', undefined, selectedGroupId)
     }
-    return success('当前模型测试通过。')
+    return success('当前模型测试通过。', undefined, selectedGroupId)
   } catch (error) {
-    return providerFetchFailure(error)
+    return providerFetchFailure(error, selectedGroupId)
   }
 }
 
@@ -1197,13 +1260,44 @@ export async function fetchProviderModelConfigsDetailed(provider: AIProvider, ap
       models = await fetchOpenAICompatibleModels(p)
     }
     if (!models.length) {
-      return failure('empty_models', '服务商没有返回可用模型，已保留当前手动模型列表。')
+      return failure<AIModel[]>('empty_models', '服务商没有返回可用模型，已保留当前手动模型列表。', undefined, findCredentialGroupIdForKey(provider, apiKey))
     }
-    return success(`已获取 ${models.length} 个模型。`, models)
+    return success(`已获取 ${models.length} 个模型。`, models, findCredentialGroupIdForKey(provider, apiKey))
   } catch (error) {
-    return providerFetchFailure(error)
+    return providerFetchFailure(error, findCredentialGroupIdForKey(provider, apiKey))
   }
   return failure('models_endpoint_unavailable', '当前服务商不支持自动获取模型，请手动维护模型列表。')
+}
+
+function supportsReasoningEffort(req: ChatRequest): boolean {
+  return !!req.provider.capabilities?.reasoningEffort || isOpenAIReasoningModel(req.model) || /reasoner|thinking|grok|glm/i.test(req.model)
+}
+
+function clamp01(value: number): number {
+  return Math.max(0, Math.min(1, value))
+}
+
+export async function syncProviderCredentialGroupsDetailed(provider: AIProvider): Promise<ProviderOperationResult<AIProvider>> {
+  const groups = provider.credentialGroups?.filter((group) => group.enabled && group.apiKey?.trim()) ?? []
+  if (!groups.length && !provider.apiKey.trim()) {
+    return failure('missing_key', '请先保存至少一个令牌分组。')
+  }
+  const sourceGroups = groups.length
+    ? provider.credentialGroups
+    : [{ id: 'default', label: '默认令牌', enabled: true, apiKey: provider.apiKey, availableModels: provider.models }]
+  const synced = await runCredentialGroupModelSync(
+    { ...provider, credentialGroups: sourceGroups },
+    {
+      fetchModels: async (source, group) => {
+        const result = await fetchProviderModelConfigsDetailed(source, group.apiKey ?? '')
+        if (!result.ok || !result.data?.length) {
+          throw new Error(result.message)
+        }
+        return result.data
+      },
+    }
+  )
+  return success('令牌分组模型同步完成。', synced)
 }
 
 export async function fetchProviderModels(provider: AIProvider, apiKey: string): Promise<string[]> {
@@ -1236,6 +1330,75 @@ export async function embedTextWithProvider(provider: AIProvider, text: string):
     source: 'provider',
     model,
   }
+}
+
+export async function transcribeAudioWithProvider(req: ProviderAudioTranscriptionRequest): Promise<string> {
+  const model = req.model ?? 'whisper-1'
+  const credential = chooseCredentialForModel(req.provider, model)
+  const provider = { ...req.provider, apiKey: credential.apiKey || req.provider.apiKey }
+  if (!provider.apiKey.trim()) throw new Error('missing_key')
+  if (provider.type === 'openai' || provider.type === 'openai-compatible') {
+    const form = new FormData()
+    form.append('model', req.model ?? 'whisper-1')
+    form.append('file', {
+      uri: `data:${req.mimeType};base64,${req.audioBase64}`,
+      name: req.fileName ?? 'audio.m4a',
+      type: req.mimeType,
+    } as unknown as Blob)
+    const response = await fetchWithTimeout(`${normalizeBaseUrl(defaultOpenAICompatibleBaseUrl(provider))}/audio/transcriptions`, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${provider.apiKey}`,
+      },
+      body: form,
+    }, PROVIDER_REQUEST_TIMEOUT_MS)
+    if (!response.ok) throw new ProviderHttpError(response.status, await safeResponseText(response))
+    const json = await response.json()
+    return typeof json.text === 'string' ? json.text : ''
+  }
+  if (provider.type === 'google') {
+    return generateText({
+      provider,
+      model: req.model ?? provider.models[0] ?? 'gemini-2.5-flash',
+      systemPrompt: '请把用户提供的音频转写为原始文字。只输出转写文本。',
+      messages: [{ role: 'user', content: '请转写这段音频。' }],
+      attachments: [{
+        id: `audio-${Date.now()}`,
+        type: 'document',
+        uri: '',
+        name: req.fileName ?? 'audio.m4a',
+        mimeType: req.mimeType,
+        size: Math.ceil(req.audioBase64.length * 0.75),
+        base64: req.audioBase64,
+      }],
+      temperature: 0.1,
+      maxTokens: 2048,
+    })
+  }
+  throw new Error('audio_transcription_unavailable')
+}
+
+export async function synthesizeSpeechWithProvider(req: ProviderSpeechRequest): Promise<string> {
+  const model = req.model ?? 'gpt-4o-mini-tts'
+  const credential = chooseCredentialForModel(req.provider, model)
+  const provider = { ...req.provider, apiKey: credential.apiKey || req.provider.apiKey }
+  if (!provider.apiKey.trim()) throw new Error('missing_key')
+  if (!(provider.type === 'openai' || provider.type === 'openai-compatible')) {
+    throw new Error('speech_unavailable')
+  }
+  const response = await fetchWithTimeout(`${normalizeBaseUrl(defaultOpenAICompatibleBaseUrl(provider))}/audio/speech`, {
+    method: 'POST',
+    headers: getHeaders(provider),
+    body: JSON.stringify({
+      model,
+      voice: req.voice ?? 'alloy',
+      input: req.text.slice(0, 4000),
+      response_format: 'mp3',
+    }),
+  }, PROVIDER_REQUEST_TIMEOUT_MS)
+  if (!response.ok) throw new ProviderHttpError(response.status, await safeResponseText(response))
+  const buffer = await response.arrayBuffer()
+  return arrayBufferToBase64(buffer)
 }
 
 async function fetchOpenAICompatibleModels(provider: AIProvider): Promise<AIModel[]> {
@@ -1375,6 +1538,22 @@ function getNumber(source: Record<string, unknown> | undefined, key: string): nu
   return typeof value === 'number' ? value : undefined
 }
 
+function arrayBufferToBase64(buffer: ArrayBuffer): string {
+  const bytes = new Uint8Array(buffer)
+  const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/'
+  let output = ''
+  for (let index = 0; index < bytes.length; index += 3) {
+    const a = bytes[index]
+    const b = bytes[index + 1]
+    const c = bytes[index + 2]
+    output += chars[a >> 2]
+    output += chars[((a & 3) << 4) | ((b ?? 0) >> 4)]
+    output += index + 1 < bytes.length ? chars[((b & 15) << 2) | ((c ?? 0) >> 6)] : '='
+    output += index + 2 < bytes.length ? chars[(c ?? 0) & 63] : '='
+  }
+  return output
+}
+
 class ProviderHttpError extends Error {
   constructor(
     readonly status: number,
@@ -1421,26 +1600,32 @@ async function safeResponseText(response: Response): Promise<string> {
   }
 }
 
-function success<T>(message: string, data?: T): ProviderOperationResult<T> {
-  return { ok: true, code: 'ok', message, data }
+function success<T>(message: string, data?: T, credentialGroupId?: string): ProviderOperationResult<T> {
+  return { ok: true, code: 'ok', message, data, credentialGroupId }
 }
 
-function failure<T>(code: ProviderOperationCode, message: string, data?: T): ProviderOperationResult<T> {
-  return { ok: false, code, message, data }
+function failure<T>(code: ProviderOperationCode, message: string, data?: T, credentialGroupId?: string): ProviderOperationResult<T> {
+  return { ok: false, code, message, data, credentialGroupId }
 }
 
-function providerFetchFailure<T>(error: unknown): ProviderOperationResult<T> {
+function providerFetchFailure<T>(error: unknown, credentialGroupId?: string): ProviderOperationResult<T> {
   if (error instanceof ProviderHttpError) {
-    return failure(classifyHttpStatus(error.status, error.responseText), formatProviderHttpError(error.status, error.responseText))
+    return failure<T>(classifyHttpStatus(error.status, error.responseText), formatProviderHttpError(error.status, error.responseText), undefined, credentialGroupId)
   }
   if (error instanceof Error && error.name === 'AbortError') {
-    return failure('timeout', '请求超时，请检查网络、代理或服务商地址。')
+    return failure<T>('timeout', '请求超时，请检查网络、代理或服务商地址。', undefined, credentialGroupId)
   }
   const message = error instanceof Error ? error.message : ''
   if (/failed to fetch|network|network request failed/i.test(message)) {
-    return failure('network_error', '网络请求失败，请检查网络、代理或服务商地址。')
+    return failure<T>('network_error', '网络请求失败，请检查网络、代理或服务商地址。', undefined, credentialGroupId)
   }
-  return failure('unknown', message || '请求失败，请稍后重试。')
+  return failure<T>('unknown', message || '请求失败，请稍后重试。', undefined, credentialGroupId)
+}
+
+function findCredentialGroupIdForKey(provider: AIProvider, apiKey: string): string | undefined {
+  const key = apiKey.trim()
+  if (!key) return undefined
+  return provider.credentialGroups?.find((group) => group.apiKey?.trim() === key)?.id
 }
 
 function classifyHttpStatus(status: number, responseText = '', model = ''): ProviderOperationCode {

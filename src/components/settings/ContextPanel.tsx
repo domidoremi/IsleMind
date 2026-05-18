@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import { Text, View } from 'react-native'
 import { BookOpen, Brain, Globe2, Trash2, Upload } from 'lucide-react-native'
-import type { AIProvider, Conversation, KnowledgeDocument, MemoryItem, Message, WebSearchMode } from '@/types'
+import type { AIProvider, Conversation, KnowledgeDocument, MemoryItem, Message, SearchProviderId, WebSearchMode } from '@/types'
 import { extractMemories, importKnowledgeFile, importKnowledgePlainText, retrieveContext, searchWeb } from '@/services/context'
 import {
   addMemory,
@@ -19,6 +19,7 @@ import { localDataStore } from '@/services/localDataStore'
 import { useAppTheme } from '@/hooks/useAppTheme'
 import { useSettingsStore } from '@/store/settingsStore'
 import { getProviderModels } from '@/types'
+import { legacySearchModeForProvider, resolveSearchProvider } from '@/services/searchPolicy'
 import { PressableScale } from '@/components/ui/PressableScale'
 import { Pill } from '@/components/ui/Pill'
 import { IslandField, IslandSection, IslandToggle } from '@/components/ui/IslandPrimitives'
@@ -47,8 +48,17 @@ export function ContextPanel({ providers }: ContextPanelProps) {
   const updateSettings = useSettingsStore((state) => state.updateSettings)
   const getTavilyApiKey = useSettingsStore((state) => state.getTavilyApiKey)
   const setTavilyApiKey = useSettingsStore((state) => state.setTavilyApiKey)
+  const getGoogleSearchApiKey = useSettingsStore((state) => state.getGoogleSearchApiKey)
+  const setGoogleSearchApiKey = useSettingsStore((state) => state.setGoogleSearchApiKey)
+  const getBingSearchApiKey = useSettingsStore((state) => state.getBingSearchApiKey)
+  const setBingSearchApiKey = useSettingsStore((state) => state.setBingSearchApiKey)
+  const getCustomSearchApiKey = useSettingsStore((state) => state.getCustomSearchApiKey)
+  const setCustomSearchApiKey = useSettingsStore((state) => state.setCustomSearchApiKey)
   const getPrimaryConfiguredProvider = useSettingsStore((state) => state.getPrimaryConfiguredProvider)
   const [tavilyKey, setTavilyKey] = useState('')
+  const [googleSearchKey, setGoogleSearchKey] = useState('')
+  const [bingSearchKey, setBingSearchKey] = useState('')
+  const [customSearchKey, setCustomSearchKey] = useState('')
   const [saved, setSaved] = useState(false)
   const [memories, setMemories] = useState<MemoryItem[]>([])
   const [documents, setDocuments] = useState<KnowledgeDocument[]>([])
@@ -75,11 +85,19 @@ export function ContextPanel({ providers }: ContextPanelProps) {
 
   useEffect(() => {
     void getTavilyApiKey().then((key) => setTavilyKey(key ?? ''))
+    void getGoogleSearchApiKey().then((key) => setGoogleSearchKey(key ?? ''))
+    void getBingSearchApiKey().then((key) => setBingSearchKey(key ?? ''))
+    void getCustomSearchApiKey().then((key) => setCustomSearchKey(key ?? ''))
     void refresh()
-  }, [getTavilyApiKey])
+  }, [getBingSearchApiKey, getCustomSearchApiKey, getGoogleSearchApiKey, getTavilyApiKey])
 
   async function saveTavilyKey() {
-    await setTavilyApiKey(tavilyKey.trim())
+    await Promise.all([
+      setTavilyApiKey(tavilyKey.trim()),
+      setGoogleSearchApiKey(googleSearchKey.trim()),
+      setBingSearchApiKey(bingSearchKey.trim()),
+      setCustomSearchApiKey(customSearchKey.trim()),
+    ])
     setSaved(true)
     setTimeout(() => setSaved(false), 1400)
   }
@@ -216,13 +234,14 @@ export function ContextPanel({ providers }: ContextPanelProps) {
       })
 
       const tavilyKey = await getTavilyApiKey()
-      if (!settings.webSearchEnabled || settings.webSearchMode !== 'tavily') {
+      const searchProvider = resolveSearchProvider(settings)
+      if (searchProvider === 'off' || searchProvider === 'native') {
         pushStep({
-          name: 'Tavily 联网搜索',
+          name: '联网搜索',
           status: 'warn',
-          detail: '当前未选择 Tavily 模式；聊天会跳过本地 Tavily 请求。',
+          detail: searchProvider === 'native' ? '当前选择服务商原生搜索；本机搜索适配器不会发起请求。' : '联网搜索未开启。',
         })
-      } else if (!tavilyKey?.trim()) {
+      } else if (searchProvider === 'tavily' && !tavilyKey?.trim()) {
         pushStep({
           name: 'Tavily 联网搜索',
           status: 'warn',
@@ -232,7 +251,7 @@ export function ContextPanel({ providers }: ContextPanelProps) {
         try {
           const webHits = await searchWeb('OpenAI Responses API streaming output_text delta', 3)
           pushStep({
-            name: 'Tavily 联网搜索',
+            name: '联网搜索适配器',
             status: webHits.length ? 'ok' : 'fail',
             detail: webHits.length
               ? `返回 ${webHits.length} 条网页，首条：${webHits[0]?.title ?? webHits[0]?.url ?? '网页来源'}`
@@ -290,9 +309,9 @@ export function ContextPanel({ providers }: ContextPanelProps) {
       />
 
       <View style={{ flexDirection: 'row', gap: 8, flexWrap: 'wrap', marginTop: 10 }}>
-        {(['native', 'tavily', 'off'] satisfies WebSearchMode[]).map((mode) => (
-          <PressableScale key={mode} haptic onPress={() => updateSettings({ webSearchMode: mode, webSearchEnabled: mode !== 'off' })}>
-            <Pill active={(settings.webSearchMode ?? 'native') === mode}>{mode === 'native' ? '原生搜索' : mode === 'tavily' ? 'Tavily' : '关闭'}</Pill>
+        {(['native', 'tavily', 'google', 'bing', 'custom', 'off'] satisfies SearchProviderId[]).map((mode) => (
+          <PressableScale key={mode} haptic onPress={() => updateSettings({ searchProvider: mode, webSearchMode: legacySearchModeForProvider(mode), webSearchEnabled: mode !== 'off' })}>
+            <Pill active={resolveSearchProvider(settings) === mode}>{searchModeLabel(mode)}</Pill>
           </PressableScale>
         ))}
       </View>
@@ -348,17 +367,18 @@ export function ContextPanel({ providers }: ContextPanelProps) {
         ) : null}
       </IslandSection>
 
-      <IslandSection title="Tavily API Key" material="raised" style={{ marginTop: 12 }}>
+      <IslandSection title="搜索 API" material="raised" style={{ marginTop: 12 }}>
         <Text style={{ color: colors.textSecondary, fontSize: 12, lineHeight: 17, marginTop: 4 }}>
-          {settings.webSearchEnabled && settings.webSearchMode === 'tavily'
-            ? 'Tavily 搜索已启用；聊天过程面板会显示搜索命中或失败原因。'
-            : tavilyKey.trim()
-              ? 'Key 已保存，但当前没有启用 Tavily 搜索。请在上方选择 Tavily。'
-              : '可选：保存后在上方选择 Tavily，用于第三方联网搜索。'}
+          Tavily、Google Custom Search、Bing/Azure Grounding 和自定义 JSON 搜索统一在这里保存。旧 Bing Web Search API 已退役，请优先使用 Azure 或自定义兼容端点。
         </Text>
-        <IslandField label="Key" style={{ marginTop: 10 }} inputProps={{ value: tavilyKey, onChangeText: setTavilyKey, secureTextEntry: true, autoCapitalize: 'none', autoCorrect: false, placeholder: '可选：用于第三方联网搜索' }} />
+        <IslandField label="Tavily Key" style={{ marginTop: 10 }} inputProps={{ value: tavilyKey, onChangeText: setTavilyKey, secureTextEntry: true, autoCapitalize: 'none', autoCorrect: false, placeholder: 'tvly-...' }} />
+        <IslandField label="Google Search Key" style={{ marginTop: 10 }} inputProps={{ value: googleSearchKey, onChangeText: setGoogleSearchKey, secureTextEntry: true, autoCapitalize: 'none', autoCorrect: false, placeholder: 'Google API Key' }} />
+        <IslandField label="Google CX" style={{ marginTop: 10 }} inputProps={{ value: settings.googleSearchCx ?? '', onChangeText: (googleSearchCx) => updateSettings({ googleSearchCx }), autoCapitalize: 'none', autoCorrect: false, placeholder: 'Programmable Search Engine cx' }} />
+        <IslandField label="Bing / Azure Key" style={{ marginTop: 10 }} inputProps={{ value: bingSearchKey, onChangeText: setBingSearchKey, secureTextEntry: true, autoCapitalize: 'none', autoCorrect: false, placeholder: 'Azure Grounding 或兼容搜索 Key' }} />
+        <IslandField label="自定义搜索端点" style={{ marginTop: 10 }} inputProps={{ value: settings.customSearchEndpoint ?? '', onChangeText: (customSearchEndpoint) => updateSettings({ customSearchEndpoint }), autoCapitalize: 'none', autoCorrect: false, placeholder: 'https://search.example.com?q={query}&limit={limit}' }} />
+        <IslandField label="自定义搜索 Key" style={{ marginTop: 10 }} inputProps={{ value: customSearchKey, onChangeText: setCustomSearchKey, secureTextEntry: true, autoCapitalize: 'none', autoCorrect: false, placeholder: '可选 Bearer Key' }} />
         <PressableScale haptic onPress={saveTavilyKey} style={{ marginTop: 10, minHeight: 42, borderRadius: 21, alignItems: 'center', justifyContent: 'center', backgroundColor: colors.text }}>
-          <Text style={{ color: colors.surface, fontSize: 14, fontWeight: '800' }}>{saved ? '已保存' : '保存 Tavily Key'}</Text>
+          <Text style={{ color: colors.surface, fontSize: 14, fontWeight: '800' }}>{saved ? '已保存' : '保存搜索配置'}</Text>
         </PressableScale>
       </IslandSection>
 
@@ -455,6 +475,23 @@ function ContextList({ title, empty, children, onClear }: { title: string; empty
       {children || <Text style={{ color: colors.textSecondary, fontSize: 13 }}>{empty}</Text>}
     </View>
   )
+}
+
+function searchModeLabel(mode: SearchProviderId): string {
+  switch (mode) {
+    case 'native':
+      return '原生搜索'
+    case 'tavily':
+      return 'Tavily'
+    case 'google':
+      return 'Google'
+    case 'bing':
+      return 'Bing/Azure'
+    case 'custom':
+      return '自定义'
+    case 'off':
+      return '关闭'
+  }
 }
 
 function ItemRow({ title, description, trailing, onToggle, onDelete }: { title: string; description: string; trailing?: string; onToggle?: () => Promise<void>; onDelete: () => Promise<void> }) {

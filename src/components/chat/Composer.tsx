@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import type { ReactNode } from 'react'
 import { ActivityIndicator, Platform, Text, TextInput, View } from 'react-native'
-import { Camera, ChevronDown, FilePlus, Image, Plus, SendHorizontal, Square } from 'lucide-react-native'
+import { Camera, ChevronDown, FilePlus, Image, Mic, Plus, SendHorizontal, Square } from 'lucide-react-native'
 import { MotiView } from 'moti'
 import type { Attachment } from '@/types'
 import { pickDocument, pickImage, takePhoto } from '@/services/attachment'
@@ -9,6 +9,7 @@ import { useAppTheme } from '@/hooks/useAppTheme'
 import { PressableScale } from '@/components/ui/PressableScale'
 import { IslandPanel } from '@/components/ui/IslandPanel'
 import { useIslandDialog } from '@/components/ui/IslandDialog'
+import { getAudioRecorderHook, isAudioRecordingAvailable, requestMicrophonePermission, transcribeLocalAudio } from '@/services/speech'
 
 interface ComposerProps {
   disabled?: boolean
@@ -27,8 +28,11 @@ export function Composer({ disabled = false, streaming = false, activityLabel, p
   const [content, setContent] = useState('')
   const [attachments, setAttachments] = useState<Attachment[]>([])
   const [attachmentsOpen, setAttachmentsOpen] = useState(false)
+  const [recording, setRecording] = useState(false)
   const [focused, setFocused] = useState(false)
   const [sending, setSending] = useState(false)
+  const useAudioRecorder = getAudioRecorderHook()
+  const recorder = useAudioRecorder ? useAudioRecorder({ extension: '.m4a' }) : null
   const canSend = (!!content.trim() || attachments.length > 0) && !disabled && !sending
 
   async function addAttachment(picker: () => Promise<Attachment | null>) {
@@ -59,6 +63,38 @@ export function Composer({ disabled = false, streaming = false, activityLabel, p
       }
     } finally {
       setSending(false)
+    }
+  }
+
+  async function toggleRecording() {
+    if (!isAudioRecordingAvailable() || !recorder) {
+      dialog.toast({ title: '语音不可用', message: '当前构建缺少 expo-audio，已保留文字输入。', tone: 'amber' })
+      return
+    }
+    try {
+      if (!recording) {
+        const granted = await requestMicrophonePermission()
+        if (!granted) {
+          dialog.toast({ title: '无法录音', message: '没有麦克风权限。', tone: 'danger' })
+          return
+        }
+        await recorder.prepareToRecordAsync()
+        recorder.record()
+        setRecording(true)
+        return
+      }
+      await recorder.stop()
+      setRecording(false)
+      const uri = recorder.uri
+      if (!uri) return
+      dialog.toast({ title: '正在转写', message: '录音已结束，正在转成文字。', tone: 'mint' })
+      const text = await transcribeLocalAudio(uri)
+      if (text.trim()) {
+        setContent((value) => [value, text.trim()].filter(Boolean).join(value.trim() ? '\n' : ''))
+      }
+    } catch (error) {
+      setRecording(false)
+      dialog.toast({ title: '语音失败', message: error instanceof Error ? error.message : '录音或转写失败。', tone: 'danger' })
     }
   }
 
@@ -146,6 +182,21 @@ export function Composer({ disabled = false, streaming = false, activityLabel, p
           }}
         >
           {attachmentsOpen ? <ChevronDown color={colors.textSecondary} size={16} strokeWidth={2} /> : <Plus color={colors.textSecondary} size={16} strokeWidth={2} />}
+        </PressableScale>
+        <PressableScale
+          haptic
+          onPress={() => void toggleRecording()}
+          accessibilityLabel={recording ? '停止录音' : '语音输入'}
+          style={{
+            width: 38,
+            height: 40,
+            alignItems: 'center',
+            justifyContent: 'center',
+            borderRadius: 18,
+            backgroundColor: recording ? colors.error : colors.islandRaised,
+          }}
+        >
+          <Mic color={recording ? colors.surface : colors.textSecondary} size={16} strokeWidth={2} />
         </PressableScale>
         <View style={{ flex: 1, minHeight: 40, justifyContent: 'center' }}>
           {streaming ? <StreamingStatusInline label={activityLabel || '生成中'} /> : null}

@@ -1,8 +1,11 @@
 import { create } from 'zustand'
 import { DEFAULT_PROVIDERS, getDefaultProviderModelIds, getModelConfig, getProviderConfigIssue, getXiaomiMimoOfficialBaseUrl, XIAOMI_MIMO_PAYG_BASE_URL } from '@/types'
-import type { Settings, AIProvider, Language, ThemeMode } from '@/types'
+import type { Settings, AIProvider, Language, ProviderCredentialGroup, ThemeMode } from '@/types'
 import { loadData, saveData } from '@/services/storage'
 import * as SecureStore from 'expo-secure-store'
+import { applyProviderPreset, defaultProviderSyncPolicy, detectProviderPreset, getProviderPreset } from '@/services/ai/providerRegistry'
+import { normalizeProviderCredentialGroups } from '@/services/ai/providerCredentials'
+import { legacySearchModeForProvider, resolveSearchProvider } from '@/services/searchPolicy'
 
 interface SettingsState {
   settings: Settings
@@ -17,8 +20,17 @@ interface SettingsState {
   removeProvider: (id: string) => Promise<void>
   setProviderApiKey: (id: string, apiKey: string) => Promise<void>
   getSecureApiKey: (id: string) => Promise<string | null>
+  setProviderCredentialGroupKey: (providerId: string, groupId: string, apiKey: string) => Promise<void>
+  getProviderCredentialGroupKey: (providerId: string, groupId: string) => Promise<string | null>
+  updateProviderCredentialGroupHealth: (providerId: string, groupId: string | undefined, ok: boolean) => Promise<void>
   setTavilyApiKey: (apiKey: string) => Promise<void>
   getTavilyApiKey: () => Promise<string | null>
+  setGoogleSearchApiKey: (apiKey: string) => Promise<void>
+  getGoogleSearchApiKey: () => Promise<string | null>
+  setBingSearchApiKey: (apiKey: string) => Promise<void>
+  getBingSearchApiKey: () => Promise<string | null>
+  setCustomSearchApiKey: (apiKey: string) => Promise<void>
+  getCustomSearchApiKey: () => Promise<string | null>
   hydrateProviderKey: (id: string) => Promise<AIProvider | null>
   getConfiguredProviders: () => Promise<AIProvider[]>
   getPrimaryConfiguredProvider: () => Promise<AIProvider | null>
@@ -42,13 +54,29 @@ const defaultSettings: Settings = {
   onboardingCompleted: false,
   ragMode: 'hybrid',
   embeddingMode: 'hybrid',
+  searchProvider: 'native',
 }
 
 function secureProviderKey(id: string): string {
   return `islemind.key.${id.replace(/[^a-zA-Z0-9._-]/g, '_')}`
 }
 
+function secureProviderGroupKey(providerId: string, groupId: string): string {
+  return `islemind.key.${providerId.replace(/[^a-zA-Z0-9._-]/g, '_')}.${groupId.replace(/[^a-zA-Z0-9._-]/g, '_')}`
+}
+
 const TAVILY_KEY = 'islemind.key.tavily'
+const GOOGLE_SEARCH_KEY = 'islemind.key.google-search'
+const BING_SEARCH_KEY = 'islemind.key.bing-search'
+const CUSTOM_SEARCH_KEY = 'islemind.key.custom-search'
+
+async function setSecureKey(key: string, value: string): Promise<void> {
+  if (value) {
+    await SecureStore.setItemAsync(key, value)
+  } else {
+    await SecureStore.deleteItemAsync(key)
+  }
+}
 
 export const useSettingsStore = create<SettingsState>((set, get) => ({
   settings: defaultSettings,
@@ -59,7 +87,14 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
       loadData<Settings>('SETTINGS'),
       loadData<AIProvider[]>('PROVIDERS'),
     ])
-    const mergedSettings = settings ? { ...defaultSettings, ...settings } : defaultSettings
+    const rawSettings = settings ? { ...defaultSettings, ...settings } : defaultSettings
+    const resolvedSearchProvider = resolveSearchProvider(rawSettings)
+    const mergedSettings = {
+      ...rawSettings,
+      searchProvider: resolvedSearchProvider,
+      webSearchMode: legacySearchModeForProvider(resolvedSearchProvider),
+      webSearchEnabled: resolvedSearchProvider !== 'off',
+    }
     const mergedProviders = mergeProviders(providers ?? [])
     const defaultProvider = mergedProviders.some((provider) => provider.id === mergedSettings.defaultProvider)
       ? mergedSettings.defaultProvider
@@ -72,7 +107,21 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
 
   updateSettings: (updates: Partial<Settings>) => {
     set((state) => {
-      const updated = { ...state.settings, ...updates }
+      const draft = { ...state.settings, ...updates }
+      const resolved = updates.searchProvider ?? (
+        updates.webSearchMode || updates.webSearchEnabled !== undefined
+          ? resolveSearchProvider(draft)
+          : draft.searchProvider
+      )
+      const nextSearchProvider = updates.webSearchEnabled === true && resolved === 'off' ? 'native' : resolved
+      const updated = nextSearchProvider
+        ? {
+            ...draft,
+            searchProvider: nextSearchProvider,
+            webSearchMode: legacySearchModeForProvider(nextSearchProvider),
+            webSearchEnabled: nextSearchProvider !== 'off',
+          }
+        : draft
       saveData('SETTINGS', updated)
       return { settings: updated }
     })
@@ -90,6 +139,7 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
     if (provider.apiKey) {
       await SecureStore.setItemAsync(secureProviderKey(provider.id), provider.apiKey)
     }
+    await persistCredentialGroupKeys(provider.id, provider.credentialGroups)
     set((state) => {
       const updated = [...state.providers, normalizeProvider({ ...provider, apiKey: '' } as AIProvider)]
       saveData('PROVIDERS', updated)
@@ -104,6 +154,9 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
     if (updates.apiKey) {
       await SecureStore.setItemAsync(secureProviderKey(id), updates.apiKey)
     }
+    if (updates.credentialGroups) {
+      await persistCredentialGroupKeys(id, updates.credentialGroups)
+    }
     set((state) => {
       const updated = state.providers.map((p) =>
         p.id === id ? normalizeProvider({ ...p, ...updates, apiKey: '' } as AIProvider) : p
@@ -115,6 +168,8 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
 
   removeProvider: async (id: string) => {
     await SecureStore.deleteItemAsync(secureProviderKey(id))
+    const provider = get().providers.find((item) => item.id === id)
+    await Promise.all((provider?.credentialGroups ?? []).map((group) => SecureStore.deleteItemAsync(secureProviderGroupKey(id, group.id))))
     set((state) => {
       const updated = state.providers.filter((p) => p.id !== id)
       saveData('PROVIDERS', updated)
@@ -144,6 +199,42 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
     return SecureStore.getItemAsync(secureProviderKey(id))
   },
 
+  setProviderCredentialGroupKey: async (providerId: string, groupId: string, apiKey: string) => {
+    if (apiKey) {
+      await SecureStore.setItemAsync(secureProviderGroupKey(providerId, groupId), apiKey)
+    } else {
+      await SecureStore.deleteItemAsync(secureProviderGroupKey(providerId, groupId))
+    }
+  },
+
+  getProviderCredentialGroupKey: async (providerId: string, groupId: string) => {
+    return SecureStore.getItemAsync(secureProviderGroupKey(providerId, groupId))
+  },
+
+  updateProviderCredentialGroupHealth: async (providerId: string, groupId: string | undefined, ok: boolean) => {
+    if (!groupId) return
+    set((state) => {
+      const now = Date.now()
+      const updated = state.providers.map((provider) => {
+        if (provider.id !== providerId || !provider.credentialGroups?.length) return provider
+        return {
+          ...provider,
+          credentialGroups: provider.credentialGroups.map((group) => {
+            if (group.id !== groupId) return group
+            return {
+              ...group,
+              lastUsedAt: now,
+              lastFailureAt: ok ? group.lastFailureAt : now,
+              failureCount: ok ? 0 : (group.failureCount ?? 0) + 1,
+            }
+          }),
+        }
+      })
+      saveData('PROVIDERS', updated)
+      return { providers: updated }
+    })
+  },
+
   setTavilyApiKey: async (apiKey: string) => {
     if (apiKey) {
       await SecureStore.setItemAsync(TAVILY_KEY, apiKey)
@@ -156,18 +247,31 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
     return SecureStore.getItemAsync(TAVILY_KEY)
   },
 
+  setGoogleSearchApiKey: async (apiKey: string) => setSecureKey(GOOGLE_SEARCH_KEY, apiKey),
+  getGoogleSearchApiKey: async () => SecureStore.getItemAsync(GOOGLE_SEARCH_KEY),
+  setBingSearchApiKey: async (apiKey: string) => setSecureKey(BING_SEARCH_KEY, apiKey),
+  getBingSearchApiKey: async () => SecureStore.getItemAsync(BING_SEARCH_KEY),
+  setCustomSearchApiKey: async (apiKey: string) => setSecureKey(CUSTOM_SEARCH_KEY, apiKey),
+  getCustomSearchApiKey: async () => SecureStore.getItemAsync(CUSTOM_SEARCH_KEY),
+
   hydrateProviderKey: async (id: string) => {
     const provider = get().providers.find((item) => item.id === id)
     if (!provider) return null
     const apiKey = await SecureStore.getItemAsync(secureProviderKey(id))
-    return { ...provider, apiKey: apiKey ?? '' }
+    const credentialGroups = await Promise.all((provider.credentialGroups ?? []).map(async (group) => ({
+      ...group,
+      apiKey: await SecureStore.getItemAsync(secureProviderGroupKey(id, group.id)) ?? group.apiKey ?? '',
+    })))
+    const primaryGroupKey = credentialGroups.find((group) => group.enabled && group.apiKey)?.apiKey
+    return normalizeProviderCredentialGroups({ ...provider, apiKey: apiKey ?? primaryGroupKey ?? '', credentialGroups })
   },
 
   getConfiguredProviders: async () => {
     const hydrated = await Promise.all(get().providers.map((provider) => get().hydrateProviderKey(provider.id)))
     return hydrated.filter((provider): provider is AIProvider => {
       if (!provider?.enabled) return false
-      if (!provider.apiKey.trim()) return false
+      const hasCredential = provider.apiKey.trim() || provider.credentialGroups?.some((group) => group.enabled && group.apiKey?.trim())
+      if (!hasCredential) return false
       if (!provider.models.length) return false
       return !getProviderConfigIssue(provider, provider.apiKey)
     })
@@ -184,6 +288,10 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
     await Promise.all([
       ...DEFAULT_PROVIDERS.map((provider) => SecureStore.deleteItemAsync(secureProviderKey(provider.id))),
       SecureStore.deleteItemAsync(TAVILY_KEY),
+      SecureStore.deleteItemAsync(GOOGLE_SEARCH_KEY),
+      SecureStore.deleteItemAsync(BING_SEARCH_KEY),
+      SecureStore.deleteItemAsync(CUSTOM_SEARCH_KEY),
+      ...get().providers.flatMap((provider) => (provider.credentialGroups ?? []).map((group) => SecureStore.deleteItemAsync(secureProviderGroupKey(provider.id, group.id)))),
     ])
     saveData('SETTINGS', resetSettings)
     const resetProviders = DEFAULT_PROVIDERS.map((provider) => ({ ...provider, enabled: false, apiKey: '' }))
@@ -207,10 +315,18 @@ function mergeProviders(saved: AIProvider[]): AIProvider[] {
 function normalizeProvider(provider: AIProvider): AIProvider {
   const models = normalizeProviderModels(provider)
   const baseUrl = normalizeProviderBaseUrl(provider)
-  return {
+  const detectedPresetId = provider.detectedPresetId ?? detectProviderPreset({ baseUrl, apiKey: provider.apiKey, name: provider.name }).presetId
+  const presetId = provider.presetId ?? (provider.id === 'custom-openai' ? 'custom-openai-compatible' : detectedPresetId)
+  const preset = getProviderPreset(presetId)
+  const normalized = applyProviderPreset({
     ...provider,
     apiKey: '',
     baseUrl,
+    presetId,
+    detectedPresetId,
+    detectionStatus: provider.detectionStatus ?? (provider.presetId ? 'manual' : 'detected'),
+    capabilities: { ...preset.capabilities, ...provider.capabilities },
+    syncPolicy: provider.syncPolicy ?? defaultProviderSyncPolicy(),
     enabled: provider.enabled ?? false,
     models,
     credentialMode: provider.type === 'xiaomi-mimo' ? provider.credentialMode ?? 'token-plan' : provider.credentialMode,
@@ -219,7 +335,13 @@ function normalizeProvider(provider: AIProvider): AIProvider {
     modelConfigs: models.map((modelId) => getModelConfig(modelId, provider.type, provider.modelConfigs)),
     lastTestStatus: provider.lastTestStatus ?? 'idle',
     lastModelSyncStatus: provider.lastModelSyncStatus ?? 'idle',
-  }
+  } as AIProvider, presetId)
+  return normalizeProviderCredentialGroups({
+    ...normalized,
+    apiKey: '',
+    credentialGroups: sanitizeCredentialGroups(normalized.credentialGroups, models),
+    modelAvailability: normalized.modelAvailability,
+  })
 }
 
 function normalizeProviderBaseUrl(provider: AIProvider): string | undefined {
@@ -243,6 +365,25 @@ function normalizeProviderBaseUrl(provider: AIProvider): string | undefined {
     return officialBaseUrl
   }
   return baseUrl
+}
+
+async function persistCredentialGroupKeys(providerId: string, groups: ProviderCredentialGroup[] | undefined): Promise<void> {
+  await Promise.all((groups ?? []).map(async (group) => {
+    if (!group.apiKey) return
+    await SecureStore.setItemAsync(secureProviderGroupKey(providerId, group.id), group.apiKey)
+  }))
+}
+
+function sanitizeCredentialGroups(groups: ProviderCredentialGroup[] | undefined, models: string[]): ProviderCredentialGroup[] {
+  return (groups ?? []).map((group, index) => ({
+    ...group,
+    id: group.id || `group-${index + 1}`,
+    label: group.label || `令牌分组 ${index + 1}`,
+    apiKey: '',
+    enabled: group.enabled ?? true,
+    availableModels: group.availableModels?.length ? group.availableModels : models,
+    failureCount: group.failureCount ?? 0,
+  }))
 }
 
 function normalizeProviderModels(provider: AIProvider): string[] {

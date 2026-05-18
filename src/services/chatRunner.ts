@@ -1,12 +1,14 @@
 import * as Clipboard from 'expo-clipboard'
 import type { AIProvider, Attachment, ChatErrorCode, Conversation, Message, ProcessTrace, RetrievalSource } from '@/types'
 import { getModelConfig, getProviderConfigIssue } from '@/types'
-import { streamChat, type StreamHandle } from '@/services/ai/base'
+import { streamChat, type ProviderRuntimeError, type StreamHandle } from '@/services/ai/base'
 import { extractMemories, retrieveContext, searchWeb } from '@/services/context'
 import { buildSystemPrompt } from '@/services/promptEngineering'
 import { buildEstimatedUsage, estimateTextTokens, mergeUsageWithEstimate } from '@/services/tokenUsage'
 import { useChatStore } from '@/store/chatStore'
 import { useSettingsStore } from '@/store/settingsStore'
+import { packChatMessages } from '@/services/contextPacker'
+import { resolveSearchProvider } from '@/services/searchPolicy'
 
 function generateId(): string {
   return `${Date.now()}-${Math.random().toString(36).slice(2, 10)}`
@@ -206,11 +208,6 @@ async function createAssistantReply(conversationId: string) {
   const latestConversation = useChatStore
     .getState()
     .conversations.find((item) => item.id === conversationId)
-
-  const promptMessages =
-    latestConversation?.messages
-      .filter((message) => message.id !== assistantMessage.id && message.status !== 'error' && message.status !== 'cancelled')
-      .map((message) => ({ role: message.role, content: message.responseText ?? message.content })) ?? []
   const lastUserMessage = [...(latestConversation?.messages ?? [])].reverse().find((message) => message.role === 'user')
   const settings = useSettingsStore.getState().settings
   const contextTraceId = traceId('context')
@@ -288,16 +285,17 @@ async function createAssistantReply(conversationId: string) {
     }))
   }
   let webSources: RetrievalSource[] = []
-  if (settings.webSearchEnabled && settings.webSearchMode === 'tavily' && lastUserMessage?.content) {
+  const searchProvider = resolveSearchProvider(settings)
+  if (searchProvider !== 'off' && searchProvider !== 'native' && lastUserMessage?.content) {
     const startedAt = Date.now()
     const webTraceId = traceId('web')
     upsertTrace(conversationId, assistantMessage.id, {
       id: webTraceId,
       type: 'search',
-      title: 'Tavily 联网搜索',
+      title: '联网搜索适配器',
       status: 'running',
       startedAt,
-      metadata: { mode: 'tavily' },
+      metadata: { mode: searchProvider },
     })
     try {
       webSources = await searchWeb(lastUserMessage.content, 4)
@@ -305,11 +303,11 @@ async function createAssistantReply(conversationId: string) {
       upsertTrace(conversationId, assistantMessage.id, completeTrace({
         id: webTraceId,
         type: 'search',
-        title: 'Tavily 联网搜索',
-        content: webSources.length ? webSources.map((source) => source.title).join('\n') : 'Tavily 请求已执行，但没有返回可用网页来源。',
+        title: '联网搜索适配器',
+        content: webSources.length ? webSources.map((source) => source.title).join('\n') : '搜索请求已执行，但没有返回可用网页来源。',
         status: 'done',
         startedAt,
-        metadata: { count: webSources.length },
+        metadata: { count: webSources.length, mode: searchProvider },
       }))
     } catch (error) {
       const message = error instanceof Error ? error.message : '联网搜索失败，已跳过搜索上下文。'
@@ -317,10 +315,11 @@ async function createAssistantReply(conversationId: string) {
       upsertTrace(conversationId, assistantMessage.id, completeTrace({
         id: webTraceId,
         type: 'search',
-        title: 'Tavily 联网搜索',
+        title: '联网搜索适配器',
         content: message,
         status: 'error',
         startedAt,
+        metadata: { mode: searchProvider },
       }))
     }
   } else {
@@ -329,9 +328,9 @@ async function createAssistantReply(conversationId: string) {
       type: 'search',
       title: '联网搜索',
       content: settings.webSearchEnabled
-        ? settings.webSearchMode === 'native'
+        ? searchProvider === 'native'
           ? '使用服务商原生联网能力时，搜索过程由模型侧返回；如果服务商未返回来源，会显示为降级。'
-          : '当前搜索模式不会在本地发起 Tavily 请求。'
+          : '当前搜索模式不会在本地发起搜索适配器请求。'
         : '联网搜索未开启。',
       status: settings.webSearchEnabled ? 'skipped' : 'skipped',
       startedAt: Date.now(),
@@ -339,7 +338,7 @@ async function createAssistantReply(conversationId: string) {
   }
   const retrievalSources = [...context.sources, ...webSources]
   const hasAttachments = !!lastUserMessage?.attachments?.length
-  const providerWebSearchMode = settings.webSearchEnabled && settings.webSearchMode === 'native' && !hasAttachments ? 'native' : 'off'
+  const providerWebSearchMode = searchProvider === 'native' && !hasAttachments ? 'native' : 'off'
   const nativeSearchTraceId = traceId('native-search')
   upsertTrace(conversationId, assistantMessage.id, completeTrace({
     id: nativeSearchTraceId,
@@ -347,7 +346,7 @@ async function createAssistantReply(conversationId: string) {
     title: '服务商原生搜索',
     content: providerWebSearchMode === 'native'
       ? '已请求服务商启用原生搜索/grounding；实际来源以服务商返回为准。'
-      : hasAttachments && settings.webSearchEnabled && settings.webSearchMode === 'native'
+      : hasAttachments && searchProvider === 'native'
         ? '本轮包含附件，为避免协议冲突已跳过原生搜索。'
         : '未启用服务商原生搜索。',
     status: providerWebSearchMode === 'native' ? 'running' : 'skipped',
@@ -363,6 +362,28 @@ async function createAssistantReply(conversationId: string) {
     hasWeb: webSources.length > 0 || providerWebSearchMode === 'native',
     retrievalSources,
   })
+  const packedPrompt = packChatMessages({
+    messages: latestConversation?.messages.filter((message) => message.id !== assistantMessage.id) ?? [],
+    contextPrompt: [context.prompt, webSources.length ? formatWebPrompt(webSources) : ''].filter(Boolean).join('\n\n'),
+    modelContextWindow: modelConfig.contextWindow,
+    maxOutputTokens: conversation.maxTokens,
+    systemPrompt,
+  })
+  if (packedPrompt.trimmedCount) {
+    upsertTrace(conversationId, assistantMessage.id, completeTrace({
+      id: traceId('context-pack'),
+      type: 'system',
+      title: '长上下文压缩',
+      content: `已保留最近 ${packedPrompt.messages.length} 条消息，并将 ${packedPrompt.trimmedCount} 条较早历史写入摘要。预算 ${packedPrompt.estimatedInputTokens}/${packedPrompt.budgetTokens} tokens。`,
+      status: 'done',
+      startedAt: Date.now(),
+      metadata: {
+        trimmedCount: packedPrompt.trimmedCount,
+        estimatedInputTokens: packedPrompt.estimatedInputTokens,
+        budgetTokens: packedPrompt.budgetTokens,
+      },
+    }))
+  }
   const chunkBuffer = createStreamingChunkBuffer(conversationId, assistantMessage.id)
   activeControllers.set(conversationId, { controller: requestController, messageId: assistantMessage.id, flush: chunkBuffer.flush })
   const modelTraceId = traceId('model')
@@ -389,10 +410,12 @@ async function createAssistantReply(conversationId: string) {
         model: conversation.model,
         systemPrompt,
         temperature: conversation.temperature,
+        topP: conversation.topP,
+        reasoningEffort: conversation.reasoningEffort,
         maxTokens: conversation.maxTokens,
         attachments: lastUserMessage?.attachments ?? [],
-        messages: promptMessages,
-        contextPrompt: [context.prompt, webSources.length ? formatWebPrompt(webSources) : ''].filter(Boolean).join('\n\n'),
+        messages: packedPrompt.messages,
+        contextPrompt: packedPrompt.contextPrompt,
         retrievalSources,
         webSearchMode: providerWebSearchMode,
         signal: requestController.signal,
@@ -423,6 +446,7 @@ async function createAssistantReply(conversationId: string) {
             estimatedTokens: usage.source === 'estimated',
             tokenCount: usage.outputTokens ?? estimateTextTokens(outputText),
           })
+          void useSettingsStore.getState().updateProviderCredentialGroupHealth(provider.id, result.credentialGroupId, true)
           upsertTrace(conversationId, assistantMessage.id, completeTrace({
             id: modelTraceId,
             type: 'system',
@@ -482,6 +506,7 @@ async function createAssistantReply(conversationId: string) {
           }))
         }
         finishWithError(conversationId, assistantMessage.id, toUserFacingError(error.message), classifyChatError(error.message), provider.id)
+        void useSettingsStore.getState().updateProviderCredentialGroupHealth(provider.id, (error as ProviderRuntimeError).credentialGroupId, false)
       },
       (citations) => {
         useChatStore.getState().updateMessage(conversationId, assistantMessage.id, { citations })

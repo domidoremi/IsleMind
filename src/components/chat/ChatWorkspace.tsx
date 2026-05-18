@@ -36,6 +36,7 @@ import { useSettingsStore } from '@/store/settingsStore'
 import { testProviderModelDetailed } from '@/services/ai/base'
 import { localDataStore } from '@/services/localDataStore'
 import { getModelConfig, getModelName, getProviderConfigIssue, getProviderModels } from '@/types'
+import { speakText } from '@/services/speech'
 import type { AIProvider, Attachment, ChatErrorCode, Conversation, Message, ProviderOperationCode } from '@/types'
 import { collectMessageTraces, getActiveTraceTitle } from './tracePresentation'
 import { useSafeAreaInsets } from 'react-native-safe-area-context'
@@ -296,6 +297,7 @@ export function ChatWorkspace({ conversation, showBack = false }: ChatWorkspaceP
       return
     }
     const result = await testProviderModelDetailed(keyedProvider, activeConversation.model, keyedProvider.apiKey)
+    await useSettingsStore.getState().updateProviderCredentialGroupHealth(keyedProvider.id, result.credentialGroupId, result.ok)
     await updateProvider(keyedProvider.id, { lastTestStatus: result.ok ? 'ok' : 'bad', lastTestedAt: Date.now(), lastTestMessage: result.message, lastTestCode: result.code })
     dialog.toast({ title: result.ok ? '模型可用' : '模型不可用', message: result.ok ? `${activeConversation.model} 已通过测试。` : result.message, tone: result.ok ? 'mint' : 'danger' })
   }
@@ -310,6 +312,7 @@ export function ChatWorkspace({ conversation, showBack = false }: ChatWorkspaceP
       return
     }
     const result = await testProviderModelDetailed(keyedProvider, activeConversation.model, keyedProvider.apiKey)
+    await useSettingsStore.getState().updateProviderCredentialGroupHealth(keyedProvider.id, result.credentialGroupId, result.ok)
     await updateProvider(keyedProvider.id, {
       lastTestStatus: result.ok ? 'ok' : 'bad',
       lastTestedAt: Date.now(),
@@ -431,6 +434,7 @@ export function ChatWorkspace({ conversation, showBack = false }: ChatWorkspaceP
                   }}
                   onRetry={(item) => void retryMessage(conversation.id, item.id).catch((error) => dialog.toast({ title: '重试失败', message: error instanceof Error ? error.message : '无法重新发送这条消息。', tone: 'danger' }))}
                   onRegenerate={() => void regenerateLastAssistant(conversation.id).catch((error) => dialog.toast({ title: '重新生成失败', message: error instanceof Error ? error.message : '无法重新生成这条回复。', tone: 'danger' }))}
+                  onSpeak={(item) => void speakText(item.responseText ?? item.content, provider)}
                   onDelete={(item) => removeMessage(conversation.id, item.id)}
                   onConfigure={() => router.push('/settings')}
                   onTestModel={(item) => void testCurrentModel(item)}
@@ -619,8 +623,14 @@ function FloatingOptionsPanel({
   const updateConversation = useChatStore((state) => state.updateConversation)
   const currentProvider = provider
   const currentModels = currentProvider
-    ? currentProvider.models.map((id) => ({ id, name: getModelName(id), config: getModelConfig(id, currentProvider.type, currentProvider.modelConfigs) }))
+    ? currentProvider.models
+      .filter((id) => {
+        const groups = currentProvider.credentialGroups ?? []
+        return !groups.length || groups.some((group) => group.enabled && (!group.availableModels?.length || group.availableModels.includes(id)))
+      })
+      .map((id) => ({ id, name: getModelName(id), config: getModelConfig(id, currentProvider.type, currentProvider.modelConfigs) }))
     : []
+  const capabilities = currentProvider?.capabilities
   return (
     <IslandPanel material="chrome" elevated style={{ marginTop: 10, maxHeight }} radius={24} contentStyle={{ padding: 12 }}>
       <View style={{ flexDirection: 'row', gap: 8, flexWrap: 'wrap' }}>
@@ -683,6 +693,30 @@ function FloatingOptionsPanel({
             if (!Number.isNaN(next)) updateConversation(conversation.id, { maxTokens: Math.max(128, Math.min(config.maxOutputTokens, next)) })
           }}
         />
+      </View>
+      <View style={{ flexDirection: 'row', gap: 8, marginTop: 10 }}>
+        {capabilities?.topP !== false ? (
+          <ParamInput
+            label="Top P"
+            value={String(conversation.topP ?? 1)}
+            onChange={(value) => {
+              const next = Number(value)
+              if (!Number.isNaN(next)) updateConversation(conversation.id, { topP: Math.max(0, Math.min(1, next)) })
+            }}
+          />
+        ) : null}
+        {capabilities?.reasoningEffort ? (
+          <View style={{ flex: 1 }}>
+            <Text style={{ color: colors.textSecondary, fontSize: 12, fontWeight: '800', marginBottom: 6 }}>Reasoning</Text>
+            <View style={{ flexDirection: 'row', gap: 6, flexWrap: 'wrap' }}>
+              {(['minimal', 'low', 'medium', 'high'] as const).map((effort) => (
+                <PressableScale key={effort} haptic onPress={() => updateConversation(conversation.id, { reasoningEffort: effort })}>
+                  <Pill active={(conversation.reasoningEffort ?? 'medium') === effort}>{effort}</Pill>
+                </PressableScale>
+              ))}
+            </View>
+          </View>
+        ) : null}
       </View>
     </IslandPanel>
   )

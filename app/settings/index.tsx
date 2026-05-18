@@ -1,11 +1,10 @@
 import { useState } from 'react'
 import { ScrollView, Text, View } from 'react-native'
 import type { ReactNode } from 'react'
-import { ChevronLeft, Download, Moon, RotateCcw, Smartphone, Sun, Trash2, Upload } from 'lucide-react-native'
+import { ChevronLeft, Download, KeyRound, Moon, RotateCcw, Smartphone, Sun, Trash2, Upload } from 'lucide-react-native'
 import { router } from 'expo-router'
 import { MotiView } from 'moti'
 import { Screen } from '@/components/ui/Screen'
-import { ApiKeyPanel } from '@/components/settings/ApiKeyPanel'
 import { ContextPanel } from '@/components/settings/ContextPanel'
 import { PressableScale } from '@/components/ui/PressableScale'
 import { Pill } from '@/components/ui/Pill'
@@ -17,6 +16,7 @@ import { useChatStore } from '@/store/chatStore'
 import { exportToJsonFile, importFromJsonFile } from '@/services/portableData'
 import { checkLatestApkRelease, downloadAndOpenApkInstaller, getVersionSnapshot, type ApkReleaseInfo } from '@/services/appUpdates'
 import { useIslandDialog } from '@/components/ui/IslandDialog'
+import { resolveSearchProvider, searchProviderLabel } from '@/services/searchPolicy'
 import type { ThemeMode } from '@/types'
 
 export default function SettingsScreen() {
@@ -32,6 +32,7 @@ export default function SettingsScreen() {
   const defaultProvider = providers.find((provider) => provider.id === settings.defaultProvider)
   const version = getVersionSnapshot()
   const [updateBusy, setUpdateBusy] = useState<'apk' | null>(null)
+  const searchProvider = resolveSearchProvider(settings)
 
   async function exportJson() {
     const uri = await exportToJsonFile()
@@ -127,7 +128,7 @@ export default function SettingsScreen() {
         <View style={{ flexDirection: 'row', gap: 8, flexWrap: 'wrap', marginTop: 10 }}>
           <MiniStat label={`已启用 ${enabledProviders}`} />
           <MiniStat label={defaultProvider ? `默认 ${defaultProvider.name}` : '未设默认'} />
-          <MiniStat label={settings.webSearchEnabled ? `搜索 ${settings.webSearchMode ?? 'native'}` : '搜索关闭'} />
+          <MiniStat label={searchProvider !== 'off' ? `搜索 ${searchProviderLabel(searchProvider)}` : '搜索关闭'} />
         </View>
 
         <IslandSection title="主题" subtitle="界面色彩只影响本机显示。" style={{ marginTop: 18 }}>
@@ -140,17 +141,25 @@ export default function SettingsScreen() {
           </View>
         </IslandSection>
 
-        <SectionTitle title="服务商" />
-        {providers.map((provider) => (
-          <ApiKeyPanel key={provider.id} provider={provider} />
-        ))}
+        <IslandSection
+          title="供应商"
+          subtitle="自动识别、多令牌、模型同步和 API 聚合平台配置。"
+          style={{ marginTop: 18 }}
+          action={<IslandButton label="管理" compact icon={<KeyRound color={colors.textSecondary} size={15} />} onPress={() => router.push('/settings/providers')} />}
+        >
+          <View style={{ gap: 8 }}>
+            <VersionRow label="启用" value={`${enabledProviders} / ${providers.length}`} />
+            <VersionRow label="默认" value={defaultProvider ? defaultProvider.name : '未设置'} />
+            <VersionRow label="令牌组" value={`${providers.reduce((sum, provider) => sum + (provider.credentialGroups?.length ?? 0), 0)} 组`} />
+          </View>
+        </IslandSection>
 
         <CollapsibleSection
           title="上下文与知识"
           summary={[
             settings.memoryEnabled ? '记忆开' : '记忆关',
             settings.knowledgeEnabled ? '知识库开' : '知识库关',
-            settings.webSearchEnabled ? `搜索 ${settings.webSearchMode ?? 'native'}` : '搜索关',
+            searchProvider !== 'off' ? `搜索 ${searchProviderLabel(searchProvider)}` : '搜索关',
           ].join(' · ')}
         >
           <ContextPanel providers={providers} />
@@ -277,11 +286,6 @@ function SettingInput({ label, value, onChange, placeholder }: { label: string; 
   return (
     <IslandField label={label} style={{ flex: 1 }} inputProps={{ value, onChangeText: onChange, placeholder, keyboardType: 'numeric' }} />
   )
-}
-
-function SectionTitle({ title }: { title: string }) {
-  const { colors } = useAppTheme()
-  return <Text style={{ color: colors.text, fontSize: 17, fontWeight: '800', marginTop: 24, marginBottom: 10 }}>{title}</Text>
 }
 
 function VersionRow({ label, value }: { label: string; value: string }) {
