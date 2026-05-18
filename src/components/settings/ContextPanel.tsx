@@ -270,7 +270,7 @@ export function ContextPanel({ providers }: ContextPanelProps) {
       pushStep({
         name: 'Embedding 降级状态',
         status: jobs.some((job) => job.status === 'running') ? 'warn' : 'ok',
-        detail: `最近任务 ${jobs.length} 个，运行中 ${jobs.filter((job) => job.status === 'running').length}，失败 ${jobs.filter((job) => job.status === 'error').length}；失败会保留本地向量降级。`,
+        detail: `最近任务 ${jobs.length} 个，运行中 ${jobs.filter((job) => job.status === 'running').length}，失败 ${jobs.filter((job) => job.status === 'error').length}。`,
       })
       await refresh()
     } catch (error) {
@@ -289,21 +289,18 @@ export function ContextPanel({ providers }: ContextPanelProps) {
       <IslandToggle
         icon={<Brain color={colors.text} size={18} />}
         title="长期记忆"
-        description="自动抽取待确认记忆，默认参与上下文检索。"
         active={!!settings.memoryEnabled}
         onPress={() => updateSettings({ memoryEnabled: !settings.memoryEnabled })}
       />
       <IslandToggle
         icon={<BookOpen color={colors.text} size={18} />}
         title="本机知识库"
-        description="导入文件后使用 SQLite FTS 本地检索。"
         active={!!settings.knowledgeEnabled}
         onPress={() => updateSettings({ knowledgeEnabled: !settings.knowledgeEnabled })}
       />
       <IslandToggle
         icon={<Globe2 color={colors.text} size={18} />}
         title="联网搜索"
-        description="默认服务商原生搜索，可切换 Tavily。"
         active={!!settings.webSearchEnabled}
         onPress={() => updateSettings({ webSearchEnabled: !settings.webSearchEnabled })}
       />
@@ -316,10 +313,10 @@ export function ContextPanel({ providers }: ContextPanelProps) {
         ))}
       </View>
 
-      <IslandSection title="RAG 检索模式" subtitle="Hybrid 会融合 SQLite FTS 与本地 JS 向量；服务商向量失败会自动降级。" material="raised" style={{ marginTop: 12 }}>
+      <IslandSection title="RAG 检索模式" material="raised" style={{ marginTop: 12 }}>
         {embeddingJobs ? (
           <Text style={{ color: embeddingJobs.error ? colors.warning : colors.textTertiary, fontSize: 11, lineHeight: 16, marginTop: 6 }}>
-            Embedding 任务：运行中 {embeddingJobs.running} · 失败 {embeddingJobs.error} · 失败会保留本地向量降级。
+            Embedding：运行中 {embeddingJobs.running} · 失败 {embeddingJobs.error}
           </Text>
         ) : null}
         <View style={{ flexDirection: 'row', gap: 8, flexWrap: 'wrap', marginTop: 10 }}>
@@ -368,9 +365,6 @@ export function ContextPanel({ providers }: ContextPanelProps) {
       </IslandSection>
 
       <IslandSection title="搜索 API" material="raised" style={{ marginTop: 12 }}>
-        <Text style={{ color: colors.textSecondary, fontSize: 12, lineHeight: 17, marginTop: 4 }}>
-          Tavily、Google Custom Search、Bing/Azure Grounding 和自定义 JSON 搜索统一在这里保存。旧 Bing Web Search API 已退役，请优先使用 Azure 或自定义兼容端点。
-        </Text>
         <IslandField label="Tavily Key" style={{ marginTop: 10 }} inputProps={{ value: tavilyKey, onChangeText: setTavilyKey, secureTextEntry: true, autoCapitalize: 'none', autoCorrect: false, placeholder: 'tvly-...' }} />
         <IslandField label="Google Search Key" style={{ marginTop: 10 }} inputProps={{ value: googleSearchKey, onChangeText: setGoogleSearchKey, secureTextEntry: true, autoCapitalize: 'none', autoCorrect: false, placeholder: 'Google API Key' }} />
         <IslandField label="Google CX" style={{ marginTop: 10 }} inputProps={{ value: settings.googleSearchCx ?? '', onChangeText: (googleSearchCx) => updateSettings({ googleSearchCx }), autoCapitalize: 'none', autoCorrect: false, placeholder: 'Programmable Search Engine cx' }} />
@@ -394,7 +388,7 @@ export function ContextPanel({ providers }: ContextPanelProps) {
 
       <IslandSection title="粘贴文本入库" material="raised" style={{ marginTop: 12 }}>
         <IslandField label="知识标题" inputProps={{ value: plainTitle, onChangeText: setPlainTitle, placeholder: '知识标题' }} />
-        <IslandField label="正文" style={{ marginTop: 10 }} inputProps={{ value: plainText, onChangeText: setPlainText, multiline: true, placeholder: '粘贴一段要进入本机知识库的文本。', style: { minHeight: 96, maxHeight: 180 } }} />
+        <IslandField label="正文" style={{ marginTop: 10 }} inputProps={{ value: plainText, onChangeText: setPlainText, multiline: true, placeholder: '正文', style: { minHeight: 96, maxHeight: 180 } }} />
         <PressableScale haptic onPress={importPlainText} disabled={importing || !plainText.trim()} style={{ marginTop: 10, minHeight: 42, borderRadius: 21, alignItems: 'center', justifyContent: 'center', backgroundColor: colors.text, opacity: importing || !plainText.trim() ? 0.45 : 1 }}>
           <Text style={{ color: colors.surface, fontSize: 14, fontWeight: '800' }}>导入粘贴文本</Text>
         </PressableScale>
@@ -402,7 +396,7 @@ export function ContextPanel({ providers }: ContextPanelProps) {
 
       <ContextList
         title={`记忆 ${memories.length}`}
-        empty="还没有自动沉淀的记忆。"
+        empty="暂无记忆"
         onClear={async () => {
           await clearMemories()
           await refresh()
@@ -428,7 +422,7 @@ export function ContextPanel({ providers }: ContextPanelProps) {
 
       <ContextList
         title={`知识库 ${documents.length}`}
-        empty="还没有导入本机知识文件。"
+        empty="暂无知识文件"
         onClear={async () => {
           await clearKnowledge()
           await refresh()
@@ -456,7 +450,7 @@ function ContextList({ title, empty, children, onClear }: { title: string; empty
   function confirmClear() {
     void dialog.confirm({
       title: `清空${title}`,
-      message: '这个操作只会删除本机上下文数据，不会删除 API Key。',
+      message: '确认清空？',
       tone: 'danger',
       confirmLabel: '清空',
       cancelLabel: '取消',

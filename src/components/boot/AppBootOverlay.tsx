@@ -54,7 +54,7 @@ export function AppBootOverlay({ ready, errorCount = 0, bootStartedAt }: AppBoot
           <BlueCatMascot loading size={168} />
           <Text style={{ color: colors.text, fontSize: 24, fontWeight: '900', letterSpacing: -0.6, marginTop: 16 }}>IsleMind</Text>
           <Text style={{ color: errorCount ? colors.warning : colors.textSecondary, fontSize: 12, lineHeight: 18, fontWeight: '900', marginTop: 6 }}>
-            {errorCount ? '安全回退中' : ready ? '准备好了' : '唤醒工作台'}
+            {errorCount ? '恢复中' : ready ? '准备好了' : '唤醒工作台'}
           </Text>
           <LoadingDots />
         </MotiView>

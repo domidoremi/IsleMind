@@ -722,14 +722,11 @@ async function extractMemoriesWithTrace(conversationId: string, messageId: strin
 
 function buildSetupGuide(): string {
   return [
-    '还没有可用的 AI 服务商，所以这条消息没有发送到任何网络接口。',
+    '还没有可用的 AI 服务商。',
     '',
-    '你可以先完成三步：',
     '1. 打开设置，选择一个服务商。',
     '2. 保存 API Key，并确认 Base URL/计费模式匹配。',
-    '3. 获取模型并测试当前模型，然后回到首页继续对话。',
-    '',
-    '如果你只是想整理本机资料，也可以先导入知识库；IsleMind 会在本机保存索引和检索缓存，API Key 不会进入 JSON 导出。'
+    '3. 获取模型并测试当前模型。'
   ].join('\n')
 }
 

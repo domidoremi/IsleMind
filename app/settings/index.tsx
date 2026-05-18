@@ -51,7 +51,7 @@ export default function SettingsScreen() {
   function confirmClearChats() {
     void dialog.confirm({
       title: '清空所有对话',
-      message: '这会删除本机保存的所有对话记录，但不会删除 API Key。',
+      message: '确认清空所有对话？',
       tone: 'danger',
       confirmLabel: '清空',
       cancelLabel: '取消',
@@ -63,7 +63,7 @@ export default function SettingsScreen() {
   function confirmResetSettings() {
     void dialog.confirm({
       title: '重置设置',
-      message: '这会恢复主题、默认参数和服务商配置，并删除本机 SecureStore 中保存的 API Key。',
+      message: '确认重置设置并删除 API Key？',
       tone: 'danger',
       confirmLabel: '重置',
       cancelLabel: '取消',
@@ -102,7 +102,7 @@ export default function SettingsScreen() {
   function confirmApkInstall(release: ApkReleaseInfo) {
     return dialog.confirm({
       title: `安装 ${release.version}？`,
-      message: 'IsleMind 会优先下载 GitHub Release 里的 universal APK，并打开 Android 系统安装器。系统会要求你确认安装，这一步无法静默完成。',
+      message: '确认下载并安装？',
       confirmLabel: '下载并安装',
       cancelLabel: '稍后',
       tone: 'amber',
@@ -118,7 +118,6 @@ export default function SettingsScreen() {
       <ScrollView contentContainerStyle={{ paddingHorizontal: 16, paddingTop: 8, paddingBottom: 46 }}>
         <IslandHeader
           title="设置"
-          subtitle="Local first"
           leading={
             <IslandIconButton label="返回" onPress={() => router.back()}>
               <ChevronLeft color={colors.text} size={23} strokeWidth={1.9} />
@@ -131,7 +130,7 @@ export default function SettingsScreen() {
           <MiniStat label={searchProvider !== 'off' ? `搜索 ${searchProviderLabel(searchProvider)}` : '搜索关闭'} />
         </View>
 
-        <IslandSection title="主题" subtitle="界面色彩只影响本机显示。" style={{ marginTop: 18 }}>
+        <IslandSection title="主题" style={{ marginTop: 18 }}>
           <View style={{ flexDirection: 'row', gap: 10, flexWrap: 'wrap' }}>
             {(['system', 'light', 'dark'] satisfies ThemeMode[]).map((item) => (
               <PressableScale key={item} haptic onPress={() => setTheme(item)}>
@@ -143,7 +142,6 @@ export default function SettingsScreen() {
 
         <IslandSection
           title="供应商"
-          subtitle="自动识别、多令牌、模型同步和 API 聚合平台配置。"
           style={{ marginTop: 18 }}
           action={<IslandButton label="管理" compact icon={<KeyRound color={colors.textSecondary} size={15} />} onPress={() => router.push('/settings/providers')} />}
         >
@@ -154,18 +152,11 @@ export default function SettingsScreen() {
           </View>
         </IslandSection>
 
-        <CollapsibleSection
-          title="上下文与知识"
-          summary={[
-            settings.memoryEnabled ? '记忆开' : '记忆关',
-            settings.knowledgeEnabled ? '知识库开' : '知识库关',
-            searchProvider !== 'off' ? `搜索 ${searchProviderLabel(searchProvider)}` : '搜索关',
-          ].join(' · ')}
-        >
+        <CollapsibleSection title="上下文与知识">
           <ContextPanel providers={providers} />
         </CollapsibleSection>
 
-        <CollapsibleSection title="偏好" summary="默认参数、触觉反馈" compact>
+        <CollapsibleSection title="偏好" compact>
           <View style={{ flexDirection: 'row', gap: 10, marginBottom: 12 }}>
             <SettingInput
               label="默认温度"
@@ -198,16 +189,13 @@ export default function SettingsScreen() {
           </PressableScale>
         </CollapsibleSection>
 
-        <CollapsibleSection title="版本更新" summary={`当前 ${version.appVersion} · APK 冷更新`} compact>
+        <CollapsibleSection title="版本更新" summary={`当前 ${version.appVersion}`} compact>
           <View style={{ gap: 10 }}>
             <View style={{ borderRadius: 22, padding: 13, backgroundColor: colors.material.paperRaised, borderWidth: 1, borderColor: colors.border }}>
               <VersionRow label="应用版本" value={`${version.appVersion} (${version.buildVersion})`} />
               <VersionRow label="更新方式" value="GitHub Release APK" />
               <VersionRow label="安装方式" value="Android 系统安装器" />
             </View>
-            <Text style={{ color: colors.textSecondary, fontSize: 12, lineHeight: 18, fontWeight: '700' }}>
-              IsleMind 当前采用 APK 冷更新。每次发布新版都下载 APK，由 Android 系统安装器确认安装。
-            </Text>
             <View style={{ flexDirection: 'row', gap: 12 }}>
               <DataButton
                 label="检查 APK"
@@ -220,17 +208,14 @@ export default function SettingsScreen() {
           </View>
         </CollapsibleSection>
 
-        <CollapsibleSection title="导入 / 导出" summary="JSON 不包含 SecureStore Key" compact>
+        <CollapsibleSection title="导入 / 导出" compact>
           <View style={{ flexDirection: 'row', gap: 12 }}>
             <DataButton label="导出 JSON" icon={<Download color={colors.surface} size={18} />} onPress={exportJson} />
             <DataButton label="导入 JSON" icon={<Upload color={colors.surface} size={18} />} onPress={importJson} />
           </View>
         </CollapsibleSection>
 
-        <CollapsibleSection title="危险操作" summary="清空对话、重置设置" compact danger>
-          <Text style={{ color: colors.textSecondary, fontSize: 12, lineHeight: 18, marginBottom: 10 }}>
-            这些操作会改变本机数据。API Key 只会在“重置设置”时删除。
-          </Text>
+        <CollapsibleSection title="危险操作" compact danger>
           <View style={{ flexDirection: 'row', gap: 12 }}>
             <DangerButton label="清空对话" icon={<Trash2 color={colors.error} size={18} />} onPress={confirmClearChats} />
             <DangerButton label="重置设置" icon={<RotateCcw color={colors.error} size={18} />} onPress={confirmResetSettings} />
@@ -258,7 +243,7 @@ function CollapsibleSection({
   danger = false,
 }: {
   title: string
-  summary: string
+  summary?: string
   children: ReactNode
   compact?: boolean
   danger?: boolean

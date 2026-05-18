@@ -23,6 +23,7 @@
     "android": {
       "package": "com.islemind.app",
       "versionCode": 100,
+      "softwareKeyboardLayoutMode": "resize",
       "permissions": [
         "android.permission.REQUEST_INSTALL_PACKAGES"
       ],

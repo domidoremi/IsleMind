@@ -338,7 +338,7 @@ export function IslandDisclosure({
   danger = false,
 }: {
   title: string
-  summary: string
+  summary?: string
   expanded: boolean
   onPress: () => void
   danger?: boolean
@@ -364,7 +364,7 @@ export function IslandDisclosure({
     >
       <View style={{ flex: 1 }}>
         <Text style={{ color: danger ? colors.error : colors.text, fontSize: 15, fontWeight: '900' }}>{title}</Text>
-        <Text numberOfLines={1} style={{ color: colors.textTertiary, fontSize: 11, marginTop: 2, fontWeight: '800' }}>{summary}</Text>
+        {summary ? <Text numberOfLines={1} style={{ color: colors.textTertiary, fontSize: 11, marginTop: 2, fontWeight: '800' }}>{summary}</Text> : null}
       </View>
       <MotiView animate={{ rotate: expanded ? '180deg' : '0deg' }} transition={{ type: 'timing', duration: motion === 'full' ? 180 : 1 }}>
         <ChevronDown color={danger ? colors.error : colors.textTertiary} size={19} />

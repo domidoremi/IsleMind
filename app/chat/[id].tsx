@@ -40,7 +40,6 @@ export default function ConversationDeepLinkScreen() {
       <View style={{ flex: 1, paddingHorizontal: 20, justifyContent: 'center' }}>
         <EmptyState
           title="找不到这个会话"
-          description="这个链接指向的本地会话不存在，可能已删除、未导入，或链接来自另一台设备。"
           actionLabel="查看历史对话"
           onAction={() => router.replace('/conversations')}
         />
