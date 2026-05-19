@@ -4,6 +4,7 @@ import { useChatStore } from '@/store/chatStore'
 import { useSettingsStore } from '@/store/settingsStore'
 import { initializeContextStore } from '@/services/contextStore'
 import { localDataStore } from '@/services/localDataStore'
+import { checkLatestApkReleaseSilently, shouldAutoCheckApkUpdate } from '@/services/appUpdates'
 import { colors } from '@/theme/colors'
 import { useAppTheme } from './useAppTheme'
 
@@ -15,6 +16,7 @@ export function useBootstrap() {
     ready: false,
     errorCount: 0,
     bootStartedAt: Date.now(),
+    updateNotice: null as string | null,
   }))
 
   useEffect(() => {
@@ -38,6 +40,18 @@ export function useBootstrap() {
           ready: true,
           errorCount: current.errorCount + initialErrors,
         }))
+        void safeBootstrap('更新检查', async () => {
+          const settings = useSettingsStore.getState().settings
+          if (!(settings.autoUpdateCheckEnabled ?? true)) return
+          if (!shouldAutoCheckApkUpdate(settings.lastApkUpdateCheckAt)) return
+          const result = await checkLatestApkReleaseSilently()
+          useSettingsStore.getState().updateSettings({ lastApkUpdateCheckAt: Date.now() })
+          if (result.status === 'available' && result.release) {
+            setState((current) => ({ ...current, updateNotice: `发现新版 APK：${result.release?.version}` }))
+          }
+        }).catch(() => {
+          setState((current) => ({ ...current, errorCount: current.errorCount + 1 }))
+        })
       }
     }
     void load()

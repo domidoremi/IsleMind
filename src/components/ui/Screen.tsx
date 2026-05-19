@@ -28,7 +28,6 @@ export function Screen({ children, padded = true, style }: ScreenProps) {
           {
             flex: 1,
             paddingHorizontal: padded ? 20 : 0,
-            backgroundColor: colors.surface,
           },
           style,
         ]}

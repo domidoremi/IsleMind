@@ -34,6 +34,7 @@ const {
   detectProviderPreset,
   maskSecret,
   parseCredentialGroups,
+  parseProviderImportText,
   probeProviderPreset,
 } = require('../src/services/ai/providerRegistry.ts')
 const {
@@ -66,6 +67,16 @@ async function run() {
   assert.deepEqual(groups.map((group) => group.label), ['令牌分组 1', '令牌分组 2', '令牌分组 3'])
   assert.ok(groups.every((group) => group.enabled), 'parsed groups are enabled by default')
   assert.equal(maskSecret('sk-1234567890abcdef'), 'sk-1...cdef')
+
+  const imported = parseProviderImportText('供应商A: https://a.example/v1, 秘钥: sk-a-123456789012345678901234, 秘钥2: sk-a-2-123456789012345678901234, 模型: model-a; Provider B, Base URL=https://b.example/v1, API Key=sk-b-123456789012345678901234, Models=model-b')
+  assert.equal(imported.providers.length, 2, 'imports semicolon separated provider blocks')
+  assert.equal(imported.providers[0].enabled, false, 'imported providers are disabled by default')
+  assert.equal(imported.providers[0].credentialGroups.length, 2, 'imports repeated Chinese key fields')
+  assert.deepEqual(imported.providers[1].models, ['model-b'], 'imports English model field')
+
+  const csvImported = parseProviderImportText('Provider C, https://c.example/v1, sk-c-123456789012345678901234')
+  assert.equal(csvImported.providers.length, 1, 'imports CSV-ish provider lines')
+  assert.equal(csvImported.providers[0].baseUrl, 'https://c.example/v1')
 
   const probeCalls = []
   const probed = await probeProviderPreset(

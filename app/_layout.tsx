@@ -1,6 +1,7 @@
 import '../src/global.css'
 import 'react-native-gesture-handler'
 import type { ErrorBoundaryProps } from 'expo-router'
+import { useEffect } from 'react'
 import { router, Stack } from 'expo-router'
 import { GestureHandlerRootView } from 'react-native-gesture-handler'
 import { Text, View } from 'react-native'
@@ -11,7 +12,7 @@ import { Screen } from '@/components/ui/Screen'
 import { IslandButton } from '@/components/ui/IslandButton'
 import { IslandPanel } from '@/components/ui/IslandPanel'
 import { AppBootOverlay } from '@/components/boot/AppBootOverlay'
-import { IslandDialogProvider } from '@/components/ui/IslandDialog'
+import { IslandDialogProvider, useIslandDialog } from '@/components/ui/IslandDialog'
 
 export default function RootLayout() {
   const boot = useBootstrap()
@@ -20,17 +21,30 @@ export default function RootLayout() {
   return (
     <GestureHandlerRootView style={{ flex: 1, backgroundColor: colors.surface }}>
       <IslandDialogProvider>
+        <RootUpdateNotice message={boot.updateNotice} />
         <Stack
           screenOptions={{
             headerShown: false,
             contentStyle: { backgroundColor: colors.surface },
             animation: 'slide_from_right',
           }}
-        />
+        >
+          <Stack.Screen name="settings/providers" options={{ animation: 'slide_from_bottom' }} />
+        </Stack>
         <AppBootOverlay ready={boot.ready} errorCount={boot.errorCount} bootStartedAt={boot.bootStartedAt} />
       </IslandDialogProvider>
     </GestureHandlerRootView>
   )
+}
+
+function RootUpdateNotice({ message }: { message: string | null }) {
+  const dialog = useIslandDialog()
+  useEffect(() => {
+    if (message) {
+      dialog.toast({ title: '发现新版本', message, tone: 'amber', durationMs: 4200 })
+    }
+  }, [dialog, message])
+  return null
 }
 
 export function ErrorBoundary({ error, retry }: ErrorBoundaryProps) {

@@ -31,6 +31,7 @@ export function ApiKeyPanel({ provider, initiallyExpanded = false }: ApiKeyPanel
   const [expanded, setExpanded] = useState(initiallyExpanded)
   const [baseUrl, setBaseUrl] = useState(provider.baseUrl ?? '')
   const [presetId, setPresetId] = useState<ProviderPresetId>(provider.presetId ?? 'custom-openai-compatible')
+  const [singleCredentialText, setSingleCredentialText] = useState('')
   const [credentialText, setCredentialText] = useState('')
   const [modelsText, setModelsText] = useState(provider.models.join('\n'))
   const [draftGroups, setDraftGroups] = useState<ProviderCredentialGroup[]>(provider.credentialGroups ?? [])
@@ -40,14 +41,14 @@ export function ApiKeyPanel({ provider, initiallyExpanded = false }: ApiKeyPanel
   const [notice, setNotice] = useState('')
 
   const hydratedGroups = draftGroups
-  const detection = useMemo(() => detectProviderPreset({ baseUrl, name: provider.name, apiKey: credentialText }), [baseUrl, credentialText, provider.name])
+  const detection = useMemo(() => detectProviderPreset({ baseUrl, name: provider.name, apiKey: singleCredentialText || credentialText }), [baseUrl, credentialText, provider.name, singleCredentialText])
   const selectedPreset = getProviderPreset(presetId)
   const currentModels = useMemo(() => parseModels(modelsText), [modelsText])
   const primaryModel = currentModels[0] ?? getProviderModels(provider.type)[0]?.id ?? '未设置模型'
   const primaryModelConfig = getModelConfig(primaryModel, provider.type, provider.modelConfigs)
   const groupCount = hydratedGroups.length
   const syncedGroups = hydratedGroups.filter((group) => group.lastModelSyncStatus === 'ok').length
-  const hasKey = hydratedGroups.some((group) => group.enabled) || !!credentialText.trim()
+  const hasKey = hydratedGroups.some((group) => group.enabled) || !!singleCredentialText.trim() || !!credentialText.trim()
   const isDefault = defaultProvider === provider.id
   const isBusy = task !== 'idle'
   const lastStatusLabel = provider.lastTestStatus === 'ok' ? '模型可用' : provider.lastTestStatus === 'bad' ? '需检查' : provider.lastModelSyncStatus === 'ok' ? '已同步' : provider.lastModelSyncStatus === 'bad' ? '同步失败' : '待验证'
@@ -59,6 +60,7 @@ export function ApiKeyPanel({ provider, initiallyExpanded = false }: ApiKeyPanel
     setDraftGroups(provider.credentialGroups ?? [])
     setModelEditing(false)
     setGroupKeyMasks({})
+    setSingleCredentialText('')
     setCredentialText('')
     setNotice('')
   }, [provider.baseUrl, provider.detectedPresetId, provider.id, provider.models, provider.presetId])
@@ -78,7 +80,7 @@ export function ApiKeyPanel({ provider, initiallyExpanded = false }: ApiKeyPanel
 
   async function save(showNotice = true) {
     setTask('saving')
-    const pastedGroups = createIncomingGroups(draftGroups.length, credentialText)
+    const pastedGroups = createIncomingGroups(draftGroups.length, [singleCredentialText, credentialText].filter(Boolean).join('\n'))
     const credentialGroups = mergeGroups(draftGroups, pastedGroups)
     const models = parseModels(modelsText)
     const applied = applyProviderPreset({
@@ -99,6 +101,7 @@ export function ApiKeyPanel({ provider, initiallyExpanded = false }: ApiKeyPanel
     if (credentialGroups.some((group) => group.enabled)) {
       updateSettings({ onboardingCompleted: true })
     }
+    setSingleCredentialText('')
     setCredentialText('')
     setModelEditing(false)
     setTask('idle')
@@ -110,13 +113,14 @@ export function ApiKeyPanel({ provider, initiallyExpanded = false }: ApiKeyPanel
   }
 
   function addPendingGroups() {
-    const incoming = createIncomingGroups(draftGroups.length, credentialText)
+    const incoming = createIncomingGroups(draftGroups.length, [singleCredentialText, credentialText].filter(Boolean).join('\n'))
     if (!incoming.length) {
       setNotice('先输入一个或多个令牌。')
       dialog.toast({ title: '未加入令牌', message: '先输入一个或多个令牌。', tone: 'amber' })
       return
     }
     setDraftGroups((current) => mergeGroups(current, incoming))
+    setSingleCredentialText('')
     setCredentialText('')
     setNotice(`已加入 ${incoming.length} 个令牌分组，点保存后生效。`)
     dialog.toast({ title: `已加入 ${incoming.length} 个令牌分组`, message: provider.name, tone: 'mint' })
@@ -230,6 +234,7 @@ export function ApiKeyPanel({ provider, initiallyExpanded = false }: ApiKeyPanel
 
   async function getProbeApiKey(): Promise<string | undefined> {
     const typed = credentialText.split(/[\n,，]+/).map((item) => item.trim()).find(Boolean)
+      ?? singleCredentialText.trim()
     if (typed) return typed
     const keyed = await hydrateProviderKey(provider.id)
     return keyed?.credentialGroups?.find((group) => group.enabled && group.apiKey?.trim())?.apiKey ?? keyed?.apiKey
@@ -324,7 +329,7 @@ export function ApiKeyPanel({ provider, initiallyExpanded = false }: ApiKeyPanel
             <SectionHeader
               title="令牌分组"
               action={
-                <MiniAction label="加入" onPress={addPendingGroups} disabled={isBusy || !credentialText.trim()}>
+                <MiniAction label="加入" onPress={addPendingGroups} disabled={isBusy || !(singleCredentialText.trim() || credentialText.trim())}>
                   <Plus color={colors.textTertiary} size={15} />
                 </MiniAction>
               }
@@ -349,14 +354,29 @@ export function ApiKeyPanel({ provider, initiallyExpanded = false }: ApiKeyPanel
               </View>
             )}
             <IslandField
-              label="新增令牌"
+              label="新增单个令牌"
+              inputProps={{
+                value: singleCredentialText,
+                onChangeText: (value) => {
+                  setSingleCredentialText(value)
+                  setNotice('')
+                },
+                secureTextEntry: false,
+                autoCapitalize: 'none',
+                autoCorrect: false,
+                placeholder: 'sk-...',
+              }}
+            />
+            <IslandField
+              label="批量新增令牌"
+              note="每行、逗号或中文逗号分隔；点“加入”后先进入待保存分组。"
               inputProps={{
                 value: credentialText,
                 onChangeText: (value) => {
                   setCredentialText(value)
                   setNotice('')
                 },
-                secureTextEntry: true,
+                secureTextEntry: false,
                 autoCapitalize: 'none',
                 autoCorrect: false,
                 multiline: true,

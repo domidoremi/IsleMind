@@ -1,5 +1,5 @@
 import { create } from 'zustand'
-import { DEFAULT_PROVIDERS, getDefaultProviderModelIds, getModelConfig, getProviderConfigIssue, getXiaomiMimoOfficialBaseUrl, XIAOMI_MIMO_PAYG_BASE_URL } from '@/types'
+import { getDefaultProviderModelIds, getModelConfig, getProviderConfigIssue, XIAOMI_MIMO_PAYG_BASE_URL, getXiaomiMimoOfficialBaseUrl } from '@/types'
 import type { Settings, AIProvider, Language, ProviderCredentialGroup, ThemeMode } from '@/types'
 import { loadData, saveData } from '@/services/storage'
 import * as SecureStore from 'expo-secure-store'
@@ -16,6 +16,7 @@ interface SettingsState {
   setTheme: (theme: ThemeMode) => void
   setLanguage: (language: Language) => void
   addProvider: (provider: AIProvider) => Promise<void>
+  addProviders: (providers: AIProvider[]) => Promise<void>
   updateProvider: (id: string, updates: Partial<AIProvider>) => Promise<void>
   updateProviders: (ids: string[], updates: Partial<AIProvider>) => Promise<void>
   reorderProviders: (providerIds: string[]) => void
@@ -49,7 +50,7 @@ const defaultSettings: Settings = {
   defaultMaxTokens: undefined,
   memoryEnabled: true,
   knowledgeEnabled: true,
-  webSearchEnabled: false,
+  webSearchEnabled: true,
   webSearchMode: 'native',
   knowledgeTopK: 4,
   memoryTopK: 4,
@@ -57,7 +58,26 @@ const defaultSettings: Settings = {
   ragMode: 'hybrid',
   embeddingMode: 'hybrid',
   searchProvider: 'native',
+  autoUpdateCheckEnabled: true,
+  providerCatalogVersion: 1,
 }
+
+const PROVIDER_CATALOG_VERSION = 1
+const LEGACY_DEFAULT_PROVIDER_IDS = [
+  'openai',
+  'anthropic',
+  'google',
+  'xiaomi-mimo',
+  'deepseek',
+  'dashscope',
+  'bigmodel',
+  'xai',
+  'openrouter',
+  'newapi',
+  'sub2api',
+  'custom-openai',
+  'custom-anthropic',
+]
 
 function secureProviderKey(id: string): string {
   return `islemind.key.${id.replace(/[^a-zA-Z0-9._-]/g, '_')}`
@@ -82,7 +102,7 @@ async function setSecureKey(key: string, value: string): Promise<void> {
 
 export const useSettingsStore = create<SettingsState>((set, get) => ({
   settings: defaultSettings,
-  providers: DEFAULT_PROVIDERS,
+  providers: [],
 
   load: async () => {
     const [settings, providers] = await Promise.all([
@@ -91,13 +111,19 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
     ])
     const rawSettings = settings ? { ...defaultSettings, ...settings } : defaultSettings
     const resolvedSearchProvider = resolveSearchProvider(rawSettings)
+    const resetCatalog = (rawSettings.providerCatalogVersion ?? 0) < PROVIDER_CATALOG_VERSION
+    if (resetCatalog) {
+      await clearProviderCatalogSecrets(providers ?? [])
+    }
     const mergedSettings = {
       ...rawSettings,
+      providerCatalogVersion: PROVIDER_CATALOG_VERSION,
+      defaultProvider: resetCatalog ? null : rawSettings.defaultProvider,
       searchProvider: resolvedSearchProvider,
       webSearchMode: legacySearchModeForProvider(resolvedSearchProvider),
       webSearchEnabled: resolvedSearchProvider !== 'off',
     }
-    const mergedProviders = mergeProviders(providers ?? [])
+    const mergedProviders = resetCatalog ? [] : mergeProviders(providers ?? [])
     const defaultProvider = mergedProviders.some((provider) => provider.id === mergedSettings.defaultProvider)
       ? mergedSettings.defaultProvider
       : null
@@ -105,6 +131,10 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
       settings: { ...mergedSettings, defaultProvider },
       providers: mergedProviders,
     })
+    if (resetCatalog) {
+      saveData('SETTINGS', { ...mergedSettings, defaultProvider: null })
+      saveData('PROVIDERS', [])
+    }
   },
 
   updateSettings: (updates: Partial<Settings>) => {
@@ -171,6 +201,26 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
       )
       saveData('PROVIDERS', updated)
       return { providers: updated }
+    })
+  },
+
+  addProviders: async (providers: AIProvider[]) => {
+    if (!providers.length) return
+    await Promise.all(providers.map(async (provider) => {
+      if (provider.apiKey) {
+        await SecureStore.setItemAsync(secureProviderKey(provider.id), provider.apiKey)
+      }
+      await persistCredentialGroupKeys(provider.id, provider.credentialGroups)
+    }))
+    set((state) => {
+      const normalized = providers.map((provider) => normalizeProvider({ ...provider, apiKey: '' } as AIProvider))
+      const existingIds = new Set(normalized.map((provider) => provider.id))
+      const updated = [...normalized, ...state.providers.filter((provider) => !existingIds.has(provider.id))]
+      const defaultProvider = state.settings.defaultProvider ?? normalized[0]?.id ?? null
+      const settings = { ...state.settings, defaultProvider }
+      saveData('PROVIDERS', updated)
+      saveData('SETTINGS', settings)
+      return { providers: updated, settings }
     })
   },
 
@@ -312,9 +362,9 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
   },
 
   clearAll: async () => {
-    const resetSettings = { ...defaultSettings, defaultProvider: null, onboardingCompleted: false }
+    const resetSettings = { ...defaultSettings, defaultProvider: null, onboardingCompleted: false, providerCatalogVersion: PROVIDER_CATALOG_VERSION }
     await Promise.all([
-      ...DEFAULT_PROVIDERS.map((provider) => SecureStore.deleteItemAsync(secureProviderKey(provider.id))),
+      ...LEGACY_DEFAULT_PROVIDER_IDS.map((id) => SecureStore.deleteItemAsync(secureProviderKey(id))),
       SecureStore.deleteItemAsync(TAVILY_KEY),
       SecureStore.deleteItemAsync(GOOGLE_SEARCH_KEY),
       SecureStore.deleteItemAsync(BING_SEARCH_KEY),
@@ -322,25 +372,14 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
       ...get().providers.flatMap((provider) => (provider.credentialGroups ?? []).map((group) => SecureStore.deleteItemAsync(secureProviderGroupKey(provider.id, group.id)))),
     ])
     saveData('SETTINGS', resetSettings)
-    const resetProviders = DEFAULT_PROVIDERS.map((provider) => ({ ...provider, enabled: false, apiKey: '' }))
+    const resetProviders: AIProvider[] = []
     saveData('PROVIDERS', resetProviders)
     set({ settings: resetSettings, providers: resetProviders })
   },
 }))
 
 function mergeProviders(saved: AIProvider[]): AIProvider[] {
-  const defaultsById = new Map(DEFAULT_PROVIDERS.map((provider) => [provider.id, provider]))
-  const savedIds = new Set<string>()
-  const merged: AIProvider[] = []
-  for (const provider of saved) {
-    const base = defaultsById.get(provider.id)
-    merged.push(normalizeProvider({ ...base, ...provider, apiKey: '' } as AIProvider))
-    savedIds.add(provider.id)
-  }
-  for (const provider of DEFAULT_PROVIDERS) {
-    if (!savedIds.has(provider.id)) merged.push(normalizeProvider(provider))
-  }
-  return merged
+  return saved.map((provider) => normalizeProvider({ ...provider, apiKey: '' } as AIProvider))
 }
 
 function normalizeProvider(provider: AIProvider): AIProvider {
@@ -403,6 +442,14 @@ async function persistCredentialGroupKeys(providerId: string, groups: ProviderCr
     if (!group.apiKey) return
     await SecureStore.setItemAsync(secureProviderGroupKey(providerId, group.id), group.apiKey)
   }))
+}
+
+async function clearProviderCatalogSecrets(providers: AIProvider[]): Promise<void> {
+  const ids = new Set([...LEGACY_DEFAULT_PROVIDER_IDS, ...providers.map((provider) => provider.id)])
+  await Promise.all([
+    ...Array.from(ids).map((id) => SecureStore.deleteItemAsync(secureProviderKey(id))),
+    ...providers.flatMap((provider) => (provider.credentialGroups ?? []).map((group) => SecureStore.deleteItemAsync(secureProviderGroupKey(provider.id, group.id)))),
+  ])
 }
 
 function sanitizeCredentialGroups(groups: ProviderCredentialGroup[] | undefined, models: string[]): ProviderCredentialGroup[] {

@@ -16,9 +16,10 @@ import { useIslandDialog } from '@/components/ui/IslandDialog'
 interface ConversationRowProps {
   conversation: Conversation
   index: number
+  onOpen?: (conversationId: string) => void
 }
 
-export function ConversationRow({ conversation, index }: ConversationRowProps) {
+export function ConversationRow({ conversation, index, onOpen }: ConversationRowProps) {
   const { colors } = useAppTheme()
   const motion = useMotionPreference()
   const remove = useChatStore((state) => state.delete)
@@ -57,7 +58,11 @@ export function ConversationRow({ conversation, index }: ConversationRowProps) {
         haptic
         onPress={() => {
           select(conversation.id)
-          router.replace({ pathname: '/chat/[id]', params: { id: conversation.id } })
+          if (onOpen) {
+            onOpen(conversation.id)
+          } else {
+            router.replace({ pathname: '/chat/[id]', params: { id: conversation.id } })
+          }
         }}
         onLongPress={() => setRenaming(true)}
         style={{ marginBottom: 12 }}
