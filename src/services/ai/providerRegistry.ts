@@ -30,6 +30,11 @@ export interface ProviderProbeResult extends ProviderDetectionResult {
   status?: number
 }
 
+export interface ProviderImportResult {
+  providers: AIProvider[]
+  warnings: string[]
+}
+
 interface ProviderProbeDeps {
   fetch?: typeof fetch
   timeoutMs?: number
@@ -227,6 +232,15 @@ export function parseCredentialGroups(input: string): NonNullable<AIProvider['cr
     }))
 }
 
+export function parseProviderImportText(input: string): ProviderImportResult {
+  const warnings: string[] = []
+  const chunks = splitProviderImportChunks(input)
+  const providers = chunks
+    .map((chunk, index) => parseProviderImportChunk(chunk, index, warnings))
+    .filter((provider): provider is AIProvider => !!provider)
+  return { providers: dedupeImportedProviders(providers, warnings), warnings }
+}
+
 export function maskSecret(value: string): string {
   const trimmed = value.trim()
   if (!trimmed) return ''
@@ -314,4 +328,138 @@ function hashKey(value: string): string {
     hash = (hash * 31 + value.charCodeAt(index)) >>> 0
   }
   return hash.toString(36)
+}
+
+function splitProviderImportChunks(input: string): string[] {
+  return input
+    .split(/(?:\r?\n\s*\r?\n|;|；)+/)
+    .map((item) => item.trim())
+    .filter(Boolean)
+}
+
+function parseProviderImportChunk(chunk: string, index: number, warnings: string[]): AIProvider | null {
+  const fields = readImportFields(chunk)
+  const name = pickField(fields, ['provider', 'name', '供应商', '服务商', '名称']) ?? inferProviderName(chunk, index)
+  const baseUrl = pickField(fields, ['baseurl', 'base url', 'url', 'endpoint', '站点', '地址', '接口'])
+  const modelsText = pickField(fields, ['models', 'model', '模型', '模型列表'])
+  const keysText = [
+    ...pickFields(fields, ['apikey', 'api key', 'key', 'keys', 'token', 'tokens', '秘钥', '密钥', '令牌']),
+    ...extractLooseKeys(chunk),
+  ].join('\n')
+  const presetId = detectProviderPreset({ baseUrl, name, apiKey: keysText }).presetId
+  const preset = getProviderPreset(presetId)
+  const models = parseModelList(modelsText).length ? parseModelList(modelsText) : preset.defaultModels
+  const credentialGroups = parseCredentialGroups(keysText)
+
+  if (!name && !baseUrl && !credentialGroups.length) {
+    warnings.push(`第 ${index + 1} 段没有可识别的供应商信息。`)
+    return null
+  }
+
+  const provider = applyProviderPreset({
+    id: importProviderId(name || preset.name, index),
+    presetId,
+    detectedPresetId: presetId,
+    detectionStatus: 'detected',
+    type: preset.type,
+    name: name || preset.name,
+    baseUrl: baseUrl?.trim() || preset.baseUrl,
+    apiKey: '',
+    credentialGroups,
+    models,
+    enabled: false,
+  } satisfies AIProvider, presetId)
+
+  if (!credentialGroups.length) warnings.push(`${provider.name} 未识别到令牌。`)
+  return provider
+}
+
+function readImportFields(chunk: string): Map<string, string[]> {
+  const fields = new Map<string, string[]>()
+  const normalized = chunk.replace(/[，]/g, ',')
+  const pattern = /(?:^|[,;\n\r])\s*([^:：=,\n\r]{1,28})\s*[:：=]\s*([^,;\n\r]+)/g
+  let match: RegExpExecArray | null
+  while ((match = pattern.exec(normalized))) {
+    const key = normalizeImportFieldKey(match[1])
+    const value = match[2]?.trim()
+    if (!key || !value) continue
+    const current = fields.get(key) ?? []
+    current.push(value)
+    fields.set(key, current)
+  }
+  const csvParts = normalized.split(',').map((part) => part.trim()).filter(Boolean)
+  const url = csvParts.find((part) => /^https?:\/\//i.test(part))
+  if (url && !fields.has('baseurl')) fields.set('baseurl', [url])
+  const looseKeys = csvParts.filter((part) => looksLikeApiKey(part))
+  if (looseKeys.length && !fields.has('key')) fields.set('key', looseKeys)
+  if (!fields.size && csvParts.length >= 2) {
+    fields.set('provider', [csvParts[0]])
+  }
+  return fields
+}
+
+function pickField(fields: Map<string, string[]>, keys: string[]): string | undefined {
+  return pickFields(fields, keys)[0]
+}
+
+function pickFields(fields: Map<string, string[]>, keys: string[]): string[] {
+  const normalized = keys.map(normalizeImportFieldKey)
+  return normalized.flatMap((key) => fields.get(key) ?? []).filter(Boolean)
+}
+
+function normalizeImportFieldKey(value: string): string {
+  return value.toLowerCase().replace(/[\s_-]+/g, '').trim()
+}
+
+function inferProviderName(chunk: string, index: number): string {
+  const first = chunk.split(/[,，\n\r]/)[0]?.trim()
+  const prefix = first?.split(/[:：=]/)[0]?.trim()
+  if (prefix && !looksLikeApiKey(prefix) && !/^https?:\/\//i.test(prefix)) return prefix
+  return `导入供应商 ${index + 1}`
+}
+
+function extractLooseKeys(chunk: string): string[] {
+  const matches = chunk.match(/(?:sk|ak|rk|pk|key|token)-[A-Za-z0-9._:-]+|[A-Za-z0-9_-]{24,}/g) ?? []
+  return matches.filter(looksLikeApiKey)
+}
+
+function looksLikeApiKey(value: string): boolean {
+  const trimmed = value.trim()
+  if (/^https?:\/\//i.test(trimmed)) return false
+  return /^(sk|ak|rk|pk|key|token)-/i.test(trimmed) || /^[A-Za-z0-9_-]{24,}$/.test(trimmed)
+}
+
+function parseModelList(value: string | undefined): string[] {
+  const seen = new Set<string>()
+  return (value ?? '')
+    .split(/[\n,，|/]+/)
+    .map((item) => item.trim())
+    .filter((item) => {
+      if (!item || seen.has(item)) return false
+      seen.add(item)
+      return true
+    })
+}
+
+function importProviderId(name: string, index: number): string {
+  const slug = name
+    .toLowerCase()
+    .replace(/https?:\/\//g, '')
+    .replace(/[^a-z0-9\u4e00-\u9fa5]+/g, '-')
+    .replace(/^-+|-+$/g, '')
+    .slice(0, 28) || `provider-${index + 1}`
+  return `import-${Date.now().toString(36)}-${index + 1}-${slug}`
+}
+
+function dedupeImportedProviders(providers: AIProvider[], warnings: string[]): AIProvider[] {
+  const seen = new Set<string>()
+  return providers.filter((provider) => {
+    const key = `${provider.name.toLowerCase()}|${provider.baseUrl ?? ''}`
+    if (seen.has(key)) {
+      warnings.push(`${provider.name} 重复，已跳过。`)
+      return false
+    }
+    seen.add(key)
+    return true
+  })
 }

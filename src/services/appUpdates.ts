@@ -10,6 +10,7 @@ export interface VersionSnapshot {
   appVersion: string
   buildVersion: string
   updateMode: 'apk'
+  hotUpdateMode: 'disabled'
 }
 
 export interface ApkReleaseInfo {
@@ -32,12 +33,34 @@ export interface ApkUpdateResult {
 const GITHUB_RELEASE_API = 'https://api.github.com/repos/domidoremi/IsleMind/releases/latest'
 const APK_MIME_TYPE = 'application/vnd.android.package-archive'
 const ANDROID_GRANT_READ_URI_PERMISSION = 1
+export const APK_AUTO_CHECK_INTERVAL_MS = 24 * 60 * 60 * 1000
 
 export function getVersionSnapshot(): VersionSnapshot {
   return {
     appVersion: Application.nativeApplicationVersion ?? Constants.expoConfig?.version ?? '1.0.0',
     buildVersion: Application.nativeBuildVersion ?? String(Constants.platform?.android?.versionCode ?? '1'),
     updateMode: 'apk',
+    hotUpdateMode: 'disabled',
+  }
+}
+
+export function shouldAutoCheckApkUpdate(lastCheckedAt: number | undefined, now = Date.now()): boolean {
+  if (!lastCheckedAt) return true
+  return now - lastCheckedAt >= APK_AUTO_CHECK_INTERVAL_MS
+}
+
+export async function checkLatestApkReleaseSilently(): Promise<ApkUpdateResult> {
+  const result = await checkLatestApkRelease()
+  if (result.status === 'available') return result
+  return { ...result, release: undefined }
+}
+
+export function formatUpdateCheckTime(value: number | undefined): string {
+  if (!value) return '从未'
+  try {
+    return new Date(value).toLocaleString()
+  } catch {
+    return '未知'
   }
 }
 

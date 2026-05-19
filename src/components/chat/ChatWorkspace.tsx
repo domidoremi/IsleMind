@@ -18,7 +18,7 @@ import { FlashList, type FlashListRef } from '@shopify/flash-list'
 import * as Clipboard from 'expo-clipboard'
 import * as Linking from 'expo-linking'
 import { router } from 'expo-router'
-import { AlertTriangle, BookOpen, ChevronLeft, GitBranchPlus, History, KeyRound, ListEnd, Settings2, Split, X } from 'lucide-react-native'
+import { AlertTriangle, BookOpen, ChevronLeft, GitBranchPlus, History, KeyRound, ListEnd, Search, Settings2, Split, X } from 'lucide-react-native'
 import { MotiView } from 'moti'
 import { Screen } from '@/components/ui/Screen'
 import { PressableScale } from '@/components/ui/PressableScale'
@@ -40,6 +40,7 @@ import { speakText } from '@/services/speech'
 import type { AIProvider, Attachment, ChatErrorCode, Conversation, Message, ProviderOperationCode } from '@/types'
 import { collectMessageTraces, getActiveTraceTitle } from './tracePresentation'
 import { useSafeAreaInsets } from 'react-native-safe-area-context'
+import { useMainPagerGestureLock } from '@/components/main/MainPagerGestureLock'
 
 type StreamingInputIntent = 'guide' | 'queue' | 'interrupt'
 
@@ -55,9 +56,12 @@ interface PendingStreamingMessage {
 interface ChatWorkspaceProps {
   conversation: Conversation | null
   showBack?: boolean
+  embedded?: boolean
+  onHistory?: () => void
+  onSettings?: () => void
 }
 
-export function ChatWorkspace({ conversation, showBack = false }: ChatWorkspaceProps) {
+export function ChatWorkspace({ conversation, showBack = false, embedded = false, onHistory, onSettings }: ChatWorkspaceProps) {
   const { colors } = useAppTheme()
   const dialog = useIslandDialog()
   const insets = useSafeAreaInsets()
@@ -69,6 +73,8 @@ export function ChatWorkspace({ conversation, showBack = false }: ChatWorkspaceP
   const providers = useSettingsStore((state) => state.providers)
   const hydrateProviderKey = useSettingsStore((state) => state.hydrateProviderKey)
   const updateProvider = useSettingsStore((state) => state.updateProvider)
+  const pagerGestureLock = useMainPagerGestureLock()
+  const setPagerGestureLocked = pagerGestureLock?.setLocked
   const listRef = useRef<FlashListRef<Message>>(null)
   const [showOptions, setShowOptions] = useState(false)
   const [chromeCollapsed, setChromeCollapsed] = useState(false)
@@ -120,6 +126,10 @@ export function ChatWorkspace({ conversation, showBack = false }: ChatWorkspaceP
       ? `引导待发送 · ${previewPendingText(pendingStreamingMessage.content, pendingStreamingMessage.attachments)}`
       : `队列待发送 · ${previewPendingText(pendingStreamingMessage.content, pendingStreamingMessage.attachments)}`
     : undefined
+  const goHistory = onHistory ?? (() => router.push('/conversations'))
+  const goSettings = onSettings ?? (() => router.push('/settings'))
+  const ScreenWrapper = embedded ? View : Screen
+  const screenProps = embedded ? { style: { flex: 1 } } : { padded: false }
 
   useEffect(() => {
     const now = Date.now()
@@ -172,6 +182,11 @@ export function ChatWorkspace({ conversation, showBack = false }: ChatWorkspaceP
     }
   }, [showOptions, providerHealth?.code, testingHeader])
 
+  useEffect(() => {
+    setPagerGestureLocked?.(showOptions)
+    return () => setPagerGestureLocked?.(false)
+  }, [setPagerGestureLocked, showOptions])
+
   if (!conversation) {
     async function submitSetup(content: string, attachments: Attachment[]) {
       const id = createLocalSetupConversation()
@@ -186,11 +201,11 @@ export function ChatWorkspace({ conversation, showBack = false }: ChatWorkspaceP
     }
 
     return (
-      <Screen padded={false}>
+      <ScreenWrapper {...screenProps}>
         <View style={{ flex: 1 }}>
           <View style={{ paddingHorizontal: 16, paddingTop: 8, paddingBottom: 8, flexDirection: 'row', alignItems: 'center', gap: 10 }}>
             <PressableScale
-              onPress={() => router.push('/conversations')}
+              onPress={goHistory}
               accessibilityLabel="历史对话"
               style={{ width: 42, height: 42, alignItems: 'center', justifyContent: 'center', borderRadius: 21, backgroundColor: colors.islandRaised, borderWidth: 1, borderColor: colors.border }}
             >
@@ -206,7 +221,7 @@ export function ChatWorkspace({ conversation, showBack = false }: ChatWorkspaceP
             </View>
             <PressableScale
               haptic
-              onPress={() => router.push('/settings')}
+              onPress={goSettings}
               accessibilityLabel="设置"
               style={{ width: 42, height: 42, alignItems: 'center', justifyContent: 'center', borderRadius: 21, backgroundColor: colors.text }}
             >
@@ -217,18 +232,18 @@ export function ChatWorkspace({ conversation, showBack = false }: ChatWorkspaceP
             <EmptyState
               title="连接一个模型"
               actionLabel="配置服务商"
-              onAction={() => router.push('/settings')}
+              onAction={goSettings}
             />
             <View style={{ gap: 10, marginTop: 18 }}>
               <OnboardingCard
                 icon={<KeyRound color={colors.text} size={18} />}
                 title="配置服务商"
-                onPress={() => router.push('/settings')}
+                onPress={goSettings}
               />
               <OnboardingCard
                 icon={<BookOpen color={colors.text} size={18} />}
                 title="导入知识"
-                onPress={() => router.push('/settings')}
+                onPress={goSettings}
               />
             </View>
           </ScrollView>
@@ -238,7 +253,7 @@ export function ChatWorkspace({ conversation, showBack = false }: ChatWorkspaceP
             </KeyboardAvoidingView>
           </View>
         </View>
-      </Screen>
+      </ScreenWrapper>
     )
   }
 
@@ -249,7 +264,7 @@ export function ChatWorkspace({ conversation, showBack = false }: ChatWorkspaceP
     if (showOptions || providerHealth?.code || testingHeader) return
     idleTimer.current = setTimeout(() => {
       setChromeCollapsed(true)
-    }, 3000)
+    }, 5000)
   }
 
   function markChromeActive() {
@@ -292,7 +307,7 @@ export function ChatWorkspace({ conversation, showBack = false }: ChatWorkspaceP
     const providerId = message.errorProviderId ?? activeConversation.providerId
     const keyedProvider = await hydrateProviderKey(providerId)
     if (!keyedProvider?.apiKey) {
-      router.push('/settings')
+      goSettings()
       return
     }
     const result = await testProviderModelDetailed(keyedProvider, activeConversation.model, keyedProvider.apiKey)
@@ -307,7 +322,7 @@ export function ChatWorkspace({ conversation, showBack = false }: ChatWorkspaceP
     const keyedProvider = await hydrateProviderKey(activeConversation.providerId)
     if (!keyedProvider?.apiKey) {
       setTestingHeader(false)
-      router.push('/settings')
+      goSettings()
       return
     }
     const result = await testProviderModelDetailed(keyedProvider, activeConversation.model, keyedProvider.apiKey)
@@ -377,8 +392,12 @@ export function ChatWorkspace({ conversation, showBack = false }: ChatWorkspaceP
     lastScrollOffset.current = y
   }
 
+  function closeOptionsFromBackground() {
+    if (showOptions) setShowOptions(false)
+  }
+
   return (
-    <Screen padded={false}>
+    <ScreenWrapper {...screenProps}>
         <View style={{ flex: 1 }}>
           <FloatingChrome
             colors={colors}
@@ -390,16 +409,15 @@ export function ChatWorkspace({ conversation, showBack = false }: ChatWorkspaceP
             provider={provider}
             providerHealth={providerHealth}
             metrics={metrics}
-            onBack={() => (showBack ? router.back() : router.push('/conversations'))}
+            onBack={() => (showBack ? router.back() : goHistory())}
             onRestore={markChromeActive}
             onToggleOptions={() => {
               markChromeActive()
               setShowOptions((value) => !value)
             }}
-            onCloseOptions={() => setShowOptions(false)}
             onSettings={() => {
               markChromeActive()
-              router.push('/settings')
+              goSettings()
             }}
             onTestModel={() => void testHeaderModel()}
             onSwitchModel={confirmSwitchModel}
@@ -409,7 +427,7 @@ export function ChatWorkspace({ conversation, showBack = false }: ChatWorkspaceP
             optionsPanelHeight={optionsPanelHeight}
           />
 
-          <View style={{ flex: 1, paddingTop: listTopInset, paddingBottom: composerBottomInset }}>
+          <View onTouchStart={closeOptionsFromBackground} style={{ flex: 1, paddingTop: listTopInset, paddingBottom: composerBottomInset }}>
             <FlashList
               ref={listRef}
               style={{ flex: 1 }}
@@ -436,11 +454,11 @@ export function ChatWorkspace({ conversation, showBack = false }: ChatWorkspaceP
                   onRegenerate={() => void regenerateLastAssistant(conversation.id).catch((error) => dialog.toast({ title: '重新生成失败', message: error instanceof Error ? error.message : '无法重新生成这条回复。', tone: 'danger' }))}
                   onSpeak={(item) => void speakText(item.responseText ?? item.content, provider)}
                   onDelete={(item) => removeMessage(conversation.id, item.id)}
-                  onConfigure={() => router.push('/settings')}
+                  onConfigure={goSettings}
                   onTestModel={(item) => void testCurrentModel(item)}
                 />
               )}
-              ListEmptyComponent={<EmptyConversationState />}
+              ListEmptyComponent={<EmptyConversationState onHistory={goHistory} onSettings={goSettings} />}
             />
           </View>
 
@@ -463,9 +481,10 @@ export function ChatWorkspace({ conversation, showBack = false }: ChatWorkspaceP
             onStop={() => safeStopMessage(conversation.id)}
             onSend={submit}
             onSendWhileStreaming={submitWhileStreaming}
+            onInteract={closeOptionsFromBackground}
           />
         </View>
-    </Screen>
+    </ScreenWrapper>
   )
 }
 
@@ -482,7 +501,6 @@ function FloatingChrome({
   onBack,
   onRestore,
   onToggleOptions,
-  onCloseOptions,
   onSettings,
   onTestModel,
   onSwitchModel,
@@ -503,7 +521,6 @@ function FloatingChrome({
   onBack: () => void
   onRestore: () => void
   onToggleOptions: () => void
-  onCloseOptions: () => void
   onSettings: () => void
   onTestModel: () => void
   onSwitchModel: (provider: AIProvider, model: string) => void
@@ -520,27 +537,11 @@ function FloatingChrome({
       top: 0,
       left: 0,
       right: 0,
-      bottom: showOptions ? 0 : undefined,
       zIndex: showOptions ? 70 : 40,
     },
   ]
   return (
     <View pointerEvents="box-none" style={shellStyle}>
-      {showOptions ? (
-        <Pressable
-          accessibilityLabel="关闭模型小窗"
-          onPress={onCloseOptions}
-          style={{ position: 'absolute', top: 0, right: 0, bottom: 0, left: 0, backgroundColor: 'transparent', zIndex: 0 }}
-        />
-      ) : null}
-      {collapsed ? (
-        <Pressable
-          onPress={onRestore}
-          accessibilityRole="button"
-          accessibilityLabel="显示顶部导航"
-          style={{ position: 'absolute', top: 0, left: 0, right: 0, height: 54, zIndex: 2 }}
-        />
-      ) : null}
       <MotiView
         pointerEvents={collapsed ? 'none' : 'auto'}
         animate={{ opacity: collapsed ? 0 : 1, translateY: collapsed ? -(insets.top + 78) : 0 }}
@@ -603,12 +604,18 @@ function FloatingChrome({
           from={{ opacity: 0, translateY: -8 }}
           animate={{ opacity: 1, translateY: 0 }}
           transition={{ type: 'spring', damping: 20, stiffness: 180 }}
-          style={{ position: 'absolute', top: 8, alignSelf: 'center' }}
-          pointerEvents="none"
+          style={{ position: 'absolute', top: Math.max(8, insets.top + 2), alignSelf: 'center', zIndex: 8 }}
+          pointerEvents="auto"
         >
-          <View style={{ minWidth: streaming ? 118 : 46, height: 24, borderRadius: 12, paddingHorizontal: 10, alignItems: 'center', justifyContent: 'center', backgroundColor: colors.material.chrome, borderWidth: 1, borderColor: colors.border }}>
+          <Pressable
+            onPress={onRestore}
+            accessibilityRole="button"
+            accessibilityLabel="显示顶部导航"
+            hitSlop={12}
+            style={{ minWidth: streaming ? 128 : 82, height: 34, borderRadius: 17, paddingHorizontal: 14, alignItems: 'center', justifyContent: 'center', backgroundColor: colors.material.chrome, borderWidth: 1, borderColor: colors.border }}
+          >
             <Text style={{ color: colors.textTertiary, fontSize: 10, fontWeight: '900' }}>{streaming ? '生成中 · 点这里显示顶部栏' : '显示顶部栏'}</Text>
-          </View>
+          </Pressable>
         </MotiView>
       ) : null}
     </View>
@@ -633,81 +640,166 @@ function FloatingOptionsPanel({
   onCopyLink: () => void
 }) {
   const updateConversation = useChatStore((state) => state.updateConversation)
+  const [selectedProviderId, setSelectedProviderId] = useState(provider?.id ?? conversation.providerId)
+  const [modelPickerQuery, setModelPickerQuery] = useState('')
   const currentProvider = provider
-  const currentModels = currentProvider
-    ? currentProvider.models
-      .filter((id) => {
-        const groups = currentProvider.credentialGroups ?? []
-        return !groups.length || groups.some((group) => group.enabled && (!group.availableModels?.length || group.availableModels.includes(id)))
-      })
-      .map((id) => ({ id, name: getModelName(id), config: getModelConfig(id, currentProvider.type, currentProvider.modelConfigs) }))
+  const normalizedQuery = normalizeSearchText(modelPickerQuery)
+  const orderedProviders = useMemo(
+    () => sortSwitchableProviders(switchableProviders, conversation.providerId, normalizedQuery),
+    [conversation.providerId, normalizedQuery, switchableProviders]
+  )
+  const selectedProvider =
+    orderedProviders.find((item) => item.id === selectedProviderId) ??
+    currentProvider ??
+    orderedProviders[0]
+  const visibleProviders = normalizedQuery
+    ? orderedProviders.filter((item) => providerMatchesQuery(item, normalizedQuery))
+    : orderedProviders.slice(0, 8)
+  const selectedModels = selectedProvider
+    ? getSwitchableProviderModels(selectedProvider, normalizedQuery)
+      .map((id) => ({ id, name: getModelName(id), config: getModelConfig(id, selectedProvider.type, selectedProvider.modelConfigs) }))
     : []
+  const selectedProviderIsCurrent = selectedProvider?.id === conversation.providerId
   const capabilities = currentProvider?.capabilities
+
+  useEffect(() => {
+    setSelectedProviderId(provider?.id ?? conversation.providerId)
+  }, [conversation.providerId, provider?.id])
+
+  useEffect(() => {
+    if (!normalizedQuery || !visibleProviders.length) return
+    if (!visibleProviders.some((item) => item.id === selectedProviderId)) {
+      setSelectedProviderId(visibleProviders[0].id)
+    }
+  }, [normalizedQuery, selectedProviderId, visibleProviders])
+
   return (
-    <IslandPanel material="chrome" elevated style={{ marginTop: 10, maxHeight }} radius={24} contentStyle={{ padding: 12 }}>
-      <View style={{ flexDirection: 'row', gap: 8, flexWrap: 'wrap' }}>
-        <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 8, paddingRight: 10 }}>
-          {switchableProviders.map((item) => (
+    <IslandPanel material="chrome" elevated style={{ marginTop: 10, maxHeight }} radius={24} contentStyle={{ padding: 0 }}>
+      <ScrollView
+        style={{ maxHeight }}
+        contentContainerStyle={{ padding: 12, paddingBottom: 14 }}
+        keyboardShouldPersistTaps="handled"
+        nestedScrollEnabled
+        showsVerticalScrollIndicator={false}
+      >
+        <View
+          style={{
+            minHeight: 42,
+            borderRadius: 21,
+            paddingHorizontal: 12,
+            flexDirection: 'row',
+            alignItems: 'center',
+            gap: 8,
+            backgroundColor: colors.material.field,
+            borderWidth: 1,
+            borderColor: colors.border,
+          }}
+        >
+          <Search color={colors.textTertiary} size={15} strokeWidth={2} />
+          <TextInput
+            value={modelPickerQuery}
+            onChangeText={setModelPickerQuery}
+            autoCapitalize="none"
+            autoCorrect={false}
+            placeholder="搜索供应商或模型"
+            placeholderTextColor={colors.textTertiary}
+            style={{ flex: 1, minHeight: 40, padding: 0, color: colors.text, fontSize: 13, fontWeight: '800' }}
+          />
+          {modelPickerQuery.trim() ? (
             <PressableScale
-              key={item.id}
-              haptic
-              onPress={() => {
-                const model = item.id === conversation.providerId ? conversation.model : item.models[0] ?? getProviderModels(item.type)[0]?.id
-                if (model) onSwitchModel(item, model)
-              }}
+              onPress={() => setModelPickerQuery('')}
+              accessibilityLabel="清空模型搜索"
+              style={{ width: 28, height: 28, borderRadius: 14, alignItems: 'center', justifyContent: 'center', backgroundColor: colors.islandRaised }}
             >
-              <Pill active={conversation.providerId === item.id}>{item.name}{item.enabled ? '' : ' · 停用'}</Pill>
+              <X color={colors.textSecondary} size={14} strokeWidth={2.2} />
             </PressableScale>
-          ))}
-        </ScrollView>
-      </View>
-      <View style={{ flexDirection: 'row', gap: 8, flexWrap: 'wrap', marginTop: 10 }}>
-        {currentModels.map((model) => (
-          <PressableScale key={model.id} haptic onPress={() => currentProvider && onSwitchModel(currentProvider, model.id)}>
-            <Pill active={conversation.model === model.id}>{model.name}{model.config.deprecated ? ' · 不推荐' : ''}</Pill>
+          ) : null}
+        </View>
+        <View style={{ gap: 8, marginTop: 12 }}>
+          <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 8 }}>
+            <Text style={{ color: colors.textSecondary, fontSize: 11, fontWeight: '900' }}>供应商</Text>
+            <Text style={{ color: colors.textTertiary, fontSize: 10, fontWeight: '800' }}>
+              {normalizedQuery ? `${visibleProviders.length}/${switchableProviders.length}` : `${switchableProviders.length} 个`}
+            </Text>
+          </View>
+          <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8 }}>
+            {visibleProviders.map((item) => (
+              <PressableScale
+                key={item.id}
+                haptic
+                onPress={() => setSelectedProviderId(item.id)}
+              >
+                <Pill active={selectedProvider?.id === item.id}>{item.name}{item.enabled ? '' : ' · 停用'}</Pill>
+              </PressableScale>
+            ))}
+            {!visibleProviders.length ? (
+              <View style={{ borderRadius: 18, paddingHorizontal: 12, paddingVertical: 10, backgroundColor: colors.material.field, borderWidth: 1, borderColor: colors.border }}>
+                <Text style={{ color: colors.textTertiary, fontSize: 12, lineHeight: 17 }}>没有匹配的供应商或模型。</Text>
+              </View>
+            ) : null}
+          </View>
+        </View>
+        <View style={{ gap: 8, marginTop: 12 }}>
+          <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 8 }}>
+            <Text style={{ color: colors.textSecondary, fontSize: 11, fontWeight: '900' }}>模型</Text>
+            <Text style={{ color: colors.textTertiary, fontSize: 10, fontWeight: '800' }}>
+              {selectedProvider?.name ?? '未选择'} · {selectedModels.length || '无'}
+            </Text>
+          </View>
+          {selectedModels.length ? (
+            <View style={{ flexDirection: 'row', gap: 8, flexWrap: 'wrap' }}>
+              {selectedModels.map((model) => (
+                <PressableScale key={model.id} haptic onPress={() => selectedProvider && onSwitchModel(selectedProvider, model.id)}>
+                  <Pill active={selectedProviderIsCurrent && conversation.model === model.id}>{model.name}{model.config.deprecated ? ' · 不推荐' : ''}</Pill>
+                </PressableScale>
+              ))}
+            </View>
+          ) : (
+            <View style={{ borderRadius: 18, paddingHorizontal: 12, paddingVertical: 10, backgroundColor: colors.material.field, borderWidth: 1, borderColor: colors.border }}>
+              <Text style={{ color: colors.textTertiary, fontSize: 12, lineHeight: 17 }}>这个供应商还没有可用模型。</Text>
+            </View>
+          )}
+        </View>
+        <Text style={{ color: colors.textTertiary, fontSize: 10, lineHeight: 15, marginTop: 8 }}>
+          当前会话只在这里手动切换才会更新绑定，避免其他会话被自动改写。
+        </Text>
+        <View style={{ marginTop: 10 }}>
+          <Text style={{ color: colors.textSecondary, fontSize: 11, fontWeight: '800', marginBottom: 6 }}>System Prompt</Text>
+          <TextInput
+            value={conversation.systemPrompt}
+            onChangeText={(systemPrompt) => updateConversation(conversation.id, { systemPrompt })}
+            multiline
+            placeholder="例如：你是一个简洁、可靠的移动端助手。"
+            placeholderTextColor={colors.textTertiary}
+            style={{ minHeight: 72, maxHeight: 128, borderRadius: 18, padding: 12, color: colors.text, backgroundColor: colors.material.field, borderWidth: 1, borderColor: colors.border, fontSize: 13, lineHeight: 19 }}
+          />
+        </View>
+        <View style={{ flexDirection: 'row', gap: 8, marginTop: 10 }}>
+          <PressableScale haptic onPress={onCopyLink} style={{ minHeight: 34, borderRadius: 17, paddingHorizontal: 12, alignItems: 'center', justifyContent: 'center', backgroundColor: colors.islandRaised, borderWidth: 1, borderColor: colors.border }}>
+            <Text style={{ color: colors.textSecondary, fontSize: 12, fontWeight: '800' }}>复制会话链接</Text>
           </PressableScale>
-        ))}
-      </View>
-      <Text style={{ color: colors.textTertiary, fontSize: 10, lineHeight: 15, marginTop: 8 }}>
-        当前会话只在这里手动切换才会更新绑定，避免其他会话被自动改写。
-      </Text>
-      <View style={{ marginTop: 10 }}>
-        <Text style={{ color: colors.textSecondary, fontSize: 11, fontWeight: '800', marginBottom: 6 }}>System Prompt</Text>
-        <TextInput
-          value={conversation.systemPrompt}
-          onChangeText={(systemPrompt) => updateConversation(conversation.id, { systemPrompt })}
-          multiline
-          placeholder="例如：你是一个简洁、可靠的移动端助手。"
-          placeholderTextColor={colors.textTertiary}
-          style={{ minHeight: 72, maxHeight: 128, borderRadius: 18, padding: 12, color: colors.text, backgroundColor: colors.material.field, borderWidth: 1, borderColor: colors.border, fontSize: 13, lineHeight: 19 }}
-        />
-      </View>
-      <View style={{ flexDirection: 'row', gap: 8, marginTop: 10 }}>
-        <PressableScale haptic onPress={onCopyLink} style={{ minHeight: 34, borderRadius: 17, paddingHorizontal: 12, alignItems: 'center', justifyContent: 'center', backgroundColor: colors.islandRaised, borderWidth: 1, borderColor: colors.border }}>
-          <Text style={{ color: colors.textSecondary, fontSize: 12, fontWeight: '800' }}>复制会话链接</Text>
-        </PressableScale>
-      </View>
-      <View style={{ flexDirection: 'row', gap: 8, marginTop: 10 }}>
-        <ParamInput
-          label="Temperature"
-          value={String(conversation.temperature)}
-          onChange={(value) => {
-            const next = Number(value)
-            if (!Number.isNaN(next)) updateConversation(conversation.id, { temperature: Math.max(0, Math.min(2, next)) })
-          }}
-        />
-        <ParamInput
-          label="Max Tokens"
-          value={String(conversation.maxTokens)}
-          onChange={(value) => {
-            const next = Number.parseInt(value, 10)
-            const config = getModelConfig(conversation.model, currentProvider?.type, currentProvider?.modelConfigs)
-            if (!Number.isNaN(next)) updateConversation(conversation.id, { maxTokens: Math.max(128, Math.min(config.maxOutputTokens, next)) })
-          }}
-        />
-      </View>
-      <View style={{ flexDirection: 'row', gap: 8, marginTop: 10 }}>
-        {capabilities?.topP !== false ? (
+        </View>
+        <View style={{ flexDirection: 'row', gap: 8, marginTop: 10 }}>
+          <ParamInput
+            label="Temperature"
+            value={String(conversation.temperature)}
+            onChange={(value) => {
+              const next = Number(value)
+              if (!Number.isNaN(next)) updateConversation(conversation.id, { temperature: Math.max(0, Math.min(2, next)) })
+            }}
+          />
+          <ParamInput
+            label="Max Tokens"
+            value={String(conversation.maxTokens)}
+            onChange={(value) => {
+              const next = Number.parseInt(value, 10)
+              const config = getModelConfig(conversation.model, currentProvider?.type, currentProvider?.modelConfigs)
+              if (!Number.isNaN(next)) updateConversation(conversation.id, { maxTokens: Math.max(128, Math.min(config.maxOutputTokens, next)) })
+            }}
+          />
+        </View>
+        <View style={{ flexDirection: 'row', gap: 8, marginTop: 10 }}>
+          {capabilities?.topP !== false ? (
           <ParamInput
             label="Top P"
             value={String(conversation.topP ?? 1)}
@@ -716,8 +808,8 @@ function FloatingOptionsPanel({
               if (!Number.isNaN(next)) updateConversation(conversation.id, { topP: Math.max(0, Math.min(1, next)) })
             }}
           />
-        ) : null}
-        {capabilities?.reasoningEffort ? (
+          ) : null}
+          {capabilities?.reasoningEffort ? (
           <View style={{ flex: 1 }}>
             <Text style={{ color: colors.textSecondary, fontSize: 12, fontWeight: '800', marginBottom: 6 }}>Reasoning</Text>
             <View style={{ flexDirection: 'row', gap: 6, flexWrap: 'wrap' }}>
@@ -728,10 +820,51 @@ function FloatingOptionsPanel({
               ))}
             </View>
           </View>
-        ) : null}
-      </View>
+          ) : null}
+        </View>
+      </ScrollView>
     </IslandPanel>
   )
+}
+
+function getSwitchableProviderModels(provider: AIProvider, query = ''): string[] {
+  const groups = provider.credentialGroups ?? []
+  const models = Array.from(new Set([...provider.models, ...getProviderModels(provider.type).map((item) => item.id)]))
+    .filter((id) => !groups.length || groups.some((group) => group.enabled && (!group.availableModels?.length || group.availableModels.includes(id))))
+  if (!query) return models
+  return models.filter((id) => normalizeSearchText(`${id} ${getModelName(id)}`).includes(query))
+}
+
+function sortSwitchableProviders(providers: AIProvider[], currentProviderId: string, query: string): AIProvider[] {
+  return [...providers].sort((a, b) => {
+    const aScore = getProviderPickerScore(a, currentProviderId, query)
+    const bScore = getProviderPickerScore(b, currentProviderId, query)
+    if (aScore !== bScore) return bScore - aScore
+    return a.name.localeCompare(b.name)
+  })
+}
+
+function getProviderPickerScore(provider: AIProvider, currentProviderId: string, query: string): number {
+  let score = 0
+  if (provider.id === currentProviderId) score += 120
+  if (provider.enabled) score += 32
+  const modelCount = getSwitchableProviderModels(provider).length
+  score += Math.min(modelCount, 24)
+  if (query) {
+    if (normalizeSearchText(`${provider.name} ${provider.id} ${provider.baseUrl ?? ''}`).includes(query)) score += 80
+    if (getSwitchableProviderModels(provider, query).length) score += 48
+  }
+  return score
+}
+
+function providerMatchesQuery(provider: AIProvider, query: string): boolean {
+  if (!query) return true
+  if (normalizeSearchText(`${provider.name} ${provider.id} ${provider.baseUrl ?? ''}`).includes(query)) return true
+  return getSwitchableProviderModels(provider, query).length > 0
+}
+
+function normalizeSearchText(value: string): string {
+  return value.toLowerCase().replace(/\s+/g, ' ').trim()
 }
 
 function FloatingComposer({
@@ -744,6 +877,7 @@ function FloatingComposer({
   onStop,
   onSend,
   onSendWhileStreaming,
+  onInteract,
 }: {
   insets: ReturnType<typeof useSafeAreaInsets>
   streaming: boolean
@@ -754,10 +888,11 @@ function FloatingComposer({
   onStop: () => void
   onSend: (content: string, attachments: Attachment[]) => Promise<void> | void
   onSendWhileStreaming: (content: string, attachments: Attachment[]) => Promise<void> | void
+  onInteract?: () => void
 }) {
   return (
     <View pointerEvents="box-none" style={{ position: 'absolute', left: 0, right: 0, bottom: 0, zIndex: 40 }}>
-      <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : 'height'} keyboardVerticalOffset={0}>
+      <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : 'height'} keyboardVerticalOffset={0} onTouchStart={onInteract}>
         <View pointerEvents="box-none" style={{ paddingHorizontal: 14, paddingTop: 6, paddingBottom: Math.max(insets.bottom, 10) + 8 }}>
           <Composer
             disabled={disabled}
@@ -879,7 +1014,7 @@ function renderConversationHeaderSpacer(
   )
 }
 
-function EmptyConversationState() {
+function EmptyConversationState({ onHistory, onSettings }: { onHistory: () => void; onSettings: () => void }) {
   const { colors } = useAppTheme()
   return (
     <View style={{ paddingTop: 36, gap: 14 }}>
@@ -887,9 +1022,9 @@ function EmptyConversationState() {
         title="新对话"
       />
       <View style={{ flexDirection: 'row', gap: 8, flexWrap: 'wrap', justifyContent: 'center' }}>
-        <QuickStartAction label="配置服务商" onPress={() => router.push('/settings')} />
-        <QuickStartAction label="导入知识" onPress={() => router.push('/settings')} muted />
-        <QuickStartAction label="历史对话" onPress={() => router.push('/conversations')} muted />
+        <QuickStartAction label="配置服务商" onPress={onSettings} />
+        <QuickStartAction label="导入知识" onPress={onSettings} muted />
+        <QuickStartAction label="历史对话" onPress={onHistory} muted />
       </View>
     </View>
   )

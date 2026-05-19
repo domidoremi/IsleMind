@@ -119,6 +119,9 @@ export interface Settings {
   searchProvider?: SearchProviderId
   googleSearchCx?: string
   customSearchEndpoint?: string
+  autoUpdateCheckEnabled?: boolean
+  lastApkUpdateCheckAt?: number
+  providerCatalogVersion?: number
 }
 
 export type MessageRole = 'user' | 'assistant'
@@ -339,133 +342,7 @@ export const DEFAULT_MODELS: AIModel[] = [
   model('mimo-v2-flash', 'MiMo V2 Flash', 'xiaomi-mimo', 262144, 65536, 65536, false, false, false, { defaultTemperature: 0.3, maxTemperature: 1.5 }),
 ]
 
-export const DEFAULT_PROVIDERS: AIProvider[] = [
-  {
-    id: 'openai',
-    presetId: 'openai',
-    type: 'openai',
-    name: 'OpenAI',
-    apiKey: '',
-    models: getDefaultProviderModelIds('openai'),
-    enabled: false,
-  },
-  {
-    id: 'anthropic',
-    presetId: 'anthropic',
-    type: 'anthropic',
-    name: 'Anthropic',
-    apiKey: '',
-    models: getDefaultProviderModelIds('anthropic'),
-    enabled: false,
-  },
-  {
-    id: 'google',
-    presetId: 'google',
-    type: 'google',
-    name: 'Google Gemini',
-    apiKey: '',
-    models: getDefaultProviderModelIds('google'),
-    enabled: false,
-  },
-  {
-    id: 'xiaomi-mimo',
-    presetId: 'xiaomi-mimo',
-    type: 'xiaomi-mimo',
-    name: 'Xiaomi MiMo',
-    apiKey: '',
-    credentialMode: 'token-plan',
-    tokenPlanRegion: 'cn',
-    wireProtocol: 'openai-compatible',
-    models: getDefaultProviderModelIds('xiaomi-mimo'),
-    enabled: false,
-  },
-  {
-    id: 'deepseek',
-    presetId: 'deepseek',
-    type: 'openai-compatible',
-    name: 'DeepSeek',
-    apiKey: '',
-    baseUrl: 'https://api.deepseek.com',
-    models: ['deepseek-v4-pro', 'deepseek-v4-flash', 'deepseek-chat', 'deepseek-reasoner'],
-    enabled: false,
-  },
-  {
-    id: 'dashscope',
-    presetId: 'dashscope',
-    type: 'openai-compatible',
-    name: '阿里云百炼',
-    apiKey: '',
-    baseUrl: 'https://dashscope.aliyuncs.com/compatible-mode/v1',
-    models: ['qwen-plus', 'qwen-max', 'qwen-turbo', 'qwen-vl-plus'],
-    enabled: false,
-  },
-  {
-    id: 'bigmodel',
-    presetId: 'bigmodel',
-    type: 'openai-compatible',
-    name: '智谱 AI',
-    apiKey: '',
-    baseUrl: 'https://open.bigmodel.cn/api/paas/v4',
-    models: ['glm-4.6', 'glm-4.5', 'glm-4-plus', 'glm-4-air'],
-    enabled: false,
-  },
-  {
-    id: 'xai',
-    presetId: 'xai',
-    type: 'openai-compatible',
-    name: 'xAI',
-    apiKey: '',
-    baseUrl: 'https://api.x.ai/v1',
-    models: ['grok-4', 'grok-3', 'grok-3-mini'],
-    enabled: false,
-  },
-  {
-    id: 'openrouter',
-    presetId: 'openrouter',
-    type: 'openai-compatible',
-    name: 'OpenRouter',
-    apiKey: '',
-    baseUrl: 'https://openrouter.ai/api/v1',
-    models: ['openai/gpt-5.5', 'openai/gpt-5.4', 'google/gemini-3-pro-preview', 'anthropic/claude-sonnet-4.5'],
-    enabled: false,
-  },
-  {
-    id: 'newapi',
-    presetId: 'newapi',
-    type: 'openai-compatible',
-    name: 'NewAPI / OneAPI',
-    apiKey: '',
-    models: [],
-    enabled: false,
-  },
-  {
-    id: 'sub2api',
-    presetId: 'sub2api',
-    type: 'openai-compatible',
-    name: 'Sub2API',
-    apiKey: '',
-    models: [],
-    enabled: false,
-  },
-  {
-    id: 'custom-openai',
-    presetId: 'custom-openai-compatible',
-    type: 'openai-compatible',
-    name: 'OpenAI Compatible',
-    apiKey: '',
-    models: ['gpt-4o-mini'],
-    enabled: false,
-  },
-  {
-    id: 'custom-anthropic',
-    presetId: 'custom-anthropic-compatible',
-    type: 'anthropic',
-    name: 'Anthropic Compatible',
-    apiKey: '',
-    models: ['claude-3-5-sonnet-20241022'],
-    enabled: false,
-  },
-]
+export const DEFAULT_PROVIDERS: AIProvider[] = []
 
 export function getModelName(modelId: string): string {
   return getModelConfig(modelId).name
