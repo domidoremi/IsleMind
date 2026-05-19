@@ -2,20 +2,6 @@ name: Runner Android APK
 
 on:
   workflow_dispatch:
-  push:
-    branches:
-      - main
-    paths:
-      - app/**
-      - assets/**
-      - src/**
-      - app.json
-      - .github/workflows/runner-android-apk.yml
-      - .github/workflows/release-android-apk.yml
-      - scripts/configure-android-release.js
-      - package.json
-      - package-lock.json
-      - tsconfig.json
 
 jobs:
   runner-android-apk:

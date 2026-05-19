@@ -7,9 +7,6 @@ on:
         description: Release tag. Defaults to package.json version, for example v1.0.0.
         required: false
         type: string
-  push:
-    tags:
-      - 'v*'
 
 permissions:
   contents: write
