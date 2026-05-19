@@ -339,8 +339,9 @@ function splitProviderImportChunks(input: string): string[] {
 
 function parseProviderImportChunk(chunk: string, index: number, warnings: string[]): AIProvider | null {
   const fields = readImportFields(chunk)
-  const name = pickField(fields, ['provider', 'name', '供应商', '服务商', '名称']) ?? inferProviderName(chunk, index)
-  const baseUrl = pickField(fields, ['baseurl', 'base url', 'url', 'endpoint', '站点', '地址', '接口'])
+  const looseBaseUrl = extractLooseBaseUrl(chunk)
+  const baseUrl = pickField(fields, ['baseurl', 'base url', 'url', 'endpoint', '站点', '地址', '接口']) ?? looseBaseUrl
+  const name = pickField(fields, ['provider', 'name', '供应商', '服务商', '名称']) ?? inferProviderName(chunk, index, baseUrl)
   const modelsText = pickField(fields, ['models', 'model', '模型', '模型列表'])
   const keysText = [
     ...pickFields(fields, ['apikey', 'api key', 'key', 'keys', 'token', 'tokens', '秘钥', '密钥', '令牌']),
@@ -382,13 +383,14 @@ function readImportFields(chunk: string): Map<string, string[]> {
   while ((match = pattern.exec(normalized))) {
     const key = normalizeImportFieldKey(match[1])
     const value = match[2]?.trim()
+    if (/^https?$/i.test(key) || /^https?:\/\//i.test(match[0].trim())) continue
     if (!key || !value) continue
     const current = fields.get(key) ?? []
     current.push(value)
     fields.set(key, current)
   }
   const csvParts = normalized.split(',').map((part) => part.trim()).filter(Boolean)
-  const url = csvParts.find((part) => /^https?:\/\//i.test(part))
+  const url = extractLooseBaseUrl(normalized)
   if (url && !fields.has('baseurl')) fields.set('baseurl', [url])
   const looseKeys = csvParts.filter((part) => looksLikeApiKey(part))
   if (looseKeys.length && !fields.has('key')) fields.set('key', looseKeys)
@@ -411,11 +413,18 @@ function normalizeImportFieldKey(value: string): string {
   return value.toLowerCase().replace(/[\s_-]+/g, '').trim()
 }
 
-function inferProviderName(chunk: string, index: number): string {
+function inferProviderName(chunk: string, index: number, baseUrl?: string): string {
   const first = chunk.split(/[,，\n\r]/)[0]?.trim()
   const prefix = first?.split(/[:：=]/)[0]?.trim()
-  if (prefix && !looksLikeApiKey(prefix) && !/^https?:\/\//i.test(prefix)) return prefix
+  const host = baseUrl ? getHost(baseUrl) : ''
+  if (first && /^https?:\/\//i.test(first) && host) return host
+  if (prefix && !/^https?$/i.test(prefix) && !looksLikeApiKey(prefix) && !/^https?:\/\//i.test(prefix)) return prefix
+  if (host) return host
   return `导入供应商 ${index + 1}`
+}
+
+function extractLooseBaseUrl(chunk: string): string | undefined {
+  return chunk.match(/https?:\/\/[^\s,，;；]+/i)?.[0]?.trim()
 }
 
 function extractLooseKeys(chunk: string): string[] {

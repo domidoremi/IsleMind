@@ -12,21 +12,36 @@ interface AppBootOverlayProps {
   bootStartedAt: number
 }
 
-const MIN_VISIBLE_MS = 1600
+const SLOW_BOOT_DELAY_MS = 900
 const MAX_VISIBLE_MS = 5200
 
 export function AppBootOverlay({ ready, errorCount = 0, bootStartedAt }: AppBootOverlayProps) {
   const { colors, isDark } = useAppTheme()
   const motion = useMotionPreference()
-  const [visible, setVisible] = useState(true)
+  const [visible, setVisible] = useState(false)
 
   useEffect(() => {
-    if (!visible) return
+    if (ready && !errorCount) {
+      setVisible(false)
+      return
+    }
     const elapsed = Date.now() - bootStartedAt
-    const wait = ready ? Math.max(0, MIN_VISIBLE_MS - elapsed) : MAX_VISIBLE_MS
-    const timer = setTimeout(() => setVisible(false), wait)
+    const wait = errorCount ? 0 : Math.max(0, SLOW_BOOT_DELAY_MS - elapsed)
+    const timer = setTimeout(() => setVisible(true), wait)
     return () => clearTimeout(timer)
-  }, [bootStartedAt, ready, visible])
+  }, [bootStartedAt, errorCount, ready])
+
+  useEffect(() => {
+    if (!visible || !ready) return
+    const timer = setTimeout(() => setVisible(false), errorCount ? 900 : 180)
+    return () => clearTimeout(timer)
+  }, [errorCount, ready, visible])
+
+  useEffect(() => {
+    if (!visible || ready) return
+    const timer = setTimeout(() => setVisible(false), MAX_VISIBLE_MS)
+    return () => clearTimeout(timer)
+  }, [ready, visible])
 
   return (
     <AnimatePresence>

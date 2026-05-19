@@ -78,6 +78,22 @@ async function run() {
   assert.equal(csvImported.providers.length, 1, 'imports CSV-ish provider lines')
   assert.equal(csvImported.providers[0].baseUrl, 'https://c.example/v1')
 
+  const urlKeyImported = parseProviderImportText(`
+https://new-api.example.com/
+sk-example-a-123456789012345678901234
+sk-example-b-123456789012345678901234
+
+https://newapi.example.net/
+sk-example-c-123456789012345678901234
+sk-example-d-123456789012345678901234
+`)
+  assert.equal(urlKeyImported.providers.length, 2, 'imports URL followed by key lines separated by blank lines')
+  assert.equal(urlKeyImported.providers[0].baseUrl, 'https://new-api.example.com/')
+  assert.equal(urlKeyImported.providers[0].name, 'new-api.example.com')
+  assert.equal(urlKeyImported.providers[0].credentialGroups.length, 2)
+  assert.equal(urlKeyImported.providers[1].baseUrl, 'https://newapi.example.net/')
+  assert.equal(urlKeyImported.providers[1].credentialGroups.length, 2)
+
   const probeCalls = []
   const probed = await probeProviderPreset(
     { baseUrl: 'https://unknown.example/v1', apiKey: 'sk-probe' },
