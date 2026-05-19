@@ -28,8 +28,8 @@
         "android.permission.REQUEST_INSTALL_PACKAGES"
       ],
       "adaptiveIcon": {
-        "foregroundImage": "./assets/adaptive-icon.png",
-        "backgroundColor": "#FFFFFF"
+        "foregroundImage": "./assets/adaptive-foreground.png",
+        "backgroundColor": "#BFEAFF"
       },
       "edgeToEdgeEnabled": true,
       "predictiveBackGestureEnabled": false

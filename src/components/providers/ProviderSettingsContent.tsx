@@ -506,14 +506,14 @@ function ProviderImportModal({
             </View>
             <IslandField
               label="供应商文本"
-              note="示例：供应商A: https://api.example.com/v1, 秘钥: sk-1, 秘钥2: sk-2; Provider B, Base URL=https://b.example/v1, API Key=sk-b"
+              note="支持字段式、CSV 式，也支持先粘贴站点 URL，再逐行粘贴多个 Key；空行分隔多个供应商。"
               inputProps={{
                 value: input,
                 onChangeText: setInput,
                 multiline: true,
                 autoCapitalize: 'none',
                 autoCorrect: false,
-                placeholder: '供应商A: https://..., 秘钥: sk-...; 供应商B: https://..., key: sk-...',
+                placeholder: 'https://api.example.com/v1\nsk-...\nsk-...\n\nhttps://api.other.com/v1\nsk-...',
                 style: { minHeight: 180, maxHeight: 300 },
               }}
             />
