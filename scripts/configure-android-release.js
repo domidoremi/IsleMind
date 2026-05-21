@@ -3,6 +3,8 @@ const path = require('node:path')
 
 const projectRoot = path.resolve(__dirname, '..')
 const buildGradlePath = path.join(projectRoot, 'android', 'app', 'build.gradle')
+const args = new Set(process.argv.slice(2))
+const skipSigning = args.has('--skip-signing')
 
 if (!fs.existsSync(buildGradlePath)) {
   throw new Error(`Android build.gradle was not found at ${buildGradlePath}. Run expo prebuild first.`)
@@ -59,7 +61,7 @@ if (!source.includes('universalApk true')) {
 `)
 }
 
-if (!source.includes('ISLEMIND_UPLOAD_STORE_FILE')) {
+if (!skipSigning && !source.includes('ISLEMIND_UPLOAD_STORE_FILE')) {
   const signingConfigs = findBlock(source, 'signingConfigs')
   if (!signingConfigs) throw new Error('Could not find signingConfigs block in android/app/build.gradle.')
   const releaseSigningConfig = `
@@ -85,16 +87,18 @@ if (!releaseBlock || releaseBlock.start > buildTypes.close) {
   throw new Error('Could not find release buildType in android/app/build.gradle.')
 }
 
-const releaseBody = source
-  .slice(releaseBlock.bodyStart, releaseBlock.bodyEnd)
-  .replace(/^\s*signingConfig\s+signingConfigs\.[A-Za-z0-9_]+\s*$/m, '')
-  .trimEnd()
+if (!skipSigning) {
+  const releaseBody = source
+    .slice(releaseBlock.bodyStart, releaseBlock.bodyEnd)
+    .replace(/^\s*signingConfig\s+signingConfigs\.[A-Za-z0-9_]+\s*$/m, '')
+    .trimEnd()
 
-const nextReleaseBody = `${releaseBody}
+  const nextReleaseBody = `${releaseBody}
             signingConfig signingConfigs.release
 `
 
-source = `${source.slice(0, releaseBlock.bodyStart)}${nextReleaseBody}${source.slice(releaseBlock.bodyEnd)}`
+  source = `${source.slice(0, releaseBlock.bodyStart)}${nextReleaseBody}${source.slice(releaseBlock.bodyEnd)}`
+}
 
 fs.writeFileSync(buildGradlePath, source)
-console.log('Configured Android release signing and ABI split APK outputs.')
+console.log(skipSigning ? 'Configured Android ABI split APK outputs.' : 'Configured Android release signing and ABI split APK outputs.')
