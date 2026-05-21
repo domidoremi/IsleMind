@@ -20,6 +20,122 @@ export interface ProcessTrace {
   metadata?: Record<string, unknown>
 }
 
+export interface ToolContentBlock {
+  type: 'text' | 'image' | 'resource'
+  text?: string
+  mimeType?: string
+  uri?: string
+  data?: string
+  name?: string
+}
+
+export interface CommandReference {
+  id: string
+  type: 'skill' | 'provider' | 'model' | 'knowledge' | 'memory'
+  label: string
+  value: string
+  metadata?: Record<string, unknown>
+}
+
+export type SkillLayer = 'base' | 'advanced' | 'adaptive'
+export type SkillVariableType = 'text' | 'number' | 'boolean' | 'choice'
+export type SkillStackPolicy = 'append' | 'override'
+
+export interface SkillVariable {
+  name: string
+  label?: string
+  type: SkillVariableType
+  required?: boolean
+  defaultValue?: string | number | boolean
+  options?: string[]
+}
+
+export interface SkillDefinition {
+  schema: 'islemind.skill.v1'
+  id: string
+  name: string
+  layer: SkillLayer
+  version?: string
+  description?: string
+  tags: string[]
+  priority: number
+  systemPrompt: string
+  variables?: SkillVariable[]
+  model?: string
+  providerId?: string
+  temperature?: number
+  maxTokens?: number
+  enabledTools?: string[]
+  knowledgeSources?: string[]
+  firstUserMessage?: string
+  expectedReplyFormat?: string
+  stackPolicy?: SkillStackPolicy
+  createdAt: number
+  updatedAt: number
+}
+
+export interface SkillSnapshot {
+  skillIds: string[]
+  names: string[]
+  systemPrompt: string
+  variables: Record<string, string | number | boolean>
+  enabledTools?: string[]
+  knowledgeSources?: string[]
+  model?: string
+  providerId?: string
+  temperature?: number
+  maxTokens?: number
+  firstUserMessage?: string
+  expectedReplyFormat?: string
+}
+
+export type McpTransport = 'sse' | 'websocket'
+export type McpConnectionStatus = 'disconnected' | 'connecting' | 'connected' | 'error'
+export type McpToolPermission = 'read-only' | 'read-write' | 'destructive'
+
+export interface McpToolManifest {
+  name: string
+  description?: string
+  inputSchema?: Record<string, unknown>
+  permission: McpToolPermission
+  serverId: string
+  enabled: boolean
+}
+
+export interface McpResourceManifest {
+  uri: string
+  name?: string
+  description?: string
+  mimeType?: string
+  serverId: string
+}
+
+export interface McpPromptManifest {
+  name: string
+  description?: string
+  arguments?: Record<string, unknown>[]
+  serverId: string
+}
+
+export interface McpServerConfig {
+  id: string
+  name: string
+  url: string
+  transport: McpTransport
+  enabled: boolean
+  status: McpConnectionStatus
+  version?: string
+  manifestTtlMs: number
+  manifestCachedAt?: number
+  tools: McpToolManifest[]
+  resources: McpResourceManifest[]
+  prompts: McpPromptManifest[]
+  approvedToolNames: string[]
+  lastError?: string
+  createdAt: number
+  updatedAt: number
+}
+
 export interface Message {
   id: string
   role: MessageRole
@@ -86,6 +202,11 @@ export interface Conversation {
   providerId: string
   model: string
   providerModelMode?: ConversationProviderModelMode
+  skillIds?: string[]
+  skillSnapshot?: SkillSnapshot
+  enabledTools?: string[]
+  knowledgeSources?: string[]
+  commandRefs?: CommandReference[]
   systemPrompt: string
   temperature: number
   topP?: number
@@ -116,12 +237,26 @@ export interface Settings {
   onboardingCompleted?: boolean
   ragMode?: 'off' | 'fts' | 'hybrid'
   embeddingMode?: 'provider' | 'local' | 'hybrid'
+  localEmbeddingModelId?: string
+  localEmbeddingModelSource?: 'bundled' | 'downloaded' | 'none'
+  ragProfile?: RagProfile
+  ragQueryRewriteEnabled?: boolean
+  ragHydeEnabled?: boolean
+  ragFlareEnabled?: boolean
+  ragGraphEnabled?: boolean
+  ragRaptorEnabled?: boolean
+  ragCrossEncoderEnabled?: boolean
+  ragColbertEnabled?: boolean
+  ragLlmlinguaEnabled?: boolean
   searchProvider?: SearchProviderId
   googleSearchCx?: string
   customSearchEndpoint?: string
   autoUpdateCheckEnabled?: boolean
   lastApkUpdateCheckAt?: number
   providerCatalogVersion?: number
+  skillsEnabled?: boolean
+  mcpEnabled?: boolean
+  commandPaletteEnabled?: boolean
 }
 
 export type MessageRole = 'user' | 'assistant'
@@ -181,6 +316,153 @@ export type WebSearchMode = 'native' | 'tavily' | 'off'
 export type SearchProviderId = 'native' | 'tavily' | 'google' | 'bing' | 'custom' | 'off'
 export type MemoryStatus = 'pending' | 'active' | 'disabled'
 export type RetrievalSourceType = 'memory' | 'knowledge' | 'web'
+export type RagProfile = 'fast' | 'balanced' | 'deep' | 'offline'
+export type RagQueryComplexity = 'simple' | 'focused' | 'complex'
+export type RagQueryIntent = 'fact' | 'how-to' | 'analysis' | 'comparison' | 'debug' | 'creative'
+export type RagRiskLevel = 'low' | 'medium' | 'high'
+export type RagTechnique =
+  | 'hybrid-search'
+  | 'query-rewriting'
+  | 'hyde'
+  | 'cross-encoder'
+  | 'lost-in-middle'
+  | 'citation-injection'
+  | 'llmlingua'
+  | 'colbert'
+  | 'graphrag'
+  | 'raptor'
+  | 'flare'
+export type RagRetrievalOrigin = RetrievalSourceType | 'query-rewrite' | 'hyde' | 'raptor' | 'graph' | 'colbert'
+export type LocalRagModelCapability = 'embedding' | 'reranker' | 'colbert' | 'compressor'
+
+export interface RagQueryPlan {
+  id: string
+  profile: RagProfile
+  query: string
+  language: Language | 'mixed'
+  intent: RagQueryIntent
+  complexity: RagQueryComplexity
+  risk: RagRiskLevel
+  rewrittenQueries: string[]
+  hydePrompt?: string
+  subQueries: string[]
+  enabledTechniques: RagTechnique[]
+  retrievalBudget: number
+  contextItemBudget: number
+  tokenBudget: number
+  createdAt: number
+}
+
+export interface RagRetrievalCandidate extends RetrievalSource {
+  candidateId: string
+  origin: RagRetrievalOrigin
+  queryVariant?: string
+  originalRank?: number
+  originalScore?: number
+  rerankScore?: number
+  compressionRatio?: number
+  sourceReason?: string
+  headingPath?: string[]
+  semanticBoundary?: string
+  qualityScore?: number
+}
+
+export interface RagRerankResult {
+  before: RagRetrievalCandidate[]
+  after: RagRetrievalCandidate[]
+  strategy: 'local-statistical' | 'cross-encoder-fallback' | 'cross-encoder-local' | 'colbert-lite' | 'colbert-local'
+  usedModel?: string
+  fallbackReasons?: string[]
+}
+
+export interface RagCitation extends MessageCitation {
+  label: string
+  rerankScore?: number
+  compressionRatio?: number
+  sourceReason?: string
+}
+
+export interface RagContextPack {
+  plan: RagQueryPlan
+  sources: RagRetrievalCandidate[]
+  citations: RagCitation[]
+  contextPrompt: string
+  trace: RagTraceStep[]
+  quality: RagEvaluationResult
+  retrievalStats?: RagRetrievalStats
+}
+
+export interface RagTraceStep {
+  id: string
+  stage: 'plan' | 'retrieve' | 'rerank' | 'pack' | 'generate' | 'verify' | 'flare' | 'evaluate'
+  title: string
+  status: ProcessTraceStatus
+  content?: string
+  startedAt: number
+  completedAt?: number
+  durationMs?: number
+  metadata?: Record<string, unknown>
+}
+
+export interface RagEvaluationResult {
+  sourceCount: number
+  candidateCount?: number
+  citationCoverage: number
+  contextPrecision: number
+  compressionRatio: number
+  confidence: number
+  activeRetrievals: number
+  missingEvidence: boolean
+  warnings: string[]
+  generationConfidence?: number
+  factualClaimCount?: number
+  citedClaimCount?: number
+  unsupportedClaimCount?: number
+  flareTriggered?: boolean
+  fallbackReasons?: string[]
+  latencyMs?: number
+  tokenBudget?: number
+  estimatedContextTokens?: number
+}
+
+export interface RagRetrievalStats {
+  queryVariants: number
+  memoryCandidates: number
+  knowledgeCandidates: number
+  advancedCandidates: number
+  byOrigin: Partial<Record<RagRetrievalOrigin, number>>
+}
+
+export interface RagEvaluationLog {
+  id: string
+  query: string
+  plan?: RagQueryPlan
+  quality?: RagEvaluationResult
+  sourceCount: number
+  latencyMs?: number
+  createdAt: number
+}
+
+export interface RagIndexingJobStatus {
+  id: string
+  documentId?: string
+  kind: string
+  status: string
+  progress?: number
+  error?: string
+  createdAt: number
+  updatedAt: number
+}
+
+export interface RagGenerationVerification {
+  confidence: number
+  factualClaimCount: number
+  citedClaimCount: number
+  unsupportedClaimCount: number
+  needsFlare: boolean
+  reasons: string[]
+  followupQuery?: string
+}
 
 export interface ProviderCredentialGroup {
   id: string
@@ -235,7 +517,18 @@ export interface MessageCitation {
   score?: number
   ftsScore?: number
   vectorScore?: number
+  chunkIndex?: number
+  similarityScore?: number
+  sourceUri?: string
   retrievalMode?: 'fts' | 'vector' | 'hybrid'
+  rerankScore?: number
+  compressionRatio?: number
+  sourceReason?: string
+  headingPath?: string[]
+  semanticBoundary?: string
+  qualityScore?: number
+  queryVariant?: string
+  retrievalStage?: string
 }
 
 export interface RetrievalSource extends MessageCitation {
@@ -248,6 +541,7 @@ export interface MemoryItem {
   status: MemoryStatus
   conversationId?: string
   score?: number
+  lastHitAt?: number
   createdAt: number
   updatedAt: number
 }
@@ -273,6 +567,20 @@ export interface KnowledgeChunk {
   title: string
   content: string
   ordinal: number
+  chunkIndex?: number
+  sentenceStart?: number
+  sentenceEnd?: number
+  semanticBoundary?: string
+  headingPath?: string[]
+  entities?: string[]
+  relations?: string[]
+  summaryNodeId?: string
+  parentChunkId?: string
+  qualityScore?: number
+  embeddingModelId?: string
+  rerankSignals?: Record<string, number>
+  embeddingProvider?: 'hash' | 'provider' | 'onnx'
+  lastHitAt?: number
   score?: number
   ftsScore?: number
   vectorScore?: number
@@ -353,9 +661,7 @@ export function getProviderModels(providerType: ProviderType): AIModel[] {
 }
 
 export function getDefaultProviderModelIds(providerType: ProviderType): string[] {
-  return getProviderModels(providerType)
-    .filter((item) => !item.deprecated)
-    .map((item) => item.id)
+  return []
 }
 
 export function getModelConfig(modelId: string, providerType?: ProviderType, modelConfigs: AIModel[] = []): AIModel {
@@ -374,16 +680,19 @@ export function getModelConfig(modelId: string, providerType?: ProviderType, mod
 
 export function mergeModelConfig(modelId: string, providerType: ProviderType, remote?: Partial<AIModel>): AIModel {
   const base = getModelConfig(modelId, providerType)
+  const contextWindow = remote?.contextWindow ?? base.contextWindow
+  const maxOutputTokens = Math.min(remote?.maxOutputTokens ?? base.maxOutputTokens, contextWindow)
+  const defaultMaxTokens = Math.min(remote?.defaultMaxTokens ?? base.defaultMaxTokens, maxOutputTokens)
   return {
     ...base,
     ...remote,
     id: modelId,
     name: remote?.name || base.name,
     provider: providerType,
-    contextWindow: remote?.contextWindow ?? base.contextWindow,
-    maxTokens: remote?.contextWindow ?? remote?.maxTokens ?? base.contextWindow,
-    maxOutputTokens: remote?.maxOutputTokens ?? base.maxOutputTokens,
-    defaultMaxTokens: Math.min(remote?.defaultMaxTokens ?? base.defaultMaxTokens, remote?.maxOutputTokens ?? base.maxOutputTokens),
+    contextWindow,
+    maxTokens: contextWindow,
+    maxOutputTokens,
+    defaultMaxTokens,
     defaultTemperature: remote?.defaultTemperature ?? base.defaultTemperature,
     maxTemperature: remote?.maxTemperature ?? base.maxTemperature,
     supportsVision: remote?.supportsVision ?? base.supportsVision,
@@ -488,6 +797,7 @@ export const XIAOMI_MIMO_TOKEN_PLAN_ANTHROPIC_BASE_URLS: Record<ProviderRegion, 
 export interface ProviderConfigIssue {
   code: ChatErrorCode
   message: string
+  messageKey?: string
 }
 
 export function detectProviderCredentialMode(apiKey: string): ProviderCredentialMode | null {
@@ -537,59 +847,64 @@ export function getProviderConfigIssue(provider: Pick<AIProvider, 'type' | 'base
   if (keyMode && keyMode !== selectedMode) {
     return {
       code: 'credential_mismatch',
-      message:
-        keyMode === 'token-plan'
-          ? 'MiMo 的 tp- Key 属于 Token Plan，请切换到 Token Plan 模式和对应区域。'
-          : 'MiMo 的 sk- Key 属于按量付费，请切换到按量付费模式，或更换为 tp- Token Plan Key。',
+      messageKey: keyMode === 'token-plan' ? 'providerIssue.mimoTpKeyWrongMode' : 'providerIssue.mimoSkKeyWrongMode',
+      message: keyMode === 'token-plan' ? 'providerIssue.mimoTpKeyWrongMode' : 'providerIssue.mimoSkKeyWrongMode',
     }
   }
 
   if (keyMode === 'token-plan' && baseUrl.includes('api.xiaomimimo.com')) {
     return {
       code: 'credential_mismatch',
-      message: 'MiMo 的 tp- Token Plan Key 不能调用按量付费 Base URL，请使用 token-plan-*.xiaomimimo.com/v1。',
+      messageKey: 'providerIssue.mimoTpKeyPaygUrl',
+      message: 'providerIssue.mimoTpKeyPaygUrl',
     }
   }
 
   if (keyMode === 'payg' && baseUrl.includes('token-plan-')) {
     return {
       code: 'credential_mismatch',
-      message: 'MiMo 的 sk- 按量付费 Key 不能调用 Token Plan Base URL，请使用 https://api.xiaomimimo.com/v1。',
+      messageKey: 'providerIssue.mimoSkKeyTokenPlanUrl',
+      message: 'providerIssue.mimoSkKeyTokenPlanUrl',
     }
   }
 
   if (selectedMode === 'token-plan' && provider.baseUrl && !baseUrl.includes('token-plan-')) {
     return {
       code: 'credential_mismatch',
-      message: '当前选择的是 MiMo Token Plan，自定义 Base URL 应使用 token-plan-*.xiaomimimo.com/v1。',
+      messageKey: 'providerIssue.mimoTokenPlanCustomUrl',
+      message: 'providerIssue.mimoTokenPlanCustomUrl',
     }
   }
 
   if (selectedMode === 'payg' && provider.baseUrl && baseUrl.includes('token-plan-')) {
     return {
       code: 'credential_mismatch',
-      message: '当前选择的是 MiMo 按量付费，自定义 Base URL 不应指向 token-plan-* 域名。',
+      messageKey: 'providerIssue.mimoPaygCustomUrl',
+      message: 'providerIssue.mimoPaygCustomUrl',
     }
   }
 
   if (selectedProtocol === 'openai-compatible' && baseUrl.includes('/anthropic')) {
     return {
       code: 'credential_mismatch',
-      message: '当前选择的是 OpenAI 兼容协议，但 Base URL 指向 Anthropic 兼容入口，请切换协议或使用 /v1 地址。',
+      messageKey: 'providerIssue.openaiProtocolAnthropicUrl',
+      message: 'providerIssue.openaiProtocolAnthropicUrl',
     }
   }
 
   if (selectedProtocol === 'anthropic-compatible' && provider.baseUrl && !baseUrl.includes('/anthropic')) {
     return {
       code: 'credential_mismatch',
-      message: '当前选择的是 Anthropic 兼容协议，Base URL 应使用 /anthropic/v1 入口。',
+      messageKey: 'providerIssue.anthropicProtocolUrl',
+      message: 'providerIssue.anthropicProtocolUrl',
     }
   }
 
   if (selectedProtocol === 'anthropic-compatible' && provider.baseUrl && baseUrl.endsWith('/anthropic')) {
     return {
       code: 'credential_mismatch',
-      message: 'MiMo Anthropic 兼容入口需要填写到 /anthropic/v1，应用会再自动拼接 /messages。',
+      messageKey: 'providerIssue.mimoAnthropicNeedsV1',
+      message: 'providerIssue.mimoAnthropicNeedsV1',
     }
   }
 

@@ -1,6 +1,6 @@
 import AsyncStorage from '@react-native-async-storage/async-storage'
-import type { AIProvider, Conversation, MessageStatus, ProcessTrace, Settings } from '@/types'
-import { getDefaultProviderModelIds, getModelConfig } from '@/types'
+import type { AIProvider, Conversation, McpServerConfig, MessageStatus, ProcessTrace, Settings, SkillDefinition } from '@/types'
+import { getModelConfig } from '@/types'
 import { exportContextSnapshot, importContextSnapshot, type ContextSnapshot } from '@/services/contextStore'
 import { localDataStore } from '@/services/localDataStore'
 
@@ -9,6 +9,8 @@ const KEYS = {
   SETTINGS: '@islemind/settings',
   PROVIDERS: '@islemind/providers',
   ACTIVE_CONVERSATION: '@islemind/active-conversation',
+  SKILLS: '@islemind/skills',
+  MCP_SERVERS: '@islemind/mcp-servers',
 }
 
 export interface ExportPayload {
@@ -17,6 +19,8 @@ export interface ExportPayload {
   conversations: Conversation[]
   settings: Settings | null
   providers: AIProvider[]
+  skills?: SkillDefinition[]
+  mcpServers?: McpServerConfig[]
   context?: ContextSnapshot
   exportedAt: number
 }
@@ -56,11 +60,13 @@ export async function clearAllData(): Promise<void> {
 }
 
 export async function exportAllData(): Promise<string> {
-  const [sqliteConversations, cachedConversations, settings, providers] = await Promise.all([
+  const [sqliteConversations, cachedConversations, settings, providers, skills, mcpServers] = await Promise.all([
     localDataStore.loadConversations(),
     loadData<Conversation[]>('CONVERSATIONS'),
     loadData<Settings>('SETTINGS'),
     loadData<AIProvider[]>('PROVIDERS'),
+    loadData<SkillDefinition[]>('SKILLS'),
+    loadData<McpServerConfig[]>('MCP_SERVERS'),
   ])
   const context = await exportContextSnapshot()
   const conversations = sqliteConversations.length ? sqliteConversations : cachedConversations ?? []
@@ -71,6 +77,8 @@ export async function exportAllData(): Promise<string> {
       conversations,
       settings,
       providers: providers ?? [],
+      skills: skills ?? [],
+      mcpServers: mcpServers ?? [],
       context,
       exportedAt: Date.now(),
     } satisfies ExportPayload,
@@ -89,6 +97,8 @@ export async function importAllData(json: string): Promise<boolean> {
     await localDataStore.saveConversations(data.conversations.map(normalizeConversation))
     if (data.settings) await saveData('SETTINGS', data.settings)
     await saveData('PROVIDERS', data.providers.map(normalizeProvider))
+    if (Array.isArray(data.skills)) await saveData('SKILLS', data.skills.map(normalizeSkill).filter(Boolean))
+    if (Array.isArray(data.mcpServers)) await saveData('MCP_SERVERS', data.mcpServers.map(normalizeMcpServer).filter(Boolean))
     if (data.context) await importContextSnapshot(data.context)
     return true
   } catch {
@@ -103,6 +113,8 @@ function isExportPayload(value: unknown): value is ExportPayload {
   if (data.version !== 1) return false
   if (!Array.isArray(data.conversations)) return false
   if (!Array.isArray(data.providers)) return false
+  if (data.skills !== undefined && !Array.isArray(data.skills)) return false
+  if (data.mcpServers !== undefined && !Array.isArray(data.mcpServers)) return false
   if (data.settings !== null && data.settings !== undefined && typeof data.settings !== 'object') return false
   return data.conversations.every(isConversationLike) && data.providers.every(isProviderLike)
 }
@@ -146,6 +158,11 @@ function normalizeConversation(conversation: Conversation): Conversation {
   return {
     ...conversation,
     providerModelMode: conversation.providerModelMode ?? 'inherited',
+    skillIds: Array.isArray(conversation.skillIds) ? conversation.skillIds.filter((item) => typeof item === 'string') : undefined,
+    skillSnapshot: conversation.skillSnapshot && typeof conversation.skillSnapshot === 'object' ? conversation.skillSnapshot : undefined,
+    enabledTools: Array.isArray(conversation.enabledTools) ? conversation.enabledTools.filter((item) => typeof item === 'string') : undefined,
+    knowledgeSources: Array.isArray(conversation.knowledgeSources) ? conversation.knowledgeSources.filter((item) => typeof item === 'string') : undefined,
+    commandRefs: Array.isArray(conversation.commandRefs) ? conversation.commandRefs : undefined,
     systemPrompt: conversation.systemPrompt ?? '',
     temperature: Number.isFinite(conversation.temperature) ? conversation.temperature : 0.7,
     topP: Number.isFinite(conversation.topP) ? conversation.topP : 1,
@@ -167,6 +184,43 @@ function normalizeConversation(conversation: Conversation): Conversation {
     })),
     createdAt: conversation.createdAt ?? Date.now(),
     updatedAt: conversation.updatedAt ?? Date.now(),
+  }
+}
+
+function normalizeSkill(skill: SkillDefinition): SkillDefinition | null {
+  if (!skill || typeof skill !== 'object') return null
+  if (skill.schema !== 'islemind.skill.v1' || typeof skill.id !== 'string' || typeof skill.name !== 'string') return null
+  const now = Date.now()
+  return {
+    ...skill,
+    layer: ['base', 'advanced', 'adaptive'].includes(skill.layer) ? skill.layer : 'base',
+    tags: Array.isArray(skill.tags) ? skill.tags.filter((item) => typeof item === 'string') : [],
+    priority: Number.isFinite(skill.priority) ? skill.priority : 0,
+    systemPrompt: typeof skill.systemPrompt === 'string' ? skill.systemPrompt : '',
+    variables: Array.isArray(skill.variables) ? skill.variables : undefined,
+    enabledTools: Array.isArray(skill.enabledTools) ? skill.enabledTools.filter((item) => typeof item === 'string') : undefined,
+    knowledgeSources: Array.isArray(skill.knowledgeSources) ? skill.knowledgeSources.filter((item) => typeof item === 'string') : undefined,
+    createdAt: Number.isFinite(skill.createdAt) ? skill.createdAt : now,
+    updatedAt: Number.isFinite(skill.updatedAt) ? skill.updatedAt : now,
+  }
+}
+
+function normalizeMcpServer(server: McpServerConfig): McpServerConfig | null {
+  if (!server || typeof server !== 'object') return null
+  if (typeof server.id !== 'string' || typeof server.name !== 'string' || typeof server.url !== 'string') return null
+  const now = Date.now()
+  return {
+    ...server,
+    transport: server.transport === 'websocket' ? 'websocket' : 'sse',
+    enabled: !!server.enabled,
+    status: ['disconnected', 'connecting', 'connected', 'error'].includes(server.status) ? server.status : 'disconnected',
+    manifestTtlMs: Number.isFinite(server.manifestTtlMs) ? server.manifestTtlMs : 6 * 60 * 60 * 1000,
+    tools: Array.isArray(server.tools) ? server.tools : [],
+    resources: Array.isArray(server.resources) ? server.resources : [],
+    prompts: Array.isArray(server.prompts) ? server.prompts : [],
+    approvedToolNames: Array.isArray(server.approvedToolNames) ? server.approvedToolNames.filter((item) => typeof item === 'string') : [],
+    createdAt: Number.isFinite(server.createdAt) ? server.createdAt : now,
+    updatedAt: Number.isFinite(server.updatedAt) ? server.updatedAt : now,
   }
 }
 
@@ -225,17 +279,32 @@ function normalizeProvider(provider: AIProvider): AIProvider {
 }
 
 function normalizeProviderModels(provider: AIProvider): string[] {
-  const defaultModels = provider.type === 'openai-compatible' && provider.id !== 'deepseek' ? [] : getDefaultProviderModelIds(provider.type)
-  if (!provider.models.length) return defaultModels
-  const defaultSet = new Set(defaultModels)
-  const existing = provider.models.filter((model) => {
+  const models = clearHistoricalInjectedModels(provider)
+  const existing = models.filter((model) => {
     const config = getModelConfig(model, provider.type, provider.modelConfigs)
-    return !config.deprecated || defaultSet.has(model) || !defaultSet.size
+    return !config.deprecated
   })
   const seen = new Set<string>()
-  return [...defaultModels, ...existing].filter((model) => {
+  return existing.filter((model) => {
     if (seen.has(model)) return false
     seen.add(model)
     return true
   })
+}
+
+function clearHistoricalInjectedModels(provider: AIProvider): string[] {
+  const models = provider.models ?? []
+  if (provider.lastModelSyncStatus === 'ok' || provider.lastTestStatus === 'ok') return models
+  if (provider.modelConfigs?.some((model) => model.source === 'remote')) return models
+  const historicalSets = [
+    ['deepseek-v4-pro', 'deepseek-v4-flash'],
+    ['deepseek-v4-pro', 'deepseek-v4-flash', 'deepseek-chat', 'deepseek-reasoner'],
+  ]
+  return historicalSets.some((set) => sameModelSet(models, set)) ? [] : models
+}
+
+function sameModelSet(left: string[], right: string[]): boolean {
+  if (left.length !== right.length) return false
+  const normalized = new Set(left.map((item) => item.trim()).filter(Boolean))
+  return right.every((item) => normalized.has(item))
 }

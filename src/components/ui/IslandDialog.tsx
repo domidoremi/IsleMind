@@ -3,6 +3,7 @@ import { createContext, useCallback, useContext, useMemo, useRef, useState } fro
 import { Modal, Pressable, Text, View } from 'react-native'
 import { AlertTriangle, Check, Info, X } from 'lucide-react-native'
 import { MotiView } from 'moti'
+import { useTranslation } from 'react-i18next'
 import { IslandButton } from '@/components/ui/IslandButton'
 import { IslandPanel } from '@/components/ui/IslandPanel'
 import { PressableScale } from '@/components/ui/PressableScale'
@@ -68,6 +69,7 @@ const IslandDialogContext = createContext<IslandDialogApi | null>(null)
 
 export function IslandDialogProvider({ children }: { children: ReactNode }) {
   const { colors } = useAppTheme()
+  const { t } = useTranslation()
   const [dialog, setDialog] = useState<DialogState | null>(null)
   const [toast, setToast] = useState<ToastState | null>(null)
   const idRef = useRef(0)
@@ -110,7 +112,7 @@ export function IslandDialogProvider({ children }: { children: ReactNode }) {
       >
         <View style={{ flex: 1, justifyContent: 'center', paddingHorizontal: 18 }}>
           <Pressable
-            accessibilityLabel="关闭弹层"
+            accessibilityLabel={t('dialog.closeLayer')}
             onPress={() => closeDialog(false)}
             style={{ position: 'absolute', top: 0, right: 0, bottom: 0, left: 0, backgroundColor: colors.backdrop }}
           />
@@ -137,7 +139,7 @@ export function IslandDialogProvider({ children }: { children: ReactNode }) {
                   <PressableScale
                     haptic
                     onPress={() => closeDialog(false)}
-                    accessibilityLabel="关闭"
+                    accessibilityLabel={t('dialog.close')}
                     style={{ width: 34, height: 34, borderRadius: 17, alignItems: 'center', justifyContent: 'center', backgroundColor: colors.islandRaised }}
                   >
                     <X color={colors.textTertiary} size={16} strokeWidth={2.2} />
@@ -157,13 +159,13 @@ export function IslandDialogProvider({ children }: { children: ReactNode }) {
                 <View style={{ flexDirection: 'row', gap: 10, marginTop: 16 }}>
                   {dialog.kind === 'confirm' ? (
                     <IslandButton
-                      label={dialog.cancelLabel ?? '取消'}
+                      label={dialog.cancelLabel ?? t('common.cancel')}
                       onPress={() => closeDialog(false)}
                       style={{ flex: 1 }}
                     />
                   ) : null}
                   <IslandButton
-                    label={dialog.kind === 'confirm' ? dialog.confirmLabel ?? '确认' : dialog.actionLabel ?? '知道了'}
+                    label={dialog.kind === 'confirm' ? dialog.confirmLabel ?? t('common.confirm') : dialog.actionLabel ?? t('dialog.ok')}
                     tone={dialog.tone === 'danger' ? 'danger' : dialog.tone === 'amber' ? 'amber' : 'primary'}
                     onPress={() => closeDialog(true)}
                     style={{ flex: 1 }}

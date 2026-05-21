@@ -1,6 +1,7 @@
 import { Text, TextInput, View } from 'react-native'
 import { useState } from 'react'
 import { router } from 'expo-router'
+import { useTranslation } from 'react-i18next'
 import { Trash2 } from 'lucide-react-native'
 import { MotiView } from 'moti'
 import type { Conversation } from '@/types'
@@ -21,6 +22,7 @@ interface ConversationRowProps {
 
 export function ConversationRow({ conversation, index, onOpen }: ConversationRowProps) {
   const { colors } = useAppTheme()
+  const { t } = useTranslation()
   const motion = useMotionPreference()
   const remove = useChatStore((state) => state.delete)
   const rename = useChatStore((state) => state.rename)
@@ -32,11 +34,11 @@ export function ConversationRow({ conversation, index, onOpen }: ConversationRow
 
   function confirmDelete() {
     void dialog.confirm({
-      title: '删除对话',
-      message: '确认删除这个对话？',
+      title: t('conversation.deleteTitle'),
+      message: t('conversation.deleteConfirm'),
       tone: 'danger',
-      confirmLabel: '删除',
-      cancelLabel: '取消',
+      confirmLabel: t('common.delete'),
+      cancelLabel: t('common.cancel'),
     }).then((confirmed) => {
       if (confirmed) remove(conversation.id)
     })
@@ -44,7 +46,7 @@ export function ConversationRow({ conversation, index, onOpen }: ConversationRow
 
   function submitRename() {
     const value = title.trim()
-    rename(conversation.id, value || '未命名对话')
+    rename(conversation.id, value || t('conversation.untitled'))
     setRenaming(false)
   }
 
@@ -61,7 +63,7 @@ export function ConversationRow({ conversation, index, onOpen }: ConversationRow
           if (onOpen) {
             onOpen(conversation.id)
           } else {
-            router.replace({ pathname: '/chat/[id]', params: { id: conversation.id } })
+            router.push({ pathname: '/chat/[id]', params: { id: conversation.id } })
           }
         }}
         onLongPress={() => setRenaming(true)}
@@ -81,17 +83,17 @@ export function ConversationRow({ conversation, index, onOpen }: ConversationRow
               />
             ) : (
               <Text numberOfLines={1} style={{ color: colors.text, fontSize: 17, fontWeight: '900' }}>
-                {conversation.title || '未命名对话'}
+                {conversation.title || t('conversation.untitled')}
               </Text>
             )}
             <Text numberOfLines={1} style={{ color: colors.textSecondary, fontSize: 13, marginTop: 6, fontWeight: '700' }}>
-              {lastMessage?.content || '还没有消息'}
+              {lastMessage?.content || t('conversation.noMessagesYet')}
             </Text>
             <Text style={{ color: colors.textTertiary, fontSize: 12, marginTop: 10, fontWeight: '900' }}>{getModelName(conversation.model)}</Text>
           </View>
           <PressableScale
             onPress={confirmDelete}
-            accessibilityLabel="删除对话"
+            accessibilityLabel={t('conversation.deleteTitle')}
             hitSlop={10}
             style={{ width: 44, height: 44, alignItems: 'center', justifyContent: 'center', borderRadius: 22, backgroundColor: colors.coralWash }}
           >

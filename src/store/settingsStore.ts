@@ -1,11 +1,13 @@
 import { create } from 'zustand'
-import { getDefaultProviderModelIds, getModelConfig, getProviderConfigIssue, XIAOMI_MIMO_PAYG_BASE_URL, getXiaomiMimoOfficialBaseUrl } from '@/types'
+import { getModelConfig, getProviderConfigIssue, XIAOMI_MIMO_PAYG_BASE_URL, getXiaomiMimoOfficialBaseUrl } from '@/types'
 import type { Settings, AIProvider, Language, ProviderCredentialGroup, ThemeMode } from '@/types'
 import { loadData, saveData } from '@/services/storage'
 import * as SecureStore from 'expo-secure-store'
 import { applyProviderPreset, defaultProviderSyncPolicy, detectProviderPreset, getProviderPreset } from '@/services/ai/providerRegistry'
 import { normalizeProviderCredentialGroups } from '@/services/ai/providerCredentials'
 import { legacySearchModeForProvider, resolveSearchProvider } from '@/services/searchPolicy'
+import { st } from '@/i18n/service'
+import { setServiceLanguage } from '@/i18n/service'
 
 interface SettingsState {
   settings: Settings
@@ -57,9 +59,23 @@ const defaultSettings: Settings = {
   onboardingCompleted: false,
   ragMode: 'hybrid',
   embeddingMode: 'hybrid',
+  localEmbeddingModelId: undefined,
+  localEmbeddingModelSource: 'none',
+  ragProfile: 'balanced',
+  ragQueryRewriteEnabled: true,
+  ragHydeEnabled: true,
+  ragFlareEnabled: true,
+  ragGraphEnabled: true,
+  ragRaptorEnabled: true,
+  ragCrossEncoderEnabled: true,
+  ragColbertEnabled: true,
+  ragLlmlinguaEnabled: true,
   searchProvider: 'native',
   autoUpdateCheckEnabled: true,
   providerCatalogVersion: 1,
+  skillsEnabled: true,
+  mcpEnabled: true,
+  commandPaletteEnabled: true,
 }
 
 const PROVIDER_CATALOG_VERSION = 1
@@ -111,7 +127,7 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
     ])
     const rawSettings = settings ? { ...defaultSettings, ...settings } : defaultSettings
     const resolvedSearchProvider = resolveSearchProvider(rawSettings)
-    const resetCatalog = (rawSettings.providerCatalogVersion ?? 0) < PROVIDER_CATALOG_VERSION
+    const resetCatalog = (rawSettings.providerCatalogVersion ?? PROVIDER_CATALOG_VERSION) < PROVIDER_CATALOG_VERSION
     if (resetCatalog) {
       await clearProviderCatalogSecrets(providers ?? [])
     }
@@ -164,6 +180,7 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
   },
 
   setLanguage: (language: Language) => {
+    setServiceLanguage(language)
     get().updateSettings({ language })
   },
 
@@ -456,7 +473,7 @@ function sanitizeCredentialGroups(groups: ProviderCredentialGroup[] | undefined,
   return (groups ?? []).map((group, index) => ({
     ...group,
     id: group.id || `group-${index + 1}`,
-    label: group.label || `令牌分组 ${index + 1}`,
+    label: group.label || st('apiKeyPanel.groupName', { index: index + 1 }),
     apiKey: '',
     enabled: group.enabled ?? true,
     availableModels: group.availableModels?.length ? group.availableModels : models,
@@ -465,18 +482,32 @@ function sanitizeCredentialGroups(groups: ProviderCredentialGroup[] | undefined,
 }
 
 function normalizeProviderModels(provider: AIProvider): string[] {
-  const defaultModels = provider.type === 'openai-compatible' && provider.id !== 'deepseek' ? [] : getDefaultProviderModelIds(provider.type)
-  if (!provider.models.length) return defaultModels
-  const defaultSet = new Set(defaultModels)
-  const existing = provider.models.filter((model) => {
+  const models = clearHistoricalInjectedModels(provider)
+  const existing = models.filter((model) => {
     const config = getModelConfig(model, provider.type, provider.modelConfigs)
-    return !config.deprecated || defaultSet.has(model) || !defaultSet.size
+    return !config.deprecated
   })
-  const merged = [...defaultModels, ...existing]
   const seen = new Set<string>()
-  return merged.filter((model) => {
+  return existing.filter((model) => {
     if (seen.has(model)) return false
     seen.add(model)
     return true
   })
+}
+
+function clearHistoricalInjectedModels(provider: AIProvider): string[] {
+  const models = provider.models ?? []
+  if (provider.lastModelSyncStatus === 'ok' || provider.lastTestStatus === 'ok') return models
+  if (provider.modelConfigs?.some((model) => model.source === 'remote')) return models
+  const historicalSets = [
+    ['deepseek-v4-pro', 'deepseek-v4-flash'],
+    ['deepseek-v4-pro', 'deepseek-v4-flash', 'deepseek-chat', 'deepseek-reasoner'],
+  ]
+  return historicalSets.some((set) => sameModelSet(models, set)) ? [] : models
+}
+
+function sameModelSet(left: string[], right: string[]): boolean {
+  if (left.length !== right.length) return false
+  const normalized = new Set(left.map((item) => item.trim()).filter(Boolean))
+  return right.every((item) => normalized.has(item))
 }

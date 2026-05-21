@@ -2,10 +2,12 @@ import { useEffect, useMemo, useState, type ReactNode } from 'react'
 import { ActivityIndicator, Text, TextInput, View } from 'react-native'
 import { Check, ChevronDown, KeyRound, ListFilter, Plus, Power, RotateCw, SearchCheck, Sparkles, Star, Trash2 } from 'lucide-react-native'
 import { MotiView } from 'moti'
+import type { TFunction } from 'i18next'
+import { useTranslation } from 'react-i18next'
 import type { AIProvider, ProviderCredentialGroup, ProviderPresetId } from '@/types'
-import { getModelConfig, getModelName, getProviderModels } from '@/types'
-import { syncProviderCredentialGroupsDetailed, testProviderModelDetailed } from '@/services/ai/base'
+import { getModelConfig, getModelName } from '@/types'
 import { applyProviderPreset, detectProviderPreset, getProviderPreset, maskSecret, parseCredentialGroups, probeProviderPreset, PROVIDER_PRESETS } from '@/services/ai/providerRegistry'
+import { syncAndTestProvider, summarizeProviderActivation } from '@/services/providerActivation'
 import { useAppTheme } from '@/hooks/useAppTheme'
 import { useSettingsStore } from '@/store/settingsStore'
 import { PressableScale } from '@/components/ui/PressableScale'
@@ -13,6 +15,7 @@ import { IslandChip } from '@/components/ui/IslandChip'
 import { IslandButton } from '@/components/ui/IslandButton'
 import { IslandField } from '@/components/ui/IslandPrimitives'
 import { useIslandDialog } from '@/components/ui/IslandDialog'
+import { parseModels } from '@/utils/text'
 
 interface ApiKeyPanelProps {
   provider: AIProvider
@@ -23,6 +26,7 @@ type PanelTask = 'idle' | 'saving' | 'syncing' | 'testing' | 'probing'
 
 export function ApiKeyPanel({ provider, initiallyExpanded = false }: ApiKeyPanelProps) {
   const { colors } = useAppTheme()
+  const { t } = useTranslation()
   const dialog = useIslandDialog()
   const updateProvider = useSettingsStore((state) => state.updateProvider)
   const updateSettings = useSettingsStore((state) => state.updateSettings)
@@ -44,14 +48,14 @@ export function ApiKeyPanel({ provider, initiallyExpanded = false }: ApiKeyPanel
   const detection = useMemo(() => detectProviderPreset({ baseUrl, name: provider.name, apiKey: singleCredentialText || credentialText }), [baseUrl, credentialText, provider.name, singleCredentialText])
   const selectedPreset = getProviderPreset(presetId)
   const currentModels = useMemo(() => parseModels(modelsText), [modelsText])
-  const primaryModel = currentModels[0] ?? getProviderModels(provider.type)[0]?.id ?? '未设置模型'
+  const primaryModel = currentModels[0] ?? provider.lastTestModel ?? t('apiKeyPanel.noModelSet')
   const primaryModelConfig = getModelConfig(primaryModel, provider.type, provider.modelConfigs)
   const groupCount = hydratedGroups.length
   const syncedGroups = hydratedGroups.filter((group) => group.lastModelSyncStatus === 'ok').length
   const hasKey = hydratedGroups.some((group) => group.enabled) || !!singleCredentialText.trim() || !!credentialText.trim()
   const isDefault = defaultProvider === provider.id
   const isBusy = task !== 'idle'
-  const lastStatusLabel = provider.lastTestStatus === 'ok' ? '模型可用' : provider.lastTestStatus === 'bad' ? '需检查' : provider.lastModelSyncStatus === 'ok' ? '已同步' : provider.lastModelSyncStatus === 'bad' ? '同步失败' : '待验证'
+  const lastStatusLabel = provider.lastTestStatus === 'ok' ? t('apiKeyPanel.modelAvailable') : provider.lastTestStatus === 'bad' ? t('apiKeyPanel.needsCheck') : provider.lastModelSyncStatus === 'ok' ? t('apiKeyPanel.synced') : provider.lastModelSyncStatus === 'bad' ? t('apiKeyPanel.syncFailed') : t('apiKeyPanel.pendingCheck')
 
   useEffect(() => {
     setBaseUrl(provider.baseUrl ?? '')
@@ -80,14 +84,14 @@ export function ApiKeyPanel({ provider, initiallyExpanded = false }: ApiKeyPanel
 
   async function save(showNotice = true) {
     setTask('saving')
-    const pastedGroups = createIncomingGroups(draftGroups.length, [singleCredentialText, credentialText].filter(Boolean).join('\n'))
-    const credentialGroups = mergeGroups(draftGroups, pastedGroups)
+    const pastedGroups = createIncomingGroups(draftGroups.length, [singleCredentialText, credentialText].filter(Boolean).join('\n'), t)
+    const credentialGroups = mergeGroups(draftGroups, pastedGroups, t)
     const models = parseModels(modelsText)
     const applied = applyProviderPreset({
       ...provider,
       baseUrl: baseUrl.trim() || selectedPreset.baseUrl,
       credentialGroups,
-      models: models.length ? models : provider.models,
+      models,
       enabled: provider.enabled,
       detectionStatus: provider.detectionStatus ?? 'detected',
     }, presetId)
@@ -106,32 +110,32 @@ export function ApiKeyPanel({ provider, initiallyExpanded = false }: ApiKeyPanel
     setModelEditing(false)
     setTask('idle')
     if (showNotice) {
-      const message = pastedGroups.length ? `已保存 ${credentialGroups.length} 个令牌分组。` : '已保存配置。'
+      const message = pastedGroups.length ? t('apiKeyPanel.savedGroups', { count: credentialGroups.length }) : t('apiKeyPanel.savedConfig')
       setNotice(message)
-      dialog.toast({ title: `已保存 ${provider.name}`, message, tone: 'mint' })
+      dialog.toast({ title: t('apiKeyPanel.providerSaved', { name: provider.name }), message, tone: 'mint' })
     }
   }
 
   function addPendingGroups() {
-    const incoming = createIncomingGroups(draftGroups.length, [singleCredentialText, credentialText].filter(Boolean).join('\n'))
+    const incoming = createIncomingGroups(draftGroups.length, [singleCredentialText, credentialText].filter(Boolean).join('\n'), t)
     if (!incoming.length) {
-      setNotice('先输入一个或多个令牌。')
-      dialog.toast({ title: '未加入令牌', message: '先输入一个或多个令牌。', tone: 'amber' })
+      setNotice(t('apiKeyPanel.enterTokensFirst'))
+      dialog.toast({ title: t('apiKeyPanel.noTokenAdded'), message: t('apiKeyPanel.enterTokensFirst'), tone: 'amber' })
       return
     }
-    setDraftGroups((current) => mergeGroups(current, incoming))
+    setDraftGroups((current) => mergeGroups(current, incoming, t))
     setSingleCredentialText('')
     setCredentialText('')
-    setNotice(`已加入 ${incoming.length} 个令牌分组，点保存后生效。`)
-    dialog.toast({ title: `已加入 ${incoming.length} 个令牌分组`, message: provider.name, tone: 'mint' })
+    setNotice(t('apiKeyPanel.pendingGroupsAdded', { count: incoming.length }))
+    dialog.toast({ title: t('apiKeyPanel.groupsAdded', { count: incoming.length }), message: provider.name, tone: 'mint' })
   }
 
   function updateDraftGroup(groupId: string, updates: Partial<ProviderCredentialGroup>) {
     setDraftGroups((groups) => groups.map((group) => group.id === groupId ? { ...group, ...updates } : group))
-    setNotice('分组变更待保存。')
+    setNotice(t('apiKeyPanel.groupChangePending'))
     if (updates.enabled !== undefined) {
       const group = draftGroups.find((item) => item.id === groupId)
-      dialog.toast({ title: updates.enabled ? '令牌分组已启用' : '令牌分组已停用', message: group?.label ?? provider.name, tone: 'mint' })
+      dialog.toast({ title: updates.enabled ? t('apiKeyPanel.groupEnabled') : t('apiKeyPanel.groupDisabled'), message: group?.label ?? provider.name, tone: 'mint' })
     }
   }
 
@@ -140,96 +144,90 @@ export function ApiKeyPanel({ provider, initiallyExpanded = false }: ApiKeyPanel
     const nextGroups = draftGroups.filter((group) => group.id !== groupId)
     setDraftGroups(nextGroups)
     await updateProvider(provider.id, { credentialGroups: nextGroups })
-    setNotice('分组已删除。')
-    dialog.toast({ title: '令牌分组已删除', message: group?.label ?? provider.name, tone: 'amber' })
+    setNotice(t('apiKeyPanel.groupDeleted'))
+    dialog.toast({ title: t('apiKeyPanel.groupDeleted'), message: group?.label ?? provider.name, tone: 'amber' })
   }
 
   async function acceptDetection() {
     setPresetId(detection.presetId)
     const preset = getProviderPreset(detection.presetId)
     if (!baseUrl.trim() && preset.baseUrl) setBaseUrl(preset.baseUrl)
-    setNotice(`已选择 ${preset.name}。`)
-    dialog.toast({ title: '已接受识别', message: `${provider.name} · ${preset.name}`, tone: 'mint' })
+    setNotice(t('apiKeyPanel.presetSelected', { name: preset.name }))
+    dialog.toast({ title: t('apiKeyPanel.detectionAccepted'), message: `${provider.name} · ${preset.name}`, tone: 'mint' })
   }
 
   async function probeDetection() {
     setTask('probing')
-    dialog.toast({ title: '网络探测开始', message: provider.name, tone: 'mint' })
+    dialog.toast({ title: t('apiKeyPanel.probeStarted'), message: provider.name, tone: 'mint' })
     const result = await probeProviderPreset({ baseUrl, name: provider.name, apiKey: await getProbeApiKey() })
     setPresetId(result.presetId)
     const preset = getProviderPreset(result.presetId)
     if (!baseUrl.trim() && preset.baseUrl) setBaseUrl(preset.baseUrl)
     setTask('idle')
     setNotice(result.reason)
-    dialog.toast({ title: '网络探测完成', message: `${provider.name} · ${getProviderPreset(result.presetId).name}`, tone: 'mint' })
+    dialog.toast({ title: t('apiKeyPanel.probeDone'), message: `${provider.name} · ${getProviderPreset(result.presetId).name}`, tone: 'mint' })
   }
 
-  async function syncModels() {
+  async function syncAndTest() {
     setTask('syncing')
-    dialog.toast({ title: '模型同步开始', message: provider.name, tone: 'mint' })
+    dialog.toast({ title: t('apiKeyPanel.syncAndTestStarted'), message: provider.name, tone: 'mint' })
     await save(false)
-    const keyed = await hydrateProviderKey(provider.id)
-    if (!keyed) {
-      setTask('idle')
-      setNotice('服务商不存在。')
-      dialog.toast({ title: '模型同步失败', message: '服务商不存在。', tone: 'danger' })
-      return
-    }
-    const result = await syncProviderCredentialGroupsDetailed(keyed)
-    if (result.data) {
-      await updateProvider(provider.id, result.data)
-      setModelsText(result.data.models.join('\n'))
-    }
+    const current = useSettingsStore.getState().providers.find((item) => item.id === provider.id) ?? provider
+    const result = await syncAndTestProvider(current, {
+      updateProvider: useSettingsStore.getState().updateProvider,
+      hydrateProviderKey: useSettingsStore.getState().hydrateProviderKey,
+      updateProviderCredentialGroupHealth: useSettingsStore.getState().updateProviderCredentialGroupHealth,
+    }, { enable: provider.enabled })
+    const latest = useSettingsStore.getState().providers.find((item) => item.id === provider.id)
+    if (latest) setModelsText(latest.models.join('\n'))
     setTask('idle')
-    setNotice(result.ok ? '令牌分组已低速同步，模型列表已合并。' : result.message)
-    dialog.toast({ title: result.ok ? '模型同步完成' : '模型同步失败', message: result.ok ? `${provider.name} · ${result.data?.models.length ?? provider.models.length} 个模型` : result.message, tone: result.ok ? 'mint' : 'danger' })
-  }
-
-  async function verifyModel() {
-    setTask('testing')
-    dialog.toast({ title: '模型测试开始', message: provider.name, tone: 'mint' })
-    await save(false)
-    const keyed = await hydrateProviderKey(provider.id)
-    const model = parseModels(modelsText)[0] ?? primaryModel
-    const group = keyed?.credentialGroups?.find((item) => item.enabled && (!item.availableModels?.length || item.availableModels.includes(model)))
-    const apiKey = group?.apiKey ?? keyed?.apiKey ?? ''
-    const result = keyed ? await testProviderModelDetailed(keyed, model, apiKey) : { ok: false, message: '服务商不存在。', code: 'unknown' as const }
-    if (keyed) {
-      await useSettingsStore.getState().updateProviderCredentialGroupHealth(keyed.id, result.credentialGroupId ?? group?.id, result.ok)
+    const summary = summarizeProviderActivation([result])
+    if (result.testOk || result.modelCount > 0) {
+      updateSettings({ defaultProvider: result.providerId, onboardingCompleted: true })
     }
-    await updateProvider(provider.id, {
-      lastTestStatus: result.ok ? 'ok' : 'bad',
-      lastTestedAt: Date.now(),
-      lastTestModel: model,
-      lastTestMessage: result.message,
-      lastTestCode: result.code,
-    })
-    setTask('idle')
-    setNotice(result.ok ? `${model} 可用。` : result.message)
-    dialog.toast({ title: result.ok ? '模型测试通过' : '模型测试失败', message: result.ok ? `${provider.name} · ${model}` : result.message, tone: result.ok ? 'mint' : 'danger' })
+    setNotice(summary.message)
+    dialog.notice({ title: result.testOk ? t('apiKeyPanel.syncAndTestDone') : t('apiKeyPanel.syncAndTestNeedsCheck'), message: summary.message, tone: summary.tone })
   }
 
   async function toggleProviderEnabled() {
     const enabled = !provider.enabled
-    await updateProvider(provider.id, { enabled })
-    dialog.toast({ title: enabled ? `已启用 ${provider.name}` : `已停用 ${provider.name}`, tone: 'mint' })
+    if (!enabled) {
+      await updateProvider(provider.id, { enabled })
+      dialog.toast({ title: t('apiKeyPanel.providerDisabled', { name: provider.name }), tone: 'mint' })
+      return
+    }
+    await save(false)
+    setTask('syncing')
+    const current = useSettingsStore.getState().providers.find((item) => item.id === provider.id) ?? provider
+    const result = await syncAndTestProvider(current, {
+      updateProvider: useSettingsStore.getState().updateProvider,
+      hydrateProviderKey: useSettingsStore.getState().hydrateProviderKey,
+      updateProviderCredentialGroupHealth: useSettingsStore.getState().updateProviderCredentialGroupHealth,
+    }, { enable: true })
+    const summary = summarizeProviderActivation([result])
+    if (result.testOk || result.modelCount > 0) {
+      updateSettings({ defaultProvider: result.providerId, onboardingCompleted: true })
+    }
+    setTask('idle')
+    setNotice(summary.message)
+    dialog.notice({ title: t('apiKeyPanel.providerEnabled', { name: provider.name }), message: summary.message, tone: summary.tone })
   }
 
   function setDefaultProvider() {
     updateSettings({ defaultProvider: provider.id, onboardingCompleted: true })
-    dialog.toast({ title: '默认供应商已更新', message: provider.name, tone: 'mint' })
+    dialog.toast({ title: t('apiKeyPanel.defaultUpdated'), message: provider.name, tone: 'mint' })
   }
 
   function cancelModelEditing() {
     setModelsText(provider.models.join('\n'))
     setModelEditing(false)
     setNotice('')
-    dialog.toast({ title: '已取消模型编辑', message: provider.name, tone: 'amber' })
+    dialog.toast({ title: t('apiKeyPanel.modelEditCancelled'), message: provider.name, tone: 'amber' })
   }
 
   function enterModelEditing() {
     setModelEditing(true)
-    dialog.toast({ title: '模型列表可编辑', message: provider.name, tone: 'mint' })
+    dialog.toast({ title: t('apiKeyPanel.modelListEditable'), message: provider.name, tone: 'mint' })
   }
 
   async function getProbeApiKey(): Promise<string | undefined> {
@@ -260,16 +258,16 @@ export function ApiKeyPanel({ provider, initiallyExpanded = false }: ApiKeyPanel
         <View style={{ flex: 1 }}>
           <View style={{ flexDirection: 'row', alignItems: 'center', gap: 7, flexWrap: 'wrap' }}>
             <Text style={{ color: colors.text, fontSize: 16, fontWeight: '900' }}>{provider.name}</Text>
-            {isDefault ? <Badge label="默认" tone="warning" /> : null}
-            <Badge label={provider.enabled ? '启用' : '停用'} tone={provider.enabled ? 'success' : 'muted'} />
-            <Badge label={`${Math.max(groupCount, hasKey ? 1 : 0)} 组令牌`} tone={hasKey ? 'success' : 'muted'} />
+            {isDefault ? <Badge label={t('settings.default')} tone="warning" /> : null}
+            <Badge label={provider.enabled ? t('apiKeyPanel.enabled') : t('apiKeyPanel.disabled')} tone={provider.enabled ? 'success' : 'muted'} />
+            <Badge label={t('apiKeyPanel.tokenGroups', { count: Math.max(groupCount, hasKey ? 1 : 0) })} tone={hasKey ? 'success' : 'muted'} />
             <Badge label={lastStatusLabel} tone={provider.lastTestStatus === 'ok' || provider.lastModelSyncStatus === 'ok' ? 'success' : provider.lastTestStatus === 'bad' || provider.lastModelSyncStatus === 'bad' ? 'danger' : 'muted'} />
           </View>
           <Text numberOfLines={1} style={{ color: colors.textSecondary, fontSize: 12, marginTop: 3 }}>
-            {getModelName(primaryModel)} · {provider.models.length} 个模型 · {getProviderPreset(provider.presetId).name}
+            {getModelName(primaryModel)} · {t('apiKeyPanel.modelCount', { count: provider.models.length })} · {getProviderPreset(provider.presetId).name}
           </Text>
           <Text numberOfLines={1} style={{ color: colors.textTertiary, fontSize: 11, marginTop: 2 }}>
-            上下文 {formatTokenLimit(primaryModelConfig.contextWindow)} · 已同步分组 {syncedGroups}/{groupCount}
+            {t('apiKeyPanel.contextGroups', { context: formatTokenLimit(primaryModelConfig.contextWindow), synced: syncedGroups, total: groupCount })}
           </Text>
         </View>
         {provider.lastTestStatus === 'ok' ? <Check color={colors.success} size={18} /> : null}
@@ -282,27 +280,27 @@ export function ApiKeyPanel({ provider, initiallyExpanded = false }: ApiKeyPanel
       {expanded ? (
         <MotiView from={{ opacity: 0, translateY: -8 }} animate={{ opacity: 1, translateY: 0 }} transition={{ type: 'spring', damping: 20, stiffness: 180 }} style={{ marginTop: 14, gap: 12 }}>
           <View style={{ flexDirection: 'row', gap: 8, flexWrap: 'wrap' }}>
-            <MiniAction active={isDefault} label={isDefault ? '默认' : '设默认'} onPress={setDefaultProvider}>
+            <MiniAction active={isDefault} label={isDefault ? t('settings.default') : t('apiKeyPanel.setDefault')} onPress={setDefaultProvider}>
               <Star color={isDefault ? colors.warning : colors.textTertiary} size={15} fill={isDefault ? colors.warning : 'transparent'} />
             </MiniAction>
-            <MiniAction active={provider.enabled} label={provider.enabled ? '已启用' : '已停用'} onPress={() => void toggleProviderEnabled()}>
+            <MiniAction active={provider.enabled} label={provider.enabled ? t('apiKeyPanel.enabledState') : t('apiKeyPanel.disabledState')} onPress={() => void toggleProviderEnabled()}>
               <Power color={provider.enabled ? colors.success : colors.textTertiary} size={15} />
             </MiniAction>
-            <MiniAction label="接受识别" onPress={() => void acceptDetection()}>
+            <MiniAction label={t('apiKeyPanel.acceptDetection')} onPress={() => void acceptDetection()}>
               <SearchCheck color={colors.textTertiary} size={15} />
             </MiniAction>
-            <MiniAction label={task === 'probing' ? '探测中' : '网络探测'} onPress={() => void probeDetection()} disabled={isBusy || !baseUrl.trim() || !hasKey}>
+            <MiniAction label={task === 'probing' ? t('apiKeyPanel.probing') : t('apiKeyPanel.networkProbe')} onPress={() => void probeDetection()} disabled={isBusy || !baseUrl.trim() || !hasKey}>
               <Sparkles color={colors.textTertiary} size={15} />
             </MiniAction>
-            <MiniAction label="低速同步" onPress={() => void syncModels()} disabled={isBusy || !hasKey}>
+            <MiniAction label={t('settings.syncAndTest')} onPress={() => void syncAndTest()} disabled={isBusy || !hasKey}>
               <ListFilter color={colors.textTertiary} size={15} />
             </MiniAction>
           </View>
 
           <View style={{ borderRadius: 18, padding: 11, backgroundColor: colors.islandRaised }}>
-            <Text style={{ color: colors.text, fontSize: 13, fontWeight: '900' }}>自动识别</Text>
+            <Text style={{ color: colors.text, fontSize: 13, fontWeight: '900' }}>{t('apiKeyPanel.autoDetect')}</Text>
             <Text style={{ color: colors.textSecondary, fontSize: 12, lineHeight: 17, marginTop: 4 }}>
-              {detection.reason} · 建议 {getProviderPreset(detection.presetId).name}
+              {detection.reason} · {t('apiKeyPanel.suggestedPreset', { name: getProviderPreset(detection.presetId).name })}
             </Text>
             <View style={{ flexDirection: 'row', gap: 8, flexWrap: 'wrap', marginTop: 10 }}>
               {PROVIDER_PRESETS.map((preset) => (
@@ -312,7 +310,7 @@ export function ApiKeyPanel({ provider, initiallyExpanded = false }: ApiKeyPanel
           </View>
 
           <IslandField
-            label="站点 / Base URL"
+            label={t('providerSettings.baseUrl')}
             inputProps={{
               value: baseUrl,
               onChangeText: (value) => {
@@ -327,9 +325,9 @@ export function ApiKeyPanel({ provider, initiallyExpanded = false }: ApiKeyPanel
 
           <View style={{ gap: 10 }}>
             <SectionHeader
-              title="令牌分组"
+              title={t('apiKeyPanel.credentialGroups')}
               action={
-                <MiniAction label="加入" onPress={addPendingGroups} disabled={isBusy || !(singleCredentialText.trim() || credentialText.trim())}>
+                <MiniAction label={t('apiKeyPanel.add')} onPress={addPendingGroups} disabled={isBusy || !(singleCredentialText.trim() || credentialText.trim())}>
                   <Plus color={colors.textTertiary} size={15} />
                 </MiniAction>
               }
@@ -350,11 +348,11 @@ export function ApiKeyPanel({ provider, initiallyExpanded = false }: ApiKeyPanel
               </View>
             ) : (
               <View style={{ borderRadius: 18, padding: 12, backgroundColor: colors.islandRaised, borderWidth: 1, borderColor: colors.border }}>
-                <Text style={{ color: colors.textSecondary, fontSize: 12, lineHeight: 18, fontWeight: '800' }}>暂无令牌分组</Text>
+                <Text style={{ color: colors.textSecondary, fontSize: 12, lineHeight: 18, fontWeight: '800' }}>{t('apiKeyPanel.noCredentialGroups')}</Text>
               </View>
             )}
             <IslandField
-              label="新增单个令牌"
+              label={t('apiKeyPanel.addSingleToken')}
               inputProps={{
                 value: singleCredentialText,
                 onChangeText: (value) => {
@@ -368,8 +366,8 @@ export function ApiKeyPanel({ provider, initiallyExpanded = false }: ApiKeyPanel
               }}
             />
             <IslandField
-              label="批量新增令牌"
-              note="每行、逗号或中文逗号分隔；点“加入”后先进入待保存分组。"
+              label={t('apiKeyPanel.addMultipleTokens')}
+              note={t('apiKeyPanel.addMultipleTokensNote')}
               inputProps={{
                 value: credentialText,
                 onChangeText: (value) => {
@@ -388,20 +386,20 @@ export function ApiKeyPanel({ provider, initiallyExpanded = false }: ApiKeyPanel
 
           <View style={{ gap: 10 }}>
             <SectionHeader
-              title="模型列表"
-              description={modelEditing ? '编辑中' : `${currentModels.length} 个模型`}
+              title={t('apiKeyPanel.modelList')}
+              description={modelEditing ? t('apiKeyPanel.editing') : t('apiKeyPanel.modelCount', { count: currentModels.length })}
               action={
                 modelEditing ? (
                   <View style={{ flexDirection: 'row', gap: 8 }}>
-                    <MiniAction label="取消" onPress={cancelModelEditing}>
+                    <MiniAction label={t('common.cancel')} onPress={cancelModelEditing}>
                       <RotateCw color={colors.textTertiary} size={15} />
                     </MiniAction>
-                    <MiniAction label="保存" onPress={() => void save()} disabled={isBusy}>
+                    <MiniAction label={t('common.save')} onPress={() => void save()} disabled={isBusy}>
                       <Check color={colors.textTertiary} size={15} />
                     </MiniAction>
                   </View>
                 ) : (
-                  <MiniAction label="编辑" onPress={enterModelEditing}>
+                  <MiniAction label={t('common.edit')} onPress={enterModelEditing}>
                     <ListFilter color={colors.textTertiary} size={15} />
                   </MiniAction>
                 )
@@ -409,7 +407,7 @@ export function ApiKeyPanel({ provider, initiallyExpanded = false }: ApiKeyPanel
             />
             {modelEditing ? (
               <IslandField
-                label="模型 ID"
+                label={t('apiKeyPanel.modelId')}
                 inputProps={{
                   value: modelsText,
                   onChangeText: (value) => {
@@ -419,7 +417,7 @@ export function ApiKeyPanel({ provider, initiallyExpanded = false }: ApiKeyPanel
                   autoCapitalize: 'none',
                   autoCorrect: false,
                   multiline: true,
-                  placeholder: getProviderModels(provider.type).map((model) => model.id).join('\n') || '每行一个模型 ID',
+                  placeholder: t('providerSettings.oneModelPerLine'),
                   style: { minHeight: 116, maxHeight: 190, paddingVertical: 12, lineHeight: 20 },
                 }}
               />
@@ -430,15 +428,14 @@ export function ApiKeyPanel({ provider, initiallyExpanded = false }: ApiKeyPanel
 
           {provider.lastModelSyncMessage || provider.lastTestMessage ? (
             <View style={{ borderRadius: 16, padding: 10, backgroundColor: colors.islandRaised }}>
-              {provider.lastModelSyncMessage ? <Text style={{ color: provider.lastModelSyncStatus === 'bad' ? colors.error : colors.textSecondary, fontSize: 11, lineHeight: 16 }}>模型同步：{provider.lastModelSyncMessage}</Text> : null}
-              {provider.lastTestMessage ? <Text style={{ color: provider.lastTestStatus === 'bad' ? colors.error : colors.textSecondary, fontSize: 11, lineHeight: 16, marginTop: provider.lastModelSyncMessage ? 3 : 0 }}>模型测试：{provider.lastTestMessage}</Text> : null}
+              {provider.lastModelSyncMessage ? <Text style={{ color: provider.lastModelSyncStatus === 'bad' ? colors.error : colors.textSecondary, fontSize: 11, lineHeight: 16 }}>{t('apiKeyPanel.syncAndTestLabel', { message: provider.lastModelSyncMessage })}</Text> : null}
+              {provider.lastTestMessage && provider.lastTestMessage !== provider.lastModelSyncMessage ? <Text style={{ color: provider.lastTestStatus === 'bad' ? colors.error : colors.textSecondary, fontSize: 11, lineHeight: 16, marginTop: provider.lastModelSyncMessage ? 3 : 0 }}>{provider.lastTestMessage}</Text> : null}
             </View>
           ) : null}
 
           <View style={{ flexDirection: 'row', gap: 10, flexWrap: 'wrap' }}>
-            <ActionButton label={task === 'saving' ? '保存中' : '保存'} busy={task === 'saving'} onPress={() => void save()} />
-            <ActionButton label="低速获取模型" busy={task === 'syncing'} disabled={!hasKey || isBusy} onPress={() => void syncModels()} secondary />
-            <ActionButton label="测试首选模型" busy={task === 'testing'} disabled={!hasKey || isBusy} onPress={() => void verifyModel()} secondary />
+            <ActionButton label={task === 'saving' ? t('apiKeyPanel.saving') : t('common.save')} busy={task === 'saving'} onPress={() => void save()} />
+            <ActionButton label={t('settings.syncAndTest')} busy={task === 'syncing'} disabled={!hasKey || isBusy} onPress={() => void syncAndTest()} secondary />
           </View>
 
           {notice ? <Text style={{ color: provider.lastTestStatus === 'bad' ? colors.error : colors.textSecondary, fontSize: 12, lineHeight: 18 }}>{notice}</Text> : null}
@@ -448,14 +445,14 @@ export function ApiKeyPanel({ provider, initiallyExpanded = false }: ApiKeyPanel
   )
 }
 
-function createIncomingGroups(offset: number, input: string): ProviderCredentialGroup[] {
+function createIncomingGroups(offset: number, input: string, t: TFunction): ProviderCredentialGroup[] {
   return parseCredentialGroups(input).map((group, index) => ({
     ...group,
-    label: `令牌分组 ${offset + index + 1}`,
+    label: t('apiKeyPanel.groupName', { index: offset + index + 1 }),
   }))
 }
 
-function mergeGroups(existing: ProviderCredentialGroup[], incoming: ProviderCredentialGroup[]): ProviderCredentialGroup[] {
+function mergeGroups(existing: ProviderCredentialGroup[], incoming: ProviderCredentialGroup[], t: TFunction): ProviderCredentialGroup[] {
   const seenKeys = new Set<string>()
   return [...existing, ...incoming].filter((group) => {
     const key = group.apiKey?.trim()
@@ -465,20 +462,8 @@ function mergeGroups(existing: ProviderCredentialGroup[], incoming: ProviderCred
     return true
   }).map((group, index) => ({
     ...group,
-    label: group.label || `令牌分组 ${index + 1}`,
+    label: group.label || t('apiKeyPanel.groupName', { index: index + 1 }),
   }))
-}
-
-function parseModels(text: string): string[] {
-  const seen = new Set<string>()
-  return text
-    .split(/[\n,]/)
-    .map((item) => item.trim())
-    .filter((item) => {
-      if (!item || seen.has(item)) return false
-      seen.add(item)
-      return true
-    })
 }
 
 function Badge({ label, tone }: { label: string; tone: 'success' | 'warning' | 'danger' | 'muted' }) {
@@ -529,19 +514,20 @@ function CredentialGroupRow({
   onDelete: () => void
 }) {
   const { colors } = useAppTheme()
+  const { t } = useTranslation()
   const statusTone = group.lastModelSyncStatus === 'bad' ? colors.error : group.enabled ? colors.success : colors.textTertiary
   const statusText = group.lastModelSyncStatus === 'ok'
-    ? '已同步'
+    ? t('apiKeyPanel.synced')
     : group.lastModelSyncStatus === 'bad'
-      ? '同步失败'
-      : group.enabled ? '启用' : '停用'
+      ? t('apiKeyPanel.syncFailed')
+      : group.enabled ? t('apiKeyPanel.enabled') : t('apiKeyPanel.disabled')
   return (
     <View style={{ borderRadius: 18, padding: 11, backgroundColor: colors.islandRaised, borderWidth: 1, borderColor: group.enabled ? colors.borderStrong : colors.border, gap: 9 }}>
       <View style={{ flexDirection: 'row', gap: 8, alignItems: 'center' }}>
         <TextInput
           value={group.label}
           onChangeText={onChangeLabel}
-          placeholder={`令牌分组 ${index + 1}`}
+          placeholder={t('apiKeyPanel.groupName', { index: index + 1 })}
           placeholderTextColor={colors.textTertiary}
           autoCapitalize="none"
           autoCorrect={false}
@@ -558,18 +544,18 @@ function CredentialGroupRow({
             fontWeight: '900',
           }}
         />
-        <IconPill label={group.enabled ? '停用' : '启用'} onPress={onToggle} tone={group.enabled ? 'mint' : 'default'}>
+        <IconPill label={group.enabled ? t('apiKeyPanel.disabled') : t('apiKeyPanel.enabled')} onPress={onToggle} tone={group.enabled ? 'mint' : 'default'}>
           <Power color={group.enabled ? colors.success : colors.textTertiary} size={15} />
         </IconPill>
-        <IconPill label="删除" onPress={onDelete} tone="danger">
+        <IconPill label={t('common.delete')} onPress={onDelete} tone="danger">
           <Trash2 color={colors.error} size={15} />
         </IconPill>
       </View>
       <View style={{ flexDirection: 'row', gap: 7, flexWrap: 'wrap', alignItems: 'center' }}>
-        <Text style={{ color: colors.textSecondary, fontSize: 11, fontWeight: '900' }}>{maskedKey || '新令牌待保存'}</Text>
-        <Text style={{ color: colors.textTertiary, fontSize: 11, fontWeight: '800' }}>{group.availableModels?.length ?? 0} 模型</Text>
+        <Text style={{ color: colors.textSecondary, fontSize: 11, fontWeight: '900' }}>{maskedKey || t('apiKeyPanel.newTokenPending')}</Text>
+        <Text style={{ color: colors.textTertiary, fontSize: 11, fontWeight: '800' }}>{t('apiKeyPanel.modelCount', { count: group.availableModels?.length ?? 0 })}</Text>
         <Text style={{ color: statusTone, fontSize: 11, fontWeight: '900' }}>{statusText}</Text>
-        {group.failureCount ? <Text style={{ color: colors.error, fontSize: 11, fontWeight: '900' }}>失败 {group.failureCount}</Text> : null}
+        {group.failureCount ? <Text style={{ color: colors.error, fontSize: 11, fontWeight: '900' }}>{t('apiKeyPanel.failureCount', { count: group.failureCount })}</Text> : null}
       </View>
     </View>
   )
@@ -577,12 +563,12 @@ function CredentialGroupRow({
 
 function ModelSummary({ models, providerType }: { models: string[]; providerType: AIProvider['type'] }) {
   const { colors } = useAppTheme()
-  const defaults = getProviderModels(providerType).map((model) => model.id)
-  const shown = (models.length ? models : defaults).slice(0, 8)
+  const { t } = useTranslation()
+  const shown = models.slice(0, 8)
   if (!shown.length) {
     return (
       <View style={{ borderRadius: 18, padding: 12, backgroundColor: colors.islandRaised, borderWidth: 1, borderColor: colors.border }}>
-        <Text style={{ color: colors.textSecondary, fontSize: 12, lineHeight: 18, fontWeight: '800' }}>暂无模型</Text>
+        <Text style={{ color: colors.textSecondary, fontSize: 12, lineHeight: 18, fontWeight: '800' }}>{t('apiKeyPanel.noModels')}</Text>
       </View>
     )
   }

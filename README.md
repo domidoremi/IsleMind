@@ -8,19 +8,33 @@ IsleMind is a local-first mobile AI workspace for focused conversations, private
 
 - Chat with configurable AI providers and models.
 - Keep conversations, settings, and local context on your device.
-- Import knowledge, search saved context, and export your data as JSON.
-- Trace source and process details when reviewing model output.
+- Import knowledge with Agentic RAG: hybrid search, semantic chunking, local rerank, citations, and graceful fallback.
+- Download optional local embedding models in the app, or use the hash embedding fallback with no model files.
+- Trace source, retrieval, and process details when reviewing model output.
 - Update Android builds through GitHub Release APKs.
 
 ## Download
 
 Download the latest Android APK from [GitHub Releases](https://github.com/domidoremi/IsleMind/releases/latest), then install it on your device. Use the universal APK unless you specifically need a smaller ABI-only package.
 
-Current app version: `1.0.0`.
+Current app version: `1.0.2`.
+
+Release APKs are split by local model bundle:
+
+- `no-model`: default build, no local model files bundled.
+- `with-model-small`: bundles `all-MiniLM-L6-v2` for local embedding.
+
+The app can also download and verify local RAG models from the local model page.
+
+## Local RAG Models
+
+IsleMind's default APK does not include model weights. Optional local models are listed in `assets/models/catalog.json`; detailed source and attribution notes are in `assets/models/NOTICE.md`.
+
+Current catalog entries are ONNX distributions published by Xenova on Hugging Face, with upstream model families from `sentence-transformers` and BAAI. Model files are not authored by IsleMind contributors. Review the upstream model cards and licenses before redistribution.
 
 ## Privacy
 
-IsleMind is local-first. Conversations, settings, context index data, and provider configuration stay on the device unless you export/import JSON or send content to a configured AI provider. Secure provider keys are not included in JSON exports.
+IsleMind is local-first. Conversations, settings, context index data, Agentic RAG indexes, and provider configuration stay on the device unless you export/import JSON, download a local model, or send content to a configured AI provider. Secure provider keys are not included in JSON exports.
 
 ## Updates
 

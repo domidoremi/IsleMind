@@ -1,6 +1,6 @@
 import * as DocumentPicker from 'expo-document-picker'
 import * as FileSystem from 'expo-file-system/legacy'
-import type { AIProvider, Conversation, Message, RetrievalSource } from '@/types'
+import type { AIProvider, Conversation, Message, RagEvaluationResult, RagQueryPlan, RagTraceStep, RetrievalSource } from '@/types'
 import { generateText } from '@/services/ai/base'
 import {
   addMemory,
@@ -13,6 +13,8 @@ import {
 import { localDataStore } from '@/services/localDataStore'
 import { useSettingsStore } from '@/store/settingsStore'
 import { searchWeb as searchWebWithAdapters } from '@/services/searchAdapters'
+import { buildCompressedContextPrompt, buildFlareContextPrompt, runAgenticRag } from '@/services/rag'
+import { st } from '@/i18n/service'
 
 const TEXT_MIME_HINTS = ['text/', 'application/json', 'application/javascript', 'application/xml', 'text/xml', 'text/csv']
 const MAX_CONTEXT_ITEMS = 8
@@ -20,6 +22,16 @@ const MAX_CONTEXT_ITEMS = 8
 export interface RetrievedContext {
   sources: RetrievalSource[]
   prompt: string
+  plan?: RagQueryPlan
+  trace?: RagTraceStep[]
+  quality?: RagEvaluationResult
+}
+
+export interface FlareRetrievalResult {
+  sources: RetrievalSource[]
+  prompt: string
+  trace: RagTraceStep[]
+  quality?: RagEvaluationResult
 }
 
 export async function retrieveContext(conversation: Conversation, draftMessage: Message): Promise<RetrievedContext> {
@@ -31,16 +43,100 @@ export async function retrieveContext(conversation: Conversation, draftMessage: 
   const settings = useSettingsStore.getState().settings
   const query = [draftMessage.content, conversation.title, conversation.systemPrompt].filter(Boolean).join('\n')
   const provider = await useSettingsStore.getState().hydrateProviderKey(conversation.providerId)
-  const groups = await Promise.all([
-    settings.memoryEnabled ? searchMemories(query, settings.memoryTopK ?? 4) : Promise.resolve([]),
-    settings.knowledgeEnabled && settings.ragMode !== 'off'
-      ? searchKnowledgeSafely(query, settings.knowledgeTopK ?? 4, settings.ragMode ?? 'hybrid', settings.embeddingMode ?? 'hybrid', provider ?? undefined)
-      : Promise.resolve([]),
-  ])
-  const sources = groups.flat().slice(0, MAX_CONTEXT_ITEMS)
+  const memorySources = settings.memoryEnabled ? await searchMemories(query, settings.memoryTopK ?? 4) : []
+  if (!settings.knowledgeEnabled || settings.ragMode === 'off') {
+    const sources = memorySources.slice(0, MAX_CONTEXT_ITEMS)
+    return {
+      sources,
+      prompt: formatContextPrompt(sources),
+    }
+  }
+  const rag = await runAgenticRag({
+    query,
+    conversationTitle: conversation.title,
+    systemPrompt: conversation.systemPrompt,
+    settings,
+    memorySources,
+    maxContextItems: Math.max(settings.knowledgeTopK ?? 4, settings.memoryTopK ?? 4, MAX_CONTEXT_ITEMS),
+    retrieveKnowledge: (variant, limit) => searchKnowledgeSafely(variant, limit, settings.ragMode === 'fts' ? 'fts' : 'hybrid', settings.embeddingMode ?? 'hybrid', provider ?? undefined),
+    retrieveAgentic: (variant, plan, limit) => localDataStore.searchAgenticIndexes(variant, { limit, plan }),
+  })
+  void localDataStore.logRagEvaluation({
+    query,
+    plan: rag.plan,
+    quality: rag.quality,
+    sourceCount: rag.sources.length,
+    latencyMs: rag.quality.latencyMs,
+    flareTriggered: rag.quality.flareTriggered,
+    fallbackReasons: rag.quality.fallbackReasons,
+  })
+  const sources = rag.sources.slice(0, MAX_CONTEXT_ITEMS)
   return {
     sources,
-    prompt: formatContextPrompt(sources),
+    prompt: rag.contextPrompt || formatContextPrompt(sources),
+    plan: rag.plan,
+    trace: rag.trace,
+    quality: rag.quality,
+  }
+}
+
+export async function retrieveFlareContext(input: {
+  conversation: Conversation
+  query: string
+  followupQuery: string
+  excludeChunkIds?: string[]
+  limit?: number
+}): Promise<FlareRetrievalResult> {
+  const settings = useSettingsStore.getState().settings
+  if (!settings.knowledgeEnabled || settings.ragMode === 'off') {
+    return { sources: [], prompt: '', trace: [] }
+  }
+  const provider = await useSettingsStore.getState().hydrateProviderKey(input.conversation.providerId)
+  const startedAt = Date.now()
+  const hits = await searchKnowledgeSafely(
+    input.followupQuery || input.query,
+    input.limit ?? 4,
+    settings.ragMode === 'fts' ? 'fts' : 'hybrid',
+    settings.embeddingMode ?? 'hybrid',
+    provider ?? undefined
+  )
+  const excluded = new Set(input.excludeChunkIds ?? [])
+  const advanced = await localDataStore.searchAgenticIndexes(input.followupQuery || input.query, {
+    limit: input.limit ?? 4,
+    techniques: ['raptor', 'graphrag', 'colbert'],
+  })
+  const merged = dedupeSources([...hits, ...advanced]).filter((source) => !source.chunkId || !excluded.has(source.chunkId)).slice(0, input.limit ?? 4)
+  const trace: RagTraceStep = {
+    id: `flare-retrieve-${Date.now()}`,
+    stage: 'flare',
+    title: 'FLARE active retrieval',
+    status: merged.length ? 'done' : 'skipped',
+    startedAt,
+    completedAt: Date.now(),
+    durationMs: Date.now() - startedAt,
+    content: merged.length ? `${merged.length} supplemental sources` : 'No supplemental evidence found.',
+    metadata: {
+      sourceCount: merged.length,
+      followupQuery: input.followupQuery,
+    },
+  }
+  return {
+    sources: merged,
+    prompt: buildFlareContextPrompt(input.query, merged),
+    trace: [trace],
+    quality: {
+      sourceCount: merged.length,
+      candidateCount: hits.length + advanced.length,
+      citationCoverage: merged.length ? 1 : 0,
+      contextPrecision: merged.length ? Math.min(1, merged.reduce((sum, source) => sum + (source.score ?? 0), 0) / merged.length) : 0,
+      compressionRatio: 1,
+      confidence: merged.length ? 0.62 : 0,
+      activeRetrievals: 1,
+      missingEvidence: merged.length === 0,
+      warnings: merged.length ? [] : ['missing-evidence'],
+      flareTriggered: true,
+      latencyMs: trace.durationMs,
+    },
   }
 }
 
@@ -103,20 +199,21 @@ export async function importKnowledgeFile(provider?: AIProvider, model?: string)
     copyToCacheDirectory: true,
     type: ['text/*', 'application/json', 'application/javascript', 'application/xml', 'text/xml', 'text/csv', 'application/pdf'],
   })
-  if (picked.canceled || !picked.assets[0]) return { ok: false, message: '未选择文件。' }
+  if (picked.canceled || !picked.assets[0]) return { ok: false, message: st('contextImport.noFileSelected') }
   const asset = picked.assets[0]
   const mimeType = asset.mimeType || 'application/octet-stream'
   const size = asset.size ?? 0
 
   if (isTextMime(mimeType) || asset.name.match(/\.(md|txt|json|csv|xml|js|ts|tsx|jsx)$/i)) {
     const text = await FileSystem.readAsStringAsync(asset.uri, { encoding: FileSystem.EncodingType.UTF8 })
-    await importKnowledgeText({ title: asset.name, mimeType, size, text, sourceUri: asset.uri }, { provider, embeddingMode: useSettingsStore.getState().settings.embeddingMode ?? 'hybrid' })
-    return { ok: true, message: `已导入 ${asset.name}` }
+    const settings = useSettingsStore.getState().settings
+    await importKnowledgeText({ title: asset.name, mimeType, size, text, sourceUri: asset.uri }, { provider, embeddingMode: settings.embeddingMode ?? 'hybrid', localEmbeddingModelId: settings.localEmbeddingModelId, localEmbeddingModelSource: settings.localEmbeddingModelSource })
+    return { ok: true, message: st('contextImport.importedFile', { name: asset.name }) }
   }
 
   if (mimeType === 'application/pdf' || asset.name.toLowerCase().endsWith('.pdf')) {
     if (!provider?.apiKey || !model) {
-      return { ok: false, message: '导入 PDF 需要先配置当前默认服务商的 API Key。' }
+      return { ok: false, message: st('contextImport.pdfNeedsKey') }
     }
     const base64 = await FileSystem.readAsStringAsync(asset.uri, { encoding: FileSystem.EncodingType.Base64 })
     const text = await generateText({
@@ -136,28 +233,29 @@ export async function importKnowledgeFile(provider?: AIProvider, model?: string)
       temperature: 0.1,
       maxTokens: 12000,
     })
-    if (!text.trim()) return { ok: false, message: 'PDF 文本抽取失败，未写入知识库。' }
-    await importKnowledgeText({ title: asset.name, mimeType, size, text, sourceUri: asset.uri }, { provider, embeddingMode: useSettingsStore.getState().settings.embeddingMode ?? 'hybrid' })
-    return { ok: true, message: `已抽取并导入 ${asset.name}` }
+    if (!text.trim()) return { ok: false, message: st('contextImport.pdfExtractFailed') }
+    const settings = useSettingsStore.getState().settings
+    await importKnowledgeText({ title: asset.name, mimeType, size, text, sourceUri: asset.uri }, { provider, embeddingMode: settings.embeddingMode ?? 'hybrid', localEmbeddingModelId: settings.localEmbeddingModelId, localEmbeddingModelSource: settings.localEmbeddingModelSource })
+    return { ok: true, message: st('contextImport.pdfImported', { name: asset.name }) }
   }
 
-  return { ok: false, message: '暂不支持这个文件类型。' }
+  return { ok: false, message: st('contextImport.unsupportedFileType') }
 }
 
 export async function importKnowledgePlainText(title: string, text: string, provider?: AIProvider): Promise<{ ok: boolean; message: string }> {
   await initializeContextStore()
   const content = text.trim()
-  if (!content) return { ok: false, message: '文本为空，未导入。' }
+  if (!content) return { ok: false, message: st('contextImport.emptyText') }
   await importKnowledgeText(
     {
-      title: title.trim() || `粘贴文本 ${new Date().toLocaleString()}`,
+      title: title.trim() || st('contextImport.pastedTextTitle', { time: new Date().toLocaleString() }),
       mimeType: 'text/plain',
       size: content.length,
       text: content,
     },
-    { provider, embeddingMode: useSettingsStore.getState().settings.embeddingMode ?? 'hybrid' }
+    { provider, embeddingMode: useSettingsStore.getState().settings.embeddingMode ?? 'hybrid', localEmbeddingModelId: useSettingsStore.getState().settings.localEmbeddingModelId, localEmbeddingModelSource: useSettingsStore.getState().settings.localEmbeddingModelSource }
   )
-  return { ok: true, message: '已导入粘贴文本。' }
+  return { ok: true, message: st('contextImport.pastedTextImported') }
 }
 
 async function searchKnowledgeSafely(
@@ -169,7 +267,8 @@ async function searchKnowledgeSafely(
 ): Promise<RetrievalSource[]> {
   try {
     if (ragMode === 'hybrid') {
-      return await localDataStore.searchHybrid(query, { limit, mode: 'hybrid', embeddingMode, provider })
+      const settings = useSettingsStore.getState().settings
+      return await localDataStore.searchHybrid(query, { limit, mode: 'hybrid', embeddingMode, localEmbeddingModelId: settings.localEmbeddingModelId, localEmbeddingModelSource: settings.localEmbeddingModelSource, provider })
     }
     return await searchKnowledge(query, limit)
   } catch {
@@ -189,11 +288,18 @@ export function formatContextPrompt(sources: RetrievalSource[]): string {
   if (!sources.length) return ''
   return [
     '以下是本机上下文增强材料。请只在相关时使用；如果材料不足或不确定，请明确说明。',
-    ...sources.map((source, index) => {
-      const label = source.type === 'memory' ? '记忆' : source.type === 'knowledge' ? '知识库' : '联网搜索'
-      return `[${index + 1}] ${label} - ${source.title}\n${source.content}`
-    }),
+    buildCompressedContextPrompt(sources),
   ].join('\n\n')
+}
+
+function dedupeSources(sources: RetrievalSource[]): RetrievalSource[] {
+  const map = new Map<string, RetrievalSource>()
+  for (const source of sources) {
+    const key = source.chunkId ?? source.url ?? source.id
+    const existing = map.get(key)
+    if (!existing || (source.score ?? 0) > (existing.score ?? 0)) map.set(key, source)
+  }
+  return Array.from(map.values()).sort((a, b) => (b.score ?? 0) - (a.score ?? 0))
 }
 
 function parseMemoryItems(raw: string): string[] {

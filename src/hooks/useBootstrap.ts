@@ -5,6 +5,8 @@ import { useSettingsStore } from '@/store/settingsStore'
 import { initializeContextStore } from '@/services/contextStore'
 import { localDataStore } from '@/services/localDataStore'
 import { checkLatestApkReleaseSilently, shouldAutoCheckApkUpdate } from '@/services/appUpdates'
+import { initI18n } from '@/i18n'
+import { st } from '@/i18n/service'
 import { colors } from '@/theme/colors'
 import { useAppTheme } from './useAppTheme'
 
@@ -23,13 +25,14 @@ export function useBootstrap() {
     let mounted = true
     async function load() {
       const results = await Promise.allSettled([
-        safeBootstrap('对话数据', loadChats),
-        safeBootstrap('应用设置', loadSettings),
+        safeBootstrap(st('bootstrap.chatData'), loadChats),
+        safeBootstrap(st('bootstrap.settings'), loadSettings),
       ])
       const initialErrors = results.filter((result) => result.status === 'rejected').length
+      initI18n(useSettingsStore.getState().settings.language)
 
       if (mounted) {
-        void safeBootstrap('本地数据库', async () => {
+        void safeBootstrap(st('bootstrap.localDatabase'), async () => {
           await localDataStore.initialize()
           await initializeContextStore()
         }).catch(() => {
@@ -40,14 +43,14 @@ export function useBootstrap() {
           ready: true,
           errorCount: current.errorCount + initialErrors,
         }))
-        void safeBootstrap('更新检查', async () => {
+        void safeBootstrap(st('bootstrap.updateCheck'), async () => {
           const settings = useSettingsStore.getState().settings
           if (!(settings.autoUpdateCheckEnabled ?? true)) return
           if (!shouldAutoCheckApkUpdate(settings.lastApkUpdateCheckAt)) return
           const result = await checkLatestApkReleaseSilently()
           useSettingsStore.getState().updateSettings({ lastApkUpdateCheckAt: Date.now() })
           if (result.status === 'available' && result.release) {
-            setState((current) => ({ ...current, updateNotice: `发现新版 APK：${result.release?.version}` }))
+            setState((current) => ({ ...current, updateNotice: st('updates.available', { version: result.release?.version ?? '' }) }))
           }
         }).catch(() => {
           setState((current) => ({ ...current, errorCount: current.errorCount + 1 }))
@@ -71,8 +74,8 @@ async function safeBootstrap(label: string, task: () => Promise<void>): Promise<
   try {
     await task()
   } catch (error) {
-    const message = error instanceof Error ? error.message : '未知错误'
-    useChatStore.getState().setError(`${label}初始化失败：${message}`)
+    const message = error instanceof Error ? error.message : st('error.unknownError')
+    useChatStore.getState().setError(st('bootstrap.failed', { label, message }))
     throw error
   }
 }

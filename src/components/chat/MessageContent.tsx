@@ -2,6 +2,8 @@ import { useMemo, useState, type ReactNode } from 'react'
 import { ScrollView, Text, View } from 'react-native'
 import * as Clipboard from 'expo-clipboard'
 import Markdown from 'react-native-markdown-display'
+import type { TFunction } from 'i18next'
+import { useTranslation } from 'react-i18next'
 import { BarChart3, Braces, ChevronDown, Copy, Table2, Workflow } from 'lucide-react-native'
 import { MotiView } from 'moti'
 import { useAppTheme } from '@/hooks/useAppTheme'
@@ -24,7 +26,8 @@ const DIAGRAM_LANGUAGES = new Set(['mermaid', 'flowchart', 'graphviz', 'dot', 'p
 const DATA_LANGUAGES = new Set(['json', 'jsonc', 'yaml', 'yml', 'csv', 'tsv', 'chart', 'vega', 'vega-lite', 'echarts'])
 
 export function MessageContent({ content, isUser = false }: MessageContentProps) {
-  const segments = useMemo(() => safeParseRichContent(content), [content])
+  const { t } = useTranslation()
+  const segments = useMemo(() => safeParseRichContent(content, t), [content, t])
 
   return (
     <View style={{ gap: 8, maxWidth: '100%', overflow: 'hidden' }}>
@@ -39,9 +42,9 @@ export function MessageContent({ content, isUser = false }: MessageContentProps)
   )
 }
 
-function safeParseRichContent(content: string): RichSegment[] {
+function safeParseRichContent(content: string, t: TFunction): RichSegment[] {
   try {
-    const segments = parseRichContent(content)
+    const segments = parseRichContent(content, t)
     return segments.length ? segments : [{ id: 'markdown-empty', type: 'markdown', content }]
   } catch {
     return [{ id: 'markdown-fallback', type: 'markdown', content }]
@@ -80,6 +83,7 @@ function RichMarkdown({ content, isUser }: { content: string; isUser: boolean })
 
 function CodeBlockCard({ content, language, isUser }: { content: string; language?: string; isUser: boolean }) {
   const { colors, isDark } = useAppTheme()
+  const { t } = useTranslation()
   const [expanded, setExpanded] = useState(false)
   const label = language?.trim() || 'code'
   return (
@@ -89,8 +93,8 @@ function CodeBlockCard({ content, language, isUser }: { content: string; languag
         title={label}
         isUser={isUser}
         actions={[
-          { label: '复制', onPress: () => void Clipboard.setStringAsync(content) },
-          { label: expanded ? '收起' : '放大', onPress: () => setExpanded((value) => !value) },
+          { label: t('common.copy'), onPress: () => void Clipboard.setStringAsync(content) },
+          { label: expanded ? t('common.collapse') : t('messageContent.zoom'), onPress: () => setExpanded((value) => !value) },
         ]}
       />
       <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ maxHeight: expanded ? undefined : 280 }}>
@@ -114,8 +118,9 @@ function CodeBlockCard({ content, language, isUser }: { content: string; languag
   )
 }
 
-function TableBlockCard({ rows, title = '表格', isUser }: { rows: string[][]; title?: string; isUser: boolean }) {
+function TableBlockCard({ rows, title, isUser }: { rows: string[][]; title?: string; isUser: boolean }) {
   const { colors, isDark } = useAppTheme()
+  const { t } = useTranslation()
   const safeRows = rows.length ? rows : [['']]
   const columnCount = Math.max(...safeRows.map((row) => row.length), 1)
   const normalizedRows = safeRows.map((row) => Array.from({ length: columnCount }, (_, index) => row[index] ?? ''))
@@ -125,11 +130,11 @@ function TableBlockCard({ rows, title = '表格', isUser }: { rows: string[][]; 
     <RichCard isUser={isUser} expanded={expanded}>
       <CardHeader
         icon={<Table2 color={isUser ? colors.surface : colors.primary} size={14} strokeWidth={2.1} />}
-        title={title}
+        title={title ?? t('messageContent.table')}
         isUser={isUser}
         actions={[
-          { label: '复制', onPress: () => void Clipboard.setStringAsync(rows.map((row) => row.join('\t')).join('\n')) },
-          ...(normalizedRows.length > 6 ? [{ label: expanded ? '收起' : '展开', onPress: () => setExpanded((value) => !value) }] : []),
+          { label: t('common.copy'), onPress: () => void Clipboard.setStringAsync(rows.map((row) => row.join('\t')).join('\n')) },
+          ...(normalizedRows.length > 6 ? [{ label: expanded ? t('common.collapse') : t('common.expand'), onPress: () => setExpanded((value) => !value) }] : []),
         ]}
       />
       <ScrollView horizontal showsHorizontalScrollIndicator={false}>
@@ -169,7 +174,7 @@ function TableBlockCard({ rows, title = '表格', isUser }: { rows: string[][]; 
       </ScrollView>
       {!expanded && normalizedRows.length > 6 ? (
         <Text style={{ color: isUser ? colors.surface : colors.textTertiary, fontSize: 11, lineHeight: 16, marginTop: 8, fontWeight: '800' }}>
-          已收起 {normalizedRows.length - 6} 行，展开后查看完整表格。
+          {t('messageContent.collapsedRows', { count: normalizedRows.length - 6 })}
         </Text>
       ) : null}
     </RichCard>
@@ -178,20 +183,21 @@ function TableBlockCard({ rows, title = '表格', isUser }: { rows: string[][]; 
 
 function DiagramBlockCard({ content, language, isUser }: { content: string; language?: string; isUser: boolean }) {
   const { colors } = useAppTheme()
+  const { t } = useTranslation()
   const [expanded, setExpanded] = useState(false)
   return (
     <RichCard isUser={isUser} expanded={expanded}>
       <CardHeader
         icon={<Workflow color={isUser ? colors.surface : colors.primary} size={14} strokeWidth={2.1} />}
-        title={`${language || 'diagram'} 源码`}
+        title={t('messageContent.sourceCode', { language: language || 'diagram' })}
         isUser={isUser}
         actions={[
-          { label: '复制', onPress: () => void Clipboard.setStringAsync(content) },
-          { label: expanded ? '收起' : '放大', onPress: () => setExpanded((value) => !value) },
+          { label: t('common.copy'), onPress: () => void Clipboard.setStringAsync(content) },
+          { label: expanded ? t('common.collapse') : t('messageContent.zoom'), onPress: () => setExpanded((value) => !value) },
         ]}
       />
       <Text style={{ color: isUser ? colors.surface : colors.textSecondary, fontSize: 11, lineHeight: 16, marginBottom: 8, fontWeight: '800' }}>
-        当前版本先保证流程图可读、可复制，不伪造不可用的图形渲染。
+        {t('messageContent.diagramFallback')}
       </Text>
       <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ maxHeight: expanded ? undefined : 220 }}>
         <Text selectable style={{ minWidth: 260, color: isUser ? colors.surface : colors.text, fontFamily: 'monospace', fontSize: 12, lineHeight: 18 }}>
@@ -204,6 +210,7 @@ function DiagramBlockCard({ content, language, isUser }: { content: string; lang
 
 function DataBlockCard({ content, language, title, isUser }: { content: string; language?: string; title: string; isUser: boolean }) {
   const { colors } = useAppTheme()
+  const { t } = useTranslation()
   const [expanded, setExpanded] = useState(false)
   const csvRows = language === 'csv' || language === 'tsv' ? parseDelimitedTable(content, language === 'tsv' ? '\t' : ',') : null
   if (csvRows?.length) return <TableBlockCard rows={csvRows} title={title} isUser={isUser} />
@@ -215,8 +222,8 @@ function DataBlockCard({ content, language, title, isUser }: { content: string; 
         title={title}
         isUser={isUser}
         actions={[
-          { label: '复制', onPress: () => void Clipboard.setStringAsync(content) },
-          { label: expanded ? '收起' : '放大', onPress: () => setExpanded((value) => !value) },
+          { label: t('common.copy'), onPress: () => void Clipboard.setStringAsync(content) },
+          { label: expanded ? t('common.collapse') : t('messageContent.zoom'), onPress: () => setExpanded((value) => !value) },
         ]}
       />
       <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ maxHeight: expanded ? undefined : 260 }}>
@@ -230,6 +237,7 @@ function DataBlockCard({ content, language, title, isUser }: { content: string; 
 
 function RichCard({ isUser, expanded, children }: { isUser: boolean; expanded?: boolean; children: ReactNode }) {
   const { colors } = useAppTheme()
+  const { t } = useTranslation()
   return (
     <IslandPanel
       elevated={!isUser}
@@ -258,6 +266,7 @@ function CardHeader({
   isUser: boolean
 }) {
   const { colors } = useAppTheme()
+  const { t } = useTranslation()
   return (
     <View style={{ flexDirection: 'row', alignItems: 'center', gap: 7, marginBottom: 8 }}>
       <View style={{ width: 24, height: 24, borderRadius: 12, alignItems: 'center', justifyContent: 'center', backgroundColor: isUser ? 'rgba(255,255,255,0.1)' : colors.island }}>
@@ -282,9 +291,9 @@ function CardHeader({
             backgroundColor: isUser ? 'rgba(255,255,255,0.12)' : colors.island,
           }}
         >
-          {action.label === '复制' ? <Copy color={isUser ? colors.surface : colors.textTertiary} size={11} strokeWidth={2.2} /> : null}
-          {action.label !== '复制' ? (
-            <MotiView animate={{ rotate: action.label === '收起' ? '180deg' : '0deg' }} transition={{ type: 'timing', duration: 160 }}>
+          {action.label === t('common.copy') ? <Copy color={isUser ? colors.surface : colors.textTertiary} size={11} strokeWidth={2.2} /> : null}
+          {action.label !== t('common.copy') ? (
+            <MotiView animate={{ rotate: action.label === t('common.collapse') ? '180deg' : '0deg' }} transition={{ type: 'timing', duration: 160 }}>
               <ChevronDown color={isUser ? colors.surface : colors.textTertiary} size={11} strokeWidth={2.2} />
             </MotiView>
           ) : null}
@@ -295,7 +304,7 @@ function CardHeader({
   )
 }
 
-function parseRichContent(content: string): RichSegment[] {
+function parseRichContent(content: string, t: TFunction): RichSegment[] {
   const segments: RichSegment[] = []
   const fenceRegex = /```([^\n`]*)\n?([\s\S]*?)```/g
   let lastIndex = 0
@@ -304,24 +313,24 @@ function parseRichContent(content: string): RichSegment[] {
 
   while ((match = fenceRegex.exec(content))) {
     if (match.index > lastIndex) {
-      segments.push(...parseTextSegments(content.slice(lastIndex, match.index), index))
+      segments.push(...parseTextSegments(content.slice(lastIndex, match.index), index, t))
       index = segments.length
     }
     const language = normalizeLanguage(match[1])
     const body = match[2] ?? ''
-    segments.push(createFencedSegment(index, language, body))
+    segments.push(createFencedSegment(index, language, body, t))
     index = segments.length
     lastIndex = fenceRegex.lastIndex
   }
 
   if (lastIndex < content.length) {
-    segments.push(...parseTextSegments(content.slice(lastIndex), index))
+    segments.push(...parseTextSegments(content.slice(lastIndex), index, t))
   }
 
   return segments.filter((segment) => segment.type !== 'markdown' || segment.content.trim())
 }
 
-function createFencedSegment(index: number, language: string | undefined, content: string): RichSegment {
+function createFencedSegment(index: number, language: string | undefined, content: string, t: TFunction): RichSegment {
   if (language && DIAGRAM_LANGUAGES.has(language)) {
     return { id: `diagram-${index}`, type: 'diagram', content, language }
   }
@@ -330,14 +339,14 @@ function createFencedSegment(index: number, language: string | undefined, conten
       return { id: `data-${index}`, type: 'data', content, language, title: language.toUpperCase() }
     }
     if (language === 'json' || language === 'jsonc') {
-      return { id: `data-${index}`, type: 'data', content, language, title: 'JSON 数据' }
+      return { id: `data-${index}`, type: 'data', content, language, title: t('messageContent.jsonData') }
     }
-    return { id: `data-${index}`, type: 'data', content, language, title: '图表数据' }
+    return { id: `data-${index}`, type: 'data', content, language, title: t('messageContent.chartData') }
   }
   return { id: `code-${index}`, type: 'code', content, language }
 }
 
-function parseTextSegments(text: string, startIndex: number): RichSegment[] {
+function parseTextSegments(text: string, startIndex: number, t: TFunction): RichSegment[] {
   const segments: RichSegment[] = []
   const buffer: string[] = []
   const lines = text.split('\n')
@@ -349,9 +358,9 @@ function parseTextSegments(text: string, startIndex: number): RichSegment[] {
     if (!raw.trim()) return
     const trimmed = raw.trim()
     if (looksLikeJson(trimmed)) {
-      segments.push({ id: `data-${index}`, type: 'data', content: trimmed, language: 'json', title: 'JSON 数据' })
+      segments.push({ id: `data-${index}`, type: 'data', content: trimmed, language: 'json', title: t('messageContent.jsonData') })
     } else if (looksLikeCsv(trimmed)) {
-      segments.push({ id: `table-${index}`, type: 'table', rows: parseDelimitedTable(trimmed, ',') ?? [[trimmed]], title: 'CSV 数据' })
+      segments.push({ id: `table-${index}`, type: 'table', rows: parseDelimitedTable(trimmed, ',') ?? [[trimmed]], title: t('messageContent.csvData') })
     } else {
       segments.push({ id: `markdown-${index}`, type: 'markdown', content: raw })
     }
@@ -368,7 +377,7 @@ function parseTextSegments(text: string, startIndex: number): RichSegment[] {
         lineIndex += 1
       }
       lineIndex -= 1
-      segments.push({ id: `table-${index}`, type: 'table', rows: parseMarkdownTable(tableLines), title: 'Markdown 表格' })
+      segments.push({ id: `table-${index}`, type: 'table', rows: parseMarkdownTable(tableLines), title: t('messageContent.markdownTable') })
       index += 1
     } else {
       buffer.push(lines[lineIndex])

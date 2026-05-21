@@ -1,14 +1,13 @@
-import { useState } from 'react'
-import { ScrollView, Text, View } from 'react-native'
 import type { ReactNode } from 'react'
-import { Download, KeyRound, Moon, RotateCcw, Smartphone, Sun, Trash2, Upload } from 'lucide-react-native'
+import { ScrollView, Text, View } from 'react-native'
 import { router } from 'expo-router'
-import { MotiView } from 'moti'
-import { ContextPanel } from '@/components/settings/ContextPanel'
+import { BookOpen, Brain, Database, Download, Globe2, House, KeyRound, Languages, Network, RotateCcw, SlidersHorizontal, Smartphone, Sparkles, Trash2, Upload } from 'lucide-react-native'
+import { useTranslation } from 'react-i18next'
 import { PressableScale } from '@/components/ui/PressableScale'
 import { Pill } from '@/components/ui/Pill'
 import { IslandButton } from '@/components/ui/IslandButton'
-import { IslandDisclosure, IslandField, IslandHeader, IslandSection } from '@/components/ui/IslandPrimitives'
+import { IslandHeader, IslandIconButton, IslandListItem, IslandSection, IslandToggle } from '@/components/ui/IslandPrimitives'
+import { MiniStat } from '@/components/ui/MiniStat'
 import { useAppTheme } from '@/hooks/useAppTheme'
 import { useSettingsStore } from '@/store/settingsStore'
 import { useChatStore } from '@/store/chatStore'
@@ -16,48 +15,52 @@ import { exportToJsonFile, importFromJsonFile } from '@/services/portableData'
 import { checkLatestApkRelease, downloadAndOpenApkInstaller, formatUpdateCheckTime, getVersionSnapshot, type ApkReleaseInfo } from '@/services/appUpdates'
 import { useIslandDialog } from '@/components/ui/IslandDialog'
 import { resolveSearchProvider, searchProviderLabel } from '@/services/searchPolicy'
-import type { ThemeMode } from '@/types'
+import { changeAppLanguage } from '@/i18n'
+import type { Language, ThemeMode } from '@/types'
 
-interface SettingsScreenContentProps {
-  onProviders?: () => void
-}
+const LANGUAGE_OPTIONS: { id: Language; label: string; detail: string }[] = [
+  { id: 'zh-CN', label: '简体中文', detail: '中文界面' },
+  { id: 'en', label: 'English', detail: 'English UI' },
+  { id: 'ja', label: '日本語', detail: '日本語 UI' },
+]
 
-export function SettingsScreenContent({ onProviders }: SettingsScreenContentProps) {
+export function SettingsScreenContent({ onHome }: { onHome?: () => void } = {}) {
   const { colors } = useAppTheme()
+  const { t } = useTranslation()
   const dialog = useIslandDialog()
   const providers = useSettingsStore((state) => state.providers)
   const settings = useSettingsStore((state) => state.settings)
   const setTheme = useSettingsStore((state) => state.setTheme)
+  const setLanguage = useSettingsStore((state) => state.setLanguage)
   const updateSettings = useSettingsStore((state) => state.updateSettings)
   const resetSettings = useSettingsStore((state) => state.clearAll)
   const clearChats = useChatStore((state) => state.clearAll)
   const enabledProviders = providers.filter((provider) => provider.enabled).length
   const defaultProvider = providers.find((provider) => provider.id === settings.defaultProvider)
   const version = getVersionSnapshot()
-  const [updateBusy, setUpdateBusy] = useState<'apk' | null>(null)
   const searchProvider = resolveSearchProvider(settings)
 
   async function exportJson() {
     const uri = await exportToJsonFile()
-    dialog.notice({ title: '导出完成', message: `JSON 已保存到应用文档目录：\n${uri}`, tone: 'mint' })
+    dialog.notice({ title: t('settings.exportDone'), message: t('settings.exportDoneMessage', { uri }), tone: 'mint' })
   }
 
   async function importJson() {
     const ok = await importFromJsonFile()
     dialog.notice({
-      title: ok ? '导入完成' : '未导入',
-      message: ok ? '对话和设置已从 JSON 恢复。' : '没有选择文件，或 JSON 结构不正确。',
+      title: ok ? t('settings.importDone') : t('settings.importSkipped'),
+      message: ok ? t('settings.importDoneMessage') : t('settings.importSkippedMessage'),
       tone: ok ? 'mint' : 'amber',
     })
   }
 
   function confirmClearChats() {
     void dialog.confirm({
-      title: '清空所有对话',
-      message: '确认清空所有对话？',
+      title: t('settings.clearChats'),
+      message: t('settings.clearChatsConfirm'),
       tone: 'danger',
-      confirmLabel: '清空',
-      cancelLabel: '取消',
+      confirmLabel: t('settings.clear'),
+      cancelLabel: t('common.cancel'),
     }).then((confirmed) => {
       if (confirmed) clearChats()
     })
@@ -65,50 +68,43 @@ export function SettingsScreenContent({ onProviders }: SettingsScreenContentProp
 
   function confirmResetSettings() {
     void dialog.confirm({
-      title: '重置设置',
-      message: '确认重置设置并删除 API Key？',
+      title: t('settings.resetSettings'),
+      message: t('settings.resetSettingsConfirm'),
       tone: 'danger',
-      confirmLabel: '重置',
-      cancelLabel: '取消',
+      confirmLabel: t('settings.reset'),
+      cancelLabel: t('common.cancel'),
     }).then((confirmed) => {
       if (confirmed) void resetSettings()
     })
   }
 
   async function checkApkUpdate() {
-    setUpdateBusy('apk')
-    try {
-      const result = await checkLatestApkRelease()
-      updateSettings({ lastApkUpdateCheckAt: Date.now() })
-      if (result.status !== 'available' || !result.release) {
-        dialog.notice({
-          title: result.status === 'error' ? 'APK 检查失败' : '没有新版 APK',
-          message: result.message,
-          tone: result.status === 'error' ? 'danger' : result.status === 'unsupported' ? 'amber' : 'mint',
-        })
-        return
-      }
-
-      const confirmed = await confirmApkInstall(result.release)
-      if (!confirmed) return
-
-      const installResult = await downloadAndOpenApkInstaller(result.release)
+    const result = await checkLatestApkRelease()
+    updateSettings({ lastApkUpdateCheckAt: Date.now() })
+    if (result.status !== 'available' || !result.release) {
       dialog.notice({
-        title: installResult.status === 'downloaded' ? '安装器已打开' : 'APK 更新失败',
-        message: installResult.message,
-        tone: installResult.status === 'downloaded' ? 'mint' : 'danger',
+        title: result.status === 'error' ? t('settings.apkCheckFailed') : t('settings.noNewApk'),
+        message: result.message,
+        tone: result.status === 'error' ? 'danger' : result.status === 'unsupported' ? 'amber' : 'mint',
       })
-    } finally {
-      setUpdateBusy(null)
+      return
     }
+    const confirmed = await confirmApkInstall(result.release)
+    if (!confirmed) return
+    const installResult = await downloadAndOpenApkInstaller(result.release)
+    dialog.notice({
+      title: installResult.status === 'downloaded' ? t('settings.installerOpened') : t('settings.apkUpdateFailed'),
+      message: installResult.message,
+      tone: installResult.status === 'downloaded' ? 'mint' : 'danger',
+    })
   }
 
   function confirmApkInstall(release: ApkReleaseInfo) {
     return dialog.confirm({
-      title: `安装 ${release.version}？`,
-      message: '确认下载并安装？',
-      confirmLabel: '下载并安装',
-      cancelLabel: '稍后',
+      title: t('settings.installVersion', { version: release.version }),
+      message: t('settings.installConfirm'),
+      confirmLabel: t('settings.downloadAndInstall'),
+      cancelLabel: t('settings.later'),
       tone: 'amber',
       chips: [
         { label: release.apkName, tone: 'mint' },
@@ -120,165 +116,136 @@ export function SettingsScreenContent({ onProviders }: SettingsScreenContentProp
   function toggleAutoCheck() {
     const next = !(settings.autoUpdateCheckEnabled ?? true)
     updateSettings({ autoUpdateCheckEnabled: next })
-    dialog.toast({ title: next ? '已开启自动检查' : '已关闭自动检查', message: '冷更新策略：GitHub Release APK。', tone: next ? 'mint' : 'amber' })
+    dialog.toast({ title: next ? t('settings.autoCheckOn') : t('settings.autoCheckOff'), message: t('settings.coldUpdatePolicy'), tone: next ? 'mint' : 'amber' })
+  }
+
+  async function chooseLanguage(language: Language) {
+    setLanguage(language)
+    await changeAppLanguage(language)
+    dialog.toast({ title: t('settings.languageUpdated'), message: LANGUAGE_OPTIONS.find((item) => item.id === language)?.label, tone: 'mint' })
   }
 
   return (
     <ScrollView keyboardShouldPersistTaps="handled" contentContainerStyle={{ paddingHorizontal: 16, paddingTop: 8, paddingBottom: 46 }}>
-      <IslandHeader title="设置" />
+      <IslandHeader
+        title={t('settings.title')}
+        leading={
+          onHome ? (
+            <IslandIconButton label={t('common.home')} onPress={onHome}>
+              <House color={colors.text} size={20} strokeWidth={1.9} />
+            </IslandIconButton>
+          ) : undefined
+        }
+      />
       <View style={{ flexDirection: 'row', gap: 8, flexWrap: 'wrap', marginTop: 10 }}>
-        <MiniStat label={`已启用 ${enabledProviders}`} />
-        <MiniStat label={defaultProvider ? `默认 ${defaultProvider.name}` : '未设默认'} />
-        <MiniStat label={searchProvider !== 'off' ? `搜索 ${searchProviderLabel(searchProvider)}` : '搜索关闭'} />
+        <MiniStat label={`${t('settings.enabled')} ${enabledProviders}`} />
+        <MiniStat label={defaultProvider ? `${t('settings.default')} ${defaultProvider.name}` : t('settings.noDefault')} />
+        <MiniStat label={searchProvider !== 'off' ? `${t('settings.search')} ${searchProviderLabel(searchProvider)}` : t('settings.searchOff')} />
       </View>
 
-      <IslandSection title="主题" style={{ marginTop: 18 }}>
+      <IslandSection title={t('settings.basicFeatures')} style={{ marginTop: 18 }}>
+        <View style={{ gap: 10 }}>
+          <IslandToggle
+            icon={<Brain color={colors.text} size={18} />}
+            title={t('settings.longMemory')}
+            active={!!settings.memoryEnabled}
+            onPress={() => updateSettings({ memoryEnabled: !settings.memoryEnabled })}
+          />
+          <IslandToggle
+            icon={<BookOpen color={colors.text} size={18} />}
+            title={t('settings.localKnowledge')}
+            active={!!settings.knowledgeEnabled}
+            onPress={() => updateSettings({ knowledgeEnabled: !settings.knowledgeEnabled })}
+          />
+          <IslandToggle
+            icon={<Globe2 color={colors.text} size={18} />}
+            title={t('settings.webSearch')}
+            active={!!settings.webSearchEnabled}
+            onPress={() => updateSettings({ webSearchEnabled: !settings.webSearchEnabled })}
+          />
+        </View>
+      </IslandSection>
+
+      <IslandSection title={t('settings.theme')} style={{ marginTop: 14 }}>
         <View style={{ flexDirection: 'row', gap: 10, flexWrap: 'wrap' }}>
           {(['system', 'light', 'dark'] satisfies ThemeMode[]).map((item) => (
             <PressableScale key={item} haptic onPress={() => setTheme(item)}>
-              <Pill active={settings.theme === item}>{item === 'system' ? '跟随系统' : item === 'light' ? '浅色' : '深色'}</Pill>
+              <Pill active={settings.theme === item}>{item === 'system' ? t('settings.themeSystem') : item === 'light' ? t('settings.themeLight') : t('settings.themeDark')}</Pill>
             </PressableScale>
           ))}
         </View>
       </IslandSection>
 
-      <IslandSection
-        title="供应商"
-        style={{ marginTop: 18 }}
-        action={<IslandButton label="管理" compact icon={<KeyRound color={colors.textSecondary} size={15} />} onPress={onProviders ?? (() => router.push('/settings/providers'))} />}
-      >
+      <IslandSection title={t('settings.language')} style={{ marginTop: 14 }}>
         <View style={{ gap: 8 }}>
-          <VersionRow label="启用" value={`${enabledProviders} / ${providers.length}`} />
-          <VersionRow label="默认" value={defaultProvider ? defaultProvider.name : '未设置'} />
-          <VersionRow label="令牌组" value={`${providers.reduce((sum, provider) => sum + (provider.credentialGroups?.length ?? 0), 0)} 组`} />
+          {LANGUAGE_OPTIONS.map((item) => (
+            <IslandListItem
+              key={item.id}
+              title={item.label}
+              description={item.detail}
+              onPress={() => void chooseLanguage(item.id)}
+              leading={<IconWrap><Languages color={colors.text} size={18} /></IconWrap>}
+              trailing={<Pill active={settings.language === item.id}>{settings.language === item.id ? t('settings.current') : item.id}</Pill>}
+            />
+          ))}
         </View>
       </IslandSection>
 
-      <CollapsibleSection title="上下文与知识">
-        <ContextPanel providers={providers} />
-      </CollapsibleSection>
+      <IslandSection title={t('settings.aiSettings')} style={{ marginTop: 14 }}>
+        <View style={{ gap: 8 }}>
+          <SettingLink title={t('settings.providerManagement')} description={`${enabledProviders} ${t('settings.enabled')} · ${providers.length} ${t('settings.providers')}`} icon={<KeyRound color={colors.text} size={18} />} onPress={() => router.push('/settings/providers')} />
+          <SettingLink title={t('settings.context')} description={t('settings.contextDescription')} icon={<Globe2 color={colors.text} size={18} />} onPress={() => router.push('/settings/context')} />
+          <SettingLink title={t('settings.memory')} description={t('settings.memoryDescription')} icon={<Brain color={colors.text} size={18} />} onPress={() => router.push('/settings/memory')} />
+          <SettingLink title={t('settings.knowledge')} description={t('settings.knowledgeDescription')} icon={<Database color={colors.text} size={18} />} onPress={() => router.push('/settings/knowledge')} />
+          <SettingLink title={t('settings.preferences')} description={t('settings.preferencesDescription')} icon={<SlidersHorizontal color={colors.text} size={18} />} onPress={() => router.push('/settings/preferences')} />
+          <SettingLink title={t('settings.skills')} description={t('settings.skillsDescription')} icon={<Sparkles color={colors.text} size={18} />} onPress={() => router.push('/settings/skills')} />
+          <SettingLink title={t('settings.mcp')} description={t('settings.mcpDescription')} icon={<Network color={colors.text} size={18} />} onPress={() => router.push('/settings/mcp')} />
+        </View>
+      </IslandSection>
 
-      <CollapsibleSection title="偏好" compact>
-        <View style={{ flexDirection: 'row', gap: 10, marginBottom: 12 }}>
-          <SettingInput
-            label="默认温度"
-            value={String(settings.defaultTemperature ?? 0.7)}
-            onChange={(value) => {
-              const next = Number(value)
-              if (!Number.isNaN(next)) updateSettings({ defaultTemperature: Math.max(0, Math.min(2, next)) })
-            }}
+      <IslandSection title={t('settings.updates')} style={{ marginTop: 14 }}>
+        <View style={{ borderRadius: 22, padding: 13, backgroundColor: colors.material.paperRaised, borderWidth: 1, borderColor: colors.border }}>
+          <VersionRow label={t('settings.appVersion')} value={`${version.appVersion} (${version.buildVersion})`} />
+          <VersionRow label={t('settings.coldUpdate')} value="GitHub Release APK" />
+          <VersionRow label={t('settings.hotUpdate')} value={t('settings.disabled')} />
+          <VersionRow label={t('settings.autoCheck')} value={(settings.autoUpdateCheckEnabled ?? true) ? t('settings.enabledState') : t('settings.disabledState')} />
+          <VersionRow label={t('settings.lastCheck')} value={formatUpdateCheckTime(settings.lastApkUpdateCheckAt)} />
+        </View>
+        <View style={{ flexDirection: 'row', gap: 12, marginTop: 10 }}>
+          <DataButton label={t('settings.checkApk')} icon={<Smartphone color={colors.surface} size={18} />} onPress={() => void checkApkUpdate()} />
+          <IslandButton
+            label={(settings.autoUpdateCheckEnabled ?? true) ? t('settings.autoEnabled') : t('settings.autoDisabled')}
+            tone="soft"
+            onPress={toggleAutoCheck}
+            style={{ flex: 1, minHeight: 54, borderRadius: 27 }}
           />
-          <SettingInput
-            label="默认 Token"
-            value={settings.defaultMaxTokens ? String(settings.defaultMaxTokens) : ''}
-            onChange={(value) => {
-              if (!value.trim()) {
-                updateSettings({ defaultMaxTokens: undefined })
-                return
-              }
-              const next = Number.parseInt(value, 10)
-              if (!Number.isNaN(next)) updateSettings({ defaultMaxTokens: Math.max(128, Math.min(128000, next)) })
-            }}
-            placeholder="跟随模型"
-          />
         </View>
-        <PressableScale haptic onPress={() => updateSettings({ hapticsEnabled: !settings.hapticsEnabled })} style={{ minHeight: 54, borderRadius: 22, paddingHorizontal: 14, backgroundColor: colors.islandRaised, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', borderWidth: 1, borderColor: colors.border }}>
-          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
-            {settings.hapticsEnabled ? <Sun color={colors.text} size={18} /> : <Moon color={colors.text} size={18} />}
-            <Text style={{ color: colors.text, fontSize: 15, fontWeight: '800' }}>触觉反馈</Text>
-          </View>
-          <Pill active={settings.hapticsEnabled}>{settings.hapticsEnabled ? '开启' : '关闭'}</Pill>
-        </PressableScale>
-      </CollapsibleSection>
+      </IslandSection>
 
-      <CollapsibleSection title="版本更新" summary={`当前 ${version.appVersion}`} compact>
-        <View style={{ gap: 10 }}>
-          <View style={{ borderRadius: 22, padding: 13, backgroundColor: colors.material.paperRaised, borderWidth: 1, borderColor: colors.border }}>
-            <VersionRow label="应用版本" value={`${version.appVersion} (${version.buildVersion})`} />
-            <VersionRow label="冷更新" value="GitHub Release APK" />
-            <VersionRow label="热更新" value="未启用" />
-            <VersionRow label="自动检查" value={(settings.autoUpdateCheckEnabled ?? true) ? '开启' : '关闭'} />
-            <VersionRow label="上次检查" value={formatUpdateCheckTime(settings.lastApkUpdateCheckAt)} />
-          </View>
-          <View style={{ flexDirection: 'row', gap: 12 }}>
-            <DataButton
-              label="检查 APK"
-              icon={<Smartphone color={colors.surface} size={18} />}
-              busy={updateBusy === 'apk'}
-              disabled={updateBusy !== null}
-              onPress={checkApkUpdate}
-            />
-            <IslandButton
-              label={(settings.autoUpdateCheckEnabled ?? true) ? '自动开启' : '自动关闭'}
-              tone="soft"
-              onPress={toggleAutoCheck}
-              style={{ flex: 1, minHeight: 54, borderRadius: 27 }}
-            />
-          </View>
-        </View>
-      </CollapsibleSection>
-
-      <CollapsibleSection title="导入 / 导出" compact>
+      <IslandSection title={t('settings.importExport')} style={{ marginTop: 14 }}>
         <View style={{ flexDirection: 'row', gap: 12 }}>
-          <DataButton label="导出 JSON" icon={<Download color={colors.surface} size={18} />} onPress={exportJson} />
-          <DataButton label="导入 JSON" icon={<Upload color={colors.surface} size={18} />} onPress={importJson} />
+          <DataButton label={t('settings.exportJson')} icon={<Download color={colors.surface} size={18} />} onPress={() => void exportJson()} />
+          <DataButton label={t('settings.importJson')} icon={<Upload color={colors.surface} size={18} />} onPress={() => void importJson()} />
         </View>
-      </CollapsibleSection>
+      </IslandSection>
 
-      <CollapsibleSection title="危险操作" compact danger>
+      <IslandSection title={t('settings.dangerZone')} style={{ marginTop: 14 }}>
         <View style={{ flexDirection: 'row', gap: 12 }}>
-          <DangerButton label="清空对话" icon={<Trash2 color={colors.error} size={18} />} onPress={confirmClearChats} />
-          <DangerButton label="重置设置" icon={<RotateCcw color={colors.error} size={18} />} onPress={confirmResetSettings} />
+          <DangerButton label={t('settings.clearChats')} icon={<Trash2 color={colors.error} size={18} />} onPress={confirmClearChats} />
+          <DangerButton label={t('settings.resetSettings')} icon={<RotateCcw color={colors.error} size={18} />} onPress={confirmResetSettings} />
         </View>
-      </CollapsibleSection>
+      </IslandSection>
     </ScrollView>
   )
 }
 
-function MiniStat({ label }: { label: string }) {
+function SettingLink({ title, description, icon, onPress }: { title: string; description: string; icon: ReactNode; onPress: () => void }) {
+  return <IslandListItem title={title} description={description} leading={<IconWrap>{icon}</IconWrap>} onPress={onPress} />
+}
+
+function IconWrap({ children }: { children: ReactNode }) {
   const { colors } = useAppTheme()
-  return (
-    <View style={{ minHeight: 30, borderRadius: 15, paddingHorizontal: 10, alignItems: 'center', justifyContent: 'center', backgroundColor: colors.islandRaised, borderWidth: 1, borderColor: colors.border }}>
-      <Text style={{ color: colors.textSecondary, fontSize: 11, fontWeight: '900' }}>{label}</Text>
-    </View>
-  )
-}
-
-function CollapsibleSection({
-  title,
-  summary,
-  children,
-  compact = false,
-  danger = false,
-}: {
-  title: string
-  summary?: string
-  children: ReactNode
-  compact?: boolean
-  danger?: boolean
-}) {
-  const [expanded, setExpanded] = useState(false)
-  return (
-    <View style={{ marginTop: compact ? 12 : 16 }}>
-      <IslandDisclosure title={title} summary={summary} expanded={expanded} danger={danger} onPress={() => setExpanded((value) => !value)} />
-      {expanded ? (
-        <MotiView
-          from={{ opacity: 0, translateY: -6 }}
-          animate={{ opacity: 1, translateY: 0 }}
-          transition={{ type: 'spring', damping: 20, stiffness: 180 }}
-          style={{ paddingTop: 12 }}
-        >
-          {children}
-        </MotiView>
-      ) : null}
-    </View>
-  )
-}
-
-function SettingInput({ label, value, onChange, placeholder }: { label: string; value: string; onChange: (value: string) => void; placeholder?: string }) {
-  return (
-    <IslandField label={label} style={{ flex: 1 }} inputProps={{ value, onChangeText: onChange, placeholder, keyboardType: 'numeric' }} />
-  )
+  return <View style={{ width: 40, height: 40, borderRadius: 20, alignItems: 'center', justifyContent: 'center', backgroundColor: colors.mintSoft }}>{children}</View>
 }
 
 function VersionRow({ label, value }: { label: string; value: string }) {
@@ -291,15 +258,16 @@ function VersionRow({ label, value }: { label: string; value: string }) {
   )
 }
 
-function DataButton({ label, icon, onPress, busy = false, disabled = false }: { label: string; icon: ReactNode; onPress: () => void; busy?: boolean; disabled?: boolean }) {
-  return (
-    <IslandButton label={label} icon={icon} tone="primary" busy={busy} disabled={disabled} onPress={onPress} style={{ flex: 1, minHeight: 54, borderRadius: 27 }} />
-  )
+function DataButton({ label, icon, onPress }: { label: string; icon: ReactNode; onPress: () => void }) {
+  return <IslandButton label={label} icon={icon} tone="primary" onPress={onPress} style={{ flex: 1, minHeight: 54, borderRadius: 27 }} />
 }
 
 function DangerButton({ label, icon, onPress }: { label: string; icon: ReactNode; onPress: () => void }) {
   const { colors } = useAppTheme()
   return (
-    <IslandButton label={label} icon={icon} tone="danger" onPress={onPress} style={{ flex: 1, minHeight: 54, borderRadius: 27 }} />
+    <PressableScale haptic onPress={onPress} style={{ flex: 1, minHeight: 54, borderRadius: 27, alignItems: 'center', justifyContent: 'center', flexDirection: 'row', gap: 8, backgroundColor: colors.coralWash, borderWidth: 1, borderColor: colors.error }}>
+      {icon}
+      <Text style={{ color: colors.error, fontSize: 14, fontWeight: '800' }}>{label}</Text>
+    </PressableScale>
   )
 }

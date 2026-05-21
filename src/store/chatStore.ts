@@ -3,6 +3,7 @@ import type { Conversation, Message, ProcessTrace } from '@/types'
 import { getModelConfig } from '@/types'
 import { loadData, saveData } from '@/services/storage'
 import { localDataStore } from '@/services/localDataStore'
+import { st } from '@/i18n/service'
 import { useSettingsStore } from './settingsStore'
 
 function generateId(): string {
@@ -102,7 +103,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
     const id = generateId()
     const conversation: Conversation = {
       id,
-      title: '配置向导',
+      title: st('chatRunner.setup.guideTitle'),
       providerId: 'local-setup',
       model: 'local-guide',
       providerModelMode: 'inherited',
@@ -369,10 +370,7 @@ async function flushStreamingPersist(getState: () => ChatState, convId: string, 
 }
 
 async function saveAsyncStorageConversationsQueued(conversations: Conversation[]): Promise<void> {
-  const snapshot = conversations.map((conversation) => ({
-    ...conversation,
-    messages: conversation.messages.map((message) => ({ ...message })),
-  }))
+  const snapshot = sanitizeConversationsForPersistence(conversations)
   asyncStorageWriteQueue = asyncStorageWriteQueue
     .catch(() => undefined)
     .then(() => saveData('CONVERSATIONS', snapshot))
@@ -384,18 +382,19 @@ async function persistConversationsQueued(conversations: Conversation[]): Promis
 }
 
 async function persistConversations(conversations: Conversation[]): Promise<void> {
+  const snapshot = sanitizeConversationsForPersistence(conversations)
   await Promise.all([
-    localDataStore.saveConversations(conversations),
-    saveAsyncStorageConversationsQueued(conversations),
+    localDataStore.saveConversations(snapshot),
+    saveAsyncStorageConversationsQueued(snapshot),
   ])
 }
 
 async function syncSqliteConversationsInBackground(conversations: Conversation[]): Promise<void> {
   try {
-    await localDataStore.saveConversations(conversations)
+    await localDataStore.saveConversations(sanitizeConversationsForPersistence(conversations))
   } catch (error) {
-    const message = error instanceof Error ? error.message : '未知错误'
-    useChatStore.getState().setError(`SQLite 对话同步失败：${message}`)
+    const message = error instanceof Error ? error.message : st('error.unknownError')
+    useChatStore.getState().setError(st('storage.sqliteSyncFailed', { message }))
   }
 }
 
@@ -407,11 +406,24 @@ async function hydrateSqliteConversationsInBackground(): Promise<void> {
     const selectedId = sqliteData.some((conversation) => conversation.id === currentId) ? currentId : sqliteData[0]?.id ?? null
     useChatStore.setState({ conversations: sqliteData, currentId: selectedId })
     void saveData(ACTIVE_CONVERSATION_KEY, selectedId)
-    void saveData('CONVERSATIONS', sqliteData)
+    void saveData('CONVERSATIONS', sanitizeConversationsForPersistence(sqliteData))
   } catch (error) {
-    const message = error instanceof Error ? error.message : '未知错误'
-    useChatStore.getState().setError(`SQLite 对话恢复失败：${message}`)
+    const message = error instanceof Error ? error.message : st('error.unknownError')
+    useChatStore.getState().setError(st('storage.sqliteRestoreFailed', { message }))
   }
+}
+
+function sanitizeConversationsForPersistence(conversations: Conversation[]): Conversation[] {
+  return conversations.map((conversation) => ({
+    ...conversation,
+    messages: conversation.messages.map((message) => ({
+      ...message,
+      attachments: message.attachments?.map((attachment) => ({
+        ...attachment,
+        base64: undefined,
+      })),
+    })),
+  }))
 }
 
 function upsertTraceOnMessage(message: Message, trace: ProcessTrace): Message {
