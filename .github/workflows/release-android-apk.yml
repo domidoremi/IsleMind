@@ -111,7 +111,8 @@ jobs:
               extra_args+=(--fail-on-missing-models)
             fi
             node scripts/prepare-model-bundle.js --variant "$model_variant" "${extra_args[@]}"
-            (cd android && ISLEMIND_MODEL_BUNDLE="$model_variant" EXPO_PUBLIC_ISLEMIND_MODEL_BUNDLE="$model_variant" ./gradlew clean assembleRelease --no-daemon --stacktrace)
+            rm -rf android/app/.cxx android/app/build/outputs/apk/release
+            (cd android && ISLEMIND_MODEL_BUNDLE="$model_variant" EXPO_PUBLIC_ISLEMIND_MODEL_BUNDLE="$model_variant" ./gradlew assembleRelease --rerun-tasks --no-daemon --stacktrace)
             shopt -s nullglob
             copied=0
             for apk in android/app/build/outputs/apk/release/*.apk; do
