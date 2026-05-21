@@ -130,6 +130,8 @@
     "commandKnowledgeDescription": "打开知识导入页面",
     "commandPromptTemplate": "插入系统提示词模板",
     "commandPromptTemplateDescription": "写入当前输入框",
+    "noCommandMatches": "没有可用命令",
+    "noReferenceMatches": "没有可引用项目",
     "promptTemplateInsert": "请作为 {{role}}，以 {{format}} 输出。",
     "attachmentMessage": "附件消息",
     "attachmentCount": "{{count}} 个附件",
@@ -671,6 +673,9 @@
       "embeddingJobs": "最近任务 {{total}} 个，运行中 {{running}}，失败 {{failed}}。",
       "exception": "自检异常",
       "failed": "上下文自检失败。",
+      "done": "上下文自检完成",
+      "doneWithIssues": "上下文自检发现问题",
+      "summary": "通过 {{ok}} · 警告 {{warn}} · 失败 {{fail}}",
       "passed": "通过",
       "needsConfig": "需配置",
       "failedStatus": "失败"

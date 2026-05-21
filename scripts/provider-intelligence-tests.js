@@ -488,6 +488,8 @@ sk-example-d-123456789012345678901234
   assert.ok(packedRag.contextPrompt.includes('[1]'), 'agentic pack injects numbered citations')
   assert.equal(packedRag.citations.length, 2, 'agentic pack returns citation metadata')
   assert.ok(packedRag.quality.confidence > 0, 'agentic pack evaluates quality')
+  assert.ok(packedRag.trace.some((step) => step.stage === 'verify'), 'agentic pack emits a verification trace')
+  assert.ok(packedRag.citations.every((citation) => citation.label && citation.rerankScore !== undefined), 'citations carry labels and rerank details')
   const agentic = await runAgenticRag({
     query: 'Why does Alpha migration fail and what evidence supports the fix?',
     settings: {
@@ -513,7 +515,9 @@ sk-example-d-123456789012345678901234
     now: () => 1234,
   })
   assert.ok(agentic.trace.some((step) => step.stage === 'retrieve'), 'agentic RAG records retrieval trace')
+  assert.ok(agentic.trace.some((step) => step.stage === 'pack'), 'agentic RAG records pack trace')
   assert.ok(agentic.quality.sourceCount >= 1, 'agentic RAG returns usable sources')
+  assert.ok(agentic.contextPrompt.includes('[1]'), 'agentic RAG context prompt preserves citation injection')
   assert.ok(agentic.trace.find((step) => step.stage === 'retrieve').metadata.advancedCandidates >= 1, 'agentic RAG merges advanced index candidates')
   assert.ok(agentic.sources.some((source) => source.origin === 'colbert'), 'advanced retrieval origin is preserved')
   const flareCheck = verifyRagGeneration({

@@ -63,7 +63,7 @@ export function Composer({
   const trigger = getActiveTrigger(content)
   const commandMatches = trigger?.type === 'command' ? filterCommands(commands, trigger.query).slice(0, 6) : []
   const referenceMatches = trigger?.type === 'reference' ? filterReferences(references, trigger.query).slice(0, 8) : []
-  const showCommandPanel = commandMatches.length > 0 || referenceMatches.length > 0
+  const showCommandPanel = !!trigger && (commandMatches.length > 0 || referenceMatches.length > 0 || trigger.query.length === 0)
   const isMultilineDraft = content.includes('\n') || content.length > 70
 
   async function addAttachment(picker: () => Promise<Attachment | null>) {
@@ -246,6 +246,11 @@ export function Composer({
                 onPress={() => applyReference(reference)}
               />
             ))}
+            {!commandMatches.length && !referenceMatches.length ? (
+              <Text style={{ color: colors.textTertiary, fontSize: 11, fontWeight: '800', paddingHorizontal: 8, paddingVertical: 6 }}>
+                {trigger?.type === 'command' ? t('chat.noCommandMatches') : t('chat.noReferenceMatches')}
+              </Text>
+            ) : null}
           </View>
         </MotiView>
       ) : null}

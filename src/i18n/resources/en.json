@@ -130,6 +130,8 @@
     "commandKnowledgeDescription": "Open knowledge import",
     "commandPromptTemplate": "Insert system prompt template",
     "commandPromptTemplateDescription": "Insert into the draft",
+    "noCommandMatches": "No commands available",
+    "noReferenceMatches": "No references available",
     "promptTemplateInsert": "Act as {{role}} and respond in {{format}}.",
     "attachmentMessage": "Attachment message",
     "attachmentCount": "{{count}} attachments",
@@ -671,6 +673,9 @@
       "embeddingJobs": "{{total}} recent jobs, {{running}} running, {{failed}} failed.",
       "exception": "Self-test exception",
       "failed": "Context self-test failed.",
+      "done": "Context self-test complete",
+      "doneWithIssues": "Context self-test found issues",
+      "summary": "{{ok}} passed · {{warn}} warnings · {{fail}} failed",
       "passed": "Passed",
       "needsConfig": "Needs config",
       "failedStatus": "Failed"

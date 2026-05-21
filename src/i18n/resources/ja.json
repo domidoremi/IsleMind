@@ -130,6 +130,8 @@
     "commandKnowledgeDescription": "ナレッジインポートを開く",
     "commandPromptTemplate": "システムプロンプトテンプレート挿入",
     "commandPromptTemplateDescription": "下書きへ挿入",
+    "noCommandMatches": "利用可能なコマンドはありません",
+    "noReferenceMatches": "参照できる項目はありません",
     "promptTemplateInsert": "{{role}} として、{{format}} 形式で回答してください。",
     "attachmentMessage": "添付メッセージ",
     "attachmentCount": "{{count}} 件の添付",
@@ -671,6 +673,9 @@
       "embeddingJobs": "直近ジョブ {{total}} 件、実行中 {{running}}、失敗 {{failed}}。",
       "exception": "自己テスト例外",
       "failed": "コンテキスト自己テストに失敗しました。",
+      "done": "コンテキスト自己テストが完了しました",
+      "doneWithIssues": "コンテキスト自己テストで問題が見つかりました",
+      "summary": "成功 {{ok}} · 警告 {{warn}} · 失敗 {{fail}}",
       "passed": "成功",
       "needsConfig": "設定が必要",
       "failedStatus": "失敗"

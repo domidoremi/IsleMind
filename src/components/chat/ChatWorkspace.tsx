@@ -136,8 +136,8 @@ export function ChatWorkspace({ conversation, showBack = false, embedded = false
   const composerBottomInset = Math.max(insets.bottom, 10) + CHAT_BOTTOM_FLOATING_SPACE
   const goHistory = onHistory ?? (() => router.push('/conversations'))
   const goSettings = onSettings ?? (() => router.push('/settings'))
-  const goProviders = () => router.push('/settings/providers')
-  const goKnowledge = () => router.push({ pathname: '/settings/knowledge', params: { focus: 'import' } })
+  const goProviders = () => pushSettingsRoute('/settings/providers')
+  const goKnowledge = () => pushSettingsRoute('/settings/knowledge', { focus: 'import' })
   const pendingNotice = pendingStreamingMessage
     ? pendingStreamingMessage.intent === 'guide'
       ? `${t('chat.pendingGuide')} · ${previewPendingText(pendingStreamingMessage.content, pendingStreamingMessage.attachments, t)}`
@@ -381,7 +381,14 @@ export function ChatWorkspace({ conversation, showBack = false, embedded = false
           </ScrollView>
           <View pointerEvents="box-none" style={{ position: 'absolute', left: 0, right: 0, bottom: 0, paddingHorizontal: 14, paddingBottom: 12, paddingTop: 4 }}>
             <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : 'height'} keyboardVerticalOffset={0}>
-              <Composer streaming={false} onStop={() => undefined} onSend={submitSetup} />
+              <Composer
+                streaming={false}
+                commands={composerCommands}
+                references={composerReferences}
+                onStop={() => undefined}
+                onReferenceSelected={() => undefined}
+                onSend={submitSetup}
+              />
             </KeyboardAvoidingView>
           </View>
         </View>
@@ -1136,6 +1143,13 @@ function EmptyConversationState({ onHistory, onProviders, onKnowledge }: { onHis
       </View>
     </View>
   )
+}
+
+function pushSettingsRoute(pathname: '/settings/providers' | '/settings/knowledge', params?: Record<string, string>) {
+  const defer = typeof requestAnimationFrame === 'function' ? requestAnimationFrame : (callback: (timestamp: number) => void) => setTimeout(() => callback(Date.now()), 0)
+  defer(() => {
+    router.push(params ? { pathname, params } : { pathname })
+  })
 }
 
 function buildComposerCommands({

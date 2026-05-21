@@ -26,6 +26,10 @@ Release APKs are split by local model bundle:
 
 The app can also download and verify local RAG models from the local model page.
 
+## Android 16 KB Page Size
+
+Release builds run `npm run apk:validate-16kb`, which checks APK ZIP page alignment with `zipalign -P 16` and inspects native library ELF `LOAD` segment alignment with `llvm-readelf`. ZIP alignment is controlled by the Android build; ELF alignment depends on the native libraries shipped by Expo, React Native, ONNX Runtime, and other dependencies. If the validator reports a third-party `.so` with 4 KB `LOAD` alignment, update or rebuild that dependency before marking the APK fully compatible with Android 16 KB page-size devices.
+
 ## Local RAG Models
 
 IsleMind's default APK does not include model weights. Optional local models are listed in `assets/models/catalog.json`; detailed source and attribution notes are in `assets/models/NOTICE.md`.

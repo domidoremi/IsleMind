@@ -168,16 +168,16 @@ export async function searchMemories(query: string, limit: number): Promise<Retr
       FROM memory_fts
       JOIN memories m ON m.id = memory_fts.id
       WHERE memory_fts MATCH ? AND m.status IN ('pending', 'active')
-      ORDER BY (abs(score) * exp(-((julianday('now') - julianday(m.createdAt / 1000, 'unixepoch')) / 30.0))) ASC
       LIMIT ?
     `,
     ftsQuery,
-    limit
+    Math.max(limit * 4, limit)
   )
   const now = Date.now()
-  await Promise.all(rows.map((item) => db.runAsync('UPDATE memories SET lastHitAt = ? WHERE id = ?', now, item.id)))
+  const ranked = rankMemoryRows(rows, now).slice(0, limit)
+  await Promise.all(ranked.map((item) => db.runAsync('UPDATE memories SET lastHitAt = ? WHERE id = ?', now, item.id)))
   await disableStaleMemories(db)
-  return rows.map((item) => ({
+  return ranked.map((item) => ({
     id: item.id,
     type: 'memory',
     title: item.status === 'pending' ? st('contextStore.pendingMemory') : st('contextStore.longTermMemory'),
@@ -185,6 +185,16 @@ export async function searchMemories(query: string, limit: number): Promise<Retr
     excerpt: item.content,
     score: item.score,
   }))
+}
+
+function rankMemoryRows<T extends MemoryItem & { score: number }>(rows: T[], now: number): T[] {
+  return [...rows].sort((a, b) => memoryRankScore(a, now) - memoryRankScore(b, now))
+}
+
+function memoryRankScore(memory: MemoryItem & { score: number }, now: number): number {
+  const ageDays = Math.max(0, (now - (memory.createdAt || now)) / 86_400_000)
+  const recencyBoost = Math.exp(-ageDays / 30)
+  return Math.abs(memory.score ?? 0) / Math.max(recencyBoost, 0.05)
 }
 
 export async function importKnowledgeText(input: {
