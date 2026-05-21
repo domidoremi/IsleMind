@@ -81,6 +81,10 @@ function ensureDir(dir) {
   fs.mkdirSync(dir, { recursive: true })
 }
 
+function removeDir(dir) {
+  fs.rmSync(dir, { recursive: true, force: true })
+}
+
 function listApks(dir) {
   if (!fs.existsSync(dir)) return []
   return fs.readdirSync(dir)
@@ -104,6 +108,9 @@ function copyOutputs(variant, buildType) {
     fs.copyFileSync(apk, target)
     copied.push(target)
   }
+  if (buildType === 'release') {
+    assertReleaseOutputs(copied, variant)
+  }
   return copied
 }
 
@@ -116,12 +123,26 @@ function inferArch(fileName) {
   return 'universal'
 }
 
+function assertReleaseOutputs(outputs, variant) {
+  const required = ['universal', 'arm64-v8a', 'armeabi-v7a', 'x86_64']
+  const missing = required.filter((arch) => !outputs.some((output) => output.endsWith(`-${arch}.apk`)))
+  if (missing.length) {
+    throw new Error(`Release build for ${variant} is missing APK split(s): ${missing.join(', ')}.`)
+  }
+}
+
+function prepareAndroidProjectForRelease() {
+  run(commandName('npx'), ['expo', 'prebuild', '--platform', 'android'])
+  run(commandName('node'), ['scripts/configure-android-release.js', '--skip-signing'])
+}
+
 function buildVariant(variant, args) {
   const assembleTask = args.buildType === 'release' ? 'assembleRelease' : 'assembleDebug'
   run(commandName('node'), ['scripts/prepare-model-bundle.js', '--variant', variant])
   if (args.clean) {
     run(gradleCommand(), ['clean', '--no-daemon'], { cwd: androidDir })
   }
+  removeDir(path.join(androidDir, 'app', 'build', 'outputs', 'apk', args.buildType))
   run(gradleCommand(), [assembleTask, '--no-daemon', '--stacktrace'], {
     cwd: androidDir,
     env: {
@@ -145,6 +166,9 @@ function main() {
   const args = parseArgs(process.argv.slice(2))
   if (!fs.existsSync(androidDir)) {
     throw new Error('android directory does not exist. Run expo prebuild before local native APK builds.')
+  }
+  if (args.buildType === 'release') {
+    prepareAndroidProjectForRelease()
   }
   if (args.runChecks) {
     run(commandName('npm'), ['run', 'type-check'])
