@@ -2,6 +2,7 @@ import type { ReactNode } from 'react'
 import { Text, TextInput, View, type StyleProp, type TextInputProps, type ViewStyle } from 'react-native'
 import { ChevronDown } from 'lucide-react-native'
 import { MotiView } from 'moti'
+import { useTranslation } from 'react-i18next'
 import { useAppTheme } from '@/hooks/useAppTheme'
 import { typography } from '@/theme/typography'
 import { useMotionPreference } from '@/hooks/useMotionPreference'
@@ -345,11 +346,12 @@ export function IslandDisclosure({
 }) {
   const { colors } = useAppTheme()
   const motion = useMotionPreference()
+  const { t } = useTranslation()
   return (
     <PressableScale
       haptic
       onPress={onPress}
-      accessibilityLabel={`${expanded ? '折叠' : '展开'}${title}`}
+      accessibilityLabel={`${expanded ? t('common.collapse') : t('common.expand')}${title}`}
       style={{
         minHeight: 54,
         borderRadius: 24,

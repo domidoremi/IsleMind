@@ -4,8 +4,9 @@ import type { ErrorBoundaryProps } from 'expo-router'
 import { useEffect } from 'react'
 import { router, Stack } from 'expo-router'
 import { GestureHandlerRootView } from 'react-native-gesture-handler'
-import { Text, View } from 'react-native'
+import { LogBox, Text, View } from 'react-native'
 import { AlertTriangle, ChevronLeft, RotateCcw } from 'lucide-react-native'
+import { useTranslation } from 'react-i18next'
 import { useBootstrap } from '@/hooks/useBootstrap'
 import { useAppTheme } from '@/hooks/useAppTheme'
 import { Screen } from '@/components/ui/Screen'
@@ -13,6 +14,10 @@ import { IslandButton } from '@/components/ui/IslandButton'
 import { IslandPanel } from '@/components/ui/IslandPanel'
 import { AppBootOverlay } from '@/components/boot/AppBootOverlay'
 import { IslandDialogProvider, useIslandDialog } from '@/components/ui/IslandDialog'
+import { initI18n } from '@/i18n'
+
+initI18n()
+LogBox.ignoreLogs(['SafeAreaView has been deprecated'])
 
 export default function RootLayout() {
   const boot = useBootstrap()
@@ -29,7 +34,13 @@ export default function RootLayout() {
             animation: 'slide_from_right',
           }}
         >
-          <Stack.Screen name="settings/providers" options={{ animation: 'slide_from_bottom' }} />
+          <Stack.Screen name="settings/context" options={{ animation: 'slide_from_right' }} />
+          <Stack.Screen name="settings/memory" options={{ animation: 'slide_from_right' }} />
+          <Stack.Screen name="settings/knowledge" options={{ animation: 'slide_from_right' }} />
+          <Stack.Screen name="settings/preferences" options={{ animation: 'slide_from_right' }} />
+          <Stack.Screen name="settings/skills" options={{ animation: 'slide_from_right' }} />
+          <Stack.Screen name="settings/mcp" options={{ animation: 'slide_from_right' }} />
+          <Stack.Screen name="settings/providers" options={{ animation: 'slide_from_right' }} />
         </Stack>
         <AppBootOverlay ready={boot.ready} errorCount={boot.errorCount} bootStartedAt={boot.bootStartedAt} />
       </IslandDialogProvider>
@@ -39,16 +50,18 @@ export default function RootLayout() {
 
 function RootUpdateNotice({ message }: { message: string | null }) {
   const dialog = useIslandDialog()
+  const { t } = useTranslation()
   useEffect(() => {
     if (message) {
-      dialog.toast({ title: '发现新版本', message, tone: 'amber', durationMs: 4200 })
+      dialog.toast({ title: t('app.newVersion'), message, tone: 'amber', durationMs: 4200 })
     }
-  }, [dialog, message])
+  }, [dialog, message, t])
   return null
 }
 
 export function ErrorBoundary({ error, retry }: ErrorBoundaryProps) {
   const { colors } = useAppTheme()
+  const { t } = useTranslation()
 
   return (
     <GestureHandlerRootView style={{ flex: 1, backgroundColor: colors.surface }}>
@@ -59,10 +72,10 @@ export function ErrorBoundary({ error, retry }: ErrorBoundaryProps) {
               <AlertTriangle color={colors.error} size={22} strokeWidth={2.1} />
             </View>
             <Text style={{ color: colors.text, fontSize: 20, lineHeight: 26, fontWeight: '900', marginTop: 14 }}>
-              页面暂时无法显示
+              {t('app.pageUnavailable')}
             </Text>
             <Text style={{ color: colors.textSecondary, fontSize: 13, lineHeight: 19, marginTop: 8 }}>
-              可以重试当前页面，或返回上一页继续操作。
+              {t('app.pageUnavailableMessage')}
             </Text>
             {__DEV__ ? (
               <Text selectable numberOfLines={5} style={{ color: colors.textTertiary, fontSize: 11, lineHeight: 16, marginTop: 10 }}>
@@ -70,8 +83,8 @@ export function ErrorBoundary({ error, retry }: ErrorBoundaryProps) {
               </Text>
             ) : null}
             <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 9, marginTop: 16 }}>
-              <IslandButton label="重试" tone="primary" icon={<RotateCcw color={colors.surface} size={15} strokeWidth={2.1} />} onPress={() => void retry()} />
-              <IslandButton label="返回" icon={<ChevronLeft color={colors.textSecondary} size={16} strokeWidth={2.1} />} onPress={() => router.canGoBack() ? router.back() : router.replace('/')} />
+              <IslandButton label={t('common.retry')} tone="primary" icon={<RotateCcw color={colors.surface} size={15} strokeWidth={2.1} />} onPress={() => void retry()} />
+              <IslandButton label={t('common.back')} icon={<ChevronLeft color={colors.textSecondary} size={16} strokeWidth={2.1} />} onPress={() => router.canGoBack() ? router.back() : router.push('/')} />
             </View>
           </IslandPanel>
         </View>

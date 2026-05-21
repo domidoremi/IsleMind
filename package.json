@@ -8,7 +8,14 @@
     "ios": "expo start --ios",
     "test:provider-intelligence": "node scripts/provider-intelligence-tests.js",
     "type-check": "tsc --noEmit",
-    "doctor": "npx --yes expo-doctor"
+    "doctor": "npx --yes expo-doctor",
+    "apk:local": "node scripts/build-local-android-apk.js --variant no-model --debug",
+    "apk:local:models": "node scripts/build-local-android-apk.js --variant with-model-small --debug",
+    "apk:local:all": "node scripts/build-local-android-apk.js --all-variants --debug",
+    "apk:local:release": "node scripts/build-local-android-apk.js --variant no-model --release",
+    "apk:local:release:models": "node scripts/build-local-android-apk.js --variant with-model-small --release",
+    "apk:local:release:all": "node scripts/build-local-android-apk.js --all-variants --release",
+    "apk:prepare-models": "node scripts/prepare-model-bundle.js"
   },
   "dependencies": {
     "@react-native-async-storage/async-storage": "2.2.0",
@@ -20,6 +27,7 @@
     "expo-blur": "~15.0.8",
     "expo-clipboard": "~8.0.8",
     "expo-constants": "~18.0.11",
+    "expo-crypto": "~15.0.9",
     "expo-document-picker": "~14.0.8",
     "expo-file-system": "~19.0.13",
     "expo-haptics": "~15.0.8",
@@ -39,6 +47,7 @@
     "lucide-react-native": "^1.16.0",
     "moti": "^0.30.0",
     "nativewind": "^4.1.23",
+    "onnxruntime-react-native": "^1.24.3",
     "react": "19.1.0",
     "react-dom": "^19.1.0",
     "react-i18next": "^15.4.1",

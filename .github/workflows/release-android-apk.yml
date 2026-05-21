@@ -100,33 +100,43 @@ jobs:
           node scripts/configure-android-release.js
 
       - name: Build release APKs
-        working-directory: android
-        run: ./gradlew assembleRelease --no-daemon --stacktrace
-
-      - name: Collect release assets
         shell: bash
         run: |
           set -euo pipefail
           VERSION="${{ steps.meta.outputs.version }}"
           mkdir -p dist-apk
-          shopt -s nullglob
-          for apk in android/app/build/outputs/apk/release/*.apk; do
-            base="$(basename "$apk")"
-            case "$base" in
-              *universal*) arch="universal" ;;
-              *arm64-v8a*) arch="arm64-v8a" ;;
-              *armeabi-v7a*) arch="armeabi-v7a" ;;
-              *x86_64*) arch="x86_64" ;;
-              *) continue ;;
-            esac
-            target="dist-apk/IsleMind-${VERSION}-android-${arch}.apk"
-            cp "$apk" "$target"
-            sha256sum "$target" > "${target}.sha256"
+          for model_variant in no-model with-model-small; do
+            extra_args=()
+            if [ "$model_variant" = "with-model-small" ]; then
+              extra_args+=(--fail-on-missing-models)
+            fi
+            node scripts/prepare-model-bundle.js --variant "$model_variant" "${extra_args[@]}"
+            (cd android && ISLEMIND_MODEL_BUNDLE="$model_variant" EXPO_PUBLIC_ISLEMIND_MODEL_BUNDLE="$model_variant" ./gradlew clean assembleRelease --no-daemon --stacktrace)
+            shopt -s nullglob
+            copied=0
+            for apk in android/app/build/outputs/apk/release/*.apk; do
+              base="$(basename "$apk")"
+              case "$base" in
+                *universal*) arch="universal" ;;
+                *arm64-v8a*) arch="arm64-v8a" ;;
+                *armeabi-v7a*) arch="armeabi-v7a" ;;
+                *x86_64*) arch="x86_64" ;;
+                *) continue ;;
+              esac
+              target="dist-apk/IsleMind-${VERSION}-android-release-${model_variant}-${arch}.apk"
+              cp "$apk" "$target"
+              sha256sum "$target" > "${target}.sha256"
+              copied=$((copied + 1))
+            done
+            if [ "$copied" -lt 4 ]; then
+              echo "::error::Expected 4 $model_variant APK assets, found $copied."
+              find android/app/build/outputs/apk/release -maxdepth 1 -type f -print || true
+              exit 1
+            fi
           done
           count="$(find dist-apk -type f -name '*.apk' | wc -l | tr -d ' ')"
-          if [ "$count" -lt 4 ]; then
-            echo "::error::Expected 4 APK assets, found $count."
-            find android/app/build/outputs/apk/release -type f -maxdepth 1 -print || true
+          if [ "$count" -lt 8 ]; then
+            echo "::error::Expected 8 APK assets, found $count."
             exit 1
           fi
 

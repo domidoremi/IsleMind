@@ -1,29 +1,55 @@
 import { useState } from 'react'
 import type { ReactNode } from 'react'
 import { ActivityIndicator, Platform, Text, TextInput, View } from 'react-native'
-import { Camera, ChevronDown, FilePlus, Image, Mic, Plus, SendHorizontal, Square } from 'lucide-react-native'
+import { AtSign, Camera, ChevronDown, FilePlus, Image, Mic, Plus, SendHorizontal, Slash, Square } from 'lucide-react-native'
 import { MotiView } from 'moti'
-import type { Attachment } from '@/types'
+import { useTranslation } from 'react-i18next'
+import type { Attachment, CommandReference } from '@/types'
 import { pickDocument, pickImage, takePhoto } from '@/services/attachment'
 import { useAppTheme } from '@/hooks/useAppTheme'
 import { PressableScale } from '@/components/ui/PressableScale'
 import { IslandPanel } from '@/components/ui/IslandPanel'
 import { useIslandDialog } from '@/components/ui/IslandDialog'
 import { getAudioRecorderHook, isAudioRecordingAvailable, requestMicrophonePermission, transcribeLocalAudio } from '@/services/speech'
+import { normalizeSearchText } from '@/utils/text'
+
+export interface ComposerCommand {
+  id: string
+  label: string
+  description?: string
+  insertText?: string
+  run?: () => void
+}
 
 interface ComposerProps {
   disabled?: boolean
   streaming?: boolean
   activityLabel?: string
   pendingNotice?: string
+  commands?: ComposerCommand[]
+  references?: CommandReference[]
   onClearPending?: () => void
   onStop?: () => void
+  onReferenceSelected?: (reference: CommandReference) => void
   onSend: (content: string, attachments: Attachment[]) => Promise<void> | void
   onSendWhileStreaming?: (content: string, attachments: Attachment[]) => Promise<void> | void
 }
 
-export function Composer({ disabled = false, streaming = false, activityLabel, pendingNotice, onClearPending, onStop, onSend, onSendWhileStreaming }: ComposerProps) {
+export function Composer({
+  disabled = false,
+  streaming = false,
+  activityLabel,
+  pendingNotice,
+  commands = [],
+  references = [],
+  onClearPending,
+  onStop,
+  onReferenceSelected,
+  onSend,
+  onSendWhileStreaming,
+}: ComposerProps) {
   const { colors } = useAppTheme()
+  const { t } = useTranslation()
   const dialog = useIslandDialog()
   const [content, setContent] = useState('')
   const [attachments, setAttachments] = useState<Attachment[]>([])
@@ -34,6 +60,11 @@ export function Composer({ disabled = false, streaming = false, activityLabel, p
   const useAudioRecorder = getAudioRecorderHook()
   const recorder = useAudioRecorder ? useAudioRecorder({ extension: '.m4a' }) : null
   const canSend = (!!content.trim() || attachments.length > 0) && !disabled && !sending
+  const trigger = getActiveTrigger(content)
+  const commandMatches = trigger?.type === 'command' ? filterCommands(commands, trigger.query).slice(0, 6) : []
+  const referenceMatches = trigger?.type === 'reference' ? filterReferences(references, trigger.query).slice(0, 8) : []
+  const showCommandPanel = commandMatches.length > 0 || referenceMatches.length > 0
+  const isMultilineDraft = content.includes('\n') || content.length > 70
 
   async function addAttachment(picker: () => Promise<Attachment | null>) {
     try {
@@ -41,8 +72,8 @@ export function Composer({ disabled = false, streaming = false, activityLabel, p
       if (attachment) setAttachments((items) => [...items, attachment])
     } catch (error) {
       dialog.toast({
-        title: '附件不可用',
-        message: error instanceof Error && error.message === 'error.fileTooLarge' ? '文件不能超过 20MB。' : '无法读取这个附件，请换一个文件试试。',
+        title: t('chat.attachmentUnavailable'),
+        message: error instanceof Error && error.message === 'error.fileTooLarge' ? t('chat.fileTooLarge20') : t('chat.attachmentReadFailed'),
         tone: 'danger',
       })
     }
@@ -66,16 +97,38 @@ export function Composer({ disabled = false, streaming = false, activityLabel, p
     }
   }
 
+  function replaceActiveToken(next: string) {
+    if (!trigger) return
+    const before = content.slice(0, trigger.start)
+    const after = content.slice(trigger.end)
+    const spacer = next && after && !/^\s/.test(after) ? ' ' : ''
+    setContent(`${before}${next}${spacer}${after}`.replace(/[ \t]+\n/g, '\n'))
+  }
+
+  function applyCommand(command: ComposerCommand) {
+    if (command.run) {
+      command.run()
+      replaceActiveToken('')
+      return
+    }
+    replaceActiveToken(command.insertText ?? '')
+  }
+
+  function applyReference(reference: CommandReference) {
+    onReferenceSelected?.(reference)
+    replaceActiveToken(`@${reference.label}`)
+  }
+
   async function toggleRecording() {
     if (!isAudioRecordingAvailable() || !recorder) {
-      dialog.toast({ title: '语音不可用', message: '当前构建缺少 expo-audio，已保留文字输入。', tone: 'amber' })
+      dialog.toast({ title: t('chat.voiceUnavailable'), message: t('chat.voiceUnavailableMessage'), tone: 'amber' })
       return
     }
     try {
       if (!recording) {
         const granted = await requestMicrophonePermission()
         if (!granted) {
-          dialog.toast({ title: '无法录音', message: '没有麦克风权限。', tone: 'danger' })
+          dialog.toast({ title: t('chat.recordingUnavailable'), message: t('chat.microphonePermissionMissing'), tone: 'danger' })
           return
         }
         await recorder.prepareToRecordAsync()
@@ -87,14 +140,14 @@ export function Composer({ disabled = false, streaming = false, activityLabel, p
       setRecording(false)
       const uri = recorder.uri
       if (!uri) return
-      dialog.toast({ title: '正在转写', message: '录音已结束，正在转成文字。', tone: 'mint' })
+      dialog.toast({ title: t('chat.transcribing'), message: t('chat.transcribingMessage'), tone: 'mint' })
       const text = await transcribeLocalAudio(uri)
       if (text.trim()) {
         setContent((value) => [value, text.trim()].filter(Boolean).join(value.trim() ? '\n' : ''))
       }
     } catch (error) {
       setRecording(false)
-      dialog.toast({ title: '语音失败', message: error instanceof Error ? error.message : '录音或转写失败。', tone: 'danger' })
+      dialog.toast({ title: t('chat.voiceFailed'), message: error instanceof Error ? error.message : t('chat.voiceFailedMessage'), tone: 'danger' })
     }
   }
 
@@ -118,7 +171,7 @@ export function Composer({ disabled = false, streaming = false, activityLabel, p
             <PressableScale
               key={item.id}
               onPress={() => setAttachments((files) => files.filter((file) => file.id !== item.id))}
-              accessibilityLabel={`移除附件 ${item.name}`}
+              accessibilityLabel={t('chat.removeAttachment', { name: item.name })}
               style={{ paddingHorizontal: 10, height: 28, borderRadius: 14, backgroundColor: colors.islandRaised, justifyContent: 'center' }}
             >
               <Text numberOfLines={1} style={{ color: colors.textSecondary, fontSize: 11, fontWeight: '700', maxWidth: 180 }}>
@@ -135,13 +188,13 @@ export function Composer({ disabled = false, streaming = false, activityLabel, p
           transition={{ type: 'spring', damping: 20, stiffness: 200 }}
           style={{ flexDirection: 'row', gap: 8, paddingHorizontal: 12, paddingTop: 10 }}
         >
-          <AttachmentChip label="图片" onPress={() => addAttachment(pickImage)}>
+          <AttachmentChip label={t('chat.attachImage')} onPress={() => addAttachment(pickImage)}>
             <Image color={colors.textSecondary} size={15} strokeWidth={1.8} />
           </AttachmentChip>
-          <AttachmentChip label="拍照" onPress={() => addAttachment(takePhoto)}>
+          <AttachmentChip label={t('chat.attachCamera')} onPress={() => addAttachment(takePhoto)}>
             <Camera color={colors.textSecondary} size={15} strokeWidth={1.8} />
           </AttachmentChip>
-          <AttachmentChip label="文件" onPress={() => addAttachment(pickDocument)}>
+          <AttachmentChip label={t('chat.attachFile')} onPress={() => addAttachment(pickDocument)}>
             <FilePlus color={colors.textSecondary} size={15} strokeWidth={1.8} />
           </AttachmentChip>
         </MotiView>
@@ -150,7 +203,7 @@ export function Composer({ disabled = false, streaming = false, activityLabel, p
         <PressableScale
           haptic
           onPress={onClearPending}
-          accessibilityLabel="清除待发送内容"
+          accessibilityLabel={t('chat.clearPending')}
           style={{
             marginHorizontal: 10,
             marginTop: 10,
@@ -167,11 +220,40 @@ export function Composer({ disabled = false, streaming = false, activityLabel, p
           </Text>
         </PressableScale>
       ) : null}
-      <View style={{ flexDirection: 'row', alignItems: 'flex-end', padding: 7, paddingTop: 7, gap: 6 }}>
+      {showCommandPanel ? (
+        <MotiView
+          from={{ opacity: 0, translateY: 5 }}
+          animate={{ opacity: 1, translateY: 0 }}
+          transition={{ type: 'spring', damping: 20, stiffness: 210 }}
+          style={{ paddingHorizontal: 10, paddingTop: 10 }}
+        >
+          <View style={{ borderRadius: 22, padding: 8, backgroundColor: colors.material.paperRaised, borderWidth: 1, borderColor: colors.border, gap: 6 }}>
+            {commandMatches.map((command) => (
+              <ComposerPickRow
+                key={command.id}
+                title={command.label}
+                description={command.description}
+                icon={<Slash color={colors.primary} size={14} strokeWidth={2.2} />}
+                onPress={() => applyCommand(command)}
+              />
+            ))}
+            {referenceMatches.map((reference) => (
+              <ComposerPickRow
+                key={`${reference.type}-${reference.id}`}
+                title={reference.label}
+                description={referenceDescription(reference, t)}
+                icon={<AtSign color={colors.primary} size={14} strokeWidth={2.2} />}
+                onPress={() => applyReference(reference)}
+              />
+            ))}
+          </View>
+        </MotiView>
+      ) : null}
+      <View style={{ flexDirection: 'row', alignItems: 'center', padding: 7, paddingTop: 7, gap: 6 }}>
         <PressableScale
           haptic
           onPress={() => setAttachmentsOpen((value) => !value)}
-          accessibilityLabel={attachmentsOpen ? '收起附件' : '展开附件'}
+          accessibilityLabel={attachmentsOpen ? t('chat.collapseAttachments') : t('chat.expandAttachments')}
           style={{
             width: 38,
             height: 40,
@@ -186,7 +268,7 @@ export function Composer({ disabled = false, streaming = false, activityLabel, p
         <PressableScale
           haptic
           onPress={() => void toggleRecording()}
-          accessibilityLabel={recording ? '停止录音' : '语音输入'}
+          accessibilityLabel={recording ? t('chat.stopRecording') : t('chat.voiceInput')}
           style={{
             width: 38,
             height: 40,
@@ -198,14 +280,14 @@ export function Composer({ disabled = false, streaming = false, activityLabel, p
         >
           <Mic color={recording ? colors.surface : colors.textSecondary} size={16} strokeWidth={2} />
         </PressableScale>
-        <View style={{ flex: 1, minHeight: 40, justifyContent: 'center' }}>
-          {streaming ? <StreamingStatusInline label={activityLabel || '生成中'} /> : null}
+        <View style={{ flex: 1, minHeight: 42, justifyContent: 'center' }}>
+          {streaming ? <StreamingStatusInline label={activityLabel || t('chat.generating')} /> : null}
           <TextInput
             value={content}
             onChangeText={setContent}
             multiline
             editable={!disabled}
-            accessibilityLabel="输入消息"
+            accessibilityLabel={t('chat.inputAccessibility')}
             returnKeyType="send"
             submitBehavior={Platform.OS === 'ios' ? 'newline' : 'submit'}
             onSubmitEditing={() => {
@@ -214,21 +296,22 @@ export function Composer({ disabled = false, streaming = false, activityLabel, p
               }
             }}
             maxLength={12000}
-            placeholder={streaming ? '继续输入...' : '问点什么...'}
+            placeholder={streaming ? t('chat.keepTyping') : t('chat.askAnything')}
             placeholderTextColor={colors.textTertiary}
             onFocus={() => setFocused(true)}
             onBlur={() => setFocused(false)}
             style={{
               flex: 1,
               width: '100%',
-              minHeight: streaming ? 28 : 40,
+              minHeight: streaming ? 30 : 42,
               maxHeight: 120,
               color: colors.text,
               fontSize: 15,
               lineHeight: 22,
-              paddingTop: streaming ? 2 : 8,
-              paddingBottom: 7,
-              textAlignVertical: 'top',
+              paddingTop: isMultilineDraft ? 8 : 0,
+              paddingBottom: isMultilineDraft ? 8 : 0,
+              paddingHorizontal: 0,
+              textAlignVertical: isMultilineDraft ? 'top' : 'center',
             }}
           />
         </View>
@@ -236,7 +319,7 @@ export function Composer({ disabled = false, streaming = false, activityLabel, p
           <PressableScale
             haptic
             onPress={onStop}
-            accessibilityLabel="停止生成"
+            accessibilityLabel={t('chat.stopGenerating')}
             hitSlop={{ top: 12, right: 8, bottom: 12, left: 8 }}
             style={{
               width: 44,
@@ -254,7 +337,7 @@ export function Composer({ disabled = false, streaming = false, activityLabel, p
           haptic
           disabled={!canSend}
           onPress={submit}
-          accessibilityLabel={streaming ? '继续输入' : '发送消息'}
+          accessibilityLabel={streaming ? t('chat.keepTypingAction') : t('chat.sendMessage')}
           hitSlop={{ top: 12, right: 10, bottom: 12, left: 10 }}
           style={{
             minWidth: 52,
@@ -296,6 +379,81 @@ function StreamingStatusInline({ label }: { label: string }) {
       </Text>
     </View>
   )
+}
+
+function ComposerPickRow({
+  title,
+  description,
+  icon,
+  onPress,
+}: {
+  title: string
+  description?: string
+  icon: ReactNode
+  onPress: () => void
+}) {
+  const { colors } = useAppTheme()
+  return (
+    <PressableScale
+      haptic
+      onPress={onPress}
+      style={{ minHeight: 42, borderRadius: 17, paddingHorizontal: 10, flexDirection: 'row', alignItems: 'center', gap: 9, backgroundColor: colors.islandRaised }}
+    >
+      <View style={{ width: 24, height: 24, borderRadius: 12, alignItems: 'center', justifyContent: 'center', backgroundColor: colors.mintSoft }}>
+        {icon}
+      </View>
+      <View style={{ flex: 1 }}>
+        <Text numberOfLines={1} style={{ color: colors.text, fontSize: 12, fontWeight: '900' }}>
+          {title}
+        </Text>
+        {description ? (
+          <Text numberOfLines={1} style={{ color: colors.textTertiary, fontSize: 10, fontWeight: '800', marginTop: 1 }}>
+            {description}
+          </Text>
+        ) : null}
+      </View>
+    </PressableScale>
+  )
+}
+
+function filterCommands(commands: ComposerCommand[], query: string): ComposerCommand[] {
+  const needle = normalizeSearchText(query)
+  if (!needle) return commands
+  return commands.filter((command) => normalizeSearchText(`${command.label} ${command.description ?? ''}`).includes(needle))
+}
+
+function filterReferences(references: CommandReference[], query: string): CommandReference[] {
+  const needle = normalizeSearchText(query)
+  if (!needle) return references
+  return references.filter((reference) => normalizeSearchText(`${reference.label} ${reference.value} ${reference.type}`).includes(needle))
+}
+
+function getActiveTrigger(value: string): { type: 'command' | 'reference'; query: string; start: number; end: number } | null {
+  const match = value.match(/(^|\s)([/@])([^\s/@]*)$/)
+  if (!match || match.index === undefined) return null
+  const token = match[0]
+  const prefixLength = /^\s/.test(token) ? 1 : 0
+  return {
+    type: match[2] === '/' ? 'command' : 'reference',
+    query: match[3] ?? '',
+    start: match.index + prefixLength,
+    end: value.length,
+  }
+}
+
+function referenceDescription(reference: CommandReference, t: (key: string) => string): string {
+  switch (reference.type) {
+    case 'skill':
+      return 'Skill'
+    case 'provider':
+      return t('settings.providerManagement')
+    case 'model':
+      return String(reference.metadata?.providerName ?? t('chat.model'))
+    case 'knowledge':
+      return t('settings.knowledge')
+    case 'memory':
+      return t('settings.memory')
+  }
 }
 
 interface IconButtonProps {

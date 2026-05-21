@@ -1,6 +1,7 @@
 import { fetch as expoFetch } from 'expo/fetch'
 import type { AIModel, Attachment, AIProvider, MessageCitation, MessageUsage, ProcessTrace, ProviderOperationCode, ProviderType, RetrievalSource, WebSearchMode } from '@/types'
 import { getModelConfig, getProviderConfigIssue, getProviderEffectiveBaseUrl, mergeModelConfig, sortModelConfigs } from '@/types'
+import { st } from '@/i18n/service'
 import { getSecureApiKey } from './secureKey'
 import { chooseCredentialForModel, runCredentialGroupModelSync, updateCredentialGroupHealth } from './providerCredentials'
 
@@ -396,7 +397,19 @@ function getOpenAIResponsesEndpoint(provider: AIProvider): string {
 }
 
 function defaultOpenAICompatibleBaseUrl(provider: AIProvider): string {
-  return getProviderEffectiveBaseUrl(provider)
+  const baseUrl = getProviderEffectiveBaseUrl(provider)
+  if (provider.type !== 'openai-compatible' && provider.type !== 'xiaomi-mimo') return baseUrl
+  try {
+    const parsed = new URL(baseUrl)
+    const path = parsed.pathname.replace(/\/+$/, '')
+    if (!path) {
+      parsed.pathname = '/v1'
+      return parsed.toString().replace(/\/+$/, '')
+    }
+  } catch {
+    // Fall back to the user-entered value; the caller will surface the network error.
+  }
+  return baseUrl
 }
 
 function getGoogleEndpoint(provider: AIProvider, model: string, stream: boolean): string {
@@ -510,10 +523,10 @@ function parseProviderStreamEvent(json: any, providerType: ProviderType): Parsed
         json.delta && isReasoningEventType(json.type) ? json.delta : undefined,
       ].map(stringValue).filter(Boolean).join('')
       if (reasoning) {
-        traces.push(createProviderTrace('reasoning', providerType, '模型思考摘要', reasoning, 'running', stableTraceId(json, 'reasoning')))
+        traces.push(createProviderTrace('reasoning', providerType, st('providerTrace.reasoningSummary'), reasoning, 'running', stableTraceId(json, 'reasoning')))
       }
       if (isToolEventType(json.type) || delta?.tool_calls || json.tool_call || json.function_call || json.item?.type?.includes?.('tool')) {
-        traces.push(createProviderTrace('tool', providerType, '工具调用', summarizeToolEvent(json), isDoneEvent(json.type) ? 'done' : 'running', stableTraceId(json, 'tool')))
+        traces.push(createProviderTrace('tool', providerType, st('providerTrace.toolCall'), summarizeToolEvent(json), isDoneEvent(json.type) ? 'done' : 'running', stableTraceId(json, 'tool')))
       }
       return { text, traces, usage: extractUsage(json, providerType === 'openai' ? 'openai' : 'openai-compatible') }
     }
@@ -523,15 +536,15 @@ function parseProviderStreamEvent(json: any, providerType: ProviderType): Parsed
       if (json.type === 'content_block_delta') {
         text += stringValue(json.delta?.text)
         const thinking = stringValue(json.delta?.thinking)
-        if (thinking) traces.push(createProviderTrace('reasoning', providerType, '模型思考摘要', thinking, 'running', stableTraceId(json, 'thinking')))
+        if (thinking) traces.push(createProviderTrace('reasoning', providerType, st('providerTrace.reasoningSummary'), thinking, 'running', stableTraceId(json, 'thinking')))
         const signature = stringValue(json.delta?.signature)
-        if (signature) traces.push(createProviderTrace('reasoning', providerType, '思考签名', '服务商返回了用于协议延续的思考签名，已安全保存但不展示原始签名。', 'done', stableTraceId(json, 'signature'), { hiddenSignature: true }))
+        if (signature) traces.push(createProviderTrace('reasoning', providerType, st('providerTrace.thoughtSignature'), st('providerTrace.signatureSaved'), 'done', stableTraceId(json, 'signature'), { hiddenSignature: true }))
       }
       if (json.type === 'content_block_start' && json.content_block?.type === 'tool_use') {
-        traces.push(createProviderTrace('tool', providerType, `工具调用：${json.content_block?.name ?? 'tool'}`, summarizeToolEvent(json.content_block), 'running', stableTraceId(json, 'tool')))
+        traces.push(createProviderTrace('tool', providerType, st('providerTrace.toolCallNamed', { name: json.content_block?.name ?? 'tool' }), summarizeToolEvent(json.content_block), 'running', stableTraceId(json, 'tool')))
       }
       if (json.type === 'content_block_delta' && json.delta?.type === 'input_json_delta') {
-        traces.push(createProviderTrace('tool', providerType, '工具参数', stringValue(json.delta?.partial_json), 'running', stableTraceId(json, 'tool-input')))
+        traces.push(createProviderTrace('tool', providerType, st('providerTrace.toolArguments'), stringValue(json.delta?.partial_json), 'running', stableTraceId(json, 'tool-input')))
       }
       return { text, traces, usage: extractUsage(json, 'anthropic') }
     }
@@ -543,12 +556,12 @@ function parseProviderStreamEvent(json: any, providerType: ProviderType): Parsed
         for (const part of parts) {
           const partText = stringValue(part.text)
           if (part.thought) {
-            if (partText) traces.push(createProviderTrace('reasoning', providerType, '模型思考摘要', partText, 'running', stableTraceId(part, 'thought')))
+            if (partText) traces.push(createProviderTrace('reasoning', providerType, st('providerTrace.reasoningSummary'), partText, 'running', stableTraceId(part, 'thought')))
             if (part.thoughtSignature) {
-              traces.push(createProviderTrace('reasoning', providerType, '思考签名', '服务商返回了用于多轮协议延续的 thoughtSignature，已安全保存但不展示原始签名。', 'done', stableTraceId(part, 'thought-signature'), { hiddenSignature: true }))
+              traces.push(createProviderTrace('reasoning', providerType, st('providerTrace.thoughtSignature'), st('providerTrace.thoughtSignatureSaved'), 'done', stableTraceId(part, 'thought-signature'), { hiddenSignature: true }))
             }
           } else if (part.functionCall) {
-            traces.push(createProviderTrace('tool', providerType, `函数调用：${part.functionCall.name ?? 'function'}`, summarizeToolEvent(part.functionCall), 'running', stableTraceId(part.functionCall, 'function')))
+            traces.push(createProviderTrace('tool', providerType, st('providerTrace.functionCallNamed', { name: part.functionCall.name ?? 'function' }), summarizeToolEvent(part.functionCall), 'running', stableTraceId(part.functionCall, 'function')))
           } else {
             text += partText
           }
@@ -571,6 +584,12 @@ function extractCitationsFromText(text: string, sources: RetrievalSource[] = [])
     documentId: source.documentId,
     chunkId: source.chunkId,
     score: source.score,
+    ftsScore: source.ftsScore,
+    vectorScore: source.vectorScore,
+    chunkIndex: source.chunkIndex,
+    similarityScore: source.similarityScore,
+    sourceUri: source.sourceUri,
+    retrievalMode: source.retrievalMode,
   }))
 }
 
@@ -713,7 +732,7 @@ function summarizeToolEvent(value: unknown): string {
   const name = stringValue(item.name) || stringValue((item.function as Record<string, unknown> | undefined)?.name)
   const input = item.input ?? item.arguments ?? item.args ?? (item.function as Record<string, unknown> | undefined)?.arguments ?? item.delta ?? item
   const inputText = typeof input === 'string' ? input : safeJsonPreview(input)
-  return [name ? `名称：${name}` : '', inputText ? `参数：${inputText}` : ''].filter(Boolean).join('\n')
+  return [name ? st('providerTrace.toolNameLine', { name }) : '', inputText ? st('providerTrace.toolArgsLine', { input: inputText }) : ''].filter(Boolean).join('\n')
 }
 
 function safeJsonPreview(value: unknown): string {
@@ -847,12 +866,12 @@ function extractTracesFromJson(json: any, providerType: ProviderType): ProcessTr
             .join('\n')
         : '',
     ].map(stringValue).filter(Boolean).join('\n')
-    if (reasoning) traces.push(createProviderTrace('reasoning', providerType, '模型思考摘要', reasoning, 'done', stableTraceId(json, 'reasoning-json')))
+    if (reasoning) traces.push(createProviderTrace('reasoning', providerType, st('providerTrace.reasoningSummary'), reasoning, 'done', stableTraceId(json, 'reasoning-json')))
     if (Array.isArray(json.output)) {
       for (const item of json.output) {
         const record = item as Record<string, unknown>
         if (isToolEventType(record.type)) {
-          traces.push(createProviderTrace('tool', providerType, '工具调用', summarizeToolEvent(record), 'done', stableTraceId(record, 'tool-json')))
+          traces.push(createProviderTrace('tool', providerType, st('providerTrace.toolCall'), summarizeToolEvent(record), 'done', stableTraceId(record, 'tool-json')))
         }
       }
     }
@@ -860,17 +879,17 @@ function extractTracesFromJson(json: any, providerType: ProviderType): ProcessTr
   if (providerType === 'anthropic' && Array.isArray(json.content)) {
     for (const part of json.content) {
       const item = part as Record<string, unknown>
-      if (item.type === 'thinking') traces.push(createProviderTrace('reasoning', providerType, '模型思考摘要', stringValue(item.thinking), 'done', stableTraceId(item, 'thinking-json')))
-      if (item.type === 'tool_use') traces.push(createProviderTrace('tool', providerType, `工具调用：${stringValue(item.name) || 'tool'}`, summarizeToolEvent(item), 'done', stableTraceId(item, 'tool-json')))
+      if (item.type === 'thinking') traces.push(createProviderTrace('reasoning', providerType, st('providerTrace.reasoningSummary'), stringValue(item.thinking), 'done', stableTraceId(item, 'thinking-json')))
+      if (item.type === 'tool_use') traces.push(createProviderTrace('tool', providerType, st('providerTrace.toolCallNamed', { name: stringValue(item.name) || 'tool' }), summarizeToolEvent(item), 'done', stableTraceId(item, 'tool-json')))
     }
   }
   if (providerType === 'google') {
     const parts = json.candidates?.[0]?.content?.parts
     if (Array.isArray(parts)) {
       for (const part of parts) {
-        if (part.thought && part.text) traces.push(createProviderTrace('reasoning', providerType, '模型思考摘要', stringValue(part.text), 'done', stableTraceId(part, 'thought-json')))
-        if (part.functionCall) traces.push(createProviderTrace('tool', providerType, `函数调用：${part.functionCall.name ?? 'function'}`, summarizeToolEvent(part.functionCall), 'done', stableTraceId(part.functionCall, 'function-json')))
-        if (part.thoughtSignature) traces.push(createProviderTrace('reasoning', providerType, '思考签名', '服务商返回了用于多轮协议延续的 thoughtSignature，已安全保存但不展示原始签名。', 'done', stableTraceId(part, 'thought-signature-json'), { hiddenSignature: true }))
+        if (part.thought && part.text) traces.push(createProviderTrace('reasoning', providerType, st('providerTrace.reasoningSummary'), stringValue(part.text), 'done', stableTraceId(part, 'thought-json')))
+        if (part.functionCall) traces.push(createProviderTrace('tool', providerType, st('providerTrace.functionCallNamed', { name: part.functionCall.name ?? 'function' }), summarizeToolEvent(part.functionCall), 'done', stableTraceId(part.functionCall, 'function-json')))
+        if (part.thoughtSignature) traces.push(createProviderTrace('reasoning', providerType, st('providerTrace.thoughtSignature'), st('providerTrace.thoughtSignatureSaved'), 'done', stableTraceId(part, 'thought-signature-json'), { hiddenSignature: true }))
       }
     }
   }
@@ -1020,7 +1039,7 @@ export async function streamChat(
   const reader = response.body?.getReader()
   if (!reader) {
     const done = runStreamTask(async () => {
-      onTrace?.(createStreamModeTrace('fallback', '当前运行环境没有暴露可逐段读取的响应正文，已明确切换为整段缓冲；这次回复不会伪装成实时流式。'))
+      onTrace?.(createStreamModeTrace('fallback', st('providerTrace.streamFallbackNoReader')))
       const raw = await safeResponseText(response)
       const result = parseBufferedStreamResponse(raw, runtimeReq, getWireProviderType(runtimeReq.provider))
       if (result.text) {
@@ -1029,14 +1048,14 @@ export async function streamChat(
         result.traces?.forEach(onTrace ?? (() => undefined))
         onDone(withCredentialGroup(result, credential.credentialGroupId))
       } else {
-        onTrace?.(createStreamModeTrace('buffered', '服务商没有返回可解析的流式正文，正在尝试非流式请求兜底。'))
+        onTrace?.(createStreamModeTrace('buffered', st('providerTrace.streamBufferedFallback')))
         await retryWithoutStreaming(runtimeReq, onChunk, onDone, onError, onCitations, onTrace, credential.credentialGroupId)
       }
     }, onError, credential.credentialGroupId)
     return { controller, done }
   }
 
-  onTrace?.(createStreamModeTrace('reader', '已通过 ReadableStream 逐段接收服务商响应。'))
+  onTrace?.(createStreamModeTrace('reader', st('providerTrace.streamReader')))
 
   const decoder = new TextDecoder()
   let fullText = ''
@@ -1085,7 +1104,7 @@ export async function streamChat(
 
 function runStreamTask(task: () => Promise<void>, onError: ErrorCallback, credentialGroupId?: string): Promise<void> {
   return task().catch((error: unknown) => {
-    const err = error instanceof Error ? error as ProviderRuntimeError : providerRuntimeError('请求失败，请稍后重试。')
+    const err = error instanceof Error ? error as ProviderRuntimeError : providerRuntimeError(st('providerOperation.requestFailed'))
     err.credentialGroupId = err.credentialGroupId ?? credentialGroupId
     if (err.name !== 'AbortError') {
       onError(err)
@@ -1124,13 +1143,13 @@ async function retryWithoutStreaming(
       return
     }
     const result = await parseNonStreamingResponse(response, fallbackReq)
-    onTrace?.(createStreamModeTrace('fallback', '服务商或当前环境未提供逐段流，已使用非流式响应完成本轮。'))
+    onTrace?.(createStreamModeTrace('fallback', st('providerTrace.streamFallbackCompleted')))
     if (result.text) onChunk(result.text)
     if (result.citations?.length) onCitations?.(result.citations)
     result.traces?.forEach(onTrace ?? (() => undefined))
     onDone(withCredentialGroup(result, credentialGroupId))
   } catch (error) {
-    const runtimeError = error instanceof Error ? error as ProviderRuntimeError : providerRuntimeError('请求失败，请稍后重试。')
+    const runtimeError = error instanceof Error ? error as ProviderRuntimeError : providerRuntimeError(st('providerOperation.requestFailed'))
     runtimeError.credentialGroupId = runtimeError.credentialGroupId ?? credentialGroupId
     onError(runtimeError)
   }
@@ -1141,7 +1160,7 @@ function createStreamModeTrace(streamMode: 'reader' | 'buffered' | 'fallback', c
   return {
     id: `stream-mode-${streamMode}`,
     type: 'system',
-    title: '流式模式',
+    title: st('providerTrace.streamMode'),
     content,
     status: streamMode === 'reader' ? 'done' : 'skipped',
     startedAt: now,
@@ -1181,17 +1200,17 @@ export async function testProviderModel(provider: AIProvider, model: string, api
 
 export async function testProviderModelDetailed(provider: AIProvider, model: string, apiKey: string): Promise<ProviderOperationResult> {
   if (!apiKey.trim()) {
-    return failure('missing_key', '请先保存 API Key。')
+    return failure('missing_key', st('providerOperation.saveApiKeyFirst'))
   }
   const selected = chooseCredentialForModel(provider, model)
   const selectedGroupId = selected.apiKey === apiKey ? selected.credentialGroupId : findCredentialGroupIdForKey(provider, apiKey)
   const p = { ...provider, apiKey: apiKey.trim() }
   const issue = getProviderConfigIssue(p, apiKey)
   if (issue) {
-    return failure('credential_mismatch', issue.message)
+    return failure('credential_mismatch', st(issue.messageKey ?? issue.message, undefined, issue.message))
   }
   if (!model.trim()) {
-    return failure('model_unavailable', '请先选择或填写一个模型 ID。')
+    return failure('model_unavailable', st('providerOperation.chooseModelFirst'))
   }
 
   try {
@@ -1214,9 +1233,9 @@ export async function testProviderModelDetailed(provider: AIProvider, model: str
     }
     const text = await parseNonStreamingText(response, getWireProviderType(p))
     if (!text.trim()) {
-      return failure('unknown', '模型返回为空，请检查模型是否支持文本对话或当前账号权限。', undefined, selectedGroupId)
+      return failure('unknown', st('providerOperation.emptyModelResponse'), undefined, selectedGroupId)
     }
-    return success('当前模型测试通过。', undefined, selectedGroupId)
+    return success(st('providerOperation.modelTestPassed'), undefined, selectedGroupId)
   } catch (error) {
     return providerFetchFailure(error, selectedGroupId)
   }
@@ -1241,12 +1260,12 @@ export async function fetchProviderModelConfigs(provider: AIProvider, apiKey: st
 
 export async function fetchProviderModelConfigsDetailed(provider: AIProvider, apiKey: string): Promise<ProviderOperationResult<AIModel[]>> {
   if (!apiKey.trim()) {
-    return failure('missing_key', '请先保存 API Key。')
+    return failure('missing_key', st('providerOperation.saveApiKeyFirst'))
   }
   const p = { ...provider, apiKey: apiKey.trim() }
   const issue = getProviderConfigIssue(p, apiKey)
   if (issue) {
-    return failure('credential_mismatch', issue.message)
+    return failure('credential_mismatch', st(issue.messageKey ?? issue.message, undefined, issue.message))
   }
   try {
     let models: AIModel[] = []
@@ -1260,13 +1279,13 @@ export async function fetchProviderModelConfigsDetailed(provider: AIProvider, ap
       models = await fetchOpenAICompatibleModels(p)
     }
     if (!models.length) {
-      return failure<AIModel[]>('empty_models', '服务商没有返回可用模型，已保留当前手动模型列表。', undefined, findCredentialGroupIdForKey(provider, apiKey))
+      return failure<AIModel[]>('empty_models', st('providerOperation.emptyModels'), undefined, findCredentialGroupIdForKey(provider, apiKey))
     }
-    return success(`已获取 ${models.length} 个模型。`, models, findCredentialGroupIdForKey(provider, apiKey))
+    return success(st('providerOperation.modelsFetched', { count: models.length }), models, findCredentialGroupIdForKey(provider, apiKey))
   } catch (error) {
     return providerFetchFailure(error, findCredentialGroupIdForKey(provider, apiKey))
   }
-  return failure('models_endpoint_unavailable', '当前服务商不支持自动获取模型，请手动维护模型列表。')
+  return failure('models_endpoint_unavailable', st('providerOperation.modelsEndpointUnavailable'))
 }
 
 function supportsReasoningEffort(req: ChatRequest): boolean {
@@ -1280,11 +1299,11 @@ function clamp01(value: number): number {
 export async function syncProviderCredentialGroupsDetailed(provider: AIProvider): Promise<ProviderOperationResult<AIProvider>> {
   const groups = provider.credentialGroups?.filter((group) => group.enabled && group.apiKey?.trim()) ?? []
   if (!groups.length && !provider.apiKey.trim()) {
-    return failure('missing_key', '请先保存至少一个令牌分组。')
+    return failure('missing_key', st('providerOperation.saveTokenGroupFirst'))
   }
   const sourceGroups = groups.length
     ? provider.credentialGroups
-    : [{ id: 'default', label: '默认令牌', enabled: true, apiKey: provider.apiKey, availableModels: provider.models }]
+    : [{ id: 'default', label: st('providerOperation.defaultToken'), enabled: true, apiKey: provider.apiKey, availableModels: provider.models }]
   const synced = await runCredentialGroupModelSync(
     { ...provider, credentialGroups: sourceGroups },
     {
@@ -1297,7 +1316,7 @@ export async function syncProviderCredentialGroupsDetailed(provider: AIProvider)
       },
     }
   )
-  return success('令牌分组模型同步完成。', synced)
+  return success(st('providerOperation.credentialGroupsSynced'), synced)
 }
 
 export async function fetchProviderModels(provider: AIProvider, apiKey: string): Promise<string[]> {
@@ -1311,7 +1330,7 @@ export async function embedTextWithProvider(provider: AIProvider, text: string):
     throw new Error('embeddings_endpoint_unavailable')
   }
   const issue = getProviderConfigIssue(provider, provider.apiKey)
-  if (issue) throw new Error(`${issue.code}: ${issue.message}`)
+  if (issue) throw new Error(`${issue.code}: ${st(issue.messageKey ?? issue.message, undefined, issue.message)}`)
   const model = pickEmbeddingModel(provider)
   const response = await fetchWithTimeout(`${normalizeBaseUrl(defaultOpenAICompatibleBaseUrl(provider))}/embeddings`, {
     method: 'POST',
@@ -1407,7 +1426,7 @@ async function fetchOpenAICompatibleModels(provider: AIProvider): Promise<AIMode
     headers: getHeaders(provider),
   }, PROVIDER_REQUEST_TIMEOUT_MS)
   if (!response.ok) throw new ProviderHttpError(response.status, await safeResponseText(response))
-  const json = (await response.json()) as OpenAIModelListResponse
+  const json = parseProviderJson<OpenAIModelListResponse>(await safeResponseText(response), response, provider, '模型列表')
   const items = json.data?.filter((item) => isString(item.id)) ?? []
   return sortModelConfigs(
     dedupeModelIds(items.map((item) => normalizeRemoteModelId(item.id!, provider.type))).map((id) => {
@@ -1415,7 +1434,6 @@ async function fetchOpenAICompatibleModels(provider: AIProvider): Promise<AIMode
       return mergeModelConfig(id, provider.type, {
         name: remote?.display_name || remote?.name,
         contextWindow: firstNumber(remote?.context_length, remote?.contextWindow, getNumber(remote?.metadata, 'context_length')),
-        maxTokens: firstNumber(remote?.context_length, remote?.contextWindow, getNumber(remote?.metadata, 'context_length')),
         maxOutputTokens: firstNumber(remote?.max_output_length, remote?.maxOutputTokens, getNumber(remote?.metadata, 'max_output_length')),
         supportsVision: supportsVisionFromOpenAIModel(remote),
         source: 'remote',
@@ -1487,7 +1505,6 @@ async function fetchGoogleModels(provider: AIProvider): Promise<AIModel[]> {
       return mergeModelConfig(id, 'google', {
         name: remote?.name,
         contextWindow: remote?.contextWindow,
-        maxTokens: remote?.contextWindow,
         maxOutputTokens: remote?.maxOutputTokens,
         defaultMaxTokens: remote?.maxOutputTokens ? Math.min(8192, remote.maxOutputTokens) : undefined,
         supportsVision: true,
@@ -1600,6 +1617,28 @@ async function safeResponseText(response: Response): Promise<string> {
   }
 }
 
+function parseProviderJson<T>(text: string, response: Response, provider: AIProvider, label: string): T {
+  const trimmed = text.trim()
+  const contentType = response.headers.get('content-type') ?? ''
+  if (!trimmed) {
+    throw new ProviderHttpError(response.status || 200, st('providerOperation.jsonEmpty', { label }))
+  }
+  if (/^</.test(trimmed) || /text\/html/i.test(contentType)) {
+    throw new ProviderHttpError(
+      response.status || 200,
+      st('providerOperation.htmlInsteadJson', { provider: provider.name })
+    )
+  }
+  try {
+    return JSON.parse(trimmed) as T
+  } catch {
+    throw new ProviderHttpError(
+      response.status || 200,
+      st('providerOperation.invalidJson', { label, contentType: contentType || st('updates.unknown'), snippet: trimmed.slice(0, 180) })
+    )
+  }
+}
+
 function success<T>(message: string, data?: T, credentialGroupId?: string): ProviderOperationResult<T> {
   return { ok: true, code: 'ok', message, data, credentialGroupId }
 }
@@ -1613,13 +1652,13 @@ function providerFetchFailure<T>(error: unknown, credentialGroupId?: string): Pr
     return failure<T>(classifyHttpStatus(error.status, error.responseText), formatProviderHttpError(error.status, error.responseText), undefined, credentialGroupId)
   }
   if (error instanceof Error && error.name === 'AbortError') {
-    return failure<T>('timeout', '请求超时，请检查网络、代理或服务商地址。', undefined, credentialGroupId)
+    return failure<T>('timeout', st('providerOperation.timeout'), undefined, credentialGroupId)
   }
   const message = error instanceof Error ? error.message : ''
   if (/failed to fetch|network|network request failed/i.test(message)) {
-    return failure<T>('network_error', '网络请求失败，请检查网络、代理或服务商地址。', undefined, credentialGroupId)
+    return failure<T>('network_error', st('providerOperation.networkError'), undefined, credentialGroupId)
   }
-  return failure<T>('unknown', message || '请求失败，请稍后重试。', undefined, credentialGroupId)
+  return failure<T>('unknown', message || st('providerOperation.requestFailed'), undefined, credentialGroupId)
 }
 
 function findCredentialGroupIdForKey(provider: AIProvider, apiKey: string): string | undefined {
@@ -1644,26 +1683,26 @@ function classifyHttpStatus(status: number, responseText = '', model = ''): Prov
 
 function formatProviderHttpError(status: number, responseText = '', provider?: AIProvider, model = ''): string {
   const code = classifyHttpStatus(status, responseText, model)
-  const providerName = provider?.name ?? '服务商'
+  const providerName = provider?.name ?? st('providerOperation.provider')
   switch (code) {
     case 'bad_auth':
-      return `${providerName} 拒绝了当前密钥，请检查 API Key、账户权限或计费模式。`
+      return st('providerOperation.http.badAuth', { provider: providerName })
     case 'model_unavailable':
-      return `${model || '当前模型'} 不可用，可能是模型 ID 错误或账号没有权限。`
+      return st('providerOperation.http.modelUnavailable', { model: model || st('providerOperation.currentModel') })
     case 'models_endpoint_unavailable':
-      return `${providerName} 的模型列表接口不可用，请手动维护模型列表或检查 Base URL。`
+      return st('providerOperation.http.modelsEndpointUnavailable', { provider: providerName })
     case 'rate_limited':
-      return `${providerName} 触发了限流或额度不足，请稍后重试或检查计费/订阅状态。`
+      return st('providerOperation.http.rateLimited', { provider: providerName })
     case 'max_tokens_exceeded':
-      return `${providerName} 拒绝了当前输出长度，请降低 Max Tokens 或切换更大输出上限的模型。`
+      return st('providerOperation.http.maxTokensExceeded', { provider: providerName })
     case 'timeout':
-      return `${providerName} 请求超时，请检查网络、代理或服务商地址。`
+      return st('providerOperation.http.timeout', { provider: providerName })
     case 'bad_base_url':
-      return `${providerName} 返回了 400，请检查 Base URL、模型 ID 和请求参数。`
+      return st('providerOperation.http.badBaseUrl', { provider: providerName })
     case 'network_error':
-      return `${providerName} 暂时不可用或网络异常，请稍后重试。`
+      return st('providerOperation.http.network', { provider: providerName })
     default:
-      return responseText ? `${providerName} 返回错误 ${status}: ${responseText.slice(0, 240)}` : `${providerName} 返回错误 ${status}。`
+      return responseText ? st('providerOperation.http.errorWithText', { provider: providerName, status, text: responseText.slice(0, 240) }) : st('providerOperation.http.error', { provider: providerName, status })
   }
 }
 

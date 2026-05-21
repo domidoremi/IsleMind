@@ -1,0 +1,222 @@
+{
+  "schema": "islemind.local-embedding-models.v1",
+  "variants": {
+    "no-model": {
+      "bundledModels": []
+    },
+    "with-model-small": {
+      "bundledModels": ["all-MiniLM-L6-v2"]
+    }
+  },
+  "models": [
+    {
+      "id": "all-MiniLM-L6-v2",
+      "version": "xenova-2024-02-02",
+      "name": "all-MiniLM-L6-v2",
+      "capability": "embedding",
+      "language": "English",
+      "useCase": "Small general-purpose embedding model",
+      "dimension": 384,
+      "tokenizer": "wordpiece",
+      "maxTokens": 256,
+      "sizeBytes": 23685172,
+      "downloadBaseUrl": "https://huggingface.co/Xenova/all-MiniLM-L6-v2/resolve/main",
+      "sourceUrl": "https://huggingface.co/Xenova/all-MiniLM-L6-v2",
+      "publisher": "Xenova",
+      "upstreamModel": "sentence-transformers/all-MiniLM-L6-v2",
+      "upstreamContributors": ["Xenova", "sentence-transformers"],
+      "license": "Apache-2.0",
+      "attribution": "ONNX distribution by Xenova; original sentence-transformers model from the all-MiniLM-L6-v2 family.",
+      "bundledIn": ["with-model-small"],
+      "files": [
+        {
+          "path": "config.json",
+          "bytes": 650,
+          "sha256": "7135149f7cffa1a573466c6e4d8423ed73b62fd2332c575bf738a0d033f70df7"
+        },
+        {
+          "path": "special_tokens_map.json",
+          "bytes": 125,
+          "sha256": "b6d346be366a7d1d48332dbc9fdf3bf8960b5d879522b7799ddba59e76237ee3"
+        },
+        {
+          "path": "tokenizer_config.json",
+          "bytes": 366,
+          "sha256": "9261e7d79b44c8195c1cada2b453e55b00aeb81e907a6664974b4d7776172ab3"
+        },
+        {
+          "path": "tokenizer.json",
+          "bytes": 711661,
+          "sha256": "da0e79933b9ed51798a3ae27893d3c5fa4a201126cef75586296df9b4d2c62a0"
+        },
+        {
+          "path": "onnx/model_quantized.onnx",
+          "bytes": 22972370,
+          "sha256": "afdb6f1a0e45b715d0bb9b11772f032c399babd23bfc31fed1c170afc848bdb1"
+        }
+      ]
+    },
+    {
+      "id": "bge-small-zh-v1.5",
+      "version": "xenova-2024-01-17",
+      "name": "bge-small-zh-v1.5",
+      "capability": "embedding",
+      "language": "Chinese",
+      "useCase": "Chinese knowledge retrieval",
+      "dimension": 512,
+      "tokenizer": "wordpiece",
+      "maxTokens": 256,
+      "sizeBytes": 24560715,
+      "downloadBaseUrl": "https://huggingface.co/Xenova/bge-small-zh-v1.5/resolve/main",
+      "sourceUrl": "https://huggingface.co/Xenova/bge-small-zh-v1.5",
+      "publisher": "Xenova",
+      "upstreamModel": "BAAI/bge-small-zh-v1.5",
+      "upstreamContributors": ["Xenova", "BAAI"],
+      "license": "MIT",
+      "attribution": "ONNX distribution by Xenova; original BGE small Chinese embedding model by BAAI.",
+      "bundledIn": [],
+      "files": [
+        {
+          "path": "config.json",
+          "bytes": 716,
+          "sha256": "d4193ead3a810fd694fa8a31d7fc72fbaebc0668b603e398734bf2f6538ff42f"
+        },
+        {
+          "path": "special_tokens_map.json",
+          "bytes": 125,
+          "sha256": "b6d346be366a7d1d48332dbc9fdf3bf8960b5d879522b7799ddba59e76237ee3"
+        },
+        {
+          "path": "tokenizer_config.json",
+          "bytes": 367,
+          "sha256": "e6f3b96db926a37d4039995fbf5ad17de158dfb8f6343d607e4dbaad18d75f5a"
+        },
+        {
+          "path": "tokenizer.json",
+          "bytes": 439125,
+          "sha256": "48cea5d44424912a6fd1ea647bf4fe50b55ab8b1e5879c3275f80e339e8fae26"
+        },
+        {
+          "path": "vocab.txt",
+          "bytes": 109540,
+          "sha256": "45bbac6b341c319adc98a532532882e91a9cefc0329aa57bac9ae761c27b291c"
+        },
+        {
+          "path": "onnx/model_quantized.onnx",
+          "bytes": 24010842,
+          "sha256": "15b717c382bcb518ba457b93ea6850ede7f4f1cd8937454aa06972366cd19bcc"
+        }
+      ]
+    },
+    {
+      "id": "paraphrase-multilingual-MiniLM-L12-v2",
+      "version": "xenova-2024-02-02",
+      "name": "paraphrase-multilingual-MiniLM-L12-v2",
+      "capability": "embedding",
+      "language": "Multilingual",
+      "useCase": "Chinese, English, and Japanese retrieval",
+      "dimension": 384,
+      "tokenizer": "unigram",
+      "maxTokens": 256,
+      "sizeBytes": 135392488,
+      "downloadBaseUrl": "https://huggingface.co/Xenova/paraphrase-multilingual-MiniLM-L12-v2/resolve/main",
+      "sourceUrl": "https://huggingface.co/Xenova/paraphrase-multilingual-MiniLM-L12-v2",
+      "publisher": "Xenova",
+      "upstreamModel": "sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2",
+      "upstreamContributors": ["Xenova", "sentence-transformers"],
+      "license": "Apache-2.0",
+      "attribution": "ONNX distribution by Xenova; original sentence-transformers multilingual MiniLM model.",
+      "bundledIn": [],
+      "files": [
+        {
+          "path": "config.json",
+          "bytes": 673,
+          "sha256": "05b570bff786faa5c4604152aa16f19f77ed6dfc31e47dd0f3dd987078693ac7"
+        },
+        {
+          "path": "special_tokens_map.json",
+          "bytes": 280,
+          "sha256": "06e405a36dfe4b9604f484f6a1e619af1a7f7d09e34a8555eb0b77b66318067f"
+        },
+        {
+          "path": "tokenizer_config.json",
+          "bytes": 496,
+          "sha256": "3f5961b9ac86288cccdb97f32fb848d6187c78e1603958c53f3ea1f296b7d8a2"
+        },
+        {
+          "path": "tokenizer.json",
+          "bytes": 17082913,
+          "sha256": "b60b6b43406a48bf3638526314f3d232d97058bc93472ff2de930d43686fa441"
+        },
+        {
+          "path": "onnx/model_quantized.onnx",
+          "bytes": 118308126,
+          "sha256": "66fc00f5f29afcaff34092e1bdd20008ca3918265a82fb9695a551e510cc4ebc"
+        }
+      ]
+    },
+    {
+      "id": "bge-reranker-base",
+      "version": "catalog-placeholder-2026-05",
+      "name": "bge-reranker-base",
+      "capability": "reranker",
+      "language": "Multilingual",
+      "useCase": "Cross-Encoder reranking for top retrieved chunks",
+      "dimension": 0,
+      "tokenizer": "wordpiece",
+      "maxTokens": 512,
+      "sizeBytes": 0,
+      "downloadBaseUrl": "https://huggingface.co/BAAI/bge-reranker-base/resolve/main",
+      "sourceUrl": "https://huggingface.co/BAAI/bge-reranker-base",
+      "publisher": "BAAI",
+      "upstreamModel": "BAAI/bge-reranker-base",
+      "upstreamContributors": ["BAAI"],
+      "license": "MIT",
+      "attribution": "Optional reranker capability placeholder. No files are bundled in the default APK.",
+      "bundledIn": [],
+      "files": []
+    },
+    {
+      "id": "colbertv2.0",
+      "version": "catalog-placeholder-2026-05",
+      "name": "ColBERTv2",
+      "capability": "colbert",
+      "language": "English",
+      "useCase": "Late-interaction multi-vector retrieval when a ColBERT runtime/model is available",
+      "dimension": 128,
+      "tokenizer": "wordpiece",
+      "maxTokens": 180,
+      "sizeBytes": 0,
+      "downloadBaseUrl": "https://huggingface.co/colbert-ir/colbertv2.0/resolve/main",
+      "sourceUrl": "https://huggingface.co/colbert-ir/colbertv2.0",
+      "publisher": "ColBERT IR",
+      "upstreamModel": "colbert-ir/colbertv2.0",
+      "upstreamContributors": ["ColBERT IR"],
+      "license": "See upstream model card",
+      "attribution": "Optional ColBERT capability placeholder. IsleMind uses token max-sim lite until model files are available.",
+      "bundledIn": [],
+      "files": []
+    },
+    {
+      "id": "llmlingua-2-xlm-roberta-large-meetingbank",
+      "version": "catalog-placeholder-2026-05",
+      "name": "LLMLingua-2 XLM-R",
+      "capability": "compressor",
+      "language": "Multilingual",
+      "useCase": "Context compression for long retrieved chunks",
+      "dimension": 0,
+      "tokenizer": "wordpiece",
+      "maxTokens": 512,
+      "sizeBytes": 0,
+      "downloadBaseUrl": "https://huggingface.co/microsoft/llmlingua-2-xlm-roberta-large-meetingbank/resolve/main",
+      "sourceUrl": "https://huggingface.co/microsoft/llmlingua-2-xlm-roberta-large-meetingbank",
+      "publisher": "Microsoft",
+      "upstreamModel": "microsoft/llmlingua-2-xlm-roberta-large-meetingbank",
+      "upstreamContributors": ["Microsoft"],
+      "license": "MIT",
+      "attribution": "Optional compressor capability placeholder. IsleMind uses extractive compression until model files are available.",
+      "bundledIn": [],
+      "files": []
+    }
+  ]
+}

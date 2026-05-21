@@ -38,6 +38,7 @@
       "expo-router",
       "expo-localization",
       "expo-secure-store",
+      "onnxruntime-react-native",
       [
         "expo-image-picker",
         {

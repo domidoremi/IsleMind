@@ -3,6 +3,7 @@ import * as Speech from 'expo-speech'
 import type { AIProvider } from '@/types'
 import { synthesizeSpeechWithProvider, transcribeAudioWithProvider } from '@/services/ai/base'
 import { useSettingsStore } from '@/store/settingsStore'
+import { st } from '@/i18n/service'
 
 let AudioModule: any = null
 let useAudioRecorderModule: any = null
@@ -36,7 +37,7 @@ export async function requestMicrophonePermission(): Promise<boolean> {
 
 export async function transcribeLocalAudio(uri: string, provider?: AIProvider | null): Promise<string> {
   const sourceProvider = provider ?? await useSettingsStore.getState().getPrimaryConfiguredProvider()
-  if (!sourceProvider) throw new Error('请先配置支持音频转写的服务商。')
+  if (!sourceProvider) throw new Error(st('speech.transcriptionNeedsProvider'))
   const base64 = await FileSystem.readAsStringAsync(uri, { encoding: FileSystem.EncodingType.Base64 })
   return transcribeAudioWithProvider({
     provider: sourceProvider,

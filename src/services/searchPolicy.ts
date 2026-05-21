@@ -1,4 +1,5 @@
 import type { SearchProviderId, Settings, WebSearchMode } from '@/types'
+import { st } from '@/i18n/service'
 
 type SearchSettings = Pick<Settings, 'webSearchEnabled' | 'webSearchMode' | 'searchProvider' | 'customSearchEndpoint'>
 
@@ -16,7 +17,7 @@ export function legacySearchModeForProvider(provider: SearchProviderId): WebSear
 export function searchProviderLabel(provider: SearchProviderId): string {
   switch (provider) {
     case 'native':
-      return '原生'
+      return st('searchPolicy.native')
     case 'tavily':
       return 'Tavily'
     case 'google':
@@ -24,9 +25,9 @@ export function searchProviderLabel(provider: SearchProviderId): string {
     case 'bing':
       return 'Bing/Azure'
     case 'custom':
-      return '自定义'
+      return st('searchPolicy.custom')
     case 'off':
-      return '关闭'
+      return st('searchPolicy.off')
   }
 }
 

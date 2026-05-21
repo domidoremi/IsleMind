@@ -4,6 +4,7 @@ import * as Sharing from 'expo-sharing'
 import { exportAllData, importAllData } from '@/services/storage'
 import { useChatStore } from '@/store/chatStore'
 import { useSettingsStore } from '@/store/settingsStore'
+import { st } from '@/i18n/service'
 
 export async function exportToJsonFile(): Promise<string> {
   const json = await exportAllData()
@@ -13,7 +14,7 @@ export async function exportToJsonFile(): Promise<string> {
   if (await Sharing.isAvailableAsync()) {
     await Sharing.shareAsync(uri, {
       mimeType: 'application/json',
-      dialogTitle: '导出 IsleMind 对话 JSON',
+      dialogTitle: st('portableData.exportDialogTitle'),
       UTI: 'public.json',
     })
   }

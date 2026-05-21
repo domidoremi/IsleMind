@@ -1,5 +1,6 @@
 import type { AIModel, AIProvider, ProviderCredentialGroup, ProviderOperationCode } from '@/types'
 import { getModelConfig, mergeModelConfig, sortModelConfigs } from '@/types'
+import { st } from '@/i18n/service'
 import { defaultProviderSyncPolicy, getProviderPreset } from './providerRegistry'
 
 interface CredentialSyncDeps {
@@ -48,7 +49,7 @@ export function normalizeProviderCredentialGroups(provider: AIProvider): AIProvi
     : provider.apiKey
       ? [{
           id: 'default',
-          label: '默认令牌',
+          label: st('providerOperation.defaultToken'),
           apiKey: provider.apiKey,
           enabled: true,
           availableModels: provider.models,
@@ -58,7 +59,7 @@ export function normalizeProviderCredentialGroups(provider: AIProvider): AIProvi
   const normalizedGroups = groups.map((group, index) => ({
     ...group,
     id: group.id || `group-${index + 1}`,
-    label: group.label || `令牌分组 ${index + 1}`,
+    label: group.label || st('apiKeyPanel.groupName', { index: index + 1 }),
     enabled: group.enabled ?? true,
     availableModels: group.availableModels ?? provider.models,
     failureCount: group.failureCount ?? 0,
@@ -117,7 +118,7 @@ export async function runCredentialGroupModelSync(provider: AIProvider, deps: Cr
       await wait(Math.round(policy.minDelayMs + span * jitter()))
     }
     try {
-      const remote = await deps.fetchModels(provider, group)
+      const remote = await deps.fetchModels({ ...provider, apiKey: group.apiKey?.trim() || provider.apiKey }, group)
       const configs = remote.map((model) => mergeModelConfig(model.id, provider.type, model))
       for (const config of configs) {
         configsById.set(config.id, config)
@@ -127,12 +128,12 @@ export async function runCredentialGroupModelSync(provider: AIProvider, deps: Cr
         availableModels: configs.map((item) => item.id),
         lastModelSyncAt: now(),
         lastModelSyncStatus: 'ok',
-        lastModelSyncMessage: `已获取 ${configs.length} 个模型。`,
+        lastModelSyncMessage: st('providerOperation.modelsFetched', { count: configs.length }),
         lastModelSyncCode: 'ok',
         failureCount: 0,
       })
     } catch (error) {
-      const message = error instanceof Error ? error.message : '模型同步失败。'
+      const message = error instanceof Error ? error.message : st('apiKeyPanel.modelSyncFailed')
       nextGroups.push({
         ...group,
         lastModelSyncAt: now(),
@@ -145,7 +146,7 @@ export async function runCredentialGroupModelSync(provider: AIProvider, deps: Cr
   }
 
   const modelConfigs = sortModelConfigs(Array.from(configsById.values()), provider.type)
-  const models = modelConfigs.length ? modelConfigs.map((item) => item.id) : provider.models
+  const models = modelConfigs.length ? modelConfigs.map((item) => item.id) : []
   const merged: AIProvider = {
     ...provider,
     credentialGroups: nextGroups,
@@ -154,7 +155,7 @@ export async function runCredentialGroupModelSync(provider: AIProvider, deps: Cr
     modelAvailability: mergeCredentialModelAvailability(nextGroups),
     lastModelSyncAt: now(),
     lastModelSyncStatus: nextGroups.some((group) => group.lastModelSyncStatus === 'ok') ? 'ok' as const : 'bad' as const,
-    lastModelSyncMessage: nextGroups.map((group) => `${group.label}: ${group.lastModelSyncMessage ?? '未同步'}`).join('\n'),
+    lastModelSyncMessage: nextGroups.map((group) => `${group.label}: ${group.lastModelSyncMessage ?? st('providerOperation.notSynced')}`).join('\n'),
   }
   const preset = getProviderPreset(provider.presetId)
   return {

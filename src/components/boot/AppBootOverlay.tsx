@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { Text, View } from 'react-native'
 import { MotiView, AnimatePresence } from 'moti'
+import { useTranslation } from 'react-i18next'
 import { BlueCatMascot } from '@/components/mascot/BlueCatMascot'
 import { useAppTheme } from '@/hooks/useAppTheme'
 import { useMotionPreference } from '@/hooks/useMotionPreference'
@@ -12,12 +13,13 @@ interface AppBootOverlayProps {
   bootStartedAt: number
 }
 
-const SLOW_BOOT_DELAY_MS = 900
+const SLOW_BOOT_DELAY_MS = 1800
 const MAX_VISIBLE_MS = 5200
 
 export function AppBootOverlay({ ready, errorCount = 0, bootStartedAt }: AppBootOverlayProps) {
-  const { colors, isDark } = useAppTheme()
+  const { colors } = useAppTheme()
   const motion = useMotionPreference()
+  const { t } = useTranslation()
   const [visible, setVisible] = useState(false)
 
   useEffect(() => {
@@ -64,12 +66,9 @@ export function AppBootOverlay({ ready, errorCount = 0, bootStartedAt }: AppBoot
             backgroundColor: colors.surface,
           }}
         >
-          <View pointerEvents="none" style={{ position: 'absolute', top: -110, right: -80, width: 240, height: 240, borderRadius: 120, backgroundColor: colors.skySoft, opacity: isDark ? 0.2 : 0.66 }} />
-          <View pointerEvents="none" style={{ position: 'absolute', bottom: -110, left: -80, width: 250, height: 250, borderRadius: 125, backgroundColor: colors.mintSoft, opacity: isDark ? 0.18 : 0.72 }} />
-          <BlueCatMascot loading size={168} />
-          <Text style={{ color: colors.text, fontSize: 24, fontWeight: '900', letterSpacing: -0.6, marginTop: 16 }}>IsleMind</Text>
+          <BlueCatMascot loading size={132} />
           <Text style={{ color: errorCount ? colors.warning : colors.textSecondary, fontSize: 12, lineHeight: 18, fontWeight: '900', marginTop: 6 }}>
-            {errorCount ? '恢复中' : ready ? '准备好了' : '唤醒工作台'}
+            {errorCount ? t('app.bootRecovering') : ready ? t('app.bootReady') : t('app.bootWaking')}
           </Text>
           <LoadingDots />
         </MotiView>

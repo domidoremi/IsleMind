@@ -1,9 +1,13 @@
 import { useMemo, useState, type ReactNode } from 'react'
 import { KeyboardAvoidingView, Modal, Platform, Pressable, ScrollView, Text, TextInput, View } from 'react-native'
+import * as Clipboard from 'expo-clipboard'
+import * as DocumentPicker from 'expo-document-picker'
+import * as FileSystem from 'expo-file-system/legacy'
 import { Gesture, GestureDetector } from 'react-native-gesture-handler'
 import Animated, { runOnJS, useAnimatedStyle, useSharedValue, withSpring } from 'react-native-reanimated'
-import { ChevronLeft, GripVertical, Import, ListChecks, Plus, Search, SlidersHorizontal, X, Zap } from 'lucide-react-native'
+import { ChevronLeft, ClipboardPaste, FileJson, GripVertical, Import, ListChecks, Plus, Search, SlidersHorizontal, X, Zap } from 'lucide-react-native'
 import { router } from 'expo-router'
+import { useTranslation } from 'react-i18next'
 import { ApiKeyPanel } from '@/components/settings/ApiKeyPanel'
 import { IslandField, IslandHeader, IslandIconButton, IslandSection } from '@/components/ui/IslandPrimitives'
 import { IslandButton } from '@/components/ui/IslandButton'
@@ -14,16 +18,19 @@ import { useChatStore } from '@/store/chatStore'
 import { useSettingsStore } from '@/store/settingsStore'
 import { type AIProvider, type ProviderPresetId } from '@/types'
 import { applyProviderPreset, getProviderPreset, parseCredentialGroups, parseProviderImportText, PROVIDER_PRESETS } from '@/services/ai/providerRegistry'
+import { syncAndTestProvider, summarizeProviderActivation } from '@/services/providerActivation'
+import { MiniStat } from '@/components/ui/MiniStat'
+import { normalizeSearchText, parseModels } from '@/utils/text'
 
 type ProviderSortMode = 'manual' | 'recent' | 'enabled' | 'models' | 'health' | 'name'
 
-const SORT_OPTIONS: { id: ProviderSortMode; label: string }[] = [
-  { id: 'manual', label: '手动' },
-  { id: 'recent', label: '最近使用' },
-  { id: 'enabled', label: '启用优先' },
-  { id: 'models', label: '模型数' },
-  { id: 'health', label: '健康状态' },
-  { id: 'name', label: '名称' },
+const SORT_OPTIONS: { id: ProviderSortMode; labelKey: string }[] = [
+  { id: 'manual', labelKey: 'providerSettings.sort.manual' },
+  { id: 'recent', labelKey: 'providerSettings.sort.recent' },
+  { id: 'enabled', labelKey: 'providerSettings.sort.enabled' },
+  { id: 'models', labelKey: 'providerSettings.sort.models' },
+  { id: 'health', labelKey: 'providerSettings.sort.health' },
+  { id: 'name', labelKey: 'providerSettings.sort.name' },
 ]
 
 interface ProviderSettingsContentProps {
@@ -33,13 +40,15 @@ interface ProviderSettingsContentProps {
 
 export function ProviderSettingsContent({ embedded = false, onClose }: ProviderSettingsContentProps) {
   const { colors } = useAppTheme()
+  const { t } = useTranslation()
   const dialog = useIslandDialog()
   const providers = useSettingsStore((state) => state.providers)
   const addProvider = useSettingsStore((state) => state.addProvider)
   const addProviders = useSettingsStore((state) => state.addProviders)
-  const updateProviders = useSettingsStore((state) => state.updateProviders)
   const reorderProviders = useSettingsStore((state) => state.reorderProviders)
   const hydrateProviderKey = useSettingsStore((state) => state.hydrateProviderKey)
+  const updateProvider = useSettingsStore((state) => state.updateProvider)
+  const updateProviderCredentialGroupHealth = useSettingsStore((state) => state.updateProviderCredentialGroupHealth)
   const conversations = useChatStore((state) => state.conversations)
   const [expandedProviderId, setExpandedProviderId] = useState<string | null>(null)
   const [sortMode, setSortMode] = useState<ProviderSortMode>('manual')
@@ -59,7 +68,7 @@ export function ProviderSettingsContent({ embedded = false, onClose }: ProviderS
   }, [conversations])
 
   const visibleProviders = useMemo(() => {
-    const normalizedFilter = normalizeSearch(modelFilter)
+    const normalizedFilter = normalizeSearchText(modelFilter)
     const filtered = normalizedFilter
       ? providers.filter((provider) => providerMatchesModelFilter(provider, normalizedFilter))
       : providers
@@ -76,13 +85,13 @@ export function ProviderSettingsContent({ embedded = false, onClose }: ProviderS
     setSortMode('manual')
     setModelFilter('')
     setAddOpen(false)
-    dialog.toast({ title: '已添加供应商', message: `${provider.name} 默认停用，已置顶。`, tone: 'mint' })
+    dialog.toast({ title: t('providerSettings.added'), message: t('providerSettings.addedMessage', { name: provider.name }), tone: 'mint' })
   }
 
   async function importProvidersFromText(input: string) {
     const result = parseProviderImportText(input)
     if (!result.providers.length) {
-      dialog.notice({ title: '未导入供应商', message: result.warnings.join('\n') || '没有识别到可导入的供应商。', tone: 'amber' })
+      dialog.notice({ title: t('providerSettings.importEmpty'), message: result.warnings.join('\n') || t('providerSettings.importEmptyMessage'), tone: 'amber' })
       return
     }
     await addProviders(result.providers)
@@ -91,8 +100,8 @@ export function ProviderSettingsContent({ embedded = false, onClose }: ProviderS
     setModelFilter('')
     setImportOpen(false)
     dialog.notice({
-      title: '批量导入完成',
-      message: [`已导入 ${result.providers.length} 个供应商，默认停用。`, ...result.warnings].join('\n'),
+      title: t('providerSettings.importDone'),
+      message: [t('providerSettings.importDoneMessage', { count: result.providers.length }), ...result.warnings].join('\n'),
       tone: result.warnings.length ? 'amber' : 'mint',
     })
   }
@@ -100,24 +109,30 @@ export function ProviderSettingsContent({ embedded = false, onClose }: ProviderS
   async function enableEffectiveSelection() {
     const ids = Array.from(effectiveSelectedIds).filter((id) => visibleProviders.some((provider) => provider.id === id))
     if (!ids.length) {
-      dialog.toast({ title: '没有可启用项', tone: 'amber' })
+      dialog.toast({ title: t('providerSettings.enableNone'), tone: 'amber' })
       return
     }
-    const results = await Promise.allSettled(ids.map((id) => updateProviders([id], { enabled: true })))
-    const enabledIds = ids.filter((_, index) => results[index]?.status === 'fulfilled')
-    const failedIds = ids.filter((_, index) => results[index]?.status === 'rejected')
-    const chosen = providers.filter((provider) => enabledIds.includes(provider.id))
-    const hydrated = await Promise.all(enabledIds.map((id) => hydrateProviderKey(id)))
-    const missingModels = chosen.filter((provider) => !provider.models.length)
-    const missingKeys = chosen.filter((provider) => {
-      const keyed = hydrated.find((item) => item?.id === provider.id)
-      return !providerHasAnyCredential(keyed ?? provider)
-    })
-    const failedProviders = providers.filter((provider) => failedIds.includes(provider.id))
+    const chosen = ids.map((id) => providers.find((provider) => provider.id === id)).filter((provider): provider is AIProvider => !!provider)
+    const successful: Awaited<ReturnType<typeof syncAndTestProvider>>[] = []
+    const failedProviders: AIProvider[] = []
+    for (const provider of chosen) {
+      try {
+        successful.push(await syncAndTestProvider(provider, { updateProvider, hydrateProviderKey, updateProviderCredentialGroupHealth }, { enable: true }))
+      } catch {
+        failedProviders.push(provider)
+      }
+    }
+    const summary = summarizeProviderActivation(successful)
+    const primaryReady = successful.find((result) => result.testOk || result.modelCount > 0)
+    if (primaryReady) {
+      useSettingsStore.getState().updateSettings({ defaultProvider: primaryReady.providerId, onboardingCompleted: true })
+    }
     dialog.notice({
-      title: '批量启用完成',
-      message: buildEnableNotice(enabledIds.length, 0, failedProviders, missingModels, missingKeys),
-      tone: failedProviders.length ? 'danger' : missingModels.length || missingKeys.length ? 'amber' : 'mint',
+      title: t('providerSettings.enableDone'),
+      message: failedProviders.length
+        ? [summary.message, t('providerSettings.failedProviders', { names: failedProviders.map((provider) => provider.name).join(', ') })].join('\n')
+        : summary.message,
+      tone: failedProviders.length ? 'danger' : summary.tone,
     })
     setBatchMode(false)
     setSelectedIds(new Set())
@@ -142,7 +157,7 @@ export function ProviderSettingsContent({ embedded = false, onClose }: ProviderS
     ordered.splice(targetIndex, 0, item)
     reorderProviders(ordered.map((provider) => provider.id))
     setSortMode('manual')
-    dialog.toast({ title: '顺序已更新', message: item.name, tone: 'mint' })
+    dialog.toast({ title: t('providerSettings.orderUpdated'), message: item.name, tone: 'mint' })
   }
 
   const content = (
@@ -154,38 +169,38 @@ export function ProviderSettingsContent({ embedded = false, onClose }: ProviderS
           contentContainerStyle={{ paddingHorizontal: 16, paddingTop: 8, paddingBottom: 96 }}
         >
           <IslandHeader
-            title="供应商"
+            title={t('settings.providerManagement')}
             leading={
               <HeaderBackButton onPress={onClose ?? closeStandaloneProviderSettings} />
             }
             trailing={
               <View style={{ flexDirection: 'row', gap: 8 }}>
-                <IslandIconButton label={batchMode ? '退出批量' : '批量模式'} tone={batchMode ? 'amber' : 'default'} onPress={() => {
+                <IslandIconButton label={batchMode ? t('providerSettings.exitBatch') : t('providerSettings.batchMode')} tone={batchMode ? 'amber' : 'default'} onPress={() => {
                   setBatchMode((value) => !value)
                   setSelectedIds(new Set())
-                  dialog.toast({ title: batchMode ? '已退出批量模式' : '已进入批量模式', tone: 'mint' })
+                  dialog.toast({ title: batchMode ? t('providerSettings.batchExited') : t('providerSettings.batchEntered'), tone: 'mint' })
                 }}>
                   <ListChecks color={batchMode ? colors.warning : colors.textSecondary} size={18} strokeWidth={2} />
                 </IslandIconButton>
-                <IslandIconButton label="添加供应商" tone="ink" onPress={() => setAddOpen(true)}>
+                <IslandIconButton label={t('settings.addProvider')} tone="ink" onPress={() => setAddOpen(true)}>
                   <Plus color={colors.surface} size={20} strokeWidth={2} />
                 </IslandIconButton>
               </View>
             }
           />
 
-          <IslandSection title="连接概况" style={{ marginTop: 16 }}>
+          <IslandSection title={t('providerSettings.overview')} style={{ marginTop: 16 }}>
             <View style={{ flexDirection: 'row', gap: 8, flexWrap: 'wrap' }}>
-              <MiniStat label={`已启用 ${enabled}`} />
-              <MiniStat label={`令牌组 ${credentialGroups}`} />
-              <MiniStat label={`供应商 ${providers.length}`} />
-              <MiniStat label={`显示 ${visibleProviders.length}`} />
+              <MiniStat label={t('providerSettings.enabledCount', { count: enabled })} />
+              <MiniStat label={t('providerSettings.credentialGroupCount', { count: credentialGroups })} />
+              <MiniStat label={t('providerSettings.providerCount', { count: providers.length })} />
+              <MiniStat label={t('providerSettings.visibleCount', { count: visibleProviders.length })} />
             </View>
             <View style={{ flexDirection: 'row', gap: 10, flexWrap: 'wrap', marginTop: 12 }}>
-              <IslandButton label="新增供应商" compact icon={<Plus color={colors.textSecondary} size={16} />} onPress={() => setAddOpen(true)} />
-              <IslandButton label="批量导入" compact icon={<Import color={colors.textSecondary} size={16} />} onPress={() => setImportOpen(true)} />
+              <IslandButton label={t('settings.addProvider')} compact icon={<Plus color={colors.textSecondary} size={16} />} onPress={() => setAddOpen(true)} />
+              <IslandButton label={t('settings.batchImport')} compact icon={<Import color={colors.textSecondary} size={16} />} onPress={() => setImportOpen(true)} />
               <IslandButton
-                label={selectedIds.size ? `启用所选 ${selectedIds.size}` : '快捷启用'}
+                label={selectedIds.size ? t('providerSettings.enableSelected', { count: selectedIds.size }) : t('settings.enableAll')}
                 compact
                 tone="mint"
                 icon={<Zap color={colors.textSecondary} size={16} />}
@@ -202,12 +217,12 @@ export function ProviderSettingsContent({ embedded = false, onClose }: ProviderS
               onChangeText={setModelFilter}
               autoCapitalize="none"
               autoCorrect={false}
-              placeholder="筛选模型"
+              placeholder={t('providerSettings.filterModels')}
               placeholderTextColor={colors.textTertiary}
               style={{ flex: 1, minHeight: 46, padding: 0, color: colors.text, fontSize: 14, fontWeight: '800' }}
             />
             {modelFilter ? (
-              <PressableScale haptic accessibilityLabel="清空筛选" onPress={() => setModelFilter('')} style={{ width: 32, height: 32, borderRadius: 16, alignItems: 'center', justifyContent: 'center', backgroundColor: colors.islandRaised }}>
+              <PressableScale haptic accessibilityLabel={t('common.clearSearch')} onPress={() => setModelFilter('')} style={{ width: 32, height: 32, borderRadius: 16, alignItems: 'center', justifyContent: 'center', backgroundColor: colors.islandRaised }}>
                 <X color={colors.textSecondary} size={15} />
               </PressableScale>
             ) : null}
@@ -219,18 +234,18 @@ export function ProviderSettingsContent({ embedded = false, onClose }: ProviderS
               {SORT_OPTIONS.map((option) => (
                 <ChoicePill
                   key={option.id}
-                  label={option.label}
+                  label={t(option.labelKey)}
                   active={sortMode === option.id}
                   onPress={() => {
                     setSortMode(option.id)
-                    dialog.toast({ title: `排序：${option.label}`, tone: 'mint' })
+                    dialog.toast({ title: t('providerSettings.sortChanged', { label: t(option.labelKey) }), tone: 'mint' })
                   }}
                 />
               ))}
             </ScrollView>
           </View>
 
-          <Text style={{ color: colors.text, fontSize: 17, fontWeight: '900', marginTop: 22, marginBottom: 10 }}>供应商列表</Text>
+          <Text style={{ color: colors.text, fontSize: 17, fontWeight: '900', marginTop: 22, marginBottom: 10 }}>{t('providerSettings.list')}</Text>
           <View style={{ gap: 12 }}>
             {visibleProviders.map((provider, index) => (
               <ProviderListRow
@@ -246,7 +261,7 @@ export function ProviderSettingsContent({ embedded = false, onClose }: ProviderS
               />
             ))}
           </View>
-          {!visibleProviders.length ? <Text style={{ color: colors.textSecondary, fontSize: 12, fontWeight: '800', marginTop: 16 }}>没有匹配的供应商</Text> : null}
+          {!visibleProviders.length ? <Text style={{ color: colors.textSecondary, fontSize: 12, fontWeight: '800', marginTop: 16 }}>{t('providerSettings.noMatches')}</Text> : null}
         </ScrollView>
       </KeyboardAvoidingView>
       <ProviderFormModal
@@ -270,10 +285,11 @@ export default ProviderSettingsContent
 
 function HeaderBackButton({ onPress }: { onPress: () => void }) {
   const { colors } = useAppTheme()
+  const { t } = useTranslation()
   return (
     <Pressable
       accessibilityRole="button"
-      accessibilityLabel="返回"
+      accessibilityLabel={t('common.back')}
       hitSlop={12}
       onPress={onPress}
       style={({ pressed }) => ({
@@ -294,7 +310,8 @@ function HeaderBackButton({ onPress }: { onPress: () => void }) {
 }
 
 function closeStandaloneProviderSettings() {
-  router.replace('/settings')
+  if (router.canGoBack()) router.back()
+  else router.push('/settings')
 }
 
 function ProviderListRow({
@@ -317,11 +334,12 @@ function ProviderListRow({
   onMove: (direction: -1 | 1) => void
 }) {
   const { colors } = useAppTheme()
+  const { t } = useTranslation()
   return (
     <View style={{ flexDirection: 'row', alignItems: 'stretch', gap: 8 }}>
       <DragRail disabledUp={!canMoveUp} disabledDown={!canMoveDown} onMove={onMove} />
       {batchMode ? (
-        <PressableScale haptic onPress={onToggleSelected} accessibilityLabel={selected ? '取消选择供应商' : '选择供应商'} style={{ width: 36, borderRadius: 18, alignItems: 'center', justifyContent: 'center', backgroundColor: selected ? colors.mintSoft : colors.islandRaised, borderWidth: 1, borderColor: selected ? colors.primary : colors.border }}>
+        <PressableScale haptic onPress={onToggleSelected} accessibilityLabel={selected ? t('providerSettings.unselectProvider') : t('providerSettings.selectProvider')} style={{ width: 36, borderRadius: 18, alignItems: 'center', justifyContent: 'center', backgroundColor: selected ? colors.mintSoft : colors.islandRaised, borderWidth: 1, borderColor: selected ? colors.primary : colors.border }}>
           <Text style={{ color: selected ? colors.primary : colors.textTertiary, fontSize: 13, fontWeight: '900' }}>{selected ? '✓' : ''}</Text>
         </PressableScale>
       ) : null}
@@ -370,15 +388,6 @@ function ChoicePill({ label, active, onPress }: { label: string; active: boolean
   )
 }
 
-function MiniStat({ label }: { label: string }) {
-  const { colors } = useAppTheme()
-  return (
-    <View style={{ minHeight: 30, borderRadius: 15, paddingHorizontal: 10, alignItems: 'center', justifyContent: 'center', backgroundColor: colors.islandRaised, borderWidth: 1, borderColor: colors.border }}>
-      <Text style={{ color: colors.textSecondary, fontSize: 11, fontWeight: '900' }}>{label}</Text>
-    </View>
-  )
-}
-
 function ProviderFormModal({
   visible,
   onClose,
@@ -389,6 +398,7 @@ function ProviderFormModal({
   onSubmit: (provider: AIProvider) => void
 }) {
   const { colors } = useAppTheme()
+  const { t } = useTranslation()
   const [presetId, setPresetId] = useState<ProviderPresetId>('custom-openai-compatible')
   const [name, setName] = useState('')
   const [baseUrl, setBaseUrl] = useState('')
@@ -408,7 +418,7 @@ function ProviderFormModal({
       baseUrl: baseUrl.trim() || preset.baseUrl,
       apiKey: '',
       credentialGroups: parseCredentialGroups(keysText),
-      models: modelList.length ? modelList : preset.defaultModels,
+      models: modelList,
       enabled: false,
     } satisfies AIProvider, presetId)
     onSubmit(provider)
@@ -428,10 +438,10 @@ function ProviderFormModal({
             <ScrollView keyboardShouldPersistTaps="handled" contentContainerStyle={{ gap: 12, paddingBottom: 18 }}>
               <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
                 <View style={{ flex: 1 }}>
-                  <Text style={{ color: colors.text, fontSize: 18, fontWeight: '900' }}>新增供应商</Text>
-                  <Text style={{ color: colors.textSecondary, fontSize: 12, marginTop: 3 }}>保存后默认停用，可再手动启用。</Text>
+                  <Text style={{ color: colors.text, fontSize: 18, fontWeight: '900' }}>{t('settings.addProvider')}</Text>
+                  <Text style={{ color: colors.textSecondary, fontSize: 12, marginTop: 3 }}>{t('providerSettings.addSubtitle')}</Text>
                 </View>
-                <IslandIconButton label="关闭" onPress={onClose}>
+                <IslandIconButton label={t('dialog.close')} onPress={onClose}>
                   <X color={colors.textSecondary} size={18} />
                 </IslandIconButton>
               </View>
@@ -445,26 +455,25 @@ function ProviderFormModal({
                       setPresetId(item.id)
                       if (!name.trim()) setName(item.name)
                       if (!baseUrl.trim() && item.baseUrl) setBaseUrl(item.baseUrl)
-                      if (!modelsText.trim() && item.defaultModels.length) setModelsText(item.defaultModels.join('\n'))
                     }}
                   />
                 ))}
               </ScrollView>
-              <IslandField label="名称" inputProps={{ value: name, onChangeText: setName, placeholder: preset.name, autoCapitalize: 'none' }} />
-              <IslandField label="站点 / Base URL" inputProps={{ value: baseUrl, onChangeText: setBaseUrl, placeholder: preset.baseUrl ?? 'https://example.com/v1', autoCapitalize: 'none', autoCorrect: false }} />
+              <IslandField label={t('providerSettings.name')} inputProps={{ value: name, onChangeText: setName, placeholder: preset.name, autoCapitalize: 'none' }} />
+              <IslandField label={t('providerSettings.baseUrl')} inputProps={{ value: baseUrl, onChangeText: setBaseUrl, placeholder: preset.baseUrl ?? 'https://example.com/v1', autoCapitalize: 'none', autoCorrect: false }} />
               <IslandField
-                label="令牌"
-                note="可粘贴单个或多个令牌，每行或逗号分隔。"
+                label={t('providerSettings.tokens')}
+                note={t('providerSettings.tokensNote')}
                 inputProps={{ value: keysText, onChangeText: setKeysText, placeholder: 'sk-...\nsk-...', autoCapitalize: 'none', autoCorrect: false, multiline: true, secureTextEntry: false, style: { minHeight: 104 } }}
               />
               <IslandField
-                label="模型"
-                note="可留空，使用快速预设的模型；也可每行一个模型 ID。"
-                inputProps={{ value: modelsText, onChangeText: setModelsText, placeholder: preset.defaultModels.join('\n') || '每行一个模型 ID', autoCapitalize: 'none', autoCorrect: false, multiline: true, style: { minHeight: 96 } }}
+                label={t('settings.models')}
+                note={t('providerSettings.modelsNote')}
+                inputProps={{ value: modelsText, onChangeText: setModelsText, placeholder: preset.defaultModels.join('\n') || t('providerSettings.oneModelPerLine'), autoCapitalize: 'none', autoCorrect: false, multiline: true, style: { minHeight: 96 } }}
               />
               <View style={{ flexDirection: 'row', gap: 10 }}>
-                <IslandButton label="取消" onPress={onClose} style={{ flex: 1 }} />
-                <IslandButton label="保存" tone="primary" onPress={submit} style={{ flex: 1 }} />
+                <IslandButton label={t('common.cancel')} onPress={onClose} style={{ flex: 1 }} />
+                <IslandButton label={t('common.save')} tone="primary" onPress={submit} style={{ flex: 1 }} />
               </View>
             </ScrollView>
           </View>
@@ -484,11 +493,42 @@ function ProviderImportModal({
   onSubmit: (input: string) => void
 }) {
   const { colors } = useAppTheme()
+  const { t } = useTranslation()
+  const dialog = useIslandDialog()
   const [input, setInput] = useState('')
   function submit() {
     onSubmit(input)
     setInput('')
   }
+
+  async function pasteFromClipboard() {
+    const text = await Clipboard.getStringAsync()
+    if (!text.trim()) {
+      dialog.toast({ title: t('providerSettings.clipboardEmpty'), tone: 'amber' })
+      return
+    }
+    setInput((current) => [current.trim(), text.trim()].filter(Boolean).join('\n\n'))
+    dialog.toast({ title: t('providerSettings.clipboardRead'), tone: 'mint' })
+  }
+
+  async function importFromFile() {
+    const result = await DocumentPicker.getDocumentAsync({
+      type: ['text/plain', 'text/csv', 'application/csv', 'application/json', 'text/json', '*/*'],
+      copyToCacheDirectory: true,
+    })
+    if (result.canceled || !result.assets[0]) return
+    const asset = result.assets[0]
+    const name = asset.name.toLowerCase()
+    const supported = /\.(txt|csv|json)$/i.test(name) || ['text/plain', 'text/csv', 'application/csv', 'application/json', 'text/json'].includes(asset.mimeType ?? '')
+    if (!supported) {
+      dialog.toast({ title: t('providerSettings.fileUnsupported'), message: t('providerSettings.fileUnsupportedMessage'), tone: 'amber' })
+      return
+    }
+    const text = await FileSystem.readAsStringAsync(asset.uri)
+    setInput((current) => [current.trim(), text.trim()].filter(Boolean).join('\n\n'))
+    dialog.toast({ title: t('providerSettings.fileRead'), message: asset.name, tone: 'mint' })
+  }
+
   return (
     <Modal transparent visible={visible} animationType="slide" statusBarTranslucent onRequestClose={onClose}>
       <View style={{ flex: 1, justifyContent: 'flex-end' }}>
@@ -497,16 +537,16 @@ function ProviderImportModal({
           <View style={{ maxHeight: '82%', borderTopLeftRadius: 30, borderTopRightRadius: 30, backgroundColor: colors.surface, padding: 16, borderWidth: 1, borderColor: colors.border }}>
             <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10, marginBottom: 12 }}>
               <View style={{ flex: 1 }}>
-                <Text style={{ color: colors.text, fontSize: 18, fontWeight: '900' }}>批量导入</Text>
-                <Text style={{ color: colors.textSecondary, fontSize: 12, marginTop: 3 }}>导入后默认停用，可再批量启用。</Text>
+                <Text style={{ color: colors.text, fontSize: 18, fontWeight: '900' }}>{t('settings.batchImport')}</Text>
+                <Text style={{ color: colors.textSecondary, fontSize: 12, marginTop: 3 }}>{t('providerSettings.importSubtitle')}</Text>
               </View>
-              <IslandIconButton label="关闭" onPress={onClose}>
+              <IslandIconButton label={t('dialog.close')} onPress={onClose}>
                 <X color={colors.textSecondary} size={18} />
               </IslandIconButton>
             </View>
             <IslandField
-              label="供应商文本"
-              note="支持字段式、CSV 式，也支持先粘贴站点 URL，再逐行粘贴多个 Key；空行分隔多个供应商。"
+              label={t('providerSettings.importContent')}
+              note={t('providerSettings.importNote')}
               inputProps={{
                 value: input,
                 onChangeText: setInput,
@@ -517,9 +557,13 @@ function ProviderImportModal({
                 style: { minHeight: 180, maxHeight: 300 },
               }}
             />
+            <View style={{ flexDirection: 'row', gap: 10, marginTop: 12 }}>
+              <IslandButton label={t('settings.pasteClipboard')} icon={<ClipboardPaste color={colors.textSecondary} size={16} />} onPress={() => void pasteFromClipboard()} style={{ flex: 1 }} />
+              <IslandButton label={t('settings.chooseFile')} icon={<FileJson color={colors.textSecondary} size={16} />} onPress={() => void importFromFile()} style={{ flex: 1 }} />
+            </View>
             <View style={{ flexDirection: 'row', gap: 10, marginTop: 14 }}>
-              <IslandButton label="取消" onPress={onClose} style={{ flex: 1 }} />
-              <IslandButton label="导入" tone="primary" disabled={!input.trim()} onPress={submit} style={{ flex: 1 }} />
+              <IslandButton label={t('common.cancel')} onPress={onClose} style={{ flex: 1 }} />
+              <IslandButton label={t('providerSettings.import')} tone="primary" disabled={!input.trim()} onPress={submit} style={{ flex: 1 }} />
             </View>
           </View>
         </KeyboardAvoidingView>
@@ -552,33 +596,5 @@ function providerMatchesModelFilter(provider: AIProvider, filter: string): boole
     ...(provider.modelConfigs ?? []).flatMap((model) => [model.id, model.name]),
     ...(provider.credentialGroups ?? []).flatMap((group) => group.availableModels ?? []),
   ]
-  return values.some((value) => normalizeSearch(value).includes(filter))
-}
-
-function normalizeSearch(value: string | undefined): string {
-  return (value ?? '').toLowerCase().replace(/\s+/g, ' ').trim()
-}
-
-function parseModels(text: string): string[] {
-  const seen = new Set<string>()
-  return text
-    .split(/[\n,，]+/)
-    .map((item) => item.trim())
-    .filter((item) => {
-      if (!item || seen.has(item)) return false
-      seen.add(item)
-      return true
-    })
-}
-
-function providerHasAnyCredential(provider: AIProvider): boolean {
-  return !!provider.apiKey?.trim() || !!provider.credentialGroups?.some((group) => group.apiKey?.trim())
-}
-
-function buildEnableNotice(successCount: number, skippedCount: number, failedProviders: AIProvider[], missingModels: AIProvider[], missingKeys: AIProvider[]): string {
-  const parts = [`成功 ${successCount} · 跳过 ${skippedCount} · 异常 ${failedProviders.length}`]
-  if (failedProviders.length) parts.push(`异常：${failedProviders.map((provider) => provider.name).join('、')}`)
-  if (missingModels.length) parts.push(`无模型：${missingModels.map((provider) => provider.name).join('、')}`)
-  if (missingKeys.length) parts.push(`缺令牌：${missingKeys.map((provider) => provider.name).join('、')}`)
-  return parts.join('\n')
+  return values.some((value) => normalizeSearchText(value).includes(filter))
 }

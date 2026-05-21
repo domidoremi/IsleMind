@@ -2,6 +2,8 @@ import type { ReactNode } from 'react'
 import { useEffect, useState } from 'react'
 import { Text, View } from 'react-native'
 import { MotiView } from 'moti'
+import type { TFunction } from 'i18next'
+import { useTranslation } from 'react-i18next'
 import { router } from 'expo-router'
 import * as Haptics from 'expo-haptics'
 import { Copy, Database, ExternalLink, Globe2, ListChecks, MoreHorizontal, RefreshCcw, RotateCcw, Settings2, Sparkles, Trash2, Volume2, Zap } from 'lucide-react-native'
@@ -36,6 +38,7 @@ const DELETE_THRESHOLD = 82
 
 export function MessageBubble({ conversationId, message, index, isLastAssistant = false, onCopy, onRetry, onRegenerate, onSpeak, onDelete, onConfigure, onTestModel }: MessageBubbleProps) {
   const { colors } = useAppTheme()
+  const { t } = useTranslation()
   const motion = useMotionPreference()
   const hapticsEnabled = useSettingsStore((state) => state.settings.hapticsEnabled)
   const [actionsOpen, setActionsOpen] = useState(false)
@@ -145,17 +148,17 @@ export function MessageBubble({ conversationId, message, index, isLastAssistant 
             >
               {message.attachments?.length ? (
                 <Text style={{ color: isUser ? colors.surface : colors.textSecondary, fontSize: 12, fontWeight: '700', marginBottom: 6 }}>
-                  {message.attachments.length} 个附件
+                  {t('messageBubble.attachmentCount', { count: message.attachments.length })}
                 </Text>
               ) : null}
-              <RenderGuard label="消息内容" fallbackText={displayText || message.content} compact>
+              <RenderGuard label={t('messageBubble.messageContent')} fallbackText={displayText || message.content} compact>
                 {displayText && isStreamingContent ? (
                   <StreamingTextContent content={displayText} isUser={isUser} />
                 ) : displayText ? (
                   <MessageContent content={displayText} isUser={isUser} />
                 ) : traces.length && message.status !== 'streaming' ? (
                   <Text style={{ color: isUser ? colors.surface : colors.textSecondary, fontSize: 13, lineHeight: 20 }}>
-                    模型未返回正文。可以展开下方过程查看服务商返回的摘要、工具事件或失败原因。
+                    {t('messageBubble.emptyResponse')}
                   </Text>
                 ) : (
                   <TypingDots />
@@ -167,10 +170,16 @@ export function MessageBubble({ conversationId, message, index, isLastAssistant 
               {!isUser && (message.citations?.length || traces.length) ? (
                 <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 6, marginTop: 8 }}>
                   {message.citations?.length ? (
-                    <CitationSummaryRow
-                      citations={message.citations}
-                      onPress={() => router.push({ pathname: '/source', params: { conversationId, messageId: message.id, citationId: message.citations?.[0]?.id ?? '' } })}
-                    />
+                    <>
+                      <CitationSummaryRow
+                        citations={message.citations}
+                        onPress={() => router.push({ pathname: '/source', params: { conversationId, messageId: message.id, citationId: message.citations?.[0]?.id ?? '' } })}
+                      />
+                      <CitationNumberChips
+                        citations={message.citations}
+                        onPress={(citation) => router.push({ pathname: '/source', params: { conversationId, messageId: message.id, citationId: citation.id } })}
+                      />
+                    </>
                   ) : null}
                   {traces.length ? (
                     <ProcessSummaryRow
@@ -233,6 +242,7 @@ function MessageActionRow({
   onRegenerate?: () => void
 }) {
   const { colors } = useAppTheme()
+  const { t } = useTranslation()
   const canCopy = !!displayText
   const canRegenerate = !isUser && isLastAssistant && message.status !== 'streaming'
   const hasNormalActions = canCopy || canRegenerate
@@ -244,13 +254,13 @@ function MessageActionRow({
   if (!isUser && message.status === 'error') {
     return (
       <View style={{ flexDirection: 'row', gap: 7, marginTop: 7, justifyContent: 'flex-start', flexWrap: 'wrap' }}>
-        <ActionButton label="配置" onPress={onConfigure} tone="danger">
+        <ActionButton label={t('messageBubble.configure')} onPress={onConfigure} tone="danger">
           <Settings2 color={colors.error} size={13} strokeWidth={2} />
         </ActionButton>
-        <ActionButton label="测试" onPress={onTestModel} tone="danger">
+        <ActionButton label={t('messageBubble.test')} onPress={onTestModel} tone="danger">
           <Zap color={colors.error} size={13} strokeWidth={2} />
         </ActionButton>
-        <ActionButton label="重试" onPress={onRetry} tone="danger">
+        <ActionButton label={t('messageBubble.retry')} onPress={onRetry} tone="danger">
           <RotateCcw color={colors.error} size={13} strokeWidth={2} />
         </ActionButton>
       </View>
@@ -260,21 +270,21 @@ function MessageActionRow({
   return (
     <View style={{ alignItems: isUser ? 'flex-end' : 'flex-start', marginTop: 5 }}>
       <View style={{ flexDirection: 'row', gap: 6, flexWrap: 'wrap', justifyContent: isUser ? 'flex-end' : 'flex-start' }}>
-        <ActionButton label={actionsOpen ? '收起' : '操作'} onPress={onToggle} compact>
+        <ActionButton label={actionsOpen ? t('common.collapse') : t('messageBubble.actions')} onPress={onToggle} compact>
           <MoreHorizontal color={colors.textTertiary} size={14} strokeWidth={2} />
         </ActionButton>
         {actionsOpen && canCopy ? (
-          <ActionButton label="复制" onPress={onCopy} compact>
+          <ActionButton label={t('common.copy')} onPress={onCopy} compact>
             <Copy color={colors.textTertiary} size={13} strokeWidth={2} />
           </ActionButton>
         ) : null}
         {actionsOpen && canCopy && !isUser ? (
-          <ActionButton label="朗读" onPress={onSpeak} compact>
+          <ActionButton label={t('messageBubble.speak')} onPress={onSpeak} compact>
             <Volume2 color={colors.textTertiary} size={13} strokeWidth={2} />
           </ActionButton>
         ) : null}
         {actionsOpen && canRegenerate ? (
-          <ActionButton label="重新生成" onPress={onRegenerate} compact>
+          <ActionButton label={t('messageBubble.regenerate')} onPress={onRegenerate} compact>
             <RefreshCcw color={colors.textTertiary} size={13} strokeWidth={2} />
           </ActionButton>
         ) : null}
@@ -285,10 +295,11 @@ function MessageActionRow({
 
 function ErrorHint({ code }: { code?: ChatErrorCode }) {
   const { colors } = useAppTheme()
+  const { t } = useTranslation()
   return (
     <View style={{ borderRadius: 16, padding: 10, backgroundColor: colors.coralWash, marginTop: 8, borderWidth: 1, borderColor: colors.error }}>
-      <Text style={{ color: colors.error, fontSize: 12, fontWeight: '800' }}>{errorTitle(code)}</Text>
-      <Text style={{ color: colors.textSecondary, fontSize: 11, lineHeight: 16, marginTop: 3 }}>{errorDescription(code)}</Text>
+      <Text style={{ color: colors.error, fontSize: 12, fontWeight: '800' }}>{errorTitle(code, t)}</Text>
+      <Text style={{ color: colors.textSecondary, fontSize: 11, lineHeight: 16, marginTop: 3 }}>{errorDescription(code, t)}</Text>
     </View>
   )
 }
@@ -329,10 +340,11 @@ function StreamingTextContent({ content, isUser }: { content: string; isUser: bo
 
 function MessageStatusLine({ message, traces, isUser, hasText }: { message: Message; traces: ReturnType<typeof collectMessageTraces>; isUser: boolean; hasText: boolean }) {
   const { colors } = useAppTheme()
+  const { t } = useTranslation()
   if (isUser && message.status === 'done') return null
   if (hasText && (message.status === 'streaming' || message.status === 'sending')) return null
   const activeTrace = getActiveTraceTitle(traces, message.status)
-  const status = statusLabel(message, activeTrace)
+  const status = statusLabel(message, activeTrace, t)
   if (!status) return null
   const tone =
     message.status === 'error'
@@ -358,16 +370,16 @@ function MessageStatusLine({ message, traces, isUser, hasText }: { message: Mess
   )
 }
 
-function statusLabel(message: Message, activeTraceTitle: string): string {
+function statusLabel(message: Message, activeTraceTitle: string, t: TFunction): string {
   switch (message.status) {
     case 'sending':
-      return '准备发送'
+      return t('messageBubble.readyToSend')
     case 'streaming':
-      return activeTraceTitle ? `${activeTraceTitle}中` : '生成中'
+      return activeTraceTitle ? t('messageBubble.traceGenerating', { title: activeTraceTitle }) : t('messageBubble.generating')
     case 'error':
-      return '失败'
+      return t('messageBubble.failed')
     case 'cancelled':
-      return '已停止'
+      return t('messageBubble.stopped')
     case 'done':
       return ''
   }
@@ -375,21 +387,22 @@ function statusLabel(message: Message, activeTraceTitle: string): string {
 
 function CitationSummaryRow({ citations, onPress }: { citations: MessageCitation[]; onPress: () => void }) {
   const { colors } = useAppTheme()
+  const { t } = useTranslation()
   const web = citations.filter((source) => source.type === 'web').length
   const knowledge = citations.filter((source) => source.type === 'knowledge').length
   const memory = citations.filter((source) => source.type === 'memory').length
   const first = citations[0]
   const summary = [
-    web ? `网页 ${web}` : '',
-    knowledge ? `知识 ${knowledge}` : '',
-    memory ? `记忆 ${memory}` : '',
+    web ? t('messageBubble.web', { count: web }) : '',
+    knowledge ? t('messageBubble.knowledge', { count: knowledge }) : '',
+    memory ? t('messageBubble.memory', { count: memory }) : '',
   ].filter(Boolean).join(' · ')
 
   return (
     <PressableScale
       haptic
       onPress={onPress}
-      accessibilityLabel="查看来源"
+      accessibilityLabel={t('messageBubble.viewSources')}
       style={{
         minHeight: 30,
         borderRadius: 15,
@@ -407,21 +420,52 @@ function CitationSummaryRow({ citations, onPress }: { citations: MessageCitation
         {first?.type === 'web' ? <Globe2 color={colors.primary} size={11} strokeWidth={2.2} /> : <Database color={colors.primary} size={11} strokeWidth={2.2} />}
       </View>
       <Text numberOfLines={1} style={{ color: colors.textSecondary, fontSize: 11, fontWeight: '900', maxWidth: 132 }}>
-        来源 {citations.length}{summary ? ` · ${summary}` : ''}
+        {t('messageBubble.sources', { count: citations.length })}{summary ? ` · ${summary}` : ''}
       </Text>
       <ExternalLink color={colors.textTertiary} size={12} strokeWidth={2} />
     </PressableScale>
   )
 }
 
+function CitationNumberChips({ citations, onPress }: { citations: MessageCitation[]; onPress: (citation: MessageCitation) => void }) {
+  const { colors } = useAppTheme()
+  const { t } = useTranslation()
+  return (
+    <View style={{ flexDirection: 'row', gap: 5, flexWrap: 'wrap' }}>
+      {citations.slice(0, 6).map((citation, index) => (
+        <PressableScale
+          key={citation.id}
+          haptic
+          onPress={() => onPress(citation)}
+          accessibilityLabel={t('source.citation', { index: index + 1 })}
+          style={{
+            minHeight: 30,
+            minWidth: 34,
+            borderRadius: 15,
+            paddingHorizontal: 8,
+            alignItems: 'center',
+            justifyContent: 'center',
+            backgroundColor: colors.mintSoft,
+            borderWidth: 1,
+            borderColor: colors.border,
+          }}
+        >
+          <Text style={{ color: colors.primary, fontSize: 11, fontWeight: '900' }}>[{index + 1}]</Text>
+        </PressableScale>
+      ))}
+    </View>
+  )
+}
+
 function ProcessSummaryRow({ summary, hasError, running, onPress }: { summary: string; hasError: boolean; running: boolean; onPress: () => void }) {
   const { colors } = useAppTheme()
+  const { t } = useTranslation()
   const tint = running ? colors.primary : hasError ? colors.error : colors.textSecondary
   return (
     <PressableScale
       haptic
       onPress={onPress}
-      accessibilityLabel="查看生成过程"
+      accessibilityLabel={t('messageBubble.viewProcess')}
       style={{
         minHeight: 30,
         borderRadius: 15,
@@ -439,7 +483,7 @@ function ProcessSummaryRow({ summary, hasError, running, onPress }: { summary: s
         <ListChecks color={tint} size={11} strokeWidth={2.2} />
       </View>
       <Text numberOfLines={1} style={{ color: colors.textSecondary, fontSize: 11, fontWeight: '900', maxWidth: 132 }}>
-        过程 · {summary}
+        {t('messageBubble.process', { summary })}
       </Text>
       <Sparkles color={tint} size={12} strokeWidth={2} />
     </PressableScale>
@@ -448,15 +492,16 @@ function ProcessSummaryRow({ summary, hasError, running, onPress }: { summary: s
 
 function MessageMeta({ message }: { message: Message }) {
   const { colors } = useAppTheme()
+  const { t } = useTranslation()
   const usage = message.usage
   const items = [
     message.durationMs ? formatDuration(message.durationMs) : '',
-    usage?.inputTokens ? `入 ${formatNumber(usage.inputTokens)}` : '',
-    usage?.outputTokens ? `出 ${formatNumber(usage.outputTokens)}` : '',
-    usage?.totalTokens ? `总 ${formatNumber(usage.totalTokens)}` : '',
-    usage?.reasoningTokens ? `思考 ${formatNumber(usage.reasoningTokens)}` : '',
-    usage?.source === 'estimated' || message.estimatedTokens ? '估算' : '',
-    message.citations?.length ? `来源 ${message.citations.length}` : '',
+    usage?.inputTokens ? t('messageBubble.tokensIn', { value: formatNumber(usage.inputTokens) }) : '',
+    usage?.outputTokens ? t('messageBubble.tokensOut', { value: formatNumber(usage.outputTokens) }) : '',
+    usage?.totalTokens ? t('messageBubble.tokensTotal', { value: formatNumber(usage.totalTokens) }) : '',
+    usage?.reasoningTokens ? t('messageBubble.tokensReasoning', { value: formatNumber(usage.reasoningTokens) }) : '',
+    usage?.source === 'estimated' || message.estimatedTokens ? t('messageBubble.estimated') : '',
+    message.citations?.length ? t('messageBubble.sources', { count: message.citations.length }) : '',
   ].filter(Boolean)
   if (!items.length) return null
   return (
@@ -477,57 +522,57 @@ function MessageMeta({ message }: { message: Message }) {
   )
 }
 
-function errorTitle(code?: ChatErrorCode): string {
+function errorTitle(code: ChatErrorCode | undefined, t: TFunction): string {
   switch (code) {
     case 'missing_key':
-      return '缺少 API Key'
+      return t('messageBubble.error.missing_key')
     case 'disabled_provider':
-      return '服务商未启用'
+      return t('messageBubble.error.disabled_provider')
     case 'credential_mismatch':
-      return '密钥类型与地址不匹配'
+      return t('messageBubble.error.credential_mismatch')
     case 'bad_auth':
-      return '密钥或权限不可用'
+      return t('messageBubble.error.bad_auth')
     case 'bad_base_url':
-      return '服务商地址可能不正确'
+      return t('messageBubble.error.bad_base_url')
     case 'model_unavailable':
-      return '模型不可用'
+      return t('messageBubble.error.model_unavailable')
     case 'network_error':
-      return '网络请求失败'
+      return t('messageBubble.error.network_error')
     case 'timeout':
-      return '请求超时'
+      return t('messageBubble.error.timeout')
     case 'rate_limited':
-      return '限流或额度不足'
+      return t('messageBubble.error.rate_limited')
     case 'max_tokens_exceeded':
-      return '输出长度超过上限'
+      return t('messageBubble.error.max_tokens_exceeded')
     default:
-      return '发送失败'
+      return t('messageBubble.error.default')
   }
 }
 
-function errorDescription(code?: ChatErrorCode): string {
+function errorDescription(code: ChatErrorCode | undefined, t: TFunction): string {
   switch (code) {
     case 'missing_key':
-      return '保存当前服务商的 Key 后，可以直接回到这里重试。'
+      return t('messageBubble.errorDescription.missing_key')
     case 'disabled_provider':
-      return '在设置中启用当前服务商，或切换到其他可用服务商。'
+      return t('messageBubble.errorDescription.disabled_provider')
     case 'credential_mismatch':
-      return '例如 MiMo 的 tp- Key 必须走 Token Plan 地址，sk- Key 必须走按量付费地址。'
+      return t('messageBubble.errorDescription.credential_mismatch')
     case 'bad_auth':
-      return '建议重新保存 Key，并使用测试密钥确认权限。'
+      return t('messageBubble.errorDescription.bad_auth')
     case 'bad_base_url':
-      return '如果使用代理或 Token Plan，请确认 Base URL 包含 /v1。'
+      return t('messageBubble.errorDescription.bad_base_url')
     case 'model_unavailable':
-      return '获取可用模型后选择一个账号有权限的模型。'
+      return t('messageBubble.errorDescription.model_unavailable')
     case 'network_error':
-      return '检查网络、代理和服务商状态后再重试。'
+      return t('messageBubble.errorDescription.network_error')
     case 'timeout':
-      return '请求等待过久，建议检查网络、代理或 Base URL。'
+      return t('messageBubble.errorDescription.timeout')
     case 'rate_limited':
-      return '稍后重试，或检查服务商订阅、余额和速率限制。'
+      return t('messageBubble.errorDescription.rate_limited')
     case 'max_tokens_exceeded':
-      return '降低对话参数里的 Max Tokens，或切换到更大输出上限的模型。'
+      return t('messageBubble.errorDescription.max_tokens_exceeded')
     default:
-      return '可以先测试当前模型，或打开设置检查服务商配置。'
+      return t('messageBubble.errorDescription.default')
   }
 }
 

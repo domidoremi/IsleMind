@@ -1,4 +1,5 @@
 import type { Message, ProcessTrace } from '@/types'
+import { st } from '@/i18n/service'
 
 export interface TraceSummary {
   total: number
@@ -38,11 +39,11 @@ export function summarizeTraces(traces: ProcessTrace[], messageStatus: Message['
   const skipped = normalized.filter((trace) => trace.status === 'skipped').length
   const running = normalized.filter((trace) => trace.status === 'running' || trace.status === 'pending').length
   const label = [
-    running ? `${running} 运行中` : '',
-    done ? `${done} 完成` : '',
-    errors ? `${errors} 异常` : '',
-    skipped ? `${skipped} 跳过` : '',
-  ].filter(Boolean).join(' · ') || '无过程'
+    running ? st('trace.summary.running', { count: running }) : '',
+    done ? st('trace.summary.done', { count: done }) : '',
+    errors ? st('trace.summary.errors', { count: errors }) : '',
+    skipped ? st('trace.summary.skipped', { count: skipped }) : '',
+  ].filter(Boolean).join(' · ') || st('trace.noProcess')
   return { total: normalized.length, done, errors, skipped, running, label }
 }
 
@@ -58,11 +59,11 @@ export function getActiveTraceTitle(traces: ProcessTrace[], messageStatus: Messa
 export function metadataSummary(metadata?: Record<string, unknown>): string {
   if (!metadata) return ''
   const parts = [
-    typeof metadata.sourceCount === 'number' ? `来源 ${metadata.sourceCount}` : '',
-    typeof metadata.memoryCount === 'number' ? `记忆 ${metadata.memoryCount}` : '',
-    typeof metadata.knowledgeCount === 'number' ? `知识 ${metadata.knowledgeCount}` : '',
-    typeof metadata.count === 'number' ? `数量 ${metadata.count}` : '',
-    typeof metadata.providerCitationCount === 'number' ? `网页 ${metadata.providerCitationCount}` : '',
+    typeof metadata.sourceCount === 'number' ? st('trace.meta.sources', { count: metadata.sourceCount }) : '',
+    typeof metadata.memoryCount === 'number' ? st('trace.meta.memories', { count: metadata.memoryCount }) : '',
+    typeof metadata.knowledgeCount === 'number' ? st('trace.meta.knowledge', { count: metadata.knowledgeCount }) : '',
+    typeof metadata.count === 'number' ? st('trace.meta.count', { count: metadata.count }) : '',
+    typeof metadata.providerCitationCount === 'number' ? st('trace.meta.web', { count: metadata.providerCitationCount }) : '',
   ].filter(Boolean)
   return parts.slice(0, 2).join(' · ')
 }
@@ -70,15 +71,15 @@ export function metadataSummary(metadata?: Record<string, unknown>): string {
 export function traceStatusLabel(status: ProcessTrace['status']): string {
   switch (status) {
     case 'pending':
-      return '准备中'
+      return st('trace.status.pending')
     case 'running':
-      return '运行中'
+      return st('trace.status.running')
     case 'done':
-      return '完成'
+      return st('trace.status.done')
     case 'error':
-      return '异常'
+      return st('trace.status.error')
     case 'skipped':
-      return '跳过'
+      return st('trace.status.skipped')
   }
 }
 

@@ -1,14 +1,18 @@
 import * as Clipboard from 'expo-clipboard'
 import type { AIProvider, Attachment, ChatErrorCode, Conversation, Message, ProcessTrace, RetrievalSource } from '@/types'
 import { getModelConfig, getProviderConfigIssue } from '@/types'
-import { streamChat, type ProviderRuntimeError, type StreamHandle } from '@/services/ai/base'
-import { extractMemories, retrieveContext, searchWeb } from '@/services/context'
+import { streamChat, type ChatCompletionResult, type ProviderRuntimeError, type StreamHandle } from '@/services/ai/base'
+import { extractMemories, retrieveContext, retrieveFlareContext, searchWeb, type RetrievedContext } from '@/services/context'
+import { verifyRagGeneration } from '@/services/rag'
 import { buildSystemPrompt } from '@/services/promptEngineering'
 import { buildEstimatedUsage, estimateTextTokens, mergeUsageWithEstimate } from '@/services/tokenUsage'
 import { useChatStore } from '@/store/chatStore'
 import { useSettingsStore } from '@/store/settingsStore'
 import { packChatMessages } from '@/services/contextPacker'
 import { resolveSearchProvider } from '@/services/searchPolicy'
+import { listMcpServers } from '@/services/mcp'
+import { localDataStore } from '@/services/localDataStore'
+import { st } from '@/i18n/service'
 
 function generateId(): string {
   return `${Date.now()}-${Math.random().toString(36).slice(2, 10)}`
@@ -52,14 +56,14 @@ export function recoverStaleStreamingMessages(conversationId: string): void {
     upsertTrace(conversationId, message.id, completeTrace({
       id: traceId('recovered-stream'),
       type: 'system',
-      title: '恢复未完成生成',
-      content: '检测到没有活动请求的流式消息，已保留已有正文并退出生成状态。',
+      title: st('chatRunner.trace.recoveredTitle'),
+      content: st('chatRunner.trace.recoveredContent'),
       status: 'done',
       startedAt: completedAt,
     }))
     settleRunningTraces(conversationId, message.id, {
       fallbackStatus: outputText.trim() ? 'done' : 'skipped',
-      fallbackContent: outputText.trim() ? '请求已恢复为已停止状态。' : '请求已恢复，未发现可保留正文。',
+      fallbackContent: outputText.trim() ? st('chatRunner.trace.recoveredStopped') : st('chatRunner.trace.recoveredEmpty'),
     })
     void useChatStore.getState().flushStreamingMessage(conversationId, message.id)
   }
@@ -96,8 +100,8 @@ export function stopMessage(conversationId: string) {
   upsertTrace(conversationId, active.messageId, completeTrace({
     id: traceId('stop'),
     type: 'system',
-    title: '停止生成',
-    content: '用户手动停止了当前流式请求，已保留已生成正文。',
+    title: st('chatRunner.trace.stopTitle'),
+    content: st('chatRunner.trace.stopContent'),
     status: 'done',
     startedAt: completedAt,
   }))
@@ -120,7 +124,7 @@ export async function sendMessage({ conversation, content, attachments = [] }: S
   useChatStore.getState().setError(null)
   useChatStore.getState().addMessage(conversation.id, userMessage)
   void createAssistantReply(conversation.id).catch((error) => {
-    const message = error instanceof Error ? error.message : '发送失败，请稍后重试。'
+    const message = error instanceof Error ? error.message : st('chatRunner.error.sendFailed')
     useChatStore.getState().setError(message)
   })
 }
@@ -140,7 +144,7 @@ export async function retryMessage(conversationId: string, assistantMessageId: s
   if (!previousUser) return
   store.trimAfterMessage(conversationId, previousUser.id)
   void createAssistantReply(conversationId).catch((error) => {
-    useChatStore.getState().setError(error instanceof Error ? error.message : '重试失败，请稍后重试。')
+    useChatStore.getState().setError(error instanceof Error ? error.message : st('chatRunner.error.retryFailed'))
   })
 }
 
@@ -153,7 +157,7 @@ export async function regenerateLastAssistant(conversationId: string) {
   if (!lastAssistant) return
   store.removeMessage(conversationId, lastAssistant.id)
   void createAssistantReply(conversationId).catch((error) => {
-    useChatStore.getState().setError(error instanceof Error ? error.message : '重新生成失败，请稍后重试。')
+    useChatStore.getState().setError(error instanceof Error ? error.message : st('chatRunner.error.regenerateFailed'))
   })
 }
 
@@ -177,31 +181,33 @@ async function createAssistantReply(conversationId: string) {
   const requestController = new AbortController()
   activeControllers.set(conversationId, { controller: requestController, messageId: assistantMessage.id })
 
-  const provider = await useSettingsStore.getState().hydrateProviderKey(conversation.providerId)
+  const resolvedRuntime = await resolveRuntimeConversation(conversation)
+  const provider = resolvedRuntime ? await useSettingsStore.getState().hydrateProviderKey(resolvedRuntime.provider.id) : null
+  const runtimeConversation = resolvedRuntime?.conversation ?? conversation
   if (isReplyCancelled(conversationId, assistantMessage.id, requestController)) return
-  if (conversation.providerId === 'local-setup') {
+  if (runtimeConversation.providerId === 'local-setup') {
     finishWithError(conversationId, assistantMessage.id, buildSetupGuide(), 'missing_key')
     return
   }
   if (!provider || !provider.enabled) {
-    finishWithError(conversationId, assistantMessage.id, '当前服务商未启用，请在设置中启用后重试。', 'disabled_provider', conversation.providerId)
+    finishWithError(conversationId, assistantMessage.id, st('chatRunner.error.providerDisabled'), 'disabled_provider', runtimeConversation.providerId)
     return
   }
 
   if (!provider.apiKey) {
-    finishWithError(conversationId, assistantMessage.id, '请先在设置中为当前服务商保存 API Key。', 'missing_key', provider.id)
+    finishWithError(conversationId, assistantMessage.id, st('chatRunner.error.missingKey'), 'missing_key', provider.id)
     return
   }
 
   const configIssue = getProviderConfigIssue(provider, provider.apiKey)
   if (configIssue) {
-    finishWithError(conversationId, assistantMessage.id, configIssue.message, configIssue.code, provider.id)
+    finishWithError(conversationId, assistantMessage.id, st(configIssue.messageKey ?? configIssue.message, undefined, configIssue.message), configIssue.code, provider.id)
     return
   }
 
-  const modelConfig = getModelConfig(conversation.model, provider.type, provider.modelConfigs)
-  if (conversation.maxTokens > modelConfig.maxOutputTokens) {
-    finishWithError(conversationId, assistantMessage.id, `当前 Max Tokens 为 ${conversation.maxTokens}，超过 ${conversation.model} 的输出上限 ${modelConfig.maxOutputTokens}。请降低输出长度后重试。`, 'max_tokens_exceeded', provider.id)
+  const modelConfig = getModelConfig(runtimeConversation.model, provider.type, provider.modelConfigs)
+  if (runtimeConversation.maxTokens > modelConfig.maxOutputTokens) {
+    finishWithError(conversationId, assistantMessage.id, st('chatRunner.error.maxTokensExceeded', { current: runtimeConversation.maxTokens, model: runtimeConversation.model, limit: modelConfig.maxOutputTokens }), 'max_tokens_exceeded', provider.id)
     return
   }
 
@@ -214,7 +220,7 @@ async function createAssistantReply(conversationId: string) {
   upsertTrace(conversationId, assistantMessage.id, {
     id: contextTraceId,
     type: 'retrieval',
-    title: '检索本机上下文',
+    title: st('chatRunner.trace.contextTitle'),
     status: 'running',
     startedAt: Date.now(),
     metadata: {
@@ -223,30 +229,46 @@ async function createAssistantReply(conversationId: string) {
       ragMode: useSettingsStore.getState().settings.ragMode,
     },
   })
-  let context = { sources: [] as RetrievalSource[], prompt: '' }
+  let context: RetrievedContext = { sources: [] as RetrievalSource[], prompt: '' }
   if (lastUserMessage) {
     const startedAt = Date.now()
     try {
-      context = await retrieveContext(conversation, lastUserMessage)
+      context = await retrieveContext(runtimeConversation, lastUserMessage)
       if (isReplyCancelled(conversationId, assistantMessage.id, requestController)) return
       const memoryCount = context.sources.filter((source) => source.type === 'memory').length
       const knowledgeCount = context.sources.filter((source) => source.type === 'knowledge').length
       upsertTrace(conversationId, assistantMessage.id, completeTrace({
         id: contextTraceId,
         type: 'retrieval',
-        title: '检索本机上下文',
+        title: st('chatRunner.trace.contextTitle'),
         content: context.sources.length
-          ? `命中 ${context.sources.length} 条上下文：记忆 ${memoryCount} 条，知识库 ${knowledgeCount} 条。`
-          : '检索已执行，但本轮没有命中记忆或知识库。功能已运行，不是跳过。',
+          ? st('chatRunner.trace.contextHits', { total: context.sources.length, memories: memoryCount, knowledge: knowledgeCount })
+          : st('chatRunner.trace.contextNoHits'),
         status: 'done',
         startedAt,
-        metadata: { memoryCount, knowledgeCount, sourceCount: context.sources.length },
+        metadata: { memoryCount, knowledgeCount, sourceCount: context.sources.length, ragPlan: context.plan, ragQuality: context.quality },
       }))
+      for (const ragTrace of context.trace ?? []) {
+        upsertTrace(conversationId, assistantMessage.id, completeTrace({
+          id: ragTrace.id,
+          type: 'retrieval',
+          title: ragTrace.title,
+          content: ragTrace.content,
+          status: ragTrace.status,
+          startedAt: ragTrace.startedAt,
+          completedAt: ragTrace.completedAt,
+          durationMs: ragTrace.durationMs,
+          metadata: {
+            stage: ragTrace.stage,
+            ...(ragTrace.metadata ?? {}),
+          },
+        }))
+      }
       if (memoryCount) {
         upsertTrace(conversationId, assistantMessage.id, completeTrace({
           id: traceId('memory'),
           type: 'memory',
-          title: '记忆命中',
+          title: st('chatRunner.trace.memoryHitTitle'),
           content: context.sources.filter((source) => source.type === 'memory').map((source) => source.title || source.excerpt || source.content.slice(0, 80)).join('\n'),
           status: 'done',
           startedAt,
@@ -257,7 +279,7 @@ async function createAssistantReply(conversationId: string) {
         upsertTrace(conversationId, assistantMessage.id, completeTrace({
           id: traceId('knowledge'),
           type: 'knowledge',
-          title: '知识库命中',
+          title: st('chatRunner.trace.knowledgeHitTitle'),
           content: context.sources.filter((source) => source.type === 'knowledge').map((source) => source.title).join('\n'),
           status: 'done',
           startedAt,
@@ -268,8 +290,8 @@ async function createAssistantReply(conversationId: string) {
       upsertTrace(conversationId, assistantMessage.id, completeTrace({
         id: contextTraceId,
         type: 'retrieval',
-        title: '检索本机上下文',
-        content: error instanceof Error ? error.message : '上下文检索失败，已跳过。',
+        title: st('chatRunner.trace.contextTitle'),
+        content: error instanceof Error ? error.message : st('chatRunner.trace.contextFailed'),
         status: 'error',
         startedAt,
       }))
@@ -278,8 +300,8 @@ async function createAssistantReply(conversationId: string) {
     upsertTrace(conversationId, assistantMessage.id, completeTrace({
       id: contextTraceId,
       type: 'retrieval',
-      title: '检索本机上下文',
-      content: '还没有用户消息，跳过上下文检索。',
+      title: st('chatRunner.trace.contextTitle'),
+      content: st('chatRunner.trace.contextNoUserMessage'),
       status: 'skipped',
       startedAt: Date.now(),
     }))
@@ -292,7 +314,7 @@ async function createAssistantReply(conversationId: string) {
     upsertTrace(conversationId, assistantMessage.id, {
       id: webTraceId,
       type: 'search',
-      title: '联网搜索适配器',
+      title: st('chatRunner.trace.webAdapterTitle'),
       status: 'running',
       startedAt,
       metadata: { mode: searchProvider },
@@ -303,19 +325,19 @@ async function createAssistantReply(conversationId: string) {
       upsertTrace(conversationId, assistantMessage.id, completeTrace({
         id: webTraceId,
         type: 'search',
-        title: '联网搜索适配器',
-        content: webSources.length ? webSources.map((source) => source.title).join('\n') : '搜索请求已执行，但没有返回可用网页来源。',
+        title: st('chatRunner.trace.webAdapterTitle'),
+        content: webSources.length ? webSources.map((source) => source.title).join('\n') : st('chatRunner.trace.webNoSources'),
         status: 'done',
         startedAt,
         metadata: { count: webSources.length, mode: searchProvider },
       }))
     } catch (error) {
-      const message = error instanceof Error ? error.message : '联网搜索失败，已跳过搜索上下文。'
+      const message = error instanceof Error ? error.message : st('chatRunner.trace.webFailed')
       useChatStore.getState().setError(message)
       upsertTrace(conversationId, assistantMessage.id, completeTrace({
         id: webTraceId,
         type: 'search',
-        title: '联网搜索适配器',
+        title: st('chatRunner.trace.webAdapterTitle'),
         content: message,
         status: 'error',
         startedAt,
@@ -326,35 +348,39 @@ async function createAssistantReply(conversationId: string) {
     upsertTrace(conversationId, assistantMessage.id, completeTrace({
       id: traceId('web-skip'),
       type: 'search',
-      title: '联网搜索',
+      title: st('chatRunner.trace.webSearchTitle'),
       content: settings.webSearchEnabled
         ? searchProvider === 'native'
-          ? '使用服务商原生联网能力时，搜索过程由模型侧返回；如果服务商未返回来源，会显示为降级。'
-          : '当前搜索模式不会在本地发起搜索适配器请求。'
-        : '联网搜索未开启。',
+          ? st('chatRunner.trace.nativeSearchProviderSide')
+          : st('chatRunner.trace.localSearchSkipped')
+        : st('chatRunner.trace.webDisabled'),
       status: settings.webSearchEnabled ? 'skipped' : 'skipped',
       startedAt: Date.now(),
     }))
   }
   const retrievalSources = [...context.sources, ...webSources]
+  const mcpContext = await resolveMcpContext(runtimeConversation)
+  for (const trace of mcpContext.traces) {
+    upsertTrace(conversationId, assistantMessage.id, trace)
+  }
   const hasAttachments = !!lastUserMessage?.attachments?.length
   const providerWebSearchMode = searchProvider === 'native' && !hasAttachments ? 'native' : 'off'
   const nativeSearchTraceId = traceId('native-search')
   upsertTrace(conversationId, assistantMessage.id, completeTrace({
     id: nativeSearchTraceId,
     type: 'search',
-    title: '服务商原生搜索',
+    title: st('chatRunner.trace.nativeSearchTitle'),
     content: providerWebSearchMode === 'native'
-      ? '已请求服务商启用原生搜索/grounding；实际来源以服务商返回为准。'
+      ? st('chatRunner.trace.nativeSearchRequested')
       : hasAttachments && searchProvider === 'native'
-        ? '本轮包含附件，为避免协议冲突已跳过原生搜索。'
-        : '未启用服务商原生搜索。',
+        ? st('chatRunner.trace.nativeSearchSkippedForAttachments')
+        : st('chatRunner.trace.nativeSearchDisabled'),
     status: providerWebSearchMode === 'native' ? 'running' : 'skipped',
     startedAt: Date.now(),
     metadata: { mode: providerWebSearchMode },
   }))
   const systemPrompt = buildSystemPrompt({
-    baseSystemPrompt: conversation.systemPrompt,
+    baseSystemPrompt: runtimeConversation.systemPrompt,
     language: settings.language,
     modelConfig,
     hasMemory: context.sources.some((source) => source.type === 'memory'),
@@ -364,17 +390,22 @@ async function createAssistantReply(conversationId: string) {
   })
   const packedPrompt = packChatMessages({
     messages: latestConversation?.messages.filter((message) => message.id !== assistantMessage.id) ?? [],
-    contextPrompt: [context.prompt, webSources.length ? formatWebPrompt(webSources) : ''].filter(Boolean).join('\n\n'),
+    contextPrompt: [context.prompt, webSources.length ? formatWebPrompt(webSources) : '', mcpContext.prompt].filter(Boolean).join('\n\n'),
     modelContextWindow: modelConfig.contextWindow,
-    maxOutputTokens: conversation.maxTokens,
+    maxOutputTokens: runtimeConversation.maxTokens,
     systemPrompt,
   })
   if (packedPrompt.trimmedCount) {
     upsertTrace(conversationId, assistantMessage.id, completeTrace({
       id: traceId('context-pack'),
       type: 'system',
-      title: '长上下文压缩',
-      content: `已保留最近 ${packedPrompt.messages.length} 条消息，并将 ${packedPrompt.trimmedCount} 条较早历史写入摘要。预算 ${packedPrompt.estimatedInputTokens}/${packedPrompt.budgetTokens} tokens。`,
+      title: st('chatRunner.trace.contextPackTitle'),
+      content: st('chatRunner.trace.contextPackContent', {
+        kept: packedPrompt.messages.length,
+        trimmed: packedPrompt.trimmedCount,
+        estimated: packedPrompt.estimatedInputTokens,
+        budget: packedPrompt.budgetTokens,
+      }),
       status: 'done',
       startedAt: Date.now(),
       metadata: {
@@ -390,15 +421,15 @@ async function createAssistantReply(conversationId: string) {
   upsertTrace(conversationId, assistantMessage.id, {
     id: modelTraceId,
     type: 'system',
-    title: '请求模型',
-    content: `${provider.name} · ${conversation.model}`,
+    title: st('chatRunner.trace.modelRequestTitle'),
+    content: `${provider.name} · ${runtimeConversation.model}`,
     status: 'running',
     startedAt: Date.now(),
     metadata: {
       providerId: provider.id,
-      model: conversation.model,
-      maxTokens: conversation.maxTokens,
-      temperature: conversation.temperature,
+      model: runtimeConversation.model,
+      maxTokens: runtimeConversation.maxTokens,
+      temperature: runtimeConversation.temperature,
     },
   })
 
@@ -407,12 +438,12 @@ async function createAssistantReply(conversationId: string) {
     handle = await streamChat(
       {
         provider,
-        model: conversation.model,
+        model: runtimeConversation.model,
         systemPrompt,
-        temperature: conversation.temperature,
-        topP: conversation.topP,
-        reasoningEffort: conversation.reasoningEffort,
-        maxTokens: conversation.maxTokens,
+        temperature: runtimeConversation.temperature,
+        topP: runtimeConversation.topP,
+        reasoningEffort: runtimeConversation.reasoningEffort,
+        maxTokens: runtimeConversation.maxTokens,
         attachments: lastUserMessage?.attachments ?? [],
         messages: packedPrompt.messages,
         contextPrompt: packedPrompt.contextPrompt,
@@ -424,62 +455,23 @@ async function createAssistantReply(conversationId: string) {
         chunkBuffer.push(chunk)
       },
       (result) => {
-        chunkBuffer.flush()
-        if (activeControllers.get(conversationId)?.messageId === assistantMessage.id) {
-          activeControllers.delete(conversationId)
-        }
-        const current = getMessage(conversationId, assistantMessage.id)
-        if (current?.status === 'streaming') {
-          const completedAt = Date.now()
-          const latest = useChatStore.getState().conversations.find((item) => item.id === conversationId)
-          const inputMessages = latest?.messages.filter((message) => message.id !== assistantMessage.id && message.status !== 'error') ?? []
-          const outputText = result.text || current.content
-          const usage = mergeUsageWithEstimate(result.usage, inputMessages, outputText)
-          useChatStore.getState().updateMessage(conversationId, assistantMessage.id, {
-            status: 'done',
-            content: outputText,
-            responseText: outputText,
-            citations: result.citations?.length ? result.citations : current.citations,
-            completedAt,
-            durationMs: current.startedAt ? completedAt - current.startedAt : undefined,
-            usage,
-            estimatedTokens: usage.source === 'estimated',
-            tokenCount: usage.outputTokens ?? estimateTextTokens(outputText),
-          })
-          void useSettingsStore.getState().updateProviderCredentialGroupHealth(provider.id, result.credentialGroupId, true)
-          upsertTrace(conversationId, assistantMessage.id, completeTrace({
-            id: modelTraceId,
-            type: 'system',
-            title: '请求模型',
-            content: outputText.trim() ? '模型已返回最终正文。' : '模型没有返回最终正文，过程面板中可能有服务商返回的摘要或工具事件。',
-            status: outputText.trim() || result.traces?.length ? 'done' : 'error',
-            startedAt: current.startedAt ?? Date.now(),
-            metadata: { textLength: outputText.length, providerUsage: result.usage?.source === 'provider' },
-          }))
-          if (providerWebSearchMode === 'native') {
-            const providerCitationCount = (result.citations ?? current.citations ?? []).filter((citation) => citation.type === 'web').length
-            upsertTrace(conversationId, assistantMessage.id, completeTrace({
-              id: nativeSearchTraceId,
-              type: 'search',
-              title: '服务商原生搜索',
-              content: providerCitationCount
-                ? `服务商返回了 ${providerCitationCount} 条网页来源。`
-                : '服务商原生搜索请求已随模型完成，但没有返回可展示的网页来源。',
-              status: 'done',
-              startedAt: getMessage(conversationId, assistantMessage.id)?.retrievalTrace?.find((trace) => trace.id === nativeSearchTraceId)?.startedAt ?? current.startedAt ?? Date.now(),
-              metadata: { mode: providerWebSearchMode, providerCitationCount },
-            }))
-          }
-          settleRunningTraces(conversationId, assistantMessage.id, {
-            fallbackStatus: outputText.trim() ? 'done' : 'skipped',
-            fallbackContent: outputText.trim() ? '步骤已随模型请求完成。' : '模型未返回正文，步骤已停止等待。',
-          })
-          const updated = useChatStore.getState().conversations.find((item) => item.id === conversationId)
-          if (updated) {
-            void extractMemoriesWithTrace(conversationId, assistantMessage.id, updated.messages, provider, conversation.model)
-          }
-          void useChatStore.getState().flushStreamingMessage(conversationId, assistantMessage.id)
-        }
+        void finalizeAssistantResult({
+          conversationId,
+          assistantMessageId: assistantMessage.id,
+          result,
+          context,
+          runtimeConversation,
+          provider,
+          modelTraceId,
+          nativeSearchTraceId,
+          providerWebSearchMode,
+          systemPrompt,
+          packedMessages: packedPrompt.messages,
+          baseContextPrompt: packedPrompt.contextPrompt,
+          retrievalSources,
+          requestController,
+          chunkFlush: chunkBuffer.flush,
+        })
       },
       (error) => {
         chunkBuffer.flush()
@@ -489,7 +481,7 @@ async function createAssistantReply(conversationId: string) {
         upsertTrace(conversationId, assistantMessage.id, completeTrace({
           id: modelTraceId,
           type: 'system',
-          title: '请求模型',
+          title: st('chatRunner.trace.modelRequestTitle'),
           content: toUserFacingError(error.message),
           status: 'error',
           startedAt: getMessage(conversationId, assistantMessage.id)?.startedAt ?? Date.now(),
@@ -498,8 +490,8 @@ async function createAssistantReply(conversationId: string) {
           upsertTrace(conversationId, assistantMessage.id, completeTrace({
             id: nativeSearchTraceId,
             type: 'search',
-            title: '服务商原生搜索',
-            content: '模型请求失败，原生搜索未完成。',
+            title: st('chatRunner.trace.nativeSearchTitle'),
+            content: st('chatRunner.trace.nativeSearchFailedWithModel'),
             status: 'error',
             startedAt: getMessage(conversationId, assistantMessage.id)?.retrievalTrace?.find((trace) => trace.id === nativeSearchTraceId)?.startedAt ?? Date.now(),
             metadata: { mode: providerWebSearchMode },
@@ -534,11 +526,11 @@ async function createAssistantReply(conversationId: string) {
     if (getMessage(conversationId, assistantMessage.id)?.status === 'cancelled') {
       return
     }
-    const message = error instanceof Error ? error.message : '发送失败，请稍后重试。'
+    const message = error instanceof Error ? error.message : st('chatRunner.error.sendFailed')
     upsertTrace(conversationId, assistantMessage.id, completeTrace({
       id: modelTraceId,
       type: 'system',
-      title: '请求模型',
+      title: st('chatRunner.trace.modelRequestTitle'),
       content: toUserFacingError(message),
       status: 'error',
       startedAt: getMessage(conversationId, assistantMessage.id)?.startedAt ?? Date.now(),
@@ -578,6 +570,279 @@ function createStreamingChunkBuffer(conversationId: string, messageId: string) {
   return { push, flush }
 }
 
+async function finalizeAssistantResult(input: {
+  conversationId: string
+  assistantMessageId: string
+  result: ChatCompletionResult
+  context: RetrievedContext
+  runtimeConversation: Conversation
+  provider: AIProvider
+  modelTraceId: string
+  nativeSearchTraceId: string
+  providerWebSearchMode: 'native' | 'off'
+  systemPrompt: string
+  packedMessages: { role: 'user' | 'assistant'; content: string | { type: 'text'; text: string }[] }[]
+  baseContextPrompt: string
+  retrievalSources: RetrievalSource[]
+  requestController: AbortController
+  chunkFlush: () => void
+}) {
+  input.chunkFlush()
+  if (activeControllers.get(input.conversationId)?.messageId === input.assistantMessageId) {
+    activeControllers.delete(input.conversationId)
+  }
+  const current = getMessage(input.conversationId, input.assistantMessageId)
+  if (current?.status !== 'streaming') return
+  const firstOutput = input.result.text || current.content
+  const firstCitations = input.result.citations?.length ? input.result.citations : current.citations ?? []
+  const verification = verifyRagGeneration({
+    answer: firstOutput,
+    query: input.runtimeConversation.messages.at(-1)?.content ?? input.runtimeConversation.title,
+    citations: firstCitations,
+    quality: input.context.quality,
+  })
+  upsertTrace(input.conversationId, input.assistantMessageId, completeTrace({
+    id: traceId('rag-generation-verify'),
+    type: 'retrieval',
+    title: st('chatRunner.trace.ragVerifyTitle'),
+    content: st('chatRunner.trace.ragVerifyContent', {
+      confidence: Math.round(verification.confidence * 100),
+      claims: verification.factualClaimCount,
+      unsupported: verification.unsupportedClaimCount,
+    }),
+    status: verification.needsFlare ? 'skipped' : 'done',
+    startedAt: Date.now(),
+    metadata: { ...verification },
+  }))
+
+  let finalResult = input.result
+  let finalOutput = firstOutput
+  let finalCitations = firstCitations
+  let flareSources: RetrievalSource[] = []
+
+  if (
+    verification.needsFlare &&
+    input.context.plan?.enabledTechniques.includes('flare') &&
+    input.runtimeConversation.messages.at(-1)?.role === 'user' &&
+    !input.requestController.signal.aborted
+  ) {
+    const flareStartedAt = Date.now()
+    try {
+      const flare = await retrieveFlareContext({
+        conversation: input.runtimeConversation,
+        query: input.context.plan.query,
+        followupQuery: verification.followupQuery ?? input.context.plan.query,
+        excludeChunkIds: input.context.sources.map((source) => source.chunkId).filter((id): id is string => !!id),
+        limit: 4,
+      })
+      flareSources = flare.sources
+      for (const ragTrace of flare.trace) {
+        upsertTrace(input.conversationId, input.assistantMessageId, completeTrace({
+          id: ragTrace.id,
+          type: 'retrieval',
+          title: ragTrace.title,
+          content: ragTrace.content,
+          status: ragTrace.status,
+          startedAt: ragTrace.startedAt,
+          completedAt: ragTrace.completedAt,
+          durationMs: ragTrace.durationMs,
+          metadata: { stage: ragTrace.stage, ...(ragTrace.metadata ?? {}) },
+        }))
+      }
+      if (flare.prompt && flare.sources.length) {
+        const revisedText = await reviseAnswerWithFlare({
+          provider: input.provider,
+          conversation: input.runtimeConversation,
+          systemPrompt: input.systemPrompt,
+          messages: input.packedMessages,
+          contextPrompt: [input.baseContextPrompt, flare.prompt].filter(Boolean).join('\n\n'),
+          originalAnswer: firstOutput,
+          sources: [...input.retrievalSources, ...flare.sources],
+          signal: input.requestController.signal,
+        })
+        if (revisedText.trim()) {
+          finalOutput = revisedText
+          finalCitations = dedupeMessageCitations([...finalCitations, ...flare.sources])
+          finalResult = {
+            ...input.result,
+            text: revisedText,
+            citations: finalCitations,
+          }
+          upsertTrace(input.conversationId, input.assistantMessageId, completeTrace({
+            id: traceId('flare-revise'),
+            type: 'retrieval',
+            title: st('chatRunner.trace.flareTitle'),
+            content: st('chatRunner.trace.flareRevised', { count: flare.sources.length }),
+            status: 'done',
+            startedAt: flareStartedAt,
+            metadata: { sourceCount: flare.sources.length, reasons: verification.reasons },
+          }))
+        }
+      }
+    } catch (error) {
+      upsertTrace(input.conversationId, input.assistantMessageId, completeTrace({
+        id: traceId('flare-error'),
+        type: 'retrieval',
+        title: st('chatRunner.trace.flareTitle'),
+        content: error instanceof Error ? error.message : st('chatRunner.trace.flareFailed'),
+        status: 'error',
+        startedAt: flareStartedAt,
+        metadata: { reasons: verification.reasons },
+      }))
+    }
+  }
+
+  const completedAt = Date.now()
+  const latest = useChatStore.getState().conversations.find((item) => item.id === input.conversationId)
+  const inputMessages = latest?.messages.filter((message) => message.id !== input.assistantMessageId && message.status !== 'error') ?? []
+  const usage = mergeUsageWithEstimate(finalResult.usage, inputMessages, finalOutput)
+  useChatStore.getState().updateMessage(input.conversationId, input.assistantMessageId, {
+    status: 'done',
+    content: finalOutput,
+    responseText: finalOutput,
+    citations: finalCitations.length ? finalCitations : current.citations,
+    completedAt,
+    durationMs: current.startedAt ? completedAt - current.startedAt : undefined,
+    usage,
+    estimatedTokens: usage.source === 'estimated',
+    tokenCount: usage.outputTokens ?? estimateTextTokens(finalOutput),
+  })
+  void useSettingsStore.getState().updateProviderCredentialGroupHealth(input.provider.id, finalResult.credentialGroupId, true)
+  void localDataStore.logRagEvaluation({
+    query: input.context.plan?.query ?? input.runtimeConversation.title,
+    plan: input.context.plan,
+    quality: {
+      ...(input.context.quality ?? {
+        sourceCount: input.context.sources.length,
+        citationCoverage: finalCitations.length ? 1 : 0,
+        contextPrecision: 0,
+        compressionRatio: 1,
+        confidence: verification.confidence,
+        activeRetrievals: 1,
+        missingEvidence: false,
+        warnings: [],
+      }),
+      generationConfidence: verification.confidence,
+      factualClaimCount: verification.factualClaimCount,
+      citedClaimCount: verification.citedClaimCount,
+      unsupportedClaimCount: verification.unsupportedClaimCount,
+      flareTriggered: flareSources.length > 0,
+    },
+    sourceCount: input.context.sources.length + flareSources.length,
+    flareTriggered: flareSources.length > 0,
+    fallbackReasons: input.context.quality?.fallbackReasons,
+  })
+  upsertTrace(input.conversationId, input.assistantMessageId, completeTrace({
+    id: traceId('rag-evaluate'),
+    type: 'retrieval',
+    title: st('chatRunner.trace.ragEvaluateTitle'),
+    content: st('chatRunner.trace.ragEvaluateContent', {
+      sources: input.context.sources.length + flareSources.length,
+      confidence: Math.round(verification.confidence * 100),
+      flare: flareSources.length > 0 ? st('chatRunner.trace.flareYes') : st('chatRunner.trace.flareNo'),
+    }),
+    status: 'done',
+    startedAt: Date.now(),
+    metadata: {
+      stage: 'evaluate',
+      sourceCount: input.context.sources.length + flareSources.length,
+      confidence: verification.confidence,
+      flareTriggered: flareSources.length > 0,
+      fallbackReasons: input.context.quality?.fallbackReasons,
+    },
+  }))
+  upsertTrace(input.conversationId, input.assistantMessageId, completeTrace({
+    id: input.modelTraceId,
+    type: 'system',
+    title: st('chatRunner.trace.modelRequestTitle'),
+    content: finalOutput.trim() ? st('chatRunner.trace.modelReturnedText') : st('chatRunner.trace.modelNoFinalText'),
+    status: finalOutput.trim() || finalResult.traces?.length ? 'done' : 'error',
+    startedAt: current.startedAt ?? Date.now(),
+    metadata: { textLength: finalOutput.length, providerUsage: finalResult.usage?.source === 'provider' },
+  }))
+  if (input.providerWebSearchMode === 'native') {
+    const providerCitationCount = finalCitations.filter((citation) => citation.type === 'web').length
+    upsertTrace(input.conversationId, input.assistantMessageId, completeTrace({
+      id: input.nativeSearchTraceId,
+      type: 'search',
+      title: st('chatRunner.trace.nativeSearchTitle'),
+      content: providerCitationCount
+        ? st('chatRunner.trace.nativeSearchSourceCount', { count: providerCitationCount })
+        : st('chatRunner.trace.nativeSearchNoSources'),
+      status: 'done',
+      startedAt: getMessage(input.conversationId, input.assistantMessageId)?.retrievalTrace?.find((trace) => trace.id === input.nativeSearchTraceId)?.startedAt ?? current.startedAt ?? Date.now(),
+      metadata: { mode: input.providerWebSearchMode, providerCitationCount },
+    }))
+  }
+  settleRunningTraces(input.conversationId, input.assistantMessageId, {
+    fallbackStatus: finalOutput.trim() ? 'done' : 'skipped',
+    fallbackContent: finalOutput.trim() ? st('chatRunner.trace.stepCompletedWithModel') : st('chatRunner.trace.stepStoppedNoText'),
+  })
+  const updated = useChatStore.getState().conversations.find((item) => item.id === input.conversationId)
+  if (updated) {
+    void extractMemoriesWithTrace(input.conversationId, input.assistantMessageId, updated.messages, input.provider, input.runtimeConversation.model)
+  }
+  void useChatStore.getState().flushStreamingMessage(input.conversationId, input.assistantMessageId)
+}
+
+async function reviseAnswerWithFlare(input: {
+  provider: AIProvider
+  conversation: Conversation
+  systemPrompt: string
+  messages: { role: 'user' | 'assistant'; content: string | { type: 'text'; text: string }[] }[]
+  contextPrompt: string
+  originalAnswer: string
+  sources: RetrievalSource[]
+  signal: AbortSignal
+}): Promise<string> {
+  let text = ''
+  let failure: Error | null = null
+  const handle = await streamChat(
+    {
+      provider: input.provider,
+      model: input.conversation.model,
+      systemPrompt: [
+        input.systemPrompt,
+        '你正在执行 FLARE 修订。保留原答案中有证据的部分；只用新增证据修订低置信或缺引用内容；保持简洁，并使用 [1] [2] 形式引用。',
+      ].filter(Boolean).join('\n\n'),
+      messages: [
+        ...input.messages,
+        { role: 'assistant', content: input.originalAnswer },
+        { role: 'user', content: '请基于 FLARE 补充证据修订上一条回答。' },
+      ],
+      contextPrompt: input.contextPrompt,
+      retrievalSources: input.sources,
+      temperature: Math.min(input.conversation.temperature, 0.4),
+      topP: input.conversation.topP,
+      reasoningEffort: input.conversation.reasoningEffort,
+      maxTokens: input.conversation.maxTokens,
+      stream: false,
+      signal: input.signal,
+    },
+    (chunk) => {
+      text += chunk
+    },
+    (result) => {
+      text = result.text || text
+    },
+    (error) => {
+      failure = error
+    }
+  )
+  await handle.done
+  if (failure) throw failure
+  return text
+}
+
+function dedupeMessageCitations(citations: RetrievalSource[] | NonNullable<Message['citations']>): NonNullable<Message['citations']> {
+  const map = new Map<string, NonNullable<Message['citations']>[number]>()
+  for (const citation of citations) {
+    const key = citation.chunkId ?? citation.url ?? citation.id
+    if (!map.has(key)) map.set(key, citation)
+  }
+  return Array.from(map.values())
+}
+
 function isReplyCancelled(conversationId: string, messageId: string, controller: AbortController): boolean {
   if (controller.signal.aborted) return true
   const current = getMessage(conversationId, messageId)
@@ -589,6 +854,91 @@ function formatWebPrompt(sources: { title: string; content: string; url?: string
     '以下是联网搜索结果。请优先引用来源 URL，并避免编造未出现的信息。',
     ...sources.map((source, index) => `[W${index + 1}] ${source.title}${source.url ? `\n${source.url}` : ''}\n${source.content}`),
   ].join('\n\n')
+}
+
+async function resolveRuntimeConversation(conversation: Conversation): Promise<{ conversation: Conversation; provider: AIProvider } | null> {
+  if ((conversation.providerModelMode ?? 'inherited') !== 'inherited') {
+    const provider = useSettingsStore.getState().providers.find((item) => item.id === conversation.providerId)
+    return provider ? { conversation, provider } : null
+  }
+  const readyProvider = pickReadyProvider(useSettingsStore.getState().providers, useSettingsStore.getState().settings.defaultProvider)
+  if (!readyProvider) return null
+  const model = readyProvider.models[0]
+  if (!model) return null
+  return {
+    provider: readyProvider,
+    conversation: {
+      ...conversation,
+      providerId: readyProvider.id,
+      model,
+      maxTokens: Math.min(conversation.maxTokens || getModelConfig(model, readyProvider.type, readyProvider.modelConfigs).defaultMaxTokens, getModelConfig(model, readyProvider.type, readyProvider.modelConfigs).maxOutputTokens),
+    },
+  }
+}
+
+function pickReadyProvider(providers: AIProvider[], defaultProvider: string | null | undefined): AIProvider | null {
+  const enabled = providers.filter((provider) => provider.id !== 'local-setup' && provider.enabled && provider.models.length > 0)
+  return enabled.find((provider) => provider.id === defaultProvider) ?? enabled[0] ?? null
+}
+
+async function resolveMcpContext(conversation: Conversation): Promise<{ prompt: string; traces: ProcessTrace[] }> {
+  const settings = useSettingsStore.getState().settings
+  const startedAt = Date.now()
+  if (!settings.mcpEnabled) {
+    return {
+      prompt: '',
+      traces: [completeTrace({
+        id: traceId('mcp-disabled'),
+        type: 'tool',
+        title: st('chatRunner.trace.mcpTitle'),
+        content: st('chatRunner.trace.mcpDisabled'),
+        status: 'skipped',
+        startedAt,
+      })],
+    }
+  }
+  const enabledTools = conversation.enabledTools ?? conversation.skillSnapshot?.enabledTools ?? []
+  const servers = await listMcpServers()
+  const tools = servers.flatMap((server) => server.tools.map((tool) => ({ server, tool })))
+  const selected = enabledTools.length
+    ? tools.filter((item) => enabledTools.includes(item.tool.name) || enabledTools.includes(`${item.server.id}:${item.tool.name}`))
+    : tools.filter((item) => item.server.id === 'islemind-builtins' && item.tool.enabled)
+  if (!selected.length) {
+    return {
+      prompt: '',
+      traces: [completeTrace({
+        id: traceId('mcp-empty'),
+        type: 'tool',
+        title: st('chatRunner.trace.mcpTitle'),
+        content: st('chatRunner.trace.mcpNoTools'),
+        status: 'skipped',
+        startedAt,
+      })],
+    }
+  }
+  const connected = selected.filter((item) => item.server.status === 'connected')
+  const offline = selected.filter((item) => item.server.status !== 'connected')
+  const prompt = connected.length
+    ? [
+        '当前可用 MCP 工具清单。需要工具时先说明要调用的工具和参数；如果工具不可用，请明确告知用户。',
+        ...connected.map(({ server, tool }) => `- ${server.name}/${tool.name} [${tool.permission}]: ${tool.description ?? 'No description'}`),
+      ].join('\n')
+    : ''
+  return {
+    prompt,
+    traces: [completeTrace({
+      id: traceId('mcp-manifest'),
+      type: 'tool',
+      title: st('chatRunner.trace.mcpManifestTitle'),
+      content: [
+        connected.length ? st('chatRunner.trace.mcpConnectedTools', { count: connected.length, tools: connected.map((item) => `${item.server.name}/${item.tool.name}`).join(', ') }) : st('chatRunner.trace.mcpNoOnlineTools'),
+        offline.length ? st('chatRunner.trace.mcpOfflineTools', { count: offline.length, tools: offline.map((item) => `${item.server.name}/${item.tool.name}`).join(', ') }) : '',
+      ].filter(Boolean).join('\n'),
+      status: connected.length ? 'done' : 'skipped',
+      startedAt,
+      metadata: { connected: connected.length, offline: offline.length },
+    })],
+  }
 }
 
 function finishWithError(conversationId: string, messageId: string, content: string, errorCode: ChatErrorCode = 'unknown', providerId?: string) {
@@ -669,8 +1019,8 @@ async function extractMemoriesWithTrace(conversationId: string, messageId: strin
     upsertTrace(conversationId, messageId, completeTrace({
       id,
       type: 'memory',
-      title: '记忆抽取',
-      content: '记忆功能未开启，跳过长期记忆抽取。',
+      title: st('chatRunner.trace.memoryExtractTitle'),
+      content: st('chatRunner.trace.memoryExtractDisabled'),
       status: 'skipped',
       startedAt,
     }))
@@ -680,8 +1030,8 @@ async function extractMemoriesWithTrace(conversationId: string, messageId: strin
     upsertTrace(conversationId, messageId, completeTrace({
       id,
       type: 'memory',
-      title: '记忆抽取',
-      content: '当前服务商缺少 API Key，跳过长期记忆抽取。',
+      title: st('chatRunner.trace.memoryExtractTitle'),
+      content: st('chatRunner.trace.memoryExtractMissingKey'),
       status: 'skipped',
       startedAt,
     }))
@@ -690,8 +1040,8 @@ async function extractMemoriesWithTrace(conversationId: string, messageId: strin
   upsertTrace(conversationId, messageId, {
     id,
     type: 'memory',
-    title: '记忆抽取',
-    content: '正在从最近对话中抽取可确认的长期记忆。',
+    title: st('chatRunner.trace.memoryExtractTitle'),
+    content: st('chatRunner.trace.memoryExtractRunning'),
     status: 'running',
     startedAt,
   })
@@ -700,10 +1050,10 @@ async function extractMemoriesWithTrace(conversationId: string, messageId: strin
     upsertTrace(conversationId, messageId, completeTrace({
       id,
       type: 'memory',
-      title: '记忆抽取',
+      title: st('chatRunner.trace.memoryExtractTitle'),
       content: added.length
-        ? `已写入 ${added.length} 条待确认记忆：${added.slice(0, 3).join('；')}`
-        : '记忆抽取已执行，本轮没有发现新的长期记忆。',
+        ? st('chatRunner.trace.memoryExtractAdded', { count: added.length, items: added.slice(0, 3).join('; ') })
+        : st('chatRunner.trace.memoryExtractNone'),
       status: 'done',
       startedAt,
       metadata: { addedCount: added.length },
@@ -712,8 +1062,8 @@ async function extractMemoriesWithTrace(conversationId: string, messageId: strin
     upsertTrace(conversationId, messageId, completeTrace({
       id,
       type: 'memory',
-      title: '记忆抽取',
-      content: error instanceof Error ? error.message : '记忆抽取失败，已跳过。',
+      title: st('chatRunner.trace.memoryExtractTitle'),
+      content: error instanceof Error ? error.message : st('chatRunner.trace.memoryExtractFailed'),
       status: 'error',
       startedAt,
     }))
@@ -722,11 +1072,11 @@ async function extractMemoriesWithTrace(conversationId: string, messageId: strin
 
 function buildSetupGuide(): string {
   return [
-    '还没有可用的 AI 服务商。',
+    st('chatRunner.setup.noProvider'),
     '',
-    '1. 打开设置，选择一个服务商。',
-    '2. 保存 API Key，并确认 Base URL/计费模式匹配。',
-    '3. 获取模型并测试当前模型。'
+    st('chatRunner.setup.stepProvider'),
+    st('chatRunner.setup.stepKey'),
+    st('chatRunner.setup.stepModel'),
   ].join('\n')
 }
 
@@ -762,27 +1112,27 @@ function toUserFacingError(message: string): string {
   const code = classifyChatError(message)
   switch (code) {
     case 'bad_auth':
-      return '服务商拒绝了当前密钥，请检查 API Key、账户权限或服务商启用状态。'
+      return st('chatRunner.userError.badAuth')
     case 'credential_mismatch':
-      return message || '服务商密钥类型与调用地址不匹配，请检查计费模式和 Base URL。'
+      return message || st('chatRunner.userError.credentialMismatch')
     case 'model_unavailable':
-      return '当前模型不可用，可能是模型 ID 错误或账号没有权限。'
+      return st('chatRunner.userError.modelUnavailable')
     case 'network_error':
       return message.toLowerCase().includes('no response body') || message.toLowerCase().includes('empty response')
-        ? '服务商没有返回可读取的响应正文，请先测试当前模型；如果测试也失败，请检查 Base URL、协议类型和模型权限。'
-        : '网络请求失败或超时，请检查网络、代理或服务商地址。'
+        ? st('chatRunner.userError.emptyResponse')
+        : st('chatRunner.userError.network')
     case 'timeout':
-      return '请求超时，请检查网络、代理或服务商地址。'
+      return st('chatRunner.userError.timeout')
     case 'rate_limited':
-      return '服务商限流或额度不足，请稍后重试，或检查订阅/计费状态。'
+      return st('chatRunner.userError.rateLimited')
     case 'max_tokens_exceeded':
-      return message || '当前输出长度超过模型上限，请降低 Max Tokens 后重试。'
+      return message || st('chatRunner.userError.maxTokens')
     case 'bad_base_url':
-      return '服务商地址或请求参数可能不正确，请检查 Base URL 和模型配置。'
+      return st('chatRunner.userError.badBaseUrl')
     case 'missing_key':
     case 'disabled_provider':
     case 'unknown':
-      return message || '发送失败，请稍后重试。'
+      return message || st('chatRunner.error.sendFailed')
   }
 }
 

@@ -3,6 +3,7 @@ import Constants from 'expo-constants'
 import * as Application from 'expo-application'
 import * as FileSystem from 'expo-file-system/legacy'
 import * as IntentLauncher from 'expo-intent-launcher'
+import { st } from '@/i18n/service'
 
 export type ApkUpdateStatus = 'available' | 'unavailable' | 'downloaded' | 'unsupported' | 'error'
 
@@ -56,23 +57,23 @@ export async function checkLatestApkReleaseSilently(): Promise<ApkUpdateResult> 
 }
 
 export function formatUpdateCheckTime(value: number | undefined): string {
-  if (!value) return '从未'
+  if (!value) return st('updates.never')
   try {
     return new Date(value).toLocaleString()
   } catch {
-    return '未知'
+    return st('updates.unknown')
   }
 }
 
 export async function checkLatestApkRelease(): Promise<ApkUpdateResult> {
   if (Platform.OS !== 'android') {
-    return { status: 'unsupported', message: 'APK 更新只适用于 Android。' }
+    return { status: 'unsupported', message: st('updates.androidOnly') }
   }
 
   try {
     const release = await fetchLatestRelease()
     if (!release) {
-      return { status: 'unavailable', message: 'GitHub Release 中没有找到可安装 APK。' }
+      return { status: 'unavailable', message: st('updates.noInstallableApk') }
     }
 
     const currentVersion = normalizeVersion(getVersionSnapshot().appVersion)
@@ -80,32 +81,32 @@ export async function checkLatestApkRelease(): Promise<ApkUpdateResult> {
     if (compareVersions(latestVersion, currentVersion) <= 0) {
       return {
         status: 'unavailable',
-        message: `当前已是最新 APK 版本：${currentVersion}。`,
+        message: st('updates.alreadyLatest', { version: currentVersion }),
         release,
       }
     }
 
     return {
       status: 'available',
-      message: `发现新版 APK：${release.version}。`,
+      message: st('updates.available', { version: release.version }),
       release,
     }
   } catch (error) {
     return {
       status: 'error',
-      message: `检查 GitHub Release 失败：${formatError(error)}`,
+      message: st('updates.releaseCheckFailed', { error: formatError(error) }),
     }
   }
 }
 
 export async function downloadAndOpenApkInstaller(release: ApkReleaseInfo): Promise<ApkUpdateResult> {
   if (Platform.OS !== 'android') {
-    return { status: 'unsupported', message: 'APK 更新只适用于 Android。', release }
+    return { status: 'unsupported', message: st('updates.androidOnly'), release }
   }
 
   const cacheDirectory = FileSystem.cacheDirectory
   if (!cacheDirectory) {
-    return { status: 'error', message: '无法访问应用缓存目录，下载已取消。', release }
+    return { status: 'error', message: st('updates.cacheUnavailable'), release }
   }
 
   try {
@@ -115,7 +116,7 @@ export async function downloadAndOpenApkInstaller(release: ApkReleaseInfo): Prom
     if (download.status < 200 || download.status >= 300) {
       return {
         status: 'error',
-        message: `APK 下载失败，HTTP ${download.status}。`,
+        message: st('updates.downloadFailedHttp', { status: download.status }),
         release,
       }
     }
@@ -129,14 +130,14 @@ export async function downloadAndOpenApkInstaller(release: ApkReleaseInfo): Prom
 
     return {
       status: 'downloaded',
-      message: 'APK 已下载，已打开 Android 系统安装器。请在系统弹窗中确认安装。',
+      message: st('updates.installerOpenedMessage'),
       release,
       localUri: download.uri,
     }
   } catch (error) {
     return {
       status: 'error',
-      message: `下载或打开安装器失败：${formatError(error)}`,
+      message: st('updates.downloadOrOpenFailed', { error: formatError(error) }),
       release,
     }
   }

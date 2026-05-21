@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
-import { BackHandler, Pressable, useWindowDimensions, View } from 'react-native'
+import { BackHandler, useWindowDimensions, View } from 'react-native'
 import { Gesture, GestureDetector } from 'react-native-gesture-handler'
 import Animated, {
   Extrapolation,
@@ -12,11 +12,9 @@ import Animated, {
 } from 'react-native-reanimated'
 import { MotiView } from 'moti'
 import { Screen } from '@/components/ui/Screen'
-import { useAppTheme } from '@/hooks/useAppTheme'
 import { ConversationsScreenContent } from './ConversationsScreenContent'
 import { HomeScreenContent } from './HomeScreenContent'
 import { SettingsScreenContent } from './SettingsScreenContent'
-import { ProviderSettingsContent } from '@/components/providers/ProviderSettingsContent'
 import { MainPagerGestureLockProvider, useMainPagerGestureLock } from './MainPagerGestureLock'
 
 export type MainPagerPage = 'history' | 'home' | 'settings'
@@ -49,11 +47,9 @@ export function MainPagerShell({ initialPage = 'home' }: MainPagerShellProps) {
 }
 
 function MainPagerShellInner({ initialPage = 'home' }: MainPagerShellProps) {
-  const { colors } = useAppTheme()
   const { width } = useWindowDimensions()
   const gestureLock = useMainPagerGestureLock()
   const [page, setPage] = useState<MainPagerPage>(initialPage)
-  const [providersOpen, setProvidersOpen] = useState(false)
   const pageValue = useSharedValue(PAGE_INDEX[initialPage])
   const pageIndex = useSharedValue(PAGE_INDEX[initialPage])
   const dragX = useSharedValue(0)
@@ -62,7 +58,7 @@ function MainPagerShellInner({ initialPage = 'home' }: MainPagerShellProps) {
     () => [
       { id: 'history' as const, index: -1, node: <ConversationsScreenContent onHome={() => switchTo('home')} onSettings={() => switchTo('settings')} /> },
       { id: 'home' as const, index: 0, node: <HomeScreenContent embedded onHistory={() => switchTo('history')} onSettings={() => switchTo('settings')} /> },
-      { id: 'settings' as const, index: 1, node: <SettingsScreenContent onProviders={() => setProvidersOpen(true)} /> },
+      { id: 'settings' as const, index: 1, node: <SettingsScreenContent onHome={() => switchTo('home')} /> },
     ],
     []
   )
@@ -73,10 +69,6 @@ function MainPagerShellInner({ initialPage = 'home' }: MainPagerShellProps) {
 
   useEffect(() => {
     const subscription = BackHandler.addEventListener('hardwareBackPress', () => {
-      if (providersOpen) {
-        setProvidersOpen(false)
-        return true
-      }
       if (page !== 'home') {
         switchTo('home')
         return true
@@ -84,7 +76,7 @@ function MainPagerShellInner({ initialPage = 'home' }: MainPagerShellProps) {
       return false
     })
     return () => subscription.remove()
-  }, [page, providersOpen])
+  }, [page])
 
   function switchTo(next: MainPagerPage) {
     setPage(next)
@@ -102,7 +94,7 @@ function MainPagerShellInner({ initialPage = 'home' }: MainPagerShellProps) {
   }
 
   const pan = Gesture.Pan()
-    .enabled(!providersOpen && !gestureLock?.locked)
+    .enabled(!gestureLock?.locked)
     .activeOffsetX([-14, 14])
     .failOffsetY([-80, 80])
     .onBegin(() => {
@@ -139,19 +131,6 @@ function MainPagerShellInner({ initialPage = 'home' }: MainPagerShellProps) {
               {item.node}
             </PagerPage>
           ))}
-          {providersOpen ? (
-            <View style={{ position: 'absolute', top: 0, right: 0, bottom: 0, left: 0, zIndex: 120 }}>
-              <Pressable onPress={() => setProvidersOpen(false)} style={{ position: 'absolute', top: 0, right: 0, bottom: 0, left: 0, backgroundColor: colors.backdrop }} />
-              <MotiView
-                from={{ opacity: 0, translateY: -42 }}
-                animate={{ opacity: 1, translateY: 0 }}
-                transition={{ type: 'spring', damping: 22, stiffness: 190 }}
-                style={{ flex: 1 }}
-              >
-                <ProviderSettingsContent embedded onClose={() => setProvidersOpen(false)} />
-              </MotiView>
-            </View>
-          ) : null}
         </Animated.View>
       </GestureDetector>
     </Screen>
