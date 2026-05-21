@@ -1,6 +1,6 @@
 {
   "name": "islemind",
-  "version": "1.0.2",
+  "version": "1.0.3",
   "main": "expo-router/entry",
   "scripts": {
     "start": "expo start",
@@ -15,7 +15,8 @@
     "apk:local:release": "node scripts/build-local-android-apk.js --variant no-model --release",
     "apk:local:release:models": "node scripts/build-local-android-apk.js --variant with-model-small --release",
     "apk:local:release:all": "node scripts/build-local-android-apk.js --all-variants --release",
-    "apk:prepare-models": "node scripts/prepare-model-bundle.js"
+    "apk:prepare-models": "node scripts/prepare-model-bundle.js",
+    "apk:validate-16kb": "node scripts/validate-android-16kb-apk.js"
   },
   "dependencies": {
     "@react-native-async-storage/async-storage": "2.2.0",

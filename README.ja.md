@@ -26,6 +26,10 @@ Release APK はローカルモデルの有無で分かれます。
 
 アプリ内のローカルモデル画面から、RAG モデルのダウンロード、検証、有効化もできます。
 
+## Android 16 KB Page Size
+
+Release ビルドでは `npm run apk:validate-16kb` を実行し、`zipalign -P 16` で APK ZIP page alignment を確認し、`llvm-readelf` で native library の ELF `LOAD` segment alignment を確認します。ZIP alignment は Android ビルドで制御できますが、ELF alignment は Expo、React Native、ONNX Runtime などの依存関係が配布するネイティブライブラリに依存します。検証で第三者 `.so` が 4 KB `LOAD` alignment と報告された場合は、その依存関係を更新または再ビルドしてから Android 16 KB page-size 端末への完全対応としてください。
+
 ## ローカル RAG モデル
 
 IsleMind の既定 APK にはモデル重みは含まれません。任意のローカルモデルは `assets/models/catalog.json` に記録され、モデルの出典と attribution は `assets/models/NOTICE.md` に記載されています。

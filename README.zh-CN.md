@@ -26,6 +26,10 @@ Release APK 按本地模型包拆分：
 
 应用内“本地模型”页面也支持下载、校验和启用 RAG 模型。
 
+## Android 16 KB Page Size
+
+Release 构建会运行 `npm run apk:validate-16kb`，用 `zipalign -P 16` 检查 APK ZIP page alignment，并用 `llvm-readelf` 检查 native library 的 ELF `LOAD` segment alignment。ZIP 对齐由 Android 构建控制；ELF 对齐取决于 Expo、React Native、ONNX Runtime 等依赖提供的原生库。如果校验报告第三方 `.so` 仍是 4 KB `LOAD` alignment，需要升级或重建对应依赖后，才能标记为完全兼容 Android 16 KB page-size 设备。
+
 ## 本地 RAG 模型
 
 IsleMind 默认 APK 不包含模型权重。可选本地模型记录在 `assets/models/catalog.json`，模型来源与署名说明在 `assets/models/NOTICE.md`。

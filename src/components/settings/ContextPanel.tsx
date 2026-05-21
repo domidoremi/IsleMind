@@ -297,12 +297,24 @@ export function ContextPanel({ providers, section = 'all' }: ContextPanelProps) 
         status: jobs.some((job) => job.status === 'running') ? 'warn' : 'ok',
         detail: t('contextPanel.selfTest.embeddingJobs', { total: jobs.length, running: jobs.filter((job) => job.status === 'running').length, failed: jobs.filter((job) => job.status === 'error').length }),
       })
+      const failed = steps.filter((step) => step.status === 'fail').length
+      const warnings = steps.filter((step) => step.status === 'warn').length
+      dialog.notice({
+        title: failed ? t('contextPanel.selfTest.doneWithIssues') : t('contextPanel.selfTest.done'),
+        message: t('contextPanel.selfTest.summary', { ok: steps.filter((step) => step.status === 'ok').length, warn: warnings, fail: failed }),
+        tone: failed ? 'danger' : warnings ? 'amber' : 'mint',
+      })
       await refresh()
     } catch (error) {
       pushStep({
         name: t('contextPanel.selfTest.exception'),
         status: 'fail',
         detail: error instanceof Error ? error.message : t('contextPanel.selfTest.failed'),
+      })
+      dialog.notice({
+        title: t('contextPanel.selfTest.doneWithIssues'),
+        message: error instanceof Error ? error.message : t('contextPanel.selfTest.failed'),
+        tone: 'danger',
       })
     } finally {
       setSelfTesting(false)
@@ -555,12 +567,14 @@ export function ContextPanel({ providers, section = 'all' }: ContextPanelProps) 
           haptic
           onPress={() => void runContextSelfTest()}
           disabled={selfTesting}
+          accessibilityLabel={t('contextPanel.runSelfTest')}
+          testID="context-self-test-button"
           style={{ marginTop: 10, minHeight: 42, borderRadius: 21, alignItems: 'center', justifyContent: 'center', backgroundColor: colors.text, opacity: selfTesting ? 0.65 : 1 }}
         >
           <Text style={{ color: colors.surface, fontSize: 13, fontWeight: '900' }}>{selfTesting ? t('contextPanel.selfTesting') : t('contextPanel.runSelfTest')}</Text>
         </PressableScale>
         {selfTestResult ? (
-          <View style={{ marginTop: 12, gap: 8 }}>
+          <View testID="context-self-test-result" style={{ marginTop: 12, gap: 8 }}>
             <Text style={{ color: colors.textTertiary, fontSize: 11, fontWeight: '800' }}>
               {t('contextPanel.lastSelfTest', { time: new Date(selfTestResult.ranAt).toLocaleTimeString() })}
             </Text>
@@ -581,6 +595,8 @@ export function ContextPanel({ providers, section = 'all' }: ContextPanelProps) 
             haptic
             onPress={() => void runRagEvaluation()}
             disabled={ragEvaluating}
+            accessibilityLabel={t('contextPanel.ragDebug.runEvaluation')}
+            testID="context-rag-evaluation-button"
             style={{ marginTop: 10, minHeight: 42, borderRadius: 21, alignItems: 'center', justifyContent: 'center', backgroundColor: colors.text, opacity: ragEvaluating ? 0.65 : 1 }}
           >
             <Text style={{ color: colors.surface, fontSize: 13, fontWeight: '900' }}>{ragEvaluating ? t('contextPanel.ragDebug.evaluating') : t('contextPanel.ragDebug.runEvaluation')}</Text>

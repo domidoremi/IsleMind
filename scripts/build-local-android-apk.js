@@ -129,7 +129,11 @@ function buildVariant(variant, args) {
       EXPO_PUBLIC_ISLEMIND_MODEL_BUNDLE: variant,
     },
   })
-  return copyOutputs(variant, args.buildType)
+  const outputs = copyOutputs(variant, args.buildType)
+  if (args.buildType === 'release') {
+    run(commandName('node'), ['scripts/validate-android-16kb-apk.js', ...outputs])
+  }
+  return outputs
 }
 
 function installApk(device, apks) {
