@@ -99,7 +99,11 @@ type OpenAIModelListItem = {
   display_name?: string
   context_length?: number
   contextWindow?: number
+  context_window?: number
+  max_context_length?: number
   max_output_length?: number
+  max_completion_tokens?: number
+  max_tokens?: number
   maxOutputTokens?: number
   architecture?: {
     input_modalities?: string[]
@@ -135,6 +139,10 @@ interface ParsedStreamChunk {
 const PROVIDER_REQUEST_TIMEOUT_MS = 18000
 const MODEL_TEST_TIMEOUT_MS = 22000
 const CHAT_REQUEST_TIMEOUT_MS = 60000
+
+export function buildOpenAIBodyForTest(req: ChatRequest) {
+  return buildOpenAIBody(req)
+}
 
 function buildOpenAIBody(req: ChatRequest) {
   const msgs: Record<string, unknown>[] = []
@@ -1303,7 +1311,7 @@ export async function syncProviderCredentialGroupsDetailed(provider: AIProvider)
   }
   const sourceGroups = groups.length
     ? provider.credentialGroups
-    : [{ id: 'default', label: st('providerOperation.defaultToken'), enabled: true, apiKey: provider.apiKey, availableModels: provider.models }]
+    : [{ id: 'default', label: st('providerOperation.defaultToken'), enabled: true, apiKey: provider.apiKey, availableModels: [] }]
   const synced = await runCredentialGroupModelSync(
     { ...provider, credentialGroups: sourceGroups },
     {
@@ -1433,8 +1441,25 @@ async function fetchOpenAICompatibleModels(provider: AIProvider): Promise<AIMode
       const remote = items.find((item) => normalizeRemoteModelId(item.id!, provider.type) === id)
       return mergeModelConfig(id, provider.type, {
         name: remote?.display_name || remote?.name,
-        contextWindow: firstNumber(remote?.context_length, remote?.contextWindow, getNumber(remote?.metadata, 'context_length')),
-        maxOutputTokens: firstNumber(remote?.max_output_length, remote?.maxOutputTokens, getNumber(remote?.metadata, 'max_output_length')),
+        contextWindow: firstNumber(
+          remote?.context_length,
+          remote?.contextWindow,
+          remote?.context_window,
+          remote?.max_context_length,
+          getNumber(remote?.metadata, 'context_length'),
+          getNumber(remote?.metadata, 'contextWindow'),
+          getNumber(remote?.metadata, 'context_window'),
+          getNumber(remote?.metadata, 'max_context_length')
+        ),
+        maxOutputTokens: firstNumber(
+          remote?.max_output_length,
+          remote?.maxOutputTokens,
+          remote?.max_completion_tokens,
+          getNumber(remote?.metadata, 'max_output_length'),
+          getNumber(remote?.metadata, 'maxOutputTokens'),
+          getNumber(remote?.metadata, 'max_completion_tokens'),
+          getNumber(remote?.metadata, 'output_token_limit')
+        ),
         supportsVision: supportsVisionFromOpenAIModel(remote),
         source: 'remote',
       })
@@ -1552,7 +1577,12 @@ function firstNumber(...values: (number | undefined)[]): number | undefined {
 
 function getNumber(source: Record<string, unknown> | undefined, key: string): number | undefined {
   const value = source?.[key]
-  return typeof value === 'number' ? value : undefined
+  if (typeof value === 'number') return value
+  if (typeof value === 'string') {
+    const parsed = Number.parseInt(value, 10)
+    return Number.isFinite(parsed) ? parsed : undefined
+  }
+  return undefined
 }
 
 function arrayBufferToBase64(buffer: ArrayBuffer): string {

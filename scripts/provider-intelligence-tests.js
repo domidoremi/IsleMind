@@ -125,6 +125,7 @@ const {
   getModelConfig,
   mergeModelConfig,
 } = require('../src/types/index.ts')
+const { buildOpenAIBodyForTest } = require('../src/services/ai/base.ts')
 const {
   getBingCompatibleEndpoint,
   legacySearchModeForProvider,
@@ -142,6 +143,10 @@ const {
   callMcpTool,
   truncateToolBlocks,
 } = require('../src/services/mcp.ts')
+const {
+  clearHistoricalInjectedProviderModels,
+  clearHistoricalInjectedGroupModels,
+} = require('../src/utils/providerModels.ts')
 const { setServiceLanguage, st } = require('../src/i18n/service.ts')
 const {
   buildCompressedContextPrompt,
@@ -296,10 +301,49 @@ sk-example-d-123456789012345678901234
   assert.deepEqual(deepseekPreset.models, [], 'quick presets expose no saved default models')
   const importWithoutModels = parseProviderImportText('Provider Empty, https://empty.example/v1, sk-empty-123456789012345678901234')
   assert.deepEqual(importWithoutModels.providers[0].models, [], 'provider import keeps models empty when no model field is provided')
+  assert.deepEqual(
+    clearHistoricalInjectedProviderModels({
+      id: 'legacy-defaults',
+      type: 'openai-compatible',
+      name: 'Legacy defaults',
+      apiKey: '',
+      models: ['deepseek-v4-pro', 'custom-manual-model', 'deepseek-v4-flash'],
+      enabled: false,
+    }),
+    ['custom-manual-model'],
+    'legacy injected DeepSeek defaults are removed from mixed unsynced model lists'
+  )
+  assert.deepEqual(
+    clearHistoricalInjectedGroupModels({
+      id: 'group-defaults',
+      label: 'group',
+      enabled: true,
+      availableModels: ['deepseek-v4-pro', 'deepseek-v4-flash'],
+    }),
+    [],
+    'legacy injected DeepSeek defaults are removed from unsynced credential groups'
+  )
+  assert.deepEqual(
+    clearHistoricalInjectedGroupModels({
+      id: 'group-synced',
+      label: 'group',
+      enabled: true,
+      lastModelSyncStatus: 'ok',
+      availableModels: ['deepseek-v4-pro', 'deepseek-v4-flash'],
+    }),
+    ['deepseek-v4-pro', 'deepseek-v4-flash'],
+    'synced credential group model lists are preserved'
+  )
 
   const normalized = normalizeProviderCredentialGroups(provider)
   assert.equal(normalized.credentialGroups.length, 3)
   assert.equal(chooseCredentialForModel(normalized, 'claude-3-5-sonnet-20241022').credentialGroupId, groups[1].id)
+  const blankGroupProvider = normalizeProviderCredentialGroups({
+    ...provider,
+    models: ['legacy-provider-model'],
+    credentialGroups: [{ ...groups[0], availableModels: undefined }],
+  })
+  assert.deepEqual(blankGroupProvider.credentialGroups[0].availableModels, [], 'credential groups do not inherit provider models without a sync result')
 
   const failedHealth = updateCredentialGroupHealth(normalized, groups[1].id, false, 2000)
   assert.equal(failedHealth.credentialGroups[1].failureCount, 1)
@@ -418,6 +462,39 @@ sk-example-d-123456789012345678901234
   const inferredConfig = getModelConfig('unknown-compatible-model', 'openai-compatible')
   assert.ok(inferredConfig.defaultMaxTokens <= inferredConfig.maxOutputTokens, 'inferred model defaults fit output limit')
   assert.ok(DEFAULT_MODELS.every((model) => model.defaultMaxTokens <= model.maxOutputTokens && model.maxOutputTokens <= model.contextWindow), 'built-in model token limits are internally consistent')
+  const reasoningBody = buildOpenAIBodyForTest({
+    provider: {
+      id: 'reasoning',
+      type: 'openai-compatible',
+      name: 'Reasoning Provider',
+      apiKey: 'sk-test',
+      models: ['reasoner-model'],
+      enabled: true,
+      capabilities: { reasoningEffort: true },
+    },
+    model: 'reasoner-model',
+    messages: [{ role: 'user', content: 'hello' }],
+    reasoningEffort: 'high',
+    maxTokens: 999999,
+  })
+  assert.equal(reasoningBody.reasoning_effort, 'high', 'reasoning effort is sent only for supported providers or models')
+  assert.ok(reasoningBody.max_tokens <= getModelConfig('reasoner-model', 'openai-compatible').maxOutputTokens, 'request max tokens are clamped to output limit')
+  const nonReasoningBody = buildOpenAIBodyForTest({
+    provider: {
+      id: 'plain',
+      type: 'openai-compatible',
+      name: 'Plain Provider',
+      apiKey: 'sk-test',
+      models: ['plain-chat-model'],
+      enabled: true,
+      capabilities: { reasoningEffort: false },
+    },
+    model: 'plain-chat-model',
+    messages: [{ role: 'user', content: 'hello' }],
+    reasoningEffort: 'high',
+    maxTokens: 512,
+  })
+  assert.equal(nonReasoningBody.reasoning_effort, undefined, 'unsupported providers do not receive reasoning effort fields')
 
   const baseSkill = createBaseSkill({
     id: 'skill-review',

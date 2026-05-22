@@ -2,6 +2,7 @@ import type { AIModel, AIProvider, ProviderCredentialGroup, ProviderOperationCod
 import { getModelConfig, mergeModelConfig, sortModelConfigs } from '@/types'
 import { st } from '@/i18n/service'
 import { defaultProviderSyncPolicy, getProviderPreset } from './providerRegistry'
+import { clearHistoricalInjectedGroupModels } from '@/utils/providerModels'
 
 interface CredentialSyncDeps {
   fetchModels: (provider: AIProvider, group: ProviderCredentialGroup) => Promise<Pick<AIModel, 'id' | 'name' | 'provider'>[] | AIModel[]>
@@ -52,7 +53,7 @@ export function normalizeProviderCredentialGroups(provider: AIProvider): AIProvi
           label: st('providerOperation.defaultToken'),
           apiKey: provider.apiKey,
           enabled: true,
-          availableModels: provider.models,
+          availableModels: [],
         }]
       : []
 
@@ -61,7 +62,7 @@ export function normalizeProviderCredentialGroups(provider: AIProvider): AIProvi
     id: group.id || `group-${index + 1}`,
     label: group.label || st('apiKeyPanel.groupName', { index: index + 1 }),
     enabled: group.enabled ?? true,
-    availableModels: group.availableModels ?? provider.models,
+    availableModels: group.availableModels ? clearHistoricalInjectedGroupModels(group) : [],
     failureCount: group.failureCount ?? 0,
   }))
   return {

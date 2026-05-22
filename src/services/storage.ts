@@ -3,6 +3,7 @@ import type { AIProvider, Conversation, McpServerConfig, MessageStatus, ProcessT
 import { getModelConfig } from '@/types'
 import { exportContextSnapshot, importContextSnapshot, type ContextSnapshot } from '@/services/contextStore'
 import { localDataStore } from '@/services/localDataStore'
+import { clearHistoricalInjectedProviderModels } from '@/utils/providerModels'
 
 const KEYS = {
   CONVERSATIONS: '@islemind/conversations',
@@ -279,7 +280,7 @@ function normalizeProvider(provider: AIProvider): AIProvider {
 }
 
 function normalizeProviderModels(provider: AIProvider): string[] {
-  const models = clearHistoricalInjectedModels(provider)
+  const models = clearHistoricalInjectedProviderModels(provider)
   const existing = models.filter((model) => {
     const config = getModelConfig(model, provider.type, provider.modelConfigs)
     return !config.deprecated
@@ -290,21 +291,4 @@ function normalizeProviderModels(provider: AIProvider): string[] {
     seen.add(model)
     return true
   })
-}
-
-function clearHistoricalInjectedModels(provider: AIProvider): string[] {
-  const models = provider.models ?? []
-  if (provider.lastModelSyncStatus === 'ok' || provider.lastTestStatus === 'ok') return models
-  if (provider.modelConfigs?.some((model) => model.source === 'remote')) return models
-  const historicalSets = [
-    ['deepseek-v4-pro', 'deepseek-v4-flash'],
-    ['deepseek-v4-pro', 'deepseek-v4-flash', 'deepseek-chat', 'deepseek-reasoner'],
-  ]
-  return historicalSets.some((set) => sameModelSet(models, set)) ? [] : models
-}
-
-function sameModelSet(left: string[], right: string[]): boolean {
-  if (left.length !== right.length) return false
-  const normalized = new Set(left.map((item) => item.trim()).filter(Boolean))
-  return right.every((item) => normalized.has(item))
 }

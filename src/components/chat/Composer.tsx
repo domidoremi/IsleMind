@@ -28,9 +28,12 @@ interface ComposerProps {
   pendingNotice?: string
   commands?: ComposerCommand[]
   references?: CommandReference[]
+  utilitiesOpen?: boolean
+  showInlineUtilities?: boolean
   onClearPending?: () => void
   onStop?: () => void
   onReferenceSelected?: (reference: CommandReference) => void
+  onFocus?: () => void
   onSend: (content: string, attachments: Attachment[]) => Promise<void> | void
   onSendWhileStreaming?: (content: string, attachments: Attachment[]) => Promise<void> | void
 }
@@ -42,9 +45,12 @@ export function Composer({
   pendingNotice,
   commands = [],
   references = [],
+  utilitiesOpen = false,
+  showInlineUtilities = true,
   onClearPending,
   onStop,
   onReferenceSelected,
+  onFocus,
   onSend,
   onSendWhileStreaming,
 }: ComposerProps) {
@@ -181,12 +187,12 @@ export function Composer({
           ))}
         </View>
       ) : null}
-      {attachmentsOpen ? (
+      {(attachmentsOpen || utilitiesOpen) ? (
         <MotiView
           from={{ opacity: 0, translateY: -4 }}
           animate={{ opacity: 1, translateY: 0 }}
           transition={{ type: 'spring', damping: 20, stiffness: 200 }}
-          style={{ flexDirection: 'row', gap: 8, paddingHorizontal: 12, paddingTop: 10 }}
+          style={{ flexDirection: 'row', gap: 8, paddingHorizontal: 12, paddingTop: 10, flexWrap: 'wrap' }}
         >
           <AttachmentChip label={t('chat.attachImage')} onPress={() => addAttachment(pickImage)}>
             <Image color={colors.textSecondary} size={15} strokeWidth={1.8} />
@@ -196,6 +202,12 @@ export function Composer({
           </AttachmentChip>
           <AttachmentChip label={t('chat.attachFile')} onPress={() => addAttachment(pickDocument)}>
             <FilePlus color={colors.textSecondary} size={15} strokeWidth={1.8} />
+          </AttachmentChip>
+          <AttachmentChip label={recording ? t('chat.stopRecording') : t('chat.voiceInput')} onPress={() => void toggleRecording()}>
+            <Mic color={recording ? colors.error : colors.textSecondary} size={15} strokeWidth={1.8} />
+          </AttachmentChip>
+          <AttachmentChip label={t('chat.openCommandPanel')} onPress={() => setContent((value) => value.trim() ? `${value} /` : '/')}>
+            <Slash color={colors.textSecondary} size={15} strokeWidth={1.8} />
           </AttachmentChip>
         </MotiView>
       ) : null}
@@ -255,36 +267,40 @@ export function Composer({
         </MotiView>
       ) : null}
       <View style={{ flexDirection: 'row', alignItems: 'center', padding: 7, paddingTop: 7, gap: 6 }}>
-        <PressableScale
-          haptic
-          onPress={() => setAttachmentsOpen((value) => !value)}
-          accessibilityLabel={attachmentsOpen ? t('chat.collapseAttachments') : t('chat.expandAttachments')}
-          style={{
-            width: 38,
-            height: 40,
-            alignItems: 'center',
-            justifyContent: 'center',
-            borderRadius: 18,
-            backgroundColor: attachmentsOpen ? colors.amberSoft : colors.islandRaised,
-          }}
-        >
-          {attachmentsOpen ? <ChevronDown color={colors.textSecondary} size={16} strokeWidth={2} /> : <Plus color={colors.textSecondary} size={16} strokeWidth={2} />}
-        </PressableScale>
-        <PressableScale
-          haptic
-          onPress={() => void toggleRecording()}
-          accessibilityLabel={recording ? t('chat.stopRecording') : t('chat.voiceInput')}
-          style={{
-            width: 38,
-            height: 40,
-            alignItems: 'center',
-            justifyContent: 'center',
-            borderRadius: 18,
-            backgroundColor: recording ? colors.error : colors.islandRaised,
-          }}
-        >
-          <Mic color={recording ? colors.surface : colors.textSecondary} size={16} strokeWidth={2} />
-        </PressableScale>
+        {showInlineUtilities ? (
+          <>
+            <PressableScale
+              haptic
+              onPress={() => setAttachmentsOpen((value) => !value)}
+              accessibilityLabel={attachmentsOpen ? t('chat.collapseAttachments') : t('chat.expandAttachments')}
+              style={{
+                width: 38,
+                height: 40,
+                alignItems: 'center',
+                justifyContent: 'center',
+                borderRadius: 18,
+                backgroundColor: attachmentsOpen ? colors.amberSoft : colors.islandRaised,
+              }}
+            >
+              {attachmentsOpen ? <ChevronDown color={colors.textSecondary} size={16} strokeWidth={2} /> : <Plus color={colors.textSecondary} size={16} strokeWidth={2} />}
+            </PressableScale>
+            <PressableScale
+              haptic
+              onPress={() => void toggleRecording()}
+              accessibilityLabel={recording ? t('chat.stopRecording') : t('chat.voiceInput')}
+              style={{
+                width: 38,
+                height: 40,
+                alignItems: 'center',
+                justifyContent: 'center',
+                borderRadius: 18,
+                backgroundColor: recording ? colors.error : colors.islandRaised,
+              }}
+            >
+              <Mic color={recording ? colors.surface : colors.textSecondary} size={16} strokeWidth={2} />
+            </PressableScale>
+          </>
+        ) : null}
         <View style={{ flex: 1, minHeight: 42, justifyContent: 'center' }}>
           {streaming ? <StreamingStatusInline label={activityLabel || t('chat.generating')} /> : null}
           <TextInput
@@ -303,7 +319,10 @@ export function Composer({
             maxLength={12000}
             placeholder={streaming ? t('chat.keepTyping') : t('chat.askAnything')}
             placeholderTextColor={colors.textTertiary}
-            onFocus={() => setFocused(true)}
+            onFocus={() => {
+              setFocused(true)
+              onFocus?.()
+            }}
             onBlur={() => setFocused(false)}
             style={{
               flex: 1,
