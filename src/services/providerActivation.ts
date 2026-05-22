@@ -155,9 +155,10 @@ function wait(deps: ProviderActivationDeps, ms: number): Promise<void> {
 }
 
 function buildTestCandidates(provider: AIProvider): Array<{ groupId?: string; groupLabel?: string; apiKey: string; model: string }> {
-  const groups = provider.credentialGroups?.filter((group) => group.enabled && group.apiKey?.trim() && group.lastModelSyncStatus === 'ok') ?? []
-  const candidates = groups.flatMap((group) => {
-    const models = group.availableModels?.length ? group.availableModels : provider.models
+  const enabledGroups = provider.credentialGroups?.filter((group) => group.enabled && group.apiKey?.trim()) ?? []
+  const syncedGroups = enabledGroups.filter((group) => group.lastModelSyncStatus === 'ok')
+  const candidates = syncedGroups.flatMap((group) => {
+    const models = group.availableModels ?? []
     return models.map((model) => ({
       groupId: group.id,
       groupLabel: group.label,
@@ -166,6 +167,16 @@ function buildTestCandidates(provider: AIProvider): Array<{ groupId?: string; gr
     }))
   })
   if (candidates.length) return dedupeCandidates(candidates)
+  if (enabledGroups.length && provider.models.length) {
+    return dedupeCandidates(enabledGroups.flatMap((group) =>
+      provider.models.map((model) => ({
+        groupId: group.id,
+        groupLabel: group.label,
+        apiKey: group.apiKey!.trim(),
+        model,
+      }))
+    ))
+  }
   if (provider.apiKey?.trim() && provider.models.length) {
     return provider.models.map((model) => ({ apiKey: provider.apiKey.trim(), model }))
   }
@@ -187,7 +198,7 @@ export function summarizeProviderActivation(results: ProviderActivationResult[])
   const synced = results.filter((item) => item.synced).length
   const testedOk = results.filter((item) => item.testOk).length
   const missingTokens = results.filter((item) => item.missingToken || !item.hadCredential)
-  const noModels = results.filter((item) => item.hadCredential && !item.modelCount)
+  const noModels = results.filter((item) => item.hadCredential && !item.modelCount && !item.failures.length)
   const failed = results.filter((item) => item.failures.length && !missingTokens.includes(item) && !item.testOk)
   const parts = [
     st('providerActivation.summary', { enabled, synced, tested: testedOk }),

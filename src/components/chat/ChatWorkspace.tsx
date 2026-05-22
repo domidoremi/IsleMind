@@ -8,6 +8,7 @@ import {
   Pressable,
   ScrollView,
   Text,
+  TextInput,
   View,
   useWindowDimensions,
   type StyleProp,
@@ -19,7 +20,7 @@ import { FlashList, type FlashListRef } from '@shopify/flash-list'
 import * as Clipboard from 'expo-clipboard'
 import * as Linking from 'expo-linking'
 import { router } from 'expo-router'
-import { AlertTriangle, BookOpen, ChevronLeft, GitBranchPlus, History, KeyRound, ListEnd, Settings2, Split, X } from 'lucide-react-native'
+import { AlertTriangle, BookOpen, Bot, ChevronLeft, ChevronRight, FileText, GitBranchPlus, History, KeyRound, ListEnd, Settings2, SlidersHorizontal, Split, X } from 'lucide-react-native'
 import { MotiView } from 'moti'
 import { useTranslation } from 'react-i18next'
 import { Screen } from '@/components/ui/Screen'
@@ -46,6 +47,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context'
 import { useMainPagerGestureLock } from '@/components/main/MainPagerGestureLock'
 import { applySkillStack, createBaseSkill, extractSkillVariables, listSkills, upsertSkill } from '@/services/skills'
 import { listKnowledgeDocuments, listMemories } from '@/services/contextStore'
+import { clearHistoricalInjectedProviderModels, hasRemoteProviderModelEvidence } from '@/utils/providerModels'
 
 type StreamingInputIntent = 'guide' | 'queue' | 'interrupt'
 
@@ -92,13 +94,14 @@ export function ChatWorkspace({ conversation, showBack = false, embedded = false
   const [skills, setSkills] = useState<SkillDefinition[]>([])
   const [knowledgeDocuments, setKnowledgeDocuments] = useState<KnowledgeDocument[]>([])
   const [memoryItems, setMemoryItems] = useState<MemoryItem[]>([])
+  const [keyboardHeight, setKeyboardHeight] = useState(0)
   const lastScrollOffset = useRef(0)
   const idleTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
   const autoScrollTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
   const lastAutoScrollAt = useRef(0)
   const enabledProviders = useMemo(() => providers.filter((item) => item.id !== 'local-setup' && item.enabled), [providers])
   const hasEnabledProvider = enabledProviders.length > 0
-  const hasAvailableModel = enabledProviders.some((item) => item.models.length > 0)
+  const hasAvailableModel = enabledProviders.some((item) => clearHistoricalInjectedProviderModels(item).length > 0)
   const homeProvider = pickReadyProviderForNewConversation(providers, settings.defaultProvider)
   const runtimeTarget = resolveRuntimeTarget(conversation, providers, settings.defaultProvider)
   const runtimeConversation = runtimeTarget?.conversation ?? conversation
@@ -106,7 +109,8 @@ export function ChatWorkspace({ conversation, showBack = false, embedded = false
   const reasoningEffort = runtimeConversation?.reasoningEffort ?? 'medium'
   const supportsReasoningQuick = !!provider && providerSupportsReasoning(provider, runtimeConversation?.model)
   const emptyHeaderTitle = !hasEnabledProvider ? t('chat.noProviderConnected') : hasAvailableModel ? homeProvider?.name ?? t('settings.providerManagement') : t('chat.noAvailableModels')
-  const emptyHeaderSubtitle = homeProvider?.models[0] ? getModelName(homeProvider.models[0]) : undefined
+  const homeProviderModel = homeProvider ? clearHistoricalInjectedProviderModels(homeProvider)[0] : undefined
+  const emptyHeaderSubtitle = homeProviderModel ? getModelName(homeProviderModel) : undefined
   const providerHealthKey = useMemo(() => provider ? [
     provider.id,
     provider.enabled ? 'on' : 'off',
@@ -132,7 +136,7 @@ export function ChatWorkspace({ conversation, showBack = false, embedded = false
   const messageSignature = runtimeConversation?.messages.map((message) => `${message.id}:${message.content.length}:${message.status}`).join('|')
   const activityLabel = streamingMessage ? getMessageActivityLabel(streamingMessage, t) : ''
   const optionsPanelHeight = Math.min(windowHeight * 0.52, 344)
-  const listTopInset = Math.max(CHAT_TOP_FLOATING_SPACE, insets.top + 92)
+  const listTopInset = Math.max(CHAT_TOP_FLOATING_SPACE, insets.top + (chromeCollapsed ? 76 : 126))
   const composerBottomInset = Math.max(insets.bottom, 10) + CHAT_BOTTOM_FLOATING_SPACE
   const goHistory = onHistory ?? (() => router.push('/conversations'))
   const goSettings = onSettings ?? (() => router.push('/settings'))
@@ -282,6 +286,19 @@ export function ChatWorkspace({ conversation, showBack = false, embedded = false
   }, [showOptions, providerHealth?.code, testingHeader])
 
   useEffect(() => {
+    const show = Keyboard.addListener(Platform.OS === 'ios' ? 'keyboardWillShow' : 'keyboardDidShow', (event) => {
+      setKeyboardHeight(event.endCoordinates.height)
+    })
+    const hide = Keyboard.addListener(Platform.OS === 'ios' ? 'keyboardWillHide' : 'keyboardDidHide', () => {
+      setKeyboardHeight(0)
+    })
+    return () => {
+      show.remove()
+      hide.remove()
+    }
+  }, [])
+
+  useEffect(() => {
     setPagerGestureLocked?.(showOptions)
     return () => setPagerGestureLocked?.(false)
   }, [setPagerGestureLocked, showOptions])
@@ -318,7 +335,9 @@ export function ChatWorkspace({ conversation, showBack = false, embedded = false
         goProviders()
         return
       }
-      const id = createConversation(readyProvider.id, readyProvider.models[0])
+      const model = clearHistoricalInjectedProviderModels(readyProvider)[0]
+      if (!model) return
+      const id = createConversation(readyProvider.id, model)
       const nextConversation = useChatStore.getState().conversations.find((item) => item.id === id)
       if (nextConversation) {
         try {
@@ -357,13 +376,14 @@ export function ChatWorkspace({ conversation, showBack = false, embedded = false
               <Settings2 color={colors.surface} size={18} strokeWidth={1.9} />
             </PressableScale>
           </View>
-          <ScrollView style={{ flex: 1 }} contentContainerStyle={{ paddingHorizontal: 20, paddingTop: 10, paddingBottom: Math.max(insets.bottom, 10) + CHAT_BOTTOM_FLOATING_SPACE }}>
+          <ScrollView style={{ flex: 1 }} contentContainerStyle={{ paddingHorizontal: 20, paddingTop: 10, paddingBottom: Math.max(insets.bottom, 10) + CHAT_BOTTOM_FLOATING_SPACE + (Platform.OS === 'android' ? keyboardHeight : 0) }}>
             <EmptyState
               title={emptyHeaderTitle}
               actionLabel={hasAvailableModel ? t('chat.startChat') : t('chat.configureProviders')}
               onAction={hasAvailableModel ? () => {
                 const readyProvider = pickReadyProviderForNewConversation(useSettingsStore.getState().providers, useSettingsStore.getState().settings.defaultProvider)
-                if (readyProvider) createConversation(readyProvider.id, readyProvider.models[0])
+                const model = readyProvider ? clearHistoricalInjectedProviderModels(readyProvider)[0] : undefined
+                if (readyProvider && model) createConversation(readyProvider.id, model)
               } : goProviders}
             />
             {!hasAvailableModel ? <View style={{ gap: 10, marginTop: 18 }}>
@@ -379,7 +399,7 @@ export function ChatWorkspace({ conversation, showBack = false, embedded = false
               />
             </View> : null}
           </ScrollView>
-          <View pointerEvents="box-none" style={{ position: 'absolute', left: 0, right: 0, bottom: 0, paddingHorizontal: 14, paddingBottom: 12, paddingTop: 4 }}>
+          <View pointerEvents="box-none" style={{ position: 'absolute', left: 0, right: 0, bottom: Platform.OS === 'android' ? keyboardHeight : 0, paddingHorizontal: 14, paddingBottom: 12, paddingTop: 4 }}>
             <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : 'height'} keyboardVerticalOffset={0}>
               <Composer
                 streaming={false}
@@ -419,6 +439,7 @@ export function ChatWorkspace({ conversation, showBack = false, embedded = false
       optionsPanelHeight={optionsPanelHeight}
       listTopInset={listTopInset}
       composerBottomInset={composerBottomInset}
+      keyboardHeight={keyboardHeight}
       insets={insets}
       colors={colors}
       screenProps={screenProps}
@@ -469,6 +490,7 @@ function ActiveChatWorkspace({
   optionsPanelHeight,
   listTopInset,
   composerBottomInset,
+  keyboardHeight,
   insets,
   colors,
   screenProps,
@@ -515,6 +537,7 @@ function ActiveChatWorkspace({
   optionsPanelHeight: number
   listTopInset: number
   composerBottomInset: number
+  keyboardHeight: number
   insets: ReturnType<typeof useSafeAreaInsets>
   colors: ReturnType<typeof useAppTheme>['colors']
   screenProps: Record<string, unknown>
@@ -673,9 +696,22 @@ function ActiveChatWorkspace({
     if (showOptions) setShowOptions(false)
   }
 
+  function scrollToLatestMessage() {
+    setTimeout(() => {
+      listRef.current?.scrollToEnd({ animated: true })
+    }, 80)
+  }
+
   return (
     <ScreenWrapper {...screenProps}>
         <View style={{ flex: 1 }}>
+          {showOptions ? (
+            <Pressable
+              accessibilityLabel={t('dialog.closeLayer')}
+              onPress={() => setShowOptions(false)}
+              style={{ position: 'absolute', top: 0, right: 0, bottom: 0, left: 0, backgroundColor: colors.backdrop, zIndex: 55 }}
+            />
+          ) : null}
           <FloatingChrome
             colors={colors}
             insets={insets}
@@ -692,6 +728,7 @@ function ActiveChatWorkspace({
               markChromeActive()
               setShowOptions((value) => !value)
             }}
+            onCloseOptions={() => setShowOptions(false)}
             onSettings={() => {
               markChromeActive()
               goSettings()
@@ -704,7 +741,7 @@ function ActiveChatWorkspace({
             optionsPanelHeight={optionsPanelHeight}
           />
 
-          <View onTouchStart={closeOptionsFromBackground} style={{ flex: 1, paddingTop: listTopInset, paddingBottom: composerBottomInset }}>
+          <View onTouchStart={closeOptionsFromBackground} style={{ flex: 1, paddingTop: listTopInset, paddingBottom: composerBottomInset + (Platform.OS === 'android' ? keyboardHeight : 0) }}>
             <FlashList
               ref={listRef}
               style={{ flex: 1 }}
@@ -713,7 +750,7 @@ function ActiveChatWorkspace({
               keyboardShouldPersistTaps="handled"
               onScroll={handleListScroll}
               scrollEventThrottle={16}
-              contentContainerStyle={{ paddingHorizontal: 20, paddingTop: 8, paddingBottom: 28 }}
+              contentContainerStyle={{ paddingHorizontal: 20, paddingTop: 8, paddingBottom: 44 }}
               ListHeaderComponent={renderConversationHeaderSpacer(providerHealth, colors, t)}
               renderItem={({ item: message, index }) => (
                 <MessageBubble
@@ -758,6 +795,12 @@ function ActiveChatWorkspace({
             reasoningEffort={reasoningEffort}
             showReasoning={supportsReasoningQuick}
             onReasoningChange={(effort) => updateConversation(activeConversation.id, { reasoningEffort: effort })}
+            systemPrompt={activeConversation.systemPrompt}
+            onSystemPromptChange={(systemPrompt) => updateConversation(activeConversation.id, { systemPrompt })}
+            onOpenModelPicker={() => {
+              markChromeActive()
+              setShowOptions(true)
+            }}
             onClearPending={() => setPendingStreamingMessage(null)}
             disabled={!provider && activeConversation.providerId !== 'local-setup'}
             onStop={() => safeStopMessage(activeConversation.id)}
@@ -765,6 +808,8 @@ function ActiveChatWorkspace({
             onSend={submit}
             onSendWhileStreaming={submitWhileStreaming}
             onInteract={closeOptionsFromBackground}
+            onInputFocus={scrollToLatestMessage}
+            keyboardHeight={keyboardHeight}
           />
         </View>
     </ScreenWrapper>
@@ -784,6 +829,7 @@ function FloatingChrome({
   onBack,
   onRestore,
   onToggleOptions,
+  onCloseOptions,
   onSettings,
   onTestModel,
   onSwitchModel,
@@ -804,6 +850,7 @@ function FloatingChrome({
   onBack: () => void
   onRestore: () => void
   onToggleOptions: () => void
+  onCloseOptions: () => void
   onSettings: () => void
   onTestModel: () => void
   onSwitchModel: (provider: AIProvider, model: string) => void
@@ -878,6 +925,7 @@ function FloatingChrome({
                 maxHeight={optionsPanelHeight}
                 onSwitchModel={onSwitchModel}
                 onCopyLink={onCopyLink}
+                onClose={onCloseOptions}
               />
             </Pressable>
           ) : null}
@@ -915,7 +963,11 @@ function FloatingComposer({
   references,
   reasoningEffort,
   showReasoning,
+  systemPrompt,
+  keyboardHeight,
   onReasoningChange,
+  onSystemPromptChange,
+  onOpenModelPicker,
   onClearPending,
   disabled,
   onStop,
@@ -923,6 +975,7 @@ function FloatingComposer({
   onSend,
   onSendWhileStreaming,
   onInteract,
+  onInputFocus,
 }: {
   insets: ReturnType<typeof useSafeAreaInsets>
   streaming: boolean
@@ -932,7 +985,11 @@ function FloatingComposer({
   references: CommandReference[]
   reasoningEffort: NonNullable<Conversation['reasoningEffort']>
   showReasoning: boolean
+  systemPrompt: string
+  keyboardHeight: number
   onReasoningChange: (effort: NonNullable<Conversation['reasoningEffort']>) => void
+  onSystemPromptChange: (systemPrompt: string) => void
+  onOpenModelPicker: () => void
   onClearPending: () => void
   disabled: boolean
   onStop: () => void
@@ -940,24 +997,13 @@ function FloatingComposer({
   onSend: (content: string, attachments: Attachment[]) => Promise<void> | void
   onSendWhileStreaming: (content: string, attachments: Attachment[]) => Promise<void> | void
   onInteract?: () => void
+  onInputFocus?: () => void
 }) {
-  const [keyboardHeight, setKeyboardHeight] = useState(0)
   const { colors } = useAppTheme()
   const { t } = useTranslation()
   const [reasoningOpen, setReasoningOpen] = useState(false)
-
-  useEffect(() => {
-    const show = Keyboard.addListener(Platform.OS === 'ios' ? 'keyboardWillShow' : 'keyboardDidShow', (event) => {
-      setKeyboardHeight(event.endCoordinates.height)
-    })
-    const hide = Keyboard.addListener(Platform.OS === 'ios' ? 'keyboardWillHide' : 'keyboardDidHide', () => {
-      setKeyboardHeight(0)
-    })
-    return () => {
-      show.remove()
-      hide.remove()
-    }
-  }, [])
+  const [promptOpen, setPromptOpen] = useState(false)
+  const [moreOpen, setMoreOpen] = useState(false)
 
   const androidKeyboardLift = Platform.OS === 'android' ? keyboardHeight : 0
 
@@ -965,43 +1011,75 @@ function FloatingComposer({
     <View pointerEvents="box-none" style={{ position: 'absolute', left: 0, right: 0, bottom: androidKeyboardLift, zIndex: 40 }}>
       <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined} keyboardVerticalOffset={0} onTouchStart={onInteract}>
         <View pointerEvents="box-none" style={{ paddingHorizontal: 14, paddingTop: 6, paddingBottom: Math.max(insets.bottom, 10) + 8 }}>
-          {showReasoning ? (
-            <View style={{ alignItems: 'flex-start', marginBottom: 7 }}>
-              <PressableScale
-                haptic
-                onPress={() => setReasoningOpen((value) => !value)}
-                accessibilityLabel={t('chat.reasoning')}
-                style={{ minHeight: 30, borderRadius: 15, paddingHorizontal: 12, alignItems: 'center', justifyContent: 'center', backgroundColor: colors.material.chrome, borderWidth: 1, borderColor: colors.border }}
-              >
-                <Text style={{ color: colors.textSecondary, fontSize: 11, fontWeight: '900' }}>
-                  {t('chat.reasoningChip', { value: t(`chat.reasoningEffort.${reasoningEffort}`) })}
-                </Text>
-              </PressableScale>
-              {reasoningOpen ? (
-                <MotiView
-                  from={{ opacity: 0, translateY: 4 }}
-                  animate={{ opacity: 1, translateY: 0 }}
-                  transition={{ type: 'spring', damping: 20, stiffness: 210 }}
-                  style={{ flexDirection: 'row', gap: 7, marginTop: 7, padding: 7, borderRadius: 18, backgroundColor: colors.material.chrome, borderWidth: 1, borderColor: colors.border }}
+          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 7 }}>
+            <ComposerToolButton label={t('chat.quickModel')} active={false} onPress={onOpenModelPicker}>
+              <Bot color={colors.textSecondary} size={15} strokeWidth={2} />
+            </ComposerToolButton>
+            {showReasoning ? (
+              <ComposerToolButton label={t('chat.quickReasoning')} active={reasoningOpen} onPress={() => {
+                setReasoningOpen((value) => !value)
+                setPromptOpen(false)
+                setMoreOpen(false)
+              }}>
+                <SlidersHorizontal color={reasoningOpen ? colors.primary : colors.textSecondary} size={15} strokeWidth={2} />
+              </ComposerToolButton>
+            ) : null}
+            <ComposerToolButton label={t('chat.quickPrompt')} active={promptOpen} onPress={() => {
+              setPromptOpen((value) => !value)
+              setReasoningOpen(false)
+              setMoreOpen(false)
+            }}>
+              <FileText color={promptOpen ? colors.primary : colors.textSecondary} size={15} strokeWidth={2} />
+            </ComposerToolButton>
+            <ComposerToolButton label={t('chat.quickMore')} active={moreOpen} onPress={() => {
+              setMoreOpen((value) => !value)
+              setReasoningOpen(false)
+              setPromptOpen(false)
+            }}>
+              <ChevronRight color={moreOpen ? colors.primary : colors.textSecondary} size={16} strokeWidth={2.2} />
+            </ComposerToolButton>
+          </View>
+          {reasoningOpen && showReasoning ? (
+            <MotiView
+              from={{ opacity: 0, translateY: 4 }}
+              animate={{ opacity: 1, translateY: 0 }}
+              transition={{ type: 'spring', damping: 20, stiffness: 210 }}
+              style={{ flexDirection: 'row', gap: 7, marginBottom: 7, padding: 7, borderRadius: 18, backgroundColor: colors.material.chrome, borderWidth: 1, borderColor: colors.border }}
+            >
+              {(['minimal', 'low', 'medium', 'high'] as const).map((effort) => (
+                <PressableScale
+                  key={effort}
+                  haptic
+                  onPress={() => {
+                    onReasoningChange(effort)
+                    setReasoningOpen(false)
+                  }}
+                  style={{ minHeight: 28, borderRadius: 14, paddingHorizontal: 10, alignItems: 'center', justifyContent: 'center', backgroundColor: reasoningEffort === effort ? colors.text : colors.islandRaised }}
                 >
-                  {(['minimal', 'low', 'medium', 'high'] as const).map((effort) => (
-                    <PressableScale
-                      key={effort}
-                      haptic
-                      onPress={() => {
-                        onReasoningChange(effort)
-                        setReasoningOpen(false)
-                      }}
-                      style={{ minHeight: 28, borderRadius: 14, paddingHorizontal: 10, alignItems: 'center', justifyContent: 'center', backgroundColor: reasoningEffort === effort ? colors.text : colors.islandRaised }}
-                    >
-                      <Text style={{ color: reasoningEffort === effort ? colors.surface : colors.textSecondary, fontSize: 11, fontWeight: '900' }}>
-                        {t(`chat.reasoningEffort.${effort}`)}
-                      </Text>
-                    </PressableScale>
-                  ))}
-                </MotiView>
-              ) : null}
-            </View>
+                  <Text style={{ color: reasoningEffort === effort ? colors.surface : colors.textSecondary, fontSize: 11, fontWeight: '900' }}>
+                    {t(`chat.reasoningEffort.${effort}`)}
+                  </Text>
+                </PressableScale>
+              ))}
+            </MotiView>
+          ) : null}
+          {promptOpen ? (
+            <MotiView
+              from={{ opacity: 0, translateY: 4 }}
+              animate={{ opacity: 1, translateY: 0 }}
+              transition={{ type: 'spring', damping: 20, stiffness: 210 }}
+              style={{ marginBottom: 7, borderRadius: 22, padding: 10, backgroundColor: colors.material.chrome, borderWidth: 1, borderColor: colors.border }}
+            >
+              <Text style={{ color: colors.textSecondary, fontSize: 11, fontWeight: '900', marginBottom: 6 }}>{t('chat.systemPrompt')}</Text>
+              <TextInput
+                value={systemPrompt}
+                onChangeText={onSystemPromptChange}
+                multiline
+                placeholder={t('chat.systemPromptExample')}
+                placeholderTextColor={colors.textTertiary}
+                style={{ minHeight: 58, maxHeight: 112, borderRadius: 16, paddingHorizontal: 12, paddingVertical: 10, color: colors.text, backgroundColor: colors.material.field, borderWidth: 1, borderColor: colors.border, fontSize: 13, lineHeight: 19, textAlignVertical: 'top' }}
+              />
+            </MotiView>
           ) : null}
           <Composer
             disabled={disabled}
@@ -1010,15 +1088,33 @@ function FloatingComposer({
             pendingNotice={pendingNotice}
             commands={commands}
             references={references}
+            utilitiesOpen={moreOpen}
+            showInlineUtilities={false}
             onClearPending={onClearPending}
             onStop={onStop}
             onReferenceSelected={onReferenceSelected}
             onSend={onSend}
             onSendWhileStreaming={onSendWhileStreaming}
+            onFocus={onInputFocus}
           />
         </View>
       </KeyboardAvoidingView>
     </View>
+  )
+}
+
+function ComposerToolButton({ label, active, children, onPress }: { label: string; active: boolean; children: ReactNode; onPress: () => void }) {
+  const { colors } = useAppTheme()
+  return (
+    <PressableScale
+      haptic
+      onPress={onPress}
+      accessibilityLabel={label}
+      style={{ minHeight: 32, borderRadius: 16, paddingHorizontal: 10, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6, backgroundColor: active ? colors.mintSoft : colors.material.chrome, borderWidth: 1, borderColor: active ? colors.primary : colors.border }}
+    >
+      {children}
+      <Text numberOfLines={1} style={{ color: active ? colors.primary : colors.textSecondary, fontSize: 11, fontWeight: '900' }}>{label}</Text>
+    </PressableScale>
   )
 }
 
@@ -1193,14 +1289,15 @@ function buildComposerReferences({
   knowledgeDocuments: KnowledgeDocument[]
   memoryItems: MemoryItem[]
 }): CommandReference[] {
-  const providerRefs = providers.filter((provider) => provider.id !== 'local-setup').map((provider) => ({
+  const cleanedProviders = providers.filter((provider) => provider.id !== 'local-setup' && !hasOnlyHistoricalDefaultModels(provider))
+  const providerRefs = cleanedProviders.map((provider) => ({
     id: provider.id,
     type: 'provider' as const,
     label: provider.name,
     value: provider.baseUrl ?? provider.id,
     metadata: { enabled: provider.enabled },
   }))
-  const modelRefs = providers.flatMap((provider) =>
+  const modelRefs = cleanedProviders.flatMap((provider) =>
     provider.models.slice(0, 12).map((model) => ({
       id: `${provider.id}:${model}`,
       type: 'model' as const,
@@ -1233,8 +1330,16 @@ function buildComposerReferences({
   return [...providerRefs, ...modelRefs, ...skillRefs, ...knowledgeRefs, ...memoryRefs]
 }
 
+function hasOnlyHistoricalDefaultModels(provider: AIProvider): boolean {
+  const models = provider.models.map((model) => model.trim().toLowerCase()).filter(Boolean)
+  if (!models.length) return false
+  if (hasRemoteProviderModelEvidence(provider)) return false
+  const defaults = new Set(['deepseek-v4-pro', 'deepseek-v4-flash'])
+  return models.every((model) => defaults.has(model))
+}
+
 function pickReadyProviderForNewConversation(providers: AIProvider[], defaultProvider: string | null | undefined): AIProvider | null {
-  const enabled = providers.filter((provider) => provider.id !== 'local-setup' && provider.enabled && provider.models.length > 0)
+  const enabled = providers.filter((provider) => provider.id !== 'local-setup' && provider.enabled && clearHistoricalInjectedProviderModels(provider).length > 0)
   return enabled.find((provider) => provider.id === defaultProvider) ?? enabled[0] ?? null
 }
 
@@ -1249,10 +1354,11 @@ function resolveRuntimeTarget(
     return { conversation, provider: providers.find((item) => item.id === conversation.providerId) }
   }
   const readyProvider = pickReadyProviderForNewConversation(providers, defaultProvider)
-  if (!readyProvider?.models[0]) {
+  const readyModel = readyProvider ? clearHistoricalInjectedProviderModels(readyProvider)[0] : undefined
+  if (!readyProvider || !readyModel) {
     return { conversation, provider: providers.find((item) => item.id === conversation.providerId) }
   }
-  const model = readyProvider.models[0]
+  const model = readyModel
   const config = getModelConfig(model, readyProvider.type, readyProvider.modelConfigs)
   return {
     provider: readyProvider,
@@ -1549,14 +1655,15 @@ function getProviderHeaderState(
 ): { title: string; subtitle?: string } {
   const enabledProviders = providers.filter((item) => item.id !== 'local-setup' && item.enabled)
   const hasEnabledProvider = enabledProviders.length > 0
-  const hasAvailableModel = enabledProviders.some((item) => item.models.length > 0)
+  const hasAvailableModel = enabledProviders.some((item) => clearHistoricalInjectedProviderModels(item).length > 0)
   if (!hasEnabledProvider) return { title: t('chat.noProviderConnected') }
   if (!hasAvailableModel) return { title: t('chat.noAvailableModels') }
   if (conversation.providerId === 'local-setup') {
-    const fallbackProvider = enabledProviders.find((item) => item.models.length > 0)
+    const fallbackProvider = enabledProviders.find((item) => clearHistoricalInjectedProviderModels(item).length > 0)
+    const fallbackModel = fallbackProvider ? clearHistoricalInjectedProviderModels(fallbackProvider)[0] : undefined
     return {
       title: fallbackProvider?.name ?? t('settings.providerManagement'),
-      subtitle: fallbackProvider?.models[0] ? getModelName(fallbackProvider.models[0]) : undefined,
+      subtitle: fallbackModel ? getModelName(fallbackModel) : undefined,
     }
   }
   const modelLabel = getModelName(conversation.model)

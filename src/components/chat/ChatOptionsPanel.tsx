@@ -19,6 +19,7 @@ export function ChatOptionsPanel({
   maxHeight,
   onSwitchModel,
   onCopyLink,
+  onClose,
 }: {
   conversation: Conversation
   provider: AIProvider | undefined
@@ -27,6 +28,7 @@ export function ChatOptionsPanel({
   maxHeight: number
   onSwitchModel: (provider: AIProvider, model: string) => void
   onCopyLink: () => void
+  onClose: () => void
 }) {
   const { t } = useTranslation()
   const updateConversation = useChatStore((state) => state.updateConversation)
@@ -44,7 +46,7 @@ export function ChatOptionsPanel({
     orderedProviders[0]
   const visibleProviders = normalizedQuery
     ? orderedProviders.filter((item) => providerMatchesQuery(item, normalizedQuery))
-    : orderedProviders.slice(0, 8)
+    : orderedProviders
   const selectedModels = selectedProvider
     ? getSwitchableProviderModels(selectedProvider, normalizedQuery)
       .map((id) => ({ id, name: getModelName(id), config: getModelConfig(id, selectedProvider.type, selectedProvider.modelConfigs) }))
@@ -64,7 +66,7 @@ export function ChatOptionsPanel({
   }, [normalizedQuery, selectedProviderId, visibleProviders])
 
   return (
-    <IslandPanel material="chrome" elevated style={{ marginTop: 10, maxHeight }} radius={24} contentStyle={{ padding: 0 }}>
+    <IslandPanel material="paper" elevated style={{ marginTop: 10, maxHeight, borderWidth: 1, borderColor: colors.borderStrong }} radius={24} contentStyle={{ padding: 0, backgroundColor: colors.paper }}>
       <ScrollView
         style={{ maxHeight }}
         contentContainerStyle={{ padding: 12, paddingBottom: 14 }}
@@ -72,6 +74,20 @@ export function ChatOptionsPanel({
         nestedScrollEnabled
         showsVerticalScrollIndicator={false}
       >
+        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10, marginBottom: 10 }}>
+          <View style={{ flex: 1 }}>
+            <Text style={{ color: colors.text, fontSize: 15, fontWeight: '900' }}>{t('chat.model')}</Text>
+            <Text numberOfLines={1} style={{ color: colors.textTertiary, fontSize: 11, fontWeight: '800', marginTop: 2 }}>{t('chat.modelPickerSubtitle')}</Text>
+          </View>
+          <PressableScale
+            haptic
+            onPress={onClose}
+            accessibilityLabel={t('chat.closeModelMenu')}
+            style={{ width: 34, height: 34, borderRadius: 17, alignItems: 'center', justifyContent: 'center', backgroundColor: colors.islandRaised, borderWidth: 1, borderColor: colors.border }}
+          >
+            <X color={colors.textSecondary} size={16} strokeWidth={2.2} />
+          </PressableScale>
+        </View>
         <View style={{ minHeight: 42, borderRadius: 21, paddingHorizontal: 12, flexDirection: 'row', alignItems: 'center', gap: 8, backgroundColor: colors.material.field, borderWidth: 1, borderColor: colors.border }}>
           <Search color={colors.textTertiary} size={15} strokeWidth={2} />
           <TextInput
@@ -101,18 +117,18 @@ export function ChatOptionsPanel({
               {normalizedQuery ? `${visibleProviders.length}/${switchableProviders.length}` : t('chat.countItems', { count: switchableProviders.length })}
             </Text>
           </View>
-          <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8 }}>
+          <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 8, paddingRight: 8 }}>
             {visibleProviders.map((item) => (
               <PressableScale key={item.id} haptic onPress={() => setSelectedProviderId(item.id)}>
                 <Pill active={selectedProvider?.id === item.id}>{item.name}{item.enabled ? '' : ` · ${t('settings.disabledState')}`}</Pill>
               </PressableScale>
             ))}
-            {!visibleProviders.length ? (
-              <View style={{ borderRadius: 18, paddingHorizontal: 12, paddingVertical: 10, backgroundColor: colors.material.field, borderWidth: 1, borderColor: colors.border }}>
-                <Text style={{ color: colors.textTertiary, fontSize: 12, lineHeight: 17 }}>{t('chat.noProviderModelMatches')}</Text>
-              </View>
-            ) : null}
-          </View>
+          </ScrollView>
+          {!visibleProviders.length ? (
+            <View style={{ borderRadius: 18, paddingHorizontal: 12, paddingVertical: 10, backgroundColor: colors.material.field, borderWidth: 1, borderColor: colors.border }}>
+              <Text style={{ color: colors.textTertiary, fontSize: 12, lineHeight: 17 }}>{t('chat.noProviderModelMatches')}</Text>
+            </View>
+          ) : null}
         </View>
 
         <View style={{ gap: 8, marginTop: 12 }}>
@@ -132,7 +148,7 @@ export function ChatOptionsPanel({
             </View>
           ) : (
             <View style={{ borderRadius: 18, paddingHorizontal: 12, paddingVertical: 10, backgroundColor: colors.material.field, borderWidth: 1, borderColor: colors.border }}>
-              <Text style={{ color: colors.textTertiary, fontSize: 12, lineHeight: 17 }}>{t('chat.providerNoModels')}</Text>
+              <Text style={{ color: colors.textTertiary, fontSize: 12, lineHeight: 17 }}>{t('chat.providerNoModelsSyncHint')}</Text>
             </View>
           )}
         </View>

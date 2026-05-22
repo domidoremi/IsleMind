@@ -198,6 +198,7 @@ export function ApiKeyPanel({ provider, initiallyExpanded = false }: ApiKeyPanel
     }
     await save(false)
     setTask('syncing')
+    dialog.toast({ title: t('providerSettings.activatingProvider'), message: provider.name, tone: 'mint', durationMs: 1600 })
     const current = useSettingsStore.getState().providers.find((item) => item.id === provider.id) ?? provider
     const result = await syncAndTestProvider(current, {
       updateProvider: useSettingsStore.getState().updateProvider,

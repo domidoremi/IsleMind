@@ -142,12 +142,15 @@ function assertReleaseOutputs(outputs, variant) {
 }
 
 function prepareAndroidProjectForRelease() {
+  run(commandName('node'), ['scripts/patch-onnxruntime-16kb.js'])
   run(commandName('npx'), ['expo', 'prebuild', '--platform', 'android'])
+  run(commandName('node'), ['scripts/patch-onnxruntime-16kb.js'])
   run(commandName('node'), ['scripts/configure-android-release.js', '--skip-signing'])
 }
 
 function buildVariant(variant, args) {
   const assembleTask = args.buildType === 'release' ? 'assembleRelease' : 'assembleDebug'
+  run(commandName('node'), ['scripts/patch-onnxruntime-16kb.js'])
   run(commandName('node'), ['scripts/prepare-model-bundle.js', '--variant', variant])
   if (args.clean) {
     run(gradleCommand(), ['clean', '--no-daemon'], { cwd: androidDir })

@@ -6,6 +6,7 @@ import * as SecureStore from 'expo-secure-store'
 import { applyProviderPreset, defaultProviderSyncPolicy, detectProviderPreset, getProviderPreset } from '@/services/ai/providerRegistry'
 import { normalizeProviderCredentialGroups } from '@/services/ai/providerCredentials'
 import { legacySearchModeForProvider, resolveSearchProvider } from '@/services/searchPolicy'
+import { clearHistoricalInjectedGroupModels, clearHistoricalInjectedProviderModels } from '@/utils/providerModels'
 import { st } from '@/i18n/service'
 import { setServiceLanguage } from '@/i18n/service'
 
@@ -476,13 +477,13 @@ function sanitizeCredentialGroups(groups: ProviderCredentialGroup[] | undefined,
     label: group.label || st('apiKeyPanel.groupName', { index: index + 1 }),
     apiKey: '',
     enabled: group.enabled ?? true,
-    availableModels: group.availableModels?.length ? group.availableModels : models,
+    availableModels: group.availableModels?.length ? clearHistoricalInjectedGroupModels(group) : [],
     failureCount: group.failureCount ?? 0,
   }))
 }
 
 function normalizeProviderModels(provider: AIProvider): string[] {
-  const models = clearHistoricalInjectedModels(provider)
+  const models = clearHistoricalInjectedProviderModels(provider)
   const existing = models.filter((model) => {
     const config = getModelConfig(model, provider.type, provider.modelConfigs)
     return !config.deprecated
@@ -493,21 +494,4 @@ function normalizeProviderModels(provider: AIProvider): string[] {
     seen.add(model)
     return true
   })
-}
-
-function clearHistoricalInjectedModels(provider: AIProvider): string[] {
-  const models = provider.models ?? []
-  if (provider.lastModelSyncStatus === 'ok' || provider.lastTestStatus === 'ok') return models
-  if (provider.modelConfigs?.some((model) => model.source === 'remote')) return models
-  const historicalSets = [
-    ['deepseek-v4-pro', 'deepseek-v4-flash'],
-    ['deepseek-v4-pro', 'deepseek-v4-flash', 'deepseek-chat', 'deepseek-reasoner'],
-  ]
-  return historicalSets.some((set) => sameModelSet(models, set)) ? [] : models
-}
-
-function sameModelSet(left: string[], right: string[]): boolean {
-  if (left.length !== right.length) return false
-  const normalized = new Set(left.map((item) => item.trim()).filter(Boolean))
-  return right.every((item) => normalized.has(item))
 }

@@ -57,6 +57,7 @@ export function ProviderSettingsContent({ embedded = false, onClose }: ProviderS
   const [selectedIds, setSelectedIds] = useState<Set<string>>(() => new Set())
   const [addOpen, setAddOpen] = useState(false)
   const [importOpen, setImportOpen] = useState(false)
+  const [activationBusy, setActivationBusy] = useState(false)
 
   const usageByProvider = useMemo(() => {
     const usage = new Map<string, number>()
@@ -77,7 +78,6 @@ export function ProviderSettingsContent({ embedded = false, onClose }: ProviderS
 
   const enabled = providers.filter((provider) => provider.enabled).length
   const credentialGroups = providers.reduce((sum, provider) => sum + (provider.credentialGroups?.length ?? 0), 0)
-  const effectiveSelectedIds = selectedIds.size ? selectedIds : new Set(visibleProviders.map((provider) => provider.id))
 
   async function addProviderFromForm(provider: AIProvider) {
     await addProvider(provider)
@@ -86,6 +86,16 @@ export function ProviderSettingsContent({ embedded = false, onClose }: ProviderS
     setModelFilter('')
     setAddOpen(false)
     dialog.toast({ title: t('providerSettings.added'), message: t('providerSettings.addedMessage', { name: provider.name }), tone: 'mint' })
+    const enableNow = await dialog.confirm({
+      title: t('providerSettings.enableAddedTitle'),
+      message: t('providerSettings.enableAddedMessage', { name: provider.name }),
+      confirmLabel: t('providerSettings.enableAddedConfirm'),
+      cancelLabel: t('providerSettings.enableLater'),
+      tone: 'mint',
+    })
+    if (enableNow) {
+      void activateProviders([provider.id], 'single')
+    }
   }
 
   async function importProvidersFromText(input: string) {
@@ -99,43 +109,87 @@ export function ProviderSettingsContent({ embedded = false, onClose }: ProviderS
     setSortMode('manual')
     setModelFilter('')
     setImportOpen(false)
-    dialog.notice({
+    dialog.toast({
       title: t('providerSettings.importDone'),
-      message: [t('providerSettings.importDoneMessage', { count: result.providers.length }), ...result.warnings].join('\n'),
+      message: t('providerSettings.importDoneMessage', { count: result.providers.length }),
+      tone: result.warnings.length ? 'amber' : 'mint',
+      durationMs: 1800,
+    })
+    const enableNow = await dialog.confirm({
+      title: t('providerSettings.enableImportedTitle'),
+      message: [t('providerSettings.enableImportedMessage', { count: result.providers.length }), ...result.warnings].join('\n'),
+      confirmLabel: t('providerSettings.enableImportedConfirm'),
+      cancelLabel: t('providerSettings.enableLater'),
       tone: result.warnings.length ? 'amber' : 'mint',
     })
+    if (enableNow) {
+      void activateProviders(result.providers.map((provider) => provider.id), 'batch')
+    }
   }
 
   async function enableEffectiveSelection() {
-    const ids = Array.from(effectiveSelectedIds).filter((id) => visibleProviders.some((provider) => provider.id === id))
+    const ids = batchMode ? Array.from(selectedIds) : providers.map((provider) => provider.id)
     if (!ids.length) {
       dialog.toast({ title: t('providerSettings.enableNone'), tone: 'amber' })
       return
     }
-    const chosen = ids.map((id) => providers.find((provider) => provider.id === id)).filter((provider): provider is AIProvider => !!provider)
-    const successful: Awaited<ReturnType<typeof syncAndTestProvider>>[] = []
-    const failedProviders: AIProvider[] = []
-    for (const provider of chosen) {
-      try {
-        successful.push(await syncAndTestProvider(provider, { updateProvider, hydrateProviderKey, updateProviderCredentialGroupHealth }, { enable: true }))
-      } catch {
-        failedProviders.push(provider)
+    void activateProviders(ids, batchMode ? 'batch' : 'all')
+  }
+
+  async function activateProviders(ids: string[], mode: 'single' | 'batch' | 'all') {
+    if (activationBusy) return
+    const currentProviders = useSettingsStore.getState().providers
+    const chosen = ids.map((id) => currentProviders.find((provider) => provider.id === id)).filter((provider): provider is AIProvider => !!provider)
+    if (!chosen.length) {
+      dialog.toast({ title: t('providerSettings.enableNone'), tone: 'amber' })
+      return
+    }
+    const startTitle = chosen.length === 1 ? t('providerSettings.activatingProvider') : t('providerSettings.activationStarted')
+    setActivationBusy(true)
+    try {
+      dialog.toast({
+        title: startTitle,
+        message: t('providerSettings.activationStartedMessage', { count: chosen.length }),
+        tone: 'mint',
+        durationMs: 1800,
+      })
+      const successful: Awaited<ReturnType<typeof syncAndTestProvider>>[] = []
+      const failedProviders: AIProvider[] = []
+      for (const provider of chosen) {
+        try {
+          successful.push(await syncAndTestProvider(provider, { updateProvider, hydrateProviderKey, updateProviderCredentialGroupHealth }, { enable: true }))
+        } catch {
+          failedProviders.push(provider)
+        }
       }
-    }
-    const summary = summarizeProviderActivation(successful)
-    const primaryReady = successful.find((result) => result.testOk || result.modelCount > 0)
-    if (primaryReady) {
-      useSettingsStore.getState().updateSettings({ defaultProvider: primaryReady.providerId, onboardingCompleted: true })
-    }
-    dialog.notice({
-      title: t('providerSettings.enableDone'),
-      message: failedProviders.length
+      const summary = summarizeProviderActivation(successful)
+      const primaryReady = successful.find((result) => result.testOk || result.modelCount > 0)
+      if (primaryReady) {
+        useSettingsStore.getState().updateSettings({ defaultProvider: primaryReady.providerId, onboardingCompleted: true })
+      }
+      const finalMessage = failedProviders.length
         ? [summary.message, t('providerSettings.failedProviders', { names: failedProviders.map((provider) => provider.name).join(', ') })].join('\n')
-        : summary.message,
-      tone: failedProviders.length ? 'danger' : summary.tone,
-    })
-    setBatchMode(false)
-    setSelectedIds(new Set())
+        : summary.message
+      if (mode === 'single') {
+        const result = successful[0]
+        const title = result?.testOk
+          ? t('providerSettings.activationSuccess')
+          : result?.synced
+            ? t('providerSettings.activationPartial')
+            : t('providerSettings.activationFailed')
+        dialog.notice({ title, message: finalMessage, tone: failedProviders.length ? 'danger' : summary.tone })
+      } else {
+        dialog.notice({
+          title: t('providerSettings.enableDone'),
+          message: finalMessage,
+          tone: failedProviders.length ? 'danger' : summary.tone,
+        })
+      }
+      setBatchMode(false)
+      setSelectedIds(new Set())
+    } finally {
+      setActivationBusy(false)
+    }
   }
 
   function toggleSelection(id: string) {
@@ -200,12 +254,12 @@ export function ProviderSettingsContent({ embedded = false, onClose }: ProviderS
               <IslandButton label={t('settings.addProvider')} compact icon={<Plus color={colors.textSecondary} size={16} />} onPress={() => setAddOpen(true)} />
               <IslandButton label={t('settings.batchImport')} compact icon={<Import color={colors.textSecondary} size={16} />} onPress={() => setImportOpen(true)} />
               <IslandButton
-                label={selectedIds.size ? t('providerSettings.enableSelected', { count: selectedIds.size }) : t('settings.enableAll')}
+                label={batchMode ? t('providerSettings.enableSelected', { count: selectedIds.size }) : t('settings.enableAll')}
                 compact
                 tone="mint"
                 icon={<Zap color={colors.textSecondary} size={16} />}
                 onPress={() => void enableEffectiveSelection()}
-                disabled={!visibleProviders.length}
+                disabled={activationBusy || (batchMode ? !selectedIds.size : !providers.length)}
               />
             </View>
           </IslandSection>
@@ -469,7 +523,7 @@ function ProviderFormModal({
               <IslandField
                 label={t('settings.models')}
                 note={t('providerSettings.modelsNote')}
-                inputProps={{ value: modelsText, onChangeText: setModelsText, placeholder: preset.defaultModels.join('\n') || t('providerSettings.oneModelPerLine'), autoCapitalize: 'none', autoCorrect: false, multiline: true, style: { minHeight: 96 } }}
+                inputProps={{ value: modelsText, onChangeText: setModelsText, placeholder: t('providerSettings.oneModelPerLine'), autoCapitalize: 'none', autoCorrect: false, multiline: true, style: { minHeight: 96 } }}
               />
               <View style={{ flexDirection: 'row', gap: 10 }}>
                 <IslandButton label={t('common.cancel')} onPress={onClose} style={{ flex: 1 }} />
