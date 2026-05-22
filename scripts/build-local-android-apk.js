@@ -103,7 +103,7 @@ function copyOutputs(variant, buildType) {
   for (const apk of apks) {
     const base = path.basename(apk)
     const arch = inferArch(base)
-    const targetName = `IsleMind-${packageJson.version}-android-${buildType}-${variant}-${arch}.apk`
+    const targetName = formatArtifactName(packageJson.version, buildType, variant, arch)
     const target = path.join(outputDir, targetName)
     fs.copyFileSync(apk, target)
     copied.push(target)
@@ -123,9 +123,19 @@ function inferArch(fileName) {
   return 'universal'
 }
 
+function formatArtifactName(version, buildType, variant, arch) {
+  if (buildType === 'release') {
+    return `IsleMind-${version}-${arch}-${variant}.apk`
+  }
+  return `IsleMind-${version}-android-${buildType}-${variant}-${arch}.apk`
+}
+
 function assertReleaseOutputs(outputs, variant) {
   const required = ['universal', 'arm64-v8a', 'armeabi-v7a', 'x86_64']
-  const missing = required.filter((arch) => !outputs.some((output) => output.endsWith(`-${arch}.apk`)))
+  const missing = required.filter((arch) => {
+    const expected = formatArtifactName(packageJson.version, 'release', variant, arch)
+    return !outputs.some((output) => path.basename(output) === expected)
+  })
   if (missing.length) {
     throw new Error(`Release build for ${variant} is missing APK split(s): ${missing.join(', ')}.`)
   }

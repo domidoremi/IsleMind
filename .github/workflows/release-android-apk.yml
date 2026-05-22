@@ -124,7 +124,7 @@ jobs:
                 *x86_64*) arch="x86_64" ;;
                 *) continue ;;
               esac
-              target="dist-apk/IsleMind-${VERSION}-android-release-${model_variant}-${arch}.apk"
+              target="dist-apk/IsleMind-${VERSION}-${arch}-${model_variant}.apk"
               cp "$apk" "$target"
               sha256sum "$target" > "${target}.sha256"
               copied=$((copied + 1))
