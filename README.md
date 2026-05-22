@@ -15,7 +15,7 @@ IsleMind is a local-first mobile AI workspace for focused conversations, private
 
 ## Download
 
-Download the latest Android APK from [GitHub Releases](https://github.com/domidoremi/IsleMind/releases/latest), then install it on your device. Release notes include direct download links because GitHub's mobile assets list can truncate long file names.
+Download the latest Android APK from [GitHub Releases](https://github.com/domidoremi/IsleMind/releases/latest), then install it on your device. Release notes include direct download links for each APK variant.
 
 Current app version: `1.0.3`.
 
@@ -26,9 +26,9 @@ Release APKs are split by local model bundle:
 
 Release APKs are also split by Android architecture:
 
-- `arm64-v8a`: recommended for most modern Android phones.
-- `x86_64`: Android emulator.
-- `armeabi-v7a`: older 32-bit Android devices.
+- `arm64-v8a`: 64-bit ARM devices.
+- `x86_64`: 64-bit x86 devices.
+- `armeabi-v7a`: 32-bit ARM devices.
 - `universal`: widest compatibility, larger file.
 
 The app can also download and verify local RAG models from the local model page.
