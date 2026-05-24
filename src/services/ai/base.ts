@@ -144,6 +144,10 @@ export function buildOpenAIBodyForTest(req: ChatRequest) {
   return buildOpenAIBody(req)
 }
 
+export function formatProviderHttpErrorForTest(status: number, responseText = '', provider?: AIProvider, model = ''): string {
+  return formatProviderHttpError(status, responseText, provider, model)
+}
+
 function buildOpenAIBody(req: ChatRequest) {
   const msgs: Record<string, unknown>[] = []
 
@@ -1029,7 +1033,7 @@ export async function streamChat(
   if (!response.ok) {
     const errorText = await safeResponseText(response)
     req.provider = updateCredentialGroupHealth(req.provider, credential.credentialGroupId, false)
-    const done = Promise.resolve().then(() => onError(providerRuntimeError(`API Error ${response.status}: ${errorText}`, credential.credentialGroupId)))
+    const done = Promise.resolve().then(() => onError(providerRuntimeError(formatProviderHttpError(response.status, errorText, runtimeReq.provider, runtimeReq.model), credential.credentialGroupId)))
     return { controller, done }
   }
 
@@ -1147,7 +1151,7 @@ async function retryWithoutStreaming(
       CHAT_REQUEST_TIMEOUT_MS
     )
     if (!response.ok) {
-      onError(providerRuntimeError(`API Error ${response.status}: ${await safeResponseText(response)}`, credentialGroupId))
+      onError(providerRuntimeError(formatProviderHttpError(response.status, await safeResponseText(response), fallbackReq.provider, fallbackReq.model), credentialGroupId))
       return
     }
     const result = await parseNonStreamingResponse(response, fallbackReq)
@@ -1714,6 +1718,7 @@ function classifyHttpStatus(status: number, responseText = '', model = ''): Prov
 function formatProviderHttpError(status: number, responseText = '', provider?: AIProvider, model = ''): string {
   const code = classifyHttpStatus(status, responseText, model)
   const providerName = provider?.name ?? st('providerOperation.provider')
+  const detail = extractProviderErrorDetail(responseText)
   switch (code) {
     case 'bad_auth':
       return st('providerOperation.http.badAuth', { provider: providerName })
@@ -1730,10 +1735,45 @@ function formatProviderHttpError(status: number, responseText = '', provider?: A
     case 'bad_base_url':
       return st('providerOperation.http.badBaseUrl', { provider: providerName })
     case 'network_error':
-      return st('providerOperation.http.network', { provider: providerName })
+      return detail ? st('providerOperation.http.errorWithSummary', { provider: providerName, status, detail }) : st('providerOperation.http.network', { provider: providerName })
     default:
-      return responseText ? st('providerOperation.http.errorWithText', { provider: providerName, status, text: responseText.slice(0, 240) }) : st('providerOperation.http.error', { provider: providerName, status })
+      return detail ? st('providerOperation.http.errorWithSummary', { provider: providerName, status, detail }) : st('providerOperation.http.error', { provider: providerName, status })
   }
+}
+
+function extractProviderErrorDetail(responseText = ''): string {
+  const trimmed = responseText.trim()
+  if (!trimmed) return ''
+  if (/^\s*</.test(trimmed)) return st('providerOperation.http.htmlResponse')
+  try {
+    const parsed = JSON.parse(trimmed) as Record<string, unknown>
+    const error = typeof parsed.error === 'object' && parsed.error ? parsed.error as Record<string, unknown> : parsed
+    const type = stringFromUnknown(error.type) || stringFromUnknown(error.code) || stringFromUnknown(parsed.code)
+    const message = stringFromUnknown(error.message) || stringFromUnknown(parsed.message)
+    const requestId = stringFromUnknown(error.request_id) || stringFromUnknown(error.requestId) || stringFromUnknown(parsed.request_id) || stringFromUnknown(parsed.requestId) || findRequestId(trimmed)
+    return [
+      type ? st('providerOperation.http.errorType', { type }) : '',
+      message ? st('providerOperation.http.errorMessage', { message: message.slice(0, 140) }) : '',
+      requestId ? st('providerOperation.http.requestId', { requestId }) : '',
+      st('providerOperation.http.suggestion'),
+    ].filter(Boolean).join(' · ')
+  } catch {
+    const plain = trimmed.replace(/\s+/g, ' ').slice(0, 180)
+    const requestId = findRequestId(trimmed)
+    return [
+      plain,
+      requestId ? st('providerOperation.http.requestId', { requestId }) : '',
+      st('providerOperation.http.suggestion'),
+    ].filter(Boolean).join(' · ')
+  }
+}
+
+function stringFromUnknown(value: unknown): string {
+  return typeof value === 'string' ? value.trim() : ''
+}
+
+function findRequestId(text: string): string {
+  return text.match(/(?:request[_ -]?id|req[_ -]?id)["':=\s]+([a-z0-9._:-]+)/i)?.[1] ?? ''
 }
 
 function isString(value: unknown): value is string {

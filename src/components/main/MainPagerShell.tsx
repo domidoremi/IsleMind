@@ -11,7 +11,7 @@ import Animated, {
   withSpring,
 } from 'react-native-reanimated'
 import { MotiView } from 'moti'
-import { Screen } from '@/components/ui/Screen'
+import { IsleScreen } from '@/components/ui/isle'
 import { ConversationsScreenContent } from './ConversationsScreenContent'
 import { HomeScreenContent } from './HomeScreenContent'
 import { SettingsScreenContent } from './SettingsScreenContent'
@@ -97,6 +97,7 @@ function MainPagerShellInner({ initialPage = 'home' }: MainPagerShellProps) {
     .enabled(!gestureLock?.locked)
     .activeOffsetX([-14, 14])
     .failOffsetY([-80, 80])
+    .cancelsTouchesInView(false)
     .onBegin(() => {
       gestureSettled.value = false
     })
@@ -123,7 +124,7 @@ function MainPagerShellInner({ initialPage = 'home' }: MainPagerShellProps) {
     })
 
   return (
-    <Screen padded={false}>
+    <IsleScreen padded={false}>
       <GestureDetector gesture={pan}>
         <Animated.View style={{ flex: 1 }}>
           {pages.map((item) => (
@@ -133,7 +134,7 @@ function MainPagerShellInner({ initialPage = 'home' }: MainPagerShellProps) {
           ))}
         </Animated.View>
       </GestureDetector>
-    </Screen>
+    </IsleScreen>
   )
 }
 

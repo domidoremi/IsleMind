@@ -1,16 +1,18 @@
 import { router } from 'expo-router'
-import { useMemo, useState } from 'react'
-import { FlatList, TextInput, View } from 'react-native'
-import { House, Plus, Search, Settings2, X } from 'lucide-react-native'
+import { useMemo, useRef, useState } from 'react'
+import { FlatList, KeyboardAvoidingView, Platform, TextInput, View } from 'react-native'
+import { House, Plus, Search, X } from 'lucide-react-native'
 import { useTranslation } from 'react-i18next'
-import { EmptyState } from '@/components/ui/EmptyState'
-import { PressableScale } from '@/components/ui/PressableScale'
-import { IslandHeader, IslandIconButton } from '@/components/ui/IslandPrimitives'
+import { IsleEmptyState } from '@/components/ui/isle'
+import { IslePressable } from '@/components/ui/isle'
+import { IsleHeader, IsleIconButton } from '@/components/ui/isle'
 import { ConversationRow } from '@/components/conversations/ConversationRow'
 import { useAppTheme } from '@/hooks/useAppTheme'
 import { useChatStore } from '@/store/chatStore'
 import { useSettingsStore } from '@/store/settingsStore'
 import { normalizeSearchText } from '@/utils/text'
+import { getProviderPreferredModel } from '@/utils/providerModels'
+import type { Conversation } from '@/types'
 
 interface ConversationsScreenContentProps {
   onHome?: () => void
@@ -24,6 +26,7 @@ export function ConversationsScreenContent({ onHome, onSettings }: Conversations
   const create = useChatStore((state) => state.create)
   const select = useChatStore((state) => state.select)
   const getPrimaryConfiguredProvider = useSettingsStore((state) => state.getPrimaryConfiguredProvider)
+  const listRef = useRef<FlatList<Conversation>>(null)
   const [query, setQuery] = useState('')
   const filteredConversations = useMemo(() => {
     const normalized = normalizeSearchText(query)
@@ -42,7 +45,7 @@ export function ConversationsScreenContent({ onHome, onSettings }: Conversations
 
   async function createConversation() {
     const provider = await getPrimaryConfiguredProvider()
-    const model = provider?.models[0]
+    const model = provider ? getProviderPreferredModel(provider) : undefined
     if (!provider || !model) {
       if (onSettings) onSettings()
       else router.push('/settings')
@@ -60,27 +63,47 @@ export function ConversationsScreenContent({ onHome, onSettings }: Conversations
     else router.push({ pathname: '/chat/[id]', params: { id } })
   }
 
+  function keepRenameInputVisible(index: number) {
+    requestAnimationFrame(() => {
+      listRef.current?.scrollToIndex({ index, viewPosition: 0.32, animated: true })
+    })
+  }
+
   return (
-    <View style={{ flex: 1 }}>
+    <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined} style={{ flex: 1 }}>
       <View style={{ paddingHorizontal: 16, paddingTop: 10, paddingBottom: 14 }}>
-        <IslandHeader
+        <IsleHeader
           title={t('conversation.title')}
           leading={
             onHome ? (
-              <IslandIconButton label={t('common.home')} size="lg" onPress={onHome}>
+              <IsleIconButton label={t('common.home')} size="lg" onPress={onHome}>
                 <House color={colors.text} size={20} strokeWidth={1.9} />
-              </IslandIconButton>
+              </IsleIconButton>
             ) : undefined
           }
           trailing={
-            <View style={{ flexDirection: 'row', gap: 8 }}>
-              <IslandIconButton label={t('settings.title')} size="lg" onPress={onSettings ?? (() => router.push('/settings'))}>
-                <Settings2 color={colors.text} size={20} strokeWidth={1.9} />
-              </IslandIconButton>
-              <IslandIconButton label={t('chat.newConversation')} size="lg" tone="ink" onPress={() => void createConversation()}>
-                <Plus color={colors.surface} size={22} strokeWidth={2.2} />
-              </IslandIconButton>
-            </View>
+            <IslePressable
+              haptic
+              accessibilityLabel={t('chat.newConversation')}
+              onPress={() => void createConversation()}
+              style={{
+                width: 50,
+                height: 50,
+                borderRadius: 25,
+                alignItems: 'center',
+                justifyContent: 'center',
+                backgroundColor: colors.primary,
+                borderWidth: 1,
+                borderColor: colors.borderStrong,
+                shadowColor: colors.shadowTint,
+                shadowOpacity: 0.16,
+                shadowRadius: 0,
+                shadowOffset: { width: 0, height: 4 },
+                elevation: 2,
+              }}
+            >
+              <Plus color={colors.primaryForeground} size={22} strokeWidth={2.35} />
+            </IslePressable>
           }
         />
         <View
@@ -103,33 +126,44 @@ export function ConversationsScreenContent({ onHome, onSettings }: Conversations
             onChangeText={setQuery}
             autoCapitalize="none"
             autoCorrect={false}
+            returnKeyType="search"
             placeholder={t('conversation.searchConversations')}
             placeholderTextColor={colors.textTertiary}
             style={{ flex: 1, minHeight: 48, color: colors.text, fontSize: 15, fontWeight: '700', padding: 0 }}
           />
           {query.trim() ? (
-            <PressableScale
+            <IslePressable
               onPress={() => setQuery('')}
               accessibilityLabel={t('common.clearSearch')}
               style={{ width: 32, height: 32, borderRadius: 16, alignItems: 'center', justifyContent: 'center', backgroundColor: colors.islandRaised }}
             >
               <X color={colors.textSecondary} size={16} strokeWidth={2} />
-            </PressableScale>
+            </IslePressable>
           ) : null}
         </View>
       </View>
       <FlatList
+        ref={listRef}
         data={filteredConversations}
         keyExtractor={(item) => item.id}
         keyboardShouldPersistTaps="handled"
+        keyboardDismissMode="on-drag"
+        automaticallyAdjustKeyboardInsets
         contentContainerStyle={{ flexGrow: 1, paddingHorizontal: 20, paddingBottom: 30 }}
+        onScrollToIndexFailed={(info) => {
+          listRef.current?.scrollToOffset({ offset: info.averageItemLength * info.index, animated: true })
+        }}
         ListEmptyComponent={
           query.trim()
-            ? <EmptyState title={t('conversation.noSearchResults')} />
-            : <EmptyState title={t('conversation.emptyHistory')} actionLabel={t('chat.newConversation')} onAction={() => void createConversation()} />
+            ? <IsleEmptyState title={t('conversation.noSearchResults')} />
+            : (
+              <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 12 }}>
+                <IsleEmptyState title={t('conversation.emptyHistory')} actionLabel={t('chat.newConversation')} onAction={() => void createConversation()} />
+              </View>
+            )
         }
-        renderItem={({ item, index }) => <ConversationRow conversation={item} index={index} onOpen={openConversation} />}
+        renderItem={({ item, index }) => <ConversationRow conversation={item} index={index} onOpen={openConversation} onRenameFocus={() => keepRenameInputVisible(index)} />}
       />
-    </View>
+    </KeyboardAvoidingView>
   )
 }

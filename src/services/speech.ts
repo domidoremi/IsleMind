@@ -4,6 +4,7 @@ import type { AIProvider } from '@/types'
 import { synthesizeSpeechWithProvider, transcribeAudioWithProvider } from '@/services/ai/base'
 import { useSettingsStore } from '@/store/settingsStore'
 import { st } from '@/i18n/service'
+import { getProviderPreferredModel } from '@/utils/providerModels'
 
 let AudioModule: any = null
 let useAudioRecorderModule: any = null
@@ -44,7 +45,7 @@ export async function transcribeLocalAudio(uri: string, provider?: AIProvider | 
     audioBase64: base64,
     mimeType: guessAudioMime(uri),
     fileName: uri.split('/').pop() || 'recording.m4a',
-    model: sourceProvider.type === 'google' ? sourceProvider.models[0] : undefined,
+    model: sourceProvider.type === 'google' ? getProviderPreferredModel(sourceProvider) : undefined,
   })
 }
 

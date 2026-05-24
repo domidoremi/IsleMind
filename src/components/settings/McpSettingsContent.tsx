@@ -2,10 +2,10 @@ import { useEffect, useMemo, useState } from 'react'
 import { Text, View } from 'react-native'
 import { Network, Plus, RefreshCw, ShieldCheck, Trash2 } from 'lucide-react-native'
 import { useTranslation } from 'react-i18next'
-import { IslandButton } from '@/components/ui/IslandButton'
-import { useIslandDialog } from '@/components/ui/IslandDialog'
-import { IslandField, IslandListItem, IslandSection, IslandToggle } from '@/components/ui/IslandPrimitives'
-import { Pill } from '@/components/ui/Pill'
+import { IsleButton } from '@/components/ui/isle'
+import { useIsleDialog } from '@/components/ui/isle'
+import { IsleField, IsleListItem, IsleSection, IsleToggle } from '@/components/ui/isle'
+import { IsleChip } from '@/components/ui/isle'
 import { useAppTheme } from '@/hooks/useAppTheme'
 import { listMcpServers, refreshMcpManifest, saveMcpServers, upsertMcpServer } from '@/services/mcp'
 import type { McpServerConfig, McpToolManifest } from '@/types'
@@ -15,7 +15,7 @@ const DEFAULT_TTL_MS = 6 * 60 * 60 * 1000
 export function McpSettingsContent() {
   const { colors } = useAppTheme()
   const { t } = useTranslation()
-  const dialog = useIslandDialog()
+  const dialog = useIsleDialog()
   const [servers, setServers] = useState<McpServerConfig[]>([])
   const [name, setName] = useState('')
   const [url, setUrl] = useState('')
@@ -100,32 +100,32 @@ export function McpSettingsContent() {
 
   return (
     <View style={{ gap: 12 }}>
-      <IslandSection
+      <IsleSection
         title={t('mcp.addServer')}
         subtitle={t('mcp.addServerSubtitle')}
         action={<Network color={colors.textSecondary} size={18} />}
       >
         <View style={{ gap: 10 }}>
-          <IslandField label={t('mcp.name')} inputProps={{ value: name, onChangeText: setName, placeholder: 'Local tools' }} />
-          <IslandField label={t('mcp.url')} inputProps={{ value: url, onChangeText: setUrl, placeholder: 'https://example.com/mcp', autoCapitalize: 'none', autoCorrect: false }} />
-          <IslandButton label={t('mcp.add')} icon={<Plus color={colors.surface} size={16} />} tone="primary" onPress={() => void addServer()} />
+          <IsleField label={t('mcp.name')} inputProps={{ value: name, onChangeText: setName, placeholder: 'Local tools' }} />
+          <IsleField label={t('mcp.url')} inputProps={{ value: url, onChangeText: setUrl, placeholder: 'https://example.com/mcp', autoCapitalize: 'none', autoCorrect: false }} />
+          <IsleButton label={t('mcp.add')} icon={<Plus color={colors.surface} size={16} />} tone="primary" onPress={() => void addServer()} />
         </View>
-      </IslandSection>
+      </IsleSection>
 
       {builtInServer ? (
-        <IslandSection title={t('mcp.builtIn')}>
+        <IsleSection title={t('mcp.builtIn')}>
           <ServerCard server={builtInServer} readonly onRefresh={refreshServer} onToggleServer={toggleServer} onToggleTool={toggleTool} onDelete={deleteServer} />
-        </IslandSection>
+        </IsleSection>
       ) : null}
 
-      <IslandSection title={`${t('mcp.servers')} ${userServers.length}`}>
+      <IsleSection title={`${t('mcp.servers')} ${userServers.length}`}>
         <View style={{ gap: 8 }}>
           {userServers.map((server) => (
             <ServerCard key={server.id} server={server} onRefresh={refreshServer} onToggleServer={toggleServer} onToggleTool={toggleTool} onDelete={deleteServer} />
           ))}
           {!userServers.length ? <Text style={{ color: colors.textSecondary, fontSize: 12, fontWeight: '800' }}>{t('mcp.empty')}</Text> : null}
         </View>
-      </IslandSection>
+      </IsleSection>
     </View>
   )
 }
@@ -149,21 +149,21 @@ function ServerCard({
   const { t } = useTranslation()
   return (
     <View style={{ borderRadius: 24, padding: 12, gap: 10, backgroundColor: colors.material.paperRaised, borderWidth: 1, borderColor: colors.border }}>
-      <IslandListItem
+      <IsleListItem
         title={server.name}
         description={server.url}
-        leading={<Pill active={server.status === 'connected'}>{t(`mcp.status.${server.status}`)}</Pill>}
+        leading={<IsleChip active={server.status === 'connected'}>{t(`mcp.status.${server.status}`)}</IsleChip>}
         trailing={
           <View style={{ flexDirection: 'row', gap: 8 }}>
-            {!readonly ? <IslandButton label={server.enabled ? t('settings.enabledState') : t('settings.disabledState')} compact tone={server.enabled ? 'mint' : 'soft'} onPress={() => void onToggleServer(server)} /> : null}
-            <IslandButton label={t('settings.sync')} compact icon={<RefreshCw color={colors.textSecondary} size={14} />} onPress={() => void onRefresh(server)} />
-            {!readonly ? <IslandButton label={t('common.delete')} compact tone="danger" icon={<Trash2 color={colors.error} size={14} />} onPress={() => void onDelete(server)} /> : null}
+            {!readonly ? <IsleButton label={server.enabled ? t('settings.enabledState') : t('settings.disabledState')} compact tone={server.enabled ? 'mint' : 'soft'} onPress={() => void onToggleServer(server)} /> : null}
+            <IsleButton label={t('settings.sync')} compact icon={<RefreshCw color={colors.textSecondary} size={14} />} onPress={() => void onRefresh(server)} />
+            {!readonly ? <IsleButton label={t('common.delete')} compact tone="danger" icon={<Trash2 color={colors.error} size={14} />} onPress={() => void onDelete(server)} /> : null}
           </View>
         }
       />
       <View style={{ gap: 8 }}>
         {server.tools.map((tool) => (
-          <IslandToggle
+          <IsleToggle
             key={tool.name}
             title={tool.name}
             description={tool.description ?? t('mcp.noDescription')}

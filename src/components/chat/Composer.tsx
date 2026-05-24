@@ -7,9 +7,9 @@ import { useTranslation } from 'react-i18next'
 import type { Attachment, CommandReference } from '@/types'
 import { pickDocument, pickImage, takePhoto } from '@/services/attachment'
 import { useAppTheme } from '@/hooks/useAppTheme'
-import { PressableScale } from '@/components/ui/PressableScale'
-import { IslandPanel } from '@/components/ui/IslandPanel'
-import { useIslandDialog } from '@/components/ui/IslandDialog'
+import { IslePressable } from '@/components/ui/isle'
+import { IslePanel } from '@/components/ui/isle'
+import { useIsleDialog } from '@/components/ui/isle'
 import { getAudioRecorderHook, isAudioRecordingAvailable, requestMicrophonePermission, transcribeLocalAudio } from '@/services/speech'
 import { normalizeSearchText } from '@/utils/text'
 
@@ -34,6 +34,8 @@ interface ComposerProps {
   onStop?: () => void
   onReferenceSelected?: (reference: CommandReference) => void
   onFocus?: () => void
+  onOpenKnowledge?: () => void
+  onInsertPromptTemplate?: () => void
   onSend: (content: string, attachments: Attachment[]) => Promise<void> | void
   onSendWhileStreaming?: (content: string, attachments: Attachment[]) => Promise<void> | void
 }
@@ -51,12 +53,14 @@ export function Composer({
   onStop,
   onReferenceSelected,
   onFocus,
+  onOpenKnowledge,
+  onInsertPromptTemplate,
   onSend,
   onSendWhileStreaming,
 }: ComposerProps) {
   const { colors } = useAppTheme()
   const { t } = useTranslation()
-  const dialog = useIslandDialog()
+  const dialog = useIsleDialog()
   const [content, setContent] = useState('')
   const [attachments, setAttachments] = useState<Attachment[]>([])
   const [attachmentsOpen, setAttachmentsOpen] = useState(false)
@@ -170,11 +174,11 @@ export function Composer({
         backgroundColor: 'transparent',
       }}
     >
-      <IslandPanel material="chrome" elevated={false} radius={26} style={{ borderColor: focused ? colors.borderStrong : colors.border, backgroundColor: colors.material.chrome }}>
+      <IslePanel material="chrome" elevated={false} radius={26} style={{ borderColor: focused ? colors.borderStrong : colors.border, backgroundColor: colors.material.chrome }}>
       {attachments.length ? (
         <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8, paddingHorizontal: 12, paddingTop: 10 }}>
           {attachments.map((item) => (
-            <PressableScale
+            <IslePressable
               key={item.id}
               onPress={() => setAttachments((files) => files.filter((file) => file.id !== item.id))}
               accessibilityLabel={t('chat.removeAttachment', { name: item.name })}
@@ -183,7 +187,7 @@ export function Composer({
               <Text numberOfLines={1} style={{ color: colors.textSecondary, fontSize: 11, fontWeight: '700', maxWidth: 180 }}>
                 {item.name}
               </Text>
-            </PressableScale>
+            </IslePressable>
           ))}
         </View>
       ) : null}
@@ -209,10 +213,20 @@ export function Composer({
           <AttachmentChip label={t('chat.openCommandPanel')} onPress={() => setContent((value) => value.trim() ? `${value} /` : '/')}>
             <Slash color={colors.textSecondary} size={15} strokeWidth={1.8} />
           </AttachmentChip>
+          {onInsertPromptTemplate ? (
+            <AttachmentChip label={t('chat.commandPromptTemplate')} onPress={onInsertPromptTemplate}>
+              <Plus color={colors.textSecondary} size={15} strokeWidth={1.8} />
+            </AttachmentChip>
+          ) : null}
+          {onOpenKnowledge ? (
+            <AttachmentChip label={t('chat.importKnowledge')} onPress={onOpenKnowledge}>
+              <FilePlus color={colors.textSecondary} size={15} strokeWidth={1.8} />
+            </AttachmentChip>
+          ) : null}
         </MotiView>
       ) : null}
       {pendingNotice ? (
-        <PressableScale
+        <IslePressable
           haptic
           onPress={onClearPending}
           accessibilityLabel={t('chat.clearPending')}
@@ -230,7 +244,7 @@ export function Composer({
           <Text numberOfLines={1} style={{ color: colors.textSecondary, fontSize: 11, fontWeight: '900' }}>
             {pendingNotice}
           </Text>
-        </PressableScale>
+        </IslePressable>
       ) : null}
       {showCommandPanel ? (
         <MotiView
@@ -269,7 +283,7 @@ export function Composer({
       <View style={{ flexDirection: 'row', alignItems: 'center', padding: 7, paddingTop: 7, gap: 6 }}>
         {showInlineUtilities ? (
           <>
-            <PressableScale
+            <IslePressable
               haptic
               onPress={() => setAttachmentsOpen((value) => !value)}
               accessibilityLabel={attachmentsOpen ? t('chat.collapseAttachments') : t('chat.expandAttachments')}
@@ -283,8 +297,8 @@ export function Composer({
               }}
             >
               {attachmentsOpen ? <ChevronDown color={colors.textSecondary} size={16} strokeWidth={2} /> : <Plus color={colors.textSecondary} size={16} strokeWidth={2} />}
-            </PressableScale>
-            <PressableScale
+            </IslePressable>
+            <IslePressable
               haptic
               onPress={() => void toggleRecording()}
               accessibilityLabel={recording ? t('chat.stopRecording') : t('chat.voiceInput')}
@@ -298,7 +312,7 @@ export function Composer({
               }}
             >
               <Mic color={recording ? colors.surface : colors.textSecondary} size={16} strokeWidth={2} />
-            </PressableScale>
+            </IslePressable>
           </>
         ) : null}
         <View style={{ flex: 1, minHeight: 42, justifyContent: 'center' }}>
@@ -340,7 +354,7 @@ export function Composer({
           />
         </View>
         {streaming ? (
-          <PressableScale
+          <IslePressable
             haptic
             onPress={onStop}
             accessibilityLabel={t('chat.stopGenerating')}
@@ -355,9 +369,9 @@ export function Composer({
             }}
           >
             <Square color={colors.surface} size={14} strokeWidth={2.4} fill={colors.surface} />
-          </PressableScale>
+          </IslePressable>
         ) : null}
-        <PressableScale
+        <IslePressable
           haptic
           disabled={!canSend}
           onPress={submit}
@@ -372,18 +386,20 @@ export function Composer({
             flexDirection: 'row',
             gap: 7,
             paddingHorizontal: 0,
-            backgroundColor: canSend ? colors.text : colors.islandRaised,
-            opacity: canSend ? 1 : 0.55,
+            backgroundColor: canSend ? colors.primary : colors.material.field,
+            borderWidth: canSend ? 0 : 1,
+            borderColor: colors.borderStrong,
+            opacity: disabled ? 0.72 : 1,
           }}
         >
           {sending ? (
-            <ActivityIndicator color={colors.surface} size="small" />
+            <ActivityIndicator color={colors.primaryForeground} size="small" />
           ) : (
-            <SendHorizontal color={colors.surface} size={19} strokeWidth={2} />
+            <SendHorizontal color={canSend ? colors.primaryForeground : colors.textSecondary} size={19} strokeWidth={2.35} />
           )}
-        </PressableScale>
+        </IslePressable>
       </View>
-      </IslandPanel>
+      </IslePanel>
     </MotiView>
   )
 }
@@ -418,7 +434,7 @@ function ComposerPickRow({
 }) {
   const { colors } = useAppTheme()
   return (
-    <PressableScale
+    <IslePressable
       haptic
       onPress={onPress}
       style={{ minHeight: 42, borderRadius: 17, paddingHorizontal: 10, flexDirection: 'row', alignItems: 'center', gap: 9, backgroundColor: colors.islandRaised }}
@@ -436,7 +452,7 @@ function ComposerPickRow({
           </Text>
         ) : null}
       </View>
-    </PressableScale>
+    </IslePressable>
   )
 }
 
@@ -489,7 +505,7 @@ interface IconButtonProps {
 function AttachmentChip({ label, children, onPress }: IconButtonProps) {
   const { colors } = useAppTheme()
   return (
-    <PressableScale
+    <IslePressable
       haptic
       onPress={onPress}
       accessibilityLabel={label}
@@ -506,6 +522,6 @@ function AttachmentChip({ label, children, onPress }: IconButtonProps) {
     >
       {children}
       <Text style={{ color: colors.textSecondary, fontSize: 11, fontWeight: '800' }}>{label}</Text>
-    </PressableScale>
+    </IslePressable>
   )
 }

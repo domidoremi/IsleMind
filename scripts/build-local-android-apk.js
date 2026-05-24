@@ -1,5 +1,6 @@
 const fs = require('node:fs')
 const path = require('node:path')
+const crypto = require('node:crypto')
 const { spawnSync } = require('node:child_process')
 const { normalizeVariant, supportedVariants } = require('./model-catalog')
 
@@ -7,6 +8,44 @@ const projectRoot = path.resolve(__dirname, '..')
 const androidDir = path.join(projectRoot, 'android')
 const outputDir = path.join(projectRoot, 'dist-apk')
 const packageJson = require(path.join(projectRoot, 'package.json'))
+const releaseBuildPasses = [
+  {
+    label: 'universal-64',
+    arch: 'universal-64',
+    abiFilters: 'arm64-v8a,x86_64',
+    reactNativeArchitectures: 'arm64-v8a,x86_64',
+    enableAbiSplits: 'false',
+    universalApk: 'false',
+    required: ['universal-64'],
+  },
+  {
+    label: 'arm64-v8a',
+    arch: 'arm64-v8a',
+    abiFilters: 'arm64-v8a',
+    reactNativeArchitectures: 'arm64-v8a',
+    enableAbiSplits: 'false',
+    universalApk: 'false',
+    required: ['arm64-v8a'],
+  },
+  {
+    label: 'x86_64',
+    arch: 'x86_64',
+    abiFilters: 'x86_64',
+    reactNativeArchitectures: 'x86_64',
+    enableAbiSplits: 'false',
+    universalApk: 'false',
+    required: ['x86_64'],
+  },
+  {
+    label: 'armeabi-v7a-legacy',
+    arch: 'armeabi-v7a-legacy',
+    abiFilters: 'armeabi-v7a',
+    reactNativeArchitectures: 'armeabi-v7a',
+    enableAbiSplits: 'false',
+    universalApk: 'false',
+    required: ['armeabi-v7a-legacy'],
+  },
+]
 
 function parseArgs(argv) {
   const args = {
@@ -85,6 +124,19 @@ function removeDir(dir) {
   fs.rmSync(dir, { recursive: true, force: true })
 }
 
+function sha256File(filePath) {
+  const hash = crypto.createHash('sha256')
+  hash.update(fs.readFileSync(filePath))
+  return hash.digest('hex')
+}
+
+function writeSha256File(filePath) {
+  const hash = sha256File(filePath)
+  const checksumPath = `${filePath}.sha256`
+  fs.writeFileSync(checksumPath, `${hash}  ${path.basename(filePath)}`, 'ascii')
+  return checksumPath
+}
+
 function listApks(dir) {
   if (!fs.existsSync(dir)) return []
   return fs.readdirSync(dir)
@@ -92,7 +144,7 @@ function listApks(dir) {
     .map((name) => path.join(dir, name))
 }
 
-function copyOutputs(variant, buildType) {
+function copyOutputs(variant, buildType, pass) {
   const sourceDir = path.join(androidDir, 'app', 'build', 'outputs', 'apk', buildType)
   const apks = listApks(sourceDir)
   if (!apks.length) {
@@ -100,24 +152,37 @@ function copyOutputs(variant, buildType) {
   }
   ensureDir(outputDir)
   const copied = []
+  if (buildType === 'release' && pass?.arch) {
+    if (apks.length !== 1) {
+      throw new Error(`Expected exactly one APK for release pass ${pass.label}, found ${apks.length}: ${apks.map((apk) => path.basename(apk)).join(', ')}`)
+    }
+    const targetName = formatArtifactName(packageJson.version, buildType, variant, pass.arch)
+    const target = path.join(outputDir, targetName)
+    fs.copyFileSync(apks[0], target)
+    writeSha256File(target)
+    copied.push(target)
+    assertReleaseOutputs(copied, variant, pass)
+    return copied
+  }
   for (const apk of apks) {
     const base = path.basename(apk)
-    const arch = inferArch(base)
+    const arch = inferArch(base, pass)
     const targetName = formatArtifactName(packageJson.version, buildType, variant, arch)
     const target = path.join(outputDir, targetName)
     fs.copyFileSync(apk, target)
+    writeSha256File(target)
     copied.push(target)
   }
   if (buildType === 'release') {
-    assertReleaseOutputs(copied, variant)
+    assertReleaseOutputs(copied, variant, pass)
   }
   return copied
 }
 
-function inferArch(fileName) {
-  if (fileName.includes('universal')) return 'universal'
+function inferArch(fileName, pass) {
+  if (fileName.includes('universal')) return pass?.label === '64-bit' ? 'universal-64' : 'universal'
   if (fileName.includes('arm64-v8a')) return 'arm64-v8a'
-  if (fileName.includes('armeabi-v7a')) return 'armeabi-v7a'
+  if (fileName.includes('armeabi-v7a')) return pass?.label === '32-bit legacy' ? 'armeabi-v7a-legacy' : 'armeabi-v7a'
   if (fileName.includes('x86_64')) return 'x86_64'
   if (fileName.includes('x86')) return 'x86'
   return 'universal'
@@ -130,14 +195,14 @@ function formatArtifactName(version, buildType, variant, arch) {
   return `IsleMind-${version}-android-${buildType}-${variant}-${arch}.apk`
 }
 
-function assertReleaseOutputs(outputs, variant) {
-  const required = ['universal', 'arm64-v8a', 'armeabi-v7a', 'x86_64']
+function assertReleaseOutputs(outputs, variant, pass) {
+  const required = pass?.required ?? ['universal-64', 'arm64-v8a', 'x86_64', 'armeabi-v7a-legacy']
   const missing = required.filter((arch) => {
     const expected = formatArtifactName(packageJson.version, 'release', variant, arch)
     return !outputs.some((output) => path.basename(output) === expected)
   })
   if (missing.length) {
-    throw new Error(`Release build for ${variant} is missing APK split(s): ${missing.join(', ')}.`)
+    throw new Error(`Release build for ${variant}${pass ? ` (${pass.label})` : ''} is missing APK split(s): ${missing.join(', ')}.`)
   }
 }
 
@@ -155,23 +220,44 @@ function buildVariant(variant, args) {
   if (args.clean) {
     run(gradleCommand(), ['clean', '--no-daemon'], { cwd: androidDir })
   }
-  removeDir(path.join(androidDir, 'app', 'build', 'outputs', 'apk', args.buildType))
-  run(gradleCommand(), [assembleTask, '--no-daemon', '--stacktrace'], {
-    cwd: androidDir,
-    env: {
-      ISLEMIND_MODEL_BUNDLE: variant,
-      EXPO_PUBLIC_ISLEMIND_MODEL_BUNDLE: variant,
-    },
-  })
-  const outputs = copyOutputs(variant, args.buildType)
+  const passes = args.buildType === 'release'
+    ? releaseBuildPasses
+    : [releaseBuildPasses[0]]
+  const outputs = []
+  for (const pass of passes) {
+    removeDir(path.join(androidDir, 'app', 'build', 'outputs', 'apk', args.buildType))
+    if (args.buildType === 'release') {
+      removeDir(path.join(androidDir, 'app', '.cxx'))
+      removeDir(path.join(androidDir, 'app', 'build', 'intermediates', 'merged_native_libs', args.buildType))
+      removeDir(path.join(androidDir, 'app', 'build', 'intermediates', 'stripped_native_libs', args.buildType))
+    }
+    run(gradleCommand(), [
+      assembleTask,
+      ...(args.buildType === 'release' ? ['--rerun-tasks'] : []),
+      '--no-daemon',
+      '--stacktrace',
+      `-PislemindAbiFilters=${pass.abiFilters}`,
+      `-PislemindEnableAbiSplits=${pass.enableAbiSplits ?? 'true'}`,
+      `-PislemindUniversalApk=${pass.universalApk}`,
+      `-PreactNativeArchitectures=${pass.reactNativeArchitectures}`,
+    ], {
+      cwd: androidDir,
+      env: {
+        ISLEMIND_MODEL_BUNDLE: variant,
+        EXPO_PUBLIC_ISLEMIND_MODEL_BUNDLE: variant,
+      },
+    })
+    outputs.push(...copyOutputs(variant, args.buildType, pass))
+  }
   if (args.buildType === 'release') {
-    run(commandName('node'), ['scripts/validate-android-16kb-apk.js', ...outputs])
+    const sixtyFourBitOutputs = outputs.filter((output) => !path.basename(output).includes('armeabi-v7a-legacy'))
+    run(commandName('node'), ['scripts/validate-android-16kb-apk.js', ...sixtyFourBitOutputs])
   }
   return outputs
 }
 
 function installApk(device, apks) {
-  const universal = apks.find((apk) => apk.endsWith('-universal.apk')) || apks[0]
+  const universal = apks.find((apk) => apk.includes('-universal-64-')) || apks.find((apk) => apk.endsWith('-universal.apk')) || apks[0]
   run('adb', ['-s', device, 'install', '-r', universal])
 }
 
@@ -190,8 +276,14 @@ function main() {
 
   const variants = args.variant === 'all' ? supportedVariants() : [args.variant]
   const outputs = []
-  for (const variant of variants) {
-    outputs.push(...buildVariant(variant, args))
+  try {
+    for (const variant of variants) {
+      outputs.push(...buildVariant(variant, args))
+    }
+  } finally {
+    if (args.buildType === 'release') {
+      run(commandName('node'), ['scripts/prepare-model-bundle.js', '--variant', 'no-model'])
+    }
   }
   if (args.installDevice) {
     installApk(args.installDevice, outputs)

@@ -1,15 +1,18 @@
 import { useEffect, useMemo, useState } from 'react'
-import { ScrollView, Text, TextInput, View } from 'react-native'
+import { ScrollView, Text, TextInput, View, useWindowDimensions } from 'react-native'
+import { MotiView } from 'moti'
 import { Search, X } from 'lucide-react-native'
 import { useTranslation } from 'react-i18next'
-import { IslandPanel } from '@/components/ui/IslandPanel'
-import { Pill } from '@/components/ui/Pill'
-import { PressableScale } from '@/components/ui/PressableScale'
+import { IslePanel } from '@/components/ui/isle'
+import { IsleChip } from '@/components/ui/isle'
+import { IslePressable } from '@/components/ui/isle'
 import { useAppTheme } from '@/hooks/useAppTheme'
 import { useChatStore } from '@/store/chatStore'
 import { getModelConfig, getModelName } from '@/types'
 import type { AIProvider, Conversation } from '@/types'
 import { normalizeSearchText } from '@/utils/text'
+import { useMotionPreference } from '@/hooks/useMotionPreference'
+import { motionTokens } from '@/theme/animation'
 
 export function ChatOptionsPanel({
   conversation,
@@ -31,6 +34,8 @@ export function ChatOptionsPanel({
   onClose: () => void
 }) {
   const { t } = useTranslation()
+  const { width: windowWidth, height: windowHeight } = useWindowDimensions()
+  const motion = useMotionPreference()
   const updateConversation = useChatStore((state) => state.updateConversation)
   const [selectedProviderId, setSelectedProviderId] = useState(provider?.id ?? conversation.providerId)
   const [modelPickerQuery, setModelPickerQuery] = useState('')
@@ -53,40 +58,39 @@ export function ChatOptionsPanel({
     : []
   const selectedProviderIsCurrent = selectedProvider?.id === conversation.providerId
   const capabilities = currentProvider?.capabilities
+  const compactPicker = windowWidth < 430 || windowHeight < 620
 
   useEffect(() => {
     setSelectedProviderId(provider?.id ?? conversation.providerId)
   }, [conversation.providerId, provider?.id])
 
   useEffect(() => {
-    if (!normalizedQuery || !visibleProviders.length) return
-    if (!visibleProviders.some((item) => item.id === selectedProviderId)) {
+    if (visibleProviders.some((item) => item.id === selectedProviderId)) return
+    if (currentProvider && visibleProviders.some((item) => item.id === currentProvider.id)) {
+      setSelectedProviderId(currentProvider.id)
+      return
+    }
+    if (visibleProviders.length) {
       setSelectedProviderId(visibleProviders[0].id)
     }
-  }, [normalizedQuery, selectedProviderId, visibleProviders])
+  }, [currentProvider, selectedProviderId, visibleProviders])
 
   return (
-    <IslandPanel material="paper" elevated style={{ marginTop: 10, maxHeight, borderWidth: 1, borderColor: colors.borderStrong }} radius={24} contentStyle={{ padding: 0, backgroundColor: colors.paper }}>
-      <ScrollView
-        style={{ maxHeight }}
-        contentContainerStyle={{ padding: 12, paddingBottom: 14 }}
-        keyboardShouldPersistTaps="handled"
-        nestedScrollEnabled
-        showsVerticalScrollIndicator={false}
-      >
+    <IslePanel material="paper" elevated style={{ marginTop: 10, maxHeight, borderWidth: 1, borderColor: colors.borderStrong }} radius={24} contentStyle={{ padding: 0, backgroundColor: colors.paper }}>
+      <View style={{ padding: 12, paddingBottom: 10, borderBottomWidth: 1, borderBottomColor: colors.border }}>
         <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10, marginBottom: 10 }}>
           <View style={{ flex: 1 }}>
             <Text style={{ color: colors.text, fontSize: 15, fontWeight: '900' }}>{t('chat.model')}</Text>
             <Text numberOfLines={1} style={{ color: colors.textTertiary, fontSize: 11, fontWeight: '800', marginTop: 2 }}>{t('chat.modelPickerSubtitle')}</Text>
           </View>
-          <PressableScale
+          <IslePressable
             haptic
             onPress={onClose}
             accessibilityLabel={t('chat.closeModelMenu')}
             style={{ width: 34, height: 34, borderRadius: 17, alignItems: 'center', justifyContent: 'center', backgroundColor: colors.islandRaised, borderWidth: 1, borderColor: colors.border }}
           >
             <X color={colors.textSecondary} size={16} strokeWidth={2.2} />
-          </PressableScale>
+          </IslePressable>
         </View>
         <View style={{ minHeight: 42, borderRadius: 21, paddingHorizontal: 12, flexDirection: 'row', alignItems: 'center', gap: 8, backgroundColor: colors.material.field, borderWidth: 1, borderColor: colors.border }}>
           <Search color={colors.textTertiary} size={15} strokeWidth={2} />
@@ -100,63 +104,96 @@ export function ChatOptionsPanel({
             style={{ flex: 1, minHeight: 40, padding: 0, color: colors.text, fontSize: 13, fontWeight: '800' }}
           />
           {modelPickerQuery.trim() ? (
-            <PressableScale
+            <IslePressable
               onPress={() => setModelPickerQuery('')}
               accessibilityLabel={t('chat.clearModelSearch')}
               style={{ width: 28, height: 28, borderRadius: 14, alignItems: 'center', justifyContent: 'center', backgroundColor: colors.islandRaised }}
             >
               <X color={colors.textSecondary} size={14} strokeWidth={2.2} />
-            </PressableScale>
+            </IslePressable>
           ) : null}
         </View>
+      </View>
 
-        <View style={{ gap: 8, marginTop: 12 }}>
-          <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 8 }}>
-            <Text style={{ color: colors.textSecondary, fontSize: 11, fontWeight: '900' }}>{t('settings.providerManagement')}</Text>
-            <Text style={{ color: colors.textTertiary, fontSize: 10, fontWeight: '800' }}>
-              {normalizedQuery ? `${visibleProviders.length}/${switchableProviders.length}` : t('chat.countItems', { count: switchableProviders.length })}
-            </Text>
-          </View>
-          <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 8, paddingRight: 8 }}>
-            {visibleProviders.map((item) => (
-              <PressableScale key={item.id} haptic onPress={() => setSelectedProviderId(item.id)}>
-                <Pill active={selectedProvider?.id === item.id}>{item.name}{item.enabled ? '' : ` · ${t('settings.disabledState')}`}</Pill>
-              </PressableScale>
-            ))}
-          </ScrollView>
-          {!visibleProviders.length ? (
-            <View style={{ borderRadius: 18, paddingHorizontal: 12, paddingVertical: 10, backgroundColor: colors.material.field, borderWidth: 1, borderColor: colors.border }}>
-              <Text style={{ color: colors.textTertiary, fontSize: 12, lineHeight: 17 }}>{t('chat.noProviderModelMatches')}</Text>
+      <View style={{ maxHeight: Math.max(180, maxHeight - 82), padding: 12, paddingBottom: 14 }}>
+        <View style={{ flexDirection: compactPicker ? 'column' : 'row', gap: 12, alignItems: 'stretch', minHeight: compactPicker ? undefined : Math.max(150, maxHeight - 152) }}>
+          <MotiView
+            from={motion === 'full' ? { opacity: 0, translateX: -8 } : { opacity: 0 }}
+            animate={{ opacity: 1, translateX: 0 }}
+            transition={motion === 'full' ? { type: 'spring', ...motionTokens.spring.settle } : { type: 'timing', duration: motionTokens.duration.fast }}
+            style={{ flex: compactPicker ? undefined : 0.42, minWidth: compactPicker ? undefined : 0, gap: 8, maxHeight: compactPicker ? Math.max(104, maxHeight * 0.26) : undefined }}
+          >
+            <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 8 }}>
+              <Text style={{ color: colors.textSecondary, fontSize: 11, fontWeight: '900' }}>{t('settings.providerManagement')}</Text>
+              <Text style={{ color: colors.textTertiary, fontSize: 10, fontWeight: '800' }}>
+                {normalizedQuery ? `${visibleProviders.length}/${switchableProviders.length}` : t('chat.countItems', { count: switchableProviders.length })}
+              </Text>
             </View>
-          ) : null}
-        </View>
-
-        <View style={{ gap: 8, marginTop: 12 }}>
-          <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 8 }}>
-            <Text style={{ color: colors.textSecondary, fontSize: 11, fontWeight: '900' }}>{t('chat.model')}</Text>
-            <Text style={{ color: colors.textTertiary, fontSize: 10, fontWeight: '800' }}>
-              {selectedProvider?.name ?? t('chat.notSelected')} · {selectedModels.length || t('chat.none')}
-            </Text>
-          </View>
-          {selectedModels.length ? (
-            <View style={{ flexDirection: 'row', gap: 8, flexWrap: 'wrap' }}>
-              {selectedModels.map((model) => (
-                <PressableScale key={model.id} haptic onPress={() => selectedProvider && onSwitchModel(selectedProvider, model.id)}>
-                  <Pill active={selectedProviderIsCurrent && conversation.model === model.id}>{model.name}{model.config.deprecated ? ` · ${t('chat.deprecated')}` : ''}</Pill>
-                </PressableScale>
+            <ScrollView
+              style={{ flexGrow: 0, maxHeight: compactPicker ? Math.max(82, maxHeight * 0.22) : Math.max(126, maxHeight - 176) }}
+              contentContainerStyle={{ gap: 8 }}
+              nestedScrollEnabled
+              keyboardShouldPersistTaps="handled"
+              showsVerticalScrollIndicator
+            >
+              {visibleProviders.map((item) => (
+                <IslePressable key={item.id} haptic onPress={() => setSelectedProviderId(item.id)}>
+                  <IsleChip active={selectedProvider?.id === item.id}>{item.name}{item.enabled ? '' : ` · ${t('settings.disabledState')}`}</IsleChip>
+                </IslePressable>
               ))}
+            </ScrollView>
+            {!visibleProviders.length ? (
+              <View style={{ borderRadius: 18, paddingHorizontal: 12, paddingVertical: 10, backgroundColor: colors.material.field, borderWidth: 1, borderColor: colors.border }}>
+                <Text style={{ color: colors.textTertiary, fontSize: 12, lineHeight: 17 }}>{t('chat.noProviderModelMatches')}</Text>
+              </View>
+            ) : null}
+          </MotiView>
+
+          <MotiView
+            from={motion === 'full' ? { opacity: 0, translateX: 8 } : { opacity: 0 }}
+            animate={{ opacity: 1, translateX: 0 }}
+            transition={motion === 'full' ? { type: 'spring', ...motionTokens.spring.settle, delay: 35 } : { type: 'timing', duration: motionTokens.duration.fast }}
+            style={{ flex: 1, minWidth: 0, gap: 8, maxHeight: compactPicker ? Math.max(118, maxHeight * 0.32) : undefined }}
+          >
+            <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 8 }}>
+              <Text style={{ color: colors.textSecondary, fontSize: 11, fontWeight: '900' }}>{t('chat.model')}</Text>
+              <Text numberOfLines={1} style={{ color: colors.textTertiary, fontSize: 10, fontWeight: '800', flexShrink: 1 }}>
+                {selectedProvider?.name ?? t('chat.notSelected')} · {selectedModels.length || t('chat.none')}
+              </Text>
             </View>
-          ) : (
-            <View style={{ borderRadius: 18, paddingHorizontal: 12, paddingVertical: 10, backgroundColor: colors.material.field, borderWidth: 1, borderColor: colors.border }}>
-              <Text style={{ color: colors.textTertiary, fontSize: 12, lineHeight: 17 }}>{t('chat.providerNoModelsSyncHint')}</Text>
-            </View>
-          )}
+            {selectedModels.length ? (
+              <ScrollView
+                style={{ flexGrow: 0, maxHeight: compactPicker ? Math.max(96, maxHeight * 0.26) : Math.max(126, maxHeight - 176) }}
+                contentContainerStyle={{ flexDirection: 'row', gap: 8, flexWrap: 'wrap', paddingRight: 4 }}
+                nestedScrollEnabled
+                keyboardShouldPersistTaps="handled"
+                showsVerticalScrollIndicator
+              >
+                {selectedModels.map((model) => (
+                  <IslePressable key={model.id} haptic onPress={() => selectedProvider && onSwitchModel(selectedProvider, model.id)}>
+                    <IsleChip active={selectedProviderIsCurrent && conversation.model === model.id}>{model.name}{model.config.deprecated ? ` · ${t('chat.deprecated')}` : ''}</IsleChip>
+                  </IslePressable>
+                ))}
+              </ScrollView>
+            ) : (
+              <View style={{ borderRadius: 18, paddingHorizontal: 12, paddingVertical: 10, backgroundColor: colors.material.field, borderWidth: 1, borderColor: colors.border }}>
+                <Text style={{ color: colors.textTertiary, fontSize: 12, lineHeight: 17 }}>{t('chat.providerNoModelsSyncHint')}</Text>
+              </View>
+            )}
+          </MotiView>
         </View>
 
-        <Text style={{ color: colors.textTertiary, fontSize: 10, lineHeight: 15, marginTop: 8 }}>
-          {t('chat.modelSwitchNote')}
-        </Text>
-        <View style={{ marginTop: 10 }}>
+        <ScrollView
+          style={{ flexGrow: 0, maxHeight: Math.max(136, maxHeight * 0.34), marginTop: 8 }}
+          contentContainerStyle={{ paddingBottom: 2 }}
+          nestedScrollEnabled
+          keyboardShouldPersistTaps="handled"
+          showsVerticalScrollIndicator
+        >
+          <Text style={{ color: colors.textTertiary, fontSize: 10, lineHeight: 15 }}>
+            {t('chat.modelSwitchNote')}
+          </Text>
+          <View style={{ marginTop: 10 }}>
           <Text style={{ color: colors.textSecondary, fontSize: 11, fontWeight: '800', marginBottom: 6 }}>{t('chat.systemPrompt')}</Text>
           <TextInput
             value={conversation.systemPrompt}
@@ -168,9 +205,9 @@ export function ChatOptionsPanel({
           />
         </View>
         <View style={{ flexDirection: 'row', gap: 8, marginTop: 10 }}>
-          <PressableScale haptic onPress={onCopyLink} style={{ minHeight: 34, borderRadius: 17, paddingHorizontal: 12, alignItems: 'center', justifyContent: 'center', backgroundColor: colors.islandRaised, borderWidth: 1, borderColor: colors.border }}>
+          <IslePressable haptic onPress={onCopyLink} style={{ minHeight: 34, borderRadius: 17, paddingHorizontal: 12, alignItems: 'center', justifyContent: 'center', backgroundColor: colors.islandRaised, borderWidth: 1, borderColor: colors.border }}>
             <Text style={{ color: colors.textSecondary, fontSize: 12, fontWeight: '800' }}>{t('chat.copyConversationLink')}</Text>
-          </PressableScale>
+          </IslePressable>
         </View>
         <View style={{ flexDirection: 'row', gap: 8, marginTop: 10 }}>
           <ParamInput
@@ -207,16 +244,17 @@ export function ChatOptionsPanel({
               <Text style={{ color: colors.textSecondary, fontSize: 12, fontWeight: '800', marginBottom: 6 }}>{t('chat.reasoning')}</Text>
               <View style={{ flexDirection: 'row', gap: 6, flexWrap: 'wrap' }}>
                 {(['minimal', 'low', 'medium', 'high'] as const).map((effort) => (
-                  <PressableScale key={effort} haptic onPress={() => updateConversation(conversation.id, { reasoningEffort: effort })}>
-                    <Pill active={(conversation.reasoningEffort ?? 'medium') === effort}>{effort}</Pill>
-                  </PressableScale>
+                  <IslePressable key={effort} haptic onPress={() => updateConversation(conversation.id, { reasoningEffort: effort })}>
+                    <IsleChip active={(conversation.reasoningEffort ?? 'medium') === effort}>{effort}</IsleChip>
+                  </IslePressable>
                 ))}
               </View>
             </View>
           ) : null}
         </View>
-      </ScrollView>
-    </IslandPanel>
+        </ScrollView>
+      </View>
+    </IslePanel>
   )
 }
 

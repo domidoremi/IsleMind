@@ -12,11 +12,11 @@ import Animated, { runOnJS, useAnimatedStyle, useSharedValue, withSequence, with
 import type { ChatErrorCode, Message, MessageCitation } from '@/types'
 import { useAppTheme } from '@/hooks/useAppTheme'
 import { messageAnimationForMotion } from '@/theme/animation'
-import { PressableScale } from '@/components/ui/PressableScale'
+import { IslePressable } from '@/components/ui/isle'
 import { useSettingsStore } from '@/store/settingsStore'
 import { MessageContent } from './MessageContent'
 import { collectMessageTraces, formatDuration, formatNumber, getActiveTraceTitle, summarizeTraces } from './tracePresentation'
-import { IslandPanel } from '@/components/ui/IslandPanel'
+import { IslePanel } from '@/components/ui/isle'
 import { RenderGuard } from '@/components/ui/RenderGuard'
 import { useMotionPreference } from '@/hooks/useMotionPreference'
 
@@ -134,7 +134,7 @@ export function MessageBubble({ conversationId, message, index, isLastAssistant 
               width: isUser ? undefined : '94%',
             }}
           >
-            <IslandPanel
+            <IslePanel
               elevated={!isUser}
               contentStyle={{
                 paddingHorizontal: 16,
@@ -191,7 +191,7 @@ export function MessageBubble({ conversationId, message, index, isLastAssistant 
                   ) : null}
                 </View>
               ) : null}
-            </IslandPanel>
+            </IslePanel>
             <MessageMeta message={message} />
             <MessageActionRow
               isUser={isUser}
@@ -399,7 +399,7 @@ function CitationSummaryRow({ citations, onPress }: { citations: MessageCitation
   ].filter(Boolean).join(' · ')
 
   return (
-    <PressableScale
+    <IslePressable
       haptic
       onPress={onPress}
       accessibilityLabel={t('messageBubble.viewSources')}
@@ -423,7 +423,7 @@ function CitationSummaryRow({ citations, onPress }: { citations: MessageCitation
         {t('messageBubble.sources', { count: citations.length })}{summary ? ` · ${summary}` : ''}
       </Text>
       <ExternalLink color={colors.textTertiary} size={12} strokeWidth={2} />
-    </PressableScale>
+    </IslePressable>
   )
 }
 
@@ -433,7 +433,7 @@ function CitationNumberChips({ citations, onPress }: { citations: MessageCitatio
   return (
     <View style={{ flexDirection: 'row', gap: 5, flexWrap: 'wrap' }}>
       {citations.slice(0, 6).map((citation, index) => (
-        <PressableScale
+        <IslePressable
           key={citation.id}
           haptic
           onPress={() => onPress(citation)}
@@ -451,7 +451,7 @@ function CitationNumberChips({ citations, onPress }: { citations: MessageCitatio
           }}
         >
           <Text style={{ color: colors.primary, fontSize: 11, fontWeight: '900' }}>[{index + 1}]</Text>
-        </PressableScale>
+        </IslePressable>
       ))}
     </View>
   )
@@ -462,7 +462,7 @@ function ProcessSummaryRow({ summary, hasError, running, onPress }: { summary: s
   const { t } = useTranslation()
   const tint = running ? colors.primary : hasError ? colors.error : colors.textSecondary
   return (
-    <PressableScale
+    <IslePressable
       haptic
       onPress={onPress}
       accessibilityLabel={t('messageBubble.viewProcess')}
@@ -486,7 +486,7 @@ function ProcessSummaryRow({ summary, hasError, running, onPress }: { summary: s
         {t('messageBubble.process', { summary })}
       </Text>
       <Sparkles color={tint} size={12} strokeWidth={2} />
-    </PressableScale>
+    </IslePressable>
   )
 }
 
@@ -580,7 +580,7 @@ function ActionButton({ label, children, compact = false, tone = 'default', onPr
   const { colors } = useAppTheme()
 
   return (
-    <PressableScale
+    <IslePressable
       haptic
       onPress={onPress}
       accessibilityLabel={label}
@@ -596,7 +596,7 @@ function ActionButton({ label, children, compact = false, tone = 'default', onPr
     >
       {children}
       <Text style={{ color: tone === 'danger' ? colors.error : colors.textTertiary, fontSize: compact ? 11 : 12, fontWeight: '900' }}>{label}</Text>
-    </PressableScale>
+    </IslePressable>
   )
 }
 

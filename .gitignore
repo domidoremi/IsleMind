@@ -28,10 +28,27 @@ npm-debug.*
 yarn-debug.*
 yarn-error.*
 .codex/
+.claude/
 screenshots/
 local-screenshots/
+test-screenshots/
+emulator-screenshots/
+test-evidence/
+emulator-evidence/
+logcat/
+*.logcat
+*.uia.xml
 *.apk
 *.aab
+
+# local/private workspace notes and automation
+AGENTS.md
+CLAUDE.md
+docs/
+local-docs/
+local-scripts/
+.local/
+*.local.md
 
 # macOS
 .DS_Store

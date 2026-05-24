@@ -13,6 +13,7 @@ import { resolveSearchProvider } from '@/services/searchPolicy'
 import { listMcpServers } from '@/services/mcp'
 import { localDataStore } from '@/services/localDataStore'
 import { st } from '@/i18n/service'
+import { getProviderAvailableModels, getProviderPreferredModel, isProviderConversationReady } from '@/utils/providerModels'
 
 function generateId(): string {
   return `${Date.now()}-${Math.random().toString(36).slice(2, 10)}`
@@ -859,11 +860,15 @@ function formatWebPrompt(sources: { title: string; content: string; url?: string
 async function resolveRuntimeConversation(conversation: Conversation): Promise<{ conversation: Conversation; provider: AIProvider } | null> {
   if ((conversation.providerModelMode ?? 'inherited') !== 'inherited') {
     const provider = useSettingsStore.getState().providers.find((item) => item.id === conversation.providerId)
-    return provider ? { conversation, provider } : null
+    return provider && getProviderAvailableModels(provider).includes(conversation.model) ? { conversation, provider } : null
+  }
+  const currentProvider = useSettingsStore.getState().providers.find((item) => item.id === conversation.providerId)
+  if (currentProvider && getProviderAvailableModels(currentProvider).includes(conversation.model) && isProviderConversationReady(currentProvider)) {
+    return { conversation, provider: currentProvider }
   }
   const readyProvider = pickReadyProvider(useSettingsStore.getState().providers, useSettingsStore.getState().settings.defaultProvider)
   if (!readyProvider) return null
-  const model = readyProvider.models[0]
+  const model = getProviderPreferredModel(readyProvider)
   if (!model) return null
   return {
     provider: readyProvider,
@@ -877,7 +882,7 @@ async function resolveRuntimeConversation(conversation: Conversation): Promise<{
 }
 
 function pickReadyProvider(providers: AIProvider[], defaultProvider: string | null | undefined): AIProvider | null {
-  const enabled = providers.filter((provider) => provider.id !== 'local-setup' && provider.enabled && provider.models.length > 0)
+  const enabled = providers.filter((provider) => isProviderConversationReady(provider))
   return enabled.find((provider) => provider.id === defaultProvider) ?? enabled[0] ?? null
 }
 

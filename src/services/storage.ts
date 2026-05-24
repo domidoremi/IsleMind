@@ -3,7 +3,7 @@ import type { AIProvider, Conversation, McpServerConfig, MessageStatus, ProcessT
 import { getModelConfig } from '@/types'
 import { exportContextSnapshot, importContextSnapshot, type ContextSnapshot } from '@/services/contextStore'
 import { localDataStore } from '@/services/localDataStore'
-import { clearHistoricalInjectedProviderModels } from '@/utils/providerModels'
+import { clearHistoricalInjectedGroupModels, clearHistoricalInjectedProviderModels } from '@/utils/providerModels'
 
 const KEYS = {
   CONVERSATIONS: '@islemind/conversations',
@@ -274,6 +274,12 @@ function normalizeProvider(provider: AIProvider): AIProvider {
     tokenPlanRegion: provider.type === 'xiaomi-mimo' ? provider.tokenPlanRegion ?? 'cn' : provider.tokenPlanRegion,
     wireProtocol: provider.type === 'xiaomi-mimo' ? provider.wireProtocol ?? 'openai-compatible' : provider.wireProtocol,
     modelConfigs: models.map((modelId) => getModelConfig(modelId, provider.type, provider.modelConfigs)),
+    credentialGroups: provider.credentialGroups?.map((group, index) => ({
+      ...group,
+      id: group.id || `group-${index + 1}`,
+      availableModels: group.availableModels?.length ? clearHistoricalInjectedGroupModels(group, provider) : [],
+      enabled: group.enabled ?? true,
+    })),
     lastTestStatus: provider.lastTestStatus ?? 'idle',
     lastModelSyncStatus: provider.lastModelSyncStatus ?? 'idle',
   }

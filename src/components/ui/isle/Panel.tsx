@@ -2,21 +2,22 @@ import type { PropsWithChildren } from 'react'
 import { StyleSheet, View, type StyleProp, type ViewStyle } from 'react-native'
 import { BlurView } from 'expo-blur'
 import { useAppTheme } from '@/hooks/useAppTheme'
+import { IsleCard } from './IsleKit'
 
-export type IslandMaterial = 'paper' | 'raised' | 'muted' | 'glass' | 'chrome' | 'field' | 'transparent'
+export type IsleMaterial = 'paper' | 'raised' | 'muted' | 'glass' | 'chrome' | 'field' | 'transparent'
 
-interface IslandPanelProps extends PropsWithChildren {
+interface IslePanelProps extends PropsWithChildren {
   style?: StyleProp<ViewStyle>
   contentStyle?: StyleProp<ViewStyle>
   blur?: boolean
-  material?: IslandMaterial
+  material?: IsleMaterial
   intensity?: number
   elevated?: boolean
   radius?: number
   interactive?: boolean
 }
 
-export function IslandPanel({
+export function IslePanel({
   children,
   style,
   contentStyle,
@@ -26,7 +27,7 @@ export function IslandPanel({
   elevated = true,
   radius = 30,
   interactive = false,
-}: IslandPanelProps) {
+}: IslePanelProps) {
   const { colors, isDark } = useAppTheme()
   const resolvedMaterial = material ?? (blur ? 'glass' : 'paper')
   const backgroundColor = panelBackground(resolvedMaterial, colors)
@@ -38,9 +39,9 @@ export function IslandPanel({
       borderRadius: radius,
       backgroundColor,
       shadowColor: colors.shadowTint,
-      shadowOpacity: elevated ? (isDark ? colors.shadow.mediumOpacity : colors.shadow.softOpacity) : 0,
-      shadowRadius: elevated ? (interactive ? 24 : 20) : 0,
-      shadowOffset: { width: 0, height: elevated ? (interactive ? 12 : 10) : 0 },
+      shadowOpacity: elevated ? (isDark ? colors.shadow.mediumOpacity : 0.18) : 0,
+      shadowRadius: elevated ? (interactive ? 18 : 12) : 0,
+      shadowOffset: { width: 0, height: elevated ? (interactive ? 8 : 5) : 0 },
       elevation: elevated ? (interactive ? 5 : 4) : 0,
     },
     style,
@@ -54,6 +55,18 @@ export function IslandPanel({
     )
   }
 
+  if (resolvedMaterial === 'paper' || resolvedMaterial === 'raised' || resolvedMaterial === 'muted') {
+    return (
+      <IsleCard
+        type={resolvedMaterial === 'muted' ? 'dashed' : resolvedMaterial === 'paper' ? 'title' : 'default'}
+        style={panelStyle}
+        contentStyle={contentStyle}
+      >
+        {children}
+      </IsleCard>
+    )
+  }
+
   return <View style={[panelStyle, contentStyle]}>{children}</View>
 }
 
@@ -64,7 +77,7 @@ const styles = StyleSheet.create({
   },
 })
 
-function panelBackground(material: IslandMaterial, colors: ReturnType<typeof useAppTheme>['colors']) {
+function panelBackground(material: IsleMaterial, colors: ReturnType<typeof useAppTheme>['colors']) {
   switch (material) {
     case 'raised':
       return colors.material.paperRaised

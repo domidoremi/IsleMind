@@ -7,22 +7,22 @@ import type { TFunction } from 'i18next'
 import { useTranslation } from 'react-i18next'
 import { BookOpen, ChevronLeft, Copy, ExternalLink, Globe2, ListChecks, RefreshCw } from 'lucide-react-native'
 import { MotiView } from 'moti'
-import { Screen } from '@/components/ui/Screen'
-import { IslandPanel } from '@/components/ui/IslandPanel'
-import { IslandButton } from '@/components/ui/IslandButton'
-import { IslandChip } from '@/components/ui/IslandChip'
-import { IslandHeader, IslandIconButton, IslandSection } from '@/components/ui/IslandPrimitives'
+import { IsleScreen } from '@/components/ui/isle'
+import { IslePanel } from '@/components/ui/isle'
+import { IsleButton } from '@/components/ui/isle'
+import { IsleChip } from '@/components/ui/isle'
+import { IsleHeader, IsleIconButton, IsleSection } from '@/components/ui/isle'
 import { RenderGuard } from '@/components/ui/RenderGuard'
 import { useAppTheme } from '@/hooks/useAppTheme'
 import { useChatStore } from '@/store/chatStore'
-import { useIslandDialog } from '@/components/ui/IslandDialog'
+import { useIsleDialog } from '@/components/ui/isle'
 import type { MessageCitation, ProcessTrace } from '@/types'
 import { collectMessageTraces, formatDuration, metadataSummary, normalizeTraceStatuses, traceStatusLabel } from '@/components/chat/tracePresentation'
 
 export default function SourceScreen() {
   const { colors } = useAppTheme()
   const { t } = useTranslation()
-  const dialog = useIslandDialog()
+  const dialog = useIsleDialog()
   const params = useLocalSearchParams<{ conversationId?: string; messageId?: string; citationId?: string; kind?: string; url?: string }>()
   const conversations = useChatStore((state) => state.conversations)
   const conversation = conversations.find((item) => item.id === params.conversationId)
@@ -63,30 +63,30 @@ export default function SourceScreen() {
   }
 
   return (
-    <Screen padded={false}>
+    <IsleScreen padded={false}>
       <View style={{ flex: 1 }}>
         <View pointerEvents="box-none" style={{ paddingHorizontal: 12, paddingTop: 6, paddingBottom: 8 }}>
-          <IslandHeader
+          <IsleHeader
             title={title}
             subtitle={subtitle}
             leading={
-              <IslandIconButton label={t('source.backToChat')} onPress={() => router.back()}>
+              <IsleIconButton label={t('source.backToChat')} onPress={() => router.back()}>
                 <ChevronLeft color={colors.text} size={22} strokeWidth={1.9} />
-              </IslandIconButton>
+              </IsleIconButton>
             }
             trailing={
               <View style={{ flexDirection: 'row', gap: 7 }}>
-                <IslandIconButton label={t('common.copy')} size="sm" onPress={() => void copyCurrent()}>
+                <IsleIconButton label={t('common.copy')} size="sm" onPress={() => void copyCurrent()}>
                   <Copy color={colors.textSecondary} size={17} strokeWidth={1.9} />
-                </IslandIconButton>
+                </IsleIconButton>
                 {webUrl ? (
                   <>
-                    <IslandIconButton label={t('common.refresh')} size="sm" onPress={() => setWebKey((value) => value + 1)}>
+                    <IsleIconButton label={t('common.refresh')} size="sm" onPress={() => setWebKey((value) => value + 1)}>
                       <RefreshCw color={colors.textSecondary} size={17} strokeWidth={1.9} />
-                    </IslandIconButton>
-                    <IslandIconButton label={t('common.openExternal')} size="sm" onPress={() => void openExternal()}>
+                    </IsleIconButton>
+                    <IsleIconButton label={t('common.openExternal')} size="sm" onPress={() => void openExternal()}>
                       <ExternalLink color={colors.textSecondary} size={17} strokeWidth={1.9} />
-                    </IslandIconButton>
+                    </IsleIconButton>
                   </>
                 ) : null}
               </View>
@@ -104,7 +104,7 @@ export default function SourceScreen() {
           )}
         </RenderGuard>
       </View>
-    </Screen>
+    </IsleScreen>
   )
 }
 
@@ -135,7 +135,7 @@ function WebReader({ url, citation, onOpenExternal }: { url: string; citation?: 
 
   return (
     <View style={{ flex: 1 }}>
-      <IslandPanel material="raised" elevated={false} style={{ marginHorizontal: 12, marginTop: 10, marginBottom: 8 }} radius={24}>
+      <IslePanel material="raised" elevated={false} style={{ marginHorizontal: 12, marginTop: 10, marginBottom: 8 }} radius={24}>
       <View style={{ paddingHorizontal: 14, paddingVertical: 11 }}>
         <View style={{ flexDirection: 'row', alignItems: 'center', gap: 9 }}>
           <View style={{ width: 26, height: 26, borderRadius: 13, alignItems: 'center', justifyContent: 'center', backgroundColor: colors.mintSoft }}>
@@ -150,14 +150,14 @@ function WebReader({ url, citation, onOpenExternal }: { url: string; citation?: 
           <Text numberOfLines={2} style={{ color: colors.textSecondary, fontSize: 12, lineHeight: 17, marginTop: 6 }}>{citation.excerpt}</Text>
         ) : null}
       </View>
-      </IslandPanel>
+      </IslePanel>
       {failed ? (
         <View style={{ flex: 1, padding: 24, justifyContent: 'center' }}>
           <Text style={{ color: colors.text, fontSize: 19, fontWeight: '900' }}>{t('source.previewUnavailable')}</Text>
           <Text style={{ color: colors.textSecondary, fontSize: 13, lineHeight: 19, marginTop: 8 }}>
             {t('source.previewUnavailableMessage')}
           </Text>
-          <IslandButton label={t('source.openInBrowser')} tone="primary" onPress={() => void onOpenExternal()} style={{ marginTop: 16 }} />
+          <IsleButton label={t('source.openInBrowser')} tone="primary" onPress={() => void onOpenExternal()} style={{ marginTop: 16 }} />
         </View>
       ) : (
         <View style={{ flex: 1 }}>
@@ -207,7 +207,7 @@ function LocalSourceReader({ citation, citations }: { citation?: MessageCitation
           transition={{ type: 'spring', damping: 20, stiffness: 180, delay: index * 35 }}
           style={{ marginBottom: 10 }}
         >
-          <IslandSection
+          <IsleSection
             elevated
             title={source.title || source.type}
             subtitle={formatCitationMeta(source, t)}
@@ -229,7 +229,7 @@ function LocalSourceReader({ citation, citations }: { citation?: MessageCitation
               {source.documentId ? <SourceMetaChip label={`doc ${source.documentId.slice(0, 8)}`} /> : null}
               {source.chunkId ? <SourceMetaChip label={`chunk ${source.chunkId.slice(0, 8)}`} /> : null}
             </View>
-          </IslandSection>
+          </IsleSection>
         </MotiView>
       ))}
     </ScrollView>
@@ -327,7 +327,7 @@ function ReaderSkeleton({ label }: { label: string }) {
 function SourceMetaChip({ label }: { label: string }) {
   const { colors } = useAppTheme()
   return (
-    <IslandChip>{label}</IslandChip>
+    <IsleChip>{label}</IsleChip>
   )
 }
 

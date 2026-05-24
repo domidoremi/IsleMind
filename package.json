@@ -17,7 +17,8 @@
     "apk:local:release:models": "node scripts/build-local-android-apk.js --variant with-model-small --release",
     "apk:local:release:all": "node scripts/build-local-android-apk.js --all-variants --release",
     "apk:prepare-models": "node scripts/prepare-model-bundle.js",
-    "apk:validate-16kb": "node scripts/validate-android-16kb-apk.js"
+    "apk:validate-16kb": "node scripts/validate-android-16kb-apk.js",
+    "test:ui-naming": "node scripts/ui-naming-audit.js"
   },
   "dependencies": {
     "@react-native-async-storage/async-storage": "2.2.0",

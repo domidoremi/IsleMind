@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState, type ReactNode } from 'react'
-import { ActivityIndicator, Text, TextInput, View } from 'react-native'
+import { ActivityIndicator, Platform, Text, TextInput, View } from 'react-native'
 import { Check, ChevronDown, KeyRound, ListFilter, Plus, Power, RotateCw, SearchCheck, Sparkles, Star, Trash2 } from 'lucide-react-native'
 import { MotiView } from 'moti'
 import type { TFunction } from 'i18next'
@@ -10,12 +10,13 @@ import { applyProviderPreset, detectProviderPreset, getProviderPreset, maskSecre
 import { syncAndTestProvider, summarizeProviderActivation } from '@/services/providerActivation'
 import { useAppTheme } from '@/hooks/useAppTheme'
 import { useSettingsStore } from '@/store/settingsStore'
-import { PressableScale } from '@/components/ui/PressableScale'
-import { IslandChip } from '@/components/ui/IslandChip'
-import { IslandButton } from '@/components/ui/IslandButton'
-import { IslandField } from '@/components/ui/IslandPrimitives'
-import { useIslandDialog } from '@/components/ui/IslandDialog'
+import { IslePressable } from '@/components/ui/isle'
+import { IsleChip } from '@/components/ui/isle'
+import { IsleButton } from '@/components/ui/isle'
+import { IsleField } from '@/components/ui/isle'
+import { useIsleDialog } from '@/components/ui/isle'
 import { parseModels } from '@/utils/text'
+import { getProviderAvailableModels, getProviderPreferredModel } from '@/utils/providerModels'
 
 interface ApiKeyPanelProps {
   provider: AIProvider
@@ -27,7 +28,7 @@ type PanelTask = 'idle' | 'saving' | 'syncing' | 'testing' | 'probing'
 export function ApiKeyPanel({ provider, initiallyExpanded = false }: ApiKeyPanelProps) {
   const { colors } = useAppTheme()
   const { t } = useTranslation()
-  const dialog = useIslandDialog()
+  const dialog = useIsleDialog()
   const updateProvider = useSettingsStore((state) => state.updateProvider)
   const updateSettings = useSettingsStore((state) => state.updateSettings)
   const defaultProvider = useSettingsStore((state) => state.settings.defaultProvider)
@@ -48,14 +49,17 @@ export function ApiKeyPanel({ provider, initiallyExpanded = false }: ApiKeyPanel
   const detection = useMemo(() => detectProviderPreset({ baseUrl, name: provider.name, apiKey: singleCredentialText || credentialText }), [baseUrl, credentialText, provider.name, singleCredentialText])
   const selectedPreset = getProviderPreset(presetId)
   const currentModels = useMemo(() => parseModels(modelsText), [modelsText])
-  const primaryModel = currentModels[0] ?? provider.lastTestModel ?? t('apiKeyPanel.noModelSet')
+  const availableModels = useMemo(() => getProviderAvailableModels(provider), [provider])
+  const preferredModel = getProviderPreferredModel(provider)
+  const primaryModel = preferredModel ?? availableModels[0] ?? currentModels[0] ?? t('apiKeyPanel.noModelSet')
   const primaryModelConfig = getModelConfig(primaryModel, provider.type, provider.modelConfigs)
   const groupCount = hydratedGroups.length
   const syncedGroups = hydratedGroups.filter((group) => group.lastModelSyncStatus === 'ok').length
   const hasKey = hydratedGroups.some((group) => group.enabled) || !!singleCredentialText.trim() || !!credentialText.trim()
   const isDefault = defaultProvider === provider.id
   const isBusy = task !== 'idle'
-  const lastStatusLabel = provider.lastTestStatus === 'ok' ? t('apiKeyPanel.modelAvailable') : provider.lastTestStatus === 'bad' ? t('apiKeyPanel.needsCheck') : provider.lastModelSyncStatus === 'ok' ? t('apiKeyPanel.synced') : provider.lastModelSyncStatus === 'bad' ? t('apiKeyPanel.syncFailed') : t('apiKeyPanel.pendingCheck')
+  const lastStatusLabel = provider.lastTestStatus === 'ok' ? t('apiKeyPanel.modelAvailable') : provider.lastTestStatus === 'bad' ? t('apiKeyPanel.needsCheck') : provider.lastModelSyncStatus === 'ok' ? t('apiKeyPanel.syncedNeedsTest') : provider.lastModelSyncStatus === 'bad' ? t('apiKeyPanel.syncFailed') : availableModels.length ? t('apiKeyPanel.pendingCheck') : t('apiKeyPanel.noAvailableModels')
+  const lastStatusTone = provider.lastTestStatus === 'ok' ? 'success' : provider.lastTestStatus === 'bad' || provider.lastModelSyncStatus === 'bad' ? 'danger' : provider.lastModelSyncStatus === 'ok' ? 'warning' : 'muted'
 
   useEffect(() => {
     setBaseUrl(provider.baseUrl ?? '')
@@ -182,7 +186,7 @@ export function ApiKeyPanel({ provider, initiallyExpanded = false }: ApiKeyPanel
     if (latest) setModelsText(latest.models.join('\n'))
     setTask('idle')
     const summary = summarizeProviderActivation([result])
-    if (result.testOk || result.modelCount > 0) {
+    if (result.testOk) {
       updateSettings({ defaultProvider: result.providerId, onboardingCompleted: true })
     }
     setNotice(summary.message)
@@ -206,7 +210,7 @@ export function ApiKeyPanel({ provider, initiallyExpanded = false }: ApiKeyPanel
       updateProviderCredentialGroupHealth: useSettingsStore.getState().updateProviderCredentialGroupHealth,
     }, { enable: true })
     const summary = summarizeProviderActivation([result])
-    if (result.testOk || result.modelCount > 0) {
+    if (result.testOk) {
       updateSettings({ defaultProvider: result.providerId, onboardingCompleted: true })
     }
     setTask('idle')
@@ -252,7 +256,7 @@ export function ApiKeyPanel({ provider, initiallyExpanded = false }: ApiKeyPanel
         marginBottom: 12,
       }}
     >
-      <PressableScale haptic onPress={() => setExpanded((value) => !value)} style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
+      <IslePressable haptic onPress={() => setExpanded((value) => !value)} style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
         <View style={{ width: 40, height: 40, borderRadius: 20, alignItems: 'center', justifyContent: 'center', backgroundColor: colors.mintSoft }}>
           {provider.presetId === 'newapi' || provider.presetId === 'sub2api' ? <Sparkles color={colors.text} size={18} /> : <KeyRound color={colors.text} size={18} />}
         </View>
@@ -262,10 +266,10 @@ export function ApiKeyPanel({ provider, initiallyExpanded = false }: ApiKeyPanel
             {isDefault ? <Badge label={t('settings.default')} tone="warning" /> : null}
             <Badge label={provider.enabled ? t('apiKeyPanel.enabled') : t('apiKeyPanel.disabled')} tone={provider.enabled ? 'success' : 'muted'} />
             <Badge label={t('apiKeyPanel.tokenGroups', { count: Math.max(groupCount, hasKey ? 1 : 0) })} tone={hasKey ? 'success' : 'muted'} />
-            <Badge label={lastStatusLabel} tone={provider.lastTestStatus === 'ok' || provider.lastModelSyncStatus === 'ok' ? 'success' : provider.lastTestStatus === 'bad' || provider.lastModelSyncStatus === 'bad' ? 'danger' : 'muted'} />
+            <Badge label={lastStatusLabel} tone={lastStatusTone} />
           </View>
           <Text numberOfLines={1} style={{ color: colors.textSecondary, fontSize: 12, marginTop: 3 }}>
-            {getModelName(primaryModel)} · {t('apiKeyPanel.modelCount', { count: provider.models.length })} · {getProviderPreset(provider.presetId).name}
+            {getModelName(primaryModel)} · {t('apiKeyPanel.modelCount', { count: availableModels.length })} · {getProviderPreset(provider.presetId).name}
           </Text>
           <Text numberOfLines={1} style={{ color: colors.textTertiary, fontSize: 11, marginTop: 2 }}>
             {t('apiKeyPanel.contextGroups', { context: formatTokenLimit(primaryModelConfig.contextWindow), synced: syncedGroups, total: groupCount })}
@@ -276,7 +280,7 @@ export function ApiKeyPanel({ provider, initiallyExpanded = false }: ApiKeyPanel
         <MotiView animate={{ rotate: expanded ? '180deg' : '0deg' }} transition={{ type: 'timing', duration: 180 }}>
           <ChevronDown color={colors.textTertiary} size={19} />
         </MotiView>
-      </PressableScale>
+      </IslePressable>
 
       {expanded ? (
         <MotiView from={{ opacity: 0, translateY: -8 }} animate={{ opacity: 1, translateY: 0 }} transition={{ type: 'spring', damping: 20, stiffness: 180 }} style={{ marginTop: 14, gap: 12 }}>
@@ -310,7 +314,7 @@ export function ApiKeyPanel({ provider, initiallyExpanded = false }: ApiKeyPanel
             </View>
           </View>
 
-          <IslandField
+          <IsleField
             label={t('providerSettings.baseUrl')}
             inputProps={{
               value: baseUrl,
@@ -320,6 +324,7 @@ export function ApiKeyPanel({ provider, initiallyExpanded = false }: ApiKeyPanel
               },
               autoCapitalize: 'none',
               autoCorrect: false,
+              returnKeyType: 'done',
               placeholder: selectedPreset.baseUrl ?? 'https://new-api.example.com/v1',
             }}
           />
@@ -352,7 +357,7 @@ export function ApiKeyPanel({ provider, initiallyExpanded = false }: ApiKeyPanel
                 <Text style={{ color: colors.textSecondary, fontSize: 12, lineHeight: 18, fontWeight: '800' }}>{t('apiKeyPanel.noCredentialGroups')}</Text>
               </View>
             )}
-            <IslandField
+            <IsleField
               label={t('apiKeyPanel.addSingleToken')}
               inputProps={{
                 value: singleCredentialText,
@@ -363,10 +368,11 @@ export function ApiKeyPanel({ provider, initiallyExpanded = false }: ApiKeyPanel
                 secureTextEntry: false,
                 autoCapitalize: 'none',
                 autoCorrect: false,
+                returnKeyType: 'done',
                 placeholder: 'sk-...',
               }}
             />
-            <IslandField
+            <IsleField
               label={t('apiKeyPanel.addMultipleTokens')}
               note={t('apiKeyPanel.addMultipleTokensNote')}
               inputProps={{
@@ -379,8 +385,9 @@ export function ApiKeyPanel({ provider, initiallyExpanded = false }: ApiKeyPanel
                 autoCapitalize: 'none',
                 autoCorrect: false,
                 multiline: true,
+                blurOnSubmit: false,
                 placeholder: 'sk-...\nsk-...\nsk-...',
-                style: { minHeight: 84, maxHeight: 140 },
+                style: { minHeight: 84, maxHeight: 140, textAlignVertical: 'top' },
               }}
             />
           </View>
@@ -407,7 +414,7 @@ export function ApiKeyPanel({ provider, initiallyExpanded = false }: ApiKeyPanel
               }
             />
             {modelEditing ? (
-              <IslandField
+              <IsleField
                 label={t('apiKeyPanel.modelId')}
                 inputProps={{
                   value: modelsText,
@@ -418,8 +425,9 @@ export function ApiKeyPanel({ provider, initiallyExpanded = false }: ApiKeyPanel
                   autoCapitalize: 'none',
                   autoCorrect: false,
                   multiline: true,
+                  blurOnSubmit: false,
                   placeholder: t('providerSettings.oneModelPerLine'),
-                  style: { minHeight: 116, maxHeight: 190, paddingVertical: 12, lineHeight: 20 },
+                  style: { minHeight: 116, maxHeight: 190, paddingVertical: 12, lineHeight: 20, textAlignVertical: 'top' },
                 }}
               />
             ) : (
@@ -468,15 +476,15 @@ function mergeGroups(existing: ProviderCredentialGroup[], incoming: ProviderCred
 }
 
 function Badge({ label, tone }: { label: string; tone: 'success' | 'warning' | 'danger' | 'muted' }) {
-  return <IslandChip tone={tone === 'warning' ? 'amber' : tone === 'danger' ? 'danger' : tone === 'success' ? 'mint' : 'default'}>{label}</IslandChip>
+  return <IsleChip tone={tone === 'warning' ? 'amber' : tone === 'danger' ? 'danger' : tone === 'success' ? 'mint' : 'default'}>{label}</IsleChip>
 }
 
 function ChoiceButton({ label, active, onPress }: { label: string; active: boolean; onPress: () => void }) {
   const { colors } = useAppTheme()
   return (
-    <PressableScale haptic onPress={onPress} style={{ minHeight: 34, borderRadius: 17, paddingHorizontal: 11, alignItems: 'center', justifyContent: 'center', backgroundColor: active ? colors.text : colors.material.field }}>
+    <IslePressable haptic onPress={onPress} style={{ minHeight: 34, borderRadius: 17, paddingHorizontal: 11, alignItems: 'center', justifyContent: 'center', backgroundColor: active ? colors.text : colors.material.field }}>
       <Text style={{ color: active ? colors.surface : colors.textSecondary, fontSize: 11, fontWeight: '900' }}>{label}</Text>
-    </PressableScale>
+    </IslePressable>
   )
 }
 
@@ -532,6 +540,10 @@ function CredentialGroupRow({
           placeholderTextColor={colors.textTertiary}
           autoCapitalize="none"
           autoCorrect={false}
+          returnKeyType="done"
+          blurOnSubmit
+          onSubmitEditing={() => onChangeLabel(group.label.trim())}
+          textAlignVertical={Platform.OS === 'android' ? 'center' : undefined}
           style={{
             flex: 1,
             minHeight: 42,
@@ -545,12 +557,12 @@ function CredentialGroupRow({
             fontWeight: '900',
           }}
         />
-        <IconPill label={group.enabled ? t('apiKeyPanel.disabled') : t('apiKeyPanel.enabled')} onPress={onToggle} tone={group.enabled ? 'mint' : 'default'}>
+        <IconIsleChip label={group.enabled ? t('apiKeyPanel.disabled') : t('apiKeyPanel.enabled')} onPress={onToggle} tone={group.enabled ? 'mint' : 'default'}>
           <Power color={group.enabled ? colors.success : colors.textTertiary} size={15} />
-        </IconPill>
-        <IconPill label={t('common.delete')} onPress={onDelete} tone="danger">
+        </IconIsleChip>
+        <IconIsleChip label={t('common.delete')} onPress={onDelete} tone="danger">
           <Trash2 color={colors.error} size={15} />
-        </IconPill>
+        </IconIsleChip>
       </View>
       <View style={{ flexDirection: 'row', gap: 7, flexWrap: 'wrap', alignItems: 'center' }}>
         <Text style={{ color: colors.textSecondary, fontSize: 11, fontWeight: '900' }}>{maskedKey || t('apiKeyPanel.newTokenPending')}</Text>
@@ -592,30 +604,30 @@ function ModelChip({ label }: { label: string }) {
   )
 }
 
-function IconPill({ label, children, tone, onPress }: { label: string; children: ReactNode; tone: 'default' | 'mint' | 'danger'; onPress: () => void }) {
+function IconIsleChip({ label, children, tone, onPress }: { label: string; children: ReactNode; tone: 'default' | 'mint' | 'danger'; onPress: () => void }) {
   const { colors } = useAppTheme()
   const background = tone === 'mint' ? colors.mintSoft : tone === 'danger' ? colors.coralWash : colors.material.field
   return (
-    <PressableScale haptic accessibilityLabel={label} onPress={onPress} style={{ width: 42, height: 42, borderRadius: 21, alignItems: 'center', justifyContent: 'center', backgroundColor: background, borderWidth: 1, borderColor: colors.border }}>
+    <IslePressable haptic accessibilityLabel={label} onPress={onPress} style={{ width: 42, height: 42, borderRadius: 21, alignItems: 'center', justifyContent: 'center', backgroundColor: background, borderWidth: 1, borderColor: colors.border }}>
       {children}
-    </PressableScale>
+    </IslePressable>
   )
 }
 
 function MiniAction({ label, children, active = false, disabled = false, onPress }: { label: string; children: ReactNode; active?: boolean; disabled?: boolean; onPress: () => void }) {
   const { colors } = useAppTheme()
   return (
-    <PressableScale haptic disabled={disabled} onPress={onPress} style={{ minHeight: 34, borderRadius: 17, paddingHorizontal: 10, flexDirection: 'row', alignItems: 'center', gap: 5, backgroundColor: active ? colors.amberSoft : colors.islandRaised, opacity: disabled ? 0.5 : 1 }}>
+    <IslePressable haptic disabled={disabled} onPress={onPress} style={{ minHeight: 34, borderRadius: 17, paddingHorizontal: 10, flexDirection: 'row', alignItems: 'center', gap: 5, backgroundColor: active ? colors.amberSoft : colors.islandRaised, opacity: disabled ? 0.5 : 1 }}>
       {children}
       <Text style={{ color: active ? colors.text : colors.textSecondary, fontSize: 12, fontWeight: '800' }}>{label}</Text>
-    </PressableScale>
+    </IslePressable>
   )
 }
 
 function ActionButton({ label, busy = false, secondary = false, disabled = false, onPress }: { label: string; busy?: boolean; secondary?: boolean; disabled?: boolean; onPress: () => void }) {
   const { colors } = useAppTheme()
   return (
-    <IslandButton
+    <IsleButton
       label={label}
       tone={secondary ? 'soft' : 'primary'}
       disabled={disabled}

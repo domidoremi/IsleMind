@@ -1,26 +1,33 @@
-import { useMemo, useState, type ReactNode } from 'react'
-import { KeyboardAvoidingView, Modal, Platform, Pressable, ScrollView, Text, TextInput, View } from 'react-native'
+import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
+import { KeyboardAvoidingView, Modal, Platform, ScrollView, Text, TextInput, View, useWindowDimensions } from 'react-native'
 import * as Clipboard from 'expo-clipboard'
 import * as DocumentPicker from 'expo-document-picker'
 import * as FileSystem from 'expo-file-system/legacy'
 import { Gesture, GestureDetector } from 'react-native-gesture-handler'
 import Animated, { runOnJS, useAnimatedStyle, useSharedValue, withSpring } from 'react-native-reanimated'
-import { ChevronLeft, ClipboardPaste, FileJson, GripVertical, Import, ListChecks, Plus, Search, SlidersHorizontal, X, Zap } from 'lucide-react-native'
+import { ChevronDown, ChevronLeft, ClipboardPaste, FileJson, GripVertical, Import, ListChecks, Plus, Search, SlidersHorizontal, X, Zap } from 'lucide-react-native'
+import { MotiView } from 'moti'
 import { router } from 'expo-router'
 import { useTranslation } from 'react-i18next'
 import { ApiKeyPanel } from '@/components/settings/ApiKeyPanel'
-import { IslandField, IslandHeader, IslandIconButton, IslandSection } from '@/components/ui/IslandPrimitives'
-import { IslandButton } from '@/components/ui/IslandButton'
-import { PressableScale } from '@/components/ui/PressableScale'
-import { useIslandDialog } from '@/components/ui/IslandDialog'
+import { useMainPagerGestureLock } from '@/components/main/MainPagerGestureLock'
+import { IsleField, IsleHeader, IsleIconButton, IsleSection } from '@/components/ui/isle'
+import { IsleButton } from '@/components/ui/isle'
+import { IsleOverlayPressable, IslePressable } from '@/components/ui/isle'
+import { useIsleDialog } from '@/components/ui/isle'
 import { useAppTheme } from '@/hooks/useAppTheme'
 import { useChatStore } from '@/store/chatStore'
 import { useSettingsStore } from '@/store/settingsStore'
+import { useActivationJobStore, type ActivationJobState } from '@/store/activationJobStore'
 import { type AIProvider, type ProviderPresetId } from '@/types'
 import { applyProviderPreset, getProviderPreset, parseCredentialGroups, parseProviderImportText, PROVIDER_PRESETS } from '@/services/ai/providerRegistry'
 import { syncAndTestProvider, summarizeProviderActivation } from '@/services/providerActivation'
-import { MiniStat } from '@/components/ui/MiniStat'
+import { IsleMetric } from '@/components/ui/isle'
 import { normalizeSearchText, parseModels } from '@/utils/text'
+import { isProviderConversationReady } from '@/utils/providerModels'
+import { useMotionPreference } from '@/hooks/useMotionPreference'
+import { motionTokens } from '@/theme/animation'
+import { useSafeAreaInsets } from 'react-native-safe-area-context'
 
 type ProviderSortMode = 'manual' | 'recent' | 'enabled' | 'models' | 'health' | 'name'
 
@@ -41,7 +48,9 @@ interface ProviderSettingsContentProps {
 export function ProviderSettingsContent({ embedded = false, onClose }: ProviderSettingsContentProps) {
   const { colors } = useAppTheme()
   const { t } = useTranslation()
-  const dialog = useIslandDialog()
+  const dialog = useIsleDialog()
+  const motion = useMotionPreference()
+  const pagerGestureLock = useMainPagerGestureLock()
   const providers = useSettingsStore((state) => state.providers)
   const addProvider = useSettingsStore((state) => state.addProvider)
   const addProviders = useSettingsStore((state) => state.addProviders)
@@ -49,6 +58,11 @@ export function ProviderSettingsContent({ embedded = false, onClose }: ProviderS
   const hydrateProviderKey = useSettingsStore((state) => state.hydrateProviderKey)
   const updateProvider = useSettingsStore((state) => state.updateProvider)
   const updateProviderCredentialGroupHealth = useSettingsStore((state) => state.updateProviderCredentialGroupHealth)
+  const activationJob = useActivationJobStore((state) => state.job)
+  const startActivationJob = useActivationJobStore((state) => state.start)
+  const updateActivationJob = useActivationJobStore((state) => state.update)
+  const finishActivationJob = useActivationJobStore((state) => state.finish)
+  const clearActivationJob = useActivationJobStore((state) => state.clear)
   const conversations = useChatStore((state) => state.conversations)
   const [expandedProviderId, setExpandedProviderId] = useState<string | null>(null)
   const [sortMode, setSortMode] = useState<ProviderSortMode>('manual')
@@ -58,6 +72,20 @@ export function ProviderSettingsContent({ embedded = false, onClose }: ProviderS
   const [addOpen, setAddOpen] = useState(false)
   const [importOpen, setImportOpen] = useState(false)
   const [activationBusy, setActivationBusy] = useState(false)
+  const mountedRef = useRef(true)
+
+  useEffect(() => {
+    mountedRef.current = true
+    return () => {
+      mountedRef.current = false
+    }
+  }, [])
+
+  useEffect(() => {
+    if (!embedded) return undefined
+    pagerGestureLock?.setLocked(true)
+    return () => pagerGestureLock?.setLocked(false)
+  }, [embedded, pagerGestureLock])
 
   const usageByProvider = useMemo(() => {
     const usage = new Map<string, number>()
@@ -77,6 +105,7 @@ export function ProviderSettingsContent({ embedded = false, onClose }: ProviderS
   }, [modelFilter, providers, sortMode, usageByProvider])
 
   const enabled = providers.filter((provider) => provider.enabled).length
+  const available = providers.filter((provider) => isProviderConversationReady(provider)).length
   const credentialGroups = providers.reduce((sum, provider) => sum + (provider.credentialGroups?.length ?? 0), 0)
 
   async function addProviderFromForm(provider: AIProvider) {
@@ -137,7 +166,7 @@ export function ProviderSettingsContent({ embedded = false, onClose }: ProviderS
   }
 
   async function activateProviders(ids: string[], mode: 'single' | 'batch' | 'all') {
-    if (activationBusy) return
+    if (activationBusy || activationJob?.status === 'running') return
     const currentProviders = useSettingsStore.getState().providers
     const chosen = ids.map((id) => currentProviders.find((provider) => provider.id === id)).filter((provider): provider is AIProvider => !!provider)
     if (!chosen.length) {
@@ -151,44 +180,128 @@ export function ProviderSettingsContent({ embedded = false, onClose }: ProviderS
         title: startTitle,
         message: t('providerSettings.activationStartedMessage', { count: chosen.length }),
         tone: 'mint',
+        position: 'bottom',
         durationMs: 1800,
       })
-      const successful: Awaited<ReturnType<typeof syncAndTestProvider>>[] = []
-      const failedProviders: AIProvider[] = []
+      const results = []
+      let completed = 0
+      let synced = 0
+      let tested = 0
+      let failed = 0
+      startActivationJob({
+        status: 'running',
+        total: chosen.length,
+        completed: 0,
+        synced: 0,
+        tested: 0,
+        failed: 0,
+        stage: t('providerSettings.activationQueued'),
+      })
       for (const provider of chosen) {
-        try {
-          successful.push(await syncAndTestProvider(provider, { updateProvider, hydrateProviderKey, updateProviderCredentialGroupHealth }, { enable: true }))
-        } catch {
-          failedProviders.push(provider)
-        }
+        updateActivationJob({
+          status: 'running',
+          total: chosen.length,
+          completed,
+          synced,
+          tested,
+          failed,
+          currentName: provider.name,
+          stage: t('providerSettings.activationCurrent', { name: provider.name }),
+        })
+        dialog.toast({
+          title: t('providerSettings.activationCurrent', { name: provider.name }),
+          message: t('providerSettings.activationProgressMessage', { completed, total: chosen.length, synced, tested, failed }),
+          tone: 'mint',
+          position: 'bottom',
+          durationMs: 2200,
+        })
+        const result = await syncAndTestProvider(provider, {
+          updateProvider,
+          hydrateProviderKey,
+          updateProviderCredentialGroupHealth,
+          onStage: (event) => {
+            updateActivationJob({ currentName: event.providerName, stage: event.message })
+          },
+        }, { enable: true }).catch((error) => ({
+          providerId: provider.id,
+          providerName: provider.name,
+          enabled: provider.enabled,
+          hadCredential: !!provider.apiKey?.trim() || !!provider.credentialGroups?.some((group) => group.enabled && group.apiKey?.trim()),
+          synced: false,
+          syncAttempted: true,
+          modelCount: provider.models.length,
+          syncedGroups: 0,
+          missingToken: false,
+          tested: false,
+          testOk: false,
+          messages: [],
+          failures: [{
+            providerName: provider.name,
+            message: error instanceof Error ? error.message : t('providerSettings.activationFailed'),
+          }],
+        }))
+        results.push(result)
+        completed += 1
+        if (result.synced) synced += 1
+        if (result.testOk) tested += 1
+        if (result.failures.length && !result.testOk) failed += 1
+        updateActivationJob({
+          status: 'running',
+          total: chosen.length,
+          completed,
+          synced,
+          tested,
+          failed,
+          currentName: result.providerName,
+          stage: result.testOk
+            ? t('providerSettings.activationProviderReady', { name: result.providerName })
+            : t('providerSettings.activationProviderNeedsCheck', { name: result.providerName }),
+        })
+        dialog.toast({
+          title: result.testOk
+            ? t('providerSettings.activationProviderReady', { name: result.providerName })
+            : t('providerSettings.activationProviderNeedsCheck', { name: result.providerName }),
+          message: t('providerSettings.activationProgressMessage', { completed, total: chosen.length, synced, tested, failed }),
+          tone: result.testOk ? 'mint' : result.synced ? 'amber' : 'danger',
+          position: 'bottom',
+          durationMs: 2200,
+        })
       }
-      const summary = summarizeProviderActivation(successful)
-      const primaryReady = successful.find((result) => result.testOk || result.modelCount > 0)
+      const summary = summarizeProviderActivation(results)
+      const primaryReady = results.find((result) => result.testOk)
       if (primaryReady) {
         useSettingsStore.getState().updateSettings({ defaultProvider: primaryReady.providerId, onboardingCompleted: true })
       }
-      const finalMessage = failedProviders.length
-        ? [summary.message, t('providerSettings.failedProviders', { names: failedProviders.map((provider) => provider.name).join(', ') })].join('\n')
-        : summary.message
       if (mode === 'single') {
-        const result = successful[0]
+        const result = results[0]
         const title = result?.testOk
           ? t('providerSettings.activationSuccess')
           : result?.synced
             ? t('providerSettings.activationPartial')
             : t('providerSettings.activationFailed')
-        dialog.notice({ title, message: finalMessage, tone: failedProviders.length ? 'danger' : summary.tone })
+        dialog.notice({ title, message: summary.message, tone: summary.tone })
       } else {
         dialog.notice({
           title: t('providerSettings.enableDone'),
-          message: finalMessage,
-          tone: failedProviders.length ? 'danger' : summary.tone,
+          message: summary.message,
+          tone: summary.tone,
         })
       }
-      setBatchMode(false)
-      setSelectedIds(new Set())
+      if (mountedRef.current) {
+        setBatchMode(false)
+        setSelectedIds(new Set())
+      }
+      finishActivationJob({
+        status: summary.tone === 'danger' ? 'failed' : 'done',
+        total: chosen.length,
+        completed,
+        synced,
+        tested,
+        failed,
+        stage: t('providerSettings.enableDone'),
+      })
     } finally {
-      setActivationBusy(false)
+      if (mountedRef.current) setActivationBusy(false)
     }
   }
 
@@ -216,53 +329,58 @@ export function ProviderSettingsContent({ embedded = false, onClose }: ProviderS
 
   const content = (
     <>
-      <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : 'height'} keyboardVerticalOffset={0} style={{ flex: 1 }}>
+      <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined} keyboardVerticalOffset={0} style={{ flex: 1 }}>
         <ScrollView
           keyboardShouldPersistTaps="handled"
           automaticallyAdjustKeyboardInsets
           contentContainerStyle={{ paddingHorizontal: 16, paddingTop: 8, paddingBottom: 96 }}
         >
-          <IslandHeader
+          <IsleHeader
             title={t('settings.providerManagement')}
             leading={
               <HeaderBackButton onPress={onClose ?? closeStandaloneProviderSettings} />
             }
             trailing={
               <View style={{ flexDirection: 'row', gap: 8 }}>
-                <IslandIconButton label={batchMode ? t('providerSettings.exitBatch') : t('providerSettings.batchMode')} tone={batchMode ? 'amber' : 'default'} onPress={() => {
+                <IsleIconButton label={batchMode ? t('providerSettings.exitBatch') : t('providerSettings.batchMode')} tone={batchMode ? 'amber' : 'default'} onPress={() => {
                   setBatchMode((value) => !value)
                   setSelectedIds(new Set())
                   dialog.toast({ title: batchMode ? t('providerSettings.batchExited') : t('providerSettings.batchEntered'), tone: 'mint' })
                 }}>
                   <ListChecks color={batchMode ? colors.warning : colors.textSecondary} size={18} strokeWidth={2} />
-                </IslandIconButton>
-                <IslandIconButton label={t('settings.addProvider')} tone="ink" onPress={() => setAddOpen(true)}>
+                </IsleIconButton>
+                <IsleIconButton label={t('settings.addProvider')} tone="ink" onPress={() => setAddOpen(true)}>
                   <Plus color={colors.surface} size={20} strokeWidth={2} />
-                </IslandIconButton>
+                </IsleIconButton>
               </View>
             }
           />
 
-          <IslandSection title={t('providerSettings.overview')} style={{ marginTop: 16 }}>
+          <IsleSection title={t('providerSettings.overview')} style={{ marginTop: 16 }}>
             <View style={{ flexDirection: 'row', gap: 8, flexWrap: 'wrap' }}>
-              <MiniStat label={t('providerSettings.enabledCount', { count: enabled })} />
-              <MiniStat label={t('providerSettings.credentialGroupCount', { count: credentialGroups })} />
-              <MiniStat label={t('providerSettings.providerCount', { count: providers.length })} />
-              <MiniStat label={t('providerSettings.visibleCount', { count: visibleProviders.length })} />
+              <IsleMetric label={t('providerSettings.enabledCount', { count: enabled })} />
+              <IsleMetric label={t('providerSettings.availableCount', { count: available })} />
+              <IsleMetric label={t('providerSettings.credentialGroupCount', { count: credentialGroups })} />
+              <IsleMetric label={t('providerSettings.providerCount', { count: providers.length })} />
+              <IsleMetric label={t('providerSettings.visibleCount', { count: visibleProviders.length })} />
             </View>
             <View style={{ flexDirection: 'row', gap: 10, flexWrap: 'wrap', marginTop: 12 }}>
-              <IslandButton label={t('settings.addProvider')} compact icon={<Plus color={colors.textSecondary} size={16} />} onPress={() => setAddOpen(true)} />
-              <IslandButton label={t('settings.batchImport')} compact icon={<Import color={colors.textSecondary} size={16} />} onPress={() => setImportOpen(true)} />
-              <IslandButton
+              <IsleButton label={t('settings.addProvider')} compact icon={<Plus color={colors.textSecondary} size={16} />} onPress={() => setAddOpen(true)} />
+              <IsleButton label={t('settings.batchImport')} compact icon={<Import color={colors.textSecondary} size={16} />} onPress={() => setImportOpen(true)} />
+              <IsleButton
                 label={batchMode ? t('providerSettings.enableSelected', { count: selectedIds.size }) : t('settings.enableAll')}
                 compact
                 tone="mint"
                 icon={<Zap color={colors.textSecondary} size={16} />}
                 onPress={() => void enableEffectiveSelection()}
-                disabled={activationBusy || (batchMode ? !selectedIds.size : !providers.length)}
+                disabled={activationBusy || activationJob?.status === 'running' || (batchMode ? !selectedIds.size : !providers.length)}
               />
             </View>
-          </IslandSection>
+          </IsleSection>
+
+          {activationJob ? (
+            <ActivationProgressCard job={activationJob} onDismiss={clearActivationJob} />
+          ) : null}
 
           <View style={{ minHeight: 48, borderRadius: 24, paddingHorizontal: 12, marginTop: 14, flexDirection: 'row', alignItems: 'center', gap: 9, backgroundColor: colors.material.field, borderWidth: 1, borderColor: colors.border }}>
             <Search color={colors.textTertiary} size={17} />
@@ -276,9 +394,9 @@ export function ProviderSettingsContent({ embedded = false, onClose }: ProviderS
               style={{ flex: 1, minHeight: 46, padding: 0, color: colors.text, fontSize: 14, fontWeight: '800' }}
             />
             {modelFilter ? (
-              <PressableScale haptic accessibilityLabel={t('common.clearSearch')} onPress={() => setModelFilter('')} style={{ width: 32, height: 32, borderRadius: 16, alignItems: 'center', justifyContent: 'center', backgroundColor: colors.islandRaised }}>
+              <IslePressable haptic accessibilityLabel={t('common.clearSearch')} onPress={() => setModelFilter('')} style={{ width: 32, height: 32, borderRadius: 16, alignItems: 'center', justifyContent: 'center', backgroundColor: colors.islandRaised }}>
                 <X color={colors.textSecondary} size={15} />
-              </PressableScale>
+              </IslePressable>
             ) : null}
           </View>
 
@@ -286,7 +404,7 @@ export function ProviderSettingsContent({ embedded = false, onClose }: ProviderS
             <SlidersHorizontal color={colors.textTertiary} size={16} />
             <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 8, paddingRight: 4 }}>
               {SORT_OPTIONS.map((option) => (
-                <ChoicePill
+                <ChoiceIsleChip
                   key={option.id}
                   label={t(option.labelKey)}
                   active={sortMode === option.id}
@@ -302,17 +420,25 @@ export function ProviderSettingsContent({ embedded = false, onClose }: ProviderS
           <Text style={{ color: colors.text, fontSize: 17, fontWeight: '900', marginTop: 22, marginBottom: 10 }}>{t('providerSettings.list')}</Text>
           <View style={{ gap: 12 }}>
             {visibleProviders.map((provider, index) => (
-              <ProviderListRow
+              <MotiView
                 key={provider.id}
-                provider={provider}
-                selected={selectedIds.has(provider.id)}
-                batchMode={batchMode}
-                expanded={expandedProviderId === provider.id || (expandedProviderId === null && index === 0 && !provider.enabled)}
-                canMoveUp={providers.findIndex((item) => item.id === provider.id) > 0}
-                canMoveDown={providers.findIndex((item) => item.id === provider.id) < providers.length - 1}
-                onToggleSelected={() => toggleSelection(provider.id)}
-                onMove={(direction) => moveProvider(provider.id, direction)}
-              />
+                from={motion === 'full' ? { opacity: 0, translateY: 10, scale: 0.99 } : { opacity: 0 }}
+                animate={{ opacity: 1, translateY: 0, scale: 1 }}
+                transition={motion === 'full'
+                  ? { type: 'spring', ...motionTokens.spring.gentle, delay: Math.min(index * 24, 160) }
+                  : { type: 'timing', duration: motionTokens.duration.fast }}
+              >
+                <ProviderListRow
+                  provider={provider}
+                  selected={selectedIds.has(provider.id)}
+                  batchMode={batchMode}
+                  expanded={expandedProviderId === provider.id || (expandedProviderId === null && index === 0 && !provider.enabled)}
+                  canMoveUp={providers.findIndex((item) => item.id === provider.id) > 0}
+                  canMoveDown={providers.findIndex((item) => item.id === provider.id) < providers.length - 1}
+                  onToggleSelected={() => toggleSelection(provider.id)}
+                  onMove={(direction) => moveProvider(provider.id, direction)}
+                />
+              </MotiView>
             ))}
           </View>
           {!visibleProviders.length ? <Text style={{ color: colors.textSecondary, fontSize: 12, fontWeight: '800', marginTop: 16 }}>{t('providerSettings.noMatches')}</Text> : null}
@@ -341,7 +467,7 @@ function HeaderBackButton({ onPress }: { onPress: () => void }) {
   const { colors } = useAppTheme()
   const { t } = useTranslation()
   return (
-    <Pressable
+    <IsleOverlayPressable
       accessibilityRole="button"
       accessibilityLabel={t('common.back')}
       hitSlop={12}
@@ -359,7 +485,7 @@ function HeaderBackButton({ onPress }: { onPress: () => void }) {
       })}
     >
       <ChevronLeft color={colors.text} size={24} strokeWidth={1.9} />
-    </Pressable>
+    </IsleOverlayPressable>
   )
 }
 
@@ -393,9 +519,9 @@ function ProviderListRow({
     <View style={{ flexDirection: 'row', alignItems: 'stretch', gap: 8 }}>
       <DragRail disabledUp={!canMoveUp} disabledDown={!canMoveDown} onMove={onMove} />
       {batchMode ? (
-        <PressableScale haptic onPress={onToggleSelected} accessibilityLabel={selected ? t('providerSettings.unselectProvider') : t('providerSettings.selectProvider')} style={{ width: 36, borderRadius: 18, alignItems: 'center', justifyContent: 'center', backgroundColor: selected ? colors.mintSoft : colors.islandRaised, borderWidth: 1, borderColor: selected ? colors.primary : colors.border }}>
+        <IslePressable haptic onPress={onToggleSelected} accessibilityLabel={selected ? t('providerSettings.unselectProvider') : t('providerSettings.selectProvider')} style={{ width: 36, borderRadius: 18, alignItems: 'center', justifyContent: 'center', backgroundColor: selected ? colors.mintSoft : colors.islandRaised, borderWidth: 1, borderColor: selected ? colors.primary : colors.border }}>
           <Text style={{ color: selected ? colors.primary : colors.textTertiary, fontSize: 13, fontWeight: '900' }}>{selected ? '✓' : ''}</Text>
-        </PressableScale>
+        </IslePressable>
       ) : null}
       <View style={{ flex: 1 }}>
         <ApiKeyPanel provider={provider} initiallyExpanded={expanded} />
@@ -433,12 +559,55 @@ function DragRail({ disabledUp, disabledDown, onMove }: { disabledUp: boolean; d
   )
 }
 
-function ChoicePill({ label, active, onPress }: { label: string; active: boolean; onPress: () => void }) {
+function ChoiceIsleChip({ label, active, onPress }: { label: string; active: boolean; onPress: () => void }) {
   const { colors } = useAppTheme()
   return (
-    <PressableScale haptic onPress={onPress} style={{ minHeight: 34, borderRadius: 17, paddingHorizontal: 12, alignItems: 'center', justifyContent: 'center', backgroundColor: active ? colors.text : colors.islandRaised, borderWidth: active ? 0 : 1, borderColor: colors.border }}>
+    <IslePressable haptic onPress={onPress} style={{ minHeight: 34, borderRadius: 17, paddingHorizontal: 12, alignItems: 'center', justifyContent: 'center', backgroundColor: active ? colors.text : colors.islandRaised, borderWidth: active ? 0 : 1, borderColor: colors.border }}>
       <Text style={{ color: active ? colors.surface : colors.textSecondary, fontSize: 12, fontWeight: '900' }}>{label}</Text>
-    </PressableScale>
+    </IslePressable>
+  )
+}
+
+function ActivationProgressCard({ job, onDismiss }: { job: ActivationJobState; onDismiss: () => void }) {
+  const { colors } = useAppTheme()
+  const { t } = useTranslation()
+  const progress = job.total ? job.completed / job.total : 0
+  const done = job.status !== 'running'
+  return (
+    <MotiView
+      from={{ opacity: 0, translateY: 8 }}
+      animate={{ opacity: 1, translateY: 0 }}
+      transition={{ type: 'spring', damping: 20, stiffness: 190 }}
+      style={{ marginTop: 14 }}
+    >
+      <View style={{ borderRadius: 24, padding: 13, backgroundColor: colors.material.chrome, borderWidth: 1, borderColor: colors.borderStrong, gap: 10 }}>
+        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
+          <View style={{ flex: 1 }}>
+            <Text style={{ color: colors.text, fontSize: 14, fontWeight: '900' }}>
+              {done ? t('providerSettings.enableDone') : t('providerSettings.activationRunning')}
+            </Text>
+            <Text numberOfLines={2} style={{ color: colors.textSecondary, fontSize: 12, lineHeight: 17, marginTop: 2, fontWeight: '800' }}>
+              {job.stage ?? job.currentName ?? t('providerSettings.activationQueued')}
+            </Text>
+          </View>
+          {done ? (
+            <IsleIconButton label={t('dialog.close')} size="sm" onPress={onDismiss}>
+              <X color={colors.textSecondary} size={15} />
+            </IsleIconButton>
+          ) : null}
+        </View>
+        <View style={{ height: 8, borderRadius: 4, backgroundColor: colors.islandRaised, overflow: 'hidden' }}>
+          <MotiView
+            animate={{ width: `${Math.max(4, Math.round(progress * 100))}%` }}
+            transition={{ type: 'timing', duration: 180 }}
+            style={{ height: 8, borderRadius: 4, backgroundColor: job.failed ? colors.warning : colors.primary }}
+          />
+        </View>
+        <Text style={{ color: colors.textTertiary, fontSize: 11, lineHeight: 16, fontWeight: '900' }}>
+          {t('providerSettings.activationProgressMessage', { completed: job.completed, total: job.total, synced: job.synced, tested: job.tested, failed: job.failed })}
+        </Text>
+      </View>
+    </MotiView>
   )
 }
 
@@ -453,12 +622,17 @@ function ProviderFormModal({
 }) {
   const { colors } = useAppTheme()
   const { t } = useTranslation()
+  const insets = useSafeAreaInsets()
+  const { height } = useWindowDimensions()
+  const motion = useMotionPreference()
   const [presetId, setPresetId] = useState<ProviderPresetId>('custom-openai-compatible')
   const [name, setName] = useState('')
   const [baseUrl, setBaseUrl] = useState('')
   const [modelsText, setModelsText] = useState('')
   const [keysText, setKeysText] = useState('')
+  const [advancedOpen, setAdvancedOpen] = useState(false)
   const preset = getProviderPreset(presetId)
+  const compact = height < 680
 
   function submit() {
     const modelList = parseModels(modelsText)
@@ -480,28 +654,41 @@ function ProviderFormModal({
     setBaseUrl('')
     setModelsText('')
     setKeysText('')
+    setAdvancedOpen(false)
     setPresetId('custom-openai-compatible')
   }
 
   return (
-    <Modal transparent visible={visible} animationType="slide" statusBarTranslucent onRequestClose={onClose}>
-      <View style={{ flex: 1, justifyContent: 'flex-end' }}>
-        <Pressable onPress={onClose} style={{ position: 'absolute', top: 0, right: 0, bottom: 0, left: 0, backgroundColor: colors.backdrop }} />
-        <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : 'height'}>
-          <View style={{ maxHeight: '88%', borderTopLeftRadius: 30, borderTopRightRadius: 30, backgroundColor: colors.surface, padding: 16, borderWidth: 1, borderColor: colors.border }}>
-            <ScrollView keyboardShouldPersistTaps="handled" contentContainerStyle={{ gap: 12, paddingBottom: 18 }}>
+    <Modal transparent visible={visible} animationType="none" statusBarTranslucent onRequestClose={onClose}>
+      <View style={{ flex: 1 }}>
+        <MotiView
+          from={{ opacity: 0 }}
+          animate={{ opacity: 1 }}
+          transition={{ type: 'timing', duration: motion === 'full' ? motionTokens.duration.fast : 1 }}
+          style={{ position: 'absolute', top: 0, right: 0, bottom: 0, left: 0 }}
+        >
+          <IsleOverlayPressable onPress={onClose} style={{ flex: 1, backgroundColor: colors.backdrop }} />
+        </MotiView>
+        <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined} style={{ flex: 1, justifyContent: 'flex-end' }}>
+          <MotiView
+            from={motion === 'full' ? { opacity: 0, translateY: 32, scale: 0.985 } : { opacity: 0 }}
+            animate={{ opacity: 1, translateY: 0, scale: 1 }}
+            transition={motion === 'full' ? { type: 'spring', damping: 23, stiffness: 190 } : { type: 'timing', duration: motionTokens.duration.fast }}
+            style={{ maxHeight: compact ? '94%' : '88%', borderTopLeftRadius: 30, borderTopRightRadius: 30, backgroundColor: colors.surface, borderWidth: 1, borderColor: colors.border, overflow: 'hidden' }}
+          >
+            <View style={{ paddingHorizontal: 16, paddingTop: 16, paddingBottom: 10, backgroundColor: colors.surface }}>
               <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
                 <View style={{ flex: 1 }}>
                   <Text style={{ color: colors.text, fontSize: 18, fontWeight: '900' }}>{t('settings.addProvider')}</Text>
                   <Text style={{ color: colors.textSecondary, fontSize: 12, marginTop: 3 }}>{t('providerSettings.addSubtitle')}</Text>
                 </View>
-                <IslandIconButton label={t('dialog.close')} onPress={onClose}>
+                <IsleIconButton label={t('dialog.close')} onPress={onClose}>
                   <X color={colors.textSecondary} size={18} />
-                </IslandIconButton>
+                </IsleIconButton>
               </View>
-              <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 8 }}>
+              <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 8, paddingTop: 12 }}>
                 {PROVIDER_PRESETS.map((item) => (
-                  <ChoicePill
+                  <ChoiceIsleChip
                     key={item.id}
                     label={item.name}
                     active={presetId === item.id}
@@ -513,24 +700,44 @@ function ProviderFormModal({
                   />
                 ))}
               </ScrollView>
-              <IslandField label={t('providerSettings.name')} inputProps={{ value: name, onChangeText: setName, placeholder: preset.name, autoCapitalize: 'none' }} />
-              <IslandField label={t('providerSettings.baseUrl')} inputProps={{ value: baseUrl, onChangeText: setBaseUrl, placeholder: preset.baseUrl ?? 'https://example.com/v1', autoCapitalize: 'none', autoCorrect: false }} />
-              <IslandField
+            </View>
+            <ScrollView
+              keyboardShouldPersistTaps="handled"
+              nestedScrollEnabled
+              automaticallyAdjustKeyboardInsets
+              showsVerticalScrollIndicator={compact}
+              contentContainerStyle={{ gap: 10, paddingHorizontal: 16, paddingBottom: 12, backgroundColor: colors.surface }}
+            >
+              <IsleField label={t('providerSettings.name')} inputProps={{ value: name, onChangeText: setName, placeholder: preset.name, autoCapitalize: 'none' }} />
+              <IsleField label={t('providerSettings.baseUrl')} inputProps={{ value: baseUrl, onChangeText: setBaseUrl, placeholder: preset.baseUrl ?? 'https://example.com/v1', autoCapitalize: 'none', autoCorrect: false }} />
+              <IsleField
                 label={t('providerSettings.tokens')}
                 note={t('providerSettings.tokensNote')}
-                inputProps={{ value: keysText, onChangeText: setKeysText, placeholder: 'sk-...\nsk-...', autoCapitalize: 'none', autoCorrect: false, multiline: true, secureTextEntry: false, style: { minHeight: 104 } }}
+                inputProps={{ value: keysText, onChangeText: setKeysText, placeholder: 'sk-...\nsk-...', autoCapitalize: 'none', autoCorrect: false, multiline: true, secureTextEntry: false, style: { minHeight: compact ? 72 : 92, maxHeight: compact ? 110 : 140 } }}
               />
-              <IslandField
-                label={t('settings.models')}
-                note={t('providerSettings.modelsNote')}
-                inputProps={{ value: modelsText, onChangeText: setModelsText, placeholder: t('providerSettings.oneModelPerLine'), autoCapitalize: 'none', autoCorrect: false, multiline: true, style: { minHeight: 96 } }}
-              />
-              <View style={{ flexDirection: 'row', gap: 10 }}>
-                <IslandButton label={t('common.cancel')} onPress={onClose} style={{ flex: 1 }} />
-                <IslandButton label={t('common.save')} tone="primary" onPress={submit} style={{ flex: 1 }} />
-              </View>
+              <IslePressable
+                haptic
+                onPress={() => setAdvancedOpen((value) => !value)}
+                style={{ minHeight: 42, borderRadius: 21, paddingHorizontal: 13, flexDirection: 'row', alignItems: 'center', gap: 8, backgroundColor: colors.material.field, borderWidth: 1, borderColor: colors.border }}
+              >
+                <Text style={{ flex: 1, color: colors.textSecondary, fontSize: 12, fontWeight: '900' }}>{t('providerSettings.advancedModels')}</Text>
+                <MotiView animate={{ rotate: advancedOpen ? '180deg' : '0deg' }} transition={{ type: 'timing', duration: 160 }}>
+                  <ChevronDown color={colors.textTertiary} size={16} />
+                </MotiView>
+              </IslePressable>
+              {advancedOpen ? (
+                <IsleField
+                  label={t('settings.models')}
+                  note={t('providerSettings.modelsNote')}
+                  inputProps={{ value: modelsText, onChangeText: setModelsText, placeholder: t('providerSettings.oneModelPerLine'), autoCapitalize: 'none', autoCorrect: false, multiline: true, style: { minHeight: 76, maxHeight: 120 } }}
+                />
+              ) : null}
             </ScrollView>
-          </View>
+            <View style={{ flexDirection: 'row', gap: 10, paddingHorizontal: 16, paddingTop: 10, paddingBottom: Math.max(insets.bottom, 10) + 10, backgroundColor: colors.surface, borderTopWidth: 1, borderTopColor: colors.border }}>
+              <IsleButton label={t('common.cancel')} onPress={onClose} style={{ flex: 1 }} />
+              <IsleButton label={t('common.save')} tone="primary" onPress={submit} style={{ flex: 1 }} />
+              </View>
+          </MotiView>
         </KeyboardAvoidingView>
       </View>
     </Modal>
@@ -548,8 +755,12 @@ function ProviderImportModal({
 }) {
   const { colors } = useAppTheme()
   const { t } = useTranslation()
-  const dialog = useIslandDialog()
+  const dialog = useIsleDialog()
+  const insets = useSafeAreaInsets()
+  const { height } = useWindowDimensions()
+  const motion = useMotionPreference()
   const [input, setInput] = useState('')
+  const compact = height < 680
   function submit() {
     onSubmit(input)
     setInput('')
@@ -584,42 +795,58 @@ function ProviderImportModal({
   }
 
   return (
-    <Modal transparent visible={visible} animationType="slide" statusBarTranslucent onRequestClose={onClose}>
-      <View style={{ flex: 1, justifyContent: 'flex-end' }}>
-        <Pressable onPress={onClose} style={{ position: 'absolute', top: 0, right: 0, bottom: 0, left: 0, backgroundColor: colors.backdrop }} />
-        <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : 'height'}>
-          <View style={{ maxHeight: '82%', borderTopLeftRadius: 30, borderTopRightRadius: 30, backgroundColor: colors.surface, padding: 16, borderWidth: 1, borderColor: colors.border }}>
-            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10, marginBottom: 12 }}>
+    <Modal transparent visible={visible} animationType="none" statusBarTranslucent onRequestClose={onClose}>
+      <View style={{ flex: 1 }}>
+        <MotiView
+          from={{ opacity: 0 }}
+          animate={{ opacity: 1 }}
+          transition={{ type: 'timing', duration: motion === 'full' ? motionTokens.duration.fast : 1 }}
+          style={{ position: 'absolute', top: 0, right: 0, bottom: 0, left: 0 }}
+        >
+          <IsleOverlayPressable onPress={onClose} style={{ flex: 1, backgroundColor: colors.backdrop }} />
+        </MotiView>
+        <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined} style={{ flex: 1, justifyContent: 'flex-end' }}>
+          <MotiView
+            from={motion === 'full' ? { opacity: 0, translateY: 32, scale: 0.985 } : { opacity: 0 }}
+            animate={{ opacity: 1, translateY: 0, scale: 1 }}
+            transition={motion === 'full' ? { type: 'spring', damping: 23, stiffness: 190 } : { type: 'timing', duration: motionTokens.duration.fast }}
+            style={{ maxHeight: compact ? '94%' : '82%', borderTopLeftRadius: 30, borderTopRightRadius: 30, backgroundColor: colors.surface, borderWidth: 1, borderColor: colors.border, overflow: 'hidden' }}
+          >
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10, paddingHorizontal: 16, paddingTop: 16, paddingBottom: 12, backgroundColor: colors.surface }}>
               <View style={{ flex: 1 }}>
                 <Text style={{ color: colors.text, fontSize: 18, fontWeight: '900' }}>{t('settings.batchImport')}</Text>
                 <Text style={{ color: colors.textSecondary, fontSize: 12, marginTop: 3 }}>{t('providerSettings.importSubtitle')}</Text>
               </View>
-              <IslandIconButton label={t('dialog.close')} onPress={onClose}>
+              <IsleIconButton label={t('dialog.close')} onPress={onClose}>
                 <X color={colors.textSecondary} size={18} />
-              </IslandIconButton>
+              </IsleIconButton>
             </View>
-            <IslandField
-              label={t('providerSettings.importContent')}
-              note={t('providerSettings.importNote')}
-              inputProps={{
-                value: input,
-                onChangeText: setInput,
-                multiline: true,
-                autoCapitalize: 'none',
-                autoCorrect: false,
-                placeholder: 'https://api.example.com/v1\nsk-...\nsk-...\n\nhttps://api.other.com/v1\nsk-...',
-                style: { minHeight: 180, maxHeight: 300 },
-              }}
-            />
-            <View style={{ flexDirection: 'row', gap: 10, marginTop: 12 }}>
-              <IslandButton label={t('settings.pasteClipboard')} icon={<ClipboardPaste color={colors.textSecondary} size={16} />} onPress={() => void pasteFromClipboard()} style={{ flex: 1 }} />
-              <IslandButton label={t('settings.chooseFile')} icon={<FileJson color={colors.textSecondary} size={16} />} onPress={() => void importFromFile()} style={{ flex: 1 }} />
+            <View style={{ paddingHorizontal: 16, paddingBottom: 10, backgroundColor: colors.surface }}>
+              <IsleField
+                label={t('providerSettings.importContent')}
+                note={t('providerSettings.importNote')}
+                inputProps={{
+                  value: input,
+                  onChangeText: setInput,
+                  multiline: true,
+                  autoCapitalize: 'none',
+                  autoCorrect: false,
+                  placeholder: 'https://api.example.com/v1\nsk-...\nsk-...\n\nhttps://api.other.com/v1\nsk-...',
+                  style: { minHeight: compact ? 180 : 220, maxHeight: compact ? 240 : 320 },
+                }}
+              />
             </View>
-            <View style={{ flexDirection: 'row', gap: 10, marginTop: 14 }}>
-              <IslandButton label={t('common.cancel')} onPress={onClose} style={{ flex: 1 }} />
-              <IslandButton label={t('providerSettings.import')} tone="primary" disabled={!input.trim()} onPress={submit} style={{ flex: 1 }} />
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10, paddingHorizontal: 16, paddingTop: 12, paddingBottom: Math.max(insets.bottom, 10) + 10, backgroundColor: colors.surface, borderTopWidth: 1, borderTopColor: colors.border, marginTop: 10 }}>
+              <IsleButton label={t('common.cancel')} compact onPress={onClose} style={{ flex: 1 }} />
+              <IsleIconButton label={t('settings.pasteClipboard')} size="lg" onPress={() => void pasteFromClipboard()}>
+                <ClipboardPaste color={colors.textSecondary} size={18} />
+              </IsleIconButton>
+              <IsleIconButton label={t('settings.chooseFile')} size="lg" onPress={() => void importFromFile()}>
+                <FileJson color={colors.textSecondary} size={18} />
+              </IsleIconButton>
+              <IsleButton label={t('providerSettings.import')} compact tone="primary" disabled={!input.trim()} onPress={submit} style={{ flex: 1 }} />
             </View>
-          </View>
+          </MotiView>
         </KeyboardAvoidingView>
       </View>
     </Modal>

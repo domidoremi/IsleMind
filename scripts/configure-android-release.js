@@ -48,17 +48,49 @@ function insertAfterBlockOpen(text, name, snippet) {
   return `${text.slice(0, block.bodyStart)}${snippet}${text.slice(block.bodyStart)}`
 }
 
-if (!source.includes('universalApk true')) {
+if (!source.includes('islemindAbiFilters')) {
+  const androidBlock = findBlock(source, 'android')
+  if (!androidBlock) throw new Error('Could not find android block in android/app/build.gradle.')
+  const existingSplits = findBlock(source, 'splits', androidBlock.bodyStart)
+  if (existingSplits && existingSplits.start < androidBlock.close) {
+    source = `${source.slice(0, existingSplits.start)}${source.slice(existingSplits.close + 1)}`
+  }
   source = insertAfterBlockOpen(source, 'android', `
+    def islemindAbiFilters = (findProperty('islemindAbiFilters') ?: 'arm64-v8a,x86_64')
+            .split(',')
+            .collect { it.trim() }
+            .findAll { it }
+    def islemindUniversalApk = (findProperty('islemindUniversalApk') ?: 'true').toBoolean()
+    def islemindEnableAbiSplits = (findProperty('islemindEnableAbiSplits') ?: 'true').toBoolean()
+
     splits {
         abi {
             reset()
-            enable true
-            universalApk true
-            include "arm64-v8a", "armeabi-v7a", "x86_64"
+            enable islemindEnableAbiSplits
+            universalApk islemindUniversalApk
+            include(*islemindAbiFilters)
         }
     }
 `)
+}
+
+if (source.includes('islemindAbiFilters') && !source.includes('islemindEnableAbiSplits')) {
+  source = source.replace(
+    /(\s*def islemindUniversalApk = \(findProperty\('islemindUniversalApk'\) \?: 'true'\)\.toBoolean\(\)\s*)/,
+    `$1    def islemindEnableAbiSplits = (findProperty('islemindEnableAbiSplits') ?: 'true').toBoolean()\n`,
+  )
+}
+
+source = source.replace(/(\s+)enable true(\s*\n\s*universalApk islemindUniversalApk)/, '$1enable islemindEnableAbiSplits$2')
+
+if (!source.includes('abiFilters(*islemindAbiFilters)')) {
+  const defaultConfig = findBlock(source, 'defaultConfig')
+  if (!defaultConfig) throw new Error('Could not find defaultConfig block in android/app/build.gradle.')
+  source = `${source.slice(0, defaultConfig.bodyEnd)}
+        ndk {
+            abiFilters(*islemindAbiFilters)
+        }
+${source.slice(defaultConfig.bodyEnd)}`
 }
 
 if (!skipSigning && !source.includes('ISLEMIND_UPLOAD_STORE_FILE')) {

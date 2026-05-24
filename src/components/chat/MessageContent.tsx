@@ -7,8 +7,8 @@ import { useTranslation } from 'react-i18next'
 import { BarChart3, Braces, ChevronDown, Copy, Table2, Workflow } from 'lucide-react-native'
 import { MotiView } from 'moti'
 import { useAppTheme } from '@/hooks/useAppTheme'
-import { PressableScale } from '@/components/ui/PressableScale'
-import { IslandPanel } from '@/components/ui/IslandPanel'
+import { IslePressable } from '@/components/ui/isle'
+import { IslePanel } from '@/components/ui/isle'
 
 interface MessageContentProps {
   content: string
@@ -239,7 +239,7 @@ function RichCard({ isUser, expanded, children }: { isUser: boolean; expanded?: 
   const { colors } = useAppTheme()
   const { t } = useTranslation()
   return (
-    <IslandPanel
+    <IslePanel
       elevated={!isUser}
       material={isUser ? 'transparent' : 'raised'}
       contentStyle={{ padding: 10 }}
@@ -250,7 +250,7 @@ function RichCard({ isUser, expanded, children }: { isUser: boolean; expanded?: 
       }}
     >
       {children}
-    </IslandPanel>
+    </IslePanel>
   )
 }
 
@@ -276,7 +276,7 @@ function CardHeader({
         {title}
       </Text>
       {actions.map((action) => (
-        <PressableScale
+        <IslePressable
           key={action.label}
           haptic
           onPress={action.onPress}
@@ -298,7 +298,7 @@ function CardHeader({
             </MotiView>
           ) : null}
           <Text style={{ color: isUser ? colors.surface : colors.textTertiary, fontSize: 11, fontWeight: '900' }}>{action.label}</Text>
-        </PressableScale>
+        </IslePressable>
       ))}
     </View>
   )

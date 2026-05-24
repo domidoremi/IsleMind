@@ -9,11 +9,12 @@ import { AlertTriangle, ChevronLeft, RotateCcw } from 'lucide-react-native'
 import { useTranslation } from 'react-i18next'
 import { useBootstrap } from '@/hooks/useBootstrap'
 import { useAppTheme } from '@/hooks/useAppTheme'
-import { Screen } from '@/components/ui/Screen'
-import { IslandButton } from '@/components/ui/IslandButton'
-import { IslandPanel } from '@/components/ui/IslandPanel'
+import { IsleScreen } from '@/components/ui/isle'
+import { IsleButton } from '@/components/ui/isle'
+import { IslePanel } from '@/components/ui/isle'
 import { AppBootOverlay } from '@/components/boot/AppBootOverlay'
-import { IslandDialogProvider, useIslandDialog } from '@/components/ui/IslandDialog'
+import { IsleDialogProvider, useIsleDialog } from '@/components/ui/isle'
+import { ActivationProgressBanner } from '@/components/providers/ActivationProgressBanner'
 import { initI18n } from '@/i18n'
 
 initI18n()
@@ -25,7 +26,7 @@ export default function RootLayout() {
 
   return (
     <GestureHandlerRootView style={{ flex: 1, backgroundColor: colors.surface }}>
-      <IslandDialogProvider>
+      <IsleDialogProvider>
         <RootUpdateNotice message={boot.updateNotice} />
         <Stack
           screenOptions={{
@@ -42,14 +43,15 @@ export default function RootLayout() {
           <Stack.Screen name="settings/mcp" options={{ animation: 'slide_from_right' }} />
           <Stack.Screen name="settings/providers" options={{ animation: 'slide_from_right' }} />
         </Stack>
+        <ActivationProgressBanner />
         <AppBootOverlay ready={boot.ready} errorCount={boot.errorCount} bootStartedAt={boot.bootStartedAt} />
-      </IslandDialogProvider>
+      </IsleDialogProvider>
     </GestureHandlerRootView>
   )
 }
 
 function RootUpdateNotice({ message }: { message: string | null }) {
-  const dialog = useIslandDialog()
+  const dialog = useIsleDialog()
   const { t } = useTranslation()
   useEffect(() => {
     if (message) {
@@ -65,9 +67,9 @@ export function ErrorBoundary({ error, retry }: ErrorBoundaryProps) {
 
   return (
     <GestureHandlerRootView style={{ flex: 1, backgroundColor: colors.surface }}>
-      <Screen padded={false}>
+      <IsleScreen padded={false}>
         <View style={{ flex: 1, justifyContent: 'center', paddingHorizontal: 18 }}>
-          <IslandPanel elevated radius={30} contentStyle={{ padding: 18 }}>
+          <IslePanel elevated radius={30} contentStyle={{ padding: 18 }}>
             <View style={{ width: 48, height: 48, borderRadius: 24, alignItems: 'center', justifyContent: 'center', backgroundColor: colors.coralWash }}>
               <AlertTriangle color={colors.error} size={22} strokeWidth={2.1} />
             </View>
@@ -83,12 +85,12 @@ export function ErrorBoundary({ error, retry }: ErrorBoundaryProps) {
               </Text>
             ) : null}
             <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 9, marginTop: 16 }}>
-              <IslandButton label={t('common.retry')} tone="primary" icon={<RotateCcw color={colors.surface} size={15} strokeWidth={2.1} />} onPress={() => void retry()} />
-              <IslandButton label={t('common.back')} icon={<ChevronLeft color={colors.textSecondary} size={16} strokeWidth={2.1} />} onPress={() => router.canGoBack() ? router.back() : router.push('/')} />
+              <IsleButton label={t('common.retry')} tone="primary" icon={<RotateCcw color={colors.surface} size={15} strokeWidth={2.1} />} onPress={() => void retry()} />
+              <IsleButton label={t('common.back')} icon={<ChevronLeft color={colors.textSecondary} size={16} strokeWidth={2.1} />} onPress={() => router.canGoBack() ? router.back() : router.push('/')} />
             </View>
-          </IslandPanel>
+          </IslePanel>
         </View>
-      </Screen>
+      </IsleScreen>
     </GestureHandlerRootView>
   )
 }
