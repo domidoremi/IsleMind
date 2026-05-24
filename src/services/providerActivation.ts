@@ -33,6 +33,15 @@ export interface ProviderActivationDeps {
   hydrateProviderKey: (id: string) => Promise<AIProvider | null>
   updateProviderCredentialGroupHealth: (providerId: string, groupId: string | undefined, ok: boolean) => Promise<void>
   delay?: (ms: number) => Promise<void>
+  onStage?: (event: ProviderActivationStageEvent) => void
+}
+
+export interface ProviderActivationStageEvent {
+  providerId: string
+  providerName: string
+  stage: 'enabled' | 'syncing' | 'testing' | 'done' | 'failed'
+  message: string
+  tone: 'mint' | 'amber' | 'danger'
 }
 
 export async function activateProviderWithHealthCheck(
@@ -49,6 +58,13 @@ export async function syncAndTestProvider(
 ): Promise<ProviderActivationResult> {
   if (options.enable) {
     await deps.updateProvider(provider.id, { enabled: true })
+    deps.onStage?.({
+      providerId: provider.id,
+      providerName: provider.name,
+      stage: 'enabled',
+      message: st('providerActivation.stageEnabled', { name: provider.name }),
+      tone: 'mint',
+    })
   }
   const initial = await deps.hydrateProviderKey(provider.id)
   const result: ProviderActivationResult = {
@@ -69,6 +85,13 @@ export async function syncAndTestProvider(
 
   if (!initial) {
     pushFailure(result, st('providerActivation.providerMissing'))
+    deps.onStage?.({
+      providerId: provider.id,
+      providerName: provider.name,
+      stage: 'failed',
+      message: st('providerActivation.stageProviderMissing', { name: provider.name }),
+      tone: 'danger',
+    })
     return result
   }
 
@@ -84,10 +107,24 @@ export async function syncAndTestProvider(
       lastTestMessage: undefined,
       lastTestCode: undefined,
     })
+    deps.onStage?.({
+      providerId: provider.id,
+      providerName: provider.name,
+      stage: 'failed',
+      message: st('providerActivation.stageMissingToken', { name: provider.name }),
+      tone: 'amber',
+    })
     return result
   }
 
   result.syncAttempted = true
+  deps.onStage?.({
+    providerId: provider.id,
+    providerName: provider.name,
+    stage: 'syncing',
+    message: st('providerActivation.stageSyncing', { name: provider.name }),
+    tone: 'mint',
+  })
   const sync = await syncProviderCredentialGroupsDetailed(current)
   if (sync.data) {
     await deps.updateProvider(provider.id, sync.data)
@@ -108,9 +145,23 @@ export async function syncAndTestProvider(
       lastTestMessage: undefined,
       lastTestCode: undefined,
     })
+    deps.onStage?.({
+      providerId: provider.id,
+      providerName: provider.name,
+      stage: 'failed',
+      message: st('providerActivation.stageNoModels', { name: provider.name }),
+      tone: 'amber',
+    })
     return result
   }
 
+  deps.onStage?.({
+    providerId: provider.id,
+    providerName: provider.name,
+    stage: 'testing',
+    message: st('providerActivation.stageTesting', { name: provider.name }),
+    tone: 'mint',
+  })
   for (const [index, candidate] of candidates.entries()) {
     const test = await testProviderModelDetailed(current, candidate.model, candidate.apiKey)
     await deps.updateProviderCredentialGroupHealth(provider.id, test.credentialGroupId ?? candidate.groupId, test.ok)
@@ -125,6 +176,13 @@ export async function syncAndTestProvider(
         lastTestModel: candidate.model,
         lastTestMessage: test.message,
         lastTestCode: test.code,
+      })
+      deps.onStage?.({
+        providerId: provider.id,
+        providerName: provider.name,
+        stage: 'done',
+        message: st('providerActivation.stageDone', { name: provider.name, model: candidate.model }),
+        tone: 'mint',
       })
       return result
     }
@@ -142,9 +200,16 @@ export async function syncAndTestProvider(
   await deps.updateProvider(provider.id, {
     lastTestStatus: 'bad',
     lastTestedAt: Date.now(),
-    lastTestModel: lastFailure?.model ?? candidates[0]?.model,
+    lastTestModel: undefined,
     lastTestMessage: dedupeMessages(result.failures.map((item) => item.message)).slice(0, 3).join('\n') || st('providerActivation.noModels'),
     lastTestCode: lastFailure?.code ?? 'unknown',
+  })
+  deps.onStage?.({
+    providerId: provider.id,
+    providerName: provider.name,
+    stage: 'failed',
+    message: st('providerActivation.stageFailed', { name: provider.name }),
+    tone: 'danger',
   })
 
   return result
@@ -198,10 +263,10 @@ export function summarizeProviderActivation(results: ProviderActivationResult[])
   const synced = results.filter((item) => item.synced).length
   const testedOk = results.filter((item) => item.testOk).length
   const missingTokens = results.filter((item) => item.missingToken || !item.hadCredential)
-  const noModels = results.filter((item) => item.hadCredential && !item.modelCount && !item.failures.length)
+  const noModels = results.filter((item) => item.hadCredential && !item.modelCount)
   const failed = results.filter((item) => item.failures.length && !missingTokens.includes(item) && !item.testOk)
   const parts = [
-    st('providerActivation.summary', { enabled, synced, tested: testedOk }),
+    st('providerActivation.summary', { target: results.length, enabled, synced, tested: testedOk, noModels: noModels.length, failed: failed.length }),
   ]
   if (missingTokens.length) parts.push(st('providerActivation.missingTokens', { names: names(missingTokens) }))
   if (noModels.length) parts.push(st('providerActivation.noModelsFor', { names: names(noModels) }))

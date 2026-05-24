@@ -1,10 +1,10 @@
 import { MotiView } from 'moti'
-import { Screen } from '@/components/ui/Screen'
+import { IsleScreen } from '@/components/ui/isle'
 import { ProviderSettingsContent } from '@/components/providers/ProviderSettingsContent'
 
 export default function ProviderSettingsScreen() {
   return (
-    <Screen padded={false}>
+    <IsleScreen padded={false}>
       <MotiView
         from={{ opacity: 0, translateY: -28 }}
         animate={{ opacity: 1, translateY: 0 }}
@@ -14,6 +14,6 @@ export default function ProviderSettingsScreen() {
       >
         <ProviderSettingsContent />
       </MotiView>
-    </Screen>
+    </IsleScreen>
   )
 }

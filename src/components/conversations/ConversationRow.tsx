@@ -8,26 +8,27 @@ import type { Conversation } from '@/types'
 import { getModelName } from '@/types'
 import { useAppTheme } from '@/hooks/useAppTheme'
 import { useChatStore } from '@/store/chatStore'
-import { PressableScale } from '@/components/ui/PressableScale'
-import { IslandPanel } from '@/components/ui/IslandPanel'
+import { IslePressable } from '@/components/ui/isle'
+import { IslePanel } from '@/components/ui/isle'
 import { useMotionPreference } from '@/hooks/useMotionPreference'
 import { motionTokens } from '@/theme/animation'
-import { useIslandDialog } from '@/components/ui/IslandDialog'
+import { useIsleDialog } from '@/components/ui/isle'
 
 interface ConversationRowProps {
   conversation: Conversation
   index: number
   onOpen?: (conversationId: string) => void
+  onRenameFocus?: () => void
 }
 
-export function ConversationRow({ conversation, index, onOpen }: ConversationRowProps) {
+export function ConversationRow({ conversation, index, onOpen, onRenameFocus }: ConversationRowProps) {
   const { colors } = useAppTheme()
   const { t } = useTranslation()
   const motion = useMotionPreference()
   const remove = useChatStore((state) => state.delete)
   const rename = useChatStore((state) => state.rename)
   const select = useChatStore((state) => state.select)
-  const dialog = useIslandDialog()
+  const dialog = useIsleDialog()
   const [renaming, setRenaming] = useState(false)
   const [title, setTitle] = useState(conversation.title)
   const lastMessage = conversation.messages.at(-1)
@@ -56,7 +57,7 @@ export function ConversationRow({ conversation, index, onOpen }: ConversationRow
       animate={{ opacity: 1, translateY: 0 }}
       transition={motion === 'full' ? { type: 'spring', ...motionTokens.spring.settle, delay: Math.min(index * 35, 280) } : { type: 'timing', duration: motionTokens.duration.fast }}
     >
-      <PressableScale
+      <IslePressable
         haptic
         onPress={() => {
           select(conversation.id)
@@ -69,7 +70,7 @@ export function ConversationRow({ conversation, index, onOpen }: ConversationRow
         onLongPress={() => setRenaming(true)}
         style={{ marginBottom: 12 }}
       >
-        <IslandPanel elevated material="paper" radius={28} contentStyle={{ minHeight: 92, padding: 16 }}>
+        <IslePanel elevated material="paper" radius={28} contentStyle={{ minHeight: 92, padding: 16 }}>
         <View style={{ flexDirection: 'row', alignItems: 'flex-start', gap: 12 }}>
           <View style={{ flex: 1 }}>
             {renaming ? (
@@ -79,6 +80,9 @@ export function ConversationRow({ conversation, index, onOpen }: ConversationRow
                 onChangeText={setTitle}
                 onBlur={submitRename}
                 onSubmitEditing={submitRename}
+                onFocus={onRenameFocus}
+                returnKeyType="done"
+                blurOnSubmit
                 style={{ color: colors.text, fontSize: 17, fontWeight: '900', padding: 0 }}
               />
             ) : (
@@ -91,17 +95,17 @@ export function ConversationRow({ conversation, index, onOpen }: ConversationRow
             </Text>
             <Text style={{ color: colors.textTertiary, fontSize: 12, marginTop: 10, fontWeight: '900' }}>{getModelName(conversation.model)}</Text>
           </View>
-          <PressableScale
+          <IslePressable
             onPress={confirmDelete}
             accessibilityLabel={t('conversation.deleteTitle')}
             hitSlop={10}
             style={{ width: 44, height: 44, alignItems: 'center', justifyContent: 'center', borderRadius: 22, backgroundColor: colors.coralWash }}
           >
             <Trash2 color={colors.textTertiary} size={18} strokeWidth={1.8} />
-          </PressableScale>
+          </IslePressable>
         </View>
-        </IslandPanel>
-      </PressableScale>
+        </IslePanel>
+      </IslePressable>
     </MotiView>
   )
 }

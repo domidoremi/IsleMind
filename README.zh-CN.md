@@ -28,14 +28,16 @@ Release APK 也按 Android 架构拆分：
 
 - `arm64-v8a`：64 位 ARM 设备使用。
 - `x86_64`：64 位 x86 设备使用。
-- `armeabi-v7a`：32 位 ARM 设备使用。
-- `universal`：兼容范围最广，体积较大。
+- `universal-64`：同时包含 64 位 ARM 和 64 位 x86 原生库。
+- `armeabi-v7a-legacy`：仅用于旧 32 位 ARM 设备。
 
 应用内“本地模型”页面也支持下载、校验和启用 RAG 模型。
 
 ## Android 16 KB Page Size
 
 Release 构建会运行 `npm run apk:validate-16kb`，用 `zipalign -P 16` 检查 APK ZIP page alignment，并用 `llvm-readelf` 检查 native library 的 ELF `LOAD` segment alignment。ZIP 对齐由 Android 构建控制；ELF 对齐取决于 Expo、React Native、ONNX Runtime 等依赖提供的原生库。如果校验报告第三方 `.so` 仍是 4 KB `LOAD` alignment，需要升级或重建对应依赖后，才能标记为完全兼容 Android 16 KB page-size 设备。
+
+当前发布打包会用 `arm64-v8a` 和 `x86_64` 生成 `universal-64`，主 universal APK 不再包含 32 位原生库。单独的 `armeabi-v7a-legacy` APK 只保留给旧 32 位设备，不参与 Android 16 的 64 位 page-size 校验。
 
 ## 本地 RAG 模型
 

@@ -28,14 +28,20 @@ Release APKs are also split by Android architecture:
 
 - `arm64-v8a`: 64-bit ARM devices.
 - `x86_64`: 64-bit x86 devices.
-- `armeabi-v7a`: 32-bit ARM devices.
-- `universal`: widest compatibility, larger file.
+- `universal-64`: includes both 64-bit ARM and 64-bit x86 native libraries.
+- `armeabi-v7a-legacy`: legacy 32-bit ARM devices only.
 
 The app can also download and verify local RAG models from the local model page.
 
 ## Android 16 KB Page Size
 
 Release builds run `npm run apk:validate-16kb`, which checks APK ZIP page alignment with `zipalign -P 16` and inspects native library ELF `LOAD` segment alignment with `llvm-readelf`. ZIP alignment is controlled by the Android build; ELF alignment depends on the native libraries shipped by Expo, React Native, ONNX Runtime, and other dependencies. If the validator reports a third-party `.so` with 4 KB `LOAD` alignment, update or rebuild that dependency before marking the APK fully compatible with Android 16 KB page-size devices.
+
+Current release packaging builds `universal-64` from only `arm64-v8a` and `x86_64`, so the main universal APK no longer includes 32-bit native libraries. The separate `armeabi-v7a-legacy` APK is kept only for legacy 32-bit devices and is not part of Android 16 64-bit page-size validation.
+
+## UI Attribution
+
+IsleMind includes a Isle UI, a React Native adaptation of the `animal-island-ui` component language. The upstream project is authored by `guokaigdg`, published under MIT, and documented at <https://github.com/guokaigdg/animal-island-ui>. IsleMind does not vendor the upstream React DOM package, CSS modules, fonts, or image assets; the local implementation is adapted for Expo/React Native, mobile safe areas, reduced motion, and IsleMind theme tokens. See `src/components/ui/isle/README.md`.
 
 ## Local RAG Models
 

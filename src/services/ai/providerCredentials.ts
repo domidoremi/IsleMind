@@ -62,7 +62,7 @@ export function normalizeProviderCredentialGroups(provider: AIProvider): AIProvi
     id: group.id || `group-${index + 1}`,
     label: group.label || st('apiKeyPanel.groupName', { index: index + 1 }),
     enabled: group.enabled ?? true,
-    availableModels: group.availableModels ? clearHistoricalInjectedGroupModels(group) : [],
+    availableModels: group.availableModels ? clearHistoricalInjectedGroupModels(group, provider) : [],
     failureCount: group.failureCount ?? 0,
   }))
   return {

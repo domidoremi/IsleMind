@@ -4,8 +4,8 @@ import { router } from 'expo-router'
 import { ChevronLeft } from 'lucide-react-native'
 import { MotiView } from 'moti'
 import { useTranslation } from 'react-i18next'
-import { IslandHeader, IslandIconButton } from '@/components/ui/IslandPrimitives'
-import { Screen } from '@/components/ui/Screen'
+import { IsleHeader, IsleIconButton } from '@/components/ui/isle'
+import { IsleScreen } from '@/components/ui/isle'
 import { useAppTheme } from '@/hooks/useAppTheme'
 
 export function SettingsPageShell({
@@ -22,19 +22,19 @@ export function SettingsPageShell({
   const { colors } = useAppTheme()
   const { t } = useTranslation()
   return (
-    <Screen padded={false}>
+    <IsleScreen padded={false}>
       <ScrollView
         keyboardShouldPersistTaps="handled"
         automaticallyAdjustKeyboardInsets
         contentContainerStyle={{ paddingHorizontal: 16, paddingTop: 8, paddingBottom: 56 }}
       >
-        <IslandHeader
+        <IsleHeader
           title={title}
           subtitle={subtitle}
           leading={
-            <IslandIconButton label={t('common.back')} onPress={() => (router.canGoBack() ? router.back() : router.push('/settings'))}>
+            <IsleIconButton label={t('common.back')} onPress={() => (router.canGoBack() ? router.back() : router.push('/settings'))}>
               <ChevronLeft color={colors.text} size={20} strokeWidth={2} />
-            </IslandIconButton>
+            </IsleIconButton>
           }
         />
         <MotiView
@@ -49,6 +49,6 @@ export function SettingsPageShell({
           </View>
         </MotiView>
       </ScrollView>
-    </Screen>
+    </IsleScreen>
   )
 }

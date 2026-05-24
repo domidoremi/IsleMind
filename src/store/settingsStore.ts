@@ -6,7 +6,7 @@ import * as SecureStore from 'expo-secure-store'
 import { applyProviderPreset, defaultProviderSyncPolicy, detectProviderPreset, getProviderPreset } from '@/services/ai/providerRegistry'
 import { normalizeProviderCredentialGroups } from '@/services/ai/providerCredentials'
 import { legacySearchModeForProvider, resolveSearchProvider } from '@/services/searchPolicy'
-import { clearHistoricalInjectedGroupModels, clearHistoricalInjectedProviderModels } from '@/utils/providerModels'
+import { clearHistoricalInjectedGroupModels, clearHistoricalInjectedProviderModels, getProviderPreferredModel, isProviderConversationReady } from '@/utils/providerModels'
 import { st } from '@/i18n/service'
 import { setServiceLanguage } from '@/i18n/service'
 
@@ -53,6 +53,7 @@ const defaultSettings: Settings = {
   defaultMaxTokens: undefined,
   memoryEnabled: true,
   knowledgeEnabled: true,
+  petEnabled: false,
   webSearchEnabled: true,
   webSearchMode: 'native',
   knowledgeTopK: 4,
@@ -365,10 +366,10 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
   getConfiguredProviders: async () => {
     const hydrated = await Promise.all(get().providers.map((provider) => get().hydrateProviderKey(provider.id)))
     return hydrated.filter((provider): provider is AIProvider => {
-      if (!provider?.enabled) return false
+      if (!provider || !isProviderConversationReady(provider)) return false
       const hasCredential = provider.apiKey.trim() || provider.credentialGroups?.some((group) => group.enabled && group.apiKey?.trim())
       if (!hasCredential) return false
-      if (!provider.models.length) return false
+      if (!getProviderPreferredModel(provider)) return false
       return !getProviderConfigIssue(provider, provider.apiKey)
     })
   },
@@ -427,7 +428,7 @@ function normalizeProvider(provider: AIProvider): AIProvider {
   return normalizeProviderCredentialGroups({
     ...normalized,
     apiKey: '',
-    credentialGroups: sanitizeCredentialGroups(normalized.credentialGroups, models),
+    credentialGroups: sanitizeCredentialGroups(normalized.credentialGroups, normalized),
     modelAvailability: normalized.modelAvailability,
   })
 }
@@ -470,14 +471,14 @@ async function clearProviderCatalogSecrets(providers: AIProvider[]): Promise<voi
   ])
 }
 
-function sanitizeCredentialGroups(groups: ProviderCredentialGroup[] | undefined, models: string[]): ProviderCredentialGroup[] {
+function sanitizeCredentialGroups(groups: ProviderCredentialGroup[] | undefined, provider: AIProvider): ProviderCredentialGroup[] {
   return (groups ?? []).map((group, index) => ({
     ...group,
     id: group.id || `group-${index + 1}`,
     label: group.label || st('apiKeyPanel.groupName', { index: index + 1 }),
     apiKey: '',
     enabled: group.enabled ?? true,
-    availableModels: group.availableModels?.length ? clearHistoricalInjectedGroupModels(group) : [],
+    availableModels: group.availableModels?.length ? clearHistoricalInjectedGroupModels(group, provider) : [],
     failureCount: group.failureCount ?? 0,
   }))
 }

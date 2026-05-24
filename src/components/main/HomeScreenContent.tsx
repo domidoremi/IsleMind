@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from 'react'
 import { ChatWorkspace } from '@/components/chat/ChatWorkspace'
 import { useChatStore } from '@/store/chatStore'
 import { useSettingsStore } from '@/store/settingsStore'
+import { getProviderPreferredModel } from '@/utils/providerModels'
 
 interface HomeScreenContentProps {
   embedded?: boolean
@@ -40,17 +41,18 @@ export function HomeScreenContent({ embedded = false, onHistory, onSettings }: H
         return
       }
 
-      if (!primary?.models[0]) return
+      const model = primary ? getProviderPreferredModel(primary) : undefined
+      if (!primary || !model) return
 
       const existing = conversations.find(
         (conversation) =>
           conversation.providerId === primary.id &&
-          primary.models.includes(conversation.model)
+          conversation.model === model
       )
       if (existing) {
         select(existing.id)
       } else {
-        create(primary.id, primary.models[0])
+        create(primary.id, model)
       }
     })
     return () => {

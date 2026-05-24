@@ -6,10 +6,10 @@ import * as FileSystem from 'expo-file-system/legacy'
 import * as Sharing from 'expo-sharing'
 import { Download, FileJson, Plus, Sparkles, Trash2, Upload } from 'lucide-react-native'
 import { useTranslation } from 'react-i18next'
-import { IslandButton } from '@/components/ui/IslandButton'
-import { useIslandDialog } from '@/components/ui/IslandDialog'
-import { IslandField, IslandListItem, IslandSection } from '@/components/ui/IslandPrimitives'
-import { Pill } from '@/components/ui/Pill'
+import { IsleButton } from '@/components/ui/isle'
+import { useIsleDialog } from '@/components/ui/isle'
+import { IsleField, IsleListItem, IsleSection } from '@/components/ui/isle'
+import { IsleChip } from '@/components/ui/isle'
 import { useAppTheme } from '@/hooks/useAppTheme'
 import { createBaseSkill, deleteSkill, exportSkill, importSkill, listSkills, upsertSkill } from '@/services/skills'
 import type { SkillDefinition, SkillLayer } from '@/types'
@@ -17,7 +17,7 @@ import type { SkillDefinition, SkillLayer } from '@/types'
 export function SkillSettingsContent() {
   const { colors } = useAppTheme()
   const { t } = useTranslation()
-  const dialog = useIslandDialog()
+  const dialog = useIsleDialog()
   const [skills, setSkills] = useState<SkillDefinition[]>([])
   const [name, setName] = useState('')
   const [systemPrompt, setSystemPrompt] = useState('')
@@ -118,53 +118,53 @@ export function SkillSettingsContent() {
 
   return (
     <View style={{ gap: 12 }}>
-      <IslandSection
+      <IsleSection
         title={t('skills.create')}
         subtitle={t('skills.createSubtitle')}
         action={<Sparkles color={colors.textSecondary} size={18} />}
       >
         <View style={{ gap: 10 }}>
-          <IslandField label={t('skills.name')} inputProps={{ value: name, onChangeText: setName, placeholder: t('skills.namePlaceholder') }} />
-          <IslandField
+          <IsleField label={t('skills.name')} inputProps={{ value: name, onChangeText: setName, placeholder: t('skills.namePlaceholder') }} />
+          <IsleField
             label={t('skills.systemPrompt')}
             inputProps={{ value: systemPrompt, onChangeText: setSystemPrompt, placeholder: t('skills.promptPlaceholder'), multiline: true, style: { minHeight: 112 } }}
           />
-          <IslandField label={t('skills.tags')} inputProps={{ value: tags, onChangeText: setTags, placeholder: 'review, zh-CN' }} />
+          <IsleField label={t('skills.tags')} inputProps={{ value: tags, onChangeText: setTags, placeholder: 'review, zh-CN' }} />
           <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 8 }}>
             {(['base', 'advanced', 'adaptive'] satisfies SkillLayer[]).map((item) => (
-              <IslandButton key={item} label={t(`skills.layer.${item}`)} compact tone={layer === item ? 'mint' : 'soft'} onPress={() => setLayer(item)} />
+              <IsleButton key={item} label={t(`skills.layer.${item}`)} compact tone={layer === item ? 'mint' : 'soft'} onPress={() => setLayer(item)} />
             ))}
           </ScrollView>
-          <IslandButton label={t('skills.saveSkill')} icon={<Plus color={colors.surface} size={16} />} tone="primary" onPress={() => void createSkill()} />
+          <IsleButton label={t('skills.saveSkill')} icon={<Plus color={colors.surface} size={16} />} tone="primary" onPress={() => void createSkill()} />
         </View>
-      </IslandSection>
+      </IsleSection>
 
-      <IslandSection title={t('skills.importExport')}>
+      <IsleSection title={t('skills.importExport')}>
         <View style={{ flexDirection: 'row', gap: 10 }}>
-          <IslandButton label={t('skills.importClipboard')} icon={<Upload color={colors.textSecondary} size={16} />} onPress={() => void importFromClipboard()} style={{ flex: 1 }} />
-          <IslandButton label={t('settings.chooseFile')} icon={<FileJson color={colors.textSecondary} size={16} />} onPress={() => void importFromFile()} style={{ flex: 1 }} />
+          <IsleButton label={t('skills.importClipboard')} icon={<Upload color={colors.textSecondary} size={16} />} onPress={() => void importFromClipboard()} style={{ flex: 1 }} />
+          <IsleButton label={t('settings.chooseFile')} icon={<FileJson color={colors.textSecondary} size={16} />} onPress={() => void importFromFile()} style={{ flex: 1 }} />
         </View>
-      </IslandSection>
+      </IsleSection>
 
-      <IslandSection title={`${t('skills.saved')} ${sortedSkills.length}`}>
+      <IsleSection title={`${t('skills.saved')} ${sortedSkills.length}`}>
         <View style={{ gap: 8 }}>
           {sortedSkills.map((skill) => (
-            <IslandListItem
+            <IsleListItem
               key={skill.id}
               title={skill.name}
               description={skill.description || skill.systemPrompt}
-              leading={<Pill active>{t(`skills.layer.${skill.layer}`)}</Pill>}
+              leading={<IsleChip active>{t(`skills.layer.${skill.layer}`)}</IsleChip>}
               trailing={
                 <View style={{ flexDirection: 'row', gap: 8 }}>
-                  <IslandButton label={t('common.share')} compact icon={<Download color={colors.textSecondary} size={14} />} onPress={() => void exportSkillFile(skill)} />
-                  <IslandButton label={t('common.delete')} compact tone="danger" icon={<Trash2 color={colors.error} size={14} />} onPress={() => void removeSkill(skill)} />
+                  <IsleButton label={t('common.share')} compact icon={<Download color={colors.textSecondary} size={14} />} onPress={() => void exportSkillFile(skill)} />
+                  <IsleButton label={t('common.delete')} compact tone="danger" icon={<Trash2 color={colors.error} size={14} />} onPress={() => void removeSkill(skill)} />
                 </View>
               }
             />
           ))}
           {!sortedSkills.length ? <Text style={{ color: colors.textSecondary, fontSize: 12, fontWeight: '800' }}>{t('skills.empty')}</Text> : null}
         </View>
-      </IslandSection>
+      </IsleSection>
     </View>
   )
 }

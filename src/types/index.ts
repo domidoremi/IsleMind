@@ -230,6 +230,7 @@ export interface Settings {
   defaultMaxTokens?: number
   memoryEnabled?: boolean
   knowledgeEnabled?: boolean
+  petEnabled?: boolean
   webSearchEnabled?: boolean
   webSearchMode?: WebSearchMode
   knowledgeTopK?: number

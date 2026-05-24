@@ -111,36 +111,37 @@ jobs:
               extra_args+=(--fail-on-missing-models)
             fi
             node scripts/prepare-model-bundle.js --variant "$model_variant" "${extra_args[@]}"
-            rm -rf android/app/.cxx android/app/build/outputs/apk/release
-            (cd android && ISLEMIND_MODEL_BUNDLE="$model_variant" EXPO_PUBLIC_ISLEMIND_MODEL_BUNDLE="$model_variant" ./gradlew assembleRelease --rerun-tasks --no-daemon --stacktrace)
-            shopt -s nullglob
             copied=0
-            for apk in android/app/build/outputs/apk/release/*.apk; do
-              base="$(basename "$apk")"
-              case "$base" in
-                *universal*) arch="universal" ;;
-                *arm64-v8a*) arch="arm64-v8a" ;;
-                *armeabi-v7a*) arch="armeabi-v7a" ;;
-                *x86_64*) arch="x86_64" ;;
-                *) continue ;;
-              esac
+            for build_pass in "universal-64:arm64-v8a,x86_64" "arm64-v8a:arm64-v8a" "x86_64:x86_64" "armeabi-v7a-legacy:armeabi-v7a"; do
+              IFS=':' read -r arch abi_filters <<< "$build_pass"
+              rm -rf android/app/.cxx android/app/build/outputs/apk/release
+              (cd android && ISLEMIND_MODEL_BUNDLE="$model_variant" EXPO_PUBLIC_ISLEMIND_MODEL_BUNDLE="$model_variant" ./gradlew assembleRelease --rerun-tasks --no-daemon --stacktrace -PislemindAbiFilters="$abi_filters" -PislemindEnableAbiSplits=false -PislemindUniversalApk=false -PreactNativeArchitectures="$abi_filters")
+              shopt -s nullglob
+              apks=(android/app/build/outputs/apk/release/*.apk)
+              if [ "${#apks[@]}" -ne 1 ]; then
+                echo "::error::Expected one APK for $arch $model_variant, found ${#apks[@]}."
+                printf '%s\n' "${apks[@]}"
+                exit 1
+              fi
               target="dist-apk/IsleMind-${VERSION}-${arch}-${model_variant}.apk"
-              cp "$apk" "$target"
+              cp "${apks[0]}" "$target"
               sha256sum "$target" > "${target}.sha256"
               copied=$((copied + 1))
             done
-            if [ "$copied" -lt 4 ]; then
-              echo "::error::Expected 4 $model_variant APK assets, found $copied."
-              find android/app/build/outputs/apk/release -maxdepth 1 -type f -print || true
-              exit 1
-            fi
+            for required_arch in universal-64 arm64-v8a x86_64 armeabi-v7a-legacy; do
+              if [ ! -f "dist-apk/IsleMind-${VERSION}-${required_arch}-${model_variant}.apk" ]; then
+                echo "::error::Missing ${required_arch} ${model_variant} APK asset."
+                find android/app/build/outputs/apk/release -maxdepth 1 -type f -print || true
+                exit 1
+              fi
+            done
           done
           count="$(find dist-apk -type f -name '*.apk' | wc -l | tr -d ' ')"
           if [ "$count" -lt 8 ]; then
             echo "::error::Expected 8 APK assets, found $count."
             exit 1
           fi
-          node scripts/validate-android-16kb-apk.js dist-apk/*.apk
+          node scripts/validate-android-16kb-apk.js dist-apk/*-universal-64-*.apk dist-apk/*-arm64-v8a-*.apk dist-apk/*-x86_64-*.apk
 
       - name: Upload APK artifact
         uses: actions/upload-artifact@v7

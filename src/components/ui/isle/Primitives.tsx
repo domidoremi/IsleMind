@@ -1,5 +1,5 @@
 import type { ReactNode } from 'react'
-import { Text, TextInput, View, type StyleProp, type TextInputProps, type ViewStyle } from 'react-native'
+import { Text, View, type StyleProp, type TextInputProps, type ViewStyle } from 'react-native'
 import { ChevronDown } from 'lucide-react-native'
 import { MotiView } from 'moti'
 import { useTranslation } from 'react-i18next'
@@ -8,12 +8,13 @@ import { typography } from '@/theme/typography'
 import { useMotionPreference } from '@/hooks/useMotionPreference'
 import { motionTokens } from '@/theme/animation'
 import { PressableScale } from '@/components/ui/PressableScale'
-import { IslandPanel, type IslandMaterial } from '@/components/ui/IslandPanel'
+import { IslePanel, type IsleMaterial } from './Panel'
+import { IsleButton, IsleInput, IsleSwitch as IsleStyledSwitch } from './IsleKit'
 
-export type IslandTone = 'default' | 'mint' | 'amber' | 'danger' | 'sky' | 'ink'
-export type IslandSize = 'sm' | 'md' | 'lg'
+export type IsleTone = 'default' | 'mint' | 'amber' | 'danger' | 'sky' | 'ink'
+export type IsleSize = 'sm' | 'md' | 'lg'
 
-export function IslandIconButton({
+export function IsleIconButton({
   label,
   children,
   onPress,
@@ -25,40 +26,38 @@ export function IslandIconButton({
   label: string
   children: ReactNode
   onPress?: () => void
-  tone?: IslandTone
+  tone?: IsleTone
   disabled?: boolean
-  size?: IslandSize
+  size?: IsleSize
   style?: StyleProp<ViewStyle>
 }) {
-  const { colors } = useAppTheme()
   const dimension = size === 'sm' ? 36 : size === 'lg' ? 50 : 42
   return (
-    <PressableScale
-      haptic
+    <IsleButton
+      type={tone === 'ink' || tone === 'mint' || tone === 'amber' ? 'primary' : 'default'}
+      danger={tone === 'danger'}
       disabled={disabled}
       onPress={onPress}
-      accessibilityLabel={label}
+      label={label}
+      icon={children}
       style={[
         {
           width: dimension,
           height: dimension,
           borderRadius: dimension / 2,
+          minHeight: dimension,
+          paddingHorizontal: 0,
           alignItems: 'center',
           justifyContent: 'center',
-          backgroundColor: toneBackground(tone, colors),
-          borderWidth: tone === 'ink' ? 0 : 1,
-          borderColor: colors.border,
-          opacity: disabled ? 0.48 : 1,
         },
         style,
       ]}
-    >
-      {children}
-    </PressableScale>
+      textStyle={{ display: 'none' }}
+    />
   )
 }
 
-export function IslandSection({
+export function IsleSection({
   title,
   subtitle,
   children,
@@ -72,14 +71,14 @@ export function IslandSection({
   subtitle?: string
   children: ReactNode
   action?: ReactNode
-  material?: IslandMaterial
+  material?: IsleMaterial
   elevated?: boolean
   style?: StyleProp<ViewStyle>
   contentStyle?: StyleProp<ViewStyle>
 }) {
   const { colors } = useAppTheme()
   return (
-    <IslandPanel material={material} elevated={elevated} radius={28} style={style} contentStyle={[{ padding: 14 }, contentStyle]}>
+    <IslePanel material={material} elevated={elevated} radius={28} style={style} contentStyle={[{ padding: 14 }, contentStyle]}>
       {title || subtitle || action ? (
         <View style={{ flexDirection: 'row', alignItems: 'flex-start', gap: 10, marginBottom: children ? 12 : 0 }}>
           <View style={{ flex: 1 }}>
@@ -94,11 +93,11 @@ export function IslandSection({
         </View>
       ) : null}
       {children}
-    </IslandPanel>
+    </IslePanel>
   )
 }
 
-export function IslandField({
+export function IsleField({
   label,
   note,
   inputProps,
@@ -112,35 +111,18 @@ export function IslandField({
   const { colors } = useAppTheme()
   return (
     <View style={style}>
-      <Text style={{ color: colors.textSecondary, fontSize: 12, fontWeight: '900', marginBottom: 6 }}>{label}</Text>
-      <TextInput
-        placeholderTextColor={colors.textTertiary}
+      <IsleInput
+        label={label}
         {...inputProps}
-        style={[
-          {
-            minHeight: inputProps.multiline ? 84 : 46,
-            maxHeight: inputProps.multiline ? 180 : undefined,
-            borderRadius: 18,
-            paddingHorizontal: 14,
-            paddingVertical: inputProps.multiline ? 12 : 0,
-            color: colors.text,
-            backgroundColor: colors.material.field,
-            borderWidth: 1,
-            borderColor: colors.border,
-            fontSize: 14,
-            lineHeight: inputProps.multiline ? 20 : undefined,
-            fontWeight: '700',
-            textAlignVertical: inputProps.multiline ? 'top' : 'center',
-          },
-          inputProps.style,
-        ]}
+        size="middle"
+        inputStyle={inputProps.style}
       />
       {note ? <Text style={{ color: colors.textTertiary, fontSize: 11, lineHeight: 16, marginTop: 6 }}>{note}</Text> : null}
     </View>
   )
 }
 
-export function IslandToggle({
+export function IsleToggle({
   title,
   description,
   active,
@@ -163,8 +145,13 @@ export function IslandToggle({
         borderRadius: 26,
         padding: 12,
         backgroundColor: colors.material.paper,
-        borderWidth: 1,
+        borderWidth: 2,
         borderColor: active ? colors.primary : colors.border,
+        shadowColor: active ? colors.primary : colors.shadowTint,
+        shadowOpacity: active ? 0.24 : 0.14,
+        shadowRadius: 0,
+        shadowOffset: { width: 0, height: 4 },
+        elevation: 2,
       }}
     >
       <View style={{ flexDirection: 'row', alignItems: 'center', gap: 12 }}>
@@ -177,37 +164,17 @@ export function IslandToggle({
           <Text style={{ color: colors.text, fontSize: 15, fontWeight: '900' }}>{title}</Text>
           {description ? <Text numberOfLines={2} style={{ color: colors.textSecondary, fontSize: 12, lineHeight: 17, marginTop: 3 }}>{description}</Text> : null}
         </View>
-        <IslandSwitch active={active} />
+        <IsleSwitch active={active} onChange={onPress} />
       </View>
     </PressableScale>
   )
 }
 
-export function IslandSwitch({ active }: { active: boolean }) {
-  const { colors } = useAppTheme()
-  const motion = useMotionPreference()
-  return (
-    <View
-      style={{
-        width: 46,
-        height: 28,
-        borderRadius: 14,
-        padding: 3,
-        backgroundColor: active ? colors.primary : colors.islandRaised,
-        borderWidth: 1,
-        borderColor: active ? colors.primary : colors.border,
-      }}
-    >
-      <MotiView
-        animate={{ translateX: active ? 18 : 0 }}
-        transition={motion === 'full' ? { type: 'spring', ...motionTokens.spring.settle } : { type: 'timing', duration: 1 }}
-        style={{ width: 20, height: 20, borderRadius: 10, backgroundColor: active ? colors.primaryForeground : colors.textTertiary }}
-      />
-    </View>
-  )
+export function IsleSwitch({ active, onChange }: { active: boolean; onChange?: () => void }) {
+  return <IsleStyledSwitch checked={active} onChange={onChange ? () => onChange() : undefined} />
 }
 
-export function IslandListItem({
+export function IsleListItem({
   title,
   description,
   leading,
@@ -247,8 +214,13 @@ export function IslandListItem({
             borderRadius: 22,
             padding: 12,
             backgroundColor: danger ? colors.coralWash : colors.material.paperRaised,
-            borderWidth: 1,
+            borderWidth: 2,
             borderColor: danger ? colors.error : colors.border,
+            shadowColor: danger ? colors.error : colors.shadowTint,
+            shadowOpacity: 0.16,
+            shadowRadius: 0,
+            shadowOffset: { width: 0, height: 3 },
+            elevation: 2,
           },
           style,
         ]}
@@ -266,8 +238,13 @@ export function IslandListItem({
           borderRadius: 22,
           padding: 12,
           backgroundColor: danger ? colors.coralWash : colors.material.paperRaised,
-          borderWidth: 1,
+          borderWidth: 2,
           borderColor: danger ? colors.error : colors.border,
+          shadowColor: danger ? colors.error : colors.shadowTint,
+          shadowOpacity: 0.12,
+          shadowRadius: 0,
+          shadowOffset: { width: 0, height: 3 },
+          elevation: 2,
         },
         style,
       ]}
@@ -277,7 +254,7 @@ export function IslandListItem({
   )
 }
 
-export function IslandHeader({
+export function IsleHeader({
   title,
   subtitle,
   leading,
@@ -292,7 +269,7 @@ export function IslandHeader({
 }) {
   const { colors } = useAppTheme()
   return (
-    <IslandPanel material="chrome" elevated radius={30} contentStyle={{ padding: collapsed ? 6 : 8 }}>
+    <IslePanel material="chrome" elevated radius={30} contentStyle={{ padding: collapsed ? 6 : 8 }}>
       <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
         {leading}
         <View style={{ flex: 1 }}>
@@ -303,11 +280,11 @@ export function IslandHeader({
         </View>
         {trailing}
       </View>
-    </IslandPanel>
+    </IslePanel>
   )
 }
 
-export function IslandSheet({
+export function IsleSheet({
   children,
   style,
   contentStyle,
@@ -324,14 +301,14 @@ export function IslandSheet({
       transition={motion === 'full' ? { type: 'spring', ...motionTokens.spring.settle } : { type: 'timing', duration: motionTokens.duration.fast }}
       style={style}
     >
-      <IslandPanel material="chrome" elevated radius={28} contentStyle={[{ padding: 12 }, contentStyle]}>
+      <IslePanel material="chrome" elevated radius={28} contentStyle={[{ padding: 12 }, contentStyle]}>
         {children}
-      </IslandPanel>
+      </IslePanel>
     </MotiView>
   )
 }
 
-export function IslandDisclosure({
+export function IsleDisclosure({
   title,
   summary,
   expanded,
@@ -356,26 +333,39 @@ export function IslandDisclosure({
         minHeight: 54,
         borderRadius: 24,
         paddingHorizontal: 13,
-        flexDirection: 'row',
-        alignItems: 'center',
-        gap: 10,
+        paddingVertical: 10,
         backgroundColor: danger ? colors.coralWash : colors.material.paper,
-        borderWidth: 1,
+        borderWidth: 2,
+        borderStyle: danger ? 'solid' : 'dashed',
         borderColor: danger ? colors.error : colors.border,
       }}
     >
-      <View style={{ flex: 1 }}>
-        <Text style={{ color: danger ? colors.error : colors.text, fontSize: 15, fontWeight: '900' }}>{title}</Text>
-        {summary ? <Text numberOfLines={1} style={{ color: colors.textTertiary, fontSize: 11, marginTop: 2, fontWeight: '800' }}>{summary}</Text> : null}
+      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
+        <View style={{ width: 28, height: 28, borderRadius: 14, alignItems: 'center', justifyContent: 'center', backgroundColor: danger ? colors.error : colors.primary }}>
+          <Text style={{ color: colors.primaryForeground, fontSize: 17, fontWeight: '900' }}>{expanded ? '-' : '+'}</Text>
+        </View>
+        <View style={{ flex: 1 }}>
+          <Text style={{ color: danger ? colors.error : colors.text, fontSize: 15, fontWeight: '900' }}>{title}</Text>
+          {summary && !expanded ? <Text numberOfLines={1} style={{ color: colors.textTertiary, fontSize: 11, marginTop: 2, fontWeight: '800' }}>{summary}</Text> : null}
+        </View>
+        <MotiView animate={{ rotate: expanded ? '180deg' : '0deg' }} transition={{ type: 'timing', duration: motion === 'full' ? 180 : 1 }}>
+          <ChevronDown color={danger ? colors.error : colors.textTertiary} size={19} />
+        </MotiView>
       </View>
-      <MotiView animate={{ rotate: expanded ? '180deg' : '0deg' }} transition={{ type: 'timing', duration: motion === 'full' ? 180 : 1 }}>
-        <ChevronDown color={danger ? colors.error : colors.textTertiary} size={19} />
-      </MotiView>
+      {expanded && summary ? (
+        <MotiView
+          from={motion === 'full' ? { opacity: 0, translateY: 6 } : { opacity: 0 }}
+          animate={{ opacity: 1, translateY: 0 }}
+          transition={motion === 'full' ? { type: 'spring', ...motionTokens.spring.gentle } : { type: 'timing', duration: 1 }}
+        >
+          <Text style={{ color: colors.textSecondary, fontSize: 12, lineHeight: 17, marginTop: 8 }}>{summary}</Text>
+        </MotiView>
+      ) : null}
     </PressableScale>
   )
 }
 
-function toneBackground(tone: IslandTone, colors: ReturnType<typeof useAppTheme>['colors']) {
+function toneBackground(tone: IsleTone, colors: ReturnType<typeof useAppTheme>['colors']) {
   switch (tone) {
     case 'mint':
       return colors.mintSoft

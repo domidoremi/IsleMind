@@ -4,19 +4,20 @@ import { Modal, Pressable, Text, View } from 'react-native'
 import { AlertTriangle, Check, Info, X } from 'lucide-react-native'
 import { MotiView } from 'moti'
 import { useTranslation } from 'react-i18next'
-import { IslandButton } from '@/components/ui/IslandButton'
-import { IslandPanel } from '@/components/ui/IslandPanel'
-import { PressableScale } from '@/components/ui/PressableScale'
+import { useSafeAreaInsets } from 'react-native-safe-area-context'
+import { IsleCard } from './IsleKit'
+import { IsleButton } from './Controls'
+import { IslePanel } from './Panel'
 import { useAppTheme } from '@/hooks/useAppTheme'
 
 type DialogTone = 'default' | 'mint' | 'amber' | 'danger'
 
-export interface IslandDialogChip {
+export interface IsleDialogChip {
   label: string
   tone?: DialogTone
 }
 
-export interface IslandDialogMetric {
+export interface IsleDialogMetric {
   label: string
   before?: string
   after?: string
@@ -29,8 +30,8 @@ interface ConfirmOptions {
   confirmLabel?: string
   cancelLabel?: string
   tone?: DialogTone
-  chips?: IslandDialogChip[]
-  metrics?: IslandDialogMetric[]
+  chips?: IsleDialogChip[]
+  metrics?: IsleDialogMetric[]
   renderBody?: () => ReactNode
 }
 
@@ -46,6 +47,7 @@ interface ToastOptions {
   message?: string
   tone?: DialogTone
   durationMs?: number
+  position?: 'top' | 'bottom'
 }
 
 interface DialogState extends ConfirmOptions {
@@ -59,17 +61,18 @@ interface ToastState extends ToastOptions {
   id: number
 }
 
-interface IslandDialogApi {
+interface IsleDialogApi {
   confirm: (options: ConfirmOptions) => Promise<boolean>
   notice: (options: NoticeOptions) => void
   toast: (options: ToastOptions) => void
 }
 
-const IslandDialogContext = createContext<IslandDialogApi | null>(null)
+const IsleDialogContext = createContext<IsleDialogApi | null>(null)
 
-export function IslandDialogProvider({ children }: { children: ReactNode }) {
+export function IsleDialogProvider({ children }: { children: ReactNode }) {
   const { colors } = useAppTheme()
   const { t } = useTranslation()
+  const insets = useSafeAreaInsets()
   const [dialog, setDialog] = useState<DialogState | null>(null)
   const [toast, setToast] = useState<ToastState | null>(null)
   const idRef = useRef(0)
@@ -82,7 +85,7 @@ export function IslandDialogProvider({ children }: { children: ReactNode }) {
     })
   }, [])
 
-  const api = useMemo<IslandDialogApi>(() => ({
+  const api = useMemo<IsleDialogApi>(() => ({
     confirm: (options) =>
       new Promise<boolean>((resolve) => {
         setDialog({ ...options, id: idRef.current++, kind: 'confirm', resolve })
@@ -101,7 +104,7 @@ export function IslandDialogProvider({ children }: { children: ReactNode }) {
   }), [])
 
   return (
-    <IslandDialogContext.Provider value={api}>
+    <IsleDialogContext.Provider value={api}>
       {children}
       <Modal
         transparent
@@ -123,7 +126,7 @@ export function IslandDialogProvider({ children }: { children: ReactNode }) {
               animate={{ opacity: 1, translateY: 0, scale: 1 }}
               transition={{ type: 'spring', damping: 20, stiffness: 190 }}
             >
-              <IslandPanel material="paper" elevated radius={32} contentStyle={{ padding: 16 }}>
+              <IsleCard type="title" style={{ padding: 18, borderRadius: 38 }}>
                 <View style={{ flexDirection: 'row', alignItems: 'flex-start', gap: 12 }}>
                   <ToneBadge tone={dialog.tone ?? 'default'} />
                   <View style={{ flex: 1 }}>
@@ -136,14 +139,13 @@ export function IslandDialogProvider({ children }: { children: ReactNode }) {
                       </Text>
                     ) : null}
                   </View>
-                  <PressableScale
-                    haptic
+                  <IsleButton
+                    label={t('dialog.close')}
+                    icon={<X color={colors.textTertiary} size={16} strokeWidth={2.2} />}
                     onPress={() => closeDialog(false)}
-                    accessibilityLabel={t('dialog.close')}
-                    style={{ width: 34, height: 34, borderRadius: 17, alignItems: 'center', justifyContent: 'center', backgroundColor: colors.islandRaised }}
-                  >
-                    <X color={colors.textTertiary} size={16} strokeWidth={2.2} />
-                  </PressableScale>
+                    style={{ width: 38, height: 38, minHeight: 38, borderRadius: 19, paddingHorizontal: 0 }}
+                    textStyle={{ display: 'none' }}
+                  />
                 </View>
                 {dialog.chips?.length ? (
                   <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginTop: 13 }}>
@@ -158,34 +160,47 @@ export function IslandDialogProvider({ children }: { children: ReactNode }) {
                 {dialog.renderBody ? <View style={{ marginTop: 13 }}>{dialog.renderBody()}</View> : null}
                 <View style={{ flexDirection: 'row', gap: 10, marginTop: 16 }}>
                   {dialog.kind === 'confirm' ? (
-                    <IslandButton
+                    <IsleButton
                       label={dialog.cancelLabel ?? t('common.cancel')}
                       onPress={() => closeDialog(false)}
                       style={{ flex: 1 }}
                     />
                   ) : null}
-                  <IslandButton
+                  <IsleButton
                     label={dialog.kind === 'confirm' ? dialog.confirmLabel ?? t('common.confirm') : dialog.actionLabel ?? t('dialog.ok')}
                     tone={dialog.tone === 'danger' ? 'danger' : dialog.tone === 'amber' ? 'amber' : 'primary'}
                     onPress={() => closeDialog(true)}
                     style={{ flex: 1 }}
                   />
                 </View>
-              </IslandPanel>
+              </IsleCard>
             </MotiView>
           ) : null}
         </View>
       </Modal>
       {toast ? (
-        <View pointerEvents="box-none" style={{ position: 'absolute', left: 0, right: 0, top: 18, zIndex: 999, alignItems: 'center', paddingHorizontal: 16 }}>
+        <View
+          pointerEvents="box-none"
+          style={{
+            position: 'absolute',
+            left: 0,
+            right: 0,
+            ...(toast.position === 'bottom'
+              ? { bottom: 18 + insets.bottom }
+              : { top: 18 + insets.top }),
+            zIndex: 999,
+            alignItems: 'center',
+            paddingHorizontal: 16,
+          }}
+        >
           <MotiView
             key={toast.id}
-            from={{ opacity: 0, translateY: -16, scale: 0.98 }}
+            from={{ opacity: 0, translateY: toast.position === 'bottom' ? 16 : -16, scale: 0.98 }}
             animate={{ opacity: 1, translateY: 0, scale: 1 }}
             transition={{ type: 'spring', damping: 20, stiffness: 210 }}
             style={{ width: '100%', maxWidth: 420 }}
           >
-            <IslandPanel material="chrome" elevated radius={26} contentStyle={{ paddingHorizontal: 13, paddingVertical: 11 }}>
+            <IslePanel material="chrome" elevated radius={26} contentStyle={{ paddingHorizontal: 13, paddingVertical: 11 }}>
               <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
                 <ToneBadge tone={toast.tone ?? 'mint'} small />
                 <View style={{ flex: 1 }}>
@@ -193,18 +208,18 @@ export function IslandDialogProvider({ children }: { children: ReactNode }) {
                   {toast.message ? <Text numberOfLines={2} style={{ color: colors.textSecondary, fontSize: 12, lineHeight: 17, marginTop: 2 }}>{toast.message}</Text> : null}
                 </View>
               </View>
-            </IslandPanel>
+            </IslePanel>
           </MotiView>
         </View>
       ) : null}
-    </IslandDialogContext.Provider>
+    </IsleDialogContext.Provider>
   )
 }
 
-export function useIslandDialog(): IslandDialogApi {
-  const context = useContext(IslandDialogContext)
+export function useIsleDialog(): IsleDialogApi {
+  const context = useContext(IsleDialogContext)
   if (!context) {
-    throw new Error('useIslandDialog must be used inside IslandDialogProvider')
+    throw new Error('useIsleDialog must be used inside IsleDialogProvider')
   }
   return context
 }
@@ -239,7 +254,7 @@ function ToneBadge({ tone, small = false }: { tone: DialogTone; small?: boolean 
   )
 }
 
-function DialogChip({ chip }: { chip: IslandDialogChip }) {
+function DialogChip({ chip }: { chip: IsleDialogChip }) {
   const { colors } = useAppTheme()
   const tone = chip.tone ?? 'default'
   const background = tone === 'mint' ? colors.mintSoft : tone === 'amber' ? colors.amberSoft : tone === 'danger' ? colors.coralWash : colors.islandRaised
@@ -251,7 +266,7 @@ function DialogChip({ chip }: { chip: IslandDialogChip }) {
   )
 }
 
-function DialogMetricRow({ metric }: { metric: IslandDialogMetric }) {
+function DialogMetricRow({ metric }: { metric: IsleDialogMetric }) {
   const { colors } = useAppTheme()
   return (
     <View style={{ borderRadius: 18, padding: 11, backgroundColor: colors.material.paperRaised, borderWidth: 1, borderColor: colors.border }}>

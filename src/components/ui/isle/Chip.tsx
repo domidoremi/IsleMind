@@ -2,14 +2,14 @@ import type { ReactNode } from 'react'
 import { Text, View, type StyleProp, type ViewStyle } from 'react-native'
 import { useAppTheme } from '@/hooks/useAppTheme'
 
-interface IslandChipProps {
+interface IsleChipProps {
   children: ReactNode
   active?: boolean
   tone?: 'default' | 'mint' | 'amber' | 'danger'
   style?: StyleProp<ViewStyle>
 }
 
-export function IslandChip({ children, active = false, tone = 'default', style }: IslandChipProps) {
+export function IsleChip({ children, active = false, tone = 'default', style }: IsleChipProps) {
   const { colors } = useAppTheme()
   const foreground = tone === 'danger' ? colors.error : active ? colors.surface : colors.textSecondary
   const background =

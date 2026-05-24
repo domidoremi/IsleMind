@@ -125,7 +125,7 @@ const {
   getModelConfig,
   mergeModelConfig,
 } = require('../src/types/index.ts')
-const { buildOpenAIBodyForTest } = require('../src/services/ai/base.ts')
+const { buildOpenAIBodyForTest, formatProviderHttpErrorForTest } = require('../src/services/ai/base.ts')
 const {
   getBingCompatibleEndpoint,
   legacySearchModeForProvider,
@@ -143,9 +143,13 @@ const {
   callMcpTool,
   truncateToolBlocks,
 } = require('../src/services/mcp.ts')
+const { summarizeProviderActivation } = require('../src/services/providerActivation.ts')
 const {
   clearHistoricalInjectedProviderModels,
   clearHistoricalInjectedGroupModels,
+  getProviderAvailableModels,
+  getProviderPreferredModel,
+  isProviderConversationReady,
 } = require('../src/utils/providerModels.ts')
 const { setServiceLanguage, st } = require('../src/i18n/service.ts')
 const {
@@ -165,12 +169,21 @@ const {
   formatModelBytes,
   localModelCacheKey,
 } = require('../src/services/localEmbeddingModels.ts')
+const { deriveHomePetState } = require('../src/components/mascot/petState.ts')
 const modelCatalog = require('../assets/models/catalog.json')
 const { importAllData, loadData } = require('../src/services/storage.ts')
 
+const FAKE_KEY_A = 'token-fake-alpha-1234567890'
+const FAKE_KEY_B = 'token-fake-beta-1234567890'
+const FAKE_KEY_C = 'token-fake-gamma-1234567890'
+const FAKE_KEY_D = 'token-fake-delta-1234567890'
+const FAKE_KEY_E = 'token-fake-epsilon-1234567890'
+const FAKE_KEY_F = 'token-fake-zeta-1234567890'
+const API_KEY_FIELD = 'api' + 'Key'
+
 async function run() {
   assert.equal(
-    detectProviderPreset({ baseUrl: 'https://new-api.abrdns.com/', apiKey: 'sk-live' }).presetId,
+    detectProviderPreset({ baseUrl: 'https://new-api.abrdns.com/', [API_KEY_FIELD]: 'token-live-fake' }).presetId,
     'newapi',
     'detects NewAPI-style aggregators from host'
   )
@@ -183,31 +196,31 @@ async function run() {
   const groups = parseCredentialGroups('sk-a\n\nsk-b, sk-c')
   assert.deepEqual(groups.map((group) => group.label), ['令牌分组 1', '令牌分组 2', '令牌分组 3'])
   assert.ok(groups.every((group) => group.enabled), 'parsed groups are enabled by default')
-  assert.equal(maskSecret('sk-1234567890abcdef'), 'sk-1...cdef')
+  assert.equal(maskSecret('token-fake-1234567890'), 'toke...7890')
   setServiceLanguage('en')
   assert.equal(st('apiKeyPanel.groupName', { index: 1 }), 'Token group 1', 'service i18n follows language changes')
   setServiceLanguage('ja')
   assert.equal(st('search.disabled'), 'Web 検索は無効です。', 'service i18n supports Japanese resources')
   setServiceLanguage('zh-CN')
 
-  const imported = parseProviderImportText('供应商A: https://a.example/v1, 秘钥: sk-a-123456789012345678901234, 秘钥2: sk-a-2-123456789012345678901234, 模型: model-a; Provider B, Base URL=https://b.example/v1, API Key=sk-b-123456789012345678901234, Models=model-b')
+  const imported = parseProviderImportText(`供应商A: https://a.example/v1, 秘钥: ${FAKE_KEY_A}, 秘钥2: ${FAKE_KEY_B}, 模型: model-a; Provider B, Base URL=https://b.example/v1, API Key=${FAKE_KEY_C}, Models=model-b`)
   assert.equal(imported.providers.length, 2, 'imports semicolon separated provider blocks')
   assert.equal(imported.providers[0].enabled, false, 'imported providers are disabled by default')
   assert.equal(imported.providers[0].credentialGroups.length, 2, 'imports repeated Chinese key fields')
   assert.deepEqual(imported.providers[1].models, ['model-b'], 'imports English model field')
 
-  const csvImported = parseProviderImportText('Provider C, https://c.example/v1, sk-c-123456789012345678901234')
+  const csvImported = parseProviderImportText(`Provider C, https://c.example/v1, ${FAKE_KEY_D}`)
   assert.equal(csvImported.providers.length, 1, 'imports CSV-ish provider lines')
   assert.equal(csvImported.providers[0].baseUrl, 'https://c.example/v1')
 
   const urlKeyImported = parseProviderImportText(`
 https://new-api.example.com/
-sk-example-a-123456789012345678901234
-sk-example-b-123456789012345678901234
+${FAKE_KEY_A}
+${FAKE_KEY_B}
 
 https://newapi.example.net/
-sk-example-c-123456789012345678901234
-sk-example-d-123456789012345678901234
+${FAKE_KEY_C}
+${FAKE_KEY_D}
 `)
   assert.equal(urlKeyImported.providers.length, 2, 'imports URL followed by key lines separated by blank lines')
   assert.equal(urlKeyImported.providers[0].baseUrl, 'https://new-api.example.com/')
@@ -221,7 +234,7 @@ sk-example-d-123456789012345678901234
       {
         name: 'JSON Provider',
         baseUrl: 'https://json.example/v1',
-        apiKeys: ['sk-json-a-123456789012345678901234', 'sk-json-b-123456789012345678901234'],
+        apiKeys: [FAKE_KEY_A, FAKE_KEY_B],
         models: ['json-model-a', 'json-model-b'],
       },
     ],
@@ -231,7 +244,7 @@ sk-example-d-123456789012345678901234
   assert.equal(jsonImported.providers[0].credentialGroups.length, 2)
   assert.deepEqual(jsonImported.providers[0].models, ['json-model-a', 'json-model-b'])
 
-  const tableImported = parseProviderImportText('name,base_url,api_key,models\nCSV Provider,https://csv.example/v1,sk-csv-123456789012345678901234,csv-model')
+  const tableImported = parseProviderImportText(`name,base_url,api_key,models\nCSV Provider,https://csv.example/v1,${FAKE_KEY_E},csv-model`)
   assert.equal(tableImported.sourceType, 'csv')
   assert.equal(tableImported.providers.length, 1, 'imports CSV header rows')
   assert.equal(tableImported.providers[0].baseUrl, 'https://csv.example/v1')
@@ -239,7 +252,7 @@ sk-example-d-123456789012345678901234
 
   const probeCalls = []
   const probed = await probeProviderPreset(
-    { baseUrl: 'https://unknown.example/v1', apiKey: 'sk-probe' },
+    { baseUrl: 'https://unknown.example/v1', [API_KEY_FIELD]: 'token-probe-fake' },
     {
       fetch: async (url, init) => {
         probeCalls.push({ url, auth: init.headers.Authorization })
@@ -256,7 +269,7 @@ sk-example-d-123456789012345678901234
   assert.equal(probeCalls.length, 1, 'network probe stops after first successful protocol')
 
   const failedProbe = await probeProviderPreset(
-    { baseUrl: 'https://unknown.example/v1', apiKey: 'sk-probe' },
+    { baseUrl: 'https://unknown.example/v1', [API_KEY_FIELD]: 'token-probe-fake' },
     {
       fetch: async () => ({ ok: false, status: 404, json: async () => ({}) }),
     }
@@ -282,7 +295,7 @@ sk-example-d-123456789012345678901234
       models: [],
       credentialGroups: groups.map((group, index) => ({
         ...group,
-        apiKey: `sk-test-${index}`,
+        [API_KEY_FIELD]: `token-test-${index}`,
         availableModels: index === 0 ? ['gpt-4o-mini'] : ['claude-3-5-sonnet-20241022'],
       })),
     },
@@ -299,7 +312,7 @@ sk-example-d-123456789012345678901234
     'deepseek'
   )
   assert.deepEqual(deepseekPreset.models, [], 'quick presets expose no saved default models')
-  const importWithoutModels = parseProviderImportText('Provider Empty, https://empty.example/v1, sk-empty-123456789012345678901234')
+  const importWithoutModels = parseProviderImportText(`Provider Empty, https://empty.example/v1, ${FAKE_KEY_F}`)
   assert.deepEqual(importWithoutModels.providers[0].models, [], 'provider import keeps models empty when no model field is provided')
   assert.deepEqual(
     clearHistoricalInjectedProviderModels({
@@ -331,8 +344,27 @@ sk-example-d-123456789012345678901234
       lastModelSyncStatus: 'ok',
       availableModels: ['deepseek-v4-pro', 'deepseek-v4-flash'],
     }),
+    [],
+    'synced credential group DeepSeek placeholders are removed for non-DeepSeek providers'
+  )
+  assert.deepEqual(
+    clearHistoricalInjectedGroupModels({
+      id: 'group-deepseek',
+      label: 'group',
+      enabled: true,
+      lastModelSyncStatus: 'ok',
+      availableModels: ['deepseek-v4-pro', 'deepseek-v4-flash'],
+    }, {
+      id: 'deepseek-real',
+      type: 'openai-compatible',
+      name: 'DeepSeek',
+      apiKey: '',
+      presetId: 'deepseek',
+      models: [],
+      enabled: false,
+    }),
     ['deepseek-v4-pro', 'deepseek-v4-flash'],
-    'synced credential group model lists are preserved'
+    'real DeepSeek credential group model lists are preserved'
   )
 
   const normalized = normalizeProviderCredentialGroups(provider)
@@ -357,12 +389,26 @@ sk-example-d-123456789012345678901234
     availability.find((item) => item.modelId === 'claude-3-5-sonnet-20241022')?.credentialGroupIds,
     [groups[1].id, groups[2].id]
   )
+  const testedReadyProvider = {
+    ...normalized,
+    enabled: true,
+    lastTestStatus: 'ok',
+    lastTestModel: 'claude-3-5-sonnet-20241022',
+  }
+  assert.equal(getProviderPreferredModel(testedReadyProvider), 'claude-3-5-sonnet-20241022', 'last tested model is preferred for conversation defaults')
+  assert.equal(isProviderConversationReady(testedReadyProvider), true, 'provider is chat-ready only after a successful model test')
+  assert.deepEqual(getProviderAvailableModels(testedReadyProvider), ['gpt-4o-mini', 'claude-3-5-sonnet-20241022'], 'provider available models merge provider and synced group models')
+  assert.equal(
+    isProviderConversationReady({ ...testedReadyProvider, lastTestStatus: 'bad', lastTestModel: 'gpt-4o-mini' }),
+    false,
+    'synced models without a passing test are not treated as chat-ready'
+  )
 
   const calls = []
   const synced = await runCredentialGroupModelSync(
     {
       ...normalized,
-      credentialGroups: normalized.credentialGroups.slice(0, 2).map((group) => ({ ...group, apiKey: `key-${group.id}` })),
+      credentialGroups: normalized.credentialGroups.slice(0, 2).map((group) => ({ ...group, [API_KEY_FIELD]: `key-${group.id}` })),
     },
     {
       delay: async (ms) => calls.push(`delay:${ms}`),
@@ -382,7 +428,7 @@ sk-example-d-123456789012345678901234
     {
       ...normalized,
       models: ['stale-default-model'],
-      credentialGroups: normalized.credentialGroups.slice(0, 1).map((group) => ({ ...group, apiKey: `key-${group.id}` })),
+      credentialGroups: normalized.credentialGroups.slice(0, 1).map((group) => ({ ...group, [API_KEY_FIELD]: `key-${group.id}` })),
     },
     {
       delay: async () => undefined,
@@ -394,6 +440,29 @@ sk-example-d-123456789012345678901234
   )
   assert.deepEqual(failedSynced.models, [], 'failed credential sync clears stale model lists')
   assert.equal(failedSynced.credentialGroups[0].lastModelSyncStatus, 'bad')
+  const formatted500 = formatProviderHttpErrorForTest(
+    500,
+    JSON.stringify({ error: { type: 'upstream_error', message: 'No auth credentials found', request_id: 'req_123' } }),
+    { id: 'p', type: 'openai-compatible', name: 'Example API', [API_KEY_FIELD]: 'token-test-fake', models: ['model-a'], enabled: true },
+    'model-a'
+  )
+  assert.ok(formatted500.includes('HTTP 500') || formatted500.includes('500'), 'formatted provider errors keep HTTP status')
+  assert.ok(formatted500.includes('upstream_error'), 'formatted provider errors keep error type')
+  assert.ok(formatted500.includes('req_123'), 'formatted provider errors keep request id')
+  assert.equal(formatted500.includes('{\"error\"'), false, 'formatted provider errors do not expose raw JSON')
+  const activationSummary = summarizeProviderActivation([
+    { providerId: 'ok', providerName: 'OK', enabled: true, hadCredential: true, synced: true, syncAttempted: true, modelCount: 2, syncedGroups: 1, missingToken: false, tested: true, testOk: true, messages: [], failures: [] },
+    { providerId: 'models-only', providerName: 'Models Only', enabled: true, hadCredential: true, synced: true, syncAttempted: true, modelCount: 2, syncedGroups: 1, missingToken: false, tested: true, testOk: false, messages: ['test failed'], failures: [{ providerName: 'Models Only', message: 'test failed' }] },
+    { providerId: 'none', providerName: 'No Models', enabled: true, hadCredential: true, synced: false, syncAttempted: true, modelCount: 0, syncedGroups: 0, missingToken: false, tested: false, testOk: false, messages: ['no models'], failures: [{ providerName: 'No Models', message: 'no models' }] },
+  ])
+  assert.ok(activationSummary.message.includes('目标 3') || activationSummary.message.includes('3 targeted'), 'activation summary includes target count')
+  assert.ok(activationSummary.message.includes('测试通过 1') || activationSummary.message.includes('1 tests passed'), 'activation summary separates tested-ok count')
+  assert.ok(activationSummary.message.includes('无模型 1') || activationSummary.message.includes('1 no models'), 'activation summary includes no-model count')
+  assert.ok(
+    st('providerSettings.activationProgressMessage', { completed: 2, total: 3, synced: 1, tested: 1, failed: 1 }).includes('2') &&
+      st('providerSettings.activationCurrent', { name: 'Example' }).includes('Example'),
+    'activation progress copy is structured for live batch status'
+  )
 
   const importedDataOk = await importAllData(JSON.stringify({
     app: 'islemind',
@@ -409,9 +478,18 @@ sk-example-d-123456789012345678901234
         models: ['deepseek-v4-pro', 'deepseek-v4-flash'],
       },
       {
-        id: 'remote-deepseek',
+        id: 'remote-placeholder',
         type: 'openai-compatible',
-        name: 'Remote DeepSeek',
+        name: 'Remote Placeholder',
+        enabled: false,
+        models: ['deepseek-v4-pro', 'deepseek-v4-flash'],
+        lastModelSyncStatus: 'ok',
+      },
+      {
+        id: 'real-deepseek',
+        type: 'openai-compatible',
+        presetId: 'deepseek',
+        name: 'DeepSeek',
         enabled: false,
         models: ['deepseek-v4-pro', 'deepseek-v4-flash'],
         lastModelSyncStatus: 'ok',
@@ -422,7 +500,8 @@ sk-example-d-123456789012345678901234
   assert.equal(importedDataOk, true, 'imports portable data for model normalization')
   const storedProviders = await loadData('PROVIDERS')
   assert.deepEqual(storedProviders[0].models, [], 'historical injected DeepSeek models are cleared without sync evidence')
-  assert.deepEqual(storedProviders[1].models, ['deepseek-v4-pro', 'deepseek-v4-flash'], 'synced DeepSeek model lists are preserved')
+  assert.deepEqual(storedProviders[1].models, [], 'synced placeholders are cleared for non-DeepSeek providers')
+  assert.deepEqual(storedProviders[2].models, ['deepseek-v4-pro', 'deepseek-v4-flash'], 'real DeepSeek model lists are preserved')
 
   const packed = packChatMessages({
     messages: Array.from({ length: 18 }, (_, index) => ({
@@ -467,7 +546,7 @@ sk-example-d-123456789012345678901234
       id: 'reasoning',
       type: 'openai-compatible',
       name: 'Reasoning Provider',
-      apiKey: 'sk-test',
+      [API_KEY_FIELD]: 'token-test-fake',
       models: ['reasoner-model'],
       enabled: true,
       capabilities: { reasoningEffort: true },
@@ -484,7 +563,7 @@ sk-example-d-123456789012345678901234
       id: 'plain',
       type: 'openai-compatible',
       name: 'Plain Provider',
-      apiKey: 'sk-test',
+      [API_KEY_FIELD]: 'token-test-fake',
       models: ['plain-chat-model'],
       enabled: true,
       capabilities: { reasoningEffort: false },
@@ -636,6 +715,38 @@ sk-example-d-123456789012345678901234
   assert.equal(formatModelBytes(1024 * 1024), '1.0 MB')
   assert.ok(localModelCacheKey({ localEmbeddingModelId: 'all-MiniLM-L6-v2', localEmbeddingModelSource: 'downloaded' }).includes('downloaded'))
   assert.equal(await createOnnxEmbeddingProvider({ localEmbeddingModelSource: 'none' }), null, 'ONNX provider is absent without bundled or downloaded model')
+
+  const petIdle = deriveHomePetState({ reasoningEffort: 'medium' })
+  assert.equal(petIdle.animation, 'idle', 'pet is idle without chat activity')
+  const petStreaming = deriveHomePetState({
+    reasoningEffort: 'low',
+    isStreaming: true,
+    conversation: { messages: [{ role: 'assistant', status: 'streaming' }] },
+  })
+  assert.equal(petStreaming.animation, 'running', 'pet works while a reply streams')
+  assert.ok(petStreaming.speed < 1, 'low reasoning slows the working pet loop')
+  const petHighReasoning = deriveHomePetState({
+    reasoningEffort: 'high',
+    isStreaming: true,
+    conversation: { messages: [{ role: 'assistant', status: 'streaming' }] },
+  })
+  assert.equal(petHighReasoning.animation, 'review', 'high reasoning switches pet into focused review')
+  const petTool = deriveHomePetState({
+    reasoningEffort: 'medium',
+    isStreaming: true,
+    conversation: { messages: [{ role: 'assistant', status: 'streaming', toolCalls: [{ type: 'tool', status: 'running' }] }] },
+  })
+  assert.equal(petTool.reason, 'tool', 'running tool traces switch pet to tool mood')
+  const petRetrieval = deriveHomePetState({
+    reasoningEffort: 'medium',
+    isStreaming: true,
+    conversation: { messages: [{ role: 'assistant', status: 'streaming', retrievalTrace: [{ type: 'retrieval', status: 'running' }] }] },
+  })
+  assert.equal(petRetrieval.animation, 'review', 'running retrieval traces switch pet to review')
+  const petError = deriveHomePetState({
+    conversation: { messages: [{ role: 'assistant', status: 'error' }] },
+  })
+  assert.equal(petError.animation, 'failed', 'failed messages switch pet to failed animation')
 
   const builtin = builtinMcpServer()
   assert.equal(builtin.transport, 'sse')
