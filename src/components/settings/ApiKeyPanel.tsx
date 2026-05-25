@@ -157,24 +157,24 @@ export function ApiKeyPanel({ provider, initiallyExpanded = false }: ApiKeyPanel
     const preset = getProviderPreset(detection.presetId)
     if (!baseUrl.trim() && preset.baseUrl) setBaseUrl(preset.baseUrl)
     setNotice(t('apiKeyPanel.presetSelected', { name: preset.name }))
-    dialog.toast({ title: t('apiKeyPanel.detectionAccepted'), message: `${provider.name} · ${preset.name}`, tone: 'mint' })
+    dialog.toast({ title: t('apiKeyPanel.detectionApplied'), message: `${provider.name} · ${preset.name}`, tone: 'mint' })
   }
 
   async function probeDetection() {
     setTask('probing')
-    dialog.toast({ title: t('apiKeyPanel.probeStarted'), message: provider.name, tone: 'mint' })
+    dialog.toast({ title: t('apiKeyPanel.interfaceProbeStarted'), message: provider.name, tone: 'mint' })
     const result = await probeProviderPreset({ baseUrl, name: provider.name, apiKey: await getProbeApiKey() })
     setPresetId(result.presetId)
     const preset = getProviderPreset(result.presetId)
     if (!baseUrl.trim() && preset.baseUrl) setBaseUrl(preset.baseUrl)
     setTask('idle')
     setNotice(result.reason)
-    dialog.toast({ title: t('apiKeyPanel.probeDone'), message: `${provider.name} · ${getProviderPreset(result.presetId).name}`, tone: 'mint' })
+    dialog.toast({ title: t('apiKeyPanel.interfaceProbeDone'), message: `${provider.name} · ${getProviderPreset(result.presetId).name}`, tone: 'mint' })
   }
 
   async function syncAndTest() {
     setTask('syncing')
-    dialog.toast({ title: t('apiKeyPanel.syncAndTestStarted'), message: provider.name, tone: 'mint' })
+    dialog.toast({ title: t('apiKeyPanel.fetchAndTestStarted'), message: provider.name, tone: 'mint' })
     await save(false)
     const current = useSettingsStore.getState().providers.find((item) => item.id === provider.id) ?? provider
     const result = await syncAndTestProvider(current, {
@@ -190,7 +190,7 @@ export function ApiKeyPanel({ provider, initiallyExpanded = false }: ApiKeyPanel
       updateSettings({ defaultProvider: result.providerId, onboardingCompleted: true })
     }
     setNotice(summary.message)
-    dialog.notice({ title: result.testOk ? t('apiKeyPanel.syncAndTestDone') : t('apiKeyPanel.syncAndTestNeedsCheck'), message: summary.message, tone: summary.tone })
+    dialog.notice({ title: result.testOk ? t('apiKeyPanel.fetchAndTestDone') : t('apiKeyPanel.fetchAndTestNeedsCheck'), message: summary.message, tone: summary.tone })
   }
 
   async function toggleProviderEnabled() {
@@ -291,13 +291,13 @@ export function ApiKeyPanel({ provider, initiallyExpanded = false }: ApiKeyPanel
             <MiniAction active={provider.enabled} label={provider.enabled ? t('apiKeyPanel.enabledState') : t('apiKeyPanel.disabledState')} onPress={() => void toggleProviderEnabled()}>
               <Power color={provider.enabled ? colors.success : colors.textTertiary} size={15} />
             </MiniAction>
-            <MiniAction label={t('apiKeyPanel.acceptDetection')} onPress={() => void acceptDetection()}>
+            <MiniAction label={t('apiKeyPanel.applyDetection')} onPress={() => void acceptDetection()}>
               <SearchCheck color={colors.textTertiary} size={15} />
             </MiniAction>
-            <MiniAction label={task === 'probing' ? t('apiKeyPanel.probing') : t('apiKeyPanel.networkProbe')} onPress={() => void probeDetection()} disabled={isBusy || !baseUrl.trim() || !hasKey}>
+            <MiniAction label={task === 'probing' ? t('apiKeyPanel.probing') : t('apiKeyPanel.detectInterface')} onPress={() => void probeDetection()} disabled={isBusy || !baseUrl.trim() || !hasKey}>
               <Sparkles color={colors.textTertiary} size={15} />
             </MiniAction>
-            <MiniAction label={t('settings.syncAndTest')} onPress={() => void syncAndTest()} disabled={isBusy || !hasKey}>
+            <MiniAction label={t('apiKeyPanel.fetchModelsAndTest')} onPress={() => void syncAndTest()} disabled={isBusy || !hasKey}>
               <ListFilter color={colors.textTertiary} size={15} />
             </MiniAction>
           </View>
@@ -306,6 +306,9 @@ export function ApiKeyPanel({ provider, initiallyExpanded = false }: ApiKeyPanel
             <Text style={{ color: colors.text, fontSize: 13, fontWeight: '900' }}>{t('apiKeyPanel.autoDetect')}</Text>
             <Text style={{ color: colors.textSecondary, fontSize: 12, lineHeight: 17, marginTop: 4 }}>
               {detection.reason} · {t('apiKeyPanel.suggestedPreset', { name: getProviderPreset(detection.presetId).name })}
+            </Text>
+            <Text style={{ color: colors.textTertiary, fontSize: 11, lineHeight: 16, marginTop: 6 }}>
+              {t('apiKeyPanel.actionHelp')}
             </Text>
             <View style={{ flexDirection: 'row', gap: 8, flexWrap: 'wrap', marginTop: 10 }}>
               {PROVIDER_PRESETS.map((preset) => (
@@ -444,7 +447,7 @@ export function ApiKeyPanel({ provider, initiallyExpanded = false }: ApiKeyPanel
 
           <View style={{ flexDirection: 'row', gap: 10, flexWrap: 'wrap' }}>
             <ActionButton label={task === 'saving' ? t('apiKeyPanel.saving') : t('common.save')} busy={task === 'saving'} onPress={() => void save()} />
-            <ActionButton label={t('settings.syncAndTest')} busy={task === 'syncing'} disabled={!hasKey || isBusy} onPress={() => void syncAndTest()} secondary />
+            <ActionButton label={t('apiKeyPanel.fetchModelsAndTest')} busy={task === 'syncing'} disabled={!hasKey || isBusy} onPress={() => void syncAndTest()} secondary />
           </View>
 
           {notice ? <Text style={{ color: provider.lastTestStatus === 'bad' ? colors.error : colors.textSecondary, fontSize: 12, lineHeight: 18 }}>{notice}</Text> : null}

@@ -240,6 +240,7 @@ export interface Settings {
   embeddingMode?: 'provider' | 'local' | 'hybrid'
   localEmbeddingModelId?: string
   localEmbeddingModelSource?: 'bundled' | 'downloaded' | 'none'
+  localModelDownloadMirrorBaseUrl?: string
   ragProfile?: RagProfile
   ragQueryRewriteEnabled?: boolean
   ragHydeEnabled?: boolean
@@ -265,7 +266,8 @@ export type MessageStatus = 'sending' | 'streaming' | 'done' | 'error' | 'cancel
 export type ProcessTraceType = 'reasoning' | 'tool' | 'retrieval' | 'search' | 'memory' | 'knowledge' | 'system'
 export type ProcessTraceStatus = 'pending' | 'running' | 'done' | 'error' | 'skipped'
 export type ConversationProviderModelMode = 'inherited' | 'manual'
-export type ReasoningEffort = 'minimal' | 'low' | 'medium' | 'high'
+export type ReasoningEffort = 'none' | 'minimal' | 'low' | 'medium' | 'high' | 'xhigh'
+export type ModelReasoningMode = 'openai-effort' | 'gemini-thinking-level' | 'gemini-thinking-budget' | 'deepseek-thinking' | 'anthropic-thinking' | 'none'
 export type ProviderType = 'openai' | 'anthropic' | 'google' | 'openai-compatible' | 'xiaomi-mimo'
 export type ProviderPresetId =
   | 'openai'
@@ -606,27 +608,35 @@ export interface AIModel {
   supportsVision: boolean
   supportsFiles: boolean
   preferredEndpoint?: 'chat-completions' | 'responses'
+  reasoningMode?: ModelReasoningMode
+  reasoningEfforts?: ReasoningEffort[]
+  sourceUrl?: string
+  verifiedAt?: string
+  deprecatedReason?: string
   source?: 'built-in' | 'remote' | 'inferred'
   deprecated?: boolean
 }
 
 export const DEFAULT_MODELS: AIModel[] = [
-  model('gpt-5.5', 'GPT-5.5', 'openai', 1000000, 128000, 8192, true, true, false, { preferredEndpoint: 'responses' }),
-  model('gpt-5.4', 'GPT-5.4', 'openai', 1000000, 128000, 8192, true, true, false, { preferredEndpoint: 'responses' }),
-  model('gpt-5.4-mini', 'GPT-5.4 Mini', 'openai', 400000, 128000, 4096, true, true, false, { preferredEndpoint: 'responses' }),
-  model('gpt-5.4-nano', 'GPT-5.4 Nano', 'openai', 400000, 128000, 2048, true, true, false, { preferredEndpoint: 'responses' }),
-  model('gpt-5.2', 'GPT-5.2', 'openai', 400000, 128000, 8192, true, true, false, { preferredEndpoint: 'responses' }),
-  model('gpt-5.2-chat-latest', 'GPT-5.2 Chat', 'openai', 400000, 128000, 8192, true, true, false, { preferredEndpoint: 'responses' }),
-  model('gpt-5.2-pro', 'GPT-5.2 Pro', 'openai', 400000, 128000, 8192, true, true, false, { preferredEndpoint: 'responses' }),
-  model('gpt-5', 'GPT-5', 'openai', 400000, 128000, 8192, true, true, false, { preferredEndpoint: 'responses' }),
-  model('gpt-5-mini', 'GPT-5 Mini', 'openai', 400000, 128000, 4096, true, true, false, { preferredEndpoint: 'responses' }),
-  model('gpt-5-nano', 'GPT-5 Nano', 'openai', 400000, 128000, 2048, true, true, false, { preferredEndpoint: 'responses' }),
+  model('gpt-5.5', 'GPT-5.5', 'openai', 1050000, 128000, 8192, true, true, false, { preferredEndpoint: 'responses', reasoningMode: 'openai-effort', reasoningEfforts: ['none', 'low', 'medium', 'high', 'xhigh'], sourceUrl: 'https://developers.openai.com/api/docs/models/gpt-5.5', verifiedAt: '2026-05-25' }),
+  model('gpt-5.4', 'GPT-5.4', 'openai', 1050000, 128000, 8192, true, true, false, { preferredEndpoint: 'responses', reasoningMode: 'openai-effort', reasoningEfforts: ['none', 'low', 'medium', 'high', 'xhigh'], sourceUrl: 'https://developers.openai.com/api/docs/models/gpt-5.4', verifiedAt: '2026-05-25' }),
+  model('gpt-5.4-mini', 'GPT-5.4 Mini', 'openai', 400000, 128000, 4096, true, true, false, { preferredEndpoint: 'responses', reasoningMode: 'openai-effort', reasoningEfforts: ['none', 'low', 'medium', 'high', 'xhigh'], sourceUrl: 'https://developers.openai.com/api/docs/models/gpt-5.4-mini', verifiedAt: '2026-05-25' }),
+  model('gpt-5.4-nano', 'GPT-5.4 Nano', 'openai', 400000, 128000, 2048, true, true, false, { preferredEndpoint: 'responses', reasoningMode: 'openai-effort', reasoningEfforts: ['none', 'low', 'medium', 'high', 'xhigh'], sourceUrl: 'https://developers.openai.com/api/docs/models/gpt-5.4-nano', verifiedAt: '2026-05-25' }),
+  model('gpt-5.2', 'GPT-5.2', 'openai', 400000, 128000, 8192, true, true, false, { preferredEndpoint: 'responses', reasoningMode: 'openai-effort', reasoningEfforts: ['none', 'low', 'medium', 'high', 'xhigh'], sourceUrl: 'https://developers.openai.com/api/docs/models/gpt-5.2', verifiedAt: '2026-05-25' }),
+  model('gpt-5.2-chat-latest', 'GPT-5.2 Chat', 'openai', 128000, 16384, 8192, true, true, false, { preferredEndpoint: 'responses', sourceUrl: 'https://developers.openai.com/api/docs/models/gpt-5.2-chat-latest', verifiedAt: '2026-05-25' }),
+  model('gpt-5.2-pro', 'GPT-5.2 Pro', 'openai', 400000, 128000, 8192, true, true, false, { preferredEndpoint: 'responses', reasoningMode: 'openai-effort', reasoningEfforts: ['medium', 'high', 'xhigh'], sourceUrl: 'https://developers.openai.com/api/docs/models/gpt-5.2-pro', verifiedAt: '2026-05-25' }),
+  model('gpt-5', 'GPT-5', 'openai', 400000, 128000, 8192, true, true, false, { preferredEndpoint: 'responses', reasoningMode: 'openai-effort', reasoningEfforts: ['minimal', 'low', 'medium', 'high'], sourceUrl: 'https://developers.openai.com/api/docs/models/gpt-5', verifiedAt: '2026-05-25' }),
+  model('gpt-5-mini', 'GPT-5 Mini', 'openai', 400000, 128000, 4096, true, true, false, { preferredEndpoint: 'responses', reasoningMode: 'openai-effort', reasoningEfforts: ['minimal', 'low', 'medium', 'high'], sourceUrl: 'https://developers.openai.com/api/docs/models/gpt-5-mini', verifiedAt: '2026-05-25' }),
+  model('gpt-5-nano', 'GPT-5 Nano', 'openai', 400000, 128000, 2048, true, true, false, { preferredEndpoint: 'responses', reasoningMode: 'openai-effort', reasoningEfforts: ['minimal', 'low', 'medium', 'high'], sourceUrl: 'https://developers.openai.com/api/docs/models/gpt-5-nano', verifiedAt: '2026-05-25' }),
   model('gpt-4.1', 'GPT-4.1', 'openai', 1047576, 32768, 4096, true, false),
   model('gpt-4.1-mini', 'GPT-4.1 Mini', 'openai', 1047576, 32768, 4096, true, false),
   model('gpt-4.1-nano', 'GPT-4.1 Nano', 'openai', 1047576, 32768, 2048, true, false),
   model('gpt-4o', 'GPT-4o', 'openai', 128000, 16384, 4096, true, false),
   model('gpt-4o-mini', 'GPT-4o Mini', 'openai', 128000, 16384, 4096, true, false),
+  model('claude-opus-4-7', 'Claude Opus 4.7', 'anthropic', 1000000, 128000, 8192, true, true, false, { reasoningMode: 'anthropic-thinking', reasoningEfforts: ['none', 'low', 'medium', 'high', 'xhigh'], sourceUrl: 'https://docs.anthropic.com/en/docs/about-claude/models/overview', verifiedAt: '2026-05-25' }),
+  model('claude-sonnet-4-6', 'Claude Sonnet 4.6', 'anthropic', 1000000, 64000, 8192, true, true, false, { reasoningMode: 'anthropic-thinking', reasoningEfforts: ['none', 'low', 'medium', 'high', 'xhigh'], sourceUrl: 'https://docs.anthropic.com/en/docs/about-claude/models/overview', verifiedAt: '2026-05-25' }),
   model('claude-sonnet-4-5-20250929', 'Claude Sonnet 4.5', 'anthropic', 200000, 64000, 8192, true, true),
+  model('claude-haiku-4-5', 'Claude Haiku 4.5', 'anthropic', 200000, 64000, 8192, true, true, false, { reasoningMode: 'anthropic-thinking', reasoningEfforts: ['none', 'low', 'medium', 'high', 'xhigh'], sourceUrl: 'https://docs.anthropic.com/en/docs/about-claude/models/overview', verifiedAt: '2026-05-25' }),
   model('claude-haiku-4-5-20251001', 'Claude Haiku 4.5', 'anthropic', 200000, 64000, 8192, true, true),
   model('claude-opus-4-1-20250805', 'Claude Opus 4.1', 'anthropic', 200000, 32000, 4096, true, true),
   model('claude-opus-4-20250514', 'Claude Opus 4', 'anthropic', 200000, 32000, 4096, true, true),
@@ -635,15 +645,15 @@ export const DEFAULT_MODELS: AIModel[] = [
   model('claude-3-5-sonnet-20241022', 'Claude 3.5 Sonnet', 'anthropic', 200000, 8192, 4096, true, true),
   model('claude-3-5-haiku-20241022', 'Claude 3.5 Haiku', 'anthropic', 200000, 8192, 4096, true, true),
   model('claude-3-haiku-20240307', 'Claude 3 Haiku', 'anthropic', 200000, 4096, 2048, true, true, true),
-  model('gemini-3-pro-preview', 'Gemini 3 Pro Preview', 'google', 1048576, 65536, 8192, true, true),
-  model('gemini-3-flash-preview', 'Gemini 3 Flash Preview', 'google', 1048576, 65536, 8192, true, true),
-  model('gemini-2.5-pro', 'Gemini 2.5 Pro', 'google', 1048576, 65536, 8192, true, true),
-  model('gemini-2.5-flash', 'Gemini 2.5 Flash', 'google', 1048576, 65536, 8192, true, true),
-  model('gemini-2.5-flash-lite', 'Gemini 2.5 Flash-Lite', 'google', 1048576, 65536, 4096, true, true),
-  model('deepseek-v4-pro', 'DeepSeek V4 Pro', 'openai-compatible', 1000000, 384000, 8192, false, false),
-  model('deepseek-v4-flash', 'DeepSeek V4 Flash', 'openai-compatible', 1000000, 384000, 8192, false, false),
-  model('deepseek-chat', 'DeepSeek Chat', 'openai-compatible', 1000000, 384000, 8192, false, false, true),
-  model('deepseek-reasoner', 'DeepSeek Reasoner', 'openai-compatible', 1000000, 384000, 8192, false, false, true),
+  model('gemini-3-pro-preview', 'Gemini 3 Pro Preview', 'google', 1048576, 65536, 8192, true, true, true, { reasoningMode: 'gemini-thinking-level', reasoningEfforts: ['low', 'medium', 'high'], sourceUrl: 'https://ai.google.dev/gemini-api/docs/thinking', verifiedAt: '2026-05-25', deprecatedReason: 'Preview model is not recommended as a default.' }),
+  model('gemini-3-flash-preview', 'Gemini 3 Flash Preview', 'google', 1048576, 65536, 8192, true, true, false, { reasoningMode: 'gemini-thinking-level', reasoningEfforts: ['minimal', 'low', 'medium', 'high'], sourceUrl: 'https://ai.google.dev/gemini-api/docs/thinking', verifiedAt: '2026-05-25' }),
+  model('gemini-2.5-pro', 'Gemini 2.5 Pro', 'google', 1048576, 65536, 8192, true, true, false, { reasoningMode: 'gemini-thinking-budget', reasoningEfforts: ['low', 'medium', 'high', 'xhigh'], sourceUrl: 'https://ai.google.dev/gemini-api/docs/thinking', verifiedAt: '2026-05-25' }),
+  model('gemini-2.5-flash', 'Gemini 2.5 Flash', 'google', 1048576, 65536, 8192, true, true, false, { reasoningMode: 'gemini-thinking-budget', reasoningEfforts: ['none', 'minimal', 'low', 'medium', 'high', 'xhigh'], sourceUrl: 'https://ai.google.dev/gemini-api/docs/thinking', verifiedAt: '2026-05-25' }),
+  model('gemini-2.5-flash-lite', 'Gemini 2.5 Flash-Lite', 'google', 1048576, 65536, 4096, true, true, false, { reasoningMode: 'gemini-thinking-budget', reasoningEfforts: ['none', 'minimal', 'low', 'medium', 'high', 'xhigh'], sourceUrl: 'https://ai.google.dev/gemini-api/docs/thinking', verifiedAt: '2026-05-25' }),
+  model('deepseek-v4-pro', 'DeepSeek V4 Pro', 'openai-compatible', 1000000, 384000, 8192, false, false, false, { reasoningMode: 'deepseek-thinking', reasoningEfforts: ['none', 'low', 'medium', 'high', 'xhigh'], sourceUrl: 'https://api-docs.deepseek.com/quick_start/pricing', verifiedAt: '2026-05-25' }),
+  model('deepseek-v4-flash', 'DeepSeek V4 Flash', 'openai-compatible', 1000000, 384000, 8192, false, false, false, { reasoningMode: 'deepseek-thinking', reasoningEfforts: ['none', 'low', 'medium', 'high', 'xhigh'], sourceUrl: 'https://api-docs.deepseek.com/quick_start/pricing', verifiedAt: '2026-05-25' }),
+  model('deepseek-chat', 'DeepSeek Chat', 'openai-compatible', 1000000, 384000, 8192, false, false, true, { reasoningMode: 'deepseek-thinking', reasoningEfforts: ['none', 'low', 'medium', 'high', 'xhigh'], sourceUrl: 'https://api-docs.deepseek.com/quick_start/pricing', verifiedAt: '2026-05-25', deprecatedReason: 'Alias is retained for compatibility; prefer deepseek-v4-flash.' }),
+  model('deepseek-reasoner', 'DeepSeek Reasoner', 'openai-compatible', 1000000, 384000, 8192, false, false, true, { reasoningMode: 'deepseek-thinking', reasoningEfforts: ['low', 'medium', 'high', 'xhigh'], sourceUrl: 'https://api-docs.deepseek.com/quick_start/pricing', verifiedAt: '2026-05-25', deprecatedReason: 'Alias is retained for compatibility; prefer deepseek-v4-flash with thinking enabled.' }),
   model('mimo-v2.5-pro', 'MiMo V2.5 Pro', 'xiaomi-mimo', 1048576, 131072, 131072, false, false, false, { defaultTemperature: 1, maxTemperature: 1.5 }),
   model('mimo-v2.5', 'MiMo V2.5', 'xiaomi-mimo', 1048576, 131072, 32768, true, false, false, { defaultTemperature: 1, maxTemperature: 1.5 }),
   model('mimo-v2-pro', 'MiMo V2 Pro', 'xiaomi-mimo', 1048576, 131072, 131072, false, false, false, { defaultTemperature: 1, maxTemperature: 1.5 }),
@@ -666,7 +676,10 @@ export function getDefaultProviderModelIds(providerType: ProviderType): string[]
 }
 
 export function getModelConfig(modelId: string, providerType?: ProviderType, modelConfigs: AIModel[] = []): AIModel {
-  const exact = modelConfigs.find((item) => item.id === modelId) ?? DEFAULT_MODELS.find((item) => item.id === modelId)
+  const remoteExact = modelConfigs.find((item) => item.id === modelId)
+  if (remoteExact) return mergeKnownModelDefaults(modelId, providerType, remoteExact)
+
+  const exact = DEFAULT_MODELS.find((item) => item.id === modelId)
   if (exact) return { ...exact, id: modelId, provider: providerType ?? exact.provider }
 
   const normalized = normalizeModelId(modelId)
@@ -677,6 +690,25 @@ export function getModelConfig(modelId: string, providerType?: ProviderType, mod
   }
 
   return inferModelConfig(modelId, providerType ?? 'openai-compatible')
+}
+
+function mergeKnownModelDefaults(modelId: string, providerType: ProviderType | undefined, remote: AIModel): AIModel {
+  const normalized = normalizeModelId(modelId)
+  const known = DEFAULT_MODELS.find((item) => item.id === modelId || item.id === normalized)
+  if (!known) return { ...remote, id: modelId, provider: providerType ?? remote.provider }
+
+  return {
+    ...known,
+    ...remote,
+    id: modelId,
+    provider: providerType ?? remote.provider,
+    preferredEndpoint: remote.preferredEndpoint ?? known.preferredEndpoint,
+    reasoningMode: remote.reasoningMode ?? known.reasoningMode,
+    reasoningEfforts: remote.reasoningEfforts ?? known.reasoningEfforts,
+    sourceUrl: remote.sourceUrl ?? known.sourceUrl,
+    verifiedAt: remote.verifiedAt ?? known.verifiedAt,
+    deprecatedReason: remote.deprecatedReason ?? known.deprecatedReason,
+  }
 }
 
 export function mergeModelConfig(modelId: string, providerType: ProviderType, remote?: Partial<AIModel>): AIModel {
@@ -775,7 +807,7 @@ function providerDefaults(providerType: ProviderType): Pick<AIModel, 'contextWin
     case 'xiaomi-mimo':
       return { contextWindow: 1048576, maxOutputTokens: 131072, defaultMaxTokens: 32768, supportsVision: true, supportsFiles: false }
     case 'openai-compatible':
-      return { contextWindow: 128000, maxOutputTokens: 8192, defaultMaxTokens: 4096, supportsVision: false, supportsFiles: false }
+      return { contextWindow: 32768, maxOutputTokens: 8192, defaultMaxTokens: 4096, supportsVision: false, supportsFiles: false }
   }
 }
 

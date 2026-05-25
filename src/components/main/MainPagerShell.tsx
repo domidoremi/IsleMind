@@ -11,6 +11,7 @@ import Animated, {
   withSpring,
 } from 'react-native-reanimated'
 import { MotiView } from 'moti'
+import { usePathname } from 'expo-router'
 import { IsleScreen } from '@/components/ui/isle'
 import { ConversationsScreenContent } from './ConversationsScreenContent'
 import { HomeScreenContent } from './HomeScreenContent'
@@ -48,6 +49,7 @@ export function MainPagerShell({ initialPage = 'home' }: MainPagerShellProps) {
 
 function MainPagerShellInner({ initialPage = 'home' }: MainPagerShellProps) {
   const { width } = useWindowDimensions()
+  const pathname = usePathname()
   const gestureLock = useMainPagerGestureLock()
   const [page, setPage] = useState<MainPagerPage>(initialPage)
   const pageValue = useSharedValue(PAGE_INDEX[initialPage])
@@ -69,6 +71,7 @@ function MainPagerShellInner({ initialPage = 'home' }: MainPagerShellProps) {
 
   useEffect(() => {
     const subscription = BackHandler.addEventListener('hardwareBackPress', () => {
+      if (!isMainPagerTopLevelPath(pathname)) return false
       if (page !== 'home') {
         switchTo('home')
         return true
@@ -76,7 +79,7 @@ function MainPagerShellInner({ initialPage = 'home' }: MainPagerShellProps) {
       return false
     })
     return () => subscription.remove()
-  }, [page])
+  }, [page, pathname])
 
   function switchTo(next: MainPagerPage) {
     setPage(next)
@@ -136,6 +139,10 @@ function MainPagerShellInner({ initialPage = 'home' }: MainPagerShellProps) {
       </GestureDetector>
     </IsleScreen>
   )
+}
+
+function isMainPagerTopLevelPath(pathname: string): boolean {
+  return pathname === '/' || pathname === '/settings' || pathname === '/conversations'
 }
 
 function PagerPage({

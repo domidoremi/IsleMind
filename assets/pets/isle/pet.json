@@ -1,0 +1,59 @@
+{
+  "id": "isle",
+  "displayName": "Isle",
+  "description": "A small original blue cat companion for IsleMind.",
+  "spritesheetPath": "spritesheet.webp",
+  "columns": 8,
+  "cellWidth": 192,
+  "cellHeight": 208,
+  "atlases": [
+    {
+      "id": "core",
+      "spritesheetPath": "spritesheet.webp",
+      "columns": 8,
+      "cellWidth": 192,
+      "cellHeight": 208,
+      "rows": 9,
+      "available": true
+    },
+    {
+      "id": "rag",
+      "spritesheetPath": "rag-spritesheet.webp",
+      "columns": 8,
+      "cellWidth": 192,
+      "cellHeight": 208,
+      "rows": 9,
+      "available": false,
+      "generationStatus": "pending-imagegen",
+      "fallbackAtlasId": "core"
+    },
+    {
+      "id": "provider",
+      "spritesheetPath": "provider-spritesheet.webp",
+      "columns": 8,
+      "cellWidth": 192,
+      "cellHeight": 208,
+      "rows": 9,
+      "available": false,
+      "generationStatus": "pending-imagegen",
+      "fallbackAtlasId": "core"
+    }
+  ],
+  "animations": {
+    "idle": { "atlasId": "core", "row": 0, "frames": 6, "fps": 5 },
+    "runningRight": { "atlasId": "core", "row": 1, "frames": 8, "fps": 10 },
+    "runningLeft": { "atlasId": "core", "row": 2, "frames": 8, "fps": 10 },
+    "waving": { "atlasId": "core", "row": 3, "frames": 4, "fps": 6 },
+    "jumping": { "atlasId": "core", "row": 4, "frames": 5, "fps": 8 },
+    "failed": { "atlasId": "core", "row": 5, "frames": 8, "fps": 5 },
+    "waiting": { "atlasId": "core", "row": 6, "frames": 6, "fps": 4 },
+    "running": { "atlasId": "core", "row": 7, "frames": 6, "fps": 8 },
+    "review": { "atlasId": "core", "row": 8, "frames": 6, "fps": 5 },
+    "deepThinking": { "atlasId": "rag", "row": 0, "frames": 6, "fps": 5, "fallbackAnimation": "review" },
+    "retrieving": { "atlasId": "rag", "row": 1, "frames": 8, "fps": 8, "fallbackAnimation": "review" },
+    "warningRecover": { "atlasId": "rag", "row": 2, "frames": 8, "fps": 5, "fallbackAnimation": "failed" },
+    "toolWorking": { "atlasId": "provider", "row": 0, "frames": 8, "fps": 8, "fallbackAnimation": "waving" },
+    "syncingModels": { "atlasId": "provider", "row": 1, "frames": 8, "fps": 8, "fallbackAnimation": "running" },
+    "offlineWaiting": { "atlasId": "provider", "row": 2, "frames": 6, "fps": 4, "fallbackAnimation": "waiting" }
+  }
+}

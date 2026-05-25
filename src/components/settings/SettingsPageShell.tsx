@@ -32,7 +32,7 @@ export function SettingsPageShell({
           title={title}
           subtitle={subtitle}
           leading={
-            <IsleIconButton label={t('common.back')} onPress={() => (router.canGoBack() ? router.back() : router.push('/settings'))}>
+            <IsleIconButton label={t('common.back')} onPress={() => router.replace('/settings')}>
               <ChevronLeft color={colors.text} size={20} strokeWidth={2} />
             </IsleIconButton>
           }
