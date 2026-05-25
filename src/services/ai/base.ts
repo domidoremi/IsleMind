@@ -1,9 +1,10 @@
 import { fetch as expoFetch } from 'expo/fetch'
-import type { AIModel, Attachment, AIProvider, MessageCitation, MessageUsage, ProcessTrace, ProviderOperationCode, ProviderType, RetrievalSource, WebSearchMode } from '@/types'
+import type { AIModel, Attachment, AIProvider, MessageCitation, MessageUsage, ProcessTrace, ProviderOperationCode, ProviderType, ReasoningEffort, RetrievalSource, WebSearchMode } from '@/types'
 import { getModelConfig, getProviderConfigIssue, getProviderEffectiveBaseUrl, mergeModelConfig, sortModelConfigs } from '@/types'
 import { st } from '@/i18n/service'
 import { getSecureApiKey } from './secureKey'
 import { chooseCredentialForModel, runCredentialGroupModelSync, updateCredentialGroupHealth } from './providerCredentials'
+import { getReasoningEffortOptions, isClaudeThinkingModel, isDeepSeekThinkingModel, isGeminiThinkingModel, isOpenAIReasoningModel as isKnownOpenAIReasoningModel, isXiaomiMimoReasoningModel, providerSupportsReasoning } from '@/utils/modelReasoning'
 
 export type StreamCallback = (chunk: string) => void
 export type DoneCallback = (result: ChatCompletionResult) => void
@@ -52,7 +53,7 @@ export interface ChatRequest {
   systemPrompt?: string
   temperature?: number
   topP?: number
-  reasoningEffort?: 'minimal' | 'low' | 'medium' | 'high'
+  reasoningEffort?: ReasoningEffort
   maxTokens?: number
   attachments?: Attachment[]
   contextPrompt?: string
@@ -116,8 +117,17 @@ type OpenAIModelListResponse = {
   data?: OpenAIModelListItem[]
 }
 
+type AnthropicModelListItem = {
+  id?: string
+  display_name?: string
+  type?: string
+  max_input_tokens?: number
+  max_tokens?: number
+  capabilities?: string[] | Record<string, unknown>
+}
+
 type AnthropicModelListResponse = {
-  data?: { id?: string; display_name?: string; type?: string }[]
+  data?: AnthropicModelListItem[]
 }
 
 type GoogleModelListResponse = {
@@ -142,6 +152,22 @@ const CHAT_REQUEST_TIMEOUT_MS = 60000
 
 export function buildOpenAIBodyForTest(req: ChatRequest) {
   return buildOpenAIBody(req)
+}
+
+export function buildGoogleBodyForTest(req: ChatRequest) {
+  return buildGoogleBody(req)
+}
+
+export function buildAnthropicBodyForTest(req: ChatRequest) {
+  return buildAnthropicBody(req)
+}
+
+export function buildOpenAIResponsesBodyForTest(req: ChatRequest) {
+  return buildOpenAIResponsesBody(req)
+}
+
+export function parseAnthropicModelsForTest(models: AnthropicModelListItem[]): AIModel[] {
+  return mapAnthropicModels({ data: models })
 }
 
 export function formatProviderHttpErrorForTest(status: number, responseText = '', provider?: AIProvider, model = ''): string {
@@ -188,13 +214,20 @@ function buildOpenAIBody(req: ChatRequest) {
     stream: req.stream ?? true,
   }
 
-  const temperature = normalizeTemperature(req)
+  const deepSeekThinking = normalizeDeepSeekThinking(req)
+  const temperature = deepSeekThinking?.type === 'enabled' ? undefined : normalizeTemperature(req)
   if (temperature !== undefined) {
     body.temperature = temperature
   }
-  if (req.topP !== undefined) body.top_p = clamp01(req.topP)
-  if (req.reasoningEffort && supportsReasoningEffort(req)) {
-    body.reasoning_effort = req.reasoningEffort
+  if (req.topP !== undefined && deepSeekThinking?.type !== 'enabled') body.top_p = clamp01(req.topP)
+  if (deepSeekThinking) {
+    body.thinking = { type: deepSeekThinking.type }
+    if (deepSeekThinking.effort) body.reasoning_effort = deepSeekThinking.effort
+  } else {
+    const openAIEffort = normalizeOpenAIReasoningEffort(req)
+    if (openAIEffort) body.reasoning_effort = openAIEffort
+    const mimoReasoning = normalizeXiaomiMimoReasoning(req)
+    if (mimoReasoning) body.reasoning = mimoReasoning
   }
 
   const maxTokensKey = req.provider.type === 'xiaomi-mimo' || isOpenAIReasoningModel(req.model) ? 'max_completion_tokens' : 'max_tokens'
@@ -210,6 +243,9 @@ function buildXiaomiMimoAnthropicBody(req: ChatRequest) {
 function buildAnthropicBody(req: ChatRequest) {
   const system = [req.systemPrompt, req.contextPrompt].filter(Boolean).join('\n\n') || undefined
   const messages: Record<string, unknown>[] = []
+  const thinkingConfig = normalizeAnthropicThinking(req)
+  const temperature = thinkingConfig ? undefined : req.temperature ?? 0.7
+  const topP = thinkingConfig ? undefined : req.topP ?? 1
 
   for (const msg of req.messages) {
     if (msg.role === 'user') {
@@ -253,16 +289,21 @@ function buildAnthropicBody(req: ChatRequest) {
     }
   }
 
-  return {
+  const body: Record<string, unknown> = {
     model: req.model,
     system,
     messages,
-    max_tokens: req.maxTokens ?? 4096,
-    temperature: req.temperature ?? 0.7,
-    top_p: req.topP ?? 1,
+    max_tokens: clampMaxTokens(req),
     stream: req.stream ?? true,
     ...(req.webSearchMode === 'native' ? { tools: [{ type: 'web_search_20250305', name: 'web_search', max_uses: 3 }] } : {}),
   }
+  if (temperature !== undefined) body.temperature = temperature
+  if (topP !== undefined) body.top_p = topP
+  if (thinkingConfig?.thinking) body.thinking = thinkingConfig.thinking
+  if (thinkingConfig?.outputConfig) body.output_config = thinkingConfig.outputConfig
+  const mimoReasoning = normalizeXiaomiMimoReasoning(req)
+  if (mimoReasoning) body.reasoning = mimoReasoning
+  return body
 }
 
 function buildGoogleBody(req: ChatRequest) {
@@ -297,14 +338,18 @@ function buildGoogleBody(req: ChatRequest) {
     })
   }
 
+  const generationConfig: Record<string, unknown> = {
+    temperature: req.temperature ?? 0.7,
+    topP: req.topP ?? 1,
+    maxOutputTokens: clampMaxTokens(req),
+  }
+  const thinkingConfig = normalizeGoogleThinkingConfig(req)
+  if (thinkingConfig) generationConfig.thinkingConfig = thinkingConfig
+
   return {
     contents,
     systemInstruction,
-    generationConfig: {
-      temperature: req.temperature ?? 0.7,
-      topP: req.topP ?? 1,
-      maxOutputTokens: req.maxTokens ?? 4096,
-    },
+    generationConfig,
     ...(req.webSearchMode === 'native' ? { tools: [{ google_search: {} }] } : {}),
   }
 }
@@ -342,12 +387,13 @@ function buildOpenAIResponsesBody(req: ChatRequest) {
       input.push({ role: message.role, content: text })
     }
   }
+  const openAIEffort = normalizeOpenAIReasoningEffort(req)
   return {
     model: req.model,
     input,
     ...(normalizeTemperature(req) === undefined ? {} : { temperature: normalizeTemperature(req) }),
     ...(req.topP === undefined ? {} : { top_p: clamp01(req.topP) }),
-    ...(req.reasoningEffort && supportsReasoningEffort(req) ? { reasoning: { effort: req.reasoningEffort } } : {}),
+    ...(openAIEffort ? { reasoning: { effort: openAIEffort } } : {}),
     max_output_tokens: clampMaxTokens(req),
     stream: req.stream ?? true,
     ...(req.webSearchMode === 'native' ? { tools: [{ type: 'web_search_preview' }] } : {}),
@@ -361,8 +407,128 @@ function usesOpenAIResponses(req: ChatRequest): boolean {
 }
 
 function isOpenAIReasoningModel(modelId: string): boolean {
-  const normalized = modelId.toLowerCase().split('/').at(-1) ?? modelId.toLowerCase()
-  return /^(o[1-9]|gpt-5)/.test(normalized)
+  return isKnownOpenAIReasoningModel({
+    id: 'openai',
+    type: 'openai',
+    name: 'OpenAI',
+    apiKey: '',
+    models: [],
+    enabled: true,
+  }, modelId)
+}
+
+function normalizeOpenAIReasoningEffort(req: ChatRequest): ReasoningEffort | undefined {
+  if (!req.reasoningEffort || !supportsReasoningEffort(req)) return undefined
+  const modelConfig = getModelConfig(req.model, req.provider.type, req.provider.modelConfigs)
+  if (req.provider.type !== 'openai' && modelConfig.reasoningMode !== 'openai-effort') return undefined
+  const supported = getReasoningEffortOptions(req.provider, req.model)
+  if (!supported.length) return undefined
+  const effort = req.reasoningEffort
+  if (supported.includes(effort)) return effort
+  if (effort === 'minimal' && supported.includes('low')) return 'low'
+  if (effort === 'xhigh' && supported.includes('high')) return 'high'
+  if (effort === 'none' && supported.includes('low')) return 'low'
+  return supported.includes('medium') ? 'medium' : supported[0]
+}
+
+function normalizeDeepSeekThinking(req: ChatRequest): { type: 'enabled' | 'disabled'; effort?: 'high' | 'max' } | undefined {
+  const modelConfig = getModelConfig(req.model, req.provider.type, req.provider.modelConfigs)
+  if (modelConfig.reasoningMode !== 'deepseek-thinking' && !isDeepSeekThinkingModel(req.provider, req.model)) return undefined
+  const effort = req.reasoningEffort ?? 'medium'
+  if (effort === 'none' || effort === 'minimal') return { type: 'disabled' }
+  return { type: 'enabled', effort: effort === 'xhigh' ? 'max' : 'high' }
+}
+
+function normalizeXiaomiMimoReasoning(req: ChatRequest): { effort: 'low' | 'medium' | 'high' } | undefined {
+  if (!req.reasoningEffort || req.reasoningEffort === 'none') return undefined
+  if (!isXiaomiMimoReasoningModel(req.provider, req.model)) return undefined
+  if (req.reasoningEffort === 'minimal' || req.reasoningEffort === 'low') return { effort: 'low' }
+  if (req.reasoningEffort === 'high' || req.reasoningEffort === 'xhigh') return { effort: 'high' }
+  return { effort: 'medium' }
+}
+
+function normalizeAnthropicThinking(req: ChatRequest): { thinking: Record<string, unknown>; outputConfig?: Record<string, unknown> } | undefined {
+  if (!req.reasoningEffort || req.reasoningEffort === 'none' || req.reasoningEffort === 'minimal') return undefined
+  const config = getModelConfig(req.model, req.provider.type, req.provider.modelConfigs)
+  if (config.reasoningMode !== 'anthropic-thinking' && !isClaudeThinkingModel(req.provider, req.model)) return undefined
+  if (supportsAnthropicAdaptiveThinking(req.model)) {
+    return {
+      thinking: { type: 'adaptive', display: 'summarized' },
+      outputConfig: { effort: normalizeAnthropicEffort(req.model, req.reasoningEffort) },
+    }
+  }
+  const maxTokens = clampMaxTokens(req)
+  const floor = Math.min(1024, Math.max(128, maxTokens - 1))
+  const preferred = (() => {
+    switch (req.reasoningEffort) {
+      case 'low':
+        return 1024
+      case 'high':
+        return 4096
+      case 'xhigh':
+        return 8192
+      case 'medium':
+      default:
+        return 2048
+    }
+  })()
+  const budget = Math.min(Math.max(floor, preferred), Math.max(1, maxTokens - 1))
+  return budget > 0 ? { thinking: { type: 'enabled', budget_tokens: budget } } : undefined
+}
+
+function supportsAnthropicAdaptiveThinking(modelId: string): boolean {
+  const normalized = modelId.toLowerCase()
+  return /claude-(mythos|opus-4-7|opus-4-6|sonnet-4-6)/.test(normalized)
+}
+
+function normalizeAnthropicEffort(modelId: string, effort: ReasoningEffort): 'low' | 'medium' | 'high' | 'xhigh' | 'max' {
+  if (effort === 'low') return 'low'
+  if (effort === 'medium') return 'medium'
+  if (effort === 'xhigh') return /claude-opus-4-7/i.test(modelId) ? 'xhigh' : 'max'
+  return 'high'
+}
+
+function normalizeGoogleThinkingConfig(req: ChatRequest): Record<string, unknown> | undefined {
+  if (!req.reasoningEffort) return undefined
+  const config = getModelConfig(req.model, 'google', req.provider.modelConfigs)
+  if (config.reasoningMode === 'gemini-thinking-level' || /^gemini-3/i.test(req.model)) {
+    const level = normalizeGeminiThinkingLevel(req.reasoningEffort, config)
+    return level ? { thinkingLevel: level } : undefined
+  }
+  if (config.reasoningMode === 'gemini-thinking-budget' || isGeminiThinkingModel(req.provider, req.model)) {
+    return { thinkingBudget: normalizeGeminiThinkingBudget(req.model, req.reasoningEffort) }
+  }
+  return undefined
+}
+
+function normalizeGeminiThinkingLevel(effort: ReasoningEffort, config: AIModel): 'minimal' | 'low' | 'medium' | 'high' | undefined {
+  const requested = effort === 'none' ? 'minimal' : effort === 'xhigh' ? 'high' : effort
+  const allowed = config.reasoningEfforts ?? ['minimal', 'low', 'medium', 'high']
+  if (requested === 'minimal' && !allowed.includes('minimal')) return 'low'
+  if (['minimal', 'low', 'medium', 'high'].includes(requested) && allowed.includes(requested as ReasoningEffort)) {
+    return requested as 'minimal' | 'low' | 'medium' | 'high'
+  }
+  return allowed.includes('medium') ? 'medium' : 'high'
+}
+
+function normalizeGeminiThinkingBudget(modelId: string, effort: ReasoningEffort): number {
+  const normalized = modelId.toLowerCase()
+  const max = normalized.includes('flash') ? 24576 : 32768
+  const canDisable = normalized.includes('flash') && !normalized.includes('flash-lite')
+  switch (effort) {
+    case 'none':
+    case 'minimal':
+      return canDisable ? 0 : normalized.includes('flash-lite') ? 512 : 128
+    case 'low':
+      return normalized.includes('flash') ? 1024 : 2048
+    case 'high':
+      return Math.min(max, 8192)
+    case 'xhigh':
+      return max
+    case 'medium':
+    default:
+      return -1
+  }
 }
 
 function normalizeTemperature(req: ChatRequest): number | undefined {
@@ -1301,7 +1467,7 @@ export async function fetchProviderModelConfigsDetailed(provider: AIProvider, ap
 }
 
 function supportsReasoningEffort(req: ChatRequest): boolean {
-  return !!req.provider.capabilities?.reasoningEffort || isOpenAIReasoningModel(req.model) || /reasoner|thinking|grok|glm/i.test(req.model)
+  return providerSupportsReasoning(req.provider, req.model)
 }
 
 function clamp01(value: number): number {
@@ -1500,16 +1666,32 @@ async function fetchAnthropicModels(provider: AIProvider): Promise<AIModel[]> {
   }, PROVIDER_REQUEST_TIMEOUT_MS)
   if (!response.ok) throw new ProviderHttpError(response.status, await safeResponseText(response))
   const json = (await response.json()) as AnthropicModelListResponse
+  return mapAnthropicModels(json)
+}
+
+function mapAnthropicModels(json: AnthropicModelListResponse): AIModel[] {
   return sortModelConfigs(
     dedupeModelIds(json.data?.map((item) => item.id).filter(isString) ?? []).map((id) => {
       const remote = json.data?.find((item) => item.id === id)
       return mergeModelConfig(id, 'anthropic', {
         name: remote?.display_name,
+        contextWindow: remote?.max_input_tokens,
+        maxOutputTokens: remote?.max_tokens,
+        defaultMaxTokens: remote?.max_tokens ? Math.min(8192, remote.max_tokens) : undefined,
+        reasoningMode: anthropicCapabilitiesIncludeThinking(remote?.capabilities) ? 'anthropic-thinking' : undefined,
         source: 'remote',
       })
     }),
     'anthropic'
   )
+}
+
+function anthropicCapabilitiesIncludeThinking(capabilities: AnthropicModelListItem['capabilities']): boolean {
+  if (Array.isArray(capabilities)) return capabilities.some((item) => /thinking|reasoning/i.test(item))
+  if (capabilities && typeof capabilities === 'object') {
+    return Object.entries(capabilities).some(([key, value]) => /thinking|reasoning/i.test(key) && value !== false)
+  }
+  return false
 }
 
 async function fetchGoogleModels(provider: AIProvider): Promise<AIModel[]> {

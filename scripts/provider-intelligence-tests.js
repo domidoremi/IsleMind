@@ -125,7 +125,14 @@ const {
   getModelConfig,
   mergeModelConfig,
 } = require('../src/types/index.ts')
-const { buildOpenAIBodyForTest, formatProviderHttpErrorForTest } = require('../src/services/ai/base.ts')
+const {
+  buildAnthropicBodyForTest,
+  buildGoogleBodyForTest,
+  buildOpenAIBodyForTest,
+  buildOpenAIResponsesBodyForTest,
+  formatProviderHttpErrorForTest,
+  parseAnthropicModelsForTest,
+} = require('../src/services/ai/base.ts')
 const {
   getBingCompatibleEndpoint,
   legacySearchModeForProvider,
@@ -167,6 +174,7 @@ const { runRagGoldEvaluation } = require('../src/services/ragEvaluation.ts')
 const {
   LOCAL_EMBEDDING_MODELS,
   formatModelBytes,
+  listLocalEmbeddingModelViews,
   localModelCacheKey,
 } = require('../src/services/localEmbeddingModels.ts')
 const { deriveHomePetState } = require('../src/components/mascot/petState.ts')
@@ -517,6 +525,8 @@ ${FAKE_KEY_D}
   assert.ok(packed.contextPrompt.includes('历史摘要'), 'adds a deterministic summary for trimmed history')
   assert.ok(packed.estimatedInputTokens <= packed.budgetTokens, 'stays under the planned input budget')
   assert.ok(packed.budgetTokens < 1200, 'reserves output tokens from the input context budget')
+  assert.equal(packed.compressionTriggered, true, 'compression trace exposes trigger state')
+  assert.ok(packed.fixedTokens >= 0 && packed.modelBudgetTokens > 0 && packed.reservedOutputTokens >= 256, 'compression trace exposes full budget fields')
 
   const singleLongPacked = packChatMessages({
     messages: [{ role: 'user', content: 'oversized '.repeat(1200) }],
@@ -527,6 +537,16 @@ ${FAKE_KEY_D}
   assert.equal(singleLongPacked.messages.length, 1, 'keeps one recent oversized message after compression')
   assert.ok(singleLongPacked.messages[0].content.includes('前文过长'), 'truncates a single oversized message deterministically')
   assert.ok(singleLongPacked.estimatedInputTokens <= singleLongPacked.budgetTokens, 'single-message truncation stays within budget')
+  assert.equal(singleLongPacked.truncatedSingleMessage, true, 'single-message truncation is reflected in trace metadata')
+  const highReasoningPacked = packChatMessages({
+    messages: [{ role: 'user', content: 'reasoning budget '.repeat(500) }],
+    modelContextWindow: 6000,
+    maxOutputTokens: 1024,
+    providerType: 'openai',
+    model: 'gpt-5.5',
+    reasoningEffort: 'high',
+  })
+  assert.ok(highReasoningPacked.reasoningReserveTokens >= 4096, 'high reasoning reserves extra thinking room before packing history')
 
   const remoteConfig = mergeModelConfig('remote-large', 'openai-compatible', {
     contextWindow: 65536,
@@ -541,11 +561,77 @@ ${FAKE_KEY_D}
   const inferredConfig = getModelConfig('unknown-compatible-model', 'openai-compatible')
   assert.ok(inferredConfig.defaultMaxTokens <= inferredConfig.maxOutputTokens, 'inferred model defaults fit output limit')
   assert.ok(DEFAULT_MODELS.every((model) => model.defaultMaxTokens <= model.maxOutputTokens && model.maxOutputTokens <= model.contextWindow), 'built-in model token limits are internally consistent')
-  const reasoningBody = buildOpenAIBodyForTest({
+  assert.equal(getModelConfig('gpt-5.5', 'openai').contextWindow, 1050000, 'GPT-5.5 context matches verified OpenAI docs')
+  assert.equal(getModelConfig('gpt-5.5', 'openai').maxOutputTokens, 128000, 'GPT-5.5 output limit matches verified OpenAI docs')
+  assert.equal(getModelConfig('gpt-5.4', 'openai').contextWindow, 1050000, 'GPT-5.4 context matches verified OpenAI docs')
+  assert.deepEqual(getModelConfig('gpt-5.2-pro', 'openai').reasoningEfforts, ['medium', 'high', 'xhigh'], 'GPT-5.2 Pro only exposes source-backed supported effort tiers')
+  assert.equal(getModelConfig('gpt-4.1', 'openai').contextWindow, 1047576, 'GPT-4.1 context remains exact')
+  assert.equal(getModelConfig('gpt-4o', 'openai').maxOutputTokens, 16384, 'GPT-4o output limit remains exact')
+  assert.equal(getModelConfig('deepseek-v4-pro', 'openai-compatible').contextWindow, 1000000, 'DeepSeek V4 Pro context is official 1M')
+  assert.equal(getModelConfig('deepseek-v4-pro', 'openai-compatible').maxOutputTokens, 384000, 'DeepSeek V4 Pro output limit is official 384K')
+  assert.equal(getModelConfig('claude-opus-4-7', 'anthropic').contextWindow, 1000000, 'Claude Opus 4.7 context uses official current model overview')
+  assert.equal(getModelConfig('claude-sonnet-4-6', 'anthropic').maxOutputTokens, 64000, 'Claude Sonnet 4.6 output limit uses official current model overview')
+  assert.equal(getModelConfig('gemini-3-pro-preview', 'google').deprecated, true, 'Gemini 3 Pro Preview is not recommended as a default')
+  const openAIResponsesBody = buildOpenAIResponsesBodyForTest({
     provider: {
-      id: 'reasoning',
+      id: 'openai',
+      type: 'openai',
+      name: 'OpenAI',
+      [API_KEY_FIELD]: 'token-test-fake',
+      models: ['gpt-5.5'],
+      enabled: true,
+      capabilities: { reasoningEffort: true },
+    },
+    model: 'gpt-5.5',
+    messages: [{ role: 'user', content: 'hello' }],
+    reasoningEffort: 'xhigh',
+    maxTokens: 999999,
+  })
+  assert.equal(openAIResponsesBody.reasoning.effort, 'xhigh', 'OpenAI Responses uses official reasoning.effort values including xhigh')
+  assert.ok(openAIResponsesBody.max_output_tokens <= getModelConfig('gpt-5.5', 'openai').maxOutputTokens, 'Responses output tokens are clamped')
+  const deepSeekThinkingBody = buildOpenAIBodyForTest({
+    provider: {
+      id: 'deepseek',
       type: 'openai-compatible',
-      name: 'Reasoning Provider',
+      presetId: 'deepseek',
+      name: 'DeepSeek',
+      [API_KEY_FIELD]: 'token-test-fake',
+      models: ['deepseek-v4-pro'],
+      enabled: true,
+      capabilities: { reasoningEffort: true },
+    },
+    model: 'deepseek-v4-pro',
+    messages: [{ role: 'user', content: 'hello' }],
+    reasoningEffort: 'xhigh',
+    maxTokens: 999999,
+  })
+  assert.deepEqual(deepSeekThinkingBody.thinking, { type: 'enabled' }, 'DeepSeek thinking uses official thinking toggle')
+  assert.equal(deepSeekThinkingBody.reasoning_effort, 'max', 'DeepSeek xhigh maps to official max effort')
+  assert.equal(deepSeekThinkingBody.temperature, undefined, 'DeepSeek thinking mode omits temperature')
+  assert.ok(deepSeekThinkingBody.max_tokens <= getModelConfig('deepseek-v4-pro', 'openai-compatible').maxOutputTokens, 'DeepSeek request max tokens are clamped to output limit')
+  const deepSeekOffBody = buildOpenAIBodyForTest({
+    provider: {
+      id: 'deepseek',
+      type: 'openai-compatible',
+      presetId: 'deepseek',
+      name: 'DeepSeek',
+      [API_KEY_FIELD]: 'token-test-fake',
+      models: ['deepseek-v4-flash'],
+      enabled: true,
+      capabilities: { reasoningEffort: true },
+    },
+    model: 'deepseek-v4-flash',
+    messages: [{ role: 'user', content: 'hello' }],
+    reasoningEffort: 'none',
+    maxTokens: 512,
+  })
+  assert.deepEqual(deepSeekOffBody.thinking, { type: 'disabled' }, 'DeepSeek none disables thinking instead of sending unsupported minimal')
+  assert.equal(deepSeekOffBody.reasoning_effort, undefined, 'DeepSeek disabled thinking omits effort')
+  const nonReasoningBody = buildOpenAIBodyForTest({
+    provider: {
+      id: 'plain',
+      type: 'openai-compatible',
+      name: 'Plain Provider',
       [API_KEY_FIELD]: 'token-test-fake',
       models: ['reasoner-model'],
       enabled: true,
@@ -554,26 +640,80 @@ ${FAKE_KEY_D}
     model: 'reasoner-model',
     messages: [{ role: 'user', content: 'hello' }],
     reasoningEffort: 'high',
-    maxTokens: 999999,
-  })
-  assert.equal(reasoningBody.reasoning_effort, 'high', 'reasoning effort is sent only for supported providers or models')
-  assert.ok(reasoningBody.max_tokens <= getModelConfig('reasoner-model', 'openai-compatible').maxOutputTokens, 'request max tokens are clamped to output limit')
-  const nonReasoningBody = buildOpenAIBodyForTest({
-    provider: {
-      id: 'plain',
-      type: 'openai-compatible',
-      name: 'Plain Provider',
-      [API_KEY_FIELD]: 'token-test-fake',
-      models: ['plain-chat-model'],
-      enabled: true,
-      capabilities: { reasoningEffort: false },
-    },
-    model: 'plain-chat-model',
-    messages: [{ role: 'user', content: 'hello' }],
-    reasoningEffort: 'high',
     maxTokens: 512,
   })
-  assert.equal(nonReasoningBody.reasoning_effort, undefined, 'unsupported providers do not receive reasoning effort fields')
+  assert.equal(nonReasoningBody.reasoning_effort, undefined, 'generic compatible providers do not receive reasoning fields without source-backed support')
+  const gemini25Body = buildGoogleBodyForTest({
+    provider: {
+      id: 'google',
+      type: 'google',
+      name: 'Google',
+      [API_KEY_FIELD]: 'token-test-fake',
+      models: ['gemini-2.5-flash'],
+      enabled: true,
+    },
+    model: 'gemini-2.5-flash',
+    messages: [{ role: 'user', content: 'hello' }],
+    reasoningEffort: 'low',
+    maxTokens: 4096,
+  })
+  assert.equal(gemini25Body.generationConfig.thinkingConfig.thinkingBudget, 1024, 'Gemini 2.5 uses thinkingBudget')
+  assert.ok(gemini25Body.generationConfig.maxOutputTokens <= getModelConfig('gemini-2.5-flash', 'google').maxOutputTokens, 'Gemini maxOutputTokens is clamped to output limit')
+  const gemini3Body = buildGoogleBodyForTest({
+    provider: {
+      id: 'google',
+      type: 'google',
+      name: 'Google',
+      [API_KEY_FIELD]: 'token-test-fake',
+      models: ['gemini-3-flash-preview'],
+      enabled: true,
+    },
+    model: 'gemini-3-flash-preview',
+    messages: [{ role: 'user', content: 'hello' }],
+    reasoningEffort: 'high',
+    maxTokens: 4096,
+  })
+  assert.equal(gemini3Body.generationConfig.thinkingConfig.thinkingLevel, 'high', 'Gemini 3 uses thinkingLevel')
+  const parsedAnthropic = parseAnthropicModelsForTest([
+    { id: 'claude-test-current', display_name: 'Claude Test', max_input_tokens: 1000000, max_tokens: 128000, capabilities: ['chat', 'extended_thinking'] },
+  ])
+  assert.equal(parsedAnthropic[0].contextWindow, 1000000, 'Anthropic Models API max_input_tokens is parsed as context window')
+  assert.equal(parsedAnthropic[0].maxOutputTokens, 128000, 'Anthropic Models API max_tokens is parsed as output limit')
+  assert.equal(parsedAnthropic[0].reasoningMode, 'anthropic-thinking', 'Anthropic model capabilities mark thinking support')
+  const anthropicAdaptiveBody = buildAnthropicBodyForTest({
+    provider: {
+      id: 'anthropic',
+      type: 'anthropic',
+      name: 'Anthropic',
+      [API_KEY_FIELD]: 'token-test-fake',
+      models: ['claude-opus-4-7'],
+      enabled: true,
+    },
+    model: 'claude-opus-4-7',
+    messages: [{ role: 'user', content: 'hello' }],
+    reasoningEffort: 'xhigh',
+    maxTokens: 128000,
+  })
+  assert.deepEqual(anthropicAdaptiveBody.thinking, { type: 'adaptive', display: 'summarized' }, 'Claude Opus 4.7 uses adaptive thinking instead of manual budget tokens')
+  assert.equal(anthropicAdaptiveBody.output_config.effort, 'xhigh', 'Claude Opus 4.7 sends source-backed effort level')
+  assert.equal(anthropicAdaptiveBody.temperature, undefined, 'Claude Opus 4.7 omits sampling parameters when reasoning is enabled')
+  const anthropicManualBody = buildAnthropicBodyForTest({
+    provider: {
+      id: 'anthropic',
+      type: 'anthropic',
+      name: 'Anthropic',
+      [API_KEY_FIELD]: 'token-test-fake',
+      models: ['claude-sonnet-4-20250514'],
+      modelConfigs: [{ ...getModelConfig('claude-sonnet-4-20250514', 'anthropic'), reasoningMode: 'anthropic-thinking' }],
+      enabled: true,
+    },
+    model: 'claude-sonnet-4-20250514',
+    messages: [{ role: 'user', content: 'hello' }],
+    reasoningEffort: 'high',
+    maxTokens: 4096,
+  })
+  assert.equal(anthropicManualBody.thinking.type, 'enabled', 'Older Claude thinking models use manual extended thinking')
+  assert.ok(anthropicManualBody.thinking.budget_tokens < anthropicManualBody.max_tokens, 'Claude manual thinking budget stays below max_tokens')
 
   const baseSkill = createBaseSkill({
     id: 'skill-review',
@@ -730,23 +870,45 @@ ${FAKE_KEY_D}
     isStreaming: true,
     conversation: { messages: [{ role: 'assistant', status: 'streaming' }] },
   })
-  assert.equal(petHighReasoning.animation, 'review', 'high reasoning switches pet into focused review')
+  assert.equal(petHighReasoning.animation, 'deepThinking', 'high reasoning switches pet into deep thinking')
+  assert.equal(petHighReasoning.atlasId, 'rag', 'high reasoning targets the RAG atlas')
   const petTool = deriveHomePetState({
     reasoningEffort: 'medium',
     isStreaming: true,
     conversation: { messages: [{ role: 'assistant', status: 'streaming', toolCalls: [{ type: 'tool', status: 'running' }] }] },
   })
+  assert.equal(petTool.animation, 'toolWorking', 'running tool traces switch pet into tool working animation')
+  assert.equal(petTool.atlasId, 'provider', 'tool activity targets the provider atlas')
   assert.equal(petTool.reason, 'tool', 'running tool traces switch pet to tool mood')
   const petRetrieval = deriveHomePetState({
     reasoningEffort: 'medium',
     isStreaming: true,
     conversation: { messages: [{ role: 'assistant', status: 'streaming', retrievalTrace: [{ type: 'retrieval', status: 'running' }] }] },
   })
-  assert.equal(petRetrieval.animation, 'review', 'running retrieval traces switch pet to review')
+  assert.equal(petRetrieval.animation, 'retrieving', 'running retrieval traces switch pet to retrieving')
+  assert.equal(petRetrieval.atlasId, 'rag', 'retrieval activity targets the RAG atlas')
+  const petFallback = deriveHomePetState({
+    reasoningEffort: 'medium',
+    isStreaming: true,
+    conversation: { messages: [{ role: 'assistant', status: 'streaming', retrievalTrace: [{ type: 'retrieval', status: 'running', metadata: { fallbackReason: 'cross-encoder-model-unavailable' } }] }] },
+  })
+  assert.equal(petFallback.animation, 'warningRecover', 'fallback retrieval switches pet to warning recovery')
+  const petProviderSync = deriveHomePetState({ providerActivity: 'syncing' })
+  assert.equal(petProviderSync.animation, 'syncingModels', 'provider activation switches pet to model syncing')
+  assert.equal(petProviderSync.atlasId, 'provider', 'provider sync targets provider atlas')
+  const petOffline = deriveHomePetState({ modelStatus: 'unavailable' })
+  assert.equal(petOffline.animation, 'offlineWaiting', 'unavailable models switch pet to offline waiting')
   const petError = deriveHomePetState({
     conversation: { messages: [{ role: 'assistant', status: 'error' }] },
   })
-  assert.equal(petError.animation, 'failed', 'failed messages switch pet to failed animation')
+  assert.equal(petError.animation, 'warningRecover', 'failed messages switch pet to warning recovery')
+  const islePetJson = JSON.parse(fs.readFileSync(path.join(root, 'assets/pets/isle/pet.json'), 'utf8'))
+  assert.equal(islePetJson.id, 'isle', 'Isle manifest uses the Isle pet id')
+  assert.equal(islePetJson.displayName, 'Isle', 'Isle manifest uses the Isle display name')
+  assert.deepEqual(islePetJson.atlases.map((atlas) => atlas.id), ['core', 'rag', 'provider'], 'Isle manifest exposes core, rag, and provider atlases')
+  assert.equal(islePetJson.atlases.find((atlas) => atlas.id === 'core').available, true, 'Isle core atlas is available')
+  assert.equal(islePetJson.atlases.find((atlas) => atlas.id === 'rag').generationStatus, 'pending-imagegen', 'Isle RAG atlas stays pending until imagegen assets are recorded')
+  assert.equal(islePetJson.animations.deepThinking.fallbackAnimation, 'review', 'new Isle actions declare safe core fallbacks')
 
   const builtin = builtinMcpServer()
   assert.equal(builtin.transport, 'sse')

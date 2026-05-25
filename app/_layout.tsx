@@ -1,10 +1,11 @@
+import '../src/devLogFilters'
 import '../src/global.css'
 import 'react-native-gesture-handler'
 import type { ErrorBoundaryProps } from 'expo-router'
 import { useEffect } from 'react'
 import { router, Stack } from 'expo-router'
 import { GestureHandlerRootView } from 'react-native-gesture-handler'
-import { LogBox, Text, View } from 'react-native'
+import { Text, View } from 'react-native'
 import { AlertTriangle, ChevronLeft, RotateCcw } from 'lucide-react-native'
 import { useTranslation } from 'react-i18next'
 import { useBootstrap } from '@/hooks/useBootstrap'
@@ -14,11 +15,9 @@ import { IsleButton } from '@/components/ui/isle'
 import { IslePanel } from '@/components/ui/isle'
 import { AppBootOverlay } from '@/components/boot/AppBootOverlay'
 import { IsleDialogProvider, useIsleDialog } from '@/components/ui/isle'
-import { ActivationProgressBanner } from '@/components/providers/ActivationProgressBanner'
 import { initI18n } from '@/i18n'
 
 initI18n()
-LogBox.ignoreLogs(['SafeAreaView has been deprecated'])
 
 export default function RootLayout() {
   const boot = useBootstrap()
@@ -43,7 +42,6 @@ export default function RootLayout() {
           <Stack.Screen name="settings/mcp" options={{ animation: 'slide_from_right' }} />
           <Stack.Screen name="settings/providers" options={{ animation: 'slide_from_right' }} />
         </Stack>
-        <ActivationProgressBanner />
         <AppBootOverlay ready={boot.ready} errorCount={boot.errorCount} bootStartedAt={boot.bootStartedAt} />
       </IsleDialogProvider>
     </GestureHandlerRootView>

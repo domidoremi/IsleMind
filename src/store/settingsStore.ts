@@ -63,6 +63,7 @@ const defaultSettings: Settings = {
   embeddingMode: 'hybrid',
   localEmbeddingModelId: undefined,
   localEmbeddingModelSource: 'none',
+  localModelDownloadMirrorBaseUrl: '',
   ragProfile: 'balanced',
   ragQueryRewriteEnabled: true,
   ragHydeEnabled: true,

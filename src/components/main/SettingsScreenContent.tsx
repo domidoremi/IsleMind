@@ -1,5 +1,5 @@
-import type { ReactNode } from 'react'
-import { ScrollView, Text, View } from 'react-native'
+import { useState, type ReactNode } from 'react'
+import { ActivityIndicator, ScrollView, Text, View } from 'react-native'
 import { router } from 'expo-router'
 import { BookOpen, Brain, Database, Download, Globe2, House, KeyRound, Languages, Network, RotateCcw, SlidersHorizontal, Smartphone, Sparkles, Trash2, Upload } from 'lucide-react-native'
 import { useTranslation } from 'react-i18next'
@@ -35,6 +35,7 @@ export function SettingsScreenContent({ onHome }: { onHome?: () => void } = {}) 
   const updateSettings = useSettingsStore((state) => state.updateSettings)
   const resetSettings = useSettingsStore((state) => state.clearAll)
   const clearChats = useChatStore((state) => state.clearAll)
+  const [checkingUpdate, setCheckingUpdate] = useState(false)
   const enabledProviders = providers.filter((provider) => provider.enabled).length
   const defaultProvider = providers.find((provider) => provider.id === settings.defaultProvider)
   const version = getVersionSnapshot()
@@ -79,24 +80,30 @@ export function SettingsScreenContent({ onHome }: { onHome?: () => void } = {}) 
   }
 
   async function checkApkUpdate() {
-    const result = await checkLatestApkRelease()
-    updateSettings({ lastApkUpdateCheckAt: Date.now() })
-    if (result.status !== 'available' || !result.release) {
+    if (checkingUpdate) return
+    setCheckingUpdate(true)
+    try {
+      const result = await checkLatestApkRelease()
+      updateSettings({ lastApkUpdateCheckAt: Date.now() })
+      if (result.status !== 'available' || !result.release) {
+        dialog.notice({
+          title: result.status === 'error' ? t('settings.apkCheckFailed') : t('settings.noNewApk'),
+          message: result.message,
+          tone: result.status === 'error' ? 'danger' : result.status === 'unsupported' ? 'amber' : 'mint',
+        })
+        return
+      }
+      const confirmed = await confirmApkInstall(result.release)
+      if (!confirmed) return
+      const installResult = await downloadAndOpenApkInstaller(result.release)
       dialog.notice({
-        title: result.status === 'error' ? t('settings.apkCheckFailed') : t('settings.noNewApk'),
-        message: result.message,
-        tone: result.status === 'error' ? 'danger' : result.status === 'unsupported' ? 'amber' : 'mint',
+        title: installResult.status === 'downloaded' ? t('settings.installerOpened') : t('settings.apkUpdateFailed'),
+        message: installResult.message,
+        tone: installResult.status === 'downloaded' ? 'mint' : 'danger',
       })
-      return
+    } finally {
+      setCheckingUpdate(false)
     }
-    const confirmed = await confirmApkInstall(result.release)
-    if (!confirmed) return
-    const installResult = await downloadAndOpenApkInstaller(result.release)
-    dialog.notice({
-      title: installResult.status === 'downloaded' ? t('settings.installerOpened') : t('settings.apkUpdateFailed'),
-      message: installResult.message,
-      tone: installResult.status === 'downloaded' ? 'mint' : 'danger',
-    })
   }
 
   function confirmApkInstall(release: ApkReleaseInfo) {
@@ -116,7 +123,7 @@ export function SettingsScreenContent({ onHome }: { onHome?: () => void } = {}) 
   function toggleAutoCheck() {
     const next = !(settings.autoUpdateCheckEnabled ?? true)
     updateSettings({ autoUpdateCheckEnabled: next })
-    dialog.toast({ title: next ? t('settings.autoCheckOn') : t('settings.autoCheckOff'), message: t('settings.coldUpdatePolicy'), tone: next ? 'mint' : 'amber' })
+    dialog.toast({ title: next ? t('settings.autoCheckOn') : t('settings.autoCheckOff'), tone: next ? 'mint' : 'amber' })
   }
 
   async function chooseLanguage(language: Language) {
@@ -213,18 +220,19 @@ export function SettingsScreenContent({ onHome }: { onHome?: () => void } = {}) 
       <IsleSection title={t('settings.updates')} style={{ marginTop: 14 }}>
         <View style={{ borderRadius: 22, padding: 13, backgroundColor: colors.material.paperRaised, borderWidth: 1, borderColor: colors.border }}>
           <VersionRow label={t('settings.appVersion')} value={`${version.appVersion} (${version.buildVersion})`} />
-          <VersionRow label={t('settings.coldUpdate')} value="GitHub Release APK" />
-          <VersionRow label={t('settings.hotUpdate')} value={t('settings.disabled')} />
-          <VersionRow label={t('settings.autoCheck')} value={(settings.autoUpdateCheckEnabled ?? true) ? t('settings.enabledState') : t('settings.disabledState')} />
           <VersionRow label={t('settings.lastCheck')} value={formatUpdateCheckTime(settings.lastApkUpdateCheckAt)} />
         </View>
-        <View style={{ flexDirection: 'row', gap: 12, marginTop: 10 }}>
-          <DataButton label={t('settings.checkApk')} icon={<Smartphone color={colors.surface} size={18} />} onPress={() => void checkApkUpdate()} />
-          <IsleButton
-            label={(settings.autoUpdateCheckEnabled ?? true) ? t('settings.autoEnabled') : t('settings.autoDisabled')}
-            tone="soft"
+        <View style={{ gap: 10, marginTop: 10 }}>
+          <DataButton
+            label={checkingUpdate ? t('settings.checkingUpdate') : t('settings.checkApk')}
+            icon={checkingUpdate ? <ActivityIndicator color={colors.surface} /> : <Smartphone color={colors.surface} size={18} />}
+            onPress={() => void checkApkUpdate()}
+          />
+          <IsleToggle
+            icon={<RotateCcw color={colors.text} size={18} />}
+            title={t('settings.autoCheck')}
+            active={settings.autoUpdateCheckEnabled ?? true}
             onPress={toggleAutoCheck}
-            style={{ flex: 1, minHeight: 54, borderRadius: 27 }}
           />
         </View>
       </IsleSection>

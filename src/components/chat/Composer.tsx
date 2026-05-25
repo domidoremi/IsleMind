@@ -34,6 +34,7 @@ interface ComposerProps {
   onStop?: () => void
   onReferenceSelected?: (reference: CommandReference) => void
   onFocus?: () => void
+  onBlur?: () => void
   onOpenKnowledge?: () => void
   onInsertPromptTemplate?: () => void
   onSend: (content: string, attachments: Attachment[]) => Promise<void> | void
@@ -53,6 +54,7 @@ export function Composer({
   onStop,
   onReferenceSelected,
   onFocus,
+  onBlur,
   onOpenKnowledge,
   onInsertPromptTemplate,
   onSend,
@@ -196,33 +198,36 @@ export function Composer({
           from={{ opacity: 0, translateY: -4 }}
           animate={{ opacity: 1, translateY: 0 }}
           transition={{ type: 'spring', damping: 20, stiffness: 200 }}
-          style={{ flexDirection: 'row', gap: 8, paddingHorizontal: 12, paddingTop: 10, flexWrap: 'wrap' }}
+          style={{ gap: 10, paddingHorizontal: 12, paddingTop: 10 }}
         >
-          <AttachmentChip label={t('chat.attachImage')} onPress={() => addAttachment(pickImage)}>
-            <Image color={colors.textSecondary} size={15} strokeWidth={1.8} />
-          </AttachmentChip>
-          <AttachmentChip label={t('chat.attachCamera')} onPress={() => addAttachment(takePhoto)}>
-            <Camera color={colors.textSecondary} size={15} strokeWidth={1.8} />
-          </AttachmentChip>
-          <AttachmentChip label={t('chat.attachFile')} onPress={() => addAttachment(pickDocument)}>
-            <FilePlus color={colors.textSecondary} size={15} strokeWidth={1.8} />
-          </AttachmentChip>
-          <AttachmentChip label={recording ? t('chat.stopRecording') : t('chat.voiceInput')} onPress={() => void toggleRecording()}>
-            <Mic color={recording ? colors.error : colors.textSecondary} size={15} strokeWidth={1.8} />
-          </AttachmentChip>
-          <AttachmentChip label={t('chat.openCommandPanel')} onPress={() => setContent((value) => value.trim() ? `${value} /` : '/')}>
-            <Slash color={colors.textSecondary} size={15} strokeWidth={1.8} />
-          </AttachmentChip>
-          {onInsertPromptTemplate ? (
-            <AttachmentChip label={t('chat.commandPromptTemplate')} onPress={onInsertPromptTemplate}>
-              <Plus color={colors.textSecondary} size={15} strokeWidth={1.8} />
+          <UtilityGroupTitle label={t('chat.inputTools')} />
+          <View style={{ flexDirection: 'row', gap: 8, flexWrap: 'wrap' }}>
+            <AttachmentChip label={t('chat.attachImage')} onPress={() => addAttachment(pickImage)}>
+              <Image color={colors.textSecondary} size={15} strokeWidth={1.8} />
             </AttachmentChip>
-          ) : null}
-          {onOpenKnowledge ? (
-            <AttachmentChip label={t('chat.importKnowledge')} onPress={onOpenKnowledge}>
+            <AttachmentChip label={t('chat.attachCamera')} onPress={() => addAttachment(takePhoto)}>
+              <Camera color={colors.textSecondary} size={15} strokeWidth={1.8} />
+            </AttachmentChip>
+            <AttachmentChip label={t('chat.attachFile')} onPress={() => addAttachment(pickDocument)}>
               <FilePlus color={colors.textSecondary} size={15} strokeWidth={1.8} />
             </AttachmentChip>
-          ) : null}
+            <AttachmentChip label={recording ? t('chat.stopRecording') : t('chat.voiceInput')} onPress={() => void toggleRecording()}>
+              <Mic color={recording ? colors.error : colors.textSecondary} size={15} strokeWidth={1.8} />
+            </AttachmentChip>
+            <AttachmentChip label={t('chat.openCommandPanel')} onPress={() => setContent((value) => value.trim() ? `${value} /` : '/')}>
+              <Slash color={colors.textSecondary} size={15} strokeWidth={1.8} />
+            </AttachmentChip>
+            {onInsertPromptTemplate ? (
+              <AttachmentChip label={t('chat.commandPromptTemplate')} onPress={onInsertPromptTemplate}>
+                <Plus color={colors.textSecondary} size={15} strokeWidth={1.8} />
+              </AttachmentChip>
+            ) : null}
+            {onOpenKnowledge ? (
+              <AttachmentChip label={t('chat.importKnowledge')} onPress={onOpenKnowledge}>
+                <FilePlus color={colors.textSecondary} size={15} strokeWidth={1.8} />
+              </AttachmentChip>
+            ) : null}
+          </View>
         </MotiView>
       ) : null}
       {pendingNotice ? (
@@ -337,7 +342,10 @@ export function Composer({
               setFocused(true)
               onFocus?.()
             }}
-            onBlur={() => setFocused(false)}
+            onBlur={() => {
+              setFocused(false)
+              onBlur?.()
+            }}
             style={{
               flex: 1,
               width: '100%',
@@ -523,5 +531,14 @@ function AttachmentChip({ label, children, onPress }: IconButtonProps) {
       {children}
       <Text style={{ color: colors.textSecondary, fontSize: 11, fontWeight: '800' }}>{label}</Text>
     </IslePressable>
+  )
+}
+
+function UtilityGroupTitle({ label }: { label: string }) {
+  const { colors } = useAppTheme()
+  return (
+    <Text style={{ color: colors.textTertiary, fontSize: 10, fontWeight: '900', textTransform: 'uppercase' }}>
+      {label}
+    </Text>
   )
 }

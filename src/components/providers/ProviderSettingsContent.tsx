@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
-import { KeyboardAvoidingView, Modal, Platform, ScrollView, Text, TextInput, View, useWindowDimensions } from 'react-native'
+import { Keyboard, KeyboardAvoidingView, Modal, Platform, ScrollView, Text, TextInput, View, useWindowDimensions } from 'react-native'
 import * as Clipboard from 'expo-clipboard'
 import * as DocumentPicker from 'expo-document-picker'
 import * as FileSystem from 'expo-file-system/legacy'
@@ -39,6 +39,14 @@ const SORT_OPTIONS: { id: ProviderSortMode; labelKey: string }[] = [
   { id: 'health', labelKey: 'providerSettings.sort.health' },
   { id: 'name', labelKey: 'providerSettings.sort.name' },
 ]
+
+const IMPORT_INPUT_LINE_HEIGHT = 20
+const IMPORT_INPUT_VERTICAL_PADDING = 24
+const IMPORT_INPUT_MAX_LINES = 14
+const IMPORT_SHEET_MARGIN = 16
+const IMPORT_HEADER_HEIGHT = 78
+const IMPORT_FOOTER_HEIGHT = 76
+const IMPORT_BODY_FIXED_SPACE = 118
 
 interface ProviderSettingsContentProps {
   embedded?: boolean
@@ -209,11 +217,11 @@ export function ProviderSettingsContent({ embedded = false, onClose }: ProviderS
           stage: t('providerSettings.activationCurrent', { name: provider.name }),
         })
         dialog.toast({
-          title: t('providerSettings.activationCurrent', { name: provider.name }),
-          message: t('providerSettings.activationProgressMessage', { completed, total: chosen.length, synced, tested, failed }),
+          title: t('providerSettings.activationRunning'),
+          message: t('providerSettings.activationCurrent', { name: provider.name }),
           tone: 'mint',
           position: 'bottom',
-          durationMs: 2200,
+          durationMs: 1300,
         })
         const result = await syncAndTestProvider(provider, {
           updateProvider,
@@ -221,6 +229,13 @@ export function ProviderSettingsContent({ embedded = false, onClose }: ProviderS
           updateProviderCredentialGroupHealth,
           onStage: (event) => {
             updateActivationJob({ currentName: event.providerName, stage: event.message })
+            dialog.toast({
+              title: stageToastTitle(event.stage, t),
+              message: event.message,
+              tone: event.tone,
+              position: 'bottom',
+              durationMs: 1300,
+            })
           },
         }, { enable: true }).catch((error) => ({
           providerId: provider.id,
@@ -258,13 +273,13 @@ export function ProviderSettingsContent({ embedded = false, onClose }: ProviderS
             : t('providerSettings.activationProviderNeedsCheck', { name: result.providerName }),
         })
         dialog.toast({
-          title: result.testOk
+          title: result.testOk ? t('providerSettings.activationSuccess') : t('providerSettings.activationPartial'),
+          message: result.testOk
             ? t('providerSettings.activationProviderReady', { name: result.providerName })
             : t('providerSettings.activationProviderNeedsCheck', { name: result.providerName }),
-          message: t('providerSettings.activationProgressMessage', { completed, total: chosen.length, synced, tested, failed }),
-          tone: result.testOk ? 'mint' : result.synced ? 'amber' : 'danger',
+          tone: result.testOk ? 'mint' : 'amber',
           position: 'bottom',
-          durationMs: 2200,
+          durationMs: 1600,
         })
       }
       const summary = summarizeProviderActivation(results)
@@ -279,12 +294,14 @@ export function ProviderSettingsContent({ embedded = false, onClose }: ProviderS
           : result?.synced
             ? t('providerSettings.activationPartial')
             : t('providerSettings.activationFailed')
-        dialog.notice({ title, message: summary.message, tone: summary.tone })
+        dialog.toast({ title, message: summary.message, tone: summary.tone, position: 'bottom', durationMs: 3800 })
       } else {
-        dialog.notice({
+        dialog.toast({
           title: t('providerSettings.enableDone'),
           message: summary.message,
           tone: summary.tone,
+          position: 'bottom',
+          durationMs: 4200,
         })
       }
       if (mountedRef.current) {
@@ -490,8 +507,7 @@ function HeaderBackButton({ onPress }: { onPress: () => void }) {
 }
 
 function closeStandaloneProviderSettings() {
-  if (router.canGoBack()) router.back()
-  else router.push('/settings')
+  router.replace('/settings')
 }
 
 function ProviderListRow({
@@ -609,6 +625,21 @@ function ActivationProgressCard({ job, onDismiss }: { job: ActivationJobState; o
       </View>
     </MotiView>
   )
+}
+
+function stageToastTitle(stage: 'enabled' | 'syncing' | 'testing' | 'done' | 'failed', t: ReturnType<typeof useTranslation>['t']): string {
+  switch (stage) {
+    case 'enabled':
+      return t('providerSettings.activationEnabled')
+    case 'syncing':
+      return t('providerSettings.activationSyncing')
+    case 'testing':
+      return t('providerSettings.activationTesting')
+    case 'done':
+      return t('providerSettings.activationSuccess')
+    case 'failed':
+      return t('providerSettings.activationFailed')
+  }
 }
 
 function ProviderFormModal({
@@ -757,13 +788,74 @@ function ProviderImportModal({
   const { t } = useTranslation()
   const dialog = useIsleDialog()
   const insets = useSafeAreaInsets()
-  const { height } = useWindowDimensions()
+  const { height, width } = useWindowDimensions()
   const motion = useMotionPreference()
+  const bodyScrollRef = useRef<ScrollView>(null)
   const [input, setInput] = useState('')
+  const [contentHeight, setContentHeight] = useState(0)
+  const [keyboardHeight, setKeyboardHeight] = useState(0)
   const compact = height < 680
+  const keyboardInset = Platform.OS === 'ios' ? keyboardHeight : 0
+  const availableSheetHeight = Math.max(
+    360,
+    height - insets.top - Math.max(insets.bottom, 10) - keyboardInset - IMPORT_SHEET_MARGIN,
+  )
+  const availableBodyHeight = Math.max(
+    180,
+    availableSheetHeight - IMPORT_HEADER_HEIGHT - IMPORT_FOOTER_HEIGHT - IMPORT_BODY_FIXED_SPACE,
+  )
+  const maxInputHeight = Math.max(
+    IMPORT_INPUT_LINE_HEIGHT * 2 + IMPORT_INPUT_VERTICAL_PADDING,
+    Math.min(
+      availableBodyHeight * 0.72,
+      IMPORT_INPUT_LINE_HEIGHT * IMPORT_INPUT_MAX_LINES + IMPORT_INPUT_VERTICAL_PADDING,
+    ),
+  )
+  const logicalLines = Math.max(1, input.split(/\r\n|\r|\n/).length)
+  const logicalVisibleLines = Math.max(2, logicalLines + 1)
+  const logicalHeight = IMPORT_INPUT_VERTICAL_PADDING + logicalVisibleLines * IMPORT_INPUT_LINE_HEIGHT
+  const measuredHeight = contentHeight ? contentHeight + IMPORT_INPUT_VERTICAL_PADDING : logicalHeight
+  const targetInputHeight = Math.max(logicalHeight, measuredHeight)
+  const inputHeight = Math.min(targetInputHeight, maxInputHeight)
+  const inputScrollEnabled = targetInputHeight > maxInputHeight
+  const sheetMaxHeight = Math.min(availableSheetHeight, height * (compact ? 0.96 : 0.9))
+  const footerCompact = width < 380
+
+  useEffect(() => {
+    if (!visible) {
+      setKeyboardHeight(0)
+      setContentHeight(0)
+      return
+    }
+    const showSub = Keyboard.addListener(Platform.OS === 'ios' ? 'keyboardWillShow' : 'keyboardDidShow', (event) => {
+      setKeyboardHeight(event.endCoordinates.height)
+    })
+    const hideSub = Keyboard.addListener(Platform.OS === 'ios' ? 'keyboardWillHide' : 'keyboardDidHide', () => {
+      setKeyboardHeight(0)
+    })
+    return () => {
+      showSub.remove()
+      hideSub.remove()
+    }
+  }, [visible])
+
+  function scrollBodyToEndSoon() {
+    requestAnimationFrame(() => {
+      requestAnimationFrame(() => {
+        bodyScrollRef.current?.scrollToEnd({ animated: true })
+      })
+    })
+  }
+
+  function appendInputText(text: string) {
+    setInput((current) => [current.trim(), text.trim()].filter(Boolean).join('\n\n'))
+    scrollBodyToEndSoon()
+  }
+
   function submit() {
     onSubmit(input)
     setInput('')
+    setContentHeight(0)
   }
 
   async function pasteFromClipboard() {
@@ -772,7 +864,7 @@ function ProviderImportModal({
       dialog.toast({ title: t('providerSettings.clipboardEmpty'), tone: 'amber' })
       return
     }
-    setInput((current) => [current.trim(), text.trim()].filter(Boolean).join('\n\n'))
+    appendInputText(text)
     dialog.toast({ title: t('providerSettings.clipboardRead'), tone: 'mint' })
   }
 
@@ -790,7 +882,7 @@ function ProviderImportModal({
       return
     }
     const text = await FileSystem.readAsStringAsync(asset.uri)
-    setInput((current) => [current.trim(), text.trim()].filter(Boolean).join('\n\n'))
+    appendInputText(text)
     dialog.toast({ title: t('providerSettings.fileRead'), message: asset.name, tone: 'mint' })
   }
 
@@ -805,49 +897,106 @@ function ProviderImportModal({
         >
           <IsleOverlayPressable onPress={onClose} style={{ flex: 1, backgroundColor: colors.backdrop }} />
         </MotiView>
-        <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined} style={{ flex: 1, justifyContent: 'flex-end' }}>
+        <View style={{ flex: 1, justifyContent: 'flex-end', paddingBottom: keyboardInset }}>
           <MotiView
             from={motion === 'full' ? { opacity: 0, translateY: 32, scale: 0.985 } : { opacity: 0 }}
             animate={{ opacity: 1, translateY: 0, scale: 1 }}
             transition={motion === 'full' ? { type: 'spring', damping: 23, stiffness: 190 } : { type: 'timing', duration: motionTokens.duration.fast }}
-            style={{ maxHeight: compact ? '94%' : '82%', borderTopLeftRadius: 30, borderTopRightRadius: 30, backgroundColor: colors.surface, borderWidth: 1, borderColor: colors.border, overflow: 'hidden' }}
+            style={{
+              maxHeight: sheetMaxHeight,
+              borderTopLeftRadius: 30,
+              borderTopRightRadius: 30,
+              backgroundColor: colors.surface,
+              borderWidth: 1,
+              borderColor: colors.border,
+              overflow: 'hidden',
+            }}
           >
-            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10, paddingHorizontal: 16, paddingTop: 16, paddingBottom: 12, backgroundColor: colors.surface }}>
+            <View style={{ minHeight: IMPORT_HEADER_HEIGHT, flexDirection: 'row', alignItems: 'center', gap: 10, paddingHorizontal: 16, paddingTop: 16, paddingBottom: 12, backgroundColor: colors.surface }}>
               <View style={{ flex: 1 }}>
                 <Text style={{ color: colors.text, fontSize: 18, fontWeight: '900' }}>{t('settings.batchImport')}</Text>
-                <Text style={{ color: colors.textSecondary, fontSize: 12, marginTop: 3 }}>{t('providerSettings.importSubtitle')}</Text>
               </View>
               <IsleIconButton label={t('dialog.close')} onPress={onClose}>
                 <X color={colors.textSecondary} size={18} />
               </IsleIconButton>
             </View>
-            <View style={{ paddingHorizontal: 16, paddingBottom: 10, backgroundColor: colors.surface }}>
-              <IsleField
-                label={t('providerSettings.importContent')}
-                note={t('providerSettings.importNote')}
-                inputProps={{
-                  value: input,
-                  onChangeText: setInput,
-                  multiline: true,
-                  autoCapitalize: 'none',
-                  autoCorrect: false,
-                  placeholder: 'https://api.example.com/v1\nsk-...\nsk-...\n\nhttps://api.other.com/v1\nsk-...',
-                  style: { minHeight: compact ? 180 : 220, maxHeight: compact ? 240 : 320 },
-                }}
-              />
-            </View>
-            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10, paddingHorizontal: 16, paddingTop: 12, paddingBottom: Math.max(insets.bottom, 10) + 10, backgroundColor: colors.surface, borderTopWidth: 1, borderTopColor: colors.border, marginTop: 10 }}>
-              <IsleButton label={t('common.cancel')} compact onPress={onClose} style={{ flex: 1 }} />
-              <IsleIconButton label={t('settings.pasteClipboard')} size="lg" onPress={() => void pasteFromClipboard()}>
-                <ClipboardPaste color={colors.textSecondary} size={18} />
-              </IsleIconButton>
-              <IsleIconButton label={t('settings.chooseFile')} size="lg" onPress={() => void importFromFile()}>
-                <FileJson color={colors.textSecondary} size={18} />
-              </IsleIconButton>
-              <IsleButton label={t('providerSettings.import')} compact tone="primary" disabled={!input.trim()} onPress={submit} style={{ flex: 1 }} />
+            <ScrollView
+              ref={bodyScrollRef}
+              keyboardShouldPersistTaps="handled"
+              nestedScrollEnabled
+              showsVerticalScrollIndicator={compact || inputScrollEnabled}
+              style={{ flexShrink: 1 }}
+              contentContainerStyle={{ paddingHorizontal: 16, paddingBottom: 14, backgroundColor: colors.surface }}
+            >
+              <View>
+                <View style={{ marginBottom: 12 }}>
+                  <Text style={{ color: colors.text, fontSize: 12, fontWeight: '900', marginBottom: 7 }}>{t('providerSettings.importSources')}</Text>
+                  <View style={{ flexDirection: footerCompact ? 'column' : 'row', gap: 8 }}>
+                    <IsleButton
+                      label={t('settings.pasteClipboard')}
+                      compact
+                      icon={<ClipboardPaste color={colors.textSecondary} size={16} />}
+                      onPress={() => void pasteFromClipboard()}
+                      style={{ flex: 1, minHeight: 44 }}
+                    />
+                    <IsleButton
+                      label={t('settings.chooseFile')}
+                      compact
+                      icon={<FileJson color={colors.textSecondary} size={16} />}
+                      onPress={() => void importFromFile()}
+                      style={{ flex: 1, minHeight: 44 }}
+                    />
+                  </View>
+                </View>
+                <Text style={{ color: colors.text, fontSize: 12, fontWeight: '900', marginBottom: 6 }}>{t('providerSettings.importContent')}</Text>
+                <View
+                  style={{
+                    height: inputHeight,
+                    borderRadius: 24,
+                    paddingHorizontal: 14,
+                    backgroundColor: colors.material.paper,
+                    borderWidth: 2.5,
+                    borderColor: colors.border,
+                    overflow: 'hidden',
+                    shadowColor: colors.shadow.color,
+                    shadowOpacity: 0.16,
+                    shadowRadius: 0,
+                    shadowOffset: { width: 0, height: 3 },
+                    elevation: 2,
+                  }}
+                >
+                  <TextInput
+                    value={input}
+                    onChangeText={setInput}
+                    onContentSizeChange={(event) => setContentHeight(event.nativeEvent.contentSize.height)}
+                    multiline
+                    scrollEnabled={inputScrollEnabled}
+                    autoCapitalize="none"
+                    autoCorrect={false}
+                    placeholder={'https://api.example.com/v1\nsk-...\nsk-...\n\nhttps://api.other.com/v1\nsk-...'}
+                    placeholderTextColor={colors.textTertiary}
+                    textAlignVertical="top"
+                    style={{
+                      height: inputHeight,
+                      paddingTop: 12,
+                      paddingBottom: 12,
+                      paddingHorizontal: 0,
+                      color: colors.text,
+                      fontSize: 14,
+                      fontWeight: '700',
+                      lineHeight: IMPORT_INPUT_LINE_HEIGHT,
+                    }}
+                  />
+                </View>
+                <Text style={{ color: colors.textTertiary, fontSize: 11, lineHeight: 16, marginTop: 8 }}>{t('providerSettings.importNote')}</Text>
+              </View>
+            </ScrollView>
+            <View style={{ minHeight: IMPORT_FOOTER_HEIGHT, flexDirection: 'row', alignItems: 'center', gap: footerCompact ? 8 : 10, paddingHorizontal: 16, paddingTop: 12, paddingBottom: Math.max(insets.bottom, 10) + 10, backgroundColor: colors.surface, borderTopWidth: 1, borderTopColor: colors.border }}>
+              <IsleButton label={t('common.cancel')} compact onPress={onClose} style={{ flex: 1, minHeight: 44 }} />
+              <IsleButton label={t('providerSettings.import')} compact tone="primary" disabled={!input.trim()} onPress={submit} style={{ flex: 1.12, minHeight: 44 }} />
             </View>
           </MotiView>
-        </KeyboardAvoidingView>
+        </View>
       </View>
     </Modal>
   )

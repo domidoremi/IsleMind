@@ -22,12 +22,12 @@ import { FlashList, type FlashListRef } from '@shopify/flash-list'
 import * as Clipboard from 'expo-clipboard'
 import * as Linking from 'expo-linking'
 import { router } from 'expo-router'
-import { AlertTriangle, BookOpen, Bot, ChevronLeft, ChevronRight, FileText, GitBranchPlus, History, ListEnd, Settings2, SlidersHorizontal, Split, X } from 'lucide-react-native'
+import { AlertTriangle, Bot, ChevronLeft, ChevronRight, FileText, GitBranchPlus, History, ListEnd, Settings2, SlidersHorizontal, Split, X } from 'lucide-react-native'
 import { MotiView } from 'moti'
 import { useTranslation } from 'react-i18next'
 import { IsleScreen } from '@/components/ui/isle'
 import { IsleOverlayPressable, IslePressable } from '@/components/ui/isle'
-import { IsleField, IsleHeader, IsleIconButton, IsleListItem, IsleSheet } from '@/components/ui/isle'
+import { IsleField, IsleHeader, IsleIconButton, IsleSheet } from '@/components/ui/isle'
 import { useIsleDialog } from '@/components/ui/isle'
 import { Composer } from '@/components/chat/Composer'
 import type { ComposerCommand } from '@/components/chat/Composer'
@@ -40,11 +40,12 @@ import { copyMessageFinalText, recoverStaleStreamingMessages, regenerateLastAssi
 import { useAppTheme } from '@/hooks/useAppTheme'
 import { useChatStore } from '@/store/chatStore'
 import { useSettingsStore } from '@/store/settingsStore'
+import { useActivationJobStore } from '@/store/activationJobStore'
 import { testProviderModelDetailed } from '@/services/ai/base'
 import { localDataStore } from '@/services/localDataStore'
 import { getModelConfig, getModelName, getProviderConfigIssue } from '@/types'
 import { speakText } from '@/services/speech'
-import type { AIProvider, Attachment, ChatErrorCode, Conversation, Message, ProviderOperationCode } from '@/types'
+import type { AIProvider, Attachment, ChatErrorCode, Conversation, Message, ProcessTrace, ProviderOperationCode, RagProfile } from '@/types'
 import type { CommandReference, KnowledgeDocument, MemoryItem, SkillDefinition } from '@/types'
 import { collectMessageTraces, getActiveTraceTitle } from './tracePresentation'
 import { useSafeAreaInsets } from 'react-native-safe-area-context'
@@ -54,9 +55,20 @@ import { listKnowledgeDocuments, listMemories } from '@/services/contextStore'
 import { getProviderAvailableModels, getProviderPreferredModel, hasRemoteProviderModelEvidence, isProviderConversationReady } from '@/utils/providerModels'
 import { useMotionPreference } from '@/hooks/useMotionPreference'
 import { motionTokens } from '@/theme/animation'
+import { getReasoningEffortOptions, normalizeModelId, providerSupportsReasoning } from '@/utils/modelReasoning'
 
 type StreamingInputIntent = 'guide' | 'queue' | 'interrupt'
 type ComposerPanel = 'model' | 'reasoning' | 'prompt' | 'more' | null
+type ModelQuickGroup = 'all' | 'gpt' | 'claude' | 'gemini' | 'deepseek' | 'qwen' | 'kimi' | 'doubao' | 'grok' | 'glm' | 'mimo' | 'llama' | 'other'
+
+interface ModelQuickOption {
+  id: string
+  provider: AIProvider
+  model: string
+  family: ModelQuickGroup
+}
+
+const MODEL_QUICK_GROUPS: ModelQuickGroup[] = ['all', 'gpt', 'claude', 'gemini', 'deepseek', 'qwen', 'kimi', 'doubao', 'grok', 'glm', 'mimo', 'llama', 'other']
 
 const CHAT_TOP_FLOATING_SPACE = 112
 const CHAT_BOTTOM_FLOATING_SPACE = 132
@@ -89,6 +101,7 @@ export function ChatWorkspace({ conversation, showBack = false, embedded = false
   const createConversation = useChatStore((state) => state.create)
   const providers = useSettingsStore((state) => state.providers)
   const settings = useSettingsStore((state) => state.settings)
+  const activationJob = useActivationJobStore((state) => state.job)
   const hydrateProviderKey = useSettingsStore((state) => state.hydrateProviderKey)
   const updateProvider = useSettingsStore((state) => state.updateProvider)
   const pagerGestureLock = useMainPagerGestureLock()
@@ -104,7 +117,12 @@ export function ChatWorkspace({ conversation, showBack = false, embedded = false
   const [knowledgeDocuments, setKnowledgeDocuments] = useState<KnowledgeDocument[]>([])
   const [memoryItems, setMemoryItems] = useState<MemoryItem[]>([])
   const [keyboardHeight, setKeyboardHeight] = useState(0)
+  const [composerFocused, setComposerFocused] = useState(false)
   const [composerPanel, setComposerPanel] = useState<ComposerPanel>(null)
+  const [setupReasoningEffort, setSetupReasoningEffort] = useState<NonNullable<Conversation['reasoningEffort']>>('medium')
+  const [setupSystemPrompt, setSetupSystemPrompt] = useState('')
+  const [setupSelectedProviderId, setSetupSelectedProviderId] = useState<string | null>(null)
+  const [setupSelectedModel, setSetupSelectedModel] = useState<string | null>(null)
   const [chromeHeight, setChromeHeight] = useState(CHAT_TOP_FLOATING_SPACE)
   const [composerHeight, setComposerHeight] = useState(COMPOSER_MIN_HEIGHT)
   const lastScrollOffset = useRef(0)
@@ -113,13 +131,23 @@ export function ChatWorkspace({ conversation, showBack = false, embedded = false
   const lastAutoScrollAt = useRef(0)
   const enabledProviders = useMemo(() => providers.filter((item) => item.id !== 'local-setup' && item.enabled), [providers])
   const hasEnabledProvider = enabledProviders.length > 0
-  const hasAvailableModel = enabledProviders.some((item) => isProviderConversationReady(item))
-  const homeProvider = pickReadyProviderForNewConversation(providers, settings.defaultProvider)
+  const readyProviders = useMemo(() => enabledProviders.filter((item) => isProviderConversationReady(item)), [enabledProviders])
+  const quickModelProviders = useMemo(() => enabledProviders.filter((item) => getProviderAvailableModels(item).length > 0), [enabledProviders])
+  const hasAvailableModel = quickModelProviders.length > 0
+  const defaultHomeProvider = pickReadyProviderForNewConversation(providers, settings.defaultProvider) ?? quickModelProviders[0] ?? null
+  const setupSelectedProvider = setupSelectedProviderId ? quickModelProviders.find((item) => item.id === setupSelectedProviderId) : undefined
+  const homeProvider = setupSelectedProvider ?? defaultHomeProvider
+  const homeProviderModels = homeProvider ? getProviderAvailableModels(homeProvider) : []
+  const setupModel = homeProvider && homeProviderModels.includes(setupSelectedModel ?? '')
+    ? setupSelectedModel!
+    : homeProvider ? getProviderPreferredModel(homeProvider) ?? homeProviderModels[0] ?? 'setup-model' : 'setup-model'
   const runtimeTarget = resolveRuntimeTarget(conversation, providers, settings.defaultProvider)
   const runtimeConversation = runtimeTarget?.conversation ?? conversation
   const provider = runtimeTarget?.provider
-  const reasoningEffort = runtimeConversation?.reasoningEffort ?? 'medium'
+  const setupConversation = useMemo<Conversation>(() => createSetupConversationShell(homeProvider, setupModel, setupReasoningEffort, setupSystemPrompt), [homeProvider, setupModel, setupReasoningEffort, setupSystemPrompt])
+  const reasoningEffort = runtimeConversation?.reasoningEffort ?? setupReasoningEffort
   const supportsReasoningQuick = !!provider && providerSupportsReasoning(provider, runtimeConversation?.model)
+  const supportsSetupReasoningQuick = !!homeProvider && providerSupportsReasoning(homeProvider, setupModel)
   const emptyHeaderTitle = !hasEnabledProvider ? t('chat.noProviderConnected') : hasAvailableModel ? homeProvider?.name ?? t('settings.providerManagement') : t('chat.noAvailableModels')
   const homeProviderModel = homeProvider ? getProviderPreferredModel(homeProvider) : undefined
   const emptyHeaderSubtitle = homeProviderModel ? getModelName(homeProviderModel) : undefined
@@ -148,16 +176,34 @@ export function ChatWorkspace({ conversation, showBack = false, embedded = false
   const messageSignature = runtimeConversation?.messages.map((message) => `${message.id}:${message.content.length}:${message.status}`).join('|')
   const activityLabel = streamingMessage ? getMessageActivityLabel(streamingMessage, t) : ''
   const petModelStatus = hasAvailableModel ? 'ready' : hasEnabledProvider ? 'unavailable' : 'unconfigured'
+  const petProviderActivity = activationJob?.status === 'running'
+    ? jobLooksLikeModelTesting(activationJob.stage) ? 'testing' : 'syncing'
+    : activationJob?.status === 'failed'
+      ? 'failed'
+      : activationJob?.status === 'done' && activationJob.failed > 0
+        ? 'partialFailure'
+        : 'idle'
+  const petRagActivity = useMemo(() => getPetRagActivity(streamingMessage ?? lastMessage, settings.ragProfile), [lastMessage, settings.ragProfile, streamingMessage])
+  const petToolActivity = useMemo(() => getPetToolActivity(streamingMessage ?? lastMessage), [lastMessage, streamingMessage])
   const petState = useMemo(
-    () => deriveHomePetState({ conversation: runtimeConversation, isStreaming, reasoningEffort, modelStatus: petModelStatus }),
-    [runtimeConversation, isStreaming, reasoningEffort, petModelStatus]
+    () => deriveHomePetState({
+      conversation: runtimeConversation ?? setupConversation,
+      isStreaming,
+      reasoningEffort,
+      modelStatus: petModelStatus,
+      ragActivity: petRagActivity,
+      toolActivity: petToolActivity,
+      providerActivity: petProviderActivity,
+    }),
+    [runtimeConversation, setupConversation, isStreaming, reasoningEffort, petModelStatus, petProviderActivity, petRagActivity, petToolActivity]
   )
   const petEnabled = settings.petEnabled === true
   const compactViewport = windowHeight < 620 || windowWidth < 360
-  const optionsPanelHeight = Math.max(220, Math.min(windowHeight * (compactViewport ? 0.46 : 0.52), compactViewport ? 286 : 344))
+  const optionsPanelHeight = Math.max(compactViewport ? 360 : 430, Math.min(windowHeight * 0.7, compactViewport ? 460 : 620))
   const listTopInset = Math.max(CHAT_TOP_FLOATING_SPACE, insets.top + (chromeCollapsed ? 54 : chromeHeight + 12))
   const composerBottomInset = Math.max(COMPOSER_MIN_HEIGHT, composerHeight + Math.max(insets.bottom, 10) + 10)
   const keyboardLift = Platform.OS === 'ios' ? keyboardHeight : 0
+  const keyboardVisible = keyboardHeight > 0 || composerFocused
   const goHistory = onHistory ?? (() => router.push('/conversations'))
   const goSettings = onSettings ?? (() => router.push('/settings'))
   const goProviders = () => pushSettingsRoute('/settings/providers')
@@ -190,7 +236,6 @@ export function ChatWorkspace({ conversation, showBack = false, embedded = false
     }),
     [knowledgeDocuments, memoryItems, providers, skills]
   )
-
   function scheduleChromeIdleCollapse() {
     if (idleTimer.current) clearTimeout(idleTimer.current)
     if (showOptions || providerHealth?.code || testingHeader) return
@@ -290,6 +335,19 @@ export function ChatWorkspace({ conversation, showBack = false, embedded = false
   }, [conversation?.id])
 
   useEffect(() => {
+    if (!homeProvider) {
+      setSetupSelectedProviderId(null)
+      setSetupSelectedModel(null)
+      return
+    }
+    if (!setupSelectedProviderId || !quickModelProviders.some((item) => item.id === setupSelectedProviderId)) {
+      setSetupSelectedProviderId(homeProvider.id)
+    }
+    if (setupSelectedModel && homeProviderModels.includes(setupSelectedModel)) return
+    setSetupSelectedModel(getProviderPreferredModel(homeProvider) ?? homeProviderModels[0] ?? null)
+  }, [homeProvider?.id, homeProviderModels.join('|'), quickModelProviders, setupSelectedModel, setupSelectedProviderId])
+
+  useEffect(() => {
     if (!isStreaming && pendingStreamingMessage && runtimeConversation) {
       const queued = pendingStreamingMessage
       setPendingStreamingMessage(null)
@@ -319,9 +377,9 @@ export function ChatWorkspace({ conversation, showBack = false, embedded = false
   }, [])
 
   useEffect(() => {
-    setPagerGestureLocked?.(showOptions)
+    setPagerGestureLocked?.(showOptions || !!composerPanel || composerFocused)
     return () => setPagerGestureLocked?.(false)
-  }, [setPagerGestureLocked, showOptions])
+  }, [composerFocused, composerPanel, setPagerGestureLocked, showOptions])
 
   useEffect(() => {
     if (Platform.OS !== 'android') return undefined
@@ -364,7 +422,7 @@ export function ChatWorkspace({ conversation, showBack = false, embedded = false
 
   if (!conversation) {
     async function submitSetup(content: string, attachments: Attachment[]) {
-      const readyProvider = pickReadyProviderForNewConversation(useSettingsStore.getState().providers, useSettingsStore.getState().settings.defaultProvider)
+      const readyProvider = homeProvider ?? pickReadyProviderForNewConversation(useSettingsStore.getState().providers, useSettingsStore.getState().settings.defaultProvider)
       if (!readyProvider) {
         if (hasEnabledProvider && !hasAvailableModel) {
           dialog.toast({ title: t('chat.noAvailableModels'), message: t('chat.syncModelsBeforeChat'), tone: 'amber' })
@@ -375,22 +433,84 @@ export function ChatWorkspace({ conversation, showBack = false, embedded = false
         goProviders()
         return
       }
-      const model = getProviderPreferredModel(readyProvider)
+      const providerModels = getProviderAvailableModels(readyProvider)
+      const model = providerModels.includes(setupModel) ? setupModel : getProviderPreferredModel(readyProvider)
       if (!model) return
       const id = createConversation(readyProvider.id, model)
+      if (setupSystemPrompt || setupReasoningEffort !== 'medium') {
+        updateConversation(id, { systemPrompt: setupSystemPrompt, reasoningEffort: setupReasoningEffort })
+      }
       const nextConversation = useChatStore.getState().conversations.find((item) => item.id === id)
       if (nextConversation) {
         try {
-          await sendMessage({ conversation: nextConversation, content, attachments })
+          await sendMessage({ conversation: { ...nextConversation, systemPrompt: setupSystemPrompt, reasoningEffort: setupReasoningEffort }, content, attachments })
         } catch (error) {
           dialog.toast({ title: t('chat.sendFailed'), message: error instanceof Error ? error.message : t('chat.sendFailedMessage'), tone: 'danger' })
         }
       }
     }
 
+    function openSetupModelPicker() {
+      markChromeActive()
+      if (!homeProvider || !homeProviderModels.length) {
+        dialog.toast({
+          title: t('chat.noAvailableModels'),
+          message: hasEnabledProvider ? t('chat.syncModelsBeforeChat') : t('chat.configureProviderBeforeChat'),
+          tone: 'amber',
+        })
+      }
+      setComposerPanel((current) => current === 'model' ? null : 'model')
+    }
+
+    function openSetupReasoningPicker() {
+      markChromeActive()
+      if (!supportsSetupReasoningQuick) {
+        dialog.toast({
+          title: t('chat.quickReasoning'),
+          message: hasAvailableModel ? t('chat.reasoningUnsupported') : t('chat.syncModelsBeforeChat'),
+          tone: 'amber',
+        })
+      }
+      setComposerPanel((current) => current === 'reasoning' ? null : 'reasoning')
+    }
+
+    function openSetupFullModelPanel() {
+      markChromeActive()
+      setShowOptions(true)
+      setComposerPanel(null)
+      if (!switchableProviders.length) {
+        dialog.toast({ title: t('chat.noProviderConnected'), message: t('chat.configureProviderBeforeChat'), tone: 'amber' })
+      }
+    }
+
+    function switchSetupModel(nextModel: string) {
+      if (!homeProvider) return
+      setSetupSelectedModel(nextModel)
+      setComposerPanel(null)
+      dialog.toast({ title: t('chat.modelSwitched'), message: `${homeProvider.name} · ${getModelName(nextModel)}`, tone: 'mint' })
+    }
+
+    const showSetupPet = petEnabled && !keyboardVisible && !showOptions && !composerPanel
+    const setupPetRight = Math.max(16, Math.min(24, windowWidth * 0.045))
+    const setupPetBottomGap = Math.max(20, Math.min(32, windowHeight * 0.025))
+
     return (
       <ScreenWrapper {...screenProps}>
         <View style={{ flex: 1 }}>
+          {showOptions ? (
+            <MotiView
+              from={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              transition={{ type: 'timing', duration: motion === 'full' ? motionTokens.duration.fast : 1 }}
+              style={{ position: 'absolute', top: 0, right: 0, bottom: 0, left: 0, zIndex: 55 }}
+            >
+              <IsleOverlayPressable
+                accessibilityLabel={t('dialog.closeLayer')}
+                onPress={() => setShowOptions(false)}
+                style={{ flex: 1, backgroundColor: colors.backdrop }}
+              />
+            </MotiView>
+          ) : null}
           <View style={{ paddingHorizontal: 16, paddingTop: 8, paddingBottom: 8, flexDirection: 'row', alignItems: 'center', gap: 10 }}>
             <IslePressable
               onPress={goHistory}
@@ -400,13 +520,25 @@ export function ChatWorkspace({ conversation, showBack = false, embedded = false
               <History color={colors.text} size={18} strokeWidth={1.8} />
             </IslePressable>
             <View style={{ flex: 1 }}>
-              <Text style={{ color: colors.text, fontSize: 18, fontWeight: '800' }}>{emptyHeaderTitle}</Text>
+              <Pressable onPress={openSetupFullModelPanel} accessibilityRole="button" accessibilityLabel={t('chat.conversationOptions')}>
+                <Text style={{ color: colors.text, fontSize: 18, fontWeight: '800' }}>{emptyHeaderTitle}</Text>
+              </Pressable>
               {emptyHeaderSubtitle ? (
-                <Text numberOfLines={1} style={{ color: colors.textSecondary, fontSize: 12, marginTop: 2 }}>
-                  {emptyHeaderSubtitle}
-                </Text>
+                <Pressable onPress={openSetupFullModelPanel} accessibilityRole="button" accessibilityLabel={t('chat.conversationOptions')}>
+                  <Text numberOfLines={1} style={{ color: colors.textSecondary, fontSize: 12, marginTop: 2 }}>
+                    {emptyHeaderSubtitle}
+                  </Text>
+                </Pressable>
               ) : null}
             </View>
+            <IslePressable
+              haptic
+              onPress={openSetupFullModelPanel}
+              accessibilityLabel={t('chat.conversationOptions')}
+              style={{ width: 42, height: 42, alignItems: 'center', justifyContent: 'center', borderRadius: 21, backgroundColor: colors.material.chrome, borderWidth: 1, borderColor: colors.borderStrong }}
+            >
+              <ListEnd color={colors.text} size={18} strokeWidth={1.9} />
+            </IslePressable>
             <IslePressable
               haptic
               onPress={goSettings}
@@ -421,7 +553,6 @@ export function ChatWorkspace({ conversation, showBack = false, embedded = false
             keyboardShouldPersistTaps="handled"
             contentContainerStyle={{ paddingHorizontal: 20, paddingTop: 10, paddingBottom: Math.max(insets.bottom, 10) + CHAT_BOTTOM_FLOATING_SPACE + keyboardLift }}
           >
-            {petEnabled ? <HomePet state={petState} compact style={{ marginTop: 4, marginBottom: 4 }} /> : null}
             <IsleEmptyState
               title={emptyHeaderTitle}
               actionLabel={hasAvailableModel ? t('chat.startChat') : t('chat.configureProviders')}
@@ -431,26 +562,97 @@ export function ChatWorkspace({ conversation, showBack = false, embedded = false
                 if (readyProvider && model) createConversation(readyProvider.id, model)
               } : goProviders}
             />
-            {!hasAvailableModel ? <View style={{ gap: 10, marginTop: 18 }}>
-              <OnboardingCard
-                icon={<BookOpen color={colors.text} size={18} />}
-                title={t('chat.importKnowledge')}
-                onPress={goKnowledge}
-              />
-            </View> : null}
           </ScrollView>
-          <View pointerEvents="box-none" style={{ position: 'absolute', left: 0, right: 0, bottom: keyboardLift, paddingHorizontal: 14, paddingBottom: 12, paddingTop: 4 }}>
-            <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined} keyboardVerticalOffset={0}>
-              <Composer
-                streaming={false}
-                commands={composerCommands}
-                references={composerReferences}
-                onStop={() => undefined}
-                onReferenceSelected={() => undefined}
-                onSend={submitSetup}
-              />
-            </KeyboardAvoidingView>
-          </View>
+          {showOptions ? (
+            <MotiView
+              from={motion === 'full' ? { opacity: 0, translateY: -8, scale: 0.985 } : { opacity: 0 }}
+              animate={{ opacity: 1, translateY: 0, scale: 1 }}
+              transition={motion === 'full' ? { type: 'spring', ...motionTokens.spring.settle } : { type: 'timing', duration: motionTokens.duration.fast }}
+              style={{ position: 'absolute', left: 12, right: 12, top: Math.max(62, insets.top + 70), zIndex: 72 }}
+            >
+              <IsleOverlayPressable onPress={(event) => event.stopPropagation()}>
+                <ChatOptionsPanel
+                  conversation={setupConversation}
+                  provider={homeProvider ?? undefined}
+                  switchableProviders={switchableProviders}
+                  colors={colors}
+                  maxHeight={optionsPanelHeight}
+                  onSwitchModel={(nextProvider, nextModel) => {
+                    setSetupSelectedProviderId(nextProvider.id)
+                    setSetupSelectedModel(nextModel)
+                    dialog.toast({ title: t('chat.modelSwitched'), message: `${nextProvider.name} · ${getModelName(nextModel)}`, tone: 'mint' })
+                    setShowOptions(false)
+                  }}
+                  onCopyLink={() => dialog.toast({ title: t('chat.noProviderConnected'), message: t('chat.configureProviderBeforeChat'), tone: 'amber' })}
+                  onClose={() => setShowOptions(false)}
+                  onDraftChange={(updates) => {
+                    if (updates.systemPrompt !== undefined) setSetupSystemPrompt(updates.systemPrompt)
+                    if (updates.reasoningEffort !== undefined) setSetupReasoningEffort(updates.reasoningEffort)
+                  }}
+                />
+              </IsleOverlayPressable>
+            </MotiView>
+          ) : null}
+          {showSetupPet ? (
+            <View
+              pointerEvents="none"
+              style={{
+                position: 'absolute',
+                right: setupPetRight,
+                bottom: composerBottomInset + setupPetBottomGap,
+                zIndex: 34,
+              }}
+            >
+              <HomePet state={petState} compact scale={0.65} />
+            </View>
+          ) : null}
+          <FloatingComposer
+            insets={insets}
+            streaming={false}
+            activityLabel=""
+            commands={composerCommands}
+            references={composerReferences}
+            reasoningEffort={setupReasoningEffort}
+            provider={homeProvider ?? undefined}
+            modelProviders={quickModelProviders}
+            conversation={setupConversation}
+            showReasoning
+            onReasoningChange={setSetupReasoningEffort}
+            systemPrompt={setupSystemPrompt}
+            onSystemPromptChange={setSetupSystemPrompt}
+            onSwitchModel={switchSetupModel}
+            onSwitchProviderModel={(nextProvider, nextModel) => {
+              setSetupSelectedProviderId(nextProvider.id)
+              setSetupSelectedModel(nextModel)
+              setComposerPanel(null)
+              dialog.toast({ title: t('chat.modelSwitched'), message: `${nextProvider.name} · ${getModelName(nextModel)}`, tone: 'mint' })
+            }}
+            onOpenModelPicker={openSetupModelPicker}
+            onOpenAdvancedModelPicker={openSetupFullModelPanel}
+            onOpenKnowledge={goKnowledge}
+            onClearPending={() => undefined}
+            disabled={false}
+            onStop={() => undefined}
+            onReferenceSelected={() => undefined}
+            onSend={submitSetup}
+            onSendWhileStreaming={submitSetup}
+            onInteract={() => {
+              setPagerGestureLocked?.(true)
+              if (showOptions) setShowOptions(false)
+            }}
+            onInteractEnd={() => {
+              if (!showOptions && !composerPanel && !composerFocused) setPagerGestureLocked?.(false)
+            }}
+            onInputFocus={() => setComposerFocused(true)}
+            onInputBlur={() => setComposerFocused(false)}
+            keyboardLift={keyboardLift}
+            panel={composerPanel}
+            onPanelChange={setComposerPanel}
+            onOpenReasoningPicker={openSetupReasoningPicker}
+            reasoningUnavailableMessage={supportsSetupReasoningQuick ? undefined : (hasAvailableModel ? t('chat.reasoningUnsupported') : t('chat.syncModelsBeforeChat'))}
+            onLayoutHeight={setComposerHeight}
+            motion={motion}
+          />
         </View>
       </ScreenWrapper>
     )
@@ -476,6 +678,7 @@ export function ChatWorkspace({ conversation, showBack = false, embedded = false
       metrics={metrics}
       regenerableAssistantId={regenerableAssistantId}
       switchableProviders={switchableProviders}
+      readyProviders={quickModelProviders}
       optionsPanelHeight={optionsPanelHeight}
       listTopInset={listTopInset}
       composerBottomInset={composerBottomInset}
@@ -512,6 +715,9 @@ export function ChatWorkspace({ conversation, showBack = false, embedded = false
       petState={petState}
       petEnabled={petEnabled}
       keyboardLift={keyboardLift}
+      keyboardVisible={keyboardVisible}
+      setComposerFocused={setComposerFocused}
+      setPagerGestureLocked={setPagerGestureLocked}
     />
   )
 }
@@ -534,6 +740,7 @@ function ActiveChatWorkspace({
   metrics,
   regenerableAssistantId,
   switchableProviders,
+  readyProviders,
   optionsPanelHeight,
   listTopInset,
   composerBottomInset,
@@ -570,6 +777,9 @@ function ActiveChatWorkspace({
   petState,
   petEnabled,
   keyboardLift,
+  keyboardVisible,
+  setComposerFocused,
+  setPagerGestureLocked,
 }: {
   conversation: Conversation
   provider: AIProvider | undefined
@@ -588,6 +798,7 @@ function ActiveChatWorkspace({
   metrics: ReturnType<typeof localDataStore.getConversationMetrics>
   regenerableAssistantId?: string
   switchableProviders: AIProvider[]
+  readyProviders: AIProvider[]
   optionsPanelHeight: number
   listTopInset: number
   composerBottomInset: number
@@ -624,8 +835,15 @@ function ActiveChatWorkspace({
   petState: ReturnType<typeof deriveHomePetState>
   petEnabled: boolean
   keyboardLift: number
+  keyboardVisible: boolean
+  setComposerFocused: React.Dispatch<React.SetStateAction<boolean>>
+  setPagerGestureLocked?: (locked: boolean) => void
 }) {
   const { t } = useTranslation()
+  const { height: windowHeight, width: windowWidth } = useWindowDimensions()
+  const petRight = Math.max(16, Math.min(24, windowWidth * 0.045))
+  const petBottomGap = Math.max(20, Math.min(32, windowHeight * 0.025))
+  const showFloatingPet = petEnabled && !keyboardVisible && !showOptions && !composerPanel && !intentDraft
 
   async function submit(content: string, attachments: Attachment[]) {
     try {
@@ -824,7 +1042,7 @@ function ActiveChatWorkspace({
               onScroll={handleListScroll}
               scrollEventThrottle={16}
               contentContainerStyle={{ paddingHorizontal: 20, paddingTop: 8, paddingBottom: 44 + composerBottomInset + keyboardLift }}
-              ListHeaderComponent={renderConversationHeaderSpacer(providerHealth, colors, t, petState, !petEnabled || activeConversation.messages.length === 0)}
+              ListHeaderComponent={renderConversationHeaderSpacer(providerHealth, colors, t)}
               renderItem={({ item: message, index }) => (
                 <MessageBubble
                   key={message.id}
@@ -845,7 +1063,7 @@ function ActiveChatWorkspace({
                   onTestModel={(item) => void testCurrentModel(item)}
                 />
               )}
-              ListEmptyComponent={<EmptyConversationState onHistory={goHistory} onProviders={goProviders} onKnowledge={goKnowledge} petState={petState} petEnabled={petEnabled} />}
+              ListEmptyComponent={<EmptyConversationState onHistory={goHistory} onProviders={goProviders} />}
             />
           </View>
 
@@ -858,6 +1076,20 @@ function ActiveChatWorkspace({
             />
           ) : null}
 
+          {showFloatingPet ? (
+            <View
+              pointerEvents="none"
+              style={{
+                position: 'absolute',
+                right: petRight,
+                bottom: composerBottomInset + petBottomGap,
+                zIndex: 34,
+              }}
+            >
+              <HomePet state={petState} compact scale={0.65} />
+            </View>
+          ) : null}
+
           <FloatingComposer
             insets={insets}
             streaming={isStreaming}
@@ -867,12 +1099,17 @@ function ActiveChatWorkspace({
             references={composerReferences}
             reasoningEffort={reasoningEffort}
             provider={provider}
+            modelProviders={readyProviders}
             conversation={activeConversation}
             showReasoning={supportsReasoningQuick}
             onReasoningChange={(effort) => updateConversation(activeConversation.id, { reasoningEffort: effort })}
             systemPrompt={activeConversation.systemPrompt}
             onSystemPromptChange={(systemPrompt) => updateConversation(activeConversation.id, { systemPrompt })}
-            onSwitchModel={(model) => confirmSwitchModel(provider!, model, { confirm: false })}
+            onSwitchModel={(model) => {
+              if (!provider) return
+              confirmSwitchModel(provider, model, { confirm: false })
+            }}
+            onSwitchProviderModel={(nextProvider, nextModel) => confirmSwitchModel(nextProvider, nextModel, { confirm: false })}
             onOpenModelPicker={() => {
               markChromeActive()
               setComposerPanel((current) => current === 'model' ? null : 'model')
@@ -889,8 +1126,18 @@ function ActiveChatWorkspace({
             onReferenceSelected={rememberCommandReference}
             onSend={submit}
             onSendWhileStreaming={submitWhileStreaming}
-            onInteract={closeOptionsFromBackground}
-            onInputFocus={scrollToLatestMessage}
+            onInteract={() => {
+              setPagerGestureLocked?.(true)
+              if (showOptions) setShowOptions(false)
+            }}
+            onInteractEnd={() => {
+              if (!showOptions && !composerPanel && !keyboardVisible) setPagerGestureLocked?.(false)
+            }}
+            onInputFocus={() => {
+              setComposerFocused(true)
+              scrollToLatestMessage()
+            }}
+            onInputBlur={() => setComposerFocused(false)}
             keyboardLift={keyboardLift}
             panel={composerPanel}
             onPanelChange={setComposerPanel}
@@ -1066,6 +1313,7 @@ function FloatingComposer({
   references,
   reasoningEffort,
   provider,
+  modelProviders,
   conversation,
   showReasoning,
   systemPrompt,
@@ -1073,7 +1321,9 @@ function FloatingComposer({
   onReasoningChange,
   onSystemPromptChange,
   onSwitchModel,
+  onSwitchProviderModel,
   onOpenModelPicker,
+  onOpenReasoningPicker,
   onOpenAdvancedModelPicker,
   onOpenKnowledge,
   onClearPending,
@@ -1083,9 +1333,12 @@ function FloatingComposer({
   onSend,
   onSendWhileStreaming,
   onInteract,
+  onInteractEnd,
   onInputFocus,
+  onInputBlur,
   panel,
   onPanelChange,
+  reasoningUnavailableMessage,
   onLayoutHeight,
   motion,
 }: {
@@ -1097,6 +1350,7 @@ function FloatingComposer({
   references: CommandReference[]
   reasoningEffort: NonNullable<Conversation['reasoningEffort']>
   provider: AIProvider | undefined
+  modelProviders: AIProvider[]
   conversation: Conversation
   showReasoning: boolean
   systemPrompt: string
@@ -1104,7 +1358,9 @@ function FloatingComposer({
   onReasoningChange: (effort: NonNullable<Conversation['reasoningEffort']>) => void
   onSystemPromptChange: (systemPrompt: string) => void
   onSwitchModel: (model: string) => void
+  onSwitchProviderModel?: (provider: AIProvider, model: string) => void
   onOpenModelPicker: () => void
+  onOpenReasoningPicker?: () => void
   onOpenAdvancedModelPicker: () => void
   onOpenKnowledge: () => void
   onClearPending: () => void
@@ -1114,9 +1370,12 @@ function FloatingComposer({
   onSend: (content: string, attachments: Attachment[]) => Promise<void> | void
   onSendWhileStreaming: (content: string, attachments: Attachment[]) => Promise<void> | void
   onInteract?: () => void
+  onInteractEnd?: () => void
   onInputFocus?: () => void
+  onInputBlur?: () => void
   panel: ComposerPanel
   onPanelChange: (panel: ComposerPanel) => void
+  reasoningUnavailableMessage?: string
   onLayoutHeight: (height: number) => void
   motion: ReturnType<typeof useMotionPreference>
 }) {
@@ -1126,7 +1385,21 @@ function FloatingComposer({
   const reasoningOpen = panel === 'reasoning'
   const promptOpen = panel === 'prompt'
   const moreOpen = panel === 'more'
-  const currentModels = provider ? getProviderAvailableModels(provider) : []
+  const reasoningOptions = useMemo(() => getReasoningEffortOptions(provider, conversation.model), [conversation.model, provider])
+  const quickModels = useMemo(() => buildModelQuickOptions(modelProviders), [modelProviders])
+  const [modelQuickGroup, setModelQuickGroup] = useState<ModelQuickGroup>(() => inferModelFamily(provider, conversation.model))
+  const selectedGroup = useMemo(() => {
+    if (modelQuickGroup === 'all') return 'all'
+    return quickModels.some((option) => option.family === modelQuickGroup) ? modelQuickGroup : 'all'
+  }, [modelQuickGroup, quickModels])
+  const visibleQuickModels = selectedGroup === 'all'
+    ? quickModels
+    : quickModels.filter((option) => option.family === selectedGroup)
+
+  useEffect(() => {
+    const currentFamily = inferModelFamily(provider, conversation.model)
+    setModelQuickGroup(currentFamily)
+  }, [conversation.model, provider?.id])
 
   function handleLayout(event: LayoutChangeEvent) {
     onLayoutHeight(Math.ceil(event.nativeEvent.layout.height))
@@ -1134,7 +1407,14 @@ function FloatingComposer({
 
   return (
     <View pointerEvents="box-none" onLayout={handleLayout} style={{ position: 'absolute', left: 0, right: 0, bottom: keyboardLift, zIndex: 40 }}>
-      <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined} keyboardVerticalOffset={0} onTouchStart={onInteract}>
+      <KeyboardAvoidingView
+        behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+        keyboardVerticalOffset={0}
+        onTouchStart={onInteract}
+        onTouchMove={onInteract}
+        onTouchEnd={onInteractEnd}
+        onTouchCancel={onInteractEnd}
+      >
         <View pointerEvents="box-none" style={{ paddingHorizontal: 14, paddingTop: 6, paddingBottom: Math.max(insets.bottom, 10) + 8 }}>
           <MotiView
             from={motion === 'full' ? { opacity: 0, translateY: 8 } : { opacity: 0 }}
@@ -1145,13 +1425,11 @@ function FloatingComposer({
             <ComposerToolButton label={t('chat.quickModel')} active={modelOpen} onPress={onOpenModelPicker}>
               <Bot color={modelOpen ? colors.primary : colors.textSecondary} size={15} strokeWidth={2} />
             </ComposerToolButton>
-            {showReasoning ? (
-              <ComposerToolButton label={t('chat.quickReasoning')} active={reasoningOpen} onPress={() => {
-                onPanelChange(reasoningOpen ? null : 'reasoning')
-              }}>
-                <SlidersHorizontal color={reasoningOpen ? colors.primary : colors.textSecondary} size={15} strokeWidth={2} />
-              </ComposerToolButton>
-            ) : null}
+            <ComposerToolButton label={t('chat.quickReasoning')} active={reasoningOpen} onPress={onOpenReasoningPicker ?? (() => {
+              onPanelChange(reasoningOpen ? null : 'reasoning')
+            })}>
+              <SlidersHorizontal color={reasoningOpen ? colors.primary : colors.textSecondary} size={15} strokeWidth={2} />
+            </ComposerToolButton>
             <ComposerToolButton label={t('chat.quickPrompt')} active={promptOpen} onPress={() => {
               onPanelChange(promptOpen ? null : 'prompt')
             }}>
@@ -1171,38 +1449,85 @@ function FloatingComposer({
               style={{ marginBottom: 7, borderRadius: 22, padding: 10, backgroundColor: colors.material.chrome, borderWidth: 1, borderColor: colors.border }}
             >
               <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 8 }}>
-                <View style={{ flex: 1 }}>
-                  <Text numberOfLines={1} style={{ color: colors.text, fontSize: 12, fontWeight: '900' }}>{provider?.name ?? t('settings.providerManagement')}</Text>
-                  <Text numberOfLines={1} style={{ color: colors.textTertiary, fontSize: 10, fontWeight: '800', marginTop: 1 }}>{currentModels.length ? t('chat.quickModelHint') : t('chat.providerNoModelsSyncHint')}</Text>
-                </View>
-                <IslePressable haptic onPress={onOpenAdvancedModelPicker} style={{ minHeight: 30, borderRadius: 15, paddingHorizontal: 10, alignItems: 'center', justifyContent: 'center', backgroundColor: colors.islandRaised }}>
+                <ScrollView
+                  horizontal
+                  showsHorizontalScrollIndicator={false}
+                  keyboardShouldPersistTaps="handled"
+                  nestedScrollEnabled
+                  onTouchStart={onInteract}
+                  onTouchMove={onInteract}
+                  onTouchEnd={onInteractEnd}
+                  onTouchCancel={onInteractEnd}
+                  contentContainerStyle={{ gap: 7, paddingRight: 2 }}
+                  style={{ flex: 1 }}
+                >
+                  {MODEL_QUICK_GROUPS.map((group) => {
+                    const active = selectedGroup === group
+                    const disabled = group !== 'all' && !quickModels.some((option) => option.family === group)
+                    return (
+                      <IslePressable
+                        key={group}
+                        haptic
+                        disabled={disabled}
+                        onPress={() => setModelQuickGroup(group)}
+                        style={{ minHeight: 30, borderRadius: 15, paddingHorizontal: 11, alignItems: 'center', justifyContent: 'center', backgroundColor: active ? colors.text : colors.islandRaised, borderWidth: active ? 0 : 1, borderColor: colors.border, opacity: disabled ? 0.42 : 1 }}
+                      >
+                        <Text numberOfLines={1} style={{ color: active ? colors.surface : colors.textSecondary, fontSize: 11, fontWeight: '900' }}>{t(`chat.modelFamilies.${group}`)}</Text>
+                      </IslePressable>
+                    )
+                  })}
+                </ScrollView>
+                <IslePressable haptic onPress={onOpenAdvancedModelPicker} style={{ minHeight: 30, borderRadius: 15, paddingHorizontal: 10, alignItems: 'center', justifyContent: 'center', backgroundColor: colors.islandRaised, borderWidth: 1, borderColor: colors.border }}>
                   <Text style={{ color: colors.textSecondary, fontSize: 11, fontWeight: '900' }}>{t('chat.advancedModelMenu')}</Text>
                 </IslePressable>
               </View>
-              {currentModels.length ? (
-                <ScrollView horizontal showsHorizontalScrollIndicator={false} keyboardShouldPersistTaps="handled" contentContainerStyle={{ gap: 7, paddingRight: 4 }}>
-                  {currentModels.map((model) => (
+              {visibleQuickModels.length ? (
+                <ScrollView
+                  horizontal
+                  showsHorizontalScrollIndicator={false}
+                  keyboardShouldPersistTaps="handled"
+                  nestedScrollEnabled
+                  onTouchStart={onInteract}
+                  onTouchMove={onInteract}
+                  onTouchEnd={onInteractEnd}
+                  onTouchCancel={onInteractEnd}
+                  contentContainerStyle={{ gap: 7, paddingRight: 4 }}
+                >
+                  {visibleQuickModels.map((option) => {
+                    const active = option.provider.id === conversation.providerId && option.model === conversation.model
+                    return (
                     <IslePressable
-                      key={model}
+                      key={option.id}
                       haptic
-                      onPress={() => onSwitchModel(model)}
-                      style={{ minHeight: 32, borderRadius: 16, paddingHorizontal: 11, alignItems: 'center', justifyContent: 'center', backgroundColor: conversation.model === model ? colors.text : colors.islandRaised, borderWidth: conversation.model === model ? 0 : 1, borderColor: colors.border }}
+                      onPress={() => {
+                        if (option.provider.id === provider?.id) {
+                          onSwitchModel(option.model)
+                        } else {
+                          onSwitchProviderModel?.(option.provider, option.model)
+                        }
+                      }}
+                      style={{ minHeight: 32, borderRadius: 16, paddingHorizontal: 11, alignItems: 'center', justifyContent: 'center', backgroundColor: active ? colors.text : colors.islandRaised, borderWidth: active ? 0 : 1, borderColor: colors.border }}
                     >
-                      <Text numberOfLines={1} style={{ maxWidth: 180, color: conversation.model === model ? colors.surface : colors.textSecondary, fontSize: 11, fontWeight: '900' }}>{getModelName(model)}</Text>
+                      <Text numberOfLines={1} ellipsizeMode="tail" style={{ maxWidth: 210, color: active ? colors.surface : colors.textSecondary, fontSize: 11, fontWeight: '900' }}>{option.provider.name} · {getModelName(option.model)}</Text>
                     </IslePressable>
-                  ))}
+                    )
+                  })}
                 </ScrollView>
-              ) : null}
+              ) : (
+                <Text style={{ color: colors.textTertiary, fontSize: 12, fontWeight: '800', lineHeight: 17, paddingHorizontal: 4, paddingVertical: 4 }}>
+                  {quickModels.length ? t('chat.noQuickModelMatches') : t('chat.providerNoModelsSyncHint')}
+                </Text>
+              )}
             </MotiView>
           ) : null}
-          {reasoningOpen && showReasoning ? (
+          {reasoningOpen ? (
             <MotiView
               from={{ opacity: 0, translateY: 4 }}
               animate={{ opacity: 1, translateY: 0 }}
               transition={{ type: 'spring', damping: 20, stiffness: 210 }}
               style={{ flexDirection: 'row', gap: 7, marginBottom: 7, padding: 7, borderRadius: 18, backgroundColor: colors.material.chrome, borderWidth: 1, borderColor: colors.border }}
             >
-              {(['minimal', 'low', 'medium', 'high'] as const).map((effort) => (
+              {showReasoning && reasoningOptions.length ? reasoningOptions.map((effort) => (
                 <IslePressable
                   key={effort}
                   haptic
@@ -1216,7 +1541,11 @@ function FloatingComposer({
                     {t(`chat.reasoningEffort.${effort}`)}
                   </Text>
                 </IslePressable>
-              ))}
+              )) : (
+                <Text style={{ color: colors.textTertiary, fontSize: 12, fontWeight: '800', lineHeight: 17, paddingHorizontal: 4, paddingVertical: 4 }}>
+                  {reasoningUnavailableMessage ?? t('chat.reasoningUnsupported')}
+                </Text>
+              )}
             </MotiView>
           ) : null}
           {promptOpen ? (
@@ -1231,6 +1560,7 @@ function FloatingComposer({
                 value={systemPrompt}
                 onChangeText={onSystemPromptChange}
                 onFocus={onInputFocus}
+                onBlur={onInputBlur}
                 multiline
                 placeholder={t('chat.systemPromptExample')}
                 placeholderTextColor={colors.textTertiary}
@@ -1264,6 +1594,7 @@ function FloatingComposer({
             onSend={onSend}
             onSendWhileStreaming={onSendWhileStreaming}
             onFocus={onInputFocus}
+            onBlur={onInputBlur}
             onOpenKnowledge={onOpenKnowledge}
             onInsertPromptTemplate={() => onSystemPromptChange(systemPrompt ? `${systemPrompt}\n\n${t('chat.promptTemplateInsert')}` : t('chat.promptTemplateInsert'))}
           />
@@ -1381,13 +1712,10 @@ function IntentAction({
 function renderConversationHeaderSpacer(
   providerHealth: ConversationHealth | null,
   colors: ReturnType<typeof useAppTheme>['colors'],
-  t: TFunction,
-  petState: ReturnType<typeof deriveHomePetState>,
-  hidePet: boolean
+  t: TFunction
 ) {
   return (
     <View style={{ gap: 8, marginBottom: 4 }}>
-      {hidePet ? null : <HomePet state={petState} compact style={{ marginTop: 2, marginBottom: 8 }} />}
       {providerHealth?.code ? (
         <Text style={{ color: providerHealth.inheritedExpired ? colors.error : colors.warning, fontSize: 11, fontWeight: '800' }}>
           {providerHealth.inheritedExpired ? t('chat.inheritedConfigExpired') : t('chat.conversationConfigIssue')}
@@ -1397,18 +1725,16 @@ function renderConversationHeaderSpacer(
   )
 }
 
-function EmptyConversationState({ onHistory, onProviders, onKnowledge, petState, petEnabled }: { onHistory: () => void; onProviders: () => void; onKnowledge: () => void; petState: ReturnType<typeof deriveHomePetState>; petEnabled: boolean }) {
+function EmptyConversationState({ onHistory, onProviders }: { onHistory: () => void; onProviders: () => void }) {
   const { colors } = useAppTheme()
   const { t } = useTranslation()
   return (
     <View style={{ paddingTop: 36, gap: 14 }}>
-      {petEnabled ? <HomePet state={petState} style={{ marginBottom: -8 }} /> : null}
       <IsleEmptyState
         title={t('chat.newConversation')}
       />
       <View style={{ flexDirection: 'row', gap: 8, flexWrap: 'wrap', justifyContent: 'center' }}>
         <QuickStartAction label={t('chat.configureProviders')} onPress={onProviders} />
-        <QuickStartAction label={t('chat.importKnowledge')} onPress={onKnowledge} muted />
         <QuickStartAction label={t('conversation.title')} onPress={onHistory} muted />
       </View>
     </View>
@@ -1512,9 +1838,88 @@ function hasOnlyHistoricalDefaultModels(provider: AIProvider): boolean {
   return models.every((model) => defaults.has(model))
 }
 
+function buildModelQuickOptions(providers: AIProvider[]): ModelQuickOption[] {
+  return providers.flatMap((provider) =>
+    getProviderAvailableModels(provider).map((model) => ({
+      id: `${provider.id}:${model}`,
+      provider,
+      model,
+      family: inferModelFamily(provider, model),
+    }))
+  )
+}
+
+function inferModelFamily(provider: AIProvider | undefined, model: string | undefined): ModelQuickGroup {
+  const modelText = normalizeModelId(model ?? '')
+  const modelFamily = inferModelFamilyFromText(modelText, false)
+  if (modelFamily) return modelFamily
+
+  const providerText = normalizeModelFamilyText([
+    provider?.name,
+    provider?.presetId,
+    provider?.detectedPresetId,
+    provider?.baseUrl,
+  ].filter(Boolean).join(' '))
+  const providerFamily = inferModelFamilyFromText(providerText, true)
+  if (providerFamily) return providerFamily
+
+  if (provider?.type === 'openai') return 'gpt'
+  if (provider?.type === 'anthropic' || provider?.wireProtocol === 'anthropic-compatible') return 'claude'
+  if (provider?.type === 'google') return 'gemini'
+  if (provider?.type === 'xiaomi-mimo') return 'mimo'
+  return 'other'
+}
+
+function inferModelFamilyFromText(text: string, includeProviderIdentity: boolean): Exclude<ModelQuickGroup, 'all'> | null {
+  if (!text) return null
+  if (/deepseek/.test(text)) return 'deepseek'
+  if (/qwen|qwq|qvq|dashscope|tongyi|aliyun/.test(text)) return 'qwen'
+  if (/kimi|moonshot/.test(text)) return 'kimi'
+  if (/doubao|volcengine|bytedance/.test(text)) return 'doubao'
+  if (/grok|(^|[-_./])xai($|[-_./])|api\.x\.ai/.test(text)) return 'grok'
+  if (/glm|bigmodel|zhipu/.test(text)) return 'glm'
+  if (/mimo|xiaomi/.test(text)) return 'mimo'
+  if (/claude|anthropic/.test(text)) return 'claude'
+  if (/gemini|google/.test(text)) return 'gemini'
+  if (/llama|(^|[-_./])meta($|[-_./])/.test(text)) return 'llama'
+  if (/(^|[-_./])(gpt|o[1-9])/.test(text) || (includeProviderIdentity && /api\.openai\.com/.test(text))) return 'gpt'
+  return null
+}
+
+function normalizeModelFamilyText(value: string): string {
+  return value
+    .toLowerCase()
+    .normalize('NFKD')
+    .replace(/[\u0300-\u036f]/g, '')
+}
+
 function pickReadyProviderForNewConversation(providers: AIProvider[], defaultProvider: string | null | undefined): AIProvider | null {
   const enabled = providers.filter((provider) => isProviderConversationReady(provider))
   return enabled.find((provider) => provider.id === defaultProvider) ?? enabled[0] ?? null
+}
+
+function createSetupConversationShell(
+  provider: AIProvider | null,
+  model: string,
+  reasoningEffort: NonNullable<Conversation['reasoningEffort']>,
+  systemPrompt: string
+): Conversation {
+  const config = getModelConfig(model, provider?.type, provider?.modelConfigs)
+  return {
+    id: '__setup__',
+    title: '',
+    providerId: provider?.id ?? 'setup',
+    model,
+    providerModelMode: 'inherited',
+    systemPrompt,
+    temperature: 0.7,
+    topP: 1,
+    reasoningEffort,
+    maxTokens: config.defaultMaxTokens,
+    messages: [],
+    createdAt: 0,
+    updatedAt: 0,
+  }
 }
 
 function resolveRuntimeTarget(
@@ -1547,11 +1952,6 @@ function resolveRuntimeTarget(
       maxTokens: Math.min(conversation.maxTokens || config.defaultMaxTokens, config.maxOutputTokens),
     },
   }
-}
-
-function providerSupportsReasoning(provider: AIProvider, model?: string): boolean {
-  if (!model) return !!provider.capabilities?.reasoningEffort
-  return !!provider.capabilities?.reasoningEffort || /(^|\/)(o[1-9]|gpt-5)|reasoner|thinking|grok|glm/i.test(model)
 }
 
 function collectSkillVariableDefaults(skills: SkillDefinition[]): Record<string, string | number | boolean> {
@@ -1623,6 +2023,49 @@ function getMessageActivityLabel(message: Message, t: TFunction): string {
   return getActiveTraceTitle(traces, message.status) || messageActivityStatusLabel(message, t)
 }
 
+function getPetRagActivity(message: Message | undefined, ragProfile?: RagProfile): 'idle' | 'retrieving' | 'deep' | 'fallback' | 'compressing' | 'flare' {
+  const activeTrace = findPetTrace(message, (trace) => trace.type === 'retrieval' || trace.type === 'knowledge' || trace.type === 'memory')
+  if (activeTrace) {
+    if (traceMetadataMatches(activeTrace, /flare|second-pass|补检索/i)) return 'flare'
+    if (traceMetadataMatches(activeTrace, /compress|llmlingua|压缩/i)) return 'compressing'
+    if (traceMetadataMatches(activeTrace, /fallback|degrad|降级|skipped|unavailable/i) || activeTrace.status === 'error' || activeTrace.status === 'skipped') return 'fallback'
+    if (traceMetadataMatches(activeTrace, /raptor|graph|colbert|hyde|rewrite|deep|多跳/i)) return 'deep'
+    return 'retrieving'
+  }
+  if ((message?.status === 'streaming' || message?.status === 'sending') && ragProfile === 'deep') return 'deep'
+  return 'idle'
+}
+
+function getPetToolActivity(message: Message | undefined): 'idle' | 'tool' | 'mcp' | 'skill' | 'attachment' | 'search' {
+  const activeTrace = findPetTrace(message, (trace) => trace.type === 'tool' || trace.type === 'search' || trace.type === 'system')
+  if (!activeTrace) return 'idle'
+  if (activeTrace.type === 'search') return 'search'
+  if (traceMetadataMatches(activeTrace, /mcp/i)) return 'mcp'
+  if (traceMetadataMatches(activeTrace, /skill|isleskill/i)) return 'skill'
+  if (traceMetadataMatches(activeTrace, /attach|file|image|附件|图片/i)) return 'attachment'
+  return 'tool'
+}
+
+function findPetTrace(message: Message | undefined, predicate: (trace: ProcessTrace) => boolean): ProcessTrace | undefined {
+  if (!message) return undefined
+  const traces = collectMessageTraces(message).filter(predicate)
+  return traces.find((trace) => trace.status === 'running' || trace.status === 'pending') ?? traces.find((trace) => trace.status === 'error' || trace.status === 'skipped')
+}
+
+function traceMetadataMatches(trace: ProcessTrace, pattern: RegExp): boolean {
+  const metadata = trace.metadata
+    ? Object.entries(trace.metadata)
+        .slice(0, 12)
+        .map(([key, value]) => `${key}:${Array.isArray(value) ? value.join(',') : String(value)}`)
+        .join(' ')
+    : ''
+  return pattern.test(`${trace.title} ${trace.content ?? ''} ${metadata}`)
+}
+
+function jobLooksLikeModelTesting(stage?: string): boolean {
+  return /test|testing|测试|检查/i.test(stage ?? '')
+}
+
 function messageActivityStatusLabel(message: Message, t: TFunction): string {
   switch (message.status) {
     case 'sending':
@@ -1642,17 +2085,6 @@ function previewPendingText(content: string, attachments: Attachment[], t: TFunc
   const text = content.trim().replace(/\s+/g, ' ')
   const label = text ? (text.length > 24 ? `${text.slice(0, 24)}...` : text) : t('chat.attachmentMessage')
   return attachments.length ? `${label} · ${t('chat.attachmentCount', { count: attachments.length })}` : label
-}
-
-function OnboardingCard({ icon, title, onPress }: { icon: ReactNode; title: string; onPress: () => void }) {
-  const { colors } = useAppTheme()
-  return (
-    <IsleListItem
-      title={title}
-      onPress={onPress}
-      leading={<View style={{ width: 40, height: 40, borderRadius: 20, alignItems: 'center', justifyContent: 'center', backgroundColor: colors.mintSoft }}>{icon}</View>}
-    />
-  )
 }
 
 interface ConversationHealth {

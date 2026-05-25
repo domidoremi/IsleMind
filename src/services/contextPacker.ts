@@ -1,4 +1,4 @@
-import type { Message } from '@/types'
+import type { Message, ProviderType, ReasoningEffort } from '@/types'
 import { estimateMessageTokens, estimateTextTokens } from '@/services/tokenUsage'
 
 export interface PackChatMessagesInput {
@@ -7,6 +7,9 @@ export interface PackChatMessagesInput {
   modelContextWindow: number
   maxOutputTokens: number
   systemPrompt?: string
+  reasoningEffort?: ReasoningEffort
+  providerType?: ProviderType
+  model?: string
 }
 
 export interface PackedChatMessages {
@@ -15,10 +18,19 @@ export interface PackedChatMessages {
   estimatedInputTokens: number
   budgetTokens: number
   trimmedCount: number
+  fixedTokens: number
+  messageTokens: number
+  modelBudgetTokens: number
+  reservedOutputTokens: number
+  reasoningReserveTokens: number
+  compressionTriggered: boolean
+  truncatedSingleMessage: boolean
 }
 
 export function packChatMessages(input: PackChatMessagesInput): PackedChatMessages {
-  const modelBudget = Math.max(512, Math.floor(input.modelContextWindow * 0.82) - input.maxOutputTokens)
+  const reasoningReserveTokens = estimateReasoningReserve(input.reasoningEffort, input.providerType, input.model)
+  const reservedOutputTokens = input.maxOutputTokens + reasoningReserveTokens
+  const modelBudget = Math.max(512, Math.floor(input.modelContextWindow * 0.82) - reservedOutputTokens)
   const fixedTokens = estimateTextTokens([input.systemPrompt, input.contextPrompt].filter(Boolean).join('\n\n'))
   const budgetTokens = Math.max(256, modelBudget - fixedTokens)
   const cleanMessages = input.messages
@@ -39,9 +51,17 @@ export function packChatMessages(input: PackChatMessagesInput): PackedChatMessag
       estimatedInputTokens,
       budgetTokens,
       trimmedCount: 0,
+      fixedTokens,
+      messageTokens: estimatedInputTokens,
+      modelBudgetTokens: modelBudget,
+      reservedOutputTokens,
+      reasoningReserveTokens,
+      compressionTriggered: false,
+      truncatedSingleMessage: false,
     }
   }
 
+  let truncatedSingleMessage = false
   selected = []
   for (let index = cleanMessages.length - 1; index >= 0; index -= 1) {
     const candidate = [cleanMessages[index], ...selected]
@@ -59,6 +79,7 @@ export function packChatMessages(input: PackChatMessagesInput): PackedChatMessag
   }
 
   if (estimatedInputTokens > budgetTokens && selected.length === 1) {
+    truncatedSingleMessage = true
     selected = [{
       ...selected[0],
       content: truncateToTokenBudget(selected[0].content, Math.max(128, budgetTokens - estimateTextTokens(contextPrompt) - 12)),
@@ -72,6 +93,13 @@ export function packChatMessages(input: PackChatMessagesInput): PackedChatMessag
     estimatedInputTokens,
     budgetTokens,
     trimmedCount: trimmed.length,
+    fixedTokens,
+    messageTokens: estimateMessageTokens(selected),
+    modelBudgetTokens: modelBudget,
+    reservedOutputTokens,
+    reasoningReserveTokens,
+    compressionTriggered: true,
+    truncatedSingleMessage,
   }
 }
 
@@ -93,4 +121,27 @@ function truncateToTokenBudget(text: string, tokenBudget: number): string {
     next = next.slice(Math.floor(next.length * 0.72))
   }
   return next.length < text.trim().length ? `[前文过长，保留末尾]\n${next}` : next
+}
+
+function estimateReasoningReserve(reasoningEffort?: ReasoningEffort, providerType?: ProviderType, model?: string): number {
+  const normalizedModel = model?.toLowerCase() ?? ''
+  const isReasoningModel = providerType === 'openai' && /^(o[1-9]|gpt-5)/.test(normalizedModel)
+    || providerType === 'google' && /^gemini-(2\.5|3)/.test(normalizedModel)
+    || /deepseek|reasoner|thinking/.test(normalizedModel)
+  if (!isReasoningModel) return 0
+  switch (reasoningEffort) {
+    case 'xhigh':
+      return 8192
+    case 'high':
+      return 4096
+    case 'medium':
+      return 2048
+    case 'low':
+      return 1024
+    case 'minimal':
+      return 512
+    case 'none':
+    default:
+      return 0
+  }
 }

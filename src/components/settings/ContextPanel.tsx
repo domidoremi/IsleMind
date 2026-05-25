@@ -24,6 +24,7 @@ import {
   downloadLocalEmbeddingModel,
   formatModelBytes,
   listLocalEmbeddingModelViews,
+  type LocalEmbeddingDownloadProgress,
   type LocalEmbeddingModelView,
 } from '@/services/localEmbeddingModels'
 import { loadRagDebugSnapshot, runRagGoldEvaluation, type RagEvaluationRun } from '@/services/ragEvaluation'
@@ -85,6 +86,7 @@ export function ContextPanel({ providers, section = 'all' }: ContextPanelProps) 
   const [ragEvaluation, setRagEvaluation] = useState<RagEvaluationRun | null>(null)
   const [localModels, setLocalModels] = useState<LocalEmbeddingModelView[]>([])
   const [modelBusyId, setModelBusyId] = useState<string | null>(null)
+  const [downloadProgress, setDownloadProgress] = useState<LocalEmbeddingDownloadProgress | null>(null)
   const [rebuilding, setRebuilding] = useState(false)
   const [importing, setImporting] = useState(false)
   const [selfTesting, setSelfTesting] = useState(false)
@@ -382,8 +384,12 @@ export function ContextPanel({ providers, section = 'all' }: ContextPanelProps) 
     })
     if (!confirmed) return
     setModelBusyId(view.model.id)
+    setDownloadProgress(null)
     try {
-      await downloadLocalEmbeddingModel(view.model.id)
+      await downloadLocalEmbeddingModel(view.model.id, {
+        mirrorBaseUrl: settings.localModelDownloadMirrorBaseUrl,
+        onProgress: (progress) => setDownloadProgress(progress),
+      })
       updateSettings({
         embeddingMode: settings.embeddingMode === 'provider' ? 'hybrid' : settings.embeddingMode,
         localEmbeddingModelId: view.model.id,
@@ -391,9 +397,10 @@ export function ContextPanel({ providers, section = 'all' }: ContextPanelProps) 
       })
       dialog.notice({ title: t('contextPanel.localModel.downloaded'), message: view.model.name, tone: 'mint' })
     } catch (error) {
-      dialog.notice({ title: t('contextPanel.localModel.downloadFailed'), message: error instanceof Error ? error.message : t('contextPanel.localModel.unknownError'), tone: 'danger' })
+      dialog.notice({ title: t('contextPanel.localModel.downloadFailed'), message: t('contextPanel.localModel.downloadFailedDetail', { error: error instanceof Error ? error.message : t('contextPanel.localModel.unknownError') }), tone: 'danger' })
     } finally {
       setModelBusyId(null)
+      setDownloadProgress(null)
       await refresh()
     }
   }
@@ -528,6 +535,18 @@ export function ContextPanel({ providers, section = 'all' }: ContextPanelProps) 
           <Text style={{ color: colors.textTertiary, fontSize: 11, lineHeight: 16, marginTop: 4 }}>
             {t('contextPanel.localModel.priority')}
           </Text>
+          <IsleField
+            label={t('contextPanel.localModel.mirrorBaseUrl')}
+            note={t('contextPanel.localModel.mirrorHelp')}
+            style={{ marginTop: 10 }}
+            inputProps={{
+              value: settings.localModelDownloadMirrorBaseUrl ?? '',
+              onChangeText: (localModelDownloadMirrorBaseUrl) => updateSettings({ localModelDownloadMirrorBaseUrl }),
+              autoCapitalize: 'none',
+              autoCorrect: false,
+              placeholder: t('contextPanel.localModel.mirrorPlaceholder'),
+            }}
+          />
           <View style={{ marginTop: 10, gap: 12 }}>
             {(['embedding', 'reranker', 'colbert', 'compressor'] satisfies LocalRagModelCapability[]).map((capability) => {
               const models = localModels.filter((view) => (view.model.capability ?? 'embedding') === capability)
@@ -547,6 +566,7 @@ export function ContextPanel({ providers, section = 'all' }: ContextPanelProps) 
                       <LocalModelRow
                         view={view}
                         busy={modelBusyId === view.model.id}
+                        progress={downloadProgress?.modelId === view.model.id ? downloadProgress : undefined}
                         onDownload={() => void downloadModel(view)}
                         onEnable={() => void enableLocalModel(view)}
                         onDelete={() => void deleteModel(view)}
@@ -774,9 +794,10 @@ function searchModeLabel(mode: SearchProviderId, t: TFunction): string {
   }
 }
 
-function LocalModelRow({ view, busy, onDownload, onEnable, onDelete }: {
+function LocalModelRow({ view, busy, progress, onDownload, onEnable, onDelete }: {
   view: LocalEmbeddingModelView
   busy: boolean
+  progress?: LocalEmbeddingDownloadProgress
   onDownload: () => void
   onEnable: () => void
   onDelete: () => void
@@ -793,6 +814,8 @@ function LocalModelRow({ view, busy, onDownload, onEnable, onDelete }: {
   ].join(' · ')
   const statusLabel = view.active
     ? t('contextPanel.localModel.statusEnabled')
+    : view.status === 'planned'
+      ? t('contextPanel.localModel.statusPlaceholder')
     : view.status === 'bundled'
       ? t('contextPanel.localModel.statusBundled')
       : view.status === 'downloaded'
@@ -802,6 +825,16 @@ function LocalModelRow({ view, busy, onDownload, onEnable, onDelete }: {
           : downloadable
             ? t('contextPanel.localModel.statusNotDownloaded')
             : t('contextPanel.localModel.statusPlaceholder')
+  const progressPercent = progress?.percent ?? 0
+  const progressText = progress
+    ? t('contextPanel.localModel.progressText', {
+        percent: progress.percent,
+        file: progress.filePath,
+        index: progress.fileIndex,
+        count: progress.fileCount,
+        stage: t(`contextPanel.localModel.downloadStages.${progress.stage}`),
+      })
+    : ''
   return (
     <View style={{ borderRadius: 18, padding: 12, backgroundColor: colors.material.paper, borderWidth: 1, borderColor: view.active ? colors.success : colors.border }}>
       <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
@@ -820,11 +853,26 @@ function LocalModelRow({ view, busy, onDownload, onEnable, onDelete }: {
       <Text numberOfLines={2} style={{ color: colors.textTertiary, fontSize: 10, lineHeight: 15, marginTop: 6 }}>
         {view.model.publisher ?? view.model.upstreamModel ?? '-'} · {view.model.license ?? '-'}
       </Text>
+      {progress ? (
+        <View style={{ marginTop: 10, gap: 6 }}>
+          <View style={{ height: 6, borderRadius: 3, overflow: 'hidden', backgroundColor: colors.material.field }}>
+            <View style={{ width: `${Math.max(2, progressPercent)}%`, height: '100%', borderRadius: 3, backgroundColor: colors.primary }} />
+          </View>
+          <Text numberOfLines={2} style={{ color: colors.textSecondary, fontSize: 11, lineHeight: 16, fontWeight: '800' }}>
+            {progressText}
+          </Text>
+          {progress.sourceUrl ? (
+            <Text numberOfLines={1} style={{ color: colors.textTertiary, fontSize: 10, fontWeight: '700' }}>
+              {progress.sourceUrl}
+            </Text>
+          ) : null}
+        </View>
+      ) : null}
       <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginTop: 10 }}>
         {!view.downloaded && !view.bundled && downloadable ? (
           <IslePressable haptic disabled={busy} onPress={onDownload} style={{ minHeight: 32, paddingHorizontal: 12, borderRadius: 16, alignItems: 'center', justifyContent: 'center', flexDirection: 'row', gap: 6, backgroundColor: colors.text, opacity: busy ? 0.65 : 1 }}>
             <Download color={colors.surface} size={13} />
-            <Text style={{ color: colors.surface, fontSize: 12, fontWeight: '900' }}>{busy ? t('contextPanel.localModel.downloading') : t('contextPanel.localModel.download')}</Text>
+            <Text style={{ color: colors.surface, fontSize: 12, fontWeight: '900' }}>{busy && progress ? `${progress.percent}%` : busy ? t('contextPanel.localModel.downloading') : t('contextPanel.localModel.download')}</Text>
           </IslePressable>
         ) : null}
         {canEnable && !view.active ? (

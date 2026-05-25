@@ -395,6 +395,9 @@ async function createAssistantReply(conversationId: string) {
     modelContextWindow: modelConfig.contextWindow,
     maxOutputTokens: runtimeConversation.maxTokens,
     systemPrompt,
+    reasoningEffort: runtimeConversation.reasoningEffort,
+    providerType: provider.type,
+    model: runtimeConversation.model,
   })
   if (packedPrompt.trimmedCount) {
     upsertTrace(conversationId, assistantMessage.id, completeTrace({
@@ -413,6 +416,13 @@ async function createAssistantReply(conversationId: string) {
         trimmedCount: packedPrompt.trimmedCount,
         estimatedInputTokens: packedPrompt.estimatedInputTokens,
         budgetTokens: packedPrompt.budgetTokens,
+        fixedTokens: packedPrompt.fixedTokens,
+        messageTokens: packedPrompt.messageTokens,
+        modelBudgetTokens: packedPrompt.modelBudgetTokens,
+        reservedOutputTokens: packedPrompt.reservedOutputTokens,
+        reasoningReserveTokens: packedPrompt.reasoningReserveTokens,
+        compressionTriggered: packedPrompt.compressionTriggered,
+        truncatedSingleMessage: packedPrompt.truncatedSingleMessage,
       },
     }))
   }

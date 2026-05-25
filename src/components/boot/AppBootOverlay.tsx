@@ -2,7 +2,6 @@ import { useEffect, useState } from 'react'
 import { Text, View } from 'react-native'
 import { MotiView, AnimatePresence } from 'moti'
 import { useTranslation } from 'react-i18next'
-import { BlueCatMascot } from '@/components/mascot/BlueCatMascot'
 import { useAppTheme } from '@/hooks/useAppTheme'
 import { useMotionPreference } from '@/hooks/useMotionPreference'
 import { motionTokens } from '@/theme/animation'
@@ -66,7 +65,29 @@ export function AppBootOverlay({ ready, errorCount = 0, bootStartedAt }: AppBoot
             backgroundColor: colors.surface,
           }}
         >
-          <BlueCatMascot loading size={132} />
+          <View
+            style={{
+              width: 84,
+              height: 84,
+              borderRadius: 42,
+              alignItems: 'center',
+              justifyContent: 'center',
+              backgroundColor: colors.mintWash,
+              borderWidth: 2,
+              borderColor: colors.borderStrong,
+            }}
+          >
+            <View
+              style={{
+                width: 34,
+                height: 34,
+                borderRadius: 17,
+                borderWidth: 4,
+                borderColor: errorCount ? colors.warning : colors.primary,
+                borderTopColor: 'transparent',
+              }}
+            />
+          </View>
           <Text style={{ color: errorCount ? colors.warning : colors.textSecondary, fontSize: 12, lineHeight: 18, fontWeight: '900', marginTop: 6 }}>
             {errorCount ? t('app.bootRecovering') : ready ? t('app.bootReady') : t('app.bootWaking')}
           </Text>
