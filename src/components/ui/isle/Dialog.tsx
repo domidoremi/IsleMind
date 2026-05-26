@@ -141,9 +141,9 @@ export function IsleDialogProvider({ children }: { children: ReactNode }) {
                   </View>
                   <IsleButton
                     label={t('dialog.close')}
-                    icon={<X color={colors.textTertiary} size={16} strokeWidth={2.2} />}
+                    icon={<X color={colors.textTertiary} size={18} strokeWidth={2.2} />}
                     onPress={() => closeDialog(false)}
-                    style={{ width: 38, height: 38, minHeight: 38, borderRadius: 19, paddingHorizontal: 0 }}
+                    style={{ width: 44, height: 44, minHeight: 44, borderRadius: 22, paddingHorizontal: 0 }}
                     textStyle={{ display: 'none' }}
                   />
                 </View>

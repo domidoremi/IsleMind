@@ -24,6 +24,8 @@ const LANGUAGE_OPTIONS: { id: Language; label: string; detail: string }[] = [
   { id: 'ja', label: '日本語', detail: '日本語 UI' },
 ]
 
+const settingsChipPressableStyle = { minHeight: 44, justifyContent: 'center' as const }
+
 export function SettingsScreenContent({ onHome }: { onHome?: () => void } = {}) {
   const { colors } = useAppTheme()
   const { t } = useTranslation()
@@ -138,7 +140,7 @@ export function SettingsScreenContent({ onHome }: { onHome?: () => void } = {}) 
         title={t('settings.title')}
         leading={
           onHome ? (
-            <IsleIconButton label={t('common.home')} onPress={onHome}>
+            <IsleIconButton label={t('common.home')} size="lg" onPress={onHome}>
               <House color={colors.text} size={20} strokeWidth={1.9} />
             </IsleIconButton>
           ) : undefined
@@ -183,7 +185,7 @@ export function SettingsScreenContent({ onHome }: { onHome?: () => void } = {}) 
       <IsleSection title={t('settings.theme')} style={{ marginTop: 14 }}>
         <View style={{ flexDirection: 'row', gap: 10, flexWrap: 'wrap' }}>
           {(['system', 'light', 'dark'] satisfies ThemeMode[]).map((item) => (
-            <IslePressable key={item} haptic onPress={() => setTheme(item)}>
+            <IslePressable key={item} haptic onPress={() => setTheme(item)} style={settingsChipPressableStyle}>
               <IsleChip active={settings.theme === item}>{item === 'system' ? t('settings.themeSystem') : item === 'light' ? t('settings.themeLight') : t('settings.themeDark')}</IsleChip>
             </IslePressable>
           ))}

@@ -147,7 +147,7 @@ export async function runCredentialGroupModelSync(provider: AIProvider, deps: Cr
   }
 
   const modelConfigs = sortModelConfigs(Array.from(configsById.values()), provider.type)
-  const models = modelConfigs.length ? modelConfigs.map((item) => item.id) : []
+  const models = modelConfigs.length ? modelConfigs.map((item) => item.id) : provider.models
   const merged: AIProvider = {
     ...provider,
     credentialGroups: nextGroups,

@@ -19,7 +19,7 @@ import { useAppTheme } from '@/hooks/useAppTheme'
 import { useChatStore } from '@/store/chatStore'
 import { useSettingsStore } from '@/store/settingsStore'
 import { useActivationJobStore, type ActivationJobState } from '@/store/activationJobStore'
-import { type AIProvider, type ProviderPresetId } from '@/types'
+import { getXiaomiMimoOfficialBaseUrl, type AIProvider, type ProviderPresetId, type ProviderWireProtocol } from '@/types'
 import { applyProviderPreset, getProviderPreset, parseCredentialGroups, parseProviderImportText, PROVIDER_PRESETS } from '@/services/ai/providerRegistry'
 import { syncAndTestProvider, summarizeProviderActivation } from '@/services/providerActivation'
 import { IsleMetric } from '@/components/ui/isle'
@@ -417,9 +417,11 @@ export function ProviderSettingsContent({ embedded = false, onClose }: ProviderS
             ) : null}
           </View>
 
-          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginTop: 12 }}>
-            <SlidersHorizontal color={colors.textTertiary} size={16} />
-            <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 8, paddingRight: 4 }}>
+          <View style={{ flexDirection: 'row', alignItems: 'flex-start', gap: 8, marginTop: 12 }}>
+            <View style={{ width: 44, height: 44, alignItems: 'center', justifyContent: 'center' }}>
+              <SlidersHorizontal color={colors.textTertiary} size={16} />
+            </View>
+            <View style={{ flex: 1, flexDirection: 'row', flexWrap: 'wrap', gap: 8 }}>
               {SORT_OPTIONS.map((option) => (
                 <ChoiceIsleChip
                   key={option.id}
@@ -431,7 +433,7 @@ export function ProviderSettingsContent({ embedded = false, onClose }: ProviderS
                   }}
                 />
               ))}
-            </ScrollView>
+            </View>
           </View>
 
           <Text style={{ color: colors.text, fontSize: 17, fontWeight: '900', marginTop: 22, marginBottom: 10 }}>{t('providerSettings.list')}</Text>
@@ -484,25 +486,9 @@ function HeaderBackButton({ onPress }: { onPress: () => void }) {
   const { colors } = useAppTheme()
   const { t } = useTranslation()
   return (
-    <IsleOverlayPressable
-      accessibilityRole="button"
-      accessibilityLabel={t('common.back')}
-      hitSlop={12}
-      onPress={onPress}
-      style={({ pressed }) => ({
-        width: 54,
-        height: 54,
-        borderRadius: 27,
-        alignItems: 'center',
-        justifyContent: 'center',
-        backgroundColor: colors.islandRaised,
-        borderWidth: 1,
-        borderColor: colors.border,
-        opacity: pressed ? 0.72 : 1,
-      })}
-    >
+    <IsleIconButton label={t('common.back')} size="lg" onPress={onPress} style={{ backgroundColor: colors.islandRaised }}>
       <ChevronLeft color={colors.text} size={24} strokeWidth={1.9} />
-    </IsleOverlayPressable>
+    </IsleIconButton>
   )
 }
 
@@ -578,7 +564,7 @@ function DragRail({ disabledUp, disabledDown, onMove }: { disabledUp: boolean; d
 function ChoiceIsleChip({ label, active, onPress }: { label: string; active: boolean; onPress: () => void }) {
   const { colors } = useAppTheme()
   return (
-    <IslePressable haptic onPress={onPress} style={{ minHeight: 34, borderRadius: 17, paddingHorizontal: 12, alignItems: 'center', justifyContent: 'center', backgroundColor: active ? colors.text : colors.islandRaised, borderWidth: active ? 0 : 1, borderColor: colors.border }}>
+    <IslePressable haptic onPress={onPress} style={{ minHeight: 44, borderRadius: 22, paddingHorizontal: 12, alignItems: 'center', justifyContent: 'center', backgroundColor: active ? colors.text : colors.islandRaised, borderWidth: active ? 0 : 1, borderColor: colors.border }}>
       <Text style={{ color: active ? colors.surface : colors.textSecondary, fontSize: 12, fontWeight: '900' }}>{label}</Text>
     </IslePressable>
   )
@@ -659,14 +645,17 @@ function ProviderFormModal({
   const [presetId, setPresetId] = useState<ProviderPresetId>('custom-openai-compatible')
   const [name, setName] = useState('')
   const [baseUrl, setBaseUrl] = useState('')
+  const [wireProtocol, setWireProtocol] = useState<ProviderWireProtocol>('openai-compatible')
   const [modelsText, setModelsText] = useState('')
   const [keysText, setKeysText] = useState('')
   const [advancedOpen, setAdvancedOpen] = useState(false)
   const preset = getProviderPreset(presetId)
+  const isMimoPreset = preset.id === 'xiaomi-mimo'
   const compact = height < 680
 
   function submit() {
     const modelList = parseModels(modelsText)
+    const providerBaseUrl = baseUrl.trim() || (isMimoPreset ? getXiaomiMimoOfficialBaseUrl('token-plan', 'cn', wireProtocol) : preset.baseUrl)
     const provider = applyProviderPreset({
       id: `custom-${Date.now().toString(36)}`,
       presetId,
@@ -674,7 +663,10 @@ function ProviderFormModal({
       detectionStatus: 'manual',
       type: preset.type,
       name: name.trim() || preset.name,
-      baseUrl: baseUrl.trim() || preset.baseUrl,
+      baseUrl: providerBaseUrl,
+      credentialMode: isMimoPreset ? 'token-plan' : undefined,
+      tokenPlanRegion: isMimoPreset ? 'cn' : undefined,
+      wireProtocol: isMimoPreset ? wireProtocol : undefined,
       apiKey: '',
       credentialGroups: parseCredentialGroups(keysText),
       models: modelList,
@@ -687,6 +679,25 @@ function ProviderFormModal({
     setKeysText('')
     setAdvancedOpen(false)
     setPresetId('custom-openai-compatible')
+    setWireProtocol('openai-compatible')
+  }
+
+  function selectPreset(nextPresetId: ProviderPresetId) {
+    const nextPreset = getProviderPreset(nextPresetId)
+    setPresetId(nextPresetId)
+    if (!name.trim()) setName(nextPreset.name)
+    if (nextPresetId === 'xiaomi-mimo') {
+      const nextProtocol = inferMimoWireProtocolFromBaseUrl(baseUrl)
+      setWireProtocol(nextProtocol)
+      if (shouldReplaceMimoBaseUrl(baseUrl)) setBaseUrl(getXiaomiMimoOfficialBaseUrl('token-plan', 'cn', nextProtocol))
+      return
+    }
+    if (!baseUrl.trim() && nextPreset.baseUrl) setBaseUrl(nextPreset.baseUrl)
+  }
+
+  function selectWireProtocol(nextProtocol: ProviderWireProtocol) {
+    setWireProtocol(nextProtocol)
+    if (shouldReplaceMimoBaseUrl(baseUrl)) setBaseUrl(getXiaomiMimoOfficialBaseUrl('token-plan', 'cn', nextProtocol))
   }
 
   return (
@@ -698,7 +709,7 @@ function ProviderFormModal({
           transition={{ type: 'timing', duration: motion === 'full' ? motionTokens.duration.fast : 1 }}
           style={{ position: 'absolute', top: 0, right: 0, bottom: 0, left: 0 }}
         >
-          <IsleOverlayPressable onPress={onClose} style={{ flex: 1, backgroundColor: colors.backdrop }} />
+          <IsleOverlayPressable accessibilityLabel={t('dialog.close')} accessibilityRole="button" onPress={onClose} style={{ flex: 1, backgroundColor: colors.backdrop }} />
         </MotiView>
         <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined} style={{ flex: 1, justifyContent: 'flex-end' }}>
           <MotiView
@@ -723,11 +734,7 @@ function ProviderFormModal({
                     key={item.id}
                     label={item.name}
                     active={presetId === item.id}
-                    onPress={() => {
-                      setPresetId(item.id)
-                      if (!name.trim()) setName(item.name)
-                      if (!baseUrl.trim() && item.baseUrl) setBaseUrl(item.baseUrl)
-                    }}
+                    onPress={() => selectPreset(item.id)}
                   />
                 ))}
               </ScrollView>
@@ -740,7 +747,29 @@ function ProviderFormModal({
               contentContainerStyle={{ gap: 10, paddingHorizontal: 16, paddingBottom: 12, backgroundColor: colors.surface }}
             >
               <IsleField label={t('providerSettings.name')} inputProps={{ value: name, onChangeText: setName, placeholder: preset.name, autoCapitalize: 'none' }} />
-              <IsleField label={t('providerSettings.baseUrl')} inputProps={{ value: baseUrl, onChangeText: setBaseUrl, placeholder: preset.baseUrl ?? 'https://example.com/v1', autoCapitalize: 'none', autoCorrect: false }} />
+              {isMimoPreset ? (
+                <View style={{ borderRadius: 18, padding: 11, backgroundColor: colors.islandRaised, gap: 9 }}>
+                  <Text style={{ color: colors.text, fontSize: 13, fontWeight: '900' }}>{t('providerSettings.protocol.title')}</Text>
+                  <View style={{ flexDirection: 'row', gap: 8, flexWrap: 'wrap' }}>
+                    <ChoiceIsleChip active={wireProtocol === 'openai-compatible'} label={t('providerSettings.protocol.openai-compatible')} onPress={() => selectWireProtocol('openai-compatible')} />
+                    <ChoiceIsleChip active={wireProtocol === 'anthropic-compatible'} label={t('providerSettings.protocol.anthropic-compatible')} onPress={() => selectWireProtocol('anthropic-compatible')} />
+                  </View>
+                  <Text style={{ color: colors.textTertiary, fontSize: 11, lineHeight: 16 }}>{t('providerSettings.protocol.mimoNote')}</Text>
+                </View>
+              ) : null}
+              <IsleField
+                label={t('providerSettings.baseUrl')}
+                inputProps={{
+                  value: baseUrl,
+                  onChangeText: (value) => {
+                    setBaseUrl(value)
+                    if (isMimoPreset) setWireProtocol(inferMimoWireProtocolFromBaseUrl(value))
+                  },
+                  placeholder: preset.baseUrl ?? 'https://example.com/v1',
+                  autoCapitalize: 'none',
+                  autoCorrect: false,
+                }}
+              />
               <IsleField
                 label={t('providerSettings.tokens')}
                 note={t('providerSettings.tokensNote')}
@@ -795,7 +824,7 @@ function ProviderImportModal({
   const [contentHeight, setContentHeight] = useState(0)
   const [keyboardHeight, setKeyboardHeight] = useState(0)
   const compact = height < 680
-  const keyboardInset = Platform.OS === 'ios' ? keyboardHeight : 0
+  const keyboardInset = keyboardHeight
   const availableSheetHeight = Math.max(
     360,
     height - insets.top - Math.max(insets.bottom, 10) - keyboardInset - IMPORT_SHEET_MARGIN,
@@ -829,6 +858,7 @@ function ProviderImportModal({
     }
     const showSub = Keyboard.addListener(Platform.OS === 'ios' ? 'keyboardWillShow' : 'keyboardDidShow', (event) => {
       setKeyboardHeight(event.endCoordinates.height)
+      scrollBodyToEndSoon()
     })
     const hideSub = Keyboard.addListener(Platform.OS === 'ios' ? 'keyboardWillHide' : 'keyboardDidHide', () => {
       setKeyboardHeight(0)
@@ -895,7 +925,7 @@ function ProviderImportModal({
           transition={{ type: 'timing', duration: motion === 'full' ? motionTokens.duration.fast : 1 }}
           style={{ position: 'absolute', top: 0, right: 0, bottom: 0, left: 0 }}
         >
-          <IsleOverlayPressable onPress={onClose} style={{ flex: 1, backgroundColor: colors.backdrop }} />
+          <IsleOverlayPressable accessibilityLabel={t('dialog.close')} accessibilityRole="button" onPress={onClose} style={{ flex: 1, backgroundColor: colors.backdrop }} />
         </MotiView>
         <View style={{ flex: 1, justifyContent: 'flex-end', paddingBottom: keyboardInset }}>
           <MotiView
@@ -1027,4 +1057,14 @@ function providerMatchesModelFilter(provider: AIProvider, filter: string): boole
     ...(provider.credentialGroups ?? []).flatMap((group) => group.availableModels ?? []),
   ]
   return values.some((value) => normalizeSearchText(value).includes(filter))
+}
+
+function inferMimoWireProtocolFromBaseUrl(value?: string): ProviderWireProtocol {
+  return /\/anthropic(?:\/v1)?(?:\/|$)/i.test(value ?? '') ? 'anthropic-compatible' : 'openai-compatible'
+}
+
+function shouldReplaceMimoBaseUrl(value?: string): boolean {
+  const trimmed = value?.trim()
+  if (!trimmed) return true
+  return /^https:\/\/(?:api|token-plan-(?:cn|sgp|ams))\.xiaomimimo\.com(?:\/(?:v1|anthropic(?:\/v1)?))?\/?$/i.test(trimmed)
 }

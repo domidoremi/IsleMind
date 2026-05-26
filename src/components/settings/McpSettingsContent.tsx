@@ -147,20 +147,21 @@ function ServerCard({
 }) {
   const { colors } = useAppTheme()
   const { t } = useTranslation()
+  const actions = (
+    <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8, justifyContent: 'flex-end' }}>
+      {!readonly ? <IsleButton label={server.enabled ? t('settings.enabledState') : t('settings.disabledState')} compact tone={server.enabled ? 'mint' : 'soft'} onPress={() => void onToggleServer(server)} /> : null}
+      <IsleButton label={t('settings.sync')} compact icon={<RefreshCw color={colors.textSecondary} size={14} />} onPress={() => void onRefresh(server)} />
+      {!readonly ? <IsleButton label={t('common.delete')} compact tone="danger" icon={<Trash2 color={colors.error} size={14} />} onPress={() => void onDelete(server)} /> : null}
+    </View>
+  )
   return (
     <View style={{ borderRadius: 24, padding: 12, gap: 10, backgroundColor: colors.material.paperRaised, borderWidth: 1, borderColor: colors.border }}>
       <IsleListItem
         title={server.name}
         description={server.url}
         leading={<IsleChip active={server.status === 'connected'}>{t(`mcp.status.${server.status}`)}</IsleChip>}
-        trailing={
-          <View style={{ flexDirection: 'row', gap: 8 }}>
-            {!readonly ? <IsleButton label={server.enabled ? t('settings.enabledState') : t('settings.disabledState')} compact tone={server.enabled ? 'mint' : 'soft'} onPress={() => void onToggleServer(server)} /> : null}
-            <IsleButton label={t('settings.sync')} compact icon={<RefreshCw color={colors.textSecondary} size={14} />} onPress={() => void onRefresh(server)} />
-            {!readonly ? <IsleButton label={t('common.delete')} compact tone="danger" icon={<Trash2 color={colors.error} size={14} />} onPress={() => void onDelete(server)} /> : null}
-          </View>
-        }
       />
+      {actions}
       <View style={{ gap: 8 }}>
         {server.tools.map((tool) => (
           <IsleToggle

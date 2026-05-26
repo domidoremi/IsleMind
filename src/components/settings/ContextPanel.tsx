@@ -42,6 +42,7 @@ import { motionTokens } from '@/theme/animation'
 interface ContextPanelProps {
   providers: AIProvider[]
   section?: 'all' | 'context' | 'memory' | 'knowledge'
+  focus?: 'import'
 }
 
 interface SelfTestStep {
@@ -55,7 +56,29 @@ interface SelfTestResult {
   steps: SelfTestStep[]
 }
 
-export function ContextPanel({ providers, section = 'all' }: ContextPanelProps) {
+const contextChipPressableStyle = { minHeight: 44, justifyContent: 'center' as const }
+const localModelActionStyle = {
+  minHeight: 44,
+  paddingHorizontal: 14,
+  borderRadius: 18,
+  alignItems: 'center' as const,
+  justifyContent: 'center' as const,
+}
+const fullWidthActionStyle = {
+  minHeight: 44,
+  borderRadius: 22,
+  alignItems: 'center' as const,
+  justifyContent: 'center' as const,
+}
+const itemRowActionStyle = {
+  minHeight: 44,
+  paddingHorizontal: 14,
+  borderRadius: 18,
+  alignItems: 'center' as const,
+  justifyContent: 'center' as const,
+}
+
+export function ContextPanel({ providers, section = 'all', focus }: ContextPanelProps) {
   const { colors } = useAppTheme()
   const { t } = useTranslation()
   const dialog = useIsleDialog()
@@ -96,6 +119,7 @@ export function ContextPanel({ providers, section = 'all' }: ContextPanelProps) 
   const showContext = section === 'all' || section === 'context'
   const showMemory = section === 'all' || section === 'memory'
   const showKnowledge = section === 'all' || section === 'knowledge'
+  const shouldPromoteKnowledgeImport = showKnowledge && section === 'knowledge' && focus === 'import'
 
   async function refresh() {
     const [memoryItems, documentItems, jobs, debug] = await Promise.all([
@@ -441,8 +465,30 @@ export function ContextPanel({ providers, section = 'all' }: ContextPanelProps) 
     }
   }
 
+  const knowledgeImportControls = showKnowledge ? (
+    <>
+      <IslePressable
+        haptic
+        onPress={importFile}
+        disabled={importing}
+        style={{ marginTop: 12, minHeight: 54, borderRadius: 27, alignItems: 'center', justifyContent: 'center', flexDirection: 'row', gap: 8, backgroundColor: colors.text, opacity: importing ? 0.65 : 1 }}
+      >
+        <Upload color={colors.surface} size={18} />
+        <Text style={{ color: colors.surface, fontSize: 14, fontWeight: '800' }}>{importing ? t('contextPanel.importing') : t('contextPanel.importKnowledgeFile')}</Text>
+      </IslePressable>
+
+      <IsleSection title={t('contextPanel.pasteTextKnowledge')} material="raised" style={{ marginTop: 12 }}>
+        <IsleField label={t('contextPanel.knowledgeTitle')} inputProps={{ value: plainTitle, onChangeText: setPlainTitle, placeholder: t('contextPanel.knowledgeTitle') }} />
+        <IsleField label={t('contextPanel.body')} style={{ marginTop: 10 }} inputProps={{ value: plainText, onChangeText: setPlainText, multiline: true, placeholder: t('contextPanel.body'), style: { minHeight: 96, maxHeight: 180 } }} />
+        <IslePressable haptic onPress={importPlainText} disabled={importing || !plainText.trim()} style={{ ...fullWidthActionStyle, marginTop: 10, backgroundColor: colors.text, opacity: importing || !plainText.trim() ? 0.45 : 1 }}>
+          <Text style={{ color: colors.surface, fontSize: 14, fontWeight: '800' }}>{t('contextPanel.importPastedText')}</Text>
+        </IslePressable>
+      </IsleSection>
+    </>
+  ) : null
+
   return (
-    <View>
+    <View style={{ paddingBottom: showKnowledge ? 96 : 0 }}>
       {showMemory ? (
         <IsleToggle
           icon={<Brain color={colors.text} size={18} />}
@@ -471,12 +517,14 @@ export function ContextPanel({ providers, section = 'all' }: ContextPanelProps) 
       {showContext ? (
         <View style={{ flexDirection: 'row', gap: 8, flexWrap: 'wrap', marginTop: 10 }}>
           {(['native', 'tavily', 'google', 'bing', 'custom', 'off'] satisfies SearchProviderId[]).map((mode) => (
-            <IslePressable key={mode} haptic onPress={() => updateSettings({ searchProvider: mode, webSearchMode: legacySearchModeForProvider(mode), webSearchEnabled: mode !== 'off' })}>
+            <IslePressable key={mode} haptic onPress={() => updateSettings({ searchProvider: mode, webSearchMode: legacySearchModeForProvider(mode), webSearchEnabled: mode !== 'off' })} style={contextChipPressableStyle}>
               <IsleChip active={resolveSearchProvider(settings) === mode}>{searchModeLabel(mode, t)}</IsleChip>
             </IslePressable>
           ))}
         </View>
       ) : null}
+
+      {shouldPromoteKnowledgeImport ? knowledgeImportControls : null}
 
       {showContext || showKnowledge ? <IsleSection title={t('contextPanel.ragMode')} material="raised" style={{ marginTop: 12 }}>
         {embeddingJobs ? (
@@ -486,7 +534,7 @@ export function ContextPanel({ providers, section = 'all' }: ContextPanelProps) 
         ) : null}
         <View style={{ flexDirection: 'row', gap: 8, flexWrap: 'wrap', marginTop: 10 }}>
           {(['hybrid', 'fts', 'off'] as const).map((mode) => (
-            <IslePressable key={mode} haptic onPress={() => updateSettings({ ragMode: mode })}>
+            <IslePressable key={mode} haptic onPress={() => updateSettings({ ragMode: mode })} style={contextChipPressableStyle}>
               <IsleChip active={(settings.ragMode ?? 'hybrid') === mode}>{mode === 'hybrid' ? t('contextPanel.ragHybrid') : mode === 'fts' ? t('contextPanel.ragFts') : t('contextPanel.ragOff')}</IsleChip>
             </IslePressable>
           ))}
@@ -494,7 +542,7 @@ export function ContextPanel({ providers, section = 'all' }: ContextPanelProps) 
         <Text style={{ color: colors.text, fontSize: 15, fontWeight: '800', marginTop: 14 }}>{t('contextPanel.ragProfile')}</Text>
         <View style={{ flexDirection: 'row', gap: 8, flexWrap: 'wrap', marginTop: 10 }}>
           {(['fast', 'balanced', 'deep', 'offline'] as const).map((profile) => (
-            <IslePressable key={profile} haptic onPress={() => updateSettings({ ragProfile: profile })}>
+            <IslePressable key={profile} haptic onPress={() => updateSettings({ ragProfile: profile })} style={contextChipPressableStyle}>
               <IsleChip active={(settings.ragProfile ?? 'balanced') === profile}>{t(`contextPanel.ragProfiles.${profile}`)}</IsleChip>
             </IslePressable>
           ))}
@@ -513,7 +561,7 @@ export function ContextPanel({ providers, section = 'all' }: ContextPanelProps) 
           ].map(([key, label]) => {
             const settingKey = key as keyof Pick<Settings, 'ragQueryRewriteEnabled' | 'ragHydeEnabled' | 'ragFlareEnabled' | 'ragCrossEncoderEnabled' | 'ragLlmlinguaEnabled' | 'ragRaptorEnabled' | 'ragGraphEnabled' | 'ragColbertEnabled'>
             return (
-            <IslePressable key={key} haptic onPress={() => updateSettings({ [settingKey]: !settings[settingKey] })}>
+            <IslePressable key={key} haptic onPress={() => updateSettings({ [settingKey]: !settings[settingKey] })} style={contextChipPressableStyle}>
               <IsleChip active={settings[settingKey] !== false}>{t(`contextPanel.techniques.${label}`)}</IsleChip>
             </IslePressable>
             )
@@ -522,7 +570,7 @@ export function ContextPanel({ providers, section = 'all' }: ContextPanelProps) 
         <Text style={{ color: colors.text, fontSize: 15, fontWeight: '800', marginTop: 14 }}>{t('contextPanel.embeddingStrategy')}</Text>
         <View style={{ flexDirection: 'row', gap: 8, flexWrap: 'wrap', marginTop: 10 }}>
           {(['hybrid', 'provider', 'local'] as const).map((mode) => (
-            <IslePressable key={mode} haptic onPress={() => updateSettings({ embeddingMode: mode })}>
+            <IslePressable key={mode} haptic onPress={() => updateSettings({ embeddingMode: mode })} style={contextChipPressableStyle}>
               <IsleChip active={(settings.embeddingMode ?? 'hybrid') === mode}>{mode === 'hybrid' ? t('contextPanel.embeddingHybrid') : mode === 'provider' ? t('contextPanel.embeddingProvider') : t('contextPanel.embeddingLocal')}</IsleChip>
             </IslePressable>
           ))}
@@ -581,7 +629,7 @@ export function ContextPanel({ providers, section = 'all' }: ContextPanelProps) 
             haptic
             onPress={() => void rebuildIndex()}
             disabled={rebuilding}
-            style={{ marginTop: 10, minHeight: 42, borderRadius: 21, alignItems: 'center', justifyContent: 'center', backgroundColor: colors.islandRaised, borderWidth: 1, borderColor: colors.border, opacity: rebuilding ? 0.65 : 1 }}
+            style={{ marginTop: 10, minHeight: 44, borderRadius: 22, alignItems: 'center', justifyContent: 'center', backgroundColor: colors.islandRaised, borderWidth: 1, borderColor: colors.border, opacity: rebuilding ? 0.65 : 1 }}
           >
             <Text style={{ color: colors.textSecondary, fontSize: 13, fontWeight: '800' }}>{rebuilding ? t('contextPanel.localModel.rebuilding') : t('contextPanel.localModel.rebuildIndex')}</Text>
           </IslePressable>
@@ -592,7 +640,7 @@ export function ContextPanel({ providers, section = 'all' }: ContextPanelProps) 
           await localDataStore.clearRagCaches()
           dialog.notice({ title: t('contextPanel.cacheCleared'), message: t('contextPanel.cacheClearedMessage'), tone: 'mint' })
         }}
-          style={{ marginTop: 12, minHeight: 42, borderRadius: 21, alignItems: 'center', justifyContent: 'center', backgroundColor: colors.islandRaised, borderWidth: 1, borderColor: colors.border }}
+          style={{ ...fullWidthActionStyle, marginTop: 12, backgroundColor: colors.islandRaised, borderWidth: 1, borderColor: colors.border }}
         >
           <Text style={{ color: colors.textSecondary, fontSize: 13, fontWeight: '800' }}>{t('contextPanel.clearRagCache')}</Text>
         </IslePressable>
@@ -602,7 +650,7 @@ export function ContextPanel({ providers, section = 'all' }: ContextPanelProps) 
           disabled={selfTesting}
           accessibilityLabel={t('contextPanel.runSelfTest')}
           testID="context-self-test-button"
-          style={{ marginTop: 10, minHeight: 42, borderRadius: 21, alignItems: 'center', justifyContent: 'center', backgroundColor: colors.text, opacity: selfTesting ? 0.65 : 1 }}
+          style={{ ...fullWidthActionStyle, marginTop: 10, backgroundColor: colors.text, opacity: selfTesting ? 0.65 : 1 }}
         >
           <Text style={{ color: colors.surface, fontSize: 13, fontWeight: '900' }}>{selfTesting ? t('contextPanel.selfTesting') : t('contextPanel.runSelfTest')}</Text>
         </IslePressable>
@@ -632,7 +680,7 @@ export function ContextPanel({ providers, section = 'all' }: ContextPanelProps) 
             disabled={ragEvaluating}
             accessibilityLabel={t('contextPanel.ragDebug.runEvaluation')}
             testID="context-rag-evaluation-button"
-            style={{ marginTop: 10, minHeight: 42, borderRadius: 21, alignItems: 'center', justifyContent: 'center', backgroundColor: colors.text, opacity: ragEvaluating ? 0.65 : 1 }}
+            style={{ ...fullWidthActionStyle, marginTop: 10, backgroundColor: colors.text, opacity: ragEvaluating ? 0.65 : 1 }}
           >
             <Text style={{ color: colors.surface, fontSize: 13, fontWeight: '900' }}>{ragEvaluating ? t('contextPanel.ragDebug.evaluating') : t('contextPanel.ragDebug.runEvaluation')}</Text>
           </IslePressable>
@@ -661,28 +709,12 @@ export function ContextPanel({ providers, section = 'all' }: ContextPanelProps) 
         <IsleField label="Bing / Azure Key" style={{ marginTop: 10 }} inputProps={{ value: bingSearchKey, onChangeText: setBingSearchKey, secureTextEntry: true, autoCapitalize: 'none', autoCorrect: false, placeholder: t('contextPanel.bingKeyPlaceholder') }} />
         <IsleField label={t('contextPanel.customSearchEndpoint')} style={{ marginTop: 10 }} inputProps={{ value: settings.customSearchEndpoint ?? '', onChangeText: (customSearchEndpoint) => updateSettings({ customSearchEndpoint }), autoCapitalize: 'none', autoCorrect: false, placeholder: 'https://search.example.com?q={query}&limit={limit}' }} />
         <IsleField label={t('contextPanel.customSearchKey')} style={{ marginTop: 10 }} inputProps={{ value: customSearchKey, onChangeText: setCustomSearchKey, secureTextEntry: true, autoCapitalize: 'none', autoCorrect: false, placeholder: t('contextPanel.optionalBearerKey') }} />
-        <IslePressable haptic onPress={saveTavilyKey} style={{ marginTop: 10, minHeight: 42, borderRadius: 21, alignItems: 'center', justifyContent: 'center', backgroundColor: colors.text }}>
+        <IslePressable haptic onPress={saveTavilyKey} style={{ ...fullWidthActionStyle, marginTop: 10, backgroundColor: colors.text }}>
           <Text style={{ color: colors.surface, fontSize: 14, fontWeight: '800' }}>{saved ? t('common.saved') : t('contextPanel.saveSearchConfig')}</Text>
         </IslePressable>
       </IsleSection> : null}
 
-      {showKnowledge ? <IslePressable
-        haptic
-        onPress={importFile}
-        disabled={importing}
-        style={{ marginTop: 12, minHeight: 54, borderRadius: 27, alignItems: 'center', justifyContent: 'center', flexDirection: 'row', gap: 8, backgroundColor: colors.text, opacity: importing ? 0.65 : 1 }}
-      >
-        <Upload color={colors.surface} size={18} />
-        <Text style={{ color: colors.surface, fontSize: 14, fontWeight: '800' }}>{importing ? t('contextPanel.importing') : t('contextPanel.importKnowledgeFile')}</Text>
-      </IslePressable> : null}
-
-      {showKnowledge ? <IsleSection title={t('contextPanel.pasteTextKnowledge')} material="raised" style={{ marginTop: 12 }}>
-        <IsleField label={t('contextPanel.knowledgeTitle')} inputProps={{ value: plainTitle, onChangeText: setPlainTitle, placeholder: t('contextPanel.knowledgeTitle') }} />
-        <IsleField label={t('contextPanel.body')} style={{ marginTop: 10 }} inputProps={{ value: plainText, onChangeText: setPlainText, multiline: true, placeholder: t('contextPanel.body'), style: { minHeight: 96, maxHeight: 180 } }} />
-        <IslePressable haptic onPress={importPlainText} disabled={importing || !plainText.trim()} style={{ marginTop: 10, minHeight: 42, borderRadius: 21, alignItems: 'center', justifyContent: 'center', backgroundColor: colors.text, opacity: importing || !plainText.trim() ? 0.45 : 1 }}>
-          <Text style={{ color: colors.surface, fontSize: 14, fontWeight: '800' }}>{t('contextPanel.importPastedText')}</Text>
-        </IslePressable>
-      </IsleSection> : null}
+      {!shouldPromoteKnowledgeImport ? knowledgeImportControls : null}
 
       {showMemory ? <ContextList
         title={t('contextPanel.memoryCount', { count: memories.length })}
@@ -697,6 +729,7 @@ export function ContextPanel({ providers, section = 'all' }: ContextPanelProps) 
             key={memory.id}
             title={memory.status === 'pending' ? t('contextPanel.pendingMemory') : memory.status === 'active' ? t('settings.longMemory') : t('contextPanel.disabledMemory')}
             description={memory.content}
+            deleteName={memory.content}
             trailing={memory.status === 'disabled' ? t('apiKeyPanel.enabled') : t('apiKeyPanel.disabled')}
             onToggle={async () => {
               await updateMemoryStatus(memory.id, memory.status === 'disabled' ? 'active' : 'disabled')
@@ -723,6 +756,7 @@ export function ContextPanel({ providers, section = 'all' }: ContextPanelProps) 
             key={document.id}
             title={document.title}
             description={t('contextPanel.chunkDescription', { count: document.chunkCount, kb: Math.round(document.size / 1024) })}
+            deleteName={document.title}
             onDelete={async () => {
               await deleteKnowledgeDocument(document.id)
               await refresh()
@@ -753,7 +787,11 @@ function ContextList({ title, empty, children, onClear }: { title: string; empty
     <View style={{ marginTop: 18 }}>
       <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 }}>
         <Text style={{ color: colors.text, fontSize: 16, fontWeight: '800' }}>{title}</Text>
-        <IslePressable onPress={confirmClear} style={{ width: 34, height: 34, borderRadius: 17, alignItems: 'center', justifyContent: 'center', backgroundColor: colors.islandRaised }}>
+        <IslePressable
+          onPress={confirmClear}
+          accessibilityLabel={t('contextPanel.clearTitle', { title })}
+          style={{ width: 44, height: 44, borderRadius: 22, alignItems: 'center', justifyContent: 'center', backgroundColor: colors.islandRaised }}
+        >
           <Trash2 color={colors.textTertiary} size={15} />
         </IslePressable>
       </View>
@@ -870,18 +908,18 @@ function LocalModelRow({ view, busy, progress, onDownload, onEnable, onDelete }:
       ) : null}
       <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginTop: 10 }}>
         {!view.downloaded && !view.bundled && downloadable ? (
-          <IslePressable haptic disabled={busy} onPress={onDownload} style={{ minHeight: 32, paddingHorizontal: 12, borderRadius: 16, alignItems: 'center', justifyContent: 'center', flexDirection: 'row', gap: 6, backgroundColor: colors.text, opacity: busy ? 0.65 : 1 }}>
+          <IslePressable haptic disabled={busy} onPress={onDownload} style={{ ...localModelActionStyle, flexDirection: 'row', gap: 6, backgroundColor: colors.text, opacity: busy ? 0.65 : 1 }}>
             <Download color={colors.surface} size={13} />
             <Text style={{ color: colors.surface, fontSize: 12, fontWeight: '900' }}>{busy && progress ? `${progress.percent}%` : busy ? t('contextPanel.localModel.downloading') : t('contextPanel.localModel.download')}</Text>
           </IslePressable>
         ) : null}
         {canEnable && !view.active ? (
-          <IslePressable haptic disabled={busy} onPress={onEnable} style={{ minHeight: 32, paddingHorizontal: 12, borderRadius: 16, justifyContent: 'center', backgroundColor: colors.islandRaised, opacity: busy ? 0.65 : 1 }}>
+          <IslePressable haptic disabled={busy} onPress={onEnable} style={{ ...localModelActionStyle, backgroundColor: colors.islandRaised, opacity: busy ? 0.65 : 1 }}>
             <Text style={{ color: colors.textSecondary, fontSize: 12, fontWeight: '900' }}>{t('contextPanel.localModel.enable')}</Text>
           </IslePressable>
         ) : null}
         {view.downloaded ? (
-          <IslePressable haptic disabled={busy} onPress={onDelete} style={{ minHeight: 32, paddingHorizontal: 12, borderRadius: 16, justifyContent: 'center', backgroundColor: colors.islandRaised, opacity: busy ? 0.65 : 1 }}>
+          <IslePressable haptic disabled={busy} onPress={onDelete} style={{ ...localModelActionStyle, backgroundColor: colors.islandRaised, opacity: busy ? 0.65 : 1 }}>
             <Text style={{ color: colors.error, fontSize: 12, fontWeight: '900' }}>{t('common.delete')}</Text>
           </IslePressable>
         ) : null}
@@ -894,20 +932,33 @@ function capabilityLabel(capability: LocalRagModelCapability, t: TFunction): str
   return t(`contextPanel.localModel.capabilities.${capability}`)
 }
 
-function ItemRow({ title, description, trailing, onToggle, onDelete }: { title: string; description: string; trailing?: string; onToggle?: () => Promise<void>; onDelete: () => Promise<void> }) {
+function ItemRow({ title, description, deleteName, trailing, onToggle, onDelete }: { title: string; description: string; deleteName?: string; trailing?: string; onToggle?: () => Promise<void>; onDelete: () => Promise<void> }) {
   const { colors } = useAppTheme()
   const { t } = useTranslation()
+  const dialog = useIsleDialog()
+
+  async function confirmDelete() {
+    const confirmed = await dialog.confirm({
+      title: t('contextPanel.deleteItemTitle'),
+      message: t('contextPanel.deleteItemConfirm', { title: deleteName || title }),
+      tone: 'danger',
+      confirmLabel: t('common.delete'),
+      cancelLabel: t('common.cancel'),
+    })
+    if (confirmed) await onDelete()
+  }
+
   return (
     <View style={{ borderRadius: 20, padding: 12, marginBottom: 8, backgroundColor: colors.material.paper, borderWidth: 1, borderColor: colors.border }}>
       <Text style={{ color: colors.text, fontSize: 14, fontWeight: '800' }}>{title}</Text>
       <Text numberOfLines={3} style={{ color: colors.textSecondary, fontSize: 12, lineHeight: 17, marginTop: 4 }}>{description}</Text>
       <View style={{ flexDirection: 'row', gap: 8, marginTop: 10 }}>
         {trailing && onToggle ? (
-          <IslePressable onPress={() => void onToggle()} style={{ minHeight: 32, paddingHorizontal: 12, borderRadius: 16, justifyContent: 'center', backgroundColor: colors.islandRaised }}>
+          <IslePressable onPress={() => void onToggle()} style={{ ...itemRowActionStyle, backgroundColor: colors.islandRaised }}>
             <Text style={{ color: colors.textSecondary, fontSize: 12, fontWeight: '800' }}>{trailing}</Text>
           </IslePressable>
         ) : null}
-        <IslePressable onPress={() => void onDelete()} style={{ minHeight: 32, paddingHorizontal: 12, borderRadius: 16, justifyContent: 'center', backgroundColor: colors.islandRaised }}>
+        <IslePressable onPress={() => void confirmDelete()} style={{ ...itemRowActionStyle, backgroundColor: colors.islandRaised }}>
           <Text style={{ color: colors.error, fontSize: 12, fontWeight: '800' }}>{t('common.delete')}</Text>
         </IslePressable>
       </View>

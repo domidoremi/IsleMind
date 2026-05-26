@@ -12,6 +12,7 @@ import { getModelConfig, getModelName } from '@/types'
 import type { AIProvider, Conversation } from '@/types'
 import { normalizeSearchText } from '@/utils/text'
 import { getReasoningEffortOptions } from '@/utils/modelReasoning'
+import { getProviderAvailableModels } from '@/utils/providerModels'
 import { useMotionPreference } from '@/hooks/useMotionPreference'
 import { motionTokens } from '@/theme/animation'
 
@@ -67,13 +68,34 @@ export function ChatOptionsPanel({
   const panelWidth = windowWidth >= 900
     ? Math.min(720, Math.round(windowWidth * 0.7))
     : Math.min(windowWidth - 24, Math.max(320, Math.round(windowWidth * 0.92)))
-  const advancedMinHeight = compactPicker ? (reasoningOptions.length ? 286 : 220) : (reasoningOptions.length ? 272 : 214)
-  const pickerBudget = Math.max(compactPicker ? 128 : 156, panelBodyMaxHeight - advancedMinHeight)
-  const compactProviderMaxHeight = Math.max(52, Math.min(150, Math.floor((pickerBudget - 12) * 0.42)))
-  const compactModelMaxHeight = Math.max(64, Math.min(190, pickerBudget - compactProviderMaxHeight - 12))
-  const providerListHeight = clampListHeight(visibleProviders.length, compactPicker ? 52 : 108, compactPicker ? compactProviderMaxHeight : pickerBudget, 1)
-  const modelListHeight = clampListHeight(selectedModels.length, compactPicker ? 64 : 132, compactPicker ? compactModelMaxHeight : pickerBudget, 2)
-  const pickerMinHeight = compactPicker ? undefined : Math.max(190, Math.min(pickerBudget + 30, Math.max(providerListHeight, modelListHeight) + 30))
+  const bodyVerticalPadding = 26
+  const panelHeaderReserve = 128
+  const pickerHeaderReserve = 30
+  const systemPromptReserve = compactPicker ? 102 : 116
+  const copyLinkReserve = 52
+  const primaryParamReserve = 79
+  const secondaryParamReserve = capabilities?.topP !== false || reasoningOptions.length ? 79 : 10
+  const lowerControlsReserve = systemPromptReserve + copyLinkReserve + primaryParamReserve + secondaryParamReserve
+  const pickerRowMaxHeight = Math.max(compactPicker ? 126 : 132, Math.min(compactPicker ? 210 : 210, maxHeight - panelHeaderReserve - bodyVerticalPadding - lowerControlsReserve))
+  const pickerListMaxHeight = Math.max(52, pickerRowMaxHeight - pickerHeaderReserve)
+  const compactProviderMaxHeight = Math.max(52, Math.min(150, Math.floor((pickerRowMaxHeight - 12) * 0.42)))
+  const compactModelMaxHeight = Math.max(64, Math.min(190, pickerRowMaxHeight - compactProviderMaxHeight - 12))
+  const providerListMinHeight = visibleProviders.length ? (compactPicker ? 52 : 108) : (compactPicker ? 52 : 64)
+  const modelListMinHeight = selectedModels.length ? (compactPicker ? 64 : 132) : (compactPicker ? 64 : 76)
+  const providerListHeight = clampListHeight(
+    visibleProviders.length,
+    Math.min(providerListMinHeight, compactPicker ? compactProviderMaxHeight : pickerListMaxHeight),
+    compactPicker ? compactProviderMaxHeight : pickerListMaxHeight,
+    1,
+  )
+  const modelListHeight = clampListHeight(
+    selectedModels.length,
+    Math.min(modelListMinHeight, compactPicker ? compactModelMaxHeight : pickerListMaxHeight),
+    compactPicker ? compactModelMaxHeight : pickerListMaxHeight,
+    2,
+  )
+  const pickerFloor = visibleProviders.length || selectedModels.length ? Math.min(156, pickerRowMaxHeight) : 132
+  const pickerMinHeight = compactPicker ? undefined : Math.max(pickerFloor, Math.min(pickerRowMaxHeight, Math.max(providerListHeight, modelListHeight) + pickerHeaderReserve))
 
   useEffect(() => {
     setSelectedProviderId(provider?.id ?? conversation.providerId)
@@ -110,12 +132,12 @@ export function ChatOptionsPanel({
             haptic
             onPress={onClose}
             accessibilityLabel={t('chat.closeModelMenu')}
-            style={{ width: 34, height: 34, borderRadius: 17, alignItems: 'center', justifyContent: 'center', backgroundColor: colors.islandRaised, borderWidth: 1, borderColor: colors.border }}
+            style={{ width: 44, height: 44, borderRadius: 22, alignItems: 'center', justifyContent: 'center', backgroundColor: colors.islandRaised, borderWidth: 1, borderColor: colors.border }}
           >
             <X color={colors.textSecondary} size={16} strokeWidth={2.2} />
           </IslePressable>
         </View>
-        <View style={{ minHeight: 42, borderRadius: 21, paddingHorizontal: 12, flexDirection: 'row', alignItems: 'center', gap: 8, backgroundColor: colors.material.field, borderWidth: 1, borderColor: colors.border }}>
+        <View style={{ minHeight: 44, borderRadius: 22, paddingHorizontal: 12, flexDirection: 'row', alignItems: 'center', gap: 8, backgroundColor: colors.material.field, borderWidth: 1, borderColor: colors.border }}>
           <Search color={colors.textTertiary} size={15} strokeWidth={2} />
           <TextInput
             value={modelPickerQuery}
@@ -124,13 +146,13 @@ export function ChatOptionsPanel({
             autoCorrect={false}
             placeholder={t('chat.searchProviderOrModel')}
             placeholderTextColor={colors.textTertiary}
-            style={{ flex: 1, minHeight: 40, padding: 0, color: colors.text, fontSize: 13, fontWeight: '800' }}
+            style={{ flex: 1, minHeight: 44, padding: 0, color: colors.text, fontSize: 13, fontWeight: '800' }}
           />
           {modelPickerQuery.trim() ? (
             <IslePressable
               onPress={() => setModelPickerQuery('')}
               accessibilityLabel={t('chat.clearModelSearch')}
-              style={{ width: 28, height: 28, borderRadius: 14, alignItems: 'center', justifyContent: 'center', backgroundColor: colors.islandRaised }}
+              style={{ width: 44, height: 44, borderRadius: 22, alignItems: 'center', justifyContent: 'center', backgroundColor: colors.islandRaised }}
             >
               <X color={colors.textSecondary} size={14} strokeWidth={2.2} />
             </IslePressable>
@@ -152,28 +174,34 @@ export function ChatOptionsPanel({
                 {normalizedQuery ? `${visibleProviders.length}/${switchableProviders.length}` : t('chat.countItems', { count: switchableProviders.length })}
               </Text>
             </View>
-            <ScrollView
-              style={{ flexGrow: 0, height: providerListHeight }}
-              contentContainerStyle={{ gap: 8 }}
-              nestedScrollEnabled
-              keyboardShouldPersistTaps="handled"
-              showsVerticalScrollIndicator
-            >
-              {visibleProviders.map((item) => (
-                <IslePressable key={item.id} haptic onPress={() => setSelectedProviderId(item.id)}>
-                  <PickerChip
-                    active={selectedProvider?.id === item.id}
-                    label={`${item.name}${item.enabled ? '' : ` · ${t('settings.disabledState')}`}`}
-                    maxWidth={compactPicker ? panelWidth - 48 : Math.max(112, panelWidth * 0.34)}
-                  />
-                </IslePressable>
-              ))}
-            </ScrollView>
-            {!visibleProviders.length ? (
-              <View style={{ borderRadius: 18, paddingHorizontal: 12, paddingVertical: 10, backgroundColor: colors.material.field, borderWidth: 1, borderColor: colors.border }}>
+            {visibleProviders.length ? (
+              <ScrollView
+                style={{ flexGrow: 0, height: providerListHeight }}
+                contentContainerStyle={{ gap: 8 }}
+                nestedScrollEnabled
+                keyboardShouldPersistTaps="handled"
+                showsVerticalScrollIndicator
+              >
+                {visibleProviders.map((item) => (
+                  <IslePressable
+                    key={item.id}
+                    haptic
+                    onPress={() => setSelectedProviderId(item.id)}
+                    accessibilityLabel={`${item.name}${item.enabled ? '' : ` · ${t('settings.disabledState')}`}`}
+                  >
+                    <PickerChip
+                      active={selectedProvider?.id === item.id}
+                      label={`${item.name}${item.enabled ? '' : ` · ${t('settings.disabledState')}`}`}
+                      maxWidth={compactPicker ? panelWidth - 48 : Math.max(112, panelWidth * 0.34)}
+                    />
+                  </IslePressable>
+                ))}
+              </ScrollView>
+            ) : (
+              <View style={{ minHeight: providerListHeight, borderRadius: 18, paddingHorizontal: 12, paddingVertical: 10, justifyContent: 'center', backgroundColor: colors.material.field, borderWidth: 1, borderColor: colors.border }}>
                 <Text style={{ color: colors.textTertiary, fontSize: 12, lineHeight: 17 }}>{t('chat.noProviderModelMatches')}</Text>
               </View>
-            ) : null}
+            )}
           </MotiView>
 
           <MotiView
@@ -197,7 +225,12 @@ export function ChatOptionsPanel({
                 showsVerticalScrollIndicator
               >
                 {selectedModels.map((model) => (
-                  <IslePressable key={model.id} haptic onPress={() => selectedProvider && onSwitchModel(selectedProvider, model.id)}>
+                  <IslePressable
+                    key={model.id}
+                    haptic
+                    onPress={() => selectedProvider && onSwitchModel(selectedProvider, model.id)}
+                    accessibilityLabel={`${model.name}${model.config.deprecated ? ` · ${t('chat.deprecated')}` : ''}`}
+                  >
                     <PickerChip
                       active={selectedProviderIsCurrent && conversation.model === model.id}
                       label={`${model.name}${model.config.deprecated ? ` · ${t('chat.deprecated')}` : ''}`}
@@ -226,7 +259,7 @@ export function ChatOptionsPanel({
           />
         </View>
         <View style={{ flexDirection: 'row', gap: 8, marginTop: 8 }}>
-          <IslePressable haptic onPress={onCopyLink} style={{ minHeight: 34, borderRadius: 17, paddingHorizontal: 12, alignItems: 'center', justifyContent: 'center', backgroundColor: colors.islandRaised, borderWidth: 1, borderColor: colors.border }}>
+          <IslePressable haptic onPress={onCopyLink} style={{ minHeight: 44, borderRadius: 22, paddingHorizontal: 12, alignItems: 'center', justifyContent: 'center', backgroundColor: colors.islandRaised, borderWidth: 1, borderColor: colors.border }}>
             <Text style={{ color: colors.textSecondary, fontSize: 12, fontWeight: '800' }}>{t('chat.copyConversationLink')}</Text>
           </IslePressable>
         </View>
@@ -290,9 +323,9 @@ function PickerChip({ label, active, maxWidth }: { label: string; active: boolea
     <View
       style={{
         maxWidth,
-        minHeight: 32,
-        borderRadius: 16,
-        paddingHorizontal: 11,
+        minHeight: 44,
+        borderRadius: 22,
+        paddingHorizontal: 12,
         alignItems: 'center',
         justifyContent: 'center',
         alignSelf: 'flex-start',
@@ -309,9 +342,8 @@ function PickerChip({ label, active, maxWidth }: { label: string; active: boolea
 }
 
 function getSwitchableProviderModels(provider: AIProvider, query = ''): string[] {
-  const groups = provider.credentialGroups ?? []
-  const models = Array.from(new Set(provider.models))
-    .filter((id) => !groups.length || groups.some((group) => group.enabled && (!group.availableModels?.length || group.availableModels.includes(id))))
+  const models = getProviderAvailableModels(provider)
+    .filter((id) => getModelConfig(id, provider.type, provider.modelConfigs).chatCompatible !== false)
   if (!query) return models
   return models.filter((id) => normalizeSearchText(`${id} ${getModelName(id)}`).includes(query))
 }
@@ -353,6 +385,7 @@ function ParamInput({ label, value, onChange }: { label: string; value: string; 
         value={value}
         onChangeText={onChange}
         keyboardType="numeric"
+        accessibilityLabel={label}
         placeholderTextColor={colors.textTertiary}
         style={{ minHeight: 46, borderRadius: 18, paddingHorizontal: 14, color: colors.text, backgroundColor: colors.material.field, borderWidth: 1, borderColor: colors.border, fontSize: 14, fontWeight: '700' }}
       />

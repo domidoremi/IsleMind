@@ -81,9 +81,18 @@ export function ConversationRow({ conversation, index, onOpen, onRenameFocus }: 
                 onBlur={submitRename}
                 onSubmitEditing={submitRename}
                 onFocus={onRenameFocus}
+                accessibilityLabel={t('conversation.rename')}
                 returnKeyType="done"
                 blurOnSubmit
-                style={{ color: colors.text, fontSize: 17, fontWeight: '900', padding: 0 }}
+                style={{
+                  color: colors.text,
+                  fontSize: 17,
+                  fontWeight: '900',
+                  minHeight: 48,
+                  paddingHorizontal: 0,
+                  paddingVertical: 8,
+                  textAlignVertical: 'center',
+                }}
               />
             ) : (
               <Text numberOfLines={1} style={{ color: colors.text, fontSize: 17, fontWeight: '900' }}>

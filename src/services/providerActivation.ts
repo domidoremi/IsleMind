@@ -1,6 +1,7 @@
 import { syncProviderCredentialGroupsDetailed, testProviderModelDetailed } from '@/services/ai/base'
 import { st } from '@/i18n/service'
 import type { AIProvider, ProviderOperationCode } from '@/types'
+import { getProviderAvailableModels } from '@/utils/providerModels'
 
 export interface ProviderActivationResult {
   providerId: string
@@ -74,7 +75,7 @@ export async function syncAndTestProvider(
     hadCredential: hasAnyCredential(initial ?? provider),
     synced: false,
     syncAttempted: false,
-    modelCount: initial?.models.length ?? provider.models.length,
+    modelCount: initial ? getProviderAvailableModels(initial).length : getProviderAvailableModels(provider).length,
     syncedGroups: 0,
     missingToken: false,
     tested: false,
@@ -129,7 +130,7 @@ export async function syncAndTestProvider(
   if (sync.data) {
     await deps.updateProvider(provider.id, sync.data)
     current = await deps.hydrateProviderKey(provider.id) ?? sync.data
-    result.modelCount = current.models.length
+    result.modelCount = getProviderAvailableModels(current).length
     result.syncedGroups = countSyncedGroups(current)
   }
   result.synced = sync.ok && result.syncedGroups > 0 && result.modelCount > 0
@@ -232,17 +233,7 @@ function buildTestCandidates(provider: AIProvider): Array<{ groupId?: string; gr
     }))
   })
   if (candidates.length) return dedupeCandidates(candidates)
-  if (enabledGroups.length && provider.models.length) {
-    return dedupeCandidates(enabledGroups.flatMap((group) =>
-      provider.models.map((model) => ({
-        groupId: group.id,
-        groupLabel: group.label,
-        apiKey: group.apiKey!.trim(),
-        model,
-      }))
-    ))
-  }
-  if (provider.apiKey?.trim() && provider.models.length) {
+  if (!enabledGroups.length && provider.apiKey?.trim() && provider.lastModelSyncStatus === 'ok' && provider.models.length) {
     return provider.models.map((model) => ({ apiKey: provider.apiKey.trim(), model }))
   }
   return []

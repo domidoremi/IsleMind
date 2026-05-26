@@ -2,8 +2,8 @@ import '../src/devLogFilters'
 import '../src/global.css'
 import 'react-native-gesture-handler'
 import type { ErrorBoundaryProps } from 'expo-router'
-import { useEffect } from 'react'
-import { router, Stack } from 'expo-router'
+import { useEffect, useRef } from 'react'
+import { router, Stack, useGlobalSearchParams } from 'expo-router'
 import { GestureHandlerRootView } from 'react-native-gesture-handler'
 import { Text, View } from 'react-native'
 import { AlertTriangle, ChevronLeft, RotateCcw } from 'lucide-react-native'
@@ -22,11 +22,13 @@ initI18n()
 export default function RootLayout() {
   const boot = useBootstrap()
   const { colors } = useAppTheme()
+  const params = useGlobalSearchParams<{ qaUpdateNotice?: string | string[] }>()
+  const qaUpdateVersion = firstQueryParam(params.qaUpdateNotice)
 
   return (
     <GestureHandlerRootView style={{ flex: 1, backgroundColor: colors.surface }}>
       <IsleDialogProvider>
-        <RootUpdateNotice message={boot.updateNotice} />
+        <RootUpdateNotice message={boot.updateNotice} qaVersion={qaUpdateVersion} />
         <Stack
           screenOptions={{
             headerShown: false,
@@ -48,15 +50,25 @@ export default function RootLayout() {
   )
 }
 
-function RootUpdateNotice({ message }: { message: string | null }) {
+function RootUpdateNotice({ message, qaVersion }: { message: string | null; qaVersion?: string }) {
   const dialog = useIsleDialog()
   const { t } = useTranslation()
+  const lastToastKey = useRef<string | null>(null)
+  const qaMessage = qaVersion ? t('updates.available', { version: qaVersion === '1' ? 'QA' : qaVersion }) : null
+  const resolvedMessage = qaMessage ?? message
   useEffect(() => {
-    if (message) {
-      dialog.toast({ title: t('app.newVersion'), message, tone: 'amber', durationMs: 4200 })
+    if (resolvedMessage && lastToastKey.current !== resolvedMessage) {
+      lastToastKey.current = resolvedMessage
+      dialog.toast({ title: t('app.newVersion'), message: resolvedMessage, tone: 'amber', durationMs: 4200 })
     }
-  }, [dialog, message, t])
+  }, [dialog, resolvedMessage, t])
   return null
+}
+
+function firstQueryParam(value?: string | string[]): string | undefined {
+  const first = Array.isArray(value) ? value[0] : value
+  const trimmed = typeof first === 'string' ? first.trim() : ''
+  return trimmed || undefined
 }
 
 export function ErrorBoundary({ error, retry }: ErrorBoundaryProps) {

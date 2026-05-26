@@ -30,6 +30,10 @@ interface SendMessageInput {
 }
 
 const activeControllers = new Map<string, { controller: AbortController; messageId: string; flush?: () => void; done?: Promise<void> }>()
+const STREAM_TEXT_FLUSH_MS = 64
+const STREAM_TEXT_MAX_BUFFER = 128
+const STREAM_TRACE_FLUSH_MS = 180
+const STREAM_TRACE_MAX_BUFFER = 6
 
 export function isConversationStreaming(conversationId: string): boolean {
   return activeControllers.has(conversationId)
@@ -427,7 +431,12 @@ async function createAssistantReply(conversationId: string) {
     }))
   }
   const chunkBuffer = createStreamingChunkBuffer(conversationId, assistantMessage.id)
-  activeControllers.set(conversationId, { controller: requestController, messageId: assistantMessage.id, flush: chunkBuffer.flush })
+  const traceBuffer = createStreamingTraceBuffer(conversationId, assistantMessage.id)
+  const flushStreamingBuffers = () => {
+    chunkBuffer.flush()
+    traceBuffer.flush()
+  }
+  activeControllers.set(conversationId, { controller: requestController, messageId: assistantMessage.id, flush: flushStreamingBuffers })
   const modelTraceId = traceId('model')
   upsertTrace(conversationId, assistantMessage.id, {
     id: modelTraceId,
@@ -481,11 +490,11 @@ async function createAssistantReply(conversationId: string) {
           baseContextPrompt: packedPrompt.contextPrompt,
           retrievalSources,
           requestController,
-          chunkFlush: chunkBuffer.flush,
+          chunkFlush: flushStreamingBuffers,
         })
       },
       (error) => {
-        chunkBuffer.flush()
+        flushStreamingBuffers()
         if (activeControllers.get(conversationId)?.messageId === assistantMessage.id) {
           activeControllers.delete(conversationId)
         }
@@ -515,7 +524,7 @@ async function createAssistantReply(conversationId: string) {
         useChatStore.getState().updateMessage(conversationId, assistantMessage.id, { citations })
       },
       (trace) => {
-        upsertTrace(conversationId, assistantMessage.id, trace)
+        traceBuffer.push(trace)
       }
     )
     if (requestController.signal.aborted || getMessage(conversationId, assistantMessage.id)?.status === 'cancelled') {
@@ -523,14 +532,15 @@ async function createAssistantReply(conversationId: string) {
       void handle.done.catch(() => undefined)
       return
     }
-    activeControllers.set(conversationId, { controller: handle.controller, messageId: assistantMessage.id, flush: chunkBuffer.flush, done: handle.done })
+    activeControllers.set(conversationId, { controller: handle.controller, messageId: assistantMessage.id, flush: flushStreamingBuffers, done: handle.done })
     void handle.done.finally(() => {
+      flushStreamingBuffers()
       if (activeControllers.get(conversationId)?.messageId === assistantMessage.id) {
         activeControllers.delete(conversationId)
       }
     })
   } catch (error) {
-    chunkBuffer.flush()
+    flushStreamingBuffers()
     if (error instanceof Error && error.name === 'AbortError') {
       return
     }
@@ -568,17 +578,72 @@ function createStreamingChunkBuffer(conversationId: string, messageId: string) {
   function push(chunk: string) {
     if (!chunk) return
     pendingText += chunk
-    const shouldFlushNow = pendingText.length >= 18 || /[\n。！？!?；;，,.、：:]$/.test(pendingText)
-    if (shouldFlushNow) {
+    if (pendingText.length >= STREAM_TEXT_MAX_BUFFER) {
       flush()
       return
     }
     if (!timer) {
-      timer = setTimeout(flush, 28)
+      timer = setTimeout(flush, STREAM_TEXT_FLUSH_MS)
     }
   }
 
   return { push, flush }
+}
+
+function createStreamingTraceBuffer(conversationId: string, messageId: string) {
+  const pending = new Map<string, ProcessTrace>()
+  let timer: ReturnType<typeof setTimeout> | null = null
+
+  function traceKey(trace: ProcessTrace): string {
+    return trace.id || `${trace.type}:${trace.title}`
+  }
+
+  function flush() {
+    if (timer) {
+      clearTimeout(timer)
+      timer = null
+    }
+    if (!pending.size) return
+    const traces = Array.from(pending.values())
+    pending.clear()
+    for (const trace of traces) {
+      upsertTrace(conversationId, messageId, trace)
+    }
+  }
+
+  function push(trace: ProcessTrace) {
+    const key = traceKey(trace)
+    const current = pending.get(key)
+    pending.set(key, current ? mergeBufferedTrace(current, trace) : trace)
+    if (pending.size >= STREAM_TRACE_MAX_BUFFER || trace.status === 'done' || trace.status === 'error' || trace.status === 'skipped') {
+      flush()
+      return
+    }
+    if (!timer) {
+      timer = setTimeout(flush, STREAM_TRACE_FLUSH_MS)
+    }
+  }
+
+  return { push, flush }
+}
+
+function mergeBufferedTrace(current: ProcessTrace, next: ProcessTrace): ProcessTrace {
+  const shouldAppend =
+    next.status === 'running' &&
+    current.content &&
+    next.content &&
+    current.content !== next.content &&
+    !current.content.endsWith(next.content)
+  const content = shouldAppend ? `${current.content}${next.content}` : next.content ?? current.content
+  return {
+    ...current,
+    ...next,
+    content: content ? clampTraceContent(content, next.type) : undefined,
+    startedAt: current.startedAt ?? next.startedAt,
+    completedAt: next.completedAt ?? current.completedAt,
+    durationMs: next.durationMs ?? current.durationMs,
+    metadata: { ...current.metadata, ...next.metadata },
+  }
 }
 
 async function finalizeAssistantResult(input: {
@@ -1001,8 +1066,13 @@ function sanitizeTrace(trace: ProcessTrace): ProcessTrace {
   return {
     ...trace,
     status,
-    content: content ? (content.length > 1400 ? `${content.slice(0, 1400)}...` : content) : undefined,
+    content: content ? clampTraceContent(content, trace.type) : undefined,
   }
+}
+
+function clampTraceContent(content: string, type: ProcessTrace['type']): string {
+  const limit = type === 'tool' ? 520 : type === 'reasoning' ? 760 : 1400
+  return content.length > limit ? `${content.slice(0, limit)}...` : content
 }
 
 function settleRunningTraces(

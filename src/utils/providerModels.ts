@@ -1,3 +1,4 @@
+import { getModelConfig } from '@/types'
 import type { AIProvider, ProviderCredentialGroup } from '@/types'
 
 const HISTORICAL_DEEPSEEK_MODEL_IDS = new Set([
@@ -26,13 +27,21 @@ export function clearHistoricalInjectedGroupModels(group: ProviderCredentialGrou
 }
 
 export function getProviderAvailableModels(provider: AIProvider): string[] {
-  const models = [
-    ...clearHistoricalInjectedProviderModels(provider),
-    ...(provider.credentialGroups ?? [])
-      .filter((group) => group.enabled !== false)
-      .flatMap((group) => clearHistoricalInjectedGroupModels(group, provider)),
-  ]
-  return uniqueModels(models)
+  const syncedGroupModels = (provider.credentialGroups ?? [])
+    .filter((group) => group.enabled !== false && group.lastModelSyncStatus === 'ok')
+    .flatMap((group) => clearHistoricalInjectedGroupModels(group, provider))
+  if (syncedGroupModels.length) return filterChatCompatibleModels(provider, syncedGroupModels)
+
+  if (provider.lastModelSyncStatus === 'ok') {
+    const syncedProviderModels = clearHistoricalInjectedProviderModels(provider)
+    if (syncedProviderModels.length) return filterChatCompatibleModels(provider, syncedProviderModels)
+  }
+
+  if (provider.lastTestStatus === 'ok' && provider.lastTestModel) {
+    return filterChatCompatibleModels(provider, [provider.lastTestModel])
+  }
+
+  return []
 }
 
 export function getProviderPreferredModel(provider: AIProvider): string | undefined {
@@ -71,6 +80,14 @@ function isDeepSeekProvider(provider?: AIProvider): boolean {
   if (provider.presetId === 'deepseek' || provider.detectedPresetId === 'deepseek') return true
   const baseUrl = (provider.baseUrl ?? '').toLowerCase()
   return baseUrl.includes('api.deepseek.com')
+}
+
+function isChatCompatibleModel(provider: AIProvider, model: string): boolean {
+  return getModelConfig(model, provider.type, provider.modelConfigs).chatCompatible !== false
+}
+
+function filterChatCompatibleModels(provider: AIProvider, models: string[]): string[] {
+  return uniqueModels(models).filter((model) => isChatCompatibleModel(provider, model))
 }
 
 function uniqueModels(models: string[]): string[] {

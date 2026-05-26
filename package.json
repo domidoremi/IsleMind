@@ -1,6 +1,6 @@
 {
   "name": "islemind",
-  "version": "1.0.4",
+  "version": "1.0.5",
   "main": "expo-router/entry",
   "scripts": {
     "start": "expo start",
@@ -10,6 +10,7 @@
     "test:provider-intelligence": "node scripts/provider-intelligence-tests.js",
     "type-check": "tsc --noEmit",
     "doctor": "npx --yes expo-doctor",
+    "test:qa-audit": "node scripts/qa-coverage-audit.js",
     "apk:local": "node scripts/build-local-android-apk.js --variant no-model --debug",
     "apk:local:models": "node scripts/build-local-android-apk.js --variant with-model-small --debug",
     "apk:local:all": "node scripts/build-local-android-apk.js --all-variants --debug",
@@ -18,7 +19,12 @@
     "apk:local:release:all": "node scripts/build-local-android-apk.js --all-variants --release",
     "apk:prepare-models": "node scripts/prepare-model-bundle.js",
     "apk:validate-16kb": "node scripts/validate-android-16kb-apk.js",
-    "test:ui-naming": "node scripts/ui-naming-audit.js"
+    "test:ui-naming": "node scripts/ui-naming-audit.js",
+    "pet:validate-plan": "node scripts/validate-isle-pet-animation-plan.js",
+    "pet:prepare-extension": "node scripts/prepare-isle-pet-animation-extension.js",
+    "pet:record-extension-result": "node scripts/record-isle-pet-extension-result.js",
+    "pet:validate-extension-run": "node scripts/validate-isle-pet-extension-run.js",
+    "pet:preview": "node scripts/render-isle-pet-animation-preview.js"
   },
   "dependencies": {
     "@react-native-async-storage/async-storage": "2.2.0",

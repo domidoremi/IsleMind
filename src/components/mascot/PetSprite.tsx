@@ -79,18 +79,32 @@ export function PetSprite({ animation, atlasId, size, speed = 1, onError, style 
 
 function outerMotion(state: HomePetAnimation) {
   switch (state) {
+    case 'modelTesting':
     case 'syncingModels':
     case 'running':
       return { translateY: -4, scale: 1.01 }
+    case 'contextCompressing':
+    case 'citationReview':
+    case 'graphMapping':
+    case 'memoryLinking':
     case 'deepThinking':
     case 'retrieving':
     case 'review':
       return { translateY: -2, scale: 1.005 }
+    case 'mcpWorking':
+    case 'skillRunning':
+    case 'attachmentReading':
     case 'toolWorking':
     case 'waving':
       return { translateY: -3, scale: 1.01 }
+    case 'flareScan':
+    case 'knowledgeIndexing':
+    case 'webSearching':
+    case 'sendingPrompt':
+      return { translateY: -5, scale: 1.012 }
     case 'jumping':
       return { translateY: -9, scale: 1.02 }
+    case 'providerIssue':
     case 'warningRecover':
     case 'failed':
       return { translateY: 3, scale: 0.99 }
@@ -106,9 +120,9 @@ function outerMotion(state: HomePetAnimation) {
 function outerDuration(state: HomePetAnimation, speed: number): number {
   const base = state === 'jumping'
     ? 680
-    : state === 'running' || state === 'syncingModels' || state === 'toolWorking'
+    : state === 'running' || state === 'syncingModels' || state === 'toolWorking' || state === 'mcpWorking' || state === 'webSearching' || state === 'modelTesting' || state === 'knowledgeIndexing'
       ? 760
-      : state === 'failed' || state === 'warningRecover'
+      : state === 'failed' || state === 'warningRecover' || state === 'providerIssue'
         ? 1280
         : motionTokens.duration.mascotLoop
   return Math.max(520, base / Math.max(speed, 0.7))

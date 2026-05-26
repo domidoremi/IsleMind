@@ -443,15 +443,21 @@ function mergeTrace(current: ProcessTrace, next: ProcessTrace): ProcessTrace {
     next.content &&
     current.content !== next.content &&
     !current.content.endsWith(next.content)
+  const content = shouldAppend ? `${current.content}${next.content}` : next.content ?? current.content
   return {
     ...current,
     ...next,
-    content: shouldAppend ? `${current.content}${next.content}` : next.content ?? current.content,
+    content: content ? clampMergedTraceContent(content, next.type) : undefined,
     startedAt: current.startedAt ?? next.startedAt,
     completedAt: next.completedAt ?? current.completedAt,
     durationMs: next.durationMs ?? current.durationMs,
     metadata: { ...current.metadata, ...next.metadata },
   }
+}
+
+function clampMergedTraceContent(content: string, type: ProcessTrace['type']): string {
+  const limit = type === 'tool' ? 520 : type === 'reasoning' ? 760 : 1400
+  return content.length > limit ? `${content.slice(0, limit)}...` : content
 }
 
 function getTraceMessageKey(type: ProcessTrace['type']): 'reasoning' | 'toolCalls' | 'retrievalTrace' {

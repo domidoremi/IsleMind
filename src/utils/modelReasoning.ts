@@ -60,7 +60,9 @@ export function isDeepSeekThinkingModel(provider: AIProvider, model: string): bo
 export function isXiaomiMimoReasoningModel(provider: AIProvider, model: string): boolean {
   if (provider.type !== 'xiaomi-mimo') return false
   if (!provider.capabilities?.reasoningEffort) return false
-  return /^mimo-v(2|2\.5)/.test(normalizeModelId(model))
+  const normalized = normalizeModelId(model)
+  if (normalized.includes('tts')) return false
+  return /^mimo-v(2|2\.5)/.test(normalized)
 }
 
 export function normalizeModelId(model: string): string {

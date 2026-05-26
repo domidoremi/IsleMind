@@ -73,6 +73,8 @@ const MODEL_QUICK_GROUPS: ModelQuickGroup[] = ['all', 'gpt', 'claude', 'gemini',
 const CHAT_TOP_FLOATING_SPACE = 112
 const CHAT_BOTTOM_FLOATING_SPACE = 132
 const COMPOSER_MIN_HEIGHT = 132
+const AUTO_SCROLL_DELAY_MS = 96
+const USER_SCROLL_PAUSE_THRESHOLD = 72
 
 interface PendingStreamingMessage {
   intent: Exclude<StreamingInputIntent, 'interrupt'>
@@ -129,6 +131,7 @@ export function ChatWorkspace({ conversation, showBack = false, embedded = false
   const idleTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
   const autoScrollTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
   const lastAutoScrollAt = useRef(0)
+  const autoStickToBottom = useRef(true)
   const enabledProviders = useMemo(() => providers.filter((item) => item.id !== 'local-setup' && item.enabled), [providers])
   const hasEnabledProvider = enabledProviders.length > 0
   const readyProviders = useMemo(() => enabledProviders.filter((item) => isProviderConversationReady(item)), [enabledProviders])
@@ -202,7 +205,7 @@ export function ChatWorkspace({ conversation, showBack = false, embedded = false
   const optionsPanelHeight = Math.max(compactViewport ? 360 : 430, Math.min(windowHeight * 0.7, compactViewport ? 460 : 620))
   const listTopInset = Math.max(CHAT_TOP_FLOATING_SPACE, insets.top + (chromeCollapsed ? 54 : chromeHeight + 12))
   const composerBottomInset = Math.max(COMPOSER_MIN_HEIGHT, composerHeight + Math.max(insets.bottom, 10) + 10)
-  const keyboardLift = Platform.OS === 'ios' ? keyboardHeight : 0
+  const keyboardLift = keyboardHeight
   const keyboardVisible = keyboardHeight > 0 || composerFocused
   const goHistory = onHistory ?? (() => router.push('/conversations'))
   const goSettings = onSettings ?? (() => router.push('/settings'))
@@ -301,16 +304,17 @@ export function ChatWorkspace({ conversation, showBack = false, embedded = false
 
   useEffect(() => {
     const now = Date.now()
-    const wait = Math.max(40, 140 - (now - lastAutoScrollAt.current))
+    const wait = Math.max(32, AUTO_SCROLL_DELAY_MS - (now - lastAutoScrollAt.current))
     if (autoScrollTimer.current) clearTimeout(autoScrollTimer.current)
     autoScrollTimer.current = setTimeout(() => {
+      if (!autoStickToBottom.current) return
       lastAutoScrollAt.current = Date.now()
       listRef.current?.scrollToEnd({ animated: true })
     }, wait)
     return () => {
       if (autoScrollTimer.current) clearTimeout(autoScrollTimer.current)
     }
-  }, [messageSignature])
+  }, [composerHeight, keyboardHeight, messageSignature])
 
   useEffect(() => {
     let mounted = true
@@ -515,27 +519,25 @@ export function ChatWorkspace({ conversation, showBack = false, embedded = false
             <IslePressable
               onPress={goHistory}
               accessibilityLabel={t('conversation.title')}
-              style={{ width: 42, height: 42, alignItems: 'center', justifyContent: 'center', borderRadius: 21, backgroundColor: colors.islandRaised, borderWidth: 1, borderColor: colors.border }}
+              style={{ width: 44, height: 44, alignItems: 'center', justifyContent: 'center', borderRadius: 22, backgroundColor: colors.islandRaised, borderWidth: 1, borderColor: colors.border }}
             >
               <History color={colors.text} size={18} strokeWidth={1.8} />
             </IslePressable>
             <View style={{ flex: 1 }}>
-              <Pressable onPress={openSetupFullModelPanel} accessibilityRole="button" accessibilityLabel={t('chat.conversationOptions')}>
+              <Pressable onPress={openSetupFullModelPanel} accessibilityRole="button" accessibilityLabel={t('chat.conversationOptions')} style={{ minHeight: 44, justifyContent: 'center' }}>
                 <Text style={{ color: colors.text, fontSize: 18, fontWeight: '800' }}>{emptyHeaderTitle}</Text>
-              </Pressable>
-              {emptyHeaderSubtitle ? (
-                <Pressable onPress={openSetupFullModelPanel} accessibilityRole="button" accessibilityLabel={t('chat.conversationOptions')}>
+                {emptyHeaderSubtitle ? (
                   <Text numberOfLines={1} style={{ color: colors.textSecondary, fontSize: 12, marginTop: 2 }}>
                     {emptyHeaderSubtitle}
                   </Text>
-                </Pressable>
-              ) : null}
+                ) : null}
+              </Pressable>
             </View>
             <IslePressable
               haptic
               onPress={openSetupFullModelPanel}
               accessibilityLabel={t('chat.conversationOptions')}
-              style={{ width: 42, height: 42, alignItems: 'center', justifyContent: 'center', borderRadius: 21, backgroundColor: colors.material.chrome, borderWidth: 1, borderColor: colors.borderStrong }}
+              style={{ width: 44, height: 44, alignItems: 'center', justifyContent: 'center', borderRadius: 22, backgroundColor: colors.material.chrome, borderWidth: 1, borderColor: colors.borderStrong }}
             >
               <ListEnd color={colors.text} size={18} strokeWidth={1.9} />
             </IslePressable>
@@ -543,7 +545,7 @@ export function ChatWorkspace({ conversation, showBack = false, embedded = false
               haptic
               onPress={goSettings}
               accessibilityLabel={t('settings.title')}
-              style={{ width: 42, height: 42, alignItems: 'center', justifyContent: 'center', borderRadius: 21, backgroundColor: colors.material.chrome, borderWidth: 1, borderColor: colors.borderStrong }}
+              style={{ width: 44, height: 44, alignItems: 'center', justifyContent: 'center', borderRadius: 22, backgroundColor: colors.material.chrome, borderWidth: 1, borderColor: colors.borderStrong }}
             >
               <Settings2 color={colors.text} size={18} strokeWidth={1.9} />
             </IslePressable>
@@ -712,6 +714,7 @@ export function ChatWorkspace({ conversation, showBack = false, embedded = false
       markChromeActive={markChromeActive}
       scheduleChromeIdleCollapse={scheduleChromeIdleCollapse}
       lastScrollOffset={lastScrollOffset}
+      autoStickToBottom={autoStickToBottom}
       petState={petState}
       petEnabled={petEnabled}
       keyboardLift={keyboardLift}
@@ -774,6 +777,7 @@ function ActiveChatWorkspace({
   markChromeActive,
   scheduleChromeIdleCollapse,
   lastScrollOffset,
+  autoStickToBottom,
   petState,
   petEnabled,
   keyboardLift,
@@ -832,6 +836,7 @@ function ActiveChatWorkspace({
   markChromeActive: () => void
   scheduleChromeIdleCollapse: () => void
   lastScrollOffset: React.MutableRefObject<number>
+  autoStickToBottom: React.MutableRefObject<boolean>
   petState: ReturnType<typeof deriveHomePetState>
   petEnabled: boolean
   keyboardLift: number
@@ -844,8 +849,10 @@ function ActiveChatWorkspace({
   const petRight = Math.max(16, Math.min(24, windowWidth * 0.045))
   const petBottomGap = Math.max(20, Math.min(32, windowHeight * 0.025))
   const showFloatingPet = petEnabled && !keyboardVisible && !showOptions && !composerPanel && !intentDraft
+  const [showJumpToBottom, setShowJumpToBottom] = useState(false)
 
   async function submit(content: string, attachments: Attachment[]) {
+    scrollToLatestMessage()
     try {
       await sendMessage({ conversation: activeConversation, content, attachments })
     } catch (error) {
@@ -868,6 +875,7 @@ function ActiveChatWorkspace({
     const draft = intentDraft
     setIntentDraft(null)
     if (intent === 'interrupt') {
+      scrollToLatestMessage()
       safeStopMessage(activeConversation.id)
       setPendingStreamingMessage(null)
       setTimeout(() => {
@@ -879,6 +887,7 @@ function ActiveChatWorkspace({
       }, 30)
       return
     }
+    scrollToLatestMessage()
     setPendingStreamingMessage({ intent, content: draft.content, attachments: draft.attachments })
   }
 
@@ -935,7 +944,7 @@ function ActiveChatWorkspace({
             { label: t('chat.currentConversationOnly'), tone: 'default' },
           ],
           metrics: [
-            { label: t('chat.contextWindow'), before: formatTokenLimit(currentConfig.contextWindow), after: formatTokenLimit(nextConfig.contextWindow) },
+            { label: t('chat.contextWindow'), before: formatModelContextLimit(currentConfig, t), after: formatModelContextLimit(nextConfig, t) },
             { label: t('chat.outputLimit'), before: formatTokenLimit(currentConfig.maxOutputTokens), after: formatTokenLimit(nextConfig.maxOutputTokens) },
           ],
         })
@@ -965,6 +974,17 @@ function ActiveChatWorkspace({
   function handleListScroll(event: NativeSyntheticEvent<NativeScrollEvent>) {
     const y = event.nativeEvent.contentOffset.y
     const delta = y - lastScrollOffset.current
+    const distanceFromBottom = Math.max(
+      0,
+      event.nativeEvent.contentSize.height - event.nativeEvent.layoutMeasurement.height - y
+    )
+    if (distanceFromBottom <= USER_SCROLL_PAUSE_THRESHOLD) {
+      autoStickToBottom.current = true
+      setShowJumpToBottom(false)
+    } else if (delta < -8) {
+      autoStickToBottom.current = false
+      setShowJumpToBottom(true)
+    }
     if (delta < -10 || y < 18) {
       markChromeActive()
     } else if (Math.abs(delta) > 8) {
@@ -979,6 +999,8 @@ function ActiveChatWorkspace({
   }
 
   function scrollToLatestMessage() {
+    autoStickToBottom.current = true
+    setShowJumpToBottom(false)
     setTimeout(() => {
       listRef.current?.scrollToEnd({ animated: true })
     }, 80)
@@ -1058,7 +1080,17 @@ function ActiveChatWorkspace({
                   onRetry={(item) => void retryMessage(activeConversation.id, item.id).catch((error) => dialog.toast({ title: t('chat.retryFailed'), message: error instanceof Error ? error.message : t('chat.retryFailedMessage'), tone: 'danger' }))}
                   onRegenerate={() => void regenerateLastAssistant(activeConversation.id).catch((error) => dialog.toast({ title: t('chat.regenerateFailed'), message: error instanceof Error ? error.message : t('chat.regenerateFailedMessage'), tone: 'danger' }))}
                   onSpeak={(item) => void speakText(item.responseText ?? item.content, provider)}
-                  onDelete={(item) => removeMessage(activeConversation.id, item.id)}
+                  onDelete={(item) => {
+                    void dialog.confirm({
+                      title: t('messageBubble.deleteConfirmTitle'),
+                      message: t('messageBubble.deleteConfirmMessage'),
+                      confirmLabel: t('common.delete'),
+                      cancelLabel: t('common.cancel'),
+                      tone: 'danger',
+                    }).then((confirmed) => {
+                      if (confirmed) removeMessage(activeConversation.id, item.id)
+                    })
+                  }}
                   onConfigure={goSettings}
                   onTestModel={(item) => void testCurrentModel(item)}
                 />
@@ -1066,6 +1098,20 @@ function ActiveChatWorkspace({
               ListEmptyComponent={<EmptyConversationState onHistory={goHistory} onProviders={goProviders} />}
             />
           </View>
+
+          {showJumpToBottom ? (
+            <View pointerEvents="box-none" style={{ position: 'absolute', right: 18, bottom: composerBottomInset + keyboardLift + 12, zIndex: 46 }}>
+              <IslePressable
+                haptic
+                onPress={scrollToLatestMessage}
+                accessibilityLabel={t('chat.jumpToBottom')}
+                style={{ minHeight: 44, borderRadius: 22, paddingHorizontal: 14, flexDirection: 'row', alignItems: 'center', gap: 6, backgroundColor: colors.material.chrome, borderWidth: 1, borderColor: colors.borderStrong }}
+              >
+                <ListEnd color={colors.textSecondary} size={14} strokeWidth={2.1} />
+                <Text style={{ color: colors.textSecondary, fontSize: 11, fontWeight: '900' }}>{t('chat.jumpToBottom')}</Text>
+              </IslePressable>
+            </View>
+          ) : null}
 
           {intentDraft ? (
             <StreamingIntentSheet
@@ -1294,7 +1340,7 @@ function FloatingChrome({
             accessibilityRole="button"
             accessibilityLabel={t('chat.showTopBar')}
             hitSlop={12}
-            style={{ minWidth: streaming ? 128 : 82, height: 34, borderRadius: 17, paddingHorizontal: 14, alignItems: 'center', justifyContent: 'center', backgroundColor: colors.material.chrome, borderWidth: 1, borderColor: colors.border }}
+            style={{ minWidth: streaming ? 136 : 96, minHeight: 44, borderRadius: 22, paddingHorizontal: 14, alignItems: 'center', justifyContent: 'center', backgroundColor: colors.material.chrome, borderWidth: 1, borderColor: colors.border }}
           >
             <Text style={{ color: colors.textTertiary, fontSize: 10, fontWeight: '900' }}>{streaming ? t('chat.generatingShowTopBar') : t('chat.showTopBar')}</Text>
           </IsleOverlayPressable>
@@ -1386,7 +1432,7 @@ function FloatingComposer({
   const promptOpen = panel === 'prompt'
   const moreOpen = panel === 'more'
   const reasoningOptions = useMemo(() => getReasoningEffortOptions(provider, conversation.model), [conversation.model, provider])
-  const quickModels = useMemo(() => buildModelQuickOptions(modelProviders), [modelProviders])
+  const quickModels = useMemo(() => provider ? buildModelQuickOptions([provider]) : [], [provider])
   const [modelQuickGroup, setModelQuickGroup] = useState<ModelQuickGroup>(() => inferModelFamily(provider, conversation.model))
   const selectedGroup = useMemo(() => {
     if (modelQuickGroup === 'all') return 'all'
@@ -1395,6 +1441,12 @@ function FloatingComposer({
   const visibleQuickModels = selectedGroup === 'all'
     ? quickModels
     : quickModels.filter((option) => option.family === selectedGroup)
+  const visibleQuickGroups = useMemo(
+    () => quickModels.length
+      ? MODEL_QUICK_GROUPS.filter((group) => group === 'all' || quickModels.some((option) => option.family === group))
+      : [],
+    [quickModels]
+  )
 
   useEffect(() => {
     const currentFamily = inferModelFamily(provider, conversation.model)
@@ -1408,7 +1460,7 @@ function FloatingComposer({
   return (
     <View pointerEvents="box-none" onLayout={handleLayout} style={{ position: 'absolute', left: 0, right: 0, bottom: keyboardLift, zIndex: 40 }}>
       <KeyboardAvoidingView
-        behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+        behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
         keyboardVerticalOffset={0}
         onTouchStart={onInteract}
         onTouchMove={onInteract}
@@ -1448,36 +1500,33 @@ function FloatingComposer({
               transition={{ type: 'spring', damping: 20, stiffness: 210 }}
               style={{ marginBottom: 7, borderRadius: 22, padding: 10, backgroundColor: colors.material.chrome, borderWidth: 1, borderColor: colors.border }}
             >
-              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 8 }}>
-                <ScrollView
-                  horizontal
-                  showsHorizontalScrollIndicator={false}
-                  keyboardShouldPersistTaps="handled"
-                  nestedScrollEnabled
-                  onTouchStart={onInteract}
-                  onTouchMove={onInteract}
-                  onTouchEnd={onInteractEnd}
-                  onTouchCancel={onInteractEnd}
-                  contentContainerStyle={{ gap: 7, paddingRight: 2 }}
-                  style={{ flex: 1 }}
-                >
-                  {MODEL_QUICK_GROUPS.map((group) => {
+              <View style={{ flexDirection: 'row', alignItems: 'flex-start', gap: 8, marginBottom: 8 }}>
+                {visibleQuickGroups.length ? (
+                  <View
+                    onTouchStart={onInteract}
+                    onTouchMove={onInteract}
+                    onTouchEnd={onInteractEnd}
+                    onTouchCancel={onInteractEnd}
+                    style={{ flex: 1, flexDirection: 'row', flexWrap: 'wrap', gap: 7 }}
+                  >
+                  {visibleQuickGroups.map((group) => {
                     const active = selectedGroup === group
-                    const disabled = group !== 'all' && !quickModels.some((option) => option.family === group)
                     return (
                       <IslePressable
                         key={group}
                         haptic
-                        disabled={disabled}
                         onPress={() => setModelQuickGroup(group)}
-                        style={{ minHeight: 30, borderRadius: 15, paddingHorizontal: 11, alignItems: 'center', justifyContent: 'center', backgroundColor: active ? colors.text : colors.islandRaised, borderWidth: active ? 0 : 1, borderColor: colors.border, opacity: disabled ? 0.42 : 1 }}
+                        style={{ minHeight: 44, borderRadius: 22, paddingHorizontal: 12, alignItems: 'center', justifyContent: 'center', backgroundColor: active ? colors.text : colors.islandRaised, borderWidth: active ? 0 : 1, borderColor: colors.border }}
                       >
                         <Text numberOfLines={1} style={{ color: active ? colors.surface : colors.textSecondary, fontSize: 11, fontWeight: '900' }}>{t(`chat.modelFamilies.${group}`)}</Text>
                       </IslePressable>
                     )
                   })}
-                </ScrollView>
-                <IslePressable haptic onPress={onOpenAdvancedModelPicker} style={{ minHeight: 30, borderRadius: 15, paddingHorizontal: 10, alignItems: 'center', justifyContent: 'center', backgroundColor: colors.islandRaised, borderWidth: 1, borderColor: colors.border }}>
+                  </View>
+                ) : (
+                  <View style={{ flex: 1 }} />
+                )}
+                <IslePressable haptic onPress={onOpenAdvancedModelPicker} style={{ minHeight: 44, borderRadius: 22, paddingHorizontal: 12, alignItems: 'center', justifyContent: 'center', backgroundColor: colors.islandRaised, borderWidth: 1, borderColor: colors.border }}>
                   <Text style={{ color: colors.textSecondary, fontSize: 11, fontWeight: '900' }}>{t('chat.advancedModelMenu')}</Text>
                 </IslePressable>
               </View>
@@ -1506,9 +1555,9 @@ function FloatingComposer({
                           onSwitchProviderModel?.(option.provider, option.model)
                         }
                       }}
-                      style={{ minHeight: 32, borderRadius: 16, paddingHorizontal: 11, alignItems: 'center', justifyContent: 'center', backgroundColor: active ? colors.text : colors.islandRaised, borderWidth: active ? 0 : 1, borderColor: colors.border }}
+                      style={{ minHeight: 44, borderRadius: 22, paddingHorizontal: 12, alignItems: 'center', justifyContent: 'center', backgroundColor: active ? colors.text : colors.islandRaised, borderWidth: active ? 0 : 1, borderColor: colors.border }}
                     >
-                      <Text numberOfLines={1} ellipsizeMode="tail" style={{ maxWidth: 210, color: active ? colors.surface : colors.textSecondary, fontSize: 11, fontWeight: '900' }}>{option.provider.name} · {getModelName(option.model)}</Text>
+                      <Text numberOfLines={1} ellipsizeMode="tail" style={{ maxWidth: 210, color: active ? colors.surface : colors.textSecondary, fontSize: 11, fontWeight: '900' }}>{getModelName(option.model)}</Text>
                     </IslePressable>
                     )
                   })}
@@ -1535,7 +1584,7 @@ function FloatingComposer({
                     onReasoningChange(effort)
                     onPanelChange(null)
                   }}
-                  style={{ minHeight: 28, borderRadius: 14, paddingHorizontal: 10, alignItems: 'center', justifyContent: 'center', backgroundColor: reasoningEffort === effort ? colors.text : colors.islandRaised }}
+                  style={{ minHeight: 44, borderRadius: 22, paddingHorizontal: 12, alignItems: 'center', justifyContent: 'center', backgroundColor: reasoningEffort === effort ? colors.text : colors.islandRaised }}
                 >
                   <Text style={{ color: reasoningEffort === effort ? colors.surface : colors.textSecondary, fontSize: 11, fontWeight: '900' }}>
                     {t(`chat.reasoningEffort.${effort}`)}
@@ -1567,13 +1616,13 @@ function FloatingComposer({
                 style={{ minHeight: 58, maxHeight: 112, borderRadius: 16, paddingHorizontal: 12, paddingVertical: 10, color: colors.text, backgroundColor: colors.material.field, borderWidth: 1, borderColor: colors.border, fontSize: 13, lineHeight: 19, textAlignVertical: 'top' }}
               />
               <View style={{ flexDirection: 'row', gap: 8, marginTop: 8 }}>
-                <IslePressable haptic onPress={() => onSystemPromptChange(t('chat.promptTemplateInsert'))} style={{ minHeight: 30, borderRadius: 15, paddingHorizontal: 10, justifyContent: 'center', backgroundColor: colors.islandRaised }}>
+                <IslePressable haptic onPress={() => onSystemPromptChange(t('chat.promptTemplateInsert'))} style={{ minHeight: 44, borderRadius: 22, paddingHorizontal: 12, justifyContent: 'center', backgroundColor: colors.islandRaised }}>
                   <Text style={{ color: colors.textSecondary, fontSize: 11, fontWeight: '900' }}>{t('chat.commandPromptTemplate')}</Text>
                 </IslePressable>
-                <IslePressable haptic onPress={() => onSystemPromptChange('')} style={{ minHeight: 30, borderRadius: 15, paddingHorizontal: 10, justifyContent: 'center', backgroundColor: colors.islandRaised }}>
+                <IslePressable haptic onPress={() => onSystemPromptChange('')} style={{ minHeight: 44, borderRadius: 22, paddingHorizontal: 12, justifyContent: 'center', backgroundColor: colors.islandRaised }}>
                   <Text style={{ color: colors.textSecondary, fontSize: 11, fontWeight: '900' }}>{t('common.clearSearch')}</Text>
                 </IslePressable>
-                <IslePressable haptic onPress={() => onPanelChange(null)} style={{ minHeight: 30, borderRadius: 15, paddingHorizontal: 10, justifyContent: 'center', backgroundColor: colors.text }}>
+                <IslePressable haptic onPress={() => onPanelChange(null)} style={{ minHeight: 44, borderRadius: 22, paddingHorizontal: 12, justifyContent: 'center', backgroundColor: colors.text }}>
                   <Text style={{ color: colors.surface, fontSize: 11, fontWeight: '900' }}>{t('common.done')}</Text>
                 </IslePressable>
               </View>
@@ -1611,7 +1660,7 @@ function ComposerToolButton({ label, active, children, onPress }: { label: strin
       haptic
       onPress={onPress}
       accessibilityLabel={label}
-      style={{ minHeight: 32, borderRadius: 16, paddingHorizontal: 10, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6, backgroundColor: active ? colors.mintSoft : colors.material.chrome, borderWidth: 1, borderColor: active ? colors.primary : colors.border }}
+      style={{ minHeight: 44, borderRadius: 22, paddingHorizontal: 12, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6, backgroundColor: active ? colors.mintSoft : colors.material.chrome, borderWidth: 1, borderColor: active ? colors.primary : colors.border }}
     >
       {children}
       <Text numberOfLines={1} style={{ color: active ? colors.primary : colors.textSecondary, fontSize: 11, fontWeight: '900' }}>{label}</Text>
@@ -1647,7 +1696,7 @@ function StreamingIntentSheet({
               haptic
               onPress={onCancel}
               accessibilityLabel={t('chat.cancelStreamingIntent')}
-              style={{ width: 34, height: 34, borderRadius: 17, alignItems: 'center', justifyContent: 'center', backgroundColor: colors.islandRaised }}
+              style={{ width: 44, height: 44, borderRadius: 22, alignItems: 'center', justifyContent: 'center', backgroundColor: colors.islandRaised }}
             >
               <X color={colors.textTertiary} size={16} strokeWidth={2.1} />
             </IslePressable>
@@ -2003,9 +2052,9 @@ function QuickStartAction({ label, muted = false, onPress }: { label: string; mu
       haptic
       onPress={onPress}
       style={{
-        minHeight: 36,
-        borderRadius: 18,
-        paddingHorizontal: 13,
+        minHeight: 44,
+        borderRadius: 22,
+        paddingHorizontal: 15,
         alignItems: 'center',
         justifyContent: 'center',
         backgroundColor: muted ? colors.islandRaised : colors.text,
@@ -2023,13 +2072,17 @@ function getMessageActivityLabel(message: Message, t: TFunction): string {
   return getActiveTraceTitle(traces, message.status) || messageActivityStatusLabel(message, t)
 }
 
-function getPetRagActivity(message: Message | undefined, ragProfile?: RagProfile): 'idle' | 'retrieving' | 'deep' | 'fallback' | 'compressing' | 'flare' {
+function getPetRagActivity(message: Message | undefined, ragProfile?: RagProfile): 'idle' | 'retrieving' | 'deep' | 'fallback' | 'compressing' | 'flare' | 'memory' | 'graph' | 'citation' | 'indexing' {
   const activeTrace = findPetTrace(message, (trace) => trace.type === 'retrieval' || trace.type === 'knowledge' || trace.type === 'memory')
   if (activeTrace) {
     if (traceMetadataMatches(activeTrace, /flare|second-pass|补检索/i)) return 'flare'
     if (traceMetadataMatches(activeTrace, /compress|llmlingua|压缩/i)) return 'compressing'
     if (traceMetadataMatches(activeTrace, /fallback|degrad|降级|skipped|unavailable/i) || activeTrace.status === 'error' || activeTrace.status === 'skipped') return 'fallback'
-    if (traceMetadataMatches(activeTrace, /raptor|graph|colbert|hyde|rewrite|deep|多跳/i)) return 'deep'
+    if (activeTrace.type === 'memory' || traceMetadataMatches(activeTrace, /memory|remember|recall|long-term|长期记忆|记忆/i)) return 'memory'
+    if (traceMetadataMatches(activeTrace, /graph|raptor|map|cluster|relationship|entity|多跳|图谱/i)) return 'graph'
+    if (traceMetadataMatches(activeTrace, /citation|source|reference|verify|evidence|引用|来源|证据/i)) return 'citation'
+    if (traceMetadataMatches(activeTrace, /index|embedding|chunk|ingest|vector|索引|嵌入|分块/i)) return 'indexing'
+    if (traceMetadataMatches(activeTrace, /colbert|hyde|rewrite|deep/i)) return 'deep'
     return 'retrieving'
   }
   if ((message?.status === 'streaming' || message?.status === 'sending') && ragProfile === 'deep') return 'deep'
@@ -2224,9 +2277,9 @@ function BannerAction({ label, compact = false, disabled = false, onPress }: { l
       disabled={disabled}
       onPress={onPress}
       style={{
-        minHeight: compact ? 30 : 34,
-        borderRadius: compact ? 15 : 17,
-        paddingHorizontal: compact ? 10 : 12,
+        minHeight: 44,
+        borderRadius: 22,
+        paddingHorizontal: compact ? 12 : 14,
         alignItems: 'center',
         justifyContent: 'center',
         backgroundColor: colors.islandRaised,
@@ -2244,11 +2297,16 @@ function formatTokenLimit(value: number): string {
   return String(value)
 }
 
+function formatModelContextLimit(config: ReturnType<typeof getModelConfig>, t: TFunction): string {
+  const value = formatTokenLimit(config.contextWindow)
+  return config.source === 'inferred' ? t('chat.contextUnknownSafeBudget', { value }) : value
+}
+
 function formatHeaderMeta(conversation: Conversation, provider: AIProvider | undefined, metrics: ReturnType<typeof localDataStore.getConversationMetrics>, t: TFunction): string {
   if (conversation.providerId === 'local-setup') return t('chat.localNoNetwork')
   const config = getModelConfig(conversation.model, provider?.type, provider?.modelConfigs)
   const parts = [
-    t('chat.contextMeta', { value: formatTokenLimit(config.contextWindow) }),
+    t('chat.contextMeta', { value: formatModelContextLimit(config, t) }),
     t('chat.outputMeta', { value: formatTokenLimit(conversation.maxTokens || config.defaultMaxTokens) }),
     metrics.totalTokens ? t('chat.conversationTokenMeta', { value: formatTokenLimit(metrics.totalTokens), estimated: metrics.estimated ? ` ${t('chat.estimated')}` : '' }) : '',
     metrics.durationMs ? t('chat.durationMeta', { value: formatDuration(metrics.durationMs) }) : '',

@@ -1,4 +1,5 @@
-import type { AIProvider, ProviderCapabilities, ProviderPresetId, ProviderType } from '@/types'
+import type { AIProvider, ProviderCapabilities, ProviderCredentialMode, ProviderPresetId, ProviderRegion, ProviderType, ProviderWireProtocol } from '@/types'
+import { detectProviderCredentialMode, getXiaomiMimoOfficialBaseUrl } from '@/types'
 import { st } from '@/i18n/service'
 
 export interface ProviderPreset {
@@ -482,6 +483,10 @@ function parseProviderImportChunk(chunk: string, index: number, warnings: string
   ].join('\n')
   const presetId = detectProviderPreset({ baseUrl, name, apiKey: keysText }).presetId
   const preset = getProviderPreset(presetId)
+  const isMimo = presetId === 'xiaomi-mimo'
+  const credentialMode = isMimo ? inferXiaomiMimoCredentialMode(keysText, baseUrl) : undefined
+  const tokenPlanRegion = isMimo ? inferXiaomiMimoRegion(baseUrl) : undefined
+  const wireProtocol = isMimo ? inferXiaomiMimoWireProtocol(baseUrl) : undefined
   const models = parseModelList(modelsText)
   const credentialGroups = parseCredentialGroups(keysText)
 
@@ -497,7 +502,10 @@ function parseProviderImportChunk(chunk: string, index: number, warnings: string
     detectionStatus: 'detected',
     type: preset.type,
     name: name || preset.name,
-    baseUrl: baseUrl?.trim() || preset.baseUrl,
+    baseUrl: baseUrl?.trim() || (isMimo ? getXiaomiMimoOfficialBaseUrl(credentialMode, tokenPlanRegion, wireProtocol) : preset.baseUrl),
+    credentialMode,
+    tokenPlanRegion,
+    wireProtocol,
     apiKey: '',
     credentialGroups,
     models,
@@ -506,6 +514,21 @@ function parseProviderImportChunk(chunk: string, index: number, warnings: string
 
   if (!credentialGroups.length) warnings.push(st('providerRegistry.noTokens', { name: provider.name }))
   return provider
+}
+
+function inferXiaomiMimoCredentialMode(apiKeyText: string, baseUrl?: string): ProviderCredentialMode {
+  return detectProviderCredentialMode(apiKeyText) ?? (baseUrl?.includes('api.xiaomimimo.com') ? 'payg' : 'token-plan')
+}
+
+function inferXiaomiMimoRegion(baseUrl?: string): ProviderRegion {
+  const normalized = baseUrl?.toLowerCase() ?? ''
+  if (normalized.includes('token-plan-sgp.')) return 'sgp'
+  if (normalized.includes('token-plan-ams.')) return 'ams'
+  return 'cn'
+}
+
+function inferXiaomiMimoWireProtocol(baseUrl?: string): ProviderWireProtocol {
+  return /\/anthropic(?:\/v1)?(?:\/|$)/i.test(baseUrl ?? '') ? 'anthropic-compatible' : 'openai-compatible'
 }
 
 function readImportFields(chunk: string): Map<string, string[]> {
@@ -561,14 +584,15 @@ function extractLooseBaseUrl(chunk: string): string | undefined {
 }
 
 function extractLooseKeys(chunk: string): string[] {
-  const matches = chunk.match(/(?:sk|ak|rk|pk|key|token)-[A-Za-z0-9._:-]+|[A-Za-z0-9_-]{24,}/g) ?? []
+  const textWithoutUrls = chunk.replace(/https?:\/\/[^\s,，;；]+/gi, ' ')
+  const matches = textWithoutUrls.match(/(?:sk|tp|ak|rk|pk|key|token)-[A-Za-z0-9._:-]+|[A-Za-z0-9_-]{24,}/g) ?? []
   return matches.filter(looksLikeApiKey)
 }
 
 function looksLikeApiKey(value: string): boolean {
   const trimmed = value.trim()
   if (/^https?:\/\//i.test(trimmed)) return false
-  return /^(sk|ak|rk|pk|key|token)-/i.test(trimmed) || /^[A-Za-z0-9_-]{24,}$/.test(trimmed)
+  return /^(sk|tp|ak|rk|pk|key|token)-/i.test(trimmed) || /^[A-Za-z0-9_-]{24,}$/.test(trimmed)
 }
 
 function parseModelList(value: string | undefined): string[] {

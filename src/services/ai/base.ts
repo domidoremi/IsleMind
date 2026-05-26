@@ -166,6 +166,14 @@ export function buildOpenAIResponsesBodyForTest(req: ChatRequest) {
   return buildOpenAIResponsesBody(req)
 }
 
+export function getAPIEndpointForTest(provider: AIProvider) {
+  return getAPIEndpoint(provider)
+}
+
+export function parseProviderStreamChunkForTest(chunk: string, providerType: ProviderType) {
+  return parseStreamChunk(chunk, providerType)
+}
+
 export function parseAnthropicModelsForTest(models: AnthropicModelListItem[]): AIModel[] {
   return mapAnthropicModels({ data: models })
 }
@@ -563,7 +571,7 @@ function getAPIEndpoint(provider: AIProvider): string {
       return `${normalizeBaseUrl(defaultOpenAICompatibleBaseUrl(provider))}/chat/completions`
     case 'xiaomi-mimo':
       return provider.wireProtocol === 'anthropic-compatible'
-        ? `${normalizeBaseUrl(defaultOpenAICompatibleBaseUrl(provider))}/messages`
+        ? getXiaomiMimoAnthropicMessagesEndpoint(provider)
         : `${normalizeBaseUrl(defaultOpenAICompatibleBaseUrl(provider))}/chat/completions`
     default:
       return ''
@@ -588,6 +596,11 @@ function defaultOpenAICompatibleBaseUrl(provider: AIProvider): string {
     // Fall back to the user-entered value; the caller will surface the network error.
   }
   return baseUrl
+}
+
+function getXiaomiMimoAnthropicMessagesEndpoint(provider: AIProvider): string {
+  const baseUrl = normalizeBaseUrl(defaultOpenAICompatibleBaseUrl(provider))
+  return /\/anthropic$/i.test(baseUrl) ? `${baseUrl}/v1/messages` : `${baseUrl}/messages`
 }
 
 function getGoogleEndpoint(provider: AIProvider, model: string, stream: boolean): string {
@@ -664,14 +677,23 @@ function parseStreamChunk(chunk: string, providerType: ProviderType): ParsedStre
   const traces: ProcessTrace[] = []
   let text = ''
   let usage: MessageUsage | undefined
+  let sawDataLine = false
   for (const line of chunk.split('\n')) {
     if (!line.startsWith('data: ') || line === 'data: [DONE]') continue
+    sawDataLine = true
     try {
       const json = JSON.parse(line.slice(6))
       const parsed = parseProviderStreamEvent(json, providerType)
       text += parsed.text
       traces.push(...parsed.traces)
       usage = parsed.usage ?? usage
+    } catch {}
+  }
+  const trimmed = chunk.trim()
+  if (!sawDataLine && trimmed.startsWith('{')) {
+    try {
+      const parsed = parseProviderStreamEvent(JSON.parse(trimmed), providerType)
+      return { text: parsed.text, traces: dedupeTraces(parsed.traces), usage: parsed.usage }
     } catch {}
   }
   return { text, traces: dedupeTraces(traces), usage }
@@ -682,11 +704,9 @@ function parseProviderStreamEvent(json: any, providerType: ProviderType): Parsed
     case 'openai':
     case 'openai-compatible':
     case 'xiaomi-mimo': {
-      let text = ''
+      let text = isDoneEvent(json.type) ? '' : extractOpenAIText(json)
       const traces: ProcessTrace[] = []
       const delta = json.choices?.[0]?.delta
-      text += stringValue(delta?.content)
-      text += stringValue(json.choices?.[0]?.message?.content)
       if (json.type === 'response.output_text.delta' || json.type === 'response.refusal.delta') {
         text += stringValue(json.delta)
       }
@@ -873,7 +893,7 @@ function createProviderTrace(
 function sanitizeTraceContent(content: string): string | undefined {
   const trimmed = content.trim()
   if (!trimmed) return undefined
-  return trimmed.length > 1200 ? `${trimmed.slice(0, 1200)}...` : trimmed
+  return trimmed.length > 760 ? `${trimmed.slice(0, 760)}...` : trimmed
 }
 
 function stableTraceId(json: any, fallback: string): string {
@@ -907,7 +927,11 @@ function isDoneEvent(type: unknown): boolean {
 function summarizeToolEvent(value: unknown): string {
   if (!value || typeof value !== 'object') return ''
   const item = value as Record<string, unknown>
-  const name = stringValue(item.name) || stringValue((item.function as Record<string, unknown> | undefined)?.name)
+  const name =
+    stringValue(item.name) ||
+    stringValue((item.function as Record<string, unknown> | undefined)?.name) ||
+    stringValue((item.tool_call as Record<string, unknown> | undefined)?.name) ||
+    stringValue((item.item as Record<string, unknown> | undefined)?.name)
   const input = item.input ?? item.arguments ?? item.args ?? (item.function as Record<string, unknown> | undefined)?.arguments ?? item.delta ?? item
   const inputText = typeof input === 'string' ? input : safeJsonPreview(input)
   return [name ? st('providerTrace.toolNameLine', { name }) : '', inputText ? st('providerTrace.toolArgsLine', { input: inputText }) : ''].filter(Boolean).join('\n')
@@ -916,7 +940,7 @@ function summarizeToolEvent(value: unknown): string {
 function safeJsonPreview(value: unknown): string {
   try {
     const raw = JSON.stringify(value)
-    return raw.length > 800 ? `${raw.slice(0, 800)}...` : raw
+    return raw.length > 360 ? `${raw.slice(0, 360)}...` : raw
   } catch {
     return ''
   }
@@ -924,6 +948,36 @@ function safeJsonPreview(value: unknown): string {
 
 function stringValue(value: unknown): string {
   return typeof value === 'string' ? value : ''
+}
+
+function extractOpenAIText(json: any): string {
+  return [
+    stringValue(json?.output_text),
+    stringValue(json?.choices?.[0]?.delta?.content),
+    stringValue(json?.choices?.[0]?.message?.content),
+    extractOpenAIOutputText(json?.output),
+  ].filter(Boolean).join('')
+}
+
+function extractOpenAIOutputText(output: unknown): string {
+  if (!Array.isArray(output)) return ''
+  const parts: string[] = []
+  for (const item of output) {
+    if (!item || typeof item !== 'object') continue
+    const value = item as Record<string, unknown>
+    parts.push(stringValue(value.text))
+    const content = value.content
+    if (typeof content === 'string') {
+      parts.push(content)
+    } else if (Array.isArray(content)) {
+      for (const part of content) {
+        if (!part || typeof part !== 'object') continue
+        const contentPart = part as Record<string, unknown>
+        parts.push(stringValue(contentPart.text))
+      }
+    }
+  }
+  return parts.filter(Boolean).join('')
 }
 
 function splitSseBuffer(buffer: string): { events: string[]; remainder: string } {
@@ -978,10 +1032,11 @@ function parseChatCompletionJson(json: any, req: ChatRequest): ChatCompletionRes
   const providerType = getWireProviderType(req.provider)
   switch (providerType) {
     case 'openai':
+      const openAIText = extractOpenAIText(json)
       return {
-        text: json.output_text ?? json.choices?.[0]?.message?.content ?? '',
+        text: openAIText,
         usage: extractUsage(json, providerType),
-        citations: extractCitationsFromText(json.output_text ?? '', req.retrievalSources),
+        citations: extractCitationsFromText(openAIText, req.retrievalSources),
         traces: extractTracesFromJson(json, providerType),
       }
     case 'anthropic':
@@ -1000,10 +1055,11 @@ function parseChatCompletionJson(json: any, req: ChatRequest): ChatCompletionRes
       }
     case 'openai-compatible':
     case 'xiaomi-mimo':
+      const compatibleText = extractOpenAIText(json)
       return {
-        text: json.choices?.[0]?.message?.content ?? '',
+        text: compatibleText,
         usage: extractUsage(json, 'openai-compatible'),
-        citations: extractCitationsFromText('', req.retrievalSources),
+        citations: extractCitationsFromText(compatibleText, req.retrievalSources),
         traces: extractTracesFromJson(json, providerType),
       }
   }
@@ -1639,14 +1695,7 @@ async function fetchOpenAICompatibleModels(provider: AIProvider): Promise<AIMode
 }
 
 async function fetchXiaomiMimoModels(provider: AIProvider): Promise<AIModel[]> {
-  try {
-    const models = await fetchOpenAICompatibleModels(getXiaomiMimoModelDiscoveryProvider(provider))
-    if (models.length) return models
-  } catch {
-    // MiMo documents the chat models in the API schema; some accounts or clusters
-    // may not expose /models. In that case we keep an official built-in list.
-  }
-  return sortModelConfigs(provider.models.map((id) => getModelConfig(id, 'xiaomi-mimo', provider.modelConfigs)), 'xiaomi-mimo')
+  return fetchOpenAICompatibleModels(getXiaomiMimoModelDiscoveryProvider(provider))
 }
 
 function getXiaomiMimoModelDiscoveryProvider(provider: AIProvider): AIProvider {
