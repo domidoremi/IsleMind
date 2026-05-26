@@ -320,7 +320,7 @@ export function Composer({
             </IslePressable>
           </>
         ) : null}
-        <View style={{ flex: 1, minHeight: 42, justifyContent: 'center' }}>
+        <View style={{ flex: 1, minHeight: 44, justifyContent: 'center' }}>
           {streaming ? <StreamingStatusInline label={activityLabel || t('chat.generating')} /> : null}
           <TextInput
             value={content}
@@ -349,7 +349,7 @@ export function Composer({
             style={{
               flex: 1,
               width: '100%',
-              minHeight: streaming ? 30 : 42,
+              minHeight: 44,
               maxHeight: 120,
               color: colors.text,
               fontSize: 15,
@@ -445,7 +445,7 @@ function ComposerPickRow({
     <IslePressable
       haptic
       onPress={onPress}
-      style={{ minHeight: 42, borderRadius: 17, paddingHorizontal: 10, flexDirection: 'row', alignItems: 'center', gap: 9, backgroundColor: colors.islandRaised }}
+      style={{ minHeight: 44, borderRadius: 18, paddingHorizontal: 10, flexDirection: 'row', alignItems: 'center', gap: 9, backgroundColor: colors.islandRaised }}
     >
       <View style={{ width: 24, height: 24, borderRadius: 12, alignItems: 'center', justifyContent: 'center', backgroundColor: colors.mintSoft }}>
         {icon}
@@ -519,9 +519,9 @@ function AttachmentChip({ label, children, onPress }: IconButtonProps) {
       accessibilityLabel={label}
       hitSlop={8}
       style={{
-        minHeight: 34,
-        paddingHorizontal: 11,
-        borderRadius: 17,
+        minHeight: 44,
+        paddingHorizontal: 12,
+        borderRadius: 22,
         flexDirection: 'row',
         alignItems: 'center',
         gap: 6,

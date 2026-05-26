@@ -9,6 +9,10 @@ const originalResolve = Module._resolveFilename
 const originalLoad = Module._load
 const memoryStorage = new Map()
 const secureStorage = new Map()
+const localFileFixtures = new Map()
+const localDownloadFixtures = new Map()
+const localFileReadRequests = []
+const localFileOperations = []
 
 global.__DEV__ = false
 
@@ -54,11 +58,65 @@ Module._load = function loadWithMocks(request, parent, isMain) {
   if (request === 'expo-file-system/legacy' || request === 'expo-file-system') {
     return {
       EncodingType: { UTF8: 'utf8', Base64: 'base64' },
-      getInfoAsync: async () => ({ exists: false, uri: 'file:///tmp/', isDirectory: false }),
-      makeDirectoryAsync: async () => undefined,
-      deleteAsync: async () => undefined,
+      getInfoAsync: async (uri) => {
+        const fixture = localFileFixtures.get(uri)
+        if (fixture) {
+          return { exists: true, uri, isDirectory: false, size: fixture.length, modificationTime: 0 }
+        }
+        if ([...localFileFixtures.keys()].some((key) => key.startsWith(uri))) {
+          return { exists: true, uri, isDirectory: true, size: 0, modificationTime: 0 }
+        }
+        return { exists: false, uri: uri ?? 'file:///tmp/', isDirectory: false }
+      },
+      makeDirectoryAsync: async (uri) => {
+        localFileOperations.push({ type: 'mkdir', uri })
+      },
+      deleteAsync: async (uri) => {
+        localFileOperations.push({ type: 'delete', uri })
+        localFileFixtures.delete(uri)
+        for (const key of [...localFileFixtures.keys()]) {
+          if (key.startsWith(uri)) localFileFixtures.delete(key)
+        }
+      },
       downloadAsync: async (_url, uri) => ({ status: 200, uri, headers: {}, mimeType: null }),
-      readAsStringAsync: async () => '',
+      createDownloadResumable: (url, uri, _options, onProgress) => ({
+        downloadAsync: async () => {
+          const fixture = localDownloadFixtures.get(url)
+          const status = fixture?.status ?? 404
+          const body = fixture?.body ?? Buffer.alloc(0)
+          if (status >= 200 && status < 300) {
+            onProgress?.({ totalBytesWritten: Math.ceil(body.length / 2), totalBytesExpectedToWrite: body.length })
+            localFileFixtures.set(uri, body)
+            onProgress?.({ totalBytesWritten: body.length, totalBytesExpectedToWrite: body.length })
+          }
+          localFileOperations.push({ type: 'download', url, uri, status, bytes: body.length })
+          return { status, uri, headers: {}, mimeType: null }
+        },
+      }),
+      readAsStringAsync: async (uri, options = {}) => {
+        const fixture = localFileFixtures.get(uri)
+        if (!fixture) return ''
+        const position = options.position ?? 0
+        const length = options.length ?? fixture.length - position
+        const chunk = fixture.subarray(position, Math.min(fixture.length, position + length))
+        localFileReadRequests.push({ uri, position, length, actualLength: chunk.length, encoding: options.encoding })
+        return options.encoding === 'base64' ? chunk.toString('base64') : chunk.toString('utf8')
+      },
+      moveAsync: async ({ from, to }) => {
+        localFileOperations.push({ type: 'move', from, to })
+        const exact = localFileFixtures.get(from)
+        if (exact) {
+          localFileFixtures.set(to, exact)
+          localFileFixtures.delete(from)
+          return
+        }
+        for (const key of [...localFileFixtures.keys()]) {
+          if (key.startsWith(from)) {
+            localFileFixtures.set(`${to}${key.slice(from.length)}`, localFileFixtures.get(key))
+            localFileFixtures.delete(key)
+          }
+        }
+      },
       writeAsStringAsync: async () => undefined,
       documentDirectory: 'file:///tmp/',
       cacheDirectory: 'file:///tmp/',
@@ -123,6 +181,9 @@ const { packChatMessages } = require('../src/services/contextPacker.ts')
 const {
   DEFAULT_MODELS,
   getModelConfig,
+  getProviderConfigIssue,
+  getProviderModels,
+  getXiaomiMimoOfficialBaseUrl,
   mergeModelConfig,
 } = require('../src/types/index.ts')
 const {
@@ -131,7 +192,9 @@ const {
   buildOpenAIBodyForTest,
   buildOpenAIResponsesBodyForTest,
   formatProviderHttpErrorForTest,
+  getAPIEndpointForTest,
   parseAnthropicModelsForTest,
+  parseProviderStreamChunkForTest,
 } = require('../src/services/ai/base.ts')
 const {
   getBingCompatibleEndpoint,
@@ -173,9 +236,13 @@ const {
 const { runRagGoldEvaluation } = require('../src/services/ragEvaluation.ts')
 const {
   LOCAL_EMBEDDING_MODELS,
+  downloadLocalEmbeddingModel,
   formatModelBytes,
   listLocalEmbeddingModelViews,
   localModelCacheKey,
+  sha256BytesForTest,
+  sha256ChunksForTest,
+  verifyLocalEmbeddingModel,
 } = require('../src/services/localEmbeddingModels.ts')
 const { deriveHomePetState } = require('../src/components/mascot/petState.ts')
 const modelCatalog = require('../assets/models/catalog.json')
@@ -187,7 +254,29 @@ const FAKE_KEY_C = 'token-fake-gamma-1234567890'
 const FAKE_KEY_D = 'token-fake-delta-1234567890'
 const FAKE_KEY_E = 'token-fake-epsilon-1234567890'
 const FAKE_KEY_F = 'token-fake-zeta-1234567890'
+const FAKE_MIMO_TP_KEY = 'tp-test-token-plan-fake-1234567890'
 const API_KEY_FIELD = 'api' + 'Key'
+
+function localModelFixturePath(modelId, filePath) {
+  return path.join(root, 'assets', 'models', modelId, ...filePath.split('/'))
+}
+
+function localModelDownloadUrl(model, filePath) {
+  return `${model.downloadBaseUrl.replace(/\/+$/, '')}/${filePath.replace(/^\/+/, '')}`
+}
+
+function localModelMirrorUrl(model, mirrorBaseUrl, filePath) {
+  const official = new URL(model.downloadBaseUrl)
+  const officialPath = official.pathname.replace(/^\/+|\/+$/g, '')
+  return `${mirrorBaseUrl.replace(/\/+$/, '')}/${officialPath}/${filePath.replace(/^\/+/, '')}`
+}
+
+function resetLocalModelFileMocks() {
+  localFileFixtures.clear()
+  localDownloadFixtures.clear()
+  localFileReadRequests.length = 0
+  localFileOperations.length = 0
+}
 
 async function run() {
   assert.equal(
@@ -258,6 +347,23 @@ ${FAKE_KEY_D}
   assert.equal(tableImported.providers[0].baseUrl, 'https://csv.example/v1')
   assert.deepEqual(tableImported.providers[0].models, ['csv-model'])
 
+  const mimoOpenAiImported = parseProviderImportText(`Xiaomi MiMo, https://token-plan-cn.xiaomimimo.com/v1, ${FAKE_MIMO_TP_KEY}`)
+  assert.equal(mimoOpenAiImported.providers.length, 1, 'imports MiMo Token Plan OpenAI-compatible provider')
+  assert.equal(mimoOpenAiImported.providers[0].type, 'xiaomi-mimo', 'MiMo OpenAI-compatible import detects provider type')
+  assert.equal(mimoOpenAiImported.providers[0].credentialMode, 'token-plan', 'MiMo OpenAI-compatible import detects Token Plan key mode')
+  assert.equal(mimoOpenAiImported.providers[0].tokenPlanRegion, 'cn', 'MiMo OpenAI-compatible import detects CN region')
+  assert.equal(mimoOpenAiImported.providers[0].wireProtocol, 'openai-compatible', 'MiMo /v1 import selects OpenAI-compatible protocol')
+  assert.equal(mimoOpenAiImported.providers[0].credentialGroups.length, 1, 'MiMo OpenAI-compatible import keeps tp- key')
+
+  const mimoAnthropicImported = parseProviderImportText(`Xiaomi MiMo Anthropic, https://token-plan-cn.xiaomimimo.com/anthropic, ${FAKE_MIMO_TP_KEY}`)
+  assert.equal(mimoAnthropicImported.providers.length, 1, 'imports MiMo Token Plan Anthropic-compatible provider')
+  assert.equal(mimoAnthropicImported.providers[0].type, 'xiaomi-mimo', 'MiMo Anthropic-compatible import detects provider type')
+  assert.equal(mimoAnthropicImported.providers[0].baseUrl, 'https://token-plan-cn.xiaomimimo.com/anthropic', 'MiMo Anthropic-compatible import preserves user-facing /anthropic base URL')
+  assert.equal(mimoAnthropicImported.providers[0].credentialMode, 'token-plan', 'MiMo Anthropic-compatible import detects Token Plan key mode')
+  assert.equal(mimoAnthropicImported.providers[0].tokenPlanRegion, 'cn', 'MiMo Anthropic-compatible import detects CN region')
+  assert.equal(mimoAnthropicImported.providers[0].wireProtocol, 'anthropic-compatible', 'MiMo /anthropic import selects Anthropic-compatible protocol')
+  assert.equal(mimoAnthropicImported.providers[0].credentialGroups.length, 1, 'MiMo Anthropic-compatible import keeps tp- key')
+
   const probeCalls = []
   const probed = await probeProviderPreset(
     { baseUrl: 'https://unknown.example/v1', [API_KEY_FIELD]: 'token-probe-fake' },
@@ -304,6 +410,7 @@ ${FAKE_KEY_D}
       credentialGroups: groups.map((group, index) => ({
         ...group,
         [API_KEY_FIELD]: `token-test-${index}`,
+        lastModelSyncStatus: 'ok',
         availableModels: index === 0 ? ['gpt-4o-mini'] : ['claude-3-5-sonnet-20241022'],
       })),
     },
@@ -446,8 +553,9 @@ ${FAKE_KEY_D}
       now: () => 2000,
     }
   )
-  assert.deepEqual(failedSynced.models, [], 'failed credential sync clears stale model lists')
+  assert.deepEqual(failedSynced.models, ['stale-default-model'], 'failed credential sync keeps existing model catalog without marking it usable')
   assert.equal(failedSynced.credentialGroups[0].lastModelSyncStatus, 'bad')
+  assert.deepEqual(getProviderAvailableModels(failedSynced), [], 'failed credential sync does not expose stale models as account-available')
   const formatted500 = formatProviderHttpErrorForTest(
     500,
     JSON.stringify({ error: { type: 'upstream_error', message: 'No auth credentials found', request_id: 'req_123' } }),
@@ -561,6 +669,60 @@ ${FAKE_KEY_D}
   const inferredConfig = getModelConfig('unknown-compatible-model', 'openai-compatible')
   assert.ok(inferredConfig.defaultMaxTokens <= inferredConfig.maxOutputTokens, 'inferred model defaults fit output limit')
   assert.ok(DEFAULT_MODELS.every((model) => model.defaultMaxTokens <= model.maxOutputTokens && model.maxOutputTokens <= model.contextWindow), 'built-in model token limits are internally consistent')
+  const mimoAnthropicBaseUrl = getXiaomiMimoOfficialBaseUrl('token-plan', 'cn', 'anthropic-compatible')
+  assert.equal(mimoAnthropicBaseUrl, 'https://token-plan-cn.xiaomimimo.com/anthropic', 'MiMo Token Plan Anthropic preset matches the documented user-facing base URL')
+  const mimoAnthropicProvider = {
+    id: 'mimo-cn-anthropic',
+    type: 'xiaomi-mimo',
+    name: 'Xiaomi MiMo',
+    [API_KEY_FIELD]: 'tp-test-fake',
+    baseUrl: mimoAnthropicBaseUrl,
+    credentialMode: 'token-plan',
+    tokenPlanRegion: 'cn',
+    wireProtocol: 'anthropic-compatible',
+    models: ['mimo-v2.5'],
+    enabled: true,
+  }
+  assert.equal(getProviderConfigIssue(mimoAnthropicProvider, 'tp-test-fake'), null, 'MiMo Anthropic /anthropic base URL is accepted in settings validation')
+  assert.equal(
+    getAPIEndpointForTest(mimoAnthropicProvider),
+    'https://token-plan-cn.xiaomimimo.com/anthropic/v1/messages',
+    'MiMo Anthropic chat requests add /v1/messages at runtime'
+  )
+  assert.equal(
+    getAPIEndpointForTest({ ...mimoAnthropicProvider, baseUrl: 'https://token-plan-cn.xiaomimimo.com/anthropic/v1' }),
+    'https://token-plan-cn.xiaomimimo.com/anthropic/v1/messages',
+    'legacy MiMo Anthropic /anthropic/v1 base URLs remain compatible'
+  )
+  const xiaomiMimoModelIds = getProviderModels('xiaomi-mimo').map((model) => model.id)
+  assert.deepEqual(xiaomiMimoModelIds, [
+    'mimo-v2.5-pro',
+    'mimo-v2.5',
+    'mimo-v2-pro',
+    'mimo-v2-omni',
+    'mimo-v2-flash',
+    'mimo-v2.5-tts',
+    'mimo-v2.5-tts-voiceclone',
+    'mimo-v2.5-tts-voicedesign',
+    'mimo-v2-tts',
+  ], 'MiMo built-in catalog includes every currently documented model')
+  assert.equal(getModelConfig('mimo-v2.5-tts', 'xiaomi-mimo').chatCompatible, false, 'MiMo TTS models are cataloged but not chat-compatible')
+  assert.deepEqual(
+    getProviderAvailableModels({
+      ...mimoAnthropicProvider,
+      models: ['mimo-v2.5-pro', 'mimo-v2.5-tts', 'mimo-v2.5-tts-voiceclone'],
+      modelConfigs: ['mimo-v2.5-pro', 'mimo-v2.5-tts', 'mimo-v2.5-tts-voiceclone'].map((id) => getModelConfig(id, 'xiaomi-mimo')),
+      credentialGroups: [{
+        id: 'default',
+        label: 'default',
+        enabled: true,
+        lastModelSyncStatus: 'ok',
+        availableModels: ['mimo-v2.5-pro', 'mimo-v2.5-tts', 'mimo-v2.5-tts-voiceclone'],
+      }],
+    }),
+    ['mimo-v2.5-pro'],
+    'chat model availability excludes MiMo TTS models'
+  )
   assert.equal(getModelConfig('gpt-5.5', 'openai').contextWindow, 1050000, 'GPT-5.5 context matches verified OpenAI docs')
   assert.equal(getModelConfig('gpt-5.5', 'openai').maxOutputTokens, 128000, 'GPT-5.5 output limit matches verified OpenAI docs')
   assert.equal(getModelConfig('gpt-5.4', 'openai').contextWindow, 1050000, 'GPT-5.4 context matches verified OpenAI docs')
@@ -589,6 +751,30 @@ ${FAKE_KEY_D}
   })
   assert.equal(openAIResponsesBody.reasoning.effort, 'xhigh', 'OpenAI Responses uses official reasoning.effort values including xhigh')
   assert.ok(openAIResponsesBody.max_output_tokens <= getModelConfig('gpt-5.5', 'openai').maxOutputTokens, 'Responses output tokens are clamped')
+  const responsesJsonChunk = parseProviderStreamChunkForTest(JSON.stringify({
+    id: 'resp_test',
+    object: 'response',
+    status: 'completed',
+    output: [
+      {
+        type: 'message',
+        role: 'assistant',
+        content: [{ type: 'output_text', text: 'Responses JSON text' }],
+      },
+    ],
+    usage: { input_tokens: 3, output_tokens: 4, total_tokens: 7 },
+  }), 'openai')
+  assert.equal(responsesJsonChunk.text, 'Responses JSON text', 'Responses JSON body is parsed when a streaming request receives buffered JSON')
+  assert.equal(responsesJsonChunk.usage.totalTokens, 7, 'Responses JSON body preserves provider usage')
+  const responsesSseChunk = parseProviderStreamChunkForTest([
+    'data: {"type":"response.output_text.delta","delta":"Hello"}',
+    '',
+    'data: {"type":"response.output_text.delta","delta":" world"}',
+    '',
+    'data: {"type":"response.completed","response":{"output":[{"content":[{"type":"output_text","text":"Hello world"}]}]}}',
+    '',
+  ].join('\n'), 'openai')
+  assert.equal(responsesSseChunk.text, 'Hello world', 'Responses SSE delta text is not duplicated by completion events')
   const deepSeekThinkingBody = buildOpenAIBodyForTest({
     provider: {
       id: 'deepseek',
@@ -854,10 +1040,154 @@ ${FAKE_KEY_D}
   )
   assert.equal(formatModelBytes(1024 * 1024), '1.0 MB')
   assert.ok(localModelCacheKey({ localEmbeddingModelId: 'all-MiniLM-L6-v2', localEmbeddingModelSource: 'downloaded' }).includes('downloaded'))
+  const textEncoder = new TextEncoder()
+  assert.equal(
+    sha256BytesForTest(textEncoder.encode('')),
+    'e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855',
+    'local model checksum handles empty files with the JS SHA-256 fallback'
+  )
+  assert.equal(
+    sha256BytesForTest(textEncoder.encode('abc')),
+    'ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad',
+    'local model checksum handles a single SHA-256 block'
+  )
+  assert.equal(
+    sha256BytesForTest(textEncoder.encode('a'.repeat(1000))),
+    '41edece42d63e8d9bf515a9ba6932e1c20cbc9f5a5d134645adb5db1b9737ea3',
+    'local model checksum handles multi-block downloaded files'
+  )
+  assert.equal(
+    sha256ChunksForTest([
+      textEncoder.encode('a'.repeat(13)),
+      textEncoder.encode('a'.repeat(987)),
+    ]),
+    '41edece42d63e8d9bf515a9ba6932e1c20cbc9f5a5d134645adb5db1b9737ea3',
+    'local model checksum handles incremental file chunks'
+  )
+  const miniLm = modelCatalog.models.find((model) => model.id === 'all-MiniLM-L6-v2')
+  resetLocalModelFileMocks()
+  for (const file of miniLm.files) {
+    localFileFixtures.set(
+      `file:///tmp/islemind-models/all-MiniLM-L6-v2/${file.path}`,
+      fs.readFileSync(localModelFixturePath('all-MiniLM-L6-v2', file.path))
+    )
+  }
+  assert.equal(await verifyLocalEmbeddingModel('all-MiniLM-L6-v2', 'downloaded'), true, 'downloaded MiniLM fixture verifies size and SHA-256 from catalog')
+  assert.ok(
+    localFileReadRequests.some((request) => request.uri.endsWith('/onnx/model_quantized.onnx') && request.position > 0),
+    'large local model files are verified through multiple file chunks'
+  )
+  assert.ok(
+    localFileReadRequests.every((request) => request.encoding === 'base64' && request.length <= 1024 * 1024),
+    'local model verification reads bounded base64 chunks'
+  )
+  resetLocalModelFileMocks()
+  memoryStorage.delete('@islemind/local-embedding-models')
+  for (const file of miniLm.files) {
+    localDownloadFixtures.set(
+      localModelDownloadUrl(miniLm, file.path),
+      { status: 200, body: fs.readFileSync(localModelFixturePath(miniLm.id, file.path)) }
+    )
+  }
+  const downloadProgress = []
+  const downloadedMiniLm = await downloadLocalEmbeddingModel(miniLm.id, {
+    onProgress: (event) => downloadProgress.push(event),
+  })
+  assert.equal(downloadedMiniLm.modelId, miniLm.id, 'download flow records the downloaded model id')
+  assert.equal(downloadedMiniLm.source, 'downloaded', 'download flow records downloaded source')
+  assert.equal(downloadedMiniLm.bytes, miniLm.sizeBytes, 'download flow records the verified byte total')
+  assert.deepEqual(downloadedMiniLm.sha256, Object.fromEntries(miniLm.files.map((file) => [file.path, file.sha256])), 'download flow stores catalog SHA-256 values')
+  assert.ok(
+    ['preparing', 'downloading', 'verifying', 'finalizing'].every((stage) => downloadProgress.some((event) => event.stage === stage)),
+    'download flow emits preparing/downloading/verifying/finalizing progress'
+  )
+  assert.equal(downloadProgress.at(-1).percent, 100, 'download flow ends at 100 percent')
+  assert.ok(
+    miniLm.files.every((file) => localFileFixtures.has(`file:///tmp/islemind-models/${miniLm.id}/${file.path}`)),
+    'download flow moves all verified files into the final model directory'
+  )
+  assert.ok(
+    ![...localFileFixtures.keys()].some((uri) => uri.includes(`${miniLm.id}.tmp-`)),
+    'download flow leaves no temporary model files after success'
+  )
+  assert.ok(
+    localFileOperations.some((operation) => operation.type === 'download' && operation.url === localModelDownloadUrl(miniLm, 'onnx/model_quantized.onnx')),
+    'download flow uses the official model file URL'
+  )
+  assert.ok(localFileOperations.some((operation) => operation.type === 'move'), 'download flow atomically moves the temporary directory into place')
+  const downloadedViews = await listLocalEmbeddingModelViews({
+    localEmbeddingModelId: miniLm.id,
+    localEmbeddingModelSource: 'downloaded',
+  })
+  assert.equal(downloadedViews.find((view) => view.model.id === miniLm.id).status, 'enabled', 'successful download appears as enabled when selected')
+
+  resetLocalModelFileMocks()
+  memoryStorage.delete('@islemind/local-embedding-models')
+  const mirrorBaseUrl = 'https://mirror.example/hf'
+  for (const file of miniLm.files) {
+    localDownloadFixtures.set(localModelDownloadUrl(miniLm, file.path), { status: 503, body: Buffer.alloc(0) })
+    localDownloadFixtures.set(
+      localModelMirrorUrl(miniLm, mirrorBaseUrl, file.path),
+      { status: 200, body: fs.readFileSync(localModelFixturePath(miniLm.id, file.path)) }
+    )
+  }
+  const mirrorProgress = []
+  const mirroredMiniLm = await downloadLocalEmbeddingModel(miniLm.id, {
+    mirrorBaseUrl,
+    onProgress: (event) => mirrorProgress.push(event),
+  })
+  assert.equal(mirroredMiniLm.bytes, miniLm.sizeBytes, 'mirror retry verifies the downloaded model')
+  assert.ok(mirrorProgress.some((event) => event.stage === 'retrying'), 'mirror retry emits retrying progress after official failure')
+  assert.ok(
+    localFileOperations.some((operation) => operation.type === 'download' && operation.status === 503),
+    'mirror retry records the official failure before falling back'
+  )
+  assert.ok(
+    localFileOperations.some((operation) => operation.type === 'download' && operation.url === localModelMirrorUrl(miniLm, mirrorBaseUrl, 'config.json')),
+    'mirror retry uses the configured mirror URL shape'
+  )
+
+  resetLocalModelFileMocks()
+  memoryStorage.delete('@islemind/local-embedding-models')
+  for (const file of miniLm.files) {
+    const body = fs.readFileSync(localModelFixturePath(miniLm.id, file.path))
+    localDownloadFixtures.set(localModelDownloadUrl(miniLm, file.path), {
+      status: 200,
+      body: file.path === 'tokenizer.json' ? Buffer.from('bad checksum') : body,
+    })
+  }
+  await assert.rejects(
+    () => downloadLocalEmbeddingModel(miniLm.id),
+    /Downloaded file size mismatch|Downloaded file checksum mismatch/,
+    'download flow rejects corrupted model files'
+  )
+  assert.ok(
+    ![...localFileFixtures.keys()].some((uri) => uri.includes(`${miniLm.id}.tmp-`)),
+    'download failure cleans temporary model files'
+  )
+  assert.ok(
+    !miniLm.files.some((file) => localFileFixtures.has(`file:///tmp/islemind-models/${miniLm.id}/${file.path}`)),
+    'download failure does not publish partial files into the final directory'
+  )
+  assert.ok(
+    localFileOperations.some((operation) => operation.type === 'delete' && operation.uri.includes(`${miniLm.id}.tmp-`)),
+    'download failure deletes the temporary directory'
+  )
+  const failedViews = await listLocalEmbeddingModelViews({
+    localEmbeddingModelId: null,
+    localEmbeddingModelSource: 'none',
+  })
+  assert.equal(failedViews.find((view) => view.model.id === miniLm.id).status, 'verify-failed', 'download failure marks the model as needing attention')
   assert.equal(await createOnnxEmbeddingProvider({ localEmbeddingModelSource: 'none' }), null, 'ONNX provider is absent without bundled or downloaded model')
 
   const petIdle = deriveHomePetState({ reasoningEffort: 'medium' })
   assert.equal(petIdle.animation, 'idle', 'pet is idle without chat activity')
+  const petUnconfigured = deriveHomePetState({ modelStatus: 'unconfigured' })
+  assert.equal(petUnconfigured.reason, 'model_unconfigured', 'missing provider is its own pet state')
+  const petUnavailable = deriveHomePetState({ modelStatus: 'unavailable' })
+  assert.equal(petUnavailable.reason, 'model_unavailable', 'unavailable model is its own pet state')
+  const petModelTesting = deriveHomePetState({ modelStatus: 'testing' })
+  assert.equal(petModelTesting.animation, 'modelTesting', 'model testing uses the testing pet animation')
   const petStreaming = deriveHomePetState({
     reasoningEffort: 'low',
     isStreaming: true,
@@ -865,6 +1195,12 @@ ${FAKE_KEY_D}
   })
   assert.equal(petStreaming.animation, 'running', 'pet works while a reply streams')
   assert.ok(petStreaming.speed < 1, 'low reasoning slows the working pet loop')
+  const petSending = deriveHomePetState({
+    reasoningEffort: 'medium',
+    isStreaming: true,
+    conversation: { messages: [{ role: 'assistant', status: 'sending' }] },
+  })
+  assert.equal(petSending.reason, 'sending_prompt', 'sending messages use a dedicated pet state')
   const petHighReasoning = deriveHomePetState({
     reasoningEffort: 'high',
     isStreaming: true,
@@ -880,6 +1216,17 @@ ${FAKE_KEY_D}
   assert.equal(petTool.animation, 'toolWorking', 'running tool traces switch pet into tool working animation')
   assert.equal(petTool.atlasId, 'provider', 'tool activity targets the provider atlas')
   assert.equal(petTool.reason, 'tool', 'running tool traces switch pet to tool mood')
+  const petMcpTool = deriveHomePetState({
+    toolActivity: 'mcp',
+    conversation: { messages: [{ role: 'assistant', status: 'streaming', toolCalls: [{ type: 'tool', title: 'MCP lookup', status: 'running' }] }] },
+  })
+  assert.equal(petMcpTool.animation, 'mcpWorking', 'MCP tool activity uses a dedicated pet animation')
+  const petSkillTool = deriveHomePetState({ toolActivity: 'skill' })
+  assert.equal(petSkillTool.reason, 'skill_tool', 'skill activity uses a dedicated pet state')
+  const petAttachmentTool = deriveHomePetState({ toolActivity: 'attachment' })
+  assert.equal(petAttachmentTool.animation, 'attachmentReading', 'attachment activity uses a dedicated pet animation')
+  const petWebSearch = deriveHomePetState({ toolActivity: 'search' })
+  assert.equal(petWebSearch.reason, 'web_search', 'web search activity uses a dedicated pet state')
   const petRetrieval = deriveHomePetState({
     reasoningEffort: 'medium',
     isStreaming: true,
@@ -887,6 +1234,24 @@ ${FAKE_KEY_D}
   })
   assert.equal(petRetrieval.animation, 'retrieving', 'running retrieval traces switch pet to retrieving')
   assert.equal(petRetrieval.atlasId, 'rag', 'retrieval activity targets the RAG atlas')
+  const petDeepRag = deriveHomePetState({ ragActivity: 'deep' })
+  assert.equal(petDeepRag.reason, 'rag_deep', 'deep RAG activity uses a dedicated pet state')
+  const petCompressing = deriveHomePetState({ ragActivity: 'compressing' })
+  assert.equal(petCompressing.animation, 'contextCompressing', 'context compression uses a dedicated pet animation')
+  const petFlare = deriveHomePetState({ ragActivity: 'flare' })
+  assert.equal(petFlare.reason, 'rag_flare', 'second-pass retrieval uses a dedicated pet state')
+  const petMemory = deriveHomePetState({ ragActivity: 'memory' })
+  assert.equal(petMemory.animation, 'memoryLinking', 'memory RAG activity uses a dedicated pet animation')
+  assert.equal(petMemory.reason, 'memory_linking', 'memory RAG activity uses a dedicated pet state')
+  const petGraph = deriveHomePetState({ ragActivity: 'graph' })
+  assert.equal(petGraph.animation, 'graphMapping', 'graph RAG activity uses a dedicated pet animation')
+  assert.equal(petGraph.labelKey, 'pet.a11y.graphMapping', 'graph RAG activity exposes its a11y label')
+  const petCitation = deriveHomePetState({ ragActivity: 'citation' })
+  assert.equal(petCitation.animation, 'citationReview', 'citation RAG activity uses a dedicated pet animation')
+  assert.equal(petCitation.reason, 'citation_review', 'citation RAG activity uses a dedicated pet state')
+  const petIndexing = deriveHomePetState({ ragActivity: 'indexing' })
+  assert.equal(petIndexing.animation, 'knowledgeIndexing', 'indexing RAG activity uses a dedicated pet animation')
+  assert.equal(petIndexing.reason, 'knowledge_indexing', 'indexing RAG activity uses a dedicated pet state')
   const petFallback = deriveHomePetState({
     reasoningEffort: 'medium',
     isStreaming: true,
@@ -896,12 +1261,49 @@ ${FAKE_KEY_D}
   const petProviderSync = deriveHomePetState({ providerActivity: 'syncing' })
   assert.equal(petProviderSync.animation, 'syncingModels', 'provider activation switches pet to model syncing')
   assert.equal(petProviderSync.atlasId, 'provider', 'provider sync targets provider atlas')
-  const petOffline = deriveHomePetState({ modelStatus: 'unavailable' })
-  assert.equal(petOffline.animation, 'offlineWaiting', 'unavailable models switch pet to offline waiting')
+  const petProviderIssue = deriveHomePetState({ providerActivity: 'partialFailure' })
+  assert.equal(petProviderIssue.reason, 'provider_issue', 'provider failures use a dedicated pet state')
+  const petUpdateCheck = deriveHomePetState({ updateActivity: 'checking' })
+  assert.equal(petUpdateCheck.reason, 'update_check', 'update checks use a dedicated pet state')
+  const petSuccess = deriveHomePetState({
+    conversation: { messages: [{ role: 'assistant', status: 'done', timestamp: Date.now() }] },
+  })
+  assert.equal(petSuccess.reason, 'success', 'recent completed replies use the celebration pet state')
   const petError = deriveHomePetState({
     conversation: { messages: [{ role: 'assistant', status: 'error' }] },
   })
   assert.equal(petError.animation, 'warningRecover', 'failed messages switch pet to warning recovery')
+  const petActionStates = [
+    petIdle,
+    petUnconfigured,
+    petUnavailable,
+    petModelTesting,
+    petStreaming,
+    petSending,
+    petHighReasoning,
+    petTool,
+    petMcpTool,
+    petSkillTool,
+    petAttachmentTool,
+    petWebSearch,
+    petRetrieval,
+    petDeepRag,
+    petCompressing,
+    petFlare,
+    petMemory,
+    petGraph,
+    petCitation,
+    petIndexing,
+    petFallback,
+    petProviderSync,
+    petProviderIssue,
+    petUpdateCheck,
+    petSuccess,
+    petError,
+  ]
+  assert.ok(new Set(petActionStates.map((state) => state.reason)).size >= 15, 'pet state derivation covers at least 15 action states')
+  assert.ok(new Set(petActionStates.map((state) => state.animation)).size >= 15, 'pet state derivation reaches at least 15 distinct animations')
+  assert.ok(petActionStates.every((state) => state.labelKey.startsWith('pet.a11y.')), 'every pet action state exposes an a11y label key')
   const islePetJson = JSON.parse(fs.readFileSync(path.join(root, 'assets/pets/isle/pet.json'), 'utf8'))
   assert.equal(islePetJson.id, 'isle', 'Isle manifest uses the Isle pet id')
   assert.equal(islePetJson.displayName, 'Isle', 'Isle manifest uses the Isle display name')
@@ -909,6 +1311,14 @@ ${FAKE_KEY_D}
   assert.equal(islePetJson.atlases.find((atlas) => atlas.id === 'core').available, true, 'Isle core atlas is available')
   assert.equal(islePetJson.atlases.find((atlas) => atlas.id === 'rag').generationStatus, 'pending-imagegen', 'Isle RAG atlas stays pending until imagegen assets are recorded')
   assert.equal(islePetJson.animations.deepThinking.fallbackAnimation, 'review', 'new Isle actions declare safe core fallbacks')
+  assert.ok(Object.keys(islePetJson.animations).length >= 28, 'Isle manifest declares the expanded pet animation set')
+  assert.equal(islePetJson.animations.contextCompressing.fallbackAnimation, 'review', 'context compression declares a safe core fallback')
+  assert.equal(islePetJson.animations.memoryLinking.fallbackAnimation, 'review', 'memory linking declares a safe core fallback')
+  assert.equal(islePetJson.animations.graphMapping.row, 6, 'graph mapping fills the next RAG atlas row')
+  assert.equal(islePetJson.animations.citationReview.fallbackAnimation, 'review', 'citation review declares a safe core fallback')
+  assert.equal(islePetJson.animations.knowledgeIndexing.fallbackAnimation, 'running', 'knowledge indexing declares an active core fallback')
+  assert.equal(islePetJson.animations.webSearching.fallbackAnimation, 'runningRight', 'web searching declares a kinetic core fallback')
+  assert.equal(islePetJson.animations.providerIssue.fallbackAnimation, 'failed', 'provider issues declare a failure core fallback')
 
   const builtin = builtinMcpServer()
   assert.equal(builtin.transport, 'sse')

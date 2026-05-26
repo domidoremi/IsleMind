@@ -1,5 +1,5 @@
-import type { ReactNode } from 'react'
-import { ScrollView, View } from 'react-native'
+import { useEffect, useRef, useState, type ReactNode } from 'react'
+import { findNodeHandle, Keyboard, Platform, ScrollView, TextInput, View } from 'react-native'
 import { router } from 'expo-router'
 import { ChevronLeft } from 'lucide-react-native'
 import { MotiView } from 'moti'
@@ -21,18 +21,66 @@ export function SettingsPageShell({
 }) {
   const { colors } = useAppTheme()
   const { t } = useTranslation()
+  const scrollRef = useRef<ScrollView>(null)
+  const [keyboardHeight, setKeyboardHeight] = useState(0)
+  const androidKeyboardPadding = Platform.OS === 'android' ? keyboardHeight : 0
+
+  function scrollFocusedInputAboveKeyboard() {
+    requestAnimationFrame(() => {
+      requestAnimationFrame(() => {
+        type TextInputState = {
+          currentlyFocusedField?: () => number | null
+          currentlyFocusedInput?: () => unknown
+        }
+        type ScrollResponder = {
+          scrollResponderScrollNativeHandleToKeyboard?: (
+            nodeHandle: number | null,
+            additionalOffset?: number,
+            preventNegativeScrollOffset?: boolean,
+          ) => void
+        }
+        const textInputState = (TextInput as unknown as { State?: TextInputState }).State
+        const focusedInput = textInputState?.currentlyFocusedInput?.()
+        const focusedHandle = typeof focusedInput === 'number'
+          ? focusedInput
+          : focusedInput
+            ? findNodeHandle(focusedInput as Parameters<typeof findNodeHandle>[0])
+            : textInputState?.currentlyFocusedField?.() ?? null
+        if (!focusedHandle) return
+        const responder = (scrollRef.current as unknown as { getScrollResponder?: () => ScrollResponder }).getScrollResponder?.()
+        responder?.scrollResponderScrollNativeHandleToKeyboard?.(focusedHandle, 96, true)
+      })
+    })
+  }
+
+  useEffect(() => {
+    const showSub = Keyboard.addListener(Platform.OS === 'ios' ? 'keyboardWillShow' : 'keyboardDidShow', (event) => {
+      setKeyboardHeight(event.endCoordinates.height)
+      scrollFocusedInputAboveKeyboard()
+      setTimeout(scrollFocusedInputAboveKeyboard, 120)
+    })
+    const hideSub = Keyboard.addListener(Platform.OS === 'ios' ? 'keyboardWillHide' : 'keyboardDidHide', () => {
+      setKeyboardHeight(0)
+    })
+    return () => {
+      showSub.remove()
+      hideSub.remove()
+    }
+  }, [])
+
   return (
     <IsleScreen padded={false}>
       <ScrollView
+        ref={scrollRef}
         keyboardShouldPersistTaps="handled"
         automaticallyAdjustKeyboardInsets
-        contentContainerStyle={{ paddingHorizontal: 16, paddingTop: 8, paddingBottom: 56 }}
+        contentContainerStyle={{ paddingHorizontal: 16, paddingTop: 8, paddingBottom: 56 + androidKeyboardPadding }}
       >
         <IsleHeader
           title={title}
           subtitle={subtitle}
           leading={
-            <IsleIconButton label={t('common.back')} onPress={() => router.replace('/settings')}>
+            <IsleIconButton label={t('common.back')} size="lg" onPress={() => router.replace('/settings')}>
               <ChevronLeft color={colors.text} size={20} strokeWidth={2} />
             </IsleIconButton>
           }

@@ -1,6 +1,9 @@
 import type { Message, ProviderType, ReasoningEffort } from '@/types'
 import { estimateMessageTokens, estimateTextTokens } from '@/services/tokenUsage'
 
+const INPUT_CONTEXT_RATIO = 0.7
+const RECENT_MESSAGE_TARGET = 8
+
 export interface PackChatMessagesInput {
   messages: Pick<Message, 'role' | 'content' | 'responseText' | 'attachments' | 'status'>[]
   contextPrompt?: string
@@ -30,7 +33,7 @@ export interface PackedChatMessages {
 export function packChatMessages(input: PackChatMessagesInput): PackedChatMessages {
   const reasoningReserveTokens = estimateReasoningReserve(input.reasoningEffort, input.providerType, input.model)
   const reservedOutputTokens = input.maxOutputTokens + reasoningReserveTokens
-  const modelBudget = Math.max(512, Math.floor(input.modelContextWindow * 0.82) - reservedOutputTokens)
+  const modelBudget = Math.max(512, Math.floor(input.modelContextWindow * INPUT_CONTEXT_RATIO) - reservedOutputTokens)
   const fixedTokens = estimateTextTokens([input.systemPrompt, input.contextPrompt].filter(Boolean).join('\n\n'))
   const budgetTokens = Math.max(256, modelBudget - fixedTokens)
   const cleanMessages = input.messages
@@ -65,11 +68,15 @@ export function packChatMessages(input: PackChatMessagesInput): PackedChatMessag
   selected = []
   for (let index = cleanMessages.length - 1; index >= 0; index -= 1) {
     const candidate = [cleanMessages[index], ...selected]
-    if (estimateMessageTokens(candidate) > budgetTokens * 0.72 && selected.length >= 2) break
+    const estimatedCandidateTokens = estimateMessageTokens(candidate)
+    if (estimatedCandidateTokens > budgetTokens * 0.72 && selected.length >= RECENT_MESSAGE_TARGET) break
+    if (estimatedCandidateTokens > budgetTokens && selected.length >= 2) break
     selected = candidate
   }
   const trimmed = cleanMessages.slice(0, Math.max(0, cleanMessages.length - selected.length))
-  const summary = summarizeMessages(trimmed)
+  const selectedTokens = estimateMessageTokens(selected)
+  const summaryBudget = Math.max(80, budgetTokens - selectedTokens - estimateTextTokens(input.contextPrompt ?? '') - 24)
+  const summary = summarizeMessages(trimmed, summaryBudget)
   const contextPrompt = [input.contextPrompt, summary ? `历史摘要\n${summary}` : ''].filter(Boolean).join('\n\n')
   estimatedInputTokens = estimateMessageTokens(selected) + estimateTextTokens(contextPrompt)
 
@@ -107,12 +114,24 @@ function toRequestMessage(message: { role: 'user' | 'assistant'; content: string
   return { role: message.role, content: message.content }
 }
 
-function summarizeMessages(messages: { role: 'user' | 'assistant'; content: string }[]): string {
+function summarizeMessages(messages: { role: 'user' | 'assistant'; content: string }[], tokenBudget: number): string {
   if (!messages.length) return ''
   const recent = messages.slice(-8)
-  return recent
+  let summary = recent
     .map((message) => `${message.role === 'user' ? '用户' : '助手'}: ${message.content.replace(/\s+/g, ' ').slice(0, 180)}`)
     .join('\n')
+  while (estimateTextTokens(summary) > tokenBudget && summary.length > 240) {
+    const next = summary
+      .split('\n')
+      .map((line) => line.slice(0, Math.max(60, Math.floor(line.length * 0.72))))
+      .join('\n')
+    if (next.length >= summary.length) break
+    summary = next
+  }
+  if (estimateTextTokens(summary) > tokenBudget) {
+    summary = truncateToTokenBudget(summary, tokenBudget)
+  }
+  return summary
 }
 
 function truncateToTokenBudget(text: string, tokenBudget: number): string {

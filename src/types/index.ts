@@ -615,6 +615,7 @@ export interface AIModel {
   deprecatedReason?: string
   source?: 'built-in' | 'remote' | 'inferred'
   deprecated?: boolean
+  chatCompatible?: boolean
 }
 
 export const DEFAULT_MODELS: AIModel[] = [
@@ -654,11 +655,15 @@ export const DEFAULT_MODELS: AIModel[] = [
   model('deepseek-v4-flash', 'DeepSeek V4 Flash', 'openai-compatible', 1000000, 384000, 8192, false, false, false, { reasoningMode: 'deepseek-thinking', reasoningEfforts: ['none', 'low', 'medium', 'high', 'xhigh'], sourceUrl: 'https://api-docs.deepseek.com/quick_start/pricing', verifiedAt: '2026-05-25' }),
   model('deepseek-chat', 'DeepSeek Chat', 'openai-compatible', 1000000, 384000, 8192, false, false, true, { reasoningMode: 'deepseek-thinking', reasoningEfforts: ['none', 'low', 'medium', 'high', 'xhigh'], sourceUrl: 'https://api-docs.deepseek.com/quick_start/pricing', verifiedAt: '2026-05-25', deprecatedReason: 'Alias is retained for compatibility; prefer deepseek-v4-flash.' }),
   model('deepseek-reasoner', 'DeepSeek Reasoner', 'openai-compatible', 1000000, 384000, 8192, false, false, true, { reasoningMode: 'deepseek-thinking', reasoningEfforts: ['low', 'medium', 'high', 'xhigh'], sourceUrl: 'https://api-docs.deepseek.com/quick_start/pricing', verifiedAt: '2026-05-25', deprecatedReason: 'Alias is retained for compatibility; prefer deepseek-v4-flash with thinking enabled.' }),
-  model('mimo-v2.5-pro', 'MiMo V2.5 Pro', 'xiaomi-mimo', 1048576, 131072, 131072, false, false, false, { defaultTemperature: 1, maxTemperature: 1.5 }),
-  model('mimo-v2.5', 'MiMo V2.5', 'xiaomi-mimo', 1048576, 131072, 32768, true, false, false, { defaultTemperature: 1, maxTemperature: 1.5 }),
-  model('mimo-v2-pro', 'MiMo V2 Pro', 'xiaomi-mimo', 1048576, 131072, 131072, false, false, false, { defaultTemperature: 1, maxTemperature: 1.5 }),
-  model('mimo-v2-omni', 'MiMo V2 Omni', 'xiaomi-mimo', 262144, 131072, 32768, true, false, false, { defaultTemperature: 1, maxTemperature: 1.5 }),
-  model('mimo-v2-flash', 'MiMo V2 Flash', 'xiaomi-mimo', 262144, 65536, 65536, false, false, false, { defaultTemperature: 0.3, maxTemperature: 1.5 }),
+  model('mimo-v2.5-pro', 'MiMo V2.5 Pro', 'xiaomi-mimo', 1048576, 131072, 131072, false, false, false, { defaultTemperature: 1, maxTemperature: 1.5, sourceUrl: 'https://platform.xiaomimimo.com/docs/en-US/quick-start/model', verifiedAt: '2026-05-22' }),
+  model('mimo-v2.5', 'MiMo V2.5', 'xiaomi-mimo', 1048576, 131072, 32768, true, false, false, { defaultTemperature: 1, maxTemperature: 1.5, sourceUrl: 'https://platform.xiaomimimo.com/docs/en-US/quick-start/model', verifiedAt: '2026-05-22' }),
+  model('mimo-v2-pro', 'MiMo V2 Pro', 'xiaomi-mimo', 1048576, 131072, 131072, false, false, false, { defaultTemperature: 1, maxTemperature: 1.5, sourceUrl: 'https://platform.xiaomimimo.com/docs/en-US/quick-start/model', verifiedAt: '2026-05-22' }),
+  model('mimo-v2-omni', 'MiMo V2 Omni', 'xiaomi-mimo', 262144, 131072, 32768, true, false, false, { defaultTemperature: 1, maxTemperature: 1.5, sourceUrl: 'https://platform.xiaomimimo.com/docs/en-US/quick-start/model', verifiedAt: '2026-05-22' }),
+  model('mimo-v2-flash', 'MiMo V2 Flash', 'xiaomi-mimo', 262144, 65536, 65536, false, false, false, { defaultTemperature: 0.3, maxTemperature: 1.5, sourceUrl: 'https://platform.xiaomimimo.com/docs/en-US/quick-start/model', verifiedAt: '2026-05-22' }),
+  model('mimo-v2.5-tts', 'MiMo V2.5 TTS', 'xiaomi-mimo', 8192, 8192, 2048, false, false, false, { chatCompatible: false, sourceUrl: 'https://platform.xiaomimimo.com/docs/en-US/quick-start/model', verifiedAt: '2026-05-22' }),
+  model('mimo-v2.5-tts-voiceclone', 'MiMo V2.5 TTS VoiceClone', 'xiaomi-mimo', 8192, 8192, 2048, false, false, false, { chatCompatible: false, sourceUrl: 'https://platform.xiaomimimo.com/docs/en-US/quick-start/model', verifiedAt: '2026-05-22' }),
+  model('mimo-v2.5-tts-voicedesign', 'MiMo V2.5 TTS VoiceDesign', 'xiaomi-mimo', 8192, 8192, 2048, false, false, false, { chatCompatible: false, sourceUrl: 'https://platform.xiaomimimo.com/docs/en-US/quick-start/model', verifiedAt: '2026-05-22' }),
+  model('mimo-v2-tts', 'MiMo V2 TTS', 'xiaomi-mimo', 8192, 8192, 2048, false, false, false, { chatCompatible: false, sourceUrl: 'https://platform.xiaomimimo.com/docs/en-US/quick-start/model', verifiedAt: '2026-05-22' }),
 ]
 
 export const DEFAULT_PROVIDERS: AIProvider[] = []
@@ -708,6 +713,7 @@ function mergeKnownModelDefaults(modelId: string, providerType: ProviderType | u
     sourceUrl: remote.sourceUrl ?? known.sourceUrl,
     verifiedAt: remote.verifiedAt ?? known.verifiedAt,
     deprecatedReason: remote.deprecatedReason ?? known.deprecatedReason,
+    chatCompatible: remote.chatCompatible ?? known.chatCompatible,
   }
 }
 
@@ -731,6 +737,7 @@ export function mergeModelConfig(modelId: string, providerType: ProviderType, re
     supportsVision: remote?.supportsVision ?? base.supportsVision,
     supportsFiles: remote?.supportsFiles ?? base.supportsFiles,
     preferredEndpoint: remote?.preferredEndpoint ?? base.preferredEndpoint,
+    chatCompatible: remote?.chatCompatible ?? base.chatCompatible,
     source: remote?.source ?? 'remote',
   }
 }
@@ -807,7 +814,7 @@ function providerDefaults(providerType: ProviderType): Pick<AIModel, 'contextWin
     case 'xiaomi-mimo':
       return { contextWindow: 1048576, maxOutputTokens: 131072, defaultMaxTokens: 32768, supportsVision: true, supportsFiles: false }
     case 'openai-compatible':
-      return { contextWindow: 32768, maxOutputTokens: 8192, defaultMaxTokens: 4096, supportsVision: false, supportsFiles: false }
+      return { contextWindow: 32768, maxOutputTokens: 4096, defaultMaxTokens: 2048, supportsVision: false, supportsFiles: false }
   }
 }
 
@@ -822,9 +829,9 @@ export const XIAOMI_MIMO_TOKEN_PLAN_BASE_URLS: Record<ProviderRegion, string> = 
   ams: 'https://token-plan-ams.xiaomimimo.com/v1',
 }
 export const XIAOMI_MIMO_TOKEN_PLAN_ANTHROPIC_BASE_URLS: Record<ProviderRegion, string> = {
-  cn: 'https://token-plan-cn.xiaomimimo.com/anthropic/v1',
-  sgp: 'https://token-plan-sgp.xiaomimimo.com/anthropic/v1',
-  ams: 'https://token-plan-ams.xiaomimimo.com/anthropic/v1',
+  cn: 'https://token-plan-cn.xiaomimimo.com/anthropic',
+  sgp: 'https://token-plan-sgp.xiaomimimo.com/anthropic',
+  ams: 'https://token-plan-ams.xiaomimimo.com/anthropic',
 }
 
 export interface ProviderConfigIssue {
@@ -846,7 +853,7 @@ export function getXiaomiMimoOfficialBaseUrl(
   wireProtocol: ProviderWireProtocol = 'openai-compatible'
 ): string {
   if (wireProtocol === 'anthropic-compatible') {
-    return mode === 'token-plan' ? XIAOMI_MIMO_TOKEN_PLAN_ANTHROPIC_BASE_URLS[region] : XIAOMI_MIMO_PAYG_BASE_URL.replace(/\/v1$/, '/anthropic/v1')
+    return mode === 'token-plan' ? XIAOMI_MIMO_TOKEN_PLAN_ANTHROPIC_BASE_URLS[region] : XIAOMI_MIMO_PAYG_BASE_URL.replace(/\/v1$/, '/anthropic')
   }
   return mode === 'token-plan' ? XIAOMI_MIMO_TOKEN_PLAN_BASE_URLS[region] : XIAOMI_MIMO_PAYG_BASE_URL
 }
@@ -930,14 +937,6 @@ export function getProviderConfigIssue(provider: Pick<AIProvider, 'type' | 'base
       code: 'credential_mismatch',
       messageKey: 'providerIssue.anthropicProtocolUrl',
       message: 'providerIssue.anthropicProtocolUrl',
-    }
-  }
-
-  if (selectedProtocol === 'anthropic-compatible' && provider.baseUrl && baseUrl.endsWith('/anthropic')) {
-    return {
-      code: 'credential_mismatch',
-      messageKey: 'providerIssue.mimoAnthropicNeedsV1',
-      message: 'providerIssue.mimoAnthropicNeedsV1',
     }
   }
 

@@ -6,6 +6,7 @@ const { normalizeVariant, supportedVariants } = require('./model-catalog')
 
 const projectRoot = path.resolve(__dirname, '..')
 const androidDir = path.join(projectRoot, 'android')
+const androidManifestPath = path.join(androidDir, 'app', 'src', 'main', 'AndroidManifest.xml')
 const outputDir = path.join(projectRoot, 'dist-apk')
 const packageJson = require(path.join(projectRoot, 'package.json'))
 const releaseBuildPasses = [
@@ -124,6 +125,19 @@ function removeDir(dir) {
   fs.rmSync(dir, { recursive: true, force: true })
 }
 
+function allowReleaseCleartextTraffic() {
+  if (!fs.existsSync(androidManifestPath)) {
+    throw new Error(`AndroidManifest.xml was not found at ${androidManifestPath}. Run expo prebuild first.`)
+  }
+  const source = fs.readFileSync(androidManifestPath, 'utf8')
+  if (source.includes('android:usesCleartextTraffic=')) return
+  const next = source.replace(/<application\b([^>]*)>/, '<application$1 android:usesCleartextTraffic="true">')
+  if (next === source) {
+    throw new Error('Could not find the Android application tag to allow user-configured HTTP MCP endpoints.')
+  }
+  fs.writeFileSync(androidManifestPath, next)
+}
+
 function sha256File(filePath) {
   const hash = crypto.createHash('sha256')
   hash.update(fs.readFileSync(filePath))
@@ -209,6 +223,7 @@ function assertReleaseOutputs(outputs, variant, pass) {
 function prepareAndroidProjectForRelease() {
   run(commandName('node'), ['scripts/patch-onnxruntime-16kb.js'])
   run(commandName('npx'), ['expo', 'prebuild', '--platform', 'android'])
+  allowReleaseCleartextTraffic()
   run(commandName('node'), ['scripts/patch-onnxruntime-16kb.js'])
   run(commandName('node'), ['scripts/configure-android-release.js', '--skip-signing'])
 }

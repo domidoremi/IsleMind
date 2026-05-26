@@ -31,7 +31,7 @@ export function IsleIconButton({
   size?: IsleSize
   style?: StyleProp<ViewStyle>
 }) {
-  const dimension = size === 'sm' ? 36 : size === 'lg' ? 50 : 42
+  const dimension = size === 'lg' ? 50 : 44
   return (
     <IsleButton
       type={tone === 'ink' || tone === 'mint' || tone === 'amber' ? 'primary' : 'default'}
@@ -164,14 +164,42 @@ export function IsleToggle({
           <Text style={{ color: colors.text, fontSize: 15, fontWeight: '900' }}>{title}</Text>
           {description ? <Text numberOfLines={2} style={{ color: colors.textSecondary, fontSize: 12, lineHeight: 17, marginTop: 3 }}>{description}</Text> : null}
         </View>
-        <IsleSwitch active={active} onChange={onPress} />
+        <View accessible={false} pointerEvents="none">
+          <IsleSwitch active={active} />
+        </View>
       </View>
     </PressableScale>
   )
 }
 
 export function IsleSwitch({ active, onChange }: { active: boolean; onChange?: () => void }) {
-  return <IsleStyledSwitch checked={active} onChange={onChange ? () => onChange() : undefined} />
+  const { colors } = useAppTheme()
+  const motion = useMotionPreference()
+  if (onChange) return <IsleStyledSwitch checked={active} onChange={() => onChange()} />
+  const width = 52
+  const height = 28
+  const knob = 21
+  return (
+    <View
+      accessible={false}
+      style={{
+        minWidth: width,
+        height,
+        borderRadius: height / 2,
+        padding: 3,
+        justifyContent: 'center',
+        backgroundColor: active ? '#86d67a' : '#d4c9b4',
+        borderWidth: 2,
+        borderColor: active ? colors.success : colors.border,
+      }}
+    >
+      <MotiView
+        animate={{ translateX: active ? width - knob - 10 : 0, translateY: -2 }}
+        transition={motion === 'full' ? { type: 'spring', ...motionTokens.spring.settle } : { type: 'timing', duration: 1 }}
+        style={{ width: knob, height: knob, borderRadius: knob / 2, backgroundColor: '#fffdf5' }}
+      />
+    </View>
+  )
 }
 
 export function IsleListItem({

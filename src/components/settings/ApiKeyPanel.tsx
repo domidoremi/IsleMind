@@ -4,8 +4,8 @@ import { Check, ChevronDown, KeyRound, ListFilter, Plus, Power, RotateCw, Search
 import { MotiView } from 'moti'
 import type { TFunction } from 'i18next'
 import { useTranslation } from 'react-i18next'
-import type { AIProvider, ProviderCredentialGroup, ProviderPresetId } from '@/types'
-import { getModelConfig, getModelName } from '@/types'
+import type { AIProvider, ProviderCredentialGroup, ProviderPresetId, ProviderWireProtocol } from '@/types'
+import { getModelConfig, getModelName, getXiaomiMimoOfficialBaseUrl } from '@/types'
 import { applyProviderPreset, detectProviderPreset, getProviderPreset, maskSecret, parseCredentialGroups, probeProviderPreset, PROVIDER_PRESETS } from '@/services/ai/providerRegistry'
 import { syncAndTestProvider, summarizeProviderActivation } from '@/services/providerActivation'
 import { useAppTheme } from '@/hooks/useAppTheme'
@@ -36,6 +36,7 @@ export function ApiKeyPanel({ provider, initiallyExpanded = false }: ApiKeyPanel
   const [expanded, setExpanded] = useState(initiallyExpanded)
   const [baseUrl, setBaseUrl] = useState(provider.baseUrl ?? '')
   const [presetId, setPresetId] = useState<ProviderPresetId>(provider.presetId ?? 'custom-openai-compatible')
+  const [wireProtocol, setWireProtocol] = useState<ProviderWireProtocol>(inferMimoWireProtocol(provider))
   const [singleCredentialText, setSingleCredentialText] = useState('')
   const [credentialText, setCredentialText] = useState('')
   const [modelsText, setModelsText] = useState(provider.models.join('\n'))
@@ -48,6 +49,7 @@ export function ApiKeyPanel({ provider, initiallyExpanded = false }: ApiKeyPanel
   const hydratedGroups = draftGroups
   const detection = useMemo(() => detectProviderPreset({ baseUrl, name: provider.name, apiKey: singleCredentialText || credentialText }), [baseUrl, credentialText, provider.name, singleCredentialText])
   const selectedPreset = getProviderPreset(presetId)
+  const isMimoPreset = selectedPreset.id === 'xiaomi-mimo'
   const currentModels = useMemo(() => parseModels(modelsText), [modelsText])
   const availableModels = useMemo(() => getProviderAvailableModels(provider), [provider])
   const preferredModel = getProviderPreferredModel(provider)
@@ -64,6 +66,7 @@ export function ApiKeyPanel({ provider, initiallyExpanded = false }: ApiKeyPanel
   useEffect(() => {
     setBaseUrl(provider.baseUrl ?? '')
     setPresetId(provider.presetId ?? provider.detectedPresetId ?? 'custom-openai-compatible')
+    setWireProtocol(inferMimoWireProtocol(provider))
     setModelsText(provider.models.join('\n'))
     setDraftGroups(provider.credentialGroups ?? [])
     setModelEditing(false)
@@ -71,7 +74,7 @@ export function ApiKeyPanel({ provider, initiallyExpanded = false }: ApiKeyPanel
     setSingleCredentialText('')
     setCredentialText('')
     setNotice('')
-  }, [provider.baseUrl, provider.detectedPresetId, provider.id, provider.models, provider.presetId])
+  }, [provider.baseUrl, provider.detectedPresetId, provider.id, provider.models, provider.presetId, provider.wireProtocol])
 
   useEffect(() => {
     if (!expanded) return
@@ -91,9 +94,13 @@ export function ApiKeyPanel({ provider, initiallyExpanded = false }: ApiKeyPanel
     const pastedGroups = createIncomingGroups(draftGroups.length, [singleCredentialText, credentialText].filter(Boolean).join('\n'), t)
     const credentialGroups = mergeGroups(draftGroups, pastedGroups, t)
     const models = parseModels(modelsText)
+    const nextIsMimo = selectedPreset.id === 'xiaomi-mimo'
     const applied = applyProviderPreset({
       ...provider,
-      baseUrl: baseUrl.trim() || selectedPreset.baseUrl,
+      baseUrl: baseUrl.trim() || (nextIsMimo ? getXiaomiMimoOfficialBaseUrl(provider.credentialMode ?? 'token-plan', provider.tokenPlanRegion ?? 'cn', wireProtocol) : selectedPreset.baseUrl),
+      credentialMode: nextIsMimo ? provider.credentialMode ?? 'token-plan' : undefined,
+      tokenPlanRegion: nextIsMimo ? provider.tokenPlanRegion ?? 'cn' : undefined,
+      wireProtocol: nextIsMimo ? wireProtocol : undefined,
       credentialGroups,
       models,
       enabled: provider.enabled,
@@ -155,7 +162,13 @@ export function ApiKeyPanel({ provider, initiallyExpanded = false }: ApiKeyPanel
   async function acceptDetection() {
     setPresetId(detection.presetId)
     const preset = getProviderPreset(detection.presetId)
-    if (!baseUrl.trim() && preset.baseUrl) setBaseUrl(preset.baseUrl)
+    if (preset.id === 'xiaomi-mimo') {
+      const nextProtocol = inferMimoWireProtocolFromBaseUrl(baseUrl)
+      setWireProtocol(nextProtocol)
+      if (shouldReplaceMimoBaseUrl(baseUrl)) setBaseUrl(getXiaomiMimoOfficialBaseUrl(provider.credentialMode ?? 'token-plan', provider.tokenPlanRegion ?? 'cn', nextProtocol))
+    } else if (!baseUrl.trim() && preset.baseUrl) {
+      setBaseUrl(preset.baseUrl)
+    }
     setNotice(t('apiKeyPanel.presetSelected', { name: preset.name }))
     dialog.toast({ title: t('apiKeyPanel.detectionApplied'), message: `${provider.name} · ${preset.name}`, tone: 'mint' })
   }
@@ -166,7 +179,13 @@ export function ApiKeyPanel({ provider, initiallyExpanded = false }: ApiKeyPanel
     const result = await probeProviderPreset({ baseUrl, name: provider.name, apiKey: await getProbeApiKey() })
     setPresetId(result.presetId)
     const preset = getProviderPreset(result.presetId)
-    if (!baseUrl.trim() && preset.baseUrl) setBaseUrl(preset.baseUrl)
+    if (preset.id === 'xiaomi-mimo') {
+      const nextProtocol = inferMimoWireProtocolFromBaseUrl(baseUrl)
+      setWireProtocol(nextProtocol)
+      if (shouldReplaceMimoBaseUrl(baseUrl)) setBaseUrl(getXiaomiMimoOfficialBaseUrl(provider.credentialMode ?? 'token-plan', provider.tokenPlanRegion ?? 'cn', nextProtocol))
+    } else if (!baseUrl.trim() && preset.baseUrl) {
+      setBaseUrl(preset.baseUrl)
+    }
     setTask('idle')
     setNotice(result.reason)
     dialog.toast({ title: t('apiKeyPanel.interfaceProbeDone'), message: `${provider.name} · ${getProviderPreset(result.presetId).name}`, tone: 'mint' })
@@ -235,6 +254,21 @@ export function ApiKeyPanel({ provider, initiallyExpanded = false }: ApiKeyPanel
     dialog.toast({ title: t('apiKeyPanel.modelListEditable'), message: provider.name, tone: 'mint' })
   }
 
+  function selectPreset(nextPresetId: ProviderPresetId) {
+    setPresetId(nextPresetId)
+    if (nextPresetId === 'xiaomi-mimo' && shouldReplaceMimoBaseUrl(baseUrl)) {
+      setBaseUrl(getXiaomiMimoOfficialBaseUrl(provider.credentialMode ?? 'token-plan', provider.tokenPlanRegion ?? 'cn', wireProtocol))
+    }
+  }
+
+  function selectWireProtocol(nextProtocol: ProviderWireProtocol) {
+    setWireProtocol(nextProtocol)
+    if (shouldReplaceMimoBaseUrl(baseUrl)) {
+      setBaseUrl(getXiaomiMimoOfficialBaseUrl(provider.credentialMode ?? 'token-plan', provider.tokenPlanRegion ?? 'cn', nextProtocol))
+    }
+    setNotice(t('apiKeyPanel.protocolChanged', { protocol: t(`providerSettings.protocol.${nextProtocol}`) }))
+  }
+
   async function getProbeApiKey(): Promise<string | undefined> {
     const typed = credentialText.split(/[\n,，]+/).map((item) => item.trim()).find(Boolean)
       ?? singleCredentialText.trim()
@@ -256,8 +290,8 @@ export function ApiKeyPanel({ provider, initiallyExpanded = false }: ApiKeyPanel
         marginBottom: 12,
       }}
     >
-      <IslePressable haptic onPress={() => setExpanded((value) => !value)} style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
-        <View style={{ width: 40, height: 40, borderRadius: 20, alignItems: 'center', justifyContent: 'center', backgroundColor: colors.mintSoft }}>
+      <IslePressable haptic onPress={() => setExpanded((value) => !value)} style={{ minHeight: 44, flexDirection: 'row', alignItems: 'center', gap: 10 }}>
+        <View style={{ width: 44, height: 44, borderRadius: 22, alignItems: 'center', justifyContent: 'center', backgroundColor: colors.mintSoft }}>
           {provider.presetId === 'newapi' || provider.presetId === 'sub2api' ? <Sparkles color={colors.text} size={18} /> : <KeyRound color={colors.text} size={18} />}
         </View>
         <View style={{ flex: 1 }}>
@@ -312,10 +346,21 @@ export function ApiKeyPanel({ provider, initiallyExpanded = false }: ApiKeyPanel
             </Text>
             <View style={{ flexDirection: 'row', gap: 8, flexWrap: 'wrap', marginTop: 10 }}>
               {PROVIDER_PRESETS.map((preset) => (
-                <ChoiceButton key={preset.id} active={presetId === preset.id} label={preset.name} onPress={() => setPresetId(preset.id)} />
+                <ChoiceButton key={preset.id} active={presetId === preset.id} label={preset.name} onPress={() => selectPreset(preset.id)} />
               ))}
             </View>
           </View>
+
+          {isMimoPreset ? (
+            <View style={{ borderRadius: 18, padding: 11, backgroundColor: colors.islandRaised, gap: 9 }}>
+              <Text style={{ color: colors.text, fontSize: 13, fontWeight: '900' }}>{t('providerSettings.protocol.title')}</Text>
+              <View style={{ flexDirection: 'row', gap: 8, flexWrap: 'wrap' }}>
+                <ChoiceButton active={wireProtocol === 'openai-compatible'} label={t('providerSettings.protocol.openai-compatible')} onPress={() => selectWireProtocol('openai-compatible')} />
+                <ChoiceButton active={wireProtocol === 'anthropic-compatible'} label={t('providerSettings.protocol.anthropic-compatible')} onPress={() => selectWireProtocol('anthropic-compatible')} />
+              </View>
+              <Text style={{ color: colors.textTertiary, fontSize: 11, lineHeight: 16 }}>{t('providerSettings.protocol.mimoNote')}</Text>
+            </View>
+          ) : null}
 
           <IsleField
             label={t('providerSettings.baseUrl')}
@@ -323,6 +368,7 @@ export function ApiKeyPanel({ provider, initiallyExpanded = false }: ApiKeyPanel
               value: baseUrl,
               onChangeText: (value) => {
                 setBaseUrl(value)
+                if (isMimoPreset) setWireProtocol(inferMimoWireProtocolFromBaseUrl(value))
                 setNotice('')
               },
               autoCapitalize: 'none',
@@ -485,7 +531,7 @@ function Badge({ label, tone }: { label: string; tone: 'success' | 'warning' | '
 function ChoiceButton({ label, active, onPress }: { label: string; active: boolean; onPress: () => void }) {
   const { colors } = useAppTheme()
   return (
-    <IslePressable haptic onPress={onPress} style={{ minHeight: 34, borderRadius: 17, paddingHorizontal: 11, alignItems: 'center', justifyContent: 'center', backgroundColor: active ? colors.text : colors.material.field }}>
+    <IslePressable haptic onPress={onPress} style={{ minHeight: 44, borderRadius: 22, paddingHorizontal: 12, alignItems: 'center', justifyContent: 'center', backgroundColor: active ? colors.text : colors.material.field }}>
       <Text style={{ color: active ? colors.surface : colors.textSecondary, fontSize: 11, fontWeight: '900' }}>{label}</Text>
     </IslePressable>
   )
@@ -549,7 +595,7 @@ function CredentialGroupRow({
           textAlignVertical={Platform.OS === 'android' ? 'center' : undefined}
           style={{
             flex: 1,
-            minHeight: 42,
+            minHeight: 44,
             borderRadius: 16,
             paddingHorizontal: 12,
             color: colors.text,
@@ -611,7 +657,7 @@ function IconIsleChip({ label, children, tone, onPress }: { label: string; child
   const { colors } = useAppTheme()
   const background = tone === 'mint' ? colors.mintSoft : tone === 'danger' ? colors.coralWash : colors.material.field
   return (
-    <IslePressable haptic accessibilityLabel={label} onPress={onPress} style={{ width: 42, height: 42, borderRadius: 21, alignItems: 'center', justifyContent: 'center', backgroundColor: background, borderWidth: 1, borderColor: colors.border }}>
+    <IslePressable haptic accessibilityLabel={label} onPress={onPress} style={{ width: 44, height: 44, borderRadius: 22, alignItems: 'center', justifyContent: 'center', backgroundColor: background, borderWidth: 1, borderColor: colors.border }}>
       {children}
     </IslePressable>
   )
@@ -620,7 +666,7 @@ function IconIsleChip({ label, children, tone, onPress }: { label: string; child
 function MiniAction({ label, children, active = false, disabled = false, onPress }: { label: string; children: ReactNode; active?: boolean; disabled?: boolean; onPress: () => void }) {
   const { colors } = useAppTheme()
   return (
-    <IslePressable haptic disabled={disabled} onPress={onPress} style={{ minHeight: 34, borderRadius: 17, paddingHorizontal: 10, flexDirection: 'row', alignItems: 'center', gap: 5, backgroundColor: active ? colors.amberSoft : colors.islandRaised, opacity: disabled ? 0.5 : 1 }}>
+    <IslePressable haptic disabled={disabled} onPress={onPress} style={{ minHeight: 44, borderRadius: 22, paddingHorizontal: 12, flexDirection: 'row', alignItems: 'center', gap: 5, backgroundColor: active ? colors.amberSoft : colors.islandRaised, opacity: disabled ? 0.5 : 1 }}>
       {children}
       <Text style={{ color: active ? colors.text : colors.textSecondary, fontSize: 12, fontWeight: '800' }}>{label}</Text>
     </IslePressable>
@@ -640,4 +686,18 @@ function ActionButton({ label, busy = false, secondary = false, disabled = false
       style={{ flexGrow: 1 }}
     />
   )
+}
+
+function inferMimoWireProtocol(provider: AIProvider): ProviderWireProtocol {
+  return provider.wireProtocol ?? inferMimoWireProtocolFromBaseUrl(provider.baseUrl)
+}
+
+function inferMimoWireProtocolFromBaseUrl(value?: string): ProviderWireProtocol {
+  return /\/anthropic(?:\/v1)?(?:\/|$)/i.test(value ?? '') ? 'anthropic-compatible' : 'openai-compatible'
+}
+
+function shouldReplaceMimoBaseUrl(value?: string): boolean {
+  const trimmed = value?.trim()
+  if (!trimmed) return true
+  return /^https:\/\/(?:api|token-plan-(?:cn|sgp|ams))\.xiaomimimo\.com(?:\/(?:v1|anthropic(?:\/v1)?))?\/?$/i.test(trimmed)
 }

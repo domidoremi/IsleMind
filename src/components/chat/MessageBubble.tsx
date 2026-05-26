@@ -8,7 +8,7 @@ import { router } from 'expo-router'
 import * as Haptics from 'expo-haptics'
 import { Copy, Database, ExternalLink, Globe2, ListChecks, MoreHorizontal, RefreshCcw, RotateCcw, Settings2, Sparkles, Trash2, Volume2, Zap } from 'lucide-react-native'
 import { Gesture, GestureDetector } from 'react-native-gesture-handler'
-import Animated, { runOnJS, useAnimatedStyle, useSharedValue, withSequence, withSpring, withTiming } from 'react-native-reanimated'
+import Animated, { runOnJS, useAnimatedStyle, useSharedValue, withSpring, withTiming } from 'react-native-reanimated'
 import type { ChatErrorCode, Message, MessageCitation } from '@/types'
 import { useAppTheme } from '@/hooks/useAppTheme'
 import { messageAnimationForMotion } from '@/theme/animation'
@@ -34,8 +34,6 @@ interface MessageBubbleProps {
   onTestModel?: (message: Message) => void
 }
 
-const DELETE_THRESHOLD = 82
-
 export function MessageBubble({ conversationId, message, index, isLastAssistant = false, onCopy, onRetry, onRegenerate, onSpeak, onDelete, onConfigure, onTestModel }: MessageBubbleProps) {
   const { colors } = useAppTheme()
   const { t } = useTranslation()
@@ -44,57 +42,37 @@ export function MessageBubble({ conversationId, message, index, isLastAssistant 
   const [actionsOpen, setActionsOpen] = useState(false)
   const isUser = message.role === 'user'
   const isStreamingContent = !isUser && (message.status === 'streaming' || message.status === 'sending')
-  const translateX = useSharedValue(0)
   const armed = useSharedValue(0)
   const deleteProgress = useSharedValue(0)
-  const direction = isUser ? 1 : -1
   const displayText = message.responseText ?? message.content
   const traces = collectMessageTraces(message)
   const traceSummary = summarizeTraces(traces, message.status)
+  const canLongPressDelete = !!onDelete && message.status !== 'sending' && message.status !== 'streaming'
 
-  function notifyArmed() {
-    if (hapticsEnabled) void Haptics.selectionAsync()
-  }
-
-  function notifyDelete() {
+  function requestDelete() {
     if (hapticsEnabled) void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning)
-    setTimeout(() => onDelete?.(message), 120)
+    onDelete?.(message)
   }
 
-  const pan = Gesture.Pan()
-    .activateAfterLongPress(260)
-    .activeOffsetX([-10, 10])
-    .failOffsetY([-18, 18])
-    .onStart(() => {
+  const longPressDelete = Gesture.LongPress()
+    .enabled(canLongPressDelete)
+    .minDuration(380)
+    .maxDistance(18)
+    .onBegin(() => {
       armed.value = 1
-      runOnJS(notifyArmed)()
+      deleteProgress.value = withTiming(0.36, { duration: 100 })
     })
-    .onUpdate((event) => {
-      const allowed = direction === 1 ? Math.max(0, event.translationX) : Math.min(0, event.translationX)
-      translateX.value = allowed
-      deleteProgress.value = Math.min(1, Math.abs(allowed) / DELETE_THRESHOLD)
-    })
-    .onEnd(() => {
-      if (Math.abs(translateX.value) >= DELETE_THRESHOLD) {
-        translateX.value = withSequence(withTiming(direction * 18, { duration: 80 }), withTiming(direction * 340, { duration: 180 }))
-        deleteProgress.value = withTiming(1, { duration: 140 })
-        runOnJS(notifyDelete)()
-      } else {
-        translateX.value = withSpring(0, { damping: 18, stiffness: 220 })
-        deleteProgress.value = withTiming(0, { duration: 140 })
-      }
-      armed.value = 0
+    .onStart(() => {
+      deleteProgress.value = withTiming(1, { duration: 120 })
+      runOnJS(requestDelete)()
     })
     .onFinalize(() => {
       armed.value = 0
-      if (Math.abs(translateX.value) < DELETE_THRESHOLD) {
-        translateX.value = withSpring(0, { damping: 18, stiffness: 220 })
-        deleteProgress.value = withTiming(0, { duration: 140 })
-      }
+      deleteProgress.value = withTiming(0, { duration: 160 })
     })
 
   const animatedStyle = useAnimatedStyle(() => ({
-    transform: [{ translateX: translateX.value }, { scale: armed.value ? withSpring(0.985) : withSpring(1) }],
+    transform: [{ scale: armed.value ? withSpring(0.985) : withSpring(1) }],
   }))
 
   const deleteStyle = useAnimatedStyle(() => ({
@@ -116,7 +94,7 @@ export function MessageBubble({ conversationId, message, index, isLastAssistant 
             alignItems: 'center',
             justifyContent: 'center',
             backgroundColor: colors.error,
-            [isUser ? 'left' : 'right']: 4,
+            [isUser ? 'right' : 'left']: 4,
           },
           deleteStyle,
         ]}
@@ -124,7 +102,7 @@ export function MessageBubble({ conversationId, message, index, isLastAssistant 
         <Trash2 color={colors.surface} size={18} strokeWidth={2.2} />
       </Animated.View>
 
-      <GestureDetector gesture={pan}>
+      <GestureDetector gesture={longPressDelete}>
         <Animated.View style={animatedStyle}>
           <MotiView
             {...messageAnimationForMotion(index, motion)}
@@ -306,22 +284,18 @@ function ErrorHint({ code }: { code?: ChatErrorCode }) {
 
 function StreamingTextContent({ content, isUser }: { content: string; isUser: boolean }) {
   const { colors } = useAppTheme()
-  const [visibleLength, setVisibleLength] = useState(() => Math.max(0, content.length - 36))
+  const [visibleLength, setVisibleLength] = useState(() => content.length)
 
   useEffect(() => {
-    if (visibleLength >= content.length) return
+    if (visibleLength >= content.length) {
+      if (visibleLength > content.length) setVisibleLength(content.length)
+      return
+    }
     const timer = setTimeout(() => {
-      setVisibleLength((current) => Math.min(content.length, current + Math.max(2, Math.ceil((content.length - current) / 4))))
-    }, 24)
+      setVisibleLength((current) => Math.min(content.length, current + Math.max(4, Math.ceil((content.length - current) / 3))))
+    }, 18)
     return () => clearTimeout(timer)
   }, [content, visibleLength])
-
-  useEffect(() => {
-    setVisibleLength((current) => {
-      if (content.length <= current) return content.length
-      return Math.max(current, content.length - 36)
-    })
-  }, [content])
 
   return (
     <Text
@@ -404,10 +378,10 @@ function CitationSummaryRow({ citations, onPress }: { citations: MessageCitation
       onPress={onPress}
       accessibilityLabel={t('messageBubble.viewSources')}
       style={{
-        minHeight: 30,
-        borderRadius: 15,
-        paddingHorizontal: 9,
-        paddingVertical: 5,
+        minHeight: 44,
+        borderRadius: 22,
+        paddingHorizontal: 11,
+        paddingVertical: 8,
         flexDirection: 'row',
         alignItems: 'center',
         gap: 6,
@@ -439,9 +413,9 @@ function CitationNumberChips({ citations, onPress }: { citations: MessageCitatio
           onPress={() => onPress(citation)}
           accessibilityLabel={t('source.citation', { index: index + 1 })}
           style={{
-            minHeight: 30,
-            minWidth: 34,
-            borderRadius: 15,
+            minHeight: 44,
+            minWidth: 44,
+            borderRadius: 22,
             paddingHorizontal: 8,
             alignItems: 'center',
             justifyContent: 'center',
@@ -467,10 +441,10 @@ function ProcessSummaryRow({ summary, hasError, running, onPress }: { summary: s
       onPress={onPress}
       accessibilityLabel={t('messageBubble.viewProcess')}
       style={{
-        minHeight: 30,
-        borderRadius: 15,
-        paddingHorizontal: 9,
-        paddingVertical: 5,
+        minHeight: 44,
+        borderRadius: 22,
+        paddingHorizontal: 11,
+        paddingVertical: 8,
         flexDirection: 'row',
         alignItems: 'center',
         gap: 6,
@@ -585,9 +559,9 @@ function ActionButton({ label, children, compact = false, tone = 'default', onPr
       onPress={onPress}
       accessibilityLabel={label}
       style={{
-        minHeight: compact ? 28 : 30,
-        paddingHorizontal: compact ? 9 : 10,
-        borderRadius: compact ? 14 : 15,
+        minHeight: 44,
+        paddingHorizontal: compact ? 11 : 12,
+        borderRadius: 22,
         flexDirection: 'row',
         alignItems: 'center',
         gap: compact ? 4 : 5,

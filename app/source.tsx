@@ -23,7 +23,7 @@ export default function SourceScreen() {
   const { colors } = useAppTheme()
   const { t } = useTranslation()
   const dialog = useIsleDialog()
-  const params = useLocalSearchParams<{ conversationId?: string; messageId?: string; citationId?: string; kind?: string; url?: string }>()
+  const params = useLocalSearchParams<{ conversationId?: string; messageId?: string; citationId?: string; kind?: string; url?: string; qaErrorBoundary?: string }>()
   const conversations = useChatStore((state) => state.conversations)
   const conversation = conversations.find((item) => item.id === params.conversationId)
   const message = conversation?.messages.find((item) => item.id === params.messageId)
@@ -39,6 +39,10 @@ export default function SourceScreen() {
   const subtitle = mode === 'process'
     ? [t('source.completed', { count: traces.filter((trace) => trace.status === 'done').length }), t('source.errors', { count: traces.filter((trace) => trace.status === 'error').length }), t('source.skipped', { count: traces.filter((trace) => trace.status === 'skipped').length })].join(' · ')
     : getSourceSubtitle(citation, webUrl, t)
+
+  if (firstParam(params.qaErrorBoundary) === '1') {
+    throw new Error('QA forced source render failure')
+  }
 
   async function copyCurrent() {
     try {

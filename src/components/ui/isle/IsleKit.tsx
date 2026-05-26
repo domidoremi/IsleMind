@@ -162,9 +162,9 @@ function textSize(size: IsleButtonSize | IsleInputSize) {
 }
 
 function controlHeight(size: IsleButtonSize | IsleInputSize) {
-  if (size === 'small') return 32
+  if (size === 'small') return 44
   if (size === 'large') return 48
-  return size === 'middle' ? 45 : 40
+  return size === 'middle' ? 45 : 44
 }
 
 function organicRadius(titleCard: boolean) {
@@ -315,11 +315,12 @@ export function IsleInput({
           onChangeText={onChangeText}
           editable={editable}
           multiline={multiline}
+          accessibilityLabel={props.accessibilityLabel ?? (typeof label === 'string' ? label : undefined)}
           placeholderTextColor={palette.secondary}
           style={[
             {
               flex: 1,
-              minHeight: multiline ? 78 : height - 4,
+              minHeight: multiline ? 78 : Math.max(44, height - 4),
               padding: 0,
               paddingVertical: multiline ? 10 : 0,
               color: palette.body,
@@ -517,6 +518,7 @@ export function IsleModal({
       <View style={{ flex: 1, justifyContent: 'center', padding: 20 }}>
         <Pressable
           onPress={maskClosable ? onClose : undefined}
+          accessible={false}
           style={{ position: 'absolute', top: 0, right: 0, bottom: 0, left: 0, backgroundColor: palette.colors.backdrop }}
         />
         <MotiView

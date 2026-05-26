@@ -8,9 +8,10 @@ export default function KnowledgeSettingsScreen() {
   const { t } = useTranslation()
   const providers = useSettingsStore((state) => state.providers)
   const params = useLocalSearchParams<{ focus?: string }>()
+  const focus = params.focus === 'import' ? 'import' : undefined
   return (
     <SettingsPageShell title={t('settings.knowledge')} subtitle={t('settings.knowledgeDescription')} focusKey={params.focus}>
-      <ContextPanel providers={providers} section="knowledge" />
+      <ContextPanel providers={providers} section="knowledge" focus={focus} />
     </SettingsPageShell>
   )
 }
