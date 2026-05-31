@@ -1,7 +1,7 @@
 import { syncProviderCredentialGroupsDetailed, testProviderModelDetailed } from '@/services/ai/base'
 import { st } from '@/i18n/service'
 import type { AIProvider, ProviderOperationCode } from '@/types'
-import { getProviderAvailableModels } from '@/utils/providerModels'
+import { getProviderAvailableModels, getProviderManualModels } from '@/utils/providerModels'
 
 export interface ProviderActivationResult {
   providerId: string
@@ -55,7 +55,7 @@ export async function activateProviderWithHealthCheck(
 export async function syncAndTestProvider(
   provider: AIProvider,
   deps: ProviderActivationDeps,
-  options: { enable?: boolean } = {}
+  options: { enable?: boolean; testModel?: string; checkParameters?: boolean } = {}
 ): Promise<ProviderActivationResult> {
   if (options.enable) {
     await deps.updateProvider(provider.id, { enabled: true })
@@ -138,7 +138,7 @@ export async function syncAndTestProvider(
     collectSyncFailures(result, current, sync.message)
   }
 
-  const candidates = buildTestCandidates(current)
+  const candidates = buildTestCandidates(current, options.testModel)
   if (!candidates.length) {
     pushFailure(result, st('providerActivation.noModels'), { code: 'empty_models' })
     await deps.updateProvider(provider.id, {
@@ -164,7 +164,7 @@ export async function syncAndTestProvider(
     tone: 'mint',
   })
   for (const [index, candidate] of candidates.entries()) {
-    const test = await testProviderModelDetailed(current, candidate.model, candidate.apiKey)
+    const test = await testProviderModelDetailed(current, candidate.model, candidate.apiKey, { checkParameters: options.checkParameters })
     await deps.updateProviderCredentialGroupHealth(provider.id, test.credentialGroupId ?? candidate.groupId, test.ok)
     result.tested = true
     if (test.ok) {
@@ -220,8 +220,20 @@ function wait(deps: ProviderActivationDeps, ms: number): Promise<void> {
   return deps.delay ? deps.delay(ms) : new Promise((resolve) => setTimeout(resolve, ms))
 }
 
-function buildTestCandidates(provider: AIProvider): Array<{ groupId?: string; groupLabel?: string; apiKey: string; model: string }> {
+function buildTestCandidates(provider: AIProvider, requestedModel?: string): Array<{ groupId?: string; groupLabel?: string; apiKey: string; model: string }> {
   const enabledGroups = provider.credentialGroups?.filter((group) => group.enabled && group.apiKey?.trim()) ?? []
+  const testModel = requestedModel?.trim()
+  if (testModel) {
+    if (enabledGroups.length) {
+      return dedupeCandidates(enabledGroups.map((group) => ({
+        groupId: group.id,
+        groupLabel: group.label,
+        apiKey: group.apiKey!.trim(),
+        model: testModel,
+      })))
+    }
+    if (provider.apiKey?.trim()) return [{ apiKey: provider.apiKey.trim(), model: testModel }]
+  }
   const syncedGroups = enabledGroups.filter((group) => group.lastModelSyncStatus === 'ok')
   const candidates = syncedGroups.flatMap((group) => {
     const models = group.availableModels ?? []
@@ -233,6 +245,20 @@ function buildTestCandidates(provider: AIProvider): Array<{ groupId?: string; gr
     }))
   })
   if (candidates.length) return dedupeCandidates(candidates)
+  const manualModels = getProviderManualModels(provider)
+  if (manualModels.length) {
+    if (enabledGroups.length) {
+      return dedupeCandidates(enabledGroups.flatMap((group) => manualModels.map((model) => ({
+        groupId: group.id,
+        groupLabel: group.label,
+        apiKey: group.apiKey!.trim(),
+        model,
+      }))))
+    }
+    if (provider.apiKey?.trim()) {
+      return manualModels.map((model) => ({ apiKey: provider.apiKey.trim(), model }))
+    }
+  }
   if (!enabledGroups.length && provider.apiKey?.trim() && provider.lastModelSyncStatus === 'ok' && provider.models.length) {
     return provider.models.map((model) => ({ apiKey: provider.apiKey.trim(), model }))
   }

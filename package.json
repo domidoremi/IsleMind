@@ -1,6 +1,6 @@
 {
   "name": "islemind",
-  "version": "1.0.5",
+  "version": "1.0.6",
   "main": "expo-router/entry",
   "scripts": {
     "start": "expo start",
@@ -10,6 +10,10 @@
     "test:provider-intelligence": "node scripts/provider-intelligence-tests.js",
     "type-check": "tsc --noEmit",
     "doctor": "npx --yes expo-doctor",
+    "test:qa-audit:self": "node scripts/qa-coverage-audit.js --self-test",
+    "test:current-apk-smoke": "node scripts/collect-current-apk-smoke.js",
+    "test:memory-review-smoke": "node scripts/collect-memory-review-smoke.js",
+    "test:work-artifact-smoke": "node scripts/collect-work-artifact-smoke.js",
     "test:qa-audit": "node scripts/qa-coverage-audit.js",
     "apk:local": "node scripts/build-local-android-apk.js --variant no-model --debug",
     "apk:local:models": "node scripts/build-local-android-apk.js --variant with-model-small --debug",
@@ -49,6 +53,7 @@
     "expo-secure-store": "~15.0.8",
     "expo-sharing": "~14.0.8",
     "expo-speech": "~14.0.8",
+    "expo-splash-screen": "~31.0.13",
     "expo-sqlite": "~16.0.10",
     "expo-status-bar": "~3.0.9",
     "expo-system-ui": "~6.0.9",

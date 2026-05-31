@@ -1,8 +1,20 @@
 import { MotiView } from 'moti'
+import { useEffect } from 'react'
+import { BackHandler, Platform } from 'react-native'
+import { router } from 'expo-router'
 import { IsleScreen } from '@/components/ui/isle'
 import { ProviderSettingsContent } from '@/components/providers/ProviderSettingsContent'
 
 export default function ProviderSettingsScreen() {
+  useEffect(() => {
+    if (Platform.OS !== 'android') return undefined
+    const subscription = BackHandler.addEventListener('hardwareBackPress', () => {
+      router.replace('/settings')
+      return true
+    })
+    return () => subscription.remove()
+  }, [])
+
   return (
     <IsleScreen padded={false}>
       <MotiView

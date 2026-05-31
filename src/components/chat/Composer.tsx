@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import type { ReactNode } from 'react'
 import { ActivityIndicator, Platform, Text, TextInput, View } from 'react-native'
 import { AtSign, Camera, ChevronDown, FilePlus, Image, Mic, Plus, SendHorizontal, Slash, Square } from 'lucide-react-native'
@@ -26,6 +26,8 @@ interface ComposerProps {
   streaming?: boolean
   activityLabel?: string
   pendingNotice?: string
+  initialDraft?: string
+  initialDraftKey?: string | number
   commands?: ComposerCommand[]
   references?: CommandReference[]
   utilitiesOpen?: boolean
@@ -46,6 +48,8 @@ export function Composer({
   streaming = false,
   activityLabel,
   pendingNotice,
+  initialDraft,
+  initialDraftKey,
   commands = [],
   references = [],
   utilitiesOpen = false,
@@ -69,6 +73,7 @@ export function Composer({
   const [recording, setRecording] = useState(false)
   const [focused, setFocused] = useState(false)
   const [sending, setSending] = useState(false)
+  const [consumedDraftKey, setConsumedDraftKey] = useState<string | number | undefined>(undefined)
   const useAudioRecorder = getAudioRecorderHook()
   const recorder = useAudioRecorder ? useAudioRecorder({ extension: '.m4a' }) : null
   const canSend = (!!content.trim() || attachments.length > 0) && !disabled && !sending
@@ -77,6 +82,15 @@ export function Composer({
   const referenceMatches = trigger?.type === 'reference' ? filterReferences(references, trigger.query).slice(0, 8) : []
   const showCommandPanel = !!trigger && (commandMatches.length > 0 || referenceMatches.length > 0 || trigger.query.length === 0)
   const isMultilineDraft = content.includes('\n') || content.length > 70
+
+  useEffect(() => {
+    const draft = initialDraft?.trim()
+    if (!draft) return
+    const draftKey = initialDraftKey ?? draft
+    if (consumedDraftKey === draftKey) return
+    setContent(draft)
+    setConsumedDraftKey(draftKey)
+  }, [consumedDraftKey, initialDraft, initialDraftKey])
 
   async function addAttachment(picker: () => Promise<Attachment | null>) {
     try {

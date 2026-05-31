@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react'
-import { findNodeHandle, Keyboard, Platform, ScrollView, TextInput, View } from 'react-native'
-import { router } from 'expo-router'
+import { BackHandler, findNodeHandle, Keyboard, Platform, ScrollView, TextInput, View } from 'react-native'
+import { router, usePathname } from 'expo-router'
 import { ChevronLeft } from 'lucide-react-native'
 import { MotiView } from 'moti'
 import { useTranslation } from 'react-i18next'
@@ -21,6 +21,7 @@ export function SettingsPageShell({
 }) {
   const { colors } = useAppTheme()
   const { t } = useTranslation()
+  const pathname = usePathname()
   const scrollRef = useRef<ScrollView>(null)
   const [keyboardHeight, setKeyboardHeight] = useState(0)
   const androidKeyboardPadding = Platform.OS === 'android' ? keyboardHeight : 0
@@ -67,6 +68,15 @@ export function SettingsPageShell({
       hideSub.remove()
     }
   }, [])
+
+  useEffect(() => {
+    if (Platform.OS !== 'android' || pathname === '/settings') return
+    const subscription = BackHandler.addEventListener('hardwareBackPress', () => {
+      router.replace('/settings')
+      return true
+    })
+    return () => subscription.remove()
+  }, [pathname])
 
   return (
     <IsleScreen padded={false}>

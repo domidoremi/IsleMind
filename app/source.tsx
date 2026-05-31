@@ -40,7 +40,7 @@ export default function SourceScreen() {
     ? [t('source.completed', { count: traces.filter((trace) => trace.status === 'done').length }), t('source.errors', { count: traces.filter((trace) => trace.status === 'error').length }), t('source.skipped', { count: traces.filter((trace) => trace.status === 'skipped').length })].join(' · ')
     : getSourceSubtitle(citation, webUrl, t)
 
-  if (firstParam(params.qaErrorBoundary) === '1') {
+  if (__DEV__ && firstParam(params.qaErrorBoundary) === '1') {
     throw new Error('QA forced source render failure')
   }
 

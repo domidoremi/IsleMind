@@ -42,7 +42,7 @@ import { useChatStore } from '@/store/chatStore'
 import { useSettingsStore } from '@/store/settingsStore'
 import { useActivationJobStore } from '@/store/activationJobStore'
 import { testProviderModelDetailed } from '@/services/ai/base'
-import { localDataStore } from '@/services/localDataStore'
+import { getConversationMetrics, type ConversationMetrics } from '@/services/conversationMetrics'
 import { getModelConfig, getModelName, getProviderConfigIssue } from '@/types'
 import { speakText } from '@/services/speech'
 import type { AIProvider, Attachment, ChatErrorCode, Conversation, Message, ProcessTrace, ProviderOperationCode, RagProfile } from '@/types'
@@ -52,14 +52,16 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context'
 import { useMainPagerGestureLock } from '@/components/main/MainPagerGestureLock'
 import { applySkillStack, createBaseSkill, extractSkillVariables, listSkills, upsertSkill } from '@/services/skills'
 import { listKnowledgeDocuments, listMemories } from '@/services/contextStore'
-import { getProviderAvailableModels, getProviderPreferredModel, hasRemoteProviderModelEvidence, isProviderConversationReady } from '@/utils/providerModels'
+import { getProviderAvailableModels, getProviderDisplayModel, getProviderPreferredModel, getProviderSelectableModels, hasRemoteProviderModelEvidence, inferModelFamily, isProviderConversationReady, MODEL_QUICK_GROUPS, resolveProviderModelAlias, type ModelQuickGroup } from '@/utils/providerModels'
 import { useMotionPreference } from '@/hooks/useMotionPreference'
 import { motionTokens } from '@/theme/animation'
-import { getReasoningEffortOptions, normalizeModelId, providerSupportsReasoning } from '@/utils/modelReasoning'
+import { getReasoningEffortOptions, providerSupportsReasoning } from '@/utils/modelReasoning'
+import { getOnboardingConversationDefaults } from '@/utils/onboardingProfile'
+import { summarizeWorkArtifact } from '@/utils/workArtifact'
+import { resolveProviderModelAccess } from '@/services/ai/policy/providerModelAccess'
 
 type StreamingInputIntent = 'guide' | 'queue' | 'interrupt'
 type ComposerPanel = 'model' | 'reasoning' | 'prompt' | 'more' | null
-type ModelQuickGroup = 'all' | 'gpt' | 'claude' | 'gemini' | 'deepseek' | 'qwen' | 'kimi' | 'doubao' | 'grok' | 'glm' | 'mimo' | 'llama' | 'other'
 
 interface ModelQuickOption {
   id: string
@@ -68,13 +70,17 @@ interface ModelQuickOption {
   family: ModelQuickGroup
 }
 
-const MODEL_QUICK_GROUPS: ModelQuickGroup[] = ['all', 'gpt', 'claude', 'gemini', 'deepseek', 'qwen', 'kimi', 'doubao', 'grok', 'glm', 'mimo', 'llama', 'other']
-
 const CHAT_TOP_FLOATING_SPACE = 112
 const CHAT_BOTTOM_FLOATING_SPACE = 132
 const COMPOSER_MIN_HEIGHT = 132
 const AUTO_SCROLL_DELAY_MS = 96
 const USER_SCROLL_PAUSE_THRESHOLD = 72
+const WORK_STARTERS = [
+  { id: 'plan', labelKey: 'chat.starterPlanLabel', draftKey: 'chat.starterPlanDraft' },
+  { id: 'notes', labelKey: 'chat.starterNotesLabel', draftKey: 'chat.starterNotesDraft' },
+  { id: 'compare', labelKey: 'chat.starterCompareLabel', draftKey: 'chat.starterCompareDraft' },
+  { id: 'brief', labelKey: 'chat.starterBriefLabel', draftKey: 'chat.starterBriefDraft' },
+] as const
 
 interface PendingStreamingMessage {
   intent: Exclude<StreamingInputIntent, 'interrupt'>
@@ -86,11 +92,13 @@ interface ChatWorkspaceProps {
   conversation: Conversation | null
   showBack?: boolean
   embedded?: boolean
+  initialDraft?: string
+  initialDraftKey?: string | number
   onHistory?: () => void
   onSettings?: () => void
 }
 
-export function ChatWorkspace({ conversation, showBack = false, embedded = false, onHistory, onSettings }: ChatWorkspaceProps) {
+export function ChatWorkspace({ conversation, showBack = false, embedded = false, initialDraft, initialDraftKey, onHistory, onSettings }: ChatWorkspaceProps) {
   const { colors } = useAppTheme()
   const { t } = useTranslation()
   const dialog = useIsleDialog()
@@ -121,8 +129,11 @@ export function ChatWorkspace({ conversation, showBack = false, embedded = false
   const [keyboardHeight, setKeyboardHeight] = useState(0)
   const [composerFocused, setComposerFocused] = useState(false)
   const [composerPanel, setComposerPanel] = useState<ComposerPanel>(null)
-  const [setupReasoningEffort, setSetupReasoningEffort] = useState<NonNullable<Conversation['reasoningEffort']>>('medium')
-  const [setupSystemPrompt, setSetupSystemPrompt] = useState('')
+  const [quickStartDraft, setQuickStartDraft] = useState<{ content: string; key: string } | null>(null)
+  const quickStartSequence = useRef(0)
+  const initialSetupDefaults = useMemo(() => getOnboardingConversationDefaults(settings.onboardingCompanionMode), [settings.onboardingCompanionMode])
+  const [setupReasoningEffort, setSetupReasoningEffort] = useState<NonNullable<Conversation['reasoningEffort']>>(initialSetupDefaults.reasoningEffort)
+  const [setupSystemPrompt, setSetupSystemPrompt] = useState(initialSetupDefaults.systemPrompt)
   const [setupSelectedProviderId, setSetupSelectedProviderId] = useState<string | null>(null)
   const [setupSelectedModel, setSetupSelectedModel] = useState<string | null>(null)
   const [chromeHeight, setChromeHeight] = useState(CHAT_TOP_FLOATING_SPACE)
@@ -133,31 +144,33 @@ export function ChatWorkspace({ conversation, showBack = false, embedded = false
   const lastAutoScrollAt = useRef(0)
   const autoStickToBottom = useRef(true)
   const enabledProviders = useMemo(() => providers.filter((item) => item.id !== 'local-setup' && item.enabled), [providers])
+  const policyEnabledProviders = useMemo(() => enabledProviders.filter((provider) => providerHasPolicyAllowedModel(provider, settings)), [enabledProviders, settings])
   const hasEnabledProvider = enabledProviders.length > 0
-  const readyProviders = useMemo(() => enabledProviders.filter((item) => isProviderConversationReady(item)), [enabledProviders])
-  const quickModelProviders = useMemo(() => enabledProviders.filter((item) => getProviderAvailableModels(item).length > 0), [enabledProviders])
+  const readyProviders = useMemo(() => policyEnabledProviders.filter((item) => isProviderConversationReady(item)), [policyEnabledProviders])
+  const quickModelProviders = useMemo(() => policyEnabledProviders.filter((item) => getPolicyAllowedProviderModels(item, settings).length > 0), [policyEnabledProviders, settings])
   const hasAvailableModel = quickModelProviders.length > 0
-  const defaultHomeProvider = pickReadyProviderForNewConversation(providers, settings.defaultProvider) ?? quickModelProviders[0] ?? null
+  const defaultHomeProvider = pickReadyProviderForNewConversation(providers, settings.defaultProvider, settings) ?? quickModelProviders[0] ?? null
   const setupSelectedProvider = setupSelectedProviderId ? quickModelProviders.find((item) => item.id === setupSelectedProviderId) : undefined
   const homeProvider = setupSelectedProvider ?? defaultHomeProvider
-  const homeProviderModels = homeProvider ? getProviderAvailableModels(homeProvider) : []
+  const homeProviderModels = homeProvider ? getPolicyAllowedProviderModels(homeProvider, settings) : []
   const setupModel = homeProvider && homeProviderModels.includes(setupSelectedModel ?? '')
     ? setupSelectedModel!
-    : homeProvider ? getProviderPreferredModel(homeProvider) ?? homeProviderModels[0] ?? 'setup-model' : 'setup-model'
-  const runtimeTarget = resolveRuntimeTarget(conversation, providers, settings.defaultProvider)
+    : homeProvider ? getPolicyPreferredProviderModel(homeProvider, settings) ?? homeProviderModels[0] ?? 'setup-model' : 'setup-model'
+  const runtimeTarget = resolveRuntimeTarget(conversation, providers, settings.defaultProvider, settings)
   const runtimeConversation = runtimeTarget?.conversation ?? conversation
   const provider = runtimeTarget?.provider
-  const setupConversation = useMemo<Conversation>(() => createSetupConversationShell(homeProvider, setupModel, setupReasoningEffort, setupSystemPrompt), [homeProvider, setupModel, setupReasoningEffort, setupSystemPrompt])
+  const setupTemperature = settings.defaultTemperature ?? initialSetupDefaults.temperature
+  const setupConversation = useMemo<Conversation>(() => createSetupConversationShell(homeProvider, setupModel, setupReasoningEffort, setupSystemPrompt, setupTemperature), [homeProvider, setupModel, setupReasoningEffort, setupSystemPrompt, setupTemperature])
   const reasoningEffort = runtimeConversation?.reasoningEffort ?? setupReasoningEffort
   const supportsReasoningQuick = !!provider && providerSupportsReasoning(provider, runtimeConversation?.model)
   const supportsSetupReasoningQuick = !!homeProvider && providerSupportsReasoning(homeProvider, setupModel)
   const emptyHeaderTitle = !hasEnabledProvider ? t('chat.noProviderConnected') : hasAvailableModel ? homeProvider?.name ?? t('settings.providerManagement') : t('chat.noAvailableModels')
-  const homeProviderModel = homeProvider ? getProviderPreferredModel(homeProvider) : undefined
-  const emptyHeaderSubtitle = homeProviderModel ? getModelName(homeProviderModel) : undefined
+  const homeProviderModel = homeProvider ? getPolicyPreferredProviderModel(homeProvider, settings) : undefined
+  const emptyHeaderSubtitle = homeProvider && homeProviderModel ? getProviderDisplayModel(homeProvider, homeProviderModel) : undefined
   const providerHealthKey = useMemo(() => provider ? [
     provider.id,
     provider.enabled ? 'on' : 'off',
-    getProviderAvailableModels(provider).join(','),
+    getPolicyAllowedProviderModels(provider, settings).join(','),
     provider.baseUrl ?? '',
     provider.credentialMode ?? '',
     provider.tokenPlanRegion ?? '',
@@ -166,12 +179,12 @@ export function ChatWorkspace({ conversation, showBack = false, embedded = false
     provider.lastTestCode ?? '',
     provider.lastTestModel ?? '',
     provider.lastTestMessage ?? '',
-  ].join('|') : runtimeConversation?.providerId ?? 'none', [runtimeConversation?.providerId, provider])
+  ].join('|') : runtimeConversation?.providerId ?? 'none', [runtimeConversation?.providerId, provider, settings])
   const switchableProviders = useMemo(
-    () => providers.filter((item) => item.id !== 'local-setup'),
-    [providers]
+    () => providers.filter((item) => item.id !== 'local-setup' && providerHasPolicyAllowedModel(item, settings)),
+    [providers, settings]
   )
-  const metrics = useMemo(() => localDataStore.getConversationMetrics(runtimeConversation), [runtimeConversation])
+  const metrics = useMemo(() => getConversationMetrics(runtimeConversation), [runtimeConversation])
   const streamingMessage = runtimeConversation?.messages.find((message) => message.status === 'streaming')
   const isStreaming = !!streamingMessage
   const lastMessage = runtimeConversation?.messages.at(-1)
@@ -203,6 +216,8 @@ export function ChatWorkspace({ conversation, showBack = false, embedded = false
   const petEnabled = settings.petEnabled === true
   const compactViewport = windowHeight < 620 || windowWidth < 360
   const optionsPanelHeight = Math.max(compactViewport ? 360 : 430, Math.min(windowHeight * 0.7, compactViewport ? 460 : 620))
+  const effectiveInitialDraft = quickStartDraft?.content ?? initialDraft
+  const effectiveInitialDraftKey = quickStartDraft?.key ?? initialDraftKey
   const listTopInset = Math.max(CHAT_TOP_FLOATING_SPACE, insets.top + (chromeCollapsed ? 54 : chromeHeight + 12))
   const composerBottomInset = Math.max(COMPOSER_MIN_HEIGHT, composerHeight + Math.max(insets.bottom, 10) + 10)
   const keyboardLift = keyboardHeight
@@ -236,8 +251,9 @@ export function ChatWorkspace({ conversation, showBack = false, embedded = false
       skills,
       knowledgeDocuments,
       memoryItems,
+      settings,
     }),
-    [knowledgeDocuments, memoryItems, providers, skills]
+    [knowledgeDocuments, memoryItems, providers, settings, skills]
   )
   function scheduleChromeIdleCollapse() {
     if (idleTimer.current) clearTimeout(idleTimer.current)
@@ -250,6 +266,14 @@ export function ChatWorkspace({ conversation, showBack = false, embedded = false
   function markChromeActive() {
     setChromeCollapsed(false)
     scheduleChromeIdleCollapse()
+  }
+
+  function applyQuickStartDraft(draft: string) {
+    quickStartSequence.current += 1
+    setQuickStartDraft({ content: draft, key: `work-starter-${quickStartSequence.current}` })
+    setShowOptions(false)
+    setComposerPanel(null)
+    setChromeCollapsed(false)
   }
 
   async function applySkillToActiveConversation(nextSkills: SkillDefinition[]) {
@@ -318,7 +342,7 @@ export function ChatWorkspace({ conversation, showBack = false, embedded = false
 
   useEffect(() => {
     let mounted = true
-    void resolveConversationHealth(runtimeConversation, providers, hydrateProviderKey, t).then((health) => {
+    void resolveConversationHealth(runtimeConversation, providers, hydrateProviderKey, t, settings).then((health) => {
       if (mounted) setProviderHealth(health)
     })
     return () => {
@@ -339,6 +363,12 @@ export function ChatWorkspace({ conversation, showBack = false, embedded = false
   }, [conversation?.id])
 
   useEffect(() => {
+    if (conversation) return
+    setSetupReasoningEffort((current) => current === initialSetupDefaults.reasoningEffort ? current : initialSetupDefaults.reasoningEffort)
+    setSetupSystemPrompt((current) => current.trim() ? current : initialSetupDefaults.systemPrompt)
+  }, [conversation, initialSetupDefaults.reasoningEffort, initialSetupDefaults.systemPrompt])
+
+  useEffect(() => {
     if (!homeProvider) {
       setSetupSelectedProviderId(null)
       setSetupSelectedModel(null)
@@ -348,8 +378,8 @@ export function ChatWorkspace({ conversation, showBack = false, embedded = false
       setSetupSelectedProviderId(homeProvider.id)
     }
     if (setupSelectedModel && homeProviderModels.includes(setupSelectedModel)) return
-    setSetupSelectedModel(getProviderPreferredModel(homeProvider) ?? homeProviderModels[0] ?? null)
-  }, [homeProvider?.id, homeProviderModels.join('|'), quickModelProviders, setupSelectedModel, setupSelectedProviderId])
+    setSetupSelectedModel(getPolicyPreferredProviderModel(homeProvider, settings) ?? homeProviderModels[0] ?? null)
+  }, [homeProvider?.id, homeProviderModels.join('|'), quickModelProviders, settings, setupSelectedModel, setupSelectedProviderId])
 
   useEffect(() => {
     if (!isStreaming && pendingStreamingMessage && runtimeConversation) {
@@ -426,7 +456,8 @@ export function ChatWorkspace({ conversation, showBack = false, embedded = false
 
   if (!conversation) {
     async function submitSetup(content: string, attachments: Attachment[]) {
-      const readyProvider = homeProvider ?? pickReadyProviderForNewConversation(useSettingsStore.getState().providers, useSettingsStore.getState().settings.defaultProvider)
+      const currentSettings = useSettingsStore.getState().settings
+      const readyProvider = homeProvider ?? pickReadyProviderForNewConversation(useSettingsStore.getState().providers, currentSettings.defaultProvider, currentSettings)
       if (!readyProvider) {
         if (hasEnabledProvider && !hasAvailableModel) {
           dialog.toast({ title: t('chat.noAvailableModels'), message: t('chat.syncModelsBeforeChat'), tone: 'amber' })
@@ -437,17 +468,15 @@ export function ChatWorkspace({ conversation, showBack = false, embedded = false
         goProviders()
         return
       }
-      const providerModels = getProviderAvailableModels(readyProvider)
-      const model = providerModels.includes(setupModel) ? setupModel : getProviderPreferredModel(readyProvider)
+      const providerModels = getPolicyAllowedProviderModels(readyProvider, currentSettings)
+      const model = providerModels.includes(setupModel) ? setupModel : getPolicyPreferredProviderModel(readyProvider, currentSettings)
       if (!model) return
       const id = createConversation(readyProvider.id, model)
-      if (setupSystemPrompt || setupReasoningEffort !== 'medium') {
-        updateConversation(id, { systemPrompt: setupSystemPrompt, reasoningEffort: setupReasoningEffort })
-      }
+      updateConversation(id, { systemPrompt: setupSystemPrompt, reasoningEffort: setupReasoningEffort, temperature: setupTemperature })
       const nextConversation = useChatStore.getState().conversations.find((item) => item.id === id)
       if (nextConversation) {
         try {
-          await sendMessage({ conversation: { ...nextConversation, systemPrompt: setupSystemPrompt, reasoningEffort: setupReasoningEffort }, content, attachments })
+          await sendMessage({ conversation: { ...nextConversation, systemPrompt: setupSystemPrompt, reasoningEffort: setupReasoningEffort, temperature: setupTemperature }, content, attachments })
         } catch (error) {
           dialog.toast({ title: t('chat.sendFailed'), message: error instanceof Error ? error.message : t('chat.sendFailedMessage'), tone: 'danger' })
         }
@@ -491,7 +520,7 @@ export function ChatWorkspace({ conversation, showBack = false, embedded = false
       if (!homeProvider) return
       setSetupSelectedModel(nextModel)
       setComposerPanel(null)
-      dialog.toast({ title: t('chat.modelSwitched'), message: `${homeProvider.name} · ${getModelName(nextModel)}`, tone: 'mint' })
+      dialog.toast({ title: t('chat.modelSwitched'), message: `${homeProvider.name} · ${getProviderDisplayModel(homeProvider, nextModel)}`, tone: 'mint' })
     }
 
     const showSetupPet = petEnabled && !keyboardVisible && !showOptions && !composerPanel
@@ -555,15 +584,19 @@ export function ChatWorkspace({ conversation, showBack = false, embedded = false
             keyboardShouldPersistTaps="handled"
             contentContainerStyle={{ paddingHorizontal: 20, paddingTop: 10, paddingBottom: Math.max(insets.bottom, 10) + CHAT_BOTTOM_FLOATING_SPACE + keyboardLift }}
           >
-            <IsleEmptyState
-              title={emptyHeaderTitle}
-              actionLabel={hasAvailableModel ? t('chat.startChat') : t('chat.configureProviders')}
-              onAction={hasAvailableModel ? () => {
-                const readyProvider = pickReadyProviderForNewConversation(useSettingsStore.getState().providers, useSettingsStore.getState().settings.defaultProvider)
-                const model = readyProvider ? getProviderPreferredModel(readyProvider) : undefined
-                if (readyProvider && model) createConversation(readyProvider.id, model)
-              } : goProviders}
-            />
+            <View style={{ gap: 14 }}>
+              <IsleEmptyState
+                title={emptyHeaderTitle}
+                actionLabel={hasAvailableModel ? t('chat.startChat') : t('chat.configureProviders')}
+                onAction={hasAvailableModel ? () => {
+                  const currentSettings = useSettingsStore.getState().settings
+                  const readyProvider = pickReadyProviderForNewConversation(useSettingsStore.getState().providers, currentSettings.defaultProvider, currentSettings)
+                  const model = readyProvider ? getPolicyPreferredProviderModel(readyProvider, currentSettings) : undefined
+                  if (readyProvider && model) createConversation(readyProvider.id, model)
+                } : goProviders}
+              />
+              <WorkStarterActions onApplyStarter={applyQuickStartDraft} />
+            </View>
           </ScrollView>
           {showOptions ? (
             <MotiView
@@ -582,7 +615,7 @@ export function ChatWorkspace({ conversation, showBack = false, embedded = false
                   onSwitchModel={(nextProvider, nextModel) => {
                     setSetupSelectedProviderId(nextProvider.id)
                     setSetupSelectedModel(nextModel)
-                    dialog.toast({ title: t('chat.modelSwitched'), message: `${nextProvider.name} · ${getModelName(nextModel)}`, tone: 'mint' })
+                    dialog.toast({ title: t('chat.modelSwitched'), message: `${nextProvider.name} · ${getProviderDisplayModel(nextProvider, nextModel)}`, tone: 'mint' })
                     setShowOptions(false)
                   }}
                   onCopyLink={() => dialog.toast({ title: t('chat.noProviderConnected'), message: t('chat.configureProviderBeforeChat'), tone: 'amber' })}
@@ -612,6 +645,8 @@ export function ChatWorkspace({ conversation, showBack = false, embedded = false
             insets={insets}
             streaming={false}
             activityLabel=""
+            initialDraft={effectiveInitialDraft}
+            initialDraftKey={effectiveInitialDraftKey}
             commands={composerCommands}
             references={composerReferences}
             reasoningEffort={setupReasoningEffort}
@@ -627,7 +662,7 @@ export function ChatWorkspace({ conversation, showBack = false, embedded = false
               setSetupSelectedProviderId(nextProvider.id)
               setSetupSelectedModel(nextModel)
               setComposerPanel(null)
-              dialog.toast({ title: t('chat.modelSwitched'), message: `${nextProvider.name} · ${getModelName(nextModel)}`, tone: 'mint' })
+              dialog.toast({ title: t('chat.modelSwitched'), message: `${nextProvider.name} · ${getProviderDisplayModel(nextProvider, nextModel)}`, tone: 'mint' })
             }}
             onOpenModelPicker={openSetupModelPicker}
             onOpenAdvancedModelPicker={openSetupFullModelPanel}
@@ -654,6 +689,7 @@ export function ChatWorkspace({ conversation, showBack = false, embedded = false
             reasoningUnavailableMessage={supportsSetupReasoningQuick ? undefined : (hasAvailableModel ? t('chat.reasoningUnsupported') : t('chat.syncModelsBeforeChat'))}
             onLayoutHeight={setComposerHeight}
             motion={motion}
+            settings={settings}
           />
         </View>
       </ScreenWrapper>
@@ -672,6 +708,8 @@ export function ChatWorkspace({ conversation, showBack = false, embedded = false
       isStreaming={isStreaming}
       activityLabel={activityLabel}
       pendingNotice={pendingNotice}
+      initialDraft={effectiveInitialDraft}
+      initialDraftKey={effectiveInitialDraftKey}
       intentDraft={intentDraft}
       composerCommands={composerCommands}
       composerReferences={composerReferences}
@@ -693,6 +731,7 @@ export function ChatWorkspace({ conversation, showBack = false, embedded = false
       goSettings={goSettings}
       goProviders={goProviders}
       goKnowledge={goKnowledge}
+      onApplyStarter={applyQuickStartDraft}
       updateConversation={updateConversation}
       switchConversationModel={switchConversationModel}
       removeMessage={removeMessage}
@@ -719,6 +758,7 @@ export function ChatWorkspace({ conversation, showBack = false, embedded = false
       petEnabled={petEnabled}
       keyboardLift={keyboardLift}
       keyboardVisible={keyboardVisible}
+      settings={settings}
       setComposerFocused={setComposerFocused}
       setPagerGestureLocked={setPagerGestureLocked}
     />
@@ -735,6 +775,8 @@ function ActiveChatWorkspace({
   isStreaming,
   activityLabel,
   pendingNotice,
+  initialDraft,
+  initialDraftKey,
   intentDraft,
   composerCommands,
   composerReferences,
@@ -756,6 +798,7 @@ function ActiveChatWorkspace({
   goSettings,
   goProviders,
   goKnowledge,
+  onApplyStarter,
   updateConversation,
   switchConversationModel,
   removeMessage,
@@ -782,6 +825,7 @@ function ActiveChatWorkspace({
   petEnabled,
   keyboardLift,
   keyboardVisible,
+  settings,
   setComposerFocused,
   setPagerGestureLocked,
 }: {
@@ -794,12 +838,14 @@ function ActiveChatWorkspace({
   isStreaming: boolean
   activityLabel: string
   pendingNotice?: string
+  initialDraft?: string
+  initialDraftKey?: string | number
   intentDraft: { content: string; attachments: Attachment[] } | null
   composerCommands: ComposerCommand[]
   composerReferences: CommandReference[]
   supportsReasoningQuick: boolean
   reasoningEffort: NonNullable<Conversation['reasoningEffort']>
-  metrics: ReturnType<typeof localDataStore.getConversationMetrics>
+  metrics: ConversationMetrics
   regenerableAssistantId?: string
   switchableProviders: AIProvider[]
   readyProviders: AIProvider[]
@@ -815,6 +861,7 @@ function ActiveChatWorkspace({
   goSettings: () => void
   goProviders: () => void
   goKnowledge: () => void
+  onApplyStarter: (draft: string) => void
   updateConversation: (id: string, updates: Partial<Conversation>) => void
   switchConversationModel: (id: string, providerId: string, model: string) => void
   removeMessage: (convId: string, msgId: string) => void
@@ -841,6 +888,7 @@ function ActiveChatWorkspace({
   petEnabled: boolean
   keyboardLift: number
   keyboardVisible: boolean
+  settings: ReturnType<typeof useSettingsStore.getState>['settings']
   setComposerFocused: React.Dispatch<React.SetStateAction<boolean>>
   setPagerGestureLocked?: (locked: boolean) => void
 }) {
@@ -898,7 +946,7 @@ function ActiveChatWorkspace({
       goSettings()
       return
     }
-    const result = await testProviderModelDetailed(keyedProvider, activeConversation.model, keyedProvider.apiKey)
+    const result = await testProviderModelDetailed(keyedProvider, activeConversation.model, keyedProvider.apiKey, { checkParameters: settings.modelTestCheckParameters })
     await useSettingsStore.getState().updateProviderCredentialGroupHealth(keyedProvider.id, result.credentialGroupId, result.ok)
     await updateProvider(keyedProvider.id, { lastTestStatus: result.ok ? 'ok' : 'bad', lastTestedAt: Date.now(), lastTestMessage: result.message, lastTestCode: result.code })
     dialog.toast({ title: result.ok ? t('chat.modelAvailable') : t('chat.modelUnavailable'), message: result.ok ? t('chat.modelTestPassed', { model: activeConversation.model }) : result.message, tone: result.ok ? 'mint' : 'danger' })
@@ -913,7 +961,7 @@ function ActiveChatWorkspace({
       goSettings()
       return
     }
-    const result = await testProviderModelDetailed(keyedProvider, activeConversation.model, keyedProvider.apiKey)
+    const result = await testProviderModelDetailed(keyedProvider, activeConversation.model, keyedProvider.apiKey, { checkParameters: settings.modelTestCheckParameters })
     await useSettingsStore.getState().updateProviderCredentialGroupHealth(keyedProvider.id, result.credentialGroupId, result.ok)
     await updateProvider(keyedProvider.id, {
       lastTestStatus: result.ok ? 'ok' : 'bad',
@@ -922,7 +970,8 @@ function ActiveChatWorkspace({
       lastTestMessage: result.message,
       lastTestCode: result.code,
     })
-    setProviderHealth(await resolveConversationHealth(activeConversation, useSettingsStore.getState().providers, hydrateProviderKey, t))
+    const currentState = useSettingsStore.getState()
+    setProviderHealth(await resolveConversationHealth(activeConversation, currentState.providers, hydrateProviderKey, t, currentState.settings))
     setTestingHeader(false)
     dialog.toast({ title: result.ok ? t('chat.modelAvailable') : t('chat.modelUnavailable'), message: result.ok ? t('chat.modelTestPassed', { model: activeConversation.model }) : result.message, tone: result.ok ? 'mint' : 'danger' })
   }
@@ -940,7 +989,7 @@ function ActiveChatWorkspace({
           cancelLabel: t('common.cancel'),
           chips: [
             { label: nextProvider.name, tone: 'mint' },
-            { label: getModelName(nextModel), tone: 'amber' },
+            { label: getProviderDisplayModel(nextProvider, nextModel), tone: 'amber' },
             { label: t('chat.currentConversationOnly'), tone: 'default' },
           ],
           metrics: [
@@ -953,7 +1002,7 @@ function ActiveChatWorkspace({
       switchConversationModel(activeConversation.id, nextProvider.id, nextModel)
       setShowOptions(false)
       setComposerPanel(null)
-      dialog.toast({ title: t('chat.modelSwitched'), message: `${nextProvider.name} · ${getModelName(nextModel)}`, tone: 'mint' })
+      dialog.toast({ title: t('chat.modelSwitched'), message: `${nextProvider.name} · ${getProviderDisplayModel(nextProvider, nextModel)}`, tone: 'mint' })
     })()
   }
 
@@ -1052,6 +1101,7 @@ function ActiveChatWorkspace({
             optionsPanelHeight={optionsPanelHeight}
             onLayoutHeight={setChromeHeight}
             motion={motion}
+            settings={settings}
           />
 
           <View onTouchStart={closeOptionsFromBackground} style={{ flex: 1, paddingTop: listTopInset }}>
@@ -1077,6 +1127,25 @@ function ActiveChatWorkspace({
                       .then(() => dialog.toast({ title: t('common.copied'), message: t('chat.messageCopied'), tone: 'mint' }))
                       .catch(() => dialog.toast({ title: t('common.copyFailed'), message: t('chat.clipboardUnavailable'), tone: 'danger' }))
                   }}
+                  onCopyWorkArtifact={(item) => {
+                    const workArtifact = summarizeWorkArtifact(item.responseText ?? item.content)
+                    if (!workArtifact.hasWorkArtifact || !workArtifact.handoffText.trim()) {
+                      dialog.toast({ title: t('messageBubble.copyWorkArtifactEmpty'), tone: 'amber' })
+                      return
+                    }
+                    void Clipboard.setStringAsync(workArtifact.handoffText)
+                      .then(() => dialog.toast({ title: t('common.copied'), message: t('messageBubble.copyWorkArtifactCopied'), tone: 'mint' }))
+                      .catch(() => dialog.toast({ title: t('common.copyFailed'), message: t('chat.clipboardUnavailable'), tone: 'danger' }))
+                  }}
+                  onContinueWorkArtifact={(item) => {
+                    const workArtifact = summarizeWorkArtifact(item.responseText ?? item.content)
+                    if (!workArtifact.hasWorkArtifact || !workArtifact.followUpPrompt.trim()) {
+                      dialog.toast({ title: t('messageBubble.copyWorkArtifactEmpty'), tone: 'amber' })
+                      return
+                    }
+                    onApplyStarter(workArtifact.followUpPrompt)
+                    dialog.toast({ title: t('messageBubble.continueWorkArtifactInserted'), tone: 'mint' })
+                  }}
                   onRetry={(item) => void retryMessage(activeConversation.id, item.id).catch((error) => dialog.toast({ title: t('chat.retryFailed'), message: error instanceof Error ? error.message : t('chat.retryFailedMessage'), tone: 'danger' }))}
                   onRegenerate={() => void regenerateLastAssistant(activeConversation.id).catch((error) => dialog.toast({ title: t('chat.regenerateFailed'), message: error instanceof Error ? error.message : t('chat.regenerateFailedMessage'), tone: 'danger' }))}
                   onSpeak={(item) => void speakText(item.responseText ?? item.content, provider)}
@@ -1095,7 +1164,7 @@ function ActiveChatWorkspace({
                   onTestModel={(item) => void testCurrentModel(item)}
                 />
               )}
-              ListEmptyComponent={<EmptyConversationState onHistory={goHistory} onProviders={goProviders} />}
+              ListEmptyComponent={<EmptyConversationState onHistory={goHistory} onProviders={goProviders} onApplyStarter={onApplyStarter} />}
             />
           </View>
 
@@ -1141,6 +1210,8 @@ function ActiveChatWorkspace({
             streaming={isStreaming}
             activityLabel={activityLabel}
             pendingNotice={pendingNotice}
+            initialDraft={initialDraft}
+            initialDraftKey={initialDraftKey}
             commands={composerCommands}
             references={composerReferences}
             reasoningEffort={reasoningEffort}
@@ -1189,6 +1260,7 @@ function ActiveChatWorkspace({
             onPanelChange={setComposerPanel}
             onLayoutHeight={setComposerHeight}
             motion={motion}
+            settings={settings}
           />
         </View>
     </ScreenWrapper>
@@ -1218,6 +1290,7 @@ function FloatingChrome({
   optionsPanelHeight,
   onLayoutHeight,
   motion,
+  settings,
 }: {
   colors: ReturnType<typeof useAppTheme>['colors']
   insets: ReturnType<typeof useSafeAreaInsets>
@@ -1227,7 +1300,7 @@ function FloatingChrome({
   conversation: Conversation
   provider: AIProvider | undefined
   providerHealth: ConversationHealth | null
-  metrics: ReturnType<typeof localDataStore.getConversationMetrics>
+  metrics: ConversationMetrics
   onBack: () => void
   onRestore: () => void
   onToggleOptions: () => void
@@ -1241,10 +1314,11 @@ function FloatingChrome({
   optionsPanelHeight: number
   onLayoutHeight: (height: number) => void
   motion: ReturnType<typeof useMotionPreference>
+  settings: ReturnType<typeof useSettingsStore.getState>['settings']
 }) {
   const { t } = useTranslation()
-  const header = getProviderHeaderState(conversation, provider, switchableProviders, metrics, providerHealth, t)
-  const modelLabel = conversation.providerId === 'local-setup' ? t('chat.localSetupGuide') : getModelName(conversation.model)
+  const header = getProviderHeaderState(conversation, provider, switchableProviders, metrics, providerHealth, settings, t)
+  const modelLabel = conversation.providerId === 'local-setup' ? t('chat.localSetupGuide') : getProviderDisplayModel(provider, conversation.model)
   const shellStyle: StyleProp<ViewStyle> = [
     {
       position: 'absolute',
@@ -1355,6 +1429,8 @@ function FloatingComposer({
   streaming,
   activityLabel,
   pendingNotice,
+  initialDraft,
+  initialDraftKey,
   commands,
   references,
   reasoningEffort,
@@ -1387,11 +1463,14 @@ function FloatingComposer({
   reasoningUnavailableMessage,
   onLayoutHeight,
   motion,
+  settings,
 }: {
   insets: ReturnType<typeof useSafeAreaInsets>
   streaming: boolean
   activityLabel: string
   pendingNotice?: string
+  initialDraft?: string
+  initialDraftKey?: string | number
   commands: ComposerCommand[]
   references: CommandReference[]
   reasoningEffort: NonNullable<Conversation['reasoningEffort']>
@@ -1424,6 +1503,7 @@ function FloatingComposer({
   reasoningUnavailableMessage?: string
   onLayoutHeight: (height: number) => void
   motion: ReturnType<typeof useMotionPreference>
+  settings: ReturnType<typeof useSettingsStore.getState>['settings']
 }) {
   const { colors } = useAppTheme()
   const { t } = useTranslation()
@@ -1432,7 +1512,7 @@ function FloatingComposer({
   const promptOpen = panel === 'prompt'
   const moreOpen = panel === 'more'
   const reasoningOptions = useMemo(() => getReasoningEffortOptions(provider, conversation.model), [conversation.model, provider])
-  const quickModels = useMemo(() => provider ? buildModelQuickOptions([provider]) : [], [provider])
+  const quickModels = useMemo(() => provider ? buildModelQuickOptions([provider], settings) : [], [provider, settings])
   const [modelQuickGroup, setModelQuickGroup] = useState<ModelQuickGroup>(() => inferModelFamily(provider, conversation.model))
   const selectedGroup = useMemo(() => {
     if (modelQuickGroup === 'all') return 'all'
@@ -1441,6 +1521,11 @@ function FloatingComposer({
   const visibleQuickModels = selectedGroup === 'all'
     ? quickModels
     : quickModels.filter((option) => option.family === selectedGroup)
+  const modelPanelEmptyMessage = !provider
+    ? t('chat.configureProviderBeforeChat')
+    : quickModels.length
+      ? t('chat.noQuickModelMatches')
+      : t('chat.providerNoModelsSyncHint')
   const visibleQuickGroups = useMemo(
     () => quickModels.length
       ? MODEL_QUICK_GROUPS.filter((group) => group === 'all' || quickModels.some((option) => option.family === group))
@@ -1557,14 +1642,14 @@ function FloatingComposer({
                       }}
                       style={{ minHeight: 44, borderRadius: 22, paddingHorizontal: 12, alignItems: 'center', justifyContent: 'center', backgroundColor: active ? colors.text : colors.islandRaised, borderWidth: active ? 0 : 1, borderColor: colors.border }}
                     >
-                      <Text numberOfLines={1} ellipsizeMode="tail" style={{ maxWidth: 210, color: active ? colors.surface : colors.textSecondary, fontSize: 11, fontWeight: '900' }}>{getModelName(option.model)}</Text>
+                      <Text numberOfLines={1} ellipsizeMode="tail" style={{ maxWidth: 210, color: active ? colors.surface : colors.textSecondary, fontSize: 11, fontWeight: '900' }}>{getProviderDisplayModel(option.provider, option.model)}</Text>
                     </IslePressable>
                     )
                   })}
                 </ScrollView>
               ) : (
                 <Text style={{ color: colors.textTertiary, fontSize: 12, fontWeight: '800', lineHeight: 17, paddingHorizontal: 4, paddingVertical: 4 }}>
-                  {quickModels.length ? t('chat.noQuickModelMatches') : t('chat.providerNoModelsSyncHint')}
+                  {modelPanelEmptyMessage}
                 </Text>
               )}
             </MotiView>
@@ -1633,6 +1718,8 @@ function FloatingComposer({
             streaming={streaming}
             activityLabel={activityLabel}
             pendingNotice={pendingNotice}
+            initialDraft={initialDraft}
+            initialDraftKey={initialDraftKey}
             commands={commands}
             references={references}
             utilitiesOpen={moreOpen}
@@ -1774,17 +1861,37 @@ function renderConversationHeaderSpacer(
   )
 }
 
-function EmptyConversationState({ onHistory, onProviders }: { onHistory: () => void; onProviders: () => void }) {
-  const { colors } = useAppTheme()
+function EmptyConversationState({ onHistory, onProviders, onApplyStarter }: { onHistory: () => void; onProviders: () => void; onApplyStarter: (draft: string) => void }) {
   const { t } = useTranslation()
   return (
     <View style={{ paddingTop: 36, gap: 14 }}>
       <IsleEmptyState
         title={t('chat.newConversation')}
       />
+      <WorkStarterActions onApplyStarter={onApplyStarter} />
       <View style={{ flexDirection: 'row', gap: 8, flexWrap: 'wrap', justifyContent: 'center' }}>
         <QuickStartAction label={t('chat.configureProviders')} onPress={onProviders} />
         <QuickStartAction label={t('conversation.title')} onPress={onHistory} muted />
+      </View>
+    </View>
+  )
+}
+
+function WorkStarterActions({ onApplyStarter }: { onApplyStarter: (draft: string) => void }) {
+  const { colors } = useAppTheme()
+  const { t } = useTranslation()
+  return (
+    <View style={{ gap: 8, alignItems: 'center' }}>
+      <Text style={{ color: colors.textTertiary, fontSize: 11, fontWeight: '900' }}>{t('chat.starterTitle')}</Text>
+      <View style={{ flexDirection: 'row', gap: 8, flexWrap: 'wrap', justifyContent: 'center' }}>
+        {WORK_STARTERS.map((starter) => (
+          <QuickStartAction
+            key={starter.id}
+            label={t(starter.labelKey)}
+            muted
+            onPress={() => onApplyStarter(t(starter.draftKey))}
+          />
+        ))}
       </View>
     </View>
   )
@@ -1818,9 +1925,16 @@ function buildComposerCommands({
     description: skill.description || skill.tags.join(', ') || t('skills.applyDescription'),
     run: () => onApplySkill(skill),
   }))
+  const workStarterCommands = WORK_STARTERS.map((starter) => ({
+    id: `work-starter-${starter.id}`,
+    label: t(starter.labelKey),
+    description: t('chat.commandWorkStarterDescription'),
+    insertText: t(starter.draftKey),
+  }))
   return [
     { id: 'model-picker', label: t('chat.commandSwitchModel'), description: t('chat.commandSwitchModelDescription'), run: onOpenModelPicker },
     { id: 'knowledge-import', label: t('chat.importKnowledge'), description: t('chat.commandKnowledgeDescription'), run: onOpenKnowledge },
+    ...workStarterCommands,
     { id: 'prompt-template', label: t('chat.commandPromptTemplate'), description: t('chat.commandPromptTemplateDescription'), insertText: t('chat.promptTemplateInsert') },
     ...skillCommands,
     ...(skills.length ? [] : [{ id: 'create-skill', label: t('skills.createDefault'), description: t('skills.createDefaultDescription'), run: onCreateDefaultSkill }]),
@@ -1832,13 +1946,15 @@ function buildComposerReferences({
   skills,
   knowledgeDocuments,
   memoryItems,
+  settings,
 }: {
   providers: AIProvider[]
   skills: SkillDefinition[]
   knowledgeDocuments: KnowledgeDocument[]
   memoryItems: MemoryItem[]
+  settings: ReturnType<typeof useSettingsStore.getState>['settings']
 }): CommandReference[] {
-  const cleanedProviders = providers.filter((provider) => provider.id !== 'local-setup' && !hasOnlyHistoricalDefaultModels(provider))
+  const cleanedProviders = providers.filter((provider) => provider.id !== 'local-setup' && !hasOnlyHistoricalDefaultModels(provider) && providerHasPolicyAllowedModel(provider, settings))
   const providerRefs = cleanedProviders.map((provider) => ({
     id: provider.id,
     type: 'provider' as const,
@@ -1847,10 +1963,10 @@ function buildComposerReferences({
     metadata: { enabled: provider.enabled },
   }))
   const modelRefs = cleanedProviders.flatMap((provider) =>
-    getProviderAvailableModels(provider).slice(0, 12).map((model) => ({
+    getPolicyAllowedProviderModels(provider, settings).slice(0, 12).map((model) => ({
       id: `${provider.id}:${model}`,
       type: 'model' as const,
-      label: getModelName(model),
+      label: getProviderDisplayModel(provider, model),
       value: model,
       metadata: { providerId: provider.id, providerName: provider.name },
     }))
@@ -1887,9 +2003,9 @@ function hasOnlyHistoricalDefaultModels(provider: AIProvider): boolean {
   return models.every((model) => defaults.has(model))
 }
 
-function buildModelQuickOptions(providers: AIProvider[]): ModelQuickOption[] {
+function buildModelQuickOptions(providers: AIProvider[], settings?: ReturnType<typeof useSettingsStore.getState>['settings']): ModelQuickOption[] {
   return providers.flatMap((provider) =>
-    getProviderAvailableModels(provider).map((model) => ({
+    getPolicyAllowedProviderModels(provider, settings).map((model) => ({
       id: `${provider.id}:${model}`,
       provider,
       model,
@@ -1898,60 +2014,38 @@ function buildModelQuickOptions(providers: AIProvider[]): ModelQuickOption[] {
   )
 }
 
-function inferModelFamily(provider: AIProvider | undefined, model: string | undefined): ModelQuickGroup {
-  const modelText = normalizeModelId(model ?? '')
-  const modelFamily = inferModelFamilyFromText(modelText, false)
-  if (modelFamily) return modelFamily
-
-  const providerText = normalizeModelFamilyText([
-    provider?.name,
-    provider?.presetId,
-    provider?.detectedPresetId,
-    provider?.baseUrl,
-  ].filter(Boolean).join(' '))
-  const providerFamily = inferModelFamilyFromText(providerText, true)
-  if (providerFamily) return providerFamily
-
-  if (provider?.type === 'openai') return 'gpt'
-  if (provider?.type === 'anthropic' || provider?.wireProtocol === 'anthropic-compatible') return 'claude'
-  if (provider?.type === 'google') return 'gemini'
-  if (provider?.type === 'xiaomi-mimo') return 'mimo'
-  return 'other'
-}
-
-function inferModelFamilyFromText(text: string, includeProviderIdentity: boolean): Exclude<ModelQuickGroup, 'all'> | null {
-  if (!text) return null
-  if (/deepseek/.test(text)) return 'deepseek'
-  if (/qwen|qwq|qvq|dashscope|tongyi|aliyun/.test(text)) return 'qwen'
-  if (/kimi|moonshot/.test(text)) return 'kimi'
-  if (/doubao|volcengine|bytedance/.test(text)) return 'doubao'
-  if (/grok|(^|[-_./])xai($|[-_./])|api\.x\.ai/.test(text)) return 'grok'
-  if (/glm|bigmodel|zhipu/.test(text)) return 'glm'
-  if (/mimo|xiaomi/.test(text)) return 'mimo'
-  if (/claude|anthropic/.test(text)) return 'claude'
-  if (/gemini|google/.test(text)) return 'gemini'
-  if (/llama|(^|[-_./])meta($|[-_./])/.test(text)) return 'llama'
-  if (/(^|[-_./])(gpt|o[1-9])/.test(text) || (includeProviderIdentity && /api\.openai\.com/.test(text))) return 'gpt'
-  return null
-}
-
-function normalizeModelFamilyText(value: string): string {
-  return value
-    .toLowerCase()
-    .normalize('NFKD')
-    .replace(/[\u0300-\u036f]/g, '')
-}
-
-function pickReadyProviderForNewConversation(providers: AIProvider[], defaultProvider: string | null | undefined): AIProvider | null {
-  const enabled = providers.filter((provider) => isProviderConversationReady(provider))
+function pickReadyProviderForNewConversation(providers: AIProvider[], defaultProvider: string | null | undefined, settings?: ReturnType<typeof useSettingsStore.getState>['settings']): AIProvider | null {
+  const enabled = providers.filter((provider) => isProviderConversationReady(provider) && providerHasPolicyAllowedModel(provider, settings))
   return enabled.find((provider) => provider.id === defaultProvider) ?? enabled[0] ?? null
+}
+
+function getPolicyAllowedProviderModels(provider: AIProvider, settings?: ReturnType<typeof useSettingsStore.getState>['settings']): string[] {
+  return getProviderSelectableModels(provider).filter((model) => {
+    const upstreamModel = resolveProviderModelAlias(provider, model)
+    const direct = resolveProviderModelAccess({ provider, model, settings })
+    const upstream = upstreamModel === model ? direct : resolveProviderModelAccess({ provider, model: upstreamModel, settings })
+    if (!direct.allowed && direct.reason !== 'model_not_allowed') return false
+    if (!upstream.allowed && upstream.reason !== 'model_not_allowed') return false
+    return direct.allowed || upstream.allowed
+  })
+}
+
+function getPolicyPreferredProviderModel(provider: AIProvider, settings?: ReturnType<typeof useSettingsStore.getState>['settings']): string | undefined {
+  const preferred = getProviderPreferredModel(provider)
+  if (preferred && resolveProviderModelAccess({ provider, model: preferred, settings }).allowed) return preferred
+  return getPolicyAllowedProviderModels(provider, settings)[0]
+}
+
+function providerHasPolicyAllowedModel(provider: AIProvider, settings?: ReturnType<typeof useSettingsStore.getState>['settings']): boolean {
+  return getPolicyAllowedProviderModels(provider, settings).length > 0
 }
 
 function createSetupConversationShell(
   provider: AIProvider | null,
   model: string,
   reasoningEffort: NonNullable<Conversation['reasoningEffort']>,
-  systemPrompt: string
+  systemPrompt: string,
+  temperature: number
 ): Conversation {
   const config = getModelConfig(model, provider?.type, provider?.modelConfigs)
   return {
@@ -1961,7 +2055,7 @@ function createSetupConversationShell(
     model,
     providerModelMode: 'inherited',
     systemPrompt,
-    temperature: 0.7,
+    temperature,
     topP: 1,
     reasoningEffort,
     maxTokens: config.defaultMaxTokens,
@@ -1974,20 +2068,21 @@ function createSetupConversationShell(
 function resolveRuntimeTarget(
   conversation: Conversation | null,
   providers: AIProvider[],
-  defaultProvider: string | null | undefined
+  defaultProvider: string | null | undefined,
+  settings?: ReturnType<typeof useSettingsStore.getState>['settings']
 ): { conversation: Conversation; provider?: AIProvider } | null {
   if (!conversation) return null
   if (conversation.providerId === 'local-setup') return { conversation }
   const currentProvider = providers.find((item) => item.id === conversation.providerId)
-  const currentModelValid = !!currentProvider && getProviderAvailableModels(currentProvider).includes(conversation.model)
+  const currentModelValid = !!currentProvider && getPolicyAllowedProviderModels(currentProvider, settings).includes(conversation.model)
   if ((conversation.providerModelMode ?? 'inherited') === 'manual' && currentProvider && currentModelValid) {
     return { conversation, provider: currentProvider }
   }
   if (currentProvider && currentModelValid && isProviderConversationReady(currentProvider)) {
     return { conversation, provider: currentProvider }
   }
-  const readyProvider = pickReadyProviderForNewConversation(providers, defaultProvider)
-  const readyModel = readyProvider ? getProviderPreferredModel(readyProvider) : undefined
+  const readyProvider = pickReadyProviderForNewConversation(providers, defaultProvider, settings)
+  const readyModel = readyProvider ? getPolicyPreferredProviderModel(readyProvider, settings) : undefined
   if (!readyProvider || !readyModel) {
     return { conversation, provider: currentProvider }
   }
@@ -2152,7 +2247,8 @@ async function resolveConversationHealth(
   conversation: Conversation | null,
   providers: AIProvider[],
   hydrateProviderKey: (id: string) => Promise<AIProvider | null>,
-  t: TFunction
+  t: TFunction,
+  settings?: ReturnType<typeof useSettingsStore.getState>['settings']
 ): Promise<ConversationHealth | null> {
   if (!conversation || conversation.providerId === 'local-setup') return null
   const provider = providers.find((item) => item.id === conversation.providerId)
@@ -2169,7 +2265,14 @@ async function resolveConversationHealth(
   if (!provider.enabled) {
     return health('disabled_provider', inheritedExpired, provider.id, provider.name, t('chat.providerDisabledDescription'), t)
   }
-  const availableModels = getProviderAvailableModels(provider)
+  const upstreamModel = resolveProviderModelAlias(provider, conversation.model)
+  const access = resolveProviderModelAccess({ provider, model: conversation.model, settings })
+  const upstreamAccess = upstreamModel === conversation.model ? access : resolveProviderModelAccess({ provider, model: upstreamModel, settings })
+  const modelAllowed = (access.allowed || access.reason === 'model_not_allowed') && (upstreamAccess.allowed || upstreamAccess.reason === 'model_not_allowed') && (access.allowed || upstreamAccess.allowed)
+  if (!modelAllowed) {
+    return health('model_unavailable', inheritedExpired, provider.id, provider.name, t('chat.modelNotInProvider', { model: conversation.model, provider: provider.name }), t)
+  }
+  const availableModels = getPolicyAllowedProviderModels(provider, settings)
   if (!availableModels.includes(conversation.model)) {
     return health('model_unavailable', inheritedExpired, provider.id, provider.name, t('chat.modelNotInProvider', { model: conversation.model, provider: provider.name }), t)
   }
@@ -2181,12 +2284,12 @@ async function resolveConversationHealth(
   if (issue) {
     return health(issue.code, inheritedExpired, provider.id, provider.name, t(issue.messageKey ?? issue.message, { defaultValue: issue.message }), t)
   }
-  if (provider.lastTestStatus === 'bad' && provider.lastTestCode && provider.lastTestCode !== 'ok' && (!provider.lastTestModel || provider.lastTestModel === conversation.model)) {
+  if (provider.lastTestStatus === 'bad' && provider.lastTestCode && provider.lastTestCode !== 'ok' && (!provider.lastTestModel || provider.lastTestModel === conversation.model || provider.lastTestModel === upstreamModel)) {
     return health(provider.lastTestCode, inheritedExpired, provider.id, provider.name, provider.lastTestMessage || t('chat.lastTestFailed'), t)
   }
-  const config = getModelConfig(conversation.model, provider.type, provider.modelConfigs)
+  const config = getModelConfig(upstreamModel, provider.type, provider.modelConfigs)
   if (config.deprecated) {
-    return health('model_unavailable', inheritedExpired, provider.id, provider.name, t('chat.modelDeprecated', { model: getModelName(conversation.model) }), t)
+    return health('model_unavailable', inheritedExpired, provider.id, provider.name, t('chat.modelDeprecated', { model: getProviderDisplayModel(provider, conversation.model) }), t)
   }
   return { code: null, title: '', description: '', inheritedExpired, providerId: provider.id }
 }
@@ -2302,9 +2405,10 @@ function formatModelContextLimit(config: ReturnType<typeof getModelConfig>, t: T
   return config.source === 'inferred' ? t('chat.contextUnknownSafeBudget', { value }) : value
 }
 
-function formatHeaderMeta(conversation: Conversation, provider: AIProvider | undefined, metrics: ReturnType<typeof localDataStore.getConversationMetrics>, t: TFunction): string {
+function formatHeaderMeta(conversation: Conversation, provider: AIProvider | undefined, metrics: ConversationMetrics, t: TFunction): string {
   if (conversation.providerId === 'local-setup') return t('chat.localNoNetwork')
-  const config = getModelConfig(conversation.model, provider?.type, provider?.modelConfigs)
+  const upstreamModel = provider ? resolveProviderModelAlias(provider, conversation.model) : conversation.model
+  const config = getModelConfig(upstreamModel, provider?.type, provider?.modelConfigs)
   const parts = [
     t('chat.contextMeta', { value: formatModelContextLimit(config, t) }),
     t('chat.outputMeta', { value: formatTokenLimit(conversation.maxTokens || config.defaultMaxTokens) }),
@@ -2318,24 +2422,25 @@ function getProviderHeaderState(
   conversation: Conversation,
   provider: AIProvider | undefined,
   providers: AIProvider[],
-  metrics: ReturnType<typeof localDataStore.getConversationMetrics>,
+  metrics: ConversationMetrics,
   providerHealth: ConversationHealth | null,
+  settings: ReturnType<typeof useSettingsStore.getState>['settings'],
   t: TFunction
 ): { title: string; subtitle?: string } {
-  const enabledProviders = providers.filter((item) => item.id !== 'local-setup' && item.enabled)
+  const enabledProviders = providers.filter((item) => item.id !== 'local-setup' && item.enabled && providerHasPolicyAllowedModel(item, settings))
   const hasEnabledProvider = enabledProviders.length > 0
   const hasAvailableModel = enabledProviders.some((item) => isProviderConversationReady(item))
   if (!hasEnabledProvider) return { title: t('chat.noProviderConnected') }
   if (!hasAvailableModel) return { title: t('chat.noAvailableModels') }
   if (conversation.providerId === 'local-setup') {
     const fallbackProvider = enabledProviders.find((item) => isProviderConversationReady(item))
-    const fallbackModel = fallbackProvider ? getProviderPreferredModel(fallbackProvider) : undefined
+    const fallbackModel = fallbackProvider ? getPolicyPreferredProviderModel(fallbackProvider, settings) : undefined
     return {
       title: fallbackProvider?.name ?? t('settings.providerManagement'),
-      subtitle: fallbackModel ? getModelName(fallbackModel) : undefined,
+      subtitle: fallbackProvider && fallbackModel ? getProviderDisplayModel(fallbackProvider, fallbackModel) : undefined,
     }
   }
-  const modelLabel = getModelName(conversation.model)
+  const modelLabel = getProviderDisplayModel(provider, conversation.model)
   return {
     title: provider?.name ?? t('settings.providerManagement'),
     subtitle: providerHealth?.code

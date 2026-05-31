@@ -6,11 +6,13 @@ import { getProviderPreferredModel } from '@/utils/providerModels'
 
 interface HomeScreenContentProps {
   embedded?: boolean
+  initialDraft?: string
+  initialDraftKey?: string | number
   onHistory?: () => void
   onSettings?: () => void
 }
 
-export function HomeScreenContent({ embedded = false, onHistory, onSettings }: HomeScreenContentProps) {
+export function HomeScreenContent({ embedded = false, initialDraft, initialDraftKey, onHistory, onSettings }: HomeScreenContentProps) {
   const conversations = useChatStore((state) => state.conversations)
   const currentId = useChatStore((state) => state.currentId)
   const create = useChatStore((state) => state.create)
@@ -82,6 +84,8 @@ export function HomeScreenContent({ embedded = false, onHistory, onSettings }: H
     <ChatWorkspace
       conversation={visibleConversation}
       embedded={embedded}
+      initialDraft={initialDraft}
+      initialDraftKey={initialDraftKey}
       onHistory={onHistory}
       onSettings={onSettings}
     />

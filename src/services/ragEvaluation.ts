@@ -1,5 +1,5 @@
 import type { Conversation, RagEvaluationLog, RagEvaluationResult, RagIndexingJobStatus, RetrievalSource, Settings } from '@/types'
-import { localDataStore } from '@/services/localDataStore'
+import { localDataStore, type EmbeddingJobStatus, type UpsertChunkOptions } from '@/services/localDataStore'
 import { runAgenticRag, verifyRagGeneration } from '@/services/rag'
 
 export interface RagGoldCase {
@@ -34,6 +34,13 @@ export interface RagCaseEvaluation {
 export interface RagDebugSnapshot {
   evaluations: RagEvaluationLog[]
   indexingJobs: RagIndexingJobStatus[]
+}
+
+export interface RagEmbeddingJobSummary {
+  total: number
+  running: number
+  error: number
+  jobs: EmbeddingJobStatus[]
 }
 
 const GOLD_CASES: RagGoldCase[] = [
@@ -145,6 +152,28 @@ export async function loadRagDebugSnapshot(): Promise<RagDebugSnapshot> {
     localDataStore.listIndexingJobs(24),
   ])
   return { evaluations, indexingJobs }
+}
+
+export async function listRagEmbeddingJobs(limit = 20): Promise<EmbeddingJobStatus[]> {
+  return localDataStore.listEmbeddingJobs(limit)
+}
+
+export async function loadRagEmbeddingJobSummary(limit = 50): Promise<RagEmbeddingJobSummary> {
+  const jobs = await listRagEmbeddingJobs(limit)
+  return {
+    total: jobs.length,
+    running: jobs.filter((job) => job.status === 'running').length,
+    error: jobs.filter((job) => job.status === 'error').length,
+    jobs,
+  }
+}
+
+export async function rebuildRagKnowledgeEmbeddings(options: UpsertChunkOptions = {}): Promise<number> {
+  return localDataStore.rebuildKnowledgeEmbeddings(options)
+}
+
+export async function clearRagQueryCaches(): Promise<void> {
+  await localDataStore.clearRagCaches()
 }
 
 function summarizeRun(run: RagEvaluationRun): RagEvaluationResult {

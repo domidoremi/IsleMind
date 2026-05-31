@@ -94,12 +94,22 @@ function writeManifest(manifest) {
 
 function writeGeneratedBundle(variant, bundledModels, generatedAt) {
   ensureDir(path.dirname(generatedBundlePath))
-  const source = [
+  const stableLines = [
     `export const MODEL_BUNDLE_VARIANT = ${JSON.stringify(variant)}`,
     `export const BUNDLED_LOCAL_EMBEDDING_MODELS: string[] = ${JSON.stringify(bundledModels)}`,
+  ]
+  if (fs.existsSync(generatedBundlePath)) {
+    const existing = fs.readFileSync(generatedBundlePath, 'utf8')
+    const hasSameStableContent = stableLines.every((line) => existing.includes(line))
+    const existingGeneratedAt = existing.match(/MODEL_BUNDLE_GENERATED_AT = "([^"]+)"/)?.[1]
+    if (hasSameStableContent && existingGeneratedAt) generatedAt = existingGeneratedAt
+  }
+  const source = [
+    ...stableLines,
     `export const MODEL_BUNDLE_GENERATED_AT = ${JSON.stringify(generatedAt)}`,
     '',
   ].join('\n')
+  if (fs.existsSync(generatedBundlePath) && fs.readFileSync(generatedBundlePath, 'utf8') === source) return
   fs.writeFileSync(generatedBundlePath, source)
 }
 

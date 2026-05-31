@@ -5,6 +5,17 @@ import { st } from '@/i18n/service'
 import { getSecureApiKey } from './secureKey'
 import { chooseCredentialForModel, runCredentialGroupModelSync, updateCredentialGroupHealth } from './providerCredentials'
 import { getReasoningEffortOptions, isClaudeThinkingModel, isDeepSeekThinkingModel, isGeminiThinkingModel, isOpenAIReasoningModel as isKnownOpenAIReasoningModel, isXiaomiMimoReasoningModel, providerSupportsReasoning } from '@/utils/modelReasoning'
+import type { PayloadRuleResult } from '@/services/ai/policy/payloadRules'
+import { evaluatePayloadRules } from '@/services/ai/policy/payloadRules'
+import type { ProxyPolicyDecision } from '@/services/ai/policy/proxyPolicy'
+import { resolveProxyPolicy } from '@/services/ai/policy/proxyPolicy'
+import { resolveProviderModelAccess } from '@/services/ai/policy/providerModelAccess'
+import type { TransportSelection } from '@/services/ai/transport/transportSelector'
+import { selectUpstreamTransport } from '@/services/ai/transport/transportSelector'
+import { acquireSessionLease } from '@/services/ai/transport/sessionLeasePool'
+import { runResponsesWebSocketTransport } from '@/services/ai/transport/responsesWebSocketTransport'
+import { appendRuntimeLog } from '@/services/runtimeLog'
+import { resolveProviderModelAlias } from '@/utils/providerModels'
 
 export type StreamCallback = (chunk: string) => void
 export type DoneCallback = (result: ChatCompletionResult) => void
@@ -22,6 +33,7 @@ export interface ChatCompletionResult {
   citations?: MessageCitation[]
   traces?: ProcessTrace[]
   credentialGroupId?: string
+  responseId?: string
 }
 
 export interface StreamHandle {
@@ -61,6 +73,41 @@ export interface ChatRequest {
   webSearchMode?: WebSearchMode
   stream?: boolean
   signal?: AbortSignal
+  conversationId?: string
+  sessionId?: string
+  settings?: {
+    transportMode?: 'auto' | 'http' | 'websocket'
+    payloadPolicyMode?: 'off' | 'warn' | 'block'
+    proxyMode?: 'off' | 'custom-base-url' | 'system-detected'
+    proxyBaseUrl?: string
+    providerAllowlist?: string[]
+    providerBlocklist?: string[]
+    modelAllowlist?: string[]
+    modelBlocklist?: string[]
+    runtimeLogEnabled?: boolean
+    runtimeLogMaxBytes?: number
+    sessionConcurrencyLimit?: number
+    sessionQueueTimeoutMs?: number
+    remoteCompactMode?: 'off' | 'auto' | 'required'
+    remoteCompactThreshold?: number
+    upstreamRequestTimeoutMs?: number
+    upstreamMaxRetries?: number
+    upstreamCircuitBreakerEnabled?: boolean
+    upstreamCircuitBreakerFailureThreshold?: number
+    upstreamCircuitBreakerCooldownMs?: number
+    requestRectificationEnabled?: boolean
+    anthropicThinkingSignatureRectificationEnabled?: boolean
+    anthropicThinkingBudgetRectificationEnabled?: boolean
+    bedrockRequestOptimizerEnabled?: boolean
+    thinkingOptimizerEnabled?: boolean
+    cacheInjectionEnabled?: boolean
+    cacheTtl?: 'default' | '5m' | '1h'
+    modelTestModel?: string
+    modelTestCheckParameters?: boolean
+  }
+  remoteCompactEligible?: boolean
+  previousResponseId?: string
+  requestedModel?: string
 }
 
 export interface ProviderAudioTranscriptionRequest {
@@ -144,11 +191,13 @@ interface ParsedStreamChunk {
   text: string
   traces: ProcessTrace[]
   usage?: MessageUsage
+  responseId?: string
 }
 
 const PROVIDER_REQUEST_TIMEOUT_MS = 18000
 const MODEL_TEST_TIMEOUT_MS = 22000
 const CHAT_REQUEST_TIMEOUT_MS = 60000
+const CIRCUIT_STATES = new Map<string, { failures: number; openedUntil?: number }>()
 
 export function buildOpenAIBodyForTest(req: ChatRequest) {
   return buildOpenAIBody(req)
@@ -170,8 +219,55 @@ export function getAPIEndpointForTest(provider: AIProvider) {
   return getAPIEndpoint(provider)
 }
 
+export function getXiaomiMimoModelDiscoveryEndpointForTest(provider: AIProvider) {
+  return `${normalizeBaseUrl(defaultOpenAICompatibleBaseUrl(getXiaomiMimoModelDiscoveryProvider(provider)))}/models`
+}
+
 export function parseProviderStreamChunkForTest(chunk: string, providerType: ProviderType) {
   return parseStreamChunk(chunk, providerType)
+}
+
+export function parseProviderStreamEventForTest(event: unknown, providerType: ProviderType) {
+  return parseProviderStreamEvent(event, providerType)
+}
+
+export function evaluatePayloadRulesForTest(input: Parameters<typeof evaluatePayloadRules>[0]) {
+  return evaluatePayloadRules(input)
+}
+
+export function selectUpstreamTransportForTest(input: Parameters<typeof selectUpstreamTransport>[0]) {
+  return selectUpstreamTransport(input)
+}
+
+export function resolveProviderModelAccessForTest(input: Parameters<typeof resolveProviderModelAccess>[0]) {
+  return resolveProviderModelAccess(input)
+}
+
+export function mergeAliasAccessPolicyForTest(
+  requested: ReturnType<typeof resolveProviderModelAccess>,
+  upstream: ReturnType<typeof resolveProviderModelAccess>
+) {
+  return mergeAliasAccessPolicy(requested, upstream)
+}
+
+export function resolveProxyPolicyForTest(input: Parameters<typeof resolveProxyPolicy>[0]) {
+  return resolveProxyPolicy(input)
+}
+
+export function optimizeRequestBodyForTest(body: Record<string, unknown>, req: ChatRequest) {
+  return optimizeRequestBody(body, req)
+}
+
+export function fetchChatStreamWithRetryForTest(input: Parameters<typeof fetchChatStreamWithRetry>[0]) {
+  return fetchChatStreamWithRetry(input)
+}
+
+export function rectifyAnthropicRequestBodyForTest(input: Parameters<typeof rectifyAnthropicRequestBody>[0]) {
+  return rectifyAnthropicRequestBody(input)
+}
+
+export function getBodyForTest(req: ChatRequest) {
+  return getBody(req)
 }
 
 export function parseAnthropicModelsForTest(models: AnthropicModelListItem[]): AIModel[] {
@@ -404,6 +500,10 @@ function buildOpenAIResponsesBody(req: ChatRequest) {
     ...(openAIEffort ? { reasoning: { effort: openAIEffort } } : {}),
     max_output_tokens: clampMaxTokens(req),
     stream: req.stream ?? true,
+    ...(req.previousResponseId ? { previous_response_id: req.previousResponseId } : {}),
+    ...(req.remoteCompactEligible
+      ? { context_management: [{ type: 'compaction', compact_threshold: req.settings?.remoteCompactThreshold ?? 0.8 }] }
+      : {}),
     ...(req.webSearchMode === 'native' ? { tools: [{ type: 'web_search_preview' }] } : {}),
   }
 }
@@ -669,6 +769,76 @@ function getWireProviderType(provider: AIProvider): ProviderType {
     : provider.type
 }
 
+function optimizeRequestBody(body: Record<string, unknown>, req: ChatRequest): Record<string, unknown> {
+  if (!isBedrockProvider(req.provider) || req.settings?.bedrockRequestOptimizerEnabled !== true) return body
+  let next = { ...body }
+  if (req.settings.thinkingOptimizerEnabled === true) {
+    next = optimizeBedrockThinking(next, req)
+  }
+  if (req.settings.cacheInjectionEnabled === true) {
+    next = injectBedrockCache(next, req.settings.cacheTtl ?? 'default')
+  }
+  return next
+}
+
+function optimizeBedrockThinking(body: Record<string, unknown>, req: ChatRequest): Record<string, unknown> {
+  if (!isAnthropicWireRequest(req)) return body
+  if (supportsAnthropicAdaptiveThinking(req.model)) {
+    return {
+      ...body,
+      thinking: { type: 'adaptive', display: 'summarized' },
+      output_config: { ...(body.output_config as Record<string, unknown> | undefined), effort: normalizeAnthropicEffort(req.model, req.reasoningEffort ?? 'medium') },
+    }
+  }
+  if (body.thinking) return body
+  const maxTokens = numberValue(body.max_tokens) ?? clampMaxTokens(req)
+  return {
+    ...body,
+    thinking: { type: 'enabled', budget_tokens: Math.min(32000, Math.max(1024, maxTokens - 1)) },
+    max_tokens: Math.max(maxTokens, 4096),
+  }
+}
+
+function injectBedrockCache(body: Record<string, unknown>, ttl: 'default' | '5m' | '1h'): Record<string, unknown> {
+  const cacheControl = ttl === 'default'
+    ? { type: 'ephemeral' }
+    : { type: 'ephemeral', ttl }
+  const next = { ...body }
+  if (typeof next.system === 'string' && next.system.trim()) {
+    next.system = [{ type: 'text', text: next.system, cache_control: cacheControl }]
+  }
+  if (Array.isArray(next.messages)) {
+    next.messages = next.messages.map((message, index) => {
+      if (!message || typeof message !== 'object') return message
+      const record = message as Record<string, unknown>
+      if (!Array.isArray(record.content) || index !== 0 && index !== (next.messages as unknown[]).length - 1) return record
+      return { ...record, content: addCacheControlToLastTextPart(record.content, cacheControl) }
+    })
+  }
+  return next
+}
+
+function addCacheControlToLastTextPart(content: unknown[], cacheControl: Record<string, unknown>): unknown[] {
+  const next = [...content]
+  for (let index = next.length - 1; index >= 0; index -= 1) {
+    const part = next[index]
+    if (part && typeof part === 'object' && (part as Record<string, unknown>).type === 'text') {
+      next[index] = { ...(part as Record<string, unknown>), cache_control: cacheControl }
+      break
+    }
+  }
+  return next
+}
+
+function isAnthropicWireRequest(req: ChatRequest): boolean {
+  return getWireProviderType(req.provider) === 'anthropic'
+}
+
+function isBedrockProvider(provider: AIProvider): boolean {
+  const text = [provider.id, provider.name, provider.baseUrl, provider.presetId, provider.detectedPresetId].filter(Boolean).join(' ').toLowerCase()
+  return /\bbedrock\b|bedrock-runtime|bedrock\.[a-z0-9-]+\.amazonaws\.com/.test(text)
+}
+
 function extractContent(chunk: string, providerType: ProviderType): string {
   return parseStreamChunk(chunk, providerType).text
 }
@@ -677,6 +847,7 @@ function parseStreamChunk(chunk: string, providerType: ProviderType): ParsedStre
   const traces: ProcessTrace[] = []
   let text = ''
   let usage: MessageUsage | undefined
+  let responseId: string | undefined
   let sawDataLine = false
   for (const line of chunk.split('\n')) {
     if (!line.startsWith('data: ') || line === 'data: [DONE]') continue
@@ -687,16 +858,17 @@ function parseStreamChunk(chunk: string, providerType: ProviderType): ParsedStre
       text += parsed.text
       traces.push(...parsed.traces)
       usage = parsed.usage ?? usage
+      responseId = parsed.responseId ?? responseId
     } catch {}
   }
   const trimmed = chunk.trim()
   if (!sawDataLine && trimmed.startsWith('{')) {
     try {
       const parsed = parseProviderStreamEvent(JSON.parse(trimmed), providerType)
-      return { text: parsed.text, traces: dedupeTraces(parsed.traces), usage: parsed.usage }
+      return { text: parsed.text, traces: dedupeTraces(parsed.traces), usage: parsed.usage, responseId: parsed.responseId }
     } catch {}
   }
-  return { text, traces: dedupeTraces(traces), usage }
+  return { text, traces: dedupeTraces(traces), usage, responseId }
 }
 
 function parseProviderStreamEvent(json: any, providerType: ProviderType): ParsedStreamChunk {
@@ -726,7 +898,7 @@ function parseProviderStreamEvent(json: any, providerType: ProviderType): Parsed
       if (isToolEventType(json.type) || delta?.tool_calls || json.tool_call || json.function_call || json.item?.type?.includes?.('tool')) {
         traces.push(createProviderTrace('tool', providerType, st('providerTrace.toolCall'), summarizeToolEvent(json), isDoneEvent(json.type) ? 'done' : 'running', stableTraceId(json, 'tool')))
       }
-      return { text, traces, usage: extractUsage(json, providerType === 'openai' ? 'openai' : 'openai-compatible') }
+      return { text, traces, usage: extractUsage(json, providerType === 'openai' ? 'openai' : 'openai-compatible'), responseId: extractResponseId(json) }
     }
     case 'anthropic': {
       let text = ''
@@ -959,6 +1131,10 @@ function extractOpenAIText(json: any): string {
   ].filter(Boolean).join('')
 }
 
+function extractResponseId(json: any): string | undefined {
+  return stringValue(json?.response?.id) || stringValue(json?.id) || stringValue(json?.response_id)
+}
+
 function extractOpenAIOutputText(output: unknown): string {
   if (!Array.isArray(output)) return ''
   const parts: string[] = []
@@ -1038,6 +1214,7 @@ function parseChatCompletionJson(json: any, req: ChatRequest): ChatCompletionRes
         usage: extractUsage(json, providerType),
         citations: extractCitationsFromText(openAIText, req.retrievalSources),
         traces: extractTracesFromJson(json, providerType),
+        responseId: extractResponseId(json),
       }
     case 'anthropic':
       return {
@@ -1061,6 +1238,7 @@ function parseChatCompletionJson(json: any, req: ChatRequest): ChatCompletionRes
         usage: extractUsage(json, 'openai-compatible'),
         citations: extractCitationsFromText(compatibleText, req.retrievalSources),
         traces: extractTracesFromJson(json, providerType),
+        responseId: extractResponseId(json),
       }
   }
 }
@@ -1083,7 +1261,7 @@ function parseBufferedStreamResponse(raw: string, req: ChatRequest, providerType
     ...extractCitationsFromText(text, req.retrievalSources),
     ...extractProviderCitationsFromSse(raw, providerType),
   ])
-  return { text, citations, traces: parsed.traces, usage: parsed.usage }
+  return { text, citations, traces: parsed.traces, usage: parsed.usage, responseId: parsed.responseId }
 }
 
 function extractTracesFromJson(json: any, providerType: ProviderType): ProcessTrace[] {
@@ -1203,6 +1381,20 @@ function providerRuntimeError(message: string, credentialGroupId?: string): Prov
   return error
 }
 
+function mergeAliasAccessPolicy(requested: ReturnType<typeof resolveProviderModelAccess>, upstream: ReturnType<typeof resolveProviderModelAccess>): ReturnType<typeof resolveProviderModelAccess> {
+  if (!requested.allowed && requested.reason !== 'model_not_allowed') return requested
+  if (!upstream.allowed && upstream.reason !== 'model_not_allowed') return upstream
+  if (requested.allowed || upstream.allowed) {
+    return {
+      allowed: true,
+      providerId: requested.providerId,
+      model: requested.model,
+      matchedRules: [...requested.matchedRules, ...upstream.matchedRules],
+    }
+  }
+  return upstream
+}
+
 export async function streamChat(
   req: ChatRequest,
   onChunk: StreamCallback,
@@ -1212,84 +1404,266 @@ export async function streamChat(
   onTrace?: TraceCallback
 ): Promise<StreamHandle> {
   const controller = new AbortController()
-  const credential = chooseCredentialForModel(req.provider, req.model)
+  const requestedModel = req.requestedModel ?? req.model
+  const upstreamModel = resolveProviderModelAlias(req.provider, requestedModel)
+  const effectiveReq = upstreamModel === req.model && requestedModel === req.model ? req : { ...req, requestedModel, model: upstreamModel }
+  const credential = chooseCredentialForModel(req.provider, requestedModel)
+  const requestedAccess = resolveProviderModelAccess({ provider: req.provider, model: requestedModel, settings: req.settings })
+  const upstreamAccess = requestedModel === upstreamModel
+    ? requestedAccess
+    : resolveProviderModelAccess({ provider: req.provider, model: upstreamModel, settings: req.settings })
+  const access = mergeAliasAccessPolicy(requestedAccess, upstreamAccess)
+  void appendRuntimeLog('access.policy', {
+    conversationId: effectiveReq.conversationId,
+    providerId: effectiveReq.provider.id,
+    model: upstreamModel,
+    requestedModel,
+    upstreamModel,
+    allowed: access.allowed,
+    matchedRules: access.matchedRules,
+    reason: access.allowed ? undefined : access.reason,
+  }, runtimeLogOptions(effectiveReq))
+  if (!access.allowed) {
+    const done = Promise.resolve().then(() => onError(providerRuntimeError(`access_policy_${access.reason}`, credential.credentialGroupId)))
+    return { controller, done }
+  }
   const runtimeReq = {
-    ...req,
+    ...effectiveReq,
     provider: {
-      ...req.provider,
-      apiKey: credential.apiKey || req.provider.apiKey,
+      ...effectiveReq.provider,
+      apiKey: credential.apiKey || effectiveReq.provider.apiKey,
     },
   }
   const issue = getProviderConfigIssue(runtimeReq.provider, runtimeReq.provider.apiKey)
   if (issue) {
-    req.provider = updateCredentialGroupHealth(req.provider, credential.credentialGroupId, false)
+    effectiveReq.provider = updateCredentialGroupHealth(effectiveReq.provider, credential.credentialGroupId, false)
     const error = providerRuntimeError(`${issue.code}: ${issue.message}`, credential.credentialGroupId)
     const done = Promise.resolve().then(() => onError(error))
     return { controller, done }
   }
-  if (req.signal) {
-    req.signal.addEventListener('abort', () => controller.abort(), { once: true })
+  if (effectiveReq.signal) {
+    effectiveReq.signal.addEventListener('abort', () => controller.abort(), { once: true })
   }
-  const stream = req.stream ?? true
+  const stream = effectiveReq.stream ?? true
   if (!runtimeReq.provider.apiKey.trim()) {
-    req.provider = updateCredentialGroupHealth(req.provider, credential.credentialGroupId, false)
+    effectiveReq.provider = updateCredentialGroupHealth(effectiveReq.provider, credential.credentialGroupId, false)
     const done = Promise.resolve().then(() => onError(providerRuntimeError('missing_key', credential.credentialGroupId)))
     return { controller, done }
   }
+  const usesResponsesApi = usesOpenAIResponses(runtimeReq)
   const url =
     runtimeReq.provider.type === 'google'
       ? getGoogleEndpoint(runtimeReq.provider, runtimeReq.model, stream)
-      : usesOpenAIResponses(runtimeReq)
+      : usesResponsesApi
         ? getOpenAIResponsesEndpoint(runtimeReq.provider)
       : getAPIEndpoint(runtimeReq.provider)
+  const transportSelection = selectUpstreamTransport({
+    provider: runtimeReq.provider,
+    usesResponsesApi,
+    settings: effectiveReq.settings,
+    hasWebSocketRuntime: typeof WebSocket !== 'undefined',
+  })
   const headers = getHeaders(runtimeReq.provider)
-  const body = JSON.stringify(getBody({ ...runtimeReq, stream }))
-
-  const response = await fetchChatStreamWithTimeout(url, {
-    method: 'POST',
-    headers,
-    body,
-    signal: controller.signal,
-  }, CHAT_REQUEST_TIMEOUT_MS)
-
-  if (!response.ok) {
-    const errorText = await safeResponseText(response)
-    req.provider = updateCredentialGroupHealth(req.provider, credential.credentialGroupId, false)
-    const done = Promise.resolve().then(() => onError(providerRuntimeError(formatProviderHttpError(response.status, errorText, runtimeReq.provider, runtimeReq.model), credential.credentialGroupId)))
+  const rawBody = optimizeRequestBody(getBody({ ...runtimeReq, stream }), runtimeReq)
+  const payloadPolicy = evaluatePayloadRules({
+    body: rawBody,
+    messages: runtimeReq.messages,
+    attachments: runtimeReq.attachments,
+    mode: effectiveReq.settings?.payloadPolicyMode,
+  })
+  void logPayloadPolicy(effectiveReq, payloadPolicy)
+  if (payloadPolicy.blocked) {
+    const done = Promise.resolve().then(() => onError(providerRuntimeError(`payload_policy_blocked:${payloadPolicy.findings.map((item) => item.id).join(',')}`, credential.credentialGroupId)))
     return { controller, done }
   }
-
-  if (!stream) {
-    const done = runStreamTask(async () => {
-      const result = await parseNonStreamingResponse(response, runtimeReq)
-      if (result.text) onChunk(result.text)
-      if (result.citations?.length) onCitations?.(result.citations)
-      result.traces?.forEach(onTrace ?? (() => undefined))
-      onDone(withCredentialGroup(result, credential.credentialGroupId))
-    }, onError, credential.credentialGroupId)
-    return { controller, done }
+  const proxyPolicy = resolveProxyPolicy({ provider: runtimeReq.provider, url, settings: effectiveReq.settings })
+  void logProxyPolicy(effectiveReq, proxyPolicy)
+  void logUpstreamRequest(effectiveReq, transportSelection, payloadPolicy, proxyPolicy)
+  const body = JSON.stringify(rawBody)
+  let lease: Awaited<ReturnType<typeof acquireSessionLease>> | null = null
+  if (transportSelection.transport === 'responses_websocket') {
+    try {
+      lease = await acquireSessionLease({
+        key: `${runtimeReq.provider.id}:${runtimeReq.model}:${effectiveReq.conversationId ?? 'global'}:${effectiveReq.sessionId ?? 'default'}`,
+        limit: effectiveReq.settings?.sessionConcurrencyLimit,
+        timeoutMs: effectiveReq.settings?.sessionQueueTimeoutMs,
+      })
+      void appendRuntimeLog('session.lease', {
+        conversationId: effectiveReq.conversationId,
+        providerId: runtimeReq.provider.id,
+        model: runtimeReq.model,
+        requestedModel: runtimeReq.requestedModel,
+        upstreamModel: runtimeReq.model,
+        status: 'acquired',
+        key: lease.key,
+      }, runtimeLogOptions(effectiveReq))
+    } catch {
+      const done = Promise.resolve().then(() => onError(providerRuntimeError('session_queue_timeout', credential.credentialGroupId)))
+      void appendRuntimeLog('session.lease', {
+        conversationId: effectiveReq.conversationId,
+        providerId: runtimeReq.provider.id,
+        model: runtimeReq.model,
+        requestedModel: runtimeReq.requestedModel,
+        upstreamModel: runtimeReq.model,
+        status: 'timeout',
+      }, runtimeLogOptions(effectiveReq))
+      return { controller, done }
+    }
   }
-
-  const reader = response.body?.getReader()
-  if (!reader) {
+  if (transportSelection.transport === 'responses_websocket') {
     const done = runStreamTask(async () => {
-      onTrace?.(createStreamModeTrace('fallback', st('providerTrace.streamFallbackNoReader')))
-      const raw = await safeResponseText(response)
-      const result = parseBufferedStreamResponse(raw, runtimeReq, getWireProviderType(runtimeReq.provider))
-      if (result.text) {
-        onChunk(result.text)
-        if (result.citations?.length) onCitations?.(result.citations)
-        result.traces?.forEach(onTrace ?? (() => undefined))
-        onDone(withCredentialGroup(result, credential.credentialGroupId))
-      } else {
-        onTrace?.(createStreamModeTrace('buffered', st('providerTrace.streamBufferedFallback')))
-        await retryWithoutStreaming(runtimeReq, onChunk, onDone, onError, onCitations, onTrace, credential.credentialGroupId)
+      let emittedText = false
+      try {
+        await runResponsesWebSocketTransport({
+          req: runtimeReq,
+          url: toWebSocketUrl(proxyPolicy.effectiveUrl),
+          headers,
+          body: rawBody as Record<string, unknown>,
+          signal: controller.signal,
+          parseEvent: parseProviderStreamEvent,
+          wireProviderType: getWireProviderType(runtimeReq.provider),
+          extractCitations: extractCitationsFromText,
+          onChunk: (chunk) => {
+            emittedText = emittedText || !!chunk
+            onChunk(chunk)
+          },
+          onDone: (result) => {
+            void appendRuntimeLog('upstream.response', {
+              conversationId: runtimeReq.conversationId,
+              providerId: runtimeReq.provider.id,
+              model: runtimeReq.model,
+              requestedModel: runtimeReq.requestedModel,
+              upstreamModel: runtimeReq.model,
+              transport: 'responses_websocket',
+              usage: result.usage,
+              textLength: result.text.length,
+              responseId: result.responseId,
+            }, runtimeLogOptions(runtimeReq))
+            onDone(withCredentialGroup(result, credential.credentialGroupId))
+          },
+          onError,
+          onCitations,
+          onTrace,
+        })
+      } catch (error) {
+        if ((effectiveReq.settings?.transportMode ?? 'auto') === 'websocket' || emittedText) throw error
+        onTrace?.(createStreamModeTrace('fallback', 'Responses WebSocket handshake failed; HTTP/SSE fallback is running.'))
+        void appendRuntimeLog('transport.fallback', {
+          conversationId: effectiveReq.conversationId,
+          providerId: runtimeReq.provider.id,
+          model: runtimeReq.model,
+          requestedModel: runtimeReq.requestedModel,
+          upstreamModel: runtimeReq.model,
+          from: 'responses_websocket',
+          to: 'http_sse',
+          reason: error instanceof Error ? error.message : 'websocket_transport_error',
+        }, runtimeLogOptions(effectiveReq))
+        await executeHttpSseChat({
+          req: runtimeReq,
+          url: proxyPolicy.effectiveUrl,
+          headers,
+          body,
+          stream,
+          controller,
+          credentialGroupId: credential.credentialGroupId,
+          onChunk,
+          onDone,
+          onError,
+          onCitations,
+          onTrace,
+        })
+      } finally {
+        lease?.release()
       }
     }, onError, credential.credentialGroupId)
     return { controller, done }
   }
+  const done = runStreamTask(() => executeHttpSseChat({
+    req: runtimeReq,
+    url: proxyPolicy.effectiveUrl,
+    headers,
+    body,
+    stream,
+    controller,
+    credentialGroupId: credential.credentialGroupId,
+    onChunk,
+    onDone,
+    onError,
+    onCitations,
+    onTrace,
+  }), onError, credential.credentialGroupId)
+  return { controller, done }
+}
 
-  onTrace?.(createStreamModeTrace('reader', st('providerTrace.streamReader')))
+async function executeHttpSseChat(input: {
+  req: ChatRequest
+  url: string
+  headers: Record<string, string>
+  body: string
+  stream: boolean
+  controller: AbortController
+  credentialGroupId?: string
+  onChunk: StreamCallback
+  onDone: DoneCallback
+  onError: ErrorCallback
+  onCitations?: CitationCallback
+  onTrace?: TraceCallback
+}): Promise<void> {
+  const response = await fetchChatStreamWithRetry(input)
+
+  if (!response.ok) {
+    const errorText = await safeResponseText(response)
+    input.req.provider = updateCredentialGroupHealth(input.req.provider, input.credentialGroupId, false)
+    void appendRuntimeLog('upstream.error', {
+      conversationId: input.req.conversationId,
+      providerId: input.req.provider.id,
+      model: input.req.model,
+      requestedModel: input.req.requestedModel,
+      upstreamModel: input.req.model,
+      status: response.status,
+      endpointHost: endpointHost(input.url),
+    }, runtimeLogOptions(input.req))
+    input.onError(providerRuntimeError(formatProviderHttpError(response.status, errorText, input.req.provider, input.req.model), input.credentialGroupId))
+    return
+  }
+
+  if (!input.stream) {
+    const result = await parseNonStreamingResponse(response, input.req)
+    if (result.text) input.onChunk(result.text)
+    if (result.citations?.length) input.onCitations?.(result.citations)
+    result.traces?.forEach(input.onTrace ?? (() => undefined))
+    void appendRuntimeLog('upstream.response', {
+      conversationId: input.req.conversationId,
+      providerId: input.req.provider.id,
+      model: input.req.model,
+      requestedModel: input.req.requestedModel,
+      upstreamModel: input.req.model,
+      transport: 'http_sse',
+      usage: result.usage,
+      textLength: result.text.length,
+    }, runtimeLogOptions(input.req))
+    input.onDone(withCredentialGroup(result, input.credentialGroupId))
+    return
+  }
+
+  const reader = response.body?.getReader()
+  if (!reader) {
+    input.onTrace?.(createStreamModeTrace('fallback', st('providerTrace.streamFallbackNoReader')))
+    const raw = await safeResponseText(response)
+    const result = parseBufferedStreamResponse(raw, input.req, getWireProviderType(input.req.provider))
+    if (result.text) {
+      input.onChunk(result.text)
+      if (result.citations?.length) input.onCitations?.(result.citations)
+      result.traces?.forEach(input.onTrace ?? (() => undefined))
+      input.onDone(withCredentialGroup(result, input.credentialGroupId))
+    } else {
+      input.onTrace?.(createStreamModeTrace('buffered', st('providerTrace.streamBufferedFallback')))
+      await retryWithoutStreaming(input.req, input.onChunk, input.onDone, input.onError, input.onCitations, input.onTrace, input.credentialGroupId)
+    }
+    return
+  }
+
+  input.onTrace?.(createStreamModeTrace('reader', st('providerTrace.streamReader')))
 
   const decoder = new TextDecoder()
   let fullText = ''
@@ -1297,7 +1671,7 @@ export async function streamChat(
   let providerCitations: MessageCitation[] = []
   let providerTraces: ProcessTrace[] = []
   let providerUsage: MessageUsage | undefined
-  const wireProviderType = getWireProviderType(runtimeReq.provider)
+  const wireProviderType = getWireProviderType(input.req.provider)
 
   async function readStream() {
     while (true) {
@@ -1306,14 +1680,24 @@ export async function streamChat(
         const finalParsed = parseStreamChunk(buffer, wireProviderType)
         if (finalParsed.text) {
           fullText += finalParsed.text
-          onChunk(finalParsed.text)
+          input.onChunk(finalParsed.text)
         }
         providerTraces = dedupeTraces([...providerTraces, ...finalParsed.traces])
-        finalParsed.traces.forEach(onTrace ?? (() => undefined))
+        finalParsed.traces.forEach(input.onTrace ?? (() => undefined))
         providerUsage = finalParsed.usage ?? providerUsage
-        const citations = dedupeCitations([...extractCitationsFromText(fullText, runtimeReq.retrievalSources), ...providerCitations])
-        if (citations.length) onCitations?.(citations)
-        onDone(withCredentialGroup({ text: fullText, citations, traces: providerTraces, usage: providerUsage }, credential.credentialGroupId))
+        const citations = dedupeCitations([...extractCitationsFromText(fullText, input.req.retrievalSources), ...providerCitations])
+        if (citations.length) input.onCitations?.(citations)
+        void appendRuntimeLog('upstream.response', {
+          conversationId: input.req.conversationId,
+          providerId: input.req.provider.id,
+          model: input.req.model,
+          requestedModel: input.req.requestedModel,
+          upstreamModel: input.req.model,
+          transport: 'http_sse',
+          usage: providerUsage,
+          textLength: fullText.length,
+        }, runtimeLogOptions(input.req))
+        input.onDone(withCredentialGroup({ text: fullText, citations, traces: providerTraces, usage: providerUsage }, input.credentialGroupId))
         return
       }
       buffer += decoder.decode(value, { stream: true })
@@ -1323,17 +1707,218 @@ export async function streamChat(
         const parsed = parseStreamChunk(event, wireProviderType)
         if (parsed.text) {
           fullText += parsed.text
-          onChunk(parsed.text)
+          input.onChunk(parsed.text)
         }
         providerTraces = dedupeTraces([...providerTraces, ...parsed.traces])
-        parsed.traces.forEach(onTrace ?? (() => undefined))
+        parsed.traces.forEach(input.onTrace ?? (() => undefined))
         providerUsage = parsed.usage ?? providerUsage
         providerCitations = dedupeCitations([...providerCitations, ...extractProviderCitationsFromSse(event, wireProviderType)])
       }
     }
   }
 
-  return { controller, done: runStreamTask(readStream, onError, credential.credentialGroupId) }
+  await readStream()
+}
+
+async function fetchChatStreamWithRetry(input: {
+  req: ChatRequest
+  url: string
+  headers: Record<string, string>
+  body: string
+  stream: boolean
+  controller: AbortController
+  credentialGroupId?: string
+  onTrace?: TraceCallback
+}): Promise<Response> {
+  const timeoutMs = clampInteger(input.req.settings?.upstreamRequestTimeoutMs, CHAT_REQUEST_TIMEOUT_MS, 5000, 300000)
+  const maxRetries = clampInteger(input.req.settings?.upstreamMaxRetries, 1, 0, 5)
+  const circuitKey = `${input.req.provider.id}:${input.req.model}`
+  assertCircuitClosed(input.req, circuitKey)
+  let body = input.body
+  let rectifiedRequest = false
+  let retryCount = 0
+
+  while (true) {
+    try {
+      const response = await fetchChatStreamWithTimeout(input.url, {
+        method: 'POST',
+        headers: input.headers,
+        body,
+        signal: input.controller.signal,
+      }, timeoutMs)
+
+      if (response.ok) {
+        recordCircuitSuccess(circuitKey)
+        return response
+      }
+
+      const canRetryStatus = response.status === 408 || response.status === 409 || response.status === 425 || response.status === 429 || response.status >= 500
+      if (isAnthropicWireRequest(input.req)) {
+        const errorText = await safeResponseText(response)
+        const rectified = rectifyAnthropicRequestBody({ req: input.req, body, errorText, rectified: rectifiedRequest })
+        if (rectified) {
+          body = JSON.stringify(rectified.body)
+          rectifiedRequest = true
+          input.onTrace?.(createProviderTrace('system', getWireProviderType(input.req.provider), st('providerTrace.requestRectified'), rectified.kind, 'done', `rectify-${rectified.kind}`))
+          void appendRuntimeLog('request.rectification', {
+            conversationId: input.req.conversationId,
+            providerId: input.req.provider.id,
+            model: input.req.model,
+            kind: rectified.kind,
+            attempt: retryCount,
+          }, runtimeLogOptions(input.req))
+          continue
+        }
+        if (canRetryStatus && retryCount < maxRetries) {
+          logRetryAttempt(input.req, retryCount + 1, maxRetries, { status: response.status })
+          retryCount += 1
+          await delay(retryDelayMs(retryCount - 1))
+          continue
+        }
+        recordCircuitFailure(input.req, circuitKey)
+        return new Response(errorText, { status: response.status, statusText: response.statusText, headers: response.headers })
+      }
+
+      if (!canRetryStatus || retryCount >= maxRetries) {
+        recordCircuitFailure(input.req, circuitKey)
+        return response
+      }
+      logRetryAttempt(input.req, retryCount + 1, maxRetries, { status: response.status })
+      retryCount += 1
+      await delay(retryDelayMs(retryCount - 1))
+    } catch (error) {
+      if (retryCount >= maxRetries || input.controller.signal.aborted) {
+        recordCircuitFailure(input.req, circuitKey)
+        throw error
+      }
+      logRetryAttempt(input.req, retryCount + 1, maxRetries, { error: error instanceof Error ? error.message : 'request_failed' })
+      retryCount += 1
+      await delay(retryDelayMs(retryCount - 1))
+    }
+  }
+}
+
+function rectifyAnthropicRequestBody(input: {
+  req: ChatRequest
+  body: string
+  errorText: string
+  rectified?: boolean
+  rectifiedSignature?: boolean
+  rectifiedBudget?: boolean
+}): { kind: 'thinking_signature' | 'thinking_budget'; body: Record<string, unknown> } | undefined {
+  if (input.req.settings?.requestRectificationEnabled !== true) return undefined
+  let parsed: Record<string, unknown>
+  try {
+    parsed = JSON.parse(input.body) as Record<string, unknown>
+  } catch {
+    return undefined
+  }
+  const text = input.errorText.toLowerCase()
+  const signatureEnabled = input.req.settings?.anthropicThinkingSignatureRectificationEnabled === true
+  const budgetEnabled = input.req.settings?.anthropicThinkingBudgetRectificationEnabled === true
+  const alreadyRectified = input.rectified === true
+  if (signatureEnabled && !alreadyRectified && !input.rectifiedSignature && /thinking|signature|tool_use|invalid_request|invalid request/.test(text) && /signature|thinking/.test(text)) {
+    return { kind: 'thinking_signature', body: stripThinkingBlocks(parsed) }
+  }
+  if (budgetEnabled && !alreadyRectified && !input.rectifiedBudget && /budget_tokens|thinking budget|at least 1024|minimum.*1024|1024/.test(text)) {
+    return { kind: 'thinking_budget', body: normalizeAnthropicThinkingBudgetBody(parsed) }
+  }
+  return undefined
+}
+
+function stripThinkingBlocks(body: Record<string, unknown>): Record<string, unknown> {
+  const next = { ...body }
+  delete next.thinking
+  delete next.output_config
+  next.messages = Array.isArray(next.messages)
+    ? next.messages.map((message) => {
+        if (!message || typeof message !== 'object') return message
+        const record = message as Record<string, unknown>
+        if (!Array.isArray(record.content)) return record
+        return {
+          ...record,
+          content: record.content.filter((part) => !isThinkingContentPart(part)),
+        }
+      })
+    : next.messages
+  return next
+}
+
+function normalizeAnthropicThinkingBudgetBody(body: Record<string, unknown>): Record<string, unknown> {
+  return {
+    ...body,
+    thinking: { type: 'enabled', budget_tokens: 32000 },
+    max_tokens: Math.max(numberValue(body.max_tokens) ?? 0, 64000),
+  }
+}
+
+function isThinkingContentPart(part: unknown): boolean {
+  if (!part || typeof part !== 'object') return false
+  const type = stringValue((part as Record<string, unknown>).type).toLowerCase()
+  return type.includes('thinking') || type.includes('signature')
+}
+
+function assertCircuitClosed(req: ChatRequest, key: string): void {
+  if (req.settings?.upstreamCircuitBreakerEnabled === false) return
+  const state = CIRCUIT_STATES.get(key)
+  if (!state?.openedUntil) return
+  if (Date.now() >= state.openedUntil) {
+    CIRCUIT_STATES.delete(key)
+    return
+  }
+  void appendRuntimeLog('circuit.breaker', {
+    conversationId: req.conversationId,
+    providerId: req.provider.id,
+    model: req.model,
+    status: 'open',
+    retryAfterMs: Math.max(0, state.openedUntil - Date.now()),
+  }, runtimeLogOptions(req))
+  throw providerRuntimeError('circuit_breaker_open')
+}
+
+function recordCircuitSuccess(key: string): void {
+  CIRCUIT_STATES.delete(key)
+}
+
+function recordCircuitFailure(req: ChatRequest, key: string): void {
+  if (req.settings?.upstreamCircuitBreakerEnabled === false) return
+  const threshold = clampInteger(req.settings?.upstreamCircuitBreakerFailureThreshold, 3, 1, 20)
+  const cooldownMs = clampInteger(req.settings?.upstreamCircuitBreakerCooldownMs, 60000, 1000, 3600000)
+  const current = CIRCUIT_STATES.get(key) ?? { failures: 0 }
+  const failures = current.failures + 1
+  const openedUntil = failures >= threshold ? Date.now() + cooldownMs : undefined
+  CIRCUIT_STATES.set(key, { failures, openedUntil })
+  void appendRuntimeLog('circuit.breaker', {
+    conversationId: req.conversationId,
+    providerId: req.provider.id,
+    model: req.model,
+    status: openedUntil ? 'opened' : 'failure',
+    failures,
+    threshold,
+    cooldownMs: openedUntil ? cooldownMs : undefined,
+  }, runtimeLogOptions(req))
+}
+
+function retryDelayMs(attempt: number): number {
+  return Math.min(2000, 250 * 2 ** attempt)
+}
+
+function logRetryAttempt(req: ChatRequest, attempt: number, maxRetries: number, detail: { status?: number; error?: string }): void {
+  void appendRuntimeLog('upstream.retry', {
+    conversationId: req.conversationId,
+    providerId: req.provider.id,
+    model: req.model,
+    requestedModel: req.requestedModel,
+    upstreamModel: req.model,
+    attempt,
+    maxRetries,
+    status: detail.status,
+    error: detail.error,
+  }, runtimeLogOptions(req))
+}
+
+function delay(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms))
 }
 
 function runStreamTask(task: () => Promise<void>, onError: ErrorCallback, credentialGroupId?: string): Promise<void> {
@@ -1376,12 +1961,23 @@ async function retryWithoutStreaming(
       onError(providerRuntimeError(formatProviderHttpError(response.status, await safeResponseText(response), fallbackReq.provider, fallbackReq.model), credentialGroupId))
       return
     }
-    const result = await parseNonStreamingResponse(response, fallbackReq)
-    onTrace?.(createStreamModeTrace('fallback', st('providerTrace.streamFallbackCompleted')))
-    if (result.text) onChunk(result.text)
-    if (result.citations?.length) onCitations?.(result.citations)
-    result.traces?.forEach(onTrace ?? (() => undefined))
-    onDone(withCredentialGroup(result, credentialGroupId))
+  const result = await parseNonStreamingResponse(response, fallbackReq)
+  onTrace?.(createStreamModeTrace('fallback', st('providerTrace.streamFallbackCompleted')))
+  if (result.text) onChunk(result.text)
+  if (result.citations?.length) onCitations?.(result.citations)
+  result.traces?.forEach(onTrace ?? (() => undefined))
+  void appendRuntimeLog('upstream.response', {
+    conversationId: req.conversationId,
+    providerId: req.provider.id,
+    model: req.model,
+    requestedModel: req.requestedModel,
+    upstreamModel: req.model,
+    transport: 'http_sse',
+    fallback: true,
+    usage: result.usage,
+    textLength: result.text.length,
+  }, runtimeLogOptions(req))
+  onDone(withCredentialGroup(result, credentialGroupId))
   } catch (error) {
     const runtimeError = error instanceof Error ? error as ProviderRuntimeError : providerRuntimeError(st('providerOperation.requestFailed'))
     runtimeError.credentialGroupId = runtimeError.credentialGroupId ?? credentialGroupId
@@ -1401,6 +1997,76 @@ function createStreamModeTrace(streamMode: 'reader' | 'buffered' | 'fallback', c
     completedAt: now,
     metadata: { streamMode },
   }
+}
+
+function runtimeLogOptions(req: ChatRequest) {
+  return {
+    enabled: req.settings?.runtimeLogEnabled,
+    maxBytes: req.settings?.runtimeLogMaxBytes,
+  }
+}
+
+async function logPayloadPolicy(req: ChatRequest, result: PayloadRuleResult): Promise<void> {
+  if (!result.findings.length && !req.settings?.runtimeLogEnabled) return
+  await appendRuntimeLog('payload.rule', {
+    conversationId: req.conversationId,
+    providerId: req.provider.id,
+    model: req.model,
+    requestedModel: req.requestedModel,
+    upstreamModel: req.model,
+    mode: result.mode,
+    blocked: result.blocked,
+    findings: result.findings,
+    bodyKeys: result.bodyKeys,
+    messageCount: result.messageCount,
+    attachmentCount: result.attachmentCount,
+  }, runtimeLogOptions(req))
+}
+
+async function logProxyPolicy(req: ChatRequest, result: ProxyPolicyDecision): Promise<void> {
+  await appendRuntimeLog('proxy.policy', {
+    conversationId: req.conversationId,
+    providerId: req.provider.id,
+    model: req.model,
+    requestedModel: req.requestedModel,
+    upstreamModel: req.model,
+    mode: result.mode,
+    applied: result.applied,
+    reason: result.reason,
+    endpointHost: result.endpointHost,
+  }, runtimeLogOptions(req))
+}
+
+async function logUpstreamRequest(req: ChatRequest, transport: TransportSelection, payload: PayloadRuleResult, proxy: ProxyPolicyDecision): Promise<void> {
+  await appendRuntimeLog('upstream.request', {
+    conversationId: req.conversationId,
+    providerId: req.provider.id,
+    model: req.model,
+    requestedModel: req.requestedModel,
+    upstreamModel: req.model,
+    transport: transport.transport,
+    requestedTransportMode: transport.requestedMode,
+    fallbackReason: transport.fallbackReason,
+    policy: payload.mode,
+    endpointHost: proxy.endpointHost,
+    bodyKeys: payload.bodyKeys,
+    messageCount: payload.messageCount,
+    attachmentCount: payload.attachmentCount,
+  }, runtimeLogOptions(req))
+}
+
+function endpointHost(url: string): string | undefined {
+  try {
+    return new URL(url).host
+  } catch {
+    return undefined
+  }
+}
+
+function toWebSocketUrl(url: string): string {
+  const parsed = new URL(url)
+  parsed.protocol = parsed.protocol === 'http:' ? 'ws:' : 'wss:'
+  return parsed.toString()
 }
 
 export async function generateText(req: ChatRequest): Promise<string> {
@@ -1432,7 +2098,8 @@ export async function testProviderModel(provider: AIProvider, model: string, api
   return (await testProviderModelDetailed(provider, model, apiKey)).ok
 }
 
-export async function testProviderModelDetailed(provider: AIProvider, model: string, apiKey: string): Promise<ProviderOperationResult> {
+export async function testProviderModelDetailed(provider: AIProvider, model: string, apiKey: string, options: { checkParameters?: boolean } = {}): Promise<ProviderOperationResult> {
+  const upstreamModel = resolveProviderModelAlias(provider, model)
   if (!apiKey.trim()) {
     return failure('missing_key', st('providerOperation.saveApiKeyFirst'))
   }
@@ -1443,27 +2110,27 @@ export async function testProviderModelDetailed(provider: AIProvider, model: str
   if (issue) {
     return failure('credential_mismatch', st(issue.messageKey ?? issue.message, undefined, issue.message))
   }
-  if (!model.trim()) {
+  if (!upstreamModel.trim()) {
     return failure('model_unavailable', st('providerOperation.chooseModelFirst'))
   }
 
   try {
-    const url = provider.type === 'google' ? getGoogleEndpoint(p, model, false) : getAPIEndpoint(p)
+    const url = provider.type === 'google' ? getGoogleEndpoint(p, upstreamModel, false) : getAPIEndpoint(p)
     const headers = getHeaders(p)
-    const body = JSON.stringify(
-      getBody({
+    const rawBody = getBody({
         provider: p,
-        model,
+        model: upstreamModel,
+        requestedModel: model,
         messages: [{ role: 'user', content: '请只回复 OK' }],
-        maxTokens: getModelTestMaxTokens(p, model),
+        maxTokens: getModelTestMaxTokens(p, upstreamModel),
         stream: false,
       })
-    )
+    const body = JSON.stringify(options.checkParameters === false ? reduceModelTestBody(rawBody) : rawBody)
 
     const response = await fetchWithTimeout(url, { method: 'POST', headers, body }, MODEL_TEST_TIMEOUT_MS)
     if (!response.ok) {
       const errorText = await safeResponseText(response)
-      return failure(classifyHttpStatus(response.status, errorText, model), formatProviderHttpError(response.status, errorText, provider, model), undefined, selectedGroupId)
+      return failure(classifyHttpStatus(response.status, errorText, upstreamModel), formatProviderHttpError(response.status, errorText, provider, model), undefined, selectedGroupId)
     }
     const text = await parseNonStreamingText(response, getWireProviderType(p))
     if (!text.trim()) {
@@ -1526,8 +2193,33 @@ function supportsReasoningEffort(req: ChatRequest): boolean {
   return providerSupportsReasoning(req.provider, req.model)
 }
 
+function reduceModelTestBody(body: Record<string, unknown>): Record<string, unknown> {
+  const next = { ...body }
+  delete next.temperature
+  delete next.top_p
+  delete next.topP
+  delete next.reasoning
+  delete next.reasoning_effort
+  delete next.thinking
+  delete next.output_config
+  const generationConfig = next.generationConfig as Record<string, unknown> | undefined
+  if (generationConfig) {
+    const reduced = { ...generationConfig }
+    delete reduced.temperature
+    delete reduced.topP
+    delete reduced.thinkingConfig
+    next.generationConfig = reduced
+  }
+  return next
+}
+
 function clamp01(value: number): number {
   return Math.max(0, Math.min(1, value))
+}
+
+function clampInteger(value: number | undefined, fallback: number, min: number, max: number): number {
+  const parsed = Number.isFinite(value) ? Math.trunc(value!) : fallback
+  return Math.max(min, Math.min(max, parsed))
 }
 
 export async function syncProviderCredentialGroupsDetailed(provider: AIProvider): Promise<ProviderOperationResult<AIProvider>> {

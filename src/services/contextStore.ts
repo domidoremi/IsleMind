@@ -1,11 +1,17 @@
 import * as SQLite from 'expo-sqlite'
-import type { KnowledgeChunk, KnowledgeDocument, MemoryItem, MemoryStatus, RetrievalSource } from '@/types'
+import type { KnowledgeChunk, KnowledgeDocument, MemoryItem, MemorySourceKind, MemoryStatus, RetrievalSource } from '@/types'
 import { localDataStore } from '@/services/localDataStore'
 import type { UpsertChunkOptions } from '@/services/localDataStore'
 import { rerankRetrievalSources, splitTextIntoSentenceChunks } from '@/services/rag'
 import { st } from '@/i18n/service'
 
 const DB_NAME = 'islemind-context.db'
+
+interface AddMemoryOptions {
+  sourceKind?: MemorySourceKind
+  sourceDetail?: string
+  confidence?: number
+}
 
 let dbPromise: Promise<SQLite.SQLiteDatabase> | null = null
 
@@ -23,6 +29,9 @@ async function getDb() {
           content TEXT NOT NULL,
           status TEXT NOT NULL,
           conversationId TEXT,
+          sourceKind TEXT,
+          sourceDetail TEXT,
+          confidence REAL,
           lastHitAt INTEGER,
           createdAt INTEGER NOT NULL,
           updatedAt INTEGER NOT NULL
@@ -83,6 +92,9 @@ async function migrateKnowledgeDocumentColumns(db: SQLite.SQLiteDatabase): Promi
 
 async function migrateContextColumns(db: SQLite.SQLiteDatabase): Promise<void> {
   await addColumnIfMissing(db, 'memories', 'lastHitAt', 'INTEGER')
+  await addColumnIfMissing(db, 'memories', 'sourceKind', 'TEXT')
+  await addColumnIfMissing(db, 'memories', 'sourceDetail', 'TEXT')
+  await addColumnIfMissing(db, 'memories', 'confidence', 'REAL')
   await addColumnIfMissing(db, 'knowledge_chunks', 'chunkIndex', 'INTEGER')
   await addColumnIfMissing(db, 'knowledge_chunks', 'sentenceStart', 'INTEGER')
   await addColumnIfMissing(db, 'knowledge_chunks', 'sentenceEnd', 'INTEGER')
@@ -105,25 +117,32 @@ async function addColumnIfMissing(db: SQLite.SQLiteDatabase, table: string, colu
   await db.execAsync(`ALTER TABLE ${table} ADD COLUMN ${column} ${definition}`)
 }
 
-export async function addMemory(content: string, conversationId?: string, status: MemoryStatus = 'pending'): Promise<MemoryItem | null> {
+export async function addMemory(content: string, conversationId?: string, status: MemoryStatus = 'pending', options: AddMemoryOptions = {}): Promise<MemoryItem | null> {
   const text = normalizeText(content)
   if (!text) return null
   const db = await getDb()
   const now = Date.now()
+  const sourceKind = options.sourceKind ?? (conversationId ? 'deterministic' : 'manual')
   const memory: MemoryItem = {
     id: generateId(),
     content: text,
     status,
     conversationId,
+    sourceKind,
+    sourceDetail: normalizeOptionalText(options.sourceDetail),
+    confidence: normalizeConfidence(options.confidence ?? defaultMemoryConfidence(sourceKind)),
     createdAt: now,
     updatedAt: now,
   }
   await db.runAsync(
-    'INSERT INTO memories (id, content, status, conversationId, lastHitAt, createdAt, updatedAt) VALUES (?, ?, ?, ?, ?, ?, ?)',
+    'INSERT INTO memories (id, content, status, conversationId, sourceKind, sourceDetail, confidence, lastHitAt, createdAt, updatedAt) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
     memory.id,
     memory.content,
     memory.status,
     memory.conversationId ?? null,
+    memory.sourceKind ?? null,
+    memory.sourceDetail ?? null,
+    memory.confidence ?? null,
     null,
     memory.createdAt,
     memory.updatedAt
@@ -136,7 +155,7 @@ export async function listMemories(statuses: MemoryStatus[] = ['pending', 'activ
   const db = await getDb()
   const placeholders = statuses.map(() => '?').join(',')
   return db.getAllAsync<MemoryItem>(
-    `SELECT id, content, status, conversationId, lastHitAt, createdAt, updatedAt FROM memories WHERE status IN (${placeholders}) ORDER BY updatedAt DESC`,
+    `SELECT id, content, status, conversationId, sourceKind, sourceDetail, confidence, lastHitAt, createdAt, updatedAt FROM memories WHERE status IN (${placeholders}) ORDER BY updatedAt DESC`,
     statuses
   )
 }
@@ -158,19 +177,22 @@ export async function clearMemories(): Promise<void> {
   await db.runAsync('DELETE FROM memory_fts')
 }
 
-export async function searchMemories(query: string, limit: number): Promise<RetrievalSource[]> {
+export async function searchMemories(query: string, limit: number, statuses: MemoryStatus[] = ['active']): Promise<RetrievalSource[]> {
   const db = await getDb()
   const ftsQuery = buildFtsQuery(query)
-  if (!ftsQuery || limit <= 0) return []
+  if (!ftsQuery || limit <= 0 || !statuses.length) return []
+  const placeholders = statuses.map(() => '?').join(',')
   const rows = await db.getAllAsync<MemoryItem & { score: number }>(
     `
-      SELECT m.id, m.content, m.status, m.conversationId, m.lastHitAt, m.createdAt, m.updatedAt, bm25(memory_fts) AS score
+      SELECT m.id, m.content, m.status, m.conversationId, m.sourceKind, m.sourceDetail, m.confidence,
+        m.lastHitAt, m.createdAt, m.updatedAt, bm25(memory_fts) AS score
       FROM memory_fts
       JOIN memories m ON m.id = memory_fts.id
-      WHERE memory_fts MATCH ? AND m.status IN ('pending', 'active')
+      WHERE memory_fts MATCH ? AND m.status IN (${placeholders})
       LIMIT ?
     `,
     ftsQuery,
+    ...statuses,
     Math.max(limit * 4, limit)
   )
   const now = Date.now()
@@ -184,6 +206,7 @@ export async function searchMemories(query: string, limit: number): Promise<Retr
     content: item.content,
     excerpt: item.content,
     score: item.score,
+    sourceReason: formatMemorySourceReason(item),
   }))
 }
 
@@ -194,7 +217,10 @@ function rankMemoryRows<T extends MemoryItem & { score: number }>(rows: T[], now
 function memoryRankScore(memory: MemoryItem & { score: number }, now: number): number {
   const ageDays = Math.max(0, (now - (memory.createdAt || now)) / 86_400_000)
   const recencyBoost = Math.exp(-ageDays / 30)
-  return Math.abs(memory.score ?? 0) / Math.max(recencyBoost, 0.05)
+  const sourceKind = normalizeMemorySourceKind(memory.sourceKind)
+  const confidence = normalizeConfidence(memory.confidence ?? defaultMemoryConfidence(sourceKind)) ?? 0.5
+  const confidencePenalty = 1 + (1 - confidence) * 0.3
+  return (Math.abs(memory.score ?? 0) * confidencePenalty) / Math.max(recencyBoost, 0.05)
 }
 
 export async function importKnowledgeText(input: {
@@ -357,7 +383,7 @@ export interface ContextSnapshot {
 export async function exportContextSnapshot(): Promise<ContextSnapshot> {
   const db = await getDb()
   const [memories, documents, chunks] = await Promise.all([
-    db.getAllAsync<MemoryItem>('SELECT id, content, status, conversationId, lastHitAt, createdAt, updatedAt FROM memories ORDER BY updatedAt DESC'),
+    db.getAllAsync<MemoryItem>('SELECT id, content, status, conversationId, sourceKind, sourceDetail, confidence, lastHitAt, createdAt, updatedAt FROM memories ORDER BY updatedAt DESC'),
     db.getAllAsync<KnowledgeDocument>('SELECT id, title, mimeType, size, chunkCount, status, error, sourceUri, rawPath, contentHash, createdAt, updatedAt FROM knowledge_documents ORDER BY updatedAt DESC'),
     db.getAllAsync<KnowledgeChunk>('SELECT id, documentId, title, content, ordinal, chunkIndex, sentenceStart, sentenceEnd, semanticBoundary, summaryNodeId, parentChunkId, qualityScore, embeddingModelId, embeddingProvider, lastHitAt, createdAt FROM knowledge_chunks ORDER BY createdAt DESC, ordinal ASC'),
   ])
@@ -372,18 +398,7 @@ export async function importContextSnapshot(snapshot: Partial<ContextSnapshot>):
   await clearMemories()
   await clearKnowledge()
   for (const memory of memories) {
-    if (!memory.id || !memory.content) continue
-    await db.runAsync(
-      'INSERT OR REPLACE INTO memories (id, content, status, conversationId, lastHitAt, createdAt, updatedAt) VALUES (?, ?, ?, ?, ?, ?, ?)',
-      memory.id,
-      memory.content,
-      memory.status ?? 'pending',
-      memory.conversationId ?? null,
-      memory.lastHitAt ?? null,
-      memory.createdAt ?? Date.now(),
-      memory.updatedAt ?? Date.now()
-    )
-    await db.runAsync('INSERT INTO memory_fts (id, content) VALUES (?, ?)', memory.id, memory.content)
+    await upsertImportedMemory(db, memory)
   }
   for (const document of documents) {
     if (!document.id || !document.title) continue
@@ -435,6 +450,37 @@ export async function importContextSnapshot(snapshot: Partial<ContextSnapshot>):
     importedChunks.push(chunk)
   }
   await localDataStore.upsertChunks(importedChunks)
+}
+
+export async function importMemoriesForReview(memories: MemoryItem[]): Promise<void> {
+  if (!memories.length) return
+  const db = await getDb()
+  for (const memory of memories) {
+    await upsertImportedMemory(db, memory)
+  }
+}
+
+async function upsertImportedMemory(db: SQLite.SQLiteDatabase, memory: Partial<MemoryItem>): Promise<void> {
+  if (!memory.id || !memory.content) return
+  const now = Date.now()
+  const sourceKind = memory.sourceKind === undefined || memory.sourceKind === null
+    ? 'imported'
+    : normalizeMemorySourceKind(memory.sourceKind)
+  await db.runAsync(
+    'INSERT OR REPLACE INTO memories (id, content, status, conversationId, sourceKind, sourceDetail, confidence, lastHitAt, createdAt, updatedAt) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+    memory.id,
+    memory.content,
+    normalizeMemoryStatus(memory.status),
+    memory.conversationId ?? null,
+    sourceKind,
+    normalizeOptionalText(memory.sourceDetail) ?? null,
+    normalizeConfidence(memory.confidence ?? defaultMemoryConfidence(sourceKind)) ?? null,
+    memory.lastHitAt ?? null,
+    memory.createdAt ?? now,
+    memory.updatedAt ?? now
+  )
+  await db.runAsync('DELETE FROM memory_fts WHERE id = ?', memory.id)
+  await db.runAsync('INSERT INTO memory_fts (id, content) VALUES (?, ?)', memory.id, memory.content)
 }
 
 function normalizeText(value: string): string {
@@ -516,6 +562,51 @@ async function disableStaleMemories(db: SQLite.SQLiteDatabase): Promise<void> {
     Date.now(),
     cutoff
   )
+}
+
+function normalizeOptionalText(value: string | undefined): string | undefined {
+  const text = value?.replace(/\s+/g, ' ').trim()
+  return text || undefined
+}
+
+function normalizeMemorySourceKind(value: unknown): MemorySourceKind {
+  if (value === 'manual' || value === 'deterministic' || value === 'model' || value === 'imported' || value === 'legacy') return value
+  return 'legacy'
+}
+
+function normalizeMemoryStatus(value: unknown): MemoryStatus {
+  if (value === 'pending' || value === 'active' || value === 'disabled') return value
+  return 'pending'
+}
+
+function normalizeConfidence(value: number | null | undefined): number | undefined {
+  if (value === null || value === undefined || Number.isNaN(value)) return undefined
+  return Number(Math.max(0, Math.min(1, value)).toFixed(2))
+}
+
+function defaultMemoryConfidence(sourceKind: MemorySourceKind): number {
+  switch (sourceKind) {
+    case 'manual':
+      return 1
+    case 'deterministic':
+      return 0.82
+    case 'model':
+      return 0.68
+    case 'imported':
+      return 0.74
+    case 'legacy':
+    default:
+      return 0.5
+  }
+}
+
+function formatMemorySourceReason(memory: MemoryItem): string {
+  const sourceKind = normalizeMemorySourceKind(memory.sourceKind)
+  const parts = [`source=${sourceKind}`]
+  const confidence = normalizeConfidence(memory.confidence)
+  if (confidence !== undefined) parts.push(`confidence=${confidence}`)
+  if (memory.sourceDetail) parts.push(memory.sourceDetail)
+  return parts.join(' · ')
 }
 
 function buildFtsQuery(query: string): string {

@@ -7,6 +7,7 @@ IsleMind is a local-first mobile AI workspace for focused conversations, private
 ## Highlights
 
 - Chat with configurable AI providers and models.
+- Turn AI replies into structured work artifacts with quality gates, executable actions, copyable handoffs, and continuation prompts.
 - Keep conversations, settings, and local context on your device.
 - Import knowledge with Agentic RAG: hybrid search, semantic chunking, local rerank, citations, and graceful fallback.
 - Download optional local embedding models in the app, or use the hash embedding fallback with no model files.
@@ -17,7 +18,7 @@ IsleMind is a local-first mobile AI workspace for focused conversations, private
 
 Download the latest Android APK from [GitHub Releases](https://github.com/domidoremi/IsleMind/releases/latest), then install it on your device. Release notes include direct download links for each APK variant.
 
-Current app version: `1.0.3`.
+Current app version: `1.0.6`.
 
 Release APKs are split by local model bundle:
 

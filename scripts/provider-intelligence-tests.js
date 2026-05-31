@@ -9,6 +9,7 @@ const originalResolve = Module._resolveFilename
 const originalLoad = Module._load
 const memoryStorage = new Map()
 const secureStorage = new Map()
+const contextMemoryRows = []
 const localFileFixtures = new Map()
 const localDownloadFixtures = new Map()
 const localFileReadRequests = []
@@ -46,8 +47,58 @@ Module._load = function loadWithMocks(request, parent, isMain) {
     return {
       openDatabaseAsync: async () => ({
         execAsync: async () => undefined,
-        runAsync: async () => undefined,
-        getAllAsync: async () => [],
+        runAsync: async (sql, ...args) => {
+          if (/UPDATE memories SET lastHitAt/i.test(sql)) {
+            const [lastHitAt, id] = args
+            const row = contextMemoryRows.find((item) => item.id === id)
+            if (row) row.lastHitAt = lastHitAt
+          }
+          if (/UPDATE memories SET status = \?, updatedAt = \? WHERE id = \?/i.test(sql)) {
+            const [status, updatedAt, id] = args
+            const row = contextMemoryRows.find((item) => item.id === id)
+            if (row) {
+              row.status = status
+              row.updatedAt = updatedAt
+            }
+          }
+          if (/UPDATE memories SET status = 'disabled'/i.test(sql)) {
+            const [updatedAt, cutoff] = args
+            for (const row of contextMemoryRows) {
+              const lastRelevantUse = row.lastHitAt ?? row.updatedAt ?? row.createdAt
+              if (row.status === 'active' && lastRelevantUse < cutoff) {
+                row.status = 'disabled'
+                row.updatedAt = updatedAt
+              }
+            }
+          }
+          if (/DELETE FROM memories/i.test(sql)) {
+            contextMemoryRows.splice(0, contextMemoryRows.length)
+          }
+          if (/INSERT OR REPLACE INTO memories/i.test(sql) || /INSERT INTO memories/i.test(sql)) {
+            const [id, content, status, conversationId, sourceKind, sourceDetail, confidence, lastHitAt, createdAt, updatedAt] = args
+            const existingIndex = contextMemoryRows.findIndex((item) => item.id === id)
+            const row = { id, content, status, conversationId, sourceKind, sourceDetail, confidence, lastHitAt, createdAt, updatedAt }
+            if (existingIndex >= 0) {
+              contextMemoryRows[existingIndex] = row
+            } else {
+              contextMemoryRows.push(row)
+            }
+          }
+        },
+        getAllAsync: async (sql, ...args) => {
+          if (/FROM memory_fts/i.test(sql)) {
+            const limit = args.at(-1) ?? contextMemoryRows.length
+            const statuses = args.slice(1, -1)
+            return contextMemoryRows
+              .filter((row) => statuses.includes(row.status))
+              .slice(0, limit)
+              .map((row, index) => ({ ...row, score: row.score ?? -1 / (index + 1) }))
+          }
+          if (/FROM memories/i.test(sql)) {
+            return [...contextMemoryRows]
+          }
+          return []
+        },
         getFirstAsync: async () => null,
       }),
     }
@@ -117,7 +168,9 @@ Module._load = function loadWithMocks(request, parent, isMain) {
           }
         }
       },
-      writeAsStringAsync: async () => undefined,
+      writeAsStringAsync: async (uri, value, options = {}) => {
+        localFileFixtures.set(uri, Buffer.from(String(value), options.encoding === 'base64' ? 'base64' : 'utf8'))
+      },
       documentDirectory: 'file:///tmp/',
       cacheDirectory: 'file:///tmp/',
     }
@@ -142,7 +195,7 @@ Module._load = function loadWithMocks(request, parent, isMain) {
     }
   }
   if (request === 'expo/fetch') {
-    return { fetch: global.fetch }
+    return { fetch: (...args) => global.fetch(...args) }
   }
   return originalLoad.call(this, request, parent, isMain)
 }
@@ -171,6 +224,22 @@ const {
   probeProviderPreset,
 } = require('../src/services/ai/providerRegistry.ts')
 const {
+  DEFAULT_PROVIDER_PRESET_ID,
+  DEFAULT_PROVIDER_WIRE_PROTOCOL,
+  PROVIDER_WIRE_PROTOCOL_OPTIONS,
+  defaultProviderCredentialMode,
+  defaultProviderTokenPlanRegion,
+  defaultProviderWireProtocol,
+  inferProviderTokenPlanRegionFromBaseUrl,
+  inferProviderWireProtocolFromBaseUrl,
+  initialProviderPresetId,
+  initialProviderWireProtocol,
+  resolveProviderConfigDraft,
+} = require('../src/services/ai/providerConfigPolicy.ts')
+const {
+  inferProviderCredentialModeFromKeyOrBaseUrl,
+} = require('../src/services/ai/providerProtocolPolicy.ts')
+const {
   chooseCredentialForModel,
   mergeCredentialModelAvailability,
   normalizeProviderCredentialGroups,
@@ -191,11 +260,37 @@ const {
   buildGoogleBodyForTest,
   buildOpenAIBodyForTest,
   buildOpenAIResponsesBodyForTest,
+  fetchChatStreamWithRetryForTest,
+  fetchProviderModelConfigsDetailed,
   formatProviderHttpErrorForTest,
   getAPIEndpointForTest,
+  getBodyForTest,
+  getXiaomiMimoModelDiscoveryEndpointForTest,
+  evaluatePayloadRulesForTest,
+  mergeAliasAccessPolicyForTest,
+  optimizeRequestBodyForTest,
   parseAnthropicModelsForTest,
+  parseProviderStreamEventForTest,
   parseProviderStreamChunkForTest,
+  rectifyAnthropicRequestBodyForTest,
+  resolveProviderModelAccessForTest,
+  resolveProxyPolicyForTest,
+  selectUpstreamTransportForTest,
+  testProviderModelDetailed,
 } = require('../src/services/ai/base.ts')
+const { runResponsesWebSocketTransport } = require('../src/services/ai/transport/responsesWebSocketTransport.ts')
+const { activeSessionLeaseCount, acquireSessionLease } = require('../src/services/ai/transport/sessionLeasePool.ts')
+const { appendRuntimeLog, clearRuntimeLog, getRuntimeLogInfo, getRuntimeLogPath, readRuntimeLogText, redactRuntimeLogValue } = require('../src/services/runtimeLog.ts')
+const { buildRuntimeDiagnosticsSummary } = require('../src/services/runtimeDiagnostics.ts')
+const {
+  decideRemoteCompact,
+  estimateRemoteCompactSavedTokens,
+} = require('../src/services/ai/compact/remoteCompact.ts')
+const {
+  clearCompactUsageRecords,
+  listCompactUsageRecords,
+  recordCompactUsage,
+} = require('../src/services/ai/compact/compactUsage.ts')
 const {
   getBingCompatibleEndpoint,
   legacySearchModeForProvider,
@@ -217,10 +312,30 @@ const { summarizeProviderActivation } = require('../src/services/providerActivat
 const {
   clearHistoricalInjectedProviderModels,
   clearHistoricalInjectedGroupModels,
+  getProviderManualModels,
+  getProviderSelectableModels,
   getProviderAvailableModels,
   getProviderPreferredModel,
+  resolveProviderModelAlias,
   isProviderConversationReady,
+  summarizeProviderModelInventory,
 } = require('../src/utils/providerModels.ts')
+const { parseModelEntries } = require('../src/utils/text.ts')
+const { buildWorkspaceReadiness } = require('../src/utils/workspaceReadiness.ts')
+const { summarizeWorkArtifact } = require('../src/utils/workArtifact.ts')
+const { getReasoningEffortOptions } = require('../src/utils/modelReasoning.ts')
+const {
+  getOnboardingCompanionProfile,
+  getOnboardingConversationDefaults,
+  getOnboardingSettingsDefaults,
+} = require('../src/utils/onboardingProfile.ts')
+const { buildMemoryReviewSummary, filterPendingMemoriesForReview } = require('../src/utils/memoryReview.ts')
+const {
+  buildMem0AddPayload,
+  exportMemoriesAsMem0,
+  importMem0Memories,
+} = require('../src/utils/mem0Interop.ts')
+const { buildKnowledgeRecoverySummary } = require('../src/utils/knowledgeRecovery.ts')
 const { setServiceLanguage, st } = require('../src/i18n/service.ts')
 const {
   buildCompressedContextPrompt,
@@ -233,6 +348,8 @@ const {
   splitTextIntoSentenceChunks,
   verifyRagGeneration,
 } = require('../src/services/rag.ts')
+const { classifyMemoryCandidateForTest } = require('../src/services/context.ts')
+const { exportContextSnapshot, importContextSnapshot, searchMemories, updateMemoryStatus } = require('../src/services/contextStore.ts')
 const { runRagGoldEvaluation } = require('../src/services/ragEvaluation.ts')
 const {
   LOCAL_EMBEDDING_MODELS,
@@ -246,7 +363,7 @@ const {
 } = require('../src/services/localEmbeddingModels.ts')
 const { deriveHomePetState } = require('../src/components/mascot/petState.ts')
 const modelCatalog = require('../assets/models/catalog.json')
-const { importAllData, loadData } = require('../src/services/storage.ts')
+const { exportAllData, importAllData, importAllDataDetailed, loadData } = require('../src/services/storage.ts')
 
 const FAKE_KEY_A = 'token-fake-alpha-1234567890'
 const FAKE_KEY_B = 'token-fake-beta-1234567890'
@@ -278,7 +395,899 @@ function resetLocalModelFileMocks() {
   localFileOperations.length = 0
 }
 
+const WORK_ARTIFACT_TEMPLATE_GATES = {
+  en: [
+    ['summary', /Structured summary/i],
+    ['decision', /Decision log/i],
+    ['action', /Action items/i],
+    ['risk', /Risks? (and blockers|or blockers)?/i],
+    ['question', /Open questions/i],
+    ['evidence', /Evidence still needed|Verification command or evidence/i],
+    ['shareable', /short version.*(sent to collaborators|send to collaborators)|copy to someone/i],
+  ],
+  zh: [
+    ['summary', /结构化摘要/],
+    ['decision', /决策记录/],
+    ['action', /行动项/],
+    ['risk', /风险和阻塞|风险/],
+    ['question', /待确认问题/],
+    ['evidence', /证据仍需补充|需要补充验证的证据|验证证据/],
+    ['shareable', /可直接发给协作者|可直接复制给他人/],
+  ],
+  ja: [
+    ['summary', /構造化.*要約/],
+    ['decision', /決定ログ/],
+    ['action', /アクション項目/],
+    ['risk', /リスク/],
+    ['question', /確認事項/],
+    ['evidence', /必要な根拠|検証.*根拠|検証コマンドまたは証拠/],
+    ['shareable', /協力者に送れる|コピーできる/],
+  ],
+}
+
+const WORK_ARTIFACT_ACTION_METADATA = {
+  en: /owner\s*\/\s*next step\s*\/\s*(deadline|trigger)/i,
+  zh: /负责人\s*\/\s*下一步\s*\/\s*(截止|触发条件)/,
+  ja: /担当者\s*\/\s*次の一歩\s*\/\s*(期限|発火条件)/,
+}
+
+function assertStructuredWorkTemplate(value, label, language) {
+  assert.ok(value.length >= 80, `${label} is detailed enough to guide a real work artifact`)
+  const hasInput = language === 'zh'
+    ? /输入/.test(value)
+    : language === 'ja'
+      ? /入力/.test(value)
+      : /Input/.test(value)
+  const hasOutputContract = language === 'zh'
+    ? /输出必须包含/.test(value)
+    : language === 'ja'
+      ? /出力には必ず/.test(value)
+      : /Output must include/.test(value)
+  const hasFixedHeadingsContract = language === 'zh'
+    ? /固定标题/.test(value)
+    : language === 'ja'
+      ? /固定見出し/.test(value)
+      : /exact section headings/i.test(value)
+  const hasActionableOutcome = language === 'zh'
+    ? /(行动|下一步|第一步|验证|风险)/.test(value)
+    : language === 'ja'
+      ? /(アクション|次|最初|検証|リスク)/.test(value)
+      : /(Action|Next|first step|validation|risk)/i.test(value)
+  assert.ok(hasInput, `${label} includes an input section`)
+  assert.ok(hasOutputContract, `${label} includes an output contract`)
+  assert.ok(hasFixedHeadingsContract, `${label} requires exact section headings for parser reliability`)
+  assert.ok(hasActionableOutcome, `${label} asks for actionable output`)
+  for (const [gate, pattern] of WORK_ARTIFACT_TEMPLATE_GATES[language]) {
+    assert.ok(pattern.test(value), `${label} includes a parser-recognizable ${gate} section`)
+  }
+  assert.ok(
+    WORK_ARTIFACT_ACTION_METADATA[language].test(value),
+    `${label} requires owner, next step, and deadline/trigger metadata for actions`
+  )
+}
+
+function assertReleaseVersionsAligned() {
+  const packageJson = JSON.parse(fs.readFileSync(path.join(root, 'package.json'), 'utf8'))
+  const appJson = JSON.parse(fs.readFileSync(path.join(root, 'app.json'), 'utf8'))
+  assert.equal(appJson.expo.version, packageJson.version, 'app.json version follows package.json')
+
+  const currentApkSmokeScript = fs.readFileSync(path.join(root, 'scripts/collect-current-apk-smoke.js'), 'utf8')
+  assert.ok(
+    currentApkSmokeScript.includes("require('./release-artifact-contract')"),
+    'current APK smoke uses the shared release artifact contract'
+  )
+  assert.ok(
+    currentApkSmokeScript.includes("require('./release-freshness-contract')"),
+    'current APK smoke uses the shared release freshness contract'
+  )
+  assert.ok(
+    currentApkSmokeScript.includes("require('./release-validation-contract')"),
+    'current APK smoke uses the shared release validation contract'
+  )
+  assert.ok(
+    currentApkSmokeScript.includes('defaultReleaseAppPackageName'),
+    'current APK smoke uses the shared release app package contract'
+  )
+  assert.ok(
+    currentApkSmokeScript.includes('resolveApkArtifactPath(root, { version, arch, variant })'),
+    'current APK smoke resolves default artifact paths through the shared contract'
+  )
+  assert.ok(
+    currentApkSmokeScript.includes('collectReleaseSourceFreshness(root, apk)'),
+    'current APK smoke resolves source freshness through the shared contract'
+  )
+  assert.ok(
+    currentApkSmokeScript.includes('validateCurrentApkSmokeResult(result, { expected: expectedApp })'),
+    'current APK smoke resolves pass/fail through the shared release validation contract'
+  )
+  assert.ok(
+    currentApkSmokeScript.includes('androidPackage: expo.android?.package ?? null'),
+    'current APK smoke records the expected Android package identity in evidence'
+  )
+  assert.ok(
+    !/IsleMind-1\.0\.6-x86_64-no-model\.apk/.test(currentApkSmokeScript),
+    'current APK smoke does not hardcode the current release version in its default artifact path'
+  )
+
+  const qaAuditScript = fs.readFileSync(path.join(root, 'scripts/qa-coverage-audit.js'), 'utf8')
+  assert.ok(
+    qaAuditScript.includes("require('./release-artifact-contract')"),
+    'QA audit release provenance uses the shared release artifact contract'
+  )
+  assert.ok(
+    qaAuditScript.includes("require('./release-freshness-contract')"),
+    'QA audit release provenance uses the shared release freshness contract'
+  )
+  assert.ok(
+    qaAuditScript.includes("require('./release-validation-contract')"),
+    'QA audit release provenance uses the shared release validation contract'
+  )
+  assert.ok(
+    qaAuditScript.includes('formatApkArtifactRelativePath({'),
+    'QA audit release provenance resolves the canonical APK path through the shared contract'
+  )
+  assert.ok(
+    qaAuditScript.includes('collectReleaseSourceFreshness(root, apk)'),
+    'QA audit release provenance resolves source freshness through the shared contract'
+  )
+  assert.ok(
+    qaAuditScript.includes('validateCurrentApkSmokeResult(data, { expected: data.expected ?? readExpectedAppConfig() })'),
+    'QA audit current APK evidence check uses the shared release validation contract'
+  )
+  assert.ok(
+    !/function validateReleaseProvenance/.test(qaAuditScript),
+    'QA audit does not keep a private release provenance validator'
+  )
+  assert.ok(
+    !/IsleMind-1\.0\.6-x86_64-no-model\.apk/.test(qaAuditScript),
+    'QA audit release provenance does not hardcode the current release version'
+  )
+  assert.ok(
+    qaAuditScript.includes('first-run onboarding handoff is blocking and app-owned touch targets are blocking'),
+    'QA audit self-test proves first-run onboarding handoff remains a blocking paired-evidence gate'
+  )
+  assert.ok(
+    qaAuditScript.includes('app-owned touch targets are blocking'),
+    'QA audit self-test proves app-owned small touch targets remain blocking'
+  )
+  assert.ok(
+    qaAuditScript.includes('summarizeBlockingTouchTargets(uiSnapshots)'),
+    'QA audit centralizes app-owned small touch target blocking'
+  )
+  assert.ok(
+    qaAuditScript.includes('app-owned runtime touch target(s) are below 44dp'),
+    'QA audit blocks runtime app touch targets below 44dp'
+  )
+  assert.ok(
+    !/First-run onboarding handoff[\s\S]{0,260}blocking: false/.test(qaAuditScript),
+    'QA audit does not classify first-run onboarding handoff as follow-up evidence'
+  )
+
+  const buildScript = fs.readFileSync(path.join(root, 'scripts/build-local-android-apk.js'), 'utf8')
+  assert.ok(
+    buildScript.includes("require('./release-artifact-contract')"),
+    'local APK build uses the shared release artifact contract'
+  )
+  assert.ok(
+    buildScript.includes('--release-arch can only be used with --release.'),
+    'local APK build supports constrained release-arch smoke refreshes'
+  )
+  assert.ok(
+    buildScript.includes('passes.filter((pass) => pass.arch === args.releaseArch)'),
+    'local APK build can target the canonical x86_64 release artifact without rebuilding every ABI'
+  )
+  assert.ok(
+    !/function formatArtifactName/.test(buildScript),
+    'local APK build does not keep a private APK artifact naming function'
+  )
+
+  const releaseArtifactContract = require('./release-artifact-contract')
+  const releaseFreshnessContract = require('./release-freshness-contract')
+  const releaseValidationContract = require('./release-validation-contract')
+  const architectureBoundaryAudit = require('./architecture-boundary-audit')
+  assert.equal(releaseArtifactContract.apkOutputDirName, 'dist-apk', 'release artifact contract owns the APK output directory')
+  assert.equal(releaseArtifactContract.defaultReleaseSmokeArch, 'x86_64', 'release artifact contract owns the smoke ABI')
+  assert.equal(releaseArtifactContract.defaultReleaseSmokeVariant, 'no-model', 'release artifact contract owns the smoke variant')
+  assert.equal(releaseValidationContract.defaultReleaseAppPackageName, appJson.expo.android.package, 'release validation contract owns the app package identity')
+  assert.equal(
+    releaseArtifactContract.formatApkArtifactName({ version: packageJson.version, buildType: 'release', variant: 'no-model', arch: 'x86_64' }),
+    `IsleMind-${packageJson.version}-x86_64-no-model.apk`,
+    'release artifact contract formats release APK names'
+  )
+  assert.equal(
+    releaseArtifactContract.formatApkArtifactName({ version: packageJson.version, buildType: 'debug', variant: 'no-model', arch: 'universal-64' }),
+    `IsleMind-${packageJson.version}-android-debug-no-model-universal-64.apk`,
+    'release artifact contract formats debug APK names'
+  )
+  assert.equal(
+    releaseArtifactContract.formatApkArtifactRelativePath({ version: packageJson.version, variant: 'no-model', arch: 'x86_64' }).replace(/\\/g, '/'),
+    `dist-apk/IsleMind-${packageJson.version}-x86_64-no-model.apk`,
+    'release artifact contract returns repo-relative APK paths'
+  )
+  assert.equal(releaseFreshnessContract.releaseFreshnessToleranceMs, 2000, 'release freshness contract owns the freshness tolerance')
+  assert.ok(releaseFreshnessContract.releaseSourceExtensions.has('.tsx'), 'release freshness contract tracks TSX release inputs')
+  assert.ok(!releaseFreshnessContract.releaseSourceExtensions.has('.md'), 'release freshness contract excludes docs from APK freshness inputs')
+  const releaseInputs = releaseFreshnessContract.collectReleaseInputFiles(root).map((file) => path.relative(root, file).replace(/\\/g, '/'))
+  for (const expectedInput of ['app.json', 'app/_layout.tsx', 'src/services/context.ts', 'assets/icon.png', 'assets/models/catalog.json']) {
+    assert.ok(releaseInputs.includes(expectedInput), `release freshness contract includes ${expectedInput}`)
+  }
+  const newestReleaseInput = releaseFreshnessContract.findNewestReleaseInput(root)
+  assert.ok(newestReleaseInput?.path, 'release freshness contract reports the newest release input path')
+  const currentFreshness = releaseFreshnessContract.collectReleaseSourceFreshness(root, { modifiedAt: new Date(Date.now() + 60_000).toISOString() })
+  assert.equal(currentFreshness.status, 'current', 'release freshness contract marks APKs newer than inputs as current')
+  const staleFreshness = releaseFreshnessContract.collectReleaseSourceFreshness(root, { modifiedAt: '1970-01-01T00:00:00.000Z' })
+  assert.equal(staleFreshness.status, 'stale', 'release freshness contract marks APKs older than inputs as stale')
+  const passingReleaseEvidence = {
+    apk: {
+      path: `dist-apk/IsleMind-${packageJson.version}-x86_64-no-model.apk`,
+      exists: true,
+      sha256: 'a'.repeat(64),
+      sidecarSha256: 'a'.repeat(64),
+      sizeBytes: 1,
+      modifiedAt: new Date(Date.now() + 60_000).toISOString(),
+    },
+    expected: {
+      packageVersion: packageJson.version,
+      expoVersion: appJson.expo.version,
+      androidPackage: appJson.expo.android.package,
+      androidVersionCode: appJson.expo.android.versionCode,
+    },
+    sourceFreshness: currentFreshness,
+    installed: {
+      deviceSerial: 'emulator-5554',
+      deviceAbi: 'x86_64',
+      packagePath: `package:/data/app/com.islemind.app/base.apk`,
+      versionName: appJson.expo.version,
+      versionCode: appJson.expo.android.versionCode,
+      primaryCpuAbi: 'x86_64',
+      cleanInstall: true,
+    },
+    launch: { ok: true, fatalLog: { fatal: false } },
+    compatibility16kb: { ok: true, zipAlignmentOk: true, elf64Ok: true },
+    source: 'adb',
+  }
+  assert.deepEqual(releaseValidationContract.validateReleaseProvenance(passingReleaseEvidence), [], 'release validation contract accepts current provenance evidence')
+  assert.deepEqual(releaseValidationContract.validateCurrentApkSmokeResult(passingReleaseEvidence), [], 'release validation contract accepts current APK smoke evidence')
+  const staleReleaseIssues = releaseValidationContract.validateCurrentApkSmokeResult({
+    ...passingReleaseEvidence,
+    sourceFreshness: staleFreshness,
+  })
+  assert.ok(staleReleaseIssues.some((issue) => /stale APK/i.test(issue)), 'release validation contract rejects stale APK smoke evidence')
+  const missingLaunchIssues = releaseValidationContract.validateCurrentApkSmokeResult({
+    ...passingReleaseEvidence,
+    launch: { ok: false, fatalLog: { fatal: true } },
+  })
+  assert.ok(missingLaunchIssues.some((issue) => /launch smoke/i.test(issue)), 'release validation contract rejects failed launch evidence')
+  const wrongPackageIssues = releaseValidationContract.validateCurrentApkSmokeResult({
+    ...passingReleaseEvidence,
+    expected: {
+      ...passingReleaseEvidence.expected,
+      androidPackage: 'com.example.invalid',
+    },
+  })
+  assert.ok(wrongPackageIssues.some((issue) => /android\.package/i.test(issue)), 'release validation contract rejects wrong Android package identity')
+  const missingPackagePathIssues = releaseValidationContract.validateCurrentApkSmokeResult({
+    ...passingReleaseEvidence,
+    installed: {
+      ...passingReleaseEvidence.installed,
+      packagePath: null,
+    },
+  })
+  assert.ok(missingPackagePathIssues.some((issue) => /package path/i.test(issue)), 'release validation contract rejects missing installed package path identity')
+  assert.equal(architectureBoundaryAudit.architectureBoundaryAuditEvidenceName, 'architecture-boundary-audit-results.json', 'architecture boundary audit owns its evidence file name')
+  assert.deepEqual(
+    architectureBoundaryAudit.architectureBoundaryReviewBudgets.map((budget) => `${budget.checkId}:${budget.maxSurfaces}/${budget.maxHits}`),
+    ['local-data-store-containment:0/0', 'provider-presentation-coupling:0/0'],
+    'architecture boundary audit owns explicit review budgets for bounded coupling'
+  )
+  assert.equal(typeof architectureBoundaryAudit.runArchitectureBoundaryAuditSelfTest, 'function', 'architecture boundary audit exposes a lightweight self-test contract')
+  const architectureBoundaryResult = architectureBoundaryAudit.collectArchitectureBoundaryAudit(root)
+  assert.equal(architectureBoundaryResult.schema, 'islemind.architecture-boundary-audit.v1', 'architecture boundary audit emits a stable schema')
+  assert.equal(architectureBoundaryResult.summary.checks, 10, 'architecture boundary audit includes review budget enforcement')
+  assert.equal(architectureBoundaryResult.summary.blockingIssues, 0, 'architecture boundary audit has no blocking issues')
+  assert.equal(architectureBoundaryResult.summary.reviewFindings, 0, 'architecture boundary audit has no current provider presentation review surfaces')
+  for (const id of [
+    'provider-transport-boundary',
+    'context-pipeline-boundary',
+    'local-model-strategy-boundary',
+    'migration-recovery-boundary',
+    'audit-evidence-boundary',
+    'network-adapter-containment',
+    'local-data-store-containment',
+    'local-model-runtime-containment',
+    'provider-presentation-coupling',
+    'architecture-review-budget',
+  ]) {
+    assert.ok(architectureBoundaryResult.checks.some((check) => check.id === id), `architecture boundary audit includes ${id}`)
+  }
+  assert.ok(
+    architectureBoundaryResult.checks.some((check) => check.id === 'provider-presentation-coupling' && check.status === 'passed'),
+    'architecture boundary audit blocks new provider presentation coupling instead of accepting a UI review surface'
+  )
+  assert.ok(
+    !architectureBoundaryResult.reviewFindings.some((item) => /src\/components\/chat\/ChatWorkspace\.tsx/.test(item.issue)),
+    'architecture boundary audit proves ChatWorkspace no longer carries provider presentation coupling'
+  )
+  assert.ok(
+    !architectureBoundaryResult.reviewFindings.some((item) => /src\/components\/chat\/ChatWorkspace\.tsx \(.*localDataStore/.test(item.issue)),
+    'architecture boundary audit proves ChatWorkspace no longer reaches the local data store directly'
+  )
+  assert.ok(
+    !architectureBoundaryResult.reviewFindings.some((item) => item.checkId === 'local-data-store-containment'),
+    'architecture boundary audit proves UI data-store coupling has no review surface'
+  )
+  const contextPanelSource = fs.readFileSync(path.join(root, 'src/components/settings/ContextPanel.tsx'), 'utf8')
+  assert.ok(
+    !contextPanelSource.includes("@/services/localDataStore"),
+    'ContextPanel reads RAG diagnostics and cache maintenance through the RAG service boundary'
+  )
+  assert.ok(
+    contextPanelSource.includes("@/services/ragEvaluation"),
+    'ContextPanel keeps RAG maintenance actions outside direct SQLite access'
+  )
+  assert.ok(
+    !/function searchModeLabel/.test(contextPanelSource),
+    'ContextPanel reads search provider labels through the search policy boundary'
+  )
+  assert.ok(
+    contextPanelSource.includes('SEARCH_PROVIDER_OPTIONS'),
+    'ContextPanel reads search provider option order through the search policy boundary'
+  )
+  assert.ok(
+    contextPanelSource.includes('SEARCH_PROVIDER_CREDENTIAL_FIELDS'),
+    'ContextPanel reads search credential field metadata through the search policy boundary'
+  )
+  assert.ok(
+    !architectureBoundaryResult.reviewFindings.some((item) => /src\/components\/settings\/ContextPanel\.tsx/.test(item.issue)),
+    'architecture boundary audit proves ContextPanel no longer carries provider presentation coupling'
+  )
+  const apiKeyPanelSource = fs.readFileSync(path.join(root, 'src/components/settings/ApiKeyPanel.tsx'), 'utf8')
+  assert.ok(
+    apiKeyPanelSource.includes("@/services/ai/providerConfigPolicy"),
+    'ApiKeyPanel reads provider protocol and base URL draft behavior through the provider config policy boundary'
+  )
+  assert.ok(
+    !/function inferMimoWireProtocol|shouldReplaceMimoBaseUrl|xiaomi-mimo|openai-compatible|anthropic-compatible|xiaomimimo/.test(apiKeyPanelSource),
+    'ApiKeyPanel does not keep provider-specific protocol and endpoint rules in the UI layer'
+  )
+  const chatWorkspaceSource = fs.readFileSync(path.join(root, 'src/components/chat/ChatWorkspace.tsx'), 'utf8')
+  assert.ok(
+    chatWorkspaceSource.includes("@/services/conversationMetrics"),
+    'ChatWorkspace reads conversation metrics through the pure metrics boundary'
+  )
+  assert.ok(
+    !chatWorkspaceSource.includes("@/services/localDataStore"),
+    'ChatWorkspace does not import the SQLite-backed local data store for display metrics'
+  )
+  assert.ok(
+    chatWorkspaceSource.includes("@/utils/providerModels"),
+    'ChatWorkspace reads model family metadata through the provider model utility boundary'
+  )
+  assert.ok(
+    !/function inferModelFamily/.test(chatWorkspaceSource),
+    'ChatWorkspace does not keep provider/model family classification rules in the UI layer'
+  )
+  const providerModels = require('../src/utils/providerModels.ts')
+  assert.deepEqual(
+    providerModels.MODEL_QUICK_GROUPS,
+    ['all', 'gpt', 'claude', 'gemini', 'deepseek', 'qwen', 'kimi', 'doubao', 'grok', 'glm', 'mimo', 'llama', 'other'],
+    'provider model utility owns stable model quick-filter groups'
+  )
+  assert.equal(
+    providerModels.inferModelFamily({ type: 'anthropic', name: 'Claude', models: [], enabled: true }, 'claude-sonnet-4'),
+    'claude',
+    'provider model utility classifies Claude-compatible models outside UI components'
+  )
+  assert.equal(
+    providerModels.inferModelFamily({ type: 'openai-compatible', name: 'Xiaomi MiMo', baseUrl: 'https://api.xiaomimimo.com', models: [], enabled: true }, 'mimo-v2'),
+    'mimo',
+    'provider model utility classifies MiMo-compatible models outside UI components'
+  )
+  const conversationMetrics = require('../src/services/conversationMetrics.ts')
+  const metricFixture = conversationMetrics.getConversationMetrics({
+    id: 'metric-conversation',
+    title: 'Metric fixture',
+    providerId: 'mock',
+    model: 'mock-model',
+    createdAt: 1,
+    updatedAt: 2,
+    messages: [
+      { id: 'user', role: 'user', content: 'hello', createdAt: 1, usage: { inputTokens: 3, outputTokens: 0, totalTokens: 3, source: 'provider' } },
+      { id: 'assistant', role: 'assistant', content: 'world', createdAt: 2, durationMs: 1200, citations: [{ id: 'source', title: 'Source', excerpt: 'Quote' }], usage: { inputTokens: 5, outputTokens: 7, totalTokens: 12, reasoningTokens: 2, source: 'estimated' } },
+    ],
+  })
+  assert.deepEqual(
+    metricFixture,
+    { inputTokens: 8, outputTokens: 7, totalTokens: 15, reasoningTokens: 2, estimated: true, durationMs: 1200, messageCount: 2, sourceCount: 1 },
+    'pure conversation metrics preserve token, duration, message, and citation totals'
+  )
+  assert.deepEqual(
+    conversationMetrics.usageFromMetrics(metricFixture),
+    { inputTokens: 8, outputTokens: 7, reasoningTokens: 2, totalTokens: 15, source: 'estimated' },
+    'pure conversation metrics still convert back to MessageUsage'
+  )
+  const architectureReviewBudget = architectureBoundaryResult.checks.find((check) => check.id === 'architecture-review-budget')
+  assert.equal(architectureReviewBudget?.status, 'passed', 'architecture boundary audit keeps current review surfaces inside explicit budget')
+  assert.deepEqual(
+    architectureReviewBudget.evidence,
+    [
+      'local-data-store-containment: 0/0 surfaces, 0/0 hits',
+      'provider-presentation-coupling: 0/0 surfaces, 0/0 hits',
+    ],
+    'architecture boundary audit reports current review budget utilization'
+  )
+  assert.equal(DEFAULT_PROVIDER_PRESET_ID, 'custom-openai-compatible', 'provider config policy owns the default custom preset id')
+  assert.equal(DEFAULT_PROVIDER_WIRE_PROTOCOL, 'openai-compatible', 'provider config policy owns the default wire protocol')
+  assert.deepEqual(PROVIDER_WIRE_PROTOCOL_OPTIONS, ['openai-compatible', 'anthropic-compatible'], 'provider config policy owns supported wire protocol option order')
+  assert.equal(inferProviderWireProtocolFromBaseUrl('https://token-plan-cn.xiaomimimo.com/anthropic'), 'anthropic-compatible', 'provider config policy infers Anthropic-compatible endpoints')
+  assert.equal(inferProviderCredentialModeFromKeyOrBaseUrl('sk-fake', 'https://token-plan-cn.xiaomimimo.com/v1'), 'payg', 'provider protocol policy infers pay-as-you-go keys before endpoint defaults')
+  assert.equal(inferProviderCredentialModeFromKeyOrBaseUrl('', 'https://api.xiaomimimo.com/v1'), 'payg', 'provider protocol policy infers pay-as-you-go official endpoints')
+  assert.equal(inferProviderCredentialModeFromKeyOrBaseUrl('', 'https://token-plan-sgp.xiaomimimo.com/v1'), 'token-plan', 'provider protocol policy defaults token-plan endpoints')
+  assert.equal(inferProviderTokenPlanRegionFromBaseUrl('https://token-plan-sgp.xiaomimimo.com/anthropic'), 'sgp', 'provider protocol policy infers Singapore token plan region')
+  assert.equal(defaultProviderCredentialMode(undefined), 'token-plan', 'provider protocol policy owns credential mode defaults')
+  assert.equal(defaultProviderTokenPlanRegion(undefined), 'cn', 'provider protocol policy owns token plan region defaults')
+  assert.equal(defaultProviderWireProtocol(undefined), DEFAULT_PROVIDER_WIRE_PROTOCOL, 'provider protocol policy owns persisted wire protocol defaults')
+  assert.equal(initialProviderPresetId({}), DEFAULT_PROVIDER_PRESET_ID, 'provider config policy returns the default preset for new provider drafts')
+  assert.equal(
+    initialProviderWireProtocol({ baseUrl: 'https://token-plan-cn.xiaomimimo.com/anthropic' }),
+    'anthropic-compatible',
+    'provider config policy initializes protocol from the endpoint when saved protocol is absent'
+  )
+  assert.deepEqual(
+    resolveProviderConfigDraft({
+      provider: { credentialMode: 'token-plan', tokenPlanRegion: 'cn' },
+      presetId: 'xiaomi-mimo',
+      baseUrl: 'https://token-plan-cn.xiaomimimo.com/v1',
+      wireProtocol: 'anthropic-compatible',
+    }),
+    {
+      presetId: 'xiaomi-mimo',
+      isProtocolSelectable: true,
+      baseUrl: 'https://token-plan-cn.xiaomimimo.com/anthropic',
+      credentialMode: 'token-plan',
+      tokenPlanRegion: 'cn',
+      wireProtocol: 'anthropic-compatible',
+    },
+    'provider config policy replaces official endpoint variants when protocol changes'
+  )
+  assert.equal(
+    resolveProviderConfigDraft({
+      provider: { credentialMode: 'token-plan', tokenPlanRegion: 'cn' },
+      presetId: 'xiaomi-mimo',
+      baseUrl: 'https://gateway.example/mimo',
+      wireProtocol: 'anthropic-compatible',
+    }).baseUrl,
+    'https://gateway.example/mimo',
+    'provider config policy preserves custom gateway endpoints'
+  )
+
+  const readmeChecks = [
+    {
+      file: 'README.md',
+      markers: ['structured work artifacts', 'quality gates', 'copyable handoffs', 'continuation prompts'],
+    },
+    {
+      file: 'README.zh-CN.md',
+      markers: ['结构化工作产物', '质量门槛', '可复制交接', '继续执行提示'],
+    },
+    {
+      file: 'README.ja.md',
+      markers: ['構造化作業成果', '品質ゲート', 'コピー可能な引き継ぎ', '継続プロンプト'],
+    },
+  ]
+  for (const { file, markers } of readmeChecks) {
+    const readme = fs.readFileSync(path.join(root, file), 'utf8')
+    assert.ok(
+      readme.includes(`\`${packageJson.version}\``),
+      `${file} documents the current app version ${packageJson.version}`
+    )
+    for (const marker of markers) {
+      assert.ok(readme.includes(marker), `${file} documents AI productivity work artifact capability: ${marker}`)
+    }
+  }
+}
+
+async function assertResponsesWebSocketTransportBehavior() {
+  const originalWebSocket = global.WebSocket
+  try {
+    const success = await runFakeWebSocketScenario(({ instance }) => {
+      instance.open()
+      instance.message({ type: 'response.output_text.delta', delta: 'hel' })
+      instance.message({ type: 'response.output_text.delta', delta: 'lo' })
+      instance.message({ type: 'response.completed', response: { id: 'resp-ok' }, usage: { input_tokens: 30, output_tokens: 2, total_tokens: 32 } })
+    })
+    assert.deepEqual(success.chunks, ['hel', 'lo'], 'Responses WebSocket emits streamed text chunks')
+    assert.equal(success.done?.text, 'hello', 'Responses WebSocket completes with accumulated text')
+    assert.equal(success.done?.responseId, 'resp-ok', 'Responses WebSocket forwards response id')
+    assert.equal(success.done?.usage?.inputTokens, 30, 'Responses WebSocket forwards provider usage')
+    assert.ok(success.sent.some((message) => message.type === 'response.create'), 'Responses WebSocket sends response.create')
+    assert.ok(!('stream' in success.sent[0]), 'Responses WebSocket removes stream from response.create payload')
+
+    const handshakeFailure = await runFakeWebSocketScenario(({ instance }) => {
+      instance.error()
+    })
+    assert.equal(handshakeFailure.error?.message, 'websocket_transport_error', 'Responses WebSocket rejects handshake failure before tokens')
+    assert.equal(handshakeFailure.chunks.length, 0, 'Responses WebSocket handshake failure emits no chunks')
+
+    const midStreamFailure = await runFakeWebSocketScenario(({ instance }) => {
+      instance.open()
+      instance.message({ type: 'response.output_text.delta', delta: 'partial' })
+      instance.error()
+    })
+    assert.equal(midStreamFailure.error?.message, 'websocket_transport_error', 'Responses WebSocket rejects mid-stream failure')
+    assert.deepEqual(midStreamFailure.chunks, ['partial'], 'Responses WebSocket mid-stream failure preserves emitted chunks for caller retry policy')
+
+    const abortController = new AbortController()
+    const aborted = await runFakeWebSocketScenario(({ instance }) => {
+      instance.open()
+      abortController.abort()
+    }, abortController)
+    assert.equal(aborted.error?.name, 'AbortError', 'Responses WebSocket abort rejects with AbortError')
+    assert.equal(aborted.closed, true, 'Responses WebSocket abort closes the socket')
+
+    const key = 'provider:model:conversation:session'
+    const lease = await acquireSessionLease({ key, limit: 1, timeoutMs: 10 })
+    assert.equal(activeSessionLeaseCount(key), 1, 'session lease records active acquisition')
+    lease.release()
+    lease.release()
+    assert.equal(activeSessionLeaseCount(key), 0, 'session lease release is idempotent')
+  } finally {
+    if (originalWebSocket === undefined) {
+      delete global.WebSocket
+    } else {
+      global.WebSocket = originalWebSocket
+    }
+  }
+}
+
+async function runFakeWebSocketScenario(script, controller = new AbortController()) {
+  const instances = []
+  class FakeWebSocket {
+    constructor(url, _protocols, options) {
+      this.url = url
+      this.options = options
+      this.sent = []
+      this.closed = false
+      instances.push(this)
+    }
+    send(value) {
+      this.sent.push(JSON.parse(value))
+    }
+    close() {
+      this.closed = true
+    }
+    open() {
+      this.onopen?.()
+    }
+    message(payload) {
+      this.onmessage?.({ data: JSON.stringify(payload) })
+    }
+    error() {
+      this.onerror?.(new Error('fake websocket error'))
+    }
+  }
+  global.WebSocket = FakeWebSocket
+  const chunks = []
+  const traces = []
+  let done = null
+  let error = null
+  const promise = runResponsesWebSocketTransport({
+    url: 'wss://api.example/v1/responses',
+    headers: { Authorization: 'Bearer sk-test-token' },
+    body: { model: 'gpt-5.2', input: [{ role: 'user', content: 'hello' }], stream: true },
+    req: { provider: { id: 'openai-main', type: 'openai', name: 'OpenAI', apiKey: '', models: ['gpt-5.2'], enabled: true }, model: 'gpt-5.2', messages: [{ role: 'user', content: 'hello' }] },
+    signal: controller.signal,
+    parseEvent: parseProviderStreamEventForTest,
+    wireProviderType: 'openai',
+    extractCitations: () => [],
+    onChunk: (chunk) => chunks.push(chunk),
+    onDone: (result) => { done = result },
+    onError: (err) => { error = err },
+    onTrace: (trace) => traces.push(trace),
+  }).catch((err) => { error = err })
+  assert.equal(instances.length, 1, 'fake WebSocket instance was created')
+  script({ instance: instances[0] })
+  await promise
+  return { chunks, traces, done, error, sent: instances[0].sent, closed: instances[0].closed }
+}
+
+async function assertRuntimeLogFileBehavior() {
+  const uri = getRuntimeLogPath()
+  localFileFixtures.delete(uri)
+  await appendRuntimeLog('upstream.request', {
+    providerId: 'openai-main',
+    model: 'gpt-5.2',
+    authorization: 'Bearer abcdefghijklmnopqrstuvwxyz123456',
+    body: JSON.stringify({ model: 'gpt-5.2', input: [{ content: 'secret prompt text' }] }),
+  }, { enabled: true, maxBytes: 4096 })
+  const content = localFileFixtures.get(uri)?.toString('utf8') ?? ''
+  const entry = JSON.parse(content.trim())
+  assert.equal(entry.schema, 'islemind.runtime-log.v1', 'runtime log writes JSONL schema')
+  assert.equal(entry.event, 'upstream.request', 'runtime log writes event family')
+  assert.equal(entry.authorization, '[redacted]', 'runtime log file redacts authorization')
+  assert.deepEqual(entry.body.keys, ['input', 'model'], 'runtime log file stores payload keys only')
+  assert.ok(!content.includes('secret prompt text'), 'runtime log file omits raw prompt text')
+  localFileFixtures.set(uri, Buffer.from(`${'x'.repeat(5000)}\n`))
+  await appendRuntimeLog('compact.usage', { providerId: 'openai-main', status: 'completed' }, { enabled: true, maxBytes: 4096 })
+  assert.ok((localFileFixtures.get(uri)?.length ?? 0) <= 4096, 'runtime log rotation respects max bytes')
+  const info = await getRuntimeLogInfo()
+  assert.equal(info.exists, true, 'runtime log info detects the current log file')
+  assert.equal(info.path, uri, 'runtime log info returns the same path')
+  assert.ok((await readRuntimeLogText()).includes('compact.usage'), 'runtime log tail reads recent events')
+  await clearRuntimeLog()
+  assert.equal(localFileFixtures.has(uri), false, 'runtime log clear deletes the log file')
+}
+
+async function assertRuntimeDiagnosticsBehavior() {
+  clearCompactUsageRecords()
+  recordCompactUsage({ mode: 'auto', providerId: 'openai-main', model: 'gpt-5.2', inputTokens: 1000, outputTokens: 120, estimatedSavedTokens: 430 })
+  recordCompactUsage({ mode: 'required', providerId: 'fallback', model: 'manual-model', failureCode: 'provider_capability_missing' })
+  const openAiPreset = applyProviderPreset({
+    id: 'openai-main',
+    type: 'openai',
+    name: 'OpenAI',
+    apiKey: '',
+    models: ['gpt-5.2'],
+    enabled: true,
+    lastTestStatus: 'ok',
+    manualModels: ['gpt-5.2'],
+    modelAliases: [{ alias: 'fast', model: 'gpt-5.2' }],
+  }, 'openai')
+  assert.equal(openAiPreset.capabilities.responsesWebSocket, true, 'OpenAI preset declares Responses WebSocket support')
+  const customProvider = {
+    id: 'custom',
+    type: 'openai-compatible',
+    name: 'Custom',
+    apiKey: '',
+    models: ['manual-model'],
+    enabled: true,
+    lastModelSyncStatus: 'bad',
+    capabilities: {
+      chat: true,
+      streaming: true,
+      modelList: false,
+      vision: false,
+      files: false,
+      audioInput: false,
+      audioTranscription: false,
+      speech: false,
+      nativeSearch: false,
+      reasoningEffort: false,
+      topP: true,
+      payloadPolicy: true,
+    },
+  }
+  const summary = await buildRuntimeDiagnosticsSummary({
+    providers: [openAiPreset, customProvider],
+    settings: {
+      transportMode: 'websocket',
+      remoteCompactMode: 'auto',
+      payloadPolicyMode: 'block',
+      proxyMode: 'system-detected',
+      providerAllowlist: ['openai-*'],
+      modelBlocklist: ['bad-*'],
+      runtimeLogEnabled: true,
+      runtimeLogMaxBytes: 4096,
+    },
+  })
+  assert.equal(summary.websocket.readyProviders, 1, 'runtime diagnostics counts WebSocket-ready providers')
+  assert.equal(summary.compact.requestCount, 2, 'runtime diagnostics counts compact usage records')
+  assert.equal(summary.compact.failureCount, 1, 'runtime diagnostics counts compact failures')
+  assert.equal(summary.compact.estimatedSavedTokens, 430, 'runtime diagnostics sums compact saved tokens')
+  assert.equal(summary.policy.providerAllowRules, 1, 'runtime diagnostics counts provider allow rules')
+  assert.equal(summary.policy.modelBlockRules, 1, 'runtime diagnostics counts model block rules')
+  assert.equal(summary.proxy.reason, 'system_proxy_platform_stack', 'runtime diagnostics reports system proxy as platform-stack mode')
+  assert.equal(summary.log.enabled, true, 'runtime diagnostics reports log enablement')
+  assert.equal(summary.providers.ready, 1, 'runtime diagnostics counts ready providers')
+  assert.equal(summary.providers.degraded, 1, 'runtime diagnostics counts degraded providers')
+  assert.equal(summary.providers.aliasProviders, 1, 'runtime diagnostics counts alias providers')
+}
+
+async function assertUpstreamGovernanceBehavior() {
+  const anthropicProvider = {
+    id: 'anthropic-main',
+    type: 'anthropic',
+    name: 'Anthropic',
+    apiKey: 'token-test-fake',
+    models: ['claude-sonnet-4-20250514'],
+    enabled: true,
+  }
+  const anthropicReq = {
+    provider: anthropicProvider,
+    model: 'claude-sonnet-4-20250514',
+    messages: [{ role: 'user', content: 'hello' }],
+    settings: {
+      requestRectificationEnabled: true,
+      anthropicThinkingSignatureRectificationEnabled: true,
+      anthropicThinkingBudgetRectificationEnabled: true,
+    },
+  }
+  const disabledRectification = rectifyAnthropicRequestBodyForTest({
+    req: { ...anthropicReq, settings: {} },
+    body: JSON.stringify({ model: 'claude-sonnet-4-20250514', messages: [], max_tokens: 2048 }),
+    errorText: 'budget_tokens must be at least 1024',
+    rectified: false,
+  })
+  assert.equal(disabledRectification, undefined, 'Anthropic rectification is default-off')
+  const signatureRectified = rectifyAnthropicRequestBodyForTest({
+    req: anthropicReq,
+    body: JSON.stringify({
+      model: 'claude-sonnet-4-20250514',
+      thinking: { type: 'enabled', budget_tokens: 2048 },
+      output_config: { effort: 'high' },
+      messages: [
+        { role: 'assistant', content: [{ type: 'thinking', thinking: 'hidden', signature: 'invalid' }, { type: 'text', text: 'answer' }] },
+        { role: 'user', content: [{ type: 'text', text: 'continue' }] },
+      ],
+    }),
+    errorText: 'invalid_request_error: thinking signature is incompatible with this request',
+    rectified: false,
+  })
+  assert.equal(signatureRectified.kind, 'thinking_signature', 'Anthropic signature rectification is detected')
+  assert.equal(signatureRectified.body.thinking, undefined, 'signature rectification removes request thinking config')
+  assert.equal(signatureRectified.body.output_config, undefined, 'signature rectification removes output_config')
+  assert.equal(signatureRectified.body.messages[0].content.length, 1, 'signature rectification removes incompatible thinking blocks')
+
+  const budgetRectified = rectifyAnthropicRequestBodyForTest({
+    req: anthropicReq,
+    body: JSON.stringify({ model: 'claude-sonnet-4-20250514', messages: [], max_tokens: 2048 }),
+    errorText: 'budget_tokens must be at least 1024 and comply with the max_tokens constraint',
+    rectified: false,
+  })
+  assert.equal(budgetRectified.kind, 'thinking_budget', 'Anthropic budget rectification is detected')
+  assert.deepEqual(budgetRectified.body.thinking, { type: 'enabled', budget_tokens: 32000 }, 'budget rectification normalizes thinking to 32000 tokens')
+  assert.equal(budgetRectified.body.max_tokens, 64000, 'budget rectification raises max_tokens when needed')
+  const secondRectification = rectifyAnthropicRequestBodyForTest({
+    req: anthropicReq,
+    body: JSON.stringify({ model: 'claude-sonnet-4-20250514', messages: [], max_tokens: 2048 }),
+    errorText: 'budget_tokens must be at least 1024',
+    rectified: true,
+  })
+  assert.equal(secondRectification, undefined, 'Anthropic rectification is single-retry only')
+
+  const bedrockBody = {
+    model: 'claude-opus-4-7',
+    system: 'System prompt',
+    messages: [{ role: 'user', content: [{ type: 'text', text: 'hello' }] }],
+    max_tokens: 4096,
+    stream: true,
+  }
+  const optimizedBedrock = optimizeRequestBodyForTest(bedrockBody, {
+    provider: {
+      id: 'aws-bedrock',
+      type: 'anthropic',
+      name: 'Amazon Bedrock',
+      baseUrl: 'https://bedrock-runtime.us-east-1.amazonaws.com',
+      apiKey: 'token-test-fake',
+      models: ['claude-opus-4-7'],
+      enabled: true,
+    },
+    model: 'claude-opus-4-7',
+    messages: [{ role: 'user', content: 'hello' }],
+    reasoningEffort: 'high',
+    settings: {
+      bedrockRequestOptimizerEnabled: true,
+      thinkingOptimizerEnabled: true,
+      cacheInjectionEnabled: true,
+      cacheTtl: '5m',
+    },
+  })
+  assert.deepEqual(optimizedBedrock.thinking, { type: 'adaptive', display: 'summarized' }, 'Bedrock optimizer enables adaptive thinking for supported Claude Opus/Sonnet models')
+  assert.equal(optimizedBedrock.output_config.effort, 'high', 'Bedrock optimizer maps thinking effort')
+  assert.equal(optimizedBedrock.system[0].cache_control.ttl, '5m', 'Bedrock optimizer injects cache TTL on system text')
+  assert.equal(optimizedBedrock.messages[0].content[0].cache_control.ttl, '5m', 'Bedrock optimizer injects cache TTL on message text')
+  const nonBedrock = optimizeRequestBodyForTest(bedrockBody, {
+    provider: {
+      id: 'custom-aws-proxy',
+      type: 'anthropic',
+      name: 'Custom AWS proxy',
+      baseUrl: 'https://aws-proxy.example/v1/messages',
+      apiKey: 'token-test-fake',
+      models: ['claude-opus-4-7'],
+      enabled: true,
+    },
+    model: 'claude-opus-4-7',
+    messages: [{ role: 'user', content: 'hello' }],
+    reasoningEffort: 'high',
+    settings: {
+      bedrockRequestOptimizerEnabled: true,
+      thinkingOptimizerEnabled: true,
+      cacheInjectionEnabled: true,
+      cacheTtl: '5m',
+    },
+  })
+  assert.equal(nonBedrock.thinking, undefined, 'Bedrock optimizer does not run for non-Bedrock AWS-named providers')
+  assert.equal(typeof nonBedrock.system, 'string', 'Bedrock cache injection is Bedrock-only')
+
+  const originalFetch = global.fetch
+  try {
+    const modelTestBodies = []
+    global.fetch = async (_url, init) => {
+      modelTestBodies.push(JSON.parse(init.body))
+      return new Response(JSON.stringify({ choices: [{ message: { content: 'OK' } }] }), {
+        status: 200,
+        headers: { 'content-type': 'application/json' },
+      })
+    }
+    const aliasProvider = {
+      id: 'custom-model-test',
+      type: 'openai-compatible',
+      name: 'Custom Model Test',
+      baseUrl: 'https://api.example/v1',
+      apiKey: FAKE_KEY_A,
+      models: ['friendly'],
+      modelAliases: [{ alias: 'friendly', model: 'upstream-model' }],
+      enabled: true,
+    }
+    const checkedModelTest = await testProviderModelDetailed(aliasProvider, 'friendly', FAKE_KEY_A, { checkParameters: true })
+    const reducedModelTest = await testProviderModelDetailed(aliasProvider, 'friendly', FAKE_KEY_A, { checkParameters: false })
+    assert.equal(checkedModelTest.ok, true, 'model test accepts aliased requested models')
+    assert.equal(reducedModelTest.ok, true, 'model test accepts reduced-parameter checks')
+    assert.equal(modelTestBodies[0].model, 'upstream-model', 'model test sends the upstream alias target')
+    assert.equal(modelTestBodies[0].temperature, 0.7, 'model test keeps generation parameters when parameter checks are enabled')
+    assert.equal(modelTestBodies[1].temperature, undefined, 'model test removes generation parameters when parameter checks are disabled')
+
+    let calls = 0
+    global.fetch = async () => {
+      calls += 1
+      return new Response(calls === 1 ? 'server overloaded' : 'data: [DONE]\n\n', { status: calls === 1 ? 500 : 200 })
+    }
+    const retriedResponse = await fetchChatStreamWithRetryForTest({
+      req: {
+        provider: anthropicProvider,
+        model: 'claude-sonnet-4-20250514',
+        messages: [{ role: 'user', content: 'hello' }],
+        settings: { upstreamMaxRetries: 1, upstreamRequestTimeoutMs: 5000, upstreamCircuitBreakerEnabled: false },
+      },
+      url: 'https://api.anthropic.com/v1/messages',
+      headers: {},
+      body: JSON.stringify({ model: 'claude-sonnet-4-20250514', messages: [], max_tokens: 128 }),
+      stream: true,
+      controller: new AbortController(),
+    })
+    assert.equal(retriedResponse.ok, true, 'Anthropic retryable 5xx responses are retried')
+    assert.equal(calls, 2, 'Anthropic retry count applies after non-rectifiable 5xx')
+
+    const sentBodies = []
+    global.fetch = async (_url, init) => {
+      sentBodies.push(JSON.parse(init.body))
+      return new Response(sentBodies.length === 1 ? 'budget_tokens must be at least 1024' : 'data: [DONE]\n\n', { status: sentBodies.length === 1 ? 400 : 200 })
+    }
+    const rectifiedResponse = await fetchChatStreamWithRetryForTest({
+      req: {
+        provider: anthropicProvider,
+        model: 'claude-sonnet-4-20250514',
+        messages: [{ role: 'user', content: 'hello' }],
+        settings: {
+          upstreamMaxRetries: 0,
+          upstreamRequestTimeoutMs: 5000,
+          upstreamCircuitBreakerEnabled: false,
+          requestRectificationEnabled: true,
+          anthropicThinkingBudgetRectificationEnabled: true,
+        },
+      },
+      url: 'https://api.anthropic.com/v1/messages',
+      headers: {},
+      body: JSON.stringify({ model: 'claude-sonnet-4-20250514', messages: [], max_tokens: 2048 }),
+      stream: true,
+      controller: new AbortController(),
+    })
+    assert.equal(rectifiedResponse.ok, true, 'Anthropic rectification retry is independent of max retry count')
+    assert.equal(sentBodies.length, 2, 'Anthropic rectification retries once')
+    assert.equal(sentBodies[1].thinking.budget_tokens, 32000, 'rectification retry sends normalized thinking budget')
+    assert.equal(sentBodies[1].max_tokens, 64000, 'rectification retry sends normalized max_tokens')
+  } finally {
+    global.fetch = originalFetch
+  }
+}
+
 async function run() {
+  assertReleaseVersionsAligned()
+  await assertResponsesWebSocketTransportBehavior()
+  await assertRuntimeLogFileBehavior()
+  await assertRuntimeDiagnosticsBehavior()
+  await assertUpstreamGovernanceBehavior()
+
   assert.equal(
     detectProviderPreset({ baseUrl: 'https://new-api.abrdns.com/', [API_KEY_FIELD]: 'token-live-fake' }).presetId,
     'newapi',
@@ -296,9 +1305,329 @@ async function run() {
   assert.equal(maskSecret('token-fake-1234567890'), 'toke...7890')
   setServiceLanguage('en')
   assert.equal(st('apiKeyPanel.groupName', { index: 1 }), 'Token group 1', 'service i18n follows language changes')
+  assert.equal(st('chat.starterPlanLabel'), 'Plan today', 'service i18n exposes work starter labels')
+  assert.equal(st('chat.commandWorkStarterDescription'), 'Insert a structured work template', 'command palette exposes work starter descriptions')
+  assert.equal(st('messageBubble.copyWorkArtifact'), 'Copy work artifact', 'message actions expose work artifact copy')
+  assert.equal(st('messageBubble.copyWorkArtifactCopied'), 'Work artifact copied to clipboard.', 'message actions confirm copied work artifacts')
+  assert.equal(st('messageBubble.continueWorkArtifact'), 'Continue work', 'message actions expose work artifact continuation')
+  assert.equal(st('messageBubble.continueWorkArtifactInserted'), 'Continuation prompt inserted.', 'message actions confirm inserted continuation prompts')
+  assert.ok(st('chat.starterCompareDraft').includes('Output must include'), 'work starter drafts define an output contract')
+  assert.ok(st('chat.starterBriefDraft').includes('A short version'), 'work starters include a shareable project brief flow')
+  assert.ok(st('onboarding.firstPrompt.samples.engineering').includes('Verification command or evidence'), 'onboarding first prompt seeds structured productivity drafts')
+  assert.ok(st('onboarding.firstPrompt.samples.organize').includes('A version I can copy'), 'onboarding organize prompt produces a shareable work artifact')
+  assert.equal(st('chatRunner.trace.compactPolicyTitle'), 'Compact policy', 'chat runner exposes compact policy trace label')
+  assert.equal(st('chatRunner.error.remoteCompactRequiredFailed'), 'Remote compact is required, but the current provider does not declare support.', 'chat runner exposes remote compact required failure text')
+  ;[
+    'chat.starterPlanDraft',
+    'chat.starterNotesDraft',
+    'chat.starterCompareDraft',
+    'chat.starterBriefDraft',
+    'onboarding.firstPrompt.samples.concise',
+    'onboarding.firstPrompt.samples.research',
+    'onboarding.firstPrompt.samples.engineering',
+    'onboarding.firstPrompt.samples.organize',
+    'onboarding.firstPrompt.samples.plan',
+  ].forEach((key) => assertStructuredWorkTemplate(st(key), key, 'en'))
   setServiceLanguage('ja')
   assert.equal(st('search.disabled'), 'Web 検索は無効です。', 'service i18n supports Japanese resources')
+  assert.equal(st('chat.starterNotesLabel'), 'メモを整理', 'Japanese resources expose work starter labels')
+  assert.equal(st('chat.commandWorkStarterDescription'), '構造化された作業テンプレートを挿入', 'Japanese command palette exposes work starter descriptions')
+  assert.equal(st('messageBubble.copyWorkArtifact'), '作業成果をコピー', 'Japanese message actions expose work artifact copy')
+  assert.equal(st('messageBubble.continueWorkArtifact'), 'この作業を続ける', 'Japanese message actions expose work artifact continuation')
+  assert.ok(st('chat.starterBriefDraft').includes('協力者に送れる短い版'), 'Japanese work starter drafts include the project brief flow')
+  assert.ok(st('onboarding.firstPrompt.samples.plan').includes('決定ログ'), 'Japanese onboarding first prompt produces parser-recognizable work artifacts')
+  ;[
+    'chat.starterPlanDraft',
+    'chat.starterNotesDraft',
+    'chat.starterCompareDraft',
+    'chat.starterBriefDraft',
+    'onboarding.firstPrompt.samples.concise',
+    'onboarding.firstPrompt.samples.research',
+    'onboarding.firstPrompt.samples.engineering',
+    'onboarding.firstPrompt.samples.organize',
+    'onboarding.firstPrompt.samples.plan',
+  ].forEach((key) => assertStructuredWorkTemplate(st(key), key, 'ja'))
   setServiceLanguage('zh-CN')
+
+  const governedProvider = {
+    id: 'openai-main',
+    type: 'openai',
+    name: 'OpenAI',
+    apiKey: '',
+    models: ['gpt-5.2'],
+    enabled: true,
+    capabilities: {
+      chat: true,
+      streaming: true,
+      modelList: true,
+      vision: true,
+      files: true,
+      audioInput: false,
+      audioTranscription: true,
+      speech: true,
+      nativeSearch: true,
+      reasoningEffort: true,
+      topP: true,
+      responsesApi: true,
+      responsesWebSocket: true,
+      remoteCompact: true,
+      payloadPolicy: true,
+    },
+  }
+  assert.deepEqual(
+    resolveProviderModelAccessForTest({
+      provider: governedProvider,
+      model: 'gpt-5.2',
+      settings: { providerAllowlist: ['openai-*'], modelAllowlist: ['gpt-*'] },
+    }),
+    { allowed: true, providerId: 'openai-main', model: 'gpt-5.2', matchedRules: ['providerAllowlist:openai-*', 'modelAllowlist:gpt-*'] },
+    'provider/model allowlists accept exact and wildcard matches'
+  )
+  assert.equal(
+    resolveProviderModelAccessForTest({
+      provider: governedProvider,
+      model: 'gpt-5.2',
+      settings: { providerBlocklist: ['openai-main'] },
+    }).reason,
+    'provider_blocked',
+    'provider blocklist takes precedence'
+  )
+  const payloadWarn = evaluatePayloadRulesForTest({
+    body: { model: 'gpt-5.2', input: [{ role: 'user', content: 'hello' }] },
+    messages: [{ role: 'user', content: 'hello' }],
+    mode: 'warn',
+  })
+  assert.equal(payloadWarn.blocked, false, 'payload warn mode does not block valid requests')
+  const payloadBlock = evaluatePayloadRulesForTest({
+    body: { model: 'gpt-5.2', input: [] },
+    messages: [],
+    mode: 'block',
+  })
+  assert.equal(payloadBlock.blocked, true, 'payload block mode blocks empty message requests')
+  assert.equal(
+    resolveProxyPolicyForTest({
+      provider: governedProvider,
+      url: 'https://api.openai.com/v1/responses?x=1',
+      settings: { proxyMode: 'custom-base-url', proxyBaseUrl: 'https://proxy.example/upstream' },
+    }).effectiveUrl,
+    'https://proxy.example/upstream/v1/responses?x=1',
+    'custom-base-url proxy preserves endpoint path and query'
+  )
+  assert.deepEqual(
+    selectUpstreamTransportForTest({
+      provider: governedProvider,
+      usesResponsesApi: true,
+      settings: { transportMode: 'websocket' },
+      hasWebSocketRuntime: true,
+    }),
+    { transport: 'responses_websocket', requestedMode: 'websocket' },
+    'transport selector allows Responses WebSocket only when runtime and capabilities match'
+  )
+  assert.equal(
+    selectUpstreamTransportForTest({
+      provider: { ...governedProvider, capabilities: { ...governedProvider.capabilities, responsesWebSocket: false } },
+      usesResponsesApi: true,
+      settings: { transportMode: 'websocket' },
+      hasWebSocketRuntime: true,
+    }).fallbackReason,
+    'provider_capability_missing',
+    'transport selector falls back when provider WebSocket capability is missing'
+  )
+  const compactResponsesBody = buildOpenAIResponsesBodyForTest({
+    provider: governedProvider,
+    model: 'gpt-5.2',
+    messages: [{ role: 'user', content: 'compress me' }],
+    maxTokens: 128,
+    stream: true,
+    remoteCompactEligible: true,
+    settings: { remoteCompactThreshold: 0.7 },
+  })
+  assert.deepEqual(
+    compactResponsesBody.context_management,
+    [{ type: 'compaction', compact_threshold: 0.7 }],
+    'Responses requests include server-side compaction when remote compact is eligible'
+  )
+  const compactEligible = decideRemoteCompact({
+    provider: governedProvider,
+    model: 'gpt-5.2',
+    messages: [{ role: 'user', content: 'x '.repeat(2000) }],
+    budgetTokens: 100,
+    settings: { remoteCompactMode: 'auto', remoteCompactThreshold: 0.8 },
+  })
+  assert.equal(compactEligible.enabled, true, 'remote compact auto mode enables under context pressure')
+  assert.equal(estimateRemoteCompactSavedTokens(1000, 120), 430, 'remote compact saved-token estimate is deterministic')
+  clearCompactUsageRecords()
+  recordCompactUsage({ mode: 'auto', providerId: 'openai-main', model: 'gpt-5.2', inputTokens: 100, outputTokens: 20, estimatedSavedTokens: 35 })
+  assert.equal(listCompactUsageRecords().length, 1, 'compact usage accounting stores separate compact records')
+  const redactedLog = redactRuntimeLogValue({
+    authorization: 'Bearer abcdefghijklmnopqrstuvwxyz123456',
+    apiKey: 'sk-testabcdefghijklmnopqrstuvwxyz123456',
+    body: JSON.stringify({ model: 'gpt-5.2', input: [{ content: 'secret prompt text' }] }),
+  })
+  assert.equal(redactedLog.authorization, '[redacted]', 'runtime log redacts authorization fields')
+  assert.equal(redactedLog.apiKey, '[redacted]', 'runtime log redacts API key fields')
+  assert.deepEqual(redactedLog.body.keys, ['input', 'model'], 'runtime log stores payload keys instead of full body')
+  assert.equal(st('chat.starterPlanLabel'), '安排今天', 'Chinese resources expose work starter labels')
+  assert.equal(st('chat.commandWorkStarterDescription'), '插入结构化工作模板', 'Chinese command palette exposes work starter descriptions')
+  assert.equal(st('messageBubble.copyWorkArtifact'), '复制工作产物', 'Chinese message actions expose work artifact copy')
+  assert.equal(st('messageBubble.continueWorkArtifact'), '继续这项工作', 'Chinese message actions expose work artifact continuation')
+  assert.ok(st('chat.starterBriefDraft').includes('可直接发给协作者'), 'Chinese work starter drafts include the project brief flow')
+  assert.ok(st('onboarding.firstPrompt.samples.research').includes('输出必须包含'), 'Chinese onboarding first prompt remains structured')
+  ;[
+    'chat.starterPlanDraft',
+    'chat.starterNotesDraft',
+    'chat.starterCompareDraft',
+    'chat.starterBriefDraft',
+    'onboarding.firstPrompt.samples.concise',
+    'onboarding.firstPrompt.samples.research',
+    'onboarding.firstPrompt.samples.engineering',
+    'onboarding.firstPrompt.samples.organize',
+    'onboarding.firstPrompt.samples.plan',
+  ].forEach((key) => assertStructuredWorkTemplate(st(key), key, 'zh'))
+
+  const chatWorkspaceSource = fs.readFileSync(path.join(root, 'src/components/chat/ChatWorkspace.tsx'), 'utf8')
+  assert.ok(chatWorkspaceSource.includes('const workStarterCommands = WORK_STARTERS.map'), 'chat command palette derives commands from work starters')
+  assert.ok(chatWorkspaceSource.includes("id: `work-starter-${starter.id}`"), 'work starter command ids are stable and namespaced')
+  assert.ok(chatWorkspaceSource.includes("description: t('chat.commandWorkStarterDescription')"), 'work starter commands use localized descriptions')
+  assert.ok(chatWorkspaceSource.includes('insertText: t(starter.draftKey)'), 'work starter commands insert the structured draft text')
+  assert.ok(chatWorkspaceSource.includes("import { summarizeWorkArtifact } from '@/utils/workArtifact'"), 'chat workspace imports work artifact summarization')
+  assert.ok(chatWorkspaceSource.includes('summarizeWorkArtifact(item.responseText ?? item.content)'), 'chat workspace summarizes assistant output before copying work artifacts')
+  assert.ok(chatWorkspaceSource.includes('Clipboard.setStringAsync(workArtifact.handoffText)'), 'chat workspace copies the work artifact handoff package')
+  assert.ok(!chatWorkspaceSource.includes('Clipboard.setStringAsync(workArtifact.shareableText)'), 'chat workspace does not copy the weaker shareable summary for work artifact handoff')
+  assert.ok(chatWorkspaceSource.includes('onApplyStarter(workArtifact.followUpPrompt)'), 'chat workspace inserts work artifact continuation prompts into the composer')
+  assert.ok(chatWorkspaceSource.includes("t('messageBubble.continueWorkArtifactInserted')"), 'chat workspace confirms continuation prompt insertion')
+
+  const messageBubbleSource = fs.readFileSync(path.join(root, 'src/components/chat/MessageBubble.tsx'), 'utf8')
+  assert.ok(messageBubbleSource.includes('onCopyWorkArtifact?: (message: Message) => void'), 'message bubble exposes a typed work artifact copy action')
+  assert.ok(messageBubbleSource.includes('onContinueWorkArtifact?: (message: Message) => void'), 'message bubble exposes a typed work artifact continuation action')
+  assert.ok(messageBubbleSource.includes("label={t('messageBubble.copyWorkArtifact')}"), 'message bubble renders a localized work artifact action')
+  assert.ok(messageBubbleSource.includes("label={t('messageBubble.continueWorkArtifact')}"), 'message bubble renders a localized work artifact continuation action')
+  assert.ok(messageBubbleSource.includes('!isUser'), 'work artifact action is guarded to assistant messages')
+  assert.ok(messageBubbleSource.includes('onContinueWorkArtifact ? () => onContinueWorkArtifact(message) : undefined'), 'work artifact continuation action is only available when a parent callback exists')
+
+  const workArtifact = summarizeWorkArtifact(`
+## Structured summary
+- IsleMind is ready to support focused work after release evidence is refreshed.
+
+## Decision log
+- Keep the default APK local-first and ship model bundles as optional variants.
+
+## Action items
+- Owner: QA / Next step: capture settings readiness and chat action evidence / Deadline: release gate
+- Owner: Product / Next step: publish the collaborator brief / Trigger: README version aligned
+
+## Risks and blockers
+- APK freshness remains stale until a rebuild and clean install pass.
+
+## Evidence still needed
+- npm run type-check -- --incremental false
+
+## Open questions
+- Which provider should be recommended first for new users?
+
+## A short version that can be sent to collaborators
+- IsleMind can handle focused work once release evidence is refreshed.
+`)
+  assert.equal(workArtifact.hasWorkArtifact, true, 'assistant replies with structured sections are recognized as work artifacts')
+  assert.equal(workArtifact.quality, 'complete', 'complete work artifacts include execution, decision, risk, question, and evidence coverage')
+  assert.equal(workArtifact.actionItemCount, 2, 'work artifact summary counts action items')
+  assert.equal(workArtifact.executableActionCount, 2, 'work artifact summary counts executable action items')
+  assert.equal(workArtifact.decisionCount, 1, 'work artifact summary counts decisions')
+  assert.equal(workArtifact.riskCount, 1, 'work artifact summary counts risks')
+  assert.equal(workArtifact.openQuestionCount, 1, 'work artifact summary counts open questions')
+  assert.equal(workArtifact.evidenceCount, 1, 'work artifact summary counts evidence requests')
+  assert.deepEqual(workArtifact.missingKinds, [], 'complete work artifacts expose no missing quality gates')
+  assert.equal(workArtifact.primaryNextStep, 'capture settings readiness and chat action evidence', 'work artifacts expose a primary next step')
+  assert.ok(workArtifact.qualitySummary.includes('ready to hand off or continue'), 'complete work artifacts expose a handoff readiness summary')
+  assert.equal(workArtifact.sections.find((section) => section.kind === 'action')?.items[0]?.owner, 'QA', 'action artifacts preserve owner metadata')
+  assert.equal(workArtifact.sections.find((section) => section.kind === 'action')?.items[0]?.nextStep, 'capture settings readiness and chat action evidence', 'action artifacts preserve next-step metadata')
+  assert.ok(workArtifact.shareableText.includes('Shareable version'), 'work artifacts expose a copyable shareable summary')
+  assert.ok(workArtifact.followUpPrompt.includes('execute the primary next step'), 'complete work artifacts expose a continuation prompt')
+  assert.ok(workArtifact.handoffText.startsWith('Work artifact handoff'), 'work artifacts expose a handoff package')
+  assert.ok(workArtifact.handoffText.includes('Quality: complete'), 'handoff packages expose quality')
+  assert.ok(workArtifact.handoffText.includes('Executable actions: 2/2'), 'handoff packages expose executable action coverage')
+  assert.ok(workArtifact.handoffText.includes('Coverage: Decision log 1, Risks 1, Open questions 1, Evidence 1'), 'handoff packages expose maturity gate coverage')
+  assert.ok(workArtifact.handoffText.includes('Missing gates: none'), 'complete handoff packages report no missing gates')
+  assert.ok(workArtifact.handoffText.includes('Primary next step: capture settings readiness and chat action evidence'), 'handoff packages expose the primary next step')
+  assert.ok(workArtifact.handoffText.includes('Quality note: this artifact covers execution'), 'handoff packages include a quality summary')
+  assert.ok(workArtifact.handoffText.includes('Continue prompt'), 'handoff packages include a prompt for the next AI turn')
+  assert.equal(workArtifact.language, 'en', 'English work artifacts keep English continuation prompts')
+
+  const chineseWorkArtifact = summarizeWorkArtifact(`
+结构化摘要
+1. 设置和知识库已经形成可恢复的工作台。
+
+行动项
+- 负责人：我 / 下一步：整理每日计划 / 截止：今天
+
+风险和阻塞
+- 内存不足会阻塞 APK 验证。
+
+待确认问题
+- 是否默认启用搜索？
+`)
+  assert.equal(chineseWorkArtifact.hasWorkArtifact, true, 'Chinese assistant replies are recognized as work artifacts')
+  assert.equal(chineseWorkArtifact.quality, 'actionable', 'Chinese work artifacts can be actionable while still missing maturity gates')
+  assert.equal(chineseWorkArtifact.actionItemCount, 1, 'Chinese work artifacts count action items')
+  assert.equal(chineseWorkArtifact.executableActionCount, 1, 'Chinese work artifacts count executable actions')
+  assert.equal(chineseWorkArtifact.riskCount, 1, 'Chinese work artifacts count risks')
+  assert.equal(chineseWorkArtifact.openQuestionCount, 1, 'Chinese work artifacts count open questions')
+  assert.deepEqual(chineseWorkArtifact.missingKinds, ['decision', 'evidence'], 'work artifact quality reports missing decision and evidence gates')
+  assert.equal(chineseWorkArtifact.primaryNextStep, '整理每日计划', 'Chinese work artifacts expose localized next-step metadata')
+  assert.equal(chineseWorkArtifact.language, 'zh-CN', 'Chinese work artifacts keep Chinese continuation prompts')
+  assert.ok(chineseWorkArtifact.qualitySummary.includes('已有 1 个可执行行动'), 'Chinese work artifacts expose localized quality summaries')
+  assert.ok(chineseWorkArtifact.shareableText.includes('摘要'), 'Chinese work artifact sections use localized labels')
+  assert.ok(chineseWorkArtifact.followUpPrompt.includes('补齐缺失门槛：决策记录、证据'), 'Chinese actionable work artifacts ask the next turn to fill missing gates in Chinese')
+  assert.ok(chineseWorkArtifact.handoffText.startsWith('工作产物交接'), 'Chinese handoff packages use localized titles')
+  assert.ok(chineseWorkArtifact.handoffText.includes('质量: actionable'), 'handoff packages preserve actionable quality for localized artifacts')
+  assert.ok(chineseWorkArtifact.handoffText.includes('可执行行动: 1/1'), 'Chinese handoff packages expose executable action coverage')
+  assert.ok(chineseWorkArtifact.handoffText.includes('覆盖范围: 决策记录 0、风险 1、待确认问题 1、证据 0'), 'Chinese handoff packages expose maturity gate coverage')
+  assert.ok(chineseWorkArtifact.handoffText.includes('缺失门槛: 决策记录、证据'), 'handoff packages expose missing quality gates in Chinese')
+  assert.ok(chineseWorkArtifact.handoffText.includes('质量说明：产物已有 1 个可执行行动'), 'Chinese handoff packages include localized quality summaries')
+  assert.ok(chineseWorkArtifact.handoffText.includes('继续提示'), 'localized handoff packages include a continuation prompt label')
+  assert.equal(chineseWorkArtifact.sections.find((section) => section.kind === 'action')?.items[0]?.owner, '我', 'Chinese action artifacts preserve owner metadata')
+
+  const japaneseWorkArtifact = summarizeWorkArtifact(`
+要約
+- 設定と知識ベースは復旧できる作業台になっています。
+
+アクション項目
+- 担当者：私 / 次の一歩：今日の検証結果を整理 / 期限：今日
+
+リスク
+- APK 検証が未完了です。
+
+確認事項
+- どのプロバイダーを初期推奨にするか？
+`)
+  assert.equal(japaneseWorkArtifact.hasWorkArtifact, true, 'Japanese assistant replies are recognized as work artifacts')
+  assert.equal(japaneseWorkArtifact.language, 'ja', 'Japanese work artifacts keep Japanese continuation prompts')
+  assert.equal(japaneseWorkArtifact.quality, 'actionable', 'Japanese work artifacts can be actionable while still missing maturity gates')
+  assert.deepEqual(japaneseWorkArtifact.missingKinds, ['decision', 'evidence'], 'Japanese work artifacts report missing decision and evidence gates')
+  assert.equal(japaneseWorkArtifact.primaryNextStep, '今日の検証結果を整理', 'Japanese work artifacts expose localized next-step metadata')
+  assert.ok(japaneseWorkArtifact.qualitySummary.includes('1 件の実行可能なアクション'), 'Japanese work artifacts expose localized quality summaries')
+  assert.ok(japaneseWorkArtifact.followUpPrompt.includes('不足ゲートを補完してください：決定ログ、根拠'), 'Japanese work artifacts ask the next turn to fill missing gates in Japanese')
+  assert.ok(japaneseWorkArtifact.handoffText.startsWith('作業成果の引き継ぎ'), 'Japanese handoff packages use localized titles')
+  assert.ok(japaneseWorkArtifact.handoffText.includes('実行可能なアクション: 1/1'), 'Japanese handoff packages expose executable action coverage')
+  assert.ok(japaneseWorkArtifact.handoffText.includes('カバレッジ: 決定ログ 0、リスク 1、確認事項 1、根拠 0'), 'Japanese handoff packages expose maturity gate coverage')
+  assert.ok(japaneseWorkArtifact.handoffText.includes('継続プロンプト'), 'Japanese handoff packages include a localized continuation prompt label')
+  assert.equal(japaneseWorkArtifact.sections.find((section) => section.kind === 'action')?.items[0]?.owner, '私', 'Japanese action artifacts preserve owner metadata')
+
+  const weakWorkArtifact = summarizeWorkArtifact(`
+Summary
+- This is a useful explanation.
+
+Risks
+- It does not define an owner or next step.
+`)
+  assert.equal(weakWorkArtifact.hasWorkArtifact, true, 'weak but structured replies are still detected')
+  assert.equal(weakWorkArtifact.quality, 'partial', 'weak work artifacts are not treated as actionable')
+  assert.equal(weakWorkArtifact.executableActionCount, 0, 'weak work artifacts do not fake executable actions')
+  assert.deepEqual(weakWorkArtifact.missingKinds, ['action', 'decision', 'question', 'evidence'], 'weak work artifacts report missing production gates')
+  assert.ok(weakWorkArtifact.qualitySummary.includes('not directly executable yet'), 'weak work artifacts explain why they are not handoff-ready')
+  assert.ok(weakWorkArtifact.followUpPrompt.includes('Action items, Decision log, Open questions, Evidence'), 'weak work artifacts produce a repair prompt')
+  assert.ok(weakWorkArtifact.handoffText.includes('Executable actions: 0/0'), 'weak handoff packages expose missing executable action coverage')
+  assert.ok(weakWorkArtifact.handoffText.includes('Missing gates: Action items, Decision log, Open questions, Evidence'), 'weak handoff packages list missing execution gates')
 
   const imported = parseProviderImportText(`供应商A: https://a.example/v1, 秘钥: ${FAKE_KEY_A}, 秘钥2: ${FAKE_KEY_B}, 模型: model-a; Provider B, Base URL=https://b.example/v1, API Key=${FAKE_KEY_C}, Models=model-b`)
   assert.equal(imported.providers.length, 2, 'imports semicolon separated provider blocks')
@@ -442,6 +1771,17 @@ ${FAKE_KEY_D}
     'legacy injected DeepSeek defaults are removed from mixed unsynced model lists'
   )
   assert.deepEqual(
+    parseModelEntries('manual-chat\nfast=gpt-4o-mini\nreasoner -> deepseek-reasoner\nmanual-chat'),
+    {
+      models: ['manual-chat', 'gpt-4o-mini', 'deepseek-reasoner'],
+      aliases: [
+        { alias: 'fast', model: 'gpt-4o-mini' },
+        { alias: 'reasoner', model: 'deepseek-reasoner' },
+      ],
+    },
+    'manual model editor parses model IDs and alias mappings'
+  )
+  assert.deepEqual(
     clearHistoricalInjectedGroupModels({
       id: 'group-defaults',
       label: 'group',
@@ -491,6 +1831,61 @@ ${FAKE_KEY_D}
     credentialGroups: [{ ...groups[0], availableModels: undefined }],
   })
   assert.deepEqual(blankGroupProvider.credentialGroups[0].availableModels, [], 'credential groups do not inherit provider models without a sync result')
+  const manualProvider = normalizeProviderCredentialGroups({
+    ...provider,
+    id: 'manual-only',
+    models: [],
+    manualModels: ['manual-chat'],
+    modelAliases: [{ alias: 'fast', model: 'gpt-4o-mini' }],
+    lastModelSyncStatus: 'bad',
+    credentialGroups: [{ ...groups[0], availableModels: ['gpt-4o-mini'], lastModelSyncStatus: 'ok' }],
+  })
+  assert.deepEqual(getProviderManualModels(manualProvider), ['manual-chat'], 'explicit manual models survive failed /models sync')
+  assert.deepEqual(getProviderSelectableModels(manualProvider), ['gpt-4o-mini', 'manual-chat', 'fast'], 'selectable models include synced models, manual models, and aliases')
+  assert.equal(resolveProviderModelAlias(manualProvider, 'fast'), 'gpt-4o-mini', 'model alias resolves to upstream model id')
+  assert.deepEqual(
+    summarizeProviderModelInventory(manualProvider),
+    {
+      remoteModels: 1,
+      manualModels: 1,
+      aliases: 1,
+      selectableModels: 3,
+      hasRemoteEvidence: true,
+    },
+    'provider model inventory summarizes remote models, manual models, and aliases separately'
+  )
+  assert.equal(chooseCredentialForModel(manualProvider, 'fast').credentialGroupId, groups[0].id, 'credential selection matches alias through upstream model')
+  assert.equal(
+    getBodyForTest({
+      provider: manualProvider,
+      model: resolveProviderModelAlias(manualProvider, 'fast'),
+      requestedModel: 'fast',
+      messages: [{ role: 'user', content: 'hello' }],
+      stream: false,
+    }).model,
+    'gpt-4o-mini',
+    'request body sends upstream model when conversation stores an alias'
+  )
+  assert.equal(
+    resolveProviderModelAccessForTest({ provider: manualProvider, model: resolveProviderModelAlias(manualProvider, 'fast'), settings: { modelAllowlist: ['gpt-*'] } }).allowed,
+    true,
+    'model allowlist can match the upstream target for an alias'
+  )
+  assert.equal(
+    resolveProviderModelAccessForTest({ provider: manualProvider, model: 'fast', settings: { modelBlocklist: ['fast'] } }).allowed,
+    false,
+    'model blocklist can block the alias itself'
+  )
+  const aliasAllowOnly = mergeAliasAccessPolicyForTest(
+    resolveProviderModelAccessForTest({ provider: manualProvider, model: 'fast', settings: { modelAllowlist: ['gpt-*'] } }),
+    resolveProviderModelAccessForTest({ provider: manualProvider, model: resolveProviderModelAlias(manualProvider, 'fast'), settings: { modelAllowlist: ['gpt-*'] } })
+  )
+  assert.equal(aliasAllowOnly.allowed, true, 'alias access policy accepts allowlist matches on the upstream model')
+  const aliasBlock = mergeAliasAccessPolicyForTest(
+    resolveProviderModelAccessForTest({ provider: manualProvider, model: 'fast', settings: { modelBlocklist: ['fast'], modelAllowlist: ['gpt-*'] } }),
+    resolveProviderModelAccessForTest({ provider: manualProvider, model: resolveProviderModelAlias(manualProvider, 'fast'), settings: { modelBlocklist: ['fast'], modelAllowlist: ['gpt-*'] } })
+  )
+  assert.equal(aliasBlock.allowed, false, 'alias access policy keeps blocklist precedence over upstream allowlist')
 
   const failedHealth = updateCredentialGroupHealth(normalized, groups[1].id, false, 2000)
   assert.equal(failedHealth.credentialGroups[1].failureCount, 1)
@@ -517,6 +1912,439 @@ ${FAKE_KEY_D}
     isProviderConversationReady({ ...testedReadyProvider, lastTestStatus: 'bad', lastTestModel: 'gpt-4o-mini' }),
     false,
     'synced models without a passing test are not treated as chat-ready'
+  )
+  const readyWorkspace = buildWorkspaceReadiness({
+    providers: [testedReadyProvider],
+    settings: {
+      memoryEnabled: true,
+      knowledgeEnabled: true,
+      ragMode: 'hybrid',
+      webSearchEnabled: true,
+      searchProvider: 'native',
+      autoUpdateCheckEnabled: true,
+    },
+    contextHealth: {
+      loading: false,
+      memoryCount: 3,
+      activeMemoryCount: 2,
+      pendingMemoryCount: 1,
+      knowledgeDocumentCount: 2,
+      knowledgeChunkCount: 12,
+      failedKnowledgeDocumentCount: 0,
+    },
+  })
+  assert.equal(readyWorkspace.readyCount, 5, 'workspace readiness counts every configured AI productivity capability')
+  assert.equal(readyWorkspace.totalCount, 5, 'workspace readiness exposes the full settings checklist')
+  assert.deepEqual(
+    Object.fromEntries(readyWorkspace.items.map((item) => [item.key, item.status])),
+    {
+      provider: 'ready',
+      memory: 'ready',
+      knowledge: 'ready',
+      search: 'ready',
+      recovery: 'ready',
+    },
+    'workspace readiness marks configured providers, memory, knowledge, search, and recovery as ready'
+  )
+  assert.equal(
+    readyWorkspace.items.find((item) => item.key === 'provider')?.metrics.readyProviders,
+    1,
+    'workspace readiness reports the number of chat-ready providers'
+  )
+  assert.equal(
+    readyWorkspace.items.find((item) => item.key === 'search')?.metrics.searchProvider,
+    'native',
+    'workspace readiness reports the resolved search provider'
+  )
+  assert.equal(readyWorkspace.primaryAction, null, 'workspace readiness has no primary action when every capability is ready')
+  const pendingOnlyMemoryWorkspace = buildWorkspaceReadiness({
+    providers: [testedReadyProvider],
+    settings: {
+      memoryEnabled: true,
+      knowledgeEnabled: true,
+      ragMode: 'hybrid',
+      webSearchEnabled: true,
+      searchProvider: 'native',
+      autoUpdateCheckEnabled: true,
+    },
+    contextHealth: {
+      loading: false,
+      memoryCount: 2,
+      activeMemoryCount: 0,
+      pendingMemoryCount: 2,
+      knowledgeDocumentCount: 2,
+      knowledgeChunkCount: 12,
+      failedKnowledgeDocumentCount: 0,
+    },
+  })
+  assert.equal(
+    pendingOnlyMemoryWorkspace.items.find((item) => item.key === 'memory')?.status,
+    'review',
+    'workspace readiness does not mark pending-only memories ready because pending memories are excluded from chat retrieval'
+  )
+  assert.equal(
+    pendingOnlyMemoryWorkspace.primaryAction?.key,
+    'memory',
+    'workspace readiness points pending-only memory users to memory review as the next best action'
+  )
+  assert.equal(classifyMemoryCandidateForTest('用户偏好：使用中文回答'), 'none', 'stable user preferences are accepted as memory candidates')
+  assert.equal(classifyMemoryCandidateForTest('用户 API Key 是 sk-secret-test'), 'sensitive', 'memory candidates reject API keys and secrets')
+  assert.equal(classifyMemoryCandidateForTest('用户默认令牌是 tp-test-token-plan-fake-1234567890'), 'sensitive', 'memory candidates reject provider-token shaped values')
+  assert.equal(classifyMemoryCandidateForTest('用户凭证是 ghp_abcdefghijklmnopqrstuvwxyz123456'), 'sensitive', 'memory candidates reject GitHub-token shaped values')
+  assert.equal(classifyMemoryCandidateForTest('用户标识：ProjectPhoenixPreferredLocaleZhCN'), 'none', 'stable non-secret identifiers are still accepted')
+  assert.equal(classifyMemoryCandidateForTest('用户今天想临时用英文回答'), 'one_time', 'memory candidates reject one-time or temporary instructions')
+  assert.equal(classifyMemoryCandidateForTest('用户可能喜欢深色模式'), 'uncertain', 'memory candidates reject uncertain inferred preferences')
+  assert.equal(classifyMemoryCandidateForTest('json: []'), 'empty', 'empty model memory output is classified explicitly')
+  const memoryReviewSummary = buildMemoryReviewSummary([
+    { id: 'pending-model', content: 'Model pending memory', status: 'pending', sourceKind: 'model', confidence: 0.62, createdAt: 1000, updatedAt: 1000 },
+    { id: 'pending-rule', content: 'Rule pending memory', status: 'pending', sourceKind: 'deterministic', confidence: 0.82, createdAt: 1000, updatedAt: 1000 },
+    { id: 'pending-legacy', content: 'Legacy pending memory', status: 'pending', confidence: undefined, createdAt: 1000, updatedAt: 1000 },
+    { id: 'active-model', content: 'Active memory should not require review', status: 'active', sourceKind: 'model', confidence: 0.2, createdAt: 1000, updatedAt: 1000 },
+  ])
+  assert.deepEqual(
+    memoryReviewSummary,
+    {
+      pendingCount: 3,
+      modelCount: 1,
+      deterministicCount: 1,
+      manualCount: 0,
+      importedCount: 0,
+      legacyCount: 1,
+      lowConfidenceCount: 1,
+      averageConfidence: 0.72,
+    },
+    'memory review summary exposes pending provenance and low-confidence review pressure'
+  )
+  const memoryReviewQueue = [
+    { id: 'pending-imported', content: 'Imported memory', status: 'pending', sourceKind: 'imported', confidence: 0.91, createdAt: 1000, updatedAt: 1000 },
+    { id: 'pending-model-low', content: 'Low confidence model memory', status: 'pending', sourceKind: 'model', confidence: 0.62, createdAt: 1000, updatedAt: 1000 },
+    { id: 'pending-manual', content: 'Manual memory', status: 'pending', sourceKind: 'manual', confidence: 1, createdAt: 1000, updatedAt: 1000 },
+    { id: 'pending-legacy', content: 'Legacy memory', status: 'pending', confidence: undefined, createdAt: 1000, updatedAt: 1000 },
+    { id: 'active-imported', content: 'Active imported memory', status: 'active', sourceKind: 'imported', confidence: 0.2, createdAt: 1000, updatedAt: 1000 },
+  ]
+  assert.deepEqual(filterPendingMemoriesForReview(memoryReviewQueue, 'imported').map((memory) => memory.id), ['pending-imported'], 'memory review queue can isolate imported mem0 memories before approval')
+  assert.deepEqual(filterPendingMemoriesForReview(memoryReviewQueue, 'model').map((memory) => memory.id), ['pending-model-low'], 'memory review queue can isolate model-extracted memories')
+  assert.deepEqual(filterPendingMemoriesForReview(memoryReviewQueue, 'manual').map((memory) => memory.id), ['pending-manual'], 'memory review queue can isolate manually added pending memories')
+  assert.deepEqual(filterPendingMemoriesForReview(memoryReviewQueue, 'legacy').map((memory) => memory.id), ['pending-legacy'], 'memory review queue can isolate legacy memories with missing provenance')
+  assert.deepEqual(filterPendingMemoriesForReview(memoryReviewQueue, 'lowConfidence').map((memory) => memory.id), ['pending-model-low'], 'memory review queue isolates low-confidence pending memories and excludes active memories')
+  const emptyContextWorkspace = buildWorkspaceReadiness({
+    providers: [testedReadyProvider],
+    settings: {
+      memoryEnabled: true,
+      knowledgeEnabled: true,
+      ragMode: 'hybrid',
+      webSearchEnabled: true,
+      searchProvider: 'native',
+      autoUpdateCheckEnabled: true,
+    },
+    contextHealth: {
+      loading: false,
+      memoryCount: 0,
+      activeMemoryCount: 0,
+      pendingMemoryCount: 0,
+      knowledgeDocumentCount: 0,
+      knowledgeChunkCount: 0,
+      failedKnowledgeDocumentCount: 0,
+    },
+  })
+  assert.deepEqual(
+    Object.fromEntries(emptyContextWorkspace.items.map((item) => [item.key, item.status])),
+    {
+      provider: 'ready',
+      memory: 'review',
+      knowledge: 'review',
+      search: 'ready',
+      recovery: 'ready',
+    },
+    'workspace readiness asks for review when memory and knowledge are enabled but empty'
+  )
+  const failedKnowledgeWorkspace = buildWorkspaceReadiness({
+    providers: [testedReadyProvider],
+    settings: {
+      memoryEnabled: true,
+      knowledgeEnabled: true,
+      ragMode: 'hybrid',
+      webSearchEnabled: true,
+      searchProvider: 'native',
+      autoUpdateCheckEnabled: true,
+    },
+    contextHealth: {
+      loading: false,
+      memoryCount: 1,
+      activeMemoryCount: 1,
+      pendingMemoryCount: 0,
+      knowledgeDocumentCount: 1,
+      knowledgeChunkCount: 8,
+      failedKnowledgeDocumentCount: 1,
+    },
+  })
+  assert.equal(
+    failedKnowledgeWorkspace.items.find((item) => item.key === 'knowledge')?.status,
+    'review',
+    'workspace readiness asks for review when knowledge indexing has failures even if chunks exist'
+  )
+  assert.equal(
+    failedKnowledgeWorkspace.primaryAction?.key,
+    'knowledge',
+    'workspace readiness prioritizes failed knowledge recovery ahead of lower-risk review items'
+  )
+  const knowledgeRecoverySummary = buildKnowledgeRecoverySummary([
+    { id: 'ready-doc', title: 'Ready', mimeType: 'text/plain', size: 1200, chunkCount: 3, status: 'ready', createdAt: 1000, updatedAt: 1000 },
+    { id: 'failed-doc', title: 'Failed', mimeType: 'text/plain', size: 800, chunkCount: 0, status: 'error', error: 'Parser failed', createdAt: 1000, updatedAt: 1200 },
+    { id: 'empty-doc', title: 'Empty', mimeType: 'text/plain', size: 0, chunkCount: 0, status: 'ready', createdAt: 1000, updatedAt: 1300 },
+    { id: 'indexing-doc', title: 'Indexing', mimeType: 'text/plain', size: 500, chunkCount: 0, status: 'extracting', createdAt: 1000, updatedAt: 1400 },
+  ], [
+    { id: 'job-error', documentId: 'failed-doc', kind: 'embedding', status: 'error', error: 'Embedding failed', createdAt: 1000, updatedAt: 1500 },
+    { id: 'job-running', documentId: 'indexing-doc', kind: 'embedding', status: 'running', progress: 0.4, createdAt: 1000, updatedAt: 1600 },
+  ])
+  assert.deepEqual(
+    knowledgeRecoverySummary,
+    {
+      failedDocuments: 1,
+      emptyDocuments: 1,
+      indexingDocuments: 1,
+      failedJobs: 1,
+      runningJobs: 1,
+      recoverableDocuments: 2,
+      lastError: 'Parser failed',
+    },
+    'knowledge recovery summary exposes failed documents, empty documents, job failures, and the latest actionable error'
+  )
+  const onboardingResearch = getOnboardingCompanionProfile('research')
+  const onboardingEngineering = getOnboardingCompanionProfile('engineering')
+  const onboardingConcise = getOnboardingCompanionProfile('concise')
+  assert.equal(onboardingResearch.ragProfile, 'deep', 'research onboarding defaults to deep RAG')
+  assert.equal(onboardingEngineering.reasoningEffort, 'high', 'engineering onboarding defaults to high reasoning')
+  assert.equal(onboardingConcise.ragProfile, 'fast', 'concise onboarding favors fast retrieval')
+  assert.ok(onboardingResearch.systemPrompt.includes('research partner'), 'research onboarding writes a role prompt')
+  assert.ok(onboardingEngineering.systemPrompt.includes('engineering partner'), 'engineering onboarding writes a role prompt')
+  const creativeConversationDefaults = getOnboardingConversationDefaults('creative')
+  assert.equal(creativeConversationDefaults.reasoningEffort, 'medium', 'creative chat defaults use medium reasoning')
+  assert.equal(creativeConversationDefaults.temperature, 0.9, 'creative chat defaults use a higher temperature')
+  assert.ok(creativeConversationDefaults.systemPrompt.includes('creative partner'), 'creative chat defaults include the selected behavior contract')
+  const companionSettings = getOnboardingSettingsDefaults('companion')
+  assert.deepEqual(
+    companionSettings,
+    {
+      onboardingCompanionMode: 'companion',
+      defaultTemperature: 0.75,
+      ragProfile: 'balanced',
+      knowledgeTopK: 4,
+      memoryTopK: 6,
+    },
+    'onboarding completion persists runtime defaults, not only the selected mode'
+  )
+  contextMemoryRows.splice(0, contextMemoryRows.length,
+    {
+      id: 'pending-memory',
+      content: 'Pending memory should wait for user confirmation before retrieval.',
+      status: 'pending',
+      sourceKind: 'model',
+      sourceDetail: 'Model-assisted extraction from recent conversation',
+      confidence: 0.68,
+      score: -1,
+      createdAt: 1000,
+      updatedAt: 1000,
+    },
+    {
+      id: 'active-memory',
+      content: 'Active memory is allowed in chat context retrieval.',
+      status: 'active',
+      sourceKind: 'deterministic',
+      sourceDetail: 'Rule-based extraction from explicit user statements',
+      confidence: 0.82,
+      score: -1,
+      createdAt: 1000,
+      updatedAt: 1000,
+    },
+    {
+      id: 'low-confidence-memory',
+      content: 'Low-confidence memory is lower priority when retrieval evidence ties.',
+      status: 'active',
+      sourceKind: 'model',
+      sourceDetail: 'Model-assisted extraction from recent conversation',
+      confidence: 0.2,
+      score: -1,
+      createdAt: 1000,
+      updatedAt: 1000,
+    }
+  )
+  const defaultMemoryHits = await searchMemories('memory retrieval', 5)
+  assert.deepEqual(defaultMemoryHits.map((hit) => hit.id), ['active-memory', 'low-confidence-memory'], 'default memory retrieval excludes pending memories until the user confirms them')
+  const reviewMemoryHits = await searchMemories('memory retrieval', 5, ['pending', 'active'])
+  assert.deepEqual(new Set(reviewMemoryHits.map((hit) => hit.id)), new Set(['pending-memory', 'active-memory', 'low-confidence-memory']), 'review flows can explicitly include pending memories')
+  assert.equal(
+    reviewMemoryHits.findIndex((hit) => hit.id === 'active-memory') < reviewMemoryHits.findIndex((hit) => hit.id === 'low-confidence-memory'),
+    true,
+    'memory retrieval ranks lower-confidence memories after stronger memories when evidence ties'
+  )
+  assert.ok(
+    reviewMemoryHits.find((hit) => hit.id === 'pending-memory')?.sourceReason?.includes('source=model'),
+    'review memory retrieval exposes model extraction provenance'
+  )
+  assert.ok(
+    reviewMemoryHits.find((hit) => hit.id === 'pending-memory')?.sourceReason?.includes('confidence=0.68'),
+    'review memory retrieval exposes extraction confidence'
+  )
+  assert.ok(
+    reviewMemoryHits.find((hit) => hit.id === 'active-memory')?.sourceReason?.includes('source=deterministic'),
+    'active memory retrieval exposes deterministic extraction provenance'
+  )
+  await importContextSnapshot({
+    memories: [{
+      id: 'imported-memory',
+      content: 'Imported memory without provenance receives an imported source kind.',
+      status: 'active',
+      createdAt: 2000,
+      updatedAt: 2000,
+    }],
+  })
+  const importedSnapshot = await exportContextSnapshot()
+  assert.equal(importedSnapshot.memories.find((memory) => memory.id === 'imported-memory')?.sourceKind, 'imported', 'imported memories without source metadata are marked as imported')
+  assert.equal(importedSnapshot.memories.find((memory) => memory.id === 'imported-memory')?.confidence, 0.74, 'imported memories without confidence use the imported confidence default')
+  const mem0Envelope = exportMemoriesAsMem0(importedSnapshot.memories, { user_id: 'local-user', app_id: 'islemind' }, '2026-05-28T20:30:00.000Z')
+  assert.equal(mem0Envelope.schema, 'islemind.mem0.v1', 'mem0 export declares a stable IsleMind interchange schema')
+  assert.equal(mem0Envelope.filters.user_id, 'local-user', 'mem0 export preserves user scope filters')
+  assert.equal(mem0Envelope.memories[0].memory, 'Imported memory without provenance receives an imported source kind.', 'mem0 export uses the canonical memory field')
+  assert.equal(mem0Envelope.memories[0].metadata.islemind_source_kind, 'imported', 'mem0 export keeps IsleMind memory provenance')
+  assert.equal(mem0Envelope.memories[0].metadata.islemind_status, 'active', 'mem0 export keeps IsleMind review status')
+  assert.equal(mem0Envelope.memories[0].created_at, '1970-01-01T00:00:02.000Z', 'mem0 export converts local timestamps to ISO timestamps')
+  const mem0Payload = buildMem0AddPayload(importedSnapshot.memories[0], { user_id: 'local-user' })
+  assert.deepEqual(mem0Payload.messages, [{ role: 'user', content: 'Imported memory without provenance receives an imported source kind.' }], 'mem0 add payload uses message input for API compatibility')
+  assert.equal(mem0Payload.infer, false, 'mem0 add payload disables second-pass inference because IsleMind already extracted the memory')
+  const mem0Imported = importMem0Memories([
+    {
+      id: 'mem0-remote-id',
+      memory: 'Remote mem0 memory should enter IsleMind review first.',
+      user_id: 'remote-user',
+      agent_id: 'assistant',
+      metadata: { confidence: 0.91 },
+      created_at: '2026-05-28T20:31:00.000Z',
+      updated_at: '2026-05-28T20:32:00.000Z',
+    },
+    {
+      memory: 'IsleMind round-tripped memory should keep its local status.',
+      metadata: {
+        islemind_id: 'roundtrip-memory',
+        islemind_status: 'active',
+        islemind_source_kind: 'model',
+        islemind_source_detail: 'validated by user',
+        islemind_confidence: 0.66,
+        islemind_created_at_ms: 3000,
+        islemind_updated_at_ms: 4000,
+      },
+    },
+  ], { now: 5000 })
+  assert.equal(mem0Imported[0].id, 'mem0-remote-id', 'mem0 import keeps remote ids when no IsleMind id exists')
+  assert.equal(mem0Imported[0].status, 'pending', 'mem0 import defaults external memories to pending review')
+  assert.equal(mem0Imported[0].sourceKind, 'imported', 'mem0 import marks external memories as imported')
+  assert.equal(mem0Imported[0].sourceDetail, 'mem0:user_id=remote-user,agent_id=assistant', 'mem0 import records entity scope as source detail')
+  assert.equal(mem0Imported[0].confidence, 0.91, 'mem0 import accepts external confidence metadata')
+  assert.equal(mem0Imported[0].createdAt, Date.parse('2026-05-28T20:31:00.000Z'), 'mem0 import parses created_at timestamps')
+  assert.deepEqual(
+    mem0Imported[1],
+    {
+      id: 'roundtrip-memory',
+      content: 'IsleMind round-tripped memory should keep its local status.',
+      status: 'active',
+      conversationId: undefined,
+      sourceKind: 'model',
+      sourceDetail: 'validated by user',
+      confidence: 0.66,
+      lastHitAt: undefined,
+      createdAt: 3000,
+      updatedAt: 4000,
+    },
+    'mem0 import preserves IsleMind round-trip metadata when present'
+  )
+  const portableJson = JSON.parse(await exportAllData())
+  assert.equal(portableJson.mem0.schema, 'islemind.mem0.v1', 'portable export includes a mem0-compatible memory envelope')
+  assert.equal(portableJson.mem0.filters.app_id, 'islemind', 'portable mem0 export declares the app scope')
+  assert.equal(portableJson.mem0.memories[0].metadata.islemind_id, 'imported-memory', 'portable mem0 export keeps local memory provenance')
+  const mem0OnlyImportOk = await importAllData(JSON.stringify({
+    schema: 'islemind.mem0.v1',
+    source: 'islemind',
+    exported_at: '2026-05-28T21:00:00.000Z',
+    filters: { user_id: 'remote-user' },
+    memories: [{
+      id: 'portable-mem0-memory',
+      memory: 'Portable mem0 import enters IsleMind memory review.',
+      user_id: 'remote-user',
+      metadata: { confidence: 0.88 },
+      created_at: '2026-05-28T21:01:00.000Z',
+      updated_at: '2026-05-28T21:02:00.000Z',
+    }],
+  }))
+  assert.equal(mem0OnlyImportOk, true, 'portable import accepts mem0-compatible memory envelopes')
+  const mem0OnlyImportResult = await importAllDataDetailed(JSON.stringify({
+    schema: 'islemind.mem0.v1',
+    source: 'islemind',
+    exported_at: '2026-05-28T21:10:00.000Z',
+    filters: { user_id: 'remote-user' },
+    memories: [{
+      id: 'portable-mem0-memory-detailed',
+      memory: 'Detailed mem0 import reports the imported review count.',
+      user_id: 'remote-user',
+    }],
+  }))
+  assert.deepEqual(mem0OnlyImportResult, { ok: true, kind: 'mem0', memories: 1 }, 'detailed mem0 imports report review queue counts for user-facing feedback')
+  const mem0OnlySnapshot = await exportContextSnapshot()
+  const portableMem0Memory = mem0OnlySnapshot.memories.find((memory) => memory.id === 'portable-mem0-memory')
+  assert.equal(portableMem0Memory?.status, 'pending', 'mem0-only imports enter memory review instead of becoming active')
+  assert.equal(portableMem0Memory?.sourceKind, 'imported', 'mem0-only imports are marked as imported memories')
+  assert.equal(portableMem0Memory?.sourceDetail, 'mem0:user_id=remote-user', 'mem0-only imports preserve entity scope evidence')
+  const preApprovalHits = await searchMemories('Portable mem0 import', 10)
+  assert.equal(preApprovalHits.some((hit) => hit.id === 'portable-mem0-memory'), false, 'mem0-only imports stay out of default retrieval while pending review')
+  const pendingReviewHits = await searchMemories('Portable mem0 import', 10, ['pending', 'active'])
+  assert.equal(pendingReviewHits.some((hit) => hit.id === 'portable-mem0-memory'), true, 'memory review can include pending mem0 imports for inspection')
+  assert.ok(
+    pendingReviewHits.find((hit) => hit.id === 'portable-mem0-memory')?.sourceReason?.includes('source=imported'),
+    'pending mem0 review hits expose imported provenance before approval'
+  )
+  await updateMemoryStatus('portable-mem0-memory', 'active')
+  const postApprovalHits = await searchMemories('Portable mem0 import', 10)
+  assert.equal(postApprovalHits.some((hit) => hit.id === 'portable-mem0-memory'), true, 'confirming a mem0 import promotes it into default chat memory retrieval')
+  assert.ok(
+    postApprovalHits.find((hit) => hit.id === 'portable-mem0-memory')?.sourceReason?.includes('mem0:user_id=remote-user'),
+    'approved mem0 retrieval hits keep source scope evidence'
+  )
+  const rawMem0ResultsOk = await importAllData(JSON.stringify({
+    results: [{
+      id: 'raw-mem0-result',
+      text: 'Raw mem0 API results can also be reviewed.',
+      app_id: 'mem0-app',
+    }],
+  }))
+  assert.equal(rawMem0ResultsOk, true, 'portable import accepts raw mem0 results JSON')
+  const rawMem0Snapshot = await exportContextSnapshot()
+  assert.equal(rawMem0Snapshot.memories.find((memory) => memory.id === 'raw-mem0-result')?.status, 'pending', 'raw mem0 results default to pending review')
+  const actionWorkspace = buildWorkspaceReadiness({
+    providers: [],
+    settings: {
+      memoryEnabled: false,
+      knowledgeEnabled: false,
+      ragMode: 'off',
+      webSearchEnabled: false,
+      searchProvider: 'off',
+      autoUpdateCheckEnabled: false,
+    },
+  })
+  assert.equal(actionWorkspace.readyCount, 0, 'workspace readiness does not count disabled capabilities as ready')
+  assert.deepEqual(
+    Object.fromEntries(actionWorkspace.items.map((item) => [item.key, item.status])),
+    {
+      provider: 'action',
+      memory: 'action',
+      knowledge: 'action',
+      search: 'review',
+      recovery: 'review',
+    },
+    'workspace readiness separates missing setup actions from settings that only need review'
+  )
+  assert.equal(
+    actionWorkspace.primaryAction?.key,
+    'provider',
+    'workspace readiness prioritizes provider setup as the first production-workspace action'
   )
 
   const calls = []
@@ -618,6 +2446,15 @@ ${FAKE_KEY_D}
   assert.deepEqual(storedProviders[0].models, [], 'historical injected DeepSeek models are cleared without sync evidence')
   assert.deepEqual(storedProviders[1].models, [], 'synced placeholders are cleared for non-DeepSeek providers')
   assert.deepEqual(storedProviders[2].models, ['deepseek-v4-pro', 'deepseek-v4-flash'], 'real DeepSeek model lists are preserved')
+  const importedDataResult = await importAllDataDetailed(JSON.stringify({
+    app: 'islemind',
+    version: 1,
+    conversations: [],
+    settings: null,
+    providers: [],
+    exportedAt: Date.now(),
+  }))
+  assert.deepEqual(importedDataResult, { ok: true, kind: 'islemind', conversations: 0 }, 'detailed IsleMind imports report full-restore semantics for user-facing feedback')
 
   const packed = packChatMessages({
     messages: Array.from({ length: 18 }, (_, index) => ({
@@ -682,6 +2519,7 @@ ${FAKE_KEY_D}
     wireProtocol: 'anthropic-compatible',
     models: ['mimo-v2.5'],
     enabled: true,
+    capabilities: { reasoningEffort: true },
   }
   assert.equal(getProviderConfigIssue(mimoAnthropicProvider, 'tp-test-fake'), null, 'MiMo Anthropic /anthropic base URL is accepted in settings validation')
   assert.equal(
@@ -694,6 +2532,40 @@ ${FAKE_KEY_D}
     'https://token-plan-cn.xiaomimimo.com/anthropic/v1/messages',
     'legacy MiMo Anthropic /anthropic/v1 base URLs remain compatible'
   )
+  assert.equal(
+    getXiaomiMimoModelDiscoveryEndpointForTest(mimoAnthropicProvider),
+    'https://token-plan-cn.xiaomimimo.com/v1/models',
+    'MiMo Anthropic-compatible providers discover models from the OpenAI-compatible /v1/models endpoint'
+  )
+  const originalFetch = global.fetch
+  const mimoDiscoveryCalls = []
+  global.fetch = async (url, init) => {
+    mimoDiscoveryCalls.push({ url: String(url), authorization: init?.headers?.Authorization })
+    return {
+      ok: true,
+      status: 200,
+      headers: new Map([['content-type', 'application/json']]),
+      text: async () => JSON.stringify({
+        object: 'list',
+        data: [
+          { id: 'mimo-v2.5-pro', object: 'model', owned_by: 'xiaomi' },
+          { id: 'mimo-v2.5-tts', object: 'model', owned_by: 'xiaomi' },
+        ],
+      }),
+    }
+  }
+  try {
+    const mimoDiscoveryResult = await fetchProviderModelConfigsDetailed(mimoAnthropicProvider, 'tp-test-fake')
+    assert.equal(mimoDiscoveryResult.ok, true, 'MiMo Anthropic-compatible model sync succeeds through /v1/models')
+    assert.deepEqual(mimoDiscoveryResult.data.map((model) => model.id), ['mimo-v2.5-pro', 'mimo-v2.5-tts'])
+    assert.equal(mimoDiscoveryResult.data[0].contextWindow, getModelConfig('mimo-v2.5-pro', 'xiaomi-mimo').contextWindow, 'MiMo remote IDs inherit verified built-in context metadata')
+    assert.equal(mimoDiscoveryResult.data[1].chatCompatible, false, 'MiMo TTS remote IDs remain non-chat models')
+    assert.equal(mimoDiscoveryCalls.length, 1, 'MiMo Anthropic-compatible model sync makes one discovery request')
+    assert.equal(mimoDiscoveryCalls[0].url, 'https://token-plan-cn.xiaomimimo.com/v1/models', 'MiMo discovery does not call unsupported /anthropic/models')
+    assert.equal(mimoDiscoveryCalls[0].authorization, 'Bearer tp-test-fake', 'MiMo model discovery uses bearer auth')
+  } finally {
+    global.fetch = originalFetch
+  }
   const xiaomiMimoModelIds = getProviderModels('xiaomi-mimo').map((model) => model.id)
   assert.deepEqual(xiaomiMimoModelIds, [
     'mimo-v2.5-pro',
@@ -706,7 +2578,43 @@ ${FAKE_KEY_D}
     'mimo-v2.5-tts-voicedesign',
     'mimo-v2-tts',
   ], 'MiMo built-in catalog includes every currently documented model')
+  const unknownMimoConfig = getModelConfig('mimo-v3-unannounced', 'xiaomi-mimo')
+  assert.equal(unknownMimoConfig.contextWindow, 32768, 'unknown MiMo models use a safe 32K budget until the provider returns metadata or the static catalog is updated')
+  assert.equal(unknownMimoConfig.maxOutputTokens, 4096, 'unknown MiMo output limit stays conservative')
+  assert.equal(unknownMimoConfig.supportsVision, false, 'unknown MiMo models do not inherit vision support by default')
   assert.equal(getModelConfig('mimo-v2.5-tts', 'xiaomi-mimo').chatCompatible, false, 'MiMo TTS models are cataloged but not chat-compatible')
+  assert.deepEqual(
+    getReasoningEffortOptions(mimoAnthropicProvider, 'mimo-v2.5'),
+    ['minimal', 'low', 'medium', 'high'],
+    'MiMo chat models expose the runtime-supported reasoning effort tiers'
+  )
+  assert.deepEqual(
+    getReasoningEffortOptions(mimoAnthropicProvider, 'mimo-v2.5-tts'),
+    [],
+    'MiMo TTS models do not expose chat reasoning controls'
+  )
+  const mimoOpenAIReasoningBody = buildOpenAIBodyForTest({
+    provider: { ...mimoAnthropicProvider, id: 'mimo-cn-openai', wireProtocol: 'openai-compatible', baseUrl: 'https://token-plan-cn.xiaomimimo.com/v1' },
+    model: 'mimo-v2.5',
+    messages: [{ role: 'user', content: 'hello' }],
+    reasoningEffort: 'minimal',
+    maxTokens: 128,
+    stream: false,
+  })
+  assert.deepEqual(mimoOpenAIReasoningBody.reasoning, { effort: 'low' }, 'MiMo OpenAI-compatible requests send the accepted reasoning object')
+  assert.equal(mimoOpenAIReasoningBody.reasoning_effort, undefined, 'MiMo OpenAI-compatible requests avoid generic reasoning_effort')
+  assert.equal(mimoOpenAIReasoningBody.max_completion_tokens, 128, 'MiMo OpenAI-compatible requests reserve enough output room for reasoning plus text')
+  const mimoAnthropicReasoningBody = buildAnthropicBodyForTest({
+    provider: mimoAnthropicProvider,
+    model: 'mimo-v2.5',
+    messages: [{ role: 'user', content: 'hello' }],
+    reasoningEffort: 'high',
+    maxTokens: 128,
+    stream: false,
+  })
+  assert.deepEqual(mimoAnthropicReasoningBody.reasoning, { effort: 'high' }, 'MiMo Anthropic-compatible requests send the accepted reasoning object')
+  assert.equal(mimoAnthropicReasoningBody.thinking, undefined, 'MiMo Anthropic-compatible requests do not use Claude thinking syntax')
+  assert.equal(mimoAnthropicReasoningBody.max_tokens, 128, 'MiMo Anthropic-compatible tests reserve enough output room for reasoning plus text')
   assert.deepEqual(
     getProviderAvailableModels({
       ...mimoAnthropicProvider,

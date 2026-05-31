@@ -6,7 +6,7 @@ import * as SecureStore from 'expo-secure-store'
 import { applyProviderPreset, defaultProviderSyncPolicy, detectProviderPreset, getProviderPreset } from '@/services/ai/providerRegistry'
 import { normalizeProviderCredentialGroups } from '@/services/ai/providerCredentials'
 import { legacySearchModeForProvider, resolveSearchProvider } from '@/services/searchPolicy'
-import { clearHistoricalInjectedGroupModels, clearHistoricalInjectedProviderModels, getProviderPreferredModel, isProviderConversationReady } from '@/utils/providerModels'
+import { clearHistoricalInjectedGroupModels, clearHistoricalInjectedProviderModels, getProviderPreferredModel, hasRemoteProviderModelEvidence, isProviderConversationReady, normalizeProviderModelAliases } from '@/utils/providerModels'
 import { st } from '@/i18n/service'
 import { setServiceLanguage } from '@/i18n/service'
 
@@ -59,6 +59,7 @@ const defaultSettings: Settings = {
   knowledgeTopK: 4,
   memoryTopK: 4,
   onboardingCompleted: false,
+  onboardingCompanionMode: 'research',
   ragMode: 'hybrid',
   embeddingMode: 'hybrid',
   localEmbeddingModelId: undefined,
@@ -79,6 +80,34 @@ const defaultSettings: Settings = {
   skillsEnabled: true,
   mcpEnabled: true,
   commandPaletteEnabled: true,
+  transportMode: 'auto',
+  remoteCompactMode: 'off',
+  remoteCompactThreshold: 0.8,
+  payloadPolicyMode: 'warn',
+  proxyMode: 'off',
+  proxyBaseUrl: '',
+  providerAllowlist: [],
+  providerBlocklist: [],
+  modelAllowlist: [],
+  modelBlocklist: [],
+  runtimeLogEnabled: false,
+  runtimeLogMaxBytes: 1048576,
+  sessionConcurrencyLimit: 1,
+  sessionQueueTimeoutMs: 1500,
+  upstreamRequestTimeoutMs: 60000,
+  upstreamMaxRetries: 1,
+  upstreamCircuitBreakerEnabled: true,
+  upstreamCircuitBreakerFailureThreshold: 3,
+  upstreamCircuitBreakerCooldownMs: 60000,
+  requestRectificationEnabled: false,
+  anthropicThinkingSignatureRectificationEnabled: false,
+  anthropicThinkingBudgetRectificationEnabled: false,
+  bedrockRequestOptimizerEnabled: false,
+  thinkingOptimizerEnabled: false,
+  cacheInjectionEnabled: false,
+  cacheTtl: 'default',
+  modelTestModel: '',
+  modelTestCheckParameters: true,
 }
 
 const PROVIDER_CATALOG_VERSION = 1
@@ -404,6 +433,8 @@ function mergeProviders(saved: AIProvider[]): AIProvider[] {
 
 function normalizeProvider(provider: AIProvider): AIProvider {
   const models = normalizeProviderModels(provider)
+  const manualModels = normalizeProviderManualModels(provider, models)
+  const modelAliases = normalizeProviderModelAliases(provider)
   const baseUrl = normalizeProviderBaseUrl(provider)
   const detectedPresetId = provider.detectedPresetId ?? detectProviderPreset({ baseUrl, apiKey: provider.apiKey, name: provider.name }).presetId
   const presetId = provider.presetId ?? (provider.id === 'custom-openai' ? 'custom-openai-compatible' : detectedPresetId)
@@ -419,10 +450,12 @@ function normalizeProvider(provider: AIProvider): AIProvider {
     syncPolicy: provider.syncPolicy ?? defaultProviderSyncPolicy(),
     enabled: provider.enabled ?? false,
     models,
+    manualModels,
+    modelAliases,
     credentialMode: provider.type === 'xiaomi-mimo' ? provider.credentialMode ?? 'token-plan' : provider.credentialMode,
     tokenPlanRegion: provider.type === 'xiaomi-mimo' ? provider.tokenPlanRegion ?? 'cn' : provider.tokenPlanRegion,
     wireProtocol: provider.type === 'xiaomi-mimo' ? provider.wireProtocol ?? 'openai-compatible' : provider.wireProtocol,
-    modelConfigs: models.map((modelId) => getModelConfig(modelId, provider.type, provider.modelConfigs)),
+    modelConfigs: uniqueStrings([...models, ...manualModels, ...modelAliases.map((item) => item.model)]).map((modelId) => getModelConfig(modelId, provider.type, provider.modelConfigs)),
     lastTestStatus: provider.lastTestStatus ?? 'idle',
     lastModelSyncStatus: provider.lastModelSyncStatus ?? 'idle',
   } as AIProvider, presetId)
@@ -496,4 +529,21 @@ function normalizeProviderModels(provider: AIProvider): string[] {
     seen.add(model)
     return true
   })
+}
+
+function normalizeProviderManualModels(provider: AIProvider, normalizedModels: string[]): string[] {
+  const source = Array.isArray(provider.manualModels) ? provider.manualModels : hasRemoteProviderModelEvidence(provider) ? [] : normalizedModels
+  const cleaned = clearHistoricalInjectedProviderModels({ ...provider, models: source })
+  return uniqueStrings(cleaned.filter((model) => !getModelConfig(model, provider.type, provider.modelConfigs).deprecated))
+}
+
+function uniqueStrings(values: string[]): string[] {
+  const seen = new Set<string>()
+  return values
+    .map((value) => value.trim())
+    .filter((value) => {
+      if (!value || seen.has(value)) return false
+      seen.add(value)
+      return true
+    })
 }

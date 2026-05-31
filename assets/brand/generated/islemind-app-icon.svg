@@ -1,0 +1,74 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg width="1024" height="1024" viewBox="0 0 1024 1024" xmlns="http://www.w3.org/2000/svg">
+  <title>IsleMind app icon</title>
+  <defs>
+    <linearGradient id="canvasGradient" x1="122" y1="76" x2="888" y2="928" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#fdfaf3"/>
+      <stop offset="0.44" stop-color="#f8f4ec"/>
+      <stop offset="1" stop-color="#dcebe5"/>
+    </linearGradient>
+    <radialGradient id="fieldGlow" cx="70%" cy="16%" r="84%">
+      <stop offset="0" stop-color="#71d9bf" stop-opacity="0.34"/>
+      <stop offset="0.36" stop-color="#5ccfe6" stop-opacity="0.16"/>
+      <stop offset="1" stop-color="#f8f4ec" stop-opacity="0"/>
+    </radialGradient>
+    <linearGradient id="coreGradient" x1="286" y1="148" x2="770" y2="848" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#1c2b28"/>
+      <stop offset="0.58" stop-color="#111918"/>
+      <stop offset="1" stop-color="#0b1110"/>
+    </linearGradient>
+    <linearGradient id="signalGradient" x1="236" y1="402" x2="818" y2="622" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#5ccfe6"/>
+      <stop offset="0.52" stop-color="#38b58f"/>
+      <stop offset="1" stop-color="#f0b856"/>
+    </linearGradient>
+    <linearGradient id="innerRoute" x1="300" y1="322" x2="754" y2="720" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#71d9bf"/>
+      <stop offset="0.42" stop-color="#38b58f"/>
+      <stop offset="1" stop-color="#5ccfe6"/>
+    </linearGradient>
+    <linearGradient id="pearlGradient" x1="330" y1="258" x2="722" y2="776" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#fffdf7"/>
+      <stop offset="1" stop-color="#fff8e8"/>
+    </linearGradient>
+    <filter id="softShadow" x="-22%" y="-24%" width="144%" height="150%" color-interpolation-filters="sRGB">
+      <feDropShadow dx="0" dy="34" stdDeviation="28" flood-color="#14201d" flood-opacity="0.32"/>
+    </filter>
+    <filter id="signalGlow" x="-30%" y="-60%" width="160%" height="220%" color-interpolation-filters="sRGB">
+      <feDropShadow dx="0" dy="0" stdDeviation="13" flood-color="#71d9bf" flood-opacity="0.48"/>
+    </filter>
+    <filter id="pinShadow" x="-50%" y="-50%" width="200%" height="200%" color-interpolation-filters="sRGB">
+      <feDropShadow dx="0" dy="16" stdDeviation="16" flood-color="#07100e" flood-opacity="0.32"/>
+    </filter>
+    <clipPath id="coreClip">
+      <path d="M512 118C656 152 776 245 836 374C900 512 868 666 754 770C674 842 574 876 512 906C450 876 350 842 270 770C156 666 124 512 188 374C248 245 368 152 512 118Z"/>
+    </clipPath>
+  </defs>
+  <rect width="1024" height="1024" rx="228" fill="url(#canvasGradient)"/>
+  <rect width="1024" height="1024" rx="232" fill="url(#fieldGlow)"/>
+  <path d="M98 364C250 300 430 288 612 324C746 350 846 416 920 510" fill="none" stroke="#5ccfe6" stroke-opacity="0.18" stroke-width="10" stroke-linecap="round"/>
+  <path d="M98 704C260 776 444 792 624 748C766 714 866 642 930 544" fill="none" stroke="#f0b856" stroke-opacity="0.18" stroke-width="10" stroke-linecap="round"/>
+  <path d="M112 518H906" fill="none" stroke="#d9d0bf" stroke-opacity="0.52" stroke-width="4" stroke-linecap="round"/>
+  <circle cx="804" cy="244" r="38" fill="#e6faf2" stroke="#38b58f" stroke-opacity="0.34" stroke-width="6"/>
+  <path d="M804 224V264M784 244H824" fill="none" stroke="#38b58f" stroke-width="10" stroke-linecap="round" opacity="0.86"/>
+  <g filter="url(#softShadow)">
+    <path d="M512 118C656 152 776 245 836 374C900 512 868 666 754 770C674 842 574 876 512 906C450 876 350 842 270 770C156 666 124 512 188 374C248 245 368 152 512 118Z" fill="url(#coreGradient)" stroke="#fffdf7" stroke-width="18" stroke-linejoin="round"/>
+    <path d="M512 118C656 152 776 245 836 374C900 512 868 666 754 770C674 842 574 876 512 906C450 876 350 842 270 770C156 666 124 512 188 374C248 245 368 152 512 118Z" fill="none" stroke="#273b37" stroke-opacity="0.72" stroke-width="8" stroke-linejoin="round"/>
+    <g clip-path="url(#coreClip)">
+      <path d="M208 540C314 442 436 424 520 480C598 532 622 634 704 654C762 668 814 632 862 552" fill="none" stroke="url(#signalGradient)" stroke-width="92" stroke-linecap="round" filter="url(#signalGlow)"/>
+      <path d="M250 578C338 506 432 498 506 546C582 596 622 678 700 692C762 704 812 666 842 612" fill="none" stroke="#fff8e8" stroke-width="20" stroke-linecap="round" opacity="0.88"/>
+      <path d="M326 370L512 250L698 370L512 490Z" fill="url(#pearlGradient)" opacity="0.98"/>
+      <path d="M326 370L512 490L512 740L326 620Z" fill="#dff7ef"/>
+      <path d="M698 370L512 490L512 740L698 620Z" fill="#c7efe6"/>
+      <path d="M326 370L512 250L698 370L512 490Z" fill="none" stroke="#273b37" stroke-opacity="0.42" stroke-width="12" stroke-linejoin="round"/>
+      <path d="M512 490V740" fill="none" stroke="#273b37" stroke-opacity="0.42" stroke-width="10" stroke-linecap="round"/>
+      <path d="M326 370L512 490L698 370" fill="none" stroke="#273b37" stroke-opacity="0.34" stroke-width="10" stroke-linecap="round" stroke-linejoin="round"/>
+      <path d="M512 292L512 690" fill="none" stroke="url(#innerRoute)" stroke-width="36" stroke-linecap="round"/>
+      <path d="M400 690H624" fill="none" stroke="url(#innerRoute)" stroke-width="36" stroke-linecap="round"/>
+    </g>
+    <circle cx="512" cy="258" r="58" fill="#38b58f" stroke="#111918" stroke-width="16" filter="url(#pinShadow)"/>
+    <circle cx="512" cy="258" r="22" fill="#71d9bf"/>
+    <circle cx="660" cy="706" r="20" fill="#f0b856"/>
+    <circle cx="354" cy="620" r="14" fill="#5ccfe6"/>
+  </g>
+</svg>

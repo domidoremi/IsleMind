@@ -19,8 +19,9 @@ import { useAppTheme } from '@/hooks/useAppTheme'
 import { useChatStore } from '@/store/chatStore'
 import { useSettingsStore } from '@/store/settingsStore'
 import { useActivationJobStore, type ActivationJobState } from '@/store/activationJobStore'
-import { getXiaomiMimoOfficialBaseUrl, type AIProvider, type ProviderPresetId, type ProviderWireProtocol } from '@/types'
+import type { AIProvider, ProviderPresetId, ProviderWireProtocol } from '@/types'
 import { applyProviderPreset, getProviderPreset, parseCredentialGroups, parseProviderImportText, PROVIDER_PRESETS } from '@/services/ai/providerRegistry'
+import { DEFAULT_PROVIDER_PRESET_ID, DEFAULT_PROVIDER_WIRE_PROTOCOL, PROVIDER_WIRE_PROTOCOL_OPTIONS, inferProviderWireProtocolFromBaseUrl, resolveProviderConfigDraft, shouldSyncWireProtocolFromBaseUrl } from '@/services/ai/providerConfigPolicy'
 import { syncAndTestProvider, summarizeProviderActivation } from '@/services/providerActivation'
 import { IsleMetric } from '@/components/ui/isle'
 import { normalizeSearchText, parseModels } from '@/utils/text'
@@ -66,6 +67,8 @@ export function ProviderSettingsContent({ embedded = false, onClose }: ProviderS
   const hydrateProviderKey = useSettingsStore((state) => state.hydrateProviderKey)
   const updateProvider = useSettingsStore((state) => state.updateProvider)
   const updateProviderCredentialGroupHealth = useSettingsStore((state) => state.updateProviderCredentialGroupHealth)
+  const modelTestModel = useSettingsStore((state) => state.settings.modelTestModel)
+  const modelTestCheckParameters = useSettingsStore((state) => state.settings.modelTestCheckParameters)
   const activationJob = useActivationJobStore((state) => state.job)
   const startActivationJob = useActivationJobStore((state) => state.start)
   const updateActivationJob = useActivationJobStore((state) => state.update)
@@ -237,7 +240,7 @@ export function ProviderSettingsContent({ embedded = false, onClose }: ProviderS
               durationMs: 1300,
             })
           },
-        }, { enable: true }).catch((error) => ({
+        }, { enable: true, testModel: modelTestModel, checkParameters: modelTestCheckParameters }).catch((error) => ({
           providerId: provider.id,
           providerName: provider.name,
           enabled: provider.enabled,
@@ -358,18 +361,13 @@ export function ProviderSettingsContent({ embedded = false, onClose }: ProviderS
               <HeaderBackButton onPress={onClose ?? closeStandaloneProviderSettings} />
             }
             trailing={
-              <View style={{ flexDirection: 'row', gap: 8 }}>
-                <IsleIconButton label={batchMode ? t('providerSettings.exitBatch') : t('providerSettings.batchMode')} tone={batchMode ? 'amber' : 'default'} onPress={() => {
-                  setBatchMode((value) => !value)
-                  setSelectedIds(new Set())
-                  dialog.toast({ title: batchMode ? t('providerSettings.batchExited') : t('providerSettings.batchEntered'), tone: 'mint' })
-                }}>
-                  <ListChecks color={batchMode ? colors.warning : colors.textSecondary} size={18} strokeWidth={2} />
-                </IsleIconButton>
-                <IsleIconButton label={t('settings.addProvider')} tone="ink" onPress={() => setAddOpen(true)}>
-                  <Plus color={colors.surface} size={20} strokeWidth={2} />
-                </IsleIconButton>
-              </View>
+              <IsleIconButton label={batchMode ? t('providerSettings.exitBatch') : t('providerSettings.batchMode')} tone={batchMode ? 'amber' : 'default'} onPress={() => {
+                setBatchMode((value) => !value)
+                setSelectedIds(new Set())
+                dialog.toast({ title: batchMode ? t('providerSettings.batchExited') : t('providerSettings.batchEntered'), tone: 'mint' })
+              }}>
+                <ListChecks color={batchMode ? colors.warning : colors.textSecondary} size={18} strokeWidth={2} />
+              </IsleIconButton>
             }
           />
 
@@ -642,20 +640,19 @@ function ProviderFormModal({
   const insets = useSafeAreaInsets()
   const { height } = useWindowDimensions()
   const motion = useMotionPreference()
-  const [presetId, setPresetId] = useState<ProviderPresetId>('custom-openai-compatible')
+  const [presetId, setPresetId] = useState<ProviderPresetId>(DEFAULT_PROVIDER_PRESET_ID)
   const [name, setName] = useState('')
   const [baseUrl, setBaseUrl] = useState('')
-  const [wireProtocol, setWireProtocol] = useState<ProviderWireProtocol>('openai-compatible')
+  const [wireProtocol, setWireProtocol] = useState<ProviderWireProtocol>(DEFAULT_PROVIDER_WIRE_PROTOCOL)
   const [modelsText, setModelsText] = useState('')
   const [keysText, setKeysText] = useState('')
   const [advancedOpen, setAdvancedOpen] = useState(false)
   const preset = getProviderPreset(presetId)
-  const isMimoPreset = preset.id === 'xiaomi-mimo'
+  const providerConfigDraft = resolveProviderConfigDraft({ provider: {}, presetId, baseUrl, wireProtocol })
   const compact = height < 680
 
   function submit() {
     const modelList = parseModels(modelsText)
-    const providerBaseUrl = baseUrl.trim() || (isMimoPreset ? getXiaomiMimoOfficialBaseUrl('token-plan', 'cn', wireProtocol) : preset.baseUrl)
     const provider = applyProviderPreset({
       id: `custom-${Date.now().toString(36)}`,
       presetId,
@@ -663,10 +660,10 @@ function ProviderFormModal({
       detectionStatus: 'manual',
       type: preset.type,
       name: name.trim() || preset.name,
-      baseUrl: providerBaseUrl,
-      credentialMode: isMimoPreset ? 'token-plan' : undefined,
-      tokenPlanRegion: isMimoPreset ? 'cn' : undefined,
-      wireProtocol: isMimoPreset ? wireProtocol : undefined,
+      baseUrl: providerConfigDraft.baseUrl,
+      credentialMode: providerConfigDraft.credentialMode,
+      tokenPlanRegion: providerConfigDraft.tokenPlanRegion,
+      wireProtocol: providerConfigDraft.wireProtocol,
       apiKey: '',
       credentialGroups: parseCredentialGroups(keysText),
       models: modelList,
@@ -678,26 +675,23 @@ function ProviderFormModal({
     setModelsText('')
     setKeysText('')
     setAdvancedOpen(false)
-    setPresetId('custom-openai-compatible')
-    setWireProtocol('openai-compatible')
+    setPresetId(DEFAULT_PROVIDER_PRESET_ID)
+    setWireProtocol(DEFAULT_PROVIDER_WIRE_PROTOCOL)
   }
 
   function selectPreset(nextPresetId: ProviderPresetId) {
     const nextPreset = getProviderPreset(nextPresetId)
+    const nextProtocol = inferProviderWireProtocolFromBaseUrl(baseUrl)
+    const nextDraft = resolveProviderConfigDraft({ provider: {}, presetId: nextPresetId, baseUrl, wireProtocol: nextProtocol })
     setPresetId(nextPresetId)
+    setWireProtocol(nextProtocol)
+    setBaseUrl(nextDraft.baseUrl)
     if (!name.trim()) setName(nextPreset.name)
-    if (nextPresetId === 'xiaomi-mimo') {
-      const nextProtocol = inferMimoWireProtocolFromBaseUrl(baseUrl)
-      setWireProtocol(nextProtocol)
-      if (shouldReplaceMimoBaseUrl(baseUrl)) setBaseUrl(getXiaomiMimoOfficialBaseUrl('token-plan', 'cn', nextProtocol))
-      return
-    }
-    if (!baseUrl.trim() && nextPreset.baseUrl) setBaseUrl(nextPreset.baseUrl)
   }
 
   function selectWireProtocol(nextProtocol: ProviderWireProtocol) {
     setWireProtocol(nextProtocol)
-    if (shouldReplaceMimoBaseUrl(baseUrl)) setBaseUrl(getXiaomiMimoOfficialBaseUrl('token-plan', 'cn', nextProtocol))
+    setBaseUrl(resolveProviderConfigDraft({ provider: {}, presetId, baseUrl, wireProtocol: nextProtocol }).baseUrl)
   }
 
   return (
@@ -747,14 +741,15 @@ function ProviderFormModal({
               contentContainerStyle={{ gap: 10, paddingHorizontal: 16, paddingBottom: 12, backgroundColor: colors.surface }}
             >
               <IsleField label={t('providerSettings.name')} inputProps={{ value: name, onChangeText: setName, placeholder: preset.name, autoCapitalize: 'none' }} />
-              {isMimoPreset ? (
+              {providerConfigDraft.isProtocolSelectable ? (
                 <View style={{ borderRadius: 18, padding: 11, backgroundColor: colors.islandRaised, gap: 9 }}>
                   <Text style={{ color: colors.text, fontSize: 13, fontWeight: '900' }}>{t('providerSettings.protocol.title')}</Text>
                   <View style={{ flexDirection: 'row', gap: 8, flexWrap: 'wrap' }}>
-                    <ChoiceIsleChip active={wireProtocol === 'openai-compatible'} label={t('providerSettings.protocol.openai-compatible')} onPress={() => selectWireProtocol('openai-compatible')} />
-                    <ChoiceIsleChip active={wireProtocol === 'anthropic-compatible'} label={t('providerSettings.protocol.anthropic-compatible')} onPress={() => selectWireProtocol('anthropic-compatible')} />
+                    {PROVIDER_WIRE_PROTOCOL_OPTIONS.map((protocol) => (
+                      <ChoiceIsleChip key={protocol} active={wireProtocol === protocol} label={t(`providerSettings.protocol.${protocol}`)} onPress={() => selectWireProtocol(protocol)} />
+                    ))}
                   </View>
-                  <Text style={{ color: colors.textTertiary, fontSize: 11, lineHeight: 16 }}>{t('providerSettings.protocol.mimoNote')}</Text>
+                  <Text style={{ color: colors.textTertiary, fontSize: 11, lineHeight: 16 }}>{t('providerSettings.protocol.endpointNote')}</Text>
                 </View>
               ) : null}
               <IsleField
@@ -763,7 +758,7 @@ function ProviderFormModal({
                   value: baseUrl,
                   onChangeText: (value) => {
                     setBaseUrl(value)
-                    if (isMimoPreset) setWireProtocol(inferMimoWireProtocolFromBaseUrl(value))
+                    if (shouldSyncWireProtocolFromBaseUrl(providerConfigDraft)) setWireProtocol(inferProviderWireProtocolFromBaseUrl(value))
                   },
                   placeholder: preset.baseUrl ?? 'https://example.com/v1',
                   autoCapitalize: 'none',
@@ -778,7 +773,7 @@ function ProviderFormModal({
               <IslePressable
                 haptic
                 onPress={() => setAdvancedOpen((value) => !value)}
-                style={{ minHeight: 42, borderRadius: 21, paddingHorizontal: 13, flexDirection: 'row', alignItems: 'center', gap: 8, backgroundColor: colors.material.field, borderWidth: 1, borderColor: colors.border }}
+                style={{ minHeight: 44, borderRadius: 22, paddingHorizontal: 13, flexDirection: 'row', alignItems: 'center', gap: 8, backgroundColor: colors.material.field, borderWidth: 1, borderColor: colors.border }}
               >
                 <Text style={{ flex: 1, color: colors.textSecondary, fontSize: 12, fontWeight: '900' }}>{t('providerSettings.advancedModels')}</Text>
                 <MotiView animate={{ rotate: advancedOpen ? '180deg' : '0deg' }} transition={{ type: 'timing', duration: 160 }}>
@@ -1057,14 +1052,4 @@ function providerMatchesModelFilter(provider: AIProvider, filter: string): boole
     ...(provider.credentialGroups ?? []).flatMap((group) => group.availableModels ?? []),
   ]
   return values.some((value) => normalizeSearchText(value).includes(filter))
-}
-
-function inferMimoWireProtocolFromBaseUrl(value?: string): ProviderWireProtocol {
-  return /\/anthropic(?:\/v1)?(?:\/|$)/i.test(value ?? '') ? 'anthropic-compatible' : 'openai-compatible'
-}
-
-function shouldReplaceMimoBaseUrl(value?: string): boolean {
-  const trimmed = value?.trim()
-  if (!trimmed) return true
-  return /^https:\/\/(?:api|token-plan-(?:cn|sgp|ams))\.xiaomimimo\.com(?:\/(?:v1|anthropic(?:\/v1)?))?\/?$/i.test(trimmed)
 }
