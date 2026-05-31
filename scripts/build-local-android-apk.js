@@ -3,11 +3,12 @@ const path = require('node:path')
 const crypto = require('node:crypto')
 const { spawnSync } = require('node:child_process')
 const { normalizeVariant, supportedVariants } = require('./model-catalog')
+const { apkOutputDirName, formatApkArtifactName } = require('./release-artifact-contract')
 
 const projectRoot = path.resolve(__dirname, '..')
 const androidDir = path.join(projectRoot, 'android')
 const androidManifestPath = path.join(androidDir, 'app', 'src', 'main', 'AndroidManifest.xml')
-const outputDir = path.join(projectRoot, 'dist-apk')
+const outputDir = path.join(projectRoot, apkOutputDirName)
 const packageJson = require(path.join(projectRoot, 'package.json'))
 const releaseBuildPasses = [
   {
@@ -55,6 +56,7 @@ function parseArgs(argv) {
     clean: false,
     runChecks: false,
     installDevice: '',
+    releaseArch: '',
   }
   for (let index = 0; index < argv.length; index += 1) {
     const item = argv[index]
@@ -78,6 +80,11 @@ function parseArgs(argv) {
       index += 1
     } else if (item.startsWith('--install-device=')) {
       args.installDevice = item.slice('--install-device='.length)
+    } else if (item === '--release-arch') {
+      args.releaseArch = argv[index + 1] || ''
+      index += 1
+    } else if (item.startsWith('--release-arch=')) {
+      args.releaseArch = item.slice('--release-arch='.length)
     }
   }
   args.variant = args.variant === 'all' ? 'all' : normalizeVariant(args.variant)
@@ -86,6 +93,12 @@ function parseArgs(argv) {
   }
   if (!['debug', 'release'].includes(args.buildType)) {
     throw new Error(`Unsupported build type "${args.buildType}".`)
+  }
+  if (args.releaseArch && args.buildType !== 'release') {
+    throw new Error('--release-arch can only be used with --release.')
+  }
+  if (args.releaseArch && !releaseBuildPasses.some((pass) => pass.arch === args.releaseArch)) {
+    throw new Error(`Unsupported --release-arch "${args.releaseArch}". Use ${releaseBuildPasses.map((pass) => pass.arch).join(', ')}.`)
   }
   return args
 }
@@ -170,7 +183,7 @@ function copyOutputs(variant, buildType, pass) {
     if (apks.length !== 1) {
       throw new Error(`Expected exactly one APK for release pass ${pass.label}, found ${apks.length}: ${apks.map((apk) => path.basename(apk)).join(', ')}`)
     }
-    const targetName = formatArtifactName(packageJson.version, buildType, variant, pass.arch)
+    const targetName = formatApkArtifactName({ version: packageJson.version, buildType, variant, arch: pass.arch })
     const target = path.join(outputDir, targetName)
     fs.copyFileSync(apks[0], target)
     writeSha256File(target)
@@ -181,7 +194,7 @@ function copyOutputs(variant, buildType, pass) {
   for (const apk of apks) {
     const base = path.basename(apk)
     const arch = inferArch(base, pass)
-    const targetName = formatArtifactName(packageJson.version, buildType, variant, arch)
+    const targetName = formatApkArtifactName({ version: packageJson.version, buildType, variant, arch })
     const target = path.join(outputDir, targetName)
     fs.copyFileSync(apk, target)
     writeSha256File(target)
@@ -202,17 +215,10 @@ function inferArch(fileName, pass) {
   return 'universal'
 }
 
-function formatArtifactName(version, buildType, variant, arch) {
-  if (buildType === 'release') {
-    return `IsleMind-${version}-${arch}-${variant}.apk`
-  }
-  return `IsleMind-${version}-android-${buildType}-${variant}-${arch}.apk`
-}
-
 function assertReleaseOutputs(outputs, variant, pass) {
   const required = pass?.required ?? ['universal-64', 'arm64-v8a', 'x86_64', 'armeabi-v7a-legacy']
   const missing = required.filter((arch) => {
-    const expected = formatArtifactName(packageJson.version, 'release', variant, arch)
+    const expected = formatApkArtifactName({ version: packageJson.version, buildType: 'release', variant, arch })
     return !outputs.some((output) => path.basename(output) === expected)
   })
   if (missing.length) {
@@ -238,8 +244,9 @@ function buildVariant(variant, args) {
   const passes = args.buildType === 'release'
     ? releaseBuildPasses
     : [releaseBuildPasses[0]]
+  const selectedPasses = args.releaseArch ? passes.filter((pass) => pass.arch === args.releaseArch) : passes
   const outputs = []
-  for (const pass of passes) {
+  for (const pass of selectedPasses) {
     removeDir(path.join(androidDir, 'app', 'build', 'outputs', 'apk', args.buildType))
     if (args.buildType === 'release') {
       removeDir(path.join(androidDir, 'app', '.cxx'))

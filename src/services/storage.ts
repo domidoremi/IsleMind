@@ -1,9 +1,11 @@
 import AsyncStorage from '@react-native-async-storage/async-storage'
 import type { AIProvider, Conversation, McpServerConfig, MessageStatus, ProcessTrace, Settings, SkillDefinition } from '@/types'
 import { getModelConfig } from '@/types'
-import { exportContextSnapshot, importContextSnapshot, type ContextSnapshot } from '@/services/contextStore'
+import { exportContextSnapshot, importContextSnapshot, importMemoriesForReview, type ContextSnapshot } from '@/services/contextStore'
 import { localDataStore } from '@/services/localDataStore'
-import { clearHistoricalInjectedGroupModels, clearHistoricalInjectedProviderModels } from '@/utils/providerModels'
+import { clearHistoricalInjectedGroupModels, clearHistoricalInjectedProviderModels, hasRemoteProviderModelEvidence } from '@/utils/providerModels'
+import { exportMemoriesAsMem0, importMem0Memories, type Mem0MemoryEnvelope } from '@/utils/mem0Interop'
+import { defaultProviderCredentialMode, defaultProviderTokenPlanRegion, defaultProviderWireProtocol } from '@/services/ai/providerProtocolPolicy'
 
 const KEYS = {
   CONVERSATIONS: '@islemind/conversations',
@@ -23,8 +25,14 @@ export interface ExportPayload {
   skills?: SkillDefinition[]
   mcpServers?: McpServerConfig[]
   context?: ContextSnapshot
+  mem0?: Mem0MemoryEnvelope
   exportedAt: number
 }
+
+export type ImportAllDataResult =
+  | { ok: true; kind: 'islemind'; conversations: number }
+  | { ok: true; kind: 'mem0'; memories: number }
+  | { ok: false; kind: 'invalid' }
 
 export async function loadData<T>(key: keyof typeof KEYS): Promise<T | null> {
   try {
@@ -71,6 +79,7 @@ export async function exportAllData(): Promise<string> {
   ])
   const context = await exportContextSnapshot()
   const conversations = sqliteConversations.length ? sqliteConversations : cachedConversations ?? []
+  const exportedAt = Date.now()
   return JSON.stringify(
     {
       app: 'islemind',
@@ -81,7 +90,8 @@ export async function exportAllData(): Promise<string> {
       skills: skills ?? [],
       mcpServers: mcpServers ?? [],
       context,
-      exportedAt: Date.now(),
+      mem0: exportMemoriesAsMem0(context.memories, { app_id: 'islemind' }, new Date(exportedAt).toISOString()),
+      exportedAt,
     } satisfies ExportPayload,
     null,
     2
@@ -89,22 +99,38 @@ export async function exportAllData(): Promise<string> {
 }
 
 export async function importAllData(json: string): Promise<boolean> {
+  return (await importAllDataDetailed(json)).ok
+}
+
+export async function importAllDataDetailed(json: string): Promise<ImportAllDataResult> {
   try {
     const data = JSON.parse(json)
-    if (!isExportPayload(data)) {
-      return false
+    if (isExportPayload(data)) {
+      await saveData('CONVERSATIONS', data.conversations.map(normalizeConversation))
+      await localDataStore.saveConversations(data.conversations.map(normalizeConversation))
+      if (data.settings) await saveData('SETTINGS', data.settings)
+      await saveData('PROVIDERS', data.providers.map(normalizeProvider))
+      if (Array.isArray(data.skills)) await saveData('SKILLS', data.skills.map(normalizeSkill).filter(Boolean))
+      if (Array.isArray(data.mcpServers)) await saveData('MCP_SERVERS', data.mcpServers.map(normalizeMcpServer).filter(Boolean))
+      if (data.context) await importContextSnapshot(data.context)
+      return { ok: true, kind: 'islemind', conversations: data.conversations.length }
     }
-    await saveData('CONVERSATIONS', data.conversations.map(normalizeConversation))
-    await localDataStore.saveConversations(data.conversations.map(normalizeConversation))
-    if (data.settings) await saveData('SETTINGS', data.settings)
-    await saveData('PROVIDERS', data.providers.map(normalizeProvider))
-    if (Array.isArray(data.skills)) await saveData('SKILLS', data.skills.map(normalizeSkill).filter(Boolean))
-    if (Array.isArray(data.mcpServers)) await saveData('MCP_SERVERS', data.mcpServers.map(normalizeMcpServer).filter(Boolean))
-    if (data.context) await importContextSnapshot(data.context)
-    return true
+    if (!isMem0ImportPayload(data)) return { ok: false, kind: 'invalid' }
+    const memories = importMem0Memories(data, { defaultStatus: 'pending' })
+    if (!memories.length) return { ok: false, kind: 'invalid' }
+    await importMemoriesForReview(memories)
+    return { ok: true, kind: 'mem0', memories: memories.length }
   } catch {
-    return false
+    return { ok: false, kind: 'invalid' }
   }
+}
+
+function isMem0ImportPayload(value: unknown): value is Parameters<typeof importMem0Memories>[0] {
+  if (Array.isArray(value)) return true
+  if (!value || typeof value !== 'object') return false
+  const data = value as { schema?: unknown; memories?: unknown; results?: unknown }
+  if (data.schema === 'islemind.mem0.v1') return Array.isArray(data.memories)
+  return Array.isArray(data.memories) || Array.isArray(data.results)
 }
 
 function isExportPayload(value: unknown): value is ExportPayload {
@@ -264,16 +290,20 @@ function normalizeMessageStatus(status: MessageStatus | undefined): MessageStatu
 
 function normalizeProvider(provider: AIProvider): AIProvider {
   const models = normalizeProviderModels(provider)
+  const manualModels = normalizeProviderManualModels(provider, models)
+  const modelAliases = normalizeProviderModelAliases(provider)
   return {
     ...provider,
     apiKey: '',
     enabled: provider.enabled ?? false,
     baseUrl: provider.baseUrl?.trim() || undefined,
     models,
-    credentialMode: provider.type === 'xiaomi-mimo' ? provider.credentialMode ?? 'token-plan' : provider.credentialMode,
-    tokenPlanRegion: provider.type === 'xiaomi-mimo' ? provider.tokenPlanRegion ?? 'cn' : provider.tokenPlanRegion,
-    wireProtocol: provider.type === 'xiaomi-mimo' ? provider.wireProtocol ?? 'openai-compatible' : provider.wireProtocol,
-    modelConfigs: models.map((modelId) => getModelConfig(modelId, provider.type, provider.modelConfigs)),
+    manualModels,
+    modelAliases,
+    credentialMode: provider.type === 'xiaomi-mimo' ? defaultProviderCredentialMode(provider.credentialMode) : provider.credentialMode,
+    tokenPlanRegion: provider.type === 'xiaomi-mimo' ? defaultProviderTokenPlanRegion(provider.tokenPlanRegion) : provider.tokenPlanRegion,
+    wireProtocol: provider.type === 'xiaomi-mimo' ? defaultProviderWireProtocol(provider.wireProtocol) : provider.wireProtocol,
+    modelConfigs: uniqueStrings([...models, ...manualModels, ...modelAliases.map((item) => item.model)]).map((modelId) => getModelConfig(modelId, provider.type, provider.modelConfigs)),
     credentialGroups: provider.credentialGroups?.map((group, index) => ({
       ...group,
       id: group.id || `group-${index + 1}`,
@@ -297,4 +327,32 @@ function normalizeProviderModels(provider: AIProvider): string[] {
     seen.add(model)
     return true
   })
+}
+
+function normalizeProviderManualModels(provider: AIProvider, normalizedModels: string[]): string[] {
+  const source = Array.isArray(provider.manualModels) ? provider.manualModels : hasRemoteProviderModelEvidence(provider) ? [] : normalizedModels
+  const cleaned = clearHistoricalInjectedProviderModels({ ...provider, models: source })
+  return uniqueStrings(cleaned.filter((model) => !getModelConfig(model, provider.type, provider.modelConfigs).deprecated))
+}
+
+function normalizeProviderModelAliases(provider: AIProvider) {
+  const byAlias = new Map<string, { alias: string; model: string }>()
+  for (const item of provider.modelAliases ?? []) {
+    const alias = item.alias?.trim()
+    const model = item.model?.trim()
+    if (!alias || !model || alias === model) continue
+    byAlias.set(alias.toLowerCase(), { alias, model })
+  }
+  return Array.from(byAlias.values())
+}
+
+function uniqueStrings(values: string[]): string[] {
+  const seen = new Set<string>()
+  return values
+    .map((value) => value.trim())
+    .filter((value) => {
+      if (!value || seen.has(value)) return false
+      seen.add(value)
+      return true
+    })
 }

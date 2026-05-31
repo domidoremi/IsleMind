@@ -4,7 +4,6 @@ import type {
   Conversation,
   KnowledgeChunk,
   KnowledgeDocument,
-  MessageUsage,
   RagEvaluationResult,
   RagEvaluationLog,
   RagIndexingJobStatus,
@@ -15,6 +14,7 @@ import type {
 import { embedTextWithProvider } from '@/services/ai/base'
 import { createOnnxEmbeddingProvider, rerankRetrievalSources } from '@/services/rag'
 import { localModelCacheKey } from '@/services/localEmbeddingModels'
+export type { ConversationMetrics } from '@/services/conversationMetrics'
 
 const DB_NAME = 'islemind-context.db'
 const VECTOR_DIMENSION = 128
@@ -74,17 +74,6 @@ export interface EmbeddingJobStatus {
   source: string
   error?: string
   updatedAt: number
-}
-
-export interface ConversationMetrics {
-  inputTokens: number
-  outputTokens: number
-  totalTokens: number
-  reasoningTokens: number
-  estimated: boolean
-  durationMs: number
-  messageCount: number
-  sourceCount: number
 }
 
 async function getDb() {
@@ -214,7 +203,6 @@ export const localDataStore = {
   logRagEvaluation,
   listRagEvaluationLogs,
   listIndexingJobs,
-  getConversationMetrics,
   clearRagCaches,
   listEmbeddingJobs,
   loadConversations,
@@ -407,25 +395,6 @@ export async function listIndexingJobs(limit = 30): Promise<RagIndexingJobStatus
   return db.getAllAsync<RagIndexingJobStatus>(
     'SELECT id, documentId, kind, status, progress, error, createdAt, updatedAt FROM indexing_jobs ORDER BY updatedAt DESC LIMIT ?',
     Math.max(1, Math.min(limit, 120))
-  )
-}
-
-export function getConversationMetrics(conversation: Conversation | null | undefined): ConversationMetrics {
-  const messages = conversation?.messages ?? []
-  return messages.reduce<ConversationMetrics>(
-    (metrics, message) => {
-      const usage = message.usage
-      metrics.inputTokens += usage?.inputTokens ?? 0
-      metrics.outputTokens += usage?.outputTokens ?? 0
-      metrics.totalTokens += usage?.totalTokens ?? (usage ? (usage.inputTokens ?? 0) + (usage.outputTokens ?? 0) : 0)
-      metrics.reasoningTokens += usage?.reasoningTokens ?? 0
-      metrics.estimated = metrics.estimated || usage?.source === 'estimated' || !!message.estimatedTokens
-      metrics.durationMs += message.durationMs ?? 0
-      metrics.messageCount += 1
-      metrics.sourceCount += message.citations?.length ?? 0
-      return metrics
-    },
-    { inputTokens: 0, outputTokens: 0, totalTokens: 0, reasoningTokens: 0, estimated: false, durationMs: 0, messageCount: 0, sourceCount: 0 }
   )
 }
 
@@ -1209,14 +1178,4 @@ function hashString(value: string): number {
     hash = Math.imul(hash, 16777619)
   }
   return hash | 0
-}
-
-export function usageFromMetrics(metrics: ConversationMetrics): MessageUsage {
-  return {
-    inputTokens: metrics.inputTokens,
-    outputTokens: metrics.outputTokens,
-    reasoningTokens: metrics.reasoningTokens || undefined,
-    totalTokens: metrics.totalTokens,
-    source: metrics.estimated ? 'estimated' : 'provider',
-  }
 }

@@ -11,17 +11,18 @@ interface HomePetProps {
   state: HomePetState
   compact?: boolean
   scale?: number
+  showStatusBadge?: boolean
   style?: StyleProp<ViewStyle>
 }
 
-export function HomePet({ state, compact = false, scale = 1, style }: HomePetProps) {
+export function HomePet({ state, compact = false, scale = 1, showStatusBadge = true, style }: HomePetProps) {
   const { colors } = useAppTheme()
   const { t } = useTranslation()
   const motion = useMotionPreference()
   const { width } = useWindowDimensions()
   const baseSize = compact ? Math.min(112, Math.max(88, width * 0.26)) : Math.min(146, Math.max(106, width * 0.32))
   const size = Math.max(54, baseSize * scale)
-  const showBadge = state.reason !== 'idle'
+  const showBadge = showStatusBadge && state.reason !== 'idle'
 
   return (
     <MotiView

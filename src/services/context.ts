@@ -10,7 +10,7 @@ import {
   searchKnowledge,
   searchMemories,
 } from '@/services/contextStore'
-import { localDataStore } from '@/services/localDataStore'
+import { localDataStore, type SearchHybridOptions } from '@/services/localDataStore'
 import { useSettingsStore } from '@/store/settingsStore'
 import { searchWeb as searchWebWithAdapters } from '@/services/searchAdapters'
 import { buildCompressedContextPrompt, buildFlareContextPrompt, runAgenticRag } from '@/services/rag'
@@ -18,6 +18,20 @@ import { st } from '@/i18n/service'
 
 const TEXT_MIME_HINTS = ['text/', 'application/json', 'application/javascript', 'application/xml', 'text/xml', 'text/csv']
 const MAX_CONTEXT_ITEMS = 8
+
+type KnowledgeSearchRuntime = Pick<SearchHybridOptions, 'localEmbeddingModelId' | 'localEmbeddingModelSource' | 'provider'> & {
+  mode: 'hybrid'
+  embeddingMode: 'provider' | 'local' | 'hybrid'
+}
+
+export type MemoryCandidateRejectionReason =
+  | 'empty'
+  | 'length'
+  | 'format'
+  | 'sensitive'
+  | 'one_time'
+  | 'uncertain'
+  | 'none'
 
 export interface RetrievedContext {
   sources: RetrievalSource[]
@@ -175,16 +189,33 @@ export async function extractMemories(conversationId: string, messages: Message[
     }
   }
 
-  const items = dedupeMemoryItems([...deterministicItems, ...modelItems])
+  const candidates = mergeMemoryCandidates([
+    ...deterministicItems.map((content) => ({
+      content,
+      sourceKind: 'deterministic' as const,
+      sourceDetail: st('contextMemory.source.deterministic'),
+      confidence: 0.82,
+    })),
+    ...modelItems.map((content) => ({
+      content,
+      sourceKind: 'model' as const,
+      sourceDetail: st('contextMemory.source.model'),
+      confidence: 0.68,
+    })),
+  ])
   const existing = new Set(
     (await listMemories(['pending', 'active', 'disabled']))
       .map((item) => normalizeMemoryKey(item.content))
   )
   const added: string[] = []
-  for (const item of items) {
-    const key = normalizeMemoryKey(item)
+  for (const candidate of candidates) {
+    const key = normalizeMemoryKey(candidate.content)
     if (!key || existing.has(key)) continue
-    const memory = await addMemory(item, conversationId, 'pending')
+    const memory = await addMemory(candidate.content, conversationId, 'pending', {
+      sourceKind: candidate.sourceKind,
+      sourceDetail: candidate.sourceDetail,
+      confidence: candidate.confidence,
+    })
     if (memory) {
       existing.add(key)
       added.push(memory.content)
@@ -267,8 +298,7 @@ async function searchKnowledgeSafely(
 ): Promise<RetrievalSource[]> {
   try {
     if (ragMode === 'hybrid') {
-      const settings = useSettingsStore.getState().settings
-      return await localDataStore.searchHybrid(query, { limit, mode: 'hybrid', embeddingMode, localEmbeddingModelId: settings.localEmbeddingModelId, localEmbeddingModelSource: settings.localEmbeddingModelSource, provider })
+      return await localDataStore.searchHybrid(query, { limit, ...resolveKnowledgeSearchRuntime(embeddingMode, provider) })
     }
     return await searchKnowledge(query, limit)
   } catch {
@@ -277,6 +307,20 @@ async function searchKnowledgeSafely(
     } catch {
       return []
     }
+  }
+}
+
+function resolveKnowledgeSearchRuntime(
+  embeddingMode: 'provider' | 'local' | 'hybrid',
+  provider?: AIProvider
+): KnowledgeSearchRuntime {
+  const settings = useSettingsStore.getState().settings
+  return {
+    mode: 'hybrid',
+    embeddingMode,
+    localEmbeddingModelId: settings.localEmbeddingModelId,
+    localEmbeddingModelSource: settings.localEmbeddingModelSource,
+    ...(provider ? { provider } : {}),
   }
 }
 
@@ -416,12 +460,41 @@ function normalizeMemoryText(value: string): string {
 }
 
 function isUsefulMemoryItem(value: string): boolean {
-  const text = value.trim()
-  if (!text || text === '[]') return false
-  if (text.length < 4 || text.length > 120) return false
-  if (/^(?:sure|好的|可以|以下|here|json|\[|\{)/i.test(text)) return false
-  if (/(api[_ -]?key|secret|token|password|密码|密钥|秘钥)/i.test(text)) return false
-  return true
+  return classifyMemoryCandidate(value) === 'none'
+}
+
+export function classifyMemoryCandidateForTest(value: string): MemoryCandidateRejectionReason {
+  return classifyMemoryCandidate(value)
+}
+
+function classifyMemoryCandidate(value: string): MemoryCandidateRejectionReason {
+  const text = normalizeMemoryText(value)
+  if (!text || text === '[]') return 'empty'
+  if (text.length < 4 || text.length > 120) return 'length'
+  if (/^(?:sure|好的|可以|以下|here|json|\[|\{)/i.test(text)) return 'format'
+  if (containsSensitiveMemoryText(text)) return 'sensitive'
+  if (/(?:今天|明天|昨天|刚才|这次|本次|临时|一次性|稍后|tonight|today|tomorrow|yesterday|this time|one[- ]?off|temporary|temporarily|for now)/i.test(text)) return 'one_time'
+  if (/(?:maybe|perhaps|not sure|不确定|可能|也许|大概|估计)/i.test(text)) return 'uncertain'
+  return 'none'
+}
+
+function containsSensitiveMemoryText(text: string): boolean {
+  if (/(api[_ -]?key|secret|token|password|密码|密钥|秘钥|凭证|验证码|verification code|one[- ]?time code|otp|2fa|mfa)/i.test(text)) return true
+  return containsCredentialLikeToken(text)
+}
+
+function containsCredentialLikeToken(text: string): boolean {
+  const tokens = text.match(/[A-Za-z0-9][A-Za-z0-9_+=/.-]{11,}/g) ?? []
+  return tokens.some(isCredentialLikeToken)
+}
+
+function isCredentialLikeToken(token: string): boolean {
+  const clean = token.replace(/^[^A-Za-z0-9]+|[^A-Za-z0-9]+$/g, '')
+  if (/^(?:sk|tp|rk)-[A-Za-z0-9_-]{8,}$/i.test(clean)) return true
+  if (/^gh[pousr]_[A-Za-z0-9_]{20,}$/i.test(clean)) return true
+  if (/^AIza[A-Za-z0-9_-]{20,}$/.test(clean)) return true
+  if (/^ya29\.[A-Za-z0-9_-]{20,}$/.test(clean)) return true
+  return /^[A-Za-z0-9+/_=-]{40,}$/.test(clean) && /[a-z]/.test(clean) && /[A-Z]/.test(clean) && /\d/.test(clean)
 }
 
 function dedupeMemoryItems(items: string[]): string[] {
@@ -434,6 +507,21 @@ function dedupeMemoryItems(items: string[]): string[] {
     result.push(item)
   }
   return result
+}
+
+function mergeMemoryCandidates(candidates: Array<{ content: string; sourceKind: 'deterministic' | 'model'; sourceDetail: string; confidence: number }>): Array<{ content: string; sourceKind: 'deterministic' | 'model'; sourceDetail: string; confidence: number }> {
+  const byKey = new Map<string, { content: string; sourceKind: 'deterministic' | 'model'; sourceDetail: string; confidence: number }>()
+  for (const candidate of candidates) {
+    const content = normalizeMemoryText(candidate.content)
+    if (!isUsefulMemoryItem(content)) continue
+    const key = normalizeMemoryKey(content)
+    if (!key) continue
+    const existing = byKey.get(key)
+    if (!existing || candidate.confidence > existing.confidence) {
+      byKey.set(key, { ...candidate, content })
+    }
+  }
+  return Array.from(byKey.values()).slice(0, 5)
 }
 
 function normalizeMemoryKey(value: string): string {

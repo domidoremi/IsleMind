@@ -183,6 +183,8 @@ export interface AIProvider {
   modelAvailability?: ProviderModelAvailability[]
   syncPolicy?: ProviderSyncPolicy
   models: string[]
+  manualModels?: string[]
+  modelAliases?: ModelAlias[]
   modelConfigs?: AIModel[]
   enabled: boolean
   lastModelSyncAt?: number
@@ -219,6 +221,12 @@ export interface Conversation {
 
 export type ThemeMode = 'light' | 'dark' | 'system'
 export type Language = 'zh-CN' | 'en' | 'ja'
+export type OnboardingCompanionMode = 'concise' | 'research' | 'creative' | 'engineering' | 'companion'
+export type UpstreamTransportMode = 'auto' | 'http' | 'websocket'
+export type RemoteCompactMode = 'off' | 'auto' | 'required'
+export type PayloadPolicyMode = 'off' | 'warn' | 'block'
+export type ProxyMode = 'off' | 'custom-base-url' | 'system-detected'
+export type BedrockCacheTtl = 'default' | '5m' | '1h'
 
 export interface Settings {
   theme: ThemeMode
@@ -236,6 +244,7 @@ export interface Settings {
   knowledgeTopK?: number
   memoryTopK?: number
   onboardingCompleted?: boolean
+  onboardingCompanionMode?: OnboardingCompanionMode
   ragMode?: 'off' | 'fts' | 'hybrid'
   embeddingMode?: 'provider' | 'local' | 'hybrid'
   localEmbeddingModelId?: string
@@ -259,6 +268,34 @@ export interface Settings {
   skillsEnabled?: boolean
   mcpEnabled?: boolean
   commandPaletteEnabled?: boolean
+  transportMode?: UpstreamTransportMode
+  remoteCompactMode?: RemoteCompactMode
+  remoteCompactThreshold?: number
+  payloadPolicyMode?: PayloadPolicyMode
+  proxyMode?: ProxyMode
+  proxyBaseUrl?: string
+  providerAllowlist?: string[]
+  providerBlocklist?: string[]
+  modelAllowlist?: string[]
+  modelBlocklist?: string[]
+  runtimeLogEnabled?: boolean
+  runtimeLogMaxBytes?: number
+  sessionConcurrencyLimit?: number
+  sessionQueueTimeoutMs?: number
+  upstreamRequestTimeoutMs?: number
+  upstreamMaxRetries?: number
+  upstreamCircuitBreakerEnabled?: boolean
+  upstreamCircuitBreakerFailureThreshold?: number
+  upstreamCircuitBreakerCooldownMs?: number
+  requestRectificationEnabled?: boolean
+  anthropicThinkingSignatureRectificationEnabled?: boolean
+  anthropicThinkingBudgetRectificationEnabled?: boolean
+  bedrockRequestOptimizerEnabled?: boolean
+  thinkingOptimizerEnabled?: boolean
+  cacheInjectionEnabled?: boolean
+  cacheTtl?: BedrockCacheTtl
+  modelTestModel?: string
+  modelTestCheckParameters?: boolean
 }
 
 export type MessageRole = 'user' | 'assistant'
@@ -318,6 +355,7 @@ export type AttachmentType = 'image' | 'pdf' | 'text' | 'document'
 export type WebSearchMode = 'native' | 'tavily' | 'off'
 export type SearchProviderId = 'native' | 'tavily' | 'google' | 'bing' | 'custom' | 'off'
 export type MemoryStatus = 'pending' | 'active' | 'disabled'
+export type MemorySourceKind = 'manual' | 'deterministic' | 'model' | 'imported' | 'legacy'
 export type RetrievalSourceType = 'memory' | 'knowledge' | 'web'
 export type RagProfile = 'fast' | 'balanced' | 'deep' | 'offline'
 export type RagQueryComplexity = 'simple' | 'focused' | 'complex'
@@ -494,6 +532,15 @@ export interface ProviderCapabilities {
   nativeSearch: boolean
   reasoningEffort: boolean
   topP: boolean
+  responsesApi?: boolean
+  responsesWebSocket?: boolean
+  remoteCompact?: boolean
+  payloadPolicy?: boolean
+}
+
+export interface ModelAlias {
+  alias: string
+  model: string
 }
 
 export interface ProviderModelAvailability {
@@ -543,6 +590,9 @@ export interface MemoryItem {
   content: string
   status: MemoryStatus
   conversationId?: string
+  sourceKind?: MemorySourceKind
+  sourceDetail?: string
+  confidence?: number
   score?: number
   lastHitAt?: number
   createdAt: number
@@ -812,7 +862,7 @@ function providerDefaults(providerType: ProviderType): Pick<AIModel, 'contextWin
     case 'google':
       return { contextWindow: 1048576, maxOutputTokens: 65536, defaultMaxTokens: 8192, supportsVision: true, supportsFiles: true }
     case 'xiaomi-mimo':
-      return { contextWindow: 1048576, maxOutputTokens: 131072, defaultMaxTokens: 32768, supportsVision: true, supportsFiles: false }
+      return { contextWindow: 32768, maxOutputTokens: 4096, defaultMaxTokens: 2048, supportsVision: false, supportsFiles: false }
     case 'openai-compatible':
       return { contextWindow: 32768, maxOutputTokens: 4096, defaultMaxTokens: 2048, supportsVision: false, supportsFiles: false }
   }

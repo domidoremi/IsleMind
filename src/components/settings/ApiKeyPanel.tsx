@@ -4,9 +4,10 @@ import { Check, ChevronDown, KeyRound, ListFilter, Plus, Power, RotateCw, Search
 import { MotiView } from 'moti'
 import type { TFunction } from 'i18next'
 import { useTranslation } from 'react-i18next'
-import type { AIProvider, ProviderCredentialGroup, ProviderPresetId, ProviderWireProtocol } from '@/types'
-import { getModelConfig, getModelName, getXiaomiMimoOfficialBaseUrl } from '@/types'
+import type { AIProvider, ProviderCapabilities, ProviderCredentialGroup, ProviderPresetId, ProviderWireProtocol } from '@/types'
+import { getModelConfig, getModelName } from '@/types'
 import { applyProviderPreset, detectProviderPreset, getProviderPreset, maskSecret, parseCredentialGroups, probeProviderPreset, PROVIDER_PRESETS } from '@/services/ai/providerRegistry'
+import { DEFAULT_PROVIDER_PRESET_ID, PROVIDER_WIRE_PROTOCOL_OPTIONS, inferProviderWireProtocolFromBaseUrl, initialProviderPresetId, initialProviderWireProtocol, resolveProviderConfigDraft, shouldSyncWireProtocolFromBaseUrl } from '@/services/ai/providerConfigPolicy'
 import { syncAndTestProvider, summarizeProviderActivation } from '@/services/providerActivation'
 import { useAppTheme } from '@/hooks/useAppTheme'
 import { useSettingsStore } from '@/store/settingsStore'
@@ -15,8 +16,8 @@ import { IsleChip } from '@/components/ui/isle'
 import { IsleButton } from '@/components/ui/isle'
 import { IsleField } from '@/components/ui/isle'
 import { useIsleDialog } from '@/components/ui/isle'
-import { parseModels } from '@/utils/text'
-import { getProviderAvailableModels, getProviderPreferredModel } from '@/utils/providerModels'
+import { parseModelEntries } from '@/utils/text'
+import { getProviderAvailableModels, getProviderManualModels, getProviderPreferredModel, summarizeProviderModelInventory } from '@/utils/providerModels'
 
 interface ApiKeyPanelProps {
   provider: AIProvider
@@ -25,6 +26,20 @@ interface ApiKeyPanelProps {
 
 type PanelTask = 'idle' | 'saving' | 'syncing' | 'testing' | 'probing'
 
+const CAPABILITY_KEYS: (keyof ProviderCapabilities)[] = [
+  'modelList',
+  'responsesApi',
+  'responsesWebSocket',
+  'remoteCompact',
+  'payloadPolicy',
+  'streaming',
+  'vision',
+  'files',
+  'nativeSearch',
+  'reasoningEffort',
+  'topP',
+]
+
 export function ApiKeyPanel({ provider, initiallyExpanded = false }: ApiKeyPanelProps) {
   const { colors } = useAppTheme()
   const { t } = useTranslation()
@@ -32,14 +47,16 @@ export function ApiKeyPanel({ provider, initiallyExpanded = false }: ApiKeyPanel
   const updateProvider = useSettingsStore((state) => state.updateProvider)
   const updateSettings = useSettingsStore((state) => state.updateSettings)
   const defaultProvider = useSettingsStore((state) => state.settings.defaultProvider)
+  const modelTestModel = useSettingsStore((state) => state.settings.modelTestModel)
+  const modelTestCheckParameters = useSettingsStore((state) => state.settings.modelTestCheckParameters)
   const hydrateProviderKey = useSettingsStore((state) => state.hydrateProviderKey)
   const [expanded, setExpanded] = useState(initiallyExpanded)
   const [baseUrl, setBaseUrl] = useState(provider.baseUrl ?? '')
-  const [presetId, setPresetId] = useState<ProviderPresetId>(provider.presetId ?? 'custom-openai-compatible')
-  const [wireProtocol, setWireProtocol] = useState<ProviderWireProtocol>(inferMimoWireProtocol(provider))
+  const [presetId, setPresetId] = useState<ProviderPresetId>(initialProviderPresetId(provider))
+  const [wireProtocol, setWireProtocol] = useState<ProviderWireProtocol>(initialProviderWireProtocol(provider))
   const [singleCredentialText, setSingleCredentialText] = useState('')
   const [credentialText, setCredentialText] = useState('')
-  const [modelsText, setModelsText] = useState(provider.models.join('\n'))
+  const [modelsText, setModelsText] = useState(formatModelEntries(provider))
   const [draftGroups, setDraftGroups] = useState<ProviderCredentialGroup[]>(provider.credentialGroups ?? [])
   const [modelEditing, setModelEditing] = useState(false)
   const [groupKeyMasks, setGroupKeyMasks] = useState<Record<string, string>>({})
@@ -49,9 +66,11 @@ export function ApiKeyPanel({ provider, initiallyExpanded = false }: ApiKeyPanel
   const hydratedGroups = draftGroups
   const detection = useMemo(() => detectProviderPreset({ baseUrl, name: provider.name, apiKey: singleCredentialText || credentialText }), [baseUrl, credentialText, provider.name, singleCredentialText])
   const selectedPreset = getProviderPreset(presetId)
-  const isMimoPreset = selectedPreset.id === 'xiaomi-mimo'
-  const currentModels = useMemo(() => parseModels(modelsText), [modelsText])
+  const providerConfigDraft = useMemo(() => resolveProviderConfigDraft({ provider, presetId, baseUrl, wireProtocol }), [baseUrl, presetId, provider, wireProtocol])
+  const modelEntries = useMemo(() => parseModelEntries(modelsText), [modelsText])
+  const currentModels = modelEntries.models
   const availableModels = useMemo(() => getProviderAvailableModels(provider), [provider])
+  const modelInventory = useMemo(() => summarizeProviderModelInventory(provider), [provider])
   const preferredModel = getProviderPreferredModel(provider)
   const primaryModel = preferredModel ?? availableModels[0] ?? currentModels[0] ?? t('apiKeyPanel.noModelSet')
   const primaryModelConfig = getModelConfig(primaryModel, provider.type, provider.modelConfigs)
@@ -65,16 +84,16 @@ export function ApiKeyPanel({ provider, initiallyExpanded = false }: ApiKeyPanel
 
   useEffect(() => {
     setBaseUrl(provider.baseUrl ?? '')
-    setPresetId(provider.presetId ?? provider.detectedPresetId ?? 'custom-openai-compatible')
-    setWireProtocol(inferMimoWireProtocol(provider))
-    setModelsText(provider.models.join('\n'))
+    setPresetId(initialProviderPresetId(provider))
+    setWireProtocol(initialProviderWireProtocol(provider))
+    setModelsText(formatModelEntries(provider))
     setDraftGroups(provider.credentialGroups ?? [])
     setModelEditing(false)
     setGroupKeyMasks({})
     setSingleCredentialText('')
     setCredentialText('')
     setNotice('')
-  }, [provider.baseUrl, provider.detectedPresetId, provider.id, provider.models, provider.presetId, provider.wireProtocol])
+  }, [provider.baseUrl, provider.detectedPresetId, provider.id, provider.manualModels, provider.modelAliases, provider.models, provider.presetId, provider.wireProtocol])
 
   useEffect(() => {
     if (!expanded) return
@@ -93,16 +112,18 @@ export function ApiKeyPanel({ provider, initiallyExpanded = false }: ApiKeyPanel
     setTask('saving')
     const pastedGroups = createIncomingGroups(draftGroups.length, [singleCredentialText, credentialText].filter(Boolean).join('\n'), t)
     const credentialGroups = mergeGroups(draftGroups, pastedGroups, t)
-    const models = parseModels(modelsText)
-    const nextIsMimo = selectedPreset.id === 'xiaomi-mimo'
+    const parsedModels = parseModelEntries(modelsText)
+    const models = parsedModels.models
     const applied = applyProviderPreset({
       ...provider,
-      baseUrl: baseUrl.trim() || (nextIsMimo ? getXiaomiMimoOfficialBaseUrl(provider.credentialMode ?? 'token-plan', provider.tokenPlanRegion ?? 'cn', wireProtocol) : selectedPreset.baseUrl),
-      credentialMode: nextIsMimo ? provider.credentialMode ?? 'token-plan' : undefined,
-      tokenPlanRegion: nextIsMimo ? provider.tokenPlanRegion ?? 'cn' : undefined,
-      wireProtocol: nextIsMimo ? wireProtocol : undefined,
+      baseUrl: providerConfigDraft.baseUrl,
+      credentialMode: providerConfigDraft.credentialMode,
+      tokenPlanRegion: providerConfigDraft.tokenPlanRegion,
+      wireProtocol: providerConfigDraft.wireProtocol,
       credentialGroups,
       models,
+      manualModels: models,
+      modelAliases: parsedModels.aliases,
       enabled: provider.enabled,
       detectionStatus: provider.detectionStatus ?? 'detected',
     }, presetId)
@@ -162,13 +183,7 @@ export function ApiKeyPanel({ provider, initiallyExpanded = false }: ApiKeyPanel
   async function acceptDetection() {
     setPresetId(detection.presetId)
     const preset = getProviderPreset(detection.presetId)
-    if (preset.id === 'xiaomi-mimo') {
-      const nextProtocol = inferMimoWireProtocolFromBaseUrl(baseUrl)
-      setWireProtocol(nextProtocol)
-      if (shouldReplaceMimoBaseUrl(baseUrl)) setBaseUrl(getXiaomiMimoOfficialBaseUrl(provider.credentialMode ?? 'token-plan', provider.tokenPlanRegion ?? 'cn', nextProtocol))
-    } else if (!baseUrl.trim() && preset.baseUrl) {
-      setBaseUrl(preset.baseUrl)
-    }
+    applyPresetDraft(detection.presetId, inferProviderWireProtocolFromBaseUrl(baseUrl))
     setNotice(t('apiKeyPanel.presetSelected', { name: preset.name }))
     dialog.toast({ title: t('apiKeyPanel.detectionApplied'), message: `${provider.name} · ${preset.name}`, tone: 'mint' })
   }
@@ -179,13 +194,7 @@ export function ApiKeyPanel({ provider, initiallyExpanded = false }: ApiKeyPanel
     const result = await probeProviderPreset({ baseUrl, name: provider.name, apiKey: await getProbeApiKey() })
     setPresetId(result.presetId)
     const preset = getProviderPreset(result.presetId)
-    if (preset.id === 'xiaomi-mimo') {
-      const nextProtocol = inferMimoWireProtocolFromBaseUrl(baseUrl)
-      setWireProtocol(nextProtocol)
-      if (shouldReplaceMimoBaseUrl(baseUrl)) setBaseUrl(getXiaomiMimoOfficialBaseUrl(provider.credentialMode ?? 'token-plan', provider.tokenPlanRegion ?? 'cn', nextProtocol))
-    } else if (!baseUrl.trim() && preset.baseUrl) {
-      setBaseUrl(preset.baseUrl)
-    }
+    applyPresetDraft(result.presetId, inferProviderWireProtocolFromBaseUrl(baseUrl))
     setTask('idle')
     setNotice(result.reason)
     dialog.toast({ title: t('apiKeyPanel.interfaceProbeDone'), message: `${provider.name} · ${getProviderPreset(result.presetId).name}`, tone: 'mint' })
@@ -200,9 +209,9 @@ export function ApiKeyPanel({ provider, initiallyExpanded = false }: ApiKeyPanel
       updateProvider: useSettingsStore.getState().updateProvider,
       hydrateProviderKey: useSettingsStore.getState().hydrateProviderKey,
       updateProviderCredentialGroupHealth: useSettingsStore.getState().updateProviderCredentialGroupHealth,
-    }, { enable: provider.enabled })
+    }, { enable: provider.enabled, testModel: modelTestModel, checkParameters: modelTestCheckParameters })
     const latest = useSettingsStore.getState().providers.find((item) => item.id === provider.id)
-    if (latest) setModelsText(latest.models.join('\n'))
+    if (latest) setModelsText(formatModelEntries(latest))
     setTask('idle')
     const summary = summarizeProviderActivation([result])
     if (result.testOk) {
@@ -227,7 +236,7 @@ export function ApiKeyPanel({ provider, initiallyExpanded = false }: ApiKeyPanel
       updateProvider: useSettingsStore.getState().updateProvider,
       hydrateProviderKey: useSettingsStore.getState().hydrateProviderKey,
       updateProviderCredentialGroupHealth: useSettingsStore.getState().updateProviderCredentialGroupHealth,
-    }, { enable: true })
+    }, { enable: true, testModel: modelTestModel, checkParameters: modelTestCheckParameters })
     const summary = summarizeProviderActivation([result])
     if (result.testOk) {
       updateSettings({ defaultProvider: result.providerId, onboardingCompleted: true })
@@ -243,7 +252,7 @@ export function ApiKeyPanel({ provider, initiallyExpanded = false }: ApiKeyPanel
   }
 
   function cancelModelEditing() {
-    setModelsText(provider.models.join('\n'))
+    setModelsText(formatModelEntries(provider))
     setModelEditing(false)
     setNotice('')
     dialog.toast({ title: t('apiKeyPanel.modelEditCancelled'), message: provider.name, tone: 'amber' })
@@ -255,18 +264,34 @@ export function ApiKeyPanel({ provider, initiallyExpanded = false }: ApiKeyPanel
   }
 
   function selectPreset(nextPresetId: ProviderPresetId) {
-    setPresetId(nextPresetId)
-    if (nextPresetId === 'xiaomi-mimo' && shouldReplaceMimoBaseUrl(baseUrl)) {
-      setBaseUrl(getXiaomiMimoOfficialBaseUrl(provider.credentialMode ?? 'token-plan', provider.tokenPlanRegion ?? 'cn', wireProtocol))
-    }
+    applyPresetDraft(nextPresetId, wireProtocol)
   }
 
   function selectWireProtocol(nextProtocol: ProviderWireProtocol) {
     setWireProtocol(nextProtocol)
-    if (shouldReplaceMimoBaseUrl(baseUrl)) {
-      setBaseUrl(getXiaomiMimoOfficialBaseUrl(provider.credentialMode ?? 'token-plan', provider.tokenPlanRegion ?? 'cn', nextProtocol))
-    }
+    setBaseUrl(resolveProviderConfigDraft({ provider, presetId, baseUrl, wireProtocol: nextProtocol }).baseUrl)
     setNotice(t('apiKeyPanel.protocolChanged', { protocol: t(`providerSettings.protocol.${nextProtocol}`) }))
+  }
+
+  async function toggleCapability(key: keyof ProviderCapabilities) {
+    const current = provider.capabilities ?? selectedPreset.capabilities
+    const next = { ...current, [key]: current[key] !== true }
+    if (key === 'responsesApi' && next.responsesApi !== true) {
+      next.responsesWebSocket = false
+      next.remoteCompact = false
+    }
+    if ((key === 'responsesWebSocket' || key === 'remoteCompact') && next[key] === true) {
+      next.responsesApi = true
+    }
+    await updateProvider(provider.id, { capabilities: next })
+    dialog.toast({ title: t('apiKeyPanel.capabilityUpdated'), message: t(`apiKeyPanel.capability.${key}`), tone: 'mint' })
+  }
+
+  function applyPresetDraft(nextPresetId: ProviderPresetId, nextWireProtocol: ProviderWireProtocol) {
+    const nextDraft = resolveProviderConfigDraft({ provider, presetId: nextPresetId, baseUrl, wireProtocol: nextWireProtocol })
+    setPresetId(nextPresetId)
+    setWireProtocol(nextWireProtocol)
+    setBaseUrl(nextDraft.baseUrl)
   }
 
   async function getProbeApiKey(): Promise<string | undefined> {
@@ -308,6 +333,12 @@ export function ApiKeyPanel({ provider, initiallyExpanded = false }: ApiKeyPanel
           <Text numberOfLines={1} style={{ color: colors.textTertiary, fontSize: 11, marginTop: 2 }}>
             {t('apiKeyPanel.contextGroups', { context: formatTokenLimit(primaryModelConfig.contextWindow), synced: syncedGroups, total: groupCount })}
           </Text>
+          <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 5, marginTop: 7 }}>
+            <MiniBadge label={provider.capabilities?.responsesWebSocket ? 'WS' : 'HTTP'} tone={provider.capabilities?.responsesWebSocket ? 'success' : 'muted'} />
+            <MiniBadge label={provider.capabilities?.remoteCompact ? 'Compact' : 'Local'} tone={provider.capabilities?.remoteCompact ? 'success' : 'muted'} />
+            <MiniBadge label={t('apiKeyPanel.manualModelShort', { count: modelInventory.manualModels })} tone={modelInventory.manualModels ? 'warning' : 'muted'} />
+            <MiniBadge label={t('apiKeyPanel.aliasShort', { count: modelInventory.aliases })} tone={modelInventory.aliases ? 'warning' : 'muted'} />
+          </View>
         </View>
         {provider.lastTestStatus === 'ok' ? <Check color={colors.success} size={18} /> : null}
         {provider.lastTestStatus === 'bad' ? <RotateCw color={colors.error} size={18} /> : null}
@@ -351,16 +382,34 @@ export function ApiKeyPanel({ provider, initiallyExpanded = false }: ApiKeyPanel
             </View>
           </View>
 
-          {isMimoPreset ? (
+          {providerConfigDraft.isProtocolSelectable ? (
             <View style={{ borderRadius: 18, padding: 11, backgroundColor: colors.islandRaised, gap: 9 }}>
               <Text style={{ color: colors.text, fontSize: 13, fontWeight: '900' }}>{t('providerSettings.protocol.title')}</Text>
               <View style={{ flexDirection: 'row', gap: 8, flexWrap: 'wrap' }}>
-                <ChoiceButton active={wireProtocol === 'openai-compatible'} label={t('providerSettings.protocol.openai-compatible')} onPress={() => selectWireProtocol('openai-compatible')} />
-                <ChoiceButton active={wireProtocol === 'anthropic-compatible'} label={t('providerSettings.protocol.anthropic-compatible')} onPress={() => selectWireProtocol('anthropic-compatible')} />
+                {PROVIDER_WIRE_PROTOCOL_OPTIONS.map((protocol) => (
+                  <ChoiceButton key={protocol} active={wireProtocol === protocol} label={t(`providerSettings.protocol.${protocol}`)} onPress={() => selectWireProtocol(protocol)} />
+                ))}
               </View>
-              <Text style={{ color: colors.textTertiary, fontSize: 11, lineHeight: 16 }}>{t('providerSettings.protocol.mimoNote')}</Text>
+              <Text style={{ color: colors.textTertiary, fontSize: 11, lineHeight: 16 }}>{t('providerSettings.protocol.endpointNote')}</Text>
             </View>
           ) : null}
+
+          <View style={{ borderRadius: 18, padding: 11, backgroundColor: colors.islandRaised, gap: 10 }}>
+            <SectionHeader
+              title={t('apiKeyPanel.capabilityMatrix')}
+              description={t('apiKeyPanel.capabilityMatrixDescription')}
+            />
+            <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8 }}>
+              {CAPABILITY_KEYS.map((key) => (
+                <CapabilityToggle
+                  key={key}
+                  label={t(`apiKeyPanel.capability.${key}`)}
+                  active={(provider.capabilities ?? selectedPreset.capabilities)[key] === true}
+                  onPress={() => void toggleCapability(key)}
+                />
+              ))}
+            </View>
+          </View>
 
           <IsleField
             label={t('providerSettings.baseUrl')}
@@ -368,13 +417,13 @@ export function ApiKeyPanel({ provider, initiallyExpanded = false }: ApiKeyPanel
               value: baseUrl,
               onChangeText: (value) => {
                 setBaseUrl(value)
-                if (isMimoPreset) setWireProtocol(inferMimoWireProtocolFromBaseUrl(value))
+                if (shouldSyncWireProtocolFromBaseUrl(providerConfigDraft)) setWireProtocol(inferProviderWireProtocolFromBaseUrl(value))
                 setNotice('')
               },
               autoCapitalize: 'none',
               autoCorrect: false,
               returnKeyType: 'done',
-              placeholder: selectedPreset.baseUrl ?? 'https://new-api.example.com/v1',
+              placeholder: selectedPreset.baseUrl ?? (resolveProviderConfigDraft({ provider, presetId: DEFAULT_PROVIDER_PRESET_ID }).baseUrl || 'https://new-api.example.com/v1'),
             }}
           />
 
@@ -444,7 +493,12 @@ export function ApiKeyPanel({ provider, initiallyExpanded = false }: ApiKeyPanel
           <View style={{ gap: 10 }}>
             <SectionHeader
               title={t('apiKeyPanel.modelList')}
-              description={modelEditing ? t('apiKeyPanel.editing') : t('apiKeyPanel.modelCount', { count: currentModels.length })}
+              description={modelEditing ? t('apiKeyPanel.editing') : t('apiKeyPanel.modelInventory', {
+                remote: modelInventory.remoteModels,
+                manual: modelInventory.manualModels,
+                alias: modelInventory.aliases,
+                selectable: modelInventory.selectableModels,
+              })}
               action={
                 modelEditing ? (
                   <View style={{ flexDirection: 'row', gap: 8 }}>
@@ -480,7 +534,7 @@ export function ApiKeyPanel({ provider, initiallyExpanded = false }: ApiKeyPanel
                 }}
               />
             ) : (
-              <ModelSummary models={currentModels} providerType={provider.type} />
+              <ModelSummary models={currentModels} providerType={provider.type} aliases={provider.modelAliases ?? []} manualCount={modelInventory.manualModels} />
             )}
           </View>
 
@@ -526,6 +580,16 @@ function mergeGroups(existing: ProviderCredentialGroup[], incoming: ProviderCred
 
 function Badge({ label, tone }: { label: string; tone: 'success' | 'warning' | 'danger' | 'muted' }) {
   return <IsleChip tone={tone === 'warning' ? 'amber' : tone === 'danger' ? 'danger' : tone === 'success' ? 'mint' : 'default'}>{label}</IsleChip>
+}
+
+function MiniBadge({ label, tone }: { label: string; tone: 'success' | 'warning' | 'muted' }) {
+  const { colors } = useAppTheme()
+  const background = tone === 'success' ? colors.mintSoft : tone === 'warning' ? colors.amberSoft : colors.islandRaised
+  return (
+    <View style={{ minHeight: 24, borderRadius: 12, paddingHorizontal: 8, alignItems: 'center', justifyContent: 'center', backgroundColor: background, borderWidth: 1, borderColor: colors.border }}>
+      <Text style={{ color: colors.textSecondary, fontSize: 10, fontWeight: '900' }}>{label}</Text>
+    </View>
+  )
 }
 
 function ChoiceButton({ label, active, onPress }: { label: string; active: boolean; onPress: () => void }) {
@@ -623,7 +687,16 @@ function CredentialGroupRow({
   )
 }
 
-function ModelSummary({ models, providerType }: { models: string[]; providerType: AIProvider['type'] }) {
+function formatModelEntries(provider: AIProvider): string {
+  const manualModels = getProviderManualModels(provider)
+  const aliases = provider.modelAliases ?? []
+  return [
+    ...manualModels,
+    ...aliases.map((item) => `${item.alias}=${item.model}`),
+  ].join('\n')
+}
+
+function ModelSummary({ models, providerType, aliases, manualCount }: { models: string[]; providerType: AIProvider['type']; aliases: NonNullable<AIProvider['modelAliases']>; manualCount: number }) {
   const { colors } = useAppTheme()
   const { t } = useTranslation()
   const shown = models.slice(0, 8)
@@ -637,8 +710,22 @@ function ModelSummary({ models, providerType }: { models: string[]; providerType
   return (
     <View style={{ borderRadius: 18, padding: 11, backgroundColor: colors.islandRaised, borderWidth: 1, borderColor: colors.border, gap: 9 }}>
       <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 7 }}>
+        <MiniBadge label={t('apiKeyPanel.manualModelShort', { count: manualCount })} tone={manualCount ? 'warning' : 'muted'} />
+        <MiniBadge label={t('apiKeyPanel.aliasShort', { count: aliases.length })} tone={aliases.length ? 'warning' : 'muted'} />
+      </View>
+      <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 7 }}>
         {shown.map((model) => <ModelChip key={model} label={getModelName(model)} />)}
       </View>
+      {aliases.length ? (
+        <View style={{ gap: 5 }}>
+          {aliases.slice(0, 4).map((alias) => (
+            <Text key={alias.alias} numberOfLines={1} style={{ color: colors.textTertiary, fontSize: 11, fontWeight: '800' }}>
+              {`${alias.alias} -> ${alias.model}`}
+            </Text>
+          ))}
+          {aliases.length > 4 ? <Text style={{ color: colors.textTertiary, fontSize: 11, fontWeight: '800' }}>+{aliases.length - 4}</Text> : null}
+        </View>
+      ) : null}
       {models.length > shown.length ? <Text style={{ color: colors.textTertiary, fontSize: 11, fontWeight: '800' }}>+{models.length - shown.length}</Text> : null}
     </View>
   )
@@ -650,6 +737,31 @@ function ModelChip({ label }: { label: string }) {
     <View style={{ minHeight: 30, borderRadius: 15, paddingHorizontal: 10, alignItems: 'center', justifyContent: 'center', backgroundColor: colors.material.field, borderWidth: 1, borderColor: colors.border }}>
       <Text numberOfLines={1} style={{ color: colors.textSecondary, fontSize: 11, fontWeight: '900', maxWidth: 180 }}>{label}</Text>
     </View>
+  )
+}
+
+function CapabilityToggle({ label, active, onPress }: { label: string; active: boolean; onPress: () => void }) {
+  const { colors } = useAppTheme()
+  return (
+    <IslePressable
+      haptic
+      accessibilityLabel={label}
+      onPress={onPress}
+      style={{
+        minHeight: 38,
+        borderRadius: 19,
+        paddingHorizontal: 11,
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 7,
+        backgroundColor: active ? colors.mintSoft : colors.material.field,
+        borderWidth: 1,
+        borderColor: active ? colors.primary : colors.border,
+      }}
+    >
+      <View style={{ width: 8, height: 8, borderRadius: 4, backgroundColor: active ? colors.success : colors.textTertiary }} />
+      <Text style={{ color: active ? colors.text : colors.textSecondary, fontSize: 11, fontWeight: '900' }}>{label}</Text>
+    </IslePressable>
   )
 }
 
@@ -686,18 +798,4 @@ function ActionButton({ label, busy = false, secondary = false, disabled = false
       style={{ flexGrow: 1 }}
     />
   )
-}
-
-function inferMimoWireProtocol(provider: AIProvider): ProviderWireProtocol {
-  return provider.wireProtocol ?? inferMimoWireProtocolFromBaseUrl(provider.baseUrl)
-}
-
-function inferMimoWireProtocolFromBaseUrl(value?: string): ProviderWireProtocol {
-  return /\/anthropic(?:\/v1)?(?:\/|$)/i.test(value ?? '') ? 'anthropic-compatible' : 'openai-compatible'
-}
-
-function shouldReplaceMimoBaseUrl(value?: string): boolean {
-  const trimmed = value?.trim()
-  if (!trimmed) return true
-  return /^https:\/\/(?:api|token-plan-(?:cn|sgp|ams))\.xiaomimimo\.com(?:\/(?:v1|anthropic(?:\/v1)?))?\/?$/i.test(trimmed)
 }

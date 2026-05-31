@@ -3,6 +3,28 @@ import { st } from '@/i18n/service'
 
 type SearchSettings = Pick<Settings, 'webSearchEnabled' | 'webSearchMode' | 'searchProvider' | 'customSearchEndpoint'>
 
+export type SearchProviderCredentialFieldId =
+  | 'tavilyApiKey'
+  | 'googleSearchApiKey'
+  | 'googleSearchCx'
+  | 'bingSearchApiKey'
+
+export interface SearchProviderCredentialField {
+  id: SearchProviderCredentialFieldId
+  label: string
+  placeholder: string
+  secureTextEntry?: boolean
+}
+
+export const SEARCH_PROVIDER_OPTIONS: SearchProviderId[] = ['native', 'tavily', 'google', 'bing', 'custom', 'off']
+export const SEARCH_DIAGNOSTIC_QUERY = 'streaming response text delta'
+export const SEARCH_PROVIDER_CREDENTIAL_FIELDS: SearchProviderCredentialField[] = [
+  { id: 'tavilyApiKey', label: 'Tavily Key', placeholder: 'tvly-...', secureTextEntry: true },
+  { id: 'googleSearchApiKey', label: 'Google Search Key', placeholder: 'Google API Key', secureTextEntry: true },
+  { id: 'googleSearchCx', label: 'Google CX', placeholder: 'Programmable Search Engine cx' },
+  { id: 'bingSearchApiKey', label: 'Bing / Azure Key', placeholder: st('contextPanel.bingKeyPlaceholder'), secureTextEntry: true },
+]
+
 export function resolveSearchProvider(settings: SearchSettings): SearchProviderId {
   if (!settings.webSearchEnabled) return 'off'
   return settings.searchProvider ?? searchProviderFromLegacyMode(settings.webSearchMode)

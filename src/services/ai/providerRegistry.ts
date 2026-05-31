@@ -1,6 +1,7 @@
 import type { AIProvider, ProviderCapabilities, ProviderCredentialMode, ProviderPresetId, ProviderRegion, ProviderType, ProviderWireProtocol } from '@/types'
-import { detectProviderCredentialMode, getXiaomiMimoOfficialBaseUrl } from '@/types'
+import { getXiaomiMimoOfficialBaseUrl } from '@/types'
 import { st } from '@/i18n/service'
+import { inferProviderCredentialModeFromKeyOrBaseUrl, inferProviderTokenPlanRegionFromBaseUrl, inferProviderWireProtocolFromBaseUrl } from '@/services/ai/providerProtocolPolicy'
 
 export interface ProviderPreset {
   id: ProviderPresetId
@@ -55,6 +56,10 @@ export const DEFAULT_PROVIDER_CAPABILITIES: ProviderCapabilities = {
   nativeSearch: false,
   reasoningEffort: false,
   topP: true,
+  responsesApi: false,
+  responsesWebSocket: false,
+  remoteCompact: false,
+  payloadPolicy: true,
 }
 
 export const PROVIDER_PRESETS: ProviderPreset[] = [
@@ -65,6 +70,9 @@ export const PROVIDER_PRESETS: ProviderPreset[] = [
     speech: true,
     nativeSearch: true,
     reasoningEffort: true,
+    responsesApi: true,
+    responsesWebSocket: true,
+    remoteCompact: true,
   }),
   preset('anthropic', 'Anthropic', 'anthropic', 'https://api.anthropic.com/v1', ['anthropic', 'claude'], [/api\.anthropic\.com/i], {
     vision: true,
@@ -484,9 +492,9 @@ function parseProviderImportChunk(chunk: string, index: number, warnings: string
   const presetId = detectProviderPreset({ baseUrl, name, apiKey: keysText }).presetId
   const preset = getProviderPreset(presetId)
   const isMimo = presetId === 'xiaomi-mimo'
-  const credentialMode = isMimo ? inferXiaomiMimoCredentialMode(keysText, baseUrl) : undefined
-  const tokenPlanRegion = isMimo ? inferXiaomiMimoRegion(baseUrl) : undefined
-  const wireProtocol = isMimo ? inferXiaomiMimoWireProtocol(baseUrl) : undefined
+  const credentialMode = isMimo ? inferProviderCredentialModeFromKeyOrBaseUrl(keysText, baseUrl) : undefined
+  const tokenPlanRegion = isMimo ? inferProviderTokenPlanRegionFromBaseUrl(baseUrl) : undefined
+  const wireProtocol = isMimo ? inferProviderWireProtocolFromBaseUrl(baseUrl) : undefined
   const models = parseModelList(modelsText)
   const credentialGroups = parseCredentialGroups(keysText)
 
@@ -514,21 +522,6 @@ function parseProviderImportChunk(chunk: string, index: number, warnings: string
 
   if (!credentialGroups.length) warnings.push(st('providerRegistry.noTokens', { name: provider.name }))
   return provider
-}
-
-function inferXiaomiMimoCredentialMode(apiKeyText: string, baseUrl?: string): ProviderCredentialMode {
-  return detectProviderCredentialMode(apiKeyText) ?? (baseUrl?.includes('api.xiaomimimo.com') ? 'payg' : 'token-plan')
-}
-
-function inferXiaomiMimoRegion(baseUrl?: string): ProviderRegion {
-  const normalized = baseUrl?.toLowerCase() ?? ''
-  if (normalized.includes('token-plan-sgp.')) return 'sgp'
-  if (normalized.includes('token-plan-ams.')) return 'ams'
-  return 'cn'
-}
-
-function inferXiaomiMimoWireProtocol(baseUrl?: string): ProviderWireProtocol {
-  return /\/anthropic(?:\/v1)?(?:\/|$)/i.test(baseUrl ?? '') ? 'anthropic-compatible' : 'openai-compatible'
 }
 
 function readImportFields(chunk: string): Map<string, string[]> {

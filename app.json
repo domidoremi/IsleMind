@@ -2,7 +2,7 @@
   "expo": {
     "name": "IsleMind",
     "slug": "islemind",
-    "version": "1.0.5",
+    "version": "1.0.6",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
     "userInterfaceStyle": "automatic",
@@ -11,7 +11,7 @@
     "splash": {
       "image": "./assets/splash-icon.png",
       "resizeMode": "contain",
-      "backgroundColor": "#FFFFFF"
+      "backgroundColor": "#F8F4EC"
     },
     "ios": {
       "supportsTablet": true,
@@ -22,14 +22,14 @@
     },
     "android": {
       "package": "com.islemind.app",
-      "versionCode": 105,
+      "versionCode": 106,
       "softwareKeyboardLayoutMode": "resize",
       "permissions": [
         "android.permission.REQUEST_INSTALL_PACKAGES"
       ],
       "adaptiveIcon": {
         "foregroundImage": "./assets/adaptive-foreground.png",
-        "backgroundColor": "#BFEAFF"
+        "backgroundColor": "#F8F4EC"
       },
       "edgeToEdgeEnabled": true,
       "predictiveBackGestureEnabled": false

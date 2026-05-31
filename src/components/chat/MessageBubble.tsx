@@ -26,6 +26,8 @@ interface MessageBubbleProps {
   index: number
   isLastAssistant?: boolean
   onCopy?: (message: Message) => void
+  onCopyWorkArtifact?: (message: Message) => void
+  onContinueWorkArtifact?: (message: Message) => void
   onRetry?: (message: Message) => void
   onRegenerate?: () => void
   onSpeak?: (message: Message) => void
@@ -34,7 +36,7 @@ interface MessageBubbleProps {
   onTestModel?: (message: Message) => void
 }
 
-export function MessageBubble({ conversationId, message, index, isLastAssistant = false, onCopy, onRetry, onRegenerate, onSpeak, onDelete, onConfigure, onTestModel }: MessageBubbleProps) {
+export function MessageBubble({ conversationId, message, index, isLastAssistant = false, onCopy, onCopyWorkArtifact, onContinueWorkArtifact, onRetry, onRegenerate, onSpeak, onDelete, onConfigure, onTestModel }: MessageBubbleProps) {
   const { colors } = useAppTheme()
   const { t } = useTranslation()
   const motion = useMotionPreference()
@@ -179,6 +181,8 @@ export function MessageBubble({ conversationId, message, index, isLastAssistant 
               actionsOpen={actionsOpen}
               onToggle={() => setActionsOpen((value) => !value)}
               onCopy={() => onCopy?.(message)}
+              onCopyWorkArtifact={onCopyWorkArtifact ? () => onCopyWorkArtifact(message) : undefined}
+              onContinueWorkArtifact={onContinueWorkArtifact ? () => onContinueWorkArtifact(message) : undefined}
               onSpeak={() => onSpeak?.(message)}
               onConfigure={() => onConfigure?.(message)}
               onTestModel={() => onTestModel?.(message)}
@@ -200,6 +204,8 @@ function MessageActionRow({
   actionsOpen,
   onToggle,
   onCopy,
+  onCopyWorkArtifact,
+  onContinueWorkArtifact,
   onSpeak,
   onConfigure,
   onTestModel,
@@ -213,6 +219,8 @@ function MessageActionRow({
   actionsOpen: boolean
   onToggle: () => void
   onCopy: () => void
+  onCopyWorkArtifact?: () => void
+  onContinueWorkArtifact?: () => void
   onSpeak: () => void
   onConfigure: () => void
   onTestModel: () => void
@@ -254,6 +262,16 @@ function MessageActionRow({
         {actionsOpen && canCopy ? (
           <ActionButton label={t('common.copy')} onPress={onCopy} compact>
             <Copy color={colors.textTertiary} size={13} strokeWidth={2} />
+          </ActionButton>
+        ) : null}
+        {actionsOpen && canCopy && !isUser && onCopyWorkArtifact ? (
+          <ActionButton label={t('messageBubble.copyWorkArtifact')} onPress={onCopyWorkArtifact} compact>
+            <ListChecks color={colors.textTertiary} size={13} strokeWidth={2} />
+          </ActionButton>
+        ) : null}
+        {actionsOpen && canCopy && !isUser && onContinueWorkArtifact ? (
+          <ActionButton label={t('messageBubble.continueWorkArtifact')} onPress={onContinueWorkArtifact} compact>
+            <Sparkles color={colors.textTertiary} size={13} strokeWidth={2} />
           </ActionButton>
         ) : null}
         {actionsOpen && canCopy && !isUser ? (

@@ -8,11 +8,11 @@ import { IsleChip } from '@/components/ui/isle'
 import { IslePressable } from '@/components/ui/isle'
 import { useAppTheme } from '@/hooks/useAppTheme'
 import { useChatStore } from '@/store/chatStore'
-import { getModelConfig, getModelName } from '@/types'
+import { getModelConfig } from '@/types'
 import type { AIProvider, Conversation } from '@/types'
 import { normalizeSearchText } from '@/utils/text'
 import { getReasoningEffortOptions } from '@/utils/modelReasoning'
-import { getProviderAvailableModels } from '@/utils/providerModels'
+import { getProviderDisplayModel, getProviderSelectableModels, resolveProviderModelAlias } from '@/utils/providerModels'
 import { useMotionPreference } from '@/hooks/useMotionPreference'
 import { motionTokens } from '@/theme/animation'
 
@@ -57,8 +57,11 @@ export function ChatOptionsPanel({
     ? orderedProviders.filter((item) => providerMatchesQuery(item, normalizedQuery))
     : orderedProviders
   const selectedModels = selectedProvider
-    ? getSwitchableProviderModels(selectedProvider, normalizedQuery)
-      .map((id) => ({ id, name: getModelName(id), config: getModelConfig(id, selectedProvider.type, selectedProvider.modelConfigs) }))
+      ? getSwitchableProviderModels(selectedProvider, normalizedQuery)
+      .map((id) => {
+        const upstreamModel = resolveProviderModelAlias(selectedProvider, id)
+        return { id, name: getProviderDisplayModel(selectedProvider, id), config: getModelConfig(upstreamModel, selectedProvider.type, selectedProvider.modelConfigs) }
+      })
     : []
   const selectedProviderIsCurrent = selectedProvider?.id === conversation.providerId
   const capabilities = currentProvider?.capabilities
@@ -277,7 +280,8 @@ export function ChatOptionsPanel({
             value={String(conversation.maxTokens)}
             onChange={(value) => {
               const next = Number.parseInt(value, 10)
-              const config = getModelConfig(conversation.model, currentProvider?.type, currentProvider?.modelConfigs)
+              const upstreamModel = currentProvider ? resolveProviderModelAlias(currentProvider, conversation.model) : conversation.model
+              const config = getModelConfig(upstreamModel, currentProvider?.type, currentProvider?.modelConfigs)
               if (!Number.isNaN(next)) patchConversation({ maxTokens: Math.max(128, Math.min(config.maxOutputTokens, next)) })
             }}
           />
@@ -342,10 +346,10 @@ function PickerChip({ label, active, maxWidth }: { label: string; active: boolea
 }
 
 function getSwitchableProviderModels(provider: AIProvider, query = ''): string[] {
-  const models = getProviderAvailableModels(provider)
-    .filter((id) => getModelConfig(id, provider.type, provider.modelConfigs).chatCompatible !== false)
+  const models = getProviderSelectableModels(provider)
+    .filter((id) => getModelConfig(resolveProviderModelAlias(provider, id), provider.type, provider.modelConfigs).chatCompatible !== false)
   if (!query) return models
-  return models.filter((id) => normalizeSearchText(`${id} ${getModelName(id)}`).includes(query))
+  return models.filter((id) => normalizeSearchText(`${id} ${getProviderDisplayModel(provider, id)} ${resolveProviderModelAlias(provider, id)}`).includes(query))
 }
 
 function sortSwitchableProviders(providers: AIProvider[], currentProviderId: string, query: string): AIProvider[] {

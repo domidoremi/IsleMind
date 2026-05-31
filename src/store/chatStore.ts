@@ -4,6 +4,7 @@ import { getModelConfig } from '@/types'
 import { loadData, saveData } from '@/services/storage'
 import { localDataStore } from '@/services/localDataStore'
 import { st } from '@/i18n/service'
+import { getOnboardingConversationDefaults } from '@/utils/onboardingProfile'
 import { useSettingsStore } from './settingsStore'
 
 function generateId(): string {
@@ -74,16 +75,17 @@ export const useChatStore = create<ChatState>((set, get) => ({
     const { settings, providers } = useSettingsStore.getState()
     const provider = providers.find((item) => item.id === providerId)
     const modelConfig = getModelConfig(model, provider?.type, provider?.modelConfigs)
+    const onboardingDefaults = getOnboardingConversationDefaults(settings.onboardingCompanionMode)
     const conversation: Conversation = {
       id,
       title: '',
       providerId,
       model,
       providerModelMode: 'inherited',
-      systemPrompt: '',
-      temperature: settings.defaultTemperature ?? 0.7,
+      systemPrompt: onboardingDefaults.systemPrompt,
+      temperature: settings.defaultTemperature ?? onboardingDefaults.temperature,
       topP: 1,
-      reasoningEffort: 'medium',
+      reasoningEffort: onboardingDefaults.reasoningEffort,
       maxTokens: settings.defaultMaxTokens ?? modelConfig.defaultMaxTokens,
       messages: [],
       createdAt: Date.now(),

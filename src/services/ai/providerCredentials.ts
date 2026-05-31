@@ -2,7 +2,7 @@ import type { AIModel, AIProvider, ProviderCredentialGroup, ProviderOperationCod
 import { getModelConfig, mergeModelConfig, sortModelConfigs } from '@/types'
 import { st } from '@/i18n/service'
 import { defaultProviderSyncPolicy, getProviderPreset } from './providerRegistry'
-import { clearHistoricalInjectedGroupModels } from '@/utils/providerModels'
+import { clearHistoricalInjectedGroupModels, resolveProviderModelAlias } from '@/utils/providerModels'
 
 interface CredentialSyncDeps {
   fetchModels: (provider: AIProvider, group: ProviderCredentialGroup) => Promise<Pick<AIModel, 'id' | 'name' | 'provider'>[] | AIModel[]>
@@ -89,9 +89,10 @@ export function mergeCredentialModelAvailability(groups: ProviderCredentialGroup
 
 export function chooseCredentialForModel(provider: AIProvider, modelId: string): CredentialSelection {
   const normalized = normalizeProviderCredentialGroups(provider)
+  const upstreamModel = resolveProviderModelAlias(provider, modelId)
   const candidates = (normalized.credentialGroups ?? [])
     .filter((group) => group.enabled)
-    .filter((group) => !group.availableModels?.length || group.availableModels.includes(modelId))
+    .filter((group) => !group.availableModels?.length || group.availableModels.includes(upstreamModel) || group.availableModels.includes(modelId))
     .sort((a, b) => (a.failureCount ?? 0) - (b.failureCount ?? 0) || (a.lastUsedAt ?? 0) - (b.lastUsedAt ?? 0))
   const selected = candidates[0] ?? normalized.credentialGroups?.find((group) => group.enabled) ?? null
   return {
