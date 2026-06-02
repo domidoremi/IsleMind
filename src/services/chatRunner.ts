@@ -13,10 +13,11 @@ import { resolveSearchProvider } from '@/services/searchPolicy'
 import { listMcpServers } from '@/services/mcp'
 import { localDataStore } from '@/services/localDataStore'
 import { st } from '@/i18n/service'
-import { getProviderAvailableModels, getProviderPreferredModel, isProviderConversationReady, resolveProviderModelAlias } from '@/utils/providerModels'
+import { isProviderConversationReady, resolveProviderModelAlias } from '@/utils/providerModels'
+import { getPolicyAllowedProviderModels, getPolicyPreferredProviderModel } from '@/services/ai/policy/providerModelAccess'
 import { decideRemoteCompact, estimateRemoteCompactSavedTokens } from '@/services/ai/compact/remoteCompact'
 import { recordCompactUsage } from '@/services/ai/compact/compactUsage'
-import { saveCompactState } from '@/services/ai/compact/compactStateStore'
+import { listActiveCompactStates, saveCompactState } from '@/services/ai/compact/compactStateStore'
 import { appendRuntimeLog } from '@/services/runtimeLog'
 
 function generateId(): string {
@@ -226,6 +227,12 @@ async function createAssistantReply(conversationId: string) {
     .conversations.find((item) => item.id === conversationId)
   const lastUserMessage = [...(latestConversation?.messages ?? [])].reverse().find((message) => message.role === 'user')
   const settings = useSettingsStore.getState().settings
+  let fallbackProviders: AIProvider[] = [provider]
+  try {
+    fallbackProviders = await useSettingsStore.getState().getConfiguredProviders()
+  } catch {
+    fallbackProviders = [provider]
+  }
   const contextTraceId = traceId('context')
   upsertTrace(conversationId, assistantMessage.id, {
     id: contextTraceId,
@@ -476,6 +483,9 @@ async function createAssistantReply(conversationId: string) {
     finishWithError(conversationId, assistantMessage.id, st('chatRunner.error.remoteCompactRequiredFailed'), 'unknown', provider.id)
     return
   }
+  const previousResponseId = compactDecision.enabled
+    ? await resolvePreviousCompactResponseId(conversationId, provider.id, runtimeConversation.model, settings)
+    : undefined
   if (packedPrompt.trimmedCount) {
     upsertTrace(conversationId, assistantMessage.id, completeTrace({
       id: traceId('context-pack'),
@@ -548,7 +558,9 @@ async function createAssistantReply(conversationId: string) {
         conversationId,
         sessionId: conversationId,
         settings,
+        fallbackProviders,
         remoteCompactEligible: compactDecision.enabled,
+        previousResponseId,
       },
       (chunk) => {
         chunkBuffer.push(chunk)
@@ -574,6 +586,7 @@ async function createAssistantReply(conversationId: string) {
           remoteCompactEligible: compactDecision.enabled,
           remoteCompactMode: compactDecision.mode,
           remoteCompactInputTokens: compactDecision.enabled ? packedPrompt.estimatedInputTokens : undefined,
+          previousResponseId,
         })
       },
       (error) => {
@@ -749,6 +762,7 @@ async function finalizeAssistantResult(input: {
   remoteCompactEligible?: boolean
   remoteCompactMode?: RemoteCompactMode
   remoteCompactInputTokens?: number
+  previousResponseId?: string
 }) {
   input.chunkFlush()
   if (activeControllers.get(input.conversationId)?.messageId === input.assistantMessageId) {
@@ -871,6 +885,7 @@ async function finalizeAssistantResult(input: {
       outputTokens: finalResult.usage?.outputTokens,
       messageCount: inputMessages.length,
       settings: useSettingsStore.getState().settings,
+      previousResponseId: input.previousResponseId,
     })
   }
   useChatStore.getState().updateMessage(input.conversationId, input.assistantMessageId, {
@@ -973,6 +988,7 @@ function recordCompletedRemoteCompact(input: {
   outputTokens?: number
   messageCount: number
   settings: { runtimeLogEnabled?: boolean; runtimeLogMaxBytes?: number }
+  previousResponseId?: string
 }) {
   const estimatedSavedTokens = estimateRemoteCompactSavedTokens(input.inputTokens, input.outputTokens)
   const record = recordCompactUsage({
@@ -994,6 +1010,7 @@ function recordCompletedRemoteCompact(input: {
     outputTokens: record.outputTokens,
     estimatedSavedTokens: record.estimatedSavedTokens,
     responseId: input.result.responseId,
+    previousResponseId: input.previousResponseId,
     status: 'completed',
   }, { enabled: input.settings.runtimeLogEnabled, maxBytes: input.settings.runtimeLogMaxBytes })
   if (!input.result.responseId) return
@@ -1008,6 +1025,7 @@ function recordCompletedRemoteCompact(input: {
     compactItemJson: JSON.stringify({
       type: 'responses_context_management',
       responseId: input.result.responseId,
+      previousResponseId: input.previousResponseId,
       recordedAt: now,
     }),
     sourceMessageStartIndex: 0,
@@ -1019,6 +1037,29 @@ function recordCompletedRemoteCompact(input: {
     createdAt: now,
     updatedAt: now,
   }).catch(() => undefined)
+}
+
+async function resolvePreviousCompactResponseId(
+  conversationId: string,
+  providerId: string,
+  model: string,
+  settings: { runtimeLogEnabled?: boolean; runtimeLogMaxBytes?: number }
+): Promise<string | undefined> {
+  try {
+    const [state] = await listActiveCompactStates(conversationId, providerId, model)
+    if (!state?.responseId) return undefined
+    void appendRuntimeLog('compact.request', {
+      conversationId,
+      providerId,
+      model,
+      previousResponseId: state.responseId,
+      compactStateId: state.id,
+      status: 'state_reused',
+    }, { enabled: settings.runtimeLogEnabled, maxBytes: settings.runtimeLogMaxBytes })
+    return state.responseId
+  } catch {
+    return undefined
+  }
 }
 
 async function reviseAnswerWithFlare(input: {
@@ -1097,17 +1138,18 @@ function formatWebPrompt(sources: { title: string; content: string; url?: string
 }
 
 async function resolveRuntimeConversation(conversation: Conversation): Promise<{ conversation: Conversation; provider: AIProvider } | null> {
+  const settings = useSettingsStore.getState().settings
   if ((conversation.providerModelMode ?? 'inherited') !== 'inherited') {
     const provider = useSettingsStore.getState().providers.find((item) => item.id === conversation.providerId)
-    return provider && getProviderAvailableModels(provider).includes(conversation.model) ? { conversation, provider } : null
+    return provider && getPolicyAllowedProviderModels(provider, settings).includes(conversation.model) ? { conversation, provider } : null
   }
   const currentProvider = useSettingsStore.getState().providers.find((item) => item.id === conversation.providerId)
-  if (currentProvider && getProviderAvailableModels(currentProvider).includes(conversation.model) && isProviderConversationReady(currentProvider)) {
+  if (currentProvider && isProviderConversationReady(currentProvider) && getPolicyAllowedProviderModels(currentProvider, settings).includes(conversation.model)) {
     return { conversation, provider: currentProvider }
   }
-  const readyProvider = pickReadyProvider(useSettingsStore.getState().providers, useSettingsStore.getState().settings.defaultProvider)
+  const readyProvider = pickReadyProvider(useSettingsStore.getState().providers, settings.defaultProvider, settings)
   if (!readyProvider) return null
-  const model = getProviderPreferredModel(readyProvider)
+  const model = getPolicyPreferredProviderModel(readyProvider, settings)
   if (!model) return null
   return {
     provider: readyProvider,
@@ -1120,8 +1162,8 @@ async function resolveRuntimeConversation(conversation: Conversation): Promise<{
   }
 }
 
-function pickReadyProvider(providers: AIProvider[], defaultProvider: string | null | undefined): AIProvider | null {
-  const enabled = providers.filter((provider) => isProviderConversationReady(provider))
+function pickReadyProvider(providers: AIProvider[], defaultProvider: string | null | undefined, settings: ReturnType<typeof useSettingsStore.getState>['settings']): AIProvider | null {
+  const enabled = providers.filter((provider) => isProviderConversationReady(provider) && !!getPolicyPreferredProviderModel(provider, settings))
   return enabled.find((provider) => provider.id === defaultProvider) ?? enabled[0] ?? null
 }
 

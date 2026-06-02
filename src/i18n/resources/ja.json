@@ -272,6 +272,8 @@
     "switchModelTitle": "この会話のモデルを切り替えますか？",
     "switchModelMessage": "この会話だけが変更されます。生成中の返信は停止してから切り替えます。",
     "switchModelConfirm": "切り替え",
+    "modelSwitchBlocked": "モデル切り替えをブロックしました",
+    "modelSwitchBlockedMessage": "{{model}} は {{provider}} の現在のアクセスポリシーでブロックされています。",
     "currentConversationOnly": "この会話のみ",
     "contextWindow": "コンテキスト",
     "outputLimit": "出力上限",
@@ -949,6 +951,9 @@
     "modelTestFailed": "モデルテスト失敗",
     "providerEnabled": "{{name}} を有効化しました",
     "providerDisabled": "{{name}} を無効化しました",
+    "deleteProviderTitle": "プロバイダーを削除しますか？",
+    "deleteProviderMessage": "{{name}} をプロバイダー設定から削除し、保存済みトークンを削除します。",
+    "providerDeleted": "プロバイダーを削除しました",
     "defaultUpdated": "既定プロバイダーを更新しました",
     "modelEditCancelled": "モデル編集をキャンセルしました",
     "modelListEditable": "モデル一覧を編集できます",
@@ -1492,7 +1497,12 @@
     "streamBufferedFallback": "プロバイダーが解析可能なストリーミング本文を返しませんでした。非ストリーミングで再試行します。",
     "streamReader": "ReadableStream のチャンクでプロバイダー応答を受信しています。",
     "streamFallbackCompleted": "プロバイダーまたは実行環境がチャンクを提供しないため、非ストリーミング応答で完了しました。",
-    "streamMode": "ストリーミングモード"
+    "streamMode": "ストリーミングモード",
+    "requestRectified": "リクエスト整流済み",
+    "runtimeGovernanceTitle": "ランタイムポリシー",
+    "runtimeGovernanceContent": "アクセス: {{access}}\nルート: {{route}}\nトランスポート: {{transport}}\nペイロード: {{payload}}\nプロキシ: {{proxy}}",
+    "runtimeFallbackTitle": "ランタイムフォールバック",
+    "runtimeFallbackContent": "トリガー: {{trigger}}\n判定: {{decision}}\n選択: {{selected}}"
   },
   "providerOperation": {
     "requestFailed": "リクエストに失敗しました。後で再試行してください。",
@@ -1557,7 +1567,9 @@
     "chunkUnrecognized": "{{index}} 番目のブロックに認識可能なプロバイダー情報がありません。",
     "noTokens": "{{name}} でトークンを認識できませんでした。",
     "importedProviderName": "インポートしたプロバイダー {{index}}",
-    "duplicateSkipped": "{{name}} は重複しているためスキップしました。"
+    "duplicateSkipped": "{{name}} は重複しているためスキップしました。",
+    "providerSkippedByPolicy": "{{name}} はプロバイダーアクセスポリシーでブロックされているためスキップしました。",
+    "modelsSkippedByPolicy": "{{name}} の {{count}} 件のモデルをアクセスポリシーでスキップしました。"
   },
   "storage": {
     "sqliteSyncFailed": "SQLite チャット同期に失敗しました: {{message}}",

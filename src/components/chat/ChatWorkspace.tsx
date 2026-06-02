@@ -52,13 +52,13 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context'
 import { useMainPagerGestureLock } from '@/components/main/MainPagerGestureLock'
 import { applySkillStack, createBaseSkill, extractSkillVariables, listSkills, upsertSkill } from '@/services/skills'
 import { listKnowledgeDocuments, listMemories } from '@/services/contextStore'
-import { getProviderAvailableModels, getProviderDisplayModel, getProviderPreferredModel, getProviderSelectableModels, hasRemoteProviderModelEvidence, inferModelFamily, isProviderConversationReady, MODEL_QUICK_GROUPS, resolveProviderModelAlias, type ModelQuickGroup } from '@/utils/providerModels'
+import { getProviderAvailableModels, getProviderDisplayModel, hasRemoteProviderModelEvidence, inferModelFamily, isProviderConversationReady, MODEL_QUICK_GROUPS, resolveProviderModelAlias, type ModelQuickGroup } from '@/utils/providerModels'
 import { useMotionPreference } from '@/hooks/useMotionPreference'
 import { motionTokens } from '@/theme/animation'
 import { getReasoningEffortOptions, providerSupportsReasoning } from '@/utils/modelReasoning'
 import { getOnboardingConversationDefaults } from '@/utils/onboardingProfile'
 import { summarizeWorkArtifact } from '@/utils/workArtifact'
-import { resolveProviderModelAccess } from '@/services/ai/policy/providerModelAccess'
+import { getPolicyAllowedProviderModels as getAccessAllowedProviderModels, getPolicyPreferredProviderModel as getAccessPreferredProviderModel, providerHasPolicyAllowedModel as accessProviderHasPolicyAllowedModel, resolveProviderModelAliasAccess } from '@/services/ai/policy/providerModelAccess'
 
 type StreamingInputIntent = 'guide' | 'queue' | 'interrupt'
 type ComposerPanel = 'model' | 'reasoning' | 'prompt' | 'more' | null
@@ -283,7 +283,16 @@ export function ChatWorkspace({ conversation, showBack = false, embedded = false
     const result = applySkillStack({ conversation: runtimeConversation, skills: nextSkills, variables: variableValues })
     updateConversation(runtimeConversation.id, result.conversationUpdates)
     if (result.snapshot.providerId && result.snapshot.model) {
-      switchConversationModel(runtimeConversation.id, result.snapshot.providerId, result.snapshot.model)
+      const snapshotProvider = providers.find((item) => item.id === result.snapshot.providerId)
+      if (snapshotProvider && !resolveProviderModelAliasAccess({ provider: snapshotProvider, model: result.snapshot.model, settings }).allowed) {
+        dialog.toast({ title: t('chat.modelSwitchBlocked'), message: t('chat.modelSwitchBlockedMessage', { model: result.snapshot.model, provider: snapshotProvider.name }), tone: 'danger' })
+        return
+      }
+      const switched = switchConversationModel(runtimeConversation.id, result.snapshot.providerId, result.snapshot.model)
+      if (!switched) {
+        dialog.toast({ title: t('chat.modelSwitchBlocked'), message: t('chat.modelSwitchBlockedMessage', { model: result.snapshot.model, provider: snapshotProvider?.name ?? result.snapshot.providerId }), tone: 'danger' })
+        return
+      }
     }
     dialog.toast({ title: t('skills.applied'), message: result.snapshot.names.join(' + '), tone: 'mint' })
   }
@@ -518,6 +527,10 @@ export function ChatWorkspace({ conversation, showBack = false, embedded = false
 
     function switchSetupModel(nextModel: string) {
       if (!homeProvider) return
+      if (!resolveProviderModelAliasAccess({ provider: homeProvider, model: nextModel, settings }).allowed) {
+        dialog.toast({ title: t('chat.modelSwitchBlocked'), message: t('chat.modelSwitchBlockedMessage', { model: nextModel, provider: homeProvider.name }), tone: 'danger' })
+        return
+      }
       setSetupSelectedModel(nextModel)
       setComposerPanel(null)
       dialog.toast({ title: t('chat.modelSwitched'), message: `${homeProvider.name} · ${getProviderDisplayModel(homeProvider, nextModel)}`, tone: 'mint' })
@@ -612,7 +625,12 @@ export function ChatWorkspace({ conversation, showBack = false, embedded = false
                   switchableProviders={switchableProviders}
                   colors={colors}
                   maxHeight={optionsPanelHeight}
+                  settings={settings}
                   onSwitchModel={(nextProvider, nextModel) => {
+                    if (!resolveProviderModelAliasAccess({ provider: nextProvider, model: nextModel, settings }).allowed) {
+                      dialog.toast({ title: t('chat.modelSwitchBlocked'), message: t('chat.modelSwitchBlockedMessage', { model: nextModel, provider: nextProvider.name }), tone: 'danger' })
+                      return
+                    }
                     setSetupSelectedProviderId(nextProvider.id)
                     setSetupSelectedModel(nextModel)
                     dialog.toast({ title: t('chat.modelSwitched'), message: `${nextProvider.name} · ${getProviderDisplayModel(nextProvider, nextModel)}`, tone: 'mint' })
@@ -659,6 +677,10 @@ export function ChatWorkspace({ conversation, showBack = false, embedded = false
             onSystemPromptChange={setSetupSystemPrompt}
             onSwitchModel={switchSetupModel}
             onSwitchProviderModel={(nextProvider, nextModel) => {
+              if (!resolveProviderModelAliasAccess({ provider: nextProvider, model: nextModel, settings }).allowed) {
+                dialog.toast({ title: t('chat.modelSwitchBlocked'), message: t('chat.modelSwitchBlockedMessage', { model: nextModel, provider: nextProvider.name }), tone: 'danger' })
+                return
+              }
               setSetupSelectedProviderId(nextProvider.id)
               setSetupSelectedModel(nextModel)
               setComposerPanel(null)
@@ -863,7 +885,7 @@ function ActiveChatWorkspace({
   goKnowledge: () => void
   onApplyStarter: (draft: string) => void
   updateConversation: (id: string, updates: Partial<Conversation>) => void
-  switchConversationModel: (id: string, providerId: string, model: string) => void
+  switchConversationModel: (id: string, providerId: string, model: string) => boolean
   removeMessage: (convId: string, msgId: string) => void
   hydrateProviderKey: (id: string) => Promise<AIProvider | null>
   updateProvider: (id: string, updates: Partial<AIProvider>) => Promise<void>
@@ -978,6 +1000,11 @@ function ActiveChatWorkspace({
 
   function confirmSwitchModel(nextProvider: AIProvider, nextModel: string, options: { confirm?: boolean } = {}) {
     if (nextProvider.id === activeConversation.providerId && nextModel === activeConversation.model) return
+    const access = resolveProviderModelAliasAccess({ provider: nextProvider, model: nextModel, settings })
+    if (!access.allowed) {
+      dialog.toast({ title: t('chat.modelSwitchBlocked'), message: t('chat.modelSwitchBlockedMessage', { model: nextModel, provider: nextProvider.name }), tone: 'danger' })
+      return
+    }
     void (async () => {
       const nextConfig = getModelConfig(nextModel, nextProvider.type, nextProvider.modelConfigs)
       const currentConfig = getModelConfig(activeConversation.model, provider?.type, provider?.modelConfigs)
@@ -999,7 +1026,11 @@ function ActiveChatWorkspace({
         })
       if (!confirmed) return
       safeStopMessage(activeConversation.id)
-      switchConversationModel(activeConversation.id, nextProvider.id, nextModel)
+      const switched = switchConversationModel(activeConversation.id, nextProvider.id, nextModel)
+      if (!switched) {
+        dialog.toast({ title: t('chat.modelSwitchBlocked'), message: t('chat.modelSwitchBlockedMessage', { model: nextModel, provider: nextProvider.name }), tone: 'danger' })
+        return
+      }
       setShowOptions(false)
       setComposerPanel(null)
       dialog.toast({ title: t('chat.modelSwitched'), message: `${nextProvider.name} · ${getProviderDisplayModel(nextProvider, nextModel)}`, tone: 'mint' })
@@ -1392,6 +1423,7 @@ function FloatingChrome({
                   switchableProviders={switchableProviders}
                   colors={colors}
                   maxHeight={optionsPanelHeight}
+                  settings={settings}
                   onSwitchModel={onSwitchModel}
                   onCopyLink={onCopyLink}
                   onClose={onCloseOptions}
@@ -1539,6 +1571,7 @@ function FloatingComposer({
   }, [conversation.model, provider?.id])
 
   function handleLayout(event: LayoutChangeEvent) {
+    if (panel) return
     onLayoutHeight(Math.ceil(event.nativeEvent.layout.height))
   }
 
@@ -2020,24 +2053,15 @@ function pickReadyProviderForNewConversation(providers: AIProvider[], defaultPro
 }
 
 function getPolicyAllowedProviderModels(provider: AIProvider, settings?: ReturnType<typeof useSettingsStore.getState>['settings']): string[] {
-  return getProviderSelectableModels(provider).filter((model) => {
-    const upstreamModel = resolveProviderModelAlias(provider, model)
-    const direct = resolveProviderModelAccess({ provider, model, settings })
-    const upstream = upstreamModel === model ? direct : resolveProviderModelAccess({ provider, model: upstreamModel, settings })
-    if (!direct.allowed && direct.reason !== 'model_not_allowed') return false
-    if (!upstream.allowed && upstream.reason !== 'model_not_allowed') return false
-    return direct.allowed || upstream.allowed
-  })
+  return getAccessAllowedProviderModels(provider, settings)
 }
 
 function getPolicyPreferredProviderModel(provider: AIProvider, settings?: ReturnType<typeof useSettingsStore.getState>['settings']): string | undefined {
-  const preferred = getProviderPreferredModel(provider)
-  if (preferred && resolveProviderModelAccess({ provider, model: preferred, settings }).allowed) return preferred
-  return getPolicyAllowedProviderModels(provider, settings)[0]
+  return getAccessPreferredProviderModel(provider, settings)
 }
 
 function providerHasPolicyAllowedModel(provider: AIProvider, settings?: ReturnType<typeof useSettingsStore.getState>['settings']): boolean {
-  return getPolicyAllowedProviderModels(provider, settings).length > 0
+  return accessProviderHasPolicyAllowedModel(provider, settings)
 }
 
 function createSetupConversationShell(
@@ -2266,10 +2290,8 @@ async function resolveConversationHealth(
     return health('disabled_provider', inheritedExpired, provider.id, provider.name, t('chat.providerDisabledDescription'), t)
   }
   const upstreamModel = resolveProviderModelAlias(provider, conversation.model)
-  const access = resolveProviderModelAccess({ provider, model: conversation.model, settings })
-  const upstreamAccess = upstreamModel === conversation.model ? access : resolveProviderModelAccess({ provider, model: upstreamModel, settings })
-  const modelAllowed = (access.allowed || access.reason === 'model_not_allowed') && (upstreamAccess.allowed || upstreamAccess.reason === 'model_not_allowed') && (access.allowed || upstreamAccess.allowed)
-  if (!modelAllowed) {
+  const access = resolveProviderModelAliasAccess({ provider, model: conversation.model, settings })
+  if (!access.allowed) {
     return health('model_unavailable', inheritedExpired, provider.id, provider.name, t('chat.modelNotInProvider', { model: conversation.model, provider: provider.name }), t)
   }
   const availableModels = getPolicyAllowedProviderModels(provider, settings)

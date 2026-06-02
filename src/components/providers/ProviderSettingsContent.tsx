@@ -26,6 +26,7 @@ import { syncAndTestProvider, summarizeProviderActivation } from '@/services/pro
 import { IsleMetric } from '@/components/ui/isle'
 import { normalizeSearchText, parseModels } from '@/utils/text'
 import { isProviderConversationReady } from '@/utils/providerModels'
+import { getPolicyAllowedProviderModels, getProviderModelDisplayCandidates, providerHasPolicyAllowedModel, type ProviderModelAccessInput } from '@/services/ai/policy/providerModelAccess'
 import { useMotionPreference } from '@/hooks/useMotionPreference'
 import { motionTokens } from '@/theme/animation'
 import { useSafeAreaInsets } from 'react-native-safe-area-context'
@@ -67,8 +68,9 @@ export function ProviderSettingsContent({ embedded = false, onClose }: ProviderS
   const hydrateProviderKey = useSettingsStore((state) => state.hydrateProviderKey)
   const updateProvider = useSettingsStore((state) => state.updateProvider)
   const updateProviderCredentialGroupHealth = useSettingsStore((state) => state.updateProviderCredentialGroupHealth)
-  const modelTestModel = useSettingsStore((state) => state.settings.modelTestModel)
-  const modelTestCheckParameters = useSettingsStore((state) => state.settings.modelTestCheckParameters)
+  const settings = useSettingsStore((state) => state.settings)
+  const modelTestModel = settings.modelTestModel
+  const modelTestCheckParameters = settings.modelTestCheckParameters
   const activationJob = useActivationJobStore((state) => state.job)
   const startActivationJob = useActivationJobStore((state) => state.start)
   const updateActivationJob = useActivationJobStore((state) => state.update)
@@ -110,13 +112,13 @@ export function ProviderSettingsContent({ embedded = false, onClose }: ProviderS
   const visibleProviders = useMemo(() => {
     const normalizedFilter = normalizeSearchText(modelFilter)
     const filtered = normalizedFilter
-      ? providers.filter((provider) => providerMatchesModelFilter(provider, normalizedFilter))
+      ? providers.filter((provider) => providerMatchesModelFilter(provider, normalizedFilter, settings))
       : providers
-    return [...filtered].sort((a, b) => compareProviders(a, b, sortMode, usageByProvider))
-  }, [modelFilter, providers, sortMode, usageByProvider])
+    return [...filtered].sort((a, b) => compareProviders(a, b, sortMode, usageByProvider, settings))
+  }, [modelFilter, providers, settings, sortMode, usageByProvider])
 
   const enabled = providers.filter((provider) => provider.enabled).length
-  const available = providers.filter((provider) => isProviderConversationReady(provider)).length
+  const available = providers.filter((provider) => isProviderConversationReady(provider) && providerHasPolicyAllowedModel(provider, settings)).length
   const credentialGroups = providers.reduce((sum, provider) => sum + (provider.credentialGroups?.length ?? 0), 0)
 
   async function addProviderFromForm(provider: AIProvider) {
@@ -139,7 +141,7 @@ export function ProviderSettingsContent({ embedded = false, onClose }: ProviderS
   }
 
   async function importProvidersFromText(input: string) {
-    const result = parseProviderImportText(input)
+    const result = parseProviderImportText(input, { accessSettings: settings })
     if (!result.providers.length) {
       dialog.notice({ title: t('providerSettings.importEmpty'), message: result.warnings.join('\n') || t('providerSettings.importEmptyMessage'), tone: 'amber' })
       return
@@ -240,7 +242,7 @@ export function ProviderSettingsContent({ embedded = false, onClose }: ProviderS
               durationMs: 1300,
             })
           },
-        }, { enable: true, testModel: modelTestModel, checkParameters: modelTestCheckParameters }).catch((error) => ({
+        }, { enable: true, testModel: modelTestModel, checkParameters: modelTestCheckParameters, accessSettings: settings }).catch((error) => ({
           providerId: provider.id,
           providerName: provider.name,
           enabled: provider.enabled,
@@ -494,6 +496,38 @@ function closeStandaloneProviderSettings() {
   router.replace('/settings')
 }
 
+function useKeyboardAwareModalRequestClose(onClose: () => void) {
+  const keyboardActiveRef = useRef(false)
+
+  useEffect(() => {
+    const showSub = Keyboard.addListener(Platform.OS === 'ios' ? 'keyboardWillShow' : 'keyboardDidShow', () => {
+      keyboardActiveRef.current = true
+    })
+    const hideSub = Keyboard.addListener(Platform.OS === 'ios' ? 'keyboardWillHide' : 'keyboardDidHide', () => {
+      keyboardActiveRef.current = false
+    })
+    return () => {
+      showSub.remove()
+      hideSub.remove()
+    }
+  }, [])
+
+  function markKeyboardActive() {
+    keyboardActiveRef.current = true
+  }
+
+  function handleRequestClose() {
+    if (Platform.OS === 'android' && keyboardActiveRef.current) {
+      Keyboard.dismiss()
+      keyboardActiveRef.current = false
+      return
+    }
+    onClose()
+  }
+
+  return { handleRequestClose, markKeyboardActive }
+}
+
 function ProviderListRow({
   provider,
   selected,
@@ -651,6 +685,23 @@ function ProviderFormModal({
   const providerConfigDraft = resolveProviderConfigDraft({ provider: {}, presetId, baseUrl, wireProtocol })
   const compact = height < 680
 
+  function resetDraft() {
+    setName('')
+    setBaseUrl('')
+    setModelsText('')
+    setKeysText('')
+    setAdvancedOpen(false)
+    setPresetId(DEFAULT_PROVIDER_PRESET_ID)
+    setWireProtocol(DEFAULT_PROVIDER_WIRE_PROTOCOL)
+  }
+
+  function closeWithoutSubmit() {
+    resetDraft()
+    onClose()
+  }
+
+  const keyboardRequestClose = useKeyboardAwareModalRequestClose(closeWithoutSubmit)
+
   function submit() {
     const modelList = parseModels(modelsText)
     const provider = applyProviderPreset({
@@ -670,13 +721,7 @@ function ProviderFormModal({
       enabled: false,
     } satisfies AIProvider, presetId)
     onSubmit(provider)
-    setName('')
-    setBaseUrl('')
-    setModelsText('')
-    setKeysText('')
-    setAdvancedOpen(false)
-    setPresetId(DEFAULT_PROVIDER_PRESET_ID)
-    setWireProtocol(DEFAULT_PROVIDER_WIRE_PROTOCOL)
+    resetDraft()
   }
 
   function selectPreset(nextPresetId: ProviderPresetId) {
@@ -695,7 +740,7 @@ function ProviderFormModal({
   }
 
   return (
-    <Modal transparent visible={visible} animationType="none" statusBarTranslucent onRequestClose={onClose}>
+    <Modal transparent visible={visible} animationType="none" statusBarTranslucent onRequestClose={keyboardRequestClose.handleRequestClose}>
       <View style={{ flex: 1 }}>
         <MotiView
           from={{ opacity: 0 }}
@@ -703,7 +748,7 @@ function ProviderFormModal({
           transition={{ type: 'timing', duration: motion === 'full' ? motionTokens.duration.fast : 1 }}
           style={{ position: 'absolute', top: 0, right: 0, bottom: 0, left: 0 }}
         >
-          <IsleOverlayPressable accessibilityLabel={t('dialog.close')} accessibilityRole="button" onPress={onClose} style={{ flex: 1, backgroundColor: colors.backdrop }} />
+          <IsleOverlayPressable accessibilityLabel={t('dialog.close')} accessibilityRole="button" onPress={closeWithoutSubmit} style={{ flex: 1, backgroundColor: colors.backdrop }} />
         </MotiView>
         <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined} style={{ flex: 1, justifyContent: 'flex-end' }}>
           <MotiView
@@ -718,7 +763,7 @@ function ProviderFormModal({
                   <Text style={{ color: colors.text, fontSize: 18, fontWeight: '900' }}>{t('settings.addProvider')}</Text>
                   <Text style={{ color: colors.textSecondary, fontSize: 12, marginTop: 3 }}>{t('providerSettings.addSubtitle')}</Text>
                 </View>
-                <IsleIconButton label={t('dialog.close')} onPress={onClose}>
+                <IsleIconButton label={t('dialog.close')} onPress={closeWithoutSubmit}>
                   <X color={colors.textSecondary} size={18} />
                 </IsleIconButton>
               </View>
@@ -740,7 +785,7 @@ function ProviderFormModal({
               showsVerticalScrollIndicator={compact}
               contentContainerStyle={{ gap: 10, paddingHorizontal: 16, paddingBottom: 12, backgroundColor: colors.surface }}
             >
-              <IsleField label={t('providerSettings.name')} inputProps={{ value: name, onChangeText: setName, placeholder: preset.name, autoCapitalize: 'none' }} />
+              <IsleField label={t('providerSettings.name')} inputProps={{ value: name, onChangeText: setName, onFocus: keyboardRequestClose.markKeyboardActive, placeholder: preset.name, autoCapitalize: 'none' }} />
               {providerConfigDraft.isProtocolSelectable ? (
                 <View style={{ borderRadius: 18, padding: 11, backgroundColor: colors.islandRaised, gap: 9 }}>
                   <Text style={{ color: colors.text, fontSize: 13, fontWeight: '900' }}>{t('providerSettings.protocol.title')}</Text>
@@ -756,6 +801,7 @@ function ProviderFormModal({
                 label={t('providerSettings.baseUrl')}
                 inputProps={{
                   value: baseUrl,
+                  onFocus: keyboardRequestClose.markKeyboardActive,
                   onChangeText: (value) => {
                     setBaseUrl(value)
                     if (shouldSyncWireProtocolFromBaseUrl(providerConfigDraft)) setWireProtocol(inferProviderWireProtocolFromBaseUrl(value))
@@ -768,7 +814,7 @@ function ProviderFormModal({
               <IsleField
                 label={t('providerSettings.tokens')}
                 note={t('providerSettings.tokensNote')}
-                inputProps={{ value: keysText, onChangeText: setKeysText, placeholder: 'sk-...\nsk-...', autoCapitalize: 'none', autoCorrect: false, multiline: true, secureTextEntry: false, style: { minHeight: compact ? 72 : 92, maxHeight: compact ? 110 : 140 } }}
+                inputProps={{ value: keysText, onChangeText: setKeysText, onFocus: keyboardRequestClose.markKeyboardActive, placeholder: 'sk-...\nsk-...', autoCapitalize: 'none', autoCorrect: false, multiline: true, secureTextEntry: false, style: { minHeight: compact ? 72 : 92, maxHeight: compact ? 110 : 140 } }}
               />
               <IslePressable
                 haptic
@@ -784,12 +830,12 @@ function ProviderFormModal({
                 <IsleField
                   label={t('settings.models')}
                   note={t('providerSettings.modelsNote')}
-                  inputProps={{ value: modelsText, onChangeText: setModelsText, placeholder: t('providerSettings.oneModelPerLine'), autoCapitalize: 'none', autoCorrect: false, multiline: true, style: { minHeight: 76, maxHeight: 120 } }}
+                  inputProps={{ value: modelsText, onChangeText: setModelsText, onFocus: keyboardRequestClose.markKeyboardActive, placeholder: t('providerSettings.oneModelPerLine'), autoCapitalize: 'none', autoCorrect: false, multiline: true, style: { minHeight: 76, maxHeight: 120 } }}
                 />
               ) : null}
             </ScrollView>
             <View style={{ flexDirection: 'row', gap: 10, paddingHorizontal: 16, paddingTop: 10, paddingBottom: Math.max(insets.bottom, 10) + 10, backgroundColor: colors.surface, borderTopWidth: 1, borderTopColor: colors.border }}>
-              <IsleButton label={t('common.cancel')} onPress={onClose} style={{ flex: 1 }} />
+              <IsleButton label={t('common.cancel')} onPress={closeWithoutSubmit} style={{ flex: 1 }} />
               <IsleButton label={t('common.save')} tone="primary" onPress={submit} style={{ flex: 1 }} />
               </View>
           </MotiView>
@@ -844,6 +890,7 @@ function ProviderImportModal({
   const inputScrollEnabled = targetInputHeight > maxInputHeight
   const sheetMaxHeight = Math.min(availableSheetHeight, height * (compact ? 0.96 : 0.9))
   const footerCompact = width < 380
+  const keyboardRequestClose = useKeyboardAwareModalRequestClose(onClose)
 
   useEffect(() => {
     if (!visible) {
@@ -912,7 +959,7 @@ function ProviderImportModal({
   }
 
   return (
-    <Modal transparent visible={visible} animationType="none" statusBarTranslucent onRequestClose={onClose}>
+    <Modal transparent visible={visible} animationType="none" statusBarTranslucent onRequestClose={keyboardRequestClose.handleRequestClose}>
       <View style={{ flex: 1 }}>
         <MotiView
           from={{ opacity: 0 }}
@@ -993,6 +1040,7 @@ function ProviderImportModal({
                   <TextInput
                     value={input}
                     onChangeText={setInput}
+                    onFocus={keyboardRequestClose.markKeyboardActive}
                     onContentSizeChange={(event) => setContentHeight(event.nativeEvent.contentSize.height)}
                     multiline
                     scrollEnabled={inputScrollEnabled}
@@ -1027,10 +1075,10 @@ function ProviderImportModal({
   )
 }
 
-function compareProviders(a: AIProvider, b: AIProvider, mode: ProviderSortMode, usageByProvider: Map<string, number>): number {
+function compareProviders(a: AIProvider, b: AIProvider, mode: ProviderSortMode, usageByProvider: Map<string, number>, settings?: ProviderModelAccessInput['settings']): number {
   if (mode === 'recent') return (usageByProvider.get(b.id) ?? 0) - (usageByProvider.get(a.id) ?? 0)
   if (mode === 'enabled') return Number(b.enabled) - Number(a.enabled) || a.name.localeCompare(b.name)
-  if (mode === 'models') return b.models.length - a.models.length || a.name.localeCompare(b.name)
+  if (mode === 'models') return getPolicyAllowedProviderModels(b, settings).length - getPolicyAllowedProviderModels(a, settings).length || a.name.localeCompare(b.name)
   if (mode === 'health') return providerHealthRank(b) - providerHealthRank(a) || a.name.localeCompare(b.name)
   if (mode === 'name') return a.name.localeCompare(b.name)
   return 0
@@ -1043,13 +1091,16 @@ function providerHealthRank(provider: AIProvider): number {
   return 2
 }
 
-function providerMatchesModelFilter(provider: AIProvider, filter: string): boolean {
+function providerMatchesModelFilter(provider: AIProvider, filter: string, settings?: ProviderModelAccessInput['settings']): boolean {
+  const policyModels = getProviderModelDisplayCandidates({ providers: [provider], settings, includeDisabled: true, includeLocalSetup: true })[0]?.models ?? []
+  const allowedModelIds = new Set(policyModels.map((model) => model.toLowerCase()))
   const values = [
     provider.name,
     provider.type,
-    ...provider.models,
-    ...(provider.modelConfigs ?? []).flatMap((model) => [model.id, model.name]),
-    ...(provider.credentialGroups ?? []).flatMap((group) => group.availableModels ?? []),
+    ...policyModels,
+    ...(provider.modelConfigs ?? [])
+      .filter((model) => allowedModelIds.has(model.id.toLowerCase()))
+      .flatMap((model) => [model.id, model.name]),
   ]
   return values.some((value) => normalizeSearchText(value).includes(filter))
 }

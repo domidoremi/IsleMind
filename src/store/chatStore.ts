@@ -5,6 +5,7 @@ import { loadData, saveData } from '@/services/storage'
 import { localDataStore } from '@/services/localDataStore'
 import { st } from '@/i18n/service'
 import { getOnboardingConversationDefaults } from '@/utils/onboardingProfile'
+import { resolveProviderModelAliasAccess } from '@/services/ai/policy/providerModelAccess'
 import { useSettingsStore } from './settingsStore'
 
 function generateId(): string {
@@ -28,7 +29,7 @@ interface ChatState {
   delete: (id: string) => void
   rename: (id: string, title: string) => void
   updateConversation: (id: string, updates: Partial<Conversation>) => void
-  switchConversationModel: (id: string, providerId: string, model: string) => void
+  switchConversationModel: (id: string, providerId: string, model: string) => boolean
   removeMessage: (convId: string, msgId: string) => void
   trimAfterMessage: (convId: string, msgId: string) => void
   addMessage: (convId: string, message: Message) => void
@@ -164,9 +165,20 @@ export const useChatStore = create<ChatState>((set, get) => ({
   },
 
   switchConversationModel: (id: string, providerId: string, model: string) => {
-    const { providers } = useSettingsStore.getState()
+    const nextModel = model.trim()
+    if (!nextModel) return false
+    const { providers, settings } = useSettingsStore.getState()
     const provider = providers.find((item) => item.id === providerId)
-    const modelConfig = getModelConfig(model, provider?.type, provider?.modelConfigs)
+    if (!provider) {
+      set({ error: st('chat.providerMissingDescription', { providerId }) })
+      return false
+    }
+    const access = resolveProviderModelAliasAccess({ provider, model: nextModel, settings })
+    if (!access.allowed) {
+      set({ error: st('chat.modelSwitchBlockedMessage', { model: nextModel, provider: provider.name }) })
+      return false
+    }
+    const modelConfig = getModelConfig(nextModel, provider.type, provider.modelConfigs)
     set((state) => {
       const updated = state.conversations.map((c) => {
         if (c.id !== id) return c
@@ -174,7 +186,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
         return {
           ...c,
           providerId,
-          model,
+          model: nextModel,
           providerModelMode: 'manual' as const,
           maxTokens: nextMaxTokens || modelConfig.defaultMaxTokens,
           temperature: Math.min(c.temperature, modelConfig.maxTemperature ?? 2),
@@ -186,6 +198,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
       void persistConversations(updated)
       return { conversations: updated }
     })
+    return true
   },
 
   removeMessage: (convId: string, msgId: string) => {

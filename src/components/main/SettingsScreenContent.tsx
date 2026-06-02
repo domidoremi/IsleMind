@@ -3,12 +3,12 @@ import { ActivityIndicator, ScrollView, Text, View } from 'react-native'
 import { router, usePathname } from 'expo-router'
 import * as Clipboard from 'expo-clipboard'
 import * as Sharing from 'expo-sharing'
-import { Activity, BookOpen, Brain, Database, Download, FileJson, Globe2, House, KeyRound, Languages, Network, RotateCcw, ShieldCheck, SlidersHorizontal, Smartphone, Sparkles, Trash2, Upload } from 'lucide-react-native'
+import { Activity, BookOpen, Brain, Database, Download, FileJson, Globe2, House, KeyRound, Network, RotateCcw, ShieldCheck, SlidersHorizontal, Smartphone, Sparkles, Trash2, Upload } from 'lucide-react-native'
 import { useTranslation } from 'react-i18next'
 import { IslePressable } from '@/components/ui/isle'
 import { IsleChip } from '@/components/ui/isle'
 import { IsleButton } from '@/components/ui/isle'
-import { IsleField, IsleHeader, IsleIconButton, IsleListItem, IsleSection, IsleToggle } from '@/components/ui/isle'
+import { IsleDisclosure, IsleField, IsleHeader, IsleIconButton, IsleListItem, IsleSection, IsleToggle } from '@/components/ui/isle'
 import { IsleMetric } from '@/components/ui/isle'
 import { useAppTheme } from '@/hooks/useAppTheme'
 import { useSettingsStore } from '@/store/settingsStore'
@@ -62,6 +62,8 @@ const CACHE_TTL_OPTIONS: { value: BedrockCacheTtl; labelKey: string }[] = [
   { value: '1h', labelKey: 'settings.cacheTtl1h' },
 ]
 
+type SettingsAdvancedGroup = 'diagnostics' | 'governance' | 'updates' | 'danger'
+
 export function SettingsScreenContent({ active = true, onHome }: { active?: boolean; onHome?: () => void } = {}) {
   const { colors } = useAppTheme()
   const { t } = useTranslation()
@@ -79,11 +81,18 @@ export function SettingsScreenContent({ active = true, onHome }: { active?: bool
   const [contextHealth, setContextHealth] = useState<WorkspaceReadinessContextHealth>({ loading: true })
   const [diagnostics, setDiagnostics] = useState<RuntimeDiagnosticsSummary | null>(null)
   const [refreshingDiagnostics, setRefreshingDiagnostics] = useState(false)
+  const [expandedGroups, setExpandedGroups] = useState<Record<SettingsAdvancedGroup, boolean>>({
+    diagnostics: false,
+    governance: false,
+    updates: false,
+    danger: false,
+  })
   const enabledProviders = providers.filter((provider) => provider.enabled).length
   const defaultProvider = providers.find((provider) => provider.id === settings.defaultProvider)
   const version = getVersionSnapshot()
   const searchProvider = resolveSearchProvider(settings)
   const readiness = buildWorkspaceReadiness({ providers, settings, contextHealth })
+  const foldoutBodyStyle = { marginTop: 8, borderRadius: 24, padding: 12, backgroundColor: colors.material.paper, borderWidth: 1, borderColor: colors.border, gap: 12 }
   const diagnosticRows = useMemo(() => diagnostics ? buildDiagnosticRows(diagnostics, t) : [], [diagnostics, t])
   const readinessItems = readiness.items.map((item) => ({
     ...item,
@@ -240,6 +249,10 @@ export function SettingsScreenContent({ active = true, onHome }: { active?: bool
     dialog.toast({ title: next ? t('settings.autoCheckOn') : t('settings.autoCheckOff'), tone: next ? 'mint' : 'amber' })
   }
 
+  function toggleExpandedGroup(group: SettingsAdvancedGroup) {
+    setExpandedGroups((current) => ({ ...current, [group]: !current[group] }))
+  }
+
   async function chooseLanguage(language: Language) {
     setLanguage(language)
     await changeAppLanguage(language)
@@ -363,6 +376,18 @@ export function SettingsScreenContent({ active = true, onHome }: { active?: bool
         </View>
       </IsleSection>
 
+      <IsleSection title={t('settings.aiSettings')} style={{ marginTop: 14 }}>
+        <View style={{ gap: 8 }}>
+          <SettingLink title={t('settings.providerManagement')} description={`${enabledProviders} ${t('settings.enabled')} · ${providers.length} ${t('settings.providers')}`} icon={<KeyRound color={colors.text} size={18} />} onPress={() => router.push('/settings/providers')} />
+          <SettingLink title={t('settings.context')} description={t('settings.contextDescription')} icon={<Globe2 color={colors.text} size={18} />} onPress={() => router.push('/settings/context')} />
+          <SettingLink title={t('settings.memory')} description={t('settings.memoryDescription')} icon={<Brain color={colors.text} size={18} />} onPress={() => router.push('/settings/memory')} />
+          <SettingLink title={t('settings.knowledge')} description={t('settings.knowledgeDescription')} icon={<Database color={colors.text} size={18} />} onPress={() => router.push('/settings/knowledge')} />
+          <SettingLink title={t('settings.preferences')} description={t('settings.preferencesDescription')} icon={<SlidersHorizontal color={colors.text} size={18} />} onPress={() => router.push('/settings/preferences')} />
+          <SettingLink title={t('settings.skills')} description={t('settings.skillsDescription')} icon={<Sparkles color={colors.text} size={18} />} onPress={() => router.push('/settings/skills')} />
+          <SettingLink title={t('settings.mcp')} description={t('settings.mcpDescription')} icon={<Network color={colors.text} size={18} />} onPress={() => router.push('/settings/mcp')} />
+        </View>
+      </IsleSection>
+
       <IsleSection title={t('settings.basicFeatures')} style={{ marginTop: 14 }}>
         <View style={{ gap: 10 }}>
           <IsleToggle
@@ -393,75 +418,80 @@ export function SettingsScreenContent({ active = true, onHome }: { active?: bool
         </View>
       </IsleSection>
 
-      <IsleSection title={t('settings.theme')} style={{ marginTop: 14 }}>
-        <View style={{ flexDirection: 'row', gap: 10, flexWrap: 'wrap' }}>
-          {(['system', 'light', 'dark'] satisfies ThemeMode[]).map((item) => (
-            <IslePressable key={item} haptic onPress={() => setTheme(item)} style={settingsChipPressableStyle}>
-              <IsleChip active={settings.theme === item}>{item === 'system' ? t('settings.themeSystem') : item === 'light' ? t('settings.themeLight') : t('settings.themeDark')}</IsleChip>
-            </IslePressable>
-          ))}
-        </View>
-      </IsleSection>
-
-      <IsleSection title={t('settings.language')} style={{ marginTop: 14 }}>
-        <View style={{ gap: 8 }}>
-          {LANGUAGE_OPTIONS.map((item) => (
-            <IsleListItem
-              key={item.id}
-              title={item.label}
-              description={item.detail}
-              onPress={() => void chooseLanguage(item.id)}
-              leading={<IconWrap><Languages color={colors.text} size={18} /></IconWrap>}
-              trailing={<IsleChip active={settings.language === item.id}>{settings.language === item.id ? t('settings.current') : item.id}</IsleChip>}
-            />
-          ))}
-        </View>
-      </IsleSection>
-
-      <IsleSection title={t('settings.aiSettings')} style={{ marginTop: 14 }}>
-        <View style={{ gap: 8 }}>
-          <SettingLink title={t('settings.providerManagement')} description={`${enabledProviders} ${t('settings.enabled')} · ${providers.length} ${t('settings.providers')}`} icon={<KeyRound color={colors.text} size={18} />} onPress={() => router.push('/settings/providers')} />
-          <SettingLink title={t('settings.context')} description={t('settings.contextDescription')} icon={<Globe2 color={colors.text} size={18} />} onPress={() => router.push('/settings/context')} />
-          <SettingLink title={t('settings.memory')} description={t('settings.memoryDescription')} icon={<Brain color={colors.text} size={18} />} onPress={() => router.push('/settings/memory')} />
-          <SettingLink title={t('settings.knowledge')} description={t('settings.knowledgeDescription')} icon={<Database color={colors.text} size={18} />} onPress={() => router.push('/settings/knowledge')} />
-          <SettingLink title={t('settings.preferences')} description={t('settings.preferencesDescription')} icon={<SlidersHorizontal color={colors.text} size={18} />} onPress={() => router.push('/settings/preferences')} />
-          <SettingLink title={t('settings.skills')} description={t('settings.skillsDescription')} icon={<Sparkles color={colors.text} size={18} />} onPress={() => router.push('/settings/skills')} />
-          <SettingLink title={t('settings.mcp')} description={t('settings.mcpDescription')} icon={<Network color={colors.text} size={18} />} onPress={() => router.push('/settings/mcp')} />
-        </View>
-      </IsleSection>
-
-      <IsleSection
-        title={t('settings.runtimeDiagnostics')}
-        subtitle={t('settings.runtimeDiagnosticsSubtitle')}
-        action={<IsleChip tone={diagnostics?.providers.degraded ? 'amber' : 'mint'}>{diagnostics ? t('settings.runtimeDiagnosticsReady') : t('settings.runtimeDiagnosticsLoading')}</IsleChip>}
-        style={{ marginTop: 14 }}
-      >
-        <View style={{ gap: 10 }}>
-          <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8 }}>
-            {diagnosticRows.map((row) => (
-              <DiagnosticPill key={row.key} label={row.label} value={row.value} tone={row.tone} />
+      <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 12, marginTop: 14 }}>
+        <IsleSection title={t('settings.theme')} style={{ flexGrow: 1, flexBasis: 160 }} contentStyle={{ padding: 12 }}>
+          <View style={{ flexDirection: 'row', gap: 8, flexWrap: 'wrap' }}>
+            {(['system', 'light', 'dark'] satisfies ThemeMode[]).map((item) => (
+              <IslePressable key={item} haptic onPress={() => setTheme(item)} style={settingsChipPressableStyle}>
+                <IsleChip active={settings.theme === item}>{item === 'system' ? t('settings.themeSystem') : item === 'light' ? t('settings.themeLight') : t('settings.themeDark')}</IsleChip>
+              </IslePressable>
             ))}
           </View>
-          <View style={{ borderRadius: 18, padding: 11, backgroundColor: colors.islandRaised, borderWidth: 1, borderColor: colors.border, gap: 7 }}>
-            <Text style={{ color: colors.text, fontSize: 13, fontWeight: '900' }}>{t('settings.runtimeLogFile')}</Text>
-            <Text selectable numberOfLines={2} style={{ color: colors.textSecondary, fontSize: 11, lineHeight: 16, fontWeight: '800' }}>
-              {diagnostics?.log.path ?? getRuntimeLogPath()}
-            </Text>
-            <Text style={{ color: colors.textTertiary, fontSize: 11, lineHeight: 16, fontWeight: '800' }}>
-              {t('settings.runtimeLogState', { size: diagnostics?.log.size ?? 0, max: diagnostics?.log.maxBytes ?? settings.runtimeLogMaxBytes ?? 1048576 })}
-            </Text>
+        </IsleSection>
+        <IsleSection title={t('settings.language')} style={{ flexGrow: 1, flexBasis: 160 }} contentStyle={{ padding: 12 }}>
+          <View style={{ gap: 8 }}>
+            {LANGUAGE_OPTIONS.map((item) => (
+              <IslePressable key={item.id} haptic onPress={() => void chooseLanguage(item.id)} style={settingsChipPressableStyle}>
+                <IsleChip active={settings.language === item.id}>{settings.language === item.id ? t('settings.current') : item.label}</IsleChip>
+              </IslePressable>
+            ))}
           </View>
-          <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8 }}>
-            <IsleButton label={refreshingDiagnostics ? t('settings.runtimeDiagnosticsRefreshing') : t('settings.runtimeDiagnosticsRefresh')} compact icon={<Activity color={colors.textSecondary} size={15} />} onPress={() => void refreshRuntimeDiagnostics()} disabled={refreshingDiagnostics} />
-            <IsleButton label={t('settings.runtimeLogCopy')} compact icon={<FileJson color={colors.textSecondary} size={15} />} onPress={() => void copyRuntimeLogTail()} />
-            <IsleButton label={t('settings.runtimeLogShare')} compact icon={<Upload color={colors.textSecondary} size={15} />} onPress={() => void shareRuntimeLogFile()} />
-            <IsleButton label={t('settings.runtimeLogClear')} compact tone="danger" icon={<Trash2 color={colors.error} size={15} />} onPress={() => void clearRuntimeLogFile()} />
-          </View>
+        </IsleSection>
+      </View>
+
+      <IsleSection title={t('settings.importExport')} style={{ marginTop: 14 }}>
+        <View style={{ flexDirection: 'row', gap: 12 }}>
+          <DataButton label={t('settings.exportJson')} icon={<Download color={colors.surface} size={18} />} onPress={() => void exportJson()} />
+          <DataButton label={t('settings.importJson')} icon={<Upload color={colors.surface} size={18} />} onPress={() => void importJson()} />
         </View>
+        <Text style={{ marginTop: 10, color: colors.textTertiary, fontSize: 12, fontWeight: '700', lineHeight: 18 }}>
+          {t('settings.importExportDescription')}
+        </Text>
       </IsleSection>
 
-      <IsleSection title={t('settings.upstreamGovernance')} subtitle={t('settings.upstreamGovernanceSubtitle')} style={{ marginTop: 14 }}>
-        <View style={{ gap: 12 }}>
+      <View style={{ gap: 8, marginTop: 14 }}>
+        <IsleDisclosure
+          title={t('settings.runtimeDiagnostics')}
+          summary={t('settings.runtimeDiagnosticsSubtitle')}
+          expanded={expandedGroups.diagnostics}
+          onPress={() => toggleExpandedGroup('diagnostics')}
+        />
+        {expandedGroups.diagnostics ? (
+          <View style={foldoutBodyStyle}>
+            <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8 }}>
+              <IsleChip tone={diagnostics?.providers.degraded ? 'amber' : 'mint'}>{diagnostics ? t('settings.runtimeDiagnosticsReady') : t('settings.runtimeDiagnosticsLoading')}</IsleChip>
+            </View>
+            <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8 }}>
+              {diagnosticRows.map((row) => (
+                <DiagnosticPill key={row.key} label={row.label} value={row.value} tone={row.tone} />
+              ))}
+            </View>
+            <View style={{ borderRadius: 18, padding: 11, backgroundColor: colors.islandRaised, borderWidth: 1, borderColor: colors.border, gap: 7 }}>
+              <Text style={{ color: colors.text, fontSize: 13, fontWeight: '900' }}>{t('settings.runtimeLogFile')}</Text>
+              <Text selectable numberOfLines={2} style={{ color: colors.textSecondary, fontSize: 11, lineHeight: 16, fontWeight: '800' }}>
+                {diagnostics?.log.path ?? getRuntimeLogPath()}
+              </Text>
+              <Text style={{ color: colors.textTertiary, fontSize: 11, lineHeight: 16, fontWeight: '800' }}>
+                {t('settings.runtimeLogState', { size: diagnostics?.log.size ?? 0, max: diagnostics?.log.maxBytes ?? settings.runtimeLogMaxBytes ?? 1048576 })}
+              </Text>
+            </View>
+            <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8 }}>
+              <IsleButton label={refreshingDiagnostics ? t('settings.runtimeDiagnosticsRefreshing') : t('settings.runtimeDiagnosticsRefresh')} compact icon={<Activity color={colors.textSecondary} size={15} />} onPress={() => void refreshRuntimeDiagnostics()} disabled={refreshingDiagnostics} />
+              <IsleButton label={t('settings.runtimeLogCopy')} compact icon={<FileJson color={colors.textSecondary} size={15} />} onPress={() => void copyRuntimeLogTail()} />
+              <IsleButton label={t('settings.runtimeLogShare')} compact icon={<Upload color={colors.textSecondary} size={15} />} onPress={() => void shareRuntimeLogFile()} />
+              <IsleButton label={t('settings.runtimeLogClear')} compact tone="danger" icon={<Trash2 color={colors.error} size={15} />} onPress={() => void clearRuntimeLogFile()} />
+            </View>
+          </View>
+        ) : null}
+
+        <IsleDisclosure
+          title={t('settings.upstreamGovernance')}
+          summary={t('settings.upstreamGovernanceSubtitle')}
+          expanded={expandedGroups.governance}
+          onPress={() => toggleExpandedGroup('governance')}
+        />
+        {expandedGroups.governance ? (
+          <View style={foldoutBodyStyle}>
           <SegmentedSetting
             label={t('settings.transportMode')}
             options={TRANSPORT_OPTIONS}
@@ -655,44 +685,51 @@ export function SettingsScreenContent({ active = true, onHome }: { active?: bool
             />
           </View>
         </View>
-      </IsleSection>
+        ) : null}
 
-      <IsleSection title={t('settings.updates')} style={{ marginTop: 14 }}>
-        <View style={{ borderRadius: 22, padding: 13, backgroundColor: colors.material.paperRaised, borderWidth: 1, borderColor: colors.border }}>
-          <VersionRow label={t('settings.appVersion')} value={`${version.appVersion} (${version.buildVersion})`} />
-          <VersionRow label={t('settings.lastCheck')} value={formatUpdateCheckTime(settings.lastApkUpdateCheckAt)} />
-        </View>
-        <View style={{ gap: 10, marginTop: 10 }}>
-          <DataButton
-            label={checkingUpdate ? t('settings.checkingUpdate') : t('settings.checkApk')}
-            icon={checkingUpdate ? <ActivityIndicator color={colors.surface} /> : <Smartphone color={colors.surface} size={18} />}
-            onPress={() => void checkApkUpdate()}
-          />
-          <IsleToggle
-            icon={<RotateCcw color={colors.text} size={18} />}
-            title={t('settings.autoCheck')}
-            active={settings.autoUpdateCheckEnabled ?? true}
-            onPress={toggleAutoCheck}
-          />
-        </View>
-      </IsleSection>
+        <IsleDisclosure
+          title={t('settings.updates')}
+          summary={`${version.appVersion} (${version.buildVersion}) · ${formatUpdateCheckTime(settings.lastApkUpdateCheckAt)}`}
+          expanded={expandedGroups.updates}
+          onPress={() => toggleExpandedGroup('updates')}
+        />
+        {expandedGroups.updates ? (
+          <View style={foldoutBodyStyle}>
+            <View style={{ borderRadius: 22, padding: 13, backgroundColor: colors.material.paperRaised, borderWidth: 1, borderColor: colors.border }}>
+              <VersionRow label={t('settings.appVersion')} value={`${version.appVersion} (${version.buildVersion})`} />
+              <VersionRow label={t('settings.lastCheck')} value={formatUpdateCheckTime(settings.lastApkUpdateCheckAt)} />
+            </View>
+            <View style={{ gap: 10 }}>
+              <DataButton
+                label={checkingUpdate ? t('settings.checkingUpdate') : t('settings.checkApk')}
+                icon={checkingUpdate ? <ActivityIndicator color={colors.surface} /> : <Smartphone color={colors.surface} size={18} />}
+                onPress={() => void checkApkUpdate()}
+              />
+              <IsleToggle
+                icon={<RotateCcw color={colors.text} size={18} />}
+                title={t('settings.autoCheck')}
+                active={settings.autoUpdateCheckEnabled ?? true}
+                onPress={toggleAutoCheck}
+              />
+            </View>
+          </View>
+        ) : null}
 
-      <IsleSection title={t('settings.importExport')} style={{ marginTop: 14 }}>
-        <View style={{ flexDirection: 'row', gap: 12 }}>
-          <DataButton label={t('settings.exportJson')} icon={<Download color={colors.surface} size={18} />} onPress={() => void exportJson()} />
-          <DataButton label={t('settings.importJson')} icon={<Upload color={colors.surface} size={18} />} onPress={() => void importJson()} />
-        </View>
-        <Text style={{ marginTop: 10, color: colors.textTertiary, fontSize: 12, fontWeight: '700', lineHeight: 18 }}>
-          {t('settings.importExportDescription')}
-        </Text>
-      </IsleSection>
-
-      <IsleSection title={t('settings.dangerZone')} style={{ marginTop: 14 }}>
-        <View style={{ flexDirection: 'row', gap: 12 }}>
-          <DangerButton label={t('settings.clearChats')} icon={<Trash2 color={colors.error} size={18} />} onPress={confirmClearChats} />
-          <DangerButton label={t('settings.resetSettings')} icon={<RotateCcw color={colors.error} size={18} />} onPress={confirmResetSettings} />
-        </View>
-      </IsleSection>
+        <IsleDisclosure
+          title={t('settings.dangerZone')}
+          expanded={expandedGroups.danger}
+          onPress={() => toggleExpandedGroup('danger')}
+          danger
+        />
+        {expandedGroups.danger ? (
+          <View style={foldoutBodyStyle}>
+            <View style={{ flexDirection: 'row', gap: 12 }}>
+              <DangerButton label={t('settings.clearChats')} icon={<Trash2 color={colors.error} size={18} />} onPress={confirmClearChats} />
+              <DangerButton label={t('settings.resetSettings')} icon={<RotateCcw color={colors.error} size={18} />} onPress={confirmResetSettings} />
+            </View>
+          </View>
+        ) : null}
+      </View>
     </ScrollView>
   )
 }

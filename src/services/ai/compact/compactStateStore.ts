@@ -105,3 +105,22 @@ export async function invalidateCompactStates(conversationId: string, reason = '
     conversationId
   )
 }
+
+export async function invalidateCompactStatesByProvider(providerId: string, reason = 'provider_changed'): Promise<void> {
+  const db = await getDb()
+  await db.runAsync(
+    `UPDATE compact_states SET status = 'invalidated', failureCode = ?, updatedAt = ? WHERE providerId = ? AND status = 'active'`,
+    reason,
+    Date.now(),
+    providerId
+  )
+}
+
+export async function invalidateAllCompactStates(reason = 'all_invalidated'): Promise<void> {
+  const db = await getDb()
+  await db.runAsync(
+    `UPDATE compact_states SET status = 'invalidated', failureCode = ?, updatedAt = ? WHERE status = 'active'`,
+    reason,
+    Date.now()
+  )
+}

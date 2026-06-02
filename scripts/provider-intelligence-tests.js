@@ -274,8 +274,11 @@ const {
   parseProviderStreamChunkForTest,
   rectifyAnthropicRequestBodyForTest,
   resolveProviderModelAccessForTest,
+  resolveProviderModelAliasAccessForTest,
   resolveProxyPolicyForTest,
+  resolveRuntimeFallbackPlanForTest,
   selectUpstreamTransportForTest,
+  streamChat,
   testProviderModelDetailed,
 } = require('../src/services/ai/base.ts')
 const { runResponsesWebSocketTransport } = require('../src/services/ai/transport/responsesWebSocketTransport.ts')
@@ -308,7 +311,7 @@ const {
   callMcpTool,
   truncateToolBlocks,
 } = require('../src/services/mcp.ts')
-const { summarizeProviderActivation } = require('../src/services/providerActivation.ts')
+const { buildProviderActivationTestCandidatesForTest, summarizeProviderActivation } = require('../src/services/providerActivation.ts')
 const {
   clearHistoricalInjectedProviderModels,
   clearHistoricalInjectedGroupModels,
@@ -361,9 +364,14 @@ const {
   sha256ChunksForTest,
   verifyLocalEmbeddingModel,
 } = require('../src/services/localEmbeddingModels.ts')
+const {
+  getProviderModelDisplayCandidates,
+} = require('../src/services/ai/policy/providerModelAccess.ts')
 const { deriveHomePetState } = require('../src/components/mascot/petState.ts')
 const modelCatalog = require('../assets/models/catalog.json')
 const { exportAllData, importAllData, importAllDataDetailed, loadData } = require('../src/services/storage.ts')
+const { useChatStore } = require('../src/store/chatStore.ts')
+const { useSettingsStore } = require('../src/store/settingsStore.ts')
 
 const FAKE_KEY_A = 'token-fake-alpha-1234567890'
 const FAKE_KEY_B = 'token-fake-beta-1234567890'
@@ -501,6 +509,10 @@ function assertReleaseVersionsAligned() {
     'current APK smoke resolves pass/fail through the shared release validation contract'
   )
   assert.ok(
+    currentApkSmokeScript.includes('cleanInstallState(info.firstInstallTime, info.lastUpdateTime)'),
+    'current APK smoke records clean-install state through the shared release validation contract'
+  )
+  assert.ok(
     currentApkSmokeScript.includes('androidPackage: expo.android?.package ?? null'),
     'current APK smoke records the expected Android package identity in evidence'
   )
@@ -535,6 +547,28 @@ function assertReleaseVersionsAligned() {
     'QA audit current APK evidence check uses the shared release validation contract'
   )
   assert.ok(
+    qaAuditScript.includes('cleanInstallState(info.firstInstallTime, info.lastUpdateTime)'),
+    'QA audit reads clean-install state through the shared release validation contract'
+  )
+  assert.ok(
+    qaAuditScript.includes('defaultReleaseAppPackageName'),
+    'QA audit reads the Android package identity through the shared release validation contract'
+  )
+  assert.ok(
+    qaAuditScript.includes('Clean install window'),
+    'QA audit renders the clean-install timing window in release provenance evidence'
+  )
+  const memoryReviewSmokeScript = fs.readFileSync(path.join(root, 'scripts/collect-memory-review-smoke.js'), 'utf8')
+  assert.ok(
+    memoryReviewSmokeScript.includes("require('./release-validation-contract')") && memoryReviewSmokeScript.includes('defaultReleaseAppPackageName'),
+    'memory review smoke collector reads the Android package identity through the shared release validation contract'
+  )
+  const workArtifactSmokeScript = fs.readFileSync(path.join(root, 'scripts/collect-work-artifact-smoke.js'), 'utf8')
+  assert.ok(
+    workArtifactSmokeScript.includes("require('./release-validation-contract')") && workArtifactSmokeScript.includes('defaultReleaseAppPackageName'),
+    'work artifact smoke collector reads the Android package identity through the shared release validation contract'
+  )
+  assert.ok(
     !/function validateReleaseProvenance/.test(qaAuditScript),
     'QA audit does not keep a private release provenance validator'
   )
@@ -562,6 +596,36 @@ function assertReleaseVersionsAligned() {
     !/First-run onboarding handoff[\s\S]{0,260}blocking: false/.test(qaAuditScript),
     'QA audit does not classify first-run onboarding handoff as follow-up evidence'
   )
+  assert.ok(
+    qaAuditScript.includes("require('./sensitive-evidence-contract')") && qaAuditScript.includes('sensitiveEvidenceExtensions'),
+    'QA audit reads sensitive evidence extensions through the shared sensitive evidence contract'
+  )
+  assert.ok(
+    !/const sensitiveEvidenceExtensions = new Set/.test(qaAuditScript),
+    'QA audit does not keep a private sensitive evidence extension list'
+  )
+
+  const providerRuntimeAndroidCollectorScript = fs.readFileSync(path.join(root, 'scripts/collect-provider-runtime-android.js'), 'utf8')
+  assert.ok(
+    providerRuntimeAndroidCollectorScript.includes("require('./sensitive-evidence-contract')") && providerRuntimeAndroidCollectorScript.includes('sensitiveEvidenceExtensions'),
+    'Provider Runtime Android collector reads sensitive evidence extensions through the shared sensitive evidence contract'
+  )
+  assert.ok(
+    providerRuntimeAndroidCollectorScript.includes('redactSensitiveEvidenceText'),
+    'Provider Runtime Android collector imports shared sensitive evidence redaction'
+  )
+  assert.ok(
+    /function sanitizeEvidenceText\(value\)\s*\{\s*return redactSensitiveEvidenceText\(value\)\s*\}/.test(providerRuntimeAndroidCollectorScript),
+    'Provider Runtime Android collector delegates persisted text redaction to the shared sensitive evidence contract'
+  )
+  assert.ok(
+    !/const sensitiveEvidenceExtensions = new Set/.test(providerRuntimeAndroidCollectorScript),
+    'Provider Runtime Android collector does not keep a private sensitive evidence extension list'
+  )
+  assert.ok(
+    !/const replacements = \[/.test(providerRuntimeAndroidCollectorScript),
+    'Provider Runtime Android collector does not keep private credential redaction patterns'
+  )
 
   const buildScript = fs.readFileSync(path.join(root, 'scripts/build-local-android-apk.js'), 'utf8')
   assert.ok(
@@ -585,10 +649,32 @@ function assertReleaseVersionsAligned() {
   const releaseFreshnessContract = require('./release-freshness-contract')
   const releaseValidationContract = require('./release-validation-contract')
   const architectureBoundaryAudit = require('./architecture-boundary-audit')
+  const sensitiveEvidenceContract = require('./sensitive-evidence-contract')
   assert.equal(releaseArtifactContract.apkOutputDirName, 'dist-apk', 'release artifact contract owns the APK output directory')
   assert.equal(releaseArtifactContract.defaultReleaseSmokeArch, 'x86_64', 'release artifact contract owns the smoke ABI')
   assert.equal(releaseArtifactContract.defaultReleaseSmokeVariant, 'no-model', 'release artifact contract owns the smoke variant')
   assert.equal(releaseValidationContract.defaultReleaseAppPackageName, appJson.expo.android.package, 'release validation contract owns the app package identity')
+  assert.equal(releaseValidationContract.cleanInstallWindowMs, 60_000, 'release validation contract owns the clean-install tolerance window')
+  assert.deepEqual(
+    releaseValidationContract.cleanInstallState('2026-06-01 11:42:46', '2026-06-01 11:42:46'),
+    { cleanInstall: true, cleanInstallWindowMs: 0 },
+    'release validation contract accepts exact clean-install timestamps'
+  )
+  assert.deepEqual(
+    releaseValidationContract.cleanInstallState('2026-06-01 11:42:46', '2026-06-01 11:43:45'),
+    { cleanInstall: true, cleanInstallWindowMs: 59000 },
+    'release validation contract accepts install/update timestamps inside the clean-install window'
+  )
+  assert.deepEqual(
+    releaseValidationContract.cleanInstallState('2026-06-01 11:42:46', '2026-06-01 11:44:00'),
+    { cleanInstall: false, cleanInstallWindowMs: 74000 },
+    'release validation contract rejects install/update timestamps outside the clean-install window'
+  )
+  assert.deepEqual(
+    releaseValidationContract.cleanInstallState(null, '2026-06-01 11:42:46'),
+    { cleanInstall: false, cleanInstallWindowMs: null },
+    'release validation contract rejects missing clean-install timestamps'
+  )
   assert.equal(
     releaseArtifactContract.formatApkArtifactName({ version: packageJson.version, buildType: 'release', variant: 'no-model', arch: 'x86_64' }),
     `IsleMind-${packageJson.version}-x86_64-no-model.apk`,
@@ -607,6 +693,37 @@ function assertReleaseVersionsAligned() {
   assert.equal(releaseFreshnessContract.releaseFreshnessToleranceMs, 2000, 'release freshness contract owns the freshness tolerance')
   assert.ok(releaseFreshnessContract.releaseSourceExtensions.has('.tsx'), 'release freshness contract tracks TSX release inputs')
   assert.ok(!releaseFreshnessContract.releaseSourceExtensions.has('.md'), 'release freshness contract excludes docs from APK freshness inputs')
+  assert.deepEqual(
+    [...sensitiveEvidenceContract.sensitiveEvidenceExtensions].sort(),
+    ['.json', '.jsonl', '.log', '.md', '.txt', '.xml'],
+    'sensitive evidence contract owns all text evidence extensions scanned for credential leakage'
+  )
+  assert.equal(typeof sensitiveEvidenceContract.collectSensitiveEvidenceHits, 'function', 'sensitive evidence contract exports the shared hit collector')
+  assert.equal(typeof sensitiveEvidenceContract.redactSensitiveEvidenceText, 'function', 'sensitive evidence contract exports the shared redaction helper')
+  const sensitiveRedactionFixture = [
+    `key=sk-${'test'.repeat(8)}`,
+    `mimo=tp-${'test'.repeat(8)}`,
+    `github=ghp_${'a'.repeat(24)}`,
+    `google=AIza${'a'.repeat(24)}`,
+    `oauth=ya29.${'a'.repeat(24)}`,
+    `error=Bearer ${'Abcd'.repeat(10)}`,
+    'refresh_token=Abcdefghijklmnopqrstuvwxyz1234567890ABCDEFGH',
+  ].join('\n')
+  const sensitiveRedacted = sensitiveEvidenceContract.redactSensitiveEvidenceText(sensitiveRedactionFixture)
+  assert.ok(!sensitiveRedacted.includes('sk-test'), 'sensitive evidence redaction removes OpenAI-style API keys')
+  assert.ok(!sensitiveRedacted.includes('tp-test'), 'sensitive evidence redaction removes MiMo Token Plan keys')
+  assert.ok(!sensitiveRedacted.includes('ghp_'), 'sensitive evidence redaction removes GitHub tokens')
+  assert.ok(!sensitiveRedacted.includes('AIza'), 'sensitive evidence redaction removes Google API keys')
+  assert.ok(!sensitiveRedacted.includes('ya29.'), 'sensitive evidence redaction removes Google OAuth access tokens')
+  assert.ok(!sensitiveRedacted.includes(`Bearer ${'Abcd'.repeat(10)}`), 'sensitive evidence redaction removes bearer token values')
+  assert.ok(!sensitiveRedacted.includes('Abcdefghijklmnopqrstuvwxyz1234567890ABCDEFGH'), 'sensitive evidence redaction removes high-entropy credential assignments')
+  assert.ok(sensitiveRedacted.includes('[redacted:openai-api-key]'), 'sensitive evidence redaction marks OpenAI-style API keys')
+  assert.ok(sensitiveRedacted.includes('[redacted:mimo-token-plan-key]'), 'sensitive evidence redaction marks MiMo Token Plan keys')
+  assert.ok(sensitiveRedacted.includes('[redacted:github-token]'), 'sensitive evidence redaction marks GitHub tokens')
+  assert.ok(sensitiveRedacted.includes('[redacted:google-api-key]'), 'sensitive evidence redaction marks Google API keys')
+  assert.ok(sensitiveRedacted.includes('[redacted:google-oauth-token]'), 'sensitive evidence redaction marks Google OAuth access tokens')
+  assert.ok(sensitiveRedacted.includes('Bearer [redacted:bearer-token]'), 'sensitive evidence redaction preserves bearer prefix with a redacted value')
+  assert.ok(sensitiveRedacted.includes('refresh_token=[redacted:credential]'), 'sensitive evidence redaction preserves credential field labels')
   const releaseInputs = releaseFreshnessContract.collectReleaseInputFiles(root).map((file) => path.relative(root, file).replace(/\\/g, '/'))
   for (const expectedInput of ['app.json', 'app/_layout.tsx', 'src/services/context.ts', 'assets/icon.png', 'assets/models/catalog.json']) {
     assert.ok(releaseInputs.includes(expectedInput), `release freshness contract includes ${expectedInput}`)
@@ -618,6 +735,7 @@ function assertReleaseVersionsAligned() {
   const staleFreshness = releaseFreshnessContract.collectReleaseSourceFreshness(root, { modifiedAt: '1970-01-01T00:00:00.000Z' })
   assert.equal(staleFreshness.status, 'stale', 'release freshness contract marks APKs older than inputs as stale')
   const passingReleaseEvidence = {
+    appPackageName: releaseValidationContract.defaultReleaseAppPackageName,
     apk: {
       path: `dist-apk/IsleMind-${packageJson.version}-x86_64-no-model.apk`,
       exists: true,
@@ -636,11 +754,14 @@ function assertReleaseVersionsAligned() {
     installed: {
       deviceSerial: 'emulator-5554',
       deviceAbi: 'x86_64',
-      packagePath: `package:/data/app/com.islemind.app/base.apk`,
+      packagePath: `package:/data/app/${releaseValidationContract.defaultReleaseAppPackageName}/base.apk`,
       versionName: appJson.expo.version,
       versionCode: appJson.expo.android.versionCode,
       primaryCpuAbi: 'x86_64',
+      firstInstallTime: '2026-06-01 11:42:46',
+      lastUpdateTime: '2026-06-01 11:42:46',
       cleanInstall: true,
+      cleanInstallWindowMs: 0,
     },
     launch: { ok: true, fatalLog: { fatal: false } },
     compatibility16kb: { ok: true, zipAlignmentOk: true, elf64Ok: true },
@@ -648,6 +769,16 @@ function assertReleaseVersionsAligned() {
   }
   assert.deepEqual(releaseValidationContract.validateReleaseProvenance(passingReleaseEvidence), [], 'release validation contract accepts current provenance evidence')
   assert.deepEqual(releaseValidationContract.validateCurrentApkSmokeResult(passingReleaseEvidence), [], 'release validation contract accepts current APK smoke evidence')
+  const missingProvenancePackageIssues = releaseValidationContract.validateReleaseProvenance({
+    ...passingReleaseEvidence,
+    appPackageName: null,
+  })
+  assert.ok(missingProvenancePackageIssues.some((issue) => /appPackageName is missing/i.test(issue)), 'release validation contract rejects missing provenance package identity')
+  const wrongProvenancePackageIssues = releaseValidationContract.validateReleaseProvenance({
+    ...passingReleaseEvidence,
+    appPackageName: 'com.example.invalid',
+  })
+  assert.ok(wrongProvenancePackageIssues.some((issue) => /appPackageName is com\.example\.invalid/i.test(issue)), 'release validation contract rejects wrong provenance package identity')
   const staleReleaseIssues = releaseValidationContract.validateCurrentApkSmokeResult({
     ...passingReleaseEvidence,
     sourceFreshness: staleFreshness,
@@ -666,6 +797,22 @@ function assertReleaseVersionsAligned() {
     },
   })
   assert.ok(wrongPackageIssues.some((issue) => /android\.package/i.test(issue)), 'release validation contract rejects wrong Android package identity')
+  const missingExpectedPackageIssues = releaseValidationContract.validateCurrentApkSmokeResult({
+    ...passingReleaseEvidence,
+    expected: {
+      ...passingReleaseEvidence.expected,
+      androidPackage: null,
+    },
+  })
+  assert.ok(missingExpectedPackageIssues.some((issue) => /android\.package is missing/i.test(issue)), 'release validation contract rejects missing Android package identity')
+  const missingExpectedVersionCodeIssues = releaseValidationContract.validateCurrentApkSmokeResult({
+    ...passingReleaseEvidence,
+    expected: {
+      ...passingReleaseEvidence.expected,
+      androidVersionCode: null,
+    },
+  })
+  assert.ok(missingExpectedVersionCodeIssues.some((issue) => /android\.versionCode is missing/i.test(issue)), 'release validation contract rejects missing Android versionCode identity')
   const missingPackagePathIssues = releaseValidationContract.validateCurrentApkSmokeResult({
     ...passingReleaseEvidence,
     installed: {
@@ -674,6 +821,46 @@ function assertReleaseVersionsAligned() {
     },
   })
   assert.ok(missingPackagePathIssues.some((issue) => /package path/i.test(issue)), 'release validation contract rejects missing installed package path identity')
+  const missingInstalledDeviceIssues = releaseValidationContract.validateCurrentApkSmokeResult({
+    ...passingReleaseEvidence,
+    installed: {
+      ...passingReleaseEvidence.installed,
+      deviceSerial: '',
+    },
+  })
+  assert.ok(missingInstalledDeviceIssues.some((issue) => /deviceSerial is missing/i.test(issue)), 'release validation contract rejects missing installed device identity')
+  const missingInstallTimestampIssues = releaseValidationContract.validateCurrentApkSmokeResult({
+    ...passingReleaseEvidence,
+    installed: {
+      ...passingReleaseEvidence.installed,
+      firstInstallTime: null,
+    },
+  })
+  assert.ok(missingInstallTimestampIssues.some((issue) => /timestamps are missing/i.test(issue)), 'release validation contract rejects missing installed timestamp evidence')
+  const missingCleanInstallWindowIssues = releaseValidationContract.validateCurrentApkSmokeResult({
+    ...passingReleaseEvidence,
+    installed: {
+      ...passingReleaseEvidence.installed,
+      cleanInstallWindowMs: undefined,
+    },
+  })
+  assert.ok(missingCleanInstallWindowIssues.some((issue) => /clean-install window/i.test(issue)), 'release validation contract rejects missing clean-install window evidence')
+  const invalidCleanInstallWindowIssues = releaseValidationContract.validateCurrentApkSmokeResult({
+    ...passingReleaseEvidence,
+    installed: {
+      ...passingReleaseEvidence.installed,
+      cleanInstallWindowMs: -1,
+    },
+  })
+  assert.ok(invalidCleanInstallWindowIssues.some((issue) => /clean-install window is invalid/i.test(issue)), 'release validation contract rejects invalid clean-install window evidence')
+  const oversizedCleanInstallWindowIssues = releaseValidationContract.validateCurrentApkSmokeResult({
+    ...passingReleaseEvidence,
+    installed: {
+      ...passingReleaseEvidence.installed,
+      cleanInstallWindowMs: releaseValidationContract.cleanInstallWindowMs + 1,
+    },
+  })
+  assert.ok(oversizedCleanInstallWindowIssues.some((issue) => /exceeds/i.test(issue)), 'release validation contract rejects clean-install windows outside the tolerance')
   assert.equal(architectureBoundaryAudit.architectureBoundaryAuditEvidenceName, 'architecture-boundary-audit-results.json', 'architecture boundary audit owns its evidence file name')
   assert.deepEqual(
     architectureBoundaryAudit.architectureBoundaryReviewBudgets.map((budget) => `${budget.checkId}:${budget.maxSurfaces}/${budget.maxHits}`),
@@ -1227,6 +1414,28 @@ async function assertUpstreamGovernanceBehavior() {
     assert.equal(modelTestBodies[0].temperature, 0.7, 'model test keeps generation parameters when parameter checks are enabled')
     assert.equal(modelTestBodies[1].temperature, undefined, 'model test removes generation parameters when parameter checks are disabled')
 
+    const blockedAccessTraces = []
+    let blockedAccessError
+    const blockedAccessHandle = await streamChat(
+      {
+        provider: aliasProvider,
+        model: 'friendly',
+        messages: [{ role: 'user', content: 'hello' }],
+        settings: { modelBlocklist: ['upstream-model'] },
+      },
+      () => {},
+      () => {},
+      (error) => { blockedAccessError = error },
+      undefined,
+      (trace) => blockedAccessTraces.push(trace)
+    )
+    await blockedAccessHandle.done
+    const blockedAccessTrace = blockedAccessTraces.find((trace) => trace.id.startsWith('runtime-governance-'))
+    assert.equal(blockedAccessError.message, 'access_policy_model_blocked', 'blocked upstream alias access fails before fetch')
+    assert.equal(blockedAccessTrace.status, 'error', 'blocked runtime access emits an error trace')
+    assert.equal(blockedAccessTrace.metadata.accessAllowed, false, 'blocked runtime access trace records the access decision')
+    assert.equal(blockedAccessTrace.metadata.accessReason, 'model_blocked', 'blocked runtime access trace records the policy reason')
+
     let calls = 0
     global.fetch = async () => {
       calls += 1
@@ -1276,9 +1485,231 @@ async function assertUpstreamGovernanceBehavior() {
     assert.equal(sentBodies.length, 2, 'Anthropic rectification retries once')
     assert.equal(sentBodies[1].thinking.budget_tokens, 32000, 'rectification retry sends normalized thinking budget')
     assert.equal(sentBodies[1].max_tokens, 64000, 'rectification retry sends normalized max_tokens')
+
+    memoryStorage.clear()
+    const fallbackOpenAI = {
+      id: 'fallback-openai',
+      type: 'openai',
+      name: 'Fallback OpenAI',
+      apiKey: FAKE_KEY_A,
+      models: ['gpt-5.5', 'gpt-5.5-mini'],
+      credentialGroups: [{ id: 'openai-a', label: 'A', apiKey: FAKE_KEY_A, enabled: true, availableModels: ['gpt-5.5', 'gpt-5.5-mini'] }],
+      enabled: true,
+    }
+    const fallbackAnthropic = {
+      id: 'fallback-anthropic',
+      type: 'anthropic',
+      name: 'Fallback Anthropic',
+      apiKey: FAKE_KEY_B,
+      models: ['claude-sonnet-4-6'],
+      credentialGroups: [{ id: 'anthropic-a', label: 'A', apiKey: FAKE_KEY_B, enabled: true }],
+      enabled: true,
+    }
+    const fallbackPlan = await resolveRuntimeFallbackPlanForTest({
+      req: {
+        provider: fallbackOpenAI,
+        fallbackProviders: [fallbackOpenAI, fallbackAnthropic],
+        model: 'gpt-5.5',
+        reasoningEffort: 'medium',
+        messages: [{ role: 'user', content: 'hello' }],
+        settings: { runtimeLogEnabled: true },
+      },
+      status: 429,
+      credentialGroupId: 'openai-a',
+      responseText: 'rate limit',
+    })
+    assert.equal(fallbackPlan.classification.trigger, 'rate_limited', 'runtime fallback classifies 429')
+    assert.equal(fallbackPlan.decision.eligible, true, 'runtime fallback finds same-provider alternate model')
+    assert.equal(fallbackPlan.decision.selected.model, 'gpt-5.5-mini', 'runtime fallback selects same-provider alternate model')
+    assert.ok(fallbackPlan.decision.rejectedCandidates.some((item) => item.providerId === 'fallback-anthropic' && item.reason === 'cross_provider_disallowed'), 'runtime fallback blocks cross-provider candidate by default')
+    assert.ok(memoryStorage.get('@islemind/provider-health')?.includes('fallback-openai'), 'runtime fallback persists original route health')
+
+    memoryStorage.clear()
+    await clearRuntimeLog()
+    const fallbackBodies = []
+    const fallbackChunks = []
+    const fallbackTraces = []
+    let fallbackDone
+    let fallbackError
+    global.fetch = async (_url, init) => {
+      fallbackBodies.push(init?.body ? JSON.parse(init.body) : null)
+      if (fallbackBodies.length === 1) return new Response(null, { status: 200 })
+      if (fallbackBodies.length === 2) return new Response('rate limit', { status: 429 })
+      return new Response(JSON.stringify({ choices: [{ message: { content: 'fallback OK' } }] }), {
+        status: 200,
+        headers: { 'content-type': 'application/json' },
+      })
+    }
+    const fallbackHandle = await streamChat(
+      {
+        provider: fallbackOpenAI,
+        fallbackProviders: [fallbackOpenAI, fallbackAnthropic],
+        model: 'gpt-5.5',
+        messages: [{ role: 'user', content: 'hello' }],
+        settings: { runtimeLogEnabled: true, upstreamMaxRetries: 0, upstreamCircuitBreakerEnabled: false },
+      },
+      (chunk) => fallbackChunks.push(chunk),
+      (result) => { fallbackDone = result },
+      (error) => { fallbackError = error },
+      undefined,
+      (trace) => fallbackTraces.push(trace)
+    )
+    await fallbackHandle.done
+    assert.equal(fallbackError, undefined, fallbackError?.message)
+    assert.equal(fallbackChunks.join(''), 'fallback OK', 'runtime fallback emits selected provider text')
+    assert.equal(fallbackDone.text, 'fallback OK', 'runtime fallback completes with selected provider result')
+    assert.equal(fallbackBodies.length, 3, 'runtime fallback sends stream probe, non-streaming retry, and selected fallback retry')
+    assert.equal(fallbackBodies[1].stream, false, 'runtime fallback retry disables streaming')
+    assert.equal(fallbackBodies[2].model, 'gpt-5.5-mini', 'runtime fallback retry sends selected model')
+    const fallbackLogText = await readRuntimeLogText()
+    assert.ok(fallbackLogText.includes('"event":"fallback.decision"'), 'runtime fallback writes decision evidence')
+    assert.ok(fallbackLogText.includes('"event":"route.decision"'), 'runtime fallback retry writes route decision evidence')
+    assert.ok(fallbackLogText.includes('"selectedModel":"gpt-5.5-mini"'), 'runtime fallback route evidence records selected fallback model')
+    assert.ok(memoryStorage.get('@islemind/provider-health')?.includes('gpt-5.5-mini'), 'runtime fallback records selected route success')
+    const runtimeGovernanceTrace = fallbackTraces.find((trace) => trace.id.startsWith('runtime-governance-'))
+    assert.equal(runtimeGovernanceTrace.status, 'done', 'runtime governance trace completes for allowed upstream requests')
+    assert.equal(runtimeGovernanceTrace.metadata.accessAllowed, true, 'runtime governance trace records access allowance')
+    assert.equal(runtimeGovernanceTrace.metadata.routeBlocked, false, 'runtime governance trace records route decision')
+    assert.equal(runtimeGovernanceTrace.metadata.transport, 'http_sse', 'runtime governance trace records transport selection')
+    assert.equal(runtimeGovernanceTrace.metadata.payloadPolicyMode, 'warn', 'runtime governance trace records payload policy')
+    assert.equal(runtimeGovernanceTrace.metadata.proxyMode, 'off', 'runtime governance trace records proxy policy')
+    const runtimeFallbackTrace = fallbackTraces.find((trace) => trace.id.startsWith('runtime-fallback-'))
+    assert.equal(runtimeFallbackTrace.status, 'done', 'runtime fallback emits a completed trace')
+    assert.equal(runtimeFallbackTrace.metadata.trigger, 'rate_limited', 'runtime fallback trace records trigger state')
+    assert.equal(runtimeFallbackTrace.metadata.selectedModel, 'gpt-5.5-mini', 'runtime fallback trace records selected model')
+
+    memoryStorage.clear()
+    await clearRuntimeLog()
+    const directFallbackBodies = []
+    const directFallbackChunks = []
+    const directFallbackTraces = []
+    let directFallbackDone
+    let directFallbackError
+    global.fetch = async (_url, init) => {
+      directFallbackBodies.push(init?.body ? JSON.parse(init.body) : null)
+      if (directFallbackBodies.length === 1) return new Response('rate limit', { status: 429 })
+      return new Response(JSON.stringify({ choices: [{ message: { content: 'direct fallback OK' } }] }), {
+        status: 200,
+        headers: { 'content-type': 'application/json' },
+      })
+    }
+    const directFallbackHandle = await streamChat(
+      {
+        provider: fallbackOpenAI,
+        fallbackProviders: [fallbackOpenAI, fallbackAnthropic],
+        model: 'gpt-5.5',
+        messages: [{ role: 'user', content: 'hello' }],
+        settings: { runtimeLogEnabled: true, upstreamMaxRetries: 0, upstreamCircuitBreakerEnabled: false },
+      },
+      (chunk) => directFallbackChunks.push(chunk),
+      (result) => { directFallbackDone = result },
+      (error) => { directFallbackError = error },
+      undefined,
+      (trace) => directFallbackTraces.push(trace)
+    )
+    await directFallbackHandle.done
+    assert.equal(directFallbackError, undefined, directFallbackError?.message)
+    assert.equal(directFallbackChunks.join(''), 'direct fallback OK', 'runtime fallback recovers initial HTTP failure before streaming starts')
+    assert.equal(directFallbackDone.text, 'direct fallback OK', 'direct runtime fallback completes with selected provider result')
+    assert.equal(directFallbackBodies.length, 2, 'direct runtime fallback sends initial stream request and selected fallback retry')
+    assert.equal(directFallbackBodies[0].stream, true, 'direct runtime fallback starts from the requested stream path')
+    assert.equal(directFallbackBodies[1].model, 'gpt-5.5-mini', 'direct runtime fallback retry sends selected model')
+    const directFallbackLogText = await readRuntimeLogText()
+    assert.ok(directFallbackLogText.includes('"event":"fallback.decision"'), 'direct runtime fallback writes decision evidence')
+    assert.ok(directFallbackLogText.includes('"event":"route.decision"'), 'direct runtime fallback retry writes route decision evidence')
+    assert.ok(directFallbackLogText.includes('"selectedModel":"gpt-5.5-mini"'), 'direct runtime fallback route evidence records selected fallback model')
+    const directRuntimeFallbackTrace = directFallbackTraces.find((trace) => trace.id.startsWith('runtime-fallback-'))
+    assert.equal(directRuntimeFallbackTrace.metadata.selectedModel, 'gpt-5.5-mini', 'direct runtime fallback trace records selected route')
   } finally {
     global.fetch = originalFetch
   }
+}
+
+async function assertProviderStoreLifecycleBehavior() {
+  memoryStorage.clear()
+  secureStorage.clear()
+  useChatStore.setState({ conversations: [], currentId: null, isLoading: false, error: null })
+  await useSettingsStore.getState().clearAll()
+  memoryStorage.clear()
+
+  const blockedProvider = {
+    id: 'store-blocked-provider',
+    type: 'openai',
+    presetId: 'openai',
+    detectedPresetId: 'openai',
+    name: 'Store Blocked Provider',
+    apiKey: FAKE_KEY_C,
+    baseUrl: 'https://api.openai.com/v1',
+    models: ['blocked-chat'],
+    enabled: true,
+    lastTestStatus: 'ok',
+    lastTestModel: 'blocked-chat',
+    credentialGroups: [
+      { id: 'blocked-group', label: 'Blocked Group', apiKey: FAKE_KEY_D, enabled: true, lastModelSyncStatus: 'ok', availableModels: ['blocked-chat'] },
+    ],
+  }
+  const allowedProvider = {
+    id: 'store-policy-provider',
+    type: 'openai',
+    presetId: 'openai',
+    detectedPresetId: 'openai',
+    name: 'Store Policy Provider',
+    apiKey: FAKE_KEY_A,
+    baseUrl: 'https://api.openai.com/v1',
+    models: ['blocked-chat', 'gpt-5.5-mini'],
+    manualModels: ['manual-chat'],
+    modelAliases: [{ alias: 'fast', model: 'gpt-5.5-mini' }],
+    enabled: true,
+    lastTestStatus: 'ok',
+    lastTestModel: 'gpt-5.5-mini',
+    credentialGroups: [
+      { id: 'policy-group', label: 'Policy Group', apiKey: FAKE_KEY_B, enabled: true, lastModelSyncStatus: 'ok', availableModels: ['blocked-chat', 'gpt-5.5-mini', 'fast'] },
+    ],
+  }
+
+  await useSettingsStore.getState().addProvider(blockedProvider)
+  await useSettingsStore.getState().addProvider(allowedProvider)
+  useSettingsStore.getState().updateSettings({
+    defaultProvider: allowedProvider.id,
+    modelAllowlist: ['gpt-*'],
+    modelBlocklist: ['blocked-*'],
+  })
+
+  const storedAllowedProvider = useSettingsStore.getState().providers.find((provider) => provider.id === allowedProvider.id)
+  assert.equal(storedAllowedProvider?.apiKey, '', 'settings store strips provider API keys before saving provider state')
+  assert.equal(storedAllowedProvider?.credentialGroups?.[0]?.apiKey, '', 'settings store strips credential group API keys before saving provider state')
+  assert.equal(secureStorage.get('islemind.key.store-policy-provider'), FAKE_KEY_A, 'settings store persists provider API keys in SecureStore')
+  assert.equal(secureStorage.get('islemind.key.store-policy-provider.policy-group'), FAKE_KEY_B, 'settings store persists credential group API keys in SecureStore')
+
+  const configuredProviders = await useSettingsStore.getState().getConfiguredProviders()
+  assert.deepEqual(configuredProviders.map((provider) => provider.id), [allowedProvider.id], 'settings store filters configured providers through model access policy')
+  assert.equal(configuredProviders[0].apiKey, FAKE_KEY_A, 'settings store hydrates provider API keys for configured provider reads')
+  assert.equal(configuredProviders[0].credentialGroups?.[0]?.apiKey, FAKE_KEY_B, 'settings store hydrates credential group API keys for configured provider reads')
+
+  const primaryProvider = await useSettingsStore.getState().getPrimaryConfiguredProvider()
+  assert.equal(primaryProvider?.id, allowedProvider.id, 'settings store primary provider resolves through configured provider filtering')
+
+  const conversationId = useChatStore.getState().create(allowedProvider.id, 'gpt-5.5-mini')
+  const blockedSwitch = useChatStore.getState().switchConversationModel(conversationId, allowedProvider.id, 'blocked-chat')
+  assert.equal(blockedSwitch, false, 'chat store rejects blocked model switches through the real store entry')
+  assert.equal(useChatStore.getState().getCurrent()?.model, 'gpt-5.5-mini', 'chat store keeps the previous model after a blocked switch')
+  assert.ok(useChatStore.getState().error?.includes('blocked-chat'), 'chat store records a blocked model switch error')
+
+  useChatStore.getState().setError(null)
+  const aliasSwitch = useChatStore.getState().switchConversationModel(conversationId, allowedProvider.id, ' fast ')
+  assert.equal(aliasSwitch, true, 'chat store accepts alias switches when the upstream model passes policy')
+  assert.equal(useChatStore.getState().getCurrent()?.model, 'fast', 'chat store stores the trimmed alias after an allowed switch')
+  assert.equal(useChatStore.getState().getCurrent()?.providerModelMode, 'manual', 'chat store marks successful switches as manual conversation overrides')
+
+  await useSettingsStore.getState().removeProvider(allowedProvider.id)
+  assert.equal(useSettingsStore.getState().settings.defaultProvider, blockedProvider.id, 'settings store moves the default provider to the remaining provider after removal')
+  assert.equal(await useSettingsStore.getState().getPrimaryConfiguredProvider(), null, 'settings store returns no primary provider when the remaining provider is policy-blocked')
+
+  useChatStore.getState().clearAll()
+  await useSettingsStore.getState().clearAll()
+  useChatStore.setState({ conversations: [], currentId: null, isLoading: false, error: null })
+  memoryStorage.clear()
+  secureStorage.clear()
 }
 
 async function run() {
@@ -1317,6 +1748,8 @@ async function run() {
   assert.ok(st('onboarding.firstPrompt.samples.organize').includes('A version I can copy'), 'onboarding organize prompt produces a shareable work artifact')
   assert.equal(st('chatRunner.trace.compactPolicyTitle'), 'Compact policy', 'chat runner exposes compact policy trace label')
   assert.equal(st('chatRunner.error.remoteCompactRequiredFailed'), 'Remote compact is required, but the current provider does not declare support.', 'chat runner exposes remote compact required failure text')
+  assert.equal(st('providerTrace.runtimeGovernanceTitle'), 'Runtime policy', 'provider trace exposes runtime governance trace label')
+  assert.equal(st('providerTrace.runtimeFallbackTitle'), 'Runtime fallback', 'provider trace exposes runtime fallback trace label')
   ;[
     'chat.starterPlanDraft',
     'chat.starterNotesDraft',
@@ -1352,8 +1785,11 @@ async function run() {
   const governedProvider = {
     id: 'openai-main',
     type: 'openai',
+    presetId: 'openai',
+    detectedPresetId: 'openai',
     name: 'OpenAI',
     apiKey: '',
+    baseUrl: 'https://api.openai.com/v1',
     models: ['gpt-5.2'],
     enabled: true,
     capabilities: {
@@ -1391,6 +1827,51 @@ async function run() {
     }).reason,
     'provider_blocked',
     'provider blocklist takes precedence'
+  )
+  assert.equal(
+    resolveProviderModelAccessForTest({
+      provider: governedProvider,
+      model: 'gpt-5.2',
+      settings: { providerBlocklist: ['preset:openai'] },
+    }).reason,
+    'provider_blocked',
+    'provider blocklist accepts preset-scoped matches'
+  )
+  assert.equal(
+    resolveProviderModelAccessForTest({
+      provider: governedProvider,
+      model: 'gpt-5.2',
+      settings: { providerAllowlist: ['preset:openai'] },
+    }).allowed,
+    true,
+    'provider allowlist accepts preset-scoped matches'
+  )
+  assert.equal(
+    resolveProviderModelAccessForTest({
+      provider: governedProvider,
+      model: 'gpt-5.2',
+      settings: { providerAllowlist: ['host:api.openai.com'] },
+    }).allowed,
+    true,
+    'provider allowlist accepts host-scoped matches'
+  )
+  assert.equal(
+    resolveProviderModelAccessForTest({
+      provider: governedProvider,
+      model: 'gpt-5.2',
+      settings: { modelBlocklist: ['family:gpt'] },
+    }).reason,
+    'model_blocked',
+    'model blocklist accepts family-scoped matches'
+  )
+  assert.equal(
+    resolveProviderModelAccessForTest({
+      provider: governedProvider,
+      model: 'gpt-5.2',
+      settings: { modelAllowlist: ['family:gpt'] },
+    }).allowed,
+    true,
+    'model allowlist accepts family-scoped matches'
   )
   const payloadWarn = evaluatePayloadRulesForTest({
     body: { model: 'gpt-5.2', input: [{ role: 'user', content: 'hello' }] },
@@ -1758,6 +2239,18 @@ ${FAKE_KEY_D}
   assert.deepEqual(deepseekPreset.models, [], 'quick presets expose no saved default models')
   const importWithoutModels = parseProviderImportText(`Provider Empty, https://empty.example/v1, ${FAKE_KEY_F}`)
   assert.deepEqual(importWithoutModels.providers[0].models, [], 'provider import keeps models empty when no model field is provided')
+  const policyImported = parseProviderImportText(
+    `Policy Provider, https://policy.example/v1, ${FAKE_KEY_A}, Models=allowed-chat|blocked-chat`,
+    { accessSettings: { modelAllowlist: ['allowed-*'], modelBlocklist: ['blocked-*'] } }
+  )
+  assert.deepEqual(policyImported.providers[0].models, ['allowed-chat'], 'provider import filters explicit models through access policy')
+  assert.equal(policyImported.warnings.length, 1, 'provider import records model policy filtering')
+  const providerPolicyImported = parseProviderImportText(
+    `Blocked Provider, https://blocked.example/v1, ${FAKE_KEY_B}, Models=allowed-chat`,
+    { accessSettings: { providerBlocklist: ['import-*'] } }
+  )
+  assert.deepEqual(providerPolicyImported.providers, [], 'provider import skips providers blocked by provider policy')
+  assert.equal(providerPolicyImported.warnings.length, 1, 'provider import records provider policy skips')
   assert.deepEqual(
     clearHistoricalInjectedProviderModels({
       id: 'legacy-defaults',
@@ -1886,6 +2379,36 @@ ${FAKE_KEY_D}
     resolveProviderModelAccessForTest({ provider: manualProvider, model: resolveProviderModelAlias(manualProvider, 'fast'), settings: { modelBlocklist: ['fast'], modelAllowlist: ['gpt-*'] } })
   )
   assert.equal(aliasBlock.allowed, false, 'alias access policy keeps blocklist precedence over upstream allowlist')
+  assert.equal(
+    resolveProviderModelAliasAccessForTest({ provider: manualProvider, model: 'fast', settings: { modelAllowlist: ['gpt-*'] } }).allowed,
+    true,
+    'shared alias access helper accepts allowlist matches on the upstream model'
+  )
+  assert.equal(
+    resolveProviderModelAliasAccessForTest({ provider: manualProvider, model: 'fast', settings: { modelBlocklist: ['fast'], modelAllowlist: ['gpt-*'] } }).allowed,
+    false,
+    'shared alias access helper keeps alias blocklist precedence'
+  )
+  const displayPolicyProvider = { ...manualProvider, id: 'display-policy-provider', enabled: true }
+  const displayDisabledProvider = { ...manualProvider, id: 'display-disabled-policy-provider', enabled: false }
+  const displayBlockedProvider = { ...manualProvider, id: 'display-blocked-policy-provider', enabled: true }
+  const displayLocalSetupProvider = { ...manualProvider, id: 'local-setup', enabled: true }
+  const displayCandidates = getProviderModelDisplayCandidates({
+    providers: [displayPolicyProvider, displayDisabledProvider, displayBlockedProvider, displayLocalSetupProvider],
+    settings: {
+      modelAllowlist: ['gpt-*'],
+      providerBlocklist: [displayBlockedProvider.id],
+    },
+  })
+  assert.deepEqual(displayCandidates.map((candidate) => candidate.provider.id), [displayPolicyProvider.id], 'provider picker display candidates hide disabled, local setup, and policy-blocked providers')
+  assert.deepEqual(displayCandidates[0].models, ['gpt-4o-mini', 'fast'], 'model picker display candidates expose only policy-allowed direct and alias models')
+  assert.equal(displayCandidates[0].preferredModel, 'gpt-4o-mini', 'display candidates expose the policy-allowed preferred model')
+  const managementDisplayCandidates = getProviderModelDisplayCandidates({
+    providers: [displayDisabledProvider],
+    settings: { modelAllowlist: ['gpt-*'] },
+    includeDisabled: true,
+  })
+  assert.deepEqual(managementDisplayCandidates.map((candidate) => candidate.provider.id), [displayDisabledProvider.id], 'provider management model filtering can inspect disabled providers without exposing them to chat picker defaults')
 
   const failedHealth = updateCredentialGroupHealth(normalized, groups[1].id, false, 2000)
   assert.equal(failedHealth.credentialGroups[1].failureCount, 1)
@@ -2407,6 +2930,35 @@ ${FAKE_KEY_D}
       st('providerSettings.activationCurrent', { name: 'Example' }).includes('Example'),
     'activation progress copy is structured for live batch status'
   )
+  const activationPolicyProvider = {
+    id: 'policy-activation',
+    type: 'openai',
+    name: 'Policy Activation',
+    apiKey: FAKE_KEY_A,
+    models: ['blocked-chat', 'gpt-5.5-mini'],
+    manualModels: ['manual-chat'],
+    modelAliases: [{ alias: 'fast', model: 'gpt-5.5-mini' }],
+    enabled: true,
+    credentialGroups: [
+      { id: 'policy-group', label: 'Policy Group', apiKey: FAKE_KEY_B, enabled: true, lastModelSyncStatus: 'ok', availableModels: ['blocked-chat', 'gpt-5.5-mini', 'fast'] },
+    ],
+  }
+  assert.deepEqual(
+    buildProviderActivationTestCandidatesForTest(activationPolicyProvider, undefined, { modelAllowlist: ['gpt-*'], modelBlocklist: ['blocked-*'] }).map((candidate) => candidate.model),
+    ['gpt-5.5-mini', 'fast'],
+    'provider activation candidates exclude blocked models and keep alias candidates allowed through upstream policy'
+  )
+  assert.deepEqual(
+    buildProviderActivationTestCandidatesForTest(activationPolicyProvider, 'fast', { modelAllowlist: ['gpt-*'] }).map((candidate) => candidate.model),
+    ['fast'],
+    'provider activation honors an explicit alias test model when its upstream model is allowed'
+  )
+  assert.equal(
+    buildProviderActivationTestCandidatesForTest(activationPolicyProvider, 'blocked-chat', { modelBlocklist: ['blocked-*'] }).some((candidate) => candidate.model === 'blocked-chat'),
+    false,
+    'provider activation does not test an explicitly blocked requested model'
+  )
+  await assertProviderStoreLifecycleBehavior()
 
   const importedDataOk = await importAllData(JSON.stringify({
     app: 'islemind',

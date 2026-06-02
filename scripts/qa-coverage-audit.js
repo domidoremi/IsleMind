@@ -12,6 +12,8 @@ const {
   releaseSourceExtensions,
 } = require('./release-freshness-contract')
 const {
+  cleanInstallState,
+  defaultReleaseAppPackageName,
   validateCurrentApkSmokeResult,
   validateReleaseProvenance,
 } = require('./release-validation-contract')
@@ -21,6 +23,20 @@ const {
   runArchitectureBoundaryAuditSelfTest,
   writeArchitectureBoundaryAuditResult,
 } = require('./architecture-boundary-audit')
+const { sensitiveEvidenceExtensions, sensitiveEvidencePatterns, collectSensitiveEvidenceHits } = require('./sensitive-evidence-contract')
+const {
+  providerRuntimeAndroidResultRelativePath,
+  providerRuntimeAndroidRunLogRelativePath,
+  requiredProviderRuntimeAndroidScenarios,
+  validateProviderRuntimeAndroidEvidencePath,
+  validateProviderRuntimeAndroidResult,
+  validateProviderRuntimeSensitiveData: validateProviderRuntimeSensitiveDataContract,
+  validateProviderRuntimeKeyboardState: validateProviderRuntimeKeyboardStateContract,
+  validateProviderRuntimeScenario: validateProviderRuntimeScenarioContract,
+  validateProviderRuntimeScenarioState: validateProviderRuntimeScenarioStateContract,
+  validateProviderRuntimeScenarioEvidence: validateProviderRuntimeScenarioEvidenceContract,
+  validateProviderRuntimeScenarioSteps: validateProviderRuntimeScenarioStepsContract,
+} = require('./provider-runtime-android-contract')
 const ts = require('typescript')
 
 const root = path.resolve(__dirname, '..')
@@ -28,17 +44,7 @@ const evidenceDir = path.join(root, 'test-evidence', 'qa')
 const outputPath = path.join(evidenceDir, 'coverage-report.md')
 const provenancePath = path.join(evidenceDir, 'apk-provenance.json')
 const locales = ['zh-CN', 'en', 'ja']
-const appPackageName = 'com.islemind.app'
-const sensitiveEvidenceExtensions = new Set(['.json', '.jsonl', '.log', '.md', '.txt', '.xml'])
-const secretPatterns = [
-  { label: 'OpenAI-style API key', pattern: /\bsk-[A-Za-z0-9_-]{20,}\b/g },
-  { label: 'MiMo Token Plan API key', pattern: /\btp-[A-Za-z0-9_-]{20,}\b/g },
-  { label: 'GitHub token', pattern: /\bgh[pousr]_[A-Za-z0-9_]{20,}\b/g },
-  { label: 'Google API key', pattern: /\bAIza[A-Za-z0-9_-]{20,}\b/g },
-  { label: 'Google OAuth access token', pattern: /\bya29\.[A-Za-z0-9_-]{20,}\b/g },
-  { label: 'Bearer token', pattern: /\bBearer\s+[A-Za-z0-9._~+/=-]{24,}\b/g },
-  { label: 'High-entropy credential assignment', pattern: /\b(?:api[_ -]?key|secret|token|password|credential|access[_ -]?token|refresh[_ -]?token)\b\s*[:=]\s*["']?(?=[A-Za-z0-9+/_=-]{40,}\b)(?=[A-Za-z0-9+/_=-]*[a-z])(?=[A-Za-z0-9+/_=-]*[A-Z])(?=[A-Za-z0-9+/_=-]*\d)[A-Za-z0-9+/_=-]{40,}\b/gi },
-]
+const appPackageName = defaultReleaseAppPackageName
 const interactiveTags = [
   'IslePressable',
   'Pressable',
@@ -514,7 +520,7 @@ function readInstalledPackageInfo() {
     firstInstallTime: matchFirst(packageDump, /firstInstallTime=([^\n\r]+)/),
     lastUpdateTime: matchFirst(packageDump, /lastUpdateTime=([^\n\r]+)/),
   }
-  info.cleanInstall = Boolean(info.firstInstallTime && info.lastUpdateTime && info.firstInstallTime === info.lastUpdateTime)
+  Object.assign(info, cleanInstallState(info.firstInstallTime, info.lastUpdateTime))
   return info
 }
 
@@ -600,6 +606,7 @@ function auditResultEvidence(context) {
     checkPreferencesPersistence(),
     checkThemeLocaleResults(),
     checkFontScaleResults(),
+    checkProviderRuntimeAndroidResults(),
     checkMockChatRequests(),
     checkLongContentRequests(),
     checkCorruptMirrorRequests(),
@@ -978,6 +985,89 @@ function checkFontScaleResults() {
   })
 }
 
+function checkProviderRuntimeAndroidResults() {
+  return resultCheck('Provider Runtime Android result', path.basename(providerRuntimeAndroidResultRelativePath), (file) => {
+    const data = JSON.parse(fs.readFileSync(file, 'utf8'))
+    const expected = readExpectedAppConfig()
+    const scenarios = Array.isArray(data.scenarios)
+      ? data.scenarios.filter((row) => row && typeof row === 'object')
+      : []
+    const issues = validateProviderRuntimeAndroidResult(data, {
+      expectedPackageName: appPackageName,
+      expected,
+      resultPath: relative(file),
+      runLogPath: providerRuntimeAndroidRunLogRelativePath,
+      validatePath: validateRepositoryEvidencePath,
+    }).map(formatProviderRuntimeAndroidIssue)
+
+    return {
+      name: 'Provider Runtime Android result',
+      file: relative(file),
+      summary: formatProviderRuntimeAndroidSummary(data, scenarios),
+      issues,
+    }
+  })
+}
+
+function formatProviderRuntimeAndroidSummary(data, scenarios) {
+  const diagnostics = data && typeof data === 'object' && data.diagnostics && typeof data.diagnostics === 'object'
+    ? data.diagnostics
+    : null
+  if (!diagnostics) {
+    return `${scenarios.filter((row) => row.status === 'passed').length}/${requiredProviderRuntimeAndroidScenarios.length} required scenarios passed`
+  }
+  const failedIds = Array.isArray(diagnostics.failedScenarioIds) && diagnostics.failedScenarioIds.length
+    ? ` failed=${diagnostics.failedScenarioIds.join(',')}`
+    : ''
+  return [
+    `${diagnostics.passedScenarioCount ?? 0}/${diagnostics.requiredScenarioCount ?? requiredProviderRuntimeAndroidScenarios.length} required scenarios passed`,
+    `contractIssues=${diagnostics.contractIssueCount ?? 'missing'}`,
+    `errors=${diagnostics.errorCount ?? 'missing'}`,
+    `credentialHits=${diagnostics.sensitiveData?.hitCount ?? 'missing'}`,
+  ].join(', ') + failedIds
+}
+
+function formatProviderRuntimeAndroidIssue(issue) {
+  const text = String(issue ?? '').trim()
+  if (!text) return 'Provider Runtime Android evidence issue.'
+  return /[.!?]$/.test(text) ? text : `${text}.`
+}
+
+function validateProviderRuntimeSensitiveData(sensitiveData, options = {}) {
+  return validateProviderRuntimeSensitiveDataContract(sensitiveData, {
+    validatePath: validateRepositoryEvidencePath,
+    ...options,
+  })
+}
+
+function validateProviderRuntimeKeyboardState(state, validatePath = validateRepositoryEvidencePath) {
+  return validateProviderRuntimeKeyboardStateContract(state, { validatePath })
+}
+
+function validateProviderRuntimeScenario(id, scenario, validatePath = validateRepositoryEvidencePath) {
+  return validateProviderRuntimeScenarioContract(id, scenario, { validatePath })
+    .map((issue) => `${issue}.`)
+}
+
+function validateProviderRuntimeScenarioState(id, scenario) {
+  return validateProviderRuntimeScenarioStateContract(id, scenario)
+    .map((issue) => `${issue}.`)
+}
+
+function validateProviderRuntimeScenarioEvidence(id, scenario, validatePath = validateRepositoryEvidencePath) {
+  return validateProviderRuntimeScenarioEvidenceContract(id, scenario, { validatePath })
+    .map((issue) => `${issue}.`)
+}
+
+function validateProviderRuntimeScenarioSteps(id, steps, validatePath = validateRepositoryEvidencePath) {
+  return validateProviderRuntimeScenarioStepsContract(id, steps, { validatePath })
+    .map((issue) => `${issue}.`)
+}
+
+function validateRepositoryEvidencePath(value) {
+  return validateProviderRuntimeAndroidEvidencePath(root, value)
+}
+
 function checkMockChatRequests() {
   return resultCheck('Mock provider chat request log', 'mock-openai-compatible-requests.jsonl', (file) => {
     const rows = readJsonl(file)
@@ -1063,6 +1153,7 @@ function checkProductionQaMatrixFreshness(context, expectedResultEvidenceCount) 
     'fresh-route-smoke/route-smoke-results.json',
     'memory-review-smoke-results.json',
     'work-artifact-smoke-results.json',
+    'provider-runtime-android-results.json',
     architectureBoundaryAuditEvidenceName,
     `${architectureBoundaryAudit?.summary?.checks ?? 0} architecture boundary checks`,
     `${architectureBoundaryAudit?.summary?.blockingIssues ?? 0} architecture blocking issues`,
@@ -1114,17 +1205,13 @@ function auditSensitiveEvidenceInDir(dir) {
   const hits = []
   for (const file of files) {
     const text = fs.readFileSync(file, 'utf8')
-    for (const { label, pattern } of secretPatterns) {
-      pattern.lastIndex = 0
-      for (const match of text.matchAll(pattern)) {
-        hits.push({
-          file: relative(file),
-          line: lineNumber(text, match.index ?? 0),
-          label,
-          sample: maskSecret(match[0]),
-        })
-      }
-    }
+    const evidencePath = relative(file)
+    hits.push(...collectSensitiveEvidenceHits(evidencePath, text).map((hit) => ({
+      file: evidencePath,
+      line: lineNumber(text, hit.index),
+      label: hit.label,
+      sample: hit.sample,
+    })))
   }
   return { scannedFiles: files.length, hits }
 }
@@ -1152,18 +1239,329 @@ function runSelfTest() {
     ].join('\n'), 'utf8')
     const result = auditSensitiveEvidenceInDir(sensitiveRoot)
     const labels = new Set(result.hits.map((hit) => hit.label))
-    const requiredLabels = secretPatterns.map((item) => item.label)
+    const requiredLabels = sensitiveEvidencePatterns.map((item) => item.label)
     const missing = requiredLabels.filter((label) => !labels.has(label))
     if (missing.length) throw new Error(`Sensitive evidence self-test missed patterns: ${missing.join(', ')}`)
     const cleanHits = result.hits.filter((hit) => hit.file.endsWith('clean-evidence.log'))
     if (cleanHits.length) throw new Error(`Sensitive evidence self-test flagged masked samples: ${cleanHits.map((hit) => hit.label).join(', ')}`)
     console.log(`Sensitive evidence self-test passed (${result.hits.length} hits across ${result.scannedFiles} files).`)
+    runProviderRuntimeSensitiveDataSelfTest(tempRoot)
+    runProviderRuntimeKeyboardStateSelfTest(tempRoot)
+    runProviderRuntimeScenarioSelfTest(tempRoot)
+    runProviderRuntimeScenarioStateSelfTest()
+    runProviderRuntimeScenarioEvidenceSelfTest(tempRoot)
+    runProviderRuntimeScenarioStepsSelfTest(tempRoot)
     runReleaseFreshnessSelfTest(tempRoot)
     runArchitectureBoundaryAuditSelfTest()
     runEvidenceCoverageSelfTest()
   } finally {
     fs.rmSync(tempRoot, { recursive: true, force: true })
   }
+}
+
+function runProviderRuntimeSensitiveDataSelfTest(tempRoot) {
+  const resultPath = providerRuntimeAndroidResultRelativePath
+  const logPath = providerRuntimeAndroidRunLogRelativePath
+  const extraPath = 'test-evidence/qa/provider-runtime-android/provider-runtime-settings-route.uia.xml'
+  const knownPaths = new Set([resultPath, logPath, extraPath])
+  const validatePath = (value) => knownPaths.has(value) ? null : 'missing'
+  const requiredPaths = [resultPath, logPath]
+  const valid = {
+    fullCredentialLeak: false,
+    scannedFiles: 3,
+    scannedPaths: [resultPath, logPath, extraPath],
+    hits: [],
+  }
+  const validIssues = validateProviderRuntimeSensitiveData(valid, { requiredPaths, validatePath })
+  if (validIssues.length) throw new Error(`Provider Runtime sensitiveData self-test rejected valid evidence: ${validIssues.join(', ')}`)
+
+  for (const evidencePath of valid.scannedPaths) {
+    const absolutePath = path.join(tempRoot, evidencePath)
+    fs.mkdirSync(path.dirname(absolutePath), { recursive: true })
+    fs.writeFileSync(absolutePath, '', 'utf8')
+  }
+  const defaultPathValidationIssues = validateProviderRuntimeSensitiveDataContract(valid, { requiredPaths, root: tempRoot })
+  if (defaultPathValidationIssues.length) {
+    throw new Error(`Provider Runtime sensitiveData self-test rejected default path validation: ${defaultPathValidationIssues.join(', ')}`)
+  }
+  const missingPathIssues = validateProviderRuntimeSensitiveDataContract({
+    ...valid,
+    scannedPaths: [resultPath, logPath, 'test-evidence/qa/provider-runtime-android/missing.log'],
+  }, { requiredPaths, root: tempRoot })
+  if (!missingPathIssues.some((issue) => issue.includes('referenced scanned path') && issue.includes('missing'))) {
+    throw new Error(`Provider Runtime sensitiveData self-test accepted missing default path evidence: ${missingPathIssues.join(', ')}`)
+  }
+  const outsidePathIssues = validateProviderRuntimeSensitiveDataContract({
+    ...valid,
+    scannedPaths: [resultPath, logPath, '../outside-provider-runtime.log'],
+  }, { requiredPaths, root: tempRoot })
+  if (!outsidePathIssues.some((issue) => issue.includes('referenced scanned path') && issue.includes('outside the repository'))) {
+    throw new Error(`Provider Runtime sensitiveData self-test accepted outside-repository default path evidence: ${outsidePathIssues.join(', ')}`)
+  }
+  const absoluteRepositoryPathIssues = validateProviderRuntimeSensitiveDataContract({
+    ...valid,
+    scannedPaths: [resultPath, logPath, path.join(tempRoot, extraPath)],
+  }, { requiredPaths, root: tempRoot })
+  if (!absoluteRepositoryPathIssues.some((issue) => issue.includes('referenced scanned path') && issue.includes('not repository-relative'))) {
+    throw new Error(`Provider Runtime sensitiveData self-test accepted absolute default path evidence: ${absoluteRepositoryPathIssues.join(', ')}`)
+  }
+  const nonNormalizedPathIssues = validateProviderRuntimeSensitiveDataContract({
+    ...valid,
+    scannedPaths: [resultPath, logPath, `./${extraPath}`],
+  }, { requiredPaths, root: tempRoot })
+  if (!nonNormalizedPathIssues.some((issue) => issue.includes('referenced scanned path') && issue.includes('not normalized repository-relative'))) {
+    throw new Error(`Provider Runtime sensitiveData self-test accepted non-normalized default path evidence: ${nonNormalizedPathIssues.join(', ')}`)
+  }
+
+  const invalidCases = [
+    ['missing state', null, 'does not record sensitiveData'],
+    ['leak flag', { ...valid, fullCredentialLeak: true }, 'fullCredentialLeak=false'],
+    ['zero scanned files', { ...valid, scannedFiles: 0, scannedPaths: [] }, 'scannedFiles as a positive integer'],
+    ['missing scanned files', { ...valid, scannedFiles: undefined }, 'scannedFiles as a positive integer'],
+    ['missing scanned paths', { ...valid, scannedPaths: undefined }, 'scannedPaths as an array'],
+    ['non-string scanned path', { ...valid, scannedPaths: [resultPath, logPath, null] }, 'scannedPaths as non-empty strings'],
+    ['blank scanned path', { ...valid, scannedPaths: [resultPath, logPath, ''] }, 'scannedPaths as non-empty strings'],
+    ['path count mismatch', { ...valid, scannedFiles: 3, scannedPaths: [resultPath, logPath] }, 'scannedPaths length matching scannedFiles'],
+    ['duplicate scanned path', { ...valid, scannedPaths: [resultPath, logPath, logPath] }, 'scannedPaths without duplicates'],
+    ['missing result path', { ...valid, scannedPaths: [logPath, extraPath], scannedFiles: 2 }, `scanned path ${resultPath}`],
+    ['missing log path', { ...valid, scannedPaths: [resultPath, extraPath], scannedFiles: 2 }, `scanned path ${logPath}`],
+    ['missing referenced path', { ...valid, scannedPaths: [resultPath, logPath, 'test-evidence/qa/provider-runtime-android/missing.log'] }, 'referenced scanned path'],
+    ['missing hits array', { ...valid, hits: undefined }, 'hits as an array'],
+    ['non-empty hits', { ...valid, hits: [{ file: 'test-evidence/qa/provider-runtime-android/leak.log' }] }, 'hits as an empty array'],
+  ]
+  for (const [name, state, expectedIssue] of invalidCases) {
+    const issues = validateProviderRuntimeSensitiveData(state, { requiredPaths, validatePath })
+    if (!issues.some((issue) => issue.includes(expectedIssue))) {
+      throw new Error(`Provider Runtime sensitiveData self-test missed ${name}: ${issues.join(', ')}`)
+    }
+  }
+  console.log(`Provider Runtime sensitiveData self-test passed (${invalidCases.length} invalid states rejected).`)
+}
+
+function runProviderRuntimeKeyboardStateSelfTest(tempRoot) {
+  const evidencePath = 'test-evidence/qa/provider-runtime-android/provider-runtime-import-keyboard-state.json'
+  const validatePath = (value) => value === evidencePath ? null : 'missing'
+  const valid = {
+    imeVisible: true,
+    editableFocused: true,
+    evidence: evidencePath,
+    signals: { inputShown: true, servedEditText: true },
+  }
+  const validIssues = validateProviderRuntimeKeyboardState(valid, validatePath)
+  if (validIssues.length) throw new Error(`Provider Runtime keyboard state self-test rejected valid evidence: ${validIssues.join(', ')}`)
+
+  const absoluteEvidencePath = path.join(tempRoot, evidencePath)
+  fs.mkdirSync(path.dirname(absoluteEvidencePath), { recursive: true })
+  fs.writeFileSync(absoluteEvidencePath, `${JSON.stringify(valid, null, 2)}\n`, 'utf8')
+  const defaultPathValidationIssues = validateProviderRuntimeKeyboardStateContract(valid, { root: tempRoot })
+  if (defaultPathValidationIssues.length) {
+    throw new Error(`Provider Runtime keyboard state self-test rejected default path validation: ${defaultPathValidationIssues.join(', ')}`)
+  }
+  const missingPathIssues = validateProviderRuntimeKeyboardStateContract({
+    ...valid,
+    evidence: 'test-evidence/qa/provider-runtime-android/missing-keyboard-state.json',
+  }, { root: tempRoot })
+  if (!missingPathIssues.some((issue) => issue.includes('evidence is missing'))) {
+    throw new Error(`Provider Runtime keyboard state self-test accepted missing default path evidence: ${missingPathIssues.join(', ')}`)
+  }
+  const outsidePathIssues = validateProviderRuntimeKeyboardStateContract({
+    ...valid,
+    evidence: '../outside-keyboard-state.json',
+  }, { root: tempRoot })
+  if (!outsidePathIssues.some((issue) => issue.includes('evidence is outside the repository'))) {
+    throw new Error(`Provider Runtime keyboard state self-test accepted outside-repository default path evidence: ${outsidePathIssues.join(', ')}`)
+  }
+  const absoluteRepositoryPathIssues = validateProviderRuntimeKeyboardStateContract({
+    ...valid,
+    evidence: absoluteEvidencePath,
+  }, { root: tempRoot })
+  if (!absoluteRepositoryPathIssues.some((issue) => issue.includes('evidence is not repository-relative'))) {
+    throw new Error(`Provider Runtime keyboard state self-test accepted absolute default path evidence: ${absoluteRepositoryPathIssues.join(', ')}`)
+  }
+  const nonNormalizedPathIssues = validateProviderRuntimeKeyboardStateContract({
+    ...valid,
+    evidence: `./${evidencePath}`,
+  }, { root: tempRoot })
+  if (!nonNormalizedPathIssues.some((issue) => issue.includes('evidence is not normalized repository-relative'))) {
+    throw new Error(`Provider Runtime keyboard state self-test accepted non-normalized default path evidence: ${nonNormalizedPathIssues.join(', ')}`)
+  }
+
+  const invalidCases = [
+    ['missing state', null, 'does not record keyboardState'],
+    ['missing ime visible', { ...valid, imeVisible: false }, 'keyboardState.imeVisible=true'],
+    ['missing editable focus', { ...valid, editableFocused: false }, 'keyboardState.editableFocused=true'],
+    ['missing evidence path', { ...valid, evidence: 'missing.json' }, 'evidence is missing'],
+    ['missing ime signal', { ...valid, signals: { servedEditText: true } }, 'positive IME visibility signal'],
+    ['missing focus signal', { ...valid, signals: { inputShown: true } }, 'positive editable-focus signal'],
+  ]
+  for (const [name, state, expectedIssue] of invalidCases) {
+    const issues = validateProviderRuntimeKeyboardState(state, validatePath)
+    if (!issues.some((issue) => issue.includes(expectedIssue))) {
+      throw new Error(`Provider Runtime keyboard state self-test missed ${name}: ${issues.join(', ')}`)
+    }
+  }
+  console.log(`Provider Runtime keyboard state self-test passed (${invalidCases.length} invalid states rejected).`)
+}
+
+function runProviderRuntimeScenarioSelfTest(tempRoot) {
+  const scenarioId = 'provider-import-keyboard'
+  const pngPath = 'test-evidence/qa/provider-runtime-android/provider-runtime-import-keyboard.png'
+  const uiaPath = 'test-evidence/qa/provider-runtime-android/provider-runtime-import-keyboard.uia.xml'
+  const logPath = 'test-evidence/qa/provider-runtime-android/provider-runtime-import-keyboard.log'
+  const keyboardPath = 'test-evidence/qa/provider-runtime-android/provider-runtime-import-keyboard-state.json'
+  const stepPngPath = 'test-evidence/qa/provider-runtime-android/provider-runtime-import-keyboard-step.png'
+  const stepUiaPath = 'test-evidence/qa/provider-runtime-android/provider-runtime-import-keyboard-step.uia.xml'
+  const valid = {
+    status: 'passed',
+    expectedState: 'Provider import input stays focused with keyboard open.',
+    actualState: 'Provider import keyboard evidence recorded focused input and IME visibility.',
+    fixEntry: 'src/components/providers/ProviderSettingsContent.tsx',
+    png: pngPath,
+    uia: uiaPath,
+    log: logPath,
+    keyboardState: {
+      imeVisible: true,
+      editableFocused: true,
+      evidence: keyboardPath,
+      signals: { inputShown: true, servedEditText: true },
+    },
+    steps: [{ name: 'focus-provider-import', png: stepPngPath, uia: stepUiaPath }],
+  }
+  const knownPaths = new Set([pngPath, uiaPath, logPath, keyboardPath, stepPngPath, stepUiaPath])
+  const validatePath = (value) => knownPaths.has(value) ? null : 'missing'
+  const validIssues = validateProviderRuntimeScenario(scenarioId, valid, validatePath)
+  if (validIssues.length) throw new Error(`Provider Runtime scenario self-test rejected valid scenario: ${validIssues.join(', ')}`)
+
+  for (const evidencePath of knownPaths) {
+    const absolutePath = path.join(tempRoot, evidencePath)
+    fs.mkdirSync(path.dirname(absolutePath), { recursive: true })
+    fs.writeFileSync(absolutePath, '', 'utf8')
+  }
+  const tempRootValidatePath = (value) => validateProviderRuntimeAndroidEvidencePath(tempRoot, value)
+  const defaultPathValidationIssues = validateProviderRuntimeScenario(scenarioId, valid, tempRootValidatePath)
+  if (defaultPathValidationIssues.length) {
+    throw new Error(`Provider Runtime scenario self-test rejected temp-root path validation: ${defaultPathValidationIssues.join(', ')}`)
+  }
+
+  const invalidCases = [
+    ['failed status', { ...valid, status: 'failed' }, 'did not pass'],
+    ['missing top-level png', { ...valid, png: 'test-evidence/qa/provider-runtime-android/missing-scenario.png' }, 'referenced png evidence is missing'],
+    ['missing step uia', { ...valid, steps: [{ ...valid.steps[0], uia: 'test-evidence/qa/provider-runtime-android/missing-step.uia.xml' }] }, 'step 1 referenced uia evidence is missing'],
+    ['non-normalized keyboard evidence', { ...valid, keyboardState: { ...valid.keyboardState, evidence: `./${keyboardPath}` } }, 'referenced keyboardState evidence is not normalized repository-relative'],
+    ['missing keyboard focus signal', { ...valid, keyboardState: { ...valid.keyboardState, editableFocused: false, signals: { inputShown: true } } }, 'keyboardState.editableFocused=true'],
+  ]
+  for (const [name, scenario, expectedIssue] of invalidCases) {
+    const issues = validateProviderRuntimeScenario(scenarioId, scenario, tempRootValidatePath)
+    if (!issues.some((issue) => issue.includes(expectedIssue))) {
+      throw new Error(`Provider Runtime scenario self-test missed ${name}: ${issues.join(', ')}`)
+    }
+  }
+  console.log(`Provider Runtime scenario self-test passed (${invalidCases.length} invalid states rejected).`)
+}
+
+function runProviderRuntimeScenarioStateSelfTest() {
+  const scenarioId = 'provider-settings-route'
+  const valid = {
+    status: 'passed',
+    expectedState: 'Provider settings route is visible.',
+    actualState: 'Provider settings route opened without an error boundary.',
+    fixEntry: 'src/components/providers/ProviderSettingsContent.tsx',
+  }
+  const validIssues = validateProviderRuntimeScenarioState(scenarioId, valid)
+  if (validIssues.length) throw new Error(`Provider Runtime scenario state self-test rejected valid state: ${validIssues.join(', ')}`)
+
+  const invalidCases = [
+    ['failed status', { ...valid, status: 'failed' }, 'did not pass'],
+    ['missing expected state', { ...valid, expectedState: '' }, 'does not record expectedState'],
+    ['missing actual state', { ...valid, actualState: undefined }, 'does not record actualState'],
+    ['missing fix entry', { ...valid, fixEntry: null }, 'does not record fixEntry'],
+    ['non-object scenario', null, 'is not an object'],
+  ]
+  for (const [name, scenario, expectedIssue] of invalidCases) {
+    const issues = validateProviderRuntimeScenarioState(scenarioId, scenario)
+    if (!issues.some((issue) => issue.includes(expectedIssue))) {
+      throw new Error(`Provider Runtime scenario state self-test missed ${name}: ${issues.join(', ')}`)
+    }
+  }
+  console.log(`Provider Runtime scenario state self-test passed (${invalidCases.length} invalid states rejected).`)
+}
+
+function runProviderRuntimeScenarioEvidenceSelfTest(tempRoot) {
+  const scenarioId = 'provider-settings-route'
+  const pngPath = 'test-evidence/qa/provider-runtime-android/provider-runtime-settings-route.png'
+  const uiaPath = 'test-evidence/qa/provider-runtime-android/provider-runtime-settings-route.uia.xml'
+  const logPath = 'test-evidence/qa/provider-runtime-android/provider-runtime-settings-route.log'
+  const valid = { png: pngPath, uia: uiaPath, log: logPath }
+  const knownPaths = new Set([pngPath, uiaPath, logPath])
+  const validatePath = (value) => knownPaths.has(value) ? null : 'missing'
+  const validIssues = validateProviderRuntimeScenarioEvidence(scenarioId, valid, validatePath)
+  if (validIssues.length) throw new Error(`Provider Runtime scenario evidence self-test rejected valid evidence: ${validIssues.join(', ')}`)
+
+  const validWithoutLogIssues = validateProviderRuntimeScenarioEvidence(scenarioId, { png: pngPath, uia: uiaPath }, validatePath)
+  if (validWithoutLogIssues.length) {
+    throw new Error(`Provider Runtime scenario evidence self-test rejected optional missing log: ${validWithoutLogIssues.join(', ')}`)
+  }
+
+  for (const evidencePath of [pngPath, uiaPath, logPath]) {
+    const absolutePath = path.join(tempRoot, evidencePath)
+    fs.mkdirSync(path.dirname(absolutePath), { recursive: true })
+    fs.writeFileSync(absolutePath, '', 'utf8')
+  }
+  const tempRootValidatePath = (value) => validateProviderRuntimeAndroidEvidencePath(tempRoot, value)
+  const defaultPathValidationIssues = validateProviderRuntimeScenarioEvidence(scenarioId, valid, tempRootValidatePath)
+  if (defaultPathValidationIssues.length) {
+    throw new Error(`Provider Runtime scenario evidence self-test rejected temp-root path validation: ${defaultPathValidationIssues.join(', ')}`)
+  }
+
+  const invalidCases = [
+    ['missing png', { ...valid, png: 'test-evidence/qa/provider-runtime-android/missing-scenario.png' }, 'referenced png evidence is missing'],
+    ['absolute uia', { ...valid, uia: path.join(tempRoot, uiaPath) }, 'referenced uia evidence is not repository-relative'],
+    ['non-normalized log', { ...valid, log: `./${logPath}` }, 'referenced log evidence is not normalized repository-relative'],
+    ['non-object scenario', null, 'is not an object'],
+  ]
+  for (const [name, scenario, expectedIssue] of invalidCases) {
+    const issues = validateProviderRuntimeScenarioEvidence(scenarioId, scenario, tempRootValidatePath)
+    if (!issues.some((issue) => issue.includes(expectedIssue))) {
+      throw new Error(`Provider Runtime scenario evidence self-test missed ${name}: ${issues.join(', ')}`)
+    }
+  }
+  console.log(`Provider Runtime scenario evidence self-test passed (${invalidCases.length} invalid states rejected).`)
+}
+
+function runProviderRuntimeScenarioStepsSelfTest(tempRoot) {
+  const scenarioId = 'provider-settings-route'
+  const pngPath = 'test-evidence/qa/provider-runtime-android/provider-runtime-settings-route-step.png'
+  const uiaPath = 'test-evidence/qa/provider-runtime-android/provider-runtime-settings-route-step.uia.xml'
+  const validSteps = [{ name: 'open-provider-settings', png: pngPath, uia: uiaPath }]
+  const knownPaths = new Set([pngPath, uiaPath])
+  const validatePath = (value) => knownPaths.has(value) ? null : 'missing'
+  const validIssues = validateProviderRuntimeScenarioSteps(scenarioId, validSteps, validatePath)
+  if (validIssues.length) throw new Error(`Provider Runtime scenario steps self-test rejected valid evidence: ${validIssues.join(', ')}`)
+
+  for (const evidencePath of [pngPath, uiaPath]) {
+    const absolutePath = path.join(tempRoot, evidencePath)
+    fs.mkdirSync(path.dirname(absolutePath), { recursive: true })
+    fs.writeFileSync(absolutePath, '', 'utf8')
+  }
+  const tempRootValidatePath = (value) => validateProviderRuntimeAndroidEvidencePath(tempRoot, value)
+  const defaultPathValidationIssues = validateProviderRuntimeScenarioSteps(scenarioId, validSteps, tempRootValidatePath)
+  if (defaultPathValidationIssues.length) {
+    throw new Error(`Provider Runtime scenario steps self-test rejected temp-root path validation: ${defaultPathValidationIssues.join(', ')}`)
+  }
+
+  const invalidCases = [
+    ['missing png', [{ ...validSteps[0], png: 'test-evidence/qa/provider-runtime-android/missing-step.png' }], 'referenced png evidence is missing'],
+    ['absolute png', [{ ...validSteps[0], png: path.join(tempRoot, pngPath) }], 'referenced png evidence is not repository-relative'],
+    ['non-normalized uia', [{ ...validSteps[0], uia: `./${uiaPath}` }], 'referenced uia evidence is not normalized repository-relative'],
+    ['non-object step', [null], 'step 1 is not an object'],
+  ]
+  for (const [name, steps, expectedIssue] of invalidCases) {
+    const issues = validateProviderRuntimeScenarioSteps(scenarioId, steps, tempRootValidatePath)
+    if (!issues.some((issue) => issue.includes(expectedIssue))) {
+      throw new Error(`Provider Runtime scenario steps self-test missed ${name}: ${issues.join(', ')}`)
+    }
+  }
+  console.log(`Provider Runtime scenario steps self-test passed (${invalidCases.length} invalid states rejected).`)
 }
 
 function runReleaseFreshnessSelfTest(tempRoot) {
@@ -1215,6 +1613,10 @@ function runEvidenceCoverageSelfTest() {
   if (!missingOnboarding) throw new Error('Evidence coverage self-test requires first-run onboarding handoff coverage.')
   if (missingOnboarding.covered) throw new Error('Evidence coverage self-test expected missing first-run onboarding evidence without snapshots.')
   if (!missingOnboarding.blocking) throw new Error('Evidence coverage self-test requires first-run onboarding handoff to be blocking.')
+  const missingProviderRuntime = missingCoverage.find((item) => item.area === 'Provider Runtime Android governance')
+  if (!missingProviderRuntime) throw new Error('Evidence coverage self-test requires Provider Runtime Android governance coverage.')
+  if (missingProviderRuntime.covered) throw new Error('Evidence coverage self-test expected missing Provider Runtime Android governance evidence without snapshots.')
+  if (!missingProviderRuntime.blocking) throw new Error('Evidence coverage self-test requires Provider Runtime Android governance to be blocking.')
 
   const unpairedCoverage = summarizeEvidenceCoverage([
     { file: 'test-evidence/qa/current-onboarding-live/onboarding-step-1-awaken.uia.xml', screenshotFile: null },
@@ -1231,6 +1633,20 @@ function runEvidenceCoverageSelfTest() {
   if (!pairedOnboarding?.covered) throw new Error('Evidence coverage self-test expected paired first-run onboarding evidence to pass.')
   if (!pairedOnboarding.blocking) throw new Error('Evidence coverage self-test requires paired first-run onboarding evidence to remain blocking.')
 
+  const pairedProviderRuntimeCoverage = summarizeEvidenceCoverage([
+    { file: 'test-evidence/qa/provider-runtime-settings-route.uia.xml', screenshotFile: 'test-evidence/qa/provider-runtime-settings-route.png' },
+    { file: 'test-evidence/qa/provider-runtime-import-keyboard.uia.xml', screenshotFile: 'test-evidence/qa/provider-runtime-import-keyboard.png' },
+    { file: 'test-evidence/qa/provider-runtime-model-switch.uia.xml', screenshotFile: 'test-evidence/qa/provider-runtime-model-switch.png' },
+    { file: 'test-evidence/qa/provider-runtime-blocked-model.uia.xml', screenshotFile: 'test-evidence/qa/provider-runtime-blocked-model.png' },
+    { file: 'test-evidence/qa/provider-runtime-fallback.uia.xml', screenshotFile: 'test-evidence/qa/provider-runtime-fallback.png' },
+    { file: 'test-evidence/qa/provider-runtime-health.uia.xml', screenshotFile: 'test-evidence/qa/provider-runtime-health.png' },
+    { file: 'test-evidence/qa/provider-runtime-android-back.uia.xml', screenshotFile: 'test-evidence/qa/provider-runtime-android-back.png' },
+    { file: 'test-evidence/qa/provider-runtime-restart.uia.xml', screenshotFile: 'test-evidence/qa/provider-runtime-restart.png' },
+  ])
+  const pairedProviderRuntime = pairedProviderRuntimeCoverage.find((item) => item.area === 'Provider Runtime Android governance')
+  if (!pairedProviderRuntime?.covered) throw new Error('Evidence coverage self-test expected paired Provider Runtime Android governance evidence to pass.')
+  if (!pairedProviderRuntime.blocking) throw new Error('Evidence coverage self-test requires paired Provider Runtime Android governance evidence to remain blocking.')
+
   const touchTargetCoverage = summarizeBlockingTouchTargets([
     {
       file: 'test-evidence/qa/app-owned-touch-target.uia.xml',
@@ -1245,12 +1661,6 @@ function runEvidenceCoverageSelfTest() {
   if (touchTargetCoverage.blockingCount !== 1) throw new Error(`Evidence coverage self-test expected one app-owned small touch target, got ${touchTargetCoverage.blockingCount}.`)
   if (!touchTargetCoverage.targets.some((node) => node.label === 'Primary action')) throw new Error('Evidence coverage self-test must report the app-owned small touch target.')
   console.log('Evidence coverage self-test passed (first-run onboarding handoff is blocking and app-owned touch targets are blocking).')
-}
-
-function maskSecret(value) {
-  const compact = value.replace(/\s+/g, ' ')
-  if (compact.length <= 12) return '*'.repeat(compact.length)
-  return `${compact.slice(0, 6)}...${compact.slice(-4)}`
 }
 
 function lineNumber(text, index) {
@@ -1593,6 +2003,7 @@ function renderReleaseProvenance(lines, provenance) {
   lines.push(`| Installed version | ${escapeCell(`${provenance.installed?.versionName ?? 'missing'} (${provenance.installed?.versionCode ?? 'missing'})`)} |`)
   lines.push(`| Installed ABI | ${escapeCell(`${provenance.installed?.primaryCpuAbi ?? 'missing'} on ${provenance.installed?.deviceAbi ?? 'missing'}`)} |`)
   lines.push(`| Clean install timestamps | ${escapeCell(`${provenance.installed?.firstInstallTime ?? 'missing'} / ${provenance.installed?.lastUpdateTime ?? 'missing'}`)} |`)
+  lines.push(`| Clean install window | ${provenance.installed?.cleanInstallWindowMs ?? 'missing'} ms |`)
   lines.push(`| Clean install proven | ${provenance.installed?.cleanInstall ? 'yes' : 'no'} |`)
   lines.push(``)
   if (!issues.length) {
@@ -1663,6 +2074,16 @@ function summarizeEvidenceCoverage(snapshots) {
     allItem('First-run onboarding handoff', [[/onboarding.*awaken/, /first-run-onboarding/], [/onboarding.*first-prompt/, /onboarding-complete.*draft/]], 'Capture first-run onboarding entry, completion, and the selected first prompt handed into the Home composer.'),
     anyItem('Provider batch import keyboard', [/settings-providers-batch-keyboard-open/, /current-.*provider-import-filled/], 'Capture provider batch import while the keyboard is open and actions remain visible.'),
     allItem('Provider activation progress/result', [[/provider-activation-progress/], [/provider-activation-result/]], 'Capture provider activation start/progress/result to prove immediate feedback and final readiness.'),
+    allItem('Provider Runtime Android governance', [
+      [/settings-providers.*route/, /provider-runtime.*settings/],
+      [/provider-runtime.*import.*keyboard/, /settings-providers-batch-keyboard-open/],
+      [/provider-runtime.*model-switch/, /chat.*model-switch/],
+      [/provider-runtime.*blocked-model/, /blocked-model-recovery/],
+      [/provider-runtime.*fallback/, /runtime-fallback/],
+      [/provider-runtime.*health/, /provider-health/],
+      [/provider-runtime.*back/, /android-back/],
+      [/provider-runtime.*restart/, /restart-recovery/],
+    ], 'Capture Provider settings, provider import keyboard, chat model switch, blocked-model recovery, runtime fallback trace, provider health, Android Back, and restart recovery from the current emulator APK.'),
     anyItem('Settings readiness panel', [/settings-readiness/, /current-.*settings.*readiness/], 'Capture the Settings AI workspace readiness panel and verify Provider, Memory, Knowledge, Search, and Recovery status chips are readable and actionable.'),
     allItem('Chat streaming in-flight and complete', [[/chat.*inflight/, /chat-responses-json-inflight/], [/chat.*complete/, /chat-responses-json-complete/]], 'Capture a configured provider chat while streaming and after completion.'),
     allItem('Chat message actions and delete confirmation', [[/chat-message-actions-menu/], [/message-delete-confirm/, /longpress-delete-confirm/, /delete-confirm.*message/]], 'Capture copy/retry/regenerate/speak and long-press delete confirmation for a real message.'),

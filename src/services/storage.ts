@@ -306,6 +306,7 @@ function normalizeProvider(provider: AIProvider): AIProvider {
     modelConfigs: uniqueStrings([...models, ...manualModels, ...modelAliases.map((item) => item.model)]).map((modelId) => getModelConfig(modelId, provider.type, provider.modelConfigs)),
     credentialGroups: provider.credentialGroups?.map((group, index) => ({
       ...group,
+      apiKey: '',
       id: group.id || `group-${index + 1}`,
       availableModels: group.availableModels?.length ? clearHistoricalInjectedGroupModels(group, provider) : [],
       enabled: group.enabled ?? true,

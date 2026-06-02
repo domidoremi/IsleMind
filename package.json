@@ -12,6 +12,7 @@
     "doctor": "npx --yes expo-doctor",
     "test:qa-audit:self": "node scripts/qa-coverage-audit.js --self-test",
     "test:current-apk-smoke": "node scripts/collect-current-apk-smoke.js",
+    "test:provider-runtime-android": "node scripts/collect-provider-runtime-android.js",
     "test:memory-review-smoke": "node scripts/collect-memory-review-smoke.js",
     "test:work-artifact-smoke": "node scripts/collect-work-artifact-smoke.js",
     "test:qa-audit": "node scripts/qa-coverage-audit.js",

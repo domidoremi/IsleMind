@@ -1,6 +1,6 @@
 import { fetch as expoFetch } from 'expo/fetch'
 import type { AIModel, Attachment, AIProvider, MessageCitation, MessageUsage, ProcessTrace, ProviderOperationCode, ProviderType, ReasoningEffort, RetrievalSource, WebSearchMode } from '@/types'
-import { getModelConfig, getProviderConfigIssue, getProviderEffectiveBaseUrl, mergeModelConfig, sortModelConfigs } from '@/types'
+import { getModelConfig, getProviderConfigIssue, mergeModelConfig, sortModelConfigs } from '@/types'
 import { st } from '@/i18n/service'
 import { getSecureApiKey } from './secureKey'
 import { chooseCredentialForModel, runCredentialGroupModelSync, updateCredentialGroupHealth } from './providerCredentials'
@@ -9,13 +9,31 @@ import type { PayloadRuleResult } from '@/services/ai/policy/payloadRules'
 import { evaluatePayloadRules } from '@/services/ai/policy/payloadRules'
 import type { ProxyPolicyDecision } from '@/services/ai/policy/proxyPolicy'
 import { resolveProxyPolicy } from '@/services/ai/policy/proxyPolicy'
-import { resolveProviderModelAccess } from '@/services/ai/policy/providerModelAccess'
+import type { AccessPolicyDecision } from '@/services/ai/policy/providerModelAccess'
+import { resolveProviderModelAccess, resolveProviderModelAliasAccess } from '@/services/ai/policy/providerModelAccess'
 import type { TransportSelection } from '@/services/ai/transport/transportSelector'
 import { selectUpstreamTransport } from '@/services/ai/transport/transportSelector'
 import { acquireSessionLease } from '@/services/ai/transport/sessionLeasePool'
 import { runResponsesWebSocketTransport } from '@/services/ai/transport/responsesWebSocketTransport'
 import { appendRuntimeLog } from '@/services/runtimeLog'
 import { resolveProviderModelAlias } from '@/utils/providerModels'
+import type { ProviderConformanceResult } from '@/services/ai/providerConformance'
+import { resolveProviderRequestConformance } from '@/services/ai/providerConformance'
+import type { ProviderRouteContext, ProviderRouteDecision } from '@/services/ai/providerRouter'
+import { resolveProviderRoute } from '@/services/ai/providerRouter'
+import { buildProviderFallbackCandidates } from '@/services/ai/providerFallbackCandidates'
+import type { ProviderFailoverDecision, ProviderFailoverInput, ProviderFailoverRoute } from '@/services/ai/providerFailover'
+import { classifyProviderFailure, resolveFailoverDecision } from '@/services/ai/providerFailover'
+import { indexProviderHealthRecords, providerHealthKey, recordProviderFailure, recordProviderSuccess } from '@/services/ai/providerHealth'
+import { loadProviderHealthSnapshot, mergeProviderHealthRecords } from '@/services/ai/providerHealthStore'
+import {
+  assembleProviderRoute,
+  defaultOpenAICompatibleBaseUrl,
+  getProviderApiEndpoint,
+  isOpenAICompatibleProvider,
+  normalizeProviderBaseUrl,
+  resolveProviderEndpoint,
+} from '@/services/ai/providerRouteAssembly'
 
 export type StreamCallback = (chunk: string) => void
 export type DoneCallback = (result: ChatCompletionResult) => void
@@ -108,6 +126,7 @@ export interface ChatRequest {
   remoteCompactEligible?: boolean
   previousResponseId?: string
   requestedModel?: string
+  fallbackProviders?: AIProvider[]
 }
 
 export interface ProviderAudioTranscriptionRequest {
@@ -216,11 +235,11 @@ export function buildOpenAIResponsesBodyForTest(req: ChatRequest) {
 }
 
 export function getAPIEndpointForTest(provider: AIProvider) {
-  return getAPIEndpoint(provider)
+  return getProviderApiEndpoint(provider)
 }
 
 export function getXiaomiMimoModelDiscoveryEndpointForTest(provider: AIProvider) {
-  return `${normalizeBaseUrl(defaultOpenAICompatibleBaseUrl(getXiaomiMimoModelDiscoveryProvider(provider)))}/models`
+  return `${normalizeProviderBaseUrl(defaultOpenAICompatibleBaseUrl(getXiaomiMimoModelDiscoveryProvider(provider)))}/models`
 }
 
 export function parseProviderStreamChunkForTest(chunk: string, providerType: ProviderType) {
@@ -241,6 +260,10 @@ export function selectUpstreamTransportForTest(input: Parameters<typeof selectUp
 
 export function resolveProviderModelAccessForTest(input: Parameters<typeof resolveProviderModelAccess>[0]) {
   return resolveProviderModelAccess(input)
+}
+
+export function resolveProviderModelAliasAccessForTest(input: Parameters<typeof resolveProviderModelAliasAccess>[0]) {
+  return resolveProviderModelAliasAccess(input)
 }
 
 export function mergeAliasAccessPolicyForTest(
@@ -268,6 +291,18 @@ export function rectifyAnthropicRequestBodyForTest(input: Parameters<typeof rect
 
 export function getBodyForTest(req: ChatRequest) {
   return getBody(req)
+}
+
+export function resolveProviderRequestConformanceForTest(req: ChatRequest, body: Record<string, unknown>) {
+  return resolveProviderRequestConformance(req, body)
+}
+
+export function resolveProviderRouteForTest(req: ChatRequest, body: Record<string, unknown>, context?: ProviderRouteContext) {
+  return resolveProviderRoute({ request: req, body, context })
+}
+
+export function resolveRuntimeFallbackPlanForTest(input: RuntimeFallbackPlanInput) {
+  return resolveRuntimeFallbackPlan(input)
 }
 
 export function parseAnthropicModelsForTest(models: AnthropicModelListItem[]): AIModel[] {
@@ -303,11 +338,8 @@ function buildOpenAIBody(req: ChatRequest) {
       lastMsg.content = [
         { type: 'text', text: textContent },
         ...req.attachments
-          .filter((a) => a.type === 'image')
-          .map((a) => ({
-            type: 'image_url' as const,
-            image_url: { url: `data:${a.mimeType};base64,${a.base64}`, detail: 'auto' as const },
-          })),
+          .filter((a) => a.base64)
+          .map(openAICompatibleAttachmentPart),
       ]
     }
   }
@@ -334,10 +366,32 @@ function buildOpenAIBody(req: ChatRequest) {
     if (mimoReasoning) body.reasoning = mimoReasoning
   }
 
-  const maxTokensKey = req.provider.type === 'xiaomi-mimo' || isOpenAIReasoningModel(req.model) ? 'max_completion_tokens' : 'max_tokens'
+  const maxTokensKey = getOpenAIChatMaxTokensField(req)
   body[maxTokensKey] = clampMaxTokens(req)
 
   return body
+}
+
+function getOpenAIChatMaxTokensField(req: ChatRequest): 'max_completion_tokens' | 'max_tokens' {
+  if (req.provider.type === 'openai') return 'max_completion_tokens'
+  if (req.provider.type === 'xiaomi-mimo') return 'max_completion_tokens'
+  return 'max_tokens'
+}
+
+function openAICompatibleAttachmentPart(attachment: Attachment): Record<string, unknown> {
+  if (attachment.type === 'image') {
+    return {
+      type: 'image_url',
+      image_url: { url: `data:${attachment.mimeType};base64,${attachment.base64}`, detail: 'auto' },
+    }
+  }
+  return {
+    type: 'file',
+    file: {
+      filename: attachment.name,
+      file_data: `data:${attachment.mimeType};base64,${attachment.base64}`,
+    },
+  }
 }
 
 function buildXiaomiMimoAnthropicBody(req: ChatRequest) {
@@ -655,64 +709,6 @@ function clampMaxTokens(req: ChatRequest): number {
   return Math.max(1, Math.min(config.maxOutputTokens, requested))
 }
 
-function isOpenAICompatibleProvider(provider: AIProvider): boolean {
-  return provider.type === 'openai-compatible' || provider.type === 'xiaomi-mimo'
-}
-
-function getAPIEndpoint(provider: AIProvider): string {
-  switch (provider.type) {
-    case 'openai':
-      return `${normalizeBaseUrl(getProviderEffectiveBaseUrl(provider))}/chat/completions`
-    case 'anthropic':
-      return `${normalizeBaseUrl(getProviderEffectiveBaseUrl(provider))}/messages`
-    case 'google':
-      return getGoogleEndpoint(provider, provider.models[0] || 'gemini-2.5-flash', true)
-    case 'openai-compatible':
-      return `${normalizeBaseUrl(defaultOpenAICompatibleBaseUrl(provider))}/chat/completions`
-    case 'xiaomi-mimo':
-      return provider.wireProtocol === 'anthropic-compatible'
-        ? getXiaomiMimoAnthropicMessagesEndpoint(provider)
-        : `${normalizeBaseUrl(defaultOpenAICompatibleBaseUrl(provider))}/chat/completions`
-    default:
-      return ''
-  }
-}
-
-function getOpenAIResponsesEndpoint(provider: AIProvider): string {
-  return `${normalizeBaseUrl(getProviderEffectiveBaseUrl(provider))}/responses`
-}
-
-function defaultOpenAICompatibleBaseUrl(provider: AIProvider): string {
-  const baseUrl = getProviderEffectiveBaseUrl(provider)
-  if (provider.type !== 'openai-compatible' && provider.type !== 'xiaomi-mimo') return baseUrl
-  try {
-    const parsed = new URL(baseUrl)
-    const path = parsed.pathname.replace(/\/+$/, '')
-    if (!path) {
-      parsed.pathname = '/v1'
-      return parsed.toString().replace(/\/+$/, '')
-    }
-  } catch {
-    // Fall back to the user-entered value; the caller will surface the network error.
-  }
-  return baseUrl
-}
-
-function getXiaomiMimoAnthropicMessagesEndpoint(provider: AIProvider): string {
-  const baseUrl = normalizeBaseUrl(defaultOpenAICompatibleBaseUrl(provider))
-  return /\/anthropic$/i.test(baseUrl) ? `${baseUrl}/v1/messages` : `${baseUrl}/messages`
-}
-
-function getGoogleEndpoint(provider: AIProvider, model: string, stream: boolean): string {
-  const method = stream ? 'streamGenerateContent?alt=sse' : 'generateContent'
-  const separator = method.includes('?') ? '&' : '?'
-  return `${normalizeBaseUrl(getProviderEffectiveBaseUrl(provider))}/models/${model}:${method}${separator}key=${encodeURIComponent(provider.apiKey)}`
-}
-
-function normalizeBaseUrl(url: string): string {
-  return url.replace(/\/+$/, '')
-}
-
 function getHeaders(provider: AIProvider): Record<string, string> {
   switch (provider.type) {
     case 'openai':
@@ -749,18 +745,29 @@ function getHeaders(provider: AIProvider): Record<string, string> {
 }
 
 function getBody(req: ChatRequest) {
+  return getBodyWithRoute(req).body
+}
+
+function getBodyWithRoute(req: ChatRequest, context?: ProviderRouteContext, failover?: ProviderFailoverInput) {
+  let body: Record<string, unknown>
   switch (req.provider.type) {
     case 'openai':
-      return usesOpenAIResponses(req) ? buildOpenAIResponsesBody(req) : buildOpenAIBody(req)
+      body = usesOpenAIResponses(req) ? buildOpenAIResponsesBody(req) : buildOpenAIBody(req)
+      break
     case 'anthropic':
-      return buildAnthropicBody(req)
+      body = buildAnthropicBody(req)
+      break
     case 'google':
-      return buildGoogleBody(req)
+      body = buildGoogleBody(req)
+      break
     case 'openai-compatible':
-      return buildOpenAIBody(req)
+      body = buildOpenAIBody(req)
+      break
     case 'xiaomi-mimo':
-      return req.provider.wireProtocol === 'anthropic-compatible' ? buildXiaomiMimoAnthropicBody(req) : buildOpenAIBody(req)
+      body = req.provider.wireProtocol === 'anthropic-compatible' ? buildXiaomiMimoAnthropicBody(req) : buildOpenAIBody(req)
+      break
   }
+  return resolveProviderRoute({ request: req, body, context, failover })
 }
 
 function getWireProviderType(provider: AIProvider): ProviderType {
@@ -1424,6 +1431,14 @@ export async function streamChat(
     reason: access.allowed ? undefined : access.reason,
   }, runtimeLogOptions(effectiveReq))
   if (!access.allowed) {
+    emitRuntimeGovernanceTrace({
+      onTrace,
+      req: effectiveReq,
+      requestedModel,
+      upstreamModel,
+      access,
+      status: 'error',
+    })
     const done = Promise.resolve().then(() => onError(providerRuntimeError(`access_policy_${access.reason}`, credential.credentialGroupId)))
     return { controller, done }
   }
@@ -1451,20 +1466,41 @@ export async function streamChat(
     return { controller, done }
   }
   const usesResponsesApi = usesOpenAIResponses(runtimeReq)
-  const url =
-    runtimeReq.provider.type === 'google'
-      ? getGoogleEndpoint(runtimeReq.provider, runtimeReq.model, stream)
-      : usesResponsesApi
-        ? getOpenAIResponsesEndpoint(runtimeReq.provider)
-      : getAPIEndpoint(runtimeReq.provider)
-  const transportSelection = selectUpstreamTransport({
+  const routeAssembly = assembleProviderRoute({
     provider: runtimeReq.provider,
+    model: runtimeReq.model,
+    stream,
     usesResponsesApi,
     settings: effectiveReq.settings,
     hasWebSocketRuntime: typeof WebSocket !== 'undefined',
   })
+  const url = routeAssembly.endpoint
+  const transportSelection = routeAssembly.transportSelection
   const headers = getHeaders(runtimeReq.provider)
-  const rawBody = optimizeRequestBody(getBody({ ...runtimeReq, stream }), runtimeReq)
+  const routeResult = getBodyWithRoute({ ...runtimeReq, stream }, {
+    endpoint: url,
+    transport: transportSelection.transport,
+    requestedTransportMode: transportSelection.requestedMode,
+    transportFallbackReason: transportSelection.fallbackReason,
+  })
+  const rawBody = optimizeRequestBody(routeResult.body, runtimeReq)
+  void logProviderRouteDecision(effectiveReq, routeResult.decision)
+  void logProviderConformance(effectiveReq, routeResult.conformance)
+  const conformanceBlockers = routeResult.conformance.issues.filter((issue) => issue.severity === 'block')
+  if (conformanceBlockers.length) {
+    emitRuntimeGovernanceTrace({
+      onTrace,
+      req: effectiveReq,
+      requestedModel,
+      upstreamModel,
+      access,
+      route: routeResult.decision,
+      transport: transportSelection,
+      status: 'error',
+    })
+    const done = Promise.resolve().then(() => onError(providerRuntimeError(`provider_conformance_blocked:${conformanceBlockers.map((issue) => issue.code).join(',')}`, credential.credentialGroupId)))
+    return { controller, done }
+  }
   const payloadPolicy = evaluatePayloadRules({
     body: rawBody,
     messages: runtimeReq.messages,
@@ -1473,12 +1509,35 @@ export async function streamChat(
   })
   void logPayloadPolicy(effectiveReq, payloadPolicy)
   if (payloadPolicy.blocked) {
+    emitRuntimeGovernanceTrace({
+      onTrace,
+      req: effectiveReq,
+      requestedModel,
+      upstreamModel,
+      access,
+      route: routeResult.decision,
+      transport: transportSelection,
+      payload: payloadPolicy,
+      status: 'error',
+    })
     const done = Promise.resolve().then(() => onError(providerRuntimeError(`payload_policy_blocked:${payloadPolicy.findings.map((item) => item.id).join(',')}`, credential.credentialGroupId)))
     return { controller, done }
   }
   const proxyPolicy = resolveProxyPolicy({ provider: runtimeReq.provider, url, settings: effectiveReq.settings })
   void logProxyPolicy(effectiveReq, proxyPolicy)
   void logUpstreamRequest(effectiveReq, transportSelection, payloadPolicy, proxyPolicy)
+  emitRuntimeGovernanceTrace({
+    onTrace,
+    req: effectiveReq,
+    requestedModel,
+    upstreamModel,
+    access,
+    route: routeResult.decision,
+    transport: transportSelection,
+    payload: payloadPolicy,
+    proxy: proxyPolicy,
+    status: 'done',
+  })
   const body = JSON.stringify(rawBody)
   let lease: Awaited<ReturnType<typeof acquireSessionLease>> | null = null
   if (transportSelection.transport === 'responses_websocket') {
@@ -1613,6 +1672,17 @@ async function executeHttpSseChat(input: {
 
   if (!response.ok) {
     const errorText = await safeResponseText(response)
+    const recovered = await tryRuntimeFallback({
+      req: input.req,
+      status: response.status,
+      responseText: errorText,
+      credentialGroupId: input.credentialGroupId,
+      onChunk: input.onChunk,
+      onDone: input.onDone,
+      onCitations: input.onCitations,
+      onTrace: input.onTrace,
+    })
+    if (recovered) return
     input.req.provider = updateCredentialGroupHealth(input.req.provider, input.credentialGroupId, false)
     void appendRuntimeLog('upstream.error', {
       conversationId: input.req.conversationId,
@@ -1931,6 +2001,241 @@ function runStreamTask(task: () => Promise<void>, onError: ErrorCallback, creden
   })
 }
 
+interface RuntimeFallbackPlanInput {
+  req: ChatRequest
+  status?: number
+  error?: unknown
+  responseText?: string
+  credentialGroupId?: string
+  streamStarted?: boolean
+}
+
+interface RuntimeFallbackPlan {
+  classification: ReturnType<typeof classifyProviderFailure>
+  decision: ProviderFailoverDecision
+  candidates: ReturnType<typeof buildProviderFallbackCandidates>
+}
+
+interface RuntimeFallbackExecutionInput {
+  req: ChatRequest
+  status: number
+  responseText: string
+  credentialGroupId?: string
+  onChunk: StreamCallback
+  onDone: DoneCallback
+  onCitations?: CitationCallback
+  onTrace?: TraceCallback
+}
+
+async function resolveRuntimeFallbackPlan(input: RuntimeFallbackPlanInput): Promise<RuntimeFallbackPlan> {
+  const nowMs = Date.now()
+  const original = routeForRuntimeFallback(input.req, input.credentialGroupId)
+  const classification = classifyProviderFailure({
+    status: input.status,
+    errorName: input.error instanceof Error ? input.error.name : undefined,
+    errorMessage: input.error instanceof Error ? input.error.message : input.responseText,
+    streamStarted: input.streamStarted,
+  })
+  const snapshot = await loadProviderHealthSnapshot({ nowMs })
+  const existing = snapshot.records.find((record) => providerHealthKey(record) === providerHealthKey(original))
+  const failureRecord = recordProviderFailure(existing, {
+    key: original,
+    trigger: classification.trigger,
+    nowMs,
+    retryAfterMs: retryAfterMsFromFailure(input.status),
+  })
+  const updatedSnapshot = await mergeProviderHealthRecords([failureRecord], { nowMs })
+  const healthRecords = indexProviderHealthRecords(updatedSnapshot.records)
+  const requiredCapabilities = requiredFallbackCapabilities(input.req)
+  const candidates = buildProviderFallbackCandidates({
+    providers: fallbackProvidersForRequest(input.req),
+    original,
+    requiredCapabilities,
+    healthRecords,
+    nowMs,
+  })
+  const decision = resolveFailoverDecision({
+    policy: { mode: 'same-provider' },
+    trigger: classification.trigger,
+    original,
+    candidates: candidates.candidates,
+    requiredCapabilities,
+    streamStarted: input.streamStarted,
+  })
+  return { classification, decision, candidates }
+}
+
+async function recordRuntimeFallbackSuccess(route: ProviderFailoverRoute): Promise<void> {
+  await mergeProviderHealthRecords([
+    recordProviderSuccess(undefined, {
+      key: route,
+      nowMs: Date.now(),
+    }),
+  ])
+}
+
+async function recordRuntimeFallbackFailure(route: ProviderFailoverRoute, status: number, responseText: string): Promise<void> {
+  const classification = classifyProviderFailure({ status, errorMessage: responseText })
+  await mergeProviderHealthRecords([
+    recordProviderFailure(undefined, {
+      key: route,
+      trigger: classification.trigger,
+      nowMs: Date.now(),
+      retryAfterMs: retryAfterMsFromFailure(status),
+    }),
+  ])
+}
+
+async function logRuntimeFallbackDecision(req: ChatRequest, plan: RuntimeFallbackPlan): Promise<void> {
+  await appendRuntimeLog('fallback.decision', {
+    conversationId: req.conversationId,
+    providerId: req.provider.id,
+    model: req.model,
+    requestedModel: req.requestedModel,
+    classification: plan.classification,
+    decision: plan.decision,
+    candidateEvidence: plan.candidates.evidence,
+    rejectedCandidates: plan.candidates.rejectedCandidates,
+  }, runtimeLogOptions(req))
+}
+
+async function tryRuntimeFallback(input: RuntimeFallbackExecutionInput): Promise<boolean> {
+  const plan = await resolveRuntimeFallbackPlan({
+    req: input.req,
+    status: input.status,
+    responseText: input.responseText,
+    credentialGroupId: input.credentialGroupId,
+  })
+  await logRuntimeFallbackDecision(input.req, plan)
+  if (!plan.decision.eligible || !plan.decision.selected) {
+    input.onTrace?.(createRuntimeFallbackTrace(input.req, plan, 'skipped'))
+    return false
+  }
+
+  const selectedRoute = plan.decision.selected
+  const selectedProvider = providerForRuntimeFallback(input.req, selectedRoute)
+  const selectedReq = {
+    ...input.req,
+    provider: selectedProvider,
+    model: selectedRoute.model,
+    requestedModel: selectedRoute.model,
+    stream: false,
+  }
+  const selectedAssembly = assembleProviderRoute({
+    provider: selectedReq.provider,
+    model: selectedReq.model,
+    stream: false,
+    usesResponsesApi: usesOpenAIResponses(selectedReq),
+    settings: selectedReq.settings,
+    hasWebSocketRuntime: typeof WebSocket !== 'undefined',
+  })
+  const selectedRouteResult = getBodyWithRoute(selectedReq, {
+    endpoint: selectedAssembly.endpoint,
+    transport: selectedAssembly.transportSelection.transport,
+    requestedTransportMode: selectedAssembly.transportSelection.requestedMode,
+    transportFallbackReason: selectedAssembly.transportSelection.fallbackReason,
+  }, {
+    policy: { mode: 'same-provider' },
+    trigger: plan.classification.trigger,
+    original: routeForRuntimeFallback(input.req, input.credentialGroupId),
+    candidates: plan.candidates.candidates,
+    requiredCapabilities: requiredFallbackCapabilities(input.req),
+  })
+  await logProviderRouteDecision(selectedReq, selectedRouteResult.decision)
+  await logProviderConformance(selectedReq, selectedRouteResult.conformance)
+  if (selectedRouteResult.decision.blocked) {
+    input.onTrace?.(createRuntimeFallbackTrace(input.req, plan, 'error', 'route_blocked'))
+    return false
+  }
+  const selectedResponse = await fetchWithTimeout(
+    selectedAssembly.endpoint,
+    {
+      method: 'POST',
+      headers: getHeaders(selectedReq.provider),
+      body: JSON.stringify(selectedRouteResult.body),
+    },
+    CHAT_REQUEST_TIMEOUT_MS
+  )
+  if (!selectedResponse.ok) {
+    await recordRuntimeFallbackFailure(selectedRoute, selectedResponse.status, await safeResponseText(selectedResponse))
+    input.onTrace?.(createRuntimeFallbackTrace(input.req, plan, 'error', `upstream_${selectedResponse.status}`))
+    return false
+  }
+
+  await recordRuntimeFallbackSuccess(selectedRoute)
+  const selectedResult = await parseNonStreamingResponse(selectedResponse, selectedReq)
+  input.onTrace?.(createRuntimeFallbackTrace(input.req, plan, 'done'))
+  input.onTrace?.(createStreamModeTrace('fallback', st('providerTrace.streamFallbackCompleted')))
+  if (selectedResult.text) input.onChunk(selectedResult.text)
+  if (selectedResult.citations?.length) input.onCitations?.(selectedResult.citations)
+  selectedResult.traces?.forEach(input.onTrace ?? (() => undefined))
+  void appendRuntimeLog('upstream.response', {
+    conversationId: input.req.conversationId,
+    providerId: selectedReq.provider.id,
+    model: selectedReq.model,
+    requestedModel: selectedReq.requestedModel,
+    upstreamModel: selectedReq.model,
+    transport: 'http_sse',
+    fallback: true,
+    usage: selectedResult.usage,
+    textLength: selectedResult.text.length,
+  }, runtimeLogOptions(input.req))
+  input.onDone(withCredentialGroup(selectedResult, selectedRoute.credentialGroupId))
+  return true
+}
+
+function routeForRuntimeFallback(req: ChatRequest, credentialGroupId?: string): ProviderFailoverRoute {
+  return {
+    providerId: req.provider.id,
+    model: req.model,
+    credentialGroupId,
+    region: req.provider.tokenPlanRegion,
+    capabilities: requiredFallbackCapabilities(req),
+  }
+}
+
+function fallbackProvidersForRequest(req: ChatRequest): AIProvider[] {
+  const providers = req.fallbackProviders?.length ? req.fallbackProviders : [req.provider]
+  const currentProvider = providers.some((provider) => provider.id === req.provider.id) ? [] : [req.provider]
+  return [...currentProvider, ...providers]
+}
+
+function requiredFallbackCapabilities(req: ChatRequest): string[] {
+  const capabilities = ['text']
+  if (req.reasoningEffort && !['none', 'minimal'].includes(req.reasoningEffort)) capabilities.push('reasoning')
+  for (const attachment of req.attachments ?? []) {
+    if (attachment.type === 'image') capabilities.push('image')
+    if (attachment.type === 'pdf' || attachment.type === 'text' || attachment.type === 'document') capabilities.push('file')
+  }
+  return Array.from(new Set(capabilities))
+}
+
+function retryAfterMsFromFailure(status?: number): number | undefined {
+  if (status === 429) return 60_000
+  if (status && status >= 500) return 20_000
+  return undefined
+}
+
+function providerForRuntimeFallback(req: ChatRequest, route: ProviderFailoverRoute): AIProvider {
+  const source = fallbackProvidersForRequest(req).find((provider) => provider.id === route.providerId) ?? req.provider
+  const groupKey = route.credentialGroupId
+    ? source.credentialGroups?.find((group) => group.id === route.credentialGroupId)?.apiKey
+    : undefined
+  return {
+    ...source,
+    apiKey: groupKey?.trim() || source.apiKey || req.provider.apiKey,
+  }
+}
+
+function getNonStreamingEndpoint(req: ChatRequest): string {
+  return resolveProviderEndpoint({
+    provider: req.provider,
+    model: req.model,
+    stream: false,
+    usesResponsesApi: usesOpenAIResponses(req),
+  })
+}
+
 async function retryWithoutStreaming(
   req: ChatRequest,
   onChunk: StreamCallback,
@@ -1942,12 +2247,7 @@ async function retryWithoutStreaming(
 ): Promise<void> {
   try {
     const fallbackReq = { ...req, stream: false }
-    const url =
-      fallbackReq.provider.type === 'google'
-        ? getGoogleEndpoint(fallbackReq.provider, fallbackReq.model, false)
-        : usesOpenAIResponses(fallbackReq)
-          ? getOpenAIResponsesEndpoint(fallbackReq.provider)
-          : getAPIEndpoint(fallbackReq.provider)
+    const url = getNonStreamingEndpoint(fallbackReq)
     const response = await fetchWithTimeout(
       url,
       {
@@ -1958,7 +2258,10 @@ async function retryWithoutStreaming(
       CHAT_REQUEST_TIMEOUT_MS
     )
     if (!response.ok) {
-      onError(providerRuntimeError(formatProviderHttpError(response.status, await safeResponseText(response), fallbackReq.provider, fallbackReq.model), credentialGroupId))
+      const errorText = await safeResponseText(response)
+      const recovered = await tryRuntimeFallback({ req: fallbackReq, status: response.status, responseText: errorText, credentialGroupId, onChunk, onDone, onCitations, onTrace })
+      if (recovered) return
+      onError(providerRuntimeError(formatProviderHttpError(response.status, errorText, fallbackReq.provider, fallbackReq.model), credentialGroupId))
       return
     }
   const result = await parseNonStreamingResponse(response, fallbackReq)
@@ -1999,6 +2302,144 @@ function createStreamModeTrace(streamMode: 'reader' | 'buffered' | 'fallback', c
   }
 }
 
+function emitRuntimeGovernanceTrace(input: {
+  onTrace?: TraceCallback
+  req: ChatRequest
+  requestedModel: string
+  upstreamModel: string
+  access: AccessPolicyDecision
+  route?: ProviderRouteDecision
+  transport?: TransportSelection
+  payload?: PayloadRuleResult
+  proxy?: ProxyPolicyDecision
+  status: ProcessTrace['status']
+}): void {
+  if (!input.onTrace) return
+  input.onTrace(createRuntimeGovernanceTrace(input))
+}
+
+function createRuntimeGovernanceTrace(input: {
+  req: ChatRequest
+  requestedModel: string
+  upstreamModel: string
+  access: AccessPolicyDecision
+  route?: ProviderRouteDecision
+  transport?: TransportSelection
+  payload?: PayloadRuleResult
+  proxy?: ProxyPolicyDecision
+  status: ProcessTrace['status']
+}): ProcessTrace {
+  const now = Date.now()
+  const accessReason = input.access.allowed ? undefined : input.access.reason
+  const payloadFindings = input.payload?.findings.map((item) => item.id) ?? []
+  return {
+    id: `runtime-governance-${now}`,
+    type: 'system',
+    title: st('providerTrace.runtimeGovernanceTitle'),
+    content: st('providerTrace.runtimeGovernanceContent', {
+      access: input.access.allowed ? 'allowed' : `blocked:${accessReason ?? 'unknown'}`,
+      route: summarizeRouteDecision(input.route),
+      transport: summarizeTransportSelection(input.transport),
+      payload: summarizePayloadPolicy(input.payload),
+      proxy: summarizeProxyPolicy(input.proxy),
+    }),
+    status: input.status,
+    startedAt: now,
+    completedAt: now,
+    metadata: {
+      source: 'runtime-policy',
+      providerId: input.req.provider.id,
+      requestedModel: input.requestedModel,
+      upstreamModel: input.upstreamModel,
+      accessAllowed: input.access.allowed,
+      accessReason,
+      accessMatchedRules: input.access.matchedRules,
+      routeBlocked: input.route?.blocked,
+      routeBlockReasons: input.route?.blockReasons,
+      routeWarnings: input.route?.warnings,
+      routeProtocol: input.route?.protocol,
+      routeManifestId: input.route?.manifestId,
+      routeCapabilityConfidence: input.route?.capabilitySource.confidence,
+      transport: input.transport?.transport,
+      requestedTransportMode: input.transport?.requestedMode,
+      transportFallbackReason: input.transport?.fallbackReason,
+      payloadPolicyMode: input.payload?.mode,
+      payloadBlocked: input.payload?.blocked,
+      payloadFindings,
+      payloadBodyKeys: input.payload?.bodyKeys,
+      messageCount: input.payload?.messageCount,
+      attachmentCount: input.payload?.attachmentCount,
+      proxyMode: input.proxy?.mode,
+      proxyApplied: input.proxy?.applied,
+      proxyReason: input.proxy?.reason,
+      endpointHost: input.proxy?.endpointHost,
+    },
+  }
+}
+
+function createRuntimeFallbackTrace(req: ChatRequest, plan: RuntimeFallbackPlan, status: ProcessTrace['status'], failureReason?: string): ProcessTrace {
+  const now = Date.now()
+  const selected = plan.decision.selected
+  return {
+    id: `runtime-fallback-${now}`,
+    type: 'system',
+    title: st('providerTrace.runtimeFallbackTitle'),
+    content: st('providerTrace.runtimeFallbackContent', {
+      trigger: plan.classification.trigger,
+      decision: failureReason ?? plan.decision.reason,
+      selected: selected ? `${selected.providerId}/${selected.model}` : 'none',
+    }),
+    status,
+    startedAt: now,
+    completedAt: now,
+    metadata: {
+      source: 'runtime-fallback',
+      providerId: req.provider.id,
+      model: req.model,
+      requestedModel: req.requestedModel,
+      trigger: plan.classification.trigger,
+      retryable: plan.classification.retryable,
+      eligible: plan.decision.eligible,
+      decisionReason: plan.decision.reason,
+      blockedReasons: plan.decision.blockedReasons,
+      selectedProviderId: selected?.providerId,
+      selectedModel: selected?.model,
+      rejectedCandidateCount: plan.decision.rejectedCandidates.length,
+      acceptedCandidateCount: plan.decision.acceptedCandidates.length,
+      failureReason,
+    },
+  }
+}
+
+function summarizeRouteDecision(route: ProviderRouteDecision | undefined): string {
+  if (!route) return 'not_evaluated'
+  if (route.blocked) return `blocked:${joinTraceCodes(route.blockReasons)}`
+  if (route.warnings.length) return `warnings:${joinTraceCodes(route.warnings)}`
+  return `${route.protocol}:ok`
+}
+
+function summarizeTransportSelection(transport: TransportSelection | undefined): string {
+  if (!transport) return 'not_selected'
+  return transport.fallbackReason ? `${transport.transport}:${transport.fallbackReason}` : transport.transport
+}
+
+function summarizePayloadPolicy(payload: PayloadRuleResult | undefined): string {
+  if (!payload) return 'not_evaluated'
+  const findings = payload.findings.map((item) => item.id)
+  if (payload.blocked) return `blocked:${joinTraceCodes(findings)}`
+  if (findings.length) return `${payload.mode}:${joinTraceCodes(findings)}`
+  return `${payload.mode}:ok`
+}
+
+function summarizeProxyPolicy(proxy: ProxyPolicyDecision | undefined): string {
+  if (!proxy) return 'not_evaluated'
+  return `${proxy.mode}:${proxy.applied ? 'applied' : 'not_applied'}:${proxy.reason}`
+}
+
+function joinTraceCodes(codes: string[]): string {
+  return codes.filter(Boolean).join(',') || 'none'
+}
+
 function runtimeLogOptions(req: ChatRequest) {
   return {
     enabled: req.settings?.runtimeLogEnabled,
@@ -2020,6 +2461,37 @@ async function logPayloadPolicy(req: ChatRequest, result: PayloadRuleResult): Pr
     bodyKeys: result.bodyKeys,
     messageCount: result.messageCount,
     attachmentCount: result.attachmentCount,
+  }, runtimeLogOptions(req))
+}
+
+async function logProviderConformance(req: ChatRequest, result: ProviderConformanceResult): Promise<void> {
+  if (!result.issues.length && !req.settings?.runtimeLogEnabled) return
+  await appendRuntimeLog('provider.conformance', {
+    conversationId: req.conversationId,
+    providerId: req.provider.id,
+    model: req.model,
+    requestedModel: req.requestedModel,
+    upstreamModel: req.model,
+    family: result.manifest.family,
+    protocol: result.manifest.protocol,
+    source: result.manifest.source,
+    reasoning: result.reasoning,
+    requestedModalities: result.requestedModalities,
+    removedParams: result.removedParams,
+    adjustedParams: result.adjustedParams,
+    issues: result.issues,
+    bodyKeys: result.bodyKeys,
+  }, runtimeLogOptions(req))
+}
+
+async function logProviderRouteDecision(req: ChatRequest, result: ProviderRouteDecision): Promise<void> {
+  if (!result.blocked && !result.warnings.length && !req.settings?.runtimeLogEnabled) return
+  await appendRuntimeLog('route.decision', {
+    conversationId: req.conversationId,
+    providerId: req.provider.id,
+    model: req.model,
+    requestedModel: req.requestedModel,
+    route: result,
   }, runtimeLogOptions(req))
 }
 
@@ -2115,16 +2587,27 @@ export async function testProviderModelDetailed(provider: AIProvider, model: str
   }
 
   try {
-    const url = provider.type === 'google' ? getGoogleEndpoint(p, upstreamModel, false) : getAPIEndpoint(p)
+    const modelTestReq = {
+      provider: p,
+      model: upstreamModel,
+      requestedModel: model,
+      messages: [{ role: 'user' as const, content: '请只回复 OK' }],
+      maxTokens: getModelTestMaxTokens(p, upstreamModel),
+      stream: false,
+    }
+    const url = resolveProviderEndpoint({
+      provider: p,
+      model: upstreamModel,
+      stream: false,
+      usesResponsesApi: usesOpenAIResponses(modelTestReq),
+    })
     const headers = getHeaders(p)
-    const rawBody = getBody({
-        provider: p,
-        model: upstreamModel,
-        requestedModel: model,
-        messages: [{ role: 'user', content: '请只回复 OK' }],
-        maxTokens: getModelTestMaxTokens(p, upstreamModel),
-        stream: false,
+    const routeResult = getBodyWithRoute(modelTestReq, {
+        endpoint: url,
+        transport: 'http',
+        requestedTransportMode: 'http',
       })
+    const rawBody = routeResult.body
     const body = JSON.stringify(options.checkParameters === false ? reduceModelTestBody(rawBody) : rawBody)
 
     const response = await fetchWithTimeout(url, { method: 'POST', headers, body }, MODEL_TEST_TIMEOUT_MS)
@@ -2258,7 +2741,7 @@ export async function embedTextWithProvider(provider: AIProvider, text: string):
   const issue = getProviderConfigIssue(provider, provider.apiKey)
   if (issue) throw new Error(`${issue.code}: ${st(issue.messageKey ?? issue.message, undefined, issue.message)}`)
   const model = pickEmbeddingModel(provider)
-  const response = await fetchWithTimeout(`${normalizeBaseUrl(defaultOpenAICompatibleBaseUrl(provider))}/embeddings`, {
+  const response = await fetchWithTimeout(`${normalizeProviderBaseUrl(defaultOpenAICompatibleBaseUrl(provider))}/embeddings`, {
     method: 'POST',
     headers: getHeaders(provider),
     body: JSON.stringify({
@@ -2290,7 +2773,7 @@ export async function transcribeAudioWithProvider(req: ProviderAudioTranscriptio
       name: req.fileName ?? 'audio.m4a',
       type: req.mimeType,
     } as unknown as Blob)
-    const response = await fetchWithTimeout(`${normalizeBaseUrl(defaultOpenAICompatibleBaseUrl(provider))}/audio/transcriptions`, {
+    const response = await fetchWithTimeout(`${normalizeProviderBaseUrl(defaultOpenAICompatibleBaseUrl(provider))}/audio/transcriptions`, {
       method: 'POST',
       headers: {
         Authorization: `Bearer ${provider.apiKey}`,
@@ -2331,7 +2814,7 @@ export async function synthesizeSpeechWithProvider(req: ProviderSpeechRequest): 
   if (!(provider.type === 'openai' || provider.type === 'openai-compatible')) {
     throw new Error('speech_unavailable')
   }
-  const response = await fetchWithTimeout(`${normalizeBaseUrl(defaultOpenAICompatibleBaseUrl(provider))}/audio/speech`, {
+  const response = await fetchWithTimeout(`${normalizeProviderBaseUrl(defaultOpenAICompatibleBaseUrl(provider))}/audio/speech`, {
     method: 'POST',
     headers: getHeaders(provider),
     body: JSON.stringify({
@@ -2347,7 +2830,7 @@ export async function synthesizeSpeechWithProvider(req: ProviderSpeechRequest): 
 }
 
 async function fetchOpenAICompatibleModels(provider: AIProvider): Promise<AIModel[]> {
-  const response = await fetchWithTimeout(`${normalizeBaseUrl(defaultOpenAICompatibleBaseUrl(provider))}/models`, {
+  const response = await fetchWithTimeout(`${normalizeProviderBaseUrl(defaultOpenAICompatibleBaseUrl(provider))}/models`, {
     method: 'GET',
     headers: getHeaders(provider),
   }, PROVIDER_REQUEST_TIMEOUT_MS)
@@ -2401,7 +2884,7 @@ function getXiaomiMimoModelDiscoveryProvider(provider: AIProvider): AIProvider {
 }
 
 async function fetchAnthropicModels(provider: AIProvider): Promise<AIModel[]> {
-  const response = await fetchWithTimeout(`${normalizeBaseUrl(getProviderEffectiveBaseUrl(provider))}/models`, {
+  const response = await fetchWithTimeout(`${normalizeProviderBaseUrl(defaultOpenAICompatibleBaseUrl(provider))}/models`, {
     method: 'GET',
     headers: getHeaders(provider),
   }, PROVIDER_REQUEST_TIMEOUT_MS)
@@ -2436,7 +2919,7 @@ function anthropicCapabilitiesIncludeThinking(capabilities: AnthropicModelListIt
 }
 
 async function fetchGoogleModels(provider: AIProvider): Promise<AIModel[]> {
-  const response = await fetchWithTimeout(`${normalizeBaseUrl(getProviderEffectiveBaseUrl(provider))}/models?key=${encodeURIComponent(provider.apiKey)}`, undefined, PROVIDER_REQUEST_TIMEOUT_MS)
+  const response = await fetchWithTimeout(`${normalizeProviderBaseUrl(defaultOpenAICompatibleBaseUrl(provider))}/models?key=${encodeURIComponent(provider.apiKey)}`, undefined, PROVIDER_REQUEST_TIMEOUT_MS)
   if (!response.ok) throw new ProviderHttpError(response.status, await safeResponseText(response))
   const json = (await response.json()) as GoogleModelListResponse
   const remoteModels: { id: string; name?: string; contextWindow?: number; maxOutputTokens?: number }[] = []

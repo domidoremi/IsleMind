@@ -12,7 +12,8 @@ import { getModelConfig } from '@/types'
 import type { AIProvider, Conversation } from '@/types'
 import { normalizeSearchText } from '@/utils/text'
 import { getReasoningEffortOptions } from '@/utils/modelReasoning'
-import { getProviderDisplayModel, getProviderSelectableModels, resolveProviderModelAlias } from '@/utils/providerModels'
+import { getProviderDisplayModel, resolveProviderModelAlias } from '@/utils/providerModels'
+import { getPolicyAllowedProviderModels, getProviderModelDisplayCandidates, type ProviderModelAccessInput } from '@/services/ai/policy/providerModelAccess'
 import { useMotionPreference } from '@/hooks/useMotionPreference'
 import { motionTokens } from '@/theme/animation'
 
@@ -26,6 +27,7 @@ export function ChatOptionsPanel({
   onCopyLink,
   onClose,
   onDraftChange,
+  settings,
 }: {
   conversation: Conversation
   provider: AIProvider | undefined
@@ -36,6 +38,7 @@ export function ChatOptionsPanel({
   onCopyLink: () => void
   onClose: () => void
   onDraftChange?: (updates: Partial<Pick<Conversation, 'systemPrompt' | 'temperature' | 'topP' | 'reasoningEffort' | 'maxTokens'>>) => void
+  settings?: ProviderModelAccessInput['settings']
 }) {
   const { t } = useTranslation()
   const { width: windowWidth, height: windowHeight } = useWindowDimensions()
@@ -45,19 +48,22 @@ export function ChatOptionsPanel({
   const [modelPickerQuery, setModelPickerQuery] = useState('')
   const currentProvider = provider
   const normalizedQuery = normalizeSearchText(modelPickerQuery)
+  const policySwitchableProviders = useMemo(
+    () => getProviderModelDisplayCandidates({ providers: switchableProviders, settings }).map((candidate) => candidate.provider),
+    [settings, switchableProviders]
+  )
   const orderedProviders = useMemo(
-    () => sortSwitchableProviders(switchableProviders, conversation.providerId, normalizedQuery),
-    [conversation.providerId, normalizedQuery, switchableProviders]
+    () => sortSwitchableProviders(policySwitchableProviders, conversation.providerId, normalizedQuery, settings),
+    [conversation.providerId, normalizedQuery, policySwitchableProviders, settings]
   )
   const selectedProvider =
     orderedProviders.find((item) => item.id === selectedProviderId) ??
-    currentProvider ??
     orderedProviders[0]
   const visibleProviders = normalizedQuery
-    ? orderedProviders.filter((item) => providerMatchesQuery(item, normalizedQuery))
+    ? orderedProviders.filter((item) => providerMatchesQuery(item, normalizedQuery, settings))
     : orderedProviders
   const selectedModels = selectedProvider
-      ? getSwitchableProviderModels(selectedProvider, normalizedQuery)
+      ? getSwitchableProviderModels(selectedProvider, normalizedQuery, settings)
       .map((id) => {
         const upstreamModel = resolveProviderModelAlias(selectedProvider, id)
         return { id, name: getProviderDisplayModel(selectedProvider, id), config: getModelConfig(upstreamModel, selectedProvider.type, selectedProvider.modelConfigs) }
@@ -174,7 +180,7 @@ export function ChatOptionsPanel({
             <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 8 }}>
               <Text style={{ color: colors.textSecondary, fontSize: 11, fontWeight: '900' }}>{t('settings.providerManagement')}</Text>
               <Text style={{ color: colors.textTertiary, fontSize: 10, fontWeight: '800' }}>
-                {normalizedQuery ? `${visibleProviders.length}/${switchableProviders.length}` : t('chat.countItems', { count: switchableProviders.length })}
+                {normalizedQuery ? `${visibleProviders.length}/${policySwitchableProviders.length}` : t('chat.countItems', { count: policySwitchableProviders.length })}
               </Text>
             </View>
             {visibleProviders.length ? (
@@ -345,39 +351,39 @@ function PickerChip({ label, active, maxWidth }: { label: string; active: boolea
   )
 }
 
-function getSwitchableProviderModels(provider: AIProvider, query = ''): string[] {
-  const models = getProviderSelectableModels(provider)
+function getSwitchableProviderModels(provider: AIProvider, query = '', settings?: ProviderModelAccessInput['settings']): string[] {
+  const models = getPolicyAllowedProviderModels(provider, settings)
     .filter((id) => getModelConfig(resolveProviderModelAlias(provider, id), provider.type, provider.modelConfigs).chatCompatible !== false)
   if (!query) return models
   return models.filter((id) => normalizeSearchText(`${id} ${getProviderDisplayModel(provider, id)} ${resolveProviderModelAlias(provider, id)}`).includes(query))
 }
 
-function sortSwitchableProviders(providers: AIProvider[], currentProviderId: string, query: string): AIProvider[] {
+function sortSwitchableProviders(providers: AIProvider[], currentProviderId: string, query: string, settings?: ProviderModelAccessInput['settings']): AIProvider[] {
   return [...providers].sort((a, b) => {
-    const aScore = getProviderPickerScore(a, currentProviderId, query)
-    const bScore = getProviderPickerScore(b, currentProviderId, query)
+    const aScore = getProviderPickerScore(a, currentProviderId, query, settings)
+    const bScore = getProviderPickerScore(b, currentProviderId, query, settings)
     if (aScore !== bScore) return bScore - aScore
     return a.name.localeCompare(b.name)
   })
 }
 
-function getProviderPickerScore(provider: AIProvider, currentProviderId: string, query: string): number {
+function getProviderPickerScore(provider: AIProvider, currentProviderId: string, query: string, settings?: ProviderModelAccessInput['settings']): number {
   let score = 0
   if (provider.id === currentProviderId) score += 120
   if (provider.enabled) score += 32
-  const modelCount = getSwitchableProviderModels(provider).length
+  const modelCount = getSwitchableProviderModels(provider, '', settings).length
   score += Math.min(modelCount, 24)
   if (query) {
     if (normalizeSearchText(`${provider.name} ${provider.id} ${provider.baseUrl ?? ''}`).includes(query)) score += 80
-    if (getSwitchableProviderModels(provider, query).length) score += 48
+    if (getSwitchableProviderModels(provider, query, settings).length) score += 48
   }
   return score
 }
 
-function providerMatchesQuery(provider: AIProvider, query: string): boolean {
+function providerMatchesQuery(provider: AIProvider, query: string, settings?: ProviderModelAccessInput['settings']): boolean {
   if (!query) return true
   if (normalizeSearchText(`${provider.name} ${provider.id} ${provider.baseUrl ?? ''}`).includes(query)) return true
-  return getSwitchableProviderModels(provider, query).length > 0
+  return getSwitchableProviderModels(provider, query, settings).length > 0
 }
 
 function ParamInput({ label, value, onChange }: { label: string; value: string; onChange: (value: string) => void }) {

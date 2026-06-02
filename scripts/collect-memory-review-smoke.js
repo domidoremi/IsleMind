@@ -1,6 +1,7 @@
 const fs = require('node:fs')
 const path = require('node:path')
 const { execFileSync } = require('node:child_process')
+const { defaultReleaseAppPackageName } = require('./release-validation-contract')
 
 const root = path.resolve(__dirname, '..')
 const evidenceDir = path.join(root, 'test-evidence', 'qa')
@@ -8,7 +9,7 @@ const smokeDir = path.join(evidenceDir, 'memory-review-smoke')
 const outputPath = path.join(evidenceDir, 'memory-review-smoke-results.json')
 const fixturePath = path.join(smokeDir, 'islemind-memory-review-smoke.json')
 const remoteFixturePath = '/sdcard/Download/islemind-memory-review-smoke.json'
-const appPackageName = 'com.islemind.app'
+const appPackageName = defaultReleaseAppPackageName
 const defaultDevice = process.env.QA_DEVICE_SERIAL || 'emulator-5554'
 
 function main() {

@@ -4,7 +4,7 @@ import type { AIProvider } from '@/types'
 import { synthesizeSpeechWithProvider, transcribeAudioWithProvider } from '@/services/ai/base'
 import { useSettingsStore } from '@/store/settingsStore'
 import { st } from '@/i18n/service'
-import { getProviderPreferredModel } from '@/utils/providerModels'
+import { getPolicyPreferredProviderModel } from '@/services/ai/policy/providerModelAccess'
 
 let AudioModule: any = null
 let useAudioRecorderModule: any = null
@@ -37,6 +37,7 @@ export async function requestMicrophonePermission(): Promise<boolean> {
 }
 
 export async function transcribeLocalAudio(uri: string, provider?: AIProvider | null): Promise<string> {
+  const settings = useSettingsStore.getState().settings
   const sourceProvider = provider ?? await useSettingsStore.getState().getPrimaryConfiguredProvider()
   if (!sourceProvider) throw new Error(st('speech.transcriptionNeedsProvider'))
   const base64 = await FileSystem.readAsStringAsync(uri, { encoding: FileSystem.EncodingType.Base64 })
@@ -45,7 +46,7 @@ export async function transcribeLocalAudio(uri: string, provider?: AIProvider | 
     audioBase64: base64,
     mimeType: guessAudioMime(uri),
     fileName: uri.split('/').pop() || 'recording.m4a',
-    model: sourceProvider.type === 'google' ? getProviderPreferredModel(sourceProvider) : undefined,
+    model: sourceProvider.type === 'google' ? getPolicyPreferredProviderModel(sourceProvider, settings) : undefined,
   })
 }
 
