@@ -7,6 +7,7 @@ import { applyProviderPreset, defaultProviderSyncPolicy, detectProviderPreset, g
 import { normalizeProviderCredentialGroups } from '@/services/ai/providerCredentials'
 import { legacySearchModeForProvider, resolveSearchProvider } from '@/services/searchPolicy'
 import { clearHistoricalInjectedGroupModels, clearHistoricalInjectedProviderModels, getProviderPreferredModel, hasRemoteProviderModelEvidence, isProviderConversationReady, normalizeProviderModelAliases } from '@/utils/providerModels'
+import { getPolicyPreferredProviderModel, providerHasPolicyAllowedModel } from '@/services/ai/policy/providerModelAccess'
 import { st } from '@/i18n/service'
 import { setServiceLanguage } from '@/i18n/service'
 
@@ -299,17 +300,17 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
     await Promise.all((provider?.credentialGroups ?? []).map((group) => SecureStore.deleteItemAsync(secureProviderGroupKey(id, group.id))))
     set((state) => {
       const updated = state.providers.filter((p) => p.id !== id)
+      const defaultProvider = updated.some((item) => item.id === state.settings.defaultProvider)
+        ? state.settings.defaultProvider
+        : updated[0]?.id ?? null
+      const settings = defaultProvider === state.settings.defaultProvider
+        ? state.settings
+        : { ...state.settings, defaultProvider }
       saveData('PROVIDERS', updated)
-      saveData('SETTINGS', {
-        ...state.settings,
-        defaultProvider: state.settings.defaultProvider === id ? null : state.settings.defaultProvider,
-      })
+      saveData('SETTINGS', settings)
       return {
         providers: updated,
-        settings:
-          state.settings.defaultProvider === id
-            ? { ...state.settings, defaultProvider: null }
-            : state.settings,
+        settings,
       }
     })
   },
@@ -399,7 +400,8 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
       if (!provider || !isProviderConversationReady(provider)) return false
       const hasCredential = provider.apiKey.trim() || provider.credentialGroups?.some((group) => group.enabled && group.apiKey?.trim())
       if (!hasCredential) return false
-      if (!getProviderPreferredModel(provider)) return false
+      if (!providerHasPolicyAllowedModel(provider, get().settings)) return false
+      if (!getPolicyPreferredProviderModel(provider, get().settings)) return false
       return !getProviderConfigIssue(provider, provider.apiKey)
     })
   },
@@ -412,13 +414,15 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
 
   clearAll: async () => {
     const resetSettings = { ...defaultSettings, defaultProvider: null, onboardingCompleted: false, providerCatalogVersion: PROVIDER_CATALOG_VERSION }
+    const providers = get().providers
+    const providerIds = new Set([...LEGACY_DEFAULT_PROVIDER_IDS, ...providers.map((provider) => provider.id)])
     await Promise.all([
-      ...LEGACY_DEFAULT_PROVIDER_IDS.map((id) => SecureStore.deleteItemAsync(secureProviderKey(id))),
+      ...Array.from(providerIds).map((id) => SecureStore.deleteItemAsync(secureProviderKey(id))),
       SecureStore.deleteItemAsync(TAVILY_KEY),
       SecureStore.deleteItemAsync(GOOGLE_SEARCH_KEY),
       SecureStore.deleteItemAsync(BING_SEARCH_KEY),
       SecureStore.deleteItemAsync(CUSTOM_SEARCH_KEY),
-      ...get().providers.flatMap((provider) => (provider.credentialGroups ?? []).map((group) => SecureStore.deleteItemAsync(secureProviderGroupKey(provider.id, group.id)))),
+      ...providers.flatMap((provider) => (provider.credentialGroups ?? []).map((group) => SecureStore.deleteItemAsync(secureProviderGroupKey(provider.id, group.id)))),
     ])
     saveData('SETTINGS', resetSettings)
     const resetProviders: AIProvider[] = []

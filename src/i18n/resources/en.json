@@ -272,6 +272,8 @@
     "switchModelTitle": "Switch model for this chat?",
     "switchModelMessage": "Only this chat changes. Any active response will stop before switching.",
     "switchModelConfirm": "Switch",
+    "modelSwitchBlocked": "Model switch blocked",
+    "modelSwitchBlockedMessage": "{{model}} is blocked by the current access policy for {{provider}}.",
     "currentConversationOnly": "This chat only",
     "contextWindow": "Context window",
     "outputLimit": "Output limit",
@@ -949,6 +951,9 @@
     "modelTestFailed": "Model test failed",
     "providerEnabled": "{{name}} enabled",
     "providerDisabled": "{{name}} disabled",
+    "deleteProviderTitle": "Delete provider?",
+    "deleteProviderMessage": "{{name}} will be removed from provider settings. Saved tokens for this provider will be deleted.",
+    "providerDeleted": "Provider deleted",
     "defaultUpdated": "Default provider updated",
     "modelEditCancelled": "Model editing cancelled",
     "modelListEditable": "Model list editable",
@@ -1492,7 +1497,12 @@
     "streamBufferedFallback": "The provider returned no parseable streaming body. Trying non-streaming fallback.",
     "streamReader": "Receiving provider response through ReadableStream chunks.",
     "streamFallbackCompleted": "Provider or runtime did not provide chunks, so this turn completed with non-streaming response.",
-    "streamMode": "Streaming mode"
+    "streamMode": "Streaming mode",
+    "requestRectified": "Request rectified",
+    "runtimeGovernanceTitle": "Runtime policy",
+    "runtimeGovernanceContent": "Access: {{access}}\nRoute: {{route}}\nTransport: {{transport}}\nPayload: {{payload}}\nProxy: {{proxy}}",
+    "runtimeFallbackTitle": "Runtime fallback",
+    "runtimeFallbackContent": "Trigger: {{trigger}}\nDecision: {{decision}}\nSelected: {{selected}}"
   },
   "providerOperation": {
     "requestFailed": "Request failed. Try again later.",
@@ -1557,7 +1567,9 @@
     "chunkUnrecognized": "Block {{index}} has no recognizable provider information.",
     "noTokens": "{{name}} has no recognized tokens.",
     "importedProviderName": "Imported provider {{index}}",
-    "duplicateSkipped": "{{name}} is duplicated and was skipped."
+    "duplicateSkipped": "{{name}} is duplicated and was skipped.",
+    "providerSkippedByPolicy": "{{name}} is blocked by provider access policy and was skipped.",
+    "modelsSkippedByPolicy": "{{count}} models for {{name}} were skipped by access policy."
   },
   "storage": {
     "sqliteSyncFailed": "SQLite chat sync failed: {{message}}",

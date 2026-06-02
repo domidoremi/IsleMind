@@ -26,15 +26,19 @@ export async function importFromJsonFile(): Promise<boolean> {
 }
 
 export async function importFromJsonFileDetailed(): Promise<ImportAllDataResult> {
-  const picked = await DocumentPicker.getDocumentAsync({
-    copyToCacheDirectory: true,
-    type: ['application/json', 'text/json', 'text/plain'],
-  })
-  if (picked.canceled || !picked.assets[0]) return { ok: false, kind: 'invalid' }
-  const raw = await FileSystem.readAsStringAsync(picked.assets[0].uri, { encoding: FileSystem.EncodingType.UTF8 })
-  const result = await importAllDataDetailed(raw)
-  if (result.ok) {
-    await Promise.all([useChatStore.getState().load(), useSettingsStore.getState().load()])
+  try {
+    const picked = await DocumentPicker.getDocumentAsync({
+      copyToCacheDirectory: true,
+      type: ['application/json', 'text/json', 'text/plain'],
+    })
+    if (picked.canceled || !picked.assets[0]) return { ok: false, kind: 'invalid' }
+    const raw = await FileSystem.readAsStringAsync(picked.assets[0].uri, { encoding: FileSystem.EncodingType.UTF8 })
+    const result = await importAllDataDetailed(raw)
+    if (result.ok) {
+      await Promise.all([useChatStore.getState().load(), useSettingsStore.getState().load()]).catch(() => undefined)
+    }
+    return result
+  } catch {
+    return { ok: false, kind: 'invalid' }
   }
-  return result
 }

@@ -11,7 +11,7 @@ import { useAppTheme } from '@/hooks/useAppTheme'
 import { useChatStore } from '@/store/chatStore'
 import { useSettingsStore } from '@/store/settingsStore'
 import { normalizeSearchText } from '@/utils/text'
-import { getProviderPreferredModel } from '@/utils/providerModels'
+import { getPolicyPreferredProviderModel } from '@/services/ai/policy/providerModelAccess'
 import type { Conversation } from '@/types'
 
 interface ConversationsScreenContentProps {
@@ -25,6 +25,7 @@ export function ConversationsScreenContent({ onHome, onSettings }: Conversations
   const conversations = useChatStore((state) => state.conversations)
   const create = useChatStore((state) => state.create)
   const select = useChatStore((state) => state.select)
+  const settings = useSettingsStore((state) => state.settings)
   const getPrimaryConfiguredProvider = useSettingsStore((state) => state.getPrimaryConfiguredProvider)
   const listRef = useRef<FlatList<Conversation>>(null)
   const [query, setQuery] = useState('')
@@ -45,7 +46,7 @@ export function ConversationsScreenContent({ onHome, onSettings }: Conversations
 
   async function createConversation() {
     const provider = await getPrimaryConfiguredProvider()
-    const model = provider ? getProviderPreferredModel(provider) : undefined
+    const model = provider ? getPolicyPreferredProviderModel(provider, settings) : undefined
     if (!provider || !model) {
       if (onSettings) onSettings()
       else router.push('/settings')

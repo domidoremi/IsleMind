@@ -384,6 +384,7 @@ Implemented service-layer defaults and contracts:
 - `ProviderCapabilities` now includes additive optional flags for Responses API, Responses WebSocket, remote compact, and payload policy.
 - Runtime log output exists as redacted JSONL with bounded file size and event families for upstream, transport, compact, payload, access, and proxy policy events.
 - Provider/model allowlist-blocklist enforcement runs before upstream requests. Blocklist wins.
+- Provider/model allowlist-blocklist matching accepts provider ids, `preset:<id>` rules, `host:<domain>` rules, and `family:<prefix>` model rules.
 - Payload rules run after provider body construction and before transport execution. `warn` is default, `block` stops invalid payloads.
 - Proxy policy supports `off`, `custom-base-url`, and `system-detected` with non-enforcement semantics for system proxy detection.
 - Remote compact `required` blocks unsupported providers. `auto` records compact usage and enables Responses `context_management` when capability and threshold allow it.
@@ -391,14 +392,39 @@ Implemented service-layer defaults and contracts:
 - Session lease pooling guards gated WebSocket execution and releases leases on completion, error, abort, and fallback.
 - Settings UI exposes transport, remote compact, payload policy, proxy policy, runtime log, session concurrency, and provider/model allowlist-blocklist fields.
 - Completed remote compact responses record provider usage, estimated saved tokens, response IDs, runtime log evidence, and compact state rows when a response ID exists.
-- Provider-intelligence tests cover Responses WebSocket success, pre-token failure, mid-stream failure, abort, session lease release, runtime log file redaction, and log rotation.
+- Provider-intelligence tests cover Responses WebSocket success, pre-token failure, mid-stream failure, abort, session lease release, runtime log file redaction, log rotation, runtime fallback, provider health persistence, and store-level provider/model access enforcement.
+- QA audit now requires `provider-runtime-android-results.json` with current emulator evidence for Provider settings, provider import keyboard, chat model switch, blocked-model recovery, runtime fallback trace, provider health state, Android Back, restart recovery, APK identity, device id, and sensitive-data status.
+- Provider import keyboard evidence must include `keyboardState.imeVisible=true`, `keyboardState.editableFocused=true`, a normalized repository-relative keyboard-state JSON evidence file, at least one positive IME visibility signal, and at least one positive editable-focus signal.
+- Provider Runtime Android run logs must be written after sensitive-evidence scanning so `fullCredentialLeak` records the final scan state.
+- Provider Runtime Android errors and scenario state text must redact credential-shaped values before writing result JSON or run logs.
+- Provider Runtime Android sensitive-evidence scanning must include captured evidence files, the final result JSON body, and the run log lines scheduled for append.
+- Provider Runtime Android text evidence files, including UIA XML and logcat-derived logs, must redact credential-shaped values before persisted local evidence is treated as reusable.
+- Provider Runtime Android sensitive-evidence patterns must stay aligned with the QA audit gate for OpenAI-style keys, MiMo Token Plan keys, GitHub tokens, Google API keys, Google OAuth access tokens, bearer tokens, and high-entropy credential assignments.
+- `scripts/sensitive-evidence-contract.js` owns credential scan patterns, redaction behavior, and scanned text-evidence extensions. QA audit and Provider Runtime Android collection must consume the shared contract instead of declaring private extension sets or private credential redaction patterns.
+- Provider Runtime Android result evidence must record `sensitiveData.scannedFiles` as a positive integer, `sensitiveData.scannedPaths` with unique normalized repository-relative paths including the final result JSON and run log, and `sensitiveData.hits` as an empty array; `fullCredentialLeak=false` alone is not sufficient.
+- Provider Runtime Android result evidence must record expected app config and installed package provenance. The QA gate must compare recorded `packageVersion`, `expoVersion`, `androidPackage`, and `androidVersionCode` with the current repository config, must require `installed.deviceSerial` to match top-level `deviceSerial`, and must pass only when `installed.cleanInstall=true` and a finite `installed.cleanInstallWindowMs` value proves the current APK was clean-installed inside the accepted install-time window.
+- `scripts/release-validation-contract.js` owns Android package identity and the clean-install window. Current APK smoke, QA audit, Provider Runtime Android collection, memory-review smoke, work-artifact smoke, and provider-intelligence release fixtures must consume `defaultReleaseAppPackageName` and `cleanInstallState` instead of duplicating package identity or timestamp policy.
+- Provider Runtime Android collector pass state and QA audit result gate must use the shared result-level contract for schema, UTC ISO-8601 `generatedAt`, device state, normalized repository-relative `.apk` path, package name, `sensitiveData`, required scenarios, duplicate scenario rejection, `errors`, `passed`, `contractIssues`, and `diagnostics`. `device.serial` must match top-level `deviceSerial`, and `device.abi` plus `device.sdk` must be present. `errors` must be an array of non-empty strings, and `diagnostics.errorCount` must derive from that array. Scenario arrays must contain only required scenario ids and must reject extra records, missing ids, non-object records, and duplicate required scenarios. `diagnostics` must summarize required scenario counts, failed scenario ids, contract issue count, collector error count, sensitive evidence hit count, and scanned file count. The scenario record contract requires `status=passed`, `expectedState`, `actualState`, `fixEntry`, normalized repository-relative top-level `png`/`uia`, optional `log`, per-step `png`/`uia`, and provider-import keyboard state evidence.
+- `npm run test:provider-runtime-android` collects the Provider Runtime Android evidence file. `node scripts/collect-provider-runtime-android.js --self-test` validates the collector schema without adb or emulator execution.
+
+Validation evidence recorded on 2026-06-02:
+
+- `node scripts/collect-provider-runtime-android.js --self-test` passed.
+- `node scripts/qa-coverage-audit.js --self-test` passed.
+- `node scripts/provider-intelligence-tests.js` passed.
+- `.\node_modules\.bin\tsc.cmd --noEmit --incremental false` passed.
+- `npm run test:provider-intelligence` passed.
+- `npm run test:qa-audit:self` passed.
+- `npm run type-check -- --incremental false` passed.
+- `npm run test:ui-naming` passed.
+- `node scripts/architecture-boundary-audit.js` passed with 10 checks, 0 blocking issues, and 0 review findings.
 
 Remaining implementation work:
 
 - Persist upstream-returned compacted window payloads if the provider returns explicit compact items beyond standard Responses response IDs.
 - Add device/upstream integration tests for real Responses WebSocket authorization, reconnect, and mid-stream failure behavior.
-- Add import/sync/display enforcement points for provider/model access policy.
-- Add picker-level filtering for provider/model allowlist-blocklist once shared model selection helpers are migrated with explicit policy inputs.
+- Run `npm run test:provider-runtime-android` against the current clean-installed emulator APK and resolve any failed Provider Runtime Android scenario before treating `test-evidence/qa/provider-runtime-android-results.json` as release evidence. Provider import keyboard acceptance requires screenshot, UIA, and parsed `keyboardState` evidence.
+- Add picker-level filtering for provider/model allowlist-blocklist if future policy scopes expand beyond provider id, preset, host, and family matching.
 
 ## Acceptance Criteria
 
@@ -411,7 +437,7 @@ Remaining implementation work:
 - Proxy policy tests prove custom-base-url routing and system-detected non-enforcement semantics.
 - Payload rule tests prove warn/block/off behavior.
 - Provider/model access tests prove blocklist precedence and all enforcement points.
-- QA audit scans generated runtime logs for full-length credentials.
+- QA audit scans generated runtime logs for full-length credentials and blocks missing Provider Runtime Android emulator evidence, including machine-readable keyboard-open state for provider import.
 
 ## Risk Control
 

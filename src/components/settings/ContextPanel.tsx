@@ -34,7 +34,7 @@ import { IslePressable } from '@/components/ui/isle'
 import { IsleChip } from '@/components/ui/isle'
 import { IsleField, IsleSection, IsleToggle } from '@/components/ui/isle'
 import { useIsleDialog } from '@/components/ui/isle'
-import { getProviderPreferredModel } from '@/utils/providerModels'
+import { getPolicyPreferredProviderModel } from '@/services/ai/policy/providerModelAccess'
 import { filterPendingMemoriesForReview, buildMemoryReviewSummary, type MemoryReviewQueueFocus } from '@/utils/memoryReview'
 import { buildKnowledgeRecoverySummary } from '@/utils/knowledgeRecovery'
 import { useMotionPreference } from '@/hooks/useMotionPreference'
@@ -344,7 +344,7 @@ export function ContextPanel({ providers, section = 'all', focus }: ContextPanel
     setImporting(true)
     try {
       const provider = await getPrimaryConfiguredProvider()
-      const model = provider ? getProviderPreferredModel(provider) : undefined
+      const model = provider ? getPolicyPreferredProviderModel(provider, settings) : undefined
       const result = await importKnowledgeFile(provider ?? undefined, model)
       dialog.toast({ title: result.ok ? t('contextPanel.knowledgeUpdated') : t('settings.importSkipped'), message: result.message, tone: result.ok ? 'mint' : 'amber' })
       await refresh()
@@ -412,6 +412,7 @@ export function ContextPanel({ providers, section = 'all', focus }: ContextPanel
       })
 
       const autoMemoryCanary = `autotest_${Date.now().toString(36)}`
+      const primaryModel = primaryProvider ? getPolicyPreferredProviderModel(primaryProvider, settings) : undefined
       const extracted = await extractMemories(
         `self-test-${canary}`,
         [
@@ -431,7 +432,7 @@ export function ContextPanel({ providers, section = 'all', focus }: ContextPanel
           },
         ],
         primaryProvider ?? undefined,
-        primaryProvider ? getProviderPreferredModel(primaryProvider) : undefined
+        primaryModel
       )
       const extractedHits = await searchMemories(`${autoMemoryCanary} velvet-river`, 5, ['pending', 'active'])
       pushStep({
@@ -446,7 +447,7 @@ export function ContextPanel({ providers, section = 'all', focus }: ContextPanel
         id: `self-test-${canary}`,
         title: 'Context self-test',
         providerId: primaryProvider?.id ?? 'self-test',
-        model: primaryProvider ? getProviderPreferredModel(primaryProvider) ?? 'self-test-model' : 'self-test-model',
+        model: primaryModel ?? 'self-test-model',
         providerModelMode: 'manual',
         systemPrompt: '',
         temperature: 0.7,

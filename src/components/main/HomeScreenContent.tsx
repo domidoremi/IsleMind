@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from 'react'
 import { ChatWorkspace } from '@/components/chat/ChatWorkspace'
 import { useChatStore } from '@/store/chatStore'
 import { useSettingsStore } from '@/store/settingsStore'
-import { getProviderPreferredModel } from '@/utils/providerModels'
+import { getPolicyPreferredProviderModel } from '@/services/ai/policy/providerModelAccess'
 
 interface HomeScreenContentProps {
   embedded?: boolean
@@ -17,7 +17,8 @@ export function HomeScreenContent({ embedded = false, initialDraft, initialDraft
   const currentId = useChatStore((state) => state.currentId)
   const create = useChatStore((state) => state.create)
   const select = useChatStore((state) => state.select)
-  const defaultProvider = useSettingsStore((state) => state.settings.defaultProvider)
+  const settings = useSettingsStore((state) => state.settings)
+  const defaultProvider = settings.defaultProvider
   const getConfiguredProviders = useSettingsStore((state) => state.getConfiguredProviders)
   const [configuredProviderIds, setConfiguredProviderIds] = useState<string[] | null>(null)
   const activeConversation = useMemo(
@@ -43,7 +44,7 @@ export function HomeScreenContent({ embedded = false, initialDraft, initialDraft
         return
       }
 
-      const model = primary ? getProviderPreferredModel(primary) : undefined
+      const model = primary ? getPolicyPreferredProviderModel(primary, settings) : undefined
       if (!primary || !model) return
 
       const existing = conversations.find(
@@ -70,6 +71,7 @@ export function HomeScreenContent({ embedded = false, initialDraft, initialDraft
     defaultProvider,
     getConfiguredProviders,
     select,
+    settings,
   ])
 
   const visibleConversation = useMemo(() => {

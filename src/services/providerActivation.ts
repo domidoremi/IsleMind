@@ -2,6 +2,7 @@ import { syncProviderCredentialGroupsDetailed, testProviderModelDetailed } from 
 import { st } from '@/i18n/service'
 import type { AIProvider, ProviderOperationCode } from '@/types'
 import { getProviderAvailableModels, getProviderManualModels } from '@/utils/providerModels'
+import { resolveProviderModelAliasAccess, type ProviderModelAccessInput } from '@/services/ai/policy/providerModelAccess'
 
 export interface ProviderActivationResult {
   providerId: string
@@ -55,7 +56,7 @@ export async function activateProviderWithHealthCheck(
 export async function syncAndTestProvider(
   provider: AIProvider,
   deps: ProviderActivationDeps,
-  options: { enable?: boolean; testModel?: string; checkParameters?: boolean } = {}
+  options: { enable?: boolean; testModel?: string; checkParameters?: boolean; accessSettings?: ProviderModelAccessInput['settings'] } = {}
 ): Promise<ProviderActivationResult> {
   if (options.enable) {
     await deps.updateProvider(provider.id, { enabled: true })
@@ -75,7 +76,7 @@ export async function syncAndTestProvider(
     hadCredential: hasAnyCredential(initial ?? provider),
     synced: false,
     syncAttempted: false,
-    modelCount: initial ? getProviderAvailableModels(initial).length : getProviderAvailableModels(provider).length,
+    modelCount: countPolicyAllowedAvailableModels(initial ?? provider, options.accessSettings),
     syncedGroups: 0,
     missingToken: false,
     tested: false,
@@ -130,15 +131,15 @@ export async function syncAndTestProvider(
   if (sync.data) {
     await deps.updateProvider(provider.id, sync.data)
     current = await deps.hydrateProviderKey(provider.id) ?? sync.data
-    result.modelCount = getProviderAvailableModels(current).length
-    result.syncedGroups = countSyncedGroups(current)
+    result.modelCount = countPolicyAllowedAvailableModels(current, options.accessSettings)
+    result.syncedGroups = countSyncedGroups(current, options.accessSettings)
   }
   result.synced = sync.ok && result.syncedGroups > 0 && result.modelCount > 0
   if (!sync.ok || !result.synced) {
     collectSyncFailures(result, current, sync.message)
   }
 
-  const candidates = buildTestCandidates(current, options.testModel)
+  const candidates = buildTestCandidates(current, options.testModel, options.accessSettings)
   if (!candidates.length) {
     pushFailure(result, st('providerActivation.noModels'), { code: 'empty_models' })
     await deps.updateProvider(provider.id, {
@@ -220,10 +221,10 @@ function wait(deps: ProviderActivationDeps, ms: number): Promise<void> {
   return deps.delay ? deps.delay(ms) : new Promise((resolve) => setTimeout(resolve, ms))
 }
 
-function buildTestCandidates(provider: AIProvider, requestedModel?: string): Array<{ groupId?: string; groupLabel?: string; apiKey: string; model: string }> {
+function buildTestCandidates(provider: AIProvider, requestedModel?: string, settings?: ProviderModelAccessInput['settings']): Array<{ groupId?: string; groupLabel?: string; apiKey: string; model: string }> {
   const enabledGroups = provider.credentialGroups?.filter((group) => group.enabled && group.apiKey?.trim()) ?? []
   const testModel = requestedModel?.trim()
-  if (testModel) {
+  if (testModel && isModelPolicyAllowed(provider, testModel, settings)) {
     if (enabledGroups.length) {
       return dedupeCandidates(enabledGroups.map((group) => ({
         groupId: group.id,
@@ -236,7 +237,7 @@ function buildTestCandidates(provider: AIProvider, requestedModel?: string): Arr
   }
   const syncedGroups = enabledGroups.filter((group) => group.lastModelSyncStatus === 'ok')
   const candidates = syncedGroups.flatMap((group) => {
-    const models = group.availableModels ?? []
+    const models = (group.availableModels ?? []).filter((model) => isModelPolicyAllowed(provider, model, settings))
     return models.map((model) => ({
       groupId: group.id,
       groupLabel: group.label,
@@ -245,7 +246,7 @@ function buildTestCandidates(provider: AIProvider, requestedModel?: string): Arr
     }))
   })
   if (candidates.length) return dedupeCandidates(candidates)
-  const manualModels = getProviderManualModels(provider)
+  const manualModels = getProviderManualModels(provider).filter((model) => isModelPolicyAllowed(provider, model, settings))
   if (manualModels.length) {
     if (enabledGroups.length) {
       return dedupeCandidates(enabledGroups.flatMap((group) => manualModels.map((model) => ({
@@ -260,9 +261,15 @@ function buildTestCandidates(provider: AIProvider, requestedModel?: string): Arr
     }
   }
   if (!enabledGroups.length && provider.apiKey?.trim() && provider.lastModelSyncStatus === 'ok' && provider.models.length) {
-    return provider.models.map((model) => ({ apiKey: provider.apiKey.trim(), model }))
+    return provider.models
+      .filter((model) => isModelPolicyAllowed(provider, model, settings))
+      .map((model) => ({ apiKey: provider.apiKey.trim(), model }))
   }
   return []
+}
+
+export function buildProviderActivationTestCandidatesForTest(provider: AIProvider, requestedModel?: string, settings?: ProviderModelAccessInput['settings']): Array<{ groupId?: string; groupLabel?: string; apiKey: string; model: string }> {
+  return buildTestCandidates(provider, requestedModel, settings)
 }
 
 function dedupeCandidates(candidates: Array<{ groupId?: string; groupLabel?: string; apiKey: string; model: string }>) {
@@ -307,8 +314,20 @@ function names(items: ProviderActivationResult[]): string {
   return items.map((item) => item.providerName).join(', ')
 }
 
-function countSyncedGroups(provider: AIProvider): number {
-  return provider.credentialGroups?.filter((group) => group.enabled && group.lastModelSyncStatus === 'ok' && (group.availableModels?.length ?? 0) > 0).length ?? 0
+function countSyncedGroups(provider: AIProvider, settings?: ProviderModelAccessInput['settings']): number {
+  return provider.credentialGroups?.filter((group) =>
+    group.enabled &&
+    group.lastModelSyncStatus === 'ok' &&
+    (group.availableModels ?? []).some((model) => isModelPolicyAllowed(provider, model, settings))
+  ).length ?? 0
+}
+
+function countPolicyAllowedAvailableModels(provider: AIProvider, settings?: ProviderModelAccessInput['settings']): number {
+  return getProviderAvailableModels(provider).filter((model) => isModelPolicyAllowed(provider, model, settings)).length
+}
+
+function isModelPolicyAllowed(provider: AIProvider, model: string, settings?: ProviderModelAccessInput['settings']): boolean {
+  return resolveProviderModelAliasAccess({ provider, model, settings }).allowed
 }
 
 function collectSyncFailures(result: ProviderActivationResult, provider: AIProvider, fallbackMessage: string) {

@@ -4,7 +4,7 @@ const crypto = require('node:crypto')
 const { execFileSync, spawnSync } = require('node:child_process')
 const { defaultReleaseSmokeArch, defaultReleaseSmokeVariant, resolveApkArtifactPath } = require('./release-artifact-contract')
 const { collectReleaseSourceFreshness } = require('./release-freshness-contract')
-const { defaultReleaseAppPackageName, validateCurrentApkSmokeResult } = require('./release-validation-contract')
+const { cleanInstallState, defaultReleaseAppPackageName, validateCurrentApkSmokeResult } = require('./release-validation-contract')
 
 const root = path.resolve(__dirname, '..')
 const evidenceDir = path.join(root, 'test-evidence', 'qa')
@@ -74,7 +74,7 @@ function readInstalledPackageInfo(device) {
     firstInstallTime: matchFirst(packageDump, /firstInstallTime=([^\n\r]+)/),
     lastUpdateTime: matchFirst(packageDump, /lastUpdateTime=([^\n\r]+)/),
   }
-  info.cleanInstall = Boolean(info.firstInstallTime && info.lastUpdateTime && info.firstInstallTime === info.lastUpdateTime)
+  Object.assign(info, cleanInstallState(info.firstInstallTime, info.lastUpdateTime))
   return info
 }
 

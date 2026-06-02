@@ -2,6 +2,7 @@ import type { AIProvider, ProviderCapabilities, ProviderCredentialMode, Provider
 import { getXiaomiMimoOfficialBaseUrl } from '@/types'
 import { st } from '@/i18n/service'
 import { inferProviderCredentialModeFromKeyOrBaseUrl, inferProviderTokenPlanRegionFromBaseUrl, inferProviderWireProtocolFromBaseUrl } from '@/services/ai/providerProtocolPolicy'
+import { resolveProviderModelAliasAccess, type ProviderModelAccessInput } from '@/services/ai/policy/providerModelAccess'
 
 export interface ProviderPreset {
   id: ProviderPresetId
@@ -37,6 +38,10 @@ export interface ProviderImportResult {
   warnings: string[]
   duplicates: string[]
   sourceType: 'text' | 'json' | 'csv'
+}
+
+export interface ProviderImportOptions {
+  accessSettings?: ProviderModelAccessInput['settings']
 }
 
 interface ProviderProbeDeps {
@@ -243,7 +248,7 @@ export function parseCredentialGroups(input: string): NonNullable<AIProvider['cr
     }))
 }
 
-export function parseProviderImportText(input: string): ProviderImportResult {
+export function parseProviderImportText(input: string, options: ProviderImportOptions = {}): ProviderImportResult {
   const warnings: string[] = []
   const duplicates: string[] = []
   const normalizedInput = normalizeProviderImportInput(input, warnings)
@@ -251,7 +256,8 @@ export function parseProviderImportText(input: string): ProviderImportResult {
   const providers = chunks
     .map((chunk, index) => parseProviderImportChunk(chunk, index, warnings))
     .filter((provider): provider is AIProvider => !!provider)
-  return { providers: dedupeImportedProviders(providers, warnings, duplicates), warnings, duplicates, sourceType: normalizedInput.sourceType }
+  const dedupedProviders = dedupeImportedProviders(providers, warnings, duplicates)
+  return { providers: applyImportedProviderAccessPolicy(dedupedProviders, warnings, options.accessSettings), warnings, duplicates, sourceType: normalizedInput.sourceType }
 }
 
 export function maskSecret(value: string): string {
@@ -623,4 +629,38 @@ function dedupeImportedProviders(providers: AIProvider[], warnings: string[], du
     seen.add(key)
     return true
   })
+}
+
+function applyImportedProviderAccessPolicy(providers: AIProvider[], warnings: string[], settings?: ProviderModelAccessInput['settings']): AIProvider[] {
+  if (!settings) return providers
+  return providers
+    .filter((provider) => {
+      if (importedProviderAllowedByPolicy(provider, settings)) return true
+      warnings.push(st('providerRegistry.providerSkippedByPolicy', { name: provider.name }))
+      return false
+    })
+    .map((provider) => filterImportedProviderModelsByPolicy(provider, warnings, settings))
+}
+
+function importedProviderAllowedByPolicy(provider: AIProvider, settings: ProviderModelAccessInput['settings']): boolean {
+  const probe = resolveProviderModelAliasAccess({ provider, model: '__provider_import_policy_probe__', settings })
+  return probe.allowed || probe.reason === 'model_blocked' || probe.reason === 'model_not_allowed'
+}
+
+function filterImportedProviderModelsByPolicy(provider: AIProvider, warnings: string[], settings: ProviderModelAccessInput['settings']): AIProvider {
+  const models = filterImportedModelsByPolicy(provider, provider.models, settings)
+  const manualModels = Array.isArray(provider.manualModels)
+    ? filterImportedModelsByPolicy(provider, provider.manualModels, settings)
+    : provider.manualModels
+  const skipped = provider.models.length - models.length + (Array.isArray(provider.manualModels) ? provider.manualModels.length - (manualModels?.length ?? 0) : 0)
+  if (skipped > 0) warnings.push(st('providerRegistry.modelsSkippedByPolicy', { name: provider.name, count: skipped }))
+  return {
+    ...provider,
+    models,
+    ...(Array.isArray(provider.manualModels) ? { manualModels } : {}),
+  }
+}
+
+function filterImportedModelsByPolicy(provider: AIProvider, models: string[], settings: ProviderModelAccessInput['settings']): string[] {
+  return models.filter((model) => resolveProviderModelAliasAccess({ provider, model, settings }).allowed)
 }

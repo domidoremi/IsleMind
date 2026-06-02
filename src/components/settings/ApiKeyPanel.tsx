@@ -17,7 +17,8 @@ import { IsleButton } from '@/components/ui/isle'
 import { IsleField } from '@/components/ui/isle'
 import { useIsleDialog } from '@/components/ui/isle'
 import { parseModelEntries } from '@/utils/text'
-import { getProviderAvailableModels, getProviderManualModels, getProviderPreferredModel, summarizeProviderModelInventory } from '@/utils/providerModels'
+import { getProviderManualModels, summarizeProviderModelInventory } from '@/utils/providerModels'
+import { getPolicyAllowedProviderModels, getPolicyPreferredProviderModel } from '@/services/ai/policy/providerModelAccess'
 
 interface ApiKeyPanelProps {
   provider: AIProvider
@@ -45,10 +46,12 @@ export function ApiKeyPanel({ provider, initiallyExpanded = false }: ApiKeyPanel
   const { t } = useTranslation()
   const dialog = useIsleDialog()
   const updateProvider = useSettingsStore((state) => state.updateProvider)
+  const removeProvider = useSettingsStore((state) => state.removeProvider)
   const updateSettings = useSettingsStore((state) => state.updateSettings)
-  const defaultProvider = useSettingsStore((state) => state.settings.defaultProvider)
-  const modelTestModel = useSettingsStore((state) => state.settings.modelTestModel)
-  const modelTestCheckParameters = useSettingsStore((state) => state.settings.modelTestCheckParameters)
+  const settings = useSettingsStore((state) => state.settings)
+  const defaultProvider = settings.defaultProvider
+  const modelTestModel = settings.modelTestModel
+  const modelTestCheckParameters = settings.modelTestCheckParameters
   const hydrateProviderKey = useSettingsStore((state) => state.hydrateProviderKey)
   const [expanded, setExpanded] = useState(initiallyExpanded)
   const [baseUrl, setBaseUrl] = useState(provider.baseUrl ?? '')
@@ -69,9 +72,9 @@ export function ApiKeyPanel({ provider, initiallyExpanded = false }: ApiKeyPanel
   const providerConfigDraft = useMemo(() => resolveProviderConfigDraft({ provider, presetId, baseUrl, wireProtocol }), [baseUrl, presetId, provider, wireProtocol])
   const modelEntries = useMemo(() => parseModelEntries(modelsText), [modelsText])
   const currentModels = modelEntries.models
-  const availableModels = useMemo(() => getProviderAvailableModels(provider), [provider])
+  const availableModels = useMemo(() => getPolicyAllowedProviderModels(provider, settings), [provider, settings])
   const modelInventory = useMemo(() => summarizeProviderModelInventory(provider), [provider])
-  const preferredModel = getProviderPreferredModel(provider)
+  const preferredModel = getPolicyPreferredProviderModel(provider, settings)
   const primaryModel = preferredModel ?? availableModels[0] ?? currentModels[0] ?? t('apiKeyPanel.noModelSet')
   const primaryModelConfig = getModelConfig(primaryModel, provider.type, provider.modelConfigs)
   const groupCount = hydratedGroups.length
@@ -209,7 +212,7 @@ export function ApiKeyPanel({ provider, initiallyExpanded = false }: ApiKeyPanel
       updateProvider: useSettingsStore.getState().updateProvider,
       hydrateProviderKey: useSettingsStore.getState().hydrateProviderKey,
       updateProviderCredentialGroupHealth: useSettingsStore.getState().updateProviderCredentialGroupHealth,
-    }, { enable: provider.enabled, testModel: modelTestModel, checkParameters: modelTestCheckParameters })
+    }, { enable: provider.enabled, testModel: modelTestModel, checkParameters: modelTestCheckParameters, accessSettings: settings })
     const latest = useSettingsStore.getState().providers.find((item) => item.id === provider.id)
     if (latest) setModelsText(formatModelEntries(latest))
     setTask('idle')
@@ -236,7 +239,7 @@ export function ApiKeyPanel({ provider, initiallyExpanded = false }: ApiKeyPanel
       updateProvider: useSettingsStore.getState().updateProvider,
       hydrateProviderKey: useSettingsStore.getState().hydrateProviderKey,
       updateProviderCredentialGroupHealth: useSettingsStore.getState().updateProviderCredentialGroupHealth,
-    }, { enable: true, testModel: modelTestModel, checkParameters: modelTestCheckParameters })
+    }, { enable: true, testModel: modelTestModel, checkParameters: modelTestCheckParameters, accessSettings: settings })
     const summary = summarizeProviderActivation([result])
     if (result.testOk) {
       updateSettings({ defaultProvider: result.providerId, onboardingCompleted: true })
@@ -249,6 +252,19 @@ export function ApiKeyPanel({ provider, initiallyExpanded = false }: ApiKeyPanel
   function setDefaultProvider() {
     updateSettings({ defaultProvider: provider.id, onboardingCompleted: true })
     dialog.toast({ title: t('apiKeyPanel.defaultUpdated'), message: provider.name, tone: 'mint' })
+  }
+
+  async function confirmRemoveProvider() {
+    const confirmed = await dialog.confirm({
+      title: t('apiKeyPanel.deleteProviderTitle'),
+      message: t('apiKeyPanel.deleteProviderMessage', { name: provider.name }),
+      confirmLabel: t('common.delete'),
+      cancelLabel: t('common.cancel'),
+      tone: 'danger',
+    })
+    if (!confirmed) return
+    await removeProvider(provider.id)
+    dialog.toast({ title: t('apiKeyPanel.providerDeleted'), message: provider.name, tone: 'mint' })
   }
 
   function cancelModelEditing() {
@@ -355,6 +371,9 @@ export function ApiKeyPanel({ provider, initiallyExpanded = false }: ApiKeyPanel
             </MiniAction>
             <MiniAction active={provider.enabled} label={provider.enabled ? t('apiKeyPanel.enabledState') : t('apiKeyPanel.disabledState')} onPress={() => void toggleProviderEnabled()}>
               <Power color={provider.enabled ? colors.success : colors.textTertiary} size={15} />
+            </MiniAction>
+            <MiniAction label={t('common.delete')} onPress={() => void confirmRemoveProvider()} disabled={isBusy}>
+              <Trash2 color={colors.error} size={15} />
             </MiniAction>
             <MiniAction label={t('apiKeyPanel.applyDetection')} onPress={() => void acceptDetection()}>
               <SearchCheck color={colors.textTertiary} size={15} />

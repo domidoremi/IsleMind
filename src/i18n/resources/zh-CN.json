@@ -272,6 +272,8 @@
     "switchModelTitle": "切换当前会话模型？",
     "switchModelMessage": "这只会影响当前会话；正在生成的回复会先停止，再切到新模型。",
     "switchModelConfirm": "确认切换",
+    "modelSwitchBlocked": "模型切换已阻止",
+    "modelSwitchBlockedMessage": "{{model}} 被 {{provider}} 的当前访问策略阻止。",
     "currentConversationOnly": "仅当前会话",
     "contextWindow": "上下文窗口",
     "outputLimit": "输出上限",
@@ -949,6 +951,9 @@
     "modelTestFailed": "模型测试失败",
     "providerEnabled": "已启用 {{name}}",
     "providerDisabled": "已停用 {{name}}",
+    "deleteProviderTitle": "删除服务商？",
+    "deleteProviderMessage": "将从服务商设置中移除 {{name}}，并删除该服务商已保存的令牌。",
+    "providerDeleted": "服务商已删除",
     "defaultUpdated": "默认供应商已更新",
     "modelEditCancelled": "已取消模型编辑",
     "modelListEditable": "模型列表可编辑",
@@ -1493,7 +1498,12 @@
     "streamBufferedFallback": "服务商没有返回可解析的流式正文，正在尝试非流式请求兜底。",
     "streamReader": "已通过 ReadableStream 逐段接收服务商响应。",
     "streamFallbackCompleted": "服务商或当前环境未提供逐段流，已使用非流式响应完成本轮。",
-    "streamMode": "流式模式"
+    "streamMode": "流式模式",
+    "requestRectified": "请求已整流",
+    "runtimeGovernanceTitle": "运行时策略",
+    "runtimeGovernanceContent": "访问：{{access}}\n路由：{{route}}\n传输：{{transport}}\n载荷：{{payload}}\n代理：{{proxy}}",
+    "runtimeFallbackTitle": "运行时兜底",
+    "runtimeFallbackContent": "触发：{{trigger}}\n决策：{{decision}}\n选中：{{selected}}"
   },
   "providerOperation": {
     "requestFailed": "请求失败，请稍后重试。",
@@ -1558,7 +1568,9 @@
     "chunkUnrecognized": "第 {{index}} 段没有可识别的供应商信息。",
     "noTokens": "{{name}} 未识别到令牌。",
     "importedProviderName": "导入供应商 {{index}}",
-    "duplicateSkipped": "{{name}} 重复，已跳过。"
+    "duplicateSkipped": "{{name}} 重复，已跳过。",
+    "providerSkippedByPolicy": "{{name}} 被供应商访问策略阻止，已跳过。",
+    "modelsSkippedByPolicy": "{{name}} 有 {{count}} 个模型被访问策略跳过。"
   },
   "storage": {
     "sqliteSyncFailed": "SQLite 对话同步失败：{{message}}",
