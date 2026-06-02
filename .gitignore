@@ -27,8 +27,18 @@ expo-env.d.ts
 npm-debug.*
 yarn-debug.*
 yarn-error.*
-.codex/
+
+# local agent/runtime artifacts
+.codex/android-validation/
+.codex/downloaded-artifacts/
+.codex/hatch-pet/
+.codex/reference/
+.codex/tmp/
 .claude/
+.gitnexus/
+/tmp/
+/temp/
+/.tmp/
 screenshots/
 local-screenshots/
 test-screenshots/
@@ -36,10 +46,15 @@ emulator-screenshots/
 test-evidence/
 emulator-evidence/
 logcat/
+*.log
 *.logcat
 *.uia.xml
 *.apk
 *.aab
+*.tmp
+*.temp
+*.bak
+*.backup
 
 # local/private workspace notes and automation
 AGENTS.md
@@ -49,6 +64,11 @@ local-docs/
 local-scripts/
 .local/
 *.local.md
+*.local.js
+*.local.cjs
+*.local.mjs
+*.local.ts
+*.local.ps1
 
 # macOS
 .DS_Store
