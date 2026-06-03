@@ -8,11 +8,12 @@ interface HomeScreenContentProps {
   embedded?: boolean
   initialDraft?: string
   initialDraftKey?: string | number
+  settingsTransitionActive?: boolean
   onHistory?: () => void
   onSettings?: () => void
 }
 
-export function HomeScreenContent({ embedded = false, initialDraft, initialDraftKey, onHistory, onSettings }: HomeScreenContentProps) {
+export function HomeScreenContent({ embedded = false, initialDraft, initialDraftKey, settingsTransitionActive = false, onHistory, onSettings }: HomeScreenContentProps) {
   const conversations = useChatStore((state) => state.conversations)
   const currentId = useChatStore((state) => state.currentId)
   const create = useChatStore((state) => state.create)
@@ -88,6 +89,7 @@ export function HomeScreenContent({ embedded = false, initialDraft, initialDraft
       embedded={embedded}
       initialDraft={initialDraft}
       initialDraftKey={initialDraftKey}
+      settingsTransitionActive={settingsTransitionActive}
       onHistory={onHistory}
       onSettings={onSettings}
     />

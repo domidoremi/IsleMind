@@ -4,6 +4,8 @@ import { router } from 'expo-router'
 import { useTranslation } from 'react-i18next'
 import { Trash2 } from 'lucide-react-native'
 import { MotiView } from 'moti'
+import { AnimatedNavigationIcon } from '@/components/navigation/AnimatedNavigationIcon'
+import { NavigationIconBadge, useNavigationTrigger } from '@/components/navigation/AnimatedNavigationTrigger'
 import type { Conversation } from '@/types'
 import { getModelName } from '@/types'
 import { useAppTheme } from '@/hooks/useAppTheme'
@@ -32,6 +34,14 @@ export function ConversationRow({ conversation, index, onOpen, onRenameFocus }: 
   const [renaming, setRenaming] = useState(false)
   const [title, setTitle] = useState(conversation.title)
   const lastMessage = conversation.messages.at(-1)
+  const { active: opening, trigger: openConversation } = useNavigationTrigger(() => {
+    select(conversation.id)
+    if (onOpen) {
+      onOpen(conversation.id)
+    } else {
+      router.push({ pathname: '/chat/[id]', params: { id: conversation.id } })
+    }
+  })
 
   function confirmDelete() {
     void dialog.confirm({
@@ -59,14 +69,7 @@ export function ConversationRow({ conversation, index, onOpen, onRenameFocus }: 
     >
       <IslePressable
         haptic
-        onPress={() => {
-          select(conversation.id)
-          if (onOpen) {
-            onOpen(conversation.id)
-          } else {
-            router.push({ pathname: '/chat/[id]', params: { id: conversation.id } })
-          }
-        }}
+        onPress={openConversation}
         onLongPress={() => setRenaming(true)}
         style={{ marginBottom: 12 }}
       >
@@ -104,6 +107,9 @@ export function ConversationRow({ conversation, index, onOpen, onRenameFocus }: 
             </Text>
             <Text style={{ color: colors.textTertiary, fontSize: 12, marginTop: 10, fontWeight: '900' }}>{getModelName(conversation.model)}</Text>
           </View>
+          <NavigationIconBadge>
+            <AnimatedNavigationIcon glyph="conversation" active={opening} color={colors.textSecondary} accentColor={colors.primary} />
+          </NavigationIconBadge>
           <IslePressable
             onPress={confirmDelete}
             accessibilityLabel={t('conversation.deleteTitle')}

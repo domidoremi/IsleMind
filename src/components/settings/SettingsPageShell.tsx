@@ -1,10 +1,10 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react'
 import { BackHandler, findNodeHandle, Keyboard, Platform, ScrollView, TextInput, View } from 'react-native'
 import { router, usePathname } from 'expo-router'
-import { ChevronLeft } from 'lucide-react-native'
 import { MotiView } from 'moti'
 import { useTranslation } from 'react-i18next'
-import { IsleHeader, IsleIconButton } from '@/components/ui/isle'
+import { AnimatedNavigationTrigger } from '@/components/navigation/AnimatedNavigationTrigger'
+import { IsleHeader } from '@/components/ui/isle'
 import { IsleScreen } from '@/components/ui/isle'
 import { useAppTheme } from '@/hooks/useAppTheme'
 
@@ -79,7 +79,7 @@ export function SettingsPageShell({
   }, [pathname])
 
   return (
-    <IsleScreen padded={false}>
+    <IsleScreen padded={false} background="surface" backgroundState={keyboardHeight > 0 ? 'input' : 'idle'}>
       <ScrollView
         ref={scrollRef}
         keyboardShouldPersistTaps="handled"
@@ -90,9 +90,7 @@ export function SettingsPageShell({
           title={title}
           subtitle={subtitle}
           leading={
-            <IsleIconButton label={t('common.back')} size="lg" onPress={() => router.replace('/settings')}>
-              <ChevronLeft color={colors.text} size={20} strokeWidth={2} />
-            </IsleIconButton>
+            <AnimatedNavigationTrigger variant="iconButton" label={t('common.back')} size="lg" glyph="back" onNavigate={() => router.replace('/settings')} color={colors.text} />
           }
         />
         <MotiView

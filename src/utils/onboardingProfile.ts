@@ -16,7 +16,7 @@ export interface OnboardingConversationDefaults {
   reasoningEffort: ReasoningEffort
 }
 
-export const DEFAULT_ONBOARDING_COMPANION_MODE: OnboardingCompanionMode = 'research'
+export const DEFAULT_ONBOARDING_COMPANION_MODE: OnboardingCompanionMode = 'concise'
 
 const ONBOARDING_COMPANION_PROFILES: Record<OnboardingCompanionMode, OnboardingCompanionProfile> = {
   concise: {

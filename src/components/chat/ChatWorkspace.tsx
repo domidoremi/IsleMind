@@ -1,4 +1,4 @@
-import type { ReactNode } from 'react'
+import type { PropsWithChildren, ReactNode } from 'react'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import type { TFunction } from 'i18next'
 import {
@@ -22,10 +22,12 @@ import { FlashList, type FlashListRef } from '@shopify/flash-list'
 import * as Clipboard from 'expo-clipboard'
 import * as Linking from 'expo-linking'
 import { router } from 'expo-router'
-import { AlertTriangle, Bot, ChevronLeft, ChevronRight, FileText, GitBranchPlus, History, ListEnd, Settings2, SlidersHorizontal, Split, X } from 'lucide-react-native'
-import { MotiView } from 'moti'
+import { AlertTriangle, Bot, ChevronRight, FileText, GitBranchPlus, ListEnd, SlidersHorizontal, Split, Square, X } from 'lucide-react-native'
+import { AnimatePresence, MotiView } from 'moti'
 import { useTranslation } from 'react-i18next'
-import { IsleScreen } from '@/components/ui/isle'
+import { AnimatedNavigationIcon, type NavigationGlyph } from '@/components/navigation/AnimatedNavigationIcon'
+import { AnimatedNavigationTrigger, useNavigationTrigger } from '@/components/navigation/AnimatedNavigationTrigger'
+import { IsleScreen, type IsleBackgroundState } from '@/components/ui/isle'
 import { IsleOverlayPressable, IslePressable } from '@/components/ui/isle'
 import { IsleField, IsleHeader, IsleIconButton, IsleSheet } from '@/components/ui/isle'
 import { useIsleDialog } from '@/components/ui/isle'
@@ -34,18 +36,15 @@ import type { ComposerCommand } from '@/components/chat/Composer'
 import { ChatOptionsPanel } from '@/components/chat/ChatOptionsPanel'
 import { MessageBubble } from '@/components/chat/MessageBubble'
 import { IsleEmptyState } from '@/components/ui/isle'
-import { HomePet } from '@/components/mascot/HomePet'
-import { deriveHomePetState } from '@/components/mascot/petState'
 import { copyMessageFinalText, recoverStaleStreamingMessages, regenerateLastAssistant, retryMessage, sendMessage, stopMessage } from '@/services/chatRunner'
 import { useAppTheme } from '@/hooks/useAppTheme'
 import { useChatStore } from '@/store/chatStore'
 import { useSettingsStore } from '@/store/settingsStore'
-import { useActivationJobStore } from '@/store/activationJobStore'
 import { testProviderModelDetailed } from '@/services/ai/base'
 import { getConversationMetrics, type ConversationMetrics } from '@/services/conversationMetrics'
 import { getModelConfig, getModelName, getProviderConfigIssue } from '@/types'
 import { speakText } from '@/services/speech'
-import type { AIProvider, Attachment, ChatErrorCode, Conversation, Message, ProcessTrace, ProviderOperationCode, RagProfile } from '@/types'
+import type { AIProvider, Attachment, ChatErrorCode, Conversation, Message, ProviderOperationCode } from '@/types'
 import type { CommandReference, KnowledgeDocument, MemoryItem, SkillDefinition } from '@/types'
 import { collectMessageTraces, getActiveTraceTitle } from './tracePresentation'
 import { useSafeAreaInsets } from 'react-native-safe-area-context'
@@ -62,6 +61,7 @@ import { getPolicyAllowedProviderModels as getAccessAllowedProviderModels, getPo
 
 type StreamingInputIntent = 'guide' | 'queue' | 'interrupt'
 type ComposerPanel = 'model' | 'reasoning' | 'prompt' | 'more' | null
+type ChatOptionsPlacement = 'popover' | 'sheet'
 
 interface ModelQuickOption {
   id: string
@@ -70,17 +70,16 @@ interface ModelQuickOption {
   family: ModelQuickGroup
 }
 
-const CHAT_TOP_FLOATING_SPACE = 112
-const CHAT_BOTTOM_FLOATING_SPACE = 132
-const COMPOSER_MIN_HEIGHT = 132
+const COMPOSER_COLLAPSED_MIN_HEIGHT = 88
+const COMPOSER_EXPANDED_MIN_HEIGHT = 132
 const AUTO_SCROLL_DELAY_MS = 96
 const USER_SCROLL_PAUSE_THRESHOLD = 72
-const WORK_STARTERS = [
-  { id: 'plan', labelKey: 'chat.starterPlanLabel', draftKey: 'chat.starterPlanDraft' },
-  { id: 'notes', labelKey: 'chat.starterNotesLabel', draftKey: 'chat.starterNotesDraft' },
-  { id: 'compare', labelKey: 'chat.starterCompareLabel', draftKey: 'chat.starterCompareDraft' },
-  { id: 'brief', labelKey: 'chat.starterBriefLabel', draftKey: 'chat.starterBriefDraft' },
-] as const
+const FLOATING_CHROME_TOP_PADDING = 6
+const FLOATING_CHROME_BOTTOM_PADDING = 8
+const COLLAPSED_CHROME_TOP_OFFSET = 8
+const COLLAPSED_CHROME_HEIGHT = 44
+const EMPTY_CONVERSATION_DEFAULT_TOP_PADDING = 36
+const EMPTY_CONVERSATION_CHROME_GAP = 16
 
 interface PendingStreamingMessage {
   intent: Exclude<StreamingInputIntent, 'interrupt'>
@@ -94,11 +93,12 @@ interface ChatWorkspaceProps {
   embedded?: boolean
   initialDraft?: string
   initialDraftKey?: string | number
+  settingsTransitionActive?: boolean
   onHistory?: () => void
   onSettings?: () => void
 }
 
-export function ChatWorkspace({ conversation, showBack = false, embedded = false, initialDraft, initialDraftKey, onHistory, onSettings }: ChatWorkspaceProps) {
+export function ChatWorkspace({ conversation, showBack = false, embedded = false, initialDraft, initialDraftKey, settingsTransitionActive = false, onHistory, onSettings }: ChatWorkspaceProps) {
   const { colors } = useAppTheme()
   const { t } = useTranslation()
   const dialog = useIsleDialog()
@@ -111,7 +111,6 @@ export function ChatWorkspace({ conversation, showBack = false, embedded = false
   const createConversation = useChatStore((state) => state.create)
   const providers = useSettingsStore((state) => state.providers)
   const settings = useSettingsStore((state) => state.settings)
-  const activationJob = useActivationJobStore((state) => state.job)
   const hydrateProviderKey = useSettingsStore((state) => state.hydrateProviderKey)
   const updateProvider = useSettingsStore((state) => state.updateProvider)
   const pagerGestureLock = useMainPagerGestureLock()
@@ -129,6 +128,7 @@ export function ChatWorkspace({ conversation, showBack = false, embedded = false
   const [keyboardHeight, setKeyboardHeight] = useState(0)
   const [composerFocused, setComposerFocused] = useState(false)
   const [composerPanel, setComposerPanel] = useState<ComposerPanel>(null)
+  const [quickToolsCollapsed, setQuickToolsCollapsed] = useState(true)
   const [quickStartDraft, setQuickStartDraft] = useState<{ content: string; key: string } | null>(null)
   const quickStartSequence = useRef(0)
   const initialSetupDefaults = useMemo(() => getOnboardingConversationDefaults(settings.onboardingCompanionMode), [settings.onboardingCompanionMode])
@@ -136,8 +136,7 @@ export function ChatWorkspace({ conversation, showBack = false, embedded = false
   const [setupSystemPrompt, setSetupSystemPrompt] = useState(initialSetupDefaults.systemPrompt)
   const [setupSelectedProviderId, setSetupSelectedProviderId] = useState<string | null>(null)
   const [setupSelectedModel, setSetupSelectedModel] = useState<string | null>(null)
-  const [chromeHeight, setChromeHeight] = useState(CHAT_TOP_FLOATING_SPACE)
-  const [composerHeight, setComposerHeight] = useState(COMPOSER_MIN_HEIGHT)
+  const [composerHeight, setComposerHeight] = useState(COMPOSER_COLLAPSED_MIN_HEIGHT)
   const lastScrollOffset = useRef(0)
   const idleTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
   const autoScrollTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
@@ -191,37 +190,24 @@ export function ChatWorkspace({ conversation, showBack = false, embedded = false
   const regenerableAssistantId = lastMessage?.role === 'assistant' ? lastMessage.id : undefined
   const messageSignature = runtimeConversation?.messages.map((message) => `${message.id}:${message.content.length}:${message.status}`).join('|')
   const activityLabel = streamingMessage ? getMessageActivityLabel(streamingMessage, t) : ''
-  const petModelStatus = hasAvailableModel ? 'ready' : hasEnabledProvider ? 'unavailable' : 'unconfigured'
-  const petProviderActivity = activationJob?.status === 'running'
-    ? jobLooksLikeModelTesting(activationJob.stage) ? 'testing' : 'syncing'
-    : activationJob?.status === 'failed'
-      ? 'failed'
-      : activationJob?.status === 'done' && activationJob.failed > 0
-        ? 'partialFailure'
-        : 'idle'
-  const petRagActivity = useMemo(() => getPetRagActivity(streamingMessage ?? lastMessage, settings.ragProfile), [lastMessage, settings.ragProfile, streamingMessage])
-  const petToolActivity = useMemo(() => getPetToolActivity(streamingMessage ?? lastMessage), [lastMessage, streamingMessage])
-  const petState = useMemo(
-    () => deriveHomePetState({
-      conversation: runtimeConversation ?? setupConversation,
-      isStreaming,
-      reasoningEffort,
-      modelStatus: petModelStatus,
-      ragActivity: petRagActivity,
-      toolActivity: petToolActivity,
-      providerActivity: petProviderActivity,
-    }),
-    [runtimeConversation, setupConversation, isStreaming, reasoningEffort, petModelStatus, petProviderActivity, petRagActivity, petToolActivity]
-  )
-  const petEnabled = settings.petEnabled === true
   const compactViewport = windowHeight < 620 || windowWidth < 360
+  const optionsPanelPlacement: ChatOptionsPlacement = windowWidth < 600 || windowHeight < 720 ? 'sheet' : 'popover'
   const optionsPanelHeight = Math.max(compactViewport ? 360 : 430, Math.min(windowHeight * 0.7, compactViewport ? 460 : 620))
   const effectiveInitialDraft = quickStartDraft?.content ?? initialDraft
   const effectiveInitialDraftKey = quickStartDraft?.key ?? initialDraftKey
-  const listTopInset = Math.max(CHAT_TOP_FLOATING_SPACE, insets.top + (chromeCollapsed ? 54 : chromeHeight + 12))
-  const composerBottomInset = Math.max(COMPOSER_MIN_HEIGHT, composerHeight + Math.max(insets.bottom, 10) + 10)
+  const composerMinimumHeight = quickToolsCollapsed ? COMPOSER_COLLAPSED_MIN_HEIGHT : COMPOSER_EXPANDED_MIN_HEIGHT
+  const composerBottomInset = Math.max(composerMinimumHeight, composerHeight + Math.max(insets.bottom, 10) + 10)
   const keyboardLift = keyboardHeight
   const keyboardVisible = keyboardHeight > 0 || composerFocused
+  const backgroundState: IsleBackgroundState = providerHealth?.code
+    ? 'error'
+    : showOptions || composerPanel || intentDraft
+      ? 'modal'
+      : keyboardVisible
+        ? 'input'
+        : isStreaming
+          ? 'active'
+          : 'idle'
   const goHistory = onHistory ?? (() => router.push('/conversations'))
   const goSettings = onSettings ?? (() => router.push('/settings'))
   const goProviders = () => pushSettingsRoute('/settings/providers')
@@ -270,10 +256,21 @@ export function ChatWorkspace({ conversation, showBack = false, embedded = false
 
   function applyQuickStartDraft(draft: string) {
     quickStartSequence.current += 1
-    setQuickStartDraft({ content: draft, key: `work-starter-${quickStartSequence.current}` })
+    setQuickStartDraft({ content: draft, key: `composer-draft-${quickStartSequence.current}` })
     setShowOptions(false)
     setComposerPanel(null)
     setChromeCollapsed(false)
+  }
+
+  function collapseQuickTools() {
+    setQuickToolsCollapsed(true)
+    setComposerPanel(null)
+  }
+
+  function toggleQuickTools() {
+    const nextCollapsed = !quickToolsCollapsed
+    setQuickToolsCollapsed(nextCollapsed)
+    if (nextCollapsed) setComposerPanel(null)
   }
 
   async function applySkillToActiveConversation(nextSkills: SkillDefinition[]) {
@@ -281,19 +278,23 @@ export function ChatWorkspace({ conversation, showBack = false, embedded = false
     const variableValues = await collectSkillVariableValues(nextSkills)
     if (!variableValues) return
     const result = applySkillStack({ conversation: runtimeConversation, skills: nextSkills, variables: variableValues })
-    updateConversation(runtimeConversation.id, result.conversationUpdates)
+    let snapshotProvider: AIProvider | undefined
     if (result.snapshot.providerId && result.snapshot.model) {
-      const snapshotProvider = providers.find((item) => item.id === result.snapshot.providerId)
-      if (snapshotProvider && !resolveProviderModelAliasAccess({ provider: snapshotProvider, model: result.snapshot.model, settings }).allowed) {
-        dialog.toast({ title: t('chat.modelSwitchBlocked'), message: t('chat.modelSwitchBlockedMessage', { model: result.snapshot.model, provider: snapshotProvider.name }), tone: 'danger' })
+      snapshotProvider = providers.find((item) => item.id === result.snapshot.providerId)
+      if (!snapshotProvider || !resolveProviderModelAliasAccess({ provider: snapshotProvider, model: result.snapshot.model, settings }).allowed) {
+        dialog.toast({ title: t('chat.modelSwitchBlocked'), message: t('chat.modelSwitchBlockedMessage', { model: result.snapshot.model, provider: snapshotProvider?.name ?? result.snapshot.providerId }), tone: 'danger' })
         return
       }
+    }
+    updateConversation(runtimeConversation.id, result.conversationUpdates)
+    if (result.snapshot.providerId && result.snapshot.model) {
       const switched = switchConversationModel(runtimeConversation.id, result.snapshot.providerId, result.snapshot.model)
       if (!switched) {
         dialog.toast({ title: t('chat.modelSwitchBlocked'), message: t('chat.modelSwitchBlockedMessage', { model: result.snapshot.model, provider: snapshotProvider?.name ?? result.snapshot.providerId }), tone: 'danger' })
         return
       }
     }
+    if (result.snapshot.firstUserMessage?.trim()) applyQuickStartDraft(result.snapshot.firstUserMessage)
     dialog.toast({ title: t('skills.applied'), message: result.snapshot.names.join(' + '), tone: 'mint' })
   }
 
@@ -332,9 +333,6 @@ export function ChatWorkspace({ conversation, showBack = false, embedded = false
     await applySkillToActiveConversation([skill])
   }
 
-  const ScreenWrapper = embedded ? View : IsleScreen
-  const screenProps = embedded ? { style: { flex: 1 } } : { padded: false }
-
   useEffect(() => {
     const now = Date.now()
     const wait = Math.max(32, AUTO_SCROLL_DELAY_MS - (now - lastAutoScrollAt.current))
@@ -342,7 +340,7 @@ export function ChatWorkspace({ conversation, showBack = false, embedded = false
     autoScrollTimer.current = setTimeout(() => {
       if (!autoStickToBottom.current) return
       lastAutoScrollAt.current = Date.now()
-      listRef.current?.scrollToEnd({ animated: true })
+      listRef.current?.scrollToEnd({ animated: false })
     }, wait)
     return () => {
       if (autoScrollTimer.current) clearTimeout(autoScrollTimer.current)
@@ -368,6 +366,7 @@ export function ChatWorkspace({ conversation, showBack = false, embedded = false
 
   useEffect(() => {
     if (!conversation?.id) return
+    collapseQuickTools()
     recoverStaleStreamingMessages(conversation.id)
   }, [conversation?.id])
 
@@ -536,12 +535,8 @@ export function ChatWorkspace({ conversation, showBack = false, embedded = false
       dialog.toast({ title: t('chat.modelSwitched'), message: `${homeProvider.name} · ${getProviderDisplayModel(homeProvider, nextModel)}`, tone: 'mint' })
     }
 
-    const showSetupPet = petEnabled && !keyboardVisible && !showOptions && !composerPanel
-    const setupPetRight = Math.max(16, Math.min(24, windowWidth * 0.045))
-    const setupPetBottomGap = Math.max(20, Math.min(32, windowHeight * 0.025))
-
     return (
-      <ScreenWrapper {...screenProps}>
+      <ChatScreenFrame embedded={embedded} backgroundState={backgroundState} compactViewport={compactViewport}>
         <View style={{ flex: 1 }}>
           {showOptions ? (
             <MotiView
@@ -557,14 +552,15 @@ export function ChatWorkspace({ conversation, showBack = false, embedded = false
               />
             </MotiView>
           ) : null}
-          <View style={{ paddingHorizontal: 16, paddingTop: 8, paddingBottom: 8, flexDirection: 'row', alignItems: 'center', gap: 10 }}>
-            <IslePressable
-              onPress={goHistory}
-              accessibilityLabel={t('conversation.title')}
-              style={{ width: 44, height: 44, alignItems: 'center', justifyContent: 'center', borderRadius: 22, backgroundColor: colors.islandRaised, borderWidth: 1, borderColor: colors.border }}
-            >
-              <History color={colors.text} size={18} strokeWidth={1.8} />
-            </IslePressable>
+          <View pointerEvents="box-none" style={{ position: 'absolute', top: 0, left: 0, right: 0, zIndex: 40, paddingHorizontal: 16, paddingTop: 8, paddingBottom: 8, flexDirection: 'row', alignItems: 'center', gap: 10 }}>
+            <AnimatedNavigationTrigger
+              variant="iconButton"
+              label={t('conversation.title')}
+              glyph="history"
+              onNavigate={goHistory}
+              color={colors.text}
+              style={{ width: 44, height: 44, borderRadius: colors.ui.radius.controlLarge, backgroundColor: colors.material.paperRaised, borderWidth: 1, borderColor: colors.border }}
+            />
             <View style={{ flex: 1 }}>
               <Pressable onPress={openSetupFullModelPanel} accessibilityRole="button" accessibilityLabel={t('chat.conversationOptions')} style={{ minHeight: 44, justifyContent: 'center' }}>
                 <Text style={{ color: colors.text, fontSize: 18, fontWeight: '800' }}>{emptyHeaderTitle}</Text>
@@ -579,44 +575,50 @@ export function ChatWorkspace({ conversation, showBack = false, embedded = false
               haptic
               onPress={openSetupFullModelPanel}
               accessibilityLabel={t('chat.conversationOptions')}
-              style={{ width: 44, height: 44, alignItems: 'center', justifyContent: 'center', borderRadius: 22, backgroundColor: colors.material.chrome, borderWidth: 1, borderColor: colors.borderStrong }}
+              style={{ width: 44, height: 44, alignItems: 'center', justifyContent: 'center', borderRadius: colors.ui.radius.controlLarge, backgroundColor: colors.material.chrome, borderWidth: 1, borderColor: colors.borderStrong }}
             >
               <ListEnd color={colors.text} size={18} strokeWidth={1.9} />
             </IslePressable>
-            <IslePressable
-              haptic
-              onPress={goSettings}
-              accessibilityLabel={t('settings.title')}
-              style={{ width: 44, height: 44, alignItems: 'center', justifyContent: 'center', borderRadius: 22, backgroundColor: colors.material.chrome, borderWidth: 1, borderColor: colors.borderStrong }}
-            >
-              <Settings2 color={colors.text} size={18} strokeWidth={1.9} />
-            </IslePressable>
+            <AnimatedNavigationTrigger
+              variant="iconButton"
+              label={t('settings.title')}
+              glyph="settings-sliders"
+              onNavigate={goSettings}
+              externalActive={settingsTransitionActive}
+              color={colors.text}
+              style={{ width: 44, height: 44, borderRadius: colors.ui.radius.controlLarge, backgroundColor: colors.material.chrome, borderWidth: 1, borderColor: colors.borderStrong }}
+            />
           </View>
           <ScrollView
             style={{ flex: 1 }}
             keyboardShouldPersistTaps="handled"
-            contentContainerStyle={{ paddingHorizontal: 20, paddingTop: 10, paddingBottom: Math.max(insets.bottom, 10) + CHAT_BOTTOM_FLOATING_SPACE + keyboardLift }}
+            contentContainerStyle={{
+              flexGrow: 1,
+              alignItems: 'center',
+              justifyContent: 'center',
+              paddingHorizontal: 20,
+              paddingTop: Math.max(insets.top + 92, compactViewport ? 104 : 126),
+              paddingBottom: composerBottomInset + keyboardLift,
+            }}
           >
-            <View style={{ gap: 14 }}>
-              <IsleEmptyState
-                title={emptyHeaderTitle}
-                actionLabel={hasAvailableModel ? t('chat.startChat') : t('chat.configureProviders')}
-                onAction={hasAvailableModel ? () => {
-                  const currentSettings = useSettingsStore.getState().settings
-                  const readyProvider = pickReadyProviderForNewConversation(useSettingsStore.getState().providers, currentSettings.defaultProvider, currentSettings)
-                  const model = readyProvider ? getPolicyPreferredProviderModel(readyProvider, currentSettings) : undefined
-                  if (readyProvider && model) createConversation(readyProvider.id, model)
-                } : goProviders}
-              />
-              <WorkStarterActions onApplyStarter={applyQuickStartDraft} />
-            </View>
+            <SetupEmptyState
+              description={hasAvailableModel ? t('chat.askAnything') : hasEnabledProvider ? t('chat.syncModelsBeforeChat') : t('chat.configureProviderBeforeChat')}
+              actionLabel={hasAvailableModel ? t('chat.startChat') : t('chat.configureProviders')}
+              glyph={hasAvailableModel ? 'new-chat' : 'provider-key'}
+              onAction={hasAvailableModel ? () => {
+                const currentSettings = useSettingsStore.getState().settings
+                const readyProvider = pickReadyProviderForNewConversation(useSettingsStore.getState().providers, currentSettings.defaultProvider, currentSettings)
+                const model = readyProvider ? getPolicyPreferredProviderModel(readyProvider, currentSettings) : undefined
+                if (readyProvider && model) createConversation(readyProvider.id, model)
+              } : goProviders}
+            />
           </ScrollView>
           {showOptions ? (
             <MotiView
               from={motion === 'full' ? { opacity: 0, translateY: -8, scale: 0.985 } : { opacity: 0 }}
               animate={{ opacity: 1, translateY: 0, scale: 1 }}
               transition={motion === 'full' ? { type: 'spring', ...motionTokens.spring.settle } : { type: 'timing', duration: motionTokens.duration.fast }}
-              style={{ position: 'absolute', left: 12, right: 12, top: Math.max(62, insets.top + 70), zIndex: 72 }}
+              style={optionsPanelOverlayStyle(optionsPanelPlacement, insets.top, insets.bottom)}
             >
               <IsleOverlayPressable onPress={(event) => event.stopPropagation()}>
                 <ChatOptionsPanel
@@ -625,6 +627,7 @@ export function ChatWorkspace({ conversation, showBack = false, embedded = false
                   switchableProviders={switchableProviders}
                   colors={colors}
                   maxHeight={optionsPanelHeight}
+                  placement={optionsPanelPlacement}
                   settings={settings}
                   onSwitchModel={(nextProvider, nextModel) => {
                     if (!resolveProviderModelAliasAccess({ provider: nextProvider, model: nextModel, settings }).allowed) {
@@ -645,19 +648,6 @@ export function ChatWorkspace({ conversation, showBack = false, embedded = false
                 />
               </IsleOverlayPressable>
             </MotiView>
-          ) : null}
-          {showSetupPet ? (
-            <View
-              pointerEvents="none"
-              style={{
-                position: 'absolute',
-                right: setupPetRight,
-                bottom: composerBottomInset + setupPetBottomGap,
-                zIndex: 34,
-              }}
-            >
-              <HomePet state={petState} compact scale={0.65} />
-            </View>
           ) : null}
           <FloatingComposer
             insets={insets}
@@ -693,8 +683,14 @@ export function ChatWorkspace({ conversation, showBack = false, embedded = false
             disabled={false}
             onStop={() => undefined}
             onReferenceSelected={() => undefined}
-            onSend={submitSetup}
-            onSendWhileStreaming={submitSetup}
+            onSend={(content, attachments) => {
+              collapseQuickTools()
+              return submitSetup(content, attachments)
+            }}
+            onSendWhileStreaming={(content, attachments) => {
+              collapseQuickTools()
+              return submitSetup(content, attachments)
+            }}
             onInteract={() => {
               setPagerGestureLocked?.(true)
               if (showOptions) setShowOptions(false)
@@ -702,11 +698,17 @@ export function ChatWorkspace({ conversation, showBack = false, embedded = false
             onInteractEnd={() => {
               if (!showOptions && !composerPanel && !composerFocused) setPagerGestureLocked?.(false)
             }}
-            onInputFocus={() => setComposerFocused(true)}
+            onInputFocus={() => {
+              collapseQuickTools()
+              setComposerFocused(true)
+            }}
             onInputBlur={() => setComposerFocused(false)}
             keyboardLift={keyboardLift}
             panel={composerPanel}
             onPanelChange={setComposerPanel}
+            toolsCollapsed={quickToolsCollapsed}
+            onToggleTools={toggleQuickTools}
+            onCollapseTools={collapseQuickTools}
             onOpenReasoningPicker={openSetupReasoningPicker}
             reasoningUnavailableMessage={supportsSetupReasoningQuick ? undefined : (hasAvailableModel ? t('chat.reasoningUnsupported') : t('chat.syncModelsBeforeChat'))}
             onLayoutHeight={setComposerHeight}
@@ -714,7 +716,7 @@ export function ChatWorkspace({ conversation, showBack = false, embedded = false
             settings={settings}
           />
         </View>
-      </ScreenWrapper>
+      </ChatScreenFrame>
     )
   }
 
@@ -742,12 +744,13 @@ export function ChatWorkspace({ conversation, showBack = false, embedded = false
       switchableProviders={switchableProviders}
       readyProviders={quickModelProviders}
       optionsPanelHeight={optionsPanelHeight}
-      listTopInset={listTopInset}
+      optionsPanelPlacement={optionsPanelPlacement}
       composerBottomInset={composerBottomInset}
       insets={insets}
       colors={colors}
-      screenProps={screenProps}
-      ScreenWrapper={ScreenWrapper}
+      embedded={embedded}
+      backgroundState={backgroundState}
+      compactViewport={compactViewport}
       showBack={showBack}
       goHistory={goHistory}
       goSettings={goSettings}
@@ -769,20 +772,21 @@ export function ChatWorkspace({ conversation, showBack = false, embedded = false
       setTestingHeader={setTestingHeader}
       composerPanel={composerPanel}
       setComposerPanel={setComposerPanel}
-      setChromeHeight={setChromeHeight}
       setComposerHeight={setComposerHeight}
+      quickToolsCollapsed={quickToolsCollapsed}
+      toggleQuickTools={toggleQuickTools}
+      collapseQuickTools={collapseQuickTools}
       motion={motion}
       markChromeActive={markChromeActive}
       scheduleChromeIdleCollapse={scheduleChromeIdleCollapse}
       lastScrollOffset={lastScrollOffset}
       autoStickToBottom={autoStickToBottom}
-      petState={petState}
-      petEnabled={petEnabled}
       keyboardLift={keyboardLift}
       keyboardVisible={keyboardVisible}
       settings={settings}
       setComposerFocused={setComposerFocused}
       setPagerGestureLocked={setPagerGestureLocked}
+      settingsTransitionActive={settingsTransitionActive}
     />
   )
 }
@@ -809,12 +813,13 @@ function ActiveChatWorkspace({
   switchableProviders,
   readyProviders,
   optionsPanelHeight,
-  listTopInset,
+  optionsPanelPlacement,
   composerBottomInset,
   insets,
   colors,
-  screenProps,
-  ScreenWrapper,
+  embedded,
+  backgroundState,
+  compactViewport,
   showBack,
   goHistory,
   goSettings,
@@ -836,20 +841,21 @@ function ActiveChatWorkspace({
   setTestingHeader,
   composerPanel,
   setComposerPanel,
-  setChromeHeight,
   setComposerHeight,
+  quickToolsCollapsed,
+  toggleQuickTools,
+  collapseQuickTools,
   motion,
   markChromeActive,
   scheduleChromeIdleCollapse,
   lastScrollOffset,
   autoStickToBottom,
-  petState,
-  petEnabled,
   keyboardLift,
   keyboardVisible,
   settings,
   setComposerFocused,
   setPagerGestureLocked,
+  settingsTransitionActive,
 }: {
   conversation: Conversation
   provider: AIProvider | undefined
@@ -872,12 +878,13 @@ function ActiveChatWorkspace({
   switchableProviders: AIProvider[]
   readyProviders: AIProvider[]
   optionsPanelHeight: number
-  listTopInset: number
+  optionsPanelPlacement: ChatOptionsPlacement
   composerBottomInset: number
   insets: ReturnType<typeof useSafeAreaInsets>
   colors: ReturnType<typeof useAppTheme>['colors']
-  screenProps: Record<string, unknown>
-  ScreenWrapper: typeof View | typeof IsleScreen
+  embedded: boolean
+  backgroundState: IsleBackgroundState
+  compactViewport: boolean
   showBack: boolean
   goHistory: () => void
   goSettings: () => void
@@ -899,30 +906,34 @@ function ActiveChatWorkspace({
   setTestingHeader: React.Dispatch<React.SetStateAction<boolean>>
   composerPanel: ComposerPanel
   setComposerPanel: React.Dispatch<React.SetStateAction<ComposerPanel>>
-  setChromeHeight: React.Dispatch<React.SetStateAction<number>>
   setComposerHeight: React.Dispatch<React.SetStateAction<number>>
+  quickToolsCollapsed: boolean
+  toggleQuickTools: () => void
+  collapseQuickTools: () => void
   motion: ReturnType<typeof useMotionPreference>
   markChromeActive: () => void
   scheduleChromeIdleCollapse: () => void
   lastScrollOffset: React.MutableRefObject<number>
   autoStickToBottom: React.MutableRefObject<boolean>
-  petState: ReturnType<typeof deriveHomePetState>
-  petEnabled: boolean
   keyboardLift: number
   keyboardVisible: boolean
   settings: ReturnType<typeof useSettingsStore.getState>['settings']
   setComposerFocused: React.Dispatch<React.SetStateAction<boolean>>
   setPagerGestureLocked?: (locked: boolean) => void
+  settingsTransitionActive: boolean
 }) {
   const { t } = useTranslation()
-  const { height: windowHeight, width: windowWidth } = useWindowDimensions()
-  const petRight = Math.max(16, Math.min(24, windowWidth * 0.045))
-  const petBottomGap = Math.max(20, Math.min(32, windowHeight * 0.025))
-  const showFloatingPet = petEnabled && !keyboardVisible && !showOptions && !composerPanel && !intentDraft
   const [showJumpToBottom, setShowJumpToBottom] = useState(false)
+  const [chromeHeight, setChromeHeight] = useState(0)
+  const emptyConversationTopPadding = Math.max(
+    EMPTY_CONVERSATION_DEFAULT_TOP_PADDING,
+    chromeCollapsed
+      ? COLLAPSED_CHROME_TOP_OFFSET + COLLAPSED_CHROME_HEIGHT + EMPTY_CONVERSATION_CHROME_GAP
+      : chromeHeight + EMPTY_CONVERSATION_CHROME_GAP
+  )
 
   async function submit(content: string, attachments: Attachment[]) {
-    scrollToLatestMessage()
+    scrollToLatestMessage(false, 0)
     try {
       await sendMessage({ conversation: activeConversation, content, attachments })
     } catch (error) {
@@ -945,7 +956,7 @@ function ActiveChatWorkspace({
     const draft = intentDraft
     setIntentDraft(null)
     if (intent === 'interrupt') {
-      scrollToLatestMessage()
+      scrollToLatestMessage(false, 0)
       safeStopMessage(activeConversation.id)
       setPendingStreamingMessage(null)
       setTimeout(() => {
@@ -957,7 +968,7 @@ function ActiveChatWorkspace({
       }, 30)
       return
     }
-    scrollToLatestMessage()
+    scrollToLatestMessage(false, 0)
     setPendingStreamingMessage({ intent, content: draft.content, attachments: draft.attachments })
   }
 
@@ -998,7 +1009,7 @@ function ActiveChatWorkspace({
     dialog.toast({ title: result.ok ? t('chat.modelAvailable') : t('chat.modelUnavailable'), message: result.ok ? t('chat.modelTestPassed', { model: activeConversation.model }) : result.message, tone: result.ok ? 'mint' : 'danger' })
   }
 
-  function confirmSwitchModel(nextProvider: AIProvider, nextModel: string, options: { confirm?: boolean } = {}) {
+  function confirmSwitchModel(nextProvider: AIProvider, nextModel: string) {
     if (nextProvider.id === activeConversation.providerId && nextModel === activeConversation.model) return
     const access = resolveProviderModelAliasAccess({ provider: nextProvider, model: nextModel, settings })
     if (!access.allowed) {
@@ -1006,25 +1017,6 @@ function ActiveChatWorkspace({
       return
     }
     void (async () => {
-      const nextConfig = getModelConfig(nextModel, nextProvider.type, nextProvider.modelConfigs)
-      const currentConfig = getModelConfig(activeConversation.model, provider?.type, provider?.modelConfigs)
-      const confirmed = options.confirm === false ? true : await dialog.confirm({
-          title: t('chat.switchModelTitle'),
-          message: t('chat.switchModelMessage'),
-          tone: 'amber',
-          confirmLabel: t('chat.switchModelConfirm'),
-          cancelLabel: t('common.cancel'),
-          chips: [
-            { label: nextProvider.name, tone: 'mint' },
-            { label: getProviderDisplayModel(nextProvider, nextModel), tone: 'amber' },
-            { label: t('chat.currentConversationOnly'), tone: 'default' },
-          ],
-          metrics: [
-            { label: t('chat.contextWindow'), before: formatModelContextLimit(currentConfig, t), after: formatModelContextLimit(nextConfig, t) },
-            { label: t('chat.outputLimit'), before: formatTokenLimit(currentConfig.maxOutputTokens), after: formatTokenLimit(nextConfig.maxOutputTokens) },
-          ],
-        })
-      if (!confirmed) return
       safeStopMessage(activeConversation.id)
       const switched = switchConversationModel(activeConversation.id, nextProvider.id, nextModel)
       if (!switched) {
@@ -1078,16 +1070,16 @@ function ActiveChatWorkspace({
     if (composerPanel) setComposerPanel(null)
   }
 
-  function scrollToLatestMessage() {
+  function scrollToLatestMessage(animated = true, delay = 80) {
     autoStickToBottom.current = true
     setShowJumpToBottom(false)
     setTimeout(() => {
-      listRef.current?.scrollToEnd({ animated: true })
-    }, 80)
+      listRef.current?.scrollToEnd({ animated })
+    }, delay)
   }
 
   return (
-    <ScreenWrapper {...screenProps}>
+    <ChatScreenFrame embedded={embedded} backgroundState={backgroundState} compactViewport={compactViewport}>
         <View style={{ flex: 1 }}>
           {showOptions ? (
             <MotiView
@@ -1130,12 +1122,14 @@ function ActiveChatWorkspace({
             testingHeader={testingHeader}
             switchableProviders={switchableProviders}
             optionsPanelHeight={optionsPanelHeight}
+            optionsPanelPlacement={optionsPanelPlacement}
             onLayoutHeight={setChromeHeight}
             motion={motion}
             settings={settings}
+            settingsTransitionActive={settingsTransitionActive}
           />
 
-          <View onTouchStart={closeOptionsFromBackground} style={{ flex: 1, paddingTop: listTopInset }}>
+          <View onTouchStart={closeOptionsFromBackground} style={{ flex: 1 }}>
             <FlashList
               ref={listRef}
               style={{ flex: 1 }}
@@ -1195,7 +1189,7 @@ function ActiveChatWorkspace({
                   onTestModel={(item) => void testCurrentModel(item)}
                 />
               )}
-              ListEmptyComponent={<EmptyConversationState onHistory={goHistory} onProviders={goProviders} onApplyStarter={onApplyStarter} />}
+              ListEmptyComponent={<EmptyConversationState onHistory={goHistory} onProviders={goProviders} topPadding={emptyConversationTopPadding} />}
             />
           </View>
 
@@ -1203,9 +1197,9 @@ function ActiveChatWorkspace({
             <View pointerEvents="box-none" style={{ position: 'absolute', right: 18, bottom: composerBottomInset + keyboardLift + 12, zIndex: 46 }}>
               <IslePressable
                 haptic
-                onPress={scrollToLatestMessage}
+                onPress={() => scrollToLatestMessage()}
                 accessibilityLabel={t('chat.jumpToBottom')}
-                style={{ minHeight: 44, borderRadius: 22, paddingHorizontal: 14, flexDirection: 'row', alignItems: 'center', gap: 6, backgroundColor: colors.material.chrome, borderWidth: 1, borderColor: colors.borderStrong }}
+                style={{ minHeight: 44, borderRadius: colors.ui.radius.chip, paddingHorizontal: 14, flexDirection: 'row', alignItems: 'center', gap: 6, backgroundColor: colors.material.chrome, borderWidth: 1, borderColor: colors.borderStrong }}
               >
                 <ListEnd color={colors.textSecondary} size={14} strokeWidth={2.1} />
                 <Text style={{ color: colors.textSecondary, fontSize: 11, fontWeight: '900' }}>{t('chat.jumpToBottom')}</Text>
@@ -1220,20 +1214,6 @@ function ActiveChatWorkspace({
               onCancel={() => setIntentDraft(null)}
               onChoose={(intent) => void applyStreamingIntent(intent)}
             />
-          ) : null}
-
-          {showFloatingPet ? (
-            <View
-              pointerEvents="none"
-              style={{
-                position: 'absolute',
-                right: petRight,
-                bottom: composerBottomInset + petBottomGap,
-                zIndex: 34,
-              }}
-            >
-              <HomePet state={petState} compact scale={0.65} />
-            </View>
           ) : null}
 
           <FloatingComposer
@@ -1255,9 +1235,9 @@ function ActiveChatWorkspace({
             onSystemPromptChange={(systemPrompt) => updateConversation(activeConversation.id, { systemPrompt })}
             onSwitchModel={(model) => {
               if (!provider) return
-              confirmSwitchModel(provider, model, { confirm: false })
+              confirmSwitchModel(provider, model)
             }}
-            onSwitchProviderModel={(nextProvider, nextModel) => confirmSwitchModel(nextProvider, nextModel, { confirm: false })}
+            onSwitchProviderModel={(nextProvider, nextModel) => confirmSwitchModel(nextProvider, nextModel)}
             onOpenModelPicker={() => {
               markChromeActive()
               setComposerPanel((current) => current === 'model' ? null : 'model')
@@ -1272,8 +1252,14 @@ function ActiveChatWorkspace({
             disabled={!provider && activeConversation.providerId !== 'local-setup'}
             onStop={() => safeStopMessage(activeConversation.id)}
             onReferenceSelected={rememberCommandReference}
-            onSend={submit}
-            onSendWhileStreaming={submitWhileStreaming}
+            onSend={(content, attachments) => {
+              collapseQuickTools()
+              return submit(content, attachments)
+            }}
+            onSendWhileStreaming={(content, attachments) => {
+              collapseQuickTools()
+              return submitWhileStreaming(content, attachments)
+            }}
             onInteract={() => {
               setPagerGestureLocked?.(true)
               if (showOptions) setShowOptions(false)
@@ -1282,19 +1268,35 @@ function ActiveChatWorkspace({
               if (!showOptions && !composerPanel && !keyboardVisible) setPagerGestureLocked?.(false)
             }}
             onInputFocus={() => {
+              collapseQuickTools()
               setComposerFocused(true)
-              scrollToLatestMessage()
+              scrollToLatestMessage(false, 0)
             }}
             onInputBlur={() => setComposerFocused(false)}
             keyboardLift={keyboardLift}
             panel={composerPanel}
             onPanelChange={setComposerPanel}
+            toolsCollapsed={quickToolsCollapsed}
+            onToggleTools={toggleQuickTools}
+            onCollapseTools={collapseQuickTools}
             onLayoutHeight={setComposerHeight}
             motion={motion}
             settings={settings}
           />
         </View>
-    </ScreenWrapper>
+    </ChatScreenFrame>
+  )
+}
+
+function ChatScreenFrame({ embedded, backgroundState, compactViewport, children }: PropsWithChildren<{ embedded: boolean; backgroundState: IsleBackgroundState; compactViewport: boolean }>) {
+  if (embedded) {
+    return <View style={{ flex: 1 }}>{children}</View>
+  }
+
+  return (
+    <IsleScreen padded={false} background="focus" backgroundState={backgroundState} backgroundIntensity={compactViewport ? 0.84 : 1}>
+      {children}
+    </IsleScreen>
   )
 }
 
@@ -1319,9 +1321,11 @@ function FloatingChrome({
   testingHeader,
   switchableProviders,
   optionsPanelHeight,
+  optionsPanelPlacement,
   onLayoutHeight,
   motion,
   settings,
+  settingsTransitionActive,
 }: {
   colors: ReturnType<typeof useAppTheme>['colors']
   insets: ReturnType<typeof useSafeAreaInsets>
@@ -1343,9 +1347,11 @@ function FloatingChrome({
   testingHeader: boolean
   switchableProviders: AIProvider[]
   optionsPanelHeight: number
+  optionsPanelPlacement: ChatOptionsPlacement
   onLayoutHeight: (height: number) => void
   motion: ReturnType<typeof useMotionPreference>
   settings: ReturnType<typeof useSettingsStore.getState>['settings']
+  settingsTransitionActive: boolean
 }) {
   const { t } = useTranslation()
   const header = getProviderHeaderState(conversation, provider, switchableProviders, metrics, providerHealth, settings, t)
@@ -1356,11 +1362,12 @@ function FloatingChrome({
       top: 0,
       left: 0,
       right: 0,
+      bottom: showOptions && optionsPanelPlacement === 'sheet' ? 0 : undefined,
       zIndex: showOptions ? 70 : 40,
     },
   ]
   function handleLayout(event: LayoutChangeEvent) {
-    onLayoutHeight(Math.ceil(event.nativeEvent.layout.height))
+    onLayoutHeight(Math.ceil(event.nativeEvent.layout.height) + FLOATING_CHROME_TOP_PADDING + FLOATING_CHROME_BOTTOM_PADDING)
   }
 
   return (
@@ -1369,7 +1376,7 @@ function FloatingChrome({
         pointerEvents={collapsed ? 'none' : 'auto'}
         animate={{ opacity: collapsed ? 0 : 1, translateY: collapsed ? -(insets.top + 78) : 0 }}
         transition={{ type: 'timing', duration: collapsed ? 150 : 210 }}
-        style={{ paddingTop: 6, paddingHorizontal: 12, paddingBottom: 8, zIndex: 1 }}
+        style={{ paddingTop: FLOATING_CHROME_TOP_PADDING, paddingHorizontal: 12, paddingBottom: FLOATING_CHROME_BOTTOM_PADDING, zIndex: 1 }}
       >
         <MotiView
           from={{ opacity: 0, translateY: -8 }}
@@ -1380,19 +1387,17 @@ function FloatingChrome({
             <IsleHeader
               title={header.title}
               subtitle={header.subtitle}
+              material="transparent"
+              elevated={false}
               leading={
-                <IsleIconButton label={t('common.back')} onPress={onBack}>
-                  {showOptions ? <ChevronLeft color={colors.text} size={18} strokeWidth={1.9} /> : <History color={colors.text} size={18} strokeWidth={1.8} />}
-                </IsleIconButton>
+                <AnimatedNavigationTrigger variant="iconButton" label={t('common.back')} glyph={showOptions ? 'back' : 'history'} onNavigate={onBack} color={colors.text} />
               }
               trailing={
                 <View style={{ flexDirection: 'row', gap: 8 }}>
                   <IsleIconButton label={t('chat.conversationOptions')} onPress={onToggleOptions} tone={showOptions ? 'amber' : 'default'}>
                     <ListEnd color={colors.textSecondary} size={17} strokeWidth={2} />
                   </IsleIconButton>
-                  <IsleIconButton label={t('settings.title')} onPress={onSettings}>
-                    <Settings2 color={colors.text} size={18} strokeWidth={1.9} />
-                  </IsleIconButton>
+                  <AnimatedNavigationTrigger variant="iconButton" label={t('settings.title')} glyph="settings-sliders" onNavigate={onSettings} externalActive={settingsTransitionActive} color={colors.text} />
                 </View>
               }
             />
@@ -1409,12 +1414,12 @@ function FloatingChrome({
             ) : null}
           </View>
 
-          {showOptions ? (
+          {showOptions && optionsPanelPlacement === 'popover' ? (
             <MotiView
               from={motion === 'full' ? { opacity: 0, translateY: -8, scale: 0.985 } : { opacity: 0 }}
               animate={{ opacity: 1, translateY: 0, scale: 1 }}
               transition={motion === 'full' ? { type: 'spring', ...motionTokens.spring.settle } : { type: 'timing', duration: motionTokens.duration.fast }}
-              style={{ position: 'absolute', left: 12, right: 12, top: Math.max(62, insets.top + 70), zIndex: 72 }}
+              style={optionsPanelOverlayStyle(optionsPanelPlacement, insets.top, insets.bottom)}
             >
               <IsleOverlayPressable onPress={(event) => event.stopPropagation()}>
                 <ChatOptionsPanel
@@ -1423,6 +1428,7 @@ function FloatingChrome({
                   switchableProviders={switchableProviders}
                   colors={colors}
                   maxHeight={optionsPanelHeight}
+                  placement={optionsPanelPlacement}
                   settings={settings}
                   onSwitchModel={onSwitchModel}
                   onCopyLink={onCopyLink}
@@ -1433,12 +1439,35 @@ function FloatingChrome({
           ) : null}
         </MotiView>
       </MotiView>
+      {showOptions && optionsPanelPlacement === 'sheet' ? (
+        <MotiView
+          from={motion === 'full' ? { opacity: 0, translateY: 18, scale: 0.985 } : { opacity: 0 }}
+          animate={{ opacity: 1, translateY: 0, scale: 1 }}
+          transition={motion === 'full' ? { type: 'spring', ...motionTokens.spring.settle } : { type: 'timing', duration: motionTokens.duration.fast }}
+          style={optionsPanelOverlayStyle(optionsPanelPlacement, insets.top, insets.bottom)}
+        >
+          <IsleOverlayPressable onPress={(event) => event.stopPropagation()}>
+            <ChatOptionsPanel
+              conversation={conversation}
+              provider={provider}
+              switchableProviders={switchableProviders}
+              colors={colors}
+              maxHeight={optionsPanelHeight}
+              placement={optionsPanelPlacement}
+              settings={settings}
+              onSwitchModel={onSwitchModel}
+              onCopyLink={onCopyLink}
+              onClose={onCloseOptions}
+            />
+          </IsleOverlayPressable>
+        </MotiView>
+      ) : null}
       {collapsed ? (
         <MotiView
           from={{ opacity: 0, translateY: -8 }}
           animate={{ opacity: 1, translateY: 0 }}
           transition={{ type: 'spring', damping: 20, stiffness: 180 }}
-          style={{ position: 'absolute', top: Math.max(8, insets.top + 2), alignSelf: 'center', zIndex: 8 }}
+          style={{ position: 'absolute', top: COLLAPSED_CHROME_TOP_OFFSET, alignSelf: 'center', zIndex: 8 }}
           pointerEvents="auto"
         >
           <IsleOverlayPressable
@@ -1446,7 +1475,7 @@ function FloatingChrome({
             accessibilityRole="button"
             accessibilityLabel={t('chat.showTopBar')}
             hitSlop={12}
-            style={{ minWidth: streaming ? 136 : 96, minHeight: 44, borderRadius: 22, paddingHorizontal: 14, alignItems: 'center', justifyContent: 'center', backgroundColor: colors.material.chrome, borderWidth: 1, borderColor: colors.border }}
+            style={{ minWidth: streaming ? 136 : 96, minHeight: 44, borderRadius: colors.ui.radius.chip, paddingHorizontal: 14, alignItems: 'center', justifyContent: 'center', backgroundColor: colors.material.chrome, borderWidth: 1, borderColor: colors.border }}
           >
             <Text style={{ color: colors.textTertiary, fontSize: 10, fontWeight: '900' }}>{streaming ? t('chat.generatingShowTopBar') : t('chat.showTopBar')}</Text>
           </IsleOverlayPressable>
@@ -1492,6 +1521,9 @@ function FloatingComposer({
   onInputBlur,
   panel,
   onPanelChange,
+  toolsCollapsed,
+  onToggleTools,
+  onCollapseTools,
   reasoningUnavailableMessage,
   onLayoutHeight,
   motion,
@@ -1532,6 +1564,9 @@ function FloatingComposer({
   onInputBlur?: () => void
   panel: ComposerPanel
   onPanelChange: (panel: ComposerPanel) => void
+  toolsCollapsed: boolean
+  onToggleTools: () => void
+  onCollapseTools: () => void
   reasoningUnavailableMessage?: string
   onLayoutHeight: (height: number) => void
   motion: ReturnType<typeof useMotionPreference>
@@ -1544,7 +1579,12 @@ function FloatingComposer({
   const promptOpen = panel === 'prompt'
   const moreOpen = panel === 'more'
   const reasoningOptions = useMemo(() => getReasoningEffortOptions(provider, conversation.model), [conversation.model, provider])
-  const quickModels = useMemo(() => provider ? buildModelQuickOptions([provider], settings) : [], [provider, settings])
+  const quickModelSourceProviders = useMemo(() => {
+    const source = modelProviders.length ? modelProviders : provider ? [provider] : []
+    if (!provider) return source
+    return [provider, ...source.filter((item) => item.id !== provider.id)]
+  }, [modelProviders, provider])
+  const quickModels = useMemo(() => buildModelQuickOptions(quickModelSourceProviders, settings), [quickModelSourceProviders, settings])
   const [modelQuickGroup, setModelQuickGroup] = useState<ModelQuickGroup>(() => inferModelFamily(provider, conversation.model))
   const selectedGroup = useMemo(() => {
     if (modelQuickGroup === 'all') return 'all'
@@ -1570,6 +1610,11 @@ function FloatingComposer({
     setModelQuickGroup(currentFamily)
   }, [conversation.model, provider?.id])
 
+  function handleInputFocus() {
+    onCollapseTools()
+    onInputFocus?.()
+  }
+
   function handleLayout(event: LayoutChangeEvent) {
     if (panel) return
     onLayoutHeight(Math.ceil(event.nativeEvent.layout.height))
@@ -1592,31 +1637,53 @@ function FloatingComposer({
             transition={motion === 'full' ? { type: 'spring', ...motionTokens.spring.gentle } : { type: 'timing', duration: motionTokens.duration.fast }}
             style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 7, flexWrap: 'wrap' }}
           >
-            <ComposerToolButton label={t('chat.quickModel')} active={modelOpen} onPress={onOpenModelPicker}>
-              <Bot color={modelOpen ? colors.primary : colors.textSecondary} size={15} strokeWidth={2} />
+            <ComposerToolButton label={toolsCollapsed ? t('chat.expandQuickTools') : t('chat.collapseQuickTools')} active={!toolsCollapsed} iconOnly onPress={onToggleTools}>
+              <ChevronRight color={toolsCollapsed ? colors.textSecondary : colors.primary} size={16} strokeWidth={2.3} />
             </ComposerToolButton>
-            <ComposerToolButton label={t('chat.quickReasoning')} active={reasoningOpen} onPress={onOpenReasoningPicker ?? (() => {
-              onPanelChange(reasoningOpen ? null : 'reasoning')
-            })}>
-              <SlidersHorizontal color={reasoningOpen ? colors.primary : colors.textSecondary} size={15} strokeWidth={2} />
-            </ComposerToolButton>
-            <ComposerToolButton label={t('chat.quickPrompt')} active={promptOpen} onPress={() => {
-              onPanelChange(promptOpen ? null : 'prompt')
-            }}>
-              <FileText color={promptOpen ? colors.primary : colors.textSecondary} size={15} strokeWidth={2} />
-            </ComposerToolButton>
-            <ComposerToolButton label={t('chat.quickMore')} active={moreOpen} onPress={() => {
-              onPanelChange(moreOpen ? null : 'more')
-            }}>
-              <ChevronRight color={moreOpen ? colors.primary : colors.textSecondary} size={16} strokeWidth={2.2} />
-            </ComposerToolButton>
+            <AnimatePresence>
+              {!toolsCollapsed ? (
+                <MotiView
+                  key="quick-tools"
+                  from={motion === 'full' ? { opacity: 0, translateX: -8, translateY: 5, scale: 0.96 } : { opacity: 0 }}
+                  animate={{ opacity: 1, translateX: 0, translateY: 0, scale: 1 }}
+                  exit={motion === 'full' ? { opacity: 0, translateX: -6, translateY: 4, scale: 0.96 } : { opacity: 0 }}
+                  transition={motion === 'full' ? { type: 'spring', damping: 21, stiffness: 230 } : { type: 'timing', duration: 1 }}
+                  style={{ flexDirection: 'row', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}
+                >
+                <ComposerToolButton label={t('chat.quickModel')} active={modelOpen} onPress={onOpenModelPicker}>
+                  <Bot color={modelOpen ? colors.primary : colors.textSecondary} size={15} strokeWidth={2} />
+                </ComposerToolButton>
+                <ComposerToolButton label={t('chat.quickReasoning')} active={reasoningOpen} onPress={onOpenReasoningPicker ?? (() => {
+                  onPanelChange(reasoningOpen ? null : 'reasoning')
+                })}>
+                  <SlidersHorizontal color={reasoningOpen ? colors.primary : colors.textSecondary} size={15} strokeWidth={2} />
+                </ComposerToolButton>
+                <ComposerToolButton label={t('chat.quickPrompt')} active={promptOpen} onPress={() => {
+                  onPanelChange(promptOpen ? null : 'prompt')
+                }}>
+                  <FileText color={promptOpen ? colors.primary : colors.textSecondary} size={15} strokeWidth={2} />
+                </ComposerToolButton>
+                <ComposerToolButton label={t('chat.quickMore')} active={moreOpen} onPress={() => {
+                  onPanelChange(moreOpen ? null : 'more')
+                }}>
+                  <ChevronRight color={moreOpen ? colors.primary : colors.textSecondary} size={16} strokeWidth={2.2} />
+                </ComposerToolButton>
+                </MotiView>
+              ) : null}
+            </AnimatePresence>
+            {streaming ? (
+              <ComposerToolButton label={t('chat.stopGenerating')} active onPress={onStop}>
+                <Square color={colors.primary} size={13} strokeWidth={2.3} fill={colors.primary} />
+              </ComposerToolButton>
+            ) : null}
+            {streaming ? <GenerationStatusPill label={activityLabel || t('chat.generating')} /> : null}
           </MotiView>
-          {modelOpen ? (
+          {!toolsCollapsed && modelOpen ? (
             <MotiView
               from={{ opacity: 0, translateY: 4 }}
               animate={{ opacity: 1, translateY: 0 }}
               transition={{ type: 'spring', damping: 20, stiffness: 210 }}
-              style={{ marginBottom: 7, borderRadius: 22, padding: 10, backgroundColor: colors.material.chrome, borderWidth: 1, borderColor: colors.border }}
+              style={{ marginBottom: 7, borderRadius: colors.ui.radius.panel, padding: 10, backgroundColor: colors.material.chrome, borderWidth: 1, borderColor: colors.border }}
             >
               <View style={{ flexDirection: 'row', alignItems: 'flex-start', gap: 8, marginBottom: 8 }}>
                 {visibleQuickGroups.length ? (
@@ -1627,24 +1694,19 @@ function FloatingComposer({
                     onTouchCancel={onInteractEnd}
                     style={{ flex: 1, flexDirection: 'row', flexWrap: 'wrap', gap: 7 }}
                   >
-                  {visibleQuickGroups.map((group) => {
-                    const active = selectedGroup === group
-                    return (
-                      <IslePressable
-                        key={group}
-                        haptic
-                        onPress={() => setModelQuickGroup(group)}
-                        style={{ minHeight: 44, borderRadius: 22, paddingHorizontal: 12, alignItems: 'center', justifyContent: 'center', backgroundColor: active ? colors.text : colors.islandRaised, borderWidth: active ? 0 : 1, borderColor: colors.border }}
-                      >
-                        <Text numberOfLines={1} style={{ color: active ? colors.surface : colors.textSecondary, fontSize: 11, fontWeight: '900' }}>{t(`chat.modelFamilies.${group}`)}</Text>
-                      </IslePressable>
-                    )
-                  })}
+                  {visibleQuickGroups.map((group) => (
+                    <QuickChoiceButton
+                      key={group}
+                      label={t(`chat.modelFamilies.${group}`)}
+                      active={selectedGroup === group}
+                      onPress={() => setModelQuickGroup(group)}
+                    />
+                  ))}
                   </View>
                 ) : (
                   <View style={{ flex: 1 }} />
                 )}
-                <IslePressable haptic onPress={onOpenAdvancedModelPicker} style={{ minHeight: 44, borderRadius: 22, paddingHorizontal: 12, alignItems: 'center', justifyContent: 'center', backgroundColor: colors.islandRaised, borderWidth: 1, borderColor: colors.border }}>
+                <IslePressable haptic onPress={onOpenAdvancedModelPicker} style={{ minHeight: 44, borderRadius: colors.ui.radius.chip, paddingHorizontal: 12, alignItems: 'center', justifyContent: 'center', backgroundColor: colors.material.paperRaised, borderWidth: 1, borderColor: colors.border }}>
                   <Text style={{ color: colors.textSecondary, fontSize: 11, fontWeight: '900' }}>{t('chat.advancedModelMenu')}</Text>
                 </IslePressable>
               </View>
@@ -1663,9 +1725,11 @@ function FloatingComposer({
                   {visibleQuickModels.map((option) => {
                     const active = option.provider.id === conversation.providerId && option.model === conversation.model
                     return (
-                    <IslePressable
+                    <QuickChoiceButton
                       key={option.id}
-                      haptic
+                      label={getProviderDisplayModel(option.provider, option.model)}
+                      active={active}
+                      maxWidth={234}
                       onPress={() => {
                         if (option.provider.id === provider?.id) {
                           onSwitchModel(option.model)
@@ -1673,10 +1737,7 @@ function FloatingComposer({
                           onSwitchProviderModel?.(option.provider, option.model)
                         }
                       }}
-                      style={{ minHeight: 44, borderRadius: 22, paddingHorizontal: 12, alignItems: 'center', justifyContent: 'center', backgroundColor: active ? colors.text : colors.islandRaised, borderWidth: active ? 0 : 1, borderColor: colors.border }}
-                    >
-                      <Text numberOfLines={1} ellipsizeMode="tail" style={{ maxWidth: 210, color: active ? colors.surface : colors.textSecondary, fontSize: 11, fontWeight: '900' }}>{getProviderDisplayModel(option.provider, option.model)}</Text>
-                    </IslePressable>
+                    />
                     )
                   })}
                 </ScrollView>
@@ -1687,12 +1748,12 @@ function FloatingComposer({
               )}
             </MotiView>
           ) : null}
-          {reasoningOpen ? (
+          {!toolsCollapsed && reasoningOpen ? (
             <MotiView
               from={{ opacity: 0, translateY: 4 }}
               animate={{ opacity: 1, translateY: 0 }}
               transition={{ type: 'spring', damping: 20, stiffness: 210 }}
-              style={{ flexDirection: 'row', gap: 7, marginBottom: 7, padding: 7, borderRadius: 18, backgroundColor: colors.material.chrome, borderWidth: 1, borderColor: colors.border }}
+              style={{ flexDirection: 'row', gap: 7, marginBottom: 7, padding: 7, borderRadius: colors.ui.radius.field, backgroundColor: colors.material.chrome, borderWidth: 1, borderColor: colors.border }}
             >
               {showReasoning && reasoningOptions.length ? reasoningOptions.map((effort) => (
                 <IslePressable
@@ -1702,9 +1763,9 @@ function FloatingComposer({
                     onReasoningChange(effort)
                     onPanelChange(null)
                   }}
-                  style={{ minHeight: 44, borderRadius: 22, paddingHorizontal: 12, alignItems: 'center', justifyContent: 'center', backgroundColor: reasoningEffort === effort ? colors.text : colors.islandRaised }}
+                  style={{ minHeight: 44, borderRadius: colors.ui.radius.chip, paddingHorizontal: 12, alignItems: 'center', justifyContent: 'center', backgroundColor: reasoningEffort === effort ? colors.ui.control.primaryBackground : colors.material.paperRaised, borderWidth: 1, borderColor: reasoningEffort === effort ? colors.ui.control.primaryBorder : colors.border }}
                 >
-                  <Text style={{ color: reasoningEffort === effort ? colors.surface : colors.textSecondary, fontSize: 11, fontWeight: '900' }}>
+                  <Text style={{ color: reasoningEffort === effort ? colors.ui.control.primaryForeground : colors.textSecondary, fontSize: 11, fontWeight: '900' }}>
                     {t(`chat.reasoningEffort.${effort}`)}
                   </Text>
                 </IslePressable>
@@ -1715,33 +1776,30 @@ function FloatingComposer({
               )}
             </MotiView>
           ) : null}
-          {promptOpen ? (
+          {!toolsCollapsed && promptOpen ? (
             <MotiView
               from={{ opacity: 0, translateY: 4 }}
               animate={{ opacity: 1, translateY: 0 }}
               transition={{ type: 'spring', damping: 20, stiffness: 210 }}
-              style={{ marginBottom: 7, borderRadius: 22, padding: 10, backgroundColor: colors.material.chrome, borderWidth: 1, borderColor: colors.border }}
+              style={{ marginBottom: 7, borderRadius: colors.ui.radius.panel, padding: 10, backgroundColor: colors.material.chrome, borderWidth: 1, borderColor: colors.border }}
             >
               <Text style={{ color: colors.textSecondary, fontSize: 11, fontWeight: '900', marginBottom: 6 }}>{t('chat.systemPrompt')}</Text>
               <TextInput
                 value={systemPrompt}
                 onChangeText={onSystemPromptChange}
-                onFocus={onInputFocus}
+                onFocus={handleInputFocus}
                 onBlur={onInputBlur}
                 multiline
                 placeholder={t('chat.systemPromptExample')}
                 placeholderTextColor={colors.textTertiary}
-                style={{ minHeight: 58, maxHeight: 112, borderRadius: 16, paddingHorizontal: 12, paddingVertical: 10, color: colors.text, backgroundColor: colors.material.field, borderWidth: 1, borderColor: colors.border, fontSize: 13, lineHeight: 19, textAlignVertical: 'top' }}
+                style={{ minHeight: 58, maxHeight: 112, borderRadius: colors.ui.radius.field, paddingHorizontal: 12, paddingVertical: 10, color: colors.text, backgroundColor: colors.material.field, borderWidth: 1, borderColor: colors.border, fontSize: 13, lineHeight: 19, textAlignVertical: 'top' }}
               />
               <View style={{ flexDirection: 'row', gap: 8, marginTop: 8 }}>
-                <IslePressable haptic onPress={() => onSystemPromptChange(t('chat.promptTemplateInsert'))} style={{ minHeight: 44, borderRadius: 22, paddingHorizontal: 12, justifyContent: 'center', backgroundColor: colors.islandRaised }}>
-                  <Text style={{ color: colors.textSecondary, fontSize: 11, fontWeight: '900' }}>{t('chat.commandPromptTemplate')}</Text>
+                <IslePressable haptic onPress={() => onSystemPromptChange('')} style={{ minHeight: 44, borderRadius: colors.ui.radius.chip, paddingHorizontal: 12, justifyContent: 'center', backgroundColor: colors.material.paperRaised, borderWidth: 1, borderColor: colors.border }}>
+                  <Text style={{ color: colors.textSecondary, fontSize: 11, fontWeight: '900' }}>{t('chat.clearSystemPrompt')}</Text>
                 </IslePressable>
-                <IslePressable haptic onPress={() => onSystemPromptChange('')} style={{ minHeight: 44, borderRadius: 22, paddingHorizontal: 12, justifyContent: 'center', backgroundColor: colors.islandRaised }}>
-                  <Text style={{ color: colors.textSecondary, fontSize: 11, fontWeight: '900' }}>{t('common.clearSearch')}</Text>
-                </IslePressable>
-                <IslePressable haptic onPress={() => onPanelChange(null)} style={{ minHeight: 44, borderRadius: 22, paddingHorizontal: 12, justifyContent: 'center', backgroundColor: colors.text }}>
-                  <Text style={{ color: colors.surface, fontSize: 11, fontWeight: '900' }}>{t('common.done')}</Text>
+                <IslePressable haptic onPress={() => onPanelChange(null)} style={{ minHeight: 44, borderRadius: colors.ui.radius.chip, paddingHorizontal: 12, justifyContent: 'center', backgroundColor: colors.ui.control.primaryBackground, borderWidth: 1, borderColor: colors.ui.control.primaryBorder }}>
+                  <Text style={{ color: colors.ui.control.primaryForeground, fontSize: 11, fontWeight: '900' }}>{t('common.done')}</Text>
                 </IslePressable>
               </View>
             </MotiView>
@@ -1749,7 +1807,6 @@ function FloatingComposer({
           <Composer
             disabled={disabled}
             streaming={streaming}
-            activityLabel={activityLabel}
             pendingNotice={pendingNotice}
             initialDraft={initialDraft}
             initialDraftKey={initialDraftKey}
@@ -1758,14 +1815,12 @@ function FloatingComposer({
             utilitiesOpen={moreOpen}
             showInlineUtilities={false}
             onClearPending={onClearPending}
-            onStop={onStop}
             onReferenceSelected={onReferenceSelected}
             onSend={onSend}
             onSendWhileStreaming={onSendWhileStreaming}
-            onFocus={onInputFocus}
+            onFocus={handleInputFocus}
             onBlur={onInputBlur}
             onOpenKnowledge={onOpenKnowledge}
-            onInsertPromptTemplate={() => onSystemPromptChange(systemPrompt ? `${systemPrompt}\n\n${t('chat.promptTemplateInsert')}` : t('chat.promptTemplateInsert'))}
           />
         </View>
       </KeyboardAvoidingView>
@@ -1773,18 +1828,94 @@ function FloatingComposer({
   )
 }
 
-function ComposerToolButton({ label, active, children, onPress }: { label: string; active: boolean; children: ReactNode; onPress: () => void }) {
+function ComposerToolButton({ label, active, iconOnly = false, children, onPress }: { label: string; active: boolean; iconOnly?: boolean; children: ReactNode; onPress: () => void }) {
   const { colors } = useAppTheme()
+  const motion = useMotionPreference()
+  const controlRadius = colors.ui.radius.controlLarge
   return (
     <IslePressable
       haptic
       onPress={onPress}
       accessibilityLabel={label}
-      style={{ minHeight: 44, borderRadius: 22, paddingHorizontal: 12, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6, backgroundColor: active ? colors.mintSoft : colors.material.chrome, borderWidth: 1, borderColor: active ? colors.primary : colors.border }}
+      style={{ width: iconOnly ? 44 : undefined, minHeight: 44, borderRadius: controlRadius }}
     >
-      {children}
-      <Text numberOfLines={1} style={{ color: active ? colors.primary : colors.textSecondary, fontSize: 11, fontWeight: '900' }}>{label}</Text>
+      <MotiView
+        animate={{
+          backgroundColor: active ? colors.mintSoft : colors.material.chrome,
+          borderColor: active ? colors.primary : colors.border,
+          scale: active ? 1.035 : 1,
+        }}
+        transition={motion === 'full' ? { type: 'spring', ...motionTokens.spring.gentle } : { type: 'timing', duration: 1 }}
+        style={{
+          width: iconOnly ? 44 : undefined,
+          minHeight: 44,
+          borderRadius: controlRadius,
+          paddingHorizontal: iconOnly ? 0 : 12,
+          flexDirection: 'row',
+          alignItems: 'center',
+          justifyContent: 'center',
+          gap: iconOnly ? 0 : 6,
+          borderWidth: 1,
+        }}
+      >
+        {iconOnly ? (
+          <MotiView
+            animate={{ rotate: active ? '90deg' : '0deg', translateX: active ? 1 : 0, scale: active ? 1.12 : 1 }}
+            transition={motion === 'full' ? { type: 'spring', damping: 17, stiffness: 280 } : { type: 'timing', duration: 1 }}
+          >
+            {children}
+          </MotiView>
+        ) : children}
+        {iconOnly ? null : <Text numberOfLines={1} style={{ color: active ? colors.primary : colors.textSecondary, fontSize: 11, lineHeight: 15, fontWeight: '900', includeFontPadding: false, textAlignVertical: 'center' }}>{label}</Text>}
+      </MotiView>
     </IslePressable>
+  )
+}
+
+function QuickChoiceButton({ label, active, maxWidth, onPress }: { label: string; active: boolean; maxWidth?: number; onPress: () => void }) {
+  const { colors } = useAppTheme()
+  const motion = useMotionPreference()
+  const textMaxWidth = maxWidth ? Math.max(24, maxWidth - 24) : undefined
+  const activeBackground = colors.ui.control.primaryBackground
+  const activeForeground = colors.ui.control.primaryForeground
+  return (
+    <IslePressable
+      haptic
+      onPress={onPress}
+      accessibilityLabel={label}
+      style={{ maxWidth, minHeight: 44, borderRadius: colors.ui.radius.chip, alignItems: 'center', justifyContent: 'center' }}
+    >
+      <MotiView
+        animate={{
+          backgroundColor: active ? activeBackground : colors.material.paperRaised,
+          borderColor: active ? colors.ui.control.primaryBorder : colors.border,
+          scale: active ? 1.025 : 1,
+        }}
+        transition={motion === 'full' ? { type: 'spring', ...motionTokens.spring.gentle } : { type: 'timing', duration: 1 }}
+        style={{ minHeight: 44, borderRadius: colors.ui.radius.chip, paddingHorizontal: 12, alignItems: 'center', justifyContent: 'center', borderWidth: 1 }}
+      >
+        <Text numberOfLines={1} ellipsizeMode="tail" style={{ maxWidth: textMaxWidth, color: active ? activeForeground : colors.textSecondary, fontSize: 11, lineHeight: 15, fontWeight: '900', includeFontPadding: false }}>
+          {label}
+        </Text>
+      </MotiView>
+    </IslePressable>
+  )
+}
+
+function GenerationStatusPill({ label }: { label: string }) {
+  const { colors } = useAppTheme()
+  return (
+    <View style={{ minHeight: 44, borderRadius: colors.ui.radius.chip, paddingHorizontal: 12, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 7, backgroundColor: colors.material.chrome, borderWidth: 1, borderColor: colors.border }}>
+      <MotiView
+        from={{ opacity: 0.35, scale: 0.84 }}
+        animate={{ opacity: 1, scale: 1 }}
+        transition={{ loop: true, type: 'timing', duration: 760 }}
+        style={{ width: 6, height: 6, borderRadius: 3, backgroundColor: colors.primary }}
+      />
+      <Text numberOfLines={1} style={{ maxWidth: 160, color: colors.textSecondary, fontSize: 11, lineHeight: 15, fontWeight: '900', includeFontPadding: false, textAlignVertical: 'center' }}>
+        {label}
+      </Text>
+    </View>
   )
 }
 
@@ -1816,7 +1947,7 @@ function StreamingIntentSheet({
               haptic
               onPress={onCancel}
               accessibilityLabel={t('chat.cancelStreamingIntent')}
-              style={{ width: 44, height: 44, borderRadius: 22, alignItems: 'center', justifyContent: 'center', backgroundColor: colors.islandRaised }}
+              style={{ width: 44, height: 44, borderRadius: colors.ui.radius.controlLarge, alignItems: 'center', justifyContent: 'center', backgroundColor: colors.material.paperRaised, borderWidth: 1, borderColor: colors.border }}
             >
               <X color={colors.textTertiary} size={16} strokeWidth={2.1} />
             </IslePressable>
@@ -1851,6 +1982,7 @@ function IntentAction({
   onPress: () => void
 }) {
   const { colors } = useAppTheme()
+  const actionRadius = colors.ui.radius.field
   return (
     <IslePressable
       haptic
@@ -1859,10 +1991,10 @@ function IntentAction({
       style={{
         flex: 1,
         minHeight: 60,
-        borderRadius: 20,
+        borderRadius: actionRadius,
         paddingHorizontal: 10,
         paddingVertical: 9,
-        backgroundColor: danger ? colors.coralWash : colors.islandRaised,
+        backgroundColor: danger ? colors.coralWash : colors.material.paperRaised,
         borderWidth: 1,
         borderColor: danger ? colors.error : colors.border,
       }}
@@ -1894,37 +2026,40 @@ function renderConversationHeaderSpacer(
   )
 }
 
-function EmptyConversationState({ onHistory, onProviders, onApplyStarter }: { onHistory: () => void; onProviders: () => void; onApplyStarter: (draft: string) => void }) {
-  const { t } = useTranslation()
+function SetupEmptyState({ description, actionLabel, glyph, onAction }: { description: string; actionLabel: string; glyph: NavigationGlyph; onAction: () => void }) {
+  const { colors } = useAppTheme()
+  const navigation = useNavigationTrigger(onAction)
   return (
-    <View style={{ paddingTop: 36, gap: 14 }}>
-      <IsleEmptyState
-        title={t('chat.newConversation')}
-      />
-      <WorkStarterActions onApplyStarter={onApplyStarter} />
-      <View style={{ flexDirection: 'row', gap: 8, flexWrap: 'wrap', justifyContent: 'center' }}>
-        <QuickStartAction label={t('chat.configureProviders')} onPress={onProviders} />
-        <QuickStartAction label={t('conversation.title')} onPress={onHistory} muted />
+    <View style={{ alignItems: 'center' }}>
+      <View style={{ width: '100%', maxWidth: 330, alignItems: 'center', gap: 14 }}>
+        <Text style={{ color: colors.textSecondary, fontSize: 14, lineHeight: 21, fontWeight: '800', textAlign: 'center' }}>
+          {description}
+        </Text>
+        <IslePressable
+          haptic
+          onPress={navigation.trigger}
+          accessibilityRole="button"
+          accessibilityLabel={actionLabel}
+          style={{ minHeight: 48, minWidth: 148, borderRadius: colors.ui.radius.controlLarge, paddingHorizontal: 18, flexDirection: 'row', gap: 7, alignItems: 'center', justifyContent: 'center', backgroundColor: colors.ui.control.primaryBackground, borderWidth: 1, borderColor: colors.ui.control.primaryBorder, shadowColor: colors.ui.control.shadow, shadowOpacity: colors.ui.control.primaryShadowOpacity, shadowRadius: colors.ui.control.primaryShadowRadius, shadowOffset: { width: 0, height: colors.ui.control.primaryShadowOffset } }}
+        >
+          <AnimatedNavigationIcon glyph={glyph} active={navigation.active} color={colors.ui.control.primaryForeground} size={18} />
+          <Text style={{ color: colors.ui.control.primaryForeground, fontSize: 14, fontWeight: '900' }}>{actionLabel}</Text>
+        </IslePressable>
       </View>
     </View>
   )
 }
 
-function WorkStarterActions({ onApplyStarter }: { onApplyStarter: (draft: string) => void }) {
-  const { colors } = useAppTheme()
+function EmptyConversationState({ onHistory, onProviders, topPadding }: { onHistory: () => void; onProviders: () => void; topPadding: number }) {
   const { t } = useTranslation()
   return (
-    <View style={{ gap: 8, alignItems: 'center' }}>
-      <Text style={{ color: colors.textTertiary, fontSize: 11, fontWeight: '900' }}>{t('chat.starterTitle')}</Text>
+    <View style={{ paddingTop: topPadding, gap: 14 }}>
+      <IsleEmptyState
+        title={t('chat.newConversation')}
+      />
       <View style={{ flexDirection: 'row', gap: 8, flexWrap: 'wrap', justifyContent: 'center' }}>
-        {WORK_STARTERS.map((starter) => (
-          <QuickStartAction
-            key={starter.id}
-            label={t(starter.labelKey)}
-            muted
-            onPress={() => onApplyStarter(t(starter.draftKey))}
-          />
-        ))}
+        <QuickStartAction label={t('chat.configureProviders')} glyph="provider-key" onPress={onProviders} />
+        <QuickStartAction label={t('conversation.title')} glyph="history" onPress={onHistory} muted />
       </View>
     </View>
   )
@@ -1958,17 +2093,9 @@ function buildComposerCommands({
     description: skill.description || skill.tags.join(', ') || t('skills.applyDescription'),
     run: () => onApplySkill(skill),
   }))
-  const workStarterCommands = WORK_STARTERS.map((starter) => ({
-    id: `work-starter-${starter.id}`,
-    label: t(starter.labelKey),
-    description: t('chat.commandWorkStarterDescription'),
-    insertText: t(starter.draftKey),
-  }))
   return [
     { id: 'model-picker', label: t('chat.commandSwitchModel'), description: t('chat.commandSwitchModelDescription'), run: onOpenModelPicker },
     { id: 'knowledge-import', label: t('chat.importKnowledge'), description: t('chat.commandKnowledgeDescription'), run: onOpenKnowledge },
-    ...workStarterCommands,
-    { id: 'prompt-template', label: t('chat.commandPromptTemplate'), description: t('chat.commandPromptTemplateDescription'), insertText: t('chat.promptTemplateInsert') },
     ...skillCommands,
     ...(skills.length ? [] : [{ id: 'create-skill', label: t('skills.createDefault'), description: t('skills.createDefaultDescription'), run: onCreateDefaultSkill }]),
   ]
@@ -2036,6 +2163,25 @@ function hasOnlyHistoricalDefaultModels(provider: AIProvider): boolean {
   return models.every((model) => defaults.has(model))
 }
 
+function optionsPanelOverlayStyle(placement: ChatOptionsPlacement, topInset: number, bottomInset: number): ViewStyle {
+  if (placement === 'sheet') {
+    return {
+      position: 'absolute',
+      left: 12,
+      right: 12,
+      bottom: Math.max(12, bottomInset + 8),
+      zIndex: 72,
+    }
+  }
+  return {
+    position: 'absolute',
+    left: 12,
+    right: 12,
+    top: Math.max(62, topInset + 70),
+    zIndex: 72,
+  }
+}
+
 function buildModelQuickOptions(providers: AIProvider[], settings?: ReturnType<typeof useSettingsStore.getState>['settings']): ModelQuickOption[] {
   return providers.flatMap((provider) =>
     getPolicyAllowedProviderModels(provider, settings).map((model) => ({
@@ -2092,7 +2238,7 @@ function createSetupConversationShell(
 function resolveRuntimeTarget(
   conversation: Conversation | null,
   providers: AIProvider[],
-  defaultProvider: string | null | undefined,
+  _defaultProvider: string | null | undefined,
   settings?: ReturnType<typeof useSettingsStore.getState>['settings']
 ): { conversation: Conversation; provider?: AIProvider } | null {
   if (!conversation) return null
@@ -2102,24 +2248,10 @@ function resolveRuntimeTarget(
   if ((conversation.providerModelMode ?? 'inherited') === 'manual' && currentProvider && currentModelValid) {
     return { conversation, provider: currentProvider }
   }
-  if (currentProvider && currentModelValid && isProviderConversationReady(currentProvider)) {
+  if (currentProvider && currentProvider.enabled && currentModelValid) {
     return { conversation, provider: currentProvider }
   }
-  const readyProvider = pickReadyProviderForNewConversation(providers, defaultProvider, settings)
-  const readyModel = readyProvider ? getPolicyPreferredProviderModel(readyProvider, settings) : undefined
-  if (!readyProvider || !readyModel) {
-    return { conversation, provider: currentProvider }
-  }
-  const config = getModelConfig(readyModel, readyProvider.type, readyProvider.modelConfigs)
-  return {
-    provider: readyProvider,
-    conversation: {
-      ...conversation,
-      providerId: readyProvider.id,
-      model: readyModel,
-      maxTokens: Math.min(conversation.maxTokens || config.defaultMaxTokens, config.maxOutputTokens),
-    },
-  }
+  return { conversation, provider: currentProvider }
 }
 
 function collectSkillVariableDefaults(skills: SkillDefinition[]): Record<string, string | number | boolean> {
@@ -2164,24 +2296,31 @@ function SkillVariableDialogBody({ variableNames, initialValues, onChange }: { v
   )
 }
 
-function QuickStartAction({ label, muted = false, onPress }: { label: string; muted?: boolean; onPress: () => void }) {
+function QuickStartAction({ label, glyph, muted = false, onPress }: { label: string; glyph: NavigationGlyph; muted?: boolean; onPress: () => void }) {
   const { colors } = useAppTheme()
+  const backgroundColor = muted ? colors.material.paperRaised : colors.ui.control.primaryBackground
+  const foregroundColor = muted ? colors.textSecondary : colors.ui.control.primaryForeground
+  const borderColor = muted ? colors.border : colors.ui.control.primaryBorder
+  const navigation = useNavigationTrigger(onPress)
   return (
     <IslePressable
       haptic
-      onPress={onPress}
+      onPress={navigation.trigger}
       style={{
         minHeight: 44,
-        borderRadius: 22,
+        borderRadius: colors.ui.radius.chip,
         paddingHorizontal: 15,
+        flexDirection: 'row',
+        gap: 6,
         alignItems: 'center',
         justifyContent: 'center',
-        backgroundColor: muted ? colors.islandRaised : colors.text,
+        backgroundColor,
         borderWidth: muted ? 1 : 0,
-        borderColor: colors.border,
+        borderColor,
       }}
     >
-      <Text style={{ color: muted ? colors.textSecondary : colors.surface, fontSize: 12, fontWeight: '900' }}>{label}</Text>
+      <AnimatedNavigationIcon glyph={glyph} active={navigation.active} color={foregroundColor} size={16} />
+      <Text style={{ color: foregroundColor, fontSize: 12, fontWeight: '900' }}>{label}</Text>
     </IslePressable>
   )
 }
@@ -2189,53 +2328,6 @@ function QuickStartAction({ label, muted = false, onPress }: { label: string; mu
 function getMessageActivityLabel(message: Message, t: TFunction): string {
   const traces = collectMessageTraces(message)
   return getActiveTraceTitle(traces, message.status) || messageActivityStatusLabel(message, t)
-}
-
-function getPetRagActivity(message: Message | undefined, ragProfile?: RagProfile): 'idle' | 'retrieving' | 'deep' | 'fallback' | 'compressing' | 'flare' | 'memory' | 'graph' | 'citation' | 'indexing' {
-  const activeTrace = findPetTrace(message, (trace) => trace.type === 'retrieval' || trace.type === 'knowledge' || trace.type === 'memory')
-  if (activeTrace) {
-    if (traceMetadataMatches(activeTrace, /flare|second-pass|补检索/i)) return 'flare'
-    if (traceMetadataMatches(activeTrace, /compress|llmlingua|压缩/i)) return 'compressing'
-    if (traceMetadataMatches(activeTrace, /fallback|degrad|降级|skipped|unavailable/i) || activeTrace.status === 'error' || activeTrace.status === 'skipped') return 'fallback'
-    if (activeTrace.type === 'memory' || traceMetadataMatches(activeTrace, /memory|remember|recall|long-term|长期记忆|记忆/i)) return 'memory'
-    if (traceMetadataMatches(activeTrace, /graph|raptor|map|cluster|relationship|entity|多跳|图谱/i)) return 'graph'
-    if (traceMetadataMatches(activeTrace, /citation|source|reference|verify|evidence|引用|来源|证据/i)) return 'citation'
-    if (traceMetadataMatches(activeTrace, /index|embedding|chunk|ingest|vector|索引|嵌入|分块/i)) return 'indexing'
-    if (traceMetadataMatches(activeTrace, /colbert|hyde|rewrite|deep/i)) return 'deep'
-    return 'retrieving'
-  }
-  if ((message?.status === 'streaming' || message?.status === 'sending') && ragProfile === 'deep') return 'deep'
-  return 'idle'
-}
-
-function getPetToolActivity(message: Message | undefined): 'idle' | 'tool' | 'mcp' | 'skill' | 'attachment' | 'search' {
-  const activeTrace = findPetTrace(message, (trace) => trace.type === 'tool' || trace.type === 'search' || trace.type === 'system')
-  if (!activeTrace) return 'idle'
-  if (activeTrace.type === 'search') return 'search'
-  if (traceMetadataMatches(activeTrace, /mcp/i)) return 'mcp'
-  if (traceMetadataMatches(activeTrace, /skill|isleskill/i)) return 'skill'
-  if (traceMetadataMatches(activeTrace, /attach|file|image|附件|图片/i)) return 'attachment'
-  return 'tool'
-}
-
-function findPetTrace(message: Message | undefined, predicate: (trace: ProcessTrace) => boolean): ProcessTrace | undefined {
-  if (!message) return undefined
-  const traces = collectMessageTraces(message).filter(predicate)
-  return traces.find((trace) => trace.status === 'running' || trace.status === 'pending') ?? traces.find((trace) => trace.status === 'error' || trace.status === 'skipped')
-}
-
-function traceMetadataMatches(trace: ProcessTrace, pattern: RegExp): boolean {
-  const metadata = trace.metadata
-    ? Object.entries(trace.metadata)
-        .slice(0, 12)
-        .map(([key, value]) => `${key}:${Array.isArray(value) ? value.join(',') : String(value)}`)
-        .join(' ')
-    : ''
-  return pattern.test(`${trace.title} ${trace.content ?? ''} ${metadata}`)
-}
-
-function jobLooksLikeModelTesting(stage?: string): boolean {
-  return /test|testing|测试|检查/i.test(stage ?? '')
 }
 
 function messageActivityStatusLabel(message: Message, t: TFunction): string {
@@ -2309,6 +2401,9 @@ async function resolveConversationHealth(
   if (provider.lastTestStatus === 'bad' && provider.lastTestCode && provider.lastTestCode !== 'ok' && (!provider.lastTestModel || provider.lastTestModel === conversation.model || provider.lastTestModel === upstreamModel)) {
     return health(provider.lastTestCode, inheritedExpired, provider.id, provider.name, provider.lastTestMessage || t('chat.lastTestFailed'), t)
   }
+  if (provider.lastTestStatus !== 'ok') {
+    return health('model_unavailable', inheritedExpired, provider.id, provider.name, t('chat.providerEnabledNeedsCheck'), t)
+  }
   const config = getModelConfig(upstreamModel, provider.type, provider.modelConfigs)
   if (config.deprecated) {
     return health('model_unavailable', inheritedExpired, provider.id, provider.name, t('chat.modelDeprecated', { model: getProviderDisplayModel(provider, conversation.model) }), t)
@@ -2359,15 +2454,15 @@ function ConversationHealthBanner({
       style={{
         marginHorizontal: compact ? 0 : 16,
         marginBottom: 8,
-        borderRadius: compact ? 18 : 24,
+        borderRadius: compact ? colors.ui.radius.field : colors.ui.radius.card,
         padding: compact ? 10 : 13,
-        backgroundColor: colors.islandRaised,
+        backgroundColor: colors.material.paperRaised,
         borderWidth: 1,
         borderColor,
       }}
     >
       <View style={{ flexDirection: 'row', alignItems: 'flex-start', gap: 10 }}>
-        <View style={{ width: compact ? 28 : 34, height: compact ? 28 : 34, borderRadius: compact ? 14 : 17, alignItems: 'center', justifyContent: 'center', backgroundColor: colors.islandRaised }}>
+        <View style={{ width: compact ? 28 : 34, height: compact ? 28 : 34, borderRadius: colors.ui.radius.controlMiddle, alignItems: 'center', justifyContent: 'center', backgroundColor: colors.material.field }}>
           <AlertTriangle color={borderColor} size={compact ? 15 : 18} strokeWidth={2} />
         </View>
         <View style={{ flex: 1 }}>
@@ -2381,7 +2476,7 @@ function ConversationHealthBanner({
         </View>
       </View>
       <View style={{ flexDirection: 'row', gap: 8, flexWrap: 'wrap', marginTop: compact ? 8 : 10 }}>
-        <BannerAction label={t('chat.configure')} onPress={onConfigure} compact={compact} />
+        <BannerAction label={t('chat.configure')} glyph="provider-key" onPress={onConfigure} compact={compact} />
         <BannerAction
           label={testing ? t('chat.testing') : compact ? t('chat.test') : t('chat.testCurrentModel')}
           onPress={onTest}
@@ -2394,23 +2489,30 @@ function ConversationHealthBanner({
   )
 }
 
-function BannerAction({ label, compact = false, disabled = false, onPress }: { label: string; compact?: boolean; disabled?: boolean; onPress: () => void }) {
+function BannerAction({ label, glyph, compact = false, disabled = false, onPress }: { label: string; glyph?: NavigationGlyph; compact?: boolean; disabled?: boolean; onPress: () => void }) {
   const { colors } = useAppTheme()
+  const navigation = useNavigationTrigger(onPress)
+  const press = glyph ? navigation.trigger : onPress
   return (
     <IslePressable
       haptic
       disabled={disabled}
-      onPress={onPress}
+      onPress={press}
       style={{
         minHeight: 44,
-        borderRadius: 22,
+        borderRadius: colors.ui.radius.chip,
         paddingHorizontal: compact ? 12 : 14,
+        flexDirection: 'row',
+        gap: glyph ? 6 : 0,
         alignItems: 'center',
         justifyContent: 'center',
-        backgroundColor: colors.islandRaised,
+        backgroundColor: colors.material.paperRaised,
+        borderWidth: 1,
+        borderColor: colors.border,
         opacity: disabled ? 0.45 : 1,
       }}
     >
+      {glyph ? <AnimatedNavigationIcon glyph={glyph} active={navigation.active} color={colors.text} size={16} /> : null}
       <Text style={{ color: colors.text, fontSize: compact ? 11 : 12, fontWeight: '800' }}>{label}</Text>
     </IslePressable>
   )
@@ -2449,13 +2551,14 @@ function getProviderHeaderState(
   settings: ReturnType<typeof useSettingsStore.getState>['settings'],
   t: TFunction
 ): { title: string; subtitle?: string } {
-  const enabledProviders = providers.filter((item) => item.id !== 'local-setup' && item.enabled && providerHasPolicyAllowedModel(item, settings))
+  const enabledProviders = providers.filter((item) => item.id !== 'local-setup' && item.enabled)
+  const modelCapableProviders = enabledProviders.filter((item) => providerHasPolicyAllowedModel(item, settings))
   const hasEnabledProvider = enabledProviders.length > 0
-  const hasAvailableModel = enabledProviders.some((item) => isProviderConversationReady(item))
+  const hasAvailableModel = modelCapableProviders.length > 0
   if (!hasEnabledProvider) return { title: t('chat.noProviderConnected') }
   if (!hasAvailableModel) return { title: t('chat.noAvailableModels') }
   if (conversation.providerId === 'local-setup') {
-    const fallbackProvider = enabledProviders.find((item) => isProviderConversationReady(item))
+    const fallbackProvider = modelCapableProviders.find((item) => isProviderConversationReady(item)) ?? modelCapableProviders[0]
     const fallbackModel = fallbackProvider ? getPolicyPreferredProviderModel(fallbackProvider, settings) : undefined
     return {
       title: fallbackProvider?.name ?? t('settings.providerManagement'),
@@ -2467,6 +2570,8 @@ function getProviderHeaderState(
     title: provider?.name ?? t('settings.providerManagement'),
     subtitle: providerHealth?.code
       ? `${providerHealth.title} · ${modelLabel}`
+      : provider?.enabled && provider.lastTestStatus !== 'ok'
+        ? `${t('chat.providerEnabledNeedsCheck')} · ${modelLabel}`
       : `${modelLabel} · ${formatHeaderMeta(conversation, provider, metrics, t)}`,
   }
 }

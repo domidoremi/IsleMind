@@ -1,7 +1,7 @@
 import type { McpServerConfig, McpToolManifest, McpToolPermission, ProcessTrace, ToolContentBlock } from '@/types'
 import { loadData, saveData } from '@/services/storage'
-import { searchExternalWeb } from '@/services/searchAdapters'
 import { st } from '@/i18n/service'
+import { BUILTIN_SERVER_ID, callBuiltinTool, listBuiltinToolManifests } from '@/services/builtinToolRegistry'
 
 export interface McpCallResult {
   ok: boolean
@@ -17,7 +17,6 @@ export interface McpApprovalRequest {
 }
 
 const DEFAULT_TTL_MS = 6 * 60 * 60 * 1000
-const BUILTIN_SERVER_ID = 'islemind-builtins'
 
 export async function listMcpServers(): Promise<McpServerConfig[]> {
   const saved = await loadData<McpServerConfig[]>('MCP_SERVERS')
@@ -131,6 +130,7 @@ export function truncateToolBlocks(blocks: ToolContentBlock[], tokenBudget = 120
 
 export function builtinMcpServer(): McpServerConfig {
   const now = Date.now()
+  const tools = listBuiltinToolManifests()
   return {
     id: BUILTIN_SERVER_ID,
     name: 'IsleMind',
@@ -141,34 +141,13 @@ export function builtinMcpServer(): McpServerConfig {
     version: '1',
     manifestTtlMs: DEFAULT_TTL_MS,
     manifestCachedAt: now,
-    approvedToolNames: ['app_info', 'search_web'],
-    tools: [
-      { name: 'app_info', description: 'Read IsleMind app/runtime information.', permission: 'read-only', serverId: BUILTIN_SERVER_ID, enabled: true },
-      { name: 'search_web', description: 'Search configured web provider adapters.', permission: 'read-only', serverId: BUILTIN_SERVER_ID, enabled: true },
-    ],
+    approvedToolNames: tools.map((tool) => tool.name),
+    tools,
     resources: [],
     prompts: [],
     createdAt: now,
     updatedAt: now,
   }
-}
-
-async function callBuiltinTool(toolName: string, args: Record<string, unknown>, startedAt: number): Promise<McpCallResult> {
-  if (toolName === 'app_info') {
-    const content = [{ type: 'text' as const, text: 'IsleMind mobile runtime. MCP stdio is disabled; Streamable HTTP/SSE is supported for user-configured servers.' }]
-    return { ok: true, content, trace: completeTrace({ id: `mcp-builtin-app-info-${startedAt}`, type: 'tool', title: 'MCP app_info', content: content[0].text, status: 'done', startedAt }) }
-  }
-  if (toolName === 'search_web') {
-    const query = typeof args.query === 'string' ? args.query : ''
-    const limit = typeof args.limit === 'number' ? args.limit : 5
-    const result = await searchExternalWeb(query, limit)
-    const content = truncateToolBlocks(result.sources.map((source) => ({
-      type: 'text' as const,
-      text: `${source.title}\n${source.url ?? ''}\n${source.excerpt ?? source.content}`,
-    })))
-    return { ok: true, content, trace: completeTrace({ id: `mcp-builtin-search-${startedAt}`, type: 'tool', title: 'MCP search_web', content: result.message, status: 'done', startedAt, metadata: { count: result.sources.length, mode: result.mode } }) }
-  }
-  return failureTrace(toolName, st('mcpRuntime.unknownBuiltinTool'), startedAt)
 }
 
 async function callMcpList(server: McpServerConfig, method: 'tools/list' | 'resources/list' | 'prompts/list'): Promise<unknown[]> {

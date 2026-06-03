@@ -3,26 +3,28 @@ import { ActivityIndicator, ScrollView, Text, View } from 'react-native'
 import { router, usePathname } from 'expo-router'
 import * as Clipboard from 'expo-clipboard'
 import * as Sharing from 'expo-sharing'
-import { Activity, BookOpen, Brain, Database, Download, FileJson, Globe2, House, KeyRound, Network, RotateCcw, ShieldCheck, SlidersHorizontal, Smartphone, Sparkles, Trash2, Upload } from 'lucide-react-native'
+import { Activity, BookOpen, Brain, Download, FileJson, Globe2, RotateCcw, Smartphone, Trash2, Upload } from 'lucide-react-native'
+import { AnimatePresence, MotiView } from 'moti'
 import { useTranslation } from 'react-i18next'
+import { AnimatedNavigationTrigger, type NavigationGlyph } from '@/components/navigation/AnimatedNavigationTrigger'
 import { IslePressable } from '@/components/ui/isle'
 import { IsleChip } from '@/components/ui/isle'
-import { IsleButton } from '@/components/ui/isle'
-import { IsleDisclosure, IsleField, IsleHeader, IsleIconButton, IsleListItem, IsleSection, IsleToggle } from '@/components/ui/isle'
+import { IsleButton, IsleTitle } from '@/components/ui/isle'
+import { IsleDisclosure, IsleField, IsleHeader, IsleSection, IsleToggle } from '@/components/ui/isle'
 import { IsleMetric } from '@/components/ui/isle'
 import { useAppTheme } from '@/hooks/useAppTheme'
 import { useSettingsStore } from '@/store/settingsStore'
 import { useChatStore } from '@/store/chatStore'
 import { exportToJsonFile, importFromJsonFileDetailed } from '@/services/portableData'
 import { checkLatestApkRelease, downloadAndOpenApkInstaller, formatUpdateCheckTime, getVersionSnapshot, type ApkReleaseInfo } from '@/services/appUpdates'
-import { listKnowledgeDocuments, listMemories } from '@/services/contextStore'
 import { useIsleDialog } from '@/components/ui/isle'
 import { resolveSearchProvider, searchProviderLabel } from '@/services/searchPolicy'
 import { clearRuntimeLog, getRuntimeLogPath, readRuntimeLogText } from '@/services/runtimeLog'
 import { buildRuntimeDiagnosticsSummary, type RuntimeDiagnosticsSummary } from '@/services/runtimeDiagnostics'
 import { changeAppLanguage } from '@/i18n'
-import { buildWorkspaceReadiness, type WorkspaceReadinessContextHealth, type WorkspaceReadinessItem, type WorkspaceReadinessKey, type WorkspaceReadinessStatus } from '@/utils/workspaceReadiness'
-import type { BedrockCacheTtl, Language, PayloadPolicyMode, ProxyMode, RemoteCompactMode, ThemeMode, UpstreamTransportMode } from '@/types'
+import type { BedrockCacheTtl, Language, PayloadPolicyMode, ProxyMode, RemoteCompactMode, ThemeId, ThemeMode, UpstreamTransportMode } from '@/types'
+import { useMotionPreference } from '@/hooks/useMotionPreference'
+import { motionTokens } from '@/theme/animation'
 
 const LANGUAGE_OPTIONS: { id: Language; label: string; detail: string }[] = [
   { id: 'zh-CN', label: '简体中文', detail: '中文界面' },
@@ -30,7 +32,13 @@ const LANGUAGE_OPTIONS: { id: Language; label: string; detail: string }[] = [
   { id: 'ja', label: '日本語', detail: '日本語 UI' },
 ]
 
+const THEME_FAMILY_OPTIONS: { id: ThemeId; labelKey: string; detailKey: string }[] = [
+  { id: 'island', labelKey: 'settings.themeIsland', detailKey: 'settings.themeIslandDescription' },
+  { id: 'minimal', labelKey: 'settings.themeMinimal', detailKey: 'settings.themeMinimalDescription' },
+]
+
 const settingsChipPressableStyle = { minHeight: 44, justifyContent: 'center' as const }
+const themeModeCardHeight = 82
 
 const TRANSPORT_OPTIONS: { value: UpstreamTransportMode; labelKey: string }[] = [
   { value: 'auto', labelKey: 'settings.transportAuto' },
@@ -66,19 +74,20 @@ type SettingsAdvancedGroup = 'diagnostics' | 'governance' | 'updates' | 'danger'
 
 export function SettingsScreenContent({ active = true, onHome }: { active?: boolean; onHome?: () => void } = {}) {
   const { colors } = useAppTheme()
+  const motion = useMotionPreference()
   const { t } = useTranslation()
   const pathname = usePathname()
   const dialog = useIsleDialog()
   const providers = useSettingsStore((state) => state.providers)
   const settings = useSettingsStore((state) => state.settings)
   const setTheme = useSettingsStore((state) => state.setTheme)
+  const setThemeId = useSettingsStore((state) => state.setThemeId)
   const setLanguage = useSettingsStore((state) => state.setLanguage)
   const updateSettings = useSettingsStore((state) => state.updateSettings)
   const resetSettings = useSettingsStore((state) => state.clearAll)
   const clearChats = useChatStore((state) => state.clearAll)
   const scrollRef = useRef<ScrollView>(null)
   const [checkingUpdate, setCheckingUpdate] = useState(false)
-  const [contextHealth, setContextHealth] = useState<WorkspaceReadinessContextHealth>({ loading: true })
   const [diagnostics, setDiagnostics] = useState<RuntimeDiagnosticsSummary | null>(null)
   const [refreshingDiagnostics, setRefreshingDiagnostics] = useState(false)
   const [expandedGroups, setExpandedGroups] = useState<Record<SettingsAdvancedGroup, boolean>>({
@@ -91,54 +100,16 @@ export function SettingsScreenContent({ active = true, onHome }: { active?: bool
   const defaultProvider = providers.find((provider) => provider.id === settings.defaultProvider)
   const version = getVersionSnapshot()
   const searchProvider = resolveSearchProvider(settings)
-  const readiness = buildWorkspaceReadiness({ providers, settings, contextHealth })
+  const activeThemeId = settings.themeId ?? 'island'
   const foldoutBodyStyle = { marginTop: 8, borderRadius: 24, padding: 12, backgroundColor: colors.material.paper, borderWidth: 1, borderColor: colors.border, gap: 12 }
+  const foldoutMotion = motion === 'full'
+    ? { type: 'spring' as const, ...motionTokens.spring.gentle }
+    : { type: 'timing' as const, duration: 1 }
   const diagnosticRows = useMemo(() => diagnostics ? buildDiagnosticRows(diagnostics, t) : [], [diagnostics, t])
-  const readinessItems = readiness.items.map((item) => ({
-    ...item,
-    title: readinessTitle(item.key, t),
-    description: readinessDescription(item, t),
-    icon: readinessIcon(item.key, colors.text),
-    onPress: readinessRoute(item.key, item.status),
-  }))
-  const primaryReadinessAction = readiness.primaryAction
-    ? {
-      title: readinessTitle(readiness.primaryAction.key, t),
-      description: readinessPrimaryActionDescription(readiness.primaryAction, t),
-      onPress: readinessRoute(readiness.primaryAction.key, readiness.primaryAction.status),
-    }
-    : null
 
   useEffect(() => {
     if (!active) return
     scrollRef.current?.scrollTo({ y: 0, animated: false })
-    let mounted = true
-    async function loadContextHealth() {
-      setContextHealth((current) => ({ ...current, loading: true }))
-      try {
-        const [memories, documents] = await Promise.all([
-          listMemories(['pending', 'active', 'disabled']),
-          listKnowledgeDocuments(),
-        ])
-        if (!mounted) return
-        setContextHealth({
-          loading: false,
-          memoryCount: memories.filter((memory) => memory.status !== 'disabled').length,
-          activeMemoryCount: memories.filter((memory) => memory.status === 'active').length,
-          pendingMemoryCount: memories.filter((memory) => memory.status === 'pending').length,
-          knowledgeDocumentCount: documents.filter((document) => document.status === 'ready').length,
-          knowledgeChunkCount: documents.filter((document) => document.status === 'ready').reduce((total, document) => total + document.chunkCount, 0),
-          failedKnowledgeDocumentCount: documents.filter((document) => document.status === 'error').length,
-        })
-      } catch {
-        if (!mounted) return
-        setContextHealth({ loading: false })
-      }
-    }
-    void loadContextHealth()
-    return () => {
-      mounted = false
-    }
   }, [active])
 
   useEffect(() => {
@@ -325,9 +296,7 @@ export function SettingsScreenContent({ active = true, onHome }: { active?: bool
         title={t('settings.title')}
         leading={
           onHome ? (
-            <IsleIconButton label={t('common.home')} size="lg" onPress={onHome}>
-              <House color={colors.text} size={20} strokeWidth={1.9} />
-            </IsleIconButton>
+            <AnimatedNavigationTrigger variant="iconButton" label={t('common.home')} size="lg" glyph="home" onNavigate={onHome} color={colors.text} />
           ) : undefined
         }
       />
@@ -337,58 +306,21 @@ export function SettingsScreenContent({ active = true, onHome }: { active?: bool
         <IsleMetric label={searchProvider !== 'off' ? `${t('settings.search')} ${searchProviderLabel(searchProvider)}` : t('settings.searchOff')} />
       </View>
 
-      <IsleSection
-        title={t('settings.readiness.title')}
-        subtitle={t('settings.readiness.subtitle')}
-        action={<IsleChip tone={readiness.readyCount === readiness.totalCount ? 'mint' : 'amber'}>{t('settings.readiness.score', { ready: readiness.readyCount, total: readiness.totalCount })}</IsleChip>}
-        style={{ marginTop: 18 }}
-      >
+      <IsleTitle color="app-teal" style={{ marginTop: 18 }}>{t('settings.aiSettings')}</IsleTitle>
+      <IsleSection style={{ marginTop: 8 }}>
         <View style={{ gap: 8 }}>
-          {primaryReadinessAction ? (
-            <IsleListItem
-              title={t('settings.readiness.primaryActionTitle')}
-              description={t('settings.readiness.primaryActionDescription', {
-                title: primaryReadinessAction.title,
-                action: primaryReadinessAction.description,
-              })}
-              leading={<IconWrap><Sparkles color={colors.text} size={18} /></IconWrap>}
-              trailing={<IsleChip tone="amber">{t('settings.readiness.next')}</IsleChip>}
-              onPress={primaryReadinessAction.onPress}
-            />
-          ) : (
-            <IsleListItem
-              title={t('settings.readiness.primaryReadyTitle')}
-              description={t('settings.readiness.primaryReadyDescription')}
-              leading={<IconWrap><ShieldCheck color={colors.text} size={18} /></IconWrap>}
-              trailing={<IsleChip tone="mint">{t('settings.readiness.ready')}</IsleChip>}
-            />
-          )}
-          {readinessItems.map((item) => (
-            <IsleListItem
-              key={item.key}
-              title={item.title}
-              description={item.description}
-              leading={<IconWrap>{item.icon}</IconWrap>}
-              trailing={<IsleChip tone={readinessTone(item.status)}>{t(`settings.readiness.${item.status}`)}</IsleChip>}
-              onPress={item.onPress}
-            />
-          ))}
+          <SettingLink title={t('settings.providerManagement')} description={`${enabledProviders} ${t('settings.enabled')} · ${providers.length} ${t('settings.providers')}`} glyph="provider-key" onPress={() => router.push('/settings/providers')} />
+          <SettingLink title={t('settings.context')} description={t('settings.contextDescription')} glyph="context-globe" onPress={() => router.push('/settings/context')} />
+          <SettingLink title={t('settings.memory')} description={t('settings.memoryDescription')} glyph="memory-brain" onPress={() => router.push('/settings/memory')} />
+          <SettingLink title={t('settings.knowledge')} description={t('settings.knowledgeDescription')} glyph="knowledge-database" onPress={() => router.push('/settings/knowledge')} />
+          <SettingLink title={t('settings.preferences')} description={t('settings.preferencesDescription')} glyph="preferences-sliders" onPress={() => router.push('/settings/preferences')} />
+          <SettingLink title={t('settings.skills')} description={t('settings.skillsDescription')} glyph="skills-sparkles" onPress={() => router.push('/settings/skills')} />
+          <SettingLink title={t('settings.mcp')} description={t('settings.mcpDescription')} glyph="mcp-network" onPress={() => router.push('/settings/mcp')} />
         </View>
       </IsleSection>
 
-      <IsleSection title={t('settings.aiSettings')} style={{ marginTop: 14 }}>
-        <View style={{ gap: 8 }}>
-          <SettingLink title={t('settings.providerManagement')} description={`${enabledProviders} ${t('settings.enabled')} · ${providers.length} ${t('settings.providers')}`} icon={<KeyRound color={colors.text} size={18} />} onPress={() => router.push('/settings/providers')} />
-          <SettingLink title={t('settings.context')} description={t('settings.contextDescription')} icon={<Globe2 color={colors.text} size={18} />} onPress={() => router.push('/settings/context')} />
-          <SettingLink title={t('settings.memory')} description={t('settings.memoryDescription')} icon={<Brain color={colors.text} size={18} />} onPress={() => router.push('/settings/memory')} />
-          <SettingLink title={t('settings.knowledge')} description={t('settings.knowledgeDescription')} icon={<Database color={colors.text} size={18} />} onPress={() => router.push('/settings/knowledge')} />
-          <SettingLink title={t('settings.preferences')} description={t('settings.preferencesDescription')} icon={<SlidersHorizontal color={colors.text} size={18} />} onPress={() => router.push('/settings/preferences')} />
-          <SettingLink title={t('settings.skills')} description={t('settings.skillsDescription')} icon={<Sparkles color={colors.text} size={18} />} onPress={() => router.push('/settings/skills')} />
-          <SettingLink title={t('settings.mcp')} description={t('settings.mcpDescription')} icon={<Network color={colors.text} size={18} />} onPress={() => router.push('/settings/mcp')} />
-        </View>
-      </IsleSection>
-
-      <IsleSection title={t('settings.basicFeatures')} style={{ marginTop: 14 }}>
+      <IsleTitle color="app-green" variant="cloud" style={{ marginTop: 18 }}>{t('settings.basicFeatures')}</IsleTitle>
+      <IsleSection style={{ marginTop: 8 }}>
         <View style={{ gap: 10 }}>
           <IsleToggle
             icon={<Brain color={colors.text} size={18} />}
@@ -408,24 +340,42 @@ export function SettingsScreenContent({ active = true, onHome }: { active?: bool
             active={!!settings.webSearchEnabled}
             onPress={() => updateSettings({ webSearchEnabled: !settings.webSearchEnabled })}
           />
-          <IsleToggle
-            icon={<Sparkles color={colors.text} size={18} />}
-            title={`${t('settings.pet')} · ${t('settings.experimental')}`}
-            description={t('settings.petDescription')}
-            active={settings.petEnabled === true}
-            onPress={() => updateSettings({ petEnabled: settings.petEnabled !== true })}
-          />
         </View>
       </IsleSection>
 
       <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 12, marginTop: 14 }}>
-        <IsleSection title={t('settings.theme')} style={{ flexGrow: 1, flexBasis: 160 }} contentStyle={{ padding: 12 }}>
+        <IsleSection title={t('settings.themeFamily')} style={{ flexGrow: 1, flexBasis: 220 }} contentStyle={{ padding: 12 }}>
           <View style={{ flexDirection: 'row', gap: 8, flexWrap: 'wrap' }}>
-            {(['system', 'light', 'dark'] satisfies ThemeMode[]).map((item) => (
-              <IslePressable key={item} haptic onPress={() => setTheme(item)} style={settingsChipPressableStyle}>
-                <IsleChip active={settings.theme === item}>{item === 'system' ? t('settings.themeSystem') : item === 'light' ? t('settings.themeLight') : t('settings.themeDark')}</IsleChip>
-              </IslePressable>
+            {THEME_FAMILY_OPTIONS.map((item) => (
+              <ThemeFamilyCard
+                key={item.id}
+                label={t(item.labelKey)}
+                detail={t(item.detailKey)}
+                active={activeThemeId === item.id}
+                onPress={() => setThemeId(item.id)}
+              />
             ))}
+          </View>
+        </IsleSection>
+        <IsleSection title={t('settings.themeMode')} style={{ flexGrow: 1, flexBasis: 160 }} contentStyle={{ padding: 12 }}>
+          <View style={{ gap: 8 }}>
+            <View style={{ flexDirection: 'row' }}>
+              <ThemeModeCard
+                label={t('settings.themeSystem')}
+                active={settings.theme === 'system'}
+                onPress={() => setTheme('system')}
+              />
+            </View>
+            <View style={{ flexDirection: 'row', gap: 8 }}>
+              {(['dark', 'light'] satisfies ThemeMode[]).map((item) => (
+                <ThemeModeCard
+                  key={item}
+                  label={item === 'dark' ? t('settings.themeDark') : t('settings.themeLight')}
+                  active={settings.theme === item}
+                  onPress={() => setTheme(item)}
+                />
+              ))}
+            </View>
           </View>
         </IsleSection>
         <IsleSection title={t('settings.language')} style={{ flexGrow: 1, flexBasis: 160 }} contentStyle={{ padding: 12 }}>
@@ -439,7 +389,8 @@ export function SettingsScreenContent({ active = true, onHome }: { active?: bool
         </IsleSection>
       </View>
 
-      <IsleSection title={t('settings.importExport')} style={{ marginTop: 14 }}>
+      <IsleTitle color="app-yellow" size="small" style={{ marginTop: 18 }}>{t('settings.importExport')}</IsleTitle>
+      <IsleSection style={{ marginTop: 8 }}>
         <View style={{ flexDirection: 'row', gap: 12 }}>
           <DataButton label={t('settings.exportJson')} icon={<Download color={colors.surface} size={18} />} onPress={() => void exportJson()} />
           <DataButton label={t('settings.importJson')} icon={<Upload color={colors.surface} size={18} />} onPress={() => void importJson()} />
@@ -456,8 +407,16 @@ export function SettingsScreenContent({ active = true, onHome }: { active?: bool
           expanded={expandedGroups.diagnostics}
           onPress={() => toggleExpandedGroup('diagnostics')}
         />
+        <AnimatePresence>
         {expandedGroups.diagnostics ? (
-          <View style={foldoutBodyStyle}>
+          <MotiView
+            key="diagnostics-foldout"
+            from={motion === 'full' ? { opacity: 0, translateY: 8, scale: 0.985 } : { opacity: 0 }}
+            animate={{ opacity: 1, translateY: 0, scale: 1 }}
+            exit={motion === 'full' ? { opacity: 0, translateY: -4, scale: 0.985 } : { opacity: 0 }}
+            transition={foldoutMotion}
+            style={foldoutBodyStyle}
+          >
             <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8 }}>
               <IsleChip tone={diagnostics?.providers.degraded ? 'amber' : 'mint'}>{diagnostics ? t('settings.runtimeDiagnosticsReady') : t('settings.runtimeDiagnosticsLoading')}</IsleChip>
             </View>
@@ -481,8 +440,9 @@ export function SettingsScreenContent({ active = true, onHome }: { active?: bool
               <IsleButton label={t('settings.runtimeLogShare')} compact icon={<Upload color={colors.textSecondary} size={15} />} onPress={() => void shareRuntimeLogFile()} />
               <IsleButton label={t('settings.runtimeLogClear')} compact tone="danger" icon={<Trash2 color={colors.error} size={15} />} onPress={() => void clearRuntimeLogFile()} />
             </View>
-          </View>
+          </MotiView>
         ) : null}
+        </AnimatePresence>
 
         <IsleDisclosure
           title={t('settings.upstreamGovernance')}
@@ -490,8 +450,16 @@ export function SettingsScreenContent({ active = true, onHome }: { active?: bool
           expanded={expandedGroups.governance}
           onPress={() => toggleExpandedGroup('governance')}
         />
+        <AnimatePresence>
         {expandedGroups.governance ? (
-          <View style={foldoutBodyStyle}>
+          <MotiView
+            key="governance-foldout"
+            from={motion === 'full' ? { opacity: 0, translateY: 8, scale: 0.985 } : { opacity: 0 }}
+            animate={{ opacity: 1, translateY: 0, scale: 1 }}
+            exit={motion === 'full' ? { opacity: 0, translateY: -4, scale: 0.985 } : { opacity: 0 }}
+            transition={foldoutMotion}
+            style={foldoutBodyStyle}
+          >
           <SegmentedSetting
             label={t('settings.transportMode')}
             options={TRANSPORT_OPTIONS}
@@ -681,11 +649,12 @@ export function SettingsScreenContent({ active = true, onHome }: { active?: bool
             <IsleField
               label={t('settings.modelBlocklist')}
               note={t('settings.blocklistNote')}
-              inputProps={{ value: joinSettingsList(settings.modelBlocklist), onChangeText: (value) => updateSettingsList('modelBlocklist', value), autoCapitalize: 'none', autoCorrect: false, multiline: true, style: { minHeight: 54, maxHeight: 96 } }}
+            inputProps={{ value: joinSettingsList(settings.modelBlocklist), onChangeText: (value) => updateSettingsList('modelBlocklist', value), autoCapitalize: 'none', autoCorrect: false, multiline: true, style: { minHeight: 54, maxHeight: 96 } }}
             />
           </View>
-        </View>
+        </MotiView>
         ) : null}
+        </AnimatePresence>
 
         <IsleDisclosure
           title={t('settings.updates')}
@@ -693,27 +662,40 @@ export function SettingsScreenContent({ active = true, onHome }: { active?: bool
           expanded={expandedGroups.updates}
           onPress={() => toggleExpandedGroup('updates')}
         />
+        <AnimatePresence>
         {expandedGroups.updates ? (
-          <View style={foldoutBodyStyle}>
+          <MotiView
+            key="updates-foldout"
+            from={motion === 'full' ? { opacity: 0, translateY: 8, scale: 0.985 } : { opacity: 0 }}
+            animate={{ opacity: 1, translateY: 0, scale: 1 }}
+            exit={motion === 'full' ? { opacity: 0, translateY: -4, scale: 0.985 } : { opacity: 0 }}
+            transition={foldoutMotion}
+            style={foldoutBodyStyle}
+          >
             <View style={{ borderRadius: 22, padding: 13, backgroundColor: colors.material.paperRaised, borderWidth: 1, borderColor: colors.border }}>
               <VersionRow label={t('settings.appVersion')} value={`${version.appVersion} (${version.buildVersion})`} />
               <VersionRow label={t('settings.lastCheck')} value={formatUpdateCheckTime(settings.lastApkUpdateCheckAt)} />
             </View>
-            <View style={{ gap: 10 }}>
-              <DataButton
-                label={checkingUpdate ? t('settings.checkingUpdate') : t('settings.checkApk')}
-                icon={checkingUpdate ? <ActivityIndicator color={colors.surface} /> : <Smartphone color={colors.surface} size={18} />}
-                onPress={() => void checkApkUpdate()}
-              />
-              <IsleToggle
-                icon={<RotateCcw color={colors.text} size={18} />}
-                title={t('settings.autoCheck')}
-                active={settings.autoUpdateCheckEnabled ?? true}
-                onPress={toggleAutoCheck}
-              />
+            <View style={{ flexDirection: 'row', gap: 10 }}>
+              <View style={{ flex: 1, minWidth: 0 }}>
+                <DataButton
+                  label={checkingUpdate ? t('settings.checkingUpdate') : t('settings.checkApk')}
+                  icon={checkingUpdate ? <ActivityIndicator color={colors.surface} /> : <Smartphone color={colors.surface} size={18} />}
+                  onPress={() => void checkApkUpdate()}
+                />
+              </View>
+              <View style={{ flex: 1, minWidth: 0 }}>
+                <IsleToggle
+                  icon={<RotateCcw color={colors.text} size={18} />}
+                  title={t('settings.autoCheck')}
+                  active={settings.autoUpdateCheckEnabled ?? true}
+                  onPress={toggleAutoCheck}
+                />
+              </View>
             </View>
-          </View>
+          </MotiView>
         ) : null}
+        </AnimatePresence>
 
         <IsleDisclosure
           title={t('settings.dangerZone')}
@@ -721,21 +703,94 @@ export function SettingsScreenContent({ active = true, onHome }: { active?: bool
           onPress={() => toggleExpandedGroup('danger')}
           danger
         />
+        <AnimatePresence>
         {expandedGroups.danger ? (
-          <View style={foldoutBodyStyle}>
+          <MotiView
+            key="danger-foldout"
+            from={motion === 'full' ? { opacity: 0, translateY: 8, scale: 0.985 } : { opacity: 0 }}
+            animate={{ opacity: 1, translateY: 0, scale: 1 }}
+            exit={motion === 'full' ? { opacity: 0, translateY: -4, scale: 0.985 } : { opacity: 0 }}
+            transition={foldoutMotion}
+            style={foldoutBodyStyle}
+          >
             <View style={{ flexDirection: 'row', gap: 12 }}>
               <DangerButton label={t('settings.clearChats')} icon={<Trash2 color={colors.error} size={18} />} onPress={confirmClearChats} />
               <DangerButton label={t('settings.resetSettings')} icon={<RotateCcw color={colors.error} size={18} />} onPress={confirmResetSettings} />
             </View>
-          </View>
+          </MotiView>
         ) : null}
+        </AnimatePresence>
       </View>
     </ScrollView>
   )
 }
 
-function SettingLink({ title, description, icon, onPress }: { title: string; description: string; icon: ReactNode; onPress: () => void }) {
-  return <IsleListItem title={title} description={description} leading={<IconWrap>{icon}</IconWrap>} onPress={onPress} />
+function SettingLink({ title, description, glyph, onPress }: { title: string; description: string; glyph: NavigationGlyph; onPress: () => void }) {
+  return <AnimatedNavigationTrigger variant="listItem" title={title} description={description} glyph={glyph} onNavigate={onPress} />
+}
+
+function ThemeFamilyCard({
+  label,
+  detail,
+  active,
+  onPress,
+}: {
+  label: string
+  detail: string
+  active: boolean
+  onPress: () => void
+}) {
+  const { colors } = useAppTheme()
+  return (
+    <IslePressable haptic onPress={onPress} style={{ flexGrow: 1, flexBasis: 150, minHeight: 82 }}>
+      <View
+        style={{
+          minHeight: 82,
+          borderRadius: colors.ui.radius.card,
+          padding: 11,
+          justifyContent: 'center',
+          backgroundColor: active ? colors.mintSoft : colors.material.paperRaised,
+          borderWidth: 2,
+          borderColor: active ? colors.primary : colors.border,
+          gap: 6,
+        }}
+      >
+        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+          <View style={{ width: 9, height: 9, borderRadius: 5, backgroundColor: active ? colors.primary : colors.textTertiary }} />
+          <Text numberOfLines={1} style={{ flex: 1, color: colors.text, fontSize: 14, lineHeight: 19, fontWeight: '900' }}>
+            {label}
+          </Text>
+        </View>
+        <Text numberOfLines={2} style={{ color: colors.textSecondary, fontSize: 11, lineHeight: 16, fontWeight: '800' }}>
+          {detail}
+        </Text>
+      </View>
+    </IslePressable>
+  )
+}
+
+function ThemeModeCard({ label, active, onPress }: { label: string; active: boolean; onPress: () => void }) {
+  const { colors } = useAppTheme()
+  return (
+    <IslePressable haptic onPress={onPress} style={{ flex: 1, minHeight: themeModeCardHeight }}>
+      <View
+        style={{
+          minHeight: themeModeCardHeight,
+          borderRadius: colors.ui.radius.card,
+          alignItems: 'center',
+          justifyContent: 'center',
+          backgroundColor: active ? colors.text : colors.material.paperRaised,
+          borderWidth: active ? 0 : 1,
+          borderColor: colors.border,
+          paddingHorizontal: 10,
+        }}
+      >
+        <Text numberOfLines={1} style={{ color: active ? colors.surface : colors.textSecondary, fontSize: 13, lineHeight: 18, fontWeight: '900', includeFontPadding: false, textAlignVertical: 'center' }}>
+          {label}
+        </Text>
+      </View>
+    </IslePressable>
+  )
 }
 
 function SegmentedSetting<T extends string>({
@@ -753,7 +808,7 @@ function SegmentedSetting<T extends string>({
   const { t } = useTranslation()
   return (
     <View>
-      <Text style={{ color: colors.text, fontSize: 13, fontWeight: '900', marginBottom: 7 }}>{label}</Text>
+      <Text style={{ color: colors.text, fontSize: 13, lineHeight: 18, fontWeight: '900', marginBottom: 7, includeFontPadding: false, textAlignVertical: 'center' }}>{label}</Text>
       <View style={{ flexDirection: 'row', gap: 8, flexWrap: 'wrap' }}>
         {options.map((option) => (
           <IslePressable key={option.value} haptic onPress={() => onChange(option.value)} style={settingsChipPressableStyle}>
@@ -842,17 +897,11 @@ function DiagnosticPill({ label, value, tone }: { label: string; value: string; 
     <View style={{ minHeight: 68, minWidth: 150, flexGrow: 1, flexBasis: '47%', borderRadius: 18, padding: 11, backgroundColor: background, borderWidth: 1, borderColor: colors.border }}>
       <View style={{ flexDirection: 'row', alignItems: 'center', gap: 7 }}>
         <View style={{ width: 8, height: 8, borderRadius: 4, backgroundColor: marker }} />
-        <Text style={{ color: colors.text, fontSize: 12, fontWeight: '900' }}>{label}</Text>
+        <Text style={{ color: colors.text, fontSize: 12, lineHeight: 16, fontWeight: '900', includeFontPadding: false, textAlignVertical: 'center' }}>{label}</Text>
       </View>
-      <Text numberOfLines={2} style={{ color: colors.textSecondary, fontSize: 11, lineHeight: 16, fontWeight: '800', marginTop: 5 }}>{value}</Text>
+      <Text numberOfLines={2} style={{ color: colors.textSecondary, fontSize: 11, lineHeight: 16, fontWeight: '800', marginTop: 5, includeFontPadding: false, textAlignVertical: 'center' }}>{value}</Text>
     </View>
   )
-}
-
-function readinessTone(status: WorkspaceReadinessStatus): 'mint' | 'amber' | 'default' {
-  if (status === 'ready') return 'mint'
-  if (status === 'action') return 'amber'
-  return 'default'
 }
 
 function importResultMessage(
@@ -864,125 +913,12 @@ function importResultMessage(
   return t('settings.importDoneMessage')
 }
 
-function readinessTitle(key: WorkspaceReadinessKey, t: ReturnType<typeof useTranslation>['t']): string {
-  switch (key) {
-    case 'provider':
-      return t('settings.readiness.providerTitle')
-    case 'memory':
-      return t('settings.readiness.memoryTitle')
-    case 'knowledge':
-      return t('settings.readiness.knowledgeTitle')
-    case 'search':
-      return t('settings.readiness.searchTitle')
-    case 'recovery':
-      return t('settings.readiness.backupTitle')
-  }
-}
-
-function readinessDescription(item: WorkspaceReadinessItem, t: ReturnType<typeof useTranslation>['t']): string {
-  switch (item.key) {
-    case 'provider':
-      return item.status === 'ready'
-        ? t('settings.readiness.providerReady', { count: item.metrics.readyProviders })
-        : t('settings.readiness.providerAction')
-    case 'memory':
-      if (item.status === 'ready') {
-        return t('settings.readiness.memoryReady', {
-          active: item.metrics.activeMemoryCount ?? 0,
-          pending: item.metrics.pendingMemoryCount ?? 0,
-        })
-      }
-      if (item.status === 'review') {
-        return item.metrics.loading
-          ? t('settings.readiness.memoryReviewLoading')
-          : t('settings.readiness.memoryReviewEmpty')
-      }
-      return t('settings.readiness.memoryAction')
-    case 'knowledge':
-      if (item.status === 'ready') {
-        return t('settings.readiness.knowledgeReady', {
-          documents: item.metrics.knowledgeDocumentCount ?? 0,
-          chunks: item.metrics.knowledgeChunkCount ?? 0,
-        })
-      }
-      if (item.status === 'review') {
-        if (item.metrics.loading) return t('settings.readiness.knowledgeReviewLoading')
-        if ((item.metrics.failedKnowledgeDocumentCount ?? 0) > 0) {
-          return t('settings.readiness.knowledgeReviewFailed', { count: item.metrics.failedKnowledgeDocumentCount })
-        }
-        return t('settings.readiness.knowledgeReviewEmpty')
-      }
-      return t('settings.readiness.knowledgeAction')
-    case 'search':
-      return item.status === 'ready'
-        ? t('settings.readiness.searchReady', { provider: searchProviderLabel(item.metrics.searchProvider) })
-        : t('settings.readiness.searchReview')
-    case 'recovery':
-      return item.status === 'ready' ? t('settings.readiness.backupReady') : t('settings.readiness.backupReview')
-  }
-}
-
-function readinessPrimaryActionDescription(item: WorkspaceReadinessItem, t: ReturnType<typeof useTranslation>['t']): string {
-  switch (item.key) {
-    case 'provider':
-      return t('settings.readiness.providerNext')
-    case 'memory':
-      return item.status === 'action'
-        ? t('settings.readiness.memoryNextEnable')
-        : t('settings.readiness.memoryNextReview')
-    case 'knowledge':
-      if (item.status === 'action') return t('settings.readiness.knowledgeNextEnable')
-      return (item.metrics.failedKnowledgeDocumentCount ?? 0) > 0
-        ? t('settings.readiness.knowledgeNextRecover')
-        : t('settings.readiness.knowledgeNextImport')
-    case 'search':
-      return t('settings.readiness.searchNext')
-    case 'recovery':
-      return t('settings.readiness.backupNext')
-  }
-}
-
-function readinessIcon(key: WorkspaceReadinessKey, color: string): ReactNode {
-  switch (key) {
-    case 'provider':
-      return <KeyRound color={color} size={18} />
-    case 'memory':
-      return <Brain color={color} size={18} />
-    case 'knowledge':
-      return <Database color={color} size={18} />
-    case 'search':
-      return <Globe2 color={color} size={18} />
-    case 'recovery':
-      return <ShieldCheck color={color} size={18} />
-  }
-}
-
-function readinessRoute(key: WorkspaceReadinessKey, status?: WorkspaceReadinessStatus): (() => void) | undefined {
-  switch (key) {
-    case 'provider':
-      return () => router.push('/settings/providers')
-    case 'memory':
-      return () => router.push(status === 'review' ? '/settings/memory?focus=review' : '/settings/memory')
-    case 'knowledge':
-      return () => router.push('/settings/knowledge')
-    case 'search':
-      return () => router.push('/settings/context')
-    case 'recovery':
-      return undefined
-  }
-}
-
-function IconWrap({ children }: { children: ReactNode }) {
-  const { colors } = useAppTheme()
-  return <View style={{ width: 40, height: 40, borderRadius: 20, alignItems: 'center', justifyContent: 'center', backgroundColor: colors.mintSoft }}>{children}</View>
-}
-
 function VersionRow({ label, value }: { label: string; value: string }) {
   const { colors } = useAppTheme()
   return (
     <View style={{ minHeight: 28, flexDirection: 'row', alignItems: 'center', gap: 10 }}>
-      <Text style={{ color: colors.textTertiary, fontSize: 11, fontWeight: '900', width: 76 }}>{label}</Text>
-      <Text numberOfLines={1} style={{ color: colors.text, fontSize: 12, fontWeight: '800', flex: 1 }}>{value}</Text>
+      <Text style={{ color: colors.textTertiary, fontSize: 11, lineHeight: 16, fontWeight: '900', width: 76, includeFontPadding: false, textAlignVertical: 'center' }}>{label}</Text>
+      <Text numberOfLines={1} style={{ color: colors.text, fontSize: 12, lineHeight: 17, fontWeight: '800', flex: 1, includeFontPadding: false, textAlignVertical: 'center' }}>{value}</Text>
     </View>
   )
 }

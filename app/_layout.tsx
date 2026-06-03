@@ -2,49 +2,34 @@ import '../src/devLogFilters'
 import '../src/global.css'
 import 'react-native-gesture-handler'
 import * as Clipboard from 'expo-clipboard'
-import * as SplashScreen from 'expo-splash-screen'
 import type { ErrorBoundaryProps } from 'expo-router'
-import { useCallback, useEffect, useRef } from 'react'
+import { useEffect, useRef } from 'react'
 import { router, Stack, useGlobalSearchParams } from 'expo-router'
 import { GestureHandlerRootView } from 'react-native-gesture-handler'
-import { Text, View } from 'react-native'
-import { AlertTriangle, ChevronLeft, Copy, RotateCcw } from 'lucide-react-native'
+import { Platform, Text, View } from 'react-native'
+import { AlertTriangle, Copy, RotateCcw } from 'lucide-react-native'
 import { useTranslation } from 'react-i18next'
+import { AnimatedNavigationIcon } from '@/components/navigation/AnimatedNavigationIcon'
+import { useNavigationTrigger } from '@/components/navigation/AnimatedNavigationTrigger'
 import { useBootstrap } from '@/hooks/useBootstrap'
 import { useAppTheme } from '@/hooks/useAppTheme'
 import { IsleScreen } from '@/components/ui/isle'
 import { IsleButton } from '@/components/ui/isle'
 import { IslePanel } from '@/components/ui/isle'
-import { AppBootOverlay } from '@/components/boot/AppBootOverlay'
 import { IsleDialogProvider, useIsleDialog } from '@/components/ui/isle'
 import { initI18n } from '@/i18n'
 
 initI18n()
-void SplashScreen.preventAutoHideAsync().catch(() => undefined)
 
 export default function RootLayout() {
   const boot = useBootstrap()
-  const { colors } = useAppTheme()
+  const { colors, mode, themeId } = useAppTheme()
   const params = useGlobalSearchParams<{ qaUpdateNotice?: string | string[] }>()
   const qaUpdateVersion = firstQueryParam(params.qaUpdateNotice)
-  const splashHiddenRef = useRef(false)
-  const hideNativeSplash = useCallback(() => {
-    if (splashHiddenRef.current) return
-    splashHiddenRef.current = true
-    void SplashScreen.hideAsync().catch(() => undefined)
-  }, [])
-
-  useEffect(() => {
-    if (boot.ready) hideNativeSplash()
-  }, [boot.ready, hideNativeSplash])
-
-  useEffect(() => {
-    const timer = setTimeout(hideNativeSplash, 1800)
-    return () => clearTimeout(timer)
-  }, [hideNativeSplash])
+  useWebThemeBridge({ colors, mode, themeId })
 
   return (
-    <GestureHandlerRootView onLayout={hideNativeSplash} style={{ flex: 1, backgroundColor: colors.surface }}>
+    <GestureHandlerRootView style={{ flex: 1, backgroundColor: colors.surface }}>
       <IsleDialogProvider>
         <RootUpdateNotice message={boot.updateNotice} qaVersion={qaUpdateVersion} />
         <Stack
@@ -62,10 +47,84 @@ export default function RootLayout() {
           <Stack.Screen name="settings/mcp" options={{ animation: 'slide_from_right' }} />
           <Stack.Screen name="settings/providers" options={{ animation: 'slide_from_right' }} />
         </Stack>
-        <AppBootOverlay ready={boot.ready} errorCount={boot.errorCount} bootStartedAt={boot.bootStartedAt} />
       </IsleDialogProvider>
     </GestureHandlerRootView>
   )
+}
+
+type WebThemeRoot = {
+  setAttribute: (name: string, value: string) => void
+  style: {
+    setProperty: (name: string, value: string) => void
+  }
+}
+
+type WebDocumentLike = {
+  documentElement?: WebThemeRoot
+}
+
+function useWebThemeBridge({ colors, mode, themeId }: Pick<ReturnType<typeof useAppTheme>, 'colors' | 'mode' | 'themeId'>) {
+  useEffect(() => {
+    if (Platform.OS !== 'web') return
+    const documentRef = (globalThis as typeof globalThis & { document?: WebDocumentLike }).document
+    const root = documentRef?.documentElement
+    if (!root) return
+
+    root.setAttribute('data-theme-id', themeId)
+    root.setAttribute('data-theme-mode', mode)
+    root.setAttribute('data-theme-ambient', colors.ui.ambient)
+    root.setAttribute('data-theme-background', colors.background.defaultMode)
+
+    const variables: [string, string][] = [
+      ['--color-surface', colors.surface],
+      ['--color-surfaceSecondary', colors.surfaceSecondary],
+      ['--color-surfaceTertiary', colors.surfaceTertiary],
+      ['--color-primary', colors.primary],
+      ['--color-primaryForeground', colors.primaryForeground],
+      ['--color-secondary', colors.secondary],
+      ['--color-accent', colors.accent],
+      ['--color-border', colors.border],
+      ['--color-borderStrong', colors.borderStrong],
+      ['--color-text', colors.text],
+      ['--color-textSecondary', colors.textSecondary],
+      ['--color-textTertiary', colors.textTertiary],
+      ['--color-success', colors.success],
+      ['--color-warning', colors.warning],
+      ['--color-error', colors.error],
+      ['--color-backdrop', colors.backdrop],
+      ['--color-island', colors.island],
+      ['--color-islandRaised', colors.islandRaised],
+      ['--color-islandMuted', colors.islandMuted],
+      ['--color-mintSoft', colors.mintSoft],
+      ['--color-amberSoft', colors.amberSoft],
+      ['--color-skySoft', colors.skySoft],
+      ['--color-paper', colors.paper],
+      ['--color-paperDeep', colors.paperDeep],
+      ['--color-paperWarm', colors.paperWarm],
+      ['--color-pressed', colors.pressed],
+      ['--color-highlight', colors.highlight],
+      ['--background-canvas', colors.background.canvas],
+      ['--background-focusCanvas', colors.background.focusCanvas],
+      ['--background-surfaceCanvas', colors.background.surfaceCanvas],
+      ['--background-mistPrimary', colors.background.mist.primary],
+      ['--background-mistSecondary', colors.background.mist.secondary],
+      ['--background-mistWarm', colors.background.mist.warm],
+      ['--background-tracePrimary', colors.background.trace.primary],
+      ['--background-traceSecondary', colors.background.trace.secondary],
+      ['--background-traceAccent', colors.background.trace.accent],
+      ['--background-grid', colors.background.grid],
+      ['--background-scrim', colors.background.scrim],
+      ['--theme-radius-card', `${colors.ui.radius.card / 16}rem`],
+      ['--theme-radius-panel', `${colors.ui.radius.panel / 16}rem`],
+      ['--theme-radius-field', `${colors.ui.radius.field / 16}rem`],
+      ['--theme-shadow-opacity', String(colors.shadow.softOpacity)],
+      ['--theme-ornament-opacity', colors.ui.ornamented ? '1' : '0'],
+    ]
+
+    for (const [name, value] of variables) {
+      root.style.setProperty(name, value)
+    }
+  }, [colors, mode, themeId])
 }
 
 function RootUpdateNotice({ message, qaVersion }: { message: string | null; qaVersion?: string }) {
@@ -95,10 +154,14 @@ export function ErrorBoundary({ error, retry }: ErrorBoundaryProps) {
   const reference = useRef(`ERR-${Date.now().toString(36).toUpperCase()}`)
   const errorDetails = formatErrorBoundaryMessage(error)
   const errorReport = `${reference.current}\n${errorDetails}`
+  const backNavigation = useNavigationTrigger(() => {
+    if (router.canGoBack()) router.back()
+    else router.push('/')
+  })
 
   return (
     <GestureHandlerRootView style={{ flex: 1, backgroundColor: colors.surface }}>
-      <IsleScreen padded={false}>
+      <IsleScreen padded={false} background="surface" backgroundState="error">
         <View style={{ flex: 1, justifyContent: 'center', paddingHorizontal: 18 }}>
           <IslePanel elevated radius={30} contentStyle={{ padding: 18 }}>
             <View style={{ width: 48, height: 48, borderRadius: 24, alignItems: 'center', justifyContent: 'center', backgroundColor: colors.coralWash }}>
@@ -118,7 +181,7 @@ export function ErrorBoundary({ error, retry }: ErrorBoundaryProps) {
             </Text>
             <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 9, marginTop: 16 }}>
               <IsleButton label={t('common.retry')} tone="primary" icon={<RotateCcw color={colors.surface} size={15} strokeWidth={2.1} />} onPress={() => void retry()} />
-              <IsleButton label={t('common.back')} icon={<ChevronLeft color={colors.textSecondary} size={16} strokeWidth={2.1} />} onPress={() => router.canGoBack() ? router.back() : router.push('/')} />
+              <IsleButton label={t('common.back')} icon={<AnimatedNavigationIcon glyph="back" active={backNavigation.active} color={colors.textSecondary} size={18} />} onPress={backNavigation.trigger} />
               <IsleButton label={t('app.copyPageError')} icon={<Copy color={colors.textSecondary} size={15} strokeWidth={2.1} />} onPress={() => void Clipboard.setStringAsync(errorReport)} />
             </View>
           </IslePanel>

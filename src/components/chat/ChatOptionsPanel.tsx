@@ -28,6 +28,7 @@ export function ChatOptionsPanel({
   onClose,
   onDraftChange,
   settings,
+  placement = 'popover',
 }: {
   conversation: Conversation
   provider: AIProvider | undefined
@@ -39,6 +40,7 @@ export function ChatOptionsPanel({
   onClose: () => void
   onDraftChange?: (updates: Partial<Pick<Conversation, 'systemPrompt' | 'temperature' | 'topP' | 'reasoningEffort' | 'maxTokens'>>) => void
   settings?: ProviderModelAccessInput['settings']
+  placement?: 'popover' | 'sheet'
 }) {
   const { t } = useTranslation()
   const { width: windowWidth, height: windowHeight } = useWindowDimensions()
@@ -73,8 +75,11 @@ export function ChatOptionsPanel({
   const capabilities = currentProvider?.capabilities
   const reasoningOptions = getReasoningEffortOptions(currentProvider, conversation.model)
   const compactPicker = windowWidth < 430 || windowHeight < 620
+  const sheetMode = placement === 'sheet'
   const panelBodyMaxHeight = Math.max(250, maxHeight - 104)
-  const panelWidth = windowWidth >= 900
+  const panelWidth = sheetMode
+    ? Math.min(windowWidth - 24, Math.max(320, windowWidth - 24))
+    : windowWidth >= 900
     ? Math.min(720, Math.round(windowWidth * 0.7))
     : Math.min(windowWidth - 24, Math.max(320, Math.round(windowWidth * 0.92)))
   const bodyVerticalPadding = 26
@@ -105,6 +110,10 @@ export function ChatOptionsPanel({
   )
   const pickerFloor = visibleProviders.length || selectedModels.length ? Math.min(156, pickerRowMaxHeight) : 132
   const pickerMinHeight = compactPicker ? undefined : Math.max(pickerFloor, Math.min(pickerRowMaxHeight, Math.max(providerListHeight, modelListHeight) + pickerHeaderReserve))
+  const panelRadius = sheetMode ? colors.ui.radius.modal : colors.ui.radius.panel
+  const fieldRadius = colors.ui.radius.field
+  const controlRadius = colors.ui.radius.controlLarge
+  const actionSurface = colors.material.paperRaised
 
   useEffect(() => {
     setSelectedProviderId(provider?.id ?? conversation.providerId)
@@ -130,7 +139,7 @@ export function ChatOptionsPanel({
   }
 
   return (
-    <IslePanel material="paper" elevated style={{ alignSelf: 'center', width: panelWidth, maxWidth: '100%', marginTop: 10, maxHeight, borderWidth: 1, borderColor: colors.borderStrong }} radius={24} contentStyle={{ padding: 0, backgroundColor: colors.paper }}>
+    <IslePanel material="paper" elevated style={{ alignSelf: 'center', width: panelWidth, maxWidth: '100%', marginTop: sheetMode ? 0 : 10, maxHeight, borderWidth: 1, borderColor: colors.borderStrong }} radius={panelRadius} contentStyle={{ padding: 0, backgroundColor: colors.material.paper }}>
       <View style={{ padding: 12, paddingBottom: 10, borderBottomWidth: 1, borderBottomColor: colors.border }}>
         <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10, marginBottom: 10 }}>
           <View style={{ flex: 1 }}>
@@ -141,12 +150,12 @@ export function ChatOptionsPanel({
             haptic
             onPress={onClose}
             accessibilityLabel={t('chat.closeModelMenu')}
-            style={{ width: 44, height: 44, borderRadius: 22, alignItems: 'center', justifyContent: 'center', backgroundColor: colors.islandRaised, borderWidth: 1, borderColor: colors.border }}
+            style={{ width: 44, height: 44, borderRadius: controlRadius, alignItems: 'center', justifyContent: 'center', backgroundColor: actionSurface, borderWidth: 1, borderColor: colors.border }}
           >
             <X color={colors.textSecondary} size={16} strokeWidth={2.2} />
           </IslePressable>
         </View>
-        <View style={{ minHeight: 44, borderRadius: 22, paddingHorizontal: 12, flexDirection: 'row', alignItems: 'center', gap: 8, backgroundColor: colors.material.field, borderWidth: 1, borderColor: colors.border }}>
+        <View style={{ minHeight: 44, borderRadius: fieldRadius, paddingHorizontal: 12, flexDirection: 'row', alignItems: 'center', gap: 8, backgroundColor: colors.material.field, borderWidth: 1, borderColor: colors.border }}>
           <Search color={colors.textTertiary} size={15} strokeWidth={2} />
           <TextInput
             value={modelPickerQuery}
@@ -161,7 +170,7 @@ export function ChatOptionsPanel({
             <IslePressable
               onPress={() => setModelPickerQuery('')}
               accessibilityLabel={t('chat.clearModelSearch')}
-              style={{ width: 44, height: 44, borderRadius: 22, alignItems: 'center', justifyContent: 'center', backgroundColor: colors.islandRaised }}
+              style={{ width: 44, height: 44, borderRadius: controlRadius, alignItems: 'center', justifyContent: 'center', backgroundColor: actionSurface }}
             >
               <X color={colors.textSecondary} size={14} strokeWidth={2.2} />
             </IslePressable>
@@ -169,7 +178,12 @@ export function ChatOptionsPanel({
         </View>
       </View>
 
-      <View style={{ maxHeight: panelBodyMaxHeight, padding: 12, paddingBottom: 14 }}>
+      <ScrollView
+        style={{ maxHeight: panelBodyMaxHeight }}
+        contentContainerStyle={{ padding: 12, paddingBottom: 14 }}
+        keyboardShouldPersistTaps="handled"
+        showsVerticalScrollIndicator
+      >
         <View style={{ flexDirection: compactPicker ? 'column' : 'row', gap: 12, alignItems: 'stretch', minHeight: pickerMinHeight }}>
           <MotiView
             from={motion === 'full' ? { opacity: 0, translateX: -8 } : { opacity: 0 }}
@@ -184,13 +198,7 @@ export function ChatOptionsPanel({
               </Text>
             </View>
             {visibleProviders.length ? (
-              <ScrollView
-                style={{ flexGrow: 0, height: providerListHeight }}
-                contentContainerStyle={{ gap: 8 }}
-                nestedScrollEnabled
-                keyboardShouldPersistTaps="handled"
-                showsVerticalScrollIndicator
-              >
+              <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8 }}>
                 {visibleProviders.map((item) => (
                   <IslePressable
                     key={item.id}
@@ -205,9 +213,9 @@ export function ChatOptionsPanel({
                     />
                   </IslePressable>
                 ))}
-              </ScrollView>
+              </View>
             ) : (
-              <View style={{ minHeight: providerListHeight, borderRadius: 18, paddingHorizontal: 12, paddingVertical: 10, justifyContent: 'center', backgroundColor: colors.material.field, borderWidth: 1, borderColor: colors.border }}>
+              <View style={{ minHeight: providerListHeight, borderRadius: fieldRadius, paddingHorizontal: 12, paddingVertical: 10, justifyContent: 'center', backgroundColor: colors.material.field, borderWidth: 1, borderColor: colors.border }}>
                 <Text style={{ color: colors.textTertiary, fontSize: 12, lineHeight: 17 }}>{t('chat.noProviderModelMatches')}</Text>
               </View>
             )}
@@ -226,13 +234,7 @@ export function ChatOptionsPanel({
               </Text>
             </View>
             {selectedModels.length ? (
-              <ScrollView
-                style={{ flexGrow: 0, height: modelListHeight }}
-                contentContainerStyle={{ flexDirection: 'row', gap: 8, flexWrap: 'wrap', paddingRight: 4, paddingBottom: 2 }}
-                nestedScrollEnabled
-                keyboardShouldPersistTaps="handled"
-                showsVerticalScrollIndicator
-              >
+              <View style={{ flexDirection: 'row', gap: 8, flexWrap: 'wrap', paddingRight: 4, paddingBottom: 2 }}>
                 {selectedModels.map((model) => (
                   <IslePressable
                     key={model.id}
@@ -247,9 +249,9 @@ export function ChatOptionsPanel({
                     />
                   </IslePressable>
                 ))}
-              </ScrollView>
+              </View>
             ) : (
-              <View style={{ minHeight: modelListHeight, borderRadius: 18, paddingHorizontal: 12, paddingVertical: 10, justifyContent: 'center', backgroundColor: colors.material.field, borderWidth: 1, borderColor: colors.border }}>
+              <View style={{ minHeight: modelListHeight, borderRadius: fieldRadius, paddingHorizontal: 12, paddingVertical: 10, justifyContent: 'center', backgroundColor: colors.material.field, borderWidth: 1, borderColor: colors.border }}>
                 <Text style={{ color: colors.textTertiary, fontSize: 12, lineHeight: 17 }}>{t('chat.providerNoModelsSyncHint')}</Text>
               </View>
             )}
@@ -264,11 +266,11 @@ export function ChatOptionsPanel({
             multiline
             placeholder={t('chat.systemPromptExample')}
             placeholderTextColor={colors.textTertiary}
-            style={{ minHeight: compactPicker ? 68 : 82, maxHeight: 136, borderRadius: 18, padding: 12, color: colors.text, backgroundColor: colors.material.field, borderWidth: 1, borderColor: colors.border, fontSize: 13, lineHeight: 19, textAlignVertical: 'top' }}
+            style={{ minHeight: compactPicker ? 68 : 82, maxHeight: 136, borderRadius: fieldRadius, padding: 12, color: colors.text, backgroundColor: colors.material.field, borderWidth: 1, borderColor: colors.border, fontSize: 13, lineHeight: 19, textAlignVertical: 'top' }}
           />
         </View>
         <View style={{ flexDirection: 'row', gap: 8, marginTop: 8 }}>
-          <IslePressable haptic onPress={onCopyLink} style={{ minHeight: 44, borderRadius: 22, paddingHorizontal: 12, alignItems: 'center', justifyContent: 'center', backgroundColor: colors.islandRaised, borderWidth: 1, borderColor: colors.border }}>
+          <IslePressable haptic onPress={onCopyLink} style={{ minHeight: 44, borderRadius: controlRadius, paddingHorizontal: 12, alignItems: 'center', justifyContent: 'center', backgroundColor: actionSurface, borderWidth: 1, borderColor: colors.border }}>
             <Text style={{ color: colors.textSecondary, fontSize: 12, fontWeight: '800' }}>{t('chat.copyConversationLink')}</Text>
           </IslePressable>
         </View>
@@ -316,7 +318,7 @@ export function ChatOptionsPanel({
             </View>
           ) : null}
         </View>
-      </View>
+      </ScrollView>
     </IslePanel>
   )
 }
@@ -329,25 +331,32 @@ function clampListHeight(count: number, minHeight: number, maxHeight: number, co
 
 function PickerChip({ label, active, maxWidth }: { label: string; active: boolean; maxWidth: number }) {
   const { colors } = useAppTheme()
+  const motion = useMotionPreference()
+  const activeBackground = colors.ui.control.primaryBackground
+  const activeForeground = colors.ui.control.primaryForeground
   return (
-    <View
+    <MotiView
+      animate={{
+        backgroundColor: active ? activeBackground : colors.material.paperRaised,
+        borderColor: active ? colors.ui.control.primaryBorder : colors.border,
+        scale: active ? 1.025 : 1,
+      }}
+      transition={motion === 'full' ? { type: 'spring', ...motionTokens.spring.gentle } : { type: 'timing', duration: 1 }}
       style={{
         maxWidth,
         minHeight: 44,
-        borderRadius: 22,
+        borderRadius: colors.ui.radius.chip,
         paddingHorizontal: 12,
         alignItems: 'center',
         justifyContent: 'center',
         alignSelf: 'flex-start',
-        backgroundColor: active ? colors.text : colors.islandRaised,
-        borderWidth: active ? 0 : 1,
-        borderColor: colors.border,
+        borderWidth: 1,
       }}
     >
-      <Text numberOfLines={1} ellipsizeMode="tail" style={{ maxWidth: Math.max(24, maxWidth - 22), color: active ? colors.surface : colors.textSecondary, fontSize: 12, fontWeight: '900' }}>
+      <Text numberOfLines={1} ellipsizeMode="tail" style={{ maxWidth: Math.max(24, maxWidth - 22), color: active ? activeForeground : colors.textSecondary, fontSize: 12, lineHeight: 16, fontWeight: '900', includeFontPadding: false }}>
         {label}
       </Text>
-    </View>
+    </MotiView>
   )
 }
 
@@ -397,7 +406,7 @@ function ParamInput({ label, value, onChange }: { label: string; value: string; 
         keyboardType="numeric"
         accessibilityLabel={label}
         placeholderTextColor={colors.textTertiary}
-        style={{ minHeight: 46, borderRadius: 18, paddingHorizontal: 14, color: colors.text, backgroundColor: colors.material.field, borderWidth: 1, borderColor: colors.border, fontSize: 14, fontWeight: '700' }}
+        style={{ minHeight: 46, borderRadius: colors.ui.radius.field, paddingHorizontal: 14, color: colors.text, backgroundColor: colors.material.field, borderWidth: 1, borderColor: colors.border, fontSize: 14, fontWeight: '700' }}
       />
     </View>
   )

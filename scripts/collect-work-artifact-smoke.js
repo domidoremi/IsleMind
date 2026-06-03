@@ -207,7 +207,6 @@ function writeFixture() {
       defaultTemperature: 0.7,
       memoryEnabled: true,
       knowledgeEnabled: true,
-      petEnabled: false,
       webSearchEnabled: false,
       webSearchMode: 'native',
       knowledgeTopK: 4,

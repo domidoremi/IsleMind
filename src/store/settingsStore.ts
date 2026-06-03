@@ -1,6 +1,6 @@
 import { create } from 'zustand'
 import { getModelConfig, getProviderConfigIssue, XIAOMI_MIMO_PAYG_BASE_URL, getXiaomiMimoOfficialBaseUrl } from '@/types'
-import type { Settings, AIProvider, Language, ProviderCredentialGroup, ThemeMode } from '@/types'
+import type { Settings, AIProvider, Language, ProviderCredentialGroup, ThemeId, ThemeMode } from '@/types'
 import { loadData, saveData } from '@/services/storage'
 import * as SecureStore from 'expo-secure-store'
 import { applyProviderPreset, defaultProviderSyncPolicy, detectProviderPreset, getProviderPreset } from '@/services/ai/providerRegistry'
@@ -10,6 +10,7 @@ import { clearHistoricalInjectedGroupModels, clearHistoricalInjectedProviderMode
 import { getPolicyPreferredProviderModel, providerHasPolicyAllowedModel } from '@/services/ai/policy/providerModelAccess'
 import { st } from '@/i18n/service'
 import { setServiceLanguage } from '@/i18n/service'
+import { normalizeThemeId } from '@/theme/colors'
 
 interface SettingsState {
   settings: Settings
@@ -18,6 +19,7 @@ interface SettingsState {
   load: () => Promise<void>
   updateSettings: (updates: Partial<Settings>) => void
   setTheme: (theme: ThemeMode) => void
+  setThemeId: (themeId: ThemeId) => void
   setLanguage: (language: Language) => void
   addProvider: (provider: AIProvider) => Promise<void>
   addProviders: (providers: AIProvider[]) => Promise<void>
@@ -46,21 +48,22 @@ interface SettingsState {
 
 const defaultSettings: Settings = {
   theme: 'system',
+  themeId: 'island',
   language: 'zh-CN',
   defaultProvider: null,
   fontSize: 16,
   hapticsEnabled: true,
-  defaultTemperature: 0.7,
+  pageTransitionStyle: 'state',
+  defaultTemperature: 0.3,
   defaultMaxTokens: undefined,
   memoryEnabled: true,
   knowledgeEnabled: true,
-  petEnabled: false,
   webSearchEnabled: true,
   webSearchMode: 'native',
   knowledgeTopK: 4,
   memoryTopK: 4,
   onboardingCompleted: false,
-  onboardingCompanionMode: 'research',
+  onboardingCompanionMode: 'concise',
   ragMode: 'hybrid',
   embeddingMode: 'hybrid',
   localEmbeddingModelId: undefined,
@@ -166,6 +169,7 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
     }
     const mergedSettings = {
       ...rawSettings,
+      themeId: normalizeThemeId(rawSettings.themeId),
       providerCatalogVersion: PROVIDER_CATALOG_VERSION,
       defaultProvider: resetCatalog ? null : rawSettings.defaultProvider,
       searchProvider: resolvedSearchProvider,
@@ -210,6 +214,10 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
 
   setTheme: (theme: ThemeMode) => {
     get().updateSettings({ theme })
+  },
+
+  setThemeId: (themeId: ThemeId) => {
+    get().updateSettings({ themeId })
   },
 
   setLanguage: (language: Language) => {

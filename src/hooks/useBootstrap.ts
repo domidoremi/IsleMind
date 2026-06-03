@@ -7,13 +7,12 @@ import { localDataStore } from '@/services/localDataStore'
 import { checkLatestApkReleaseSilently, shouldAutoCheckApkUpdate } from '@/services/appUpdates'
 import { initI18n } from '@/i18n'
 import { st } from '@/i18n/service'
-import { colors } from '@/theme/colors'
 import { useAppTheme } from './useAppTheme'
 
 export function useBootstrap() {
   const loadChats = useChatStore((state) => state.load)
   const loadSettings = useSettingsStore((state) => state.load)
-  const { isDark } = useAppTheme()
+  const { colors } = useAppTheme()
   const [state, setState] = useState(() => ({
     ready: false,
     errorCount: 0,
@@ -64,8 +63,8 @@ export function useBootstrap() {
   }, [loadChats, loadSettings])
 
   useEffect(() => {
-    void SystemUI.setBackgroundColorAsync(isDark ? colors.dark.surface : colors.light.surface)
-  }, [isDark])
+    void SystemUI.setBackgroundColorAsync(colors.surface)
+  }, [colors.surface])
 
   return state
 }

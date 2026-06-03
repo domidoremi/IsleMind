@@ -5,9 +5,10 @@ import * as Clipboard from 'expo-clipboard'
 import { router, useLocalSearchParams } from 'expo-router'
 import type { TFunction } from 'i18next'
 import { useTranslation } from 'react-i18next'
-import { BookOpen, ChevronLeft, Copy, ExternalLink, Globe2, ListChecks, RefreshCw } from 'lucide-react-native'
+import { BookOpen, Copy, ExternalLink, Globe2, ListChecks, RefreshCw } from 'lucide-react-native'
 import { MotiView } from 'moti'
-import { IsleScreen } from '@/components/ui/isle'
+import { AnimatedNavigationTrigger } from '@/components/navigation/AnimatedNavigationTrigger'
+import { IsleScreen, type IsleBackgroundState } from '@/components/ui/isle'
 import { IslePanel } from '@/components/ui/isle'
 import { IsleButton } from '@/components/ui/isle'
 import { IsleChip } from '@/components/ui/isle'
@@ -32,9 +33,20 @@ export default function SourceScreen() {
   const citation = citations.find((item) => item.id === params.citationId) ?? citations[0]
   const explicitUrl = firstParam(params.url)
   const [webKey, setWebKey] = useState(0)
+  const [readerBackgroundState, setReaderBackgroundState] = useState<IsleBackgroundState>('idle')
 
   const mode = params.kind === 'process' ? 'process' : 'source'
   const webUrl = mode === 'source' ? explicitUrl ?? citation?.url : undefined
+  const processBackgroundState: IsleBackgroundState = traces.some((trace) => trace.status === 'error')
+    ? 'error'
+    : traces.some((trace) => trace.status === 'pending' || trace.status === 'running')
+      ? 'active'
+      : 'idle'
+  const backgroundState: IsleBackgroundState = mode === 'process'
+    ? processBackgroundState
+    : webUrl
+      ? readerBackgroundState
+      : 'idle'
   const title = mode === 'process' ? t('source.process') : citation?.title ?? t('source.source')
   const subtitle = mode === 'process'
     ? [t('source.completed', { count: traces.filter((trace) => trace.status === 'done').length }), t('source.errors', { count: traces.filter((trace) => trace.status === 'error').length }), t('source.skipped', { count: traces.filter((trace) => trace.status === 'skipped').length })].join(' · ')
@@ -43,6 +55,11 @@ export default function SourceScreen() {
   if (__DEV__ && firstParam(params.qaErrorBoundary) === '1') {
     throw new Error('QA forced source render failure')
   }
+
+  useEffect(() => {
+    if (mode === 'process') return
+    setReaderBackgroundState(webUrl ? 'active' : 'idle')
+  }, [mode, webKey, webUrl])
 
   async function copyCurrent() {
     try {
@@ -67,16 +84,14 @@ export default function SourceScreen() {
   }
 
   return (
-    <IsleScreen padded={false}>
+    <IsleScreen padded={false} background={mode === 'process' ? 'surface' : 'focus'} backgroundState={backgroundState}>
       <View style={{ flex: 1 }}>
         <View pointerEvents="box-none" style={{ paddingHorizontal: 12, paddingTop: 6, paddingBottom: 8 }}>
           <IsleHeader
             title={title}
             subtitle={subtitle}
             leading={
-              <IsleIconButton label={t('source.backToChat')} onPress={() => router.back()}>
-                <ChevronLeft color={colors.text} size={22} strokeWidth={1.9} />
-              </IsleIconButton>
+              <AnimatedNavigationTrigger variant="iconButton" label={t('source.backToChat')} glyph="back" onNavigate={() => router.back()} color={colors.text} />
             }
             trailing={
               <View style={{ flexDirection: 'row', gap: 7 }}>
@@ -102,7 +117,7 @@ export default function SourceScreen() {
           {mode === 'process' ? (
             <ProcessReader traces={traces} />
           ) : webUrl ? (
-            <WebReader key={webKey} url={webUrl} citation={citation} onOpenExternal={openExternal} />
+            <WebReader key={webKey} url={webUrl} citation={citation} onOpenExternal={openExternal} onBackgroundStateChange={setReaderBackgroundState} />
           ) : (
             <LocalSourceReader citation={citation} citations={citations} />
           )}
@@ -112,7 +127,17 @@ export default function SourceScreen() {
   )
 }
 
-function WebReader({ url, citation, onOpenExternal }: { url: string; citation?: MessageCitation; onOpenExternal: () => Promise<void> }) {
+function WebReader({
+  url,
+  citation,
+  onOpenExternal,
+  onBackgroundStateChange,
+}: {
+  url: string
+  citation?: MessageCitation
+  onOpenExternal: () => Promise<void>
+  onBackgroundStateChange: (state: IsleBackgroundState) => void
+}) {
   const { colors } = useAppTheme()
   const { t } = useTranslation()
   const [loading, setLoading] = useState(true)
@@ -136,6 +161,10 @@ function WebReader({ url, citation, onOpenExternal }: { url: string; citation?: 
       mounted = false
     }
   }, [])
+
+  useEffect(() => {
+    onBackgroundStateChange(failed ? 'error' : loading || !WebViewComponent ? 'active' : 'idle')
+  }, [failed, loading, onBackgroundStateChange, WebViewComponent])
 
   return (
     <View style={{ flex: 1 }}>

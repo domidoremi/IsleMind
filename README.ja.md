@@ -36,7 +36,7 @@ Release APK は Android アーキテクチャ別にも分かれます。
 
 ## Android 16 KB Page Size
 
-Release ビルドでは `npm run apk:validate-16kb` を実行し、`zipalign -P 16` で APK ZIP page alignment を確認し、`llvm-readelf` で native library の ELF `LOAD` segment alignment を確認します。ZIP alignment は Android ビルドで制御できますが、ELF alignment は Expo、React Native、ONNX Runtime などの依存関係が配布するネイティブライブラリに依存します。検証で第三者 `.so` が 4 KB `LOAD` alignment と報告された場合は、その依存関係を更新または再ビルドしてから Android 16 KB page-size 端末への完全対応としてください。
+Release ビルドでは `bun run apk:validate-16kb` を実行し、`zipalign -P 16` で APK ZIP page alignment を確認し、`llvm-readelf` で native library の ELF `LOAD` segment alignment を確認します。ZIP alignment は Android ビルドで制御できますが、ELF alignment は Expo、React Native、ONNX Runtime などの依存関係が配布するネイティブライブラリに依存します。検証で第三者 `.so` が 4 KB `LOAD` alignment と報告された場合は、その依存関係を更新または再ビルドしてから Android 16 KB page-size 端末への完全対応としてください。
 
 現在の Release packaging では、`arm64-v8a` と `x86_64` のみから `universal-64` を生成するため、メインの universal APK には 32-bit ネイティブライブラリが含まれません。個別の `armeabi-v7a-legacy` APK は旧 32-bit 端末向けにのみ残し、Android 16 の 64-bit page-size 検証対象には含めません。
 

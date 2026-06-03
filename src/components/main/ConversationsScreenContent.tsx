@@ -1,11 +1,12 @@
 import { router } from 'expo-router'
 import { useMemo, useRef, useState } from 'react'
 import { FlatList, KeyboardAvoidingView, Platform, TextInput, View } from 'react-native'
-import { House, Plus, Search, X } from 'lucide-react-native'
+import { Search, X } from 'lucide-react-native'
 import { useTranslation } from 'react-i18next'
+import { AnimatedNavigationTrigger } from '@/components/navigation/AnimatedNavigationTrigger'
 import { IsleEmptyState } from '@/components/ui/isle'
 import { IslePressable } from '@/components/ui/isle'
-import { IsleHeader, IsleIconButton } from '@/components/ui/isle'
+import { IsleHeader } from '@/components/ui/isle'
 import { ConversationRow } from '@/components/conversations/ConversationRow'
 import { useAppTheme } from '@/hooks/useAppTheme'
 import { useChatStore } from '@/store/chatStore'
@@ -77,16 +78,16 @@ export function ConversationsScreenContent({ onHome, onSettings }: Conversations
           title={t('conversation.title')}
           leading={
             onHome ? (
-              <IsleIconButton label={t('common.home')} size="lg" onPress={onHome}>
-                <House color={colors.text} size={20} strokeWidth={1.9} />
-              </IsleIconButton>
+              <AnimatedNavigationTrigger variant="iconButton" label={t('common.home')} size="lg" glyph="home" onNavigate={onHome} color={colors.text} />
             ) : undefined
           }
           trailing={
-            <IslePressable
-              haptic
-              accessibilityLabel={t('chat.newConversation')}
-              onPress={() => void createConversation()}
+            <AnimatedNavigationTrigger
+              variant="iconButton"
+              label={t('chat.newConversation')}
+              glyph="new-chat"
+              onNavigate={createConversation}
+              color={colors.primaryForeground}
               style={{
                 width: 50,
                 height: 50,
@@ -102,9 +103,7 @@ export function ConversationsScreenContent({ onHome, onSettings }: Conversations
                 shadowOffset: { width: 0, height: 4 },
                 elevation: 2,
               }}
-            >
-              <Plus color={colors.primaryForeground} size={22} strokeWidth={2.35} />
-            </IslePressable>
+            />
           }
         />
         <View
@@ -159,7 +158,7 @@ export function ConversationsScreenContent({ onHome, onSettings }: Conversations
             ? <IsleEmptyState title={t('conversation.noSearchResults')} />
             : (
               <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 12 }}>
-                <IsleEmptyState title={t('conversation.emptyHistory')} actionLabel={t('chat.newConversation')} onAction={() => void createConversation()} />
+                <IsleEmptyState title={t('conversation.emptyHistory')} actionLabel={t('chat.newConversation')} actionGlyph="new-chat" onAction={() => void createConversation()} />
               </View>
             )
         }

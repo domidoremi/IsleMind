@@ -1,12 +1,14 @@
 import { useEffect, useMemo, useState, type ReactNode } from 'react'
 import { ActivityIndicator, Platform, Text, TextInput, View } from 'react-native'
-import { Check, ChevronDown, KeyRound, ListFilter, Plus, Power, RotateCw, SearchCheck, Sparkles, Star, Trash2 } from 'lucide-react-native'
+import * as Clipboard from 'expo-clipboard'
+import { Check, ChevronDown, ClipboardPaste, KeyRound, ListFilter, Plus, Power, RotateCw, SearchCheck, Sparkles, Star, Trash2 } from 'lucide-react-native'
 import { MotiView } from 'moti'
 import type { TFunction } from 'i18next'
 import { useTranslation } from 'react-i18next'
 import type { AIProvider, ProviderCapabilities, ProviderCredentialGroup, ProviderPresetId, ProviderWireProtocol } from '@/types'
-import { getModelConfig, getModelName } from '@/types'
+import { getModelName } from '@/types'
 import { applyProviderPreset, detectProviderPreset, getProviderPreset, maskSecret, parseCredentialGroups, probeProviderPreset, PROVIDER_PRESETS } from '@/services/ai/providerRegistry'
+import { looksLikeProviderImportConnectionText, parseProviderImportDraft } from '@/services/ai/providerImportDraft'
 import { DEFAULT_PROVIDER_PRESET_ID, PROVIDER_WIRE_PROTOCOL_OPTIONS, inferProviderWireProtocolFromBaseUrl, initialProviderPresetId, initialProviderWireProtocol, resolveProviderConfigDraft, shouldSyncWireProtocolFromBaseUrl } from '@/services/ai/providerConfigPolicy'
 import { syncAndTestProvider, summarizeProviderActivation } from '@/services/providerActivation'
 import { useAppTheme } from '@/hooks/useAppTheme'
@@ -25,7 +27,7 @@ interface ApiKeyPanelProps {
   initiallyExpanded?: boolean
 }
 
-type PanelTask = 'idle' | 'saving' | 'syncing' | 'testing' | 'probing'
+type PanelTask = 'idle' | 'saving' | 'syncing' | 'testing' | 'probing' | 'clipboard'
 
 const CAPABILITY_KEYS: (keyof ProviderCapabilities)[] = [
   'modelList',
@@ -57,29 +59,29 @@ export function ApiKeyPanel({ provider, initiallyExpanded = false }: ApiKeyPanel
   const [baseUrl, setBaseUrl] = useState(provider.baseUrl ?? '')
   const [presetId, setPresetId] = useState<ProviderPresetId>(initialProviderPresetId(provider))
   const [wireProtocol, setWireProtocol] = useState<ProviderWireProtocol>(initialProviderWireProtocol(provider))
-  const [singleCredentialText, setSingleCredentialText] = useState('')
   const [credentialText, setCredentialText] = useState('')
   const [modelsText, setModelsText] = useState(formatModelEntries(provider))
   const [draftGroups, setDraftGroups] = useState<ProviderCredentialGroup[]>(provider.credentialGroups ?? [])
   const [modelEditing, setModelEditing] = useState(false)
+  const [advancedOpen, setAdvancedOpen] = useState(false)
   const [groupKeyMasks, setGroupKeyMasks] = useState<Record<string, string>>({})
   const [task, setTask] = useState<PanelTask>('idle')
   const [notice, setNotice] = useState('')
 
   const hydratedGroups = draftGroups
-  const detection = useMemo(() => detectProviderPreset({ baseUrl, name: provider.name, apiKey: singleCredentialText || credentialText }), [baseUrl, credentialText, provider.name, singleCredentialText])
+  const detection = useMemo(() => detectProviderPreset({ baseUrl, name: provider.name, apiKey: credentialText }), [baseUrl, credentialText, provider.name])
   const selectedPreset = getProviderPreset(presetId)
   const providerConfigDraft = useMemo(() => resolveProviderConfigDraft({ provider, presetId, baseUrl, wireProtocol }), [baseUrl, presetId, provider, wireProtocol])
   const modelEntries = useMemo(() => parseModelEntries(modelsText), [modelsText])
   const currentModels = modelEntries.models
+  const customModels = useMemo(() => getProviderManualModels(provider), [provider])
   const availableModels = useMemo(() => getPolicyAllowedProviderModels(provider, settings), [provider, settings])
+  const remoteModels = useMemo(() => getRemoteModelIds(provider, availableModels), [availableModels, provider])
   const modelInventory = useMemo(() => summarizeProviderModelInventory(provider), [provider])
   const preferredModel = getPolicyPreferredProviderModel(provider, settings)
   const primaryModel = preferredModel ?? availableModels[0] ?? currentModels[0] ?? t('apiKeyPanel.noModelSet')
-  const primaryModelConfig = getModelConfig(primaryModel, provider.type, provider.modelConfigs)
   const groupCount = hydratedGroups.length
-  const syncedGroups = hydratedGroups.filter((group) => group.lastModelSyncStatus === 'ok').length
-  const hasKey = hydratedGroups.some((group) => group.enabled) || !!singleCredentialText.trim() || !!credentialText.trim()
+  const hasKey = hydratedGroups.some((group) => group.enabled) || !!credentialText.trim()
   const isDefault = defaultProvider === provider.id
   const isBusy = task !== 'idle'
   const lastStatusLabel = provider.lastTestStatus === 'ok' ? t('apiKeyPanel.modelAvailable') : provider.lastTestStatus === 'bad' ? t('apiKeyPanel.needsCheck') : provider.lastModelSyncStatus === 'ok' ? t('apiKeyPanel.syncedNeedsTest') : provider.lastModelSyncStatus === 'bad' ? t('apiKeyPanel.syncFailed') : availableModels.length ? t('apiKeyPanel.pendingCheck') : t('apiKeyPanel.noAvailableModels')
@@ -92,8 +94,8 @@ export function ApiKeyPanel({ provider, initiallyExpanded = false }: ApiKeyPanel
     setModelsText(formatModelEntries(provider))
     setDraftGroups(provider.credentialGroups ?? [])
     setModelEditing(false)
+    setAdvancedOpen(false)
     setGroupKeyMasks({})
-    setSingleCredentialText('')
     setCredentialText('')
     setNotice('')
   }, [provider.baseUrl, provider.detectedPresetId, provider.id, provider.manualModels, provider.modelAliases, provider.models, provider.presetId, provider.wireProtocol])
@@ -113,7 +115,7 @@ export function ApiKeyPanel({ provider, initiallyExpanded = false }: ApiKeyPanel
 
   async function save(showNotice = true) {
     setTask('saving')
-    const pastedGroups = createIncomingGroups(draftGroups.length, [singleCredentialText, credentialText].filter(Boolean).join('\n'), t)
+    const pastedGroups = createIncomingGroups(draftGroups.length, credentialText, t)
     const credentialGroups = mergeGroups(draftGroups, pastedGroups, t)
     const parsedModels = parseModelEntries(modelsText)
     const models = parsedModels.models
@@ -140,7 +142,6 @@ export function ApiKeyPanel({ provider, initiallyExpanded = false }: ApiKeyPanel
     if (credentialGroups.some((group) => group.enabled)) {
       updateSettings({ onboardingCompleted: true })
     }
-    setSingleCredentialText('')
     setCredentialText('')
     setModelEditing(false)
     setTask('idle')
@@ -152,17 +153,85 @@ export function ApiKeyPanel({ provider, initiallyExpanded = false }: ApiKeyPanel
   }
 
   function addPendingGroups() {
-    const incoming = createIncomingGroups(draftGroups.length, [singleCredentialText, credentialText].filter(Boolean).join('\n'), t)
+    const incoming = createIncomingGroups(draftGroups.length, credentialText, t)
     if (!incoming.length) {
       setNotice(t('apiKeyPanel.enterTokensFirst'))
       dialog.toast({ title: t('apiKeyPanel.noTokenAdded'), message: t('apiKeyPanel.enterTokensFirst'), tone: 'amber' })
       return
     }
     setDraftGroups((current) => mergeGroups(current, incoming, t))
-    setSingleCredentialText('')
     setCredentialText('')
     setNotice(t('apiKeyPanel.pendingGroupsAdded', { count: incoming.length }))
     dialog.toast({ title: t('apiKeyPanel.groupsAdded', { count: incoming.length }), message: provider.name, tone: 'mint' })
+  }
+
+  function applyProviderImportDraftText(text: string, source: 'clipboard' | 'manual'): boolean {
+    const draft = parseProviderImportDraft(text, { requireConnection: source === 'manual', preferredWireProtocol: wireProtocol })
+    if (!draft) return false
+    if (draft.baseUrl) {
+      const nextDraft = resolveProviderConfigDraft({ provider: draft.provider, presetId: draft.presetId, baseUrl: draft.baseUrl, wireProtocol: draft.wireProtocol })
+      setPresetId(draft.presetId)
+      setWireProtocol(draft.wireProtocol)
+      setBaseUrl(nextDraft.baseUrl)
+    }
+    setDraftGroups((current) => mergeGroups(current, draft.provider.credentialGroups ?? [], t))
+    setCredentialText('')
+    if (draft.modelText) setModelsText(draft.modelText)
+    const messageKey = source === 'clipboard' && draft.count > 1 ? 'providerSettings.importAppliedFirst' : 'providerSettings.importDetected'
+    setNotice(t(messageKey, { count: draft.count }))
+    dialog.toast({
+      title: t('providerSettings.clipboardDetected'),
+      message: t(messageKey, { count: draft.count }),
+      tone: 'mint',
+    })
+    return true
+  }
+
+  function handleBaseUrlText(value: string) {
+    if (looksLikeProviderImportConnectionText(value) && applyProviderImportDraftText(value, 'manual')) return
+    setBaseUrl(value)
+    if (shouldSyncWireProtocolFromBaseUrl(providerConfigDraft)) setWireProtocol(inferProviderWireProtocolFromBaseUrl(value))
+    setNotice('')
+  }
+
+  function handleCredentialText(value: string) {
+    if (looksLikeProviderImportConnectionText(value) && applyProviderImportDraftText(value, 'manual')) return
+    setCredentialText(value)
+    setNotice('')
+  }
+
+  async function readProviderClipboard() {
+    if (isBusy) return
+    setTask('clipboard')
+    dialog.toast({
+      title: t('providerSettings.clipboardPermissionRequest'),
+      message: t('providerSettings.clipboardPermissionMessage'),
+      tone: 'mint',
+      durationMs: 1400,
+    })
+    try {
+      const hasText = await Clipboard.hasStringAsync()
+      if (!hasText) {
+        dialog.toast({ title: t('providerSettings.clipboardEmpty'), tone: 'amber' })
+        return
+      }
+      const text = await Clipboard.getStringAsync()
+      if (!text.trim()) {
+        dialog.toast({ title: t('providerSettings.clipboardEmpty'), tone: 'amber' })
+        return
+      }
+      if (!applyProviderImportDraftText(text, 'clipboard')) {
+        dialog.toast({ title: t('providerSettings.clipboardRead'), message: t('providerSettings.clipboardNoConfig'), tone: 'amber' })
+      }
+    } catch (error) {
+      dialog.toast({
+        title: t('providerSettings.clipboardReadFailed'),
+        message: clipboardReadFailureMessage(error, t),
+        tone: 'amber',
+      })
+    } finally {
+      setTask('idle')
+    }
   }
 
   function updateDraftGroup(groupId: string, updates: Partial<ProviderCredentialGroup>) {
@@ -246,7 +315,7 @@ export function ApiKeyPanel({ provider, initiallyExpanded = false }: ApiKeyPanel
     }
     setTask('idle')
     setNotice(summary.message)
-    dialog.notice({ title: t('apiKeyPanel.providerEnabled', { name: provider.name }), message: summary.message, tone: summary.tone })
+    dialog.toast({ title: t('apiKeyPanel.providerEnabled', { name: provider.name }), message: summary.message, tone: summary.tone, position: 'bottom', durationMs: summary.tone === 'danger' ? 6500 : summary.tone === 'amber' ? 5200 : 3600 })
   }
 
   function setDefaultProvider() {
@@ -277,6 +346,17 @@ export function ApiKeyPanel({ provider, initiallyExpanded = false }: ApiKeyPanel
   function enterModelEditing() {
     setModelEditing(true)
     dialog.toast({ title: t('apiKeyPanel.modelListEditable'), message: provider.name, tone: 'mint' })
+  }
+
+  function appendModelEntry(model: string) {
+    const parsed = parseModelEntries(modelsText)
+    if (parsed.models.includes(model)) {
+      setModelEditing(true)
+      return
+    }
+    setModelsText([modelsText.trim(), model].filter(Boolean).join('\n'))
+    setModelEditing(true)
+    setNotice(t('apiKeyPanel.modelInserted', { model }))
   }
 
   function selectPreset(nextPresetId: ProviderPresetId) {
@@ -311,8 +391,7 @@ export function ApiKeyPanel({ provider, initiallyExpanded = false }: ApiKeyPanel
   }
 
   async function getProbeApiKey(): Promise<string | undefined> {
-    const typed = credentialText.split(/[\n,，]+/).map((item) => item.trim()).find(Boolean)
-      ?? singleCredentialText.trim()
+    const typed = parseCredentialGroups(credentialText)[0]?.apiKey
     if (typed) return typed
     const keyed = await hydrateProviderKey(provider.id)
     return keyed?.credentialGroups?.find((group) => group.enabled && group.apiKey?.trim())?.apiKey ?? keyed?.apiKey
@@ -344,17 +423,8 @@ export function ApiKeyPanel({ provider, initiallyExpanded = false }: ApiKeyPanel
             <Badge label={lastStatusLabel} tone={lastStatusTone} />
           </View>
           <Text numberOfLines={1} style={{ color: colors.textSecondary, fontSize: 12, marginTop: 3 }}>
-            {getModelName(primaryModel)} · {t('apiKeyPanel.modelCount', { count: availableModels.length })} · {getProviderPreset(provider.presetId).name}
+            {getModelName(primaryModel)} · {t('apiKeyPanel.modelCount', { count: availableModels.length })} · {t('apiKeyPanel.tokenGroups', { count: Math.max(groupCount, hasKey ? 1 : 0) })}
           </Text>
-          <Text numberOfLines={1} style={{ color: colors.textTertiary, fontSize: 11, marginTop: 2 }}>
-            {t('apiKeyPanel.contextGroups', { context: formatTokenLimit(primaryModelConfig.contextWindow), synced: syncedGroups, total: groupCount })}
-          </Text>
-          <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 5, marginTop: 7 }}>
-            <MiniBadge label={provider.capabilities?.responsesWebSocket ? 'WS' : 'HTTP'} tone={provider.capabilities?.responsesWebSocket ? 'success' : 'muted'} />
-            <MiniBadge label={provider.capabilities?.remoteCompact ? 'Compact' : 'Local'} tone={provider.capabilities?.remoteCompact ? 'success' : 'muted'} />
-            <MiniBadge label={t('apiKeyPanel.manualModelShort', { count: modelInventory.manualModels })} tone={modelInventory.manualModels ? 'warning' : 'muted'} />
-            <MiniBadge label={t('apiKeyPanel.aliasShort', { count: modelInventory.aliases })} tone={modelInventory.aliases ? 'warning' : 'muted'} />
-          </View>
         </View>
         {provider.lastTestStatus === 'ok' ? <Check color={colors.success} size={18} /> : null}
         {provider.lastTestStatus === 'bad' ? <RotateCw color={colors.error} size={18} /> : null}
@@ -375,30 +445,9 @@ export function ApiKeyPanel({ provider, initiallyExpanded = false }: ApiKeyPanel
             <MiniAction label={t('common.delete')} onPress={() => void confirmRemoveProvider()} disabled={isBusy}>
               <Trash2 color={colors.error} size={15} />
             </MiniAction>
-            <MiniAction label={t('apiKeyPanel.applyDetection')} onPress={() => void acceptDetection()}>
-              <SearchCheck color={colors.textTertiary} size={15} />
-            </MiniAction>
-            <MiniAction label={task === 'probing' ? t('apiKeyPanel.probing') : t('apiKeyPanel.detectInterface')} onPress={() => void probeDetection()} disabled={isBusy || !baseUrl.trim() || !hasKey}>
-              <Sparkles color={colors.textTertiary} size={15} />
-            </MiniAction>
             <MiniAction label={t('apiKeyPanel.fetchModelsAndTest')} onPress={() => void syncAndTest()} disabled={isBusy || !hasKey}>
               <ListFilter color={colors.textTertiary} size={15} />
             </MiniAction>
-          </View>
-
-          <View style={{ borderRadius: 18, padding: 11, backgroundColor: colors.islandRaised }}>
-            <Text style={{ color: colors.text, fontSize: 13, fontWeight: '900' }}>{t('apiKeyPanel.autoDetect')}</Text>
-            <Text style={{ color: colors.textSecondary, fontSize: 12, lineHeight: 17, marginTop: 4 }}>
-              {detection.reason} · {t('apiKeyPanel.suggestedPreset', { name: getProviderPreset(detection.presetId).name })}
-            </Text>
-            <Text style={{ color: colors.textTertiary, fontSize: 11, lineHeight: 16, marginTop: 6 }}>
-              {t('apiKeyPanel.actionHelp')}
-            </Text>
-            <View style={{ flexDirection: 'row', gap: 8, flexWrap: 'wrap', marginTop: 10 }}>
-              {PROVIDER_PRESETS.map((preset) => (
-                <ChoiceButton key={preset.id} active={presetId === preset.id} label={preset.name} onPress={() => selectPreset(preset.id)} />
-              ))}
-            </View>
           </View>
 
           {providerConfigDraft.isProtocolSelectable ? (
@@ -413,32 +462,11 @@ export function ApiKeyPanel({ provider, initiallyExpanded = false }: ApiKeyPanel
             </View>
           ) : null}
 
-          <View style={{ borderRadius: 18, padding: 11, backgroundColor: colors.islandRaised, gap: 10 }}>
-            <SectionHeader
-              title={t('apiKeyPanel.capabilityMatrix')}
-              description={t('apiKeyPanel.capabilityMatrixDescription')}
-            />
-            <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8 }}>
-              {CAPABILITY_KEYS.map((key) => (
-                <CapabilityToggle
-                  key={key}
-                  label={t(`apiKeyPanel.capability.${key}`)}
-                  active={(provider.capabilities ?? selectedPreset.capabilities)[key] === true}
-                  onPress={() => void toggleCapability(key)}
-                />
-              ))}
-            </View>
-          </View>
-
           <IsleField
             label={t('providerSettings.baseUrl')}
             inputProps={{
               value: baseUrl,
-              onChangeText: (value) => {
-                setBaseUrl(value)
-                if (shouldSyncWireProtocolFromBaseUrl(providerConfigDraft)) setWireProtocol(inferProviderWireProtocolFromBaseUrl(value))
-                setNotice('')
-              },
+              onChangeText: handleBaseUrlText,
               autoCapitalize: 'none',
               autoCorrect: false,
               returnKeyType: 'done',
@@ -446,13 +474,72 @@ export function ApiKeyPanel({ provider, initiallyExpanded = false }: ApiKeyPanel
             }}
           />
 
+          <IslePressable
+            haptic
+            onPress={() => setAdvancedOpen((value) => !value)}
+            style={{ minHeight: 44, borderRadius: 22, paddingHorizontal: 13, flexDirection: 'row', alignItems: 'center', gap: 8, backgroundColor: colors.material.field, borderWidth: 1, borderColor: colors.border }}
+          >
+            <Text style={{ flex: 1, color: colors.textSecondary, fontSize: 12, fontWeight: '900' }}>{t('apiKeyPanel.advancedInterfaceSettings')}</Text>
+            <MotiView animate={{ rotate: advancedOpen ? '180deg' : '0deg' }} transition={{ type: 'timing', duration: 160 }}>
+              <ChevronDown color={colors.textTertiary} size={16} />
+            </MotiView>
+          </IslePressable>
+
+          {advancedOpen ? (
+            <View style={{ gap: 10 }}>
+              <View style={{ borderRadius: 18, padding: 11, backgroundColor: colors.islandRaised }}>
+                <SectionHeader
+                  title={t('apiKeyPanel.autoDetect')}
+                  description={`${detection.reason} · ${t('apiKeyPanel.suggestedPreset', { name: getProviderPreset(detection.presetId).name })}`}
+                  action={
+                    <View style={{ flexDirection: 'row', gap: 8 }}>
+                      <MiniAction label={t('apiKeyPanel.applyDetection')} onPress={() => void acceptDetection()}>
+                        <SearchCheck color={colors.textTertiary} size={15} />
+                      </MiniAction>
+                      <MiniAction label={task === 'probing' ? t('apiKeyPanel.probing') : t('apiKeyPanel.detectInterface')} onPress={() => void probeDetection()} disabled={isBusy || !baseUrl.trim() || !hasKey}>
+                        <Sparkles color={colors.textTertiary} size={15} />
+                      </MiniAction>
+                    </View>
+                  }
+                />
+                <View style={{ flexDirection: 'row', gap: 8, flexWrap: 'wrap', marginTop: 10 }}>
+                  {PROVIDER_PRESETS.map((preset) => (
+                    <ChoiceButton key={preset.id} active={presetId === preset.id} label={preset.name} onPress={() => selectPreset(preset.id)} />
+                  ))}
+                </View>
+              </View>
+
+              <View style={{ borderRadius: 18, padding: 11, backgroundColor: colors.islandRaised, gap: 10 }}>
+                <SectionHeader
+                  title={t('apiKeyPanel.capabilityMatrix')}
+                  description={t('apiKeyPanel.capabilityMatrixDescription')}
+                />
+                <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8 }}>
+                  {CAPABILITY_KEYS.map((key) => (
+                    <CapabilityToggle
+                      key={key}
+                      label={t(`apiKeyPanel.capability.${key}`)}
+                      active={(provider.capabilities ?? selectedPreset.capabilities)[key] === true}
+                      onPress={() => void toggleCapability(key)}
+                    />
+                  ))}
+                </View>
+              </View>
+            </View>
+          ) : null}
+
           <View style={{ gap: 10 }}>
             <SectionHeader
               title={t('apiKeyPanel.credentialGroups')}
               action={
-                <MiniAction label={t('apiKeyPanel.add')} onPress={addPendingGroups} disabled={isBusy || !(singleCredentialText.trim() || credentialText.trim())}>
-                  <Plus color={colors.textTertiary} size={15} />
-                </MiniAction>
+                <View style={{ flexDirection: 'row', gap: 8 }}>
+                  <MiniAction label={task === 'clipboard' ? t('providerSettings.clipboardChecking') : t('settings.pasteClipboard')} onPress={() => void readProviderClipboard()} disabled={isBusy}>
+                    <ClipboardPaste color={colors.textTertiary} size={15} />
+                  </MiniAction>
+                  <MiniAction label={t('apiKeyPanel.add')} onPress={addPendingGroups} disabled={isBusy || !credentialText.trim()}>
+                    <Plus color={colors.textTertiary} size={15} />
+                  </MiniAction>
+                </View>
               }
             />
             {hydratedGroups.length ? (
@@ -475,36 +562,18 @@ export function ApiKeyPanel({ provider, initiallyExpanded = false }: ApiKeyPanel
               </View>
             )}
             <IsleField
-              label={t('apiKeyPanel.addSingleToken')}
-              inputProps={{
-                value: singleCredentialText,
-                onChangeText: (value) => {
-                  setSingleCredentialText(value)
-                  setNotice('')
-                },
-                secureTextEntry: false,
-                autoCapitalize: 'none',
-                autoCorrect: false,
-                returnKeyType: 'done',
-                placeholder: 'sk-...',
-              }}
-            />
-            <IsleField
-              label={t('apiKeyPanel.addMultipleTokens')}
-              note={t('apiKeyPanel.addMultipleTokensNote')}
+              label={t('apiKeyPanel.addTokens')}
+              note={t('apiKeyPanel.addTokensNote')}
               inputProps={{
                 value: credentialText,
-                onChangeText: (value) => {
-                  setCredentialText(value)
-                  setNotice('')
-                },
+                onChangeText: handleCredentialText,
                 secureTextEntry: false,
                 autoCapitalize: 'none',
                 autoCorrect: false,
                 multiline: true,
                 blurOnSubmit: false,
-                placeholder: 'sk-...\nsk-...\nsk-...',
-                style: { minHeight: 84, maxHeight: 140, textAlignVertical: 'top' },
+                placeholder: 'sk-...\nsk-...\n{\"keys\":[\"sk-...\"]}',
+                style: { minHeight: 98, maxHeight: 160, textAlignVertical: 'top' },
               }}
             />
           </View>
@@ -536,24 +605,38 @@ export function ApiKeyPanel({ provider, initiallyExpanded = false }: ApiKeyPanel
               }
             />
             {modelEditing ? (
-              <IsleField
-                label={t('apiKeyPanel.modelId')}
-                inputProps={{
-                  value: modelsText,
-                  onChangeText: (value) => {
-                    setModelsText(value)
-                    setNotice('')
-                  },
-                  autoCapitalize: 'none',
-                  autoCorrect: false,
-                  multiline: true,
-                  blurOnSubmit: false,
-                  placeholder: t('providerSettings.oneModelPerLine'),
-                  style: { minHeight: 116, maxHeight: 190, paddingVertical: 12, lineHeight: 20, textAlignVertical: 'top' },
-                }}
-              />
+              <View style={{ gap: 10 }}>
+                {remoteModels.length ? (
+                  <View style={{ borderRadius: 18, padding: 11, backgroundColor: colors.islandRaised, borderWidth: 1, borderColor: colors.border, gap: 8 }}>
+                    <Text style={{ color: colors.text, fontSize: 12, fontWeight: '900' }}>{t('apiKeyPanel.remoteModels')}</Text>
+                    <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 7 }}>
+                      {remoteModels.slice(0, 16).map((model) => (
+                        <ChoiceButton key={model} active={false} label={getModelName(model)} onPress={() => appendModelEntry(model)} />
+                      ))}
+                      {remoteModels.length > 16 ? <Text style={{ color: colors.textTertiary, fontSize: 11, fontWeight: '800' }}>+{remoteModels.length - 16}</Text> : null}
+                    </View>
+                  </View>
+                ) : null}
+                <IsleField
+                  label={t('apiKeyPanel.customModelAliases')}
+                  note={t('apiKeyPanel.modelAliasHelp')}
+                  inputProps={{
+                    value: modelsText,
+                    onChangeText: (value) => {
+                      setModelsText(value)
+                      setNotice('')
+                    },
+                    autoCapitalize: 'none',
+                    autoCorrect: false,
+                    multiline: true,
+                    blurOnSubmit: false,
+                    placeholder: `${t('providerSettings.oneModelPerLine')}\n${t('apiKeyPanel.aliasPlaceholder')}`,
+                    style: { minHeight: 116, maxHeight: 190, paddingVertical: 12, lineHeight: 20, textAlignVertical: 'top' },
+                  }}
+                />
+              </View>
             ) : (
-              <ModelSummary models={currentModels} providerType={provider.type} aliases={provider.modelAliases ?? []} manualCount={modelInventory.manualModels} />
+              <ModelSummary remoteModels={remoteModels} customModels={customModels} aliases={provider.modelAliases ?? []} manualCount={modelInventory.manualModels} selectableCount={availableModels.length} />
             )}
           </View>
 
@@ -574,6 +657,13 @@ export function ApiKeyPanel({ provider, initiallyExpanded = false }: ApiKeyPanel
       ) : null}
     </MotiView>
   )
+}
+
+function clipboardReadFailureMessage(error: unknown, t: TFunction): string {
+  const message = error instanceof Error ? `${error.name} ${error.message}` : String(error ?? '')
+  return /permission|denied|not.?allowed|nopermission/i.test(message)
+    ? t('providerSettings.clipboardPermissionDenied')
+    : t('providerSettings.clipboardUnavailable')
 }
 
 function createIncomingGroups(offset: number, input: string, t: TFunction): ProviderCredentialGroup[] {
@@ -618,12 +708,6 @@ function ChoiceButton({ label, active, onPress }: { label: string; active: boole
       <Text style={{ color: active ? colors.surface : colors.textSecondary, fontSize: 11, fontWeight: '900' }}>{label}</Text>
     </IslePressable>
   )
-}
-
-function formatTokenLimit(value: number): string {
-  if (value >= 1000000) return `${Math.round(value / 100000) / 10}M`
-  if (value >= 1000) return `${Math.round(value / 1000)}K`
-  return String(value)
 }
 
 function SectionHeader({ title, description, action }: { title: string; description?: string; action?: ReactNode }) {
@@ -715,11 +799,30 @@ function formatModelEntries(provider: AIProvider): string {
   ].join('\n')
 }
 
-function ModelSummary({ models, providerType, aliases, manualCount }: { models: string[]; providerType: AIProvider['type']; aliases: NonNullable<AIProvider['modelAliases']>; manualCount: number }) {
+function getRemoteModelIds(provider: AIProvider, allowedModels: string[]): string[] {
+  const manual = new Set(getProviderManualModels(provider))
+  const allowed = new Set(allowedModels)
+  const seen = new Set<string>()
+  return [
+    ...provider.models,
+    ...(provider.credentialGroups ?? []).flatMap((group) => group.availableModels ?? []),
+    ...(provider.modelAvailability ?? []).map((item) => item.modelId),
+  ]
+    .map((model) => model.trim())
+    .filter((model) => {
+      if (!model || manual.has(model) || seen.has(model)) return false
+      if (allowed.size && !allowed.has(model)) return false
+      seen.add(model)
+      return true
+    })
+}
+
+function ModelSummary({ remoteModels, customModels, aliases, manualCount, selectableCount }: { remoteModels: string[]; customModels: string[]; aliases: NonNullable<AIProvider['modelAliases']>; manualCount: number; selectableCount: number }) {
   const { colors } = useAppTheme()
   const { t } = useTranslation()
-  const shown = models.slice(0, 8)
-  if (!shown.length) {
+  const shownRemote = remoteModels.slice(0, 8)
+  const shownCustom = customModels.slice(0, 8)
+  if (!shownRemote.length && !shownCustom.length && !aliases.length) {
     return (
       <View style={{ borderRadius: 18, padding: 12, backgroundColor: colors.islandRaised, borderWidth: 1, borderColor: colors.border }}>
         <Text style={{ color: colors.textSecondary, fontSize: 12, lineHeight: 18, fontWeight: '800' }}>{t('apiKeyPanel.noModels')}</Text>
@@ -729,12 +832,17 @@ function ModelSummary({ models, providerType, aliases, manualCount }: { models: 
   return (
     <View style={{ borderRadius: 18, padding: 11, backgroundColor: colors.islandRaised, borderWidth: 1, borderColor: colors.border, gap: 9 }}>
       <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 7 }}>
-        <MiniBadge label={t('apiKeyPanel.manualModelShort', { count: manualCount })} tone={manualCount ? 'warning' : 'muted'} />
+        <MiniBadge label={t('apiKeyPanel.remoteModelShort', { count: remoteModels.length })} tone={remoteModels.length ? 'success' : 'muted'} />
+        <MiniBadge label={t('apiKeyPanel.customModelShort', { count: manualCount })} tone={manualCount ? 'warning' : 'muted'} />
         <MiniBadge label={t('apiKeyPanel.aliasShort', { count: aliases.length })} tone={aliases.length ? 'warning' : 'muted'} />
+        <MiniBadge label={t('apiKeyPanel.selectableModelShort', { count: selectableCount })} tone={selectableCount ? 'success' : 'muted'} />
       </View>
-      <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 7 }}>
-        {shown.map((model) => <ModelChip key={model} label={getModelName(model)} />)}
-      </View>
+      {shownRemote.length ? (
+        <ModelChipGroup title={t('apiKeyPanel.remoteModels')} models={shownRemote} remaining={remoteModels.length - shownRemote.length} />
+      ) : null}
+      {shownCustom.length ? (
+        <ModelChipGroup title={t('apiKeyPanel.customModels')} models={shownCustom} remaining={customModels.length - shownCustom.length} />
+      ) : null}
       {aliases.length ? (
         <View style={{ gap: 5 }}>
           {aliases.slice(0, 4).map((alias) => (
@@ -745,7 +853,19 @@ function ModelSummary({ models, providerType, aliases, manualCount }: { models: 
           {aliases.length > 4 ? <Text style={{ color: colors.textTertiary, fontSize: 11, fontWeight: '800' }}>+{aliases.length - 4}</Text> : null}
         </View>
       ) : null}
-      {models.length > shown.length ? <Text style={{ color: colors.textTertiary, fontSize: 11, fontWeight: '800' }}>+{models.length - shown.length}</Text> : null}
+    </View>
+  )
+}
+
+function ModelChipGroup({ title, models, remaining }: { title: string; models: string[]; remaining: number }) {
+  const { colors } = useAppTheme()
+  return (
+    <View style={{ gap: 6 }}>
+      <Text style={{ color: colors.textSecondary, fontSize: 11, fontWeight: '900' }}>{title}</Text>
+      <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 7 }}>
+        {models.map((model) => <ModelChip key={model} label={getModelName(model)} />)}
+        {remaining > 0 ? <Text style={{ color: colors.textTertiary, fontSize: 11, fontWeight: '800' }}>+{remaining}</Text> : null}
+      </View>
     </View>
   )
 }

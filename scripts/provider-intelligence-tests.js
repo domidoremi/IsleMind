@@ -224,6 +224,10 @@ const {
   probeProviderPreset,
 } = require('../src/services/ai/providerRegistry.ts')
 const {
+  looksLikeProviderImportConnectionText,
+  parseProviderImportDraft,
+} = require('../src/services/ai/providerImportDraft.ts')
+const {
   DEFAULT_PROVIDER_PRESET_ID,
   DEFAULT_PROVIDER_WIRE_PROTOCOL,
   PROVIDER_WIRE_PROTOCOL_OPTIONS,
@@ -328,6 +332,7 @@ const { buildWorkspaceReadiness } = require('../src/utils/workspaceReadiness.ts'
 const { summarizeWorkArtifact } = require('../src/utils/workArtifact.ts')
 const { getReasoningEffortOptions } = require('../src/utils/modelReasoning.ts')
 const {
+  DEFAULT_ONBOARDING_COMPANION_MODE,
   getOnboardingCompanionProfile,
   getOnboardingConversationDefaults,
   getOnboardingSettingsDefaults,
@@ -367,7 +372,6 @@ const {
 const {
   getProviderModelDisplayCandidates,
 } = require('../src/services/ai/policy/providerModelAccess.ts')
-const { deriveHomePetState } = require('../src/components/mascot/petState.ts')
 const modelCatalog = require('../assets/models/catalog.json')
 const { exportAllData, importAllData, importAllDataDetailed, loadData } = require('../src/services/storage.ts')
 const { useChatStore } = require('../src/store/chatStore.ts')
@@ -1047,6 +1051,31 @@ function assertReleaseVersionsAligned() {
     'https://gateway.example/mimo',
     'provider config policy preserves custom gateway endpoints'
   )
+  assert.deepEqual(
+    parseCredentialGroups('sk-one\nsk-two,sk-one').map((group) => group.apiKey),
+    ['sk-one', 'sk-two'],
+    'credential groups keep legacy line/comma parsing and dedupe tokens'
+  )
+  assert.deepEqual(
+    parseCredentialGroups(JSON.stringify(['sk-json-one', 'sk-json-two'])).map((group) => group.apiKey),
+    ['sk-json-one', 'sk-json-two'],
+    'credential groups parse JSON token arrays'
+  )
+  const parsedCredentialObject = parseCredentialGroups(JSON.stringify({
+    keys: ['sk-object-one'],
+    apiKeys: ['sk-object-two'],
+    credentialGroups: [{ label: 'Backup', key: 'sk-object-three', enabled: false }],
+  }))
+  assert.deepEqual(
+    parsedCredentialObject.map((group) => ({ apiKey: group.apiKey, enabled: group.enabled })),
+    [
+      { apiKey: 'sk-object-one', enabled: true },
+      { apiKey: 'sk-object-two', enabled: true },
+      { apiKey: 'sk-object-three', enabled: false },
+    ],
+    'credential groups parse JSON objects with keys/apiKeys/credentialGroups'
+  )
+  assert.equal(parsedCredentialObject[2].label, 'Backup', 'credential group JSON preserves explicit labels')
 
   const readmeChecks = [
     {
@@ -1736,14 +1765,10 @@ async function run() {
   assert.equal(maskSecret('token-fake-1234567890'), 'toke...7890')
   setServiceLanguage('en')
   assert.equal(st('apiKeyPanel.groupName', { index: 1 }), 'Token group 1', 'service i18n follows language changes')
-  assert.equal(st('chat.starterPlanLabel'), 'Plan today', 'service i18n exposes work starter labels')
-  assert.equal(st('chat.commandWorkStarterDescription'), 'Insert a structured work template', 'command palette exposes work starter descriptions')
   assert.equal(st('messageBubble.copyWorkArtifact'), 'Copy work artifact', 'message actions expose work artifact copy')
   assert.equal(st('messageBubble.copyWorkArtifactCopied'), 'Work artifact copied to clipboard.', 'message actions confirm copied work artifacts')
   assert.equal(st('messageBubble.continueWorkArtifact'), 'Continue work', 'message actions expose work artifact continuation')
   assert.equal(st('messageBubble.continueWorkArtifactInserted'), 'Continuation prompt inserted.', 'message actions confirm inserted continuation prompts')
-  assert.ok(st('chat.starterCompareDraft').includes('Output must include'), 'work starter drafts define an output contract')
-  assert.ok(st('chat.starterBriefDraft').includes('A short version'), 'work starters include a shareable project brief flow')
   assert.ok(st('onboarding.firstPrompt.samples.engineering').includes('Verification command or evidence'), 'onboarding first prompt seeds structured productivity drafts')
   assert.ok(st('onboarding.firstPrompt.samples.organize').includes('A version I can copy'), 'onboarding organize prompt produces a shareable work artifact')
   assert.equal(st('chatRunner.trace.compactPolicyTitle'), 'Compact policy', 'chat runner exposes compact policy trace label')
@@ -1751,10 +1776,6 @@ async function run() {
   assert.equal(st('providerTrace.runtimeGovernanceTitle'), 'Runtime policy', 'provider trace exposes runtime governance trace label')
   assert.equal(st('providerTrace.runtimeFallbackTitle'), 'Runtime fallback', 'provider trace exposes runtime fallback trace label')
   ;[
-    'chat.starterPlanDraft',
-    'chat.starterNotesDraft',
-    'chat.starterCompareDraft',
-    'chat.starterBriefDraft',
     'onboarding.firstPrompt.samples.concise',
     'onboarding.firstPrompt.samples.research',
     'onboarding.firstPrompt.samples.engineering',
@@ -1763,17 +1784,10 @@ async function run() {
   ].forEach((key) => assertStructuredWorkTemplate(st(key), key, 'en'))
   setServiceLanguage('ja')
   assert.equal(st('search.disabled'), 'Web 検索は無効です。', 'service i18n supports Japanese resources')
-  assert.equal(st('chat.starterNotesLabel'), 'メモを整理', 'Japanese resources expose work starter labels')
-  assert.equal(st('chat.commandWorkStarterDescription'), '構造化された作業テンプレートを挿入', 'Japanese command palette exposes work starter descriptions')
   assert.equal(st('messageBubble.copyWorkArtifact'), '作業成果をコピー', 'Japanese message actions expose work artifact copy')
   assert.equal(st('messageBubble.continueWorkArtifact'), 'この作業を続ける', 'Japanese message actions expose work artifact continuation')
-  assert.ok(st('chat.starterBriefDraft').includes('協力者に送れる短い版'), 'Japanese work starter drafts include the project brief flow')
   assert.ok(st('onboarding.firstPrompt.samples.plan').includes('決定ログ'), 'Japanese onboarding first prompt produces parser-recognizable work artifacts')
   ;[
-    'chat.starterPlanDraft',
-    'chat.starterNotesDraft',
-    'chat.starterCompareDraft',
-    'chat.starterBriefDraft',
     'onboarding.firstPrompt.samples.concise',
     'onboarding.firstPrompt.samples.research',
     'onboarding.firstPrompt.samples.engineering',
@@ -1948,17 +1962,10 @@ async function run() {
   assert.equal(redactedLog.authorization, '[redacted]', 'runtime log redacts authorization fields')
   assert.equal(redactedLog.apiKey, '[redacted]', 'runtime log redacts API key fields')
   assert.deepEqual(redactedLog.body.keys, ['input', 'model'], 'runtime log stores payload keys instead of full body')
-  assert.equal(st('chat.starterPlanLabel'), '安排今天', 'Chinese resources expose work starter labels')
-  assert.equal(st('chat.commandWorkStarterDescription'), '插入结构化工作模板', 'Chinese command palette exposes work starter descriptions')
   assert.equal(st('messageBubble.copyWorkArtifact'), '复制工作产物', 'Chinese message actions expose work artifact copy')
   assert.equal(st('messageBubble.continueWorkArtifact'), '继续这项工作', 'Chinese message actions expose work artifact continuation')
-  assert.ok(st('chat.starterBriefDraft').includes('可直接发给协作者'), 'Chinese work starter drafts include the project brief flow')
   assert.ok(st('onboarding.firstPrompt.samples.research').includes('输出必须包含'), 'Chinese onboarding first prompt remains structured')
   ;[
-    'chat.starterPlanDraft',
-    'chat.starterNotesDraft',
-    'chat.starterCompareDraft',
-    'chat.starterBriefDraft',
     'onboarding.firstPrompt.samples.concise',
     'onboarding.firstPrompt.samples.research',
     'onboarding.firstPrompt.samples.engineering',
@@ -1967,10 +1974,10 @@ async function run() {
   ].forEach((key) => assertStructuredWorkTemplate(st(key), key, 'zh'))
 
   const chatWorkspaceSource = fs.readFileSync(path.join(root, 'src/components/chat/ChatWorkspace.tsx'), 'utf8')
-  assert.ok(chatWorkspaceSource.includes('const workStarterCommands = WORK_STARTERS.map'), 'chat command palette derives commands from work starters')
-  assert.ok(chatWorkspaceSource.includes("id: `work-starter-${starter.id}`"), 'work starter command ids are stable and namespaced')
-  assert.ok(chatWorkspaceSource.includes("description: t('chat.commandWorkStarterDescription')"), 'work starter commands use localized descriptions')
-  assert.ok(chatWorkspaceSource.includes('insertText: t(starter.draftKey)'), 'work starter commands insert the structured draft text')
+  assert.ok(!chatWorkspaceSource.includes('WorkStarterActions'), 'chat workspace removes visible work starter actions')
+  assert.ok(!chatWorkspaceSource.includes('WORK_STARTERS'), 'chat workspace removes work starter data source')
+  assert.ok(!chatWorkspaceSource.includes('workStarterCommands'), 'chat command palette no longer derives work starter commands')
+  assert.ok(!chatWorkspaceSource.includes("t('chat.commandWorkStarterDescription')"), 'chat command palette no longer uses work starter descriptions')
   assert.ok(chatWorkspaceSource.includes("import { summarizeWorkArtifact } from '@/utils/workArtifact'"), 'chat workspace imports work artifact summarization')
   assert.ok(chatWorkspaceSource.includes('summarizeWorkArtifact(item.responseText ?? item.content)'), 'chat workspace summarizes assistant output before copying work artifacts')
   assert.ok(chatWorkspaceSource.includes('Clipboard.setStringAsync(workArtifact.handoffText)'), 'chat workspace copies the work artifact handoff package')
@@ -2001,7 +2008,7 @@ async function run() {
 - APK freshness remains stale until a rebuild and clean install pass.
 
 ## Evidence still needed
-- npm run type-check -- --incremental false
+- bun run type-check -- --incremental false
 
 ## Open questions
 - Which provider should be recommended first for new users?
@@ -2151,6 +2158,38 @@ ${FAKE_KEY_D}
   assert.equal(jsonImported.providers[0].credentialGroups.length, 2)
   assert.deepEqual(jsonImported.providers[0].models, ['json-model-a', 'json-model-b'])
 
+  const newApiConnectionImported = parseProviderImportText(JSON.stringify({
+    _type: 'newapi_channel_conn',
+    url: 'https://gateway.example/v1',
+    key: FAKE_KEY_C,
+  }))
+  assert.equal(newApiConnectionImported.sourceType, 'json', 'imports NewAPI connection config JSON as JSON')
+  assert.equal(newApiConnectionImported.providers.length, 1, 'imports NewAPI connection config JSON')
+  assert.equal(newApiConnectionImported.providers[0].presetId, 'newapi', 'NewAPI connection config selects the NewAPI preset')
+  assert.equal(newApiConnectionImported.providers[0].name, 'NewAPI / OneAPI', 'NewAPI connection config uses a non-secret provider name')
+  assert.equal(newApiConnectionImported.providers[0].baseUrl, 'https://gateway.example/v1', 'NewAPI connection config preserves the provided Base URL')
+  assert.equal(newApiConnectionImported.providers[0].credentialGroups.length, 1, 'NewAPI connection config imports one credential group')
+  assert.equal(newApiConnectionImported.providers[0].credentialGroups[0][API_KEY_FIELD], FAKE_KEY_C, 'NewAPI connection config stores the provided key in the credential group')
+  assert.ok(!newApiConnectionImported.warnings.join('\n').includes(FAKE_KEY_C), 'NewAPI connection config diagnostics do not echo imported keys')
+  assert.equal(looksLikeProviderImportConnectionText(JSON.stringify({ _type: 'newapi_channel_conn', url: 'https://gateway.example/v1', key: FAKE_KEY_C })), true, 'provider import draft detects NewAPI connection JSON text')
+  const newApiConnectionDraft = parseProviderImportDraft(JSON.stringify({
+    _type: 'newapi_channel_conn',
+    url: 'https://gateway.example/v1',
+    key: FAKE_KEY_C,
+  }), { requireConnection: true })
+  assert.equal(newApiConnectionDraft?.presetId, 'newapi', 'provider import draft exposes NewAPI preset for form application')
+  assert.equal(newApiConnectionDraft?.baseUrl, 'https://gateway.example/v1', 'provider import draft exposes Base URL for form application')
+  assert.equal(newApiConnectionDraft?.credentialText, FAKE_KEY_C, 'provider import draft exposes credential text only for field application')
+
+  const providerSettingsContentSource = fs.readFileSync(path.join(root, 'src/components/providers/ProviderSettingsContent.tsx'), 'utf8')
+  const apiKeyPanelSource = fs.readFileSync(path.join(root, 'src/components/settings/ApiKeyPanel.tsx'), 'utf8')
+  assert.ok(providerSettingsContentSource.includes('Clipboard.hasStringAsync()'), 'provider import requests clipboard text availability before reading clipboard text')
+  assert.ok(providerSettingsContentSource.includes('parseProviderImportText(input)'), 'provider import modal detects manually pasted provider configs')
+  assert.ok(providerSettingsContentSource.includes("parseProviderImportDraft(text, { requireConnection: source === 'manual', preferredWireProtocol: wireProtocol })"), 'add provider form applies detected provider import drafts from clipboard and manual input')
+  assert.ok(providerSettingsContentSource.includes('onChangeText: handleKeysText'), 'add provider form routes token input through provider import auto-detection')
+  assert.ok(apiKeyPanelSource.includes('readProviderClipboard'), 'single provider editor exposes clipboard provider import handling')
+  assert.ok(apiKeyPanelSource.includes('onChangeText: handleCredentialText'), 'single provider editor routes multi-token input through provider import auto-detection')
+
   const tableImported = parseProviderImportText(`name,base_url,api_key,models\nCSV Provider,https://csv.example/v1,${FAKE_KEY_E},csv-model`)
   assert.equal(tableImported.sourceType, 'csv')
   assert.equal(tableImported.providers.length, 1, 'imports CSV header rows')
@@ -2173,6 +2212,67 @@ ${FAKE_KEY_D}
   assert.equal(mimoAnthropicImported.providers[0].tokenPlanRegion, 'cn', 'MiMo Anthropic-compatible import detects CN region')
   assert.equal(mimoAnthropicImported.providers[0].wireProtocol, 'anthropic-compatible', 'MiMo /anthropic import selects Anthropic-compatible protocol')
   assert.equal(mimoAnthropicImported.providers[0].credentialGroups.length, 1, 'MiMo Anthropic-compatible import keeps tp- key')
+
+  const mimoMultiProtocolText = `${FAKE_MIMO_TP_KEY}
+兼容OpenAI接口协议：
+https://token-plan-cn.xiaomimimo.com/v1
+兼容Anthropic接口协议：
+https://token-plan-cn.xiaomimimo.com/anthropic`
+  const mimoMultiProtocolImported = parseProviderImportText(mimoMultiProtocolText)
+  assert.equal(mimoMultiProtocolImported.providers.length, 2, 'MiMo multi-protocol paste imports both labeled endpoints')
+  assert.deepEqual(
+    mimoMultiProtocolImported.providers.map((provider) => provider.baseUrl),
+    ['https://token-plan-cn.xiaomimimo.com/v1', 'https://token-plan-cn.xiaomimimo.com/anthropic'],
+    'MiMo multi-protocol paste preserves labeled endpoint order'
+  )
+  assert.deepEqual(
+    mimoMultiProtocolImported.providers.map((provider) => provider.wireProtocol),
+    ['openai-compatible', 'anthropic-compatible'],
+    'MiMo multi-protocol paste assigns protocol per labeled endpoint'
+  )
+  assert.ok(mimoMultiProtocolImported.providers.every((provider) => provider.name === 'Xiaomi MiMo'), 'MiMo multi-protocol paste uses detected preset name')
+  assert.ok(mimoMultiProtocolImported.providers.every((provider) => provider.credentialGroups.length === 1), 'MiMo multi-protocol paste keeps the tp- key on each endpoint candidate')
+  const mimoAnthropicDraft = parseProviderImportDraft(mimoMultiProtocolText, { requireConnection: true, preferredWireProtocol: 'anthropic-compatible' })
+  assert.equal(mimoAnthropicDraft?.baseUrl, 'https://token-plan-cn.xiaomimimo.com/anthropic', 'provider import draft can prefer the Anthropic-compatible labeled endpoint')
+  assert.equal(mimoAnthropicDraft?.wireProtocol, 'anthropic-compatible', 'provider import draft exposes the preferred Anthropic-compatible protocol')
+  const mimoOpenAiDraft = parseProviderImportDraft(mimoMultiProtocolText, { requireConnection: true, preferredWireProtocol: 'openai-compatible' })
+  assert.equal(mimoOpenAiDraft?.baseUrl, 'https://token-plan-cn.xiaomimimo.com/v1', 'provider import draft can prefer the OpenAI-compatible labeled endpoint')
+  assert.equal(mimoOpenAiDraft?.credentialText, FAKE_MIMO_TP_KEY, 'provider import draft keeps the imported MiMo token plan key')
+
+  const genericMultiProtocolText = `${FAKE_KEY_A}
+OpenAI-compatible endpoint:
+https://gateway.example/openai/v1
+Anthropic-compatible endpoint:
+https://gateway.example/anthropic`
+  const genericMultiProtocolImported = parseProviderImportText(genericMultiProtocolText)
+  assert.equal(genericMultiProtocolImported.providers.length, 2, 'generic multi-protocol paste imports both labeled endpoints')
+  assert.deepEqual(
+    genericMultiProtocolImported.providers.map((provider) => provider.presetId),
+    ['custom-openai-compatible', 'custom-anthropic-compatible'],
+    'generic multi-protocol paste selects custom presets from endpoint labels'
+  )
+  assert.deepEqual(
+    genericMultiProtocolImported.providers.map((provider) => provider.wireProtocol),
+    ['openai-compatible', 'anthropic-compatible'],
+    'generic multi-protocol paste keeps explicit wire protocol hints'
+  )
+  assert.deepEqual(
+    genericMultiProtocolImported.providers.map((provider) => provider.type),
+    ['openai-compatible', 'anthropic'],
+    'generic multi-protocol paste maps endpoint labels to provider transport types'
+  )
+  const genericAnthropicDraft = parseProviderImportDraft(genericMultiProtocolText, { requireConnection: true, preferredWireProtocol: 'anthropic-compatible' })
+  assert.equal(genericAnthropicDraft?.presetId, 'custom-anthropic-compatible', 'provider import draft can prefer a generic Anthropic-compatible endpoint')
+  assert.equal(genericAnthropicDraft?.baseUrl, 'https://gateway.example/anthropic', 'provider import draft applies the generic Anthropic-compatible base URL')
+  assert.equal(genericAnthropicDraft?.credentialText, FAKE_KEY_A, 'provider import draft keeps the generic imported key')
+
+  const genericSingleAnthropicText = `${FAKE_KEY_B}
+兼容Anthropic接口协议：
+https://gateway.example/messages`
+  const genericSingleAnthropicImported = parseProviderImportText(genericSingleAnthropicText)
+  assert.equal(genericSingleAnthropicImported.providers.length, 1, 'generic single labeled Anthropic paste imports one provider')
+  assert.equal(genericSingleAnthropicImported.providers[0].presetId, 'custom-anthropic-compatible', 'generic single labeled Anthropic paste selects the Anthropic-compatible preset even without /anthropic path')
+  assert.equal(genericSingleAnthropicImported.providers[0].wireProtocol, 'anthropic-compatible', 'generic single labeled Anthropic paste preserves the label-derived protocol')
 
   const probeCalls = []
   const probed = await probeProviderPreset(
@@ -2636,6 +2736,12 @@ ${FAKE_KEY_D}
   const onboardingResearch = getOnboardingCompanionProfile('research')
   const onboardingEngineering = getOnboardingCompanionProfile('engineering')
   const onboardingConcise = getOnboardingCompanionProfile('concise')
+  const defaultOnboarding = getOnboardingCompanionProfile()
+  const defaultConversationDefaults = getOnboardingConversationDefaults()
+  assert.equal(DEFAULT_ONBOARDING_COMPANION_MODE, 'concise', 'onboarding defaults to concise mode')
+  assert.equal(defaultOnboarding.mode, 'concise', 'missing onboarding mode resolves to concise profile')
+  assert.equal(defaultConversationDefaults.temperature, 0.3, 'default conversation settings stay concise')
+  assert.equal(defaultConversationDefaults.reasoningEffort, 'low', 'default conversation reasoning stays concise')
   assert.equal(onboardingResearch.ragProfile, 'deep', 'research onboarding defaults to deep RAG')
   assert.equal(onboardingEngineering.reasoningEffort, 'high', 'engineering onboarding defaults to high reasoning')
   assert.equal(onboardingConcise.ragProfile, 'fast', 'concise onboarding favors fast retrieval')
@@ -3639,146 +3745,6 @@ ${FAKE_KEY_D}
   })
   assert.equal(failedViews.find((view) => view.model.id === miniLm.id).status, 'verify-failed', 'download failure marks the model as needing attention')
   assert.equal(await createOnnxEmbeddingProvider({ localEmbeddingModelSource: 'none' }), null, 'ONNX provider is absent without bundled or downloaded model')
-
-  const petIdle = deriveHomePetState({ reasoningEffort: 'medium' })
-  assert.equal(petIdle.animation, 'idle', 'pet is idle without chat activity')
-  const petUnconfigured = deriveHomePetState({ modelStatus: 'unconfigured' })
-  assert.equal(petUnconfigured.reason, 'model_unconfigured', 'missing provider is its own pet state')
-  const petUnavailable = deriveHomePetState({ modelStatus: 'unavailable' })
-  assert.equal(petUnavailable.reason, 'model_unavailable', 'unavailable model is its own pet state')
-  const petModelTesting = deriveHomePetState({ modelStatus: 'testing' })
-  assert.equal(petModelTesting.animation, 'modelTesting', 'model testing uses the testing pet animation')
-  const petStreaming = deriveHomePetState({
-    reasoningEffort: 'low',
-    isStreaming: true,
-    conversation: { messages: [{ role: 'assistant', status: 'streaming' }] },
-  })
-  assert.equal(petStreaming.animation, 'running', 'pet works while a reply streams')
-  assert.ok(petStreaming.speed < 1, 'low reasoning slows the working pet loop')
-  const petSending = deriveHomePetState({
-    reasoningEffort: 'medium',
-    isStreaming: true,
-    conversation: { messages: [{ role: 'assistant', status: 'sending' }] },
-  })
-  assert.equal(petSending.reason, 'sending_prompt', 'sending messages use a dedicated pet state')
-  const petHighReasoning = deriveHomePetState({
-    reasoningEffort: 'high',
-    isStreaming: true,
-    conversation: { messages: [{ role: 'assistant', status: 'streaming' }] },
-  })
-  assert.equal(petHighReasoning.animation, 'deepThinking', 'high reasoning switches pet into deep thinking')
-  assert.equal(petHighReasoning.atlasId, 'rag', 'high reasoning targets the RAG atlas')
-  const petTool = deriveHomePetState({
-    reasoningEffort: 'medium',
-    isStreaming: true,
-    conversation: { messages: [{ role: 'assistant', status: 'streaming', toolCalls: [{ type: 'tool', status: 'running' }] }] },
-  })
-  assert.equal(petTool.animation, 'toolWorking', 'running tool traces switch pet into tool working animation')
-  assert.equal(petTool.atlasId, 'provider', 'tool activity targets the provider atlas')
-  assert.equal(petTool.reason, 'tool', 'running tool traces switch pet to tool mood')
-  const petMcpTool = deriveHomePetState({
-    toolActivity: 'mcp',
-    conversation: { messages: [{ role: 'assistant', status: 'streaming', toolCalls: [{ type: 'tool', title: 'MCP lookup', status: 'running' }] }] },
-  })
-  assert.equal(petMcpTool.animation, 'mcpWorking', 'MCP tool activity uses a dedicated pet animation')
-  const petSkillTool = deriveHomePetState({ toolActivity: 'skill' })
-  assert.equal(petSkillTool.reason, 'skill_tool', 'skill activity uses a dedicated pet state')
-  const petAttachmentTool = deriveHomePetState({ toolActivity: 'attachment' })
-  assert.equal(petAttachmentTool.animation, 'attachmentReading', 'attachment activity uses a dedicated pet animation')
-  const petWebSearch = deriveHomePetState({ toolActivity: 'search' })
-  assert.equal(petWebSearch.reason, 'web_search', 'web search activity uses a dedicated pet state')
-  const petRetrieval = deriveHomePetState({
-    reasoningEffort: 'medium',
-    isStreaming: true,
-    conversation: { messages: [{ role: 'assistant', status: 'streaming', retrievalTrace: [{ type: 'retrieval', status: 'running' }] }] },
-  })
-  assert.equal(petRetrieval.animation, 'retrieving', 'running retrieval traces switch pet to retrieving')
-  assert.equal(petRetrieval.atlasId, 'rag', 'retrieval activity targets the RAG atlas')
-  const petDeepRag = deriveHomePetState({ ragActivity: 'deep' })
-  assert.equal(petDeepRag.reason, 'rag_deep', 'deep RAG activity uses a dedicated pet state')
-  const petCompressing = deriveHomePetState({ ragActivity: 'compressing' })
-  assert.equal(petCompressing.animation, 'contextCompressing', 'context compression uses a dedicated pet animation')
-  const petFlare = deriveHomePetState({ ragActivity: 'flare' })
-  assert.equal(petFlare.reason, 'rag_flare', 'second-pass retrieval uses a dedicated pet state')
-  const petMemory = deriveHomePetState({ ragActivity: 'memory' })
-  assert.equal(petMemory.animation, 'memoryLinking', 'memory RAG activity uses a dedicated pet animation')
-  assert.equal(petMemory.reason, 'memory_linking', 'memory RAG activity uses a dedicated pet state')
-  const petGraph = deriveHomePetState({ ragActivity: 'graph' })
-  assert.equal(petGraph.animation, 'graphMapping', 'graph RAG activity uses a dedicated pet animation')
-  assert.equal(petGraph.labelKey, 'pet.a11y.graphMapping', 'graph RAG activity exposes its a11y label')
-  const petCitation = deriveHomePetState({ ragActivity: 'citation' })
-  assert.equal(petCitation.animation, 'citationReview', 'citation RAG activity uses a dedicated pet animation')
-  assert.equal(petCitation.reason, 'citation_review', 'citation RAG activity uses a dedicated pet state')
-  const petIndexing = deriveHomePetState({ ragActivity: 'indexing' })
-  assert.equal(petIndexing.animation, 'knowledgeIndexing', 'indexing RAG activity uses a dedicated pet animation')
-  assert.equal(petIndexing.reason, 'knowledge_indexing', 'indexing RAG activity uses a dedicated pet state')
-  const petFallback = deriveHomePetState({
-    reasoningEffort: 'medium',
-    isStreaming: true,
-    conversation: { messages: [{ role: 'assistant', status: 'streaming', retrievalTrace: [{ type: 'retrieval', status: 'running', metadata: { fallbackReason: 'cross-encoder-model-unavailable' } }] }] },
-  })
-  assert.equal(petFallback.animation, 'warningRecover', 'fallback retrieval switches pet to warning recovery')
-  const petProviderSync = deriveHomePetState({ providerActivity: 'syncing' })
-  assert.equal(petProviderSync.animation, 'syncingModels', 'provider activation switches pet to model syncing')
-  assert.equal(petProviderSync.atlasId, 'provider', 'provider sync targets provider atlas')
-  const petProviderIssue = deriveHomePetState({ providerActivity: 'partialFailure' })
-  assert.equal(petProviderIssue.reason, 'provider_issue', 'provider failures use a dedicated pet state')
-  const petUpdateCheck = deriveHomePetState({ updateActivity: 'checking' })
-  assert.equal(petUpdateCheck.reason, 'update_check', 'update checks use a dedicated pet state')
-  const petSuccess = deriveHomePetState({
-    conversation: { messages: [{ role: 'assistant', status: 'done', timestamp: Date.now() }] },
-  })
-  assert.equal(petSuccess.reason, 'success', 'recent completed replies use the celebration pet state')
-  const petError = deriveHomePetState({
-    conversation: { messages: [{ role: 'assistant', status: 'error' }] },
-  })
-  assert.equal(petError.animation, 'warningRecover', 'failed messages switch pet to warning recovery')
-  const petActionStates = [
-    petIdle,
-    petUnconfigured,
-    petUnavailable,
-    petModelTesting,
-    petStreaming,
-    petSending,
-    petHighReasoning,
-    petTool,
-    petMcpTool,
-    petSkillTool,
-    petAttachmentTool,
-    petWebSearch,
-    petRetrieval,
-    petDeepRag,
-    petCompressing,
-    petFlare,
-    petMemory,
-    petGraph,
-    petCitation,
-    petIndexing,
-    petFallback,
-    petProviderSync,
-    petProviderIssue,
-    petUpdateCheck,
-    petSuccess,
-    petError,
-  ]
-  assert.ok(new Set(petActionStates.map((state) => state.reason)).size >= 15, 'pet state derivation covers at least 15 action states')
-  assert.ok(new Set(petActionStates.map((state) => state.animation)).size >= 15, 'pet state derivation reaches at least 15 distinct animations')
-  assert.ok(petActionStates.every((state) => state.labelKey.startsWith('pet.a11y.')), 'every pet action state exposes an a11y label key')
-  const islePetJson = JSON.parse(fs.readFileSync(path.join(root, 'assets/pets/isle/pet.json'), 'utf8'))
-  assert.equal(islePetJson.id, 'isle', 'Isle manifest uses the Isle pet id')
-  assert.equal(islePetJson.displayName, 'Isle', 'Isle manifest uses the Isle display name')
-  assert.deepEqual(islePetJson.atlases.map((atlas) => atlas.id), ['core', 'rag', 'provider'], 'Isle manifest exposes core, rag, and provider atlases')
-  assert.equal(islePetJson.atlases.find((atlas) => atlas.id === 'core').available, true, 'Isle core atlas is available')
-  assert.equal(islePetJson.atlases.find((atlas) => atlas.id === 'rag').generationStatus, 'pending-imagegen', 'Isle RAG atlas stays pending until imagegen assets are recorded')
-  assert.equal(islePetJson.animations.deepThinking.fallbackAnimation, 'review', 'new Isle actions declare safe core fallbacks')
-  assert.ok(Object.keys(islePetJson.animations).length >= 28, 'Isle manifest declares the expanded pet animation set')
-  assert.equal(islePetJson.animations.contextCompressing.fallbackAnimation, 'review', 'context compression declares a safe core fallback')
-  assert.equal(islePetJson.animations.memoryLinking.fallbackAnimation, 'review', 'memory linking declares a safe core fallback')
-  assert.equal(islePetJson.animations.graphMapping.row, 6, 'graph mapping fills the next RAG atlas row')
-  assert.equal(islePetJson.animations.citationReview.fallbackAnimation, 'review', 'citation review declares a safe core fallback')
-  assert.equal(islePetJson.animations.knowledgeIndexing.fallbackAnimation, 'running', 'knowledge indexing declares an active core fallback')
-  assert.equal(islePetJson.animations.webSearching.fallbackAnimation, 'runningRight', 'web searching declares a kinetic core fallback')
-  assert.equal(islePetJson.animations.providerIssue.fallbackAnimation, 'failed', 'provider issues declare a failure core fallback')
 
   const builtin = builtinMcpServer()
   assert.equal(builtin.transport, 'sse')

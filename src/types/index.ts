@@ -220,6 +220,7 @@ export interface Conversation {
 }
 
 export type ThemeMode = 'light' | 'dark' | 'system'
+export type ThemeId = 'island' | 'minimal'
 export type Language = 'zh-CN' | 'en' | 'ja'
 export type OnboardingCompanionMode = 'concise' | 'research' | 'creative' | 'engineering' | 'companion'
 export type UpstreamTransportMode = 'auto' | 'http' | 'websocket'
@@ -227,18 +228,20 @@ export type RemoteCompactMode = 'off' | 'auto' | 'required'
 export type PayloadPolicyMode = 'off' | 'warn' | 'block'
 export type ProxyMode = 'off' | 'custom-base-url' | 'system-detected'
 export type BedrockCacheTtl = 'default' | '5m' | '1h'
+export type PageTransitionStyle = 'state' | 'classic'
 
 export interface Settings {
   theme: ThemeMode
+  themeId?: ThemeId
   language: Language
   defaultProvider: string | null
   fontSize: number
   hapticsEnabled: boolean
+  pageTransitionStyle?: PageTransitionStyle
   defaultTemperature?: number
   defaultMaxTokens?: number
   memoryEnabled?: boolean
   knowledgeEnabled?: boolean
-  petEnabled?: boolean
   webSearchEnabled?: boolean
   webSearchMode?: WebSearchMode
   knowledgeTopK?: number

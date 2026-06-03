@@ -228,7 +228,7 @@ function assertReleaseOutputs(outputs, variant, pass) {
 
 function prepareAndroidProjectForRelease() {
   run(commandName('node'), ['scripts/patch-onnxruntime-16kb.js'])
-  run(commandName('npx'), ['expo', 'prebuild', '--platform', 'android'])
+  run(commandName('node'), ['node_modules/expo/bin/cli', 'prebuild', '--platform', 'android'])
   allowReleaseCleartextTraffic()
   run(commandName('node'), ['scripts/patch-onnxruntime-16kb.js'])
   run(commandName('node'), ['scripts/configure-android-release.js', '--skip-signing'])
@@ -292,8 +292,8 @@ function main() {
     prepareAndroidProjectForRelease()
   }
   if (args.runChecks) {
-    run(commandName('npm'), ['run', 'type-check'])
-    run(commandName('npm'), ['run', 'test:provider-intelligence'])
+    run(commandName('bun'), ['run', 'type-check'])
+    run(commandName('bun'), ['run', 'test:provider-intelligence'])
   }
 
   const variants = args.variant === 'all' ? supportedVariants() : [args.variant]

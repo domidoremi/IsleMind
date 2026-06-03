@@ -6,19 +6,28 @@ import type { TFunction } from 'i18next'
 import { useTranslation } from 'react-i18next'
 import { router } from 'expo-router'
 import * as Haptics from 'expo-haptics'
-import { Copy, Database, ExternalLink, Globe2, ListChecks, MoreHorizontal, RefreshCcw, RotateCcw, Settings2, Sparkles, Trash2, Volume2, Zap } from 'lucide-react-native'
+import { ChevronDown, Copy, ListChecks, MoreHorizontal, RefreshCcw, RotateCcw, Settings2, Sparkles, Trash2, Volume2, Zap } from 'lucide-react-native'
 import { Gesture, GestureDetector } from 'react-native-gesture-handler'
 import Animated, { runOnJS, useAnimatedStyle, useSharedValue, withSpring, withTiming } from 'react-native-reanimated'
-import type { ChatErrorCode, Message, MessageCitation } from '@/types'
+import { AnimatedNavigationIcon } from '@/components/navigation/AnimatedNavigationIcon'
+import { useNavigationTrigger } from '@/components/navigation/AnimatedNavigationTrigger'
+import type { ChatErrorCode, Message, MessageCitation, ProcessTrace } from '@/types'
 import { useAppTheme } from '@/hooks/useAppTheme'
 import { messageAnimationForMotion } from '@/theme/animation'
 import { IslePressable } from '@/components/ui/isle'
 import { useSettingsStore } from '@/store/settingsStore'
 import { MessageContent } from './MessageContent'
-import { collectMessageTraces, formatDuration, formatNumber, getActiveTraceTitle, summarizeTraces } from './tracePresentation'
+import { collectMessageTraces, formatDuration, formatNumber, getActiveTraceTitle, normalizeTraceStatuses, summarizeTraces } from './tracePresentation'
 import { IslePanel } from '@/components/ui/isle'
 import { RenderGuard } from '@/components/ui/RenderGuard'
 import { useMotionPreference } from '@/hooks/useMotionPreference'
+
+type MessageActionItem = {
+  key: string
+  label: string
+  onPress?: () => void
+  icon: ReactNode
+}
 
 interface MessageBubbleProps {
   conversationId: string
@@ -47,9 +56,13 @@ export function MessageBubble({ conversationId, message, index, isLastAssistant 
   const armed = useSharedValue(0)
   const deleteProgress = useSharedValue(0)
   const displayText = message.responseText ?? message.content
-  const traces = collectMessageTraces(message)
-  const traceSummary = summarizeTraces(traces, message.status)
+  const processTraces = collectMessageTraces(message)
+  const thinkingTraces = collectThinkingTraces(message)
+  const processSummary = summarizeTraces(processTraces, message.status)
+  const thinkingSummary = summarizeTraces(thinkingTraces, message.status)
   const canLongPressDelete = !!onDelete && message.status !== 'sending' && message.status !== 'streaming'
+  const showThinking = !isUser && thinkingTraces.length > 0
+  const hasFloatingActions = message.status !== 'error' && (displayText.length > 0 || (!isUser && isLastAssistant && message.status !== 'streaming'))
 
   function requestDelete() {
     if (hapticsEnabled) void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning)
@@ -95,13 +108,15 @@ export function MessageBubble({ conversationId, message, index, isLastAssistant 
             borderRadius: 28,
             alignItems: 'center',
             justifyContent: 'center',
-            backgroundColor: colors.error,
+            backgroundColor: colors.material.chrome,
+            borderWidth: 1,
+            borderColor: colors.borderStrong,
             [isUser ? 'right' : 'left']: 4,
           },
           deleteStyle,
         ]}
       >
-        <Trash2 color={colors.surface} size={18} strokeWidth={2.2} />
+        <Trash2 color={colors.textTertiary} size={18} strokeWidth={2.2} />
       </Animated.View>
 
       <GestureDetector gesture={longPressDelete}>
@@ -110,19 +125,24 @@ export function MessageBubble({ conversationId, message, index, isLastAssistant 
             {...messageAnimationForMotion(index, motion)}
             style={{
               alignSelf: isUser ? 'flex-end' : 'flex-start',
-              maxWidth: isUser ? '86%' : '94%',
-              width: isUser ? undefined : '94%',
+              maxWidth: isUser ? '84%' : '94%',
+              width: isUser ? undefined : '92%',
             }}
           >
             <IslePanel
               elevated={!isUser}
               contentStyle={{
                 paddingHorizontal: 16,
-                paddingVertical: 12,
+                paddingTop: 12,
+                paddingBottom: hasFloatingActions ? 56 : 12,
+                paddingRight: hasFloatingActions ? 54 : 16,
+                position: 'relative',
               }}
               style={{
-                borderRadius: isUser ? 24 : 28,
-                backgroundColor: isUser ? colors.text : colors.island,
+                borderRadius: 24,
+                borderBottomRightRadius: isUser ? 9 : 24,
+                borderBottomLeftRadius: isUser ? 24 : 9,
+                backgroundColor: isUser ? colors.text : colors.material.paperRaised,
                 borderColor: message.status === 'error' ? colors.error : colors.border,
               }}
             >
@@ -131,23 +151,24 @@ export function MessageBubble({ conversationId, message, index, isLastAssistant 
                   {t('messageBubble.attachmentCount', { count: message.attachments.length })}
                 </Text>
               ) : null}
+              {showThinking ? <ThinkingProcessBlock traces={thinkingTraces} status={message.status} summary={thinkingSummary.label} /> : null}
               <RenderGuard label={t('messageBubble.messageContent')} fallbackText={displayText || message.content} compact>
-                {displayText && isStreamingContent ? (
-                  <StreamingTextContent content={displayText} isUser={isUser} />
-                ) : displayText ? (
-                  <MessageContent content={displayText} isUser={isUser} />
-                ) : traces.length && message.status !== 'streaming' ? (
+                {displayText ? (
+                  <MessageBodyReveal active={isStreamingContent}>
+                    <MessageContent content={displayText} isUser={isUser} />
+                  </MessageBodyReveal>
+                ) : processTraces.length && message.status !== 'streaming' ? (
                   <Text style={{ color: isUser ? colors.surface : colors.textSecondary, fontSize: 13, lineHeight: 20 }}>
                     {t('messageBubble.emptyResponse')}
                   </Text>
-                ) : (
+                ) : isUser ? (
                   <TypingDots />
-                )}
+                ) : null}
               </RenderGuard>
               {isStreamingContent && displayText ? <Cursor /> : null}
               {message.status === 'error' ? <ErrorHint code={message.errorCode} /> : null}
-              <MessageStatusLine message={message} traces={traces} isUser={isUser} hasText={!!displayText} />
-              {!isUser && (message.citations?.length || traces.length) ? (
+              <MessageStatusLine message={message} traces={processTraces} isUser={isUser} hasText={!!displayText} />
+              {!isUser && (message.citations?.length || processTraces.length) ? (
                 <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 6, marginTop: 8 }}>
                   {message.citations?.length ? (
                     <>
@@ -161,39 +182,45 @@ export function MessageBubble({ conversationId, message, index, isLastAssistant 
                       />
                     </>
                   ) : null}
-                  {traces.length ? (
+                  {processTraces.length ? (
                     <ProcessSummaryRow
-                      summary={traceSummary.label}
-                      hasError={traceSummary.errors > 0}
-                      running={traceSummary.running > 0}
+                      summary={processSummary.label}
+                      hasError={processSummary.errors > 0}
+                      running={processSummary.running > 0}
                       onPress={() => router.push({ pathname: '/source', params: { conversationId, messageId: message.id, kind: 'process' } })}
                     />
                   ) : null}
                 </View>
               ) : null}
+              <MessageActionRow
+                isUser={isUser}
+                message={message}
+                displayText={displayText}
+                isLastAssistant={isLastAssistant}
+                actionsOpen={actionsOpen}
+                onToggle={() => setActionsOpen((value) => !value)}
+                onCopy={() => onCopy?.(message)}
+                onCopyWorkArtifact={onCopyWorkArtifact ? () => onCopyWorkArtifact(message) : undefined}
+                onContinueWorkArtifact={onContinueWorkArtifact ? () => onContinueWorkArtifact(message) : undefined}
+                onSpeak={() => onSpeak?.(message)}
+                onConfigure={() => onConfigure?.(message)}
+                onTestModel={() => onTestModel?.(message)}
+                onRetry={() => onRetry?.(message)}
+                onRegenerate={onRegenerate}
+              />
             </IslePanel>
             <MessageMeta message={message} />
-            <MessageActionRow
-              isUser={isUser}
-              message={message}
-              displayText={displayText}
-              isLastAssistant={isLastAssistant}
-              actionsOpen={actionsOpen}
-              onToggle={() => setActionsOpen((value) => !value)}
-              onCopy={() => onCopy?.(message)}
-              onCopyWorkArtifact={onCopyWorkArtifact ? () => onCopyWorkArtifact(message) : undefined}
-              onContinueWorkArtifact={onContinueWorkArtifact ? () => onContinueWorkArtifact(message) : undefined}
-              onSpeak={() => onSpeak?.(message)}
-              onConfigure={() => onConfigure?.(message)}
-              onTestModel={() => onTestModel?.(message)}
-              onRetry={() => onRetry?.(message)}
-              onRegenerate={onRegenerate}
-            />
           </MotiView>
         </Animated.View>
       </GestureDetector>
     </View>
   )
+}
+
+function collectThinkingTraces(message: Message): ProcessTrace[] {
+  return (message.reasoning ?? [])
+    .filter((trace) => trace.type === 'reasoning' && !trace.metadata?.hiddenSignature)
+    .sort((a, b) => (a.startedAt ?? 0) - (b.startedAt ?? 0))
 }
 
 function MessageActionRow({
@@ -231,11 +258,17 @@ function MessageActionRow({
   const { t } = useTranslation()
   const canCopy = !!displayText
   const canRegenerate = !isUser && isLastAssistant && message.status !== 'streaming'
-  const hasNormalActions = canCopy || canRegenerate
+  const actionCandidates: Array<MessageActionItem | null> = [
+    canCopy ? { key: 'copy', label: t('common.copy'), onPress: onCopy, icon: <Copy color={colors.textSecondary} size={15} strokeWidth={2.1} /> } : null,
+    canCopy && !isUser ? { key: 'speak', label: t('messageBubble.speak'), onPress: onSpeak, icon: <Volume2 color={colors.textSecondary} size={15} strokeWidth={2.1} /> } : null,
+    canRegenerate ? { key: 'regenerate', label: t('messageBubble.regenerate'), onPress: onRegenerate, icon: <RefreshCcw color={colors.textSecondary} size={15} strokeWidth={2.1} /> } : null,
+  ]
+  const normalActions = actionCandidates.filter((item): item is MessageActionItem => item !== null)
+  const hasWorkArtifactActions = canCopy && !isUser && (!!onCopyWorkArtifact || !!onContinueWorkArtifact)
 
   if (message.status === 'sending') return null
   if (message.status === 'streaming' && !canCopy) return null
-  if (!hasNormalActions && message.status !== 'error') return null
+  if (!normalActions.length && !hasWorkArtifactActions && message.status !== 'error') return null
 
   if (!isUser && message.status === 'error') {
     return (
@@ -254,37 +287,46 @@ function MessageActionRow({
   }
 
   return (
-    <View style={{ alignItems: isUser ? 'flex-end' : 'flex-start', marginTop: 5 }}>
-      <View style={{ flexDirection: 'row', gap: 6, flexWrap: 'wrap', justifyContent: isUser ? 'flex-end' : 'flex-start' }}>
-        <ActionButton label={actionsOpen ? t('common.collapse') : t('messageBubble.actions')} onPress={onToggle} compact>
-          <MoreHorizontal color={colors.textTertiary} size={14} strokeWidth={2} />
-        </ActionButton>
-        {actionsOpen && canCopy ? (
-          <ActionButton label={t('common.copy')} onPress={onCopy} compact>
-            <Copy color={colors.textTertiary} size={13} strokeWidth={2} />
-          </ActionButton>
-        ) : null}
-        {actionsOpen && canCopy && !isUser && onCopyWorkArtifact ? (
-          <ActionButton label={t('messageBubble.copyWorkArtifact')} onPress={onCopyWorkArtifact} compact>
-            <ListChecks color={colors.textTertiary} size={13} strokeWidth={2} />
-          </ActionButton>
-        ) : null}
-        {actionsOpen && canCopy && !isUser && onContinueWorkArtifact ? (
-          <ActionButton label={t('messageBubble.continueWorkArtifact')} onPress={onContinueWorkArtifact} compact>
-            <Sparkles color={colors.textTertiary} size={13} strokeWidth={2} />
-          </ActionButton>
-        ) : null}
-        {actionsOpen && canCopy && !isUser ? (
-          <ActionButton label={t('messageBubble.speak')} onPress={onSpeak} compact>
-            <Volume2 color={colors.textTertiary} size={13} strokeWidth={2} />
-          </ActionButton>
-        ) : null}
-        {actionsOpen && canRegenerate ? (
-          <ActionButton label={t('messageBubble.regenerate')} onPress={onRegenerate} compact>
-            <RefreshCcw color={colors.textTertiary} size={13} strokeWidth={2} />
-          </ActionButton>
-        ) : null}
-      </View>
+    <View pointerEvents="box-none" style={{ position: 'absolute', right: 8, bottom: 8, zIndex: 3, alignItems: 'flex-end' }}>
+      {actionsOpen ? (
+        <MotiView
+          from={{ opacity: 0, translateY: 4, scale: 0.96 }}
+          animate={{ opacity: 1, translateY: 0, scale: 1 }}
+          transition={{ type: 'timing', duration: 120 }}
+          style={{
+            marginBottom: 6,
+            minHeight: 38,
+            borderRadius: 20,
+            paddingHorizontal: 5,
+            paddingVertical: 4,
+            flexDirection: 'row',
+            alignItems: 'center',
+            gap: 4,
+            backgroundColor: colors.material.chrome,
+            borderWidth: 1,
+            borderColor: colors.border,
+          }}
+        >
+          {normalActions.map((action) => (
+            <ActionIconButton key={action.key} label={action.label} onPress={action.onPress}>
+              {action.icon}
+            </ActionIconButton>
+          ))}
+          {canCopy && !isUser && onCopyWorkArtifact ? (
+            <ActionIconButton label={t('messageBubble.copyWorkArtifact')} onPress={onCopyWorkArtifact}>
+              <ListChecks color={colors.textSecondary} size={15} strokeWidth={2.1} />
+            </ActionIconButton>
+          ) : null}
+          {canCopy && !isUser && onContinueWorkArtifact ? (
+            <ActionIconButton label={t('messageBubble.continueWorkArtifact')} onPress={onContinueWorkArtifact}>
+              <Sparkles color={colors.textSecondary} size={15} strokeWidth={2.1} />
+            </ActionIconButton>
+          ) : null}
+        </MotiView>
+      ) : null}
+      <ActionIconButton label={actionsOpen ? t('common.collapse') : t('messageBubble.actions')} onPress={onToggle} active={actionsOpen}>
+        <MoreHorizontal color={actionsOpen ? colors.primary : colors.textTertiary} size={16} strokeWidth={2.2} />
+      </ActionIconButton>
     </View>
   )
 }
@@ -300,33 +342,134 @@ function ErrorHint({ code }: { code?: ChatErrorCode }) {
   )
 }
 
-function StreamingTextContent({ content, isUser }: { content: string; isUser: boolean }) {
+function MessageBodyReveal({ active, children }: { active: boolean; children: ReactNode }) {
+  return (
+    <MotiView
+      from={{ opacity: 0.92, translateY: active ? 2 : 0 }}
+      animate={{ opacity: 1, translateY: 0 }}
+      transition={{ type: 'timing', duration: 90 }}
+      style={{ marginTop: active ? 4 : 0 }}
+    >
+      {children}
+    </MotiView>
+  )
+}
+
+function ThinkingProcessBlock({ traces, status, summary }: { traces: ProcessTrace[]; status: Message['status']; summary: string }) {
   const { colors } = useAppTheme()
-  const [visibleLength, setVisibleLength] = useState(() => content.length)
+  const { t } = useTranslation()
+  const running = status === 'streaming' || status === 'sending'
+  const [expanded, setExpanded] = useState(running)
+  const normalizedTraces = normalizeTraceStatuses(traces, status).filter((trace) => !trace.metadata?.hiddenSignature)
+  const activeTrace = normalizedTraces.find((trace) => trace.status === 'running' || trace.status === 'pending')
+  const details = normalizedTraces.length ? normalizedTraces.slice(-5) : []
+  const canToggle = running || details.length > 0
 
   useEffect(() => {
-    if (visibleLength >= content.length) {
-      if (visibleLength > content.length) setVisibleLength(content.length)
-      return
+    if (running) {
+      setExpanded(true)
+    } else {
+      setExpanded(false)
     }
-    const timer = setTimeout(() => {
-      setVisibleLength((current) => Math.min(content.length, current + Math.max(4, Math.ceil((content.length - current) / 3))))
-    }, 18)
-    return () => clearTimeout(timer)
-  }, [content, visibleLength])
+  }, [running])
 
   return (
-    <Text
-      selectable
-      style={{
-        color: isUser ? colors.surface : colors.text,
-        fontSize: 15,
-        lineHeight: 23,
-        letterSpacing: 0.1,
-      }}
-    >
-      {content.slice(0, visibleLength)}
-    </Text>
+    <View style={{ marginBottom: 10 }}>
+      <IslePressable
+        haptic
+        disabled={!canToggle}
+        onPress={() => setExpanded((value) => !value)}
+        accessibilityLabel={expanded ? t('messageBubble.collapseThinking') : t('messageBubble.expandThinking')}
+        style={{
+          minHeight: 44,
+          borderRadius: 18,
+          paddingHorizontal: 10,
+          paddingVertical: 8,
+          flexDirection: 'row',
+          alignItems: 'center',
+          gap: 8,
+          backgroundColor: colors.material.field,
+          borderWidth: 1,
+          borderColor: running ? colors.borderStrong : colors.border,
+        }}
+      >
+        <MotiView
+          from={{ opacity: 0.4, scale: 0.84 }}
+          animate={{ opacity: running ? 1 : 0.72, scale: 1 }}
+          transition={{ loop: running, type: 'timing', duration: 760 }}
+          style={{ width: 7, height: 7, borderRadius: 4, backgroundColor: running ? colors.primary : colors.textTertiary }}
+        />
+        <View style={{ flex: 1, minWidth: 0 }}>
+          <Text numberOfLines={1} style={{ color: colors.text, fontSize: 12, fontWeight: '900' }}>
+            {running ? (activeTrace?.title ?? t('messageBubble.thinkingActive')) : t('messageBubble.thinkingCollapsed')}
+          </Text>
+          <Text numberOfLines={1} style={{ color: colors.textTertiary, fontSize: 10, fontWeight: '800', marginTop: 1 }}>
+            {summary}
+          </Text>
+        </View>
+        {canToggle ? (
+          <MotiView animate={{ rotate: expanded ? '180deg' : '0deg' }} transition={{ type: 'timing', duration: 150 }}>
+            <ChevronDown color={colors.textTertiary} size={14} strokeWidth={2.1} />
+          </MotiView>
+        ) : null}
+      </IslePressable>
+      {expanded ? (
+        <MotiView
+          from={{ opacity: 0, translateY: -3 }}
+          animate={{ opacity: 1, translateY: 0 }}
+          transition={{ type: 'timing', duration: 120 }}
+          style={{
+            marginTop: 6,
+            borderRadius: 16,
+            padding: 10,
+            backgroundColor: colors.material.field,
+            borderWidth: 1,
+            borderColor: colors.border,
+            gap: 8,
+          }}
+        >
+          {details.length ? details.map((trace) => (
+            <View key={trace.id} style={{ gap: 2 }}>
+              <Text numberOfLines={1} style={{ color: colors.textSecondary, fontSize: 11, fontWeight: '900' }}>
+                {trace.title}
+              </Text>
+              {trace.content ? (
+                <Text numberOfLines={3} style={{ color: colors.textTertiary, fontSize: 10, lineHeight: 15, fontWeight: '700' }}>
+                  {trace.content}
+                </Text>
+              ) : null}
+            </View>
+          )) : (
+            <TypingDots />
+          )}
+        </MotiView>
+      ) : null}
+    </View>
+  )
+}
+
+function UsageTextChips({ usage, estimated }: { usage: NonNullable<Message['usage']>; estimated: boolean }) {
+  const { t } = useTranslation()
+  const input = usage.inputTokens ?? 0
+  const output = usage.outputTokens ?? 0
+  const reasoning = usage.reasoningTokens ?? 0
+  const total = usage.totalTokens ?? input + output + reasoning
+  const items = [
+    input ? t('messageBubble.tokensIn', { value: formatNumber(input) }) : '',
+    output ? t('messageBubble.tokensOut', { value: formatNumber(output) }) : '',
+    total ? t('messageBubble.tokensTotal', { value: formatNumber(total) }) : '',
+    reasoning ? t('messageBubble.tokensReasoning', { value: formatNumber(reasoning) }) : '',
+    estimated ? t('messageBubble.estimated') : '',
+  ].filter(Boolean)
+
+  if (!items.length) return null
+
+  return (
+    <>
+      {items.map((item) => (
+        <MetaChip key={item} label={item} />
+      ))}
+    </>
   )
 }
 
@@ -384,6 +527,7 @@ function CitationSummaryRow({ citations, onPress }: { citations: MessageCitation
   const knowledge = citations.filter((source) => source.type === 'knowledge').length
   const memory = citations.filter((source) => source.type === 'memory').length
   const first = citations[0]
+  const navigation = useNavigationTrigger(onPress)
   const summary = [
     web ? t('messageBubble.web', { count: web }) : '',
     knowledge ? t('messageBubble.knowledge', { count: knowledge }) : '',
@@ -393,7 +537,7 @@ function CitationSummaryRow({ citations, onPress }: { citations: MessageCitation
   return (
     <IslePressable
       haptic
-      onPress={onPress}
+      onPress={navigation.trigger}
       accessibilityLabel={t('messageBubble.viewSources')}
       style={{
         minHeight: 44,
@@ -409,43 +553,52 @@ function CitationSummaryRow({ citations, onPress }: { citations: MessageCitation
       }}
     >
       <View style={{ width: 18, height: 18, borderRadius: 9, alignItems: 'center', justifyContent: 'center', backgroundColor: colors.island }}>
-        {first?.type === 'web' ? <Globe2 color={colors.primary} size={11} strokeWidth={2.2} /> : <Database color={colors.primary} size={11} strokeWidth={2.2} />}
+        <AnimatedNavigationIcon glyph={first?.type === 'knowledge' ? 'knowledge-database' : first?.type === 'memory' ? 'memory-brain' : 'source'} active={navigation.active} color={colors.primary} size={16} />
       </View>
       <Text numberOfLines={1} style={{ color: colors.textSecondary, fontSize: 11, fontWeight: '900', maxWidth: 132 }}>
         {t('messageBubble.sources', { count: citations.length })}{summary ? ` · ${summary}` : ''}
       </Text>
-      <ExternalLink color={colors.textTertiary} size={12} strokeWidth={2} />
+      <AnimatedNavigationIcon glyph="source" active={navigation.active} color={colors.textTertiary} size={14} />
     </IslePressable>
   )
 }
 
 function CitationNumberChips({ citations, onPress }: { citations: MessageCitation[]; onPress: (citation: MessageCitation) => void }) {
-  const { colors } = useAppTheme()
-  const { t } = useTranslation()
   return (
     <View style={{ flexDirection: 'row', gap: 5, flexWrap: 'wrap' }}>
       {citations.slice(0, 6).map((citation, index) => (
-        <IslePressable
-          key={citation.id}
-          haptic
-          onPress={() => onPress(citation)}
-          accessibilityLabel={t('source.citation', { index: index + 1 })}
-          style={{
-            minHeight: 44,
-            minWidth: 44,
-            borderRadius: 22,
-            paddingHorizontal: 8,
-            alignItems: 'center',
-            justifyContent: 'center',
-            backgroundColor: colors.mintSoft,
-            borderWidth: 1,
-            borderColor: colors.border,
-          }}
-        >
-          <Text style={{ color: colors.primary, fontSize: 11, fontWeight: '900' }}>[{index + 1}]</Text>
-        </IslePressable>
+        <CitationNumberChip key={citation.id} citation={citation} index={index} onPress={onPress} />
       ))}
     </View>
+  )
+}
+
+function CitationNumberChip({ citation, index, onPress }: { citation: MessageCitation; index: number; onPress: (citation: MessageCitation) => void }) {
+  const { colors } = useAppTheme()
+  const { t } = useTranslation()
+  const navigation = useNavigationTrigger(() => onPress(citation))
+  return (
+    <IslePressable
+      haptic
+      onPress={navigation.trigger}
+      accessibilityLabel={t('source.citation', { index: index + 1 })}
+      style={{
+        minHeight: 44,
+        minWidth: 44,
+        borderRadius: 22,
+        paddingHorizontal: 8,
+        flexDirection: 'row',
+        alignItems: 'center',
+        justifyContent: 'center',
+        gap: 3,
+        backgroundColor: colors.mintSoft,
+        borderWidth: 1,
+        borderColor: colors.border,
+      }}
+    >
+      <AnimatedNavigationIcon glyph={citation.type === 'knowledge' ? 'knowledge-database' : citation.type === 'memory' ? 'memory-brain' : 'source'} active={navigation.active} color={colors.primary} size={14} />
+      <Text style={{ color: colors.primary, fontSize: 11, fontWeight: '900' }}>[{index + 1}]</Text>
+    </IslePressable>
   )
 }
 
@@ -453,10 +606,11 @@ function ProcessSummaryRow({ summary, hasError, running, onPress }: { summary: s
   const { colors } = useAppTheme()
   const { t } = useTranslation()
   const tint = running ? colors.primary : hasError ? colors.error : colors.textSecondary
+  const navigation = useNavigationTrigger(onPress)
   return (
     <IslePressable
       haptic
-      onPress={onPress}
+      onPress={navigation.trigger}
       accessibilityLabel={t('messageBubble.viewProcess')}
       style={{
         minHeight: 44,
@@ -472,45 +626,46 @@ function ProcessSummaryRow({ summary, hasError, running, onPress }: { summary: s
       }}
     >
       <View style={{ width: 18, height: 18, borderRadius: 9, alignItems: 'center', justifyContent: 'center', backgroundColor: colors.island }}>
-        <ListChecks color={tint} size={11} strokeWidth={2.2} />
+        <AnimatedNavigationIcon glyph="source" active={navigation.active} color={tint} size={16} />
       </View>
       <Text numberOfLines={1} style={{ color: colors.textSecondary, fontSize: 11, fontWeight: '900', maxWidth: 132 }}>
         {t('messageBubble.process', { summary })}
       </Text>
-      <Sparkles color={tint} size={12} strokeWidth={2} />
+      <AnimatedNavigationIcon glyph="mcp-network" active={navigation.active} color={tint} size={14} />
     </IslePressable>
   )
 }
 
 function MessageMeta({ message }: { message: Message }) {
-  const { colors } = useAppTheme()
   const { t } = useTranslation()
   const usage = message.usage
+  const estimated = usage?.source === 'estimated' || !!message.estimatedTokens
+  const hasUsage = !!usage && !!(usage.inputTokens || usage.outputTokens || usage.totalTokens || usage.reasoningTokens)
   const items = [
-    message.durationMs ? formatDuration(message.durationMs) : '',
-    usage?.inputTokens ? t('messageBubble.tokensIn', { value: formatNumber(usage.inputTokens) }) : '',
-    usage?.outputTokens ? t('messageBubble.tokensOut', { value: formatNumber(usage.outputTokens) }) : '',
-    usage?.totalTokens ? t('messageBubble.tokensTotal', { value: formatNumber(usage.totalTokens) }) : '',
-    usage?.reasoningTokens ? t('messageBubble.tokensReasoning', { value: formatNumber(usage.reasoningTokens) }) : '',
-    usage?.source === 'estimated' || message.estimatedTokens ? t('messageBubble.estimated') : '',
+    message.durationMs ? t('messageBubble.duration', { value: formatDuration(message.durationMs) }) : '',
+    !hasUsage && estimated ? t('messageBubble.estimated') : '',
     message.citations?.length ? t('messageBubble.sources', { count: message.citations.length }) : '',
   ].filter(Boolean)
-  if (!items.length) return null
+  if (!items.length && !hasUsage) return null
   return (
-    <Text
-      numberOfLines={1}
+    <View
       style={{
         alignSelf: message.role === 'user' ? 'flex-end' : 'flex-start',
-        maxWidth: '86%',
-        color: colors.textTertiary,
-        fontSize: 10,
-        fontWeight: '900',
+        maxWidth: message.role === 'user' ? '84%' : '92%',
         marginTop: 6,
         paddingHorizontal: 4,
+        flexDirection: 'row',
+        alignItems: 'center',
+        justifyContent: message.role === 'user' ? 'flex-end' : 'flex-start',
+        flexWrap: 'wrap',
+        gap: 6,
       }}
     >
-      {items.join(' · ')}
-    </Text>
+      {hasUsage && usage ? <UsageTextChips usage={usage} estimated={estimated} /> : null}
+      {items.map((item) => (
+        <MetaChip key={item} label={item} />
+      ))}
+    </View>
   )
 }
 
@@ -589,6 +744,42 @@ function ActionButton({ label, children, compact = false, tone = 'default', onPr
       {children}
       <Text style={{ color: tone === 'danger' ? colors.error : colors.textTertiary, fontSize: compact ? 11 : 12, fontWeight: '900' }}>{label}</Text>
     </IslePressable>
+  )
+}
+
+function ActionIconButton({ label, children, active = false, onPress }: { label: string; children: ReactNode; active?: boolean; onPress?: () => void }) {
+  const { colors } = useAppTheme()
+
+  return (
+    <IslePressable
+      haptic
+      onPress={onPress}
+      accessibilityLabel={label}
+      style={{
+        width: 38,
+        height: 38,
+        borderRadius: 19,
+        alignItems: 'center',
+        justifyContent: 'center',
+        backgroundColor: active ? colors.islandRaised : colors.material.paperRaised,
+        borderWidth: 1,
+        borderColor: active ? colors.borderStrong : colors.border,
+      }}
+    >
+      {children}
+    </IslePressable>
+  )
+}
+
+function MetaChip({ label }: { label: string }) {
+  const { colors } = useAppTheme()
+
+  return (
+    <View style={{ minHeight: 24, borderRadius: 12, paddingHorizontal: 8, paddingVertical: 5, backgroundColor: colors.material.field, borderWidth: 1, borderColor: colors.border }}>
+      <Text numberOfLines={1} style={{ color: colors.textTertiary, fontSize: 10, fontWeight: '900' }}>
+        {label}
+      </Text>
+    </View>
   )
 }
 

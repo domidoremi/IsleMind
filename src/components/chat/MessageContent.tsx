@@ -52,7 +52,8 @@ function safeParseRichContent(content: string, t: TFunction): RichSegment[] {
 }
 
 function RichMarkdown({ content, isUser }: { content: string; isUser: boolean }) {
-  const { colors, isDark } = useAppTheme()
+  const { colors } = useAppTheme()
+  const inlineCodeBackground = isUser ? colors.highlight : colors.pressed
   return (
     <View style={{ maxWidth: '100%', overflow: 'hidden' }}>
       <Markdown
@@ -67,7 +68,7 @@ function RichMarkdown({ content, isUser }: { content: string; isUser: boolean })
           ordered_list: { marginTop: 2, marginBottom: 8 },
           code_inline: {
             color: isUser ? colors.surface : colors.text,
-            backgroundColor: isUser ? 'rgba(255,255,255,0.14)' : isDark ? 'rgba(255,242,221,0.08)' : 'rgba(76,57,35,0.08)',
+            backgroundColor: inlineCodeBackground,
             borderRadius: 7,
             paddingHorizontal: 5,
           },
@@ -82,10 +83,11 @@ function RichMarkdown({ content, isUser }: { content: string; isUser: boolean })
 }
 
 function CodeBlockCard({ content, language, isUser }: { content: string; language?: string; isUser: boolean }) {
-  const { colors, isDark } = useAppTheme()
+  const { colors } = useAppTheme()
   const { t } = useTranslation()
   const [expanded, setExpanded] = useState(false)
   const label = language?.trim() || 'code'
+  const codeSurface = isUser ? colors.highlight : colors.ui.code.background
   return (
     <RichCard isUser={isUser} expanded={expanded}>
       <CardHeader
@@ -102,13 +104,15 @@ function CodeBlockCard({ content, language, isUser }: { content: string; languag
           selectable
           style={{
             minWidth: 260,
-            color: isUser ? colors.surface : colors.text,
+            color: isUser ? colors.surface : colors.ui.code.text,
             fontFamily: 'monospace',
             fontSize: 12,
             lineHeight: 18,
             padding: 12,
             borderRadius: 18,
-            backgroundColor: isUser ? colors.highlight : isDark ? 'rgba(255,242,221,0.055)' : 'rgba(76,57,35,0.055)',
+            backgroundColor: codeSurface,
+            borderWidth: isUser ? 0 : 1,
+            borderColor: colors.ui.code.border,
           }}
         >
           {content.trimEnd()}
@@ -119,13 +123,18 @@ function CodeBlockCard({ content, language, isUser }: { content: string; languag
 }
 
 function TableBlockCard({ rows, title, isUser }: { rows: string[][]; title?: string; isUser: boolean }) {
-  const { colors, isDark } = useAppTheme()
+  const { colors } = useAppTheme()
   const { t } = useTranslation()
   const safeRows = rows.length ? rows : [['']]
   const columnCount = Math.max(...safeRows.map((row) => row.length), 1)
   const normalizedRows = safeRows.map((row) => Array.from({ length: columnCount }, (_, index) => row[index] ?? ''))
   const [expanded, setExpanded] = useState(rows.length <= 6)
   const visibleRows = expanded ? normalizedRows : normalizedRows.slice(0, 6)
+  const userDivider = colors.highlight
+  const tableBorder = isUser ? userDivider : colors.border
+  const tableHeaderBackground = isUser ? colors.highlight : colors.ui.table.headerBackground
+  const tableRowBackground = isUser ? 'transparent' : colors.ui.card.defaultBackground
+  const tableStripeBackground = isUser ? undefined : colors.ui.card.mutedBackground
   return (
     <RichCard isUser={isUser} expanded={expanded}>
       <CardHeader
@@ -138,9 +147,9 @@ function TableBlockCard({ rows, title, isUser }: { rows: string[][]; title?: str
         ]}
       />
       <ScrollView horizontal showsHorizontalScrollIndicator={false}>
-        <View style={{ borderRadius: 16, overflow: 'hidden', borderWidth: 1, borderColor: isUser ? 'rgba(255,255,255,0.16)' : colors.border }}>
+        <View style={{ borderRadius: 16, overflow: 'hidden', borderWidth: 1, borderColor: tableBorder }}>
           {visibleRows.map((row, rowIndex) => (
-            <View key={`${rowIndex}-${row.join('|')}`} style={{ flexDirection: 'row', backgroundColor: rowIndex === 0 ? (isUser ? 'rgba(255,255,255,0.13)' : colors.islandRaised) : (isUser ? 'transparent' : colors.island) }}>
+            <View key={`${rowIndex}-${row.join('|')}`} style={{ flexDirection: 'row', backgroundColor: rowIndex === 0 ? tableHeaderBackground : tableRowBackground }}>
               {row.map((cell, cellIndex) => (
                 <View
                   key={`${rowIndex}-${cellIndex}`}
@@ -151,8 +160,8 @@ function TableBlockCard({ rows, title, isUser }: { rows: string[][]; title?: str
                     paddingVertical: 9,
                     borderRightWidth: cellIndex === row.length - 1 ? 0 : 1,
                     borderBottomWidth: rowIndex === visibleRows.length - 1 ? 0 : 1,
-                    borderColor: isUser ? 'rgba(255,255,255,0.14)' : colors.border,
-                    backgroundColor: rowIndex > 0 && rowIndex % 2 === 0 && !isUser ? (isDark ? 'rgba(255,242,221,0.025)' : 'rgba(76,57,35,0.026)') : undefined,
+                    borderColor: tableBorder,
+                    backgroundColor: rowIndex > 0 && rowIndex % 2 === 0 ? tableStripeBackground : undefined,
                   }}
                 >
                   <Text
@@ -245,8 +254,8 @@ function RichCard({ isUser, expanded, children }: { isUser: boolean; expanded?: 
       contentStyle={{ padding: 10 }}
       style={{
         borderRadius: expanded ? 24 : 20,
-        backgroundColor: isUser ? 'rgba(255,255,255,0.1)' : colors.material.paperRaised,
-        borderColor: isUser ? 'rgba(255,255,255,0.14)' : colors.border,
+        backgroundColor: isUser ? colors.highlight : colors.material.paperRaised,
+        borderColor: isUser ? colors.highlight : colors.border,
       }}
     >
       {children}
@@ -267,9 +276,10 @@ function CardHeader({
 }) {
   const { colors } = useAppTheme()
   const { t } = useTranslation()
+  const actionSurface = isUser ? colors.highlight : colors.island
   return (
     <View style={{ flexDirection: 'row', alignItems: 'center', gap: 7, marginBottom: 8 }}>
-      <View style={{ width: 24, height: 24, borderRadius: 12, alignItems: 'center', justifyContent: 'center', backgroundColor: isUser ? 'rgba(255,255,255,0.1)' : colors.island }}>
+      <View style={{ width: 24, height: 24, borderRadius: 12, alignItems: 'center', justifyContent: 'center', backgroundColor: actionSurface }}>
         {icon}
       </View>
       <Text numberOfLines={1} style={{ flex: 1, color: isUser ? colors.surface : colors.text, fontSize: 12, fontWeight: '900' }}>
@@ -288,7 +298,7 @@ function CardHeader({
             flexDirection: 'row',
             alignItems: 'center',
             gap: 4,
-            backgroundColor: isUser ? 'rgba(255,255,255,0.12)' : colors.island,
+            backgroundColor: actionSurface,
           }}
         >
           {action.label === t('common.copy') ? <Copy color={isUser ? colors.surface : colors.textTertiary} size={11} strokeWidth={2.2} /> : null}

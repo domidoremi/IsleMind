@@ -43,7 +43,7 @@ export const motionTokens = {
     normal: 230,
     slow: 420,
     ambient: 5200,
-    mascotLoop: 1600,
+    pulseLoop: 1600,
   },
   distance: {
     chrome: 84,

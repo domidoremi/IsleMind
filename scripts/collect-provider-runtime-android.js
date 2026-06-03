@@ -318,7 +318,6 @@ function writeFixture(device) {
     settings: {
       language: 'zh-CN',
       onboardingCompleted: true,
-      petEnabled: false,
       runtimeLogEnabled: true,
       providerAllowlist: [],
       providerBlocklist: [],

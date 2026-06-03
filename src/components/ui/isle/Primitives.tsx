@@ -1,10 +1,9 @@
 import type { ReactNode } from 'react'
 import { Text, View, type StyleProp, type TextInputProps, type ViewStyle } from 'react-native'
 import { ChevronDown } from 'lucide-react-native'
-import { MotiView } from 'moti'
+import { AnimatePresence, MotiView } from 'moti'
 import { useTranslation } from 'react-i18next'
 import { useAppTheme } from '@/hooks/useAppTheme'
-import { typography } from '@/theme/typography'
 import { useMotionPreference } from '@/hooks/useMotionPreference'
 import { motionTokens } from '@/theme/animation'
 import { PressableScale } from '@/components/ui/PressableScale'
@@ -78,13 +77,13 @@ export function IsleSection({
 }) {
   const { colors } = useAppTheme()
   return (
-    <IslePanel material={material} elevated={elevated} radius={28} style={style} contentStyle={[{ padding: 14 }, contentStyle]}>
+    <IslePanel material={material} elevated={elevated} radius={colors.ui.radius.panel} style={style} contentStyle={[{ padding: 14 }, contentStyle]}>
       {title || subtitle || action ? (
-        <View style={{ flexDirection: 'row', alignItems: 'flex-start', gap: 10, marginBottom: children ? 12 : 0 }}>
+        <View style={{ flexDirection: 'row', alignItems: subtitle ? 'flex-start' : 'center', gap: 10, marginBottom: children ? 12 : 0 }}>
           <View style={{ flex: 1 }}>
-            {title ? <Text style={{ color: colors.text, fontSize: 16, fontWeight: '900' }}>{title}</Text> : null}
+            {title ? <Text style={{ color: colors.text, fontSize: 16, lineHeight: 21, fontWeight: '900', includeFontPadding: false, textAlignVertical: 'center' }}>{title}</Text> : null}
             {subtitle ? (
-              <Text numberOfLines={2} style={{ color: colors.textSecondary, fontSize: 12, lineHeight: 17, marginTop: title ? 3 : 0 }}>
+              <Text numberOfLines={2} style={{ color: colors.textSecondary, fontSize: 12, lineHeight: 17, marginTop: title ? 3 : 0, includeFontPadding: false }}>
                 {subtitle}
               </Text>
             ) : null}
@@ -117,7 +116,7 @@ export function IsleField({
         size="middle"
         inputStyle={inputProps.style}
       />
-      {note ? <Text style={{ color: colors.textTertiary, fontSize: 11, lineHeight: 16, marginTop: 6 }}>{note}</Text> : null}
+      {note ? <Text style={{ color: colors.textTertiary, fontSize: 11, lineHeight: 16, marginTop: 6, includeFontPadding: false }}>{note}</Text> : null}
     </View>
   )
 }
@@ -136,38 +135,55 @@ export function IsleToggle({
   onPress: () => void
 }) {
   const { colors } = useAppTheme()
+  const motion = useMotionPreference()
   return (
     <PressableScale
       haptic
       onPress={onPress}
       style={{
-        minHeight: 68,
-        borderRadius: 26,
-        padding: 12,
-        backgroundColor: colors.material.paper,
-        borderWidth: 2,
-        borderColor: active ? colors.primary : colors.border,
-        shadowColor: active ? colors.primary : colors.shadowTint,
-        shadowOpacity: active ? 0.24 : 0.14,
-        shadowRadius: 0,
-        shadowOffset: { width: 0, height: 4 },
-        elevation: 2,
+        borderRadius: colors.ui.radius.panel,
       }}
     >
-      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 12 }}>
+      <MotiView
+        animate={{
+          backgroundColor: active ? colors.mintSoft : colors.material.paper,
+          borderColor: active ? colors.primary : colors.border,
+          scale: active ? 1.006 : 1,
+          translateY: active ? -1 : 0,
+        }}
+        transition={motion === 'full' ? { type: 'spring', ...motionTokens.spring.settle } : { type: 'timing', duration: 1 }}
+        style={{
+          minHeight: 68,
+          borderRadius: colors.ui.radius.panel,
+          padding: 12,
+          justifyContent: 'center',
+          borderWidth: 2,
+          shadowColor: active ? colors.primary : colors.shadowTint,
+          shadowOpacity: active && colors.ui.minimal ? colors.shadow.mediumOpacity : colors.ui.card.shadowOpacity,
+          shadowRadius: colors.ui.card.shadowRadius,
+          shadowOffset: { width: 0, height: colors.ui.card.shadowOffset },
+          elevation: colors.ui.card.shadowOpacity > 0 ? 1 : 0,
+        }}
+      >
+      <View style={{ minHeight: 44, flexDirection: 'row', alignItems: 'center', gap: 12 }}>
         {icon ? (
-          <View style={{ width: 38, height: 38, borderRadius: 19, alignItems: 'center', justifyContent: 'center', backgroundColor: active ? colors.mintSoft : colors.islandRaised }}>
+          <MotiView
+            animate={{ backgroundColor: active ? colors.surface : colors.islandRaised, scale: active ? 1.04 : 1, rotate: active || colors.ui.minimal ? '0deg' : '-2deg' }}
+            transition={motion === 'full' ? { type: 'spring', ...motionTokens.spring.gentle } : { type: 'timing', duration: 1 }}
+            style={{ width: 38, height: 38, borderRadius: 19, alignItems: 'center', justifyContent: 'center' }}
+          >
             {icon}
-          </View>
+          </MotiView>
         ) : null}
-        <View style={{ flex: 1 }}>
-          <Text style={{ color: colors.text, fontSize: 15, fontWeight: '900' }}>{title}</Text>
-          {description ? <Text numberOfLines={2} style={{ color: colors.textSecondary, fontSize: 12, lineHeight: 17, marginTop: 3 }}>{description}</Text> : null}
+        <View style={{ flex: 1, minHeight: description ? 40 : 44, justifyContent: 'center' }}>
+          <Text numberOfLines={1} style={{ color: colors.text, fontSize: 15, lineHeight: 21, fontWeight: '900', includeFontPadding: false, textAlignVertical: 'center' }}>{title}</Text>
+          {description ? <Text numberOfLines={2} style={{ color: colors.textSecondary, fontSize: 12, lineHeight: 17, marginTop: 3, includeFontPadding: false, textAlignVertical: 'center' }}>{description}</Text> : null}
         </View>
-        <View accessible={false} pointerEvents="none">
+        <View accessible={false} pointerEvents="none" style={{ height: 44, justifyContent: 'center' }}>
           <IsleSwitch active={active} />
         </View>
       </View>
+      </MotiView>
     </PressableScale>
   )
 }
@@ -175,30 +191,54 @@ export function IsleToggle({
 export function IsleSwitch({ active, onChange }: { active: boolean; onChange?: () => void }) {
   const { colors } = useAppTheme()
   const motion = useMotionPreference()
+  const switchTokens = colors.ui.switch
   if (onChange) return <IsleStyledSwitch checked={active} onChange={() => onChange()} />
   const width = 52
   const height = 28
-  const knob = 21
+  const borderWidth = 2
+  const thumbInset = 3
+  const knob = height - thumbInset * 2
+  const thumbTravel = width - knob - thumbInset * 2
   return (
-    <View
+    <MotiView
       accessible={false}
       style={{
-        minWidth: width,
+        width,
         height,
         borderRadius: height / 2,
-        padding: 3,
+        alignItems: 'flex-start',
         justifyContent: 'center',
-        backgroundColor: active ? '#86d67a' : '#d4c9b4',
-        borderWidth: 2,
-        borderColor: active ? colors.success : colors.border,
       }}
     >
       <MotiView
-        animate={{ translateX: active ? width - knob - 10 : 0, translateY: -2 }}
-        transition={motion === 'full' ? { type: 'spring', ...motionTokens.spring.settle } : { type: 'timing', duration: 1 }}
-        style={{ width: knob, height: knob, borderRadius: knob / 2, backgroundColor: '#fffdf5' }}
+        animate={{
+          backgroundColor: active ? switchTokens.trackOn : switchTokens.trackOff,
+          borderColor: active ? switchTokens.trackOnBorder : switchTokens.trackOffBorder,
+        }}
+        transition={motion === 'full' ? { type: 'timing', duration: motionTokens.duration.fast } : { type: 'timing', duration: 1 }}
+        style={{ position: 'absolute', top: 0, right: 0, bottom: 0, left: 0, borderRadius: height / 2, borderWidth }}
       />
-    </View>
+      <MotiView
+        animate={{ translateX: active ? thumbTravel : 0, scale: 1 }}
+        transition={motion === 'full' ? { type: 'spring', ...motionTokens.spring.settle } : { type: 'timing', duration: 1 }}
+        style={{
+          position: 'absolute',
+          top: thumbInset,
+          left: thumbInset,
+          width: knob,
+          height: knob,
+          borderRadius: knob / 2,
+          backgroundColor: switchTokens.thumb,
+          borderWidth: 1,
+          borderColor: active ? switchTokens.thumbOnBorder : switchTokens.thumbOffBorder,
+          shadowColor: 'transparent',
+          shadowOpacity: 0,
+          shadowRadius: 0,
+          shadowOffset: { width: 0, height: 0 },
+          elevation: 0,
+        }}
+      />
+    </MotiView>
   )
 }
 
@@ -221,11 +261,11 @@ export function IsleListItem({
 }) {
   const { colors } = useAppTheme()
   const content = (
-    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 12 }}>
+    <View style={{ minHeight: 44, flexDirection: 'row', alignItems: 'center', gap: 12 }}>
       {leading}
-      <View style={{ flex: 1 }}>
-        <Text numberOfLines={1} style={{ color: danger ? colors.error : colors.text, fontSize: 15, fontWeight: '900' }}>{title}</Text>
-        {description ? <Text numberOfLines={2} style={{ color: colors.textSecondary, fontSize: 12, lineHeight: 17, marginTop: 3 }}>{description}</Text> : null}
+      <View style={{ flex: 1, minHeight: description ? 40 : 44, justifyContent: 'center' }}>
+        <Text numberOfLines={1} style={{ color: danger ? colors.error : colors.text, fontSize: 15, lineHeight: 21, fontWeight: '900', includeFontPadding: false, textAlignVertical: 'center' }}>{title}</Text>
+        {description ? <Text numberOfLines={2} style={{ color: colors.textSecondary, fontSize: 12, lineHeight: 17, marginTop: 3, includeFontPadding: false, textAlignVertical: 'center' }}>{description}</Text> : null}
       </View>
       {trailing}
     </View>
@@ -239,16 +279,17 @@ export function IsleListItem({
         style={[
           {
             minHeight: 58,
-            borderRadius: 22,
+            borderRadius: colors.ui.radius.card,
             padding: 12,
+            justifyContent: 'center',
             backgroundColor: danger ? colors.coralWash : colors.material.paperRaised,
             borderWidth: 2,
             borderColor: danger ? colors.error : colors.border,
             shadowColor: danger ? colors.error : colors.shadowTint,
-            shadowOpacity: 0.16,
-            shadowRadius: 0,
-            shadowOffset: { width: 0, height: 3 },
-            elevation: 2,
+            shadowOpacity: colors.ui.card.shadowOpacity,
+            shadowRadius: colors.ui.card.shadowRadius,
+            shadowOffset: { width: 0, height: colors.ui.card.shadowOffset },
+            elevation: colors.ui.card.shadowOpacity > 0 ? 1 : 0,
           },
           style,
         ]}
@@ -263,16 +304,17 @@ export function IsleListItem({
       style={[
         {
           minHeight: 58,
-          borderRadius: 22,
+          borderRadius: colors.ui.radius.card,
           padding: 12,
+          justifyContent: 'center',
           backgroundColor: danger ? colors.coralWash : colors.material.paperRaised,
           borderWidth: 2,
           borderColor: danger ? colors.error : colors.border,
           shadowColor: danger ? colors.error : colors.shadowTint,
-          shadowOpacity: 0.12,
-          shadowRadius: 0,
-          shadowOffset: { width: 0, height: 3 },
-          elevation: 2,
+          shadowOpacity: colors.ui.card.shadowOpacity,
+          shadowRadius: colors.ui.card.shadowRadius,
+          shadowOffset: { width: 0, height: colors.ui.card.shadowOffset },
+          elevation: colors.ui.card.shadowOpacity > 0 ? 1 : 0,
         },
         style,
       ]}
@@ -288,23 +330,27 @@ export function IsleHeader({
   leading,
   trailing,
   collapsed = false,
+  material = 'chrome',
+  elevated = true,
 }: {
   title: string
   subtitle?: string
   leading?: ReactNode
   trailing?: ReactNode
   collapsed?: boolean
+  material?: IsleMaterial
+  elevated?: boolean
 }) {
   const { colors } = useAppTheme()
   return (
-    <IslePanel material="chrome" elevated radius={30} contentStyle={{ padding: collapsed ? 6 : 8 }}>
+    <IslePanel material={material} elevated={elevated} radius={colors.ui.radius.panel} contentStyle={{ padding: collapsed ? 6 : 8 }}>
       <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
         {leading}
         <View style={{ flex: 1 }}>
-          <Text numberOfLines={1} style={{ color: colors.text, fontSize: collapsed ? 14 : 17, fontWeight: '900', letterSpacing: typography.tracking.tight }}>
+          <Text numberOfLines={1} style={{ color: colors.text, fontSize: collapsed ? 14 : 17, lineHeight: collapsed ? 18 : 22, fontWeight: '900', letterSpacing: 0, includeFontPadding: false, textAlignVertical: 'center' }}>
             {title}
           </Text>
-          {subtitle ? <Text numberOfLines={1} style={{ color: colors.textSecondary, fontSize: 11, fontWeight: '800', marginTop: 2 }}>{subtitle}</Text> : null}
+          {subtitle ? <Text numberOfLines={1} style={{ color: colors.textSecondary, fontSize: 11, lineHeight: 15, fontWeight: '800', marginTop: 2, includeFontPadding: false }}>{subtitle}</Text> : null}
         </View>
         {trailing}
       </View>
@@ -322,6 +368,7 @@ export function IsleSheet({
   contentStyle?: StyleProp<ViewStyle>
 }) {
   const motion = useMotionPreference()
+  const { colors } = useAppTheme()
   return (
     <MotiView
       from={motion === 'full' ? { opacity: 0, translateY: motionTokens.distance.sheet, scale: 0.985 } : { opacity: 0 }}
@@ -329,7 +376,7 @@ export function IsleSheet({
       transition={motion === 'full' ? { type: 'spring', ...motionTokens.spring.settle } : { type: 'timing', duration: motionTokens.duration.fast }}
       style={style}
     >
-      <IslePanel material="chrome" elevated radius={28} contentStyle={[{ padding: 12 }, contentStyle]}>
+      <IslePanel material="chrome" elevated radius={colors.ui.radius.panel} contentStyle={[{ padding: 12 }, contentStyle]}>
         {children}
       </IslePanel>
     </MotiView>
@@ -358,37 +405,55 @@ export function IsleDisclosure({
       onPress={onPress}
       accessibilityLabel={`${expanded ? t('common.collapse') : t('common.expand')}${title}`}
       style={{
-        minHeight: 54,
-        borderRadius: 24,
-        paddingHorizontal: 13,
-        paddingVertical: 10,
-        backgroundColor: danger ? colors.coralWash : colors.material.paper,
-        borderWidth: 2,
-        borderStyle: danger ? 'solid' : 'dashed',
-        borderColor: danger ? colors.error : colors.border,
+        borderRadius: colors.ui.radius.panel,
       }}
     >
-      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
-        <View style={{ width: 28, height: 28, borderRadius: 14, alignItems: 'center', justifyContent: 'center', backgroundColor: danger ? colors.error : colors.primary }}>
-          <Text style={{ color: colors.primaryForeground, fontSize: 17, fontWeight: '900' }}>{expanded ? '-' : '+'}</Text>
+      <MotiView
+        animate={{
+          backgroundColor: danger ? colors.coralWash : expanded ? colors.material.paperRaised : colors.material.paper,
+          borderColor: danger ? colors.error : expanded ? colors.primary : colors.border,
+          scale: expanded ? 1.005 : 1,
+        }}
+        transition={motion === 'full' ? { type: 'spring', ...motionTokens.spring.gentle } : { type: 'timing', duration: 1 }}
+        style={{
+          minHeight: 54,
+          borderRadius: colors.ui.radius.panel,
+          paddingHorizontal: 13,
+          paddingVertical: 10,
+          borderWidth: 2,
+          borderStyle: danger || colors.ui.minimal ? 'solid' : 'dashed',
+        }}
+      >
+      <View style={{ minHeight: 30, flexDirection: 'row', alignItems: 'center', gap: 10 }}>
+        <MotiView
+          animate={{ backgroundColor: danger ? colors.error : expanded ? colors.primary : colors.primary, scale: expanded ? 1.04 : 1 }}
+          transition={motion === 'full' ? { type: 'spring', ...motionTokens.spring.gentle } : { type: 'timing', duration: 1 }}
+          style={{ width: 28, height: 28, borderRadius: 14, alignItems: 'center', justifyContent: 'center' }}
+        >
+          <Text style={{ color: colors.primaryForeground, fontSize: 17, lineHeight: 21, fontWeight: '900', includeFontPadding: false, textAlignVertical: 'center' }}>{expanded ? '-' : '+'}</Text>
+        </MotiView>
+        <View style={{ flex: 1, minHeight: summary && !expanded ? 32 : 28, justifyContent: 'center' }}>
+          <Text style={{ color: danger ? colors.error : colors.text, fontSize: 15, lineHeight: 21, fontWeight: '900', includeFontPadding: false, textAlignVertical: 'center' }}>{title}</Text>
+          {summary && !expanded ? <Text numberOfLines={1} style={{ color: colors.textTertiary, fontSize: 11, lineHeight: 15, marginTop: 2, fontWeight: '800', includeFontPadding: false, textAlignVertical: 'center' }}>{summary}</Text> : null}
         </View>
-        <View style={{ flex: 1 }}>
-          <Text style={{ color: danger ? colors.error : colors.text, fontSize: 15, fontWeight: '900' }}>{title}</Text>
-          {summary && !expanded ? <Text numberOfLines={1} style={{ color: colors.textTertiary, fontSize: 11, marginTop: 2, fontWeight: '800' }}>{summary}</Text> : null}
-        </View>
-        <MotiView animate={{ rotate: expanded ? '180deg' : '0deg' }} transition={{ type: 'timing', duration: motion === 'full' ? 180 : 1 }}>
+        <MotiView animate={{ rotate: expanded ? '180deg' : '0deg', scale: expanded ? 1.08 : 1 }} transition={{ type: 'timing', duration: motion === 'full' ? 180 : 1 }}>
           <ChevronDown color={danger ? colors.error : colors.textTertiary} size={19} />
         </MotiView>
       </View>
-      {expanded && summary ? (
-        <MotiView
-          from={motion === 'full' ? { opacity: 0, translateY: 6 } : { opacity: 0 }}
-          animate={{ opacity: 1, translateY: 0 }}
-          transition={motion === 'full' ? { type: 'spring', ...motionTokens.spring.gentle } : { type: 'timing', duration: 1 }}
-        >
-          <Text style={{ color: colors.textSecondary, fontSize: 12, lineHeight: 17, marginTop: 8 }}>{summary}</Text>
-        </MotiView>
-      ) : null}
+      <AnimatePresence>
+        {expanded && summary ? (
+          <MotiView
+            key="isle-disclosure-summary"
+            from={motion === 'full' ? { opacity: 0, translateY: 6, scale: 0.985 } : { opacity: 0 }}
+            animate={{ opacity: 1, translateY: 0, scale: 1 }}
+            exit={motion === 'full' ? { opacity: 0, translateY: -4, scale: 0.985 } : { opacity: 0 }}
+            transition={motion === 'full' ? { type: 'spring', ...motionTokens.spring.gentle } : { type: 'timing', duration: 1 }}
+          >
+            <Text style={{ color: colors.textSecondary, fontSize: 12, lineHeight: 17, marginTop: 8, includeFontPadding: false, textAlignVertical: 'center' }}>{summary}</Text>
+          </MotiView>
+        ) : null}
+      </AnimatePresence>
+      </MotiView>
     </PressableScale>
   )
 }

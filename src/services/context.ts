@@ -58,6 +58,7 @@ export async function retrieveContext(conversation: Conversation, draftMessage: 
   const query = [draftMessage.content, conversation.title, conversation.systemPrompt].filter(Boolean).join('\n')
   const provider = await useSettingsStore.getState().hydrateProviderKey(conversation.providerId)
   const memorySources = settings.memoryEnabled ? await searchMemories(query, settings.memoryTopK ?? 4) : []
+  const knowledgeScope = buildKnowledgeScope(conversation.knowledgeSources ?? conversation.skillSnapshot?.knowledgeSources)
   if (!settings.knowledgeEnabled || settings.ragMode === 'off') {
     const sources = memorySources.slice(0, MAX_CONTEXT_ITEMS)
     return {
@@ -72,8 +73,8 @@ export async function retrieveContext(conversation: Conversation, draftMessage: 
     settings,
     memorySources,
     maxContextItems: Math.max(settings.knowledgeTopK ?? 4, settings.memoryTopK ?? 4, MAX_CONTEXT_ITEMS),
-    retrieveKnowledge: (variant, limit) => searchKnowledgeSafely(variant, limit, settings.ragMode === 'fts' ? 'fts' : 'hybrid', settings.embeddingMode ?? 'hybrid', provider ?? undefined),
-    retrieveAgentic: (variant, plan, limit) => localDataStore.searchAgenticIndexes(variant, { limit, plan }),
+    retrieveKnowledge: (variant, limit) => searchKnowledgeSafely(variant, limit, settings.ragMode === 'fts' ? 'fts' : 'hybrid', settings.embeddingMode ?? 'hybrid', provider ?? undefined, knowledgeScope),
+    retrieveAgentic: (variant, plan, limit) => localDataStore.searchAgenticIndexes(variant, { limit, plan }).then((sources) => filterKnowledgeSources(sources, knowledgeScope).slice(0, limit)),
   })
   void localDataStore.logRagEvaluation({
     query,
@@ -112,7 +113,8 @@ export async function retrieveFlareContext(input: {
     input.limit ?? 4,
     settings.ragMode === 'fts' ? 'fts' : 'hybrid',
     settings.embeddingMode ?? 'hybrid',
-    provider ?? undefined
+    provider ?? undefined,
+    buildKnowledgeScope(input.conversation.knowledgeSources ?? input.conversation.skillSnapshot?.knowledgeSources)
   )
   const excluded = new Set(input.excludeChunkIds ?? [])
   const advanced = await localDataStore.searchAgenticIndexes(input.followupQuery || input.query, {
@@ -294,16 +296,22 @@ async function searchKnowledgeSafely(
   limit: number,
   ragMode: 'fts' | 'hybrid',
   embeddingMode: 'provider' | 'local' | 'hybrid',
-  provider?: AIProvider
+  provider?: AIProvider,
+  knowledgeScope?: KnowledgeScope
 ): Promise<RetrievalSource[]> {
   try {
+    const scopedLimit = knowledgeScope ? Math.max(limit * 4, 20) : limit
+    let results: RetrievalSource[]
     if (ragMode === 'hybrid') {
-      return await localDataStore.searchHybrid(query, { limit, ...resolveKnowledgeSearchRuntime(embeddingMode, provider) })
+      results = await localDataStore.searchHybrid(query, { limit: scopedLimit, ...resolveKnowledgeSearchRuntime(embeddingMode, provider) })
+    } else {
+      results = await searchKnowledge(query, scopedLimit)
     }
-    return await searchKnowledge(query, limit)
+    return filterKnowledgeSources(results, knowledgeScope).slice(0, limit)
   } catch {
     try {
-      return await searchKnowledge(query, limit)
+      const scopedLimit = knowledgeScope ? Math.max(limit * 4, 20) : limit
+      return filterKnowledgeSources(await searchKnowledge(query, scopedLimit), knowledgeScope).slice(0, limit)
     } catch {
       return []
     }
@@ -322,6 +330,34 @@ function resolveKnowledgeSearchRuntime(
     localEmbeddingModelSource: settings.localEmbeddingModelSource,
     ...(provider ? { provider } : {}),
   }
+}
+
+interface KnowledgeScope {
+  ids: Set<string>
+  terms: string[]
+}
+
+function buildKnowledgeScope(values?: string[]): KnowledgeScope | undefined {
+  const normalized = Array.from(new Set((values ?? []).map((value) => normalizeScopeValue(value)).filter(Boolean)))
+  if (!normalized.length) return undefined
+  return {
+    ids: new Set(normalized),
+    terms: normalized,
+  }
+}
+
+function filterKnowledgeSources(sources: RetrievalSource[], scope?: KnowledgeScope): RetrievalSource[] {
+  if (!scope) return sources
+  return sources.filter((source) => {
+    const documentId = normalizeScopeValue(source.documentId)
+    if (documentId && scope.ids.has(documentId)) return true
+    const title = normalizeScopeValue(source.title)
+    return scope.terms.some((term) => title.includes(term))
+  })
+}
+
+function normalizeScopeValue(value?: string): string {
+  return typeof value === 'string' ? value.trim().toLowerCase() : ''
 }
 
 export async function searchWeb(query: string, limit = 5): Promise<RetrievalSource[]> {

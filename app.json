@@ -8,11 +8,6 @@
     "userInterfaceStyle": "automatic",
     "newArchEnabled": true,
     "scheme": "islemind",
-    "splash": {
-      "image": "./assets/splash-icon.png",
-      "resizeMode": "contain",
-      "backgroundColor": "#F8F4EC"
-    },
     "ios": {
       "supportsTablet": true,
       "bundleIdentifier": "com.islemind.app",

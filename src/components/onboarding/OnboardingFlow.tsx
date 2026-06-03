@@ -13,12 +13,12 @@ import { AnimatePresence, MotiView } from 'moti'
 import { BrainCircuit, Check, Compass, LockKeyhole, MessageCircle, Search, SendHorizontal, ShieldCheck, Sparkles } from 'lucide-react-native'
 import { useTranslation } from 'react-i18next'
 import { useSafeAreaInsets } from 'react-native-safe-area-context'
-import type { HomePetState } from '@/components/mascot/petState'
 import { IslePressable } from '@/components/ui/isle'
 import { useAppTheme } from '@/hooks/useAppTheme'
 import { useMotionPreference } from '@/hooks/useMotionPreference'
 import { motionTokens } from '@/theme/animation'
 import type { OnboardingCompanionMode } from '@/types'
+import { DEFAULT_ONBOARDING_COMPANION_MODE } from '@/utils/onboardingProfile'
 
 export interface OnboardingCompleteInput {
   draft?: string
@@ -40,7 +40,6 @@ interface OnboardingStage {
   bodyKey: string
   actionKey: string
   tone: StageTone
-  pet: HomePetState
 }
 
 interface CompanionOption {
@@ -49,7 +48,6 @@ interface CompanionOption {
   bodyKey: string
   promptKey: string
   tone: StageTone
-  pet: HomePetState
 }
 
 const mark = require('../../../assets/splash-icon.png')
@@ -62,7 +60,6 @@ const STAGES: OnboardingStage[] = [
     bodyKey: 'onboarding.awaken.body',
     actionKey: 'onboarding.awaken.action',
     tone: 'mint',
-    pet: petState('core', 'waving', 'celebrate', 1.04, 'success', 'pet.a11y.celebrate'),
   },
   {
     id: 'privacy',
@@ -71,7 +68,6 @@ const STAGES: OnboardingStage[] = [
     bodyKey: 'onboarding.privacy.body',
     actionKey: 'onboarding.privacy.action',
     tone: 'sky',
-    pet: petState('provider', 'offlineWaiting', 'thinking', 0.88, 'model_unconfigured', 'pet.a11y.modelUnconfigured'),
   },
   {
     id: 'companion',
@@ -80,7 +76,6 @@ const STAGES: OnboardingStage[] = [
     bodyKey: 'onboarding.companion.body',
     actionKey: 'onboarding.companion.action',
     tone: 'amber',
-    pet: petState('rag', 'deepThinking', 'thinking', 1.1, 'reasoning', 'pet.a11y.thinking'),
   },
   {
     id: 'capability',
@@ -89,7 +84,6 @@ const STAGES: OnboardingStage[] = [
     bodyKey: 'onboarding.capability.body',
     actionKey: 'onboarding.capability.action',
     tone: 'coral',
-    pet: petState('rag', 'retrieving', 'working', 1.02, 'retrieval', 'pet.a11y.retrieval'),
   },
   {
     id: 'firstPrompt',
@@ -98,7 +92,6 @@ const STAGES: OnboardingStage[] = [
     bodyKey: 'onboarding.firstPrompt.body',
     actionKey: 'onboarding.firstPrompt.action',
     tone: 'mint',
-    pet: petState('core', 'sendingPrompt', 'working', 1.08, 'sending_prompt', 'pet.a11y.sending'),
   },
 ]
 
@@ -109,7 +102,6 @@ const COMPANIONS: CompanionOption[] = [
     bodyKey: 'onboarding.companion.modes.concise.body',
     promptKey: 'onboarding.firstPrompt.samples.concise',
     tone: 'mint',
-    pet: petState('core', 'review', 'working', 1, 'idle', 'pet.a11y.idle'),
   },
   {
     id: 'research',
@@ -117,7 +109,6 @@ const COMPANIONS: CompanionOption[] = [
     bodyKey: 'onboarding.companion.modes.research.body',
     promptKey: 'onboarding.firstPrompt.samples.research',
     tone: 'sky',
-    pet: petState('rag', 'retrieving', 'working', 1.08, 'retrieval', 'pet.a11y.retrieval'),
   },
   {
     id: 'creative',
@@ -125,7 +116,6 @@ const COMPANIONS: CompanionOption[] = [
     bodyKey: 'onboarding.companion.modes.creative.body',
     promptKey: 'onboarding.firstPrompt.samples.creative',
     tone: 'amber',
-    pet: petState('core', 'jumping', 'celebrate', 1.1, 'success', 'pet.a11y.celebrate'),
   },
   {
     id: 'engineering',
@@ -133,7 +123,6 @@ const COMPANIONS: CompanionOption[] = [
     bodyKey: 'onboarding.companion.modes.engineering.body',
     promptKey: 'onboarding.firstPrompt.samples.engineering',
     tone: 'ink',
-    pet: petState('rag', 'graphMapping', 'thinking', 1.06, 'graph_mapping', 'pet.a11y.graphMapping'),
   },
   {
     id: 'companion',
@@ -141,9 +130,10 @@ const COMPANIONS: CompanionOption[] = [
     bodyKey: 'onboarding.companion.modes.companion.body',
     promptKey: 'onboarding.firstPrompt.samples.companion',
     tone: 'coral',
-    pet: petState('core', 'waving', 'celebrate', 0.96, 'success', 'pet.a11y.celebrate'),
   },
 ]
+
+const DEFAULT_COMPANION = COMPANIONS.find((item) => item.id === DEFAULT_ONBOARDING_COMPANION_MODE) ?? COMPANIONS[0]
 
 const BEACONS = [
   { id: 'chat', titleKey: 'onboarding.privacy.beacons.chat.title', bodyKey: 'onboarding.privacy.beacons.chat.body', icon: MessageCircle },
@@ -166,17 +156,17 @@ export function OnboardingFlow({ onComplete, onSkip }: OnboardingFlowProps) {
   const { width, height } = useWindowDimensions()
   const [stageIndex, setStageIndex] = useState(0)
   const [litBeacons, setLitBeacons] = useState<Set<string>>(() => new Set())
-  const [companionMode, setCompanionMode] = useState<OnboardingCompanionMode>('research')
-  const [selectedPromptKey, setSelectedPromptKey] = useState<string>(COMPANIONS[1].promptKey)
+  const [companionMode, setCompanionMode] = useState<OnboardingCompanionMode>(DEFAULT_ONBOARDING_COMPANION_MODE)
+  const [selectedPromptKey, setSelectedPromptKey] = useState<string | null>(null)
   const [leaving, setLeaving] = useState(false)
   const stage = STAGES[stageIndex]
-  const selectedCompanion = COMPANIONS.find((item) => item.id === companionMode) ?? COMPANIONS[1]
+  const selectedCompanion = COMPANIONS.find((item) => item.id === companionMode) ?? DEFAULT_COMPANION
   const tone = toneColors(stage.id === 'companion' ? selectedCompanion.tone : stage.tone, colors)
   const progress = (stageIndex + 1) / STAGES.length
   const compact = height < 680 || width < 370
 
   const promptOptions = useMemo(() => {
-    const companion = COMPANIONS.find((item) => item.id === companionMode) ?? COMPANIONS[1]
+    const companion = COMPANIONS.find((item) => item.id === companionMode) ?? DEFAULT_COMPANION
     return [
       companion.promptKey,
       'onboarding.firstPrompt.samples.organize',
@@ -185,8 +175,8 @@ export function OnboardingFlow({ onComplete, onSkip }: OnboardingFlowProps) {
   }, [companionMode])
 
   useEffect(() => {
-    if (!promptOptions.includes(selectedPromptKey)) {
-      setSelectedPromptKey(promptOptions[0])
+    if (selectedPromptKey && !promptOptions.includes(selectedPromptKey)) {
+      setSelectedPromptKey(null)
     }
   }, [promptOptions, selectedPromptKey])
 
@@ -201,7 +191,7 @@ export function OnboardingFlow({ onComplete, onSkip }: OnboardingFlowProps) {
   function goNext() {
     if (leaving) return
     if (stage.id === 'firstPrompt') {
-      complete(t(selectedPromptKey))
+      complete(selectedPromptKey ? t(selectedPromptKey) : undefined)
       return
     }
     setStageIndex((index) => Math.min(index + 1, STAGES.length - 1))
@@ -250,7 +240,7 @@ export function OnboardingFlow({ onComplete, onSkip }: OnboardingFlowProps) {
             bottom: 0,
             left: 0,
             zIndex: 80,
-            backgroundColor: isDark ? '#120f0c' : '#fff4dc',
+            backgroundColor: colors.material.canvas,
           }}
         >
           <OnboardingBackdrop
@@ -258,6 +248,7 @@ export function OnboardingFlow({ onComplete, onSkip }: OnboardingFlowProps) {
             height={height}
             progress={progress}
             tone={tone}
+            colors={colors}
             dark={isDark}
             motionFull={motion === 'full'}
           />
@@ -480,6 +471,7 @@ function HeroStage({
   progress: number
   motionFull: boolean
 }) {
+  const { colors } = useAppTheme()
   const activeTone = stage.id === 'companion' ? companion.tone : stage.tone
   const badgeSize = compact ? 54 : 62
   const stageWidth = compact ? 260 : 310
@@ -525,7 +517,7 @@ function HeroStage({
             borderRadius: markSize / 2,
             alignItems: 'center',
             justifyContent: 'center',
-            backgroundColor: 'rgba(255, 253, 245, 0.72)',
+            backgroundColor: colors.material.chrome,
             borderWidth: 1,
             borderColor: tone.line,
           }}
@@ -741,7 +733,7 @@ function CapabilityStep({ tone, compact }: { tone: ToneColors; compact: boolean 
   )
 }
 
-function FirstPromptStep({ options, selectedKey, onSelect, tone, compact }: { options: string[]; selectedKey: string; onSelect: (key: string) => void; tone: ToneColors; compact: boolean }) {
+function FirstPromptStep({ options, selectedKey, onSelect, tone, compact }: { options: string[]; selectedKey: string | null; onSelect: (key: string | null) => void; tone: ToneColors; compact: boolean }) {
   const { colors } = useAppTheme()
   const { t } = useTranslation()
   return (
@@ -757,7 +749,7 @@ function FirstPromptStep({ options, selectedKey, onSelect, tone, compact }: { op
           >
             <IslePressable
               haptic
-              onPress={() => onSelect(key)}
+              onPress={() => onSelect(active ? null : key)}
               accessibilityLabel={t(key)}
               style={{
                 minHeight: compact ? 50 : 56,
@@ -944,6 +936,7 @@ function OnboardingBackdrop({
   height,
   progress,
   tone,
+  colors,
   dark,
   motionFull,
 }: {
@@ -951,28 +944,35 @@ function OnboardingBackdrop({
   height: number
   progress: number
   tone: ToneColors
+  colors: ReturnType<typeof useAppTheme>['colors']
   dark: boolean
   motionFull: boolean
 }) {
   const horizon = height * 0.44
+  const skyStart = colors.material.canvas
+  const skyEnd = colors.paperDeep
+  const waterStart = colors.paperWarm
+  const islandFill = colors.islandMuted
+  const islandRaisedFill = colors.surfaceTertiary
+  const decorativeOpacity = colors.ui.ornamented ? 0.68 : 0.36
   return (
     <View pointerEvents="none" style={{ position: 'absolute', top: 0, right: 0, bottom: 0, left: 0 }}>
       <Svg width={width} height={height} viewBox={`0 0 ${width} ${height}`}>
         <Defs>
           <LinearGradient id="sky" x1="0" y1="0" x2="0" y2="1">
-            <Stop offset="0" stopColor={dark ? '#120f0c' : '#fff7e8'} stopOpacity="1" />
+            <Stop offset="0" stopColor={skyStart} stopOpacity="1" />
             <Stop offset="0.58" stopColor={tone.bg} stopOpacity={dark ? '0.42' : '0.62'} />
-            <Stop offset="1" stopColor={dark ? '#22160f' : '#f2ddbd'} stopOpacity="1" />
+            <Stop offset="1" stopColor={skyEnd} stopOpacity="1" />
           </LinearGradient>
           <LinearGradient id="water" x1="0" y1="0" x2="1" y2="1">
-            <Stop offset="0" stopColor={dark ? '#19120e' : '#f3d9b7'} stopOpacity="1" />
+            <Stop offset="0" stopColor={waterStart} stopOpacity="1" />
             <Stop offset="1" stopColor={tone.bg} stopOpacity={dark ? '0.38' : '0.72'} />
           </LinearGradient>
         </Defs>
         <Path d={`M0 0H${width}V${height}H0Z`} fill="url(#sky)" />
         <Path d={`M0 ${horizon} C ${width * 0.18} ${horizon - 18}, ${width * 0.35} ${horizon + 18}, ${width * 0.52} ${horizon} S ${width * 0.83} ${horizon - 16}, ${width} ${horizon + 8} V ${height} H0Z`} fill="url(#water)" opacity="0.76" />
-        <Path d={`M${width * 0.09} ${horizon + 36} C ${width * 0.18} ${horizon + 8}, ${width * 0.36} ${horizon + 10}, ${width * 0.45} ${horizon + 38} C ${width * 0.36} ${horizon + 54}, ${width * 0.18} ${horizon + 58}, ${width * 0.09} ${horizon + 36}Z`} fill={dark ? '#2e241a' : '#e6c99e'} opacity="0.68" />
-        <Path d={`M${width * 0.52} ${horizon + 64} C ${width * 0.63} ${horizon + 24}, ${width * 0.88} ${horizon + 28}, ${width * 0.96} ${horizon + 72} C ${width * 0.78} ${horizon + 92}, ${width * 0.62} ${horizon + 92}, ${width * 0.52} ${horizon + 64}Z`} fill={dark ? '#302418' : '#e8c285'} opacity="0.66" />
+        <Path d={`M${width * 0.09} ${horizon + 36} C ${width * 0.18} ${horizon + 8}, ${width * 0.36} ${horizon + 10}, ${width * 0.45} ${horizon + 38} C ${width * 0.36} ${horizon + 54}, ${width * 0.18} ${horizon + 58}, ${width * 0.09} ${horizon + 36}Z`} fill={islandFill} opacity={String(decorativeOpacity)} />
+        <Path d={`M${width * 0.52} ${horizon + 64} C ${width * 0.63} ${horizon + 24}, ${width * 0.88} ${horizon + 28}, ${width * 0.96} ${horizon + 72} C ${width * 0.78} ${horizon + 92}, ${width * 0.62} ${horizon + 92}, ${width * 0.52} ${horizon + 64}Z`} fill={islandRaisedFill} opacity={String(Math.max(0.28, decorativeOpacity - 0.02))} />
         <Path d={`M${width * 0.16} ${height * 0.79} C ${width * 0.34} ${height * 0.74}, ${width * 0.56} ${height * 0.76}, ${width * 0.82} ${height * 0.69}`} stroke={tone.primary} strokeOpacity="0.26" strokeWidth="2" fill="none" />
         <G opacity={motionFull ? '0.34' : '0.16'}>
           <Circle cx={width * 0.18} cy={height * 0.18} r="1.8" fill={tone.primary} />
@@ -1005,11 +1005,11 @@ interface ToneColors {
 }
 
 function toneColors(tone: StageTone, colors: ReturnType<typeof useAppTheme>['colors']): ToneColors {
-  if (tone === 'sky') return { primary: colors.sky, bg: colors.skyWash, wash: colors.skyWash, line: 'rgba(139, 189, 208, 0.46)' }
-  if (tone === 'amber') return { primary: colors.amber, bg: colors.amberWash, wash: colors.amberWash, line: 'rgba(232, 162, 58, 0.46)' }
-  if (tone === 'coral') return { primary: colors.coral, bg: colors.coralWash, wash: colors.coralWash, line: 'rgba(216, 91, 71, 0.42)' }
+  if (tone === 'sky') return { primary: colors.sky, bg: colors.skyWash, wash: colors.skyWash, line: colors.borderStrong }
+  if (tone === 'amber') return { primary: colors.amber, bg: colors.amberWash, wash: colors.amberWash, line: colors.borderStrong }
+  if (tone === 'coral') return { primary: colors.coral, bg: colors.coralWash, wash: colors.coralWash, line: colors.borderStrong }
   if (tone === 'ink') return { primary: colors.text, bg: colors.surfaceSecondary, wash: colors.surfaceSecondary, line: colors.borderStrong }
-  return { primary: colors.primary, bg: colors.mintWash, wash: colors.mintWash, line: 'rgba(74, 163, 132, 0.46)' }
+  return { primary: colors.primary, bg: colors.mintWash, wash: colors.mintWash, line: colors.borderStrong }
 }
 
 function toggleSet(items: Set<string>, id: string) {
@@ -1017,15 +1017,4 @@ function toggleSet(items: Set<string>, id: string) {
   if (next.has(id)) next.delete(id)
   else next.add(id)
   return next
-}
-
-function petState(
-  atlasId: HomePetState['atlasId'],
-  animation: HomePetState['animation'],
-  mood: HomePetState['mood'],
-  speed: number,
-  reason: HomePetState['reason'],
-  labelKey: HomePetState['labelKey']
-): HomePetState {
-  return { atlasId, animation, mood, speed, reason, labelKey }
 }
