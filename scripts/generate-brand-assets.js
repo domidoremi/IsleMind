@@ -139,17 +139,6 @@ function renderImage(inputName, outputPath, size) {
 }
 
 function renderAndroidResources() {
-  const splashSizes = [
-    ['drawable-mdpi', 224],
-    ['drawable-hdpi', 336],
-    ['drawable-xhdpi', 448],
-    ['drawable-xxhdpi', 672],
-    ['drawable-xxxhdpi', 896],
-  ]
-  for (const [density, size] of splashSizes) {
-    renderImage('splash-icon.png', path.join(androidResDir, density, 'splashscreen_logo.png'), size)
-  }
-
   const launcherSizes = [
     ['mipmap-mdpi', 48, 108],
     ['mipmap-hdpi', 72, 162],

@@ -2,10 +2,11 @@ import { useEffect } from 'react'
 import { Text, View } from 'react-native'
 import { router, useLocalSearchParams } from 'expo-router'
 import { useTranslation } from 'react-i18next'
-import { ArrowLeft, MessageCircle } from 'lucide-react-native'
+import { MessageCircle } from 'lucide-react-native'
 import { ChatWorkspace } from '@/components/chat/ChatWorkspace'
+import { AnimatedNavigationTrigger } from '@/components/navigation/AnimatedNavigationTrigger'
 import { IsleEmptyState } from '@/components/ui/isle'
-import { IsleHeader, IsleIconButton } from '@/components/ui/isle'
+import { IsleHeader } from '@/components/ui/isle'
 import { IsleScreen } from '@/components/ui/isle'
 import { useAppTheme } from '@/hooks/useAppTheme'
 import { useChatStore } from '@/store/chatStore'
@@ -27,15 +28,13 @@ export default function ConversationDeepLinkScreen() {
   }
 
   return (
-    <IsleScreen padded={false}>
+    <IsleScreen padded={false} background="focus">
       <View style={{ paddingHorizontal: 12, paddingTop: 8, paddingBottom: 8 }}>
         <IsleHeader
           title={t('conversation.unavailable')}
           subtitle={id || t('conversation.missingId')}
           leading={
-            <IsleIconButton label={t('common.back')} onPress={() => router.back()}>
-              <ArrowLeft color={colors.text} size={19} strokeWidth={2} />
-            </IsleIconButton>
+            <AnimatedNavigationTrigger variant="iconButton" label={t('common.back')} glyph="back" onNavigate={() => router.back()} color={colors.text} />
           }
         />
       </View>
@@ -43,6 +42,7 @@ export default function ConversationDeepLinkScreen() {
         <IsleEmptyState
           title={t('conversation.notFound')}
           actionLabel={t('conversation.viewHistory')}
+          actionGlyph="history"
           onAction={() => router.push('/conversations')}
         />
         <View style={{ alignItems: 'center', marginTop: 12 }}>

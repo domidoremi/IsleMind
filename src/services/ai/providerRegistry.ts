@@ -49,6 +49,8 @@ interface ProviderProbeDeps {
   timeoutMs?: number
 }
 
+const NEWAPI_CHANNEL_CONN_TYPE = 'newapi_channel_conn'
+
 export const DEFAULT_PROVIDER_CAPABILITIES: ProviderCapabilities = {
   chat: true,
   streaming: true,
@@ -232,27 +234,84 @@ export function applyProviderPreset<T extends Partial<AIProvider>>(provider: T, 
 
 export function parseCredentialGroups(input: string): NonNullable<AIProvider['credentialGroups']> {
   const seen = new Set<string>()
+  return extractCredentialEntries(input)
+    .filter((item) => {
+      const apiKey = item.apiKey.trim()
+      if (!apiKey || seen.has(apiKey)) return false
+      seen.add(apiKey)
+      return true
+    })
+    .map((item, index) => {
+      const apiKey = item.apiKey.trim()
+      return {
+        id: `group-${Date.now().toString(36)}-${index + 1}-${hashKey(apiKey)}`,
+        label: item.label?.trim() || st('apiKeyPanel.groupName', { index: index + 1 }),
+        apiKey,
+        enabled: item.enabled ?? true,
+      }
+    })
+}
+
+function extractCredentialEntries(input: string): Array<{ apiKey: string; label?: string; enabled?: boolean }> {
+  const trimmed = input.trim()
+  if (!trimmed) return []
+  const parsed = parseCredentialJson(trimmed)
+  if (parsed !== null) return collectCredentialEntries(parsed)
+  return splitCredentialText(trimmed).map((apiKey) => ({ apiKey }))
+}
+
+function parseCredentialJson(input: string): unknown | null {
+  if (!/^[\[{"]/.test(input)) return null
+  try {
+    return JSON.parse(input)
+  } catch {
+    return null
+  }
+}
+
+function collectCredentialEntries(value: unknown, context: { label?: string; enabled?: boolean } = {}): Array<{ apiKey: string; label?: string; enabled?: boolean }> {
+  if (typeof value === 'string') {
+    return splitCredentialText(value).map((apiKey) => ({ ...context, apiKey }))
+  }
+  if (Array.isArray(value)) {
+    return value.flatMap((item) => collectCredentialEntries(item, context))
+  }
+  if (!value || typeof value !== 'object') return []
+  const record = value as Record<string, unknown>
+  const label = stringField(record, ['label', 'name', 'title']) ?? context.label
+  const enabled = typeof record.enabled === 'boolean' ? record.enabled : context.enabled
+  const nextContext: { label?: string; enabled?: boolean } = {}
+  if (label) nextContext.label = label
+  if (enabled !== undefined) nextContext.enabled = enabled
+  const direct = stringField(record, ['apiKey', 'api_key', 'key', 'token', 'secret', 'accessToken', 'access_token'])
+  const directEntries = direct ? splitCredentialText(direct).map((apiKey) => ({ ...nextContext, apiKey })) : []
+  const nestedKeys = ['keys', 'apiKeys', 'api_keys', 'tokens', 'credentialGroups', 'credential_groups', 'groups', 'credentials']
+  return [
+    ...directEntries,
+    ...nestedKeys.flatMap((key) => collectCredentialEntries(record[key], nextContext)),
+  ]
+}
+
+function splitCredentialText(input: string): string[] {
   return input
     .split(/[\n,，]+/)
     .map((item) => item.trim())
-    .filter((item) => {
-      if (!item || seen.has(item)) return false
-      seen.add(item)
-      return true
-    })
-    .map((apiKey, index) => ({
-      id: `group-${Date.now().toString(36)}-${index + 1}-${hashKey(apiKey)}`,
-      label: st('apiKeyPanel.groupName', { index: index + 1 }),
-      apiKey,
-      enabled: true,
-    }))
+    .filter(Boolean)
+}
+
+function stringField(record: Record<string, unknown>, keys: string[]): string | undefined {
+  for (const key of keys) {
+    const value = record[key]
+    if (typeof value === 'string' && value.trim()) return value
+  }
+  return undefined
 }
 
 export function parseProviderImportText(input: string, options: ProviderImportOptions = {}): ProviderImportResult {
   const warnings: string[] = []
   const duplicates: string[] = []
   const normalizedInput = normalizeProviderImportInput(input, warnings)
-  const chunks = splitProviderImportChunks(normalizedInput.text)
+  const chunks = splitProviderImportChunks(normalizedInput.text).flatMap(expandProviderImportChunk)
   const providers = chunks
     .map((chunk, index) => parseProviderImportChunk(chunk, index, warnings))
     .filter((provider): provider is AIProvider => !!provider)
@@ -394,13 +453,17 @@ function jsonImportBlocks(value: unknown): string[] {
 }
 
 function jsonProviderObjectToBlock(record: Record<string, unknown>): string | null {
+  const type = firstString(record._type, record.type)
+  const isNewApiChannelConnection = type === NEWAPI_CHANNEL_CONN_TYPE
   const baseUrl = firstString(record.baseUrl, record.base_url, record.url, record.endpoint, record.apiBase, record.api_base, record['站点'], record['地址'], record['接口'])
-  const name = firstString(record.provider, record.name, record.title, record['供应商'], record['服务商'], record['名称'])
+  const name = firstString(record.provider, record.name, record.title, record.channel, record.channelName, record.channel_name, record['供应商'], record['服务商'], record['名称'])
   const models = stringArray(record.models, record.model, record['模型'], record['模型列表'])
   const keys = stringArray(record.apiKey, record.api_key, record.apiKeys, record.api_keys, record.key, record.keys, record.token, record.tokens, record['秘钥'], record['密钥'], record['令牌'])
+  if (isNewApiChannelConnection && (!baseUrl || !keys.length)) return null
   if (!baseUrl && !name && !keys.length) return null
+  const resolvedName = name ?? (isNewApiChannelConnection ? getProviderPreset('newapi').name : undefined)
   const parts = [
-    name ? `供应商: ${name}` : '',
+    resolvedName ? `供应商: ${resolvedName}` : '',
     baseUrl ? `Base URL: ${baseUrl}` : '',
     ...keys.map((key, index) => `Key${index + 1}: ${key}`),
     models.length ? `Models: ${models.join('|')}` : '',
@@ -485,24 +548,58 @@ function splitProviderImportChunks(input: string): string[] {
     .filter(Boolean)
 }
 
+function expandProviderImportChunk(chunk: string): string[] {
+  const endpoints = extractLabeledProtocolBaseUrls(chunk)
+  if (!endpoints.length) return [chunk]
+
+  const fields = readImportFields(chunk)
+  const name = pickField(fields, ['provider', 'name', '供应商', '服务商', '名称'])
+  const modelsText = pickField(fields, ['models', 'model', '模型', '模型列表'])
+  const keys = [
+    ...pickFields(fields, ['apikey', 'api key', 'key', 'keys', 'token', 'tokens', '秘钥', '密钥', '令牌']),
+    ...extractLooseKeys(chunk),
+  ]
+  const seenKeys = new Set<string>()
+  const uniqueKeys = keys
+    .map((key) => key.trim())
+    .filter((key) => {
+      if (!key || seenKeys.has(key)) return false
+      seenKeys.add(key)
+      return true
+    })
+
+  return endpoints.map((endpoint) => [
+    name ? `Provider: ${name}` : '',
+    `Base URL: ${endpoint.baseUrl}`,
+    `Protocol: ${endpoint.wireProtocol}`,
+    ...uniqueKeys.map((key, index) => `Key${index + 1}: ${key}`),
+    modelsText ? `Models: ${modelsText}` : '',
+  ].filter(Boolean).join('\n'))
+}
+
 function parseProviderImportChunk(chunk: string, index: number, warnings: string[]): AIProvider | null {
   const fields = readImportFields(chunk)
   const looseBaseUrl = extractLooseBaseUrl(chunk)
   const baseUrl = pickField(fields, ['baseurl', 'base url', 'url', 'endpoint', '站点', '地址', '接口']) ?? looseBaseUrl
-  const name = pickField(fields, ['provider', 'name', '供应商', '服务商', '名称']) ?? inferProviderName(chunk, index, baseUrl)
+  const explicitName = pickField(fields, ['provider', 'name', '供应商', '服务商', '名称'])
+  const name = explicitName ?? inferProviderName(chunk, index, baseUrl)
+  const wireProtocolHint = parseProviderWireProtocolText(pickField(fields, ['protocol', 'wireprotocol', 'wire protocol', '协议', '接口协议']))
+    ?? inferExplicitProviderWireProtocolFromBaseUrl(baseUrl)
   const modelsText = pickField(fields, ['models', 'model', '模型', '模型列表'])
   const keysText = [
     ...pickFields(fields, ['apikey', 'api key', 'key', 'keys', 'token', 'tokens', '秘钥', '密钥', '令牌']),
     ...extractLooseKeys(chunk),
   ].join('\n')
-  const presetId = detectProviderPreset({ baseUrl, name, apiKey: keysText }).presetId
+  const detection = detectProviderPreset({ baseUrl, name, apiKey: keysText })
+  const presetId = resolveImportPresetId(detection, wireProtocolHint)
   const preset = getProviderPreset(presetId)
   const isMimo = presetId === 'xiaomi-mimo'
   const credentialMode = isMimo ? inferProviderCredentialModeFromKeyOrBaseUrl(keysText, baseUrl) : undefined
   const tokenPlanRegion = isMimo ? inferProviderTokenPlanRegionFromBaseUrl(baseUrl) : undefined
-  const wireProtocol = isMimo ? inferProviderWireProtocolFromBaseUrl(baseUrl) : undefined
+  const wireProtocol = isMimo ? wireProtocolHint ?? inferProviderWireProtocolFromBaseUrl(baseUrl) : wireProtocolHint
   const models = parseModelList(modelsText)
   const credentialGroups = parseCredentialGroups(keysText)
+  const providerName = explicitName ?? (isMimo ? preset.name : name)
 
   if (!name && !baseUrl && !credentialGroups.length) {
     warnings.push(st('providerRegistry.chunkUnrecognized', { index: index + 1 }))
@@ -510,12 +607,12 @@ function parseProviderImportChunk(chunk: string, index: number, warnings: string
   }
 
   const provider = applyProviderPreset({
-    id: importProviderId(name || preset.name, index),
+    id: importProviderId(providerName || preset.name, index),
     presetId,
     detectedPresetId: presetId,
     detectionStatus: 'detected',
     type: preset.type,
-    name: name || preset.name,
+    name: providerName || preset.name,
     baseUrl: baseUrl?.trim() || (isMimo ? getXiaomiMimoOfficialBaseUrl(credentialMode, tokenPlanRegion, wireProtocol) : preset.baseUrl),
     credentialMode,
     tokenPlanRegion,
@@ -573,9 +670,69 @@ function inferProviderName(chunk: string, index: number, baseUrl?: string): stri
   const prefix = first?.split(/[:：=]/)[0]?.trim()
   const host = baseUrl ? getHost(baseUrl) : ''
   if (first && /^https?:\/\//i.test(first) && host) return host
+  if (prefix && isImportMetadataField(prefix)) return host || st('providerRegistry.importedProviderName', { index: index + 1 })
   if (prefix && !/^https?$/i.test(prefix) && !looksLikeApiKey(prefix) && !/^https?:\/\//i.test(prefix)) return prefix
   if (host) return host
   return st('providerRegistry.importedProviderName', { index: index + 1 })
+}
+
+function resolveImportPresetId(detection: ProviderDetectionResult, wireProtocolHint?: ProviderWireProtocol): ProviderPresetId {
+  if (!wireProtocolHint || detection.confidence !== 'low') return detection.presetId
+  return providerPresetIdForWireProtocol(wireProtocolHint)
+}
+
+function providerPresetIdForWireProtocol(wireProtocol: ProviderWireProtocol): ProviderPresetId {
+  return wireProtocol === 'anthropic-compatible' ? 'custom-anthropic-compatible' : 'custom-openai-compatible'
+}
+
+function parseProviderWireProtocolText(value?: string): ProviderWireProtocol | undefined {
+  if (!value?.trim()) return undefined
+  if (/anthropic|claude/i.test(value)) return 'anthropic-compatible'
+  if (/openai|gpt/i.test(value)) return 'openai-compatible'
+  return undefined
+}
+
+function inferExplicitProviderWireProtocolFromBaseUrl(value?: string): ProviderWireProtocol | undefined {
+  return /\/anthropic(?:\/v1)?(?:\/|$)/i.test(value ?? '') ? 'anthropic-compatible' : undefined
+}
+
+function isImportMetadataField(value: string): boolean {
+  return [
+    'baseurl',
+    'url',
+    'endpoint',
+    'protocol',
+    'wireprotocol',
+    '站点',
+    '地址',
+    '接口',
+    '协议',
+    '接口协议',
+  ].includes(normalizeImportFieldKey(value))
+}
+
+function extractLabeledProtocolBaseUrls(chunk: string): Array<{ baseUrl: string; wireProtocol: ProviderWireProtocol }> {
+  const endpoints: Array<{ baseUrl: string; wireProtocol: ProviderWireProtocol }> = []
+  const seen = new Set<string>()
+  const pattern = /([^\n\r:：=]{0,80}(?:openai|anthropic|claude)[^\n\r:：=]{0,80})\s*[:：=]\s*(https?:\/\/[^\s,，;；]+)/gi
+  let match: RegExpExecArray | null
+  while ((match = pattern.exec(chunk))) {
+    const wireProtocol = protocolLabelWireProtocol(match[1] ?? '')
+    const baseUrl = match[2]?.trim()
+    if (!wireProtocol || !baseUrl) continue
+    const key = `${wireProtocol}|${baseUrl.toLowerCase()}`
+    if (seen.has(key)) continue
+    seen.add(key)
+    endpoints.push({ baseUrl, wireProtocol })
+  }
+  return endpoints
+}
+
+function protocolLabelWireProtocol(label: string): ProviderWireProtocol | undefined {
+  if (!/(compatible|compat|protocol|endpoint|api|base\s*url|接口|协议|兼容|入口|地址)/i.test(label)) return undefined
+  if (/anthropic|claude/i.test(label)) return 'anthropic-compatible'
+  if (/openai|gpt/i.test(label)) return 'openai-compatible'
+  return undefined
 }
 
 function extractLooseBaseUrl(chunk: string): string | undefined {

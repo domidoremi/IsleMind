@@ -1,6 +1,8 @@
 import { Text, View } from 'react-native'
 import { MessageCircle } from 'lucide-react-native'
 import { MotiView } from 'moti'
+import { AnimatedNavigationIcon, type NavigationGlyph } from '@/components/navigation/AnimatedNavigationIcon'
+import { useNavigationTrigger } from '@/components/navigation/AnimatedNavigationTrigger'
 import { useAppTheme } from '@/hooks/useAppTheme'
 import { IsleCard } from './IsleKit'
 import { IsleButton } from './Controls'
@@ -11,19 +13,22 @@ interface EmptyStateProps {
   title: string
   description?: string
   actionLabel?: string
+  actionGlyph?: NavigationGlyph
   onAction?: () => void
 }
 
-export function IsleEmptyState({ title, description, actionLabel, onAction }: EmptyStateProps) {
+export function IsleEmptyState({ title, description, actionLabel, actionGlyph, onAction }: EmptyStateProps) {
   const { colors } = useAppTheme()
   const motion = useMotionPreference()
+  const navigation = useNavigationTrigger(onAction ?? (() => undefined))
+  const actionPress = actionGlyph ? navigation.trigger : onAction
 
   return (
     <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 24 }}>
       <MotiView
         from={{ scale: 0.9, opacity: 0.6 }}
         animate={motion === 'full' ? { scale: 1.05, opacity: 1 } : { scale: 1, opacity: 1 }}
-        transition={motion === 'full' ? { loop: true, type: 'timing', duration: motionTokens.duration.mascotLoop } : { type: 'timing', duration: 1 }}
+        transition={motion === 'full' ? { loop: true, type: 'timing', duration: motionTokens.duration.pulseLoop } : { type: 'timing', duration: 1 }}
         style={{
           width: 76,
           height: 76,
@@ -54,7 +59,8 @@ export function IsleEmptyState({ title, description, actionLabel, onAction }: Em
         <IsleButton
           label={actionLabel}
           tone="primary"
-          onPress={onAction}
+          icon={actionGlyph ? <AnimatedNavigationIcon glyph={actionGlyph} active={navigation.active} color={colors.surface} size={18} /> : undefined}
+          onPress={actionPress}
           style={{ alignSelf: 'center', marginTop: 22, minWidth: 150, minHeight: 48, borderRadius: 24 }}
         />
       ) : null}

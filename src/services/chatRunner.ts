@@ -1,5 +1,5 @@
 import * as Clipboard from 'expo-clipboard'
-import type { AIProvider, Attachment, ChatErrorCode, Conversation, Message, ProcessTrace, RemoteCompactMode, RetrievalSource } from '@/types'
+import type { AIProvider, Attachment, ChatErrorCode, Conversation, McpServerConfig, McpToolManifest, Message, ProcessTrace, RemoteCompactMode, RetrievalSource, ToolContentBlock } from '@/types'
 import { getModelConfig, getProviderConfigIssue } from '@/types'
 import { streamChat, type ChatCompletionResult, type ProviderRuntimeError, type StreamHandle } from '@/services/ai/base'
 import { extractMemories, retrieveContext, retrieveFlareContext, searchWeb, type RetrievedContext } from '@/services/context'
@@ -10,11 +10,12 @@ import { useChatStore } from '@/store/chatStore'
 import { useSettingsStore } from '@/store/settingsStore'
 import { packChatMessages } from '@/services/contextPacker'
 import { resolveSearchProvider } from '@/services/searchPolicy'
-import { listMcpServers } from '@/services/mcp'
+import { callMcpTool, listMcpServers, truncateToolBlocks } from '@/services/mcp'
 import { localDataStore } from '@/services/localDataStore'
+import { routeLocalAppCommand, type LocalAppCommandResult } from '@/services/appCommandRouter'
 import { st } from '@/i18n/service'
-import { isProviderConversationReady, resolveProviderModelAlias } from '@/utils/providerModels'
-import { getPolicyAllowedProviderModels, getPolicyPreferredProviderModel } from '@/services/ai/policy/providerModelAccess'
+import { resolveProviderModelAlias } from '@/utils/providerModels'
+import { getPolicyAllowedProviderModels } from '@/services/ai/policy/providerModelAccess'
 import { decideRemoteCompact, estimateRemoteCompactSavedTokens } from '@/services/ai/compact/remoteCompact'
 import { recordCompactUsage } from '@/services/ai/compact/compactUsage'
 import { listActiveCompactStates, saveCompactState } from '@/services/ai/compact/compactStateStore'
@@ -39,6 +40,24 @@ const STREAM_TEXT_FLUSH_MS = 64
 const STREAM_TEXT_MAX_BUFFER = 128
 const STREAM_TRACE_FLUSH_MS = 180
 const STREAM_TRACE_MAX_BUFFER = 6
+const MCP_CALL_TAG = 'islemind_mcp_call'
+
+interface ResolvedMcpTool {
+  server: McpServerConfig
+  tool: McpToolManifest
+}
+
+interface McpContextResolution {
+  prompt: string
+  traces: ProcessTrace[]
+  tools: ResolvedMcpTool[]
+}
+
+interface McpToolRequest {
+  serverId?: string
+  toolName: string
+  arguments: Record<string, unknown>
+}
 
 export function isConversationStreaming(conversationId: string): boolean {
   return activeControllers.has(conversationId)
@@ -133,10 +152,38 @@ export async function sendMessage({ conversation, content, attachments = [] }: S
 
   useChatStore.getState().setError(null)
   useChatStore.getState().addMessage(conversation.id, userMessage)
+  if (attachments.length === 0) {
+    const localCommand = await routeLocalAppCommand(text)
+    if (localCommand) {
+      addLocalAppCommandReply(conversation.id, userMessage, localCommand)
+      return
+    }
+  }
   void createAssistantReply(conversation.id).catch((error) => {
     const message = error instanceof Error ? error.message : st('chatRunner.error.sendFailed')
     useChatStore.getState().setError(message)
   })
+}
+
+function addLocalAppCommandReply(conversationId: string, userMessage: Message, command: LocalAppCommandResult): void {
+  const now = Date.now()
+  const assistantMessage: Message = {
+    id: generateId(),
+    role: 'assistant',
+    content: command.message,
+    responseText: command.message,
+    timestamp: now,
+    status: command.ok ? 'done' : 'error',
+    errorCode: command.ok ? undefined : 'unknown',
+    startedAt: now,
+    completedAt: now,
+    durationMs: 0,
+    toolCalls: [command.trace],
+    usage: buildEstimatedUsage([userMessage], command.message),
+    estimatedTokens: true,
+    tokenCount: estimateTextTokens(command.message),
+  }
+  useChatStore.getState().addMessage(conversationId, assistantMessage)
 }
 
 function normalizeUserContent(content: string): string {
@@ -192,13 +239,17 @@ async function createAssistantReply(conversationId: string) {
   activeControllers.set(conversationId, { controller: requestController, messageId: assistantMessage.id })
 
   const resolvedRuntime = await resolveRuntimeConversation(conversation)
-  const provider = resolvedRuntime ? await useSettingsStore.getState().hydrateProviderKey(resolvedRuntime.provider.id) : null
   const runtimeConversation = resolvedRuntime?.conversation ?? conversation
   if (isReplyCancelled(conversationId, assistantMessage.id, requestController)) return
   if (runtimeConversation.providerId === 'local-setup') {
     finishWithError(conversationId, assistantMessage.id, buildSetupGuide(), 'missing_key')
     return
   }
+  if (!resolvedRuntime) {
+    finishWithRuntimeResolutionError(conversationId, assistantMessage.id, runtimeConversation)
+    return
+  }
+  const provider = await useSettingsStore.getState().hydrateProviderKey(resolvedRuntime.provider.id)
   if (!provider || !provider.enabled) {
     finishWithError(conversationId, assistantMessage.id, st('chatRunner.error.providerDisabled'), 'disabled_provider', runtimeConversation.providerId)
     return
@@ -398,6 +449,7 @@ async function createAssistantReply(conversationId: string) {
   }))
   const systemPrompt = buildSystemPrompt({
     baseSystemPrompt: runtimeConversation.systemPrompt,
+    expectedReplyFormat: runtimeConversation.skillSnapshot?.expectedReplyFormat,
     language: settings.language,
     modelConfig,
     hasMemory: context.sources.some((source) => source.type === 'memory'),
@@ -580,6 +632,7 @@ async function createAssistantReply(conversationId: string) {
           packedMessages: packedPrompt.messages,
           baseContextPrompt: packedPrompt.contextPrompt,
           retrievalSources,
+          mcpTools: mcpContext.tools,
           requestController,
           chunkFlush: flushStreamingBuffers,
           upstreamModel,
@@ -756,6 +809,7 @@ async function finalizeAssistantResult(input: {
   packedMessages: { role: 'user' | 'assistant'; content: string | { type: 'text'; text: string }[] }[]
   baseContextPrompt: string
   retrievalSources: RetrievalSource[]
+  mcpTools: ResolvedMcpTool[]
   requestController: AbortController
   chunkFlush: () => void
   upstreamModel: string
@@ -796,6 +850,29 @@ async function finalizeAssistantResult(input: {
   let finalOutput = firstOutput
   let finalCitations = firstCitations
   let flareSources: RetrievalSource[] = []
+
+  if (input.mcpTools.length && !input.requestController.signal.aborted) {
+    const mcpRevision = await resolveMcpToolRevision({
+      conversationId: input.conversationId,
+      assistantMessageId: input.assistantMessageId,
+      provider: input.provider,
+      conversation: input.runtimeConversation,
+      systemPrompt: input.systemPrompt,
+      messages: input.packedMessages,
+      baseContextPrompt: input.baseContextPrompt,
+      firstOutput: finalOutput,
+      tools: input.mcpTools,
+      signal: input.requestController.signal,
+    })
+    if (mcpRevision?.text.trim()) {
+      finalOutput = mcpRevision.text
+      finalResult = {
+        ...finalResult,
+        text: mcpRevision.text,
+        usage: mergeUsage(finalResult.usage, mcpRevision.usage),
+      }
+    }
+  }
 
   if (
     verification.needsFlare &&
@@ -1039,6 +1116,238 @@ function recordCompletedRemoteCompact(input: {
   }).catch(() => undefined)
 }
 
+async function resolveMcpToolRevision(input: {
+  conversationId: string
+  assistantMessageId: string
+  provider: AIProvider
+  conversation: Conversation
+  systemPrompt: string
+  messages: { role: 'user' | 'assistant'; content: string | { type: 'text'; text: string }[] }[]
+  baseContextPrompt: string
+  firstOutput: string
+  tools: ResolvedMcpTool[]
+  signal: AbortSignal
+}): Promise<{ text: string; usage?: ChatCompletionResult['usage'] } | null> {
+  const request = parseMcpToolRequest(input.firstOutput)
+  if (!request) return null
+  const resolved = findMcpTool(input.tools, request)
+  if (!resolved) {
+    upsertTrace(input.conversationId, input.assistantMessageId, completeTrace({
+      id: traceId('mcp-unmatched'),
+      type: 'tool',
+      title: st('chatRunner.trace.mcpToolRequestTitle'),
+      content: st('chatRunner.trace.mcpToolUnavailable', { tool: request.toolName }),
+      status: 'error',
+      startedAt: Date.now(),
+      metadata: { requestedTool: request.toolName, serverId: request.serverId },
+    }))
+    return { text: st('mcpRuntime.toolUnavailable', { tool: request.toolName }) }
+  }
+
+  upsertTrace(input.conversationId, input.assistantMessageId, {
+    id: traceId('mcp-call-start'),
+    type: 'tool',
+    title: st('chatRunner.trace.mcpToolRequestTitle'),
+    content: st('chatRunner.trace.mcpToolRequested', { server: resolved.server.name, tool: resolved.tool.name }),
+    status: 'running',
+    startedAt: Date.now(),
+    metadata: { serverId: resolved.server.id, tool: resolved.tool.name, permission: resolved.tool.permission },
+  })
+
+  const result = await callMcpTool(resolved.server, resolved.tool.name, request.arguments)
+  upsertTrace(input.conversationId, input.assistantMessageId, result.trace)
+  if (input.signal.aborted) return null
+
+  const blocks = truncateToolBlocks(result.content)
+  const toolOutput = formatToolBlocks(blocks)
+  if (!toolOutput.trim()) {
+    return { text: result.error ?? st('mcpRuntime.emptyOutput') }
+  }
+
+  try {
+    const revision = await generateAnswerWithMcpToolResult({
+      ...input,
+      request,
+      tool: resolved,
+      toolOutput,
+      ok: result.ok,
+    })
+    if (revision.text.trim()) return revision
+  } catch (error) {
+    upsertTrace(input.conversationId, input.assistantMessageId, completeTrace({
+      id: traceId('mcp-revise-error'),
+      type: 'tool',
+      title: st('chatRunner.trace.mcpToolResultTitle'),
+      content: error instanceof Error ? error.message : st('mcpRuntime.callFailed'),
+      status: 'error',
+      startedAt: Date.now(),
+      metadata: { serverId: resolved.server.id, tool: resolved.tool.name },
+    }))
+  }
+
+  return {
+    text: [
+      st('chatRunner.trace.mcpToolResultTitle'),
+      '',
+      toolOutput,
+    ].join('\n'),
+  }
+}
+
+async function generateAnswerWithMcpToolResult(input: {
+  provider: AIProvider
+  conversation: Conversation
+  systemPrompt: string
+  messages: { role: 'user' | 'assistant'; content: string | { type: 'text'; text: string }[] }[]
+  baseContextPrompt: string
+  firstOutput: string
+  request: McpToolRequest
+  tool: ResolvedMcpTool
+  toolOutput: string
+  ok: boolean
+  signal: AbortSignal
+}): Promise<{ text: string; usage?: ChatCompletionResult['usage'] }> {
+  let text = ''
+  let usage: ChatCompletionResult['usage']
+  let failure: Error | null = null
+  const handle = await streamChat(
+    {
+      provider: input.provider,
+      model: input.conversation.model,
+      systemPrompt: [
+        input.systemPrompt,
+        '你正在根据 MCP 工具结果生成最终回复。不要暴露工具请求 JSON；只基于工具输出和已有上下文回答用户。如果工具失败，请明确说明失败状态和可继续的下一步。',
+      ].filter(Boolean).join('\n\n'),
+      messages: [
+        ...input.messages,
+        { role: 'assistant', content: stripMcpCallBlocks(input.firstOutput) },
+        {
+          role: 'user',
+          content: [
+            `MCP 工具：${input.tool.server.name}/${input.tool.tool.name}`,
+            `调用状态：${input.ok ? 'ok' : 'failed'}`,
+            `请求参数：${JSON.stringify(input.request.arguments)}`,
+            '',
+            '工具输出：',
+            input.toolOutput,
+            '',
+            '请生成最终回复。',
+          ].join('\n'),
+        },
+      ],
+      contextPrompt: input.baseContextPrompt,
+      temperature: Math.min(input.conversation.temperature, 0.4),
+      topP: input.conversation.topP,
+      reasoningEffort: input.conversation.reasoningEffort,
+      maxTokens: input.conversation.maxTokens,
+      stream: false,
+      signal: input.signal,
+      conversationId: input.conversation.id,
+      sessionId: input.conversation.id,
+      settings: useSettingsStore.getState().settings,
+      remoteCompactEligible: false,
+    },
+    (chunk) => {
+      text += chunk
+    },
+    (result) => {
+      text = result.text || text
+      usage = result.usage
+    },
+    (error) => {
+      failure = error
+    }
+  )
+  await handle.done
+  if (failure) throw failure
+  return { text, usage }
+}
+
+function parseMcpToolRequest(output: string): McpToolRequest | null {
+  const text = output.trim()
+  if (!text) return null
+  const match = text.match(new RegExp(`<${MCP_CALL_TAG}>\\s*([\\s\\S]*?)\\s*<\\/${MCP_CALL_TAG}>`, 'i'))
+  const raw = match?.[1] ?? (looksLikeMcpRequestJson(text) ? text : '')
+  if (!raw) return null
+  try {
+    const parsed = JSON.parse(raw) as Record<string, unknown>
+    const toolValue = typeof parsed.tool === 'string'
+      ? parsed.tool
+      : typeof parsed.toolName === 'string'
+        ? parsed.toolName
+        : typeof parsed.name === 'string'
+          ? parsed.name
+          : ''
+    if (!toolValue.trim()) return null
+    const split = splitToolReference(toolValue)
+    const serverId = typeof parsed.serverId === 'string' && parsed.serverId.trim()
+      ? parsed.serverId.trim()
+      : split.serverId
+    return {
+      serverId,
+      toolName: split.toolName,
+      arguments: normalizeMcpArguments(parsed.arguments ?? parsed.args ?? parsed.input),
+    }
+  } catch {
+    return null
+  }
+}
+
+function looksLikeMcpRequestJson(text: string): boolean {
+  return text.startsWith('{') && /"(tool|toolName|name)"\s*:/.test(text) && /"(arguments|args|input)"\s*:/.test(text)
+}
+
+function splitToolReference(value: string): { serverId?: string; toolName: string } {
+  const trimmed = value.trim()
+  const separator = trimmed.includes('/') ? '/' : trimmed.includes(':') ? ':' : ''
+  if (!separator) return { toolName: trimmed }
+  const [serverId, ...rest] = trimmed.split(separator)
+  const toolName = rest.join(separator).trim()
+  return toolName ? { serverId: serverId.trim(), toolName } : { toolName: trimmed }
+}
+
+function normalizeMcpArguments(value: unknown): Record<string, unknown> {
+  return value && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : {}
+}
+
+function findMcpTool(tools: ResolvedMcpTool[], request: McpToolRequest): ResolvedMcpTool | undefined {
+  return tools.find(({ server, tool }) => {
+    if (request.serverId && server.id !== request.serverId && server.name !== request.serverId) return false
+    return tool.name === request.toolName || `${server.id}:${tool.name}` === request.toolName || `${server.id}/${tool.name}` === request.toolName
+  }) ?? tools.find(({ tool }) => !request.serverId && tool.name === request.toolName)
+}
+
+function stripMcpCallBlocks(output: string): string {
+  return output.replace(new RegExp(`<${MCP_CALL_TAG}>[\\s\\S]*?<\\/${MCP_CALL_TAG}>`, 'gi'), '').trim()
+}
+
+function formatToolBlocks(blocks: ToolContentBlock[]): string {
+  return blocks.map((block) => {
+    if (block.type === 'text') return block.text ?? ''
+    if (block.type === 'resource') return [block.uri, block.text].filter(Boolean).join('\n')
+    if (block.type === 'image') return block.mimeType ? `[image:${block.mimeType}]` : '[image]'
+    return ''
+  }).filter(Boolean).join('\n\n')
+}
+
+function mergeUsage(base: ChatCompletionResult['usage'], extra: ChatCompletionResult['usage']): ChatCompletionResult['usage'] {
+  if (!base) return extra
+  if (!extra) return base
+  return {
+    source: base.source === 'provider' && extra.source === 'provider' ? 'provider' : 'estimated',
+    inputTokens: addOptionalNumbers(base.inputTokens, extra.inputTokens),
+    outputTokens: addOptionalNumbers(base.outputTokens, extra.outputTokens),
+    reasoningTokens: addOptionalNumbers(base.reasoningTokens, extra.reasoningTokens),
+    totalTokens: addOptionalNumbers(base.totalTokens, extra.totalTokens) ?? addOptionalNumbers(addOptionalNumbers(base.inputTokens, base.outputTokens), addOptionalNumbers(extra.inputTokens, extra.outputTokens)),
+  }
+}
+
+function addOptionalNumbers(a?: number, b?: number): number | undefined {
+  if (typeof a !== 'number') return b
+  if (typeof b !== 'number') return a
+  return a + b
+}
+
 async function resolvePreviousCompactResponseId(
   conversationId: string,
   providerId: string,
@@ -1139,40 +1448,32 @@ function formatWebPrompt(sources: { title: string; content: string; url?: string
 
 async function resolveRuntimeConversation(conversation: Conversation): Promise<{ conversation: Conversation; provider: AIProvider } | null> {
   const settings = useSettingsStore.getState().settings
-  if ((conversation.providerModelMode ?? 'inherited') !== 'inherited') {
-    const provider = useSettingsStore.getState().providers.find((item) => item.id === conversation.providerId)
-    return provider && getPolicyAllowedProviderModels(provider, settings).includes(conversation.model) ? { conversation, provider } : null
-  }
   const currentProvider = useSettingsStore.getState().providers.find((item) => item.id === conversation.providerId)
-  if (currentProvider && isProviderConversationReady(currentProvider) && getPolicyAllowedProviderModels(currentProvider, settings).includes(conversation.model)) {
+  if ((conversation.providerModelMode ?? 'inherited') !== 'inherited') {
+    return currentProvider && getPolicyAllowedProviderModels(currentProvider, settings).includes(conversation.model) ? { conversation, provider: currentProvider } : null
+  }
+  if (currentProvider && currentProvider.enabled && getPolicyAllowedProviderModels(currentProvider, settings).includes(conversation.model)) {
     return { conversation, provider: currentProvider }
   }
-  const readyProvider = pickReadyProvider(useSettingsStore.getState().providers, settings.defaultProvider, settings)
-  if (!readyProvider) return null
-  const model = getPolicyPreferredProviderModel(readyProvider, settings)
-  if (!model) return null
-  return {
-    provider: readyProvider,
-    conversation: {
-      ...conversation,
-      providerId: readyProvider.id,
-      model,
-      maxTokens: Math.min(conversation.maxTokens || getModelConfig(model, readyProvider.type, readyProvider.modelConfigs).defaultMaxTokens, getModelConfig(model, readyProvider.type, readyProvider.modelConfigs).maxOutputTokens),
-    },
+  return null
+}
+
+function finishWithRuntimeResolutionError(conversationId: string, messageId: string, conversation: Conversation) {
+  const provider = useSettingsStore.getState().providers.find((item) => item.id === conversation.providerId)
+  if (provider && !provider.enabled) {
+    finishWithError(conversationId, messageId, st('chatRunner.error.providerDisabled'), 'disabled_provider', provider.id)
+    return
   }
+  finishWithError(conversationId, messageId, st('chatRunner.userError.modelUnavailable'), 'model_unavailable', provider?.id ?? conversation.providerId)
 }
 
-function pickReadyProvider(providers: AIProvider[], defaultProvider: string | null | undefined, settings: ReturnType<typeof useSettingsStore.getState>['settings']): AIProvider | null {
-  const enabled = providers.filter((provider) => isProviderConversationReady(provider) && !!getPolicyPreferredProviderModel(provider, settings))
-  return enabled.find((provider) => provider.id === defaultProvider) ?? enabled[0] ?? null
-}
-
-async function resolveMcpContext(conversation: Conversation): Promise<{ prompt: string; traces: ProcessTrace[] }> {
+async function resolveMcpContext(conversation: Conversation): Promise<McpContextResolution> {
   const settings = useSettingsStore.getState().settings
   const startedAt = Date.now()
   if (!settings.mcpEnabled) {
     return {
       prompt: '',
+      tools: [],
       traces: [completeTrace({
         id: traceId('mcp-disabled'),
         type: 'tool',
@@ -1185,13 +1486,16 @@ async function resolveMcpContext(conversation: Conversation): Promise<{ prompt: 
   }
   const enabledTools = conversation.enabledTools ?? conversation.skillSnapshot?.enabledTools ?? []
   const servers = await listMcpServers()
-  const tools = servers.flatMap((server) => server.tools.map((tool) => ({ server, tool })))
+  const tools = servers
+    .filter((server) => server.enabled)
+    .flatMap((server) => server.tools.filter((tool) => tool.enabled).map((tool) => ({ server, tool })))
   const selected = enabledTools.length
     ? tools.filter((item) => enabledTools.includes(item.tool.name) || enabledTools.includes(`${item.server.id}:${item.tool.name}`))
-    : tools.filter((item) => item.server.id === 'islemind-builtins' && item.tool.enabled)
+    : tools
   if (!selected.length) {
     return {
       prompt: '',
+      tools: [],
       traces: [completeTrace({
         id: traceId('mcp-empty'),
         type: 'tool',
@@ -1206,12 +1510,16 @@ async function resolveMcpContext(conversation: Conversation): Promise<{ prompt: 
   const offline = selected.filter((item) => item.server.status !== 'connected')
   const prompt = connected.length
     ? [
-        '当前可用 MCP 工具清单。需要工具时先说明要调用的工具和参数；如果工具不可用，请明确告知用户。',
-        ...connected.map(({ server, tool }) => `- ${server.name}/${tool.name} [${tool.permission}]: ${tool.description ?? 'No description'}`),
+        '当前可用 MCP 工具清单。普通回答不需要调用工具时请直接回答。',
+        `如果必须调用工具，请只输出一个 <${MCP_CALL_TAG}>JSON</${MCP_CALL_TAG}> 块，不要输出其它正文。`,
+        'JSON 格式：{"serverId":"server-id","tool":"tool-name","arguments":{}}。',
+        '工具执行后，系统会把工具结果交给你生成最终回复。',
+        ...connected.map(({ server, tool }) => `- ${server.id}/${tool.name} (${server.name}) [${tool.permission}]: ${tool.description ?? 'No description'}${tool.inputSchema ? `\n  inputSchema: ${JSON.stringify(tool.inputSchema).slice(0, 600)}` : ''}`),
       ].join('\n')
     : ''
   return {
     prompt,
+    tools: connected,
     traces: [completeTrace({
       id: traceId('mcp-manifest'),
       type: 'tool',

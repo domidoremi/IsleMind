@@ -1,6 +1,9 @@
 import type { ReactNode } from 'react'
 import { Text, View, type StyleProp, type TextStyle, type ViewStyle } from 'react-native'
+import { MotiView } from 'moti'
 import { useAppTheme } from '@/hooks/useAppTheme'
+import { useMotionPreference } from '@/hooks/useMotionPreference'
+import { motionTokens } from '@/theme/animation'
 import { IsleButton as BaseIsleButton, type IsleButtonType } from './IsleKit'
 import { IsleCard } from './IsleKit'
 
@@ -43,6 +46,7 @@ export function IsleButton({ label, icon, onPress, disabled = false, busy = fals
 
 export function IsleChip({ children, active = false, tone = 'default', style }: { children: ReactNode; active?: boolean; tone?: Exclude<IsleTone, 'primary' | 'soft' | 'sky' | 'ink'>; style?: StyleProp<ViewStyle> }) {
   const { colors } = useAppTheme()
+  const motion = useMotionPreference()
   const foreground = tone === 'danger' ? colors.error : active ? colors.surface : colors.textSecondary
   const background =
     tone === 'danger'
@@ -56,31 +60,31 @@ export function IsleChip({ children, active = false, tone = 'default', style }: 
             : colors.islandRaised
 
   return (
-    <View
+    <MotiView
+      animate={{ backgroundColor: background, borderColor: active ? 'transparent' : colors.border, scale: active && !colors.ui.minimal ? 1.035 : 1 }}
+      transition={motion === 'full' ? { type: 'spring', ...motionTokens.spring.gentle } : { type: 'timing', duration: 1 }}
       style={[
         {
           minHeight: 32,
-          borderRadius: 16,
+          borderRadius: colors.ui.radius.chip,
           paddingHorizontal: 11,
           alignItems: 'center',
           justifyContent: 'center',
-          backgroundColor: background,
-          borderWidth: active ? 0 : 1,
-          borderColor: colors.border,
+          borderWidth: 1,
         },
         style,
       ]}
     >
-      <Text style={{ color: foreground, fontSize: 12, fontWeight: '900' }}>{children}</Text>
-    </View>
+      <Text style={{ color: foreground, fontSize: 12, lineHeight: 16, fontWeight: '900', includeFontPadding: false, textAlignVertical: 'center' }}>{children}</Text>
+    </MotiView>
   )
 }
 
 export function IsleMetric({ label }: { label: string }) {
   const { colors } = useAppTheme()
   return (
-    <IsleCard type="title" style={{ minHeight: 34, borderRadius: 18, paddingHorizontal: 12, paddingVertical: 7, alignItems: 'center', justifyContent: 'center' }}>
-      <Text style={{ color: colors.textSecondary, fontSize: 11, fontWeight: '900' }}>{label}</Text>
+    <IsleCard type="title" style={{ minHeight: 34, borderRadius: colors.ui.radius.chip, paddingHorizontal: 12, paddingVertical: 7, alignItems: 'center', justifyContent: 'center' }}>
+      <Text style={{ color: colors.textSecondary, fontSize: 11, lineHeight: 14, fontWeight: '900', includeFontPadding: false, textAlignVertical: 'center' }}>{label}</Text>
     </IsleCard>
   )
 }

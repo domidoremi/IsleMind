@@ -5,24 +5,27 @@ import * as DocumentPicker from 'expo-document-picker'
 import * as FileSystem from 'expo-file-system/legacy'
 import { Gesture, GestureDetector } from 'react-native-gesture-handler'
 import Animated, { runOnJS, useAnimatedStyle, useSharedValue, withSpring } from 'react-native-reanimated'
-import { ChevronDown, ChevronLeft, ClipboardPaste, FileJson, GripVertical, Import, ListChecks, Plus, Search, SlidersHorizontal, X, Zap } from 'lucide-react-native'
+import { ChevronDown, ClipboardPaste, FileJson, GripVertical, Import, ListChecks, Plus, Search, SlidersHorizontal, X, Zap } from 'lucide-react-native'
 import { MotiView } from 'moti'
 import { router } from 'expo-router'
 import { useTranslation } from 'react-i18next'
 import { ApiKeyPanel } from '@/components/settings/ApiKeyPanel'
+import { AnimatedNavigationTrigger } from '@/components/navigation/AnimatedNavigationTrigger'
 import { useMainPagerGestureLock } from '@/components/main/MainPagerGestureLock'
 import { IsleField, IsleHeader, IsleIconButton, IsleSection } from '@/components/ui/isle'
 import { IsleButton } from '@/components/ui/isle'
 import { IsleOverlayPressable, IslePressable } from '@/components/ui/isle'
+import type { IsleBackgroundState } from '@/components/ui/isle'
 import { useIsleDialog } from '@/components/ui/isle'
 import { useAppTheme } from '@/hooks/useAppTheme'
 import { useChatStore } from '@/store/chatStore'
 import { useSettingsStore } from '@/store/settingsStore'
-import { useActivationJobStore, type ActivationJobState } from '@/store/activationJobStore'
+import { resolveActivationJobProgress, useActivationJobStore, type ActivationJobItemState, type ActivationJobState } from '@/store/activationJobStore'
 import type { AIProvider, ProviderPresetId, ProviderWireProtocol } from '@/types'
 import { applyProviderPreset, getProviderPreset, parseCredentialGroups, parseProviderImportText, PROVIDER_PRESETS } from '@/services/ai/providerRegistry'
+import { looksLikeProviderImportConnectionText, parseProviderImportDraft } from '@/services/ai/providerImportDraft'
 import { DEFAULT_PROVIDER_PRESET_ID, DEFAULT_PROVIDER_WIRE_PROTOCOL, PROVIDER_WIRE_PROTOCOL_OPTIONS, inferProviderWireProtocolFromBaseUrl, resolveProviderConfigDraft, shouldSyncWireProtocolFromBaseUrl } from '@/services/ai/providerConfigPolicy'
-import { syncAndTestProvider, summarizeProviderActivation } from '@/services/providerActivation'
+import { syncAndTestProvider, summarizeProviderActivation, type ProviderActivationResult, type ProviderActivationStageEvent } from '@/services/providerActivation'
 import { IsleMetric } from '@/components/ui/isle'
 import { normalizeSearchText, parseModels } from '@/utils/text'
 import { isProviderConversationReady } from '@/utils/providerModels'
@@ -32,6 +35,7 @@ import { motionTokens } from '@/theme/animation'
 import { useSafeAreaInsets } from 'react-native-safe-area-context'
 
 type ProviderSortMode = 'manual' | 'recent' | 'enabled' | 'models' | 'health' | 'name'
+type ClipboardReadState = 'idle' | 'requesting'
 
 const SORT_OPTIONS: { id: ProviderSortMode; labelKey: string }[] = [
   { id: 'manual', labelKey: 'providerSettings.sort.manual' },
@@ -41,6 +45,14 @@ const SORT_OPTIONS: { id: ProviderSortMode; labelKey: string }[] = [
   { id: 'health', labelKey: 'providerSettings.sort.health' },
   { id: 'name', labelKey: 'providerSettings.sort.name' },
 ]
+
+const ACTIVATION_STAGE_PROGRESS: Record<ProviderActivationStageEvent['stage'], number> = {
+  enabled: 0.18,
+  syncing: 0.46,
+  testing: 0.76,
+  done: 0.96,
+  failed: 0.96,
+}
 
 const IMPORT_INPUT_LINE_HEIGHT = 20
 const IMPORT_INPUT_VERTICAL_PADDING = 24
@@ -53,9 +65,10 @@ const IMPORT_BODY_FIXED_SPACE = 118
 interface ProviderSettingsContentProps {
   embedded?: boolean
   onClose?: () => void
+  onBackgroundStateChange?: (state: IsleBackgroundState) => void
 }
 
-export function ProviderSettingsContent({ embedded = false, onClose }: ProviderSettingsContentProps) {
+export function ProviderSettingsContent({ embedded = false, onClose, onBackgroundStateChange }: ProviderSettingsContentProps) {
   const { colors } = useAppTheme()
   const { t } = useTranslation()
   const dialog = useIsleDialog()
@@ -85,7 +98,17 @@ export function ProviderSettingsContent({ embedded = false, onClose }: ProviderS
   const [addOpen, setAddOpen] = useState(false)
   const [importOpen, setImportOpen] = useState(false)
   const [activationBusy, setActivationBusy] = useState(false)
+  const [keyboardHeight, setKeyboardHeight] = useState(0)
   const mountedRef = useRef(true)
+  const backgroundState: IsleBackgroundState = keyboardHeight > 0
+    ? 'input'
+    : addOpen || importOpen
+      ? 'modal'
+      : activationJob?.status === 'failed'
+        ? 'error'
+        : activationBusy || activationJob?.status === 'running'
+          ? 'active'
+          : 'idle'
 
   useEffect(() => {
     mountedRef.current = true
@@ -99,6 +122,23 @@ export function ProviderSettingsContent({ embedded = false, onClose }: ProviderS
     pagerGestureLock?.setLocked(true)
     return () => pagerGestureLock?.setLocked(false)
   }, [embedded, pagerGestureLock])
+
+  useEffect(() => {
+    const showSub = Keyboard.addListener(Platform.OS === 'ios' ? 'keyboardWillShow' : 'keyboardDidShow', (event) => {
+      setKeyboardHeight(event.endCoordinates.height)
+    })
+    const hideSub = Keyboard.addListener(Platform.OS === 'ios' ? 'keyboardWillHide' : 'keyboardDidHide', () => {
+      setKeyboardHeight(0)
+    })
+    return () => {
+      showSub.remove()
+      hideSub.remove()
+    }
+  }, [])
+
+  useEffect(() => {
+    onBackgroundStateChange?.(backgroundState)
+  }, [backgroundState, onBackgroundStateChange])
 
   const usageByProvider = useMemo(() => {
     const usage = new Map<string, number>()
@@ -159,7 +199,7 @@ export function ProviderSettingsContent({ embedded = false, onClose }: ProviderS
     })
     const enableNow = await dialog.confirm({
       title: t('providerSettings.enableImportedTitle'),
-      message: [t('providerSettings.enableImportedMessage', { count: result.providers.length }), ...result.warnings].join('\n'),
+      message: [t('providerSettings.enableImportedMessage', { count: result.providers.length }), providerNameList(result.providers), ...result.warnings].filter(Boolean).join('\n'),
       confirmLabel: t('providerSettings.enableImportedConfirm'),
       cancelLabel: t('providerSettings.enableLater'),
       tone: result.warnings.length ? 'amber' : 'mint',
@@ -196,53 +236,76 @@ export function ProviderSettingsContent({ embedded = false, onClose }: ProviderS
         position: 'bottom',
         durationMs: 1800,
       })
-      const results = []
-      let completed = 0
-      let synced = 0
-      let tested = 0
-      let failed = 0
+      let activationItems = createActivationItems(chosen, t('providerSettings.activationQueued'))
+      const isSingleActivation = chosen.length === 1
+      const publishActivationItems = (nextItems: ActivationJobItemState[], stage?: string, currentName?: string) => {
+        activationItems = nextItems
+        const aggregate = aggregateActivationItems(activationItems)
+        updateActivationJob({
+          status: 'running',
+          total: chosen.length,
+          completed: aggregate.completed,
+          progress: aggregate.progress,
+          synced: aggregate.synced,
+          tested: aggregate.tested,
+          failed: aggregate.failed,
+          currentName,
+          stage: stage ?? t('providerSettings.activationStartedMessage', { count: chosen.length }),
+          items: activationItems,
+        })
+      }
+      const publishActivationItem = (providerId: string, updates: ActivationItemPatch, stage?: string, currentName?: string) => {
+        publishActivationItems(patchActivationItem(activationItems, providerId, updates), stage, currentName)
+      }
       startActivationJob({
         status: 'running',
         total: chosen.length,
         completed: 0,
+        progress: 0,
         synced: 0,
         tested: 0,
         failed: 0,
-        stage: t('providerSettings.activationQueued'),
+        stage: chosen.length === 1 ? t('providerSettings.activationQueued') : t('providerSettings.activationStartedMessage', { count: chosen.length }),
+        items: activationItems,
       })
-      for (const provider of chosen) {
-        updateActivationJob({
+      const runProviderActivation = async (provider: AIProvider): Promise<ProviderActivationResult> => {
+        const currentStage = t('providerSettings.activationCurrent', { name: provider.name })
+        publishActivationItem(provider.id, {
           status: 'running',
-          total: chosen.length,
-          completed,
-          synced,
-          tested,
-          failed,
-          currentName: provider.name,
-          stage: t('providerSettings.activationCurrent', { name: provider.name }),
-        })
-        dialog.toast({
-          title: t('providerSettings.activationRunning'),
-          message: t('providerSettings.activationCurrent', { name: provider.name }),
-          tone: 'mint',
-          position: 'bottom',
-          durationMs: 1300,
-        })
+          progress: 0.04,
+          stage: currentStage,
+        }, currentStage, provider.name)
+        if (isSingleActivation) {
+          dialog.toast({
+            title: t('providerSettings.activationRunning'),
+            message: currentStage,
+            tone: 'mint',
+            position: 'bottom',
+            durationMs: 1300,
+          })
+        }
         const result = await syncAndTestProvider(provider, {
           updateProvider,
           hydrateProviderKey,
           updateProviderCredentialGroupHealth,
           onStage: (event) => {
-            updateActivationJob({ currentName: event.providerName, stage: event.message })
-            dialog.toast({
-              title: stageToastTitle(event.stage, t),
-              message: event.message,
-              tone: event.tone,
-              position: 'bottom',
-              durationMs: 1300,
-            })
+            publishActivationItem(event.providerId, {
+              status: event.stage === 'failed' ? 'failed' : 'running',
+              progress: ACTIVATION_STAGE_PROGRESS[event.stage],
+              failed: event.stage === 'failed',
+              stage: event.message,
+            }, event.message, event.providerName)
+            if (isSingleActivation) {
+              dialog.toast({
+                title: stageToastTitle(event.stage, t),
+                message: event.message,
+                tone: event.tone,
+                position: 'bottom',
+                durationMs: 1300,
+              })
+            }
           },
-        }, { enable: true, testModel: modelTestModel, checkParameters: modelTestCheckParameters, accessSettings: settings }).catch((error) => ({
+        }, { enable: true, testModel: modelTestModel, checkParameters: modelTestCheckParameters, accessSettings: settings }).catch((error): ProviderActivationResult => ({
           providerId: provider.id,
           providerName: provider.name,
           enabled: provider.enabled,
@@ -260,34 +323,33 @@ export function ProviderSettingsContent({ embedded = false, onClose }: ProviderS
             message: error instanceof Error ? error.message : t('providerSettings.activationFailed'),
           }],
         }))
-        results.push(result)
-        completed += 1
-        if (result.synced) synced += 1
-        if (result.testOk) tested += 1
-        if (result.failures.length && !result.testOk) failed += 1
-        updateActivationJob({
-          status: 'running',
-          total: chosen.length,
-          completed,
-          synced,
-          tested,
-          failed,
-          currentName: result.providerName,
-          stage: result.testOk
-            ? t('providerSettings.activationProviderReady', { name: result.providerName })
-            : t('providerSettings.activationProviderNeedsCheck', { name: result.providerName }),
-        })
-        dialog.toast({
-          title: result.testOk ? t('providerSettings.activationSuccess') : t('providerSettings.activationPartial'),
-          message: result.testOk
-            ? t('providerSettings.activationProviderReady', { name: result.providerName })
-            : t('providerSettings.activationProviderNeedsCheck', { name: result.providerName }),
-          tone: result.testOk ? 'mint' : 'amber',
-          position: 'bottom',
-          durationMs: 1600,
-        })
+        const resultStage = result.testOk
+          ? t('providerSettings.activationProviderReady', { name: result.providerName })
+          : t('providerSettings.activationProviderNeedsCheck', { name: result.providerName })
+        const resultFailed = result.failures.length > 0 && !result.testOk
+        publishActivationItem(result.providerId, {
+          status: resultFailed ? 'failed' : 'done',
+          progress: 1,
+          synced: result.synced,
+          tested: result.testOk,
+          failed: resultFailed,
+          stage: resultStage,
+        }, resultStage, result.providerName)
+        if (isSingleActivation) {
+          dialog.toast({
+            title: result.testOk ? t('providerSettings.activationSuccess') : t('providerSettings.activationPartial'),
+            message: resultStage,
+            tone: result.testOk ? 'mint' : 'amber',
+            position: 'bottom',
+            durationMs: 1600,
+          })
+        }
+        return result
       }
+      const results = await Promise.all(chosen.map(runProviderActivation))
+      const finalAggregate = aggregateActivationItems(activationItems)
       const summary = summarizeProviderActivation(results)
+      const doneTitle = activationDoneTitle(mode, chosen.length, t)
       const primaryReady = results.find((result) => result.testOk)
       if (primaryReady) {
         useSettingsStore.getState().updateSettings({ defaultProvider: primaryReady.providerId, onboardingCompleted: true })
@@ -302,7 +364,7 @@ export function ProviderSettingsContent({ embedded = false, onClose }: ProviderS
         dialog.toast({ title, message: summary.message, tone: summary.tone, position: 'bottom', durationMs: 3800 })
       } else {
         dialog.toast({
-          title: t('providerSettings.enableDone'),
+          title: doneTitle,
           message: summary.message,
           tone: summary.tone,
           position: 'bottom',
@@ -316,12 +378,15 @@ export function ProviderSettingsContent({ embedded = false, onClose }: ProviderS
       finishActivationJob({
         status: summary.tone === 'danger' ? 'failed' : 'done',
         total: chosen.length,
-        completed,
-        synced,
-        tested,
-        failed,
-        stage: t('providerSettings.enableDone'),
+        completed: finalAggregate.completed,
+        progress: 1,
+        synced: finalAggregate.synced,
+        tested: finalAggregate.tested,
+        failed: finalAggregate.failed,
+        stage: summary.message,
+        items: activationItems,
       })
+      scheduleActivationJobDismiss(summary.tone, clearActivationJob)
     } finally {
       if (mountedRef.current) setActivationBusy(false)
     }
@@ -486,9 +551,7 @@ function HeaderBackButton({ onPress }: { onPress: () => void }) {
   const { colors } = useAppTheme()
   const { t } = useTranslation()
   return (
-    <IsleIconButton label={t('common.back')} size="lg" onPress={onPress} style={{ backgroundColor: colors.islandRaised }}>
-      <ChevronLeft color={colors.text} size={24} strokeWidth={1.9} />
-    </IsleIconButton>
+    <AnimatedNavigationTrigger variant="iconButton" label={t('common.back')} size="lg" glyph="back" onNavigate={onPress} color={colors.text} style={{ backgroundColor: colors.islandRaised }} />
   )
 }
 
@@ -595,9 +658,20 @@ function DragRail({ disabledUp, disabledDown, onMove }: { disabledUp: boolean; d
 
 function ChoiceIsleChip({ label, active, onPress }: { label: string; active: boolean; onPress: () => void }) {
   const { colors } = useAppTheme()
+  const motion = useMotionPreference()
   return (
-    <IslePressable haptic onPress={onPress} style={{ minHeight: 44, borderRadius: 22, paddingHorizontal: 12, alignItems: 'center', justifyContent: 'center', backgroundColor: active ? colors.text : colors.islandRaised, borderWidth: active ? 0 : 1, borderColor: colors.border }}>
-      <Text style={{ color: active ? colors.surface : colors.textSecondary, fontSize: 12, fontWeight: '900' }}>{label}</Text>
+    <IslePressable haptic onPress={onPress} style={{ minHeight: 44, borderRadius: 22, alignItems: 'center', justifyContent: 'center' }}>
+      <MotiView
+        animate={{
+          backgroundColor: active ? colors.text : colors.islandRaised,
+          borderColor: active ? 'transparent' : colors.border,
+          scale: active ? 1.025 : 1,
+        }}
+        transition={motion === 'full' ? { type: 'spring', ...motionTokens.spring.gentle } : { type: 'timing', duration: 1 }}
+        style={{ minHeight: 44, borderRadius: 22, paddingHorizontal: 12, alignItems: 'center', justifyContent: 'center', borderWidth: 1 }}
+      >
+        <Text style={{ color: active ? colors.surface : colors.textSecondary, fontSize: 12, lineHeight: 16, fontWeight: '900', includeFontPadding: false }}>{label}</Text>
+      </MotiView>
     </IslePressable>
   )
 }
@@ -605,8 +679,13 @@ function ChoiceIsleChip({ label, active, onPress }: { label: string; active: boo
 function ActivationProgressCard({ job, onDismiss }: { job: ActivationJobState; onDismiss: () => void }) {
   const { colors } = useAppTheme()
   const { t } = useTranslation()
-  const progress = job.total ? job.completed / job.total : 0
+  const progress = resolveActivationJobProgress(job)
   const done = job.status !== 'running'
+  const providerItems = job.items ?? []
+  const showProviderItems = providerItems.length > 1
+  const title = done
+    ? job.status === 'failed' ? t('providerSettings.activationFailed') : activationDoneTitle(job.total === 1 ? 'single' : 'batch', job.total, t)
+    : t('providerSettings.activationRunning')
   return (
     <MotiView
       from={{ opacity: 0, translateY: 8 }}
@@ -618,7 +697,7 @@ function ActivationProgressCard({ job, onDismiss }: { job: ActivationJobState; o
         <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
           <View style={{ flex: 1 }}>
             <Text style={{ color: colors.text, fontSize: 14, fontWeight: '900' }}>
-              {done ? t('providerSettings.enableDone') : t('providerSettings.activationRunning')}
+              {title}
             </Text>
             <Text numberOfLines={2} style={{ color: colors.textSecondary, fontSize: 12, lineHeight: 17, marginTop: 2, fontWeight: '800' }}>
               {job.stage ?? job.currentName ?? t('providerSettings.activationQueued')}
@@ -630,6 +709,12 @@ function ActivationProgressCard({ job, onDismiss }: { job: ActivationJobState; o
             </IsleIconButton>
           ) : null}
         </View>
+        <View style={{ flexDirection: 'row', gap: 6, flexWrap: 'wrap' }}>
+          <ActivationProgressPill label={`${job.completed}/${job.total}`} />
+          {!showProviderItems && job.currentName ? <ActivationProgressPill label={job.currentName} /> : null}
+          <ActivationProgressPill label={activationStatusLabel(job, t)} tone={job.status === 'failed' ? 'danger' : job.failed ? 'amber' : done ? 'mint' : 'default'} />
+        </View>
+        {showProviderItems ? <ActivationProviderProgressList items={providerItems} /> : null}
         <View style={{ height: 8, borderRadius: 4, backgroundColor: colors.islandRaised, overflow: 'hidden' }}>
           <MotiView
             animate={{ width: `${Math.max(4, Math.round(progress * 100))}%` }}
@@ -643,6 +728,151 @@ function ActivationProgressCard({ job, onDismiss }: { job: ActivationJobState; o
       </View>
     </MotiView>
   )
+}
+
+function ActivationProviderProgressList({ items }: { items: ActivationJobItemState[] }) {
+  const { colors } = useAppTheme()
+  const { t } = useTranslation()
+  return (
+    <View style={{ gap: 8 }}>
+      {items.map((item) => {
+        const progress = activationItemProgress(item.progress)
+        const warning = item.status === 'failed' || item.failed
+        const ready = item.status === 'done' && item.tested
+        return (
+          <View key={item.providerId} style={{ gap: 5 }}>
+            <View style={{ minHeight: 20, flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+              <Text numberOfLines={1} style={{ flex: 1, color: colors.text, fontSize: 12, lineHeight: 16, fontWeight: '900' }}>{item.providerName}</Text>
+              <Text numberOfLines={1} style={{ color: warning ? colors.warning : ready ? colors.primary : colors.textSecondary, fontSize: 10, lineHeight: 14, fontWeight: '900' }}>
+                {activationItemStatusLabel(item, t)}
+              </Text>
+            </View>
+            <View style={{ height: 5, borderRadius: 3, backgroundColor: colors.islandRaised, overflow: 'hidden' }}>
+              <View style={{ width: `${Math.max(4, Math.round(progress * 100))}%`, height: 5, borderRadius: 3, backgroundColor: warning ? colors.warning : colors.primary }} />
+            </View>
+            {item.stage ? (
+              <Text numberOfLines={1} style={{ color: colors.textTertiary, fontSize: 10, lineHeight: 14, fontWeight: '800' }}>{item.stage}</Text>
+            ) : null}
+          </View>
+        )
+      })}
+    </View>
+  )
+}
+
+function ActivationProgressPill({ label, tone = 'default' }: { label: string; tone?: 'default' | 'mint' | 'amber' | 'danger' }) {
+  const { colors } = useAppTheme()
+  const background = tone === 'mint'
+    ? colors.mintSoft
+    : tone === 'amber'
+      ? colors.amberSoft
+      : tone === 'danger'
+        ? colors.coralWash
+        : colors.islandRaised
+  const textColor = tone === 'mint'
+    ? colors.primary
+    : tone === 'amber'
+      ? colors.warning
+      : tone === 'danger'
+        ? colors.error
+        : colors.textSecondary
+  return (
+    <View style={{ minHeight: 28, borderRadius: 14, paddingHorizontal: 9, alignItems: 'center', justifyContent: 'center', backgroundColor: background }}>
+      <Text numberOfLines={1} style={{ color: textColor, fontSize: 11, fontWeight: '900' }}>{label}</Text>
+    </View>
+  )
+}
+
+function activationDoneTitle(mode: 'single' | 'batch' | 'all', total: number, t: ReturnType<typeof useTranslation>['t']): string {
+  if (mode === 'single' || total === 1) return t('providerSettings.activationSingleDone')
+  if (mode === 'all') return t('providerSettings.activationAllDone')
+  return t('providerSettings.activationBatchDone')
+}
+
+type ActivationItemPatch = Partial<Omit<ActivationJobItemState, 'providerId' | 'providerName'>>
+
+function createActivationItems(providers: AIProvider[], stage: string): ActivationJobItemState[] {
+  return providers.map((provider) => ({
+    providerId: provider.id,
+    providerName: provider.name,
+    status: 'queued',
+    progress: 0,
+    synced: false,
+    tested: false,
+    failed: false,
+    stage,
+  }))
+}
+
+function patchActivationItem(items: ActivationJobItemState[], providerId: string, updates: ActivationItemPatch): ActivationJobItemState[] {
+  return items.map((item) => {
+    if (item.providerId !== providerId) return item
+    if ((item.status === 'done' || item.status === 'failed') && updates.status === 'running') return item
+    const progress = updates.progress === undefined ? item.progress : Math.max(item.progress, updates.progress)
+    return {
+      ...item,
+      ...updates,
+      progress: activationItemProgress(progress),
+    }
+  })
+}
+
+function aggregateActivationItems(items: ActivationJobItemState[]): { completed: number; synced: number; tested: number; failed: number; progress: number } {
+  const completed = items.filter((item) => item.status === 'done' || item.status === 'failed').length
+  const synced = items.filter((item) => item.synced).length
+  const tested = items.filter((item) => item.tested).length
+  const failed = items.filter((item) => item.failed).length
+  const progress = items.length ? items.reduce((sum, item) => sum + activationItemProgress(item.progress), 0) / items.length : 0
+  return { completed, synced, tested, failed, progress }
+}
+
+function activationItemProgress(progress: number): number {
+  if (!Number.isFinite(progress)) return 0
+  return Math.min(1, Math.max(0, progress))
+}
+
+function activationItemStatusLabel(item: ActivationJobItemState, t: ReturnType<typeof useTranslation>['t']): string {
+  if (item.status === 'queued') return t('providerSettings.activationQueued')
+  if (item.status === 'running') return t('providerSettings.activationRunning')
+  if (item.status === 'failed' || item.failed) return t('providerSettings.activationFailed')
+  if (item.tested) return t('providerSettings.activationSuccess')
+  return t('providerSettings.activationPartial')
+}
+
+function providerNameList(providers: Pick<AIProvider, 'name'>[]): string {
+  return providers
+    .map((provider) => provider.name.trim())
+    .filter(Boolean)
+    .map((name) => `- ${name}`)
+    .join('\n')
+}
+
+function activationStatusLabel(job: ActivationJobState, t: ReturnType<typeof useTranslation>['t']): string {
+  if (job.status === 'running') return t('providerSettings.activationRunning')
+  if (job.status === 'failed') return t('providerSettings.activationFailed')
+  if (job.failed > 0) return t('providerSettings.activationPartial')
+  return t('providerSettings.activationSuccess')
+}
+
+function scheduleActivationJobDismiss(tone: 'mint' | 'amber' | 'danger', clearActivationJob: () => void) {
+  if (tone !== 'mint') return
+  const jobId = useActivationJobStore.getState().job?.id
+  setTimeout(() => {
+    const current = useActivationJobStore.getState().job
+    if (current && current.id === jobId && current.status !== 'running') clearActivationJob()
+  }, 5000)
+}
+
+function isPresetDefaultBaseUrl(value: string, presetId: ProviderPresetId, wireProtocol: ProviderWireProtocol): boolean {
+  const current = normalizeDraftBaseUrl(value)
+  if (!current) return true
+  const preset = getProviderPreset(presetId)
+  const draft = resolveProviderConfigDraft({ provider: {}, presetId, baseUrl: '', wireProtocol })
+  return [preset.baseUrl, draft.baseUrl].some((candidate) => normalizeDraftBaseUrl(candidate ?? '') === current)
+}
+
+function normalizeDraftBaseUrl(value: string): string {
+  return value.trim().replace(/\/+$/, '').toLowerCase()
 }
 
 function stageToastTitle(stage: 'enabled' | 'syncing' | 'testing' | 'done' | 'failed', t: ReturnType<typeof useTranslation>['t']): string {
@@ -671,26 +901,34 @@ function ProviderFormModal({
 }) {
   const { colors } = useAppTheme()
   const { t } = useTranslation()
+  const dialog = useIsleDialog()
   const insets = useSafeAreaInsets()
   const { height } = useWindowDimensions()
   const motion = useMotionPreference()
   const [presetId, setPresetId] = useState<ProviderPresetId>(DEFAULT_PROVIDER_PRESET_ID)
   const [name, setName] = useState('')
   const [baseUrl, setBaseUrl] = useState('')
+  const [nameDirty, setNameDirty] = useState(false)
+  const [baseUrlDirty, setBaseUrlDirty] = useState(false)
   const [wireProtocol, setWireProtocol] = useState<ProviderWireProtocol>(DEFAULT_PROVIDER_WIRE_PROTOCOL)
   const [modelsText, setModelsText] = useState('')
   const [keysText, setKeysText] = useState('')
   const [advancedOpen, setAdvancedOpen] = useState(false)
+  const [clipboardState, setClipboardState] = useState<ClipboardReadState>('idle')
   const preset = getProviderPreset(presetId)
   const providerConfigDraft = resolveProviderConfigDraft({ provider: {}, presetId, baseUrl, wireProtocol })
   const compact = height < 680
+  const clipboardBusy = clipboardState !== 'idle'
 
   function resetDraft() {
     setName('')
     setBaseUrl('')
+    setNameDirty(false)
+    setBaseUrlDirty(false)
     setModelsText('')
     setKeysText('')
     setAdvancedOpen(false)
+    setClipboardState('idle')
     setPresetId(DEFAULT_PROVIDER_PRESET_ID)
     setWireProtocol(DEFAULT_PROVIDER_WIRE_PROTOCOL)
   }
@@ -725,18 +963,93 @@ function ProviderFormModal({
   }
 
   function selectPreset(nextPresetId: ProviderPresetId) {
+    const currentPreset = getProviderPreset(presetId)
     const nextPreset = getProviderPreset(nextPresetId)
-    const nextProtocol = inferProviderWireProtocolFromBaseUrl(baseUrl)
-    const nextDraft = resolveProviderConfigDraft({ provider: {}, presetId: nextPresetId, baseUrl, wireProtocol: nextProtocol })
+    const shouldReplaceName = !nameDirty || !name.trim() || name.trim() === currentPreset.name
+    const shouldReplaceBaseUrl = !baseUrlDirty || !baseUrl.trim() || isPresetDefaultBaseUrl(baseUrl, presetId, wireProtocol)
+    const draftBaseUrl = shouldReplaceBaseUrl ? '' : baseUrl
+    const nextProtocol = inferProviderWireProtocolFromBaseUrl(draftBaseUrl)
+    const nextDraft = resolveProviderConfigDraft({ provider: {}, presetId: nextPresetId, baseUrl: draftBaseUrl, wireProtocol: nextProtocol })
     setPresetId(nextPresetId)
     setWireProtocol(nextProtocol)
     setBaseUrl(nextDraft.baseUrl)
-    if (!name.trim()) setName(nextPreset.name)
+    setBaseUrlDirty(!shouldReplaceBaseUrl)
+    if (shouldReplaceName) {
+      setName(nextPreset.name)
+      setNameDirty(false)
+    }
   }
 
   function selectWireProtocol(nextProtocol: ProviderWireProtocol) {
     setWireProtocol(nextProtocol)
-    setBaseUrl(resolveProviderConfigDraft({ provider: {}, presetId, baseUrl, wireProtocol: nextProtocol }).baseUrl)
+    const shouldReplaceBaseUrl = !baseUrlDirty || isPresetDefaultBaseUrl(baseUrl, presetId, wireProtocol)
+    setBaseUrl(resolveProviderConfigDraft({ provider: {}, presetId, baseUrl: shouldReplaceBaseUrl ? '' : baseUrl, wireProtocol: nextProtocol }).baseUrl)
+    setBaseUrlDirty(!shouldReplaceBaseUrl)
+  }
+
+  function applyProviderImportDraftText(text: string, source: 'clipboard' | 'manual'): boolean {
+    const draft = parseProviderImportDraft(text, { requireConnection: source === 'manual', preferredWireProtocol: wireProtocol })
+    if (!draft) return false
+    const nextDraft = resolveProviderConfigDraft({ provider: draft.provider, presetId: draft.presetId, baseUrl: draft.baseUrl, wireProtocol: draft.wireProtocol })
+    setPresetId(draft.presetId)
+    setWireProtocol(draft.wireProtocol)
+    setBaseUrl(nextDraft.baseUrl)
+    setName(draft.provider.name)
+    setNameDirty(false)
+    setBaseUrlDirty(false)
+    setKeysText(draft.credentialText)
+    if (draft.modelText) setModelsText(draft.modelText)
+    dialog.toast({
+      title: t('providerSettings.clipboardDetected'),
+      message: t(source === 'clipboard' && draft.count > 1 ? 'providerSettings.importAppliedFirst' : 'providerSettings.importDetected', { count: draft.count }),
+      tone: 'mint',
+    })
+    return true
+  }
+
+  function handleBaseUrlText(value: string) {
+    if (looksLikeProviderImportConnectionText(value) && applyProviderImportDraftText(value, 'manual')) return
+    setBaseUrl(value)
+    setBaseUrlDirty(true)
+    if (shouldSyncWireProtocolFromBaseUrl(providerConfigDraft)) setWireProtocol(inferProviderWireProtocolFromBaseUrl(value))
+  }
+
+  function handleKeysText(value: string) {
+    if (looksLikeProviderImportConnectionText(value) && applyProviderImportDraftText(value, 'manual')) return
+    setKeysText(value)
+  }
+
+  async function readProviderClipboard() {
+    setClipboardState('requesting')
+    dialog.toast({
+      title: t('providerSettings.clipboardPermissionRequest'),
+      message: t('providerSettings.clipboardPermissionMessage'),
+      tone: 'mint',
+      durationMs: 1400,
+    })
+    try {
+      const hasText = await Clipboard.hasStringAsync()
+      if (!hasText) {
+        dialog.toast({ title: t('providerSettings.clipboardEmpty'), tone: 'amber' })
+        return
+      }
+      const text = await Clipboard.getStringAsync()
+      if (!text.trim()) {
+        dialog.toast({ title: t('providerSettings.clipboardEmpty'), tone: 'amber' })
+        return
+      }
+      if (!applyProviderImportDraftText(text, 'clipboard')) {
+        dialog.toast({ title: t('providerSettings.clipboardRead'), message: t('providerSettings.clipboardNoConfig'), tone: 'amber' })
+      }
+    } catch (error) {
+      dialog.toast({
+        title: t('providerSettings.clipboardReadFailed'),
+        message: clipboardReadFailureMessage(error, t),
+        tone: 'amber',
+      })
+    } finally {
+      setClipboardState('idle')
+    }
   }
 
   return (
@@ -777,6 +1090,15 @@ function ProviderFormModal({
                   />
                 ))}
               </ScrollView>
+              <View style={{ paddingTop: 10 }}>
+                <IsleButton
+                  label={clipboardBusy ? t('providerSettings.clipboardChecking') : t('settings.pasteClipboard')}
+                  compact
+                  icon={<ClipboardPaste color={colors.textSecondary} size={16} />}
+                  onPress={() => void readProviderClipboard()}
+                  disabled={clipboardBusy}
+                />
+              </View>
             </View>
             <ScrollView
               keyboardShouldPersistTaps="handled"
@@ -785,7 +1107,10 @@ function ProviderFormModal({
               showsVerticalScrollIndicator={compact}
               contentContainerStyle={{ gap: 10, paddingHorizontal: 16, paddingBottom: 12, backgroundColor: colors.surface }}
             >
-              <IsleField label={t('providerSettings.name')} inputProps={{ value: name, onChangeText: setName, onFocus: keyboardRequestClose.markKeyboardActive, placeholder: preset.name, autoCapitalize: 'none' }} />
+              <IsleField label={t('providerSettings.name')} inputProps={{ value: name, onChangeText: (value) => {
+                setName(value)
+                setNameDirty(true)
+              }, onFocus: keyboardRequestClose.markKeyboardActive, placeholder: preset.name, autoCapitalize: 'none' }} />
               {providerConfigDraft.isProtocolSelectable ? (
                 <View style={{ borderRadius: 18, padding: 11, backgroundColor: colors.islandRaised, gap: 9 }}>
                   <Text style={{ color: colors.text, fontSize: 13, fontWeight: '900' }}>{t('providerSettings.protocol.title')}</Text>
@@ -802,10 +1127,7 @@ function ProviderFormModal({
                 inputProps={{
                   value: baseUrl,
                   onFocus: keyboardRequestClose.markKeyboardActive,
-                  onChangeText: (value) => {
-                    setBaseUrl(value)
-                    if (shouldSyncWireProtocolFromBaseUrl(providerConfigDraft)) setWireProtocol(inferProviderWireProtocolFromBaseUrl(value))
-                  },
+                  onChangeText: handleBaseUrlText,
                   placeholder: preset.baseUrl ?? 'https://example.com/v1',
                   autoCapitalize: 'none',
                   autoCorrect: false,
@@ -814,7 +1136,7 @@ function ProviderFormModal({
               <IsleField
                 label={t('providerSettings.tokens')}
                 note={t('providerSettings.tokensNote')}
-                inputProps={{ value: keysText, onChangeText: setKeysText, onFocus: keyboardRequestClose.markKeyboardActive, placeholder: 'sk-...\nsk-...', autoCapitalize: 'none', autoCorrect: false, multiline: true, secureTextEntry: false, style: { minHeight: compact ? 72 : 92, maxHeight: compact ? 110 : 140 } }}
+                inputProps={{ value: keysText, onChangeText: handleKeysText, onFocus: keyboardRequestClose.markKeyboardActive, placeholder: 'sk-...\nsk-...', autoCapitalize: 'none', autoCorrect: false, multiline: true, secureTextEntry: false, style: { minHeight: compact ? 72 : 92, maxHeight: compact ? 110 : 140 } }}
               />
               <IslePressable
                 haptic
@@ -862,6 +1184,7 @@ function ProviderImportModal({
   const motion = useMotionPreference()
   const bodyScrollRef = useRef<ScrollView>(null)
   const [input, setInput] = useState('')
+  const [clipboardState, setClipboardState] = useState<ClipboardReadState>('idle')
   const [contentHeight, setContentHeight] = useState(0)
   const [keyboardHeight, setKeyboardHeight] = useState(0)
   const compact = height < 680
@@ -890,12 +1213,16 @@ function ProviderImportModal({
   const inputScrollEnabled = targetInputHeight > maxInputHeight
   const sheetMaxHeight = Math.min(availableSheetHeight, height * (compact ? 0.96 : 0.9))
   const footerCompact = width < 380
+  const detectedImport = useMemo(() => input.trim() ? parseProviderImportText(input) : null, [input])
+  const detectedImportCount = detectedImport?.providers.length ?? 0
+  const clipboardBusy = clipboardState !== 'idle'
   const keyboardRequestClose = useKeyboardAwareModalRequestClose(onClose)
 
   useEffect(() => {
     if (!visible) {
       setKeyboardHeight(0)
       setContentHeight(0)
+      setClipboardState('idle')
       return
     }
     const showSub = Keyboard.addListener(Platform.OS === 'ios' ? 'keyboardWillShow' : 'keyboardDidShow', (event) => {
@@ -925,19 +1252,49 @@ function ProviderImportModal({
   }
 
   function submit() {
+    if (!input.trim()) return
     onSubmit(input)
     setInput('')
     setContentHeight(0)
   }
 
   async function pasteFromClipboard() {
-    const text = await Clipboard.getStringAsync()
-    if (!text.trim()) {
-      dialog.toast({ title: t('providerSettings.clipboardEmpty'), tone: 'amber' })
-      return
+    setClipboardState('requesting')
+    dialog.toast({
+      title: t('providerSettings.clipboardPermissionRequest'),
+      message: t('providerSettings.clipboardPermissionMessage'),
+      tone: 'mint',
+      durationMs: 1400,
+    })
+    try {
+      const hasText = await Clipboard.hasStringAsync()
+      if (!hasText) {
+        dialog.toast({ title: t('providerSettings.clipboardEmpty'), tone: 'amber' })
+        return
+      }
+      const text = await Clipboard.getStringAsync()
+      if (!text.trim()) {
+        dialog.toast({ title: t('providerSettings.clipboardEmpty'), tone: 'amber' })
+        return
+      }
+      appendInputText(text)
+      const detected = parseProviderImportText(text)
+      dialog.toast({
+        title: detected.providers.length ? t('providerSettings.clipboardDetected') : t('providerSettings.clipboardRead'),
+        message: detected.providers.length
+          ? t('providerSettings.clipboardDetectedMessage', { count: detected.providers.length })
+          : t('providerSettings.clipboardNoConfig'),
+        tone: detected.providers.length ? 'mint' : 'amber',
+      })
+    } catch (error) {
+      dialog.toast({
+        title: t('providerSettings.clipboardReadFailed'),
+        message: clipboardReadFailureMessage(error, t),
+        tone: 'amber',
+      })
+    } finally {
+      setClipboardState('idle')
     }
-    appendInputText(text)
-    dialog.toast({ title: t('providerSettings.clipboardRead'), tone: 'mint' })
   }
 
   async function importFromFile() {
@@ -1005,10 +1362,11 @@ function ProviderImportModal({
                   <Text style={{ color: colors.text, fontSize: 12, fontWeight: '900', marginBottom: 7 }}>{t('providerSettings.importSources')}</Text>
                   <View style={{ flexDirection: footerCompact ? 'column' : 'row', gap: 8 }}>
                     <IsleButton
-                      label={t('settings.pasteClipboard')}
+                      label={clipboardBusy ? t('providerSettings.clipboardChecking') : t('settings.pasteClipboard')}
                       compact
                       icon={<ClipboardPaste color={colors.textSecondary} size={16} />}
                       onPress={() => void pasteFromClipboard()}
+                      disabled={clipboardBusy}
                       style={{ flex: 1, minHeight: 44 }}
                     />
                     <IsleButton
@@ -1061,7 +1419,13 @@ function ProviderImportModal({
                     }}
                   />
                 </View>
-                <Text style={{ color: colors.textTertiary, fontSize: 11, lineHeight: 16, marginTop: 8 }}>{t('providerSettings.importNote')}</Text>
+                <Text style={{ color: detectedImportCount ? colors.primary : colors.textTertiary, fontSize: 11, lineHeight: 16, marginTop: 8, fontWeight: detectedImportCount ? '900' : '700' }}>
+                  {input.trim()
+                    ? detectedImportCount
+                      ? t('providerSettings.importDetected', { count: detectedImportCount })
+                      : t('providerSettings.importDetectionEmpty')
+                    : t('providerSettings.importNote')}
+                </Text>
               </View>
             </ScrollView>
             <View style={{ minHeight: IMPORT_FOOTER_HEIGHT, flexDirection: 'row', alignItems: 'center', gap: footerCompact ? 8 : 10, paddingHorizontal: 16, paddingTop: 12, paddingBottom: Math.max(insets.bottom, 10) + 10, backgroundColor: colors.surface, borderTopWidth: 1, borderTopColor: colors.border }}>
@@ -1073,6 +1437,13 @@ function ProviderImportModal({
       </View>
     </Modal>
   )
+}
+
+function clipboardReadFailureMessage(error: unknown, t: ReturnType<typeof useTranslation>['t']): string {
+  const message = error instanceof Error ? `${error.name} ${error.message}` : String(error ?? '')
+  return /permission|denied|not.?allowed|nopermission/i.test(message)
+    ? t('providerSettings.clipboardPermissionDenied')
+    : t('providerSettings.clipboardUnavailable')
 }
 
 function compareProviders(a: AIProvider, b: AIProvider, mode: ProviderSortMode, usageByProvider: Map<string, number>, settings?: ProviderModelAccessInput['settings']): number {

@@ -2,6 +2,7 @@ import type { AIModel, Language, RetrievalSource } from '@/types'
 
 interface PromptBuildInput {
   baseSystemPrompt?: string
+  expectedReplyFormat?: string
   language: Language
   modelConfig: AIModel
   hasMemory: boolean
@@ -19,6 +20,7 @@ export function buildSystemPrompt(input: PromptBuildInput): string {
     input.hasKnowledge ? '知识库规则：使用本机知识库内容时，优先引用来源编号；知识库不足时明确说明，不要补造不存在的资料。' : '',
     input.hasWeb ? '联网搜索规则：联网来源只用于补充当前事实；涉及新闻、价格、法规、版本或时间敏感内容时，回答中保留来源指向。' : '',
     input.retrievalSources.length ? citationRule(input.retrievalSources.length) : '',
+    input.expectedReplyFormat?.trim() ? `回复格式要求：\n${input.expectedReplyFormat.trim()}` : '',
   ]
   return parts.filter(Boolean).join('\n\n')
 }

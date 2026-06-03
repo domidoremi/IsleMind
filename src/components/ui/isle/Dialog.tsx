@@ -126,7 +126,7 @@ export function IsleDialogProvider({ children }: { children: ReactNode }) {
               animate={{ opacity: 1, translateY: 0, scale: 1 }}
               transition={{ type: 'spring', damping: 20, stiffness: 190 }}
             >
-              <IsleCard type="title" style={{ padding: 18, borderRadius: 38 }}>
+              <IsleCard type="title" style={{ padding: 18, borderRadius: colors.ui.radius.modal }}>
                 <View style={{ flexDirection: 'row', alignItems: 'flex-start', gap: 12 }}>
                   <ToneBadge tone={dialog.tone ?? 'default'} />
                   <View style={{ flex: 1 }}>
@@ -200,7 +200,7 @@ export function IsleDialogProvider({ children }: { children: ReactNode }) {
             transition={{ type: 'spring', damping: 20, stiffness: 210 }}
             style={{ width: '100%', maxWidth: 420 }}
           >
-            <IslePanel material="chrome" elevated radius={26} contentStyle={{ paddingHorizontal: 13, paddingVertical: 11 }}>
+            <IslePanel material="chrome" elevated radius={colors.ui.radius.panel} contentStyle={{ paddingHorizontal: 13, paddingVertical: 11 }}>
               <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
                 <ToneBadge tone={toast.tone ?? 'mint'} small />
                 <View style={{ flex: 1 }}>

@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import type { ReactNode } from 'react'
 import { ActivityIndicator, Platform, Text, TextInput, View } from 'react-native'
-import { AtSign, Camera, ChevronDown, FilePlus, Image, Mic, Plus, SendHorizontal, Slash, Square } from 'lucide-react-native'
+import { AtSign, Camera, ChevronDown, FilePlus, Image, Mic, Plus, SendHorizontal, Slash } from 'lucide-react-native'
 import { MotiView } from 'moti'
 import { useTranslation } from 'react-i18next'
 import type { Attachment, CommandReference } from '@/types'
@@ -24,7 +24,6 @@ export interface ComposerCommand {
 interface ComposerProps {
   disabled?: boolean
   streaming?: boolean
-  activityLabel?: string
   pendingNotice?: string
   initialDraft?: string
   initialDraftKey?: string | number
@@ -33,12 +32,10 @@ interface ComposerProps {
   utilitiesOpen?: boolean
   showInlineUtilities?: boolean
   onClearPending?: () => void
-  onStop?: () => void
   onReferenceSelected?: (reference: CommandReference) => void
   onFocus?: () => void
   onBlur?: () => void
   onOpenKnowledge?: () => void
-  onInsertPromptTemplate?: () => void
   onSend: (content: string, attachments: Attachment[]) => Promise<void> | void
   onSendWhileStreaming?: (content: string, attachments: Attachment[]) => Promise<void> | void
 }
@@ -46,7 +43,6 @@ interface ComposerProps {
 export function Composer({
   disabled = false,
   streaming = false,
-  activityLabel,
   pendingNotice,
   initialDraft,
   initialDraftKey,
@@ -55,12 +51,10 @@ export function Composer({
   utilitiesOpen = false,
   showInlineUtilities = true,
   onClearPending,
-  onStop,
   onReferenceSelected,
   onFocus,
   onBlur,
   onOpenKnowledge,
-  onInsertPromptTemplate,
   onSend,
   onSendWhileStreaming,
 }: ComposerProps) {
@@ -82,6 +76,12 @@ export function Composer({
   const referenceMatches = trigger?.type === 'reference' ? filterReferences(references, trigger.query).slice(0, 8) : []
   const showCommandPanel = !!trigger && (commandMatches.length > 0 || referenceMatches.length > 0 || trigger.query.length === 0)
   const isMultilineDraft = content.includes('\n') || content.length > 70
+  const panelRadius = colors.ui.radius.panel
+  const fieldRadius = colors.ui.radius.field
+  const chipRadius = colors.ui.radius.chip
+  const compactControlRadius = colors.ui.radius.controlMiddle
+  const largeControlRadius = colors.ui.radius.controlLarge
+  const raisedSurface = colors.material.paperRaised
 
   useEffect(() => {
     const draft = initialDraft?.trim()
@@ -190,7 +190,7 @@ export function Composer({
         backgroundColor: 'transparent',
       }}
     >
-      <IslePanel material="chrome" elevated={false} radius={26} style={{ borderColor: focused ? colors.borderStrong : colors.border, backgroundColor: colors.material.chrome }}>
+      <IslePanel material="chrome" elevated={false} radius={panelRadius} style={{ borderColor: focused ? colors.borderStrong : colors.border, backgroundColor: colors.material.chrome }}>
       {attachments.length ? (
         <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8, paddingHorizontal: 12, paddingTop: 10 }}>
           {attachments.map((item) => (
@@ -198,7 +198,7 @@ export function Composer({
               key={item.id}
               onPress={() => setAttachments((files) => files.filter((file) => file.id !== item.id))}
               accessibilityLabel={t('chat.removeAttachment', { name: item.name })}
-              style={{ paddingHorizontal: 10, height: 28, borderRadius: 14, backgroundColor: colors.islandRaised, justifyContent: 'center' }}
+              style={{ paddingHorizontal: 10, height: 28, borderRadius: chipRadius, backgroundColor: raisedSurface, justifyContent: 'center' }}
             >
               <Text numberOfLines={1} style={{ color: colors.textSecondary, fontSize: 11, fontWeight: '700', maxWidth: 180 }}>
                 {item.name}
@@ -231,11 +231,6 @@ export function Composer({
             <AttachmentChip label={t('chat.openCommandPanel')} onPress={() => setContent((value) => value.trim() ? `${value} /` : '/')}>
               <Slash color={colors.textSecondary} size={15} strokeWidth={1.8} />
             </AttachmentChip>
-            {onInsertPromptTemplate ? (
-              <AttachmentChip label={t('chat.commandPromptTemplate')} onPress={onInsertPromptTemplate}>
-                <Plus color={colors.textSecondary} size={15} strokeWidth={1.8} />
-              </AttachmentChip>
-            ) : null}
             {onOpenKnowledge ? (
               <AttachmentChip label={t('chat.importKnowledge')} onPress={onOpenKnowledge}>
                 <FilePlus color={colors.textSecondary} size={15} strokeWidth={1.8} />
@@ -253,7 +248,7 @@ export function Composer({
             marginHorizontal: 10,
             marginTop: 10,
             minHeight: 30,
-            borderRadius: 15,
+            borderRadius: compactControlRadius,
             paddingHorizontal: 11,
             alignItems: 'center',
             justifyContent: 'center',
@@ -272,7 +267,7 @@ export function Composer({
           transition={{ type: 'spring', damping: 20, stiffness: 210 }}
           style={{ paddingHorizontal: 10, paddingTop: 10 }}
         >
-          <View style={{ borderRadius: 22, padding: 8, backgroundColor: colors.material.paperRaised, borderWidth: 1, borderColor: colors.border, gap: 6 }}>
+          <View style={{ borderRadius: fieldRadius, padding: 8, backgroundColor: raisedSurface, borderWidth: 1, borderColor: colors.border, gap: 6 }}>
             {commandMatches.map((command) => (
               <ComposerPickRow
                 key={command.id}
@@ -311,8 +306,8 @@ export function Composer({
                 height: 40,
                 alignItems: 'center',
                 justifyContent: 'center',
-                borderRadius: 18,
-                backgroundColor: attachmentsOpen ? colors.amberSoft : colors.islandRaised,
+                borderRadius: compactControlRadius,
+                backgroundColor: attachmentsOpen ? colors.amberSoft : raisedSurface,
               }}
             >
               {attachmentsOpen ? <ChevronDown color={colors.textSecondary} size={16} strokeWidth={2} /> : <Plus color={colors.textSecondary} size={16} strokeWidth={2} />}
@@ -326,16 +321,15 @@ export function Composer({
                 height: 40,
                 alignItems: 'center',
                 justifyContent: 'center',
-                borderRadius: 18,
-                backgroundColor: recording ? colors.error : colors.islandRaised,
+                borderRadius: compactControlRadius,
+                backgroundColor: recording ? colors.error : raisedSurface,
               }}
             >
-              <Mic color={recording ? colors.surface : colors.textSecondary} size={16} strokeWidth={2} />
+              <Mic color={recording ? colors.primaryForeground : colors.textSecondary} size={16} strokeWidth={2} />
             </IslePressable>
           </>
         ) : null}
         <View style={{ flex: 1, minHeight: 44, justifyContent: 'center' }}>
-          {streaming ? <StreamingStatusInline label={activityLabel || t('chat.generating')} /> : null}
           <TextInput
             value={content}
             onChangeText={setContent}
@@ -375,24 +369,6 @@ export function Composer({
             }}
           />
         </View>
-        {streaming ? (
-          <IslePressable
-            haptic
-            onPress={onStop}
-            accessibilityLabel={t('chat.stopGenerating')}
-            hitSlop={{ top: 12, right: 8, bottom: 12, left: 8 }}
-            style={{
-              width: 44,
-              height: 44,
-              borderRadius: 22,
-              alignItems: 'center',
-              justifyContent: 'center',
-              backgroundColor: colors.error,
-            }}
-          >
-            <Square color={colors.surface} size={14} strokeWidth={2.4} fill={colors.surface} />
-          </IslePressable>
-        ) : null}
         <IslePressable
           haptic
           disabled={!canSend}
@@ -402,7 +378,7 @@ export function Composer({
           style={{
             minWidth: 52,
             height: 44,
-            borderRadius: 22,
+            borderRadius: largeControlRadius,
             alignItems: 'center',
             justifyContent: 'center',
             flexDirection: 'row',
@@ -426,23 +402,6 @@ export function Composer({
   )
 }
 
-function StreamingStatusInline({ label }: { label: string }) {
-  const { colors } = useAppTheme()
-  return (
-    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, paddingHorizontal: 2, paddingTop: 2 }}>
-      <MotiView
-        from={{ opacity: 0.35, scale: 0.84 }}
-        animate={{ opacity: 1, scale: 1 }}
-        transition={{ loop: true, type: 'timing', duration: 760 }}
-        style={{ width: 6, height: 6, borderRadius: 3, backgroundColor: colors.primary }}
-      />
-      <Text numberOfLines={1} style={{ color: colors.textSecondary, fontSize: 11, fontWeight: '800', flexShrink: 1 }}>
-        {label}
-      </Text>
-    </View>
-  )
-}
-
 function ComposerPickRow({
   title,
   description,
@@ -455,13 +414,14 @@ function ComposerPickRow({
   onPress: () => void
 }) {
   const { colors } = useAppTheme()
+  const rowRadius = colors.ui.radius.field
   return (
     <IslePressable
       haptic
       onPress={onPress}
-      style={{ minHeight: 44, borderRadius: 18, paddingHorizontal: 10, flexDirection: 'row', alignItems: 'center', gap: 9, backgroundColor: colors.islandRaised }}
+      style={{ minHeight: 44, borderRadius: rowRadius, paddingHorizontal: 10, flexDirection: 'row', alignItems: 'center', gap: 9, backgroundColor: colors.material.field }}
     >
-      <View style={{ width: 24, height: 24, borderRadius: 12, alignItems: 'center', justifyContent: 'center', backgroundColor: colors.mintSoft }}>
+      <View style={{ width: 24, height: 24, borderRadius: colors.ui.radius.controlSmall, alignItems: 'center', justifyContent: 'center', backgroundColor: colors.mintSoft }}>
         {icon}
       </View>
       <View style={{ flex: 1 }}>
@@ -535,11 +495,13 @@ function AttachmentChip({ label, children, onPress }: IconButtonProps) {
       style={{
         minHeight: 44,
         paddingHorizontal: 12,
-        borderRadius: 22,
+        borderRadius: colors.ui.radius.chip,
         flexDirection: 'row',
         alignItems: 'center',
         gap: 6,
-        backgroundColor: colors.islandRaised,
+        backgroundColor: colors.material.paperRaised,
+        borderWidth: 1,
+        borderColor: colors.border,
       }}
     >
       {children}

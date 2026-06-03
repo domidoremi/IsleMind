@@ -5,7 +5,7 @@ import { useTranslation } from 'react-i18next'
 import { useSafeAreaInsets } from 'react-native-safe-area-context'
 import { IsleIconButton } from '@/components/ui/isle'
 import { useAppTheme } from '@/hooks/useAppTheme'
-import { useActivationJobStore, type ActivationJobState } from '@/store/activationJobStore'
+import { resolveActivationJobProgress, useActivationJobStore, type ActivationJobState } from '@/store/activationJobStore'
 import { motionTokens } from '@/theme/animation'
 
 export function ActivationProgressBanner() {
@@ -31,7 +31,7 @@ export function ActivationProgressBanner() {
         <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
           <View style={{ flex: 1 }}>
             <Text style={{ color: colors.text, fontSize: 13, fontWeight: '900' }}>
-              {done ? t('providerSettings.enableDone') : t('providerSettings.activationRunning')}
+              {done ? activationDoneTitle(job.total, t) : t('providerSettings.activationRunning')}
             </Text>
             <Text numberOfLines={1} style={{ color: colors.textSecondary, fontSize: 11, lineHeight: 16, marginTop: 2, fontWeight: '800' }}>
               {job.stage ?? job.currentName ?? t('providerSettings.activationQueued')}
@@ -52,9 +52,13 @@ export function ActivationProgressBanner() {
   )
 }
 
+function activationDoneTitle(total: number, t: ReturnType<typeof useTranslation>['t']): string {
+  return total === 1 ? t('providerSettings.activationSingleDone') : t('providerSettings.activationBatchDone')
+}
+
 function ActivationProgressBar({ job }: { job: ActivationJobState }) {
   const { colors } = useAppTheme()
-  const progress = job.total ? job.completed / job.total : 0
+  const progress = resolveActivationJobProgress(job)
   return (
     <View style={{ height: 8, borderRadius: 4, backgroundColor: colors.islandRaised, overflow: 'hidden' }}>
       <MotiView

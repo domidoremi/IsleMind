@@ -25,24 +25,25 @@ export function IslePanel({
   material,
   intensity = 34,
   elevated = true,
-  radius = 30,
+  radius,
   interactive = false,
 }: IslePanelProps) {
   const { colors, isDark } = useAppTheme()
   const resolvedMaterial = material ?? (blur ? 'glass' : 'paper')
+  const resolvedRadius = radius ?? colors.ui.radius.panel
   const backgroundColor = panelBackground(resolvedMaterial, colors)
   const borderColor = resolvedMaterial === 'transparent' ? 'transparent' : colors.material.stroke
   const panelStyle: StyleProp<ViewStyle> = [
     styles.panel,
     {
       borderColor,
-      borderRadius: radius,
+      borderRadius: resolvedRadius,
       backgroundColor,
       shadowColor: colors.shadowTint,
-      shadowOpacity: elevated ? (isDark ? colors.shadow.mediumOpacity : 0.18) : 0,
-      shadowRadius: elevated ? (interactive ? 18 : 12) : 0,
-      shadowOffset: { width: 0, height: elevated ? (interactive ? 8 : 5) : 0 },
-      elevation: elevated ? (interactive ? 5 : 4) : 0,
+      shadowOpacity: elevated ? colors.ui.card.shadowOpacity : 0,
+      shadowRadius: elevated ? (interactive ? colors.ui.card.shadowRadius + 6 : colors.ui.card.shadowRadius) : 0,
+      shadowOffset: { width: 0, height: elevated ? (interactive ? colors.ui.card.shadowOffset + 3 : colors.ui.card.shadowOffset) : 0 },
+      elevation: elevated && colors.ui.card.shadowOpacity > 0 ? (interactive ? 5 : 2) : 0,
     },
     style,
   ]
