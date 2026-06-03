@@ -10,6 +10,19 @@ if (!fs.existsSync(buildGradlePath)) {
   throw new Error(`Android build.gradle was not found at ${buildGradlePath}. Run expo prebuild first.`)
 }
 
+function ensureLauncherBackgroundDrawable() {
+  const drawableDir = path.join(projectRoot, 'android', 'app', 'src', 'main', 'res', 'drawable')
+  const launcherBackgroundPath = path.join(drawableDir, 'ic_launcher_background.xml')
+  if (fs.existsSync(launcherBackgroundPath)) return
+  fs.mkdirSync(drawableDir, { recursive: true })
+  fs.writeFileSync(
+    launcherBackgroundPath,
+    '<shape xmlns:android="http://schemas.android.com/apk/res/android" android:shape="rectangle">\n  <solid android:color="@color/iconBackground" />\n</shape>\n',
+  )
+}
+
+ensureLauncherBackgroundDrawable()
+
 let source = fs.readFileSync(buildGradlePath, 'utf8')
 
 function findMatchingBrace(text, openIndex) {
