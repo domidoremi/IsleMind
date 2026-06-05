@@ -40,10 +40,14 @@ const PAGE_BY_INDEX: Record<number, MainPagerPage> = {
 
 const SWIPE_PAGE_THRESHOLD = 0.18
 const SWIPE_VELOCITY_THRESHOLD = 520
+const PAGER_ACTIVE_HORIZONTAL_OFFSET = 18
+const PAGER_FAIL_VERTICAL_OFFSET = 36
+const PAGER_HORIZONTAL_DOMINANCE_RATIO = 1.35
+const PAGER_MIN_HORIZONTAL_DRAG = 24
 const PAGE_SETTLE_SPRING = {
-  damping: 24,
-  stiffness: 190,
-  mass: 0.9,
+  damping: 28,
+  stiffness: 220,
+  mass: 0.86,
 }
 const REDUCED_MOTION_SETTLE_MS = 90
 const SETTINGS_TRANSITION_SPIN_MS = 420
@@ -168,13 +172,21 @@ function MainPagerShellInner({ initialPage = 'home', transitionStyle = 'state' }
 
   const pan = Gesture.Pan()
     .enabled(!gestureLock?.locked && !settingsTransitionActive)
-    .activeOffsetX([-14, 14])
-    .failOffsetY([-80, 80])
+    .activeOffsetX([-PAGER_ACTIVE_HORIZONTAL_OFFSET, PAGER_ACTIVE_HORIZONTAL_OFFSET])
+    .failOffsetY([-PAGER_FAIL_VERTICAL_OFFSET, PAGER_FAIL_VERTICAL_OFFSET])
     .cancelsTouchesInView(false)
     .onBegin(() => {
       gestureSettled.value = false
     })
     .onUpdate((event) => {
+      const absX = Math.abs(event.translationX)
+      const absY = Math.abs(event.translationY)
+      const horizontalDominant = absX >= PAGER_MIN_HORIZONTAL_DRAG && absX >= absY * PAGER_HORIZONTAL_DOMINANCE_RATIO
+      if (!horizontalDominant) {
+        pageValue.value = pageIndex.value
+        return
+      }
+
       dragX.value = event.translationX
       const dragProgress = Math.max(-1, Math.min(1, event.translationX / Math.max(width, 1)))
       const nextValue = pageIndex.value - dragProgress
@@ -183,8 +195,14 @@ function MainPagerShellInner({ initialPage = 'home', transitionStyle = 'state' }
     .onEnd((event) => {
       gestureSettled.value = true
       dragX.value = 0
+      const absX = Math.abs(event.translationX)
+      const absY = Math.abs(event.translationY)
+      const absVelocityX = Math.abs(event.velocityX)
+      const absVelocityY = Math.abs(event.velocityY)
+      const horizontalDominant = absX >= PAGER_MIN_HORIZONTAL_DRAG && absX >= absY * PAGER_HORIZONTAL_DOMINANCE_RATIO
+      const velocityHorizontal = absVelocityX >= SWIPE_VELOCITY_THRESHOLD && absVelocityX >= absVelocityY * PAGER_HORIZONTAL_DOMINANCE_RATIO
       const dragProgress = event.translationX / Math.max(width, 1)
-      const shouldMove = Math.abs(dragProgress) >= SWIPE_PAGE_THRESHOLD || Math.abs(event.velocityX) >= SWIPE_VELOCITY_THRESHOLD
+      const shouldMove = (horizontalDominant && Math.abs(dragProgress) >= SWIPE_PAGE_THRESHOLD) || velocityHorizontal
       const direction = shouldMove ? (event.translationX < 0 || event.velocityX < -SWIPE_VELOCITY_THRESHOLD ? 1 : -1) : 0
       const targetIndex = Math.max(-1, Math.min(1, pageIndex.value + direction)) as -1 | 0 | 1
       runOnJS(settleToIndex)(targetIndex)
@@ -283,10 +301,11 @@ function PagerPage({
     if (transitionStyle === 'state') {
       return {
         transform: [
-          { translateY: interpolate(absDelta, [0, 1], [0, 16], Extrapolation.CLAMP) },
-          { scale: interpolate(absDelta, [0, 0.6, 1], [1, 0.986, 0.97], Extrapolation.CLAMP) },
+          { translateX: interpolate(delta, [-1, 0, 1], [-28, 0, 28], Extrapolation.CLAMP) },
+          { translateY: interpolate(absDelta, [0, 0.7, 1], [0, 10, 18], Extrapolation.CLAMP) },
+          { scale: interpolate(absDelta, [0, 0.6, 1], [1, 0.988, 0.968], Extrapolation.CLAMP) },
         ],
-        opacity: interpolate(absDelta, [0, 0.42, 0.86], [1, 0.34, 0], Extrapolation.CLAMP),
+        opacity: interpolate(absDelta, [0, 0.5, 0.92], [1, 0.46, 0], Extrapolation.CLAMP),
         zIndex: Math.round(20 - absDelta * 8),
       }
     }
@@ -294,10 +313,10 @@ function PagerPage({
     return {
       transform: [
         { translateX: delta * width },
-        { translateY: interpolate(absDelta, [0, 1], [0, 10], Extrapolation.CLAMP) },
-        { scale: interpolate(absDelta, [0, 0.6, 1.12], [1, 0.982, 0.946], Extrapolation.CLAMP) },
+        { translateY: interpolate(absDelta, [0, 0.7, 1.12], [0, 6, 14], Extrapolation.CLAMP) },
+        { scale: interpolate(absDelta, [0, 0.6, 1.12], [1, 0.986, 0.958], Extrapolation.CLAMP) },
       ],
-      opacity: interpolate(absDelta, [0, 0.56, 1.14], [1, 0.86, 0.24], Extrapolation.CLAMP),
+      opacity: interpolate(absDelta, [0, 0.56, 1.14], [1, 0.9, 0.32], Extrapolation.CLAMP),
       zIndex: Math.round(20 - absDelta * 8),
     }
   }, [motionFull, pageIndex, transitionStyle, width])

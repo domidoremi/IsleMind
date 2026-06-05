@@ -3,6 +3,7 @@ import '../src/global.css'
 import 'react-native-gesture-handler'
 import * as Clipboard from 'expo-clipboard'
 import type { ErrorBoundaryProps } from 'expo-router'
+import type { NativeStackNavigationOptions } from '@react-navigation/native-stack'
 import { useEffect, useRef } from 'react'
 import { router, Stack, useGlobalSearchParams } from 'expo-router'
 import { GestureHandlerRootView } from 'react-native-gesture-handler'
@@ -18,14 +19,20 @@ import { IsleButton } from '@/components/ui/isle'
 import { IslePanel } from '@/components/ui/isle'
 import { IsleDialogProvider, useIsleDialog } from '@/components/ui/isle'
 import { initI18n } from '@/i18n'
+import { useMotionPreference } from '@/hooks/useMotionPreference'
+import { useSettingsStore } from '@/store/settingsStore'
+import type { PageTransitionStyle } from '@/types'
 
 initI18n()
 
 export default function RootLayout() {
   const boot = useBootstrap()
   const { colors, mode, themeId } = useAppTheme()
+  const motion = useMotionPreference()
+  const pageTransitionStyle = useSettingsStore((state) => state.settings.pageTransitionStyle ?? 'state')
   const params = useGlobalSearchParams<{ qaUpdateNotice?: string | string[] }>()
   const qaUpdateVersion = firstQueryParam(params.qaUpdateNotice)
+  const stackTransitionOptions = resolveStackTransitionOptions(pageTransitionStyle, motion === 'full')
   useWebThemeBridge({ colors, mode, themeId })
 
   return (
@@ -37,16 +44,16 @@ export default function RootLayout() {
             screenOptions={{
               headerShown: false,
               contentStyle: { backgroundColor: colors.surface },
-              animation: 'slide_from_right',
+              ...stackTransitionOptions,
             }}
           >
-            <Stack.Screen name="settings/context" options={{ animation: 'slide_from_right' }} />
-            <Stack.Screen name="settings/memory" options={{ animation: 'slide_from_right' }} />
-            <Stack.Screen name="settings/knowledge" options={{ animation: 'slide_from_right' }} />
-            <Stack.Screen name="settings/preferences" options={{ animation: 'slide_from_right' }} />
-            <Stack.Screen name="settings/skills" options={{ animation: 'slide_from_right' }} />
-            <Stack.Screen name="settings/mcp" options={{ animation: 'slide_from_right' }} />
-            <Stack.Screen name="settings/providers" options={{ animation: 'slide_from_right' }} />
+            <Stack.Screen name="settings/context" options={stackTransitionOptions} />
+            <Stack.Screen name="settings/memory" options={stackTransitionOptions} />
+            <Stack.Screen name="settings/knowledge" options={stackTransitionOptions} />
+            <Stack.Screen name="settings/preferences" options={stackTransitionOptions} />
+            <Stack.Screen name="settings/skills" options={stackTransitionOptions} />
+            <Stack.Screen name="settings/mcp" options={stackTransitionOptions} />
+            <Stack.Screen name="settings/providers" options={stackTransitionOptions} />
           </Stack>
         ) : (
           <View style={{ flex: 1, backgroundColor: colors.surface }} />
@@ -54,6 +61,32 @@ export default function RootLayout() {
       </IsleDialogProvider>
     </GestureHandlerRootView>
   )
+}
+
+function resolveStackTransitionOptions(style: PageTransitionStyle, motionFull: boolean): NativeStackNavigationOptions {
+  if (!motionFull) {
+    return {
+      animation: 'fade',
+      animationDuration: 120,
+      gestureEnabled: true,
+    }
+  }
+
+  if (style === 'classic') {
+    return {
+      animation: 'slide_from_right',
+      animationDuration: 300,
+      gestureEnabled: true,
+      fullScreenGestureEnabled: true,
+      animationMatchesGesture: true,
+    }
+  }
+
+  return {
+    animation: 'fade_from_bottom',
+    animationDuration: 260,
+    gestureEnabled: true,
+  }
 }
 
 type WebThemeRoot = {
