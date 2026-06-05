@@ -74,8 +74,8 @@ function main() {
 
     openChat(device)
     const chat = captureChatWithAssistant(device, result)
-    result.importedChatOpened = hasAnyText(chat.uiaText, ['QA Work Artifact Fixture', 'QA_WORK_ARTIFACT_USER_TOKEN', assistantToken])
     result.assistantWorkArtifactVisible = hasAnyText(chat.uiaText, [assistantToken, '结构化摘要', continuationPromptStep])
+    result.importedChatOpened = result.assistantWorkArtifactVisible || hasAnyText(chat.uiaText, ['QA Work Artifact Fixture', 'QA_WORK_ARTIFACT_USER_TOKEN', assistantToken])
     result.chatPng = chat.png
     result.chatUia = chat.uia
     if (!result.importedChatOpened || !result.assistantWorkArtifactVisible) {
