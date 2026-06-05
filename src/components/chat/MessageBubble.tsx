@@ -1,26 +1,23 @@
 import type { ReactNode } from 'react'
-import { useEffect, useState } from 'react'
-import { ScrollView, Text, View, useWindowDimensions } from 'react-native'
+import { useEffect, useMemo, useState } from 'react'
+import { ScrollView, Text, View } from 'react-native'
 import { MotiView } from 'moti'
 import type { TFunction } from 'i18next'
 import { useTranslation } from 'react-i18next'
-import { router } from 'expo-router'
 import * as Haptics from 'expo-haptics'
 import { ChevronRight, Copy, ListChecks, RefreshCcw, RotateCcw, Settings2, Sparkles, Trash2, Volume2, Zap } from 'lucide-react-native'
 import { Gesture, GestureDetector } from 'react-native-gesture-handler'
 import Animated, { runOnJS, useAnimatedStyle, useSharedValue, withSpring, withTiming } from 'react-native-reanimated'
-import { AnimatedNavigationIcon, type NavigationGlyph } from '@/components/navigation/AnimatedNavigationIcon'
-import { useNavigationTrigger } from '@/components/navigation/AnimatedNavigationTrigger'
-import type { ChatErrorCode, Message, MessageCitation, ProcessTrace } from '@/types'
+import type { ChatErrorCode, Message, ProcessTrace } from '@/types'
 import { useAppTheme } from '@/hooks/useAppTheme'
 import { messageAnimationForMotion } from '@/theme/animation'
 import { IslePressable } from '@/components/ui/isle'
 import { useSettingsStore } from '@/store/settingsStore'
 import { MessageContent } from './MessageContent'
-import { collectMessageTraces, formatDuration, formatNumber, getActiveTraceTitle, metadataSummary, normalizeTraceStatuses, summarizeTraces, traceStatusLabel } from './tracePresentation'
+import { normalizeTraceStatuses } from './tracePresentation'
 import { IslePanel } from '@/components/ui/isle'
 import { RenderGuard } from '@/components/ui/RenderGuard'
-import { useMotionPreference } from '@/hooks/useMotionPreference'
+import type { MotionIntensity } from '@/hooks/useMotionPreference'
 
 const STREAMING_LAYOUT_TEXT_STEP = 160
 
@@ -28,6 +25,8 @@ interface MessageBubbleProps {
   conversationId: string
   message: Message
   index: number
+  motion: MotionIntensity
+  viewportHeight: number
   isLastAssistant?: boolean
   activeActionMessageId?: string | null
   onActionMessageChange?: (messageId: string | null) => void
@@ -44,9 +43,10 @@ interface MessageBubbleProps {
 }
 
 export function MessageBubble({
-  conversationId,
   message,
   index,
+  motion,
+  viewportHeight,
   isLastAssistant = false,
   activeActionMessageId,
   onActionMessageChange,
@@ -62,19 +62,18 @@ export function MessageBubble({
   onTestModel,
 }: MessageBubbleProps) {
   const { colors } = useAppTheme()
-  const motion = useMotionPreference()
-  const { height: viewportHeight } = useWindowDimensions()
   const hapticsEnabled = useSettingsStore((state) => state.settings.hapticsEnabled)
   const [localActionsOpen, setLocalActionsOpen] = useState(false)
+  const [processExpanded, setProcessExpanded] = useState(false)
   const isUser = message.role === 'user'
   const isStreamingContent = !isUser && (message.status === 'streaming' || message.status === 'sending')
   const displayText = message.responseText ?? message.content
   const streamingLayoutStep = isStreamingContent ? Math.floor(displayText.length / STREAMING_LAYOUT_TEXT_STEP) : 0
-  const visibleTraces = collectVisibleMessageTraces(message)
-  const traceSummary = summarizeTraces(visibleTraces, message.status)
-  const tokenTotal = getMessageTotalTokens(message)
-  const panelMaxHeight = Math.min(260, viewportHeight * 0.38)
-  const [activityExpanded, setActivityExpanded] = useState(isStreamingContent)
+  const reasoningTraces = useMemo(() => collectVisibleReasoningTraces(message), [message.reasoning])
+  const reasoningTextLength = useMemo(() => reasoningTraces.reduce((total, trace) => total + (trace.content?.length ?? 0), 0), [reasoningTraces])
+  const reasoningLayoutStep = isStreamingContent ? Math.floor(reasoningTextLength / STREAMING_LAYOUT_TEXT_STEP) : 0
+  const processCanExpand = !isUser && (reasoningTraces.some(hasThinkingContent) || isStreamingContent)
+  const processMaxHeight = Math.min(230, viewportHeight * 0.34)
   const actionBarOpen = activeActionMessageId === undefined ? localActionsOpen : activeActionMessageId === message.id
   const armed = useSharedValue(0)
   const deleteProgress = useSharedValue(0)
@@ -92,26 +91,17 @@ export function MessageBubble({
     onConfigure,
     onTestModel,
   })
-  const showActivity = !isUser && (message.status !== 'done' || visibleTraces.length > 0 || !!message.citations?.length || !!tokenTotal)
-  const activityCanExpand = visibleTraces.length > 0 || !!message.citations?.length || isStreamingContent
 
   useEffect(() => {
     setLocalActionsOpen(false)
+    setProcessExpanded(false)
     if (activeActionMessageId === message.id) onActionMessageChange?.(null)
-    setActivityExpanded(isStreamingContent)
   }, [message.id])
 
   useEffect(() => {
-    if (isStreamingContent) {
-      setActivityExpanded(true)
-    }
-  }, [isStreamingContent])
-
-  useEffect(() => {
-    if (!showActivity) return
-    if (!activityExpanded && !isStreamingContent) return
+    if (!isStreamingContent && !processExpanded) return
     onLayoutChangeRequest?.()
-  }, [showActivity, activityExpanded, isStreamingContent, visibleTraces.length, streamingLayoutStep, onLayoutChangeRequest])
+  }, [isStreamingContent, processExpanded, reasoningTraces.length, reasoningLayoutStep, streamingLayoutStep, onLayoutChangeRequest])
 
   useEffect(() => {
     if (actionBarOpen) onLayoutChangeRequest?.()
@@ -127,18 +117,18 @@ export function MessageBubble({
     onDelete?.(message)
   }
 
-  function toggleActivity() {
-    if (!activityCanExpand) return
-    if (hapticsEnabled) void Haptics.selectionAsync()
-    setActionBarOpen(false)
-    setActivityExpanded((value) => !value)
-    onLayoutChangeRequest?.()
-  }
-
   function toggleActionBar() {
     if (!canOpenActions) return
     if (hapticsEnabled) void Haptics.selectionAsync()
     setActionBarOpen(!actionBarOpen)
+  }
+
+  function toggleProcessLayer() {
+    if (!processCanExpand) return
+    if (hapticsEnabled) void Haptics.selectionAsync()
+    setActionBarOpen(false)
+    setProcessExpanded((value) => !value)
+    onLayoutChangeRequest?.()
   }
 
   const longPressDelete = Gesture.LongPress()
@@ -183,7 +173,7 @@ export function MessageBubble({
         style={[
           {
             position: 'absolute',
-            top: showActivity ? 42 : 8,
+            top: 8,
             bottom: 8,
             width: 56,
             borderRadius: 28,
@@ -208,48 +198,40 @@ export function MessageBubble({
           width: isUser ? undefined : '92%',
         }}
       >
-        {showActivity ? (
-          <MessageActivityBar
-            message={message}
-            traces={visibleTraces}
-            traceSummary={traceSummary.label}
-            tokenTotal={tokenTotal}
-            expanded={activityExpanded}
-            canExpand={activityCanExpand}
-            onToggle={toggleActivity}
-          />
-        ) : null}
-        {showActivity && activityExpanded ? (
-          <MessageActivityPanel
-            conversationId={conversationId}
-            message={message}
-            traces={visibleTraces}
-            maxHeight={panelMaxHeight}
-            onNavigate={() => setActionBarOpen(false)}
-          />
-        ) : null}
-
-        <GestureDetector gesture={bubbleGesture}>
-          <Animated.View style={animatedStyle}>
-            <IslePanel
-              elevated={false}
-              contentStyle={{
-                paddingHorizontal: 14,
-                paddingVertical: 11,
-                position: 'relative',
-              }}
-              style={{
-                borderRadius: 18,
-                borderBottomRightRadius: isUser ? 8 : 18,
-                borderBottomLeftRadius: isUser ? 18 : 8,
-                backgroundColor: isUser ? colors.text : colors.material.paperRaised,
-                borderColor: message.status === 'error' ? colors.error : colors.border,
-              }}
-            >
-              <MessageBody message={message} displayText={displayText} isUser={isUser} isStreamingContent={isStreamingContent} visibleTraces={visibleTraces} />
-            </IslePanel>
-          </Animated.View>
-        </GestureDetector>
+        <Animated.View style={animatedStyle}>
+          <IslePanel
+            elevated={false}
+            contentStyle={{
+              paddingHorizontal: 14,
+              paddingVertical: 11,
+              position: 'relative',
+            }}
+            style={{
+              borderRadius: 18,
+              borderBottomRightRadius: isUser ? 8 : 18,
+              borderBottomLeftRadius: isUser ? 18 : 8,
+              backgroundColor: isUser ? colors.text : colors.material.paperRaised,
+              borderColor: message.status === 'error' ? colors.error : colors.border,
+            }}
+          >
+            {!isUser ? (
+              <MessageProcessLayer
+                message={message}
+                displayText={displayText}
+                traces={reasoningTraces}
+                expanded={processExpanded}
+                canExpand={processCanExpand}
+                maxHeight={processMaxHeight}
+                onToggle={toggleProcessLayer}
+              />
+            ) : null}
+            <GestureDetector gesture={bubbleGesture}>
+              <Animated.View>
+                <MessageBody message={message} displayText={displayText} isUser={isUser} isStreamingContent={isStreamingContent} />
+              </Animated.View>
+            </GestureDetector>
+          </IslePanel>
+        </Animated.View>
 
         {actionBarOpen ? (
           <MessageActionBar
@@ -272,7 +254,7 @@ export function MessageBubble({
   )
 }
 
-function MessageBody({ message, displayText, isUser, isStreamingContent, visibleTraces }: { message: Message; displayText: string; isUser: boolean; isStreamingContent: boolean; visibleTraces: ProcessTrace[] }) {
+function MessageBody({ message, displayText, isUser, isStreamingContent }: { message: Message; displayText: string; isUser: boolean; isStreamingContent: boolean }) {
   const { colors } = useAppTheme()
   const { t } = useTranslation()
 
@@ -288,7 +270,7 @@ function MessageBody({ message, displayText, isUser, isStreamingContent, visible
           <MessageBodyReveal active={isStreamingContent}>
             <MessageContent content={displayText} isUser={isUser} />
           </MessageBodyReveal>
-        ) : visibleTraces.length && message.status !== 'streaming' ? (
+        ) : !isUser && !isStreamingContent ? (
           <Text style={{ color: isUser ? colors.surface : colors.textSecondary, fontSize: 13, lineHeight: 20 }}>
             {t('messageBubble.emptyResponse')}
           </Text>
@@ -302,211 +284,143 @@ function MessageBody({ message, displayText, isUser, isStreamingContent, visible
   )
 }
 
-function MessageActivityBar({
+function MessageProcessLayer({
   message,
+  displayText,
   traces,
-  traceSummary,
-  tokenTotal,
   expanded,
   canExpand,
+  maxHeight,
   onToggle,
 }: {
   message: Message
+  displayText: string
   traces: ProcessTrace[]
-  traceSummary: string
-  tokenTotal: number
   expanded: boolean
   canExpand: boolean
+  maxHeight: number
   onToggle: () => void
 }) {
   const { colors } = useAppTheme()
   const { t } = useTranslation()
-  const running = message.status === 'streaming' || message.status === 'sending'
-  const label = activityLabel(message, traces, traceSummary, t)
+  const active = message.status === 'streaming' || message.status === 'sending'
   const tone =
     message.status === 'error'
       ? colors.error
       : message.status === 'cancelled'
         ? colors.warning
-        : running
+        : active
           ? colors.primary
           : colors.textTertiary
 
   return (
-    <IslePressable
-      haptic
-      disabled={!canExpand}
-      onPress={onToggle}
-      accessibilityLabel={expanded ? t('messageBubble.collapseThinking') : t('messageBubble.expandThinking')}
-      style={{
-        alignSelf: 'flex-start',
-        minHeight: 32,
-        maxWidth: '100%',
-        marginBottom: 5,
-        paddingLeft: 8,
-        paddingRight: 7,
-        paddingVertical: 5,
-        borderRadius: 16,
-        flexDirection: 'row',
-        alignItems: 'center',
-        gap: 7,
-        backgroundColor: colors.material.field,
-        borderWidth: 1,
-        borderColor: expanded ? colors.borderStrong : colors.border,
-      }}
-    >
-      <MotiView
-        from={{ opacity: 0.38, scale: 0.8 }}
-        animate={{ opacity: running ? 1 : 0.72, scale: 1 }}
-        transition={{ loop: running, type: 'timing', duration: 760 }}
-        style={{ width: 8, height: 8, borderRadius: 4, backgroundColor: tone }}
-      />
-      <Text numberOfLines={1} style={{ color: colors.textSecondary, fontSize: 11, fontWeight: '800', flexShrink: 1, maxWidth: 176 }}>
-        {label}
-      </Text>
-      {tokenTotal ? (
-        <Text numberOfLines={1} style={{ color: colors.textTertiary, fontSize: 10, fontWeight: '800' }}>
-          {t('messageBubble.tokensTotal', { value: formatNumber(tokenTotal) })}
+    <View style={{ marginBottom: 8 }}>
+      <IslePressable
+        haptic
+        disabled={!canExpand}
+        onPress={onToggle}
+        accessibilityLabel={expanded ? t('messageBubble.collapseThinking') : t('messageBubble.expandThinking')}
+        style={{
+          minHeight: 26,
+          flexDirection: 'row',
+          alignItems: 'center',
+          gap: 8,
+        }}
+      >
+        <ThinkingPulse active={active} tone={tone} />
+        <Text numberOfLines={1} style={{ color: colors.textSecondary, fontSize: 12, lineHeight: 16, fontWeight: '800', flex: 1 }}>
+          {processLayerLabel(message, displayText, t)}
         </Text>
-      ) : null}
-      {canExpand ? (
-        <MotiView animate={{ rotate: expanded ? '90deg' : '0deg' }} transition={{ type: 'timing', duration: 150 }}>
-          <ChevronRight color={colors.textTertiary} size={14} strokeWidth={2.2} />
-        </MotiView>
-      ) : null}
-    </IslePressable>
-  )
-}
-
-function MessageActivityPanel({ conversationId, message, traces, maxHeight, onNavigate }: { conversationId: string; message: Message; traces: ProcessTrace[]; maxHeight: number; onNavigate: () => void }) {
-  const { colors } = useAppTheme()
-  const { t } = useTranslation()
-  const normalizedTraces = normalizeTraceStatuses(traces, message.status).filter((trace) => !trace.metadata?.hiddenSignature)
-  const details = normalizedTraces.slice(-6)
-  const citations = message.citations ?? []
-  const firstCitation = citations[0]
-  const processSummary = summarizeTraces(normalizedTraces, message.status)
-  const scrollHeight = Math.max(80, maxHeight - (citations.length || normalizedTraces.length ? 48 : 0))
-  const running = message.status === 'streaming' || message.status === 'sending'
-
-  function openSources() {
-    onNavigate()
-    router.push({ pathname: '/source', params: { conversationId, messageId: message.id, citationId: firstCitation?.id ?? '' } })
-  }
-
-  function openProcess() {
-    onNavigate()
-    router.push({ pathname: '/source', params: { conversationId, messageId: message.id, kind: 'process' } })
-  }
-
-  return (
-    <MotiView
-      from={{ opacity: 0, translateY: -4 }}
-      animate={{ opacity: 1, translateY: 0 }}
-      transition={{ type: 'timing', duration: 140 }}
-      style={{
-        maxHeight,
-        marginBottom: 7,
-        borderRadius: 14,
-        padding: 9,
-        backgroundColor: colors.material.field,
-        borderWidth: 1,
-        borderColor: colors.border,
-      }}
-    >
-      {details.length || running ? (
-        <ScrollView nestedScrollEnabled showsVerticalScrollIndicator={details.length > 3} style={{ maxHeight: scrollHeight }} contentContainerStyle={{ gap: 9 }}>
-          {details.length ? details.map((trace) => <ActivityTraceRow key={trace.id} trace={trace} />) : <TypingDots />}
-        </ScrollView>
-      ) : null}
-      {citations.length || normalizedTraces.length ? (
-        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 7, marginTop: 8, paddingTop: 8, borderTopWidth: 1, borderTopColor: colors.border }}>
-          {citations.length ? (
-            <ActivityFooterButton
-              label={t('messageBubble.sources', { count: citations.length })}
-              glyph={citationGlyph(firstCitation)}
-              onPress={openSources}
-              tint={colors.primary}
-            />
-          ) : null}
-          {normalizedTraces.length ? (
-            <ActivityFooterButton
-              label={t('messageBubble.process', { summary: processSummary.label })}
-              glyph="mcp-network"
-              onPress={openProcess}
-              tint={processSummary.errors ? colors.error : processSummary.running ? colors.primary : colors.textSecondary}
-            />
-          ) : null}
-        </View>
-      ) : null}
-    </MotiView>
-  )
-}
-
-function ActivityTraceRow({ trace }: { trace: ProcessTrace }) {
-  const { colors } = useAppTheme()
-  const meta = [
-    traceStatusLabel(trace.status),
-    trace.durationMs ? formatDuration(trace.durationMs) : '',
-    metadataSummary(trace.metadata),
-  ].filter(Boolean).join(' · ')
-  const tint =
-    trace.status === 'error'
-      ? colors.error
-      : trace.status === 'running' || trace.status === 'pending'
-        ? colors.primary
-        : colors.textTertiary
-
-  return (
-    <View style={{ gap: 3 }}>
-      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 7 }}>
-        <View style={{ width: 6, height: 6, borderRadius: 3, backgroundColor: tint }} />
-        <Text numberOfLines={1} style={{ color: colors.textSecondary, fontSize: 11, fontWeight: '900', flex: 1 }}>
-          {trace.title}
-        </Text>
-      </View>
-      {meta ? (
-        <Text numberOfLines={1} style={{ color: colors.textTertiary, fontSize: 10, fontWeight: '800', marginLeft: 13 }}>
-          {meta}
-        </Text>
-      ) : null}
-      {trace.content ? (
-        <Text style={{ color: colors.textTertiary, fontSize: 11, lineHeight: 16, fontWeight: '700', marginLeft: 13 }}>
-          {trace.content}
-        </Text>
-      ) : null}
+        {canExpand ? (
+          <MotiView animate={{ rotate: expanded ? '90deg' : '0deg' }} transition={{ type: 'timing', duration: 150 }}>
+            <ChevronRight color={colors.textTertiary} size={14} strokeWidth={2.2} />
+          </MotiView>
+        ) : null}
+      </IslePressable>
+      {expanded && canExpand ? <MessageProcessPanel message={message} traces={traces} maxHeight={maxHeight} /> : null}
     </View>
   )
 }
 
-function ActivityFooterButton({ label, glyph, tint, onPress }: { label: string; glyph: NavigationGlyph; tint: string; onPress: () => void }) {
+function MessageProcessPanel({ message, traces, maxHeight }: { message: Message; traces: ProcessTrace[]; maxHeight: number }) {
   const { colors } = useAppTheme()
-  const navigation = useNavigationTrigger(onPress)
+  const thinkingText = normalizeTraceStatuses(traces, message.status)
+    .map((trace) => trace.content?.trim() ?? '')
+    .filter(Boolean)
+    .join('\n\n')
+  const running = message.status === 'streaming' || message.status === 'sending'
 
   return (
-    <IslePressable
-      haptic
-      onPress={navigation.trigger}
-      accessibilityLabel={label}
+    <MotiView
+      from={{ opacity: 0, translateY: -3 }}
+      animate={{ opacity: 1, translateY: 0 }}
+      transition={{ type: 'timing', duration: 130 }}
       style={{
-        minHeight: 36,
-        maxWidth: 168,
-        borderRadius: 18,
-        paddingHorizontal: 9,
-        flexDirection: 'row',
-        alignItems: 'center',
-        gap: 6,
-        backgroundColor: colors.material.paperRaised,
-        borderWidth: 1,
-        borderColor: colors.border,
+        marginTop: 7,
+        borderTopWidth: 1,
+        borderTopColor: colors.border,
+        paddingTop: 8,
       }}
     >
-      <AnimatedNavigationIcon glyph={glyph} active={navigation.active} color={tint} size={14} />
-      <Text numberOfLines={1} style={{ color: colors.textSecondary, fontSize: 10, fontWeight: '900', flexShrink: 1 }}>
-        {label}
-      </Text>
-    </IslePressable>
+      <ScrollView nestedScrollEnabled showsVerticalScrollIndicator={thinkingText.length > 360} style={{ maxHeight }}>
+        {thinkingText ? (
+          <Text style={{ color: colors.textTertiary, fontSize: 12, lineHeight: 18, fontWeight: '700' }}>
+            {thinkingText}
+          </Text>
+        ) : running ? (
+          <TypingDots />
+        ) : null}
+      </ScrollView>
+    </MotiView>
   )
+}
+
+function ThinkingPulse({ active, tone }: { active: boolean; tone: string }) {
+  if (!active) {
+    return (
+      <View style={{ width: 22, height: 10, flexDirection: 'row', alignItems: 'center', gap: 3 }}>
+        {[0, 1, 2].map((item) => (
+          <View
+            key={item}
+            style={{ width: 4, height: 4, borderRadius: 2, backgroundColor: tone, opacity: 0.65 }}
+          />
+        ))}
+      </View>
+    )
+  }
+
+  return (
+    <View style={{ width: 22, height: 10, flexDirection: 'row', alignItems: 'center', gap: 3 }}>
+      {[0, 1, 2].map((item) => (
+        <MotiView
+          key={item}
+          from={{ opacity: active ? 0.3 : 0.65, translateY: 0 }}
+          animate={{ opacity: active ? 1 : 0.65, translateY: active ? -2 : 0 }}
+          transition={{ loop: active, type: 'timing', duration: 560, delay: item * 120 }}
+          style={{ width: 4, height: 4, borderRadius: 2, backgroundColor: tone }}
+        />
+      ))}
+    </View>
+  )
+}
+
+function processLayerLabel(message: Message, displayText: string, t: TFunction): string {
+  return (() => {
+    switch (message.status) {
+      case 'sending':
+        return translateMessageBubbleLabel(t, 'messageBubble.thinking', '正在思考')
+      case 'streaming':
+        return displayText.trim()
+          ? translateMessageBubbleLabel(t, 'messageBubble.thinkingDone', '思考完成')
+          : translateMessageBubbleLabel(t, 'messageBubble.thinking', '正在思考')
+      case 'error':
+        return translateMessageBubbleLabel(t, 'messageBubble.failed', '失败')
+      case 'cancelled':
+        return translateMessageBubbleLabel(t, 'messageBubble.stopped', '已停止')
+      case 'done':
+        return translateMessageBubbleLabel(t, 'messageBubble.thinkingDone', '思考完成')
+    }
+  })()
 }
 
 function MessageActionBar({
@@ -635,6 +549,8 @@ function ErrorHint({ code }: { code?: ChatErrorCode }) {
 }
 
 function MessageBodyReveal({ active, children }: { active: boolean; children: ReactNode }) {
+  if (!active) return <View>{children}</View>
+
   return (
     <MotiView
       from={{ opacity: 0.92, translateY: active ? 2 : 0 }}
@@ -645,22 +561,6 @@ function MessageBodyReveal({ active, children }: { active: boolean; children: Re
       {children}
     </MotiView>
   )
-}
-
-function activityLabel(message: Message, traces: ProcessTrace[], traceSummary: string, t: TFunction): string {
-  const activeTraceTitle = getActiveTraceTitle(traces, message.status)
-  switch (message.status) {
-    case 'sending':
-      return t('messageBubble.readyToSend')
-    case 'streaming':
-      return activeTraceTitle ? t('messageBubble.traceGenerating', { title: activeTraceTitle }) : t('messageBubble.generating')
-    case 'error':
-      return activeTraceTitle || t('messageBubble.failed')
-    case 'cancelled':
-      return t('messageBubble.stopped')
-    case 'done':
-      return traces.length ? traceSummary : t('messageBubble.completed')
-  }
 }
 
 function canShowActionBar({
@@ -697,24 +597,19 @@ function canShowActionBar({
   return hasCommonActions || hasRegenerate || hasErrorActions
 }
 
-function collectVisibleMessageTraces(message: Message): ProcessTrace[] {
-  return collectMessageTraces(message).filter((trace) => !trace.metadata?.hiddenSignature)
+function collectVisibleReasoningTraces(message: Message): ProcessTrace[] {
+  return (message.reasoning ?? [])
+    .filter((trace) => trace.type === 'reasoning' && !trace.metadata?.hiddenSignature)
+    .sort((a, b) => (a.startedAt ?? 0) - (b.startedAt ?? 0))
 }
 
-function getMessageTotalTokens(message: Message): number {
-  const usage = message.usage
-  if (usage?.totalTokens) return usage.totalTokens
-  const input = usage?.inputTokens ?? 0
-  const output = usage?.outputTokens ?? 0
-  const reasoning = usage?.reasoningTokens ?? 0
-  const computed = input + output + reasoning
-  return computed || message.tokenCount || 0
+function hasThinkingContent(trace: ProcessTrace): boolean {
+  return !!trace.content?.trim()
 }
 
-function citationGlyph(citation?: MessageCitation): NavigationGlyph {
-  if (citation?.type === 'knowledge') return 'knowledge-database'
-  if (citation?.type === 'memory') return 'memory-brain'
-  return 'source'
+function translateMessageBubbleLabel(t: TFunction, key: string, fallback: string): string {
+  const translated = t(key, { defaultValue: fallback })
+  return typeof translated === 'string' && translated !== key ? translated : fallback
 }
 
 function errorTitle(code: ChatErrorCode | undefined, t: TFunction): string {

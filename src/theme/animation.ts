@@ -91,7 +91,7 @@ export const messageAnimationForMotion = (index: number, motion: MotionIntensity
     return {
       from: { opacity: 0 },
       animate: { opacity: 1 },
-      transition: { type: 'timing' as const, duration: motionTokens.duration.fast },
+      transition: { type: 'timing' as const, duration: 1 },
     }
   }
   return messageAnimation(index)

@@ -24,13 +24,11 @@ export function SettingsPageShell({
   const pathname = usePathname()
   const scrollRef = useRef<ScrollView>(null)
   const [keyboardHeight, setKeyboardHeight] = useState(0)
-  const androidKeyboardPadding = Platform.OS === 'android' ? keyboardHeight : 0
 
   function scrollFocusedInputAboveKeyboard() {
     requestAnimationFrame(() => {
       requestAnimationFrame(() => {
         type TextInputState = {
-          currentlyFocusedField?: () => number | null
           currentlyFocusedInput?: () => unknown
         }
         type ScrollResponder = {
@@ -46,7 +44,7 @@ export function SettingsPageShell({
           ? focusedInput
           : focusedInput
             ? findNodeHandle(focusedInput as Parameters<typeof findNodeHandle>[0])
-            : textInputState?.currentlyFocusedField?.() ?? null
+            : null
         if (!focusedHandle) return
         const responder = (scrollRef.current as unknown as { getScrollResponder?: () => ScrollResponder }).getScrollResponder?.()
         responder?.scrollResponderScrollNativeHandleToKeyboard?.(focusedHandle, 96, true)
@@ -84,7 +82,7 @@ export function SettingsPageShell({
         ref={scrollRef}
         keyboardShouldPersistTaps="handled"
         automaticallyAdjustKeyboardInsets
-        contentContainerStyle={{ paddingHorizontal: 16, paddingTop: 8, paddingBottom: 56 + androidKeyboardPadding }}
+        contentContainerStyle={{ paddingHorizontal: 16, paddingTop: 8, paddingBottom: 56 }}
       >
         <IsleHeader
           title={title}

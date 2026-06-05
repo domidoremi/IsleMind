@@ -471,7 +471,7 @@ async function ensureDirectory(uri: string): Promise<void> {
   await FileSystem.makeDirectoryAsync(uri, { intermediates: true })
 }
 
-async function sha256File(uri: string): Promise<string> {
+export async function sha256File(uri: string): Promise<string> {
   const info = await FileSystem.getInfoAsync(uri)
   if (!info.exists) throw new Error(`Downloaded file is missing: ${uri}`)
   const digest = new Sha256Digest()

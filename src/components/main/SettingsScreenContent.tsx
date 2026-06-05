@@ -17,7 +17,7 @@ import { useSettingsStore } from '@/store/settingsStore'
 import { useChatStore } from '@/store/chatStore'
 import { listKnowledgeDocuments, listMemories } from '@/services/contextStore'
 import { exportToJsonFile, importFromJsonFileDetailed } from '@/services/portableData'
-import { checkLatestApkRelease, downloadAndOpenApkInstaller, formatUpdateCheckTime, getVersionSnapshot, type ApkReleaseInfo } from '@/services/appUpdates'
+import { checkLatestApkRelease, downloadAndOpenApkInstaller, formatApkSizeBytes, formatUpdateCheckTime, getVersionSnapshot, shouldRecordApkUpdateCheck, type ApkReleaseInfo } from '@/services/appUpdates'
 import { useIsleDialog } from '@/components/ui/isle'
 import { resolveSearchProvider, searchProviderLabel } from '@/services/searchPolicy'
 import { clearRuntimeLog, getRuntimeLogPath, readRuntimeLogText } from '@/services/runtimeLog'
@@ -191,11 +191,16 @@ export function SettingsScreenContent({ active = true, onHome }: { active?: bool
     setCheckingUpdate(true)
     try {
       const result = await checkLatestApkRelease()
-      updateSettings({ lastApkUpdateCheckAt: Date.now() })
+      if (shouldRecordApkUpdateCheck(result)) {
+        updateSettings({ lastApkUpdateCheckAt: Date.now() })
+      }
       if (result.status !== 'available' || !result.release) {
+        const message = result.status === 'error'
+          ? `${result.message}\n${t('settings.updateRetryNotSuppressed')}`
+          : result.message
         dialog.notice({
           title: result.status === 'error' ? t('settings.apkCheckFailed') : t('settings.noNewApk'),
-          message: result.message,
+          message,
           tone: result.status === 'error' ? 'danger' : result.status === 'unsupported' ? 'amber' : 'mint',
         })
         return
@@ -214,6 +219,7 @@ export function SettingsScreenContent({ active = true, onHome }: { active?: bool
   }
 
   function confirmApkInstall(release: ApkReleaseInfo) {
+    const variantLabel = release.variant ? t(`settings.apkVariant.${release.variant}`) : null
     return dialog.confirm({
       title: t('settings.installVersion', { version: release.version }),
       message: t('settings.installConfirm'),
@@ -222,8 +228,12 @@ export function SettingsScreenContent({ active = true, onHome }: { active?: bool
       tone: 'amber',
       chips: [
         { label: release.apkName, tone: 'mint' },
+        release.versionCode ? { label: t('settings.apkBuildCode', { code: release.versionCode }) } : null,
+        release.abi ? { label: t('settings.apkArchitecture', { abi: release.abi }) } : null,
+        variantLabel ? { label: variantLabel } : null,
+        release.sizeBytes ? { label: t('settings.apkSize', { size: formatApkSizeBytes(release.sizeBytes) }) } : null,
         { label: release.tagName || release.name },
-      ],
+      ].filter((chip): chip is { label: string; tone?: 'mint' } => Boolean(chip)),
     })
   }
 

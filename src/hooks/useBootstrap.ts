@@ -4,7 +4,7 @@ import { useChatStore } from '@/store/chatStore'
 import { useSettingsStore } from '@/store/settingsStore'
 import { initializeContextStore } from '@/services/contextStore'
 import { localDataStore } from '@/services/localDataStore'
-import { checkLatestApkReleaseSilently, shouldAutoCheckApkUpdate } from '@/services/appUpdates'
+import { checkLatestApkReleaseSilently, shouldAutoCheckApkUpdate, shouldRecordApkUpdateCheck } from '@/services/appUpdates'
 import { initI18n } from '@/i18n'
 import { st } from '@/i18n/service'
 import { useAppTheme } from './useAppTheme'
@@ -47,7 +47,9 @@ export function useBootstrap() {
           if (!(settings.autoUpdateCheckEnabled ?? true)) return
           if (!shouldAutoCheckApkUpdate(settings.lastApkUpdateCheckAt)) return
           const result = await checkLatestApkReleaseSilently()
-          useSettingsStore.getState().updateSettings({ lastApkUpdateCheckAt: Date.now() })
+          if (shouldRecordApkUpdateCheck(result)) {
+            useSettingsStore.getState().updateSettings({ lastApkUpdateCheckAt: Date.now() })
+          }
           if (result.status === 'available' && result.release) {
             setState((current) => ({ ...current, updateNotice: st('updates.available', { version: result.release?.version ?? '' }) }))
           }

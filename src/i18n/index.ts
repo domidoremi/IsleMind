@@ -25,6 +25,7 @@ export function initI18n(language?: Language) {
   setServiceLanguage(detected)
 
   if (i18n.isInitialized) {
+    syncResourceBundles()
     if (i18n.language !== detected) {
       void i18n.changeLanguage(detected)
     }
@@ -47,6 +48,13 @@ export function initI18n(language?: Language) {
 }
 
 export function changeAppLanguage(language: Language) {
+  syncResourceBundles()
   setServiceLanguage(language)
   return i18n.changeLanguage(language)
+}
+
+function syncResourceBundles(): void {
+  i18n.addResourceBundle('en', 'translation', en, true, true)
+  i18n.addResourceBundle('zh-CN', 'translation', zhCN, true, true)
+  i18n.addResourceBundle('ja', 'translation', ja, true, true)
 }

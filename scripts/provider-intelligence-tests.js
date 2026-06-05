@@ -14,6 +14,13 @@ const localFileFixtures = new Map()
 const localDownloadFixtures = new Map()
 const localFileReadRequests = []
 const localFileOperations = []
+const launchedIntents = []
+const supportedCpuArchitectures = ['arm64-v8a', 'armeabi-v7a']
+let expoDeviceModuleAvailable = true
+const reactNativePlatform = {
+  OS: 'test',
+  select: (choices) => choices?.[reactNativePlatform.OS] ?? choices?.default,
+}
 
 global.__DEV__ = false
 
@@ -129,7 +136,17 @@ Module._load = function loadWithMocks(request, parent, isMain) {
           if (key.startsWith(uri)) localFileFixtures.delete(key)
         }
       },
-      downloadAsync: async (_url, uri) => ({ status: 200, uri, headers: {}, mimeType: null }),
+      downloadAsync: async (url, uri) => {
+        const fixture = localDownloadFixtures.get(url)
+        const status = fixture?.status ?? 404
+        const body = fixture?.body ?? Buffer.alloc(0)
+        if (status >= 200 && status < 300) {
+          localFileFixtures.set(uri, body)
+        }
+        localFileOperations.push({ type: 'download', url, uri, status, bytes: body.length })
+        return { status, uri, headers: {}, mimeType: null }
+      },
+      getContentUriAsync: async (uri) => `content://${uri.replace(/^file:\/\//, '')}`,
       createDownloadResumable: (url, uri, _options, onProgress) => ({
         downloadAsync: async () => {
           const fixture = localDownloadFixtures.get(url)
@@ -183,9 +200,35 @@ Module._load = function loadWithMocks(request, parent, isMain) {
   }
   if (request === 'react-native') {
     return {
-      Platform: { OS: 'test', select: (choices) => choices?.default },
+      Platform: reactNativePlatform,
       NativeModules: {},
       StyleSheet: { create: (styles) => styles },
+    }
+  }
+  if (request === 'expo-application') {
+    return {
+      nativeApplicationVersion: '1.0.6',
+      nativeBuildVersion: '106',
+    }
+  }
+  if (request === 'expo-constants') {
+    return {
+      __esModule: true,
+      default: {
+        expoConfig: { version: '1.0.6' },
+        platform: { android: { versionCode: 106 } },
+      },
+    }
+  }
+  if (request === 'expo-device') {
+    if (!expoDeviceModuleAvailable) throw new Error("Cannot find native module 'ExpoDevice'")
+    return { supportedCpuArchitectures }
+  }
+  if (request === 'expo-intent-launcher') {
+    return {
+      startActivityAsync: async (action, params) => {
+        launchedIntents.push({ action, params })
+      },
     }
   }
   if (request === 'expo-clipboard') {
@@ -371,6 +414,14 @@ const {
   verifyLocalEmbeddingModel,
 } = require('../src/services/localEmbeddingModels.ts')
 const {
+  checkLatestApkRelease,
+  compareReleaseToSnapshotForTest,
+  downloadAndOpenApkInstaller,
+  normalizeApkUpdateManifestForTest,
+  selectApkAssetForTest,
+  shouldRecordApkUpdateCheck,
+} = require('../src/services/appUpdates.ts')
+const {
   getProviderModelDisplayCandidates,
 } = require('../src/services/ai/policy/providerModelAccess.ts')
 const modelCatalog = require('../assets/models/catalog.json')
@@ -406,6 +457,10 @@ function resetLocalModelFileMocks() {
   localDownloadFixtures.clear()
   localFileReadRequests.length = 0
   localFileOperations.length = 0
+  launchedIntents.length = 0
+  supportedCpuArchitectures.splice(0, supportedCpuArchitectures.length, 'arm64-v8a', 'armeabi-v7a')
+  expoDeviceModuleAvailable = true
+  reactNativePlatform.OS = 'test'
 }
 
 const WORK_ARTIFACT_TEMPLATE_GATES = {
@@ -3609,6 +3664,153 @@ https://gateway.example/messages`
   assert.equal(formatModelBytes(1024 * 1024), '1.0 MB')
   assert.ok(localModelCacheKey({ localEmbeddingModelId: 'all-MiniLM-L6-v2', localEmbeddingModelSource: 'downloaded' }).includes('downloaded'))
   const textEncoder = new TextEncoder()
+  const apkManifestFixture = {
+    versionName: '1.0.7',
+    versionCode: 107,
+    publishedAt: '2026-06-05T00:00:00Z',
+    releaseUrl: 'https://github.com/domidoremi/IsleMind/releases/tag/v1.0.7',
+    assets: [
+      {
+        abi: 'universal-64',
+        variant: 'no-model',
+        name: 'IsleMind-1.0.7-universal-64-no-model.apk',
+        url: 'https://example.test/IsleMind-1.0.7-universal-64-no-model.apk',
+        sha256: '1'.repeat(64),
+        sizeBytes: 300,
+      },
+      {
+        abi: 'arm64-v8a',
+        variant: 'with-model-small',
+        name: 'IsleMind-1.0.7-arm64-v8a-with-model-small.apk',
+        url: 'https://example.test/IsleMind-1.0.7-arm64-v8a-with-model-small.apk',
+        sha256: '2'.repeat(64),
+        sizeBytes: 200,
+      },
+      {
+        abi: 'arm64-v8a',
+        variant: 'no-model',
+        name: 'IsleMind-1.0.7-arm64-v8a-no-model.apk',
+        url: 'https://example.test/IsleMind-1.0.7-arm64-v8a-no-model.apk',
+        sha256: '3'.repeat(64),
+        sizeBytes: 100,
+      },
+    ],
+  }
+  const selectedManifestRelease = normalizeApkUpdateManifestForTest(apkManifestFixture, ['arm64-v8a', 'armeabi-v7a'])
+  assert.ok(selectedManifestRelease, 'APK manifest produces a selected release')
+  assert.equal(selectedManifestRelease.apkName, 'IsleMind-1.0.7-arm64-v8a-no-model.apk', 'APK manifest selects the device arm64 no-model asset')
+  assert.equal(selectedManifestRelease.versionCode, 107, 'APK manifest preserves Android versionCode')
+  assert.equal(selectedManifestRelease.sha256, '3'.repeat(64), 'APK manifest preserves selected asset checksum')
+  const unknownAbiAsset = selectApkAssetForTest(apkManifestFixture.assets, ['riscv64'])
+  assert.ok(unknownAbiAsset, 'APK asset selection returns a fallback asset for unknown ABIs')
+  assert.equal(unknownAbiAsset.abi, 'universal-64', 'unknown device ABI falls back to universal-64 no-model')
+  assert.ok(
+    compareReleaseToSnapshotForTest(
+      {
+        version: '1.0.6',
+        versionCode: 107,
+        tagName: 'v1.0.6',
+        name: 'IsleMind 1.0.6',
+        htmlUrl: 'https://example.test/release',
+        apkUrl: 'https://example.test/app.apk',
+        apkName: 'app.apk',
+        publishedAt: null,
+      },
+      { appVersion: '9.9.9', buildVersion: '106', updateMode: 'apk', hotUpdateMode: 'disabled' }
+    ) > 0,
+    'APK update comparison uses versionCode before versionName'
+  )
+  assert.equal(shouldRecordApkUpdateCheck({ status: 'available', message: '' }), true, 'available update checks update the last-check timestamp')
+  assert.equal(shouldRecordApkUpdateCheck({ status: 'unavailable', message: '' }), true, 'unavailable update checks update the last-check timestamp')
+  assert.equal(shouldRecordApkUpdateCheck({ status: 'error', message: '', reason: 'network' }), false, 'failed update checks do not update the last-check timestamp')
+
+  resetLocalModelFileMocks()
+  reactNativePlatform.OS = 'android'
+  const originalFetchForApk = global.fetch
+  const updateFetchUrls = []
+  global.fetch = async (url) => {
+    updateFetchUrls.push(String(url))
+    if (String(url).includes('raw.githubusercontent.com')) {
+      return { ok: false, status: 404, json: async () => ({}) }
+    }
+    return {
+      ok: true,
+      status: 200,
+      json: async () => ({
+        tag_name: 'v1.0.7',
+        name: 'IsleMind 1.0.7',
+        html_url: 'https://github.com/domidoremi/IsleMind/releases/tag/v1.0.7',
+        published_at: '2026-06-05T00:00:00Z',
+        assets: [
+          {
+            name: 'IsleMind-1.0.7-arm64-v8a-no-model.apk',
+            browser_download_url: 'https://example.test/IsleMind-1.0.7-arm64-v8a-no-model.apk',
+            size: 123,
+          },
+        ],
+      }),
+    }
+  }
+  try {
+    const fallbackUpdate = await checkLatestApkRelease()
+    assert.equal(fallbackUpdate.status, 'available', 'GitHub Release API remains the fallback when the manifest is unavailable')
+    assert.ok(fallbackUpdate.release, 'GitHub fallback returns release metadata for available updates')
+    assert.equal(fallbackUpdate.release.apkName, 'IsleMind-1.0.7-arm64-v8a-no-model.apk', 'GitHub fallback still selects the device ABI APK')
+    assert.ok(updateFetchUrls[0].includes('/updates/android.json'), 'APK update check tries the static manifest first')
+    assert.ok(updateFetchUrls[1].includes('/repos/domidoremi/IsleMind/releases/latest'), 'APK update check falls back to the GitHub latest API')
+  } finally {
+    global.fetch = originalFetchForApk
+    reactNativePlatform.OS = 'test'
+  }
+
+  resetLocalModelFileMocks()
+  reactNativePlatform.OS = 'android'
+  expoDeviceModuleAvailable = false
+  const originalFetchForNoDeviceModule = global.fetch
+  global.fetch = async () => ({
+    ok: true,
+    status: 200,
+    json: async () => apkManifestFixture,
+  })
+  try {
+    const noDeviceModuleUpdate = await checkLatestApkRelease()
+    assert.equal(noDeviceModuleUpdate.status, 'available', 'missing ExpoDevice native module does not crash APK update checks')
+    assert.ok(noDeviceModuleUpdate.release, 'missing ExpoDevice native module still returns selected release metadata')
+    assert.equal(noDeviceModuleUpdate.release.apkName, 'IsleMind-1.0.7-universal-64-no-model.apk', 'missing ExpoDevice native module uses unknown-ABI universal fallback')
+  } finally {
+    global.fetch = originalFetchForNoDeviceModule
+    expoDeviceModuleAvailable = true
+    reactNativePlatform.OS = 'test'
+  }
+
+  resetLocalModelFileMocks()
+  reactNativePlatform.OS = 'android'
+  const corruptApkBody = Buffer.from('not the expected apk')
+  const corruptApkUrl = 'https://example.test/corrupt.apk'
+  localDownloadFixtures.set(corruptApkUrl, { status: 200, body: corruptApkBody })
+  const checksumResult = await downloadAndOpenApkInstaller({
+    version: '1.0.7',
+    versionCode: 107,
+    tagName: 'v1.0.7',
+    name: 'IsleMind 1.0.7',
+    htmlUrl: 'https://github.com/domidoremi/IsleMind/releases/tag/v1.0.7',
+    apkUrl: corruptApkUrl,
+    apkName: 'IsleMind-1.0.7-arm64-v8a-no-model.apk',
+    publishedAt: null,
+    sha256: '0'.repeat(64),
+    sizeBytes: corruptApkBody.length,
+    abi: 'arm64-v8a',
+    variant: 'no-model',
+  })
+  assert.equal(checksumResult.status, 'error', 'APK checksum mismatch is reported as an update error')
+  assert.equal(checksumResult.reason, 'checksum_mismatch', 'APK checksum mismatch carries the checksum_mismatch reason')
+  assert.equal(launchedIntents.length, 0, 'APK checksum mismatch blocks Android installer launch')
+  assert.ok(
+    localFileOperations.some((operation) => operation.type === 'delete' && operation.uri.endsWith('IsleMind-1.0.7-arm64-v8a-no-model.apk')),
+    'APK checksum mismatch deletes the cached APK'
+  )
+  reactNativePlatform.OS = 'test'
+
   assert.equal(
     sha256BytesForTest(textEncoder.encode('')),
     'e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855',
