@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="assets/icon.png" width="120" height="120" alt="IsleMind app icon">
+  <img src="../../assets/icon.png" width="120" height="120" alt="IsleMind app icon">
 </p>
 
 <h1 align="center">IsleMind</h1>
@@ -9,13 +9,13 @@
 </p>
 
 <p align="center">
-  简体中文 | <a href="docs/readme/README.en.md">English</a> | <a href="docs/readme/README.ja.md">日本語</a>
+  <a href="../../README.md">简体中文</a> | <a href="README.en.md">English</a> | <a href="README.ja.md">日本語</a>
 </p>
 
 <p align="center">
   <a href="https://github.com/domidoremi/IsleMind/releases/latest">最新 APK</a>
   ·
-  <a href="docs/README.md">文档目录</a>
+  <a href="../README.md">文档目录</a>
 </p>
 
 ## 能力边界
@@ -80,8 +80,8 @@ Android 架构变体：
 
 - 应用运行时：[Expo SDK](https://docs.expo.dev/)、[React Native](https://reactnative.dev/)、[React](https://react.dev/)、[Expo Router](https://docs.expo.dev/router/introduction/)、[TypeScript](https://www.typescriptlang.org/)。
 - 移动目标：[Android APK](https://developer.android.com/build/building-cmdline)、[EAS](https://docs.expo.dev/eas/) 配置、[Expo iOS metadata](https://docs.expo.dev/versions/latest/config/app/)。
-- UI 与动效：[NativeWind](https://www.nativewind.dev/)、[Tailwind CSS](https://tailwindcss.com/)、[Isle UI](src/components/ui/isle/README.md)、[lucide-react-native](https://lucide.dev/)、[moti](https://moti.fyi/)、[React Native Reanimated](https://docs.swmansion.com/react-native-reanimated/)、[Gesture Handler](https://docs.swmansion.com/react-native-gesture-handler/)、[Safe Area Context](https://github.com/AppAndFlow/react-native-safe-area-context)、[Screens](https://github.com/software-mansion/react-native-screens)、[SVG](https://github.com/software-mansion/react-native-svg)、[Expo Blur](https://docs.expo.dev/versions/latest/sdk/blur-view/)。
+- UI 与动效：[NativeWind](https://www.nativewind.dev/)、[Tailwind CSS](https://tailwindcss.com/)、[Isle UI](../../src/components/ui/isle/README.md)、[lucide-react-native](https://lucide.dev/)、[moti](https://moti.fyi/)、[React Native Reanimated](https://docs.swmansion.com/react-native-reanimated/)、[Gesture Handler](https://docs.swmansion.com/react-native-gesture-handler/)、[Safe Area Context](https://github.com/AppAndFlow/react-native-safe-area-context)、[Screens](https://github.com/software-mansion/react-native-screens)、[SVG](https://github.com/software-mansion/react-native-svg)、[Expo Blur](https://docs.expo.dev/versions/latest/sdk/blur-view/)。
 - 本地存储与设备 API：[AsyncStorage](https://react-native-async-storage.github.io/async-storage/)、[Expo SecureStore](https://docs.expo.dev/versions/latest/sdk/securestore/)、[Expo SQLite](https://docs.expo.dev/versions/latest/sdk/sqlite/)、[Expo FileSystem](https://docs.expo.dev/versions/latest/sdk/filesystem/)、[Expo Document Picker](https://docs.expo.dev/versions/latest/sdk/document-picker/)、[Expo Image Picker](https://docs.expo.dev/versions/latest/sdk/imagepicker/)、[Expo Clipboard](https://docs.expo.dev/versions/latest/sdk/clipboard/)、[Expo Sharing](https://docs.expo.dev/versions/latest/sdk/sharing/)、[Expo Application](https://docs.expo.dev/versions/latest/sdk/application/)、[Expo Constants](https://docs.expo.dev/versions/latest/sdk/constants/)、[Expo Haptics](https://docs.expo.dev/versions/latest/sdk/haptics/)、[Expo Audio](https://docs.expo.dev/versions/latest/sdk/audio/)、[Expo Speech](https://docs.expo.dev/versions/latest/sdk/speech/)。
 - AI 服务商运行时：[OpenAI](https://platform.openai.com/docs/)、[Anthropic](https://docs.anthropic.com/)、[Google Gemini](https://ai.google.dev/gemini-api/docs)、[Xiaomi MiMo](https://mimo.mi.com/)、[OpenAI-compatible providers](https://platform.openai.com/docs/api-reference)、[自定义兼容端点](https://platform.openai.com/docs/api-reference)，以及 [DeepSeek](https://api-docs.deepseek.com/)、[DashScope/Qwen](https://www.alibabacloud.com/help/en/model-studio/use-qwen-by-calling-api)、[Zhipu/GLM](https://docs.bigmodel.cn/)、[xAI](https://docs.x.ai/)、[OpenRouter](https://openrouter.ai/docs/api/reference)、[NewAPI](https://docs.newapi.pro/)、[OneAPI](https://github.com/songquanpeng/one-api)、[Sub2API](https://sub2api.info/) 预设。
-- 检索与本地模型：Agentic RAG、[ONNX Runtime React Native](https://onnxruntime.ai/docs/get-started/with-javascript/react-native.html)、[local embedding model catalog](assets/models/catalog.json)、模型下载校验、[Xenova](https://huggingface.co/Xenova) 与 [BAAI](https://huggingface.co/BAAI) 模型来源、hash embedding fallback。
+- 检索与本地模型：Agentic RAG、[ONNX Runtime React Native](https://onnxruntime.ai/docs/get-started/with-javascript/react-native.html)、[local embedding model catalog](../../assets/models/catalog.json)、模型下载校验、[Xenova](https://huggingface.co/Xenova) 与 [BAAI](https://huggingface.co/BAAI) 模型来源、hash embedding fallback。
 - 多语言：[i18next](https://www.i18next.com/)、[React i18next](https://react.i18next.com/)、[Expo Localization](https://docs.expo.dev/versions/latest/sdk/localization/)、`zh-CN`、`en`、`ja` 资源文件。
