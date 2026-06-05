@@ -38,7 +38,7 @@ export function ChatOptionsPanel({
   onSwitchModel: (provider: AIProvider, model: string) => void
   onCopyLink: () => void
   onClose: () => void
-  onDraftChange?: (updates: Partial<Pick<Conversation, 'systemPrompt' | 'temperature' | 'topP' | 'reasoningEffort' | 'maxTokens'>>) => void
+  onDraftChange?: (updates: Partial<Pick<Conversation, 'temperature' | 'topP' | 'reasoningEffort' | 'maxTokens'>>) => void
   settings?: ProviderModelAccessInput['settings']
   placement?: 'popover' | 'sheet'
 }) {
@@ -71,6 +71,15 @@ export function ChatOptionsPanel({
         return { id, name: getProviderDisplayModel(selectedProvider, id), config: getModelConfig(upstreamModel, selectedProvider.type, selectedProvider.modelConfigs) }
       })
     : []
+  const noSwitchableProviderCandidates = policySwitchableProviders.length === 0
+  const showPickerEmptyState = noSwitchableProviderCandidates || (normalizedQuery.length > 0 && visibleProviders.length === 0 && selectedModels.length === 0)
+  const pickerEmptyTitle = noSwitchableProviderCandidates
+    ? switchableProviders.length ? t('chat.noAvailableModels') : t('chat.noProviderConnected')
+    : t('chat.noProviderModelMatches')
+  const pickerEmptyDescription = noSwitchableProviderCandidates
+    ? switchableProviders.length ? t('chat.syncModelsBeforeChat') : t('chat.configureProviderBeforeChat')
+    : t('chat.noProviderModelMatchesDescription')
+  const modelEmptyTitle = selectedProvider ? t('chat.noModelsForSelectedProvider', { provider: selectedProvider.name }) : t('chat.noAvailableModels')
   const selectedProviderIsCurrent = selectedProvider?.id === conversation.providerId
   const capabilities = currentProvider?.capabilities
   const reasoningOptions = getReasoningEffortOptions(currentProvider, conversation.model)
@@ -85,11 +94,10 @@ export function ChatOptionsPanel({
   const bodyVerticalPadding = 26
   const panelHeaderReserve = 128
   const pickerHeaderReserve = 30
-  const systemPromptReserve = compactPicker ? 102 : 116
   const copyLinkReserve = 52
   const primaryParamReserve = 79
   const secondaryParamReserve = capabilities?.topP !== false || reasoningOptions.length ? 79 : 10
-  const lowerControlsReserve = systemPromptReserve + copyLinkReserve + primaryParamReserve + secondaryParamReserve
+  const lowerControlsReserve = copyLinkReserve + primaryParamReserve + secondaryParamReserve
   const pickerRowMaxHeight = Math.max(compactPicker ? 126 : 132, Math.min(compactPicker ? 210 : 210, maxHeight - panelHeaderReserve - bodyVerticalPadding - lowerControlsReserve))
   const pickerListMaxHeight = Math.max(52, pickerRowMaxHeight - pickerHeaderReserve)
   const compactProviderMaxHeight = Math.max(52, Math.min(150, Math.floor((pickerRowMaxHeight - 12) * 0.42)))
@@ -110,6 +118,7 @@ export function ChatOptionsPanel({
   )
   const pickerFloor = visibleProviders.length || selectedModels.length ? Math.min(156, pickerRowMaxHeight) : 132
   const pickerMinHeight = compactPicker ? undefined : Math.max(pickerFloor, Math.min(pickerRowMaxHeight, Math.max(providerListHeight, modelListHeight) + pickerHeaderReserve))
+  const pickerEmptyMinHeight = compactPicker ? 108 : Math.max(116, pickerMinHeight ?? 116)
   const panelRadius = sheetMode ? colors.ui.radius.modal : colors.ui.radius.panel
   const fieldRadius = colors.ui.radius.field
   const controlRadius = colors.ui.radius.controlLarge
@@ -130,7 +139,7 @@ export function ChatOptionsPanel({
     }
   }, [currentProvider, selectedProviderId, visibleProviders])
 
-  function patchConversation(updates: Partial<Pick<Conversation, 'systemPrompt' | 'temperature' | 'topP' | 'reasoningEffort' | 'maxTokens'>>) {
+  function patchConversation(updates: Partial<Pick<Conversation, 'temperature' | 'topP' | 'reasoningEffort' | 'maxTokens'>>) {
     if (onDraftChange) {
       onDraftChange(updates)
       return
@@ -184,20 +193,22 @@ export function ChatOptionsPanel({
         keyboardShouldPersistTaps="handled"
         showsVerticalScrollIndicator
       >
-        <View style={{ flexDirection: compactPicker ? 'column' : 'row', gap: 12, alignItems: 'stretch', minHeight: pickerMinHeight }}>
-          <MotiView
-            from={motion === 'full' ? { opacity: 0, translateX: -8 } : { opacity: 0 }}
-            animate={{ opacity: 1, translateX: 0 }}
-            transition={motion === 'full' ? { type: 'spring', ...motionTokens.spring.settle } : { type: 'timing', duration: motionTokens.duration.fast }}
-            style={{ flex: compactPicker ? undefined : 0.42, minWidth: compactPicker ? undefined : 0, gap: 8 }}
-          >
-            <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 8 }}>
-              <Text style={{ color: colors.textSecondary, fontSize: 11, fontWeight: '900' }}>{t('settings.providerManagement')}</Text>
-              <Text style={{ color: colors.textTertiary, fontSize: 10, fontWeight: '800' }}>
-                {normalizedQuery ? `${visibleProviders.length}/${policySwitchableProviders.length}` : t('chat.countItems', { count: policySwitchableProviders.length })}
-              </Text>
-            </View>
-            {visibleProviders.length ? (
+        {showPickerEmptyState ? (
+          <PickerEmptyState title={pickerEmptyTitle} description={pickerEmptyDescription} minHeight={pickerEmptyMinHeight} />
+        ) : (
+          <View style={{ flexDirection: compactPicker ? 'column' : 'row', gap: 12, alignItems: 'stretch', minHeight: pickerMinHeight }}>
+            <MotiView
+              from={motion === 'full' ? { opacity: 0, translateX: -8 } : { opacity: 0 }}
+              animate={{ opacity: 1, translateX: 0 }}
+              transition={motion === 'full' ? { type: 'spring', ...motionTokens.spring.settle } : { type: 'timing', duration: motionTokens.duration.fast }}
+              style={{ flex: compactPicker ? undefined : 0.42, minWidth: compactPicker ? undefined : 0, gap: 8 }}
+            >
+              <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 8 }}>
+                <Text style={{ color: colors.textSecondary, fontSize: 11, fontWeight: '900' }}>{t('settings.providerManagement')}</Text>
+                <Text style={{ color: colors.textTertiary, fontSize: 10, fontWeight: '800' }}>
+                  {normalizedQuery ? `${visibleProviders.length}/${policySwitchableProviders.length}` : t('chat.countItems', { count: policySwitchableProviders.length })}
+                </Text>
+              </View>
               <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8 }}>
                 {visibleProviders.map((item) => (
                   <IslePressable
@@ -214,61 +225,43 @@ export function ChatOptionsPanel({
                   </IslePressable>
                 ))}
               </View>
-            ) : (
-              <View style={{ minHeight: providerListHeight, borderRadius: fieldRadius, paddingHorizontal: 12, paddingVertical: 10, justifyContent: 'center', backgroundColor: colors.material.field, borderWidth: 1, borderColor: colors.border }}>
-                <Text style={{ color: colors.textTertiary, fontSize: 12, lineHeight: 17 }}>{t('chat.noProviderModelMatches')}</Text>
-              </View>
-            )}
-          </MotiView>
+            </MotiView>
 
-          <MotiView
-            from={motion === 'full' ? { opacity: 0, translateX: 8 } : { opacity: 0 }}
-            animate={{ opacity: 1, translateX: 0 }}
-            transition={motion === 'full' ? { type: 'spring', ...motionTokens.spring.settle, delay: 35 } : { type: 'timing', duration: motionTokens.duration.fast }}
-            style={{ flex: 1, minWidth: 0, gap: 8 }}
-          >
-            <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 8 }}>
-              <Text style={{ color: colors.textSecondary, fontSize: 11, fontWeight: '900' }}>{t('chat.model')}</Text>
-              <Text numberOfLines={1} style={{ color: colors.textTertiary, fontSize: 10, fontWeight: '800', flexShrink: 1 }}>
-                {selectedProvider?.name ?? t('chat.notSelected')} · {selectedModels.length || t('chat.none')}
-              </Text>
-            </View>
-            {selectedModels.length ? (
-              <View style={{ flexDirection: 'row', gap: 8, flexWrap: 'wrap', paddingRight: 4, paddingBottom: 2 }}>
-                {selectedModels.map((model) => (
-                  <IslePressable
-                    key={model.id}
-                    haptic
-                    onPress={() => selectedProvider && onSwitchModel(selectedProvider, model.id)}
-                    accessibilityLabel={`${model.name}${model.config.deprecated ? ` · ${t('chat.deprecated')}` : ''}`}
-                  >
-                    <PickerChip
-                      active={selectedProviderIsCurrent && conversation.model === model.id}
-                      label={`${model.name}${model.config.deprecated ? ` · ${t('chat.deprecated')}` : ''}`}
-                      maxWidth={compactPicker ? panelWidth - 48 : Math.max(128, panelWidth * 0.42)}
-                    />
-                  </IslePressable>
-                ))}
+            <MotiView
+              from={motion === 'full' ? { opacity: 0, translateX: 8 } : { opacity: 0 }}
+              animate={{ opacity: 1, translateX: 0 }}
+              transition={motion === 'full' ? { type: 'spring', ...motionTokens.spring.settle, delay: 35 } : { type: 'timing', duration: motionTokens.duration.fast }}
+              style={{ flex: 1, minWidth: 0, gap: 8 }}
+            >
+              <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 8 }}>
+                <Text style={{ color: colors.textSecondary, fontSize: 11, fontWeight: '900' }}>{t('chat.model')}</Text>
+                <Text numberOfLines={1} style={{ color: colors.textTertiary, fontSize: 10, fontWeight: '800', flexShrink: 1 }}>
+                  {selectedProvider?.name ?? t('chat.notSelected')} · {selectedModels.length || t('chat.none')}
+                </Text>
               </View>
-            ) : (
-              <View style={{ minHeight: modelListHeight, borderRadius: fieldRadius, paddingHorizontal: 12, paddingVertical: 10, justifyContent: 'center', backgroundColor: colors.material.field, borderWidth: 1, borderColor: colors.border }}>
-                <Text style={{ color: colors.textTertiary, fontSize: 12, lineHeight: 17 }}>{t('chat.providerNoModelsSyncHint')}</Text>
-              </View>
-            )}
-          </MotiView>
-        </View>
-
-        <View style={{ marginTop: 10 }}>
-          <Text style={{ color: colors.textSecondary, fontSize: 11, fontWeight: '800', marginBottom: 6 }}>{t('chat.systemPrompt')}</Text>
-          <TextInput
-            value={conversation.systemPrompt}
-            onChangeText={(systemPrompt) => patchConversation({ systemPrompt })}
-            multiline
-            placeholder={t('chat.systemPromptExample')}
-            placeholderTextColor={colors.textTertiary}
-            style={{ minHeight: compactPicker ? 68 : 82, maxHeight: 136, borderRadius: fieldRadius, padding: 12, color: colors.text, backgroundColor: colors.material.field, borderWidth: 1, borderColor: colors.border, fontSize: 13, lineHeight: 19, textAlignVertical: 'top' }}
-          />
-        </View>
+              {selectedModels.length ? (
+                <View style={{ flexDirection: 'row', gap: 8, flexWrap: 'wrap', paddingRight: 4, paddingBottom: 2 }}>
+                  {selectedModels.map((model) => (
+                    <IslePressable
+                      key={model.id}
+                      haptic
+                      onPress={() => selectedProvider && onSwitchModel(selectedProvider, model.id)}
+                      accessibilityLabel={`${model.name}${model.config.deprecated ? ` · ${t('chat.deprecated')}` : ''}`}
+                    >
+                      <PickerChip
+                        active={selectedProviderIsCurrent && conversation.model === model.id}
+                        label={`${model.name}${model.config.deprecated ? ` · ${t('chat.deprecated')}` : ''}`}
+                        maxWidth={compactPicker ? panelWidth - 48 : Math.max(128, panelWidth * 0.42)}
+                      />
+                    </IslePressable>
+                  ))}
+                </View>
+              ) : (
+                <PickerEmptyState title={modelEmptyTitle} description={t('chat.providerNoModelsSyncHint')} minHeight={modelListHeight} />
+              )}
+            </MotiView>
+          </View>
+        )}
         <View style={{ flexDirection: 'row', gap: 8, marginTop: 8 }}>
           <IslePressable haptic onPress={onCopyLink} style={{ minHeight: 44, borderRadius: controlRadius, paddingHorizontal: 12, alignItems: 'center', justifyContent: 'center', backgroundColor: actionSurface, borderWidth: 1, borderColor: colors.border }}>
             <Text style={{ color: colors.textSecondary, fontSize: 12, fontWeight: '800' }}>{t('chat.copyConversationLink')}</Text>
@@ -327,6 +320,16 @@ function clampListHeight(count: number, minHeight: number, maxHeight: number, co
   if (count <= 0) return minHeight
   const estimated = Math.ceil(count / Math.max(1, columns)) * 40 + 8
   return Math.round(Math.max(minHeight, Math.min(maxHeight, estimated)))
+}
+
+function PickerEmptyState({ title, description, minHeight }: { title: string; description: string; minHeight: number }) {
+  const { colors } = useAppTheme()
+  return (
+    <View style={{ minHeight, borderRadius: colors.ui.radius.field, paddingHorizontal: 14, paddingVertical: 12, justifyContent: 'center', backgroundColor: colors.material.field, borderWidth: 1, borderColor: colors.border }}>
+      <Text style={{ color: colors.textSecondary, fontSize: 12, lineHeight: 17, fontWeight: '900' }}>{title}</Text>
+      <Text style={{ color: colors.textTertiary, fontSize: 11, lineHeight: 16, marginTop: 4 }}>{description}</Text>
+    </View>
+  )
 }
 
 function PickerChip({ label, active, maxWidth }: { label: string; active: boolean; maxWidth: number }) {

@@ -2,7 +2,6 @@ import type { OnboardingCompanionMode, RagProfile, ReasoningEffort, Settings } f
 
 export interface OnboardingCompanionProfile {
   mode: OnboardingCompanionMode
-  systemPrompt: string
   temperature: number
   reasoningEffort: ReasoningEffort
   ragProfile: RagProfile
@@ -21,11 +20,6 @@ export const DEFAULT_ONBOARDING_COMPANION_MODE: OnboardingCompanionMode = 'conci
 const ONBOARDING_COMPANION_PROFILES: Record<OnboardingCompanionMode, OnboardingCompanionProfile> = {
   concise: {
     mode: 'concise',
-    systemPrompt: [
-      'Answer directly and keep the result easy to act on.',
-      'Prefer concrete next steps, short tradeoffs, and crisp decisions.',
-      'Ask at most one clarifying question when the task is blocked.',
-    ].join(' '),
     temperature: 0.3,
     reasoningEffort: 'low',
     ragProfile: 'fast',
@@ -34,11 +28,6 @@ const ONBOARDING_COMPANION_PROFILES: Record<OnboardingCompanionMode, OnboardingC
   },
   research: {
     mode: 'research',
-    systemPrompt: [
-      'Act as a careful research partner.',
-      'Separate evidence from inference, surface uncertainty, and use available knowledge, memory, and search context before answering.',
-      'When sources are provided, cite them instead of relying on unstated assumptions.',
-    ].join(' '),
     temperature: 0.5,
     reasoningEffort: 'high',
     ragProfile: 'deep',
@@ -47,11 +36,6 @@ const ONBOARDING_COMPANION_PROFILES: Record<OnboardingCompanionMode, OnboardingC
   },
   creative: {
     mode: 'creative',
-    systemPrompt: [
-      'Act as an exploratory creative partner.',
-      'Offer varied options, preserve the user constraints, and turn loose ideas into usable drafts or prototypes.',
-      'Keep momentum by proposing a strong first version before polishing.',
-    ].join(' '),
     temperature: 0.9,
     reasoningEffort: 'medium',
     ragProfile: 'balanced',
@@ -60,11 +44,6 @@ const ONBOARDING_COMPANION_PROFILES: Record<OnboardingCompanionMode, OnboardingC
   },
   engineering: {
     mode: 'engineering',
-    systemPrompt: [
-      'Act as a senior engineering partner.',
-      'Prioritize reproducible steps, risk controls, implementation details, and verification evidence.',
-      'Keep recommendations scoped to the actual system and call out assumptions that could break the plan.',
-    ].join(' '),
     temperature: 0.35,
     reasoningEffort: 'high',
     ragProfile: 'deep',
@@ -73,11 +52,6 @@ const ONBOARDING_COMPANION_PROFILES: Record<OnboardingCompanionMode, OnboardingC
   },
   companion: {
     mode: 'companion',
-    systemPrompt: [
-      'Act as a steady productivity companion.',
-      'Help the user clarify intent, keep momentum, remember preferences when available, and convert discussion into concrete next actions.',
-      'Balance warmth with useful structure.',
-    ].join(' '),
     temperature: 0.75,
     reasoningEffort: 'medium',
     ragProfile: 'balanced',
@@ -85,6 +59,8 @@ const ONBOARDING_COMPANION_PROFILES: Record<OnboardingCompanionMode, OnboardingC
     memoryTopK: 6,
   },
 }
+
+const LEGACY_ONBOARDING_SYSTEM_PROMPT_HASHES = new Set([0xf9888d0a, 0x57f345ce, 0xa98f9ab0, 0xbafba833, 0x24c158ad])
 
 export function getOnboardingCompanionProfile(mode?: OnboardingCompanionMode | null): OnboardingCompanionProfile {
   const requested = mode ?? DEFAULT_ONBOARDING_COMPANION_MODE
@@ -97,10 +73,25 @@ export function getOnboardingCompanionProfile(mode?: OnboardingCompanionMode | n
 export function getOnboardingConversationDefaults(mode?: OnboardingCompanionMode | null): OnboardingConversationDefaults {
   const profile = getOnboardingCompanionProfile(mode)
   return {
-    systemPrompt: profile.systemPrompt,
+    systemPrompt: '',
     temperature: profile.temperature,
     reasoningEffort: profile.reasoningEffort,
   }
+}
+
+export function isOnboardingSystemPrompt(systemPrompt?: string | null): boolean {
+  const normalized = systemPrompt?.trim()
+  if (!normalized) return false
+  return LEGACY_ONBOARDING_SYSTEM_PROMPT_HASHES.has(hashPrompt(normalized))
+}
+
+function hashPrompt(value: string): number {
+  let hash = 2166136261
+  for (let index = 0; index < value.length; index += 1) {
+    hash ^= value.charCodeAt(index)
+    hash = Math.imul(hash, 16777619)
+  }
+  return hash >>> 0
 }
 
 export function getOnboardingSettingsDefaults(
