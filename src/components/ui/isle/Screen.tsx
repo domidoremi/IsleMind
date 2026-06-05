@@ -24,9 +24,8 @@ export function IsleScreen({ children, padded = true, style, background = 'defau
     <SafeAreaView style={{ flex: 1, backgroundColor: canvas }}>
       <StatusBar style={isDark ? 'light' : 'dark'} />
       <MotiView
-        from={{ opacity: 0, translateY: 8 }}
         animate={{ opacity: 1, translateY: 0 }}
-        transition={{ type: 'timing', duration: 220 }}
+        transition={{ type: 'timing', duration: motion === 'full' ? 160 : 1 }}
         style={[
           {
             flex: 1,

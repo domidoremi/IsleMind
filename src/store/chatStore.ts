@@ -4,7 +4,7 @@ import { getModelConfig } from '@/types'
 import { loadData, saveData } from '@/services/storage'
 import { localDataStore } from '@/services/localDataStore'
 import { st } from '@/i18n/service'
-import { getOnboardingConversationDefaults } from '@/utils/onboardingProfile'
+import { getOnboardingConversationDefaults, isOnboardingSystemPrompt } from '@/utils/onboardingProfile'
 import { resolveProviderModelAliasAccess } from '@/services/ai/policy/providerModelAccess'
 import { useSettingsStore } from './settingsStore'
 
@@ -56,15 +56,16 @@ export const useChatStore = create<ChatState>((set, get) => ({
     set({ isLoading: true })
     const data = await loadData<Conversation[]>('CONVERSATIONS')
     if (data?.length) {
+      const conversations = stripOnboardingSystemPrompts(data)
       const currentId = await loadData<string | null>(ACTIVE_CONVERSATION_KEY)
-      const selectedId = data.some((conversation) => conversation.id === currentId) ? currentId : data[0]?.id ?? null
+      const selectedId = conversations.some((conversation) => conversation.id === currentId) ? currentId : conversations[0]?.id ?? null
       set({
-        conversations: data,
+        conversations,
         currentId: selectedId,
         isLoading: false,
       })
       void saveData(ACTIVE_CONVERSATION_KEY, selectedId)
-      void syncSqliteConversationsInBackground(data)
+      void persistConversations(conversations)
     } else {
       set({ isLoading: false })
       void hydrateSqliteConversationsInBackground()
@@ -341,10 +342,11 @@ export const useChatStore = create<ChatState>((set, get) => ({
   },
 
   importData: (conversations: Conversation[]) => {
-    const currentId = conversations[0]?.id ?? null
-    set({ conversations, currentId })
+    const cleaned = stripOnboardingSystemPrompts(conversations)
+    const currentId = cleaned[0]?.id ?? null
+    set({ conversations: cleaned, currentId })
     void saveData(ACTIVE_CONVERSATION_KEY, currentId)
-    void persistConversations(conversations)
+    void persistConversations(cleaned)
   },
 
   getCurrent: () => {
@@ -404,24 +406,24 @@ async function persistConversations(conversations: Conversation[]): Promise<void
   ])
 }
 
-async function syncSqliteConversationsInBackground(conversations: Conversation[]): Promise<void> {
-  try {
-    await localDataStore.saveConversations(sanitizeConversationsForPersistence(conversations))
-  } catch (error) {
-    const message = error instanceof Error ? error.message : st('error.unknownError')
-    useChatStore.getState().setError(st('storage.sqliteSyncFailed', { message }))
-  }
+function stripOnboardingSystemPrompts(conversations: Conversation[]): Conversation[] {
+  return conversations.map((conversation) =>
+    isOnboardingSystemPrompt(conversation.systemPrompt)
+      ? { ...conversation, systemPrompt: '' }
+      : conversation
+  )
 }
 
 async function hydrateSqliteConversationsInBackground(): Promise<void> {
   try {
     const sqliteData = await localDataStore.loadConversations()
     if (!sqliteData.length) return
+    const conversations = stripOnboardingSystemPrompts(sqliteData)
     const currentId = await loadData<string | null>(ACTIVE_CONVERSATION_KEY)
-    const selectedId = sqliteData.some((conversation) => conversation.id === currentId) ? currentId : sqliteData[0]?.id ?? null
-    useChatStore.setState({ conversations: sqliteData, currentId: selectedId })
+    const selectedId = conversations.some((conversation) => conversation.id === currentId) ? currentId : conversations[0]?.id ?? null
+    useChatStore.setState({ conversations, currentId: selectedId })
     void saveData(ACTIVE_CONVERSATION_KEY, selectedId)
-    void saveData('CONVERSATIONS', sanitizeConversationsForPersistence(sqliteData))
+    void persistConversations(conversations)
   } catch (error) {
     const message = error instanceof Error ? error.message : st('error.unknownError')
     useChatStore.getState().setError(st('storage.sqliteRestoreFailed', { message }))

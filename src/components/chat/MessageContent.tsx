@@ -85,7 +85,7 @@ function RichMarkdown({ content, isUser }: { content: string; isUser: boolean })
 function CodeBlockCard({ content, language, isUser }: { content: string; language?: string; isUser: boolean }) {
   const { colors } = useAppTheme()
   const { t } = useTranslation()
-  const [expanded, setExpanded] = useState(false)
+  const [expanded, setExpanded] = useState(isUser)
   const label = language?.trim() || 'code'
   const codeSurface = isUser ? colors.highlight : colors.ui.code.background
   return (
@@ -94,7 +94,7 @@ function CodeBlockCard({ content, language, isUser }: { content: string; languag
         icon={<Braces color={isUser ? colors.surface : colors.primary} size={14} strokeWidth={2.1} />}
         title={label}
         isUser={isUser}
-        actions={[
+        actions={isUser ? [] : [
           { label: t('common.copy'), onPress: () => void Clipboard.setStringAsync(content) },
           { label: expanded ? t('common.collapse') : t('messageContent.zoom'), onPress: () => setExpanded((value) => !value) },
         ]}
@@ -128,7 +128,7 @@ function TableBlockCard({ rows, title, isUser }: { rows: string[][]; title?: str
   const safeRows = rows.length ? rows : [['']]
   const columnCount = Math.max(...safeRows.map((row) => row.length), 1)
   const normalizedRows = safeRows.map((row) => Array.from({ length: columnCount }, (_, index) => row[index] ?? ''))
-  const [expanded, setExpanded] = useState(rows.length <= 6)
+  const [expanded, setExpanded] = useState(isUser || rows.length <= 6)
   const visibleRows = expanded ? normalizedRows : normalizedRows.slice(0, 6)
   const userDivider = colors.highlight
   const tableBorder = isUser ? userDivider : colors.border
@@ -141,7 +141,7 @@ function TableBlockCard({ rows, title, isUser }: { rows: string[][]; title?: str
         icon={<Table2 color={isUser ? colors.surface : colors.primary} size={14} strokeWidth={2.1} />}
         title={title ?? t('messageContent.table')}
         isUser={isUser}
-        actions={[
+        actions={isUser ? [] : [
           { label: t('common.copy'), onPress: () => void Clipboard.setStringAsync(rows.map((row) => row.join('\t')).join('\n')) },
           ...(normalizedRows.length > 6 ? [{ label: expanded ? t('common.collapse') : t('common.expand'), onPress: () => setExpanded((value) => !value) }] : []),
         ]}
@@ -193,14 +193,14 @@ function TableBlockCard({ rows, title, isUser }: { rows: string[][]; title?: str
 function DiagramBlockCard({ content, language, isUser }: { content: string; language?: string; isUser: boolean }) {
   const { colors } = useAppTheme()
   const { t } = useTranslation()
-  const [expanded, setExpanded] = useState(false)
+  const [expanded, setExpanded] = useState(isUser)
   return (
     <RichCard isUser={isUser} expanded={expanded}>
       <CardHeader
         icon={<Workflow color={isUser ? colors.surface : colors.primary} size={14} strokeWidth={2.1} />}
         title={t('messageContent.sourceCode', { language: language || 'diagram' })}
         isUser={isUser}
-        actions={[
+        actions={isUser ? [] : [
           { label: t('common.copy'), onPress: () => void Clipboard.setStringAsync(content) },
           { label: expanded ? t('common.collapse') : t('messageContent.zoom'), onPress: () => setExpanded((value) => !value) },
         ]}
@@ -220,7 +220,7 @@ function DiagramBlockCard({ content, language, isUser }: { content: string; lang
 function DataBlockCard({ content, language, title, isUser }: { content: string; language?: string; title: string; isUser: boolean }) {
   const { colors } = useAppTheme()
   const { t } = useTranslation()
-  const [expanded, setExpanded] = useState(false)
+  const [expanded, setExpanded] = useState(isUser)
   const csvRows = language === 'csv' || language === 'tsv' ? parseDelimitedTable(content, language === 'tsv' ? '\t' : ',') : null
   if (csvRows?.length) return <TableBlockCard rows={csvRows} title={title} isUser={isUser} />
 
@@ -230,7 +230,7 @@ function DataBlockCard({ content, language, title, isUser }: { content: string; 
         icon={<BarChart3 color={isUser ? colors.surface : colors.primary} size={14} strokeWidth={2.1} />}
         title={title}
         isUser={isUser}
-        actions={[
+        actions={isUser ? [] : [
           { label: t('common.copy'), onPress: () => void Clipboard.setStringAsync(content) },
           { label: expanded ? t('common.collapse') : t('messageContent.zoom'), onPress: () => setExpanded((value) => !value) },
         ]}

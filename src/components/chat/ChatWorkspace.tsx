@@ -1,5 +1,5 @@
 import type { PropsWithChildren, ReactNode } from 'react'
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { TFunction } from 'i18next'
 import {
   BackHandler,
@@ -29,7 +29,7 @@ import { AnimatedNavigationIcon, type NavigationGlyph } from '@/components/navig
 import { AnimatedNavigationTrigger, useNavigationTrigger } from '@/components/navigation/AnimatedNavigationTrigger'
 import { IsleScreen, type IsleBackgroundState } from '@/components/ui/isle'
 import { IsleOverlayPressable, IslePressable } from '@/components/ui/isle'
-import { IsleField, IsleHeader, IsleIconButton, IsleSheet } from '@/components/ui/isle'
+import { IsleField, IsleIconButton, IsleSheet } from '@/components/ui/isle'
 import { useIsleDialog } from '@/components/ui/isle'
 import { Composer } from '@/components/chat/Composer'
 import type { ComposerCommand } from '@/components/chat/Composer'
@@ -74,12 +74,12 @@ const COMPOSER_COLLAPSED_MIN_HEIGHT = 88
 const COMPOSER_EXPANDED_MIN_HEIGHT = 132
 const AUTO_SCROLL_DELAY_MS = 96
 const USER_SCROLL_PAUSE_THRESHOLD = 72
-const FLOATING_CHROME_TOP_PADDING = 6
+const FLOATING_CHROME_SAFE_AREA_GAP = 4
 const FLOATING_CHROME_BOTTOM_PADDING = 8
-const COLLAPSED_CHROME_TOP_OFFSET = 8
+const COLLAPSED_CHROME_TOP_OFFSET = 6
 const COLLAPSED_CHROME_HEIGHT = 44
+const MESSAGE_LIST_CHROME_GAP = 12
 const EMPTY_CONVERSATION_DEFAULT_TOP_PADDING = 36
-const EMPTY_CONVERSATION_CHROME_GAP = 16
 
 interface PendingStreamingMessage {
   intent: Exclude<StreamingInputIntent, 'interrupt'>
@@ -133,7 +133,7 @@ export function ChatWorkspace({ conversation, showBack = false, embedded = false
   const quickStartSequence = useRef(0)
   const initialSetupDefaults = useMemo(() => getOnboardingConversationDefaults(settings.onboardingCompanionMode), [settings.onboardingCompanionMode])
   const [setupReasoningEffort, setSetupReasoningEffort] = useState<NonNullable<Conversation['reasoningEffort']>>(initialSetupDefaults.reasoningEffort)
-  const [setupSystemPrompt, setSetupSystemPrompt] = useState(initialSetupDefaults.systemPrompt)
+  const [setupSystemPrompt, setSetupSystemPrompt] = useState('')
   const [setupSelectedProviderId, setSetupSelectedProviderId] = useState<string | null>(null)
   const [setupSelectedModel, setSetupSelectedModel] = useState<string | null>(null)
   const [composerHeight, setComposerHeight] = useState(COMPOSER_COLLAPSED_MIN_HEIGHT)
@@ -188,7 +188,7 @@ export function ChatWorkspace({ conversation, showBack = false, embedded = false
   const isStreaming = !!streamingMessage
   const lastMessage = runtimeConversation?.messages.at(-1)
   const regenerableAssistantId = lastMessage?.role === 'assistant' ? lastMessage.id : undefined
-  const messageSignature = runtimeConversation?.messages.map((message) => `${message.id}:${message.content.length}:${message.status}`).join('|')
+  const messageSignature = runtimeConversation?.messages.map((message) => `${message.id}:${message.status}`).join('|')
   const activityLabel = streamingMessage ? getMessageActivityLabel(streamingMessage, t) : ''
   const compactViewport = windowHeight < 620 || windowWidth < 360
   const optionsPanelPlacement: ChatOptionsPlacement = windowWidth < 600 || windowHeight < 720 ? 'sheet' : 'popover'
@@ -252,6 +252,11 @@ export function ChatWorkspace({ conversation, showBack = false, embedded = false
   function markChromeActive() {
     setChromeCollapsed(false)
     scheduleChromeIdleCollapse()
+  }
+
+  function restoreChrome() {
+    if (idleTimer.current) clearTimeout(idleTimer.current)
+    setChromeCollapsed(false)
   }
 
   function applyQuickStartDraft(draft: string) {
@@ -373,8 +378,7 @@ export function ChatWorkspace({ conversation, showBack = false, embedded = false
   useEffect(() => {
     if (conversation) return
     setSetupReasoningEffort((current) => current === initialSetupDefaults.reasoningEffort ? current : initialSetupDefaults.reasoningEffort)
-    setSetupSystemPrompt((current) => current.trim() ? current : initialSetupDefaults.systemPrompt)
-  }, [conversation, initialSetupDefaults.reasoningEffort, initialSetupDefaults.systemPrompt])
+  }, [conversation, initialSetupDefaults.reasoningEffort])
 
   useEffect(() => {
     if (!homeProvider) {
@@ -642,7 +646,6 @@ export function ChatWorkspace({ conversation, showBack = false, embedded = false
                   onCopyLink={() => dialog.toast({ title: t('chat.noProviderConnected'), message: t('chat.configureProviderBeforeChat'), tone: 'amber' })}
                   onClose={() => setShowOptions(false)}
                   onDraftChange={(updates) => {
-                    if (updates.systemPrompt !== undefined) setSetupSystemPrompt(updates.systemPrompt)
                     if (updates.reasoningEffort !== undefined) setSetupReasoningEffort(updates.reasoningEffort)
                   }}
                 />
@@ -778,6 +781,7 @@ export function ChatWorkspace({ conversation, showBack = false, embedded = false
       collapseQuickTools={collapseQuickTools}
       motion={motion}
       markChromeActive={markChromeActive}
+      restoreChrome={restoreChrome}
       scheduleChromeIdleCollapse={scheduleChromeIdleCollapse}
       lastScrollOffset={lastScrollOffset}
       autoStickToBottom={autoStickToBottom}
@@ -847,6 +851,7 @@ function ActiveChatWorkspace({
   collapseQuickTools,
   motion,
   markChromeActive,
+  restoreChrome,
   scheduleChromeIdleCollapse,
   lastScrollOffset,
   autoStickToBottom,
@@ -912,6 +917,7 @@ function ActiveChatWorkspace({
   collapseQuickTools: () => void
   motion: ReturnType<typeof useMotionPreference>
   markChromeActive: () => void
+  restoreChrome: () => void
   scheduleChromeIdleCollapse: () => void
   lastScrollOffset: React.MutableRefObject<number>
   autoStickToBottom: React.MutableRefObject<boolean>
@@ -925,12 +931,27 @@ function ActiveChatWorkspace({
   const { t } = useTranslation()
   const [showJumpToBottom, setShowJumpToBottom] = useState(false)
   const [chromeHeight, setChromeHeight] = useState(0)
+  const [activeActionMessageId, setActiveActionMessageId] = useState<string | null>(null)
+  const layoutScrollTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const lastLayoutScrollAt = useRef(0)
+  const collapsedChromeTop = Math.max(insets.top, 0) + COLLAPSED_CHROME_TOP_OFFSET
+  const chromeReservedTopPadding = chromeCollapsed
+    ? collapsedChromeTop + COLLAPSED_CHROME_HEIGHT + MESSAGE_LIST_CHROME_GAP
+    : chromeHeight + MESSAGE_LIST_CHROME_GAP
   const emptyConversationTopPadding = Math.max(
     EMPTY_CONVERSATION_DEFAULT_TOP_PADDING,
-    chromeCollapsed
-      ? COLLAPSED_CHROME_TOP_OFFSET + COLLAPSED_CHROME_HEIGHT + EMPTY_CONVERSATION_CHROME_GAP
-      : chromeHeight + EMPTY_CONVERSATION_CHROME_GAP
+    chromeReservedTopPadding
   )
+
+  useEffect(() => {
+    setActiveActionMessageId(null)
+  }, [activeConversation.id])
+
+  useEffect(() => {
+    return () => {
+      if (layoutScrollTimer.current) clearTimeout(layoutScrollTimer.current)
+    }
+  }, [])
 
   async function submit(content: string, attachments: Attachment[]) {
     scrollToLatestMessage(false, 0)
@@ -1044,6 +1065,7 @@ function ActiveChatWorkspace({
   }
 
   function handleListScroll(event: NativeSyntheticEvent<NativeScrollEvent>) {
+    if (activeActionMessageId) setActiveActionMessageId(null)
     const y = event.nativeEvent.contentOffset.y
     const delta = y - lastScrollOffset.current
     const distanceFromBottom = Math.max(
@@ -1070,13 +1092,31 @@ function ActiveChatWorkspace({
     if (composerPanel) setComposerPanel(null)
   }
 
-  function scrollToLatestMessage(animated = true, delay = 80) {
+  const scrollToLatestMessage = useCallback((animated = true, delay = 80) => {
     autoStickToBottom.current = true
     setShowJumpToBottom(false)
     setTimeout(() => {
       listRef.current?.scrollToEnd({ animated })
     }, delay)
-  }
+  }, [])
+
+  const requestMessageLayoutScroll = useCallback(() => {
+    if (!autoStickToBottom.current) return
+    const now = Date.now()
+    const wait = Math.max(0, AUTO_SCROLL_DELAY_MS - (now - lastLayoutScrollAt.current))
+    if (wait === 0) {
+      lastLayoutScrollAt.current = now
+      listRef.current?.scrollToEnd({ animated: false })
+      return
+    }
+    if (layoutScrollTimer.current) return
+    layoutScrollTimer.current = setTimeout(() => {
+      layoutScrollTimer.current = null
+      if (!autoStickToBottom.current) return
+      lastLayoutScrollAt.current = Date.now()
+      listRef.current?.scrollToEnd({ animated: false })
+    }, wait)
+  }, [autoStickToBottom, listRef])
 
   return (
     <ChatScreenFrame embedded={embedded} backgroundState={backgroundState} compactViewport={compactViewport}>
@@ -1106,7 +1146,7 @@ function ActiveChatWorkspace({
             providerHealth={providerHealth}
             metrics={metrics}
             onBack={() => (showBack ? router.back() : goHistory())}
-            onRestore={markChromeActive}
+            onRestore={restoreChrome}
             onToggleOptions={() => {
               markChromeActive()
               setShowOptions((value) => !value)
@@ -1139,7 +1179,7 @@ function ActiveChatWorkspace({
               onScroll={handleListScroll}
               scrollEventThrottle={16}
               contentContainerStyle={{ paddingHorizontal: 20, paddingTop: 8, paddingBottom: 44 + composerBottomInset + keyboardLift }}
-              ListHeaderComponent={renderConversationHeaderSpacer(providerHealth, colors, t)}
+              ListHeaderComponent={activeConversation.messages.length ? renderConversationHeaderSpacer(chromeReservedTopPadding) : null}
               renderItem={({ item: message, index }) => (
                 <MessageBubble
                   key={message.id}
@@ -1147,6 +1187,9 @@ function ActiveChatWorkspace({
                   message={message}
                   index={index}
                   isLastAssistant={message.id === regenerableAssistantId}
+                  activeActionMessageId={activeActionMessageId}
+                  onActionMessageChange={setActiveActionMessageId}
+                  onLayoutChangeRequest={requestMessageLayoutScroll}
                   onCopy={(item) => {
                     void copyMessageFinalText(item)
                       .then(() => dialog.toast({ title: t('common.copied'), message: t('chat.messageCopied'), tone: 'mint' }))
@@ -1356,18 +1399,42 @@ function FloatingChrome({
   const { t } = useTranslation()
   const header = getProviderHeaderState(conversation, provider, switchableProviders, metrics, providerHealth, settings, t)
   const modelLabel = conversation.providerId === 'local-setup' ? t('chat.localSetupGuide') : getProviderDisplayModel(provider, conversation.model)
+  const subtitleLabel = providerHealth?.code
+    ? modelLabel
+    : provider?.enabled && provider.lastTestStatus !== 'ok'
+      ? `${t('chat.providerEnabledNeedsCheck')} · ${modelLabel}`
+      : modelLabel
+  const chromeTopPadding = Math.max(insets.top, 0) + FLOATING_CHROME_SAFE_AREA_GAP
+  const chromeIconStyle: ViewStyle = {
+    width: 44,
+    height: 44,
+    minHeight: 44,
+    borderRadius: 22,
+    backgroundColor: 'transparent',
+    borderWidth: 0,
+    shadowOpacity: 0,
+    shadowRadius: 0,
+    shadowOffset: { width: 0, height: 0 },
+    elevation: 0,
+  }
+  const activeChromeIconStyle: ViewStyle = {
+    ...chromeIconStyle,
+    backgroundColor: colors.material.field,
+    borderWidth: 1,
+    borderColor: colors.border,
+  }
   const shellStyle: StyleProp<ViewStyle> = [
     {
       position: 'absolute',
       top: 0,
       left: 0,
       right: 0,
-      bottom: showOptions && optionsPanelPlacement === 'sheet' ? 0 : undefined,
+      bottom: 0,
       zIndex: showOptions ? 70 : 40,
     },
   ]
   function handleLayout(event: LayoutChangeEvent) {
-    onLayoutHeight(Math.ceil(event.nativeEvent.layout.height) + FLOATING_CHROME_TOP_PADDING + FLOATING_CHROME_BOTTOM_PADDING)
+    onLayoutHeight(Math.ceil(event.nativeEvent.layout.height) + chromeTopPadding + FLOATING_CHROME_BOTTOM_PADDING)
   }
 
   return (
@@ -1376,7 +1443,7 @@ function FloatingChrome({
         pointerEvents={collapsed ? 'none' : 'auto'}
         animate={{ opacity: collapsed ? 0 : 1, translateY: collapsed ? -(insets.top + 78) : 0 }}
         transition={{ type: 'timing', duration: collapsed ? 150 : 210 }}
-        style={{ paddingTop: FLOATING_CHROME_TOP_PADDING, paddingHorizontal: 12, paddingBottom: FLOATING_CHROME_BOTTOM_PADDING, zIndex: 1 }}
+        style={{ paddingTop: chromeTopPadding, paddingHorizontal: 12, paddingBottom: FLOATING_CHROME_BOTTOM_PADDING, zIndex: 1 }}
       >
         <MotiView
           from={{ opacity: 0, translateY: -8 }}
@@ -1384,33 +1451,57 @@ function FloatingChrome({
           transition={{ type: 'spring', damping: 22, stiffness: 190 }}
         >
           <View onLayout={handleLayout}>
-            <IsleHeader
-              title={header.title}
-              subtitle={header.subtitle}
-              material="transparent"
-              elevated={false}
-              leading={
-                <AnimatedNavigationTrigger variant="iconButton" label={t('common.back')} glyph={showOptions ? 'back' : 'history'} onNavigate={onBack} color={colors.text} />
-              }
-              trailing={
-                <View style={{ flexDirection: 'row', gap: 8 }}>
-                  <IsleIconButton label={t('chat.conversationOptions')} onPress={onToggleOptions} tone={showOptions ? 'amber' : 'default'}>
+            <View
+              style={{
+                minHeight: 54,
+                paddingHorizontal: 8,
+                paddingVertical: 5,
+                justifyContent: 'center',
+                backgroundColor: colors.material.chrome,
+                borderRadius: colors.ui.radius.controlLarge,
+                borderWidth: 1,
+                borderColor: colors.border,
+                shadowColor: colors.shadowTint,
+                shadowOpacity: colors.ui.card.shadowOpacity,
+                shadowRadius: colors.ui.card.shadowRadius,
+                shadowOffset: { width: 0, height: colors.ui.card.shadowOffset },
+                elevation: colors.ui.card.shadowOpacity > 0 ? 2 : 0,
+              }}
+            >
+              <View style={{ minHeight: 44, flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+                <View style={{ width: 44, flexShrink: 0, alignItems: 'flex-start' }}>
+                  <AnimatedNavigationTrigger variant="iconButton" label={t('common.back')} glyph={showOptions ? 'back' : 'history'} onNavigate={onBack} color={colors.text} style={chromeIconStyle} />
+                </View>
+                <View style={{ flex: 1, minWidth: 0, justifyContent: 'center', overflow: 'hidden', paddingHorizontal: 2 }}>
+                  <Text numberOfLines={1} ellipsizeMode="tail" style={{ color: colors.text, fontSize: 16, lineHeight: 21, fontWeight: '900', letterSpacing: 0, includeFontPadding: false, textAlignVertical: 'center' }}>
+                    {header.title}
+                  </Text>
+                  {subtitleLabel ? (
+                    <Text numberOfLines={1} ellipsizeMode="tail" style={{ color: colors.textSecondary, fontSize: 11, lineHeight: 15, fontWeight: '700', marginTop: 1, includeFontPadding: false }}>
+                      {subtitleLabel}
+                    </Text>
+                  ) : null}
+                </View>
+                <View style={{ width: 92, flexShrink: 0, flexDirection: 'row', justifyContent: 'flex-end', gap: 4 }}>
+                  <IsleIconButton label={t('chat.conversationOptions')} onPress={onToggleOptions} tone="default" style={showOptions ? activeChromeIconStyle : chromeIconStyle}>
                     <ListEnd color={colors.textSecondary} size={17} strokeWidth={2} />
                   </IsleIconButton>
-                  <AnimatedNavigationTrigger variant="iconButton" label={t('settings.title')} glyph="settings-sliders" onNavigate={onSettings} externalActive={settingsTransitionActive} color={colors.text} />
+                  <AnimatedNavigationTrigger variant="iconButton" label={t('settings.title')} glyph="settings-sliders" onNavigate={onSettings} externalActive={settingsTransitionActive} color={colors.text} style={settingsTransitionActive ? activeChromeIconStyle : chromeIconStyle} />
                 </View>
-              }
-            />
+              </View>
+            </View>
 
             {providerHealth?.code ? (
-              <ConversationHealthBanner
-                health={providerHealth}
-                testing={testingHeader}
-                onConfigure={onSettings}
-                onTest={onTestModel}
-                onSwitch={onToggleOptions}
-                compact
-              />
+              <View style={{ paddingTop: 8 }}>
+                <ConversationHealthBanner
+                  health={providerHealth}
+                  testing={testingHeader}
+                  onConfigure={onSettings}
+                  onTest={onTestModel}
+                  onSwitch={onToggleOptions}
+                  compact
+                />
+              </View>
             ) : null}
           </View>
 
@@ -1467,15 +1558,15 @@ function FloatingChrome({
           from={{ opacity: 0, translateY: -8 }}
           animate={{ opacity: 1, translateY: 0 }}
           transition={{ type: 'spring', damping: 20, stiffness: 180 }}
-          style={{ position: 'absolute', top: COLLAPSED_CHROME_TOP_OFFSET, alignSelf: 'center', zIndex: 8 }}
-          pointerEvents="auto"
+          style={{ position: 'absolute', top: Math.max(insets.top, 0) + COLLAPSED_CHROME_TOP_OFFSET, left: 0, right: 0, alignItems: 'center', zIndex: 80, elevation: 24 }}
+          pointerEvents="box-none"
         >
           <IsleOverlayPressable
             onPress={onRestore}
             accessibilityRole="button"
             accessibilityLabel={t('chat.showTopBar')}
             hitSlop={12}
-            style={{ minWidth: streaming ? 136 : 96, minHeight: 44, borderRadius: colors.ui.radius.chip, paddingHorizontal: 14, alignItems: 'center', justifyContent: 'center', backgroundColor: colors.material.chrome, borderWidth: 1, borderColor: colors.border }}
+            style={{ minWidth: streaming ? 136 : 96, minHeight: 44, borderRadius: colors.ui.radius.chip, paddingHorizontal: 14, alignItems: 'center', justifyContent: 'center', backgroundColor: colors.material.chrome, borderWidth: 1, borderColor: colors.border, elevation: 24 }}
           >
             <Text style={{ color: colors.textTertiary, fontSize: 10, fontWeight: '900' }}>{streaming ? t('chat.generatingShowTopBar') : t('chat.showTopBar')}</Text>
           </IsleOverlayPressable>
@@ -2011,19 +2102,9 @@ function IntentAction({
 }
 
 function renderConversationHeaderSpacer(
-  providerHealth: ConversationHealth | null,
-  colors: ReturnType<typeof useAppTheme>['colors'],
-  t: TFunction
+  topPadding: number
 ) {
-  return (
-    <View style={{ gap: 8, marginBottom: 4 }}>
-      {providerHealth?.code ? (
-        <Text style={{ color: providerHealth.inheritedExpired ? colors.error : colors.warning, fontSize: 11, fontWeight: '800' }}>
-          {providerHealth.inheritedExpired ? t('chat.inheritedConfigExpired') : t('chat.conversationConfigIssue')}
-        </Text>
-      ) : null}
-    </View>
-  )
+  return <View style={{ paddingTop: topPadding, marginBottom: 4 }} />
 }
 
 function SetupEmptyState({ description, actionLabel, glyph, onAction }: { description: string; actionLabel: string; glyph: NavigationGlyph; onAction: () => void }) {
@@ -2446,44 +2527,72 @@ function ConversationHealthBanner({
   const { colors } = useAppTheme()
   const { t } = useTranslation()
   const borderColor = health.inheritedExpired ? colors.error : colors.warning
+  if (compact) {
+    return (
+      <MotiView
+        from={{ opacity: 0, translateY: -6, scale: 0.98 }}
+        animate={{ opacity: 1, translateY: 0, scale: 1 }}
+        transition={{ type: 'spring', damping: 20, stiffness: 180 }}
+        style={{
+          marginBottom: 8,
+          borderRadius: colors.ui.radius.chip,
+          padding: 4,
+          flexDirection: 'row',
+          alignItems: 'center',
+          gap: 4,
+          backgroundColor: colors.material.chrome,
+          borderWidth: 1,
+          borderColor: colors.border,
+        }}
+      >
+        <BannerAction label={t('chat.configure')} glyph="provider-key" onPress={onConfigure} compact />
+        <BannerAction
+          label={testing ? t('chat.testing') : t('chat.test')}
+          onPress={onTest}
+          compact
+          disabled={testing || health.code === 'missing_key' || health.code === 'disabled_provider' || health.code === 'provider_missing'}
+        />
+        <BannerAction label={t('chat.switch')} onPress={onSwitch} compact />
+      </MotiView>
+    )
+  }
   return (
     <MotiView
       from={{ opacity: 0, translateY: -8, scale: 0.98 }}
       animate={{ opacity: 1, translateY: 0, scale: 1 }}
       transition={{ type: 'spring', damping: 20, stiffness: 180 }}
       style={{
-        marginHorizontal: compact ? 0 : 16,
+        marginHorizontal: 16,
         marginBottom: 8,
-        borderRadius: compact ? colors.ui.radius.field : colors.ui.radius.card,
-        padding: compact ? 10 : 13,
+        borderRadius: colors.ui.radius.card,
+        padding: 13,
         backgroundColor: colors.material.paperRaised,
         borderWidth: 1,
         borderColor,
       }}
     >
       <View style={{ flexDirection: 'row', alignItems: 'flex-start', gap: 10 }}>
-        <View style={{ width: compact ? 28 : 34, height: compact ? 28 : 34, borderRadius: colors.ui.radius.controlMiddle, alignItems: 'center', justifyContent: 'center', backgroundColor: colors.material.field }}>
-          <AlertTriangle color={borderColor} size={compact ? 15 : 18} strokeWidth={2} />
+        <View style={{ width: 34, height: 34, borderRadius: colors.ui.radius.controlMiddle, alignItems: 'center', justifyContent: 'center', backgroundColor: colors.material.field }}>
+          <AlertTriangle color={borderColor} size={18} strokeWidth={2} />
         </View>
         <View style={{ flex: 1 }}>
-          <Text style={{ color: colors.text, fontSize: compact ? 13 : 14, fontWeight: '900' }}>{health.title}</Text>
-          {!compact ? <Text style={{ color: colors.textSecondary, fontSize: 12, lineHeight: 17, marginTop: 3 }}>{health.description}</Text> : null}
-          {health.inheritedExpired && !compact ? (
+          <Text style={{ color: colors.text, fontSize: 14, fontWeight: '900' }}>{health.title}</Text>
+          <Text style={{ color: colors.textSecondary, fontSize: 12, lineHeight: 17, marginTop: 3 }}>{health.description}</Text>
+          {health.inheritedExpired ? (
             <Text style={{ color: colors.error, fontSize: 11, lineHeight: 16, marginTop: 5 }}>
               {t('chat.chooseAvailableModel')}
             </Text>
           ) : null}
         </View>
       </View>
-      <View style={{ flexDirection: 'row', gap: 8, flexWrap: 'wrap', marginTop: compact ? 8 : 10 }}>
-        <BannerAction label={t('chat.configure')} glyph="provider-key" onPress={onConfigure} compact={compact} />
+      <View style={{ flexDirection: 'row', gap: 8, flexWrap: 'wrap', marginTop: 10 }}>
+        <BannerAction label={t('chat.configure')} glyph="provider-key" onPress={onConfigure} />
         <BannerAction
-          label={testing ? t('chat.testing') : compact ? t('chat.test') : t('chat.testCurrentModel')}
+          label={testing ? t('chat.testing') : t('chat.testCurrentModel')}
           onPress={onTest}
-          compact={compact}
           disabled={testing || health.code === 'missing_key' || health.code === 'disabled_provider' || health.code === 'provider_missing'}
         />
-        <BannerAction label={compact ? t('chat.switch') : t('chat.switchModel')} onPress={onSwitch} compact={compact} />
+        <BannerAction label={t('chat.switchModel')} onPress={onSwitch} />
       </View>
     </MotiView>
   )
@@ -2569,7 +2678,7 @@ function getProviderHeaderState(
   return {
     title: provider?.name ?? t('settings.providerManagement'),
     subtitle: providerHealth?.code
-      ? `${providerHealth.title} · ${modelLabel}`
+      ? modelLabel
       : provider?.enabled && provider.lastTestStatus !== 'ok'
         ? `${t('chat.providerEnabledNeedsCheck')} · ${modelLabel}`
       : `${modelLabel} · ${formatHeaderMeta(conversation, provider, metrics, t)}`,
