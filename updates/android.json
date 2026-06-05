@@ -1,74 +1,74 @@
 {
   "schemaVersion": 1,
   "platform": "android",
-  "versionName": "1.0.6",
-  "versionCode": 106,
-  "publishedAt": "2026-06-03T15:55:44Z",
-  "releaseUrl": "https://github.com/domidoremi/IsleMind/releases/tag/v1.0.6",
+  "versionName": "1.0.7",
+  "versionCode": 107,
+  "publishedAt": "2026-06-05T15:21:32Z",
+  "releaseUrl": "https://github.com/domidoremi/IsleMind/releases/tag/v1.0.7",
   "assets": [
     {
       "abi": "arm64-v8a",
       "variant": "no-model",
-      "name": "IsleMind-1.0.6-arm64-v8a-no-model.apk",
-      "url": "https://github.com/domidoremi/IsleMind/releases/download/v1.0.6/IsleMind-1.0.6-arm64-v8a-no-model.apk",
-      "sha256": "0885fdfd7e3def67af4942cee0b816f6a2e8961b8b7d9be61af2d141c8f0ea9c",
-      "sizeBytes": 72992454
+      "name": "IsleMind-1.0.7-arm64-v8a-no-model.apk",
+      "url": "https://github.com/domidoremi/IsleMind/releases/download/v1.0.7/IsleMind-1.0.7-arm64-v8a-no-model.apk",
+      "sha256": "59fd86e1544904d9d2e272f4fb2cedba6dfc55c04cbc8c1eca921b146d1865b0",
+      "sizeBytes": 72986430
     },
     {
       "abi": "arm64-v8a",
       "variant": "with-model-small",
-      "name": "IsleMind-1.0.6-arm64-v8a-with-model-small.apk",
-      "url": "https://github.com/domidoremi/IsleMind/releases/download/v1.0.6/IsleMind-1.0.6-arm64-v8a-with-model-small.apk",
-      "sha256": "6c052b0cfdf8330d9429cf74604bab98c1423304850cc3fe9227318631c4684f",
-      "sizeBytes": 89419810
+      "name": "IsleMind-1.0.7-arm64-v8a-with-model-small.apk",
+      "url": "https://github.com/domidoremi/IsleMind/releases/download/v1.0.7/IsleMind-1.0.7-arm64-v8a-with-model-small.apk",
+      "sha256": "8394fdeccea7f5078ec5d596a11ec0ffbc6e4d1fd7e9abb848277a02a3cb10d8",
+      "sizeBytes": 89413786
     },
     {
       "abi": "armeabi-v7a",
       "variant": "no-model",
-      "name": "IsleMind-1.0.6-armeabi-v7a-legacy-no-model.apk",
-      "url": "https://github.com/domidoremi/IsleMind/releases/download/v1.0.6/IsleMind-1.0.6-armeabi-v7a-legacy-no-model.apk",
-      "sha256": "a7e56b5b8f0350ea1922da6007a6d728e391aeda1d5060d8b142e1269d687553",
-      "sizeBytes": 58457348
+      "name": "IsleMind-1.0.7-armeabi-v7a-legacy-no-model.apk",
+      "url": "https://github.com/domidoremi/IsleMind/releases/download/v1.0.7/IsleMind-1.0.7-armeabi-v7a-legacy-no-model.apk",
+      "sha256": "4585459293d7050bd9cc12f99cd037e79605a596791ecd92dcfb2a48b4a85a3c",
+      "sizeBytes": 58451324
     },
     {
       "abi": "armeabi-v7a",
       "variant": "with-model-small",
-      "name": "IsleMind-1.0.6-armeabi-v7a-legacy-with-model-small.apk",
-      "url": "https://github.com/domidoremi/IsleMind/releases/download/v1.0.6/IsleMind-1.0.6-armeabi-v7a-legacy-with-model-small.apk",
-      "sha256": "ea73b4cd88038d71b3f315c57cca1dbae975bbeef67b7d749de4d0e9b35ad1b7",
-      "sizeBytes": 74884704
+      "name": "IsleMind-1.0.7-armeabi-v7a-legacy-with-model-small.apk",
+      "url": "https://github.com/domidoremi/IsleMind/releases/download/v1.0.7/IsleMind-1.0.7-armeabi-v7a-legacy-with-model-small.apk",
+      "sha256": "9a95381a655f503ee297ec530928112df50df473c6393904a7333b96b65d8069",
+      "sizeBytes": 74878680
     },
     {
       "abi": "universal-64",
       "variant": "no-model",
-      "name": "IsleMind-1.0.6-universal-64-no-model.apk",
-      "url": "https://github.com/domidoremi/IsleMind/releases/download/v1.0.6/IsleMind-1.0.6-universal-64-no-model.apk",
-      "sha256": "7a508146b84470f83fb6c5fb43d67fd1017be1684b5a4085a830943f45bda947",
-      "sizeBytes": 129655153
+      "name": "IsleMind-1.0.7-universal-64-no-model.apk",
+      "url": "https://github.com/domidoremi/IsleMind/releases/download/v1.0.7/IsleMind-1.0.7-universal-64-no-model.apk",
+      "sha256": "57d8a0cc4c299340bfa6a6e02b316a70911f77110105e58d034566764557b7bb",
+      "sizeBytes": 129649129
     },
     {
       "abi": "universal-64",
       "variant": "with-model-small",
-      "name": "IsleMind-1.0.6-universal-64-with-model-small.apk",
-      "url": "https://github.com/domidoremi/IsleMind/releases/download/v1.0.6/IsleMind-1.0.6-universal-64-with-model-small.apk",
-      "sha256": "062b00d4466c6d9f02e048ae11d509514e47f8d0b86202fd1cfb7dcbfcc77a05",
-      "sizeBytes": 146082509
+      "name": "IsleMind-1.0.7-universal-64-with-model-small.apk",
+      "url": "https://github.com/domidoremi/IsleMind/releases/download/v1.0.7/IsleMind-1.0.7-universal-64-with-model-small.apk",
+      "sha256": "997ecb3c82ca6d578198ecfa6208cb0dcce56711539762c1d17479e65e71d5a3",
+      "sizeBytes": 146076485
     },
     {
       "abi": "x86_64",
       "variant": "no-model",
-      "name": "IsleMind-1.0.6-x86_64-no-model.apk",
-      "url": "https://github.com/domidoremi/IsleMind/releases/download/v1.0.6/IsleMind-1.0.6-x86_64-no-model.apk",
-      "sha256": "88385866583fa3cb146528acb93ed78115f50050c1b6eb950d1af6ccedb1cbd4",
-      "sizeBytes": 80435643
+      "name": "IsleMind-1.0.7-x86_64-no-model.apk",
+      "url": "https://github.com/domidoremi/IsleMind/releases/download/v1.0.7/IsleMind-1.0.7-x86_64-no-model.apk",
+      "sha256": "c2ba75c80e834385959bed71b4b7193b61e4ab3df90d2528f3c4f91983b892b7",
+      "sizeBytes": 80429619
     },
     {
       "abi": "x86_64",
       "variant": "with-model-small",
-      "name": "IsleMind-1.0.6-x86_64-with-model-small.apk",
-      "url": "https://github.com/domidoremi/IsleMind/releases/download/v1.0.6/IsleMind-1.0.6-x86_64-with-model-small.apk",
-      "sha256": "28695b69f6ea1f4d31e30baf01e14eea881a45c0da36f55bccd8f2911f2c7128",
-      "sizeBytes": 96862999
+      "name": "IsleMind-1.0.7-x86_64-with-model-small.apk",
+      "url": "https://github.com/domidoremi/IsleMind/releases/download/v1.0.7/IsleMind-1.0.7-x86_64-with-model-small.apk",
+      "sha256": "1a663a541fbf0911b9e443a534bfdf9a6157ee23b032d93a7e30458ddcbd7872",
+      "sizeBytes": 96856975
     }
   ]
 }
