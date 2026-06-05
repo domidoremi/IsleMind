@@ -1,12 +1,10 @@
 import { View } from 'react-native'
-import { Command, Layers, Moon, Network, Sparkles, Sun } from 'lucide-react-native'
+import { Command, Moon, Network, Sparkles, Sun } from 'lucide-react-native'
 import { useTranslation } from 'react-i18next'
-import { IsleChip, IsleField, IslePressable, IsleSection, IsleToggle } from '@/components/ui/isle'
+import { IsleField, IsleSection, IsleToggle } from '@/components/ui/isle'
 import { useAppTheme } from '@/hooks/useAppTheme'
 import { useSettingsStore } from '@/store/settingsStore'
-import type { PageTransitionStyle } from '@/types'
-
-const PAGE_TRANSITION_OPTIONS: PageTransitionStyle[] = ['state', 'classic']
+import { PageTransitionSetting } from './PageTransitionSetting'
 
 export function PreferenceSettingsContent() {
   const { colors } = useAppTheme()
@@ -58,19 +56,7 @@ export function PreferenceSettingsContent() {
       />
       <IsleSection title={t('preferences.interaction')} style={{ marginTop: 12 }}>
         <View style={{ gap: 10 }}>
-          <View style={{ gap: 8 }}>
-            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
-              <Layers color={colors.text} size={18} />
-              <IsleChip active>{t('preferences.pageTransition')}</IsleChip>
-            </View>
-            <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8 }}>
-              {PAGE_TRANSITION_OPTIONS.map((option) => (
-                <IslePressable key={option} haptic onPress={() => updateSettings({ pageTransitionStyle: option })} style={{ minHeight: 44, justifyContent: 'center' }}>
-                  <IsleChip active={(settings.pageTransitionStyle ?? 'state') === option}>{t(`preferences.pageTransition.${option}`)}</IsleChip>
-                </IslePressable>
-              ))}
-            </View>
-          </View>
+          <PageTransitionSetting />
           <IsleToggle
             icon={<Command color={colors.text} size={18} />}
             title={t('preferences.commandPalette')}

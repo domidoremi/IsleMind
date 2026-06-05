@@ -15,13 +15,16 @@ import { IsleMetric } from '@/components/ui/isle'
 import { useAppTheme } from '@/hooks/useAppTheme'
 import { useSettingsStore } from '@/store/settingsStore'
 import { useChatStore } from '@/store/chatStore'
+import { listKnowledgeDocuments, listMemories } from '@/services/contextStore'
 import { exportToJsonFile, importFromJsonFileDetailed } from '@/services/portableData'
 import { checkLatestApkRelease, downloadAndOpenApkInstaller, formatUpdateCheckTime, getVersionSnapshot, type ApkReleaseInfo } from '@/services/appUpdates'
 import { useIsleDialog } from '@/components/ui/isle'
 import { resolveSearchProvider, searchProviderLabel } from '@/services/searchPolicy'
 import { clearRuntimeLog, getRuntimeLogPath, readRuntimeLogText } from '@/services/runtimeLog'
 import { buildRuntimeDiagnosticsSummary, type RuntimeDiagnosticsSummary } from '@/services/runtimeDiagnostics'
+import { buildWorkspaceReadiness, type WorkspaceReadinessContextHealth, type WorkspaceReadinessItem, type WorkspaceReadinessSummary } from '@/utils/workspaceReadiness'
 import { changeAppLanguage } from '@/i18n'
+import { PageTransitionSetting } from '@/components/settings/PageTransitionSetting'
 import type { BedrockCacheTtl, Language, PayloadPolicyMode, ProxyMode, RemoteCompactMode, ThemeId, ThemeMode, UpstreamTransportMode } from '@/types'
 import { useMotionPreference } from '@/hooks/useMotionPreference'
 import { motionTokens } from '@/theme/animation'
@@ -89,6 +92,7 @@ export function SettingsScreenContent({ active = true, onHome }: { active?: bool
   const scrollRef = useRef<ScrollView>(null)
   const [checkingUpdate, setCheckingUpdate] = useState(false)
   const [diagnostics, setDiagnostics] = useState<RuntimeDiagnosticsSummary | null>(null)
+  const [readinessHealth, setReadinessHealth] = useState<WorkspaceReadinessContextHealth>({ loading: true })
   const [refreshingDiagnostics, setRefreshingDiagnostics] = useState(false)
   const [expandedGroups, setExpandedGroups] = useState<Record<SettingsAdvancedGroup, boolean>>({
     diagnostics: false,
@@ -106,6 +110,10 @@ export function SettingsScreenContent({ active = true, onHome }: { active?: bool
     ? { type: 'spring' as const, ...motionTokens.spring.gentle }
     : { type: 'timing' as const, duration: 1 }
   const diagnosticRows = useMemo(() => diagnostics ? buildDiagnosticRows(diagnostics, t) : [], [diagnostics, t])
+  const readiness = useMemo(
+    () => buildWorkspaceReadiness({ providers, settings, contextHealth: readinessHealth }),
+    [providers, readinessHealth, settings]
+  )
 
   useEffect(() => {
     if (!active) return
@@ -122,6 +130,11 @@ export function SettingsScreenContent({ active = true, onHome }: { active?: bool
   useEffect(() => {
     if (!active) return
     void refreshRuntimeDiagnostics()
+  }, [active, providers, settings])
+
+  useEffect(() => {
+    if (!active) return
+    void refreshWorkspaceReadiness()
   }, [active, providers, settings])
 
   async function exportJson() {
@@ -269,6 +282,47 @@ export function SettingsScreenContent({ active = true, onHome }: { active?: bool
     setRefreshingDiagnostics(false)
   }
 
+  async function refreshWorkspaceReadiness() {
+    setReadinessHealth((current) => ({ ...current, loading: true }))
+    try {
+      const [memories, documents] = await Promise.all([
+        listMemories(['pending', 'active', 'disabled']),
+        listKnowledgeDocuments(),
+      ])
+      setReadinessHealth({
+        loading: false,
+        memoryCount: memories.length,
+        activeMemoryCount: memories.filter((memory) => memory.status === 'active').length,
+        pendingMemoryCount: memories.filter((memory) => memory.status === 'pending').length,
+        knowledgeDocumentCount: documents.length,
+        knowledgeChunkCount: documents.reduce((total, document) => total + Math.max(0, document.chunkCount), 0),
+        failedKnowledgeDocumentCount: documents.filter((document) => document.status === 'error').length,
+      })
+    } catch {
+      setReadinessHealth({ loading: false })
+    }
+  }
+
+  function openReadinessItem(item: WorkspaceReadinessItem) {
+    if (item.key === 'provider') {
+      router.push('/settings/providers')
+      return
+    }
+    if (item.key === 'memory') {
+      router.push('/settings/memory')
+      return
+    }
+    if (item.key === 'knowledge') {
+      router.push({ pathname: '/settings/knowledge', params: { focus: 'import' } })
+      return
+    }
+    if (item.key === 'search') {
+      router.push('/settings/context')
+      return
+    }
+    setExpandedGroups((current) => ({ ...current, updates: true, diagnostics: true }))
+  }
+
   async function copyRuntimeLogTail() {
     const text = await readRuntimeLogText()
     await Clipboard.setStringAsync(text || t('settings.runtimeLogEmpty'))
@@ -305,6 +359,8 @@ export function SettingsScreenContent({ active = true, onHome }: { active?: bool
         <IsleMetric label={defaultProvider ? `${t('settings.default')} ${defaultProvider.name}` : t('settings.noDefault')} />
         <IsleMetric label={searchProvider !== 'off' ? `${t('settings.search')} ${searchProviderLabel(searchProvider)}` : t('settings.searchOff')} />
       </View>
+
+      <SettingsReadinessPanel summary={readiness} onOpen={openReadinessItem} />
 
       <IsleTitle color="app-teal" style={{ marginTop: 18 }}>{t('settings.aiSettings')}</IsleTitle>
       <IsleSection style={{ marginTop: 8 }}>
@@ -386,6 +442,9 @@ export function SettingsScreenContent({ active = true, onHome }: { active?: bool
               </IslePressable>
             ))}
           </View>
+        </IsleSection>
+        <IsleSection title={t('preferences.pageTransition')} style={{ flexGrow: 1, flexBasis: 260 }} contentStyle={{ padding: 12 }}>
+          <PageTransitionSetting showHeader={false} />
         </IsleSection>
       </View>
 
@@ -791,6 +850,91 @@ function ThemeModeCard({ label, active, onPress }: { label: string; active: bool
       </View>
     </IslePressable>
   )
+}
+
+function SettingsReadinessPanel({ summary, onOpen }: { summary: WorkspaceReadinessSummary; onOpen: (item: WorkspaceReadinessItem) => void }) {
+  const { colors } = useAppTheme()
+  const { t } = useTranslation()
+  return (
+    <IsleSection
+      title={t('settings.workspaceReadiness')}
+      subtitle={t('settings.workspaceReadinessSummary', { ready: summary.readyCount, total: summary.totalCount })}
+      material="raised"
+      style={{ marginTop: 14 }}
+      contentStyle={{ padding: 12 }}
+    >
+      <View testID="settings-readiness-panel" style={{ gap: 8 }}>
+        <View style={{ flexDirection: 'row', gap: 8, flexWrap: 'wrap' }}>
+          {summary.items.map((item) => (
+            <IslePressable
+              key={item.key}
+              haptic
+              onPress={() => onOpen(item)}
+              accessibilityLabel={t('settings.workspaceReadinessOpen', { item: readinessItemTitle(item, t) })}
+              style={{ minHeight: 44, flexBasis: '47%', flexGrow: 1 }}
+            >
+              <View
+                style={{
+                  minHeight: 68,
+                  borderRadius: 18,
+                  padding: 11,
+                  borderWidth: 1,
+                  borderColor: item.status === 'ready' ? colors.success : item.status === 'action' ? colors.warning : colors.border,
+                  backgroundColor: item.status === 'ready' ? colors.mintSoft : item.status === 'action' ? colors.amberSoft : colors.material.paperRaised,
+                }}
+              >
+                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 7 }}>
+                  <View style={{ width: 8, height: 8, borderRadius: 4, backgroundColor: item.status === 'ready' ? colors.success : item.status === 'action' ? colors.warning : colors.textTertiary }} />
+                  <Text numberOfLines={1} style={{ color: colors.text, fontSize: 12, lineHeight: 16, fontWeight: '900', includeFontPadding: false, textAlignVertical: 'center' }}>
+                    {readinessItemTitle(item, t)}
+                  </Text>
+                </View>
+                <Text numberOfLines={2} style={{ color: colors.textSecondary, fontSize: 11, lineHeight: 16, fontWeight: '800', marginTop: 5, includeFontPadding: false, textAlignVertical: 'center' }}>
+                  {readinessItemDetail(item, t)}
+                </Text>
+              </View>
+            </IslePressable>
+          ))}
+        </View>
+        {summary.primaryAction ? (
+          <Text style={{ color: colors.textTertiary, fontSize: 11, lineHeight: 16, fontWeight: '800' }}>
+            {t('settings.workspaceReadinessPrimaryAction', { item: readinessItemTitle(summary.primaryAction, t) })}
+          </Text>
+        ) : null}
+      </View>
+    </IsleSection>
+  )
+}
+
+function readinessItemTitle(item: WorkspaceReadinessItem, t: ReturnType<typeof useTranslation>['t']): string {
+  if (item.key === 'provider') return t('settings.providerManagement')
+  if (item.key === 'memory') return t('settings.memory')
+  if (item.key === 'knowledge') return t('settings.knowledge')
+  if (item.key === 'search') return t('settings.search')
+  return t('settings.workspaceReadinessRecovery')
+}
+
+function readinessItemDetail(item: WorkspaceReadinessItem, t: ReturnType<typeof useTranslation>['t']): string {
+  const status = t(`settings.workspaceReadinessStatus.${item.status}`)
+  if (item.key === 'provider') return `${status} · ${t('settings.workspaceReadinessProviderDetail', { count: item.metrics.readyProviders })}`
+  if (item.key === 'memory') {
+    if (item.metrics.loading) return `${status} · ${t('settings.workspaceReadinessLoading')}`
+    return `${status} · ${t('settings.workspaceReadinessMemoryDetail', {
+      active: item.metrics.activeMemoryCount ?? 0,
+      pending: item.metrics.pendingMemoryCount ?? 0,
+      total: item.metrics.memoryCount ?? 0,
+    })}`
+  }
+  if (item.key === 'knowledge') {
+    if (item.metrics.loading) return `${status} · ${t('settings.workspaceReadinessLoading')}`
+    return `${status} · ${t('settings.workspaceReadinessKnowledgeDetail', {
+      documents: item.metrics.knowledgeDocumentCount ?? 0,
+      chunks: item.metrics.knowledgeChunkCount ?? 0,
+      failed: item.metrics.failedKnowledgeDocumentCount ?? 0,
+    })}`
+  }
+  if (item.key === 'search') return `${status} · ${searchProviderLabel(item.metrics.searchProvider)}`
+  return status
 }
 
 function SegmentedSetting<T extends string>({
