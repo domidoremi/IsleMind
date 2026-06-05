@@ -13,9 +13,18 @@ const resources: Record<Language, TranslationTree> = {
 }
 
 let serviceLanguage: Language = 'zh-CN'
+let systemLanguage: Language = 'zh-CN'
 
 export function setServiceLanguage(language: Language): void {
   serviceLanguage = language
+}
+
+export function setSystemLanguage(language: Language): void {
+  systemLanguage = language
+}
+
+export function getSystemLanguage(): Language {
+  return systemLanguage
 }
 
 export function st(key: string, values?: TranslationValues, fallback?: string): string {

@@ -9,7 +9,8 @@ import { legacySearchModeForProvider, resolveSearchProvider } from '@/services/s
 import { clearHistoricalInjectedGroupModels, clearHistoricalInjectedProviderModels, getProviderPreferredModel, hasRemoteProviderModelEvidence, isProviderConversationReady, normalizeProviderModelAliases } from '@/utils/providerModels'
 import { getPolicyPreferredProviderModel, providerHasPolicyAllowedModel } from '@/services/ai/policy/providerModelAccess'
 import { st } from '@/i18n/service'
-import { setServiceLanguage } from '@/i18n/service'
+import { getSystemLanguage, setServiceLanguage } from '@/i18n/service'
+import { clearLanguagePreferenceSource, loadLanguagePreferenceSource, resolveEffectiveLanguage, saveLanguagePreferenceSource } from '@/i18n/languagePreference'
 import { normalizeThemeId } from '@/theme/colors'
 
 interface SettingsState {
@@ -157,11 +158,13 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
   providers: [],
 
   load: async () => {
-    const [settings, providers] = await Promise.all([
+    const [settings, providers, languageSource] = await Promise.all([
       loadData<Settings>('SETTINGS'),
       loadData<AIProvider[]>('PROVIDERS'),
+      loadLanguagePreferenceSource(),
     ])
     const rawSettings = settings ? { ...defaultSettings, ...settings } : defaultSettings
+    const effectiveLanguage = resolveEffectiveLanguage(rawSettings.language, languageSource, getSystemLanguage())
     const resolvedSearchProvider = resolveSearchProvider(rawSettings)
     const resetCatalog = (rawSettings.providerCatalogVersion ?? PROVIDER_CATALOG_VERSION) < PROVIDER_CATALOG_VERSION
     if (resetCatalog) {
@@ -169,6 +172,7 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
     }
     const mergedSettings = {
       ...rawSettings,
+      language: effectiveLanguage,
       themeId: normalizeThemeId(rawSettings.themeId),
       providerCatalogVersion: PROVIDER_CATALOG_VERSION,
       defaultProvider: resetCatalog ? null : rawSettings.defaultProvider,
@@ -184,6 +188,7 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
       settings: { ...mergedSettings, defaultProvider },
       providers: mergedProviders,
     })
+    setServiceLanguage(effectiveLanguage)
     if (resetCatalog) {
       saveData('SETTINGS', { ...mergedSettings, defaultProvider: null })
       saveData('PROVIDERS', [])
@@ -221,6 +226,7 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
   },
 
   setLanguage: (language: Language) => {
+    void saveLanguagePreferenceSource('user')
     setServiceLanguage(language)
     get().updateSettings({ language })
   },
@@ -421,7 +427,8 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
   },
 
   clearAll: async () => {
-    const resetSettings = { ...defaultSettings, defaultProvider: null, onboardingCompleted: false, providerCatalogVersion: PROVIDER_CATALOG_VERSION }
+    const resetLanguage = resolveEffectiveLanguage(undefined, 'system', getSystemLanguage())
+    const resetSettings = { ...defaultSettings, language: resetLanguage, defaultProvider: null, onboardingCompleted: false, providerCatalogVersion: PROVIDER_CATALOG_VERSION }
     const providers = get().providers
     const providerIds = new Set([...LEGACY_DEFAULT_PROVIDER_IDS, ...providers.map((provider) => provider.id)])
     await Promise.all([
@@ -431,7 +438,9 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
       SecureStore.deleteItemAsync(BING_SEARCH_KEY),
       SecureStore.deleteItemAsync(CUSTOM_SEARCH_KEY),
       ...providers.flatMap((provider) => (provider.credentialGroups ?? []).map((group) => SecureStore.deleteItemAsync(secureProviderGroupKey(provider.id, group.id)))),
+      clearLanguagePreferenceSource(),
     ])
+    setServiceLanguage(resetLanguage)
     saveData('SETTINGS', resetSettings)
     const resetProviders: AIProvider[] = []
     saveData('PROVIDERS', resetProviders)

@@ -31,22 +31,26 @@ export default function RootLayout() {
   return (
     <GestureHandlerRootView style={{ flex: 1, backgroundColor: colors.surface }}>
       <IsleDialogProvider>
-        <RootUpdateNotice message={boot.updateNotice} qaVersion={qaUpdateVersion} />
-        <Stack
-          screenOptions={{
-            headerShown: false,
-            contentStyle: { backgroundColor: colors.surface },
-            animation: 'slide_from_right',
-          }}
-        >
-          <Stack.Screen name="settings/context" options={{ animation: 'slide_from_right' }} />
-          <Stack.Screen name="settings/memory" options={{ animation: 'slide_from_right' }} />
-          <Stack.Screen name="settings/knowledge" options={{ animation: 'slide_from_right' }} />
-          <Stack.Screen name="settings/preferences" options={{ animation: 'slide_from_right' }} />
-          <Stack.Screen name="settings/skills" options={{ animation: 'slide_from_right' }} />
-          <Stack.Screen name="settings/mcp" options={{ animation: 'slide_from_right' }} />
-          <Stack.Screen name="settings/providers" options={{ animation: 'slide_from_right' }} />
-        </Stack>
+        {boot.ready ? <RootUpdateNotice message={boot.updateNotice} qaVersion={qaUpdateVersion} /> : null}
+        {boot.ready ? (
+          <Stack
+            screenOptions={{
+              headerShown: false,
+              contentStyle: { backgroundColor: colors.surface },
+              animation: 'slide_from_right',
+            }}
+          >
+            <Stack.Screen name="settings/context" options={{ animation: 'slide_from_right' }} />
+            <Stack.Screen name="settings/memory" options={{ animation: 'slide_from_right' }} />
+            <Stack.Screen name="settings/knowledge" options={{ animation: 'slide_from_right' }} />
+            <Stack.Screen name="settings/preferences" options={{ animation: 'slide_from_right' }} />
+            <Stack.Screen name="settings/skills" options={{ animation: 'slide_from_right' }} />
+            <Stack.Screen name="settings/mcp" options={{ animation: 'slide_from_right' }} />
+            <Stack.Screen name="settings/providers" options={{ animation: 'slide_from_right' }} />
+          </Stack>
+        ) : (
+          <View style={{ flex: 1, backgroundColor: colors.surface }} />
+        )}
       </IsleDialogProvider>
     </GestureHandlerRootView>
   )
