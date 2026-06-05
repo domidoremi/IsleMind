@@ -6,6 +6,13 @@ import { localDataStore } from '@/services/localDataStore'
 import { clearHistoricalInjectedGroupModels, clearHistoricalInjectedProviderModels, hasRemoteProviderModelEvidence } from '@/utils/providerModels'
 import { exportMemoriesAsMem0, importMem0Memories, type Mem0MemoryEnvelope } from '@/utils/mem0Interop'
 import { defaultProviderCredentialMode, defaultProviderTokenPlanRegion, defaultProviderWireProtocol } from '@/services/ai/providerProtocolPolicy'
+import {
+  clearLanguagePreferenceSource,
+  isLanguagePreferenceSource,
+  loadLanguagePreferenceSource,
+  saveLanguagePreferenceSource,
+  type LanguagePreferenceSource,
+} from '@/i18n/languagePreference'
 
 const KEYS = {
   CONVERSATIONS: '@islemind/conversations',
@@ -21,6 +28,7 @@ export interface ExportPayload {
   version: 1
   conversations: Conversation[]
   settings: Settings | null
+  languagePreferenceSource?: LanguagePreferenceSource
   providers: AIProvider[]
   skills?: SkillDefinition[]
   mcpServers?: McpServerConfig[]
@@ -61,6 +69,7 @@ export async function removeData(key: keyof typeof KEYS): Promise<void> {
 
 export async function clearAllData(): Promise<void> {
   try {
+    await clearLanguagePreferenceSource()
     await AsyncStorage.multiRemove(Object.values(KEYS))
     await localDataStore.clearConversations()
   } catch {
@@ -69,13 +78,14 @@ export async function clearAllData(): Promise<void> {
 }
 
 export async function exportAllData(): Promise<string> {
-  const [sqliteConversations, cachedConversations, settings, providers, skills, mcpServers] = await Promise.all([
+  const [sqliteConversations, cachedConversations, settings, providers, skills, mcpServers, languagePreferenceSource] = await Promise.all([
     localDataStore.loadConversations(),
     loadData<Conversation[]>('CONVERSATIONS'),
     loadData<Settings>('SETTINGS'),
     loadData<AIProvider[]>('PROVIDERS'),
     loadData<SkillDefinition[]>('SKILLS'),
     loadData<McpServerConfig[]>('MCP_SERVERS'),
+    loadLanguagePreferenceSource(),
   ])
   const context = await exportContextSnapshot()
   const conversations = sqliteConversations.length ? sqliteConversations : cachedConversations ?? []
@@ -86,6 +96,7 @@ export async function exportAllData(): Promise<string> {
       version: 1,
       conversations,
       settings,
+      languagePreferenceSource,
       providers: providers ?? [],
       skills: skills ?? [],
       mcpServers: mcpServers ?? [],
@@ -109,6 +120,8 @@ export async function importAllDataDetailed(json: string): Promise<ImportAllData
       await saveData('CONVERSATIONS', data.conversations.map(normalizeConversation))
       await localDataStore.saveConversations(data.conversations.map(normalizeConversation))
       if (data.settings) await saveData('SETTINGS', data.settings)
+      if (isLanguagePreferenceSource(data.languagePreferenceSource)) await saveLanguagePreferenceSource(data.languagePreferenceSource)
+      else await clearLanguagePreferenceSource()
       await saveData('PROVIDERS', data.providers.map(normalizeProvider))
       if (Array.isArray(data.skills)) await saveData('SKILLS', data.skills.map(normalizeSkill).filter(Boolean))
       if (Array.isArray(data.mcpServers)) await saveData('MCP_SERVERS', data.mcpServers.map(normalizeMcpServer).filter(Boolean))

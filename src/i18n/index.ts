@@ -6,7 +6,7 @@ import type { Language } from '@/types'
 import en from './resources/en.json'
 import ja from './resources/ja.json'
 import zhCN from './resources/zh-CN.json'
-import { setServiceLanguage } from './service'
+import { setServiceLanguage, setSystemLanguage } from './service'
 
 export { i18n }
 
@@ -19,7 +19,9 @@ export function detectLanguage(): Language {
 }
 
 export function initI18n(language?: Language) {
-  const detected = language ?? detectLanguage()
+  const systemLanguage = detectLanguage()
+  const detected = language ?? systemLanguage
+  setSystemLanguage(systemLanguage)
   setServiceLanguage(detected)
 
   if (i18n.isInitialized) {
