@@ -64,6 +64,9 @@ docs/
 !docs/
 docs/*
 !docs/production-qa-matrix.md
+!docs/README.md
+!docs/readme/
+!docs/readme/**
 local-docs/
 local-scripts/
 .local/
