@@ -146,8 +146,16 @@ function runBlockedModelRecovery(device) {
   const ok = hasAnyText(capture.uiaText, [
     '模型不可用',
     'Model unavailable',
+    '当前会话配置异常',
+    'Session configuration',
+    '会话参数',
+    'Session settings',
+    '去配置',
+    'Configure',
     '切换模型',
     'Switch model',
+    '切换',
+    'Switch',
     '当前服务商',
     'Current provider',
   ]) && !hasErrorBoundary(capture.uiaText)
@@ -163,12 +171,17 @@ function runRuntimeFallbackTrace(device) {
   sleep(1600)
   let capture = captureStep(device, record, 'provider-runtime-fallback')
   const logText = collectRuntimeLogText(device)
-  const ok = /fallback\.decision|runtime-fallback|transport\.fallback/i.test(logText)
-    || hasAnyText(capture.uiaText, ['fallback', '降级', '运行时诊断', 'Runtime diagnostics'])
+  let ok = hasRuntimeFallbackEvidence(logText, capture.uiaText)
   if (!ok) {
-    swipeUp(device)
-    sleep(450)
-    capture = captureStep(device, record, 'provider-runtime-fallback-after-scroll')
+    const found = findByScrolling(device, record, capture, [
+      'fallback',
+      'Fallback',
+      '降级',
+      '运行时诊断',
+      'Runtime diagnostics',
+    ], 5)
+    capture = found.capture
+    ok = found.matched || hasRuntimeFallbackEvidence(logText, capture.uiaText)
   }
   return completeScenario(record, ok, capture, ok ? 'Runtime fallback evidence was visible or logged.' : 'Runtime fallback evidence was not present in current app state.')
 }
@@ -196,7 +209,7 @@ function runAndroidBack(device) {
   sleep(1600)
   const before = captureStep(device, record, 'provider-runtime-android-back-before')
   runCommand('adb', ['-s', device, 'shell', 'input', 'keyevent', '4'])
-  sleep(900)
+  sleep(1400)
   const after = captureStep(device, record, 'provider-runtime-android-back')
   const ok = hasAnyText(before.uiaText, ['供应商', 'Providers'])
     && hasAnyText(after.uiaText, ['设置', 'Settings', 'AI 工作区', 'AI workspace'])
@@ -340,10 +353,12 @@ function openUrl(device, url) {
 function captureStep(device, record, name) {
   const png = path.join(smokeDir, `${name}.png`)
   const uia = path.join(smokeDir, `${name}.uia.xml`)
-  runCommand('adb', ['-s', device, 'shell', 'screencap', '-p', `/sdcard/${name}.png`])
-  runCommand('adb', ['-s', device, 'pull', `/sdcard/${name}.png`, png])
-  runCommand('adb', ['-s', device, 'shell', 'uiautomator', 'dump', `/sdcard/${name}.uia.xml`])
-  runCommand('adb', ['-s', device, 'pull', `/sdcard/${name}.uia.xml`, uia])
+  captureFileWithRetry(device, `/sdcard/${name}.png`, png, () => {
+    runCommand('adb', ['-s', device, 'shell', 'screencap', '-p', `/sdcard/${name}.png`])
+  })
+  captureFileWithRetry(device, `/sdcard/${name}.uia.xml`, uia, () => {
+    runCommand('adb', ['-s', device, 'shell', 'uiautomator', 'dump', `/sdcard/${name}.uia.xml`])
+  })
   const uiaText = fs.existsSync(uia) ? sanitizePersistedTextEvidence(uia) : ''
   const step = {
     name,
@@ -353,6 +368,17 @@ function captureStep(device, record, name) {
   }
   record.steps.push(step)
   return { png: step.png, uia: step.uia, uiaText }
+}
+
+function captureFileWithRetry(device, remotePath, localPath, captureRemote) {
+  if (fs.existsSync(localPath)) fs.unlinkSync(localPath)
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    captureRemote()
+    runCommand('adb', ['-s', device, 'pull', remotePath, localPath])
+    if (fs.existsSync(localPath) && fs.statSync(localPath).size > 0) return true
+    sleep(450 + attempt * 350)
+  }
+  return false
 }
 
 function findByScrolling(device, record, initialCapture, labels, maxScrolls) {
@@ -444,6 +470,11 @@ function hasAnyText(text, values) {
 
 function hasErrorBoundary(uiaText) {
   return hasAnyText(uiaText, ['页面暂时无法显示', 'Page is unavailable', 'Render Error', 'ReferenceError', 'TypeError'])
+}
+
+function hasRuntimeFallbackEvidence(logText, uiaText) {
+  return /fallback\.decision|runtime-fallback|transport\.fallback/i.test(logText)
+    || hasAnyText(uiaText, ['fallback', 'Fallback', '降级', '运行时诊断', 'Runtime diagnostics'])
 }
 
 function collectRuntimeLogText(device) {

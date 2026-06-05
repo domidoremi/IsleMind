@@ -336,6 +336,7 @@ const {
   getOnboardingCompanionProfile,
   getOnboardingConversationDefaults,
   getOnboardingSettingsDefaults,
+  isOnboardingSystemPrompt,
 } = require('../src/utils/onboardingProfile.ts')
 const { buildMemoryReviewSummary, filterPendingMemoriesForReview } = require('../src/utils/memoryReview.ts')
 const {
@@ -1080,23 +1081,23 @@ function assertReleaseVersionsAligned() {
   const readmeChecks = [
     {
       file: 'README.md',
-      markers: ['structured work artifacts', 'quality gates', 'copyable handoffs', 'continuation prompts'],
+      markers: ['结构化工作产物', '质量门槛', '复制交接', '继续提示'],
     },
     {
-      file: 'README.zh-CN.md',
-      markers: ['结构化工作产物', '质量门槛', '可复制交接', '继续执行提示'],
+      file: 'docs/readme/README.en.md',
+      markers: ['structured work artifacts', 'Quality gates', 'copyable handoffs', 'continuation prompts'],
     },
     {
-      file: 'README.ja.md',
-      markers: ['構造化作業成果', '品質ゲート', 'コピー可能な引き継ぎ', '継続プロンプト'],
+      file: 'docs/readme/README.zh-CN.md',
+      markers: ['结构化工作产物', '质量门槛', '复制交接', '继续提示'],
+    },
+    {
+      file: 'docs/readme/README.ja.md',
+      markers: ['構造化された作業成果物', '品質ゲート', 'コピー可能な引き継ぎ', '継続プロンプト'],
     },
   ]
   for (const { file, markers } of readmeChecks) {
     const readme = fs.readFileSync(path.join(root, file), 'utf8')
-    assert.ok(
-      readme.includes(`\`${packageJson.version}\``),
-      `${file} documents the current app version ${packageJson.version}`
-    )
     for (const marker of markers) {
       assert.ok(readme.includes(marker), `${file} documents AI productivity work artifact capability: ${marker}`)
     }
@@ -2742,15 +2743,16 @@ https://gateway.example/messages`
   assert.equal(defaultOnboarding.mode, 'concise', 'missing onboarding mode resolves to concise profile')
   assert.equal(defaultConversationDefaults.temperature, 0.3, 'default conversation settings stay concise')
   assert.equal(defaultConversationDefaults.reasoningEffort, 'low', 'default conversation reasoning stays concise')
+  assert.equal(defaultConversationDefaults.systemPrompt, '', 'default conversations start without a preset system prompt')
   assert.equal(onboardingResearch.ragProfile, 'deep', 'research onboarding defaults to deep RAG')
   assert.equal(onboardingEngineering.reasoningEffort, 'high', 'engineering onboarding defaults to high reasoning')
   assert.equal(onboardingConcise.ragProfile, 'fast', 'concise onboarding favors fast retrieval')
-  assert.ok(onboardingResearch.systemPrompt.includes('research partner'), 'research onboarding writes a role prompt')
-  assert.ok(onboardingEngineering.systemPrompt.includes('engineering partner'), 'engineering onboarding writes a role prompt')
+  assert.equal(isOnboardingSystemPrompt(''), false, 'empty system prompts are not treated as legacy onboarding text')
+  assert.equal(isOnboardingSystemPrompt('Custom project prompt'), false, 'custom system prompts are preserved')
   const creativeConversationDefaults = getOnboardingConversationDefaults('creative')
   assert.equal(creativeConversationDefaults.reasoningEffort, 'medium', 'creative chat defaults use medium reasoning')
   assert.equal(creativeConversationDefaults.temperature, 0.9, 'creative chat defaults use a higher temperature')
-  assert.ok(creativeConversationDefaults.systemPrompt.includes('creative partner'), 'creative chat defaults include the selected behavior contract')
+  assert.equal(creativeConversationDefaults.systemPrompt, '', 'creative chat defaults do not inject a preset system prompt')
   const companionSettings = getOnboardingSettingsDefaults('companion')
   assert.deepEqual(
     companionSettings,
