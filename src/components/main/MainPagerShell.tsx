@@ -86,7 +86,7 @@ function MainPagerShellInner({ initialPage = 'home', transitionStyle = 'state' }
   const gestureSettled = useSharedValue(false)
   const settingsTransitionActive = settingsTransitionPhase !== null
   const backgroundMode: IsleBackgroundMode = settingsTransitionActive ? 'surface' : page === 'settings' ? 'surface' : page === 'home' ? 'focus' : 'default'
-  const backgroundState: IsleBackgroundState = gestureLock?.locked ? 'input' : settingsTransitionActive ? 'active' : page === 'settings' ? 'idle' : 'active'
+  const backgroundState: IsleBackgroundState = gestureLock?.locked ? 'input' : settingsTransitionActive ? 'active' : 'idle'
   const pages = useMemo(
     () => [
       { id: 'history' as const, index: -1, node: <ConversationsScreenContent onHome={() => switchTo('home')} onSettings={() => switchTo('settings')} /> },

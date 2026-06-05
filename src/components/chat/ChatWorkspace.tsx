@@ -12,6 +12,7 @@ import {
   TextInput,
   View,
   useWindowDimensions,
+  type GestureResponderEvent,
   type StyleProp,
   type NativeScrollEvent,
   type NativeSyntheticEvent,
@@ -22,8 +23,8 @@ import { FlashList, type FlashListRef } from '@shopify/flash-list'
 import * as Clipboard from 'expo-clipboard'
 import * as Linking from 'expo-linking'
 import { router } from 'expo-router'
-import { AlertTriangle, Bot, ChevronRight, FileText, GitBranchPlus, ListEnd, SlidersHorizontal, Split, Square, X } from 'lucide-react-native'
-import { AnimatePresence, MotiView } from 'moti'
+import { AlertTriangle, Bot, Brain, BrainCircuit, BrainCog, ChevronRight, FileText, GitBranchPlus, ListEnd, Sparkles, Split, Square, Wrench, X } from 'lucide-react-native'
+import { MotiView } from 'moti'
 import { useTranslation } from 'react-i18next'
 import { AnimatedNavigationIcon, type NavigationGlyph } from '@/components/navigation/AnimatedNavigationIcon'
 import { AnimatedNavigationTrigger, useNavigationTrigger } from '@/components/navigation/AnimatedNavigationTrigger'
@@ -70,10 +71,14 @@ interface ModelQuickOption {
   family: ModelQuickGroup
 }
 
-const COMPOSER_COLLAPSED_MIN_HEIGHT = 88
-const COMPOSER_EXPANDED_MIN_HEIGHT = 132
+const COMPOSER_COLLAPSED_MIN_HEIGHT = 78
+const COMPOSER_EXPANDED_MIN_HEIGHT = 124
 const AUTO_SCROLL_DELAY_MS = 96
 const USER_SCROLL_PAUSE_THRESHOLD = 72
+const MESSAGE_ANCHOR_SCROLL_THRESHOLD = 180
+const MESSAGE_ANCHOR_OVERFLOW_MARGIN = 48
+const MESSAGE_ANCHOR_MAX_HEIGHT = 260
+const MESSAGE_ANCHOR_MIN_HEIGHT = 132
 const FLOATING_CHROME_SAFE_AREA_GAP = 4
 const FLOATING_CHROME_BOTTOM_PADDING = 8
 const COLLAPSED_CHROME_TOP_OFFSET = 6
@@ -85,6 +90,26 @@ interface PendingStreamingMessage {
   intent: Exclude<StreamingInputIntent, 'interrupt'>
   content: string
   attachments: Attachment[]
+}
+
+interface MessageAnchorViewport {
+  contentHeight: number
+  viewportHeight: number
+  scrollY: number
+  awayFromBottom: boolean
+  scrolledEnough: boolean
+}
+
+interface MessageAnchorItem {
+  id: string
+  message: Message
+  messageIndex: number
+}
+
+const MESSAGE_ANCHOR_ROLES = new Set<Message['role']>(['user', 'assistant'])
+
+function isMessageAnchorSource(message: Message) {
+  return MESSAGE_ANCHOR_ROLES.has(message.role)
 }
 
 interface ChatWorkspaceProps {
@@ -105,6 +130,7 @@ export function ChatWorkspace({ conversation, showBack = false, embedded = false
   const insets = useSafeAreaInsets()
   const { height: windowHeight, width: windowWidth } = useWindowDimensions()
   const motion = useMotionPreference()
+  const chatMotion = Platform.OS === 'android' && motion === 'full' ? 'reduced' : motion
   const updateConversation = useChatStore((state) => state.updateConversation)
   const switchConversationModel = useChatStore((state) => state.switchConversationModel)
   const removeMessage = useChatStore((state) => state.removeMessage)
@@ -191,13 +217,19 @@ export function ChatWorkspace({ conversation, showBack = false, embedded = false
   const messageSignature = runtimeConversation?.messages.map((message) => `${message.id}:${message.status}`).join('|')
   const activityLabel = streamingMessage ? getMessageActivityLabel(streamingMessage, t) : ''
   const compactViewport = windowHeight < 620 || windowWidth < 360
+  const keyboardLift = keyboardHeight
   const optionsPanelPlacement: ChatOptionsPlacement = windowWidth < 600 || windowHeight < 720 ? 'sheet' : 'popover'
-  const optionsPanelHeight = Math.max(compactViewport ? 360 : 430, Math.min(windowHeight * 0.7, compactViewport ? 460 : 620))
+  const optionsPanelKeyboardInset = optionsPanelPlacement === 'sheet' ? keyboardLift : 0
+  const optionsPanelAvailableHeight = Math.max(
+    260,
+    windowHeight - insets.top - Math.max(insets.bottom, 10) - optionsPanelKeyboardInset - 88,
+  )
+  const optionsPanelPreferredHeight = Math.min(windowHeight * 0.7, compactViewport ? 460 : 620)
+  const optionsPanelHeight = Math.max(260, Math.min(optionsPanelPreferredHeight, optionsPanelAvailableHeight))
   const effectiveInitialDraft = quickStartDraft?.content ?? initialDraft
   const effectiveInitialDraftKey = quickStartDraft?.key ?? initialDraftKey
-  const composerMinimumHeight = quickToolsCollapsed ? COMPOSER_COLLAPSED_MIN_HEIGHT : COMPOSER_EXPANDED_MIN_HEIGHT
-  const composerBottomInset = Math.max(composerMinimumHeight, composerHeight + Math.max(insets.bottom, 10) + 10)
-  const keyboardLift = keyboardHeight
+  const composerMinimumHeight = quickToolsCollapsed && !composerPanel ? COMPOSER_COLLAPSED_MIN_HEIGHT : COMPOSER_EXPANDED_MIN_HEIGHT
+  const composerBottomInset = Math.max(composerMinimumHeight, composerHeight + Math.max(insets.bottom, 10) + 4)
   const keyboardVisible = keyboardHeight > 0 || composerFocused
   const backgroundState: IsleBackgroundState = providerHealth?.code
     ? 'error'
@@ -471,13 +503,12 @@ export function ChatWorkspace({ conversation, showBack = false, embedded = false
       const currentSettings = useSettingsStore.getState().settings
       const readyProvider = homeProvider ?? pickReadyProviderForNewConversation(useSettingsStore.getState().providers, currentSettings.defaultProvider, currentSettings)
       if (!readyProvider) {
+        if (content.trim()) applyQuickStartDraft(content)
         if (hasEnabledProvider && !hasAvailableModel) {
           dialog.toast({ title: t('chat.noAvailableModels'), message: t('chat.syncModelsBeforeChat'), tone: 'amber' })
-          goProviders()
           return
         }
         dialog.toast({ title: t('chat.noProviderConnected'), message: t('chat.configureProviderBeforeChat'), tone: 'amber' })
-        goProviders()
         return
       }
       const providerModels = getPolicyAllowedProviderModels(readyProvider, currentSettings)
@@ -546,7 +577,7 @@ export function ChatWorkspace({ conversation, showBack = false, embedded = false
             <MotiView
               from={{ opacity: 0 }}
               animate={{ opacity: 1 }}
-              transition={{ type: 'timing', duration: motion === 'full' ? motionTokens.duration.fast : 1 }}
+              transition={{ type: 'timing', duration: chatMotion === 'full' ? motionTokens.duration.fast : 1 }}
               style={{ position: 'absolute', top: 0, right: 0, bottom: 0, left: 0, zIndex: 55 }}
             >
               <IsleOverlayPressable
@@ -619,10 +650,10 @@ export function ChatWorkspace({ conversation, showBack = false, embedded = false
           </ScrollView>
           {showOptions ? (
             <MotiView
-              from={motion === 'full' ? { opacity: 0, translateY: -8, scale: 0.985 } : { opacity: 0 }}
+              from={chatMotion === 'full' ? { opacity: 0, translateY: -8, scale: 0.985 } : { opacity: 0 }}
               animate={{ opacity: 1, translateY: 0, scale: 1 }}
-              transition={motion === 'full' ? { type: 'spring', ...motionTokens.spring.settle } : { type: 'timing', duration: motionTokens.duration.fast }}
-              style={optionsPanelOverlayStyle(optionsPanelPlacement, insets.top, insets.bottom)}
+              transition={chatMotion === 'full' ? { type: 'spring', ...motionTokens.spring.settle } : { type: 'timing', duration: motionTokens.duration.fast }}
+              style={optionsPanelOverlayStyle(optionsPanelPlacement, insets.top, insets.bottom, optionsPanelKeyboardInset)}
             >
               <IsleOverlayPressable onPress={(event) => event.stopPropagation()}>
                 <ChatOptionsPanel
@@ -715,7 +746,7 @@ export function ChatWorkspace({ conversation, showBack = false, embedded = false
             onOpenReasoningPicker={openSetupReasoningPicker}
             reasoningUnavailableMessage={supportsSetupReasoningQuick ? undefined : (hasAvailableModel ? t('chat.reasoningUnsupported') : t('chat.syncModelsBeforeChat'))}
             onLayoutHeight={setComposerHeight}
-            motion={motion}
+            motion={chatMotion}
             settings={settings}
           />
         </View>
@@ -748,12 +779,14 @@ export function ChatWorkspace({ conversation, showBack = false, embedded = false
       readyProviders={quickModelProviders}
       optionsPanelHeight={optionsPanelHeight}
       optionsPanelPlacement={optionsPanelPlacement}
+      optionsPanelKeyboardInset={optionsPanelKeyboardInset}
       composerBottomInset={composerBottomInset}
       insets={insets}
       colors={colors}
       embedded={embedded}
       backgroundState={backgroundState}
       compactViewport={compactViewport}
+      viewportHeight={windowHeight}
       showBack={showBack}
       goHistory={goHistory}
       goSettings={goSettings}
@@ -779,7 +812,7 @@ export function ChatWorkspace({ conversation, showBack = false, embedded = false
       quickToolsCollapsed={quickToolsCollapsed}
       toggleQuickTools={toggleQuickTools}
       collapseQuickTools={collapseQuickTools}
-      motion={motion}
+      motion={chatMotion}
       markChromeActive={markChromeActive}
       restoreChrome={restoreChrome}
       scheduleChromeIdleCollapse={scheduleChromeIdleCollapse}
@@ -818,12 +851,14 @@ function ActiveChatWorkspace({
   readyProviders,
   optionsPanelHeight,
   optionsPanelPlacement,
+  optionsPanelKeyboardInset,
   composerBottomInset,
   insets,
   colors,
   embedded,
   backgroundState,
   compactViewport,
+  viewportHeight,
   showBack,
   goHistory,
   goSettings,
@@ -884,12 +919,14 @@ function ActiveChatWorkspace({
   readyProviders: AIProvider[]
   optionsPanelHeight: number
   optionsPanelPlacement: ChatOptionsPlacement
+  optionsPanelKeyboardInset: number
   composerBottomInset: number
   insets: ReturnType<typeof useSafeAreaInsets>
   colors: ReturnType<typeof useAppTheme>['colors']
   embedded: boolean
   backgroundState: IsleBackgroundState
   compactViewport: boolean
+  viewportHeight: number
   showBack: boolean
   goHistory: () => void
   goSettings: () => void
@@ -932,6 +969,19 @@ function ActiveChatWorkspace({
   const [showJumpToBottom, setShowJumpToBottom] = useState(false)
   const [chromeHeight, setChromeHeight] = useState(0)
   const [activeActionMessageId, setActiveActionMessageId] = useState<string | null>(null)
+  const [messageAnchorViewport, setMessageAnchorViewport] = useState<MessageAnchorViewport>({
+    contentHeight: 0,
+    viewportHeight: 0,
+    scrollY: 0,
+    awayFromBottom: false,
+    scrolledEnough: false,
+  })
+  const messageAnchors = useMemo<MessageAnchorItem[]>(
+    () => activeConversation.messages
+      .map((message, messageIndex) => ({ id: message.id, message, messageIndex }))
+      .filter((anchor) => isMessageAnchorSource(anchor.message)),
+    [activeConversation.messages]
+  )
   const layoutScrollTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
   const lastLayoutScrollAt = useRef(0)
   const collapsedChromeTop = Math.max(insets.top, 0) + COLLAPSED_CHROME_TOP_OFFSET
@@ -1068,10 +1118,20 @@ function ActiveChatWorkspace({
     if (activeActionMessageId) setActiveActionMessageId(null)
     const y = event.nativeEvent.contentOffset.y
     const delta = y - lastScrollOffset.current
+    const viewportHeight = event.nativeEvent.layoutMeasurement.height
+    const contentHeight = event.nativeEvent.contentSize.height
     const distanceFromBottom = Math.max(
       0,
-      event.nativeEvent.contentSize.height - event.nativeEvent.layoutMeasurement.height - y
+      contentHeight - viewportHeight - y
     )
+    const awayFromBottom = distanceFromBottom > USER_SCROLL_PAUSE_THRESHOLD
+    const scrolledEnough = y > MESSAGE_ANCHOR_SCROLL_THRESHOLD || distanceFromBottom > MESSAGE_ANCHOR_SCROLL_THRESHOLD
+    setMessageAnchorViewport((current) => {
+      const stableScroll = Math.abs(current.scrollY - y) < 32
+      const stableSize = Math.abs(current.contentHeight - contentHeight) < 8 && Math.abs(current.viewportHeight - viewportHeight) < 8
+      if (stableScroll && stableSize && current.awayFromBottom === awayFromBottom && current.scrolledEnough === scrolledEnough) return current
+      return { contentHeight, viewportHeight, scrollY: y, awayFromBottom, scrolledEnough }
+    })
     if (distanceFromBottom <= USER_SCROLL_PAUSE_THRESHOLD) {
       autoStickToBottom.current = true
       setShowJumpToBottom(false)
@@ -1118,6 +1178,31 @@ function ActiveChatWorkspace({
     }, wait)
   }, [autoStickToBottom, listRef])
 
+  function scrollToMessageAnchor(anchorIndex: number) {
+    const boundedAnchorIndex = Math.max(0, Math.min(messageAnchors.length - 1, anchorIndex))
+    const anchor = messageAnchors[boundedAnchorIndex]
+    if (!anchor) return
+    const targetIndex = Math.max(0, Math.min(activeConversation.messages.length - 1, anchor.messageIndex))
+    setActiveActionMessageId(null)
+    autoStickToBottom.current = boundedAnchorIndex >= messageAnchors.length - 1
+    if (autoStickToBottom.current) {
+      scrollToLatestMessage()
+      return
+    }
+    listRef.current?.scrollToIndex({ index: targetIndex, animated: true, viewPosition: 0.18 })
+  }
+
+  const messageAnchorRailVisible =
+    messageAnchors.length > 2 &&
+    messageAnchorViewport.contentHeight > messageAnchorViewport.viewportHeight + MESSAGE_ANCHOR_OVERFLOW_MARGIN &&
+    messageAnchorViewport.awayFromBottom &&
+    messageAnchorViewport.scrolledEnough &&
+    !isStreaming &&
+    !keyboardVisible &&
+    !showOptions &&
+    !composerPanel &&
+    !intentDraft
+
   return (
     <ChatScreenFrame embedded={embedded} backgroundState={backgroundState} compactViewport={compactViewport}>
         <View style={{ flex: 1 }}>
@@ -1163,6 +1248,7 @@ function ActiveChatWorkspace({
             switchableProviders={switchableProviders}
             optionsPanelHeight={optionsPanelHeight}
             optionsPanelPlacement={optionsPanelPlacement}
+            optionsPanelKeyboardInset={optionsPanelKeyboardInset}
             onLayoutHeight={setChromeHeight}
             motion={motion}
             settings={settings}
@@ -1177,7 +1263,10 @@ function ActiveChatWorkspace({
               keyExtractor={(item) => item.id}
               keyboardShouldPersistTaps="handled"
               onScroll={handleListScroll}
-              scrollEventThrottle={16}
+              scrollEventThrottle={Platform.OS === 'android' ? 32 : 16}
+              drawDistance={Platform.OS === 'android' ? 420 : undefined}
+              maxItemsInRecyclePool={Platform.OS === 'android' ? 18 : undefined}
+              getItemType={getMessageItemType}
               contentContainerStyle={{ paddingHorizontal: 20, paddingTop: 8, paddingBottom: 44 + composerBottomInset + keyboardLift }}
               ListHeaderComponent={activeConversation.messages.length ? renderConversationHeaderSpacer(chromeReservedTopPadding) : null}
               renderItem={({ item: message, index }) => (
@@ -1186,6 +1275,8 @@ function ActiveChatWorkspace({
                   conversationId={activeConversation.id}
                   message={message}
                   index={index}
+                  motion={motion}
+                  viewportHeight={viewportHeight}
                   isLastAssistant={message.id === regenerableAssistantId}
                   activeActionMessageId={activeActionMessageId}
                   onActionMessageChange={setActiveActionMessageId}
@@ -1235,6 +1326,17 @@ function ActiveChatWorkspace({
               ListEmptyComponent={<EmptyConversationState onHistory={goHistory} onProviders={goProviders} topPadding={emptyConversationTopPadding} />}
             />
           </View>
+
+          {messageAnchorRailVisible ? (
+            <MessageAnchorRail
+              anchors={messageAnchors}
+              viewport={messageAnchorViewport}
+              topOffset={Math.max(chromeReservedTopPadding + 12, insets.top + 88)}
+              bottomOffset={composerBottomInset + keyboardLift + 64}
+              motion={motion}
+              onJump={scrollToMessageAnchor}
+            />
+          ) : null}
 
           {showJumpToBottom ? (
             <View pointerEvents="box-none" style={{ position: 'absolute', right: 18, bottom: composerBottomInset + keyboardLift + 12, zIndex: 46 }}>
@@ -1335,11 +1437,115 @@ function ChatScreenFrame({ embedded, backgroundState, compactViewport, children 
   if (embedded) {
     return <View style={{ flex: 1 }}>{children}</View>
   }
+  const backgroundMode = Platform.OS === 'android' ? 'none' : 'focus'
 
   return (
-    <IsleScreen padded={false} background="focus" backgroundState={backgroundState} backgroundIntensity={compactViewport ? 0.84 : 1}>
+    <IsleScreen padded={false} background={backgroundMode} backgroundState={backgroundState} backgroundIntensity={compactViewport ? 0.84 : 1}>
       {children}
     </IsleScreen>
+  )
+}
+
+function MessageAnchorRail({
+  anchors,
+  viewport,
+  topOffset,
+  bottomOffset,
+  motion,
+  onJump,
+}: {
+  anchors: MessageAnchorItem[]
+  viewport: MessageAnchorViewport
+  topOffset: number
+  bottomOffset: number
+  motion: ReturnType<typeof useMotionPreference>
+  onJump: (index: number) => void
+}) {
+  const { colors } = useAppTheme()
+  const { t } = useTranslation()
+  const [railHeight, setRailHeight] = useState(0)
+  const height = Math.min(MESSAGE_ANCHOR_MAX_HEIGHT, Math.max(MESSAGE_ANCHOR_MIN_HEIGHT, viewport.viewportHeight * 0.34))
+  const innerHeight = Math.max(1, (railHeight || height) - 20)
+  const maxScroll = Math.max(1, viewport.contentHeight - viewport.viewportHeight)
+  const anchorCount = anchors.length
+  const currentIndex = Math.max(0, Math.min(anchorCount - 1, Math.round((viewport.scrollY / maxScroll) * Math.max(0, anchorCount - 1))))
+
+  function handlePress(event: GestureResponderEvent) {
+    const y = Math.max(0, Math.min(innerHeight, event.nativeEvent.locationY - 10))
+    const index = anchorCount <= 1 ? 0 : Math.round((y / innerHeight) * (anchorCount - 1))
+    onJump(index)
+  }
+
+  function dotColor(message: Message) {
+    if (message.status === 'error') return colors.error
+    if (message.status === 'streaming' || message.status === 'sending') return colors.primary
+    return message.role === 'user' ? colors.textSecondary : colors.textTertiary
+  }
+
+  return (
+    <View
+      pointerEvents="box-none"
+      style={{
+        position: 'absolute',
+        top: topOffset,
+        right: 4,
+        bottom: bottomOffset,
+        zIndex: 45,
+        justifyContent: 'center',
+        alignItems: 'flex-end',
+      }}
+    >
+      <MotiView
+        from={motion === 'full' ? { opacity: 0, translateX: 8, scale: 0.98 } : { opacity: 0 }}
+        animate={{ opacity: 1, translateX: 0, scale: 1 }}
+        transition={motion === 'full' ? { type: 'spring', damping: 22, stiffness: 210 } : { type: 'timing', duration: 1 }}
+        style={{
+          width: 42,
+          height,
+          borderRadius: 21,
+          backgroundColor: colors.material.chrome,
+          borderWidth: 1,
+          borderColor: colors.border,
+          shadowColor: colors.shadowTint,
+          shadowOpacity: 0.12,
+          shadowRadius: 0,
+          shadowOffset: { width: 0, height: 2 },
+        }}
+      >
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel={t('chat.messageAnchorRail', { defaultValue: 'Message anchors' })}
+          accessibilityHint={t('chat.messageAnchorRailHint', { defaultValue: 'Jump to a message by tapping its position on the rail.' })}
+          onLayout={(event) => setRailHeight(event.nativeEvent.layout.height)}
+          onPress={handlePress}
+          style={{ width: 42, height, alignItems: 'center', justifyContent: 'center', paddingVertical: 10 }}
+        >
+          <View style={{ position: 'relative', width: 18, height: innerHeight }}>
+            {anchors.map((anchor, index) => {
+              const progress = anchorCount <= 1 ? 0.5 : index / (anchorCount - 1)
+              const highlighted = Math.abs(index - currentIndex) <= 0
+              const size = highlighted ? 7 : 5
+              const top = Math.max(0, Math.min(innerHeight - size, progress * innerHeight - size / 2))
+              return (
+                <View
+                  key={anchor.id}
+                  style={{
+                    position: 'absolute',
+                    top,
+                    left: (18 - size) / 2,
+                    width: size,
+                    height: size,
+                    borderRadius: size / 2,
+                    backgroundColor: dotColor(anchor.message),
+                    opacity: highlighted ? 0.95 : 0.48,
+                  }}
+                />
+              )
+            })}
+          </View>
+        </Pressable>
+      </MotiView>
+    </View>
   )
 }
 
@@ -1365,6 +1571,7 @@ function FloatingChrome({
   switchableProviders,
   optionsPanelHeight,
   optionsPanelPlacement,
+  optionsPanelKeyboardInset,
   onLayoutHeight,
   motion,
   settings,
@@ -1391,6 +1598,7 @@ function FloatingChrome({
   switchableProviders: AIProvider[]
   optionsPanelHeight: number
   optionsPanelPlacement: ChatOptionsPlacement
+  optionsPanelKeyboardInset: number
   onLayoutHeight: (height: number) => void
   motion: ReturnType<typeof useMotionPreference>
   settings: ReturnType<typeof useSettingsStore.getState>['settings']
@@ -1510,7 +1718,7 @@ function FloatingChrome({
               from={motion === 'full' ? { opacity: 0, translateY: -8, scale: 0.985 } : { opacity: 0 }}
               animate={{ opacity: 1, translateY: 0, scale: 1 }}
               transition={motion === 'full' ? { type: 'spring', ...motionTokens.spring.settle } : { type: 'timing', duration: motionTokens.duration.fast }}
-              style={optionsPanelOverlayStyle(optionsPanelPlacement, insets.top, insets.bottom)}
+              style={optionsPanelOverlayStyle(optionsPanelPlacement, insets.top, insets.bottom, optionsPanelKeyboardInset)}
             >
               <IsleOverlayPressable onPress={(event) => event.stopPropagation()}>
                 <ChatOptionsPanel
@@ -1535,7 +1743,7 @@ function FloatingChrome({
           from={motion === 'full' ? { opacity: 0, translateY: 18, scale: 0.985 } : { opacity: 0 }}
           animate={{ opacity: 1, translateY: 0, scale: 1 }}
           transition={motion === 'full' ? { type: 'spring', ...motionTokens.spring.settle } : { type: 'timing', duration: motionTokens.duration.fast }}
-          style={optionsPanelOverlayStyle(optionsPanelPlacement, insets.top, insets.bottom)}
+          style={optionsPanelOverlayStyle(optionsPanelPlacement, insets.top, insets.bottom, optionsPanelKeyboardInset)}
         >
           <IsleOverlayPressable onPress={(event) => event.stopPropagation()}>
             <ChatOptionsPanel
@@ -1668,7 +1876,7 @@ function FloatingComposer({
   const modelOpen = panel === 'model'
   const reasoningOpen = panel === 'reasoning'
   const promptOpen = panel === 'prompt'
-  const moreOpen = panel === 'more'
+  const toolsOpen = panel === 'more'
   const reasoningOptions = useMemo(() => getReasoningEffortOptions(provider, conversation.model), [conversation.model, provider])
   const quickModelSourceProviders = useMemo(() => {
     const source = modelProviders.length ? modelProviders : provider ? [provider] : []
@@ -1695,6 +1903,12 @@ function FloatingComposer({
       : [],
     [quickModels]
   )
+  const reasoningAvailable = showReasoning && reasoningOptions.length > 0
+  const modelStatusLabel = provider ? getProviderDisplayModel(provider, conversation.model) : t('chat.quickModelUnset')
+  const reasoningStatusLabel = reasoningAvailable ? t(`chat.reasoningEffort.${reasoningEffort}`) : t('chat.quickReasoningUnsupported')
+  const promptStatusLabel = systemPrompt.trim() ? t('chat.quickPromptActive') : t('chat.quickPromptEmpty')
+  const toolsStatusLabel = toolsOpen ? t('chat.quickToolsOpen') : t('chat.quickToolsReady')
+  const quickMenuOpen = !toolsCollapsed
 
   useEffect(() => {
     const currentFamily = inferModelFamily(provider, conversation.model)
@@ -1704,6 +1918,10 @@ function FloatingComposer({
   function handleInputFocus() {
     onCollapseTools()
     onInputFocus?.()
+  }
+
+  function handlePromptInputFocus() {
+    onInteract?.()
   }
 
   function handleLayout(event: LayoutChangeEvent) {
@@ -1721,60 +1939,13 @@ function FloatingComposer({
         onTouchEnd={onInteractEnd}
         onTouchCancel={onInteractEnd}
       >
-        <View pointerEvents="box-none" style={{ paddingHorizontal: 14, paddingTop: 6, paddingBottom: Math.max(insets.bottom, 10) + 8 }}>
-          <MotiView
-            from={motion === 'full' ? { opacity: 0, translateY: 8 } : { opacity: 0 }}
-            animate={{ opacity: 1, translateY: 0 }}
-            transition={motion === 'full' ? { type: 'spring', ...motionTokens.spring.gentle } : { type: 'timing', duration: motionTokens.duration.fast }}
-            style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 7, flexWrap: 'wrap' }}
-          >
-            <ComposerToolButton label={toolsCollapsed ? t('chat.expandQuickTools') : t('chat.collapseQuickTools')} active={!toolsCollapsed} iconOnly onPress={onToggleTools}>
-              <ChevronRight color={toolsCollapsed ? colors.textSecondary : colors.primary} size={16} strokeWidth={2.3} />
-            </ComposerToolButton>
-            <AnimatePresence>
-              {!toolsCollapsed ? (
-                <MotiView
-                  key="quick-tools"
-                  from={motion === 'full' ? { opacity: 0, translateX: -8, translateY: 5, scale: 0.96 } : { opacity: 0 }}
-                  animate={{ opacity: 1, translateX: 0, translateY: 0, scale: 1 }}
-                  exit={motion === 'full' ? { opacity: 0, translateX: -6, translateY: 4, scale: 0.96 } : { opacity: 0 }}
-                  transition={motion === 'full' ? { type: 'spring', damping: 21, stiffness: 230 } : { type: 'timing', duration: 1 }}
-                  style={{ flexDirection: 'row', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}
-                >
-                <ComposerToolButton label={t('chat.quickModel')} active={modelOpen} onPress={onOpenModelPicker}>
-                  <Bot color={modelOpen ? colors.primary : colors.textSecondary} size={15} strokeWidth={2} />
-                </ComposerToolButton>
-                <ComposerToolButton label={t('chat.quickReasoning')} active={reasoningOpen} onPress={onOpenReasoningPicker ?? (() => {
-                  onPanelChange(reasoningOpen ? null : 'reasoning')
-                })}>
-                  <SlidersHorizontal color={reasoningOpen ? colors.primary : colors.textSecondary} size={15} strokeWidth={2} />
-                </ComposerToolButton>
-                <ComposerToolButton label={t('chat.quickPrompt')} active={promptOpen} onPress={() => {
-                  onPanelChange(promptOpen ? null : 'prompt')
-                }}>
-                  <FileText color={promptOpen ? colors.primary : colors.textSecondary} size={15} strokeWidth={2} />
-                </ComposerToolButton>
-                <ComposerToolButton label={t('chat.quickMore')} active={moreOpen} onPress={() => {
-                  onPanelChange(moreOpen ? null : 'more')
-                }}>
-                  <ChevronRight color={moreOpen ? colors.primary : colors.textSecondary} size={16} strokeWidth={2.2} />
-                </ComposerToolButton>
-                </MotiView>
-              ) : null}
-            </AnimatePresence>
-            {streaming ? (
-              <ComposerToolButton label={t('chat.stopGenerating')} active onPress={onStop}>
-                <Square color={colors.primary} size={13} strokeWidth={2.3} fill={colors.primary} />
-              </ComposerToolButton>
-            ) : null}
-            {streaming ? <GenerationStatusPill label={activityLabel || t('chat.generating')} /> : null}
-          </MotiView>
-          {!toolsCollapsed && modelOpen ? (
+        <View pointerEvents="box-none" style={{ paddingHorizontal: 14, paddingTop: 2, paddingBottom: Math.max(insets.bottom, 10) + 6 }}>
+          {modelOpen ? (
             <MotiView
               from={{ opacity: 0, translateY: 4 }}
               animate={{ opacity: 1, translateY: 0 }}
               transition={{ type: 'spring', damping: 20, stiffness: 210 }}
-              style={{ marginBottom: 7, borderRadius: colors.ui.radius.panel, padding: 10, backgroundColor: colors.material.chrome, borderWidth: 1, borderColor: colors.border }}
+              style={{ marginBottom: 5, borderRadius: colors.ui.radius.panel, padding: 10, backgroundColor: colors.material.chrome, borderWidth: 1, borderColor: colors.border }}
             >
               <View style={{ flexDirection: 'row', alignItems: 'flex-start', gap: 8, marginBottom: 8 }}>
                 {visibleQuickGroups.length ? (
@@ -1839,14 +2010,14 @@ function FloatingComposer({
               )}
             </MotiView>
           ) : null}
-          {!toolsCollapsed && reasoningOpen ? (
+          {reasoningOpen ? (
             <MotiView
               from={{ opacity: 0, translateY: 4 }}
               animate={{ opacity: 1, translateY: 0 }}
               transition={{ type: 'spring', damping: 20, stiffness: 210 }}
-              style={{ flexDirection: 'row', gap: 7, marginBottom: 7, padding: 7, borderRadius: colors.ui.radius.field, backgroundColor: colors.material.chrome, borderWidth: 1, borderColor: colors.border }}
+              style={{ flexDirection: 'row', gap: 7, marginBottom: 5, padding: 7, borderRadius: colors.ui.radius.field, backgroundColor: colors.material.chrome, borderWidth: 1, borderColor: colors.border }}
             >
-              {showReasoning && reasoningOptions.length ? reasoningOptions.map((effort) => (
+              {reasoningAvailable ? reasoningOptions.map((effort) => (
                 <IslePressable
                   key={effort}
                   haptic
@@ -1867,18 +2038,18 @@ function FloatingComposer({
               )}
             </MotiView>
           ) : null}
-          {!toolsCollapsed && promptOpen ? (
+          {promptOpen ? (
             <MotiView
               from={{ opacity: 0, translateY: 4 }}
               animate={{ opacity: 1, translateY: 0 }}
               transition={{ type: 'spring', damping: 20, stiffness: 210 }}
-              style={{ marginBottom: 7, borderRadius: colors.ui.radius.panel, padding: 10, backgroundColor: colors.material.chrome, borderWidth: 1, borderColor: colors.border }}
+              style={{ marginBottom: 5, borderRadius: colors.ui.radius.panel, padding: 10, backgroundColor: colors.material.chrome, borderWidth: 1, borderColor: colors.border }}
             >
               <Text style={{ color: colors.textSecondary, fontSize: 11, fontWeight: '900', marginBottom: 6 }}>{t('chat.systemPrompt')}</Text>
               <TextInput
                 value={systemPrompt}
                 onChangeText={onSystemPromptChange}
-                onFocus={handleInputFocus}
+                onFocus={handlePromptInputFocus}
                 onBlur={onInputBlur}
                 multiline
                 placeholder={t('chat.systemPromptExample')}
@@ -1895,6 +2066,56 @@ function FloatingComposer({
               </View>
             </MotiView>
           ) : null}
+          <View style={{ minHeight: 44, flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 5 }}>
+            <ComposerToolButton label={toolsCollapsed ? t('chat.expandQuickTools') : t('chat.collapseQuickTools')} active={!toolsCollapsed} iconOnly onPress={onToggleTools}>
+              <MotiView
+                animate={{ rotate: toolsCollapsed ? '0deg' : '-90deg', scale: toolsCollapsed ? 1 : 1.08 }}
+                transition={motion === 'full' ? { type: 'spring', damping: 17, stiffness: 280 } : { type: 'timing', duration: 1 }}
+              >
+                <ChevronRight color={toolsCollapsed ? colors.textSecondary : colors.primary} size={17} strokeWidth={2.3} />
+              </MotiView>
+            </ComposerToolButton>
+            {quickMenuOpen ? (
+              <View style={{ flex: 1, minHeight: 44 }}>
+                <ScrollView
+                  horizontal
+                  showsHorizontalScrollIndicator={false}
+                  keyboardShouldPersistTaps="handled"
+                  nestedScrollEnabled
+                  onTouchStart={onInteract}
+                  onTouchMove={onInteract}
+                  onTouchEnd={onInteractEnd}
+                  onTouchCancel={onInteractEnd}
+                  contentContainerStyle={{ alignItems: 'center', gap: 8, paddingLeft: 2, paddingRight: 4, paddingVertical: 1 }}
+                >
+                  <ComposerToolButton label={t('chat.quickModel')} stateLabel={modelStatusLabel} active={modelOpen} maxWidth={136} onPress={onOpenModelPicker}>
+                    <Bot color={modelOpen ? colors.primary : colors.textSecondary} size={17} strokeWidth={2} />
+                  </ComposerToolButton>
+                  <ComposerToolButton label={t('chat.quickReasoning')} stateLabel={reasoningStatusLabel} active={reasoningOpen} maxWidth={124} onPress={onOpenReasoningPicker ?? (() => {
+                    onPanelChange(reasoningOpen ? null : 'reasoning')
+                  })}>
+                    <ReasoningToolIcon effort={reasoningEffort} active={reasoningOpen} available={reasoningAvailable} />
+                  </ComposerToolButton>
+                  <ComposerToolButton label={t('chat.quickPrompt')} stateLabel={promptStatusLabel} active={promptOpen || !!systemPrompt.trim()} maxWidth={116} onPress={() => {
+                    onPanelChange(promptOpen ? null : 'prompt')
+                  }}>
+                    <FileText color={(promptOpen || systemPrompt.trim()) ? colors.primary : colors.textSecondary} size={17} strokeWidth={2} />
+                  </ComposerToolButton>
+                  <ComposerToolButton label={t('chat.quickTools')} stateLabel={toolsStatusLabel} active={toolsOpen} maxWidth={124} onPress={() => {
+                    onPanelChange(toolsOpen ? null : 'more')
+                  }}>
+                    <Wrench color={toolsOpen ? colors.primary : colors.textSecondary} size={17} strokeWidth={2.1} />
+                  </ComposerToolButton>
+                </ScrollView>
+              </View>
+            ) : null}
+            {streaming ? (
+              <ComposerToolButton label={t('chat.stopGenerating')} active onPress={onStop}>
+                <Square color={colors.primary} size={13} strokeWidth={2.3} fill={colors.primary} />
+              </ComposerToolButton>
+            ) : null}
+            {streaming ? <GenerationStatusPill label={activityLabel || t('chat.generating')} /> : null}
+          </View>
           <Composer
             disabled={disabled}
             streaming={streaming}
@@ -1903,7 +2124,7 @@ function FloatingComposer({
             initialDraftKey={initialDraftKey}
             commands={commands}
             references={references}
-            utilitiesOpen={moreOpen}
+            utilitiesOpen={toolsOpen}
             showInlineUtilities={false}
             onClearPending={onClearPending}
             onReferenceSelected={onReferenceSelected}
@@ -1919,16 +2140,33 @@ function FloatingComposer({
   )
 }
 
-function ComposerToolButton({ label, active, iconOnly = false, children, onPress }: { label: string; active: boolean; iconOnly?: boolean; children: ReactNode; onPress: () => void }) {
+function ComposerToolButton({
+  label,
+  stateLabel,
+  active,
+  iconOnly = false,
+  maxWidth,
+  children,
+  onPress,
+}: {
+  label: string
+  stateLabel?: string
+  active: boolean
+  iconOnly?: boolean
+  maxWidth?: number
+  children: ReactNode
+  onPress: () => void
+}) {
   const { colors } = useAppTheme()
   const motion = useMotionPreference()
   const controlRadius = colors.ui.radius.controlLarge
+  const accessibilityLabel = stateLabel ? `${label}: ${stateLabel}` : label
   return (
     <IslePressable
       haptic
       onPress={onPress}
-      accessibilityLabel={label}
-      style={{ width: iconOnly ? 44 : undefined, minHeight: 44, borderRadius: controlRadius }}
+      accessibilityLabel={accessibilityLabel}
+      style={{ width: iconOnly ? 44 : undefined, maxWidth, minHeight: 44, borderRadius: controlRadius }}
     >
       <MotiView
         animate={{
@@ -1939,28 +2177,70 @@ function ComposerToolButton({ label, active, iconOnly = false, children, onPress
         transition={motion === 'full' ? { type: 'spring', ...motionTokens.spring.gentle } : { type: 'timing', duration: 1 }}
         style={{
           width: iconOnly ? 44 : undefined,
+          maxWidth,
           minHeight: 44,
           borderRadius: controlRadius,
-          paddingHorizontal: iconOnly ? 0 : 12,
+          paddingHorizontal: iconOnly ? 0 : stateLabel ? 10 : 12,
           flexDirection: 'row',
           alignItems: 'center',
           justifyContent: 'center',
-          gap: iconOnly ? 0 : 6,
+          gap: iconOnly ? 0 : 7,
           borderWidth: 1,
         }}
       >
-        {iconOnly ? (
-          <MotiView
-            animate={{ rotate: active ? '90deg' : '0deg', translateX: active ? 1 : 0, scale: active ? 1.12 : 1 }}
-            transition={motion === 'full' ? { type: 'spring', damping: 17, stiffness: 280 } : { type: 'timing', duration: 1 }}
-          >
-            {children}
-          </MotiView>
-        ) : children}
-        {iconOnly ? null : <Text numberOfLines={1} style={{ color: active ? colors.primary : colors.textSecondary, fontSize: 11, lineHeight: 15, fontWeight: '900', includeFontPadding: false, textAlignVertical: 'center' }}>{label}</Text>}
+        {children}
+        {iconOnly ? null : (
+          <View style={{ minWidth: stateLabel ? 48 : undefined, maxWidth: stateLabel ? 82 : 104 }}>
+            <Text numberOfLines={1} style={{ color: active ? colors.primary : colors.textSecondary, fontSize: 11, lineHeight: 14, fontWeight: '900', includeFontPadding: false, textAlignVertical: 'center' }}>{label}</Text>
+            {stateLabel ? (
+              <Text numberOfLines={1} ellipsizeMode="tail" style={{ color: active ? colors.primary : colors.textTertiary, fontSize: 10, lineHeight: 13, fontWeight: '800', includeFontPadding: false, textAlignVertical: 'center' }}>
+                {stateLabel}
+              </Text>
+            ) : null}
+          </View>
+        )}
       </MotiView>
     </IslePressable>
   )
+}
+
+function ReasoningToolIcon({ effort, active, available }: { effort: NonNullable<Conversation['reasoningEffort']>; active: boolean; available: boolean }) {
+  const { colors } = useAppTheme()
+  const level = getReasoningVisualLevel(effort)
+  const Icon = level >= 4 ? BrainCog : level >= 2 ? BrainCircuit : Brain
+  const color = !available ? colors.textTertiary : active || level >= 4 ? colors.primary : colors.textSecondary
+  const showDot = available && level >= 2
+  const showSpark = available && level >= 4
+
+  return (
+    <View style={{ width: 22, height: 22, alignItems: 'center', justifyContent: 'center' }}>
+      <Icon color={color} size={17} strokeWidth={level >= 4 ? 2.25 : 2} />
+      {showDot ? (
+        <View style={{ position: 'absolute', right: level >= 4 ? 0 : 2, bottom: 1, width: level >= 3 ? 6 : 4, height: level >= 3 ? 6 : 4, borderRadius: 3, backgroundColor: color, opacity: level >= 3 ? 0.88 : 0.62 }} />
+      ) : null}
+      {showSpark ? (
+        <Sparkles color={color} size={10} strokeWidth={2.2} style={{ position: 'absolute', right: -3, top: -3 }} />
+      ) : null}
+    </View>
+  )
+}
+
+function getReasoningVisualLevel(effort: NonNullable<Conversation['reasoningEffort']>) {
+  switch (effort) {
+    case 'xhigh':
+      return 5
+    case 'high':
+      return 4
+    case 'medium':
+      return 3
+    case 'low':
+      return 2
+    case 'minimal':
+      return 1
+    case 'none':
+    default:
+      return 0
+  }
 }
 
 function QuickChoiceButton({ label, active, maxWidth, onPress }: { label: string; active: boolean; maxWidth?: number; onPress: () => void }) {
@@ -2107,6 +2387,11 @@ function renderConversationHeaderSpacer(
   return <View style={{ paddingTop: topPadding, marginBottom: 4 }} />
 }
 
+function getMessageItemType(message: Message) {
+  if (message.status === 'streaming' || message.status === 'sending') return `${message.role}:active`
+  return `${message.role}:static`
+}
+
 function SetupEmptyState({ description, actionLabel, glyph, onAction }: { description: string; actionLabel: string; glyph: NavigationGlyph; onAction: () => void }) {
   const { colors } = useAppTheme()
   const navigation = useNavigationTrigger(onAction)
@@ -2244,13 +2529,13 @@ function hasOnlyHistoricalDefaultModels(provider: AIProvider): boolean {
   return models.every((model) => defaults.has(model))
 }
 
-function optionsPanelOverlayStyle(placement: ChatOptionsPlacement, topInset: number, bottomInset: number): ViewStyle {
+function optionsPanelOverlayStyle(placement: ChatOptionsPlacement, topInset: number, bottomInset: number, keyboardInset = 0): ViewStyle {
   if (placement === 'sheet') {
     return {
       position: 'absolute',
       left: 12,
       right: 12,
-      bottom: Math.max(12, bottomInset + 8),
+      bottom: Math.max(12, bottomInset + 8) + keyboardInset,
       zIndex: 72,
     }
   }

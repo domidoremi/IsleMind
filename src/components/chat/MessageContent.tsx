@@ -58,11 +58,11 @@ function RichMarkdown({ content, isUser }: { content: string; isUser: boolean })
     <View style={{ maxWidth: '100%', overflow: 'hidden' }}>
       <Markdown
         style={{
-          body: { color: isUser ? colors.surface : colors.text, fontSize: 15, lineHeight: 23 },
+          body: { color: isUser ? colors.surface : colors.text, fontSize: 15, lineHeight: 23, includeFontPadding: !isUser },
           heading1: { color: isUser ? colors.surface : colors.text, fontSize: 20, lineHeight: 26, marginTop: 4, marginBottom: 8, fontWeight: '900' },
           heading2: { color: isUser ? colors.surface : colors.text, fontSize: 18, lineHeight: 24, marginTop: 4, marginBottom: 8, fontWeight: '900' },
           heading3: { color: isUser ? colors.surface : colors.text, fontSize: 16, lineHeight: 22, marginTop: 4, marginBottom: 7, fontWeight: '900' },
-          paragraph: { marginTop: 0, marginBottom: 8 },
+          paragraph: { marginTop: 0, marginBottom: isUser ? 0 : 8 },
           link: { color: isUser ? colors.surface : colors.primary, fontWeight: '900' },
           bullet_list: { marginTop: 2, marginBottom: 8 },
           ordered_list: { marginTop: 2, marginBottom: 8 },

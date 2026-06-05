@@ -76,8 +76,7 @@ export function resolveBackgroundCanvas(colors: AppPalette, mode: IsleBackground
 function shouldAnimateBackground(colors: AppPalette, motion: MotionIntensity, state: IsleBackgroundState) {
   if (motion !== 'full') return false
   if (colors.background.motion === 'none') return false
-  if (state === 'input' || state === 'modal') return false
-  return true
+  return state === 'active'
 }
 
 function backgroundProfile(colors: AppPalette, mode: ThemeBackgroundMode, state: IsleBackgroundState, intensity: number) {
@@ -135,18 +134,26 @@ function AmbientMistField({
   from: { translateX: number; translateY: number; scale: number }
   animate: { translateX: number; translateY: number; scale: number }
 }) {
+  const mist = (
+    <Svg width="100%" height="100%" viewBox="0 0 390 844" preserveAspectRatio="none">
+      <Path d="M-92 74C24 36 96 98 192 68C286 39 330 -18 476 14" stroke={primary} strokeWidth={172} strokeLinecap="round" fill="none" />
+      <Path d="M-112 642C12 568 118 632 220 572C308 520 356 456 500 484" stroke={secondary} strokeWidth={206} strokeLinecap="round" fill="none" />
+      <Path d="M-88 354C48 284 120 318 230 286C332 256 396 206 492 238" stroke={primary} strokeWidth={86} strokeLinecap="round" fill="none" opacity={0.58} />
+    </Svg>
+  )
+
+  if (!enabled) {
+    return <View style={[styles.fieldLayer, { opacity }]}>{mist}</View>
+  }
+
   return (
     <MotiView
       from={from}
-      animate={enabled ? animate : { translateX: 0, translateY: 0, scale: 1 }}
-      transition={enabled ? { loop: true, type: 'timing', duration: motionTokens.duration.ambient * 2.4, delay } : { type: 'timing', duration: 1 }}
+      animate={animate}
+      transition={{ loop: true, type: 'timing', duration: motionTokens.duration.ambient * 2.4, delay }}
       style={[styles.fieldLayer, { opacity }]}
     >
-      <Svg width="100%" height="100%" viewBox="0 0 390 844" preserveAspectRatio="none">
-        <Path d="M-92 74C24 36 96 98 192 68C286 39 330 -18 476 14" stroke={primary} strokeWidth={172} strokeLinecap="round" fill="none" />
-        <Path d="M-112 642C12 568 118 632 220 572C308 520 356 456 500 484" stroke={secondary} strokeWidth={206} strokeLinecap="round" fill="none" />
-        <Path d="M-88 354C48 284 120 318 230 286C332 256 396 206 492 238" stroke={primary} strokeWidth={86} strokeLinecap="round" fill="none" opacity={0.58} />
-      </Svg>
+      {mist}
     </MotiView>
   )
 }
@@ -173,20 +180,27 @@ function AmbientTraceField({
   showGrid: boolean
 }) {
   const drift = motionTokens.distance.blob * motionScale
+  const trace = (
+    <Svg width="100%" height="100%" viewBox="0 0 390 844" preserveAspectRatio="none">
+      {showGrid ? <Rect x="0" y="0" width="390" height="844" fill="none" stroke={grid} strokeWidth="1" strokeDasharray="1 34" opacity={0.64} /> : null}
+      <Path d="M18 206C82 176 134 194 188 158C246 120 308 110 372 82" stroke={primary} strokeWidth={1.4} strokeLinecap="round" fill="none" opacity={0.42} />
+      <Path d="M-10 526C58 498 126 534 186 492C248 448 294 452 404 386" stroke={secondary} strokeWidth={1.2} strokeLinecap="round" fill="none" opacity={0.34} />
+      <Path d="M40 742C122 704 174 736 250 682C302 646 336 632 402 624" stroke={accent} strokeWidth={1.2} strokeLinecap="round" fill="none" opacity={0.3} />
+    </Svg>
+  )
+
+  if (!enabled) {
+    return <View style={[styles.traceLayer, { opacity: opacity * 0.76 }]}>{trace}</View>
+  }
 
   return (
     <MotiView
       from={{ opacity: opacity * 0.72, translateX: -drift, translateY: 0 }}
-      animate={enabled ? { opacity, translateX: drift, translateY: -6 * motionScale } : { opacity: opacity * 0.76, translateX: 0, translateY: 0 }}
-      transition={enabled ? { loop: true, type: 'timing', duration: motionTokens.duration.ambient * 1.8, delay } : { type: 'timing', duration: 1 }}
+      animate={{ opacity, translateX: drift, translateY: -6 * motionScale }}
+      transition={{ loop: true, type: 'timing', duration: motionTokens.duration.ambient * 1.8, delay }}
       style={styles.traceLayer}
     >
-      <Svg width="100%" height="100%" viewBox="0 0 390 844" preserveAspectRatio="none">
-        {showGrid ? <Rect x="0" y="0" width="390" height="844" fill="none" stroke={grid} strokeWidth="1" strokeDasharray="1 34" opacity={0.64} /> : null}
-        <Path d="M18 206C82 176 134 194 188 158C246 120 308 110 372 82" stroke={primary} strokeWidth={1.4} strokeLinecap="round" fill="none" opacity={0.42} />
-        <Path d="M-10 526C58 498 126 534 186 492C248 448 294 452 404 386" stroke={secondary} strokeWidth={1.2} strokeLinecap="round" fill="none" opacity={0.34} />
-        <Path d="M40 742C122 704 174 736 250 682C302 646 336 632 402 624" stroke={accent} strokeWidth={1.2} strokeLinecap="round" fill="none" opacity={0.3} />
-      </Svg>
+      {trace}
     </MotiView>
   )
 }

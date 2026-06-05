@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
-import { Keyboard, KeyboardAvoidingView, Modal, Platform, ScrollView, Text, TextInput, View, useWindowDimensions } from 'react-native'
+import { findNodeHandle, Keyboard, KeyboardAvoidingView, Modal, Platform, ScrollView, Text, TextInput, View, useWindowDimensions, type LayoutChangeEvent } from 'react-native'
 import * as Clipboard from 'expo-clipboard'
 import * as DocumentPicker from 'expo-document-picker'
 import * as FileSystem from 'expo-file-system/legacy'
@@ -61,6 +61,7 @@ const IMPORT_SHEET_MARGIN = 16
 const IMPORT_HEADER_HEIGHT = 78
 const IMPORT_FOOTER_HEIGHT = 76
 const IMPORT_BODY_FIXED_SPACE = 118
+type ProviderFormFieldId = 'name' | 'baseUrl' | 'tokens' | 'models'
 
 interface ProviderSettingsContentProps {
   embedded?: boolean
@@ -162,11 +163,11 @@ export function ProviderSettingsContent({ embedded = false, onClose, onBackgroun
   const credentialGroups = providers.reduce((sum, provider) => sum + (provider.credentialGroups?.length ?? 0), 0)
 
   async function addProviderFromForm(provider: AIProvider) {
+    setAddOpen(false)
     await addProvider(provider)
     setExpandedProviderId(provider.id)
     setSortMode('manual')
     setModelFilter('')
-    setAddOpen(false)
     dialog.toast({ title: t('providerSettings.added'), message: t('providerSettings.addedMessage', { name: provider.name }), tone: 'mint' })
     const enableNow = await dialog.confirm({
       title: t('providerSettings.enableAddedTitle'),
@@ -186,11 +187,11 @@ export function ProviderSettingsContent({ embedded = false, onClose, onBackgroun
       dialog.notice({ title: t('providerSettings.importEmpty'), message: result.warnings.join('\n') || t('providerSettings.importEmptyMessage'), tone: 'amber' })
       return
     }
+    setImportOpen(false)
     await addProviders(result.providers)
     setExpandedProviderId(result.providers[0]?.id ?? null)
     setSortMode('manual')
     setModelFilter('')
-    setImportOpen(false)
     dialog.toast({
       title: t('providerSettings.importDone'),
       message: t('providerSettings.importDoneMessage', { count: result.providers.length }),
@@ -905,6 +906,9 @@ function ProviderFormModal({
   const insets = useSafeAreaInsets()
   const { height } = useWindowDimensions()
   const motion = useMotionPreference()
+  const bodyScrollRef = useRef<ScrollView>(null)
+  const fieldOffsetsRef = useRef<Partial<Record<ProviderFormFieldId, number>>>({})
+  const focusedFieldRef = useRef<ProviderFormFieldId | null>(null)
   const [presetId, setPresetId] = useState<ProviderPresetId>(DEFAULT_PROVIDER_PRESET_ID)
   const [name, setName] = useState('')
   const [baseUrl, setBaseUrl] = useState('')
@@ -915,10 +919,26 @@ function ProviderFormModal({
   const [keysText, setKeysText] = useState('')
   const [advancedOpen, setAdvancedOpen] = useState(false)
   const [clipboardState, setClipboardState] = useState<ClipboardReadState>('idle')
+  const [keyboardHeight, setKeyboardHeight] = useState(0)
   const preset = getProviderPreset(presetId)
   const providerConfigDraft = resolveProviderConfigDraft({ provider: {}, presetId, baseUrl, wireProtocol })
   const compact = height < 680
   const clipboardBusy = clipboardState !== 'idle'
+  const keyboardInset = Platform.OS === 'android' ? keyboardHeight : 0
+  const keyboardVisible = keyboardHeight > 0
+  const availableSheetHeight = Math.max(
+    360,
+    height - insets.top - Math.max(insets.bottom, 10) - keyboardInset - IMPORT_SHEET_MARGIN,
+  )
+  const sheetMaxHeight = Math.min(availableSheetHeight, height * (compact ? 0.96 : 0.88))
+  const footerScrollReserve = Math.max(insets.bottom, 10) + 132
+  const focusedInputKeyboardOffset = Platform.OS === 'android' ? footerScrollReserve + 72 : 96
+  const fieldScrollViewportOffset: Record<ProviderFormFieldId, number> = {
+    name: 72,
+    baseUrl: 48,
+    tokens: -56,
+    models: -56,
+  }
 
   function resetDraft() {
     setName('')
@@ -939,6 +959,85 @@ function ProviderFormModal({
   }
 
   const keyboardRequestClose = useKeyboardAwareModalRequestClose(closeWithoutSubmit)
+
+  useEffect(() => {
+    if (!visible) {
+      setKeyboardHeight(0)
+      return undefined
+    }
+    const showSub = Keyboard.addListener(Platform.OS === 'ios' ? 'keyboardWillShow' : 'keyboardDidShow', (event) => {
+      setKeyboardHeight(event.endCoordinates.height)
+      scrollFocusedInputAboveKeyboard()
+      scheduleFocusedFieldScroll()
+      setTimeout(scrollFocusedInputAboveKeyboard, 120)
+      setTimeout(scheduleFocusedFieldScroll, 180)
+    })
+    const hideSub = Keyboard.addListener(Platform.OS === 'ios' ? 'keyboardWillHide' : 'keyboardDidHide', () => {
+      setKeyboardHeight(0)
+    })
+    return () => {
+      showSub.remove()
+      hideSub.remove()
+    }
+  }, [visible])
+
+  function rememberFieldLayout(id: ProviderFormFieldId) {
+    return (event: LayoutChangeEvent) => {
+      fieldOffsetsRef.current[id] = event.nativeEvent.layout.y
+    }
+  }
+
+  function scrollFocusedFieldIntoView() {
+    const focusedField = focusedFieldRef.current
+    if (!focusedField) return
+    const fieldOffset = fieldOffsetsRef.current[focusedField]
+    if (fieldOffset === undefined) return
+    bodyScrollRef.current?.scrollTo({ y: Math.max(0, fieldOffset - fieldScrollViewportOffset[focusedField]), animated: true })
+  }
+
+  function scheduleFocusedFieldScroll() {
+    requestAnimationFrame(() => {
+      requestAnimationFrame(scrollFocusedFieldIntoView)
+    })
+  }
+
+  function scrollFocusedInputAboveKeyboard() {
+    requestAnimationFrame(() => {
+      requestAnimationFrame(() => {
+        type TextInputState = {
+          currentlyFocusedInput?: () => unknown
+        }
+        type ScrollResponder = {
+          scrollResponderScrollNativeHandleToKeyboard?: (
+            nodeHandle: number | null,
+            additionalOffset?: number,
+            preventNegativeScrollOffset?: boolean,
+          ) => void
+        }
+        const textInputState = (TextInput as unknown as { State?: TextInputState }).State
+        const focusedInput = textInputState?.currentlyFocusedInput?.()
+        const focusedHandle = typeof focusedInput === 'number'
+          ? focusedInput
+          : focusedInput
+            ? findNodeHandle(focusedInput as Parameters<typeof findNodeHandle>[0])
+            : null
+        if (focusedHandle) {
+          const responder = (bodyScrollRef.current as unknown as { getScrollResponder?: () => ScrollResponder }).getScrollResponder?.()
+          responder?.scrollResponderScrollNativeHandleToKeyboard?.(focusedHandle, focusedInputKeyboardOffset, true)
+        }
+        scrollFocusedFieldIntoView()
+      })
+    })
+  }
+
+  function markInputFocused(fieldId: ProviderFormFieldId) {
+    focusedFieldRef.current = fieldId
+    keyboardRequestClose.markKeyboardActive()
+    scrollFocusedInputAboveKeyboard()
+    scheduleFocusedFieldScroll()
+    setTimeout(scrollFocusedInputAboveKeyboard, 120)
+    setTimeout(scheduleFocusedFieldScroll, 180)
+  }
 
   function submit() {
     const modelList = parseModels(modelsText)
@@ -1063,12 +1162,12 @@ function ProviderFormModal({
         >
           <IsleOverlayPressable accessibilityLabel={t('dialog.close')} accessibilityRole="button" onPress={closeWithoutSubmit} style={{ flex: 1, backgroundColor: colors.backdrop }} />
         </MotiView>
-        <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined} style={{ flex: 1, justifyContent: 'flex-end' }}>
+        <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined} style={{ flex: 1, justifyContent: 'flex-end', paddingBottom: keyboardInset }}>
           <MotiView
             from={motion === 'full' ? { opacity: 0, translateY: 32, scale: 0.985 } : { opacity: 0 }}
             animate={{ opacity: 1, translateY: 0, scale: 1 }}
             transition={motion === 'full' ? { type: 'spring', damping: 23, stiffness: 190 } : { type: 'timing', duration: motionTokens.duration.fast }}
-            style={{ maxHeight: compact ? '94%' : '88%', borderTopLeftRadius: 30, borderTopRightRadius: 30, backgroundColor: colors.surface, borderWidth: 1, borderColor: colors.border, overflow: 'hidden' }}
+            style={{ maxHeight: sheetMaxHeight, borderTopLeftRadius: 30, borderTopRightRadius: 30, backgroundColor: colors.surface, borderWidth: 1, borderColor: colors.border, overflow: 'hidden' }}
           >
             <View style={{ paddingHorizontal: 16, paddingTop: 16, paddingBottom: 10, backgroundColor: colors.surface }}>
               <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
@@ -1101,16 +1200,20 @@ function ProviderFormModal({
               </View>
             </View>
             <ScrollView
+              ref={bodyScrollRef}
               keyboardShouldPersistTaps="handled"
               nestedScrollEnabled
               automaticallyAdjustKeyboardInsets
               showsVerticalScrollIndicator={compact}
+              style={{ flexShrink: 1 }}
               contentContainerStyle={{ gap: 10, paddingHorizontal: 16, paddingBottom: 12, backgroundColor: colors.surface }}
             >
-              <IsleField label={t('providerSettings.name')} inputProps={{ value: name, onChangeText: (value) => {
-                setName(value)
-                setNameDirty(true)
-              }, onFocus: keyboardRequestClose.markKeyboardActive, placeholder: preset.name, autoCapitalize: 'none' }} />
+              <View onLayout={rememberFieldLayout('name')}>
+                <IsleField label={t('providerSettings.name')} inputProps={{ value: name, onChangeText: (value) => {
+                  setName(value)
+                  setNameDirty(true)
+                }, onFocus: () => markInputFocused('name'), placeholder: preset.name, autoCapitalize: 'none' }} />
+              </View>
               {providerConfigDraft.isProtocolSelectable ? (
                 <View style={{ borderRadius: 18, padding: 11, backgroundColor: colors.islandRaised, gap: 9 }}>
                   <Text style={{ color: colors.text, fontSize: 13, fontWeight: '900' }}>{t('providerSettings.protocol.title')}</Text>
@@ -1122,22 +1225,26 @@ function ProviderFormModal({
                   <Text style={{ color: colors.textTertiary, fontSize: 11, lineHeight: 16 }}>{t('providerSettings.protocol.endpointNote')}</Text>
                 </View>
               ) : null}
-              <IsleField
-                label={t('providerSettings.baseUrl')}
-                inputProps={{
-                  value: baseUrl,
-                  onFocus: keyboardRequestClose.markKeyboardActive,
-                  onChangeText: handleBaseUrlText,
-                  placeholder: preset.baseUrl ?? 'https://example.com/v1',
-                  autoCapitalize: 'none',
-                  autoCorrect: false,
-                }}
-              />
-              <IsleField
-                label={t('providerSettings.tokens')}
-                note={t('providerSettings.tokensNote')}
-                inputProps={{ value: keysText, onChangeText: handleKeysText, onFocus: keyboardRequestClose.markKeyboardActive, placeholder: 'sk-...\nsk-...', autoCapitalize: 'none', autoCorrect: false, multiline: true, secureTextEntry: false, style: { minHeight: compact ? 72 : 92, maxHeight: compact ? 110 : 140 } }}
-              />
+              <View onLayout={rememberFieldLayout('baseUrl')}>
+                <IsleField
+                  label={t('providerSettings.baseUrl')}
+                  inputProps={{
+                    value: baseUrl,
+                    onFocus: () => markInputFocused('baseUrl'),
+                    onChangeText: handleBaseUrlText,
+                    placeholder: preset.baseUrl ?? 'https://example.com/v1',
+                    autoCapitalize: 'none',
+                    autoCorrect: false,
+                  }}
+                />
+              </View>
+              <View onLayout={rememberFieldLayout('tokens')}>
+                <IsleField
+                  label={t('providerSettings.tokens')}
+                  note={t('providerSettings.tokensNote')}
+                  inputProps={{ value: keysText, onChangeText: handleKeysText, onFocus: () => markInputFocused('tokens'), placeholder: 'sk-...\nsk-...', autoCapitalize: 'none', autoCorrect: false, multiline: true, secureTextEntry: false, style: { minHeight: compact ? 72 : 92, maxHeight: compact ? 110 : 140 } }}
+                />
+              </View>
               <IslePressable
                 haptic
                 onPress={() => setAdvancedOpen((value) => !value)}
@@ -1149,17 +1256,21 @@ function ProviderFormModal({
                 </MotiView>
               </IslePressable>
               {advancedOpen ? (
-                <IsleField
-                  label={t('settings.models')}
-                  note={t('providerSettings.modelsNote')}
-                  inputProps={{ value: modelsText, onChangeText: setModelsText, onFocus: keyboardRequestClose.markKeyboardActive, placeholder: t('providerSettings.oneModelPerLine'), autoCapitalize: 'none', autoCorrect: false, multiline: true, style: { minHeight: 76, maxHeight: 120 } }}
-                />
+                <View onLayout={rememberFieldLayout('models')}>
+                  <IsleField
+                    label={t('settings.models')}
+                    note={t('providerSettings.modelsNote')}
+                    inputProps={{ value: modelsText, onChangeText: setModelsText, onFocus: () => markInputFocused('models'), placeholder: t('providerSettings.oneModelPerLine'), autoCapitalize: 'none', autoCorrect: false, multiline: true, style: { minHeight: 76, maxHeight: 120 } }}
+                  />
+                </View>
               ) : null}
             </ScrollView>
-            <View style={{ flexDirection: 'row', gap: 10, paddingHorizontal: 16, paddingTop: 10, paddingBottom: Math.max(insets.bottom, 10) + 10, backgroundColor: colors.surface, borderTopWidth: 1, borderTopColor: colors.border }}>
-              <IsleButton label={t('common.cancel')} onPress={closeWithoutSubmit} style={{ flex: 1 }} />
-              <IsleButton label={t('common.save')} tone="primary" onPress={submit} style={{ flex: 1 }} />
+            {!keyboardVisible ? (
+              <View style={{ flexDirection: 'row', gap: 10, paddingHorizontal: 16, paddingTop: 10, paddingBottom: Math.max(insets.bottom, 10) + 10, backgroundColor: colors.surface, borderTopWidth: 1, borderTopColor: colors.border }}>
+                <IsleButton label={t('common.cancel')} onPress={closeWithoutSubmit} style={{ flex: 1 }} />
+                <IsleButton label={t('common.save')} tone="primary" onPress={submit} style={{ flex: 1 }} />
               </View>
+            ) : null}
           </MotiView>
         </KeyboardAvoidingView>
       </View>
@@ -1189,6 +1300,7 @@ function ProviderImportModal({
   const [keyboardHeight, setKeyboardHeight] = useState(0)
   const compact = height < 680
   const keyboardInset = keyboardHeight
+  const keyboardVisible = keyboardHeight > 0
   const availableSheetHeight = Math.max(
     360,
     height - insets.top - Math.max(insets.bottom, 10) - keyboardInset - IMPORT_SHEET_MARGIN,
@@ -1428,10 +1540,12 @@ function ProviderImportModal({
                 </Text>
               </View>
             </ScrollView>
-            <View style={{ minHeight: IMPORT_FOOTER_HEIGHT, flexDirection: 'row', alignItems: 'center', gap: footerCompact ? 8 : 10, paddingHorizontal: 16, paddingTop: 12, paddingBottom: Math.max(insets.bottom, 10) + 10, backgroundColor: colors.surface, borderTopWidth: 1, borderTopColor: colors.border }}>
-              <IsleButton label={t('common.cancel')} compact onPress={onClose} style={{ flex: 1, minHeight: 44 }} />
-              <IsleButton label={t('providerSettings.import')} compact tone="primary" disabled={!input.trim()} onPress={submit} style={{ flex: 1.12, minHeight: 44 }} />
-            </View>
+            {!keyboardVisible ? (
+              <View style={{ minHeight: IMPORT_FOOTER_HEIGHT, flexDirection: 'row', alignItems: 'center', gap: footerCompact ? 8 : 10, paddingHorizontal: 16, paddingTop: 12, paddingBottom: Math.max(insets.bottom, 10) + 10, backgroundColor: colors.surface, borderTopWidth: 1, borderTopColor: colors.border }}>
+                <IsleButton label={t('common.cancel')} compact onPress={onClose} style={{ flex: 1, minHeight: 44 }} />
+                <IsleButton label={t('providerSettings.import')} compact tone="primary" disabled={!input.trim()} onPress={submit} style={{ flex: 1.12, minHeight: 44 }} />
+              </View>
+            ) : null}
           </MotiView>
         </View>
       </View>
