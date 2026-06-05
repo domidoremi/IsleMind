@@ -15,7 +15,7 @@
 <p align="center">
   <a href="https://github.com/domidoremi/IsleMind/releases/latest">Latest APK</a>
   ·
-  <a href="../README.md">Documentation Index</a>
+  <a href="../production-qa-matrix.md">Release QA Matrix</a>
 </p>
 
 ## Capability Boundary

@@ -15,7 +15,7 @@
 <p align="center">
   <a href="https://github.com/domidoremi/IsleMind/releases/latest">最新 APK</a>
   ·
-  <a href="docs/README.md">文档目录</a>
+  <a href="docs/production-qa-matrix.md">发布验收</a>
 </p>
 
 ## 能力边界

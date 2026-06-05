@@ -15,7 +15,7 @@
 <p align="center">
   <a href="https://github.com/domidoremi/IsleMind/releases/latest">最新 APK</a>
   ·
-  <a href="../README.md">文書目録</a>
+  <a href="../production-qa-matrix.md">リリース検収</a>
 </p>
 
 ## 能力境界
