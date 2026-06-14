@@ -68,6 +68,8 @@ docs/*
 !docs/agentic-capability-boundary.md
 !docs/agentic-workflow-roadmap.md
 !docs/android-status-notification-roadmap.md
+!docs/architecture/
+!docs/architecture/**
 !docs/readme/
 !docs/readme/**
 local-docs/

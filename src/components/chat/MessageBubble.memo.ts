@@ -12,6 +12,7 @@
 
 import { memo } from 'react'
 import type { MessageBubbleProps } from './MessageBubble'
+import { collectVisibleProcessTraces } from './tracePresentation'
 
 /**
  * 消息属性比较函数
@@ -30,14 +31,13 @@ const areMessagesEqual = (
   if (prevMsg.id !== nextMsg.id) return false
   if (prevMsg.role !== nextMsg.role) return false
   if (prevMsg.content !== nextMsg.content) return false
-  if (prevMsg.streaming !== nextMsg.streaming) return false
   if (prevMsg.status !== nextMsg.status) return false
 
   // 2. 附件比较（仅比较长度）
   if (prevMsg.attachments?.length !== nextMsg.attachments?.length) return false
 
   // 3. Traces 比较（仅比较长度，避免深比较）
-  if (prevMsg.traces?.length !== nextMsg.traces?.length) return false
+  if (collectVisibleProcessTraces(prevMsg).length !== collectVisibleProcessTraces(nextMsg).length) return false
 
   // 4. 其他关键 props 比较
   if (prevProps.index !== nextProps.index) return false

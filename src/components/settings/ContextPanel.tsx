@@ -5,7 +5,7 @@ import { MotiView } from 'moti'
 import type { TFunction } from 'i18next'
 import { useTranslation } from 'react-i18next'
 import type { AIProvider, Conversation, KnowledgeDocument, LocalRagModelCapability, MemoryItem, MemorySourceKind, Message, RagEvaluationLog, RagIndexingJobStatus, Settings } from '@/types'
-import { extractMemories, importKnowledgeFile, importKnowledgePlainText, retrieveContext, searchWeb } from '@/services/context'
+import { extractMemories, importKnowledgeFile, importKnowledgePlainText, retrieveContext, searchKnowledgeAgenticIndexes, searchKnowledgeHybrid, searchWeb } from '@/services/context'
 import {
   addMemory,
   clearKnowledge,
@@ -27,7 +27,6 @@ import {
   type LocalEmbeddingModelView,
 } from '@/services/localEmbeddingModels'
 import { clearRagQueryCaches, listRagEmbeddingJobs, loadRagDebugSnapshot, loadRagEmbeddingJobSummary, rebuildRagKnowledgeEmbeddings, runRagGoldEvaluation, type RagEvaluationRun } from '@/services/ragEvaluation'
-import { localDataStore } from '@/services/localDataStore'
 import { useAppTheme } from '@/hooks/useAppTheme'
 import { useSettingsStore } from '@/store/settingsStore'
 import { SEARCH_DIAGNOSTIC_QUERY, SEARCH_PROVIDER_CREDENTIAL_FIELDS, SEARCH_PROVIDER_OPTIONS, legacySearchModeForProvider, resolveSearchProvider, searchProviderLabel } from '@/services/searchPolicy'
@@ -439,7 +438,7 @@ export function ContextPanel({ providers, section = 'all', focus }: ContextPanel
           : t('contextPanel.selfTest.knowledgeMiss'),
       })
 
-      const hybridKnowledgeHits = await localDataStore.searchHybrid(`${canary} aurora-lantern`, {
+      const hybridKnowledgeHits = await searchKnowledgeHybrid(`${canary} aurora-lantern`, {
         limit: 3,
         embeddingMode: settings.embeddingMode ?? 'hybrid',
         localEmbeddingModelId: settings.localEmbeddingModelId,
@@ -454,7 +453,7 @@ export function ContextPanel({ providers, section = 'all', focus }: ContextPanel
           : t('contextPanel.selfTest.knowledgeMiss'),
       })
 
-      const agenticKnowledgeHits = await localDataStore.searchAgenticIndexes(`${canary} aurora-lantern`, {
+      const agenticKnowledgeHits = await searchKnowledgeAgenticIndexes(`${canary} aurora-lantern`, {
         limit: 3,
         techniques: ['raptor', 'graphrag', 'colbert'],
       })

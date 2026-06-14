@@ -481,6 +481,8 @@ export function createOnnxPlaceholderProvider(): EmbeddingProvider {
 }
 
 export async function createOnnxEmbeddingProvider(settings: Pick<Settings, 'localEmbeddingModelId' | 'localEmbeddingModelSource'>): Promise<EmbeddingProvider | null> {
+  if (settings.localEmbeddingModelSource === 'none') return null
+
   // 优化：延迟加载模型，仅在首次embed时加载
   // 避免在createProvider时就加载108MB的AI模型
 

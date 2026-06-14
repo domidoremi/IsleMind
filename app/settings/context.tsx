@@ -5,7 +5,7 @@ import { useTranslation } from 'react-i18next'
 
 // 懒加载上下文面板组件
 const ContextPanel = createLazyComponent(
-  () => import('@/components/settings/ContextPanel')
+  () => import('@/components/settings/ContextPanel').then((module) => ({ default: module.ContextPanel }))
 )
 
 export default function ContextSettingsScreen() {
