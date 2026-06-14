@@ -5,6 +5,7 @@ import { AlertTriangle, Check, Info, X } from 'lucide-react-native'
 import { MotiView } from 'moti'
 import { useTranslation } from 'react-i18next'
 import { useSafeAreaInsets } from 'react-native-safe-area-context'
+import { StatusBar } from 'expo-status-bar'
 import { IsleButton } from './Controls'
 import { IslePanel } from './Panel'
 import { useAppTheme } from '@/hooks/useAppTheme'
@@ -117,6 +118,7 @@ export function IsleDialogProvider({ children }: { children: ReactNode }) {
         onRequestClose={() => closeDialog(false)}
         statusBarTranslucent
       >
+        <StatusBar style="light" translucent backgroundColor="transparent" />
         <View style={{ flex: 1, justifyContent: 'center', paddingHorizontal: modalPaddingHorizontal }}>
           <Pressable
             accessibilityLabel={t('dialog.closeLayer')}
