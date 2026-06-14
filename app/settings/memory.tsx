@@ -6,7 +6,7 @@ import { useTranslation } from 'react-i18next'
 
 // 懒加载记忆面板组件
 const ContextPanel = createLazyComponent(
-  () => import('@/components/settings/ContextPanel')
+  () => import('@/components/settings/ContextPanel').then((module) => ({ default: module.ContextPanel }))
 )
 
 export default function MemorySettingsScreen() {

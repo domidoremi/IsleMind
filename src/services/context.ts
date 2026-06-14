@@ -1,6 +1,6 @@
 import * as DocumentPicker from 'expo-document-picker'
 import * as FileSystem from 'expo-file-system/legacy'
-import type { AIProvider, Conversation, Message, RagEvaluationResult, RagQueryPlan, RagTraceStep, RetrievalSource } from '@/types'
+import type { AIProvider, Conversation, Message, RagEvaluationResult, RagQueryPlan, RagTechnique, RagTraceStep, RetrievalSource } from '@/types'
 import { generateText } from '@/services/ai/base'
 import {
   addMemory,
@@ -46,6 +46,19 @@ export interface FlareRetrievalResult {
   prompt: string
   trace: RagTraceStep[]
   quality?: RagEvaluationResult
+}
+
+export interface KnowledgeHybridSearchOptions {
+  limit?: number
+  embeddingMode?: 'provider' | 'local' | 'hybrid'
+  localEmbeddingModelId?: string
+  localEmbeddingModelSource?: 'bundled' | 'downloaded' | 'none'
+  provider?: AIProvider
+}
+
+export interface KnowledgeAgenticSearchOptions {
+  limit?: number
+  techniques?: RagTechnique[]
 }
 
 export async function retrieveContext(conversation: Conversation, draftMessage: Message): Promise<RetrievedContext> {
@@ -289,6 +302,32 @@ export async function importKnowledgePlainText(title: string, text: string, prov
     { provider, embeddingMode: useSettingsStore.getState().settings.embeddingMode ?? 'hybrid', localEmbeddingModelId: useSettingsStore.getState().settings.localEmbeddingModelId, localEmbeddingModelSource: useSettingsStore.getState().settings.localEmbeddingModelSource }
   )
   return { ok: true, message: st('contextImport.pastedTextImported') }
+}
+
+export async function searchKnowledgeHybrid(query: string, options: KnowledgeHybridSearchOptions = {}): Promise<RetrievalSource[]> {
+  try {
+    return await localDataStore.searchHybrid(query, {
+      limit: options.limit,
+      mode: 'hybrid',
+      embeddingMode: options.embeddingMode ?? 'hybrid',
+      localEmbeddingModelId: options.localEmbeddingModelId,
+      localEmbeddingModelSource: options.localEmbeddingModelSource,
+      ...(options.provider ? { provider: options.provider } : {}),
+    })
+  } catch {
+    return searchKnowledge(query, options.limit ?? 4).catch(() => [])
+  }
+}
+
+export async function searchKnowledgeAgenticIndexes(query: string, options: KnowledgeAgenticSearchOptions = {}): Promise<RetrievalSource[]> {
+  try {
+    return await localDataStore.searchAgenticIndexes(query, {
+      limit: options.limit,
+      techniques: options.techniques ?? ['raptor', 'graphrag', 'colbert'],
+    })
+  } catch {
+    return []
+  }
 }
 
 async function searchKnowledgeSafely(

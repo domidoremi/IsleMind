@@ -1,7 +1,7 @@
 import { router } from 'expo-router'
 import { useCallback, useDeferredValue, useEffect, useMemo, useRef, useState } from 'react'
 import { ActivityIndicator, AppState, Keyboard, KeyboardAvoidingView, Platform, Text, TextInput, View, useWindowDimensions, type NativeScrollEvent, type NativeSyntheticEvent, type ViewToken } from 'react-native'
-import { FlashList } from '@shopify/flash-list'
+import { FlashList, type FlashListRef } from '@shopify/flash-list'
 import { ArrowRight, ArrowUp, MessageCircle, Search, X } from 'lucide-react-native'
 import { useTranslation } from 'react-i18next'
 import { useSafeAreaInsets } from 'react-native-safe-area-context'
@@ -133,7 +133,7 @@ export function ConversationsScreenContent({ active = true, onHome, onSettings }
   const settings = useSettingsStore((state) => state.settings)
   const providers = useSettingsStore((state) => state.providers)
   const getPrimaryConfiguredProvider = useSettingsStore((state) => state.getPrimaryConfiguredProvider)
-  const listRef = useRef<FlashList<Conversation>>(null)
+  const listRef = useRef<FlashListRef<Conversation>>(null)
   const searchInputRef = useRef<TextInput>(null)
   const scrollTopActionVisible = useRef(false)
   const scrollTopActionLockTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
@@ -1222,7 +1222,6 @@ export function ConversationsScreenContent({ active = true, onHome, onSettings }
         ref={listRef}
         data={filteredConversations}
         extraData={conversationListExtraData}
-        estimatedItemSize={CONVERSATION_ROW_ESTIMATED_HEIGHT}
         accessibilityRole="list"
         accessibilityLabel={t('conversation.title')}
         accessibilityState={listAccessibilityState}
@@ -1232,7 +1231,6 @@ export function ConversationsScreenContent({ active = true, onHome, onSettings }
         keyboardShouldPersistTaps="handled"
         keyboardDismissMode="on-drag"
         automaticallyAdjustKeyboardInsets
-        getItemLayout={getConversationListItemLayout}
         onTouchStart={handleListTouchStart}
         onTouchEnd={handleListTouchEnd}
         onTouchCancel={handleListTouchEnd}
@@ -1245,9 +1243,6 @@ export function ConversationsScreenContent({ active = true, onHome, onSettings }
         viewabilityConfig={listViewabilityConfig}
         scrollEventThrottle={32}
         contentContainerStyle={{ paddingHorizontal: listHorizontalPadding, paddingBottom: listBottomPadding }}
-        onScrollToIndexFailed={(info) => {
-          scheduleScrollToIndexRetry(info.index, info.averageItemLength)
-        }}
         ListEmptyComponent={
           trimmedQuery
             ? searchPending

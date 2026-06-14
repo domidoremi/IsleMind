@@ -44,9 +44,8 @@ class LazyEmbeddingService {
     this.scheduleUnload()
 
     try {
-      // 调用实际的 embedding 方法
-      // 注意：需要根据实际的模型 API 调整
-      return await model.model.embed(text)
+      void model
+      throw new Error('Lazy embedding inference must use the ONNX embedding provider.')
     } catch (error) {
       console.error('[LazyEmbedding] Inference failed:', error)
       throw error
@@ -65,7 +64,9 @@ class LazyEmbeddingService {
     this.lastUsedAt = Date.now()
     this.scheduleUnload()
 
-    return await Promise.all(texts.map(text => model.model.embed(text)))
+    void texts
+    void model
+    throw new Error('Lazy embedding inference must use the ONNX embedding provider.')
   }
 
   /**

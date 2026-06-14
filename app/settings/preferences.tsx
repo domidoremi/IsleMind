@@ -4,7 +4,7 @@ import { SettingsPageShell } from '@/components/settings/SettingsPageShell'
 
 // 懒加载偏好设置内容
 const PreferenceSettingsContent = createLazyComponent(
-  () => import('@/components/settings/PreferenceSettingsContent')
+  () => import('@/components/settings/PreferenceSettingsContent').then((module) => ({ default: module.PreferenceSettingsContent }))
 )
 
 export default function PreferencesSettingsScreen() {
