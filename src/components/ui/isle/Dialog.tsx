@@ -118,7 +118,7 @@ export function IsleDialogProvider({ children }: { children: ReactNode }) {
         onRequestClose={() => closeDialog(false)}
         statusBarTranslucent
       >
-        <StatusBar style="light" translucent backgroundColor="transparent" />
+        <StatusBar style="light" translucent backgroundColor={colors.backdrop} />
         <View style={{ flex: 1, justifyContent: 'center', paddingHorizontal: modalPaddingHorizontal }}>
           <Pressable
             accessibilityLabel={t('dialog.closeLayer')}
