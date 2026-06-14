@@ -38,6 +38,11 @@ export interface ProviderPayloadPlan {
   adjustedParams: Record<string, unknown>
 }
 
+export interface ProviderTransportPlan {
+  streaming: boolean
+  preferredEndpoint?: ProviderConformanceResult['manifest']['transport']['preferredEndpoint']
+}
+
 export type ProviderFallbackPlan = ProviderFailoverDecision
 
 export interface ProviderRouteDecision {
@@ -56,6 +61,7 @@ export interface ProviderRouteDecision {
   modalityPlan: ProviderModalityPlan
   reasoningPlan: ProviderReasoningPlan
   payloadPlan: ProviderPayloadPlan
+  transportPlan: ProviderTransportPlan
   fallbackPlan: ProviderFallbackPlan
   blocked: boolean
   blockReasons: string[]
@@ -137,6 +143,10 @@ function buildRouteDecision(input: ProviderRouteInput, conformance: ProviderConf
       bodyKeys: conformance.bodyKeys,
       removedParams: conformance.removedParams,
       adjustedParams: conformance.adjustedParams,
+    },
+    transportPlan: {
+      streaming: manifest.transport.streaming,
+      preferredEndpoint: manifest.transport.preferredEndpoint,
     },
     fallbackPlan: resolveFailoverDecision(input.failover ?? defaultFailoverInput(input)),
     blocked: blockers.length > 0,

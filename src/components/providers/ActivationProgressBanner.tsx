@@ -1,4 +1,4 @@
-import { Text, View } from 'react-native'
+import { Text, View, useWindowDimensions } from 'react-native'
 import { X } from 'lucide-react-native'
 import { MotiView } from 'moti'
 import { useTranslation } from 'react-i18next'
@@ -12,6 +12,8 @@ export function ActivationProgressBanner() {
   const { colors } = useAppTheme()
   const { t } = useTranslation()
   const insets = useSafeAreaInsets()
+  const { width } = useWindowDimensions()
+  const edgeInset = width < 390 ? 10 : 14
   const job = useActivationJobStore((state) => state.job)
   const clear = useActivationJobStore((state) => state.clear)
 
@@ -25,15 +27,15 @@ export function ActivationProgressBanner() {
       animate={{ opacity: 1, translateY: 0 }}
       transition={{ type: 'spring', ...motionTokens.spring.gentle }}
       pointerEvents="auto"
-      style={{ position: 'absolute', top: Math.max(insets.top, 10) + 8, left: 14, right: 14, zIndex: 200 }}
+      style={{ position: 'absolute', top: Math.max(insets.top, 10) + 8, left: edgeInset, right: edgeInset, zIndex: 200 }}
     >
-      <View style={{ borderRadius: 24, padding: 12, backgroundColor: colors.material.chrome, borderWidth: 1, borderColor: colors.borderStrong, shadowColor: colors.shadowTint, shadowOpacity: 0.2, shadowRadius: 0, shadowOffset: { width: 0, height: 4 }, elevation: 8, gap: 9 }}>
+      <View style={{ borderRadius: colors.ui.radius.panel, padding: 12, backgroundColor: colors.ui.card.defaultBackground, borderWidth: 1, borderColor: colors.material.strokeStrong, shadowColor: colors.ui.control.shadow, shadowOpacity: colors.ui.card.shadowOpacity, shadowRadius: colors.ui.card.shadowRadius, shadowOffset: { width: 0, height: colors.ui.card.shadowOffset }, elevation: colors.ui.card.shadowOpacity > 0 ? 1 : 0, gap: 9 }}>
         <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
-          <View style={{ flex: 1 }}>
-            <Text style={{ color: colors.text, fontSize: 13, fontWeight: '900' }}>
+          <View style={{ flex: 1, minWidth: 0 }}>
+            <Text numberOfLines={1} style={{ color: colors.text, fontSize: 13, lineHeight: 18, fontWeight: '900', includeFontPadding: false }}>
               {done ? activationDoneTitle(job.total, t) : t('providerSettings.activationRunning')}
             </Text>
-            <Text numberOfLines={1} style={{ color: colors.textSecondary, fontSize: 11, lineHeight: 16, marginTop: 2, fontWeight: '800' }}>
+            <Text numberOfLines={1} style={{ color: colors.textSecondary, fontSize: 11, lineHeight: 16, marginTop: 2, fontWeight: '800', includeFontPadding: false }}>
               {job.stage ?? job.currentName ?? t('providerSettings.activationQueued')}
             </Text>
           </View>
@@ -44,7 +46,7 @@ export function ActivationProgressBanner() {
           ) : null}
         </View>
         <ActivationProgressBar job={job} />
-        <Text style={{ color: colors.textTertiary, fontSize: 10, lineHeight: 15, fontWeight: '900' }}>
+        <Text numberOfLines={2} style={{ color: colors.textTertiary, fontSize: 10, lineHeight: 15, fontWeight: '900', includeFontPadding: false }}>
           {t('providerSettings.activationProgressMessage', { completed: job.completed, total: job.total, synced: job.synced, tested: job.tested, failed: job.failed })}
         </Text>
       </View>
@@ -60,11 +62,11 @@ function ActivationProgressBar({ job }: { job: ActivationJobState }) {
   const { colors } = useAppTheme()
   const progress = resolveActivationJobProgress(job)
   return (
-    <View style={{ height: 8, borderRadius: 4, backgroundColor: colors.islandRaised, overflow: 'hidden' }}>
+    <View style={{ height: 8, borderRadius: colors.ui.radius.chip, backgroundColor: colors.ui.section.divider, overflow: 'hidden' }}>
       <MotiView
         animate={{ width: `${Math.max(4, Math.round(progress * 100))}%` }}
         transition={{ type: 'timing', duration: 180 }}
-        style={{ height: 8, borderRadius: 4, backgroundColor: job.failed ? colors.warning : colors.primary }}
+        style={{ height: 8, borderRadius: colors.ui.radius.chip, backgroundColor: job.failed ? colors.ui.tone.warning.foreground : colors.ui.control.primaryBackground }}
       />
     </View>
   )

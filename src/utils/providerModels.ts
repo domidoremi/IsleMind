@@ -2,9 +2,9 @@ import { getModelConfig } from '@/types'
 import type { AIProvider, ModelAlias, ProviderCredentialGroup } from '@/types'
 import { normalizeModelId } from '@/utils/modelReasoning'
 
-export type ModelQuickGroup = 'all' | 'gpt' | 'claude' | 'gemini' | 'deepseek' | 'qwen' | 'kimi' | 'doubao' | 'grok' | 'glm' | 'mimo' | 'llama' | 'other'
+export type ModelQuickGroup = 'all' | 'gpt' | 'claude' | 'gemini' | 'deepseek' | 'qwen' | 'kimi' | 'doubao' | 'grok' | 'glm' | 'minimax' | 'mimo' | 'llama' | 'other'
 
-export const MODEL_QUICK_GROUPS: ModelQuickGroup[] = ['all', 'gpt', 'claude', 'gemini', 'deepseek', 'qwen', 'kimi', 'doubao', 'grok', 'glm', 'mimo', 'llama', 'other']
+export const MODEL_QUICK_GROUPS: ModelQuickGroup[] = ['all', 'gpt', 'claude', 'gemini', 'deepseek', 'qwen', 'kimi', 'doubao', 'grok', 'glm', 'minimax', 'mimo', 'llama', 'other']
 
 const HISTORICAL_DEEPSEEK_MODEL_IDS = new Set([
   'deepseek-v4-pro',
@@ -181,6 +181,7 @@ function inferModelFamilyFromText(text: string, includeProviderIdentity: boolean
   if (/doubao|volcengine|bytedance/.test(text)) return 'doubao'
   if (/grok|(^|[-_./])xai($|[-_./])|api\.x\.ai/.test(text)) return 'grok'
   if (/glm|bigmodel|zhipu/.test(text)) return 'glm'
+  if (/minimax|mini[-_ ]?max|minimaxi/.test(text)) return 'minimax'
   if (/mimo|xiaomi/.test(text)) return 'mimo'
   if (/claude|anthropic/.test(text)) return 'claude'
   if (/gemini|google/.test(text)) return 'gemini'
@@ -196,12 +197,12 @@ function normalizeModelFamilyText(value: string): string {
     .replace(/[\u0300-\u036f]/g, '')
 }
 
-function isChatCompatibleModel(provider: AIProvider, model: string): boolean {
+export function isProviderChatCompatibleModel(provider: AIProvider, model: string): boolean {
   return getModelConfig(resolveProviderModelAlias(provider, model), provider.type, provider.modelConfigs).chatCompatible !== false
 }
 
 function filterChatCompatibleModels(provider: AIProvider, models: string[]): string[] {
-  return uniqueModels(models).filter((model) => isChatCompatibleModel(provider, model))
+  return uniqueModels(models).filter((model) => isProviderChatCompatibleModel(provider, model))
 }
 
 function uniqueModels(models: string[]): string[] {

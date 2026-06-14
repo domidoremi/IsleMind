@@ -81,19 +81,19 @@ const styles = StyleSheet.create({
 function panelBackground(material: IsleMaterial, colors: ReturnType<typeof useAppTheme>['colors']) {
   switch (material) {
     case 'raised':
-      return colors.material.paperRaised
+      return colors.ui.card.defaultBackground
     case 'muted':
-      return colors.material.paperPressed
+      return colors.ui.card.mutedBackground
     case 'glass':
       return colors.material.glass
     case 'chrome':
-      return colors.material.chrome
+      return colors.ui.card.defaultBackground
     case 'field':
-      return colors.material.field
+      return colors.ui.input.background
     case 'transparent':
       return 'transparent'
     case 'paper':
     default:
-      return colors.material.paper
+      return colors.ui.card.defaultBackground
   }
 }

@@ -23,6 +23,7 @@ export type RuntimeLogEvent =
   | 'request.rectification'
   | 'access.policy'
   | 'proxy.policy'
+  | 'android.operation.audit'
 
 export interface RuntimeLogOptions {
   enabled?: boolean
@@ -148,17 +149,30 @@ async function writeRuntimeLogLine(uri: string, line: string, maxBytes: number):
 }
 
 function trimToMaxBytes(value: string, maxBytes: number): string {
-  if (value.length <= maxBytes) return value
+  if (utf8ByteLength(value) <= maxBytes) return value
   const lines = value.split('\n').filter(Boolean)
   const kept: string[] = []
   let size = 0
   for (let index = lines.length - 1; index >= 0; index -= 1) {
     const line = `${lines[index]}\n`
-    size += line.length
-    if (size > maxBytes && kept.length) break
+    const lineSize = utf8ByteLength(line)
+    if (size + lineSize > maxBytes && kept.length) break
+    size += lineSize
     kept.unshift(line)
   }
   return kept.join('')
+}
+
+function utf8ByteLength(value: string): number {
+  let bytes = 0
+  for (const char of value) {
+    const codePoint = char.codePointAt(0) ?? 0
+    if (codePoint <= 0x7f) bytes += 1
+    else if (codePoint <= 0x7ff) bytes += 2
+    else if (codePoint <= 0xffff) bytes += 3
+    else bytes += 4
+  }
+  return bytes
 }
 
 function isSensitiveKey(key: string): boolean {

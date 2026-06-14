@@ -1,8 +1,10 @@
 import { syncProviderCredentialGroupsDetailed, testProviderModelDetailed } from '@/services/ai/base'
 import { st } from '@/i18n/service'
 import type { AIProvider, ProviderOperationCode } from '@/types'
-import { getProviderAvailableModels, getProviderManualModels } from '@/utils/providerModels'
+import { getProviderAvailableModels, getProviderManualModels, getProviderPreferredModel, isProviderChatCompatibleModel } from '@/utils/providerModels'
 import { resolveProviderModelAliasAccess, type ProviderModelAccessInput } from '@/services/ai/policy/providerModelAccess'
+
+const ACTIVATION_TEST_MODELS_PER_CREDENTIAL = 1
 
 export interface ProviderActivationResult {
   providerId: string
@@ -193,6 +195,7 @@ export async function syncAndTestProvider(
       groupLabel: candidate.groupLabel,
       model: candidate.model,
     })
+    if (test.code === 'rate_limited') break
     if (index < candidates.length - 1) {
       await wait(deps, 450)
     }
@@ -237,7 +240,7 @@ function buildTestCandidates(provider: AIProvider, requestedModel?: string, sett
   }
   const syncedGroups = enabledGroups.filter((group) => group.lastModelSyncStatus === 'ok')
   const candidates = syncedGroups.flatMap((group) => {
-    const models = (group.availableModels ?? []).filter((model) => isModelPolicyAllowed(provider, model, settings))
+    const models = selectActivationTestModels(provider, group.availableModels ?? [], settings)
     return models.map((model) => ({
       groupId: group.id,
       groupLabel: group.label,
@@ -246,7 +249,7 @@ function buildTestCandidates(provider: AIProvider, requestedModel?: string, sett
     }))
   })
   if (candidates.length) return dedupeCandidates(candidates)
-  const manualModels = getProviderManualModels(provider).filter((model) => isModelPolicyAllowed(provider, model, settings))
+  const manualModels = selectActivationTestModels(provider, getProviderManualModels(provider), settings)
   if (manualModels.length) {
     if (enabledGroups.length) {
       return dedupeCandidates(enabledGroups.flatMap((group) => manualModels.map((model) => ({
@@ -261,11 +264,23 @@ function buildTestCandidates(provider: AIProvider, requestedModel?: string, sett
     }
   }
   if (!enabledGroups.length && provider.apiKey?.trim() && provider.lastModelSyncStatus === 'ok' && provider.models.length) {
-    return provider.models
-      .filter((model) => isModelPolicyAllowed(provider, model, settings))
+    return selectActivationTestModels(provider, provider.models, settings)
       .map((model) => ({ apiKey: provider.apiKey.trim(), model }))
   }
   return []
+}
+
+function selectActivationTestModels(provider: AIProvider, models: string[], settings?: ProviderModelAccessInput['settings']): string[] {
+  const allowed = models.filter((model) => isProviderChatCompatibleModel(provider, model) && isModelPolicyAllowed(provider, model, settings))
+  if (!allowed.length) return []
+  const preferred = [
+    provider.lastTestStatus === 'ok' ? provider.lastTestModel : undefined,
+    getProviderPreferredModel(provider),
+    ...getProviderManualModels(provider),
+  ]
+    .filter((model): model is string => !!model?.trim())
+    .filter((model) => allowed.includes(model))
+  return uniqueModels([...preferred, ...allowed]).slice(0, ACTIVATION_TEST_MODELS_PER_CREDENTIAL)
 }
 
 export function buildProviderActivationTestCandidatesForTest(provider: AIProvider, requestedModel?: string, settings?: ProviderModelAccessInput['settings']): Array<{ groupId?: string; groupLabel?: string; apiKey: string; model: string }> {
@@ -277,6 +292,16 @@ function dedupeCandidates(candidates: Array<{ groupId?: string; groupLabel?: str
   return candidates.filter((candidate) => {
     const key = `${candidate.groupId ?? candidate.apiKey}:${candidate.model}`
     if (seen.has(key)) return false
+    seen.add(key)
+    return true
+  })
+}
+
+function uniqueModels(models: string[]): string[] {
+  const seen = new Set<string>()
+  return models.filter((model) => {
+    const key = model.trim()
+    if (!key || seen.has(key)) return false
     seen.add(key)
     return true
   })

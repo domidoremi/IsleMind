@@ -6,6 +6,9 @@ import { localDataStore } from '@/services/localDataStore'
 import { clearHistoricalInjectedGroupModels, clearHistoricalInjectedProviderModels, hasRemoteProviderModelEvidence } from '@/utils/providerModels'
 import { exportMemoriesAsMem0, importMem0Memories, type Mem0MemoryEnvelope } from '@/utils/mem0Interop'
 import { defaultProviderCredentialMode, defaultProviderTokenPlanRegion, defaultProviderWireProtocol } from '@/services/ai/providerProtocolPolicy'
+import { redactSensitiveText } from '@/services/agent/agentTrace'
+import { sanitizeSkillForBackup } from '@/utils/skillSafety'
+import { sanitizeTraceMetadata } from '@/utils/traceSafety'
 import {
   clearLanguagePreferenceSource,
   isLanguagePreferenceSource,
@@ -94,11 +97,11 @@ export async function exportAllData(): Promise<string> {
     {
       app: 'islemind',
       version: 1,
-      conversations,
+      conversations: conversations.map(normalizeConversation),
       settings,
       languagePreferenceSource,
-      providers: providers ?? [],
-      skills: skills ?? [],
+      providers: (providers ?? []).filter(isProviderLike).map(normalizeProvider),
+      skills: (skills ?? []).map(normalizeSkill).filter((skill): skill is SkillDefinition => Boolean(skill)),
       mcpServers: mcpServers ?? [],
       context,
       mem0: exportMemoriesAsMem0(context.memories, { app_id: 'islemind' }, new Date(exportedAt).toISOString()),
@@ -231,15 +234,16 @@ function normalizeSkill(skill: SkillDefinition): SkillDefinition | null {
   if (!skill || typeof skill !== 'object') return null
   if (skill.schema !== 'islemind.skill.v1' || typeof skill.id !== 'string' || typeof skill.name !== 'string') return null
   const now = Date.now()
+  const safeSkill = sanitizeSkillForBackup(skill)
   return {
-    ...skill,
+    ...safeSkill,
     layer: ['base', 'advanced', 'adaptive'].includes(skill.layer) ? skill.layer : 'base',
-    tags: Array.isArray(skill.tags) ? skill.tags.filter((item) => typeof item === 'string') : [],
+    tags: Array.isArray(safeSkill.tags) ? safeSkill.tags.filter((item) => typeof item === 'string') : [],
     priority: Number.isFinite(skill.priority) ? skill.priority : 0,
-    systemPrompt: typeof skill.systemPrompt === 'string' ? skill.systemPrompt : '',
-    variables: Array.isArray(skill.variables) ? skill.variables : undefined,
-    enabledTools: Array.isArray(skill.enabledTools) ? skill.enabledTools.filter((item) => typeof item === 'string') : undefined,
-    knowledgeSources: Array.isArray(skill.knowledgeSources) ? skill.knowledgeSources.filter((item) => typeof item === 'string') : undefined,
+    systemPrompt: typeof safeSkill.systemPrompt === 'string' ? safeSkill.systemPrompt : '',
+    variables: Array.isArray(safeSkill.variables) ? safeSkill.variables : undefined,
+    enabledTools: Array.isArray(safeSkill.enabledTools) ? safeSkill.enabledTools.filter((item) => typeof item === 'string') : undefined,
+    knowledgeSources: Array.isArray(safeSkill.knowledgeSources) ? safeSkill.knowledgeSources.filter((item) => typeof item === 'string') : undefined,
     createdAt: Number.isFinite(skill.createdAt) ? skill.createdAt : now,
     updatedAt: Number.isFinite(skill.updatedAt) ? skill.updatedAt : now,
   }
@@ -271,13 +275,13 @@ function normalizeTraces(traces: ProcessTrace[] | undefined): ProcessTrace[] | u
     .map((trace) => ({
       id: trace.id,
       type: ['reasoning', 'tool', 'retrieval', 'search', 'memory', 'knowledge', 'system'].includes(trace.type) ? trace.type : 'system',
-      title: trace.title,
-      content: typeof trace.content === 'string' ? trace.content : undefined,
-      status: ['pending', 'running', 'done', 'error', 'skipped'].includes(trace.status) ? trace.status : 'done',
+      title: redactSensitiveText(trace.title),
+      content: typeof trace.content === 'string' ? redactSensitiveText(trace.content) : undefined,
+      status: ['pending', 'running', 'done', 'error', 'skipped', 'cancelled'].includes(trace.status) ? trace.status : 'done',
       startedAt: finiteNumber(trace.startedAt),
       completedAt: finiteNumber(trace.completedAt),
       durationMs: finiteNumber(trace.durationMs),
-      metadata: trace.metadata && typeof trace.metadata === 'object' ? trace.metadata : undefined,
+      metadata: sanitizeTraceMetadata(trace.metadata),
     }))
   return normalized.length ? normalized : undefined
 }

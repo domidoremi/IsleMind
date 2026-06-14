@@ -4,22 +4,32 @@ import type { AIProvider, ReasoningEffort } from '@/types'
 export function getReasoningEffortOptions(provider: AIProvider | undefined, model: string | undefined): ReasoningEffort[] {
   if (!provider || !model) return []
   const config = getModelConfig(model, provider.type, provider.modelConfigs)
+  if (config.reasoningMode === 'minimax-thinking') {
+    return isMiniMaxThinkingModel(provider, model) ? config.reasoningEfforts ?? ['none', 'high'] : []
+  }
   if (config.reasoningEfforts?.length) return config.reasoningEfforts
   if (config.reasoningMode === 'openai-effort') return ['low', 'medium', 'high']
   if (config.reasoningMode === 'deepseek-thinking') return ['none', 'low', 'medium', 'high', 'xhigh']
-  if (config.reasoningMode === 'anthropic-thinking') return ['none', 'low', 'medium', 'high', 'xhigh']
+  if (config.reasoningMode === 'anthropic-thinking') return ['none', 'low', 'medium', 'high', 'xhigh', 'max']
+  if (config.reasoningMode === 'dashscope-thinking') return ['none', 'low', 'medium', 'high']
+  if (config.reasoningMode === 'kimi-thinking') return ['none', 'high']
+  if (config.reasoningMode === 'xai-reasoning-effort') return isXAIMultiAgentReasoningModel(model) ? ['low', 'medium', 'high', 'xhigh'] : ['none', 'low', 'medium', 'high']
   if (config.reasoningMode === 'gemini-thinking-level') return ['minimal', 'low', 'medium', 'high']
   if (config.reasoningMode === 'gemini-thinking-budget') return ['none', 'minimal', 'low', 'medium', 'high', 'xhigh']
 
   if (isOpenAIReasoningModel(provider, model)) return ['low', 'medium', 'high']
-  if (isClaudeThinkingModel(provider, model)) return ['none', 'low', 'medium', 'high', 'xhigh']
+  if (isClaudeThinkingModel(provider, model)) return ['none', 'low', 'medium', 'high', 'xhigh', 'max']
   if (isGeminiThinkingModel(provider, model)) {
-    return /^gemini-3/i.test(normalizeModelId(model))
+    return isGeminiThinkingLevelModel(model)
       ? ['minimal', 'low', 'medium', 'high']
       : ['none', 'minimal', 'low', 'medium', 'high', 'xhigh']
   }
   if (isDeepSeekThinkingModel(provider, model)) return ['none', 'low', 'medium', 'high', 'xhigh']
-  if (isXiaomiMimoReasoningModel(provider, model)) return ['minimal', 'low', 'medium', 'high']
+  if (isDashScopeThinkingModel(provider, model)) return ['none', 'low', 'medium', 'high']
+  if (isKimiThinkingModel(provider, model)) return ['none', 'high']
+  if (isMiniMaxThinkingModel(provider, model)) return ['none', 'high']
+  if (isXAIReasoningModel(provider, model)) return isXAIMultiAgentReasoningModel(model) ? ['low', 'medium', 'high', 'xhigh'] : ['none', 'low', 'medium', 'high']
+  if (isXiaomiMimoReasoningModel(provider, model)) return ['none', 'high']
   return []
 }
 
@@ -37,7 +47,14 @@ export function isOpenAIReasoningModel(provider: AIProvider, model: string): boo
 
 export function isClaudeThinkingModel(provider: AIProvider, model: string): boolean {
   if (provider.type !== 'anthropic' && provider.wireProtocol !== 'anthropic-compatible') return false
-  return /claude-(3[.-]7|sonnet-3[.-]7|opus-4|sonnet-4|haiku-4|mythos)/.test(normalizeModelId(model))
+  return /claude-(3[.-]7|sonnet-3[.-]7|fable-5|opus-4|sonnet-4|haiku-4|mythos)/.test(normalizeModelId(model))
+}
+
+export function modelDisallowsAnthropicSampling(model: string): boolean {
+  const normalized = normalizeModelId(model)
+  if (/^claude-(fable-5|mythos-5|mythos-preview)/.test(normalized)) return true
+  const opusMatch = normalized.match(/^claude-opus-4-(\d+)/)
+  return opusMatch ? Number(opusMatch[1]) >= 7 : false
 }
 
 export function isGeminiThinkingModel(provider: AIProvider, model: string): boolean {
@@ -45,16 +62,49 @@ export function isGeminiThinkingModel(provider: AIProvider, model: string): bool
   return /^gemini-(2\.5|3)/i.test(normalizeModelId(model))
 }
 
+export function isGeminiThinkingLevelModel(model: string): boolean {
+  return /^gemini-3/i.test(normalizeModelId(model))
+}
+
 export function isDeepSeekThinkingModel(provider: AIProvider, model: string): boolean {
   const normalized = normalizeModelId(model)
-  if (provider.presetId === 'deepseek' || provider.detectedPresetId === 'deepseek') return true
-  if ((provider.baseUrl ?? '').toLowerCase().includes('deepseek')) return true
-  return provider.modelConfigs?.some((config) =>
+  const remoteThinking = provider.modelConfigs?.some((config) =>
     config.id === model &&
     config.source === 'remote' &&
-    config.reasoningMode === 'deepseek-thinking' &&
-    (normalized.includes('reasoner') || normalized.includes('thinking'))
+    config.reasoningMode === 'deepseek-thinking'
   ) ?? false
+  if (remoteThinking) return true
+  if (normalized === 'deepseek-chat') return false
+  if (provider.presetId !== 'deepseek' && provider.detectedPresetId !== 'deepseek' && !(provider.baseUrl ?? '').toLowerCase().includes('deepseek')) return false
+  return /^deepseek-v4(?:-|$)/.test(normalized) || normalized.includes('reasoner') || normalized.includes('thinking')
+}
+
+export function isDashScopeThinkingModel(provider: AIProvider, model: string): boolean {
+  if (!isProviderFamily(provider, 'dashscope', /dashscope|qwen|qwq|qvq|tongyi|aliyun|alibaba|百炼|阿里/i)) return false
+  const normalized = normalizeModelId(model)
+  return /^(qwen3|qwq|qvq)/.test(normalized)
+}
+
+export function isKimiThinkingModel(provider: AIProvider, model: string): boolean {
+  if (!isProviderFamily(provider, 'moonshot', /moonshot|kimi/i)) return false
+  return /^kimi-k2(?:[.-]|$)/.test(normalizeModelId(model))
+}
+
+export function isMiniMaxThinkingModel(provider: AIProvider, model: string): boolean {
+  if (!isProviderFamily(provider, 'minimax', /minimax|mini[-_ ]?max|minimaxi|海螺/i)) return false
+  return normalizeModelId(model) === 'minimax-m3'
+}
+
+export function isXAIReasoningModel(provider: AIProvider, model: string): boolean {
+  if (!isProviderFamily(provider, 'xai', /(^|[-_./])xai($|[-_./])|grok|api\.x\.ai/i)) return false
+  const normalized = normalizeModelId(model)
+  if (normalized === 'grok-4.3') return true
+  if (normalized.includes('non-reasoning')) return false
+  return /^grok-4\.20(?:[.-]|$)/.test(normalized)
+}
+
+export function isXAIMultiAgentReasoningModel(model: string): boolean {
+  return /^grok-4\.20(?:[.-])multi(?:[.-])agent(?:[.-]|$)/.test(normalizeModelId(model))
 }
 
 export function isXiaomiMimoReasoningModel(provider: AIProvider, model: string): boolean {
@@ -63,6 +113,12 @@ export function isXiaomiMimoReasoningModel(provider: AIProvider, model: string):
   const normalized = normalizeModelId(model)
   if (normalized.includes('tts')) return false
   return /^mimo-v(2|2\.5)/.test(normalized)
+}
+
+function isProviderFamily(provider: AIProvider, presetId: string, pattern: RegExp): boolean {
+  if (provider.presetId === presetId || provider.detectedPresetId === presetId) return true
+  const text = [provider.id, provider.name, provider.baseUrl, provider.models?.join(' ')].filter(Boolean).join(' ')
+  return pattern.test(text)
 }
 
 export function normalizeModelId(model: string): string {

@@ -96,7 +96,7 @@ function backgroundProfile(colors: AppPalette, mode: ThemeBackgroundMode, state:
     warmOpacity: opacityForMode(colors, mode, 'warm') * calmScale,
     traceOpacity: opacityForMode(colors, mode, 'trace') * calmScale,
     scrimOpacity: state === 'modal' ? 0.72 : state === 'input' ? 0.38 : 0.18,
-    traceAccent: state === 'error' ? colors.error : colors.background.trace.accent,
+    traceAccent: state === 'error' ? colors.ui.tone.danger.foreground : colors.background.trace.accent,
     motionScale: colors.background.motion === 'subtle' ? 0.52 : mode === 'focus' || mode === 'surface' ? 0.62 : 1,
   }
 }

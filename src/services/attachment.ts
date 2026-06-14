@@ -2,6 +2,7 @@ import * as FileSystem from 'expo-file-system/legacy'
 import * as ImagePicker from 'expo-image-picker'
 import * as DocumentPicker from 'expo-document-picker'
 import type { Attachment, AttachmentType } from '@/types'
+import { smartCompressImage } from './imageCompression'
 
 function generateId(): string {
   return `${Date.now()}-${Math.random().toString(36).slice(2, 10)}`
@@ -40,16 +41,24 @@ export async function pickImage(): Promise<Attachment | null> {
 
   const asset = result.assets[0]
   assertFileSize(asset.fileSize)
-  const base64 = await fileToBase64(asset.uri)
+
+  // 自动压缩图片
+  const compressed = await smartCompressImage(asset.uri)
+  const base64 = await fileToBase64(compressed.uri)
 
   return {
     id: generateId(),
     type: 'image',
-    uri: asset.uri,
+    uri: compressed.uri,
     name: asset.fileName || 'image.jpg',
     mimeType: asset.mimeType || 'image/jpeg',
-    size: asset.fileSize || 0,
+    size: compressed.compressedSize,
     base64,
+    metadata: {
+      originalSize: compressed.originalSize,
+      compressionRatio: compressed.compressionRatio,
+      savings: compressed.savings,
+    },
   }
 }
 
@@ -63,16 +72,24 @@ export async function takePhoto(): Promise<Attachment | null> {
 
   const asset = result.assets[0]
   assertFileSize(asset.fileSize)
-  const base64 = await fileToBase64(asset.uri)
+
+  // 自动压缩图片
+  const compressed = await smartCompressImage(asset.uri)
+  const base64 = await fileToBase64(compressed.uri)
 
   return {
     id: generateId(),
     type: 'image',
-    uri: asset.uri,
+    uri: compressed.uri,
     name: asset.fileName || 'photo.jpg',
     mimeType: asset.mimeType || 'image/jpeg',
-    size: asset.fileSize || 0,
+    size: compressed.compressedSize,
     base64,
+    metadata: {
+      originalSize: compressed.originalSize,
+      compressionRatio: compressed.compressionRatio,
+      savings: compressed.savings,
+    },
   }
 }
 

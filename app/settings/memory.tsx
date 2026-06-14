@@ -1,8 +1,13 @@
 import { useLocalSearchParams } from 'expo-router'
-import { ContextPanel } from '@/components/settings/ContextPanel'
+import { createLazyComponent } from '@/utils/lazyLoad'
 import { SettingsPageShell } from '@/components/settings/SettingsPageShell'
 import { useSettingsStore } from '@/store/settingsStore'
 import { useTranslation } from 'react-i18next'
+
+// 懒加载记忆面板组件
+const ContextPanel = createLazyComponent(
+  () => import('@/components/settings/ContextPanel')
+)
 
 export default function MemorySettingsScreen() {
   const { t } = useTranslation()

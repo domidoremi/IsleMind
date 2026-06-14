@@ -14,6 +14,7 @@ import type {
 import { embedTextWithProvider } from '@/services/ai/base'
 import { createOnnxEmbeddingProvider, rerankRetrievalSources } from '@/services/rag'
 import { localModelCacheKey } from '@/services/localEmbeddingModels'
+import { shouldUseSqliteWebFallback, sqliteWebFallbackDb } from '@/services/sqliteFallback'
 export type { ConversationMetrics } from '@/services/conversationMetrics'
 
 const DB_NAME = 'islemind-context.db'
@@ -77,6 +78,7 @@ export interface EmbeddingJobStatus {
 }
 
 async function getDb() {
+  if (shouldUseSqliteWebFallback) return sqliteWebFallbackDb as unknown as SQLite.SQLiteDatabase
   if (!dbPromise) {
     dbPromise = SQLite.openDatabaseAsync(DB_NAME).then(async (db) => {
       await db.execAsync(`

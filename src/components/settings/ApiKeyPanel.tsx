@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState, type ReactNode } from 'react'
-import { ActivityIndicator, Platform, Text, TextInput, View } from 'react-native'
+import { ActivityIndicator, Platform, Text, TextInput, View, useWindowDimensions } from 'react-native'
 import * as Clipboard from 'expo-clipboard'
 import { Check, ChevronDown, ClipboardPaste, KeyRound, ListFilter, Plus, Power, RotateCw, SearchCheck, Sparkles, Star, Trash2 } from 'lucide-react-native'
 import { MotiView } from 'moti'
@@ -43,10 +43,21 @@ const CAPABILITY_KEYS: (keyof ProviderCapabilities)[] = [
   'topP',
 ]
 
+function panelCardStyle(colors: ReturnType<typeof useAppTheme>['colors'], borderColor = colors.material.stroke) {
+  return {
+    borderRadius: colors.ui.radius.card,
+    backgroundColor: colors.ui.card.defaultBackground,
+    borderWidth: 1,
+    borderColor,
+  }
+}
+
 export function ApiKeyPanel({ provider, initiallyExpanded = false }: ApiKeyPanelProps) {
   const { colors } = useAppTheme()
   const { t } = useTranslation()
   const dialog = useIsleDialog()
+  const { width } = useWindowDimensions()
+  const compact = width < 430
   const updateProvider = useSettingsStore((state) => state.updateProvider)
   const removeProvider = useSettingsStore((state) => state.removeProvider)
   const updateSettings = useSettingsStore((state) => state.updateSettings)
@@ -402,32 +413,32 @@ export function ApiKeyPanel({ provider, initiallyExpanded = false }: ApiKeyPanel
       animate={{ scale: expanded ? 1 : 0.995, opacity: provider.enabled ? 1 : 0.82 }}
       transition={{ type: 'spring', damping: 22, stiffness: 180 }}
       style={{
-        borderRadius: 26,
-        padding: 14,
-        backgroundColor: colors.material.paper,
+        borderRadius: colors.ui.radius.panel,
+        padding: compact ? 12 : 14,
+        backgroundColor: colors.ui.card.defaultBackground,
         borderWidth: 1,
-        borderColor: expanded ? colors.borderStrong : colors.border,
+        borderColor: expanded ? colors.material.strokeStrong : colors.material.stroke,
         marginBottom: 12,
       }}
     >
       <IslePressable haptic onPress={() => setExpanded((value) => !value)} style={{ minHeight: 44, flexDirection: 'row', alignItems: 'center', gap: 10 }}>
-        <View style={{ width: 44, height: 44, borderRadius: 22, alignItems: 'center', justifyContent: 'center', backgroundColor: colors.mintSoft }}>
-          {provider.presetId === 'newapi' || provider.presetId === 'sub2api' ? <Sparkles color={colors.text} size={18} /> : <KeyRound color={colors.text} size={18} />}
+        <View style={{ width: 44, height: 44, borderRadius: colors.ui.radius.controlMiddle, alignItems: 'center', justifyContent: 'center', backgroundColor: colors.ui.icon.accentBackground }}>
+          {provider.presetId === 'newapi' || provider.presetId === 'sub2api' ? <Sparkles color={colors.ui.icon.accentForeground} size={18} /> : <KeyRound color={colors.ui.icon.accentForeground} size={18} />}
         </View>
-        <View style={{ flex: 1 }}>
+        <View style={{ flex: 1, minWidth: 0 }}>
           <View style={{ flexDirection: 'row', alignItems: 'center', gap: 7, flexWrap: 'wrap' }}>
-            <Text style={{ color: colors.text, fontSize: 16, fontWeight: '900' }}>{provider.name}</Text>
+            <Text numberOfLines={1} style={{ color: colors.text, fontSize: 16, lineHeight: 21, fontWeight: '900', flexShrink: 1, minWidth: 0, includeFontPadding: false }}>{provider.name}</Text>
             {isDefault ? <Badge label={t('settings.default')} tone="warning" /> : null}
             <Badge label={provider.enabled ? t('apiKeyPanel.enabled') : t('apiKeyPanel.disabled')} tone={provider.enabled ? 'success' : 'muted'} />
             <Badge label={t('apiKeyPanel.tokenGroups', { count: Math.max(groupCount, hasKey ? 1 : 0) })} tone={hasKey ? 'success' : 'muted'} />
             <Badge label={lastStatusLabel} tone={lastStatusTone} />
           </View>
-          <Text numberOfLines={1} style={{ color: colors.textSecondary, fontSize: 12, marginTop: 3 }}>
+          <Text numberOfLines={1} style={{ color: colors.textSecondary, fontSize: 12, lineHeight: 17, marginTop: 3, includeFontPadding: false }}>
             {getModelName(primaryModel)} · {t('apiKeyPanel.modelCount', { count: availableModels.length })} · {t('apiKeyPanel.tokenGroups', { count: Math.max(groupCount, hasKey ? 1 : 0) })}
           </Text>
         </View>
-        {provider.lastTestStatus === 'ok' ? <Check color={colors.success} size={18} /> : null}
-        {provider.lastTestStatus === 'bad' ? <RotateCw color={colors.error} size={18} /> : null}
+        {provider.lastTestStatus === 'ok' ? <Check color={colors.ui.tone.success.foreground} size={18} /> : null}
+        {provider.lastTestStatus === 'bad' ? <RotateCw color={colors.ui.tone.danger.foreground} size={18} /> : null}
         <MotiView animate={{ rotate: expanded ? '180deg' : '0deg' }} transition={{ type: 'timing', duration: 180 }}>
           <ChevronDown color={colors.textTertiary} size={19} />
         </MotiView>
@@ -437,13 +448,13 @@ export function ApiKeyPanel({ provider, initiallyExpanded = false }: ApiKeyPanel
         <MotiView from={{ opacity: 0, translateY: -8 }} animate={{ opacity: 1, translateY: 0 }} transition={{ type: 'spring', damping: 20, stiffness: 180 }} style={{ marginTop: 14, gap: 12 }}>
           <View style={{ flexDirection: 'row', gap: 8, flexWrap: 'wrap' }}>
             <MiniAction active={isDefault} label={isDefault ? t('settings.default') : t('apiKeyPanel.setDefault')} onPress={setDefaultProvider}>
-              <Star color={isDefault ? colors.warning : colors.textTertiary} size={15} fill={isDefault ? colors.warning : 'transparent'} />
+              <Star color={isDefault ? colors.ui.control.primaryForeground : colors.textTertiary} size={15} fill={isDefault ? colors.ui.control.primaryForeground : 'transparent'} />
             </MiniAction>
             <MiniAction active={provider.enabled} label={provider.enabled ? t('apiKeyPanel.enabledState') : t('apiKeyPanel.disabledState')} onPress={() => void toggleProviderEnabled()}>
-              <Power color={provider.enabled ? colors.success : colors.textTertiary} size={15} />
+              <Power color={provider.enabled ? colors.ui.control.primaryForeground : colors.textTertiary} size={15} />
             </MiniAction>
             <MiniAction label={t('common.delete')} onPress={() => void confirmRemoveProvider()} disabled={isBusy}>
-              <Trash2 color={colors.error} size={15} />
+              <Trash2 color={colors.ui.tone.danger.foreground} size={15} />
             </MiniAction>
             <MiniAction label={t('apiKeyPanel.fetchModelsAndTest')} onPress={() => void syncAndTest()} disabled={isBusy || !hasKey}>
               <ListFilter color={colors.textTertiary} size={15} />
@@ -451,7 +462,7 @@ export function ApiKeyPanel({ provider, initiallyExpanded = false }: ApiKeyPanel
           </View>
 
           {providerConfigDraft.isProtocolSelectable ? (
-            <View style={{ borderRadius: 18, padding: 11, backgroundColor: colors.islandRaised, gap: 9 }}>
+            <View style={{ padding: 11, gap: 9, ...panelCardStyle(colors) }}>
               <Text style={{ color: colors.text, fontSize: 13, fontWeight: '900' }}>{t('providerSettings.protocol.title')}</Text>
               <View style={{ flexDirection: 'row', gap: 8, flexWrap: 'wrap' }}>
                 {PROVIDER_WIRE_PROTOCOL_OPTIONS.map((protocol) => (
@@ -477,9 +488,9 @@ export function ApiKeyPanel({ provider, initiallyExpanded = false }: ApiKeyPanel
           <IslePressable
             haptic
             onPress={() => setAdvancedOpen((value) => !value)}
-            style={{ minHeight: 44, borderRadius: 22, paddingHorizontal: 13, flexDirection: 'row', alignItems: 'center', gap: 8, backgroundColor: colors.material.field, borderWidth: 1, borderColor: colors.border }}
+            style={{ minHeight: 44, borderRadius: colors.ui.radius.controlLarge, paddingHorizontal: 13, flexDirection: 'row', alignItems: 'center', gap: 8, backgroundColor: colors.ui.input.background, borderWidth: 1, borderColor: colors.ui.input.border }}
           >
-            <Text style={{ flex: 1, color: colors.textSecondary, fontSize: 12, fontWeight: '900' }}>{t('apiKeyPanel.advancedInterfaceSettings')}</Text>
+            <Text numberOfLines={1} style={{ flex: 1, minWidth: 0, color: colors.textSecondary, fontSize: 12, lineHeight: 17, fontWeight: '900', includeFontPadding: false }}>{t('apiKeyPanel.advancedInterfaceSettings')}</Text>
             <MotiView animate={{ rotate: advancedOpen ? '180deg' : '0deg' }} transition={{ type: 'timing', duration: 160 }}>
               <ChevronDown color={colors.textTertiary} size={16} />
             </MotiView>
@@ -487,7 +498,7 @@ export function ApiKeyPanel({ provider, initiallyExpanded = false }: ApiKeyPanel
 
           {advancedOpen ? (
             <View style={{ gap: 10 }}>
-              <View style={{ borderRadius: 18, padding: 11, backgroundColor: colors.islandRaised }}>
+              <View style={{ padding: 11, ...panelCardStyle(colors) }}>
                 <SectionHeader
                   title={t('apiKeyPanel.autoDetect')}
                   description={`${detection.reason} · ${t('apiKeyPanel.suggestedPreset', { name: getProviderPreset(detection.presetId).name })}`}
@@ -509,7 +520,7 @@ export function ApiKeyPanel({ provider, initiallyExpanded = false }: ApiKeyPanel
                 </View>
               </View>
 
-              <View style={{ borderRadius: 18, padding: 11, backgroundColor: colors.islandRaised, gap: 10 }}>
+              <View style={{ padding: 11, gap: 10, ...panelCardStyle(colors) }}>
                 <SectionHeader
                   title={t('apiKeyPanel.capabilityMatrix')}
                   description={t('apiKeyPanel.capabilityMatrixDescription')}
@@ -557,7 +568,7 @@ export function ApiKeyPanel({ provider, initiallyExpanded = false }: ApiKeyPanel
                 ))}
               </View>
             ) : (
-              <View style={{ borderRadius: 18, padding: 12, backgroundColor: colors.islandRaised, borderWidth: 1, borderColor: colors.border }}>
+              <View style={{ padding: 12, ...panelCardStyle(colors) }}>
                 <Text style={{ color: colors.textSecondary, fontSize: 12, lineHeight: 18, fontWeight: '800' }}>{t('apiKeyPanel.noCredentialGroups')}</Text>
               </View>
             )}
@@ -607,7 +618,7 @@ export function ApiKeyPanel({ provider, initiallyExpanded = false }: ApiKeyPanel
             {modelEditing ? (
               <View style={{ gap: 10 }}>
                 {remoteModels.length ? (
-                  <View style={{ borderRadius: 18, padding: 11, backgroundColor: colors.islandRaised, borderWidth: 1, borderColor: colors.border, gap: 8 }}>
+                  <View style={{ padding: 11, gap: 8, ...panelCardStyle(colors) }}>
                     <Text style={{ color: colors.text, fontSize: 12, fontWeight: '900' }}>{t('apiKeyPanel.remoteModels')}</Text>
                     <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 7 }}>
                       {remoteModels.slice(0, 16).map((model) => (
@@ -641,9 +652,9 @@ export function ApiKeyPanel({ provider, initiallyExpanded = false }: ApiKeyPanel
           </View>
 
           {provider.lastModelSyncMessage || provider.lastTestMessage ? (
-            <View style={{ borderRadius: 16, padding: 10, backgroundColor: colors.islandRaised }}>
-              {provider.lastModelSyncMessage ? <Text style={{ color: provider.lastModelSyncStatus === 'bad' ? colors.error : colors.textSecondary, fontSize: 11, lineHeight: 16 }}>{t('apiKeyPanel.syncAndTestLabel', { message: provider.lastModelSyncMessage })}</Text> : null}
-              {provider.lastTestMessage && provider.lastTestMessage !== provider.lastModelSyncMessage ? <Text style={{ color: provider.lastTestStatus === 'bad' ? colors.error : colors.textSecondary, fontSize: 11, lineHeight: 16, marginTop: provider.lastModelSyncMessage ? 3 : 0 }}>{provider.lastTestMessage}</Text> : null}
+            <View style={{ padding: 10, ...panelCardStyle(colors) }}>
+              {provider.lastModelSyncMessage ? <Text style={{ color: provider.lastModelSyncStatus === 'bad' ? colors.ui.tone.danger.foreground : colors.textSecondary, fontSize: 11, lineHeight: 16 }}>{t('apiKeyPanel.syncAndTestLabel', { message: provider.lastModelSyncMessage })}</Text> : null}
+              {provider.lastTestMessage && provider.lastTestMessage !== provider.lastModelSyncMessage ? <Text style={{ color: provider.lastTestStatus === 'bad' ? colors.ui.tone.danger.foreground : colors.textSecondary, fontSize: 11, lineHeight: 16, marginTop: provider.lastModelSyncMessage ? 3 : 0 }}>{provider.lastTestMessage}</Text> : null}
             </View>
           ) : null}
 
@@ -652,7 +663,7 @@ export function ApiKeyPanel({ provider, initiallyExpanded = false }: ApiKeyPanel
             <ActionButton label={t('apiKeyPanel.fetchModelsAndTest')} busy={task === 'syncing'} disabled={!hasKey || isBusy} onPress={() => void syncAndTest()} secondary />
           </View>
 
-          {notice ? <Text style={{ color: provider.lastTestStatus === 'bad' ? colors.error : colors.textSecondary, fontSize: 12, lineHeight: 18 }}>{notice}</Text> : null}
+          {notice ? <Text style={{ color: provider.lastTestStatus === 'bad' ? colors.ui.tone.danger.foreground : colors.textSecondary, fontSize: 12, lineHeight: 18 }}>{notice}</Text> : null}
         </MotiView>
       ) : null}
     </MotiView>
@@ -693,10 +704,14 @@ function Badge({ label, tone }: { label: string; tone: 'success' | 'warning' | '
 
 function MiniBadge({ label, tone }: { label: string; tone: 'success' | 'warning' | 'muted' }) {
   const { colors } = useAppTheme()
-  const background = tone === 'success' ? colors.mintSoft : tone === 'warning' ? colors.amberSoft : colors.islandRaised
+  const toneToken = tone === 'success'
+    ? colors.ui.tone.success
+    : tone === 'warning'
+      ? colors.ui.tone.warning
+      : colors.ui.tone.neutral
   return (
-    <View style={{ minHeight: 24, borderRadius: 12, paddingHorizontal: 8, alignItems: 'center', justifyContent: 'center', backgroundColor: background, borderWidth: 1, borderColor: colors.border }}>
-      <Text style={{ color: colors.textSecondary, fontSize: 10, fontWeight: '900' }}>{label}</Text>
+    <View style={{ minHeight: 24, borderRadius: colors.ui.radius.chip, paddingHorizontal: 8, alignItems: 'center', justifyContent: 'center', backgroundColor: toneToken.background, borderWidth: 1, borderColor: toneToken.border }}>
+      <Text style={{ color: toneToken.foreground, fontSize: 10, fontWeight: '900' }}>{label}</Text>
     </View>
   )
 }
@@ -704,8 +719,8 @@ function MiniBadge({ label, tone }: { label: string; tone: 'success' | 'warning'
 function ChoiceButton({ label, active, onPress }: { label: string; active: boolean; onPress: () => void }) {
   const { colors } = useAppTheme()
   return (
-    <IslePressable haptic onPress={onPress} style={{ minHeight: 44, borderRadius: 22, paddingHorizontal: 12, alignItems: 'center', justifyContent: 'center', backgroundColor: active ? colors.text : colors.material.field }}>
-      <Text style={{ color: active ? colors.surface : colors.textSecondary, fontSize: 11, fontWeight: '900' }}>{label}</Text>
+    <IslePressable haptic onPress={onPress} style={{ minHeight: 44, borderRadius: colors.ui.radius.controlLarge, paddingHorizontal: 12, alignItems: 'center', justifyContent: 'center', backgroundColor: active ? colors.ui.control.primaryBackground : colors.ui.card.defaultBackground, borderWidth: 1, borderColor: active ? colors.ui.control.primaryBorder : colors.material.stroke }}>
+      <Text numberOfLines={1} style={{ color: active ? colors.ui.control.primaryForeground : colors.textSecondary, fontSize: 11, lineHeight: 15, fontWeight: '900', includeFontPadding: false }}>{label}</Text>
     </IslePressable>
   )
 }
@@ -714,9 +729,9 @@ function SectionHeader({ title, description, action }: { title: string; descript
   const { colors } = useAppTheme()
   return (
     <View style={{ flexDirection: 'row', alignItems: 'flex-start', gap: 10 }}>
-      <View style={{ flex: 1 }}>
-        <Text style={{ color: colors.text, fontSize: 14, fontWeight: '900' }}>{title}</Text>
-        {description ? <Text style={{ color: colors.textSecondary, fontSize: 11, lineHeight: 16, marginTop: 2 }}>{description}</Text> : null}
+      <View style={{ flex: 1, minWidth: 0 }}>
+        <Text numberOfLines={1} style={{ color: colors.text, fontSize: 14, lineHeight: 19, fontWeight: '900', includeFontPadding: false }}>{title}</Text>
+        {description ? <Text numberOfLines={2} style={{ color: colors.textSecondary, fontSize: 11, lineHeight: 16, marginTop: 2, includeFontPadding: false }}>{description}</Text> : null}
       </View>
       {action}
     </View>
@@ -740,14 +755,14 @@ function CredentialGroupRow({
 }) {
   const { colors } = useAppTheme()
   const { t } = useTranslation()
-  const statusTone = group.lastModelSyncStatus === 'bad' ? colors.error : group.enabled ? colors.success : colors.textTertiary
+  const statusTone = group.lastModelSyncStatus === 'bad' ? colors.ui.tone.danger.foreground : group.enabled ? colors.ui.tone.success.foreground : colors.textTertiary
   const statusText = group.lastModelSyncStatus === 'ok'
     ? t('apiKeyPanel.synced')
     : group.lastModelSyncStatus === 'bad'
       ? t('apiKeyPanel.syncFailed')
       : group.enabled ? t('apiKeyPanel.enabled') : t('apiKeyPanel.disabled')
   return (
-    <View style={{ borderRadius: 18, padding: 11, backgroundColor: colors.islandRaised, borderWidth: 1, borderColor: group.enabled ? colors.borderStrong : colors.border, gap: 9 }}>
+    <View style={{ padding: 11, gap: 9, ...panelCardStyle(colors, group.enabled ? colors.material.strokeStrong : colors.material.stroke) }}>
       <View style={{ flexDirection: 'row', gap: 8, alignItems: 'center' }}>
         <TextInput
           value={group.label}
@@ -762,29 +777,30 @@ function CredentialGroupRow({
           textAlignVertical={Platform.OS === 'android' ? 'center' : undefined}
           style={{
             flex: 1,
+            minWidth: 0,
             minHeight: 44,
-            borderRadius: 16,
+            borderRadius: colors.ui.radius.field,
             paddingHorizontal: 12,
             color: colors.text,
-            backgroundColor: colors.material.field,
+            backgroundColor: colors.ui.input.background,
             borderWidth: 1,
-            borderColor: colors.border,
+            borderColor: colors.ui.input.border,
             fontSize: 13,
             fontWeight: '900',
           }}
         />
         <IconIsleChip label={group.enabled ? t('apiKeyPanel.disabled') : t('apiKeyPanel.enabled')} onPress={onToggle} tone={group.enabled ? 'mint' : 'default'}>
-          <Power color={group.enabled ? colors.success : colors.textTertiary} size={15} />
+          <Power color={group.enabled ? colors.ui.tone.success.foreground : colors.textTertiary} size={15} />
         </IconIsleChip>
         <IconIsleChip label={t('common.delete')} onPress={onDelete} tone="danger">
-          <Trash2 color={colors.error} size={15} />
+          <Trash2 color={colors.ui.tone.danger.foreground} size={15} />
         </IconIsleChip>
       </View>
       <View style={{ flexDirection: 'row', gap: 7, flexWrap: 'wrap', alignItems: 'center' }}>
-        <Text style={{ color: colors.textSecondary, fontSize: 11, fontWeight: '900' }}>{maskedKey || t('apiKeyPanel.newTokenPending')}</Text>
-        <Text style={{ color: colors.textTertiary, fontSize: 11, fontWeight: '800' }}>{t('apiKeyPanel.modelCount', { count: group.availableModels?.length ?? 0 })}</Text>
-        <Text style={{ color: statusTone, fontSize: 11, fontWeight: '900' }}>{statusText}</Text>
-        {group.failureCount ? <Text style={{ color: colors.error, fontSize: 11, fontWeight: '900' }}>{t('apiKeyPanel.failureCount', { count: group.failureCount })}</Text> : null}
+        <Text numberOfLines={1} style={{ color: colors.textSecondary, fontSize: 11, lineHeight: 15, fontWeight: '900', maxWidth: '100%', includeFontPadding: false }}>{maskedKey || t('apiKeyPanel.newTokenPending')}</Text>
+        <Text numberOfLines={1} style={{ color: colors.textTertiary, fontSize: 11, lineHeight: 15, fontWeight: '800', includeFontPadding: false }}>{t('apiKeyPanel.modelCount', { count: group.availableModels?.length ?? 0 })}</Text>
+        <Text numberOfLines={1} style={{ color: statusTone, fontSize: 11, lineHeight: 15, fontWeight: '900', includeFontPadding: false }}>{statusText}</Text>
+        {group.failureCount ? <Text numberOfLines={1} style={{ color: colors.ui.tone.danger.foreground, fontSize: 11, lineHeight: 15, fontWeight: '900', includeFontPadding: false }}>{t('apiKeyPanel.failureCount', { count: group.failureCount })}</Text> : null}
       </View>
     </View>
   )
@@ -824,13 +840,13 @@ function ModelSummary({ remoteModels, customModels, aliases, manualCount, select
   const shownCustom = customModels.slice(0, 8)
   if (!shownRemote.length && !shownCustom.length && !aliases.length) {
     return (
-      <View style={{ borderRadius: 18, padding: 12, backgroundColor: colors.islandRaised, borderWidth: 1, borderColor: colors.border }}>
+      <View style={{ padding: 12, ...panelCardStyle(colors) }}>
         <Text style={{ color: colors.textSecondary, fontSize: 12, lineHeight: 18, fontWeight: '800' }}>{t('apiKeyPanel.noModels')}</Text>
       </View>
     )
   }
   return (
-    <View style={{ borderRadius: 18, padding: 11, backgroundColor: colors.islandRaised, borderWidth: 1, borderColor: colors.border, gap: 9 }}>
+    <View style={{ padding: 11, gap: 9, ...panelCardStyle(colors) }}>
       <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 7 }}>
         <MiniBadge label={t('apiKeyPanel.remoteModelShort', { count: remoteModels.length })} tone={remoteModels.length ? 'success' : 'muted'} />
         <MiniBadge label={t('apiKeyPanel.customModelShort', { count: manualCount })} tone={manualCount ? 'warning' : 'muted'} />
@@ -846,7 +862,7 @@ function ModelSummary({ remoteModels, customModels, aliases, manualCount, select
       {aliases.length ? (
         <View style={{ gap: 5 }}>
           {aliases.slice(0, 4).map((alias) => (
-            <Text key={alias.alias} numberOfLines={1} style={{ color: colors.textTertiary, fontSize: 11, fontWeight: '800' }}>
+            <Text key={alias.alias} numberOfLines={1} style={{ color: colors.textTertiary, fontSize: 11, lineHeight: 15, fontWeight: '800', includeFontPadding: false }}>
               {`${alias.alias} -> ${alias.model}`}
             </Text>
           ))}
@@ -872,9 +888,11 @@ function ModelChipGroup({ title, models, remaining }: { title: string; models: s
 
 function ModelChip({ label }: { label: string }) {
   const { colors } = useAppTheme()
+  const { width } = useWindowDimensions()
+  const labelMaxWidth = Math.max(112, Math.min(180, width * 0.46))
   return (
-    <View style={{ minHeight: 30, borderRadius: 15, paddingHorizontal: 10, alignItems: 'center', justifyContent: 'center', backgroundColor: colors.material.field, borderWidth: 1, borderColor: colors.border }}>
-      <Text numberOfLines={1} style={{ color: colors.textSecondary, fontSize: 11, fontWeight: '900', maxWidth: 180 }}>{label}</Text>
+    <View style={{ minHeight: 30, borderRadius: colors.ui.radius.chip, paddingHorizontal: 10, alignItems: 'center', justifyContent: 'center', backgroundColor: colors.ui.card.mutedBackground, borderWidth: 1, borderColor: colors.material.stroke }}>
+      <Text numberOfLines={1} style={{ color: colors.textSecondary, fontSize: 11, lineHeight: 15, fontWeight: '900', maxWidth: labelMaxWidth, includeFontPadding: false, textAlignVertical: 'center' }}>{label}</Text>
     </View>
   )
 }
@@ -888,27 +906,27 @@ function CapabilityToggle({ label, active, onPress }: { label: string; active: b
       onPress={onPress}
       style={{
         minHeight: 38,
-        borderRadius: 19,
+        borderRadius: colors.ui.radius.controlMiddle,
         paddingHorizontal: 11,
         flexDirection: 'row',
         alignItems: 'center',
         gap: 7,
-        backgroundColor: active ? colors.mintSoft : colors.material.field,
+        backgroundColor: active ? colors.ui.control.primaryBackground : colors.ui.card.defaultBackground,
         borderWidth: 1,
-        borderColor: active ? colors.primary : colors.border,
+        borderColor: active ? colors.ui.control.primaryBorder : colors.material.stroke,
       }}
     >
-      <View style={{ width: 8, height: 8, borderRadius: 4, backgroundColor: active ? colors.success : colors.textTertiary }} />
-      <Text style={{ color: active ? colors.text : colors.textSecondary, fontSize: 11, fontWeight: '900' }}>{label}</Text>
+      <View style={{ width: 8, height: 8, borderRadius: 4, backgroundColor: active ? colors.ui.control.primaryForeground : colors.textTertiary }} />
+      <Text style={{ color: active ? colors.ui.control.primaryForeground : colors.textSecondary, fontSize: 11, fontWeight: '900' }}>{label}</Text>
     </IslePressable>
   )
 }
 
 function IconIsleChip({ label, children, tone, onPress }: { label: string; children: ReactNode; tone: 'default' | 'mint' | 'danger'; onPress: () => void }) {
   const { colors } = useAppTheme()
-  const background = tone === 'mint' ? colors.mintSoft : tone === 'danger' ? colors.coralWash : colors.material.field
+  const toneToken = tone === 'mint' ? colors.ui.tone.success : tone === 'danger' ? colors.ui.tone.danger : colors.ui.tone.neutral
   return (
-    <IslePressable haptic accessibilityLabel={label} onPress={onPress} style={{ width: 44, height: 44, borderRadius: 22, alignItems: 'center', justifyContent: 'center', backgroundColor: background, borderWidth: 1, borderColor: colors.border }}>
+    <IslePressable haptic accessibilityLabel={label} onPress={onPress} style={{ width: 44, height: 44, borderRadius: colors.ui.radius.controlMiddle, alignItems: 'center', justifyContent: 'center', backgroundColor: toneToken.background, borderWidth: 1, borderColor: toneToken.border }}>
       {children}
     </IslePressable>
   )
@@ -917,9 +935,9 @@ function IconIsleChip({ label, children, tone, onPress }: { label: string; child
 function MiniAction({ label, children, active = false, disabled = false, onPress }: { label: string; children: ReactNode; active?: boolean; disabled?: boolean; onPress: () => void }) {
   const { colors } = useAppTheme()
   return (
-    <IslePressable haptic disabled={disabled} onPress={onPress} style={{ minHeight: 44, borderRadius: 22, paddingHorizontal: 12, flexDirection: 'row', alignItems: 'center', gap: 5, backgroundColor: active ? colors.amberSoft : colors.islandRaised, opacity: disabled ? 0.5 : 1 }}>
+    <IslePressable haptic disabled={disabled} onPress={onPress} style={{ minHeight: 44, borderRadius: colors.ui.radius.controlLarge, paddingHorizontal: 12, flexDirection: 'row', alignItems: 'center', gap: 5, backgroundColor: active ? colors.ui.control.primaryBackground : colors.ui.card.defaultBackground, borderWidth: 1, borderColor: active ? colors.ui.control.primaryBorder : colors.material.stroke, opacity: disabled ? 0.5 : 1 }}>
       {children}
-      <Text style={{ color: active ? colors.text : colors.textSecondary, fontSize: 12, fontWeight: '800' }}>{label}</Text>
+      <Text numberOfLines={1} style={{ color: active ? colors.ui.control.primaryForeground : colors.textSecondary, fontSize: 12, lineHeight: 16, fontWeight: '800', includeFontPadding: false }}>{label}</Text>
     </IslePressable>
   )
 }
@@ -932,7 +950,7 @@ function ActionButton({ label, busy = false, secondary = false, disabled = false
       tone={secondary ? 'soft' : 'primary'}
       disabled={disabled}
       busy={busy}
-      icon={busy ? <ActivityIndicator size="small" color={secondary ? colors.text : colors.surface} /> : undefined}
+      icon={busy ? <ActivityIndicator size="small" color={secondary ? colors.text : colors.ui.control.primaryForeground} /> : undefined}
       onPress={onPress}
       style={{ flexGrow: 1 }}
     />

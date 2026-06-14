@@ -15,21 +15,22 @@ interface IsleChipProps {
 export function IsleChip({ children, active = false, tone = 'default', style }: IsleChipProps) {
   const { colors } = useAppTheme()
   const motion = useMotionPreference()
-  const foreground = tone === 'danger' ? colors.error : active ? colors.surface : colors.textSecondary
+  const toneToken = tone === 'danger'
+    ? colors.ui.tone.danger
+    : tone === 'mint'
+      ? colors.ui.tone.success
+      : tone === 'amber'
+        ? colors.ui.tone.warning
+        : colors.ui.tone.neutral
+  const foreground = tone === 'danger' ? toneToken.foreground : active ? colors.ui.control.primaryForeground : toneToken.foreground
   const background =
-    tone === 'danger'
-      ? colors.coralWash
-      : active
-        ? colors.text
-        : tone === 'mint'
-          ? colors.mintSoft
-          : tone === 'amber'
-            ? colors.amberSoft
-          : colors.islandRaised
+    active
+      ? colors.ui.control.primaryBackground
+      : toneToken.background
 
   return (
     <MotiView
-      animate={{ backgroundColor: background, borderColor: active ? 'transparent' : colors.border, scale: active && !colors.ui.minimal ? 1.035 : 1 }}
+      animate={{ backgroundColor: background, borderColor: active ? colors.ui.control.primaryBorder : toneToken.border, scale: active && !colors.ui.minimal ? 1.035 : 1 }}
       transition={motion === 'full' ? { type: 'spring', ...motionTokens.spring.gentle } : { type: 'timing', duration: 1 }}
       style={[
         {

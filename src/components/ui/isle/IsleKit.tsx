@@ -7,6 +7,7 @@ import {
   Text,
   TextInput,
   View,
+  useWindowDimensions,
   type StyleProp,
   type TextInputProps,
   type TextStyle,
@@ -97,50 +98,6 @@ export const ISLE_UI_COMPONENTS = [
 
 export const ICON_LIST: IsleIconName[] = ['camera', 'chat', 'critterpedia', 'design', 'diy', 'helicopter', 'leaf', 'map', 'miles', 'shopping']
 
-export const isleColors = {
-  primary: '#19c8b9',
-  primaryHover: '#3dd4c6',
-  primaryActive: '#11a89b',
-  primaryBg: '#e6f9f6',
-  success: '#6fba2c',
-  warning: '#f5c31c',
-  error: '#e05a5a',
-  focus: '#ffcc00',
-  focusDark: '#e0b800',
-  text: '#794f27',
-  body: '#725d42',
-  secondary: '#9f927d',
-  muted: '#8a7b66',
-  disabled: '#c4b89e',
-  border: '#9f927d',
-  borderLight: '#c4b89e',
-  bg: '#f8f8f0',
-  card: '#f7f3df',
-  buttonShadow: '#bdaea0',
-  inputShadow: '#d4c9b4',
-  codeBg: '#2b2118',
-  codeBorder: '#3d3028',
-  codeText: '#e8d5bc',
-}
-
-export const isleTokens = isleColors
-
-const cardColors: Record<IsleCardColor, { bg: string; fg: string }> = {
-  default: { bg: isleColors.card, fg: isleColors.body },
-  'app-pink': { bg: '#f8a6b2', fg: '#fff' },
-  purple: { bg: '#b77dee', fg: '#fff' },
-  'app-blue': { bg: '#889df0', fg: '#fff' },
-  'app-yellow': { bg: '#f7cd67', fg: isleColors.body },
-  'app-orange': { bg: '#e59266', fg: '#fff' },
-  'app-teal': { bg: '#82d5bb', fg: '#fff' },
-  'app-green': { bg: '#8ac68a', fg: '#fff' },
-  'app-red': { bg: '#fc736d', fg: '#fff' },
-  'lime-green': { bg: '#d1da49', fg: '#3d5a1a' },
-  'yellow-green': { bg: '#ecdf52', fg: isleColors.body },
-  brown: { bg: '#9a835a', fg: '#fff' },
-  'warm-peach-pink': { bg: '#e18c6f', fg: '#fff' },
-}
-
 const titleMetrics: Record<IsleTitleSize, { fontSize: number; lineHeight: number; minHeight: number; paddingHorizontal: number }> = {
   small: { fontSize: 14, lineHeight: 18, minHeight: 34, paddingHorizontal: 16 },
   middle: { fontSize: 20, lineHeight: 24, minHeight: 44, paddingHorizontal: 22 },
@@ -155,13 +112,13 @@ function useIslePalette() {
     themeId,
     ui: colors.ui,
     minimal: colors.ui.minimal,
-    surface: colors.material.paper,
+    surface: colors.ui.card.defaultBackground,
     card: colors.ui.card.defaultBackground,
     text: colors.text,
     body: colors.textSecondary,
     secondary: colors.textTertiary,
-    border: colors.borderStrong,
-    borderLight: colors.border,
+    border: colors.material.strokeStrong,
+    borderLight: colors.material.stroke,
     shadow: colors.shadowTint,
     inputShadow: colors.ui.input.shadow,
   }
@@ -226,9 +183,9 @@ export function IsleButton({
   const text = type === 'text' || link
   const height = controlHeight(size)
   const fontSize = textSize(size)
-  const foreground = danger && primary ? '#fff' : link ? control.link : danger ? palette.colors.error : primary ? control.primaryForeground : palette.text
-  const background = ghost || text ? 'transparent' : danger && primary ? palette.colors.error : primary ? control.primaryBackground : control.defaultBackground
-  const borderColor = text ? 'transparent' : danger ? palette.colors.error : type === 'dashed' ? palette.borderLight : primary ? control.primaryBorder : palette.border
+  const foreground = danger && primary ? control.dangerForeground : link ? control.link : danger ? palette.ui.tone.danger.foreground : primary ? control.primaryForeground : palette.text
+  const background = ghost || text ? 'transparent' : danger && primary ? palette.ui.tone.danger.foreground : primary ? control.primaryBackground : control.defaultBackground
+  const borderColor = text ? 'transparent' : danger ? palette.ui.tone.danger.border : type === 'dashed' ? palette.colors.material.stroke : primary ? control.primaryBorder : palette.colors.material.strokeStrong
   const shadowColor = danger && primary ? control.dangerShadow : control.shadow
   const shadowOpacity = text || ghost ? 0 : primary ? control.primaryShadowOpacity : control.secondaryShadowOpacity
   const shadowRadius = primary ? control.primaryShadowRadius : control.secondaryShadowRadius
@@ -252,7 +209,7 @@ export function IsleButton({
           gap: 8,
           backgroundColor: background,
           borderWidth: text ? 0 : 2,
-          borderStyle: type === 'dashed' ? 'dashed' : 'solid',
+          borderStyle: type === 'dashed' && !palette.minimal ? 'dashed' : 'solid',
           borderColor,
           opacity: disabled ? 0.5 : 1,
           shadowColor,
@@ -313,14 +270,14 @@ export function IsleInput({
   const [focused, setFocused] = useState(false)
   const disabled = editable === false
   const input = palette.ui.input
-  const borderColor = status === 'error' ? palette.colors.error : status === 'warning' ? palette.colors.warning : input.border
+  const borderColor = status === 'error' ? palette.ui.tone.danger.border : status === 'warning' ? palette.ui.tone.warning.border : input.border
   const activeBorderColor = focused && !disabled ? input.focus : borderColor
-  const statusShadow = status === 'error' ? palette.colors.error : status === 'warning' ? palette.colors.warning : input.shadow
+  const statusShadow = status === 'error' ? palette.ui.tone.danger.foreground : status === 'warning' ? palette.ui.tone.warning.foreground : input.shadow
   const shadowEnabled = shadow || !!status
   const height = controlHeight(size)
   return (
     <View style={wrapperStyle}>
-      {label ? <Text style={{ color: palette.body, fontSize: 12, fontWeight: '900', marginBottom: 6 }}>{label}</Text> : null}
+      {label ? <Text style={{ color: palette.colors.textSecondary, fontSize: 12, fontWeight: '900', marginBottom: 6 }}>{label}</Text> : null}
       <MotiView
         animate={{
           backgroundColor: disabled ? input.disabledBackground : focused ? input.backgroundFocused : input.background,
@@ -364,10 +321,11 @@ export function IsleInput({
           style={[
             {
               flex: 1,
+              minWidth: 0,
               minHeight: multiline ? 78 : Math.max(44, height - 4),
               padding: 0,
               paddingVertical: multiline ? 10 : 0,
-              color: palette.body,
+              color: palette.colors.textSecondary,
               fontSize: textSize(size),
               fontWeight: '600',
               lineHeight: multiline ? 20 : undefined,
@@ -378,7 +336,7 @@ export function IsleInput({
           ]}
         />
         {allowClear && value ? (
-          <PressableScale haptic onPress={() => onChangeText?.('')} style={{ width: 26, height: 26, borderRadius: 13, alignItems: 'center', justifyContent: 'center', backgroundColor: palette.colors.pressed }}>
+          <PressableScale haptic onPress={() => onChangeText?.('')} style={{ width: 26, height: 26, borderRadius: palette.ui.radius.controlSmall, alignItems: 'center', justifyContent: 'center', backgroundColor: palette.ui.card.mutedBackground }}>
             <X color={palette.secondary} size={13} />
           </PressableScale>
         ) : suffix ? suffix : null}
@@ -413,11 +371,11 @@ export function IsleSwitch({
   const switchTokens = palette.ui.switch
   const width = size === 'small' ? 38 : 52
   const height = size === 'small' ? 20 : 28
-  const borderWidth = 2
+  const borderWidth = palette.minimal ? 1 : 2
   const thumbInset = size === 'small' ? 3 : 3
   const knob = height - thumbInset * 2
   const thumbTravel = width - knob - thumbInset * 2
-  const switchTextColor = active ? palette.colors.primaryForeground : palette.colors.textSecondary
+  const switchTextColor = active ? palette.ui.control.primaryForeground : palette.colors.textSecondary
   function toggle() {
     if (disabled || loading) return
     const next = !active
@@ -505,8 +463,8 @@ export function IsleCard({
           padding: titleCard ? 14 : 16,
           backgroundColor: color === 'default' ? uiCard.defaultBackground : selected.bg,
           borderWidth: type === 'dashed' ? 2 : StyleSheet.hairlineWidth,
-          borderStyle: type === 'dashed' ? 'dashed' : 'solid',
-          borderColor: type === 'dashed' ? palette.borderLight : palette.minimal ? palette.borderLight : 'transparent',
+          borderStyle: type === 'dashed' && !palette.minimal ? 'dashed' : 'solid',
+          borderColor: type === 'dashed' ? palette.colors.material.stroke : palette.minimal ? palette.colors.material.stroke : 'transparent',
           shadowColor: palette.colors.shadowTint,
           shadowOpacity: type === 'dashed' ? 0 : uiCard.shadowOpacity,
           shadowRadius: type === 'dashed' ? 0 : uiCard.shadowRadius,
@@ -545,8 +503,8 @@ export function IsleTitle({
   const motion = useMotionPreference()
   const selected = palette.colors.cardColors[color]
   const metrics = titleMetrics[size]
-  const background = color === 'default' ? palette.colors.primary : selected.bg
-  const foreground = color === 'default' ? palette.text : selected.fg
+  const background = color === 'default' ? palette.ui.tone.ink.background : selected.bg
+  const foreground = color === 'default' ? palette.ui.tone.ink.foreground : selected.fg
   const content = children ?? title
   const selfAlignment = align === 'center' ? 'center' : align === 'right' ? 'flex-end' : 'flex-start'
   const titleText = typeof content === 'string' || typeof content === 'number'
@@ -555,7 +513,7 @@ export function IsleTitle({
   const cloudRightSize = metrics.minHeight * 0.68
   const wingWidth = metrics.minHeight * 0.46
   const wingHeight = metrics.minHeight * 0.52
-  const titleBorder = palette.minimal ? palette.borderLight : palette.colors.highlight
+  const titleBorder = palette.minimal ? palette.colors.material.stroke : palette.ui.tone.ink.border
 
   const label = titleText ? (
     <Text
@@ -598,7 +556,7 @@ export function IsleTitle({
           style,
         ]}
       >
-        <View style={{ width: 3, height: Math.max(18, metrics.lineHeight), borderRadius: 999, backgroundColor: palette.colors.primary }} />
+        <View style={{ width: 3, height: Math.max(18, metrics.lineHeight), borderRadius: 999, backgroundColor: palette.ui.section.marker }} />
         {titleText ? (
           <Text
             numberOfLines={2}
@@ -729,16 +687,16 @@ export function IsleCollapse({
   const palette = useIslePalette()
   const motion = useMotionPreference()
   const [expanded, setExpanded] = useState(defaultExpanded)
-  const controlForeground = palette.colors.primaryForeground
+  const controlForeground = palette.ui.control.primaryForeground
   return (
     <IsleCard type="dashed" style={{ opacity: disabled ? 0.55 : 1 }}>
       <PressableScale haptic disabled={disabled} onPress={() => setExpanded((value) => !value)} style={{ minHeight: 34, flexDirection: 'row', alignItems: 'center', gap: 10 }}>
-        <View style={{ width: 28, height: 28, borderRadius: 14, alignItems: 'center', justifyContent: 'center', backgroundColor: palette.colors.primary }}>
+        <View style={{ width: 28, height: 28, borderRadius: palette.ui.radius.controlSmall, alignItems: 'center', justifyContent: 'center', backgroundColor: palette.ui.control.primaryBackground }}>
           <Text style={{ color: controlForeground, fontSize: 18, lineHeight: 22, fontWeight: '900', includeFontPadding: false, textAlignVertical: 'center' }}>{expanded ? '-' : '+'}</Text>
         </View>
-        <Text style={{ flex: 1, color: palette.text, fontSize: 14, lineHeight: 19, fontWeight: '900', includeFontPadding: false, textAlignVertical: 'center' }}>{question}</Text>
+        <Text style={{ flex: 1, minWidth: 0, color: palette.text, fontSize: 14, lineHeight: 19, fontWeight: '900', includeFontPadding: false, textAlignVertical: 'center' }}>{question}</Text>
         <MotiView animate={{ rotate: expanded ? '180deg' : '0deg', scale: expanded ? 1.06 : 1 }} transition={{ type: 'timing', duration: motion === 'full' ? 180 : 1 }}>
-          <Leaf color={expanded ? palette.colors.primary : palette.secondary} size={18} />
+          <Leaf color={expanded ? palette.ui.icon.accentForeground : palette.secondary} size={18} />
         </MotiView>
       </PressableScale>
       <AnimatePresence>
@@ -750,7 +708,7 @@ export function IsleCollapse({
             exit={motion === 'full' ? { opacity: 0, translateY: -4, scale: 0.985 } : { opacity: 0 }}
             transition={motion === 'full' ? { type: 'spring', ...motionTokens.spring.gentle } : { type: 'timing', duration: 1 }}
           >
-            <Text style={{ color: palette.body, fontSize: 13, lineHeight: 19, marginTop: 10, includeFontPadding: false }}>{answer}</Text>
+            <Text style={{ color: palette.colors.textSecondary, fontSize: 13, lineHeight: 19, marginTop: 10, includeFontPadding: false }}>{answer}</Text>
           </MotiView>
         ) : null}
       </AnimatePresence>
@@ -798,9 +756,9 @@ export function IsleModal({
         >
           <IsleCard type="title" style={{ padding: 22, borderRadius: palette.ui.radius.modal }}>
             <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
-              <Text style={{ flex: 1, color: palette.text, fontSize: 18, fontWeight: '900' }}>{title}</Text>
-              <PressableScale haptic onPress={onClose} style={{ width: 34, height: 34, borderRadius: 17, alignItems: 'center', justifyContent: 'center', backgroundColor: palette.colors.pressed }}>
-                <X color={palette.body} size={16} />
+              <Text style={{ flex: 1, minWidth: 0, color: palette.text, fontSize: 18, fontWeight: '900' }}>{title}</Text>
+              <PressableScale haptic onPress={onClose} style={{ width: 34, height: 34, borderRadius: palette.ui.radius.controlSmall, alignItems: 'center', justifyContent: 'center', backgroundColor: palette.ui.card.mutedBackground }}>
+                <X color={palette.colors.textSecondary} size={16} />
               </PressableScale>
             </View>
             <View style={{ marginTop: 12 }}>
@@ -854,13 +812,16 @@ export function IsleTypewriter({ children, speed = 40, trigger, autoPlay = true,
     return () => clearInterval(timer)
   }, [autoPlay, onDone, speed, text, trigger])
   if (!text) return <>{children}</>
-  return <Text style={[{ color: palette.body, fontSize: 14, lineHeight: 21, fontWeight: '700' }, textStyle]}>{text.slice(0, count)}</Text>
+  return <Text style={[{ color: palette.colors.textSecondary, fontSize: 14, lineHeight: 21, fontWeight: '700' }, textStyle]}>{text.slice(0, count)}</Text>
 }
 
 export function IsleDivider({ type = 'line-brown', style }: { type?: IsleDividerType; style?: StyleProp<ViewStyle> }) {
   const palette = useIslePalette()
-  const color = type === 'line-teal' ? palette.colors.primary : type === 'line-yellow' || type === 'wave-yellow' ? palette.colors.accent : type === 'line-white' ? palette.colors.material.paper : palette.borderLight
+  const color = type === 'line-teal' ? palette.ui.icon.accentForeground : type === 'line-yellow' || type === 'wave-yellow' ? palette.colors.accent : type === 'line-white' ? palette.ui.card.defaultBackground : palette.colors.material.stroke
   const wave = type === 'wave-yellow'
+  if (palette.minimal) {
+    return <View style={[{ height: StyleSheet.hairlineWidth, backgroundColor: type === 'line-white' ? palette.colors.material.stroke : color, opacity: type === 'line-brown' ? 1 : 0.74 }, style]} />
+  }
   return (
     <View style={[{ height: 14, flexDirection: 'row', alignItems: 'center', overflow: 'hidden' }, style]}>
       {Array.from({ length: wave ? 18 : 14 }).map((_, index) => (
@@ -928,6 +889,9 @@ export function IsleSelect({ options, value, placeholder = 'Select', disabled = 
   const motion = useMotionPreference()
   const [open, setOpen] = useState(false)
   const selected = options.find((option) => option.value === value)
+  const activeOptionBackground = palette.ui.tone.success.background
+  const activeOptionForeground = palette.ui.tone.success.foreground
+  const activeOptionBorder = palette.ui.tone.success.border
   return (
     <View style={style}>
       <IsleButton
@@ -940,7 +904,7 @@ export function IsleSelect({ options, value, placeholder = 'Select', disabled = 
             transition={motion === 'full' ? { type: 'spring', ...motionTokens.spring.gentle } : { type: 'timing', duration: 1 }}
             style={{ width: 16, height: 16, alignItems: 'center', justifyContent: 'center' }}
           >
-            <ChevronDown color={palette.body} size={15} />
+            <ChevronDown color={palette.colors.textSecondary} size={15} />
           </MotiView>
         }
         onPress={() => setOpen((current) => !current)}
@@ -964,14 +928,14 @@ export function IsleSelect({ options, value, placeholder = 'Select', disabled = 
                     onChange?.(option.value)
                     setOpen(false)
                   }}
-                  style={{ minHeight: 34, borderRadius: 17, paddingHorizontal: 10, justifyContent: 'center', opacity: option.disabled ? 0.45 : 1 }}
+                  style={{ minHeight: 34, borderRadius: palette.ui.radius.controlSmall, paddingHorizontal: 10, justifyContent: 'center', opacity: option.disabled ? 0.45 : 1 }}
                 >
                   <MotiView
-                    animate={{ backgroundColor: option.value === value ? palette.colors.mintSoft : 'transparent', scale: option.value === value ? 1.01 : 1 }}
+                    animate={{ backgroundColor: option.value === value ? activeOptionBackground : 'transparent', scale: option.value === value ? 1.01 : 1 }}
                     transition={motion === 'full' ? { type: 'spring', ...motionTokens.spring.gentle } : { type: 'timing', duration: 1 }}
-                    style={{ minHeight: 34, borderRadius: 17, paddingHorizontal: 10, justifyContent: 'center', marginHorizontal: -10 }}
+                    style={{ minHeight: 34, borderRadius: palette.ui.radius.controlSmall, paddingHorizontal: 10, justifyContent: 'center', marginHorizontal: -10, borderWidth: option.value === value ? StyleSheet.hairlineWidth : 0, borderColor: activeOptionBorder }}
                   >
-                    <Text style={{ color: option.value === value ? palette.colors.primary : palette.body, fontSize: 13, lineHeight: 18, fontWeight: '900', includeFontPadding: false, textAlignVertical: 'center' }}>{option.label}</Text>
+                    <Text style={{ color: option.value === value ? activeOptionForeground : palette.colors.textSecondary, fontSize: 13, lineHeight: 18, fontWeight: '900', includeFontPadding: false, textAlignVertical: 'center' }}>{option.label}</Text>
                   </MotiView>
                 </PressableScale>
               ))}
@@ -1001,7 +965,9 @@ export function IsleCheckbox({ options, value = [], size = 'middle', direction =
   const motion = useMotionPreference()
   const box = size === 'small' ? 18 : size === 'large' ? 28 : 22
   const fontSize = size === 'small' ? 12 : size === 'large' ? 16 : 14
-  const checkColor = palette.colors.primaryForeground
+  const activeBoxBackground = palette.ui.control.primaryBackground
+  const activeBoxBorder = palette.ui.control.primaryBorder
+  const checkColor = palette.ui.control.primaryForeground
   function toggle(option: IsleCheckboxOption) {
     if (disabled || option.disabled) return
     const next = value.includes(option.value) ? value.filter((item) => item !== option.value) : [...value, option.value]
@@ -1014,9 +980,9 @@ export function IsleCheckbox({ options, value = [], size = 'middle', direction =
         return (
           <PressableScale key={option.value} haptic disabled={disabled || option.disabled} onPress={() => toggle(option)} style={{ minHeight: Math.max(34, box + 10), flexDirection: 'row', alignItems: 'center', gap: 8, opacity: disabled || option.disabled ? 0.55 : 1 }}>
             <MotiView
-              animate={{ backgroundColor: active ? palette.colors.primary : palette.card, borderColor: active ? palette.colors.mintPressed : palette.borderLight, scale: active ? 1.04 : 1, rotate: active || palette.minimal ? '0deg' : '-2deg' }}
+              animate={{ backgroundColor: active ? activeBoxBackground : palette.card, borderColor: active ? activeBoxBorder : palette.colors.material.stroke, scale: active ? 1.04 : 1, rotate: active || palette.minimal ? '0deg' : '-2deg' }}
               transition={motion === 'full' ? { type: 'spring', ...motionTokens.spring.gentle } : { type: 'timing', duration: 1 }}
-              style={{ width: box, height: box, borderRadius: 8, alignItems: 'center', justifyContent: 'center', borderWidth: 2 }}
+              style={{ width: box, height: box, borderRadius: palette.minimal ? palette.ui.radius.controlSmall : 8, alignItems: 'center', justifyContent: 'center', borderWidth: palette.minimal ? StyleSheet.hairlineWidth : 2 }}
             >
               <AnimatePresence>
                 {active ? (
@@ -1032,7 +998,7 @@ export function IsleCheckbox({ options, value = [], size = 'middle', direction =
                 ) : null}
               </AnimatePresence>
             </MotiView>
-            <Text style={{ color: palette.body, fontSize, lineHeight: Math.max(18, fontSize + 4), fontWeight: '700', includeFontPadding: false, textAlignVertical: 'center' }}>{option.label}</Text>
+            <Text style={{ color: palette.colors.textSecondary, fontSize, lineHeight: Math.max(18, fontSize + 4), fontWeight: '700', includeFontPadding: false, textAlignVertical: 'center' }}>{option.label}</Text>
           </PressableScale>
         )
       })}
@@ -1070,7 +1036,7 @@ export function IsleTabs({ items, activeKey, onChange, style }: { items: IsleTab
                   transition={motion === 'full' ? { type: 'spring', ...motionTokens.spring.gentle } : { type: 'timing', duration: 1 }}
                   style={{ width: 14, height: 14, alignItems: 'center', justifyContent: 'center' }}
                 >
-                  <Leaf color={palette.colors.primary} size={13} />
+                  <Leaf color={palette.colors.ui.control.primaryForeground} size={13} />
                 </MotiView>
               }
               onPress={() => onChange?.(item.key)}
@@ -1085,6 +1051,18 @@ export function IsleTabs({ items, activeKey, onChange, style }: { items: IsleTab
 export function IsleFooter({ type = 'tree', style }: { type?: IsleFooterType; style?: StyleProp<ViewStyle> }) {
   const palette = useIslePalette()
   const colors = type === 'sea' ? palette.ui.footer.sea : palette.ui.footer.tree
+  if (palette.minimal) {
+    return (
+      <View style={[{ height: type === 'sea' ? 32 : 28, justifyContent: 'flex-end' }, style]}>
+        <View style={{ height: StyleSheet.hairlineWidth, backgroundColor: colors[0], opacity: 0.78 }} />
+        <View style={{ flexDirection: 'row', gap: 5, marginTop: 6 }}>
+          {colors.slice(0, 3).map((color, index) => (
+            <View key={`${type}-${color}`} style={{ flex: 1, height: type === 'sea' ? 4 : 3, borderRadius: 999, backgroundColor: color, opacity: 0.68 - index * 0.08 }} />
+          ))}
+        </View>
+      </View>
+    )
+  }
   return (
     <View style={[{ height: type === 'sea' ? 56 : 44, overflow: 'hidden', justifyContent: 'flex-end' }, style]}>
       <View style={{ flexDirection: 'row', alignItems: 'flex-end', gap: type === 'sea' ? 0 : 6 }}>
@@ -1120,21 +1098,24 @@ export function IsleLoading({ label, style }: { label?: string; style?: StylePro
   const palette = useIslePalette()
   const motion = useMotionPreference()
   const loadingTokens = palette.ui.loading
+  const loaderWidth = palette.minimal ? 64 : 76
+  const loaderHeight = palette.minimal ? 36 : 44
+  const dotSize = palette.minimal ? 8 : 10
   return (
     <View style={[{ alignItems: 'center', justifyContent: 'center', padding: 16 }, style]}>
-      <View style={{ width: 76, height: 44, borderRadius: 28, alignItems: 'center', justifyContent: 'center', backgroundColor: loadingTokens.background, borderWidth: 2, borderColor: loadingTokens.border }}>
+      <View style={{ width: loaderWidth, height: loaderHeight, borderRadius: palette.ui.radius.chip, alignItems: 'center', justifyContent: 'center', backgroundColor: loadingTokens.background, borderWidth: palette.minimal ? StyleSheet.hairlineWidth : 2, borderColor: loadingTokens.border }}>
         <View style={{ flexDirection: 'row', gap: 5 }}>
           {[0, 1, 2].map((index) => (
             <MotiView
               key={index}
               animate={motion === 'full' ? { translateY: [-2, -8, -2], scale: [1, 1.12, 1] } : { translateY: 0, scale: 1 }}
               transition={motion === 'full' ? { loop: true, type: 'timing', duration: 900, delay: index * 110 } : { type: 'timing', duration: 1 }}
-              style={{ width: 10, height: 10, borderRadius: 5, backgroundColor: loadingTokens.dot }}
+              style={{ width: dotSize, height: dotSize, borderRadius: dotSize / 2, backgroundColor: loadingTokens.dot }}
             />
           ))}
         </View>
       </View>
-      {label ? <Text style={{ color: palette.body, fontSize: 12, fontWeight: '900', marginTop: 8 }}>{label}</Text> : null}
+      {label ? <Text style={{ color: palette.colors.textSecondary, fontSize: 12, fontWeight: '900', marginTop: 8 }}>{label}</Text> : null}
     </View>
   )
 }
@@ -1148,26 +1129,31 @@ export interface IsleTableColumn<T extends Record<string, unknown> = Record<stri
 
 export function IsleTable<T extends Record<string, unknown>>({ columns, data, emptyText = 'No data' }: { columns: IsleTableColumn<T>[]; data: T[]; emptyText?: string }) {
   const palette = useIslePalette()
+  const { width } = useWindowDimensions()
+  const tableBackground = palette.minimal ? palette.ui.card.mutedBackground : palette.card
+  const rowBorderWidth = palette.minimal ? StyleSheet.hairlineWidth : 1
+  const tableMinWidth = Math.max(240, Math.min(280, width - 32))
+  const defaultColumnWidth = Math.max(96, Math.min(124, width * 0.32))
   return (
     <ScrollView horizontal showsHorizontalScrollIndicator={false}>
-      <View style={{ minWidth: 280, borderRadius: palette.ui.radius.card, overflow: 'hidden', borderWidth: 1, borderColor: palette.borderLight, backgroundColor: palette.card }}>
+      <View style={{ minWidth: tableMinWidth, borderRadius: palette.ui.radius.card, overflow: 'hidden', borderWidth: rowBorderWidth, borderColor: palette.colors.material.stroke, backgroundColor: tableBackground }}>
         <View style={{ flexDirection: 'row', backgroundColor: palette.ui.table.headerBackground }}>
           {columns.map((column) => (
-            <Text key={String(column.dataIndex)} style={{ width: column.width ?? 120, padding: 10, color: palette.text, fontSize: 12, fontWeight: '900' }}>{column.title}</Text>
+            <Text key={String(column.dataIndex)} style={{ width: column.width ?? defaultColumnWidth, padding: 10, color: palette.text, fontSize: 12, fontWeight: '900' }}>{column.title}</Text>
           ))}
         </View>
         {data.length ? data.map((row, index) => (
-          <View key={index} style={{ flexDirection: 'row', borderTopWidth: 1, borderTopColor: palette.borderLight }}>
+          <View key={index} style={{ flexDirection: 'row', borderTopWidth: rowBorderWidth, borderTopColor: palette.colors.material.stroke }}>
             {columns.map((column) => (
-              <Text key={String(column.dataIndex)} numberOfLines={2} style={{ width: column.width ?? 120, padding: 10, color: palette.body, fontSize: 12, lineHeight: 17, fontWeight: '700' }}>
+              <Text key={String(column.dataIndex)} numberOfLines={2} style={{ width: column.width ?? defaultColumnWidth, padding: 10, color: palette.colors.textSecondary, fontSize: 12, lineHeight: 17, fontWeight: '700' }}>
                 {column.render ? column.render(row[column.dataIndex], row, index) : String(row[column.dataIndex] ?? '')}
               </Text>
             ))}
           </View>
         )) : (
           <View style={{ padding: 18, alignItems: 'center' }}>
-            <Leaf color={palette.secondary} size={24} />
-            <Text style={{ color: palette.secondary, fontSize: 12, fontWeight: '800', marginTop: 6 }}>{emptyText}</Text>
+            {palette.minimal ? null : <Leaf color={palette.secondary} size={24} />}
+            <Text style={{ color: palette.secondary, fontSize: 12, fontWeight: '800', marginTop: palette.minimal ? 0 : 6 }}>{emptyText}</Text>
           </View>
         )}
       </View>
@@ -1183,13 +1169,15 @@ export function IsleTime({ style }: { style?: StyleProp<ViewStyle> }) {
     return () => clearInterval(timer)
   }, [])
   const weekdays = ['SUN', 'MON', 'TUE', 'WED', 'THU', 'FRI', 'SAT']
+  const frameBorderWidth = palette.minimal ? StyleSheet.hairlineWidth : 3
+  const timeFontSize = palette.minimal ? 28 : 32
   return (
-    <View style={[{ flexDirection: 'row', alignItems: 'center', gap: 16, paddingHorizontal: 20, paddingVertical: 12, borderRadius: palette.ui.radius.panel, backgroundColor: palette.surface, borderWidth: 3, borderColor: palette.ui.time.border }, style]}>
-      <View style={{ paddingRight: 16, borderRightWidth: 3, borderRightColor: palette.ui.time.divider }}>
-        <Text style={{ color: palette.colors.success, fontSize: 12, fontWeight: '900', letterSpacing: 1.2 }}>{weekdays[time.getDay()]}</Text>
-        <Text style={{ color: palette.body, fontSize: 18, fontWeight: '900' }}>{time.getMonth() + 1}/{time.getDate()}</Text>
+    <View style={[{ flexDirection: 'row', alignItems: 'center', gap: palette.minimal ? 14 : 16, paddingHorizontal: palette.minimal ? 18 : 20, paddingVertical: 12, borderRadius: palette.ui.radius.panel, backgroundColor: palette.minimal ? palette.ui.card.mutedBackground : palette.colors.ui.card.defaultBackground, borderWidth: frameBorderWidth, borderColor: palette.ui.time.border }, style]}>
+      <View style={{ paddingRight: palette.minimal ? 14 : 16, borderRightWidth: frameBorderWidth, borderRightColor: palette.ui.time.divider }}>
+        <Text style={{ color: palette.ui.tone.success.foreground, fontSize: 12, lineHeight: 16, fontWeight: '900', letterSpacing: 0, includeFontPadding: false, textAlignVertical: 'center' }}>{weekdays[time.getDay()]}</Text>
+        <Text style={{ color: palette.colors.textSecondary, fontSize: 18, lineHeight: 23, fontWeight: '900', includeFontPadding: false, textAlignVertical: 'center' }}>{time.getMonth() + 1}/{time.getDate()}</Text>
       </View>
-      <Text style={{ color: palette.body, fontSize: 32, fontWeight: '900', letterSpacing: 1 }}>
+      <Text style={{ color: palette.colors.textSecondary, fontSize: timeFontSize, lineHeight: timeFontSize + 5, fontWeight: '900', letterSpacing: 0, includeFontPadding: false, textAlignVertical: 'center' }}>
         {time.getHours().toString().padStart(2, '0')}:{time.getMinutes().toString().padStart(2, '0')}
       </Text>
     </View>
@@ -1198,6 +1186,9 @@ export function IsleTime({ style }: { style?: StyleProp<ViewStyle> }) {
 
 export function IslePhone({ title = 'IsleMind', style }: { title?: string; style?: StyleProp<ViewStyle> }) {
   const palette = useIslePalette()
+  const { width } = useWindowDimensions()
+  const phoneWidth = Math.max(164, Math.min(188, width - 48))
+  const appTileSize = phoneWidth < 176 ? 40 : 44
   const apps: { name: IsleIconName; color: IsleCardColor }[] = [
     { name: 'camera', color: 'purple' },
     { name: 'chat', color: 'app-blue' },
@@ -1207,14 +1198,14 @@ export function IslePhone({ title = 'IsleMind', style }: { title?: string; style
     { name: 'design', color: 'app-green' },
   ]
   return (
-    <View style={[{ width: 188, borderRadius: palette.minimal ? 24 : 46, padding: 14, backgroundColor: palette.surface, borderWidth: 2, borderColor: palette.borderLight }, style]}>
+    <View style={[{ width: phoneWidth, borderRadius: palette.minimal ? 24 : 46, padding: 14, backgroundColor: palette.minimal ? palette.ui.card.mutedBackground : palette.colors.ui.card.defaultBackground, borderWidth: palette.minimal ? StyleSheet.hairlineWidth : 2, borderColor: palette.colors.material.stroke }, style]}>
       <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
-        <Text style={{ color: palette.body, fontSize: 12, fontWeight: '900' }}>{title}</Text>
+        <Text style={{ color: palette.colors.textSecondary, fontSize: 12, fontWeight: '900' }}>{title}</Text>
         <MoreHorizontal color={palette.secondary} size={18} />
       </View>
       <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 10, marginTop: 14 }}>
         {apps.map((app) => (
-          <View key={app.name} style={{ width: 44, height: 44, borderRadius: palette.minimal ? 12 : 18, alignItems: 'center', justifyContent: 'center', backgroundColor: palette.colors.cardColors[app.color].bg }}>
+          <View key={app.name} style={{ width: appTileSize, height: appTileSize, borderRadius: palette.minimal ? 12 : 18, alignItems: 'center', justifyContent: 'center', backgroundColor: palette.colors.cardColors[app.color].bg, borderWidth: palette.minimal ? StyleSheet.hairlineWidth : 0, borderColor: palette.colors.material.stroke }}>
             <IsleIcon name={app.name} color={palette.colors.cardColors[app.color].fg} size={20} />
           </View>
         ))}
