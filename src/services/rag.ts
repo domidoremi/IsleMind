@@ -24,6 +24,7 @@ import {
   type LocalEmbeddingModel,
   type LocalEmbeddingTokenizer,
 } from '@/services/localEmbeddingModels'
+import { lazyEmbedding } from '@/services/lazyEmbedding'
 
 export interface SentenceChunk {
   content: string
@@ -38,17 +39,24 @@ export interface EmbeddingProvider {
   available: () => Promise<boolean>
 }
 
+export interface RagRetrievalOptions {
+  signal?: AbortSignal
+}
+
 export interface AgenticRagOptions {
   query: string
   conversationTitle?: string
   systemPrompt?: string
   settings: Settings
+  profile?: RagProfile
+  profileReason?: string
   memorySources?: RetrievalSource[]
-  retrieveKnowledge: (query: string, limit: number) => Promise<RetrievalSource[]>
-  retrieveAgentic?: (query: string, plan: RagQueryPlan, limit: number) => Promise<RetrievalSource[]>
+  retrieveKnowledge: (query: string, limit: number, options?: RagRetrievalOptions) => Promise<RetrievalSource[]>
+  retrieveAgentic?: (query: string, plan: RagQueryPlan, limit: number, options?: RagRetrievalOptions) => Promise<RetrievalSource[]>
   now?: () => number
   tokenBudget?: number
   maxContextItems?: number
+  signal?: AbortSignal
 }
 
 const TARGET_CHUNK_LENGTH = 1200
@@ -58,6 +66,7 @@ const DEFAULT_CONTEXT_TOKEN_BUDGET = 2800
 const DEFAULT_MAX_CONTEXT_ITEMS = 8
 
 export async function runAgenticRag(options: AgenticRagOptions): Promise<RagContextPack> {
+  throwIfAgenticRagCancelled(options.signal)
   const now = options.now?.() ?? Date.now()
   const trace: RagTraceStep[] = []
   const planStarted = now
@@ -66,6 +75,8 @@ export async function runAgenticRag(options: AgenticRagOptions): Promise<RagCont
     conversationTitle: options.conversationTitle,
     systemPrompt: options.systemPrompt,
     settings: options.settings,
+    profile: options.profile,
+    profileReason: options.profileReason,
     now,
     tokenBudget: options.tokenBudget ?? DEFAULT_CONTEXT_TOKEN_BUDGET,
     maxContextItems: options.maxContextItems ?? DEFAULT_MAX_CONTEXT_ITEMS,
@@ -76,8 +87,11 @@ export async function runAgenticRag(options: AgenticRagOptions): Promise<RagCont
     title: 'RAG plan',
     status: 'done',
     startedAt: planStarted,
-    content: `${plan.profile} · ${plan.complexity} · ${plan.enabledTechniques.join(', ') || 'baseline'}`,
+    content: `${plan.profile} · ${plan.profileSource} · ${plan.complexity} · ${plan.enabledTechniques.join(', ') || 'baseline'}`,
     metadata: {
+      profile: plan.profile,
+      profileSource: plan.profileSource,
+      profileReason: plan.profileReason,
       language: plan.language,
       intent: plan.intent,
       risk: plan.risk,
@@ -87,9 +101,11 @@ export async function runAgenticRag(options: AgenticRagOptions): Promise<RagCont
   }, options.now?.() ?? Date.now()))
 
   const retrieved = await retrieveRagCandidates(plan, options)
+  throwIfAgenticRagCancelled(options.signal)
   trace.push(retrieved.trace)
 
   const reranked = rerankAgenticCandidates(plan, retrieved.candidates)
+  throwIfAgenticRagCancelled(options.signal)
   trace.push(completeRagTrace({
     id: `${plan.id}-rerank`,
     stage: 'rerank',
@@ -106,6 +122,7 @@ export async function runAgenticRag(options: AgenticRagOptions): Promise<RagCont
   }, options.now?.() ?? Date.now()))
 
   const packed = packRagContext(plan, reranked.after, options.tokenBudget ?? DEFAULT_CONTEXT_TOKEN_BUDGET)
+  throwIfAgenticRagCancelled(options.signal)
   trace.push(completeRagTrace({
     id: `${plan.id}-pack`,
     stage: 'pack',
@@ -148,17 +165,31 @@ export async function runAgenticRag(options: AgenticRagOptions): Promise<RagCont
   }
 }
 
+function throwIfAgenticRagCancelled(signal?: AbortSignal): void {
+  if (!signal?.aborted) return
+  const error = new Error('RAG retrieval was cancelled.')
+  error.name = 'AbortError'
+  throw error
+}
+
 export function createRagQueryPlan(input: {
   query: string
   conversationTitle?: string
   systemPrompt?: string
   settings: Settings
+  profile?: RagProfile
+  profileReason?: string
   now?: number
   tokenBudget?: number
   maxContextItems?: number
 }): RagQueryPlan {
   const query = input.query.trim()
-  const profile = normalizeRagProfile(input.settings.ragProfile, input.settings.ragMode)
+  const profileSelection = resolveRagProfileSelection({
+    requestedProfile: input.profile,
+    requestReason: input.profileReason,
+    settings: input.settings,
+  })
+  const profile = profileSelection.profile
   const language = detectLanguage(query)
   const intent = detectIntent(query)
   const complexity = detectComplexity(query)
@@ -171,6 +202,8 @@ export function createRagQueryPlan(input: {
   return {
     id: `rag-${Math.abs(hashString(`${query}:${input.now ?? Date.now()}`)).toString(36)}`,
     profile,
+    profileSource: profileSelection.source,
+    profileReason: profileSelection.reason,
     query,
     language,
     intent,
@@ -448,32 +481,44 @@ export function createOnnxPlaceholderProvider(): EmbeddingProvider {
 }
 
 export async function createOnnxEmbeddingProvider(settings: Pick<Settings, 'localEmbeddingModelId' | 'localEmbeddingModelSource'>): Promise<EmbeddingProvider | null> {
-  const active = await resolveActiveLocalEmbeddingModel(settings as Settings)
-  if (!active) return null
-  if (!supportsTokenizer(active.model.tokenizer)) {
-    return {
-      id: 'onnx',
-      dimension: active.model.dimension,
-      available: async () => false,
-      embed: async () => {
-        throw new Error(`Tokenizer ${active.model.tokenizer} is not supported in this build.`)
-      },
-    }
+  // 优化：延迟加载模型，仅在首次embed时加载
+  // 避免在createProvider时就加载108MB的AI模型
+
+  let cachedModel: { model: LocalEmbeddingModel; source: string; directoryUri: string } | null = null
+
+  const loadModelOnDemand = async () => {
+    if (cachedModel) return cachedModel
+
+    const active = await resolveActiveLocalEmbeddingModel(settings as Settings)
+    if (!active) throw new Error('No embedding model available')
+
+    cachedModel = active
+    return active
   }
+
   return {
     id: 'onnx',
-    dimension: active.model.dimension,
+    dimension: 384, // 默认维度，实际会从模型中获取
     available: async () => {
       try {
+        const active = await loadModelOnDemand()
+        if (!supportsTokenizer(active.model.tokenizer)) return false
+
         await getOnnxRuntime()
         await loadTokenizer(active.model, active.directoryUri)
         return true
       } catch (error) {
-        await markLocalEmbeddingModelFailure(active.model.id, error instanceof Error ? error.message : 'ONNX runtime unavailable')
+        console.error('[ONNX] Provider not available:', error)
         return false
       }
     },
     embed: async (text: string) => {
+      const active = await loadModelOnDemand()
+
+      if (!supportsTokenizer(active.model.tokenizer)) {
+        throw new Error(`Tokenizer ${active.model.tokenizer} is not supported in this build.`)
+      }
+
       const vector = await embedWithOnnx(active.model, active.directoryUri, text)
       return vector
     },
@@ -529,9 +574,40 @@ function maxTokenMatch(a: Set<string>, b: Set<string>): number {
   return Math.min(1, best / Math.max(1, a.size))
 }
 
-function normalizeRagProfile(profile: RagProfile | undefined, ragMode: Settings['ragMode']): RagProfile {
-  if (ragMode === 'off') return 'offline'
-  return profile ?? 'balanced'
+function resolveRagProfileSelection(input: {
+  requestedProfile?: RagProfile
+  requestReason?: string
+  settings: Settings
+}): { profile: RagProfile; source: RagQueryPlan['profileSource']; reason: string } {
+  if (input.settings.ragMode === 'off') {
+    return {
+      profile: 'offline',
+      source: 'rag-mode',
+      reason: 'ragMode=off',
+    }
+  }
+  if (isRagProfile(input.requestedProfile)) {
+    return {
+      profile: input.requestedProfile,
+      source: 'tool-request',
+      reason: sanitizeRagProfileReason(input.requestReason) ?? 'agent tool request',
+    }
+  }
+  return {
+    profile: input.settings.ragProfile ?? 'balanced',
+    source: 'settings',
+    reason: input.settings.ragProfile ? 'settings.ragProfile' : 'default-balanced',
+  }
+}
+
+function isRagProfile(value: unknown): value is RagProfile {
+  return value === 'fast' || value === 'balanced' || value === 'deep' || value === 'offline'
+}
+
+function sanitizeRagProfileReason(value: string | undefined): string | undefined {
+  if (!value) return undefined
+  const sanitized = value.replace(/[\u0000-\u001f\u007f]+/g, ' ').replace(/\s+/g, ' ').trim()
+  return sanitized ? sanitized.slice(0, 160) : undefined
 }
 
 function detectLanguage(query: string): Language | 'mixed' {
@@ -626,6 +702,7 @@ function buildHydePrompt(query: string, language: Language | 'mixed', intent: Ra
 
 async function retrieveRagCandidates(plan: RagQueryPlan, options: AgenticRagOptions): Promise<{ candidates: RagRetrievalCandidate[]; trace: RagTraceStep; stats: NonNullable<RagContextPack['retrievalStats']> }> {
   const startedAt = options.now?.() ?? Date.now()
+  throwIfAgenticRagCancelled(options.signal)
   const variants = [
     ...plan.rewrittenQueries,
     ...plan.subQueries,
@@ -633,14 +710,19 @@ async function retrieveRagCandidates(plan: RagQueryPlan, options: AgenticRagOpti
   ].map((item) => item.trim()).filter(Boolean)
   const perQueryLimit = Math.max(4, Math.ceil(plan.retrievalBudget / Math.max(1, variants.length)))
   const memoryCandidates = (options.memorySources ?? []).map((source, index) => toCandidate(source, 'memory', plan.query, index))
+  const retrievalOptions = options.signal ? { signal: options.signal } : undefined
   const batches = await Promise.all(variants.map(async (variant) => {
-    const hits = await options.retrieveKnowledge(variant, perQueryLimit)
+    throwIfAgenticRagCancelled(options.signal)
+    const hits = await options.retrieveKnowledge(variant, perQueryLimit, retrievalOptions)
+    throwIfAgenticRagCancelled(options.signal)
     const origin: RagRetrievalOrigin = variant === plan.hydePrompt ? 'hyde' : variant === plan.query ? 'knowledge' : 'query-rewrite'
     return hits.map((source, index) => toCandidate(source, origin, variant, index))
   }))
+  throwIfAgenticRagCancelled(options.signal)
   const advancedHits = options.retrieveAgentic
-    ? await options.retrieveAgentic(plan.query, plan, Math.max(4, Math.ceil(plan.retrievalBudget / 3)))
+    ? await options.retrieveAgentic(plan.query, plan, Math.max(4, Math.ceil(plan.retrievalBudget / 3)), retrievalOptions)
     : []
+  throwIfAgenticRagCancelled(options.signal)
   const advancedCandidates = advancedHits.map((source, index) => toCandidate(
     source,
     inferAdvancedOrigin(source),

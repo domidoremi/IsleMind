@@ -1,4 +1,5 @@
 import type { MessageUsage, RemoteCompactMode } from '@/types'
+import type { LocalCompressionStrategy, PackedCompressionRoleCounts, PackedCompressionSectionMetadata, PackedCompressionMetadata } from '@/services/contextPacker'
 
 export interface CompactUsageInput {
   mode: RemoteCompactMode
@@ -8,6 +9,22 @@ export interface CompactUsageInput {
   inputTokens?: number
   outputTokens?: number
   estimatedSavedTokens?: number
+  localSourceTokens?: number
+  localCompressedTokens?: number
+  localEstimatedSavedTokens?: number
+  localCompressionRatio?: number
+  localCompressionSchemaVersion?: PackedCompressionMetadata['schemaVersion']
+  localCompressionStrategy?: LocalCompressionStrategy
+  localCompressionTriggerReason?: PackedCompressionMetadata['triggerReason']
+  localSourceMessageCount?: number
+  localKeptMessageCount?: number
+  localSourceRoleCounts?: PackedCompressionRoleCounts
+  localKeptRoleCounts?: PackedCompressionRoleCounts
+  localSummaryTokenBudget?: number
+  localSummaryTokens?: number
+  localSummarySectionCount?: number
+  localSummaryItemCount?: number
+  localSummarySections?: PackedCompressionSectionMetadata[]
   failureCode?: string
   fallbackLocal?: boolean
 }

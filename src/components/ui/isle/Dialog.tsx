@@ -1,11 +1,10 @@
 import type { ReactNode } from 'react'
 import { createContext, useCallback, useContext, useMemo, useRef, useState } from 'react'
-import { Modal, Pressable, Text, View } from 'react-native'
+import { Modal, Pressable, Text, View, useWindowDimensions } from 'react-native'
 import { AlertTriangle, Check, Info, X } from 'lucide-react-native'
 import { MotiView } from 'moti'
 import { useTranslation } from 'react-i18next'
 import { useSafeAreaInsets } from 'react-native-safe-area-context'
-import { IsleCard } from './IsleKit'
 import { IsleButton } from './Controls'
 import { IslePanel } from './Panel'
 import { useAppTheme } from '@/hooks/useAppTheme'
@@ -73,6 +72,11 @@ export function IsleDialogProvider({ children }: { children: ReactNode }) {
   const { colors } = useAppTheme()
   const { t } = useTranslation()
   const insets = useSafeAreaInsets()
+  const { width } = useWindowDimensions()
+  const sheetMaterial = colors.material.sheet
+  const modalPaddingHorizontal = width < 380 ? 14 : 18
+  const dialogMaxWidth = Math.min(460, Math.max(240, width - modalPaddingHorizontal * 2))
+  const toastMaxWidth = Math.min(420, Math.max(240, width - 32))
   const [dialog, setDialog] = useState<DialogState | null>(null)
   const [toast, setToast] = useState<ToastState | null>(null)
   const idRef = useRef(0)
@@ -113,7 +117,7 @@ export function IsleDialogProvider({ children }: { children: ReactNode }) {
         onRequestClose={() => closeDialog(false)}
         statusBarTranslucent
       >
-        <View style={{ flex: 1, justifyContent: 'center', paddingHorizontal: 18 }}>
+        <View style={{ flex: 1, justifyContent: 'center', paddingHorizontal: modalPaddingHorizontal }}>
           <Pressable
             accessibilityLabel={t('dialog.closeLayer')}
             onPress={() => closeDialog(false)}
@@ -125,11 +129,18 @@ export function IsleDialogProvider({ children }: { children: ReactNode }) {
               from={{ opacity: 0, translateY: 18, scale: 0.97 }}
               animate={{ opacity: 1, translateY: 0, scale: 1 }}
               transition={{ type: 'spring', damping: 20, stiffness: 190 }}
+              style={{ width: '100%', maxWidth: dialogMaxWidth, alignSelf: 'center' }}
             >
-              <IsleCard type="title" style={{ padding: 18, borderRadius: colors.ui.radius.modal }}>
+              <IslePanel
+                material="chrome"
+                elevated
+                radius={colors.ui.radius.modal}
+                style={{ backgroundColor: sheetMaterial.surface, borderColor: sheetMaterial.border }}
+                contentStyle={{ padding: 18, backgroundColor: sheetMaterial.body }}
+              >
                 <View style={{ flexDirection: 'row', alignItems: 'flex-start', gap: 12 }}>
                   <ToneBadge tone={dialog.tone ?? 'default'} />
-                  <View style={{ flex: 1 }}>
+                  <View style={{ flex: 1, minWidth: 0 }}>
                     <Text style={{ color: colors.text, fontSize: 19, lineHeight: 25, fontWeight: '900' }}>
                       {dialog.title}
                     </Text>
@@ -143,7 +154,7 @@ export function IsleDialogProvider({ children }: { children: ReactNode }) {
                     label={t('dialog.close')}
                     icon={<X color={colors.textTertiary} size={18} strokeWidth={2.2} />}
                     onPress={() => closeDialog(false)}
-                    style={{ width: 44, height: 44, minHeight: 44, borderRadius: 22, paddingHorizontal: 0 }}
+                    style={{ width: 44, height: 44, minHeight: 44, borderRadius: colors.ui.radius.controlMiddle, paddingHorizontal: 0 }}
                     textStyle={{ display: 'none' }}
                   />
                 </View>
@@ -163,17 +174,17 @@ export function IsleDialogProvider({ children }: { children: ReactNode }) {
                     <IsleButton
                       label={dialog.cancelLabel ?? t('common.cancel')}
                       onPress={() => closeDialog(false)}
-                      style={{ flex: 1 }}
+                      style={{ flex: 1, minWidth: 0 }}
                     />
                   ) : null}
                   <IsleButton
                     label={dialog.kind === 'confirm' ? dialog.confirmLabel ?? t('common.confirm') : dialog.actionLabel ?? t('dialog.ok')}
                     tone={dialog.tone === 'danger' ? 'danger' : dialog.tone === 'amber' ? 'amber' : 'primary'}
                     onPress={() => closeDialog(true)}
-                    style={{ flex: 1 }}
+                    style={{ flex: 1, minWidth: 0 }}
                   />
                 </View>
-              </IsleCard>
+              </IslePanel>
             </MotiView>
           ) : null}
         </View>
@@ -198,12 +209,18 @@ export function IsleDialogProvider({ children }: { children: ReactNode }) {
             from={{ opacity: 0, translateY: toast.position === 'bottom' ? 16 : -16, scale: 0.98 }}
             animate={{ opacity: 1, translateY: 0, scale: 1 }}
             transition={{ type: 'spring', damping: 20, stiffness: 210 }}
-            style={{ width: '100%', maxWidth: 420 }}
+            style={{ width: '100%', maxWidth: toastMaxWidth }}
           >
-            <IslePanel material="chrome" elevated radius={colors.ui.radius.panel} contentStyle={{ paddingHorizontal: 13, paddingVertical: 11 }}>
+            <IslePanel
+              material="chrome"
+              elevated
+              radius={colors.ui.radius.panel}
+              style={{ backgroundColor: sheetMaterial.chrome, borderColor: sheetMaterial.border }}
+              contentStyle={{ paddingHorizontal: 13, paddingVertical: 11, backgroundColor: sheetMaterial.chrome }}
+            >
               <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
                 <ToneBadge tone={toast.tone ?? 'mint'} small />
-                <View style={{ flex: 1 }}>
+                <View style={{ flex: 1, minWidth: 0 }}>
                   <Text numberOfLines={1} style={{ color: colors.text, fontSize: 14, fontWeight: '900' }}>{toast.title}</Text>
                   {toast.message ? <Text numberOfLines={2} style={{ color: colors.textSecondary, fontSize: 12, lineHeight: 17, marginTop: 2 }}>{toast.message}</Text> : null}
                 </View>
@@ -227,29 +244,14 @@ export function useIsleDialog(): IsleDialogApi {
 function ToneBadge({ tone, small = false }: { tone: DialogTone; small?: boolean }) {
   const { colors } = useAppTheme()
   const size = small ? 28 : 42
-  const background =
-    tone === 'danger'
-      ? colors.coralWash
-      : tone === 'amber'
-        ? colors.amberSoft
-        : tone === 'mint'
-          ? colors.mintSoft
-          : colors.skySoft
-  const foreground =
-    tone === 'danger'
-      ? colors.error
-      : tone === 'amber'
-        ? colors.warning
-        : tone === 'mint'
-          ? colors.primary
-          : colors.secondary
+  const toneToken = dialogToneToken(colors, tone === 'default' ? 'info' : tone)
   return (
-    <View style={{ width: size, height: size, borderRadius: size / 2, alignItems: 'center', justifyContent: 'center', backgroundColor: background }}>
+    <View style={{ width: size, height: size, borderRadius: size / 2, alignItems: 'center', justifyContent: 'center', backgroundColor: toneToken.background, borderWidth: 1, borderColor: toneToken.border }}>
       {tone === 'danger'
-        ? <AlertTriangle color={foreground} size={small ? 15 : 21} strokeWidth={2.2} />
+        ? <AlertTriangle color={toneToken.foreground} size={small ? 15 : 21} strokeWidth={2.2} />
         : tone === 'mint'
-          ? <Check color={foreground} size={small ? 15 : 21} strokeWidth={2.4} />
-          : <Info color={foreground} size={small ? 15 : 21} strokeWidth={2.2} />}
+          ? <Check color={toneToken.foreground} size={small ? 15 : 21} strokeWidth={2.4} />
+          : <Info color={toneToken.foreground} size={small ? 15 : 21} strokeWidth={2.2} />}
     </View>
   )
 }
@@ -257,11 +259,10 @@ function ToneBadge({ tone, small = false }: { tone: DialogTone; small?: boolean 
 function DialogChip({ chip }: { chip: IsleDialogChip }) {
   const { colors } = useAppTheme()
   const tone = chip.tone ?? 'default'
-  const background = tone === 'mint' ? colors.mintSoft : tone === 'amber' ? colors.amberSoft : tone === 'danger' ? colors.coralWash : colors.islandRaised
-  const foreground = tone === 'danger' ? colors.error : tone === 'mint' ? colors.primary : colors.textSecondary
+  const toneToken = dialogToneToken(colors, tone)
   return (
-    <View style={{ minHeight: 30, borderRadius: 15, paddingHorizontal: 11, alignItems: 'center', justifyContent: 'center', backgroundColor: background, borderWidth: 1, borderColor: colors.border }}>
-      <Text numberOfLines={1} style={{ color: foreground, fontSize: 11, fontWeight: '900' }}>{chip.label}</Text>
+    <View style={{ minHeight: 30, borderRadius: colors.ui.radius.chip, paddingHorizontal: 11, alignItems: 'center', justifyContent: 'center', backgroundColor: toneToken.background, borderWidth: 1, borderColor: toneToken.border }}>
+      <Text numberOfLines={1} style={{ color: toneToken.foreground, fontSize: 11, fontWeight: '900' }}>{chip.label}</Text>
     </View>
   )
 }
@@ -269,13 +270,21 @@ function DialogChip({ chip }: { chip: IsleDialogChip }) {
 function DialogMetricRow({ metric }: { metric: IsleDialogMetric }) {
   const { colors } = useAppTheme()
   return (
-    <View style={{ borderRadius: 18, padding: 11, backgroundColor: colors.material.paperRaised, borderWidth: 1, borderColor: colors.border }}>
+    <View style={{ borderRadius: colors.ui.radius.card, padding: 11, backgroundColor: colors.ui.card.defaultBackground, borderWidth: 1, borderColor: colors.material.stroke }}>
       <Text style={{ color: colors.text, fontSize: 12, fontWeight: '900' }}>{metric.label}</Text>
       <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginTop: 5 }}>
-        {metric.before ? <Text numberOfLines={1} style={{ color: colors.textTertiary, fontSize: 11, fontWeight: '800', flex: 1 }}>{metric.before}</Text> : null}
-        {metric.after ? <Text style={{ color: colors.primary, fontSize: 12, fontWeight: '900' }}>→</Text> : null}
-        {metric.after ? <Text numberOfLines={1} style={{ color: colors.textSecondary, fontSize: 11, fontWeight: '900', flex: 1 }}>{metric.after}</Text> : null}
+        {metric.before ? <Text numberOfLines={1} style={{ color: colors.textTertiary, fontSize: 11, fontWeight: '800', flex: 1, minWidth: 0 }}>{metric.before}</Text> : null}
+        {metric.after ? <Text style={{ color: colors.ui.icon.accentForeground, fontSize: 12, fontWeight: '900' }}>→</Text> : null}
+        {metric.after ? <Text numberOfLines={1} style={{ color: colors.textSecondary, fontSize: 11, fontWeight: '900', flex: 1, minWidth: 0 }}>{metric.after}</Text> : null}
       </View>
     </View>
   )
+}
+
+function dialogToneToken(colors: ReturnType<typeof useAppTheme>['colors'], tone: DialogTone | 'info') {
+  if (tone === 'mint') return colors.ui.tone.success
+  if (tone === 'amber') return colors.ui.tone.warning
+  if (tone === 'danger') return colors.ui.tone.danger
+  if (tone === 'info') return colors.ui.tone.info
+  return colors.ui.tone.neutral
 }

@@ -4,7 +4,7 @@ import { getModelConfig, getProviderConfigIssue, mergeModelConfig, sortModelConf
 import { st } from '@/i18n/service'
 import { getSecureApiKey } from './secureKey'
 import { chooseCredentialForModel, runCredentialGroupModelSync, updateCredentialGroupHealth } from './providerCredentials'
-import { getReasoningEffortOptions, isClaudeThinkingModel, isDeepSeekThinkingModel, isGeminiThinkingModel, isOpenAIReasoningModel as isKnownOpenAIReasoningModel, isXiaomiMimoReasoningModel, providerSupportsReasoning } from '@/utils/modelReasoning'
+import { getReasoningEffortOptions, isClaudeThinkingModel, isDashScopeThinkingModel, isDeepSeekThinkingModel, isGeminiThinkingLevelModel, isGeminiThinkingModel, isKimiThinkingModel, isMiniMaxThinkingModel, isOpenAIReasoningModel as isKnownOpenAIReasoningModel, isXAIReasoningModel, isXAIMultiAgentReasoningModel, isXiaomiMimoReasoningModel, modelDisallowsAnthropicSampling, providerSupportsReasoning } from '@/utils/modelReasoning'
 import type { PayloadRuleResult } from '@/services/ai/policy/payloadRules'
 import { evaluatePayloadRules } from '@/services/ai/policy/payloadRules'
 import type { ProxyPolicyDecision } from '@/services/ai/policy/proxyPolicy'
@@ -16,7 +16,9 @@ import { selectUpstreamTransport } from '@/services/ai/transport/transportSelect
 import { acquireSessionLease } from '@/services/ai/transport/sessionLeasePool'
 import { runResponsesWebSocketTransport } from '@/services/ai/transport/responsesWebSocketTransport'
 import { appendRuntimeLog } from '@/services/runtimeLog'
+import { buildAgentToolCallTraceMetadata, inferAgentToolNameFromTraceContent } from '@/services/agent/agentToolCallTrace'
 import { resolveProviderModelAlias } from '@/utils/providerModels'
+import { redactSensitiveText } from '@/utils/traceSafety'
 import type { ProviderConformanceResult } from '@/services/ai/providerConformance'
 import { resolveProviderRequestConformance } from '@/services/ai/providerConformance'
 import type { ProviderRouteContext, ProviderRouteDecision } from '@/services/ai/providerRouter'
@@ -50,6 +52,10 @@ export interface ChatCompletionResult {
   usage?: MessageUsage
   citations?: MessageCitation[]
   traces?: ProcessTrace[]
+  providerToolCalls?: ProviderToolCall[]
+  reasoningContent?: string
+  responseItems?: Record<string, unknown>[]
+  providerContentBlocks?: Record<string, unknown>[]
   credentialGroupId?: string
   responseId?: string
 }
@@ -57,6 +63,17 @@ export interface ChatCompletionResult {
 export interface StreamHandle {
   controller: AbortController
   done: Promise<void>
+}
+
+export interface ProviderToolCall {
+  id?: string
+  callId?: string
+  index?: number
+  name: string
+  arguments: Record<string, unknown>
+  rawArguments?: unknown
+  thoughtSignature?: string
+  argumentsComplete?: boolean
 }
 
 export interface EmbeddingResult {
@@ -77,8 +94,14 @@ export interface ChatRequest {
   provider: AIProvider
   model: string
   messages: {
-    role: 'user' | 'assistant'
+    role: 'user' | 'assistant' | 'tool'
     content: string | ContentPart[]
+    reasoningContent?: string
+    responseItems?: Record<string, unknown>[]
+    providerContentBlocks?: Record<string, unknown>[]
+    toolCallId?: string
+    name?: string
+    toolCalls?: ProviderToolCall[]
   }[]
   systemPrompt?: string
   temperature?: number
@@ -127,6 +150,7 @@ export interface ChatRequest {
   previousResponseId?: string
   requestedModel?: string
   fallbackProviders?: AIProvider[]
+  providerToolDeclarations?: readonly unknown[]
 }
 
 export interface ProviderAudioTranscriptionRequest {
@@ -145,8 +169,13 @@ export interface ProviderSpeechRequest {
 }
 
 export interface ContentPart {
-  type: 'text'
+  type: 'text' | 'function_call' | 'function_response' | 'tool_use' | 'tool_result'
   text: string
+  functionCall?: Record<string, unknown>
+  functionResponse?: Record<string, unknown>
+  toolUse?: Record<string, unknown>
+  toolResult?: Record<string, unknown>
+  thoughtSignature?: string
 }
 
 export interface ImageContentPart {
@@ -211,6 +240,10 @@ interface ParsedStreamChunk {
   traces: ProcessTrace[]
   usage?: MessageUsage
   responseId?: string
+  providerToolCalls?: ProviderToolCall[]
+  reasoningContent?: string
+  responseItems?: Record<string, unknown>[]
+  providerContentBlocks?: Record<string, unknown>[]
 }
 
 const PROVIDER_REQUEST_TIMEOUT_MS = 18000
@@ -322,7 +355,24 @@ function buildOpenAIBody(req: ChatRequest) {
   }
 
   for (const msg of req.messages) {
-    msgs.push({ role: msg.role, content: msg.content })
+    const content = toTextContent(msg.content)
+    if (msg.role === 'tool') {
+      msgs.push({
+        role: 'tool',
+        tool_call_id: msg.toolCallId,
+        ...(msg.name ? { name: msg.name } : {}),
+        content,
+      })
+      continue
+    }
+    msgs.push({
+      role: msg.role,
+      content,
+      ...(msg.role === 'assistant' && msg.reasoningContent && shouldReplayOpenAICompatibleReasoningContent(req, msg)
+        ? { reasoning_content: msg.reasoningContent }
+        : {}),
+      ...(msg.toolCalls?.length ? { tool_calls: msg.toolCalls.map(toOpenAIChatToolCall) } : {}),
+    })
   }
 
   if (req.attachments?.length) {
@@ -349,21 +399,43 @@ function buildOpenAIBody(req: ChatRequest) {
     messages: msgs,
     stream: req.stream ?? true,
   }
+  const providerTools = mergeProviderToolDeclarations(req.providerToolDeclarations)
+  if (providerTools) body.tools = providerTools
+  if (shouldRequestDashScopeStreamUsage(req)) body.stream_options = { include_usage: true }
 
   const deepSeekThinking = normalizeDeepSeekThinking(req)
-  const temperature = deepSeekThinking?.type === 'enabled' ? undefined : normalizeTemperature(req)
+  const dashScopeThinking = normalizeDashScopeThinking(req)
+  const kimiThinking = normalizeKimiThinking(req)
+  const miniMaxThinking = normalizeMiniMaxThinking(req)
+  const mimoThinking = normalizeXiaomiMimoThinking(req)
+  const kimiSamplingLocked = isKimiSamplingLocked(req)
+  const compatibleReasoningEnabled =
+    deepSeekThinking?.type === 'enabled' ||
+    dashScopeThinking?.enabled === true ||
+    kimiThinking?.type === 'enabled' ||
+    kimiSamplingLocked ||
+    isXiaomiMimoThinkingActive(req)
+  const temperature = compatibleReasoningEnabled ? undefined : normalizeTemperature(req)
   if (temperature !== undefined) {
     body.temperature = temperature
   }
-  if (req.topP !== undefined && deepSeekThinking?.type !== 'enabled') body.top_p = clamp01(req.topP)
+  if (req.topP !== undefined && !compatibleReasoningEnabled) body.top_p = clamp01(req.topP)
   if (deepSeekThinking) {
     body.thinking = { type: deepSeekThinking.type }
     if (deepSeekThinking.effort) body.reasoning_effort = deepSeekThinking.effort
   } else {
+    if (dashScopeThinking) {
+      body.enable_thinking = dashScopeThinking.enabled
+      if (dashScopeThinking.budget !== undefined) body.thinking_budget = dashScopeThinking.budget
+    }
+    const kimiPreservedThinking = normalizeKimiPreservedThinking(req, kimiThinking)
+    if (kimiPreservedThinking) body.thinking = kimiPreservedThinking
+    else if (kimiThinking) body.thinking = kimiThinking
+    if (miniMaxThinking) body.thinking = miniMaxThinking
+    if (shouldRequestMiniMaxReasoningSplit(req, miniMaxThinking)) body.reasoning_split = true
     const openAIEffort = normalizeOpenAIReasoningEffort(req)
     if (openAIEffort) body.reasoning_effort = openAIEffort
-    const mimoReasoning = normalizeXiaomiMimoReasoning(req)
-    if (mimoReasoning) body.reasoning = mimoReasoning
+    if (mimoThinking) body.thinking = mimoThinking
   }
 
   const maxTokensKey = getOpenAIChatMaxTokensField(req)
@@ -372,9 +444,35 @@ function buildOpenAIBody(req: ChatRequest) {
   return body
 }
 
+function toTextContent(content: string | ContentPart[]): string {
+  return typeof content === 'string' ? content : content.map((part) => part.text).filter(Boolean).join('\n')
+}
+
+function toOpenAIChatToolCall(call: ProviderToolCall, index: number): Record<string, unknown> {
+  return {
+    id: call.id || `islemind-tool-${index}`,
+    type: 'function',
+    function: {
+      name: call.name,
+      arguments: typeof call.rawArguments === 'string' ? call.rawArguments : stringifyProviderToolArguments(call.arguments),
+    },
+  }
+}
+
+function stringifyProviderToolArguments(args: Record<string, unknown>): string {
+  try {
+    return JSON.stringify(args)
+  } catch {
+    return '{}'
+  }
+}
+
 function getOpenAIChatMaxTokensField(req: ChatRequest): 'max_completion_tokens' | 'max_tokens' {
   if (req.provider.type === 'openai') return 'max_completion_tokens'
   if (req.provider.type === 'xiaomi-mimo') return 'max_completion_tokens'
+  if (isMiniMaxProvider(req.provider)) return 'max_completion_tokens'
+  if (isMoonshotProvider(req.provider)) return 'max_completion_tokens'
+  if (isXAIProvider(req.provider)) return 'max_completion_tokens'
   return 'max_tokens'
 }
 
@@ -402,15 +500,15 @@ function buildAnthropicBody(req: ChatRequest) {
   const system = [req.systemPrompt, req.contextPrompt].filter(Boolean).join('\n\n') || undefined
   const messages: Record<string, unknown>[] = []
   const thinkingConfig = normalizeAnthropicThinking(req)
-  const temperature = thinkingConfig ? undefined : req.temperature ?? 0.7
-  const topP = thinkingConfig ? undefined : req.topP ?? 1
+  const miniMaxThinking = normalizeMiniMaxThinking(req)
+  const mimoThinking = normalizeXiaomiMimoThinking(req)
+  const samplingDisallowed = Boolean(thinkingConfig) || isXiaomiMimoThinkingActive(req) || modelDisallowsAnthropicSampling(req.model)
+  const temperature = samplingDisallowed ? undefined : isMiniMaxProvider(req.provider) ? normalizeTemperature(req) : req.temperature ?? 0.7
+  const topP = samplingDisallowed ? undefined : req.topP ?? 1
 
   for (const msg of req.messages) {
     if (msg.role === 'user') {
-      const content: Record<string, unknown>[] = []
-      const textContent = typeof msg.content === 'string' ? msg.content : msg.content.map((p: ContentPart) => p.text).join('\n')
-
-      content.push({ type: 'text', text: textContent })
+      const content = toAnthropicContentBlocks(msg.content)
 
       if (req.attachments?.length && msg === req.messages[req.messages.length - 1]) {
         for (const att of req.attachments) {
@@ -439,29 +537,85 @@ function buildAnthropicBody(req: ChatRequest) {
       }
 
       messages.push({ role: 'user', content })
-    } else {
+    } else if (msg.role === 'assistant') {
+      const content = [
+        ...sanitizeAnthropicReplayContentBlocks(msg.providerContentBlocks ?? []),
+        ...toAnthropicContentBlocks(msg.content),
+      ]
       messages.push({
-        role: msg.role,
-        content: typeof msg.content === 'string' ? msg.content : '',
+        role: 'assistant',
+        content: !msg.providerContentBlocks?.length && content.length === 1 && content[0].type === 'text'
+          ? stringValue(content[0].text)
+          : content,
       })
     }
   }
 
+  const tools = mergeProviderToolDeclarations(
+    req.providerToolDeclarations,
+    req.webSearchMode === 'native' ? [anthropicNativeWebSearchTool(req.model)] : []
+  )
   const body: Record<string, unknown> = {
     model: req.model,
     system,
     messages,
     max_tokens: clampMaxTokens(req),
     stream: req.stream ?? true,
-    ...(req.webSearchMode === 'native' ? { tools: [{ type: 'web_search_20250305', name: 'web_search', max_uses: 3 }] } : {}),
+    ...(tools ? { tools } : {}),
   }
   if (temperature !== undefined) body.temperature = temperature
   if (topP !== undefined) body.top_p = topP
   if (thinkingConfig?.thinking) body.thinking = thinkingConfig.thinking
   if (thinkingConfig?.outputConfig) body.output_config = thinkingConfig.outputConfig
-  const mimoReasoning = normalizeXiaomiMimoReasoning(req)
-  if (mimoReasoning) body.reasoning = mimoReasoning
+  if (miniMaxThinking) body.thinking = miniMaxThinking
+  if (mimoThinking) body.thinking = mimoThinking
   return body
+}
+
+function toAnthropicContentBlocks(content: string | ContentPart[]): Record<string, unknown>[] {
+  if (typeof content === 'string') return [{ type: 'text', text: content }]
+  const blocks: Record<string, unknown>[] = []
+  for (const part of content) {
+    if (part.toolUse) {
+      blocks.push({
+        type: 'tool_use',
+        ...part.toolUse,
+      })
+      continue
+    }
+    if (part.toolResult) {
+      blocks.push({
+        type: 'tool_result',
+        ...part.toolResult,
+      })
+      continue
+    }
+    if (part.text) blocks.push({ type: 'text', text: part.text })
+  }
+  return blocks.length ? blocks : [{ type: 'text', text: '' }]
+}
+
+function sanitizeAnthropicReplayContentBlocks(blocks: readonly Record<string, unknown>[]): Record<string, unknown>[] {
+  return blocks
+    .map((block) => {
+      const next = cloneAnthropicReplayContentBlock(block)
+      if (next) delete next.__islemindAnthropicBlockIndex
+      return next
+    })
+    .filter((block): block is Record<string, unknown> => !!block)
+}
+
+function anthropicNativeWebSearchTool(modelId: string): Record<string, unknown> {
+  return {
+    type: supportsAnthropicDynamicWebSearch(modelId) ? 'web_search_20260209' : 'web_search_20250305',
+    name: 'web_search',
+    max_uses: 3,
+  }
+}
+
+function supportsAnthropicDynamicWebSearch(modelId: string): boolean {
+  const normalized = modelId.toLowerCase().split('/').at(-1) ?? modelId.toLowerCase()
+  return /^claude-(fable-5|mythos-5|mythos-preview|opus-4-[678]|sonnet-4-6)/.test(normalized)
 }
 
 function buildGoogleBody(req: ChatRequest) {
@@ -472,10 +626,7 @@ function buildGoogleBody(req: ChatRequest) {
     : undefined
 
   for (const msg of req.messages) {
-    const parts: Record<string, unknown>[] = []
-    const textContent = typeof msg.content === 'string' ? msg.content : msg.content.map((p: ContentPart) => p.text).join('\n')
-
-    parts.push({ text: textContent })
+    const parts = toGoogleContentParts(msg.content)
 
     if (msg.role === 'user' && msg === req.messages[req.messages.length - 1] && req.attachments?.length) {
       for (const att of req.attachments) {
@@ -504,12 +655,36 @@ function buildGoogleBody(req: ChatRequest) {
   const thinkingConfig = normalizeGoogleThinkingConfig(req)
   if (thinkingConfig) generationConfig.thinkingConfig = thinkingConfig
 
+  const tools = mergeProviderToolDeclarations(
+    req.providerToolDeclarations,
+    req.webSearchMode === 'native' ? [{ google_search: {} }] : []
+  )
   return {
     contents,
     systemInstruction,
     generationConfig,
-    ...(req.webSearchMode === 'native' ? { tools: [{ google_search: {} }] } : {}),
+    ...(tools ? { tools } : {}),
   }
+}
+
+function toGoogleContentParts(content: string | ContentPart[]): Record<string, unknown>[] {
+  if (typeof content === 'string') return [{ text: content }]
+  const parts: Record<string, unknown>[] = []
+  for (const part of content) {
+    if (part.functionCall) {
+      parts.push({
+        functionCall: part.functionCall,
+        ...(part.thoughtSignature ? { thoughtSignature: part.thoughtSignature } : {}),
+      })
+      continue
+    }
+    if (part.functionResponse) {
+      parts.push({ functionResponse: part.functionResponse })
+      continue
+    }
+    if (part.text) parts.push({ text: part.text })
+  }
+  return parts.length ? parts : [{ text: '' }]
 }
 
 function buildOpenAIResponsesBody(req: ChatRequest) {
@@ -521,6 +696,25 @@ function buildOpenAIResponsesBody(req: ChatRequest) {
   for (const [index, message] of req.messages.entries()) {
     const text = typeof message.content === 'string' ? message.content : message.content.map((part) => part.text).join('\n')
     const isLast = index === req.messages.length - 1
+    if (message.role === 'tool') {
+      input.push({
+        type: 'function_call_output',
+        call_id: message.toolCallId,
+        output: text,
+      })
+      continue
+    }
+    if (message.role === 'assistant' && (message.responseItems?.length || message.toolCalls?.length)) {
+      if (text) input.push({ role: 'assistant', content: text })
+      const responseItems = cloneOpenAIResponsesInputItems(message.responseItems ?? [])
+      for (const [toolIndex, call] of (message.toolCalls ?? []).entries()) {
+        if (!hasOpenAIResponsesFunctionCallItem(responseItems, call)) {
+          responseItems.push(toOpenAIResponsesFunctionCallInput(call, toolIndex))
+        }
+      }
+      input.push(...responseItems)
+      continue
+    }
     if (message.role === 'user' && isLast && req.attachments?.length) {
       input.push({
         role: 'user',
@@ -546,26 +740,97 @@ function buildOpenAIResponsesBody(req: ChatRequest) {
     }
   }
   const openAIEffort = normalizeOpenAIReasoningEffort(req)
+  const responsesReasoning = buildOpenAIResponsesReasoning(req, openAIEffort)
+  const includeEncryptedReasoning = shouldIncludeOpenAIResponsesEncryptedReasoning(req, openAIEffort)
+  const tools = mergeProviderToolDeclarations(
+    req.providerToolDeclarations,
+    req.webSearchMode === 'native' ? [openAIResponsesNativeWebSearchTool(req.provider)] : []
+  )
   return {
     model: req.model,
     input,
     ...(normalizeTemperature(req) === undefined ? {} : { temperature: normalizeTemperature(req) }),
     ...(req.topP === undefined ? {} : { top_p: clamp01(req.topP) }),
-    ...(openAIEffort ? { reasoning: { effort: openAIEffort } } : {}),
+    ...(responsesReasoning ? { reasoning: responsesReasoning } : {}),
+    ...(includeEncryptedReasoning ? { include: ['reasoning.encrypted_content'] } : {}),
     max_output_tokens: clampMaxTokens(req),
     stream: req.stream ?? true,
     ...(req.previousResponseId ? { previous_response_id: req.previousResponseId } : {}),
     ...(req.remoteCompactEligible
       ? { context_management: [{ type: 'compaction', compact_threshold: req.settings?.remoteCompactThreshold ?? 0.8 }] }
       : {}),
-    ...(req.webSearchMode === 'native' ? { tools: [{ type: 'web_search_preview' }] } : {}),
+    ...(tools ? { tools } : {}),
   }
 }
 
+function buildOpenAIResponsesReasoning(req: ChatRequest, effort: ReasoningEffort | undefined): Record<string, unknown> | undefined {
+  if (!effort) return undefined
+  return {
+    effort,
+    ...(req.provider.type === 'openai' && effort !== 'none' ? { summary: 'auto' } : {}),
+  }
+}
+
+function openAIResponsesNativeWebSearchTool(provider: AIProvider): Record<string, unknown> {
+  return { type: isXAIProvider(provider) ? 'web_search' : 'web_search_preview' }
+}
+
+function shouldIncludeOpenAIResponsesEncryptedReasoning(req: ChatRequest, effort?: ReasoningEffort): boolean {
+  if (effort && effort !== 'none') return true
+  if (effort === 'none') return false
+  return req.provider.type === 'openai-compatible' && isXAIProvider(req.provider) && isXAIReasoningModel(req.provider, req.model)
+}
+
+function cloneOpenAIResponsesInputItems(items: readonly Record<string, unknown>[]): Record<string, unknown>[] {
+  return items.map((item) => ({ ...item }))
+}
+
+function hasOpenAIResponsesFunctionCallItem(items: readonly Record<string, unknown>[], call: ProviderToolCall): boolean {
+  const callId = call.callId || call.id
+  return items.some((item) => {
+    if (item.type !== 'function_call') return false
+    if (callId && (item.call_id === callId || item.id === callId)) return true
+    return Boolean(call.name && item.name === call.name)
+  })
+}
+
+function toOpenAIResponsesFunctionCallInput(call: ProviderToolCall, index: number): Record<string, unknown> {
+  return {
+    type: 'function_call',
+    ...(call.id ? { id: call.id } : {}),
+    call_id: call.callId || call.id || `islemind-tool-${index}`,
+    name: call.name,
+    arguments: typeof call.rawArguments === 'string' ? call.rawArguments : stringifyProviderToolArguments(call.arguments),
+  }
+}
+
+function mergeProviderToolDeclarations(providerTools?: readonly unknown[], builtInTools: readonly unknown[] = []): unknown[] | undefined {
+  const tools = [
+    ...cloneProviderToolDeclarations(builtInTools),
+    ...cloneProviderToolDeclarations(providerTools),
+  ]
+  return tools.length ? tools : undefined
+}
+
+function cloneProviderToolDeclarations(tools?: readonly unknown[]): unknown[] {
+  if (!Array.isArray(tools)) return []
+  return tools
+    .map((tool) => {
+      const record = asRecord(tool)
+      return record ? { ...record } : undefined
+    })
+    .filter((tool): tool is Record<string, unknown> => !!tool)
+}
+
 function usesOpenAIResponses(req: ChatRequest): boolean {
-  if (req.provider.type !== 'openai') return false
   const modelConfig = getModelConfig(req.model, req.provider.type, req.provider.modelConfigs)
-  return modelConfig.preferredEndpoint === 'responses' || req.webSearchMode === 'native' || !!req.attachments?.some((attachment) => attachment.type !== 'image')
+  if (req.provider.type === 'openai') {
+    return modelConfig.preferredEndpoint === 'responses' || req.webSearchMode === 'native' || !!req.attachments?.some((attachment) => attachment.type !== 'image')
+  }
+  if (req.provider.type === 'openai-compatible' && req.provider.wireProtocol !== 'anthropic-compatible' && isXAIProvider(req.provider)) {
+    return modelConfig.preferredEndpoint === 'responses'
+  }
+  return false
 }
 
 function isOpenAIReasoningModel(modelId: string): boolean {
@@ -579,17 +844,63 @@ function isOpenAIReasoningModel(modelId: string): boolean {
   }, modelId)
 }
 
+function isMiniMaxProvider(provider: AIProvider): boolean {
+  if (provider.presetId === 'minimax' || provider.detectedPresetId === 'minimax') return true
+  const text = [provider.id, provider.name, provider.baseUrl, provider.models?.join(' ')].filter(Boolean).join(' ')
+  return /minimax|mini[-_ ]?max|minimaxi|海螺/i.test(text)
+}
+
+function isDashScopeProvider(provider: AIProvider): boolean {
+  if (provider.presetId === 'dashscope' || provider.detectedPresetId === 'dashscope') return true
+  const text = [provider.id, provider.name, provider.baseUrl, provider.models?.join(' ')].filter(Boolean).join(' ')
+  return /dashscope|qwen|qwq|qvq|tongyi|aliyun|alibaba|百炼|阿里/i.test(text)
+}
+
+function isMoonshotProvider(provider: AIProvider): boolean {
+  if (provider.presetId === 'moonshot' || provider.detectedPresetId === 'moonshot') return true
+  const text = [provider.id, provider.name, provider.baseUrl, provider.models?.join(' ')].filter(Boolean).join(' ')
+  return /moonshot|kimi/i.test(text)
+}
+
+function shouldRequestDashScopeStreamUsage(req: ChatRequest): boolean {
+  return (req.stream ?? true) !== false && isDashScopeProvider(req.provider)
+}
+
+function isXAIProvider(provider: AIProvider): boolean {
+  if (provider.presetId === 'xai' || provider.detectedPresetId === 'xai') return true
+  const text = [provider.id, provider.name, provider.baseUrl, provider.models?.join(' ')].filter(Boolean).join(' ')
+  return /(^|[-_./])xai($|[-_./])|grok|api\.x\.ai/i.test(text)
+}
+
+function shouldReplayOpenAICompatibleReasoningContent(req: ChatRequest, msg: ChatRequest['messages'][number]): boolean {
+  if (req.provider.type !== 'openai-compatible' && req.provider.type !== 'xiaomi-mimo') return false
+  if (req.provider.wireProtocol === 'anthropic-compatible') return false
+  if (isDeepSeekThinkingModel(req.provider, req.model)) return Boolean(msg.toolCalls?.length)
+  return isKimiThinkingModel(req.provider, req.model) || isXAIReasoningModel(req.provider, req.model)
+}
+
 function normalizeOpenAIReasoningEffort(req: ChatRequest): ReasoningEffort | undefined {
   if (!req.reasoningEffort || !supportsReasoningEffort(req)) return undefined
   const modelConfig = getModelConfig(req.model, req.provider.type, req.provider.modelConfigs)
+  if (modelConfig.reasoningMode === 'xai-reasoning-effort' || isXAIReasoningModel(req.provider, req.model)) {
+    const supported = getReasoningEffortOptions(req.provider, req.model)
+    if (supported.includes(req.reasoningEffort)) return req.reasoningEffort
+    if (req.reasoningEffort === 'max' && supported.includes('xhigh')) return 'xhigh'
+    if ((req.reasoningEffort === 'xhigh' || req.reasoningEffort === 'max') && supported.includes('high')) return 'high'
+    if (req.reasoningEffort === 'minimal' && supported.includes('low')) return 'low'
+    if (isXAIMultiAgentReasoningModel(req.model) && supported.includes('low')) return 'low'
+    return supported.includes('medium') ? 'medium' : supported[0]
+  }
+  if (req.reasoningEffort === 'none') return undefined
   if (req.provider.type !== 'openai' && modelConfig.reasoningMode !== 'openai-effort') return undefined
   const supported = getReasoningEffortOptions(req.provider, req.model)
   if (!supported.length) return undefined
   const effort = req.reasoningEffort
   if (supported.includes(effort)) return effort
   if (effort === 'minimal' && supported.includes('low')) return 'low'
+  if (effort === 'max' && supported.includes('xhigh')) return 'xhigh'
+  if (effort === 'max' && supported.includes('high')) return 'high'
   if (effort === 'xhigh' && supported.includes('high')) return 'high'
-  if (effort === 'none' && supported.includes('low')) return 'low'
   return supported.includes('medium') ? 'medium' : supported[0]
 }
 
@@ -598,21 +909,90 @@ function normalizeDeepSeekThinking(req: ChatRequest): { type: 'enabled' | 'disab
   if (modelConfig.reasoningMode !== 'deepseek-thinking' && !isDeepSeekThinkingModel(req.provider, req.model)) return undefined
   const effort = req.reasoningEffort ?? 'medium'
   if (effort === 'none' || effort === 'minimal') return { type: 'disabled' }
-  return { type: 'enabled', effort: effort === 'xhigh' ? 'max' : 'high' }
+  return { type: 'enabled', effort: effort === 'xhigh' || effort === 'max' ? 'max' : 'high' }
 }
 
-function normalizeXiaomiMimoReasoning(req: ChatRequest): { effort: 'low' | 'medium' | 'high' } | undefined {
-  if (!req.reasoningEffort || req.reasoningEffort === 'none') return undefined
+function normalizeDashScopeThinking(req: ChatRequest): { enabled: boolean; budget?: number } | undefined {
+  if (!req.reasoningEffort) return undefined
+  const modelConfig = getModelConfig(req.model, req.provider.type, req.provider.modelConfigs)
+  if (modelConfig.reasoningMode !== 'dashscope-thinking' && !isDashScopeThinkingModel(req.provider, req.model)) return undefined
+  if (req.reasoningEffort === 'none' || req.reasoningEffort === 'minimal') return { enabled: false }
+  return { enabled: true, budget: normalizeDashScopeThinkingBudget(req.model, req.reasoningEffort) }
+}
+
+function normalizeDashScopeThinkingBudget(modelId: string, effort: ReasoningEffort): number {
+  const maxBudget = getDashScopeThinkingBudgetMax(modelId)
+  if (effort === 'low') return Math.min(maxBudget, 8192)
+  if (effort === 'high' || effort === 'xhigh' || effort === 'max') return maxBudget
+  return Math.min(maxBudget, 65536)
+}
+
+function getDashScopeThinkingBudgetMax(modelId: string): number {
+  const normalized = modelId.toLowerCase().split('/').at(-1) ?? modelId.toLowerCase()
+  if (/^qwen3\.7(?:-|$)/.test(normalized)) return 262144
+  if (/^qwen3\.6-(?:flash|max-preview)(?:-|$)/.test(normalized)) return 131072
+  if (/^qwen3\.6-plus(?:-|$)/.test(normalized)) return 81920
+  if (/^qwen3\.5(?:-|$)/.test(normalized)) return 81920
+  return 8192
+}
+
+function normalizeKimiThinking(req: ChatRequest): { type: 'enabled' | 'disabled' } | undefined {
+  if (!req.reasoningEffort) return undefined
+  const modelConfig = getModelConfig(req.model, req.provider.type, req.provider.modelConfigs)
+  if (modelConfig.reasoningMode !== 'kimi-thinking' && !isKimiThinkingModel(req.provider, req.model)) return undefined
+  return {
+    type: req.reasoningEffort === 'none' || req.reasoningEffort === 'minimal' ? 'disabled' : 'enabled',
+  }
+}
+
+function normalizeKimiPreservedThinking(
+  req: ChatRequest,
+  thinking: { type: 'enabled' | 'disabled' } | undefined
+): { type: 'enabled'; keep: 'all' } | undefined {
+  if (!isKimiThinkingModel(req.provider, req.model)) return undefined
+  if (!req.messages.some((msg) => msg.role === 'assistant' && typeof msg.reasoningContent === 'string' && msg.reasoningContent.trim())) return undefined
+  if (thinking?.type === 'disabled') return undefined
+  return { type: 'enabled', keep: 'all' }
+}
+
+function isKimiSamplingLocked(req: ChatRequest): boolean {
+  const modelConfig = getModelConfig(req.model, req.provider.type, req.provider.modelConfigs)
+  return modelConfig.reasoningMode === 'kimi-thinking' || isKimiThinkingModel(req.provider, req.model)
+}
+
+function normalizeMiniMaxThinking(req: ChatRequest): { type: 'adaptive' | 'disabled' } | undefined {
+  if (!req.reasoningEffort) return undefined
+  const modelConfig = getModelConfig(req.model, req.provider.type, req.provider.modelConfigs)
+  if (modelConfig.reasoningMode !== 'minimax-thinking' || !isMiniMaxThinkingModel(req.provider, req.model)) return undefined
+  return { type: req.reasoningEffort === 'none' || req.reasoningEffort === 'minimal' ? 'disabled' : 'adaptive' }
+}
+
+function shouldRequestMiniMaxReasoningSplit(req: ChatRequest, thinking: { type: 'adaptive' | 'disabled' } | undefined): boolean {
+  return req.provider.wireProtocol !== 'anthropic-compatible' && isMiniMaxThinkingModel(req.provider, req.model) && thinking?.type !== 'disabled'
+}
+
+function normalizeXiaomiMimoThinking(req: ChatRequest): { type: 'enabled' | 'disabled' } | undefined {
+  if (!req.reasoningEffort) return undefined
   if (!isXiaomiMimoReasoningModel(req.provider, req.model)) return undefined
-  if (req.reasoningEffort === 'minimal' || req.reasoningEffort === 'low') return { effort: 'low' }
-  if (req.reasoningEffort === 'high' || req.reasoningEffort === 'xhigh') return { effort: 'high' }
-  return { effort: 'medium' }
+  return { type: req.reasoningEffort === 'none' ? 'disabled' : 'enabled' }
 }
 
-function normalizeAnthropicThinking(req: ChatRequest): { thinking: Record<string, unknown>; outputConfig?: Record<string, unknown> } | undefined {
+function isXiaomiMimoThinkingActive(req: ChatRequest): boolean {
+  if (!isXiaomiMimoReasoningModel(req.provider, req.model)) return false
+  if (req.reasoningEffort) return req.reasoningEffort !== 'none'
+  const modelId = req.model.toLowerCase()
+  return ['mimo-v2.5-pro', 'mimo-v2.5', 'mimo-v2-pro', 'mimo-v2-omni'].includes(modelId)
+}
+
+function normalizeAnthropicThinking(req: ChatRequest): { thinking?: Record<string, unknown>; outputConfig?: Record<string, unknown> } | undefined {
   if (!req.reasoningEffort || req.reasoningEffort === 'none' || req.reasoningEffort === 'minimal') return undefined
   const config = getModelConfig(req.model, req.provider.type, req.provider.modelConfigs)
   if (config.reasoningMode !== 'anthropic-thinking' && !isClaudeThinkingModel(req.provider, req.model)) return undefined
+  if (usesAnthropicOutputConfigOnlyThinking(req.model)) {
+    return {
+      outputConfig: { effort: normalizeAnthropicEffort(req.model, req.reasoningEffort) },
+    }
+  }
   if (supportsAnthropicAdaptiveThinking(req.model)) {
     return {
       thinking: { type: 'adaptive', display: 'summarized' },
@@ -628,6 +1008,7 @@ function normalizeAnthropicThinking(req: ChatRequest): { thinking: Record<string
       case 'high':
         return 4096
       case 'xhigh':
+      case 'max':
         return 8192
       case 'medium':
       default:
@@ -640,31 +1021,42 @@ function normalizeAnthropicThinking(req: ChatRequest): { thinking: Record<string
 
 function supportsAnthropicAdaptiveThinking(modelId: string): boolean {
   const normalized = modelId.toLowerCase()
-  return /claude-(mythos|opus-4-7|opus-4-6|sonnet-4-6)/.test(normalized)
+  return /claude-(mythos-preview|opus-4-8|opus-4-7|opus-4-6|sonnet-4-6)/.test(normalized)
+}
+
+function usesAnthropicOutputConfigOnlyThinking(modelId: string): boolean {
+  const normalized = modelId.toLowerCase()
+  return /claude-(fable-5|mythos-5)/.test(normalized)
 }
 
 function normalizeAnthropicEffort(modelId: string, effort: ReasoningEffort): 'low' | 'medium' | 'high' | 'xhigh' | 'max' {
+  if (effort === 'max') return 'max'
   if (effort === 'low') return 'low'
   if (effort === 'medium') return 'medium'
-  if (effort === 'xhigh') return /claude-opus-4-7/i.test(modelId) ? 'xhigh' : 'max'
+  if (effort === 'xhigh') return /claude-(fable-5|mythos-5|opus-4-[78])/i.test(modelId) ? 'xhigh' : 'max'
   return 'high'
 }
 
 function normalizeGoogleThinkingConfig(req: ChatRequest): Record<string, unknown> | undefined {
   if (!req.reasoningEffort) return undefined
   const config = getModelConfig(req.model, 'google', req.provider.modelConfigs)
-  if (config.reasoningMode === 'gemini-thinking-level' || /^gemini-3/i.test(req.model)) {
+  if (config.reasoningMode === 'gemini-thinking-level' || isGeminiThinkingLevelModel(req.model)) {
     const level = normalizeGeminiThinkingLevel(req.reasoningEffort, config)
-    return level ? { thinkingLevel: level } : undefined
+    return level ? withGoogleThoughtSummaries({ thinkingLevel: level }, req.reasoningEffort) : undefined
   }
   if (config.reasoningMode === 'gemini-thinking-budget' || isGeminiThinkingModel(req.provider, req.model)) {
-    return { thinkingBudget: normalizeGeminiThinkingBudget(req.model, req.reasoningEffort) }
+    return withGoogleThoughtSummaries({ thinkingBudget: normalizeGeminiThinkingBudget(req.model, req.reasoningEffort) }, req.reasoningEffort)
   }
   return undefined
 }
 
+function withGoogleThoughtSummaries(config: Record<string, unknown>, effort: ReasoningEffort): Record<string, unknown> {
+  if (effort === 'none' || effort === 'minimal') return config
+  return { ...config, includeThoughts: true }
+}
+
 function normalizeGeminiThinkingLevel(effort: ReasoningEffort, config: AIModel): 'minimal' | 'low' | 'medium' | 'high' | undefined {
-  const requested = effort === 'none' ? 'minimal' : effort === 'xhigh' ? 'high' : effort
+  const requested = effort === 'none' ? 'minimal' : effort === 'xhigh' || effort === 'max' ? 'high' : effort
   const allowed = config.reasoningEfforts ?? ['minimal', 'low', 'medium', 'high']
   if (requested === 'minimal' && !allowed.includes('minimal')) return 'low'
   if (['minimal', 'low', 'medium', 'high'].includes(requested) && allowed.includes(requested as ReasoningEffort)) {
@@ -676,7 +1068,7 @@ function normalizeGeminiThinkingLevel(effort: ReasoningEffort, config: AIModel):
 function normalizeGeminiThinkingBudget(modelId: string, effort: ReasoningEffort): number {
   const normalized = modelId.toLowerCase()
   const max = normalized.includes('flash') ? 24576 : 32768
-  const canDisable = normalized.includes('flash') && !normalized.includes('flash-lite')
+  const canDisable = normalized.includes('flash')
   switch (effort) {
     case 'none':
     case 'minimal':
@@ -686,6 +1078,7 @@ function normalizeGeminiThinkingBudget(modelId: string, effort: ReasoningEffort)
     case 'high':
       return Math.min(max, 8192)
     case 'xhigh':
+    case 'max':
       return max
     case 'medium':
     default:
@@ -694,11 +1087,12 @@ function normalizeGeminiThinkingBudget(modelId: string, effort: ReasoningEffort)
 }
 
 function normalizeTemperature(req: ChatRequest): number | undefined {
-  const modelId = req.model.toLowerCase()
   if (req.provider.type === 'xiaomi-mimo') {
-    const isThinkingDefault = ['mimo-v2.5-pro', 'mimo-v2.5', 'mimo-v2-pro', 'mimo-v2-omni'].includes(modelId)
-    if (isThinkingDefault) return undefined
+    if (isXiaomiMimoThinkingActive(req)) return undefined
     return Math.max(0, Math.min(1.5, req.temperature ?? 0.7))
+  }
+  if (isMiniMaxProvider(req.provider)) {
+    return Math.max(0, Math.min(2, req.temperature ?? 1))
   }
   return req.temperature ?? 0.7
 }
@@ -725,6 +1119,13 @@ function getHeaders(provider: AIProvider): Record<string, string> {
     case 'google':
       return { 'Content-Type': 'application/json' }
     case 'openai-compatible':
+      if (provider.wireProtocol === 'anthropic-compatible') {
+        return {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${provider.apiKey}`,
+          'anthropic-version': '2023-06-01',
+        }
+      }
       return {
         'Content-Type': 'application/json',
         Authorization: `Bearer ${provider.apiKey}`,
@@ -761,7 +1162,9 @@ function getBodyWithRoute(req: ChatRequest, context?: ProviderRouteContext, fail
       body = buildGoogleBody(req)
       break
     case 'openai-compatible':
-      body = buildOpenAIBody(req)
+      body = req.provider.wireProtocol === 'anthropic-compatible'
+        ? buildAnthropicBody(req)
+        : usesOpenAIResponses(req) ? buildOpenAIResponsesBody(req) : buildOpenAIBody(req)
       break
     case 'xiaomi-mimo':
       body = req.provider.wireProtocol === 'anthropic-compatible' ? buildXiaomiMimoAnthropicBody(req) : buildOpenAIBody(req)
@@ -771,7 +1174,7 @@ function getBodyWithRoute(req: ChatRequest, context?: ProviderRouteContext, fail
 }
 
 function getWireProviderType(provider: AIProvider): ProviderType {
-  return provider.type === 'xiaomi-mimo' && provider.wireProtocol === 'anthropic-compatible'
+  return provider.wireProtocol === 'anthropic-compatible'
     ? 'anthropic'
     : provider.type
 }
@@ -790,6 +1193,12 @@ function optimizeRequestBody(body: Record<string, unknown>, req: ChatRequest): R
 
 function optimizeBedrockThinking(body: Record<string, unknown>, req: ChatRequest): Record<string, unknown> {
   if (!isAnthropicWireRequest(req)) return body
+  if (usesAnthropicOutputConfigOnlyThinking(req.model)) {
+    return {
+      ...body,
+      output_config: { ...(body.output_config as Record<string, unknown> | undefined), effort: normalizeAnthropicEffort(req.model, req.reasoningEffort ?? 'medium') },
+    }
+  }
   if (supportsAnthropicAdaptiveThinking(req.model)) {
     return {
       ...body,
@@ -852,9 +1261,13 @@ function extractContent(chunk: string, providerType: ProviderType): string {
 
 function parseStreamChunk(chunk: string, providerType: ProviderType): ParsedStreamChunk {
   const traces: ProcessTrace[] = []
+  let providerToolCalls: ProviderToolCall[] = []
   let text = ''
   let usage: MessageUsage | undefined
   let responseId: string | undefined
+  let reasoningContent = ''
+  let responseItems: Record<string, unknown>[] = []
+  let providerContentBlocks: Record<string, unknown>[] = []
   let sawDataLine = false
   for (const line of chunk.split('\n')) {
     if (!line.startsWith('data: ') || line === 'data: [DONE]') continue
@@ -864,18 +1277,40 @@ function parseStreamChunk(chunk: string, providerType: ProviderType): ParsedStre
       const parsed = parseProviderStreamEvent(json, providerType)
       text += parsed.text
       traces.push(...parsed.traces)
+      providerToolCalls = mergeProviderToolCallParts([...providerToolCalls, ...(parsed.providerToolCalls ?? [])])
       usage = parsed.usage ?? usage
       responseId = parsed.responseId ?? responseId
+      reasoningContent += parsed.reasoningContent ?? ''
+      responseItems = mergeOpenAIResponseReplayItems([...responseItems, ...(parsed.responseItems ?? [])])
+      providerContentBlocks = mergeAnthropicReplayContentBlocks([...providerContentBlocks, ...(parsed.providerContentBlocks ?? [])])
     } catch {}
   }
   const trimmed = chunk.trim()
   if (!sawDataLine && trimmed.startsWith('{')) {
     try {
       const parsed = parseProviderStreamEvent(JSON.parse(trimmed), providerType)
-      return { text: parsed.text, traces: dedupeTraces(parsed.traces), usage: parsed.usage, responseId: parsed.responseId }
+      return {
+        text: parsed.text,
+        traces: dedupeTraces(parsed.traces),
+        usage: parsed.usage,
+        responseId: parsed.responseId,
+        providerToolCalls: mergeProviderToolCallParts(parsed.providerToolCalls ?? []),
+        reasoningContent: parsed.reasoningContent,
+        responseItems: parsed.responseItems,
+        providerContentBlocks: parsed.providerContentBlocks,
+      }
     } catch {}
   }
-  return { text, traces: dedupeTraces(traces), usage, responseId }
+  return {
+    text,
+    traces: dedupeTraces(traces),
+    usage,
+    responseId,
+    providerToolCalls,
+    ...(reasoningContent ? { reasoningContent } : {}),
+    ...(responseItems.length ? { responseItems } : {}),
+    ...(providerContentBlocks.length ? { providerContentBlocks: sanitizeAnthropicReplayContentBlocks(providerContentBlocks) } : {}),
+  }
 }
 
 function parseProviderStreamEvent(json: any, providerType: ProviderType): ParsedStreamChunk {
@@ -891,9 +1326,13 @@ function parseProviderStreamEvent(json: any, providerType: ProviderType): Parsed
       }
       const reasoning = [
         delta?.reasoning_content,
+        stringifyReasoningDetails(delta?.reasoning_details),
         json.choices?.[0]?.message?.reasoning_content,
+        stringifyReasoningDetails(json.choices?.[0]?.message?.reasoning_details),
         json.delta?.reasoning_content,
+        stringifyReasoningDetails(json.delta?.reasoning_details),
         json.reasoning_content,
+        stringifyReasoningDetails(json.reasoning_details),
         json.summary?.text,
         json.part?.text,
         json.text && isReasoningEventType(json.type) ? json.text : undefined,
@@ -902,10 +1341,18 @@ function parseProviderStreamEvent(json: any, providerType: ProviderType): Parsed
       if (reasoning) {
         traces.push(createProviderTrace('reasoning', providerType, st('providerTrace.reasoningSummary'), reasoning, 'running', stableTraceId(json, 'reasoning')))
       }
-      if (isToolEventType(json.type) || delta?.tool_calls || json.tool_call || json.function_call || json.item?.type?.includes?.('tool')) {
+      if (isToolEventType(json.type) || delta?.tool_calls || json.tool_call || json.function_call || isToolEventType(json.item?.type)) {
         traces.push(createProviderTrace('tool', providerType, st('providerTrace.toolCall'), summarizeToolEvent(json), isDoneEvent(json.type) ? 'done' : 'running', stableTraceId(json, 'tool')))
       }
-      return { text, traces, usage: extractUsage(json, providerType === 'openai' ? 'openai' : 'openai-compatible'), responseId: extractResponseId(json) }
+      return {
+        text,
+        traces,
+        usage: extractUsage(json, providerType === 'openai' ? 'openai' : 'openai-compatible'),
+        responseId: extractResponseId(json),
+        providerToolCalls: extractProviderToolCalls(json, providerType),
+        reasoningContent: extractOpenAIReasoningContent(json),
+        responseItems: extractOpenAIResponseReplayItems(json),
+      }
     }
     case 'anthropic': {
       let text = ''
@@ -923,7 +1370,13 @@ function parseProviderStreamEvent(json: any, providerType: ProviderType): Parsed
       if (json.type === 'content_block_delta' && json.delta?.type === 'input_json_delta') {
         traces.push(createProviderTrace('tool', providerType, st('providerTrace.toolArguments'), stringValue(json.delta?.partial_json), 'running', stableTraceId(json, 'tool-input')))
       }
-      return { text, traces, usage: extractUsage(json, 'anthropic') }
+      return {
+        text,
+        traces,
+        usage: extractUsage(json, 'anthropic'),
+        providerToolCalls: extractProviderToolCalls(json, 'anthropic'),
+        providerContentBlocks: extractAnthropicReplayContentBlocks(json),
+      }
     }
     case 'google': {
       let text = ''
@@ -934,17 +1387,17 @@ function parseProviderStreamEvent(json: any, providerType: ProviderType): Parsed
           const partText = stringValue(part.text)
           if (part.thought) {
             if (partText) traces.push(createProviderTrace('reasoning', providerType, st('providerTrace.reasoningSummary'), partText, 'running', stableTraceId(part, 'thought')))
-            if (part.thoughtSignature) {
-              traces.push(createProviderTrace('reasoning', providerType, st('providerTrace.thoughtSignature'), st('providerTrace.thoughtSignatureSaved'), 'done', stableTraceId(part, 'thought-signature'), { hiddenSignature: true }))
-            }
           } else if (part.functionCall) {
             traces.push(createProviderTrace('tool', providerType, st('providerTrace.functionCallNamed', { name: part.functionCall.name ?? 'function' }), summarizeToolEvent(part.functionCall), 'running', stableTraceId(part.functionCall, 'function')))
           } else {
             text += partText
           }
+          if (part.thoughtSignature) {
+            traces.push(createProviderTrace('reasoning', providerType, st('providerTrace.thoughtSignature'), st('providerTrace.thoughtSignatureSaved'), 'done', stableTraceId(part, 'thought-signature'), { hiddenSignature: true }))
+          }
         }
       }
-      return { text, traces, usage: extractUsage(json, 'google') }
+      return { text, traces, usage: extractUsage(json, 'google'), providerToolCalls: extractProviderToolCalls(json, 'google') }
     }
     default:
       return { text: '', traces: [] }
@@ -1053,6 +1506,15 @@ function createProviderTrace(
   metadata?: Record<string, unknown>
 ): ProcessTrace {
   const now = Date.now()
+  const toolCallMetadata = type === 'tool'
+    ? buildAgentToolCallTraceMetadata({
+        mode: 'native-provider',
+        source: 'provider',
+        toolName: inferAgentToolNameFromTraceContent(title, content),
+        status,
+        providerType,
+      })
+    : {}
   return {
     id,
     type,
@@ -1064,13 +1526,14 @@ function createProviderTrace(
     metadata: {
       providerType,
       source: 'provider',
+      ...toolCallMetadata,
       ...metadata,
     },
   }
 }
 
 function sanitizeTraceContent(content: string): string | undefined {
-  const trimmed = content.trim()
+  const trimmed = redactSensitiveText(content.trim())
   if (!trimmed) return undefined
   return trimmed.length > 760 ? `${trimmed.slice(0, 760)}...` : trimmed
 }
@@ -1105,15 +1568,398 @@ function isDoneEvent(type: unknown): boolean {
 
 function summarizeToolEvent(value: unknown): string {
   if (!value || typeof value !== 'object') return ''
-  const item = value as Record<string, unknown>
-  const name =
-    stringValue(item.name) ||
-    stringValue((item.function as Record<string, unknown> | undefined)?.name) ||
-    stringValue((item.tool_call as Record<string, unknown> | undefined)?.name) ||
-    stringValue((item.item as Record<string, unknown> | undefined)?.name)
-  const input = item.input ?? item.arguments ?? item.args ?? (item.function as Record<string, unknown> | undefined)?.arguments ?? item.delta ?? item
+  const records = collectProviderToolEventRecords(value)
+  const name = findProviderToolEventName(records)
+  const input = findProviderToolEventInput(records) ?? value
   const inputText = typeof input === 'string' ? input : safeJsonPreview(input)
   return [name ? st('providerTrace.toolNameLine', { name }) : '', inputText ? st('providerTrace.toolArgsLine', { input: inputText }) : ''].filter(Boolean).join('\n')
+}
+
+function collectProviderToolEventRecords(value: unknown): Record<string, unknown>[] {
+  const root = asRecord(value)
+  if (!root) return []
+  const records: Record<string, unknown>[] = []
+  const addRecord = (record: unknown) => {
+    const item = asRecord(record)
+    if (item) records.push(item)
+  }
+  const addRecordArray = (items: unknown) => {
+    if (!Array.isArray(items)) return
+    items.forEach(addRecord)
+  }
+
+  addRecord(root)
+  addRecord(root.tool_call)
+  addRecord(root.item)
+  addRecord(root.content_block)
+  addRecordArray(root.tool_calls)
+
+  for (const choice of Array.isArray(root.choices) ? root.choices : []) {
+    const choiceRecord = asRecord(choice)
+    const delta = asRecord(choiceRecord?.delta)
+    const message = asRecord(choiceRecord?.message)
+    addRecord(delta)
+    addRecord(delta?.function_call)
+    addRecordArray(delta?.tool_calls)
+    addRecord(message)
+    addRecord(message?.function_call)
+    addRecordArray(message?.tool_calls)
+  }
+
+  return records
+}
+
+function findProviderToolEventName(records: Record<string, unknown>[]): string {
+  for (const item of records) {
+    const name =
+      stringValue(item.name) ||
+      stringValue(item.toolName) ||
+      stringValue((item.function as Record<string, unknown> | undefined)?.name) ||
+      stringValue((item.tool_call as Record<string, unknown> | undefined)?.name) ||
+      stringValue((item.item as Record<string, unknown> | undefined)?.name) ||
+      stringValue((item.content_block as Record<string, unknown> | undefined)?.name)
+    if (name) return name
+  }
+  return ''
+}
+
+function findProviderToolEventInput(records: Record<string, unknown>[]): unknown {
+  for (const item of records) {
+    const input =
+      item.input ??
+      item.arguments ??
+      item.args ??
+      (item.function as Record<string, unknown> | undefined)?.arguments ??
+      (item.tool_call as Record<string, unknown> | undefined)?.arguments ??
+      (item.item as Record<string, unknown> | undefined)?.input ??
+      (item.content_block as Record<string, unknown> | undefined)?.input
+    if (input !== undefined) return input
+  }
+  return undefined
+}
+
+function extractProviderToolCalls(value: unknown, providerType: ProviderType): ProviderToolCall[] | undefined {
+  const root = asRecord(value)
+  if (!root) return undefined
+  const calls: ProviderToolCall[] = []
+  const add = (input: { id?: string; callId?: string; index?: number; name?: string; rawArguments?: unknown; arguments?: unknown }) => {
+    const call = normalizeProviderToolCall(input)
+    if (call) calls.push(call)
+  }
+
+  if (providerType === 'openai' || providerType === 'openai-compatible' || providerType === 'xiaomi-mimo') {
+    collectOpenAIProviderToolCalls(root, add)
+  } else if (providerType === 'anthropic') {
+    collectAnthropicProviderToolCalls(root, add)
+  } else if (providerType === 'google') {
+    collectGoogleProviderToolCalls(root, add)
+  }
+
+  return calls.length ? mergeProviderToolCallParts(calls) : undefined
+}
+
+function collectOpenAIProviderToolCalls(
+  root: Record<string, unknown>,
+  add: (input: { id?: string; callId?: string; index?: number; name?: string; rawArguments?: unknown; arguments?: unknown }) => void
+) {
+  const addOpenAIToolCall = (value: unknown, fallback: { id?: string; index?: number; name?: string; rawArguments?: unknown } = {}) => {
+    const record = asRecord(value)
+    if (!record) return
+    const fn = asRecord(record.function) ?? asRecord(record.function_call)
+    add({
+      id: stringValue(record.id) || stringValue(record.call_id) || stringValue(record.item_id) || fallback.id,
+      callId: stringValue(record.call_id),
+      index: numberValue(record.index) ?? fallback.index,
+      name: stringValue(record.name) || stringValue(fn?.name) || fallback.name,
+      rawArguments: record.arguments ?? record.input ?? fn?.arguments ?? fn?.input ?? fallback.rawArguments,
+    })
+  }
+  const addOpenAIArray = (items: unknown, fallback: { index?: number } = {}) => {
+    if (!Array.isArray(items)) return
+    items.forEach((item, index) => addOpenAIToolCall(item, { index: fallback.index ?? index }))
+  }
+
+  addOpenAIArray(root.tool_calls)
+  if (isToolEventType(root.type) || root.name || root.arguments || root.input) {
+    addOpenAIToolCall(root)
+  }
+  addOpenAIToolCall(root.tool_call)
+  addOpenAIToolCall(root.function_call)
+  addOpenAIToolCall(root.item)
+  if (root.type === 'response.function_call_arguments.delta' || root.type === 'response.function_call_arguments.done') {
+    add({
+      id: stringValue(root.item_id) || stringValue(root.id) || stringValue(root.call_id),
+      callId: stringValue(root.call_id),
+      index: numberValue(root.output_index),
+      rawArguments: root.arguments ?? root.delta,
+    })
+  }
+
+  for (const choice of Array.isArray(root.choices) ? root.choices : []) {
+    const choiceRecord = asRecord(choice)
+    const delta = asRecord(choiceRecord?.delta)
+    const message = asRecord(choiceRecord?.message)
+    addOpenAIArray(delta?.tool_calls)
+    addOpenAIToolCall(delta?.function_call)
+    addOpenAIArray(message?.tool_calls)
+    addOpenAIToolCall(message?.function_call)
+  }
+
+  for (const output of Array.isArray(root.output) ? root.output : []) {
+    const item = asRecord(output)
+    if (!item) continue
+    if (isToolEventType(item.type) || item.name || item.arguments || item.input) {
+      addOpenAIToolCall(item)
+    }
+    addOpenAIArray(item.tool_calls)
+    for (const part of Array.isArray(item.content) ? item.content : []) {
+      const contentPart = asRecord(part)
+      if (contentPart && (isToolEventType(contentPart.type) || contentPart.name || contentPart.arguments || contentPart.input)) {
+        addOpenAIToolCall(contentPart, {
+          id: stringValue(item.id) || stringValue(item.call_id),
+          index: numberValue(item.index),
+        })
+      }
+    }
+  }
+}
+
+function collectAnthropicProviderToolCalls(
+  root: Record<string, unknown>,
+  add: (input: { id?: string; index?: number; name?: string; rawArguments?: unknown; arguments?: unknown }) => void
+) {
+  const addAnthropicToolUse = (value: unknown, fallback: { id?: string; index?: number } = {}) => {
+    const record = asRecord(value)
+    if (!record || record.type !== 'tool_use') return
+    add({
+      id: stringValue(record.id) || fallback.id,
+      index: numberValue(record.index) ?? fallback.index,
+      name: stringValue(record.name),
+      rawArguments: record.input,
+    })
+  }
+  const index = numberValue(root.index)
+  addAnthropicToolUse(root.content_block, { index })
+  for (const part of Array.isArray(root.content) ? root.content : []) addAnthropicToolUse(part)
+  const delta = asRecord(root.delta)
+  if (root.type === 'content_block_delta' && delta?.type === 'input_json_delta') {
+    add({
+      index,
+      rawArguments: delta.partial_json,
+    })
+  }
+}
+
+function collectGoogleProviderToolCalls(
+  root: Record<string, unknown>,
+  add: (input: { id?: string; index?: number; name?: string; rawArguments?: unknown; arguments?: unknown; thoughtSignature?: string }) => void
+) {
+  const addFunctionCall = (value: unknown, index?: number, thoughtSignature?: string) => {
+    const record = asRecord(value)
+    if (!record) return
+    add({
+      index,
+      name: stringValue(record.name),
+      rawArguments: record.args ?? record.arguments,
+      thoughtSignature,
+    })
+  }
+  addFunctionCall(root.functionCall)
+  const candidates = Array.isArray(root.candidates) ? root.candidates : []
+  for (const candidate of candidates) {
+    const content = asRecord((candidate as Record<string, unknown>).content)
+    const parts = Array.isArray(content?.parts) ? content.parts : []
+    parts.forEach((part, index) => {
+      const record = asRecord(part)
+      addFunctionCall(record?.functionCall, index, stringValue(record?.thoughtSignature))
+    })
+  }
+}
+
+function normalizeProviderToolCall(input: {
+  id?: string
+  callId?: string
+  index?: number
+  name?: string
+  rawArguments?: unknown
+  arguments?: unknown
+  thoughtSignature?: string
+}): ProviderToolCall | undefined {
+  const id = input.id || undefined
+  const callId = input.callId || undefined
+  const index = typeof input.index === 'number' && Number.isFinite(input.index) ? input.index : undefined
+  const name = input.name || ''
+  const rawArguments = input.rawArguments ?? input.arguments
+  if (!id && index === undefined && !name) return undefined
+  const parsed = normalizeProviderToolCallArguments(rawArguments)
+  return {
+    ...(id ? { id } : {}),
+    ...(callId ? { callId } : {}),
+    ...(index !== undefined ? { index } : {}),
+    name,
+    arguments: parsed.arguments,
+    ...(rawArguments !== undefined ? { rawArguments } : {}),
+    ...(input.thoughtSignature ? { thoughtSignature: input.thoughtSignature } : {}),
+    argumentsComplete: parsed.complete,
+  }
+}
+
+function normalizeProviderToolCallArguments(value: unknown): { arguments: Record<string, unknown>; complete: boolean } {
+  if (value === undefined) return { arguments: {}, complete: true }
+  const record = asRecord(value)
+  if (record) return { arguments: { ...record }, complete: true }
+  if (typeof value !== 'string') return { arguments: {}, complete: false }
+  const trimmed = value.trim()
+  if (!trimmed) return { arguments: {}, complete: true }
+  try {
+    const parsed = JSON.parse(trimmed)
+    const parsedRecord = asRecord(parsed)
+    return parsedRecord ? { arguments: { ...parsedRecord }, complete: true } : { arguments: {}, complete: false }
+  } catch {
+    return { arguments: {}, complete: false }
+  }
+}
+
+function mergeProviderToolCallParts(parts: ProviderToolCall[]): ProviderToolCall[] {
+  const merged: ProviderToolCall[] = []
+  for (const part of parts) {
+    const index = findMatchingProviderToolCallIndex(merged, part)
+    if (index < 0) {
+      merged.push({ ...part, arguments: { ...part.arguments } })
+      continue
+    }
+    merged[index] = mergeProviderToolCallPart(merged[index], part)
+  }
+  return merged
+}
+
+function findMatchingProviderToolCallIndex(calls: ProviderToolCall[], part: ProviderToolCall): number {
+  if (part.id) {
+    const byId = calls.findIndex((call) => call.id === part.id)
+    if (byId >= 0) return byId
+  }
+  if (part.index !== undefined) {
+    const byIndex = calls.findIndex((call) => call.index === part.index)
+    if (byIndex >= 0) return byIndex
+  }
+  if (part.name) {
+    const byName = calls.findIndex((call) => call.name === part.name && !call.id && call.index === undefined)
+    if (byName >= 0) return byName
+  }
+  return -1
+}
+
+function mergeProviderToolCallPart(previous: ProviderToolCall, next: ProviderToolCall): ProviderToolCall {
+  const rawArguments = mergeProviderToolRawArguments(previous.rawArguments, next.rawArguments, next.argumentsComplete === true)
+  const parsed = normalizeProviderToolCallArguments(rawArguments)
+  const mergedArguments = rawArguments !== undefined && parsed.complete
+    ? parsed.arguments
+    : { ...previous.arguments, ...next.arguments }
+  return {
+    id: previous.id || next.id,
+    ...(previous.callId || next.callId ? { callId: previous.callId || next.callId } : {}),
+    index: previous.index ?? next.index,
+    name: previous.name || next.name,
+    arguments: mergedArguments,
+    ...(rawArguments !== undefined ? { rawArguments } : {}),
+    ...(previous.thoughtSignature || next.thoughtSignature ? { thoughtSignature: previous.thoughtSignature || next.thoughtSignature } : {}),
+    argumentsComplete: rawArguments !== undefined ? parsed.complete : previous.argumentsComplete !== false && next.argumentsComplete !== false,
+  }
+}
+
+function mergeProviderToolRawArguments(previous: unknown, next: unknown, nextComplete: boolean): unknown {
+  if (next === undefined) return previous
+  if (previous === undefined) return next
+  if (typeof previous === 'string' && typeof next === 'string') return nextComplete ? next : `${previous}${next}`
+  return next
+}
+
+function executableProviderToolCalls(calls: ProviderToolCall[] | undefined): ProviderToolCall[] | undefined {
+  const executable = mergeProviderToolCallParts(calls ?? [])
+    .filter((call) => call.name && call.argumentsComplete !== false)
+    .map((call) => ({
+      ...(call.id ? { id: call.id } : {}),
+      ...(call.callId ? { callId: call.callId } : {}),
+      ...(call.index !== undefined ? { index: call.index } : {}),
+      name: call.name,
+      arguments: { ...call.arguments },
+      ...(call.rawArguments !== undefined ? { rawArguments: call.rawArguments } : {}),
+      ...(call.thoughtSignature ? { thoughtSignature: call.thoughtSignature } : {}),
+      argumentsComplete: true,
+    }))
+  return executable.length ? executable : undefined
+}
+
+function extractAnthropicReplayContentBlocks(json: any): Record<string, unknown>[] | undefined {
+  const blocks: Record<string, unknown>[] = []
+  if (Array.isArray(json?.content)) {
+    for (const part of json.content) {
+      const block = cloneAnthropicReplayContentBlock(part)
+      if (block) blocks.push(block)
+    }
+  }
+  const startedBlock = cloneAnthropicReplayContentBlock(json?.content_block)
+  if (startedBlock) blocks.push(startedBlock)
+  const delta = asRecord(json?.delta)
+  if (json?.type === 'content_block_delta' && delta) {
+    const index = numberValue(json.index)
+    if (delta.type === 'thinking_delta' || typeof delta.thinking === 'string') {
+      blocks.push(withAnthropicReplayIndex({ type: 'thinking', thinking: stringValue(delta.thinking) }, index))
+    }
+    if (delta.type === 'signature_delta' || typeof delta.signature === 'string') {
+      blocks.push(withAnthropicReplayIndex({ type: 'thinking', signature: stringValue(delta.signature) }, index))
+    }
+  }
+  const merged = mergeAnthropicReplayContentBlocks(blocks)
+  return merged.length ? sanitizeAnthropicReplayContentBlocks(merged) : undefined
+}
+
+function cloneAnthropicReplayContentBlock(part: unknown): Record<string, unknown> | undefined {
+  const record = asRecord(part)
+  if (!record) return undefined
+  const type = stringValue(record.type)
+  if (type !== 'thinking' && type !== 'redacted_thinking') return undefined
+  const next = { ...record }
+  delete next.cache_control
+  delete next.__islemindAnthropicBlockIndex
+  const index = numberValue(record.__islemindAnthropicBlockIndex)
+  return withAnthropicReplayIndex(next, index)
+}
+
+function withAnthropicReplayIndex(block: Record<string, unknown>, index: number | undefined): Record<string, unknown> {
+  return index === undefined ? block : { ...block, __islemindAnthropicBlockIndex: index }
+}
+
+function mergeAnthropicReplayContentBlocks(blocks: Record<string, unknown>[]): Record<string, unknown>[] {
+  const merged: Record<string, unknown>[] = []
+  for (const block of blocks) {
+    const normalized = cloneAnthropicReplayContentBlock(block)
+    if (!normalized) continue
+    const index = numberValue(normalized.__islemindAnthropicBlockIndex)
+    const mergeIndex = index === undefined
+      ? (merged.length && stringValue(merged[merged.length - 1].type) === stringValue(normalized.type) ? merged.length - 1 : -1)
+      : merged.findIndex((item) => numberValue(item.__islemindAnthropicBlockIndex) === index)
+    if (mergeIndex < 0) {
+      merged.push(normalized)
+      continue
+    }
+    merged[mergeIndex] = mergeAnthropicReplayContentBlock(merged[mergeIndex], normalized)
+  }
+  return merged
+}
+
+function mergeAnthropicReplayContentBlock(previous: Record<string, unknown>, next: Record<string, unknown>): Record<string, unknown> {
+  const merged = { ...previous, ...next }
+  for (const key of ['thinking', 'signature']) {
+    const previousValue = stringValue(previous[key])
+    const nextValue = stringValue(next[key])
+    if (previousValue && nextValue) merged[key] = `${previousValue}${nextValue}`
+  }
+  return merged
+}
+
+function asRecord(value: unknown): Record<string, unknown> | undefined {
+  return value && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : undefined
 }
 
 function safeJsonPreview(value: unknown): string {
@@ -1127,6 +1973,24 @@ function safeJsonPreview(value: unknown): string {
 
 function stringValue(value: unknown): string {
   return typeof value === 'string' ? value : ''
+}
+
+function stringifyReasoningDetails(value: unknown): string {
+  if (!Array.isArray(value)) return ''
+  return value
+    .map((item) => {
+      if (typeof item === 'string') return item
+      if (!item || typeof item !== 'object') return ''
+      const record = item as Record<string, unknown>
+      return [
+        record.text,
+        record.reasoning_text,
+        record.content,
+        record.summary,
+      ].map(stringValue).filter(Boolean).join('\n')
+    })
+    .filter(Boolean)
+    .join('\n')
 }
 
 function extractOpenAIText(json: any): string {
@@ -1221,6 +2085,9 @@ function parseChatCompletionJson(json: any, req: ChatRequest): ChatCompletionRes
         usage: extractUsage(json, providerType),
         citations: extractCitationsFromText(openAIText, req.retrievalSources),
         traces: extractTracesFromJson(json, providerType),
+        providerToolCalls: executableProviderToolCalls(extractProviderToolCalls(json, providerType)),
+        reasoningContent: extractOpenAIReasoningContent(json),
+        responseItems: extractOpenAIResponseReplayItems(json),
         responseId: extractResponseId(json),
       }
     case 'anthropic':
@@ -1229,6 +2096,8 @@ function parseChatCompletionJson(json: any, req: ChatRequest): ChatCompletionRes
         usage: extractUsage(json, 'anthropic'),
         citations: [...extractCitationsFromText('', req.retrievalSources), ...extractProviderCitations(json, 'anthropic')],
         traces: extractTracesFromJson(json, 'anthropic'),
+        providerToolCalls: executableProviderToolCalls(extractProviderToolCalls(json, 'anthropic')),
+        providerContentBlocks: extractAnthropicReplayContentBlocks(json),
       }
     case 'google':
       return {
@@ -1236,6 +2105,7 @@ function parseChatCompletionJson(json: any, req: ChatRequest): ChatCompletionRes
         usage: extractUsage(json, 'google'),
         citations: [...extractCitationsFromText('', req.retrievalSources), ...extractProviderCitations(json, 'google')],
         traces: extractTracesFromJson(json, 'google'),
+        providerToolCalls: executableProviderToolCalls(extractProviderToolCalls(json, 'google')),
       }
     case 'openai-compatible':
     case 'xiaomi-mimo':
@@ -1245,6 +2115,9 @@ function parseChatCompletionJson(json: any, req: ChatRequest): ChatCompletionRes
         usage: extractUsage(json, 'openai-compatible'),
         citations: extractCitationsFromText(compatibleText, req.retrievalSources),
         traces: extractTracesFromJson(json, providerType),
+        providerToolCalls: executableProviderToolCalls(extractProviderToolCalls(json, providerType)),
+        reasoningContent: extractOpenAIReasoningContent(json),
+        responseItems: extractOpenAIResponseReplayItems(json),
         responseId: extractResponseId(json),
       }
   }
@@ -1268,7 +2141,17 @@ function parseBufferedStreamResponse(raw: string, req: ChatRequest, providerType
     ...extractCitationsFromText(text, req.retrievalSources),
     ...extractProviderCitationsFromSse(raw, providerType),
   ])
-  return { text, citations, traces: parsed.traces, usage: parsed.usage, responseId: parsed.responseId }
+  return {
+    text,
+    citations,
+    traces: parsed.traces,
+    usage: parsed.usage,
+    responseId: parsed.responseId,
+    providerToolCalls: executableProviderToolCalls(parsed.providerToolCalls),
+    reasoningContent: parsed.reasoningContent,
+    responseItems: parsed.responseItems,
+    providerContentBlocks: parsed.providerContentBlocks,
+  }
 }
 
 function extractTracesFromJson(json: any, providerType: ProviderType): ProcessTrace[] {
@@ -1276,6 +2159,8 @@ function extractTracesFromJson(json: any, providerType: ProviderType): ProcessTr
   if (providerType === 'openai' || providerType === 'openai-compatible' || providerType === 'xiaomi-mimo') {
     const reasoning = [
       json.choices?.[0]?.message?.reasoning_content,
+      stringifyReasoningDetails(json.choices?.[0]?.message?.reasoning_details),
+      stringifyReasoningDetails(json.reasoning_details),
       json.reasoning?.summary?.map?.((item: { text?: string }) => item.text ?? '').join('\n'),
       Array.isArray(json.output)
         ? json.output
@@ -1313,6 +2198,63 @@ function extractTracesFromJson(json: any, providerType: ProviderType): ProcessTr
     }
   }
   return dedupeTraces(traces)
+}
+
+function extractOpenAIReasoningContent(json: any): string | undefined {
+  const reasoning = [
+    json?.choices?.[0]?.message?.reasoning_content,
+    json?.choices?.[0]?.delta?.reasoning_content,
+    json?.delta?.reasoning_content,
+    json?.message?.reasoning_content,
+    json?.reasoning_content,
+  ].map(stringValue).filter(Boolean).join('')
+  return reasoning || undefined
+}
+
+function extractOpenAIResponseReplayItems(json: any): Record<string, unknown>[] | undefined {
+  const items: Record<string, unknown>[] = []
+  const addItems = (value: unknown) => {
+    if (!Array.isArray(value)) return
+    for (const item of value) {
+      const record = asRecord(item)
+      if (record && isOpenAIResponsesReplayItem(record)) items.push({ ...record })
+    }
+  }
+
+  addItems(json?.output)
+  addItems(json?.response?.output)
+  const item = asRecord(json?.item)
+  if (item && item.type === 'reasoning') items.push({ ...item })
+  if (asRecord(json) && isOpenAIResponsesReplayItem(json)) items.push({ ...json })
+
+  const merged = mergeOpenAIResponseReplayItems(items)
+  return merged.length ? merged : undefined
+}
+
+function isOpenAIResponsesReplayItem(item: Record<string, unknown>): boolean {
+  return item.type === 'reasoning' || item.type === 'function_call'
+}
+
+function mergeOpenAIResponseReplayItems(items: Record<string, unknown>[]): Record<string, unknown>[] {
+  const merged: Record<string, unknown>[] = []
+  for (const item of items) {
+    const key = openAIResponseReplayItemKey(item)
+    const existingIndex = key ? merged.findIndex((entry) => openAIResponseReplayItemKey(entry) === key) : -1
+    if (existingIndex < 0) {
+      merged.push({ ...item })
+      continue
+    }
+    merged[existingIndex] = { ...merged[existingIndex], ...item }
+  }
+  return merged
+}
+
+function openAIResponseReplayItemKey(item: Record<string, unknown>): string {
+  const id = stringValue(item.id)
+  if (id) return `${item.type}:id:${id}`
+  const callId = stringValue(item.call_id)
+  if (callId) return `${item.type}:call:${callId}`
+  return ''
 }
 
 function extractAnthropicText(json: any): string {
@@ -1459,7 +2401,8 @@ export async function streamChat(
   if (effectiveReq.signal) {
     effectiveReq.signal.addEventListener('abort', () => controller.abort(), { once: true })
   }
-  const stream = effectiveReq.stream ?? true
+  const runtimeModelConfig = getModelConfig(runtimeReq.model, runtimeReq.provider.type, runtimeReq.provider.modelConfigs)
+  const stream = runtimeModelConfig.supportsStreaming === false ? false : (effectiveReq.stream ?? true)
   if (!runtimeReq.provider.apiKey.trim()) {
     effectiveReq.provider = updateCredentialGroupHealth(effectiveReq.provider, credential.credentialGroupId, false)
     const done = Promise.resolve().then(() => onError(providerRuntimeError('missing_key', credential.credentialGroupId)))
@@ -1740,7 +2683,11 @@ async function executeHttpSseChat(input: {
   let buffer = ''
   let providerCitations: MessageCitation[] = []
   let providerTraces: ProcessTrace[] = []
+  let providerToolCalls: ProviderToolCall[] = []
   let providerUsage: MessageUsage | undefined
+  let providerReasoningContent = ''
+  let providerResponseItems: Record<string, unknown>[] = []
+  let providerContentBlocks: Record<string, unknown>[] = []
   const wireProviderType = getWireProviderType(input.req.provider)
 
   async function readStream() {
@@ -1753,9 +2700,14 @@ async function executeHttpSseChat(input: {
           input.onChunk(finalParsed.text)
         }
         providerTraces = dedupeTraces([...providerTraces, ...finalParsed.traces])
+        providerToolCalls = mergeProviderToolCallParts([...providerToolCalls, ...(finalParsed.providerToolCalls ?? [])])
+        providerReasoningContent += finalParsed.reasoningContent ?? ''
+        providerResponseItems = mergeOpenAIResponseReplayItems([...providerResponseItems, ...(finalParsed.responseItems ?? [])])
+        providerContentBlocks = mergeAnthropicReplayContentBlocks([...providerContentBlocks, ...(finalParsed.providerContentBlocks ?? [])])
         finalParsed.traces.forEach(input.onTrace ?? (() => undefined))
         providerUsage = finalParsed.usage ?? providerUsage
         const citations = dedupeCitations([...extractCitationsFromText(fullText, input.req.retrievalSources), ...providerCitations])
+        const finalProviderToolCalls = executableProviderToolCalls(providerToolCalls)
         if (citations.length) input.onCitations?.(citations)
         void appendRuntimeLog('upstream.response', {
           conversationId: input.req.conversationId,
@@ -1767,7 +2719,16 @@ async function executeHttpSseChat(input: {
           usage: providerUsage,
           textLength: fullText.length,
         }, runtimeLogOptions(input.req))
-        input.onDone(withCredentialGroup({ text: fullText, citations, traces: providerTraces, usage: providerUsage }, input.credentialGroupId))
+        input.onDone(withCredentialGroup({
+          text: fullText,
+          citations,
+          traces: providerTraces,
+          usage: providerUsage,
+          ...(finalProviderToolCalls ? { providerToolCalls: finalProviderToolCalls } : {}),
+          ...(providerReasoningContent ? { reasoningContent: providerReasoningContent } : {}),
+          ...(providerResponseItems.length ? { responseItems: providerResponseItems } : {}),
+          ...(providerContentBlocks.length ? { providerContentBlocks: sanitizeAnthropicReplayContentBlocks(providerContentBlocks) } : {}),
+        }, input.credentialGroupId))
         return
       }
       buffer += decoder.decode(value, { stream: true })
@@ -1780,6 +2741,10 @@ async function executeHttpSseChat(input: {
           input.onChunk(parsed.text)
         }
         providerTraces = dedupeTraces([...providerTraces, ...parsed.traces])
+        providerToolCalls = mergeProviderToolCallParts([...providerToolCalls, ...(parsed.providerToolCalls ?? [])])
+        providerReasoningContent += parsed.reasoningContent ?? ''
+        providerResponseItems = mergeOpenAIResponseReplayItems([...providerResponseItems, ...(parsed.responseItems ?? [])])
+        providerContentBlocks = mergeAnthropicReplayContentBlocks([...providerContentBlocks, ...(parsed.providerContentBlocks ?? [])])
         parsed.traces.forEach(input.onTrace ?? (() => undefined))
         providerUsage = parsed.usage ?? providerUsage
         providerCitations = dedupeCitations([...providerCitations, ...extractProviderCitationsFromSse(event, wireProviderType)])
@@ -2587,12 +3552,14 @@ export async function testProviderModelDetailed(provider: AIProvider, model: str
   }
 
   try {
+    const modelTestReasoningEffort = options.checkParameters === false ? undefined : getModelTestReasoningEffort(p, upstreamModel)
     const modelTestReq = {
       provider: p,
       model: upstreamModel,
       requestedModel: model,
       messages: [{ role: 'user' as const, content: '请只回复 OK' }],
-      maxTokens: getModelTestMaxTokens(p, upstreamModel),
+      ...(modelTestReasoningEffort ? { reasoningEffort: modelTestReasoningEffort } : {}),
+      maxTokens: getModelTestMaxTokens(p, upstreamModel, modelTestReasoningEffort),
       stream: false,
     }
     const url = resolveProviderEndpoint({
@@ -2625,10 +3592,18 @@ export async function testProviderModelDetailed(provider: AIProvider, model: str
   }
 }
 
-function getModelTestMaxTokens(provider: AIProvider, model: string): number {
+function getModelTestReasoningEffort(provider: AIProvider, model: string): ReasoningEffort | undefined {
+  if (provider.type !== 'google') return undefined
+  const options = getReasoningEffortOptions(provider, model)
+  if (options.includes('medium')) return 'medium'
+  return options.find((effort) => effort !== 'none' && effort !== 'minimal')
+}
+
+function getModelTestMaxTokens(provider: AIProvider, model: string, reasoningEffort?: ReasoningEffort): number {
   const config = getModelConfig(model, provider.type, provider.modelConfigs)
   const normalized = model.toLowerCase().split('/').at(-1) ?? model.toLowerCase()
   const needsReasoningRoom =
+    Boolean(reasoningEffort && reasoningEffort !== 'none' && reasoningEffort !== 'minimal') ||
     provider.type === 'xiaomi-mimo' ||
     isOpenAIReasoningModel(model) ||
     normalized.includes('reasoner') ||

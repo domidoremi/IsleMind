@@ -1,5 +1,5 @@
 import { useEffect, useState, type ReactNode } from 'react'
-import { Text, View } from 'react-native'
+import { Text, View, useWindowDimensions } from 'react-native'
 import { BookOpen, Brain, Check, Download, Globe2, HardDrive, Trash2, Upload } from 'lucide-react-native'
 import { MotiView } from 'moti'
 import type { TFunction } from 'i18next'
@@ -27,6 +27,7 @@ import {
   type LocalEmbeddingModelView,
 } from '@/services/localEmbeddingModels'
 import { clearRagQueryCaches, listRagEmbeddingJobs, loadRagDebugSnapshot, loadRagEmbeddingJobSummary, rebuildRagKnowledgeEmbeddings, runRagGoldEvaluation, type RagEvaluationRun } from '@/services/ragEvaluation'
+import { localDataStore } from '@/services/localDataStore'
 import { useAppTheme } from '@/hooks/useAppTheme'
 import { useSettingsStore } from '@/store/settingsStore'
 import { SEARCH_DIAGNOSTIC_QUERY, SEARCH_PROVIDER_CREDENTIAL_FIELDS, SEARCH_PROVIDER_OPTIONS, legacySearchModeForProvider, resolveSearchProvider, searchProviderLabel } from '@/services/searchPolicy'
@@ -68,20 +69,17 @@ const contextChipPressableStyle = { minHeight: 44, justifyContent: 'center' as c
 const localModelActionStyle = {
   minHeight: 44,
   paddingHorizontal: 14,
-  borderRadius: 18,
   alignItems: 'center' as const,
   justifyContent: 'center' as const,
 }
 const fullWidthActionStyle = {
   minHeight: 44,
-  borderRadius: 22,
   alignItems: 'center' as const,
   justifyContent: 'center' as const,
 }
 const itemRowActionStyle = {
   minHeight: 44,
   paddingHorizontal: 14,
-  borderRadius: 18,
   alignItems: 'center' as const,
   justifyContent: 'center' as const,
 }
@@ -99,28 +97,33 @@ function primaryActionSurface(colors: ReturnType<typeof useAppTheme>['colors']) 
 
 function secondaryActionSurface(colors: ReturnType<typeof useAppTheme>['colors']) {
   return {
-    backgroundColor: colors.material.paperRaised,
+    backgroundColor: colors.ui.card.defaultBackground,
     borderWidth: 1,
-    borderColor: colors.border,
+    borderColor: colors.material.stroke,
     borderRadius: colors.ui.radius.controlLarge,
   }
 }
 
 function rowActionSurface(colors: ReturnType<typeof useAppTheme>['colors']) {
   return {
-    backgroundColor: colors.material.paperRaised,
+    backgroundColor: colors.ui.card.defaultBackground,
     borderWidth: 1,
-    borderColor: colors.border,
+    borderColor: colors.material.stroke,
     borderRadius: colors.ui.radius.controlMiddle,
   }
 }
 
-function assetCardSurface(colors: ReturnType<typeof useAppTheme>['colors'], borderColor = colors.border) {
+function assetCardSurface(colors: ReturnType<typeof useAppTheme>['colors'], borderColor = colors.material.stroke) {
   return {
     borderRadius: colors.ui.radius.card,
-    backgroundColor: colors.material.paperRaised,
+    backgroundColor: colors.ui.card.defaultBackground,
     borderWidth: 1,
     borderColor,
+    shadowColor: colors.ui.control.shadow,
+    shadowOpacity: colors.ui.card.shadowOpacity,
+    shadowRadius: colors.ui.card.shadowRadius,
+    shadowOffset: { width: 0, height: colors.ui.card.shadowOffset },
+    elevation: colors.ui.card.shadowOpacity > 0 ? 1 : 0,
   }
 }
 
@@ -433,6 +436,33 @@ export function ContextPanel({ providers, section = 'all', focus }: ContextPanel
         status: knowledgeHits.length ? 'ok' : 'fail',
         detail: knowledgeHits.length
           ? t('contextPanel.selfTest.hitFirst', { count: knowledgeHits.length, first: knowledgeHits[0]?.title ?? t('contextPanel.knowledgeChunk') })
+          : t('contextPanel.selfTest.knowledgeMiss'),
+      })
+
+      const hybridKnowledgeHits = await localDataStore.searchHybrid(`${canary} aurora-lantern`, {
+        limit: 3,
+        embeddingMode: settings.embeddingMode ?? 'hybrid',
+        localEmbeddingModelId: settings.localEmbeddingModelId,
+        localEmbeddingModelSource: settings.localEmbeddingModelSource,
+        ...(primaryProvider ? { provider: primaryProvider } : {}),
+      })
+      pushStep({
+        name: t('contextPanel.selfTest.knowledgeHybrid'),
+        status: hybridKnowledgeHits.length ? 'ok' : 'fail',
+        detail: hybridKnowledgeHits.length
+          ? t('contextPanel.selfTest.hitFirst', { count: hybridKnowledgeHits.length, first: hybridKnowledgeHits[0]?.title ?? t('contextPanel.knowledgeChunk') })
+          : t('contextPanel.selfTest.knowledgeMiss'),
+      })
+
+      const agenticKnowledgeHits = await localDataStore.searchAgenticIndexes(`${canary} aurora-lantern`, {
+        limit: 3,
+        techniques: ['raptor', 'graphrag', 'colbert'],
+      })
+      pushStep({
+        name: t('contextPanel.selfTest.knowledgeAgentic'),
+        status: agenticKnowledgeHits.length ? 'ok' : 'fail',
+        detail: agenticKnowledgeHits.length
+          ? t('contextPanel.selfTest.hitFirst', { count: agenticKnowledgeHits.length, first: agenticKnowledgeHits[0]?.title ?? t('contextPanel.knowledgeChunk') })
           : t('contextPanel.selfTest.knowledgeMiss'),
       })
 
@@ -751,7 +781,7 @@ export function ContextPanel({ providers, section = 'all', focus }: ContextPanel
 
       {showContext ? <IsleSection title={t('contextPanel.ragMode')} material="raised" style={{ marginTop: 12 }}>
         {embeddingJobs ? (
-          <Text style={{ color: embeddingJobs.error ? colors.warning : colors.textTertiary, fontSize: 11, lineHeight: 16, marginTop: 6 }}>
+          <Text style={{ color: embeddingJobs.error ? colors.ui.tone.warning.foreground : colors.textTertiary, fontSize: 11, lineHeight: 16, marginTop: 6 }}>
             {t('contextPanel.embeddingStatus', { running: embeddingJobs.running, failed: embeddingJobs.error })}
           </Text>
         ) : null}
@@ -804,7 +834,7 @@ export function ContextPanel({ providers, section = 'all', focus }: ContextPanel
         <View style={{ marginTop: 14 }}>
           <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
             <HardDrive color={colors.text} size={17} />
-            <Text style={{ color: colors.text, fontSize: 15, fontWeight: '900', flex: 1 }}>{t('contextPanel.localModel.title')}</Text>
+            <Text style={{ color: colors.text, fontSize: 15, fontWeight: '900', flex: 1, minWidth: 0 }}>{t('contextPanel.localModel.title')}</Text>
           </View>
           <Text style={{ color: colors.textTertiary, fontSize: 11, lineHeight: 16, marginTop: 4 }}>
             {t('contextPanel.localModel.priority')}
@@ -1045,7 +1075,7 @@ export function ContextPanel({ providers, section = 'all', focus }: ContextPanel
         ) : null}
         {hasMemoryFilters ? (
           <View testID="memory-filter-summary" style={{ flexDirection: 'row', alignItems: 'center', gap: 10, marginBottom: 10 }}>
-            <Text style={{ color: colors.textTertiary, fontSize: 11, lineHeight: 16, flex: 1 }}>
+            <Text style={{ color: colors.textTertiary, fontSize: 11, lineHeight: 16, flex: 1, minWidth: 0 }}>
               {t('contextPanel.memoryFilterSummary', { count: sortedMemories.length, total: memories.length })}
             </Text>
             <IslePressable
@@ -1110,9 +1140,9 @@ export function ContextPanel({ providers, section = 'all', focus }: ContextPanel
             onPress={() => void rejectPendingMemories(filteredPendingMemories)}
             disabled={confirmingMemories}
             accessibilityLabel={t('contextPanel.rejectFilteredPendingMemoriesTitle', { count: filteredPendingMemories.length })}
-            style={{ ...fullWidthActionStyle, ...secondaryActionSurface(colors), marginBottom: 10, borderColor: colors.error, opacity: confirmingMemories ? 0.65 : 1 }}
+            style={{ ...fullWidthActionStyle, ...secondaryActionSurface(colors), marginBottom: 10, borderColor: colors.ui.tone.danger.border, opacity: confirmingMemories ? 0.65 : 1 }}
           >
-            <Text style={{ color: colors.error, fontSize: 13, fontWeight: '900' }}>
+            <Text style={{ color: colors.ui.tone.danger.foreground, fontSize: 13, fontWeight: '900' }}>
               {confirmingMemories ? t('contextPanel.confirmingPendingMemories') : t('contextPanel.rejectFilteredPendingMemories', { count: filteredPendingMemories.length })}
             </Text>
           </IslePressable>
@@ -1208,7 +1238,7 @@ export function ContextPanel({ providers, section = 'all', focus }: ContextPanel
           </View>
         ) : null}
         {knowledgeStatusCounts.failed || knowledgeStatusCounts.empty ? (
-          <Text testID="knowledge-readiness-warning" style={{ color: knowledgeStatusCounts.failed ? colors.error : colors.warning, fontSize: 12, lineHeight: 17, marginBottom: 10 }}>
+          <Text testID="knowledge-readiness-warning" style={{ color: knowledgeStatusCounts.failed ? colors.ui.tone.danger.foreground : colors.ui.tone.warning.foreground, fontSize: 12, lineHeight: 17, marginBottom: 10 }}>
             {knowledgeStatusCounts.failed && knowledgeStatusCounts.empty
               ? t('contextPanel.knowledgeReadinessWarning', { failed: knowledgeStatusCounts.failed, empty: knowledgeStatusCounts.empty })
               : knowledgeStatusCounts.failed
@@ -1217,7 +1247,7 @@ export function ContextPanel({ providers, section = 'all', focus }: ContextPanel
           </Text>
         ) : null}
         {knowledgeRecoverySummary.recoverableDocuments || knowledgeRecoverySummary.failedJobs ? (
-          <View testID="knowledge-recovery-summary" style={{ marginBottom: 10, padding: 12, ...assetCardSurface(colors, knowledgeRecoverySummary.failedDocuments || knowledgeRecoverySummary.failedJobs ? colors.error : colors.warning) }}>
+          <View testID="knowledge-recovery-summary" style={{ marginBottom: 10, padding: 12, ...assetCardSurface(colors, knowledgeRecoverySummary.failedDocuments || knowledgeRecoverySummary.failedJobs ? colors.ui.tone.danger.border : colors.ui.tone.warning.border) }}>
             <Text style={{ color: colors.text, fontSize: 13, fontWeight: '900' }}>{t('contextPanel.knowledgeRecoveryTitle')}</Text>
             <Text style={{ color: colors.textTertiary, fontSize: 11, lineHeight: 16, marginTop: 4 }}>
               {t('contextPanel.knowledgeRecoverySummary', {
@@ -1227,19 +1257,19 @@ export function ContextPanel({ providers, section = 'all', focus }: ContextPanel
               })}
             </Text>
             {knowledgeRecoverySummary.lastError ? (
-              <Text numberOfLines={2} style={{ color: colors.error, fontSize: 11, lineHeight: 16, marginTop: 6 }}>
+              <Text numberOfLines={2} style={{ color: colors.ui.tone.danger.foreground, fontSize: 11, lineHeight: 16, marginTop: 6 }}>
                 {t('contextPanel.knowledgeRecoveryLastError', { error: knowledgeRecoverySummary.lastError })}
               </Text>
             ) : null}
             <View style={{ flexDirection: 'row', gap: 8, flexWrap: 'wrap', marginTop: 10 }}>
               {knowledgeRecoverySummary.failedDocuments ? (
                 <IslePressable haptic onPress={() => focusKnowledgeRecovery('error')} style={{ ...itemRowActionStyle, ...rowActionSurface(colors) }}>
-                  <Text style={{ color: colors.error, fontSize: 12, fontWeight: '900' }}>{t('contextPanel.knowledgeRecoveryShowFailed')}</Text>
+                  <Text style={{ color: colors.ui.tone.danger.foreground, fontSize: 12, fontWeight: '900' }}>{t('contextPanel.knowledgeRecoveryShowFailed')}</Text>
                 </IslePressable>
               ) : null}
               {knowledgeRecoverySummary.emptyDocuments ? (
                 <IslePressable haptic onPress={() => focusKnowledgeRecovery('empty')} style={{ ...itemRowActionStyle, ...rowActionSurface(colors) }}>
-                  <Text style={{ color: colors.warning, fontSize: 12, fontWeight: '900' }}>{t('contextPanel.knowledgeRecoveryShowEmpty')}</Text>
+                  <Text style={{ color: colors.ui.tone.warning.foreground, fontSize: 12, fontWeight: '900' }}>{t('contextPanel.knowledgeRecoveryShowEmpty')}</Text>
                 </IslePressable>
               ) : null}
               <IslePressable haptic onPress={() => void rebuildIndex()} disabled={rebuilding} style={{ ...itemRowActionStyle, ...primaryActionSurface(colors), opacity: rebuilding ? 0.65 : 1 }}>
@@ -1280,7 +1310,7 @@ export function ContextPanel({ providers, section = 'all', focus }: ContextPanel
         ) : null}
         {hasKnowledgeFilters ? (
           <View testID="knowledge-filter-summary" style={{ flexDirection: 'row', alignItems: 'center', gap: 10, marginBottom: 10 }}>
-            <Text style={{ color: colors.textTertiary, fontSize: 11, lineHeight: 16, flex: 1 }}>
+            <Text style={{ color: colors.textTertiary, fontSize: 11, lineHeight: 16, flex: 1, minWidth: 0 }}>
               {t('contextPanel.knowledgeFilterSummary', { count: filteredDocuments.length, total: documents.length })}
             </Text>
             <IslePressable
@@ -1362,9 +1392,9 @@ function ContextList({ title, empty, children, onClear }: { title: string; empty
         <IslePressable
           onPress={confirmClear}
           accessibilityLabel={t('contextPanel.clearTitle', { title })}
-          style={{ width: 44, height: 44, borderRadius: colors.ui.radius.controlLarge, alignItems: 'center', justifyContent: 'center', backgroundColor: colors.material.paperRaised, borderWidth: 1, borderColor: colors.border }}
+          style={{ width: 44, height: 44, borderRadius: colors.ui.radius.controlLarge, alignItems: 'center', justifyContent: 'center', backgroundColor: colors.ui.tone.danger.background, borderWidth: 1, borderColor: colors.ui.tone.danger.border }}
         >
-          <Trash2 color={colors.textTertiary} size={15} />
+          <Trash2 color={colors.ui.tone.danger.foreground} size={15} />
         </IslePressable>
       </View>
       {children || <Text style={{ color: colors.textSecondary, fontSize: 13 }}>{empty}</Text>}
@@ -1434,10 +1464,10 @@ function LocalModelRow({ view, busy, progress, onDownload, onDetails, onEnable, 
       })
     : ''
   return (
-    <View style={{ padding: 12, ...assetCardSurface(colors, view.active ? colors.success : colors.border) }}>
+    <View style={{ padding: 12, ...assetCardSurface(colors, view.active ? colors.ui.control.primaryBorder : colors.material.stroke) }}>
       <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
-        <View style={{ width: 34, height: 34, borderRadius: colors.ui.radius.controlMiddle, alignItems: 'center', justifyContent: 'center', backgroundColor: view.active ? colors.mintSoft : colors.material.field }}>
-          {view.active ? <Check color={colors.success} size={16} /> : <HardDrive color={colors.textTertiary} size={16} />}
+        <View style={{ width: 34, height: 34, borderRadius: colors.ui.radius.controlMiddle, alignItems: 'center', justifyContent: 'center', backgroundColor: view.active ? colors.ui.control.primaryBackground : colors.ui.icon.accentBackground }}>
+          {view.active ? <Check color={colors.ui.control.primaryForeground} size={16} /> : <HardDrive color={colors.textTertiary} size={16} />}
         </View>
         <View style={{ flex: 1, minWidth: 0 }}>
           <Text numberOfLines={1} style={{ color: colors.text, fontSize: 13, fontWeight: '900' }}>{view.model.name}</Text>
@@ -1445,7 +1475,7 @@ function LocalModelRow({ view, busy, progress, onDownload, onDetails, onEnable, 
             {modelMeta}
           </Text>
         </View>
-        <Text style={{ color: view.active ? colors.success : colors.textTertiary, fontSize: 11, fontWeight: '900' }}>{statusLabel}</Text>
+        <Text style={{ color: view.active ? colors.ui.control.link : colors.textTertiary, fontSize: 11, fontWeight: '900' }}>{statusLabel}</Text>
       </View>
       <Text numberOfLines={2} style={{ color: colors.textTertiary, fontSize: 11, lineHeight: 16, marginTop: 8 }}>{view.model.useCase}</Text>
       <Text numberOfLines={2} style={{ color: colors.textTertiary, fontSize: 10, lineHeight: 15, marginTop: 6 }}>
@@ -1453,8 +1483,8 @@ function LocalModelRow({ view, busy, progress, onDownload, onDetails, onEnable, 
       </Text>
       {progress ? (
         <View style={{ marginTop: 10, gap: 6 }}>
-          <View style={{ height: 6, borderRadius: 3, overflow: 'hidden', backgroundColor: colors.material.field }}>
-            <View style={{ width: `${Math.max(2, progressPercent)}%`, height: '100%', borderRadius: 3, backgroundColor: colors.primary }} />
+          <View style={{ height: 6, borderRadius: colors.ui.radius.chip, overflow: 'hidden', backgroundColor: colors.ui.section.divider }}>
+            <View style={{ width: `${Math.max(2, progressPercent)}%`, height: '100%', borderRadius: colors.ui.radius.chip, backgroundColor: colors.ui.control.primaryBackground }} />
           </View>
           <Text numberOfLines={2} style={{ color: colors.textSecondary, fontSize: 11, lineHeight: 16, fontWeight: '800' }}>
             {progressText}
@@ -1485,7 +1515,7 @@ function LocalModelRow({ view, busy, progress, onDownload, onDetails, onEnable, 
         ) : null}
         {view.downloaded ? (
           <IslePressable haptic disabled={busy} onPress={onDelete} style={{ ...localModelActionStyle, ...rowActionSurface(colors), opacity: busy ? 0.65 : 1 }}>
-            <Text style={{ color: colors.error, fontSize: 12, fontWeight: '900' }}>{t('common.delete')}</Text>
+            <Text style={{ color: colors.ui.tone.danger.foreground, fontSize: 12, fontWeight: '900' }}>{t('common.delete')}</Text>
           </IslePressable>
         ) : null}
       </View>
@@ -1509,10 +1539,10 @@ function LocalCapabilityRow({ view, settings, onDetails }: {
     view.model.maxTokens ? t('contextPanel.localModel.maxTokens', { count: view.model.maxTokens }) : '',
   ].filter(Boolean).join(' · ')
   return (
-    <View style={{ padding: 12, ...assetCardSurface(colors, active ? colors.border : colors.warning) }}>
+    <View style={{ padding: 12, ...assetCardSurface(colors, active ? colors.material.stroke : colors.ui.tone.warning.border) }}>
       <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
-        <View style={{ width: 34, height: 34, borderRadius: colors.ui.radius.controlMiddle, alignItems: 'center', justifyContent: 'center', backgroundColor: active ? colors.mintSoft : colors.material.field }}>
-          {active ? <Check color={colors.success} size={16} /> : <HardDrive color={colors.warning} size={16} />}
+        <View style={{ width: 34, height: 34, borderRadius: colors.ui.radius.controlMiddle, alignItems: 'center', justifyContent: 'center', backgroundColor: active ? colors.ui.control.primaryBackground : colors.ui.tone.warning.background }}>
+          {active ? <Check color={colors.ui.control.primaryForeground} size={16} /> : <HardDrive color={colors.ui.tone.warning.foreground} size={16} />}
         </View>
         <View style={{ flex: 1, minWidth: 0 }}>
           <Text numberOfLines={1} style={{ color: colors.text, fontSize: 13, fontWeight: '900' }}>{view.model.name}</Text>
@@ -1525,7 +1555,7 @@ function LocalCapabilityRow({ view, settings, onDetails }: {
       <Text style={{ color: colors.textTertiary, fontSize: 11, lineHeight: 16, marginTop: 8 }}>
         {t(`contextPanel.localModel.fallbackStrategies.${capability}`)}
       </Text>
-      <Text style={{ color: active ? colors.textSecondary : colors.warning, fontSize: 11, lineHeight: 16, marginTop: 6, fontWeight: '800' }}>
+      <Text style={{ color: active ? colors.textSecondary : colors.ui.tone.warning.foreground, fontSize: 11, lineHeight: 16, marginTop: 6, fontWeight: '800' }}>
         {active ? t('contextPanel.localModel.runtimeBoundaryOn') : t('contextPanel.localModel.runtimeBoundaryOff')}
       </Text>
       <Text numberOfLines={2} style={{ color: colors.textTertiary, fontSize: 10, lineHeight: 15, marginTop: 6 }}>
@@ -1719,7 +1749,7 @@ function ItemRow({ title, description, meta, deleteName, trailing, onToggle, onD
           </IslePressable>
         ) : null}
         <IslePressable onPress={() => void confirmDelete()} style={{ ...itemRowActionStyle, ...rowActionSurface(colors) }}>
-          <Text style={{ color: colors.error, fontSize: 12, fontWeight: '800' }}>{t('common.delete')}</Text>
+          <Text style={{ color: colors.ui.tone.danger.foreground, fontSize: 12, fontWeight: '800' }}>{t('common.delete')}</Text>
         </IslePressable>
       </View>
     </View>
@@ -1730,7 +1760,7 @@ function SelfTestRow({ step }: { step: SelfTestStep }) {
   const { colors } = useAppTheme()
   const { t } = useTranslation()
   const [expanded, setExpanded] = useState(step.status === 'fail')
-  const statusColor = step.status === 'ok' ? colors.success : step.status === 'warn' ? colors.warning : colors.error
+  const statusColor = step.status === 'ok' ? colors.ui.tone.success.foreground : step.status === 'warn' ? colors.ui.tone.warning.foreground : colors.ui.tone.danger.foreground
   const statusText = step.status === 'ok' ? t('contextPanel.selfTest.passed') : step.status === 'warn' ? t('contextPanel.selfTest.needsConfig') : t('contextPanel.selfTest.failedStatus')
   return (
     <IslePressable
@@ -1741,7 +1771,7 @@ function SelfTestRow({ step }: { step: SelfTestStep }) {
     >
       <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
         <View style={{ width: 8, height: 8, borderRadius: 4, backgroundColor: statusColor }} />
-        <Text style={{ color: colors.text, fontSize: 12, fontWeight: '900', flex: 1 }}>{step.name}</Text>
+        <Text style={{ color: colors.text, fontSize: 12, fontWeight: '900', flex: 1, minWidth: 0 }}>{step.name}</Text>
         <Text style={{ color: statusColor, fontSize: 11, fontWeight: '900' }}>{statusText}</Text>
       </View>
       {expanded || step.status === 'ok' ? (
@@ -1793,9 +1823,9 @@ function RagLogRow({ log }: { log: RagEvaluationLog }) {
 function IndexingJobRow({ job }: { job: RagIndexingJobStatus }) {
   const { colors } = useAppTheme()
   return (
-    <View style={{ marginTop: 8, padding: 10, ...assetCardSurface(colors, job.status === 'error' ? colors.error : colors.border) }}>
+    <View style={{ marginTop: 8, padding: 10, ...assetCardSurface(colors, job.status === 'error' ? colors.ui.tone.danger.border : colors.material.stroke) }}>
       <Text numberOfLines={1} style={{ color: colors.text, fontSize: 12, fontWeight: '900' }}>{job.kind}</Text>
-      <Text numberOfLines={2} style={{ color: job.status === 'error' ? colors.error : colors.textTertiary, fontSize: 11, lineHeight: 16, marginTop: 4 }}>
+      <Text numberOfLines={2} style={{ color: job.status === 'error' ? colors.ui.tone.danger.foreground : colors.textTertiary, fontSize: 11, lineHeight: 16, marginTop: 4 }}>
         {job.status}{job.progress !== undefined ? ` · ${Math.round((job.progress ?? 0) * 100)}%` : ''}{job.error ? ` · ${job.error}` : ''}
       </Text>
     </View>
@@ -1804,8 +1834,10 @@ function IndexingJobRow({ job }: { job: RagIndexingJobStatus }) {
 
 function DebugStat({ label, value }: { label: string; value: string }) {
   const { colors } = useAppTheme()
+  const { width } = useWindowDimensions()
+  const statMinWidth = width < 390 ? 64 : 74
   return (
-    <View style={{ minHeight: 34, minWidth: 74, paddingHorizontal: 10, alignItems: 'center', justifyContent: 'center', ...rowActionSurface(colors) }}>
+    <View style={{ minHeight: 34, minWidth: statMinWidth, paddingHorizontal: 10, alignItems: 'center', justifyContent: 'center', ...rowActionSurface(colors) }}>
       <Text style={{ color: colors.text, fontSize: 12, fontWeight: '900' }}>{value}</Text>
       <Text numberOfLines={1} style={{ color: colors.textTertiary, fontSize: 10, fontWeight: '800' }}>{label}</Text>
     </View>

@@ -9,9 +9,11 @@ const sourceDir = path.join(brandDir, 'source')
 const generatedDir = path.join(brandDir, 'generated')
 const androidResDir = path.join(root, 'android', 'app', 'src', 'main', 'res')
 
-const iconBackground = '#F8F4EC'
+const iconBackground = '#1F73FF'
 const yellowKey = '#FDFB08'
 const petSource = path.join(sourceDir, 'isle-pet-preview-base.png')
+const appIconPinkSource = path.join(sourceDir, 'islemind-icon-pink.png')
+const appIconBlueSource = path.join(sourceDir, 'islemind-icon-blue.png')
 
 fs.mkdirSync(sourceDir, { recursive: true })
 fs.mkdirSync(generatedDir, { recursive: true })
@@ -19,9 +21,39 @@ fs.mkdirSync(generatedDir, { recursive: true })
 if (!fs.existsSync(petSource)) {
   throw new Error(`Missing pet icon source: ${path.relative(root, petSource)}`)
 }
+if (!fs.existsSync(appIconPinkSource)) {
+  throw new Error(`Missing pink app icon source: ${path.relative(root, appIconPinkSource)}`)
+}
+if (!fs.existsSync(appIconBlueSource)) {
+  throw new Error(`Missing blue app icon source: ${path.relative(root, appIconBlueSource)}`)
+}
+
+function resolveMagickExecutable() {
+  if (process.platform !== 'win32') {
+    return 'magick'
+  }
+
+  const result = spawnSync('where.exe', ['magick.exe'], {
+    cwd: root,
+    encoding: 'utf8',
+  })
+  if (result.status === 0) {
+    const executable = result.stdout
+      .split(/\r?\n/)
+      .map((line) => line.trim())
+      .find(Boolean)
+    if (executable) {
+      return executable
+    }
+  }
+
+  return 'magick'
+}
+
+const magickExecutable = resolveMagickExecutable()
 
 function runMagick(args, label) {
-  const result = spawnSync('magick', args, {
+  const result = spawnSync(magickExecutable, args, {
     cwd: root,
     stdio: 'inherit',
   })
@@ -30,7 +62,7 @@ function runMagick(args, label) {
   }
 }
 
-function petCutoutArgs(maxSubjectSize) {
+function transparentPetSourceArgs() {
   return [
     petSource,
     '-alpha',
@@ -47,6 +79,12 @@ function petCutoutArgs(maxSubjectSize) {
     '#7A7515',
     '-fuzz',
     '28%',
+  ]
+}
+
+function petCutoutArgs(maxSubjectSize) {
+  return [
+    ...transparentPetSourceArgs(),
     '-trim',
     '+repage',
     '-filter',
@@ -77,36 +115,8 @@ function renderTransparentPet(outputPath, size, maxSubjectSize) {
   )
 }
 
-function renderOpaquePetIcon(outputPath, size, maxSubjectSize) {
-  runMagick(
-    [
-      '-size',
-      `${size}x${size}`,
-      `xc:${iconBackground}`,
-      '(',
-      ...petCutoutArgs(maxSubjectSize),
-      ')',
-      '-gravity',
-      'center',
-      '-compose',
-      'over',
-      '-composite',
-      '-alpha',
-      'remove',
-      '-alpha',
-      'off',
-      '-depth',
-      '8',
-      '-strip',
-      outputPath,
-    ],
-    path.relative(root, outputPath)
-  )
-}
-
-function renderImage(inputName, outputPath, size) {
+function renderImage(inputPath, outputPath, size) {
   fs.mkdirSync(path.dirname(outputPath), { recursive: true })
-  const inputPath = path.join(assetsDir, inputName)
   runMagick(
     [inputPath, '-filter', 'point', '-resize', `${size}x${size}`, '-alpha', 'on', '-depth', '8', '-strip', outputPath],
     path.relative(root, outputPath)
@@ -143,17 +153,17 @@ function renderAndroidResources() {
     ['mipmap-xxxhdpi', 192, 432],
   ]
   for (const [density, iconSize, foregroundSize] of launcherSizes) {
-    renderImage('icon.png', path.join(androidResDir, density, 'ic_launcher.webp'), iconSize)
-    renderImage('icon.png', path.join(androidResDir, density, 'ic_launcher_round.webp'), iconSize)
-    renderImage('adaptive-foreground.png', path.join(androidResDir, density, 'ic_launcher_foreground.webp'), foregroundSize)
+    renderImage(appIconBlueSource, path.join(androidResDir, density, 'ic_launcher.webp'), iconSize)
+    renderImage(appIconBlueSource, path.join(androidResDir, density, 'ic_launcher_round.webp'), iconSize)
+    renderImage(appIconBlueSource, path.join(androidResDir, density, 'ic_launcher_foreground.webp'), foregroundSize)
   }
 }
 
-renderOpaquePetIcon(path.join(assetsDir, 'icon.png'), 1024, 820)
-renderOpaquePetIcon(path.join(assetsDir, 'adaptive-icon.png'), 1024, 820)
-renderTransparentPet(path.join(assetsDir, 'adaptive-foreground.png'), 1024, 620)
+renderImage(appIconPinkSource, path.join(assetsDir, 'icon.png'), 1024)
+renderImage(appIconBlueSource, path.join(assetsDir, 'adaptive-icon.png'), 1024)
+renderImage(appIconBlueSource, path.join(assetsDir, 'adaptive-foreground.png'), 1024)
 renderTransparentPet(path.join(assetsDir, 'splash-icon.png'), 1024, 760)
-renderOpaquePetIcon(path.join(assetsDir, 'favicon.png'), 48, 40)
+renderImage(appIconPinkSource, path.join(assetsDir, 'favicon.png'), 48)
 renderTransparentPet(path.join(generatedDir, 'isle-pet-icon-transparent.png'), 1024, 820)
 writeIconBackgroundResources()
 renderAndroidResources()

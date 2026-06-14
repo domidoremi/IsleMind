@@ -1,21 +1,33 @@
 import { MotiView } from 'moti'
-import { useEffect, useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import { BackHandler, Platform } from 'react-native'
 import { router } from 'expo-router'
 import { IsleScreen, type IsleBackgroundState } from '@/components/ui/isle'
-import { ProviderSettingsContent } from '@/components/providers/ProviderSettingsContent'
+import { createLazyComponent } from '@/utils/lazyLoad'
+
+// 懒加载设置内容，减少启动时间
+const ProviderSettingsContent = createLazyComponent(
+  () => import('@/components/providers/ProviderSettingsContent')
+)
 
 export default function ProviderSettingsScreen() {
   const [backgroundState, setBackgroundState] = useState<IsleBackgroundState>('idle')
+  const closeProviderSettings = useCallback(() => {
+    if (router.canGoBack()) {
+      router.back()
+      return
+    }
+    router.replace('/settings')
+  }, [])
 
   useEffect(() => {
     if (Platform.OS !== 'android') return undefined
     const subscription = BackHandler.addEventListener('hardwareBackPress', () => {
-      router.replace('/settings')
+      closeProviderSettings()
       return true
     })
     return () => subscription.remove()
-  }, [])
+  }, [closeProviderSettings])
 
   return (
     <IsleScreen padded={false} background="surface" backgroundState={backgroundState}>
@@ -26,7 +38,7 @@ export default function ProviderSettingsScreen() {
         transition={{ type: 'spring', damping: 22, stiffness: 190 }}
         style={{ flex: 1 }}
       >
-        <ProviderSettingsContent onBackgroundStateChange={setBackgroundState} />
+        <ProviderSettingsContent onClose={closeProviderSettings} onBackgroundStateChange={setBackgroundState} />
       </MotiView>
     </IsleScreen>
   )

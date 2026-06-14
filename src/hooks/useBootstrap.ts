@@ -31,9 +31,12 @@ export function useBootstrap() {
       initI18n(useSettingsStore.getState().settings.language)
 
       if (mounted) {
+        // 优化：不再在启动时初始化 contextStore (会加载 AI 模型)
+        // AI 模型现在采用延迟加载，仅在首次使用时加载
         void safeBootstrap(st('bootstrap.localDatabase'), async () => {
           await localDataStore.initialize()
-          await initializeContextStore()
+          // 移除: await initializeContextStore()
+          // Context store 将在首次需要时通过 lazyEmbedding 自动初始化
         }).catch(() => {
           setState((current) => ({ ...current, errorCount: current.errorCount + 1 }))
         })

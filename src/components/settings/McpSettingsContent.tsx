@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
-import { Text, View } from 'react-native'
+import { Text, View, useWindowDimensions } from 'react-native'
 import { Network, Plus, RefreshCw, ShieldCheck, Trash2 } from 'lucide-react-native'
 import { useTranslation } from 'react-i18next'
 import { IsleButton } from '@/components/ui/isle'
@@ -8,7 +8,7 @@ import { IsleField, IsleListItem, IsleSection, IsleToggle } from '@/components/u
 import { IsleChip } from '@/components/ui/isle'
 import { useAppTheme } from '@/hooks/useAppTheme'
 import { listMcpServers, refreshMcpManifest, saveMcpServers, upsertMcpServer } from '@/services/mcp'
-import type { McpServerConfig, McpToolManifest } from '@/types'
+import type { McpPromptManifest, McpResourceManifest, McpServerConfig, McpToolManifest } from '@/types'
 
 const DEFAULT_TTL_MS = 6 * 60 * 60 * 1000
 
@@ -16,6 +16,8 @@ export function McpSettingsContent() {
   const { colors } = useAppTheme()
   const { t } = useTranslation()
   const dialog = useIsleDialog()
+  const { width } = useWindowDimensions()
+  const compact = width < 430
   const [servers, setServers] = useState<McpServerConfig[]>([])
   const [name, setName] = useState('')
   const [url, setUrl] = useState('')
@@ -108,7 +110,7 @@ export function McpSettingsContent() {
         <View style={{ gap: 10 }}>
           <IsleField label={t('mcp.name')} inputProps={{ value: name, onChangeText: setName, placeholder: 'Local tools' }} />
           <IsleField label={t('mcp.url')} inputProps={{ value: url, onChangeText: setUrl, placeholder: 'https://example.com/mcp', autoCapitalize: 'none', autoCorrect: false }} />
-          <IsleButton label={t('mcp.add')} icon={<Plus color={colors.surface} size={16} />} tone="primary" onPress={() => void addServer()} />
+          <IsleButton label={t('mcp.add')} icon={<Plus color={colors.ui.control.primaryForeground} size={16} />} tone="primary" onPress={() => void addServer()} style={compact ? { alignSelf: 'stretch' } : { alignSelf: 'flex-start', minWidth: 0 }} />
         </View>
       </IsleSection>
 
@@ -147,22 +149,49 @@ function ServerCard({
 }) {
   const { colors } = useAppTheme()
   const { t } = useTranslation()
+  const { width } = useWindowDimensions()
+  const compact = width < 430
+  const resourceItems = server.resources.map((resource) => ({
+    key: resource.uri,
+    title: resource.name ?? resource.uri,
+    description: formatResourceDescription(resource),
+  }))
+  const promptItems = server.prompts.map((prompt) => ({
+    key: prompt.name,
+    title: prompt.name,
+    description: formatPromptDescription(prompt, t),
+  }))
   const actions = (
-    <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8, justifyContent: 'flex-end' }}>
-      {!readonly ? <IsleButton label={server.enabled ? t('settings.enabledState') : t('settings.disabledState')} compact tone={server.enabled ? 'mint' : 'soft'} onPress={() => void onToggleServer(server)} /> : null}
-      <IsleButton label={t('settings.sync')} compact icon={<RefreshCw color={colors.textSecondary} size={14} />} onPress={() => void onRefresh(server)} />
-      {!readonly ? <IsleButton label={t('common.delete')} compact tone="danger" icon={<Trash2 color={colors.error} size={14} />} onPress={() => void onDelete(server)} /> : null}
+    <View style={{ flexDirection: compact ? 'column' : 'row', flexWrap: compact ? 'nowrap' : 'wrap', gap: 8, justifyContent: 'flex-end', alignItems: compact ? 'stretch' : 'center' }}>
+      {!readonly ? <IsleButton label={server.enabled ? t('settings.enabledState') : t('settings.disabledState')} compact tone={server.enabled ? 'mint' : 'soft'} onPress={() => void onToggleServer(server)} style={compact ? { alignSelf: 'stretch' } : undefined} /> : null}
+      <IsleButton label={t('settings.sync')} compact icon={<RefreshCw color={colors.textSecondary} size={14} />} onPress={() => void onRefresh(server)} style={compact ? { alignSelf: 'stretch' } : undefined} />
+      {!readonly ? <IsleButton label={t('common.delete')} compact tone="danger" icon={<Trash2 color={colors.ui.tone.danger.foreground} size={14} />} onPress={() => void onDelete(server)} style={compact ? { alignSelf: 'stretch' } : undefined} /> : null}
     </View>
   )
   return (
-    <View style={{ borderRadius: 24, padding: 12, gap: 10, backgroundColor: colors.material.paperRaised, borderWidth: 1, borderColor: colors.border }}>
+    <View
+      style={{
+        borderRadius: colors.ui.radius.panel,
+        padding: compact ? 10 : 12,
+        gap: 10,
+        backgroundColor: colors.ui.card.defaultBackground,
+        borderWidth: colors.ui.minimal ? 1 : 2,
+        borderColor: server.enabled ? colors.material.strokeStrong : colors.material.stroke,
+        shadowColor: colors.ui.control.shadow,
+        shadowOpacity: colors.ui.card.shadowOpacity,
+        shadowRadius: colors.ui.card.shadowRadius,
+        shadowOffset: { width: 0, height: colors.ui.card.shadowOffset },
+        elevation: colors.ui.card.shadowOpacity > 0 ? 1 : 0,
+      }}
+    >
       <IsleListItem
         title={server.name}
-        description={server.url}
+        description={[server.url, t('mcp.refreshSummary', { tools: server.tools.length, resources: server.resources.length, prompts: server.prompts.length })].join('\n')}
         leading={<IsleChip active={server.status === 'connected'}>{t(`mcp.status.${server.status}`)}</IsleChip>}
       />
       {actions}
       <View style={{ gap: 8 }}>
+        <Text style={{ color: colors.textSecondary, fontSize: 11, fontWeight: '900', letterSpacing: 0.3 }}>{t('mcp.toolsTitle', { count: server.tools.length })}</Text>
         {server.tools.map((tool) => (
           <IsleToggle
             key={tool.name}
@@ -175,6 +204,46 @@ function ServerCard({
         ))}
         {!server.tools.length ? <Text style={{ color: colors.textTertiary, fontSize: 12, fontWeight: '800' }}>{t('mcp.noTools')}</Text> : null}
       </View>
+      <View style={{ gap: 8 }}>
+        <Text style={{ color: colors.textSecondary, fontSize: 11, fontWeight: '900', letterSpacing: 0.3 }}>{t('mcp.resourcesTitle', { count: server.resources.length })}</Text>
+        {resourceItems.map((resource) => (
+          <IsleListItem
+            key={resource.key}
+            title={resource.title}
+            description={resource.description}
+            leading={<IsleChip>{t('mcp.resourceChip')}</IsleChip>}
+          />
+        ))}
+        {!resourceItems.length ? <Text style={{ color: colors.textTertiary, fontSize: 12, fontWeight: '800' }}>{t('mcp.noResources')}</Text> : null}
+      </View>
+      <View style={{ gap: 8 }}>
+        <Text style={{ color: colors.textSecondary, fontSize: 11, fontWeight: '900', letterSpacing: 0.3 }}>{t('mcp.promptsTitle', { count: server.prompts.length })}</Text>
+        {promptItems.map((prompt) => (
+          <IsleListItem
+            key={prompt.key}
+            title={prompt.title}
+            description={prompt.description}
+            leading={<IsleChip>{t('mcp.promptChip')}</IsleChip>}
+          />
+        ))}
+        {!promptItems.length ? <Text style={{ color: colors.textTertiary, fontSize: 12, fontWeight: '800' }}>{t('mcp.noPrompts')}</Text> : null}
+      </View>
     </View>
   )
+}
+
+function formatResourceDescription(resource: McpResourceManifest): string | undefined {
+  const parts = [resource.description, resource.mimeType, resource.uri].filter(Boolean)
+  return parts.length ? parts.join(' · ') : undefined
+}
+
+function formatPromptDescription(prompt: McpPromptManifest, t: (key: string, options?: Record<string, unknown>) => string): string | undefined {
+  const argumentNames = (prompt.arguments ?? [])
+    .map((argument) => (argument && typeof argument.name === 'string' ? argument.name : ''))
+    .filter(Boolean)
+  const argumentSummary = argumentNames.length
+    ? `${t('mcp.promptArguments', { count: argumentNames.length })}: ${argumentNames.slice(0, 4).join(', ')}${argumentNames.length > 4 ? '…' : ''}`
+    : undefined
+  const parts = [prompt.description, argumentSummary].filter(Boolean)
+  return parts.length ? parts.join(' · ') : undefined
 }

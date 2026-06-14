@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import type { ReactNode } from 'react'
-import { ActivityIndicator, Platform, Text, TextInput, View } from 'react-native'
+import { ActivityIndicator, Platform, Text, TextInput, View, useWindowDimensions } from 'react-native'
 import { AtSign, Camera, ChevronDown, FilePlus, Image, Mic, Plus, SendHorizontal, Slash } from 'lucide-react-native'
 import { MotiView } from 'moti'
 import { useTranslation } from 'react-i18next'
@@ -27,10 +27,13 @@ interface ComposerProps {
   pendingNotice?: string
   initialDraft?: string
   initialDraftKey?: string | number
+  initialAttachments?: Attachment[]
+  restoreInitialDraftIfEmpty?: boolean
   commands?: ComposerCommand[]
   references?: CommandReference[]
   utilitiesOpen?: boolean
   showInlineUtilities?: boolean
+  leadingAccessory?: ReactNode
   onClearPending?: () => void
   onReferenceSelected?: (reference: CommandReference) => void
   onFocus?: () => void
@@ -40,16 +43,23 @@ interface ComposerProps {
   onSendWhileStreaming?: (content: string, attachments: Attachment[]) => Promise<void> | void
 }
 
+const COMPOSER_CONTROL_HIT_SLOP = { top: 8, right: 8, bottom: 8, left: 8 }
+const COMPOSER_PILL_HIT_SLOP = { top: 10, right: 8, bottom: 10, left: 8 }
+const COMPOSER_MAX_LENGTH = 12000
+
 export function Composer({
   disabled = false,
   streaming = false,
   pendingNotice,
   initialDraft,
   initialDraftKey,
+  initialAttachments,
+  restoreInitialDraftIfEmpty = false,
   commands = [],
   references = [],
   utilitiesOpen = false,
   showInlineUtilities = true,
+  leadingAccessory,
   onClearPending,
   onReferenceSelected,
   onFocus,
@@ -61,6 +71,7 @@ export function Composer({
   const { colors } = useAppTheme()
   const { t } = useTranslation()
   const dialog = useIsleDialog()
+  const { width: composerWindowWidth } = useWindowDimensions()
   const [content, setContent] = useState('')
   const [attachments, setAttachments] = useState<Attachment[]>([])
   const [attachmentsOpen, setAttachmentsOpen] = useState(false)
@@ -70,7 +81,35 @@ export function Composer({
   const [consumedDraftKey, setConsumedDraftKey] = useState<string | number | undefined>(undefined)
   const useAudioRecorder = getAudioRecorderHook()
   const recorder = useAudioRecorder ? useAudioRecorder({ extension: '.m4a' }) : null
-  const canSend = (!!content.trim() || attachments.length > 0) && !disabled && !sending
+  const draftCharacterCount = content.length
+  const draftOverLimit = draftCharacterCount > COMPOSER_MAX_LENGTH
+  const draftExcessCharacters = Math.max(0, draftCharacterCount - COMPOSER_MAX_LENGTH)
+  const hasSendableDraft = !!content.trim() || attachments.length > 0
+  const canSend = hasSendableDraft && !disabled && !sending && !draftOverLimit
+  const draftStatusVisible = draftOverLimit
+  const draftStatusLabel = attachments.length > 0
+    ? t('chat.composerDraftStatusWithAttachments', {
+      count: draftCharacterCount,
+      limit: COMPOSER_MAX_LENGTH,
+      attachments: attachments.length,
+    })
+    : t('chat.composerDraftStatus', {
+      count: draftCharacterCount,
+      limit: COMPOSER_MAX_LENGTH,
+    })
+  const draftWarningLabel = draftOverLimit ? t('chat.composerDraftExceeded', { count: draftExcessCharacters }) : ''
+  const draftAccessibilityValue = draftStatusVisible
+    ? { text: draftWarningLabel ? `${draftStatusLabel}. ${draftWarningLabel}` : draftStatusLabel }
+    : undefined
+  const sendButtonAccessibilityHint = sending
+    ? t('chat.sendingAccessibilityHint')
+    : disabled
+      ? t('chat.sendMessageUnavailableAccessibilityHint')
+      : !hasSendableDraft
+        ? t('chat.sendMessageEmptyAccessibilityHint')
+        : streaming
+          ? t('chat.keepTypingAccessibilityHint')
+          : t('chat.sendMessageAccessibilityHint')
   const trigger = getActiveTrigger(content)
   const commandMatches = trigger?.type === 'command' ? filterCommands(commands, trigger.query).slice(0, 6) : []
   const referenceMatches = trigger?.type === 'reference' ? filterReferences(references, trigger.query).slice(0, 8) : []
@@ -81,16 +120,29 @@ export function Composer({
   const chipRadius = colors.ui.radius.chip
   const compactControlRadius = colors.ui.radius.controlMiddle
   const largeControlRadius = colors.ui.radius.controlLarge
-  const raisedSurface = colors.material.paperRaised
+  const raisedSurface = colors.ui.card.defaultBackground
+  const raisedBorder = colors.material.stroke
+  const compactComposer = composerWindowWidth < 390
+  const attachmentLabelMaxWidth = Math.max(108, Math.min(compactComposer ? 132 : 180, composerWindowWidth * 0.42))
+  const utilityControlWidth = compactComposer ? 36 : 38
+  const sendButtonMinWidth = compactComposer ? 46 : 52
 
   useEffect(() => {
-    const draft = initialDraft?.trim()
-    if (!draft) return
-    const draftKey = initialDraftKey ?? draft
+    const draft = initialDraft ?? ''
+    const draftAttachments = initialAttachments ?? []
+    const hasDraft = !!draft.trim()
+    const hasAttachments = draftAttachments.length > 0
+    if (!hasDraft && !hasAttachments) return
+    const draftKey = initialDraftKey ?? [draft ?? '', ...draftAttachments.map((item) => `${item.id}:${item.uri}`)].join('|')
     if (consumedDraftKey === draftKey) return
-    setContent(draft)
+    if (restoreInitialDraftIfEmpty && (content.trim() || attachments.length > 0)) {
+      setConsumedDraftKey(draftKey)
+      return
+    }
+    setContent(draft ?? '')
+    if (hasAttachments) setAttachments(draftAttachments)
     setConsumedDraftKey(draftKey)
-  }, [consumedDraftKey, initialDraft, initialDraftKey])
+  }, [attachments.length, consumedDraftKey, content, initialAttachments, initialDraft, initialDraftKey, restoreInitialDraftIfEmpty])
 
   async function addAttachment(picker: () => Promise<Attachment | null>) {
     try {
@@ -118,6 +170,9 @@ export function Composer({
       } else {
         await onSend(text, files)
       }
+    } catch {
+      setContent((current) => current ? current : text)
+      setAttachments((current) => current.length > 0 ? current : files)
     } finally {
       setSending(false)
     }
@@ -179,7 +234,7 @@ export function Composer({
 
   return (
     <MotiView
-      animate={{ scale: focused ? 1.01 : 1, translateY: focused ? -1 : 0 }}
+      animate={{ scale: focused && !compactComposer ? 1.01 : 1, translateY: focused ? -1 : 0 }}
       transition={{ type: 'spring', damping: 18, stiffness: 180 }}
       style={{
         shadowColor: colors.shadowTint,
@@ -190,17 +245,20 @@ export function Composer({
         backgroundColor: 'transparent',
       }}
     >
-      <IslePanel material="chrome" elevated={false} radius={panelRadius} style={{ borderColor: focused ? colors.borderStrong : colors.border, backgroundColor: colors.material.chrome }}>
+      <IslePanel material="chrome" elevated={false} radius={panelRadius} style={{ borderColor: focused ? colors.material.strokeStrong : colors.material.stroke, backgroundColor: colors.ui.card.defaultBackground }}>
       {attachments.length ? (
         <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8, paddingHorizontal: 12, paddingTop: 10 }}>
           {attachments.map((item) => (
             <IslePressable
               key={item.id}
               onPress={() => setAttachments((files) => files.filter((file) => file.id !== item.id))}
+              accessibilityRole="button"
               accessibilityLabel={t('chat.removeAttachment', { name: item.name })}
+              accessibilityHint={t('chat.removeAttachmentAccessibilityHint', { name: item.name })}
+              hitSlop={COMPOSER_PILL_HIT_SLOP}
               style={{ paddingHorizontal: 10, height: 28, borderRadius: chipRadius, backgroundColor: raisedSurface, justifyContent: 'center' }}
             >
-              <Text numberOfLines={1} style={{ color: colors.textSecondary, fontSize: 11, fontWeight: '700', maxWidth: 180 }}>
+              <Text numberOfLines={1} style={{ color: colors.textSecondary, fontSize: 11, fontWeight: '700', maxWidth: attachmentLabelMaxWidth }}>
                 {item.name}
               </Text>
             </IslePressable>
@@ -216,23 +274,28 @@ export function Composer({
         >
           <UtilityGroupTitle label={t('chat.inputTools')} />
           <View style={{ flexDirection: 'row', gap: 8, flexWrap: 'wrap' }}>
-            <AttachmentChip label={t('chat.attachImage')} onPress={() => addAttachment(pickImage)}>
+            <AttachmentChip label={t('chat.attachImage')} accessibilityHint={t('chat.attachImageAccessibilityHint')} onPress={() => addAttachment(pickImage)}>
               <Image color={colors.textSecondary} size={15} strokeWidth={1.8} />
             </AttachmentChip>
-            <AttachmentChip label={t('chat.attachCamera')} onPress={() => addAttachment(takePhoto)}>
+            <AttachmentChip label={t('chat.attachCamera')} accessibilityHint={t('chat.attachCameraAccessibilityHint')} onPress={() => addAttachment(takePhoto)}>
               <Camera color={colors.textSecondary} size={15} strokeWidth={1.8} />
             </AttachmentChip>
-            <AttachmentChip label={t('chat.attachFile')} onPress={() => addAttachment(pickDocument)}>
+            <AttachmentChip label={t('chat.attachFile')} accessibilityHint={t('chat.attachFileAccessibilityHint')} onPress={() => addAttachment(pickDocument)}>
               <FilePlus color={colors.textSecondary} size={15} strokeWidth={1.8} />
             </AttachmentChip>
-            <AttachmentChip label={recording ? t('chat.stopRecording') : t('chat.voiceInput')} onPress={() => void toggleRecording()}>
-              <Mic color={recording ? colors.error : colors.textSecondary} size={15} strokeWidth={1.8} />
+            <AttachmentChip
+              label={recording ? t('chat.stopRecording') : t('chat.voiceInput')}
+              accessibilityHint={recording ? t('chat.stopRecordingAccessibilityHint') : t('chat.voiceInputAccessibilityHint')}
+              active={recording}
+              onPress={() => void toggleRecording()}
+            >
+              <Mic color={recording ? colors.ui.tone.danger.foreground : colors.textSecondary} size={15} strokeWidth={1.8} />
             </AttachmentChip>
-            <AttachmentChip label={t('chat.openCommandPanel')} onPress={() => setContent((value) => value.trim() ? `${value} /` : '/')}>
+            <AttachmentChip label={t('chat.openCommandPanel')} accessibilityHint={t('chat.openCommandPanelAccessibilityHint')} onPress={() => setContent((value) => value.trim() ? `${value} /` : '/')}>
               <Slash color={colors.textSecondary} size={15} strokeWidth={1.8} />
             </AttachmentChip>
             {onOpenKnowledge ? (
-              <AttachmentChip label={t('chat.importKnowledge')} onPress={onOpenKnowledge}>
+              <AttachmentChip label={t('chat.importKnowledge')} accessibilityHint={t('chat.importKnowledgeAccessibilityHint')} onPress={onOpenKnowledge}>
                 <FilePlus color={colors.textSecondary} size={15} strokeWidth={1.8} />
               </AttachmentChip>
             ) : null}
@@ -243,7 +306,12 @@ export function Composer({
         <IslePressable
           haptic
           onPress={onClearPending}
+          accessibilityRole="button"
           accessibilityLabel={t('chat.clearPending')}
+          accessibilityHint={t('chat.clearPendingAccessibilityHint')}
+          accessibilityValue={{ text: pendingNotice }}
+          accessibilityLiveRegion="polite"
+          hitSlop={COMPOSER_PILL_HIT_SLOP}
           style={{
             marginHorizontal: 10,
             marginTop: 10,
@@ -252,10 +320,12 @@ export function Composer({
             paddingHorizontal: 11,
             alignItems: 'center',
             justifyContent: 'center',
-            backgroundColor: colors.amberSoft,
+            backgroundColor: colors.ui.tone.warning.background,
+            borderWidth: 1,
+            borderColor: colors.ui.tone.warning.border,
           }}
         >
-          <Text numberOfLines={1} style={{ color: colors.textSecondary, fontSize: 11, fontWeight: '900' }}>
+          <Text accessible={false} importantForAccessibility="no" numberOfLines={1} style={{ color: colors.ui.tone.warning.foreground, fontSize: 11, fontWeight: '900' }}>
             {pendingNotice}
           </Text>
         </IslePressable>
@@ -267,13 +337,14 @@ export function Composer({
           transition={{ type: 'spring', damping: 20, stiffness: 210 }}
           style={{ paddingHorizontal: 10, paddingTop: 10 }}
         >
-          <View style={{ borderRadius: fieldRadius, padding: 8, backgroundColor: raisedSurface, borderWidth: 1, borderColor: colors.border, gap: 6 }}>
+          <View style={{ borderRadius: fieldRadius, padding: 8, backgroundColor: raisedSurface, borderWidth: 1, borderColor: raisedBorder, gap: 6 }}>
             {commandMatches.map((command) => (
               <ComposerPickRow
                 key={command.id}
                 title={command.label}
                 description={command.description}
-                icon={<Slash color={colors.primary} size={14} strokeWidth={2.2} />}
+                icon={<Slash color={colors.ui.icon.accentForeground} size={14} strokeWidth={2.2} />}
+                accessibilityHint={t('chat.selectCommandAccessibilityHint', { command: command.label })}
                 onPress={() => applyCommand(command)}
               />
             ))}
@@ -282,7 +353,8 @@ export function Composer({
                 key={`${reference.type}-${reference.id}`}
                 title={reference.label}
                 description={referenceDescription(reference, t)}
-                icon={<AtSign color={colors.primary} size={14} strokeWidth={2.2} />}
+                icon={<AtSign color={colors.ui.icon.accentForeground} size={14} strokeWidth={2.2} />}
+                accessibilityHint={t('chat.selectReferenceAccessibilityHint', { reference: reference.label })}
                 onPress={() => applyReference(reference)}
               />
             ))}
@@ -295,37 +367,54 @@ export function Composer({
         </MotiView>
       ) : null}
       <View style={{ flexDirection: 'row', alignItems: 'center', padding: 7, paddingTop: 7, gap: 6 }}>
+        {leadingAccessory ? (
+          <View style={{ flexShrink: 0 }}>
+            {leadingAccessory}
+          </View>
+        ) : null}
         {showInlineUtilities ? (
           <>
             <IslePressable
               haptic
               onPress={() => setAttachmentsOpen((value) => !value)}
+              accessibilityRole="button"
               accessibilityLabel={attachmentsOpen ? t('chat.collapseAttachments') : t('chat.expandAttachments')}
+              accessibilityHint={attachmentsOpen ? t('chat.collapseAttachmentsAccessibilityHint') : t('chat.expandAttachmentsAccessibilityHint')}
+              accessibilityState={{ expanded: attachmentsOpen }}
+              hitSlop={COMPOSER_CONTROL_HIT_SLOP}
               style={{
-                width: 38,
+                width: utilityControlWidth,
                 height: 40,
                 alignItems: 'center',
                 justifyContent: 'center',
                 borderRadius: compactControlRadius,
-                backgroundColor: attachmentsOpen ? colors.amberSoft : raisedSurface,
+                backgroundColor: attachmentsOpen ? colors.ui.control.primaryBackground : raisedSurface,
+                borderWidth: 1,
+                borderColor: attachmentsOpen ? colors.ui.control.primaryBorder : raisedBorder,
               }}
             >
-              {attachmentsOpen ? <ChevronDown color={colors.textSecondary} size={16} strokeWidth={2} /> : <Plus color={colors.textSecondary} size={16} strokeWidth={2} />}
+              {attachmentsOpen ? <ChevronDown color={colors.ui.control.primaryForeground} size={16} strokeWidth={2} /> : <Plus color={colors.textSecondary} size={16} strokeWidth={2} />}
             </IslePressable>
             <IslePressable
               haptic
               onPress={() => void toggleRecording()}
+              accessibilityRole="button"
               accessibilityLabel={recording ? t('chat.stopRecording') : t('chat.voiceInput')}
+              accessibilityHint={recording ? t('chat.stopRecordingAccessibilityHint') : t('chat.voiceInputAccessibilityHint')}
+              accessibilityState={{ selected: recording, busy: recording }}
+              hitSlop={COMPOSER_CONTROL_HIT_SLOP}
               style={{
-                width: 38,
+                width: utilityControlWidth,
                 height: 40,
                 alignItems: 'center',
                 justifyContent: 'center',
                 borderRadius: compactControlRadius,
-                backgroundColor: recording ? colors.error : raisedSurface,
+                backgroundColor: recording ? colors.ui.tone.danger.foreground : raisedSurface,
+                borderWidth: 1,
+                borderColor: recording ? colors.ui.tone.danger.border : raisedBorder,
               }}
             >
-              <Mic color={recording ? colors.primaryForeground : colors.textSecondary} size={16} strokeWidth={2} />
+              <Mic color={recording ? colors.ui.control.dangerForeground : colors.textSecondary} size={16} strokeWidth={2} />
             </IslePressable>
           </>
         ) : null}
@@ -336,6 +425,9 @@ export function Composer({
             multiline
             editable={!disabled}
             accessibilityLabel={t('chat.inputAccessibility')}
+            accessibilityHint={streaming ? t('chat.keepTypingInputAccessibilityHint') : t('chat.inputAccessibilityHint')}
+            accessibilityState={{ disabled }}
+            accessibilityValue={draftAccessibilityValue}
             returnKeyType="send"
             submitBehavior={Platform.OS === 'ios' ? 'newline' : 'submit'}
             onSubmitEditing={() => {
@@ -343,7 +435,6 @@ export function Composer({
                 void submit()
               }
             }}
-            maxLength={12000}
             placeholder={streaming ? t('chat.keepTyping') : t('chat.askAnything')}
             placeholderTextColor={colors.textTertiary}
             onFocus={() => {
@@ -364,7 +455,7 @@ export function Composer({
               lineHeight: 22,
               paddingTop: isMultilineDraft ? 8 : 0,
               paddingBottom: isMultilineDraft ? 8 : 0,
-              paddingHorizontal: 0,
+              paddingHorizontal: 8,
               textAlignVertical: isMultilineDraft ? 'top' : 'center',
             }}
           />
@@ -373,10 +464,13 @@ export function Composer({
           haptic
           disabled={!canSend}
           onPress={submit}
+          accessibilityRole="button"
           accessibilityLabel={streaming ? t('chat.keepTypingAction') : t('chat.sendMessage')}
+          accessibilityHint={sendButtonAccessibilityHint}
+          accessibilityState={{ disabled: !canSend, busy: sending }}
           hitSlop={{ top: 12, right: 10, bottom: 12, left: 10 }}
           style={{
-            minWidth: 52,
+            minWidth: sendButtonMinWidth,
             height: 44,
             borderRadius: largeControlRadius,
             alignItems: 'center',
@@ -384,19 +478,34 @@ export function Composer({
             flexDirection: 'row',
             gap: 7,
             paddingHorizontal: 0,
-            backgroundColor: canSend ? colors.primary : colors.material.field,
-            borderWidth: canSend ? 0 : 1,
-            borderColor: colors.borderStrong,
+            backgroundColor: canSend ? colors.ui.control.primaryBackground : colors.ui.input.disabledBackground,
+            borderWidth: 1,
+            borderColor: canSend ? colors.ui.control.primaryBorder : colors.ui.input.border,
             opacity: disabled ? 0.72 : 1,
           }}
         >
           {sending ? (
-            <ActivityIndicator color={colors.primaryForeground} size="small" />
+            <ActivityIndicator color={colors.ui.control.primaryForeground} size="small" />
           ) : (
-            <SendHorizontal color={canSend ? colors.primaryForeground : colors.textSecondary} size={19} strokeWidth={2.35} />
+            <SendHorizontal color={canSend ? colors.ui.control.primaryForeground : colors.textSecondary} size={19} strokeWidth={2.35} />
           )}
         </IslePressable>
       </View>
+      {draftStatusVisible ? (
+        <View
+          accessibilityLiveRegion={draftWarningLabel ? 'polite' : undefined}
+          style={{ minHeight: 18, paddingHorizontal: 12, paddingBottom: 8, marginTop: -2, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 8 }}
+        >
+          <Text numberOfLines={1} style={{ flex: 1, minWidth: 0, color: colors.textTertiary, fontSize: 10.5, lineHeight: 14, fontWeight: '800' }}>
+            {draftStatusLabel}
+          </Text>
+          {draftWarningLabel ? (
+            <Text numberOfLines={1} style={{ color: colors.ui.tone.warning.foreground, fontSize: 10.5, lineHeight: 14, fontWeight: '900' }}>
+              {draftWarningLabel}
+            </Text>
+          ) : null}
+        </View>
+      ) : null}
       </IslePanel>
     </MotiView>
   )
@@ -406,11 +515,13 @@ function ComposerPickRow({
   title,
   description,
   icon,
+  accessibilityHint,
   onPress,
 }: {
   title: string
   description?: string
   icon: ReactNode
+  accessibilityHint?: string
   onPress: () => void
 }) {
   const { colors } = useAppTheme()
@@ -419,9 +530,14 @@ function ComposerPickRow({
     <IslePressable
       haptic
       onPress={onPress}
-      style={{ minHeight: 44, borderRadius: rowRadius, paddingHorizontal: 10, flexDirection: 'row', alignItems: 'center', gap: 9, backgroundColor: colors.material.field }}
+      accessibilityRole="button"
+      accessibilityLabel={title}
+      accessibilityHint={accessibilityHint}
+      accessibilityValue={description ? { text: description } : undefined}
+      hitSlop={COMPOSER_CONTROL_HIT_SLOP}
+      style={{ minHeight: 44, borderRadius: rowRadius, paddingHorizontal: 10, flexDirection: 'row', alignItems: 'center', gap: 9, backgroundColor: colors.ui.card.mutedBackground }}
     >
-      <View style={{ width: 24, height: 24, borderRadius: colors.ui.radius.controlSmall, alignItems: 'center', justifyContent: 'center', backgroundColor: colors.mintSoft }}>
+      <View style={{ width: 24, height: 24, borderRadius: colors.ui.radius.controlSmall, alignItems: 'center', justifyContent: 'center', backgroundColor: colors.ui.icon.accentBackground }}>
         {icon}
       </View>
       <View style={{ flex: 1 }}>
@@ -480,18 +596,23 @@ function referenceDescription(reference: CommandReference, t: (key: string) => s
 
 interface IconButtonProps {
   label: string
+  accessibilityHint?: string
+  active?: boolean
   children: ReactNode
   onPress: () => void
 }
 
-function AttachmentChip({ label, children, onPress }: IconButtonProps) {
+function AttachmentChip({ label, accessibilityHint, active = false, children, onPress }: IconButtonProps) {
   const { colors } = useAppTheme()
   return (
     <IslePressable
       haptic
       onPress={onPress}
+      accessibilityRole="button"
       accessibilityLabel={label}
-      hitSlop={8}
+      accessibilityHint={accessibilityHint}
+      accessibilityState={active ? { selected: true, busy: true } : undefined}
+      hitSlop={COMPOSER_CONTROL_HIT_SLOP}
       style={{
         minHeight: 44,
         paddingHorizontal: 12,
@@ -499,13 +620,13 @@ function AttachmentChip({ label, children, onPress }: IconButtonProps) {
         flexDirection: 'row',
         alignItems: 'center',
         gap: 6,
-        backgroundColor: colors.material.paperRaised,
+        backgroundColor: active ? colors.ui.tone.danger.background : colors.ui.card.defaultBackground,
         borderWidth: 1,
-        borderColor: colors.border,
+        borderColor: active ? colors.ui.tone.danger.border : colors.material.stroke,
       }}
     >
       {children}
-      <Text style={{ color: colors.textSecondary, fontSize: 11, fontWeight: '800' }}>{label}</Text>
+      <Text style={{ color: active ? colors.ui.tone.danger.foreground : colors.textSecondary, fontSize: 11, fontWeight: '800' }}>{label}</Text>
     </IslePressable>
   )
 }

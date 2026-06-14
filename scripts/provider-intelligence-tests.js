@@ -322,6 +322,8 @@ const {
   rectifyAnthropicRequestBodyForTest,
   resolveProviderModelAccessForTest,
   resolveProviderModelAliasAccessForTest,
+  resolveProviderRequestConformanceForTest,
+  resolveProviderRouteForTest,
   resolveProxyPolicyForTest,
   resolveRuntimeFallbackPlanForTest,
   selectUpstreamTransportForTest,
@@ -330,6 +332,9 @@ const {
 } = require('../src/services/ai/base.ts')
 const { runResponsesWebSocketTransport } = require('../src/services/ai/transport/responsesWebSocketTransport.ts')
 const { activeSessionLeaseCount, acquireSessionLease } = require('../src/services/ai/transport/sessionLeasePool.ts')
+const { resolveProviderCapabilityManifest } = require('../src/services/ai/providerConformance.ts')
+const { resolveProviderEndpoint } = require('../src/services/ai/providerRouteAssembly.ts')
+const { buildProviderFallbackCandidates } = require('../src/services/ai/providerFallbackCandidates.ts')
 const { appendRuntimeLog, clearRuntimeLog, getRuntimeLogInfo, getRuntimeLogPath, readRuntimeLogText, redactRuntimeLogValue } = require('../src/services/runtimeLog.ts')
 const { buildRuntimeDiagnosticsSummary } = require('../src/services/runtimeDiagnostics.ts')
 const {
@@ -358,7 +363,7 @@ const {
   callMcpTool,
   truncateToolBlocks,
 } = require('../src/services/mcp.ts')
-const { buildProviderActivationTestCandidatesForTest, summarizeProviderActivation } = require('../src/services/providerActivation.ts')
+const { buildProviderActivationTestCandidatesForTest, summarizeProviderActivation, syncAndTestProvider } = require('../src/services/providerActivation.ts')
 const {
   clearHistoricalInjectedProviderModels,
   clearHistoricalInjectedGroupModels,
@@ -371,9 +376,9 @@ const {
   summarizeProviderModelInventory,
 } = require('../src/utils/providerModels.ts')
 const { parseModelEntries } = require('../src/utils/text.ts')
-const { buildWorkspaceReadiness } = require('../src/utils/workspaceReadiness.ts')
 const { summarizeWorkArtifact } = require('../src/utils/workArtifact.ts')
-const { getReasoningEffortOptions } = require('../src/utils/modelReasoning.ts')
+const { getReasoningEffortOptions, providerSupportsReasoning } = require('../src/utils/modelReasoning.ts')
+const { resolveAgentProviderToolTarget } = require('../src/services/agent/agentProviderToolAdapter.ts')
 const {
   DEFAULT_ONBOARDING_COMPANION_MODE,
   getOnboardingCompanionProfile,
@@ -930,7 +935,7 @@ function assertReleaseVersionsAligned() {
   assert.equal(typeof architectureBoundaryAudit.runArchitectureBoundaryAuditSelfTest, 'function', 'architecture boundary audit exposes a lightweight self-test contract')
   const architectureBoundaryResult = architectureBoundaryAudit.collectArchitectureBoundaryAudit(root)
   assert.equal(architectureBoundaryResult.schema, 'islemind.architecture-boundary-audit.v1', 'architecture boundary audit emits a stable schema')
-  assert.equal(architectureBoundaryResult.summary.checks, 10, 'architecture boundary audit includes review budget enforcement')
+  assert.equal(architectureBoundaryResult.summary.checks, 11, 'architecture boundary audit includes agentic workflow and review budget enforcement')
   assert.equal(architectureBoundaryResult.summary.blockingIssues, 0, 'architecture boundary audit has no blocking issues')
   assert.equal(architectureBoundaryResult.summary.reviewFindings, 0, 'architecture boundary audit has no current provider presentation review surfaces')
   for (const id of [
@@ -938,6 +943,7 @@ function assertReleaseVersionsAligned() {
     'context-pipeline-boundary',
     'local-model-strategy-boundary',
     'migration-recovery-boundary',
+    'agentic-workflow-engine-boundary',
     'audit-evidence-boundary',
     'network-adapter-containment',
     'local-data-store-containment',
@@ -1017,7 +1023,7 @@ function assertReleaseVersionsAligned() {
   const providerModels = require('../src/utils/providerModels.ts')
   assert.deepEqual(
     providerModels.MODEL_QUICK_GROUPS,
-    ['all', 'gpt', 'claude', 'gemini', 'deepseek', 'qwen', 'kimi', 'doubao', 'grok', 'glm', 'mimo', 'llama', 'other'],
+    ['all', 'gpt', 'claude', 'gemini', 'deepseek', 'qwen', 'kimi', 'doubao', 'grok', 'glm', 'minimax', 'mimo', 'llama', 'other'],
     'provider model utility owns stable model quick-filter groups'
   )
   assert.equal(
@@ -1029,6 +1035,11 @@ function assertReleaseVersionsAligned() {
     providerModels.inferModelFamily({ type: 'openai-compatible', name: 'Xiaomi MiMo', baseUrl: 'https://api.xiaomimimo.com', models: [], enabled: true }, 'mimo-v2'),
     'mimo',
     'provider model utility classifies MiMo-compatible models outside UI components'
+  )
+  assert.equal(
+    providerModels.inferModelFamily({ type: 'openai-compatible', name: 'MiniMax', baseUrl: 'https://api.minimax.io/v1', models: [], enabled: true }, 'MiniMax-M3'),
+    'minimax',
+    'provider model utility classifies MiniMax-compatible models outside UI components'
   )
   const conversationMetrics = require('../src/services/conversationMetrics.ts')
   const metricFixture = conversationMetrics.getConversationMetrics({
@@ -1175,6 +1186,24 @@ async function assertResponsesWebSocketTransportBehavior() {
     assert.ok(success.sent.some((message) => message.type === 'response.create'), 'Responses WebSocket sends response.create')
     assert.ok(!('stream' in success.sent[0]), 'Responses WebSocket removes stream from response.create payload')
 
+    const toolCallSuccess = await runFakeWebSocketScenario(({ instance }) => {
+      instance.open()
+      instance.message({ type: 'response.output_item.added', item: { id: 'rs_websocket_search', type: 'reasoning', encrypted_content: 'encrypted-websocket-reasoning', summary: [] } })
+      instance.message({ type: 'response.output_item.added', item: { id: 'fc_websocket_search', call_id: 'call_websocket_search', type: 'function_call', name: 'search_web', arguments: '{"query":' } })
+      instance.message({ type: 'response.function_call_arguments.delta', item_id: 'fc_websocket_search', delta: '"Isle' })
+      instance.message({ type: 'response.function_call_arguments.delta', item_id: 'fc_websocket_search', delta: 'Mind"}' })
+      instance.message({ type: 'response.completed', response: { id: 'resp-tool-ok' } })
+    })
+    assert.equal(toolCallSuccess.done?.providerToolCalls?.[0]?.id, 'fc_websocket_search', 'Responses WebSocket forwards provider tool call id')
+    assert.equal(toolCallSuccess.done?.providerToolCalls?.[0]?.callId, 'call_websocket_search', 'Responses WebSocket forwards provider function call_id')
+    assert.equal(toolCallSuccess.done?.providerToolCalls?.[0]?.name, 'search_web', 'Responses WebSocket forwards provider tool call name')
+    assert.equal(toolCallSuccess.done?.providerToolCalls?.[0]?.arguments?.query, 'IsleMind', 'Responses WebSocket merges streamed provider tool arguments')
+    assert.deepEqual(
+      toolCallSuccess.done?.responseItems?.[0],
+      { id: 'rs_websocket_search', type: 'reasoning', encrypted_content: 'encrypted-websocket-reasoning', summary: [] },
+      'Responses WebSocket forwards reasoning replay items'
+    )
+
     const handshakeFailure = await runFakeWebSocketScenario(({ instance }) => {
       instance.error()
     })
@@ -1282,6 +1311,9 @@ async function assertRuntimeLogFileBehavior() {
   localFileFixtures.set(uri, Buffer.from(`${'x'.repeat(5000)}\n`))
   await appendRuntimeLog('compact.usage', { providerId: 'openai-main', status: 'completed' }, { enabled: true, maxBytes: 4096 })
   assert.ok((localFileFixtures.get(uri)?.length ?? 0) <= 4096, 'runtime log rotation respects max bytes')
+  localFileFixtures.set(uri, Buffer.from(`${'运行日志'.repeat(1800)}\n`))
+  await appendRuntimeLog('compact.usage', { providerId: 'openai-main', status: 'completed' }, { enabled: true, maxBytes: 4096 })
+  assert.ok((localFileFixtures.get(uri)?.length ?? 0) <= 4096, 'runtime log rotation respects UTF-8 byte limits')
   const info = await getRuntimeLogInfo()
   assert.equal(info.exists, true, 'runtime log info detects the current log file')
   assert.equal(info.path, uri, 'runtime log info returns the same path')
@@ -1292,7 +1324,40 @@ async function assertRuntimeLogFileBehavior() {
 
 async function assertRuntimeDiagnosticsBehavior() {
   clearCompactUsageRecords()
+  recordCompactUsage({ mode: 'auto', providerId: 'openai-main', model: 'gpt-5.2', inputTokens: 1000 })
   recordCompactUsage({ mode: 'auto', providerId: 'openai-main', model: 'gpt-5.2', inputTokens: 1000, outputTokens: 120, estimatedSavedTokens: 430 })
+  recordCompactUsage({
+    mode: 'auto',
+    providerId: 'fallback',
+    model: 'manual-model',
+    fallbackLocal: true,
+    localSourceTokens: 800,
+    localCompressedTokens: 200,
+    localEstimatedSavedTokens: 600,
+    localCompressionRatio: 0.25,
+    localCompressionSchemaVersion: 2,
+    localCompressionStrategy: 'structured-v2',
+    localCompressionTriggerReason: 'message_budget_exceeded',
+    localSourceMessageCount: 6,
+    localKeptMessageCount: 8,
+    localSourceRoleCounts: { user: 3, assistant: 3 },
+    localKeptRoleCounts: { user: 4, assistant: 4 },
+    localSummarySectionCount: 3,
+    localSummaryItemCount: 7,
+    localSummarySections: [{ id: 'recent', title: '近期旧消息', itemCount: 4 }],
+  })
+  recordCompactUsage({
+    mode: 'off',
+    providerId: 'local-only',
+    model: 'manual-model',
+    localSourceTokens: 500,
+    localCompressedTokens: 250,
+    localEstimatedSavedTokens: 250,
+    localCompressionRatio: 0.5,
+    localCompressionSchemaVersion: 2,
+    localCompressionStrategy: 'structured-v2',
+    localCompressionTriggerReason: 'message_budget_exceeded',
+  })
   recordCompactUsage({ mode: 'required', providerId: 'fallback', model: 'manual-model', failureCode: 'provider_capability_missing' })
   const openAiPreset = applyProviderPreset({
     id: 'openai-main',
@@ -1343,7 +1408,13 @@ async function assertRuntimeDiagnosticsBehavior() {
     },
   })
   assert.equal(summary.websocket.readyProviders, 1, 'runtime diagnostics counts WebSocket-ready providers')
-  assert.equal(summary.compact.requestCount, 2, 'runtime diagnostics counts compact usage records')
+  assert.equal(summary.compact.requestCount, 5, 'runtime diagnostics counts compact usage records')
+  assert.equal(summary.compact.remoteRequestCount, 1, 'runtime diagnostics counts remote compact request attempts')
+  assert.equal(summary.compact.localCompressionCount, 2, 'runtime diagnostics counts every local compact record')
+  assert.equal(summary.compact.localFallbackCount, 1, 'runtime diagnostics keeps local compact fallback records separate')
+  assert.equal(summary.compact.localEstimatedSavedTokens, 850, 'runtime diagnostics sums all local compact saved tokens separately')
+  assert.equal(summary.compact.localAverageCompressionRatio, 0.375, 'runtime diagnostics reports average local compact compression ratio')
+  assert.equal(summary.compact.completedCount, 1, 'runtime diagnostics counts completed remote compact records')
   assert.equal(summary.compact.failureCount, 1, 'runtime diagnostics counts compact failures')
   assert.equal(summary.compact.estimatedSavedTokens, 430, 'runtime diagnostics sums compact saved tokens')
   assert.equal(summary.policy.providerAllowRules, 1, 'runtime diagnostics counts provider allow rules')
@@ -1475,8 +1546,12 @@ async function assertUpstreamGovernanceBehavior() {
   try {
     const modelTestBodies = []
     global.fetch = async (_url, init) => {
-      modelTestBodies.push(JSON.parse(init.body))
-      return new Response(JSON.stringify({ choices: [{ message: { content: 'OK' } }] }), {
+      const requestBody = JSON.parse(init.body)
+      modelTestBodies.push(requestBody)
+      const responseBody = requestBody.generationConfig
+        ? { candidates: [{ content: { parts: [{ thought: true, text: 'Checking.' }, { text: 'OK' }] } }], usageMetadata: { thoughtsTokenCount: 2 } }
+        : { choices: [{ message: { content: 'OK' } }] }
+      return new Response(JSON.stringify(responseBody), {
         status: 200,
         headers: { 'content-type': 'application/json' },
       })
@@ -1498,6 +1573,28 @@ async function assertUpstreamGovernanceBehavior() {
     assert.equal(modelTestBodies[0].model, 'upstream-model', 'model test sends the upstream alias target')
     assert.equal(modelTestBodies[0].temperature, 0.7, 'model test keeps generation parameters when parameter checks are enabled')
     assert.equal(modelTestBodies[1].temperature, undefined, 'model test removes generation parameters when parameter checks are disabled')
+    const checkedGeminiTest = await testProviderModelDetailed({
+      id: 'google-test',
+      type: 'google',
+      name: 'Google Test',
+      apiKey: FAKE_KEY_A,
+      models: ['gemini-3.5-flash'],
+      enabled: true,
+    }, 'gemini-3.5-flash', FAKE_KEY_A, { checkParameters: true })
+    const reducedGeminiTest = await testProviderModelDetailed({
+      id: 'google-test',
+      type: 'google',
+      name: 'Google Test',
+      apiKey: FAKE_KEY_A,
+      models: ['gemini-3.5-flash'],
+      enabled: true,
+    }, 'gemini-3.5-flash', FAKE_KEY_A, { checkParameters: false })
+    assert.equal(checkedGeminiTest.ok, true, 'Gemini model test accepts thought summary parts without treating them as answer text')
+    assert.equal(reducedGeminiTest.ok, true, 'Gemini reduced-parameter model test remains low-cost')
+    assert.equal(modelTestBodies[2].generationConfig.thinkingConfig.thinkingLevel, 'medium', 'Gemini 3.5 parameter checks request the official default thinking level')
+    assert.equal(modelTestBodies[2].generationConfig.thinkingConfig.includeThoughts, true, 'Gemini 3.5 parameter checks request thought summaries')
+    assert.equal(modelTestBodies[2].generationConfig.maxOutputTokens, 128, 'Gemini thinking model tests reserve enough response budget for thought summaries')
+    assert.equal(modelTestBodies[3].generationConfig.thinkingConfig, undefined, 'Gemini reduced-parameter checks remove thinkingConfig')
 
     const blockedAccessTraces = []
     let blockedAccessError
@@ -1520,6 +1617,38 @@ async function assertUpstreamGovernanceBehavior() {
     assert.equal(blockedAccessTrace.status, 'error', 'blocked runtime access emits an error trace')
     assert.equal(blockedAccessTrace.metadata.accessAllowed, false, 'blocked runtime access trace records the access decision')
     assert.equal(blockedAccessTrace.metadata.accessReason, 'model_blocked', 'blocked runtime access trace records the policy reason')
+
+    const nonStreamingBodies = []
+    const nonStreamingProvider = {
+      id: 'openai-pro',
+      type: 'openai',
+      name: 'OpenAI Pro',
+      apiKey: FAKE_KEY_A,
+      models: ['gpt-5.5-pro'],
+      enabled: true,
+    }
+    let nonStreamingText = ''
+    global.fetch = async (_url, init) => {
+      nonStreamingBodies.push(JSON.parse(init.body))
+      return new Response(JSON.stringify({ output_text: 'non-streaming OK' }), {
+        status: 200,
+        headers: { 'content-type': 'application/json' },
+      })
+    }
+    const nonStreamingHandle = await streamChat(
+      {
+        provider: nonStreamingProvider,
+        model: 'gpt-5.5-pro',
+        messages: [{ role: 'user', content: 'hello' }],
+        stream: true,
+      },
+      (chunk) => { nonStreamingText += chunk },
+      () => {},
+      (error) => { throw error }
+    )
+    await nonStreamingHandle.done
+    assert.equal(nonStreamingBodies[0].stream, false, 'model-level streaming disable overrides requested streaming')
+    assert.equal(nonStreamingText, 'non-streaming OK', 'non-streaming model responses are parsed through the normal done path')
 
     let calls = 0
     global.fetch = async () => {
@@ -1741,14 +1870,14 @@ async function assertProviderStoreLifecycleBehavior() {
     name: 'Store Policy Provider',
     apiKey: FAKE_KEY_A,
     baseUrl: 'https://api.openai.com/v1',
-    models: ['blocked-chat', 'gpt-5.5-mini'],
+    models: ['blocked-chat', 'gpt-5.5-mini', 'gpt-4o'],
     manualModels: ['manual-chat'],
     modelAliases: [{ alias: 'fast', model: 'gpt-5.5-mini' }],
     enabled: true,
     lastTestStatus: 'ok',
     lastTestModel: 'gpt-5.5-mini',
     credentialGroups: [
-      { id: 'policy-group', label: 'Policy Group', apiKey: FAKE_KEY_B, enabled: true, lastModelSyncStatus: 'ok', availableModels: ['blocked-chat', 'gpt-5.5-mini', 'fast'] },
+      { id: 'policy-group', label: 'Policy Group', apiKey: FAKE_KEY_B, enabled: true, lastModelSyncStatus: 'ok', availableModels: ['blocked-chat', 'gpt-5.5-mini', 'gpt-4o', 'fast'] },
     ],
   }
 
@@ -1785,6 +1914,33 @@ async function assertProviderStoreLifecycleBehavior() {
   assert.equal(aliasSwitch, true, 'chat store accepts alias switches when the upstream model passes policy')
   assert.equal(useChatStore.getState().getCurrent()?.model, 'fast', 'chat store stores the trimmed alias after an allowed switch')
   assert.equal(useChatStore.getState().getCurrent()?.providerModelMode, 'manual', 'chat store marks successful switches as manual conversation overrides')
+  assert.equal(useChatStore.getState().getCurrent()?.reasoningEffort, 'low', 'chat store resolves alias model metadata before preserving supported reasoning effort')
+  const nonReasoningSwitch = useChatStore.getState().switchConversationModel(conversationId, allowedProvider.id, 'gpt-4o')
+  assert.equal(nonReasoningSwitch, true, 'chat store accepts allowed switches to non-reasoning models')
+  assert.equal(useChatStore.getState().getCurrent()?.reasoningEffort, undefined, 'chat store clears reasoning effort when the target model does not support reasoning controls')
+  const aliasCreatedConversationId = useChatStore.getState().create(allowedProvider.id, 'fast')
+  assert.equal(useChatStore.getState().getCurrent()?.id, aliasCreatedConversationId, 'chat store selects conversations created from model aliases')
+  assert.equal(useChatStore.getState().getCurrent()?.model, 'fast', 'chat store preserves the user-facing model alias on create')
+  assert.equal(useChatStore.getState().getCurrent()?.reasoningEffort, 'low', 'chat store resolves alias model metadata before assigning default reasoning effort')
+  const kimiDefaultProvider = {
+    id: 'kimi-defaults',
+    type: 'openai-compatible',
+    presetId: 'moonshot',
+    name: 'Kimi Defaults',
+    apiKey: FAKE_KEY_A,
+    baseUrl: 'https://api.moonshot.ai/v1',
+    models: ['kimi-k2.6'],
+    enabled: true,
+  }
+  await useSettingsStore.getState().addProvider(kimiDefaultProvider)
+  const kimiConversationId = useChatStore.getState().create(kimiDefaultProvider.id, 'kimi-k2.6')
+  assert.equal(useChatStore.getState().getCurrent()?.id, kimiConversationId, 'chat store selects the newly created Kimi conversation')
+  assert.equal(useChatStore.getState().getCurrent()?.reasoningEffort, 'high', 'chat store normalizes new conversations to a model-supported Kimi reasoning effort')
+  const plainConversationId = useChatStore.getState().create(allowedProvider.id, 'gpt-4o')
+  assert.equal(useChatStore.getState().getCurrent()?.id, plainConversationId, 'chat store selects the newly created non-reasoning conversation')
+  assert.equal(useChatStore.getState().getCurrent()?.reasoningEffort, undefined, 'chat store does not attach default reasoning to new non-reasoning conversations')
+  await useSettingsStore.getState().removeProvider(kimiDefaultProvider.id)
+  useSettingsStore.getState().updateSettings({ defaultProvider: allowedProvider.id })
 
   await useSettingsStore.getState().removeProvider(allowedProvider.id)
   assert.equal(useSettingsStore.getState().settings.defaultProvider, blockedProvider.id, 'settings store moves the default provider to the remaining provider after removal')
@@ -1813,6 +1969,16 @@ async function run() {
     detectProviderPreset({ baseUrl: 'https://dashscope.aliyuncs.com/compatible-mode/v1' }).presetId,
     'dashscope',
     'detects DashScope compatible mode'
+  )
+  assert.equal(
+    detectProviderPreset({ baseUrl: 'https://api.moonshot.ai/v1' }).presetId,
+    'moonshot',
+    'detects Moonshot OpenAI-compatible hosts'
+  )
+  assert.equal(
+    detectProviderPreset({ baseUrl: 'https://api.minimax.io/v1' }).presetId,
+    'minimax',
+    'detects MiniMax OpenAI-compatible hosts'
   )
 
   const groups = parseCredentialGroups('sk-a\n\nsk-b, sk-c')
@@ -1968,6 +2134,7 @@ async function run() {
     selectUpstreamTransportForTest({
       provider: governedProvider,
       usesResponsesApi: true,
+      stream: true,
       settings: { transportMode: 'websocket' },
       hasWebSocketRuntime: true,
     }),
@@ -1978,11 +2145,23 @@ async function run() {
     selectUpstreamTransportForTest({
       provider: { ...governedProvider, capabilities: { ...governedProvider.capabilities, responsesWebSocket: false } },
       usesResponsesApi: true,
+      stream: true,
       settings: { transportMode: 'websocket' },
       hasWebSocketRuntime: true,
     }).fallbackReason,
     'provider_capability_missing',
     'transport selector falls back when provider WebSocket capability is missing'
+  )
+  assert.deepEqual(
+    selectUpstreamTransportForTest({
+      provider: governedProvider,
+      usesResponsesApi: true,
+      stream: false,
+      settings: { transportMode: 'websocket' },
+      hasWebSocketRuntime: true,
+    }),
+    { transport: 'http_sse', requestedMode: 'websocket', fallbackReason: 'streaming_disabled' },
+    'transport selector does not choose Responses WebSocket for non-streaming requests'
   )
   const compactResponsesBody = buildOpenAIResponsesBodyForTest({
     provider: governedProvider,
@@ -2021,6 +2200,15 @@ async function run() {
   assert.equal(st('messageBubble.copyWorkArtifact'), '复制工作产物', 'Chinese message actions expose work artifact copy')
   assert.equal(st('messageBubble.continueWorkArtifact'), '继续这项工作', 'Chinese message actions expose work artifact continuation')
   assert.ok(st('onboarding.firstPrompt.samples.research').includes('输出必须包含'), 'Chinese onboarding first prompt remains structured')
+  const settingsScreenSource = fs.readFileSync(path.join(root, 'src/components/main/SettingsScreenContent.tsx'), 'utf8')
+  assert.ok(settingsScreenSource.includes('localSaved: diagnostics.compact.localEstimatedSavedTokens'), 'settings diagnostics surfaces local compact saved-token totals')
+  assert.ok(settingsScreenSource.includes('localRatio: formatCompactRatio(diagnostics.compact.localAverageCompressionRatio)'), 'settings diagnostics surfaces local compact average ratio')
+  assert.ok(settingsScreenSource.includes('function formatCompactRatio'), 'settings diagnostics formats local compact ratio for display')
+  for (const locale of ['en', 'zh-CN', 'ja']) {
+    const localeSource = fs.readFileSync(path.join(root, 'src/i18n/resources', `${locale}.json`), 'utf8')
+    assert.ok(localeSource.includes('{{localSaved}}'), `${locale} compact diagnostics includes localSaved placeholder`)
+    assert.ok(localeSource.includes('{{localRatio}}'), `${locale} compact diagnostics includes localRatio placeholder`)
+  }
   ;[
     'onboarding.firstPrompt.samples.concise',
     'onboarding.firstPrompt.samples.research',
@@ -2038,7 +2226,12 @@ async function run() {
   assert.ok(chatWorkspaceSource.includes('summarizeWorkArtifact(item.responseText ?? item.content)'), 'chat workspace summarizes assistant output before copying work artifacts')
   assert.ok(chatWorkspaceSource.includes('Clipboard.setStringAsync(workArtifact.handoffText)'), 'chat workspace copies the work artifact handoff package')
   assert.ok(!chatWorkspaceSource.includes('Clipboard.setStringAsync(workArtifact.shareableText)'), 'chat workspace does not copy the weaker shareable summary for work artifact handoff')
-  assert.ok(chatWorkspaceSource.includes('onApplyStarter(workArtifact.followUpPrompt)'), 'chat workspace inserts work artifact continuation prompts into the composer')
+  assert.ok(chatWorkspaceSource.includes('function readCompletedWorkArtifactTraceFollowUpPrompt'), 'chat workspace reads completed work artifact follow-up prompts from trace metadata')
+  assert.ok(chatWorkspaceSource.includes("continuationAction?.reason !== 'work-artifact-follow-up'"), 'chat workspace only trusts completed work artifact continuation actions for work artifact continuation')
+  assert.ok(chatWorkspaceSource.includes('const traceFollowUpPrompt = readCompletedWorkArtifactTraceFollowUpPrompt(item)'), 'chat workspace checks the completed work artifact trace before body fallback')
+  assert.ok(chatWorkspaceSource.includes('const continuePrompt = traceFollowUpPrompt || safeAgentWorkflowStarterPrompt(workArtifact.followUpPrompt)'), 'chat workspace falls back to parsed work artifact follow-up prompts only after trace metadata')
+  assert.ok(chatWorkspaceSource.includes('!continuePrompt || (!traceFollowUpPrompt && !workArtifact.hasWorkArtifact)'), 'chat workspace requires a trace follow-up or parser-recognized work artifact before composer insertion')
+  assert.ok(chatWorkspaceSource.includes('onApplyStarter(continuePrompt)'), 'chat workspace inserts the safe work artifact continuation prompt into the composer')
   assert.ok(chatWorkspaceSource.includes("t('messageBubble.continueWorkArtifactInserted')"), 'chat workspace confirms continuation prompt insertion')
 
   const messageBubbleSource = fs.readFileSync(path.join(root, 'src/components/chat/MessageBubble.tsx'), 'utf8')
@@ -2592,80 +2785,6 @@ https://gateway.example/messages`
     false,
     'synced models without a passing test are not treated as chat-ready'
   )
-  const readyWorkspace = buildWorkspaceReadiness({
-    providers: [testedReadyProvider],
-    settings: {
-      memoryEnabled: true,
-      knowledgeEnabled: true,
-      ragMode: 'hybrid',
-      webSearchEnabled: true,
-      searchProvider: 'native',
-      autoUpdateCheckEnabled: true,
-    },
-    contextHealth: {
-      loading: false,
-      memoryCount: 3,
-      activeMemoryCount: 2,
-      pendingMemoryCount: 1,
-      knowledgeDocumentCount: 2,
-      knowledgeChunkCount: 12,
-      failedKnowledgeDocumentCount: 0,
-    },
-  })
-  assert.equal(readyWorkspace.readyCount, 5, 'workspace readiness counts every configured AI productivity capability')
-  assert.equal(readyWorkspace.totalCount, 5, 'workspace readiness exposes the full settings checklist')
-  assert.deepEqual(
-    Object.fromEntries(readyWorkspace.items.map((item) => [item.key, item.status])),
-    {
-      provider: 'ready',
-      memory: 'ready',
-      knowledge: 'ready',
-      search: 'ready',
-      recovery: 'ready',
-    },
-    'workspace readiness marks configured providers, memory, knowledge, search, and recovery as ready'
-  )
-  assert.equal(
-    readyWorkspace.items.find((item) => item.key === 'provider')?.metrics.readyProviders,
-    1,
-    'workspace readiness reports the number of chat-ready providers'
-  )
-  assert.equal(
-    readyWorkspace.items.find((item) => item.key === 'search')?.metrics.searchProvider,
-    'native',
-    'workspace readiness reports the resolved search provider'
-  )
-  assert.equal(readyWorkspace.primaryAction, null, 'workspace readiness has no primary action when every capability is ready')
-  const pendingOnlyMemoryWorkspace = buildWorkspaceReadiness({
-    providers: [testedReadyProvider],
-    settings: {
-      memoryEnabled: true,
-      knowledgeEnabled: true,
-      ragMode: 'hybrid',
-      webSearchEnabled: true,
-      searchProvider: 'native',
-      autoUpdateCheckEnabled: true,
-    },
-    contextHealth: {
-      loading: false,
-      memoryCount: 2,
-      activeMemoryCount: 0,
-      pendingMemoryCount: 2,
-      knowledgeDocumentCount: 2,
-      knowledgeChunkCount: 12,
-      failedKnowledgeDocumentCount: 0,
-    },
-  })
-  assert.equal(
-    pendingOnlyMemoryWorkspace.items.find((item) => item.key === 'memory')?.status,
-    'review',
-    'workspace readiness does not mark pending-only memories ready because pending memories are excluded from chat retrieval'
-  )
-  assert.equal(
-    pendingOnlyMemoryWorkspace.primaryAction?.key,
-    'memory',
-    'workspace readiness points pending-only memory users to memory review as the next best action'
-  )
   assert.equal(classifyMemoryCandidateForTest('用户偏好：使用中文回答'), 'none', 'stable user preferences are accepted as memory candidates')
   assert.equal(classifyMemoryCandidateForTest('用户 API Key 是 sk-secret-test'), 'sensitive', 'memory candidates reject API keys and secrets')
   assert.equal(classifyMemoryCandidateForTest('用户默认令牌是 tp-test-token-plan-fake-1234567890'), 'sensitive', 'memory candidates reject provider-token shaped values')
@@ -2706,67 +2825,6 @@ https://gateway.example/messages`
   assert.deepEqual(filterPendingMemoriesForReview(memoryReviewQueue, 'manual').map((memory) => memory.id), ['pending-manual'], 'memory review queue can isolate manually added pending memories')
   assert.deepEqual(filterPendingMemoriesForReview(memoryReviewQueue, 'legacy').map((memory) => memory.id), ['pending-legacy'], 'memory review queue can isolate legacy memories with missing provenance')
   assert.deepEqual(filterPendingMemoriesForReview(memoryReviewQueue, 'lowConfidence').map((memory) => memory.id), ['pending-model-low'], 'memory review queue isolates low-confidence pending memories and excludes active memories')
-  const emptyContextWorkspace = buildWorkspaceReadiness({
-    providers: [testedReadyProvider],
-    settings: {
-      memoryEnabled: true,
-      knowledgeEnabled: true,
-      ragMode: 'hybrid',
-      webSearchEnabled: true,
-      searchProvider: 'native',
-      autoUpdateCheckEnabled: true,
-    },
-    contextHealth: {
-      loading: false,
-      memoryCount: 0,
-      activeMemoryCount: 0,
-      pendingMemoryCount: 0,
-      knowledgeDocumentCount: 0,
-      knowledgeChunkCount: 0,
-      failedKnowledgeDocumentCount: 0,
-    },
-  })
-  assert.deepEqual(
-    Object.fromEntries(emptyContextWorkspace.items.map((item) => [item.key, item.status])),
-    {
-      provider: 'ready',
-      memory: 'review',
-      knowledge: 'review',
-      search: 'ready',
-      recovery: 'ready',
-    },
-    'workspace readiness asks for review when memory and knowledge are enabled but empty'
-  )
-  const failedKnowledgeWorkspace = buildWorkspaceReadiness({
-    providers: [testedReadyProvider],
-    settings: {
-      memoryEnabled: true,
-      knowledgeEnabled: true,
-      ragMode: 'hybrid',
-      webSearchEnabled: true,
-      searchProvider: 'native',
-      autoUpdateCheckEnabled: true,
-    },
-    contextHealth: {
-      loading: false,
-      memoryCount: 1,
-      activeMemoryCount: 1,
-      pendingMemoryCount: 0,
-      knowledgeDocumentCount: 1,
-      knowledgeChunkCount: 8,
-      failedKnowledgeDocumentCount: 1,
-    },
-  })
-  assert.equal(
-    failedKnowledgeWorkspace.items.find((item) => item.key === 'knowledge')?.status,
-    'review',
-    'workspace readiness asks for review when knowledge indexing has failures even if chunks exist'
-  )
-  assert.equal(
-    failedKnowledgeWorkspace.primaryAction?.key,
-    'knowledge',
-    'workspace readiness prioritizes failed knowledge recovery ahead of lower-risk review items'
-  )
   const knowledgeRecoverySummary = buildKnowledgeRecoverySummary([
     { id: 'ready-doc', title: 'Ready', mimeType: 'text/plain', size: 1200, chunkCount: 3, status: 'ready', createdAt: 1000, updatedAt: 1000 },
     { id: 'failed-doc', title: 'Failed', mimeType: 'text/plain', size: 800, chunkCount: 0, status: 'error', error: 'Parser failed', createdAt: 1000, updatedAt: 1200 },
@@ -3004,35 +3062,60 @@ https://gateway.example/messages`
   assert.equal(rawMem0ResultsOk, true, 'portable import accepts raw mem0 results JSON')
   const rawMem0Snapshot = await exportContextSnapshot()
   assert.equal(rawMem0Snapshot.memories.find((memory) => memory.id === 'raw-mem0-result')?.status, 'pending', 'raw mem0 results default to pending review')
-  const actionWorkspace = buildWorkspaceReadiness({
-    providers: [],
-    settings: {
-      memoryEnabled: false,
-      knowledgeEnabled: false,
-      ragMode: 'off',
-      webSearchEnabled: false,
-      searchProvider: 'off',
-      autoUpdateCheckEnabled: false,
-    },
+  await importContextSnapshot({
+    memories: [{
+      id: 'local-confirmed-memory',
+      content: 'Duplicate external memory should stay unique.',
+      status: 'active',
+      sourceKind: 'deterministic',
+      sourceDetail: 'local-confirmed',
+      confidence: 0.82,
+      createdAt: 1000,
+      updatedAt: 1000,
+    }],
   })
-  assert.equal(actionWorkspace.readyCount, 0, 'workspace readiness does not count disabled capabilities as ready')
-  assert.deepEqual(
-    Object.fromEntries(actionWorkspace.items.map((item) => [item.key, item.status])),
-    {
-      provider: 'action',
-      memory: 'action',
-      knowledge: 'action',
-      search: 'review',
-      recovery: 'review',
-    },
-    'workspace readiness separates missing setup actions from settings that only need review'
-  )
-  assert.equal(
-    actionWorkspace.primaryAction?.key,
-    'provider',
-    'workspace readiness prioritizes provider setup as the first production-workspace action'
-  )
-
+  const duplicateExternalImport = await importAllDataDetailed(JSON.stringify({
+    results: [{
+      id: 'remote-duplicate-memory',
+      text: 'Duplicate external memory should stay unique.',
+      user_id: 'remote-user',
+      metadata: { confidence: 0.91 },
+    }],
+  }))
+  assert.deepEqual(duplicateExternalImport, { ok: true, kind: 'mem0', memories: 1 }, 'duplicate mem0 imports still report a valid import attempt')
+  const duplicateExternalSnapshot = await exportContextSnapshot()
+  const mergedExternalMemories = duplicateExternalSnapshot.memories.filter((memory) => memory.content === 'Duplicate external memory should stay unique.')
+  assert.equal(mergedExternalMemories.length, 1, 'external memory imports merge duplicate content instead of adding another review row')
+  assert.equal(mergedExternalMemories[0].id, 'local-confirmed-memory', 'duplicate external memories keep the existing local memory id')
+  assert.equal(mergedExternalMemories[0].status, 'active', 'duplicate external memories do not downgrade an approved local memory')
+  assert.equal(mergedExternalMemories[0].sourceKind, 'deterministic', 'duplicate external memories keep stronger local provenance')
+  assert.equal(mergedExternalMemories[0].confidence, 0.91, 'duplicate external memories retain the strongest confidence')
+  assert.ok(mergedExternalMemories[0].sourceDetail?.includes('local-confirmed'), 'duplicate external memories keep local source detail')
+  assert.ok(mergedExternalMemories[0].sourceDetail?.includes('mem0:user_id=remote-user'), 'duplicate external memories append mem0 scope detail')
+  await importContextSnapshot({ memories: [] })
+  const repeatedMem0ImportOk = await importAllData(JSON.stringify({
+    results: [
+      {
+        id: 'repeated-mem0-a',
+        text: 'Repeated mem0 memory enters review once.',
+        user_id: 'remote-user',
+        metadata: { confidence: 0.7 },
+      },
+      {
+        id: 'repeated-mem0-b',
+        text: 'Repeated mem0 memory enters review once.',
+        user_id: 'remote-user',
+        metadata: { confidence: 0.9 },
+      },
+    ],
+  }))
+  assert.equal(repeatedMem0ImportOk, true, 'repeated mem0 results remain importable')
+  const repeatedMem0Snapshot = await exportContextSnapshot()
+  const repeatedMem0Memories = repeatedMem0Snapshot.memories.filter((memory) => memory.content === 'Repeated mem0 memory enters review once.')
+  assert.equal(repeatedMem0Memories.length, 1, 'repeated mem0 records are deduplicated before entering review')
+  assert.equal(repeatedMem0Memories[0].id, 'repeated-mem0-a', 'repeated mem0 imports keep the first imported id as the review identity')
+  assert.equal(repeatedMem0Memories[0].status, 'pending', 'repeated mem0 imports still require review before retrieval')
+  assert.equal(repeatedMem0Memories[0].confidence, 0.9, 'repeated mem0 imports keep the strongest duplicate confidence')
   const calls = []
   const synced = await runCredentialGroupModelSync(
     {
@@ -3108,9 +3191,88 @@ https://gateway.example/messages`
   }
   assert.deepEqual(
     buildProviderActivationTestCandidatesForTest(activationPolicyProvider, undefined, { modelAllowlist: ['gpt-*'], modelBlocklist: ['blocked-*'] }).map((candidate) => candidate.model),
-    ['gpt-5.5-mini', 'fast'],
-    'provider activation candidates exclude blocked models and keep alias candidates allowed through upstream policy'
+    ['gpt-5.5-mini'],
+    'provider activation auto-tests only one allowed model per credential group'
   )
+  const activationManyModelProvider = {
+    ...activationPolicyProvider,
+    models: ['gpt-5.5', 'gpt-5.5-mini', 'gpt-4o'],
+    credentialGroups: [
+      { id: 'group-a', label: 'Group A', apiKey: FAKE_KEY_A, enabled: true, lastModelSyncStatus: 'ok', availableModels: ['gpt-5.5', 'gpt-5.5-mini', 'gpt-4o'] },
+      { id: 'group-b', label: 'Group B', apiKey: FAKE_KEY_B, enabled: true, lastModelSyncStatus: 'ok', availableModels: ['gpt-5.5', 'gpt-5.5-mini', 'gpt-4o'] },
+    ],
+  }
+  const manyModelActivationCandidates = buildProviderActivationTestCandidatesForTest(activationManyModelProvider)
+  assert.equal(manyModelActivationCandidates.length, 2, 'provider activation does not test every synced model during automatic activation')
+  assert.deepEqual(
+    manyModelActivationCandidates.map((candidate) => candidate.groupId),
+    ['group-a', 'group-b'],
+    'provider activation keeps automatic testing bounded to one candidate per credential group'
+  )
+  const mimoActivationCandidates = buildProviderActivationTestCandidatesForTest({
+    id: 'mimo-activation',
+    type: 'xiaomi-mimo',
+    name: 'MiMo Activation',
+    apiKey: FAKE_KEY_A,
+    models: ['mimo-v2.5-asr', 'mimo-v2.5-tts', 'mimo-v2.5-pro'],
+    modelConfigs: ['mimo-v2.5-asr', 'mimo-v2.5-tts', 'mimo-v2.5-pro'].map((id) => getModelConfig(id, 'xiaomi-mimo')),
+    enabled: true,
+    credentialGroups: [{
+      id: 'mimo-group',
+      label: 'MiMo Group',
+      apiKey: FAKE_KEY_A,
+      enabled: true,
+      lastModelSyncStatus: 'ok',
+      availableModels: ['mimo-v2.5-asr', 'mimo-v2.5-tts', 'mimo-v2.5-pro'],
+    }],
+  })
+  assert.deepEqual(
+    mimoActivationCandidates.map((candidate) => candidate.model),
+    ['mimo-v2.5-pro'],
+    'provider activation skips MiMo ASR/TTS models during automatic health checks'
+  )
+  const originalFetchForActivationRateLimit = global.fetch
+  let rateLimitedActivationProvider = {
+    ...activationManyModelProvider,
+    id: 'activation-rate-limited',
+    name: 'Activation Rate Limited',
+    syncPolicy: { minDelayMs: 0, maxDelayMs: 0, timeoutMs: 18000, strategy: 'sequential-low-rate' },
+  }
+  let activationHealthCheckCalls = 0
+  try {
+    global.fetch = async (_url, init = {}) => {
+      if ((init.method ?? 'GET') === 'GET') {
+        return new Response(JSON.stringify({
+          data: [
+            { id: 'gpt-5.5-mini' },
+            { id: 'gpt-4o' },
+          ],
+        }), { status: 200, headers: { 'content-type': 'application/json' } })
+      }
+      activationHealthCheckCalls += 1
+      return new Response('rate limit', { status: 429 })
+    }
+    const rateLimitedActivation = await syncAndTestProvider(rateLimitedActivationProvider, {
+      updateProvider: async (_id, updates) => {
+        rateLimitedActivationProvider = { ...rateLimitedActivationProvider, ...updates }
+      },
+      hydrateProviderKey: async () => rateLimitedActivationProvider,
+      updateProviderCredentialGroupHealth: async (_providerId, groupId, ok) => {
+        rateLimitedActivationProvider = {
+          ...rateLimitedActivationProvider,
+          credentialGroups: rateLimitedActivationProvider.credentialGroups?.map((group) =>
+            group.id === groupId ? { ...group, lastTestStatus: ok ? 'ok' : 'bad' } : group
+          ),
+        }
+      },
+      delay: async () => undefined,
+    }, { enable: true, checkParameters: false })
+    assert.equal(activationHealthCheckCalls, 1, 'provider activation stops health checks after the first rate-limited model test')
+    assert.equal(rateLimitedActivation.testOk, false, 'rate-limited activation does not report a successful test')
+    assert.equal(rateLimitedActivation.failures[0]?.code, 'rate_limited', 'rate-limited activation records the provider error code')
+  } finally {
+    global.fetch = originalFetchForActivationRateLimit
+  }
   assert.deepEqual(
     buildProviderActivationTestCandidatesForTest(activationPolicyProvider, 'fast', { modelAllowlist: ['gpt-*'] }).map((candidate) => candidate.model),
     ['fast'],
@@ -3183,10 +3345,112 @@ https://gateway.example/messages`
   assert.ok(packed.messages.length < 18, 'packs long histories into a sliding window')
   assert.ok(packed.trimmedCount > 0, 'reports the number of trimmed messages')
   assert.ok(packed.contextPrompt.includes('历史摘要'), 'adds a deterministic summary for trimmed history')
+  assert.ok(packed.contextPrompt.includes('近期旧消息'), 'local compression v2 labels preserved older recent turns')
   assert.ok(packed.estimatedInputTokens <= packed.budgetTokens, 'stays under the planned input budget')
   assert.ok(packed.budgetTokens < 1200, 'reserves output tokens from the input context budget')
   assert.equal(packed.compressionTriggered, true, 'compression trace exposes trigger state')
   assert.ok(packed.fixedTokens >= 0 && packed.modelBudgetTokens > 0 && packed.reservedOutputTokens >= 256, 'compression trace exposes full budget fields')
+  assert.equal(packed.compressionMetadata.schemaVersion, 2, 'local compression metadata exposes the v2 schema version')
+  assert.equal(packed.compressionMetadata.strategy, 'structured-v2', 'local compression v2 exposes its strategy')
+  assert.equal(packed.compressionMetadata.triggerReason, 'message_budget_exceeded', 'local compression metadata reports the trigger reason')
+  assert.equal(packed.compressionMetadata.sourceMessageCount, packed.trimmedCount, 'local compression metadata counts the summarized source messages')
+  assert.equal(packed.compressionMetadata.keptMessageCount, packed.messages.length, 'local compression metadata counts retained request messages')
+  assert.equal(
+    packed.compressionMetadata.sourceRoleCounts.user + packed.compressionMetadata.sourceRoleCounts.assistant,
+    packed.compressionMetadata.sourceMessageCount,
+    'local compression metadata reports source role counts'
+  )
+  assert.equal(
+    packed.compressionMetadata.keptRoleCounts.user + packed.compressionMetadata.keptRoleCounts.assistant,
+    packed.compressionMetadata.keptMessageCount,
+    'local compression metadata reports kept role counts'
+  )
+  assert.ok(packed.compressionMetadata.summarySectionCount > 0, 'local compression metadata counts structured sections')
+  assert.ok(packed.compressionMetadata.summaryItemCount > 0, 'local compression metadata counts structured summary items')
+  assert.ok(packed.compressionMetadata.summarySections.some((section) => section.id === 'recent' && section.itemCount > 0), 'local compression metadata exposes rendered section distribution')
+  assert.ok(packed.compressionMetadata.sourceTokens > packed.compressionMetadata.compressedTokens, 'local compression metadata estimates token savings')
+  assert.equal(
+    packed.compressionMetadata.estimatedSavedTokens,
+    packed.compressionMetadata.sourceTokens - packed.compressionMetadata.compressedTokens,
+    'local compression metadata reports saved tokens from source and compressed estimates'
+  )
+  assert.ok(packed.compressionMetadata.compressionRatio > 0 && packed.compressionMetadata.compressionRatio < 1, 'local compression metadata reports an effectiveness ratio')
+  assert.ok(packed.compressionMetadata.summaryTokens <= packed.compressionMetadata.summaryTokenBudget, 'local compression metadata reports a budgeted summary')
+  const structuredPacked = packChatMessages({
+    messages: [
+      { role: 'user', content: `用户约束: 必须保持 TUN 模式开启，不要破坏 remote compact 探针。${'constraint detail '.repeat(60)}` },
+      { role: 'assistant', content: `已确认决策: 采用 structured-v2 本地压缩，并保留 localCompression false 路径。${'decision detail '.repeat(60)}` },
+      { role: 'user', content: `失败与风险: 上次验证出现 TS2322 风险，运行命令可能 timeout。${'risk detail '.repeat(60)}` },
+      { role: 'assistant', content: `待办与下一步: 需要运行 bun run test:provider-intelligence 并检查 src/services/contextPacker.ts。${'action detail '.repeat(60)}` },
+      { role: 'user', content: `重要引用: docs/agentic-workflow-roadmap.md scripts/provider-intelligence-tests.js G:\\Project\\IsleMind\\src\\services\\contextPacker.ts。${'reference detail '.repeat(45)}` },
+      { role: 'assistant', content: `完成: 远程压缩仍由 provider capability 和 responsesApi 控制。${'remote compact detail '.repeat(60)}` },
+      ...Array.from({ length: 8 }, (_, index) => ({
+        role: index % 2 ? 'assistant' : 'user',
+        content: `recent retained message ${index} ${'recent detail '.repeat(70)}`,
+      })),
+    ],
+    contextPrompt: 'retrieved context',
+    modelContextWindow: 2600,
+    maxOutputTokens: 256,
+  })
+  assert.equal(structuredPacked.compressionMetadata.strategy, 'structured-v2', 'structured local compression uses the v2 strategy')
+  assert.equal(structuredPacked.compressionMetadata.schemaVersion, 2, 'structured local compression uses schema v2')
+  assert.equal(structuredPacked.compressionMetadata.triggerReason, 'message_budget_exceeded', 'structured local compression records its budget trigger')
+  for (const heading of ['用户约束', '已确认决策', '失败与风险', '待办与下一步', '重要引用']) {
+    assert.ok(structuredPacked.contextPrompt.includes(heading), `structured local compression preserves ${heading}`)
+  }
+  assert.ok(structuredPacked.contextPrompt.includes('src/services/contextPacker.ts'), 'structured local compression extracts file references')
+  assert.ok(structuredPacked.compressionMetadata.summarySectionCount >= 5, 'structured local compression records semantic section coverage')
+  assert.ok(structuredPacked.compressionMetadata.summaryItemCount >= 5, 'structured local compression records semantic item coverage')
+  const structuredSectionIds = structuredPacked.compressionMetadata.summarySections.map((section) => section.id)
+  for (const sectionId of ['constraints', 'decisions', 'failures', 'actions', 'references']) {
+    assert.ok(structuredSectionIds.includes(sectionId), `structured local compression reports ${sectionId} section metadata`)
+  }
+  assert.ok(structuredPacked.compressionMetadata.summarySections.every((section) => section.title && section.itemCount >= 0), 'structured local compression section metadata is display-safe')
+  assert.ok(structuredPacked.compressionMetadata.sourceTokens > structuredPacked.compressionMetadata.compressedTokens, 'structured local compression quantifies summary savings')
+  assert.ok(structuredPacked.compressionMetadata.estimatedSavedTokens > 0, 'structured local compression reports positive saved tokens')
+  assert.ok(structuredPacked.compressionMetadata.compressionRatio > 0 && structuredPacked.compressionMetadata.compressionRatio < 1, 'structured local compression reports compression ratio below 1')
+  assert.ok(structuredPacked.compressionMetadata.summaryTokens <= structuredPacked.compressionMetadata.summaryTokenBudget, 'structured local compression fits its summary budget')
+  const remoteCompactProbe = packChatMessages({
+    messages: Array.from({ length: 18 }, (_, index) => ({
+      role: index % 2 ? 'assistant' : 'user',
+      content: `message ${index} ${'long text '.repeat(120)}`,
+    })),
+    contextPrompt: 'retrieved context',
+    modelContextWindow: 1200,
+    maxOutputTokens: 256,
+    localCompression: false,
+  })
+  assert.equal(remoteCompactProbe.messages.length, 18, 'remote compact probes keep full local history before server-side compaction')
+  assert.equal(remoteCompactProbe.trimmedCount, 0, 'remote compact probes do not consume the local trimming path')
+  assert.equal(remoteCompactProbe.compressionTriggered, false, 'remote compact probes report local compression as inactive')
+  assert.equal(remoteCompactProbe.compressionMetadata.strategy, 'none', 'remote compact probes report no local compression strategy')
+  assert.equal(remoteCompactProbe.compressionMetadata.schemaVersion, 2, 'remote compact probes still expose the metadata schema version')
+  assert.equal(remoteCompactProbe.compressionMetadata.triggerReason, 'disabled_or_unneeded', 'remote compact probes report local compression as disabled')
+  assert.equal(remoteCompactProbe.compressionMetadata.sourceMessageCount, 0, 'remote compact probes report no local compression source messages')
+  assert.equal(remoteCompactProbe.compressionMetadata.keptMessageCount, 0, 'remote compact probes report no retained local compression count')
+  assert.deepEqual(remoteCompactProbe.compressionMetadata.sourceRoleCounts, { user: 0, assistant: 0 }, 'remote compact probes report empty source role counts')
+  assert.deepEqual(remoteCompactProbe.compressionMetadata.keptRoleCounts, { user: 0, assistant: 0 }, 'remote compact probes report empty kept role counts')
+  assert.equal(remoteCompactProbe.compressionMetadata.summarySectionCount, 0, 'remote compact probes report no local summary sections')
+  assert.equal(remoteCompactProbe.compressionMetadata.summaryItemCount, 0, 'remote compact probes report no local summary items')
+  assert.deepEqual(remoteCompactProbe.compressionMetadata.summarySections, [], 'remote compact probes report no local summary section distribution')
+  assert.equal(remoteCompactProbe.compressionMetadata.sourceTokens, 0, 'remote compact probes report no local compression source token estimate')
+  assert.equal(remoteCompactProbe.compressionMetadata.compressedTokens, 0, 'remote compact probes report no local compression output token estimate')
+  assert.equal(remoteCompactProbe.compressionMetadata.estimatedSavedTokens, 0, 'remote compact probes report no local compression savings')
+  assert.equal(remoteCompactProbe.compressionMetadata.compressionRatio, 0, 'remote compact probes report no local compression ratio')
+  assert.equal(
+    decideRemoteCompact({
+      provider: governedProvider,
+      model: 'gpt-5.2',
+      messages: remoteCompactProbe.messages,
+      contextPrompt: remoteCompactProbe.contextPrompt,
+      budgetTokens: remoteCompactProbe.budgetTokens,
+      estimatedInputTokens: remoteCompactProbe.estimatedInputTokens,
+      settings: { remoteCompactMode: 'auto', remoteCompactThreshold: 0.8 },
+    }).enabled,
+    true,
+    'remote compact decisions evaluate the untrimmed prompt before local fallback packing'
+  )
 
   const singleLongPacked = packChatMessages({
     messages: [{ role: 'user', content: 'oversized '.repeat(1200) }],
@@ -3198,6 +3462,52 @@ https://gateway.example/messages`
   assert.ok(singleLongPacked.messages[0].content.includes('前文过长'), 'truncates a single oversized message deterministically')
   assert.ok(singleLongPacked.estimatedInputTokens <= singleLongPacked.budgetTokens, 'single-message truncation stays within budget')
   assert.equal(singleLongPacked.truncatedSingleMessage, true, 'single-message truncation is reflected in trace metadata')
+  assert.equal(singleLongPacked.compressionMetadata.strategy, 'single-message-truncation', 'single-message truncation is exposed as a local compression strategy')
+  assert.equal(singleLongPacked.compressionMetadata.schemaVersion, 2, 'single-message truncation uses compression metadata schema v2')
+  assert.equal(singleLongPacked.compressionMetadata.triggerReason, 'single_message_budget_exceeded', 'single-message truncation reports its trigger reason')
+  assert.equal(singleLongPacked.compressionMetadata.sourceMessageCount, 0, 'single-message truncation does not report summarized source messages')
+  assert.equal(singleLongPacked.compressionMetadata.keptMessageCount, 1, 'single-message truncation reports the retained message count')
+  assert.deepEqual(singleLongPacked.compressionMetadata.summarySections, [], 'single-message truncation reports no structured summary sections')
+  assert.ok(singleLongPacked.compressionMetadata.sourceTokens > singleLongPacked.compressionMetadata.compressedTokens, 'single-message truncation estimates token savings')
+  assert.ok(singleLongPacked.compressionMetadata.estimatedSavedTokens > 0, 'single-message truncation reports saved tokens')
+  assert.ok(singleLongPacked.compressionMetadata.compressionRatio > 0 && singleLongPacked.compressionMetadata.compressionRatio < 1, 'single-message truncation reports compression ratio below 1')
+  const chatRunnerSource = fs.readFileSync(path.join(root, 'src/services/chatRunner.ts'), 'utf8')
+  assert.ok(
+    chatRunnerSource.includes('if (activePrompt.compressionTriggered)'),
+    'chat runner emits context-pack trace metadata for every local compression strategy'
+  )
+  assert.ok(
+    chatRunnerSource.includes('summarySections: activePrompt.compressionMetadata.summarySections'),
+    'chat runner forwards local compression section distribution to trace metadata'
+  )
+  assert.ok(
+    chatRunnerSource.includes('compressionSchemaVersion: activePrompt.compressionMetadata.schemaVersion'),
+    'chat runner forwards local compression schema version to trace metadata'
+  )
+  assert.ok(
+    chatRunnerSource.includes('compressionTriggerReason: activePrompt.compressionMetadata.triggerReason'),
+    'chat runner forwards local compression trigger reason to trace metadata'
+  )
+  assert.ok(
+    chatRunnerSource.includes('summaryKeptMessageCount: activePrompt.compressionMetadata.keptMessageCount'),
+    'chat runner forwards retained message count to trace metadata'
+  )
+  assert.ok(
+    chatRunnerSource.includes('compressionEstimatedSavedTokens: activePrompt.compressionMetadata.estimatedSavedTokens'),
+    'chat runner forwards local compression savings estimate to trace metadata'
+  )
+  assert.ok(
+    chatRunnerSource.includes('localEstimatedSavedTokens: activePrompt.compressionTriggered ? activePrompt.compressionMetadata.estimatedSavedTokens : undefined'),
+    'chat runner records local compression savings in compact usage diagnostics'
+  )
+  assert.ok(
+    chatRunnerSource.includes('localCompressionStrategy: activePrompt.compressionTriggered ? activePrompt.compressionMetadata.strategy : undefined'),
+    'chat runner records local compression strategy in compact usage diagnostics'
+  )
+  assert.ok(
+    chatRunnerSource.includes('localSummarySections: activePrompt.compressionTriggered ? activePrompt.compressionMetadata.summarySections : undefined'),
+    'chat runner records local compression section metadata in compact usage diagnostics'
+  )
   const highReasoningPacked = packChatMessages({
     messages: [{ role: 'user', content: 'reasoning budget '.repeat(500) }],
     modelContextWindow: 6000,
@@ -3207,6 +3517,25 @@ https://gateway.example/messages`
     reasoningEffort: 'high',
   })
   assert.ok(highReasoningPacked.reasoningReserveTokens >= 4096, 'high reasoning reserves extra thinking room before packing history')
+  const claudeMaxReasoningPacked = packChatMessages({
+    messages: [{ role: 'user', content: 'claude reasoning budget '.repeat(500) }],
+    modelContextWindow: 1000000,
+    maxOutputTokens: 128000,
+    providerType: 'anthropic',
+    model: 'claude-fable-5',
+    reasoningEffort: 'max',
+  })
+  assert.equal(claudeMaxReasoningPacked.reasoningReserveTokens, 8192, 'Claude max reasoning reserves the highest local thinking budget before packing history')
+  const qwenHighReasoningPacked = packChatMessages({
+    messages: [{ role: 'user', content: 'qwen reasoning budget '.repeat(500) }],
+    modelContextWindow: 1000000,
+    maxOutputTokens: 65536,
+    providerType: 'openai-compatible',
+    model: 'qwen3.7-max',
+    reasoningEffort: 'high',
+  })
+  assert.equal(qwenHighReasoningPacked.reasoningReserveTokens, 262144, 'Qwen high reasoning reserves the official 256K thinking budget')
+  assert.equal(qwenHighReasoningPacked.reservedOutputTokens, 327680, 'Qwen context packing reserves output plus thinking budget')
 
   const remoteConfig = mergeModelConfig('remote-large', 'openai-compatible', {
     contextWindow: 65536,
@@ -3291,6 +3620,7 @@ https://gateway.example/messages`
     'mimo-v2.5-tts',
     'mimo-v2.5-tts-voiceclone',
     'mimo-v2.5-tts-voicedesign',
+    'mimo-v2.5-asr',
     'mimo-v2-tts',
   ], 'MiMo built-in catalog includes every currently documented model')
   const unknownMimoConfig = getModelConfig('mimo-v3-unannounced', 'xiaomi-mimo')
@@ -3298,10 +3628,13 @@ https://gateway.example/messages`
   assert.equal(unknownMimoConfig.maxOutputTokens, 4096, 'unknown MiMo output limit stays conservative')
   assert.equal(unknownMimoConfig.supportsVision, false, 'unknown MiMo models do not inherit vision support by default')
   assert.equal(getModelConfig('mimo-v2.5-tts', 'xiaomi-mimo').chatCompatible, false, 'MiMo TTS models are cataloged but not chat-compatible')
+  assert.equal(getModelConfig('mimo-v2.5-tts', 'xiaomi-mimo').maxOutputTokens, 8192, 'MiMo TTS models keep the official 8K max output metadata')
+  assert.equal(getModelConfig('mimo-v2.5-asr', 'xiaomi-mimo').chatCompatible, false, 'MiMo ASR models are cataloged but not chat-compatible')
+  assert.equal(getModelConfig('mimo-v2.5-asr', 'xiaomi-mimo').maxOutputTokens, 2048, 'MiMo ASR model keeps the official 2K max output metadata')
   assert.deepEqual(
     getReasoningEffortOptions(mimoAnthropicProvider, 'mimo-v2.5'),
-    ['minimal', 'low', 'medium', 'high'],
-    'MiMo chat models expose the runtime-supported reasoning effort tiers'
+    ['none', 'high'],
+    'MiMo chat models expose the provider-supported thinking toggle'
   )
   assert.deepEqual(
     getReasoningEffortOptions(mimoAnthropicProvider, 'mimo-v2.5-tts'),
@@ -3312,13 +3645,39 @@ https://gateway.example/messages`
     provider: { ...mimoAnthropicProvider, id: 'mimo-cn-openai', wireProtocol: 'openai-compatible', baseUrl: 'https://token-plan-cn.xiaomimimo.com/v1' },
     model: 'mimo-v2.5',
     messages: [{ role: 'user', content: 'hello' }],
-    reasoningEffort: 'minimal',
+    reasoningEffort: 'high',
     maxTokens: 128,
     stream: false,
   })
-  assert.deepEqual(mimoOpenAIReasoningBody.reasoning, { effort: 'low' }, 'MiMo OpenAI-compatible requests send the accepted reasoning object')
+  assert.deepEqual(mimoOpenAIReasoningBody.thinking, { type: 'enabled' }, 'MiMo OpenAI-compatible requests send the official thinking toggle')
+  assert.equal(mimoOpenAIReasoningBody.reasoning, undefined, 'MiMo OpenAI-compatible requests avoid unsupported reasoning objects')
   assert.equal(mimoOpenAIReasoningBody.reasoning_effort, undefined, 'MiMo OpenAI-compatible requests avoid generic reasoning_effort')
+  assert.equal(mimoOpenAIReasoningBody.temperature, undefined, 'MiMo thinking requests omit custom temperature')
+  assert.equal(mimoOpenAIReasoningBody.top_p, undefined, 'MiMo thinking requests omit custom top_p')
   assert.equal(mimoOpenAIReasoningBody.max_completion_tokens, 128, 'MiMo OpenAI-compatible requests reserve enough output room for reasoning plus text')
+  const mimoOpenAIReasoningConformance = resolveProviderRequestConformanceForTest({
+    provider: { ...mimoAnthropicProvider, id: 'mimo-cn-openai', wireProtocol: 'openai-compatible', baseUrl: 'https://token-plan-cn.xiaomimimo.com/v1' },
+    model: 'mimo-v2.5',
+    messages: [{ role: 'user', content: 'hello' }],
+    reasoningEffort: 'high',
+    maxTokens: 128,
+  }, mimoOpenAIReasoningBody)
+  assert.equal(mimoOpenAIReasoningConformance.manifest.reasoning.requestShape, 'xiaomi-mimo-thinking', 'provider conformance exposes MiMo thinking request shape')
+  assert.equal(mimoOpenAIReasoningConformance.reasoning.enabled, true, 'provider conformance treats MiMo high as active thinking')
+  assert.equal(mimoOpenAIReasoningConformance.reasoning.providerValue, 'enabled', 'provider conformance maps MiMo active thinking to the accepted provider value')
+  const mimoOpenAIThinkingOffBody = buildOpenAIBodyForTest({
+    provider: { ...mimoAnthropicProvider, id: 'mimo-cn-openai', wireProtocol: 'openai-compatible', baseUrl: 'https://token-plan-cn.xiaomimimo.com/v1' },
+    model: 'mimo-v2.5',
+    messages: [{ role: 'user', content: 'hello' }],
+    reasoningEffort: 'none',
+    temperature: 0.4,
+    topP: 0.8,
+    maxTokens: 128,
+    stream: false,
+  })
+  assert.deepEqual(mimoOpenAIThinkingOffBody.thinking, { type: 'disabled' }, 'MiMo none explicitly disables thinking instead of relying on provider defaults')
+  assert.equal(mimoOpenAIThinkingOffBody.temperature, 0.4, 'MiMo disabled-thinking requests may customize temperature')
+  assert.equal(mimoOpenAIThinkingOffBody.top_p, 0.8, 'MiMo disabled-thinking requests may customize top_p')
   const mimoAnthropicReasoningBody = buildAnthropicBodyForTest({
     provider: mimoAnthropicProvider,
     model: 'mimo-v2.5',
@@ -3327,36 +3686,182 @@ https://gateway.example/messages`
     maxTokens: 128,
     stream: false,
   })
-  assert.deepEqual(mimoAnthropicReasoningBody.reasoning, { effort: 'high' }, 'MiMo Anthropic-compatible requests send the accepted reasoning object')
-  assert.equal(mimoAnthropicReasoningBody.thinking, undefined, 'MiMo Anthropic-compatible requests do not use Claude thinking syntax')
+  assert.deepEqual(mimoAnthropicReasoningBody.thinking, { type: 'enabled' }, 'MiMo Anthropic-compatible requests send the official thinking toggle')
+  assert.equal(mimoAnthropicReasoningBody.reasoning, undefined, 'MiMo Anthropic-compatible requests avoid unsupported reasoning objects')
+  assert.equal(mimoAnthropicReasoningBody.output_config, undefined, 'MiMo Anthropic-compatible requests do not use Claude output_config thinking tiers')
   assert.equal(mimoAnthropicReasoningBody.max_tokens, 128, 'MiMo Anthropic-compatible tests reserve enough output room for reasoning plus text')
   assert.deepEqual(
     getProviderAvailableModels({
       ...mimoAnthropicProvider,
-      models: ['mimo-v2.5-pro', 'mimo-v2.5-tts', 'mimo-v2.5-tts-voiceclone'],
-      modelConfigs: ['mimo-v2.5-pro', 'mimo-v2.5-tts', 'mimo-v2.5-tts-voiceclone'].map((id) => getModelConfig(id, 'xiaomi-mimo')),
+      models: ['mimo-v2.5-pro', 'mimo-v2.5-tts', 'mimo-v2.5-tts-voiceclone', 'mimo-v2.5-asr'],
+      modelConfigs: ['mimo-v2.5-pro', 'mimo-v2.5-tts', 'mimo-v2.5-tts-voiceclone', 'mimo-v2.5-asr'].map((id) => getModelConfig(id, 'xiaomi-mimo')),
       credentialGroups: [{
         id: 'default',
         label: 'default',
         enabled: true,
         lastModelSyncStatus: 'ok',
-        availableModels: ['mimo-v2.5-pro', 'mimo-v2.5-tts', 'mimo-v2.5-tts-voiceclone'],
+        availableModels: ['mimo-v2.5-pro', 'mimo-v2.5-tts', 'mimo-v2.5-tts-voiceclone', 'mimo-v2.5-asr'],
       }],
     }),
     ['mimo-v2.5-pro'],
-    'chat model availability excludes MiMo TTS models'
+    'chat model availability excludes MiMo TTS and ASR models'
   )
   assert.equal(getModelConfig('gpt-5.5', 'openai').contextWindow, 1050000, 'GPT-5.5 context matches verified OpenAI docs')
   assert.equal(getModelConfig('gpt-5.5', 'openai').maxOutputTokens, 128000, 'GPT-5.5 output limit matches verified OpenAI docs')
+  assert.equal(getModelConfig('gpt-5.5', 'openai').supportsTools, true, 'OpenAI current models expose native tool support')
+  assert.equal(getModelConfig('gpt-5.5-pro', 'openai').supportsStreaming, false, 'GPT-5.5 Pro records official non-streaming support')
+  assert.deepEqual(getModelConfig('gpt-5.5-pro', 'openai').reasoningEfforts, ['medium', 'high', 'xhigh'], 'GPT-5.5 Pro exposes source-backed reasoning tiers')
+  const openAIStreamingProvider = {
+    id: 'openai-streaming-provider',
+    type: 'openai',
+    name: 'OpenAI Streaming Provider',
+    apiKey: FAKE_KEY_A,
+    models: ['gpt-5.5-pro', 'gpt-5.5'],
+    credentialGroups: [{ id: 'openai-a', label: 'A', apiKey: FAKE_KEY_A, enabled: true, availableModels: ['gpt-5.5-pro', 'gpt-5.5'] }],
+    capabilities: { streaming: true },
+    enabled: true,
+  }
+  const gpt55Manifest = resolveProviderCapabilityManifest({ provider: openAIStreamingProvider, model: 'gpt-5.5' })
+  const gpt55ProManifest = resolveProviderCapabilityManifest({ provider: openAIStreamingProvider, model: 'gpt-5.5-pro' })
+  assert.equal(gpt55Manifest.transport.streaming, true, 'provider manifest records model-level streaming support')
+  assert.equal(gpt55Manifest.transport.preferredEndpoint, 'responses', 'provider manifest records the model preferred endpoint')
+  assert.equal(gpt55ProManifest.transport.streaming, false, 'provider manifest disables streaming when the selected model is non-streaming')
+  const gpt55ProRoute = resolveProviderRouteForTest(
+    { provider: openAIStreamingProvider, model: 'gpt-5.5-pro', messages: [{ role: 'user', content: 'hello' }], stream: false },
+    { model: 'gpt-5.5-pro', stream: false },
+    { transport: 'http_sse' }
+  )
+  assert.equal(gpt55ProRoute.decision.transportPlan.streaming, false, 'route decision exposes model-level non-streaming transport support')
+  assert.equal(gpt55ProRoute.decision.transportPlan.preferredEndpoint, 'responses', 'route decision exposes the preferred endpoint from model metadata')
+  const streamingFallbackCandidates = buildProviderFallbackCandidates({
+    providers: [openAIStreamingProvider],
+    original: { providerId: 'origin', model: 'origin-model' },
+    requiredCapabilities: ['streaming'],
+  })
+  assert.ok(streamingFallbackCandidates.candidates.some((item) => item.model === 'gpt-5.5'), 'streaming fallback candidates keep streaming-capable models')
+  assert.ok(!streamingFallbackCandidates.candidates.some((item) => item.model === 'gpt-5.5-pro'), 'streaming fallback candidates exclude non-streaming models')
+  assert.ok(
+    streamingFallbackCandidates.rejectedCandidates.some((item) => item.model === 'gpt-5.5-pro' && item.reason === 'capability_mismatch'),
+    'streaming fallback candidates record non-streaming model capability mismatch'
+  )
   assert.equal(getModelConfig('gpt-5.4', 'openai').contextWindow, 1050000, 'GPT-5.4 context matches verified OpenAI docs')
+  assert.equal(getModelConfig('gpt-5.4-pro', 'openai').contextWindow, 1050000, 'GPT-5.4 Pro context matches verified OpenAI docs')
   assert.deepEqual(getModelConfig('gpt-5.2-pro', 'openai').reasoningEfforts, ['medium', 'high', 'xhigh'], 'GPT-5.2 Pro only exposes source-backed supported effort tiers')
   assert.equal(getModelConfig('gpt-4.1', 'openai').contextWindow, 1047576, 'GPT-4.1 context remains exact')
   assert.equal(getModelConfig('gpt-4o', 'openai').maxOutputTokens, 16384, 'GPT-4o output limit remains exact')
+  assert.equal(getModelConfig('gpt-4.1', 'openai').supportsTools, true, 'OpenAI legacy chat models expose native tool support')
   assert.equal(getModelConfig('deepseek-v4-pro', 'openai-compatible').contextWindow, 1000000, 'DeepSeek V4 Pro context is official 1M')
   assert.equal(getModelConfig('deepseek-v4-pro', 'openai-compatible').maxOutputTokens, 384000, 'DeepSeek V4 Pro output limit is official 384K')
+  assert.deepEqual(getModelConfig('deepseek-v4-pro', 'openai-compatible').reasoningEfforts, ['none', 'high', 'xhigh'], 'DeepSeek V4 Pro exposes official high/max thinking efforts')
+  assert.equal(getModelConfig('deepseek-chat', 'openai-compatible').reasoningMode, undefined, 'DeepSeek Chat alias remains the official non-thinking compatibility mode')
+  assert.deepEqual(getModelConfig('deepseek-reasoner', 'openai-compatible').reasoningEfforts, ['high', 'xhigh'], 'DeepSeek Reasoner exposes only enabled official thinking efforts')
+  assert.equal(getModelConfig('qwen3.7-max', 'openai-compatible').contextWindow, 1000000, 'Qwen3.7 Max context uses official DashScope model metadata')
+  assert.equal(getModelConfig('qwen3.7-max', 'openai-compatible').maxOutputTokens, 65536, 'Qwen3.7 Max output limit uses official DashScope model metadata')
+  assert.equal(getModelConfig('qwen3.6-plus', 'openai-compatible').contextWindow, 1000000, 'Qwen3.6 Plus context uses official DashScope model metadata')
+  assert.equal(getModelConfig('qwen3.6-plus', 'openai-compatible').maxOutputTokens, 65536, 'Qwen3.6 Plus output limit uses official DashScope model metadata')
+  assert.equal(getModelConfig('qwen3.5-flash', 'openai-compatible').contextWindow, 1000000, 'Qwen3.5 Flash context uses official DashScope model metadata')
+  assert.deepEqual(getModelConfig('qwen3.5-plus', 'openai-compatible').reasoningEfforts, ['none', 'low', 'medium', 'high'], 'Qwen3.5 models expose DashScope thinking levels')
+  assert.equal(getModelConfig('kimi-k2.6', 'openai-compatible').contextWindow, 262144, 'Kimi K2.6 context uses official Moonshot model metadata')
+  assert.equal(getModelConfig('kimi-k2.6', 'openai-compatible').maxOutputTokens, 32768, 'Kimi K2.6 output limit follows the official 32K max_tokens guidance')
+  assert.equal(getModelConfig('kimi-k2.6', 'openai-compatible').defaultMaxTokens, 32768, 'Kimi K2.6 default output budget follows the official thinking-model guidance')
+  assert.equal(getModelConfig('kimi-k2.6', 'openai-compatible').supportsVision, true, 'Kimi K2.6 exposes official visual input support')
+  assert.equal(getModelConfig('kimi-k2.5', 'openai-compatible').contextWindow, 262144, 'Kimi K2.5 context uses official Moonshot model metadata')
+  assert.equal(getModelConfig('kimi-k2.5', 'openai-compatible').maxOutputTokens, 32768, 'Kimi K2.5 output limit follows the official 32K max_tokens guidance')
+  assert.deepEqual(getModelConfig('kimi-k2.5', 'openai-compatible').reasoningEfforts, ['none', 'high'], 'Kimi K2.5 exposes the provider-supported thinking toggle')
+  assert.equal(getModelConfig('kimi-k2.5', 'openai-compatible').supportsVision, true, 'Kimi K2.5 exposes official visual input support')
+  assert.equal(getModelConfig('kimi-k2-turbo-preview', 'openai-compatible').deprecated, true, 'Kimi K2 Turbo Preview is retained only as a discontinued compatibility entry')
+  assert.equal(getModelConfig('moonshot-v1-128k', 'openai-compatible').maxOutputTokens, 65536, 'Moonshot V1 128K output limit uses official Moonshot model metadata')
+  assert.equal(getModelConfig('glm-5.1', 'openai-compatible').contextWindow, 200000, 'GLM-5.1 context uses official BigModel metadata')
+  assert.equal(getModelConfig('glm-5.1', 'openai-compatible').maxOutputTokens, 128000, 'GLM-5.1 output limit uses official BigModel metadata')
+  assert.equal(getModelConfig('MiniMax-M3', 'openai-compatible').contextWindow, 1000000, 'MiniMax M3 context uses official MiniMax metadata')
+  assert.equal(getModelConfig('MiniMax-M3', 'openai-compatible').maxOutputTokens, 524288, 'MiniMax M3 output limit uses official MiniMax metadata')
+  assert.equal(getModelConfig('MiniMax-M3', 'openai-compatible').defaultMaxTokens, 131072, 'MiniMax M3 default output budget follows the official recommendation')
+  assert.equal(getModelConfig('MiniMax-M3', 'openai-compatible').supportsVision, true, 'MiniMax M3 exposes official image input support')
+  assert.equal(getModelConfig('MiniMax-M2.7', 'openai-compatible').contextWindow, 1000000, 'MiniMax M2.7 context uses official MiniMax metadata')
+  assert.equal(getModelConfig('MiniMax-M2.7', 'openai-compatible').maxOutputTokens, 204800, 'MiniMax M2.7 output limit uses official MiniMax metadata')
+  assert.equal(getModelConfig('MiniMax-M2.7', 'openai-compatible').defaultMaxTokens, 65536, 'MiniMax M2.7 default output budget follows the official recommendation')
+  assert.equal(getModelConfig('MiniMax-M2.5', 'openai-compatible').contextWindow, 204800, 'MiniMax M2.5 context uses official 204800-token metadata')
+  assert.equal(getModelConfig('grok-4.3', 'openai-compatible').contextWindow, 1000000, 'Grok 4.3 context uses official xAI model metadata')
+  assert.equal(getModelConfig('grok-4.3', 'openai-compatible').maxOutputTokens, 1000000, 'Grok 4.3 visible output budget can use the official context ceiling through max_completion_tokens')
+  assert.equal(getModelConfig('grok-4.3', 'openai-compatible').preferredEndpoint, 'responses', 'Grok 4.3 records xAI Responses as the official preferred endpoint')
+  assert.deepEqual(getModelConfig('grok-4.20', 'openai-compatible').reasoningEfforts, ['none', 'low', 'medium', 'high'], 'Grok 4.20 exposes xAI reasoning efforts')
+  assert.deepEqual(getModelConfig('grok-4.20-multi-agent', 'openai-compatible').reasoningEfforts, ['low', 'medium', 'high', 'xhigh'], 'Grok 4.20 Multi-Agent exposes official xhigh effort')
+  assert.equal(getModelConfig('grok-4.20-non-reasoning', 'openai-compatible').reasoningMode, undefined, 'Grok 4.20 non-reasoning model does not expose reasoning controls')
+  assert.equal(getModelConfig('grok-build-0.1', 'openai-compatible').contextWindow, 256000, 'Grok Build context uses official xAI model metadata')
+  assert.equal(getModelConfig('grok-4.1', 'openai-compatible').deprecated, true, 'Grok 4.1 shorthand is treated as a compatibility entry, not a current xAI API model')
+  assert.equal(getModelConfig('grok-4', 'openai-compatible').deprecated, true, 'Grok 4 legacy entry is treated as retired/redirected to Grok 4.3')
+  assert.equal(getModelConfig('claude-fable-5', 'anthropic').contextWindow, 1000000, 'Claude Fable 5 context uses official current model overview')
+  assert.equal(getModelConfig('claude-fable-5', 'anthropic').maxOutputTokens, 128000, 'Claude Fable 5 output limit uses official current model overview')
+  assert.deepEqual(getModelConfig('claude-fable-5', 'anthropic').reasoningEfforts, ['low', 'medium', 'high', 'xhigh', 'max'], 'Claude Fable 5 exposes official always-on adaptive effort tiers')
+  assert.equal(getModelConfig('claude-mythos-5', 'anthropic').contextWindow, 1000000, 'Claude Mythos 5 context uses official current model overview')
+  assert.equal(getModelConfig('claude-mythos-5', 'anthropic').maxOutputTokens, 128000, 'Claude Mythos 5 output limit uses official current model overview')
+  assert.equal(getModelConfig('claude-fable-5-20260602', 'anthropic').deprecated, true, 'Claude Fable dated draft id is treated as a compatibility entry')
+  assert.equal(getModelConfig('claude-opus-4-8', 'anthropic').contextWindow, 1000000, 'Claude Opus 4.8 context uses official current model overview')
+  assert.deepEqual(getModelConfig('claude-opus-4-8', 'anthropic').reasoningEfforts, ['none', 'low', 'medium', 'high', 'xhigh', 'max'], 'Claude Opus 4.8 exposes official output_config effort tiers')
   assert.equal(getModelConfig('claude-opus-4-7', 'anthropic').contextWindow, 1000000, 'Claude Opus 4.7 context uses official current model overview')
   assert.equal(getModelConfig('claude-sonnet-4-6', 'anthropic').maxOutputTokens, 64000, 'Claude Sonnet 4.6 output limit uses official current model overview')
+  assert.equal(getModelConfig('claude-opus-4-8', 'anthropic').supportsTools, true, 'Claude current models expose native tool support')
+  assert.equal(getModelConfig('gemini-3.5-flash', 'google').deprecated, false, 'Gemini 3.5 Flash is cataloged as a current default-capable model')
+  assert.deepEqual(getModelConfig('gemini-3.5-flash', 'google').reasoningEfforts, ['minimal', 'low', 'medium', 'high'], 'Gemini 3.5 Flash exposes official thinking levels')
+  assert.equal(getModelConfig('gemini-3.5-flash', 'google').supportsTools, true, 'Gemini current models expose native tool support')
   assert.equal(getModelConfig('gemini-3-pro-preview', 'google').deprecated, true, 'Gemini 3 Pro Preview is not recommended as a default')
+  assert.equal(getModelConfig('mimo-v2-pro', 'xiaomi-mimo').deprecated, true, 'MiMo V2 Pro is marked deprecated during the official retirement window')
+  assert.equal(getModelConfig('mimo-v2-omni', 'xiaomi-mimo').deprecated, true, 'MiMo V2 Omni is marked deprecated during the official retirement window')
+  const qwenProvider = { id: 'dashscope', type: 'openai-compatible', presetId: 'dashscope', name: 'DashScope', models: ['qwen3.7-max', 'qwen3.6-flash', 'qwen3.6-plus', 'qwen3.5-flash'], enabled: true }
+  const deepSeekProvider = { id: 'deepseek', type: 'openai-compatible', presetId: 'deepseek', name: 'DeepSeek', models: ['deepseek-v4-pro'], enabled: true }
+  const kimiProvider = { id: 'moonshot', type: 'openai-compatible', presetId: 'moonshot', name: 'Moonshot', models: ['kimi-k2.6', 'kimi-k2.5'], enabled: true }
+  const minimaxProvider = { id: 'minimax', type: 'openai-compatible', presetId: 'minimax', name: 'MiniMax', models: ['MiniMax-M3'], enabled: true }
+  const grokProvider = { id: 'xai', type: 'openai-compatible', presetId: 'xai', name: 'xAI', baseUrl: 'https://api.x.ai/v1', models: ['grok-4.3', 'grok-4.20', 'grok-4.20-multi-agent', 'grok-4.20-non-reasoning'], enabled: true }
+  assert.equal(getModelConfig('qwen3.7-max', 'openai-compatible').supportsTools, true, 'Qwen models expose native tool support')
+  assert.equal(getModelConfig('kimi-k2.6', 'openai-compatible').supportsTools, true, 'Kimi models expose native tool support')
+  assert.equal(getModelConfig('MiniMax-M3', 'openai-compatible').supportsTools, true, 'MiniMax models expose native tool support')
+  assert.equal(getModelConfig('grok-4.3', 'openai-compatible').supportsTools, true, 'Grok models expose native tool support')
+  assert.deepEqual(getReasoningEffortOptions(deepSeekProvider, 'deepseek-v4-pro'), ['none', 'high', 'xhigh'], 'DeepSeek thinking models expose only source-backed effort levels')
+  assert.deepEqual(getReasoningEffortOptions(deepSeekProvider, 'deepseek-chat'), [], 'DeepSeek Chat compatibility alias does not expose thinking controls')
+  assert.deepEqual(getReasoningEffortOptions(qwenProvider, 'qwen3.7-max'), ['none', 'low', 'medium', 'high'], 'Qwen thinking models expose DashScope thinking levels')
+  assert.deepEqual(getReasoningEffortOptions(qwenProvider, 'qwen3.5-flash'), ['none', 'low', 'medium', 'high'], 'Qwen3.5 thinking models expose DashScope thinking levels')
+  assert.deepEqual(getReasoningEffortOptions(kimiProvider, 'kimi-k2.6'), ['none', 'high'], 'Kimi thinking models expose the provider-supported thinking toggle')
+  assert.deepEqual(getReasoningEffortOptions(kimiProvider, 'kimi-k2.5'), ['none', 'high'], 'Kimi K2.5 exposes the provider-supported thinking toggle')
+  assert.deepEqual(getReasoningEffortOptions(grokProvider, 'grok-4.3'), ['none', 'low', 'medium', 'high'], 'Grok reasoning models expose xAI effort levels')
+  assert.deepEqual(getReasoningEffortOptions(grokProvider, 'grok-4.20'), ['none', 'low', 'medium', 'high'], 'Grok 4.20 reasoning model exposes xAI effort levels')
+  assert.deepEqual(getReasoningEffortOptions(grokProvider, 'grok-4.20-multi-agent'), ['low', 'medium', 'high', 'xhigh'], 'Grok 4.20 Multi-Agent exposes xAI xhigh effort')
+  assert.deepEqual(getReasoningEffortOptions(grokProvider, 'grok-4.20-non-reasoning'), [], 'Grok 4.20 non-reasoning model does not expose reasoning controls')
+  assert.deepEqual(getReasoningEffortOptions(grokProvider, 'grok-4'), [], 'Grok legacy compatibility entries do not expose xAI reasoning_effort controls')
+  assert.deepEqual(getReasoningEffortOptions(minimaxProvider, 'MiniMax-M3'), ['none', 'high'], 'MiniMax M3 exposes the provider-supported thinking toggle')
+  assert.deepEqual(
+    getReasoningEffortOptions({ id: 'anthropic-current', type: 'anthropic', name: 'Anthropic', models: ['claude-fable-5'], enabled: true }, 'claude-fable-5'),
+    ['low', 'medium', 'high', 'xhigh', 'max'],
+    'Claude Fable 5 exposes always-on adaptive effort controls without a disable option'
+  )
+  assert.equal(resolveAgentProviderToolTarget('openai-compatible', { assumeOpenAICompatibleTools: true }), 'openai-chat', 'source-backed compatible providers can declare OpenAI-format tools')
+  assert.equal(resolveAgentProviderToolTarget('openai-compatible', { assumeOpenAICompatibleTools: true, preferredEndpoint: 'responses' }), 'openai-responses', 'xAI Responses-compatible providers declare Responses-format tools')
+  assert.equal(resolveAgentProviderToolTarget('xiaomi-mimo', { wireProtocol: 'anthropic-compatible' }), 'anthropic', 'MiMo Anthropic-compatible endpoints declare Anthropic-format tools')
+  assert.deepEqual(
+    getReasoningEffortOptions({ id: 'google', type: 'google', name: 'Google', models: ['gemini-3.5-flash'], enabled: true }, 'gemini-3.5-flash'),
+    ['minimal', 'low', 'medium', 'high'],
+    'Gemini 3.5 Flash exposes thinking levels through Google provider metadata'
+  )
+  const googlePrefixedModelProvider = {
+    id: 'google-prefixed-models',
+    type: 'google',
+    name: 'Google Prefixed Models',
+    baseUrl: 'https://generativelanguage.googleapis.com/v1beta',
+    [API_KEY_FIELD]: FAKE_KEY_A,
+    models: ['models/gemini-3.5-flash'],
+    modelConfigs: [{ ...getModelConfig('gemini-3.5-flash', 'google'), id: 'models/gemini-3.5-flash', source: 'remote' }],
+    enabled: true,
+  }
+  assert.deepEqual(
+    getReasoningEffortOptions(googlePrefixedModelProvider, 'models/gemini-3.5-flash'),
+    ['minimal', 'low', 'medium', 'high'],
+    'Gemini official models/ resource names still expose thinking levels'
+  )
+  assert.equal(providerSupportsReasoning(googlePrefixedModelProvider, 'models/gemini-3.5-flash'), true, 'Gemini official models/ resource names keep quick reasoning enabled')
+  assert.equal(
+    resolveProviderEndpoint({ provider: googlePrefixedModelProvider, model: 'models/gemini-3.5-flash', stream: true }),
+    `https://generativelanguage.googleapis.com/v1beta/models/gemini-3.5-flash:streamGenerateContent?alt=sse&key=${FAKE_KEY_A}`,
+    'Gemini official models/ resource names do not duplicate the models path in streaming requests'
+  )
   const openAIResponsesBody = buildOpenAIResponsesBodyForTest({
     provider: {
       id: 'openai',
@@ -3373,7 +3878,460 @@ https://gateway.example/messages`
     maxTokens: 999999,
   })
   assert.equal(openAIResponsesBody.reasoning.effort, 'xhigh', 'OpenAI Responses uses official reasoning.effort values including xhigh')
+  assert.equal(openAIResponsesBody.reasoning.summary, 'auto', 'OpenAI Responses requests official reasoning summaries')
+  assert.deepEqual(openAIResponsesBody.include, ['reasoning.encrypted_content'], 'OpenAI Responses reasoning requests ask for encrypted reasoning replay items')
   assert.ok(openAIResponsesBody.max_output_tokens <= getModelConfig('gpt-5.5', 'openai').maxOutputTokens, 'Responses output tokens are clamped')
+  const openAINoReasoningSummaryBody = buildOpenAIResponsesBodyForTest({
+    provider: {
+      id: 'openai',
+      type: 'openai',
+      name: 'OpenAI',
+      [API_KEY_FIELD]: 'token-test-fake',
+      models: ['gpt-5.5'],
+      enabled: true,
+      capabilities: { reasoningEffort: true },
+    },
+    model: 'gpt-5.5',
+    messages: [{ role: 'user', content: 'hello' }],
+    reasoningEffort: 'none',
+    maxTokens: 4096,
+  })
+  assert.equal(openAINoReasoningSummaryBody.reasoning, undefined, 'OpenAI Responses omits reasoning summaries when no reasoning object is sent')
+  const openAIMinimalResponsesBody = buildOpenAIResponsesBodyForTest({
+    provider: {
+      id: 'openai',
+      type: 'openai',
+      name: 'OpenAI',
+      [API_KEY_FIELD]: 'token-test-fake',
+      models: ['gpt-5'],
+      enabled: true,
+      capabilities: { reasoningEffort: true },
+    },
+    model: 'gpt-5',
+    messages: [{ role: 'user', content: 'hello' }],
+    reasoningEffort: 'minimal',
+    maxTokens: 4096,
+  })
+  assert.equal(openAIMinimalResponsesBody.reasoning.effort, 'minimal', 'OpenAI GPT-5 Responses preserves official minimal reasoning effort')
+  const openAIMinimalConformance = resolveProviderRequestConformanceForTest({
+    provider: {
+      id: 'openai',
+      type: 'openai',
+      name: 'OpenAI',
+      [API_KEY_FIELD]: 'token-test-fake',
+      models: ['gpt-5'],
+      enabled: true,
+      capabilities: { reasoningEffort: true },
+    },
+    model: 'gpt-5',
+    messages: [{ role: 'user', content: 'hello' }],
+    reasoningEffort: 'minimal',
+    maxTokens: 4096,
+  }, openAIMinimalResponsesBody)
+  assert.equal(openAIMinimalConformance.reasoning.enabled, true, 'provider conformance treats OpenAI minimal as active reasoning')
+  assert.equal(openAIMinimalConformance.reasoning.providerValue, 'minimal', 'provider conformance preserves OpenAI minimal provider value')
+  assert.equal(openAIMinimalConformance.manifest.payload.reasoningSummaryField, 'reasoning.summary', 'provider conformance records OpenAI Responses reasoning summary field')
+  const openAIChatBodyWithTools = buildOpenAIBodyForTest({
+    provider: {
+      id: 'openai',
+      type: 'openai',
+      name: 'OpenAI',
+      [API_KEY_FIELD]: 'token-test-fake',
+      models: ['gpt-4.1'],
+      enabled: true,
+    },
+    model: 'gpt-4.1',
+    messages: [{ role: 'user', content: 'hello' }],
+    providerToolDeclarations: [{
+      type: 'function',
+      function: {
+        name: 'search_web',
+        description: 'Search readable web sources.',
+        parameters: { type: 'object', properties: { query: { type: 'string' } }, required: ['query'] },
+      },
+    }],
+  })
+  assert.equal(openAIChatBodyWithTools.tools[0].type, 'function', 'OpenAI Chat carries native provider tool declarations')
+  assert.equal(openAIChatBodyWithTools.tools[0].function.name, 'search_web', 'OpenAI Chat preserves provider function name')
+  const openAIResponsesBodyWithTools = buildOpenAIResponsesBodyForTest({
+    provider: {
+      id: 'openai',
+      type: 'openai',
+      name: 'OpenAI',
+      [API_KEY_FIELD]: 'token-test-fake',
+      models: ['gpt-5.5'],
+      enabled: true,
+    },
+    model: 'gpt-5.5',
+    messages: [{ role: 'user', content: 'hello' }],
+    webSearchMode: 'native',
+    providerToolDeclarations: [{
+      type: 'function',
+      name: 'inspect_source',
+      description: 'Inspect a cited source.',
+      parameters: { type: 'object', properties: { sourceId: { type: 'string' } } },
+    }],
+  })
+  assert.equal(openAIResponsesBodyWithTools.tools[0].type, 'web_search_preview', 'OpenAI Responses keeps native web search declaration')
+  assert.equal(openAIResponsesBodyWithTools.tools[1].name, 'inspect_source', 'OpenAI Responses appends IsleMind provider tool declarations')
+  const openAIResponsesToolResultBody = buildOpenAIResponsesBodyForTest({
+    provider: {
+      id: 'openai',
+      type: 'openai',
+      name: 'OpenAI',
+      [API_KEY_FIELD]: 'token-test-fake',
+      models: ['gpt-5.5'],
+      enabled: true,
+    },
+    model: 'gpt-5.5',
+    messages: [
+      { role: 'user', content: 'Need source details.' },
+      {
+        role: 'assistant',
+        content: '',
+        toolCalls: [{
+          id: 'fc_inspect_source',
+          callId: 'call_inspect_source',
+          name: 'inspect_source',
+          arguments: { sourceId: 'src-1' },
+        }],
+      },
+      {
+        role: 'tool',
+        name: 'inspect_source',
+        toolCallId: 'call_inspect_source',
+        content: 'Source details.',
+      },
+    ],
+    stream: false,
+  })
+  assert.deepEqual(
+    openAIResponsesToolResultBody.input[1],
+    { type: 'function_call', id: 'fc_inspect_source', call_id: 'call_inspect_source', name: 'inspect_source', arguments: '{"sourceId":"src-1"}' },
+    'OpenAI Responses tool replay uses official function_call input items'
+  )
+  assert.deepEqual(
+    openAIResponsesToolResultBody.input[2],
+    { type: 'function_call_output', call_id: 'call_inspect_source', output: 'Source details.' },
+    'OpenAI Responses tool replay sends official function_call_output items'
+  )
+  const openAIResponsesReasoningReplayBody = buildOpenAIResponsesBodyForTest({
+    provider: {
+      id: 'openai',
+      type: 'openai',
+      name: 'OpenAI',
+      [API_KEY_FIELD]: 'token-test-fake',
+      models: ['gpt-5.5'],
+      enabled: true,
+    },
+    model: 'gpt-5.5',
+    messages: [
+      { role: 'user', content: 'Need source details.' },
+      {
+        role: 'assistant',
+        content: '',
+        responseItems: [{
+          type: 'reasoning',
+          id: 'rs_inspect_source',
+          encrypted_content: 'encrypted-reasoning-state',
+          summary: [],
+        }],
+        toolCalls: [{
+          id: 'fc_inspect_source',
+          callId: 'call_inspect_source',
+          name: 'inspect_source',
+          arguments: { sourceId: 'src-1' },
+        }],
+      },
+      {
+        role: 'tool',
+        name: 'inspect_source',
+        toolCallId: 'call_inspect_source',
+        content: 'Source details.',
+      },
+    ],
+    reasoningEffort: 'high',
+    stream: false,
+  })
+  assert.deepEqual(
+    openAIResponsesReasoningReplayBody.input.slice(1, 4),
+    [
+      { type: 'reasoning', id: 'rs_inspect_source', encrypted_content: 'encrypted-reasoning-state', summary: [] },
+      { type: 'function_call', id: 'fc_inspect_source', call_id: 'call_inspect_source', name: 'inspect_source', arguments: '{"sourceId":"src-1"}' },
+      { type: 'function_call_output', call_id: 'call_inspect_source', output: 'Source details.' },
+    ],
+    'OpenAI Responses tool replay preserves reasoning items before function_call_output'
+  )
+  const anthropicBodyWithTools = buildAnthropicBodyForTest({
+    provider: {
+      id: 'anthropic',
+      type: 'anthropic',
+      name: 'Anthropic',
+      [API_KEY_FIELD]: 'token-test-fake',
+      models: ['claude-sonnet-4-6'],
+      enabled: true,
+    },
+    model: 'claude-sonnet-4-6',
+    messages: [{ role: 'user', content: 'hello' }],
+    webSearchMode: 'native',
+    providerToolDeclarations: [{
+      name: 'read_context',
+      description: 'Read local context.',
+      input_schema: { type: 'object', properties: { query: { type: 'string' } } },
+    }],
+  })
+  assert.equal(anthropicBodyWithTools.tools[0].type, 'web_search_20260209', 'Anthropic current Claude models use the official dynamic web search tool')
+  assert.equal(anthropicBodyWithTools.tools[1].name, 'read_context', 'Anthropic appends IsleMind provider tool declarations')
+  const anthropicWebSearchConformance = resolveProviderRequestConformanceForTest({
+    provider: {
+      id: 'anthropic',
+      type: 'anthropic',
+      name: 'Anthropic',
+      [API_KEY_FIELD]: 'token-test-fake',
+      models: ['claude-sonnet-4-6'],
+      enabled: true,
+    },
+    model: 'claude-sonnet-4-6',
+    messages: [{ role: 'user', content: 'hello' }],
+    webSearchMode: 'native',
+  }, anthropicBodyWithTools)
+  assert.equal(anthropicWebSearchConformance.manifest.tools.nativeWebSearchToolType, 'web_search_20260209', 'provider conformance records Anthropic current web search tool type')
+  const anthropicLegacyWebSearchBody = buildAnthropicBodyForTest({
+    provider: {
+      id: 'anthropic',
+      type: 'anthropic',
+      name: 'Anthropic',
+      [API_KEY_FIELD]: 'token-test-fake',
+      models: ['claude-3-5-sonnet-20241022'],
+      enabled: true,
+    },
+    model: 'claude-3-5-sonnet-20241022',
+    messages: [{ role: 'user', content: 'hello' }],
+    webSearchMode: 'native',
+  })
+  assert.equal(anthropicLegacyWebSearchBody.tools[0].type, 'web_search_20250305', 'Anthropic legacy Claude models keep the compatible web search tool type')
+  const anthropicToolResultBody = buildAnthropicBodyForTest({
+    provider: {
+      id: 'anthropic',
+      type: 'anthropic',
+      name: 'Anthropic',
+      [API_KEY_FIELD]: 'token-test-fake',
+      models: ['claude-sonnet-4-6'],
+      enabled: true,
+    },
+    model: 'claude-sonnet-4-6',
+    messages: [
+      { role: 'user', content: 'Need context.' },
+      {
+        role: 'assistant',
+        content: [{
+          type: 'tool_use',
+          text: '',
+          toolUse: { id: 'toolu_read_context', name: 'read_context', input: { query: 'IsleMind' } },
+        }],
+      },
+      {
+        role: 'user',
+        content: [{
+          type: 'tool_result',
+          text: '',
+          toolResult: { tool_use_id: 'toolu_read_context', content: 'Context result.' },
+        }],
+      },
+    ],
+    maxTokens: 1024,
+    stream: false,
+  })
+  assert.deepEqual(
+    anthropicToolResultBody.messages[1].content[0],
+    { type: 'tool_use', id: 'toolu_read_context', name: 'read_context', input: { query: 'IsleMind' } },
+    'Anthropic provider-native tool revision replays assistant tool_use content blocks'
+  )
+  assert.deepEqual(
+    anthropicToolResultBody.messages[2].content[0],
+    { type: 'tool_result', tool_use_id: 'toolu_read_context', content: 'Context result.' },
+    'Anthropic provider-native tool revision sends official tool_result content blocks'
+  )
+  const anthropicThinkingToolChunk = parseProviderStreamChunkForTest([
+    'data: {"type":"content_block_start","index":0,"content_block":{"type":"thinking","thinking":""}}',
+    'data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"Checking tool context."}}',
+    'data: {"type":"content_block_delta","index":0,"delta":{"type":"signature_delta","signature":"thinking-signature-1"}}',
+  ].join('\n'), 'anthropic')
+  assert.deepEqual(
+    anthropicThinkingToolChunk.providerContentBlocks,
+    [{ type: 'thinking', thinking: 'Checking tool context.', signature: 'thinking-signature-1' }],
+    'Anthropic streaming parser preserves thinking blocks and signatures for official tool-result continuation'
+  )
+  const anthropicToolThinkingReplayBody = buildAnthropicBodyForTest({
+    provider: {
+      id: 'anthropic',
+      type: 'anthropic',
+      name: 'Anthropic',
+      [API_KEY_FIELD]: 'token-test-fake',
+      models: ['claude-sonnet-4-6'],
+      enabled: true,
+    },
+    model: 'claude-sonnet-4-6',
+    messages: [
+      { role: 'user', content: 'Need context.' },
+      {
+        role: 'assistant',
+        providerContentBlocks: [
+          { type: 'thinking', thinking: 'Checking tool context.', signature: 'thinking-signature-1' },
+          { type: 'redacted_thinking', data: 'encrypted-redacted-thinking' },
+        ],
+        content: [{
+          type: 'tool_use',
+          text: '',
+          toolUse: { id: 'toolu_read_context', name: 'read_context', input: { query: 'IsleMind' } },
+        }],
+      },
+      {
+        role: 'user',
+        content: [{
+          type: 'tool_result',
+          text: '',
+          toolResult: { tool_use_id: 'toolu_read_context', content: 'Context result.' },
+        }],
+      },
+    ],
+    maxTokens: 1024,
+    stream: false,
+  })
+  assert.deepEqual(
+    anthropicToolThinkingReplayBody.messages[1].content.slice(0, 3),
+    [
+      { type: 'thinking', thinking: 'Checking tool context.', signature: 'thinking-signature-1' },
+      { type: 'redacted_thinking', data: 'encrypted-redacted-thinking' },
+      { type: 'tool_use', id: 'toolu_read_context', name: 'read_context', input: { query: 'IsleMind' } },
+    ],
+    'Anthropic provider-native tool revision replays thinking and redacted_thinking blocks before tool_use'
+  )
+  const googleBodyWithTools = buildGoogleBodyForTest({
+    provider: {
+      id: 'google',
+      type: 'google',
+      name: 'Google',
+      [API_KEY_FIELD]: 'token-test-fake',
+      models: ['gemini-2.5-flash'],
+      enabled: true,
+    },
+    model: 'gemini-2.5-flash',
+    messages: [{ role: 'user', content: 'hello' }],
+    webSearchMode: 'native',
+    providerToolDeclarations: [{
+      functionDeclarations: [{
+        name: 'read_context',
+        description: 'Read local context.',
+        parameters: { type: 'object', properties: { query: { type: 'string' } } },
+      }],
+    }],
+  })
+  assert.ok(googleBodyWithTools.tools[0].google_search, 'Google keeps native web search declaration')
+  assert.equal(googleBodyWithTools.tools[1].functionDeclarations[0].name, 'read_context', 'Google appends IsleMind provider tool declarations')
+  const googleFunctionResponseBody = buildGoogleBodyForTest({
+    provider: {
+      id: 'google',
+      type: 'google',
+      name: 'Google',
+      [API_KEY_FIELD]: 'token-test-fake',
+      models: ['gemini-3.5-flash'],
+      enabled: true,
+    },
+    model: 'gemini-3.5-flash',
+    messages: [
+      { role: 'user', content: 'Need context.' },
+      {
+        role: 'assistant',
+        content: [{
+          type: 'function_call',
+          text: '',
+          functionCall: { name: 'read_context', args: { query: 'IsleMind' } },
+          thoughtSignature: 'signature-on-function-call',
+        }],
+      },
+      {
+        role: 'user',
+        content: [{
+          type: 'function_response',
+          text: '',
+          functionResponse: { name: 'read_context', response: { result: 'Context result.' } },
+        }],
+      },
+    ],
+    maxTokens: 1024,
+  })
+  assert.deepEqual(
+    googleFunctionResponseBody.contents[1].parts[0],
+    { functionCall: { name: 'read_context', args: { query: 'IsleMind' } }, thoughtSignature: 'signature-on-function-call' },
+    'Google provider-native tool revision preserves Gemini functionCall thought signatures'
+  )
+  assert.deepEqual(
+    googleFunctionResponseBody.contents[2].parts[0],
+    { functionResponse: { name: 'read_context', response: { result: 'Context result.' } } },
+    'Google provider-native tool revision sends official functionResponse parts'
+  )
+  const geminiThoughtSseChunk = parseProviderStreamChunkForTest([
+    `data: ${JSON.stringify({
+      candidates: [{
+        content: {
+          parts: [
+            { thought: true, text: 'Checking the request.' },
+            { functionCall: { name: 'read_context', args: { query: 'IsleMind' } }, thoughtSignature: 'signature-on-function-call' },
+            { text: 'Gemini answer.', thoughtSignature: 'signature-on-answer-part' },
+          ],
+        },
+      }],
+      usageMetadata: {
+        promptTokenCount: 3,
+        candidatesTokenCount: 4,
+        thoughtsTokenCount: 5,
+        totalTokenCount: 12,
+      },
+    })}`,
+    '',
+  ].join('\n'), 'google')
+  assert.equal(geminiThoughtSseChunk.text, 'Gemini answer.', 'Gemini thought summaries are not emitted as answer text')
+  assert.ok(geminiThoughtSseChunk.traces.some((trace) => trace.content === 'Checking the request.'), 'Gemini thought summaries are emitted as reasoning traces')
+  assert.ok(
+    geminiThoughtSseChunk.traces.some((trace) => trace.metadata?.hiddenSignature === true),
+    'Gemini thought signatures are preserved even when attached to an answer part'
+  )
+  assert.equal(geminiThoughtSseChunk.providerToolCalls?.[0]?.thoughtSignature, 'signature-on-function-call', 'Gemini function call thought signatures stay attached to provider tool calls')
+  assert.equal(geminiThoughtSseChunk.usage.reasoningTokens, 5, 'Gemini thoughtsTokenCount is preserved as reasoning token usage')
+  const minimaxReasoningDetailsChunk = parseProviderStreamChunkForTest([
+    `data: ${JSON.stringify({
+      choices: [{
+        delta: {
+          reasoning_details: [{ text: 'Checking MiniMax reasoning.' }],
+          content: 'MiniMax answer.',
+        },
+      }],
+    })}`,
+    '',
+  ].join('\n'), 'openai-compatible')
+  assert.equal(minimaxReasoningDetailsChunk.text, 'MiniMax answer.', 'MiniMax reasoning_details are not emitted as answer text')
+  assert.ok(
+    minimaxReasoningDetailsChunk.traces.some((trace) => trace.content === 'Checking MiniMax reasoning.'),
+    'MiniMax reasoning_details are emitted as reasoning traces'
+  )
+  const deepSeekReasoningContentChunk = parseProviderStreamChunkForTest([
+    `data: ${JSON.stringify({
+      choices: [{
+        delta: {
+          reasoning_content: 'Encrypted reasoning state.',
+          content: 'DeepSeek answer.',
+        },
+      }],
+    })}`,
+    '',
+  ].join('\n'), 'openai-compatible')
+  assert.equal(deepSeekReasoningContentChunk.text, 'DeepSeek answer.', 'OpenAI-compatible reasoning_content is not emitted as answer text')
+  assert.equal(deepSeekReasoningContentChunk.reasoningContent, 'Encrypted reasoning state.', 'OpenAI-compatible reasoning_content is preserved for provider replay')
+  assert.ok(
+    deepSeekReasoningContentChunk.traces.some((trace) => trace.content === 'Encrypted reasoning state.'),
+    'OpenAI-compatible reasoning_content is still emitted as a reasoning trace'
+  )
   const responsesJsonChunk = parseProviderStreamChunkForTest(JSON.stringify({
     id: 'resp_test',
     object: 'response',
@@ -3389,6 +4347,36 @@ https://gateway.example/messages`
   }), 'openai')
   assert.equal(responsesJsonChunk.text, 'Responses JSON text', 'Responses JSON body is parsed when a streaming request receives buffered JSON')
   assert.equal(responsesJsonChunk.usage.totalTokens, 7, 'Responses JSON body preserves provider usage')
+  const responsesReasoningJsonChunk = parseProviderStreamChunkForTest(JSON.stringify({
+    id: 'resp_reasoning_tool',
+    object: 'response',
+    status: 'completed',
+    output: [
+      {
+        type: 'reasoning',
+        id: 'rs_inspect_source',
+        encrypted_content: 'encrypted-reasoning-state',
+        summary: [],
+      },
+      {
+        type: 'function_call',
+        id: 'fc_inspect_source',
+        call_id: 'call_inspect_source',
+        name: 'inspect_source',
+        arguments: '{"sourceId":"src-1"}',
+      },
+    ],
+    usage: { input_tokens: 3, output_tokens: 4, total_tokens: 7 },
+  }), 'openai')
+  assert.equal(responsesReasoningJsonChunk.text, '', 'Responses replay items are not emitted as answer text')
+  assert.deepEqual(
+    responsesReasoningJsonChunk.responseItems,
+    [
+      { type: 'reasoning', id: 'rs_inspect_source', encrypted_content: 'encrypted-reasoning-state', summary: [] },
+      { type: 'function_call', id: 'fc_inspect_source', call_id: 'call_inspect_source', name: 'inspect_source', arguments: '{"sourceId":"src-1"}' },
+    ],
+    'Responses JSON preserves reasoning and function_call items for tool replay'
+  )
   const responsesSseChunk = parseProviderStreamChunkForTest([
     'data: {"type":"response.output_text.delta","delta":"Hello"}',
     '',
@@ -3398,6 +4386,30 @@ https://gateway.example/messages`
     '',
   ].join('\n'), 'openai')
   assert.equal(responsesSseChunk.text, 'Hello world', 'Responses SSE delta text is not duplicated by completion events')
+  const xaiReasoningSummaryChunk = parseProviderStreamChunkForTest([
+    'data: {"type":"response.reasoning_summary_text.delta","delta":"Thinking about the request"}',
+    '',
+  ].join('\n'), 'openai-compatible')
+  assert.equal(xaiReasoningSummaryChunk.text, '', 'xAI Responses reasoning summary deltas are not emitted as answer text')
+  assert.ok(
+    xaiReasoningSummaryChunk.traces.some((trace) => trace.type === 'reasoning' && trace.content === 'Thinking about the request'),
+    'xAI Responses reasoning summary deltas are surfaced as provider reasoning traces'
+  )
+  const responsesFunctionCallChunk = parseProviderStreamChunkForTest([
+    `data: ${JSON.stringify({
+      type: 'response.output_item.added',
+      item: {
+        id: 'fc_inspect_source',
+        call_id: 'call_inspect_source',
+        type: 'function_call',
+        name: 'inspect_source',
+        arguments: '{"sourceId":"src-1"}',
+      },
+    })}`,
+    '',
+  ].join('\n'), 'openai')
+  assert.equal(responsesFunctionCallChunk.providerToolCalls?.[0]?.id, 'fc_inspect_source', 'Responses parser preserves output item id')
+  assert.equal(responsesFunctionCallChunk.providerToolCalls?.[0]?.callId, 'call_inspect_source', 'Responses parser preserves function call_id for tool outputs')
   const deepSeekThinkingBody = buildOpenAIBodyForTest({
     provider: {
       id: 'deepseek',
@@ -3418,6 +4430,78 @@ https://gateway.example/messages`
   assert.equal(deepSeekThinkingBody.reasoning_effort, 'max', 'DeepSeek xhigh maps to official max effort')
   assert.equal(deepSeekThinkingBody.temperature, undefined, 'DeepSeek thinking mode omits temperature')
   assert.ok(deepSeekThinkingBody.max_tokens <= getModelConfig('deepseek-v4-pro', 'openai-compatible').maxOutputTokens, 'DeepSeek request max tokens are clamped to output limit')
+  const deepSeekThinkingConformance = resolveProviderRequestConformanceForTest({
+    provider: {
+      id: 'deepseek',
+      type: 'openai-compatible',
+      presetId: 'deepseek',
+      name: 'DeepSeek',
+      [API_KEY_FIELD]: 'token-test-fake',
+      models: ['deepseek-v4-pro'],
+      enabled: true,
+      capabilities: { reasoningEffort: true },
+    },
+    model: 'deepseek-v4-pro',
+    messages: [{ role: 'user', content: 'hello' }],
+    reasoningEffort: 'xhigh',
+    maxTokens: 4096,
+  }, deepSeekThinkingBody)
+  assert.equal(deepSeekThinkingConformance.manifest.payload.requiresReasoningStatePassthrough, true, 'provider conformance marks DeepSeek reasoning_content passthrough as required')
+  const deepSeekToolReplayBody = buildOpenAIBodyForTest({
+    provider: {
+      id: 'deepseek',
+      type: 'openai-compatible',
+      presetId: 'deepseek',
+      name: 'DeepSeek',
+      [API_KEY_FIELD]: 'token-test-fake',
+      models: ['deepseek-v4-pro'],
+      enabled: true,
+      capabilities: { reasoningEffort: true, nativeTools: true },
+    },
+    model: 'deepseek-v4-pro',
+    messages: [
+      { role: 'user', content: 'Need context.' },
+      {
+        role: 'assistant',
+        content: '',
+        reasoningContent: 'DeepSeek tool reasoning state.',
+        toolCalls: [{
+          id: 'call_read_context',
+          name: 'read_context',
+          arguments: { query: 'IsleMind' },
+        }],
+      },
+      {
+        role: 'tool',
+        name: 'read_context',
+        toolCallId: 'call_read_context',
+        content: 'Context result.',
+      },
+    ],
+    maxTokens: 1024,
+    stream: false,
+  })
+  assert.equal(deepSeekToolReplayBody.messages[1].reasoning_content, 'DeepSeek tool reasoning state.', 'DeepSeek tool-call replay preserves reasoning_content on the assistant tool-call message')
+  const deepSeekPlainReplayBody = buildOpenAIBodyForTest({
+    provider: {
+      id: 'deepseek',
+      type: 'openai-compatible',
+      presetId: 'deepseek',
+      name: 'DeepSeek',
+      [API_KEY_FIELD]: 'token-test-fake',
+      models: ['deepseek-v4-pro'],
+      enabled: true,
+      capabilities: { reasoningEffort: true },
+    },
+    model: 'deepseek-v4-pro',
+    messages: [
+      { role: 'assistant', content: 'Plain answer.', reasoningContent: 'DeepSeek plain reasoning state.' },
+      { role: 'user', content: 'Follow up.' },
+    ],
+    maxTokens: 1024,
+    stream: false,
+  })
+  assert.equal(deepSeekPlainReplayBody.messages[0].reasoning_content, undefined, 'DeepSeek plain multi-turn replay omits reasoning_content when no tool call was performed')
   const deepSeekOffBody = buildOpenAIBodyForTest({
     provider: {
       id: 'deepseek',
@@ -3436,6 +4520,41 @@ https://gateway.example/messages`
   })
   assert.deepEqual(deepSeekOffBody.thinking, { type: 'disabled' }, 'DeepSeek none disables thinking instead of sending unsupported minimal')
   assert.equal(deepSeekOffBody.reasoning_effort, undefined, 'DeepSeek disabled thinking omits effort')
+  const deepSeekChatAliasBody = buildOpenAIBodyForTest({
+    provider: {
+      id: 'deepseek',
+      type: 'openai-compatible',
+      presetId: 'deepseek',
+      name: 'DeepSeek',
+      [API_KEY_FIELD]: 'token-test-fake',
+      models: ['deepseek-chat'],
+      enabled: true,
+      capabilities: { reasoningEffort: true },
+    },
+    model: 'deepseek-chat',
+    messages: [{ role: 'user', content: 'hello' }],
+    reasoningEffort: 'high',
+    maxTokens: 512,
+  })
+  assert.equal(deepSeekChatAliasBody.thinking, undefined, 'DeepSeek Chat alias does not send thinking controls')
+  assert.equal(deepSeekChatAliasBody.reasoning_effort, undefined, 'DeepSeek Chat alias does not send reasoning_effort')
+  const deepSeekChatAliasConformance = resolveProviderRequestConformanceForTest({
+    provider: {
+      id: 'deepseek',
+      type: 'openai-compatible',
+      presetId: 'deepseek',
+      name: 'DeepSeek',
+      [API_KEY_FIELD]: 'token-test-fake',
+      models: ['deepseek-chat'],
+      enabled: true,
+      capabilities: { reasoningEffort: true },
+    },
+    model: 'deepseek-chat',
+    messages: [{ role: 'user', content: 'hello' }],
+    reasoningEffort: 'high',
+    maxTokens: 512,
+  }, deepSeekChatAliasBody)
+  assert.equal(deepSeekChatAliasConformance.manifest.reasoning.supported, false, 'DeepSeek Chat alias conformance reports non-thinking mode')
   const nonReasoningBody = buildOpenAIBodyForTest({
     provider: {
       id: 'plain',
@@ -3452,6 +4571,511 @@ https://gateway.example/messages`
     maxTokens: 512,
   })
   assert.equal(nonReasoningBody.reasoning_effort, undefined, 'generic compatible providers do not receive reasoning fields without source-backed support')
+  const qwenThinkingBody = buildOpenAIBodyForTest({
+    provider: {
+      ...qwenProvider,
+      [API_KEY_FIELD]: 'token-test-fake',
+      capabilities: { reasoningEffort: true, nativeTools: true },
+    },
+    model: 'qwen3.7-max',
+    messages: [{ role: 'user', content: 'hello' }],
+    reasoningEffort: 'high',
+    maxTokens: 4096,
+    providerToolDeclarations: [{
+      type: 'function',
+      function: {
+        name: 'read_context',
+        description: 'Read local context.',
+        parameters: { type: 'object', properties: { query: { type: 'string' } } },
+      },
+    }],
+  })
+  assert.equal(qwenThinkingBody.enable_thinking, true, 'Qwen DashScope thinking uses enable_thinking')
+  assert.equal(qwenThinkingBody.thinking_budget, 262144, 'Qwen DashScope high thinking uses the official 256K thinking budget')
+  assert.deepEqual(qwenThinkingBody.stream_options, { include_usage: true }, 'Qwen DashScope streaming requests include usage metadata')
+  assert.equal(qwenThinkingBody.temperature, undefined, 'Qwen thinking requests omit sampling parameters')
+  assert.equal(qwenThinkingBody.tools[0].function.name, 'read_context', 'Qwen OpenAI-compatible requests carry native tool declarations')
+  const buildQwenHighThinkingBody = (model) => buildOpenAIBodyForTest({
+    provider: { ...qwenProvider, [API_KEY_FIELD]: 'token-test-fake', capabilities: { reasoningEffort: true } },
+    model,
+    messages: [{ role: 'user', content: 'hello' }],
+    reasoningEffort: 'high',
+    maxTokens: 4096,
+  })
+  const qwen36FlashThinkingBody = buildQwenHighThinkingBody('qwen3.6-flash')
+  assert.equal(qwen36FlashThinkingBody.thinking_budget, 131072, 'Qwen3.6 Flash high thinking uses the official 128K thinking budget')
+  const qwen36MaxPreviewThinkingBody = buildQwenHighThinkingBody('qwen3.6-max-preview')
+  assert.equal(qwen36MaxPreviewThinkingBody.thinking_budget, 131072, 'Qwen3.6 Max Preview high thinking uses the official 128K thinking budget')
+  const qwen36PlusThinkingBody = buildQwenHighThinkingBody('qwen3.6-plus')
+  assert.equal(qwen36PlusThinkingBody.thinking_budget, 81920, 'Qwen3.6 Plus high thinking uses the official 80K thinking budget')
+  const qwen35PlusThinkingBody = buildQwenHighThinkingBody('qwen3.5-plus')
+  assert.equal(qwen35PlusThinkingBody.thinking_budget, 81920, 'Qwen3.5 Plus high thinking uses the official 80K thinking budget')
+  const qwen35FlashThinkingBody = buildQwenHighThinkingBody('qwen3.5-flash')
+  assert.equal(qwen35FlashThinkingBody.thinking_budget, 81920, 'Qwen3.5 Flash high thinking uses the official 80K thinking budget')
+  const qwen36FlashConformance = resolveProviderRequestConformanceForTest({
+    provider: { ...qwenProvider, [API_KEY_FIELD]: 'token-test-fake', capabilities: { reasoningEffort: true } },
+    model: 'qwen3.6-flash',
+    messages: [{ role: 'user', content: 'hello' }],
+    reasoningEffort: 'high',
+    maxTokens: 4096,
+  }, qwen36FlashThinkingBody)
+  assert.equal(qwen36FlashConformance.reasoning.providerValue, 131072, 'provider conformance mirrors the official Qwen3.6 Flash 128K thinking budget')
+  const qwen35FlashConformance = resolveProviderRequestConformanceForTest({
+    provider: { ...qwenProvider, [API_KEY_FIELD]: 'token-test-fake', capabilities: { reasoningEffort: true } },
+    model: 'qwen3.5-flash',
+    messages: [{ role: 'user', content: 'hello' }],
+    reasoningEffort: 'high',
+    maxTokens: 4096,
+  }, qwen35FlashThinkingBody)
+  assert.equal(qwen35FlashConformance.reasoning.providerValue, 81920, 'provider conformance mirrors the official Qwen3.5 80K thinking budget')
+  const qwenToolResultBody = buildOpenAIBodyForTest({
+    provider: { ...qwenProvider, [API_KEY_FIELD]: 'token-test-fake' },
+    model: 'qwen3.7-max',
+    messages: [
+      { role: 'user', content: 'Need context.' },
+      {
+        role: 'assistant',
+        content: '',
+        toolCalls: [{
+          id: 'call_read_context',
+          name: 'read_context',
+          arguments: { query: 'IsleMind' },
+        }],
+      },
+      {
+        role: 'tool',
+        name: 'read_context',
+        toolCallId: 'call_read_context',
+        content: 'Context result.',
+      },
+    ],
+    maxTokens: 1024,
+    stream: false,
+  })
+  assert.deepEqual(
+    qwenToolResultBody.messages[1].tool_calls[0],
+    { id: 'call_read_context', type: 'function', function: { name: 'read_context', arguments: '{"query":"IsleMind"}' } },
+    'Qwen OpenAI-compatible tool revision replays assistant tool_calls in official format'
+  )
+  assert.deepEqual(
+    qwenToolResultBody.messages[2],
+    { role: 'tool', tool_call_id: 'call_read_context', name: 'read_context', content: 'Context result.' },
+    'Qwen OpenAI-compatible tool revision sends official tool result messages'
+  )
+  const qwenMediumThinkingBody = buildOpenAIBodyForTest({
+    provider: { ...qwenProvider, [API_KEY_FIELD]: 'token-test-fake', capabilities: { reasoningEffort: true } },
+    model: 'qwen3.7-max',
+    messages: [{ role: 'user', content: 'hello' }],
+    reasoningEffort: 'medium',
+    maxTokens: 4096,
+  })
+  assert.equal(qwenMediumThinkingBody.enable_thinking, true, 'Qwen medium thinking stays enabled')
+  assert.equal(qwenMediumThinkingBody.thinking_budget, 65536, 'Qwen DashScope medium thinking uses a bounded 64K thinking budget')
+  const qwenNonStreamingBody = buildOpenAIBodyForTest({
+    provider: { ...qwenProvider, [API_KEY_FIELD]: 'token-test-fake', capabilities: { reasoningEffort: true } },
+    model: 'qwen3.7-max',
+    messages: [{ role: 'user', content: 'hello' }],
+    reasoningEffort: 'medium',
+    maxTokens: 512,
+    stream: false,
+  })
+  assert.equal(qwenNonStreamingBody.stream_options, undefined, 'Qwen non-streaming requests omit stream_options')
+  const qwenOffBody = buildOpenAIBodyForTest({
+    provider: { ...qwenProvider, [API_KEY_FIELD]: 'token-test-fake', capabilities: { reasoningEffort: true } },
+    model: 'qwen3.7-max',
+    messages: [{ role: 'user', content: 'hello' }],
+    reasoningEffort: 'none',
+    maxTokens: 512,
+  })
+  assert.equal(qwenOffBody.enable_thinking, false, 'Qwen none explicitly disables thinking when the user turns reasoning off')
+  assert.equal(qwenOffBody.thinking_budget, undefined, 'Qwen disabled thinking omits thinking_budget')
+  const qwenMinimalBody = buildOpenAIBodyForTest({
+    provider: { ...qwenProvider, [API_KEY_FIELD]: 'token-test-fake', capabilities: { reasoningEffort: true } },
+    model: 'qwen3.7-max',
+    messages: [{ role: 'user', content: 'hello' }],
+    reasoningEffort: 'minimal',
+    maxTokens: 512,
+  })
+  assert.equal(qwenMinimalBody.enable_thinking, false, 'Qwen minimal remains an explicit off state for DashScope thinking')
+  assert.equal(qwenMinimalBody.thinking_budget, undefined, 'Qwen minimal off state omits thinking_budget')
+  const qwenMinimalConformance = resolveProviderRequestConformanceForTest({
+    provider: { ...qwenProvider, [API_KEY_FIELD]: 'token-test-fake', capabilities: { reasoningEffort: true } },
+    model: 'qwen3.7-max',
+    messages: [{ role: 'user', content: 'hello' }],
+    reasoningEffort: 'minimal',
+    maxTokens: 512,
+  }, qwenMinimalBody)
+  assert.equal(qwenMinimalConformance.reasoning.enabled, false, 'provider conformance keeps DashScope minimal as disabled thinking')
+  const kimiThinkingBody = buildOpenAIBodyForTest({
+    provider: { ...kimiProvider, [API_KEY_FIELD]: 'token-test-fake', capabilities: { reasoningEffort: true, nativeTools: true } },
+    model: 'kimi-k2.6',
+    messages: [{ role: 'user', content: 'hello' }],
+    reasoningEffort: 'high',
+    maxTokens: 4096,
+  })
+  assert.deepEqual(kimiThinkingBody.thinking, { type: 'enabled' }, 'Kimi thinking uses Moonshot thinking.type')
+  assert.equal(kimiThinkingBody.temperature, undefined, 'Kimi thinking requests omit sampling parameters')
+  assert.equal(kimiThinkingBody.max_completion_tokens, 4096, 'Kimi requests use official max_completion_tokens')
+  assert.equal(kimiThinkingBody.max_tokens, undefined, 'Kimi requests do not send deprecated max_tokens')
+  const kimi25ThinkingBody = buildOpenAIBodyForTest({
+    provider: { ...kimiProvider, [API_KEY_FIELD]: 'token-test-fake', capabilities: { reasoningEffort: true, nativeTools: true } },
+    model: 'kimi-k2.5',
+    messages: [{ role: 'user', content: 'hello' }],
+    reasoningEffort: 'high',
+    maxTokens: 4096,
+  })
+  assert.deepEqual(kimi25ThinkingBody.thinking, { type: 'enabled' }, 'Kimi K2.5 thinking uses Moonshot thinking.type')
+  assert.equal(kimi25ThinkingBody.max_completion_tokens, 4096, 'Kimi K2.5 requests use official max_completion_tokens')
+  const kimiOffBody = buildOpenAIBodyForTest({
+    provider: { ...kimiProvider, [API_KEY_FIELD]: 'token-test-fake', capabilities: { reasoningEffort: true } },
+    model: 'kimi-k2.6',
+    messages: [{ role: 'user', content: 'hello' }],
+    reasoningEffort: 'none',
+    temperature: 0.2,
+    topP: 0.5,
+    maxTokens: 512,
+  })
+  assert.deepEqual(kimiOffBody.thinking, { type: 'disabled' }, 'Kimi none explicitly disables thinking')
+  assert.equal(kimiOffBody.temperature, undefined, 'Kimi K2.6 disabled-thinking requests still omit fixed sampling parameters')
+  assert.equal(kimiOffBody.top_p, undefined, 'Kimi K2.6 disabled-thinking requests omit top_p')
+  assert.equal(kimiOffBody.max_completion_tokens, 512, 'Kimi disabled-thinking requests use official max_completion_tokens')
+  const kimiDefaultThinkingBody = buildOpenAIBodyForTest({
+    provider: { ...kimiProvider, [API_KEY_FIELD]: 'token-test-fake', capabilities: { reasoningEffort: true } },
+    model: 'kimi-k2.6',
+    messages: [{ role: 'user', content: 'hello' }],
+    temperature: 0.2,
+    topP: 0.5,
+    maxTokens: 2048,
+  })
+  assert.equal(kimiDefaultThinkingBody.thinking, undefined, 'Kimi K2.6 default thinking relies on the official enabled default')
+  assert.equal(kimiDefaultThinkingBody.temperature, undefined, 'Kimi K2.6 default thinking omits fixed sampling parameters')
+  assert.equal(kimiDefaultThinkingBody.top_p, undefined, 'Kimi K2.6 default thinking omits top_p')
+  assert.equal(kimiDefaultThinkingBody.max_completion_tokens, 2048, 'Kimi K2.6 default thinking uses max_completion_tokens')
+  const kimiToolReplayBody = buildOpenAIBodyForTest({
+    provider: { ...kimiProvider, [API_KEY_FIELD]: 'token-test-fake', capabilities: { reasoningEffort: true, nativeTools: true } },
+    model: 'kimi-k2.6',
+    messages: [
+      { role: 'user', content: 'Need context.' },
+      {
+        role: 'assistant',
+        content: '',
+        reasoningContent: 'Encrypted Kimi reasoning state.',
+        toolCalls: [{
+          id: 'call_read_context',
+          name: 'read_context',
+          arguments: { query: 'IsleMind' },
+        }],
+      },
+      {
+        role: 'tool',
+        name: 'read_context',
+        toolCallId: 'call_read_context',
+        content: 'Context result.',
+      },
+    ],
+    maxTokens: 1024,
+    stream: false,
+  })
+  assert.equal(kimiToolReplayBody.messages[1].reasoning_content, 'Encrypted Kimi reasoning state.', 'Kimi tool-result replay preserves assistant reasoning_content')
+  assert.equal(kimiToolReplayBody.messages[1].tool_calls[0].id, 'call_read_context', 'Kimi tool-result replay keeps official tool_calls')
+  assert.deepEqual(kimiToolReplayBody.thinking, { type: 'enabled', keep: 'all' }, 'Kimi preserved thinking requests thinking.keep all when replaying reasoning_content')
+  const genericReasoningReplayBody = buildOpenAIBodyForTest({
+    provider: {
+      id: 'generic-compatible',
+      type: 'openai-compatible',
+      name: 'Generic Compatible',
+      [API_KEY_FIELD]: 'token-test-fake',
+      models: ['generic-chat'],
+      enabled: true,
+    },
+    model: 'generic-chat',
+    messages: [{ role: 'assistant', content: 'hello', reasoningContent: 'should-not-send' }],
+    maxTokens: 512,
+  })
+  assert.equal(genericReasoningReplayBody.messages[0].reasoning_content, undefined, 'generic compatible providers do not receive reasoning_content replay without source-backed support')
+  const grokReasoningBody = buildOpenAIResponsesBodyForTest({
+    provider: { ...grokProvider, [API_KEY_FIELD]: 'token-test-fake', capabilities: { reasoningEffort: true, nativeTools: true } },
+    model: 'grok-4.3',
+    messages: [{ role: 'user', content: 'hello' }],
+    reasoningEffort: 'high',
+    maxTokens: 4096,
+    providerToolDeclarations: [{
+      type: 'function',
+      name: 'inspect_source',
+      description: 'Inspect a source.',
+      parameters: { type: 'object', properties: { sourceId: { type: 'string' } } },
+    }],
+  })
+  assert.equal(grokReasoningBody.reasoning.effort, 'high', 'Grok Responses reasoning uses official xAI reasoning.effort')
+  assert.equal(grokReasoningBody.reasoning.summary, undefined, 'Grok Responses does not inherit OpenAI-only reasoning.summary')
+  assert.deepEqual(grokReasoningBody.include, ['reasoning.encrypted_content'], 'Grok Responses reasoning requests preserve encrypted reasoning state for tool loops')
+  assert.equal(grokReasoningBody.max_output_tokens, 4096, 'Grok Responses uses xAI-supported max_output_tokens')
+  assert.equal(grokReasoningBody.max_completion_tokens, undefined, 'Grok Responses avoids chat-completions max_completion_tokens')
+  assert.equal(grokReasoningBody.max_tokens, undefined, 'Grok Responses avoids deprecated max_tokens')
+  assert.equal(grokReasoningBody.tools[0].name, 'inspect_source', 'Grok Responses requests carry native Responses tool declarations')
+  const grok420MultiAgentBody = buildOpenAIResponsesBodyForTest({
+    provider: { ...grokProvider, [API_KEY_FIELD]: 'token-test-fake', capabilities: { reasoningEffort: true, nativeTools: true } },
+    model: 'grok-4.20-multi-agent',
+    messages: [{ role: 'user', content: 'coordinate agents' }],
+    reasoningEffort: 'xhigh',
+    maxTokens: 4096,
+  })
+  assert.equal(grok420MultiAgentBody.reasoning.effort, 'xhigh', 'Grok 4.20 Multi-Agent preserves official xAI xhigh reasoning effort')
+  const grok420MultiAgentConformance = resolveProviderRequestConformanceForTest({
+    provider: { ...grokProvider, [API_KEY_FIELD]: 'token-test-fake', capabilities: { reasoningEffort: true, nativeTools: true } },
+    model: 'grok-4.20-multi-agent',
+    messages: [{ role: 'user', content: 'coordinate agents' }],
+    reasoningEffort: 'xhigh',
+    maxTokens: 4096,
+  }, grok420MultiAgentBody)
+  assert.equal(grok420MultiAgentConformance.reasoning.providerValue, 'xhigh', 'provider conformance preserves xAI Multi-Agent xhigh reasoning effort')
+  const grok420NonReasoningBody = buildOpenAIResponsesBodyForTest({
+    provider: { ...grokProvider, [API_KEY_FIELD]: 'token-test-fake', capabilities: { reasoningEffort: true, nativeTools: true } },
+    model: 'grok-4.20-non-reasoning',
+    messages: [{ role: 'user', content: 'fast answer' }],
+    reasoningEffort: 'high',
+    maxTokens: 4096,
+  })
+  assert.equal(grok420NonReasoningBody.reasoning, undefined, 'Grok 4.20 non-reasoning requests omit reasoning controls')
+  const grokNativeSearchBody = buildOpenAIResponsesBodyForTest({
+    provider: { ...grokProvider, [API_KEY_FIELD]: 'token-test-fake', capabilities: { reasoningEffort: true, nativeTools: true } },
+    model: 'grok-4.3',
+    messages: [{ role: 'user', content: 'latest xAI docs?' }],
+    webSearchMode: 'native',
+    maxTokens: 4096,
+  })
+  assert.equal(grokNativeSearchBody.tools[0].type, 'web_search', 'Grok Responses native search uses the official xAI web_search tool')
+  const grokNativeSearchConformance = resolveProviderRequestConformanceForTest({
+    provider: { ...grokProvider, [API_KEY_FIELD]: 'token-test-fake', capabilities: { reasoningEffort: true, nativeTools: true } },
+    model: 'grok-4.3',
+    messages: [{ role: 'user', content: 'latest xAI docs?' }],
+    webSearchMode: 'native',
+    maxTokens: 4096,
+  }, grokNativeSearchBody)
+  assert.equal(grokNativeSearchConformance.manifest.tools.nativeWebSearchToolType, 'web_search', 'provider conformance records xAI Responses web search tool type')
+  const grokRuntimeBody = getBodyForTest({
+    provider: { ...grokProvider, [API_KEY_FIELD]: 'token-test-fake', capabilities: { reasoningEffort: true, nativeTools: true, responsesApi: true } },
+    model: 'grok-4.3',
+    messages: [{ role: 'user', content: 'hello' }],
+    reasoningEffort: 'high',
+    maxTokens: 4096,
+  })
+  assert.equal(grokRuntimeBody.input[0].content, 'hello', 'Grok runtime request body uses Responses input instead of chat messages')
+  assert.equal(grokRuntimeBody.reasoning.effort, 'high', 'Grok runtime request body uses Responses reasoning.effort')
+  const grokResponsesEndpoint = resolveProviderEndpoint({
+    provider: { ...grokProvider, [API_KEY_FIELD]: 'token-test-fake' },
+    model: 'grok-4.3',
+    stream: true,
+    usesResponsesApi: true,
+  })
+  assert.equal(grokResponsesEndpoint, 'https://api.x.ai/v1/responses', 'Grok Responses requests resolve to the xAI /v1/responses endpoint')
+  const grokMediumReasoningBody = buildOpenAIResponsesBodyForTest({
+    provider: { ...grokProvider, [API_KEY_FIELD]: 'token-test-fake', capabilities: { reasoningEffort: true, nativeTools: true } },
+    model: 'grok-4.3',
+    messages: [{ role: 'user', content: 'hello' }],
+    reasoningEffort: 'medium',
+    maxTokens: 4096,
+  })
+  assert.equal(grokMediumReasoningBody.reasoning.effort, 'medium', 'Grok medium reasoning remains a provider-native xAI effort')
+  const grokDefaultReasoningBody = buildOpenAIResponsesBodyForTest({
+    provider: { ...grokProvider, [API_KEY_FIELD]: 'token-test-fake', capabilities: { reasoningEffort: true, nativeTools: true } },
+    model: 'grok-4.3',
+    messages: [{ role: 'user', content: 'hello' }],
+    maxTokens: 4096,
+  })
+  assert.equal(grokDefaultReasoningBody.reasoning, undefined, 'Grok default reasoning relies on xAI server-side low effort')
+  assert.deepEqual(grokDefaultReasoningBody.include, ['reasoning.encrypted_content'], 'Grok default reasoning still requests encrypted state for continuation')
+  const grokNoReasoningBody = buildOpenAIResponsesBodyForTest({
+    provider: { ...grokProvider, [API_KEY_FIELD]: 'token-test-fake', capabilities: { reasoningEffort: true, nativeTools: true } },
+    model: 'grok-4.3',
+    messages: [{ role: 'user', content: 'hello' }],
+    reasoningEffort: 'none',
+    maxTokens: 4096,
+  })
+  assert.equal(grokNoReasoningBody.reasoning.effort, 'none', 'Grok none reasoning explicitly disables xAI default reasoning')
+  assert.equal(grokNoReasoningBody.include, undefined, 'Grok disabled reasoning does not request encrypted reasoning content')
+  const grokNoReasoningConformance = resolveProviderRequestConformanceForTest({
+    provider: { ...grokProvider, [API_KEY_FIELD]: 'token-test-fake', capabilities: { reasoningEffort: true, nativeTools: true } },
+    model: 'grok-4.3',
+    messages: [{ role: 'user', content: 'hello' }],
+    reasoningEffort: 'none',
+    maxTokens: 4096,
+  }, grokNoReasoningBody)
+  assert.equal(grokNoReasoningConformance.reasoning.enabled, false, 'provider conformance treats xAI none as disabled reasoning')
+  const minimaxToolBody = buildOpenAIBodyForTest({
+    provider: { ...minimaxProvider, [API_KEY_FIELD]: 'token-test-fake', capabilities: { nativeTools: true } },
+    model: 'MiniMax-M3',
+    messages: [{ role: 'user', content: 'hello' }],
+    maxTokens: 4096,
+    providerToolDeclarations: [{
+      type: 'function',
+      function: {
+        name: 'summarize_file',
+        description: 'Summarize a file.',
+        parameters: { type: 'object', properties: { fileId: { type: 'string' } } },
+      },
+    }],
+  })
+  assert.equal(minimaxToolBody.tools[0].function.name, 'summarize_file', 'MiniMax requests carry native tool declarations')
+  assert.equal(minimaxToolBody.thinking, undefined, 'MiniMax M3 requests omit thinking when unset and rely on the official adaptive default')
+  assert.equal(minimaxToolBody.reasoning_split, true, 'MiniMax M3 requests split reasoning output from answer text by default')
+  assert.equal(minimaxToolBody.reasoning_effort, undefined, 'MiniMax M3 requests do not send unsupported reasoning_effort')
+  assert.equal(minimaxToolBody.max_completion_tokens, 4096, 'MiniMax OpenAI-compatible requests use the official max_completion_tokens field')
+  assert.equal(minimaxToolBody.max_tokens, undefined, 'MiniMax OpenAI-compatible requests avoid the deprecated max_tokens field')
+  const minimaxThinkingBody = buildOpenAIBodyForTest({
+    provider: { ...minimaxProvider, [API_KEY_FIELD]: 'token-test-fake', capabilities: { nativeTools: true } },
+    model: 'MiniMax-M3',
+    messages: [{ role: 'user', content: 'hello' }],
+    reasoningEffort: 'high',
+    temperature: 0.4,
+    topP: 0.8,
+    maxTokens: 999999,
+  })
+  assert.deepEqual(minimaxThinkingBody.thinking, { type: 'adaptive' }, 'MiniMax M3 high reasoning uses official adaptive thinking')
+  assert.equal(minimaxThinkingBody.reasoning_split, true, 'MiniMax M3 high reasoning requests separated reasoning output')
+  assert.equal(minimaxThinkingBody.reasoning_effort, undefined, 'MiniMax M3 adaptive thinking avoids unsupported reasoning_effort')
+  assert.equal(minimaxThinkingBody.temperature, 0.4, 'MiniMax M3 thinking requests keep provider-supported temperature')
+  assert.equal(minimaxThinkingBody.top_p, 0.8, 'MiniMax M3 thinking requests keep provider-supported top_p')
+  assert.equal(minimaxThinkingBody.max_completion_tokens, getModelConfig('MiniMax-M3', 'openai-compatible').maxOutputTokens, 'MiniMax M3 request max tokens clamp to the official output maximum')
+  const minimaxOffBody = buildOpenAIBodyForTest({
+    provider: { ...minimaxProvider, [API_KEY_FIELD]: 'token-test-fake', capabilities: { nativeTools: true } },
+    model: 'MiniMax-M3',
+    messages: [{ role: 'user', content: 'hello' }],
+    reasoningEffort: 'none',
+    maxTokens: 512,
+  })
+  assert.deepEqual(minimaxOffBody.thinking, { type: 'disabled' }, 'MiniMax M3 none explicitly disables thinking')
+  assert.equal(minimaxOffBody.reasoning_split, undefined, 'MiniMax M3 disabled thinking omits reasoning_split')
+  const minimaxToolReplayBody = buildOpenAIBodyForTest({
+    provider: { ...minimaxProvider, [API_KEY_FIELD]: 'token-test-fake', capabilities: { nativeTools: true } },
+    model: 'MiniMax-M3',
+    messages: [
+      { role: 'user', content: 'Need a file summary.' },
+      {
+        role: 'assistant',
+        content: '',
+        reasoningContent: 'MiniMax structured thinking is response-only.',
+        toolCalls: [{
+          id: 'call_summarize_file',
+          name: 'summarize_file',
+          arguments: { path: 'docs/README.md' },
+        }],
+      },
+      {
+        role: 'tool',
+        name: 'summarize_file',
+        toolCallId: 'call_summarize_file',
+        content: 'Summary.',
+      },
+    ],
+    maxTokens: 4096,
+    stream: false,
+  })
+  assert.equal(minimaxToolReplayBody.messages[1].reasoning_content, undefined, 'MiniMax tool-result replay avoids non-schema reasoning_content fields')
+  assert.equal(minimaxToolReplayBody.messages[1].tool_calls[0].id, 'call_summarize_file', 'MiniMax tool-result replay preserves official tool_calls')
+  const minimaxConformance = resolveProviderRequestConformanceForTest({
+    provider: { ...minimaxProvider, [API_KEY_FIELD]: 'token-test-fake', capabilities: { reasoningEffort: true, nativeTools: true } },
+    model: 'MiniMax-M3',
+    messages: [{ role: 'user', content: 'hello' }],
+    reasoningEffort: 'high',
+    maxTokens: 4096,
+  }, minimaxThinkingBody)
+  assert.equal(minimaxConformance.manifest.family, 'minimax', 'provider conformance classifies MiniMax as MiniMax')
+  assert.equal(minimaxConformance.manifest.reasoning.requestShape, 'minimax-thinking', 'provider conformance exposes MiniMax thinking request shape')
+  assert.equal(minimaxConformance.reasoning.providerValue, 'adaptive', 'provider conformance maps MiniMax active thinking to adaptive')
+  assert.equal(minimaxConformance.manifest.payload.maxTokensField, 'max_completion_tokens', 'provider conformance records MiniMax OpenAI-compatible max token field')
+  assert.equal(minimaxConformance.manifest.payload.requiresReasoningStatePassthrough, false, 'provider conformance avoids non-schema MiniMax reasoning state passthrough')
+  assert.equal(minimaxConformance.manifest.payload.reasoningOutputSplitField, 'reasoning_split', 'provider conformance records MiniMax reasoning_split output separation')
+  assert.equal(minimaxConformance.manifest.modalities.input.video, true, 'provider conformance records MiniMax M3 video input support')
+  const minimaxAnthropicBody = buildAnthropicBodyForTest({
+    provider: { ...minimaxProvider, wireProtocol: 'anthropic-compatible', [API_KEY_FIELD]: 'token-test-fake', capabilities: { nativeTools: true } },
+    model: 'MiniMax-M3',
+    messages: [{ role: 'user', content: 'hello' }],
+    reasoningEffort: 'high',
+    maxTokens: 4096,
+    stream: false,
+  })
+  assert.deepEqual(minimaxAnthropicBody.thinking, { type: 'adaptive' }, 'MiniMax Anthropic-compatible requests use official adaptive thinking')
+  assert.equal(minimaxAnthropicBody.output_config, undefined, 'MiniMax Anthropic-compatible requests avoid Claude output_config thinking tiers')
+  assert.equal(minimaxAnthropicBody.max_tokens, 4096, 'MiniMax Anthropic-compatible requests keep Anthropic max_tokens field')
+  const minimaxAnthropicConformance = resolveProviderRequestConformanceForTest({
+    provider: { ...minimaxProvider, wireProtocol: 'anthropic-compatible', [API_KEY_FIELD]: 'token-test-fake', capabilities: { reasoningEffort: true, nativeTools: true } },
+    model: 'MiniMax-M3',
+    messages: [{ role: 'user', content: 'hello' }],
+    reasoningEffort: 'high',
+    maxTokens: 4096,
+  }, minimaxAnthropicBody)
+  assert.equal(minimaxAnthropicConformance.manifest.family, 'minimax', 'provider conformance keeps MiniMax family on Anthropic-compatible wire protocol')
+  assert.equal(minimaxAnthropicConformance.manifest.protocol, 'anthropic-compatible', 'provider conformance records MiniMax Anthropic-compatible protocol')
+  assert.equal(minimaxAnthropicConformance.manifest.payload.maxTokensField, 'max_tokens', 'provider conformance records MiniMax Anthropic-compatible max token field')
+  assert.equal(minimaxAnthropicConformance.manifest.payload.reasoningOutputSplitField, undefined, 'provider conformance avoids OpenAI-only reasoning_split on MiniMax Anthropic-compatible requests')
+  const qwenConformance = resolveProviderRequestConformanceForTest({
+    provider: { ...qwenProvider, [API_KEY_FIELD]: 'token-test-fake', capabilities: { reasoningEffort: true, nativeTools: true } },
+    model: 'qwen3.7-max',
+    messages: [{ role: 'user', content: 'hello' }],
+    reasoningEffort: 'high',
+    maxTokens: 4096,
+  }, qwenThinkingBody)
+  assert.equal(qwenConformance.manifest.family, 'dashscope', 'provider conformance classifies Qwen as DashScope')
+  assert.equal(qwenConformance.manifest.reasoning.requestShape, 'dashscope-thinking', 'provider conformance exposes Qwen thinking request shape')
+  assert.equal(qwenConformance.manifest.payload.streamUsageField, 'stream_options.include_usage', 'provider conformance records DashScope stream usage field')
+  assert.equal(qwenConformance.reasoning.providerValue, 262144, 'provider conformance exposes Qwen high thinking budget')
+  assert.equal(qwenConformance.manifest.tools.supported, true, 'provider conformance exposes Qwen native tool support')
+  assert.equal(qwenConformance.manifest.tools.requestShape, 'openai-tools', 'provider conformance exposes Qwen OpenAI-format tool shape')
+  const kimiConformance = resolveProviderRequestConformanceForTest({
+    provider: { ...kimiProvider, [API_KEY_FIELD]: 'token-test-fake', capabilities: { reasoningEffort: true, nativeTools: true } },
+    model: 'kimi-k2.6',
+    messages: [{ role: 'user', content: 'hello' }],
+    reasoningEffort: 'low',
+    maxTokens: 4096,
+  }, kimiThinkingBody)
+  assert.equal(kimiConformance.reasoning.effective, 'high', 'provider conformance downgrades unsupported Kimi levels to high instead of disabling thinking')
+  assert.equal(kimiConformance.manifest.reasoning.requestShape, 'kimi-thinking', 'provider conformance exposes Kimi thinking request shape')
+  assert.equal(kimiConformance.manifest.payload.maxTokensField, 'max_completion_tokens', 'provider conformance exposes Moonshot max_completion_tokens')
+  assert.equal(kimiConformance.manifest.payload.requiresReasoningStatePassthrough, true, 'provider conformance marks Kimi reasoning_content passthrough as required')
+  assert.equal(kimiConformance.manifest.payload.reasoningStatePreservationField, 'thinking.keep', 'provider conformance records Kimi preserved-thinking keep field')
+  assert.equal(kimiConformance.manifest.tools.supported, true, 'provider conformance exposes Kimi native tool support')
+  const grokConformance = resolveProviderRequestConformanceForTest({
+    provider: { ...grokProvider, [API_KEY_FIELD]: 'token-test-fake', capabilities: { reasoningEffort: true, nativeTools: true } },
+    model: 'grok-4.3',
+    messages: [{ role: 'user', content: 'hello' }],
+    reasoningEffort: 'high',
+    maxTokens: 4096,
+  }, grokReasoningBody)
+  assert.equal(grokConformance.manifest.family, 'xai', 'provider conformance classifies Grok as xAI')
+  assert.equal(grokConformance.manifest.protocol, 'openai-responses', 'provider conformance exposes xAI Responses protocol for Grok 4.3')
+  assert.equal(grokConformance.manifest.reasoning.requestShape, 'xai-reasoning-effort', 'provider conformance exposes Grok reasoning request shape')
+  assert.equal(grokConformance.manifest.payload.maxTokensField, 'max_output_tokens', 'provider conformance exposes xAI Responses max_output_tokens')
+  assert.equal(grokConformance.manifest.payload.requiresReasoningStatePassthrough, true, 'provider conformance marks Grok reasoning_content passthrough as required')
+  assert.deepEqual(
+    grokConformance.manifest.payload.unsupportedFieldsWhenReasoning,
+    ['presence_penalty', 'presencePenalty', 'frequency_penalty', 'frequencyPenalty', 'stop', 'stop_sequences', 'stopSequences'],
+    'provider conformance records xAI reasoning-incompatible fields'
+  )
+  const grokHardenedConformance = resolveProviderRequestConformanceForTest({
+    provider: { ...grokProvider, [API_KEY_FIELD]: 'token-test-fake', capabilities: { reasoningEffort: true, nativeTools: true } },
+    model: 'grok-4.3',
+    messages: [{ role: 'user', content: 'hello' }],
+    reasoningEffort: 'high',
+    maxTokens: 4096,
+  }, {
+    ...grokReasoningBody,
+    presence_penalty: 0.2,
+    frequency_penalty: 0.1,
+    stop: ['END'],
+  })
+  assert.ok(grokHardenedConformance.removedParams.includes('presence_penalty'), 'provider conformance removes xAI reasoning-incompatible presence_penalty')
+  assert.ok(grokHardenedConformance.removedParams.includes('frequency_penalty'), 'provider conformance removes xAI reasoning-incompatible frequency_penalty')
+  assert.ok(grokHardenedConformance.removedParams.includes('stop'), 'provider conformance removes xAI reasoning-incompatible stop')
+  assert.equal(grokConformance.manifest.tools.supported, true, 'provider conformance exposes Grok native tool support')
+  const grokMediumConformance = resolveProviderRequestConformanceForTest({
+    provider: { ...grokProvider, [API_KEY_FIELD]: 'token-test-fake', capabilities: { reasoningEffort: true, nativeTools: true } },
+    model: 'grok-4.3',
+    messages: [{ role: 'user', content: 'hello' }],
+    reasoningEffort: 'medium',
+    maxTokens: 4096,
+  }, grokMediumReasoningBody)
+  assert.equal(grokMediumConformance.reasoning.providerValue, 'medium', 'provider conformance preserves xAI medium reasoning effort')
   const gemini25Body = buildGoogleBodyForTest({
     provider: {
       id: 'google',
@@ -3467,7 +5091,157 @@ https://gateway.example/messages`
     maxTokens: 4096,
   })
   assert.equal(gemini25Body.generationConfig.thinkingConfig.thinkingBudget, 1024, 'Gemini 2.5 uses thinkingBudget')
+  assert.equal(gemini25Body.generationConfig.thinkingConfig.includeThoughts, true, 'Gemini 2.5 requests thought summaries for visible thinking efforts')
   assert.ok(gemini25Body.generationConfig.maxOutputTokens <= getModelConfig('gemini-2.5-flash', 'google').maxOutputTokens, 'Gemini maxOutputTokens is clamped to output limit')
+  const gemini25DynamicBody = buildGoogleBodyForTest({
+    provider: {
+      id: 'google',
+      type: 'google',
+      name: 'Google',
+      [API_KEY_FIELD]: 'token-test-fake',
+      models: ['gemini-2.5-flash'],
+      enabled: true,
+    },
+    model: 'gemini-2.5-flash',
+    messages: [{ role: 'user', content: 'hello' }],
+    reasoningEffort: 'medium',
+    maxTokens: 4096,
+  })
+  assert.equal(gemini25DynamicBody.generationConfig.thinkingConfig.thinkingBudget, -1, 'Gemini 2.5 Flash medium uses dynamic thinking budget')
+  const gemini25DynamicConformance = resolveProviderRequestConformanceForTest({
+    provider: {
+      id: 'google',
+      type: 'google',
+      name: 'Google',
+      [API_KEY_FIELD]: 'token-test-fake',
+      models: ['gemini-2.5-flash'],
+      enabled: true,
+    },
+    model: 'gemini-2.5-flash',
+    messages: [{ role: 'user', content: 'hello' }],
+    reasoningEffort: 'medium',
+    maxTokens: 4096,
+  }, gemini25DynamicBody)
+  assert.equal(gemini25DynamicConformance.reasoning.providerValue, -1, 'provider conformance preserves Gemini dynamic thinking budget')
+  const gemini25ProLowBody = buildGoogleBodyForTest({
+    provider: {
+      id: 'google',
+      type: 'google',
+      name: 'Google',
+      [API_KEY_FIELD]: 'token-test-fake',
+      models: ['gemini-2.5-pro'],
+      enabled: true,
+    },
+    model: 'gemini-2.5-pro',
+    messages: [{ role: 'user', content: 'hello' }],
+    reasoningEffort: 'low',
+    maxTokens: 4096,
+  })
+  assert.equal(gemini25ProLowBody.generationConfig.thinkingConfig.thinkingBudget, 2048, 'Gemini 2.5 Pro low uses the Pro thinking budget floor')
+  const gemini25ProLowConformance = resolveProviderRequestConformanceForTest({
+    provider: {
+      id: 'google',
+      type: 'google',
+      name: 'Google',
+      [API_KEY_FIELD]: 'token-test-fake',
+      models: ['gemini-2.5-pro'],
+      enabled: true,
+    },
+    model: 'gemini-2.5-pro',
+    messages: [{ role: 'user', content: 'hello' }],
+    reasoningEffort: 'low',
+    maxTokens: 4096,
+  }, gemini25ProLowBody)
+  assert.equal(gemini25ProLowConformance.reasoning.providerValue, 2048, 'provider conformance mirrors Gemini 2.5 Pro low thinking budget')
+  const geminiOversizedRoute = resolveProviderRouteForTest({
+    provider: {
+      id: 'google',
+      type: 'google',
+      name: 'Google',
+      [API_KEY_FIELD]: 'token-test-fake',
+      models: ['gemini-2.5-flash'],
+      enabled: true,
+    },
+    model: 'gemini-2.5-flash',
+    messages: [{ role: 'user', content: 'hello' }],
+    maxTokens: 999999,
+  }, {
+    contents: [{ role: 'user', parts: [{ text: 'hello' }] }],
+    generationConfig: { maxOutputTokens: 999999 },
+  })
+  assert.equal(
+    geminiOversizedRoute.body.generationConfig.maxOutputTokens,
+    getModelConfig('gemini-2.5-flash', 'google').maxOutputTokens,
+    'Google conformance clamps nested generationConfig.maxOutputTokens'
+  )
+  assert.equal(
+    geminiOversizedRoute.conformance.adjustedParams['generationConfig.maxOutputTokens'],
+    getModelConfig('gemini-2.5-flash', 'google').maxOutputTokens,
+    'Google conformance records nested output-token adjustment evidence'
+  )
+  assert.equal(geminiOversizedRoute.decision.contextPlan.maxTokensField, 'generationConfig.maxOutputTokens', 'Google route plan points at the nested max token field')
+  const gemini25MinimalBody = buildGoogleBodyForTest({
+    provider: {
+      id: 'google',
+      type: 'google',
+      name: 'Google',
+      [API_KEY_FIELD]: 'token-test-fake',
+      models: ['gemini-2.5-flash'],
+      enabled: true,
+    },
+    model: 'gemini-2.5-flash',
+    messages: [{ role: 'user', content: 'hello' }],
+    reasoningEffort: 'minimal',
+    maxTokens: 4096,
+  })
+  assert.equal(gemini25MinimalBody.generationConfig.thinkingConfig.includeThoughts, undefined, 'Gemini minimal thinking does not request visible thought summaries')
+  const gemini25FlashLiteOffBody = buildGoogleBodyForTest({
+    provider: {
+      id: 'google',
+      type: 'google',
+      name: 'Google',
+      [API_KEY_FIELD]: 'token-test-fake',
+      models: ['gemini-2.5-flash-lite'],
+      enabled: true,
+    },
+    model: 'gemini-2.5-flash-lite',
+    messages: [{ role: 'user', content: 'hello' }],
+    reasoningEffort: 'none',
+    maxTokens: 4096,
+  })
+  assert.equal(gemini25FlashLiteOffBody.generationConfig.thinkingConfig.thinkingBudget, 0, 'Gemini 2.5 Flash-Lite none disables thinking with budget 0')
+  const gemini25FlashLiteMinimalBody = buildGoogleBodyForTest({
+    provider: {
+      id: 'google',
+      type: 'google',
+      name: 'Google',
+      [API_KEY_FIELD]: 'token-test-fake',
+      models: ['gemini-2.5-flash-lite'],
+      enabled: true,
+    },
+    model: 'gemini-2.5-flash-lite',
+    messages: [{ role: 'user', content: 'hello' }],
+    reasoningEffort: 'minimal',
+    maxTokens: 4096,
+  })
+  assert.equal(gemini25FlashLiteMinimalBody.generationConfig.thinkingConfig.thinkingBudget, 0, 'Gemini 2.5 Flash-Lite minimal keeps the no-thinking budget')
+  assert.equal(gemini25FlashLiteMinimalBody.generationConfig.thinkingConfig.includeThoughts, undefined, 'Gemini 2.5 Flash-Lite minimal does not request visible thought summaries')
+  const gemini25FlashLiteMinimalConformance = resolveProviderRequestConformanceForTest({
+    provider: {
+      id: 'google',
+      type: 'google',
+      name: 'Google',
+      [API_KEY_FIELD]: 'token-test-fake',
+      models: ['gemini-2.5-flash-lite'],
+      enabled: true,
+    },
+    model: 'gemini-2.5-flash-lite',
+    messages: [{ role: 'user', content: 'hello' }],
+    reasoningEffort: 'minimal',
+    maxTokens: 4096,
+  }, gemini25FlashLiteMinimalBody)
+  assert.equal(gemini25FlashLiteMinimalConformance.reasoning.enabled, true, 'provider conformance treats Gemini 2.5 Flash-Lite minimal as an active thinking control')
+  assert.equal(gemini25FlashLiteMinimalConformance.reasoning.providerValue, 0, 'provider conformance maps Gemini 2.5 Flash-Lite minimal to budget 0')
   const gemini3Body = buildGoogleBodyForTest({
     provider: {
       id: 'google',
@@ -3483,12 +5257,110 @@ https://gateway.example/messages`
     maxTokens: 4096,
   })
   assert.equal(gemini3Body.generationConfig.thinkingConfig.thinkingLevel, 'high', 'Gemini 3 uses thinkingLevel')
+  assert.equal(gemini3Body.generationConfig.thinkingConfig.includeThoughts, true, 'Gemini 3 requests thought summaries for visible thinking levels')
+  const gemini35Body = buildGoogleBodyForTest({
+    provider: {
+      id: 'google',
+      type: 'google',
+      name: 'Google',
+      [API_KEY_FIELD]: 'token-test-fake',
+      models: ['gemini-3.5-flash'],
+      enabled: true,
+    },
+    model: 'gemini-3.5-flash',
+    messages: [{ role: 'user', content: 'hello' }],
+    reasoningEffort: 'medium',
+    maxTokens: 4096,
+  })
+  assert.equal(gemini35Body.generationConfig.thinkingConfig.thinkingLevel, 'medium', 'Gemini 3.5 Flash uses thinkingLevel')
+  assert.equal(gemini35Body.generationConfig.thinkingConfig.includeThoughts, true, 'Gemini 3.5 Flash requests thought summaries for visible thinking levels')
+  const gemini35PrefixedBody = buildGoogleBodyForTest({
+    provider: {
+      id: 'google',
+      type: 'google',
+      name: 'Google',
+      [API_KEY_FIELD]: 'token-test-fake',
+      models: ['models/gemini-3.5-flash'],
+      enabled: true,
+    },
+    model: 'models/gemini-3.5-flash',
+    messages: [{ role: 'user', content: 'hello' }],
+    reasoningEffort: 'medium',
+    maxTokens: 4096,
+  })
+  assert.equal(gemini35PrefixedBody.generationConfig.thinkingConfig.thinkingLevel, 'medium', 'Gemini official models/ resource names still use thinkingLevel')
+  assert.equal(gemini35PrefixedBody.generationConfig.thinkingConfig.includeThoughts, true, 'Gemini official models/ resource names still request thought summaries')
+  const gemini35MinimalBody = buildGoogleBodyForTest({
+    provider: {
+      id: 'google',
+      type: 'google',
+      name: 'Google',
+      [API_KEY_FIELD]: 'token-test-fake',
+      models: ['gemini-3.5-flash'],
+      enabled: true,
+    },
+    model: 'gemini-3.5-flash',
+    messages: [{ role: 'user', content: 'hello' }],
+    reasoningEffort: 'minimal',
+    maxTokens: 4096,
+  })
+  assert.equal(gemini35MinimalBody.generationConfig.thinkingConfig.thinkingLevel, 'minimal', 'Gemini 3.5 Flash preserves official minimal thinking level')
+  assert.equal(gemini35MinimalBody.generationConfig.thinkingConfig.includeThoughts, undefined, 'Gemini 3.5 Flash minimal does not request visible thought summaries')
+  const gemini35MinimalConformance = resolveProviderRequestConformanceForTest({
+    provider: {
+      id: 'google',
+      type: 'google',
+      name: 'Google',
+      [API_KEY_FIELD]: 'token-test-fake',
+      models: ['gemini-3.5-flash'],
+      enabled: true,
+    },
+    model: 'gemini-3.5-flash',
+    messages: [{ role: 'user', content: 'hello' }],
+    reasoningEffort: 'minimal',
+    maxTokens: 4096,
+  }, gemini35MinimalBody)
+  assert.equal(gemini35MinimalConformance.reasoning.enabled, true, 'provider conformance treats Gemini thinkingLevel minimal as active thinking control')
+  assert.equal(gemini35MinimalConformance.reasoning.providerValue, 'minimal', 'provider conformance preserves Gemini minimal thinking level')
   const parsedAnthropic = parseAnthropicModelsForTest([
     { id: 'claude-test-current', display_name: 'Claude Test', max_input_tokens: 1000000, max_tokens: 128000, capabilities: ['chat', 'extended_thinking'] },
   ])
   assert.equal(parsedAnthropic[0].contextWindow, 1000000, 'Anthropic Models API max_input_tokens is parsed as context window')
   assert.equal(parsedAnthropic[0].maxOutputTokens, 128000, 'Anthropic Models API max_tokens is parsed as output limit')
   assert.equal(parsedAnthropic[0].reasoningMode, 'anthropic-thinking', 'Anthropic model capabilities mark thinking support')
+  const anthropicFableAdaptiveBody = buildAnthropicBodyForTest({
+    provider: {
+      id: 'anthropic',
+      type: 'anthropic',
+      name: 'Anthropic',
+      [API_KEY_FIELD]: 'token-test-fake',
+      models: ['claude-fable-5'],
+      enabled: true,
+    },
+    model: 'claude-fable-5',
+    messages: [{ role: 'user', content: 'hello' }],
+    reasoningEffort: 'max',
+    maxTokens: 128000,
+  })
+  assert.equal(anthropicFableAdaptiveBody.thinking, undefined, 'Claude Fable 5 does not send a synthetic thinking object because adaptive thinking is always on')
+  assert.equal(anthropicFableAdaptiveBody.output_config.effort, 'max', 'Claude Fable 5 preserves official max effort')
+  const anthropicFableConformance = resolveProviderRequestConformanceForTest({
+    provider: {
+      id: 'anthropic',
+      type: 'anthropic',
+      name: 'Anthropic',
+      [API_KEY_FIELD]: 'token-test-fake',
+      capabilities: { reasoningEffort: true, nativeTools: true },
+      models: ['claude-fable-5'],
+      enabled: true,
+    },
+    model: 'claude-fable-5',
+    messages: [{ role: 'user', content: 'hello' }],
+    reasoningEffort: 'max',
+    maxTokens: 128000,
+  }, anthropicFableAdaptiveBody)
+  assert.equal(anthropicFableConformance.manifest.reasoning.requestShape, 'anthropic-output-config-effort', 'provider conformance exposes Claude Fable 5 output_config effort control')
+  assert.equal(anthropicFableConformance.reasoning.providerValue, 'max', 'provider conformance preserves Claude Fable 5 max effort')
   const anthropicAdaptiveBody = buildAnthropicBodyForTest({
     provider: {
       id: 'anthropic',
@@ -3506,6 +5378,72 @@ https://gateway.example/messages`
   assert.deepEqual(anthropicAdaptiveBody.thinking, { type: 'adaptive', display: 'summarized' }, 'Claude Opus 4.7 uses adaptive thinking instead of manual budget tokens')
   assert.equal(anthropicAdaptiveBody.output_config.effort, 'xhigh', 'Claude Opus 4.7 sends source-backed effort level')
   assert.equal(anthropicAdaptiveBody.temperature, undefined, 'Claude Opus 4.7 omits sampling parameters when reasoning is enabled')
+  const anthropic47DefaultBody = buildAnthropicBodyForTest({
+    provider: {
+      id: 'anthropic',
+      type: 'anthropic',
+      name: 'Anthropic',
+      [API_KEY_FIELD]: 'token-test-fake',
+      models: ['claude-opus-4-7'],
+      enabled: true,
+    },
+    model: 'claude-opus-4-7',
+    messages: [{ role: 'user', content: 'hello' }],
+    maxTokens: 4096,
+  })
+  assert.equal(anthropic47DefaultBody.temperature, undefined, 'Claude Opus 4.7 omits default temperature even without explicit reasoning')
+  assert.equal(anthropic47DefaultBody.top_p, undefined, 'Claude Opus 4.7 omits default top_p even without explicit reasoning')
+  const anthropic47Conformance = resolveProviderRequestConformanceForTest({
+    provider: {
+      id: 'anthropic',
+      type: 'anthropic',
+      name: 'Anthropic',
+      [API_KEY_FIELD]: 'token-test-fake',
+      capabilities: { reasoningEffort: true, nativeTools: true },
+      models: ['claude-opus-4-7'],
+      enabled: true,
+    },
+    model: 'claude-opus-4-7',
+    messages: [{ role: 'user', content: 'hello' }],
+    maxTokens: 4096,
+  }, { ...anthropic47DefaultBody, temperature: 0.7, top_p: 1 })
+  assert.deepEqual(anthropic47Conformance.removedParams.sort(), ['temperature', 'top_p'], 'provider conformance removes Claude Opus 4.7 unsupported sampling parameters')
+  const anthropic48AdaptiveBody = buildAnthropicBodyForTest({
+    provider: {
+      id: 'anthropic',
+      type: 'anthropic',
+      name: 'Anthropic',
+      [API_KEY_FIELD]: 'token-test-fake',
+      models: ['claude-opus-4-8'],
+      enabled: true,
+    },
+    model: 'claude-opus-4-8',
+    messages: [{ role: 'user', content: 'hello' }],
+    reasoningEffort: 'max',
+    maxTokens: 128000,
+  })
+  assert.deepEqual(anthropic48AdaptiveBody.thinking, { type: 'adaptive', display: 'summarized' }, 'Claude Opus 4.8 uses adaptive thinking instead of manual budget tokens')
+  assert.equal(anthropic48AdaptiveBody.output_config.effort, 'max', 'Claude Opus 4.8 preserves max effort')
+  const anthropic48Conformance = resolveProviderRequestConformanceForTest({
+    provider: {
+      id: 'anthropic',
+      type: 'anthropic',
+      name: 'Anthropic',
+      [API_KEY_FIELD]: 'token-test-fake',
+      capabilities: { reasoningEffort: true, nativeTools: true },
+      models: ['claude-opus-4-8'],
+      enabled: true,
+    },
+    model: 'claude-opus-4-8',
+    messages: [{ role: 'user', content: 'hello' }],
+    reasoningEffort: 'max',
+    maxTokens: 128000,
+  }, anthropic48AdaptiveBody)
+  assert.equal(anthropic48Conformance.manifest.reasoning.requestShape, 'anthropic-adaptive', 'provider conformance exposes Claude Opus 4.8 adaptive thinking')
+  assert.equal(anthropic48Conformance.reasoning.providerValue, 'max', 'provider conformance preserves Claude Opus 4.8 max effort')
+  assert.equal(anthropic48Conformance.manifest.payload.requiresReasoningStatePassthrough, true, 'provider conformance records Claude thinking block passthrough requirement')
+  assert.equal(anthropic48Conformance.manifest.payload.reasoningStatePreservationField, 'anthropic-content-blocks', 'provider conformance records Claude thinking block preservation field')
+  assert.equal(anthropic48Conformance.manifest.tools.supported, true, 'provider conformance exposes Claude Opus 4.8 native tool support')
   const anthropicManualBody = buildAnthropicBodyForTest({
     provider: {
       id: 'anthropic',
@@ -3528,6 +5466,8 @@ https://gateway.example/messages`
     id: 'skill-review',
     name: 'Code Review',
     systemPrompt: 'Review {{target}}. Output in {{language}}.',
+    providerId: 'provider-local-only',
+    model: 'local-model-only',
     variables: [
       { name: 'target', type: 'text', defaultValue: 'diff' },
       { name: 'language', type: 'text', defaultValue: 'Chinese' },
@@ -3545,8 +5485,31 @@ https://gateway.example/messages`
     priority: 20,
   })
   const exportedSkill = exportSkill(baseSkill)
+  const exportedSkillEnvelope = JSON.parse(exportedSkill)
+  assert.equal(exportedSkillEnvelope.schema, 'islemind.skill.portable.v2', 'skill export uses the portable envelope schema')
+  assert.equal(exportedSkillEnvelope.manifest.kind, 'skill', 'skill export manifest identifies regular skills')
+  assert.equal(exportedSkillEnvelope.manifest.skillId, 'skill-review', 'skill export manifest records the skill id')
+  assert.equal(exportedSkillEnvelope.manifest.hasProviderBinding, false, 'skill export manifest records provider binding absence')
+  assert.equal(exportedSkillEnvelope.manifest.hasModelBinding, false, 'skill export manifest records model binding absence')
+  assert.equal(exportedSkillEnvelope.manifest.providerBindingOmitted, true, 'skill export manifest records omitted provider binding')
+  assert.equal(exportedSkillEnvelope.manifest.modelBindingOmitted, true, 'skill export manifest records omitted model binding')
+  assert.equal(exportedSkillEnvelope.skill.providerId, undefined, 'skill export omits local provider bindings from portable payloads')
+  assert.equal(exportedSkillEnvelope.skill.model, undefined, 'skill export omits local model bindings from portable payloads')
+  assert.equal(exportedSkillEnvelope.skill.schema, 'islemind.skill.v1', 'skill export envelope carries the portable skill payload')
   const importedSkill = importSkill(exportedSkill)
   assert.equal(importedSkill.ok, true, 'imports .isleskill JSON')
+  assert.equal(importedSkill.manifest?.schema, 'islemind.skill.portable.v2', 'skill import returns portable manifest metadata')
+  assert.equal(importedSkill.manifest?.providerBindingOmitted, true, 'skill import preserves portable provider omission audit metadata')
+  assert.equal(importedSkill.manifest?.modelBindingOmitted, true, 'skill import preserves portable model omission audit metadata')
+  assert.equal(importedSkill.skill.providerId, undefined, 'skill import keeps portable provider binding omitted')
+  assert.equal(importedSkill.skill.model, undefined, 'skill import keeps portable model binding omitted')
+  const legacyImportedSkill = importSkill(JSON.stringify(baseSkill))
+  assert.equal(legacyImportedSkill.ok, true, 'imports legacy raw .isleskill JSON')
+  assert.equal(legacyImportedSkill.manifest?.kind, 'skill', 'legacy raw skill imports synthesize portable manifest metadata')
+  assert.equal(legacyImportedSkill.manifest?.providerBindingOmitted, true, 'legacy raw skill imports report omitted provider binding')
+  assert.equal(legacyImportedSkill.manifest?.modelBindingOmitted, true, 'legacy raw skill imports report omitted model binding')
+  assert.equal(legacyImportedSkill.skill.providerId, undefined, 'legacy raw skill imports do not inherit external provider binding')
+  assert.equal(legacyImportedSkill.skill.model, undefined, 'legacy raw skill imports do not inherit external model binding')
   assert.equal(renderSkillTemplate('Hello {{name}}', { name: 'IsleMind' }), 'Hello IsleMind')
   const skillApplied = applySkillStack({
     skills: [advancedSkill, baseSkill],

@@ -18,6 +18,10 @@ export interface AppActionRequest {
   source: AppActionSource
 }
 
+export interface AppActionOptions {
+  signal?: AbortSignal
+}
+
 export interface AppActionResult {
   ok: boolean
   message: string
@@ -64,8 +68,16 @@ export function decideAppActionPolicy(request: AppActionRequest): AppActionPolic
   return DIRECT_ACTIONS.has(request.name) ? 'execute' : 'reject'
 }
 
-export async function executeAppAction(request: AppActionRequest): Promise<AppActionResult> {
+export async function executeAppAction(request: AppActionRequest, options: AppActionOptions = {}): Promise<AppActionResult> {
   const startedAt = Date.now()
+  if (options.signal?.aborted) {
+    return appActionFailure(request.name, st('appAction.cancelled', undefined, 'App action was cancelled.'), startedAt, 'skipped', {
+      errorCode: 'cancelled',
+      status: 'cancelled',
+      failureCode: 'cancelled',
+    })
+  }
+
   const decision = decideAppActionPolicy(request)
   if (decision !== 'execute') {
     return appActionFailure(request.name, st('appAction.rejected', undefined, 'Action rejected by policy.'), startedAt, 'skipped')
@@ -217,7 +229,13 @@ function appActionSuccess(
   }
 }
 
-function appActionFailure(action: string, message: string, startedAt: number, status: ProcessTrace['status'] = 'error'): AppActionResult {
+function appActionFailure(
+  action: string,
+  message: string,
+  startedAt: number,
+  status: ProcessTrace['status'] = 'error',
+  metadata: Record<string, unknown> = {}
+): AppActionResult {
   const completedAt = Date.now()
   return {
     ok: false,
@@ -233,7 +251,7 @@ function appActionFailure(action: string, message: string, startedAt: number, st
       startedAt,
       completedAt,
       durationMs: completedAt - startedAt,
-      metadata: { action },
+      metadata: { action, ...metadata },
     },
   }
 }

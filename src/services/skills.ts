@@ -1,11 +1,13 @@
 import type { Conversation, SkillDefinition, SkillSnapshot } from '@/types'
 import { loadData, saveData } from '@/services/storage'
 import { st } from '@/i18n/service'
+import { sanitizeSkillForPortable } from '@/utils/skillSafety'
 
 export interface SkillImportResult {
   ok: boolean
   skill?: SkillDefinition
   message: string
+  manifest?: PortableSkillManifest
 }
 
 export interface SkillApplyInput {
@@ -20,6 +22,36 @@ export interface SkillApplyResult {
 }
 
 const SKILL_SCHEMA = 'islemind.skill.v1'
+const PORTABLE_SKILL_ENVELOPE_SCHEMA = 'islemind.skill.portable.v2'
+
+export interface PortableSkillManifest {
+  schema: typeof PORTABLE_SKILL_ENVELOPE_SCHEMA
+  exportedAt: number
+  source: 'islemind'
+  kind: 'skill' | 'agent-workflow-skill'
+  skillId: string
+  skillName: string
+  version: string
+  tagCount: number
+  hasProviderBinding: boolean
+  hasModelBinding: boolean
+  providerBindingOmitted: boolean
+  modelBindingOmitted: boolean
+  hasKnowledgeSources: boolean
+  hasEnabledTools: boolean
+  workflow?: {
+    id?: string
+    importedReviewRequired: boolean
+    approvalInherited: false
+    state: 'disabled'
+  }
+}
+
+export interface PortableSkillEnvelope {
+  schema: typeof PORTABLE_SKILL_ENVELOPE_SCHEMA
+  manifest: PortableSkillManifest
+  skill: SkillDefinition
+}
 
 export async function listSkills(): Promise<SkillDefinition[]> {
   return loadData<SkillDefinition[]>('SKILLS').then((items) => (items ?? []).map(normalizeSkill).filter(isSkillDefinition))
@@ -43,15 +75,29 @@ export async function deleteSkill(id: string): Promise<void> {
 }
 
 export function exportSkill(skill: SkillDefinition): string {
-  return JSON.stringify(requireSkill(skill), null, 2)
+  const sourceSkill = requireSkill(skill)
+  const safeSkill = sanitizeSkillForPortable(sourceSkill)
+  const envelope: PortableSkillEnvelope = {
+    schema: PORTABLE_SKILL_ENVELOPE_SCHEMA,
+    manifest: buildPortableSkillManifest(safeSkill, sourceSkill),
+    skill: safeSkill,
+  }
+  return JSON.stringify(envelope, null, 2)
 }
 
 export function importSkill(raw: string): SkillImportResult {
   try {
     const parsed = JSON.parse(raw)
-    const skill = normalizeSkill(parsed)
+    const envelope = parsePortableSkillEnvelope(parsed)
+    const skill = normalizeSkill(envelope?.skill ?? parsed)
     if (!skill) return { ok: false, message: st('skills.importInvalidFormat') }
-    return { ok: true, skill, message: st('skills.importRecognized', { name: skill.name }) }
+    const safeSkill = sanitizeSkillForPortable(skill)
+    return {
+      ok: true,
+      skill: safeSkill,
+      manifest: envelope?.manifest ?? buildPortableSkillManifest(safeSkill, skill),
+      message: st('skills.importRecognized', { name: safeSkill.name }),
+    }
   } catch {
     return { ok: false, message: st('skills.importJsonFailed') }
   }
@@ -194,6 +240,85 @@ function normalizeSkill(value: unknown): SkillDefinition | null {
     createdAt: Number.isFinite(item.createdAt) ? Number(item.createdAt) : now,
     updatedAt: Number.isFinite(item.updatedAt) ? Number(item.updatedAt) : now,
   }
+}
+
+function parsePortableSkillEnvelope(value: unknown): PortableSkillEnvelope | undefined {
+  if (!value || typeof value !== 'object') return undefined
+  const record = value as Partial<PortableSkillEnvelope>
+  if (record.schema !== PORTABLE_SKILL_ENVELOPE_SCHEMA || !record.skill || typeof record.manifest !== 'object') return undefined
+  const skill = normalizeSkill(record.skill)
+  if (!skill) return undefined
+  const safeSkill = sanitizeSkillForPortable(skill)
+  return {
+    schema: PORTABLE_SKILL_ENVELOPE_SCHEMA,
+    manifest: normalizePortableSkillManifest(record.manifest, safeSkill, skill),
+    skill: safeSkill,
+  }
+}
+
+function buildPortableSkillManifest(skill: SkillDefinition, sourceSkill: SkillDefinition = skill): PortableSkillManifest {
+  const workflowId = extractWorkflowId(skill.tags)
+  const workflow = skill.tags.includes('agent-workflow')
+    ? {
+        id: workflowId,
+        importedReviewRequired: skill.tags.includes('workflow-import:review-required'),
+        approvalInherited: false as const,
+        state: 'disabled' as const,
+      }
+    : undefined
+  return {
+    schema: PORTABLE_SKILL_ENVELOPE_SCHEMA,
+    exportedAt: Date.now(),
+    source: 'islemind',
+    kind: workflow ? 'agent-workflow-skill' : 'skill',
+    skillId: skill.id,
+    skillName: skill.name,
+    version: skill.version,
+    tagCount: skill.tags.length,
+    hasProviderBinding: !!skill.providerId,
+    hasModelBinding: !!skill.model,
+    providerBindingOmitted: !!sourceSkill.providerId && !skill.providerId,
+    modelBindingOmitted: !!sourceSkill.model && !skill.model,
+    hasKnowledgeSources: !!skill.knowledgeSources?.length,
+    hasEnabledTools: !!skill.enabledTools?.length,
+    workflow,
+  }
+}
+
+function normalizePortableSkillManifest(value: unknown, skill: SkillDefinition, sourceSkill: SkillDefinition = skill): PortableSkillManifest {
+  const fallback = buildPortableSkillManifest(skill, sourceSkill)
+  if (!value || typeof value !== 'object') return fallback
+  const record = value as Partial<PortableSkillManifest>
+  const workflow = fallback.workflow
+  return {
+    ...fallback,
+    exportedAt: Number.isFinite(record.exportedAt) ? Number(record.exportedAt) : fallback.exportedAt,
+    source: 'islemind',
+    kind: fallback.kind,
+    skillId: fallback.skillId,
+    skillName: fallback.skillName,
+    version: fallback.version,
+    tagCount: fallback.tagCount,
+    hasProviderBinding: fallback.hasProviderBinding,
+    hasModelBinding: fallback.hasModelBinding,
+    providerBindingOmitted: fallback.providerBindingOmitted || record.providerBindingOmitted === true,
+    modelBindingOmitted: fallback.modelBindingOmitted || record.modelBindingOmitted === true,
+    hasKnowledgeSources: fallback.hasKnowledgeSources,
+    hasEnabledTools: fallback.hasEnabledTools,
+    workflow: workflow
+      ? {
+          ...workflow,
+          importedReviewRequired: true,
+          approvalInherited: false,
+          state: 'disabled',
+        }
+      : undefined,
+  }
+}
+
+function extractWorkflowId(tags: string[]): string | undefined {
+  const tag = tags.find((item) => item.startsWith('workflow:'))
+  return tag?.slice('workflow:'.length) || undefined
 }
 
 function isSkillDefinition(value: SkillDefinition | null): value is SkillDefinition {

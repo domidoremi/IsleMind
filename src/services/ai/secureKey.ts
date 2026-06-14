@@ -1,4 +1,4 @@
-import * as SecureStore from 'expo-secure-store'
+import { deleteSecureItem, getSecureItem, setSecureItem } from '@/services/secureStorage'
 
 function secureProviderKey(providerId: string): string {
   return `islemind.key.${providerId.replace(/[^a-zA-Z0-9._-]/g, '_')}`
@@ -10,7 +10,7 @@ function secureProviderGroupKey(providerId: string, groupId: string): string {
 
 export async function getSecureApiKey(providerId: string): Promise<string | null> {
   try {
-    return await SecureStore.getItemAsync(secureProviderKey(providerId))
+    return await getSecureItem(secureProviderKey(providerId))
   } catch {
     return null
   }
@@ -18,7 +18,7 @@ export async function getSecureApiKey(providerId: string): Promise<string | null
 
 export async function getSecureCredentialGroupKey(providerId: string, groupId: string): Promise<string | null> {
   try {
-    return await SecureStore.getItemAsync(secureProviderGroupKey(providerId, groupId))
+    return await getSecureItem(secureProviderGroupKey(providerId, groupId))
   } catch {
     return null
   }
@@ -27,9 +27,9 @@ export async function getSecureCredentialGroupKey(providerId: string, groupId: s
 export async function setSecureCredentialGroupKey(providerId: string, groupId: string, key: string): Promise<void> {
   try {
     if (key) {
-      await SecureStore.setItemAsync(secureProviderGroupKey(providerId, groupId), key)
+      await setSecureItem(secureProviderGroupKey(providerId, groupId), key)
     } else {
-      await SecureStore.deleteItemAsync(secureProviderGroupKey(providerId, groupId))
+      await deleteSecureItem(secureProviderGroupKey(providerId, groupId))
     }
   } catch {
     // silently fail
@@ -38,7 +38,7 @@ export async function setSecureCredentialGroupKey(providerId: string, groupId: s
 
 export async function deleteSecureCredentialGroupKey(providerId: string, groupId: string): Promise<void> {
   try {
-    await SecureStore.deleteItemAsync(secureProviderGroupKey(providerId, groupId))
+    await deleteSecureItem(secureProviderGroupKey(providerId, groupId))
   } catch {
     // silently fail
   }
@@ -46,7 +46,11 @@ export async function deleteSecureCredentialGroupKey(providerId: string, groupId
 
 export async function setSecureApiKey(providerId: string, key: string): Promise<void> {
   try {
-    await SecureStore.setItemAsync(secureProviderKey(providerId), key)
+    if (key) {
+      await setSecureItem(secureProviderKey(providerId), key)
+    } else {
+      await deleteSecureItem(secureProviderKey(providerId))
+    }
   } catch {
     // silently fail
   }
@@ -54,7 +58,7 @@ export async function setSecureApiKey(providerId: string, key: string): Promise<
 
 export async function deleteSecureApiKey(providerId: string): Promise<void> {
   try {
-    await SecureStore.deleteItemAsync(secureProviderKey(providerId))
+    await deleteSecureItem(secureProviderKey(providerId))
   } catch {
     // silently fail
   }

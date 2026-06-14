@@ -61,10 +61,10 @@ class RenderGuardBoundary extends Component<RenderGuardBoundaryProps, RenderGuar
     const { colors, strings } = this.props
     const title = this.props.compact ? strings.compactTitle : `${this.props.label ?? strings.content}${strings.titleSuffix}`
     return (
-      <IslePanel elevated={false} style={{ borderRadius: this.props.compact ? 18 : 24 }} contentStyle={{ padding: this.props.compact ? 10 : 14 }}>
+      <IslePanel elevated={false} style={{ borderRadius: this.props.compact ? colors.ui.radius.card : colors.ui.radius.panel }} contentStyle={{ padding: this.props.compact ? 10 : 14 }}>
         <View style={{ flexDirection: 'row', gap: 9, alignItems: 'flex-start' }}>
-          <View style={{ width: 28, height: 28, borderRadius: 14, alignItems: 'center', justifyContent: 'center', backgroundColor: colors.coralWash }}>
-            <AlertTriangle color={colors.error} size={15} strokeWidth={2.1} />
+          <View style={{ width: 28, height: 28, borderRadius: colors.ui.radius.controlSmall, alignItems: 'center', justifyContent: 'center', backgroundColor: colors.ui.tone.danger.background, borderWidth: 1, borderColor: colors.ui.tone.danger.border }}>
+            <AlertTriangle color={colors.ui.tone.danger.foreground} size={15} strokeWidth={2.1} />
           </View>
           <View style={{ flex: 1, minWidth: 0 }}>
             <Text style={{ color: colors.text, fontSize: 13, lineHeight: 18, fontWeight: '900' }}>{title}</Text>

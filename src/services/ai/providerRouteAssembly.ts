@@ -24,6 +24,7 @@ export function assembleProviderRoute(input: ProviderRouteAssemblyInput): Provid
   const transportSelection = selectUpstreamTransport({
     provider: input.provider,
     usesResponsesApi: input.usesResponsesApi === true,
+    stream: input.stream,
     settings: input.settings,
     hasWebSocketRuntime: input.hasWebSocketRuntime,
   })
@@ -35,7 +36,7 @@ export function assembleProviderRoute(input: ProviderRouteAssemblyInput): Provid
 
 export function resolveProviderEndpoint(input: ProviderEndpointInput): string {
   if (input.provider.type === 'google') return getGoogleGenerateEndpoint(input.provider, input.model, input.stream)
-  if (input.usesResponsesApi && input.provider.type === 'openai') return getOpenAIResponsesEndpoint(input.provider)
+  if (input.usesResponsesApi && (input.provider.type === 'openai' || input.provider.type === 'openai-compatible')) return getOpenAIResponsesEndpoint(input.provider)
   return getProviderApiEndpoint(input.provider)
 }
 
@@ -59,7 +60,10 @@ export function getProviderApiEndpoint(provider: AIProvider): string {
 }
 
 export function getOpenAIResponsesEndpoint(provider: AIProvider): string {
-  return `${normalizeProviderBaseUrl(getProviderEffectiveBaseUrl(provider))}/responses`
+  const baseUrl = provider.type === 'openai-compatible'
+    ? defaultOpenAICompatibleBaseUrl(provider)
+    : getProviderEffectiveBaseUrl(provider)
+  return `${normalizeProviderBaseUrl(baseUrl)}/responses`
 }
 
 export function isOpenAICompatibleProvider(provider: AIProvider): boolean {
@@ -90,9 +94,13 @@ export function getXiaomiMimoAnthropicMessagesEndpoint(provider: AIProvider): st
 export function getGoogleGenerateEndpoint(provider: AIProvider, model: string, stream: boolean): string {
   const method = stream ? 'streamGenerateContent?alt=sse' : 'generateContent'
   const separator = method.includes('?') ? '&' : '?'
-  return `${normalizeProviderBaseUrl(getProviderEffectiveBaseUrl(provider))}/models/${model}:${method}${separator}key=${encodeURIComponent(provider.apiKey)}`
+  return `${normalizeProviderBaseUrl(getProviderEffectiveBaseUrl(provider))}/models/${normalizeGoogleModelPath(model)}:${method}${separator}key=${encodeURIComponent(provider.apiKey)}`
 }
 
 export function normalizeProviderBaseUrl(url: string): string {
   return url.replace(/\/+$/, '')
+}
+
+function normalizeGoogleModelPath(model: string): string {
+  return model.trim().replace(/^models\//i, '')
 }

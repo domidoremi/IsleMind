@@ -62,6 +62,7 @@ export const DEFAULT_PROVIDER_CAPABILITIES: ProviderCapabilities = {
   speech: false,
   nativeSearch: false,
   reasoningEffort: false,
+  nativeTools: false,
   topP: true,
   responsesApi: false,
   responsesWebSocket: false,
@@ -77,6 +78,7 @@ export const PROVIDER_PRESETS: ProviderPreset[] = [
     speech: true,
     nativeSearch: true,
     reasoningEffort: true,
+    nativeTools: true,
     responsesApi: true,
     responsesWebSocket: true,
     remoteCompact: true,
@@ -86,15 +88,19 @@ export const PROVIDER_PRESETS: ProviderPreset[] = [
     files: true,
     nativeSearch: true,
     reasoningEffort: true,
+    nativeTools: true,
   }),
   preset('google', 'Google Gemini', 'google', 'https://generativelanguage.googleapis.com/v1beta', ['google', 'gemini'], [/generativelanguage\.googleapis\.com/i], {
     vision: true,
     files: true,
     audioInput: true,
     nativeSearch: true,
+    reasoningEffort: true,
+    nativeTools: true,
   }),
   preset('deepseek', 'DeepSeek', 'openai-compatible', 'https://api.deepseek.com', ['deepseek'], [/api\.deepseek\.com/i], {
     reasoningEffort: true,
+    nativeTools: true,
   }),
   preset('dashscope', '阿里云百炼', 'openai-compatible', 'https://dashscope.aliyuncs.com/compatible-mode/v1', ['dashscope', 'qwen', 'aliyun', '阿里', '百炼'], [/dashscope\.aliyuncs\.com/i], {
     vision: true,
@@ -102,19 +108,31 @@ export const PROVIDER_PRESETS: ProviderPreset[] = [
     audioInput: true,
     audioTranscription: true,
     speech: true,
+    nativeTools: true,
+  }),
+  preset('moonshot', 'Moonshot AI', 'openai-compatible', 'https://api.moonshot.ai/v1', ['moonshot', 'kimi', '月之暗面'], [/moonshot\.(ai|cn)/i, /platform\.kimi\.ai/i], {
+    reasoningEffort: true,
+    nativeTools: true,
   }),
   preset('bigmodel', '智谱 AI', 'openai-compatible', 'https://open.bigmodel.cn/api/paas/v4', ['bigmodel', 'zhipu', 'glm', '智谱'], [/bigmodel\.cn/i], {
     vision: true,
     files: true,
     reasoningEffort: true,
+    nativeTools: true,
+  }),
+  preset('minimax', 'MiniMax', 'openai-compatible', 'https://api.minimax.io/v1', ['minimax', 'mini-max', '海螺'], [/minimax\.(io|com)/i, /minimaxi\.com/i], {
+    nativeTools: true,
   }),
   preset('xai', 'xAI', 'openai-compatible', 'https://api.x.ai/v1', ['xai', 'grok'], [/api\.x\.ai/i], {
     vision: true,
     reasoningEffort: true,
+    nativeTools: true,
+    responsesApi: true,
   }),
   preset('xiaomi-mimo', 'Xiaomi MiMo', 'xiaomi-mimo', undefined, ['mimo', 'xiaomi', '小米'], [/xiaomimimo\.com/i], {
     vision: true,
     reasoningEffort: true,
+    nativeTools: true,
   }),
   preset('openrouter', 'OpenRouter', 'openai-compatible', 'https://openrouter.ai/api/v1', ['openrouter'], [/openrouter\.ai/i], {
     vision: true,

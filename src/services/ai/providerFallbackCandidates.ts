@@ -168,7 +168,7 @@ function capabilityList(provider: AIProvider, manifest: ReturnType<typeof resolv
   if (manifest.modalities.input.audio) capabilities.push('audio')
   if (manifest.modalities.input.video) capabilities.push('video')
   if (manifest.reasoning.supported) capabilities.push('reasoning')
-  if (provider.capabilities?.streaming) capabilities.push('streaming')
+  if (manifest.transport.streaming) capabilities.push('streaming')
   if (provider.capabilities?.nativeSearch) capabilities.push('native_search')
   return capabilities
 }
