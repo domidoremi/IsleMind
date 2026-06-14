@@ -46,6 +46,53 @@ export interface WorkArtifactSummary {
   handoffText: string
 }
 
+export type WorkArtifactQualityAuditIssueCode =
+  | 'work_artifact_missing'
+  | 'item_count_too_low'
+  | 'action_missing'
+  | 'executable_action_missing'
+  | 'primary_next_step_missing'
+  | 'quality_summary_missing'
+  | 'follow_up_prompt_missing'
+  | 'handoff_text_missing'
+  | 'coverage_missing'
+  | 'quality_inconsistent'
+
+export interface WorkArtifactQualityAuditIssue {
+  code: WorkArtifactQualityAuditIssueCode
+  message: string
+  kind?: WorkArtifactKind
+  expected?: string | number | boolean
+  actual?: string | number | boolean
+}
+
+export interface WorkArtifactQualityAuditOptions {
+  minItemCount?: number
+  requireCompleteCoverage?: boolean
+  requirePrimaryNextStep?: boolean
+  requireFollowUpPrompt?: boolean
+  requireHandoffText?: boolean
+}
+
+export interface WorkArtifactQualityAuditResult {
+  ok: boolean
+  quality: WorkArtifactSummary['quality']
+  missingKinds: WorkArtifactKind[]
+  errors: WorkArtifactQualityAuditIssue[]
+  warnings: WorkArtifactQualityAuditIssue[]
+  checks: {
+    hasWorkArtifact: boolean
+    hasMinimumItems: boolean
+    hasAction: boolean
+    hasExecutableAction: boolean
+    hasPrimaryNextStep: boolean
+    hasQualitySummary: boolean
+    hasFollowUpPrompt: boolean
+    hasHandoffText: boolean
+    hasCompleteCoverage: boolean
+  }
+}
+
 const SECTION_LABELS: Record<WorkArtifactKind, string> = {
   summary: 'Summary',
   decision: 'Decision log',
@@ -118,6 +165,92 @@ const HANDOFF_LABELS: Record<WorkArtifactLanguage, {
     executableActions: '実行可能なアクション',
     itemCounts: 'カバレッジ',
   },
+}
+
+export function validateWorkArtifactQuality(
+  summary: WorkArtifactSummary,
+  options: WorkArtifactQualityAuditOptions = {}
+): WorkArtifactQualityAuditResult {
+  const minItemCount = Math.max(1, options.minItemCount ?? 2)
+  const requireCompleteCoverage = options.requireCompleteCoverage ?? true
+  const requirePrimaryNextStep = options.requirePrimaryNextStep ?? true
+  const requireFollowUpPrompt = options.requireFollowUpPrompt ?? true
+  const requireHandoffText = options.requireHandoffText ?? true
+  const missingKinds = getMissingArtifactKinds({
+    actionItemCount: summary.actionItemCount,
+    decisionCount: summary.decisionCount,
+    riskCount: summary.riskCount,
+    openQuestionCount: summary.openQuestionCount,
+    evidenceCount: summary.evidenceCount,
+  })
+  const checks = {
+    hasWorkArtifact: summary.hasWorkArtifact,
+    hasMinimumItems: summary.itemCount >= minItemCount,
+    hasAction: summary.actionItemCount > 0,
+    hasExecutableAction: summary.executableActionCount > 0,
+    hasPrimaryNextStep: !!summary.primaryNextStep?.trim(),
+    hasQualitySummary: !!summary.qualitySummary.trim(),
+    hasFollowUpPrompt: !!summary.followUpPrompt.trim(),
+    hasHandoffText: !!summary.handoffText.trim(),
+    hasCompleteCoverage: missingKinds.length === 0,
+  }
+  const errors: WorkArtifactQualityAuditIssue[] = []
+  const warnings: WorkArtifactQualityAuditIssue[] = []
+
+  if (!checks.hasWorkArtifact) {
+    errors.push(workArtifactAuditIssue('work_artifact_missing', 'Artifact must contain at least two populated recognized sections.'))
+  }
+  if (!checks.hasMinimumItems) {
+    errors.push(workArtifactAuditIssue('item_count_too_low', 'Artifact must contain the minimum required item count.', undefined, minItemCount, summary.itemCount))
+  }
+  if (!checks.hasAction) {
+    errors.push(workArtifactAuditIssue('action_missing', 'Artifact must include at least one action item.', 'action'))
+  }
+  if (!checks.hasExecutableAction) {
+    errors.push(workArtifactAuditIssue('executable_action_missing', 'Artifact must include at least one executable action with a next step, due date, trigger, or execution verb.', 'action'))
+  }
+  if (requirePrimaryNextStep && !checks.hasPrimaryNextStep) {
+    errors.push(workArtifactAuditIssue('primary_next_step_missing', 'Artifact must expose one primary next step.'))
+  }
+  if (!checks.hasQualitySummary) {
+    errors.push(workArtifactAuditIssue('quality_summary_missing', 'Artifact must include a quality summary.'))
+  }
+  if (requireFollowUpPrompt && !checks.hasFollowUpPrompt) {
+    errors.push(workArtifactAuditIssue('follow_up_prompt_missing', 'Artifact must include a continuation prompt.'))
+  }
+  if (requireHandoffText && !checks.hasHandoffText) {
+    errors.push(workArtifactAuditIssue('handoff_text_missing', 'Artifact must include handoff text.'))
+  }
+  if (requireCompleteCoverage && !checks.hasCompleteCoverage) {
+    errors.push(workArtifactAuditIssue(
+      'coverage_missing',
+      `Artifact must cover action, decision, risk, question, and evidence gates. Missing: ${missingKinds.map((kind) => SECTION_LABELS[kind]).join(', ')}.`,
+      undefined,
+      0,
+      missingKinds.length
+    ))
+  }
+  if (summary.quality === 'complete' && !checks.hasCompleteCoverage) {
+    errors.push(workArtifactAuditIssue('quality_inconsistent', 'A complete artifact must not have missing coverage gates.', undefined, 'complete coverage', summary.quality))
+  }
+  if (!requireCompleteCoverage && !checks.hasCompleteCoverage) {
+    warnings.push(workArtifactAuditIssue(
+      'coverage_missing',
+      `Artifact is executable but not complete. Missing: ${missingKinds.map((kind) => SECTION_LABELS[kind]).join(', ')}.`,
+      undefined,
+      0,
+      missingKinds.length
+    ))
+  }
+
+  return {
+    ok: errors.length === 0,
+    quality: summary.quality,
+    missingKinds,
+    errors,
+    warnings,
+    checks,
+  }
 }
 
 export function summarizeWorkArtifact(content: string): WorkArtifactSummary {
@@ -257,6 +390,20 @@ export function formatWorkArtifactHandoff(input: Pick<WorkArtifactSummary, 'lang
   }
 
   return lines.join('\n')
+}
+
+function workArtifactAuditIssue(
+  code: WorkArtifactQualityAuditIssueCode,
+  message: string,
+  kind?: WorkArtifactKind,
+  expected?: string | number | boolean,
+  actual?: string | number | boolean
+): WorkArtifactQualityAuditIssue {
+  const issue: WorkArtifactQualityAuditIssue = { code, message }
+  if (kind) issue.kind = kind
+  if (expected !== undefined) issue.expected = expected
+  if (actual !== undefined) issue.actual = actual
+  return issue
 }
 
 function detectWorkArtifactLanguage(content: string): WorkArtifactLanguage {

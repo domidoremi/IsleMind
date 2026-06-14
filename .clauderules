@@ -1,0 +1,711 @@
+# Claude Rules for IsleMind
+
+> AI 开发助手规则文件 - 用于 Claude Code、Cursor、Cline 等 AI 编程助手
+>
+> 本规则基于 IsleMind 项目的架构、约定和最佳实践制定
+
+---
+
+## ⚠️ 重要规则
+
+### 🚫 禁止创建文档
+- **禁止随意创建任何文档文件**
+- 只有在用户明确要求时才能创建文档
+- 优先使用代码注释和现有文档
+- 如需记录，使用代码内的 JSDoc 注释
+
+### 🔓 权限模式
+- **默认模式**: 自动执行，无需用户授权
+- 所有命令和操作直接执行
+- 用户已授予完全权限
+
+---
+
+## 项目概述
+
+**项目名称**: IsleMind
+**类型**: 本地优先的移动 AI 工作区
+**技术栈**: React Native + Expo + TypeScript
+**平台**: Android (主要), iOS (元数据配置)
+**包管理器**: Bun 1.3.14
+
+### 核心特性
+- 本地优先架构，完整隐私保护
+- 支持 15+ AI 服务商（OpenAI、Anthropic、Gemini 等）
+- Agentic RAG 知识检索系统
+- 本地 ONNX 模型支持
+- 企业级质量保证体系
+
+---
+
+## 🎯 核心原则
+
+### 1. 本地优先（Local-First）
+- 所有数据默认存储在设备本地
+- 网络请求必须由用户显式触发
+- 敏感数据（API Key）使用 SecureStore 加密存储
+- 支持完整的离线功能和降级路径
+
+### 2. 隐私保护（Privacy-First）
+- API Key 不写入导出的 JSON 文件
+- 服务商请求必须用户配置触发
+- 明确的能力边界和数据流向
+- 透明的风险控制和失败行为
+
+### 3. 企业级质量（Production-Ready）
+- 完整的 QA 矩阵和证据链
+- 严格的 Android 权限和能力审计
+- 架构边界审计
+- 测试驱动开发
+
+### 4. 渐进式增强（Progressive Enhancement）
+- 本地模型缺失时回退到 hash embedding
+- 服务商不可达时返回可诊断状态
+- APK 更新通过系统安装器确认
+- 降级路径必须保留
+
+---
+
+## 📁 项目结构
+
+```
+IsleMind/
+├── app/                        # Expo Router 路由
+│   ├── _layout.tsx            # 根布局
+│   ├── index.tsx              # 主页（对话列表）
+│   ├── chat/[id].tsx          # 对话详情页
+│   ├── settings/              # 设置页面
+│   └── source.tsx             # 资源页面
+├── src/
+│   ├── components/            # React 组件
+│   │   ├── chat/             # 聊天相关组件
+│   │   ├── settings/         # 设置相关组件
+│   │   ├── providers/        # 服务商配置组件
+│   │   ├── ui/isle/          # Isle UI 组件库
+│   │   └── navigation/       # 导航组件
+│   ├── services/             # 业务逻辑层
+│   │   ├── ai/              # AI 服务商集成
+│   │   ├── agent/           # Agent 工作流
+│   │   ├── rag.ts           # RAG 检索
+│   │   ├── chatRunner.ts    # 对话运行时
+│   │   └── storage.ts       # 存储服务
+│   ├── store/                # Zustand 状态管理
+│   │   ├── chatStore.ts     # 对话状态
+│   │   └── settingsStore.ts # 设置状态
+│   ├── hooks/                # React Hooks
+│   ├── types/                # TypeScript 类型定义
+│   ├── utils/                # 工具函数
+│   ├── i18n/                 # 国际化资源
+│   └── theme/                # 主题配置
+├── assets/                    # 静态资源
+│   ├── models/               # 本地模型配置
+│   └── brand/                # 品牌资源
+├── scripts/                   # 构建和测试脚本
+├── docs/                      # 项目文档
+└── test-evidence/            # QA 证据
+```
+
+---
+
+## 🔧 开发规范
+
+### TypeScript 规范
+
+```typescript
+// ✅ 正确：使用明确的类型定义
+interface Message {
+  id: string;
+  role: 'user' | 'assistant' | 'system';
+  content: string;
+  timestamp: number;
+  streaming?: boolean;
+}
+
+// ✅ 正确：使用类型守卫
+function isAssistantMessage(msg: Message): msg is Message & { role: 'assistant' } {
+  return msg.role === 'assistant';
+}
+
+// ❌ 错误：避免使用 any
+const data: any = await fetchData(); // 不推荐
+
+// ✅ 正确：使用具体类型
+const data: ApiResponse = await fetchData();
+```
+
+### React 组件规范
+
+```typescript
+// ✅ 正确：函数组件 + TypeScript
+interface MessageBubbleProps {
+  message: Message;
+  onRetry?: () => void;
+}
+
+export const MessageBubble = ({ message, onRetry }: MessageBubbleProps) => {
+  // 组件实现
+};
+
+// ✅ 正确：使用 memo 优化性能（关键组件）
+export const MessageBubble = memo(
+  ({ message, onRetry }: MessageBubbleProps) => {
+    // 组件实现
+  },
+  (prev, next) => prev.message.id === next.message.id &&
+                 prev.message.content === next.message.content
+);
+```
+
+### 命名约定
+
+```typescript
+// 组件：PascalCase
+export const MessageBubble = () => { };
+export const ChatWorkspace = () => { };
+
+// 文件名：与默认导出一致
+// MessageBubble.tsx
+// ChatWorkspace.tsx
+
+// Hook：use 前缀 + camelCase
+export const useAppTheme = () => { };
+export const useChatStore = () => { };
+
+// 服务/工具函数：camelCase
+export const sendMessage = async () => { };
+export const formatTimestamp = () => { };
+
+// 常量：UPPER_SNAKE_CASE
+export const MAX_MESSAGE_LENGTH = 4000;
+export const DEFAULT_MODEL = 'gpt-4';
+
+// 类型/接口：PascalCase
+interface ChatMessage { }
+type AIProvider = 'openai' | 'anthropic';
+```
+
+### 状态管理（Zustand）
+
+```typescript
+// ✅ 正确：使用 Zustand 管理全局状态
+interface ChatStore {
+  conversations: Record<string, Conversation>;
+  currentConversationId: string | null;
+
+  // Actions
+  addMessage: (conversationId: string, message: Message) => void;
+  setCurrentConversation: (id: string) => void;
+}
+
+export const useChatStore = create<ChatStore>((set) => ({
+  conversations: {},
+  currentConversationId: null,
+
+  addMessage: (conversationId, message) => set((state) => ({
+    conversations: {
+      ...state.conversations,
+      [conversationId]: {
+        ...state.conversations[conversationId],
+        messages: [...state.conversations[conversationId].messages, message],
+      },
+    },
+  })),
+
+  setCurrentConversation: (id) => set({ currentConversationId: id }),
+}));
+
+// ✅ 正确：局部状态使用 useState
+const [isLoading, setIsLoading] = useState(false);
+```
+
+### 样式规范（NativeWind）
+
+```typescript
+// ✅ 正确：使用 NativeWind (Tailwind CSS)
+<View className="flex-1 bg-background p-4">
+  <Text className="text-lg font-semibold text-foreground">
+    标题
+  </Text>
+</View>
+
+// ✅ 正确：条件样式
+<View className={`p-4 ${isActive ? 'bg-primary' : 'bg-secondary'}`}>
+  内容
+</View>
+
+// ✅ 正确：主题感知
+const theme = useAppTheme();
+<View style={{ backgroundColor: theme.background }}>
+```
+
+---
+
+## 🚀 性能优化原则
+
+### 1. 渲染优化
+
+```typescript
+// ✅ 使用 React.memo 避免不必要的重渲染
+export const MessageBubble = memo(Component, arePropsEqual);
+
+// ✅ 使用 useMemo 缓存计算结果
+const sortedMessages = useMemo(
+  () => messages.sort((a, b) => a.timestamp - b.timestamp),
+  [messages]
+);
+
+// ✅ 使用 useCallback 缓存回调函数
+const handleSend = useCallback((text: string) => {
+  sendMessage(text);
+}, []);
+
+// ✅ 使用 FlashList 替代 FlatList（已使用）
+import { FlashList } from '@shopify/flash-list';
+```
+
+### 2. 存储优化
+
+```typescript
+// ⚠️ 当前使用 AsyncStorage（性能较低）
+// 🎯 计划迁移到 MMKV（性能提升10倍）
+
+// ✅ 批量操作
+await AsyncStorage.multiSet([
+  ['key1', 'value1'],
+  ['key2', 'value2'],
+]);
+
+// ✅ 缓存频繁读取的数据
+const cache = new Map<string, any>();
+```
+
+### 3. 懒加载
+
+```typescript
+// ✅ 路由级懒加载
+const ProviderSettings = lazy(() =>
+  import('@/components/providers/ProviderSettingsContent')
+);
+
+// ✅ 使用 Suspense
+<Suspense fallback={<LoadingScreen />}>
+  <ProviderSettings />
+</Suspense>
+```
+
+---
+
+## 🔐 安全规范
+
+### 1. API Key 管理
+
+```typescript
+// ✅ 正确：使用 SecureStore 存储敏感信息
+import * as SecureStore from 'expo-secure-store';
+
+await SecureStore.setItemAsync('openai_api_key', apiKey);
+const apiKey = await SecureStore.getItemAsync('openai_api_key');
+
+// ❌ 错误：不要在普通存储中保存 API Key
+await AsyncStorage.setItem('api_key', key); // 不安全！
+```
+
+### 2. 数据导出安全
+
+```typescript
+// ✅ 正确：导出时排除敏感信息
+const exportData = {
+  conversations: conversations,
+  settings: {
+    ...settings,
+    providers: settings.providers.map(p => ({
+      ...p,
+      apiKey: undefined, // 不导出 API Key
+    })),
+  },
+};
+```
+
+### 3. 网络请求安全
+
+```typescript
+// ✅ 正确：用户配置触发
+if (!provider.configured) {
+  throw new Error('Provider not configured');
+}
+
+// ✅ 正确：错误处理和降级
+try {
+  const response = await callAI(prompt);
+  return response;
+} catch (error) {
+  // 返回可诊断状态，不丢弃用户输入
+  return { error, diagnostics: buildDiagnostics(error) };
+}
+```
+
+---
+
+## 🧪 测试规范
+
+### 1. 单元测试
+
+```typescript
+// ✅ 正确：测试纯函数
+describe('formatTimestamp', () => {
+  it('should format timestamp correctly', () => {
+    const result = formatTimestamp(1234567890000);
+    expect(result).toBe('2009-02-14 07:31:30');
+  });
+});
+
+// ✅ 正确：测试 React 组件
+import { render } from '@testing-library/react-native';
+
+describe('MessageBubble', () => {
+  it('should render message content', () => {
+    const message = { id: '1', role: 'user', content: 'Hello' };
+    const { getByText } = render(<MessageBubble message={message} />);
+    expect(getByText('Hello')).toBeTruthy();
+  });
+});
+```
+
+### 2. 测试命令
+
+```bash
+# 运行所有测试
+bun run test
+
+# 监听模式
+bun run test:watch
+
+# 覆盖率报告
+bun run test:coverage
+
+# 类型检查
+bun run type-check
+
+# 架构边界审计
+bun run test:architecture-boundary
+
+# QA 审计
+bun run test:qa-audit
+```
+
+---
+
+## 📦 构建和发布
+
+### APK 构建
+
+```bash
+# 本地调试版本（无模型）
+bun run apk:local
+
+# 本地调试版本（带模型）
+bun run apk:local:models
+
+# 正式发布版本
+bun run apk:local:release
+
+# 验证 16KB 页面大小兼容性
+bun run apk:validate-16kb
+```
+
+### 发布检查清单
+
+- [ ] 类型检查通过 (`bun run type-check`)
+- [ ] 所有测试通过 (`bun run test`)
+- [ ] 架构边界审计通过 (`bun run test:architecture-boundary`)
+- [ ] QA 审计通过 (`bun run test:qa-audit`)
+- [ ] APK 签名正确
+- [ ] 版本号已更新
+- [ ] CHANGELOG 已更新
+
+---
+
+## 🎨 UI/UX 规范
+
+### Isle UI 使用
+
+```typescript
+// ✅ 使用 Isle UI 组件
+import { IsleButton, IsleDialog, IsleEmptyState } from '@/components/ui/isle';
+
+// 按钮
+<IsleButton onPress={handlePress}>
+  发送消息
+</IsleButton>
+
+// 对话框
+const dialog = useIsleDialog();
+dialog.show({
+  title: '确认删除',
+  message: '此操作不可撤销',
+  actions: [
+    { label: '取消', onPress: () => dialog.hide() },
+    { label: '删除', onPress: handleDelete, destructive: true },
+  ],
+});
+
+// 空状态
+<IsleEmptyState
+  icon="MessageSquare"
+  title="暂无对话"
+  description="开始新对话吧"
+/>
+```
+
+### 国际化（i18n）
+
+```typescript
+// ✅ 使用 i18next
+import { useTranslation } from 'react-i18next';
+
+const { t } = useTranslation();
+
+<Text>{t('chat.send')}</Text>
+<Text>{t('settings.title')}</Text>
+
+// 资源文件位置
+// src/i18n/resources/zh-CN.json
+// src/i18n/resources/en.json
+// src/i18n/resources/ja.json
+```
+
+---
+
+## 🔍 GitNexus 集成
+
+### 代码影响分析（必须）
+
+```typescript
+// ⚠️ 在修改任何函数前，必须运行影响分析
+// 1. 运行影响分析
+gitnexus_impact({ target: "sendMessage", direction: "upstream" })
+
+// 2. 查看调用者和影响范围
+// 3. 如果风险为 HIGH 或 CRITICAL，警告用户
+// 4. 然后再进行修改
+
+// ⚠️ 提交前，必须运行变更检测
+gitnexus_detect_changes()
+```
+
+### GitNexus 规则（来自 CLAUDE.md）
+
+#### Always Do
+- **MUST** 在编辑任何符号前运行影响分析
+- **MUST** 在提交前运行 `gitnexus_detect_changes()`
+- **MUST** 对 HIGH/CRITICAL 风险向用户发出警告
+- 探索代码时使用 `gitnexus_query()` 而非 grep
+- 需要完整上下文时使用 `gitnexus_context()`
+
+#### Never Do
+- **NEVER** 在未运行影响分析前编辑函数
+- **NEVER** 忽略 HIGH/CRITICAL 风险警告
+- **NEVER** 使用 find-replace 重命名符号（用 `gitnexus_rename`）
+- **NEVER** 在未运行 `gitnexus_detect_changes()` 前提交
+
+---
+
+## 📝 文档规范
+
+### 代码注释
+
+```typescript
+// ✅ 正确：为复杂逻辑添加注释
+/**
+ * 发送消息到 AI 服务商
+ *
+ * @param conversationId - 对话 ID
+ * @param message - 用户消息
+ * @param options - 可选配置
+ * @returns 包含 AI 响应的 Promise
+ *
+ * @throws {ProviderNotConfiguredError} 服务商未配置
+ * @throws {NetworkError} 网络请求失败
+ */
+export async function sendMessage(
+  conversationId: string,
+  message: string,
+  options?: SendOptions
+): Promise<AIResponse> {
+  // 实现
+}
+
+// ✅ 正确：关键业务逻辑的解释性注释
+// 本地模型缺失时回退到 hash embedding
+if (!localModelAvailable) {
+  return await hashEmbedding(text);
+}
+```
+
+### README 更新
+
+- 新功能必须更新 README.md
+- 破坏性变更必须在 CHANGELOG 中记录
+- API 变更必须更新文档
+
+---
+
+## 🚨 错误处理
+
+### 错误处理原则
+
+```typescript
+// ✅ 正确：返回可诊断状态
+try {
+  const response = await provider.call(prompt);
+  return { success: true, data: response };
+} catch (error) {
+  return {
+    success: false,
+    error: error.message,
+    diagnostics: {
+      provider: provider.name,
+      timestamp: Date.now(),
+      context: { prompt: prompt.slice(0, 100) },
+    },
+  };
+}
+
+// ❌ 错误：丢弃用户输入
+try {
+  await provider.call(prompt);
+} catch (error) {
+  return null; // 不推荐！
+}
+```
+
+### 降级策略
+
+```typescript
+// ✅ 正确：保留降级路径
+async function embedText(text: string): Promise<number[]> {
+  // 优先使用本地模型
+  if (localModelAvailable) {
+    return await localEmbed(text);
+  }
+
+  // 降级到 hash embedding
+  return await hashEmbedding(text);
+}
+```
+
+---
+
+## 🔄 Git 工作流
+
+### 提交规范
+
+```bash
+# 格式：<type>(<scope>): <subject>
+
+# 类型
+feat:     新功能
+fix:      Bug 修复
+docs:     文档更新
+style:    代码格式（不影响功能）
+refactor: 重构
+perf:     性能优化
+test:     测试相关
+chore:    构建/工具链
+
+# 示例
+feat(chat): 添加消息重试功能
+fix(rag): 修复本地模型加载失败问题
+docs(readme): 更新安装说明
+perf(render): 优化消息列表渲染性能
+```
+
+### 分支策略
+
+```bash
+# 主分支
+main              # 生产分支，始终可发布
+
+# 功能分支
+feature/chat-retry
+feature/rag-enhancement
+
+# 修复分支
+fix/message-render-bug
+fix/storage-leak
+
+# 发布分支
+release/1.0.8
+```
+
+---
+
+## 🎯 当前改进计划
+
+### 性能优化（Week 1 - 快速胜利）
+
+1. **图片自动压缩**（1天）
+   - 添加 `expo-image-manipulator`
+   - 实现自动压缩逻辑
+   - 目标：上传时间减少 60%
+
+2. **React.memo 优化**（2天）
+   - 优化 MessageBubble
+   - 添加渲染缓存
+   - 目标：滚动性能提升 2倍
+
+3. **懒加载**（2天）
+   - 实现组件懒加载
+   - 优化启动路径
+   - 目标：启动时间减少 20%
+
+4. **流式 Markdown**（1天）
+   - 改进增量渲染
+   - 修复闪烁问题
+
+参考文档：`docs/improvement-*.md`
+
+---
+
+## 🔗 相关资源
+
+### 内部文档
+- [项目 README](../README.md)
+- [生产 QA 矩阵](../docs/production-qa-matrix.md)
+- [改进评估报告](../docs/improvement-assessment.md)
+- [实施计划](../docs/improvement-implementation-plan.md)
+
+### 技术栈文档
+- [Expo SDK](https://docs.expo.dev/)
+- [React Native](https://reactnative.dev/)
+- [NativeWind](https://www.nativewind.dev/)
+- [Zustand](https://docs.pmnd.rs/zustand/)
+- [i18next](https://www.i18next.com/)
+
+### 最佳实践
+- [React Native 性能](https://reactnative.dev/docs/performance)
+- [TypeScript 最佳实践](https://www.typescriptlang.org/docs/handbook/declaration-files/do-s-and-don-ts.html)
+- [Expo 最佳实践](https://docs.expo.dev/guides/best-practices/)
+
+---
+
+## 📞 支持和贡献
+
+### 遇到问题？
+1. 检查现有文档和注释
+2. 运行 `bun run type-check` 检查类型
+3. 查看 GitNexus 符号上下文
+4. 查阅改进文档 `docs/improvement-*.md`
+
+### 贡献指南
+1. 遵循本规则文件的所有规范
+2. 运行完整测试套件
+3. 更新相关文档
+4. 提交前运行 GitNexus 变更检测
+
+---
+
+**文档版本**: 1.0.0
+**最后更新**: 2026-06-13
+**适用于**: Claude Code, Cursor, Cline 等 AI 编程助手
+

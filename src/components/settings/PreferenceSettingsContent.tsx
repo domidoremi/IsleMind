@@ -1,5 +1,5 @@
-import { View } from 'react-native'
-import { Command, Moon, Network, Sparkles, Sun } from 'lucide-react-native'
+import { View, useWindowDimensions } from 'react-native'
+import { Command, Moon, Network, ShieldCheck, Sparkles, Sun } from 'lucide-react-native'
 import { useTranslation } from 'react-i18next'
 import { IsleField, IsleSection, IsleToggle } from '@/components/ui/isle'
 import { useAppTheme } from '@/hooks/useAppTheme'
@@ -11,14 +11,27 @@ export function PreferenceSettingsContent() {
   const { t } = useTranslation()
   const settings = useSettingsStore((state) => state.settings)
   const updateSettings = useSettingsStore((state) => state.updateSettings)
+  const { width } = useWindowDimensions()
+  const compact = width < 430
+  const fieldRowStyle = { flexDirection: compact ? 'column' : 'row', gap: 10, marginBottom: 12 } as const
+  const fieldFlexStyle = compact ? undefined : { flex: 1, minWidth: 0 }
+  const updateBoundedNumberSetting = (
+    key: 'agentWorkflowMaxSteps' | 'agentWorkflowMaxToolCallsPerStep' | 'agentWorkflowOutputCharLimit',
+    value: string,
+    min: number,
+    max: number
+  ) => {
+    const next = Number.parseInt(value, 10)
+    if (!Number.isNaN(next)) updateSettings({ [key]: Math.max(min, Math.min(max, next)) })
+  }
 
   return (
     <>
       <IsleSection title={t('preferences.generation')} subtitle={t('preferences.generationSubtitle')}>
-        <View style={{ flexDirection: 'row', gap: 10, marginBottom: 12 }}>
+        <View style={fieldRowStyle}>
           <IsleField
             label={t('chat.temperature')}
-            style={{ flex: 1 }}
+            style={fieldFlexStyle}
             inputProps={{
               value: String(settings.defaultTemperature ?? 0.3),
               onChangeText: (value) => {
@@ -30,7 +43,7 @@ export function PreferenceSettingsContent() {
           />
           <IsleField
             label={t('chat.maxTokens')}
-            style={{ flex: 1 }}
+            style={fieldFlexStyle}
             inputProps={{
               value: settings.defaultMaxTokens ? String(settings.defaultMaxTokens) : '',
               onChangeText: (value) => {
@@ -74,6 +87,63 @@ export function PreferenceSettingsContent() {
             title={t('settings.mcp')}
             active={settings.mcpEnabled ?? true}
             onPress={() => updateSettings({ mcpEnabled: !(settings.mcpEnabled ?? true) })}
+          />
+        </View>
+      </IsleSection>
+
+      <IsleSection title={t('preferences.agentWorkflow')} subtitle={t('preferences.agentWorkflowSubtitle')} style={{ marginTop: 12 }}>
+        <View style={fieldRowStyle}>
+          <IsleField
+            label={t('preferences.agentWorkflowMaxSteps')}
+            note={t('preferences.agentWorkflowMaxStepsNote')}
+            style={fieldFlexStyle}
+            inputProps={{
+              value: String(settings.agentWorkflowMaxSteps ?? 3),
+              onChangeText: (value) => updateBoundedNumberSetting('agentWorkflowMaxSteps', value, 1, 8),
+              keyboardType: 'numeric',
+            }}
+          />
+          <IsleField
+            label={t('preferences.agentWorkflowMaxToolCalls')}
+            note={t('preferences.agentWorkflowMaxToolCallsNote')}
+            style={fieldFlexStyle}
+            inputProps={{
+              value: String(settings.agentWorkflowMaxToolCallsPerStep ?? 1),
+              onChangeText: (value) => updateBoundedNumberSetting('agentWorkflowMaxToolCallsPerStep', value, 1, 3),
+              keyboardType: 'numeric',
+            }}
+          />
+        </View>
+        <IsleField
+          label={t('preferences.agentWorkflowOutputLimit')}
+          note={t('preferences.agentWorkflowOutputLimitNote')}
+          inputProps={{
+            value: String(settings.agentWorkflowOutputCharLimit ?? 4800),
+            onChangeText: (value) => updateBoundedNumberSetting('agentWorkflowOutputCharLimit', value, 512, 12000),
+            keyboardType: 'numeric',
+          }}
+        />
+        <View style={{ gap: 10, marginTop: 12 }}>
+          <IsleToggle
+            icon={<ShieldCheck color={colors.text} size={18} />}
+            title={t('preferences.agentWorkflowReadOnlyTools')}
+            description={t('preferences.agentWorkflowReadOnlyToolsDescription')}
+            active={settings.agentWorkflowAllowReadOnlyTools ?? true}
+            onPress={() => updateSettings({ agentWorkflowAllowReadOnlyTools: !(settings.agentWorkflowAllowReadOnlyTools ?? true) })}
+          />
+          <IsleToggle
+            icon={<ShieldCheck color={colors.text} size={18} />}
+            title={t('preferences.agentWorkflowVisibleWrites')}
+            description={t('preferences.agentWorkflowVisibleWritesDescription')}
+            active={(settings.agentWorkflowAllowReadWriteTools ?? 'visible') !== false}
+            onPress={() => updateSettings({ agentWorkflowAllowReadWriteTools: (settings.agentWorkflowAllowReadWriteTools ?? 'visible') === false ? 'visible' : false })}
+          />
+          <IsleToggle
+            icon={<ShieldCheck color={colors.text} size={18} />}
+            title={t('preferences.agentWorkflowDestructiveConfirm')}
+            description={t('preferences.agentWorkflowDestructiveConfirmDescription')}
+            active={(settings.agentWorkflowAllowDestructiveTools ?? 'confirm') === 'confirm'}
+            onPress={() => updateSettings({ agentWorkflowAllowDestructiveTools: (settings.agentWorkflowAllowDestructiveTools ?? 'confirm') === 'confirm' ? false : 'confirm' })}
           />
         </View>
       </IsleSection>

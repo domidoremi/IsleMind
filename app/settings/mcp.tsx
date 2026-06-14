@@ -1,6 +1,11 @@
 import { useTranslation } from 'react-i18next'
 import { SettingsPageShell } from '@/components/settings/SettingsPageShell'
-import { McpSettingsContent } from '@/components/settings/McpSettingsContent'
+import { createLazyComponent } from '@/utils/lazyLoad'
+
+// 懒加载 MCP 设置内容
+const McpSettingsContent = createLazyComponent(
+  () => import('@/components/settings/McpSettingsContent')
+)
 
 export default function McpSettingsScreen() {
   const { t } = useTranslation()

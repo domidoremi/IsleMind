@@ -65,11 +65,8 @@ export function ChatOptionsPanel({
     ? orderedProviders.filter((item) => providerMatchesQuery(item, normalizedQuery, settings))
     : orderedProviders
   const selectedModels = selectedProvider
-      ? getSwitchableProviderModels(selectedProvider, normalizedQuery, settings)
-      .map((id) => {
-        const upstreamModel = resolveProviderModelAlias(selectedProvider, id)
-        return { id, name: getProviderDisplayModel(selectedProvider, id), config: getModelConfig(upstreamModel, selectedProvider.type, selectedProvider.modelConfigs) }
-      })
+    ? getSwitchableProviderModels(selectedProvider, normalizedQuery, settings)
+      .map((id) => ({ id, name: getProviderDisplayModel(selectedProvider, id) }))
     : []
   const noSwitchableProviderCandidates = policySwitchableProviders.length === 0
   const showPickerEmptyState = noSwitchableProviderCandidates || (normalizedQuery.length > 0 && visibleProviders.length === 0 && selectedModels.length === 0)
@@ -82,7 +79,9 @@ export function ChatOptionsPanel({
   const modelEmptyTitle = selectedProvider ? t('chat.noModelsForSelectedProvider', { provider: selectedProvider.name }) : t('chat.noAvailableModels')
   const selectedProviderIsCurrent = selectedProvider?.id === conversation.providerId
   const capabilities = currentProvider?.capabilities
-  const reasoningOptions = getReasoningEffortOptions(currentProvider, conversation.model)
+  const reasoningModel = currentProvider ? resolveProviderModelAlias(currentProvider, conversation.model) : conversation.model
+  const reasoningOptions = getReasoningEffortOptions(currentProvider, reasoningModel)
+  const currentModelConfig = getModelConfig(reasoningModel, currentProvider?.type, currentProvider?.modelConfigs)
   const compactPicker = windowWidth < 430 || windowHeight < 620
   const sheetMode = placement === 'sheet'
   const panelBodyMaxHeight = Math.max(250, maxHeight - 104)
@@ -122,7 +121,14 @@ export function ChatOptionsPanel({
   const panelRadius = sheetMode ? colors.ui.radius.modal : colors.ui.radius.panel
   const fieldRadius = colors.ui.radius.field
   const controlRadius = colors.ui.radius.controlLarge
-  const actionSurface = colors.material.paperRaised
+  const sheetMaterial = colors.material.sheet
+  const panelSurface = sheetMode ? sheetMaterial.surface : colors.ui.card.defaultBackground
+  const panelBody = sheetMode ? sheetMaterial.body : colors.ui.card.defaultBackground
+  const panelChrome = sheetMode ? sheetMaterial.chrome : colors.ui.card.defaultBackground
+  const panelBorder = sheetMode ? sheetMaterial.border : colors.material.strokeStrong
+  const panelDivider = sheetMode ? sheetMaterial.divider : colors.ui.section.divider
+  const actionSurface = colors.ui.card.mutedBackground
+  const actionBorder = colors.material.stroke
 
   useEffect(() => {
     setSelectedProviderId(provider?.id ?? conversation.providerId)
@@ -148,8 +154,8 @@ export function ChatOptionsPanel({
   }
 
   return (
-    <IslePanel material="paper" elevated style={{ alignSelf: 'center', width: panelWidth, maxWidth: '100%', marginTop: sheetMode ? 0 : 10, maxHeight, borderWidth: 1, borderColor: colors.borderStrong }} radius={panelRadius} contentStyle={{ padding: 0, backgroundColor: colors.material.paper }}>
-      <View style={{ padding: 12, paddingBottom: 10, borderBottomWidth: 1, borderBottomColor: colors.border }}>
+    <IslePanel material="paper" elevated style={{ alignSelf: 'center', width: panelWidth, maxWidth: '100%', marginTop: sheetMode ? 0 : 10, maxHeight, borderWidth: 1, borderColor: panelBorder, backgroundColor: panelSurface }} radius={panelRadius} contentStyle={{ padding: 0, backgroundColor: panelBody }}>
+      <View style={{ padding: 12, paddingBottom: 10, borderBottomWidth: 1, borderBottomColor: panelDivider, backgroundColor: panelChrome }}>
         <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10, marginBottom: 10 }}>
           <View style={{ flex: 1 }}>
             <Text style={{ color: colors.text, fontSize: 15, fontWeight: '900' }}>{t('chat.model')}</Text>
@@ -158,13 +164,16 @@ export function ChatOptionsPanel({
           <IslePressable
             haptic
             onPress={onClose}
+            accessibilityRole="button"
             accessibilityLabel={t('chat.closeModelMenu')}
-            style={{ width: 44, height: 44, borderRadius: controlRadius, alignItems: 'center', justifyContent: 'center', backgroundColor: actionSurface, borderWidth: 1, borderColor: colors.border }}
+            accessibilityHint={t('chat.closeModelMenuHint')}
+            hitSlop={MODEL_MENU_ACTION_HIT_SLOP}
+            style={{ width: 44, height: 44, borderRadius: controlRadius, alignItems: 'center', justifyContent: 'center', backgroundColor: actionSurface, borderWidth: 1, borderColor: actionBorder }}
           >
             <X color={colors.textSecondary} size={16} strokeWidth={2.2} />
           </IslePressable>
         </View>
-        <View style={{ minHeight: 44, borderRadius: fieldRadius, paddingHorizontal: 12, flexDirection: 'row', alignItems: 'center', gap: 8, backgroundColor: colors.material.field, borderWidth: 1, borderColor: colors.border }}>
+        <View style={{ minHeight: 44, borderRadius: fieldRadius, paddingHorizontal: 12, flexDirection: 'row', alignItems: 'center', gap: 8, backgroundColor: colors.ui.input.background, borderWidth: 1, borderColor: colors.ui.input.border }}>
           <Search color={colors.textTertiary} size={15} strokeWidth={2} />
           <TextInput
             value={modelPickerQuery}
@@ -173,12 +182,17 @@ export function ChatOptionsPanel({
             autoCorrect={false}
             placeholder={t('chat.searchProviderOrModel')}
             placeholderTextColor={colors.textTertiary}
+            accessibilityLabel={t('chat.searchProviderOrModel')}
+            accessibilityHint={t('chat.searchProviderOrModelAccessibilityHint')}
             style={{ flex: 1, minHeight: 44, padding: 0, color: colors.text, fontSize: 13, fontWeight: '800' }}
           />
           {modelPickerQuery.trim() ? (
             <IslePressable
               onPress={() => setModelPickerQuery('')}
+              accessibilityRole="button"
               accessibilityLabel={t('chat.clearModelSearch')}
+              accessibilityHint={t('chat.clearModelSearchHint')}
+              hitSlop={MODEL_MENU_ACTION_HIT_SLOP}
               style={{ width: 44, height: 44, borderRadius: controlRadius, alignItems: 'center', justifyContent: 'center', backgroundColor: actionSurface }}
             >
               <X color={colors.textSecondary} size={14} strokeWidth={2.2} />
@@ -189,7 +203,7 @@ export function ChatOptionsPanel({
 
       <ScrollView
         style={{ maxHeight: panelBodyMaxHeight }}
-        contentContainerStyle={{ padding: 12, paddingBottom: 14 }}
+        contentContainerStyle={{ padding: 12, paddingBottom: 14, backgroundColor: panelBody }}
         keyboardShouldPersistTaps="handled"
         showsVerticalScrollIndicator
       >
@@ -215,7 +229,11 @@ export function ChatOptionsPanel({
                     key={item.id}
                     haptic
                     onPress={() => setSelectedProviderId(item.id)}
+                    accessibilityRole="button"
                     accessibilityLabel={`${item.name}${item.enabled ? '' : ` · ${t('settings.disabledState')}`}`}
+                    accessibilityHint={t('chat.selectProviderAccessibilityHint', { provider: item.name })}
+                    accessibilityState={{ selected: selectedProvider?.id === item.id }}
+                    hitSlop={MODEL_MENU_CHIP_HIT_SLOP}
                   >
                     <PickerChip
                       active={selectedProvider?.id === item.id}
@@ -246,11 +264,15 @@ export function ChatOptionsPanel({
                       key={model.id}
                       haptic
                       onPress={() => selectedProvider && onSwitchModel(selectedProvider, model.id)}
-                      accessibilityLabel={`${model.name}${model.config.deprecated ? ` · ${t('chat.deprecated')}` : ''}`}
+                      accessibilityRole="button"
+                      accessibilityLabel={model.name}
+                      accessibilityHint={t('chat.selectModelAccessibilityHint', { provider: selectedProvider?.name ?? t('chat.notSelected'), model: model.name })}
+                      accessibilityState={{ selected: selectedProviderIsCurrent && conversation.model === model.id }}
+                      hitSlop={MODEL_MENU_CHIP_HIT_SLOP}
                     >
                       <PickerChip
                         active={selectedProviderIsCurrent && conversation.model === model.id}
-                        label={`${model.name}${model.config.deprecated ? ` · ${t('chat.deprecated')}` : ''}`}
+                        label={model.name}
                         maxWidth={compactPicker ? panelWidth - 48 : Math.max(128, panelWidth * 0.42)}
                       />
                     </IslePressable>
@@ -263,13 +285,22 @@ export function ChatOptionsPanel({
           </View>
         )}
         <View style={{ flexDirection: 'row', gap: 8, marginTop: 8 }}>
-          <IslePressable haptic onPress={onCopyLink} style={{ minHeight: 44, borderRadius: controlRadius, paddingHorizontal: 12, alignItems: 'center', justifyContent: 'center', backgroundColor: actionSurface, borderWidth: 1, borderColor: colors.border }}>
+          <IslePressable
+            haptic
+            onPress={onCopyLink}
+            accessibilityRole="button"
+            accessibilityLabel={t('chat.copyConversationLink')}
+            accessibilityHint={t('chat.copyConversationLinkHint')}
+            hitSlop={MODEL_MENU_ACTION_HIT_SLOP}
+            style={{ minHeight: 44, borderRadius: controlRadius, paddingHorizontal: 12, alignItems: 'center', justifyContent: 'center', backgroundColor: actionSurface, borderWidth: 1, borderColor: actionBorder }}
+          >
             <Text style={{ color: colors.textSecondary, fontSize: 12, fontWeight: '800' }}>{t('chat.copyConversationLink')}</Text>
           </IslePressable>
         </View>
         <View style={{ flexDirection: 'row', gap: 8, marginTop: 10 }}>
           <ParamInput
-            label="Temperature"
+            label={t('chat.temperature')}
+            accessibilityHint={t('chat.temperatureAccessibilityHint')}
             value={String(conversation.temperature)}
             onChange={(value) => {
               const next = Number(value)
@@ -277,20 +308,20 @@ export function ChatOptionsPanel({
             }}
           />
           <ParamInput
-            label="Max Tokens"
+            label={t('chat.maxTokens')}
+            accessibilityHint={t('chat.maxTokensAccessibilityHint', { limit: currentModelConfig.maxOutputTokens })}
             value={String(conversation.maxTokens)}
             onChange={(value) => {
               const next = Number.parseInt(value, 10)
-              const upstreamModel = currentProvider ? resolveProviderModelAlias(currentProvider, conversation.model) : conversation.model
-              const config = getModelConfig(upstreamModel, currentProvider?.type, currentProvider?.modelConfigs)
-              if (!Number.isNaN(next)) patchConversation({ maxTokens: Math.max(128, Math.min(config.maxOutputTokens, next)) })
+              if (!Number.isNaN(next)) patchConversation({ maxTokens: Math.max(128, Math.min(currentModelConfig.maxOutputTokens, next)) })
             }}
           />
         </View>
         <View style={{ flexDirection: 'row', gap: 8, marginTop: 10 }}>
           {capabilities?.topP !== false ? (
             <ParamInput
-              label="Top P"
+              label={t('chat.topP')}
+              accessibilityHint={t('chat.topPAccessibilityHint')}
               value={String(conversation.topP ?? 1)}
               onChange={(value) => {
                 const next = Number(value)
@@ -303,7 +334,16 @@ export function ChatOptionsPanel({
               <Text style={{ color: colors.textSecondary, fontSize: 12, fontWeight: '800', marginBottom: 6 }}>{t('chat.reasoning')}</Text>
               <View style={{ flexDirection: 'row', gap: 6, flexWrap: 'wrap' }}>
                 {reasoningOptions.map((effort) => (
-                  <IslePressable key={effort} haptic onPress={() => patchConversation({ reasoningEffort: effort })}>
+                  <IslePressable
+                    key={effort}
+                    haptic
+                    onPress={() => patchConversation({ reasoningEffort: effort })}
+                    accessibilityRole="button"
+                    accessibilityLabel={t('chat.reasoningChip', { value: t(`chat.reasoningEffort.${effort}`) })}
+                    accessibilityHint={t('chat.reasoningEffortAccessibilityHint', { value: t(`chat.reasoningEffort.${effort}`) })}
+                    accessibilityState={{ selected: (conversation.reasoningEffort ?? 'medium') === effort }}
+                    hitSlop={MODEL_MENU_CHIP_HIT_SLOP}
+                  >
                     <IsleChip active={(conversation.reasoningEffort ?? 'medium') === effort}>{t(`chat.reasoningEffort.${effort}`)}</IsleChip>
                   </IslePressable>
                 ))}
@@ -316,6 +356,9 @@ export function ChatOptionsPanel({
   )
 }
 
+const MODEL_MENU_ACTION_HIT_SLOP = { top: 8, bottom: 8, left: 8, right: 8 }
+const MODEL_MENU_CHIP_HIT_SLOP = { top: 6, bottom: 6, left: 4, right: 4 }
+
 function clampListHeight(count: number, minHeight: number, maxHeight: number, columns: number): number {
   if (count <= 0) return minHeight
   const estimated = Math.ceil(count / Math.max(1, columns)) * 40 + 8
@@ -325,7 +368,7 @@ function clampListHeight(count: number, minHeight: number, maxHeight: number, co
 function PickerEmptyState({ title, description, minHeight }: { title: string; description: string; minHeight: number }) {
   const { colors } = useAppTheme()
   return (
-    <View style={{ minHeight, borderRadius: colors.ui.radius.field, paddingHorizontal: 14, paddingVertical: 12, justifyContent: 'center', backgroundColor: colors.material.field, borderWidth: 1, borderColor: colors.border }}>
+    <View style={{ minHeight, borderRadius: colors.ui.radius.field, paddingHorizontal: 14, paddingVertical: 12, justifyContent: 'center', backgroundColor: colors.ui.card.mutedBackground, borderWidth: 1, borderColor: colors.material.stroke }}>
       <Text style={{ color: colors.textSecondary, fontSize: 12, lineHeight: 17, fontWeight: '900' }}>{title}</Text>
       <Text style={{ color: colors.textTertiary, fontSize: 11, lineHeight: 16, marginTop: 4 }}>{description}</Text>
     </View>
@@ -340,8 +383,8 @@ function PickerChip({ label, active, maxWidth }: { label: string; active: boolea
   return (
     <MotiView
       animate={{
-        backgroundColor: active ? activeBackground : colors.material.paperRaised,
-        borderColor: active ? colors.ui.control.primaryBorder : colors.border,
+        backgroundColor: active ? activeBackground : colors.ui.card.defaultBackground,
+        borderColor: active ? colors.ui.control.primaryBorder : colors.material.stroke,
         scale: active ? 1.025 : 1,
       }}
       transition={motion === 'full' ? { type: 'spring', ...motionTokens.spring.gentle } : { type: 'timing', duration: 1 }}
@@ -398,7 +441,7 @@ function providerMatchesQuery(provider: AIProvider, query: string, settings?: Pr
   return getSwitchableProviderModels(provider, query, settings).length > 0
 }
 
-function ParamInput({ label, value, onChange }: { label: string; value: string; onChange: (value: string) => void }) {
+function ParamInput({ label, value, accessibilityHint, onChange }: { label: string; value: string; accessibilityHint?: string; onChange: (value: string) => void }) {
   const { colors } = useAppTheme()
   return (
     <View style={{ flex: 1 }}>
@@ -408,8 +451,9 @@ function ParamInput({ label, value, onChange }: { label: string; value: string; 
         onChangeText={onChange}
         keyboardType="numeric"
         accessibilityLabel={label}
+        accessibilityHint={accessibilityHint}
         placeholderTextColor={colors.textTertiary}
-        style={{ minHeight: 46, borderRadius: colors.ui.radius.field, paddingHorizontal: 14, color: colors.text, backgroundColor: colors.material.field, borderWidth: 1, borderColor: colors.border, fontSize: 14, fontWeight: '700' }}
+        style={{ minHeight: 46, borderRadius: colors.ui.radius.field, paddingHorizontal: 14, color: colors.text, backgroundColor: colors.ui.input.background, borderWidth: 1, borderColor: colors.ui.input.border, fontSize: 14, fontWeight: '700' }}
       />
     </View>
   )

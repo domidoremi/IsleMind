@@ -13,6 +13,11 @@ export interface RuntimeDiagnosticsSummary {
     mode: NonNullable<Settings['remoteCompactMode']>
     capableProviders: number
     requestCount: number
+    remoteRequestCount: number
+    localCompressionCount: number
+    localFallbackCount: number
+    localEstimatedSavedTokens: number
+    localAverageCompressionRatio: number
     completedCount: number
     failureCount: number
     estimatedSavedTokens: number
@@ -52,6 +57,8 @@ export async function buildRuntimeDiagnosticsSummary(input: {
   const settings = input.settings
   const enabledProviders = providers.filter((provider) => provider.enabled)
   const compactRecords = listCompactUsageRecords()
+  const localCompressionRecords = compactRecords.filter((record) => hasLocalCompressionRecord(record))
+  const localCompactRecords = compactRecords.filter((record) => record.fallbackLocal === true)
   const logInfo = await getRuntimeLogInfo()
   return {
     websocket: {
@@ -64,7 +71,12 @@ export async function buildRuntimeDiagnosticsSummary(input: {
       mode: settings.remoteCompactMode ?? 'off',
       capableProviders: providers.filter((provider) => provider.capabilities?.remoteCompact === true && provider.capabilities?.responsesApi === true).length,
       requestCount: compactRecords.length,
-      completedCount: compactRecords.filter((record) => !record.failureCode).length,
+      remoteRequestCount: compactRecords.filter((record) => !record.fallbackLocal && !record.failureCode && typeof record.inputTokens === 'number' && typeof record.outputTokens !== 'number').length,
+      localCompressionCount: localCompressionRecords.length,
+      localFallbackCount: localCompactRecords.length,
+      localEstimatedSavedTokens: sumFiniteNumbers(localCompressionRecords.map((record) => record.localEstimatedSavedTokens)),
+      localAverageCompressionRatio: averageFiniteNumbers(localCompressionRecords.map((record) => record.localCompressionRatio)),
+      completedCount: compactRecords.filter((record) => !record.failureCode && typeof record.outputTokens === 'number').length,
       failureCount: compactRecords.filter((record) => !!record.failureCode).length,
       estimatedSavedTokens: compactRecords.reduce((sum, record) => sum + (record.estimatedSavedTokens ?? 0), 0),
     },
@@ -90,6 +102,23 @@ export async function buildRuntimeDiagnosticsSummary(input: {
       aliasProviders: providers.filter((provider) => (provider.modelAliases?.length ?? 0) > 0).length,
     },
   }
+}
+
+function hasLocalCompressionRecord(record: ReturnType<typeof listCompactUsageRecords>[number]): boolean {
+  return typeof record.localCompressedTokens === 'number' ||
+    typeof record.localEstimatedSavedTokens === 'number' ||
+    record.localCompressionStrategy === 'structured-v2' ||
+    record.localCompressionStrategy === 'single-message-truncation'
+}
+
+function sumFiniteNumbers(values: Array<number | undefined>): number {
+  return values.reduce<number>((sum, value) => Number.isFinite(value) ? sum + value! : sum, 0)
+}
+
+function averageFiniteNumbers(values: Array<number | undefined>): number {
+  const finiteValues = values.filter((value): value is number => Number.isFinite(value))
+  if (!finiteValues.length) return 0
+  return Math.round((finiteValues.reduce((sum, value) => sum + value, 0) / finiteValues.length) * 1000) / 1000
 }
 
 function buildProxySummary(settings: Settings): RuntimeDiagnosticsSummary['proxy'] {

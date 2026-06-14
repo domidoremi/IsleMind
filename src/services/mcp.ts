@@ -1,6 +1,8 @@
 import type { McpServerConfig, McpToolManifest, McpToolPermission, ProcessTrace, ToolContentBlock } from '@/types'
 import { loadData, saveData } from '@/services/storage'
 import { st } from '@/i18n/service'
+import { redactSensitiveText } from '@/services/agent/agentTrace'
+import { buildAgentToolCallTraceMetadata } from '@/services/agent/agentToolCallTrace'
 import { BUILTIN_SERVER_ID, callBuiltinTool, listBuiltinToolManifests } from '@/services/builtinToolRegistry'
 
 export interface McpCallResult {
@@ -15,6 +17,12 @@ export interface McpApprovalRequest {
   tool: McpToolManifest
   arguments: Record<string, unknown>
 }
+
+export interface McpCallOptions {
+  signal?: AbortSignal
+}
+
+type McpTraceErrorCode = 'tool_unavailable' | 'permission_required' | 'execution_failed' | 'cancelled'
 
 const DEFAULT_TTL_MS = 6 * 60 * 60 * 1000
 
@@ -78,24 +86,48 @@ export async function callMcpTool(
   server: McpServerConfig,
   toolName: string,
   args: Record<string, unknown> = {},
-  approve?: (request: McpApprovalRequest) => Promise<boolean>
+  approve?: (request: McpApprovalRequest) => Promise<boolean>,
+  options: McpCallOptions = {}
 ): Promise<McpCallResult> {
   const tool = server.tools.find((item) => item.name === toolName)
   const startedAt = Date.now()
-  if (!tool || !tool.enabled) return failureTrace(toolName, st('mcpRuntime.toolNotEnabled'), startedAt)
+  if (options.signal?.aborted) {
+    return cancelledTrace(server, toolName, tool, startedAt)
+  }
+  if (!server.enabled) {
+    return failureTrace(toolName, st('mcpRuntime.disconnected'), startedAt, 'skipped', mcpTraceMetadata(server, toolName, tool, 'tool_unavailable'))
+  }
+  if (!tool || !tool.enabled) {
+    return failureTrace(toolName, st('mcpRuntime.toolNotEnabled'), startedAt, 'skipped', mcpTraceMetadata(server, toolName, tool, 'tool_unavailable'))
+  }
   if (tool.permission === 'destructive') {
+    if (options.signal?.aborted) {
+      return cancelledTrace(server, toolName, tool, startedAt)
+    }
     const confirmed = await approve?.({ server, tool, arguments: args })
-    if (!confirmed) return failureTrace(toolName, st('mcpRuntime.notApproved'), startedAt, 'skipped')
+    if (options.signal?.aborted) {
+      return cancelledTrace(server, toolName, tool, startedAt)
+    }
+    if (!confirmed) {
+      return failureTrace(toolName, st('mcpRuntime.notApproved'), startedAt, 'skipped', mcpTraceMetadata(server, toolName, tool, 'permission_required'))
+    }
   }
   try {
+    if (options.signal?.aborted) {
+      return cancelledTrace(server, toolName, tool, startedAt)
+    }
     if (server.id === BUILTIN_SERVER_ID) {
-      return await callBuiltinTool(toolName, args, startedAt)
+      const result = await callBuiltinTool(toolName, args, startedAt)
+      return options.signal?.aborted ? cancelledTrace(server, toolName, tool, startedAt) : sanitizeMcpCallResult(result)
     }
     if (server.status === 'disconnected' || server.status === 'error') {
-      return failureTrace(toolName, st('mcpRuntime.disconnected'), startedAt, 'skipped')
+      return failureTrace(toolName, st('mcpRuntime.disconnected'), startedAt, 'skipped', mcpTraceMetadata(server, toolName, tool, 'tool_unavailable'))
     }
-    const response = await postMcp(server, 'tools/call', { name: toolName, arguments: args })
-    const content = normalizeContentBlocks(response.content)
+    const response = await postMcp(server, 'tools/call', { name: toolName, arguments: args }, options.signal)
+    if (options.signal?.aborted) {
+      return cancelledTrace(server, toolName, tool, startedAt)
+    }
+    const content = sanitizeToolContentBlocks(normalizeContentBlocks(response.content))
     return {
       ok: true,
       content,
@@ -106,11 +138,14 @@ export async function callMcpTool(
         content: summarizeBlocks(content),
         status: 'done',
         startedAt,
-        metadata: { serverId: server.id, permission: tool.permission },
+        metadata: mcpTraceMetadata(server, toolName, tool),
       }),
     }
   } catch (error) {
-    return failureTrace(toolName, error instanceof Error ? error.message : st('mcpRuntime.callFailed'), startedAt)
+    if (options.signal?.aborted || isAbortError(error)) {
+      return cancelledTrace(server, toolName, tool, startedAt)
+    }
+    return failureTrace(toolName, error instanceof Error ? error.message : st('mcpRuntime.callFailed'), startedAt, 'error', mcpTraceMetadata(server, toolName, tool, 'execution_failed'))
   }
 }
 
@@ -119,11 +154,12 @@ export function truncateToolBlocks(blocks: ToolContentBlock[], tokenBudget = 120
   let used = 0
   return blocks.map((block) => {
     if (block.type !== 'text' || !block.text) return block
+    const safeText = redactSensitiveText(block.text)
     const remaining = Math.max(0, charBudget - used)
-    used += Math.min(block.text.length, remaining)
+    used += Math.min(safeText.length, remaining)
     return {
       ...block,
-      text: block.text.length > remaining ? `${block.text.slice(0, remaining)}\n${st('mcpRuntime.outputTruncated')}` : block.text,
+      text: safeText.length > remaining ? `${safeText.slice(0, remaining)}\n${st('mcpRuntime.outputTruncated')}` : safeText,
     }
   })
 }
@@ -166,11 +202,12 @@ async function callMcpVersion(server: McpServerConfig): Promise<string | undefin
   }
 }
 
-async function postMcp(server: McpServerConfig, method: string, params: Record<string, unknown>): Promise<Record<string, any>> {
+async function postMcp(server: McpServerConfig, method: string, params: Record<string, unknown>, signal?: AbortSignal): Promise<Record<string, any>> {
   const response = await fetch(server.url, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', Accept: 'application/json, text/event-stream' },
     body: JSON.stringify({ jsonrpc: '2.0', id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`, method, params }),
+    signal,
   })
   const text = await response.text()
   if (!response.ok) throw new Error(`MCP ${method} failed: HTTP ${response.status}`)
@@ -290,26 +327,128 @@ function requireServer(value: McpServerConfig): McpServerConfig {
 }
 
 function summarizeBlocks(blocks: ToolContentBlock[]): string {
-  return blocks.map((block) => block.text || block.uri || block.name || block.type).join('\n').slice(0, 1200)
+  return redactSensitiveText(blocks.map((block) => block.text || block.uri || block.name || block.type).join('\n')).slice(0, 1200)
 }
 
-function failureTrace(toolName: string, message: string, startedAt: number, status: ProcessTrace['status'] = 'error'): McpCallResult {
+function sanitizeMcpCallResult(result: McpCallResult): McpCallResult {
+  return {
+    ...result,
+    content: sanitizeToolContentBlocks(result.content),
+    error: result.error ? redactSensitiveText(result.error) : undefined,
+    trace: sanitizeMcpTrace(result.trace),
+  }
+}
+
+function sanitizeToolContentBlocks(blocks: ToolContentBlock[]): ToolContentBlock[] {
+  return blocks.map((block) => ({
+    ...block,
+    text: block.text ? redactSensitiveText(block.text) : block.text,
+    uri: block.uri ? redactSensitiveText(block.uri) : block.uri,
+    name: block.name ? redactSensitiveText(block.name) : block.name,
+  }))
+}
+
+function sanitizeMcpTrace(trace: ProcessTrace): ProcessTrace {
+  return {
+    ...trace,
+    id: sanitizeTraceId(trace.id),
+    title: redactSensitiveText(trace.title),
+    content: trace.content ? redactSensitiveText(trace.content) : undefined,
+    metadata: sanitizeMcpTraceMetadata(trace.metadata),
+  }
+}
+
+function sanitizeTraceId(id: string): string {
+  const redacted = redactSensitiveText(id)
+  if (redacted === id) return id
+  return redacted.replace(/\[redacted\]/g, 'redacted').replace(/[^A-Za-z0-9_.:-]+/g, '-')
+}
+
+function sanitizeMcpTraceMetadata(metadata: Record<string, unknown> | undefined): Record<string, unknown> | undefined {
+  if (!metadata) return undefined
+  const output: Record<string, unknown> = {}
+  for (const [key, value] of Object.entries(metadata)) {
+    output[key] = sanitizeMcpTraceMetadataValue(value)
+  }
+  return output
+}
+
+function sanitizeMcpTraceMetadataValue(value: unknown): unknown {
+  if (typeof value === 'string') return redactSensitiveText(value)
+  if (Array.isArray(value)) return value.map(sanitizeMcpTraceMetadataValue)
+  if (value && typeof value === 'object') {
+    const output: Record<string, unknown> = {}
+    for (const [key, child] of Object.entries(value as Record<string, unknown>)) {
+      output[key] = sanitizeMcpTraceMetadataValue(child)
+    }
+    return output
+  }
+  return value
+}
+
+function mcpTraceMetadata(
+  server: McpServerConfig,
+  toolName: string,
+  tool?: McpToolManifest,
+  errorCode?: McpTraceErrorCode
+): Record<string, unknown> {
+  const source = server.id === BUILTIN_SERVER_ID ? 'builtin' : 'mcp'
+  const cancellationMetadata = errorCode === 'cancelled'
+    ? { status: 'cancelled', failureCode: 'cancelled' }
+    : {}
+  return {
+    ...buildAgentToolCallTraceMetadata({
+      mode: 'mcp-runtime',
+      source,
+      serverId: server.id,
+      toolName,
+      permission: tool?.permission,
+      status: errorCode ? (errorCode === 'execution_failed' ? 'error' : 'skipped') : 'done',
+      errorCode,
+    }),
+    serverId: server.id,
+    toolName,
+    source,
+    permission: tool?.permission,
+    connectionStatus: server.status,
+    errorCode,
+    ...cancellationMetadata,
+  }
+}
+
+function cancelledTrace(server: McpServerConfig, toolName: string, tool: McpToolManifest | undefined, startedAt: number): McpCallResult {
+  return failureTrace(toolName, st('mcpRuntime.cancelled'), startedAt, 'skipped', mcpTraceMetadata(server, toolName, tool, 'cancelled'))
+}
+
+function failureTrace(
+  toolName: string,
+  message: string,
+  startedAt: number,
+  status: ProcessTrace['status'] = 'error',
+  metadata?: Record<string, unknown>
+): McpCallResult {
+  const safeMessage = redactSensitiveText(message)
   return {
     ok: false,
-    content: [{ type: 'text', text: message }],
-    error: message,
+    content: [{ type: 'text', text: safeMessage }],
+    error: safeMessage,
     trace: completeTrace({
-      id: `mcp-failed-${toolName}-${startedAt}`,
+      id: `mcp-failed-${sanitizeTraceId(toolName)}-${startedAt}`,
       type: 'tool',
-      title: `MCP ${toolName}`,
-      content: message,
+      title: `MCP ${redactSensitiveText(toolName)}`,
+      content: safeMessage,
       status,
       startedAt,
+      metadata,
     }),
   }
 }
 
 function completeTrace(trace: ProcessTrace): ProcessTrace {
   const completedAt = Date.now()
-  return { ...trace, completedAt, durationMs: completedAt - (trace.startedAt ?? completedAt) }
+  return sanitizeMcpTrace({ ...trace, completedAt, durationMs: completedAt - (trace.startedAt ?? completedAt) })
+}
+
+function isAbortError(error: unknown): boolean {
+  return error instanceof Error && error.name === 'AbortError'
 }

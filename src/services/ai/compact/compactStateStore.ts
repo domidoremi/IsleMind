@@ -1,4 +1,5 @@
 import * as SQLite from 'expo-sqlite'
+import { shouldUseSqliteWebFallback, sqliteWebFallbackDb } from '@/services/sqliteFallback'
 
 const DB_NAME = 'islemind-context.db'
 
@@ -25,6 +26,7 @@ export interface CompactStateRecord {
 }
 
 async function getDb() {
+  if (shouldUseSqliteWebFallback) return sqliteWebFallbackDb as unknown as SQLite.SQLiteDatabase
   if (!dbPromise) {
     dbPromise = SQLite.openDatabaseAsync(DB_NAME).then(async (db) => {
       await db.execAsync(`

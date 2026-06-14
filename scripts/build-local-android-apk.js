@@ -4,12 +4,17 @@ const crypto = require('node:crypto')
 const { spawnSync } = require('node:child_process')
 const { normalizeVariant, supportedVariants } = require('./model-catalog')
 const { apkOutputDirName, formatApkArtifactName } = require('./release-artifact-contract')
+const { writeReleaseSourceSnapshot } = require('./release-freshness-contract')
 
 const projectRoot = path.resolve(__dirname, '..')
 const androidDir = path.join(projectRoot, 'android')
 const androidManifestPath = path.join(androidDir, 'app', 'src', 'main', 'AndroidManifest.xml')
 const outputDir = path.join(projectRoot, apkOutputDirName)
 const packageJson = require(path.join(projectRoot, 'package.json'))
+const apkOutputWaitMs = 10 * 60 * 1000
+const apkOutputPollMs = 2000
+const gradleNativeRetryAttempts = 3
+const preferredCmakeVersions = ['4.1.2']
 const releaseBuildPasses = [
   {
     label: 'universal-64',
@@ -134,8 +139,74 @@ function ensureDir(dir) {
   fs.mkdirSync(dir, { recursive: true })
 }
 
+function sleep(ms) {
+  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms)
+}
+
 function removeDir(dir) {
-  fs.rmSync(dir, { recursive: true, force: true })
+  if (!fs.existsSync(dir)) return
+  let lastError = null
+  const attempts = 8
+  for (let attempt = 1; attempt <= attempts; attempt += 1) {
+    try {
+      fs.rmSync(dir, { recursive: true, force: true, maxRetries: 3, retryDelay: 500 })
+      return
+    } catch (error) {
+      lastError = error
+      if (!isRetryableRemoveError(error) || attempt === attempts) break
+      sleep(Math.min(1000 * attempt, 5000))
+    }
+  }
+  const detail = lastError?.code ? `${lastError.code}: ${lastError.message}` : String(lastError)
+  throw new Error(`Could not remove ${dir} after ${attempts} attempts. Last error: ${detail}`)
+}
+
+function isRetryableRemoveError(error) {
+  return ['EBUSY', 'ENOTEMPTY', 'EPERM', 'EACCES'].includes(error?.code)
+}
+
+function removeNativeBuildOutputs(buildType) {
+  const dirs = [
+    path.join(androidDir, 'app', '.cxx'),
+    path.join(androidDir, 'app', 'build', 'intermediates', 'merged_native_libs', buildType),
+    path.join(androidDir, 'app', 'build', 'intermediates', 'stripped_native_libs', buildType),
+    path.join(androidDir, 'app', 'build', 'intermediates', 'incremental', `package${capitalizeBuildType(buildType)}`),
+    path.join(androidDir, 'app', 'build', 'outputs', 'apk', buildType),
+  ]
+  const failures = []
+  for (const dir of dirs) {
+    try {
+      removeDir(dir)
+    } catch (error) {
+      failures.push({ dir, error })
+    }
+  }
+  return failures
+}
+
+function capitalizeBuildType(buildType) {
+  return `${buildType.slice(0, 1).toUpperCase()}${buildType.slice(1)}`
+}
+
+function runGradleAssembleWithNativeRetry(args, env) {
+  const buildType = args[0] === 'assembleRelease' ? 'release' : 'debug'
+  let lastError = null
+  for (let attempt = 1; attempt <= gradleNativeRetryAttempts; attempt += 1) {
+    try {
+      run(gradleCommand(), args, { cwd: androidDir, env })
+      return
+    } catch (error) {
+      lastError = error
+      if (attempt === gradleNativeRetryAttempts) break
+      console.warn(`Gradle failed; clearing native/package build outputs and retrying (${attempt}/${gradleNativeRetryAttempts - 1}).`)
+      const cleanupFailures = removeNativeBuildOutputs(buildType)
+      for (const failure of cleanupFailures) {
+        const detail = failure.error?.code ? `${failure.error.code}: ${failure.error.message}` : String(failure.error)
+        console.warn(`Could not remove ${failure.dir}; continuing retry. ${detail}`)
+      }
+    }
+  }
+  throw lastError
 }
 
 function allowReleaseCleartextTraffic() {
@@ -151,6 +222,68 @@ function allowReleaseCleartextTraffic() {
   fs.writeFileSync(androidManifestPath, next)
 }
 
+function ensureAndroidLocalProperties() {
+  const sdkDir = resolveAndroidSdkDir()
+  if (!sdkDir) return
+  const localPropertiesPath = path.join(androidDir, 'local.properties')
+  const properties = readLocalProperties(localPropertiesPath)
+  properties.set('sdk.dir', sdkDir)
+  const cmakeDir = resolvePreferredCmakeDir(sdkDir)
+  if (cmakeDir) {
+    properties.set('cmake.dir', cmakeDir)
+  }
+  writeLocalProperties(localPropertiesPath, properties)
+}
+
+function resolveAndroidSdkDir() {
+  const candidates = [
+    process.env.ANDROID_HOME,
+    process.env.ANDROID_SDK_ROOT,
+    readLocalProperties(path.join(androidDir, 'local.properties')).get('sdk.dir'),
+  ].filter(Boolean)
+  for (const candidate of candidates) {
+    const normalized = path.resolve(candidate)
+    if (fs.existsSync(normalized)) return normalized
+  }
+  return ''
+}
+
+function resolvePreferredCmakeDir(sdkDir) {
+  for (const version of preferredCmakeVersions) {
+    const cmakeDir = path.join(sdkDir, 'cmake', version)
+    const cmakeExecutable = path.join(cmakeDir, 'bin', process.platform === 'win32' ? 'cmake.exe' : 'cmake')
+    if (fs.existsSync(cmakeExecutable)) return cmakeDir
+  }
+  return ''
+}
+
+function readLocalProperties(filePath) {
+  const properties = new Map()
+  if (!fs.existsSync(filePath)) return properties
+  const lines = fs.readFileSync(filePath, 'utf8').split(/\r?\n/)
+  for (const line of lines) {
+    const trimmed = line.trim()
+    if (!trimmed || trimmed.startsWith('#')) continue
+    const separator = trimmed.indexOf('=')
+    if (separator < 0) continue
+    const key = trimmed.slice(0, separator).trim()
+    const value = trimmed.slice(separator + 1).trim().replace(/\\:/g, ':').replace(/\\\\/g, '\\')
+    if (key) properties.set(key, value)
+  }
+  return properties
+}
+
+function writeLocalProperties(filePath, properties) {
+  const body = [...properties.entries()]
+    .map(([key, value]) => `${key}=${formatLocalPropertyValue(value)}`)
+    .join('\n')
+  fs.writeFileSync(filePath, `${body}\n`, 'utf8')
+}
+
+function formatLocalPropertyValue(value) {
+  return path.resolve(value).replace(/\\/g, '/').replace(/^([A-Za-z]):/, '$1\\:')
+}
+
 function sha256File(filePath) {
   const hash = crypto.createHash('sha256')
   hash.update(fs.readFileSync(filePath))
@@ -164,6 +297,11 @@ function writeSha256File(filePath) {
   return checksumPath
 }
 
+function writeReleaseSidecars(filePath) {
+  writeSha256File(filePath)
+  writeReleaseSourceSnapshot(projectRoot, filePath)
+}
+
 function listApks(dir) {
   if (!fs.existsSync(dir)) return []
   return fs.readdirSync(dir)
@@ -171,9 +309,19 @@ function listApks(dir) {
     .map((name) => path.join(dir, name))
 }
 
+function waitForApks(dir, timeoutMs = apkOutputWaitMs) {
+  const startedAt = Date.now()
+  while (Date.now() - startedAt < timeoutMs) {
+    const apks = listApks(dir)
+    if (apks.length) return apks
+    sleep(apkOutputPollMs)
+  }
+  return listApks(dir)
+}
+
 function copyOutputs(variant, buildType, pass) {
   const sourceDir = path.join(androidDir, 'app', 'build', 'outputs', 'apk', buildType)
-  const apks = listApks(sourceDir)
+  const apks = waitForApks(sourceDir)
   if (!apks.length) {
     throw new Error(`No APK files were found in ${sourceDir}.`)
   }
@@ -186,7 +334,6 @@ function copyOutputs(variant, buildType, pass) {
     const targetName = formatApkArtifactName({ version: packageJson.version, buildType, variant, arch: pass.arch })
     const target = path.join(outputDir, targetName)
     fs.copyFileSync(apks[0], target)
-    writeSha256File(target)
     copied.push(target)
     assertReleaseOutputs(copied, variant, pass)
     return copied
@@ -197,7 +344,6 @@ function copyOutputs(variant, buildType, pass) {
     const targetName = formatApkArtifactName({ version: packageJson.version, buildType, variant, arch })
     const target = path.join(outputDir, targetName)
     fs.copyFileSync(apk, target)
-    writeSha256File(target)
     copied.push(target)
   }
   if (buildType === 'release') {
@@ -229,6 +375,7 @@ function assertReleaseOutputs(outputs, variant, pass) {
 function prepareAndroidProjectForRelease() {
   run(commandName('node'), ['scripts/patch-onnxruntime-16kb.js'])
   run(commandName('node'), ['node_modules/expo/bin/cli', 'prebuild', '--platform', 'android'])
+  ensureAndroidLocalProperties()
   allowReleaseCleartextTraffic()
   run(commandName('node'), ['scripts/patch-onnxruntime-16kb.js'])
   run(commandName('node'), ['scripts/configure-android-release.js', '--skip-signing'])
@@ -239,6 +386,7 @@ function buildVariant(variant, args) {
   run(commandName('node'), ['scripts/patch-onnxruntime-16kb.js'])
   run(commandName('node'), ['scripts/prepare-model-bundle.js', '--variant', variant])
   if (args.clean) {
+    removeDir(path.join(androidDir, 'app', '.cxx'))
     run(gradleCommand(), ['clean', '--no-daemon'], { cwd: androidDir })
   }
   const passes = args.buildType === 'release'
@@ -249,25 +397,21 @@ function buildVariant(variant, args) {
   for (const pass of selectedPasses) {
     removeDir(path.join(androidDir, 'app', 'build', 'outputs', 'apk', args.buildType))
     if (args.buildType === 'release') {
-      removeDir(path.join(androidDir, 'app', '.cxx'))
-      removeDir(path.join(androidDir, 'app', 'build', 'intermediates', 'merged_native_libs', args.buildType))
-      removeDir(path.join(androidDir, 'app', 'build', 'intermediates', 'stripped_native_libs', args.buildType))
+      removeNativeBuildOutputs(args.buildType)
     }
-    run(gradleCommand(), [
+    runGradleAssembleWithNativeRetry([
       assembleTask,
       ...(args.buildType === 'release' ? ['--rerun-tasks'] : []),
       '--no-daemon',
+      ...(args.buildType === 'release' ? ['--no-parallel'] : []),
       '--stacktrace',
       `-PislemindAbiFilters=${pass.abiFilters}`,
       `-PislemindEnableAbiSplits=${pass.enableAbiSplits ?? 'true'}`,
       `-PislemindUniversalApk=${pass.universalApk}`,
       `-PreactNativeArchitectures=${pass.reactNativeArchitectures}`,
     ], {
-      cwd: androidDir,
-      env: {
-        ISLEMIND_MODEL_BUNDLE: variant,
-        EXPO_PUBLIC_ISLEMIND_MODEL_BUNDLE: variant,
-      },
+      ISLEMIND_MODEL_BUNDLE: variant,
+      EXPO_PUBLIC_ISLEMIND_MODEL_BUNDLE: variant,
     })
     outputs.push(...copyOutputs(variant, args.buildType, pass))
   }
@@ -306,6 +450,9 @@ function main() {
     if (args.buildType === 'release') {
       run(commandName('node'), ['scripts/prepare-model-bundle.js', '--variant', 'no-model'])
     }
+  }
+  for (const output of outputs) {
+    writeReleaseSidecars(output)
   }
   if (args.installDevice) {
     installApk(args.installDevice, outputs)

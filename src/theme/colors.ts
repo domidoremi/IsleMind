@@ -22,6 +22,12 @@ type CardColorMap = Record<ThemeCardColor, { bg: string; fg: string }>
 export type ThemeBackgroundMode = 'plain' | 'ambient' | 'focus' | 'surface'
 export type ThemeBackgroundMotion = 'none' | 'subtle' | 'full'
 
+type ThemeToneToken = {
+  background: string
+  foreground: string
+  border: string
+}
+
 export interface ThemeBackgroundTokens {
   defaultMode: ThemeBackgroundMode
   canvas: string
@@ -53,6 +59,23 @@ interface ThemeUiTokens {
   minimal: boolean
   ornamented: boolean
   ambient: 'island' | 'plain'
+  section: {
+    marker: string
+    title: string
+    divider: string
+  }
+  icon: {
+    accentBackground: string
+    accentForeground: string
+  }
+  tone: {
+    success: ThemeToneToken
+    warning: ThemeToneToken
+    danger: ThemeToneToken
+    info: ThemeToneToken
+    neutral: ThemeToneToken
+    ink: ThemeToneToken
+  }
   radius: {
     card: number
     titleCard: number
@@ -67,6 +90,7 @@ interface ThemeUiTokens {
   control: {
     primaryBackground: string
     primaryForeground: string
+    dangerForeground: string
     primaryBorder: string
     defaultBackground: string
     link: string
@@ -106,6 +130,28 @@ interface ThemeUiTokens {
     shadowOpacity: number
     shadowRadius: number
     shadowOffset: number
+  }
+  composer: {
+    shellBackground: string
+    shellFocusedBackground: string
+    toolbarBackground: string
+    toolbarBorder: string
+    statusBackground: string
+    statusForeground: string
+  }
+  actionBar: {
+    background: string
+    border: string
+    itemBackground: string
+    itemBorder: string
+    itemActiveBackground: string
+  }
+  message: {
+    userBackground: string
+    userForeground: string
+    userBorder: string
+    userActionBackground: string
+    userActionForeground: string
   }
   code: {
     background: string
@@ -185,6 +231,13 @@ export interface AppPalette {
     field: string
     stroke: string
     strokeStrong: string
+    sheet: {
+      surface: string
+      chrome: string
+      body: string
+      border: string
+      divider: string
+    }
   }
   status: {
     info: string
@@ -241,6 +294,47 @@ function islandUi(mode: ResolvedThemeMode): ThemeUiTokens {
     minimal: false,
     ornamented: true,
     ambient: 'island',
+    section: {
+      marker: dark ? '#7cc9a8' : '#19c8b9',
+      title: dark ? '#fff2dd' : '#794f27',
+      divider: dark ? 'rgba(255, 238, 211, 0.12)' : 'rgba(114, 93, 66, 0.16)',
+    },
+    icon: {
+      accentBackground: dark ? '#2e5145' : '#d8f3ee',
+      accentForeground: dark ? '#b9f0d5' : '#0c6f66',
+    },
+    tone: {
+      success: {
+        background: dark ? '#214438' : '#e6f9f6',
+        foreground: dark ? '#7cc9a8' : '#138f83',
+        border: dark ? 'rgba(124, 201, 168, 0.24)' : 'rgba(25, 200, 185, 0.24)',
+      },
+      warning: {
+        background: dark ? '#4c3920' : '#fff1c5',
+        foreground: dark ? '#e8b15a' : '#8f6500',
+        border: dark ? 'rgba(232, 177, 90, 0.24)' : 'rgba(245, 195, 28, 0.3)',
+      },
+      danger: {
+        background: dark ? 'rgba(240, 113, 95, 0.14)' : 'rgba(224, 90, 90, 0.12)',
+        foreground: dark ? '#f0715f' : '#d84a4a',
+        border: dark ? 'rgba(240, 113, 95, 0.26)' : 'rgba(224, 90, 90, 0.22)',
+      },
+      info: {
+        background: dark ? '#203d47' : '#d9edf2',
+        foreground: dark ? '#85b8cc' : '#4d8394',
+        border: dark ? 'rgba(133, 184, 204, 0.24)' : 'rgba(139, 189, 208, 0.3)',
+      },
+      neutral: {
+        background: dark ? '#2b221a' : 'rgb(247, 243, 223)',
+        foreground: dark ? '#c8b69f' : '#725d42',
+        border: dark ? 'rgba(255, 238, 211, 0.1)' : 'rgba(114, 93, 66, 0.16)',
+      },
+      ink: {
+        background: dark ? '#fff2dd' : '#794f27',
+        foreground: dark ? '#17130f' : '#f8f8f0',
+        border: dark ? 'rgba(255, 238, 211, 0.28)' : 'rgba(114, 93, 66, 0.24)',
+      },
+    },
     radius: {
       card: 20,
       titleCard: 36,
@@ -253,11 +347,12 @@ function islandUi(mode: ResolvedThemeMode): ThemeUiTokens {
       controlLarge: 24,
     },
     control: {
-      primaryBackground: dark ? '#211a14' : '#f8f8f0',
-      primaryForeground: dark ? '#fff2dd' : '#794f27',
-      primaryBorder: dark ? 'rgba(255, 238, 211, 0.18)' : '#f8f8f0',
+      primaryBackground: dark ? '#e8b15a' : '#ffcc00',
+      primaryForeground: dark ? '#17130f' : '#4f3517',
+      dangerForeground: dark ? '#17130f' : '#ffffff',
+      primaryBorder: dark ? 'rgba(232, 177, 90, 0.72)' : '#d99d00',
       defaultBackground: dark ? '#211a14' : '#f8f8f0',
-      link: '#19c8b9',
+      link: dark ? '#7cc9a8' : '#138f83',
       focus: '#ffcc00',
       shadow: dark ? '#050302' : '#bdaea0',
       dangerShadow: '#c94444',
@@ -295,6 +390,28 @@ function islandUi(mode: ResolvedThemeMode): ThemeUiTokens {
       shadowRadius: 0,
       shadowOffset: 0,
     },
+    composer: {
+      shellBackground: dark ? '#211a14' : '#fffdf5',
+      shellFocusedBackground: dark ? '#241d17' : '#f8f8f0',
+      toolbarBackground: dark ? 'rgba(255, 238, 211, 0.06)' : 'rgba(114, 93, 66, 0.06)',
+      toolbarBorder: dark ? 'rgba(255, 238, 211, 0.1)' : 'rgba(114, 93, 66, 0.12)',
+      statusBackground: dark ? 'rgba(255, 238, 211, 0.08)' : 'rgba(114, 93, 66, 0.08)',
+      statusForeground: dark ? '#c8b69f' : '#725d42',
+    },
+    actionBar: {
+      background: dark ? 'rgba(33, 26, 20, 0.94)' : 'rgba(255, 253, 245, 0.96)',
+      border: dark ? 'rgba(255, 238, 211, 0.12)' : 'rgba(114, 93, 66, 0.16)',
+      itemBackground: dark ? '#2b221a' : '#f8f8f0',
+      itemBorder: dark ? 'rgba(255, 238, 211, 0.12)' : 'rgba(114, 93, 66, 0.14)',
+      itemActiveBackground: dark ? '#382c21' : '#fff1c5',
+    },
+    message: {
+      userBackground: dark ? '#fff2dd' : '#794f27',
+      userForeground: dark ? '#17130f' : '#f8f8f0',
+      userBorder: dark ? 'rgba(255, 238, 211, 0.28)' : 'rgba(114, 93, 66, 0.18)',
+      userActionBackground: dark ? 'rgba(23, 19, 15, 0.08)' : 'rgba(255, 255, 255, 0.18)',
+      userActionForeground: dark ? '#17130f' : '#f8f8f0',
+    },
     code: {
       background: '#2b2118',
       border: '#3d3028',
@@ -304,9 +421,9 @@ function islandUi(mode: ResolvedThemeMode): ThemeUiTokens {
       headerBackground: dark ? '#214438' : '#e6f9f6',
     },
     loading: {
-      background: '#e6f9f6',
-      border: '#19c8b9',
-      dot: '#19c8b9',
+      background: dark ? '#214438' : '#e6f9f6',
+      border: dark ? '#7cc9a8' : '#138f83',
+      dot: dark ? '#7cc9a8' : '#138f83',
     },
     time: {
       border: dark ? '#4c3920' : '#d4cfc3',
@@ -325,6 +442,47 @@ function minimalUi(mode: ResolvedThemeMode): ThemeUiTokens {
     minimal: true,
     ornamented: false,
     ambient: 'plain',
+    section: {
+      marker: dark ? '#d7f0e8' : '#234f46',
+      title: dark ? '#e8ecee' : '#191b1d',
+      divider: dark ? 'rgba(232, 236, 238, 0.12)' : 'rgba(25, 27, 29, 0.12)',
+    },
+    icon: {
+      accentBackground: dark ? '#d7f0e8' : '#dcebe6',
+      accentForeground: dark ? '#0b0d0e' : '#173a34',
+    },
+    tone: {
+      success: {
+        background: dark ? '#17322d' : '#e5f2ee',
+        foreground: dark ? '#81c59b' : '#3f7c5f',
+        border: dark ? 'rgba(129, 197, 155, 0.24)' : 'rgba(63, 124, 95, 0.22)',
+      },
+      warning: {
+        background: dark ? '#352819' : '#f4ead8',
+        foreground: dark ? '#d0a15a' : '#a66a1f',
+        border: dark ? 'rgba(208, 161, 90, 0.24)' : 'rgba(166, 106, 31, 0.22)',
+      },
+      danger: {
+        background: dark ? 'rgba(224, 122, 115, 0.14)' : 'rgba(181, 69, 63, 0.1)',
+        foreground: dark ? '#e07a73' : '#b5453f',
+        border: dark ? 'rgba(224, 122, 115, 0.24)' : 'rgba(181, 69, 63, 0.2)',
+      },
+      info: {
+        background: dark ? '#1a2630' : '#e8eef8',
+        foreground: dark ? '#88949b' : '#64748b',
+        border: dark ? 'rgba(136, 148, 155, 0.24)' : 'rgba(100, 116, 139, 0.18)',
+      },
+      neutral: {
+        background: dark ? '#141719' : '#ffffff',
+        foreground: dark ? '#b3bbc0' : '#565f63',
+        border: dark ? 'rgba(232, 236, 238, 0.1)' : 'rgba(25, 27, 29, 0.1)',
+      },
+      ink: {
+        background: dark ? '#d7f0e8' : '#234f46',
+        foreground: dark ? '#0b0d0e' : '#ffffff',
+        border: dark ? 'rgba(215, 240, 232, 0.58)' : 'rgba(35, 79, 70, 0.34)',
+      },
+    },
     radius: {
       card: 14,
       titleCard: 16,
@@ -339,7 +497,8 @@ function minimalUi(mode: ResolvedThemeMode): ThemeUiTokens {
     control: {
       primaryBackground: dark ? '#d7f0e8' : '#234f46',
       primaryForeground: dark ? '#0b0d0e' : '#ffffff',
-      primaryBorder: dark ? '#d7f0e8' : '#234f46',
+      dangerForeground: dark ? '#0b0d0e' : '#ffffff',
+      primaryBorder: dark ? 'rgba(215, 240, 232, 0.58)' : 'rgba(35, 79, 70, 0.34)',
       defaultBackground: dark ? '#141719' : '#ffffff',
       link: dark ? '#9fd8ca' : '#2f6259',
       focus: dark ? '#9fd8ca' : '#2f6259',
@@ -365,10 +524,10 @@ function minimalUi(mode: ResolvedThemeMode): ThemeUiTokens {
     switch: {
       trackOn: dark ? '#9fd8ca' : '#234f46',
       trackOff: dark ? '#252b2e' : '#d8d8d2',
-      trackOnBorder: dark ? '#9fd8ca' : '#234f46',
+      trackOnBorder: dark ? 'rgba(159, 216, 202, 0.5)' : 'rgba(35, 79, 70, 0.32)',
       trackOffBorder: dark ? 'rgba(232, 236, 238, 0.18)' : 'rgba(25, 27, 29, 0.12)',
       thumb: dark ? '#0b0d0e' : '#ffffff',
-      thumbOnBorder: dark ? '#0b0d0e' : '#ffffff',
+      thumbOnBorder: dark ? 'rgba(11, 13, 14, 0.28)' : 'rgba(255, 255, 255, 0.72)',
       thumbOffBorder: dark ? '#5f686d' : '#b7b7ae',
       shadowOpacity: 0,
     },
@@ -378,6 +537,28 @@ function minimalUi(mode: ResolvedThemeMode): ThemeUiTokens {
       shadowOpacity: dark ? 0.08 : 0.04,
       shadowRadius: 10,
       shadowOffset: 2,
+    },
+    composer: {
+      shellBackground: dark ? '#111416' : '#ffffff',
+      shellFocusedBackground: dark ? '#141719' : '#ffffff',
+      toolbarBackground: dark ? 'rgba(232, 236, 238, 0.05)' : 'rgba(25, 27, 29, 0.04)',
+      toolbarBorder: dark ? 'rgba(232, 236, 238, 0.1)' : 'rgba(25, 27, 29, 0.1)',
+      statusBackground: dark ? 'rgba(232, 236, 238, 0.07)' : 'rgba(25, 27, 29, 0.05)',
+      statusForeground: dark ? '#b3bbc0' : '#565f63',
+    },
+    actionBar: {
+      background: dark ? 'rgba(17, 20, 22, 0.96)' : 'rgba(255, 255, 255, 0.96)',
+      border: dark ? 'rgba(232, 236, 238, 0.12)' : 'rgba(25, 27, 29, 0.12)',
+      itemBackground: dark ? '#1b2023' : '#ffffff',
+      itemBorder: dark ? 'rgba(232, 236, 238, 0.1)' : 'rgba(25, 27, 29, 0.1)',
+      itemActiveBackground: dark ? '#252b2e' : '#f0efea',
+    },
+    message: {
+      userBackground: dark ? '#d7f0e8' : '#234f46',
+      userForeground: dark ? '#0b0d0e' : '#ffffff',
+      userBorder: dark ? '#d7f0e8' : '#234f46',
+      userActionBackground: dark ? 'rgba(11, 13, 14, 0.08)' : 'rgba(255, 255, 255, 0.14)',
+      userActionForeground: dark ? '#0b0d0e' : '#ffffff',
     },
     code: {
       background: dark ? '#0f1113' : '#1e2326',
@@ -475,7 +656,7 @@ const islandLight: AppPalette = {
   borderStrong: 'rgba(114, 93, 66, 0.28)',
   text: '#794f27',
   textSecondary: '#725d42',
-  textTertiary: '#9f927d',
+  textTertiary: '#94856d',
   success: '#6fba2c',
   warning: '#f5c31c',
   error: '#e05a5a',
@@ -518,6 +699,13 @@ const islandLight: AppPalette = {
     field: 'rgb(247, 243, 223)',
     stroke: 'rgba(114, 93, 66, 0.16)',
     strokeStrong: 'rgba(114, 93, 66, 0.28)',
+    sheet: {
+      surface: '#fffdf5',
+      chrome: 'rgba(255, 253, 245, 0.92)',
+      body: '#fffdf5',
+      border: 'rgba(114, 93, 66, 0.28)',
+      divider: 'rgba(114, 93, 66, 0.16)',
+    },
   },
   status: {
     info: '#8bbdd0',
@@ -591,6 +779,13 @@ const islandDark: AppPalette = {
     field: '#2b221a',
     stroke: 'rgba(255, 238, 211, 0.1)',
     strokeStrong: 'rgba(255, 238, 211, 0.22)',
+    sheet: {
+      surface: '#211a14',
+      chrome: 'rgba(33, 26, 20, 0.94)',
+      body: '#211a14',
+      border: 'rgba(255, 238, 211, 0.22)',
+      divider: 'rgba(255, 238, 211, 0.1)',
+    },
   },
   status: {
     info: '#85b8cc',
@@ -621,7 +816,7 @@ const minimalLight: AppPalette = {
   borderStrong: 'rgba(25, 27, 29, 0.18)',
   text: '#1b1d1f',
   textSecondary: '#565f63',
-  textTertiary: '#868b8f',
+  textTertiary: '#7f8589',
   success: '#3f7c5f',
   warning: '#a66a1f',
   error: '#b5453f',
@@ -664,6 +859,13 @@ const minimalLight: AppPalette = {
     field: '#ffffff',
     stroke: 'rgba(25, 27, 29, 0.1)',
     strokeStrong: 'rgba(25, 27, 29, 0.18)',
+    sheet: {
+      surface: '#ffffff',
+      chrome: '#f7f7f2',
+      body: '#ffffff',
+      border: 'rgba(25, 27, 29, 0.18)',
+      divider: 'rgba(25, 27, 29, 0.1)',
+    },
   },
   status: {
     info: '#64748b',
@@ -737,6 +939,13 @@ const minimalDark: AppPalette = {
     field: '#141719',
     stroke: 'rgba(232, 236, 238, 0.1)',
     strokeStrong: 'rgba(232, 236, 238, 0.18)',
+    sheet: {
+      surface: '#111416',
+      chrome: '#141719',
+      body: '#111416',
+      border: 'rgba(232, 236, 238, 0.18)',
+      divider: 'rgba(232, 236, 238, 0.1)',
+    },
   },
   status: {
     info: '#88949b',

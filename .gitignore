@@ -65,6 +65,9 @@ docs/
 docs/*
 !docs/production-qa-matrix.md
 !docs/README.md
+!docs/agentic-capability-boundary.md
+!docs/agentic-workflow-roadmap.md
+!docs/android-status-notification-roadmap.md
 !docs/readme/
 !docs/readme/**
 local-docs/

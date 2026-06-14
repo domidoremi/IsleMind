@@ -161,9 +161,12 @@ export function OnboardingFlow({ onComplete, onSkip }: OnboardingFlowProps) {
   const [leaving, setLeaving] = useState(false)
   const stage = STAGES[stageIndex]
   const selectedCompanion = COMPANIONS.find((item) => item.id === companionMode) ?? DEFAULT_COMPANION
-  const tone = toneColors(stage.id === 'companion' ? selectedCompanion.tone : stage.tone, colors)
+  const tone = toneColors(stage.id === 'companion' ? selectedCompanion.tone : stage.tone, colors, isDark)
   const progress = (stageIndex + 1) / STAGES.length
   const compact = height < 680 || width < 370
+  const pagePaddingHorizontal = compact ? 16 : 22
+  const titleMaxWidth = Math.max(244, Math.min(compact ? 316 : 360, width - pagePaddingHorizontal * 2))
+  const bodyMaxWidth = Math.max(240, Math.min(compact ? 310 : 348, width - pagePaddingHorizontal * 2))
 
   const promptOptions = useMemo(() => {
     const companion = COMPANIONS.find((item) => item.id === companionMode) ?? DEFAULT_COMPANION
@@ -265,7 +268,7 @@ export function OnboardingFlow({ onComplete, onSkip }: OnboardingFlowProps) {
               flex: 1,
               paddingTop: Math.max(insets.top + 12, 28),
               paddingBottom: Math.max(insets.bottom + 12, 24),
-              paddingHorizontal: compact ? 16 : 22,
+              paddingHorizontal: pagePaddingHorizontal,
             }}
           >
             <TopBar
@@ -283,7 +286,7 @@ export function OnboardingFlow({ onComplete, onSkip }: OnboardingFlowProps) {
                 from={motion === 'full' ? { opacity: 0, translateY: 18, scale: 0.99 } : { opacity: 0 }}
                 animate={{ opacity: 1, translateY: 0, scale: 1 }}
                 transition={motion === 'full' ? { type: 'spring', ...motionTokens.spring.gentle } : { type: 'timing', duration: motionTokens.duration.fast }}
-                style={{ alignItems: 'center' }}
+                style={{ alignItems: 'center', width: '100%' }}
               >
                 <HeroStage
                   stage={stage}
@@ -304,7 +307,7 @@ export function OnboardingFlow({ onComplete, onSkip }: OnboardingFlowProps) {
                     fontWeight: '900',
                     textAlign: 'center',
                     marginTop: 8,
-                    maxWidth: compact ? 316 : 344,
+                    maxWidth: titleMaxWidth,
                   }}
                 >
                   {t(stage.titleKey)}
@@ -317,7 +320,7 @@ export function OnboardingFlow({ onComplete, onSkip }: OnboardingFlowProps) {
                     fontWeight: '700',
                     textAlign: 'center',
                     marginTop: 10,
-                    maxWidth: 344,
+                    maxWidth: bodyMaxWidth,
                   }}
                 >
                   {t(stage.bodyKey)}
@@ -351,7 +354,7 @@ export function OnboardingFlow({ onComplete, onSkip }: OnboardingFlowProps) {
                   accessibilityLabel={t(stage.actionKey)}
                   style={{
                     minHeight: 54,
-                    borderRadius: 27,
+                    borderRadius: colors.ui.radius.controlLarge,
                     paddingHorizontal: 18,
                     flexDirection: 'row',
                     alignItems: 'center',
@@ -365,12 +368,12 @@ export function OnboardingFlow({ onComplete, onSkip }: OnboardingFlowProps) {
                     elevation: 4,
                   }}
                 >
-                  <Text style={{ color: colors.primaryForeground, fontSize: 15, lineHeight: 18, fontWeight: '900' }}>
+                  <Text style={{ color: tone.foreground, fontSize: 15, lineHeight: 18, fontWeight: '900' }}>
                     {t(stage.actionKey)}
                   </Text>
                   {stage.id === 'firstPrompt'
-                    ? <SendHorizontal color={colors.primaryForeground} size={17} strokeWidth={2.2} />
-                    : <Check color={colors.primaryForeground} size={17} strokeWidth={2.2} />}
+                    ? <SendHorizontal color={tone.foreground} size={17} strokeWidth={2.2} />
+                    : <Check color={tone.foreground} size={17} strokeWidth={2.2} />}
                 </IslePressable>
                 {stage.id === 'capability' ? (
                   <Text style={{ color: colors.textTertiary, fontSize: 11, lineHeight: 16, textAlign: 'center', fontWeight: '800' }}>
@@ -414,24 +417,24 @@ function TopBar({
         style={{
           width: 44,
           height: 44,
-          borderRadius: 22,
+          borderRadius: colors.ui.radius.controlMiddle,
           alignItems: 'center',
           justifyContent: 'center',
-          backgroundColor: onBack ? colors.material.chrome : 'transparent',
+          backgroundColor: onBack ? colors.ui.card.defaultBackground : 'transparent',
           opacity: onBack ? 1 : 0,
         }}
       >
         <Text style={{ color: colors.textSecondary, fontSize: 18, lineHeight: 22, fontWeight: '900' }}>‹</Text>
       </IslePressable>
-      <View style={{ flex: 1, flexDirection: 'row', gap: 6, justifyContent: 'center' }}>
+      <View style={{ flex: 1, minWidth: 0, flexDirection: 'row', gap: 6, justifyContent: 'center' }}>
         {Array.from({ length: total }).map((_, index) => (
           <View
             key={index}
             style={{
               width: index === current ? 28 : 8,
               height: 8,
-              borderRadius: 4,
-              backgroundColor: index <= current ? colors.primary : colors.borderStrong,
+              borderRadius: colors.ui.radius.chip,
+              backgroundColor: index <= current ? colors.ui.section.marker : colors.ui.section.divider,
             }}
           />
         ))}
@@ -441,13 +444,12 @@ function TopBar({
         onPress={onSkip}
         accessibilityLabel={skipLabel}
         style={{
-          minWidth: 62,
-          height: 44,
-          borderRadius: 22,
+          minHeight: 44,
+          borderRadius: colors.ui.radius.controlMiddle,
           alignItems: 'center',
           justifyContent: 'center',
           paddingHorizontal: 12,
-          backgroundColor: colors.material.chrome,
+          backgroundColor: colors.ui.card.defaultBackground,
         }}
       >
         <Text style={{ color: colors.textSecondary, fontSize: 12, lineHeight: 16, fontWeight: '900' }}>{skipLabel}</Text>
@@ -517,7 +519,7 @@ function HeroStage({
             borderRadius: markSize / 2,
             alignItems: 'center',
             justifyContent: 'center',
-            backgroundColor: colors.material.chrome,
+            backgroundColor: colors.ui.card.defaultBackground,
             borderWidth: 1,
             borderColor: tone.line,
           }}
@@ -584,18 +586,18 @@ function AwakenStep({ tone, compact }: { tone: ToneColors; compact: boolean }) {
           transition={{ type: 'spring', ...motionTokens.spring.gentle, delay: index * 45 }}
           style={{
             minHeight: 42,
-            borderRadius: 21,
+            borderRadius: colors.ui.radius.chip,
             paddingHorizontal: 14,
             flexDirection: 'row',
             alignItems: 'center',
             gap: 10,
-            backgroundColor: colors.material.chrome,
+            backgroundColor: colors.ui.card.defaultBackground,
             borderWidth: 1,
-            borderColor: colors.border,
+            borderColor: colors.material.stroke,
           }}
         >
           <View style={{ width: 9, height: 9, borderRadius: 5, backgroundColor: tone.primary }} />
-          <Text style={{ flex: 1, color: colors.textSecondary, fontSize: 12, lineHeight: 16, fontWeight: '900' }}>
+          <Text style={{ flex: 1, minWidth: 0, color: colors.textSecondary, fontSize: 12, lineHeight: 16, fontWeight: '900' }}>
             {t(`onboarding.awaken.signals.${id}`)}
           </Text>
         </MotiView>
@@ -625,21 +627,21 @@ function PrivacyStep({ lit, onToggle, tone, compact }: { lit: Set<string>; onTog
               accessibilityLabel={t(item.titleKey)}
               style={{
                 minHeight: compact ? 54 : 62,
-                borderRadius: 24,
+                borderRadius: colors.ui.radius.card,
                 paddingHorizontal: 13,
                 paddingVertical: 10,
                 flexDirection: 'row',
                 alignItems: 'center',
                 gap: 12,
-                backgroundColor: active ? tone.wash : colors.material.chrome,
+                backgroundColor: active ? tone.wash : colors.ui.card.defaultBackground,
                 borderWidth: 1,
-                borderColor: active ? tone.primary : colors.border,
+                borderColor: active ? tone.primary : colors.material.stroke,
               }}
             >
-              <View style={{ width: 38, height: 38, borderRadius: 19, alignItems: 'center', justifyContent: 'center', backgroundColor: active ? tone.primary : colors.islandRaised }}>
-                <Icon color={active ? colors.primaryForeground : colors.textSecondary} size={17} strokeWidth={2.2} />
+              <View style={{ width: 38, height: 38, borderRadius: colors.ui.radius.controlLarge, alignItems: 'center', justifyContent: 'center', backgroundColor: active ? tone.primary : colors.ui.icon.accentBackground }}>
+                <Icon color={active ? tone.foreground : colors.textSecondary} size={17} strokeWidth={2.2} />
               </View>
-              <View style={{ flex: 1 }}>
+              <View style={{ flex: 1, minWidth: 0 }}>
                 <Text style={{ color: colors.text, fontSize: 13, lineHeight: 17, fontWeight: '900' }}>{t(item.titleKey)}</Text>
                 <Text numberOfLines={2} style={{ color: colors.textSecondary, fontSize: 11, lineHeight: 15, fontWeight: '700', marginTop: 2 }}>
                   {t(item.bodyKey)}
@@ -670,23 +672,23 @@ function CompanionStep({ selected, onSelect, tone, compact }: { selected: Onboar
               accessibilityLabel={t(item.labelKey)}
               style={{
                 minHeight: 44,
-                borderRadius: 22,
+                borderRadius: colors.ui.radius.controlMiddle,
                 paddingHorizontal: 13,
                 alignItems: 'center',
                 justifyContent: 'center',
-                backgroundColor: active ? tone.primary : colors.material.chrome,
+                backgroundColor: active ? tone.primary : colors.ui.card.defaultBackground,
                 borderWidth: 1,
-                borderColor: active ? tone.primary : colors.border,
+                borderColor: active ? tone.primary : colors.material.stroke,
               }}
             >
-              <Text style={{ color: active ? colors.primaryForeground : colors.textSecondary, fontSize: 12, lineHeight: 16, fontWeight: '900' }}>
+              <Text style={{ color: active ? tone.foreground : colors.textSecondary, fontSize: 12, lineHeight: 16, fontWeight: '900' }}>
                 {t(item.labelKey)}
               </Text>
             </IslePressable>
           )
         })}
       </View>
-      <View style={{ minHeight: compact ? 74 : 86, borderRadius: 26, padding: 14, justifyContent: 'center', backgroundColor: colors.material.chrome, borderWidth: 1, borderColor: colors.border }}>
+      <View style={{ minHeight: compact ? 74 : 86, borderRadius: colors.ui.radius.panel, padding: 14, justifyContent: 'center', backgroundColor: colors.ui.card.defaultBackground, borderWidth: 1, borderColor: colors.material.stroke }}>
         <Text style={{ color: colors.text, fontSize: 14, lineHeight: 18, fontWeight: '900' }}>
           {t(COMPANIONS.find((item) => item.id === selected)?.labelKey ?? COMPANIONS[1].labelKey)}
         </Text>
@@ -714,14 +716,14 @@ function CapabilityStep({ tone, compact }: { tone: ToneColors; compact: boolean 
             style={{
               width: compact ? '47%' : '46%',
               minHeight: compact ? 78 : 92,
-              borderRadius: 24,
+              borderRadius: colors.ui.radius.card,
               padding: 12,
-              backgroundColor: colors.material.chrome,
+              backgroundColor: colors.ui.card.defaultBackground,
               borderWidth: 1,
-              borderColor: colors.border,
+              borderColor: colors.material.stroke,
             }}
           >
-            <View style={{ width: 34, height: 34, borderRadius: 17, alignItems: 'center', justifyContent: 'center', backgroundColor: tone.wash }}>
+            <View style={{ width: 34, height: 34, borderRadius: colors.ui.radius.controlSmall, alignItems: 'center', justifyContent: 'center', backgroundColor: tone.wash }}>
               <Icon color={tone.primary} size={16} strokeWidth={2.2} />
             </View>
             <Text style={{ color: colors.text, fontSize: 12, lineHeight: 16, fontWeight: '900', marginTop: 8 }}>{t(item.titleKey)}</Text>
@@ -753,21 +755,21 @@ function FirstPromptStep({ options, selectedKey, onSelect, tone, compact }: { op
               accessibilityLabel={t(key)}
               style={{
                 minHeight: compact ? 50 : 56,
-                borderRadius: 24,
+                borderRadius: colors.ui.radius.card,
                 paddingHorizontal: 14,
                 paddingVertical: compact ? 8 : 9,
                 flexDirection: 'row',
                 alignItems: 'center',
                 gap: 10,
-                backgroundColor: active ? tone.wash : colors.material.chrome,
+                backgroundColor: active ? tone.wash : colors.ui.card.defaultBackground,
                 borderWidth: 1,
-                borderColor: active ? tone.primary : colors.border,
+                borderColor: active ? tone.primary : colors.material.stroke,
               }}
             >
-              <View style={{ width: 32, height: 32, borderRadius: 16, alignItems: 'center', justifyContent: 'center', backgroundColor: active ? tone.primary : colors.islandRaised }}>
-                <SendHorizontal color={active ? colors.primaryForeground : colors.textSecondary} size={15} strokeWidth={2.2} />
+              <View style={{ width: 32, height: 32, borderRadius: colors.ui.radius.controlSmall, alignItems: 'center', justifyContent: 'center', backgroundColor: active ? tone.primary : colors.ui.icon.accentBackground }}>
+                <SendHorizontal color={active ? tone.foreground : colors.textSecondary} size={15} strokeWidth={2.2} />
               </View>
-              <Text numberOfLines={2} style={{ flex: 1, color: colors.text, fontSize: 12, lineHeight: 17, fontWeight: '900' }}>{t(key)}</Text>
+              <Text numberOfLines={2} style={{ flex: 1, minWidth: 0, color: colors.text, fontSize: 12, lineHeight: 17, fontWeight: '900' }}>{t(key)}</Text>
             </IslePressable>
           </MotiView>
         )
@@ -793,8 +795,8 @@ function LightPath({
 }) {
   const { colors } = useAppTheme()
   const { t } = useTranslation()
-  const width = useWindowDimensions().width - (compact ? 32 : 44)
-  const railWidth = Math.max(260, Math.min(390, width))
+  const availableWidth = useWindowDimensions().width - (compact ? 32 : 44)
+  const railWidth = Math.max(220, Math.min(compact ? 330 : 390, availableWidth))
   const dotX = useSharedValue((railWidth - 44) * (stageIndex / Math.max(1, total - 1)))
   const doneThreshold = railWidth - 76
 
@@ -826,15 +828,15 @@ function LightPath({
         style={{
           width: railWidth,
           height: 44,
-          borderRadius: 22,
+          borderRadius: colors.ui.radius.controlLarge,
           padding: 5,
           justifyContent: 'center',
-          backgroundColor: colors.material.chrome,
+          backgroundColor: colors.ui.card.defaultBackground,
           borderWidth: 1,
-          borderColor: colors.border,
+          borderColor: colors.material.stroke,
         }}
       >
-        <View style={{ height: 6, borderRadius: 3, backgroundColor: colors.borderStrong, overflow: 'hidden' }}>
+        <View style={{ height: 6, borderRadius: colors.ui.radius.chip, backgroundColor: colors.ui.section.divider, overflow: 'hidden' }}>
           <View style={{ width: `${((stageIndex + 1) / total) * 100}%`, height: 6, borderRadius: 3, backgroundColor: tone.primary }} />
         </View>
         <GestureDetector gesture={pan}>
@@ -846,7 +848,7 @@ function LightPath({
                 top: 5,
                 width: 34,
                 height: 34,
-                borderRadius: 17,
+                borderRadius: colors.ui.radius.controlSmall,
                 alignItems: 'center',
                 justifyContent: 'center',
                 backgroundColor: tone.primary,
@@ -859,7 +861,7 @@ function LightPath({
               dotStyle,
             ]}
           >
-            <Sparkles color={colors.primaryForeground} size={14} strokeWidth={2.2} />
+            <Sparkles color={tone.foreground} size={14} strokeWidth={2.2} />
           </Animated.View>
         </GestureDetector>
       </View>
@@ -916,8 +918,8 @@ function ComposerLandingRibbon({
         style={{
           width: '100%',
           height: compact ? 52 : 58,
-          borderRadius: 29,
-          backgroundColor: colors.material.chrome,
+          borderRadius: colors.ui.radius.controlMiddle,
+          backgroundColor: colors.ui.card.defaultBackground,
           borderWidth: 1,
           borderColor: tone.line,
           shadowColor: tone.primary,
@@ -950,10 +952,10 @@ function OnboardingBackdrop({
 }) {
   const horizon = height * 0.44
   const skyStart = colors.material.canvas
-  const skyEnd = colors.paperDeep
-  const waterStart = colors.paperWarm
-  const islandFill = colors.islandMuted
-  const islandRaisedFill = colors.surfaceTertiary
+  const skyEnd = colors.background.surfaceCanvas
+  const waterStart = colors.material.paper
+  const islandFill = colors.material.paperPressed
+  const islandRaisedFill = colors.material.paperRaised
   const decorativeOpacity = colors.ui.ornamented ? 0.68 : 0.36
   return (
     <View pointerEvents="none" style={{ position: 'absolute', top: 0, right: 0, bottom: 0, left: 0 }}>
@@ -999,17 +1001,20 @@ function OnboardingBackdrop({
 
 interface ToneColors {
   primary: string
+  foreground: string
   bg: string
   wash: string
   line: string
 }
 
-function toneColors(tone: StageTone, colors: ReturnType<typeof useAppTheme>['colors']): ToneColors {
-  if (tone === 'sky') return { primary: colors.sky, bg: colors.skyWash, wash: colors.skyWash, line: colors.borderStrong }
-  if (tone === 'amber') return { primary: colors.amber, bg: colors.amberWash, wash: colors.amberWash, line: colors.borderStrong }
-  if (tone === 'coral') return { primary: colors.coral, bg: colors.coralWash, wash: colors.coralWash, line: colors.borderStrong }
-  if (tone === 'ink') return { primary: colors.text, bg: colors.surfaceSecondary, wash: colors.surfaceSecondary, line: colors.borderStrong }
-  return { primary: colors.primary, bg: colors.mintWash, wash: colors.mintWash, line: colors.borderStrong }
+function toneColors(tone: StageTone, colors: ReturnType<typeof useAppTheme>['colors'], isDark: boolean): ToneColors {
+  const tintedForeground = colors.ui.control.primaryForeground
+  const inkForeground = isDark ? colors.material.canvas : colors.material.paper
+  if (tone === 'sky') return { primary: colors.ui.tone.info.foreground, foreground: tintedForeground, bg: colors.ui.tone.info.background, wash: colors.ui.tone.info.background, line: colors.ui.tone.info.border }
+  if (tone === 'amber') return { primary: colors.ui.tone.warning.foreground, foreground: tintedForeground, bg: colors.ui.tone.warning.background, wash: colors.ui.tone.warning.background, line: colors.ui.tone.warning.border }
+  if (tone === 'coral') return { primary: colors.ui.tone.danger.foreground, foreground: colors.ui.control.dangerForeground, bg: colors.ui.tone.danger.background, wash: colors.ui.tone.danger.background, line: colors.ui.tone.danger.border }
+  if (tone === 'ink') return { primary: colors.ui.tone.ink.background, foreground: inkForeground, bg: colors.ui.tone.neutral.background, wash: colors.ui.tone.neutral.background, line: colors.ui.tone.ink.border }
+  return { primary: colors.ui.tone.success.foreground, foreground: tintedForeground, bg: colors.ui.tone.success.background, wash: colors.ui.tone.success.background, line: colors.ui.tone.success.border }
 }
 
 function toggleSet(items: Set<string>, id: string) {

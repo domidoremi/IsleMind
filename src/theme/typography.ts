@@ -44,8 +44,8 @@ export const typography = {
     relaxed: 1.75,
   },
   tracking: {
-    tight: -0.7,
+    tight: 0,
     normal: 0,
-    wide: 0.5,
+    wide: 0,
   },
 }

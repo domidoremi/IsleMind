@@ -74,6 +74,9 @@ export function ProviderSettingsContent({ embedded = false, onClose, onBackgroun
   const { t } = useTranslation()
   const dialog = useIsleDialog()
   const motion = useMotionPreference()
+  const { width } = useWindowDimensions()
+  const compactWidth = width < 430
+  const pagePadding = compactWidth ? 12 : 16
   const pagerGestureLock = useMainPagerGestureLock()
   const providers = useSettingsStore((state) => state.providers)
   const addProvider = useSettingsStore((state) => state.addProvider)
@@ -421,7 +424,7 @@ export function ProviderSettingsContent({ embedded = false, onClose, onBackgroun
         <ScrollView
           keyboardShouldPersistTaps="handled"
           automaticallyAdjustKeyboardInsets
-          contentContainerStyle={{ paddingHorizontal: 16, paddingTop: 8, paddingBottom: 96 }}
+          contentContainerStyle={{ paddingHorizontal: pagePadding, paddingTop: 8, paddingBottom: 96 }}
         >
           <IsleHeader
             title={t('settings.providerManagement')}
@@ -434,7 +437,7 @@ export function ProviderSettingsContent({ embedded = false, onClose, onBackgroun
                 setSelectedIds(new Set())
                 dialog.toast({ title: batchMode ? t('providerSettings.batchExited') : t('providerSettings.batchEntered'), tone: 'mint' })
               }}>
-                <ListChecks color={batchMode ? colors.warning : colors.textSecondary} size={18} strokeWidth={2} />
+                <ListChecks color={batchMode ? colors.ui.tone.warning.foreground : colors.textSecondary} size={18} strokeWidth={2} />
               </IsleIconButton>
             }
           />
@@ -448,8 +451,8 @@ export function ProviderSettingsContent({ embedded = false, onClose, onBackgroun
               <IsleMetric label={t('providerSettings.visibleCount', { count: visibleProviders.length })} />
             </View>
             <View style={{ flexDirection: 'row', gap: 10, flexWrap: 'wrap', marginTop: 12 }}>
-              <IsleButton label={t('settings.addProvider')} compact icon={<Plus color={colors.textSecondary} size={16} />} onPress={() => setAddOpen(true)} />
-              <IsleButton label={t('settings.batchImport')} compact icon={<Import color={colors.textSecondary} size={16} />} onPress={() => setImportOpen(true)} />
+              <IsleButton label={t('settings.addProvider')} compact icon={<Plus color={colors.textSecondary} size={16} />} onPress={() => setAddOpen(true)} style={compactWidth ? { alignSelf: 'stretch', flexGrow: 1, flexShrink: 1, flexBasis: '100%', minWidth: 0 } : undefined} />
+              <IsleButton label={t('settings.batchImport')} compact icon={<Import color={colors.textSecondary} size={16} />} onPress={() => setImportOpen(true)} style={compactWidth ? { alignSelf: 'stretch', flexGrow: 1, flexShrink: 1, flexBasis: '100%', minWidth: 0 } : undefined} />
               <IsleButton
                 label={batchMode ? t('providerSettings.enableSelected', { count: selectedIds.size }) : t('settings.enableAll')}
                 compact
@@ -457,6 +460,7 @@ export function ProviderSettingsContent({ embedded = false, onClose, onBackgroun
                 icon={<Zap color={colors.textSecondary} size={16} />}
                 onPress={() => void enableEffectiveSelection()}
                 disabled={activationBusy || activationJob?.status === 'running' || (batchMode ? !selectedIds.size : !providers.length)}
+                style={compactWidth ? { alignSelf: 'stretch', flexGrow: 1, flexShrink: 1, flexBasis: '100%', minWidth: 0 } : undefined}
               />
             </View>
           </IsleSection>
@@ -465,7 +469,7 @@ export function ProviderSettingsContent({ embedded = false, onClose, onBackgroun
             <ActivationProgressCard job={activationJob} onDismiss={clearActivationJob} />
           ) : null}
 
-          <View style={{ minHeight: 48, borderRadius: 24, paddingHorizontal: 12, marginTop: 14, flexDirection: 'row', alignItems: 'center', gap: 9, backgroundColor: colors.material.field, borderWidth: 1, borderColor: colors.border }}>
+          <View style={{ minHeight: 48, borderRadius: colors.ui.radius.controlLarge, paddingHorizontal: 12, marginTop: 14, flexDirection: 'row', alignItems: 'center', gap: 9, backgroundColor: colors.ui.input.background, borderWidth: 1, borderColor: colors.ui.input.border }}>
             <Search color={colors.textTertiary} size={17} />
             <TextInput
               value={modelFilter}
@@ -474,20 +478,20 @@ export function ProviderSettingsContent({ embedded = false, onClose, onBackgroun
               autoCorrect={false}
               placeholder={t('providerSettings.filterModels')}
               placeholderTextColor={colors.textTertiary}
-              style={{ flex: 1, minHeight: 46, padding: 0, color: colors.text, fontSize: 14, fontWeight: '800' }}
+              style={{ flex: 1, minWidth: 0, minHeight: 46, padding: 0, color: colors.text, fontSize: 14, fontWeight: '800' }}
             />
             {modelFilter ? (
-              <IslePressable haptic accessibilityLabel={t('common.clearSearch')} onPress={() => setModelFilter('')} style={{ width: 32, height: 32, borderRadius: 16, alignItems: 'center', justifyContent: 'center', backgroundColor: colors.islandRaised }}>
+              <IslePressable haptic accessibilityLabel={t('common.clearSearch')} onPress={() => setModelFilter('')} style={{ width: 32, height: 32, borderRadius: colors.ui.radius.controlSmall, alignItems: 'center', justifyContent: 'center', backgroundColor: colors.ui.card.defaultBackground }}>
                 <X color={colors.textSecondary} size={15} />
               </IslePressable>
             ) : null}
           </View>
 
           <View style={{ flexDirection: 'row', alignItems: 'flex-start', gap: 8, marginTop: 12 }}>
-            <View style={{ width: 44, height: 44, alignItems: 'center', justifyContent: 'center' }}>
+            <View style={{ width: compactWidth ? 34 : 44, height: 44, alignItems: 'center', justifyContent: 'center' }}>
               <SlidersHorizontal color={colors.textTertiary} size={16} />
             </View>
-            <View style={{ flex: 1, flexDirection: 'row', flexWrap: 'wrap', gap: 8 }}>
+            <View style={{ flex: 1, minWidth: 0, flexDirection: 'row', flexWrap: 'wrap', gap: 8 }}>
               {SORT_OPTIONS.map((option) => (
                 <ChoiceIsleChip
                   key={option.id}
@@ -552,11 +556,15 @@ function HeaderBackButton({ onPress }: { onPress: () => void }) {
   const { colors } = useAppTheme()
   const { t } = useTranslation()
   return (
-    <AnimatedNavigationTrigger variant="iconButton" label={t('common.back')} size="lg" glyph="back" onNavigate={onPress} color={colors.text} style={{ backgroundColor: colors.islandRaised }} />
+    <AnimatedNavigationTrigger variant="iconButton" label={t('common.back')} size="lg" glyph="back" onNavigate={onPress} color={colors.text} style={{ backgroundColor: colors.ui.card.defaultBackground }} />
   )
 }
 
 function closeStandaloneProviderSettings() {
+  if (router.canGoBack()) {
+    router.back()
+    return
+  }
   router.replace('/settings')
 }
 
@@ -614,14 +622,14 @@ function ProviderListRow({
   const { colors } = useAppTheme()
   const { t } = useTranslation()
   return (
-    <View style={{ flexDirection: 'row', alignItems: 'stretch', gap: 8 }}>
+    <View style={{ flexDirection: 'row', alignItems: 'stretch', gap: 8, minWidth: 0 }}>
       <DragRail disabledUp={!canMoveUp} disabledDown={!canMoveDown} onMove={onMove} />
       {batchMode ? (
-        <IslePressable haptic onPress={onToggleSelected} accessibilityLabel={selected ? t('providerSettings.unselectProvider') : t('providerSettings.selectProvider')} style={{ width: 36, borderRadius: 18, alignItems: 'center', justifyContent: 'center', backgroundColor: selected ? colors.mintSoft : colors.islandRaised, borderWidth: 1, borderColor: selected ? colors.primary : colors.border }}>
-          <Text style={{ color: selected ? colors.primary : colors.textTertiary, fontSize: 13, fontWeight: '900' }}>{selected ? '✓' : ''}</Text>
+        <IslePressable haptic onPress={onToggleSelected} accessibilityLabel={selected ? t('providerSettings.unselectProvider') : t('providerSettings.selectProvider')} style={{ width: 36, borderRadius: colors.ui.radius.chip, alignItems: 'center', justifyContent: 'center', backgroundColor: selected ? colors.ui.control.primaryBackground : colors.ui.card.defaultBackground, borderWidth: 1, borderColor: selected ? colors.ui.control.primaryBorder : colors.material.stroke }}>
+          <Text style={{ color: selected ? colors.ui.control.primaryForeground : colors.textTertiary, fontSize: 13, fontWeight: '900' }}>{selected ? '✓' : ''}</Text>
         </IslePressable>
       ) : null}
-      <View style={{ flex: 1 }}>
+      <View style={{ flex: 1, minWidth: 0 }}>
         <ApiKeyPanel provider={provider} initiallyExpanded={expanded} />
       </View>
     </View>
@@ -650,7 +658,7 @@ function DragRail({ disabledUp, disabledDown, onMove }: { disabledUp: boolean; d
   }))
   return (
     <GestureDetector gesture={gesture}>
-      <Animated.View style={[{ width: 34, borderRadius: 17, alignItems: 'center', justifyContent: 'center', backgroundColor: colors.islandRaised, borderWidth: 1, borderColor: colors.border, opacity: disabledUp && disabledDown ? 0.42 : 1 }, animatedStyle]}>
+      <Animated.View style={[{ width: 34, borderRadius: colors.ui.radius.controlSmall, alignItems: 'center', justifyContent: 'center', backgroundColor: colors.ui.card.defaultBackground, borderWidth: 1, borderColor: colors.material.stroke, opacity: disabledUp && disabledDown ? 0.42 : 1 }, animatedStyle]}>
         <GripVertical color={colors.textTertiary} size={17} />
       </Animated.View>
     </GestureDetector>
@@ -661,17 +669,17 @@ function ChoiceIsleChip({ label, active, onPress }: { label: string; active: boo
   const { colors } = useAppTheme()
   const motion = useMotionPreference()
   return (
-    <IslePressable haptic onPress={onPress} style={{ minHeight: 44, borderRadius: 22, alignItems: 'center', justifyContent: 'center' }}>
+    <IslePressable haptic onPress={onPress} style={{ minHeight: 44, borderRadius: colors.ui.radius.controlMiddle, alignItems: 'center', justifyContent: 'center' }}>
       <MotiView
         animate={{
-          backgroundColor: active ? colors.text : colors.islandRaised,
-          borderColor: active ? 'transparent' : colors.border,
+          backgroundColor: active ? colors.ui.control.primaryBackground : colors.ui.card.defaultBackground,
+          borderColor: active ? colors.ui.control.primaryBorder : colors.material.stroke,
           scale: active ? 1.025 : 1,
         }}
         transition={motion === 'full' ? { type: 'spring', ...motionTokens.spring.gentle } : { type: 'timing', duration: 1 }}
-        style={{ minHeight: 44, borderRadius: 22, paddingHorizontal: 12, alignItems: 'center', justifyContent: 'center', borderWidth: 1 }}
+        style={{ minHeight: 44, borderRadius: colors.ui.radius.controlMiddle, paddingHorizontal: 12, alignItems: 'center', justifyContent: 'center', borderWidth: 1 }}
       >
-        <Text style={{ color: active ? colors.surface : colors.textSecondary, fontSize: 12, lineHeight: 16, fontWeight: '900', includeFontPadding: false }}>{label}</Text>
+        <Text style={{ color: active ? colors.ui.control.primaryForeground : colors.textSecondary, fontSize: 12, lineHeight: 16, fontWeight: '900', includeFontPadding: false }}>{label}</Text>
       </MotiView>
     </IslePressable>
   )
@@ -694,9 +702,9 @@ function ActivationProgressCard({ job, onDismiss }: { job: ActivationJobState; o
       transition={{ type: 'spring', damping: 20, stiffness: 190 }}
       style={{ marginTop: 14 }}
     >
-      <View style={{ borderRadius: 24, padding: 13, backgroundColor: colors.material.chrome, borderWidth: 1, borderColor: colors.borderStrong, gap: 10 }}>
+      <View style={{ borderRadius: colors.ui.radius.panel, padding: 13, backgroundColor: colors.ui.card.defaultBackground, borderWidth: 1, borderColor: colors.material.strokeStrong, shadowColor: colors.ui.control.shadow, shadowOpacity: colors.ui.card.shadowOpacity, shadowRadius: colors.ui.card.shadowRadius, shadowOffset: { width: 0, height: colors.ui.card.shadowOffset }, elevation: colors.ui.card.shadowOpacity > 0 ? 1 : 0, gap: 10 }}>
         <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
-          <View style={{ flex: 1 }}>
+          <View style={{ flex: 1, minWidth: 0 }}>
             <Text style={{ color: colors.text, fontSize: 14, fontWeight: '900' }}>
               {title}
             </Text>
@@ -716,11 +724,11 @@ function ActivationProgressCard({ job, onDismiss }: { job: ActivationJobState; o
           <ActivationProgressPill label={activationStatusLabel(job, t)} tone={job.status === 'failed' ? 'danger' : job.failed ? 'amber' : done ? 'mint' : 'default'} />
         </View>
         {showProviderItems ? <ActivationProviderProgressList items={providerItems} /> : null}
-        <View style={{ height: 8, borderRadius: 4, backgroundColor: colors.islandRaised, overflow: 'hidden' }}>
+        <View style={{ height: 8, borderRadius: colors.ui.radius.chip, backgroundColor: colors.ui.section.divider, overflow: 'hidden' }}>
           <MotiView
             animate={{ width: `${Math.max(4, Math.round(progress * 100))}%` }}
             transition={{ type: 'timing', duration: 180 }}
-            style={{ height: 8, borderRadius: 4, backgroundColor: job.failed ? colors.warning : colors.primary }}
+            style={{ height: 8, borderRadius: colors.ui.radius.chip, backgroundColor: job.failed ? colors.ui.tone.warning.foreground : colors.ui.control.primaryBackground }}
           />
         </View>
         <Text style={{ color: colors.textTertiary, fontSize: 11, lineHeight: 16, fontWeight: '900' }}>
@@ -743,13 +751,13 @@ function ActivationProviderProgressList({ items }: { items: ActivationJobItemSta
         return (
           <View key={item.providerId} style={{ gap: 5 }}>
             <View style={{ minHeight: 20, flexDirection: 'row', alignItems: 'center', gap: 8 }}>
-              <Text numberOfLines={1} style={{ flex: 1, color: colors.text, fontSize: 12, lineHeight: 16, fontWeight: '900' }}>{item.providerName}</Text>
-              <Text numberOfLines={1} style={{ color: warning ? colors.warning : ready ? colors.primary : colors.textSecondary, fontSize: 10, lineHeight: 14, fontWeight: '900' }}>
+              <Text numberOfLines={1} style={{ flex: 1, minWidth: 0, color: colors.text, fontSize: 12, lineHeight: 16, fontWeight: '900' }}>{item.providerName}</Text>
+              <Text numberOfLines={1} style={{ color: warning ? colors.ui.tone.warning.foreground : ready ? colors.ui.control.link : colors.textSecondary, fontSize: 10, lineHeight: 14, fontWeight: '900' }}>
                 {activationItemStatusLabel(item, t)}
               </Text>
             </View>
-            <View style={{ height: 5, borderRadius: 3, backgroundColor: colors.islandRaised, overflow: 'hidden' }}>
-              <View style={{ width: `${Math.max(4, Math.round(progress * 100))}%`, height: 5, borderRadius: 3, backgroundColor: warning ? colors.warning : colors.primary }} />
+            <View style={{ height: 5, borderRadius: colors.ui.radius.chip, backgroundColor: colors.ui.section.divider, overflow: 'hidden' }}>
+              <View style={{ width: `${Math.max(4, Math.round(progress * 100))}%`, height: 5, borderRadius: colors.ui.radius.chip, backgroundColor: warning ? colors.ui.tone.warning.foreground : colors.ui.control.primaryBackground }} />
             </View>
             {item.stage ? (
               <Text numberOfLines={1} style={{ color: colors.textTertiary, fontSize: 10, lineHeight: 14, fontWeight: '800' }}>{item.stage}</Text>
@@ -763,23 +771,16 @@ function ActivationProviderProgressList({ items }: { items: ActivationJobItemSta
 
 function ActivationProgressPill({ label, tone = 'default' }: { label: string; tone?: 'default' | 'mint' | 'amber' | 'danger' }) {
   const { colors } = useAppTheme()
-  const background = tone === 'mint'
-    ? colors.mintSoft
+  const toneToken = tone === 'mint'
+    ? colors.ui.tone.success
     : tone === 'amber'
-      ? colors.amberSoft
+      ? colors.ui.tone.warning
       : tone === 'danger'
-        ? colors.coralWash
-        : colors.islandRaised
-  const textColor = tone === 'mint'
-    ? colors.primary
-    : tone === 'amber'
-      ? colors.warning
-      : tone === 'danger'
-        ? colors.error
-        : colors.textSecondary
+        ? colors.ui.tone.danger
+        : colors.ui.tone.neutral
   return (
-    <View style={{ minHeight: 28, borderRadius: 14, paddingHorizontal: 9, alignItems: 'center', justifyContent: 'center', backgroundColor: background }}>
-      <Text numberOfLines={1} style={{ color: textColor, fontSize: 11, fontWeight: '900' }}>{label}</Text>
+    <View style={{ minHeight: 28, borderRadius: colors.ui.radius.chip, paddingHorizontal: 9, alignItems: 'center', justifyContent: 'center', backgroundColor: toneToken.background, borderWidth: 1, borderColor: toneToken.border }}>
+      <Text numberOfLines={1} style={{ color: toneToken.foreground, fontSize: 11, fontWeight: '900' }}>{label}</Text>
     </View>
   )
 }
@@ -904,7 +905,7 @@ function ProviderFormModal({
   const { t } = useTranslation()
   const dialog = useIsleDialog()
   const insets = useSafeAreaInsets()
-  const { height } = useWindowDimensions()
+  const { height, width } = useWindowDimensions()
   const motion = useMotionPreference()
   const bodyScrollRef = useRef<ScrollView>(null)
   const fieldOffsetsRef = useRef<Partial<Record<ProviderFormFieldId, number>>>({})
@@ -923,6 +924,8 @@ function ProviderFormModal({
   const preset = getProviderPreset(presetId)
   const providerConfigDraft = resolveProviderConfigDraft({ provider: {}, presetId, baseUrl, wireProtocol })
   const compact = height < 680
+  const compactWidth = width < 430
+  const footerCompact = width < 380
   const clipboardBusy = clipboardState !== 'idle'
   const keyboardInset = Platform.OS === 'android' ? keyboardHeight : 0
   const keyboardVisible = keyboardHeight > 0
@@ -931,6 +934,9 @@ function ProviderFormModal({
     height - insets.top - Math.max(insets.bottom, 10) - keyboardInset - IMPORT_SHEET_MARGIN,
   )
   const sheetMaxHeight = Math.min(availableSheetHeight, height * (compact ? 0.96 : 0.88))
+  const sheetMaterial = colors.material.sheet
+  const modalPadding = compactWidth ? 12 : 16
+  const modalActionStyle = footerCompact ? { alignSelf: 'stretch' as const, minHeight: 44 } : { flexGrow: 1, flexShrink: 1, flexBasis: '47%' as const, minWidth: 0 }
   const footerScrollReserve = Math.max(insets.bottom, 10) + 132
   const focusedInputKeyboardOffset = Platform.OS === 'android' ? footerScrollReserve + 72 : 96
   const fieldScrollViewportOffset: Record<ProviderFormFieldId, number> = {
@@ -1167,11 +1173,11 @@ function ProviderFormModal({
             from={motion === 'full' ? { opacity: 0, translateY: 32, scale: 0.985 } : { opacity: 0 }}
             animate={{ opacity: 1, translateY: 0, scale: 1 }}
             transition={motion === 'full' ? { type: 'spring', damping: 23, stiffness: 190 } : { type: 'timing', duration: motionTokens.duration.fast }}
-            style={{ maxHeight: sheetMaxHeight, borderTopLeftRadius: 30, borderTopRightRadius: 30, backgroundColor: colors.surface, borderWidth: 1, borderColor: colors.border, overflow: 'hidden' }}
+            style={{ maxHeight: sheetMaxHeight, borderTopLeftRadius: 30, borderTopRightRadius: 30, backgroundColor: sheetMaterial.surface, borderWidth: 1, borderColor: sheetMaterial.border, overflow: 'hidden' }}
           >
-            <View style={{ paddingHorizontal: 16, paddingTop: 16, paddingBottom: 10, backgroundColor: colors.surface }}>
+            <View style={{ paddingHorizontal: modalPadding, paddingTop: 16, paddingBottom: 10, backgroundColor: sheetMaterial.chrome, borderBottomWidth: 1, borderBottomColor: sheetMaterial.divider }}>
               <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
-                <View style={{ flex: 1 }}>
+                <View style={{ flex: 1, minWidth: 0 }}>
                   <Text style={{ color: colors.text, fontSize: 18, fontWeight: '900' }}>{t('settings.addProvider')}</Text>
                   <Text style={{ color: colors.textSecondary, fontSize: 12, marginTop: 3 }}>{t('providerSettings.addSubtitle')}</Text>
                 </View>
@@ -1189,13 +1195,14 @@ function ProviderFormModal({
                   />
                 ))}
               </ScrollView>
-              <View style={{ paddingTop: 10 }}>
+              <View style={{ paddingTop: 10, alignItems: compactWidth ? 'stretch' : 'flex-start' }}>
                 <IsleButton
                   label={clipboardBusy ? t('providerSettings.clipboardChecking') : t('settings.pasteClipboard')}
                   compact
                   icon={<ClipboardPaste color={colors.textSecondary} size={16} />}
                   onPress={() => void readProviderClipboard()}
                   disabled={clipboardBusy}
+                  style={compactWidth ? { alignSelf: 'stretch' } : undefined}
                 />
               </View>
             </View>
@@ -1206,7 +1213,7 @@ function ProviderFormModal({
               automaticallyAdjustKeyboardInsets
               showsVerticalScrollIndicator={compact}
               style={{ flexShrink: 1 }}
-              contentContainerStyle={{ gap: 10, paddingHorizontal: 16, paddingBottom: 12, backgroundColor: colors.surface }}
+              contentContainerStyle={{ gap: 10, paddingHorizontal: modalPadding, paddingBottom: 12, backgroundColor: sheetMaterial.body }}
             >
               <View onLayout={rememberFieldLayout('name')}>
                 <IsleField label={t('providerSettings.name')} inputProps={{ value: name, onChangeText: (value) => {
@@ -1215,7 +1222,7 @@ function ProviderFormModal({
                 }, onFocus: () => markInputFocused('name'), placeholder: preset.name, autoCapitalize: 'none' }} />
               </View>
               {providerConfigDraft.isProtocolSelectable ? (
-                <View style={{ borderRadius: 18, padding: 11, backgroundColor: colors.islandRaised, gap: 9 }}>
+                <View style={{ borderRadius: colors.ui.radius.panel, padding: 11, backgroundColor: colors.ui.card.defaultBackground, borderWidth: 1, borderColor: colors.material.stroke, gap: 9 }}>
                   <Text style={{ color: colors.text, fontSize: 13, fontWeight: '900' }}>{t('providerSettings.protocol.title')}</Text>
                   <View style={{ flexDirection: 'row', gap: 8, flexWrap: 'wrap' }}>
                     {PROVIDER_WIRE_PROTOCOL_OPTIONS.map((protocol) => (
@@ -1248,9 +1255,9 @@ function ProviderFormModal({
               <IslePressable
                 haptic
                 onPress={() => setAdvancedOpen((value) => !value)}
-                style={{ minHeight: 44, borderRadius: 22, paddingHorizontal: 13, flexDirection: 'row', alignItems: 'center', gap: 8, backgroundColor: colors.material.field, borderWidth: 1, borderColor: colors.border }}
+                style={{ minHeight: 44, borderRadius: colors.ui.radius.controlLarge, paddingHorizontal: 13, flexDirection: 'row', alignItems: 'center', gap: 8, backgroundColor: colors.ui.input.background, borderWidth: 1, borderColor: colors.ui.input.border }}
               >
-                <Text style={{ flex: 1, color: colors.textSecondary, fontSize: 12, fontWeight: '900' }}>{t('providerSettings.advancedModels')}</Text>
+                <Text style={{ flex: 1, minWidth: 0, color: colors.textSecondary, fontSize: 12, fontWeight: '900' }}>{t('providerSettings.advancedModels')}</Text>
                 <MotiView animate={{ rotate: advancedOpen ? '180deg' : '0deg' }} transition={{ type: 'timing', duration: 160 }}>
                   <ChevronDown color={colors.textTertiary} size={16} />
                 </MotiView>
@@ -1266,9 +1273,9 @@ function ProviderFormModal({
               ) : null}
             </ScrollView>
             {!keyboardVisible ? (
-              <View style={{ flexDirection: 'row', gap: 10, paddingHorizontal: 16, paddingTop: 10, paddingBottom: Math.max(insets.bottom, 10) + 10, backgroundColor: colors.surface, borderTopWidth: 1, borderTopColor: colors.border }}>
-                <IsleButton label={t('common.cancel')} onPress={closeWithoutSubmit} style={{ flex: 1 }} />
-                <IsleButton label={t('common.save')} tone="primary" onPress={submit} style={{ flex: 1 }} />
+              <View style={{ flexDirection: footerCompact ? 'column' : 'row', gap: 10, paddingHorizontal: modalPadding, paddingTop: 10, paddingBottom: Math.max(insets.bottom, 10) + 10, backgroundColor: sheetMaterial.chrome, borderTopWidth: 1, borderTopColor: sheetMaterial.divider }}>
+                <IsleButton label={t('common.cancel')} onPress={closeWithoutSubmit} style={modalActionStyle} />
+                <IsleButton label={t('common.save')} tone="primary" onPress={submit} style={modalActionStyle} />
               </View>
             ) : null}
           </MotiView>
@@ -1324,7 +1331,11 @@ function ProviderImportModal({
   const inputHeight = Math.min(targetInputHeight, maxInputHeight)
   const inputScrollEnabled = targetInputHeight > maxInputHeight
   const sheetMaxHeight = Math.min(availableSheetHeight, height * (compact ? 0.96 : 0.9))
+  const sheetMaterial = colors.material.sheet
+  const compactWidth = width < 430
   const footerCompact = width < 380
+  const modalPadding = compactWidth ? 12 : 16
+  const modalActionStyle = footerCompact ? { alignSelf: 'stretch' as const, minHeight: 44 } : { flex: 1, minHeight: 44 }
   const detectedImport = useMemo(() => input.trim() ? parseProviderImportText(input) : null, [input])
   const detectedImportCount = detectedImport?.providers.length ?? 0
   const clipboardBusy = clipboardState !== 'idle'
@@ -1447,14 +1458,14 @@ function ProviderImportModal({
               maxHeight: sheetMaxHeight,
               borderTopLeftRadius: 30,
               borderTopRightRadius: 30,
-              backgroundColor: colors.surface,
+              backgroundColor: sheetMaterial.surface,
               borderWidth: 1,
-              borderColor: colors.border,
+              borderColor: sheetMaterial.border,
               overflow: 'hidden',
             }}
           >
-            <View style={{ minHeight: IMPORT_HEADER_HEIGHT, flexDirection: 'row', alignItems: 'center', gap: 10, paddingHorizontal: 16, paddingTop: 16, paddingBottom: 12, backgroundColor: colors.surface }}>
-              <View style={{ flex: 1 }}>
+            <View style={{ minHeight: IMPORT_HEADER_HEIGHT, flexDirection: 'row', alignItems: 'center', gap: 10, paddingHorizontal: modalPadding, paddingTop: 16, paddingBottom: 12, backgroundColor: sheetMaterial.chrome, borderBottomWidth: 1, borderBottomColor: sheetMaterial.divider }}>
+              <View style={{ flex: 1, minWidth: 0 }}>
                 <Text style={{ color: colors.text, fontSize: 18, fontWeight: '900' }}>{t('settings.batchImport')}</Text>
               </View>
               <IsleIconButton label={t('dialog.close')} onPress={onClose}>
@@ -1467,7 +1478,7 @@ function ProviderImportModal({
               nestedScrollEnabled
               showsVerticalScrollIndicator={compact || inputScrollEnabled}
               style={{ flexShrink: 1 }}
-              contentContainerStyle={{ paddingHorizontal: 16, paddingBottom: 14, backgroundColor: colors.surface }}
+              contentContainerStyle={{ paddingHorizontal: modalPadding, paddingBottom: 14, backgroundColor: sheetMaterial.body }}
             >
               <View>
                 <View style={{ marginBottom: 12 }}>
@@ -1479,14 +1490,14 @@ function ProviderImportModal({
                       icon={<ClipboardPaste color={colors.textSecondary} size={16} />}
                       onPress={() => void pasteFromClipboard()}
                       disabled={clipboardBusy}
-                      style={{ flex: 1, minHeight: 44 }}
+                      style={modalActionStyle}
                     />
                     <IsleButton
                       label={t('settings.chooseFile')}
                       compact
                       icon={<FileJson color={colors.textSecondary} size={16} />}
                       onPress={() => void importFromFile()}
-                      style={{ flex: 1, minHeight: 44 }}
+                      style={modalActionStyle}
                     />
                   </View>
                 </View>
@@ -1494,14 +1505,14 @@ function ProviderImportModal({
                 <View
                   style={{
                     height: inputHeight,
-                    borderRadius: 24,
+                    borderRadius: colors.ui.radius.panel,
                     paddingHorizontal: 14,
-                    backgroundColor: colors.material.paper,
-                    borderWidth: 2.5,
-                    borderColor: colors.border,
+                    backgroundColor: colors.ui.input.background,
+                    borderWidth: colors.ui.minimal ? 1 : 2,
+                    borderColor: colors.ui.input.border,
                     overflow: 'hidden',
                     shadowColor: colors.shadow.color,
-                    shadowOpacity: 0.16,
+                    shadowOpacity: colors.ui.minimal ? 0 : 0.16,
                     shadowRadius: 0,
                     shadowOffset: { width: 0, height: 3 },
                     elevation: 2,
@@ -1531,7 +1542,7 @@ function ProviderImportModal({
                     }}
                   />
                 </View>
-                <Text style={{ color: detectedImportCount ? colors.primary : colors.textTertiary, fontSize: 11, lineHeight: 16, marginTop: 8, fontWeight: detectedImportCount ? '900' : '700' }}>
+                <Text style={{ color: detectedImportCount ? colors.ui.tone.success.foreground : colors.textTertiary, fontSize: 11, lineHeight: 16, marginTop: 8, fontWeight: detectedImportCount ? '900' : '700' }}>
                   {input.trim()
                     ? detectedImportCount
                       ? t('providerSettings.importDetected', { count: detectedImportCount })
@@ -1541,9 +1552,9 @@ function ProviderImportModal({
               </View>
             </ScrollView>
             {!keyboardVisible ? (
-              <View style={{ minHeight: IMPORT_FOOTER_HEIGHT, flexDirection: 'row', alignItems: 'center', gap: footerCompact ? 8 : 10, paddingHorizontal: 16, paddingTop: 12, paddingBottom: Math.max(insets.bottom, 10) + 10, backgroundColor: colors.surface, borderTopWidth: 1, borderTopColor: colors.border }}>
-                <IsleButton label={t('common.cancel')} compact onPress={onClose} style={{ flex: 1, minHeight: 44 }} />
-                <IsleButton label={t('providerSettings.import')} compact tone="primary" disabled={!input.trim()} onPress={submit} style={{ flex: 1.12, minHeight: 44 }} />
+              <View style={{ minHeight: IMPORT_FOOTER_HEIGHT, flexDirection: footerCompact ? 'column' : 'row', alignItems: footerCompact ? 'stretch' : 'center', gap: footerCompact ? 8 : 10, paddingHorizontal: modalPadding, paddingTop: 12, paddingBottom: Math.max(insets.bottom, 10) + 10, backgroundColor: sheetMaterial.chrome, borderTopWidth: 1, borderTopColor: sheetMaterial.divider }}>
+                <IsleButton label={t('common.cancel')} compact onPress={onClose} style={modalActionStyle} />
+                <IsleButton label={t('providerSettings.import')} compact tone="primary" disabled={!input.trim()} onPress={submit} style={modalActionStyle} />
               </View>
             ) : null}
           </MotiView>

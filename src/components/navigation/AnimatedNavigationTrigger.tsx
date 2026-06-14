@@ -103,7 +103,7 @@ export function AnimatedNavigationTrigger(props: AnimatedNavigationTriggerProps)
       glyph={props.glyph}
       active={active || props.externalActive}
       color={color}
-      accentColor={props.accentColor ?? colors.primary}
+      accentColor={props.accentColor ?? colors.ui.icon.accentForeground}
       size={props.variant === 'iconButton' && props.size === 'lg' ? 23 : 22}
     />
   )
@@ -139,7 +139,7 @@ export function AnimatedNavigationTrigger(props: AnimatedNavigationTriggerProps)
 export function NavigationIconBadge({ children }: { children: ReactNode }) {
   const { colors } = useAppTheme()
   return (
-    <View style={{ width: 40, height: 40, borderRadius: 20, alignItems: 'center', justifyContent: 'center', backgroundColor: colors.mintSoft }}>
+    <View style={{ width: 40, height: 40, borderRadius: colors.ui.radius.controlLarge, alignItems: 'center', justifyContent: 'center', backgroundColor: colors.ui.icon.accentBackground }}>
       {children}
     </View>
   )

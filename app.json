@@ -20,11 +20,20 @@
       "versionCode": 107,
       "softwareKeyboardLayoutMode": "resize",
       "permissions": [
-        "android.permission.REQUEST_INSTALL_PACKAGES"
+        "android.permission.REQUEST_INSTALL_PACKAGES",
+        "android.permission.POST_NOTIFICATIONS"
+      ],
+      "blockedPermissions": [
+        "android.permission.READ_EXTERNAL_STORAGE",
+        "android.permission.WRITE_EXTERNAL_STORAGE",
+        "android.permission.READ_MEDIA_IMAGES",
+        "android.permission.READ_MEDIA_VIDEO",
+        "android.permission.READ_MEDIA_AUDIO",
+        "android.permission.ACCESS_MEDIA_LOCATION"
       ],
       "adaptiveIcon": {
         "foregroundImage": "./assets/adaptive-foreground.png",
-        "backgroundColor": "#F8F4EC"
+        "backgroundColor": "#1F73FF"
       },
       "edgeToEdgeEnabled": true,
       "predictiveBackGestureEnabled": false
@@ -47,7 +56,9 @@
         }
       ],
       "expo-audio",
-      "expo-asset"
+      "expo-asset",
+      "./plugins/android-status-notification/withAndroidStatusNotification",
+      "./plugins/android-device-tools/withAndroidDeviceTools"
     ],
     "extra": {
       "router": {},

@@ -217,6 +217,100 @@
       "attribution": "Optional compressor capability placeholder. IsleMind uses extractive compression until model files are available.",
       "bundledIn": [],
       "files": []
+    },
+    {
+      "id": "embeddinggemma-300m",
+      "version": "onnx-community-2026-06",
+      "name": "EmbeddingGemma 300M",
+      "capability": "embedding",
+      "language": "Multilingual",
+      "useCase": "Google's efficient embedding model for 100+ languages, optimized for on-device use",
+      "dimension": 768,
+      "tokenizer": "sentencepiece",
+      "maxTokens": 2048,
+      "sizeBytes": 305000000,
+      "downloadBaseUrl": "https://huggingface.co/onnx-community/embeddinggemma-300m-ONNX/resolve/main",
+      "sourceUrl": "https://huggingface.co/onnx-community/embeddinggemma-300m-ONNX",
+      "publisher": "onnx-community",
+      "upstreamModel": "google/embeddinggemma-300m",
+      "upstreamContributors": ["Google", "onnx-community"],
+      "license": "Gemma License",
+      "attribution": "ONNX distribution by onnx-community; original EmbeddingGemma model by Google. Supports 100+ languages with 2K context window.",
+      "bundledIn": [],
+      "files": [
+        {
+          "path": "config.json",
+          "bytes": 850,
+          "sha256": "placeholder-to-be-verified"
+        },
+        {
+          "path": "tokenizer.json",
+          "bytes": 17000000,
+          "sha256": "placeholder-to-be-verified"
+        },
+        {
+          "path": "tokenizer_config.json",
+          "bytes": 450,
+          "sha256": "placeholder-to-be-verified"
+        },
+        {
+          "path": "onnx/model_quantized.onnx",
+          "bytes": 287000000,
+          "sha256": "placeholder-to-be-verified"
+        }
+      ]
+    },
+    {
+      "id": "bge-small-en-v1.5",
+      "version": "xenova-2024-02",
+      "name": "bge-small-en-v1.5",
+      "capability": "embedding",
+      "language": "English",
+      "useCase": "BAAI's efficient English embedding model, excellent for general-purpose retrieval",
+      "dimension": 384,
+      "tokenizer": "wordpiece",
+      "maxTokens": 512,
+      "sizeBytes": 33000000,
+      "downloadBaseUrl": "https://huggingface.co/Xenova/bge-small-en-v1.5/resolve/main",
+      "sourceUrl": "https://huggingface.co/Xenova/bge-small-en-v1.5",
+      "publisher": "Xenova",
+      "upstreamModel": "BAAI/bge-small-en-v1.5",
+      "upstreamContributors": ["Xenova", "BAAI"],
+      "license": "MIT",
+      "attribution": "ONNX distribution by Xenova; original BGE small English embedding model by BAAI (Beijing Academy of AI).",
+      "bundledIn": [],
+      "files": [
+        {
+          "path": "config.json",
+          "bytes": 750,
+          "sha256": "placeholder-to-be-verified"
+        },
+        {
+          "path": "special_tokens_map.json",
+          "bytes": 125,
+          "sha256": "placeholder-to-be-verified"
+        },
+        {
+          "path": "tokenizer_config.json",
+          "bytes": 400,
+          "sha256": "placeholder-to-be-verified"
+        },
+        {
+          "path": "tokenizer.json",
+          "bytes": 700000,
+          "sha256": "placeholder-to-be-verified"
+        },
+        {
+          "path": "vocab.txt",
+          "bytes": 230000,
+          "sha256": "placeholder-to-be-verified"
+        },
+        {
+          "path": "onnx/model_quantized.onnx",
+          "bytes": 32000000,
+          "sha256": "placeholder-to-be-verified"
+        }
+      ]
     }
   ]
 }
