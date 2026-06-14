@@ -2,7 +2,7 @@ import { create } from 'zustand'
 import { getModelConfig, getProviderConfigIssue, XIAOMI_MIMO_PAYG_BASE_URL, getXiaomiMimoOfficialBaseUrl } from '@/types'
 import type { Settings, AIProvider, Language, ProviderCredentialGroup, ThemeId, ThemeMode } from '@/types'
 import { loadData, saveData } from '@/services/storage'
-import * as SecureStore from 'expo-secure-store'
+import { deleteSecureItem, getSecureItem, setSecureItem } from '@/services/secureStorage'
 import { applyProviderPreset, defaultProviderSyncPolicy, detectProviderPreset, getProviderPreset } from '@/services/ai/providerRegistry'
 import { normalizeProviderCredentialGroups } from '@/services/ai/providerCredentials'
 import { legacySearchModeForProvider, resolveSearchProvider } from '@/services/searchPolicy'
@@ -54,6 +54,7 @@ const defaultSettings: Settings = {
   defaultProvider: null,
   fontSize: 16,
   hapticsEnabled: true,
+  systemStatusNotificationsEnabled: false,
   pageTransitionStyle: 'state',
   defaultTemperature: 0.3,
   defaultMaxTokens: undefined,
@@ -85,6 +86,12 @@ const defaultSettings: Settings = {
   skillsEnabled: true,
   mcpEnabled: true,
   commandPaletteEnabled: true,
+  agentWorkflowMaxSteps: 3,
+  agentWorkflowMaxToolCallsPerStep: 1,
+  agentWorkflowAllowReadOnlyTools: true,
+  agentWorkflowAllowReadWriteTools: 'visible',
+  agentWorkflowAllowDestructiveTools: 'confirm',
+  agentWorkflowOutputCharLimit: 4800,
   transportMode: 'auto',
   remoteCompactMode: 'off',
   remoteCompactThreshold: 0.8,
@@ -123,7 +130,9 @@ const LEGACY_DEFAULT_PROVIDER_IDS = [
   'xiaomi-mimo',
   'deepseek',
   'dashscope',
+  'moonshot',
   'bigmodel',
+  'minimax',
   'xai',
   'openrouter',
   'newapi',
@@ -147,9 +156,9 @@ const CUSTOM_SEARCH_KEY = 'islemind.key.custom-search'
 
 async function setSecureKey(key: string, value: string): Promise<void> {
   if (value) {
-    await SecureStore.setItemAsync(key, value)
+    await setSecureItem(key, value)
   } else {
-    await SecureStore.deleteItemAsync(key)
+    await deleteSecureItem(key)
   }
 }
 
@@ -233,7 +242,7 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
 
   addProvider: async (provider: AIProvider) => {
     if (provider.apiKey) {
-      await SecureStore.setItemAsync(secureProviderKey(provider.id), provider.apiKey)
+      await setSecureItem(secureProviderKey(provider.id), provider.apiKey)
     }
     await persistCredentialGroupKeys(provider.id, provider.credentialGroups)
     set((state) => {
@@ -248,14 +257,14 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
 
   updateProvider: async (id: string, updates: Partial<AIProvider>) => {
     if (updates.apiKey) {
-      await SecureStore.setItemAsync(secureProviderKey(id), updates.apiKey)
+      await setSecureItem(secureProviderKey(id), updates.apiKey)
     }
     if (updates.credentialGroups) {
       const previous = get().providers.find((provider) => provider.id === id)?.credentialGroups ?? []
       const nextIds = new Set(updates.credentialGroups.map((group) => group.id))
       await Promise.all(previous
         .filter((group) => !nextIds.has(group.id))
-        .map((group) => SecureStore.deleteItemAsync(secureProviderGroupKey(id, group.id)))
+        .map((group) => deleteSecureItem(secureProviderGroupKey(id, group.id)))
       )
       await persistCredentialGroupKeys(id, updates.credentialGroups)
     }
@@ -272,7 +281,7 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
     if (!providers.length) return
     await Promise.all(providers.map(async (provider) => {
       if (provider.apiKey) {
-        await SecureStore.setItemAsync(secureProviderKey(provider.id), provider.apiKey)
+        await setSecureItem(secureProviderKey(provider.id), provider.apiKey)
       }
       await persistCredentialGroupKeys(provider.id, provider.credentialGroups)
     }))
@@ -309,9 +318,9 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
   },
 
   removeProvider: async (id: string) => {
-    await SecureStore.deleteItemAsync(secureProviderKey(id))
+    await deleteSecureItem(secureProviderKey(id))
     const provider = get().providers.find((item) => item.id === id)
-    await Promise.all((provider?.credentialGroups ?? []).map((group) => SecureStore.deleteItemAsync(secureProviderGroupKey(id, group.id))))
+    await Promise.all((provider?.credentialGroups ?? []).map((group) => deleteSecureItem(secureProviderGroupKey(id, group.id))))
     set((state) => {
       const updated = state.providers.filter((p) => p.id !== id)
       const defaultProvider = updated.some((item) => item.id === state.settings.defaultProvider)
@@ -331,26 +340,26 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
 
   setProviderApiKey: async (id: string, apiKey: string) => {
     if (apiKey) {
-      await SecureStore.setItemAsync(secureProviderKey(id), apiKey)
+      await setSecureItem(secureProviderKey(id), apiKey)
     } else {
-      await SecureStore.deleteItemAsync(secureProviderKey(id))
+      await deleteSecureItem(secureProviderKey(id))
     }
   },
 
   getSecureApiKey: async (id: string) => {
-    return SecureStore.getItemAsync(secureProviderKey(id))
+    return getSecureItem(secureProviderKey(id))
   },
 
   setProviderCredentialGroupKey: async (providerId: string, groupId: string, apiKey: string) => {
     if (apiKey) {
-      await SecureStore.setItemAsync(secureProviderGroupKey(providerId, groupId), apiKey)
+      await setSecureItem(secureProviderGroupKey(providerId, groupId), apiKey)
     } else {
-      await SecureStore.deleteItemAsync(secureProviderGroupKey(providerId, groupId))
+      await deleteSecureItem(secureProviderGroupKey(providerId, groupId))
     }
   },
 
   getProviderCredentialGroupKey: async (providerId: string, groupId: string) => {
-    return SecureStore.getItemAsync(secureProviderGroupKey(providerId, groupId))
+    return getSecureItem(secureProviderGroupKey(providerId, groupId))
   },
 
   updateProviderCredentialGroupHealth: async (providerId: string, groupId: string | undefined, ok: boolean) => {
@@ -379,30 +388,30 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
 
   setTavilyApiKey: async (apiKey: string) => {
     if (apiKey) {
-      await SecureStore.setItemAsync(TAVILY_KEY, apiKey)
+      await setSecureItem(TAVILY_KEY, apiKey)
     } else {
-      await SecureStore.deleteItemAsync(TAVILY_KEY)
+      await deleteSecureItem(TAVILY_KEY)
     }
   },
 
   getTavilyApiKey: async () => {
-    return SecureStore.getItemAsync(TAVILY_KEY)
+    return getSecureItem(TAVILY_KEY)
   },
 
   setGoogleSearchApiKey: async (apiKey: string) => setSecureKey(GOOGLE_SEARCH_KEY, apiKey),
-  getGoogleSearchApiKey: async () => SecureStore.getItemAsync(GOOGLE_SEARCH_KEY),
+  getGoogleSearchApiKey: async () => getSecureItem(GOOGLE_SEARCH_KEY),
   setBingSearchApiKey: async (apiKey: string) => setSecureKey(BING_SEARCH_KEY, apiKey),
-  getBingSearchApiKey: async () => SecureStore.getItemAsync(BING_SEARCH_KEY),
+  getBingSearchApiKey: async () => getSecureItem(BING_SEARCH_KEY),
   setCustomSearchApiKey: async (apiKey: string) => setSecureKey(CUSTOM_SEARCH_KEY, apiKey),
-  getCustomSearchApiKey: async () => SecureStore.getItemAsync(CUSTOM_SEARCH_KEY),
+  getCustomSearchApiKey: async () => getSecureItem(CUSTOM_SEARCH_KEY),
 
   hydrateProviderKey: async (id: string) => {
     const provider = get().providers.find((item) => item.id === id)
     if (!provider) return null
-    const apiKey = await SecureStore.getItemAsync(secureProviderKey(id))
+    const apiKey = await getSecureItem(secureProviderKey(id))
     const credentialGroups = await Promise.all((provider.credentialGroups ?? []).map(async (group) => ({
       ...group,
-      apiKey: await SecureStore.getItemAsync(secureProviderGroupKey(id, group.id)) ?? group.apiKey ?? '',
+      apiKey: await getSecureItem(secureProviderGroupKey(id, group.id)) ?? group.apiKey ?? '',
     })))
     const primaryGroupKey = credentialGroups.find((group) => group.enabled && group.apiKey)?.apiKey
     return normalizeProviderCredentialGroups({ ...provider, apiKey: apiKey ?? primaryGroupKey ?? '', credentialGroups })
@@ -432,12 +441,12 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
     const providers = get().providers
     const providerIds = new Set([...LEGACY_DEFAULT_PROVIDER_IDS, ...providers.map((provider) => provider.id)])
     await Promise.all([
-      ...Array.from(providerIds).map((id) => SecureStore.deleteItemAsync(secureProviderKey(id))),
-      SecureStore.deleteItemAsync(TAVILY_KEY),
-      SecureStore.deleteItemAsync(GOOGLE_SEARCH_KEY),
-      SecureStore.deleteItemAsync(BING_SEARCH_KEY),
-      SecureStore.deleteItemAsync(CUSTOM_SEARCH_KEY),
-      ...providers.flatMap((provider) => (provider.credentialGroups ?? []).map((group) => SecureStore.deleteItemAsync(secureProviderGroupKey(provider.id, group.id)))),
+      ...Array.from(providerIds).map((id) => deleteSecureItem(secureProviderKey(id))),
+      deleteSecureItem(TAVILY_KEY),
+      deleteSecureItem(GOOGLE_SEARCH_KEY),
+      deleteSecureItem(BING_SEARCH_KEY),
+      deleteSecureItem(CUSTOM_SEARCH_KEY),
+      ...providers.flatMap((provider) => (provider.credentialGroups ?? []).map((group) => deleteSecureItem(secureProviderGroupKey(provider.id, group.id)))),
       clearLanguagePreferenceSource(),
     ])
     setServiceLanguage(resetLanguage)
@@ -514,15 +523,15 @@ function normalizeProviderBaseUrl(provider: AIProvider): string | undefined {
 async function persistCredentialGroupKeys(providerId: string, groups: ProviderCredentialGroup[] | undefined): Promise<void> {
   await Promise.all((groups ?? []).map(async (group) => {
     if (!group.apiKey) return
-    await SecureStore.setItemAsync(secureProviderGroupKey(providerId, group.id), group.apiKey)
+    await setSecureItem(secureProviderGroupKey(providerId, group.id), group.apiKey)
   }))
 }
 
 async function clearProviderCatalogSecrets(providers: AIProvider[]): Promise<void> {
   const ids = new Set([...LEGACY_DEFAULT_PROVIDER_IDS, ...providers.map((provider) => provider.id)])
   await Promise.all([
-    ...Array.from(ids).map((id) => SecureStore.deleteItemAsync(secureProviderKey(id))),
-    ...providers.flatMap((provider) => (provider.credentialGroups ?? []).map((group) => SecureStore.deleteItemAsync(secureProviderGroupKey(provider.id, group.id)))),
+    ...Array.from(ids).map((id) => deleteSecureItem(secureProviderKey(id))),
+    ...providers.flatMap((provider) => (provider.credentialGroups ?? []).map((group) => deleteSecureItem(secureProviderGroupKey(provider.id, group.id)))),
   ])
 }
 

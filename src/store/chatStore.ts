@@ -6,6 +6,9 @@ import { localDataStore } from '@/services/localDataStore'
 import { st } from '@/i18n/service'
 import { getOnboardingConversationDefaults, isOnboardingSystemPrompt } from '@/utils/onboardingProfile'
 import { resolveProviderModelAliasAccess } from '@/services/ai/policy/providerModelAccess'
+import { getReasoningEffortOptions } from '@/utils/modelReasoning'
+import { resolveProviderModelAlias } from '@/utils/providerModels'
+import { sanitizeProcessTraceForBoundary, sanitizeProcessTracesForBoundary } from '@/utils/traceSafety'
 import { useSettingsStore } from './settingsStore'
 
 function generateId(): string {
@@ -14,6 +17,16 @@ function generateId(): string {
 
 export function generateTitle(content: string): string {
   return content.slice(0, 50).replace(/\n/g, ' ') + (content.length > 50 ? '...' : '')
+}
+
+function selectSupportedReasoningEffort(
+  requested: Conversation['reasoningEffort'],
+  options: NonNullable<Conversation['reasoningEffort']>[]
+): Conversation['reasoningEffort'] {
+  if (!options.length) return undefined
+  if (requested && options.includes(requested)) return requested
+  if (options.includes('medium')) return 'medium'
+  return options.find((effort) => effort !== 'none' && effort !== 'minimal') ?? options[0]
 }
 
 interface ChatState {
@@ -56,7 +69,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
     set({ isLoading: true })
     const data = await loadData<Conversation[]>('CONVERSATIONS')
     if (data?.length) {
-      const conversations = stripOnboardingSystemPrompts(data)
+      const conversations = prepareConversationsForStore(data)
       const currentId = await loadData<string | null>(ACTIVE_CONVERSATION_KEY)
       const selectedId = conversations.some((conversation) => conversation.id === currentId) ? currentId : conversations[0]?.id ?? null
       set({
@@ -76,8 +89,11 @@ export const useChatStore = create<ChatState>((set, get) => ({
     const id = generateId()
     const { settings, providers } = useSettingsStore.getState()
     const provider = providers.find((item) => item.id === providerId)
-    const modelConfig = getModelConfig(model, provider?.type, provider?.modelConfigs)
+    const upstreamModel = provider ? resolveProviderModelAlias(provider, model) : model
+    const modelConfig = getModelConfig(upstreamModel, provider?.type, provider?.modelConfigs)
     const onboardingDefaults = getOnboardingConversationDefaults(settings.onboardingCompanionMode)
+    const reasoningOptions = getReasoningEffortOptions(provider, upstreamModel)
+    const defaultReasoningEffort = selectSupportedReasoningEffort(onboardingDefaults.reasoningEffort, reasoningOptions)
     const conversation: Conversation = {
       id,
       title: '',
@@ -87,7 +103,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
       systemPrompt: onboardingDefaults.systemPrompt,
       temperature: settings.defaultTemperature ?? onboardingDefaults.temperature,
       topP: 1,
-      reasoningEffort: onboardingDefaults.reasoningEffort,
+      reasoningEffort: defaultReasoningEffort,
       maxTokens: settings.defaultMaxTokens ?? modelConfig.defaultMaxTokens,
       messages: [],
       createdAt: Date.now(),
@@ -179,11 +195,14 @@ export const useChatStore = create<ChatState>((set, get) => ({
       set({ error: st('chat.modelSwitchBlockedMessage', { model: nextModel, provider: provider.name }) })
       return false
     }
-    const modelConfig = getModelConfig(nextModel, provider.type, provider.modelConfigs)
+    const upstreamModel = resolveProviderModelAlias(provider, nextModel)
+    const modelConfig = getModelConfig(upstreamModel, provider.type, provider.modelConfigs)
+    const reasoningOptions = getReasoningEffortOptions(provider, upstreamModel)
     set((state) => {
       const updated = state.conversations.map((c) => {
         if (c.id !== id) return c
         const nextMaxTokens = Math.min(c.maxTokens || modelConfig.defaultMaxTokens, modelConfig.maxOutputTokens)
+        const nextReasoningEffort = selectSupportedReasoningEffort(c.reasoningEffort, reasoningOptions)
         return {
           ...c,
           providerId,
@@ -192,7 +211,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
           maxTokens: nextMaxTokens || modelConfig.defaultMaxTokens,
           temperature: Math.min(c.temperature, modelConfig.maxTemperature ?? 2),
           topP: c.topP ?? 1,
-          reasoningEffort: c.reasoningEffort ?? 'medium',
+          reasoningEffort: nextReasoningEffort,
           updatedAt: Date.now(),
         }
       })
@@ -251,13 +270,14 @@ export const useChatStore = create<ChatState>((set, get) => ({
   },
 
   updateMessage: (convId: string, msgId: string, updates: Partial<Message>) => {
+    const safeUpdates = sanitizeMessageTraceUpdates(updates)
     set((state) => {
       const updated = state.conversations.map((c) => {
         if (c.id !== convId) return c
         return {
           ...c,
           messages: c.messages.map((m) =>
-            m.id === msgId ? { ...m, ...updates } : m
+            m.id === msgId ? { ...m, ...safeUpdates } : m
           ),
           updatedAt: Date.now(),
         }
@@ -342,7 +362,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
   },
 
   importData: (conversations: Conversation[]) => {
-    const cleaned = stripOnboardingSystemPrompts(conversations)
+    const cleaned = prepareConversationsForStore(conversations)
     const currentId = cleaned[0]?.id ?? null
     set({ conversations: cleaned, currentId })
     void saveData(ACTIVE_CONVERSATION_KEY, currentId)
@@ -414,11 +434,15 @@ function stripOnboardingSystemPrompts(conversations: Conversation[]): Conversati
   )
 }
 
+function prepareConversationsForStore(conversations: Conversation[]): Conversation[] {
+  return sanitizeConversationTracesForStore(stripOnboardingSystemPrompts(conversations))
+}
+
 async function hydrateSqliteConversationsInBackground(): Promise<void> {
   try {
     const sqliteData = await localDataStore.loadConversations()
     if (!sqliteData.length) return
-    const conversations = stripOnboardingSystemPrompts(sqliteData)
+    const conversations = prepareConversationsForStore(sqliteData)
     const currentId = await loadData<string | null>(ACTIVE_CONVERSATION_KEY)
     const selectedId = conversations.some((conversation) => conversation.id === currentId) ? currentId : conversations[0]?.id ?? null
     useChatStore.setState({ conversations, currentId: selectedId })
@@ -431,7 +455,7 @@ async function hydrateSqliteConversationsInBackground(): Promise<void> {
 }
 
 function sanitizeConversationsForPersistence(conversations: Conversation[]): Conversation[] {
-  return conversations.map((conversation) => ({
+  return sanitizeConversationTracesForStore(conversations).map((conversation) => ({
     ...conversation,
     messages: conversation.messages.map((message) => ({
       ...message,
@@ -443,13 +467,42 @@ function sanitizeConversationsForPersistence(conversations: Conversation[]): Con
   }))
 }
 
+function sanitizeConversationTracesForStore(conversations: Conversation[]): Conversation[] {
+  return conversations.map((conversation) => ({
+    ...conversation,
+    messages: conversation.messages.map(sanitizeMessageTracesForStore),
+  }))
+}
+
+function sanitizeMessageTracesForStore(message: Message): Message {
+  return {
+    ...message,
+    reasoning: sanitizeProcessTracesForBoundary(message.reasoning),
+    toolCalls: sanitizeProcessTracesForBoundary(message.toolCalls),
+    retrievalTrace: sanitizeProcessTracesForBoundary(message.retrievalTrace),
+  }
+}
+
+function sanitizeMessageTraceUpdates(updates: Partial<Message>): Partial<Message> {
+  const safe = { ...updates }
+  if ('reasoning' in safe) safe.reasoning = sanitizeProcessTracesForBoundary(safe.reasoning)
+  if ('toolCalls' in safe) safe.toolCalls = sanitizeProcessTracesForBoundary(safe.toolCalls)
+  if ('retrievalTrace' in safe) safe.retrievalTrace = sanitizeProcessTracesForBoundary(safe.retrievalTrace)
+  return safe
+}
+
+function sanitizeProcessTraceForStore(trace: ProcessTrace): ProcessTrace {
+  return sanitizeProcessTraceForBoundary(trace)
+}
+
 function upsertTraceOnMessage(message: Message, trace: ProcessTrace): Message {
-  const key = getTraceMessageKey(trace.type)
+  const safeTrace = sanitizeProcessTraceForStore(trace)
+  const key = getTraceMessageKey(safeTrace.type)
   const current = message[key] ?? []
-  const index = current.findIndex((item) => item.id === trace.id)
+  const index = current.findIndex((item) => item.id === safeTrace.id)
   const next = index >= 0
-    ? current.map((item) => item.id === trace.id ? mergeTrace(item, trace) : item)
-    : [...current, trace]
+    ? current.map((item) => item.id === safeTrace.id ? mergeTrace(item, safeTrace) : item)
+    : [...current, safeTrace]
   return { ...message, [key]: next }
 }
 

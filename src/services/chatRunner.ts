@@ -1,12 +1,14 @@
 import * as Clipboard from 'expo-clipboard'
-import type { AIProvider, Attachment, ChatErrorCode, Conversation, McpServerConfig, McpToolManifest, Message, ProcessTrace, RemoteCompactMode, RetrievalSource, ToolContentBlock } from '@/types'
+import type { AIModel, AIProvider, Attachment, ChatErrorCode, Conversation, McpServerConfig, McpToolManifest, Message, ProcessTrace, RemoteCompactMode, RetrievalSource, Settings, ToolContentBlock } from '@/types'
 import { getModelConfig, getProviderConfigIssue } from '@/types'
-import { streamChat, type ChatCompletionResult, type ProviderRuntimeError, type StreamHandle } from '@/services/ai/base'
+import { streamChat, type ChatCompletionResult, type ChatRequest, type ContentPart, type ProviderRuntimeError, type ProviderToolCall, type StreamHandle } from '@/services/ai/base'
 import { extractMemories, retrieveContext, retrieveFlareContext, searchWeb, type RetrievedContext } from '@/services/context'
+import { searchKnowledge } from '@/services/contextStore'
 import { verifyRagGeneration } from '@/services/rag'
 import { buildSystemPrompt } from '@/services/promptEngineering'
 import { buildEstimatedUsage, estimateTextTokens, mergeUsageWithEstimate } from '@/services/tokenUsage'
 import { useChatStore } from '@/store/chatStore'
+import { useChatStreamingStore } from '@/store/chatStreamingStore'
 import { useSettingsStore } from '@/store/settingsStore'
 import { packChatMessages } from '@/services/contextPacker'
 import { resolveSearchProvider } from '@/services/searchPolicy'
@@ -20,6 +22,37 @@ import { decideRemoteCompact, estimateRemoteCompactSavedTokens } from '@/service
 import { recordCompactUsage } from '@/services/ai/compact/compactUsage'
 import { listActiveCompactStates, saveCompactState } from '@/services/ai/compact/compactStateStore'
 import { appendRuntimeLog } from '@/services/runtimeLog'
+import { sanitizeTraceMetadata } from '@/utils/traceSafety'
+import {
+  decideAgentRuntimeAssistantMessage,
+  extractAgentWorkflowDefinitionsFromSkillSnapshot,
+  getAgentPendingActionFromMessage,
+  getAgentWorkflowSkillSuggestionFromMessage,
+  clampAgentOutput,
+  buildAgentToolCallTraceMetadata,
+  buildAgentProviderToolAdapter,
+  createAgentRagRuntime,
+  executeAgentTool,
+  listBlockedAgentWorkflowStatesForSkillSnapshot,
+  listEnabledAgentWorkflowIdsForSkillSnapshot,
+  listAgentToolManifests,
+  redactSensitiveText,
+  resolveAgentProviderToolTarget,
+  resolveAgentTool,
+  resolveSettingsAgentRunLimits,
+  resolveAgentRuntimeAssistantMessage,
+  saveApprovedAgentWorkflowSkillSuggestion,
+  stripAgentToolRequestBlocks,
+  type AgentAssistantMessagePatch,
+  type AgentPendingAction,
+  type AgentProviderToolAdapterResult,
+  type AgentProviderToolNameMapEntry,
+  type AgentRequestedOutput,
+  type AgentRunLimits,
+  type AgentToolManifest,
+  type AgentToolRequest,
+  type AgentWorkflowRuntimeBlockState,
+} from '@/services/agent'
 
 function generateId(): string {
   return `${Date.now()}-${Math.random().toString(36).slice(2, 10)}`
@@ -33,12 +66,32 @@ interface SendMessageInput {
   conversation: Conversation
   content: string
   attachments?: Attachment[]
+  requestedOutput?: AgentRequestedOutput
+}
+
+interface AgentRuntimeReplyOptions {
+  explicitToolRequest?: AgentToolRequest
+  requestedOutput?: AgentRequestedOutput
+  manifests?: AgentToolManifest[]
+  enabledAgentWorkflowIds?: string[]
+  blockedAgentWorkflowStates?: AgentWorkflowRuntimeBlockState[]
+  limits?: Partial<AgentRunLimits>
+  userConfirmed?: boolean
+}
+
+export interface SaveAgentWorkflowSkillFromMessageResult {
+  ok: boolean
+  status: 'saved' | 'already_saved' | 'unavailable' | 'blocked'
+  skillName?: string
+  reason?: string
 }
 
 const activeControllers = new Map<string, { controller: AbortController; messageId: string; flush?: () => void; done?: Promise<void> }>()
 const STREAM_TEXT_FLUSH_MS = 64
 const STREAM_TEXT_MAX_BUFFER = 128
 const STREAM_TRACE_FLUSH_MS = 180
+const PROVIDER_NATIVE_TOOL_OUTPUT_LIMIT = 4800
+const PROVIDER_NATIVE_TOOL_TRACE_OUTPUT_LIMIT = 1600
 const STREAM_TRACE_MAX_BUFFER = 6
 const MCP_CALL_TAG = 'islemind_mcp_call'
 
@@ -57,6 +110,17 @@ interface McpToolRequest {
   serverId?: string
   toolName: string
   arguments: Record<string, unknown>
+}
+
+interface AgentProviderToolContext {
+  adapter: AgentProviderToolAdapterResult
+  manifests: AgentToolManifest[]
+  limits: AgentRunLimits
+}
+
+interface KnowledgeScope {
+  ids: Set<string>
+  terms: string[]
 }
 
 export function isConversationStreaming(conversationId: string): boolean {
@@ -94,7 +158,7 @@ export function recoverStaleStreamingMessages(conversationId: string): void {
       fallbackStatus: outputText.trim() ? 'done' : 'skipped',
       fallbackContent: outputText.trim() ? st('chatRunner.trace.recoveredStopped') : st('chatRunner.trace.recoveredEmpty'),
     })
-    void useChatStore.getState().flushStreamingMessage(conversationId, message.id)
+    void useChatStreamingStore.getState().flushStreamingMessage(conversationId, message.id)
   }
 }
 
@@ -134,10 +198,10 @@ export function stopMessage(conversationId: string) {
     status: 'done',
     startedAt: completedAt,
   }))
-  void useChatStore.getState().flushStreamingMessage(conversationId, active.messageId)
+  void useChatStreamingStore.getState().flushStreamingMessage(conversationId, active.messageId)
 }
 
-export async function sendMessage({ conversation, content, attachments = [] }: SendMessageInput) {
+export async function sendMessage({ conversation, content, attachments = [], requestedOutput }: SendMessageInput) {
   const text = normalizeUserContent(content)
   if (!text && attachments.length === 0) return
 
@@ -158,6 +222,36 @@ export async function sendMessage({ conversation, content, attachments = [] }: S
       addLocalAppCommandReply(conversation.id, userMessage, localCommand)
       return
     }
+  }
+  const agentDecisionContext = await resolveAgentDecisionContext(conversation)
+  const settings = useSettingsStore.getState().settings
+  const agentLimits = resolveSettingsAgentRunLimits(settings)
+  const agentRuntimeInput = {
+    conversation,
+    content: text,
+    attachments,
+    settings,
+    requestedOutput,
+    manifests: agentDecisionContext.manifests,
+    enabledAgentWorkflowIds: agentDecisionContext.enabledAgentWorkflowIds,
+    blockedAgentWorkflowStates: agentDecisionContext.blockedAgentWorkflowStates,
+    retrieveContext,
+    limits: agentLimits,
+    intentVisible: true,
+  }
+  const agentDecision = decideAgentRuntimeAssistantMessage(agentRuntimeInput)
+  if (agentDecision.shouldHandle) {
+    void createAgentRuntimeReply(conversation, text, {
+      requestedOutput,
+      manifests: agentRuntimeInput.manifests,
+      enabledAgentWorkflowIds: agentRuntimeInput.enabledAgentWorkflowIds,
+      blockedAgentWorkflowStates: agentRuntimeInput.blockedAgentWorkflowStates,
+      limits: agentLimits,
+    }).catch((error) => {
+      const message = error instanceof Error ? error.message : st('chatRunner.error.sendFailed')
+      useChatStore.getState().setError(message)
+    })
+    return
   }
   void createAssistantReply(conversation.id).catch((error) => {
     const message = error instanceof Error ? error.message : st('chatRunner.error.sendFailed')
@@ -184,6 +278,205 @@ function addLocalAppCommandReply(conversationId: string, userMessage: Message, c
     tokenCount: estimateTextTokens(command.message),
   }
   useChatStore.getState().addMessage(conversationId, assistantMessage)
+}
+
+export async function confirmAgentAction(conversationId: string, assistantMessageId: string): Promise<boolean> {
+  const store = useChatStore.getState()
+  const conversation = store.conversations.find((item) => item.id === conversationId)
+  if (!conversation) return false
+  const assistantIndex = conversation.messages.findIndex((message) => message.id === assistantMessageId)
+  const assistantMessage = assistantIndex >= 0 ? conversation.messages[assistantIndex] : undefined
+  if (!assistantMessage || assistantMessage.role !== 'assistant') return false
+  if (conversation.messages.slice(assistantIndex + 1).some((message) => message.status !== 'cancelled')) return false
+
+  const pendingAction = getAgentPendingActionFromMessage(assistantMessage)
+  if (!pendingAction?.confirmable || !pendingAction.resumeToolRequest) return false
+  const confirmedTool = await resolveConfirmedPendingActionTool(pendingAction)
+  if (!confirmedTool) return false
+  const previousUser = [...conversation.messages.slice(0, assistantIndex)].reverse().find((message) => message.role === 'user')
+  if (!previousUser) return false
+
+  stopMessage(conversationId)
+  store.removeMessage(conversationId, assistantMessage.id)
+  const nextConversation = useChatStore.getState().conversations.find((item) => item.id === conversationId)
+  if (!nextConversation) return false
+  await createAgentRuntimeReply(nextConversation, previousUser.content, {
+    explicitToolRequest: pendingAction.resumeToolRequest,
+    limits: resolveSettingsAgentRunLimits(useSettingsStore.getState().settings),
+    userConfirmed: true,
+  })
+  return true
+}
+
+async function resolveConfirmedPendingActionTool(pendingAction: AgentPendingAction): Promise<AgentToolManifest | undefined> {
+  const request = pendingAction.resumeToolRequest
+  if (!request || !pendingAction.permission) return undefined
+  const tool = resolveAgentTool(request, await listAgentToolManifests())
+  if (!tool) return undefined
+  if (!tool.enabled) return undefined
+  if (tool.permission !== pendingAction.permission) return undefined
+  if (pendingAction.source && tool.source !== pendingAction.source) return undefined
+  if (request.source && tool.source !== request.source) return undefined
+  if (request.serverId && tool.serverId !== request.serverId) return undefined
+  if (request.name && request.name !== tool.name) return undefined
+  if (request.toolId && request.toolId !== tool.id) return undefined
+  if (pendingAction.toolName && pendingAction.toolName !== tool.name) return undefined
+  if (pendingAction.toolId && pendingAction.toolId !== tool.id) return undefined
+  if (pendingAction.serverId && pendingAction.serverId !== tool.serverId) return undefined
+  if (!pendingAction.toolName && !pendingAction.toolId) return undefined
+  return tool
+}
+
+export async function saveAgentWorkflowSkillFromMessage(conversationId: string, assistantMessageId: string): Promise<SaveAgentWorkflowSkillFromMessageResult> {
+  const conversation = useChatStore.getState().conversations.find((item) => item.id === conversationId)
+  const assistantMessage = conversation?.messages.find((message) => message.id === assistantMessageId)
+  if (!assistantMessage || assistantMessage.role !== 'assistant') {
+    return { ok: false, status: 'unavailable', reason: st('chatRunner.workflowSave.messageUnavailable') }
+  }
+  const suggestion = getAgentWorkflowSkillSuggestionFromMessage(assistantMessage)
+  if (!suggestion?.ok || !suggestion.skill) {
+    return { ok: false, status: 'unavailable', reason: st('chatRunner.workflowSave.suggestionUnavailable') }
+  }
+  const result = await saveApprovedAgentWorkflowSkillSuggestion({
+    suggestion,
+    approval: {
+      approved: true,
+      approvedBy: 'chat-message',
+      approvedAt: Date.now(),
+      visibleSummary: `Saved from conversation ${conversationId}.`,
+    },
+  })
+  if (!result.ok || !result.skill) {
+    return { ok: false, status: 'blocked', reason: formatAgentWorkflowSaveBlockedReason(result.reason) }
+  }
+  return {
+    ok: true,
+    status: result.status === 'already_saved' ? 'already_saved' : 'saved',
+    skillName: result.skill.name,
+  }
+}
+
+function formatAgentWorkflowSaveBlockedReason(reason: string | undefined): string {
+  switch (reason) {
+    case 'approval_required':
+      return st('chatRunner.workflowSave.approvalRequired')
+    case 'invalid_workflow':
+      return st('chatRunner.workflowSave.invalidWorkflow')
+    case 'missing_skill':
+      return st('chatRunner.workflowSave.missingSkill')
+    case 'payload_too_large':
+      return st('chatRunner.workflowSave.payloadTooLarge')
+    case 'skill_id_conflict':
+      return st('chatRunner.workflowSave.skillIdConflict')
+    case undefined:
+      return st('chatRunner.workflowSave.saveBlocked')
+    default:
+      return st('chatRunner.workflowSave.saveBlocked')
+  }
+}
+
+async function createAgentRuntimeReply(conversation: Conversation, content: string, options: AgentRuntimeReplyOptions = {}): Promise<void> {
+  stopMessage(conversation.id)
+
+  const startedAt = Date.now()
+  const assistantMessage: Message = {
+    id: generateId(),
+    role: 'assistant',
+    content: '',
+    responseText: '',
+    timestamp: startedAt,
+    status: 'streaming',
+    startedAt,
+    reasoning: [
+      {
+        id: traceId('agent-runtime'),
+        type: 'system',
+        title: 'Agent workflow',
+        content: 'Agentic workflow is running.',
+        status: 'running',
+        startedAt,
+      },
+    ],
+  }
+  useChatStore.getState().addMessage(conversation.id, assistantMessage)
+
+  const requestController = new AbortController()
+  activeControllers.set(conversation.id, { controller: requestController, messageId: assistantMessage.id })
+
+  try {
+    const settings = useSettingsStore.getState().settings
+    const agentResolution = await resolveAgentRuntimeAssistantMessage({
+      conversation,
+      content,
+      explicitToolRequest: options.explicitToolRequest,
+      requestedOutput: options.requestedOutput,
+      settings,
+      manifests: options.manifests,
+      enabledAgentWorkflowIds: options.enabledAgentWorkflowIds,
+      blockedAgentWorkflowStates: options.blockedAgentWorkflowStates,
+      limits: options.limits ?? resolveSettingsAgentRunLimits(settings),
+      retrieveContext,
+      startedAt,
+      intentVisible: true,
+      userConfirmed: options.userConfirmed,
+      signal: requestController.signal,
+    })
+    if (isReplyCancelled(conversation.id, assistantMessage.id, requestController)) return
+    if (agentResolution.handled && agentResolution.patch) {
+      updateAgentRuntimeReply(conversation.id, assistantMessage.id, agentResolution.patch)
+      return
+    }
+
+    activeControllers.delete(conversation.id)
+    useChatStore.getState().removeMessage(conversation.id, assistantMessage.id)
+    void createAssistantReply(conversation.id).catch((error) => {
+      const message = error instanceof Error ? error.message : st('chatRunner.error.sendFailed')
+      useChatStore.getState().setError(message)
+    })
+  } catch (error) {
+    if (requestController.signal.aborted || getMessage(conversation.id, assistantMessage.id)?.status === 'cancelled') return
+    const message = error instanceof Error ? error.message : st('chatRunner.error.sendFailed')
+    finishWithError(conversation.id, assistantMessage.id, toUserFacingError(message), classifyChatError(message))
+  } finally {
+    if (activeControllers.get(conversation.id)?.messageId === assistantMessage.id) {
+      activeControllers.delete(conversation.id)
+    }
+  }
+}
+
+interface AgentDecisionContext {
+  manifests?: AgentToolManifest[]
+  enabledAgentWorkflowIds?: string[]
+  blockedAgentWorkflowStates?: AgentWorkflowRuntimeBlockState[]
+}
+
+async function resolveAgentDecisionContext(conversation: Conversation): Promise<AgentDecisionContext> {
+  if (!extractAgentWorkflowDefinitionsFromSkillSnapshot(conversation.skillSnapshot).length) return {}
+  const manifests = await listAgentToolManifests()
+  const [enabledAgentWorkflowIds, blockedAgentWorkflowStates] = await Promise.all([
+    listEnabledAgentWorkflowIdsForSkillSnapshot(conversation.skillSnapshot),
+    listBlockedAgentWorkflowStatesForSkillSnapshot(conversation.skillSnapshot, manifests),
+  ])
+  return { manifests, enabledAgentWorkflowIds, blockedAgentWorkflowStates }
+}
+
+function updateAgentRuntimeReply(conversationId: string, messageId: string, patch: AgentAssistantMessagePatch): void {
+  const durationMs = patch.durationMs ?? 0
+  useChatStore.getState().updateMessage(conversationId, messageId, {
+    content: patch.content,
+    responseText: patch.responseText,
+    status: patch.status,
+    errorCode: patch.errorCode,
+    startedAt: Math.max(0, patch.completedAt - durationMs),
+    completedAt: patch.completedAt,
+    durationMs,
+    reasoning: patch.reasoning,
+    retrievalTrace: patch.retrievalTrace,
+    toolCalls: patch.toolCalls,
+    usage: patch.usage,
+    estimatedTokens: patch.usage.source === 'estimated',
+    tokenCount: patch.tokenCount,
+  })
 }
 
 function normalizeUserContent(content: string): string {
@@ -431,6 +724,15 @@ async function createAssistantReply(conversationId: string) {
   for (const trace of mcpContext.traces) {
     upsertTrace(conversationId, assistantMessage.id, trace)
   }
+  const providerToolContext = await resolveProviderNativeToolContext({
+    provider,
+    model: upstreamModel,
+    modelPreferredEndpoint: modelConfig.preferredEndpoint,
+    settings,
+  })
+  if (providerToolContext) {
+    upsertTrace(conversationId, assistantMessage.id, buildProviderNativeToolManifestTrace(providerToolContext))
+  }
   const hasAttachments = !!lastUserMessage?.attachments?.length
   const providerWebSearchMode = searchProvider === 'native' && !hasAttachments ? 'native' : 'off'
   const nativeSearchTraceId = traceId('native-search')
@@ -457,25 +759,41 @@ async function createAssistantReply(conversationId: string) {
     hasWeb: webSources.length > 0 || providerWebSearchMode === 'native',
     retrievalSources,
   })
-  const packedPrompt = packChatMessages({
-    messages: latestConversation?.messages.filter((message) => message.id !== assistantMessage.id) ?? [],
-    contextPrompt: [context.prompt, webSources.length ? formatWebPrompt(webSources) : '', mcpContext.prompt].filter(Boolean).join('\n\n'),
+  const sourceMessages = latestConversation?.messages.filter((message) => message.id !== assistantMessage.id) ?? []
+  const baseContextPrompt = [context.prompt, webSources.length ? formatWebPrompt(webSources) : '', mcpContext.prompt].filter(Boolean).join('\n\n')
+  const remoteCompactProbe = packChatMessages({
+    messages: sourceMessages,
+    contextPrompt: baseContextPrompt,
     modelContextWindow: modelConfig.contextWindow,
     maxOutputTokens: runtimeConversation.maxTokens,
     systemPrompt,
     reasoningEffort: runtimeConversation.reasoningEffort,
     providerType: provider.type,
     model: upstreamModel,
+    localCompression: false,
   })
   const compactDecision = decideRemoteCompact({
     provider,
     model: upstreamModel,
-    contextPrompt: packedPrompt.contextPrompt,
-    messages: packedPrompt.messages,
-    budgetTokens: packedPrompt.budgetTokens,
-    estimatedInputTokens: packedPrompt.estimatedInputTokens,
+    contextPrompt: remoteCompactProbe.contextPrompt,
+    messages: remoteCompactProbe.messages,
+    budgetTokens: remoteCompactProbe.budgetTokens,
+    estimatedInputTokens: remoteCompactProbe.estimatedInputTokens,
     settings,
   })
+  const blocksForMissingRequiredRemote = compactDecision.required && !compactDecision.supported
+  const activePrompt = compactDecision.enabled || blocksForMissingRequiredRemote
+    ? remoteCompactProbe
+    : packChatMessages({
+      messages: sourceMessages,
+      contextPrompt: baseContextPrompt,
+      modelContextWindow: modelConfig.contextWindow,
+      maxOutputTokens: runtimeConversation.maxTokens,
+      systemPrompt,
+      reasoningEffort: runtimeConversation.reasoningEffort,
+      providerType: provider.type,
+      model: upstreamModel,
+    })
   void appendRuntimeLog('compact.request', {
     conversationId,
     providerId: provider.id,
@@ -493,11 +811,27 @@ async function createAssistantReply(conversationId: string) {
     providerId: provider.id,
     model: runtimeConversation.model,
     upstreamModel,
-    inputTokens: compactDecision.enabled ? packedPrompt.estimatedInputTokens : undefined,
+    inputTokens: compactDecision.enabled ? remoteCompactProbe.estimatedInputTokens : undefined,
     outputTokens: undefined,
     estimatedSavedTokens: undefined,
+    localSourceTokens: activePrompt.compressionTriggered ? activePrompt.compressionMetadata.sourceTokens : undefined,
+    localCompressedTokens: activePrompt.compressionTriggered ? activePrompt.compressionMetadata.compressedTokens : undefined,
+    localEstimatedSavedTokens: activePrompt.compressionTriggered ? activePrompt.compressionMetadata.estimatedSavedTokens : undefined,
+    localCompressionRatio: activePrompt.compressionTriggered ? activePrompt.compressionMetadata.compressionRatio : undefined,
+    localCompressionSchemaVersion: activePrompt.compressionTriggered ? activePrompt.compressionMetadata.schemaVersion : undefined,
+    localCompressionStrategy: activePrompt.compressionTriggered ? activePrompt.compressionMetadata.strategy : undefined,
+    localCompressionTriggerReason: activePrompt.compressionTriggered ? activePrompt.compressionMetadata.triggerReason : undefined,
+    localSourceMessageCount: activePrompt.compressionTriggered ? activePrompt.compressionMetadata.sourceMessageCount : undefined,
+    localKeptMessageCount: activePrompt.compressionTriggered ? activePrompt.compressionMetadata.keptMessageCount : undefined,
+    localSourceRoleCounts: activePrompt.compressionTriggered ? activePrompt.compressionMetadata.sourceRoleCounts : undefined,
+    localKeptRoleCounts: activePrompt.compressionTriggered ? activePrompt.compressionMetadata.keptRoleCounts : undefined,
+    localSummaryTokenBudget: activePrompt.compressionTriggered ? activePrompt.compressionMetadata.summaryTokenBudget : undefined,
+    localSummaryTokens: activePrompt.compressionTriggered ? activePrompt.compressionMetadata.summaryTokens : undefined,
+    localSummarySectionCount: activePrompt.compressionTriggered ? activePrompt.compressionMetadata.summarySectionCount : undefined,
+    localSummaryItemCount: activePrompt.compressionTriggered ? activePrompt.compressionMetadata.summaryItemCount : undefined,
+    localSummarySections: activePrompt.compressionTriggered ? activePrompt.compressionMetadata.summarySections : undefined,
     failureCode: compactDecision.required && !compactDecision.supported ? 'provider_capability_missing' : undefined,
-    fallbackLocal: compactDecision.mode === 'auto' && !compactDecision.enabled && packedPrompt.compressionTriggered,
+    fallbackLocal: compactDecision.mode === 'auto' && !compactDecision.enabled && activePrompt.compressionTriggered,
   })
   void appendRuntimeLog('compact.usage', {
     conversationId,
@@ -508,6 +842,22 @@ async function createAssistantReply(conversationId: string) {
     inputTokens: compactRecord.inputTokens,
     outputTokens: compactRecord.outputTokens,
     estimatedSavedTokens: compactRecord.estimatedSavedTokens,
+    localSourceTokens: compactRecord.localSourceTokens,
+    localCompressedTokens: compactRecord.localCompressedTokens,
+    localEstimatedSavedTokens: compactRecord.localEstimatedSavedTokens,
+    localCompressionRatio: compactRecord.localCompressionRatio,
+    localCompressionSchemaVersion: compactRecord.localCompressionSchemaVersion,
+    localCompressionStrategy: compactRecord.localCompressionStrategy,
+    localCompressionTriggerReason: compactRecord.localCompressionTriggerReason,
+    localSourceMessageCount: compactRecord.localSourceMessageCount,
+    localKeptMessageCount: compactRecord.localKeptMessageCount,
+    localSourceRoleCounts: compactRecord.localSourceRoleCounts,
+    localKeptRoleCounts: compactRecord.localKeptRoleCounts,
+    localSummaryTokenBudget: compactRecord.localSummaryTokenBudget,
+    localSummaryTokens: compactRecord.localSummaryTokens,
+    localSummarySectionCount: compactRecord.localSummarySectionCount,
+    localSummaryItemCount: compactRecord.localSummaryItemCount,
+    localSummarySections: compactRecord.localSummarySections,
     failureCode: compactRecord.failureCode,
     fallbackLocal: compactRecord.fallbackLocal,
   }, { enabled: settings.runtimeLogEnabled, maxBytes: settings.runtimeLogMaxBytes })
@@ -521,7 +871,7 @@ async function createAssistantReply(conversationId: string) {
     status: compactDecision.required && !compactDecision.supported ? 'error' : 'done',
     startedAt: Date.now(),
     metadata: {
-      compactMode: compactDecision.enabled ? 'remote' : packedPrompt.compressionTriggered ? 'local' : 'off',
+      compactMode: compactDecision.enabled ? 'remote' : activePrompt.compressionTriggered ? 'local' : 'off',
       remoteCompactMode: compactDecision.mode,
       supported: compactDecision.supported,
       reason: compactDecision.reason,
@@ -538,30 +888,46 @@ async function createAssistantReply(conversationId: string) {
   const previousResponseId = compactDecision.enabled
     ? await resolvePreviousCompactResponseId(conversationId, provider.id, runtimeConversation.model, settings)
     : undefined
-  if (packedPrompt.trimmedCount) {
+  if (activePrompt.compressionTriggered) {
     upsertTrace(conversationId, assistantMessage.id, completeTrace({
       id: traceId('context-pack'),
       type: 'system',
       title: st('chatRunner.trace.contextPackTitle'),
       content: st('chatRunner.trace.contextPackContent', {
-        kept: packedPrompt.messages.length,
-        trimmed: packedPrompt.trimmedCount,
-        estimated: packedPrompt.estimatedInputTokens,
-        budget: packedPrompt.budgetTokens,
+        kept: activePrompt.messages.length,
+        trimmed: activePrompt.trimmedCount,
+        estimated: activePrompt.estimatedInputTokens,
+        budget: activePrompt.budgetTokens,
       }),
       status: 'done',
       startedAt: Date.now(),
       metadata: {
-        trimmedCount: packedPrompt.trimmedCount,
-        estimatedInputTokens: packedPrompt.estimatedInputTokens,
-        budgetTokens: packedPrompt.budgetTokens,
-        fixedTokens: packedPrompt.fixedTokens,
-        messageTokens: packedPrompt.messageTokens,
-        modelBudgetTokens: packedPrompt.modelBudgetTokens,
-        reservedOutputTokens: packedPrompt.reservedOutputTokens,
-        reasoningReserveTokens: packedPrompt.reasoningReserveTokens,
-        compressionTriggered: packedPrompt.compressionTriggered,
-        truncatedSingleMessage: packedPrompt.truncatedSingleMessage,
+        trimmedCount: activePrompt.trimmedCount,
+        estimatedInputTokens: activePrompt.estimatedInputTokens,
+        budgetTokens: activePrompt.budgetTokens,
+        fixedTokens: activePrompt.fixedTokens,
+        messageTokens: activePrompt.messageTokens,
+        modelBudgetTokens: activePrompt.modelBudgetTokens,
+        reservedOutputTokens: activePrompt.reservedOutputTokens,
+        reasoningReserveTokens: activePrompt.reasoningReserveTokens,
+        compressionTriggered: activePrompt.compressionTriggered,
+        truncatedSingleMessage: activePrompt.truncatedSingleMessage,
+        compressionSchemaVersion: activePrompt.compressionMetadata.schemaVersion,
+        compressionStrategy: activePrompt.compressionMetadata.strategy,
+        compressionTriggerReason: activePrompt.compressionMetadata.triggerReason,
+        summarySourceMessageCount: activePrompt.compressionMetadata.sourceMessageCount,
+        summaryKeptMessageCount: activePrompt.compressionMetadata.keptMessageCount,
+        summarySourceRoleCounts: activePrompt.compressionMetadata.sourceRoleCounts,
+        summaryKeptRoleCounts: activePrompt.compressionMetadata.keptRoleCounts,
+        compressionSourceTokens: activePrompt.compressionMetadata.sourceTokens,
+        compressionCompressedTokens: activePrompt.compressionMetadata.compressedTokens,
+        compressionEstimatedSavedTokens: activePrompt.compressionMetadata.estimatedSavedTokens,
+        compressionRatio: activePrompt.compressionMetadata.compressionRatio,
+        summaryTokenBudget: activePrompt.compressionMetadata.summaryTokenBudget,
+        summaryTokens: activePrompt.compressionMetadata.summaryTokens,
+        summarySectionCount: activePrompt.compressionMetadata.summarySectionCount,
+        summaryItemCount: activePrompt.compressionMetadata.summaryItemCount,
+        summarySections: activePrompt.compressionMetadata.summarySections,
       },
     }))
   }
@@ -602,8 +968,8 @@ async function createAssistantReply(conversationId: string) {
         reasoningEffort: runtimeConversation.reasoningEffort,
         maxTokens: runtimeConversation.maxTokens,
         attachments: lastUserMessage?.attachments ?? [],
-        messages: packedPrompt.messages,
-        contextPrompt: packedPrompt.contextPrompt,
+        messages: activePrompt.messages,
+        contextPrompt: activePrompt.contextPrompt,
         retrievalSources,
         webSearchMode: providerWebSearchMode,
         signal: requestController.signal,
@@ -613,6 +979,7 @@ async function createAssistantReply(conversationId: string) {
         fallbackProviders,
         remoteCompactEligible: compactDecision.enabled,
         previousResponseId,
+        providerToolDeclarations: providerToolContext?.adapter.tools,
       },
       (chunk) => {
         chunkBuffer.push(chunk)
@@ -629,16 +996,17 @@ async function createAssistantReply(conversationId: string) {
           nativeSearchTraceId,
           providerWebSearchMode,
           systemPrompt,
-          packedMessages: packedPrompt.messages,
-          baseContextPrompt: packedPrompt.contextPrompt,
+          packedMessages: activePrompt.messages,
+          baseContextPrompt: activePrompt.contextPrompt,
           retrievalSources,
           mcpTools: mcpContext.tools,
+          providerTools: providerToolContext,
           requestController,
           chunkFlush: flushStreamingBuffers,
           upstreamModel,
           remoteCompactEligible: compactDecision.enabled,
           remoteCompactMode: compactDecision.mode,
-          remoteCompactInputTokens: compactDecision.enabled ? packedPrompt.estimatedInputTokens : undefined,
+          remoteCompactInputTokens: compactDecision.enabled ? remoteCompactProbe.estimatedInputTokens : undefined,
           previousResponseId,
         })
       },
@@ -721,7 +1089,7 @@ function createStreamingChunkBuffer(conversationId: string, messageId: string) {
     if (!pendingText) return
     const text = pendingText
     pendingText = ''
-    useChatStore.getState().appendContent(conversationId, messageId, text)
+    useChatStreamingStore.getState().appendContent(conversationId, messageId, text)
   }
 
   function push(chunk: string) {
@@ -806,10 +1174,11 @@ async function finalizeAssistantResult(input: {
   nativeSearchTraceId: string
   providerWebSearchMode: 'native' | 'off'
   systemPrompt: string
-  packedMessages: { role: 'user' | 'assistant'; content: string | { type: 'text'; text: string }[] }[]
+  packedMessages: ChatRequest['messages']
   baseContextPrompt: string
   retrievalSources: RetrievalSource[]
   mcpTools: ResolvedMcpTool[]
+  providerTools?: AgentProviderToolContext
   requestController: AbortController
   chunkFlush: () => void
   upstreamModel: string
@@ -850,6 +1219,34 @@ async function finalizeAssistantResult(input: {
   let finalOutput = firstOutput
   let finalCitations = firstCitations
   let flareSources: RetrievalSource[] = []
+
+  if (input.result.providerToolCalls?.length && !input.requestController.signal.aborted) {
+    const providerToolRevision = await resolveProviderNativeToolRevision({
+      conversationId: input.conversationId,
+      assistantMessageId: input.assistantMessageId,
+      provider: input.provider,
+      conversation: input.runtimeConversation,
+      systemPrompt: input.systemPrompt,
+      messages: input.packedMessages,
+      baseContextPrompt: input.baseContextPrompt,
+      firstOutput: finalOutput,
+      firstReasoningContent: input.result.reasoningContent,
+      firstResponseItems: input.result.responseItems,
+      firstProviderContentBlocks: input.result.providerContentBlocks,
+      providerTools: input.providerTools,
+      calls: input.result.providerToolCalls,
+      context: input.context,
+      signal: input.requestController.signal,
+    })
+    if (providerToolRevision?.text.trim()) {
+      finalOutput = providerToolRevision.text
+      finalResult = {
+        ...finalResult,
+        text: providerToolRevision.text,
+        usage: mergeUsage(finalResult.usage, providerToolRevision.usage),
+      }
+    }
+  }
 
   if (input.mcpTools.length && !input.requestController.signal.aborted) {
     const mcpRevision = await resolveMcpToolRevision({
@@ -1051,7 +1448,7 @@ async function finalizeAssistantResult(input: {
   if (updated) {
     void extractMemoriesWithTrace(input.conversationId, input.assistantMessageId, updated.messages, input.provider, input.upstreamModel)
   }
-  void useChatStore.getState().flushStreamingMessage(input.conversationId, input.assistantMessageId)
+  void useChatStreamingStore.getState().flushStreamingMessage(input.conversationId, input.assistantMessageId)
 }
 
 function recordCompletedRemoteCompact(input: {
@@ -1116,13 +1513,636 @@ function recordCompletedRemoteCompact(input: {
   }).catch(() => undefined)
 }
 
+async function resolveProviderNativeToolContext(input: {
+  provider: AIProvider
+  model: string
+  modelPreferredEndpoint?: 'chat-completions' | 'responses'
+  settings: Settings
+}): Promise<AgentProviderToolContext | undefined> {
+  const modelConfig = getModelConfig(input.model, input.provider.type, input.provider.modelConfigs)
+  if (!providerSupportsNativeTools(input.provider, modelConfig)) return undefined
+  const target = resolveAgentProviderToolTarget(input.provider.type, {
+    preferredEndpoint: input.modelPreferredEndpoint === 'responses' ? 'responses' : 'chat',
+    assumeOpenAICompatibleTools: true,
+    wireProtocol: input.provider.wireProtocol,
+  })
+  if (!target) return undefined
+  const limits = resolveSettingsAgentRunLimits(input.settings)
+  if (!limits.allowReadOnlyTools) return undefined
+  const manifests = await listAgentToolManifests()
+  const adapter = buildAgentProviderToolAdapter({
+    manifests,
+    target,
+    permissionCeiling: 'read-only',
+    maxTools: 24,
+  })
+  if (!adapter.tools.length) return undefined
+  return {
+    adapter,
+    manifests,
+    limits: {
+      ...limits,
+      maxToolCallsPerStep: 1,
+      allowReadWriteTools: false,
+      allowDestructiveTools: false,
+    },
+  }
+}
+
+function providerSupportsNativeTools(provider: AIProvider, modelConfig: AIModel): boolean {
+  if (modelConfig.chatCompatible === false) return false
+  if (modelConfig.supportsTools === false) return false
+  if (modelConfig.supportsTools === true || provider.capabilities?.nativeTools === true) return true
+  return provider.type === 'openai' || provider.type === 'anthropic' || provider.type === 'google'
+}
+
+function buildProviderNativeToolManifestTrace(context: AgentProviderToolContext): ProcessTrace {
+  return completeTrace({
+    id: traceId('provider-tools'),
+    type: 'tool',
+    title: 'Provider native tools',
+    content: `Declared ${context.adapter.tools.length} read-only IsleMind tools for ${context.adapter.target}.`,
+    status: 'done',
+    startedAt: Date.now(),
+    metadata: {
+      providerToolTarget: context.adapter.target,
+      declaredToolCount: context.adapter.tools.length,
+      skippedToolCount: context.adapter.skipped.length,
+      permissionCeiling: 'read-only',
+      maxToolCallsPerStep: context.limits.maxToolCallsPerStep,
+    },
+  })
+}
+
+async function resolveProviderNativeToolRevision(input: {
+  conversationId: string
+  assistantMessageId: string
+  provider: AIProvider
+  conversation: Conversation
+  systemPrompt: string
+  messages: ChatRequest['messages']
+  baseContextPrompt: string
+  firstOutput: string
+  firstReasoningContent?: string
+  firstResponseItems?: ChatCompletionResult['responseItems']
+  firstProviderContentBlocks?: ChatCompletionResult['providerContentBlocks']
+  providerTools?: AgentProviderToolContext
+  calls: ProviderToolCall[]
+  context: RetrievedContext
+  signal: AbortSignal
+}): Promise<{ text: string; usage?: ChatCompletionResult['usage'] } | null> {
+  const calls = input.calls.filter((call) => call.name.trim())
+  if (!calls.length) return null
+  const call = calls[0]
+  const toolCallIndex = 0
+  const maxToolCallsPerStep = input.providerTools?.limits.maxToolCallsPerStep ?? 1
+  const safeCallName = safeProviderNativeToolText(call.name, 'tool', 160)
+  if (calls.length > 1) {
+    upsertTrace(input.conversationId, input.assistantMessageId, completeTrace({
+      id: traceId('provider-tool-limit'),
+      type: 'tool',
+      title: 'Provider native tool limit',
+      content: `Provider requested ${calls.length} tool calls; IsleMind executed only the first call for this step.`,
+      status: 'skipped',
+      startedAt: Date.now(),
+      metadata: buildProviderNativeToolTraceMetadata({
+        call,
+        provider: input.provider,
+        status: 'skipped',
+        errorCode: 'step_limit_reached',
+        target: input.providerTools?.adapter.target,
+        stepIndex: 0,
+        toolCallIndex: maxToolCallsPerStep,
+        requestedToolCallCount: calls.length,
+        maxToolCallsPerStep,
+      }),
+    }))
+  }
+
+  if (!input.providerTools) {
+    upsertProviderNativeToolFailureTrace({
+      conversationId: input.conversationId,
+      assistantMessageId: input.assistantMessageId,
+      provider: input.provider,
+      call,
+      content: `Provider requested ${safeCallName}, but IsleMind did not authorize native provider tools for this request.`,
+      errorCode: 'tool_unavailable',
+    })
+    return { text: `Provider requested ${safeCallName}, but IsleMind did not authorize native provider tools for this request.` }
+  }
+
+  const tool = findProviderToolNameMapEntry(input.providerTools.adapter.toolNameMap, call.name)
+  if (!tool) {
+    upsertProviderNativeToolFailureTrace({
+      conversationId: input.conversationId,
+      assistantMessageId: input.assistantMessageId,
+      provider: input.provider,
+      call,
+      target: input.providerTools.adapter.target,
+      content: `Provider requested unavailable tool ${safeCallName}.`,
+      errorCode: 'tool_unavailable',
+    })
+    return { text: `Provider requested unavailable tool ${safeCallName}.` }
+  }
+
+  const nativeTraceId = traceId('provider-tool-call')
+  const startedAt = Date.now()
+  const safeToolName = safeProviderNativeToolText(tool.toolName, 'tool', 160)
+  upsertTrace(input.conversationId, input.assistantMessageId, {
+    id: nativeTraceId,
+    type: 'tool',
+    title: 'Provider native tool',
+    content: `Provider requested ${safeToolName}; IsleMind is executing it through the agent tool registry.`,
+    status: 'running',
+    startedAt,
+    metadata: buildProviderNativeToolTraceMetadata({
+      call,
+      provider: input.provider,
+      tool,
+      status: 'running',
+      target: input.providerTools.adapter.target,
+      stepIndex: 0,
+      toolCallIndex,
+      maxToolCallsPerStep: input.providerTools.limits.maxToolCallsPerStep,
+    }),
+  })
+
+  const settings = useSettingsStore.getState().settings
+  const result = await executeAgentTool({
+    toolId: tool.toolId,
+    name: tool.toolName,
+    source: tool.source,
+    serverId: tool.serverId,
+    arguments: call.arguments,
+  }, {
+    manifests: input.providerTools.manifests,
+    limits: input.providerTools.limits,
+    intentVisible: true,
+    userConfirmed: false,
+    stepIndex: 0,
+    toolCallIndex,
+    signal: input.signal,
+    runtimeLog: { enabled: settings.runtimeLogEnabled, maxBytes: settings.runtimeLogMaxBytes },
+    ragRuntime: createChatRunnerAgentRagRuntime({
+      conversation: input.conversation,
+      settings,
+      provider: input.provider,
+      systemPrompt: input.systemPrompt,
+      context: input.context,
+    }),
+  })
+  upsertTrace(input.conversationId, input.assistantMessageId, result.trace)
+  if (input.signal.aborted) return null
+
+  const blocks = result.blocks?.length ? result.blocks : [{ type: 'text' as const, text: result.output }]
+  const toolOutput = safeProviderNativeToolText(
+    formatToolBlocks(blocks),
+    result.output || `${safeToolName} returned no output.`,
+    input.providerTools.limits.outputCharLimit
+  )
+  upsertTrace(input.conversationId, input.assistantMessageId, completeTrace({
+    id: nativeTraceId,
+    type: 'tool',
+    title: 'Provider native tool',
+    content: safeProviderNativeToolText(toolOutput, `${safeToolName} returned no output.`, PROVIDER_NATIVE_TOOL_TRACE_OUTPUT_LIMIT),
+    status: result.status,
+    startedAt,
+    metadata: buildProviderNativeToolTraceMetadata({
+      call,
+      provider: input.provider,
+      tool,
+      status: result.status,
+      errorCode: result.errorCode,
+      target: input.providerTools.adapter.target,
+      stepIndex: 0,
+      toolCallIndex,
+      maxToolCallsPerStep: input.providerTools.limits.maxToolCallsPerStep,
+    }),
+  }))
+
+  if (!toolOutput.trim()) {
+    return { text: safeProviderNativeToolText(result.output, `${safeToolName} returned no output.`) }
+  }
+
+  try {
+    const revision = await generateAnswerWithProviderNativeToolResult({
+      ...input,
+      call,
+      tool,
+      toolOutput,
+      ok: result.ok,
+      firstReasoningContent: input.firstReasoningContent,
+      firstResponseItems: input.firstResponseItems,
+      firstProviderContentBlocks: input.firstProviderContentBlocks,
+    })
+    if (revision.text.trim()) return revision
+  } catch (error) {
+    upsertTrace(input.conversationId, input.assistantMessageId, completeTrace({
+      id: traceId('provider-tool-revise-error'),
+      type: 'tool',
+      title: 'Provider native tool result',
+      content: safeProviderNativeToolText(
+        error instanceof Error ? error.message : `${safeToolName} synthesis failed.`,
+        `${safeToolName} synthesis failed.`,
+        PROVIDER_NATIVE_TOOL_TRACE_OUTPUT_LIMIT
+      ),
+      status: 'error',
+      startedAt: Date.now(),
+      metadata: buildProviderNativeToolTraceMetadata({
+        call,
+        provider: input.provider,
+        tool,
+        status: 'error',
+        errorCode: 'execution_failed',
+        target: input.providerTools.adapter.target,
+        stepIndex: 0,
+        toolCallIndex,
+        maxToolCallsPerStep: input.providerTools.limits.maxToolCallsPerStep,
+      }),
+    }))
+  }
+
+  return {
+    text: [
+      'Provider native tool result',
+      '',
+      toolOutput,
+    ].join('\n'),
+  }
+}
+
+function safeProviderNativeToolText(
+  value: string | undefined,
+  fallback = '',
+  limit = PROVIDER_NATIVE_TOOL_OUTPUT_LIMIT
+): string {
+  const text = typeof value === 'string' && value.trim() ? value : fallback
+  return clampAgentOutput(redactSensitiveText(text), limit).trim()
+}
+
+function findProviderToolNameMapEntry(
+  map: AgentProviderToolNameMapEntry[],
+  providerName: string
+): AgentProviderToolNameMapEntry | undefined {
+  return map.find((entry) => entry.providerName === providerName) ??
+    map.find((entry) => entry.toolName === providerName)
+}
+
+function upsertProviderNativeToolFailureTrace(input: {
+  conversationId: string
+  assistantMessageId: string
+  provider: AIProvider
+  call: ProviderToolCall
+  content: string
+  errorCode: string
+  target?: AgentProviderToolAdapterResult['target']
+}) {
+  upsertTrace(input.conversationId, input.assistantMessageId, completeTrace({
+    id: traceId('provider-tool-unavailable'),
+    type: 'tool',
+    title: 'Provider native tool',
+    content: input.content,
+    status: 'error',
+    startedAt: Date.now(),
+    metadata: buildProviderNativeToolTraceMetadata({
+      call: input.call,
+      provider: input.provider,
+      status: 'error',
+      errorCode: input.errorCode,
+      target: input.target,
+    }),
+  }))
+}
+
+function buildProviderNativeToolTraceMetadata(input: {
+  call: ProviderToolCall
+  provider: AIProvider
+  status: ProcessTrace['status']
+  tool?: AgentProviderToolNameMapEntry
+  errorCode?: string
+  target?: AgentProviderToolAdapterResult['target']
+  stepIndex?: number
+  toolCallIndex?: number
+  requestedToolCallCount?: number
+  maxToolCallsPerStep?: number
+}): Record<string, unknown> {
+  const metadata: Record<string, unknown> = {
+    ...buildAgentToolCallTraceMetadata({
+      mode: 'native-provider',
+      source: input.tool?.source ?? 'provider',
+      toolName: input.tool?.toolName ?? input.call.name,
+      toolId: input.tool?.toolId,
+      serverId: input.tool?.serverId,
+      permission: input.tool?.permission,
+      status: input.status,
+      errorCode: input.errorCode,
+      providerType: input.provider.type,
+    }),
+    providerToolCallId: input.call.id,
+    providerToolName: input.call.name,
+    providerToolTarget: input.target,
+    providerToolArgumentsComplete: input.call.argumentsComplete !== false,
+  }
+  if (typeof input.stepIndex === 'number') metadata.stepIndex = input.stepIndex
+  if (typeof input.toolCallIndex === 'number') metadata.toolCallIndex = input.toolCallIndex
+  if (typeof input.requestedToolCallCount === 'number') metadata.requestedToolCallCount = input.requestedToolCallCount
+  if (typeof input.maxToolCallsPerStep === 'number') metadata.maxToolCallsPerStep = input.maxToolCallsPerStep
+  return metadata
+}
+
+async function generateAnswerWithProviderNativeToolResult(input: {
+  provider: AIProvider
+  conversation: Conversation
+  systemPrompt: string
+  messages: ChatRequest['messages']
+  baseContextPrompt: string
+  firstOutput: string
+  firstReasoningContent?: string
+  firstResponseItems?: ChatCompletionResult['responseItems']
+  firstProviderContentBlocks?: ChatCompletionResult['providerContentBlocks']
+  call: ProviderToolCall
+  tool: AgentProviderToolNameMapEntry
+  toolOutput: string
+  ok: boolean
+  signal: AbortSignal
+}): Promise<{ text: string; usage?: ChatCompletionResult['usage'] }> {
+  let text = ''
+  let usage: ChatCompletionResult['usage']
+  let failure: Error | null = null
+  const assistantContent = stripMcpCallBlocks(input.firstOutput) || `Provider requested IsleMind tool ${input.tool.toolName}.`
+  const messages = buildProviderNativeToolRevisionMessages(input, assistantContent)
+  const handle = await streamChat(
+    {
+      provider: input.provider,
+      model: input.conversation.model,
+      systemPrompt: [
+        input.systemPrompt,
+        '你正在根据 IsleMind 受控工具结果生成最终回复。不要调用更多工具，不要暴露 provider tool call JSON；只基于工具输出和已有上下文回答用户。如果工具失败，请明确说明失败状态和可继续的下一步。',
+      ].filter(Boolean).join('\n\n'),
+      messages,
+      contextPrompt: input.baseContextPrompt,
+      temperature: Math.min(input.conversation.temperature, 0.4),
+      topP: input.conversation.topP,
+      reasoningEffort: input.conversation.reasoningEffort,
+      maxTokens: input.conversation.maxTokens,
+      stream: false,
+      signal: input.signal,
+      conversationId: input.conversation.id,
+      sessionId: input.conversation.id,
+      settings: useSettingsStore.getState().settings,
+      remoteCompactEligible: false,
+    },
+    (chunk) => {
+      text += chunk
+    },
+    (result) => {
+      text = result.text || text
+      usage = result.usage
+    },
+    (error) => {
+      failure = error
+    }
+  )
+  await handle.done
+  if (failure) throw failure
+  return { text: sanitizeToolRevisionAnswerText(text), usage }
+}
+
+function buildProviderNativeToolRevisionMessages(
+  input: {
+    provider: AIProvider
+    messages: ChatRequest['messages']
+    firstOutput: string
+    firstReasoningContent?: string
+    firstResponseItems?: ChatCompletionResult['responseItems']
+    firstProviderContentBlocks?: ChatCompletionResult['providerContentBlocks']
+    call: ProviderToolCall
+    tool: AgentProviderToolNameMapEntry
+    toolOutput: string
+    ok: boolean
+  },
+  assistantContent: string
+): ChatRequest['messages'] {
+  if (usesOpenAICompatibleToolResultMessages(input.provider)) {
+    const toolCallId = input.call.callId || input.call.id || `islemind-tool-${input.call.index ?? 0}`
+    return [
+      ...input.messages,
+      {
+        role: 'assistant',
+        content: stripMcpCallBlocks(input.firstOutput).trim(),
+        ...(input.firstReasoningContent ? { reasoningContent: input.firstReasoningContent } : {}),
+        ...(input.firstResponseItems?.length ? { responseItems: input.firstResponseItems } : {}),
+        toolCalls: [{
+          ...input.call,
+          id: input.call.id || toolCallId,
+          callId: toolCallId,
+          rawArguments: input.call.rawArguments ?? stringifyToolArguments(input.call.arguments),
+        }],
+      },
+      {
+        role: 'tool',
+        name: input.call.name,
+        toolCallId,
+        content: input.toolOutput,
+      },
+    ]
+  }
+
+  if (usesAnthropicCompatibleToolResultMessages(input.provider)) {
+    const toolUseId = input.call.id || `islemind-tool-${input.call.index ?? 0}`
+    const assistantParts: ContentPart[] = []
+    const assistantText = stripMcpCallBlocks(input.firstOutput).trim()
+    if (assistantText) assistantParts.push({ type: 'text', text: assistantText })
+    assistantParts.push({
+      type: 'tool_use',
+      text: '',
+      toolUse: {
+        id: toolUseId,
+        name: input.call.name,
+        input: input.call.arguments,
+      },
+    })
+    return [
+      ...input.messages,
+      {
+        role: 'assistant',
+        content: assistantParts,
+        ...(input.firstProviderContentBlocks?.length ? { providerContentBlocks: input.firstProviderContentBlocks } : {}),
+      },
+      {
+        role: 'user',
+        content: [{
+          type: 'tool_result',
+          text: '',
+          toolResult: {
+            tool_use_id: toolUseId,
+            content: input.toolOutput,
+            ...(input.ok ? {} : { is_error: true }),
+          },
+        }],
+      },
+    ]
+  }
+
+  if (input.provider.type !== 'google') {
+    return [
+      ...input.messages,
+      { role: 'assistant', content: assistantContent },
+      {
+        role: 'user',
+        content: [
+          `IsleMind 工具：${input.tool.source}/${input.tool.toolName}`,
+          '调用模式：native-provider',
+          `调用状态：${input.ok ? 'ok' : 'failed'}`,
+          `请求参数：${stringifyToolArguments(input.call.arguments)}`,
+          '',
+          '工具输出：',
+          input.toolOutput,
+          '',
+          '请生成最终回复。',
+        ].join('\n'),
+      },
+    ]
+  }
+
+  const assistantParts: ContentPart[] = []
+  const assistantText = stripMcpCallBlocks(input.firstOutput).trim()
+  if (assistantText) assistantParts.push({ type: 'text', text: assistantText })
+  assistantParts.push({
+    type: 'function_call',
+    text: '',
+    functionCall: {
+      name: input.call.name,
+      args: input.call.arguments,
+    },
+    ...(input.call.thoughtSignature ? { thoughtSignature: input.call.thoughtSignature } : {}),
+  })
+
+  return [
+    ...input.messages,
+    { role: 'assistant', content: assistantParts },
+    {
+      role: 'user',
+      content: [{
+        type: 'function_response',
+        text: '',
+        functionResponse: {
+          name: input.call.name,
+          response: {
+            ok: input.ok,
+            result: input.toolOutput,
+          },
+        },
+      }],
+    },
+  ]
+}
+
+function usesOpenAICompatibleToolResultMessages(provider: AIProvider): boolean {
+  return (
+    provider.type === 'openai' ||
+    provider.type === 'openai-compatible' ||
+    provider.type === 'xiaomi-mimo'
+  ) && provider.wireProtocol !== 'anthropic-compatible'
+}
+
+function usesAnthropicCompatibleToolResultMessages(provider: AIProvider): boolean {
+  return provider.type === 'anthropic' || provider.wireProtocol === 'anthropic-compatible'
+}
+
+function createChatRunnerAgentRagRuntime(input: {
+  conversation: Conversation
+  settings: Settings
+  provider: AIProvider
+  systemPrompt: string
+  context: RetrievedContext
+}) {
+  const knowledgeScope = buildKnowledgeScope(input.conversation.knowledgeSources ?? input.conversation.skillSnapshot?.knowledgeSources)
+  return createAgentRagRuntime({
+    settings: input.settings,
+    conversationTitle: input.conversation.title,
+    systemPrompt: input.systemPrompt,
+    memorySources: input.context.sources.filter((source) => source.type === 'memory'),
+    retrieveKnowledge: (query, limit, options) => {
+      if (options?.signal?.aborted) return Promise.resolve([])
+      return searchAgentKnowledge(query, limit, input.settings, input.provider, knowledgeScope)
+    },
+    retrieveAgentic: async (query, plan, limit, options) => {
+      if (options?.signal?.aborted) return []
+      const sources = await localDataStore.searchAgenticIndexes(query, { limit, plan })
+      return filterKnowledgeSources(sources, knowledgeScope).slice(0, limit)
+    },
+  })
+}
+
+async function searchAgentKnowledge(
+  query: string,
+  limit: number,
+  settings: Settings,
+  provider: AIProvider,
+  knowledgeScope?: KnowledgeScope
+): Promise<RetrievalSource[]> {
+  if (!settings.knowledgeEnabled || settings.ragMode === 'off') return []
+  const scopedLimit = knowledgeScope ? Math.max(limit * 4, 20) : limit
+  try {
+    const results = settings.ragMode === 'fts'
+      ? await searchKnowledge(query, scopedLimit)
+      : await localDataStore.searchHybrid(query, {
+          limit: scopedLimit,
+          mode: 'hybrid',
+          embeddingMode: settings.embeddingMode ?? 'hybrid',
+          localEmbeddingModelId: settings.localEmbeddingModelId,
+          localEmbeddingModelSource: settings.localEmbeddingModelSource,
+          provider,
+        })
+    return filterKnowledgeSources(results, knowledgeScope).slice(0, limit)
+  } catch {
+    try {
+      return filterKnowledgeSources(await searchKnowledge(query, scopedLimit), knowledgeScope).slice(0, limit)
+    } catch {
+      return []
+    }
+  }
+}
+
+function buildKnowledgeScope(values?: string[]): KnowledgeScope | undefined {
+  const normalized = Array.from(new Set((values ?? []).map((value) => normalizeScopeValue(value)).filter(Boolean)))
+  if (!normalized.length) return undefined
+  return {
+    ids: new Set(normalized),
+    terms: normalized,
+  }
+}
+
+function filterKnowledgeSources(sources: RetrievalSource[], scope?: KnowledgeScope): RetrievalSource[] {
+  if (!scope) return sources
+  return sources.filter((source) => {
+    const documentId = normalizeScopeValue(source.documentId)
+    if (documentId && scope.ids.has(documentId)) return true
+    const title = normalizeScopeValue(source.title)
+    return scope.terms.some((term) => title.includes(term))
+  })
+}
+
+function normalizeScopeValue(value?: string): string {
+  return typeof value === 'string' ? value.trim().toLowerCase() : ''
+}
+
+function stringifyToolArguments(args: Record<string, unknown>): string {
+  try {
+    return JSON.stringify(args)
+  } catch {
+    return '{}'
+  }
+}
+
 async function resolveMcpToolRevision(input: {
   conversationId: string
   assistantMessageId: string
   provider: AIProvider
   conversation: Conversation
   systemPrompt: string
-  messages: { role: 'user' | 'assistant'; content: string | { type: 'text'; text: string }[] }[]
+  messages: ChatRequest['messages']
   baseContextPrompt: string
   firstOutput: string
   tools: ResolvedMcpTool[]
@@ -1139,7 +2159,17 @@ async function resolveMcpToolRevision(input: {
       content: st('chatRunner.trace.mcpToolUnavailable', { tool: request.toolName }),
       status: 'error',
       startedAt: Date.now(),
-      metadata: { requestedTool: request.toolName, serverId: request.serverId },
+      metadata: {
+        requestedTool: request.toolName,
+        ...buildAgentToolCallTraceMetadata({
+          mode: 'tagged-json-fallback',
+          source: 'mcp',
+          serverId: request.serverId,
+          toolName: request.toolName,
+          status: 'error',
+          errorCode: 'tool_unavailable',
+        }),
+      },
     }))
     return { text: st('mcpRuntime.toolUnavailable', { tool: request.toolName }) }
   }
@@ -1151,10 +2181,20 @@ async function resolveMcpToolRevision(input: {
     content: st('chatRunner.trace.mcpToolRequested', { server: resolved.server.name, tool: resolved.tool.name }),
     status: 'running',
     startedAt: Date.now(),
-    metadata: { serverId: resolved.server.id, tool: resolved.tool.name, permission: resolved.tool.permission },
+    metadata: {
+      tool: resolved.tool.name,
+      ...buildAgentToolCallTraceMetadata({
+        mode: 'tagged-json-fallback',
+        source: 'mcp',
+        serverId: resolved.server.id,
+        toolName: resolved.tool.name,
+        permission: resolved.tool.permission,
+        status: 'running',
+      }),
+    },
   })
 
-  const result = await callMcpTool(resolved.server, resolved.tool.name, request.arguments)
+  const result = await callMcpTool(resolved.server, resolved.tool.name, request.arguments, undefined, { signal: input.signal })
   upsertTrace(input.conversationId, input.assistantMessageId, result.trace)
   if (input.signal.aborted) return null
 
@@ -1181,7 +2221,18 @@ async function resolveMcpToolRevision(input: {
       content: error instanceof Error ? error.message : st('mcpRuntime.callFailed'),
       status: 'error',
       startedAt: Date.now(),
-      metadata: { serverId: resolved.server.id, tool: resolved.tool.name },
+      metadata: {
+        tool: resolved.tool.name,
+        ...buildAgentToolCallTraceMetadata({
+          mode: 'tagged-json-fallback',
+          source: 'mcp',
+          serverId: resolved.server.id,
+          toolName: resolved.tool.name,
+          permission: resolved.tool.permission,
+          status: 'error',
+          errorCode: 'execution_failed',
+        }),
+      },
     }))
   }
 
@@ -1198,7 +2249,7 @@ async function generateAnswerWithMcpToolResult(input: {
   provider: AIProvider
   conversation: Conversation
   systemPrompt: string
-  messages: { role: 'user' | 'assistant'; content: string | { type: 'text'; text: string }[] }[]
+  messages: ChatRequest['messages']
   baseContextPrompt: string
   firstOutput: string
   request: McpToolRequest
@@ -1260,7 +2311,11 @@ async function generateAnswerWithMcpToolResult(input: {
   )
   await handle.done
   if (failure) throw failure
-  return { text, usage }
+  return { text: sanitizeToolRevisionAnswerText(text), usage }
+}
+
+function sanitizeToolRevisionAnswerText(output: string): string {
+  return redactSensitiveText(stripMcpCallBlocks(output)).trim()
 }
 
 function parseMcpToolRequest(output: string): McpToolRequest | null {
@@ -1318,7 +2373,7 @@ function findMcpTool(tools: ResolvedMcpTool[], request: McpToolRequest): Resolve
 }
 
 function stripMcpCallBlocks(output: string): string {
-  return output.replace(new RegExp(`<${MCP_CALL_TAG}>[\\s\\S]*?<\\/${MCP_CALL_TAG}>`, 'gi'), '').trim()
+  return stripAgentToolRequestBlocks(output, MCP_CALL_TAG)
 }
 
 function formatToolBlocks(blocks: ToolContentBlock[]): string {
@@ -1375,7 +2430,7 @@ async function reviseAnswerWithFlare(input: {
   provider: AIProvider
   conversation: Conversation
   systemPrompt: string
-  messages: { role: 'user' | 'assistant'; content: string | { type: 'text'; text: string }[] }[]
+  messages: ChatRequest['messages']
   contextPrompt: string
   originalAnswer: string
   sources: RetrievalSource[]
@@ -1579,8 +2634,10 @@ function sanitizeTrace(trace: ProcessTrace): ProcessTrace {
   const status = trace.status === 'running' && trace.completedAt ? 'done' : trace.status
   return {
     ...trace,
+    title: redactSensitiveText(trace.title),
     status,
-    content: content ? clampTraceContent(content, trace.type) : undefined,
+    content: content ? clampTraceContent(redactSensitiveText(content), trace.type) : undefined,
+    metadata: sanitizeTraceMetadata(trace.metadata),
   }
 }
 
