@@ -23,6 +23,10 @@ const DEFAULT_OPTIONS: Required<CompressionOptions> = {
   maxSizeBytes: 5 * 1024 * 1024, // 5MB
 }
 
+function existingFileSize(info: Awaited<ReturnType<typeof FileSystem.getInfoAsync>>): number {
+  return info.exists && typeof info.size === 'number' ? info.size : 0
+}
+
 /**
  * 自动压缩图片以减少上传时间和存储空间
  *
@@ -44,7 +48,7 @@ export async function compressImage(
     throw new Error('Image file not found')
   }
 
-  const originalSize = info.size || 0
+  const originalSize = existingFileSize(info)
 
   // 如果文件已经足够小，跳过压缩
   if (originalSize < opts.maxSizeBytes) {
@@ -80,7 +84,7 @@ export async function compressImage(
 
     // 获取压缩后文件信息
     const compressedInfo = await FileSystem.getInfoAsync(result.uri)
-    const compressedSize = compressedInfo.size || 0
+    const compressedSize = existingFileSize(compressedInfo)
 
     const compressionRatio = originalSize > 0 ? compressedSize / originalSize : 1
     const savings = ((1 - compressionRatio) * 100).toFixed(1)
@@ -117,7 +121,7 @@ export async function compressImage(
  */
 export async function smartCompressImage(uri: string): Promise<CompressionResult> {
   const info = await FileSystem.getInfoAsync(uri)
-  const size = info.size || 0
+  const size = existingFileSize(info)
 
   // 根据文件大小调整压缩策略
   if (size < 1 * 1024 * 1024) {

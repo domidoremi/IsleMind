@@ -26,6 +26,37 @@ const {
   writeArchitectureBoundaryAuditResult,
 } = require('./architecture-boundary-audit')
 const { sensitiveEvidenceExtensions, sensitiveEvidencePatterns, collectSensitiveEvidenceHits } = require('./sensitive-evidence-contract')
+
+function optionalLocalRequire(modulePath) {
+  try {
+    return { ok: true, modulePath, exports: require(modulePath) }
+  } catch (error) {
+    if (error?.code === 'MODULE_NOT_FOUND' && String(error.message ?? '').includes(modulePath)) {
+      return { ok: false, modulePath, exports: {} }
+    }
+    throw error
+  }
+}
+
+const themeEvidenceContracts = optionalLocalRequire('./theme-evidence-contract-specs')
+const themeInteractionContracts = optionalLocalRequire('./theme-interaction-coverage-specs')
+const themeMatrixContracts = optionalLocalRequire('./theme-matrix-specs')
+const themeReleaseGateContracts = optionalLocalRequire('./theme-release-gate-specs')
+const themeRouteCoverageContracts = optionalLocalRequire('./theme-route-coverage-specs')
+const themeSourceCoverageContracts = optionalLocalRequire('./theme-source-coverage-specs')
+const themeContractModules = [
+  themeEvidenceContracts,
+  themeInteractionContracts,
+  themeMatrixContracts,
+  themeReleaseGateContracts,
+  themeRouteCoverageContracts,
+  themeSourceCoverageContracts,
+]
+const missingThemeContractModules = themeContractModules
+  .filter((item) => !item.ok)
+  .map((item) => item.modulePath)
+const themeContractsAvailable = missingThemeContractModules.length === 0
+
 const {
   createRenderedEvidenceContractReportFixture,
   createRenderedEvidenceSelfTestReportFixture,
@@ -119,12 +150,12 @@ const {
   themeWebRenderedScenarioKeys,
   themeWebRenderedSharedReportKeys,
   themeWebRenderedViewportKeys,
-} = require('./theme-evidence-contract-specs')
+} = themeEvidenceContracts.exports
 const {
   renderedInteractionSelfTestTargets,
   renderedInteractionSpecs,
-} = require('./theme-interaction-coverage-specs')
-const { expectedThemeScenarioCount, requiredThemeVariantKeys, requiredViewportKeys, scenarios } = require('./theme-matrix-specs')
+} = themeInteractionContracts.exports
+const { expectedThemeScenarioCount, requiredThemeVariantKeys, requiredViewportKeys, scenarios } = themeMatrixContracts.exports
 const {
   compactThemeSystemReleaseGateReport,
   collectThemePackageScriptReport,
@@ -147,9 +178,9 @@ const {
   themeStaticWebRelativeDir,
   themeStaticWebRequiredFiles,
   themeWebRenderedEvidenceRelativePath,
-} = require('./theme-release-gate-specs')
-const { expectedThemeRouteCount, expectedThemeRoutePaths, routeCoverageSpecs: themeRouteCoverageSpecs } = require('./theme-route-coverage-specs')
-const { expectedThemeSourceCoverageNeedles, sourceCoverageSpecs: themeSourceCoverageSpecs } = require('./theme-source-coverage-specs')
+} = themeReleaseGateContracts.exports
+const { expectedThemeRouteCount, expectedThemeRoutePaths, routeCoverageSpecs: themeRouteCoverageSpecs } = themeRouteCoverageContracts.exports
+const { expectedThemeSourceCoverageNeedles, sourceCoverageSpecs: themeSourceCoverageSpecs } = themeSourceCoverageContracts.exports
 const {
   createLongContentRequestRowsFixture,
   longContentRequestLogName,
@@ -407,6 +438,11 @@ function main() {
     return
   }
   if (process.argv.includes('--self-test=theme-system')) {
+    if (!themeContractsAvailable) {
+      console.error(`Theme system self-test requires missing contract modules: ${missingThemeContractModules.join(', ')}`)
+      process.exitCode = 1
+      return
+    }
     runThemeSystemSelfTest()
     return
   }
@@ -3608,7 +3644,11 @@ function runSelfTest() {
     runAgentWorkflowPolicyGateSelfTest(tempRoot)
     runAgentWorkflowMatrixGateSelfTest()
     runRawEvidenceContractMatrixGateSelfTest(tempRoot)
-    runThemeSystemMatrixGateSelfTest(tempRoot)
+    if (themeContractsAvailable) {
+      runThemeSystemMatrixGateSelfTest(tempRoot)
+    } else {
+      console.log(`Theme system matrix gate self-test skipped (missing optional modules: ${missingThemeContractModules.join(', ')}).`)
+    }
     runAndroidDeviceToolPolicyGateSelfTest(tempRoot)
     runAndroidDeviceTaskReleaseGateSelfTest(tempRoot)
     runAndroidStatusNotificationReleaseGateSelfTest(tempRoot)

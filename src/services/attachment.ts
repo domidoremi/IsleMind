@@ -54,11 +54,6 @@ export async function pickImage(): Promise<Attachment | null> {
     mimeType: asset.mimeType || 'image/jpeg',
     size: compressed.compressedSize,
     base64,
-    metadata: {
-      originalSize: compressed.originalSize,
-      compressionRatio: compressed.compressionRatio,
-      savings: compressed.savings,
-    },
   }
 }
 
@@ -85,11 +80,6 @@ export async function takePhoto(): Promise<Attachment | null> {
     mimeType: asset.mimeType || 'image/jpeg',
     size: compressed.compressedSize,
     base64,
-    metadata: {
-      originalSize: compressed.originalSize,
-      compressionRatio: compressed.compressionRatio,
-      savings: compressed.savings,
-    },
   }
 }
 

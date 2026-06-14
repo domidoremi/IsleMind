@@ -14,7 +14,7 @@ function LazyLoadingFallback() {
         flex: 1,
         justifyContent: 'center',
         alignItems: 'center',
-        backgroundColor: colors.background,
+        backgroundColor: colors.surface,
       }}
     >
       <ActivityIndicator size="large" color={colors.ui.icon.accentForeground} />

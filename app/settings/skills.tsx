@@ -1,12 +1,12 @@
 import { useLocalSearchParams } from 'expo-router'
 import { useTranslation } from 'react-i18next'
 import { SettingsPageShell } from '@/components/settings/SettingsPageShell'
+import { type AgentWorkflowSettingsFocus } from '@/components/settings/SkillSettingsContent'
 import { createLazyComponent } from '@/utils/lazyLoad'
-import type { AgentWorkflowSettingsFocus } from '@/components/settings/SkillSettingsContent'
 
 // 懒加载技能设置内容
 const SkillSettingsContent = createLazyComponent(
-  () => import('@/components/settings/SkillSettingsContent')
+  () => import('@/components/settings/SkillSettingsContent').then((module) => ({ default: module.SkillSettingsContent }))
 )
 
 export default function SkillsSettingsScreen() {

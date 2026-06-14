@@ -23,7 +23,7 @@ import * as SQLite from 'expo-sqlite'
  */
 export function enableSQLiteOptimizations(db: SQLite.SQLiteDatabase): void {
   try {
-    // 注意：WAL mode 已在 contextStore.ts 和 localDataStore.ts 中启用
+    // 注意：WAL mode 已在上下文存储与本地索引服务中启用
     // 这里提供完整的优化配置供参考
 
     // 增加缓存大小 (2MB)

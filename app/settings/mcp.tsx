@@ -4,7 +4,7 @@ import { createLazyComponent } from '@/utils/lazyLoad'
 
 // 懒加载 MCP 设置内容
 const McpSettingsContent = createLazyComponent(
-  () => import('@/components/settings/McpSettingsContent')
+  () => import('@/components/settings/McpSettingsContent').then((module) => ({ default: module.McpSettingsContent }))
 )
 
 export default function McpSettingsScreen() {

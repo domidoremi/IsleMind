@@ -36,7 +36,7 @@ const AGENT_ACTION_PROMPT_VISIBILITY_LIMIT = 900
 const MESSAGE_ACTION_LOCK_MS = 420
 const MESSAGE_BUBBLE_HORIZONTAL_GUTTER = 40
 
-interface MessageBubbleProps {
+export interface MessageBubbleProps {
   conversationId: string
   message: Message
   index: number
@@ -1239,12 +1239,11 @@ const areMessagesEqual = (
   if (prevMsg.id !== nextMsg.id) return false
   if (prevMsg.role !== nextMsg.role) return false
   if (prevMsg.content !== nextMsg.content) return false
-  if (prevMsg.streaming !== nextMsg.streaming) return false
   if (prevMsg.status !== nextMsg.status) return false
 
   // 附件和 traces 长度比较
   if (prevMsg.attachments?.length !== nextMsg.attachments?.length) return false
-  if (prevMsg.traces?.length !== nextMsg.traces?.length) return false
+  if (collectVisibleProcessTraces(prevMsg).length !== collectVisibleProcessTraces(nextMsg).length) return false
 
   // 其他关键 props 比较
   if (prevProps.index !== nextProps.index) return false

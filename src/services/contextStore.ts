@@ -463,24 +463,134 @@ export async function importMemoriesForReview(memories: MemoryItem[]): Promise<v
 async function upsertImportedMemory(db: SQLite.SQLiteDatabase, memory: Partial<MemoryItem>): Promise<void> {
   if (!memory.id || !memory.content) return
   const now = Date.now()
+  const content = normalizeText(memory.content)
+  if (!content) return
   const sourceKind = memory.sourceKind === undefined || memory.sourceKind === null
     ? 'imported'
     : normalizeMemorySourceKind(memory.sourceKind)
+  const imported: MemoryItem = {
+    id: memory.id,
+    content,
+    status: normalizeMemoryStatus(memory.status),
+    conversationId: memory.conversationId,
+    sourceKind,
+    sourceDetail: normalizeOptionalText(memory.sourceDetail),
+    confidence: normalizeConfidence(memory.confidence ?? defaultMemoryConfidence(sourceKind)),
+    lastHitAt: memory.lastHitAt,
+    createdAt: memory.createdAt ?? now,
+    updatedAt: memory.updatedAt ?? now,
+  }
+  const existing = await findImportedMemoryDuplicate(db, imported)
+  const next = existing ? mergeImportedMemory(existing, imported, now) : imported
   await db.runAsync(
     'INSERT OR REPLACE INTO memories (id, content, status, conversationId, sourceKind, sourceDetail, confidence, lastHitAt, createdAt, updatedAt) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
-    memory.id,
-    memory.content,
-    normalizeMemoryStatus(memory.status),
-    memory.conversationId ?? null,
-    sourceKind,
-    normalizeOptionalText(memory.sourceDetail) ?? null,
-    normalizeConfidence(memory.confidence ?? defaultMemoryConfidence(sourceKind)) ?? null,
-    memory.lastHitAt ?? null,
-    memory.createdAt ?? now,
-    memory.updatedAt ?? now
+    next.id,
+    next.content,
+    next.status,
+    next.conversationId ?? null,
+    next.sourceKind ?? null,
+    next.sourceDetail ?? null,
+    next.confidence ?? null,
+    next.lastHitAt ?? null,
+    next.createdAt,
+    next.updatedAt
   )
-  await db.runAsync('DELETE FROM memory_fts WHERE id = ?', memory.id)
-  await db.runAsync('INSERT INTO memory_fts (id, content) VALUES (?, ?)', memory.id, memory.content)
+  await db.runAsync('DELETE FROM memory_fts WHERE id = ?', next.id)
+  await db.runAsync('INSERT INTO memory_fts (id, content) VALUES (?, ?)', next.id, next.content)
+}
+
+async function findImportedMemoryDuplicate(db: SQLite.SQLiteDatabase, memory: MemoryItem): Promise<MemoryItem | null> {
+  const rows = await db.getAllAsync<MemoryItem>(
+    'SELECT id, content, status, conversationId, sourceKind, sourceDetail, confidence, lastHitAt, createdAt, updatedAt FROM memories'
+  )
+  const byId = rows.find((row) => row.id === memory.id)
+  if (byId) return byId
+  return rows
+    .filter((row) => row.content === memory.content)
+    .sort(compareMemoryMergePriority)[0] ?? null
+}
+
+function compareMemoryMergePriority(left: MemoryItem, right: MemoryItem): number {
+  return memoryStatusMergeRank(left.status) - memoryStatusMergeRank(right.status) ||
+    memorySourceKindSortRank(normalizeMemorySourceKind(left.sourceKind)) - memorySourceKindSortRank(normalizeMemorySourceKind(right.sourceKind)) ||
+    (right.updatedAt ?? 0) - (left.updatedAt ?? 0)
+}
+
+function mergeImportedMemory(existing: MemoryItem, incoming: MemoryItem, now: number): MemoryItem {
+  const existingKind = normalizeMemorySourceKind(existing.sourceKind)
+  const incomingKind = normalizeMemorySourceKind(incoming.sourceKind)
+  const sourceKind = strongerMemorySourceKind(existingKind, incomingKind)
+  const existingConfidence = normalizeConfidence(existing.confidence ?? defaultMemoryConfidence(existingKind)) ?? 0
+  const incomingConfidence = normalizeConfidence(incoming.confidence ?? defaultMemoryConfidence(incomingKind)) ?? 0
+  return {
+    id: existing.id,
+    content: existing.content,
+    status: mergeMemoryStatus(existing.status, incoming.status),
+    conversationId: existing.conversationId ?? incoming.conversationId,
+    sourceKind,
+    sourceDetail: mergeMemorySourceDetails(existing.sourceDetail, incoming.sourceDetail),
+    confidence: normalizeConfidence(Math.max(existingConfidence, incomingConfidence)),
+    lastHitAt: maxOptionalTimestamp(existing.lastHitAt, incoming.lastHitAt),
+    createdAt: Math.min(existing.createdAt ?? incoming.createdAt ?? now, incoming.createdAt ?? existing.createdAt ?? now),
+    updatedAt: Math.max(existing.updatedAt ?? 0, incoming.updatedAt ?? 0, now),
+  }
+}
+
+function mergeMemoryStatus(left: MemoryStatus, right: MemoryStatus): MemoryStatus {
+  const statuses = new Set([normalizeMemoryStatus(left), normalizeMemoryStatus(right)])
+  if (statuses.has('active')) return 'active'
+  if (statuses.has('pending')) return 'pending'
+  return 'disabled'
+}
+
+function memoryStatusMergeRank(status: MemoryStatus): number {
+  switch (normalizeMemoryStatus(status)) {
+    case 'active':
+      return 0
+    case 'pending':
+      return 1
+    case 'disabled':
+    default:
+      return 2
+  }
+}
+
+function strongerMemorySourceKind(left: MemorySourceKind, right: MemorySourceKind): MemorySourceKind {
+  return memorySourceKindRank(left) >= memorySourceKindRank(right) ? left : right
+}
+
+function memorySourceKindSortRank(sourceKind: MemorySourceKind): number {
+  return 5 - memorySourceKindRank(sourceKind)
+}
+
+function memorySourceKindRank(sourceKind: MemorySourceKind): number {
+  switch (sourceKind) {
+    case 'manual':
+      return 5
+    case 'deterministic':
+      return 4
+    case 'model':
+      return 3
+    case 'imported':
+      return 2
+    case 'legacy':
+    default:
+      return 1
+  }
+}
+
+function mergeMemorySourceDetails(...values: Array<string | undefined>): string | undefined {
+  const parts: string[] = []
+  for (const value of values) {
+    const detail = normalizeOptionalText(value)
+    if (detail && !parts.includes(detail)) parts.push(detail)
+  }
+  return parts.length ? parts.join('; ') : undefined
+}
+
+function maxOptionalTimestamp(...values: Array<number | undefined>): number | undefined {
+  const timestamps = values.filter((value): value is number => typeof value === 'number')
+  return timestamps.length ? Math.max(...timestamps) : undefined
 }
 
 function normalizeText(value: string): string {

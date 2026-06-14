@@ -5,6 +5,7 @@
 :root {
   color-scheme: light;
 
+  /* Enhanced contrast colors for island theme */
   --color-surface: #f8f8f0;
   --color-surfaceSecondary: rgb(247, 243, 223);
   --color-surfaceTertiary: #eadcc4;
@@ -12,15 +13,15 @@
   --color-primaryForeground: #ffffff;
   --color-secondary: #8bbdd0;
   --color-accent: #ffcc00;
-  --color-border: rgba(114, 93, 66, 0.16);
-  --color-borderStrong: rgba(114, 93, 66, 0.28);
-  --color-text: #794f27;
-  --color-textSecondary: #725d42;
-  --color-textTertiary: #94856d;
+  --color-border: rgba(114, 93, 66, 0.2);
+  --color-borderStrong: rgba(114, 93, 66, 0.35);
+  --color-text: #5a3819;
+  --color-textSecondary: #5a4a32;
+  --color-textTertiary: #7a6b5a;
   --color-success: #138f83;
-  --color-warning: #8f6500;
-  --color-error: #d84a4a;
-  --color-backdrop: rgba(40, 30, 20, 0.45);
+  --color-warning: #7a5200;
+  --color-error: #c73a3a;
+  --color-backdrop: rgba(40, 30, 20, 0.55);
   --color-island: #fffdf5;
   --color-islandRaised: rgb(247, 243, 223);
   --color-islandMuted: #efe0c7;
@@ -30,8 +31,10 @@
   --color-paper: #f8f8f0;
   --color-paperDeep: #f1dfc2;
   --color-paperWarm: #fff1d0;
-  --color-pressed: rgba(114, 93, 66, 0.08);
-  --color-highlight: rgba(255, 255, 255, 0.72);
+  --color-pressed: rgba(114, 93, 66, 0.12);
+  --color-highlight: rgba(255, 255, 255, 0.78);
+
+  /* Material design tokens */
   --color-materialCanvas: #f8f8f0;
   --color-materialPaper: #fffdf5;
   --color-materialPaperRaised: rgb(247, 243, 223);
@@ -39,19 +42,20 @@
   --color-materialGlass: rgba(255, 253, 245, 0.78);
   --color-materialChrome: rgba(255, 253, 245, 0.86);
   --color-materialField: rgb(247, 243, 223);
-  --color-materialStroke: rgba(114, 93, 66, 0.16);
-  --color-materialStrokeStrong: rgba(114, 93, 66, 0.28);
+  --color-materialStroke: rgba(114, 93, 66, 0.2);
+  --color-materialStrokeStrong: rgba(114, 93, 66, 0.35);
   --color-sheetSurface: #fffdf5;
   --color-sheetChrome: rgba(255, 253, 245, 0.92);
   --color-sheetBody: #fffdf5;
   --color-sheetBorder: rgba(114, 93, 66, 0.28);
   --color-sheetDivider: rgba(114, 93, 66, 0.16);
+  /* Control colors - Animal Island UI inspired */
   --color-controlPrimaryBackground: #ffcc00;
-  --color-controlPrimaryForeground: #4f3517;
+  --color-controlPrimaryForeground: #3d2710;
   --color-controlDangerForeground: #ffffff;
   --color-controlPrimaryBorder: #d99d00;
   --color-controlDefaultBackground: #f8f8f0;
-  --color-controlLink: #138f83;
+  --color-controlLink: #0c6f66;
   --color-controlFocus: #ffcc00;
   --color-controlShadow: #bdaea0;
   --color-controlDangerShadow: #c94444;
@@ -75,33 +79,36 @@
   --color-switchThumbOffBorder: #bdaea0;
   --color-cardDefaultBackground: rgb(247, 243, 223);
   --color-cardMutedBackground: #faf8f2;
+  /* Tone colors - Enhanced contrast */
   --color-toneSuccessBackground: #e6f9f6;
-  --color-toneSuccessForeground: #138f83;
-  --color-toneSuccessBorder: rgba(25, 200, 185, 0.24);
+  --color-toneSuccessForeground: #0c6f66;
+  --color-toneSuccessBorder: rgba(12, 111, 102, 0.24);
   --color-toneWarningBackground: #fff1c5;
-  --color-toneWarningForeground: #8f6500;
-  --color-toneWarningBorder: rgba(245, 195, 28, 0.3);
-  --color-toneDangerBackground: rgba(224, 90, 90, 0.12);
-  --color-toneDangerForeground: #d84a4a;
-  --color-toneDangerBorder: rgba(224, 90, 90, 0.22);
+  --color-toneWarningForeground: #7a5200;
+  --color-toneWarningBorder: rgba(122, 82, 0, 0.32);
+  --color-toneDangerBackground: rgba(199, 58, 58, 0.12);
+  --color-toneDangerForeground: #c73a3a;
+  --color-toneDangerBorder: rgba(199, 58, 58, 0.28);
   --color-toneInfoBackground: #d9edf2;
-  --color-toneInfoForeground: #4d8394;
-  --color-toneInfoBorder: rgba(139, 189, 208, 0.3);
+  --color-toneInfoForeground: #3a6d7d;
+  --color-toneInfoBorder: rgba(58, 109, 125, 0.32);
   --color-toneNeutralBackground: rgb(247, 243, 223);
-  --color-toneNeutralForeground: #725d42;
-  --color-toneNeutralBorder: rgba(114, 93, 66, 0.16);
-  --color-messageUserBackground: #794f27;
+  --color-toneNeutralForeground: #5a4a32;
+  --color-toneNeutralBorder: rgba(90, 74, 50, 0.2);
+  /* Message colors - Enhanced contrast */
+  --color-messageUserBackground: #5a3819;
   --color-messageUserForeground: #f8f8f0;
-  --color-messageUserBorder: rgba(114, 93, 66, 0.18);
+  --color-messageUserBorder: rgba(90, 56, 25, 0.28);
   --color-messageUserActionBackground: rgba(255, 255, 255, 0.18);
   --color-messageUserActionForeground: #f8f8f0;
   --color-codeBackground: #2b2118;
   --color-codeBorder: #3d3028;
   --color-codeText: #e8d5bc;
+  /* Loading and table colors - Enhanced contrast */
   --color-tableHeaderBackground: #e6f9f6;
   --color-loadingBackground: #e6f9f6;
-  --color-loadingBorder: #138f83;
-  --color-loadingDot: #138f83;
+  --color-loadingBorder: #0c6f66;
+  --color-loadingDot: #0c6f66;
   --color-timeBorder: #d4cfc3;
   --color-timeDivider: rgba(159, 146, 125, 0.35);
   --color-footerSea0: #327a93;
@@ -121,12 +128,13 @@
   --background-traceAccent: #ffcc00;
   --background-grid: rgba(114, 93, 66, 0.1);
   --background-scrim: rgba(255, 253, 245, 0.18);
+  /* Radius tokens - Animal Island UI pill shapes */
   --theme-radius-card: 1.25rem;
   --theme-radius-titleCard: 2.25rem;
   --theme-radius-panel: 1.875rem;
   --theme-radius-modal: 2.375rem;
   --theme-radius-field: 1.375rem;
-  --theme-radius-chip: 1rem;
+  --theme-radius-chip: 62.4375rem;
   --theme-radius-controlSmall: 0.75rem;
   --theme-radius-controlMiddle: 62.4375rem;
   --theme-radius-controlLarge: 1.5rem;
@@ -153,24 +161,25 @@
   :root {
     color-scheme: dark;
 
+    /* Enhanced contrast colors for dark island theme */
     --color-surface: #17130f;
     --color-surfaceSecondary: #241d17;
     --color-surfaceTertiary: #31271e;
-    --color-primary: #b9f0d5;
+    --color-primary: #7cc9a8;
     --color-primaryForeground: #ffffff;
     --color-secondary: #85b8cc;
     --color-accent: #e8b15a;
-    --color-border: rgba(255, 238, 211, 0.1);
-    --color-borderStrong: rgba(255, 238, 211, 0.22);
+    --color-border: rgba(255, 238, 211, 0.14);
+    --color-borderStrong: rgba(255, 238, 211, 0.28);
     --color-text: #fff2dd;
-    --color-textSecondary: #c8b69f;
-    --color-textTertiary: #8f7c66;
+    --color-textSecondary: #d4c3af;
+    --color-textTertiary: #a89580;
     --color-success: #7cc9a8;
     --color-warning: #e8b15a;
-    --color-error: #f0715f;
-    --color-backdrop: rgba(0, 0, 0, 0.62);
+    --color-error: #f58070;
+    --color-backdrop: rgba(0, 0, 0, 0.68);
     --color-island: #211a14;
-    --color-islandRaised: #211a14;
+    --color-islandRaised: #2b221a;
     --color-islandMuted: #382c21;
     --color-mintSoft: #214438;
     --color-amberSoft: #4c3920;
@@ -178,8 +187,10 @@
     --color-paper: #17130f;
     --color-paperDeep: #100d0a;
     --color-paperWarm: #241d17;
-    --color-pressed: rgba(255, 238, 211, 0.08);
-    --color-highlight: rgba(255, 242, 221, 0.08);
+    --color-pressed: rgba(255, 238, 211, 0.12);
+    --color-highlight: rgba(255, 242, 221, 0.12);
+
+    /* Material design tokens - enhanced */
     --color-materialCanvas: #17130f;
     --color-materialPaper: #211a14;
     --color-materialPaperRaised: #2b221a;
@@ -187,13 +198,13 @@
     --color-materialGlass: rgba(33, 26, 20, 0.8);
     --color-materialChrome: rgba(33, 26, 20, 0.88);
     --color-materialField: #2b221a;
-    --color-materialStroke: rgba(255, 238, 211, 0.1);
-    --color-materialStrokeStrong: rgba(255, 238, 211, 0.22);
+    --color-materialStroke: rgba(255, 238, 211, 0.14);
+    --color-materialStrokeStrong: rgba(255, 238, 211, 0.28);
     --color-sheetSurface: #211a14;
     --color-sheetChrome: rgba(33, 26, 20, 0.94);
     --color-sheetBody: #211a14;
-    --color-sheetBorder: rgba(255, 238, 211, 0.22);
-    --color-sheetDivider: rgba(255, 238, 211, 0.1);
+    --color-sheetBorder: rgba(255, 238, 211, 0.28);
+    --color-sheetDivider: rgba(255, 238, 211, 0.14);
     --color-controlPrimaryBackground: #e8b15a;
     --color-controlPrimaryForeground: #17130f;
     --color-controlDangerForeground: #17130f;
@@ -203,15 +214,17 @@
     --color-controlFocus: #ffcc00;
     --color-controlShadow: #050302;
     --color-controlDangerShadow: #c94444;
+    /* Section colors - Enhanced divider */
     --color-sectionMarker: #7cc9a8;
     --color-sectionTitle: #fff2dd;
-    --color-sectionDivider: rgba(255, 238, 211, 0.12);
+    --color-sectionDivider: rgba(255, 238, 211, 0.16);
     --color-iconAccentBackground: #2e5145;
     --color-iconAccentForeground: #b9f0d5;
+    /* Input colors - Enhanced borders */
     --color-inputBackground: #2b221a;
     --color-inputBackgroundFocused: #211a14;
     --color-inputDisabledBackground: #382c21;
-    --color-inputBorder: rgba(255, 238, 211, 0.16);
+    --color-inputBorder: rgba(255, 238, 211, 0.2);
     --color-inputFocus: #ffcc00;
     --color-inputShadow: #100d0a;
     --color-switchTrackOn: #86d67a;
@@ -223,21 +236,22 @@
     --color-switchThumbOffBorder: #8f7c66;
     --color-cardDefaultBackground: #211a14;
     --color-cardMutedBackground: #382c21;
+    /* Tone colors - Enhanced contrast for dark mode */
     --color-toneSuccessBackground: #214438;
-    --color-toneSuccessForeground: #7cc9a8;
-    --color-toneSuccessBorder: rgba(124, 201, 168, 0.24);
+    --color-toneSuccessForeground: #8fd9b8;
+    --color-toneSuccessBorder: rgba(143, 217, 184, 0.28);
     --color-toneWarningBackground: #4c3920;
-    --color-toneWarningForeground: #e8b15a;
-    --color-toneWarningBorder: rgba(232, 177, 90, 0.24);
-    --color-toneDangerBackground: rgba(240, 113, 95, 0.14);
-    --color-toneDangerForeground: #f0715f;
-    --color-toneDangerBorder: rgba(240, 113, 95, 0.26);
+    --color-toneWarningForeground: #f0c370;
+    --color-toneWarningBorder: rgba(240, 195, 112, 0.28);
+    --color-toneDangerBackground: rgba(245, 128, 112, 0.16);
+    --color-toneDangerForeground: #f58070;
+    --color-toneDangerBorder: rgba(245, 128, 112, 0.3);
     --color-toneInfoBackground: #203d47;
-    --color-toneInfoForeground: #85b8cc;
-    --color-toneInfoBorder: rgba(133, 184, 204, 0.24);
+    --color-toneInfoForeground: #a0c9d8;
+    --color-toneInfoBorder: rgba(160, 201, 216, 0.28);
     --color-toneNeutralBackground: #2b221a;
-    --color-toneNeutralForeground: #c8b69f;
-    --color-toneNeutralBorder: rgba(255, 238, 211, 0.1);
+    --color-toneNeutralForeground: #d4c3af;
+    --color-toneNeutralBorder: rgba(255, 238, 211, 0.14);
     --color-messageUserBackground: #fff2dd;
     --color-messageUserForeground: #17130f;
     --color-messageUserBorder: rgba(255, 238, 211, 0.28);
@@ -247,9 +261,10 @@
     --color-codeBorder: #3d3028;
     --color-codeText: #e8d5bc;
     --color-tableHeaderBackground: #214438;
+    /* Loading colors - Enhanced contrast */
     --color-loadingBackground: #214438;
-    --color-loadingBorder: #7cc9a8;
-    --color-loadingDot: #7cc9a8;
+    --color-loadingBorder: #8fd9b8;
+    --color-loadingDot: #8fd9b8;
     --color-timeBorder: #4c3920;
     --color-timeDivider: rgba(159, 146, 125, 0.35);
     --color-footerSea0: #327a93;
@@ -267,27 +282,34 @@
     --background-tracePrimary: #7cc9a8;
     --background-traceSecondary: #85b8cc;
     --background-traceAccent: #e8b15a;
-    --background-grid: rgba(255, 238, 211, 0.08);
-    --background-scrim: rgba(0, 0, 0, 0.12);
+    /* Background settings - Enhanced grid */
+    --background-grid: rgba(255, 238, 211, 0.11);
+    --background-scrim: rgba(0, 0, 0, 0.16);
+    /* Radius tokens - Animal Island UI pill shapes (dark mode) */
     --theme-radius-card: 1.25rem;
     --theme-radius-titleCard: 2.25rem;
     --theme-radius-panel: 1.875rem;
     --theme-radius-modal: 2.375rem;
     --theme-radius-field: 1.375rem;
-    --theme-radius-chip: 1rem;
+    --theme-radius-chip: 62.4375rem;
     --theme-radius-controlSmall: 0.75rem;
     --theme-radius-controlMiddle: 62.4375rem;
     --theme-radius-controlLarge: 1.5rem;
-    --theme-shadow-opacity: 0.24;
+    /* Shadow opacity - Enhanced for dark mode */
+    --theme-shadow-opacity: 0.28;
     --theme-controlPrimaryShadowOpacity: 0.7;
     --theme-controlPrimaryShadowRadius: 0rem;
     --theme-controlPrimaryShadowOffset: 0.3125rem;
-    --theme-controlSecondaryShadowOpacity: 0.28;
+    --theme-controlSecondaryShadowOpacity: 0.32;
     --theme-controlSecondaryShadowRadius: 0.625rem;
     --theme-controlSecondaryShadowOffset: 0.1875rem;
-    --theme-inputShadowOpacity: 0.42;
+    --theme-inputShadowOpacity: 0.46;
     --theme-inputShadowRadius: 0rem;
     --theme-switchShadowOpacity: 0;
+    --theme-cardShadowOpacity: 0;
+    --theme-cardShadowRadius: 0rem;
+    --theme-cardShadowOffset: 0rem;
+    --theme-ornament-opacity: 1;
     --theme-cardShadowOpacity: 0;
     --theme-cardShadowRadius: 0rem;
     --theme-cardShadowOffset: 0rem;
@@ -323,8 +345,10 @@
   --color-paper: #f8f8f0;
   --color-paperDeep: #f1dfc2;
   --color-paperWarm: #fff1d0;
-  --color-pressed: rgba(114, 93, 66, 0.08);
-  --color-highlight: rgba(255, 255, 255, 0.72);
+  --color-pressed: rgba(114, 93, 66, 0.12);
+  --color-highlight: rgba(255, 255, 255, 0.78);
+
+  /* Material design tokens */
   --color-materialCanvas: #f8f8f0;
   --color-materialPaper: #fffdf5;
   --color-materialPaperRaised: rgb(247, 243, 223);
@@ -332,19 +356,20 @@
   --color-materialGlass: rgba(255, 253, 245, 0.78);
   --color-materialChrome: rgba(255, 253, 245, 0.86);
   --color-materialField: rgb(247, 243, 223);
-  --color-materialStroke: rgba(114, 93, 66, 0.16);
-  --color-materialStrokeStrong: rgba(114, 93, 66, 0.28);
+  --color-materialStroke: rgba(114, 93, 66, 0.2);
+  --color-materialStrokeStrong: rgba(114, 93, 66, 0.35);
   --color-sheetSurface: #fffdf5;
   --color-sheetChrome: rgba(255, 253, 245, 0.92);
   --color-sheetBody: #fffdf5;
   --color-sheetBorder: rgba(114, 93, 66, 0.28);
   --color-sheetDivider: rgba(114, 93, 66, 0.16);
+  /* Control colors - Animal Island UI inspired */
   --color-controlPrimaryBackground: #ffcc00;
-  --color-controlPrimaryForeground: #4f3517;
+  --color-controlPrimaryForeground: #3d2710;
   --color-controlDangerForeground: #ffffff;
   --color-controlPrimaryBorder: #d99d00;
   --color-controlDefaultBackground: #f8f8f0;
-  --color-controlLink: #138f83;
+  --color-controlLink: #0c6f66;
   --color-controlFocus: #ffcc00;
   --color-controlShadow: #bdaea0;
   --color-controlDangerShadow: #c94444;
@@ -368,33 +393,36 @@
   --color-switchThumbOffBorder: #bdaea0;
   --color-cardDefaultBackground: rgb(247, 243, 223);
   --color-cardMutedBackground: #faf8f2;
+  /* Tone colors - Enhanced contrast */
   --color-toneSuccessBackground: #e6f9f6;
-  --color-toneSuccessForeground: #138f83;
-  --color-toneSuccessBorder: rgba(25, 200, 185, 0.24);
+  --color-toneSuccessForeground: #0c6f66;
+  --color-toneSuccessBorder: rgba(12, 111, 102, 0.24);
   --color-toneWarningBackground: #fff1c5;
-  --color-toneWarningForeground: #8f6500;
-  --color-toneWarningBorder: rgba(245, 195, 28, 0.3);
-  --color-toneDangerBackground: rgba(224, 90, 90, 0.12);
-  --color-toneDangerForeground: #d84a4a;
-  --color-toneDangerBorder: rgba(224, 90, 90, 0.22);
+  --color-toneWarningForeground: #7a5200;
+  --color-toneWarningBorder: rgba(122, 82, 0, 0.32);
+  --color-toneDangerBackground: rgba(199, 58, 58, 0.12);
+  --color-toneDangerForeground: #c73a3a;
+  --color-toneDangerBorder: rgba(199, 58, 58, 0.28);
   --color-toneInfoBackground: #d9edf2;
-  --color-toneInfoForeground: #4d8394;
-  --color-toneInfoBorder: rgba(139, 189, 208, 0.3);
+  --color-toneInfoForeground: #3a6d7d;
+  --color-toneInfoBorder: rgba(58, 109, 125, 0.32);
   --color-toneNeutralBackground: rgb(247, 243, 223);
-  --color-toneNeutralForeground: #725d42;
-  --color-toneNeutralBorder: rgba(114, 93, 66, 0.16);
-  --color-messageUserBackground: #794f27;
+  --color-toneNeutralForeground: #5a4a32;
+  --color-toneNeutralBorder: rgba(90, 74, 50, 0.2);
+  /* Message colors - Enhanced contrast */
+  --color-messageUserBackground: #5a3819;
   --color-messageUserForeground: #f8f8f0;
-  --color-messageUserBorder: rgba(114, 93, 66, 0.18);
+  --color-messageUserBorder: rgba(90, 56, 25, 0.28);
   --color-messageUserActionBackground: rgba(255, 255, 255, 0.18);
   --color-messageUserActionForeground: #f8f8f0;
   --color-codeBackground: #2b2118;
   --color-codeBorder: #3d3028;
   --color-codeText: #e8d5bc;
+  /* Loading and table colors - Enhanced contrast */
   --color-tableHeaderBackground: #e6f9f6;
   --color-loadingBackground: #e6f9f6;
-  --color-loadingBorder: #138f83;
-  --color-loadingDot: #138f83;
+  --color-loadingBorder: #0c6f66;
+  --color-loadingDot: #0c6f66;
   --color-timeBorder: #d4cfc3;
   --color-timeDivider: rgba(159, 146, 125, 0.35);
   --color-footerSea0: #327a93;
@@ -414,12 +442,13 @@
   --background-traceAccent: #ffcc00;
   --background-grid: rgba(114, 93, 66, 0.1);
   --background-scrim: rgba(255, 253, 245, 0.18);
+  /* Radius tokens - Animal Island UI pill shapes */
   --theme-radius-card: 1.25rem;
   --theme-radius-titleCard: 2.25rem;
   --theme-radius-panel: 1.875rem;
   --theme-radius-modal: 2.375rem;
   --theme-radius-field: 1.375rem;
-  --theme-radius-chip: 1rem;
+  --theme-radius-chip: 62.4375rem;
   --theme-radius-controlSmall: 0.75rem;
   --theme-radius-controlMiddle: 62.4375rem;
   --theme-radius-controlLarge: 1.5rem;
@@ -558,12 +587,13 @@
   --background-traceAccent: #e8b15a;
   --background-grid: rgba(255, 238, 211, 0.08);
   --background-scrim: rgba(0, 0, 0, 0.12);
+  /* Radius tokens - Animal Island UI pill shapes */
   --theme-radius-card: 1.25rem;
   --theme-radius-titleCard: 2.25rem;
   --theme-radius-panel: 1.875rem;
   --theme-radius-modal: 2.375rem;
   --theme-radius-field: 1.375rem;
-  --theme-radius-chip: 1rem;
+  --theme-radius-chip: 62.4375rem;
   --theme-radius-controlSmall: 0.75rem;
   --theme-radius-controlMiddle: 62.4375rem;
   --theme-radius-controlLarge: 1.5rem;

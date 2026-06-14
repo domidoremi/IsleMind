@@ -6,7 +6,7 @@ import { useSettingsStore } from '@/store/settingsStore'
 
 // 懒加载知识面板组件
 const ContextPanel = createLazyComponent(
-  () => import('@/components/settings/ContextPanel')
+  () => import('@/components/settings/ContextPanel').then((module) => ({ default: module.ContextPanel }))
 )
 
 export default function KnowledgeSettingsScreen() {

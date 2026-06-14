@@ -273,7 +273,7 @@ function buildPortableSkillManifest(skill: SkillDefinition, sourceSkill: SkillDe
     kind: workflow ? 'agent-workflow-skill' : 'skill',
     skillId: skill.id,
     skillName: skill.name,
-    version: skill.version,
+    version: skill.version ?? '1.0.0',
     tagCount: skill.tags.length,
     hasProviderBinding: !!skill.providerId,
     hasModelBinding: !!skill.model,

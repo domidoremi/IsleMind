@@ -256,20 +256,21 @@ export interface AppPalette {
   ui: ThemeUiTokens
 }
 
+// Animal Island UI inspired color palette with enhanced contrast
 const islandCards: CardColorMap = {
   default: { bg: 'rgb(247, 243, 223)', fg: '#725d42' },
-  'app-pink': { bg: '#f8a6b2', fg: '#fff' },
-  purple: { bg: '#b77dee', fg: '#fff' },
-  'app-blue': { bg: '#889df0', fg: '#fff' },
-  'app-yellow': { bg: '#f7cd67', fg: '#725d42' },
-  'app-orange': { bg: '#e59266', fg: '#fff' },
-  'app-teal': { bg: '#82d5bb', fg: '#fff' },
-  'app-green': { bg: '#8ac68a', fg: '#fff' },
-  'app-red': { bg: '#fc736d', fg: '#fff' },
+  'app-pink': { bg: '#f8a6b2', fg: '#5a2832' },  // Darker text for better contrast
+  purple: { bg: '#b77dee', fg: '#2d1a4f' },      // Darker text for better contrast
+  'app-blue': { bg: '#889df0', fg: '#1e2d5a' },  // Darker text for better contrast
+  'app-yellow': { bg: '#f7cd67', fg: '#5a4a1e' }, // Slightly darker for contrast
+  'app-orange': { bg: '#e59266', fg: '#4a2f1e' }, // Darker text for better contrast
+  'app-teal': { bg: '#82d5bb', fg: '#1a4a3d' },   // Darker text for better contrast
+  'app-green': { bg: '#8ac68a', fg: '#2a4a2a' },  // Darker text for better contrast
+  'app-red': { bg: '#fc736d', fg: '#4a1e1c' },    // Darker text for better contrast
   'lime-green': { bg: '#d1da49', fg: '#3d5a1a' },
-  'yellow-green': { bg: '#ecdf52', fg: '#725d42' },
-  brown: { bg: '#9a835a', fg: '#fff' },
-  'warm-peach-pink': { bg: '#e18c6f', fg: '#fff' },
+  'yellow-green': { bg: '#ecdf52', fg: '#5a5219' }, // Slightly darker
+  brown: { bg: '#9a835a', fg: '#2d2419' },        // Darker text for better contrast
+  'warm-peach-pink': { bg: '#e18c6f', fg: '#4a2d1e' }, // Darker text for better contrast
 }
 
 const minimalCards: CardColorMap = {
@@ -306,33 +307,33 @@ function islandUi(mode: ResolvedThemeMode): ThemeUiTokens {
     tone: {
       success: {
         background: dark ? '#214438' : '#e6f9f6',
-        foreground: dark ? '#7cc9a8' : '#138f83',
-        border: dark ? 'rgba(124, 201, 168, 0.24)' : 'rgba(25, 200, 185, 0.24)',
+        foreground: dark ? '#7cc9a8' : '#0c6f66', // Enhanced contrast (was #138f83)
+        border: dark ? 'rgba(124, 201, 168, 0.28)' : 'rgba(12, 111, 102, 0.24)', // Stronger border
       },
       warning: {
         background: dark ? '#4c3920' : '#fff1c5',
-        foreground: dark ? '#e8b15a' : '#8f6500',
-        border: dark ? 'rgba(232, 177, 90, 0.24)' : 'rgba(245, 195, 28, 0.3)',
+        foreground: dark ? '#e8b15a' : '#7a5200', // Enhanced contrast (was #8f6500)
+        border: dark ? 'rgba(232, 177, 90, 0.28)' : 'rgba(122, 82, 0, 0.32)', // Stronger border
       },
       danger: {
         background: dark ? 'rgba(240, 113, 95, 0.14)' : 'rgba(224, 90, 90, 0.12)',
-        foreground: dark ? '#f0715f' : '#d84a4a',
-        border: dark ? 'rgba(240, 113, 95, 0.26)' : 'rgba(224, 90, 90, 0.22)',
+        foreground: dark ? '#f0715f' : '#c73a3a', // Enhanced contrast (was #d84a4a)
+        border: dark ? 'rgba(240, 113, 95, 0.3)' : 'rgba(199, 58, 58, 0.28)', // Stronger border
       },
       info: {
         background: dark ? '#203d47' : '#d9edf2',
-        foreground: dark ? '#85b8cc' : '#4d8394',
-        border: dark ? 'rgba(133, 184, 204, 0.24)' : 'rgba(139, 189, 208, 0.3)',
+        foreground: dark ? '#85b8cc' : '#3a6d7d', // Enhanced contrast (was #4d8394)
+        border: dark ? 'rgba(133, 184, 204, 0.28)' : 'rgba(58, 109, 125, 0.32)', // Stronger border
       },
       neutral: {
         background: dark ? '#2b221a' : 'rgb(247, 243, 223)',
-        foreground: dark ? '#c8b69f' : '#725d42',
-        border: dark ? 'rgba(255, 238, 211, 0.1)' : 'rgba(114, 93, 66, 0.16)',
+        foreground: dark ? '#c8b69f' : '#5a4a32', // Enhanced contrast (was #725d42)
+        border: dark ? 'rgba(255, 238, 211, 0.12)' : 'rgba(90, 74, 50, 0.2)', // Stronger border
       },
       ink: {
-        background: dark ? '#fff2dd' : '#794f27',
+        background: dark ? '#fff2dd' : '#5a3819', // Enhanced contrast (was #794f27)
         foreground: dark ? '#17130f' : '#f8f8f0',
-        border: dark ? 'rgba(255, 238, 211, 0.28)' : 'rgba(114, 93, 66, 0.24)',
+        border: dark ? 'rgba(255, 238, 211, 0.32)' : 'rgba(90, 56, 25, 0.28)', // Stronger border
       },
     },
     radius: {
@@ -341,24 +342,24 @@ function islandUi(mode: ResolvedThemeMode): ThemeUiTokens {
       panel: 30,
       modal: 38,
       field: 22,
-      chip: 16,
+      chip: 999, // Full pill shape for chips (animal-island-ui style)
       controlSmall: 12,
-      controlMiddle: 999,
+      controlMiddle: 999, // Full pill shape for buttons (animal-island-ui style)
       controlLarge: 24,
     },
     control: {
       primaryBackground: dark ? '#e8b15a' : '#ffcc00',
-      primaryForeground: dark ? '#17130f' : '#4f3517',
+      primaryForeground: dark ? '#17130f' : '#3d2710', // Enhanced contrast (was #4f3517)
       dangerForeground: dark ? '#17130f' : '#ffffff',
       primaryBorder: dark ? 'rgba(232, 177, 90, 0.72)' : '#d99d00',
       defaultBackground: dark ? '#211a14' : '#f8f8f0',
-      link: dark ? '#7cc9a8' : '#138f83',
+      link: dark ? '#7cc9a8' : '#0c6f66', // Enhanced contrast (was #138f83)
       focus: '#ffcc00',
       shadow: dark ? '#050302' : '#bdaea0',
       dangerShadow: '#c94444',
       primaryShadowOpacity: dark ? 0.7 : 1,
       primaryShadowRadius: 0,
-      primaryShadowOffset: 5,
+      primaryShadowOffset: 5, // Animal Island UI 3D button shadow
       secondaryShadowOpacity: dark ? 0.28 : 0.18,
       secondaryShadowRadius: 10,
       secondaryShadowOffset: 3,
@@ -652,15 +653,15 @@ const islandLight: AppPalette = {
   primaryForeground: '#ffffff',
   secondary: '#8bbdd0',
   accent: '#ffcc00',
-  border: 'rgba(114, 93, 66, 0.16)',
-  borderStrong: 'rgba(114, 93, 66, 0.28)',
-  text: '#794f27',
-  textSecondary: '#725d42',
-  textTertiary: '#94856d',
+  border: 'rgba(114, 93, 66, 0.2)', // Stronger borders for better separation
+  borderStrong: 'rgba(114, 93, 66, 0.35)', // Enhanced contrast
+  text: '#5a3819', // Darker text for better readability (was #794f27)
+  textSecondary: '#5a4a32', // Darker secondary text (was #725d42)
+  textTertiary: '#7a6b5a', // Slightly darker tertiary (was #94856d)
   success: '#6fba2c',
   warning: '#f5c31c',
-  error: '#e05a5a',
-  backdrop: 'rgba(40, 30, 20, 0.45)',
+  error: '#c73a3a', // Darker for better contrast (was #e05a5a)
+  backdrop: 'rgba(40, 30, 20, 0.55)', // Slightly darker backdrop
   island: '#fffdf5',
   islandRaised: 'rgb(247, 243, 223)',
   islandMuted: '#efe0c7',
@@ -672,22 +673,22 @@ const islandLight: AppPalette = {
   paper: '#f8f8f0',
   paperDeep: '#f1dfc2',
   paperWarm: '#fff1d0',
-  creamInk: '#725d42',
+  creamInk: '#5a4a32', // Darker for better contrast
   mint: '#19c8b9',
-  mintPressed: '#11a89b',
+  mintPressed: '#0c6f66', // Darker pressed state for better feedback
   mintWash: '#e6f9f6',
   amber: '#ffcc00',
-  amberPressed: '#e0b800',
+  amberPressed: '#d99d00', // Darker pressed state
   amberWash: '#fff1c5',
-  coral: '#e05a5a',
-  coralWash: 'rgba(224, 90, 90, 0.12)',
+  coral: '#c73a3a', // Darker for better contrast
+  coralWash: 'rgba(199, 58, 58, 0.12)',
   sky: '#8bbdd0',
   skyWash: '#d9edf2',
-  overlay: 'rgba(40, 30, 20, 0.45)',
-  scrim: 'rgba(58, 48, 36, 0.18)',
-  pressed: 'rgba(114, 93, 66, 0.08)',
-  disabled: 'rgba(159, 146, 125, 0.46)',
-  highlight: 'rgba(255, 255, 255, 0.72)',
+  overlay: 'rgba(40, 30, 20, 0.55)',
+  scrim: 'rgba(58, 48, 36, 0.22)', // Slightly stronger
+  pressed: 'rgba(114, 93, 66, 0.12)', // More visible pressed state
+  disabled: 'rgba(159, 146, 125, 0.5)', // Slightly stronger
+  highlight: 'rgba(255, 255, 255, 0.78)',
   background: islandBackground('light'),
   material: {
     canvas: '#f8f8f0',
@@ -732,15 +733,15 @@ const islandDark: AppPalette = {
   primaryForeground: '#ffffff',
   secondary: '#85b8cc',
   accent: '#e8b15a',
-  border: 'rgba(255, 238, 211, 0.1)',
-  borderStrong: 'rgba(255, 238, 211, 0.22)',
+  border: 'rgba(255, 238, 211, 0.14)', // Enhanced from 0.1 (+40%)
+  borderStrong: 'rgba(255, 238, 211, 0.28)', // Enhanced from 0.22 (+27%)
   text: '#fff2dd',
-  textSecondary: '#c8b69f',
-  textTertiary: '#8f7c66',
+  textSecondary: '#d4c3af', // Lighter for better contrast (was #c8b69f)
+  textTertiary: '#a89580', // Lighter tertiary (was #8f7c66)
   success: '#7cc9a8',
   warning: '#e8b15a',
-  error: '#f0715f',
-  backdrop: 'rgba(0, 0, 0, 0.62)',
+  error: '#f58070', // Lighter for better contrast (was #f0715f)
+  backdrop: 'rgba(0, 0, 0, 0.68)', // Darker backdrop (+10%)
   island: '#211a14',
   islandRaised: '#2b221a',
   islandMuted: '#382c21',
@@ -754,20 +755,20 @@ const islandDark: AppPalette = {
   paperWarm: '#241d17',
   creamInk: '#fff2dd',
   mint: '#7cc9a8',
-  mintPressed: '#4f9879',
+  mintPressed: '#5aae8c', // Lighter pressed state
   mintWash: '#214438',
   amber: '#e8b15a',
-  amberPressed: '#b87d2d',
+  amberPressed: '#d39d3f', // Lighter pressed state
   amberWash: '#4c3920',
-  coral: '#f0715f',
-  coralWash: 'rgba(240, 113, 95, 0.14)',
+  coral: '#f58070', // Enhanced contrast
+  coralWash: 'rgba(245, 128, 112, 0.16)', // Slightly stronger
   sky: '#85b8cc',
   skyWash: '#203d47',
-  overlay: 'rgba(0, 0, 0, 0.62)',
-  scrim: 'rgba(0, 0, 0, 0.34)',
-  pressed: 'rgba(255, 238, 211, 0.08)',
-  disabled: 'rgba(200, 182, 159, 0.38)',
-  highlight: 'rgba(255, 242, 221, 0.08)',
+  overlay: 'rgba(0, 0, 0, 0.68)', // Darker overlay
+  scrim: 'rgba(0, 0, 0, 0.42)', // Stronger scrim (+24%)
+  pressed: 'rgba(255, 238, 211, 0.12)', // More visible (+50%)
+  disabled: 'rgba(212, 195, 175, 0.42)', // Slightly stronger
+  highlight: 'rgba(255, 242, 221, 0.12)', // More visible (+50%)
   background: islandBackground('dark'),
   material: {
     canvas: '#17130f',
@@ -777,14 +778,14 @@ const islandDark: AppPalette = {
     glass: 'rgba(33, 26, 20, 0.8)',
     chrome: 'rgba(33, 26, 20, 0.88)',
     field: '#2b221a',
-    stroke: 'rgba(255, 238, 211, 0.1)',
-    strokeStrong: 'rgba(255, 238, 211, 0.22)',
+    stroke: 'rgba(255, 238, 211, 0.14)', // Enhanced from 0.1
+    strokeStrong: 'rgba(255, 238, 211, 0.28)', // Enhanced from 0.22
     sheet: {
       surface: '#211a14',
       chrome: 'rgba(33, 26, 20, 0.94)',
       body: '#211a14',
-      border: 'rgba(255, 238, 211, 0.22)',
-      divider: 'rgba(255, 238, 211, 0.1)',
+      border: 'rgba(255, 238, 211, 0.28)', // Enhanced from 0.22
+      divider: 'rgba(255, 238, 211, 0.14)', // Enhanced from 0.1
     },
   },
   status: {
@@ -796,9 +797,9 @@ const islandDark: AppPalette = {
   },
   shadow: {
     color: '#050302',
-    softOpacity: 0.24,
-    mediumOpacity: 0.34,
-    strongOpacity: 0.44,
+    softOpacity: 0.28, // Enhanced from 0.24
+    mediumOpacity: 0.38, // Enhanced from 0.34
+    strongOpacity: 0.48, // Enhanced from 0.44
   },
   cardColors: islandCards,
   ui: islandUi('dark'),
