@@ -8,6 +8,7 @@ import {
   Keyboard,
   Platform,
   Pressable,
+  StyleSheet,
   ScrollView,
   Text,
   TextInput,
@@ -25,11 +26,11 @@ import { FlashList, type FlashListRef } from '@shopify/flash-list'
 import * as Clipboard from 'expo-clipboard'
 import * as Linking from 'expo-linking'
 import { router } from 'expo-router'
-import { AlertTriangle, Bot, Brain, BrainCircuit, BrainCog, ChevronRight, FileText, GitBranchPlus, ListEnd, Sparkles, Split, Square, Wrench, X } from 'lucide-react-native'
 import { MotiView } from 'moti'
 import { useTranslation } from 'react-i18next'
 import { AnimatedNavigationIcon, type NavigationGlyph } from '@/components/navigation/AnimatedNavigationIcon'
 import { AnimatedNavigationTrigger, useNavigationTrigger } from '@/components/navigation/AnimatedNavigationTrigger'
+import { AppIcon, appIconStroke, type AppIconName } from '@/components/ui/AppIcon'
 import { IsleScreen, type IsleBackgroundState } from '@/components/ui/isle'
 import { IsleOverlayPressable, IslePressable } from '@/components/ui/isle'
 import { IsleField, IsleIconButton, IsleSheet } from '@/components/ui/isle'
@@ -43,17 +44,18 @@ import { confirmAgentAction, copyMessageFinalText, recoverStaleStreamingMessages
 import { useAppTheme } from '@/hooks/useAppTheme'
 import { useChatStore } from '@/store/chatStore'
 import { useSettingsStore } from '@/store/settingsStore'
-import { testProviderModelDetailed } from '@/services/ai/base'
+import { testProviderModelHealth } from '@/services/providerModelHealth'
 import { getConversationMetrics, type ConversationMetrics } from '@/services/conversationMetrics'
 import { getModelConfig, getModelName, getProviderConfigIssue } from '@/types'
 import { speakText } from '@/services/speech'
 import { buildAgentWorkflowSkillSavePreview, isSkillSelectableWithAgentWorkflowState, type AgentWorkflowSkillSavePreview } from '@/services/agent/agentWorkflowSkills'
 import { getAgentEvidenceRepairActionFromMessage, getAgentPendingActionFromMessage, getAgentWorkflowContinuationActionFromMessage, getAgentWorkflowRecoveryActionFromMessage, getAgentWorkflowSkillSuggestionFromMessage } from '@/services/agent/agentMessageAdapter'
-import { clampAgentOutput, redactSensitiveText } from '@/services/agent/agentTrace'
+import { buildAndroidUndoPromptContext, boundedAndroidUndoResult, safeChatPromptText } from '@/services/chatAndroidUndoPrompt'
 import type { AgentRequestedOutput } from '@/services/agent'
-import type { AIProvider, Attachment, ChatErrorCode, Conversation, Message, ProcessTrace, ProviderOperationCode } from '@/types'
+import type { AIProvider, Attachment, ChatErrorCode, Conversation, Message, ProviderOperationCode } from '@/types'
 import type { CommandReference, KnowledgeDocument, MemoryItem, SkillDefinition } from '@/types'
-import { collectMessageTraces, collectVisibleProcessTraces, formatProcessTraceForCopy, getActiveTraceTitle, isAgentWorkflowEnvelopeTrace } from './tracePresentation'
+import { collectMessageTraces, collectVisibleProcessTraces, formatProcessTraceForCopy, getActiveTraceTitle } from './tracePresentation'
+import type { PackedCompressionMetadata } from '@/services/contextPacker'
 import { useSafeAreaInsets } from 'react-native-safe-area-context'
 import { useMainPagerGestureLock } from '@/components/main/MainPagerGestureLock'
 import { applySkillStack, createBaseSkill, extractSkillVariables, listSkills, upsertSkill } from '@/services/skills'
@@ -93,21 +95,18 @@ const MESSAGE_LIST_MOMENTUM_ELIGIBILITY_MS = 240
 const QUICK_START_ACTION_HIT_SLOP = { top: 8, right: 8, bottom: 8, left: 8 }
 const QUICK_TOOL_HIT_SLOP = { top: 8, right: 6, bottom: 8, left: 6 }
 const FLOATING_CHROME_SAFE_AREA_GAP = 0
-const FLOATING_CHROME_ANDROID_TOP_GAP = Platform.OS === 'android' ? 12 : 0
-const FLOATING_CHROME_BOTTOM_PADDING = 6
+const FLOATING_CHROME_ANDROID_TOP_GAP = 0
+const FLOATING_CHROME_BOTTOM_PADDING = 4
 const FLOATING_CHROME_IDLE_COLLAPSE_DELAY_MS = 1800
 const FLOATING_CHROME_SWIPE_COLLAPSE_DISTANCE = 28
-const COLLAPSED_CHROME_TOP_OFFSET = 2
-const COLLAPSED_CHROME_HEIGHT = 44
+const COLLAPSED_CHROME_TOP_OFFSET = 0
+const COLLAPSED_CHROME_HEIGHT = 26
 const MESSAGE_LIST_CHROME_GAP = 8
+const MESSAGE_LIST_CHROME_OVERLAY = 0
+const MESSAGE_LIST_CHROME_UNDERLAP = 0
 const MESSAGE_LIST_COMPOSER_GAP = 12
-const EMPTY_CONVERSATION_DEFAULT_TOP_PADDING = 36
+const EMPTY_CONVERSATION_DEFAULT_TOP_PADDING = 20
 const HOME_MODEL_HIGHLIGHT_LIMIT = 4
-const ANDROID_UNDO_OPERATIONS_PROMPT_LIMIT = 2400
-const ANDROID_UNDO_OPERATION_PROMPT_ITEM_LIMIT = 1200
-const ANDROID_UNDO_OPERATION_PROMPT_MAX_ITEMS = 20
-const ANDROID_UNDO_PROMPT_TEXT_LIMIT = 1400
-const ANDROID_UNDO_PROMPT_FIELD_LIMIT = 360
 
 interface PendingStreamingMessage {
   intent: Exclude<StreamingInputIntent, 'interrupt'>
@@ -146,11 +145,11 @@ function createEmptyMessageScrollViewport(): MessageScrollViewport {
 }
 
 function boundedAgentWorkflowResult(message: Message): string {
-  return safePromptText(message.responseText ?? message.content, ANDROID_UNDO_PROMPT_TEXT_LIMIT)
+  return boundedAndroidUndoResult(message)
 }
 
 function safeAgentWorkflowStarterPrompt(value: unknown): string {
-  return safePromptText(value, ANDROID_UNDO_PROMPT_TEXT_LIMIT)
+  return safePromptText(value, 1400)
 }
 
 function readCompletedWorkArtifactTraceFollowUpPrompt(message: Message): string {
@@ -181,135 +180,8 @@ function buildAgentWorkflowSettingsParams(message: Message): Record<string, stri
   }
 }
 
-function buildAndroidUndoPromptContext(message: Message, t: TFunction): string {
-  const undoTrace = findAndroidUndoFollowUpTrace(message)
-  const metadata = undoTrace?.metadata
-  const summary = safePromptText(metadata?.androidUndoSummary, ANDROID_UNDO_PROMPT_FIELD_LIMIT)
-  const undoOperations = collectAndroidUndoOperationsFromMessage(message)
-  const undoOperationsJson = undoOperations.length
-    ? safePromptText(JSON.stringify(undoOperations, null, 2), ANDROID_UNDO_OPERATIONS_PROMPT_LIMIT)
-    : ''
-  const previousResult = boundedAgentWorkflowResult(message) || t('messageBubble.emptyResponse')
-  const toolName = metadata?.androidUndoToolName === 'android.files.undo_operations'
-    ? metadata.androidUndoToolName
-    : 'android.files.undo_operations'
-  return [
-    `Undo tool: ${toolName}`,
-    undoOperations.length ? `Undo operations: ${undoOperations.length}` : typeof metadata?.androidUndoOperationCount === 'number' ? `Undo operations: ${Math.max(0, Math.floor(metadata.androidUndoOperationCount))}` : '',
-    undoOperationsJson ? 'Undo operations JSON:' : '',
-    undoOperationsJson,
-    metadata?.androidUndoRequiresVisibleConfirmation === true ? 'Visible confirmation required: yes' : 'Visible confirmation required: required before applying',
-    'Delete-based rollback: unsupported',
-    summary ? `Trace summary: ${summary}` : '',
-    '',
-    'Previous result:',
-    previousResult,
-  ].filter((line) => line !== '').join('\n')
-}
-
-function collectAndroidUndoOperationsFromMessage(message: Message): unknown[] {
-  for (const trace of collectMessageTraces(message)) {
-    if (!isAndroidUndoOperationManifestTrace(trace)) continue
-    const parsed = parseJsonObject(trace.content)
-    const undoOperations = parsed ? readArray(parsed.undoOperations) : undefined
-    const safeOperations = sanitizeAndroidUndoOperationsForPrompt(undoOperations)
-    if (safeOperations.length) return safeOperations
-  }
-  return []
-}
-
-function findAndroidUndoFollowUpTrace(message: Message): ProcessTrace | undefined {
-  return collectMessageTraces(message).find(isAndroidUndoFollowUpTrace)
-}
-
-function isAndroidUndoFollowUpTrace(trace: ProcessTrace): boolean {
-  const metadata = trace.metadata
-  return isWorkflowAndroidUndoFollowUpTrace(trace) &&
-    typeof metadata?.androidUndoOperationCount === 'number' &&
-    metadata.androidUndoOperationCount > 0 &&
-    metadata.androidUndoToolName === 'android.files.undo_operations' &&
-    metadata.androidUndoRequiresVisibleConfirmation === true
-}
-
-function isWorkflowAndroidUndoFollowUpTrace(trace: ProcessTrace): boolean {
-  return isAgentWorkflowEnvelopeTrace(trace)
-}
-
-function isAndroidUndoOperationManifestTrace(trace: ProcessTrace): boolean {
-  const metadata = trace.metadata
-  return trace.type === 'tool' &&
-    metadata?.source === 'android' &&
-    metadata?.toolId === 'android:files.apply_operations'
-}
-
-function parseJsonObject(value: string | undefined): Record<string, unknown> | undefined {
-  if (!value?.trim()) return undefined
-  try {
-    const parsed = JSON.parse(value)
-    return parsed && typeof parsed === 'object' && !Array.isArray(parsed)
-      ? parsed as Record<string, unknown>
-      : undefined
-  } catch {
-    return undefined
-  }
-}
-
-function readArray(value: unknown): unknown[] | undefined {
-  return Array.isArray(value) ? value : undefined
-}
-
-function sanitizeAndroidUndoOperationsForPrompt(value: unknown[] | undefined): unknown[] {
-  if (!value?.length) return []
-  return value
-    .map(sanitizeAndroidUndoOperationForPrompt)
-    .filter((operation): operation is Record<string, unknown> => Boolean(operation))
-    .slice(0, ANDROID_UNDO_OPERATION_PROMPT_MAX_ITEMS)
-}
-
-function sanitizeAndroidUndoOperationForPrompt(value: unknown): Record<string, unknown> | undefined {
-  if (!value || typeof value !== 'object' || Array.isArray(value)) return undefined
-  const sanitized = sanitizeAndroidUndoPromptValue(value, 0)
-  if (!sanitized || typeof sanitized !== 'object' || Array.isArray(sanitized)) return undefined
-  const serialized = JSON.stringify(sanitized)
-  if (serialized.length <= ANDROID_UNDO_OPERATION_PROMPT_ITEM_LIMIT) return sanitized as Record<string, unknown>
-  const record = sanitized as Record<string, unknown>
-  return {
-    ...(typeof record.id === 'string' ? { id: record.id } : {}),
-    ...(typeof record.action === 'string' ? { action: record.action } : {}),
-    ...(typeof record.sourceName === 'string' ? { sourceName: record.sourceName } : {}),
-    ...(typeof record.targetName === 'string' ? { targetName: record.targetName } : {}),
-    requiresUserConfirmation: record.requiresUserConfirmation === true,
-    truncated: true,
-  }
-}
-
-function sanitizeAndroidUndoPromptValue(value: unknown, depth: number): unknown {
-  if (typeof value === 'string') return safePromptText(value, ANDROID_UNDO_PROMPT_FIELD_LIMIT)
-  if (typeof value === 'number' || typeof value === 'boolean' || value === null) return value
-  if (Array.isArray(value)) {
-    if (depth >= 3) return '[redacted]'
-    return value.slice(0, ANDROID_UNDO_OPERATION_PROMPT_MAX_ITEMS).map((item) => sanitizeAndroidUndoPromptValue(item, depth + 1))
-  }
-  if (value && typeof value === 'object') {
-    if (depth >= 3) return '[redacted]'
-    const result: Record<string, unknown> = {}
-    for (const [key, child] of Object.entries(value).slice(0, 32)) {
-      const safeKey = safePromptText(key, 80)
-      if (!safeKey) continue
-      result[safeKey] = isSensitivePromptKey(safeKey) ? '[redacted]' : sanitizeAndroidUndoPromptValue(child, depth + 1)
-    }
-    return result
-  }
-  return undefined
-}
-
 function safePromptText(value: unknown, limit: number): string {
-  if (typeof value !== 'string') return ''
-  return clampAgentOutput(redactSensitiveText(value.trim()), limit).trim()
-}
-
-function isSensitivePromptKey(value: string): boolean {
-  return /(api[_-]?key|authorization|bearer|password|secret|token)/i.test(value)
+  return safeChatPromptText(value, limit)
 }
 
 type WorkflowSaveDialogTone = 'default' | 'mint' | 'amber' | 'danger'
@@ -404,7 +276,7 @@ interface ChatWorkspaceProps {
 }
 
 export function ChatWorkspace({ conversation, showBack = false, embedded = false, initialDraft, initialDraftKey, settingsTransitionActive = false, onHistory, onSettings }: ChatWorkspaceProps) {
-  const { colors } = useAppTheme()
+  const { colors, isGlass } = useAppTheme()
   const { t } = useTranslation()
   const dialog = useIsleDialog()
   const insets = useSafeAreaInsets()
@@ -424,7 +296,7 @@ export function ChatWorkspace({ conversation, showBack = false, embedded = false
   const setPagerGestureLocked = pagerGestureLock?.setLocked
   const listRef = useRef<FlashListRef<Message>>(null)
   const [showOptions, setShowOptions] = useState(false)
-  const [chromeCollapsed, setChromeCollapsed] = useState(true)
+  const [chromeCollapsed, setChromeCollapsed] = useState(false)
   const [providerHealth, setProviderHealth] = useState<ConversationHealth | null>(null)
   const [testingHeader, setTestingHeader] = useState(false)
   const [pendingStreamingMessage, setPendingStreamingMessage] = useState<PendingStreamingMessage | null>(null)
@@ -437,7 +309,6 @@ export function ChatWorkspace({ conversation, showBack = false, embedded = false
   const [keyboardBaselineHeight, setKeyboardBaselineHeight] = useState(windowHeight)
   const [composerFocused, setComposerFocused] = useState(false)
   const [composerPanel, setComposerPanel] = useState<ComposerPanel>(null)
-  const [quickToolsCollapsed, setQuickToolsCollapsed] = useState(true)
   const [composerOutputMode, setComposerOutputMode] = useState<AgentRequestedOutput>('auto')
   const [quickStartDraft, setQuickStartDraft] = useState<ComposerDraftPayload | null>(null)
   const quickStartSequence = useRef(0)
@@ -502,12 +373,14 @@ export function ChatWorkspace({ conversation, showBack = false, embedded = false
   const runtimeConversationId = runtimeConversation?.id
   const runtimeConversationTitle = runtimeConversation?.title
   const lastMessage = runtimeConversation?.messages.at(-1)
+  const latestCompression = useMemo(() => findLatestCompressionSummary(runtimeConversation?.messages ?? []), [runtimeConversation?.messages])
+  const lastCompressionToastSignature = useRef('')
   const regenerableAssistantId = lastMessage?.role === 'assistant' ? lastMessage.id : undefined
   const messageSignature = runtimeConversation?.messages.map((message) => `${message.id}:${message.status}`).join('|')
   const activityLabel = streamingMessage ? getMessageActivityLabel(streamingMessage, t) : ''
   const compactViewport = windowHeight < 620 || windowWidth < 360
   const mobileChatViewport = windowWidth < 600
-  const keepChromeExpanded = embedded && mobileChatViewport
+  const keepChromeExpanded = true
   const androidResizeInset = Platform.OS === 'android' && keyboardHeight > 0
     ? Math.max(0, keyboardBaselineHeight - windowHeight)
     : 0
@@ -555,6 +428,18 @@ export function ChatWorkspace({ conversation, showBack = false, embedded = false
       ? `${t('chat.pendingGuide')} · ${previewPendingText(pendingStreamingMessage.content, pendingStreamingMessage.attachments, t)}`
       : `${t('chat.pendingQueue')} · ${previewPendingText(pendingStreamingMessage.content, pendingStreamingMessage.attachments, t)}`
     : undefined
+
+  useEffect(() => {
+    if (!latestCompression?.metadata) return
+    const signature = `${latestCompression.mode}:${latestCompression.metadata.strategy}:${latestCompression.metadata.sourceMessageCount}:${latestCompression.metadata.keptMessageCount}:${latestCompression.savedTokens}`
+    if (lastCompressionToastSignature.current === signature) return
+    lastCompressionToastSignature.current = signature
+    dialog.toast({
+      title: t(latestCompression.titleKey),
+      message: renderCompressionMessage(latestCompression, t),
+      tone: latestCompression.mode === 'remote' ? 'mint' : 'amber',
+    })
+  }, [dialog, latestCompression, t])
 
   useEffect(() => {
     if (!runtimeConversationId || settings.systemStatusNotificationsEnabled !== true || !isStreaming) {
@@ -657,14 +542,7 @@ export function ChatWorkspace({ conversation, showBack = false, embedded = false
   }
 
   function collapseQuickTools() {
-    setQuickToolsCollapsed(true)
     setComposerPanel(null)
-  }
-
-  function toggleQuickTools() {
-    const nextCollapsed = !quickToolsCollapsed
-    setQuickToolsCollapsed(nextCollapsed)
-    if (nextCollapsed) setComposerPanel(null)
   }
 
   function toggleComposerOutputMode() {
@@ -905,7 +783,12 @@ export function ChatWorkspace({ conversation, showBack = false, embedded = false
       }
     }
 
-    function openSetupModelPicker() {
+  const topChromeItemSurface = isGlass ? colors.ui.actionBar.itemBackground : colors.ui.cartoon ? colors.ui.semantic.surface.muted : colors.ui.semantic.surface.muted
+  const topChromeMutedSurface = isGlass ? colors.ui.semantic.chrome.background : colors.ui.cartoon ? colors.ui.semantic.surface.base : colors.ui.semantic.surface.base
+  const topChromeItemBorder = colors.ui.cartoon ? colors.material.stroke : isGlass ? colors.ui.actionBar.itemBorder : colors.ui.semantic.chrome.border
+  const topChromeBorderWidth = colors.ui.cartoon ? 1 : StyleSheet.hairlineWidth
+
+  function openSetupModelPicker() {
       markChromeActive()
       if (!homeProvider || !homeProviderModels.length) {
         dialog.toast({
@@ -951,8 +834,17 @@ export function ChatWorkspace({ conversation, showBack = false, embedded = false
 
     return (
       <ChatScreenFrame embedded={embedded} backgroundState={backgroundState} compactViewport={compactViewport}>
-        <View style={{ flex: 1 }}>
-          {showOptions ? (
+      <View style={{ flex: 1 }}>
+        {latestCompression?.metadata ? (
+          <View pointerEvents="box-none" style={{ position: 'absolute', top: visualTopInset + 42, left: 0, right: 0, zIndex: 44, paddingHorizontal: 14 }}>
+            <CompressionBanner
+              compression={latestCompression}
+              onOpenDetails={() => setShowOptions(true)}
+              compact={compactViewport}
+            />
+          </View>
+        ) : null}
+        {showOptions ? (
             <MotiView
               from={{ opacity: 0 }}
               animate={{ opacity: 1 }}
@@ -966,20 +858,20 @@ export function ChatWorkspace({ conversation, showBack = false, embedded = false
               />
             </MotiView>
           ) : null}
-          <View pointerEvents="box-none" style={{ position: 'absolute', top: 0, left: 0, right: 0, zIndex: 40, paddingHorizontal: 16, paddingTop: 4, paddingBottom: 6, flexDirection: 'row', alignItems: 'center', gap: 10 }}>
+          <View pointerEvents="box-none" style={{ position: 'absolute', top: 0, left: 0, right: 0, zIndex: 40, paddingHorizontal: 14, paddingTop: 0, paddingBottom: 0, flexDirection: 'row', alignItems: 'center', gap: 8 }}>
             <AnimatedNavigationTrigger
               variant="iconButton"
               label={t('conversation.title')}
               glyph="history"
               onNavigate={goHistory}
               color={colors.text}
-              style={{ width: 44, height: 44, borderRadius: colors.ui.radius.controlLarge, backgroundColor: colors.ui.card.defaultBackground, borderWidth: 1, borderColor: colors.material.stroke }}
+              style={{ width: 36, height: 36, borderRadius: colors.ui.radius.controlLarge, backgroundColor: topChromeItemSurface, borderWidth: topChromeBorderWidth, borderColor: topChromeItemBorder }}
             />
             <View style={{ flex: 1 }}>
-              <Pressable onPress={openSetupFullModelPanel} accessibilityRole="button" accessibilityLabel={t('chat.conversationOptions')} accessibilityHint={t('chat.conversationOptionsAccessibilityHint')} hitSlop={QUICK_START_ACTION_HIT_SLOP} style={{ minHeight: 44, justifyContent: 'center' }}>
-                <Text style={{ color: colors.text, fontSize: 18, fontWeight: '800' }}>{emptyHeaderTitle}</Text>
+              <Pressable onPress={openSetupFullModelPanel} accessibilityRole="button" accessibilityLabel={t('chat.conversationOptions')} accessibilityHint={t('chat.conversationOptionsAccessibilityHint')} hitSlop={QUICK_START_ACTION_HIT_SLOP} style={{ minHeight: 36, justifyContent: 'center' }}>
+                <Text numberOfLines={1} style={{ color: colors.text, fontSize: 15, lineHeight: 18, fontWeight: '800', includeFontPadding: false }}>{emptyHeaderTitle}</Text>
                 {emptyHeaderSubtitle ? (
-                  <Text numberOfLines={1} style={{ color: colors.textSecondary, fontSize: 12, marginTop: 2 }}>
+                  <Text numberOfLines={1} style={{ color: colors.textSecondary, fontSize: 10.5, lineHeight: 13, marginTop: 1, includeFontPadding: false }}>
                     {emptyHeaderSubtitle}
                   </Text>
                 ) : null}
@@ -993,17 +885,17 @@ export function ChatWorkspace({ conversation, showBack = false, embedded = false
               accessibilityHint={t('chat.conversationOptionsAccessibilityHint')}
               hitSlop={QUICK_START_ACTION_HIT_SLOP}
               style={{
-                width: 44,
-                height: 44,
+                width: 36,
+                height: 36,
                 alignItems: 'center',
                 justifyContent: 'center',
                 borderRadius: colors.ui.radius.controlLarge,
-                backgroundColor: showOptions ? colors.ui.control.primaryBackground : colors.ui.card.mutedBackground,
-                borderWidth: 1,
-                borderColor: showOptions ? colors.ui.control.primaryBorder : colors.material.strokeStrong,
+                backgroundColor: showOptions ? colors.ui.control.primaryBackground : topChromeMutedSurface,
+                borderWidth: topChromeBorderWidth,
+                borderColor: showOptions ? colors.ui.control.primaryBorder : topChromeItemBorder,
               }}
             >
-              <ListEnd color={showOptions ? colors.ui.control.primaryForeground : colors.textSecondary} size={18} strokeWidth={1.9} />
+              <AppIcon name="menu-output" color={showOptions ? colors.ui.control.primaryForeground : colors.textSecondary} size={18} strokeWidth={appIconStroke.fine} />
             </IslePressable>
             <AnimatedNavigationTrigger
               variant="iconButton"
@@ -1012,7 +904,7 @@ export function ChatWorkspace({ conversation, showBack = false, embedded = false
               onNavigate={goSettings}
               externalActive={settingsTransitionActive}
               color={colors.text}
-              style={{ width: 44, height: 44, borderRadius: colors.ui.radius.controlLarge, backgroundColor: colors.ui.card.mutedBackground, borderWidth: 1, borderColor: colors.material.strokeStrong }}
+              style={{ width: 36, height: 36, borderRadius: colors.ui.radius.controlLarge, backgroundColor: topChromeMutedSurface, borderWidth: topChromeBorderWidth, borderColor: topChromeItemBorder }}
             />
           </View>
           <ScrollView
@@ -1023,7 +915,7 @@ export function ChatWorkspace({ conversation, showBack = false, embedded = false
               alignItems: 'center',
               justifyContent: 'center',
               paddingHorizontal: 20,
-              paddingTop: Math.max(visualTopInset + 92, compactViewport ? 104 : 126),
+              paddingTop: Math.max(visualTopInset + 48, compactViewport ? 68 : 80),
               paddingBottom: composerBottomInset + keyboardLift,
             }}
           >
@@ -1136,8 +1028,6 @@ export function ChatWorkspace({ conversation, showBack = false, embedded = false
             keyboardLift={keyboardLift}
             panel={composerPanel}
             onPanelChange={setComposerPanel}
-            toolsCollapsed={quickToolsCollapsed}
-            onToggleTools={toggleQuickTools}
             onCollapseTools={collapseQuickTools}
             onOpenReasoningPicker={openSetupReasoningPicker}
             reasoningUnavailableMessage={supportsSetupReasoningQuick ? undefined : (hasAvailableModel ? t('chat.reasoningUnsupported') : t('chat.syncModelsBeforeChat'))}
@@ -1213,8 +1103,6 @@ export function ChatWorkspace({ conversation, showBack = false, embedded = false
       composerPanel={composerPanel}
       setComposerPanel={setComposerPanel}
       setComposerHeight={setComposerHeight}
-      quickToolsCollapsed={quickToolsCollapsed}
-      toggleQuickTools={toggleQuickTools}
       collapseQuickTools={collapseQuickTools}
       motion={chatMotion}
       markChromeActive={markChromeActive}
@@ -1292,8 +1180,6 @@ function ActiveChatWorkspace({
   composerPanel,
   setComposerPanel,
   setComposerHeight,
-  quickToolsCollapsed,
-  toggleQuickTools,
   collapseQuickTools,
   motion,
   markChromeActive,
@@ -1367,8 +1253,6 @@ function ActiveChatWorkspace({
   composerPanel: ComposerPanel
   setComposerPanel: React.Dispatch<React.SetStateAction<ComposerPanel>>
   setComposerHeight: React.Dispatch<React.SetStateAction<number>>
-  quickToolsCollapsed: boolean
-  toggleQuickTools: () => void
   collapseQuickTools: () => void
   motion: ReturnType<typeof useMotionPreference>
   markChromeActive: () => void
@@ -1387,12 +1271,10 @@ function ActiveChatWorkspace({
   const [activeActionMessageId, setActiveActionMessageId] = useState<string | null>(null)
   const [messageScrollViewport, setMessageScrollViewport] = useState<MessageScrollViewport>(() => createEmptyMessageScrollViewport())
   const messageScrollViewportRef = useRef<MessageScrollViewport>(messageScrollViewport)
-  const [shortConversationTopSpacer, setShortConversationTopSpacer] = useState(0)
   const messageListMaintainVisibleContentPosition = useMemo(
     () => ({
       autoscrollToBottomThreshold: FLASH_LIST_AUTO_SCROLL_THRESHOLD,
       animateAutoScrollToBottom: false,
-      startRenderingFromBottom: true,
     }),
     []
   )
@@ -1418,18 +1300,15 @@ function ActiveChatWorkspace({
   const pagerGestureScrollReleaseTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
   const persistentPagerGestureLockRef = useRef(false)
   const lastLayoutScrollAt = useRef(0)
-  const chromeCollapseLocked = embedded && mobileViewport
+  const chromeCollapseLocked = true
   const collapsedChromeTop = visualTopInset + COLLAPSED_CHROME_TOP_OFFSET + FLOATING_CHROME_ANDROID_TOP_GAP
   const messageListTopInset = !chromeCollapsed
-    ? chromeHeight + MESSAGE_LIST_CHROME_GAP
+    ? Math.max(0, chromeHeight - MESSAGE_LIST_CHROME_OVERLAY + MESSAGE_LIST_CHROME_GAP)
     : mobileViewport
-      ? MESSAGE_LIST_CHROME_GAP
-      : collapsedChromeTop + COLLAPSED_CHROME_HEIGHT + MESSAGE_LIST_CHROME_GAP
-  const conversationHeaderTopPadding = shortConversationTopSpacer
-  const emptyConversationTopPadding = Math.max(
-    EMPTY_CONVERSATION_DEFAULT_TOP_PADDING,
-    MESSAGE_LIST_CHROME_GAP
-  )
+      ? 0
+      : collapsedChromeTop + COLLAPSED_CHROME_HEIGHT
+  const conversationHeaderTopPadding = Math.max(0, messageListTopInset - MESSAGE_LIST_CHROME_UNDERLAP)
+  const emptyConversationTopPadding = Math.max(EMPTY_CONVERSATION_DEFAULT_TOP_PADDING, messageListTopInset - MESSAGE_LIST_CHROME_UNDERLAP + 6)
 
   const clearLatestMessageScrollTimers = useCallback(() => {
     for (const timer of latestMessageScrollTimers.current) clearTimeout(timer)
@@ -1517,7 +1396,6 @@ function ActiveChatWorkspace({
     const emptyViewport = createEmptyMessageScrollViewport()
     messageScrollViewportRef.current = emptyViewport
     setMessageScrollViewport(emptyViewport)
-    setShortConversationTopSpacer(0)
     userScrollInteractionActive.current = false
     userDragMomentumEligible.current = false
     if (userDragMomentumEligibilityTimer.current) {
@@ -1603,9 +1481,10 @@ function ActiveChatWorkspace({
       goSettings()
       return
     }
-    const result = await testProviderModelDetailed(keyedProvider, activeConversation.model, keyedProvider.apiKey, { checkParameters: settings.modelTestCheckParameters })
-    await useSettingsStore.getState().updateProviderCredentialGroupHealth(keyedProvider.id, result.credentialGroupId, result.ok)
-    await updateProvider(keyedProvider.id, { lastTestStatus: result.ok ? 'ok' : 'bad', lastTestedAt: Date.now(), lastTestMessage: result.message, lastTestCode: result.code })
+    const result = await testProviderModelHealth(keyedProvider, activeConversation.model, keyedProvider.apiKey, {
+      updateProvider,
+      updateProviderCredentialGroupHealth: useSettingsStore.getState().updateProviderCredentialGroupHealth,
+    }, { checkParameters: settings.modelTestCheckParameters })
     dialog.toast({ title: result.ok ? t('chat.modelAvailable') : t('chat.modelUnavailable'), message: result.ok ? t('chat.modelTestPassed', { model: activeConversation.model }) : result.message, tone: result.ok ? 'mint' : 'danger' })
   }
 
@@ -1618,15 +1497,10 @@ function ActiveChatWorkspace({
       goSettings()
       return
     }
-    const result = await testProviderModelDetailed(keyedProvider, activeConversation.model, keyedProvider.apiKey, { checkParameters: settings.modelTestCheckParameters })
-    await useSettingsStore.getState().updateProviderCredentialGroupHealth(keyedProvider.id, result.credentialGroupId, result.ok)
-    await updateProvider(keyedProvider.id, {
-      lastTestStatus: result.ok ? 'ok' : 'bad',
-      lastTestedAt: Date.now(),
-      lastTestModel: activeConversation.model,
-      lastTestMessage: result.message,
-      lastTestCode: result.code,
-    })
+    const result = await testProviderModelHealth(keyedProvider, activeConversation.model, keyedProvider.apiKey, {
+      updateProvider,
+      updateProviderCredentialGroupHealth: useSettingsStore.getState().updateProviderCredentialGroupHealth,
+    }, { checkParameters: settings.modelTestCheckParameters, recordLastTestModel: true })
     const currentState = useSettingsStore.getState()
     setProviderHealth(await resolveConversationHealth(activeConversation, currentState.providers, hydrateProviderKey, t, currentState.settings))
     setTestingHeader(false)
@@ -1755,7 +1629,6 @@ function ActiveChatWorkspace({
     const viewportHeight = Math.ceil(event.nativeEvent.layout.height)
     const currentViewport = messageScrollViewportRef.current
     commitMessageScrollViewport(buildMessageScrollViewport(currentViewport.contentHeight, viewportHeight, currentViewport.scrollY))
-    updateShortConversationTopSpacer(viewportHeight, currentViewport.contentHeight)
     if (shouldAutoFollowLatestMessage()) requestMessageLayoutScroll()
   }
 
@@ -1763,20 +1636,7 @@ function ActiveChatWorkspace({
     const measuredContentHeight = Math.ceil(contentHeight)
     const currentViewport = messageScrollViewportRef.current
     commitMessageScrollViewport(buildMessageScrollViewport(measuredContentHeight, currentViewport.viewportHeight, currentViewport.scrollY))
-    updateShortConversationTopSpacer(currentViewport.viewportHeight, measuredContentHeight)
     if (shouldAutoFollowLatestMessage()) requestMessageLayoutScroll()
-  }
-
-  function updateShortConversationTopSpacer(viewportHeight: number, measuredContentHeight: number) {
-    if (!activeConversation.messages.length || viewportHeight <= 0 || measuredContentHeight <= 0) {
-      setShortConversationTopSpacer((current) => current === 0 ? current : 0)
-      return
-    }
-    setShortConversationTopSpacer((current) => {
-      const baseContentHeight = Math.max(0, measuredContentHeight - current)
-      const next = Math.max(0, Math.ceil(viewportHeight - baseContentHeight))
-      return Math.abs(next - current) < 2 ? current : next
-    })
   }
 
   function closeOptionsFromBackground() {
@@ -1893,7 +1753,7 @@ function ActiveChatWorkspace({
             settingsTransitionActive={settingsTransitionActive}
           />
 
-          <View onTouchStart={closeOptionsFromBackground} style={{ flex: 1, paddingTop: messageListTopInset }}>
+          <View onTouchStart={closeOptionsFromBackground} style={{ flex: 1 }}>
             <FlashList
               ref={listRef}
               style={{ flex: 1 }}
@@ -1919,7 +1779,7 @@ function ActiveChatWorkspace({
               drawDistance={Platform.OS === 'android' ? 420 : undefined}
               maxItemsInRecyclePool={Platform.OS === 'android' ? 18 : undefined}
               getItemType={getMessageItemType}
-              contentContainerStyle={{ paddingLeft: 20, paddingRight: messageListRightPadding, paddingTop: 8, paddingBottom: messageListBottomPadding }}
+              contentContainerStyle={{ paddingLeft: 20, paddingRight: messageListRightPadding, paddingTop: activeConversation.messages.length ? 0 : emptyConversationTopPadding, paddingBottom: messageListBottomPadding }}
               ListHeaderComponent={activeConversation.messages.length ? renderConversationHeaderSpacer(conversationHeaderTopPadding) : null}
               renderItem={({ item: message, index }) => (
                 <MessageBubble
@@ -2007,7 +1867,7 @@ function ActiveChatWorkspace({
                   }}
                   onPrepareAndroidUndo={(item) => {
                     const undoPrompt = t('messageBubble.prepareAndroidUndoPrompt', {
-                      context: buildAndroidUndoPromptContext(item, t),
+                      context: buildAndroidUndoPromptContext(item, t('messageBubble.emptyResponse')),
                     })
                     onApplyStarter(undoPrompt)
                     dialog.toast({ title: t('messageBubble.prepareAndroidUndoInserted'), tone: 'mint' })
@@ -2070,7 +1930,7 @@ function ActiveChatWorkspace({
                   onHistory={goHistory}
                   onProviders={goProviders}
                   onSwitchProviderModel={confirmSwitchModel}
-                  topPadding={emptyConversationTopPadding}
+                  topPadding={Math.max(0, emptyConversationTopPadding)}
                 />
               )}
             />
@@ -2149,8 +2009,6 @@ function ActiveChatWorkspace({
             keyboardLift={keyboardLift}
             panel={composerPanel}
             onPanelChange={setComposerPanel}
-            toolsCollapsed={quickToolsCollapsed}
-            onToggleTools={toggleQuickTools}
             onCollapseTools={collapseQuickTools}
             onLayoutHeight={setComposerHeight}
             motion={motion}
@@ -2166,9 +2024,12 @@ function ChatScreenFrame({ embedded, backgroundState, compactViewport, children 
     return <View style={{ flex: 1 }}>{children}</View>
   }
   const backgroundMode = Platform.OS === 'android' ? 'none' : 'focus'
+  const screenEdges = Platform.OS === 'android'
+    ? (['left', 'right', 'bottom'] as const)
+    : undefined
 
   return (
-    <IsleScreen padded={false} background={backgroundMode} backgroundState={backgroundState} backgroundIntensity={compactViewport ? 0.84 : 1}>
+    <IsleScreen edges={screenEdges} padded={false} background={backgroundMode} backgroundState={backgroundState} backgroundIntensity={compactViewport ? 0.84 : 1}>
       {children}
     </IsleScreen>
   )
@@ -2236,21 +2097,27 @@ function FloatingChrome({
   settingsTransitionActive: boolean
 }) {
   const { t } = useTranslation()
+  const isGlass = colors.ui.glass
   const chromeSwipeStartY = useRef<number | null>(null)
   const chromeSwipeCollapsed = useRef(false)
   const header = getProviderHeaderState(conversation, provider, switchableProviders, metrics, providerHealth, settings, t)
   const modelLabel = conversation.providerId === 'local-setup' ? t('chat.localSetupGuide') : getProviderDisplayModel(provider, conversation.model)
-  const collapsedPeekVisible = collapsed && (!mobileViewport || streaming)
+  const collapsedPeekVisible = false
   const subtitleLabel = providerHealth?.code
     ? modelLabel
     : provider?.enabled && provider.lastTestStatus !== 'ok'
       ? `${t('chat.providerEnabledNeedsCheck')} · ${modelLabel}`
       : modelLabel
   const chromeTopPadding = visualTopInset + FLOATING_CHROME_SAFE_AREA_GAP
+  const chromeSurface = isGlass ? colors.ui.semantic.chrome.background : colors.ui.cartoon ? colors.ui.composer.shellBackground : colors.ui.semantic.chrome.background
+  const chromeItemSurface = isGlass ? colors.ui.actionBar.itemBackground : colors.ui.composer.statusBackground
+  const chromeItemActiveSurface = colors.ui.cartoon ? colors.ui.actionBar.itemActiveBackground : isGlass ? colors.ui.actionBar.itemActiveBackground : colors.ui.composer.statusBackground
+  const chromeBorder = colors.ui.composer.toolbarBorder
+  const chromeBorderWidth = colors.ui.cartoon ? 1 : StyleSheet.hairlineWidth
   const chromeIconStyle: ViewStyle = {
-    width: 44,
-    height: 44,
-    minHeight: 44,
+    width: 42,
+    height: 42,
+    minHeight: 42,
     borderRadius: colors.ui.radius.controlMiddle,
     backgroundColor: 'transparent',
     borderWidth: 0,
@@ -2261,9 +2128,9 @@ function FloatingChrome({
   }
   const activeChromeIconStyle: ViewStyle = {
     ...chromeIconStyle,
-    backgroundColor: colors.ui.card.mutedBackground,
-    borderWidth: 1,
-    borderColor: colors.material.stroke,
+    backgroundColor: chromeItemActiveSurface,
+    borderWidth: chromeBorderWidth,
+    borderColor: chromeBorder,
   }
   const shellStyle: StyleProp<ViewStyle> = [
     {
@@ -2276,7 +2143,8 @@ function FloatingChrome({
     },
   ]
   function handleLayout(event: LayoutChangeEvent) {
-    onLayoutHeight(Math.ceil(event.nativeEvent.layout.height) + chromeTopPadding + FLOATING_CHROME_BOTTOM_PADDING + FLOATING_CHROME_ANDROID_TOP_GAP)
+    const measuredHeight = Math.ceil(event.nativeEvent.layout.height)
+    onLayoutHeight(measuredHeight + chromeTopPadding + FLOATING_CHROME_BOTTOM_PADDING + FLOATING_CHROME_ANDROID_TOP_GAP)
   }
 
   function handleChromeTouchStart(event: GestureResponderEvent) {
@@ -2302,7 +2170,7 @@ function FloatingChrome({
     <View pointerEvents="box-none" style={shellStyle}>
       <MotiView
         pointerEvents={collapsed ? 'none' : 'auto'}
-        animate={{ opacity: collapsed ? 0 : 1, translateY: collapsed ? -(visualTopInset + 78) : 0 }}
+        animate={{ opacity: collapsed ? 0 : 1, translateY: collapsed ? -(visualTopInset + 64) : 0 }}
         transition={{ type: 'timing', duration: collapsed ? 150 : 210 }}
         onTouchStart={handleChromeTouchStart}
         onTouchMove={handleChromeTouchMove}
@@ -2315,41 +2183,42 @@ function FloatingChrome({
           animate={{ opacity: 1, translateY: 0 }}
           transition={{ type: 'spring', damping: 22, stiffness: 190 }}
         >
-          <View onLayout={handleLayout}>
+          <View>
             <View
+              onLayout={handleLayout}
               style={{
-                minHeight: 54,
+                minHeight: 48,
                 paddingHorizontal: 8,
-                paddingVertical: 5,
+                paddingVertical: 4,
                 justifyContent: 'center',
-                backgroundColor: colors.material.glass,
+                backgroundColor: chromeSurface,
                 borderRadius: colors.ui.radius.controlLarge,
-                borderWidth: 1,
-                borderColor: colors.material.stroke,
+                borderWidth: chromeBorderWidth,
+                borderColor: chromeBorder,
                 shadowColor: colors.shadowTint,
-                shadowOpacity: Math.min(colors.ui.card.shadowOpacity, 0.14),
-                shadowRadius: colors.ui.card.shadowRadius,
-                shadowOffset: { width: 0, height: colors.ui.card.shadowOffset },
-                elevation: colors.ui.card.shadowOpacity > 0 ? 2 : 0,
+                shadowOpacity: colors.ui.cartoon ? Math.min(colors.ui.card.shadowOpacity, 0.04) : 0.02,
+                shadowRadius: colors.ui.cartoon ? Math.max(2, colors.ui.card.shadowRadius - 6) : 0,
+                shadowOffset: { width: 0, height: colors.ui.cartoon ? 1 : 0 },
+                elevation: colors.ui.cartoon && colors.ui.card.shadowOpacity > 0 ? 1 : 0,
               }}
             >
-              <View style={{ minHeight: 44, flexDirection: 'row', alignItems: 'center', gap: 8 }}>
-                <View style={{ width: 44, flexShrink: 0, alignItems: 'flex-start' }}>
+              <View style={{ minHeight: 42, flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                <View style={{ width: 42, flexShrink: 0, alignItems: 'flex-start' }}>
                   <AnimatedNavigationTrigger variant="iconButton" label={t('common.back')} glyph={showOptions ? 'back' : 'history'} onNavigate={onBack} color={colors.text} style={chromeIconStyle} />
                 </View>
                 <View style={{ flex: 1, minWidth: 0, justifyContent: 'center', overflow: 'hidden', paddingHorizontal: 2 }}>
-                  <Text numberOfLines={1} ellipsizeMode="tail" style={{ color: colors.text, fontSize: 16, lineHeight: 21, fontWeight: '900', letterSpacing: 0, includeFontPadding: false, textAlignVertical: 'center' }}>
+                  <Text numberOfLines={1} ellipsizeMode="tail" style={{ color: colors.text, fontSize: 15, lineHeight: 18, fontWeight: '900', letterSpacing: 0, includeFontPadding: false, textAlignVertical: 'center' }}>
                     {header.title}
                   </Text>
                   {subtitleLabel ? (
-                    <Text numberOfLines={1} ellipsizeMode="tail" style={{ color: colors.textSecondary, fontSize: 11, lineHeight: 15, fontWeight: '700', marginTop: 1, includeFontPadding: false }}>
+                    <Text numberOfLines={1} ellipsizeMode="tail" style={{ color: colors.textSecondary, fontSize: 11, lineHeight: 14, fontWeight: '700', marginTop: 1, includeFontPadding: false }}>
                       {subtitleLabel}
                     </Text>
                   ) : null}
                 </View>
-                <View style={{ width: 92, flexShrink: 0, flexDirection: 'row', justifyContent: 'flex-end', gap: 4 }}>
+                <View style={{ width: 90, flexShrink: 0, flexDirection: 'row', justifyContent: 'flex-end', gap: 6 }}>
                   <IsleIconButton label={t('chat.conversationOptions')} onPress={onToggleOptions} tone="default" style={showOptions ? activeChromeIconStyle : chromeIconStyle}>
-                    <ListEnd color={showOptions ? colors.ui.control.primaryForeground : colors.textSecondary} size={17} strokeWidth={2} />
+                    <AppIcon name="menu-output" color={showOptions ? colors.ui.control.primaryForeground : colors.textSecondary} size={16} />
                   </IsleIconButton>
                   <AnimatedNavigationTrigger variant="iconButton" label={t('settings.title')} glyph="settings-sliders" onNavigate={onSettings} externalActive={settingsTransitionActive} color={colors.text} style={settingsTransitionActive ? activeChromeIconStyle : chromeIconStyle} />
                 </View>
@@ -2357,7 +2226,7 @@ function FloatingChrome({
             </View>
 
             {providerHealth?.code ? (
-              <View style={{ paddingTop: 8 }}>
+              <View style={{ paddingTop: 6, paddingLeft: 2 }}>
                 <ConversationHealthBanner
                   health={providerHealth}
                   testing={testingHeader}
@@ -2423,7 +2292,7 @@ function FloatingChrome({
           from={{ opacity: 0, translateY: -8 }}
           animate={{ opacity: 1, translateY: 0 }}
           transition={{ type: 'spring', damping: 20, stiffness: 180 }}
-          style={{ position: 'absolute', top: visualTopInset + COLLAPSED_CHROME_TOP_OFFSET + FLOATING_CHROME_ANDROID_TOP_GAP, left: 0, right: 0, alignItems: 'center', zIndex: 80, elevation: 24 }}
+           style={{ position: 'absolute', top: visualTopInset + COLLAPSED_CHROME_TOP_OFFSET + FLOATING_CHROME_ANDROID_TOP_GAP, left: 0, right: 0, alignItems: 'center', zIndex: 80, elevation: 4 }}
           pointerEvents="box-none"
         >
           <IsleOverlayPressable
@@ -2433,9 +2302,24 @@ function FloatingChrome({
             accessibilityHint={t('chat.showTopBarAccessibilityHint')}
             accessibilityState={streaming ? { busy: true } : undefined}
             hitSlop={12}
-            style={{ minWidth: streaming ? 136 : 96, minHeight: 44, borderRadius: colors.ui.radius.chip, paddingHorizontal: 14, alignItems: 'center', justifyContent: 'center', backgroundColor: colors.material.glass, borderWidth: 1, borderColor: colors.material.stroke, elevation: 24 }}
+            style={{
+              minWidth: streaming ? 126 : 88,
+              minHeight: 36,
+              borderRadius: colors.ui.radius.chip,
+              paddingHorizontal: 12,
+              alignItems: 'center',
+              justifyContent: 'center',
+              backgroundColor: chromeItemSurface,
+              borderWidth: chromeBorderWidth,
+              borderColor: chromeBorder,
+              shadowColor: colors.shadowTint,
+              shadowOpacity: 0,
+              shadowRadius: 0,
+              shadowOffset: { width: 0, height: 0 },
+              elevation: colors.ui.cartoon ? 1 : 0,
+            }}
           >
-            <Text style={{ color: colors.textTertiary, fontSize: 10, fontWeight: '900' }}>{streaming ? t('chat.generatingShowTopBar') : t('chat.showTopBar')}</Text>
+            <Text style={{ color: isGlass ? colors.textSecondary : colors.textTertiary, fontSize: 10, fontWeight: '900' }}>{streaming ? t('chat.generatingShowTopBar') : t('chat.showTopBar')}</Text>
           </IsleOverlayPressable>
         </MotiView>
       ) : null}
@@ -2483,8 +2367,6 @@ function FloatingComposer({
   onInputBlur,
   panel,
   onPanelChange,
-  toolsCollapsed,
-  onToggleTools,
   onCollapseTools,
   reasoningUnavailableMessage,
   onLayoutHeight,
@@ -2530,15 +2412,13 @@ function FloatingComposer({
   onInputBlur?: () => void
   panel: ComposerPanel
   onPanelChange: (panel: ComposerPanel) => void
-  toolsCollapsed: boolean
-  onToggleTools: () => void
   onCollapseTools: () => void
   reasoningUnavailableMessage?: string
   onLayoutHeight: (height: number) => void
   motion: ReturnType<typeof useMotionPreference>
   settings: ReturnType<typeof useSettingsStore.getState>['settings']
 }) {
-  const { colors } = useAppTheme()
+  const { colors, isGlass } = useAppTheme()
   const { t } = useTranslation()
   const { width: composerWindowWidth } = useWindowDimensions()
   const modelOpen = panel === 'model'
@@ -2581,13 +2461,14 @@ function FloatingComposer({
   const toolsStatusLabel = toolsOpen ? t('chat.quickToolsOpen') : t('chat.quickToolsReady')
   const outputStatusLabel = requestedOutput === 'work-artifact' ? t('chat.quickOutputWorkArtifact') : t('chat.quickOutputAuto')
   const outputActive = requestedOutput === 'work-artifact'
-  const quickMenuOpen = !toolsCollapsed
+  const panelChromeSurface = isGlass ? colors.ui.semantic.chrome.background : colors.ui.cartoon ? colors.ui.semantic.surface.base : colors.ui.semantic.surface.base
+  const panelChromeBorder = colors.ui.cartoon ? colors.material.stroke : isGlass ? colors.ui.actionBar.itemBorder : colors.ui.semantic.chrome.border
+  const chipSurface = isGlass ? colors.ui.actionBar.itemBackground : colors.ui.cartoon ? colors.ui.semantic.surface.muted : colors.ui.semantic.surface.muted
+  const subtleBorderWidth = colors.ui.cartoon ? 1 : StyleSheet.hairlineWidth
   const quickToolMetrics = useMemo(() => {
     const usableWidth = Math.max(220, composerWindowWidth - 92)
-    const secondaryWidth = Math.max(78, Math.min(96, usableWidth * 0.24))
     return {
-      modelWidth: Math.max(86, Math.min(106, usableWidth * 0.28)),
-      secondaryWidth,
+      dockButtonWidth: Math.max(124, Math.min(182, usableWidth * 0.46)),
       modelChoiceWidth: Math.max(164, Math.min(234, usableWidth * 0.72)),
     }
   }, [composerWindowWidth])
@@ -2607,41 +2488,108 @@ function FloatingComposer({
   }
 
   function handleLayout(event: LayoutChangeEvent) {
-    if (panel || !toolsCollapsed) return
+    if (panel) return
     onLayoutHeight(Math.ceil(event.nativeEvent.layout.height))
   }
 
-  const showQuickToolbar = quickMenuOpen || streaming || outputActive
-  const renderQuickToolsToggle = () => (
-    <ComposerToolButton
-      label={toolsCollapsed ? t('chat.expandQuickTools') : t('chat.collapseQuickTools')}
-      accessibilityHint={toolsCollapsed ? t('chat.expandQuickToolsAccessibilityHint') : t('chat.collapseQuickToolsAccessibilityHint')}
-      accessibilityState={{ expanded: !toolsCollapsed }}
-      active={!toolsCollapsed}
-      iconOnly
-      onPress={onToggleTools}
-    >
-      <MotiView
-        animate={{ rotate: toolsCollapsed ? '0deg' : '-90deg', scale: toolsCollapsed ? 1 : 1.08 }}
-        transition={motion === 'full' ? { type: 'spring', damping: 17, stiffness: 280 } : { type: 'timing', duration: 1 }}
-      >
-        <ChevronRight color={toolsCollapsed ? colors.textSecondary : colors.ui.control.primaryForeground} size={17} strokeWidth={2.3} />
-      </MotiView>
-    </ComposerToolButton>
-  )
-  const renderOutputModeButton = () => (
+  const renderOutputModeButton = ({ iconOnly = false, compact = false, maxWidth }: { iconOnly?: boolean; compact?: boolean; maxWidth?: number } = {}) => (
     <ComposerToolButton
       label={t('chat.quickOutput')}
       stateLabel={outputStatusLabel}
       accessibilityHint={t('chat.quickOutputAccessibilityHint')}
       accessibilityState={{ selected: outputActive }}
       active={outputActive}
-      compact
-      maxWidth={quickToolMetrics.secondaryWidth}
+      iconOnly={iconOnly}
+      compact={compact}
+      maxWidth={maxWidth}
       onPress={onToggleRequestedOutput}
     >
-      <ListEnd color={outputActive ? colors.ui.control.primaryForeground : colors.textSecondary} size={17} strokeWidth={2.1} />
+      <AppIcon name="menu-output" color={outputActive ? colors.ui.control.primaryForeground : colors.textSecondary} size={17} strokeWidth={appIconStroke.strong} />
     </ComposerToolButton>
+  )
+
+  const renderComposerToolsPanel = () => (
+    <MotiView
+      from={{ opacity: 0, translateY: 4 }}
+      animate={{ opacity: 1, translateY: 0 }}
+      transition={{ type: 'spring', damping: 20, stiffness: 210 }}
+      style={{ marginBottom: 5, borderRadius: colors.ui.radius.panel, padding: 8, backgroundColor: panelChromeSurface, borderWidth: subtleBorderWidth, borderColor: panelChromeBorder, gap: 7 }}
+    >
+      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 7 }}>
+        <ComposerToolButton
+          label={t('chat.quickReasoning')}
+          stateLabel={reasoningStatusLabel}
+          accessibilityHint={reasoningAvailable ? t('chat.quickReasoningAccessibilityHint') : t('chat.quickReasoningUnavailableAccessibilityHint')}
+          accessibilityState={{ expanded: reasoningOpen }}
+          active={reasoningOpen}
+          compact
+          onPress={onOpenReasoningPicker ?? (() => {
+            onPanelChange('reasoning')
+          })}
+        >
+          <ReasoningToolIcon effort={reasoningEffort} active={reasoningOpen} available={reasoningAvailable} />
+        </ComposerToolButton>
+        {renderOutputModeButton({ compact: true })}
+      </View>
+      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 7 }}>
+        <ComposerToolButton
+          label={t('chat.quickPrompt')}
+          stateLabel={promptStatusLabel}
+          accessibilityHint={t('chat.quickPromptAccessibilityHint')}
+          accessibilityState={{ expanded: promptOpen, selected: !!systemPrompt.trim() }}
+          active={promptOpen || !!systemPrompt.trim()}
+          compact
+          onPress={() => {
+            onPanelChange('prompt')
+          }}
+        >
+          <AppIcon name="prompt" color={(promptOpen || systemPrompt.trim()) ? colors.ui.control.primaryForeground : colors.textSecondary} size={17} />
+        </ComposerToolButton>
+      </View>
+    </MotiView>
+  )
+
+  const renderComposerDock = () => (
+    <View style={{ minHeight: 44, flexDirection: 'row', alignItems: 'center', gap: 7 }}>
+      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 7, flex: 1, minWidth: 0 }}>
+        <ComposerToolButton
+          label={t('chat.quickModel')}
+          stateLabel={modelStatusLabel}
+          accessibilityHint={t('chat.quickModelAccessibilityHint')}
+          accessibilityState={{ expanded: modelOpen }}
+          active={modelOpen}
+          compact
+          maxWidth={quickToolMetrics.dockButtonWidth}
+          onPress={onOpenModelPicker}
+        >
+          <AppIcon name="model" color={modelOpen ? colors.ui.control.primaryForeground : colors.textSecondary} size={17} />
+        </ComposerToolButton>
+        <ComposerToolButton
+          label={t('chat.quickTools')}
+          stateLabel={toolsStatusLabel}
+          accessibilityHint={t('chat.quickToolsAccessibilityHint')}
+          accessibilityState={{ expanded: toolsOpen }}
+          active={toolsOpen || outputActive || !!systemPrompt.trim()}
+          compact
+          maxWidth={quickToolMetrics.dockButtonWidth}
+          onPress={() => {
+            onPanelChange(toolsOpen ? null : 'more')
+          }}
+        >
+          <AppIcon name="tools" color={(toolsOpen || outputActive || systemPrompt.trim()) ? colors.ui.control.primaryForeground : colors.textSecondary} size={17} strokeWidth={appIconStroke.strong} />
+        </ComposerToolButton>
+        {streaming ? (
+          <ComposerToolButton iconOnly label={t('chat.stopGenerating')} accessibilityHint={t('chat.stopGeneratingAccessibilityHint')} accessibilityState={{ busy: true }} active onPress={onStop}>
+            <AppIcon name="stop" color={colors.ui.control.primaryForeground} size={13} strokeWidth={appIconStroke.bold} fill={colors.ui.control.primaryForeground} />
+          </ComposerToolButton>
+        ) : null}
+      </View>
+      {streaming ? (
+        <View style={{ flex: 1, minWidth: 0 }}>
+          <GenerationStatusPill label={activityLabel || t('chat.generating')} />
+        </View>
+      ) : null}
+    </View>
   )
 
   return (
@@ -2661,7 +2609,7 @@ function FloatingComposer({
               from={{ opacity: 0, translateY: 4 }}
               animate={{ opacity: 1, translateY: 0 }}
               transition={{ type: 'spring', damping: 20, stiffness: 210 }}
-              style={{ marginBottom: 5, borderRadius: colors.ui.radius.panel, padding: 10, backgroundColor: colors.ui.card.defaultBackground, borderWidth: 1, borderColor: colors.material.stroke }}
+              style={{ marginBottom: 5, borderRadius: colors.ui.radius.panel, padding: 10, backgroundColor: panelChromeSurface, borderWidth: subtleBorderWidth, borderColor: panelChromeBorder }}
             >
               <View style={{ flexDirection: 'row', alignItems: 'flex-start', gap: 8, marginBottom: 8 }}>
                 {visibleQuickGroups.length ? (
@@ -2692,7 +2640,7 @@ function FloatingComposer({
                   accessibilityLabel={t('chat.advancedModelMenu')}
                   accessibilityHint={t('chat.advancedModelMenuAccessibilityHint')}
                   hitSlop={QUICK_TOOL_HIT_SLOP}
-                  style={{ minHeight: 44, borderRadius: colors.ui.radius.chip, paddingHorizontal: 12, alignItems: 'center', justifyContent: 'center', backgroundColor: colors.ui.card.mutedBackground, borderWidth: 1, borderColor: colors.material.stroke }}
+                  style={{ minHeight: 44, borderRadius: colors.ui.radius.chip, paddingHorizontal: 12, alignItems: 'center', justifyContent: 'center', backgroundColor: chipSurface, borderWidth: subtleBorderWidth, borderColor: panelChromeBorder }}
                 >
                   <Text style={{ color: colors.textSecondary, fontSize: 11, fontWeight: '900' }}>{t('chat.advancedModelMenu')}</Text>
                 </IslePressable>
@@ -2741,7 +2689,7 @@ function FloatingComposer({
               from={{ opacity: 0, translateY: 4 }}
               animate={{ opacity: 1, translateY: 0 }}
               transition={{ type: 'spring', damping: 20, stiffness: 210 }}
-              style={{ flexDirection: 'row', gap: 7, marginBottom: 5, padding: 7, borderRadius: colors.ui.radius.field, backgroundColor: colors.ui.card.defaultBackground, borderWidth: 1, borderColor: colors.material.stroke }}
+              style={{ flexDirection: 'row', gap: 7, marginBottom: 5, padding: 7, borderRadius: colors.ui.radius.field, backgroundColor: panelChromeSurface, borderWidth: subtleBorderWidth, borderColor: panelChromeBorder }}
             >
               {reasoningAvailable ? reasoningOptions.map((effort) => (
                 <IslePressable
@@ -2756,7 +2704,7 @@ function FloatingComposer({
                   accessibilityHint={t('chat.reasoningEffortAccessibilityHint', { value: t(`chat.reasoningEffort.${effort}`) })}
                   accessibilityState={{ selected: reasoningEffort === effort }}
                   hitSlop={QUICK_TOOL_HIT_SLOP}
-                  style={{ minHeight: 44, borderRadius: colors.ui.radius.chip, paddingHorizontal: 12, alignItems: 'center', justifyContent: 'center', backgroundColor: reasoningEffort === effort ? colors.ui.control.primaryBackground : colors.ui.card.mutedBackground, borderWidth: 1, borderColor: reasoningEffort === effort ? colors.ui.control.primaryBorder : colors.material.stroke }}
+                  style={{ minHeight: 44, borderRadius: colors.ui.radius.chip, paddingHorizontal: 12, alignItems: 'center', justifyContent: 'center', backgroundColor: reasoningEffort === effort ? colors.ui.control.primaryBackground : chipSurface, borderWidth: subtleBorderWidth, borderColor: reasoningEffort === effort ? colors.ui.control.primaryBorder : panelChromeBorder }}
                 >
                   <Text style={{ color: reasoningEffort === effort ? colors.ui.control.primaryForeground : colors.textSecondary, fontSize: 11, fontWeight: '900' }}>
                     {t(`chat.reasoningEffort.${effort}`)}
@@ -2769,12 +2717,13 @@ function FloatingComposer({
               )}
             </MotiView>
           ) : null}
+          {toolsOpen ? renderComposerToolsPanel() : null}
           {promptOpen ? (
             <MotiView
               from={{ opacity: 0, translateY: 4 }}
               animate={{ opacity: 1, translateY: 0 }}
               transition={{ type: 'spring', damping: 20, stiffness: 210 }}
-              style={{ marginBottom: 5, borderRadius: colors.ui.radius.panel, padding: 10, backgroundColor: colors.ui.card.defaultBackground, borderWidth: 1, borderColor: colors.material.stroke }}
+              style={{ marginBottom: 5, borderRadius: colors.ui.radius.panel, padding: 10, backgroundColor: panelChromeSurface, borderWidth: subtleBorderWidth, borderColor: panelChromeBorder }}
             >
               <Text style={{ color: colors.textSecondary, fontSize: 11, fontWeight: '900', marginBottom: 6 }}>{t('chat.systemPrompt')}</Text>
               <TextInput
@@ -2787,7 +2736,7 @@ function FloatingComposer({
                 placeholderTextColor={colors.textTertiary}
                 accessibilityLabel={t('chat.systemPrompt')}
                 accessibilityHint={t('chat.systemPromptAccessibilityHint')}
-                style={{ minHeight: 58, maxHeight: 112, borderRadius: colors.ui.radius.field, paddingHorizontal: 12, paddingVertical: 10, color: colors.text, backgroundColor: colors.ui.input.background, borderWidth: 1, borderColor: colors.ui.input.border, fontSize: 13, lineHeight: 19, textAlignVertical: 'top' }}
+                style={{ minHeight: 58, maxHeight: 112, borderRadius: colors.ui.radius.field, paddingHorizontal: 12, paddingVertical: 10, color: colors.text, backgroundColor: colors.ui.input.background, borderWidth: colors.ui.cartoon ? 1 : StyleSheet.hairlineWidth, borderColor: colors.ui.input.border, fontSize: 13, lineHeight: 19, textAlignVertical: 'top' }}
               />
               <View style={{ flexDirection: 'row', gap: 8, marginTop: 8 }}>
                 <IslePressable
@@ -2797,7 +2746,7 @@ function FloatingComposer({
                   accessibilityLabel={t('chat.clearSystemPrompt')}
                   accessibilityHint={t('chat.clearSystemPromptAccessibilityHint')}
                   hitSlop={QUICK_TOOL_HIT_SLOP}
-                  style={{ minHeight: 44, borderRadius: colors.ui.radius.chip, paddingHorizontal: 12, justifyContent: 'center', backgroundColor: colors.ui.card.mutedBackground, borderWidth: 1, borderColor: colors.material.stroke }}
+                  style={{ minHeight: 44, borderRadius: colors.ui.radius.chip, paddingHorizontal: 12, justifyContent: 'center', backgroundColor: chipSurface, borderWidth: subtleBorderWidth, borderColor: panelChromeBorder }}
                 >
                   <Text style={{ color: colors.textSecondary, fontSize: 11, fontWeight: '900' }}>{t('chat.clearSystemPrompt')}</Text>
                 </IslePressable>
@@ -2808,95 +2757,12 @@ function FloatingComposer({
                   accessibilityLabel={t('common.done')}
                   accessibilityHint={t('chat.closeQuickPanelAccessibilityHint')}
                   hitSlop={QUICK_TOOL_HIT_SLOP}
-                  style={{ minHeight: 44, borderRadius: colors.ui.radius.chip, paddingHorizontal: 12, justifyContent: 'center', backgroundColor: colors.ui.control.primaryBackground, borderWidth: 1, borderColor: colors.ui.control.primaryBorder }}
+                  style={{ minHeight: 44, borderRadius: colors.ui.radius.chip, paddingHorizontal: 12, justifyContent: 'center', backgroundColor: colors.ui.control.primaryBackground, borderWidth: colors.ui.cartoon ? 1 : StyleSheet.hairlineWidth, borderColor: colors.ui.control.primaryBorder }}
                 >
                   <Text style={{ color: colors.ui.control.primaryForeground, fontSize: 11, fontWeight: '900' }}>{t('common.done')}</Text>
                 </IslePressable>
               </View>
             </MotiView>
-          ) : null}
-          {showQuickToolbar ? (
-          <View style={{ minHeight: 44, flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 9 }}>
-            {renderQuickToolsToggle()}
-            {outputActive && !quickMenuOpen ? renderOutputModeButton() : null}
-            {quickMenuOpen ? (
-              <View style={{ flex: 1, minHeight: 44 }}>
-                <ScrollView
-                  horizontal
-                  showsHorizontalScrollIndicator={false}
-                  keyboardShouldPersistTaps="handled"
-                  nestedScrollEnabled
-                  onTouchStart={onInteract}
-                  onTouchMove={onInteract}
-                  onTouchEnd={onInteractEnd}
-                  onTouchCancel={onInteractEnd}
-                  contentContainerStyle={{ flexGrow: 1, alignItems: 'center', gap: 5, paddingLeft: 2, paddingRight: 0, paddingVertical: 1 }}
-                >
-                  <ComposerToolButton
-                    label={t('chat.quickModel')}
-                    stateLabel={modelStatusLabel}
-                    accessibilityHint={t('chat.quickModelAccessibilityHint')}
-                    accessibilityState={{ expanded: modelOpen }}
-                    active={modelOpen}
-                    compact
-                    maxWidth={quickToolMetrics.modelWidth}
-                    onPress={onOpenModelPicker}
-                  >
-                    <Bot color={modelOpen ? colors.ui.control.primaryForeground : colors.textSecondary} size={17} strokeWidth={2} />
-                  </ComposerToolButton>
-                  <ComposerToolButton
-                    label={t('chat.quickReasoning')}
-                    stateLabel={reasoningStatusLabel}
-                    accessibilityHint={reasoningAvailable ? t('chat.quickReasoningAccessibilityHint') : t('chat.quickReasoningUnavailableAccessibilityHint')}
-                    accessibilityState={{ expanded: reasoningOpen }}
-                    active={reasoningOpen}
-                    compact
-                    maxWidth={quickToolMetrics.secondaryWidth}
-                    onPress={onOpenReasoningPicker ?? (() => {
-                      onPanelChange(reasoningOpen ? null : 'reasoning')
-                    })}
-                  >
-                    <ReasoningToolIcon effort={reasoningEffort} active={reasoningOpen} available={reasoningAvailable} />
-                  </ComposerToolButton>
-                  <ComposerToolButton
-                    label={t('chat.quickPrompt')}
-                    stateLabel={promptStatusLabel}
-                    accessibilityHint={t('chat.quickPromptAccessibilityHint')}
-                    accessibilityState={{ expanded: promptOpen, selected: !!systemPrompt.trim() }}
-                    active={promptOpen || !!systemPrompt.trim()}
-                    compact
-                    maxWidth={quickToolMetrics.secondaryWidth}
-                    onPress={() => {
-                      onPanelChange(promptOpen ? null : 'prompt')
-                    }}
-                  >
-                    <FileText color={(promptOpen || systemPrompt.trim()) ? colors.ui.control.primaryForeground : colors.textSecondary} size={17} strokeWidth={2} />
-                  </ComposerToolButton>
-                  {renderOutputModeButton()}
-                  <ComposerToolButton
-                    label={t('chat.quickTools')}
-                    stateLabel={toolsStatusLabel}
-                    accessibilityHint={t('chat.quickToolsAccessibilityHint')}
-                    accessibilityState={{ expanded: toolsOpen }}
-                    active={toolsOpen}
-                    compact
-                    maxWidth={quickToolMetrics.secondaryWidth}
-                    onPress={() => {
-                      onPanelChange(toolsOpen ? null : 'more')
-                    }}
-                  >
-                    <Wrench color={toolsOpen ? colors.ui.control.primaryForeground : colors.textSecondary} size={17} strokeWidth={2.1} />
-                  </ComposerToolButton>
-                </ScrollView>
-              </View>
-            ) : null}
-            {streaming ? (
-              <ComposerToolButton label={t('chat.stopGenerating')} accessibilityHint={t('chat.stopGeneratingAccessibilityHint')} accessibilityState={{ busy: true }} active onPress={onStop}>
-                <Square color={colors.ui.control.primaryForeground} size={13} strokeWidth={2.3} fill={colors.ui.control.primaryForeground} />
-              </ComposerToolButton>
-            ) : null}
-            {streaming ? <GenerationStatusPill label={activityLabel || t('chat.generating')} /> : null}
-          </View>
           ) : null}
           <Composer
             disabled={disabled}
@@ -2910,7 +2776,7 @@ function FloatingComposer({
             references={references}
             utilitiesOpen={toolsOpen}
             showInlineUtilities={false}
-            leadingAccessory={!showQuickToolbar ? renderQuickToolsToggle() : undefined}
+            bottomAccessory={renderComposerDock()}
             onClearPending={onClearPending}
             onReferenceSelected={onReferenceSelected}
             onSend={onSend}
@@ -2954,10 +2820,13 @@ function ComposerToolButton({
   children: ReactNode
   onPress: () => void
 }) {
-  const { colors } = useAppTheme()
+  const { colors, isGlass } = useAppTheme()
   const motion = useMotionPreference()
   const controlRadius = colors.ui.radius.controlLarge
   const accessibilityLabel = stateLabel ? `${label}: ${stateLabel}` : label
+  const itemSurface = isGlass ? colors.ui.actionBar.itemBackground : colors.ui.cartoon ? colors.ui.semantic.surface.muted : colors.ui.semantic.surface.muted
+  const itemBorder = colors.ui.cartoon ? colors.material.stroke : isGlass ? colors.ui.actionBar.itemBorder : colors.ui.semantic.chrome.border
+  const subtleBorderWidth = colors.ui.cartoon ? 1 : StyleSheet.hairlineWidth
   return (
     <IslePressable
       haptic
@@ -2971,9 +2840,10 @@ function ComposerToolButton({
     >
       <MotiView
         animate={{
-          backgroundColor: active ? colors.ui.control.primaryBackground : colors.ui.card.mutedBackground,
-          borderColor: active ? colors.ui.control.primaryBorder : colors.material.stroke,
-          scale: active ? 1.035 : 1,
+          backgroundColor: active ? colors.ui.control.primaryBackground : itemSurface,
+          borderColor: active ? colors.ui.control.primaryBorder : itemBorder,
+          scale: active ? (isGlass ? 1.01 : 1.035) : 1,
+          translateY: active && isGlass ? -0.5 : 0,
         }}
         transition={motion === 'full' ? { type: 'spring', ...motionTokens.spring.gentle } : { type: 'timing', duration: 1 }}
         style={{
@@ -2986,7 +2856,7 @@ function ComposerToolButton({
           alignItems: 'center',
           justifyContent: 'center',
           gap: iconOnly ? 0 : compact ? 4 : 7,
-          borderWidth: 1,
+          borderWidth: subtleBorderWidth,
         }}
       >
         {children}
@@ -3006,21 +2876,21 @@ function ComposerToolButton({
 }
 
 function ReasoningToolIcon({ effort, active, available }: { effort: NonNullable<Conversation['reasoningEffort']>; active: boolean; available: boolean }) {
-  const { colors } = useAppTheme()
+  const { colors, isGlass } = useAppTheme()
   const level = getReasoningVisualLevel(effort)
-  const Icon = level >= 4 ? BrainCog : level >= 2 ? BrainCircuit : Brain
+  const iconName: AppIconName = level >= 4 ? 'reasoning-deep' : level >= 2 ? 'reasoning-advanced' : 'reasoning'
   const color = !available ? colors.textTertiary : active ? colors.ui.control.primaryForeground : level >= 4 ? colors.ui.icon.accentForeground : colors.textSecondary
   const showDot = available && level >= 2
   const showSpark = available && level >= 4
 
   return (
     <View style={{ width: 22, height: 22, alignItems: 'center', justifyContent: 'center' }}>
-      <Icon color={color} size={17} strokeWidth={level >= 4 ? 2.25 : 2} />
+      <AppIcon name={iconName} color={color} size={17} strokeWidth={level >= 4 ? appIconStroke.bold : appIconStroke.regular} />
       {showDot ? (
         <View style={{ position: 'absolute', right: level >= 4 ? 0 : 2, bottom: 1, width: level >= 3 ? 6 : 4, height: level >= 3 ? 6 : 4, borderRadius: 3, backgroundColor: color, opacity: level >= 3 ? 0.88 : 0.62 }} />
       ) : null}
       {showSpark ? (
-        <Sparkles color={color} size={10} strokeWidth={2.2} style={{ position: 'absolute', right: -3, top: -3 }} />
+        <AppIcon name="spark" color={color} size={10} strokeWidth={appIconStroke.strong} style={{ position: 'absolute', right: -3, top: -3 }} />
       ) : null}
     </View>
   )
@@ -3045,12 +2915,53 @@ function getReasoningVisualLevel(effort: NonNullable<Conversation['reasoningEffo
   }
 }
 
+function resolveChatChromeSurface(
+  colors: ReturnType<typeof useAppTheme>['colors'],
+  isGlass: boolean,
+  variant: 'default' | 'muted' | 'toolbar' = 'default'
+) {
+  if (variant === 'toolbar') {
+    return isGlass ? colors.ui.semantic.chrome.toolbar : colors.ui.cartoon ? colors.ui.semantic.surface.muted : colors.ui.semantic.chrome.toolbar
+  }
+  if (variant === 'muted') {
+    return isGlass ? colors.ui.actionBar.itemBackground : colors.ui.cartoon ? colors.ui.semantic.surface.muted : colors.ui.semantic.surface.muted
+  }
+  return isGlass ? colors.ui.semantic.chrome.background : colors.ui.cartoon ? colors.ui.semantic.surface.base : colors.ui.semantic.surface.base
+}
+
+function resolveChatChromeBorder(colors: ReturnType<typeof useAppTheme>['colors'], isGlass: boolean) {
+  return colors.ui.cartoon ? colors.material.stroke : isGlass ? colors.ui.actionBar.itemBorder : colors.ui.semantic.chrome.border
+}
+
+function resolveChatControlSurface(
+  colors: ReturnType<typeof useAppTheme>['colors'],
+  isGlass: boolean,
+  active: boolean,
+  inactiveVariant: 'default' | 'muted' | 'activeAccent' = 'default'
+) {
+  if (active) return colors.ui.control.primaryBackground
+  if (inactiveVariant === 'activeAccent') {
+    return isGlass ? colors.ui.actionBar.itemActiveBackground : colors.ui.cartoon ? colors.ui.semantic.surface.muted : colors.ui.semantic.surface.muted
+  }
+  if (inactiveVariant === 'muted') {
+    return isGlass ? colors.ui.actionBar.itemBackground : colors.ui.cartoon ? colors.ui.semantic.surface.muted : colors.ui.semantic.surface.muted
+  }
+  return isGlass ? colors.ui.actionBar.itemBackground : colors.ui.cartoon ? colors.ui.semantic.surface.base : colors.ui.semantic.surface.muted
+}
+
+function resolveChatControlBorder(colors: ReturnType<typeof useAppTheme>['colors'], isGlass: boolean, active: boolean) {
+  if (active) return colors.ui.control.primaryBorder
+  return resolveChatChromeBorder(colors, isGlass)
+}
+
 function QuickChoiceButton({ label, active, accessibilityHint, maxWidth, onPress }: { label: string; active: boolean; accessibilityHint?: string; maxWidth?: number; onPress: () => void }) {
-  const { colors } = useAppTheme()
+  const { colors, isGlass } = useAppTheme()
   const motion = useMotionPreference()
   const textMaxWidth = maxWidth ? Math.max(24, maxWidth - 24) : undefined
-  const activeBackground = colors.ui.control.primaryBackground
   const activeForeground = colors.ui.control.primaryForeground
+  const inactiveBackground = resolveChatControlSurface(colors, isGlass, false, 'muted')
+  const inactiveBorder = resolveChatControlBorder(colors, isGlass, false)
+  const subtleBorderWidth = colors.ui.cartoon ? 1 : StyleSheet.hairlineWidth
   return (
     <IslePressable
       haptic
@@ -3064,12 +2975,13 @@ function QuickChoiceButton({ label, active, accessibilityHint, maxWidth, onPress
     >
       <MotiView
         animate={{
-          backgroundColor: active ? activeBackground : colors.ui.card.mutedBackground,
-          borderColor: active ? colors.ui.control.primaryBorder : colors.material.stroke,
-          scale: active ? 1.025 : 1,
+          backgroundColor: active ? colors.ui.control.primaryBackground : inactiveBackground,
+          borderColor: active ? colors.ui.control.primaryBorder : inactiveBorder,
+          scale: active ? (isGlass ? 1.01 : 1.025) : 1,
+          translateY: active && isGlass ? -0.5 : 0,
         }}
         transition={motion === 'full' ? { type: 'spring', ...motionTokens.spring.gentle } : { type: 'timing', duration: 1 }}
-        style={{ minHeight: 44, borderRadius: colors.ui.radius.chip, paddingHorizontal: 12, alignItems: 'center', justifyContent: 'center', borderWidth: 1 }}
+        style={{ minHeight: 44, borderRadius: colors.ui.radius.chip, paddingHorizontal: 12, alignItems: 'center', justifyContent: 'center', borderWidth: subtleBorderWidth }}
       >
         <Text numberOfLines={1} ellipsizeMode="tail" style={{ maxWidth: textMaxWidth, color: active ? activeForeground : colors.textSecondary, fontSize: 11, lineHeight: 15, fontWeight: '900', includeFontPadding: false }}>
           {label}
@@ -3080,9 +2992,12 @@ function QuickChoiceButton({ label, active, accessibilityHint, maxWidth, onPress
 }
 
 function GenerationStatusPill({ label }: { label: string }) {
-  const { colors } = useAppTheme()
+  const { colors, isGlass } = useAppTheme()
   const { width } = useWindowDimensions()
   const labelMaxWidth = Math.max(112, Math.min(160, width * 0.36))
+  const backgroundColor = resolveChatChromeSurface(colors, isGlass)
+  const borderColor = resolveChatChromeBorder(colors, isGlass)
+  const subtleBorderWidth = colors.ui.cartoon ? 1 : StyleSheet.hairlineWidth
   return (
     <View
       accessible
@@ -3090,7 +3005,7 @@ function GenerationStatusPill({ label }: { label: string }) {
       accessibilityLiveRegion="polite"
       accessibilityRole="text"
       accessibilityState={{ busy: true }}
-      style={{ minHeight: 44, borderRadius: colors.ui.radius.chip, paddingHorizontal: 12, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 7, backgroundColor: colors.ui.card.defaultBackground, borderWidth: 1, borderColor: colors.material.stroke }}
+      style={{ minHeight: 44, borderRadius: colors.ui.radius.chip, paddingHorizontal: 12, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 7, backgroundColor, borderWidth: subtleBorderWidth, borderColor }}
     >
       <MotiView
         accessibilityElementsHidden
@@ -3118,11 +3033,13 @@ function StreamingIntentSheet({
   onCancel: () => void
   onChoose: (intent: StreamingInputIntent) => void
 }) {
-  const { colors } = useAppTheme()
+  const { colors, isGlass } = useAppTheme()
   const { t } = useTranslation()
   const { width } = useWindowDimensions()
   const preview = previewPendingText(draft.content, draft.attachments, t)
   const compact = width < 390
+  const dismissSurface = isGlass ? colors.ui.actionBar.itemBackground : colors.ui.cartoon ? colors.ui.semantic.surface.muted : colors.ui.semantic.surface.muted
+  const dismissBorder = colors.ui.cartoon ? colors.material.stroke : isGlass ? colors.ui.actionBar.itemBorder : colors.ui.semantic.chrome.border
   return (
     <View pointerEvents="box-none" style={{ position: 'absolute', left: 0, right: 0, bottom: Math.max(insets.bottom, 10) + 106, zIndex: 55, paddingHorizontal: 14 }}>
       <IsleSheet>
@@ -3137,20 +3054,20 @@ function StreamingIntentSheet({
               haptic
               onPress={onCancel}
               accessibilityLabel={t('chat.cancelStreamingIntent')}
-              style={{ width: 44, height: 44, borderRadius: colors.ui.radius.controlLarge, alignItems: 'center', justifyContent: 'center', backgroundColor: colors.ui.card.mutedBackground, borderWidth: 1, borderColor: colors.material.stroke }}
+              style={{ width: 44, height: 44, borderRadius: colors.ui.radius.controlLarge, alignItems: 'center', justifyContent: 'center', backgroundColor: dismissSurface, borderWidth: colors.ui.cartoon ? 1 : StyleSheet.hairlineWidth, borderColor: dismissBorder }}
             >
-              <X color={colors.textTertiary} size={16} strokeWidth={2.1} />
+              <AppIcon name="close" color={colors.textTertiary} size={16} strokeWidth={appIconStroke.strong} />
             </IslePressable>
           </View>
           <View style={{ flexDirection: 'row', flexWrap: compact ? 'wrap' : 'nowrap', gap: 8, marginTop: 11 }}>
             <IntentAction label={t('chat.intentGuide')} description={t('chat.intentGuideDescription')} onPress={() => onChoose('guide')}>
-              <GitBranchPlus color={colors.ui.icon.accentForeground} size={16} strokeWidth={2.1} />
+              <AppIcon name="trace" color={colors.ui.icon.accentForeground} size={16} strokeWidth={appIconStroke.strong} />
             </IntentAction>
             <IntentAction label={t('chat.intentQueue')} description={t('chat.intentQueueDescription')} onPress={() => onChoose('queue')}>
-              <ListEnd color={colors.ui.icon.accentForeground} size={16} strokeWidth={2.1} />
+              <AppIcon name="menu-output" color={colors.ui.icon.accentForeground} size={16} strokeWidth={appIconStroke.strong} />
             </IntentAction>
             <IntentAction label={t('chat.intentInterrupt')} description={t('chat.intentInterruptDescription')} danger onPress={() => onChoose('interrupt')}>
-              <Split color={colors.ui.tone.danger.foreground} size={16} strokeWidth={2.1} />
+              <AppIcon name="split" color={colors.ui.tone.danger.foreground} size={16} strokeWidth={appIconStroke.strong} />
             </IntentAction>
           </View>
       </IsleSheet>
@@ -3171,8 +3088,11 @@ function IntentAction({
   children: ReactNode
   onPress: () => void
 }) {
-  const { colors } = useAppTheme()
+  const { colors, isGlass } = useAppTheme()
   const actionRadius = colors.ui.radius.field
+  const surface = danger ? colors.ui.tone.danger.background : isGlass ? colors.ui.actionBar.itemBackground : colors.ui.cartoon ? colors.ui.semantic.surface.base : colors.ui.semantic.surface.muted
+  const borderColor = danger ? colors.ui.tone.danger.border : colors.ui.cartoon ? colors.material.stroke : isGlass ? colors.ui.actionBar.itemBorder : colors.ui.semantic.chrome.border
+  const subtleBorderWidth = colors.ui.cartoon ? 1 : StyleSheet.hairlineWidth
   return (
     <IslePressable
       haptic
@@ -3187,9 +3107,9 @@ function IntentAction({
         borderRadius: actionRadius,
         paddingHorizontal: 10,
         paddingVertical: 9,
-        backgroundColor: danger ? colors.ui.tone.danger.background : colors.ui.card.defaultBackground,
-        borderWidth: 1,
-        borderColor: danger ? colors.ui.tone.danger.border : colors.material.stroke,
+        backgroundColor: surface,
+        borderWidth: subtleBorderWidth,
+        borderColor,
       }}
     >
       <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, minWidth: 0 }}>
@@ -3206,7 +3126,7 @@ function IntentAction({
 function renderConversationHeaderSpacer(
   topPadding: number
 ) {
-  return <View style={{ paddingTop: topPadding, marginBottom: 4 }} />
+  return <View style={{ height: topPadding }} />
 }
 
 function getMessageItemType(message: Message) {
@@ -3220,6 +3140,7 @@ function SetupEmptyState({ description, actionLabel, actionHint, glyph, onAction
   const navigation = useNavigationTrigger(onAction)
   const contentMaxWidth = Math.max(260, Math.min(330, width - 48))
   const actionMinWidth = Math.max(132, Math.min(148, contentMaxWidth * 0.46))
+  const subtleBorderWidth = colors.ui.cartoon ? 1 : StyleSheet.hairlineWidth
   return (
     <View style={{ alignItems: 'center' }}>
       <View style={{ width: '100%', maxWidth: contentMaxWidth, alignItems: 'center', gap: 14 }}>
@@ -3233,7 +3154,7 @@ function SetupEmptyState({ description, actionLabel, actionHint, glyph, onAction
           accessibilityLabel={actionLabel}
           accessibilityHint={actionHint}
           hitSlop={QUICK_START_ACTION_HIT_SLOP}
-          style={{ minHeight: 48, minWidth: actionMinWidth, borderRadius: colors.ui.radius.controlLarge, paddingHorizontal: 18, flexDirection: 'row', gap: 7, alignItems: 'center', justifyContent: 'center', backgroundColor: colors.ui.control.primaryBackground, borderWidth: 1, borderColor: colors.ui.control.primaryBorder, shadowColor: colors.ui.control.shadow, shadowOpacity: colors.ui.control.primaryShadowOpacity, shadowRadius: colors.ui.control.primaryShadowRadius, shadowOffset: { width: 0, height: colors.ui.control.primaryShadowOffset } }}
+          style={{ minHeight: 48, minWidth: actionMinWidth, borderRadius: colors.ui.radius.controlLarge, paddingHorizontal: 18, flexDirection: 'row', gap: 7, alignItems: 'center', justifyContent: 'center', backgroundColor: colors.ui.control.primaryBackground, borderWidth: subtleBorderWidth, borderColor: colors.ui.control.primaryBorder, shadowColor: colors.ui.control.shadow, shadowOpacity: colors.ui.cartoon ? Math.min(colors.ui.control.primaryShadowOpacity, 0.05) : 0, shadowRadius: colors.ui.cartoon ? colors.ui.control.primaryShadowRadius : 0, shadowOffset: { width: 0, height: colors.ui.cartoon ? colors.ui.control.primaryShadowOffset : 0 } }}
         >
           <AnimatedNavigationIcon glyph={glyph} active={navigation.active} color={colors.ui.control.primaryForeground} size={18} />
           <Text numberOfLines={1} style={{ flexShrink: 1, color: colors.ui.control.primaryForeground, fontSize: 14, fontWeight: '900', includeFontPadding: false }}>{actionLabel}</Text>
@@ -3263,12 +3184,13 @@ function EmptyConversationState({
   topPadding: number
 }) {
   const { t } = useTranslation()
+  const { isGlass } = useAppTheme()
   const highlights = useMemo(
     () => buildHomeModelHighlights(conversation, provider, readyProviders, settings),
     [conversation.model, conversation.providerId, provider, readyProviders, settings]
   )
   return (
-    <View style={{ paddingTop: topPadding, gap: 14 }}>
+      <View style={{ paddingTop: topPadding, gap: 12 }}>
       <IsleEmptyState
         title={t('chat.newConversation')}
       />
@@ -3288,7 +3210,7 @@ function EmptyConversationState({
           </View>
         </View>
       ) : null}
-      <View style={{ flexDirection: 'row', gap: 8, flexWrap: 'wrap', justifyContent: 'center' }}>
+              <View style={{ flexDirection: 'row', gap: 8, flexWrap: 'wrap', justifyContent: 'center' }}>
         <QuickStartAction label={t('chat.configureProviders')} accessibilityHint={t('chat.configureProvidersAccessibilityHint')} glyph="provider-key" onPress={onProviders} />
         <QuickStartAction label={t('conversation.viewHistory')} accessibilityHint={t('conversation.viewHistoryAccessibilityHint')} glyph="history" onPress={onHistory} muted />
       </View>
@@ -3309,10 +3231,11 @@ function QuickStartModelChip({
   accessibilityHint?: string
   onPress: () => void
 }) {
-  const { colors } = useAppTheme()
-  const backgroundColor = active ? colors.ui.control.primaryBackground : colors.ui.card.defaultBackground
+  const { colors, isGlass } = useAppTheme()
+  const backgroundColor = resolveChatControlSurface(colors, isGlass, active)
   const foregroundColor = active ? colors.ui.control.primaryForeground : colors.textSecondary
-  const borderColor = active ? colors.ui.control.primaryBorder : colors.material.stroke
+  const borderColor = resolveChatControlBorder(colors, isGlass, active)
+  const subtleBorderWidth = colors.ui.cartoon ? 1 : StyleSheet.hairlineWidth
   return (
     <IslePressable
       haptic
@@ -3330,7 +3253,7 @@ function QuickStartModelChip({
         paddingVertical: 7,
         gap: 2,
         backgroundColor,
-        borderWidth: 1,
+        borderWidth: subtleBorderWidth,
         borderColor,
       }}
     >
@@ -3613,10 +3536,11 @@ function SkillVariableDialogBody({ variableNames, initialValues, onChange }: { v
 }
 
 function QuickStartAction({ label, accessibilityHint, glyph, muted = false, onPress }: { label: string; accessibilityHint?: string; glyph: NavigationGlyph; muted?: boolean; onPress: () => void }) {
-  const { colors } = useAppTheme()
-  const backgroundColor = muted ? colors.ui.card.defaultBackground : colors.ui.control.primaryBackground
+  const { colors, isGlass } = useAppTheme()
+  const backgroundColor = muted ? resolveChatControlSurface(colors, isGlass, false) : colors.ui.control.primaryBackground
   const foregroundColor = muted ? colors.textSecondary : colors.ui.control.primaryForeground
-  const borderColor = muted ? colors.material.stroke : colors.ui.control.primaryBorder
+  const borderColor = muted ? resolveChatChromeBorder(colors, isGlass) : colors.ui.control.primaryBorder
+  const subtleBorderWidth = colors.ui.cartoon ? 1 : StyleSheet.hairlineWidth
   const navigation = useNavigationTrigger(onPress)
   return (
     <IslePressable
@@ -3636,7 +3560,7 @@ function QuickStartAction({ label, accessibilityHint, glyph, muted = false, onPr
         alignItems: 'center',
         justifyContent: 'center',
         backgroundColor,
-        borderWidth: muted ? 1 : 0,
+        borderWidth: muted ? subtleBorderWidth : 0,
         borderColor,
       }}
     >
@@ -3648,7 +3572,14 @@ function QuickStartAction({ label, accessibilityHint, glyph, muted = false, onPr
 
 function getMessageActivityLabel(message: Message, t: TFunction): string {
   const traces = collectMessageTraces(message)
-  return getActiveTraceTitle(traces, message.status) || messageActivityStatusLabel(message, t)
+  const stageLabel = getActiveTraceTitle(traces, message.status)
+  if (stageLabel && (message.status === 'streaming' || message.status === 'sending')) {
+    return t('messageBubble.traceGenerating', {
+      title: stageLabel,
+      defaultValue: `${stageLabel}...`,
+    })
+  }
+  return stageLabel || messageActivityStatusLabel(message, t)
 }
 
 function messageActivityStatusLabel(message: Message, t: TFunction): string {
@@ -3764,36 +3695,62 @@ function ConversationHealthBanner({
   onSwitch: () => void
   compact?: boolean
 }) {
-  const { colors } = useAppTheme()
+  const { colors, isGlass } = useAppTheme()
   const { t } = useTranslation()
   const healthTone = health.inheritedExpired ? colors.ui.tone.danger : colors.ui.tone.warning
   const borderColor = healthTone.border
+  const subtleBorderWidth = colors.ui.cartoon ? 1 : StyleSheet.hairlineWidth
   if (compact) {
+    const primaryAction = health.code === 'missing_key' || health.code === 'disabled_provider' || health.code === 'provider_missing'
+      ? onConfigure
+      : health.code === 'model_unavailable'
+        ? onSwitch
+        : onTest
+    const primaryGlyph: NavigationGlyph = health.code === 'missing_key' || health.code === 'disabled_provider' || health.code === 'provider_missing'
+      ? 'provider-key'
+      : health.code === 'model_unavailable'
+        ? 'settings-sliders'
+        : 'conversation'
     return (
       <MotiView
         from={{ opacity: 0, translateY: -6, scale: 0.98 }}
         animate={{ opacity: 1, translateY: 0, scale: 1 }}
         transition={{ type: 'spring', damping: 20, stiffness: 180 }}
-        style={{
-          marginBottom: 8,
-          borderRadius: colors.ui.radius.chip,
-          padding: 4,
-          flexDirection: 'row',
-          alignItems: 'center',
-          gap: 4,
-          backgroundColor: colors.ui.card.defaultBackground,
-          borderWidth: 1,
-          borderColor: colors.material.stroke,
-        }}
+        style={{ alignSelf: 'stretch' }}
       >
-        <BannerAction label={t('chat.configure')} glyph="provider-key" onPress={onConfigure} compact />
-        <BannerAction
-          label={testing ? t('chat.testing') : t('chat.test')}
-          onPress={onTest}
-          compact
-          disabled={testing || health.code === 'missing_key' || health.code === 'disabled_provider' || health.code === 'provider_missing'}
-        />
-        <BannerAction label={t('chat.switch')} onPress={onSwitch} compact />
+        <IslePressable
+          haptic
+          onPress={primaryAction}
+          accessibilityRole="button"
+          accessibilityLabel={health.title}
+          accessibilityHint={health.description}
+          style={{
+            minHeight: 28,
+            borderRadius: colors.ui.radius.chip,
+            paddingHorizontal: 7,
+            flexDirection: 'row',
+            alignItems: 'center',
+            gap: 6,
+            backgroundColor: resolveChatChromeSurface(colors, isGlass, 'toolbar'),
+            borderWidth: subtleBorderWidth,
+            borderColor,
+          }}
+        >
+          <View style={{ width: 16, height: 16, borderRadius: colors.ui.radius.controlSmall, alignItems: 'center', justifyContent: 'center', backgroundColor: healthTone.background }}>
+            <AppIcon name="warning" color={healthTone.foreground} size={10} />
+          </View>
+          <View style={{ flex: 1, minWidth: 0 }}>
+            <Text numberOfLines={1} style={{ color: colors.text, fontSize: 9.5, lineHeight: 11, fontWeight: '900', includeFontPadding: false }}>
+              {health.title}
+            </Text>
+            <Text numberOfLines={1} style={{ color: colors.textSecondary, fontSize: 8.5, lineHeight: 10, fontWeight: '700', includeFontPadding: false }}>
+              {health.description}
+            </Text>
+          </View>
+          <View style={{ width: 18, height: 18, borderRadius: colors.ui.radius.controlSmall, alignItems: 'center', justifyContent: 'center', backgroundColor: resolveChatControlSurface(colors, isGlass, false, 'activeAccent') }}>
+            <AnimatedNavigationIcon glyph={primaryGlyph} active={false} color={colors.textSecondary} size={11} />
+          </View>
+        </IslePressable>
       </MotiView>
     )
   }
@@ -3807,14 +3764,14 @@ function ConversationHealthBanner({
         marginBottom: 8,
         borderRadius: colors.ui.radius.card,
         padding: 13,
-        backgroundColor: colors.ui.card.defaultBackground,
-        borderWidth: 1,
+        backgroundColor: resolveChatChromeSurface(colors, isGlass),
+        borderWidth: subtleBorderWidth,
         borderColor,
       }}
     >
       <View style={{ flexDirection: 'row', alignItems: 'flex-start', gap: 10 }}>
         <View style={{ width: 34, height: 34, borderRadius: colors.ui.radius.controlMiddle, alignItems: 'center', justifyContent: 'center', backgroundColor: healthTone.background }}>
-          <AlertTriangle color={healthTone.foreground} size={18} strokeWidth={2} />
+          <AppIcon name="warning" color={healthTone.foreground} size={18} />
         </View>
         <View style={{ flex: 1 }}>
           <Text style={{ color: colors.text, fontSize: 14, fontWeight: '900' }}>{health.title}</Text>
@@ -3840,42 +3797,255 @@ function ConversationHealthBanner({
 }
 
 function BannerAction({ label, glyph, compact = false, disabled = false, onPress }: { label: string; glyph?: NavigationGlyph; compact?: boolean; disabled?: boolean; onPress: () => void }) {
-  const { colors } = useAppTheme()
+  const { colors, isGlass } = useAppTheme()
   const navigation = useNavigationTrigger(onPress)
   const press = glyph ? navigation.trigger : onPress
+  const surface = compact ? resolveChatControlSurface(colors, isGlass, false) : resolveChatChromeSurface(colors, isGlass)
+  const borderColor = resolveChatChromeBorder(colors, isGlass)
+  const subtleBorderWidth = colors.ui.cartoon ? 1 : StyleSheet.hairlineWidth
+  const foreground = compact && isGlass ? colors.textSecondary : colors.text
   return (
     <IslePressable
       haptic
       disabled={disabled}
       onPress={press}
       style={{
-        minHeight: 44,
+        minHeight: compact ? 34 : 44,
         borderRadius: colors.ui.radius.chip,
-        paddingHorizontal: compact ? 12 : 14,
+        paddingHorizontal: compact ? 9 : 14,
         flexDirection: 'row',
-        gap: glyph ? 6 : 0,
+        gap: glyph ? (compact ? 5 : 6) : 0,
         alignItems: 'center',
         justifyContent: 'center',
-        backgroundColor: colors.ui.card.defaultBackground,
-        borderWidth: 1,
-        borderColor: colors.material.stroke,
+        backgroundColor: surface,
+        borderWidth: subtleBorderWidth,
+        borderColor,
         opacity: disabled ? 0.45 : 1,
       }}
     >
-      {glyph ? <AnimatedNavigationIcon glyph={glyph} active={navigation.active} color={colors.text} size={16} /> : null}
-      <Text style={{ color: colors.text, fontSize: compact ? 11 : 12, fontWeight: '800' }}>{label}</Text>
+      {glyph ? <AnimatedNavigationIcon glyph={glyph} active={navigation.active} color={foreground} size={compact ? 14 : 16} /> : null}
+      <Text style={{ color: foreground, fontSize: compact ? 9 : 12, fontWeight: '800' }}>{label}</Text>
     </IslePressable>
   )
 }
 
-function formatTokenLimit(value: number): string {
+function CompressionBanner({
+  compression,
+  onOpenDetails,
+  compact = false,
+}: {
+  compression: CompressionSummary
+  onOpenDetails: () => void
+  compact?: boolean
+}) {
+  const { colors, isGlass } = useAppTheme()
+  const { t } = useTranslation()
+  const tone = compression.mode === 'remote' ? colors.ui.tone.success : colors.ui.tone.warning
+  const subtleBorderWidth = colors.ui.cartoon ? 1 : StyleSheet.hairlineWidth
+  const ratio = Math.round(compression.ratio * 100)
+  const savedTokens = Math.max(0, Math.round(compression.savedTokens))
+  return (
+    <MotiView
+      from={{ opacity: 0, translateY: -8, scale: 0.99 }}
+      animate={{ opacity: 1, translateY: 0, scale: 1 }}
+      transition={{ type: 'spring', damping: 20, stiffness: 180 }}
+      style={{ alignSelf: 'stretch' }}
+    >
+      <IslePressable
+        haptic
+        onPress={onOpenDetails}
+        accessibilityRole="button"
+        accessibilityLabel={t(compression.titleKey)}
+        accessibilityHint={renderCompressionMessage(compression, t)}
+        style={{
+          minHeight: compact ? 34 : 42,
+          borderRadius: colors.ui.radius.card,
+          paddingHorizontal: compact ? 10 : 12,
+          paddingVertical: compact ? 7 : 8,
+          flexDirection: 'row',
+          alignItems: 'center',
+          gap: 10,
+          backgroundColor: isGlass ? colors.ui.semantic.chrome.background : colors.ui.cartoon ? colors.ui.semantic.surface.base : colors.ui.semantic.surface.base,
+          borderWidth: subtleBorderWidth,
+          borderColor: tone.border,
+        }}
+      >
+        <View style={{ width: compact ? 20 : 24, height: compact ? 20 : 24, borderRadius: colors.ui.radius.controlSmall, alignItems: 'center', justifyContent: 'center', backgroundColor: tone.background }}>
+          <AppIcon name={compression.mode === 'remote' ? 'skills-sparkles' : 'memory-brain'} color={tone.foreground} size={compact ? 11 : 13} />
+        </View>
+        <View style={{ flex: 1, minWidth: 0 }}>
+          <Text numberOfLines={1} style={{ color: colors.text, fontSize: compact ? 10 : 12.5, lineHeight: compact ? 12 : 15, fontWeight: '900', includeFontPadding: false }}>
+            {t(compression.titleKey)}
+          </Text>
+          <Text numberOfLines={1} style={{ color: colors.textSecondary, fontSize: compact ? 8.5 : 10.5, lineHeight: compact ? 10 : 13, fontWeight: '700', includeFontPadding: false }}>
+            {renderCompressionMessage(compression, t)}
+          </Text>
+        </View>
+        <View style={{ alignItems: 'flex-end', minWidth: compact ? 52 : 66 }}>
+          <Text numberOfLines={1} style={{ color: tone.foreground, fontSize: compact ? 9 : 11, lineHeight: compact ? 10 : 13, fontWeight: '900', includeFontPadding: false }}>
+            {t('chat.compressionRatio', { ratio })}
+          </Text>
+          <Text numberOfLines={1} style={{ color: colors.textTertiary, fontSize: compact ? 8 : 9.5, lineHeight: compact ? 9 : 11, fontWeight: '700', includeFontPadding: false }}>
+            {t('chat.compressionSavedTokens', { count: savedTokens })}
+          </Text>
+        </View>
+      </IslePressable>
+    </MotiView>
+  )
+}
+
+interface CompressionSummary {
+  titleKey: string
+  messageKey: string
+  messageParams?: Record<string, string | number | undefined>
+  mode: 'local' | 'remote'
+  ratio: number
+  savedTokens: number
+  metadata: PackedCompressionMetadata | null
+  reasonKey?: string
+}
+
+function findLatestCompressionSummary(messages: Conversation['messages']): CompressionSummary | null {
+  for (let index = messages.length - 1; index >= 0; index -= 1) {
+    const message = messages[index]
+    const summary = findCompressionSummaryFromMessage(message)
+    if (summary) return summary
+  }
+  return null
+}
+
+function findCompressionSummaryFromMessage(message: Conversation['messages'][number]): CompressionSummary | null {
+  const traces = collectMessageTraces(message).filter((trace) => trace.type === 'system' && trace.metadata)
+  const compressionTrace = traces.find((trace) => trace.metadata?.compressionTriggered === true)
+  const compactTrace = traces.find((trace) => typeof trace.metadata?.compactMode === 'string' && trace.metadata.compactMode !== 'off')
+  const metadata = (compressionTrace?.metadata ?? compactTrace?.metadata) as Record<string, unknown> | undefined
+  if (!metadata) return null
+  const remote = metadata.compactMode === 'remote'
+  const ratio = finiteNumber(metadata.compressionRatio) ?? finiteNumber(metadata.remoteCompactRatio) ?? finiteNumber(metadata.pressureRatio) ?? 0
+  const savedTokens = finiteNumber(metadata.compressionEstimatedSavedTokens) ?? finiteNumber(metadata.localEstimatedSavedTokens) ?? finiteNumber(metadata.estimatedSavedTokens) ?? finiteNumber(metadata.compressionSourceTokens) ?? 0
+  const sourceCount = finiteNumber(metadata.summarySourceMessageCount) ?? finiteNumber(metadata.localSourceMessageCount) ?? 0
+  const keptCount = finiteNumber(metadata.summaryKeptMessageCount) ?? finiteNumber(metadata.localKeptMessageCount) ?? 0
+  const strategy = chatNormalizeCompressionStrategy(metadata.compressionStrategy ?? metadata.localCompressionStrategy)
+  const reasonKey = compressionReasonKey(metadata.reason)
+  const titleKey = remote
+    ? 'chat.compressionBannerRemoteTitle'
+    : strategy === 'single-message-truncation'
+      ? 'chat.compressionBannerSingleTitle'
+      : 'chat.compressionBannerLocalTitle'
+  const messageKey = remote
+    ? 'chat.compressionBannerRemoteMessage'
+    : strategy === 'single-message-truncation'
+      ? 'chat.compressionBannerSingleMessage'
+      : 'chat.compressionBannerLocalMessage'
+  let messageParams: Record<string, string | number>
+  if (remote) {
+    messageParams = {
+      mode: stringValue(metadata.remoteCompactMode) === 'required' ? 'chat.compressionModeRequired' : 'chat.compressionModeAuto',
+      ratio: Math.max(0, Math.round(ratio * 100)),
+      reason: reasonKey ?? 'chat.compressionReasonRemote',
+    }
+  } else if (strategy === 'single-message-truncation') {
+    messageParams = {
+      ratio: Math.max(0, Math.round(ratio * 100)),
+      reason: reasonKey ?? 'chat.compressionReasonSingleMessage',
+    }
+  } else {
+    messageParams = {
+      kept: keptCount,
+      total: Math.max(keptCount + sourceCount, 1),
+      reason: reasonKey ?? 'chat.compressionReasonLocalSummary',
+    }
+  }
+  return {
+    titleKey,
+    messageKey,
+    messageParams,
+    mode: remote ? 'remote' : 'local',
+    ratio,
+    savedTokens,
+    reasonKey,
+    metadata: {
+      schemaVersion: 2,
+      strategy,
+      triggerReason: chatNormalizeCompressionTriggerReason(metadata.compressionTriggerReason ?? metadata.localCompressionTriggerReason),
+      sourceMessageCount: sourceCount,
+      keptMessageCount: keptCount,
+      sourceRoleCounts: normalizeCompressionRoleCounts(metadata.summarySourceRoleCounts ?? metadata.localSourceRoleCounts),
+      keptRoleCounts: normalizeCompressionRoleCounts(metadata.summaryKeptRoleCounts ?? metadata.localKeptRoleCounts),
+      sourceTokens: finiteNumber(metadata.compressionSourceTokens) ?? finiteNumber(metadata.localSourceTokens) ?? 0,
+      compressedTokens: finiteNumber(metadata.compressionCompressedTokens) ?? finiteNumber(metadata.localCompressedTokens) ?? 0,
+      estimatedSavedTokens: savedTokens,
+      compressionRatio: ratio,
+      summaryTokenBudget: finiteNumber(metadata.summaryTokenBudget) ?? finiteNumber(metadata.localSummaryTokenBudget) ?? 0,
+      summaryTokens: finiteNumber(metadata.summaryTokens) ?? finiteNumber(metadata.localSummaryTokens) ?? 0,
+      summarySectionCount: finiteNumber(metadata.summarySectionCount) ?? finiteNumber(metadata.localSummarySectionCount) ?? 0,
+      summaryItemCount: finiteNumber(metadata.summaryItemCount) ?? finiteNumber(metadata.localSummaryItemCount) ?? 0,
+      summarySections: Array.isArray(metadata.summarySections) ? metadata.summarySections as PackedCompressionMetadata['summarySections'] : [],
+    },
+  }
+}
+
+function compressionReasonKey(value: unknown): string | undefined {
+  switch (value) {
+    case 'below_threshold':
+      return 'chat.compressionReasonBelowThreshold'
+    case 'provider_capability_missing':
+      return 'chat.compressionReasonProviderCapabilityMissing'
+    case 'disabled':
+      return 'chat.compressionReasonDisabled'
+    case 'supported':
+      return 'chat.compressionReasonRemote'
+    default:
+      return undefined
+  }
+}
+
+function renderCompressionMessage(summary: CompressionSummary, t: TFunction): string {
+  const params = summary.messageParams
+  if (!params) return ''
+  const resolved = Object.fromEntries(Object.entries(params).map(([key, value]) => {
+    if (typeof value === 'string' && value.startsWith('chat.')) return [key, t(value)]
+    return [key, value]
+  }))
+  return t(summary.messageKey, resolved)
+}
+
+function normalizeCompressionRoleCounts(value: unknown): PackedCompressionMetadata['sourceRoleCounts'] {
+  const counts = value as Partial<PackedCompressionMetadata['sourceRoleCounts']> | undefined
+  return {
+    user: finiteNumber(counts?.user) ?? 0,
+    assistant: finiteNumber(counts?.assistant) ?? 0,
+  }
+}
+
+function finiteNumber(value: unknown): number | undefined {
+  return typeof value === 'number' && Number.isFinite(value) ? value : undefined
+}
+
+function stringValue(value: unknown): string | undefined {
+  return typeof value === 'string' && value.trim() ? value : undefined
+}
+
+const chatNormalizeCompressionTriggerReason = (value: unknown): PackedCompressionMetadata['triggerReason'] => {
+  if (value === 'single_message_budget_exceeded') return 'single_message_budget_exceeded'
+  if (value === 'disabled_or_unneeded') return 'disabled_or_unneeded'
+  return 'message_budget_exceeded'
+}
+
+const chatNormalizeCompressionStrategy = (value: unknown): PackedCompressionMetadata['strategy'] => {
+  if (value === 'none') return 'none'
+  if (value === 'single-message-truncation') return 'single-message-truncation'
+  return 'structured-v2'
+}
+
+const chatFormatTokenLimit = (value: number): string => {
   if (value >= 1000000) return `${Math.round(value / 100000) / 10}M`
   if (value >= 1000) return `${Math.round(value / 1000)}K`
   return String(value)
 }
 
 function formatModelContextLimit(config: ReturnType<typeof getModelConfig>, t: TFunction): string {
-  const value = formatTokenLimit(config.contextWindow)
+  const value = chatFormatTokenLimit(config.contextWindow)
   return config.source === 'inferred' ? t('chat.contextUnknownSafeBudget', { value }) : value
 }
 
@@ -3885,8 +4055,8 @@ function formatHeaderMeta(conversation: Conversation, provider: AIProvider | und
   const config = getModelConfig(upstreamModel, provider?.type, provider?.modelConfigs)
   const parts = [
     t('chat.contextMeta', { value: formatModelContextLimit(config, t) }),
-    t('chat.outputMeta', { value: formatTokenLimit(conversation.maxTokens || config.defaultMaxTokens) }),
-    metrics.totalTokens ? t('chat.conversationTokenMeta', { value: formatTokenLimit(metrics.totalTokens), estimated: metrics.estimated ? ` ${t('chat.estimated')}` : '' }) : '',
+    t('chat.outputMeta', { value: chatFormatTokenLimit(conversation.maxTokens || config.defaultMaxTokens) }),
+    metrics.totalTokens ? t('chat.conversationTokenMeta', { value: chatFormatTokenLimit(metrics.totalTokens), estimated: metrics.estimated ? ` ${t('chat.estimated')}` : '' }) : '',
     metrics.durationMs ? t('chat.durationMeta', { value: formatDuration(metrics.durationMs) }) : '',
   ].filter(Boolean)
   return parts.join(' · ')

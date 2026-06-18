@@ -60,12 +60,12 @@ const BUILTIN_TOOLS: BuiltinToolDefinition[] = [
   },
   {
     name: 'set_theme_family',
-    description: 'Set theme family to island or minimal.',
+    description: 'Set theme family to minimal, glass, or cartoon. Legacy island requests map to cartoon.',
     permission: 'read-write',
     inputSchema: {
       type: 'object',
       properties: {
-        themeId: { type: 'string', enum: ['island', 'minimal'] },
+        themeId: { type: 'string', enum: ['minimal', 'glass', 'cartoon', 'island'] },
       },
       required: ['themeId'],
     },

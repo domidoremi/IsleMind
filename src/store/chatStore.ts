@@ -9,6 +9,8 @@ import { resolveProviderModelAliasAccess } from '@/services/ai/policy/providerMo
 import { getReasoningEffortOptions } from '@/utils/modelReasoning'
 import { resolveProviderModelAlias } from '@/utils/providerModels'
 import { sanitizeProcessTraceForBoundary, sanitizeProcessTracesForBoundary } from '@/utils/traceSafety'
+import { sanitizeAttachmentsForPersistence } from '@/services/attachmentContract'
+import { abortAllStreams, abortStream } from '@/services/chatStreamLifecycle'
 import { useSettingsStore } from './settingsStore'
 
 function generateId(): string {
@@ -149,6 +151,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
   },
 
   delete: (id: string) => {
+    abortStream(id)
     set((state) => {
       const updated = state.conversations.filter((c) => c.id !== id)
       void persistConversations(updated)
@@ -356,6 +359,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
   },
 
   clearAll: () => {
+    abortAllStreams()
     set({ conversations: [], currentId: null })
     void saveData(ACTIVE_CONVERSATION_KEY, null)
     void persistConversations([])
@@ -435,7 +439,7 @@ function stripOnboardingSystemPrompts(conversations: Conversation[]): Conversati
 }
 
 function prepareConversationsForStore(conversations: Conversation[]): Conversation[] {
-  return sanitizeConversationTracesForStore(stripOnboardingSystemPrompts(conversations))
+  return sanitizeConversationAttachmentsForStore(sanitizeConversationTracesForStore(stripOnboardingSystemPrompts(conversations)))
 }
 
 async function hydrateSqliteConversationsInBackground(): Promise<void> {
@@ -455,14 +459,15 @@ async function hydrateSqliteConversationsInBackground(): Promise<void> {
 }
 
 function sanitizeConversationsForPersistence(conversations: Conversation[]): Conversation[] {
-  return sanitizeConversationTracesForStore(conversations).map((conversation) => ({
+  return sanitizeConversationAttachmentsForStore(sanitizeConversationTracesForStore(conversations))
+}
+
+function sanitizeConversationAttachmentsForStore(conversations: Conversation[]): Conversation[] {
+  return conversations.map((conversation) => ({
     ...conversation,
     messages: conversation.messages.map((message) => ({
       ...message,
-      attachments: message.attachments?.map((attachment) => ({
-        ...attachment,
-        base64: undefined,
-      })),
+      attachments: sanitizeAttachmentsForPersistence(message.attachments),
     })),
   }))
 }

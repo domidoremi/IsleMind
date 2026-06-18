@@ -1,11 +1,11 @@
 import { router } from 'expo-router'
 import { useCallback, useDeferredValue, useEffect, useMemo, useRef, useState } from 'react'
-import { ActivityIndicator, AppState, Keyboard, KeyboardAvoidingView, Platform, Text, TextInput, View, useWindowDimensions, type NativeScrollEvent, type NativeSyntheticEvent, type ViewToken } from 'react-native'
+import { ActivityIndicator, AppState, Keyboard, KeyboardAvoidingView, Platform, StyleSheet, Text, TextInput, View, useWindowDimensions, type NativeScrollEvent, type NativeSyntheticEvent, type ViewToken } from 'react-native'
 import { FlashList, type FlashListRef } from '@shopify/flash-list'
-import { ArrowRight, ArrowUp, MessageCircle, Search, X } from 'lucide-react-native'
 import { useTranslation } from 'react-i18next'
 import { useSafeAreaInsets } from 'react-native-safe-area-context'
 import { AnimatedNavigationTrigger } from '@/components/navigation/AnimatedNavigationTrigger'
+import { AppIcon, appIconStroke } from '@/components/ui/AppIcon'
 import { IsleEmptyState, IsleHeader, IslePressable, useIsleDialog } from '@/components/ui/isle'
 import { ConversationRow } from '@/components/conversations/ConversationRow'
 import { useMainPagerGestureLock } from './MainPagerGestureLock'
@@ -110,7 +110,7 @@ interface VisibleConversationRange {
 }
 
 export function ConversationsScreenContent({ active = true, onHome, onSettings }: ConversationsScreenContentProps) {
-  const { colors } = useAppTheme()
+  const { colors, isGlass } = useAppTheme()
   const { t } = useTranslation()
   const dialog = useIsleDialog()
   const pagerGestureLock = useMainPagerGestureLock()
@@ -126,6 +126,16 @@ export function ConversationsScreenContent({ active = true, onHome, onSettings }
   const primaryActionSize = compact ? 46 : 50
   const currentConversationActionWidth = Math.max(SCROLL_TOP_ACTION_SIZE, Math.min(width - listHorizontalPadding * 2, compact ? 176 : 206))
   const searchHorizontalPadding = compact ? 12 : 14
+  const subtleBorderWidth = colors.ui.cartoon ? 1 : StyleSheet.hairlineWidth
+  const chromeIconSurface = colors.ui.cartoon ? colors.ui.semantic.surface.muted : isGlass ? colors.ui.actionBar.itemBackground : colors.ui.semantic.surface.muted
+  const chromeIconBorder = colors.ui.cartoon ? colors.material.stroke : colors.ui.semantic.chrome.border
+  const searchShellBackground = isGlass ? colors.ui.semantic.chrome.background : colors.ui.cartoon ? colors.ui.semantic.surface.muted : colors.ui.semantic.surface.muted
+  const searchShellBorder = isGlass ? colors.ui.semantic.chrome.border : colors.ui.cartoon ? colors.ui.input.border : colors.ui.semantic.chrome.border
+  const floatingSecondarySurface = isGlass ? colors.ui.actionBar.itemBackground : colors.ui.cartoon ? colors.ui.semantic.surface.muted : colors.ui.semantic.surface.muted
+  const floatingSecondaryBorder = colors.ui.cartoon ? colors.material.strokeStrong : colors.ui.semantic.chrome.border
+  const floatingSecondaryShadowOpacity = colors.ui.cartoon ? Math.min(colors.ui.card.shadowOpacity, 0.08) : 0
+  const floatingSecondaryShadowRadius = colors.ui.cartoon ? Math.max(2, colors.ui.card.shadowRadius - 4) : 0
+  const floatingSecondaryShadowOffset = colors.ui.cartoon ? Math.max(1, colors.ui.card.shadowOffset - 2) : 0
   const conversations = useChatStore((state) => state.conversations)
   const currentId = useChatStore((state) => state.currentId)
   const create = useChatStore((state) => state.create)
@@ -1107,13 +1117,13 @@ export function ConversationsScreenContent({ active = true, onHome, onSettings }
                 alignItems: 'center',
                 justifyContent: 'center',
                 backgroundColor: colors.ui.control.primaryBackground,
-                borderWidth: 1,
+                borderWidth: subtleBorderWidth,
                 borderColor: colors.ui.control.primaryBorder,
                 shadowColor: colors.ui.control.shadow,
-                shadowOpacity: colors.ui.control.primaryShadowOpacity,
-                shadowRadius: colors.ui.control.primaryShadowRadius,
-                shadowOffset: { width: 0, height: colors.ui.control.primaryShadowOffset },
-                elevation: 2,
+                shadowOpacity: colors.ui.cartoon ? Math.min(colors.ui.control.primaryShadowOpacity, 0.08) : 0,
+                shadowRadius: colors.ui.cartoon ? colors.ui.control.primaryShadowRadius : 0,
+                shadowOffset: { width: 0, height: colors.ui.cartoon ? colors.ui.control.primaryShadowOffset : 0 },
+                elevation: colors.ui.cartoon ? 1 : 0,
               }}
             />
           }
@@ -1127,12 +1137,12 @@ export function ConversationsScreenContent({ active = true, onHome, onSettings }
             flexDirection: 'row',
             alignItems: 'center',
             gap: 10,
-            backgroundColor: colors.ui.input.background,
-            borderWidth: 1,
-            borderColor: colors.ui.input.border,
+            backgroundColor: searchShellBackground,
+            borderWidth: subtleBorderWidth,
+            borderColor: searchShellBorder,
           }}
         >
-          <Search color={colors.textTertiary} size={18} strokeWidth={1.9} />
+          <AppIcon name="search" color={colors.textTertiary} size={18} strokeWidth={appIconStroke.fine} />
           <TextInput
             ref={searchInputRef}
             value={query}
@@ -1179,13 +1189,13 @@ export function ConversationsScreenContent({ active = true, onHome, onSettings }
                     borderRadius: colors.ui.radius.controlMiddle,
                     alignItems: 'center',
                     justifyContent: 'center',
-                    backgroundColor: firstSearchResultActionHasMatch ? colors.ui.control.primaryBackground : colors.ui.card.defaultBackground,
-                    borderWidth: 1,
-                    borderColor: firstSearchResultActionHasMatch ? colors.ui.control.primaryBorder : colors.material.stroke,
+                    backgroundColor: firstSearchResultActionHasMatch ? colors.ui.control.primaryBackground : chromeIconSurface,
+                    borderWidth: subtleBorderWidth,
+                    borderColor: firstSearchResultActionHasMatch ? colors.ui.control.primaryBorder : chromeIconBorder,
                     opacity: firstSearchResultActionDisabled ? 0.55 : 1,
                   }}
                 >
-                  <ArrowRight color={firstSearchResultActionHasMatch ? colors.ui.control.primaryForeground : colors.textSecondary} size={16} strokeWidth={2.2} />
+                  <AppIcon name="arrow-right" color={firstSearchResultActionHasMatch ? colors.ui.control.primaryForeground : colors.textSecondary} size={16} strokeWidth={appIconStroke.strong} />
                 </IslePressable>
               ) : null}
               <IslePressable
@@ -1194,9 +1204,18 @@ export function ConversationsScreenContent({ active = true, onHome, onSettings }
                 accessibilityLabel={t('common.clearSearch')}
                 accessibilityHint={t('common.clearSearchHint')}
                 hitSlop={ICON_ACTION_HIT_SLOP}
-                style={{ width: 44, height: 44, borderRadius: colors.ui.radius.controlMiddle, alignItems: 'center', justifyContent: 'center', backgroundColor: colors.ui.card.defaultBackground }}
+                style={{
+                  width: 44,
+                  height: 44,
+                  borderRadius: colors.ui.radius.controlMiddle,
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  backgroundColor: chromeIconSurface,
+                  borderWidth: subtleBorderWidth,
+                  borderColor: chromeIconBorder,
+                }}
               >
-                <X color={colors.textSecondary} size={16} strokeWidth={2} />
+                <AppIcon name="close" color={colors.textSecondary} size={16} />
               </IslePressable>
             </View>
           ) : null}
@@ -1250,6 +1269,7 @@ export function ConversationsScreenContent({ active = true, onHome, onSettings }
                 <IsleEmptyState
                   title={t('conversation.searchPendingForQuery', { query: trimmedQuery })}
                   description={t('conversation.searchPendingDescription', { query: trimmedQuery })}
+                  contextual
                 />
               )
               : (
@@ -1258,6 +1278,7 @@ export function ConversationsScreenContent({ active = true, onHome, onSettings }
                   description={t('conversation.noSearchResultsDescription', { query: trimmedQuery })}
                   actionLabel={t('common.clearSearch')}
                   onAction={clearSearch}
+                  contextual
                 />
               )
             : (
@@ -1269,6 +1290,7 @@ export function ConversationsScreenContent({ active = true, onHome, onSettings }
                   actionBusy={creatingConversation}
                   actionDisabled={creatingConversation}
                   onAction={() => void createConversation()}
+                  contextual
                 />
               </View>
             )
@@ -1298,17 +1320,17 @@ export function ConversationsScreenContent({ active = true, onHome, onSettings }
               gap: 7,
               paddingHorizontal: 12,
               backgroundColor: colors.ui.control.primaryBackground,
-              borderWidth: 1,
+              borderWidth: subtleBorderWidth,
               borderColor: colors.ui.control.primaryBorder,
               shadowColor: colors.ui.control.shadow,
-              shadowOpacity: colors.ui.control.primaryShadowOpacity,
-              shadowRadius: colors.ui.control.primaryShadowRadius,
-              shadowOffset: { width: 0, height: colors.ui.control.primaryShadowOffset },
-              elevation: 2,
+              shadowOpacity: colors.ui.cartoon ? Math.min(colors.ui.control.primaryShadowOpacity, 0.08) : 0,
+              shadowRadius: colors.ui.cartoon ? colors.ui.control.primaryShadowRadius : 0,
+              shadowOffset: { width: 0, height: colors.ui.cartoon ? colors.ui.control.primaryShadowOffset : 0 },
+              elevation: colors.ui.cartoon ? 1 : 0,
               opacity: currentConversationActionLocked ? 0.64 : 1,
             }}
           >
-            <MessageCircle color={colors.ui.control.primaryForeground} size={17} strokeWidth={2.2} />
+            <AppIcon name="message" color={colors.ui.control.primaryForeground} size={17} strokeWidth={appIconStroke.strong} />
             <View style={{ flexShrink: 1, minWidth: 0, justifyContent: 'center', gap: 1 }}>
               <Text
                 numberOfLines={1}
@@ -1370,18 +1392,18 @@ export function ConversationsScreenContent({ active = true, onHome, onSettings }
               borderRadius: colors.ui.radius.controlMiddle,
               alignItems: 'center',
               justifyContent: 'center',
-              backgroundColor: colors.ui.card.defaultBackground,
-              borderWidth: 1,
-              borderColor: colors.material.strokeStrong,
+              backgroundColor: floatingSecondarySurface,
+              borderWidth: subtleBorderWidth,
+              borderColor: floatingSecondaryBorder,
               shadowColor: colors.shadowTint,
-              shadowOpacity: colors.ui.card.shadowOpacity,
-              shadowRadius: colors.ui.card.shadowRadius,
-              shadowOffset: { width: 0, height: colors.ui.card.shadowOffset },
-              elevation: colors.ui.card.shadowOpacity > 0 ? 2 : 0,
+              shadowOpacity: floatingSecondaryShadowOpacity,
+              shadowRadius: floatingSecondaryShadowRadius,
+              shadowOffset: { width: 0, height: floatingSecondaryShadowOffset },
+              elevation: colors.ui.cartoon && floatingSecondaryShadowOpacity > 0 ? 1 : 0,
               opacity: scrollTopActionLocked ? 0.64 : 1,
             }}
           >
-            <ArrowUp color={colors.textSecondary} size={17} strokeWidth={2.25} />
+            <AppIcon name="arrow-up" color={colors.textSecondary} size={17} strokeWidth={appIconStroke.bold} />
           </IslePressable>
         </View>
       ) : null}

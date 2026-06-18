@@ -5,6 +5,7 @@ import type {
   AgentWorkflowDefinitionValidation,
 } from '@/services/agent/agentToolTypes'
 import { redactSensitiveText } from '@/services/agent/agentTrace'
+import { resolveUniqueAgentTool } from '@/services/agent/agentToolIdentityUtils'
 
 const WORKFLOW_SCHEMA = 'islemind.agent.workflow.v1'
 const WORK_ARTIFACT_QUALITY_AUDIT_ACCEPTANCE = 'quality audit passes'
@@ -164,14 +165,7 @@ export function permissionWithinCeiling(permission: AgentToolPermission, ceiling
 }
 
 function resolveWorkflowTool(request: NonNullable<AgentWorkflowDefinition['steps'][number]['toolRequest']>, manifests: AgentToolManifest[]): AgentToolManifest | undefined {
-  if (request.toolId) return manifests.find((tool) => tool.id === request.toolId)
-  if (!request.name) return undefined
-  return manifests.find((tool) => {
-    if (tool.name !== request.name) return false
-    if (request.source && tool.source !== request.source) return false
-    if (request.serverId && tool.serverId !== request.serverId) return false
-    return true
-  })
+  return resolveUniqueAgentTool(request, manifests) ?? undefined
 }
 
 function normalizeWorkflowAcceptanceChecks(

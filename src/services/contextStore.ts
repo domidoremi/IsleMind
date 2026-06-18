@@ -75,6 +75,9 @@ async function getDb() {
       await migrateKnowledgeDocumentColumns(db)
       await migrateContextColumns(db)
       return db
+    }).catch((error) => {
+      dbPromise = null
+      throw error
     })
   }
   return dbPromise
@@ -235,6 +238,7 @@ export async function importKnowledgeText(input: {
   const now = Date.now()
   const documentId = generateId()
   const chunks = splitText(input.text)
+  const normalizedSourceUri = normalizeKnowledgeSourceLabel(input.sourceUri) ?? normalizeKnowledgeSourceLabel(input.rawPath) ?? normalizeKnowledgeSourceLabel(input.title)
   const document: KnowledgeDocument = {
     id: documentId,
     title: input.title,
@@ -242,7 +246,7 @@ export async function importKnowledgeText(input: {
     size: input.size,
     chunkCount: chunks.length,
     status: 'ready',
-    sourceUri: input.sourceUri,
+    sourceUri: normalizedSourceUri,
     rawPath: input.rawPath,
     contentHash: hashText(input.text),
     createdAt: now,
@@ -321,14 +325,16 @@ export async function importKnowledgeText(input: {
 
 export async function listKnowledgeDocuments(): Promise<KnowledgeDocument[]> {
   const db = await getDb()
-  return db.getAllAsync<KnowledgeDocument>(
+  const rows = await db.getAllAsync<KnowledgeDocument>(
     'SELECT id, title, mimeType, size, chunkCount, status, error, sourceUri, rawPath, contentHash, createdAt, updatedAt FROM knowledge_documents ORDER BY updatedAt DESC'
   )
+  return rows.map(normalizeKnowledgeDocumentRecord)
 }
 
 export async function deleteKnowledgeDocument(id: string): Promise<void> {
   const db = await getDb()
   await localDataStore.deleteKnowledgeDocumentIndexes(id)
+  await db.runAsync('DELETE FROM document_sources WHERE documentId = ?', id)
   await db.runAsync('DELETE FROM knowledge_documents WHERE id = ?', id)
   await db.runAsync('DELETE FROM knowledge_chunks WHERE documentId = ?', id)
   await db.runAsync('DELETE FROM knowledge_fts WHERE documentId = ?', id)
@@ -337,6 +343,7 @@ export async function deleteKnowledgeDocument(id: string): Promise<void> {
 export async function clearKnowledge(): Promise<void> {
   const db = await getDb()
   await localDataStore.clearKnowledgeIndexes()
+  await localDataStore.clearDocumentSources()
   await db.runAsync('DELETE FROM knowledge_documents')
   await db.runAsync('DELETE FROM knowledge_chunks')
   await db.runAsync('DELETE FROM knowledge_fts')
@@ -346,11 +353,13 @@ export async function searchKnowledge(query: string, limit: number): Promise<Ret
   const db = await getDb()
   const ftsQuery = buildFtsQuery(query)
   if (!ftsQuery || limit <= 0) return []
-  const rows = await db.getAllAsync<KnowledgeChunk & { score: number }>(
+  const rows = await db.getAllAsync<(KnowledgeChunk & { score: number }) & Pick<KnowledgeDocument, 'sourceUri' | 'rawPath'>>(
     `
-      SELECT c.id, c.documentId, c.title, c.content, c.ordinal, c.chunkIndex, c.sentenceStart, c.sentenceEnd, c.embeddingProvider, c.lastHitAt, c.createdAt, bm25(knowledge_fts) AS score
+      SELECT c.id, c.documentId, c.title, c.content, c.ordinal, c.chunkIndex, c.sentenceStart, c.sentenceEnd,
+        c.embeddingProvider, c.lastHitAt, c.createdAt, d.sourceUri, d.rawPath, bm25(knowledge_fts) AS score
       FROM knowledge_fts
       JOIN knowledge_chunks c ON c.id = knowledge_fts.id
+      LEFT JOIN knowledge_documents d ON d.id = c.documentId
       WHERE knowledge_fts MATCH ?
       ORDER BY score
       LIMIT ?
@@ -369,6 +378,7 @@ export async function searchKnowledge(query: string, limit: number): Promise<Ret
     chunkIndex: chunk.chunkIndex ?? chunk.ordinal,
     score: chunk.score,
     ftsScore: chunk.score,
+    sourceUri: normalizeOptionalText(chunk.sourceUri) ?? normalizeOptionalText(chunk.rawPath),
   })), limit)
   await Promise.all(reranked.map((source) => source.chunkId ? db.runAsync('UPDATE knowledge_chunks SET lastHitAt = ? WHERE id = ?', Date.now(), source.chunkId) : Promise.resolve()))
   return reranked
@@ -387,7 +397,7 @@ export async function exportContextSnapshot(): Promise<ContextSnapshot> {
     db.getAllAsync<KnowledgeDocument>('SELECT id, title, mimeType, size, chunkCount, status, error, sourceUri, rawPath, contentHash, createdAt, updatedAt FROM knowledge_documents ORDER BY updatedAt DESC'),
     db.getAllAsync<KnowledgeChunk>('SELECT id, documentId, title, content, ordinal, chunkIndex, sentenceStart, sentenceEnd, semanticBoundary, summaryNodeId, parentChunkId, qualityScore, embeddingModelId, embeddingProvider, lastHitAt, createdAt FROM knowledge_chunks ORDER BY createdAt DESC, ordinal ASC'),
   ])
-  return { memories, documents, chunks }
+  return { memories, documents: documents.map(normalizeKnowledgeDocumentRecord), chunks }
 }
 
 export async function importContextSnapshot(snapshot: Partial<ContextSnapshot>): Promise<void> {
@@ -677,6 +687,37 @@ async function disableStaleMemories(db: SQLite.SQLiteDatabase): Promise<void> {
 function normalizeOptionalText(value: string | undefined): string | undefined {
   const text = value?.replace(/\s+/g, ' ').trim()
   return text || undefined
+}
+
+function normalizeKnowledgeDocumentRecord(document: KnowledgeDocument): KnowledgeDocument {
+  return {
+    ...document,
+    error: normalizeOptionalText(document.error),
+    sourceUri: normalizeOptionalText(document.sourceUri),
+    rawPath: normalizeOptionalText(document.rawPath),
+    contentHash: normalizeOptionalText(document.contentHash),
+  }
+}
+
+function normalizeKnowledgeSourceLabel(value: string | undefined): string | undefined {
+  const text = normalizeOptionalText(value)
+  if (!text) return undefined
+  if (/^https?:\/\//i.test(text)) return text
+  if (/^[a-z][a-z0-9+.-]*:\/\//i.test(text)) {
+    return readKnowledgeSourceBasename(text) ?? text
+  }
+  return text
+}
+
+function readKnowledgeSourceBasename(value: string): string | undefined {
+  try {
+    const parsed = new URL(value)
+    const normalizedPath = decodeURIComponent(parsed.pathname.replace(/\/+$/, ''))
+    const segments = normalizedPath.split('/').filter(Boolean)
+    return segments.at(-1) ?? parsed.hostname ?? undefined
+  } catch {
+    return undefined
+  }
 }
 
 function normalizeMemorySourceKind(value: unknown): MemorySourceKind {

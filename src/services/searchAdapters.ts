@@ -1,6 +1,6 @@
 import type { RetrievalSource, SearchProviderId } from '@/types'
 import { useSettingsStore } from '@/store/settingsStore'
-import { getBingCompatibleEndpoint, resolveSearchProvider } from '@/services/searchPolicy'
+import { buildCustomSearchUrl, getBingCompatibleEndpoint, resolveSearchProvider } from '@/services/searchPolicy'
 import { st } from '@/i18n/service'
 
 export interface SearchAdapterResult {
@@ -92,11 +92,8 @@ async function searchBingCompatible(query: string, limit: number): Promise<Retri
 
 async function searchCustomJson(query: string, limit: number): Promise<RetrievalSource[]> {
   const apiKey = await useSettingsStore.getState().getCustomSearchApiKey()
-  const endpoint = useSettingsStore.getState().settings.customSearchEndpoint?.trim()
-  if (!endpoint) return []
-  const url = endpoint
-    .replace(/\{query\}/g, encodeURIComponent(query))
-    .replace(/\{limit\}/g, String(limit))
+  const url = buildCustomSearchUrl(useSettingsStore.getState().settings.customSearchEndpoint, query, limit)
+  if (!url) return []
   const response = await fetch(url, apiKey ? { headers: { Authorization: `Bearer ${apiKey}` } } : undefined)
   if (!response.ok) throw new Error(st('search.customFailedStatus', { status: response.status }))
   const data = await response.json()

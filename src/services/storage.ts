@@ -6,9 +6,21 @@ import { localDataStore } from '@/services/localDataStore'
 import { clearHistoricalInjectedGroupModels, clearHistoricalInjectedProviderModels, hasRemoteProviderModelEvidence } from '@/utils/providerModels'
 import { exportMemoriesAsMem0, importMem0Memories, type Mem0MemoryEnvelope } from '@/utils/mem0Interop'
 import { defaultProviderCredentialMode, defaultProviderTokenPlanRegion, defaultProviderWireProtocol } from '@/services/ai/providerProtocolPolicy'
+import { sanitizeAttachmentsForPersistence } from '@/services/attachmentContract'
+import { clearKnownSearchSecureKeys, deleteSecureApiKey, deleteSecureCredentialGroupKey, setSecureApiKey, setSecureCredentialGroupKey } from '@/services/ai/secureKey'
+import { clearProviderHealthSnapshot } from '@/services/ai/providerHealthStore'
+import { clearAllCompactStates } from '@/services/ai/compact/compactStateStore'
+import { clearCompactUsageRecords } from '@/services/ai/compact/compactUsage'
+import { clearRuntimeLog } from '@/services/runtimeLog'
+import { clearLocalEmbeddingModelState, deleteDownloadedLocalEmbeddingModel, LOCAL_EMBEDDING_MODELS } from '@/services/localEmbeddingModels'
+import { clearStagedApkDownloads } from '@/services/apkInstallCache'
+import { normalizeMcpServerUrl } from '@/services/mcpUrlPolicy'
 import { redactSensitiveText } from '@/services/agent/agentTrace'
 import { sanitizeSkillForBackup } from '@/utils/skillSafety'
 import { sanitizeTraceMetadata } from '@/utils/traceSafety'
+import { sanitizeProviderBaseUrl } from '@/types'
+import { sanitizeSettingsUrlFields } from '@/services/settingsUrlPolicy'
+import { logStorageOperationFailure } from '@/services/runtimeHealthLog'
 import {
   clearLanguagePreferenceSource,
   isLanguagePreferenceSource,
@@ -43,13 +55,14 @@ export interface ExportPayload {
 export type ImportAllDataResult =
   | { ok: true; kind: 'islemind'; conversations: number }
   | { ok: true; kind: 'mem0'; memories: number }
-  | { ok: false; kind: 'invalid' }
+  | { ok: false; kind: 'invalid'; reason?: 'file_too_large' }
 
 export async function loadData<T>(key: keyof typeof KEYS): Promise<T | null> {
   try {
     const raw = await AsyncStorage.getItem(KEYS[key])
     return raw ? JSON.parse(raw) : null
-  } catch {
+  } catch (error) {
+    await logStorageOperationFailure({ operation: 'load', storageKey: key, error })
     return null
   }
 }
@@ -57,26 +70,37 @@ export async function loadData<T>(key: keyof typeof KEYS): Promise<T | null> {
 export async function saveData<T>(key: keyof typeof KEYS, data: T): Promise<void> {
   try {
     await AsyncStorage.setItem(KEYS[key], JSON.stringify(data))
-  } catch {
-    // silently fail
+  } catch (error) {
+    await logStorageOperationFailure({ operation: 'save', storageKey: key, error })
   }
 }
 
 export async function removeData(key: keyof typeof KEYS): Promise<void> {
   try {
     await AsyncStorage.removeItem(KEYS[key])
-  } catch {
-    // silently fail
+  } catch (error) {
+    await logStorageOperationFailure({ operation: 'remove', storageKey: key, error })
   }
 }
 
 export async function clearAllData(): Promise<void> {
   try {
-    await clearLanguagePreferenceSource()
-    await AsyncStorage.multiRemove(Object.values(KEYS))
-    await localDataStore.clearConversations()
-  } catch {
-    // silently fail
+    const providers = await loadData<AIProvider[]>('PROVIDERS')
+    await Promise.all([
+      clearLanguagePreferenceSource(),
+      AsyncStorage.multiRemove([...Object.values(KEYS), '@islemind/provider-health', '@islemind/local-embedding-models']),
+      localDataStore.clearConversations(),
+      clearProviderHealthSnapshot(),
+      clearContextArtifacts(),
+      clearLocalEmbeddingArtifacts(),
+      clearCompactStateArtifacts(),
+      clearStagedApkDownloads(),
+      clearRuntimeLog(),
+      clearImportedProviderSecrets(providers ?? []),
+      clearKnownSearchSecureKeys(),
+    ])
+  } catch (error) {
+    await logStorageOperationFailure({ operation: 'clear', detail: 'clearAllData', error })
   }
 }
 
@@ -93,12 +117,13 @@ export async function exportAllData(): Promise<string> {
   const context = await exportContextSnapshot()
   const conversations = sqliteConversations.length ? sqliteConversations : cachedConversations ?? []
   const exportedAt = Date.now()
+  const normalizedSettings = settings ? sanitizeSettingsUrlFields(settings) : null
   return JSON.stringify(
     {
       app: 'islemind',
       version: 1,
       conversations: conversations.map(normalizeConversation),
-      settings,
+      settings: normalizedSettings,
       languagePreferenceSource,
       providers: (providers ?? []).filter(isProviderLike).map(normalizeProvider),
       skills: (skills ?? []).map(normalizeSkill).filter((skill): skill is SkillDefinition => Boolean(skill)),
@@ -120,15 +145,19 @@ export async function importAllDataDetailed(json: string): Promise<ImportAllData
   try {
     const data = JSON.parse(json)
     if (isExportPayload(data)) {
+      const normalizedProviders = data.providers.map(normalizeProvider)
+      const existingProviders = await loadData<AIProvider[]>('PROVIDERS')
+      await clearRestoreRuntimeArtifacts()
       await saveData('CONVERSATIONS', data.conversations.map(normalizeConversation))
       await localDataStore.saveConversations(data.conversations.map(normalizeConversation))
-      if (data.settings) await saveData('SETTINGS', data.settings)
+      await saveData('SETTINGS', data.settings ? sanitizeSettingsUrlFields(data.settings) : null)
       if (isLanguagePreferenceSource(data.languagePreferenceSource)) await saveLanguagePreferenceSource(data.languagePreferenceSource)
       else await clearLanguagePreferenceSource()
-      await saveData('PROVIDERS', data.providers.map(normalizeProvider))
-      if (Array.isArray(data.skills)) await saveData('SKILLS', data.skills.map(normalizeSkill).filter(Boolean))
-      if (Array.isArray(data.mcpServers)) await saveData('MCP_SERVERS', data.mcpServers.map(normalizeMcpServer).filter(Boolean))
-      if (data.context) await importContextSnapshot(data.context)
+      await persistImportedProviderSecrets(data.providers, existingProviders ?? [])
+      await saveData('PROVIDERS', normalizedProviders)
+      await saveData('SKILLS', Array.isArray(data.skills) ? data.skills.map(normalizeSkill).filter(Boolean) : [])
+      await saveData('MCP_SERVERS', Array.isArray(data.mcpServers) ? data.mcpServers.map(normalizeMcpServer).filter(Boolean) : [])
+      await importContextSnapshot(data.context ?? {})
       return { ok: true, kind: 'islemind', conversations: data.conversations.length }
     }
     if (!isMem0ImportPayload(data)) return { ok: false, kind: 'invalid' }
@@ -136,7 +165,8 @@ export async function importAllDataDetailed(json: string): Promise<ImportAllData
     if (!memories.length) return { ok: false, kind: 'invalid' }
     await importMemoriesForReview(memories)
     return { ok: true, kind: 'mem0', memories: memories.length }
-  } catch {
+  } catch (error) {
+    await logStorageOperationFailure({ operation: 'import', detail: 'importAllDataDetailed', error })
     return { ok: false, kind: 'invalid' }
   }
 }
@@ -218,7 +248,7 @@ function normalizeConversation(conversation: Conversation): Conversation {
       reasoning: normalizeTraces(message.reasoning),
       toolCalls: normalizeTraces(message.toolCalls),
       retrievalTrace: normalizeTraces(message.retrievalTrace),
-      attachments: message.attachments ?? undefined,
+      attachments: sanitizeAttachmentsForPersistence(message.attachments),
       usage: normalizeUsage(message.usage),
       durationMs: finiteNumber(message.durationMs),
       startedAt: finiteNumber(message.startedAt),
@@ -252,6 +282,8 @@ function normalizeSkill(skill: SkillDefinition): SkillDefinition | null {
 function normalizeMcpServer(server: McpServerConfig): McpServerConfig | null {
   if (!server || typeof server !== 'object') return null
   if (typeof server.id !== 'string' || typeof server.name !== 'string' || typeof server.url !== 'string') return null
+  const url = normalizeMcpServerUrl({ id: server.id, url: server.url })
+  if (!url) return null
   const now = Date.now()
   return {
     ...server,
@@ -263,6 +295,7 @@ function normalizeMcpServer(server: McpServerConfig): McpServerConfig | null {
     resources: Array.isArray(server.resources) ? server.resources : [],
     prompts: Array.isArray(server.prompts) ? server.prompts : [],
     approvedToolNames: Array.isArray(server.approvedToolNames) ? server.approvedToolNames.filter((item) => typeof item === 'string') : [],
+    url,
     createdAt: Number.isFinite(server.createdAt) ? server.createdAt : now,
     updatedAt: Number.isFinite(server.updatedAt) ? server.updatedAt : now,
   }
@@ -313,7 +346,7 @@ function normalizeProvider(provider: AIProvider): AIProvider {
     ...provider,
     apiKey: '',
     enabled: provider.enabled ?? false,
-    baseUrl: provider.baseUrl?.trim() || undefined,
+    baseUrl: sanitizeProviderBaseUrl(provider.baseUrl),
     models,
     manualModels,
     modelAliases,
@@ -331,6 +364,77 @@ function normalizeProvider(provider: AIProvider): AIProvider {
     lastTestStatus: provider.lastTestStatus ?? 'idle',
     lastModelSyncStatus: provider.lastModelSyncStatus ?? 'idle',
   }
+}
+
+async function persistImportedProviderSecrets(providers: AIProvider[], existingProviders: AIProvider[]): Promise<void> {
+  const importedIds = new Set(providers.map((provider) => provider.id))
+  const tasks: Promise<void>[] = []
+
+  for (const existing of existingProviders) {
+    if (!importedIds.has(existing.id)) {
+      tasks.push(deleteSecureApiKey(existing.id))
+      for (const group of existing.credentialGroups ?? []) {
+        tasks.push(deleteSecureCredentialGroupKey(existing.id, group.id))
+      }
+    }
+  }
+
+  for (const provider of providers) {
+    const apiKey = typeof provider.apiKey === 'string' ? provider.apiKey.trim() : ''
+    tasks.push(apiKey ? setSecureApiKey(provider.id, apiKey) : deleteSecureApiKey(provider.id))
+
+    const importedGroupIds = new Set<string>()
+    for (const [index, group] of (provider.credentialGroups ?? []).entries()) {
+      const groupId = group.id || `group-${index + 1}`
+      importedGroupIds.add(groupId)
+      const groupKey = typeof group.apiKey === 'string' ? group.apiKey.trim() : ''
+      tasks.push(groupKey ? setSecureCredentialGroupKey(provider.id, groupId, groupKey) : deleteSecureCredentialGroupKey(provider.id, groupId))
+    }
+
+    const previous = existingProviders.find((item) => item.id === provider.id)
+    for (const group of previous?.credentialGroups ?? []) {
+      if (!importedGroupIds.has(group.id)) {
+        tasks.push(deleteSecureCredentialGroupKey(provider.id, group.id))
+      }
+    }
+  }
+
+  await Promise.all(tasks)
+}
+
+async function clearImportedProviderSecrets(providers: AIProvider[]): Promise<void> {
+  const tasks: Promise<void>[] = []
+  for (const provider of providers) {
+    tasks.push(deleteSecureApiKey(provider.id))
+    for (const group of provider.credentialGroups ?? []) {
+      tasks.push(deleteSecureCredentialGroupKey(provider.id, group.id))
+    }
+  }
+  await Promise.all(tasks)
+}
+
+async function clearContextArtifacts(): Promise<void> {
+  await importContextSnapshot({ memories: [], documents: [], chunks: [] })
+}
+
+async function clearLocalEmbeddingArtifacts(): Promise<void> {
+  await Promise.all(LOCAL_EMBEDDING_MODELS.map((model) => deleteDownloadedLocalEmbeddingModel(model.id).catch(() => undefined)))
+  await clearLocalEmbeddingModelState()
+}
+
+async function clearCompactStateArtifacts(): Promise<void> {
+  clearCompactUsageRecords()
+  await clearAllCompactStates()
+}
+
+async function clearRestoreRuntimeArtifacts(): Promise<void> {
+  await Promise.all([
+    clearProviderHealthSnapshot(),
+    clearAllCompactStates(),
+    clearKnownSearchSecureKeys(),
+    clearRuntimeLog(),
+  ])
+  clearCompactUsageRecords()
 }
 
 function normalizeProviderModels(provider: AIProvider): string[] {

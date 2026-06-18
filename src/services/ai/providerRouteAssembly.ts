@@ -2,6 +2,9 @@ import type { AIProvider, Settings } from '@/types'
 import { getProviderEffectiveBaseUrl } from '@/types'
 import type { TransportSelection } from '@/services/ai/transport/transportSelector'
 import { selectUpstreamTransport } from '@/services/ai/transport/transportSelector'
+import { isPerplexityProvider } from '@/services/ai/providerIdentity'
+import { isBedrockMantleProvider, normalizeBedrockMantleBaseUrl } from '@/services/ai/providerAwsBedrockRouting'
+import { isAzureOpenAIProvider, normalizeAzureOpenAIBaseUrl } from '@/services/ai/providerHostedRouting'
 
 export interface ProviderEndpointInput {
   provider: AIProvider
@@ -49,6 +52,7 @@ export function getProviderApiEndpoint(provider: AIProvider): string {
     case 'google':
       return getGoogleGenerateEndpoint(provider, provider.models[0] || 'gemini-2.5-flash', true)
     case 'openai-compatible':
+      if (isPerplexityProvider(provider)) return `${defaultOpenAICompatibleBaseUrl(provider)}/chat/completions`
       return `${normalizeProviderBaseUrl(defaultOpenAICompatibleBaseUrl(provider))}/chat/completions`
     case 'xiaomi-mimo':
       return provider.wireProtocol === 'anthropic-compatible'
@@ -73,6 +77,9 @@ export function isOpenAICompatibleProvider(provider: AIProvider): boolean {
 export function defaultOpenAICompatibleBaseUrl(provider: AIProvider): string {
   const baseUrl = getProviderEffectiveBaseUrl(provider)
   if (!isOpenAICompatibleProvider(provider)) return baseUrl
+  if (isPerplexityProvider(provider)) return normalizePerplexityOpenAIBaseUrl(baseUrl)
+  if (isAzureOpenAIProvider(provider)) return normalizeAzureOpenAIBaseUrl(provider.baseUrl?.trim() ?? '')
+  if (isBedrockMantleProvider(provider)) return normalizeBedrockMantleBaseUrl(provider.baseUrl?.trim() ?? '')
   try {
     const parsed = new URL(baseUrl)
     const path = parsed.pathname.replace(/\/+$/, '')
@@ -84,6 +91,11 @@ export function defaultOpenAICompatibleBaseUrl(provider: AIProvider): string {
     // The caller surfaces the network error for invalid user-entered endpoints.
   }
   return baseUrl
+}
+
+function normalizePerplexityOpenAIBaseUrl(baseUrl: string): string {
+  const normalized = normalizeProviderBaseUrl(baseUrl)
+  return normalized.replace(/\/v1$/i, '').replace(/\/chat\/completions$/i, '')
 }
 
 export function getXiaomiMimoAnthropicMessagesEndpoint(provider: AIProvider): string {

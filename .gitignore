@@ -63,7 +63,6 @@ CLAUDE.md
 docs/
 !docs/
 docs/*
-!docs/production-qa-matrix.md
 !docs/README.md
 !docs/agentic-capability-boundary.md
 !docs/agentic-workflow-roadmap.md

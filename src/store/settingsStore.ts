@@ -1,5 +1,5 @@
 import { create } from 'zustand'
-import { getModelConfig, getProviderConfigIssue, XIAOMI_MIMO_PAYG_BASE_URL, getXiaomiMimoOfficialBaseUrl } from '@/types'
+import { getModelConfig, getProviderConfigIssue, XIAOMI_MIMO_PAYG_BASE_URL, getXiaomiMimoOfficialBaseUrl, sanitizeProviderBaseUrl } from '@/types'
 import type { Settings, AIProvider, Language, ProviderCredentialGroup, ThemeId, ThemeMode } from '@/types'
 import { loadData, saveData } from '@/services/storage'
 import { deleteSecureItem, getSecureItem, setSecureItem } from '@/services/secureStorage'
@@ -12,6 +12,9 @@ import { st } from '@/i18n/service'
 import { getSystemLanguage, setServiceLanguage } from '@/i18n/service'
 import { clearLanguagePreferenceSource, loadLanguagePreferenceSource, resolveEffectiveLanguage, saveLanguagePreferenceSource } from '@/i18n/languagePreference'
 import { normalizeThemeId } from '@/theme/colors'
+import { sanitizeSettingsUrlFields } from '@/services/settingsUrlPolicy'
+import { removeProviderHealthRecordsByProviderId, clearProviderHealthSnapshot } from '@/services/ai/providerHealthStore'
+import { invalidateAllCompactStates, invalidateCompactStatesByProvider } from '@/services/ai/compact/compactStateStore'
 
 interface SettingsState {
   settings: Settings
@@ -28,6 +31,7 @@ interface SettingsState {
   updateProviders: (ids: string[], updates: Partial<AIProvider>) => Promise<void>
   reorderProviders: (providerIds: string[]) => void
   removeProvider: (id: string) => Promise<void>
+  clearAllProviders: () => Promise<void>
   setProviderApiKey: (id: string, apiKey: string) => Promise<void>
   getSecureApiKey: (id: string) => Promise<string | null>
   setProviderCredentialGroupKey: (providerId: string, groupId: string, apiKey: string) => Promise<void>
@@ -49,13 +53,12 @@ interface SettingsState {
 
 const defaultSettings: Settings = {
   theme: 'system',
-  themeId: 'island',
+  themeId: 'minimal',
   language: 'zh-CN',
   defaultProvider: null,
   fontSize: 16,
   hapticsEnabled: true,
   systemStatusNotificationsEnabled: false,
-  pageTransitionStyle: 'state',
   defaultTemperature: 0.3,
   defaultMaxTokens: undefined,
   memoryEnabled: true,
@@ -95,6 +98,7 @@ const defaultSettings: Settings = {
   transportMode: 'auto',
   remoteCompactMode: 'off',
   remoteCompactThreshold: 0.8,
+  remoteCompactThresholdTokens: 200000,
   payloadPolicyMode: 'warn',
   proxyMode: 'off',
   proxyBaseUrl: '',
@@ -172,23 +176,25 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
       loadData<AIProvider[]>('PROVIDERS'),
       loadLanguagePreferenceSource(),
     ])
-    const rawSettings = settings ? { ...defaultSettings, ...settings } : defaultSettings
+    const storedSettings = stripLegacySettingsFields(settings ? { ...defaultSettings, ...settings } : defaultSettings)
+    const rawSettings = sanitizeSettingsUrlFields(storedSettings)
     const effectiveLanguage = resolveEffectiveLanguage(rawSettings.language, languageSource, getSystemLanguage())
     const resolvedSearchProvider = resolveSearchProvider(rawSettings)
     const resetCatalog = (rawSettings.providerCatalogVersion ?? PROVIDER_CATALOG_VERSION) < PROVIDER_CATALOG_VERSION
     if (resetCatalog) {
       await clearProviderCatalogSecrets(providers ?? [])
     }
-    const mergedSettings = {
+    const normalizedThemeId = normalizeThemeId(rawSettings.themeId)
+    const mergedSettings = sanitizeSettingsUrlFields({
       ...rawSettings,
       language: effectiveLanguage,
-      themeId: normalizeThemeId(rawSettings.themeId),
+      themeId: normalizedThemeId,
       providerCatalogVersion: PROVIDER_CATALOG_VERSION,
       defaultProvider: resetCatalog ? null : rawSettings.defaultProvider,
       searchProvider: resolvedSearchProvider,
       webSearchMode: legacySearchModeForProvider(resolvedSearchProvider),
       webSearchEnabled: resolvedSearchProvider !== 'off',
-    }
+    })
     const mergedProviders = resetCatalog ? [] : mergeProviders(providers ?? [])
     const defaultProvider = mergedProviders.some((provider) => provider.id === mergedSettings.defaultProvider)
       ? mergedSettings.defaultProvider
@@ -198,8 +204,12 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
       providers: mergedProviders,
     })
     setServiceLanguage(effectiveLanguage)
+    const themeIdMigrated = rawSettings.themeId !== normalizedThemeId
+    const settingsUrlMigrated = rawSettings !== storedSettings
+    if (resetCatalog || themeIdMigrated || settingsUrlMigrated) {
+      saveData('SETTINGS', { ...mergedSettings, defaultProvider: resetCatalog ? null : defaultProvider })
+    }
     if (resetCatalog) {
-      saveData('SETTINGS', { ...mergedSettings, defaultProvider: null })
       saveData('PROVIDERS', [])
     }
   },
@@ -213,14 +223,14 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
           : draft.searchProvider
       )
       const nextSearchProvider = updates.webSearchEnabled === true && resolved === 'off' ? 'native' : resolved
-      const updated = nextSearchProvider
+      const updated = sanitizeSettingsUrlFields(nextSearchProvider
         ? {
             ...draft,
             searchProvider: nextSearchProvider,
             webSearchMode: legacySearchModeForProvider(nextSearchProvider),
             webSearchEnabled: nextSearchProvider !== 'off',
           }
-        : draft
+        : draft)
       saveData('SETTINGS', updated)
       return { settings: updated }
     })
@@ -290,7 +300,7 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
       const existingIds = new Set(normalized.map((provider) => provider.id))
       const updated = [...normalized, ...state.providers.filter((provider) => !existingIds.has(provider.id))]
       const defaultProvider = state.settings.defaultProvider ?? normalized[0]?.id ?? null
-      const settings = { ...state.settings, defaultProvider }
+      const settings = sanitizeSettingsUrlFields({ ...state.settings, defaultProvider })
       saveData('PROVIDERS', updated)
       saveData('SETTINGS', settings)
       return { providers: updated, settings }
@@ -320,19 +330,40 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
   removeProvider: async (id: string) => {
     await deleteSecureItem(secureProviderKey(id))
     const provider = get().providers.find((item) => item.id === id)
-    await Promise.all((provider?.credentialGroups ?? []).map((group) => deleteSecureItem(secureProviderGroupKey(id, group.id))))
+    await Promise.all([
+      ...(provider?.credentialGroups ?? []).map((group) => deleteSecureItem(secureProviderGroupKey(id, group.id))),
+      removeProviderHealthRecordsByProviderId(id),
+      invalidateCompactStatesByProvider(id, 'provider_removed'),
+    ])
     set((state) => {
       const updated = state.providers.filter((p) => p.id !== id)
       const defaultProvider = updated.some((item) => item.id === state.settings.defaultProvider)
         ? state.settings.defaultProvider
         : updated[0]?.id ?? null
-      const settings = defaultProvider === state.settings.defaultProvider
+      const settings = sanitizeSettingsUrlFields(defaultProvider === state.settings.defaultProvider
         ? state.settings
-        : { ...state.settings, defaultProvider }
+        : { ...state.settings, defaultProvider })
       saveData('PROVIDERS', updated)
       saveData('SETTINGS', settings)
       return {
         providers: updated,
+        settings,
+      }
+    })
+  },
+
+  clearAllProviders: async () => {
+    const allProviders = get().providers
+    await Promise.all(allProviders.map(async (provider) => {
+      await deleteSecureItem(secureProviderKey(provider.id))
+      await Promise.all((provider.credentialGroups ?? []).map((group) => deleteSecureItem(secureProviderGroupKey(provider.id, group.id))))
+    }).concat([clearProviderRuntimeState()]))
+    set((state) => {
+      const settings = sanitizeSettingsUrlFields({ ...state.settings, defaultProvider: null })
+      saveData('PROVIDERS', [])
+      saveData('SETTINGS', settings)
+      return {
+        providers: [],
         settings,
       }
     })
@@ -437,7 +468,7 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
 
   clearAll: async () => {
     const resetLanguage = resolveEffectiveLanguage(undefined, 'system', getSystemLanguage())
-    const resetSettings = { ...defaultSettings, language: resetLanguage, defaultProvider: null, onboardingCompleted: false, providerCatalogVersion: PROVIDER_CATALOG_VERSION }
+    const resetSettings = sanitizeSettingsUrlFields({ ...defaultSettings, language: resetLanguage, defaultProvider: null, onboardingCompleted: false, providerCatalogVersion: PROVIDER_CATALOG_VERSION })
     const providers = get().providers
     const providerIds = new Set([...LEGACY_DEFAULT_PROVIDER_IDS, ...providers.map((provider) => provider.id)])
     await Promise.all([
@@ -447,6 +478,7 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
       deleteSecureItem(BING_SEARCH_KEY),
       deleteSecureItem(CUSTOM_SEARCH_KEY),
       ...providers.flatMap((provider) => (provider.credentialGroups ?? []).map((group) => deleteSecureItem(secureProviderGroupKey(provider.id, group.id)))),
+      clearProviderRuntimeState(),
       clearLanguagePreferenceSource(),
     ])
     setServiceLanguage(resetLanguage)
@@ -459,6 +491,14 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
 
 function mergeProviders(saved: AIProvider[]): AIProvider[] {
   return saved.map((provider) => normalizeProvider({ ...provider, apiKey: '' } as AIProvider))
+}
+
+function stripLegacySettingsFields(settings: Settings): Settings {
+  const currentSettings: Settings & Partial<Record<string, unknown>> = { ...settings }
+  for (const key of ['page' + 'TransitionStyle']) {
+    delete currentSettings[key]
+  }
+  return currentSettings
 }
 
 function normalizeProvider(provider: AIProvider): AIProvider {
@@ -498,7 +538,7 @@ function normalizeProvider(provider: AIProvider): AIProvider {
 }
 
 function normalizeProviderBaseUrl(provider: AIProvider): string | undefined {
-  const baseUrl = provider.baseUrl?.trim()
+  const baseUrl = sanitizeProviderBaseUrl(provider.baseUrl)
   if (provider.type !== 'xiaomi-mimo') return baseUrl || undefined
 
   const credentialMode = provider.credentialMode ?? 'token-plan'
@@ -532,6 +572,13 @@ async function clearProviderCatalogSecrets(providers: AIProvider[]): Promise<voi
   await Promise.all([
     ...Array.from(ids).map((id) => deleteSecureItem(secureProviderKey(id))),
     ...providers.flatMap((provider) => (provider.credentialGroups ?? []).map((group) => deleteSecureItem(secureProviderGroupKey(provider.id, group.id)))),
+  ])
+}
+
+async function clearProviderRuntimeState(): Promise<void> {
+  await Promise.all([
+    clearProviderHealthSnapshot(),
+    invalidateAllCompactStates('providers_cleared'),
   ])
 }
 

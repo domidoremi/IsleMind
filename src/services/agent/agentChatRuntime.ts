@@ -29,15 +29,25 @@ import { decideAgenticChatEntry, type AgenticChatEntryInput, type AgenticChatEnt
 import { buildAgentAssistantMessagePatch, resolveAgentAssistantMessagePatch } from '@/services/agent/agentMessageAdapter'
 import { createAgentRagRuntime } from '@/services/agent/agentRagRuntime'
 import { clampAgentOutput, createAgentTrace, redactSensitiveText } from '@/services/agent/agentTrace'
-import { listAgentToolManifests } from '@/services/agent/agentToolRegistry'
+import { listAgentToolManifests, listStaticAgentToolManifests } from '@/services/agent/agentToolRegistry'
 import { validateAgentWorkflowDefinition } from '@/services/agent/agentWorkflowDefinitions'
 import {
   extractAgentWorkflowDefinitionsFromSkillSnapshot,
   listBlockedAgentWorkflowStatesForSkillSnapshot,
   listEnabledAgentWorkflowIdsForSkillSnapshot,
-  selectAgentWorkflowDefinitionFromSkillSnapshot,
   type AgentWorkflowRuntimeBlockState,
 } from '@/services/agent/agentWorkflowSkills'
+import {
+  ANDROID_ALARM_WORKFLOW_ID,
+  ANDROID_APK_INSTALL_WORKFLOW_ID,
+  ANDROID_APP_CACHE_CLEANUP_WORKFLOW_ID,
+  ANDROID_CALENDAR_TODO_WORKFLOW_ID,
+  ANDROID_DOWNLOAD_ORGANIZE_WORKFLOW_ID,
+  ANDROID_FILE_COPY_RENAME_WORKFLOW_ID,
+  ANDROID_NOTIFICATION_SETTINGS_WORKFLOW_ID,
+  listAndroidBuiltInWorkflowDefinitions,
+} from '@/services/agent/agentAndroidWorkflows'
+import { inferAndroidWorkflowId } from '@/services/agent/agentIntentClassifier'
 import { createRagQueryPlan } from '@/services/rag'
 
 export interface AgentRetrievedContext {
@@ -111,13 +121,14 @@ export function decideAgentRuntimeAssistantMessage(input: AgentChatRuntimeInput)
   }
 
   const ragRuntime = input.ragRuntime ?? createRuntimeRagAdapter(input)
+  const manifests = input.manifests ?? (hasBuiltInRuntimeWorkflowCandidate(input.content) ? listStaticAgentToolManifests() : undefined)
   const blockedWorkflowStates = input.blockedAgentWorkflowStates
   const enabledWorkflowIds = filterBlockedWorkflowIds(input.enabledAgentWorkflowIds, blockedWorkflowStates)
-  const workflowSelection = !input.explicitToolRequest && input.manifests
+  const workflowSelection = !input.explicitToolRequest && manifests
     ? selectRuntimeWorkflowDefinition({
         snapshot: input.conversation.skillSnapshot,
         content: input.content,
-        manifests: input.manifests,
+        manifests,
         enabledWorkflowIds,
         blockedWorkflowStates,
         now: input.now,
@@ -148,7 +159,7 @@ export function decideAgentRuntimeAssistantMessage(input: AgentChatRuntimeInput)
     requestedOutput: input.requestedOutput,
     workflowDefinition: workflowSelection?.workflow,
     ragRuntime,
-    manifests: input.manifests,
+    manifests,
     limits: input.limits,
     intentVisible: input.intentVisible,
     userConfirmed: input.userConfirmed,
@@ -172,7 +183,8 @@ export async function resolveAgentRuntimeAssistantMessage(
 
   const ragRuntime = input.ragRuntime ?? createRuntimeRagAdapter(input)
   const hasWorkflowDefinitions = hasAgentWorkflowDefinitions(input.conversation)
-  const initialManifests = input.manifests ?? (hasWorkflowDefinitions
+  const hasBuiltInWorkflowCandidate = hasBuiltInRuntimeWorkflowCandidate(input.content)
+  const initialManifests = input.manifests ?? (hasWorkflowDefinitions || hasBuiltInWorkflowCandidate
     ? await listAgentToolManifests()
     : undefined)
   const blockedWorkflowStates = input.blockedAgentWorkflowStates ?? (hasWorkflowDefinitions
@@ -323,19 +335,23 @@ function selectRuntimeWorkflowDefinition(input: {
   blockedWorkflowStates?: AgentWorkflowRuntimeBlockState[]
   now?: number
 }): RuntimeWorkflowSelection {
-  const selection = selectAgentWorkflowDefinitionFromSkillSnapshot(input.snapshot, input.content, input.manifests, {
+  const workflowCandidates = [
+    ...extractAgentWorkflowDefinitionsFromSkillSnapshot(input.snapshot),
+    ...listBuiltInRuntimeWorkflowCandidates(input.content, input.now),
+  ]
+  const selection = selectAgentWorkflowDefinitionFromCandidates(workflowCandidates, input.content, input.manifests, {
     enabledWorkflowIds: input.enabledWorkflowIds,
   })
   if (selection) return { workflow: selection.workflow }
   const disabledTrace = buildDisabledSelectedWorkflowTrace(
-    input.snapshot,
+    workflowCandidates,
     input.enabledWorkflowIds,
     input.blockedWorkflowStates,
     input.now
   )
   if (disabledTrace) return { disabledTrace }
   return {
-    ambiguousTrace: buildAmbiguousSelectedWorkflowTrace(input.snapshot, input.manifests, input.enabledWorkflowIds, input.now),
+    ambiguousTrace: buildAmbiguousSelectedWorkflowTrace(workflowCandidates, input.manifests, input.enabledWorkflowIds, input.now),
   }
 }
 
@@ -350,15 +366,15 @@ function filterBlockedWorkflowIds(
 }
 
 function buildDisabledSelectedWorkflowTrace(
-  snapshot: Conversation['skillSnapshot'],
+  workflows: AgentWorkflowDefinition[],
   enabledWorkflowIds: string[] | undefined,
   blockedWorkflowStates: AgentWorkflowRuntimeBlockState[] | undefined,
   now = Date.now()
 ): ProcessTrace | undefined {
-  const workflows = extractAgentWorkflowDefinitionsFromSkillSnapshot(snapshot)
   if (workflows.length !== 1) return undefined
   const [workflow] = workflows
   if (!workflow) return undefined
+  if (isBuiltInRuntimeWorkflowId(workflow.id)) return undefined
   const blockedState = blockedWorkflowStates?.find((state) => state.workflowId === workflow.id)
   if (!blockedState && (!enabledWorkflowIds || enabledWorkflowIds.includes(workflow.id))) return undefined
   const reason = blockedState?.reason ?? 'workflow-disabled'
@@ -408,20 +424,20 @@ function formatBlockedWorkflowNextStep(reason: AgentWorkflowRuntimeBlockState['r
 }
 
 function buildAmbiguousSelectedWorkflowTrace(
-  snapshot: Conversation['skillSnapshot'],
+  workflows: AgentWorkflowDefinition[],
   manifests: AgentToolManifest[],
   enabledWorkflowIds: string[] | undefined,
   now = Date.now()
 ): ProcessTrace | undefined {
   const enabledWorkflowIdSet = enabledWorkflowIds ? new Set(enabledWorkflowIds) : undefined
-  const workflows = extractAgentWorkflowDefinitionsFromSkillSnapshot(snapshot)
+  const validWorkflows = workflows
     .map((workflow) => validateAgentWorkflowDefinition(workflow, manifests))
     .filter((validation) => validation.ok && validation.sanitized?.enabled)
     .map((validation) => validation.sanitized!)
-    .filter((workflow) => !enabledWorkflowIdSet || enabledWorkflowIdSet.has(workflow.id))
+    .filter((workflow) => !enabledWorkflowIdSet || enabledWorkflowIdSet.has(workflow.id) || isBuiltInRuntimeWorkflowId(workflow.id))
 
-  if (workflows.length <= 1) return undefined
-  const workflowNames = workflows
+  if (validWorkflows.length <= 1) return undefined
+  const workflowNames = validWorkflows
     .map((workflow) => safeRuntimeWorkflowText(workflow.name, 'Agent workflow', WORKFLOW_SKIP_NAME_LIMIT))
     .slice(0, WORKFLOW_SKIP_NAME_LIST_LIMIT)
   return createAgentTrace({
@@ -438,12 +454,70 @@ function buildAmbiguousSelectedWorkflowTrace(
     completedAt: now,
     metadata: {
       reason: 'workflow-selection-ambiguous',
-      workflowCount: workflows.length,
-      workflowIds: workflows.map((workflow) => workflow.id),
+      workflowCount: validWorkflows.length,
+      workflowIds: validWorkflows.map((workflow) => workflow.id),
       workflowNames,
       failureNextStep: 'Name one workflow in the request or disable extra selected workflows before running again.',
     },
   })
+}
+
+function listBuiltInRuntimeWorkflowCandidates(content: string, now?: number): AgentWorkflowDefinition[] {
+  const workflowId = inferAndroidWorkflowId(content)
+  if (!workflowId) return []
+  return listAndroidBuiltInWorkflowDefinitions({ now }).filter((workflow) => workflow.id === workflowId)
+}
+
+function selectAgentWorkflowDefinitionFromCandidates(
+  workflows: AgentWorkflowDefinition[],
+  content: string,
+  manifests: AgentToolManifest[],
+  options: { enabledWorkflowIds?: string[] } = {}
+): { workflow: AgentWorkflowDefinition } | undefined {
+  const enabledWorkflowIdSet = options.enabledWorkflowIds ? new Set(options.enabledWorkflowIds) : undefined
+  const valid = workflows
+    .map((workflow) => ({ workflow, validation: validateAgentWorkflowDefinition(workflow, manifests) }))
+    .filter((item) => item.validation.ok && item.validation.sanitized?.enabled)
+    .filter((item) => !enabledWorkflowIdSet || enabledWorkflowIdSet.has(item.validation.sanitized!.id) || isBuiltInRuntimeWorkflowId(item.validation.sanitized!.id))
+    .map((item) => item.validation.sanitized!)
+
+  if (valid.length === 1) return { workflow: valid[0] }
+
+  const matched = valid.filter((workflow) => runtimeWorkflowMatchesContent(workflow, content))
+  if (matched.length === 1) return { workflow: matched[0] }
+
+  return undefined
+}
+
+function runtimeWorkflowMatchesContent(workflow: AgentWorkflowDefinition, content: string): boolean {
+  const normalizedContent = normalizeRuntimeWorkflowMatchText(content)
+  if (!normalizedContent) return false
+  const candidates = [
+    workflow.name,
+    workflow.id,
+    ...workflow.triggerHints,
+  ]
+    .map(normalizeRuntimeWorkflowMatchText)
+    .filter((value) => value.length >= 2)
+  return candidates.some((candidate) => normalizedContent.includes(candidate))
+}
+
+function normalizeRuntimeWorkflowMatchText(value: string): string {
+  return value.toLocaleLowerCase().replace(/\s+/g, ' ').trim()
+}
+
+function hasBuiltInRuntimeWorkflowCandidate(content: string): boolean {
+  return Boolean(inferAndroidWorkflowId(content))
+}
+
+function isBuiltInRuntimeWorkflowId(workflowId: string): boolean {
+  return workflowId === ANDROID_DOWNLOAD_ORGANIZE_WORKFLOW_ID ||
+    workflowId === ANDROID_FILE_COPY_RENAME_WORKFLOW_ID ||
+    workflowId === ANDROID_APK_INSTALL_WORKFLOW_ID ||
+    workflowId === ANDROID_APP_CACHE_CLEANUP_WORKFLOW_ID ||
+    workflowId === ANDROID_ALARM_WORKFLOW_ID ||
+    workflowId === ANDROID_CALENDAR_TODO_WORKFLOW_ID ||
+    workflowId === ANDROID_NOTIFICATION_SETTINGS_WORKFLOW_ID
 }
 
 function createRuntimeRagAdapter(input: AgentChatRuntimeInput): AgentRagRuntime | undefined {

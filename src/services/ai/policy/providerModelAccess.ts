@@ -63,6 +63,20 @@ export function resolveProviderModelAliasAccess(input: ProviderModelAliasAccessI
   return mergeProviderAliasAccess(direct, upstream)
 }
 
+export function mergeRuntimeAliasAccessPolicy(requested: AccessPolicyDecision, upstream: AccessPolicyDecision): AccessPolicyDecision {
+  if (!requested.allowed && requested.reason !== 'model_not_allowed') return requested
+  if (!upstream.allowed && upstream.reason !== 'model_not_allowed') return upstream
+  if (requested.allowed || upstream.allowed) {
+    return {
+      allowed: true,
+      providerId: requested.providerId,
+      model: requested.model,
+      matchedRules: [...requested.matchedRules, ...upstream.matchedRules],
+    }
+  }
+  return upstream
+}
+
 export function getPolicyAllowedProviderModels(provider: AIProvider, settings?: ProviderModelAccessInput['settings']): string[] {
   return getProviderSelectableModels(provider).filter((model) =>
     resolveProviderModelAliasAccess({ provider, model, settings }).allowed

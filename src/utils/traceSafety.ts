@@ -1,6 +1,7 @@
 import type { ProcessTrace } from '@/types'
 
 const SECRET_PATTERNS: RegExp[] = [
+  /\b(?:proxy-)?authorization\s*[:=]\s*["']?(?:Bearer|Basic)\s+[A-Za-z0-9._~+/=-]{8,}["']?(?=$|[^A-Za-z0-9._~+/=-])/gi,
   /(api[_-]?key|authorization|bearer|password|secret|token)\s*[:=]\s*["']?[^"'\s,}]+/gi,
   /\b(sk|tp)-[A-Za-z0-9_-]{8,}\b/g,
   /\bBearer\s+[A-Za-z0-9._-]{8,}\b/gi,

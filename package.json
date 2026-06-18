@@ -56,6 +56,7 @@
     "test:ui-naming": "node scripts/ui-naming-audit.js",
     "test:theme-system:audit": "node scripts/theme-system-audit.js",
     "test:theme-system:source": "node scripts/verify-theme-web-render.js --source-only",
+    "test:theme-contrast": "bun scripts/theme-contrast-selftest.js",
     "test:theme-system:qa": "node scripts/qa-coverage-audit.js --self-test=theme-system",
     "theme:sync-global-css": "node scripts/verify-theme-web-render.js --sync-global-css",
     "theme:sync-release-gate-row": "node scripts/theme-release-gate-specs.js --sync-matrix-row",
@@ -63,6 +64,7 @@
     "test:theme-system": "bun run test:theme-system:source && bun run test:theme-system:audit && bun run test:theme-system:qa"
   },
   "dependencies": {
+    "@expo/vector-icons": "15.1.1",
     "@react-native-async-storage/async-storage": "2.2.0",
     "@shopify/flash-list": "2.0.2",
     "expo": "~54.0.35",

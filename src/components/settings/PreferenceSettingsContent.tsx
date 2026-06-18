@@ -1,10 +1,9 @@
 import { View, useWindowDimensions } from 'react-native'
-import { Command, Moon, Network, ShieldCheck, Sparkles, Sun } from 'lucide-react-native'
 import { useTranslation } from 'react-i18next'
+import { AppIcon } from '@/components/ui/AppIcon'
 import { IsleField, IsleSection, IsleToggle } from '@/components/ui/isle'
 import { useAppTheme } from '@/hooks/useAppTheme'
 import { useSettingsStore } from '@/store/settingsStore'
-import { PageTransitionSetting } from './PageTransitionSetting'
 
 export function PreferenceSettingsContent() {
   const { colors } = useAppTheme()
@@ -62,28 +61,27 @@ export function PreferenceSettingsContent() {
       </IsleSection>
 
       <IsleToggle
-        icon={settings.hapticsEnabled ? <Sun color={colors.text} size={18} /> : <Moon color={colors.text} size={18} />}
+        icon={settings.hapticsEnabled ? <AppIcon name="sun" color={colors.text} size={18} /> : <AppIcon name="moon" color={colors.text} size={18} />}
         title={t('settings.haptics')}
         active={settings.hapticsEnabled}
         onPress={() => updateSettings({ hapticsEnabled: !settings.hapticsEnabled })}
       />
       <IsleSection title={t('preferences.interaction')} style={{ marginTop: 12 }}>
         <View style={{ gap: 10 }}>
-          <PageTransitionSetting />
           <IsleToggle
-            icon={<Command color={colors.text} size={18} />}
+            icon={<AppIcon name="command" color={colors.text} size={18} />}
             title={t('preferences.commandPalette')}
             active={settings.commandPaletteEnabled ?? true}
             onPress={() => updateSettings({ commandPaletteEnabled: !(settings.commandPaletteEnabled ?? true) })}
           />
           <IsleToggle
-            icon={<Sparkles color={colors.text} size={18} />}
+            icon={<AppIcon name="spark" color={colors.text} size={18} />}
             title={t('settings.skills')}
             active={settings.skillsEnabled ?? true}
             onPress={() => updateSettings({ skillsEnabled: !(settings.skillsEnabled ?? true) })}
           />
           <IsleToggle
-            icon={<Network color={colors.text} size={18} />}
+            icon={<AppIcon name="network" color={colors.text} size={18} />}
             title={t('settings.mcp')}
             active={settings.mcpEnabled ?? true}
             onPress={() => updateSettings({ mcpEnabled: !(settings.mcpEnabled ?? true) })}
@@ -125,21 +123,21 @@ export function PreferenceSettingsContent() {
         />
         <View style={{ gap: 10, marginTop: 12 }}>
           <IsleToggle
-            icon={<ShieldCheck color={colors.text} size={18} />}
+            icon={<AppIcon name="shield" color={colors.text} size={18} />}
             title={t('preferences.agentWorkflowReadOnlyTools')}
             description={t('preferences.agentWorkflowReadOnlyToolsDescription')}
             active={settings.agentWorkflowAllowReadOnlyTools ?? true}
             onPress={() => updateSettings({ agentWorkflowAllowReadOnlyTools: !(settings.agentWorkflowAllowReadOnlyTools ?? true) })}
           />
           <IsleToggle
-            icon={<ShieldCheck color={colors.text} size={18} />}
+            icon={<AppIcon name="shield" color={colors.text} size={18} />}
             title={t('preferences.agentWorkflowVisibleWrites')}
             description={t('preferences.agentWorkflowVisibleWritesDescription')}
             active={(settings.agentWorkflowAllowReadWriteTools ?? 'visible') !== false}
             onPress={() => updateSettings({ agentWorkflowAllowReadWriteTools: (settings.agentWorkflowAllowReadWriteTools ?? 'visible') === false ? 'visible' : false })}
           />
           <IsleToggle
-            icon={<ShieldCheck color={colors.text} size={18} />}
+            icon={<AppIcon name="shield" color={colors.text} size={18} />}
             title={t('preferences.agentWorkflowDestructiveConfirm')}
             description={t('preferences.agentWorkflowDestructiveConfirmDescription')}
             active={(settings.agentWorkflowAllowDestructiveTools ?? 'confirm') === 'confirm'}

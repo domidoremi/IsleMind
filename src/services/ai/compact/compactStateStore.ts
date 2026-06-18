@@ -126,3 +126,8 @@ export async function invalidateAllCompactStates(reason = 'all_invalidated'): Pr
     Date.now()
   )
 }
+
+export async function clearAllCompactStates(): Promise<void> {
+  const db = await getDb()
+  await db.runAsync('DELETE FROM compact_states')
+}

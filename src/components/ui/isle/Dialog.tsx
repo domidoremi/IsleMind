@@ -1,13 +1,13 @@
 import type { ReactNode } from 'react'
-import { createContext, useCallback, useContext, useMemo, useRef, useState } from 'react'
-import { Modal, Pressable, Text, View, useWindowDimensions } from 'react-native'
-import { AlertTriangle, Check, Info, X } from 'lucide-react-native'
+import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react'
+import { Modal, Pressable, StyleSheet, Text, View, useWindowDimensions } from 'react-native'
 import { MotiView } from 'moti'
 import { useTranslation } from 'react-i18next'
 import { useSafeAreaInsets } from 'react-native-safe-area-context'
 import { StatusBar } from 'expo-status-bar'
 import { IsleButton } from './Controls'
 import { IslePanel } from './Panel'
+import { AppIcon, appIconStroke } from '@/components/ui/AppIcon'
 import { useAppTheme } from '@/hooks/useAppTheme'
 
 type DialogTone = 'default' | 'mint' | 'amber' | 'danger'
@@ -68,8 +68,17 @@ interface IsleDialogApi {
 }
 
 const IsleDialogContext = createContext<IsleDialogApi | null>(null)
+const fallbackDialogApi: IsleDialogApi = {
+  confirm: async () => false,
+  notice: () => {},
+  toast: () => {},
+}
 
-export function IsleDialogProvider({ children }: { children: ReactNode }) {
+function dialogBorderWidth(colors: ReturnType<typeof useAppTheme>['colors']) {
+  return colors.ui.cartoon ? 1 : StyleSheet.hairlineWidth
+}
+
+export function IsleDialogProvider({ children, updateNotice }: { children: ReactNode; updateNotice?: string | null }) {
   const { colors } = useAppTheme()
   const { t } = useTranslation()
   const insets = useSafeAreaInsets()
@@ -82,6 +91,7 @@ export function IsleDialogProvider({ children }: { children: ReactNode }) {
   const [toast, setToast] = useState<ToastState | null>(null)
   const idRef = useRef(0)
   const toastTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const lastUpdateNotice = useRef<string | null>(null)
 
   const closeDialog = useCallback((value: boolean) => {
     setDialog((current) => {
@@ -107,6 +117,12 @@ export function IsleDialogProvider({ children }: { children: ReactNode }) {
       }, options.durationMs ?? 2400)
     },
   }), [])
+
+  useEffect(() => {
+    if (!updateNotice || lastUpdateNotice.current === updateNotice) return
+    lastUpdateNotice.current = updateNotice
+    api.toast({ title: t('app.newVersion'), message: updateNotice, tone: 'amber', durationMs: 4200 })
+  }, [api, t, updateNotice])
 
   return (
     <IsleDialogContext.Provider value={api}>
@@ -154,7 +170,7 @@ export function IsleDialogProvider({ children }: { children: ReactNode }) {
                   </View>
                   <IsleButton
                     label={t('dialog.close')}
-                    icon={<X color={colors.textTertiary} size={18} strokeWidth={2.2} />}
+                    icon={<AppIcon name="close" color={colors.textTertiary} size={18} strokeWidth={appIconStroke.strong} />}
                     onPress={() => closeDialog(false)}
                     style={{ width: 44, height: 44, minHeight: 44, borderRadius: colors.ui.radius.controlMiddle, paddingHorizontal: 0 }}
                     textStyle={{ display: 'none' }}
@@ -237,23 +253,35 @@ export function IsleDialogProvider({ children }: { children: ReactNode }) {
 
 export function useIsleDialog(): IsleDialogApi {
   const context = useContext(IsleDialogContext)
-  if (!context) {
-    throw new Error('useIsleDialog must be used inside IsleDialogProvider')
-  }
-  return context
+  return context ?? fallbackDialogApi
 }
 
 function ToneBadge({ tone, small = false }: { tone: DialogTone; small?: boolean }) {
   const { colors } = useAppTheme()
   const size = small ? 28 : 42
   const toneToken = dialogToneToken(colors, tone === 'default' ? 'info' : tone)
+  const borderWidth = dialogBorderWidth(colors)
   return (
-    <View style={{ width: size, height: size, borderRadius: size / 2, alignItems: 'center', justifyContent: 'center', backgroundColor: toneToken.background, borderWidth: 1, borderColor: toneToken.border }}>
+    <View style={{
+      width: size,
+      height: size,
+      borderRadius: size / 2,
+      alignItems: 'center',
+      justifyContent: 'center',
+      backgroundColor: toneToken.background,
+      borderWidth,
+      borderColor: toneToken.border,
+      shadowColor: colors.shadowTint,
+      shadowOpacity: 0,
+      shadowRadius: 0,
+      shadowOffset: { width: 0, height: 0 },
+      elevation: 0,
+    }}>
       {tone === 'danger'
-        ? <AlertTriangle color={toneToken.foreground} size={small ? 15 : 21} strokeWidth={2.2} />
+        ? <AppIcon name="warning" color={toneToken.foreground} size={small ? 15 : 21} strokeWidth={appIconStroke.strong} />
         : tone === 'mint'
-          ? <Check color={toneToken.foreground} size={small ? 15 : 21} strokeWidth={2.4} />
-          : <Info color={toneToken.foreground} size={small ? 15 : 21} strokeWidth={2.2} />}
+          ? <AppIcon name="check" color={toneToken.foreground} size={small ? 15 : 21} strokeWidth={appIconStroke.bold} />
+          : <AppIcon name="info" color={toneToken.foreground} size={small ? 15 : 21} strokeWidth={appIconStroke.strong} />}
     </View>
   )
 }
@@ -262,17 +290,39 @@ function DialogChip({ chip }: { chip: IsleDialogChip }) {
   const { colors } = useAppTheme()
   const tone = chip.tone ?? 'default'
   const toneToken = dialogToneToken(colors, tone)
+  const isGlass = colors.ui.glass
+  const backgroundColor = tone === 'default' && isGlass ? colors.ui.actionBar.itemBackground : toneToken.background
+  const borderColor = tone === 'default' && isGlass ? colors.ui.actionBar.itemBorder : toneToken.border
+  const foreground = tone === 'default' && isGlass ? colors.textSecondary : toneToken.foreground
+  const borderWidth = dialogBorderWidth(colors)
   return (
-    <View style={{ minHeight: 30, borderRadius: colors.ui.radius.chip, paddingHorizontal: 11, alignItems: 'center', justifyContent: 'center', backgroundColor: toneToken.background, borderWidth: 1, borderColor: toneToken.border }}>
-      <Text numberOfLines={1} style={{ color: toneToken.foreground, fontSize: 11, fontWeight: '900' }}>{chip.label}</Text>
+    <View style={{
+      minHeight: 30,
+      borderRadius: colors.ui.radius.chip,
+      paddingHorizontal: 11,
+      alignItems: 'center',
+      justifyContent: 'center',
+      backgroundColor,
+      borderWidth,
+      borderColor,
+    }}>
+      <Text numberOfLines={1} style={{ color: foreground, fontSize: 11, fontWeight: '900' }}>{chip.label}</Text>
     </View>
   )
 }
 
 function DialogMetricRow({ metric }: { metric: IsleDialogMetric }) {
   const { colors } = useAppTheme()
+  const backgroundColor = colors.ui.glass ? colors.ui.semantic.surface.overlay : colors.ui.semantic.surface.base
+  const borderWidth = dialogBorderWidth(colors)
   return (
-    <View style={{ borderRadius: colors.ui.radius.card, padding: 11, backgroundColor: colors.ui.card.defaultBackground, borderWidth: 1, borderColor: colors.material.stroke }}>
+    <View style={{
+      borderRadius: colors.ui.radius.card,
+      padding: 11,
+      backgroundColor,
+      borderWidth,
+      borderColor: colors.ui.semantic.chrome.border,
+    }}>
       <Text style={{ color: colors.text, fontSize: 12, fontWeight: '900' }}>{metric.label}</Text>
       <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginTop: 5 }}>
         {metric.before ? <Text numberOfLines={1} style={{ color: colors.textTertiary, fontSize: 11, fontWeight: '800', flex: 1, minWidth: 0 }}>{metric.before}</Text> : null}

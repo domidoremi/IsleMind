@@ -5,6 +5,7 @@ import catalog from '../../assets/models/catalog.json'
 import { BUNDLED_LOCAL_EMBEDDING_MODELS } from '@/generated/modelBundle'
 import type { Settings } from '@/types'
 import type { LocalRagModelCapability } from '@/types'
+import { safeHttpUrl } from '@/utils/networkUrlSafety'
 
 export type LocalEmbeddingModelStatus = 'not-downloaded' | 'downloading' | 'downloaded' | 'bundled' | 'enabled' | 'verify-failed' | 'runtime-unavailable' | 'planned'
 export type LocalEmbeddingModelSource = 'bundled' | 'downloaded'
@@ -184,6 +185,7 @@ export async function downloadLocalEmbeddingModel(modelId: string, options: Loca
   }
   if (!MODEL_ROOT) throw new Error('File storage is unavailable.')
   await ensureDirectory(MODEL_ROOT)
+  await cleanupStaleModelDirectories(model.id)
   const tempDirectory = tempModelDirectory(model.id)
   const finalDirectory = modelDirectory(model.id)
   await FileSystem.deleteAsync(tempDirectory, { idempotent: true })
@@ -281,9 +283,15 @@ export async function verifyLocalEmbeddingModel(modelId: string, source: LocalEm
 export async function deleteDownloadedLocalEmbeddingModel(modelId: string): Promise<void> {
   const state = await loadLocalModelState()
   await FileSystem.deleteAsync(modelDirectory(modelId), { idempotent: true })
+  await cleanupStaleModelDirectories(modelId)
   delete state.records[modelId]
   delete state.failed[modelId]
   await saveLocalModelState(state)
+}
+
+export async function clearLocalEmbeddingModelState(): Promise<void> {
+  cachedState = { records: {}, failed: {} }
+  await AsyncStorage.removeItem(STORAGE_KEY)
 }
 
 export async function resolveActiveLocalEmbeddingModel(settings: Settings): Promise<{ model: LocalEmbeddingModel; source: LocalEmbeddingModelSource; directoryUri: string } | null> {
@@ -425,7 +433,7 @@ function modelFileDownloadUrl(baseUrl: string, filePath: string): string {
 }
 
 function normalizeMirrorBaseUrl(url: string | undefined): string | undefined {
-  const value = url?.trim()
+  const value = safeHttpUrl(url)
   if (!value) return undefined
   return value.replace(/\/+$/, '')
 }
@@ -469,6 +477,22 @@ async function replaceDownloadedModelDirectory(modelId: string, tempDirectory: s
 async function ensureDirectory(uri: string): Promise<void> {
   if (!uri.startsWith('file://')) return
   await FileSystem.makeDirectoryAsync(uri, { intermediates: true })
+}
+
+async function cleanupStaleModelDirectories(modelId: string): Promise<void> {
+  if (!MODEL_ROOT.startsWith('file://')) return
+  let entries: string[] = []
+  try {
+    entries = await FileSystem.readDirectoryAsync(MODEL_ROOT)
+  } catch {
+    return
+  }
+  const staleNames = entries.filter((name) => isStaleModelDirectoryName(modelId, name))
+  await Promise.all(staleNames.map((name) => FileSystem.deleteAsync(`${MODEL_ROOT}${name}`, { idempotent: true }).catch(() => undefined)))
+}
+
+function isStaleModelDirectoryName(modelId: string, entryName: string): boolean {
+  return entryName.startsWith(`${modelId}.tmp-`) || entryName.startsWith(`${modelId}.bak-`)
 }
 
 export async function sha256File(uri: string): Promise<string> {

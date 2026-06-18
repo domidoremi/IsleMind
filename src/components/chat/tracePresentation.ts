@@ -32,7 +32,13 @@ export function collectMessageTraces(message: Message): ProcessTrace[] {
 }
 
 export function collectVisibleProcessTraces(message: Message): ProcessTrace[] {
-  return collectMessageTraces(message).filter((trace) => !trace.metadata?.hiddenSignature && Boolean(trace.title || trace.content))
+  return collectMessageTraces(message).filter((trace) => !trace.metadata?.hiddenSignature &&
+    (
+      Boolean(trace.title || trace.content) ||
+      trace.status === 'running' ||
+      trace.status === 'pending'
+    )
+  )
 }
 
 function resolveTraceDisplayOrder(trace: ProcessTrace, fallback: number): number {

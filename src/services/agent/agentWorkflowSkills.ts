@@ -11,6 +11,7 @@ import type {
 } from '@/services/agent/agentToolTypes'
 import { createAgentWorkflowDefinition, exportAgentWorkflowDefinition, sanitizeAgentWorkflowDefinition, validateAgentWorkflowDefinition } from '@/services/agent/agentWorkflowDefinitions'
 import { clampAgentOutput, redactSensitiveText } from '@/services/agent/agentTrace'
+import { formatAgentToolRequestIdentity, resolveUniqueAgentTool } from '@/services/agent/agentToolIdentityUtils'
 
 export interface AgentWorkflowSkillSuggestion {
   ok: boolean
@@ -914,10 +915,7 @@ function collectWorkflowToolRefs(workflow: AgentWorkflowDefinition): string[] {
 }
 
 function formatToolRequest(request?: AgentToolRequest): string {
-  if (!request) return ''
-  if (request.toolId) return request.toolId
-  if (request.serverId && request.name) return `${request.serverId}:${request.name}`
-  return request.name ?? ''
+  return formatAgentToolRequestIdentity(request)
 }
 
 function isRagContextPackToolRequest(request?: AgentToolRequest): request is AgentToolRequest {
@@ -1046,14 +1044,7 @@ function resolvePermissionCeiling(requests: Array<AgentToolRequest | undefined>,
 
 function resolveWorkflowToolManifest(request: AgentToolRequest | undefined, manifests: AgentToolManifest[]): AgentToolManifest | undefined {
   if (!request) return undefined
-  if (request.toolId) return manifests.find((tool) => tool.id === request.toolId)
-  if (!request.name) return undefined
-  return manifests.find((tool) => {
-    if (tool.name !== request.name) return false
-    if (request.source && tool.source !== request.source) return false
-    if (request.serverId && tool.serverId !== request.serverId) return false
-    return true
-  })
+  return resolveUniqueAgentTool(request, manifests) ?? undefined
 }
 
 function permissionRank(permission: AgentToolPermission): number {

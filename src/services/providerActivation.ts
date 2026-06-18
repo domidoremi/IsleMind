@@ -4,7 +4,7 @@ import type { AIProvider, ProviderOperationCode } from '@/types'
 import { getProviderAvailableModels, getProviderManualModels, getProviderPreferredModel, isProviderChatCompatibleModel } from '@/utils/providerModels'
 import { resolveProviderModelAliasAccess, type ProviderModelAccessInput } from '@/services/ai/policy/providerModelAccess'
 
-const ACTIVATION_TEST_MODELS_PER_CREDENTIAL = 1
+const ACTIVATION_TEST_MODELS_PER_CREDENTIAL = 3
 
 export interface ProviderActivationResult {
   providerId: string

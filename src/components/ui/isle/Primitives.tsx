@@ -1,8 +1,8 @@
 import type { ReactNode } from 'react'
-import { Text, View, type StyleProp, type TextInputProps, type ViewStyle } from 'react-native'
-import { ChevronDown } from 'lucide-react-native'
+import { StyleSheet, Text, View, type StyleProp, type TextInputProps, type ViewStyle } from 'react-native'
 import { AnimatePresence, MotiView } from 'moti'
 import { useTranslation } from 'react-i18next'
+import { AppIcon } from '@/components/ui/AppIcon'
 import { useAppTheme } from '@/hooks/useAppTheme'
 import { useMotionPreference } from '@/hooks/useMotionPreference'
 import { motionTokens } from '@/theme/animation'
@@ -61,7 +61,7 @@ export function IsleSection({
   subtitle,
   children,
   action,
-  material = 'paper',
+  material,
   elevated = false,
   style,
   contentStyle,
@@ -76,10 +76,12 @@ export function IsleSection({
   contentStyle?: StyleProp<ViewStyle>
 }) {
   const { colors } = useAppTheme()
+  const resolvedMaterial = material ?? (colors.ui.minimal ? 'transparent' : colors.ui.glass ? 'chrome' : 'paper')
+  const sectionPadding = colors.ui.cartoon ? 14 : 12
   return (
-    <IslePanel material={material} elevated={elevated} radius={colors.ui.radius.panel} style={style} contentStyle={[{ padding: 14 }, contentStyle]}>
+    <IslePanel material={resolvedMaterial} elevated={elevated} radius={colors.ui.radius.panel} style={style} contentStyle={[{ padding: sectionPadding }, contentStyle]}>
       {title || subtitle || action ? (
-        <View style={{ flexDirection: 'row', alignItems: subtitle ? 'flex-start' : 'center', gap: 10, marginBottom: children ? 12 : 0 }}>
+        <View style={{ flexDirection: 'row', alignItems: subtitle ? 'flex-start' : 'center', gap: 10, marginBottom: children ? (colors.ui.cartoon ? 12 : 10) : 0 }}>
           <View style={{ flex: 1, minWidth: 0 }}>
             {title ? <Text style={{ color: colors.text, fontSize: 16, lineHeight: 21, fontWeight: '900', includeFontPadding: false, textAlignVertical: 'center' }}>{title}</Text> : null}
             {subtitle ? (
@@ -136,6 +138,31 @@ export function IsleToggle({
 }) {
   const { colors } = useAppTheme()
   const motion = useMotionPreference()
+  const playful = colors.ui.cartoon
+  const toggleSurface = active
+    ? colors.ui.glass
+      ? colors.ui.semantic.chrome.background
+      : colors.ui.semantic.surface.base
+    : colors.ui.glass
+      ? colors.ui.actionBar.itemBackground
+      : colors.ui.semantic.surface.muted
+  const toggleBorder = active
+    ? colors.ui.control.primaryBorder
+    : colors.ui.glass
+      ? colors.ui.actionBar.itemBorder
+    : playful
+      ? colors.material.stroke
+      : colors.ui.semantic.chrome.border
+  const toggleShadowOpacity = active
+    ? playful
+      ? colors.ui.card.shadowOpacity
+      : 0
+    : 0
+  const iconBackground = active
+    ? colors.ui.control.primaryBackground
+    : colors.ui.glass
+      ? colors.ui.actionBar.itemActiveBackground
+      : colors.ui.icon.accentBackground
   return (
     <PressableScale
       haptic
@@ -146,31 +173,31 @@ export function IsleToggle({
       >
       <MotiView
         animate={{
-          backgroundColor: active ? colors.ui.card.defaultBackground : colors.ui.card.mutedBackground,
-          borderColor: active ? colors.ui.control.primaryBorder : colors.material.stroke,
-          scale: active ? 1.006 : 1,
-          translateY: active ? -1 : 0,
+          backgroundColor: toggleSurface,
+          borderColor: toggleBorder,
+          scale: active ? (colors.ui.glass ? 1.002 : 1.003) : 1,
+          translateY: active && playful ? -0.5 : 0,
         }}
         transition={motion === 'full' ? { type: 'spring', ...motionTokens.spring.settle } : { type: 'timing', duration: 1 }}
         style={{
-          minHeight: 68,
+          minHeight: 64,
           borderRadius: colors.ui.radius.panel,
-          padding: 12,
+          padding: 11,
           justifyContent: 'center',
-          borderWidth: colors.ui.minimal ? 1 : 2,
+          borderWidth: playful ? 1 : StyleSheet.hairlineWidth,
           shadowColor: active ? colors.ui.control.shadow : colors.shadowTint,
-          shadowOpacity: active && colors.ui.minimal ? colors.shadow.mediumOpacity : colors.ui.card.shadowOpacity,
-          shadowRadius: colors.ui.card.shadowRadius,
-          shadowOffset: { width: 0, height: colors.ui.card.shadowOffset },
-          elevation: colors.ui.card.shadowOpacity > 0 ? 1 : 0,
+          shadowOpacity: toggleShadowOpacity,
+          shadowRadius: playful ? colors.ui.card.shadowRadius : 0,
+          shadowOffset: { width: 0, height: playful ? colors.ui.card.shadowOffset : 0 },
+          elevation: playful && colors.ui.card.shadowOpacity > 0 ? 1 : 0,
         }}
       >
         <View style={{ minHeight: 44, flexDirection: 'row', alignItems: 'center', gap: 12 }}>
           {icon ? (
             <MotiView
-              animate={{ backgroundColor: active ? colors.ui.control.primaryBackground : colors.ui.icon.accentBackground, scale: active ? 1.04 : 1, rotate: active || colors.ui.minimal ? '0deg' : '-2deg' }}
+              animate={{ backgroundColor: iconBackground, scale: active ? 1.03 : 1, rotate: active || !playful ? '0deg' : '-1deg' }}
               transition={motion === 'full' ? { type: 'spring', ...motionTokens.spring.gentle } : { type: 'timing', duration: 1 }}
-              style={{ width: 38, height: 38, borderRadius: colors.ui.radius.controlLarge, alignItems: 'center', justifyContent: 'center' }}
+              style={{ width: 36, height: 36, borderRadius: colors.ui.radius.controlLarge, alignItems: 'center', justifyContent: 'center' }}
             >
               {icon}
             </MotiView>
@@ -195,7 +222,7 @@ export function IsleSwitch({ active, onChange }: { active: boolean; onChange?: (
   if (onChange) return <IsleStyledSwitch checked={active} onChange={() => onChange()} />
   const width = 52
   const height = 28
-  const borderWidth = colors.ui.minimal ? 1 : 2
+  const borderWidth = colors.ui.cartoon ? 1 : StyleSheet.hairlineWidth
   const thumbInset = 3
   const knob = height - thumbInset * 2
   const thumbTravel = width - knob - thumbInset * 2
@@ -229,7 +256,7 @@ export function IsleSwitch({ active, onChange }: { active: boolean; onChange?: (
           height: knob,
           borderRadius: knob / 2,
           backgroundColor: switchTokens.thumb,
-          borderWidth: 1,
+          borderWidth: StyleSheet.hairlineWidth,
           borderColor: active ? switchTokens.thumbOnBorder : switchTokens.thumbOffBorder,
           shadowColor: 'transparent',
           shadowOpacity: 0,
@@ -260,6 +287,20 @@ export function IsleListItem({
   style?: StyleProp<ViewStyle>
 }) {
   const { colors } = useAppTheme()
+  const borderWidth = colors.ui.cartoon ? 1 : StyleSheet.hairlineWidth
+  const itemBackground = danger
+    ? colors.ui.tone.danger.background
+    : colors.ui.cartoon
+      ? colors.ui.semantic.surface.base
+      : colors.ui.glass
+        ? colors.ui.actionBar.itemBackground
+        : colors.ui.semantic.surface.muted
+  const itemBorderColor = danger
+    ? colors.ui.tone.danger.border
+    : colors.ui.glass
+      ? colors.ui.actionBar.itemBorder
+      : colors.ui.semantic.chrome.border
+  const itemShadowOpacity = colors.ui.cartoon ? Math.min(colors.ui.card.shadowOpacity, 0.04) : 0
   const content = (
     <View style={{ minHeight: 44, flexDirection: 'row', alignItems: 'center', gap: 12 }}>
       {leading}
@@ -278,18 +319,18 @@ export function IsleListItem({
         onPress={onPress}
         style={[
           {
-            minHeight: 58,
+            minHeight: 56,
             borderRadius: colors.ui.radius.card,
-            padding: 12,
+            padding: 11,
             justifyContent: 'center',
-            backgroundColor: danger ? colors.ui.tone.danger.background : colors.ui.card.defaultBackground,
-            borderWidth: 2,
-            borderColor: danger ? colors.ui.tone.danger.border : colors.material.stroke,
+            backgroundColor: itemBackground,
+            borderWidth,
+            borderColor: itemBorderColor,
             shadowColor: danger ? colors.ui.tone.danger.foreground : colors.shadowTint,
-            shadowOpacity: colors.ui.card.shadowOpacity,
-            shadowRadius: colors.ui.card.shadowRadius,
-            shadowOffset: { width: 0, height: colors.ui.card.shadowOffset },
-            elevation: colors.ui.card.shadowOpacity > 0 ? 1 : 0,
+            shadowOpacity: itemShadowOpacity,
+            shadowRadius: colors.ui.cartoon ? Math.max(1, colors.ui.card.shadowRadius - 6) : 0,
+            shadowOffset: { width: 0, height: colors.ui.cartoon ? Math.max(1, colors.ui.card.shadowOffset - 3) : 0 },
+            elevation: colors.ui.cartoon && itemShadowOpacity > 0 ? 1 : 0,
           },
           style,
         ]}
@@ -303,18 +344,18 @@ export function IsleListItem({
     <View
       style={[
         {
-          minHeight: 58,
+          minHeight: 56,
           borderRadius: colors.ui.radius.card,
-          padding: 12,
+          padding: 11,
           justifyContent: 'center',
-          backgroundColor: danger ? colors.ui.tone.danger.background : colors.ui.card.defaultBackground,
-          borderWidth: 2,
-          borderColor: danger ? colors.ui.tone.danger.border : colors.material.stroke,
+          backgroundColor: itemBackground,
+          borderWidth,
+          borderColor: itemBorderColor,
           shadowColor: danger ? colors.ui.tone.danger.foreground : colors.shadowTint,
-          shadowOpacity: colors.ui.card.shadowOpacity,
-          shadowRadius: colors.ui.card.shadowRadius,
-          shadowOffset: { width: 0, height: colors.ui.card.shadowOffset },
-          elevation: colors.ui.card.shadowOpacity > 0 ? 1 : 0,
+          shadowOpacity: itemShadowOpacity,
+          shadowRadius: colors.ui.cartoon ? colors.ui.card.shadowRadius : 0,
+          shadowOffset: { width: 0, height: colors.ui.cartoon ? colors.ui.card.shadowOffset : 0 },
+          elevation: colors.ui.cartoon && itemShadowOpacity > 0 ? 1 : 0,
         },
         style,
       ]}
@@ -406,6 +447,34 @@ export function IsleDisclosure({
   const { colors } = useAppTheme()
   const motion = useMotionPreference()
   const { t } = useTranslation()
+  const playful = colors.ui.cartoon
+  const collapsedBackground = danger
+    ? colors.ui.tone.danger.background
+    : colors.ui.glass
+      ? colors.ui.actionBar.itemBackground
+      : colors.ui.semantic.surface.muted
+  const expandedBackground = danger
+    ? colors.ui.tone.danger.background
+    : colors.ui.glass
+      ? colors.ui.semantic.chrome.background
+      : colors.ui.semantic.surface.base
+  const collapsedBorderColor = danger
+    ? colors.ui.tone.danger.border
+    : colors.ui.glass
+      ? colors.ui.actionBar.itemBorder
+      : colors.ui.semantic.chrome.border
+  const disclosureGlyphBackground = danger
+    ? colors.ui.tone.danger.foreground
+    : expanded
+      ? colors.ui.control.primaryBackground
+      : colors.ui.glass
+        ? colors.ui.actionBar.itemActiveBackground
+        : colors.ui.icon.accentBackground
+  const disclosureGlyphColor = danger
+    ? colors.ui.control.dangerForeground
+    : expanded
+      ? colors.ui.control.primaryForeground
+      : colors.textSecondary
   return (
     <PressableScale
       haptic
@@ -417,34 +486,34 @@ export function IsleDisclosure({
     >
       <MotiView
         animate={{
-          backgroundColor: danger ? colors.ui.tone.danger.background : expanded ? colors.ui.card.defaultBackground : colors.ui.card.mutedBackground,
-          borderColor: danger ? colors.ui.tone.danger.border : expanded ? colors.ui.control.primaryBorder : colors.material.stroke,
-          scale: expanded ? 1.005 : 1,
+          backgroundColor: expanded ? expandedBackground : collapsedBackground,
+          borderColor: danger ? colors.ui.tone.danger.border : expanded ? colors.ui.control.primaryBorder : collapsedBorderColor,
+          scale: expanded ? (colors.ui.glass ? 1.001 : 1.002) : 1,
         }}
         transition={motion === 'full' ? { type: 'spring', ...motionTokens.spring.gentle } : { type: 'timing', duration: 1 }}
         style={{
           minHeight: 54,
           borderRadius: colors.ui.radius.panel,
-          paddingHorizontal: 13,
-          paddingVertical: 10,
-          borderWidth: 2,
-          borderStyle: danger || colors.ui.minimal ? 'solid' : 'dashed',
+          paddingHorizontal: 12,
+          paddingVertical: 9,
+          borderWidth: playful ? 1 : StyleSheet.hairlineWidth,
+          borderStyle: danger || !playful ? 'solid' : 'dashed',
         }}
       >
       <View style={{ minHeight: 30, flexDirection: 'row', alignItems: 'center', gap: 10 }}>
         <MotiView
-          animate={{ backgroundColor: danger ? colors.ui.tone.danger.foreground : colors.ui.control.primaryBackground, scale: expanded ? 1.04 : 1 }}
+          animate={{ backgroundColor: disclosureGlyphBackground, scale: expanded ? 1.03 : 1 }}
           transition={motion === 'full' ? { type: 'spring', ...motionTokens.spring.gentle } : { type: 'timing', duration: 1 }}
           style={{ width: 28, height: 28, borderRadius: colors.ui.radius.controlSmall, alignItems: 'center', justifyContent: 'center' }}
         >
-          <Text style={{ color: danger ? colors.ui.control.dangerForeground : colors.ui.control.primaryForeground, fontSize: 17, lineHeight: 21, fontWeight: '900', includeFontPadding: false, textAlignVertical: 'center' }}>{expanded ? '-' : '+'}</Text>
+          <Text style={{ color: disclosureGlyphColor, fontSize: 17, lineHeight: 21, fontWeight: '900', includeFontPadding: false, textAlignVertical: 'center' }}>{expanded ? '-' : '+'}</Text>
         </MotiView>
         <View style={{ flex: 1, minWidth: 0, minHeight: summary && !expanded ? 32 : 28, justifyContent: 'center' }}>
           <Text numberOfLines={1} style={{ color: danger ? colors.ui.tone.danger.foreground : colors.text, fontSize: 15, lineHeight: 21, fontWeight: '900', includeFontPadding: false, textAlignVertical: 'center' }}>{title}</Text>
           {summary && !expanded ? <Text numberOfLines={1} style={{ color: colors.textTertiary, fontSize: 11, lineHeight: 15, marginTop: 2, fontWeight: '800', includeFontPadding: false, textAlignVertical: 'center' }}>{summary}</Text> : null}
         </View>
         <MotiView animate={{ rotate: expanded ? '180deg' : '0deg', scale: expanded ? 1.08 : 1 }} transition={{ type: 'timing', duration: motion === 'full' ? 180 : 1 }}>
-          <ChevronDown color={danger ? colors.ui.tone.danger.foreground : colors.textTertiary} size={19} />
+          <AppIcon name="collapse" color={danger ? colors.ui.tone.danger.foreground : colors.textTertiary} size={19} />
         </MotiView>
       </View>
       <AnimatePresence>
