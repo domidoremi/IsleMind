@@ -1,8 +1,8 @@
 import { useEffect, useMemo, useState } from 'react'
-import { ScrollView, Text, TextInput, View, useWindowDimensions } from 'react-native'
+import { ScrollView, StyleSheet, Text, TextInput, View, useWindowDimensions } from 'react-native'
 import { MotiView } from 'moti'
-import { Search, X } from 'lucide-react-native'
 import { useTranslation } from 'react-i18next'
+import { AppIcon, appIconStroke } from '@/components/ui/AppIcon'
 import { IslePanel } from '@/components/ui/isle'
 import { IsleChip } from '@/components/ui/isle'
 import { IslePressable } from '@/components/ui/isle'
@@ -43,6 +43,7 @@ export function ChatOptionsPanel({
   placement?: 'popover' | 'sheet'
 }) {
   const { t } = useTranslation()
+  const { isGlass, isCartoon } = useAppTheme()
   const { width: windowWidth, height: windowHeight } = useWindowDimensions()
   const motion = useMotionPreference()
   const updateConversation = useChatStore((state) => state.updateConversation)
@@ -122,13 +123,14 @@ export function ChatOptionsPanel({
   const fieldRadius = colors.ui.radius.field
   const controlRadius = colors.ui.radius.controlLarge
   const sheetMaterial = colors.material.sheet
-  const panelSurface = sheetMode ? sheetMaterial.surface : colors.ui.card.defaultBackground
-  const panelBody = sheetMode ? sheetMaterial.body : colors.ui.card.defaultBackground
-  const panelChrome = sheetMode ? sheetMaterial.chrome : colors.ui.card.defaultBackground
-  const panelBorder = sheetMode ? sheetMaterial.border : colors.material.strokeStrong
+  const panelSurface = sheetMode ? sheetMaterial.surface : isGlass ? colors.ui.semantic.chrome.background : isCartoon ? colors.ui.semantic.surface.base : colors.ui.semantic.surface.base
+  const panelBody = sheetMode ? sheetMaterial.body : isGlass ? colors.ui.actionBar.itemBackground : isCartoon ? colors.ui.semantic.surface.base : colors.ui.semantic.surface.base
+  const panelChrome = sheetMode ? sheetMaterial.chrome : isGlass ? colors.ui.semantic.chrome.toolbar : isCartoon ? colors.ui.semantic.surface.muted : colors.ui.semantic.surface.base
+  const panelBorder = sheetMode ? sheetMaterial.border : isCartoon ? colors.material.stroke : isGlass ? colors.ui.actionBar.itemBorder : colors.ui.semantic.chrome.border
   const panelDivider = sheetMode ? sheetMaterial.divider : colors.ui.section.divider
-  const actionSurface = colors.ui.card.mutedBackground
-  const actionBorder = colors.material.stroke
+  const actionSurface = isGlass ? colors.ui.actionBar.itemBackground : isCartoon ? colors.ui.semantic.surface.muted : colors.ui.semantic.surface.muted
+  const actionBorder = isCartoon ? colors.material.stroke : colors.ui.semantic.chrome.border
+  const subtleBorderWidth = isCartoon ? 1 : StyleSheet.hairlineWidth
 
   useEffect(() => {
     setSelectedProviderId(provider?.id ?? conversation.providerId)
@@ -154,8 +156,8 @@ export function ChatOptionsPanel({
   }
 
   return (
-    <IslePanel material="paper" elevated style={{ alignSelf: 'center', width: panelWidth, maxWidth: '100%', marginTop: sheetMode ? 0 : 10, maxHeight, borderWidth: 1, borderColor: panelBorder, backgroundColor: panelSurface }} radius={panelRadius} contentStyle={{ padding: 0, backgroundColor: panelBody }}>
-      <View style={{ padding: 12, paddingBottom: 10, borderBottomWidth: 1, borderBottomColor: panelDivider, backgroundColor: panelChrome }}>
+    <IslePanel material={sheetMode || isGlass ? 'chrome' : 'paper'} intensity={isGlass ? 44 : 30} elevated={false} style={{ alignSelf: 'center', width: panelWidth, maxWidth: '100%', marginTop: sheetMode ? 0 : 10, maxHeight, borderWidth: subtleBorderWidth, borderColor: panelBorder, backgroundColor: panelSurface }} radius={panelRadius} contentStyle={{ padding: 0, backgroundColor: panelBody }}>
+      <View style={{ padding: 12, paddingBottom: 10, borderBottomWidth: subtleBorderWidth, borderBottomColor: panelDivider, backgroundColor: panelChrome }}>
         <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10, marginBottom: 10 }}>
           <View style={{ flex: 1 }}>
             <Text style={{ color: colors.text, fontSize: 15, fontWeight: '900' }}>{t('chat.model')}</Text>
@@ -168,13 +170,13 @@ export function ChatOptionsPanel({
             accessibilityLabel={t('chat.closeModelMenu')}
             accessibilityHint={t('chat.closeModelMenuHint')}
             hitSlop={MODEL_MENU_ACTION_HIT_SLOP}
-            style={{ width: 44, height: 44, borderRadius: controlRadius, alignItems: 'center', justifyContent: 'center', backgroundColor: actionSurface, borderWidth: 1, borderColor: actionBorder }}
+            style={{ width: 44, height: 44, borderRadius: controlRadius, alignItems: 'center', justifyContent: 'center', backgroundColor: actionSurface, borderWidth: subtleBorderWidth, borderColor: actionBorder }}
           >
-            <X color={colors.textSecondary} size={16} strokeWidth={2.2} />
+            <AppIcon name="close" color={colors.textSecondary} size={16} strokeWidth={appIconStroke.strong} />
           </IslePressable>
         </View>
-        <View style={{ minHeight: 44, borderRadius: fieldRadius, paddingHorizontal: 12, flexDirection: 'row', alignItems: 'center', gap: 8, backgroundColor: colors.ui.input.background, borderWidth: 1, borderColor: colors.ui.input.border }}>
-          <Search color={colors.textTertiary} size={15} strokeWidth={2} />
+        <View style={{ minHeight: 44, borderRadius: fieldRadius, paddingHorizontal: 12, flexDirection: 'row', alignItems: 'center', gap: 8, backgroundColor: colors.ui.input.background, borderWidth: subtleBorderWidth, borderColor: colors.ui.input.border }}>
+          <AppIcon name="search" color={colors.textTertiary} size={15} />
           <TextInput
             value={modelPickerQuery}
             onChangeText={setModelPickerQuery}
@@ -193,9 +195,9 @@ export function ChatOptionsPanel({
               accessibilityLabel={t('chat.clearModelSearch')}
               accessibilityHint={t('chat.clearModelSearchHint')}
               hitSlop={MODEL_MENU_ACTION_HIT_SLOP}
-              style={{ width: 44, height: 44, borderRadius: controlRadius, alignItems: 'center', justifyContent: 'center', backgroundColor: actionSurface }}
+              style={{ width: 44, height: 44, borderRadius: controlRadius, alignItems: 'center', justifyContent: 'center', backgroundColor: actionSurface, borderWidth: subtleBorderWidth, borderColor: actionBorder }}
             >
-              <X color={colors.textSecondary} size={14} strokeWidth={2.2} />
+              <AppIcon name="close" color={colors.textSecondary} size={14} strokeWidth={appIconStroke.strong} />
             </IslePressable>
           ) : null}
         </View>
@@ -292,7 +294,7 @@ export function ChatOptionsPanel({
             accessibilityLabel={t('chat.copyConversationLink')}
             accessibilityHint={t('chat.copyConversationLinkHint')}
             hitSlop={MODEL_MENU_ACTION_HIT_SLOP}
-            style={{ minHeight: 44, borderRadius: controlRadius, paddingHorizontal: 12, alignItems: 'center', justifyContent: 'center', backgroundColor: actionSurface, borderWidth: 1, borderColor: actionBorder }}
+            style={{ minHeight: 44, borderRadius: controlRadius, paddingHorizontal: 12, alignItems: 'center', justifyContent: 'center', backgroundColor: actionSurface, borderWidth: subtleBorderWidth, borderColor: actionBorder }}
           >
             <Text style={{ color: colors.textSecondary, fontSize: 12, fontWeight: '800' }}>{t('chat.copyConversationLink')}</Text>
           </IslePressable>
@@ -366,9 +368,11 @@ function clampListHeight(count: number, minHeight: number, maxHeight: number, co
 }
 
 function PickerEmptyState({ title, description, minHeight }: { title: string; description: string; minHeight: number }) {
-  const { colors } = useAppTheme()
+  const { colors, isGlass, isCartoon } = useAppTheme()
+  const surface = isGlass ? colors.ui.actionBar.itemBackground : isCartoon ? colors.ui.semantic.surface.muted : colors.ui.semantic.surface.muted
+  const borderColor = isCartoon ? colors.material.stroke : isGlass ? colors.ui.actionBar.itemBorder : colors.ui.semantic.chrome.border
   return (
-    <View style={{ minHeight, borderRadius: colors.ui.radius.field, paddingHorizontal: 14, paddingVertical: 12, justifyContent: 'center', backgroundColor: colors.ui.card.mutedBackground, borderWidth: 1, borderColor: colors.material.stroke }}>
+    <View style={{ minHeight, borderRadius: colors.ui.radius.field, paddingHorizontal: 14, paddingVertical: 12, justifyContent: 'center', backgroundColor: surface, borderWidth: isCartoon ? 1 : StyleSheet.hairlineWidth, borderColor }}>
       <Text style={{ color: colors.textSecondary, fontSize: 12, lineHeight: 17, fontWeight: '900' }}>{title}</Text>
       <Text style={{ color: colors.textTertiary, fontSize: 11, lineHeight: 16, marginTop: 4 }}>{description}</Text>
     </View>
@@ -376,16 +380,18 @@ function PickerEmptyState({ title, description, minHeight }: { title: string; de
 }
 
 function PickerChip({ label, active, maxWidth }: { label: string; active: boolean; maxWidth: number }) {
-  const { colors } = useAppTheme()
+  const { colors, isGlass, isCartoon } = useAppTheme()
   const motion = useMotionPreference()
   const activeBackground = colors.ui.control.primaryBackground
   const activeForeground = colors.ui.control.primaryForeground
+  const idleBackground = isCartoon ? colors.ui.semantic.surface.base : isGlass ? colors.ui.actionBar.itemBackground : colors.ui.semantic.surface.muted
+  const idleBorder = isCartoon ? colors.material.stroke : isGlass ? colors.ui.actionBar.itemBorder : colors.ui.semantic.chrome.border
   return (
     <MotiView
       animate={{
-        backgroundColor: active ? activeBackground : colors.ui.card.defaultBackground,
-        borderColor: active ? colors.ui.control.primaryBorder : colors.material.stroke,
-        scale: active ? 1.025 : 1,
+        backgroundColor: active ? activeBackground : idleBackground,
+        borderColor: active ? colors.ui.control.primaryBorder : idleBorder,
+        scale: active ? (isCartoon ? 1.025 : 1.01) : 1,
       }}
       transition={motion === 'full' ? { type: 'spring', ...motionTokens.spring.gentle } : { type: 'timing', duration: 1 }}
       style={{
@@ -396,7 +402,7 @@ function PickerChip({ label, active, maxWidth }: { label: string; active: boolea
         alignItems: 'center',
         justifyContent: 'center',
         alignSelf: 'flex-start',
-        borderWidth: 1,
+        borderWidth: isCartoon ? 1 : StyleSheet.hairlineWidth,
       }}
     >
       <Text numberOfLines={1} ellipsizeMode="tail" style={{ maxWidth: Math.max(24, maxWidth - 22), color: active ? activeForeground : colors.textSecondary, fontSize: 12, lineHeight: 16, fontWeight: '900', includeFontPadding: false }}>
@@ -442,7 +448,7 @@ function providerMatchesQuery(provider: AIProvider, query: string, settings?: Pr
 }
 
 function ParamInput({ label, value, accessibilityHint, onChange }: { label: string; value: string; accessibilityHint?: string; onChange: (value: string) => void }) {
-  const { colors } = useAppTheme()
+  const { colors, isCartoon } = useAppTheme()
   return (
     <View style={{ flex: 1 }}>
       <Text style={{ color: colors.textSecondary, fontSize: 12, fontWeight: '800', marginBottom: 6 }}>{label}</Text>
@@ -453,7 +459,7 @@ function ParamInput({ label, value, accessibilityHint, onChange }: { label: stri
         accessibilityLabel={label}
         accessibilityHint={accessibilityHint}
         placeholderTextColor={colors.textTertiary}
-        style={{ minHeight: 46, borderRadius: colors.ui.radius.field, paddingHorizontal: 14, color: colors.text, backgroundColor: colors.ui.input.background, borderWidth: 1, borderColor: colors.ui.input.border, fontSize: 14, fontWeight: '700' }}
+        style={{ minHeight: 46, borderRadius: colors.ui.radius.field, paddingHorizontal: 14, color: colors.text, backgroundColor: colors.ui.input.background, borderWidth: isCartoon ? 1 : StyleSheet.hairlineWidth, borderColor: colors.ui.input.border, fontSize: 14, fontWeight: '700' }}
       />
     </View>
   )

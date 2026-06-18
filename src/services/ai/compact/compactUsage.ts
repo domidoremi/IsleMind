@@ -6,6 +6,7 @@ export interface CompactUsageInput {
   providerId: string
   model: string
   upstreamModel?: string
+  decisionReason?: 'disabled' | 'supported' | 'below_threshold' | 'provider_capability_missing'
   inputTokens?: number
   outputTokens?: number
   estimatedSavedTokens?: number

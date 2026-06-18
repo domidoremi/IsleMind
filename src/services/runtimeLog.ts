@@ -1,10 +1,17 @@
+import AsyncStorage from '@react-native-async-storage/async-storage'
 import * as FileSystem from 'expo-file-system/legacy'
+import type { Settings } from '@/types'
 
 const SCHEMA = 'islemind.runtime-log.v1'
 const DEFAULT_MAX_BYTES = 1048576
 const LOG_FILE_NAME = 'islemind-runtime.jsonl'
 const REDACTED = '[redacted]'
 const MAX_STRING_LENGTH = 160
+const MAX_URL_STRING_LENGTH = 2048
+const SENSITIVE_QUERY_PARAM_PATTERN = /([?&]([^=&#\s]+)=)([^&#\s]+)/gi
+const SENSITIVE_ASSIGNMENT_PATTERN = /((?:^|[\s,;])(?:api[_ -]?key|access[_ -]?token|refresh[_ -]?token|secret|token|password|credential)\s*[:=]\s*)(["']?)([A-Za-z0-9._~+/=-]{8,})/gi
+const SETTINGS_STORAGE_KEY = '@islemind/settings'
+let runtimeLogMutationChain: Promise<unknown> = Promise.resolve()
 
 export type RuntimeLogEvent =
   | 'upstream.request'
@@ -23,6 +30,11 @@ export type RuntimeLogEvent =
   | 'request.rectification'
   | 'access.policy'
   | 'proxy.policy'
+  | 'app.update'
+  | 'mcp.operation'
+  | 'context.operation'
+  | 'storage.operation'
+  | 'render.error'
   | 'android.operation.audit'
 
 export interface RuntimeLogOptions {
@@ -41,6 +53,20 @@ export interface RuntimeLogInfo {
   path: string
   exists: boolean
   size: number
+}
+
+export async function readStoredRuntimeLogOptions(): Promise<RuntimeLogOptions> {
+  try {
+    const raw = await AsyncStorage.getItem(SETTINGS_STORAGE_KEY)
+    if (!raw) return { enabled: false }
+    const settings = JSON.parse(raw) as Partial<Settings>
+    return {
+      enabled: settings.runtimeLogEnabled === true,
+      maxBytes: typeof settings.runtimeLogMaxBytes === 'number' ? settings.runtimeLogMaxBytes : undefined,
+    }
+  } catch {
+    return { enabled: false }
+  }
 }
 
 export function getRuntimeLogPath(): string {
@@ -69,11 +95,12 @@ export async function readRuntimeLogText(maxBytes = 12000): Promise<string> {
     if (!info.exists) return ''
     const size = 'size' in info && typeof info.size === 'number' ? info.size : 0
     const position = Math.max(0, size - normalizedMax)
-    return await FileSystem.readAsStringAsync(path, {
+    const text = await FileSystem.readAsStringAsync(path, {
       encoding: FileSystem.EncodingType.UTF8,
       position,
       length: normalizedMax,
     })
+    return position > 0 ? trimLeadingPartialLine(text) : text
   } catch {
     return ''
   }
@@ -82,9 +109,11 @@ export async function readRuntimeLogText(maxBytes = 12000): Promise<string> {
 export async function clearRuntimeLog(): Promise<void> {
   const path = getRuntimeLogPath()
   try {
-    const info = await FileSystem.getInfoAsync(path)
-    if (!info.exists) return
-    await FileSystem.deleteAsync(path, { idempotent: true })
+    await enqueueRuntimeLogMutation(async () => {
+      const info = await FileSystem.getInfoAsync(path)
+      if (!info.exists) return
+      await FileSystem.deleteAsync(path, { idempotent: true })
+    })
   } catch {
     // Log maintenance must not block settings interactions.
   }
@@ -104,7 +133,7 @@ export async function appendRuntimeLog(event: RuntimeLogEvent, data: Record<stri
     ...redactedData,
   }
   try {
-    await writeRuntimeLogLine(uri, `${JSON.stringify(entry)}\n`, maxBytes)
+    await enqueueRuntimeLogMutation(() => writeRuntimeLogLine(uri, `${JSON.stringify(entry)}\n`, maxBytes))
   } catch {
     // Logging must not change the chat request result.
   }
@@ -137,6 +166,19 @@ function redactRuntimeLogRecord(value: Record<string, unknown>): Record<string, 
 
 function normalizeMaxBytes(value: number | undefined): number {
   return Number.isFinite(value) && value! > 0 ? Math.max(4096, Math.floor(value!)) : DEFAULT_MAX_BYTES
+}
+
+function trimLeadingPartialLine(value: string): string {
+  if (!value) return ''
+  const newlineIndex = value.indexOf('\n')
+  if (newlineIndex < 0) return ''
+  return value.slice(newlineIndex + 1)
+}
+
+function enqueueRuntimeLogMutation<T>(task: () => Promise<T>): Promise<T> {
+  const run = runtimeLogMutationChain.catch(() => undefined).then(task)
+  runtimeLogMutationChain = run.then(() => undefined, () => undefined)
+  return run
 }
 
 async function writeRuntimeLogLine(uri: string, line: string, maxBytes: number): Promise<void> {
@@ -203,13 +245,47 @@ function parseJsonKeys(value: string): string[] | undefined {
   }
 }
 
+function redactSensitiveQueryParams(value: string): string {
+  return value.replace(
+    SENSITIVE_QUERY_PARAM_PATTERN,
+    (match: string, prefix: string, rawKey: string) => (isSensitiveQueryParamKey(rawKey) ? `${prefix}[redacted]` : match)
+  )
+}
+
+function redactSensitiveAssignments(value: string): string {
+  return value.replace(SENSITIVE_ASSIGNMENT_PATTERN, (_match, prefix: string, quote: string) => `${prefix}${quote}[redacted]${quote}`)
+}
+
+function redactUrlUserInfo(value: string): string {
+  return value.replace(/\b([a-z][a-z0-9+.-]*:\/\/)([^/\s@]+)@/gi, (_match, scheme: string) => `${scheme}[redacted]@`)
+}
+
 function redactString(value: string): string {
-  let next = value
-    .replace(/\bBearer\s+[A-Za-z0-9._~+/=-]{8,}\b/g, 'Bearer [redacted]')
+  let next = redactUrlUserInfo(redactSensitiveAssignments(redactSensitiveQueryParams(value)))
+    .replace(/\b(Bearer)\s+[A-Za-z0-9._~+/=-]{8,}(?=$|[^A-Za-z0-9._~+/=-])/gi, '$1 [redacted]')
+    .replace(/\b(Basic)\s+[A-Za-z0-9+/=-]{8,}(?=$|[^A-Za-z0-9+/=-])/gi, '$1 [redacted]')
     .replace(/\b(?:sk|tp)-[A-Za-z0-9_-]{8,}\b/g, REDACTED)
     .replace(/\bgh[pousr]_[A-Za-z0-9_]{8,}\b/g, REDACTED)
     .replace(/\bAIza[A-Za-z0-9_-]{8,}\b/g, REDACTED)
     .replace(/\bya29\.[A-Za-z0-9_-]{8,}\b/g, REDACTED)
-  if (next.length > MAX_STRING_LENGTH) next = `${next.slice(0, MAX_STRING_LENGTH)}...`
+  const maxLength = isLikelyUrl(next) ? MAX_URL_STRING_LENGTH : MAX_STRING_LENGTH
+  if (next.length > maxLength) next = `${next.slice(0, maxLength)}...`
   return next
+}
+
+function isSensitiveQueryParamKey(key: string): boolean {
+  const normalized = key.trim().toLowerCase()
+  if (!normalized) return false
+  if (normalized === 'key' || normalized === 'token' || normalized === 'sig' || normalized === 'signature') return true
+  if (normalized.includes('password') || normalized.includes('secret') || normalized.includes('credential')) return true
+  if (normalized.includes('api') && normalized.includes('key')) return true
+  if (normalized.includes('access') && normalized.includes('token')) return true
+  if (normalized.includes('refresh') && normalized.includes('token')) return true
+  if (normalized.startsWith('x-amz-') && (normalized.endsWith('credential') || normalized.endsWith('signature') || normalized.endsWith('security-token'))) return true
+  if (normalized.startsWith('x-goog-') && (normalized.endsWith('credential') || normalized.endsWith('signature') || normalized.endsWith('token'))) return true
+  return false
+}
+
+function isLikelyUrl(value: string): boolean {
+  return /^[a-z][a-z0-9+.-]*:\/\//i.test(value)
 }

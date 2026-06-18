@@ -5,7 +5,7 @@
 :root {
   color-scheme: light;
 
-  /* Enhanced contrast colors for island theme */
+  /* Legacy static fallback. Runtime themes are driven by app/_layout.tsx. */
   --color-surface: #f8f8f0;
   --color-surfaceSecondary: rgb(247, 243, 223);
   --color-surfaceTertiary: #eadcc4;
@@ -86,9 +86,9 @@
   --color-toneWarningBackground: #fff1c5;
   --color-toneWarningForeground: #7a5200;
   --color-toneWarningBorder: rgba(122, 82, 0, 0.32);
-  --color-toneDangerBackground: rgba(199, 58, 58, 0.12);
-  --color-toneDangerForeground: #c73a3a;
-  --color-toneDangerBorder: rgba(199, 58, 58, 0.28);
+  --color-toneDangerBackground: rgba(173, 45, 45, 0.12);
+  --color-toneDangerForeground: #ad2d2d;
+  --color-toneDangerBorder: rgba(173, 45, 45, 0.28);
   --color-toneInfoBackground: #d9edf2;
   --color-toneInfoForeground: #3a6d7d;
   --color-toneInfoBorder: rgba(58, 109, 125, 0.32);
@@ -152,6 +152,9 @@
   --theme-cardShadowRadius: 0rem;
   --theme-cardShadowOffset: 0rem;
   --theme-ornament-opacity: 1;
+  --theme-family: minimal;
+  --theme-glass-enabled: 0;
+  --theme-cartoon-enabled: 0;
 
   --font-sans: 'Nunito', 'SF Pro Rounded', system-ui, sans-serif;
   --font-mono: 'SF Mono', 'JetBrains Mono', monospace;
@@ -317,6 +320,7 @@
   }
 }
 
+:root[data-theme-id='cartoon'][data-theme-mode='light'],
 :root[data-theme-id='island'][data-theme-mode='light'] {
   color-scheme: light;
 
@@ -400,9 +404,9 @@
   --color-toneWarningBackground: #fff1c5;
   --color-toneWarningForeground: #7a5200;
   --color-toneWarningBorder: rgba(122, 82, 0, 0.32);
-  --color-toneDangerBackground: rgba(199, 58, 58, 0.12);
-  --color-toneDangerForeground: #c73a3a;
-  --color-toneDangerBorder: rgba(199, 58, 58, 0.28);
+  --color-toneDangerBackground: rgba(173, 45, 45, 0.12);
+  --color-toneDangerForeground: #ad2d2d;
+  --color-toneDangerBorder: rgba(173, 45, 45, 0.28);
   --color-toneInfoBackground: #d9edf2;
   --color-toneInfoForeground: #3a6d7d;
   --color-toneInfoBorder: rgba(58, 109, 125, 0.32);
@@ -466,8 +470,12 @@
   --theme-cardShadowRadius: 0rem;
   --theme-cardShadowOffset: 0rem;
   --theme-ornament-opacity: 1;
+  --theme-family: cartoon;
+  --theme-glass-enabled: 0;
+  --theme-cartoon-enabled: 1;
 }
 
+:root[data-theme-id='cartoon'][data-theme-mode='dark'],
 :root[data-theme-id='island'][data-theme-mode='dark'] {
   color-scheme: dark;
 
@@ -548,7 +556,7 @@
   --color-toneWarningForeground: #e8b15a;
   --color-toneWarningBorder: rgba(232, 177, 90, 0.24);
   --color-toneDangerBackground: rgba(240, 113, 95, 0.14);
-  --color-toneDangerForeground: #f0715f;
+  --color-toneDangerForeground: #f88f82;
   --color-toneDangerBorder: rgba(240, 113, 95, 0.26);
   --color-toneInfoBackground: #203d47;
   --color-toneInfoForeground: #85b8cc;
@@ -611,8 +619,12 @@
   --theme-cardShadowRadius: 0rem;
   --theme-cardShadowOffset: 0rem;
   --theme-ornament-opacity: 1;
+  --theme-family: cartoon;
+  --theme-glass-enabled: 0;
+  --theme-cartoon-enabled: 1;
 }
 
+:root:not([data-theme-id]),
 :root[data-theme-id='minimal'][data-theme-mode='light'] {
   color-scheme: light;
 
@@ -690,14 +702,14 @@
   --color-toneSuccessForeground: #3f7c5f;
   --color-toneSuccessBorder: rgba(63, 124, 95, 0.22);
   --color-toneWarningBackground: #f4ead8;
-  --color-toneWarningForeground: #a66a1f;
-  --color-toneWarningBorder: rgba(166, 106, 31, 0.22);
+  --color-toneWarningForeground: #925b16;
+  --color-toneWarningBorder: rgba(146, 91, 22, 0.22);
   --color-toneDangerBackground: rgba(181, 69, 63, 0.1);
   --color-toneDangerForeground: #b5453f;
   --color-toneDangerBorder: rgba(181, 69, 63, 0.2);
   --color-toneInfoBackground: #e8eef8;
-  --color-toneInfoForeground: #64748b;
-  --color-toneInfoBorder: rgba(100, 116, 139, 0.18);
+  --color-toneInfoForeground: #5a687c;
+  --color-toneInfoBorder: rgba(90, 104, 124, 0.18);
   --color-toneNeutralBackground: #ffffff;
   --color-toneNeutralForeground: #565f63;
   --color-toneNeutralBorder: rgba(25, 27, 29, 0.1);
@@ -755,6 +767,9 @@
   --theme-cardShadowRadius: 0.625rem;
   --theme-cardShadowOffset: 0.125rem;
   --theme-ornament-opacity: 0;
+  --theme-family: minimal;
+  --theme-glass-enabled: 0;
+  --theme-cartoon-enabled: 0;
 }
 
 :root[data-theme-id='minimal'][data-theme-mode='dark'] {
@@ -899,4 +914,233 @@
   --theme-cardShadowRadius: 0.625rem;
   --theme-cardShadowOffset: 0.125rem;
   --theme-ornament-opacity: 0;
+  --theme-family: minimal;
+  --theme-glass-enabled: 0;
+  --theme-cartoon-enabled: 0;
+}
+
+:root[data-theme-id='glass'][data-theme-mode='light'] {
+  color-scheme: light;
+
+  --color-surface: #f4f8fb;
+  --color-surfaceSecondary: rgba(255, 255, 255, 0.78);
+  --color-surfaceTertiary: rgba(247, 250, 252, 0.74);
+  --color-primary: #24495c;
+  --color-primaryForeground: #f7fbfd;
+  --color-secondary: #70838f;
+  --color-accent: #5a91aa;
+  --color-border: rgba(23, 50, 64, 0.08);
+  --color-borderStrong: rgba(23, 50, 64, 0.16);
+  --color-text: #173240;
+  --color-textSecondary: #566872;
+  --color-textTertiary: #7b8a92;
+  --color-success: #2f6e5f;
+  --color-warning: #9d6b1f;
+  --color-error: #bb4d45;
+  --color-backdrop: rgba(9, 17, 21, 0.28);
+  --color-island: rgba(255, 255, 255, 0.78);
+  --color-islandRaised: rgba(255, 255, 255, 0.88);
+  --color-islandMuted: rgba(247, 250, 252, 0.74);
+  --color-materialCanvas: #f4f8fb;
+  --color-materialPaper: rgba(255, 255, 255, 0.8);
+  --color-materialPaperRaised: rgba(255, 255, 255, 0.88);
+  --color-materialPaperPressed: rgba(239, 244, 247, 0.84);
+  --color-materialGlass: rgba(255, 255, 255, 0.72);
+  --color-materialChrome: rgba(255, 255, 255, 0.82);
+  --color-materialField: rgba(255, 255, 255, 0.5);
+  --color-materialStroke: rgba(23, 50, 64, 0.08);
+  --color-materialStrokeStrong: rgba(23, 50, 64, 0.16);
+  --color-sheetSurface: rgba(255, 255, 255, 0.8);
+  --color-sheetChrome: rgba(255, 255, 255, 0.88);
+  --color-sheetBody: rgba(255, 255, 255, 0.76);
+  --color-sheetBorder: rgba(23, 50, 64, 0.12);
+  --color-sheetDivider: rgba(23, 50, 64, 0.08);
+  --color-controlPrimaryBackground: rgba(23, 50, 64, 0.9);
+  --color-controlPrimaryForeground: #f7fbfd;
+  --color-controlDangerForeground: #ffffff;
+  --color-controlPrimaryBorder: rgba(23, 50, 64, 0.2);
+  --color-controlDefaultBackground: rgba(255, 255, 255, 0.58);
+  --color-controlLink: #1b556f;
+  --color-controlFocus: #2e6580;
+  --color-controlShadow: #000000;
+  --color-controlDangerShadow: #000000;
+  --color-sectionMarker: #2e6580;
+  --color-sectionTitle: #173240;
+  --color-sectionDivider: rgba(23, 50, 64, 0.12);
+  --color-iconAccentBackground: rgba(184, 227, 255, 0.42);
+  --color-iconAccentForeground: #1b556f;
+  --color-cardDefaultBackground: rgba(255, 255, 255, 0.76);
+  --color-cardMutedBackground: rgba(248, 250, 252, 0.72);
+  --color-toneSuccessBackground: rgba(213, 241, 234, 0.72);
+  --color-toneSuccessForeground: #2f6e5f;
+  --color-toneSuccessBorder: rgba(47, 110, 95, 0.16);
+  --color-toneWarningBackground: rgba(249, 237, 208, 0.74);
+  --color-toneWarningForeground: #855713;
+  --color-toneWarningBorder: rgba(133, 87, 19, 0.16);
+  --color-toneDangerBackground: rgba(247, 224, 221, 0.72);
+  --color-toneDangerForeground: #a63d38;
+  --color-toneDangerBorder: rgba(166, 61, 56, 0.16);
+  --color-toneInfoBackground: rgba(225, 236, 244, 0.72);
+  --color-toneInfoForeground: #3f5f71;
+  --color-toneInfoBorder: rgba(63, 95, 113, 0.16);
+  --color-toneNeutralBackground: rgba(255, 255, 255, 0.84);
+  --color-toneNeutralForeground: #5b6970;
+  --color-toneNeutralBorder: rgba(23, 50, 64, 0.1);
+  --color-semanticSurfaceCanvas: #f4f8fb;
+  --color-semanticSurfaceBase: rgba(255, 255, 255, 0.78);
+  --color-semanticSurfaceRaised: rgba(255, 255, 255, 0.88);
+  --color-semanticSurfaceMuted: rgba(247, 250, 252, 0.74);
+  --color-semanticSurfaceOverlay: rgba(255, 255, 255, 0.76);
+  --color-semanticContentPrimary: #173240;
+  --color-semanticContentSecondary: #5b6970;
+  --color-semanticContentTertiary: #7d8d96;
+  --color-semanticContentInverse: #f7fbfd;
+  --color-semanticChromeBackground: rgba(255, 255, 255, 0.82);
+  --color-semanticChromeBorder: rgba(23, 50, 64, 0.08);
+  --color-semanticChromeToolbar: rgba(23, 50, 64, 0.04);
+  --color-semanticChromeSheet: rgba(255, 255, 255, 0.8);
+  --color-semanticControlBackground: rgba(23, 50, 64, 0.9);
+  --color-semanticControlForeground: #f7fbfd;
+  --color-semanticControlBorder: rgba(23, 50, 64, 0.2);
+  --color-semanticControlFocus: #2e6580;
+  --background-canvas: #f4f8fb;
+  --background-focusCanvas: #eef5f9;
+  --background-surfaceCanvas: #f7fbfd;
+  --background-grid: rgba(23, 50, 64, 0.05);
+  --theme-radius-card: 1.125rem;
+  --theme-radius-titleCard: 1.375rem;
+  --theme-radius-panel: 1.5rem;
+  --theme-radius-modal: 1.75rem;
+  --theme-radius-field: 1.125rem;
+  --theme-radius-chip: 62.4375rem;
+  --theme-radius-controlSmall: 0.625rem;
+  --theme-radius-controlMiddle: 1.125rem;
+  --theme-radius-controlLarge: 1.25rem;
+  --theme-shadow-opacity: 0.1;
+  --theme-controlPrimaryShadowOpacity: 0.08;
+  --theme-controlPrimaryShadowRadius: 0.75rem;
+  --theme-controlPrimaryShadowOffset: 0.125rem;
+  --theme-controlSecondaryShadowOpacity: 0.04;
+  --theme-controlSecondaryShadowRadius: 0.5rem;
+  --theme-controlSecondaryShadowOffset: 0.0625rem;
+  --theme-cardShadowOpacity: 0.05;
+  --theme-cardShadowRadius: 0.75rem;
+  --theme-cardShadowOffset: 0.125rem;
+  --theme-ornament-opacity: 0;
+  --theme-family: glass;
+  --theme-glass-enabled: 1;
+  --theme-cartoon-enabled: 0;
+}
+
+:root[data-theme-id='glass'][data-theme-mode='dark'] {
+  color-scheme: dark;
+
+  --color-surface: #0d1215;
+  --color-surfaceSecondary: rgba(16, 20, 23, 0.72);
+  --color-surfaceTertiary: rgba(30, 37, 42, 0.62);
+  --color-primary: #f2fbff;
+  --color-primaryForeground: #091115;
+  --color-secondary: #8ea0aa;
+  --color-accent: #b8e3ff;
+  --color-border: rgba(232, 242, 247, 0.08);
+  --color-borderStrong: rgba(232, 242, 247, 0.16);
+  --color-text: #f2fbff;
+  --color-textSecondary: #c8d0d5;
+  --color-textTertiary: #8f9ea7;
+  --color-success: #9ad9c6;
+  --color-warning: #ebc47c;
+  --color-error: #f3a79e;
+  --color-backdrop: rgba(9, 17, 21, 0.42);
+  --color-island: rgba(16, 20, 23, 0.72);
+  --color-islandRaised: rgba(24, 29, 33, 0.72);
+  --color-islandMuted: rgba(30, 37, 42, 0.62);
+  --color-materialCanvas: #0d1215;
+  --color-materialPaper: rgba(16, 20, 23, 0.72);
+  --color-materialPaperRaised: rgba(24, 29, 33, 0.72);
+  --color-materialPaperPressed: rgba(30, 37, 42, 0.64);
+  --color-materialGlass: rgba(16, 20, 23, 0.68);
+  --color-materialChrome: rgba(16, 20, 23, 0.8);
+  --color-materialField: rgba(15, 19, 22, 0.56);
+  --color-materialStroke: rgba(232, 242, 247, 0.08);
+  --color-materialStrokeStrong: rgba(232, 242, 247, 0.16);
+  --color-sheetSurface: rgba(12, 15, 18, 0.8);
+  --color-sheetChrome: rgba(16, 20, 23, 0.86);
+  --color-sheetBody: rgba(12, 15, 18, 0.76);
+  --color-sheetBorder: rgba(232, 242, 247, 0.12);
+  --color-sheetDivider: rgba(232, 242, 247, 0.08);
+  --color-controlPrimaryBackground: rgba(232, 242, 247, 0.78);
+  --color-controlPrimaryForeground: #091115;
+  --color-controlDangerForeground: #091115;
+  --color-controlPrimaryBorder: rgba(232, 242, 247, 0.28);
+  --color-controlDefaultBackground: rgba(24, 30, 35, 0.66);
+  --color-controlLink: #b8e3ff;
+  --color-controlFocus: #dff5ff;
+  --color-controlShadow: #000000;
+  --color-controlDangerShadow: #000000;
+  --color-sectionMarker: #b8e3ff;
+  --color-sectionTitle: #f2fbff;
+  --color-sectionDivider: rgba(240, 250, 255, 0.12);
+  --color-iconAccentBackground: rgba(92, 141, 169, 0.18);
+  --color-iconAccentForeground: #dff5ff;
+  --color-cardDefaultBackground: rgba(16, 20, 23, 0.62);
+  --color-cardMutedBackground: rgba(24, 29, 33, 0.56);
+  --color-toneSuccessBackground: rgba(36, 87, 76, 0.22);
+  --color-toneSuccessForeground: #9ad9c6;
+  --color-toneSuccessBorder: rgba(154, 217, 198, 0.22);
+  --color-toneWarningBackground: rgba(96, 71, 34, 0.22);
+  --color-toneWarningForeground: #ebc47c;
+  --color-toneWarningBorder: rgba(235, 196, 124, 0.2);
+  --color-toneDangerBackground: rgba(128, 69, 61, 0.2);
+  --color-toneDangerForeground: #f3a79e;
+  --color-toneDangerBorder: rgba(243, 167, 158, 0.2);
+  --color-toneInfoBackground: rgba(46, 75, 96, 0.22);
+  --color-toneInfoForeground: #9cc3d8;
+  --color-toneInfoBorder: rgba(156, 195, 216, 0.2);
+  --color-toneNeutralBackground: rgba(21, 26, 29, 0.72);
+  --color-toneNeutralForeground: #c8d0d5;
+  --color-toneNeutralBorder: rgba(232, 241, 246, 0.1);
+  --color-semanticSurfaceCanvas: #0d1215;
+  --color-semanticSurfaceBase: rgba(16, 20, 23, 0.72);
+  --color-semanticSurfaceRaised: rgba(24, 29, 33, 0.72);
+  --color-semanticSurfaceMuted: rgba(30, 37, 42, 0.62);
+  --color-semanticSurfaceOverlay: rgba(12, 15, 18, 0.76);
+  --color-semanticContentPrimary: #f2fbff;
+  --color-semanticContentSecondary: #c8d0d5;
+  --color-semanticContentTertiary: #8998a1;
+  --color-semanticContentInverse: #091115;
+  --color-semanticChromeBackground: rgba(16, 20, 23, 0.8);
+  --color-semanticChromeBorder: rgba(232, 242, 247, 0.08);
+  --color-semanticChromeToolbar: rgba(232, 242, 247, 0.05);
+  --color-semanticChromeSheet: rgba(12, 15, 18, 0.8);
+  --color-semanticControlBackground: rgba(232, 242, 247, 0.78);
+  --color-semanticControlForeground: #091115;
+  --color-semanticControlBorder: rgba(232, 242, 247, 0.28);
+  --color-semanticControlFocus: #dff5ff;
+  --background-canvas: #0d1215;
+  --background-focusCanvas: #091115;
+  --background-surfaceCanvas: #10161a;
+  --background-grid: rgba(232, 242, 247, 0.05);
+  --theme-radius-card: 1.125rem;
+  --theme-radius-titleCard: 1.375rem;
+  --theme-radius-panel: 1.5rem;
+  --theme-radius-modal: 1.75rem;
+  --theme-radius-field: 1.125rem;
+  --theme-radius-chip: 62.4375rem;
+  --theme-radius-controlSmall: 0.625rem;
+  --theme-radius-controlMiddle: 1.125rem;
+  --theme-radius-controlLarge: 1.25rem;
+  --theme-shadow-opacity: 0.14;
+  --theme-controlPrimaryShadowOpacity: 0.08;
+  --theme-controlPrimaryShadowRadius: 0.75rem;
+  --theme-controlPrimaryShadowOffset: 0.125rem;
+  --theme-controlSecondaryShadowOpacity: 0.04;
+  --theme-controlSecondaryShadowRadius: 0.5rem;
+  --theme-controlSecondaryShadowOffset: 0.0625rem;
+  --theme-cardShadowOpacity: 0.05;
+  --theme-cardShadowRadius: 0.75rem;
+  --theme-cardShadowOffset: 0.125rem;
+  --theme-ornament-opacity: 0;
+  --theme-family: glass;
+  --theme-glass-enabled: 1;
+  --theme-cartoon-enabled: 0;
 }

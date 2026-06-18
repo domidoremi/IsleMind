@@ -5,6 +5,7 @@ import { useSettingsStore } from '@/store/settingsStore'
 import { initializeContextStore } from '@/services/contextStore'
 import { localDataStore } from '@/services/localDataStore'
 import { checkLatestApkReleaseSilently, shouldAutoCheckApkUpdate, shouldRecordApkUpdateCheck } from '@/services/appUpdates'
+import { clearStagedApkDownloads } from '@/services/apkInstallCache'
 import { initI18n } from '@/i18n'
 import { st } from '@/i18n/service'
 import { useAppTheme } from './useAppTheme'
@@ -37,6 +38,11 @@ export function useBootstrap() {
           await localDataStore.initialize()
           // 移除: await initializeContextStore()
           // Context store 将在首次需要时通过 lazyEmbedding 自动初始化
+        }).catch(() => {
+          setState((current) => ({ ...current, errorCount: current.errorCount + 1 }))
+        })
+        void safeBootstrap(st('bootstrap.stagedApkCleanup'), async () => {
+          await clearStagedApkDownloads()
         }).catch(() => {
           setState((current) => ({ ...current, errorCount: current.errorCount + 1 }))
         })

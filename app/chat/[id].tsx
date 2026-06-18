@@ -2,9 +2,9 @@ import { useEffect } from 'react'
 import { Text, View } from 'react-native'
 import { router, useLocalSearchParams } from 'expo-router'
 import { useTranslation } from 'react-i18next'
-import { MessageCircle } from 'lucide-react-native'
 import { ChatWorkspace } from '@/components/chat/ChatWorkspace'
 import { AnimatedNavigationTrigger } from '@/components/navigation/AnimatedNavigationTrigger'
+import { AppIcon, appIconStroke } from '@/components/ui/AppIcon'
 import { IsleEmptyState } from '@/components/ui/isle'
 import { IsleHeader } from '@/components/ui/isle'
 import { IsleScreen } from '@/components/ui/isle'
@@ -46,7 +46,7 @@ export default function ConversationDeepLinkScreen() {
           onAction={() => router.push('/conversations')}
         />
         <View style={{ alignItems: 'center', marginTop: 12 }}>
-          <MessageCircle color={colors.textTertiary} size={22} strokeWidth={1.8} />
+          <AppIcon name="message" color={colors.textTertiary} size={22} strokeWidth={appIconStroke.fine} />
         </View>
       </View>
     </IsleScreen>

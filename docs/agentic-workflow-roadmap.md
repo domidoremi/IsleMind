@@ -43,7 +43,7 @@ The workflow engine must keep task classification, bounded planning, policy chec
 | Synthesize a final answer or structured artifact | `src/services/agent/agentOrchestrator.ts`, `src/services/agent/workArtifactWorkflow.ts`, `scripts/agent-work-artifact-workflow-tests.js` |
 | Preserve user state on failure | `src/services/agent/agentOrchestrator.ts`, `src/services/agent/agentMessageAdapter.ts`, `src/components/chat/ChatWorkspace.tsx`, `scripts/agent-tool-policy-tests.js` |
 | Save user-approved workflows as visible skills | `src/services/agent/agentWorkflowSkills.ts`, `src/components/settings/SkillSettingsContent.tsx`, `app/settings/skills.tsx`, `scripts/agent-tool-policy-tests.js` |
-| Pass the existing release gates plus agent-specific contract tests | `package.json`, `scripts/architecture-boundary-audit.js`, `scripts/qa-coverage-audit.js`, `docs/production-qa-matrix.md` |
+| Pass the existing release gates plus agent-specific contract tests | `package.json`, `scripts/architecture-boundary-audit.js`, `scripts/qa-coverage-audit.js` |
 
 Treat missing, stale, indirect, or narrow evidence as incomplete. Architecture and QA freshness gates must enforce the durable goal contract.
 

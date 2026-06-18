@@ -4,6 +4,8 @@ import { st } from '@/i18n/service'
 import { redactSensitiveText } from '@/services/agent/agentTrace'
 import { buildAgentToolCallTraceMetadata } from '@/services/agent/agentToolCallTrace'
 import { BUILTIN_SERVER_ID, callBuiltinTool, listBuiltinToolManifests } from '@/services/builtinToolRegistry'
+import { isAllowedMcpServerUrl, normalizeMcpServerUrl } from '@/services/mcpUrlPolicy'
+import { logMcpOperation } from '@/services/runtimeHealthLog'
 
 export interface McpCallResult {
   ok: boolean
@@ -46,8 +48,30 @@ export async function upsertMcpServer(server: McpServerConfig): Promise<McpServe
 export async function refreshMcpManifest(server: McpServerConfig): Promise<McpServerConfig> {
   if (server.id === BUILTIN_SERVER_ID) return builtinMcpServer()
   if (!server.enabled) return { ...server, status: 'disconnected' }
+  if (!isAllowedMcpServerUrl(server)) {
+    const next = { ...server, status: 'error' as const, lastError: st('mcpRuntime.explicitHttpOnly'), updatedAt: Date.now() }
+    await logMcpOperation({
+      phase: 'manifest_refresh',
+      server: next,
+      status: 'skipped',
+      reason: 'tool_unavailable',
+      detail: 'non_http_server_url',
+      error: new Error(next.lastError),
+    })
+    await saveMcpServers((await listMcpServers()).filter((item) => item.id !== server.id))
+    return next
+  }
   if (server.transport !== 'sse') {
-    return { ...server, status: 'error', lastError: 'WebSocket transport is reserved but not enabled in this build.' }
+    const next = { ...server, status: 'error' as const, lastError: 'WebSocket transport is reserved but not enabled in this build.' }
+    await logMcpOperation({
+      phase: 'manifest_refresh',
+      server: next,
+      status: 'skipped',
+      reason: 'tool_unavailable',
+      detail: 'unsupported_transport',
+      error: new Error(next.lastError),
+    })
+    return next
   }
   try {
     const [tools, resources, prompts, version] = await Promise.all([
@@ -68,10 +92,25 @@ export async function refreshMcpManifest(server: McpServerConfig): Promise<McpSe
       updatedAt: Date.now(),
     }
     await upsertMcpServer(next)
+    await logMcpOperation({
+      phase: 'manifest_refresh',
+      server: next,
+      status: 'done',
+      method: 'tools/list,resources/list,prompts/list,initialize',
+      resultCount: [tools, resources, prompts].reduce((sum, items) => sum + items.length, 0),
+    })
     return next
   } catch (error) {
     const next = { ...server, status: 'error' as const, lastError: error instanceof Error ? error.message : 'MCP manifest refresh failed', updatedAt: Date.now() }
     await upsertMcpServer(next)
+    await logMcpOperation({
+      phase: 'manifest_refresh',
+      server: next,
+      status: 'error',
+      method: 'tools/list,resources/list,prompts/list,initialize',
+      error,
+      detail: 'refresh_failed',
+    })
     return next
   }
 }
@@ -92,13 +131,53 @@ export async function callMcpTool(
   const tool = server.tools.find((item) => item.name === toolName)
   const startedAt = Date.now()
   if (options.signal?.aborted) {
+    await logMcpOperation({
+      phase: 'tool_call',
+      server,
+      tool,
+      status: 'cancelled',
+      method: 'tools/call',
+      reason: 'cancelled',
+      detail: 'signal_already_aborted',
+    })
     return cancelledTrace(server, toolName, tool, startedAt)
   }
   if (!server.enabled) {
+    await logMcpOperation({
+      phase: 'tool_call',
+      server,
+      tool: tool && tool.enabled ? tool : undefined,
+      status: 'skipped',
+      reason: 'tool_unavailable',
+      detail: 'server_disabled',
+      method: 'tools/call',
+    })
     return failureTrace(toolName, st('mcpRuntime.disconnected'), startedAt, 'skipped', mcpTraceMetadata(server, toolName, tool, 'tool_unavailable'))
   }
   if (!tool || !tool.enabled) {
+    await logMcpOperation({
+      phase: 'tool_call',
+      server,
+      tool,
+      status: 'skipped',
+      reason: 'tool_unavailable',
+      detail: 'tool_disabled',
+      method: 'tools/call',
+    })
     return failureTrace(toolName, st('mcpRuntime.toolNotEnabled'), startedAt, 'skipped', mcpTraceMetadata(server, toolName, tool, 'tool_unavailable'))
+  }
+  if (!isAllowedMcpServerUrl(server)) {
+    await logMcpOperation({
+      phase: 'tool_call',
+      server,
+      tool,
+      status: 'skipped',
+      reason: 'tool_unavailable',
+      detail: 'non_http_server_url',
+      method: 'tools/call',
+      error: new Error(st('mcpRuntime.explicitHttpOnly')),
+    })
+    return failureTrace(toolName, st('mcpRuntime.explicitHttpOnly'), startedAt, 'skipped', mcpTraceMetadata(server, toolName, tool, 'tool_unavailable'))
   }
   if (tool.permission === 'destructive') {
     if (options.signal?.aborted) {
@@ -109,6 +188,15 @@ export async function callMcpTool(
       return cancelledTrace(server, toolName, tool, startedAt)
     }
     if (!confirmed) {
+      await logMcpOperation({
+        phase: 'tool_call',
+        server,
+        tool,
+        status: 'skipped',
+        reason: 'permission_required',
+        detail: 'approval_denied',
+        method: 'tools/call',
+      })
       return failureTrace(toolName, st('mcpRuntime.notApproved'), startedAt, 'skipped', mcpTraceMetadata(server, toolName, tool, 'permission_required'))
     }
   }
@@ -118,9 +206,26 @@ export async function callMcpTool(
     }
     if (server.id === BUILTIN_SERVER_ID) {
       const result = await callBuiltinTool(toolName, args, startedAt)
+      await logMcpOperation({
+        phase: 'tool_call',
+        server,
+        tool,
+        status: 'done',
+        method: 'tools/call',
+        resultCount: result.content.length,
+      })
       return options.signal?.aborted ? cancelledTrace(server, toolName, tool, startedAt) : sanitizeMcpCallResult(result)
     }
     if (server.status === 'disconnected' || server.status === 'error') {
+      await logMcpOperation({
+        phase: 'tool_call',
+        server,
+        tool,
+        status: 'skipped',
+        reason: 'tool_unavailable',
+        detail: 'server_unavailable',
+        method: 'tools/call',
+      })
       return failureTrace(toolName, st('mcpRuntime.disconnected'), startedAt, 'skipped', mcpTraceMetadata(server, toolName, tool, 'tool_unavailable'))
     }
     const response = await postMcp(server, 'tools/call', { name: toolName, arguments: args }, options.signal)
@@ -128,6 +233,14 @@ export async function callMcpTool(
       return cancelledTrace(server, toolName, tool, startedAt)
     }
     const content = sanitizeToolContentBlocks(normalizeContentBlocks(response.content))
+    await logMcpOperation({
+      phase: 'tool_call',
+      server,
+      tool,
+      status: 'done',
+      method: 'tools/call',
+      resultCount: content.length,
+    })
     return {
       ok: true,
       content,
@@ -143,8 +256,26 @@ export async function callMcpTool(
     }
   } catch (error) {
     if (options.signal?.aborted || isAbortError(error)) {
+      await logMcpOperation({
+        phase: 'tool_call',
+        server,
+        tool,
+        status: 'cancelled',
+        method: 'tools/call',
+        reason: 'cancelled',
+        error,
+      })
       return cancelledTrace(server, toolName, tool, startedAt)
     }
+    await logMcpOperation({
+      phase: 'tool_call',
+      server,
+      tool,
+      status: 'error',
+      method: 'tools/call',
+      reason: 'execution_failed',
+      error,
+    })
     return failureTrace(toolName, error instanceof Error ? error.message : st('mcpRuntime.callFailed'), startedAt, 'error', mcpTraceMetadata(server, toolName, tool, 'execution_failed'))
   }
 }
@@ -296,11 +427,13 @@ function normalizeServer(value: unknown): McpServerConfig | null {
   if (!value || typeof value !== 'object') return null
   const item = value as Partial<McpServerConfig>
   if (!item.id || !item.name || !item.url) return null
+  const url = normalizeMcpServerUrl({ id: item.id, url: item.url })
+  if (!url) return null
   const now = Date.now()
   return {
     id: item.id,
     name: item.name,
-    url: item.url,
+    url,
     transport: item.transport === 'websocket' ? 'websocket' : 'sse',
     enabled: !!item.enabled,
     status: item.status ?? 'disconnected',
@@ -320,7 +453,7 @@ function normalizeServer(value: unknown): McpServerConfig | null {
 function requireServer(value: McpServerConfig): McpServerConfig {
   const server = normalizeServer(value)
   if (!server) throw new Error('Invalid MCP server')
-  if (!/^https?:\/\//i.test(server.url) && server.id !== BUILTIN_SERVER_ID) {
+  if (!isAllowedMcpServerUrl(server)) {
     throw new Error(st('mcpRuntime.explicitHttpOnly'))
   }
   return server

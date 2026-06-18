@@ -3,6 +3,7 @@ import { LogBox } from 'react-native'
 const IGNORED_DEV_WARNING_FRAGMENTS = [
   '[Reanimated] Reduced motion setting is enabled on this device',
   'SafeAreaView has been deprecated and will be removed in a future release',
+  'largeTitleHideShadow prop is not available on Android',
 ]
 
 const INSTALL_KEY = '__isleMindDevLogFiltersInstalled'

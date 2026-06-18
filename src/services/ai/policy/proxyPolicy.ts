@@ -1,4 +1,5 @@
 import type { AIProvider, ProxyMode, Settings } from '@/types'
+import { safeHttpUrl } from '@/utils/networkUrlSafety'
 
 export interface ProxyPolicyDecision {
   mode: ProxyMode
@@ -18,7 +19,7 @@ export function resolveProxyPolicy(input: ProxyPolicyInput): ProxyPolicyDecision
   const mode = input.settings?.proxyMode ?? 'off'
   if (mode === 'off') return decision(mode, input.url, false, 'off')
   if (mode === 'system-detected') return decision(mode, input.url, true, 'system_proxy_platform_stack')
-  const baseUrl = input.settings?.proxyBaseUrl?.trim()
+  const baseUrl = safeHttpUrl(input.settings?.proxyBaseUrl)
   if (!baseUrl) return decision(mode, input.url, false, 'invalid_custom_base_url')
   try {
     const original = new URL(input.url)

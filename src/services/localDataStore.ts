@@ -77,6 +77,12 @@ export interface EmbeddingJobStatus {
   updatedAt: number
 }
 
+interface DocumentSourceRow {
+  documentId: string
+  sourceUri?: string
+  rawPath?: string
+}
+
 async function getDb() {
   if (shouldUseSqliteWebFallback) return sqliteWebFallbackDb as unknown as SQLite.SQLiteDatabase
   if (!dbPromise) {
@@ -210,6 +216,7 @@ export const localDataStore = {
   loadConversations,
   saveConversations,
   clearConversations,
+  clearDocumentSources,
   deleteKnowledgeDocumentIndexes,
   clearKnowledgeIndexes,
 }
@@ -459,6 +466,11 @@ export async function clearConversations(): Promise<void> {
   await db.runAsync('DELETE FROM conversation_records')
 }
 
+export async function clearDocumentSources(): Promise<void> {
+  const db = await getDb()
+  await db.runAsync('DELETE FROM document_sources')
+}
+
 export async function deleteKnowledgeDocumentIndexes(documentId: string): Promise<void> {
   const db = await getDb()
   await db.runAsync('DELETE FROM chunk_embeddings WHERE chunkId IN (SELECT id FROM knowledge_chunks WHERE documentId = ?)', documentId)
@@ -536,7 +548,7 @@ async function searchKnowledgeFts(query: string, limit: number): Promise<Retriev
       ftsQuery,
       limit
     )
-    return rows.map(chunkToSource)
+    return await attachDocumentSources(rows.map(chunkToSource))
   } catch {
     return []
   }
@@ -582,7 +594,7 @@ async function searchKnowledgeVector(query: string, limit: number, options: Sear
     void upsertChunks(chunksNeedingLocalEmbedding)
   }
 
-  return scored.sort((a, b) => (b.vectorScore ?? 0) - (a.vectorScore ?? 0)).slice(0, limit)
+  return await attachDocumentSources(scored.sort((a, b) => (b.vectorScore ?? 0) - (a.vectorScore ?? 0)).slice(0, limit))
 }
 
 async function createQueryEmbedding(query: string, chunks: Partial<ChunkEmbeddingRecord>[], options: SearchHybridOptions): Promise<number[]> {
@@ -628,6 +640,27 @@ function chunkToSource(chunk: KnowledgeChunk & { score?: number }): RetrievalSou
     qualityScore: chunk.qualityScore,
     sourceReason: raw.rerankSignalsJson || raw.entitiesJson ? 'indexed-signals' : undefined,
   }
+}
+
+async function attachDocumentSources<T extends RetrievalSource>(sources: T[]): Promise<T[]> {
+  if (!sources.length) return sources
+  const documentIds = Array.from(new Set(sources.map((source) => source.documentId).filter((documentId): documentId is string => Boolean(documentId))))
+  if (!documentIds.length) return sources
+  const db = await getDb()
+  const placeholders = documentIds.map(() => '?').join(',')
+  const rows = await db.getAllAsync<DocumentSourceRow>(
+    `SELECT documentId, sourceUri, rawPath FROM document_sources WHERE documentId IN (${placeholders})`,
+    ...documentIds
+  )
+  const byDocumentId = new Map(rows.map((row) => [row.documentId, row] as const))
+  return sources.map((source) => {
+    const documentSource = source.documentId ? byDocumentId.get(source.documentId) : undefined
+    if (!documentSource) return source
+    return {
+      ...source,
+      sourceUri: source.sourceUri ?? documentSource.sourceUri ?? documentSource.rawPath,
+    }
+  })
 }
 
 async function upsertAgenticIndexes(chunks: KnowledgeChunk[], now: number): Promise<void> {
@@ -807,7 +840,7 @@ async function searchRaptorIndex(query: string, limit: number): Promise<Retrieva
     'SELECT id, documentId, title, summary, childChunkIdsJson, embeddingJson, level FROM raptor_nodes ORDER BY updatedAt DESC LIMIT 240'
   )
   const queryEmbedding = createLocalEmbedding(query)
-  return rows
+  return await attachDocumentSources(rows
     .map((node) => {
       const vectorScore = cosineSimilarity(queryEmbedding, parseEmbedding(node.embeddingJson) ?? createLocalEmbedding(node.summary))
       const lexical = tokenOverlapScore(query, `${node.title} ${node.summary}`)
@@ -829,7 +862,7 @@ async function searchRaptorIndex(query: string, limit: number): Promise<Retrieva
     })
     .filter((source) => (source.score ?? 0) > 0.02)
     .sort((a, b) => (b.score ?? 0) - (a.score ?? 0))
-    .slice(0, limit)
+    .slice(0, limit))
 }
 
 async function searchGraphIndex(query: string, limit: number): Promise<RetrievalSource[]> {
@@ -911,7 +944,7 @@ async function searchGraphIndex(query: string, limit: number): Promise<Retrieval
      FROM knowledge_chunks WHERE id IN (${placeholders})`,
     ...Array.from(matchedChunkIds.keys())
   )
-  return chunks
+  return await attachDocumentSources(chunks
     .map((chunk) => {
       const match = matchedChunkIds.get(chunk.id)!
       return {
@@ -923,7 +956,7 @@ async function searchGraphIndex(query: string, limit: number): Promise<Retrieval
       }
     })
     .sort((a, b) => (b.score ?? 0) - (a.score ?? 0))
-    .slice(0, limit)
+    .slice(0, limit))
 }
 
 async function searchColbertIndex(query: string, limit: number): Promise<RetrievalSource[]> {
@@ -947,7 +980,7 @@ async function searchColbertIndex(query: string, limit: number): Promise<Retriev
     ...chunkIds
   )
   const matched = new Map(rows.map((row) => [row.chunkId, row.matched]))
-  return chunks
+  return await attachDocumentSources(chunks
     .map((chunk) => {
       const score = Math.min(1, (matched.get(chunk.id) ?? 0) / Math.max(1, tokens.length))
       return {
@@ -959,7 +992,7 @@ async function searchColbertIndex(query: string, limit: number): Promise<Retriev
       }
     })
     .sort((a, b) => (b.score ?? 0) - (a.score ?? 0))
-    .slice(0, limit)
+    .slice(0, limit))
 }
 
 async function resolveOnnxProvider(embeddingMode: 'provider' | 'local' | 'hybrid' | undefined, settings: Pick<SearchHybridOptions, 'localEmbeddingModelId' | 'localEmbeddingModelSource'>) {

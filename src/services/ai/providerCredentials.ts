@@ -101,6 +101,12 @@ export function chooseCredentialForModel(provider: AIProvider, modelId: string):
   }
 }
 
+export function findCredentialGroupIdForKey(provider: AIProvider, apiKey: string): string | undefined {
+  const key = apiKey.trim()
+  if (!key) return undefined
+  return provider.credentialGroups?.find((group) => group.apiKey?.trim() === key)?.id
+}
+
 export async function runCredentialGroupModelSync(provider: AIProvider, deps: CredentialSyncDeps): Promise<AIProvider> {
   const now = deps.now ?? Date.now
   const jitter = deps.jitter ?? Math.random

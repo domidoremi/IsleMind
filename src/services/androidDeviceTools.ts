@@ -5,6 +5,8 @@ import type { ProcessTrace, ToolContentBlock } from '@/types'
 import type { AgentToolManifest, AgentToolResult } from '@/services/agent/agentToolTypes'
 import { clampAgentOutput, createAgentTrace, redactSensitiveText } from '@/services/agent/agentTrace'
 import { appendRuntimeLog, type RuntimeLogOptions } from '@/services/runtimeLog'
+import { isAllowedAndroidApkUri } from '@/services/androidUriPolicy'
+import { openAndroidStatusNotificationSettings, type AndroidStatusNotificationSettingsTarget } from '@/services/androidStatusNotification'
 
 export type AndroidFileOperationAction = 'mkdir' | 'move' | 'copy' | 'rename'
 export type AndroidFileConflictPolicy = 'skip' | 'rename'
@@ -338,6 +340,18 @@ export function listAndroidDeviceToolManifests(): AgentToolManifest[] {
       }, ['title']),
       metadata: { androidOnly: true, requiresExternalConfirmation: true, localReminderStoreAvailable: false },
     },
+    {
+      id: 'android:notifications.open_settings',
+      source: 'android',
+      name: 'android.notifications.open_settings',
+      description: 'Open IsleMind notification-related Android system settings such as app notifications or promoted notification settings.',
+      permission: 'read-write',
+      enabled: true,
+      inputSchema: objectSchema({
+        target: { type: 'string', enum: ['notifications', 'promoted'] },
+      }),
+      metadata: { androidOnly: true, requiresExternalConfirmation: true, backgroundReliable: false },
+    },
   ]
 }
 
@@ -406,6 +420,9 @@ async function runAndroidTool(toolName: string, args: Record<string, unknown>, o
       break
     case 'android.reminder.open_create_todo':
       execution = openReminderTool(args)
+      break
+    case 'android.notifications.open_settings':
+      execution = openNotificationSettingsTool(args)
       break
     default:
       throw androidToolError('tool_unavailable', `${toolName} is not an Android device tool.`, 'skipped')
@@ -648,21 +665,38 @@ async function openApkInstallerTool(args: Record<string, unknown>): Promise<Andr
     throw androidToolError('schema_invalid', 'apkUri must point to an .apk file or Android content URI.')
   }
   const contentUri = apkUri.startsWith('file://') ? await FileSystem.getContentUriAsync(apkUri) : apkUri
-  await IntentLauncher.startActivityAsync('android.intent.action.INSTALL_PACKAGE', {
-    data: contentUri,
-    type: APK_MIME_TYPE,
-    flags: ANDROID_GRANT_READ_URI_PERMISSION,
-  })
+  const launchMetadata = await launchAndroidIntentWithFallback([
+    {
+      action: 'android.intent.action.INSTALL_PACKAGE',
+      params: {
+        data: contentUri,
+        type: APK_MIME_TYPE,
+        flags: ANDROID_GRANT_READ_URI_PERMISSION,
+      },
+      label: 'install-package',
+    },
+    {
+      action: 'android.intent.action.VIEW',
+      params: {
+        data: contentUri,
+        type: APK_MIME_TYPE,
+        flags: ANDROID_GRANT_READ_URI_PERMISSION,
+      },
+      label: 'view-package-archive',
+    },
+  ], 'Android package installer could not be opened for this APK URI.')
   return jsonExecution({
     installerOpened: true,
     apkUri,
     contentUri,
     silentInstallSupported: false,
     confirmation: 'Android package installer requires user confirmation.',
+    launchAttempt: launchMetadata.attempt,
   }, {
     installerOpened: true,
     requiresExternalConfirmation: true,
     silentInstallSupported: false,
+    launchAttempt: launchMetadata.attempt,
   })
 }
 
@@ -730,7 +764,12 @@ async function clearAppCacheTool(options: AndroidDeviceToolOptions = {}): Promis
       userFilesDeleted: false,
     })
     try {
-      await FileSystem.deleteAsync(`${cacheDirectory}${name}`, { idempotent: true })
+      const entryUri = appCacheEntryUri(cacheDirectory, name)
+      if (!entryUri) {
+        failures.push(`${name}: refused non-child cache entry`)
+        continue
+      }
+      await FileSystem.deleteAsync(entryUri, { idempotent: true })
       deleted += 1
     } catch (error) {
       failures.push(`${name}: ${errorMessageFrom(error)}`)
@@ -761,14 +800,56 @@ async function openAlarmTool(args: Record<string, unknown>): Promise<AndroidTool
   const hour = readInteger(args.hour, -1, 0, 23)
   const minutes = readInteger(args.minutes, -1, 0, 59)
   if (hour < 0 || minutes < 0) throw androidToolError('schema_invalid', 'hour and minutes are required.')
-  await IntentLauncher.startActivityAsync('android.intent.action.SET_ALARM', {
-    extra: {
-      'android.intent.extra.alarm.HOUR': hour,
-      'android.intent.extra.alarm.MINUTES': minutes,
-      'android.intent.extra.alarm.MESSAGE': typeof args.message === 'string' ? args.message : '',
-      'android.intent.extra.alarm.SKIP_UI': false,
+  const alarmExtras = {
+    'android.intent.extra.alarm.HOUR': hour,
+    'android.intent.extra.alarm.MINUTES': minutes,
+    'android.intent.extra.alarm.MESSAGE': typeof args.message === 'string' ? args.message : '',
+    'android.intent.extra.alarm.SKIP_UI': false,
+  }
+  const launchMetadata = await launchAndroidIntentWithFallback([
+    {
+      action: 'android.intent.action.SET_ALARM',
+      params: {
+        packageName: 'com.android.deskclock',
+        extra: alarmExtras,
+      },
+      label: 'set-alarm-deskclock',
     },
-  })
+    {
+      action: 'android.intent.action.SET_ALARM',
+      params: {
+        packageName: 'com.google.android.deskclock',
+        extra: alarmExtras,
+      },
+      label: 'set-alarm-google-clock',
+    },
+    {
+      action: 'android.intent.action.SET_ALARM',
+      params: {
+        extra: alarmExtras,
+      },
+      label: 'set-alarm',
+    },
+    {
+      action: 'android.intent.action.SHOW_ALARMS',
+      label: 'show-alarms',
+    },
+    {
+      action: 'android.intent.action.MAIN',
+      params: {
+        category: 'android.intent.category.APP_ALARM',
+      },
+      label: 'app-alarm',
+    },
+    {
+      action: 'android.intent.action.MAIN',
+      params: {
+        category: 'android.intent.category.LAUNCHER',
+        packageName: 'com.android.deskclock',
+      },
+      label: 'deskclock-launcher',
+    },
+  ], 'Android Clock could not be opened for alarm creation.')
   return jsonExecution({
     opened: true,
     target: 'alarm',
@@ -776,9 +857,11 @@ async function openAlarmTool(args: Record<string, unknown>): Promise<AndroidTool
     minutes,
     message: typeof args.message === 'string' ? args.message : undefined,
     exactAlarmPermissionRequired: false,
+    launchAttempt: launchMetadata.attempt,
   }, {
     target: 'alarm',
     requiresExternalConfirmation: true,
+    launchAttempt: launchMetadata.attempt,
   })
 }
 
@@ -787,26 +870,49 @@ async function openCalendarEventTool(args: Record<string, unknown>): Promise<And
   const title = requireNonEmptyString(args.title, 'title')
   const beginTimeMs = readTimestamp(args.beginTimeMs, args.beginTimeIso, Date.now())
   const endTimeMs = readTimestamp(args.endTimeMs, args.endTimeIso, beginTimeMs + 30 * 60 * 1000)
-  await IntentLauncher.startActivityAsync('android.intent.action.INSERT', {
-    data: 'content://com.android.calendar/events',
-    type: 'vnd.android.cursor.item/event',
-    extra: {
-      title,
-      description: typeof args.description === 'string' ? args.description : '',
-      beginTime: beginTimeMs,
-      endTime: Math.max(beginTimeMs, endTimeMs),
+  const normalizedEndTimeMs = Math.max(beginTimeMs, endTimeMs)
+  const launchMetadata = await launchAndroidIntentWithFallback([
+    {
+      action: 'android.intent.action.INSERT',
+      params: {
+        data: 'content://com.android.calendar/events',
+        type: 'vnd.android.cursor.item/event',
+        extra: {
+          title,
+          description: typeof args.description === 'string' ? args.description : '',
+          beginTime: beginTimeMs,
+          endTime: normalizedEndTimeMs,
+        },
+      },
+      label: 'calendar-insert',
     },
-  })
+    {
+      action: 'android.intent.action.EDIT',
+      params: {
+        data: 'content://com.android.calendar/events',
+        type: 'vnd.android.cursor.item/event',
+        extra: {
+          title,
+          description: typeof args.description === 'string' ? args.description : '',
+          beginTime: beginTimeMs,
+          endTime: normalizedEndTimeMs,
+        },
+      },
+      label: 'calendar-edit',
+    },
+  ], 'Android Calendar could not be opened for event creation.')
   return jsonExecution({
     opened: true,
     target: 'calendar-event',
     title,
     beginTimeMs,
-    endTimeMs: Math.max(beginTimeMs, endTimeMs),
+    endTimeMs: normalizedEndTimeMs,
     calendarPermissionRequired: false,
+    launchAttempt: launchMetadata.attempt,
   }, {
     target: 'calendar-event',
     requiresExternalConfirmation: true,
+    launchAttempt: launchMetadata.attempt,
   })
 }
 
@@ -815,16 +921,36 @@ async function openReminderTool(args: Record<string, unknown>): Promise<AndroidT
   const title = requireNonEmptyString(args.title, 'title')
   const dueTimeMs = readTimestamp(args.dueTimeMs, args.dueTimeIso, Date.now())
   const endTimeMs = dueTimeMs + 15 * 60 * 1000
-  await IntentLauncher.startActivityAsync('android.intent.action.INSERT', {
-    data: 'content://com.android.calendar/events',
-    type: 'vnd.android.cursor.item/event',
-    extra: {
-      title,
-      description: typeof args.description === 'string' ? args.description : '',
-      beginTime: dueTimeMs,
-      endTime: endTimeMs,
+  const launchMetadata = await launchAndroidIntentWithFallback([
+    {
+      action: 'android.intent.action.INSERT',
+      params: {
+        data: 'content://com.android.calendar/events',
+        type: 'vnd.android.cursor.item/event',
+        extra: {
+          title,
+          description: typeof args.description === 'string' ? args.description : '',
+          beginTime: dueTimeMs,
+          endTime: endTimeMs,
+        },
+      },
+      label: 'calendar-todo-insert',
     },
-  })
+    {
+      action: 'android.intent.action.EDIT',
+      params: {
+        data: 'content://com.android.calendar/events',
+        type: 'vnd.android.cursor.item/event',
+        extra: {
+          title,
+          description: typeof args.description === 'string' ? args.description : '',
+          beginTime: dueTimeMs,
+          endTime: endTimeMs,
+        },
+      },
+      label: 'calendar-todo-edit',
+    },
+  ], 'Android Calendar could not be opened for to-do creation.')
   return jsonExecution({
     opened: true,
     target: 'calendar-todo',
@@ -833,11 +959,66 @@ async function openReminderTool(args: Record<string, unknown>): Promise<AndroidT
     endTimeMs,
     calendarPermissionRequired: false,
     localReminderStoreAvailable: false,
+    launchAttempt: launchMetadata.attempt,
   }, {
     target: 'calendar-todo',
     requiresExternalConfirmation: true,
     calendarPermissionRequired: false,
     localReminderStoreAvailable: false,
+    launchAttempt: launchMetadata.attempt,
+  })
+}
+
+async function openNotificationSettingsTool(args: Record<string, unknown>): Promise<AndroidToolExecution> {
+  assertAndroid()
+  const target: AndroidStatusNotificationSettingsTarget = args.target === 'promoted' ? 'promoted' : 'notifications'
+  const result = await openAndroidStatusNotificationSettings(target)
+  if (!result.opened) {
+    const message = target === 'promoted' && result.reason === 'unsupported_api'
+      ? 'Promoted notification settings are unavailable on this Android version.'
+      : result.errorMessage || `Android notification settings could not be opened (${result.reason}).`
+    throw androidToolError(result.reason === 'failed' ? 'execution_failed' : 'tool_unavailable', message, 'skipped', {
+      target,
+      requiresExternalConfirmation: true,
+      backgroundReliable: false,
+      settingsReason: result.reason,
+    })
+  }
+  return jsonExecution({
+    opened: true,
+    target,
+    backgroundReliable: false,
+    reason: result.reason,
+  }, {
+    target,
+    requiresExternalConfirmation: true,
+    backgroundReliable: false,
+    settingsReason: result.reason,
+  })
+}
+
+interface AndroidIntentLaunchAttempt {
+  action: string
+  params?: IntentLauncher.IntentLauncherParams
+  label: string
+}
+
+async function launchAndroidIntentWithFallback(
+  attempts: AndroidIntentLaunchAttempt[],
+  failureMessage: string
+): Promise<{ attempt: string }> {
+  const errors: string[] = []
+  for (const attempt of attempts) {
+    try {
+      await IntentLauncher.startActivityAsync(attempt.action, attempt.params)
+      return { attempt: attempt.label }
+    } catch (error) {
+      errors.push(`${attempt.label}: ${errorMessageFrom(error)}`)
+    }
+  }
+  throw androidToolError('tool_unavailable', `${failureMessage} ${errors.join(' | ')}`.trim(), 'skipped', {
+    intentAttempts: attempts.map((attempt) => attempt.label),
+    intentErrors: errors,
   })
 }
 
@@ -1154,7 +1335,7 @@ function displayNameFromSafUri(uri: string): string {
 }
 
 function looksLikeApkUri(uri: string): boolean {
-  return uri.startsWith('content://') || uri.toLowerCase().split('?')[0].endsWith('.apk')
+  return isAllowedAndroidApkUri(uri)
 }
 
 async function listAppCacheEntries(): Promise<string[]> {
@@ -1165,6 +1346,16 @@ async function listAppCacheEntries(): Promise<string[]> {
   } catch {
     return []
   }
+}
+
+function appCacheEntryUri(cacheDirectory: string, entryName: string): string | null {
+  const normalizedCacheDirectory = cacheDirectory.endsWith('/') ? cacheDirectory : `${cacheDirectory}/`
+  const normalizedName = entryName
+  if (!normalizedName || normalizedName === '.' || normalizedName === '..') return null
+  if (normalizedName !== normalizedName.trim()) return null
+  if (/[/\\\u0000-\u001F]/.test(normalizedName)) return null
+  if (/^[a-z][a-z0-9+.-]*:/i.test(normalizedName)) return null
+  return `${normalizedCacheDirectory}${normalizedName}`
 }
 
 async function safeNumber(action: () => Promise<number>): Promise<number | null> {
@@ -1450,6 +1641,8 @@ function androidOperationKind(toolName: string): string {
       return 'calendar-event-intent'
     case 'android.reminder.open_create_todo':
       return 'calendar-todo-intent'
+    case 'android.notifications.open_settings':
+      return 'notification-settings-intent'
     default:
       return 'android-tool'
   }
@@ -1463,6 +1656,7 @@ function androidAuditScope(toolName: string): string {
   if (toolName === 'android.storage.audit') return 'storage-summary'
   if (toolName.startsWith('android.alarm.')) return 'system-clock'
   if (toolName.startsWith('android.calendar.') || toolName.startsWith('android.reminder.')) return 'system-calendar'
+  if (toolName.startsWith('android.notifications.')) return 'system-notification-settings'
   return 'android-runtime'
 }
 

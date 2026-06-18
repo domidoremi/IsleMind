@@ -6,6 +6,7 @@ const RECENT_MESSAGE_TARGET = 8
 
 export type LocalCompressionStrategy = 'none' | 'structured-v2' | 'single-message-truncation'
 export type SummarySectionId = 'constraints' | 'decisions' | 'failures' | 'actions' | 'references' | 'recent'
+type SummaryCandidatePriority = 'critical' | 'high' | 'normal'
 
 export interface PackChatMessagesInput {
   messages: Pick<Message, 'role' | 'content' | 'responseText' | 'attachments' | 'status'>[]
@@ -77,6 +78,11 @@ interface SummarySectionConfig {
   title: string
   maxItems: number
   maxChars: number
+}
+
+interface SummaryCandidate {
+  value: string
+  priority: SummaryCandidatePriority
 }
 
 const SUMMARY_SECTIONS: SummarySectionConfig[] = [
@@ -248,46 +254,56 @@ function countMessageRoles(messages: { role: 'user' | 'assistant' }[]): PackedCo
   }, { user: 0, assistant: 0 })
 }
 
-function collectStructuredSummarySections(messages: { role: 'user' | 'assistant'; content: string }[]): Map<SummarySectionId, string[]> {
-  const sections = new Map<SummarySectionId, string[]>()
+function collectStructuredSummarySections(messages: { role: 'user' | 'assistant'; content: string }[]): Map<SummarySectionId, SummaryCandidate[]> {
+  const sections = new Map<SummarySectionId, SummaryCandidate[]>()
   const seen = new Set<string>()
 
   messages.forEach((message) => {
     const text = normalizeSummaryText(message.content)
     if (!text) return
     const line = `${roleLabel(message.role)}: ${text}`
+    const importance = classifySummaryImportance(text)
     if (/(必须|务必|不要|不能|禁止|保留|默认|要求|约束|must|should|never|require|constraint)/i.test(text)) {
-      pushSummaryItem(sections, seen, 'constraints', line)
+      pushSummaryItem(sections, seen, 'constraints', line, escalateSummaryPriority(importance, 'high'))
     }
     if (/(决定|已确认|结论|采用|选择|改为|移除|删除|完成|decided|decision|adopt|choose|confirmed)/i.test(text)) {
-      pushSummaryItem(sections, seen, 'decisions', line)
+      pushSummaryItem(sections, seen, 'decisions', line, importance)
     }
     if (/(失败|报错|错误|异常|阻断|风险|超时|unauthorized|timeout|failed|failure|error|blocked|risk|TS\d+)/i.test(text)) {
-      pushSummaryItem(sections, seen, 'failures', line)
+      pushSummaryItem(sections, seen, 'failures', line, escalateSummaryPriority(importance, 'high'))
     }
     if (/(下一步|待办|需要|修复|验证|检查|运行|实现|todo|next|fix|verify|run|implement|inspect)/i.test(text)) {
-      pushSummaryItem(sections, seen, 'actions', line)
+      pushSummaryItem(sections, seen, 'actions', line, importance)
     }
     for (const reference of extractReferences(text)) {
-      pushSummaryItem(sections, seen, 'references', `${roleLabel(message.role)}: ${reference}`)
+      const referencePriority = /(?:src|app|scripts|docs)\//i.test(reference) || /(?:bun run|node scripts\/|git |adb |pwsh )/i.test(reference)
+        ? 'high'
+        : importance
+      pushSummaryItem(sections, seen, 'references', `${roleLabel(message.role)}: ${reference}`, referencePriority)
     }
   })
 
   messages.slice(-8).forEach((message) => {
     const text = normalizeSummaryText(message.content)
     if (!text) return
-    pushSummaryItem(sections, seen, 'recent', `${roleLabel(message.role)}: ${text}`)
+    pushSummaryItem(sections, seen, 'recent', `${roleLabel(message.role)}: ${text}`, classifyRecentPriority(text))
   })
 
   return sections
 }
 
-function pushSummaryItem(sections: Map<SummarySectionId, string[]>, seen: Set<string>, section: SummarySectionId, value: string): void {
+function pushSummaryItem(
+  sections: Map<SummarySectionId, SummaryCandidate[]>,
+  seen: Set<string>,
+  section: SummarySectionId,
+  value: string,
+  priority: SummaryCandidatePriority
+): void {
   const normalized = value.toLowerCase()
   if (seen.has(`${section}:${normalized}`)) return
   seen.add(`${section}:${normalized}`)
   const items = sections.get(section) ?? []
-  items.push(value)
+  items.push({ value, priority })
   sections.set(section, items)
 }
 
@@ -295,26 +311,29 @@ function extractReferences(text: string): string[] {
   const matches = new Set<string>()
   const patterns = [
     /\b(?:src|app|scripts|docs|assets|test-evidence|output)\/[A-Za-z0-9_./-]+\b/g,
-    /\b[A-Za-z]:\\[^\s"'<>|]+/g,
+    /\b[A-Za-z]:\\[^\s"'<>|，。；;]+/g,
     /\b(?:bun run|node scripts\/|npx |git |adb |pwsh |powershell )[^\n。；;]{1,120}/gi,
     /\b[A-Za-z0-9_-]+\.(?:ts|tsx|js|jsx|json|md|yml|yaml|ps1|sql|db)\b/g,
   ]
   for (const pattern of patterns) {
     for (const match of text.matchAll(pattern)) {
-      matches.add(match[0].trim())
+      const value = normalizeReferenceMatch(match[0].trim())
+      matches.add(value)
     }
   }
   return Array.from(matches).slice(0, 10)
 }
 
-function renderStructuredSummary(sections: Map<SummarySectionId, string[]>, sectionConfigs: SummarySectionConfig[]): string {
+function renderStructuredSummary(sections: Map<SummarySectionId, SummaryCandidate[]>, sectionConfigs: SummarySectionConfig[]): string {
   return sectionConfigs
     .map((section) => {
-      const items = (sections.get(section.id) ?? []).slice(0, section.maxItems)
+      const items = rankSummaryCandidates(section.id, sections.get(section.id) ?? []).slice(0, section.maxItems)
       if (!items.length) return ''
       return [
         section.title,
-        ...items.map((item) => `- ${clampSummaryLine(item, section.maxChars)}`),
+        ...items.map((item) => `- ${section.id === 'references'
+          ? clampReferenceSummaryLine(item.value, Math.max(section.maxChars, 420))
+          : clampSummaryLine(item.value, section.maxChars)}`),
       ].join('\n')
     })
     .filter(Boolean)
@@ -359,6 +378,22 @@ function clampSummaryLine(text: string, maxChars: number): string {
   return trimmed.length > maxChars ? `${trimmed.slice(0, Math.max(24, maxChars - 3))}...` : trimmed
 }
 
+function clampReferenceSummaryLine(text: string, maxChars: number): string {
+  const trimmed = text.trim()
+  if (trimmed.length <= maxChars) return trimmed
+  const pathMatch = trimmed.match(/[A-Za-z]:\\[^\s"'<>|]+|(?:src|app|scripts|docs|assets)\/[A-Za-z0-9_./-]+|[A-Za-z0-9_-]+\.(?:ts|tsx|js|jsx|json|md|yml|yaml|ps1|sql|db)\b/)
+  if (!pathMatch) return clampSummaryLine(trimmed, maxChars)
+  const pathValue = pathMatch[0]
+  const prefix = trimmed.slice(0, pathMatch.index ?? 0).trimEnd()
+  if (pathValue.length <= maxChars) {
+    return prefix ? `${prefix} ${pathValue}` : pathValue
+  }
+  const pathBudget = Math.max(96, maxChars - Math.min(prefix.length + 1, 48))
+  const preservedPath = preserveHeadTail(pathValue, pathBudget).replace(/\n\.\.\.\n/g, '...')
+  const next = prefix ? `${prefix} ${preservedPath}` : preservedPath
+  return next.length > maxChars ? next : next
+}
+
 function clampSummaryToTokenBudget(summary: string, tokenBudget: number): string {
   let next = summary.trim()
   let lineBudget = 140
@@ -366,7 +401,12 @@ function clampSummaryToTokenBudget(summary: string, tokenBudget: number): string
     lineBudget = Math.floor(lineBudget * 0.78)
     next = next
       .split('\n')
-      .map((line) => line.startsWith('- ') ? clampSummaryLine(line, lineBudget) : line)
+      .map((line) => {
+        if (!line.startsWith('- ')) return line
+        return /(?:src|app|scripts|docs|assets)\/|[A-Za-z]:\\/.test(line)
+          ? clampReferenceSummaryLine(line, Math.max(lineBudget, 220))
+          : clampSummaryLine(line, lineBudget)
+      })
       .join('\n')
   }
   while (estimateTextTokens(next) > tokenBudget && next.includes('\n近期旧消息\n')) {
@@ -379,21 +419,97 @@ function clampSummaryToTokenBudget(summary: string, tokenBudget: number): string
 }
 
 function truncateSummaryHeadToTokenBudget(text: string, tokenBudget: number): string {
-  let next = text.trim()
+  const source = text.trim()
+  let next = source
   while (estimateTextTokens(next) > tokenBudget && next.length > 24) {
-    next = next.slice(0, Math.floor(next.length * 0.78)).trim()
+    next = preserveHeadTail(next, Math.max(120, Math.floor(next.length * 0.78)))
   }
-  if (next.length >= text.trim().length) return next
+  if (next.length >= source.length) return next
   const truncated = `${next}\n[历史摘要已截断]`
   return estimateTextTokens(truncated) <= tokenBudget ? truncated : next
 }
 
 function truncateToTokenBudget(text: string, tokenBudget: number): string {
-  let next = text.trim()
-  while (estimateTextTokens(next) > tokenBudget && next.length > 180) {
-    next = next.slice(Math.floor(next.length * 0.72))
+  const source = text.trim()
+  const prefix = '[前文过长，已保留开头与末尾]\n'
+  if (estimateTextTokens(source) <= tokenBudget) return source
+  if (estimateTextTokens(prefix) >= tokenBudget) {
+    return preserveHeadTail(source, Math.max(120, Math.floor(source.length * 0.72)))
   }
-  return next.length < text.trim().length ? `[前文过长，保留末尾]\n${next}` : next
+  let next = source
+  while (estimateTextTokens(next) > tokenBudget && next.length > 180) {
+    next = preserveHeadTail(next, Math.max(120, Math.floor(next.length * 0.72)))
+  }
+  if (next.length >= source.length) return next
+  let prefixed = `${prefix}${next}`
+  while (estimateTextTokens(prefixed) > tokenBudget && next.length > 120) {
+    next = preserveHeadTail(next, Math.max(96, Math.floor(next.length * 0.84)))
+    prefixed = `${prefix}${next}`
+  }
+  return estimateTextTokens(prefixed) <= tokenBudget ? prefixed : next
+}
+
+function preserveHeadTail(text: string, keepChars: number): string {
+  const source = text.trim()
+  if (source.length <= keepChars) return source
+  const ellipsis = '\n...\n'
+  const available = Math.max(48, keepChars - ellipsis.length)
+  const headLength = Math.max(24, Math.ceil(available * 0.42))
+  const tailLength = Math.max(24, available - headLength)
+  return `${source.slice(0, headLength).trimEnd()}${ellipsis}${source.slice(Math.max(headLength, source.length - tailLength)).trimStart()}`
+}
+
+function classifySummaryImportance(text: string): SummaryCandidatePriority {
+  if (/(?:\b(?:fatal|critical|blocker|blocked|cannot|must|required|forbidden|security|unauthorized|denied|timeout|traceback|exception)\b|TS\d+|HTTP\s*\d{3}|line\s+\d+|:[0-9]{1,5}\b|```|Error:|失败|阻断|必须|禁止|报错|超时|异常|安全|未授权|权限)/i.test(text)) {
+    return 'critical'
+  }
+  if (/(?:\b(?:todo|next|verify|inspect|implement|fix|patch|config|command|file|diff|test)\b|src\/|app\/|scripts\/|docs\/|[A-Za-z]:\\|bun run|node scripts\/|git |adb |pwsh |步骤|待办|下一步|验证|修复|实现|检查|文件|命令)/i.test(text)) {
+    return 'high'
+  }
+  return 'normal'
+}
+
+function classifyRecentPriority(text: string): SummaryCandidatePriority {
+  return /(?:\b(?:done|fixed|verified|passed|ready)\b|完成|已修复|已验证|通过)/i.test(text)
+    ? 'normal'
+    : classifySummaryImportance(text)
+}
+
+function escalateSummaryPriority(current: SummaryCandidatePriority, minimum: Exclude<SummaryCandidatePriority, 'normal'>): SummaryCandidatePriority {
+  const rank = { normal: 0, high: 1, critical: 2 } as const
+  return rank[current] >= rank[minimum] ? current : minimum
+}
+
+function rankSummaryCandidates(section: SummarySectionId, items: SummaryCandidate[]): SummaryCandidate[] {
+  const priorityRank = { critical: 0, high: 1, normal: 2 } as const
+  return [...items].sort((left, right) => {
+    const byPriority = priorityRank[left.priority] - priorityRank[right.priority]
+    if (byPriority !== 0) return byPriority
+    if (section === 'references') {
+      const leftScore = referenceStabilityScore(left.value)
+      const rightScore = referenceStabilityScore(right.value)
+      if (leftScore !== rightScore) return rightScore - leftScore
+    }
+    return right.value.length - left.value.length
+  })
+}
+
+function referenceStabilityScore(value: string): number {
+  let score = 0
+  if (/(?:src|app|scripts|docs)\//i.test(value)) score += 4
+  if (/\b[A-Za-z]:\\/.test(value)) score += 4
+  if (/\.(?:ts|tsx|js|jsx|json|md|yml|yaml|ps1|sql|db)\b/i.test(value)) score += 2
+  if (/(?:bun run|node scripts\/|git |adb |pwsh |powershell )/i.test(value)) score += 1
+  return score
+}
+
+function normalizeReferenceMatch(value: string): string {
+  const normalizedWindows = value.replace(/\\/g, '/')
+  const repoRelative = normalizedWindows.match(/(?:^|\/)(src|app|scripts|docs|assets|test-evidence|output\/?)[A-Za-z0-9_./-]*/i)
+  if (repoRelative) {
+    return repoRelative[0].replace(/^\/+/, '')
+  }
+  return value
 }
 
 function estimateReasoningReserve(reasoningEffort?: ReasoningEffort, providerType?: ProviderType, model?: string): number {

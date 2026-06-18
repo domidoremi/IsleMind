@@ -1,11 +1,12 @@
 import { Component, type ErrorInfo, type ReactNode } from 'react'
-import { Text, View } from 'react-native'
+import { StyleSheet, Text, View } from 'react-native'
 import * as Clipboard from 'expo-clipboard'
-import { AlertTriangle, Copy, RotateCcw } from 'lucide-react-native'
 import { useTranslation } from 'react-i18next'
+import { AppIcon, appIconStroke } from '@/components/ui/AppIcon'
 import { IsleButton } from '@/components/ui/isle'
 import { IslePanel } from '@/components/ui/isle'
 import { useAppTheme } from '@/hooks/useAppTheme'
+import { logRenderError } from '@/services/runtimeHealthLog'
 
 interface RenderGuardProps {
   children: ReactNode
@@ -40,6 +41,13 @@ class RenderGuardBoundary extends Component<RenderGuardBoundaryProps, RenderGuar
   }
 
   componentDidCatch(error: Error, info: ErrorInfo) {
+    void logRenderError({
+      label: this.props.label,
+      compact: this.props.compact,
+      fallbackText: this.props.fallbackText,
+      componentStack: info.componentStack ?? undefined,
+      error,
+    })
     if (__DEV__) {
       console.warn('[RenderGuard]', this.props.label ?? 'render', error, info.componentStack)
     }
@@ -59,12 +67,13 @@ class RenderGuardBoundary extends Component<RenderGuardBoundaryProps, RenderGuar
     if (!this.state.error) return this.props.children
 
     const { colors, strings } = this.props
+    const subtleBorderWidth = colors.ui.cartoon ? 1 : StyleSheet.hairlineWidth
     const title = this.props.compact ? strings.compactTitle : `${this.props.label ?? strings.content}${strings.titleSuffix}`
     return (
       <IslePanel elevated={false} style={{ borderRadius: this.props.compact ? colors.ui.radius.card : colors.ui.radius.panel }} contentStyle={{ padding: this.props.compact ? 10 : 14 }}>
         <View style={{ flexDirection: 'row', gap: 9, alignItems: 'flex-start' }}>
-          <View style={{ width: 28, height: 28, borderRadius: colors.ui.radius.controlSmall, alignItems: 'center', justifyContent: 'center', backgroundColor: colors.ui.tone.danger.background, borderWidth: 1, borderColor: colors.ui.tone.danger.border }}>
-            <AlertTriangle color={colors.ui.tone.danger.foreground} size={15} strokeWidth={2.1} />
+          <View style={{ width: 28, height: 28, borderRadius: colors.ui.radius.controlSmall, alignItems: 'center', justifyContent: 'center', backgroundColor: colors.ui.tone.danger.background, borderWidth: subtleBorderWidth, borderColor: colors.ui.tone.danger.border }}>
+            <AppIcon name="warning" color={colors.ui.tone.danger.foreground} size={15} strokeWidth={appIconStroke.strong} />
           </View>
           <View style={{ flex: 1, minWidth: 0 }}>
             <Text style={{ color: colors.text, fontSize: 13, lineHeight: 18, fontWeight: '900' }}>{title}</Text>
@@ -72,9 +81,9 @@ class RenderGuardBoundary extends Component<RenderGuardBoundaryProps, RenderGuar
               {strings.description}
             </Text>
             <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 7, marginTop: 10 }}>
-              <IsleButton compact label={strings.retryRender} icon={<RotateCcw color={colors.textSecondary} size={13} strokeWidth={2} />} onPress={this.reset} />
+              <IsleButton compact label={strings.retryRender} icon={<AppIcon name="retry" color={colors.textSecondary} size={13} />} onPress={this.reset} />
               {this.props.fallbackText ? (
-                <IsleButton compact label={strings.copyRaw} icon={<Copy color={colors.textSecondary} size={13} strokeWidth={2} />} onPress={this.copyFallback} />
+                <IsleButton compact label={strings.copyRaw} icon={<AppIcon name="copy" color={colors.textSecondary} size={13} />} onPress={this.copyFallback} />
               ) : null}
             </View>
           </View>

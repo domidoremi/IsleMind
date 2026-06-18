@@ -7,6 +7,7 @@ import type { AgentPlannedStep } from '@/services/agent/agentPlanner'
 import { createAgentPlan } from '@/services/agent/agentPlanner'
 import { resolveAgentRunLimits } from '@/services/agent/agentPolicy'
 import { validateAgentWorkflowDefinition } from '@/services/agent/agentWorkflowDefinitions'
+import { formatAgentToolRequestIdentity } from '@/services/agent/agentToolIdentityUtils'
 import { st } from '@/i18n/service'
 
 const RAG_EVIDENCE_MIN_CONFIDENCE = 0.5
@@ -285,11 +286,7 @@ function hasArrayItems(value: unknown): boolean {
 }
 
 function formatToolRequestRef(request: AgentToolRequest): string {
-  return [
-    request.toolId,
-    request.serverId && request.name ? `${request.serverId}:${request.name}` : undefined,
-    request.name,
-  ].filter(Boolean).join('|')
+  return formatAgentToolRequestIdentity(request)
 }
 
 function isAndroidPreviewOperationsRef(ref: string): boolean {
@@ -724,6 +721,11 @@ function buildAndroidPendingActionCopy(toolName: string | undefined, args: Recor
       return {
         title: st('messageBubble.androidPendingAlarmTitle', undefined, 'Open Android alarm editor'),
         summary: st('messageBubble.androidPendingAlarmSummary', undefined, 'IsleMind opens the Android clock UI with the requested alarm fields. The alarm is created only after you confirm it in the system app.'),
+      }
+    case 'android.notifications.open_settings':
+      return {
+        title: st('messageBubble.androidPendingNotificationSettingsTitle', undefined, 'Open Android notification settings'),
+        summary: st('messageBubble.androidPendingNotificationSettingsSummary', undefined, 'IsleMind opens Android notification-related system settings for this app. Final notification permission or promoted-notification changes still happen in the system UI.'),
       }
     case 'android.calendar.open_create_event':
     case 'android.reminder.open_create_todo':

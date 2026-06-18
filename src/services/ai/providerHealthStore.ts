@@ -62,6 +62,26 @@ export async function clearProviderHealthSnapshot(): Promise<void> {
   await AsyncStorage.removeItem(PROVIDER_HEALTH_STORAGE_KEY)
 }
 
+export async function removeProviderHealthRecordsByProviderId(
+  providerId: string,
+  options: ProviderHealthSnapshotOptions = {},
+): Promise<ProviderHealthSnapshot> {
+  const normalizedProviderId = typeof providerId === 'string' ? providerId.trim() : ''
+  if (!normalizedProviderId) {
+    return loadProviderHealthSnapshot(options)
+  }
+  const current = await loadProviderHealthSnapshot({
+    ...options,
+    maxAgeMs: Number.MAX_SAFE_INTEGER,
+  })
+  const records = current.records.filter((record) => record.providerId !== normalizedProviderId)
+  if (records.length === current.records.length) return current
+  return saveProviderHealthRecords(records, {
+    ...options,
+    maxAgeMs: Number.MAX_SAFE_INTEGER,
+  })
+}
+
 export function normalizeProviderHealthSnapshot(value: unknown, options: ProviderHealthSnapshotOptions = {}): ProviderHealthSnapshot {
   const data = value && typeof value === 'object' ? value as Partial<ProviderHealthSnapshot> : {}
   const nowMs = options.nowMs ?? Date.now()

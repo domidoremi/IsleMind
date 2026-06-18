@@ -1,5 +1,6 @@
 import { getModelConfig } from '@/types'
 import type { AIProvider, Attachment, ProviderType, ReasoningEffort } from '@/types'
+import { filterSendableAttachments } from '@/services/attachmentContract'
 import { getReasoningEffortOptions, isClaudeThinkingModel, isDashScopeThinkingModel, isDeepSeekThinkingModel, isGeminiThinkingLevelModel, isGeminiThinkingModel, isKimiThinkingModel, isMiniMaxThinkingModel, isOpenAIReasoningModel, isXAIReasoningModel, isXAIMultiAgentReasoningModel, isXiaomiMimoReasoningModel, modelDisallowsAnthropicSampling } from '@/utils/modelReasoning'
 
 export type ProviderConformanceFamily =
@@ -345,6 +346,14 @@ function inferProtocol(input: ProviderConformanceRequest, family: ProviderConfor
     const config = getModelConfig(input.model, input.provider.type, input.provider.modelConfigs)
     return config.preferredEndpoint === 'responses' ? 'openai-responses' : 'openai-compatible'
   }
+  if (
+    family === 'openai-compatible'
+    && input.provider.wireProtocol !== 'anthropic-compatible'
+    && input.provider.capabilities?.responsesApi === true
+  ) {
+    const config = getModelConfig(input.model, input.provider.type, input.provider.modelConfigs)
+    return config.preferredEndpoint === 'responses' || input.webSearchMode === 'native' ? 'openai-responses' : 'openai-compatible'
+  }
   if (['dashscope', 'moonshot', 'bigmodel', 'openrouter', 'newapi', 'sub2api'].includes(family)) return 'openai-compatible'
   if (family === 'xiaomi-mimo') return input.provider.wireProtocol === 'anthropic-compatible' ? 'xiaomi-mimo-anthropic-compatible' : 'xiaomi-mimo-openai-compatible'
   if (family === 'anthropic-compatible') return 'anthropic-compatible'
@@ -638,7 +647,7 @@ function reasoningSummaryField(
 
 function requestedModalities(attachments: Attachment[] | undefined): string[] {
   const modalities = new Set<string>()
-  for (const attachment of attachments ?? []) {
+  for (const attachment of filterSendableAttachments(attachments)) {
     if (attachment.type === 'image') modalities.add('image')
     else modalities.add('file')
   }
@@ -763,7 +772,26 @@ function providerSourceUrl(family: ProviderConformanceFamily): string | undefine
 }
 
 function providerSourceVerifiedAt(family: ProviderConformanceFamily): string | undefined {
-  return providerSourceUrl(family) ? '2026-06-10' : undefined
+  switch (family) {
+    case 'openai':
+    case 'anthropic':
+    case 'anthropic-compatible':
+    case 'google':
+    case 'xai':
+      return '2026-06-18'
+    case 'deepseek':
+    case 'dashscope':
+    case 'moonshot':
+    case 'bigmodel':
+    case 'minimax':
+    case 'openrouter':
+    case 'newapi':
+    case 'sub2api':
+    case 'xiaomi-mimo':
+      return '2026-06-10'
+    default:
+      return undefined
+  }
 }
 
 function numberValue(value: unknown): number | undefined {

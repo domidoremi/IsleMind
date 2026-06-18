@@ -61,7 +61,7 @@ const FEATURE_FLAGS: Record<string, { key: FeatureFlagKey; label: string }> = {
 }
 
 const THEME_MODES: ThemeMode[] = ['light', 'dark', 'system']
-const THEME_IDS: ThemeId[] = ['island', 'minimal']
+const THEME_IDS: ThemeId[] = ['minimal', 'glass', 'cartoon']
 const LANGUAGES: Language[] = ['zh-CN', 'en', 'ja']
 
 export function decideAppActionPolicy(request: AppActionRequest): AppActionPolicyDecision {
@@ -181,6 +181,7 @@ function normalizeThemeMode(value: unknown): ThemeMode | undefined {
 }
 
 function normalizeThemeId(value: unknown): ThemeId | undefined {
+  if (value === 'island') return 'cartoon'
   return typeof value === 'string' && THEME_IDS.includes(value as ThemeId) ? value as ThemeId : undefined
 }
 

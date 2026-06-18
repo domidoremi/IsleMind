@@ -8,6 +8,13 @@ function secureProviderGroupKey(providerId: string, groupId: string): string {
   return `islemind.key.${providerId.replace(/[^a-zA-Z0-9._-]/g, '_')}.${groupId.replace(/[^a-zA-Z0-9._-]/g, '_')}`
 }
 
+const KNOWN_SEARCH_SECURE_KEYS = [
+  'islemind.key.tavily',
+  'islemind.key.google-search',
+  'islemind.key.bing-search',
+  'islemind.key.custom-search',
+] as const
+
 export async function getSecureApiKey(providerId: string): Promise<string | null> {
   try {
     return await getSecureItem(secureProviderKey(providerId))
@@ -62,4 +69,14 @@ export async function deleteSecureApiKey(providerId: string): Promise<void> {
   } catch {
     // silently fail
   }
+}
+
+export async function clearKnownSearchSecureKeys(): Promise<void> {
+  await Promise.all(KNOWN_SEARCH_SECURE_KEYS.map(async (key) => {
+    try {
+      await deleteSecureItem(key)
+    } catch {
+      // silently fail
+    }
+  }))
 }

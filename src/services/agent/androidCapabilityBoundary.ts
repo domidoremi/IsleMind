@@ -6,6 +6,7 @@ import {
   ANDROID_CALENDAR_TODO_WORKFLOW_ID,
   ANDROID_DOWNLOAD_ORGANIZE_WORKFLOW_ID,
   ANDROID_FILE_COPY_RENAME_WORKFLOW_ID,
+  ANDROID_NOTIFICATION_SETTINGS_WORKFLOW_ID,
 } from '@/services/agent/agentAndroidWorkflows'
 
 export const ANDROID_CAPABILITY_BOUNDARY_SCHEMA = 'islemind.android.capability-boundary.v1'
@@ -240,12 +241,23 @@ export const ANDROID_TOOL_BOUNDARIES: AndroidToolBoundary[] = [
     allowedScopes: ['Android Calendar insert UI'],
     rejectedCapabilities: ['calendar read permission', 'calendar write permission', 'background todo creation'],
   },
+  {
+    toolId: 'android:notifications.open_settings',
+    toolName: 'android.notifications.open_settings',
+    permission: 'read-write',
+    operationKind: 'notification-settings-intent',
+    auditScope: 'system-notification-settings',
+    writeGate: 'external-system-confirmation',
+    allowedScopes: ['IsleMind app notification settings', 'Android promoted notification settings'],
+    rejectedCapabilities: ['background notification grant', 'reliable background reply claim'],
+  },
 ]
 
 export const ANDROID_AUXILIARY_TOOL_IDS = [
   'android:files.undo_operations',
   'android:storage.audit',
   'android:calendar.open_create_event',
+  'android:notifications.open_settings',
 ] as const
 
 export const ANDROID_CAPABILITY_TASKS: AndroidCapabilityTaskBoundary[] = [
@@ -350,6 +362,23 @@ export const ANDROID_CAPABILITY_TASKS: AndroidCapabilityTaskBoundary[] = [
     auditOperationKinds: ['calendar-todo-intent'],
     deviceEvidenceTaskIds: ['calendar-todo-handoff'],
     evidenceCommands: ['bun run test:android-device-task:evidence -- --device <serial>'],
+  },
+  {
+    id: 'notification-settings-system-settings',
+    title: 'Open Android app notification settings UI',
+    examplePrompts: ['打开 IsleMind 的通知设置', '打开 Android 通知权限设置'],
+    workflowId: ANDROID_NOTIFICATION_SETTINGS_WORKFLOW_ID,
+    expectedOutput: 'handoff',
+    permissionCeiling: 'read-write',
+    entrySurfaces: ['skill-template', 'agent-workflow', 'android-tool-registry', 'mcp-orchestrated-tool-request', 'system-intent-handoff', 'qa-cli-evidence'],
+    toolIds: ['android:notifications.open_settings'],
+    requiredUserGates: ['Android system notification settings confirmation'],
+    externalConfirmations: ['Android Settings'],
+    allowedScopes: ['IsleMind app notification settings', 'Android promoted notification settings'],
+    rejectedCapabilities: ['background notification grant', 'reliable background reply delivery'],
+    auditOperationKinds: ['notification-settings-intent'],
+    deviceEvidenceTaskIds: ['android-status-notification-evidence'],
+    evidenceCommands: ['bun run test:android-status-notification:evidence -- --device <serial>'],
   },
 ]
 

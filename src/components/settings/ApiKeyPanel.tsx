@@ -1,7 +1,6 @@
 import { useEffect, useMemo, useState, type ReactNode } from 'react'
-import { ActivityIndicator, Platform, Text, TextInput, View, useWindowDimensions } from 'react-native'
+import { ActivityIndicator, Platform, StyleSheet, Text, TextInput, View, useWindowDimensions, type StyleProp, type ViewStyle } from 'react-native'
 import * as Clipboard from 'expo-clipboard'
-import { Check, ChevronDown, ClipboardPaste, KeyRound, ListFilter, Plus, Power, RotateCw, SearchCheck, Sparkles, Star, Trash2 } from 'lucide-react-native'
 import { MotiView } from 'moti'
 import type { TFunction } from 'i18next'
 import { useTranslation } from 'react-i18next'
@@ -13,6 +12,7 @@ import { DEFAULT_PROVIDER_PRESET_ID, PROVIDER_WIRE_PROTOCOL_OPTIONS, inferProvid
 import { syncAndTestProvider, summarizeProviderActivation } from '@/services/providerActivation'
 import { useAppTheme } from '@/hooks/useAppTheme'
 import { useSettingsStore } from '@/store/settingsStore'
+import { AppIcon } from '@/components/ui/AppIcon'
 import { IslePressable } from '@/components/ui/isle'
 import { IsleChip } from '@/components/ui/isle'
 import { IsleButton } from '@/components/ui/isle'
@@ -21,10 +21,15 @@ import { useIsleDialog } from '@/components/ui/isle'
 import { parseModelEntries } from '@/utils/text'
 import { getProviderManualModels, summarizeProviderModelInventory } from '@/utils/providerModels'
 import { getPolicyAllowedProviderModels, getPolicyPreferredProviderModel } from '@/services/ai/policy/providerModelAccess'
+import { buildProviderCapabilityMatrix, summarizeProviderCapabilityMatrix } from '@/services/ai/providerCapabilityMatrix'
 
 interface ApiKeyPanelProps {
   provider: AIProvider
   initiallyExpanded?: boolean
+  expanded?: boolean
+  onExpandedChange?: (expanded: boolean) => void
+  hideHeader?: boolean
+  style?: StyleProp<ViewStyle>
 }
 
 type PanelTask = 'idle' | 'saving' | 'syncing' | 'testing' | 'probing' | 'clipboard'
@@ -44,15 +49,49 @@ const CAPABILITY_KEYS: (keyof ProviderCapabilities)[] = [
 ]
 
 function panelCardStyle(colors: ReturnType<typeof useAppTheme>['colors'], borderColor = colors.material.stroke) {
+  const resolvedBorderColor = colors.ui.cartoon
+    ? borderColor
+    : borderColor === colors.material.stroke
+      ? colors.ui.glass
+        ? colors.ui.actionBar.itemBorder
+        : colors.ui.semantic.chrome.border
+      : borderColor
   return {
     borderRadius: colors.ui.radius.card,
-    backgroundColor: colors.ui.card.defaultBackground,
-    borderWidth: 1,
-    borderColor,
+    backgroundColor: colors.ui.glass ? colors.ui.semantic.chrome.background : colors.ui.cartoon ? colors.ui.semantic.surface.base : colors.ui.semantic.surface.base,
+    borderWidth: colors.ui.cartoon ? 1 : StyleSheet.hairlineWidth,
+    borderColor: resolvedBorderColor,
   }
 }
 
-export function ApiKeyPanel({ provider, initiallyExpanded = false }: ApiKeyPanelProps) {
+function quietControlSurface(colors: ReturnType<typeof useAppTheme>['colors'], active: boolean) {
+  return {
+    backgroundColor: active
+      ? colors.ui.control.primaryBackground
+      : colors.ui.glass
+      ? colors.ui.actionBar.itemBackground
+      : colors.ui.cartoon
+          ? colors.ui.semantic.surface.muted
+          : colors.ui.semantic.surface.muted,
+    borderWidth: colors.ui.cartoon ? 1 : StyleSheet.hairlineWidth,
+    borderColor: active
+      ? colors.ui.control.primaryBorder
+      : colors.ui.glass
+        ? colors.ui.actionBar.itemBorder
+        : colors.ui.cartoon
+          ? colors.material.stroke
+          : colors.ui.semantic.chrome.border,
+  }
+}
+
+export function ApiKeyPanel({
+  provider,
+  initiallyExpanded = false,
+  expanded: controlledExpanded,
+  onExpandedChange,
+  hideHeader = false,
+  style,
+}: ApiKeyPanelProps) {
   const { colors } = useAppTheme()
   const { t } = useTranslation()
   const dialog = useIsleDialog()
@@ -66,7 +105,7 @@ export function ApiKeyPanel({ provider, initiallyExpanded = false }: ApiKeyPanel
   const modelTestModel = settings.modelTestModel
   const modelTestCheckParameters = settings.modelTestCheckParameters
   const hydrateProviderKey = useSettingsStore((state) => state.hydrateProviderKey)
-  const [expanded, setExpanded] = useState(initiallyExpanded)
+  const [localExpanded, setLocalExpanded] = useState(initiallyExpanded)
   const [baseUrl, setBaseUrl] = useState(provider.baseUrl ?? '')
   const [presetId, setPresetId] = useState<ProviderPresetId>(initialProviderPresetId(provider))
   const [wireProtocol, setWireProtocol] = useState<ProviderWireProtocol>(initialProviderWireProtocol(provider))
@@ -91,9 +130,11 @@ export function ApiKeyPanel({ provider, initiallyExpanded = false }: ApiKeyPanel
   const modelInventory = useMemo(() => summarizeProviderModelInventory(provider), [provider])
   const preferredModel = getPolicyPreferredProviderModel(provider, settings)
   const primaryModel = preferredModel ?? availableModels[0] ?? currentModels[0] ?? t('apiKeyPanel.noModelSet')
+  const expanded = controlledExpanded ?? localExpanded
   const groupCount = hydratedGroups.length
   const hasKey = hydratedGroups.some((group) => group.enabled) || !!credentialText.trim()
   const isDefault = defaultProvider === provider.id
+  const capabilitySummary = buildCapabilitySummary(provider, selectedPreset, t)
   const isBusy = task !== 'idle'
   const lastStatusLabel = provider.lastTestStatus === 'ok' ? t('apiKeyPanel.modelAvailable') : provider.lastTestStatus === 'bad' ? t('apiKeyPanel.needsCheck') : provider.lastModelSyncStatus === 'ok' ? t('apiKeyPanel.syncedNeedsTest') : provider.lastModelSyncStatus === 'bad' ? t('apiKeyPanel.syncFailed') : availableModels.length ? t('apiKeyPanel.pendingCheck') : t('apiKeyPanel.noAvailableModels')
   const lastStatusTone = provider.lastTestStatus === 'ok' ? 'success' : provider.lastTestStatus === 'bad' || provider.lastModelSyncStatus === 'bad' ? 'danger' : provider.lastModelSyncStatus === 'ok' ? 'warning' : 'muted'
@@ -110,6 +151,11 @@ export function ApiKeyPanel({ provider, initiallyExpanded = false }: ApiKeyPanel
     setCredentialText('')
     setNotice('')
   }, [provider.baseUrl, provider.detectedPresetId, provider.id, provider.manualModels, provider.modelAliases, provider.models, provider.presetId, provider.wireProtocol])
+
+  useEffect(() => {
+    if (controlledExpanded !== undefined) return
+    setLocalExpanded(initiallyExpanded)
+  }, [controlledExpanded, initiallyExpanded, provider.id])
 
   useEffect(() => {
     if (!expanded) return
@@ -408,56 +454,65 @@ export function ApiKeyPanel({ provider, initiallyExpanded = false }: ApiKeyPanel
     return keyed?.credentialGroups?.find((group) => group.enabled && group.apiKey?.trim())?.apiKey ?? keyed?.apiKey
   }
 
+  function setPanelExpanded(next: boolean) {
+    if (controlledExpanded === undefined) setLocalExpanded(next)
+    onExpandedChange?.(next)
+  }
+
   return (
     <MotiView
-      animate={{ scale: expanded ? 1 : 0.995, opacity: provider.enabled ? 1 : 0.82 }}
+      animate={{ scale: hideHeader ? 1 : expanded ? 1 : 0.995, opacity: provider.enabled ? 1 : 0.82 }}
       transition={{ type: 'spring', damping: 22, stiffness: 180 }}
-      style={{
+      style={[{
         borderRadius: colors.ui.radius.panel,
-        padding: compact ? 12 : 14,
-        backgroundColor: colors.ui.card.defaultBackground,
-        borderWidth: 1,
-        borderColor: expanded ? colors.material.strokeStrong : colors.material.stroke,
-        marginBottom: 12,
-      }}
+        padding: compact ? 8 : 10,
+        backgroundColor: colors.ui.glass ? colors.ui.semantic.chrome.background : colors.ui.cartoon ? colors.ui.semantic.surface.muted : colors.ui.semantic.surface.muted,
+        borderWidth: colors.ui.cartoon ? 1 : StyleSheet.hairlineWidth,
+        borderColor: colors.ui.glass ? colors.ui.actionBar.itemBorder : colors.ui.cartoon ? colors.material.stroke : colors.ui.semantic.chrome.border,
+        marginBottom: hideHeader ? 0 : 8,
+      }, style]}
     >
-      <IslePressable haptic onPress={() => setExpanded((value) => !value)} style={{ minHeight: 44, flexDirection: 'row', alignItems: 'center', gap: 10 }}>
-        <View style={{ width: 44, height: 44, borderRadius: colors.ui.radius.controlMiddle, alignItems: 'center', justifyContent: 'center', backgroundColor: colors.ui.icon.accentBackground }}>
-          {provider.presetId === 'newapi' || provider.presetId === 'sub2api' ? <Sparkles color={colors.ui.icon.accentForeground} size={18} /> : <KeyRound color={colors.ui.icon.accentForeground} size={18} />}
-        </View>
-        <View style={{ flex: 1, minWidth: 0 }}>
-          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 7, flexWrap: 'wrap' }}>
-            <Text numberOfLines={1} style={{ color: colors.text, fontSize: 16, lineHeight: 21, fontWeight: '900', flexShrink: 1, minWidth: 0, includeFontPadding: false }}>{provider.name}</Text>
-            {isDefault ? <Badge label={t('settings.default')} tone="warning" /> : null}
-            <Badge label={provider.enabled ? t('apiKeyPanel.enabled') : t('apiKeyPanel.disabled')} tone={provider.enabled ? 'success' : 'muted'} />
-            <Badge label={t('apiKeyPanel.tokenGroups', { count: Math.max(groupCount, hasKey ? 1 : 0) })} tone={hasKey ? 'success' : 'muted'} />
-            <Badge label={lastStatusLabel} tone={lastStatusTone} />
+      {!hideHeader ? (
+        <IslePressable haptic onPress={() => setPanelExpanded(!expanded)} style={{ minHeight: 40, flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+          <View style={{ width: 36, height: 36, borderRadius: colors.ui.radius.controlMiddle, alignItems: 'center', justifyContent: 'center', backgroundColor: colors.ui.icon.accentBackground }}>
+            {provider.presetId === 'newapi' || provider.presetId === 'sub2api' ? <AppIcon name="spark" color={colors.ui.icon.accentForeground} size={18} /> : <AppIcon name="key" color={colors.ui.icon.accentForeground} size={18} />}
           </View>
-          <Text numberOfLines={1} style={{ color: colors.textSecondary, fontSize: 12, lineHeight: 17, marginTop: 3, includeFontPadding: false }}>
-            {getModelName(primaryModel)} · {t('apiKeyPanel.modelCount', { count: availableModels.length })} · {t('apiKeyPanel.tokenGroups', { count: Math.max(groupCount, hasKey ? 1 : 0) })}
-          </Text>
-        </View>
-        {provider.lastTestStatus === 'ok' ? <Check color={colors.ui.tone.success.foreground} size={18} /> : null}
-        {provider.lastTestStatus === 'bad' ? <RotateCw color={colors.ui.tone.danger.foreground} size={18} /> : null}
-        <MotiView animate={{ rotate: expanded ? '180deg' : '0deg' }} transition={{ type: 'timing', duration: 180 }}>
-          <ChevronDown color={colors.textTertiary} size={19} />
-        </MotiView>
-      </IslePressable>
+          <View style={{ flex: 1, minWidth: 0 }}>
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
+              <Text numberOfLines={1} style={{ color: colors.text, fontSize: 15, lineHeight: 20, fontWeight: '900', flexShrink: 1, minWidth: 0, includeFontPadding: false }}>{provider.name}</Text>
+              {isDefault ? <Badge label={t('settings.default')} tone="warning" /> : null}
+              <MiniBadge label={provider.enabled ? t('apiKeyPanel.enabled') : t('apiKeyPanel.disabled')} tone={provider.enabled ? 'success' : 'muted'} />
+              <MiniBadge label={lastStatusLabel} tone={lastStatusTone === 'danger' ? 'warning' : lastStatusTone === 'success' ? 'success' : 'muted'} />
+            </View>
+            <Text numberOfLines={1} style={{ color: colors.textSecondary, fontSize: 10, lineHeight: 14, marginTop: 2, includeFontPadding: false }}>
+              {getModelName(primaryModel)} · {t('apiKeyPanel.modelCount', { count: availableModels.length })} · {t('apiKeyPanel.tokenGroups', { count: Math.max(groupCount, hasKey ? 1 : 0) })}
+            </Text>
+            <Text numberOfLines={1} style={{ color: colors.textTertiary, fontSize: 9.5, lineHeight: 12, marginTop: 2, fontWeight: '800', includeFontPadding: false }}>
+              {capabilitySummary}
+            </Text>
+          </View>
+          {provider.lastTestStatus === 'ok' ? <AppIcon name="check" color={colors.ui.tone.success.foreground} size={17} /> : null}
+          {provider.lastTestStatus === 'bad' ? <AppIcon name="refresh" color={colors.ui.tone.danger.foreground} size={17} /> : null}
+          <MotiView animate={{ rotate: expanded ? '180deg' : '0deg' }} transition={{ type: 'timing', duration: 180 }}>
+            <AppIcon name="collapse" color={colors.textTertiary} size={18} />
+          </MotiView>
+        </IslePressable>
+      ) : null}
 
       {expanded ? (
-        <MotiView from={{ opacity: 0, translateY: -8 }} animate={{ opacity: 1, translateY: 0 }} transition={{ type: 'spring', damping: 20, stiffness: 180 }} style={{ marginTop: 14, gap: 12 }}>
+        <MotiView from={{ opacity: 0, translateY: -8 }} animate={{ opacity: 1, translateY: 0 }} transition={{ type: 'spring', damping: 20, stiffness: 180 }} style={{ marginTop: hideHeader ? 0 : 10, gap: 10 }}>
           <View style={{ flexDirection: 'row', gap: 8, flexWrap: 'wrap' }}>
             <MiniAction active={isDefault} label={isDefault ? t('settings.default') : t('apiKeyPanel.setDefault')} onPress={setDefaultProvider}>
-              <Star color={isDefault ? colors.ui.control.primaryForeground : colors.textTertiary} size={15} fill={isDefault ? colors.ui.control.primaryForeground : 'transparent'} />
+              <AppIcon name="star" color={isDefault ? colors.ui.control.primaryForeground : colors.textTertiary} size={15} fill={isDefault ? colors.ui.control.primaryForeground : 'transparent'} />
             </MiniAction>
             <MiniAction active={provider.enabled} label={provider.enabled ? t('apiKeyPanel.enabledState') : t('apiKeyPanel.disabledState')} onPress={() => void toggleProviderEnabled()}>
-              <Power color={provider.enabled ? colors.ui.control.primaryForeground : colors.textTertiary} size={15} />
+              <AppIcon name="power" color={provider.enabled ? colors.ui.control.primaryForeground : colors.textTertiary} size={15} />
             </MiniAction>
             <MiniAction label={t('common.delete')} onPress={() => void confirmRemoveProvider()} disabled={isBusy}>
-              <Trash2 color={colors.ui.tone.danger.foreground} size={15} />
+              <AppIcon name="delete" color={colors.ui.tone.danger.foreground} size={15} />
             </MiniAction>
             <MiniAction label={t('apiKeyPanel.fetchModelsAndTest')} onPress={() => void syncAndTest()} disabled={isBusy || !hasKey}>
-              <ListFilter color={colors.textTertiary} size={15} />
+              <AppIcon name="filter" color={colors.textTertiary} size={15} />
             </MiniAction>
           </View>
 
@@ -488,11 +543,11 @@ export function ApiKeyPanel({ provider, initiallyExpanded = false }: ApiKeyPanel
           <IslePressable
             haptic
             onPress={() => setAdvancedOpen((value) => !value)}
-            style={{ minHeight: 44, borderRadius: colors.ui.radius.controlLarge, paddingHorizontal: 13, flexDirection: 'row', alignItems: 'center', gap: 8, backgroundColor: colors.ui.input.background, borderWidth: 1, borderColor: colors.ui.input.border }}
+            style={{ minHeight: 42, borderRadius: colors.ui.radius.controlLarge, paddingHorizontal: 13, flexDirection: 'row', alignItems: 'center', gap: 8, backgroundColor: colors.ui.glass ? colors.ui.actionBar.itemBackground : colors.ui.cartoon ? colors.ui.semantic.surface.muted : colors.ui.semantic.surface.muted, borderWidth: colors.ui.cartoon ? 1 : StyleSheet.hairlineWidth, borderColor: colors.ui.glass ? colors.ui.actionBar.itemBorder : colors.ui.cartoon ? colors.material.stroke : colors.ui.semantic.chrome.border }}
           >
             <Text numberOfLines={1} style={{ flex: 1, minWidth: 0, color: colors.textSecondary, fontSize: 12, lineHeight: 17, fontWeight: '900', includeFontPadding: false }}>{t('apiKeyPanel.advancedInterfaceSettings')}</Text>
             <MotiView animate={{ rotate: advancedOpen ? '180deg' : '0deg' }} transition={{ type: 'timing', duration: 160 }}>
-              <ChevronDown color={colors.textTertiary} size={16} />
+              <AppIcon name="collapse" color={colors.textTertiary} size={16} />
             </MotiView>
           </IslePressable>
 
@@ -505,10 +560,10 @@ export function ApiKeyPanel({ provider, initiallyExpanded = false }: ApiKeyPanel
                   action={
                     <View style={{ flexDirection: 'row', gap: 8 }}>
                       <MiniAction label={t('apiKeyPanel.applyDetection')} onPress={() => void acceptDetection()}>
-                        <SearchCheck color={colors.textTertiary} size={15} />
+                        <AppIcon name="search-check" color={colors.textTertiary} size={15} />
                       </MiniAction>
                       <MiniAction label={task === 'probing' ? t('apiKeyPanel.probing') : t('apiKeyPanel.detectInterface')} onPress={() => void probeDetection()} disabled={isBusy || !baseUrl.trim() || !hasKey}>
-                        <Sparkles color={colors.textTertiary} size={15} />
+                        <AppIcon name="spark" color={colors.textTertiary} size={15} />
                       </MiniAction>
                     </View>
                   }
@@ -523,7 +578,7 @@ export function ApiKeyPanel({ provider, initiallyExpanded = false }: ApiKeyPanel
               <View style={{ padding: 11, gap: 10, ...panelCardStyle(colors) }}>
                 <SectionHeader
                   title={t('apiKeyPanel.capabilityMatrix')}
-                  description={t('apiKeyPanel.capabilityMatrixDescription')}
+                  description={`${t('apiKeyPanel.capabilityMatrixDescription')} ${t('apiKeyPanel.capabilityDependencyHint')}`}
                 />
                 <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8 }}>
                   {CAPABILITY_KEYS.map((key) => (
@@ -545,10 +600,10 @@ export function ApiKeyPanel({ provider, initiallyExpanded = false }: ApiKeyPanel
               action={
                 <View style={{ flexDirection: 'row', gap: 8 }}>
                   <MiniAction label={task === 'clipboard' ? t('providerSettings.clipboardChecking') : t('settings.pasteClipboard')} onPress={() => void readProviderClipboard()} disabled={isBusy}>
-                    <ClipboardPaste color={colors.textTertiary} size={15} />
+                    <AppIcon name="paste" color={colors.textTertiary} size={15} />
                   </MiniAction>
                   <MiniAction label={t('apiKeyPanel.add')} onPress={addPendingGroups} disabled={isBusy || !credentialText.trim()}>
-                    <Plus color={colors.textTertiary} size={15} />
+                    <AppIcon name="add" color={colors.textTertiary} size={15} />
                   </MiniAction>
                 </View>
               }
@@ -602,15 +657,15 @@ export function ApiKeyPanel({ provider, initiallyExpanded = false }: ApiKeyPanel
                 modelEditing ? (
                   <View style={{ flexDirection: 'row', gap: 8 }}>
                     <MiniAction label={t('common.cancel')} onPress={cancelModelEditing}>
-                      <RotateCw color={colors.textTertiary} size={15} />
+                      <AppIcon name="refresh" color={colors.textTertiary} size={15} />
                     </MiniAction>
                     <MiniAction label={t('common.save')} onPress={() => void save()} disabled={isBusy}>
-                      <Check color={colors.textTertiary} size={15} />
+                      <AppIcon name="check" color={colors.textTertiary} size={15} />
                     </MiniAction>
                   </View>
                 ) : (
                   <MiniAction label={t('common.edit')} onPress={enterModelEditing}>
-                    <ListFilter color={colors.textTertiary} size={15} />
+                    <AppIcon name="filter" color={colors.textTertiary} size={15} />
                   </MiniAction>
                 )
               }
@@ -710,7 +765,7 @@ function MiniBadge({ label, tone }: { label: string; tone: 'success' | 'warning'
       ? colors.ui.tone.warning
       : colors.ui.tone.neutral
   return (
-    <View style={{ minHeight: 24, borderRadius: colors.ui.radius.chip, paddingHorizontal: 8, alignItems: 'center', justifyContent: 'center', backgroundColor: toneToken.background, borderWidth: 1, borderColor: toneToken.border }}>
+    <View style={{ minHeight: 22, borderRadius: colors.ui.radius.chip, paddingHorizontal: 8, alignItems: 'center', justifyContent: 'center', backgroundColor: toneToken.background, borderWidth: colors.ui.cartoon ? 1 : StyleSheet.hairlineWidth, borderColor: toneToken.border }}>
       <Text style={{ color: toneToken.foreground, fontSize: 10, fontWeight: '900' }}>{label}</Text>
     </View>
   )
@@ -719,7 +774,7 @@ function MiniBadge({ label, tone }: { label: string; tone: 'success' | 'warning'
 function ChoiceButton({ label, active, onPress }: { label: string; active: boolean; onPress: () => void }) {
   const { colors } = useAppTheme()
   return (
-    <IslePressable haptic onPress={onPress} style={{ minHeight: 44, borderRadius: colors.ui.radius.controlLarge, paddingHorizontal: 12, alignItems: 'center', justifyContent: 'center', backgroundColor: active ? colors.ui.control.primaryBackground : colors.ui.card.defaultBackground, borderWidth: 1, borderColor: active ? colors.ui.control.primaryBorder : colors.material.stroke }}>
+    <IslePressable haptic onPress={onPress} style={{ minHeight: 40, borderRadius: colors.ui.radius.controlLarge, paddingHorizontal: 12, alignItems: 'center', justifyContent: 'center', ...quietControlSurface(colors, active) }}>
       <Text numberOfLines={1} style={{ color: active ? colors.ui.control.primaryForeground : colors.textSecondary, fontSize: 11, lineHeight: 15, fontWeight: '900', includeFontPadding: false }}>{label}</Text>
     </IslePressable>
   )
@@ -763,7 +818,7 @@ function CredentialGroupRow({
       : group.enabled ? t('apiKeyPanel.enabled') : t('apiKeyPanel.disabled')
   return (
     <View style={{ padding: 11, gap: 9, ...panelCardStyle(colors, group.enabled ? colors.material.strokeStrong : colors.material.stroke) }}>
-      <View style={{ flexDirection: 'row', gap: 8, alignItems: 'center' }}>
+      <View style={{ flexDirection: 'row', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
         <TextInput
           value={group.label}
           onChangeText={onChangeLabel}
@@ -783,17 +838,17 @@ function CredentialGroupRow({
             paddingHorizontal: 12,
             color: colors.text,
             backgroundColor: colors.ui.input.background,
-            borderWidth: 1,
+            borderWidth: colors.ui.cartoon ? 1 : StyleSheet.hairlineWidth,
             borderColor: colors.ui.input.border,
             fontSize: 13,
             fontWeight: '900',
           }}
         />
         <IconIsleChip label={group.enabled ? t('apiKeyPanel.disabled') : t('apiKeyPanel.enabled')} onPress={onToggle} tone={group.enabled ? 'mint' : 'default'}>
-          <Power color={group.enabled ? colors.ui.tone.success.foreground : colors.textTertiary} size={15} />
+          <AppIcon name="power" color={group.enabled ? colors.ui.tone.success.foreground : colors.textTertiary} size={15} />
         </IconIsleChip>
         <IconIsleChip label={t('common.delete')} onPress={onDelete} tone="danger">
-          <Trash2 color={colors.ui.tone.danger.foreground} size={15} />
+          <AppIcon name="delete" color={colors.ui.tone.danger.foreground} size={15} />
         </IconIsleChip>
       </View>
       <View style={{ flexDirection: 'row', gap: 7, flexWrap: 'wrap', alignItems: 'center' }}>
@@ -891,7 +946,7 @@ function ModelChip({ label }: { label: string }) {
   const { width } = useWindowDimensions()
   const labelMaxWidth = Math.max(112, Math.min(180, width * 0.46))
   return (
-    <View style={{ minHeight: 30, borderRadius: colors.ui.radius.chip, paddingHorizontal: 10, alignItems: 'center', justifyContent: 'center', backgroundColor: colors.ui.card.mutedBackground, borderWidth: 1, borderColor: colors.material.stroke }}>
+    <View style={{ minHeight: 28, borderRadius: colors.ui.radius.chip, paddingHorizontal: 10, alignItems: 'center', justifyContent: 'center', backgroundColor: colors.ui.glass ? colors.ui.actionBar.itemBackground : colors.ui.cartoon ? colors.ui.semantic.surface.muted : colors.ui.semantic.surface.base, borderWidth: colors.ui.cartoon ? 1 : StyleSheet.hairlineWidth, borderColor: colors.ui.glass ? colors.ui.actionBar.itemBorder : colors.ui.cartoon ? colors.material.stroke : colors.ui.semantic.chrome.border }}>
       <Text numberOfLines={1} style={{ color: colors.textSecondary, fontSize: 11, lineHeight: 15, fontWeight: '900', maxWidth: labelMaxWidth, includeFontPadding: false, textAlignVertical: 'center' }}>{label}</Text>
     </View>
   )
@@ -911,9 +966,7 @@ function CapabilityToggle({ label, active, onPress }: { label: string; active: b
         flexDirection: 'row',
         alignItems: 'center',
         gap: 7,
-        backgroundColor: active ? colors.ui.control.primaryBackground : colors.ui.card.defaultBackground,
-        borderWidth: 1,
-        borderColor: active ? colors.ui.control.primaryBorder : colors.material.stroke,
+        ...quietControlSurface(colors, active),
       }}
     >
       <View style={{ width: 8, height: 8, borderRadius: 4, backgroundColor: active ? colors.ui.control.primaryForeground : colors.textTertiary }} />
@@ -922,11 +975,24 @@ function CapabilityToggle({ label, active, onPress }: { label: string; active: b
   )
 }
 
+function buildCapabilitySummary(provider: AIProvider, preset: ReturnType<typeof getProviderPreset>, t: TFunction): string {
+  const capabilities = provider.capabilities ?? preset.capabilities
+  const matrix = buildProviderCapabilityMatrix(provider)
+  const labels = [
+    summarizeProviderCapabilityMatrix(matrix),
+    capabilities.responsesApi === true ? t('apiKeyPanel.capability.responsesApi') : '',
+    capabilities.responsesWebSocket === true ? t('apiKeyPanel.capability.responsesWebSocket') : '',
+    capabilities.remoteCompact === true ? t('apiKeyPanel.capability.remoteCompact') : '',
+    capabilities.nativeSearch === true ? t('apiKeyPanel.capability.nativeSearch') : '',
+  ].filter(Boolean)
+  return labels.length ? labels.join(' · ') : t('apiKeyPanel.capabilityMatrix')
+}
+
 function IconIsleChip({ label, children, tone, onPress }: { label: string; children: ReactNode; tone: 'default' | 'mint' | 'danger'; onPress: () => void }) {
   const { colors } = useAppTheme()
   const toneToken = tone === 'mint' ? colors.ui.tone.success : tone === 'danger' ? colors.ui.tone.danger : colors.ui.tone.neutral
   return (
-    <IslePressable haptic accessibilityLabel={label} onPress={onPress} style={{ width: 44, height: 44, borderRadius: colors.ui.radius.controlMiddle, alignItems: 'center', justifyContent: 'center', backgroundColor: toneToken.background, borderWidth: 1, borderColor: toneToken.border }}>
+    <IslePressable haptic accessibilityLabel={label} onPress={onPress} style={{ width: 42, height: 42, borderRadius: colors.ui.radius.controlMiddle, alignItems: 'center', justifyContent: 'center', backgroundColor: colors.ui.glass ? colors.ui.actionBar.itemBackground : toneToken.background, borderWidth: colors.ui.cartoon ? 1 : StyleSheet.hairlineWidth, borderColor: colors.ui.glass ? colors.ui.actionBar.itemBorder : toneToken.border }}>
       {children}
     </IslePressable>
   )
@@ -935,7 +1001,7 @@ function IconIsleChip({ label, children, tone, onPress }: { label: string; child
 function MiniAction({ label, children, active = false, disabled = false, onPress }: { label: string; children: ReactNode; active?: boolean; disabled?: boolean; onPress: () => void }) {
   const { colors } = useAppTheme()
   return (
-    <IslePressable haptic disabled={disabled} onPress={onPress} style={{ minHeight: 44, borderRadius: colors.ui.radius.controlLarge, paddingHorizontal: 12, flexDirection: 'row', alignItems: 'center', gap: 5, backgroundColor: active ? colors.ui.control.primaryBackground : colors.ui.card.defaultBackground, borderWidth: 1, borderColor: active ? colors.ui.control.primaryBorder : colors.material.stroke, opacity: disabled ? 0.5 : 1 }}>
+    <IslePressable haptic disabled={disabled} onPress={onPress} style={{ minHeight: 40, borderRadius: colors.ui.radius.controlLarge, paddingHorizontal: 12, flexDirection: 'row', alignItems: 'center', gap: 5, ...quietControlSurface(colors, active), opacity: disabled ? 0.5 : 1 }}>
       {children}
       <Text numberOfLines={1} style={{ color: active ? colors.ui.control.primaryForeground : colors.textSecondary, fontSize: 12, lineHeight: 16, fontWeight: '800', includeFontPadding: false }}>{label}</Text>
     </IslePressable>

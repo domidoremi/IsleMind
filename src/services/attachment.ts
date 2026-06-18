@@ -3,17 +3,14 @@ import * as ImagePicker from 'expo-image-picker'
 import * as DocumentPicker from 'expo-document-picker'
 import type { Attachment, AttachmentType } from '@/types'
 import { smartCompressImage } from './imageCompression'
+import { assertImportFileSizeByUri, deleteTemporaryImportCopy, MAX_IMPORT_TEXT_FILE_BYTES } from './fileImportGuards'
 
 function generateId(): string {
   return `${Date.now()}-${Math.random().toString(36).slice(2, 10)}`
 }
 
-const MAX_FILE_SIZE = 20 * 1024 * 1024
-
-function assertFileSize(size?: number) {
-  if (size && size > MAX_FILE_SIZE) {
-    throw new Error('error.fileTooLarge')
-  }
+async function assertFileSize(uri: string, size?: number): Promise<number> {
+  return (await assertImportFileSizeByUri(uri, { size, limitBytes: MAX_IMPORT_TEXT_FILE_BYTES })) ?? 0
 }
 
 function getAttachmentType(mimeType: string): AttachmentType {
@@ -39,22 +36,7 @@ export async function pickImage(): Promise<Attachment | null> {
 
   if (result.canceled || !result.assets[0]) return null
 
-  const asset = result.assets[0]
-  assertFileSize(asset.fileSize)
-
-  // 自动压缩图片
-  const compressed = await smartCompressImage(asset.uri)
-  const base64 = await fileToBase64(compressed.uri)
-
-  return {
-    id: generateId(),
-    type: 'image',
-    uri: compressed.uri,
-    name: asset.fileName || 'image.jpg',
-    mimeType: asset.mimeType || 'image/jpeg',
-    size: compressed.compressedSize,
-    base64,
-  }
+  return buildCompressedImageAttachment(result.assets[0], 'image.jpg')
 }
 
 export async function takePhoto(): Promise<Attachment | null> {
@@ -65,47 +47,38 @@ export async function takePhoto(): Promise<Attachment | null> {
 
   if (result.canceled || !result.assets[0]) return null
 
-  const asset = result.assets[0]
-  assertFileSize(asset.fileSize)
-
-  // 自动压缩图片
-  const compressed = await smartCompressImage(asset.uri)
-  const base64 = await fileToBase64(compressed.uri)
-
-  return {
-    id: generateId(),
-    type: 'image',
-    uri: compressed.uri,
-    name: asset.fileName || 'photo.jpg',
-    mimeType: asset.mimeType || 'image/jpeg',
-    size: compressed.compressedSize,
-    base64,
-  }
+  return buildCompressedImageAttachment(result.assets[0], 'photo.jpg')
 }
 
 export async function pickDocument(): Promise<Attachment | null> {
-  const result = await DocumentPicker.getDocumentAsync({
-    type: ['image/*', 'application/pdf', 'text/*', 'application/json', 'application/javascript', 'application/xml', 'text/xml'],
-    copyToCacheDirectory: true,
-  })
+  let importUri: string | undefined
+  try {
+    const result = await DocumentPicker.getDocumentAsync({
+      type: ['image/*', 'application/pdf', 'text/*', 'application/json', 'application/javascript', 'application/xml', 'text/xml'],
+      copyToCacheDirectory: true,
+    })
 
-  if (result.canceled || !result.assets[0]) return null
+    if (result.canceled || !result.assets[0]) return null
 
-  const asset = result.assets[0]
+    const asset = result.assets[0]
+    importUri = asset.uri
 
-  assertFileSize(asset.size)
+    const size = await assertFileSize(importUri, asset.size)
 
-  const type = getAttachmentType(asset.mimeType || '')
-  const base64 = await fileToBase64(asset.uri)
+    const type = getAttachmentType(asset.mimeType || '')
+    const base64 = await fileToBase64(importUri)
 
-  return {
-    id: generateId(),
-    type,
-    uri: asset.uri,
-    name: asset.name,
-    mimeType: asset.mimeType || 'application/octet-stream',
-    size: asset.size || 0,
-    base64,
+    return {
+      id: generateId(),
+      type,
+      uri: importUri,
+      name: asset.name,
+      mimeType: asset.mimeType || 'application/octet-stream',
+      size,
+      base64,
+    }
+  } finally {
+    await deleteTemporaryImportCopy(importUri, { assumeTemporaryCopy: true })
   }
 }
 
@@ -115,5 +88,52 @@ export function getAttachmentIcon(type: AttachmentType): string {
     case 'pdf': return 'file-text'
     case 'text': return 'file-code'
     case 'document': return 'file'
+  }
+}
+
+async function cleanupImageAttachmentCopies(input: {
+  originalUri?: string
+  compressedUri?: string
+}): Promise<void> {
+  const cleanup: Promise<void>[] = []
+  if (input.originalUri) {
+    cleanup.push(deleteTemporaryImportCopy(input.originalUri))
+  }
+  if (input.compressedUri) {
+    cleanup.push(deleteTemporaryImportCopy(input.compressedUri, { assumeTemporaryCopy: true }))
+  }
+  await Promise.all(cleanup)
+}
+
+async function buildCompressedImageAttachment(
+  asset: {
+    uri: string
+    fileName?: string | null
+    mimeType?: string | null
+    fileSize?: number | null
+  },
+  defaultName: string
+): Promise<Attachment> {
+  let compressedUri: string | undefined
+  try {
+    await assertFileSize(asset.uri, asset.fileSize ?? undefined)
+
+    // 自动压缩图片
+    const compressed = await smartCompressImage(asset.uri)
+    compressedUri = compressed.uri
+    const compressedSize = await assertFileSize(compressedUri, compressed.compressedSize)
+    const base64 = await fileToBase64(compressedUri)
+
+    return {
+      id: generateId(),
+      type: 'image',
+      uri: compressedUri,
+      name: asset.fileName || defaultName,
+      mimeType: asset.mimeType || 'image/jpeg',
+      size: compressedSize,
+      base64,
+    }
+  } finally {
+    await cleanupImageAttachmentCopies({ originalUri: asset.uri, compressedUri })
   }
 }

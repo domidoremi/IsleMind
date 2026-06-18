@@ -1,9 +1,8 @@
 import * as Clipboard from 'expo-clipboard'
-import type { AIModel, AIProvider, Attachment, ChatErrorCode, Conversation, McpServerConfig, McpToolManifest, Message, ProcessTrace, RemoteCompactMode, RetrievalSource, Settings, ToolContentBlock } from '@/types'
+import type { AIProvider, Attachment, ChatErrorCode, Conversation, Message, ProcessTrace, RemoteCompactMode, RetrievalSource, Settings } from '@/types'
 import { getModelConfig, getProviderConfigIssue } from '@/types'
-import { streamChat, type ChatCompletionResult, type ChatRequest, type ContentPart, type ProviderRuntimeError, type ProviderToolCall, type StreamHandle } from '@/services/ai/base'
+import { streamChat, type ChatCompletionResult, type ChatRequest, type ProviderRuntimeError, type ProviderToolCall, type StreamHandle } from '@/services/ai/base'
 import { extractMemories, retrieveContext, retrieveFlareContext, searchWeb, type RetrievedContext } from '@/services/context'
-import { searchKnowledge } from '@/services/contextStore'
 import { verifyRagGeneration } from '@/services/rag'
 import { buildSystemPrompt } from '@/services/promptEngineering'
 import { buildEstimatedUsage, estimateTextTokens, mergeUsageWithEstimate } from '@/services/tokenUsage'
@@ -12,23 +11,53 @@ import { useChatStreamingStore } from '@/store/chatStreamingStore'
 import { useSettingsStore } from '@/store/settingsStore'
 import { packChatMessages } from '@/services/contextPacker'
 import { resolveSearchProvider } from '@/services/searchPolicy'
-import { callMcpTool, listMcpServers, truncateToolBlocks } from '@/services/mcp'
+import { MCP_TOOL_CALL_TAG } from '@/services/mcpToolRequest'
+import { formatAgentWorkflowSaveBlockedReason, resolveConfirmedPendingActionTool } from '@/services/chatAgentActionUtils'
+import { buildSetupGuide, classifyChatError, toUserFacingError } from '@/services/chatErrorUtils'
+import { resolveMcpToolRevision } from '@/services/chatMcpToolRuntime'
+import { dedupeMessageCitations, formatWebPrompt, normalizeUserContent } from '@/services/chatMessageUtils'
+import { searchAgenticKnowledgeWithScope, searchKnowledgeWithFallback } from '@/services/knowledgeRetrievalRuntime'
+import {
+  buildCompletedRemoteCompactRuntimeLogPayload,
+  buildCompletedRemoteCompactStateRecord,
+  buildCompletedRemoteCompactUsageInput,
+} from '@/services/chatRemoteCompactUtils'
+import { resolveRuntimeConversation, resolveRuntimeResolutionError } from '@/services/chatRuntimeResolution'
+import { createStreamingChunkBuffer, createStreamingTraceBuffer, mergeBufferedTrace } from '@/services/chatStreamingBuffers'
+import { resolveMcpContext, type McpContextResolution, type ResolvedMcpTool } from '@/services/chatMcpContextUtils'
+import {
+  buildProviderNativeToolManifestTrace,
+  buildProviderNativeToolRevisionMessages,
+  buildProviderNativeToolTraceMetadata,
+  findProviderToolNameMapEntry,
+  providerSupportsNativeTools,
+  safeProviderNativeToolText,
+  PROVIDER_NATIVE_TOOL_TRACE_OUTPUT_LIMIT,
+} from '@/services/chatProviderNativeToolUtils'
+import { clampTraceContent, completeTrace, sanitizeTrace, settleMessageTraces, type SettleRunningTracesOptions } from '@/services/chatTraceUtils'
+import { formatToolBlocks, mergeUsage, sanitizeToolRevisionAnswerText, stripMcpCallBlocks } from '@/services/chatToolResultUtils'
 import { localDataStore } from '@/services/localDataStore'
+import { buildKnowledgeScope, type KnowledgeScope } from '@/services/knowledgeScope'
 import { routeLocalAppCommand, type LocalAppCommandResult } from '@/services/appCommandRouter'
 import { st } from '@/i18n/service'
 import { resolveProviderModelAlias } from '@/utils/providerModels'
-import { getPolicyAllowedProviderModels } from '@/services/ai/policy/providerModelAccess'
-import { decideRemoteCompact, estimateRemoteCompactSavedTokens } from '@/services/ai/compact/remoteCompact'
+import { decideRemoteCompact } from '@/services/ai/compact/remoteCompact'
 import { recordCompactUsage } from '@/services/ai/compact/compactUsage'
 import { listActiveCompactStates, saveCompactState } from '@/services/ai/compact/compactStateStore'
 import { appendRuntimeLog } from '@/services/runtimeLog'
-import { sanitizeTraceMetadata } from '@/utils/traceSafety'
+import { filterSendableAttachments } from '@/services/attachmentContract'
+import {
+  clearActiveStream,
+  getActiveStream,
+  hasActiveStream,
+  registerStreamAborter,
+  setActiveStream,
+} from '@/services/chatStreamLifecycle'
 import {
   decideAgentRuntimeAssistantMessage,
   extractAgentWorkflowDefinitionsFromSkillSnapshot,
   getAgentPendingActionFromMessage,
   getAgentWorkflowSkillSuggestionFromMessage,
-  clampAgentOutput,
   buildAgentToolCallTraceMetadata,
   buildAgentProviderToolAdapter,
   createAgentRagRuntime,
@@ -36,17 +65,13 @@ import {
   listBlockedAgentWorkflowStatesForSkillSnapshot,
   listEnabledAgentWorkflowIdsForSkillSnapshot,
   listAgentToolManifests,
-  redactSensitiveText,
   resolveAgentProviderToolTarget,
   resolveAgentTool,
   resolveSettingsAgentRunLimits,
   resolveAgentRuntimeAssistantMessage,
   saveApprovedAgentWorkflowSkillSuggestion,
-  stripAgentToolRequestBlocks,
   type AgentAssistantMessagePatch,
-  type AgentPendingAction,
   type AgentProviderToolAdapterResult,
-  type AgentProviderToolNameMapEntry,
   type AgentRequestedOutput,
   type AgentRunLimits,
   type AgentToolManifest,
@@ -86,31 +111,10 @@ export interface SaveAgentWorkflowSkillFromMessageResult {
   reason?: string
 }
 
-const activeControllers = new Map<string, { controller: AbortController; messageId: string; flush?: () => void; done?: Promise<void> }>()
 const STREAM_TEXT_FLUSH_MS = 64
 const STREAM_TEXT_MAX_BUFFER = 128
 const STREAM_TRACE_FLUSH_MS = 180
-const PROVIDER_NATIVE_TOOL_OUTPUT_LIMIT = 4800
-const PROVIDER_NATIVE_TOOL_TRACE_OUTPUT_LIMIT = 1600
 const STREAM_TRACE_MAX_BUFFER = 6
-const MCP_CALL_TAG = 'islemind_mcp_call'
-
-interface ResolvedMcpTool {
-  server: McpServerConfig
-  tool: McpToolManifest
-}
-
-interface McpContextResolution {
-  prompt: string
-  traces: ProcessTrace[]
-  tools: ResolvedMcpTool[]
-}
-
-interface McpToolRequest {
-  serverId?: string
-  toolName: string
-  arguments: Record<string, unknown>
-}
 
 interface AgentProviderToolContext {
   adapter: AgentProviderToolAdapterResult
@@ -118,17 +122,12 @@ interface AgentProviderToolContext {
   limits: AgentRunLimits
 }
 
-interface KnowledgeScope {
-  ids: Set<string>
-  terms: string[]
-}
-
 export function isConversationStreaming(conversationId: string): boolean {
-  return activeControllers.has(conversationId)
+  return hasActiveStream(conversationId)
 }
 
 export function recoverStaleStreamingMessages(conversationId: string): void {
-  if (activeControllers.has(conversationId)) return
+  if (hasActiveStream(conversationId)) return
   const conversation = useChatStore.getState().conversations.find((item) => item.id === conversationId)
   const staleMessages = conversation?.messages.filter((message) => message.role === 'assistant' && (message.status === 'streaming' || message.status === 'sending')) ?? []
   if (!staleMessages.length) return
@@ -173,11 +172,11 @@ export async function copyMessageFinalText(message: Message): Promise<void> {
 }
 
 export function stopMessage(conversationId: string) {
-  const active = activeControllers.get(conversationId)
+  const active = getActiveStream(conversationId)
   if (!active) return
   active.flush?.()
   active.controller.abort()
-  activeControllers.delete(conversationId)
+  clearActiveStream(conversationId)
   const current = getMessage(conversationId, active.messageId)
   const conversation = useChatStore.getState().conversations.find((item) => item.id === conversationId)
   const inputMessages = conversation?.messages.filter((message) => message.id !== active.messageId && message.status !== 'error') ?? []
@@ -200,6 +199,8 @@ export function stopMessage(conversationId: string) {
   }))
   void useChatStreamingStore.getState().flushStreamingMessage(conversationId, active.messageId)
 }
+
+registerStreamAborter(stopMessage)
 
 export async function sendMessage({ conversation, content, attachments = [], requestedOutput }: SendMessageInput) {
   const text = normalizeUserContent(content)
@@ -291,7 +292,11 @@ export async function confirmAgentAction(conversationId: string, assistantMessag
 
   const pendingAction = getAgentPendingActionFromMessage(assistantMessage)
   if (!pendingAction?.confirmable || !pendingAction.resumeToolRequest) return false
-  const confirmedTool = await resolveConfirmedPendingActionTool(pendingAction)
+  const request = pendingAction.resumeToolRequest
+  const confirmedTool = resolveConfirmedPendingActionTool({
+    pendingAction,
+    tool: resolveAgentTool(request, await listAgentToolManifests()),
+  })
   if (!confirmedTool) return false
   const previousUser = [...conversation.messages.slice(0, assistantIndex)].reverse().find((message) => message.role === 'user')
   if (!previousUser) return false
@@ -301,30 +306,11 @@ export async function confirmAgentAction(conversationId: string, assistantMessag
   const nextConversation = useChatStore.getState().conversations.find((item) => item.id === conversationId)
   if (!nextConversation) return false
   await createAgentRuntimeReply(nextConversation, previousUser.content, {
-    explicitToolRequest: pendingAction.resumeToolRequest,
+    explicitToolRequest: request,
     limits: resolveSettingsAgentRunLimits(useSettingsStore.getState().settings),
     userConfirmed: true,
   })
   return true
-}
-
-async function resolveConfirmedPendingActionTool(pendingAction: AgentPendingAction): Promise<AgentToolManifest | undefined> {
-  const request = pendingAction.resumeToolRequest
-  if (!request || !pendingAction.permission) return undefined
-  const tool = resolveAgentTool(request, await listAgentToolManifests())
-  if (!tool) return undefined
-  if (!tool.enabled) return undefined
-  if (tool.permission !== pendingAction.permission) return undefined
-  if (pendingAction.source && tool.source !== pendingAction.source) return undefined
-  if (request.source && tool.source !== request.source) return undefined
-  if (request.serverId && tool.serverId !== request.serverId) return undefined
-  if (request.name && request.name !== tool.name) return undefined
-  if (request.toolId && request.toolId !== tool.id) return undefined
-  if (pendingAction.toolName && pendingAction.toolName !== tool.name) return undefined
-  if (pendingAction.toolId && pendingAction.toolId !== tool.id) return undefined
-  if (pendingAction.serverId && pendingAction.serverId !== tool.serverId) return undefined
-  if (!pendingAction.toolName && !pendingAction.toolId) return undefined
-  return tool
 }
 
 export async function saveAgentWorkflowSkillFromMessage(conversationId: string, assistantMessageId: string): Promise<SaveAgentWorkflowSkillFromMessageResult> {
@@ -347,31 +333,12 @@ export async function saveAgentWorkflowSkillFromMessage(conversationId: string, 
     },
   })
   if (!result.ok || !result.skill) {
-    return { ok: false, status: 'blocked', reason: formatAgentWorkflowSaveBlockedReason(result.reason) }
+    return { ok: false, status: 'blocked', reason: formatAgentWorkflowSaveBlockedReason(result.reason, st) }
   }
   return {
     ok: true,
     status: result.status === 'already_saved' ? 'already_saved' : 'saved',
     skillName: result.skill.name,
-  }
-}
-
-function formatAgentWorkflowSaveBlockedReason(reason: string | undefined): string {
-  switch (reason) {
-    case 'approval_required':
-      return st('chatRunner.workflowSave.approvalRequired')
-    case 'invalid_workflow':
-      return st('chatRunner.workflowSave.invalidWorkflow')
-    case 'missing_skill':
-      return st('chatRunner.workflowSave.missingSkill')
-    case 'payload_too_large':
-      return st('chatRunner.workflowSave.payloadTooLarge')
-    case 'skill_id_conflict':
-      return st('chatRunner.workflowSave.skillIdConflict')
-    case undefined:
-      return st('chatRunner.workflowSave.saveBlocked')
-    default:
-      return st('chatRunner.workflowSave.saveBlocked')
   }
 }
 
@@ -401,7 +368,7 @@ async function createAgentRuntimeReply(conversation: Conversation, content: stri
   useChatStore.getState().addMessage(conversation.id, assistantMessage)
 
   const requestController = new AbortController()
-  activeControllers.set(conversation.id, { controller: requestController, messageId: assistantMessage.id })
+  setActiveStream(conversation.id, { controller: requestController, messageId: assistantMessage.id })
 
   try {
     const settings = useSettingsStore.getState().settings
@@ -427,7 +394,7 @@ async function createAgentRuntimeReply(conversation: Conversation, content: stri
       return
     }
 
-    activeControllers.delete(conversation.id)
+    clearActiveStream(conversation.id)
     useChatStore.getState().removeMessage(conversation.id, assistantMessage.id)
     void createAssistantReply(conversation.id).catch((error) => {
       const message = error instanceof Error ? error.message : st('chatRunner.error.sendFailed')
@@ -438,8 +405,8 @@ async function createAgentRuntimeReply(conversation: Conversation, content: stri
     const message = error instanceof Error ? error.message : st('chatRunner.error.sendFailed')
     finishWithError(conversation.id, assistantMessage.id, toUserFacingError(message), classifyChatError(message))
   } finally {
-    if (activeControllers.get(conversation.id)?.messageId === assistantMessage.id) {
-      activeControllers.delete(conversation.id)
+    if (getActiveStream(conversation.id)?.messageId === assistantMessage.id) {
+      clearActiveStream(conversation.id)
     }
   }
 }
@@ -477,10 +444,6 @@ function updateAgentRuntimeReply(conversationId: string, messageId: string, patc
     estimatedTokens: patch.usage.source === 'estimated',
     tokenCount: patch.tokenCount,
   })
-}
-
-function normalizeUserContent(content: string): string {
-  return content.replace(/%20/g, ' ').trim()
 }
 
 export async function retryMessage(conversationId: string, assistantMessageId: string) {
@@ -529,9 +492,14 @@ async function createAssistantReply(conversationId: string) {
 
   chatStore.addMessage(conversationId, assistantMessage)
   const requestController = new AbortController()
-  activeControllers.set(conversationId, { controller: requestController, messageId: assistantMessage.id })
+  setActiveStream(conversationId, { controller: requestController, messageId: assistantMessage.id })
 
-  const resolvedRuntime = await resolveRuntimeConversation(conversation)
+  const settingsState = useSettingsStore.getState()
+  const resolvedRuntime = resolveRuntimeConversation({
+    conversation,
+    providers: settingsState.providers,
+    settings: settingsState.settings,
+  })
   const runtimeConversation = resolvedRuntime?.conversation ?? conversation
   if (isReplyCancelled(conversationId, assistantMessage.id, requestController)) return
   if (runtimeConversation.providerId === 'local-setup') {
@@ -570,6 +538,7 @@ async function createAssistantReply(conversationId: string) {
     .getState()
     .conversations.find((item) => item.id === conversationId)
   const lastUserMessage = [...(latestConversation?.messages ?? [])].reverse().find((message) => message.role === 'user')
+  const sendableAttachments = filterSendableAttachments(lastUserMessage?.attachments)
   const settings = useSettingsStore.getState().settings
   let fallbackProviders: AIProvider[] = [provider]
   try {
@@ -720,7 +689,13 @@ async function createAssistantReply(conversationId: string) {
     }))
   }
   const retrievalSources = [...context.sources, ...webSources]
-  const mcpContext = await resolveMcpContext(runtimeConversation)
+  const mcpContext = await resolveMcpContext({
+    conversation: runtimeConversation,
+    mcpEnabled: settings.mcpEnabled !== false,
+    toolCallTag: MCP_TOOL_CALL_TAG,
+    completeTrace,
+    traceId,
+  })
   for (const trace of mcpContext.traces) {
     upsertTrace(conversationId, assistantMessage.id, trace)
   }
@@ -731,9 +706,9 @@ async function createAssistantReply(conversationId: string) {
     settings,
   })
   if (providerToolContext) {
-    upsertTrace(conversationId, assistantMessage.id, buildProviderNativeToolManifestTrace(providerToolContext))
+    upsertTrace(conversationId, assistantMessage.id, buildProviderNativeToolManifestTrace(providerToolContext, completeTrace, traceId))
   }
-  const hasAttachments = !!lastUserMessage?.attachments?.length
+  const hasAttachments = sendableAttachments.length > 0
   const providerWebSearchMode = searchProvider === 'native' && !hasAttachments ? 'native' : 'off'
   const nativeSearchTraceId = traceId('native-search')
   upsertTrace(conversationId, assistantMessage.id, completeTrace({
@@ -811,6 +786,7 @@ async function createAssistantReply(conversationId: string) {
     providerId: provider.id,
     model: runtimeConversation.model,
     upstreamModel,
+    decisionReason: compactDecision.reason,
     inputTokens: compactDecision.enabled ? remoteCompactProbe.estimatedInputTokens : undefined,
     outputTokens: undefined,
     estimatedSavedTokens: undefined,
@@ -839,6 +815,7 @@ async function createAssistantReply(conversationId: string) {
     model: runtimeConversation.model,
     upstreamModel,
     mode: compactRecord.mode,
+    decisionReason: compactRecord.decisionReason,
     inputTokens: compactRecord.inputTokens,
     outputTokens: compactRecord.outputTokens,
     estimatedSavedTokens: compactRecord.estimatedSavedTokens,
@@ -931,13 +908,28 @@ async function createAssistantReply(conversationId: string) {
       },
     }))
   }
-  const chunkBuffer = createStreamingChunkBuffer(conversationId, assistantMessage.id)
-  const traceBuffer = createStreamingTraceBuffer(conversationId, assistantMessage.id)
+  const chunkBuffer = createStreamingChunkBuffer({
+    flushMs: STREAM_TEXT_FLUSH_MS,
+    maxBuffer: STREAM_TEXT_MAX_BUFFER,
+    appendContent(text) {
+      useChatStreamingStore.getState().appendContent(conversationId, assistantMessage.id, text)
+    },
+  })
+  const traceBuffer = createStreamingTraceBuffer({
+    flushMs: STREAM_TRACE_FLUSH_MS,
+    maxBuffer: STREAM_TRACE_MAX_BUFFER,
+    upsertTrace(trace) {
+      upsertTrace(conversationId, assistantMessage.id, trace)
+    },
+    mergeTrace(current, next) {
+      return mergeBufferedTrace(current, next, clampTraceContent)
+    },
+  })
   const flushStreamingBuffers = () => {
     chunkBuffer.flush()
     traceBuffer.flush()
   }
-  activeControllers.set(conversationId, { controller: requestController, messageId: assistantMessage.id, flush: flushStreamingBuffers })
+  setActiveStream(conversationId, { controller: requestController, messageId: assistantMessage.id, flush: flushStreamingBuffers })
   const modelTraceId = traceId('model')
   upsertTrace(conversationId, assistantMessage.id, {
     id: modelTraceId,
@@ -967,7 +959,7 @@ async function createAssistantReply(conversationId: string) {
         topP: runtimeConversation.topP,
         reasoningEffort: runtimeConversation.reasoningEffort,
         maxTokens: runtimeConversation.maxTokens,
-        attachments: lastUserMessage?.attachments ?? [],
+        attachments: sendableAttachments,
         messages: activePrompt.messages,
         contextPrompt: activePrompt.contextPrompt,
         retrievalSources,
@@ -1012,8 +1004,8 @@ async function createAssistantReply(conversationId: string) {
       },
       (error) => {
         flushStreamingBuffers()
-        if (activeControllers.get(conversationId)?.messageId === assistantMessage.id) {
-          activeControllers.delete(conversationId)
+        if (getActiveStream(conversationId)?.messageId === assistantMessage.id) {
+          clearActiveStream(conversationId)
         }
         upsertTrace(conversationId, assistantMessage.id, completeTrace({
           id: modelTraceId,
@@ -1049,11 +1041,11 @@ async function createAssistantReply(conversationId: string) {
       void handle.done.catch(() => undefined)
       return
     }
-    activeControllers.set(conversationId, { controller: handle.controller, messageId: assistantMessage.id, flush: flushStreamingBuffers, done: handle.done })
+    setActiveStream(conversationId, { controller: handle.controller, messageId: assistantMessage.id, flush: flushStreamingBuffers, done: handle.done })
     void handle.done.finally(() => {
       flushStreamingBuffers()
-      if (activeControllers.get(conversationId)?.messageId === assistantMessage.id) {
-        activeControllers.delete(conversationId)
+      if (getActiveStream(conversationId)?.messageId === assistantMessage.id) {
+        clearActiveStream(conversationId)
       }
     })
   } catch (error) {
@@ -1074,92 +1066,6 @@ async function createAssistantReply(conversationId: string) {
       startedAt: getMessage(conversationId, assistantMessage.id)?.startedAt ?? Date.now(),
     }))
     finishWithError(conversationId, assistantMessage.id, toUserFacingError(message), classifyChatError(message), provider.id)
-  }
-}
-
-function createStreamingChunkBuffer(conversationId: string, messageId: string) {
-  let pendingText = ''
-  let timer: ReturnType<typeof setTimeout> | null = null
-
-  function flush() {
-    if (timer) {
-      clearTimeout(timer)
-      timer = null
-    }
-    if (!pendingText) return
-    const text = pendingText
-    pendingText = ''
-    useChatStreamingStore.getState().appendContent(conversationId, messageId, text)
-  }
-
-  function push(chunk: string) {
-    if (!chunk) return
-    pendingText += chunk
-    if (pendingText.length >= STREAM_TEXT_MAX_BUFFER) {
-      flush()
-      return
-    }
-    if (!timer) {
-      timer = setTimeout(flush, STREAM_TEXT_FLUSH_MS)
-    }
-  }
-
-  return { push, flush }
-}
-
-function createStreamingTraceBuffer(conversationId: string, messageId: string) {
-  const pending = new Map<string, ProcessTrace>()
-  let timer: ReturnType<typeof setTimeout> | null = null
-
-  function traceKey(trace: ProcessTrace): string {
-    return trace.id || `${trace.type}:${trace.title}`
-  }
-
-  function flush() {
-    if (timer) {
-      clearTimeout(timer)
-      timer = null
-    }
-    if (!pending.size) return
-    const traces = Array.from(pending.values())
-    pending.clear()
-    for (const trace of traces) {
-      upsertTrace(conversationId, messageId, trace)
-    }
-  }
-
-  function push(trace: ProcessTrace) {
-    const key = traceKey(trace)
-    const current = pending.get(key)
-    pending.set(key, current ? mergeBufferedTrace(current, trace) : trace)
-    if (pending.size >= STREAM_TRACE_MAX_BUFFER || trace.status === 'done' || trace.status === 'error' || trace.status === 'skipped') {
-      flush()
-      return
-    }
-    if (!timer) {
-      timer = setTimeout(flush, STREAM_TRACE_FLUSH_MS)
-    }
-  }
-
-  return { push, flush }
-}
-
-function mergeBufferedTrace(current: ProcessTrace, next: ProcessTrace): ProcessTrace {
-  const shouldAppend =
-    next.status === 'running' &&
-    current.content &&
-    next.content &&
-    current.content !== next.content &&
-    !current.content.endsWith(next.content)
-  const content = shouldAppend ? `${current.content}${next.content}` : next.content ?? current.content
-  return {
-    ...current,
-    ...next,
-    content: content ? clampTraceContent(content, next.type) : undefined,
-    startedAt: current.startedAt ?? next.startedAt,
-    completedAt: next.completedAt ?? current.completedAt,
-    durationMs: next.durationMs ?? current.durationMs,
-    metadata: { ...current.metadata, ...next.metadata },
   }
 }
 
@@ -1188,8 +1094,8 @@ async function finalizeAssistantResult(input: {
   previousResponseId?: string
 }) {
   input.chunkFlush()
-  if (activeControllers.get(input.conversationId)?.messageId === input.assistantMessageId) {
-    activeControllers.delete(input.conversationId)
+  if (getActiveStream(input.conversationId)?.messageId === input.assistantMessageId) {
+    clearActiveStream(input.conversationId)
   }
   const current = getMessage(input.conversationId, input.assistantMessageId)
   if (current?.status !== 'streaming') return
@@ -1260,6 +1166,11 @@ async function finalizeAssistantResult(input: {
       firstOutput: finalOutput,
       tools: input.mcpTools,
       signal: input.requestController.signal,
+      completeTrace,
+      traceId,
+      upsertTrace(trace) {
+        upsertTrace(input.conversationId, input.assistantMessageId, trace)
+      },
     })
     if (mcpRevision?.text.trim()) {
       finalOutput = mcpRevision.text
@@ -1428,16 +1339,17 @@ async function finalizeAssistantResult(input: {
   }))
   if (input.providerWebSearchMode === 'native') {
     const providerCitationCount = finalCitations.filter((citation) => citation.type === 'web').length
+    const hasProviderSources = providerCitationCount > 0
     upsertTrace(input.conversationId, input.assistantMessageId, completeTrace({
       id: input.nativeSearchTraceId,
       type: 'search',
       title: st('chatRunner.trace.nativeSearchTitle'),
-      content: providerCitationCount
+      content: hasProviderSources
         ? st('chatRunner.trace.nativeSearchSourceCount', { count: providerCitationCount })
         : st('chatRunner.trace.nativeSearchNoSources'),
-      status: 'done',
+      status: hasProviderSources ? 'done' : 'skipped',
       startedAt: getMessage(input.conversationId, input.assistantMessageId)?.retrievalTrace?.find((trace) => trace.id === input.nativeSearchTraceId)?.startedAt ?? current.startedAt ?? Date.now(),
-      metadata: { mode: input.providerWebSearchMode, providerCitationCount },
+      metadata: { mode: input.providerWebSearchMode, providerCitationCount, sourceVerified: hasProviderSources },
     }))
   }
   settleRunningTraces(input.conversationId, input.assistantMessageId, {
@@ -1464,53 +1376,38 @@ function recordCompletedRemoteCompact(input: {
   settings: { runtimeLogEnabled?: boolean; runtimeLogMaxBytes?: number }
   previousResponseId?: string
 }) {
-  const estimatedSavedTokens = estimateRemoteCompactSavedTokens(input.inputTokens, input.outputTokens)
-  const record = recordCompactUsage({
-    mode: input.mode,
+  const record = recordCompactUsage(buildCompletedRemoteCompactUsageInput({
+    conversationId: input.conversationId,
     providerId: input.provider.id,
     model: input.model,
-    upstreamModel: input.upstreamModel ?? input.model,
+    upstreamModel: input.upstreamModel,
+    mode: input.mode,
+    responseId: input.result.responseId,
     inputTokens: input.inputTokens,
     outputTokens: input.outputTokens,
-    estimatedSavedTokens,
-  })
-  void appendRuntimeLog('compact.usage', {
-    conversationId: input.conversationId,
-    providerId: input.provider.id,
-    model: input.model,
-    upstreamModel: input.upstreamModel ?? input.model,
-    mode: record.mode,
-    inputTokens: record.inputTokens,
-    outputTokens: record.outputTokens,
-    estimatedSavedTokens: record.estimatedSavedTokens,
-    responseId: input.result.responseId,
+    messageCount: input.messageCount,
     previousResponseId: input.previousResponseId,
-    status: 'completed',
-  }, { enabled: input.settings.runtimeLogEnabled, maxBytes: input.settings.runtimeLogMaxBytes })
-  if (!input.result.responseId) return
-  const now = Date.now()
-  void saveCompactState({
-    id: `compact-state-${input.result.responseId}`,
-    conversationId: input.conversationId,
-    providerId: input.provider.id,
-    model: input.model,
-    responseId: input.result.responseId,
-    sessionId: input.conversationId,
-    compactItemJson: JSON.stringify({
-      type: 'responses_context_management',
+  }))
+  void appendRuntimeLog(
+    'compact.usage',
+    buildCompletedRemoteCompactRuntimeLogPayload({
+      conversationId: input.conversationId,
+      record,
       responseId: input.result.responseId,
       previousResponseId: input.previousResponseId,
-      recordedAt: now,
     }),
-    sourceMessageStartIndex: 0,
-    sourceMessageEndIndex: Math.max(0, input.messageCount - 1),
-    inputTokens: input.inputTokens,
-    outputTokens: input.outputTokens,
-    estimatedSavedTokens,
-    status: 'active',
-    createdAt: now,
-    updatedAt: now,
-  }).catch(() => undefined)
+    { enabled: input.settings.runtimeLogEnabled, maxBytes: input.settings.runtimeLogMaxBytes }
+  )
+  const stateRecord = buildCompletedRemoteCompactStateRecord({
+    conversationId: input.conversationId,
+    record,
+    responseId: input.result.responseId,
+    previousResponseId: input.previousResponseId,
+    messageCount: input.messageCount,
+    now: Date.now(),
+  })
+  if (!stateRecord) return
+  void saveCompactState(stateRecord).catch(() => undefined)
 }
 
 async function resolveProviderNativeToolContext(input: {
@@ -1547,31 +1444,6 @@ async function resolveProviderNativeToolContext(input: {
       allowDestructiveTools: false,
     },
   }
-}
-
-function providerSupportsNativeTools(provider: AIProvider, modelConfig: AIModel): boolean {
-  if (modelConfig.chatCompatible === false) return false
-  if (modelConfig.supportsTools === false) return false
-  if (modelConfig.supportsTools === true || provider.capabilities?.nativeTools === true) return true
-  return provider.type === 'openai' || provider.type === 'anthropic' || provider.type === 'google'
-}
-
-function buildProviderNativeToolManifestTrace(context: AgentProviderToolContext): ProcessTrace {
-  return completeTrace({
-    id: traceId('provider-tools'),
-    type: 'tool',
-    title: 'Provider native tools',
-    content: `Declared ${context.adapter.tools.length} read-only IsleMind tools for ${context.adapter.target}.`,
-    status: 'done',
-    startedAt: Date.now(),
-    metadata: {
-      providerToolTarget: context.adapter.target,
-      declaredToolCount: context.adapter.tools.length,
-      skippedToolCount: context.adapter.skipped.length,
-      permissionCeiling: 'read-only',
-      maxToolCallsPerStep: context.limits.maxToolCallsPerStep,
-    },
-  })
 }
 
 async function resolveProviderNativeToolRevision(input: {
@@ -1771,23 +1643,6 @@ async function resolveProviderNativeToolRevision(input: {
   }
 }
 
-function safeProviderNativeToolText(
-  value: string | undefined,
-  fallback = '',
-  limit = PROVIDER_NATIVE_TOOL_OUTPUT_LIMIT
-): string {
-  const text = typeof value === 'string' && value.trim() ? value : fallback
-  return clampAgentOutput(redactSensitiveText(text), limit).trim()
-}
-
-function findProviderToolNameMapEntry(
-  map: AgentProviderToolNameMapEntry[],
-  providerName: string
-): AgentProviderToolNameMapEntry | undefined {
-  return map.find((entry) => entry.providerName === providerName) ??
-    map.find((entry) => entry.toolName === providerName)
-}
-
 function upsertProviderNativeToolFailureTrace(input: {
   conversationId: string
   assistantMessageId: string
@@ -1814,42 +1669,6 @@ function upsertProviderNativeToolFailureTrace(input: {
   }))
 }
 
-function buildProviderNativeToolTraceMetadata(input: {
-  call: ProviderToolCall
-  provider: AIProvider
-  status: ProcessTrace['status']
-  tool?: AgentProviderToolNameMapEntry
-  errorCode?: string
-  target?: AgentProviderToolAdapterResult['target']
-  stepIndex?: number
-  toolCallIndex?: number
-  requestedToolCallCount?: number
-  maxToolCallsPerStep?: number
-}): Record<string, unknown> {
-  const metadata: Record<string, unknown> = {
-    ...buildAgentToolCallTraceMetadata({
-      mode: 'native-provider',
-      source: input.tool?.source ?? 'provider',
-      toolName: input.tool?.toolName ?? input.call.name,
-      toolId: input.tool?.toolId,
-      serverId: input.tool?.serverId,
-      permission: input.tool?.permission,
-      status: input.status,
-      errorCode: input.errorCode,
-      providerType: input.provider.type,
-    }),
-    providerToolCallId: input.call.id,
-    providerToolName: input.call.name,
-    providerToolTarget: input.target,
-    providerToolArgumentsComplete: input.call.argumentsComplete !== false,
-  }
-  if (typeof input.stepIndex === 'number') metadata.stepIndex = input.stepIndex
-  if (typeof input.toolCallIndex === 'number') metadata.toolCallIndex = input.toolCallIndex
-  if (typeof input.requestedToolCallCount === 'number') metadata.requestedToolCallCount = input.requestedToolCallCount
-  if (typeof input.maxToolCallsPerStep === 'number') metadata.maxToolCallsPerStep = input.maxToolCallsPerStep
-  return metadata
-}
-
 async function generateAnswerWithProviderNativeToolResult(input: {
   provider: AIProvider
   conversation: Conversation
@@ -1861,7 +1680,7 @@ async function generateAnswerWithProviderNativeToolResult(input: {
   firstResponseItems?: ChatCompletionResult['responseItems']
   firstProviderContentBlocks?: ChatCompletionResult['providerContentBlocks']
   call: ProviderToolCall
-  tool: AgentProviderToolNameMapEntry
+  tool: NonNullable<AgentProviderToolAdapterResult['toolNameMap'][number]>
   toolOutput: string
   ok: boolean
   signal: AbortSignal
@@ -1908,148 +1727,6 @@ async function generateAnswerWithProviderNativeToolResult(input: {
   return { text: sanitizeToolRevisionAnswerText(text), usage }
 }
 
-function buildProviderNativeToolRevisionMessages(
-  input: {
-    provider: AIProvider
-    messages: ChatRequest['messages']
-    firstOutput: string
-    firstReasoningContent?: string
-    firstResponseItems?: ChatCompletionResult['responseItems']
-    firstProviderContentBlocks?: ChatCompletionResult['providerContentBlocks']
-    call: ProviderToolCall
-    tool: AgentProviderToolNameMapEntry
-    toolOutput: string
-    ok: boolean
-  },
-  assistantContent: string
-): ChatRequest['messages'] {
-  if (usesOpenAICompatibleToolResultMessages(input.provider)) {
-    const toolCallId = input.call.callId || input.call.id || `islemind-tool-${input.call.index ?? 0}`
-    return [
-      ...input.messages,
-      {
-        role: 'assistant',
-        content: stripMcpCallBlocks(input.firstOutput).trim(),
-        ...(input.firstReasoningContent ? { reasoningContent: input.firstReasoningContent } : {}),
-        ...(input.firstResponseItems?.length ? { responseItems: input.firstResponseItems } : {}),
-        toolCalls: [{
-          ...input.call,
-          id: input.call.id || toolCallId,
-          callId: toolCallId,
-          rawArguments: input.call.rawArguments ?? stringifyToolArguments(input.call.arguments),
-        }],
-      },
-      {
-        role: 'tool',
-        name: input.call.name,
-        toolCallId,
-        content: input.toolOutput,
-      },
-    ]
-  }
-
-  if (usesAnthropicCompatibleToolResultMessages(input.provider)) {
-    const toolUseId = input.call.id || `islemind-tool-${input.call.index ?? 0}`
-    const assistantParts: ContentPart[] = []
-    const assistantText = stripMcpCallBlocks(input.firstOutput).trim()
-    if (assistantText) assistantParts.push({ type: 'text', text: assistantText })
-    assistantParts.push({
-      type: 'tool_use',
-      text: '',
-      toolUse: {
-        id: toolUseId,
-        name: input.call.name,
-        input: input.call.arguments,
-      },
-    })
-    return [
-      ...input.messages,
-      {
-        role: 'assistant',
-        content: assistantParts,
-        ...(input.firstProviderContentBlocks?.length ? { providerContentBlocks: input.firstProviderContentBlocks } : {}),
-      },
-      {
-        role: 'user',
-        content: [{
-          type: 'tool_result',
-          text: '',
-          toolResult: {
-            tool_use_id: toolUseId,
-            content: input.toolOutput,
-            ...(input.ok ? {} : { is_error: true }),
-          },
-        }],
-      },
-    ]
-  }
-
-  if (input.provider.type !== 'google') {
-    return [
-      ...input.messages,
-      { role: 'assistant', content: assistantContent },
-      {
-        role: 'user',
-        content: [
-          `IsleMind 工具：${input.tool.source}/${input.tool.toolName}`,
-          '调用模式：native-provider',
-          `调用状态：${input.ok ? 'ok' : 'failed'}`,
-          `请求参数：${stringifyToolArguments(input.call.arguments)}`,
-          '',
-          '工具输出：',
-          input.toolOutput,
-          '',
-          '请生成最终回复。',
-        ].join('\n'),
-      },
-    ]
-  }
-
-  const assistantParts: ContentPart[] = []
-  const assistantText = stripMcpCallBlocks(input.firstOutput).trim()
-  if (assistantText) assistantParts.push({ type: 'text', text: assistantText })
-  assistantParts.push({
-    type: 'function_call',
-    text: '',
-    functionCall: {
-      name: input.call.name,
-      args: input.call.arguments,
-    },
-    ...(input.call.thoughtSignature ? { thoughtSignature: input.call.thoughtSignature } : {}),
-  })
-
-  return [
-    ...input.messages,
-    { role: 'assistant', content: assistantParts },
-    {
-      role: 'user',
-      content: [{
-        type: 'function_response',
-        text: '',
-        functionResponse: {
-          name: input.call.name,
-          response: {
-            ok: input.ok,
-            result: input.toolOutput,
-          },
-        },
-      }],
-    },
-  ]
-}
-
-function usesOpenAICompatibleToolResultMessages(provider: AIProvider): boolean {
-  return (
-    provider.type === 'openai' ||
-    provider.type === 'openai-compatible' ||
-    provider.type === 'xiaomi-mimo'
-  ) && provider.wireProtocol !== 'anthropic-compatible'
-}
-
-function usesAnthropicCompatibleToolResultMessages(provider: AIProvider): boolean {
-  return provider.type === 'anthropic' || provider.wireProtocol === 'anthropic-compatible'
-}
-
 function createChatRunnerAgentRagRuntime(input: {
   conversation: Conversation
   settings: Settings
@@ -2067,10 +1744,9 @@ function createChatRunnerAgentRagRuntime(input: {
       if (options?.signal?.aborted) return Promise.resolve([])
       return searchAgentKnowledge(query, limit, input.settings, input.provider, knowledgeScope)
     },
-    retrieveAgentic: async (query, plan, limit, options) => {
-      if (options?.signal?.aborted) return []
-      const sources = await localDataStore.searchAgenticIndexes(query, { limit, plan })
-      return filterKnowledgeSources(sources, knowledgeScope).slice(0, limit)
+    retrieveAgentic: (query, plan, limit, options) => {
+      if (options?.signal?.aborted) return Promise.resolve([])
+      return searchAgenticKnowledgeWithScope({ query, plan, limit, knowledgeScope })
     },
   })
 }
@@ -2083,324 +1759,16 @@ async function searchAgentKnowledge(
   knowledgeScope?: KnowledgeScope
 ): Promise<RetrievalSource[]> {
   if (!settings.knowledgeEnabled || settings.ragMode === 'off') return []
-  const scopedLimit = knowledgeScope ? Math.max(limit * 4, 20) : limit
-  try {
-    const results = settings.ragMode === 'fts'
-      ? await searchKnowledge(query, scopedLimit)
-      : await localDataStore.searchHybrid(query, {
-          limit: scopedLimit,
-          mode: 'hybrid',
-          embeddingMode: settings.embeddingMode ?? 'hybrid',
-          localEmbeddingModelId: settings.localEmbeddingModelId,
-          localEmbeddingModelSource: settings.localEmbeddingModelSource,
-          provider,
-        })
-    return filterKnowledgeSources(results, knowledgeScope).slice(0, limit)
-  } catch {
-    try {
-      return filterKnowledgeSources(await searchKnowledge(query, scopedLimit), knowledgeScope).slice(0, limit)
-    } catch {
-      return []
-    }
-  }
-}
-
-function buildKnowledgeScope(values?: string[]): KnowledgeScope | undefined {
-  const normalized = Array.from(new Set((values ?? []).map((value) => normalizeScopeValue(value)).filter(Boolean)))
-  if (!normalized.length) return undefined
-  return {
-    ids: new Set(normalized),
-    terms: normalized,
-  }
-}
-
-function filterKnowledgeSources(sources: RetrievalSource[], scope?: KnowledgeScope): RetrievalSource[] {
-  if (!scope) return sources
-  return sources.filter((source) => {
-    const documentId = normalizeScopeValue(source.documentId)
-    if (documentId && scope.ids.has(documentId)) return true
-    const title = normalizeScopeValue(source.title)
-    return scope.terms.some((term) => title.includes(term))
+  return searchKnowledgeWithFallback({
+    query,
+    limit,
+    ragMode: settings.ragMode === 'fts' ? 'fts' : 'hybrid',
+    embeddingMode: settings.embeddingMode ?? 'hybrid',
+    localEmbeddingModelId: settings.localEmbeddingModelId,
+    localEmbeddingModelSource: settings.localEmbeddingModelSource,
+    provider,
+    knowledgeScope,
   })
-}
-
-function normalizeScopeValue(value?: string): string {
-  return typeof value === 'string' ? value.trim().toLowerCase() : ''
-}
-
-function stringifyToolArguments(args: Record<string, unknown>): string {
-  try {
-    return JSON.stringify(args)
-  } catch {
-    return '{}'
-  }
-}
-
-async function resolveMcpToolRevision(input: {
-  conversationId: string
-  assistantMessageId: string
-  provider: AIProvider
-  conversation: Conversation
-  systemPrompt: string
-  messages: ChatRequest['messages']
-  baseContextPrompt: string
-  firstOutput: string
-  tools: ResolvedMcpTool[]
-  signal: AbortSignal
-}): Promise<{ text: string; usage?: ChatCompletionResult['usage'] } | null> {
-  const request = parseMcpToolRequest(input.firstOutput)
-  if (!request) return null
-  const resolved = findMcpTool(input.tools, request)
-  if (!resolved) {
-    upsertTrace(input.conversationId, input.assistantMessageId, completeTrace({
-      id: traceId('mcp-unmatched'),
-      type: 'tool',
-      title: st('chatRunner.trace.mcpToolRequestTitle'),
-      content: st('chatRunner.trace.mcpToolUnavailable', { tool: request.toolName }),
-      status: 'error',
-      startedAt: Date.now(),
-      metadata: {
-        requestedTool: request.toolName,
-        ...buildAgentToolCallTraceMetadata({
-          mode: 'tagged-json-fallback',
-          source: 'mcp',
-          serverId: request.serverId,
-          toolName: request.toolName,
-          status: 'error',
-          errorCode: 'tool_unavailable',
-        }),
-      },
-    }))
-    return { text: st('mcpRuntime.toolUnavailable', { tool: request.toolName }) }
-  }
-
-  upsertTrace(input.conversationId, input.assistantMessageId, {
-    id: traceId('mcp-call-start'),
-    type: 'tool',
-    title: st('chatRunner.trace.mcpToolRequestTitle'),
-    content: st('chatRunner.trace.mcpToolRequested', { server: resolved.server.name, tool: resolved.tool.name }),
-    status: 'running',
-    startedAt: Date.now(),
-    metadata: {
-      tool: resolved.tool.name,
-      ...buildAgentToolCallTraceMetadata({
-        mode: 'tagged-json-fallback',
-        source: 'mcp',
-        serverId: resolved.server.id,
-        toolName: resolved.tool.name,
-        permission: resolved.tool.permission,
-        status: 'running',
-      }),
-    },
-  })
-
-  const result = await callMcpTool(resolved.server, resolved.tool.name, request.arguments, undefined, { signal: input.signal })
-  upsertTrace(input.conversationId, input.assistantMessageId, result.trace)
-  if (input.signal.aborted) return null
-
-  const blocks = truncateToolBlocks(result.content)
-  const toolOutput = formatToolBlocks(blocks)
-  if (!toolOutput.trim()) {
-    return { text: result.error ?? st('mcpRuntime.emptyOutput') }
-  }
-
-  try {
-    const revision = await generateAnswerWithMcpToolResult({
-      ...input,
-      request,
-      tool: resolved,
-      toolOutput,
-      ok: result.ok,
-    })
-    if (revision.text.trim()) return revision
-  } catch (error) {
-    upsertTrace(input.conversationId, input.assistantMessageId, completeTrace({
-      id: traceId('mcp-revise-error'),
-      type: 'tool',
-      title: st('chatRunner.trace.mcpToolResultTitle'),
-      content: error instanceof Error ? error.message : st('mcpRuntime.callFailed'),
-      status: 'error',
-      startedAt: Date.now(),
-      metadata: {
-        tool: resolved.tool.name,
-        ...buildAgentToolCallTraceMetadata({
-          mode: 'tagged-json-fallback',
-          source: 'mcp',
-          serverId: resolved.server.id,
-          toolName: resolved.tool.name,
-          permission: resolved.tool.permission,
-          status: 'error',
-          errorCode: 'execution_failed',
-        }),
-      },
-    }))
-  }
-
-  return {
-    text: [
-      st('chatRunner.trace.mcpToolResultTitle'),
-      '',
-      toolOutput,
-    ].join('\n'),
-  }
-}
-
-async function generateAnswerWithMcpToolResult(input: {
-  provider: AIProvider
-  conversation: Conversation
-  systemPrompt: string
-  messages: ChatRequest['messages']
-  baseContextPrompt: string
-  firstOutput: string
-  request: McpToolRequest
-  tool: ResolvedMcpTool
-  toolOutput: string
-  ok: boolean
-  signal: AbortSignal
-}): Promise<{ text: string; usage?: ChatCompletionResult['usage'] }> {
-  let text = ''
-  let usage: ChatCompletionResult['usage']
-  let failure: Error | null = null
-  const handle = await streamChat(
-    {
-      provider: input.provider,
-      model: input.conversation.model,
-      systemPrompt: [
-        input.systemPrompt,
-        '你正在根据 MCP 工具结果生成最终回复。不要暴露工具请求 JSON；只基于工具输出和已有上下文回答用户。如果工具失败，请明确说明失败状态和可继续的下一步。',
-      ].filter(Boolean).join('\n\n'),
-      messages: [
-        ...input.messages,
-        { role: 'assistant', content: stripMcpCallBlocks(input.firstOutput) },
-        {
-          role: 'user',
-          content: [
-            `MCP 工具：${input.tool.server.name}/${input.tool.tool.name}`,
-            `调用状态：${input.ok ? 'ok' : 'failed'}`,
-            `请求参数：${JSON.stringify(input.request.arguments)}`,
-            '',
-            '工具输出：',
-            input.toolOutput,
-            '',
-            '请生成最终回复。',
-          ].join('\n'),
-        },
-      ],
-      contextPrompt: input.baseContextPrompt,
-      temperature: Math.min(input.conversation.temperature, 0.4),
-      topP: input.conversation.topP,
-      reasoningEffort: input.conversation.reasoningEffort,
-      maxTokens: input.conversation.maxTokens,
-      stream: false,
-      signal: input.signal,
-      conversationId: input.conversation.id,
-      sessionId: input.conversation.id,
-      settings: useSettingsStore.getState().settings,
-      remoteCompactEligible: false,
-    },
-    (chunk) => {
-      text += chunk
-    },
-    (result) => {
-      text = result.text || text
-      usage = result.usage
-    },
-    (error) => {
-      failure = error
-    }
-  )
-  await handle.done
-  if (failure) throw failure
-  return { text: sanitizeToolRevisionAnswerText(text), usage }
-}
-
-function sanitizeToolRevisionAnswerText(output: string): string {
-  return redactSensitiveText(stripMcpCallBlocks(output)).trim()
-}
-
-function parseMcpToolRequest(output: string): McpToolRequest | null {
-  const text = output.trim()
-  if (!text) return null
-  const match = text.match(new RegExp(`<${MCP_CALL_TAG}>\\s*([\\s\\S]*?)\\s*<\\/${MCP_CALL_TAG}>`, 'i'))
-  const raw = match?.[1] ?? (looksLikeMcpRequestJson(text) ? text : '')
-  if (!raw) return null
-  try {
-    const parsed = JSON.parse(raw) as Record<string, unknown>
-    const toolValue = typeof parsed.tool === 'string'
-      ? parsed.tool
-      : typeof parsed.toolName === 'string'
-        ? parsed.toolName
-        : typeof parsed.name === 'string'
-          ? parsed.name
-          : ''
-    if (!toolValue.trim()) return null
-    const split = splitToolReference(toolValue)
-    const serverId = typeof parsed.serverId === 'string' && parsed.serverId.trim()
-      ? parsed.serverId.trim()
-      : split.serverId
-    return {
-      serverId,
-      toolName: split.toolName,
-      arguments: normalizeMcpArguments(parsed.arguments ?? parsed.args ?? parsed.input),
-    }
-  } catch {
-    return null
-  }
-}
-
-function looksLikeMcpRequestJson(text: string): boolean {
-  return text.startsWith('{') && /"(tool|toolName|name)"\s*:/.test(text) && /"(arguments|args|input)"\s*:/.test(text)
-}
-
-function splitToolReference(value: string): { serverId?: string; toolName: string } {
-  const trimmed = value.trim()
-  const separator = trimmed.includes('/') ? '/' : trimmed.includes(':') ? ':' : ''
-  if (!separator) return { toolName: trimmed }
-  const [serverId, ...rest] = trimmed.split(separator)
-  const toolName = rest.join(separator).trim()
-  return toolName ? { serverId: serverId.trim(), toolName } : { toolName: trimmed }
-}
-
-function normalizeMcpArguments(value: unknown): Record<string, unknown> {
-  return value && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : {}
-}
-
-function findMcpTool(tools: ResolvedMcpTool[], request: McpToolRequest): ResolvedMcpTool | undefined {
-  return tools.find(({ server, tool }) => {
-    if (request.serverId && server.id !== request.serverId && server.name !== request.serverId) return false
-    return tool.name === request.toolName || `${server.id}:${tool.name}` === request.toolName || `${server.id}/${tool.name}` === request.toolName
-  }) ?? tools.find(({ tool }) => !request.serverId && tool.name === request.toolName)
-}
-
-function stripMcpCallBlocks(output: string): string {
-  return stripAgentToolRequestBlocks(output, MCP_CALL_TAG)
-}
-
-function formatToolBlocks(blocks: ToolContentBlock[]): string {
-  return blocks.map((block) => {
-    if (block.type === 'text') return block.text ?? ''
-    if (block.type === 'resource') return [block.uri, block.text].filter(Boolean).join('\n')
-    if (block.type === 'image') return block.mimeType ? `[image:${block.mimeType}]` : '[image]'
-    return ''
-  }).filter(Boolean).join('\n\n')
-}
-
-function mergeUsage(base: ChatCompletionResult['usage'], extra: ChatCompletionResult['usage']): ChatCompletionResult['usage'] {
-  if (!base) return extra
-  if (!extra) return base
-  return {
-    source: base.source === 'provider' && extra.source === 'provider' ? 'provider' : 'estimated',
-    inputTokens: addOptionalNumbers(base.inputTokens, extra.inputTokens),
-    outputTokens: addOptionalNumbers(base.outputTokens, extra.outputTokens),
-    reasoningTokens: addOptionalNumbers(base.reasoningTokens, extra.reasoningTokens),
-    totalTokens: addOptionalNumbers(base.totalTokens, extra.totalTokens) ?? addOptionalNumbers(addOptionalNumbers(base.inputTokens, base.outputTokens), addOptionalNumbers(extra.inputTokens, extra.outputTokens)),
-  }
-}
-
-function addOptionalNumbers(a?: number, b?: number): number | undefined {
-  if (typeof a !== 'number') return b
-  if (typeof b !== 'number') return a
-  return a + b
 }
 
 async function resolvePreviousCompactResponseId(
@@ -2479,121 +1847,27 @@ async function reviseAnswerWithFlare(input: {
   return text
 }
 
-function dedupeMessageCitations(citations: RetrievalSource[] | NonNullable<Message['citations']>): NonNullable<Message['citations']> {
-  const map = new Map<string, NonNullable<Message['citations']>[number]>()
-  for (const citation of citations) {
-    const key = citation.chunkId ?? citation.url ?? citation.id
-    if (!map.has(key)) map.set(key, citation)
-  }
-  return Array.from(map.values())
-}
-
 function isReplyCancelled(conversationId: string, messageId: string, controller: AbortController): boolean {
   if (controller.signal.aborted) return true
   const current = getMessage(conversationId, messageId)
   return current?.status === 'cancelled'
 }
 
-function formatWebPrompt(sources: { title: string; content: string; url?: string }[]): string {
-  return [
-    '以下是联网搜索结果。请优先引用来源 URL，并避免编造未出现的信息。',
-    ...sources.map((source, index) => `[W${index + 1}] ${source.title}${source.url ? `\n${source.url}` : ''}\n${source.content}`),
-  ].join('\n\n')
-}
-
-async function resolveRuntimeConversation(conversation: Conversation): Promise<{ conversation: Conversation; provider: AIProvider } | null> {
-  const settings = useSettingsStore.getState().settings
-  const currentProvider = useSettingsStore.getState().providers.find((item) => item.id === conversation.providerId)
-  if ((conversation.providerModelMode ?? 'inherited') !== 'inherited') {
-    return currentProvider && getPolicyAllowedProviderModels(currentProvider, settings).includes(conversation.model) ? { conversation, provider: currentProvider } : null
-  }
-  if (currentProvider && currentProvider.enabled && getPolicyAllowedProviderModels(currentProvider, settings).includes(conversation.model)) {
-    return { conversation, provider: currentProvider }
-  }
-  return null
-}
-
 function finishWithRuntimeResolutionError(conversationId: string, messageId: string, conversation: Conversation) {
-  const provider = useSettingsStore.getState().providers.find((item) => item.id === conversation.providerId)
-  if (provider && !provider.enabled) {
-    finishWithError(conversationId, messageId, st('chatRunner.error.providerDisabled'), 'disabled_provider', provider.id)
-    return
-  }
-  finishWithError(conversationId, messageId, st('chatRunner.userError.modelUnavailable'), 'model_unavailable', provider?.id ?? conversation.providerId)
-}
-
-async function resolveMcpContext(conversation: Conversation): Promise<McpContextResolution> {
-  const settings = useSettingsStore.getState().settings
-  const startedAt = Date.now()
-  if (!settings.mcpEnabled) {
-    return {
-      prompt: '',
-      tools: [],
-      traces: [completeTrace({
-        id: traceId('mcp-disabled'),
-        type: 'tool',
-        title: st('chatRunner.trace.mcpTitle'),
-        content: st('chatRunner.trace.mcpDisabled'),
-        status: 'skipped',
-        startedAt,
-      })],
-    }
-  }
-  const enabledTools = conversation.enabledTools ?? conversation.skillSnapshot?.enabledTools ?? []
-  const servers = await listMcpServers()
-  const tools = servers
-    .filter((server) => server.enabled)
-    .flatMap((server) => server.tools.filter((tool) => tool.enabled).map((tool) => ({ server, tool })))
-  const selected = enabledTools.length
-    ? tools.filter((item) => enabledTools.includes(item.tool.name) || enabledTools.includes(`${item.server.id}:${item.tool.name}`))
-    : tools
-  if (!selected.length) {
-    return {
-      prompt: '',
-      tools: [],
-      traces: [completeTrace({
-        id: traceId('mcp-empty'),
-        type: 'tool',
-        title: st('chatRunner.trace.mcpTitle'),
-        content: st('chatRunner.trace.mcpNoTools'),
-        status: 'skipped',
-        startedAt,
-      })],
-    }
-  }
-  const connected = selected.filter((item) => item.server.status === 'connected')
-  const offline = selected.filter((item) => item.server.status !== 'connected')
-  const prompt = connected.length
-    ? [
-        '当前可用 MCP 工具清单。普通回答不需要调用工具时请直接回答。',
-        `如果必须调用工具，请只输出一个 <${MCP_CALL_TAG}>JSON</${MCP_CALL_TAG}> 块，不要输出其它正文。`,
-        'JSON 格式：{"serverId":"server-id","tool":"tool-name","arguments":{}}。',
-        '工具执行后，系统会把工具结果交给你生成最终回复。',
-        ...connected.map(({ server, tool }) => `- ${server.id}/${tool.name} (${server.name}) [${tool.permission}]: ${tool.description ?? 'No description'}${tool.inputSchema ? `\n  inputSchema: ${JSON.stringify(tool.inputSchema).slice(0, 600)}` : ''}`),
-      ].join('\n')
-    : ''
-  return {
-    prompt,
-    tools: connected,
-    traces: [completeTrace({
-      id: traceId('mcp-manifest'),
-      type: 'tool',
-      title: st('chatRunner.trace.mcpManifestTitle'),
-      content: [
-        connected.length ? st('chatRunner.trace.mcpConnectedTools', { count: connected.length, tools: connected.map((item) => `${item.server.name}/${item.tool.name}`).join(', ') }) : st('chatRunner.trace.mcpNoOnlineTools'),
-        offline.length ? st('chatRunner.trace.mcpOfflineTools', { count: offline.length, tools: offline.map((item) => `${item.server.name}/${item.tool.name}`).join(', ') }) : '',
-      ].filter(Boolean).join('\n'),
-      status: connected.length ? 'done' : 'skipped',
-      startedAt,
-      metadata: { connected: connected.length, offline: offline.length },
-    })],
-  }
+  const error = resolveRuntimeResolutionError({
+    conversation,
+    providers: useSettingsStore.getState().providers,
+  })
+  const message = error.code === 'disabled_provider'
+    ? st('chatRunner.error.providerDisabled')
+    : st('chatRunner.userError.modelUnavailable')
+  finishWithError(conversationId, messageId, message, error.code, error.providerId)
 }
 
 function finishWithError(conversationId: string, messageId: string, content: string, errorCode: ChatErrorCode = 'unknown', providerId?: string) {
-  const active = activeControllers.get(conversationId)
+  const active = getActiveStream(conversationId)
   if (active?.messageId === messageId) {
-    activeControllers.delete(conversationId)
+    clearActiveStream(conversationId)
   }
   const current = getMessage(conversationId, messageId)
   const conversation = useChatStore.getState().conversations.find((item) => item.id === conversationId)
@@ -2620,50 +1894,14 @@ function upsertTrace(conversationId: string, messageId: string, trace: ProcessTr
   useChatStore.getState().upsertMessageTrace(conversationId, messageId, sanitizeTrace(trace))
 }
 
-function completeTrace(trace: ProcessTrace): ProcessTrace {
-  const completedAt = trace.completedAt ?? Date.now()
-  return {
-    ...trace,
-    completedAt,
-    durationMs: trace.startedAt ? completedAt - trace.startedAt : trace.durationMs,
-  }
-}
-
-function sanitizeTrace(trace: ProcessTrace): ProcessTrace {
-  const content = trace.content?.trim()
-  const status = trace.status === 'running' && trace.completedAt ? 'done' : trace.status
-  return {
-    ...trace,
-    title: redactSensitiveText(trace.title),
-    status,
-    content: content ? clampTraceContent(redactSensitiveText(content), trace.type) : undefined,
-    metadata: sanitizeTraceMetadata(trace.metadata),
-  }
-}
-
-function clampTraceContent(content: string, type: ProcessTrace['type']): string {
-  const limit = type === 'tool' ? 520 : type === 'reasoning' ? 760 : 1400
-  return content.length > limit ? `${content.slice(0, limit)}...` : content
-}
-
 function settleRunningTraces(
   conversationId: string,
   messageId: string,
-  options: { fallbackStatus: ProcessTrace['status']; fallbackContent: string }
+  options: SettleRunningTracesOptions
 ) {
   const message = getMessage(conversationId, messageId)
-  const traces = [
-    ...(message?.retrievalTrace ?? []),
-    ...(message?.reasoning ?? []),
-    ...(message?.toolCalls ?? []),
-  ]
-  for (const trace of traces) {
-    if (trace.status !== 'running' && trace.status !== 'pending') continue
-    upsertTrace(conversationId, messageId, completeTrace({
-      ...trace,
-      status: options.fallbackStatus,
-      content: trace.content ?? options.fallbackContent,
-    }))
+  for (const trace of settleMessageTraces(message, options)) {
+    upsertTrace(conversationId, messageId, trace)
   }
 }
 
@@ -2723,72 +1961,6 @@ async function extractMemoriesWithTrace(conversationId: string, messageId: strin
       status: 'error',
       startedAt,
     }))
-  }
-}
-
-function buildSetupGuide(): string {
-  return [
-    st('chatRunner.setup.noProvider'),
-    '',
-    st('chatRunner.setup.stepProvider'),
-    st('chatRunner.setup.stepKey'),
-    st('chatRunner.setup.stepModel'),
-  ].join('\n')
-}
-
-function classifyChatError(message: string): ChatErrorCode {
-  const text = message.toLowerCase()
-  if (text.includes('401') || text.includes('403') || text.includes('unauthorized') || text.includes('invalid api key') || text.includes('permission')) {
-    return 'bad_auth'
-  }
-  if (text.includes('credential_mismatch') || text.includes('token plan') || text.includes('tp-') || text.includes('sk-')) {
-    return 'credential_mismatch'
-  }
-  if (text.includes('aborterror') || text.includes('timeout') || text.includes('timed out') || text.includes('超时')) {
-    return 'timeout'
-  }
-  if (text.includes('no response body') || text.includes('empty response') || text.includes('模型返回为空')) {
-    return 'network_error'
-  }
-  if (text.includes('rate limit') || text.includes('too many requests') || text.includes('429') || text.includes('quota') || text.includes('额度')) return 'rate_limited'
-  if (text.includes('max_tokens') || text.includes('max_completion_tokens') || text.includes('too many tokens') || text.includes('context length') || text.includes('输出上限')) return 'max_tokens_exceeded'
-  if (text.includes('404') || text.includes('model') || text.includes('not found')) {
-    return 'model_unavailable'
-  }
-  if (text.includes('failed to fetch') || text.includes('network') || text.includes('timeout')) {
-    return 'network_error'
-  }
-  if (text.includes('api error 400') || text.includes('base url') || text.includes('unsupported url')) {
-    return 'bad_base_url'
-  }
-  return 'unknown'
-}
-
-function toUserFacingError(message: string): string {
-  const code = classifyChatError(message)
-  switch (code) {
-    case 'bad_auth':
-      return st('chatRunner.userError.badAuth')
-    case 'credential_mismatch':
-      return message || st('chatRunner.userError.credentialMismatch')
-    case 'model_unavailable':
-      return st('chatRunner.userError.modelUnavailable')
-    case 'network_error':
-      return message.toLowerCase().includes('no response body') || message.toLowerCase().includes('empty response')
-        ? st('chatRunner.userError.emptyResponse')
-        : st('chatRunner.userError.network')
-    case 'timeout':
-      return st('chatRunner.userError.timeout')
-    case 'rate_limited':
-      return st('chatRunner.userError.rateLimited')
-    case 'max_tokens_exceeded':
-      return message || st('chatRunner.userError.maxTokens')
-    case 'bad_base_url':
-      return st('chatRunner.userError.badBaseUrl')
-    case 'missing_key':
-    case 'disabled_provider':
-    case 'unknown':
-      return message || st('chatRunner.error.sendFailed')
   }
 }
 

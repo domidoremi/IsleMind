@@ -1,12 +1,12 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
-import { ActivityIndicator, ScrollView, Text, View, useWindowDimensions, type ViewStyle } from 'react-native'
+import { ActivityIndicator, ScrollView, StyleSheet, Text, View, useWindowDimensions, type ViewStyle } from 'react-native'
 import { router, usePathname } from 'expo-router'
 import * as Clipboard from 'expo-clipboard'
 import * as Sharing from 'expo-sharing'
-import { Activity, BookOpen, Brain, Download, FileJson, Globe2, RotateCcw, Settings as SettingsIcon, ShieldCheck, Smartphone, Trash2, Upload } from 'lucide-react-native'
 import { AnimatePresence, MotiView } from 'moti'
 import { useTranslation } from 'react-i18next'
 import { AnimatedNavigationTrigger, type NavigationGlyph } from '@/components/navigation/AnimatedNavigationTrigger'
+import { AppIcon } from '@/components/ui/AppIcon'
 import { IslePressable } from '@/components/ui/isle'
 import { IsleChip } from '@/components/ui/isle'
 import { IsleButton } from '@/components/ui/isle'
@@ -16,13 +16,13 @@ import { useAppTheme } from '@/hooks/useAppTheme'
 import { useSettingsStore } from '@/store/settingsStore'
 import { useChatStore } from '@/store/chatStore'
 import { exportToJsonFile, importFromJsonFileDetailed } from '@/services/portableData'
+import { formatImportSizeLimit, MAX_IMPORT_JSON_FILE_BYTES } from '@/services/fileImportGuards'
 import { checkLatestApkRelease, downloadAndOpenApkInstaller, formatApkSizeBytes, formatUpdateCheckTime, getVersionSnapshot, shouldRecordApkUpdateCheck, type ApkReleaseInfo } from '@/services/appUpdates'
 import { useIsleDialog } from '@/components/ui/isle'
 import { resolveSearchProvider, searchProviderLabel } from '@/services/searchPolicy'
-import { clearRuntimeLog, getRuntimeLogPath, readRuntimeLogText } from '@/services/runtimeLog'
+import { clearRuntimeLog, getRuntimeLogInfo, getRuntimeLogPath, readRuntimeLogText } from '@/services/runtimeLog'
 import { buildRuntimeDiagnosticsSummary, type RuntimeDiagnosticsSummary } from '@/services/runtimeDiagnostics'
 import { changeAppLanguage } from '@/i18n'
-import { PageTransitionSetting } from '@/components/settings/PageTransitionSetting'
 import type { BedrockCacheTtl, Language, PayloadPolicyMode, ProxyMode, RemoteCompactMode, ThemeId, ThemeMode, UpstreamTransportMode } from '@/types'
 import { useMotionPreference } from '@/hooks/useMotionPreference'
 import { motionTokens } from '@/theme/animation'
@@ -35,8 +35,9 @@ const LANGUAGE_OPTIONS: { id: Language; label: string; detail: string }[] = [
 ]
 
 const THEME_FAMILY_OPTIONS: { id: ThemeId; labelKey: string; detailKey: string }[] = [
-  { id: 'island', labelKey: 'settings.themeIsland', detailKey: 'settings.themeIslandDescription' },
   { id: 'minimal', labelKey: 'settings.themeMinimal', detailKey: 'settings.themeMinimalDescription' },
+  { id: 'glass', labelKey: 'settings.themeGlass', detailKey: 'settings.themeGlassDescription' },
+  { id: 'cartoon', labelKey: 'settings.themeCartoon', detailKey: 'settings.themeCartoonDescription' },
 ]
 
 const settingsChipPressableStyle = { minHeight: 44, justifyContent: 'center' as const }
@@ -88,6 +89,17 @@ const describeSystemStatusNotification = (
 
 type SettingsAdvancedGroup = 'diagnostics' | 'governance' | 'updates' | 'danger'
 
+function resolveSettingsFoldoutSurface(colors: ReturnType<typeof useAppTheme>['colors'], isGlass: boolean, variant: 'base' | 'muted' = 'base') {
+  if (variant === 'muted') {
+    return colors.ui.cartoon ? colors.ui.semantic.surface.muted : isGlass ? colors.ui.actionBar.itemBackground : colors.ui.semantic.surface.muted
+  }
+  return colors.ui.cartoon ? colors.ui.semantic.surface.base : isGlass ? colors.ui.semantic.chrome.background : colors.ui.semantic.surface.muted
+}
+
+function resolveSettingsFoldoutBorder(colors: ReturnType<typeof useAppTheme>['colors'], isGlass: boolean) {
+  return colors.ui.cartoon ? colors.material.stroke : isGlass ? colors.ui.actionBar.itemBorder : colors.ui.semantic.chrome.border
+}
+
 export function SettingsScreenContent({ active = true, onHome }: { active?: boolean; onHome?: () => void } = {}) {
   const { colors } = useAppTheme()
   const motion = useMotionPreference()
@@ -121,8 +133,9 @@ export function SettingsScreenContent({ active = true, onHome }: { active?: bool
   const defaultProvider = providers.find((provider) => provider.id === settings.defaultProvider)
   const version = getVersionSnapshot()
   const searchProvider = resolveSearchProvider(settings)
-  const activeThemeId = settings.themeId ?? 'island'
-  const foldoutBodyStyle = { marginTop: 8, borderRadius: colors.ui.radius.panel, padding: 12, backgroundColor: colors.ui.card.defaultBackground, borderWidth: 1, borderColor: colors.material.stroke, gap: 12 }
+  const activeThemeId = settings.themeId ?? 'minimal'
+  const subtleBorderWidth = colors.ui.cartoon ? 1 : StyleSheet.hairlineWidth
+  const foldoutBodyStyle = { marginTop: 8, borderRadius: colors.ui.radius.panel, padding: 11, backgroundColor: resolveSettingsFoldoutSurface(colors, colors.ui.glass), borderWidth: subtleBorderWidth, borderColor: resolveSettingsFoldoutBorder(colors, colors.ui.glass), gap: 10 }
   const settingsGridSectionStyle = (basis: number): ViewStyle => ({
     flexGrow: 1,
     flexShrink: 1,
@@ -131,10 +144,10 @@ export function SettingsScreenContent({ active = true, onHome }: { active?: bool
   })
   const foldoutCardStyle = (gap = 10): ViewStyle => ({
     borderRadius: colors.ui.radius.card,
-    padding: 11,
-    backgroundColor: colors.ui.card.defaultBackground,
-    borderWidth: 1,
-    borderColor: colors.material.stroke,
+    padding: 10,
+    backgroundColor: colors.ui.cartoon ? colors.ui.semantic.surface.muted : colors.ui.glass ? colors.ui.actionBar.itemBackground : colors.ui.semantic.surface.muted,
+    borderWidth: subtleBorderWidth,
+    borderColor: colors.ui.cartoon ? colors.material.stroke : colors.ui.glass ? colors.ui.actionBar.itemBorder : colors.ui.semantic.chrome.border,
     gap,
   })
   const foldoutMotion = motion === 'full'
@@ -369,7 +382,7 @@ export function SettingsScreenContent({ active = true, onHome }: { active?: bool
   }
 
   function updatePositiveInteger(
-    key: 'runtimeLogMaxBytes' | 'sessionConcurrencyLimit' | 'sessionQueueTimeoutMs' | 'upstreamRequestTimeoutMs' | 'upstreamMaxRetries' | 'upstreamCircuitBreakerFailureThreshold' | 'upstreamCircuitBreakerCooldownMs' | 'agentWorkflowMaxSteps' | 'agentWorkflowMaxToolCallsPerStep' | 'agentWorkflowOutputCharLimit',
+    key: 'runtimeLogMaxBytes' | 'sessionConcurrencyLimit' | 'sessionQueueTimeoutMs' | 'upstreamRequestTimeoutMs' | 'upstreamMaxRetries' | 'upstreamCircuitBreakerFailureThreshold' | 'upstreamCircuitBreakerCooldownMs' | 'agentWorkflowMaxSteps' | 'agentWorkflowMaxToolCallsPerStep' | 'agentWorkflowOutputCharLimit' | 'remoteCompactThresholdTokens',
     value: string,
     fallback: number,
     min: number,
@@ -387,6 +400,7 @@ export function SettingsScreenContent({ active = true, onHome }: { active?: bool
     if (key === 'agentWorkflowMaxSteps') updateSettings({ agentWorkflowMaxSteps: next })
     if (key === 'agentWorkflowMaxToolCallsPerStep') updateSettings({ agentWorkflowMaxToolCallsPerStep: next })
     if (key === 'agentWorkflowOutputCharLimit') updateSettings({ agentWorkflowOutputCharLimit: next })
+    if (key === 'remoteCompactThresholdTokens') updateSettings({ remoteCompactThresholdTokens: next })
   }
 
   function updateRemoteCompactThreshold(value: string) {
@@ -397,30 +411,67 @@ export function SettingsScreenContent({ active = true, onHome }: { active?: bool
 
   async function refreshRuntimeDiagnostics() {
     setRefreshingDiagnostics(true)
-    const summary = await buildRuntimeDiagnosticsSummary({ providers, settings })
-    setDiagnostics(summary)
-    setRefreshingDiagnostics(false)
+    try {
+      const summary = await buildRuntimeDiagnosticsSummary({ providers, settings })
+      setDiagnostics(summary)
+    } catch (error) {
+      dialog.toast({
+        title: t('settings.runtimeDiagnosticsRefreshFailed'),
+        message: error instanceof Error ? error.message : String(error),
+        tone: 'danger',
+      })
+    } finally {
+      setRefreshingDiagnostics(false)
+    }
   }
 
   async function copyRuntimeLogTail() {
-    const text = await readRuntimeLogText()
-    await Clipboard.setStringAsync(text || t('settings.runtimeLogEmpty'))
-    dialog.toast({ title: t('settings.runtimeLogCopied'), tone: 'mint' })
+    try {
+      const text = await readRuntimeLogText()
+      await Clipboard.setStringAsync(text || t('settings.runtimeLogEmpty'))
+      dialog.toast({ title: t('settings.runtimeLogCopied'), tone: 'mint' })
+    } catch (error) {
+      dialog.toast({
+        title: t('settings.runtimeLogCopyFailed'),
+        message: error instanceof Error ? error.message : String(error),
+        tone: 'danger',
+      })
+    }
   }
 
   async function shareRuntimeLogFile() {
-    const path = getRuntimeLogPath()
-    if (await Sharing.isAvailableAsync()) {
-      await Sharing.shareAsync(path, { mimeType: 'application/json', dialogTitle: t('settings.runtimeLogShare') })
-      return
+    try {
+      const logInfo = await getRuntimeLogInfo()
+      if (!logInfo.exists || logInfo.size <= 0) {
+        await copyRuntimeLogTail()
+        return
+      }
+      if (await Sharing.isAvailableAsync()) {
+        await Sharing.shareAsync(logInfo.path, { mimeType: 'application/json', dialogTitle: t('settings.runtimeLogShare') })
+        return
+      }
+      await copyRuntimeLogTail()
+    } catch (error) {
+      dialog.toast({
+        title: t('settings.runtimeLogShareFailed'),
+        message: error instanceof Error ? error.message : String(error),
+        tone: 'danger',
+      })
     }
-    await copyRuntimeLogTail()
   }
 
   async function clearRuntimeLogFile() {
-    await clearRuntimeLog()
-    await refreshRuntimeDiagnostics()
-    dialog.toast({ title: t('settings.runtimeLogCleared'), tone: 'amber' })
+    try {
+      await clearRuntimeLog()
+      await refreshRuntimeDiagnostics()
+      dialog.toast({ title: t('settings.runtimeLogCleared'), tone: 'amber' })
+    } catch (error) {
+      dialog.toast({
+        title: t('settings.runtimeLogClearFailed'),
+        message: error instanceof Error ? error.message : String(error),
+        tone: 'danger',
+      })
+    }
   }
 
   return (
@@ -456,25 +507,25 @@ export function SettingsScreenContent({ active = true, onHome }: { active?: bool
       <IsleSection style={{ marginTop: 8 }}>
         <View style={{ gap: 10 }}>
           <IsleToggle
-            icon={<Brain color={colors.text} size={18} />}
+            icon={<AppIcon name="reasoning" color={colors.text} size={18} />}
             title={t('settings.longMemory')}
             active={!!settings.memoryEnabled}
             onPress={() => updateSettings({ memoryEnabled: !settings.memoryEnabled })}
           />
           <IsleToggle
-            icon={<BookOpen color={colors.text} size={18} />}
+            icon={<AppIcon name="knowledge" color={colors.text} size={18} />}
             title={t('settings.localKnowledge')}
             active={!!settings.knowledgeEnabled}
             onPress={() => updateSettings({ knowledgeEnabled: !settings.knowledgeEnabled })}
           />
           <IsleToggle
-            icon={<Globe2 color={colors.text} size={18} />}
+            icon={<AppIcon name="globe" color={colors.text} size={18} />}
             title={t('settings.webSearch')}
             active={!!settings.webSearchEnabled}
             onPress={() => updateSettings({ webSearchEnabled: !settings.webSearchEnabled })}
           />
           <IsleToggle
-            icon={<Activity color={colors.text} size={18} />}
+            icon={<AppIcon name="activity" color={colors.text} size={18} />}
             title={t('settings.systemStatusNotifications')}
             description={systemStatusNotificationDescription}
             active={settings.systemStatusNotificationsEnabled === true}
@@ -486,7 +537,7 @@ export function SettingsScreenContent({ active = true, onHome }: { active?: bool
                 <IsleButton
                   compact
                   label={t('settings.systemStatusNotificationsOpenSettings')}
-                  icon={<SettingsIcon color={colors.textSecondary} size={14} />}
+                  icon={<AppIcon name="settings" color={colors.textSecondary} size={14} />}
                   onPress={() => void openSystemStatusNotificationSettings('notifications')}
                   style={narrowLayout ? { alignSelf: 'stretch' } : { alignSelf: 'flex-start', minWidth: 0 }}
                 />
@@ -495,7 +546,7 @@ export function SettingsScreenContent({ active = true, onHome }: { active?: bool
                 <IsleButton
                   compact
                   label={t('settings.systemStatusNotificationsOpenPromotedSettings')}
-                  icon={<SettingsIcon color={colors.textSecondary} size={14} />}
+                  icon={<AppIcon name="settings" color={colors.textSecondary} size={14} />}
                   onPress={() => void openSystemStatusNotificationSettings('promoted')}
                   style={narrowLayout ? { alignSelf: 'stretch' } : { alignSelf: 'flex-start', minWidth: 0 }}
                 />
@@ -549,16 +600,13 @@ export function SettingsScreenContent({ active = true, onHome }: { active?: bool
             ))}
           </View>
         </IsleSection>
-        <IsleSection title={t('preferences.pageTransition')} style={settingsGridSectionStyle(260)} contentStyle={{ padding: 12 }}>
-          <PageTransitionSetting showHeader={false} />
-        </IsleSection>
       </View>
 
       <SettingsSectionTitle>{t('settings.importExport')}</SettingsSectionTitle>
       <IsleSection style={{ marginTop: 8 }}>
         <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 12 }}>
-          <DataButton label={t('settings.exportJson')} icon={<Download color={colors.ui.control.primaryForeground} size={18} />} onPress={() => void exportJson()} />
-          <DataButton label={t('settings.importJson')} icon={<Upload color={colors.ui.control.primaryForeground} size={18} />} onPress={() => void importJson()} />
+          <DataButton label={t('settings.exportJson')} icon={<AppIcon name="download" color={colors.ui.control.primaryForeground} size={18} />} onPress={() => void exportJson()} />
+          <DataButton label={t('settings.importJson')} icon={<AppIcon name="upload" color={colors.ui.control.primaryForeground} size={18} />} onPress={() => void importJson()} />
         </View>
         <Text style={{ marginTop: 10, color: colors.textTertiary, fontSize: 12, fontWeight: '700', lineHeight: 18 }}>
           {t('settings.importExportDescription')}
@@ -600,10 +648,10 @@ export function SettingsScreenContent({ active = true, onHome }: { active?: bool
               </Text>
             </View>
             <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8 }}>
-              <IsleButton label={refreshingDiagnostics ? t('settings.runtimeDiagnosticsRefreshing') : t('settings.runtimeDiagnosticsRefresh')} compact icon={<Activity color={colors.textSecondary} size={15} />} onPress={() => void refreshRuntimeDiagnostics()} disabled={refreshingDiagnostics} />
-              <IsleButton label={t('settings.runtimeLogCopy')} compact icon={<FileJson color={colors.textSecondary} size={15} />} onPress={() => void copyRuntimeLogTail()} />
-              <IsleButton label={t('settings.runtimeLogShare')} compact icon={<Upload color={colors.textSecondary} size={15} />} onPress={() => void shareRuntimeLogFile()} />
-              <IsleButton label={t('settings.runtimeLogClear')} compact tone="danger" icon={<Trash2 color={colors.ui.tone.danger.foreground} size={15} />} onPress={() => void clearRuntimeLogFile()} />
+              <IsleButton label={refreshingDiagnostics ? t('settings.runtimeDiagnosticsRefreshing') : t('settings.runtimeDiagnosticsRefresh')} compact icon={<AppIcon name="activity" color={colors.textSecondary} size={15} />} onPress={() => void refreshRuntimeDiagnostics()} disabled={refreshingDiagnostics} />
+              <IsleButton label={t('settings.runtimeLogCopy')} compact icon={<AppIcon name="json" color={colors.textSecondary} size={15} />} onPress={() => void copyRuntimeLogTail()} />
+              <IsleButton label={t('settings.runtimeLogShare')} compact icon={<AppIcon name="upload" color={colors.textSecondary} size={15} />} onPress={() => void shareRuntimeLogFile()} />
+              <IsleButton label={t('settings.runtimeLogClear')} compact tone="danger" icon={<AppIcon name="delete" color={colors.ui.control.dangerForeground} size={15} />} onPress={() => void clearRuntimeLogFile()} />
             </View>
           </MotiView>
         ) : null}
@@ -644,6 +692,15 @@ export function SettingsScreenContent({ active = true, onHome }: { active?: bool
               value: String(settings.remoteCompactThreshold ?? 0.8),
               onChangeText: updateRemoteCompactThreshold,
               keyboardType: 'decimal-pad',
+            }}
+          />
+          <IsleField
+            label={t('settings.remoteCompactThresholdTokens')}
+            note={t('settings.remoteCompactThresholdTokensNote')}
+            inputProps={{
+              value: String(settings.remoteCompactThresholdTokens ?? 200000),
+              onChangeText: (value) => updatePositiveInteger('remoteCompactThresholdTokens', value, 200000, 1024, 4000000),
+              keyboardType: 'number-pad',
             }}
           />
           <View style={foldoutCardStyle(6)}>
@@ -690,21 +747,21 @@ export function SettingsScreenContent({ active = true, onHome }: { active?: bool
             />
             <View style={{ gap: 10 }}>
               <IsleToggle
-                icon={<ShieldCheck color={colors.text} size={18} />}
+                icon={<AppIcon name="shield" color={colors.text} size={18} />}
                 title={t('preferences.agentWorkflowReadOnlyTools')}
                 description={t('preferences.agentWorkflowReadOnlyToolsDescription')}
                 active={settings.agentWorkflowAllowReadOnlyTools ?? true}
                 onPress={() => updateSettings({ agentWorkflowAllowReadOnlyTools: !(settings.agentWorkflowAllowReadOnlyTools ?? true) })}
               />
               <IsleToggle
-                icon={<ShieldCheck color={colors.text} size={18} />}
+                icon={<AppIcon name="shield" color={colors.text} size={18} />}
                 title={t('preferences.agentWorkflowVisibleWrites')}
                 description={t('preferences.agentWorkflowVisibleWritesDescription')}
                 active={(settings.agentWorkflowAllowReadWriteTools ?? 'visible') !== false}
                 onPress={() => updateSettings({ agentWorkflowAllowReadWriteTools: (settings.agentWorkflowAllowReadWriteTools ?? 'visible') === false ? 'visible' : false })}
               />
               <IsleToggle
-                icon={<ShieldCheck color={colors.text} size={18} />}
+                icon={<AppIcon name="shield" color={colors.text} size={18} />}
                 title={t('preferences.agentWorkflowDestructiveConfirm')}
                 description={t('preferences.agentWorkflowDestructiveConfirmDescription')}
                 active={(settings.agentWorkflowAllowDestructiveTools ?? 'confirm') === 'confirm'}
@@ -903,7 +960,7 @@ export function SettingsScreenContent({ active = true, onHome }: { active?: bool
             transition={foldoutMotion}
             style={foldoutBodyStyle}
           >
-            <View style={{ borderRadius: colors.ui.radius.card, padding: 13, backgroundColor: colors.ui.card.mutedBackground, borderWidth: 1, borderColor: colors.material.stroke }}>
+            <View style={{ borderRadius: colors.ui.radius.card, padding: 13, backgroundColor: resolveSettingsFoldoutSurface(colors, colors.ui.glass, 'muted'), borderWidth: subtleBorderWidth, borderColor: resolveSettingsFoldoutBorder(colors, colors.ui.glass) }}>
               <VersionRow label={t('settings.appVersion')} value={`${version.appVersion} (${version.buildVersion})`} />
               <VersionRow label={t('settings.lastCheck')} value={formatUpdateCheckTime(settings.lastApkUpdateCheckAt)} />
             </View>
@@ -911,13 +968,13 @@ export function SettingsScreenContent({ active = true, onHome }: { active?: bool
               <View style={{ flexGrow: 1, flexShrink: 1, flexBasis: narrowLayout ? '100%' : '45%', minWidth: 0 }}>
                 <DataButton
                   label={checkingUpdate ? t('settings.checkingUpdate') : t('settings.checkApk')}
-                  icon={checkingUpdate ? <ActivityIndicator color={colors.ui.control.primaryForeground} size="small" /> : <Smartphone color={colors.ui.control.primaryForeground} size={18} />}
+                  icon={checkingUpdate ? <ActivityIndicator color={colors.ui.control.primaryForeground} size="small" /> : <AppIcon name="device" color={colors.ui.control.primaryForeground} size={18} />}
                   onPress={() => void checkApkUpdate()}
                 />
               </View>
               <View style={{ flexGrow: 1.2, flexShrink: 1, flexBasis: narrowLayout ? '100%' : '50%', minWidth: 0 }}>
                 <IsleToggle
-                  icon={<RotateCcw color={colors.text} size={18} />}
+                  icon={<AppIcon name="retry" color={colors.text} size={18} />}
                   title={t('settings.autoCheck')}
                   active={settings.autoUpdateCheckEnabled ?? true}
                   onPress={toggleAutoCheck}
@@ -945,8 +1002,8 @@ export function SettingsScreenContent({ active = true, onHome }: { active?: bool
             style={foldoutBodyStyle}
           >
             <View style={{ flexDirection: 'row', gap: 12 }}>
-              <DangerButton label={t('settings.clearChats')} icon={<Trash2 color={colors.ui.tone.danger.foreground} size={18} />} onPress={confirmClearChats} />
-              <DangerButton label={t('settings.resetSettings')} icon={<RotateCcw color={colors.ui.tone.danger.foreground} size={18} />} onPress={confirmResetSettings} />
+              <DangerButton label={t('settings.clearChats')} icon={<AppIcon name="delete" color={colors.ui.control.dangerForeground} size={18} />} onPress={confirmClearChats} />
+              <DangerButton label={t('settings.resetSettings')} icon={<AppIcon name="retry" color={colors.ui.control.dangerForeground} size={18} />} onPress={confirmResetSettings} />
             </View>
           </MotiView>
         ) : null}
@@ -1011,33 +1068,37 @@ function ThemeFamilyCard({
   const activeBackground = colors.ui.control.primaryBackground
   const activeForeground = colors.ui.control.primaryForeground
   const activeBorder = colors.ui.control.primaryBorder
+  const subtleBorderWidth = colors.ui.cartoon ? 1 : StyleSheet.hairlineWidth
+  const inactiveBackground = colors.ui.cartoon ? colors.ui.semantic.surface.muted : colors.ui.glass ? colors.ui.actionBar.itemBackground : colors.ui.semantic.surface.muted
+  const inactiveBorder = colors.ui.cartoon ? colors.material.stroke : colors.ui.glass ? colors.ui.actionBar.itemBorder : colors.ui.semantic.chrome.border
+  const previewBackground = active ? colors.highlight : colors.ui.glass ? colors.ui.semantic.surface.overlay : colors.ui.semantic.surface.base
   return (
-    <IslePressable haptic onPress={onPress} style={{ flexGrow: 1, flexShrink: 1, flexBasis: '47%', minWidth: 0, minHeight: 92 }}>
+    <IslePressable haptic onPress={onPress} style={{ flexGrow: 1, flexShrink: 1, flexBasis: '47%', minWidth: 0, minHeight: 88 }}>
       <MotiView
         animate={{
-          backgroundColor: active ? activeBackground : colors.ui.card.defaultBackground,
-          borderColor: active ? activeBorder : colors.material.stroke,
-          scale: active ? 1.01 : 1,
+          backgroundColor: active ? activeBackground : inactiveBackground,
+          borderColor: active ? activeBorder : inactiveBorder,
+          scale: active ? 1.006 : 1,
         }}
         transition={motion === 'full' ? { type: 'spring', ...motionTokens.spring.gentle } : { type: 'timing', duration: 1 }}
         style={{
-          minHeight: 92,
+          minHeight: 84,
           borderRadius: colors.ui.radius.card,
-          padding: 11,
+          padding: 9,
           justifyContent: 'center',
-          borderWidth: 1,
-          gap: 6,
+          borderWidth: subtleBorderWidth,
+          gap: 5,
         }}
       >
         <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
-          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 3, padding: 3, borderRadius: colors.ui.radius.controlSmall, backgroundColor: active ? colors.highlight : colors.ui.card.mutedBackground }}>
-            <View style={{ width: 12, height: 12, borderRadius: 6, backgroundColor: active ? activeForeground : colors.ui.icon.accentForeground }} />
-            <View style={{ width: 12, height: 12, borderRadius: 6, backgroundColor: active ? colors.ui.tone.neutral.background : colors.ui.tone.warning.foreground }} />
-          </View>
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 3, padding: 3, borderRadius: colors.ui.radius.controlSmall, backgroundColor: previewBackground }}>
+              <View style={{ width: 12, height: 12, borderRadius: 6, backgroundColor: active ? activeForeground : colors.ui.icon.accentForeground }} />
+              <View style={{ width: 12, height: 12, borderRadius: 6, backgroundColor: active ? colors.ui.tone.neutral.background : colors.ui.tone.warning.foreground }} />
+            </View>
           <Text numberOfLines={1} style={{ flex: 1, minWidth: 0, color: active ? activeForeground : colors.text, fontSize: 14, lineHeight: 19, fontWeight: '900' }}>
             {label}
           </Text>
-          <View style={{ width: 18, height: 18, borderRadius: 9, alignItems: 'center', justifyContent: 'center', backgroundColor: active ? colors.highlight : colors.ui.card.mutedBackground, borderWidth: 1, borderColor: active ? colors.ui.control.primaryBorder : colors.material.stroke }}>
+          <View style={{ width: 18, height: 18, borderRadius: 9, alignItems: 'center', justifyContent: 'center', backgroundColor: previewBackground, borderWidth: subtleBorderWidth, borderColor: active ? colors.ui.control.primaryBorder : inactiveBorder }}>
             <View style={{ width: 7, height: 7, borderRadius: 4, backgroundColor: active ? activeForeground : 'transparent' }} />
           </View>
         </View>
@@ -1052,13 +1113,16 @@ function ThemeFamilyCard({
 function ThemeModeCard({ label, active, onPress }: { label: string; active: boolean; onPress: () => void }) {
   const { colors } = useAppTheme()
   const motion = useMotionPreference()
+  const subtleBorderWidth = colors.ui.cartoon ? 1 : StyleSheet.hairlineWidth
+  const inactiveBackground = colors.ui.cartoon ? colors.ui.semantic.surface.muted : colors.ui.glass ? colors.ui.actionBar.itemBackground : colors.ui.semantic.surface.muted
+  const inactiveBorder = colors.ui.cartoon ? colors.material.stroke : colors.ui.glass ? colors.ui.actionBar.itemBorder : colors.ui.semantic.chrome.border
   return (
     <IslePressable haptic onPress={onPress} style={{ flex: 1, minWidth: 0, minHeight: themeModeCardHeight }}>
       <MotiView
         animate={{
-          backgroundColor: active ? colors.ui.control.primaryBackground : colors.ui.card.defaultBackground,
-          borderColor: active ? colors.ui.control.primaryBorder : colors.material.stroke,
-          scale: active ? 1.01 : 1,
+          backgroundColor: active ? colors.ui.control.primaryBackground : inactiveBackground,
+          borderColor: active ? colors.ui.control.primaryBorder : inactiveBorder,
+          scale: active ? 1.006 : 1,
         }}
         transition={motion === 'full' ? { type: 'spring', ...motionTokens.spring.gentle } : { type: 'timing', duration: 1 }}
         style={{
@@ -1066,15 +1130,15 @@ function ThemeModeCard({ label, active, onPress }: { label: string; active: bool
           borderRadius: colors.ui.radius.card,
           alignItems: 'center',
           justifyContent: 'center',
-          borderWidth: 1,
+          borderWidth: subtleBorderWidth,
           paddingHorizontal: 10,
-          gap: 7,
+          gap: 6,
         }}
       >
-        <View style={{ width: 38, height: 16, borderRadius: 8, overflow: 'hidden', borderWidth: 1, borderColor: active ? colors.ui.control.primaryBorder : colors.material.stroke }}>
+        <View style={{ width: 38, height: 16, borderRadius: 8, overflow: 'hidden', borderWidth: subtleBorderWidth, borderColor: active ? colors.ui.control.primaryBorder : inactiveBorder }}>
           <View style={{ flex: 1, flexDirection: 'row' }}>
             <View style={{ flex: 1, backgroundColor: active ? colors.ui.control.primaryForeground : colors.ui.input.background }} />
-            <View style={{ flex: 1, backgroundColor: active ? colors.highlight : colors.ui.card.mutedBackground }} />
+            <View style={{ flex: 1, backgroundColor: active ? colors.highlight : colors.ui.glass ? colors.ui.semantic.surface.overlay : colors.ui.semantic.surface.muted }} />
           </View>
         </View>
         <Text numberOfLines={1} style={{ color: active ? colors.ui.control.primaryForeground : colors.textSecondary, fontSize: 13, lineHeight: 18, fontWeight: '900', includeFontPadding: false, textAlignVertical: 'center' }}>
@@ -1128,12 +1192,23 @@ function joinSettingsList(value: string[] | undefined): string {
 function buildDiagnosticRows(diagnostics: RuntimeDiagnosticsSummary, t: ReturnType<typeof useTranslation>['t']): Array<{ key: string; label: string; value: string; tone: 'mint' | 'amber' | 'danger' | 'default' }> {
   return [
     {
+      key: 'responses',
+      label: t('settings.runtimeDiagnosticResponses'),
+      value: t('settings.runtimeDiagnosticResponsesValue', {
+        ready: diagnostics.responses.readyProviders,
+        capable: diagnostics.responses.capableProviders,
+        active: Object.keys(diagnostics.responses.activeProtocols).length,
+      }),
+      tone: diagnostics.responses.readyProviders ? 'mint' : diagnostics.responses.capableProviders ? 'amber' : 'default',
+    },
+    {
       key: 'websocket',
       label: t('settings.runtimeDiagnosticWebSocket'),
       value: t('settings.runtimeDiagnosticWebSocketValue', {
         mode: t(`settings.transport${diagnostics.websocket.mode === 'auto' ? 'Auto' : diagnostics.websocket.mode === 'http' ? 'Http' : 'WebSocket'}`),
         ready: diagnostics.websocket.readyProviders,
         capable: diagnostics.websocket.capableProviders,
+        fallback: diagnostics.websocket.fallbackCount,
       }),
       tone: diagnostics.websocket.mode === 'websocket' && !diagnostics.websocket.readyProviders ? 'amber' : 'mint',
     },
@@ -1145,9 +1220,16 @@ function buildDiagnosticRows(diagnostics: RuntimeDiagnosticsSummary, t: ReturnTy
         count: diagnostics.compact.requestCount,
         remote: diagnostics.compact.remoteRequestCount,
         local: diagnostics.compact.localCompressionCount,
+        fallback: diagnostics.compact.localFallbackCount,
+        ready: diagnostics.compact.readyProviders,
         saved: diagnostics.compact.estimatedSavedTokens,
         localSaved: diagnostics.compact.localEstimatedSavedTokens,
         localRatio: formatCompactRatio(diagnostics.compact.localAverageCompressionRatio),
+        fallbackReasons: [
+          diagnostics.compact.fallbackReasons.belowThreshold ? t('settings.runtimeDiagnosticCompactReasonBelowThreshold', { count: diagnostics.compact.fallbackReasons.belowThreshold }) : null,
+          diagnostics.compact.fallbackReasons.providerCapabilityMissing ? t('settings.runtimeDiagnosticCompactReasonCapabilityMissing', { count: diagnostics.compact.fallbackReasons.providerCapabilityMissing }) : null,
+          diagnostics.compact.fallbackReasons.disabled ? t('settings.runtimeDiagnosticCompactReasonDisabled', { count: diagnostics.compact.fallbackReasons.disabled }) : null,
+        ].filter(Boolean).join(' · '),
       }),
       tone: diagnostics.compact.failureCount ? 'amber' : 'mint',
     },
@@ -1177,6 +1259,30 @@ function buildDiagnosticRows(diagnostics: RuntimeDiagnosticsSummary, t: ReturnTy
       tone: diagnostics.providers.degraded ? 'amber' : 'mint',
     },
     {
+      key: 'provider-coverage',
+      label: t('settings.runtimeDiagnosticProviderCoverage'),
+      value: t('settings.runtimeDiagnosticProviderCoverageValue', {
+        official: diagnostics.capabilityMatrix.hostingProfiles.official,
+        aggregator: diagnostics.capabilityMatrix.hostingProfiles.aggregator,
+        relay: diagnostics.capabilityMatrix.hostingProfiles.relay,
+        local: diagnostics.capabilityMatrix.hostingProfiles['local-runtime'],
+        hosted: diagnostics.capabilityMatrix.hostingProfiles['cloud-hosted'],
+      }),
+      tone: diagnostics.capabilityMatrix.hostingProfiles['cloud-hosted'] ? 'amber' : 'mint',
+    },
+    {
+      key: 'provider-support',
+      label: t('settings.runtimeDiagnosticProviderSupport'),
+      value: t('settings.runtimeDiagnosticProviderSupportValue', {
+        full: diagnostics.capabilityMatrix.supportLevels.full,
+        partial: diagnostics.capabilityMatrix.supportLevels.partial,
+        planned: diagnostics.capabilityMatrix.supportLevels.planned,
+        hosted: diagnostics.capabilityMatrix.hostedGapProviders,
+        modelList: diagnostics.capabilityMatrix.genericModelListSuppressedProviders,
+      }),
+      tone: diagnostics.capabilityMatrix.plannedProviders ? 'amber' : diagnostics.capabilityMatrix.partialProviders ? 'default' : 'mint',
+    },
+    {
       key: 'log',
       label: t('settings.runtimeDiagnosticLog'),
       value: diagnostics.log.enabled ? t('settings.runtimeDiagnosticLogOn') : t('settings.runtimeDiagnosticLogOff'),
@@ -1199,10 +1305,10 @@ function DiagnosticPill({ label, value, tone }: { label: string; value: string; 
     : tone === 'amber'
       ? colors.ui.tone.warning
       : tone === 'danger'
-        ? colors.ui.tone.danger
-        : colors.ui.tone.neutral
+      ? colors.ui.tone.danger
+      : colors.ui.tone.neutral
   return (
-    <View style={{ minHeight: 68, minWidth: 0, flexGrow: 1, flexShrink: 1, flexBasis: compact ? '100%' : '47%', borderRadius: colors.ui.radius.card, padding: 11, backgroundColor: toneToken.background, borderWidth: 1, borderColor: toneToken.border }}>
+    <View style={{ minHeight: 64, minWidth: 0, flexGrow: 1, flexShrink: 1, flexBasis: compact ? '100%' : '47%', borderRadius: colors.ui.radius.card, padding: 10, backgroundColor: toneToken.background, borderWidth: colors.ui.cartoon ? 1 : StyleSheet.hairlineWidth, borderColor: toneToken.border }}>
       <View style={{ flexDirection: 'row', alignItems: 'center', gap: 7 }}>
         <View style={{ width: 8, height: 8, borderRadius: 4, backgroundColor: toneToken.foreground }} />
         <Text numberOfLines={1} style={{ flex: 1, minWidth: 0, color: colors.text, fontSize: 12, lineHeight: 16, fontWeight: '900', includeFontPadding: false, textAlignVertical: 'center' }}>{label}</Text>
@@ -1216,6 +1322,9 @@ function importResultMessage(
   result: Awaited<ReturnType<typeof importFromJsonFileDetailed>>,
   t: ReturnType<typeof useTranslation>['t']
 ): string {
+  if (!result.ok && result.reason === 'file_too_large') {
+    return `${t('error.fileTooLarge')} (${formatImportSizeLimit(MAX_IMPORT_JSON_FILE_BYTES)})`
+  }
   if (!result.ok) return t('settings.importSkippedMessage')
   if (result.kind === 'mem0') return t('settings.importMem0DoneMessage', { count: result.memories })
   return t('settings.importDoneMessage')

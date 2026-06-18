@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
-import { BackHandler, Image, Text, View, useWindowDimensions } from 'react-native'
+import { BackHandler, Image, StyleSheet, Text, View, useWindowDimensions } from 'react-native'
 import { Gesture, GestureDetector } from 'react-native-gesture-handler'
 import Animated, {
   runOnJS,
@@ -10,9 +10,9 @@ import Animated, {
 } from 'react-native-reanimated'
 import Svg, { Circle, Defs, G, LinearGradient, Path, Stop } from 'react-native-svg'
 import { AnimatePresence, MotiView } from 'moti'
-import { BrainCircuit, Check, Compass, LockKeyhole, MessageCircle, Search, SendHorizontal, ShieldCheck, Sparkles } from 'lucide-react-native'
 import { useTranslation } from 'react-i18next'
 import { useSafeAreaInsets } from 'react-native-safe-area-context'
+import { AppIcon, appIconStroke, type AppIconName } from '@/components/ui/AppIcon'
 import { IslePressable } from '@/components/ui/isle'
 import { useAppTheme } from '@/hooks/useAppTheme'
 import { useMotionPreference } from '@/hooks/useMotionPreference'
@@ -136,17 +136,17 @@ const COMPANIONS: CompanionOption[] = [
 const DEFAULT_COMPANION = COMPANIONS.find((item) => item.id === DEFAULT_ONBOARDING_COMPANION_MODE) ?? COMPANIONS[0]
 
 const BEACONS = [
-  { id: 'chat', titleKey: 'onboarding.privacy.beacons.chat.title', bodyKey: 'onboarding.privacy.beacons.chat.body', icon: MessageCircle },
-  { id: 'key', titleKey: 'onboarding.privacy.beacons.key.title', bodyKey: 'onboarding.privacy.beacons.key.body', icon: LockKeyhole },
-  { id: 'knowledge', titleKey: 'onboarding.privacy.beacons.knowledge.title', bodyKey: 'onboarding.privacy.beacons.knowledge.body', icon: ShieldCheck },
-] as const
+  { id: 'chat', titleKey: 'onboarding.privacy.beacons.chat.title', bodyKey: 'onboarding.privacy.beacons.chat.body', iconName: 'message' },
+  { id: 'key', titleKey: 'onboarding.privacy.beacons.key.title', bodyKey: 'onboarding.privacy.beacons.key.body', iconName: 'lock' },
+  { id: 'knowledge', titleKey: 'onboarding.privacy.beacons.knowledge.title', bodyKey: 'onboarding.privacy.beacons.knowledge.body', iconName: 'shield' },
+] as const satisfies readonly { id: string; titleKey: string; bodyKey: string; iconName: AppIconName }[]
 
 const CAPABILITIES = [
-  { id: 'knowledge', titleKey: 'onboarding.capability.items.knowledge.title', bodyKey: 'onboarding.capability.items.knowledge.body', icon: BrainCircuit },
-  { id: 'memory', titleKey: 'onboarding.capability.items.memory.title', bodyKey: 'onboarding.capability.items.memory.body', icon: Sparkles },
-  { id: 'search', titleKey: 'onboarding.capability.items.search.title', bodyKey: 'onboarding.capability.items.search.body', icon: Search },
-  { id: 'skills', titleKey: 'onboarding.capability.items.skills.title', bodyKey: 'onboarding.capability.items.skills.body', icon: Compass },
-] as const
+  { id: 'knowledge', titleKey: 'onboarding.capability.items.knowledge.title', bodyKey: 'onboarding.capability.items.knowledge.body', iconName: 'reasoning-advanced' },
+  { id: 'memory', titleKey: 'onboarding.capability.items.memory.title', bodyKey: 'onboarding.capability.items.memory.body', iconName: 'spark' },
+  { id: 'search', titleKey: 'onboarding.capability.items.search.title', bodyKey: 'onboarding.capability.items.search.body', iconName: 'search' },
+  { id: 'skills', titleKey: 'onboarding.capability.items.skills.title', bodyKey: 'onboarding.capability.items.skills.body', iconName: 'compass' },
+] as const satisfies readonly { id: string; titleKey: string; bodyKey: string; iconName: AppIconName }[]
 
 export function OnboardingFlow({ onComplete, onSkip }: OnboardingFlowProps) {
   const { colors, isDark } = useAppTheme()
@@ -167,6 +167,10 @@ export function OnboardingFlow({ onComplete, onSkip }: OnboardingFlowProps) {
   const pagePaddingHorizontal = compact ? 16 : 22
   const titleMaxWidth = Math.max(244, Math.min(compact ? 316 : 360, width - pagePaddingHorizontal * 2))
   const bodyMaxWidth = Math.max(240, Math.min(compact ? 310 : 348, width - pagePaddingHorizontal * 2))
+  const subtleBorderWidth = colors.ui.cartoon ? 1 : StyleSheet.hairlineWidth
+  const primaryShadowOpacity = colors.ui.cartoon ? 0.08 : 0.025
+  const primaryShadowRadius = colors.ui.cartoon ? 6 : 5
+  const primaryShadowOffset = colors.ui.cartoon ? 2 : 1
 
   const promptOptions = useMemo(() => {
     const companion = COMPANIONS.find((item) => item.id === companionMode) ?? DEFAULT_COMPANION
@@ -361,19 +365,21 @@ export function OnboardingFlow({ onComplete, onSkip }: OnboardingFlowProps) {
                     justifyContent: 'center',
                     gap: 10,
                     backgroundColor: tone.primary,
+                    borderWidth: subtleBorderWidth,
+                    borderColor: tone.line,
                     shadowColor: tone.primary,
-                    shadowOpacity: 0.24,
-                    shadowRadius: 18,
-                    shadowOffset: { width: 0, height: 10 },
-                    elevation: 4,
+                    shadowOpacity: primaryShadowOpacity,
+                    shadowRadius: primaryShadowRadius,
+                    shadowOffset: { width: 0, height: primaryShadowOffset },
+                    elevation: colors.ui.cartoon ? 4 : 0,
                   }}
                 >
                   <Text style={{ color: tone.foreground, fontSize: 15, lineHeight: 18, fontWeight: '900' }}>
                     {t(stage.actionKey)}
                   </Text>
                   {stage.id === 'firstPrompt'
-                    ? <SendHorizontal color={tone.foreground} size={17} strokeWidth={2.2} />
-                    : <Check color={tone.foreground} size={17} strokeWidth={2.2} />}
+                    ? <AppIcon name="send" color={tone.foreground} size={17} strokeWidth={appIconStroke.strong} />
+                    : <AppIcon name="check" color={tone.foreground} size={17} strokeWidth={appIconStroke.strong} />}
                 </IslePressable>
                 {stage.id === 'capability' ? (
                   <Text style={{ color: colors.textTertiary, fontSize: 11, lineHeight: 16, textAlign: 'center', fontWeight: '800' }}>
@@ -405,6 +411,9 @@ function TopBar({
   skipLabel: string
   backLabel: string
 }) {
+  const subtleBorderWidth = colors.ui.cartoon ? 1 : StyleSheet.hairlineWidth
+  const controlSurface = colors.ui.cartoon ? colors.ui.semantic.surface.muted : colors.ui.semantic.surface.muted
+  const chromeBorder = colors.ui.cartoon ? colors.material.stroke : colors.ui.semantic.chrome.border
   return (
     <View style={{ minHeight: 44, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 12 }}>
       <IslePressable
@@ -420,7 +429,9 @@ function TopBar({
           borderRadius: colors.ui.radius.controlMiddle,
           alignItems: 'center',
           justifyContent: 'center',
-          backgroundColor: onBack ? colors.ui.card.defaultBackground : 'transparent',
+          backgroundColor: onBack ? controlSurface : 'transparent',
+          borderWidth: onBack ? subtleBorderWidth : 0,
+          borderColor: chromeBorder,
           opacity: onBack ? 1 : 0,
         }}
       >
@@ -449,7 +460,9 @@ function TopBar({
           alignItems: 'center',
           justifyContent: 'center',
           paddingHorizontal: 12,
-          backgroundColor: colors.ui.card.defaultBackground,
+          backgroundColor: controlSurface,
+          borderWidth: subtleBorderWidth,
+          borderColor: chromeBorder,
         }}
       >
         <Text style={{ color: colors.textSecondary, fontSize: 12, lineHeight: 16, fontWeight: '900' }}>{skipLabel}</Text>
@@ -475,6 +488,9 @@ function HeroStage({
 }) {
   const { colors } = useAppTheme()
   const activeTone = stage.id === 'companion' ? companion.tone : stage.tone
+  const subtleBorderWidth = colors.ui.cartoon ? 1 : StyleSheet.hairlineWidth
+  const heroSurface = colors.ui.cartoon ? colors.ui.semantic.surface.muted : colors.ui.semantic.surface.muted
+  const badgeSurface = colors.ui.cartoon ? colors.ui.semantic.surface.base : colors.ui.semantic.surface.muted
   const badgeSize = compact ? 54 : 62
   const stageWidth = compact ? 260 : 310
   const stageHeight = compact ? 132 : 158
@@ -491,7 +507,7 @@ function HeroStage({
           width: ringSize,
           height: ringSize,
           borderRadius: ringSize / 2,
-          borderWidth: 1,
+          borderWidth: subtleBorderWidth,
           borderColor: tone.line,
           opacity: 0.82,
         }}
@@ -504,7 +520,7 @@ function HeroStage({
           width: orbitSize,
           height: orbitSize * 0.62,
           borderRadius: orbitSize,
-          borderWidth: 1,
+          borderWidth: subtleBorderWidth,
           borderColor: tone.primary,
           transform: [{ rotate: '-8deg' }],
         }}
@@ -519,8 +535,8 @@ function HeroStage({
             borderRadius: markSize / 2,
             alignItems: 'center',
             justifyContent: 'center',
-            backgroundColor: colors.ui.card.defaultBackground,
-            borderWidth: 1,
+            backgroundColor: heroSurface,
+            borderWidth: subtleBorderWidth,
             borderColor: tone.line,
           }}
         >
@@ -538,12 +554,12 @@ function HeroStage({
             borderRadius: badgeSize / 2,
             alignItems: 'center',
             justifyContent: 'center',
-            backgroundColor: tone.wash,
-            borderWidth: 1,
+            backgroundColor: badgeSurface,
+            borderWidth: subtleBorderWidth,
             borderColor: tone.line,
           }}
         >
-          <Sparkles color={activeTone === 'ink' ? tone.primary : tone.primary} size={badgeSize * 0.34} strokeWidth={2.25} />
+          <AppIcon name="spark" color={activeTone === 'ink' ? tone.primary : tone.primary} size={badgeSize * 0.34} strokeWidth={appIconStroke.bold} />
         </MotiView>
         <View
           style={{
@@ -576,6 +592,9 @@ function HeroStage({
 function AwakenStep({ tone, compact }: { tone: ToneColors; compact: boolean }) {
   const { colors } = useAppTheme()
   const { t } = useTranslation()
+  const subtleBorderWidth = colors.ui.cartoon ? 1 : StyleSheet.hairlineWidth
+  const itemSurface = colors.ui.cartoon ? colors.ui.semantic.surface.muted : colors.ui.semantic.surface.muted
+  const itemBorder = colors.ui.cartoon ? colors.material.stroke : colors.ui.semantic.chrome.border
   return (
     <View style={{ gap: compact ? 8 : 10 }}>
       {['local', 'private', 'ready'].map((id, index) => (
@@ -591,9 +610,9 @@ function AwakenStep({ tone, compact }: { tone: ToneColors; compact: boolean }) {
             flexDirection: 'row',
             alignItems: 'center',
             gap: 10,
-            backgroundColor: colors.ui.card.defaultBackground,
-            borderWidth: 1,
-            borderColor: colors.material.stroke,
+            backgroundColor: itemSurface,
+            borderWidth: subtleBorderWidth,
+            borderColor: itemBorder,
           }}
         >
           <View style={{ width: 9, height: 9, borderRadius: 5, backgroundColor: tone.primary }} />
@@ -609,10 +628,13 @@ function AwakenStep({ tone, compact }: { tone: ToneColors; compact: boolean }) {
 function PrivacyStep({ lit, onToggle, tone, compact }: { lit: Set<string>; onToggle: (id: string) => void; tone: ToneColors; compact: boolean }) {
   const { colors } = useAppTheme()
   const { t } = useTranslation()
+  const subtleBorderWidth = colors.ui.cartoon ? 1 : StyleSheet.hairlineWidth
+  const itemSurface = colors.ui.cartoon ? colors.ui.semantic.surface.muted : colors.ui.semantic.surface.muted
+  const itemBorder = colors.ui.cartoon ? colors.material.stroke : colors.ui.semantic.chrome.border
+  const idleIconSurface = colors.ui.cartoon ? colors.ui.semantic.surface.base : colors.ui.semantic.surface.muted
   return (
     <View style={{ gap: compact ? 8 : 10 }}>
       {BEACONS.map((item, index) => {
-        const Icon = item.icon
         const active = lit.has(item.id)
         return (
           <MotiView
@@ -633,13 +655,13 @@ function PrivacyStep({ lit, onToggle, tone, compact }: { lit: Set<string>; onTog
                 flexDirection: 'row',
                 alignItems: 'center',
                 gap: 12,
-                backgroundColor: active ? tone.wash : colors.ui.card.defaultBackground,
-                borderWidth: 1,
-                borderColor: active ? tone.primary : colors.material.stroke,
+                backgroundColor: active ? tone.wash : itemSurface,
+                borderWidth: subtleBorderWidth,
+                borderColor: active ? tone.primary : itemBorder,
               }}
             >
-              <View style={{ width: 38, height: 38, borderRadius: colors.ui.radius.controlLarge, alignItems: 'center', justifyContent: 'center', backgroundColor: active ? tone.primary : colors.ui.icon.accentBackground }}>
-                <Icon color={active ? tone.foreground : colors.textSecondary} size={17} strokeWidth={2.2} />
+              <View style={{ width: 38, height: 38, borderRadius: colors.ui.radius.controlLarge, alignItems: 'center', justifyContent: 'center', backgroundColor: active ? tone.primary : idleIconSurface }}>
+                <AppIcon name={item.iconName} color={active ? tone.foreground : colors.textSecondary} size={17} strokeWidth={appIconStroke.strong} />
               </View>
               <View style={{ flex: 1, minWidth: 0 }}>
                 <Text style={{ color: colors.text, fontSize: 13, lineHeight: 17, fontWeight: '900' }}>{t(item.titleKey)}</Text>
@@ -647,7 +669,7 @@ function PrivacyStep({ lit, onToggle, tone, compact }: { lit: Set<string>; onTog
                   {t(item.bodyKey)}
                 </Text>
               </View>
-              {active ? <Check color={tone.primary} size={18} strokeWidth={2.4} /> : null}
+              {active ? <AppIcon name="check" color={tone.primary} size={18} strokeWidth={appIconStroke.bold} /> : null}
             </IslePressable>
           </MotiView>
         )
@@ -659,6 +681,10 @@ function PrivacyStep({ lit, onToggle, tone, compact }: { lit: Set<string>; onTog
 function CompanionStep({ selected, onSelect, tone, compact }: { selected: OnboardingCompanionMode; onSelect: (mode: OnboardingCompanionMode) => void; tone: ToneColors; compact: boolean }) {
   const { colors } = useAppTheme()
   const { t } = useTranslation()
+  const subtleBorderWidth = colors.ui.cartoon ? 1 : StyleSheet.hairlineWidth
+  const controlSurface = colors.ui.cartoon ? colors.ui.semantic.surface.muted : colors.ui.semantic.surface.muted
+  const panelSurface = colors.ui.cartoon ? colors.ui.semantic.surface.base : colors.ui.semantic.surface.muted
+  const chromeBorder = colors.ui.cartoon ? colors.material.stroke : colors.ui.semantic.chrome.border
   return (
     <View style={{ gap: compact ? 8 : 10 }}>
       <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8, justifyContent: 'center' }}>
@@ -676,9 +702,9 @@ function CompanionStep({ selected, onSelect, tone, compact }: { selected: Onboar
                 paddingHorizontal: 13,
                 alignItems: 'center',
                 justifyContent: 'center',
-                backgroundColor: active ? tone.primary : colors.ui.card.defaultBackground,
-                borderWidth: 1,
-                borderColor: active ? tone.primary : colors.material.stroke,
+                backgroundColor: active ? tone.primary : controlSurface,
+                borderWidth: subtleBorderWidth,
+                borderColor: active ? tone.primary : chromeBorder,
               }}
             >
               <Text style={{ color: active ? tone.foreground : colors.textSecondary, fontSize: 12, lineHeight: 16, fontWeight: '900' }}>
@@ -688,7 +714,7 @@ function CompanionStep({ selected, onSelect, tone, compact }: { selected: Onboar
           )
         })}
       </View>
-      <View style={{ minHeight: compact ? 74 : 86, borderRadius: colors.ui.radius.panel, padding: 14, justifyContent: 'center', backgroundColor: colors.ui.card.defaultBackground, borderWidth: 1, borderColor: colors.material.stroke }}>
+      <View style={{ minHeight: compact ? 74 : 86, borderRadius: colors.ui.radius.panel, padding: 14, justifyContent: 'center', backgroundColor: panelSurface, borderWidth: subtleBorderWidth, borderColor: chromeBorder }}>
         <Text style={{ color: colors.text, fontSize: 14, lineHeight: 18, fontWeight: '900' }}>
           {t(COMPANIONS.find((item) => item.id === selected)?.labelKey ?? COMPANIONS[1].labelKey)}
         </Text>
@@ -703,10 +729,12 @@ function CompanionStep({ selected, onSelect, tone, compact }: { selected: Onboar
 function CapabilityStep({ tone, compact }: { tone: ToneColors; compact: boolean }) {
   const { colors } = useAppTheme()
   const { t } = useTranslation()
+  const subtleBorderWidth = colors.ui.cartoon ? 1 : StyleSheet.hairlineWidth
+  const cardSurface = colors.ui.cartoon ? colors.ui.semantic.surface.base : colors.ui.semantic.surface.muted
+  const cardBorder = colors.ui.cartoon ? colors.material.stroke : colors.ui.semantic.chrome.border
   return (
     <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 9, justifyContent: 'center' }}>
       {CAPABILITIES.map((item, index) => {
-        const Icon = item.icon
         return (
           <MotiView
             key={item.id}
@@ -718,13 +746,13 @@ function CapabilityStep({ tone, compact }: { tone: ToneColors; compact: boolean 
               minHeight: compact ? 78 : 92,
               borderRadius: colors.ui.radius.card,
               padding: 12,
-              backgroundColor: colors.ui.card.defaultBackground,
-              borderWidth: 1,
-              borderColor: colors.material.stroke,
+              backgroundColor: cardSurface,
+              borderWidth: subtleBorderWidth,
+              borderColor: cardBorder,
             }}
           >
             <View style={{ width: 34, height: 34, borderRadius: colors.ui.radius.controlSmall, alignItems: 'center', justifyContent: 'center', backgroundColor: tone.wash }}>
-              <Icon color={tone.primary} size={16} strokeWidth={2.2} />
+              <AppIcon name={item.iconName} color={tone.primary} size={16} strokeWidth={appIconStroke.strong} />
             </View>
             <Text style={{ color: colors.text, fontSize: 12, lineHeight: 16, fontWeight: '900', marginTop: 8 }}>{t(item.titleKey)}</Text>
             <Text numberOfLines={2} style={{ color: colors.textSecondary, fontSize: 10, lineHeight: 14, fontWeight: '700', marginTop: 3 }}>{t(item.bodyKey)}</Text>
@@ -738,6 +766,10 @@ function CapabilityStep({ tone, compact }: { tone: ToneColors; compact: boolean 
 function FirstPromptStep({ options, selectedKey, onSelect, tone, compact }: { options: string[]; selectedKey: string | null; onSelect: (key: string | null) => void; tone: ToneColors; compact: boolean }) {
   const { colors } = useAppTheme()
   const { t } = useTranslation()
+  const subtleBorderWidth = colors.ui.cartoon ? 1 : StyleSheet.hairlineWidth
+  const cardSurface = colors.ui.cartoon ? colors.ui.semantic.surface.base : colors.ui.semantic.surface.muted
+  const cardBorder = colors.ui.cartoon ? colors.material.stroke : colors.ui.semantic.chrome.border
+  const idleIconSurface = colors.ui.cartoon ? colors.ui.semantic.surface.muted : colors.ui.semantic.surface.muted
   return (
     <View style={{ gap: compact ? 8 : 10 }}>
       {options.map((key, index) => {
@@ -761,13 +793,13 @@ function FirstPromptStep({ options, selectedKey, onSelect, tone, compact }: { op
                 flexDirection: 'row',
                 alignItems: 'center',
                 gap: 10,
-                backgroundColor: active ? tone.wash : colors.ui.card.defaultBackground,
-                borderWidth: 1,
-                borderColor: active ? tone.primary : colors.material.stroke,
+                backgroundColor: active ? tone.wash : cardSurface,
+                borderWidth: subtleBorderWidth,
+                borderColor: active ? tone.primary : cardBorder,
               }}
             >
-              <View style={{ width: 32, height: 32, borderRadius: colors.ui.radius.controlSmall, alignItems: 'center', justifyContent: 'center', backgroundColor: active ? tone.primary : colors.ui.icon.accentBackground }}>
-                <SendHorizontal color={active ? tone.foreground : colors.textSecondary} size={15} strokeWidth={2.2} />
+              <View style={{ width: 32, height: 32, borderRadius: colors.ui.radius.controlSmall, alignItems: 'center', justifyContent: 'center', backgroundColor: active ? tone.primary : idleIconSurface }}>
+                <AppIcon name="send" color={active ? tone.foreground : colors.textSecondary} size={15} strokeWidth={appIconStroke.strong} />
               </View>
               <Text numberOfLines={2} style={{ flex: 1, minWidth: 0, color: colors.text, fontSize: 12, lineHeight: 17, fontWeight: '900' }}>{t(key)}</Text>
             </IslePressable>
@@ -795,6 +827,9 @@ function LightPath({
 }) {
   const { colors } = useAppTheme()
   const { t } = useTranslation()
+  const subtleBorderWidth = colors.ui.cartoon ? 1 : StyleSheet.hairlineWidth
+  const railSurface = colors.ui.cartoon ? colors.ui.semantic.surface.base : colors.ui.semantic.surface.muted
+  const railBorder = colors.ui.cartoon ? colors.material.stroke : colors.ui.semantic.chrome.border
   const availableWidth = useWindowDimensions().width - (compact ? 32 : 44)
   const railWidth = Math.max(220, Math.min(compact ? 330 : 390, availableWidth))
   const dotX = useSharedValue((railWidth - 44) * (stageIndex / Math.max(1, total - 1)))
@@ -831,9 +866,9 @@ function LightPath({
           borderRadius: colors.ui.radius.controlLarge,
           padding: 5,
           justifyContent: 'center',
-          backgroundColor: colors.ui.card.defaultBackground,
-          borderWidth: 1,
-          borderColor: colors.material.stroke,
+          backgroundColor: railSurface,
+          borderWidth: subtleBorderWidth,
+          borderColor: railBorder,
         }}
       >
         <View style={{ height: 6, borderRadius: colors.ui.radius.chip, backgroundColor: colors.ui.section.divider, overflow: 'hidden' }}>
@@ -853,15 +888,15 @@ function LightPath({
                 justifyContent: 'center',
                 backgroundColor: tone.primary,
                 shadowColor: tone.primary,
-                shadowOpacity: 0.28,
-                shadowRadius: 10,
-                shadowOffset: { width: 0, height: 5 },
-                elevation: 4,
+                shadowOpacity: colors.ui.cartoon ? 0.08 : 0.02,
+                shadowRadius: colors.ui.cartoon ? 4 : 2,
+                shadowOffset: { width: 0, height: 1 },
+                elevation: colors.ui.cartoon ? 1 : 0,
               },
               dotStyle,
             ]}
           >
-            <Sparkles color={tone.foreground} size={14} strokeWidth={2.2} />
+            <AppIcon name="spark" color={tone.foreground} size={14} strokeWidth={appIconStroke.strong} />
           </Animated.View>
         </GestureDetector>
       </View>
@@ -884,6 +919,8 @@ function ComposerLandingRibbon({
   bottomInset: number
 }) {
   const { colors } = useAppTheme()
+  const subtleBorderWidth = colors.ui.cartoon ? 1 : StyleSheet.hairlineWidth
+  const ribbonSurface = colors.ui.cartoon ? colors.ui.semantic.surface.base : colors.ui.semantic.surface.muted
   return (
     <View
       pointerEvents="none"
@@ -919,14 +956,14 @@ function ComposerLandingRibbon({
           width: '100%',
           height: compact ? 52 : 58,
           borderRadius: colors.ui.radius.controlMiddle,
-          backgroundColor: colors.ui.card.defaultBackground,
-          borderWidth: 1,
+          backgroundColor: ribbonSurface,
+          borderWidth: subtleBorderWidth,
           borderColor: tone.line,
           shadowColor: tone.primary,
-          shadowOpacity: 0.22,
-          shadowRadius: 18,
-          shadowOffset: { width: 0, height: 10 },
-          elevation: 5,
+          shadowOpacity: colors.ui.cartoon ? 0.08 : 0.02,
+          shadowRadius: colors.ui.cartoon ? 10 : 6,
+          shadowOffset: { width: 0, height: colors.ui.cartoon ? 4 : 1 },
+          elevation: colors.ui.cartoon ? 1 : 0,
         }}
       />
     </View>
