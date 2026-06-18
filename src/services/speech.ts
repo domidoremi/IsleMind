@@ -5,11 +5,14 @@ import { synthesizeSpeechWithProvider, transcribeAudioWithProvider } from '@/ser
 import { useSettingsStore } from '@/store/settingsStore'
 import { st } from '@/i18n/service'
 import { getPolicyPreferredProviderModel } from '@/services/ai/policy/providerModelAccess'
+import { assertImportFileSizeByUri, MAX_IMPORT_TEXT_FILE_BYTES } from '@/services/fileImportGuards'
 
 let AudioModule: any = null
 let useAudioRecorderModule: any = null
 let createAudioPlayerModule: any = null
 let activeProviderAudioPlayer: any = null
+let activeProviderAudioUri: string | null = null
+let activeProviderAudioStatusSubscription: { remove?: () => void } | null = null
 
 try {
   const expoAudio = require('expo-audio')
@@ -37,6 +40,7 @@ export async function requestMicrophonePermission(): Promise<boolean> {
 }
 
 export async function transcribeLocalAudio(uri: string, provider?: AIProvider | null): Promise<string> {
+  await assertImportFileSizeByUri(uri, { limitBytes: MAX_IMPORT_TEXT_FILE_BYTES })
   const settings = useSettingsStore.getState().settings
   const sourceProvider = provider ?? await useSettingsStore.getState().getPrimaryConfiguredProvider()
   if (!sourceProvider) throw new Error(st('speech.transcriptionNeedsProvider'))
@@ -81,11 +85,14 @@ export function speakTextLocally(text: string): void {
 }
 
 export function stopSpeaking(): void {
+  activeProviderAudioStatusSubscription?.remove?.()
+  activeProviderAudioStatusSubscription = null
   try {
     activeProviderAudioPlayer?.pause?.()
     activeProviderAudioPlayer?.remove?.()
   } catch {}
   activeProviderAudioPlayer = null
+  void clearActiveProviderAudioFile()
   Speech.stop()
 }
 
@@ -94,7 +101,25 @@ async function playProviderSpeechBase64(base64: string): Promise<void> {
   await FileSystem.writeAsStringAsync(uri, base64, { encoding: FileSystem.EncodingType.Base64 })
   stopSpeaking()
   activeProviderAudioPlayer = createAudioPlayerModule({ uri })
+  activeProviderAudioUri = uri
+  activeProviderAudioStatusSubscription = activeProviderAudioPlayer?.addListener?.('playbackStatusUpdate', (status: { didJustFinish?: boolean }) => {
+    if (!status?.didJustFinish) return
+    activeProviderAudioStatusSubscription?.remove?.()
+    activeProviderAudioStatusSubscription = null
+    try {
+      activeProviderAudioPlayer?.remove?.()
+    } catch {}
+    activeProviderAudioPlayer = null
+    void clearActiveProviderAudioFile()
+  }) ?? null
   activeProviderAudioPlayer.play()
+}
+
+async function clearActiveProviderAudioFile(): Promise<void> {
+  const uri = activeProviderAudioUri
+  activeProviderAudioUri = null
+  if (!uri) return
+  await FileSystem.deleteAsync(uri, { idempotent: true }).catch(() => undefined)
 }
 
 function guessAudioMime(uri: string): string {

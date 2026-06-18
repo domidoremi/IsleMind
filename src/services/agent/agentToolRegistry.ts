@@ -16,6 +16,7 @@ import { BUILTIN_SERVER_ID, listBuiltinToolManifests } from '@/services/builtinT
 import { builtinMcpServer, callMcpTool, listMcpServers } from '@/services/mcp'
 import { decideAgentToolPermission, resolveAgentRunLimits, validateAgentToolInput } from '@/services/agent/agentPolicy'
 import { clampAgentOutput, createAgentTrace, normalizeToolBlocks, redactSensitiveText, summarizeToolBlocks } from '@/services/agent/agentTrace'
+import { resolveUniqueAgentTool } from '@/services/agent/agentToolIdentityUtils'
 import {
   WORK_ARTIFACT_WORKFLOW_CONTRACT,
   buildWorkArtifactWorkflowOutput,
@@ -63,11 +64,11 @@ const APP_ACTIONS: AgentAppActionManifest[] = [
   },
   {
     name: 'set_theme_family',
-    description: 'Set theme family to island or minimal.',
+    description: 'Set theme family to minimal, glass, or cartoon. Legacy island requests map to cartoon.',
     permission: 'read-write',
     inputSchema: {
       type: 'object',
-      properties: { themeId: { type: 'string', enum: ['island', 'minimal'] } },
+      properties: { themeId: { type: 'string', enum: ['minimal', 'glass', 'cartoon', 'island'] } },
       required: ['themeId'],
     },
   },
@@ -250,15 +251,7 @@ export async function executeResolvedAgentTool(
 }
 
 export function resolveAgentTool(request: AgentToolRequest, manifests: AgentToolManifest[]): AgentToolManifest | null {
-  if (request.toolId) return manifests.find((tool) => tool.id === request.toolId) ?? null
-  if (!request.name) return null
-  const matches = manifests.filter((tool) => {
-    if (tool.name !== request.name) return false
-    if (request.source && tool.source !== request.source) return false
-    if (request.serverId && tool.serverId !== request.serverId) return false
-    return true
-  })
-  return matches[0] ?? null
+  return resolveUniqueAgentTool(request, manifests)
 }
 
 export function normalizeAgentToolResult(input: {

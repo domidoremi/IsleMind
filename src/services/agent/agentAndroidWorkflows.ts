@@ -1,5 +1,6 @@
 import type { AgentWorkflowDefinition } from '@/services/agent/agentToolTypes'
 import { createAgentWorkflowDefinition } from '@/services/agent/agentWorkflowDefinitions'
+import { sanitizeAndroidApkUri } from '@/services/androidUriPolicy'
 
 export const ANDROID_DOWNLOAD_ORGANIZE_WORKFLOW_ID = 'agent-workflow-android-download-organize'
 export const ANDROID_FILE_COPY_RENAME_WORKFLOW_ID = 'agent-workflow-android-file-copy-rename'
@@ -7,6 +8,7 @@ export const ANDROID_APK_INSTALL_WORKFLOW_ID = 'agent-workflow-android-apk-insta
 export const ANDROID_APP_CACHE_CLEANUP_WORKFLOW_ID = 'agent-workflow-android-app-cache-cleanup'
 export const ANDROID_ALARM_WORKFLOW_ID = 'agent-workflow-android-alarm'
 export const ANDROID_CALENDAR_TODO_WORKFLOW_ID = 'agent-workflow-android-calendar-todo'
+export const ANDROID_NOTIFICATION_SETTINGS_WORKFLOW_ID = 'agent-workflow-android-notification-settings'
 
 export interface CreateAndroidBuiltInWorkflowInput {
   directoryUri?: string
@@ -435,6 +437,55 @@ export function createAndroidCalendarTodoWorkflowDefinition(
   })
 }
 
+export function createAndroidNotificationSettingsWorkflowDefinition(
+  input: CreateAndroidBuiltInWorkflowInput = {}
+): AgentWorkflowDefinition {
+  return createAgentWorkflowDefinition({
+    id: ANDROID_NOTIFICATION_SETTINGS_WORKFLOW_ID,
+    name: 'Android notification settings handoff workflow',
+    description: [
+      'Opens Android app notification settings or promoted notification settings for IsleMind.',
+      'Any permission or promoted-notification change is finalized only in the Android system UI.',
+    ].join(' '),
+    enabled: input.enabled ?? true,
+    triggerHints: [
+      'android',
+      'notification settings',
+      'app notifications',
+      'system notifications',
+      'promoted notifications',
+      '通知设置',
+      '通知权限',
+    ],
+    permissionCeiling: 'read-write',
+    expectedOutput: 'handoff',
+    acceptanceChecks: [
+      'opens Android app notification settings',
+      'can target promoted notification settings when supported',
+      'requires system UI confirmation for permission or promoted changes',
+      'does not claim reliable background reply delivery',
+      'records Android operation audit',
+    ],
+    steps: [
+      {
+        id: 'open-notification-settings',
+        title: 'Open Android notification settings',
+        toolRequest: {
+          toolId: 'android:notifications.open_settings',
+          name: 'android.notifications.open_settings',
+          source: 'android',
+          arguments: { target: 'notifications' },
+        },
+        acceptance: [
+          'opens Android app notification settings',
+          'keeps final permission and promoted changes inside Android system settings',
+        ],
+      },
+    ],
+    now: input.now,
+  })
+}
+
 export function listAndroidBuiltInWorkflowDefinitions(input: CreateAndroidBuiltInWorkflowInput = {}): AgentWorkflowDefinition[] {
   return [
     createAndroidDownloadOrganizeWorkflowDefinition(input),
@@ -443,6 +494,7 @@ export function listAndroidBuiltInWorkflowDefinitions(input: CreateAndroidBuiltI
     createAndroidAppCacheCleanupWorkflowDefinition(input),
     createAndroidAlarmWorkflowDefinition(input),
     createAndroidCalendarTodoWorkflowDefinition(input),
+    createAndroidNotificationSettingsWorkflowDefinition(input),
   ]
 }
 
@@ -453,9 +505,7 @@ function sanitizeDirectoryUri(value: string | undefined): string | undefined {
 }
 
 function sanitizeAndroidUri(value: string | undefined): string | undefined {
-  if (typeof value !== 'string') return undefined
-  const trimmed = value.trim()
-  return trimmed.startsWith('content://') || trimmed.startsWith('file://') ? trimmed : undefined
+  return sanitizeAndroidApkUri(value)
 }
 
 function buildFileCopyRenamePreviewArguments(input: CreateAndroidBuiltInWorkflowInput): Record<string, unknown> {

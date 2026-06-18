@@ -1,4 +1,5 @@
 import type { Message, MessageUsage } from '@/types'
+import { filterSendableAttachments } from '@/services/attachmentContract'
 
 const CJK_RE = /[\u3400-\u9fff\u3040-\u30ff\uac00-\ud7af]/g
 const WORD_RE = /[A-Za-z0-9_]+(?:[-'][A-Za-z0-9_]+)*/g
@@ -14,7 +15,7 @@ export function estimateTextTokens(text: string): number {
 
 export function estimateMessageTokens(messages: Pick<Message, 'role' | 'content' | 'attachments'>[]): number {
   return messages.reduce((sum, message) => {
-    const attachmentTokens = message.attachments?.reduce((total, attachment) => total + estimateAttachmentTokens(attachment.size), 0) ?? 0
+    const attachmentTokens = filterSendableAttachments(message.attachments).reduce((total, attachment) => total + estimateAttachmentTokens(attachment.size), 0)
     return sum + 4 + estimateTextTokens(message.content) + attachmentTokens
   }, 0)
 }

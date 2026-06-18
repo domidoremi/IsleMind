@@ -1,11 +1,8 @@
 import type { ReactNode } from 'react'
-import { Text, View, type StyleProp, type TextStyle, type ViewStyle } from 'react-native'
-import { MotiView } from 'moti'
+import { StyleSheet, Text, View, type StyleProp, type TextStyle, type ViewStyle } from 'react-native'
 import { useAppTheme } from '@/hooks/useAppTheme'
-import { useMotionPreference } from '@/hooks/useMotionPreference'
-import { motionTokens } from '@/theme/animation'
 import { IsleButton as BaseIsleButton, type IsleButtonType } from './IsleKit'
-import { IsleCard } from './IsleKit'
+import { IsleChip as BaseIsleChip, type IsleChipTone } from './Chip'
 
 export type IsleTone = 'primary' | 'soft' | 'danger' | 'mint' | 'amber' | 'default' | 'sky' | 'ink'
 export type IsleSize = 'sm' | 'md' | 'lg'
@@ -45,48 +42,41 @@ export function IsleButton({ label, icon, onPress, disabled = false, busy = fals
 }
 
 export function IsleChip({ children, active = false, tone = 'default', style }: { children: ReactNode; active?: boolean; tone?: Exclude<IsleTone, 'primary' | 'soft' | 'sky' | 'ink'>; style?: StyleProp<ViewStyle> }) {
-  const { colors } = useAppTheme()
-  const motion = useMotionPreference()
-  const toneToken = tone === 'danger'
-    ? colors.ui.tone.danger
-    : tone === 'mint'
-      ? colors.ui.tone.success
-      : tone === 'amber'
-        ? colors.ui.tone.warning
-        : colors.ui.tone.neutral
-  const foreground = tone === 'danger' ? toneToken.foreground : active ? colors.ui.control.primaryForeground : toneToken.foreground
-  const background =
-    active
-      ? colors.ui.control.primaryBackground
-      : toneToken.background
-
   return (
-    <MotiView
-      animate={{ backgroundColor: background, borderColor: active ? colors.ui.control.primaryBorder : toneToken.border, scale: active && !colors.ui.minimal ? 1.035 : 1 }}
-      transition={motion === 'full' ? { type: 'spring', ...motionTokens.spring.gentle } : { type: 'timing', duration: 1 }}
-      style={[
-        {
-          minHeight: 32,
-          borderRadius: colors.ui.radius.chip,
-          paddingHorizontal: 11,
-          alignItems: 'center',
-          justifyContent: 'center',
-          borderWidth: 1,
-        },
-        style,
-      ]}
-    >
-      <Text style={{ color: foreground, fontSize: 12, lineHeight: 16, fontWeight: '900', includeFontPadding: false, textAlignVertical: 'center' }}>{children}</Text>
-    </MotiView>
+    <BaseIsleChip active={active} tone={tone as IsleChipTone} style={style}>
+      {children}
+    </BaseIsleChip>
   )
 }
 
 export function IsleMetric({ label }: { label: string }) {
   const { colors } = useAppTheme()
+  const backgroundColor = colors.ui.cartoon
+    ? colors.ui.semantic.surface.base
+    : colors.ui.glass
+      ? colors.ui.actionBar.itemBackground
+      : colors.ui.semantic.surface.muted
+  const borderColor = colors.ui.cartoon
+    ? colors.material.stroke
+    : colors.ui.glass
+      ? colors.ui.actionBar.itemBorder
+      : colors.ui.semantic.chrome.border
   return (
-    <IsleCard type="title" style={{ minHeight: 34, borderRadius: colors.ui.radius.chip, paddingHorizontal: 12, paddingVertical: 7, alignItems: 'center', justifyContent: 'center' }}>
+    <View
+      style={{
+        minHeight: 30,
+        borderRadius: colors.ui.radius.chip,
+        paddingHorizontal: 11,
+        paddingVertical: 6,
+        alignItems: 'center',
+        justifyContent: 'center',
+        backgroundColor,
+        borderWidth: colors.ui.cartoon ? 1 : StyleSheet.hairlineWidth,
+        borderColor,
+      }}
+    >
       <Text style={{ color: colors.textSecondary, fontSize: 11, lineHeight: 14, fontWeight: '900', includeFontPadding: false, textAlignVertical: 'center' }}>{label}</Text>
-    </IsleCard>
+    </View>
   )
 }
 

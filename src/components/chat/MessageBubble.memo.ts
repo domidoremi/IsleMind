@@ -10,7 +10,6 @@
  * 3. 使用 memo 包装并导出
  */
 
-import { memo } from 'react'
 import type { MessageBubbleProps } from './MessageBubble'
 import { collectVisibleProcessTraces } from './tracePresentation'
 
@@ -31,13 +30,14 @@ const areMessagesEqual = (
   if (prevMsg.id !== nextMsg.id) return false
   if (prevMsg.role !== nextMsg.role) return false
   if (prevMsg.content !== nextMsg.content) return false
+  if (prevMsg.responseText !== nextMsg.responseText) return false
   if (prevMsg.status !== nextMsg.status) return false
 
   // 2. 附件比较（仅比较长度）
   if (prevMsg.attachments?.length !== nextMsg.attachments?.length) return false
 
-  // 3. Traces 比较（仅比较长度，避免深比较）
-  if (collectVisibleProcessTraces(prevMsg).length !== collectVisibleProcessTraces(nextMsg).length) return false
+  // 3. Traces 比较：状态和内容长度变化会影响流式过程提示
+  if (processTraceSignature(prevMsg) !== processTraceSignature(nextMsg)) return false
 
   // 4. 其他关键 props 比较
   if (prevProps.index !== nextProps.index) return false
@@ -47,6 +47,12 @@ const areMessagesEqual = (
 
   // 所有关键属性相同，跳过重新渲染
   return true
+}
+
+function processTraceSignature(message: MessageBubbleProps['message']): string {
+  return collectVisibleProcessTraces(message)
+    .map((trace) => `${trace.id}:${trace.type}:${trace.status}:${trace.title}:${trace.content?.length ?? 0}:${trace.completedAt ?? ''}`)
+    .join('|')
 }
 
 /**

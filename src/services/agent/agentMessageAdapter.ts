@@ -4,6 +4,7 @@ import type { AgentPendingAction, AgentToolPermission, AgentToolRequest, AgentTo
 import { buildAgentWorkflowApprovalSummary, type AgentWorkflowSkillSuggestion } from '@/services/agent/agentWorkflowSkills'
 import { runAgenticChatWorkflow } from '@/services/agent/agentChatEntry'
 import { clampAgentOutput, redactSensitiveText } from '@/services/agent/agentTrace'
+import { formatAgentToolRequestIdentity } from '@/services/agent/agentToolIdentityUtils'
 import { createAgentWorkflowDefinition, exportAgentWorkflowDefinition, sanitizeAgentWorkflowDefinition } from '@/services/agent/agentWorkflowDefinitions'
 import { WORK_ARTIFACT_WORKFLOW_CONTRACT } from '@/services/agent/workArtifactWorkflow'
 
@@ -919,10 +920,7 @@ function collectWorkflowSuggestionToolRefs(workflow: AgentWorkflowDefinition): s
 }
 
 function formatWorkflowSuggestionToolRequest(request?: AgentToolRequest): string {
-  if (!request) return ''
-  if (request.toolId) return request.toolId
-  if (request.serverId && request.name) return `${request.serverId}:${request.name}`
-  return request.name ?? ''
+  return formatAgentToolRequestIdentity(request)
 }
 
 function sanitizeWorkflowSuggestionStringList(value: unknown, limit: number): string[] {

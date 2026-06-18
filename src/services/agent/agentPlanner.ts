@@ -8,7 +8,9 @@ import {
   type AgentIntentClassification,
 } from '@/services/agent/agentIntentClassifier'
 import { clampAgentOutput, createAgentTrace, redactSensitiveText } from '@/services/agent/agentTrace'
+import { formatAgentToolRequestIdentity } from '@/services/agent/agentToolIdentityUtils'
 import { collectWorkflowRagProfileRequirements } from '@/services/agent/agentWorkflowSkills'
+import { sanitizeAndroidApkUri } from '@/services/androidUriPolicy'
 
 const WORKFLOW_TRACE_ACCEPTANCE_MAX_ITEMS = 3
 const WORKFLOW_TRACE_ACCEPTANCE_ITEM_LIMIT = 160
@@ -92,7 +94,7 @@ export function createAgentPlan(input: CreateAgentPlanInput): AgentPlan {
         id,
         type: 'reasoning',
         title: 'Agent plan',
-        content: `Selected saved workflow ${input.workflowDefinition.name} with ${steps.length} bounded steps. Permission ceiling: ${input.workflowDefinition.permissionCeiling}.${workflowRequiredToolSummary}${runtimeBindings.length ? ` Runtime arguments bound for ${runtimeBindings.length} step(s).` : ''}${runtimeBindingSummary}${workflowAcceptanceSummary}${workflowRagProfileRequirementSummary}`,
+        content: `Selected workflow ${input.workflowDefinition.name} with ${steps.length} bounded steps. Permission ceiling: ${input.workflowDefinition.permissionCeiling}.${workflowRequiredToolSummary}${runtimeBindings.length ? ` Runtime arguments bound for ${runtimeBindings.length} step(s).` : ''}${runtimeBindingSummary}${workflowAcceptanceSummary}${workflowRagProfileRequirementSummary}`,
         status: 'done',
         startedAt,
         metadata: {
@@ -182,10 +184,7 @@ function summarizeWorkflowToolRefs(refs: string[]): string[] {
 }
 
 function formatToolRequestRefForTrace(request?: AgentToolRequest): string {
-  if (!request) return ''
-  if (request.toolId) return request.toolId
-  if (request.serverId && request.name) return `${request.serverId}:${request.name}`
-  return request.name ?? ''
+  return formatAgentToolRequestIdentity(request)
 }
 
 function bindRuntimeArgumentsForSelectedWorkflowStep(
@@ -277,11 +276,7 @@ function bindRuntimeArgumentsForSelectedWorkflowStep(
 }
 
 function formatToolRequestRef(request: AgentToolRequest): string {
-  return [
-    request.toolId,
-    request.serverId && request.name ? `${request.serverId}:${request.name}` : undefined,
-    request.name,
-  ].filter(Boolean).join('|')
+  return formatAgentToolRequestIdentity(request)
 }
 
 function isWorkArtifactSummarizeRef(ref: string): boolean {
@@ -332,9 +327,7 @@ function inferAndroidSafDirectoryUri(value: string): string | undefined {
 
 function inferAndroidApkUri(value: string): string | undefined {
   const match = value.match(/\b(?:content|file):\/\/[^\s"'，。；;、)）]+/i)
-  const uri = match?.[0]
-  if (!uri) return undefined
-  return /\.apk(?:$|[?#])/i.test(uri) || uri.startsWith('content://') ? uri : undefined
+  return sanitizeAndroidApkUri(match?.[0])
 }
 
 function inferAndroidDirectFilePreviewArguments(value: string): {

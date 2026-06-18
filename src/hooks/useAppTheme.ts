@@ -15,7 +15,8 @@ export function useAppTheme() {
     mode: resolvedTheme,
     themeMode: settings.theme,
     themeId,
-    isIsland: themeId === 'island',
     isMinimal: themeId === 'minimal',
+    isGlass: themeId === 'glass',
+    isCartoon: themeId === 'cartoon',
   }
 }

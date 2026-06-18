@@ -1,9 +1,9 @@
 import { useEffect, useState } from 'react'
 import type { ReactNode } from 'react'
-import { ActivityIndicator, Platform, Text, TextInput, View, useWindowDimensions } from 'react-native'
-import { AtSign, Camera, ChevronDown, FilePlus, Image, Mic, Plus, SendHorizontal, Slash } from 'lucide-react-native'
+import { ActivityIndicator, Platform, StyleSheet, Text, TextInput, View, useWindowDimensions } from 'react-native'
 import { MotiView } from 'moti'
 import { useTranslation } from 'react-i18next'
+import { AppIcon, appIconStroke } from '@/components/ui/AppIcon'
 import type { Attachment, CommandReference } from '@/types'
 import { pickDocument, pickImage, takePhoto } from '@/services/attachment'
 import { useAppTheme } from '@/hooks/useAppTheme'
@@ -34,6 +34,7 @@ interface ComposerProps {
   utilitiesOpen?: boolean
   showInlineUtilities?: boolean
   leadingAccessory?: ReactNode
+  bottomAccessory?: ReactNode
   onClearPending?: () => void
   onReferenceSelected?: (reference: CommandReference) => void
   onFocus?: () => void
@@ -60,6 +61,7 @@ export function Composer({
   utilitiesOpen = false,
   showInlineUtilities = true,
   leadingAccessory,
+  bottomAccessory,
   onClearPending,
   onReferenceSelected,
   onFocus,
@@ -68,7 +70,7 @@ export function Composer({
   onSend,
   onSendWhileStreaming,
 }: ComposerProps) {
-  const { colors } = useAppTheme()
+  const { colors, isGlass } = useAppTheme()
   const { t } = useTranslation()
   const dialog = useIsleDialog()
   const { width: composerWindowWidth } = useWindowDimensions()
@@ -113,19 +115,38 @@ export function Composer({
   const trigger = getActiveTrigger(content)
   const commandMatches = trigger?.type === 'command' ? filterCommands(commands, trigger.query).slice(0, 6) : []
   const referenceMatches = trigger?.type === 'reference' ? filterReferences(references, trigger.query).slice(0, 8) : []
-  const showCommandPanel = !!trigger && (commandMatches.length > 0 || referenceMatches.length > 0 || trigger.query.length === 0)
+  const showCommandPanel = !!trigger && (
+    commandMatches.length > 0 ||
+    referenceMatches.length > 0 ||
+    trigger.query.length === 0 ||
+    trigger.type === 'command'
+  )
   const isMultilineDraft = content.includes('\n') || content.length > 70
   const panelRadius = colors.ui.radius.panel
   const fieldRadius = colors.ui.radius.field
   const chipRadius = colors.ui.radius.chip
   const compactControlRadius = colors.ui.radius.controlMiddle
   const largeControlRadius = colors.ui.radius.controlLarge
-  const raisedSurface = colors.ui.card.defaultBackground
-  const raisedBorder = colors.material.stroke
+  const subtleBorderWidth = colors.ui.cartoon ? 1 : StyleSheet.hairlineWidth
+  const raisedSurface = colors.ui.glass ? colors.ui.semantic.chrome.background : colors.ui.cartoon ? colors.ui.semantic.surface.base : colors.ui.semantic.surface.base
+  const raisedBorder = colors.ui.glass ? colors.ui.actionBar.itemBorder : colors.ui.cartoon ? colors.material.stroke : colors.ui.semantic.chrome.border
+  const utilitySurface = colors.ui.glass ? colors.ui.actionBar.itemBackground : colors.ui.cartoon ? colors.ui.semantic.surface.muted : colors.ui.semantic.surface.muted
+  const chipSurface = colors.ui.glass ? colors.ui.actionBar.itemBackground : colors.ui.cartoon ? colors.ui.semantic.surface.base : colors.ui.semantic.surface.base
+  const chipBorder = colors.ui.glass ? colors.ui.actionBar.itemBorder : colors.ui.cartoon ? colors.material.stroke : colors.ui.semantic.chrome.border
+  const shellBorder = colors.ui.cartoon
+    ? (focused ? colors.material.strokeStrong : colors.material.stroke)
+    : focused
+      ? colors.ui.semantic.control.focus
+      : colors.ui.glass
+        ? colors.ui.actionBar.border
+        : colors.ui.semantic.chrome.border
   const compactComposer = composerWindowWidth < 390
   const attachmentLabelMaxWidth = Math.max(108, Math.min(compactComposer ? 132 : 180, composerWindowWidth * 0.42))
   const utilityControlWidth = compactComposer ? 36 : 38
   const sendButtonMinWidth = compactComposer ? 46 : 52
+  const composerShadowOpacity = colors.ui.cartoon
+    ? (focused ? 0.05 : 0.018)
+    : 0
 
   useEffect(() => {
     const draft = initialDraft ?? ''
@@ -228,7 +249,11 @@ export function Composer({
       }
     } catch (error) {
       setRecording(false)
-      dialog.toast({ title: t('chat.voiceFailed'), message: error instanceof Error ? error.message : t('chat.voiceFailedMessage'), tone: 'danger' })
+      dialog.toast({
+        title: t('chat.voiceFailed'),
+        message: error instanceof Error && error.message === 'error.fileTooLarge' ? t('chat.fileTooLarge20') : error instanceof Error ? error.message : t('chat.voiceFailedMessage'),
+        tone: 'danger',
+      })
     }
   }
 
@@ -238,14 +263,14 @@ export function Composer({
       transition={{ type: 'spring', damping: 18, stiffness: 180 }}
       style={{
         shadowColor: colors.shadowTint,
-        shadowRadius: focused ? 22 : 14,
-        shadowOffset: { width: 0, height: 10 },
-        shadowOpacity: focused ? 0.16 : 0.1,
-        elevation: focused ? 5 : 3,
+        shadowRadius: focused ? 12 : 6,
+        shadowOffset: { width: 0, height: 6 },
+        shadowOpacity: composerShadowOpacity,
+        elevation: colors.ui.cartoon && composerShadowOpacity > 0.02 ? 1 : 0,
         backgroundColor: 'transparent',
       }}
     >
-      <IslePanel material="chrome" elevated={false} radius={panelRadius} style={{ borderColor: focused ? colors.material.strokeStrong : colors.material.stroke, backgroundColor: colors.ui.card.defaultBackground }}>
+      <IslePanel material="chrome" intensity={isGlass ? 48 : 34} elevated={false} radius={panelRadius} style={{ borderColor: shellBorder, backgroundColor: focused ? colors.ui.composer.shellFocusedBackground : colors.ui.composer.shellBackground }}>
       {attachments.length ? (
         <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8, paddingHorizontal: 12, paddingTop: 10 }}>
           {attachments.map((item) => (
@@ -256,7 +281,7 @@ export function Composer({
               accessibilityLabel={t('chat.removeAttachment', { name: item.name })}
               accessibilityHint={t('chat.removeAttachmentAccessibilityHint', { name: item.name })}
               hitSlop={COMPOSER_PILL_HIT_SLOP}
-              style={{ paddingHorizontal: 10, height: 28, borderRadius: chipRadius, backgroundColor: raisedSurface, justifyContent: 'center' }}
+              style={{ paddingHorizontal: 10, height: 28, borderRadius: chipRadius, backgroundColor: chipSurface, borderWidth: subtleBorderWidth, borderColor: chipBorder, justifyContent: 'center' }}
             >
               <Text numberOfLines={1} style={{ color: colors.textSecondary, fontSize: 11, fontWeight: '700', maxWidth: attachmentLabelMaxWidth }}>
                 {item.name}
@@ -275,13 +300,13 @@ export function Composer({
           <UtilityGroupTitle label={t('chat.inputTools')} />
           <View style={{ flexDirection: 'row', gap: 8, flexWrap: 'wrap' }}>
             <AttachmentChip label={t('chat.attachImage')} accessibilityHint={t('chat.attachImageAccessibilityHint')} onPress={() => addAttachment(pickImage)}>
-              <Image color={colors.textSecondary} size={15} strokeWidth={1.8} />
+              <AppIcon name="image" color={colors.textSecondary} size={15} strokeWidth={appIconStroke.fine} />
             </AttachmentChip>
             <AttachmentChip label={t('chat.attachCamera')} accessibilityHint={t('chat.attachCameraAccessibilityHint')} onPress={() => addAttachment(takePhoto)}>
-              <Camera color={colors.textSecondary} size={15} strokeWidth={1.8} />
+              <AppIcon name="camera" color={colors.textSecondary} size={15} strokeWidth={appIconStroke.fine} />
             </AttachmentChip>
             <AttachmentChip label={t('chat.attachFile')} accessibilityHint={t('chat.attachFileAccessibilityHint')} onPress={() => addAttachment(pickDocument)}>
-              <FilePlus color={colors.textSecondary} size={15} strokeWidth={1.8} />
+              <AppIcon name="attachment" color={colors.textSecondary} size={15} strokeWidth={appIconStroke.fine} />
             </AttachmentChip>
             <AttachmentChip
               label={recording ? t('chat.stopRecording') : t('chat.voiceInput')}
@@ -289,14 +314,14 @@ export function Composer({
               active={recording}
               onPress={() => void toggleRecording()}
             >
-              <Mic color={recording ? colors.ui.tone.danger.foreground : colors.textSecondary} size={15} strokeWidth={1.8} />
+              <AppIcon name="microphone" color={recording ? colors.ui.tone.danger.foreground : colors.textSecondary} size={15} strokeWidth={appIconStroke.fine} />
             </AttachmentChip>
             <AttachmentChip label={t('chat.openCommandPanel')} accessibilityHint={t('chat.openCommandPanelAccessibilityHint')} onPress={() => setContent((value) => value.trim() ? `${value} /` : '/')}>
-              <Slash color={colors.textSecondary} size={15} strokeWidth={1.8} />
+              <AppIcon name="slash-command" color={colors.textSecondary} size={15} strokeWidth={appIconStroke.fine} />
             </AttachmentChip>
             {onOpenKnowledge ? (
               <AttachmentChip label={t('chat.importKnowledge')} accessibilityHint={t('chat.importKnowledgeAccessibilityHint')} onPress={onOpenKnowledge}>
-                <FilePlus color={colors.textSecondary} size={15} strokeWidth={1.8} />
+                <AppIcon name="knowledge" color={colors.textSecondary} size={15} strokeWidth={appIconStroke.fine} />
               </AttachmentChip>
             ) : null}
           </View>
@@ -321,7 +346,7 @@ export function Composer({
             alignItems: 'center',
             justifyContent: 'center',
             backgroundColor: colors.ui.tone.warning.background,
-            borderWidth: 1,
+            borderWidth: subtleBorderWidth,
             borderColor: colors.ui.tone.warning.border,
           }}
         >
@@ -337,13 +362,13 @@ export function Composer({
           transition={{ type: 'spring', damping: 20, stiffness: 210 }}
           style={{ paddingHorizontal: 10, paddingTop: 10 }}
         >
-          <View style={{ borderRadius: fieldRadius, padding: 8, backgroundColor: raisedSurface, borderWidth: 1, borderColor: raisedBorder, gap: 6 }}>
+          <View style={{ borderRadius: fieldRadius, padding: 8, backgroundColor: raisedSurface, borderWidth: subtleBorderWidth, borderColor: raisedBorder, gap: 6 }}>
             {commandMatches.map((command) => (
               <ComposerPickRow
                 key={command.id}
                 title={command.label}
                 description={command.description}
-                icon={<Slash color={colors.ui.icon.accentForeground} size={14} strokeWidth={2.2} />}
+                icon={<AppIcon name="slash-command" color={colors.ui.icon.accentForeground} size={14} strokeWidth={appIconStroke.strong} />}
                 accessibilityHint={t('chat.selectCommandAccessibilityHint', { command: command.label })}
                 onPress={() => applyCommand(command)}
               />
@@ -353,7 +378,7 @@ export function Composer({
                 key={`${reference.type}-${reference.id}`}
                 title={reference.label}
                 description={referenceDescription(reference, t)}
-                icon={<AtSign color={colors.ui.icon.accentForeground} size={14} strokeWidth={2.2} />}
+                icon={<AppIcon name="mention" color={colors.ui.icon.accentForeground} size={14} strokeWidth={appIconStroke.strong} />}
                 accessibilityHint={t('chat.selectReferenceAccessibilityHint', { reference: reference.label })}
                 onPress={() => applyReference(reference)}
               />
@@ -366,7 +391,7 @@ export function Composer({
           </View>
         </MotiView>
       ) : null}
-      <View style={{ flexDirection: 'row', alignItems: 'center', padding: 7, paddingTop: 7, gap: 6 }}>
+      <View style={{ flexDirection: 'row', alignItems: 'center', paddingHorizontal: 7, paddingTop: 7, paddingBottom: bottomAccessory ? 5 : 7, gap: 6 }}>
         {leadingAccessory ? (
           <View style={{ flexShrink: 0 }}>
             {leadingAccessory}
@@ -388,12 +413,12 @@ export function Composer({
                 alignItems: 'center',
                 justifyContent: 'center',
                 borderRadius: compactControlRadius,
-                backgroundColor: attachmentsOpen ? colors.ui.control.primaryBackground : raisedSurface,
-                borderWidth: 1,
+                backgroundColor: attachmentsOpen ? colors.ui.control.primaryBackground : utilitySurface,
+                borderWidth: subtleBorderWidth,
                 borderColor: attachmentsOpen ? colors.ui.control.primaryBorder : raisedBorder,
               }}
             >
-              {attachmentsOpen ? <ChevronDown color={colors.ui.control.primaryForeground} size={16} strokeWidth={2} /> : <Plus color={colors.textSecondary} size={16} strokeWidth={2} />}
+              {attachmentsOpen ? <AppIcon name="collapse" color={colors.ui.control.primaryForeground} size={16} /> : <AppIcon name="add" color={colors.textSecondary} size={16} />}
             </IslePressable>
             <IslePressable
               haptic
@@ -409,12 +434,12 @@ export function Composer({
                 alignItems: 'center',
                 justifyContent: 'center',
                 borderRadius: compactControlRadius,
-                backgroundColor: recording ? colors.ui.tone.danger.foreground : raisedSurface,
-                borderWidth: 1,
+                backgroundColor: recording ? colors.ui.tone.danger.foreground : utilitySurface,
+                borderWidth: subtleBorderWidth,
                 borderColor: recording ? colors.ui.tone.danger.border : raisedBorder,
               }}
             >
-              <Mic color={recording ? colors.ui.control.dangerForeground : colors.textSecondary} size={16} strokeWidth={2} />
+              <AppIcon name="microphone" color={recording ? colors.ui.control.dangerForeground : colors.textSecondary} size={16} />
             </IslePressable>
           </>
         ) : null}
@@ -436,7 +461,7 @@ export function Composer({
               }
             }}
             placeholder={streaming ? t('chat.keepTyping') : t('chat.askAnything')}
-            placeholderTextColor={colors.textTertiary}
+            placeholderTextColor={colors.ui.input.placeholderForeground}
             onFocus={() => {
               setFocused(true)
               onFocus?.()
@@ -478,19 +503,24 @@ export function Composer({
             flexDirection: 'row',
             gap: 7,
             paddingHorizontal: 0,
-            backgroundColor: canSend ? colors.ui.control.primaryBackground : colors.ui.input.disabledBackground,
-            borderWidth: 1,
-            borderColor: canSend ? colors.ui.control.primaryBorder : colors.ui.input.border,
-            opacity: disabled ? 0.72 : 1,
+            backgroundColor: canSend ? colors.ui.control.primaryBackground : colors.ui.control.disabledBackground,
+            borderWidth: subtleBorderWidth,
+            borderColor: canSend ? colors.ui.control.primaryBorder : colors.ui.control.disabledBorder,
+            opacity: 1,
           }}
         >
           {sending ? (
             <ActivityIndicator color={colors.ui.control.primaryForeground} size="small" />
           ) : (
-            <SendHorizontal color={canSend ? colors.ui.control.primaryForeground : colors.textSecondary} size={19} strokeWidth={2.35} />
+            <AppIcon name="send" color={canSend ? colors.ui.control.primaryForeground : colors.ui.control.disabledForeground} size={19} strokeWidth={appIconStroke.bold} />
           )}
         </IslePressable>
       </View>
+      {bottomAccessory ? (
+        <View style={{ paddingHorizontal: 7, paddingTop: 0, paddingBottom: 7 }}>
+          {bottomAccessory}
+        </View>
+      ) : null}
       {draftStatusVisible ? (
         <View
           accessibilityLiveRegion={draftWarningLabel ? 'polite' : undefined}
@@ -524,8 +554,11 @@ function ComposerPickRow({
   accessibilityHint?: string
   onPress: () => void
 }) {
-  const { colors } = useAppTheme()
+  const { colors, isGlass } = useAppTheme()
   const rowRadius = colors.ui.radius.field
+  const rowBackground = isGlass ? colors.ui.actionBar.itemBackground : colors.ui.cartoon ? colors.ui.semantic.surface.muted : colors.ui.semantic.surface.muted
+  const rowBorderColor = isGlass ? colors.ui.actionBar.itemBorder : colors.ui.cartoon ? colors.material.stroke : colors.ui.semantic.chrome.border
+  const iconBackground = isGlass ? colors.ui.actionBar.itemActiveBackground : colors.ui.icon.accentBackground
   return (
     <IslePressable
       haptic
@@ -535,9 +568,9 @@ function ComposerPickRow({
       accessibilityHint={accessibilityHint}
       accessibilityValue={description ? { text: description } : undefined}
       hitSlop={COMPOSER_CONTROL_HIT_SLOP}
-      style={{ minHeight: 44, borderRadius: rowRadius, paddingHorizontal: 10, flexDirection: 'row', alignItems: 'center', gap: 9, backgroundColor: colors.ui.card.mutedBackground }}
+      style={{ minHeight: 44, borderRadius: rowRadius, paddingHorizontal: 10, flexDirection: 'row', alignItems: 'center', gap: 9, backgroundColor: rowBackground, borderWidth: colors.ui.cartoon ? 1 : StyleSheet.hairlineWidth, borderColor: rowBorderColor }}
     >
-      <View style={{ width: 24, height: 24, borderRadius: colors.ui.radius.controlSmall, alignItems: 'center', justifyContent: 'center', backgroundColor: colors.ui.icon.accentBackground }}>
+      <View style={{ width: 24, height: 24, borderRadius: colors.ui.radius.controlSmall, alignItems: 'center', justifyContent: 'center', backgroundColor: iconBackground }}>
         {icon}
       </View>
       <View style={{ flex: 1 }}>
@@ -603,7 +636,9 @@ interface IconButtonProps {
 }
 
 function AttachmentChip({ label, accessibilityHint, active = false, children, onPress }: IconButtonProps) {
-  const { colors } = useAppTheme()
+  const { colors, isGlass } = useAppTheme()
+  const idleBackground = isGlass ? colors.ui.actionBar.itemBackground : colors.ui.cartoon ? colors.ui.semantic.surface.base : colors.ui.semantic.surface.base
+  const idleBorder = isGlass ? colors.ui.actionBar.itemBorder : colors.ui.cartoon ? colors.material.stroke : colors.ui.semantic.chrome.border
   return (
     <IslePressable
       haptic
@@ -620,9 +655,9 @@ function AttachmentChip({ label, accessibilityHint, active = false, children, on
         flexDirection: 'row',
         alignItems: 'center',
         gap: 6,
-        backgroundColor: active ? colors.ui.tone.danger.background : colors.ui.card.defaultBackground,
-        borderWidth: 1,
-        borderColor: active ? colors.ui.tone.danger.border : colors.material.stroke,
+        backgroundColor: active ? colors.ui.tone.danger.background : idleBackground,
+        borderWidth: colors.ui.cartoon ? 1 : StyleSheet.hairlineWidth,
+        borderColor: active ? colors.ui.tone.danger.border : idleBorder,
       }}
     >
       {children}

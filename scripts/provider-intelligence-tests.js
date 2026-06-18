@@ -8,13 +8,37 @@ const root = path.resolve(__dirname, '..')
 const originalResolve = Module._resolveFilename
 const originalLoad = Module._load
 const memoryStorage = new Map()
+const asyncStorageFaults = {
+  getItem: null,
+  setItem: null,
+  removeItem: null,
+  multiRemove: null,
+}
 const secureStorage = new Map()
 const contextMemoryRows = []
+const contextKnowledgeDocuments = []
+const contextKnowledgeChunks = []
+const contextDocumentSources = []
+const conversationRecords = []
+const compactStateRows = []
 const localFileFixtures = new Map()
 const localDownloadFixtures = new Map()
 const localFileReadRequests = []
 const localFileOperations = []
 const launchedIntents = []
+const sharedFiles = []
+let nextReadDirectoryEntries = null
+const intentLauncherModule = {
+  startActivityAsync: async (action, params) => {
+    launchedIntents.push({ action, params })
+  },
+}
+let nextDocumentPickerResult = null
+let nextImageLibraryResult = null
+let nextCameraResult = null
+let nextManipulateResultFactory = null
+let nextSqliteOpenError = null
+let sharingAvailable = false
 const supportedCpuArchitectures = ['arm64-v8a', 'armeabi-v7a']
 let expoDeviceModuleAvailable = true
 const reactNativePlatform = {
@@ -23,6 +47,19 @@ const reactNativePlatform = {
 }
 
 global.__DEV__ = false
+
+function resetAsyncStorageFaults() {
+  asyncStorageFaults.getItem = null
+  asyncStorageFaults.setItem = null
+  asyncStorageFaults.removeItem = null
+  asyncStorageFaults.multiRemove = null
+}
+
+function readAsyncStorageFault(operation, ...args) {
+  const fault = asyncStorageFaults[operation]
+  if (!fault) return null
+  return typeof fault === 'function' ? fault(...args) : fault
+}
 
 Module._resolveFilename = function resolveAlias(request, parent, isMain, options) {
   if (request.startsWith('@/')) {
@@ -36,10 +73,26 @@ Module._load = function loadWithMocks(request, parent, isMain) {
     return {
       __esModule: true,
       default: {
-        getItem: async (key) => memoryStorage.get(key) ?? null,
-        setItem: async (key, value) => memoryStorage.set(key, value),
-        removeItem: async (key) => memoryStorage.delete(key),
-        multiRemove: async (keys) => keys.forEach((key) => memoryStorage.delete(key)),
+        getItem: async (key) => {
+          const fault = readAsyncStorageFault('getItem', key)
+          if (fault) throw fault
+          return memoryStorage.get(key) ?? null
+        },
+        setItem: async (key, value) => {
+          const fault = readAsyncStorageFault('setItem', key, value)
+          if (fault) throw fault
+          memoryStorage.set(key, value)
+        },
+        removeItem: async (key) => {
+          const fault = readAsyncStorageFault('removeItem', key)
+          if (fault) throw fault
+          memoryStorage.delete(key)
+        },
+        multiRemove: async (keys) => {
+          const fault = readAsyncStorageFault('multiRemove', keys)
+          if (fault) throw fault
+          keys.forEach((key) => memoryStorage.delete(key))
+        },
       },
     }
   }
@@ -52,7 +105,13 @@ Module._load = function loadWithMocks(request, parent, isMain) {
   }
   if (request === 'expo-sqlite') {
     return {
-      openDatabaseAsync: async () => ({
+      openDatabaseAsync: async () => {
+        if (nextSqliteOpenError) {
+          const error = nextSqliteOpenError
+          nextSqliteOpenError = null
+          throw error
+        }
+        return ({
         execAsync: async () => undefined,
         runAsync: async (sql, ...args) => {
           if (/UPDATE memories SET lastHitAt/i.test(sql)) {
@@ -81,6 +140,52 @@ Module._load = function loadWithMocks(request, parent, isMain) {
           if (/DELETE FROM memories/i.test(sql)) {
             contextMemoryRows.splice(0, contextMemoryRows.length)
           }
+          if (/DELETE FROM knowledge_documents/i.test(sql)) {
+            contextKnowledgeDocuments.splice(0, contextKnowledgeDocuments.length)
+          }
+          if (/DELETE FROM knowledge_chunks/i.test(sql)) {
+            contextKnowledgeChunks.splice(0, contextKnowledgeChunks.length)
+          }
+          if (/DELETE FROM knowledge_fts/i.test(sql)) {
+            return
+          }
+          if (/DELETE FROM document_sources/i.test(sql)) {
+            contextDocumentSources.splice(0, contextDocumentSources.length)
+          }
+          if (/DELETE FROM conversation_records/i.test(sql)) {
+            conversationRecords.splice(0, conversationRecords.length)
+          }
+          if (/DELETE FROM compact_states/i.test(sql)) {
+            compactStateRows.splice(0, compactStateRows.length)
+          }
+          if (/UPDATE compact_states SET status = 'invalidated'/i.test(sql)) {
+            const [failureCode, updatedAt, scope] = args
+            if (/WHERE providerId = \? AND status = 'active'/i.test(sql)) {
+              for (const row of compactStateRows) {
+                if (row.providerId === scope && row.status === 'active') {
+                  row.status = 'invalidated'
+                  row.failureCode = failureCode
+                  row.updatedAt = updatedAt
+                }
+              }
+            } else if (/WHERE conversationId = \? AND status = 'active'/i.test(sql)) {
+              for (const row of compactStateRows) {
+                if (row.conversationId === scope && row.status === 'active') {
+                  row.status = 'invalidated'
+                  row.failureCode = failureCode
+                  row.updatedAt = updatedAt
+                }
+              }
+            } else if (/WHERE status = 'active'/i.test(sql)) {
+              for (const row of compactStateRows) {
+                if (row.status === 'active') {
+                  row.status = 'invalidated'
+                  row.failureCode = failureCode
+                  row.updatedAt = updatedAt
+                }
+              }
+            }
+          }
           if (/INSERT OR REPLACE INTO memories/i.test(sql) || /INSERT INTO memories/i.test(sql)) {
             const [id, content, status, conversationId, sourceKind, sourceDetail, confidence, lastHitAt, createdAt, updatedAt] = args
             const existingIndex = contextMemoryRows.findIndex((item) => item.id === id)
@@ -90,6 +195,77 @@ Module._load = function loadWithMocks(request, parent, isMain) {
             } else {
               contextMemoryRows.push(row)
             }
+          }
+          if (/INSERT OR REPLACE INTO document_sources/i.test(sql)) {
+            const [documentId, sourceUri, rawPath, contentHash, updatedAt] = args
+            const existingIndex = contextDocumentSources.findIndex((item) => item.documentId === documentId)
+            const row = { documentId, sourceUri, rawPath, contentHash, updatedAt }
+            if (existingIndex >= 0) contextDocumentSources[existingIndex] = row
+            else contextDocumentSources.push(row)
+          }
+          if (/INSERT OR REPLACE INTO knowledge_documents/i.test(sql) || /INSERT INTO knowledge_documents/i.test(sql)) {
+            const [id, title, mimeType, size, chunkCount, status, error, sourceUri, rawPath, contentHash, createdAt, updatedAt] = args
+            const existingIndex = contextKnowledgeDocuments.findIndex((item) => item.id === id)
+            const row = { id, title, mimeType, size, chunkCount, status, error, sourceUri, rawPath, contentHash, createdAt, updatedAt }
+            if (existingIndex >= 0) contextKnowledgeDocuments[existingIndex] = row
+            else contextKnowledgeDocuments.push(row)
+          }
+          if (/INSERT INTO knowledge_chunks/i.test(sql)) {
+            const [id, documentId, title, content, ordinal, chunkIndex, sentenceStart, sentenceEnd, semanticBoundary, headingPathJson, entitiesJson, relationsJson, summaryNodeId, parentChunkId, qualityScore, embeddingModelId, rerankSignalsJson, embeddingProvider, lastHitAt, createdAt] = args
+            const existingIndex = contextKnowledgeChunks.findIndex((item) => item.id === id)
+            const row = { id, documentId, title, content, ordinal, chunkIndex, sentenceStart, sentenceEnd, semanticBoundary, headingPathJson, entitiesJson, relationsJson, summaryNodeId, parentChunkId, qualityScore, embeddingModelId, rerankSignalsJson, embeddingProvider, lastHitAt, createdAt }
+            if (existingIndex >= 0) contextKnowledgeChunks[existingIndex] = row
+            else contextKnowledgeChunks.push(row)
+          }
+          if (/INSERT OR REPLACE INTO conversation_records/i.test(sql)) {
+            const [id, title, providerId, model, updatedAt, payloadJson] = args
+            const existingIndex = conversationRecords.findIndex((item) => item.id === id)
+            const row = { id, title, providerId, model, updatedAt, payloadJson }
+            if (existingIndex >= 0) conversationRecords[existingIndex] = row
+            else conversationRecords.push(row)
+          }
+          if (/INSERT OR REPLACE INTO compact_states/i.test(sql)) {
+            const [
+              id,
+              conversationId,
+              providerId,
+              model,
+              responseId,
+              sessionId,
+              compactItemJson,
+              sourceMessageStartIndex,
+              sourceMessageEndIndex,
+              inputTokens,
+              outputTokens,
+              estimatedSavedTokens,
+              status,
+              failureCode,
+              createdAt,
+              updatedAt,
+              expiresAt,
+            ] = args
+            const existingIndex = compactStateRows.findIndex((item) => item.id === id)
+            const row = {
+              id,
+              conversationId,
+              providerId,
+              model,
+              responseId,
+              sessionId,
+              compactItemJson,
+              sourceMessageStartIndex,
+              sourceMessageEndIndex,
+              inputTokens,
+              outputTokens,
+              estimatedSavedTokens,
+              status,
+              failureCode,
+              createdAt,
+              updatedAt,
+              expiresAt,
+            }
+            if (existingIndex >= 0) compactStateRows[existingIndex] = row
+            else compactStateRows.push(row)
           }
         },
         getAllAsync: async (sql, ...args) => {
@@ -101,17 +277,130 @@ Module._load = function loadWithMocks(request, parent, isMain) {
               .slice(0, limit)
               .map((row, index) => ({ ...row, score: row.score ?? -1 / (index + 1) }))
           }
+          if (/FROM knowledge_fts/i.test(sql)) {
+            const limit = args.at(-1) ?? contextKnowledgeChunks.length
+            return contextKnowledgeChunks
+              .slice(0, limit)
+              .map((row, index) => {
+                const document = contextKnowledgeDocuments.find((item) => item.id === row.documentId)
+                return {
+                  ...row,
+                  sourceUri: document?.sourceUri,
+                  rawPath: document?.rawPath,
+                  score: row.score ?? -1 / (index + 1),
+                }
+              })
+          }
           if (/FROM memories/i.test(sql)) {
             return [...contextMemoryRows]
+          }
+          if (/FROM knowledge_documents/i.test(sql)) {
+            return [...contextKnowledgeDocuments]
+          }
+          if (/FROM knowledge_chunks/i.test(sql) && /WHERE id IN/i.test(sql)) {
+            const ids = new Set(args)
+            return contextKnowledgeChunks.filter((row) => ids.has(row.id))
+          }
+          if (/FROM knowledge_chunks/i.test(sql)) {
+            return [...contextKnowledgeChunks]
+          }
+          if (/FROM document_sources/i.test(sql)) {
+            const ids = new Set(args)
+            return contextDocumentSources.filter((row) => ids.has(row.documentId))
+          }
+          if (/FROM conversation_records/i.test(sql)) {
+            return [...conversationRecords].sort((a, b) => b.updatedAt - a.updatedAt)
+          }
+          if (/FROM compact_states/i.test(sql)) {
+            const [conversationId, providerId, model, now] = args
+            return compactStateRows
+              .filter((row) =>
+                row.conversationId === conversationId &&
+                row.providerId === providerId &&
+                row.model === model &&
+                row.status === 'active' &&
+                (row.expiresAt == null || row.expiresAt > now)
+              )
+              .sort((a, b) => b.updatedAt - a.updatedAt)
           }
           return []
         },
         getFirstAsync: async () => null,
-      }),
+      })
+      },
     }
   }
   if (request === 'expo-document-picker') {
-    return { getDocumentAsync: async () => ({ canceled: true, assets: [] }) }
+    return {
+      getDocumentAsync: async () => {
+        const result = nextDocumentPickerResult ?? { canceled: true, assets: [] }
+        nextDocumentPickerResult = null
+        return result
+      },
+    }
+  }
+  if (request === 'expo-image-picker') {
+    return {
+      launchImageLibraryAsync: async () => {
+        const result = nextImageLibraryResult ?? { canceled: true, assets: [] }
+        nextImageLibraryResult = null
+        return result
+      },
+      launchCameraAsync: async () => {
+        const result = nextCameraResult ?? { canceled: true, assets: [] }
+        nextCameraResult = null
+        return result
+      },
+    }
+  }
+  if (request === 'expo-image-manipulator') {
+    return {
+      SaveFormat: { JPEG: 'jpeg' },
+      manipulateAsync: async (uri) => {
+        if (typeof nextManipulateResultFactory === 'function') {
+          const factory = nextManipulateResultFactory
+          nextManipulateResultFactory = null
+          return factory(uri)
+        }
+        return { uri }
+      },
+    }
+  }
+  if (request === 'expo-audio') {
+    return {
+      AudioModule: {
+        requestRecordingPermissionsAsync: async () => ({ granted: false }),
+      },
+      useAudioRecorder: () => null,
+      createAudioPlayer: () => {
+        let playbackListener = null
+        const player = {
+          play: () => undefined,
+          pause: () => undefined,
+          remove: () => {
+            if (global.__lastExpoAudioPlayer === player) {
+              global.__lastExpoAudioPlayer = null
+            }
+            playbackListener = null
+          },
+          addListener: (event, listener) => {
+            if (event === 'playbackStatusUpdate') {
+              playbackListener = listener
+            }
+            return {
+              remove: () => {
+                if (playbackListener === listener) playbackListener = null
+              },
+            }
+          },
+          emitPlaybackStatusUpdate: (status) => {
+            playbackListener?.(status)
+          },
+        }
+        global.__lastExpoAudioPlayer = player
+        return player
+      },
+    }
   }
   if (request === 'expo-file-system/legacy' || request === 'expo-file-system') {
     return {
@@ -125,6 +414,22 @@ Module._load = function loadWithMocks(request, parent, isMain) {
           return { exists: true, uri, isDirectory: true, size: 0, modificationTime: 0 }
         }
         return { exists: false, uri: uri ?? 'file:///tmp/', isDirectory: false }
+      },
+      readDirectoryAsync: async (uri) => {
+        if (Array.isArray(nextReadDirectoryEntries)) {
+          const entries = nextReadDirectoryEntries
+          nextReadDirectoryEntries = null
+          return entries
+        }
+        const entries = new Set()
+        const normalized = uri.endsWith('/') ? uri : `${uri}/`
+        for (const key of localFileFixtures.keys()) {
+          if (!key.startsWith(normalized)) continue
+          const rest = key.slice(normalized.length)
+          const name = rest.split('/')[0]
+          if (name) entries.add(name)
+        }
+        return [...entries]
       },
       makeDirectoryAsync: async (uri) => {
         localFileOperations.push({ type: 'mkdir', uri })
@@ -189,7 +494,7 @@ Module._load = function loadWithMocks(request, parent, isMain) {
         localFileFixtures.set(uri, Buffer.from(String(value), options.encoding === 'base64' ? 'base64' : 'utf8'))
       },
       documentDirectory: 'file:///tmp/',
-      cacheDirectory: 'file:///tmp/',
+      cacheDirectory: 'file:///cache/',
     }
   }
   if (request === 'expo-crypto') {
@@ -225,16 +530,51 @@ Module._load = function loadWithMocks(request, parent, isMain) {
     return { supportedCpuArchitectures }
   }
   if (request === 'expo-intent-launcher') {
-    return {
-      startActivityAsync: async (action, params) => {
-        launchedIntents.push({ action, params })
-      },
-    }
+    return intentLauncherModule
   }
   if (request === 'expo-clipboard') {
     return {
       setStringAsync: async () => undefined,
       getStringAsync: async () => '',
+    }
+  }
+  if (request === 'expo-speech') {
+    return {
+      stop: () => undefined,
+      speak: () => undefined,
+    }
+  }
+  if (request === 'expo-sharing') {
+    return {
+      isAvailableAsync: async () => sharingAvailable,
+      shareAsync: async (uri, options) => {
+        sharedFiles.push({ uri, options })
+      },
+    }
+  }
+  if (request === 'onnxruntime-react-native') {
+    class FakeTensor {
+      constructor(type, data, dims) {
+        this.type = type
+        this.data = data
+        this.dims = dims
+      }
+    }
+    return {
+      Tensor: FakeTensor,
+      InferenceSession: {
+        create: async (modelPath) => ({
+          inputNames: ['input_ids', 'attention_mask', 'token_type_ids'],
+          outputNames: ['sentence_embedding'],
+          run: async () => ({
+            sentence_embedding: {
+              dims: [1, 384],
+              data: new Float32Array(Array.from({ length: 384 }, (_, index) => (index % 16) + 1)),
+            },
+          }),
+          modelPath,
+        }),
+      },
     }
   }
   if (request === 'expo/fetch') {
@@ -288,18 +628,22 @@ const {
 } = require('../src/services/ai/providerProtocolPolicy.ts')
 const {
   chooseCredentialForModel,
+  findCredentialGroupIdForKey,
   mergeCredentialModelAvailability,
   normalizeProviderCredentialGroups,
   runCredentialGroupModelSync,
   updateCredentialGroupHealth,
 } = require('../src/services/ai/providerCredentials.ts')
 const { packChatMessages } = require('../src/services/contextPacker.ts')
+const IntentLauncher = require('expo-intent-launcher')
 const {
   DEFAULT_MODELS,
   getModelConfig,
   getProviderConfigIssue,
   getProviderModels,
   getXiaomiMimoOfficialBaseUrl,
+  hasCustomProviderBaseUrl,
+  isHttpProviderBaseUrl,
   mergeModelConfig,
 } = require('../src/types/index.ts')
 const {
@@ -330,11 +674,279 @@ const {
   streamChat,
   testProviderModelDetailed,
 } = require('../src/services/ai/base.ts')
+const { ProviderHttpError, classifyHttpStatus, extractProviderErrorDetail, failure, success } = require('../src/services/ai/providerOperationResult.ts')
+const {
+  dedupeModelIds,
+  fetchProviderModelConfigsFromRemote,
+  mapGoogleModels,
+  mapOpenAICompatibleModels,
+  normalizeRemoteModelId,
+} = require('../src/services/ai/providerModelDiscovery.ts')
+const {
+  getModelTestMaxTokens,
+  getModelTestReasoningEffort,
+  reduceModelTestBody,
+} = require('../src/services/ai/providerModelTest.ts')
+const {
+  isDashScopeProvider,
+  isMiniMaxProvider,
+  isMoonshotProvider,
+  isPerplexityProvider,
+  isXAIProvider,
+  shouldRequestDashScopeStreamUsage,
+} = require('../src/services/ai/providerIdentity.ts')
+const {
+  buildProviderCapabilityMatrix,
+  buildProviderCoverageBuckets,
+  describeProviderCapabilityStatus,
+  providerNeedsHostedCompatibilityWork,
+  providerSuppressesGenericModelList,
+  summarizeProviderCapabilityMatrix,
+} = require('../src/services/ai/providerCapabilityMatrix.ts')
+const {
+  buildPayloadPolicyLogData,
+  buildProviderRouteDecisionLogData,
+  buildProxyPolicyLogData,
+  buildUpstreamRequestLogData,
+  createRuntimeFallbackTrace,
+  createRuntimeGovernanceTrace,
+  createStreamModeTrace,
+  emitRuntimeGovernanceTrace,
+  runtimeLogOptions,
+  summarizePayloadPolicy,
+  summarizeProxyPolicy,
+  summarizeRouteDecision,
+  summarizeTransportSelection,
+} = require('../src/services/ai/providerRuntimeDiagnostics.ts')
+const {
+  assertProviderCircuitClosed,
+  providerCircuitKey,
+  providerRetryDelayMs,
+  recordProviderCircuitFailure,
+  recordProviderCircuitSuccess,
+  resolveProviderMaxRetries,
+  resolveProviderRequestTimeoutMs,
+} = require('../src/services/ai/providerRuntimeRetry.ts')
+const {
+  providerRuntimeError,
+  runStreamTask,
+  withCredentialGroup,
+} = require('../src/services/ai/providerRuntimeResult.ts')
+const {
+  parseProviderStreamChunk,
+  parseProviderStreamEvent,
+} = require('../src/services/ai/providerStreamParsing.ts')
+const { extractUsage, numberValue } = require('../src/services/ai/providerUsage.ts')
+const {
+  dedupeCitations,
+  extractCitationsFromText,
+  extractProviderCitations,
+  extractProviderCitationsFromSse,
+} = require('../src/services/ai/providerCitations.ts')
+const {
+  normalizeAnthropicEffort,
+  normalizeAnthropicThinking,
+  supportsAnthropicAdaptiveThinking,
+  usesAnthropicOutputConfigOnlyThinking,
+} = require('../src/services/ai/providerAnthropicThinking.ts')
+const {
+  anthropicAttachmentPart,
+  anthropicNativeWebSearchTool,
+  supportsAnthropicDynamicWebSearch,
+} = require('../src/services/ai/providerAnthropicRequest.ts')
+const {
+  extractAnthropicReplayContentBlocks,
+  mergeAnthropicReplayContentBlocks,
+  sanitizeAnthropicReplayContentBlocks,
+} = require('../src/services/ai/providerAnthropicReplay.ts')
+const {
+  normalizeAnthropicThinkingBudgetBody,
+  stripThinkingBlocks,
+} = require('../src/services/ai/providerAnthropicRectification.ts')
+const {
+  injectBedrockCache,
+  isAnthropicWireProvider,
+  isBedrockProvider,
+  optimizeBedrockThinking,
+} = require('../src/services/ai/providerRequestOptimization.ts')
+const { dedupeTraces, splitSseBuffer } = require('../src/services/ai/providerStreamUtils.ts')
 const { runResponsesWebSocketTransport } = require('../src/services/ai/transport/responsesWebSocketTransport.ts')
 const { activeSessionLeaseCount, acquireSessionLease } = require('../src/services/ai/transport/sessionLeasePool.ts')
 const { resolveProviderCapabilityManifest } = require('../src/services/ai/providerConformance.ts')
 const { resolveProviderEndpoint } = require('../src/services/ai/providerRouteAssembly.ts')
+const {
+  bedrockRuntimeInvokeModelUrl,
+  getBedrockRuntimeSupportIssue,
+  inferBedrockMantleRegion,
+  inferBedrockRuntimeRegion,
+  isBedrockMantleBaseUrl,
+  isBedrockMantleProvider,
+  isBedrockRuntimeProvider,
+  normalizeBedrockMantleBaseUrl,
+  parseBedrockRuntimeCredentials,
+  prepareBedrockRuntimeInvokeModelRequest,
+} = require('../src/services/ai/providerAwsBedrockRouting.ts')
+const { hmacSha256Hex, sha256Hex, signAwsRequestV4 } = require('../src/services/ai/providerAwsSigV4.ts')
+const {
+  isAzureOpenAILegacyDeploymentProvider,
+  isAzureOpenAIProvider,
+  isAzureOpenAIV1Provider,
+  normalizeAzureOpenAIBaseUrl,
+} = require('../src/services/ai/providerHostedRouting.ts')
+const {
+  getHostedProviderKind,
+  getHostedProviderSupportIssue,
+  isAwsBedrockHostedProvider,
+  isHostedProviderGap,
+  isVertexAIOpenAICompatibleProvider,
+  isVertexAIProvider,
+} = require('../src/services/ai/providerHostedBoundary.ts')
 const { buildProviderFallbackCandidates } = require('../src/services/ai/providerFallbackCandidates.ts')
+const {
+  fallbackProvidersForRequest,
+  providerForRuntimeFallback,
+  requiredFallbackCapabilities,
+  retryAfterMsFromFailure,
+  routeForRuntimeFallback,
+} = require('../src/services/ai/providerRuntimeFallback.ts')
+const { fetchWithTimeout, safeResponseText } = require('../src/services/ai/providerHttp.ts')
+const { asRecord, parseProviderJson, safeJsonPreview, stringValue, stringifyReasoningDetails } = require('../src/services/ai/providerJsonUtils.ts')
+const { endpointHost, resolveNonStreamingProviderEndpoint, toWebSocketUrl } = require('../src/services/ai/providerEndpointUtils.ts')
+const { fallbackModel, pickEmbeddingModel } = require('../src/services/ai/providerDefaultModels.ts')
+const { arrayBufferToBase64 } = require('../src/services/ai/providerBinaryUtils.ts')
+const { createStreamingChunkBuffer, createStreamingTraceBuffer, mergeBufferedTrace } = require('../src/services/chatStreamingBuffers.ts')
+const { formatAgentWorkflowSaveBlockedReason, resolveConfirmedPendingActionTool } = require('../src/services/chatAgentActionUtils.ts')
+const { buildSetupGuide, classifyChatError, toUserFacingError } = require('../src/services/chatErrorUtils.ts')
+const {
+  generateAnswerWithMcpToolResult,
+  resolveMcpToolRevision,
+} = require('../src/services/chatMcpToolRuntime.ts')
+const { buildMcpToolRevisionMessages, buildMcpToolRevisionSystemPrompt } = require('../src/services/chatMcpRevisionUtils.ts')
+const {
+  buildCompletedRemoteCompactRuntimeLogPayload,
+  buildCompletedRemoteCompactStateRecord,
+  buildCompletedRemoteCompactUsageInput,
+} = require('../src/services/chatRemoteCompactUtils.ts')
+const { resolveRuntimeConversation, resolveRuntimeResolutionError } = require('../src/services/chatRuntimeResolution.ts')
+const { dedupeMessageCitations, formatWebPrompt, normalizeUserContent } = require('../src/services/chatMessageUtils.ts')
+const { buildAndroidUndoPromptContext, safeChatPromptText } = require('../src/services/chatAndroidUndoPrompt.ts')
+const {
+  buildProviderNativeToolManifestTrace,
+  buildProviderNativeToolRevisionMessages,
+  buildProviderNativeToolTraceMetadata,
+  findProviderToolNameMapEntry,
+  providerSupportsNativeTools,
+  safeProviderNativeToolText,
+  usesAnthropicCompatibleToolResultMessages,
+  usesOpenAICompatibleToolResultMessages,
+} = require('../src/services/chatProviderNativeToolUtils.ts')
+const {
+  clampTraceContent,
+  completeTrace,
+  sanitizeTrace,
+  settleMessageTraces,
+  settleTrace,
+  tracesNeedingSettlement,
+} = require('../src/services/chatTraceUtils.ts')
+const {
+  addOptionalNumbers,
+  findMcpTool,
+  formatToolBlocks,
+  mergeUsage,
+  sanitizeToolRevisionAnswerText,
+  stringifyToolArguments,
+  stripMcpCallBlocks,
+} = require('../src/services/chatToolResultUtils.ts')
+const { clamp01, clampInteger } = require('../src/services/ai/providerNumberUtils.ts')
+const { getHeaders } = require('../src/services/ai/providerHeaders.ts')
+const { getWireProviderType, isAnthropicWireRequest } = require('../src/services/ai/providerWireProtocol.ts')
+const {
+  clampMaxTokens,
+  isXiaomiMimoThinkingActive,
+  normalizeTemperature,
+  normalizeXiaomiMimoThinking,
+} = require('../src/services/ai/providerRequestParameters.ts')
+const {
+  buildOpenAIResponsesReasoning,
+  getOpenAIChatMaxTokensField,
+  normalizeOpenAIReasoningEffort,
+  openAICompatibleAttachmentPart,
+  openAIResponsesAttachmentPart,
+  openAIResponsesNativeWebSearchTool,
+  shouldIncludeOpenAIResponsesEncryptedReasoning,
+  shouldReplayOpenAICompatibleReasoningContent,
+  usesOpenAIResponses,
+} = require('../src/services/ai/providerOpenAIRequest.ts')
+const {
+  isKimiSamplingLocked,
+  normalizeDashScopeThinking,
+  normalizeDashScopeThinkingBudget,
+  normalizeDeepSeekThinking,
+  normalizeKimiPreservedThinking,
+  normalizeKimiThinking,
+  normalizeMiniMaxThinking,
+  shouldRequestMiniMaxReasoningSplit,
+} = require('../src/services/ai/providerOpenAICompatibleThinking.ts')
+const {
+  normalizeGeminiThinkingBudget,
+  normalizeGeminiThinkingLevel,
+  normalizeGoogleThinkingConfig,
+  withGoogleThoughtSummaries,
+} = require('../src/services/ai/providerGoogleThinking.ts')
+const {
+  googleAttachmentPart,
+  googleNativeWebSearchTool,
+} = require('../src/services/ai/providerGoogleRequest.ts')
+const {
+  toAnthropicContentBlocks,
+  toGoogleContentParts,
+  toTextContent,
+} = require('../src/services/ai/providerContentParts.ts')
+const {
+  extractOpenAIReasoningContent,
+  extractOpenAIResponseReplayItems,
+  mergeOpenAIResponseReplayItems,
+} = require('../src/services/ai/providerOpenAIReplay.ts')
+const {
+  extractAnthropicText,
+  extractGoogleText,
+  extractOpenAIText,
+  extractResponseId,
+  stringifyOpenAIReasoningItem,
+} = require('../src/services/ai/providerResponseText.ts')
+const {
+  parseProviderBufferedStreamResponse,
+  parseProviderBufferedStreamJson,
+  parseProviderChatCompletionJson,
+  parseProviderNonStreamingResponse,
+  parseProviderNonStreamingText,
+  readProviderResponseBody,
+} = require('../src/services/ai/providerResponseParsing.ts')
+const {
+  createProviderTrace,
+  extractTracesFromJson,
+  isDoneEvent,
+  isReasoningEventType,
+  isToolEventType,
+  stableTraceId,
+  summarizeToolEvent,
+} = require('../src/services/ai/providerTraceUtils.ts')
+const {
+  executableProviderToolCalls,
+  extractProviderToolCalls,
+  mergeProviderToolCallParts,
+} = require('../src/services/ai/providerToolCalls.ts')
+const {
+  cloneProviderToolDeclarations,
+  mergeProviderToolDeclarations,
+} = require('../src/services/ai/providerToolDeclarations.ts')
+const {
+  cloneOpenAIResponsesInputItems,
+  hasOpenAIResponsesFunctionCallItem,
+  stringifyProviderToolArguments,
+  toOpenAIChatToolCall,
+  toOpenAIResponsesFunctionCallInput,
+} = require('../src/services/ai/providerToolReplay.ts')
 const { appendRuntimeLog, clearRuntimeLog, getRuntimeLogInfo, getRuntimeLogPath, readRuntimeLogText, redactRuntimeLogValue } = require('../src/services/runtimeLog.ts')
 const { buildRuntimeDiagnosticsSummary } = require('../src/services/runtimeDiagnostics.ts')
 const {
@@ -347,10 +959,18 @@ const {
   recordCompactUsage,
 } = require('../src/services/ai/compact/compactUsage.ts')
 const {
+  buildCustomSearchUrl,
   getBingCompatibleEndpoint,
   legacySearchModeForProvider,
   resolveSearchProvider,
+  safeCustomSearchEndpoint,
 } = require('../src/services/searchPolicy.ts')
+const {
+  MAX_IMPORT_JSON_FILE_BYTES,
+  MAX_IMPORT_TEXT_FILE_BYTES,
+  deleteTemporaryImportCopy,
+  readUtf8ImportFile,
+} = require('../src/services/fileImportGuards.ts')
 const {
   applySkillStack,
   createBaseSkill,
@@ -358,12 +978,20 @@ const {
   importSkill,
   renderSkillTemplate,
 } = require('../src/services/skills.ts')
+const { exportToJsonFile, importFromJsonFileDetailed } = require('../src/services/portableData.ts')
 const {
   builtinMcpServer,
   callMcpTool,
+  listMcpServers,
   truncateToolBlocks,
+  refreshMcpManifest,
 } = require('../src/services/mcp.ts')
+const { MCP_TOOL_CALL_TAG, parseMcpToolRequest } = require('../src/services/mcpToolRequest.ts')
+const { buildMcpContextPrompt, buildMcpManifestTrace, collectResolvedMcpTools } = require('../src/services/chatMcpContextUtils.ts')
 const { buildProviderActivationTestCandidatesForTest, summarizeProviderActivation, syncAndTestProvider } = require('../src/services/providerActivation.ts')
+const { ACTIVATION_STAGE_PROGRESS, activationItemProgress, aggregateActivationItems, createActivationItems, patchActivationItem } = require('../src/services/providerActivationJob.ts')
+const { countDetectedProviderImports, formatProviderNameList } = require('../src/services/providerImportSummary.ts')
+const { compareProviders, filterAndSortProviders, providerMatchesModelFilter } = require('../src/services/providerSettingsList.ts')
 const {
   clearHistoricalInjectedProviderModels,
   clearHistoricalInjectedGroupModels,
@@ -377,8 +1005,14 @@ const {
 } = require('../src/utils/providerModels.ts')
 const { parseModelEntries } = require('../src/utils/text.ts')
 const { summarizeWorkArtifact } = require('../src/utils/workArtifact.ts')
+const { isAllowedWebViewNavigation, safeHttpUrl } = require('../src/utils/sourceUrlSafety.ts')
+const { isAllowedAndroidApkUriForTest, sanitizeAndroidApkUriForTest } = require('../src/services/androidUriPolicy.ts')
 const { getReasoningEffortOptions, providerSupportsReasoning } = require('../src/utils/modelReasoning.ts')
 const { resolveAgentProviderToolTarget } = require('../src/services/agent/agentProviderToolAdapter.ts')
+const { resolveAgentTool } = require('../src/services/agent/agentToolRegistry.ts')
+const { validateAgentWorkflowDefinition } = require('../src/services/agent/agentWorkflowDefinitions.ts')
+const { buildAgentWorkflowSkillSavePreview, createAgentWorkflowSkillSuggestionFromRun } = require('../src/services/agent/agentWorkflowSkills.ts')
+const { formatAgentToolRequestIdentity } = require('../src/services/agent/agentToolIdentityUtils.ts')
 const {
   DEFAULT_ONBOARDING_COMPANION_MODE,
   getOnboardingCompanionProfile,
@@ -387,6 +1021,25 @@ const {
   isOnboardingSystemPrompt,
 } = require('../src/utils/onboardingProfile.ts')
 const { buildMemoryReviewSummary, filterPendingMemoriesForReview } = require('../src/utils/memoryReview.ts')
+const {
+  capabilityLabel,
+  formatKnowledgeMeta,
+  formatMemoryMeta,
+  formatMemoryTime,
+  memoryReviewFocusKey,
+  memorySourceKindKey,
+  shortenKnowledgeSource,
+} = require('../src/services/contextAssetFormatters.ts')
+const {
+  filterAndSortKnowledgeDocuments,
+  filterAndSortMemories,
+  hasKnowledgeAssetFilters,
+  hasMemoryAssetFilters,
+  knowledgeAssetEmptyMessage,
+  memoryAssetEmptyMessage,
+  sortKnowledgeDocuments,
+  sortMemories,
+} = require('../src/services/contextAssetFilters.ts')
 const {
   buildMem0AddPayload,
   exportMemoriesAsMem0,
@@ -405,11 +1058,14 @@ const {
   splitTextIntoSentenceChunks,
   verifyRagGeneration,
 } = require('../src/services/rag.ts')
-const { classifyMemoryCandidateForTest } = require('../src/services/context.ts')
-const { exportContextSnapshot, importContextSnapshot, searchMemories, updateMemoryStatus } = require('../src/services/contextStore.ts')
+const { classifyMemoryCandidateForTest, importKnowledgeFile, importKnowledgePlainText, retrieveContext, extractMemories } = require('../src/services/context.ts')
+const { executeAndroidDeviceTool, listAndroidDeviceToolManifests } = require('../src/services/androidDeviceTools.ts')
+const { exportContextSnapshot, importContextSnapshot, listKnowledgeDocuments, searchKnowledge, searchMemories, updateMemoryStatus } = require('../src/services/contextStore.ts')
+const { searchKnowledgeWithFallback, searchAgenticKnowledgeWithScope } = require('../src/services/knowledgeRetrievalRuntime.ts')
 const { runRagGoldEvaluation } = require('../src/services/ragEvaluation.ts')
 const {
   LOCAL_EMBEDDING_MODELS,
+  deleteDownloadedLocalEmbeddingModel,
   downloadLocalEmbeddingModel,
   formatModelBytes,
   listLocalEmbeddingModelViews,
@@ -418,6 +1074,8 @@ const {
   sha256ChunksForTest,
   verifyLocalEmbeddingModel,
 } = require('../src/services/localEmbeddingModels.ts')
+const { isDownloadableLocalModel, localCapabilityEnabled, splitLocalModelViews } = require('../src/services/contextLocalModelRules.ts')
+const { lazyEmbedding } = require('../src/services/lazyEmbedding.ts')
 const {
   checkLatestApkRelease,
   compareReleaseToSnapshotForTest,
@@ -426,13 +1084,40 @@ const {
   selectApkAssetForTest,
   shouldRecordApkUpdateCheck,
 } = require('../src/services/appUpdates.ts')
+const { clearStagedApkDownloads } = require('../src/services/apkInstallCache.ts')
+const { logRenderError, logStorageOperationFailure } = require('../src/services/runtimeHealthLog.ts')
 const {
   getProviderModelDisplayCandidates,
 } = require('../src/services/ai/policy/providerModelAccess.ts')
 const modelCatalog = require('../assets/models/catalog.json')
-const { exportAllData, importAllData, importAllDataDetailed, loadData } = require('../src/services/storage.ts')
+const { pickDocument, pickImage, takePhoto } = require('../src/services/attachment.ts')
+const {
+  attachmentHasPayload,
+  filterSendableAttachments,
+  sanitizeAttachmentsForPersistence,
+} = require('../src/services/attachmentContract.ts')
+const { localDataStore } = require('../src/services/localDataStore.ts')
+const { speakText, stopSpeaking, transcribeLocalAudio } = require('../src/services/speech.ts')
+const { clearAllData, exportAllData, importAllData, importAllDataDetailed, loadData, saveData } = require('../src/services/storage.ts')
+const { buildEstimatedUsage, estimateMessageTokens, estimateTextTokens } = require('../src/services/tokenUsage.ts')
 const { useChatStore } = require('../src/store/chatStore.ts')
 const { useSettingsStore } = require('../src/store/settingsStore.ts')
+const {
+  clearActiveStream,
+  getActiveStream,
+  registerStreamAborter,
+  setActiveStream,
+} = require('../src/services/chatStreamLifecycle.ts')
+const {
+  saveCompactState,
+  listActiveCompactStates,
+  invalidateAllCompactStates,
+  invalidateCompactStatesByProvider,
+} = require('../src/services/ai/compact/compactStateStore.ts')
+const {
+  loadProviderHealthSnapshot,
+  mergeProviderHealthRecords,
+} = require('../src/services/ai/providerHealthStore.ts')
 
 const FAKE_KEY_A = 'token-fake-alpha-1234567890'
 const FAKE_KEY_B = 'token-fake-beta-1234567890'
@@ -463,9 +1148,18 @@ function resetLocalModelFileMocks() {
   localFileReadRequests.length = 0
   localFileOperations.length = 0
   launchedIntents.length = 0
+  sharedFiles.length = 0
+  nextDocumentPickerResult = null
+  nextImageLibraryResult = null
+  nextCameraResult = null
+  nextManipulateResultFactory = null
+  nextSqliteOpenError = null
+  nextReadDirectoryEntries = null
+  sharingAvailable = false
   supportedCpuArchitectures.splice(0, supportedCpuArchitectures.length, 'arm64-v8a', 'armeabi-v7a')
   expoDeviceModuleAvailable = true
   reactNativePlatform.OS = 'test'
+  resetAsyncStorageFaults()
 }
 
 const WORK_ARTIFACT_TEMPLATE_GATES = {
@@ -1013,6 +1707,14 @@ function assertReleaseVersionsAligned() {
     'ChatWorkspace does not import the SQLite-backed local data store for display metrics'
   )
   assert.ok(
+    chatWorkspaceSource.includes("@/services/providerModelHealth"),
+    'ChatWorkspace routes model health checks through the provider model health boundary'
+  )
+  assert.ok(
+    !chatWorkspaceSource.includes("@/services/ai/base"),
+    'ChatWorkspace does not import provider transport test helpers directly'
+  )
+  assert.ok(
     chatWorkspaceSource.includes("@/utils/providerModels"),
     'ChatWorkspace reads model family metadata through the provider model utility boundary'
   )
@@ -1299,6 +2001,11 @@ async function assertRuntimeLogFileBehavior() {
     providerId: 'openai-main',
     model: 'gpt-5.2',
     authorization: 'Bearer abcdefghijklmnopqrstuvwxyz123456',
+    route: {
+      endpoint: `https://generativelanguage.googleapis.com/v1beta/models/gemini-3.5-flash:streamGenerateContent?alt=sse&key=${FAKE_KEY_A}`,
+      fallback: 'https://proxy.example/chat?token=runtime-token-secret',
+    },
+    headerText: 'Authorization: Basic QWxhZGRpbjpvcGVuIHNlc2FtZQ==; proxy-authorization: bearer abcdefghijklmnopqrstuvwxyz123456',
     body: JSON.stringify({ model: 'gpt-5.2', input: [{ content: 'secret prompt text' }] }),
   }, { enabled: true, maxBytes: 4096 })
   const content = localFileFixtures.get(uri)?.toString('utf8') ?? ''
@@ -1306,8 +2013,12 @@ async function assertRuntimeLogFileBehavior() {
   assert.equal(entry.schema, 'islemind.runtime-log.v1', 'runtime log writes JSONL schema')
   assert.equal(entry.event, 'upstream.request', 'runtime log writes event family')
   assert.equal(entry.authorization, '[redacted]', 'runtime log file redacts authorization')
+  assert.equal(entry.route.endpoint, 'https://generativelanguage.googleapis.com/v1beta/models/gemini-3.5-flash:streamGenerateContent?alt=sse&key=[redacted]', 'runtime log file redacts sensitive query-string API keys')
+  assert.equal(entry.route.fallback, 'https://proxy.example/chat?token=[redacted]', 'runtime log file redacts sensitive query-string token parameters')
+  assert.equal(entry.headerText, 'Authorization: Basic [redacted]; proxy-authorization: bearer [redacted]', 'runtime log file redacts header-like authorization strings')
   assert.deepEqual(entry.body.keys, ['input', 'model'], 'runtime log file stores payload keys only')
   assert.ok(!content.includes('secret prompt text'), 'runtime log file omits raw prompt text')
+  assert.ok(!content.includes(FAKE_KEY_A), 'runtime log file omits raw query-string API key values')
   localFileFixtures.set(uri, Buffer.from(`${'x'.repeat(5000)}\n`))
   await appendRuntimeLog('compact.usage', { providerId: 'openai-main', status: 'completed' }, { enabled: true, maxBytes: 4096 })
   assert.ok((localFileFixtures.get(uri)?.length ?? 0) <= 4096, 'runtime log rotation respects max bytes')
@@ -1318,11 +2029,46 @@ async function assertRuntimeLogFileBehavior() {
   assert.equal(info.exists, true, 'runtime log info detects the current log file')
   assert.equal(info.path, uri, 'runtime log info returns the same path')
   assert.ok((await readRuntimeLogText()).includes('compact.usage'), 'runtime log tail reads recent events')
+  localFileFixtures.set(uri, Buffer.from([
+    JSON.stringify({ index: 1, note: 'x'.repeat(13000) }),
+    JSON.stringify({ index: 2, event: 'upstream.request' }),
+    JSON.stringify({ index: 3, event: 'upstream.response' }),
+    '',
+  ].join('\n'), 'utf8'))
+  const parsedTailEntries = (await readRuntimeLogText())
+    .trim()
+    .split('\n')
+    .filter(Boolean)
+    .map((line) => JSON.parse(line))
+  assert.deepEqual(parsedTailEntries.map((entry) => entry.index), [2, 3], 'runtime log tail drops truncated leading fragments and keeps full JSONL lines')
   await clearRuntimeLog()
   assert.equal(localFileFixtures.has(uri), false, 'runtime log clear deletes the log file')
+
+  await Promise.all([
+    appendRuntimeLog('upstream.request', { providerId: 'openai-main', model: 'gpt-5.2', requestId: 'req-1' }, { enabled: true, maxBytes: 4096 }),
+    appendRuntimeLog('upstream.response', { providerId: 'openai-main', model: 'gpt-5.2', requestId: 'req-1', status: 200 }, { enabled: true, maxBytes: 4096 }),
+  ])
+  const concurrentEntries = (localFileFixtures.get(uri)?.toString('utf8') ?? '')
+    .trim()
+    .split('\n')
+    .filter(Boolean)
+    .map((line) => JSON.parse(line))
+  assert.deepEqual(
+    concurrentEntries.map((entry) => entry.event),
+    ['upstream.request', 'upstream.response'],
+    'runtime log serializes concurrent appends without dropping entries'
+  )
+
+  const appendThenClear = appendRuntimeLog('compact.usage', { providerId: 'openai-main', status: 'completed' }, { enabled: true, maxBytes: 4096 })
+  const clearWhileAppendPending = clearRuntimeLog()
+  await Promise.all([appendThenClear, clearWhileAppendPending])
+  assert.equal(localFileFixtures.has(uri), false, 'runtime log clear waits for pending writes before deleting the file')
 }
 
 async function assertRuntimeDiagnosticsBehavior() {
+  await clearRuntimeLog()
+  await appendRuntimeLog('provider.conformance', { protocol: 'openai-responses', providerId: 'openai-main' }, { enabled: true, maxBytes: 4096 })
+  await appendRuntimeLog('transport.fallback', { from: 'responses_websocket', to: 'http_sse', providerId: 'openai-main' }, { enabled: true, maxBytes: 4096 })
   clearCompactUsageRecords()
   recordCompactUsage({ mode: 'auto', providerId: 'openai-main', model: 'gpt-5.2', inputTokens: 1000 })
   recordCompactUsage({ mode: 'auto', providerId: 'openai-main', model: 'gpt-5.2', inputTokens: 1000, outputTokens: 120, estimatedSavedTokens: 430 })
@@ -1331,6 +2077,7 @@ async function assertRuntimeDiagnosticsBehavior() {
     providerId: 'fallback',
     model: 'manual-model',
     fallbackLocal: true,
+    decisionReason: 'below_threshold',
     localSourceTokens: 800,
     localCompressedTokens: 200,
     localEstimatedSavedTokens: 600,
@@ -1412,6 +2159,8 @@ async function assertRuntimeDiagnosticsBehavior() {
   assert.equal(summary.compact.remoteRequestCount, 1, 'runtime diagnostics counts remote compact request attempts')
   assert.equal(summary.compact.localCompressionCount, 2, 'runtime diagnostics counts every local compact record')
   assert.equal(summary.compact.localFallbackCount, 1, 'runtime diagnostics keeps local compact fallback records separate')
+  assert.equal(summary.compact.readyProviders, 1, 'runtime diagnostics counts ready compact providers')
+  assert.equal(summary.compact.fallbackReasons.belowThreshold, 1, 'runtime diagnostics counts local fallback below-threshold decisions')
   assert.equal(summary.compact.localEstimatedSavedTokens, 850, 'runtime diagnostics sums all local compact saved tokens separately')
   assert.equal(summary.compact.localAverageCompressionRatio, 0.375, 'runtime diagnostics reports average local compact compression ratio')
   assert.equal(summary.compact.completedCount, 1, 'runtime diagnostics counts completed remote compact records')
@@ -1424,9 +2173,621 @@ async function assertRuntimeDiagnosticsBehavior() {
   assert.equal(summary.providers.ready, 1, 'runtime diagnostics counts ready providers')
   assert.equal(summary.providers.degraded, 1, 'runtime diagnostics counts degraded providers')
   assert.equal(summary.providers.aliasProviders, 1, 'runtime diagnostics counts alias providers')
+  assert.equal(summary.responses.capableProviders, 1, 'runtime diagnostics counts responses-capable providers')
+  assert.equal(summary.responses.readyProviders, 1, 'runtime diagnostics counts ready responses providers')
+  assert.equal(summary.responses.activeProtocols['openai-responses'], 1, 'runtime diagnostics summarizes observed active response protocols from runtime logs')
+  assert.equal(summary.websocket.fallbackCount, 1, 'runtime diagnostics counts observed WebSocket fallbacks from runtime logs')
+  assert.deepEqual(
+    summary.capabilityMatrix.hostingProfiles,
+    { official: 1, aggregator: 0, relay: 1, 'local-runtime': 0, 'cloud-hosted': 0 },
+    'runtime diagnostics reports provider hosting-profile coverage buckets'
+  )
+  assert.equal(summary.capabilityMatrix.supportLevels.partial, 2, 'runtime diagnostics reports support-level summaries')
+  assert.equal(summary.capabilityMatrix.hostedGapProviders, 0, 'runtime diagnostics reports zero hosted gaps when no hosted providers are configured')
+  assert.equal(summary.capabilityMatrix.genericModelListSuppressedProviders, 1, 'runtime diagnostics reports providers that intentionally suppress generic model-list sync')
+  const invalidProxySummary = await buildRuntimeDiagnosticsSummary({
+    providers: [openAiPreset, customProvider],
+    settings: {
+      transportMode: 'websocket',
+      remoteCompactMode: 'auto',
+      payloadPolicyMode: 'block',
+      proxyMode: 'custom-base-url',
+      proxyBaseUrl: 'file:///tmp/proxy',
+      providerAllowlist: ['openai-*'],
+      modelBlocklist: ['bad-*'],
+      runtimeLogEnabled: true,
+      runtimeLogMaxBytes: 4096,
+    },
+  })
+  assert.equal(invalidProxySummary.proxy.applied, false, 'runtime diagnostics rejects non-web custom proxy base URLs')
+  assert.equal(invalidProxySummary.proxy.reason, 'invalid_custom_base_url', 'runtime diagnostics records invalid custom proxy base URLs')
+
+  const hostedSummary = await buildRuntimeDiagnosticsSummary({
+    providers: [
+      openAiPreset,
+      {
+        id: 'azure',
+        type: 'openai-compatible',
+        name: 'Azure OpenAI',
+        baseUrl: 'https://example.openai.azure.com/openai/v1',
+        apiKey: '',
+        models: ['gpt-4.1'],
+        enabled: true,
+        capabilities: { ...customProvider.capabilities, modelList: true },
+      },
+    ],
+    settings: {
+      transportMode: 'auto',
+      remoteCompactMode: 'auto',
+      payloadPolicyMode: 'warn',
+      proxyMode: 'off',
+      runtimeLogEnabled: false,
+      runtimeLogMaxBytes: 4096,
+    },
+  })
+  assert.equal(hostedSummary.capabilityMatrix.hostingProfiles['cloud-hosted'], 1, 'runtime diagnostics classifies hosted providers separately')
+  assert.equal(hostedSummary.capabilityMatrix.plannedProviders, 0, 'runtime diagnostics does not count Azure OpenAI v1 as a hosted implementation gap')
+  assert.equal(hostedSummary.capabilityMatrix.hostedGapProviders, 0, 'runtime diagnostics keeps hosted gaps for providers without a supported hosted route')
+
+  const hostedGapSummary = await buildRuntimeDiagnosticsSummary({
+    providers: [
+      openAiPreset,
+      {
+        id: 'bedrock',
+        type: 'anthropic',
+        name: 'AWS Bedrock',
+        presetId: 'aws-bedrock',
+        baseUrl: 'https://bedrock-runtime.us-east-1.amazonaws.com',
+        apiKey: '',
+        models: ['anthropic.claude-3-7-sonnet'],
+        enabled: true,
+      },
+      {
+        id: 'vertex-native',
+        type: 'openai-compatible',
+        name: 'Vertex AI',
+        presetId: 'vertex-ai',
+        baseUrl: 'https://us-central1-aiplatform.googleapis.com',
+        apiKey: '',
+        models: ['gemini-2.5-pro'],
+        enabled: true,
+      },
+      {
+        id: 'vertex-openai',
+        type: 'openai-compatible',
+        name: 'Vertex AI OpenAI',
+        presetId: 'vertex-ai',
+        baseUrl: 'https://us-central1-aiplatform.googleapis.com/v1/projects/islemind-dev/locations/us-central1/endpoints/openapi',
+        apiKey: '',
+        models: ['gemini-2.5-pro'],
+        enabled: true,
+      },
+    ],
+    settings: {
+      transportMode: 'auto',
+      remoteCompactMode: 'auto',
+      payloadPolicyMode: 'warn',
+      proxyMode: 'off',
+      runtimeLogEnabled: false,
+      runtimeLogMaxBytes: 4096,
+    },
+  })
+  assert.equal(hostedGapSummary.capabilityMatrix.hostingProfiles['cloud-hosted'], 3, 'runtime diagnostics counts Bedrock and Vertex AI as hosted providers')
+  assert.equal(hostedGapSummary.capabilityMatrix.plannedProviders, 2, 'runtime diagnostics counts hosted providers that still need dedicated auth and path implementation')
+  assert.equal(hostedGapSummary.capabilityMatrix.hostedGapProviders, 2, 'runtime diagnostics reports Bedrock and native Vertex AI hosted gaps explicitly')
+}
+
+async function assertRuntimeDiagnosticsFailurePath() {
+  const settingsScreenSource = fs.readFileSync(path.join(root, 'src/components/main/SettingsScreenContent.tsx'), 'utf8')
+  assert.ok(settingsScreenSource.includes('runtimeDiagnosticsRefreshFailed'), 'settings diagnostics exposes refresh failure feedback')
+  assert.ok(settingsScreenSource.includes('runtimeLogCopyFailed'), 'settings diagnostics exposes copy failure feedback')
+  assert.ok(settingsScreenSource.includes('runtimeLogShareFailed'), 'settings diagnostics exposes share failure feedback')
+  assert.ok(settingsScreenSource.includes('runtimeLogClearFailed'), 'settings diagnostics exposes clear failure feedback')
+  assert.ok(settingsScreenSource.includes('const logInfo = await getRuntimeLogInfo()'), 'settings diagnostics checks runtime log file metadata before sharing')
+  assert.ok(settingsScreenSource.includes('if (!logInfo.exists || logInfo.size <= 0)'), 'settings diagnostics falls back to copy when the runtime log file is missing or empty')
+  assert.ok(settingsScreenSource.includes('finally {'), 'settings diagnostics resets refreshing state in a finally block')
+}
+
+async function assertAppUpdateRuntimeLogging() {
+  const runtimeLogPath = getRuntimeLogPath()
+  localFileFixtures.delete(runtimeLogPath)
+  resetLocalModelFileMocks()
+  await saveData('SETTINGS', { runtimeLogEnabled: true, runtimeLogMaxBytes: 4096 })
+  reactNativePlatform.OS = 'android'
+  const originalFetchForUpdateLogging = global.fetch
+  global.fetch = async () => ({
+    ok: false,
+    status: 429,
+    json: async () => ({}),
+  })
+  try {
+    const result = await checkLatestApkRelease()
+    assert.equal(result.status, 'error', 'APK update logging test reaches an error result')
+    const entries = (localFileFixtures.get(runtimeLogPath)?.toString('utf8') ?? '')
+      .trim()
+      .split('\n')
+      .filter(Boolean)
+      .map((line) => JSON.parse(line))
+    const updateEntry = entries.find((entry) => entry.event === 'app.update' && entry.phase === 'check')
+    assert.ok(updateEntry, 'APK update checks append runtime log entries')
+    assert.equal(updateEntry.status, 'error', 'APK update runtime log records check status')
+    assert.equal(updateEntry.reason, 'rate_limited', 'APK update runtime log records failure reason')
+  } finally {
+    global.fetch = originalFetchForUpdateLogging
+    reactNativePlatform.OS = 'test'
+  }
+
+  localFileFixtures.delete(runtimeLogPath)
+  resetLocalModelFileMocks()
+  await saveData('SETTINGS', { runtimeLogEnabled: false, runtimeLogMaxBytes: 4096 })
+  reactNativePlatform.OS = 'android'
+  const originalFetchForDisabledUpdateLogging = global.fetch
+  global.fetch = async () => ({
+    ok: false,
+    status: 429,
+    json: async () => ({}),
+  })
+  try {
+    const disabledResult = await checkLatestApkRelease()
+    assert.equal(disabledResult.status, 'error', 'APK update checks keep the same error result when runtime logs are disabled')
+    assert.equal(localFileFixtures.has(runtimeLogPath), false, 'APK update checks stay quiet when runtime logs are disabled')
+  } finally {
+    global.fetch = originalFetchForDisabledUpdateLogging
+    reactNativePlatform.OS = 'test'
+  }
+}
+
+async function assertStorageFailureRuntimeLogging() {
+  const runtimeLogPath = getRuntimeLogPath()
+  localFileFixtures.delete(runtimeLogPath)
+  memoryStorage.clear()
+  resetAsyncStorageFaults()
+  await saveData('SETTINGS', { runtimeLogEnabled: true, runtimeLogMaxBytes: 4096 })
+  asyncStorageFaults.setItem = new Error('storage token=super-secret-value')
+  try {
+    await saveData('PROVIDERS', [{ id: 'broken' }])
+  } finally {
+    resetAsyncStorageFaults()
+  }
+  const entries = (localFileFixtures.get(runtimeLogPath)?.toString('utf8') ?? '')
+    .trim()
+    .split('\n')
+    .filter(Boolean)
+    .map((line) => JSON.parse(line))
+  const storageEntry = entries.find((entry) => entry.event === 'storage.operation' && entry.operation === 'save')
+  assert.ok(storageEntry, 'storage persistence failures append runtime log entries')
+  assert.equal(storageEntry.storageKey, 'PROVIDERS', 'storage persistence log records the storage key')
+  assert.equal(storageEntry.status, 'error', 'storage persistence log records error status')
+  assert.equal(storageEntry.errorText, 'storage token=[redacted]', 'storage persistence log redacts sensitive error text')
+
+  localFileFixtures.delete(runtimeLogPath)
+  memoryStorage.clear()
+  resetAsyncStorageFaults()
+  await saveData('SETTINGS', { runtimeLogEnabled: false, runtimeLogMaxBytes: 4096 })
+  await logStorageOperationFailure({
+    operation: 'save',
+    storageKey: 'PROVIDERS',
+    error: new Error('storage token=super-secret-value'),
+  })
+  assert.equal(localFileFixtures.has(runtimeLogPath), false, 'storage persistence failures stay quiet when runtime logs are disabled')
+}
+
+async function assertRenderGuardRuntimeLogging() {
+  const runtimeLogPath = getRuntimeLogPath()
+  localFileFixtures.delete(runtimeLogPath)
+  memoryStorage.clear()
+  await saveData('SETTINGS', { runtimeLogEnabled: true, runtimeLogMaxBytes: 4096 })
+  await logRenderError({
+    label: 'message-bubble',
+    compact: true,
+    fallbackText: 'assistant raw output',
+    componentStack: '\n at MessageBubble',
+    error: new Error('render token=super-secret-value'),
+  })
+  const entries = (localFileFixtures.get(runtimeLogPath)?.toString('utf8') ?? '')
+    .trim()
+    .split('\n')
+    .filter(Boolean)
+    .map((line) => JSON.parse(line))
+  const renderEntry = entries.find((entry) => entry.event === 'render.error')
+  assert.ok(renderEntry, 'render guard failures append runtime log entries')
+  assert.equal(renderEntry.label, 'message-bubble', 'render guard log records the failing label')
+  assert.equal(renderEntry.compact, true, 'render guard log records compact state')
+  assert.equal(renderEntry.fallbackTextPresent, true, 'render guard log records fallback availability without storing raw fallback text')
+  assert.equal(renderEntry.errorText, 'render token=[redacted]', 'render guard log redacts sensitive render errors')
+  assert.ok(!JSON.stringify(renderEntry).includes('assistant raw output'), 'render guard log does not persist raw fallback content')
+  const renderGuardSource = fs.readFileSync(path.join(root, 'src/components/ui/RenderGuard.tsx'), 'utf8')
+  assert.ok(renderGuardSource.includes('void logRenderError({'), 'RenderGuard routes componentDidCatch failures into runtime logging')
+  assert.ok(renderGuardSource.includes('componentStack: info.componentStack'), 'RenderGuard runtime log keeps component stack context')
+
+  localFileFixtures.delete(runtimeLogPath)
+  memoryStorage.clear()
+  await saveData('SETTINGS', { runtimeLogEnabled: false, runtimeLogMaxBytes: 4096 })
+  await logRenderError({
+    label: 'message-bubble',
+    compact: true,
+    fallbackText: 'assistant raw output',
+    componentStack: '\n at MessageBubble',
+    error: new Error('render token=super-secret-value'),
+  })
+  assert.equal(localFileFixtures.has(runtimeLogPath), false, 'render guard failures stay quiet when runtime logs are disabled')
+}
+
+async function assertMcpRuntimeLogging() {
+  const runtimeLogPath = getRuntimeLogPath()
+  localFileFixtures.delete(runtimeLogPath)
+  memoryStorage.clear()
+  await saveData('SETTINGS', { runtimeLogEnabled: true, runtimeLogMaxBytes: 4096 })
+  const invalidRuntimeMcpServer = {
+    id: 'mcp-runtime-invalid',
+    name: 'Runtime Invalid MCP',
+    url: 'islemind://external-mcp',
+    transport: 'sse',
+    enabled: true,
+    status: 'connected',
+    manifestTtlMs: 1000,
+    tools: [{ name: 'read_remote_fixture', permission: 'read-only', enabled: true, serverId: 'mcp-runtime-invalid' }],
+    resources: [],
+    prompts: [],
+    approvedToolNames: ['read_remote_fixture'],
+    createdAt: 1,
+    updatedAt: 1,
+  }
+  const originalFetchForInvalidMcp = global.fetch
+  try {
+    global.fetch = async () => {
+      throw new Error('invalid MCP URLs must not reach fetch')
+    }
+    const invalidMcpCallResult = await callMcpTool(invalidRuntimeMcpServer, 'read_remote_fixture', {})
+    assert.equal(invalidMcpCallResult.ok, false, 'MCP runtime rejects invalid non-web server URLs before execution')
+    assert.equal(invalidMcpCallResult.trace.status, 'skipped', 'invalid MCP runtime URLs fail closed before tool execution')
+    const invalidMcpRefreshResult = await refreshMcpManifest(invalidRuntimeMcpServer)
+    assert.equal(invalidMcpRefreshResult.status, 'error', 'manifest refresh rejects invalid non-web MCP server URLs before fetch')
+  } finally {
+    global.fetch = originalFetchForInvalidMcp
+  }
+  const entries = (localFileFixtures.get(runtimeLogPath)?.toString('utf8') ?? '')
+    .trim()
+    .split('\n')
+    .filter(Boolean)
+    .map((line) => JSON.parse(line))
+  const toolCallEntry = entries.find((entry) => entry.event === 'mcp.operation' && entry.phase === 'tool_call' && entry.detail === 'non_http_server_url')
+  assert.ok(toolCallEntry, 'MCP tool failures append runtime log entries')
+  assert.equal(toolCallEntry.status, 'skipped', 'MCP tool runtime log records skipped boundary failures')
+  assert.equal(toolCallEntry.serverId, 'mcp-runtime-invalid', 'MCP tool runtime log records the server id')
+  const refreshEntry = entries.find((entry) => entry.event === 'mcp.operation' && entry.phase === 'manifest_refresh' && entry.detail === 'non_http_server_url')
+  assert.ok(refreshEntry, 'MCP manifest refresh failures append runtime log entries')
+  assert.equal(refreshEntry.status, 'skipped', 'MCP manifest runtime log records skipped boundary failures')
+
+  localFileFixtures.delete(runtimeLogPath)
+  memoryStorage.clear()
+  await saveData('SETTINGS', { runtimeLogEnabled: false, runtimeLogMaxBytes: 4096 })
+  const originalFetchForDisabledMcp = global.fetch
+  try {
+    global.fetch = async () => {
+      throw new Error('invalid MCP URLs must not reach fetch')
+    }
+    await callMcpTool(invalidRuntimeMcpServer, 'read_remote_fixture', {})
+    await refreshMcpManifest(invalidRuntimeMcpServer)
+  } finally {
+    global.fetch = originalFetchForDisabledMcp
+  }
+  assert.equal(localFileFixtures.has(runtimeLogPath), false, 'MCP runtime health events stay quiet when runtime logs are disabled')
+}
+
+async function assertContextRuntimeLogging() {
+  resetLocalModelFileMocks()
+  const runtimeLogPath = getRuntimeLogPath()
+  localFileFixtures.delete(runtimeLogPath)
+  memoryStorage.clear()
+  await saveData('SETTINGS', { runtimeLogEnabled: true, runtimeLogMaxBytes: 4096 })
+
+  nextSqliteOpenError = new Error('context init token=super-secret-value')
+  const retrieved = await retrieveContext(
+    { id: 'conv-1', title: 'Test', providerId: 'provider-1', model: 'model-1', messages: [], createdAt: 1, updatedAt: 1 },
+    { id: 'msg-1', role: 'user', content: 'hello', timestamp: 1, status: 'done' }
+  )
+  assert.deepEqual(retrieved, { sources: [], prompt: '' }, 'context retrieval still fails closed when initialization fails')
+
+  nextDocumentPickerResult = {
+    canceled: false,
+    assets: [{
+      uri: 'file:///tmp/broken-knowledge.txt',
+      name: 'broken-knowledge.txt',
+      mimeType: 'text/plain',
+      size: 24,
+    }],
+  }
+  localFileFixtures.set('file:///tmp/broken-knowledge.txt', Buffer.from('broken import text', 'utf8'))
+  nextSqliteOpenError = new Error('knowledge import token=super-secret-value')
+  await assert.rejects(
+    () => importKnowledgeFile(),
+    /knowledge import token=super-secret-value/,
+    'knowledge import still surfaces fatal initialization failures'
+  )
+
+  await saveData('SETTINGS', { runtimeLogEnabled: true, runtimeLogMaxBytes: 4096, memoryEnabled: true })
+  const originalFetchForContext = global.fetch
+  try {
+    global.fetch = async () => { throw new Error('memory extract token=super-secret-value') }
+    const extracted = await extractMemories(
+      'conv-2',
+      [
+        { id: 'msg-u1', role: 'user', content: 'I prefer terse answers.', timestamp: 1, status: 'done' },
+        { id: 'msg-a1', role: 'assistant', content: 'ok', timestamp: 2, status: 'done' },
+      ],
+      {
+        id: 'provider-openai',
+        type: 'openai',
+        name: 'OpenAI',
+        apiKey: FAKE_KEY_A,
+        models: ['gpt-5.2'],
+        enabled: true,
+      },
+      'gpt-5.2'
+    )
+    assert.ok(extracted.some((item) => item.includes('用户偏好')), 'deterministic memory extraction still returns fallback items when model extraction fails')
+  } finally {
+    global.fetch = originalFetchForContext
+  }
+
+  const entries = (localFileFixtures.get(runtimeLogPath)?.toString('utf8') ?? '')
+    .trim()
+    .split('\n')
+    .filter(Boolean)
+    .map((line) => JSON.parse(line))
+  const initEntry = entries.find((entry) => entry.event === 'context.operation' && entry.phase === 'initialize' && entry.detail === 'retrieve_context')
+  assert.ok(initEntry, 'context initialization failures append runtime log entries')
+  assert.equal(initEntry.status, 'error', 'context initialization runtime log records error status')
+  assert.equal(initEntry.errorText, 'context init token=[redacted]', 'context initialization runtime log redacts sensitive error text')
+  const importEntry = entries.find((entry) => entry.event === 'context.operation' && entry.phase === 'knowledge_import' && entry.detail === 'import_knowledge_file_failed')
+  assert.ok(importEntry, 'context knowledge import failures append runtime log entries')
+  assert.equal(importEntry.title, 'broken-knowledge.txt', 'context knowledge import runtime log records the source title')
+  assert.equal(importEntry.errorText, 'knowledge import token=[redacted]', 'context knowledge import runtime log redacts sensitive error text')
+  const memoryEntry = entries.find((entry) => entry.event === 'context.operation' && entry.phase === 'memory_extract' && entry.detail === 'model_extraction_failed')
+  assert.ok(memoryEntry, 'context memory extraction failures append runtime log entries')
+  assert.equal(memoryEntry.providerId, 'provider-openai', 'context memory extraction runtime log records provider identity')
+
+  localFileFixtures.delete(runtimeLogPath)
+  memoryStorage.clear()
+  await saveData('SETTINGS', { runtimeLogEnabled: false, runtimeLogMaxBytes: 4096, memoryEnabled: true })
+
+  const contextStoreModule = require('../src/services/contextStore.ts')
+  const originalInitializeContextStore = contextStoreModule.initializeContextStore
+  try {
+    contextStoreModule.initializeContextStore = async () => {
+      throw new Error('context init token=super-secret-value')
+    }
+    const disabledRetrieved = await retrieveContext(
+      { id: 'conv-1b', title: 'Test', providerId: 'provider-1', model: 'model-1', messages: [], createdAt: 1, updatedAt: 1 },
+      { id: 'msg-1b', role: 'user', content: 'hello again', timestamp: 1, status: 'done' }
+    )
+    assert.deepEqual(disabledRetrieved, { sources: [], prompt: '' }, 'context retrieval keeps the same fail-closed result when runtime logs are disabled')
+  } finally {
+    contextStoreModule.initializeContextStore = originalInitializeContextStore
+  }
+
+  nextDocumentPickerResult = {
+    canceled: false,
+    assets: [{
+      uri: 'file:///tmp/broken-knowledge-disabled.txt',
+      name: 'broken-knowledge-disabled.txt',
+      mimeType: 'text/plain',
+      size: 24,
+    }],
+  }
+  localFileFixtures.set('file:///tmp/broken-knowledge-disabled.txt', Buffer.from('broken import text', 'utf8'))
+  try {
+    contextStoreModule.initializeContextStore = async () => {
+      throw new Error('knowledge import token=super-secret-value')
+    }
+    await assert.rejects(
+      () => importKnowledgeFile(),
+      /knowledge import token=super-secret-value/,
+      'knowledge import still surfaces fatal initialization failures when runtime logs are disabled'
+    )
+  } finally {
+    contextStoreModule.initializeContextStore = originalInitializeContextStore
+  }
+
+  try {
+    contextStoreModule.initializeContextStore = async () => {
+      throw new Error('plain text import token=super-secret-value')
+    }
+    await assert.rejects(
+      () => importKnowledgePlainText('disabled-note', 'disabled plain text body'),
+      /plain text import token=super-secret-value/,
+      'plain text knowledge import still surfaces fatal initialization failures when runtime logs are disabled'
+    )
+  } finally {
+    contextStoreModule.initializeContextStore = originalInitializeContextStore
+  }
+
+  const originalFetchForDisabledContext = global.fetch
+  try {
+    global.fetch = async () => { throw new Error('memory extract token=super-secret-value') }
+    const disabledExtracted = await extractMemories(
+      'conv-2b',
+      [
+        { id: 'msg-u2', role: 'user', content: 'I prefer ultra-terse disabled-mode answers.', timestamp: 1, status: 'done' },
+        { id: 'msg-a2', role: 'assistant', content: 'ok', timestamp: 2, status: 'done' },
+      ],
+      {
+        id: 'provider-openai',
+        type: 'openai',
+        name: 'OpenAI',
+        apiKey: FAKE_KEY_A,
+        models: ['gpt-5.2'],
+        enabled: true,
+      },
+      'gpt-5.2'
+    )
+    assert.ok(disabledExtracted.some((item) => item.includes('ultra-terse disabled-mode answers')), 'deterministic memory extraction still returns fallback items when runtime logs are disabled')
+  } finally {
+    global.fetch = originalFetchForDisabledContext
+  }
+
+  assert.equal(localFileFixtures.has(runtimeLogPath), false, 'context runtime health events stay quiet when runtime logs are disabled')
+}
+
+async function assertKnowledgeRetrievalRuntimeLogging() {
+  resetLocalModelFileMocks()
+  const runtimeLogPath = getRuntimeLogPath()
+  localFileFixtures.delete(runtimeLogPath)
+  memoryStorage.clear()
+  await saveData('SETTINGS', { runtimeLogEnabled: true, runtimeLogMaxBytes: 4096 })
+
+  const originalSearchHybrid = localDataStore.searchHybrid
+  const originalSearchAgenticIndexes = localDataStore.searchAgenticIndexes
+  try {
+    localDataStore.searchHybrid = async () => { throw new Error('hybrid retrieval token=super-secret-value') }
+    const fallbackResults = await searchKnowledgeWithFallback({
+      query: 'fallback query',
+      limit: 4,
+      ragMode: 'hybrid',
+      embeddingMode: 'hybrid',
+    })
+    assert.deepEqual(fallbackResults, [], 'knowledge retrieval falls back to empty results when both hybrid and FTS search fail')
+
+    localDataStore.searchAgenticIndexes = async () => { throw new Error('agentic retrieval token=super-secret-value') }
+    const agenticResults = await searchAgenticKnowledgeWithScope({
+      query: 'agentic query',
+      limit: 4,
+      techniques: ['raptor'],
+    })
+    assert.deepEqual(agenticResults, [], 'agentic retrieval still fails closed when advanced search throws')
+  } finally {
+    localDataStore.searchHybrid = originalSearchHybrid
+    localDataStore.searchAgenticIndexes = originalSearchAgenticIndexes
+  }
+
+  const entries = (localFileFixtures.get(runtimeLogPath)?.toString('utf8') ?? '')
+    .trim()
+    .split('\n')
+    .filter(Boolean)
+    .map((line) => JSON.parse(line))
+  const hybridEntry = entries.find((entry) => entry.event === 'context.operation' && entry.phase === 'knowledge_retrieval' && entry.detail === 'hybrid_search_failed')
+  assert.ok(hybridEntry, 'hybrid retrieval failures append runtime log entries')
+  assert.equal(hybridEntry.errorText, 'hybrid retrieval token=[redacted]', 'hybrid retrieval runtime log redacts sensitive error text')
+  const fallbackEntry = entries.find((entry) => entry.event === 'context.operation' && entry.phase === 'knowledge_retrieval' && entry.detail === 'fts_fallback_applied')
+  assert.ok(fallbackEntry || entries.find((entry) => entry.detail === 'fts_fallback_failed'), 'knowledge retrieval runtime log records fallback outcomes after hybrid failure')
+  const agenticEntry = entries.find((entry) => entry.event === 'context.operation' && entry.phase === 'knowledge_retrieval' && entry.detail === 'agentic_search_failed')
+  assert.ok(agenticEntry, 'agentic retrieval failures append runtime log entries')
+  assert.equal(agenticEntry.errorText, 'agentic retrieval token=[redacted]', 'agentic retrieval runtime log redacts sensitive error text')
+
+  localFileFixtures.delete(runtimeLogPath)
+  memoryStorage.clear()
+  await saveData('SETTINGS', { runtimeLogEnabled: false, runtimeLogMaxBytes: 4096 })
+
+  const originalSearchHybridDisabled = localDataStore.searchHybrid
+  const originalSearchAgenticIndexesDisabled = localDataStore.searchAgenticIndexes
+  try {
+    localDataStore.searchHybrid = async () => { throw new Error('hybrid retrieval token=super-secret-value') }
+    const disabledFallbackResults = await searchKnowledgeWithFallback({
+      query: 'fallback query disabled',
+      limit: 4,
+      ragMode: 'hybrid',
+      embeddingMode: 'hybrid',
+    })
+    assert.deepEqual(disabledFallbackResults, [], 'knowledge retrieval keeps the same fail-closed result when runtime logs are disabled')
+
+    localDataStore.searchAgenticIndexes = async () => { throw new Error('agentic retrieval token=super-secret-value') }
+    const disabledAgenticResults = await searchAgenticKnowledgeWithScope({
+      query: 'agentic query disabled',
+      limit: 4,
+      techniques: ['raptor'],
+    })
+    assert.deepEqual(disabledAgenticResults, [], 'agentic retrieval keeps the same fail-closed result when runtime logs are disabled')
+  } finally {
+    localDataStore.searchHybrid = originalSearchHybridDisabled
+    localDataStore.searchAgenticIndexes = originalSearchAgenticIndexesDisabled
+  }
+
+  assert.equal(localFileFixtures.has(runtimeLogPath), false, 'knowledge retrieval runtime health events stay quiet when runtime logs are disabled')
+}
+
+async function assertKnowledgeEmbeddingRuntimeLogging() {
+  resetLocalModelFileMocks()
+  const runtimeLogPath = getRuntimeLogPath()
+  localFileFixtures.delete(runtimeLogPath)
+  memoryStorage.clear()
+  await saveData('SETTINGS', { runtimeLogEnabled: true, runtimeLogMaxBytes: 4096 })
+
+  const onnxProvider = await createOnnxEmbeddingProvider({
+    localEmbeddingModelId: 'all-MiniLM-L6-v2',
+    localEmbeddingModelSource: 'downloaded',
+  })
+  assert.ok(onnxProvider, 'ONNX provider factory still returns a provider object when a downloaded model may be configured')
+  assert.equal(await onnxProvider.available(), false, 'ONNX provider reports unavailable when no downloaded model files are actually present')
+
+  const entries = (localFileFixtures.get(runtimeLogPath)?.toString('utf8') ?? '')
+    .trim()
+    .split('\n')
+    .filter(Boolean)
+    .map((line) => JSON.parse(line))
+  const embeddingEntry = entries.find((entry) => entry.event === 'context.operation' && entry.phase === 'knowledge_embedding' && entry.detail === 'onnx_provider_unavailable')
+  assert.ok(embeddingEntry, 'ONNX availability failures append runtime log entries')
+  assert.match(String(embeddingEntry.errorText ?? ''), /No embedding model available|not bundled/, 'ONNX availability runtime log preserves the failure reason')
+
+  localFileFixtures.delete(runtimeLogPath)
+  memoryStorage.clear()
+  await saveData('SETTINGS', { runtimeLogEnabled: true, runtimeLogMaxBytes: 4096, localEmbeddingModelSource: 'none' })
+  lazyEmbedding.unload()
+  await assert.rejects(
+    () => lazyEmbedding.embed('hello'),
+    /No embedding model available/,
+    'lazy embedding still surfaces the no-model failure to callers'
+  )
+  const lazyEntries = (localFileFixtures.get(runtimeLogPath)?.toString('utf8') ?? '')
+    .trim()
+    .split('\n')
+    .filter(Boolean)
+    .map((line) => JSON.parse(line))
+  const lazyEntry = lazyEntries.find((entry) => entry.event === 'context.operation' && entry.phase === 'knowledge_embedding' && entry.detail === 'lazy_embedding_model_unavailable')
+  assert.ok(lazyEntry, 'lazy embedding no-model failures append runtime log entries')
+
+  localFileFixtures.delete(runtimeLogPath)
+  memoryStorage.clear()
+  await saveData('SETTINGS', { runtimeLogEnabled: false, runtimeLogMaxBytes: 4096, localEmbeddingModelSource: 'downloaded', localEmbeddingModelId: 'all-MiniLM-L6-v2' })
+
+  const disabledOnnxProvider = await createOnnxEmbeddingProvider({
+    localEmbeddingModelId: 'all-MiniLM-L6-v2',
+    localEmbeddingModelSource: 'downloaded',
+  })
+  assert.ok(disabledOnnxProvider, 'ONNX provider factory still returns a provider object when runtime logs are disabled')
+  assert.equal(await disabledOnnxProvider.available(), false, 'ONNX availability keeps the same failure result when runtime logs are disabled')
+
+  localFileFixtures.delete(runtimeLogPath)
+  memoryStorage.clear()
+  await saveData('SETTINGS', { runtimeLogEnabled: false, runtimeLogMaxBytes: 4096, localEmbeddingModelSource: 'none' })
+  lazyEmbedding.unload()
+  await assert.rejects(
+    () => lazyEmbedding.embed('hello disabled'),
+    /No embedding model available/,
+    'lazy embedding still surfaces the no-model failure when runtime logs are disabled'
+  )
+  assert.equal(localFileFixtures.has(runtimeLogPath), false, 'knowledge embedding runtime health events stay quiet when runtime logs are disabled')
 }
 
 async function assertUpstreamGovernanceBehavior() {
+  const originalFetchForHttpHelper = global.fetch
+  try {
+    let helperFetchSawAbortSignal = false
+    global.fetch = async (_url, init) => {
+      helperFetchSawAbortSignal = init?.signal instanceof AbortSignal
+      return new Response('helper ok', { status: 200 })
+    }
+    const helperResponse = await fetchWithTimeout('https://helper.example/test', { method: 'GET' }, 1000)
+    assert.equal(await helperResponse.text(), 'helper ok', 'provider HTTP helper returns the delegated fetch response')
+    assert.equal(helperFetchSawAbortSignal, true, 'provider HTTP helper forwards an abort signal')
+  } finally {
+    global.fetch = originalFetchForHttpHelper
+  }
+  assert.equal(
+    await safeResponseText({ text: async () => { throw new Error('read failed') } }),
+    '',
+    'provider HTTP helper returns blank text when response body reading fails'
+  )
   const anthropicProvider = {
     id: 'anthropic-main',
     type: 'anthropic',
@@ -1470,6 +2831,15 @@ async function assertUpstreamGovernanceBehavior() {
   assert.equal(signatureRectified.body.thinking, undefined, 'signature rectification removes request thinking config')
   assert.equal(signatureRectified.body.output_config, undefined, 'signature rectification removes output_config')
   assert.equal(signatureRectified.body.messages[0].content.length, 1, 'signature rectification removes incompatible thinking blocks')
+  assert.deepEqual(
+    stripThinkingBlocks({
+      thinking: { type: 'enabled' },
+      output_config: { effort: 'high' },
+      messages: [{ role: 'assistant', content: [{ type: 'redacted_thinking', text: 'hidden' }, { type: 'text', text: 'answer' }, { type: 'signature_delta', signature: 'bad' }] }],
+    }),
+    { messages: [{ role: 'assistant', content: [{ type: 'text', text: 'answer' }] }] },
+    'Anthropic rectification helper strips thinking and signature content parts'
+  )
 
   const budgetRectified = rectifyAnthropicRequestBodyForTest({
     req: anthropicReq,
@@ -1480,6 +2850,11 @@ async function assertUpstreamGovernanceBehavior() {
   assert.equal(budgetRectified.kind, 'thinking_budget', 'Anthropic budget rectification is detected')
   assert.deepEqual(budgetRectified.body.thinking, { type: 'enabled', budget_tokens: 32000 }, 'budget rectification normalizes thinking to 32000 tokens')
   assert.equal(budgetRectified.body.max_tokens, 64000, 'budget rectification raises max_tokens when needed')
+  assert.deepEqual(
+    normalizeAnthropicThinkingBudgetBody({ max_tokens: 96000, messages: [] }),
+    { max_tokens: 96000, messages: [], thinking: { type: 'enabled', budget_tokens: 32000 } },
+    'Anthropic rectification helper preserves already-large max_tokens'
+  )
   const secondRectification = rectifyAnthropicRequestBodyForTest({
     req: anthropicReq,
     body: JSON.stringify({ model: 'claude-sonnet-4-20250514', messages: [], max_tokens: 2048 }),
@@ -1519,6 +2894,115 @@ async function assertUpstreamGovernanceBehavior() {
   assert.equal(optimizedBedrock.output_config.effort, 'high', 'Bedrock optimizer maps thinking effort')
   assert.equal(optimizedBedrock.system[0].cache_control.ttl, '5m', 'Bedrock optimizer injects cache TTL on system text')
   assert.equal(optimizedBedrock.messages[0].content[0].cache_control.ttl, '5m', 'Bedrock optimizer injects cache TTL on message text')
+  assert.equal(isBedrockProvider({ id: 'aws-bedrock', type: 'anthropic', name: 'Amazon Bedrock', baseUrl: 'https://bedrock-runtime.us-east-1.amazonaws.com' }), true, 'Bedrock optimizer helper detects Bedrock runtime hosts')
+  assert.equal(isAnthropicWireProvider({ type: 'xiaomi-mimo', wireProtocol: 'anthropic-compatible' }), true, 'Bedrock optimizer helper detects Anthropic-compatible wire protocol')
+  assert.deepEqual(
+    getHeaders({ id: 'anthropic-main', type: 'anthropic', name: 'Anthropic', apiKey: FAKE_KEY_A, models: [], enabled: true }),
+    { 'Content-Type': 'application/json', 'x-api-key': FAKE_KEY_A, 'anthropic-version': '2023-06-01' },
+    'provider header helper preserves official Anthropic headers'
+  )
+  assert.deepEqual(
+    getHeaders({ id: 'mimo-anthropic', type: 'xiaomi-mimo', name: 'MiMo Anthropic', apiKey: FAKE_KEY_A, models: [], enabled: true, wireProtocol: 'anthropic-compatible' }),
+    { 'Content-Type': 'application/json', Authorization: `Bearer ${FAKE_KEY_A}`, 'anthropic-version': '2023-06-01' },
+    'provider header helper preserves Anthropic-compatible bearer headers'
+  )
+  assert.deepEqual(
+    getHeaders({ id: 'google-main', type: 'google', name: 'Google', apiKey: FAKE_KEY_A, models: [], enabled: true }),
+    { 'Content-Type': 'application/json' },
+    'provider header helper keeps Google API keys out of headers'
+  )
+  assert.deepEqual(
+    getHeaders({ id: 'azure-openai-main', type: 'openai-compatible', name: 'Azure OpenAI', baseUrl: 'https://example.openai.azure.com/openai/v1', apiKey: FAKE_KEY_A, models: [], enabled: true }),
+    { 'Content-Type': 'application/json', 'api-key': FAKE_KEY_A },
+    'provider header helper uses Azure OpenAI API-key authentication for Azure v1 endpoints'
+  )
+  assert.equal(
+    getWireProviderType({ id: 'custom-anthropic', type: 'openai-compatible', name: 'Custom Anthropic', apiKey: FAKE_KEY_A, models: [], enabled: true, wireProtocol: 'anthropic-compatible' }),
+    'anthropic',
+    'provider wire helper maps Anthropic-compatible providers to Anthropic parsing'
+  )
+  assert.equal(
+    isAnthropicWireRequest({ provider: { id: 'mimo-anthropic', type: 'xiaomi-mimo', name: 'MiMo Anthropic', apiKey: FAKE_KEY_A, models: [], enabled: true, wireProtocol: 'anthropic-compatible' } }),
+    true,
+    'provider wire helper detects Anthropic-compatible requests'
+  )
+  assert.equal(supportsAnthropicAdaptiveThinking('claude-opus-4-7'), true, 'Anthropic thinking helper keeps adaptive model detection')
+  assert.equal(usesAnthropicOutputConfigOnlyThinking('claude-fable-5'), true, 'Anthropic thinking helper keeps output_config-only model detection')
+  assert.equal(normalizeAnthropicEffort('claude-opus-4-7', 'xhigh'), 'xhigh', 'Anthropic thinking helper keeps xhigh effort for newer Opus models')
+  assert.equal(normalizeAnthropicEffort('claude-sonnet-4-20250514', 'xhigh'), 'max', 'Anthropic thinking helper maps unsupported xhigh to max')
+  assert.equal(supportsAnthropicDynamicWebSearch('claude-sonnet-4-6'), true, 'Anthropic request helper detects dynamic web search models')
+  assert.equal(supportsAnthropicDynamicWebSearch('claude-3-5-sonnet-20241022'), false, 'Anthropic request helper keeps legacy web search models on compatible tool type')
+  assert.deepEqual(
+    anthropicNativeWebSearchTool('claude-opus-4-7'),
+    { type: 'web_search_20260209', name: 'web_search', max_uses: 3 },
+    'Anthropic request helper keeps current web search tool shape'
+  )
+  assert.deepEqual(
+    anthropicNativeWebSearchTool('claude-3-5-sonnet-20241022'),
+    { type: 'web_search_20250305', name: 'web_search', max_uses: 3 },
+    'Anthropic request helper keeps legacy web search tool shape'
+  )
+  assert.deepEqual(
+    anthropicAttachmentPart({ id: 'anthropic-image', type: 'image', uri: 'file://image.png', name: 'image.png', mimeType: 'image/png', size: 12, base64: 'aW1n' }),
+    { type: 'image', source: { type: 'base64', media_type: 'image/png', data: 'aW1n' } },
+    'Anthropic request helper keeps image attachment block shape'
+  )
+  assert.deepEqual(
+    anthropicAttachmentPart({ id: 'anthropic-pdf', type: 'pdf', uri: 'file://doc.pdf', name: 'doc.pdf', mimeType: 'application/pdf', size: 12, base64: 'cGRm' }),
+    { type: 'document', source: { type: 'base64', media_type: 'application/pdf', data: 'cGRm' } },
+    'Anthropic request helper keeps PDF attachment block shape'
+  )
+  assert.deepEqual(
+    anthropicAttachmentPart({ id: 'anthropic-text', type: 'text', uri: 'file://note.txt', name: 'note.txt', mimeType: 'text/plain', size: 12, base64: 'dHh0' }),
+    { type: 'document', source: { type: 'base64', media_type: 'text/plain', data: 'dHh0' } },
+    'Anthropic request helper keeps text attachment block shape'
+  )
+  assert.equal(
+    anthropicAttachmentPart({ id: 'anthropic-document', type: 'document', uri: 'file://doc.bin', name: 'doc.bin', mimeType: 'application/octet-stream', size: 12, base64: 'ZG9j' }),
+    undefined,
+    'Anthropic request helper preserves unsupported document attachment omission'
+  )
+  assert.equal(
+    anthropicAttachmentPart({ id: 'anthropic-empty', type: 'image', uri: 'file://image.png', name: 'image.png', mimeType: 'image/png', size: 12 }),
+    undefined,
+    'Anthropic request helper omits attachments without base64 data'
+  )
+  const anthropicThinkingProvider = { id: 'anthropic-main', type: 'anthropic', name: 'Anthropic', apiKey: FAKE_KEY_A, models: ['claude-opus-4-7', 'claude-fable-5', 'claude-sonnet-4-20250514'], enabled: true }
+  assert.deepEqual(
+    normalizeAnthropicThinking({ provider: anthropicThinkingProvider, model: 'claude-opus-4-7', reasoningEffort: 'xhigh', maxTokens: 8192 }),
+    { thinking: { type: 'adaptive', display: 'summarized' }, outputConfig: { effort: 'xhigh' } },
+    'Anthropic thinking helper keeps adaptive thinking plus output_config effort'
+  )
+  assert.deepEqual(
+    normalizeAnthropicThinking({ provider: anthropicThinkingProvider, model: 'claude-fable-5', reasoningEffort: 'high', maxTokens: 8192 }),
+    { outputConfig: { effort: 'high' } },
+    'Anthropic thinking helper keeps output_config-only models free of request thinking'
+  )
+  assert.deepEqual(
+    normalizeAnthropicThinking({ provider: anthropicThinkingProvider, model: 'claude-sonnet-4-20250514', reasoningEffort: 'low', maxTokens: 512 }),
+    { thinking: { type: 'enabled', budget_tokens: 511 } },
+    'Anthropic thinking helper keeps legacy budget constrained below max_tokens'
+  )
+  assert.equal(
+    normalizeAnthropicThinking({ provider: anthropicThinkingProvider, model: 'claude-sonnet-4-20250514', reasoningEffort: 'minimal', maxTokens: 512 }),
+    undefined,
+    'Anthropic thinking helper omits none/minimal reasoning requests'
+  )
+  assert.deepEqual(
+    optimizeBedrockThinking({ max_tokens: 2048 }, {
+      provider: { id: 'bedrock-anthropic', type: 'anthropic', name: 'Bedrock Anthropic', baseUrl: 'https://bedrock-runtime.example' },
+      model: 'claude-sonnet-4-20250514',
+      reasoningEffort: 'medium',
+      fallbackMaxTokens: 2048,
+    }),
+    { max_tokens: 4096, thinking: { type: 'enabled', budget_tokens: 2047 } },
+    'Bedrock thinking optimizer keeps legacy thinking-budget fallback behavior'
+  )
+  assert.deepEqual(
+    injectBedrockCache({ messages: [{ role: 'user', content: [{ type: 'tool_use', id: 'tool-1' }, { type: 'text', text: 'cache me' }] }] }, '1h').messages[0].content[1].cache_control,
+    { type: 'ephemeral', ttl: '1h' },
+    'Bedrock cache helper injects cache control into the last text part'
+  )
   const nonBedrock = optimizeRequestBodyForTest(bedrockBody, {
     provider: {
       id: 'custom-aws-proxy',
@@ -1541,6 +3025,242 @@ async function assertUpstreamGovernanceBehavior() {
   })
   assert.equal(nonBedrock.thinking, undefined, 'Bedrock optimizer does not run for non-Bedrock AWS-named providers')
   assert.equal(typeof nonBedrock.system, 'string', 'Bedrock cache injection is Bedrock-only')
+
+  assert.equal(isMiniMaxProvider({ id: 'custom', type: 'openai-compatible', name: 'Mini Max Proxy', apiKey: FAKE_KEY_A, models: [], enabled: true }), true, 'provider identity helper detects MiniMax names')
+  assert.equal(isDashScopeProvider({ id: 'custom', type: 'openai-compatible', name: 'Custom', apiKey: FAKE_KEY_A, models: ['qwen3-coder'], enabled: true }), true, 'provider identity helper detects DashScope model families')
+  assert.equal(isMoonshotProvider({ id: 'custom', type: 'openai-compatible', name: 'Custom', apiKey: FAKE_KEY_A, models: ['kimi-k2'], enabled: true }), true, 'provider identity helper detects Moonshot/Kimi model families')
+  assert.equal(isXAIProvider({ id: 'custom', type: 'openai-compatible', name: 'Custom', baseUrl: 'https://api.x.ai/v1', apiKey: FAKE_KEY_A, models: [], enabled: true }), true, 'provider identity helper detects xAI hosts')
+  assert.equal(
+    shouldRequestDashScopeStreamUsage({ provider: { id: 'dashscope-stream', type: 'openai-compatible', name: 'DashScope', apiKey: FAKE_KEY_A, models: [], enabled: true }, stream: false }),
+    false,
+    'provider identity helper does not request DashScope stream usage for non-streaming requests'
+  )
+  const mimoParameterProvider = { id: 'mimo-params', type: 'xiaomi-mimo', name: 'MiMo Params', apiKey: FAKE_KEY_A, models: ['mimo-v2.5-pro'], enabled: true, capabilities: { reasoningEffort: true } }
+  assert.deepEqual(
+    normalizeXiaomiMimoThinking({ provider: mimoParameterProvider, model: 'mimo-v2.5-pro', reasoningEffort: 'none' }),
+    { type: 'disabled' },
+    'provider request parameter helper preserves explicit MiMo thinking disable'
+  )
+  assert.equal(
+    isXiaomiMimoThinkingActive({ provider: mimoParameterProvider, model: 'mimo-v2.5-pro' }),
+    true,
+    'provider request parameter helper treats default MiMo reasoning models as thinking-active'
+  )
+  assert.equal(
+    normalizeTemperature({ provider: mimoParameterProvider, model: 'mimo-v2.5-pro', reasoningEffort: 'high', temperature: 1.2 }),
+    undefined,
+    'provider request parameter helper omits MiMo temperature while thinking is active'
+  )
+  assert.equal(
+    normalizeTemperature({ provider: mimoParameterProvider, model: 'mimo-chat', temperature: 2 }),
+    1.5,
+    'provider request parameter helper clamps MiMo non-thinking temperature'
+  )
+  assert.equal(
+    normalizeTemperature({ provider: { id: 'minimax-temp', type: 'openai-compatible', name: 'MiniMax', apiKey: FAKE_KEY_A, models: ['MiniMax-M3'], enabled: true }, model: 'MiniMax-M3', temperature: 4 }),
+    2,
+    'provider request parameter helper clamps MiniMax temperature'
+  )
+  assert.equal(
+    clampMaxTokens({ provider: { id: 'token-clamp', type: 'openai-compatible', name: 'Token Clamp', apiKey: FAKE_KEY_A, models: ['MiniMax-M3'], enabled: true }, model: 'MiniMax-M3', maxTokens: 9999999 }),
+    getModelConfig('MiniMax-M3', 'openai-compatible').maxOutputTokens,
+    'provider request parameter helper clamps max tokens to model metadata'
+  )
+  const openAIRequestProvider = { id: 'openai-helper', type: 'openai', name: 'OpenAI', apiKey: FAKE_KEY_A, models: ['gpt-5.5'], enabled: true, capabilities: { reasoningEffort: true } }
+  assert.equal(
+    getOpenAIChatMaxTokensField({ provider: openAIRequestProvider, model: 'gpt-5.5' }),
+    'max_completion_tokens',
+    'OpenAI request helper keeps official chat max-token field'
+  )
+  assert.equal(
+    getOpenAIChatMaxTokensField({ provider: { id: 'generic-helper', type: 'openai-compatible', name: 'Generic', apiKey: FAKE_KEY_A, models: ['generic-chat'], enabled: true }, model: 'generic-chat' }),
+    'max_tokens',
+    'OpenAI request helper keeps generic compatible max-token field'
+  )
+  assert.deepEqual(
+    openAICompatibleAttachmentPart({ id: 'att-image', type: 'image', uri: 'file://image.png', name: 'image.png', mimeType: 'image/png', size: 12, base64: 'aW1n' }),
+    { type: 'image_url', image_url: { url: 'data:image/png;base64,aW1n', detail: 'auto' } },
+    'OpenAI request helper keeps image attachment parts'
+  )
+  assert.deepEqual(
+    openAICompatibleAttachmentPart({ id: 'att-pdf', type: 'file', uri: 'file://doc.pdf', name: 'doc.pdf', mimeType: 'application/pdf', size: 12, base64: 'cGRm' }),
+    { type: 'file', file: { filename: 'doc.pdf', file_data: 'data:application/pdf;base64,cGRm' } },
+    'OpenAI request helper keeps file attachment parts'
+  )
+  assert.deepEqual(
+    openAIResponsesAttachmentPart({ id: 'att-responses-image', type: 'image', uri: 'file://image.png', name: 'image.png', mimeType: 'image/png', size: 12, base64: 'aW1n' }),
+    { type: 'input_image', image_url: 'data:image/png;base64,aW1n' },
+    'OpenAI request helper keeps Responses image attachment parts'
+  )
+  assert.deepEqual(
+    openAIResponsesAttachmentPart({ id: 'att-responses-pdf', type: 'pdf', uri: 'file://doc.pdf', name: 'doc.pdf', mimeType: 'application/pdf', size: 12, base64: 'cGRm' }),
+    { type: 'input_file', filename: 'doc.pdf', file_data: 'data:application/pdf;base64,cGRm' },
+    'OpenAI request helper keeps Responses file attachment parts'
+  )
+  assert.equal(
+    normalizeOpenAIReasoningEffort({ provider: openAIRequestProvider, model: 'gpt-5.5', reasoningEffort: 'xhigh' }),
+    'xhigh',
+    'OpenAI request helper keeps OpenAI reasoning effort normalization'
+  )
+  assert.deepEqual(
+    buildOpenAIResponsesReasoning('high', openAIRequestProvider),
+    { effort: 'high', summary: 'auto' },
+    'OpenAI request helper keeps OpenAI-only Responses reasoning summaries'
+  )
+  const xaiRequestProvider = { id: 'xai-helper', type: 'openai-compatible', presetId: 'xai', name: 'xAI', baseUrl: 'https://api.x.ai/v1', apiKey: FAKE_KEY_A, models: ['grok-4.3', 'grok-4.20-multi-agent'], enabled: true, capabilities: { reasoningEffort: true, nativeTools: true } }
+  assert.deepEqual(
+    buildOpenAIResponsesReasoning('high', xaiRequestProvider),
+    { effort: 'high' },
+    'OpenAI request helper omits OpenAI reasoning summaries for xAI Responses'
+  )
+  assert.deepEqual(openAIResponsesNativeWebSearchTool(xaiRequestProvider), { type: 'web_search' }, 'OpenAI request helper keeps xAI native web search type')
+  assert.equal(
+    shouldIncludeOpenAIResponsesEncryptedReasoning({ provider: xaiRequestProvider, model: 'grok-4.3' }),
+    true,
+    'OpenAI request helper keeps default xAI encrypted reasoning continuation'
+  )
+  assert.equal(
+    shouldIncludeOpenAIResponsesEncryptedReasoning({ provider: xaiRequestProvider, model: 'grok-4.3' }, 'none'),
+    false,
+    'OpenAI request helper omits encrypted reasoning when reasoning is explicitly disabled'
+  )
+  assert.equal(
+    usesOpenAIResponses({ provider: openAIRequestProvider, model: 'gpt-5.5', webSearchMode: 'native' }),
+    true,
+    'OpenAI request helper routes native OpenAI web search through Responses'
+  )
+  assert.equal(
+    usesOpenAIResponses({ provider: xaiRequestProvider, model: 'grok-4.3' }),
+    true,
+    'OpenAI request helper keeps xAI preferred Responses routing'
+  )
+  assert.equal(
+    normalizeOpenAIReasoningEffort({ provider: xaiRequestProvider, model: 'grok-4.20-multi-agent', reasoningEffort: 'minimal' }),
+    'low',
+    'OpenAI request helper preserves xAI Multi-Agent minimal-to-low reasoning fallback'
+  )
+  assert.equal(
+    shouldReplayOpenAICompatibleReasoningContent({ provider: { id: 'deepseek-helper', type: 'openai-compatible', presetId: 'deepseek', name: 'DeepSeek', apiKey: FAKE_KEY_A, models: ['deepseek-v4-pro'], enabled: true }, model: 'deepseek-v4-pro' }, {}),
+    false,
+    'OpenAI request helper does not replay DeepSeek reasoning without tool calls'
+  )
+  assert.equal(
+    shouldReplayOpenAICompatibleReasoningContent({ provider: { id: 'deepseek-helper', type: 'openai-compatible', presetId: 'deepseek', name: 'DeepSeek', apiKey: FAKE_KEY_A, models: ['deepseek-v4-pro'], enabled: true }, model: 'deepseek-v4-pro' }, { toolCalls: [{ id: 'call-1' }] }),
+    true,
+    'OpenAI request helper replays DeepSeek reasoning only for tool continuations'
+  )
+  assert.equal(
+    shouldReplayOpenAICompatibleReasoningContent({ provider: { id: 'kimi-helper', type: 'openai-compatible', presetId: 'moonshot', name: 'Moonshot', apiKey: FAKE_KEY_A, models: ['kimi-k2.6'], enabled: true }, model: 'kimi-k2.6' }, {}),
+    true,
+    'OpenAI request helper preserves Kimi reasoning replay'
+  )
+  assert.equal(
+    shouldReplayOpenAICompatibleReasoningContent({ provider: xaiRequestProvider, model: 'grok-4.3' }, {}),
+    true,
+    'OpenAI request helper preserves xAI reasoning replay'
+  )
+  assert.equal(
+    shouldReplayOpenAICompatibleReasoningContent({ provider: { ...xaiRequestProvider, wireProtocol: 'anthropic-compatible' }, model: 'grok-4.3' }, { toolCalls: [{ id: 'call-1' }] }),
+    false,
+    'OpenAI request helper does not replay OpenAI-compatible reasoning on Anthropic wire protocol'
+  )
+  assert.deepEqual(
+    normalizeDeepSeekThinking({ provider: { id: 'deepseek-helper', type: 'openai-compatible', presetId: 'deepseek', name: 'DeepSeek', apiKey: FAKE_KEY_A, models: ['deepseek-v4-pro'], enabled: true }, model: 'deepseek-v4-pro', reasoningEffort: 'xhigh' }),
+    { type: 'enabled', effort: 'max' },
+    'OpenAI-compatible thinking helper maps DeepSeek xhigh to max effort'
+  )
+  assert.deepEqual(
+    normalizeDashScopeThinking({ provider: { id: 'qwen-helper', type: 'openai-compatible', presetId: 'dashscope', name: 'DashScope', apiKey: FAKE_KEY_A, models: ['qwen3.7-max'], enabled: true }, model: 'qwen3.7-max', reasoningEffort: 'high' }),
+    { enabled: true, budget: 262144 },
+    'OpenAI-compatible thinking helper preserves DashScope high thinking budget'
+  )
+  assert.equal(normalizeDashScopeThinkingBudget('qwen3.6-plus', 'medium'), 65536, 'OpenAI-compatible thinking helper preserves medium Qwen budget cap')
+  const kimiHelperProvider = { id: 'kimi-helper', type: 'openai-compatible', presetId: 'moonshot', name: 'Moonshot', apiKey: FAKE_KEY_A, models: ['kimi-k2.6'], enabled: true }
+  const kimiHelperThinking = normalizeKimiThinking({ provider: kimiHelperProvider, model: 'kimi-k2.6', reasoningEffort: 'high' })
+  assert.deepEqual(kimiHelperThinking, { type: 'enabled' }, 'OpenAI-compatible thinking helper enables Kimi thinking')
+  assert.deepEqual(
+    normalizeKimiPreservedThinking({ provider: kimiHelperProvider, model: 'kimi-k2.6', messages: [{ role: 'assistant', reasoningContent: 'kept reasoning' }] }, kimiHelperThinking),
+    { type: 'enabled', keep: 'all' },
+    'OpenAI-compatible thinking helper preserves Kimi assistant reasoning replay'
+  )
+  assert.equal(isKimiSamplingLocked({ provider: kimiHelperProvider, model: 'kimi-k2.6' }), true, 'OpenAI-compatible thinking helper locks Kimi sampling')
+  const miniMaxHelperReq = { provider: { id: 'minimax-helper', type: 'openai-compatible', presetId: 'minimax', name: 'MiniMax', apiKey: FAKE_KEY_A, models: ['MiniMax-M3'], enabled: true }, model: 'MiniMax-M3', reasoningEffort: 'high' }
+  const miniMaxHelperThinking = normalizeMiniMaxThinking(miniMaxHelperReq)
+  assert.deepEqual(miniMaxHelperThinking, { type: 'adaptive' }, 'OpenAI-compatible thinking helper preserves MiniMax adaptive thinking')
+  assert.equal(shouldRequestMiniMaxReasoningSplit(miniMaxHelperReq, miniMaxHelperThinking), true, 'OpenAI-compatible thinking helper requests MiniMax reasoning split')
+  assert.deepEqual(
+    normalizeGoogleThinkingConfig({ provider: { id: 'google-helper', type: 'google', name: 'Google', apiKey: FAKE_KEY_A, models: ['gemini-2.5-flash'], enabled: true }, model: 'gemini-2.5-flash', reasoningEffort: 'low' }),
+    { thinkingBudget: 1024, includeThoughts: true },
+    'Google thinking helper preserves Gemini 2.5 Flash low thinking budget'
+  )
+  assert.deepEqual(
+    normalizeGoogleThinkingConfig({ provider: { id: 'google-helper', type: 'google', name: 'Google', apiKey: FAKE_KEY_A, models: ['gemini-3.5-flash'], enabled: true }, model: 'gemini-3.5-flash', reasoningEffort: 'minimal' }),
+    { thinkingLevel: 'minimal' },
+    'Google thinking helper preserves Gemini 3.5 minimal thinking level without thought summaries'
+  )
+  assert.equal(normalizeGeminiThinkingBudget('gemini-2.5-pro', 'low'), 2048, 'Google thinking helper preserves Gemini Pro low thinking floor')
+  assert.equal(
+    normalizeGeminiThinkingLevel('xhigh', getModelConfig('gemini-3.5-flash', 'google')),
+    'high',
+    'Google thinking helper maps xhigh to Gemini high thinking level'
+  )
+  assert.deepEqual(
+    withGoogleThoughtSummaries({ thinkingBudget: 0 }, 'minimal'),
+    { thinkingBudget: 0 },
+    'Google thinking helper does not request thought summaries for minimal thinking'
+  )
+  assert.deepEqual(
+    googleNativeWebSearchTool(),
+    { google_search: {} },
+    'Google request helper keeps native web search tool shape'
+  )
+  assert.deepEqual(
+    googleAttachmentPart({ id: 'google-image', type: 'image', uri: 'file://image.png', name: 'image.png', mimeType: 'image/png', size: 12, base64: 'aW1n' }),
+    { inline_data: { mime_type: 'image/png', data: 'aW1n' } },
+    'Google request helper keeps inline attachment data shape'
+  )
+  assert.equal(
+    googleAttachmentPart({ id: 'google-empty', type: 'image', uri: 'file://image.png', name: 'image.png', mimeType: 'image/png', size: 12 }),
+    undefined,
+    'Google request helper omits attachments without base64 data'
+  )
+
+  const googleModelTestProvider = {
+    id: 'google-model-test-helper',
+    type: 'google',
+    name: 'Google Model Test Helper',
+    apiKey: FAKE_KEY_A,
+    models: ['gemini-3.5-flash'],
+    enabled: true,
+  }
+  const googleModelTestEffort = getModelTestReasoningEffort(googleModelTestProvider, 'gemini-3.5-flash')
+  assert.equal(googleModelTestEffort, 'medium', 'provider model-test helper selects Gemini medium reasoning effort')
+  assert.equal(
+    getModelTestMaxTokens(googleModelTestProvider, 'gemini-3.5-flash', googleModelTestEffort),
+    128,
+    'provider model-test helper reserves reasoning response budget'
+  )
+  assert.deepEqual(
+    reduceModelTestBody({
+      model: 'gemini-3.5-flash',
+      temperature: 0.7,
+      top_p: 0.8,
+      reasoning: { effort: 'medium' },
+      generationConfig: {
+        temperature: 0.7,
+        topP: 0.8,
+        thinkingConfig: { thinkingLevel: 'medium' },
+        maxOutputTokens: 128,
+      },
+    }),
+    {
+      model: 'gemini-3.5-flash',
+      generationConfig: {
+        maxOutputTokens: 128,
+      },
+    },
+    'provider model-test helper removes optional generation controls while preserving output budget'
+  )
 
   const originalFetch = global.fetch
   try {
@@ -1650,6 +3370,49 @@ async function assertUpstreamGovernanceBehavior() {
     assert.equal(nonStreamingBodies[0].stream, false, 'model-level streaming disable overrides requested streaming')
     assert.equal(nonStreamingText, 'non-streaming OK', 'non-streaming model responses are parsed through the normal done path')
 
+    const bedrockRuntimeChatProvider = {
+      id: 'bedrock-runtime-chat',
+      type: 'anthropic',
+      name: 'AWS Bedrock Runtime',
+      presetId: 'aws-bedrock',
+      baseUrl: 'https://bedrock-runtime.us-east-1.amazonaws.com',
+      apiKey: JSON.stringify({
+        accessKeyId: 'AKIDEXAMPLE',
+        secretAccessKey: 'wJalrXUtnFEMI/K7MDENG+bPxRfiCYEXAMPLEKEY',
+        sessionToken: 'session-token-example',
+      }),
+      models: ['anthropic.claude-3-7-sonnet'],
+      enabled: true,
+    }
+    const bedrockRuntimeChatCalls = []
+    let bedrockRuntimeChatText = ''
+    global.fetch = async (url, init) => {
+      bedrockRuntimeChatCalls.push({ url: String(url), headers: init.headers, body: JSON.parse(init.body) })
+      return new Response(JSON.stringify({ content: [{ type: 'text', text: 'bedrock runtime OK' }] }), {
+        status: 200,
+        headers: { 'content-type': 'application/json' },
+      })
+    }
+    const bedrockRuntimeChatHandle = await streamChat(
+      {
+        provider: bedrockRuntimeChatProvider,
+        model: 'anthropic.claude-3-7-sonnet',
+        messages: [{ role: 'user', content: 'hello' }],
+        stream: false,
+        settings: { upstreamCircuitBreakerEnabled: false },
+      },
+      (chunk) => { bedrockRuntimeChatText += chunk },
+      () => {},
+      (error) => { throw error }
+    )
+    await bedrockRuntimeChatHandle.done
+    assert.equal(bedrockRuntimeChatCalls[0].url, 'https://bedrock-runtime.us-east-1.amazonaws.com/model/anthropic.claude-3-7-sonnet/invoke', 'Bedrock Runtime non-streaming chat uses InvokeModel')
+    assert.match(bedrockRuntimeChatCalls[0].headers.Authorization, /AWS4-HMAC-SHA256 Credential=AKIDEXAMPLE\//, 'Bedrock Runtime non-streaming chat signs InvokeModel requests')
+    assert.equal(bedrockRuntimeChatCalls[0].headers['X-Amz-Security-Token'], 'session-token-example', 'Bedrock Runtime non-streaming chat forwards session token')
+    assert.equal(bedrockRuntimeChatCalls[0].body.anthropic_version, 'bedrock-2023-05-31', 'Bedrock Runtime non-streaming chat sends Anthropic Bedrock API version')
+    assert.equal(bedrockRuntimeChatCalls[0].body.stream, undefined, 'Bedrock Runtime non-streaming chat omits stream for InvokeModel')
+    assert.equal(bedrockRuntimeChatText, 'bedrock runtime OK', 'Bedrock Runtime non-streaming chat parses Anthropic InvokeModel response')
+
     let calls = 0
     global.fetch = async () => {
       calls += 1
@@ -1719,6 +3482,46 @@ async function assertUpstreamGovernanceBehavior() {
       credentialGroups: [{ id: 'anthropic-a', label: 'A', apiKey: FAKE_KEY_B, enabled: true }],
       enabled: true,
     }
+    assert.deepEqual(
+      requiredFallbackCapabilities({
+        provider: fallbackOpenAI,
+        model: 'gpt-5.5',
+        reasoningEffort: 'high',
+        attachments: [
+          { id: 'fixture-image', type: 'image', uri: 'image://fixture', name: 'fixture.png', mimeType: 'image/png', size: 128, base64: 'ZmFrZQ==' },
+          { id: 'fixture-pdf', type: 'pdf', uri: 'file://fixture.pdf', name: 'fixture.pdf', mimeType: 'application/pdf', size: 256, base64: 'cGRm' },
+        ],
+      }),
+      ['text', 'reasoning', 'image', 'file'],
+      'runtime fallback helper derives required text, reasoning, image, and file capabilities'
+    )
+    assert.deepEqual(
+      requiredFallbackCapabilities({
+        provider: fallbackOpenAI,
+        model: 'gpt-5.5',
+        reasoningEffort: 'high',
+        attachments: [{ id: 'stale-image', type: 'image', uri: 'file:///tmp/stale-image.png', name: 'stale-image.png', mimeType: 'image/png', size: 1024 }],
+      }),
+      ['text', 'reasoning'],
+      'runtime fallback helper ignores metadata-only persisted attachments without inline payloads'
+    )
+    assert.deepEqual(
+      fallbackProvidersForRequest({ provider: fallbackOpenAI, model: 'gpt-5.5', fallbackProviders: [fallbackAnthropic] }).map((provider) => provider.id),
+      ['fallback-openai', 'fallback-anthropic'],
+      'runtime fallback helper prepends current provider when fallback list omits it'
+    )
+    assert.deepEqual(
+      routeForRuntimeFallback({ provider: fallbackOpenAI, model: 'gpt-5.5-mini', reasoningEffort: 'minimal' }, 'openai-a'),
+      { providerId: 'fallback-openai', model: 'gpt-5.5-mini', credentialGroupId: 'openai-a', region: undefined, capabilities: ['text'] },
+      'runtime fallback helper builds original route evidence'
+    )
+    assert.equal(
+      providerForRuntimeFallback({ provider: fallbackOpenAI, model: 'gpt-5.5', fallbackProviders: [fallbackAnthropic] }, { providerId: 'fallback-anthropic', model: 'claude-sonnet-4-6', credentialGroupId: 'anthropic-a', capabilities: ['text'] }).apiKey,
+      FAKE_KEY_B,
+      'runtime fallback helper hydrates selected credential group API key'
+    )
+    assert.equal(retryAfterMsFromFailure(429), 60000, 'runtime fallback helper maps rate limits to retry-after')
+    assert.equal(retryAfterMsFromFailure(503), 20000, 'runtime fallback helper maps server errors to retry-after')
     const fallbackPlan = await resolveRuntimeFallbackPlanForTest({
       req: {
         provider: fallbackOpenAI,
@@ -1846,6 +3649,39 @@ async function assertProviderStoreLifecycleBehavior() {
   await useSettingsStore.getState().clearAll()
   memoryStorage.clear()
 
+  useSettingsStore.getState().updateSettings({
+    customSearchEndpoint: 'https://user:pass@search.example/query?q={query}',
+    localModelDownloadMirrorBaseUrl: 'file:///tmp/local-model-mirror',
+    proxyBaseUrl: 'islemind://proxy',
+  })
+  assert.equal(useSettingsStore.getState().settings.customSearchEndpoint, '', 'settings store strips embedded-credential custom search endpoints before keeping them in memory')
+  assert.equal(useSettingsStore.getState().settings.localModelDownloadMirrorBaseUrl, '', 'settings store strips non-web local-model mirror URLs before keeping them in memory')
+  assert.equal(useSettingsStore.getState().settings.proxyBaseUrl, '', 'settings store strips non-web proxy base URLs before keeping them in memory')
+  const persistedUnsafeSettings = await loadData('SETTINGS')
+  assert.equal(persistedUnsafeSettings.customSearchEndpoint, '', 'settings store strips embedded-credential custom search endpoints before AsyncStorage persistence')
+  assert.equal(persistedUnsafeSettings.localModelDownloadMirrorBaseUrl, '', 'settings store strips non-web local-model mirror URLs before AsyncStorage persistence')
+  assert.equal(persistedUnsafeSettings.proxyBaseUrl, '', 'settings store strips non-web proxy base URLs before AsyncStorage persistence')
+
+  useSettingsStore.setState((state) => ({
+    ...state,
+    settings: {
+      ...state.settings,
+      customSearchEndpoint: '',
+      localModelDownloadMirrorBaseUrl: '',
+      proxyBaseUrl: '',
+    },
+  }))
+  memoryStorage.set('@islemind/settings', JSON.stringify({
+    ...persistedUnsafeSettings,
+    customSearchEndpoint: 'https://mirror-user:mirror-pass@search.example/import?q={query}',
+    localModelDownloadMirrorBaseUrl: 'islemind://mirror-host',
+    proxyBaseUrl: 'file:///tmp/import-proxy',
+  }))
+  await useSettingsStore.getState().load()
+  assert.equal(useSettingsStore.getState().settings.customSearchEndpoint, '', 'settings store load strips embedded-credential custom search endpoints from persisted settings')
+  assert.equal(useSettingsStore.getState().settings.localModelDownloadMirrorBaseUrl, '', 'settings store load strips non-web mirror URLs from persisted settings')
+  assert.equal(useSettingsStore.getState().settings.proxyBaseUrl, '', 'settings store load strips non-web proxy base URLs from persisted settings')
+
   const blockedProvider = {
     id: 'store-blocked-provider',
     type: 'openai',
@@ -1942,15 +3778,1295 @@ async function assertProviderStoreLifecycleBehavior() {
   await useSettingsStore.getState().removeProvider(kimiDefaultProvider.id)
   useSettingsStore.getState().updateSettings({ defaultProvider: allowedProvider.id })
 
+  const deleteAbortCalls = []
+  registerStreamAborter((conversationId) => {
+    deleteAbortCalls.push(conversationId)
+    clearActiveStream(conversationId)
+  })
+  setActiveStream(conversationId, {
+    controller: new AbortController(),
+    messageId: 'streaming-message',
+  })
+  useChatStore.getState().delete(conversationId)
+  assert.deepEqual(deleteAbortCalls, [conversationId], 'chat store delete aborts the active stream before removing the conversation')
+  assert.equal(getActiveStream(conversationId), undefined, 'chat store delete clears the active stream entry after aborting')
+  registerStreamAborter((conversationId) => {
+    deleteAbortCalls.push(`clear:${conversationId}`)
+    clearActiveStream(conversationId)
+  })
+  setActiveStream(conversationId, {
+    controller: new AbortController(),
+    messageId: 'streaming-message-two',
+  })
+  setActiveStream(plainConversationId, {
+    controller: new AbortController(),
+    messageId: 'streaming-message-three',
+  })
+  useChatStore.getState().clearAll()
+  assert.deepEqual(
+    deleteAbortCalls.slice(1),
+    [`clear:${conversationId}`, `clear:${plainConversationId}`],
+    'chat store clearAll aborts every active stream before clearing conversations'
+  )
+  assert.equal(getActiveStream(conversationId), undefined, 'chat store clearAll clears the deleted conversation stream entry')
+  assert.equal(getActiveStream(plainConversationId), undefined, 'chat store clearAll clears the remaining active stream entry')
+  registerStreamAborter(null)
+
+  await mergeProviderHealthRecords([
+    {
+      providerId: allowedProvider.id,
+      model: 'gpt-5.5-mini',
+      status: 'cooldown',
+      successes: 0,
+      failures: 1,
+      consecutiveFailures: 1,
+      lastFailureAtMs: 10,
+    },
+    {
+      providerId: blockedProvider.id,
+      model: 'blocked-chat',
+      status: 'healthy',
+      successes: 1,
+      failures: 0,
+      consecutiveFailures: 0,
+      lastSuccessAtMs: 11,
+    },
+  ], { nowMs: 12 })
+  await saveCompactState({
+    id: 'provider-store-compact-allowed',
+    conversationId,
+    providerId: allowedProvider.id,
+    model: 'gpt-5.5-mini',
+    compactItemJson: '{"summary":"allowed stale compact"}',
+    sourceMessageStartIndex: 0,
+    sourceMessageEndIndex: 1,
+    status: 'active',
+    createdAt: 1,
+    updatedAt: 1,
+  })
+  await saveCompactState({
+    id: 'provider-store-compact-blocked',
+    conversationId: 'blocked-conversation',
+    providerId: blockedProvider.id,
+    model: 'blocked-chat',
+    compactItemJson: '{"summary":"blocked active compact"}',
+    sourceMessageStartIndex: 0,
+    sourceMessageEndIndex: 1,
+    status: 'active',
+    createdAt: 2,
+    updatedAt: 2,
+  })
+
   await useSettingsStore.getState().removeProvider(allowedProvider.id)
   assert.equal(useSettingsStore.getState().settings.defaultProvider, blockedProvider.id, 'settings store moves the default provider to the remaining provider after removal')
   assert.equal(await useSettingsStore.getState().getPrimaryConfiguredProvider(), null, 'settings store returns no primary provider when the remaining provider is policy-blocked')
+  const healthAfterRemoval = await loadProviderHealthSnapshot({ nowMs: 12 })
+  assert.equal(healthAfterRemoval.records.some((record) => record.providerId === allowedProvider.id), false, 'settings store removes persisted provider health records when removing a provider')
+  assert.equal(healthAfterRemoval.records.some((record) => record.providerId === blockedProvider.id), true, 'settings store preserves other provider health records when removing a provider')
+  assert.deepEqual(await listActiveCompactStates(conversationId, allowedProvider.id, 'gpt-5.5-mini'), [], 'settings store invalidates removed-provider compact state')
+  assert.equal(
+    compactStateRows.find((row) => row.id === 'provider-store-compact-allowed')?.failureCode,
+    'provider_removed',
+    'settings store records provider_removed as the compact invalidation reason'
+  )
+  assert.equal(
+    compactStateRows.find((row) => row.id === 'provider-store-compact-blocked')?.status,
+    'active',
+    'settings store leaves other providers compact state untouched on single-provider removal'
+  )
+
+  await mergeProviderHealthRecords([
+    {
+      providerId: blockedProvider.id,
+      model: 'blocked-chat',
+      status: 'cooldown',
+      successes: 1,
+      failures: 1,
+      consecutiveFailures: 1,
+      lastFailureAtMs: 20,
+    },
+  ], { nowMs: 21 })
 
   useChatStore.getState().clearAll()
+  await useSettingsStore.getState().clearAllProviders()
+  assert.deepEqual((await loadProviderHealthSnapshot({ nowMs: 21 })).records, [], 'settings store clears persisted provider health snapshots when clearing all providers')
+  assert.equal(compactStateRows.every((row) => row.status !== 'active'), true, 'settings store invalidates all compact state when clearing all providers')
+  assert.equal(
+    compactStateRows.find((row) => row.id === 'provider-store-compact-blocked')?.failureCode,
+    'providers_cleared',
+    'settings store records providers_cleared as the clear-all compact invalidation reason'
+  )
+  await mergeProviderHealthRecords([
+    {
+      providerId: blockedProvider.id,
+      model: 'blocked-chat',
+      status: 'cooldown',
+      successes: 0,
+      failures: 1,
+      consecutiveFailures: 1,
+      lastFailureAtMs: 30,
+    },
+  ], { nowMs: 31 })
+  await saveCompactState({
+    id: 'provider-store-reset-compact',
+    conversationId: 'reset-conversation',
+    providerId: blockedProvider.id,
+    model: 'blocked-chat',
+    compactItemJson: '{"summary":"reset stale compact"}',
+    sourceMessageStartIndex: 0,
+    sourceMessageEndIndex: 1,
+    status: 'active',
+    createdAt: 30,
+    updatedAt: 30,
+  })
+  await useSettingsStore.getState().clearAll()
+  assert.deepEqual((await loadProviderHealthSnapshot({ nowMs: 31 })).records, [], 'settings store clearAll clears provider health snapshots when resetting settings')
+  assert.equal((await listActiveCompactStates('reset-conversation', blockedProvider.id, 'blocked-chat')).length, 0, 'settings store clearAll clears provider compact state when resetting settings')
+  useChatStore.setState({ conversations: [], currentId: null, isLoading: false, error: null })
+  memoryStorage.clear()
+  secureStorage.clear()
+  compactStateRows.splice(0, compactStateRows.length)
+}
+
+async function assertSettingsUrlPersistenceBehavior() {
+  await assertProviderStoreLifecycleBehavior()
+
+  const importedSettingsUrlResult = await importAllDataDetailed(JSON.stringify({
+    app: 'islemind',
+    version: 1,
+    conversations: [],
+    settings: {
+      theme: 'system',
+      language: 'zh-CN',
+      defaultProvider: null,
+      fontSize: 16,
+      hapticsEnabled: true,
+      customSearchEndpoint: 'https://user:pass@search.example/query?q={query}',
+      localModelDownloadMirrorBaseUrl: 'file:///tmp/local-model-mirror',
+      proxyBaseUrl: 'islemind://proxy',
+    },
+    providers: [],
+    exportedAt: Date.now(),
+  }))
+  assert.deepEqual(importedSettingsUrlResult, { ok: true, kind: 'islemind', conversations: 0 }, 'portable settings import still accepts otherwise valid backups')
+  const importedSettingsRows = await loadData('SETTINGS')
+  assert.equal(importedSettingsRows.customSearchEndpoint, '', 'portable import strips embedded-credential custom search endpoints before settings persistence')
+  assert.equal(importedSettingsRows.localModelDownloadMirrorBaseUrl, '', 'portable import strips non-web local-model mirror URLs before settings persistence')
+  assert.equal(importedSettingsRows.proxyBaseUrl, '', 'portable import strips non-web proxy base URLs before settings persistence')
+  await saveData('SETTINGS', {
+    theme: 'system',
+    language: 'zh-CN',
+    defaultProvider: null,
+    fontSize: 16,
+    hapticsEnabled: true,
+    customSearchEndpoint: 'https://user:pass@search.example/query?q={query}',
+    localModelDownloadMirrorBaseUrl: 'file:///tmp/local-model-mirror',
+    proxyBaseUrl: 'islemind://proxy',
+  })
+  const exportedSettingsUrlPayload = JSON.parse(await exportAllData())
+  assert.equal(exportedSettingsUrlPayload.settings.customSearchEndpoint, '', 'portable export does not reintroduce embedded-credential custom search endpoints from stored settings')
+  assert.equal(exportedSettingsUrlPayload.settings.localModelDownloadMirrorBaseUrl, '', 'portable export does not reintroduce non-web local-model mirror URLs from stored settings')
+  assert.equal(exportedSettingsUrlPayload.settings.proxyBaseUrl, '', 'portable export does not reintroduce non-web proxy base URLs from stored settings')
+
   await useSettingsStore.getState().clearAll()
   useChatStore.setState({ conversations: [], currentId: null, isLoading: false, error: null })
   memoryStorage.clear()
   secureStorage.clear()
+}
+
+async function assertClearAllDataBehavior() {
+  await saveData('CONVERSATIONS', [{
+    id: 'clear-all-conversation',
+    title: 'Clear all conversation',
+    providerId: 'clear-all-provider',
+    model: 'gpt-5.5-mini',
+    messages: [],
+    createdAt: 1,
+    updatedAt: 1,
+  }])
+  await saveData('SETTINGS', {
+    theme: 'system',
+    language: 'zh-CN',
+    defaultProvider: 'clear-all-provider',
+    fontSize: 16,
+    hapticsEnabled: true,
+  })
+  await saveData('PROVIDERS', [{
+    id: 'clear-all-provider',
+    type: 'openai-compatible',
+    name: 'Clear All Provider',
+    enabled: true,
+    models: ['gpt-5.5-mini'],
+    credentialGroups: [
+      { id: 'primary', label: 'Primary', apiKey: '', enabled: true },
+    ],
+  }])
+  await saveData('SKILLS', [{
+    schema: 'islemind.skill.v1',
+    id: 'clear-all-skill',
+    name: 'Clear All Skill',
+    layer: 'base',
+    priority: 0,
+    systemPrompt: 'Keep this removable.',
+    createdAt: 1,
+    updatedAt: 1,
+    tags: [],
+  }])
+  await saveData('MCP_SERVERS', [{
+    id: 'clear-all-mcp',
+    name: 'Clear All MCP',
+    url: 'https://mcp.example.test',
+    transport: 'sse',
+    enabled: true,
+    status: 'connected',
+    manifestTtlMs: 1000,
+    tools: [],
+    resources: [],
+    prompts: [],
+    approvedToolNames: [],
+    createdAt: 1,
+    updatedAt: 1,
+  }])
+  memoryStorage.set('@islemind/active-conversation', JSON.stringify('clear-all-conversation'))
+  memoryStorage.set('@islemind/provider-health', JSON.stringify({
+    version: 1,
+    updatedAtMs: 1,
+    records: [{ providerId: 'clear-all-provider', status: 'healthy', successes: 1, failures: 0, consecutiveFailures: 0 }],
+  }))
+  memoryStorage.set('@islemind/local-embedding-models', JSON.stringify({
+    records: {
+      'all-MiniLM-L6-v2': {
+        modelId: 'all-MiniLM-L6-v2',
+        source: 'downloaded',
+        downloadedAt: 1,
+        verifiedAt: 1,
+        bytes: 128,
+      },
+    },
+    failed: {
+      'all-MiniLM-L6-v2': 'stale verify failure',
+    },
+  }))
+  secureStorage.set('islemind.key.clear-all-provider', FAKE_KEY_A)
+  secureStorage.set('islemind.key.clear-all-provider.primary', FAKE_KEY_B)
+  secureStorage.set('islemind.key.tavily', FAKE_KEY_C)
+  secureStorage.set('islemind.key.google-search', FAKE_KEY_D)
+  secureStorage.set('islemind.key.bing-search', FAKE_KEY_E)
+  secureStorage.set('islemind.key.custom-search', FAKE_KEY_F)
+  await importContextSnapshot({
+    memories: [{
+      id: 'clear-all-memory',
+      content: 'Clear all should remove this memory.',
+      status: 'active',
+      sourceKind: 'manual',
+      createdAt: 1,
+      updatedAt: 1,
+    }],
+    documents: [{
+      id: 'clear-all-document',
+      title: 'Clear All Knowledge',
+      mimeType: 'text/plain',
+      size: 24,
+      chunkCount: 1,
+      status: 'ready',
+      createdAt: 1,
+      updatedAt: 1,
+    }],
+    chunks: [{
+      id: 'clear-all-chunk',
+      documentId: 'clear-all-document',
+      title: 'Clear All Knowledge',
+      content: 'Clear all should remove this knowledge chunk.',
+      ordinal: 0,
+      createdAt: 1,
+    }],
+  })
+  await saveCompactState({
+    id: 'clear-all-compact',
+    conversationId: 'clear-all-conversation',
+    providerId: 'clear-all-provider',
+    model: 'gpt-5.5-mini',
+    compactItemJson: '{"summary":"stale compact"}',
+    sourceMessageStartIndex: 0,
+    sourceMessageEndIndex: 1,
+    status: 'active',
+    createdAt: 1,
+    updatedAt: 1,
+  })
+  recordCompactUsage({
+    mode: 'auto',
+    providerId: 'clear-all-provider',
+    model: 'gpt-5.5-mini',
+    inputTokens: 12,
+    outputTokens: 5,
+  })
+  await clearRuntimeLog()
+  await appendRuntimeLog('storage.operation', { detail: 'clear-all-setup' }, { enabled: true, maxBytes: 4096 })
+  localFileFixtures.set('file:///tmp/islemind-models/all-MiniLM-L6-v2/model.onnx', Buffer.from('fake-model'))
+  localFileFixtures.set('file:///cache/IsleMind-clear-all.apk', Buffer.from('apk'))
+  localFileFixtures.set('file:///cache/islemind-apk-cleanup-clear-all.txt', Buffer.from('file:///cache/IsleMind-clear-all.apk', 'utf8'))
+
+  await clearAllData()
+
+  assert.equal(await loadData('CONVERSATIONS'), null, 'clearAllData removes persisted conversations')
+  assert.equal(await loadData('SETTINGS'), null, 'clearAllData removes persisted settings')
+  assert.equal(await loadData('PROVIDERS'), null, 'clearAllData removes persisted providers')
+  assert.equal(await loadData('SKILLS'), null, 'clearAllData removes persisted skills')
+  assert.equal(await loadData('MCP_SERVERS'), null, 'clearAllData removes persisted MCP servers')
+  assert.equal(memoryStorage.get('@islemind/active-conversation'), undefined, 'clearAllData removes the active conversation pointer')
+  assert.equal(memoryStorage.get('@islemind/provider-health'), undefined, 'clearAllData removes persisted provider health snapshots')
+  assert.equal(memoryStorage.get('@islemind/local-embedding-models'), undefined, 'clearAllData removes persisted local embedding model state')
+  assert.equal(secureStorage.get('islemind.key.clear-all-provider'), undefined, 'clearAllData removes provider secure keys')
+  assert.equal(secureStorage.get('islemind.key.clear-all-provider.primary'), undefined, 'clearAllData removes provider credential-group secure keys')
+  assert.equal(secureStorage.get('islemind.key.tavily'), undefined, 'clearAllData removes Tavily search keys')
+  assert.equal(secureStorage.get('islemind.key.google-search'), undefined, 'clearAllData removes Google search keys')
+  assert.equal(secureStorage.get('islemind.key.bing-search'), undefined, 'clearAllData removes Bing search keys')
+  assert.equal(secureStorage.get('islemind.key.custom-search'), undefined, 'clearAllData removes custom-search keys')
+  assert.deepEqual(await exportContextSnapshot(), { memories: [], documents: [], chunks: [] }, 'clearAllData removes context memories, knowledge documents, and knowledge chunks')
+  assert.deepEqual(await localDataStore.loadConversations(), [], 'clearAllData removes SQLite conversation records')
+  assert.deepEqual(await searchKnowledge('Clear all should remove this knowledge chunk.', 10), [], 'clearAllData removes knowledge source indexes used by retrieval')
+  assert.deepEqual(await listActiveCompactStates('clear-all-conversation', 'clear-all-provider', 'gpt-5.5-mini'), [], 'clearAllData removes persisted remote compact state')
+  assert.deepEqual(listCompactUsageRecords(), [], 'clearAllData removes in-memory remote compact usage records')
+  assert.equal((await getRuntimeLogInfo()).exists, false, 'clearAllData removes the runtime log file')
+  assert.equal(localFileFixtures.has('file:///tmp/islemind-models/all-MiniLM-L6-v2/model.onnx'), false, 'clearAllData removes downloaded local embedding model files')
+  assert.ok(localFileOperations.some((operation) => operation.type === 'delete' && operation.uri.includes('all-MiniLM-L6-v2')), 'clearAllData deletes downloaded local embedding model directories')
+  assert.equal(localFileFixtures.has('file:///cache/IsleMind-clear-all.apk'), false, 'clearAllData removes staged APK installer cache files')
+  assert.equal(localFileFixtures.has('file:///cache/islemind-apk-cleanup-clear-all.txt'), false, 'clearAllData removes staged APK cleanup markers')
+
+  memoryStorage.clear()
+  secureStorage.clear()
+  localFileFixtures.clear()
+  localFileOperations.length = 0
+  compactStateRows.splice(0, compactStateRows.length)
+  clearCompactUsageRecords()
+}
+
+async function assertApkUpdateBehavior() {
+  const apkManifestFixture = {
+    versionName: '1.0.7',
+    versionCode: 107,
+    publishedAt: '2026-06-05T00:00:00Z',
+    releaseUrl: 'https://github.com/domidoremi/IsleMind/releases/tag/v1.0.7',
+    assets: [
+      {
+        abi: 'universal-64',
+        variant: 'no-model',
+        name: 'IsleMind-1.0.7-universal-64-no-model.apk',
+        url: 'https://example.test/IsleMind-1.0.7-universal-64-no-model.apk',
+        sha256: '1'.repeat(64),
+        sizeBytes: 300,
+      },
+      {
+        abi: 'arm64-v8a',
+        variant: 'with-model-small',
+        name: 'IsleMind-1.0.7-arm64-v8a-with-model-small.apk',
+        url: 'https://example.test/IsleMind-1.0.7-arm64-v8a-with-model-small.apk',
+        sha256: '2'.repeat(64),
+        sizeBytes: 200,
+      },
+      {
+        abi: 'arm64-v8a',
+        variant: 'no-model',
+        name: 'IsleMind-1.0.7-arm64-v8a-no-model.apk',
+        url: 'https://example.test/IsleMind-1.0.7-arm64-v8a-no-model.apk',
+        sha256: '3'.repeat(64),
+        sizeBytes: 100,
+      },
+    ],
+  }
+  const selectedManifestRelease = normalizeApkUpdateManifestForTest(apkManifestFixture, ['arm64-v8a', 'armeabi-v7a'])
+  assert.ok(selectedManifestRelease, 'APK manifest produces a selected release')
+  assert.equal(selectedManifestRelease.apkName, 'IsleMind-1.0.7-arm64-v8a-no-model.apk', 'APK manifest selects the device arm64 no-model asset')
+  assert.equal(selectedManifestRelease.versionCode, 107, 'APK manifest preserves Android versionCode')
+  assert.equal(selectedManifestRelease.sha256, '3'.repeat(64), 'APK manifest preserves selected asset checksum')
+  assert.equal(isAllowedAndroidApkUriForTest('file:///tmp/IsleMind-1.0.7.apk'), true, 'Android APK URI policy allows explicit file APK URIs')
+  assert.equal(isAllowedAndroidApkUriForTest('content://downloads/document/IsleMind-1.0.7.apk'), true, 'Android APK URI policy allows content URIs whose document path is an APK')
+  assert.equal(isAllowedAndroidApkUriForTest('content://downloads/document/report.pdf'), false, 'Android APK URI policy rejects non-APK content document URIs')
+  assert.equal(isAllowedAndroidApkUriForTest('content://com.android.externalstorage.documents/tree/Download'), false, 'Android APK URI policy rejects SAF tree grants as installer APK input')
+  assert.equal(sanitizeAndroidApkUriForTest('  content://downloads/document/app.apk  '), 'content://downloads/document/app.apk', 'Android APK URI policy trims accepted APK URIs')
+  assert.equal(sanitizeAndroidApkUriForTest('https://example.test/app.apk'), undefined, 'Android APK URI policy rejects remote APK URLs for system-installer handoff')
+  assert.throws(
+    () => normalizeApkUpdateManifestForTest({
+      ...apkManifestFixture,
+      releaseUrl: 'islemind://release',
+    }, ['arm64-v8a']),
+    /releaseUrl must be an explicit HTTP\(S\) URL/,
+    'APK manifest rejects non-web release URLs'
+  )
+  assert.throws(
+    () => normalizeApkUpdateManifestForTest({
+      ...apkManifestFixture,
+      assets: [{
+        ...apkManifestFixture.assets[0],
+        url: 'file:///tmp/update.apk',
+      }],
+    }, ['arm64-v8a']),
+    /url must be an explicit HTTP\(S\) URL/,
+    'APK manifest rejects non-web APK asset URLs'
+  )
+  const unknownAbiAsset = selectApkAssetForTest(apkManifestFixture.assets, ['riscv64'])
+  assert.ok(unknownAbiAsset, 'APK asset selection returns a fallback asset for unknown ABIs')
+  assert.equal(unknownAbiAsset.abi, 'universal-64', 'unknown device ABI falls back to universal-64 no-model')
+  assert.ok(
+    compareReleaseToSnapshotForTest(
+      {
+        version: '1.0.6',
+        versionCode: 107,
+        tagName: 'v1.0.6',
+        name: 'IsleMind 1.0.6',
+        htmlUrl: 'https://example.test/release',
+        apkUrl: 'https://example.test/app.apk',
+        apkName: 'app.apk',
+        publishedAt: null,
+      },
+      { appVersion: '9.9.9', buildVersion: '106', updateMode: 'apk', hotUpdateMode: 'disabled' }
+    ) > 0,
+    'APK update comparison uses versionCode before versionName'
+  )
+  assert.equal(shouldRecordApkUpdateCheck({ status: 'available', message: '' }), true, 'available update checks update the last-check timestamp')
+  assert.equal(shouldRecordApkUpdateCheck({ status: 'unavailable', message: '' }), true, 'unavailable update checks update the last-check timestamp')
+  assert.equal(shouldRecordApkUpdateCheck({ status: 'error', message: '', reason: 'network' }), false, 'failed update checks do not update the last-check timestamp')
+
+  resetLocalModelFileMocks()
+  reactNativePlatform.OS = 'android'
+  const originalFetchForApk = global.fetch
+  const updateFetchUrls = []
+  global.fetch = async (url) => {
+    updateFetchUrls.push(String(url))
+    if (String(url).includes('raw.githubusercontent.com')) {
+      return { ok: false, status: 404, json: async () => ({}) }
+    }
+    return {
+      ok: true,
+      status: 200,
+      json: async () => ({
+        tag_name: 'v1.0.7',
+        name: 'IsleMind 1.0.7',
+        html_url: 'https://github.com/domidoremi/IsleMind/releases/tag/v1.0.7',
+        published_at: '2026-06-05T00:00:00Z',
+        assets: [
+          {
+            name: 'IsleMind-1.0.7-arm64-v8a-no-model.apk',
+            browser_download_url: 'https://example.test/IsleMind-1.0.7-arm64-v8a-no-model.apk',
+            size: 123,
+          },
+        ],
+      }),
+    }
+  }
+  try {
+    const fallbackUpdate = await checkLatestApkRelease()
+    assert.equal(fallbackUpdate.status, 'available', 'GitHub Release API remains the fallback when the manifest is unavailable')
+    assert.ok(fallbackUpdate.release, 'GitHub fallback returns release metadata for available updates')
+    assert.equal(fallbackUpdate.release.apkName, 'IsleMind-1.0.7-arm64-v8a-no-model.apk', 'GitHub fallback still selects the device ABI APK')
+    assert.ok(updateFetchUrls[0].includes('/updates/android.json'), 'APK update check tries the static manifest first')
+    assert.ok(updateFetchUrls[1].includes('/repos/domidoremi/IsleMind/releases/latest'), 'APK update check falls back to the GitHub latest API')
+  } finally {
+    global.fetch = originalFetchForApk
+    reactNativePlatform.OS = 'test'
+}
+
+  resetLocalModelFileMocks()
+  reactNativePlatform.OS = 'android'
+  expoDeviceModuleAvailable = false
+  const originalFetchForNoDeviceModule = global.fetch
+  global.fetch = async () => ({
+    ok: true,
+    status: 200,
+    json: async () => apkManifestFixture,
+  })
+  try {
+    const noDeviceModuleUpdate = await checkLatestApkRelease()
+    assert.equal(noDeviceModuleUpdate.status, 'available', 'missing ExpoDevice native module does not crash APK update checks')
+    assert.ok(noDeviceModuleUpdate.release, 'missing ExpoDevice native module still returns selected release metadata')
+    assert.equal(noDeviceModuleUpdate.release.apkName, 'IsleMind-1.0.7-universal-64-no-model.apk', 'missing ExpoDevice native module uses unknown-ABI universal fallback')
+  } finally {
+    global.fetch = originalFetchForNoDeviceModule
+    expoDeviceModuleAvailable = true
+    reactNativePlatform.OS = 'test'
+  }
+
+  resetLocalModelFileMocks()
+  reactNativePlatform.OS = 'android'
+  const originalFetchForInvalidGithubAsset = global.fetch
+  global.fetch = async (url) => {
+    if (String(url).includes('raw.githubusercontent.com')) {
+      return { ok: false, status: 404, json: async () => ({}) }
+    }
+    return {
+      ok: true,
+      status: 200,
+      json: async () => ({
+        tag_name: 'v1.0.7',
+        name: 'IsleMind 1.0.7',
+        html_url: 'https://github.com/domidoremi/IsleMind/releases/tag/v1.0.7',
+        published_at: '2026-06-05T00:00:00Z',
+        assets: [
+          {
+            name: 'IsleMind-1.0.7-arm64-v8a-no-model.apk',
+            browser_download_url: 'islemind://bad-apk',
+            size: 123,
+          },
+        ],
+      }),
+    }
+  }
+  try {
+    const invalidGithubAssetUpdate = await checkLatestApkRelease()
+    assert.equal(invalidGithubAssetUpdate.status, 'unavailable', 'GitHub fallback ignores non-web APK asset URLs and returns no installable update')
+  } finally {
+    global.fetch = originalFetchForInvalidGithubAsset
+    reactNativePlatform.OS = 'test'
+  }
+
+  resetLocalModelFileMocks()
+  reactNativePlatform.OS = 'android'
+  const originalFetchForUserInfoGithubAsset = global.fetch
+  global.fetch = async (url) => {
+    if (String(url).includes('raw.githubusercontent.com')) {
+      return { ok: false, status: 404, json: async () => ({}) }
+    }
+    return {
+      ok: true,
+      status: 200,
+      json: async () => ({
+        tag_name: 'v1.0.7',
+        name: 'IsleMind 1.0.7',
+        html_url: 'https://github.com/domidoremi/IsleMind/releases/tag/v1.0.7',
+        published_at: '2026-06-05T00:00:00Z',
+        assets: [
+          {
+            name: 'IsleMind-1.0.7-arm64-v8a-no-model.apk',
+            browser_download_url: 'https://release-user:release-pass@example.test/IsleMind-1.0.7-arm64-v8a-no-model.apk',
+            size: 123,
+          },
+        ],
+      }),
+    }
+  }
+  try {
+    const userInfoGithubAssetUpdate = await checkLatestApkRelease()
+    assert.equal(userInfoGithubAssetUpdate.status, 'unavailable', 'GitHub fallback ignores APK asset URLs with embedded credentials')
+  } finally {
+    global.fetch = originalFetchForUserInfoGithubAsset
+    reactNativePlatform.OS = 'test'
+  }
+
+  resetLocalModelFileMocks()
+  reactNativePlatform.OS = 'android'
+  const corruptApkBody = Buffer.from('not the expected apk')
+  const corruptApkUrl = 'https://example.test/corrupt.apk'
+  localDownloadFixtures.set(corruptApkUrl, { status: 200, body: corruptApkBody })
+  const checksumResult = await downloadAndOpenApkInstaller({
+    version: '1.0.7',
+    versionCode: 107,
+    tagName: 'v1.0.7',
+    name: 'IsleMind 1.0.7',
+    htmlUrl: 'https://github.com/domidoremi/IsleMind/releases/tag/v1.0.7',
+    apkUrl: corruptApkUrl,
+    apkName: 'IsleMind-1.0.7-arm64-v8a-no-model.apk',
+    publishedAt: null,
+    sha256: '0'.repeat(64),
+    sizeBytes: corruptApkBody.length,
+    abi: 'arm64-v8a',
+    variant: 'no-model',
+  })
+  assert.equal(checksumResult.status, 'error', 'APK checksum mismatch is reported as an update error')
+  assert.equal(checksumResult.reason, 'checksum_mismatch', 'APK checksum mismatch carries the checksum_mismatch reason')
+  assert.equal(launchedIntents.length, 0, 'APK checksum mismatch blocks Android installer launch')
+  assert.ok(
+    localFileOperations.some((operation) => operation.type === 'delete' && operation.uri.endsWith('IsleMind-1.0.7-arm64-v8a-no-model.apk')),
+    'APK checksum mismatch deletes the cached APK'
+  )
+  resetLocalModelFileMocks()
+  reactNativePlatform.OS = 'android'
+  const failingApkUrl = 'https://example.test/failing.apk'
+  localDownloadFixtures.set(failingApkUrl, { status: 500, body: Buffer.from('fail') })
+  const failedDownloadResult = await downloadAndOpenApkInstaller({
+    version: '1.0.7',
+    versionCode: 107,
+    tagName: 'v1.0.7',
+    name: 'IsleMind 1.0.7',
+    htmlUrl: 'https://github.com/domidoremi/IsleMind/releases/tag/v1.0.7',
+    apkUrl: failingApkUrl,
+    apkName: 'IsleMind-1.0.7-arm64-v8a-no-model.apk',
+    publishedAt: null,
+    sha256: '0'.repeat(64),
+    sizeBytes: 4,
+    abi: 'arm64-v8a',
+    variant: 'no-model',
+  })
+  assert.equal(failedDownloadResult.status, 'error', 'APK HTTP download failure is reported as an update error')
+  assert.equal(failedDownloadResult.reason, 'network', 'APK HTTP download failure carries the network reason')
+  assert.ok(
+    localFileOperations.some((operation) => operation.type === 'delete' && operation.uri.endsWith('IsleMind-1.0.7-arm64-v8a-no-model.apk')),
+    'APK HTTP download failure deletes the cached APK'
+  )
+  const invalidApkUrlResult = await downloadAndOpenApkInstaller({
+    version: '1.0.7',
+    versionCode: 107,
+    tagName: 'v1.0.7',
+    name: 'IsleMind 1.0.7',
+    htmlUrl: 'https://github.com/domidoremi/IsleMind/releases/tag/v1.0.7',
+    apkUrl: 'file:///tmp/bad-update.apk',
+    apkName: 'IsleMind-1.0.7-arm64-v8a-no-model.apk',
+    publishedAt: null,
+    sha256: '0'.repeat(64),
+    sizeBytes: 12,
+    abi: 'arm64-v8a',
+    variant: 'no-model',
+  })
+  assert.equal(invalidApkUrlResult.status, 'error', 'installer flow rejects non-web APK URLs before download')
+  assert.equal(invalidApkUrlResult.reason, 'manifest_invalid', 'installer flow reports invalid APK URLs as manifest_invalid')
+  assert.equal(
+    localFileOperations.some((operation) => operation.type === 'download' && operation.url === 'file:///tmp/bad-update.apk'),
+    false,
+    'installer flow never attempts non-web APK downloads'
+  )
+  const userInfoApkUrlResult = await downloadAndOpenApkInstaller({
+    version: '1.0.7',
+    versionCode: 107,
+    tagName: 'v1.0.7',
+    name: 'IsleMind 1.0.7',
+    htmlUrl: 'https://github.com/domidoremi/IsleMind/releases/tag/v1.0.7',
+    apkUrl: 'https://release-user:release-pass@example.test/private.apk',
+    apkName: 'IsleMind-1.0.7-arm64-v8a-no-model.apk',
+    publishedAt: null,
+    sha256: '0'.repeat(64),
+    sizeBytes: 12,
+    abi: 'arm64-v8a',
+    variant: 'no-model',
+  })
+  assert.equal(userInfoApkUrlResult.status, 'error', 'installer flow rejects APK URLs with embedded credentials before download')
+  assert.equal(userInfoApkUrlResult.reason, 'manifest_invalid', 'installer flow reports embedded-credential APK URLs as manifest_invalid')
+  assert.equal(
+    localFileOperations.some((operation) => operation.type === 'download' && operation.url === 'https://release-user:release-pass@example.test/private.apk'),
+    false,
+    'installer flow never attempts APK downloads with embedded credentials'
+  )
+  resetLocalModelFileMocks()
+  reactNativePlatform.OS = 'android'
+  const installerFailUrl = 'https://example.test/installer-fail.apk'
+  localDownloadFixtures.set(installerFailUrl, { status: 200, body: Buffer.from('apk-binary') })
+  const originalStartActivityAsync = IntentLauncher.startActivityAsync
+  IntentLauncher.startActivityAsync = async () => { throw new Error('installer failed') }
+  try {
+    const installerFailBody = Buffer.from('apk-binary')
+    const installerFailureResult = await downloadAndOpenApkInstaller({
+      version: '1.0.7',
+      versionCode: 107,
+      tagName: 'v1.0.7',
+      name: 'IsleMind 1.0.7',
+      htmlUrl: 'https://github.com/domidoremi/IsleMind/releases/tag/v1.0.7',
+      apkUrl: installerFailUrl,
+      apkName: 'IsleMind-1.0.7-arm64-v8a-no-model.apk',
+      publishedAt: null,
+      sha256: sha256BytesForTest(Buffer.from('apk-binary')),
+      sizeBytes: installerFailBody.length,
+      abi: 'arm64-v8a',
+      variant: 'no-model',
+    })
+    assert.equal(installerFailureResult.status, 'error', 'APK installer launch failure is reported as an update error')
+    assert.equal(installerFailureResult.reason, 'installer_failed', 'APK installer launch failure carries the installer_failed reason')
+    assert.ok(
+      localFileOperations.some((operation) => operation.type === 'delete' && operation.uri.endsWith('IsleMind-1.0.7-arm64-v8a-no-model.apk')),
+      'APK installer launch failure deletes the cached APK'
+    )
+  } finally {
+    IntentLauncher.startActivityAsync = originalStartActivityAsync
+  }
+  resetLocalModelFileMocks()
+  reactNativePlatform.OS = 'android'
+  const installerSuccessUrl = 'https://example.test/installer-success.apk'
+  const installerSuccessBody = Buffer.from('apk-binary-success')
+  localDownloadFixtures.set(installerSuccessUrl, { status: 200, body: installerSuccessBody })
+  const installerSuccessResult = await downloadAndOpenApkInstaller({
+    version: '1.0.7',
+    versionCode: 107,
+    tagName: 'v1.0.7',
+    name: 'IsleMind 1.0.7',
+    htmlUrl: 'https://github.com/domidoremi/IsleMind/releases/tag/v1.0.7',
+    apkUrl: installerSuccessUrl,
+    apkName: 'IsleMind-1.0.7-arm64-v8a-no-model.apk',
+    publishedAt: null,
+    sha256: sha256BytesForTest(installerSuccessBody),
+    sizeBytes: installerSuccessBody.length,
+    abi: 'arm64-v8a',
+    variant: 'no-model',
+  })
+  assert.equal(installerSuccessResult.status, 'downloaded', 'successful APK handoff still reports installer-opened status')
+  assert.equal(launchedIntents.at(-1)?.action, 'android.intent.action.INSTALL_PACKAGE', 'successful APK handoff still opens the Android installer')
+  assert.equal(localFileFixtures.has(installerSuccessResult.localUri), true, 'successful APK handoff leaves the package available for the installer immediately after launch')
+  assert.ok(
+    [...localFileFixtures.keys()].some((uri) => uri.startsWith('file:///cache/islemind-apk-cleanup-')),
+    'successful APK handoff writes a cache cleanup marker'
+  )
+  const deletedStagedApks = await clearStagedApkDownloads()
+  assert.equal(deletedStagedApks, 1, 'staged APK cleanup deletes the installer handoff package on the next cleanup pass')
+  assert.equal(localFileFixtures.has(installerSuccessResult.localUri), false, 'staged APK cleanup removes the installer handoff package from cache')
+  assert.equal(
+    [...localFileFixtures.keys()].some((uri) => uri.startsWith('file:///cache/islemind-apk-cleanup-')),
+    false,
+    'staged APK cleanup removes cleanup markers after processing them'
+  )
+  resetLocalModelFileMocks()
+  reactNativePlatform.OS = 'android'
+  localFileFixtures.set('file:///cache/islemind-apk-cleanup-malicious.txt', Buffer.from('file:///tmp/not-cache.apk', 'utf8'))
+  localFileFixtures.set('file:///tmp/not-cache.apk', Buffer.from('do-not-delete'))
+  const rejectedStagedApks = await clearStagedApkDownloads()
+  assert.equal(rejectedStagedApks, 0, 'staged APK cleanup refuses marker payloads outside app cache')
+  assert.equal(localFileFixtures.has('file:///tmp/not-cache.apk'), true, 'staged APK cleanup does not delete non-cache marker payloads')
+  assert.equal(localFileFixtures.has('file:///cache/islemind-apk-cleanup-malicious.txt'), false, 'staged APK cleanup still removes rejected markers')
+  resetLocalModelFileMocks()
+  reactNativePlatform.OS = 'android'
+  localFileFixtures.set('file:///cache/islemind-apk-cleanup-valid.txt', Buffer.from('file:///cache/valid-direct.apk', 'utf8'))
+  localFileFixtures.set('file:///cache/valid-direct.apk', Buffer.from('apk'))
+  localFileFixtures.set('file:///tmp/islemind-apk-cleanup-parent.txt', Buffer.from('file:///cache/parent-target.apk', 'utf8'))
+  localFileFixtures.set('file:///cache/parent-target.apk', Buffer.from('apk'))
+  localFileFixtures.set('file:///tmp/absolute-marker.txt', Buffer.from('file:///cache/absolute-target.apk', 'utf8'))
+  localFileFixtures.set('file:///cache/absolute-target.apk', Buffer.from('apk'))
+  localFileFixtures.set('file:///cache/nested/child.apk', Buffer.from('apk'))
+  localFileFixtures.set('file:///cacheprefix/confused.apk', Buffer.from('apk'))
+  nextReadDirectoryEntries = [
+    'islemind-apk-cleanup-valid.txt',
+    '../islemind-apk-cleanup-parent.txt',
+    'file:///tmp/absolute-marker.txt',
+    'islemind-apk-cleanup-nested.txt',
+    'islemind-apk-cleanup-prefix-confusion.txt',
+  ]
+  localFileFixtures.set('file:///cache/islemind-apk-cleanup-nested.txt', Buffer.from('file:///cache/nested/child.apk', 'utf8'))
+  localFileFixtures.set('file:///cache/islemind-apk-cleanup-prefix-confusion.txt', Buffer.from('file:///cacheprefix/confused.apk', 'utf8'))
+  const boundedMarkerCleanupCount = await clearStagedApkDownloads()
+  assert.equal(boundedMarkerCleanupCount, 1, 'staged APK cleanup only deletes direct child app-cache APK payloads from direct child markers')
+  assert.equal(localFileFixtures.has('file:///cache/valid-direct.apk'), false, 'staged APK cleanup deletes valid direct child APK payloads')
+  assert.equal(localFileFixtures.has('file:///cache/parent-target.apk'), true, 'staged APK cleanup ignores parent-traversal marker entries')
+  assert.equal(localFileFixtures.has('file:///cache/absolute-target.apk'), true, 'staged APK cleanup ignores absolute marker entries')
+  assert.equal(localFileFixtures.has('file:///cache/nested/child.apk'), true, 'staged APK cleanup does not treat nested cache paths as direct staged APK payloads')
+  assert.equal(localFileFixtures.has('file:///cacheprefix/confused.apk'), true, 'staged APK cleanup rejects cache-prefix-confusion APK payloads')
+  assert.ok(!localFileOperations.some((operation) => operation.type === 'delete' && operation.uri.includes('..')), 'staged APK cleanup never deletes parent-traversal marker paths')
+  assert.ok(!localFileOperations.some((operation) => operation.type === 'delete' && operation.uri === 'file:///tmp/absolute-marker.txt'), 'staged APK cleanup never deletes absolute marker paths')
+  launchedIntents.length = 0
+  const apkInstallerTool = listAndroidDeviceToolManifests().find((tool) => tool.id === 'android:apk.open_installer')
+  assert.ok(apkInstallerTool, 'Android device tool registry includes the APK installer handoff tool')
+  const rejectedContentApkToolResult = await executeAndroidDeviceTool(apkInstallerTool, {
+    apkUri: 'content://downloads/document/report.pdf',
+  })
+  assert.equal(rejectedContentApkToolResult.ok, false, 'Android APK installer tool rejects non-APK content URIs')
+  assert.equal(rejectedContentApkToolResult.errorCode, 'schema_invalid', 'Android APK installer tool reports non-APK content URIs as invalid schema')
+  assert.equal(launchedIntents.length, 0, 'Android APK installer tool does not grant or launch intents for non-APK content URIs')
+  localFileFixtures.set('content://downloads/document/IsleMind-1.0.7.apk', Buffer.from('apk'))
+  const acceptedContentApkToolResult = await executeAndroidDeviceTool(apkInstallerTool, {
+    apkUri: 'content://downloads/document/IsleMind-1.0.7.apk',
+  })
+  assert.equal(acceptedContentApkToolResult.ok, true, 'Android APK installer tool still accepts content URIs that identify APK files')
+  assert.equal(launchedIntents.at(-1)?.action, 'android.intent.action.INSTALL_PACKAGE', 'Android APK installer tool opens the system package installer for APK content URIs')
+  reactNativePlatform.OS = 'test'
+}
+
+async function assertAndroidAppCacheCleanupBehavior() {
+  resetLocalModelFileMocks()
+  reactNativePlatform.OS = 'android'
+  const clearCacheTool = listAndroidDeviceToolManifests().find((tool) => tool.id === 'android:storage.clear_app_cache')
+  assert.ok(clearCacheTool, 'Android device tool registry includes the app-cache cleanup tool')
+  localFileFixtures.set('file:///cache/safe-cache.bin', Buffer.from('cache'))
+  localFileFixtures.set('file:///tmp/outside-cache.bin', Buffer.from('outside'))
+  nextReadDirectoryEntries = [
+    'safe-cache.bin',
+    '../outside-cache.bin',
+    'nested/cache.bin',
+    'file:///tmp/outside-cache.bin',
+    ' trailing-space.bin ',
+    '',
+  ]
+
+  const result = await executeAndroidDeviceTool(clearCacheTool)
+  const payload = JSON.parse(result.output)
+  assert.equal(result.ok, true, 'Android app-cache cleanup keeps normal successful tool status')
+  assert.equal(payload.deletedEntryCount, 1, 'Android app-cache cleanup deletes valid direct child cache entries')
+  assert.equal(payload.failureCount, 5, 'Android app-cache cleanup reports refused malformed cache entries as failures')
+  assert.equal(localFileFixtures.has('file:///cache/safe-cache.bin'), false, 'Android app-cache cleanup removes valid direct child cache files')
+  assert.equal(localFileFixtures.has('file:///tmp/outside-cache.bin'), true, 'Android app-cache cleanup does not delete paths outside app cache')
+  assert.ok(
+    localFileOperations.some((operation) => operation.type === 'delete' && operation.uri === 'file:///cache/safe-cache.bin'),
+    'Android app-cache cleanup constructs delete targets inside the normalized cache directory'
+  )
+  assert.equal(
+    localFileOperations.some((operation) => operation.type === 'delete' && operation.uri.includes('..')),
+    false,
+    'Android app-cache cleanup never deletes parent-traversal cache entries'
+  )
+  assert.equal(
+    localFileOperations.some((operation) => operation.type === 'delete' && operation.uri === 'file:///tmp/outside-cache.bin'),
+    false,
+    'Android app-cache cleanup never deletes absolute URI cache entries'
+  )
+  assert.equal(result.metadata?.androidOperationAudit?.scope, 'app-cache', 'Android app-cache cleanup audit remains scoped to app cache')
+  assert.equal(result.metadata?.androidOperationAudit?.userFilesDeleted, false, 'Android app-cache cleanup audit records that user files were not deleted')
+  reactNativePlatform.OS = 'test'
+}
+
+function assertChatAndroidUndoPromptBehavior() {
+  assert.equal(safeChatPromptText('  sk-secret-token-1234567890  ', 120), '[redacted]', 'chat prompt helper redacts provider-looking secrets')
+  const prompt = buildAndroidUndoPromptContext({
+    id: 'assistant-with-undo-focused',
+    role: 'assistant',
+    content: 'Moved two files into Documents.',
+    timestamp: 1,
+    status: 'done',
+    reasoning: [{
+      id: 'workflow-undo-focused',
+      type: 'reasoning',
+      title: 'Agent workflow',
+      status: 'done',
+      startedAt: 1,
+      completedAt: 4,
+      metadata: {
+        androidUndoOperationCount: 2,
+        androidUndoToolName: 'android.files.undo_operations',
+        androidUndoRequiresVisibleConfirmation: true,
+        androidUndoSummary: 'Can reverse the completed move operations.',
+      },
+    }],
+    toolCalls: [{
+      id: 'android-apply-focused',
+      type: 'tool',
+      title: 'Android apply',
+      status: 'done',
+      content: JSON.stringify({
+        undoOperations: [
+          {
+            id: 'undo-1',
+            action: 'move',
+            sourceName: 'report.pdf',
+            targetName: 'report.pdf',
+            password: 'do-not-leak-password',
+            nested: { token: 'do-not-leak-token' },
+            requiresUserConfirmation: true,
+          },
+        ],
+      }),
+      startedAt: 2,
+      completedAt: 3,
+      metadata: {
+        source: 'android',
+        toolId: 'android:files.apply_operations',
+      },
+    }],
+  }, 'Empty response')
+  assert.ok(prompt.includes('Undo tool: android.files.undo_operations'), 'Android undo prompt preserves the undo tool identity')
+  assert.ok(prompt.includes('Undo operations: 1'), 'Android undo prompt includes sanitized undo operation count')
+  assert.ok(prompt.includes('Visible confirmation required: yes'), 'Android undo prompt preserves the visible confirmation requirement')
+  assert.ok(prompt.includes('Delete-based rollback: unsupported'), 'Android undo prompt keeps the delete rollback boundary explicit')
+  assert.ok(prompt.includes('"password": "[redacted]"'), 'Android undo prompt redacts sensitive operation fields')
+  assert.ok(prompt.includes('"token": "[redacted]"'), 'Android undo prompt redacts nested sensitive operation fields')
+  assert.ok(!prompt.includes('do-not-leak'), 'Android undo prompt omits raw sensitive operation values')
+}
+
+async function assertExpandedProviderPresetCoverage() {
+  const expandedProviderDetectionFixtures = [
+    ['https://api.mistral.ai/v1', 'mistral'],
+    ['https://api.groq.com/openai/v1', 'groq'],
+    ['https://api.together.ai/v1', 'together'],
+    ['https://api.fireworks.ai/inference/v1', 'fireworks'],
+    ['https://api.perplexity.ai/chat/completions', 'perplexity'],
+    ['https://api.cohere.ai/compatibility/v1', 'cohere'],
+    ['https://api.cerebras.ai/v1', 'cerebras'],
+    ['https://api.sambanova.ai/v1', 'sambanova'],
+    ['https://integrate.api.nvidia.com/v1', 'nvidia-nim'],
+    ['https://router.huggingface.co/v1', 'huggingface'],
+    ['https://models.github.ai/inference', 'github-models'],
+    ['https://api.deepinfra.com/v1/openai', 'deepinfra'],
+    ['https://api.novita.ai/v3/openai', 'novita'],
+    ['https://api.siliconflow.cn/v1', 'siliconflow'],
+    ['https://api-inference.modelscope.cn/v1', 'modelscope'],
+    ['https://ark.cn-beijing.volces.com/api/v3', 'volcengine-ark'],
+    ['https://qianfan.baidubce.com/v2', 'baidu-qianfan'],
+    ['https://api.hunyuan.cloud.tencent.com/v1', 'tencent-hunyuan'],
+    ['https://api.baichuan-ai.com/v1', 'baichuan'],
+    ['https://api.stepfun.com/v1', 'stepfun'],
+    ['https://api.lingyiwanwu.com/v1', 'zero-one'],
+    ['https://example.openai.azure.com/openai/v1', 'azure-openai'],
+    ['https://bedrock-mantle.us-east-1.api.aws/v1', 'aws-bedrock'],
+    ['https://bedrock-runtime.us-east-1.amazonaws.com', 'aws-bedrock'],
+    ['https://us-central1-aiplatform.googleapis.com', 'vertex-ai'],
+    ['http://localhost:11434/v1', 'ollama'],
+    ['http://localhost:1234/v1', 'lm-studio'],
+    ['http://localhost:8080/v1', 'localai'],
+    ['http://localhost:8000/v1', 'vllm'],
+    ['http://localhost:30000/v1', 'sglang'],
+  ]
+  for (const [baseUrl, presetId] of expandedProviderDetectionFixtures) {
+    assert.equal(
+      detectProviderPreset({ baseUrl }).presetId,
+      presetId,
+      `detects expanded provider preset for ${baseUrl}`
+    )
+  }
+
+  const groqPreset = applyProviderPreset({ apiKey: FAKE_KEY_A, models: [], enabled: false }, 'groq')
+  assert.equal(groqPreset.type, 'openai-compatible', 'expanded Groq preset stays on OpenAI-compatible request shape')
+  assert.equal(groqPreset.capabilities.responsesApi, true, 'expanded Groq preset declares Responses API support')
+  assert.equal(groqPreset.capabilities.remoteCompact, false, 'expanded non-official Responses presets do not infer remote compact')
+  const vertexPreset = applyProviderPreset({ apiKey: FAKE_KEY_A, baseUrl: 'https://us-central1-aiplatform.googleapis.com/v1/projects/islemind-dev/locations/us-central1/endpoints/openapi', models: [], enabled: false }, 'vertex-ai')
+  assert.equal(vertexPreset.type, 'openai-compatible', 'Vertex AI preset uses its OpenAI-compatible hosted endpoint shape')
+  assert.equal(vertexPreset.capabilities.modelList, true, 'Vertex AI OpenAI-compatible endpoint keeps model-list sync enabled when configured under /endpoints/openapi')
+  const bedrockMantlePreset = applyProviderPreset({ apiKey: FAKE_KEY_A, models: [], enabled: false }, 'aws-bedrock')
+  assert.equal(bedrockMantlePreset.type, 'openai-compatible', 'AWS Bedrock preset defaults to the OpenAI-compatible Mantle API shape')
+  assert.equal(bedrockMantlePreset.baseUrl, 'https://bedrock-mantle.us-east-1.api.aws/v1', 'AWS Bedrock preset defaults to the Mantle /v1 base URL')
+  assert.equal(bedrockMantlePreset.capabilities.responsesApi, true, 'AWS Bedrock Mantle preset declares Responses API routing')
+  assert.equal(bedrockMantlePreset.capabilities.modelList, true, 'AWS Bedrock Mantle preset keeps OpenAI-compatible model-list sync enabled')
+  assert.equal(isBedrockMantleBaseUrl('https://bedrock-mantle.us-west-2.api.aws/v1/responses'), true, 'Bedrock Mantle helper detects OpenAI-compatible Bedrock API hosts')
+  assert.equal(normalizeBedrockMantleBaseUrl('https://bedrock-mantle.us-west-2.api.aws/v1/chat/completions'), 'https://bedrock-mantle.us-west-2.api.aws/v1', 'Bedrock Mantle base URL normalization keeps the /v1 namespace')
+  assert.equal(inferBedrockMantleRegion('https://bedrock-mantle.eu-central-1.api.aws/v1'), 'eu-central-1', 'Bedrock Mantle helper infers the configured AWS region')
+
+  const perplexityPreset = applyProviderPreset({ apiKey: FAKE_KEY_A, models: ['sonar'], enabled: false }, 'perplexity')
+  assert.equal(isPerplexityProvider(perplexityPreset), true, 'provider identity helper detects Perplexity presets')
+  assert.equal(perplexityPreset.capabilities.modelList, false, 'Perplexity preset disables generic /models sync by default')
+  assert.equal(getAPIEndpointForTest(perplexityPreset), 'https://api.perplexity.ai/chat/completions', 'Perplexity preset keeps chat-completions endpoint under its compatibility root')
+  assert.equal(
+    getAPIEndpointForTest({ ...perplexityPreset, baseUrl: 'https://api.perplexity.ai/chat/completions' }),
+    'https://api.perplexity.ai/chat/completions',
+    'Perplexity endpoint normalization does not append an extra /v1 to direct chat-completions URLs'
+  )
+
+  const originalFetch = global.fetch
+  try {
+    global.fetch = async () => {
+      throw new Error('provider presets with modelList=false must not call remote discovery')
+    }
+    assert.deepEqual(
+      await fetchProviderModelConfigsFromRemote(perplexityPreset, 1),
+      [],
+      'model discovery skips providers that explicitly disable model-list sync'
+    )
+  } finally {
+    global.fetch = originalFetch
+  }
+}
+
+async function assertProviderCapabilityMatrixBehavior() {
+  const officialProvider = applyProviderPreset({ apiKey: FAKE_KEY_A, models: ['gpt-5.5'], enabled: true }, 'openai')
+  const azureV1Provider = {
+    id: 'azure',
+    type: 'openai-compatible',
+    name: 'Azure OpenAI',
+    presetId: 'azure-openai',
+    baseUrl: 'https://example.openai.azure.com/openai/v1',
+    apiKey: FAKE_KEY_A,
+    models: ['gpt-4.1'],
+    enabled: true,
+    capabilities: { responsesApi: true },
+  }
+  const azureLegacyProvider = {
+    ...azureV1Provider,
+    id: 'azure-legacy',
+    baseUrl: 'https://example.openai.azure.com/openai/deployments/gpt-4o',
+  }
+  const azureMissingBaseUrlProvider = {
+    ...azureV1Provider,
+    id: 'azure-missing-base-url',
+    baseUrl: undefined,
+  }
+  const bedrockRuntimeProvider = {
+    id: 'bedrock-runtime',
+    type: 'anthropic',
+    name: 'AWS Bedrock Runtime',
+    presetId: 'aws-bedrock',
+    baseUrl: 'https://bedrock-runtime.us-east-1.amazonaws.com',
+    apiKey: FAKE_KEY_A,
+    models: ['anthropic.claude-3-7-sonnet'],
+    enabled: true,
+  }
+  const bedrockRuntimeCredentialJson = JSON.stringify({
+    accessKeyId: 'AKIDEXAMPLE',
+    secretAccessKey: 'wJalrXUtnFEMI/K7MDENG+bPxRfiCYEXAMPLEKEY',
+    sessionToken: 'session-token-example',
+  })
+  const bedrockRuntimeReadyProvider = {
+    ...bedrockRuntimeProvider,
+    id: 'bedrock-runtime-ready',
+    apiKey: bedrockRuntimeCredentialJson,
+  }
+  const bedrockMantleProvider = {
+    id: 'bedrock-mantle',
+    type: 'openai-compatible',
+    name: 'AWS Bedrock Mantle',
+    presetId: 'aws-bedrock',
+    baseUrl: 'https://bedrock-mantle.us-east-1.api.aws/v1',
+    apiKey: FAKE_KEY_A,
+    models: ['openai.gpt-oss-120b-1:0'],
+    enabled: true,
+    capabilities: { responsesApi: true, nativeTools: true },
+  }
+  const vertexNativeProvider = {
+    id: 'vertex-native',
+    type: 'openai-compatible',
+    name: 'Vertex AI',
+    presetId: 'vertex-ai',
+    baseUrl: 'https://us-central1-aiplatform.googleapis.com',
+    apiKey: FAKE_KEY_A,
+    models: ['gemini-2.5-pro'],
+    enabled: true,
+  }
+  const vertexOpenAIProvider = {
+    ...vertexNativeProvider,
+    id: 'vertex-openai',
+    baseUrl: 'https://us-central1-aiplatform.googleapis.com/v1/projects/islemind-dev/locations/us-central1/endpoints/openapi',
+  }
+  const matrix = buildProviderCapabilityMatrix(officialProvider)
+  assert.equal(matrix.hostingProfile, 'official', 'official provider is classified as official hosting')
+  assert.equal(matrix.summaryLevel, 'partial', 'official provider still reports partial due to cache coverage not being universal')
+  assert.ok(matrix.statuses.some((status) => status.area === 'response' && status.level === 'full'), 'official provider has full response support')
+  assert.ok(matrix.statuses.some((status) => status.area === 'cache' && status.level === 'partial'), 'official provider cache support remains explicit rather than universal')
+  assert.equal(summarizeProviderCapabilityMatrix(matrix), 'official · partial', 'matrix summary is human-readable')
+  assert.equal(providerSuppressesGenericModelList(applyProviderPreset({ apiKey: FAKE_KEY_A, models: [], enabled: false }, 'perplexity')), true, 'Perplexity suppresses generic model-list sync')
+  assert.equal(isAzureOpenAIProvider(azureV1Provider), true, 'hosted routing helper detects Azure OpenAI providers')
+  assert.equal(isAzureOpenAIV1Provider(azureV1Provider), true, 'hosted routing helper detects Azure OpenAI v1-compatible base URLs')
+  assert.equal(isAzureOpenAILegacyDeploymentProvider(azureLegacyProvider), true, 'hosted routing helper detects legacy deployment-style Azure OpenAI paths')
+  assert.equal(normalizeAzureOpenAIBaseUrl('https://example.openai.azure.com'), 'https://example.openai.azure.com/openai/v1', 'Azure OpenAI bare resource endpoints normalize to /openai/v1')
+  assert.equal(normalizeAzureOpenAIBaseUrl('https://example.openai.azure.com/openai/v1/chat/completions'), 'https://example.openai.azure.com/openai/v1', 'Azure OpenAI full chat endpoints normalize back to the v1 base namespace')
+  assert.equal(
+    resolveProviderEndpoint({ provider: azureV1Provider, model: 'gpt-4.1', stream: true }),
+    'https://example.openai.azure.com/openai/v1/chat/completions',
+    'Azure OpenAI v1 chat routing keeps the /openai/v1 namespace'
+  )
+  assert.equal(
+    resolveProviderEndpoint({ provider: azureV1Provider, model: 'gpt-4.1', stream: true, usesResponsesApi: true }),
+    'https://example.openai.azure.com/openai/v1/responses',
+    'Azure OpenAI v1 Responses routing keeps the /openai/v1 namespace'
+  )
+  assert.equal(
+    resolveProviderEndpoint({ provider: azureMissingBaseUrlProvider, model: 'gpt-4.1', stream: true }),
+    '/chat/completions',
+    'Azure OpenAI presets without a resource base URL do not silently fall back to the official OpenAI endpoint'
+  )
+  assert.equal(providerNeedsHostedCompatibilityWork(azureV1Provider), false, 'Azure OpenAI v1 endpoints are no longer reported as a hosted compatibility gap')
+  assert.equal(providerNeedsHostedCompatibilityWork(azureLegacyProvider), true, 'legacy Azure deployment paths still require dedicated compatibility work')
+  assert.equal(providerNeedsHostedCompatibilityWork(azureMissingBaseUrlProvider), true, 'Azure OpenAI presets still require a configured Azure resource base URL')
+  assert.equal(buildProviderCapabilityMatrix(azureMissingBaseUrlProvider).hostingProfile, 'cloud-hosted', 'Azure OpenAI presets remain cloud-hosted even before the resource URL is configured')
+  assert.equal(getHostedProviderKind(bedrockRuntimeProvider), 'aws-bedrock', 'hosted boundary helper detects AWS Bedrock Runtime providers')
+  assert.equal(getHostedProviderKind(bedrockMantleProvider), 'aws-bedrock', 'hosted boundary helper detects AWS Bedrock Mantle providers')
+  assert.equal(getHostedProviderKind(vertexNativeProvider), 'vertex-ai', 'hosted boundary helper detects Vertex AI providers')
+  assert.equal(isAwsBedrockHostedProvider(bedrockRuntimeProvider), true, 'hosted boundary helper identifies Bedrock runtime hosts')
+  assert.equal(isAwsBedrockHostedProvider(bedrockMantleProvider), true, 'hosted boundary helper identifies Bedrock Mantle hosts')
+  assert.equal(isBedrockRuntimeProvider(bedrockRuntimeProvider), true, 'Bedrock routing helper detects runtime hosts that still need SigV4')
+  assert.equal(isBedrockRuntimeProvider(bedrockMantleProvider), false, 'Bedrock routing helper does not misclassify Mantle presets as Runtime')
+  assert.equal(isBedrockMantleProvider(bedrockMantleProvider), true, 'Bedrock routing helper detects Mantle OpenAI-compatible hosts')
+  assert.equal(parseBedrockRuntimeCredentials(FAKE_KEY_A), null, 'Bedrock Runtime credential parser rejects single API-key strings')
+  assert.equal(parseBedrockRuntimeCredentials(bedrockRuntimeCredentialJson).accessKeyId, 'AKIDEXAMPLE', 'Bedrock Runtime credential parser accepts JSON AWS credentials')
+  assert.equal(parseBedrockRuntimeCredentials('AWS_ACCESS_KEY_ID=AKIAENV\nAWS_SECRET_ACCESS_KEY=secret\nAWS_REGION=us-west-2').region, 'us-west-2', 'Bedrock Runtime credential parser accepts env-like AWS credentials')
+  assert.equal(inferBedrockRuntimeRegion('https://bedrock-runtime.eu-west-1.amazonaws.com'), 'eu-west-1', 'Bedrock Runtime helper infers region from runtime host')
+  assert.equal(getBedrockRuntimeSupportIssue(bedrockRuntimeProvider), 'missing_aws_credentials', 'Bedrock Runtime without AWS credentials remains a hosted gap')
+  assert.equal(getBedrockRuntimeSupportIssue(bedrockRuntimeReadyProvider), null, 'Bedrock Runtime with AWS credentials and runtime host is ready for signed InvokeModel preparation')
+  assert.equal(isVertexAIProvider(vertexNativeProvider), true, 'hosted boundary helper identifies Vertex AI hosts')
+  assert.equal(isVertexAIOpenAICompatibleProvider(vertexNativeProvider), false, 'hosted boundary helper keeps native Vertex paths planned')
+  assert.equal(isVertexAIOpenAICompatibleProvider(vertexOpenAIProvider), true, 'hosted boundary helper detects Vertex OpenAI-compatible endpoints')
+  assert.equal(isHostedProviderGap(bedrockRuntimeProvider), true, 'Bedrock Runtime remains a hosted gap until SigV4 routing is implemented')
+  assert.equal(isHostedProviderGap(bedrockRuntimeReadyProvider), false, 'Bedrock Runtime with AWS credentials passes the chat hosted boundary for signed non-streaming InvokeModel')
+  assert.equal(isHostedProviderGap(bedrockMantleProvider), false, 'Bedrock Mantle OpenAI-compatible endpoints pass hosted boundary checks')
+  assert.equal(isHostedProviderGap(vertexNativeProvider), true, 'native Vertex AI remains a hosted gap until native project routing is implemented')
+  assert.equal(isHostedProviderGap(vertexOpenAIProvider), false, 'Vertex AI OpenAI-compatible endpoints are no longer reported as hosted gaps')
+  assert.match(
+    getHostedProviderSupportIssue(bedrockRuntimeProvider, 'chat')?.message ?? '',
+    /SigV4|Converse|InvokeModel/,
+    'Bedrock Runtime hosted gap exposes an explicit unsupported reason'
+  )
+  assert.equal(getHostedProviderSupportIssue(bedrockMantleProvider, 'chat'), null, 'Bedrock Mantle endpoints pass hosted boundary checks')
+  assert.equal(getHostedProviderSupportIssue(bedrockRuntimeReadyProvider, 'chat'), null, 'Bedrock Runtime signed InvokeModel path passes chat hosted boundary checks')
+  assert.match(
+    getHostedProviderSupportIssue(bedrockRuntimeReadyProvider, 'modelList')?.message ?? '',
+    /Mantle|SigV4|Converse|InvokeModel/,
+    'Bedrock Runtime model-list remains a hosted gap even when chat request signing is available'
+  )
+  assert.match(
+    getHostedProviderSupportIssue(vertexNativeProvider, 'chat')?.message ?? '',
+    /Google Cloud|project\/location|project/i,
+    'Vertex AI hosted gap exposes an explicit unsupported reason'
+  )
+  assert.equal(getHostedProviderSupportIssue(vertexOpenAIProvider, 'chat'), null, 'Vertex OpenAI-compatible endpoints pass hosted boundary checks')
+  assert.equal(buildProviderCapabilityMatrix(bedrockRuntimeProvider).hostingProfile, 'cloud-hosted', 'Bedrock Runtime providers are classified as cloud-hosted')
+  assert.equal(buildProviderCapabilityMatrix(bedrockRuntimeProvider).summaryLevel, 'planned', 'Bedrock Runtime remains planned until SigV4 hosted routing is implemented')
+  assert.equal(buildProviderCapabilityMatrix(bedrockRuntimeReadyProvider).summaryLevel, 'planned', 'Bedrock Runtime stays planned overall because model-list, remote compact, and tools still need direct Runtime support')
+  assert.equal(describeProviderCapabilityStatus(buildProviderCapabilityMatrix(bedrockRuntimeReadyProvider), 'response'), 'AWS Bedrock Runtime InvokeModel request preparation and SigV4 signing are available for non-streaming Anthropic-style chat; streaming and Converse remain planned', 'Bedrock Runtime ready capability matrix shows partial response support')
+  assert.equal(buildProviderCapabilityMatrix(bedrockMantleProvider).summaryLevel, 'partial', 'Bedrock Mantle is partial-ready through the OpenAI-compatible hosted path')
+  assert.equal(buildProviderCapabilityMatrix(vertexNativeProvider).summaryLevel, 'planned', 'native Vertex AI remains planned until the hosted route is implemented')
+  assert.equal(buildProviderCapabilityMatrix(vertexOpenAIProvider).summaryLevel, 'partial', 'Vertex AI OpenAI-compatible endpoints are partial-ready through the hosted OpenAI path')
+  assert.equal(
+    resolveProviderEndpoint({ provider: bedrockMantleProvider, model: 'openai.gpt-oss-120b-1:0', stream: true }),
+    'https://bedrock-mantle.us-east-1.api.aws/v1/chat/completions',
+    'Bedrock Mantle chat routing keeps the hosted /v1 namespace'
+  )
+  assert.equal(
+    resolveProviderEndpoint({ provider: bedrockMantleProvider, model: 'openai.gpt-oss-120b-1:0', stream: true, usesResponsesApi: true }),
+    'https://bedrock-mantle.us-east-1.api.aws/v1/responses',
+    'Bedrock Mantle Responses routing keeps the hosted /v1 namespace'
+  )
+  assert.equal(
+    resolveProviderEndpoint({ provider: vertexOpenAIProvider, model: 'gemini-2.5-pro', stream: true }),
+    'https://us-central1-aiplatform.googleapis.com/v1/projects/islemind-dev/locations/us-central1/endpoints/openapi/chat/completions',
+    'Vertex AI OpenAI-compatible chat routing keeps the hosted /endpoints/openapi namespace'
+  )
+  assert.deepEqual(
+    getHeaders(vertexOpenAIProvider),
+    { 'Content-Type': 'application/json', Authorization: `Bearer ${FAKE_KEY_A}` },
+    'Vertex AI OpenAI-compatible endpoints use Google Cloud access-token bearer auth'
+  )
+  assert.deepEqual(
+    getHeaders(bedrockMantleProvider),
+    { 'Content-Type': 'application/json', Authorization: `Bearer ${FAKE_KEY_A}` },
+    'Bedrock Mantle endpoints use Bedrock API-key bearer auth'
+  )
+  assert.equal(
+    describeProviderCapabilityStatus(buildProviderCapabilityMatrix(bedrockRuntimeProvider), 'response'),
+    getHostedProviderSupportIssue(bedrockRuntimeProvider, 'chat')?.message,
+    'Bedrock Runtime capability matrix keeps the hosted boundary explicit'
+  )
+  assert.equal(
+    describeProviderCapabilityStatus(buildProviderCapabilityMatrix(bedrockMantleProvider), 'protocol'),
+    'AWS Bedrock Mantle exposes OpenAI-compatible Chat Completions, Responses, and Models APIs, while Bedrock Runtime Invoke/Converse still needs SigV4 routing',
+    'Bedrock Mantle capability matrix describes the partial-ready protocol path'
+  )
+  assert.equal(
+    describeProviderCapabilityStatus(buildProviderCapabilityMatrix(vertexNativeProvider), 'modelCatalog'),
+    getHostedProviderSupportIssue(vertexNativeProvider, 'modelList')?.message,
+    'native Vertex AI capability matrix keeps the hosted boundary explicit'
+  )
+  assert.equal(
+    describeProviderCapabilityStatus(buildProviderCapabilityMatrix(vertexOpenAIProvider), 'protocol'),
+    'Vertex AI OpenAI-compatible endpoints use OpenAI chat-completions shapes, while native Gemini Vertex paths remain provider-specific',
+    'Vertex OpenAI-compatible capability matrix describes the partial-ready protocol path'
+  )
+  assert.equal(
+    describeProviderCapabilityStatus(
+      buildProviderCapabilityMatrix(azureV1Provider),
+      'protocol'
+    ),
+    'Azure OpenAI v1 follows OpenAI-compatible request shapes, while deployment and Foundry resource semantics remain provider-specific',
+    'Azure OpenAI v1 protocol support is explicit without overclaiming full hosted coverage'
+  )
+  assert.match(
+    describeProviderCapabilityStatus(
+      buildProviderCapabilityMatrix(azureLegacyProvider),
+      'protocol'
+    ) ?? '',
+    /\/openai\/v1|deployment/i,
+    'legacy Azure OpenAI deployment path gap remains explicit'
+  )
+  assert.deepEqual(
+    buildProviderCoverageBuckets([
+      officialProvider,
+      applyProviderPreset({ apiKey: FAKE_KEY_A, models: [], enabled: false }, 'groq'),
+      applyProviderPreset({ apiKey: FAKE_KEY_A, models: [], enabled: false }, 'newapi'),
+      applyProviderPreset({ apiKey: FAKE_KEY_A, models: [], enabled: false }, 'ollama'),
+      azureV1Provider,
+      bedrockRuntimeProvider,
+      bedrockMantleProvider,
+      vertexNativeProvider,
+      vertexOpenAIProvider,
+    ]),
+    { official: 1, aggregator: 1, relay: 1, 'local-runtime': 1, 'cloud-hosted': 5 },
+    'provider coverage buckets classify the current provider set'
+  )
+  const bedrockRuntimeModelTest = await testProviderModelDetailed(bedrockRuntimeProvider, 'anthropic.claude-3-7-sonnet', FAKE_KEY_A)
+  assert.equal(bedrockRuntimeModelTest.ok, false, 'Bedrock Runtime provider model tests fail closed before attempting an unsupported direct request')
+  assert.equal(bedrockRuntimeModelTest.code, 'models_endpoint_unavailable', 'Bedrock Runtime provider model tests report hosted compatibility gaps through the unsupported models code')
+  assert.match(bedrockRuntimeModelTest.message, /SigV4|Converse|InvokeModel/, 'Bedrock Runtime provider model tests surface the hosted boundary reason directly')
+  const bedrockRuntimeModelSync = await fetchProviderModelConfigsDetailed(bedrockRuntimeProvider, FAKE_KEY_A)
+  assert.equal(bedrockRuntimeModelSync.ok, false, 'Bedrock Runtime provider model sync fails closed before remote discovery')
+  assert.equal(bedrockRuntimeModelSync.code, 'models_endpoint_unavailable', 'Bedrock Runtime provider model sync uses the hosted boundary error code')
+  assert.equal(sha256Hex(new TextEncoder().encode('abc')), 'ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad', 'AWS SigV4 helper computes the SHA-256 reference digest')
+  assert.equal(hmacSha256Hex('key', 'The quick brown fox jumps over the lazy dog'), 'f7bc83f430538424b13298e6aa6fb143ef4d59a14946175997479dbc2d1a3cd8', 'AWS SigV4 helper computes the HMAC-SHA256 reference digest')
+  assert.equal(
+    signAwsRequestV4({
+      method: 'GET',
+      url: 'https://iam.amazonaws.com/?Action=ListUsers&Version=2010-05-08',
+      region: 'us-east-1',
+      service: 'iam',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded; charset=utf-8' },
+      body: '',
+      credentials: {
+        accessKeyId: 'AKIDEXAMPLE',
+        secretAccessKey: 'wJalrXUtnFEMI/K7MDENG+bPxRfiCYEXAMPLEKEY',
+      },
+      now: new Date('2015-08-30T12:36:00Z'),
+    }).Authorization,
+    'AWS4-HMAC-SHA256 Credential=AKIDEXAMPLE/20150830/us-east-1/iam/aws4_request, SignedHeaders=content-type;host;x-amz-content-sha256;x-amz-date, Signature=dd479fa8a80364edf2119ec24bebde66712ee9c9cb2b0d92eb3ab9ccdc0c3947',
+    'AWS SigV4 helper signs the canonical request with the payload hash header included'
+  )
+  assert.equal(
+    bedrockRuntimeInvokeModelUrl(bedrockRuntimeProvider, 'anthropic.claude-3-7-sonnet', 'us-east-1'),
+    'https://bedrock-runtime.us-east-1.amazonaws.com/model/anthropic.claude-3-7-sonnet/invoke',
+    'Bedrock Runtime InvokeModel URL follows the documented /model/{modelId}/invoke path'
+  )
+  const preparedBedrockRuntime = prepareBedrockRuntimeInvokeModelRequest({
+    provider: bedrockRuntimeReadyProvider,
+    model: 'anthropic.claude-3-7-sonnet',
+    body: {
+      model: 'anthropic.claude-3-7-sonnet',
+      messages: [{ role: 'user', content: [{ type: 'text', text: 'hello' }] }],
+      max_tokens: 32,
+      stream: false,
+    },
+    now: new Date('2026-06-18T00:00:00Z'),
+  })
+  assert.equal(preparedBedrockRuntime.url, 'https://bedrock-runtime.us-east-1.amazonaws.com/model/anthropic.claude-3-7-sonnet/invoke', 'Bedrock Runtime prepared request targets InvokeModel')
+  assert.equal(preparedBedrockRuntime.headers['X-Amz-Date'], '20260618T000000Z', 'Bedrock Runtime prepared request includes SigV4 date')
+  assert.equal(preparedBedrockRuntime.headers['X-Amz-Security-Token'], 'session-token-example', 'Bedrock Runtime prepared request forwards session token')
+  assert.match(preparedBedrockRuntime.headers.Authorization, /Credential=AKIDEXAMPLE\/20260618\/us-east-1\/bedrock\/aws4_request/, 'Bedrock Runtime prepared request signs for the bedrock service')
+  const preparedBedrockRuntimeBody = JSON.parse(preparedBedrockRuntime.body)
+  assert.equal(preparedBedrockRuntimeBody.anthropic_version, 'bedrock-2023-05-31', 'Bedrock Runtime prepared request adds Anthropic Bedrock API version')
+  assert.equal(preparedBedrockRuntimeBody.stream, undefined, 'Bedrock Runtime InvokeModel body omits stream')
+  const originalFetch = global.fetch
+  try {
+    global.fetch = async (input, init = {}) => {
+      assert.equal(String(input), 'https://bedrock-runtime.us-east-1.amazonaws.com/model/anthropic.claude-3-7-sonnet/invoke', 'Bedrock Runtime model test calls InvokeModel')
+      assert.equal(init.method, 'POST', 'Bedrock Runtime model test uses POST')
+      assert.match(init.headers.Authorization, /AWS4-HMAC-SHA256 Credential=AKIDEXAMPLE\//, 'Bedrock Runtime model test uses SigV4 Authorization')
+      assert.equal(init.headers['X-Amz-Security-Token'], 'session-token-example', 'Bedrock Runtime model test includes session token')
+      const body = JSON.parse(init.body)
+      assert.equal(body.anthropic_version, 'bedrock-2023-05-31', 'Bedrock Runtime model test sends Anthropic Bedrock API version')
+      assert.equal(body.stream, undefined, 'Bedrock Runtime model test omits stream for InvokeModel')
+      assert.equal(body.messages[0].role, 'user', 'Bedrock Runtime model test keeps Anthropic messages shape')
+      return new Response(JSON.stringify({ content: [{ type: 'text', text: 'OK' }] }), { status: 200 })
+    }
+    const bedrockRuntimeReadyModelTest = await testProviderModelDetailed(bedrockRuntimeReadyProvider, 'anthropic.claude-3-7-sonnet', bedrockRuntimeCredentialJson)
+    assert.equal(bedrockRuntimeReadyModelTest.ok, true, 'Bedrock Runtime model test can use signed non-streaming InvokeModel when AWS credentials are supplied')
+  } finally {
+    global.fetch = originalFetch
+  }
+  try {
+    global.fetch = async (input, init = {}) => {
+      assert.equal(String(input), 'https://bedrock-mantle.us-east-1.api.aws/v1/models', 'Bedrock Mantle model sync calls the OpenAI-compatible models endpoint')
+      assert.equal(init.method, 'GET', 'Bedrock Mantle model sync uses GET')
+      assert.equal(init.headers.Authorization, `Bearer ${FAKE_KEY_A}`, 'Bedrock Mantle model sync uses bearer API-key auth')
+      return new Response(JSON.stringify({ data: [{ id: 'openai.gpt-oss-120b-1:0', object: 'model', context_length: 131072 }] }), { status: 200 })
+    }
+    const bedrockMantleModelSync = await fetchProviderModelConfigsDetailed(bedrockMantleProvider, FAKE_KEY_A)
+    assert.equal(bedrockMantleModelSync.ok, true, 'Bedrock Mantle provider model sync uses the supported OpenAI-compatible endpoint')
+    assert.equal(bedrockMantleModelSync.data[0].id, 'openai.gpt-oss-120b-1:0', 'Bedrock Mantle provider model sync maps returned model ids')
+  } finally {
+    global.fetch = originalFetch
+  }
+  try {
+    global.fetch = async (input, init = {}) => {
+      assert.equal(String(input), 'https://bedrock-mantle.us-east-1.api.aws/v1/chat/completions', 'Bedrock Mantle model test calls the OpenAI-compatible chat endpoint')
+      assert.equal(init.method, 'POST', 'Bedrock Mantle model test uses POST')
+      assert.equal(init.headers.Authorization, `Bearer ${FAKE_KEY_A}`, 'Bedrock Mantle model test uses bearer API-key auth')
+      const body = JSON.parse(init.body)
+      assert.equal(body.model, 'openai.gpt-oss-120b-1:0', 'Bedrock Mantle model test preserves the requested model id')
+      assert.equal(body.stream, false, 'Bedrock Mantle model test stays non-streaming')
+      assert.equal(body.max_tokens, 32, 'Bedrock Mantle model test uses OpenAI-compatible max_tokens')
+      assert.equal(body.messages[0].role, 'user', 'Bedrock Mantle model test uses OpenAI-compatible messages')
+      return new Response(JSON.stringify({ choices: [{ message: { content: 'OK' } }] }), { status: 200 })
+    }
+    const bedrockMantleModelTest = await testProviderModelDetailed(bedrockMantleProvider, 'openai.gpt-oss-120b-1:0', FAKE_KEY_A)
+    assert.equal(bedrockMantleModelTest.ok, true, 'Bedrock Mantle provider model test can use the supported OpenAI-compatible endpoint')
+  } finally {
+    global.fetch = originalFetch
+  }
+  const vertexModelSync = await fetchProviderModelConfigsDetailed(vertexNativeProvider, FAKE_KEY_A)
+  assert.equal(vertexModelSync.ok, false, 'native Vertex AI provider model sync fails closed before remote discovery')
+  assert.equal(vertexModelSync.code, 'models_endpoint_unavailable', 'native Vertex AI provider model sync uses the hosted boundary error code')
 }
 
 async function run() {
@@ -1958,6 +5074,14 @@ async function run() {
   await assertResponsesWebSocketTransportBehavior()
   await assertRuntimeLogFileBehavior()
   await assertRuntimeDiagnosticsBehavior()
+  await assertRuntimeDiagnosticsFailurePath()
+  await assertAppUpdateRuntimeLogging()
+  await assertStorageFailureRuntimeLogging()
+  await assertRenderGuardRuntimeLogging()
+  await assertMcpRuntimeLogging()
+  await assertContextRuntimeLogging()
+  await assertKnowledgeRetrievalRuntimeLogging()
+  await assertKnowledgeEmbeddingRuntimeLogging()
   await assertUpstreamGovernanceBehavior()
 
   assert.equal(
@@ -1980,6 +5104,7 @@ async function run() {
     'minimax',
     'detects MiniMax OpenAI-compatible hosts'
   )
+  await assertExpandedProviderPresetCoverage()
 
   const groups = parseCredentialGroups('sk-a\n\nsk-b, sk-c')
   assert.deepEqual(groups.map((group) => group.label), ['令牌分组 1', '令牌分组 2', '令牌分组 3'])
@@ -1995,8 +5120,637 @@ async function run() {
   assert.ok(st('onboarding.firstPrompt.samples.organize').includes('A version I can copy'), 'onboarding organize prompt produces a shareable work artifact')
   assert.equal(st('chatRunner.trace.compactPolicyTitle'), 'Compact policy', 'chat runner exposes compact policy trace label')
   assert.equal(st('chatRunner.error.remoteCompactRequiredFailed'), 'Remote compact is required, but the current provider does not declare support.', 'chat runner exposes remote compact required failure text')
+  assert.equal(normalizeUserContent('  hello%20world  '), 'hello world', 'chat message helper normalizes pasted encoded spaces')
+  assert.deepEqual(
+    dedupeMessageCitations([
+      { id: 'src-1', type: 'knowledge', title: 'A', content: 'First', chunkId: 'chunk-1' },
+      { id: 'src-2', type: 'knowledge', title: 'A again', content: 'Duplicate', chunkId: 'chunk-1' },
+      { id: 'src-3', type: 'web', title: 'Web', content: 'Web', url: 'https://example.com' },
+    ]).map((citation) => citation.id),
+    ['src-1', 'src-3'],
+    'chat message helper dedupes citations by chunk/url/id while preserving first occurrence'
+  )
+  assert.equal(
+    formatWebPrompt([{ title: 'Source title', url: 'https://example.com', content: 'Source body' }]),
+    '以下是联网搜索结果。请优先引用来源 URL，并避免编造未出现的信息。\n\n[W1] Source title\nhttps://example.com\nSource body',
+    'chat message helper preserves web prompt format'
+  )
+  assertChatAndroidUndoPromptBehavior()
+  assert.equal(
+    buildSetupGuide(),
+    [st('chatRunner.setup.noProvider'), '', st('chatRunner.setup.stepProvider'), st('chatRunner.setup.stepKey'), st('chatRunner.setup.stepModel')].join('\n'),
+    'chat error helper keeps the provider setup guide copy'
+  )
+  const confirmedPendingAction = {
+    id: 'pending-read',
+    reason: 'permission_required',
+    title: 'Read source',
+    summary: 'Read source with confirmation',
+    toolName: 'read_source',
+    toolId: 'tool-read-source',
+    source: 'app-action',
+    serverId: 'islemind',
+    permission: 'read-only',
+    confirmable: true,
+    resumeToolRequest: { name: 'read_source', toolId: 'tool-read-source', source: 'app-action', serverId: 'islemind', arguments: {} },
+    createdAt: 1,
+  }
+  const confirmedToolManifest = {
+    id: 'tool-read-source',
+    source: 'app-action',
+    name: 'read_source',
+    description: 'Read source',
+    permission: 'read-only',
+    enabled: true,
+    serverId: 'islemind',
+  }
+  assert.equal(
+    resolveConfirmedPendingActionTool({ pendingAction: confirmedPendingAction, tool: confirmedToolManifest })?.id,
+    'tool-read-source',
+    'chat agent action helper accepts matching confirmed pending actions'
+  )
+  assert.equal(
+    resolveConfirmedPendingActionTool({ pendingAction: confirmedPendingAction, tool: { ...confirmedToolManifest, id: 'tool-other' } }),
+    undefined,
+    'chat agent action helper rejects pending action tool identity drift'
+  )
+  assert.equal(
+    resolveConfirmedPendingActionTool({ pendingAction: confirmedPendingAction, tool: { ...confirmedToolManifest, enabled: false } }),
+    undefined,
+    'chat agent action helper rejects disabled manifests before resuming confirmed actions'
+  )
+  assert.equal(
+    formatAgentWorkflowSaveBlockedReason('approval_required', st),
+    st('chatRunner.workflowSave.approvalRequired'),
+    'chat agent action helper preserves workflow save approval copy'
+  )
+  assert.equal(
+    formatAgentWorkflowSaveBlockedReason(undefined, st),
+    st('chatRunner.workflowSave.saveBlocked'),
+    'chat agent action helper preserves generic workflow save blocked copy'
+  )
+  const runtimeSettings = {
+    theme: 'system',
+    language: 'en',
+    defaultProvider: null,
+    fontSize: 16,
+    hapticsEnabled: true,
+  }
+  const runtimeProvider = {
+    id: 'runtime-openai',
+    type: 'openai',
+    name: 'Runtime OpenAI',
+    apiKey: 'sk-runtime',
+    models: ['gpt-runtime'],
+    manualModels: ['gpt-runtime'],
+    enabled: true,
+  }
+  const runtimeConversation = {
+    id: 'runtime-conversation',
+    title: 'Runtime',
+    providerId: runtimeProvider.id,
+    model: 'gpt-runtime',
+    providerModelMode: 'inherited',
+    systemPrompt: '',
+    temperature: 0.7,
+    maxTokens: 1024,
+    messages: [],
+    createdAt: 1,
+    updatedAt: 1,
+  }
+  assert.equal(
+    resolveRuntimeConversation({ conversation: runtimeConversation, providers: [runtimeProvider], settings: runtimeSettings })?.provider.id,
+    runtimeProvider.id,
+    'chat runtime resolution helper accepts enabled inherited provider/model routes'
+  )
+  assert.equal(
+    resolveRuntimeConversation({ conversation: runtimeConversation, providers: [{ ...runtimeProvider, enabled: false }], settings: runtimeSettings }),
+    null,
+    'chat runtime resolution helper rejects disabled inherited provider routes'
+  )
+  assert.equal(
+    resolveRuntimeConversation({ conversation: { ...runtimeConversation, providerModelMode: 'manual' }, providers: [{ ...runtimeProvider, enabled: false }], settings: runtimeSettings })?.provider.id,
+    runtimeProvider.id,
+    'chat runtime resolution helper preserves existing manual-mode provider enabled bypass'
+  )
+  assert.deepEqual(
+    resolveRuntimeResolutionError({ conversation: runtimeConversation, providers: [{ ...runtimeProvider, enabled: false }] }),
+    { code: 'disabled_provider', providerId: runtimeProvider.id },
+    'chat runtime resolution helper reports disabled providers before model availability errors'
+  )
+  assert.deepEqual(
+    resolveRuntimeResolutionError({ conversation: { ...runtimeConversation, providerId: 'missing-provider' }, providers: [] }),
+    { code: 'model_unavailable', providerId: 'missing-provider' },
+    'chat runtime resolution helper preserves missing provider as model unavailable'
+  )
+  assert.equal(
+    buildMcpToolRevisionSystemPrompt('Base instructions'),
+    'Base instructions\n\n你正在根据 MCP 工具结果生成最终回复。不要暴露工具请求 JSON；只基于工具输出和已有上下文回答用户。如果工具失败，请明确说明失败状态和可继续的下一步。',
+    'chat MCP revision helper appends the MCP revision instruction block to the system prompt'
+  )
+  const mcpRevisionMessages = buildMcpToolRevisionMessages({
+    messages: [{ role: 'user', content: 'Find the status.' }],
+    firstOutput: '<islemind_mcp_call>{"tool":"github/search","arguments":{"query":"islemind"}}</islemind_mcp_call>\nDraft answer',
+    request: { serverId: 'github', toolName: 'search', arguments: { query: 'islemind' } },
+    tool: { server: { id: 'github', name: 'GitHub' }, tool: { name: 'search' } },
+    toolOutput: 'Found one result.',
+    ok: true,
+  })
+  assert.equal(mcpRevisionMessages[1].content, 'Draft answer', 'chat MCP revision helper strips tagged MCP call blocks from the assistant replay message')
+  assert.equal(
+    mcpRevisionMessages[2].content,
+    [
+      'MCP 工具：GitHub/search',
+      '调用状态：ok',
+      '请求参数：{"query":"islemind"}',
+      '',
+      '工具输出：',
+      'Found one result.',
+      '',
+      '请生成最终回复。',
+    ].join('\n'),
+    'chat MCP revision helper preserves the MCP revision user message format'
+  )
+  const mcpToolRuntimeSource = fs.readFileSync(path.join(root, 'src/services/chatMcpToolRuntime.ts'), 'utf8')
+  assert.ok(mcpToolRuntimeSource.includes("id: input.traceId('mcp-unmatched')"), 'chat MCP tool runtime records unmatched tool traces through injected trace helpers')
+  assert.ok(mcpToolRuntimeSource.includes('const result = await callMcpTool(resolved.server, resolved.tool.name, request.arguments, undefined, { signal: input.signal })'), 'chat MCP tool runtime owns MCP tool execution behind the helper seam')
+  assert.ok(mcpToolRuntimeSource.includes('generateAnswerWithMcpToolResult({'), 'chat MCP tool runtime reuses a dedicated MCP synthesis helper')
+  assert.ok(mcpToolRuntimeSource.includes('messages: buildMcpToolRevisionMessages(input)'), 'chat MCP tool runtime reuses the MCP revision message builder during synthesis')
+  assert.equal(typeof resolveMcpToolRevision, 'function', 'chat MCP tool runtime exports MCP tool revision orchestration')
+  assert.equal(typeof generateAnswerWithMcpToolResult, 'function', 'chat MCP tool runtime exports MCP tool synthesis')
+  assert.equal(classifyChatError('401 unauthorized invalid api key'), 'bad_auth', 'chat error helper classifies auth failures')
+  assert.equal(classifyChatError('credential_mismatch token plan tp-credential'), 'credential_mismatch', 'chat error helper classifies credential mismatch failures')
+  assert.equal(classifyChatError('AbortError: request timed out'), 'timeout', 'chat error helper classifies timeouts')
+  assert.equal(classifyChatError('No response body'), 'network_error', 'chat error helper classifies empty responses as network errors')
+  assert.equal(classifyChatError('rate limit 429 quota exceeded'), 'rate_limited', 'chat error helper classifies rate limits')
+  assert.equal(classifyChatError('max_tokens context length 输出上限'), 'max_tokens_exceeded', 'chat error helper classifies output limit failures')
+  assert.equal(classifyChatError('404 model not found'), 'model_unavailable', 'chat error helper classifies missing models')
+  assert.equal(classifyChatError('API error 400 unsupported url'), 'bad_base_url', 'chat error helper classifies bad base URLs')
+  assert.equal(toUserFacingError('No response body'), st('chatRunner.userError.emptyResponse'), 'chat error helper preserves empty-response user copy')
+  assert.equal(toUserFacingError('401 unauthorized invalid api key'), st('chatRunner.userError.badAuth'), 'chat error helper preserves auth user copy')
+  assert.equal(
+    providerSupportsNativeTools({ id: 'openai-tools', type: 'openai', name: 'OpenAI', apiKey: '', models: [], enabled: true }, { id: 'gpt-4.1', name: 'GPT', maxOutputTokens: 4096, defaultMaxTokens: 1024, supportsTools: false }),
+    false,
+    'chat provider-native helper blocks native tools when the model explicitly disables tool support'
+  )
+  assert.equal(
+    providerSupportsNativeTools({ id: 'compatible-tools', type: 'openai-compatible', name: 'Compatible', apiKey: '', models: [], enabled: true, capabilities: { nativeTools: true } }, { id: 'model', name: 'Model', maxOutputTokens: 4096, defaultMaxTokens: 1024 }),
+    true,
+    'chat provider-native helper honors provider native tool capability metadata'
+  )
+  const providerToolEntry = {
+    providerName: 'inspect_source',
+    toolId: 'tool-source-inspect',
+    toolName: 'inspectSource',
+    source: 'app',
+    permission: 'read-only',
+    serverId: 'islemind',
+  }
+  assert.equal(findProviderToolNameMapEntry([providerToolEntry], 'inspect_source')?.toolId, 'tool-source-inspect', 'chat provider-native helper resolves provider tool names')
+  assert.equal(findProviderToolNameMapEntry([providerToolEntry], 'inspectSource')?.providerName, 'inspect_source', 'chat provider-native helper falls back to IsleMind tool names')
+  assert.equal(safeProviderNativeToolText('apiKey=secret-value'), '[redacted]', 'chat provider-native helper redacts sensitive tool text')
+  const providerToolMetadata = buildProviderNativeToolTraceMetadata({
+    call: { id: 'call-inspect', name: 'inspect_source', arguments: { sourceId: 'src-1' } },
+    provider: { id: 'openai-tools', type: 'openai', name: 'OpenAI', apiKey: '', models: [], enabled: true },
+    tool: providerToolEntry,
+    status: 'running',
+    target: 'openai-responses',
+    stepIndex: 0,
+    toolCallIndex: 0,
+    maxToolCallsPerStep: 1,
+  })
+  assert.equal(providerToolMetadata.toolCallMode, 'native-provider', 'chat provider-native helper keeps native-provider trace mode')
+  assert.equal(providerToolMetadata.providerToolTarget, 'openai-responses', 'chat provider-native helper records provider tool target')
+  const providerToolManifestTrace = buildProviderNativeToolManifestTrace(
+    { adapter: { target: 'openai-responses', tools: [{ type: 'function', name: 'inspect_source' }], skipped: [{ toolId: 'hidden', toolName: 'write', reason: 'permission-ceiling' }] }, limits: { maxToolCallsPerStep: 1 } },
+    (trace) => ({ ...trace, completedAt: trace.completedAt ?? 999 }),
+    (prefix) => `${prefix}-fixture`,
+  )
+  assert.equal(providerToolManifestTrace.id, 'provider-tools-fixture', 'chat provider-native helper keeps manifest trace id prefix')
+  assert.equal(providerToolManifestTrace.metadata.declaredToolCount, 1, 'chat provider-native helper records declared provider tools')
+  assert.equal(providerToolManifestTrace.metadata.skippedToolCount, 1, 'chat provider-native helper records skipped provider tools')
+  assert.equal(usesOpenAICompatibleToolResultMessages({ id: 'openai-tools', type: 'openai', name: 'OpenAI', apiKey: '', models: [], enabled: true }), true, 'chat provider-native helper routes OpenAI-compatible tool result messages')
+  assert.equal(usesAnthropicCompatibleToolResultMessages({ id: 'anthropic-tools', type: 'anthropic', name: 'Anthropic', apiKey: '', models: [], enabled: true }), true, 'chat provider-native helper routes Anthropic-compatible tool result messages')
+  const openAIProviderToolRevisionMessages = buildProviderNativeToolRevisionMessages({
+    provider: { id: 'openai-tools', type: 'openai', name: 'OpenAI', apiKey: '', models: [], enabled: true },
+    messages: [{ role: 'user', content: 'Need source details.' }],
+    firstOutput: '<islemind_mcp_call>{"tool":"ignored","arguments":{}}</islemind_mcp_call>',
+    firstReasoningContent: 'Preserved reasoning',
+    firstResponseItems: [{ type: 'reasoning', id: 'rs-1', encrypted_content: 'encrypted', summary: [] }],
+    call: { id: 'fc_inspect_source', callId: 'call_inspect_source', name: 'inspect_source', arguments: { sourceId: 'src-1' } },
+    tool: providerToolEntry,
+    toolOutput: 'Source details.',
+    ok: true,
+  }, 'Provider requested IsleMind tool inspectSource.')
+  assert.equal(openAIProviderToolRevisionMessages[1].toolCalls[0].rawArguments, '{"sourceId":"src-1"}', 'chat provider-native helper stringifies OpenAI-compatible tool arguments')
+  assert.equal(openAIProviderToolRevisionMessages[2].toolCallId, 'call_inspect_source', 'chat provider-native helper emits matching OpenAI-compatible tool result messages')
+  const anthropicProviderToolRevisionMessages = buildProviderNativeToolRevisionMessages({
+    provider: { id: 'anthropic-tools', type: 'anthropic', name: 'Anthropic', apiKey: '', models: [], enabled: true },
+    messages: [{ role: 'user', content: 'Need context.' }],
+    firstOutput: 'I will inspect it.',
+    firstProviderContentBlocks: [{ type: 'thinking', thinking: 'Checking context.', signature: 'sig-1' }],
+    call: { id: 'toolu_inspect_source', name: 'inspect_source', arguments: { sourceId: 'src-1' } },
+    tool: providerToolEntry,
+    toolOutput: 'Source details.',
+    ok: false,
+  }, 'Provider requested IsleMind tool inspectSource.')
+  assert.equal(anthropicProviderToolRevisionMessages[1].providerContentBlocks[0].signature, 'sig-1', 'chat provider-native helper preserves Anthropic provider content blocks')
+  assert.equal(anthropicProviderToolRevisionMessages[2].content[0].toolResult.is_error, true, 'chat provider-native helper marks failed Anthropic tool results')
+  const googleProviderToolRevisionMessages = buildProviderNativeToolRevisionMessages({
+    provider: { id: 'google-tools', type: 'google', name: 'Google', apiKey: '', models: [], enabled: true },
+    messages: [{ role: 'user', content: 'Need context.' }],
+    firstOutput: 'I will inspect it.',
+    call: { id: 'google-fn-1', name: 'inspect_source', arguments: { sourceId: 'src-1' }, thoughtSignature: 'thought-sig' },
+    tool: providerToolEntry,
+    toolOutput: 'Source details.',
+    ok: true,
+  }, 'Provider requested IsleMind tool inspectSource.')
+  const googleFunctionCallPart = googleProviderToolRevisionMessages[1].content.find((part) => part.functionCall)
+  const googleFunctionResponsePart = googleProviderToolRevisionMessages[2].content.find((part) => part.functionResponse)
+  assert.equal(googleFunctionCallPart.functionCall.name, 'inspect_source', 'chat provider-native helper emits Gemini function calls')
+  assert.equal(googleFunctionCallPart.thoughtSignature, 'thought-sig', 'chat provider-native helper preserves Gemini thought signatures')
+  assert.equal(googleFunctionResponsePart.functionResponse.response.ok, true, 'chat provider-native helper emits Gemini function responses')
   assert.equal(st('providerTrace.runtimeGovernanceTitle'), 'Runtime policy', 'provider trace exposes runtime governance trace label')
   assert.equal(st('providerTrace.runtimeFallbackTitle'), 'Runtime fallback', 'provider trace exposes runtime fallback trace label')
+  assert.equal(safeHttpUrl(' https://example.com/source?q=1 '), 'https://example.com/source?q=1', 'source URL guard keeps HTTPS source previews')
+  assert.equal(safeHttpUrl('http://localhost:19006/source'), 'http://localhost:19006/source', 'source URL guard keeps HTTP source previews')
+  assert.equal(safeHttpUrl('https://user:pass@example.com/source'), undefined, 'source URL guard rejects embedded userinfo credentials')
+  assert.equal(safeHttpUrl('javascript:alert(1)'), undefined, 'source URL guard rejects javascript: previews')
+  assert.equal(safeHttpUrl('file:///data/data/islemind/private.txt'), undefined, 'source URL guard rejects file: previews')
+  assert.equal(safeHttpUrl('islemind://settings'), undefined, 'source URL guard rejects app-scheme previews')
+  assert.equal(isAllowedWebViewNavigation('about:blank'), true, 'source WebView guard permits the internal blank page')
+  assert.equal(isAllowedWebViewNavigation('https://example.com/next'), true, 'source WebView guard permits HTTPS navigations')
+  assert.equal(isAllowedWebViewNavigation('data:text/html,<script>alert(1)</script>'), false, 'source WebView guard rejects data: navigations')
+  assert.deepEqual(
+    parseMcpToolRequest(`<${MCP_TOOL_CALL_TAG}>{"tool":"github/search","arguments":{"query":"islemind"}}</${MCP_TOOL_CALL_TAG}>`),
+    { serverId: 'github', toolName: 'search', arguments: { query: 'islemind' } },
+    'MCP tool parser reads tagged JSON tool requests'
+  )
+  assert.deepEqual(
+    parseMcpToolRequest('{"serverId":"playwright","toolName":"browser.goto","args":{"url":"https://example.com"}}'),
+    { serverId: 'playwright', toolName: 'browser.goto', arguments: { url: 'https://example.com' } },
+    'MCP tool parser reads direct JSON tool requests'
+  )
+  assert.deepEqual(
+    parseMcpToolRequest('{"tool":"context7:resolve-library-id","input":["react"]}'),
+    { serverId: 'context7', toolName: 'resolve-library-id', arguments: {} },
+    'MCP tool parser keeps non-object arguments out of executable requests'
+  )
+  assert.equal(parseMcpToolRequest(`<${MCP_TOOL_CALL_TAG}>{bad json}</${MCP_TOOL_CALL_TAG}>`), null, 'MCP tool parser rejects malformed tagged JSON')
+  assert.equal(stringifyToolArguments({ query: 'islemind' }), '{"query":"islemind"}', 'chat tool-result helper stringifies tool arguments as JSON')
+  assert.equal(
+    sanitizeToolRevisionAnswerText(`<${MCP_TOOL_CALL_TAG}>{"tool":"github/search","arguments":{"query":"islemind"}}</${MCP_TOOL_CALL_TAG}>\n\nFinal answer`),
+    'Final answer',
+    'chat tool-result helper strips MCP call blocks before returning revision text'
+  )
+  assert.equal(
+    stripMcpCallBlocks(`Intro\n<${MCP_TOOL_CALL_TAG}>{"tool":"github/search","arguments":{"query":"islemind"}}</${MCP_TOOL_CALL_TAG}>\nOutro`).trim(),
+    'Intro\n\nOutro',
+    'chat tool-result helper removes tagged MCP call blocks from assistant content'
+  )
+  assert.deepEqual(
+    formatToolBlocks([
+      { type: 'text', text: 'Text block' },
+      { type: 'resource', uri: 'file:///tmp/example.txt', text: 'Resource body' },
+      { type: 'image', mimeType: 'image/png' },
+    ]),
+    'Text block\n\nfile:///tmp/example.txt\nResource body\n\n[image:image/png]',
+    'chat tool-result helper formats text, resource, and image MCP blocks'
+  )
+  assert.equal(
+    findMcpTool(
+      [
+        { server: { id: 'github', name: 'GitHub' }, tool: { name: 'search' } },
+        { server: { id: 'playwright', name: 'Playwright' }, tool: { name: 'browser.goto' } },
+      ],
+      { serverId: 'github', toolName: 'search', arguments: {} }
+    )?.server.id,
+    'github',
+    'chat tool-result helper matches MCP tools by explicit server id'
+  )
+  assert.equal(
+    findMcpTool(
+      [
+        { server: { id: 'github', name: 'GitHub' }, tool: { name: 'search' } },
+        { server: { id: 'playwright', name: 'Playwright' }, tool: { name: 'browser.goto' } },
+      ],
+      { toolName: 'playwright/browser.goto', arguments: {} }
+    )?.tool.name,
+    'browser.goto',
+    'chat tool-result helper matches MCP tools by combined server/tool reference'
+  )
+  assert.equal(
+    findMcpTool(
+      [
+        { server: { id: 'github', name: 'GitHub' }, tool: { name: 'search' } },
+        { server: { id: 'gitlab', name: 'GitLab' }, tool: { name: 'search' } },
+      ],
+      { toolName: 'search', arguments: {} }
+    ),
+    undefined,
+    'chat tool-result helper refuses ambiguous bare MCP tool names when more than one server exposes the same tool'
+  )
+  assert.deepEqual(
+    mergeUsage(
+      { source: 'provider', inputTokens: 10, outputTokens: 4, totalTokens: 14 },
+      { source: 'provider', inputTokens: 2, outputTokens: 3, reasoningTokens: 5, totalTokens: 5 }
+    ),
+    { source: 'provider', inputTokens: 12, outputTokens: 7, reasoningTokens: 5, totalTokens: 19 },
+    'chat tool-result helper merges provider usage counts field by field'
+  )
+  assert.equal(addOptionalNumbers(undefined, 3), 3, 'chat tool-result helper keeps the defined optional number')
+  assert.equal(addOptionalNumbers(2, 3), 5, 'chat tool-result helper sums optional numbers when both exist')
+  const mcpServers = [
+    {
+      id: 'github',
+      name: 'GitHub',
+      enabled: true,
+      status: 'connected',
+      tools: [
+        { name: 'search', enabled: true, permission: 'read-only', description: 'Search issues', inputSchema: { type: 'object' } },
+        { name: 'write', enabled: false, permission: 'destructive' },
+      ],
+    },
+    {
+      id: 'playwright',
+      name: 'Playwright',
+      enabled: true,
+      status: 'disconnected',
+      tools: [
+        { name: 'browser.goto', enabled: true, permission: 'read-only', description: 'Open page' },
+      ],
+    },
+  ]
+  const selectedMcpTools = collectResolvedMcpTools(mcpServers, ['github:search', 'playwright:browser.goto'])
+  assert.deepEqual(
+    selectedMcpTools.map((item) => `${item.server.id}:${item.tool.name}`),
+    ['github:search', 'playwright:browser.goto'],
+    'chat MCP context helper preserves enabled tool selection by server-qualified ids'
+  )
+  assert.deepEqual(
+    collectResolvedMcpTools([
+      ...mcpServers,
+      {
+        id: 'gitlab',
+        name: 'GitLab',
+        enabled: true,
+        status: 'connected',
+        tools: [
+          { name: 'search', enabled: true, permission: 'read-only', description: 'Search merge requests' },
+        ],
+      },
+    ], ['search']).map((item) => `${item.server.id}:${item.tool.name}`),
+    [],
+    'chat MCP context helper refuses ambiguous bare enabled tool names when more than one server exposes the same tool'
+  )
+  assert.deepEqual(
+    collectResolvedMcpTools([
+      {
+        id: 'github',
+        name: 'GitHub',
+        enabled: true,
+        status: 'connected',
+        tools: [
+          { name: 'search', enabled: true, permission: 'read-only', description: 'Search issues' },
+        ],
+      },
+    ], ['search']).map((item) => `${item.server.id}:${item.tool.name}`),
+    ['github:search'],
+    'chat MCP context helper still allows a bare enabled tool name when it resolves to exactly one server tool'
+  )
+  const agentToolManifests = [
+    {
+      id: 'mcp:github:search',
+      source: 'mcp',
+      name: 'search',
+      description: 'Search GitHub issues',
+      permission: 'read-only',
+      enabled: true,
+      serverId: 'github',
+      serverName: 'GitHub',
+    },
+    {
+      id: 'mcp:gitlab:search',
+      source: 'mcp',
+      name: 'search',
+      description: 'Search GitLab merge requests',
+      permission: 'read-only',
+      enabled: true,
+      serverId: 'gitlab',
+      serverName: 'GitLab',
+    },
+    {
+      id: 'rag:context_pack',
+      source: 'rag',
+      name: 'rag.context_pack',
+      description: 'Build a retrieval context pack',
+      permission: 'read-only',
+      enabled: true,
+    },
+  ]
+  assert.equal(
+    resolveAgentTool(
+      { name: 'rag.context_pack', arguments: { query: 'IsleMind' } },
+      agentToolManifests
+    )?.id,
+    'rag:context_pack',
+    'agent tool registry still allows a bare tool name when it resolves uniquely'
+  )
+  assert.equal(
+    resolveAgentTool(
+      { name: 'search', arguments: { query: 'IsleMind' } },
+      agentToolManifests
+    ),
+    null,
+    'agent tool registry refuses ambiguous bare tool names when more than one manifest exposes the same name'
+  )
+  assert.equal(
+    resolveAgentTool(
+      { name: 'search', source: 'mcp', serverId: 'github', arguments: { query: 'IsleMind' } },
+      agentToolManifests
+    )?.id,
+    'mcp:github:search',
+    'agent tool registry still resolves explicit source and server-scoped tool names'
+  )
+  assert.equal(
+    resolveAgentTool(
+      { toolId: 'mcp:gitlab:search', name: 'search', arguments: { query: 'IsleMind' } },
+      agentToolManifests
+    )?.id,
+    'mcp:gitlab:search',
+    'agent tool registry still prefers explicit tool ids over ambiguous names'
+  )
+  assert.equal(
+    formatAgentToolRequestIdentity({ toolId: 'mcp:gitlab:search', name: 'search', serverId: 'gitlab' }),
+    'mcp:gitlab:search',
+    'agent tool identity helper formats explicit tool ids first'
+  )
+  assert.equal(
+    formatAgentToolRequestIdentity({ name: 'search', serverId: 'github' }),
+    'github:search',
+    'agent tool identity helper formats scoped server/name references consistently'
+  )
+  assert.equal(
+    formatAgentToolRequestIdentity({ name: 'rag.context_pack' }),
+    'rag.context_pack',
+    'agent tool identity helper formats bare tool names consistently'
+  )
+  assert.equal(
+    validateAgentWorkflowDefinition({
+      schema: 'islemind.agent.workflow.v1',
+      id: 'workflow-ambiguous',
+      name: 'Ambiguous search workflow',
+      enabled: true,
+      triggerHints: [],
+      steps: [
+        {
+          id: 'step-1',
+          title: 'Search across MCP',
+          toolRequest: { name: 'search', arguments: { query: 'IsleMind' } },
+          acceptance: [],
+        },
+      ],
+      permissionCeiling: 'read-only',
+      acceptanceChecks: [],
+      createdAt: 1,
+      updatedAt: 1,
+    }, agentToolManifests).ok,
+    false,
+    'agent workflow validation treats ambiguous bare tool references as unavailable'
+  )
+  assert.equal(
+    validateAgentWorkflowDefinition({
+      schema: 'islemind.agent.workflow.v1',
+      id: 'workflow-unique',
+      name: 'Unique rag workflow',
+      enabled: true,
+      triggerHints: [],
+      steps: [
+        {
+          id: 'step-1',
+          title: 'Build evidence pack',
+          toolRequest: { name: 'rag.context_pack', arguments: { query: 'IsleMind' } },
+          acceptance: [],
+        },
+      ],
+      permissionCeiling: 'read-only',
+      expectedOutput: 'rag-evidence',
+      acceptanceChecks: [],
+      createdAt: 1,
+      updatedAt: 1,
+    }, agentToolManifests).ok,
+    true,
+    'agent workflow validation still accepts uniquely resolved bare tool names'
+  )
+  const ambiguousWorkflowSuggestion = createAgentWorkflowSkillSuggestionFromRun({
+    run: {
+      id: 'agent-run-ambiguous',
+      goal: 'Search through MCP',
+      intent: 'tool_task',
+      status: 'done',
+      startedAt: 1,
+      completedAt: 2,
+      finalOutput: 'done',
+      traces: [],
+      steps: [
+        {
+          id: 'step-1',
+          title: 'Search through MCP',
+          status: 'done',
+          toolRequest: { name: 'search', arguments: { query: 'IsleMind' } },
+          observation: {
+            ok: true,
+            status: 'done',
+            output: 'done',
+            trace: { id: 'trace-step-1', type: 'tool', title: 'Search', status: 'done' },
+          },
+          trace: [],
+          startedAt: 1,
+          completedAt: 2,
+        },
+      ],
+    },
+    manifests: agentToolManifests,
+    now: 3,
+  })
+  assert.equal(
+    ambiguousWorkflowSuggestion?.workflow.permissionCeiling,
+    'read-only',
+    'agent workflow skill suggestion no longer inflates the permission ceiling from an ambiguous bare tool name'
+  )
+  const ambiguousWorkflowPreview = ambiguousWorkflowSuggestion
+    ? buildAgentWorkflowSkillSavePreview(ambiguousWorkflowSuggestion)
+    : null
+  assert.ok(
+    ambiguousWorkflowPreview?.errorCount > 0,
+    'agent workflow skill preview reports the ambiguous bare tool reference as an error'
+  )
+  assert.ok(
+    buildMcpContextPrompt(selectedMcpTools.filter((item) => item.server.status === 'connected'), MCP_TOOL_CALL_TAG).includes('<islemind_mcp_call>JSON</islemind_mcp_call>'),
+    'chat MCP context helper instructs the model to emit one tagged JSON block for MCP tool calls'
+  )
+  const mcpManifestTrace = buildMcpManifestTrace(
+    selectedMcpTools.filter((item) => item.server.status === 'connected'),
+    selectedMcpTools.filter((item) => item.server.status !== 'connected'),
+    123,
+    (trace) => ({ ...trace, completedAt: trace.completedAt ?? 456 }),
+    (prefix) => `${prefix}-fixture`,
+  )
+  assert.equal(mcpManifestTrace.id, 'mcp-manifest-fixture', 'chat MCP context helper keeps the manifest trace id prefix')
+  assert.equal(mcpManifestTrace.metadata.connected, 1, 'chat MCP context helper records connected tool count')
+  assert.equal(mcpManifestTrace.metadata.offline, 1, 'chat MCP context helper records offline tool count')
+  assert.deepEqual(
+    completeTrace({ id: 'trace-complete', type: 'system', title: 'Trace', status: 'running', startedAt: 100, completedAt: 160 }),
+    { id: 'trace-complete', type: 'system', title: 'Trace', status: 'running', startedAt: 100, completedAt: 160, durationMs: 60 },
+    'chat trace helper preserves explicit completion time and derives duration'
+  )
+  assert.equal(
+    clampTraceContent('x'.repeat(530), 'tool'),
+    `${'x'.repeat(520)}...`,
+    'chat trace helper keeps the existing short tool trace content limit'
+  )
+  assert.deepEqual(
+    sanitizeTrace({
+      id: 'trace-safe',
+      type: 'tool',
+      title: 'Uses apiKey=secret-value',
+      content: '  Bearer sensitive-token-value  ',
+      status: 'running',
+      completedAt: 200,
+      metadata: { authorization: 'Bearer sensitive-token-value', tokenCount: 12 },
+    }),
+    {
+      id: 'trace-safe',
+      type: 'tool',
+      title: 'Uses [redacted]',
+      content: '[redacted]',
+      status: 'done',
+      completedAt: 200,
+      metadata: { authorization: '[redacted]', tokenCount: 12 },
+    },
+    'chat trace helper redacts title/content/metadata and completes finished running traces'
+  )
+  assertTraceRedactionBehavior()
+  const unsettledTraceMessage = {
+    retrievalTrace: [{ id: 'retrieval-a', type: 'retrieval', title: 'Retrieval', status: 'running', startedAt: 100 }],
+    reasoning: [{ id: 'reasoning-a', type: 'reasoning', title: 'Reasoning', status: 'done', startedAt: 100, completedAt: 120 }],
+    toolCalls: [{ id: 'tool-a', type: 'tool', title: 'Tool', status: 'pending' }],
+  }
+  assert.deepEqual(
+    tracesNeedingSettlement(unsettledTraceMessage).map((trace) => trace.id),
+    ['retrieval-a', 'tool-a'],
+    'chat trace helper selects only running and pending message traces for settlement'
+  )
+  assert.equal(
+    settleTrace({ id: 'tool-a', type: 'tool', title: 'Tool', status: 'pending' }, { fallbackStatus: 'skipped', fallbackContent: 'Stopped' }).content,
+    'Stopped',
+    'chat trace helper supplies fallback content when settling an empty trace'
+  )
+  assert.deepEqual(
+    settleMessageTraces(unsettledTraceMessage, { fallbackStatus: 'skipped', fallbackContent: 'Stopped' }).map((trace) => [trace.id, trace.status, trace.content]),
+    [['retrieval-a', 'skipped', 'Stopped'], ['tool-a', 'skipped', 'Stopped']],
+    'chat trace helper settles only active message traces'
+  )
   ;[
     'onboarding.firstPrompt.samples.concise',
     'onboarding.firstPrompt.samples.research',
@@ -2121,6 +5875,190 @@ async function run() {
     mode: 'block',
   })
   assert.equal(payloadBlock.blocked, true, 'payload block mode blocks empty message requests')
+  assert.equal(summarizePayloadPolicy(undefined), 'not_evaluated', 'runtime diagnostics summarize missing payload policy')
+  assert.equal(
+    summarizePayloadPolicy({ mode: 'warn', blocked: false, findings: [], bodyKeys: [], messageCount: 1, attachmentCount: 0 }),
+    'warn:ok',
+    'runtime diagnostics summarize clean payload policy'
+  )
+  assert.equal(
+    summarizePayloadPolicy({ mode: 'block', blocked: true, findings: [{ id: 'empty_messages', severity: 'error', message: 'empty' }], bodyKeys: [], messageCount: 0, attachmentCount: 0 }),
+    'blocked:empty_messages',
+    'runtime diagnostics summarize blocked payload policy findings'
+  )
+  assert.equal(
+    summarizeRouteDecision({ blocked: true, blockReasons: ['unsupported_protocol', ''], warnings: [], protocol: 'openai-responses' }),
+    'blocked:unsupported_protocol',
+    'runtime diagnostics summarize blocked route decisions'
+  )
+  assert.equal(
+    summarizeTransportSelection({ transport: 'http_sse', requestedMode: 'websocket', fallbackReason: 'streaming_disabled' }),
+    'http_sse:streaming_disabled',
+    'runtime diagnostics summarize transport fallback reasons'
+  )
+  assert.equal(
+    summarizeProxyPolicy({ mode: 'custom-base-url', applied: true, reason: 'custom_base_url', effectiveUrl: 'https://proxy.example/v1/responses' }),
+    'custom-base-url:applied:custom_base_url',
+    'runtime diagnostics summarize proxy policy decisions'
+  )
+  assert.deepEqual(
+    runtimeLogOptions({ settings: { runtimeLogEnabled: true, runtimeLogMaxBytes: 2048 } }),
+    { enabled: true, maxBytes: 2048 },
+    'runtime diagnostics extract runtime log options'
+  )
+  const runtimeLogReq = {
+    conversationId: 'conv-log',
+    provider: { id: 'provider-log' },
+    model: 'upstream-log-model',
+    requestedModel: 'alias-log-model',
+    settings: { runtimeLogEnabled: true },
+  }
+  const payloadLogData = buildPayloadPolicyLogData(runtimeLogReq, { mode: 'warn', blocked: false, findings: [], bodyKeys: ['model', 'messages'], messageCount: 1, attachmentCount: 0 })
+  assert.deepEqual(
+    payloadLogData,
+    {
+      conversationId: 'conv-log',
+      providerId: 'provider-log',
+      model: 'upstream-log-model',
+      requestedModel: 'alias-log-model',
+      upstreamModel: 'upstream-log-model',
+      mode: 'warn',
+      blocked: false,
+      findings: [],
+      bodyKeys: ['model', 'messages'],
+      messageCount: 1,
+      attachmentCount: 0,
+    },
+    'runtime diagnostics builds payload policy log data'
+  )
+  assert.equal(
+    buildProviderRouteDecisionLogData(runtimeLogReq, { blocked: true, blockReasons: ['unsupported_protocol'], warnings: [], protocol: 'openai-responses', capabilitySource: { confidence: 'known' } }).route.blocked,
+    true,
+    'runtime diagnostics builds route decision log data'
+  )
+  assert.equal(
+    buildProxyPolicyLogData(runtimeLogReq, { mode: 'custom-base-url', applied: true, reason: 'custom_base_url', endpointHost: 'proxy.example' }).endpointHost,
+    'proxy.example',
+    'runtime diagnostics builds proxy policy log data'
+  )
+  assert.equal(
+    buildUpstreamRequestLogData(
+      runtimeLogReq,
+      { transport: 'http_sse', requestedMode: 'websocket', fallbackReason: 'streaming_disabled' },
+      { mode: 'warn', blocked: false, findings: [], bodyKeys: ['model'], messageCount: 1, attachmentCount: 0 },
+      { mode: 'off', applied: false, reason: 'disabled' }
+    ).transport,
+    'http_sse',
+    'runtime diagnostics builds upstream request log data'
+  )
+  const streamModeTrace = createStreamModeTrace('buffered', 'Buffered fallback is running.')
+  assert.equal(streamModeTrace.status, 'skipped', 'runtime diagnostics creates skipped buffered stream-mode traces')
+  assert.equal(streamModeTrace.metadata.streamMode, 'buffered', 'runtime diagnostics records stream mode metadata')
+  const governanceTrace = createRuntimeGovernanceTrace({
+    req: { provider: { id: 'governed-provider' } },
+    requestedModel: 'alias-model',
+    upstreamModel: 'upstream-model',
+    access: { allowed: false, reason: 'model_blocked', matchedRules: ['block-a'] },
+    route: { blocked: true, blockReasons: ['unsupported_protocol'], warnings: [], protocol: 'openai-responses', capabilitySource: { confidence: 'known' } },
+    transport: { transport: 'http_sse', requestedMode: 'websocket', fallbackReason: 'streaming_disabled' },
+    payload: { mode: 'block', blocked: true, findings: [{ id: 'empty_messages', severity: 'error', message: 'empty' }], bodyKeys: ['model'], messageCount: 0, attachmentCount: 0 },
+    proxy: { mode: 'custom-base-url', applied: true, reason: 'custom_base_url', effectiveUrl: 'https://proxy.example/v1/responses', endpointHost: 'proxy.example' },
+    status: 'error',
+  })
+  assert.equal(governanceTrace.metadata.source, 'runtime-policy', 'runtime diagnostics creates runtime governance traces')
+  assert.equal(governanceTrace.metadata.accessReason, 'model_blocked', 'runtime diagnostics records governance access reason')
+  assert.deepEqual(governanceTrace.metadata.payloadFindings, ['empty_messages'], 'runtime diagnostics records payload finding ids')
+  const emittedGovernanceTraces = []
+  emitRuntimeGovernanceTrace({
+    onTrace: (trace) => emittedGovernanceTraces.push(trace),
+    req: { provider: { id: 'governed-provider' } },
+    requestedModel: 'alias-model',
+    upstreamModel: 'upstream-model',
+    access: { allowed: true, matchedRules: [] },
+    status: 'done',
+  })
+  emitRuntimeGovernanceTrace({
+    req: { provider: { id: 'governed-provider' } },
+    requestedModel: 'alias-model',
+    upstreamModel: 'upstream-model',
+    access: { allowed: true, matchedRules: [] },
+    status: 'done',
+  })
+  assert.equal(emittedGovernanceTraces.length, 1, 'runtime diagnostics emits governance traces only when a callback is present')
+  assert.equal(emittedGovernanceTraces[0].metadata.source, 'runtime-policy', 'runtime diagnostics emit helper preserves governance trace shape')
+  const fallbackTrace = createRuntimeFallbackTrace(
+    { provider: { id: 'primary-provider' }, model: 'primary-model', requestedModel: 'alias-model' },
+    {
+      classification: { trigger: 'rate_limited', retryable: true, source: 'status', evidence: { status: 429 } },
+      decision: {
+        mode: 'approved-providers',
+        trigger: 'rate_limited',
+        eligible: true,
+        selected: { providerId: 'backup-provider', model: 'backup-model' },
+        acceptedCandidates: [{ providerId: 'backup-provider', model: 'backup-model' }],
+        rejectedCandidates: [{ providerId: 'slow-provider', model: 'slow-model', reason: 'cooldown' }],
+        blockedReasons: [],
+        requiresUserConfirmation: false,
+        reason: 'selected',
+      },
+    },
+    'done'
+  )
+  assert.equal(fallbackTrace.metadata.source, 'runtime-fallback', 'runtime diagnostics creates runtime fallback traces')
+  assert.equal(fallbackTrace.metadata.selectedProviderId, 'backup-provider', 'runtime diagnostics records fallback selected provider')
+  assert.equal(fallbackTrace.metadata.rejectedCandidateCount, 1, 'runtime diagnostics records fallback rejection counts')
+  assert.deepEqual(
+    withCredentialGroup({ text: 'ok' }, 'group-a'),
+    { text: 'ok', credentialGroupId: 'group-a' },
+    'provider runtime result helper attaches credential group ids'
+  )
+  assert.deepEqual(
+    withCredentialGroup({ text: 'ok' }, undefined),
+    { text: 'ok' },
+    'provider runtime result helper preserves unscoped results'
+  )
+  const runtimeError = providerRuntimeError('blocked', 'group-b')
+  assert.equal(runtimeError.message, 'blocked', 'provider runtime result helper preserves error messages')
+  assert.equal(runtimeError.credentialGroupId, 'group-b', 'provider runtime result helper attaches credential group ids to errors')
+  const streamTaskErrors = []
+  await runStreamTask(async () => {
+    throw new Error('stream failed')
+  }, (error) => streamTaskErrors.push(error), 'group-c')
+  assert.equal(streamTaskErrors[0]?.message, 'stream failed', 'provider runtime result helper forwards stream task errors')
+  assert.equal(streamTaskErrors[0]?.credentialGroupId, 'group-c', 'provider runtime result helper applies fallback credential group id')
+  const abortErrors = []
+  const abortError = new Error('aborted')
+  abortError.name = 'AbortError'
+  await runStreamTask(async () => {
+    throw abortError
+  }, (error) => abortErrors.push(error), 'group-d')
+  assert.equal(abortErrors.length, 0, 'provider runtime result helper suppresses abort errors')
+  const retryRuntimeReq = {
+    provider: { id: 'retry-provider' },
+    model: `retry-model-${Date.now()}`,
+    settings: {
+      upstreamRequestTimeoutMs: 1,
+      upstreamMaxRetries: 99,
+      upstreamCircuitBreakerFailureThreshold: 1,
+      upstreamCircuitBreakerCooldownMs: 1000,
+    },
+  }
+  assert.equal(resolveProviderRequestTimeoutMs(retryRuntimeReq, 60000), 5000, 'provider runtime retry helper clamps request timeout minimum')
+  assert.equal(resolveProviderMaxRetries(retryRuntimeReq), 5, 'provider runtime retry helper clamps max retries')
+  assert.equal(providerRetryDelayMs(0), 250, 'provider runtime retry helper keeps first retry delay')
+  assert.equal(providerRetryDelayMs(5), 2000, 'provider runtime retry helper caps retry delay')
+  const retryCircuitKey = providerCircuitKey(retryRuntimeReq)
+  recordProviderCircuitFailure(retryRuntimeReq, retryCircuitKey)
+  assert.throws(
+    () => assertProviderCircuitClosed(retryRuntimeReq, retryCircuitKey),
+    /circuit_breaker_open/,
+    'provider runtime retry helper opens circuit after configured failure threshold'
+  )
+  recordProviderCircuitSuccess(retryCircuitKey)
+  assert.doesNotThrow(
+    () => assertProviderCircuitClosed(retryRuntimeReq, retryCircuitKey),
+    'provider runtime retry helper clears circuit after successful request'
+  )
   assert.equal(
     resolveProxyPolicyForTest({
       provider: governedProvider,
@@ -2129,6 +6067,24 @@ async function run() {
     }).effectiveUrl,
     'https://proxy.example/upstream/v1/responses?x=1',
     'custom-base-url proxy preserves endpoint path and query'
+  )
+  assert.equal(
+    resolveProxyPolicyForTest({
+      provider: governedProvider,
+      url: 'https://api.openai.com/v1/responses?x=1',
+      settings: { proxyMode: 'custom-base-url', proxyBaseUrl: 'file:///tmp/proxy' },
+    }).reason,
+    'invalid_custom_base_url',
+    'custom-base-url proxy rejects file URLs before credentialed fetch'
+  )
+  assert.equal(
+    resolveProxyPolicyForTest({
+      provider: governedProvider,
+      url: 'https://api.openai.com/v1/responses?x=1',
+      settings: { proxyMode: 'custom-base-url', proxyBaseUrl: 'islemind://proxy' },
+    }).reason,
+    'invalid_custom_base_url',
+    'custom-base-url proxy rejects app-scheme proxy URLs before credentialed fetch'
   )
   assert.deepEqual(
     selectUpstreamTransportForTest({
@@ -2170,12 +6126,53 @@ async function run() {
     maxTokens: 128,
     stream: true,
     remoteCompactEligible: true,
-    settings: { remoteCompactThreshold: 0.7 },
+    settings: { remoteCompactThresholdTokens: 200000 },
   })
   assert.deepEqual(
     compactResponsesBody.context_management,
-    [{ type: 'compaction', compact_threshold: 0.7 }],
+    [{ type: 'compaction', compact_threshold: 200000 }],
     'Responses requests include server-side compaction when remote compact is eligible'
+  )
+  const compatibleResponsesProvider = {
+    id: 'relay-openai-compatible',
+    type: 'openai-compatible',
+    presetId: 'custom-openai-compatible',
+    name: 'Relay OpenAI Compatible',
+    baseUrl: 'https://relay.example/v1',
+    apiKey: FAKE_KEY_A,
+    models: ['gpt-5.2'],
+    enabled: true,
+    capabilities: { nativeTools: true, responsesApi: true },
+  }
+  assert.equal(
+    usesOpenAIResponses({ provider: compatibleResponsesProvider, model: 'gpt-5.2', webSearchMode: 'native' }),
+    true,
+    'openai-compatible providers can opt into Responses routing when relay capabilities declare responsesApi support'
+  )
+  const compatibleResponsesBody = getBodyForTest({
+    provider: compatibleResponsesProvider,
+    model: 'gpt-5.2',
+    messages: [{ role: 'user', content: 'relay me through responses' }],
+    webSearchMode: 'native',
+    maxTokens: 256,
+    remoteCompactEligible: true,
+    settings: { remoteCompactThresholdTokens: 200000 },
+  })
+  assert.equal(Array.isArray(compatibleResponsesBody.input), true, 'openai-compatible Responses relays use Responses input payloads')
+  assert.deepEqual(
+    compatibleResponsesBody.context_management,
+    [{ type: 'compaction', compact_threshold: 200000 }],
+    'openai-compatible Responses relays forward server-side compaction settings'
+  )
+  assert.equal(
+    resolveProviderEndpoint({
+      provider: compatibleResponsesProvider,
+      model: 'gpt-5.2',
+      stream: true,
+      usesResponsesApi: true,
+    }),
+    'https://relay.example/v1/responses',
+    'openai-compatible Responses relays resolve to their configured /responses endpoint'
   )
   const compactEligible = decideRemoteCompact({
     provider: governedProvider,
@@ -2186,17 +6183,89 @@ async function run() {
   })
   assert.equal(compactEligible.enabled, true, 'remote compact auto mode enables under context pressure')
   assert.equal(estimateRemoteCompactSavedTokens(1000, 120), 430, 'remote compact saved-token estimate is deterministic')
+  const completedRemoteCompactUsageInput = buildCompletedRemoteCompactUsageInput({
+    conversationId: 'conversation-1',
+    providerId: 'openai-main',
+    model: 'gpt-5.2',
+    upstreamModel: 'gpt-5.2',
+    mode: 'auto',
+    responseId: 'resp-1',
+    previousResponseId: 'resp-prev',
+    inputTokens: 1000,
+    outputTokens: 120,
+    messageCount: 12,
+  })
+  assert.deepEqual(
+    completedRemoteCompactUsageInput,
+    {
+      mode: 'auto',
+      providerId: 'openai-main',
+      model: 'gpt-5.2',
+      upstreamModel: 'gpt-5.2',
+      inputTokens: 1000,
+      outputTokens: 120,
+      estimatedSavedTokens: 430,
+    },
+    'chat remote compact helper preserves compact usage input fields and saved-token estimates'
+  )
+  const completedRemoteCompactRecord = recordCompactUsage(completedRemoteCompactUsageInput)
+  const completedRemoteCompactLogPayload = buildCompletedRemoteCompactRuntimeLogPayload({
+    conversationId: 'conversation-1',
+    record: completedRemoteCompactRecord,
+    responseId: 'resp-1',
+    previousResponseId: 'resp-prev',
+  })
+  assert.equal(completedRemoteCompactLogPayload.status, 'completed', 'chat remote compact helper marks completed runtime log payloads')
+  assert.equal(completedRemoteCompactLogPayload.responseId, 'resp-1', 'chat remote compact helper preserves the compact response id in runtime logs')
+  const completedRemoteCompactState = buildCompletedRemoteCompactStateRecord({
+    conversationId: 'conversation-1',
+    record: completedRemoteCompactRecord,
+    responseId: 'resp-1',
+    previousResponseId: 'resp-prev',
+    messageCount: 12,
+    now: 123456,
+  })
+  assert.equal(completedRemoteCompactState.id, 'compact-state-resp-1', 'chat remote compact helper derives compact state ids from response ids')
+  assert.equal(completedRemoteCompactState.sourceMessageEndIndex, 11, 'chat remote compact helper preserves the last source message index')
+  assert.equal(
+    buildCompletedRemoteCompactStateRecord({
+      conversationId: 'conversation-1',
+      record: completedRemoteCompactRecord,
+      responseId: undefined,
+      previousResponseId: 'resp-prev',
+      messageCount: 12,
+      now: 123456,
+    }),
+    undefined,
+    'chat remote compact helper skips compact state persistence when no response id is available'
+  )
   clearCompactUsageRecords()
   recordCompactUsage({ mode: 'auto', providerId: 'openai-main', model: 'gpt-5.2', inputTokens: 100, outputTokens: 20, estimatedSavedTokens: 35 })
   assert.equal(listCompactUsageRecords().length, 1, 'compact usage accounting stores separate compact records')
   const redactedLog = redactRuntimeLogValue({
     authorization: 'Bearer abcdefghijklmnopqrstuvwxyz123456',
     apiKey: 'sk-testabcdefghijklmnopqrstuvwxyz123456',
+    endpoint: `https://example.com/models?key=${FAKE_KEY_A}&refresh_token=refresh-secret-token`,
+    proxyEndpoint: 'https://runtime-user:runtime-password@example.com/chat/completions',
+    details: 'refresh_token=Abcdefghijklmnopqrstuvwxyz1234567890ABCDEFGH',
+    headerText: 'Authorization: Basic QWxhZGRpbjpvcGVuIHNlc2FtZQ==; proxy-authorization: bearer abcdefghijklmnopqrstuvwxyz123456',
     body: JSON.stringify({ model: 'gpt-5.2', input: [{ content: 'secret prompt text' }] }),
   })
   assert.equal(redactedLog.authorization, '[redacted]', 'runtime log redacts authorization fields')
   assert.equal(redactedLog.apiKey, '[redacted]', 'runtime log redacts API key fields')
+  assert.equal(redactedLog.endpoint, 'https://example.com/models?key=[redacted]&refresh_token=[redacted]', 'runtime log redacts sensitive query-string assignments')
+  assert.equal(redactedLog.proxyEndpoint, 'https://[redacted]@example.com/chat/completions', 'runtime log redacts URL userinfo credentials')
+  assert.equal(redactedLog.details, 'refresh_token=[redacted]', 'runtime log redacts sensitive credential assignments in plain strings')
+  assert.equal(redactedLog.headerText, 'Authorization: Basic [redacted]; proxy-authorization: bearer [redacted]', 'runtime log redacts header-like authorization strings')
   assert.deepEqual(redactedLog.body.keys, ['input', 'model'], 'runtime log stores payload keys instead of full body')
+  const presignedLog = redactRuntimeLogValue({
+    downloadUrl: 'https://example.com/download.apk?X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Credential=AKIAIOSFODNN7EXAMPLE%2F20260618%2Fus-east-1%2Fs3%2Faws4_request&X-Amz-Date=20260618T010203Z&X-Amz-Expires=300&X-Amz-Security-Token=IQoJb3JpZ2luX2VjEOz%2F%2F%2F%2F%2F%2F8BEAAaCXVzLWVhc3QtMSJGMEQCIFakeToken&X-Amz-Signature=0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef',
+  })
+  assert.equal(
+    presignedLog.downloadUrl,
+    'https://example.com/download.apk?X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Credential=[redacted]&X-Amz-Date=20260618T010203Z&X-Amz-Expires=300&X-Amz-Security-Token=[redacted]&X-Amz-Signature=[redacted]',
+    'runtime log redacts pre-signed URL credential, security-token, and signature parameters while preserving non-secret query context'
+  )
   assert.equal(st('messageBubble.copyWorkArtifact'), '复制工作产物', 'Chinese message actions expose work artifact copy')
   assert.equal(st('messageBubble.continueWorkArtifact'), '继续这项工作', 'Chinese message actions expose work artifact continuation')
   assert.ok(st('onboarding.firstPrompt.samples.research').includes('输出必须包含'), 'Chinese onboarding first prompt remains structured')
@@ -2395,6 +6464,28 @@ ${FAKE_KEY_D}
   assert.equal(urlKeyImported.providers[1].baseUrl, 'https://newapi.example.net/')
   assert.equal(urlKeyImported.providers[1].credentialGroups.length, 2)
 
+  const blankSeparatedUrlKeyImported = parseProviderImportText(`
+https://blank-key.example/v1
+
+${FAKE_KEY_A}
+
+${FAKE_KEY_B}
+`)
+  assert.equal(blankSeparatedUrlKeyImported.providers.length, 1, 'imports URL and following key-only blocks as one provider')
+  assert.equal(blankSeparatedUrlKeyImported.providers[0].baseUrl, 'https://blank-key.example/v1')
+  assert.equal(blankSeparatedUrlKeyImported.providers[0].credentialGroups.length, 2, 'keeps blank-separated keys on the URL provider')
+  assert.equal(countDetectedProviderImports('   '), 0, 'provider import summary treats blank input as no detected providers')
+  assert.equal(
+    countDetectedProviderImports(`Provider Summary, https://summary.example/v1, ${FAKE_KEY_A}`),
+    1,
+    'provider import summary counts parseable provider import text'
+  )
+  assert.equal(
+    formatProviderNameList([{ name: 'Provider Summary' }, { name: '   ' }, { name: 'Provider Backup' }]),
+    '- Provider Summary\n- Provider Backup',
+    'provider import summary formats non-empty provider names for confirmation copy'
+  )
+
   const jsonImported = parseProviderImportText(JSON.stringify({
     providers: [
       {
@@ -2434,13 +6525,19 @@ ${FAKE_KEY_D}
   assert.equal(newApiConnectionDraft?.credentialText, FAKE_KEY_C, 'provider import draft exposes credential text only for field application')
 
   const providerSettingsContentSource = fs.readFileSync(path.join(root, 'src/components/providers/ProviderSettingsContent.tsx'), 'utf8')
+  const providerImportSummarySource = fs.readFileSync(path.join(root, 'src/services/providerImportSummary.ts'), 'utf8')
   const apiKeyPanelSource = fs.readFileSync(path.join(root, 'src/components/settings/ApiKeyPanel.tsx'), 'utf8')
+  const skillSettingsContentSource = fs.readFileSync(path.join(root, 'src/components/settings/SkillSettingsContent.tsx'), 'utf8')
   assert.ok(providerSettingsContentSource.includes('Clipboard.hasStringAsync()'), 'provider import requests clipboard text availability before reading clipboard text')
-  assert.ok(providerSettingsContentSource.includes('parseProviderImportText(input)'), 'provider import modal detects manually pasted provider configs')
+  assert.ok(providerSettingsContentSource.includes('countDetectedProviderImports(input)'), 'provider import modal routes manual detection through the import summary helper')
+  assert.ok(providerImportSummarySource.includes('parseProviderImportText(input)'), 'provider import summary helper detects manually pasted provider configs')
   assert.ok(providerSettingsContentSource.includes("parseProviderImportDraft(text, { requireConnection: source === 'manual', preferredWireProtocol: wireProtocol })"), 'add provider form applies detected provider import drafts from clipboard and manual input')
   assert.ok(providerSettingsContentSource.includes('onChangeText: handleKeysText'), 'add provider form routes token input through provider import auto-detection')
   assert.ok(apiKeyPanelSource.includes('readProviderClipboard'), 'single provider editor exposes clipboard provider import handling')
   assert.ok(apiKeyPanelSource.includes('onChangeText: handleCredentialText'), 'single provider editor routes multi-token input through provider import auto-detection')
+  assert.ok(skillSettingsContentSource.includes("await FileSystem.deleteAsync(uri, { idempotent: true }).catch(() => undefined)"), 'skill export clears its temporary share file after the share flow completes')
+  assert.ok(skillSettingsContentSource.includes("await deleteTemporaryImportCopy(importUri, { assumeTemporaryCopy: true })"), 'skill import clears cached picker copies after reading import files')
+  assert.ok(providerSettingsContentSource.includes("await deleteTemporaryImportCopy(importUri, { assumeTemporaryCopy: true })"), 'provider import clears cached picker copies after reading import files')
 
   const tableImported = parseProviderImportText(`name,base_url,api_key,models\nCSV Provider,https://csv.example/v1,${FAKE_KEY_E},csv-model`)
   assert.equal(tableImported.sourceType, 'csv')
@@ -2552,6 +6649,16 @@ https://gateway.example/messages`
   )
   assert.equal(failedProbe.ok, false, 'failed network probe keeps a manual-friendly fallback')
   assert.equal(failedProbe.presetId, 'custom-openai-compatible')
+  const invalidProbe = await probeProviderPreset(
+    { baseUrl: 'file:///tmp/provider', [API_KEY_FIELD]: 'token-probe-fake' },
+    {
+      fetch: async () => {
+        throw new Error('probe fetch should not run for invalid provider base URLs')
+      },
+    }
+  )
+  assert.equal(invalidProbe.ok, false, 'provider preset probe rejects invalid custom base URLs before network probe')
+  assert.match(invalidProbe.reason, /http:\/\/|https:\/\//i, 'provider preset probe surfaces the invalid custom base URL reason')
 
   assert.equal(resolveSearchProvider({ webSearchEnabled: true, searchProvider: 'google' }), 'google')
   assert.equal(resolveSearchProvider({ webSearchEnabled: true, webSearchMode: 'tavily' }), 'tavily')
@@ -2559,6 +6666,17 @@ https://gateway.example/messages`
   assert.equal(legacySearchModeForProvider('bing'), 'tavily')
   assert.equal(getBingCompatibleEndpoint({ customSearchEndpoint: '' }), null, 'Bing requires an explicit compatible endpoint')
   assert.equal(getBingCompatibleEndpoint({ customSearchEndpoint: ' https://search.example?q={query} ' }), 'https://search.example?q={query}')
+  assert.equal(safeCustomSearchEndpoint('file:///tmp/search.json'), null, 'custom search endpoint rejects file URLs before credentialed fetch')
+  assert.equal(safeCustomSearchEndpoint('islemind://search'), null, 'custom search endpoint rejects app-scheme URLs before credentialed fetch')
+  assert.equal(safeCustomSearchEndpoint('https://user:pass@search.example/query'), null, 'custom search endpoint rejects embedded credentials')
+  assert.equal(buildCustomSearchUrl('https://search.example?q={query}&limit={limit}', 'a b', 3), 'https://search.example?q=a%20b&limit=3', 'custom search endpoint builds safe HTTPS query URLs')
+  assert.equal(buildCustomSearchUrl('{query}', 'file:///tmp/leak', 3), null, 'custom search endpoint rejects template output that is not an HTTP URL')
+  assert.equal(hasCustomProviderBaseUrl({ baseUrl: ' https://api.example/v1 ' }), true, 'provider base URL helper detects explicit custom endpoints')
+  assert.equal(hasCustomProviderBaseUrl({ baseUrl: '   ' }), false, 'provider base URL helper ignores blank custom endpoints')
+  assert.equal(isHttpProviderBaseUrl({ type: 'openai-compatible', baseUrl: 'https://api.example/v1' }), true, 'provider base URL helper accepts HTTPS custom endpoints')
+  assert.equal(isHttpProviderBaseUrl({ type: 'openai-compatible', baseUrl: 'file:///tmp/provider' }), false, 'provider base URL helper rejects file custom endpoints')
+  assert.equal(isHttpProviderBaseUrl({ type: 'openai-compatible', baseUrl: 'https://user:pass@api.example/v1' }), false, 'provider base URL helper rejects embedded credentials')
+  assert.equal(getProviderConfigIssue({ type: 'openai-compatible', baseUrl: 'islemind://provider' }, 'token-test-fake')?.code, 'bad_base_url', 'provider settings validation rejects app-scheme custom base URLs')
 
   const provider = applyProviderPreset(
     {
@@ -2670,6 +6788,8 @@ https://gateway.example/messages`
   const normalized = normalizeProviderCredentialGroups(provider)
   assert.equal(normalized.credentialGroups.length, 3)
   assert.equal(chooseCredentialForModel(normalized, 'claude-3-5-sonnet-20241022').credentialGroupId, groups[1].id)
+  assert.equal(findCredentialGroupIdForKey(normalized, ` ${normalized.credentialGroups[1].apiKey} `), groups[1].id, 'credential helper finds a token group by trimmed API key')
+  assert.equal(findCredentialGroupIdForKey(normalized, '   '), undefined, 'credential helper ignores blank API keys')
   const blankGroupProvider = normalizeProviderCredentialGroups({
     ...provider,
     models: ['legacy-provider-model'],
@@ -2731,6 +6851,11 @@ https://gateway.example/messages`
     resolveProviderModelAccessForTest({ provider: manualProvider, model: resolveProviderModelAlias(manualProvider, 'fast'), settings: { modelBlocklist: ['fast'], modelAllowlist: ['gpt-*'] } })
   )
   assert.equal(aliasBlock.allowed, false, 'alias access policy keeps blocklist precedence over upstream allowlist')
+  const aliasBothModelDenied = mergeAliasAccessPolicyForTest(
+    resolveProviderModelAccessForTest({ provider: manualProvider, model: 'fast', settings: { modelAllowlist: ['never-*'] } }),
+    resolveProviderModelAccessForTest({ provider: manualProvider, model: resolveProviderModelAlias(manualProvider, 'fast'), settings: { modelAllowlist: ['never-*'] } })
+  )
+  assert.equal(aliasBothModelDenied.model, resolveProviderModelAlias(manualProvider, 'fast'), 'runtime alias access policy preserves upstream denial context when both alias and target miss the allowlist')
   assert.equal(
     resolveProviderModelAliasAccessForTest({ provider: manualProvider, model: 'fast', settings: { modelAllowlist: ['gpt-*'] } }).allowed,
     true,
@@ -2828,6 +6953,34 @@ https://gateway.example/messages`
   assert.deepEqual(filterPendingMemoriesForReview(memoryReviewQueue, 'manual').map((memory) => memory.id), ['pending-manual'], 'memory review queue can isolate manually added pending memories')
   assert.deepEqual(filterPendingMemoriesForReview(memoryReviewQueue, 'legacy').map((memory) => memory.id), ['pending-legacy'], 'memory review queue can isolate legacy memories with missing provenance')
   assert.deepEqual(filterPendingMemoriesForReview(memoryReviewQueue, 'lowConfidence').map((memory) => memory.id), ['pending-model-low'], 'memory review queue isolates low-confidence pending memories and excludes active memories')
+  assert.deepEqual(sortMemories([
+    { id: 'older', content: 'Older', status: 'active', createdAt: 1000, updatedAt: 2000, lastHitAt: 9000 },
+    { id: 'newer', content: 'Newer', status: 'active', createdAt: 3000, updatedAt: 4000 },
+  ], 'lastUsed').map((memory) => memory.id), ['older', 'newer'], 'context asset filters keep last-used memory sorting behavior')
+  assert.deepEqual(
+    filterAndSortMemories(memoryReviewQueue, { statusFocus: 'pending', reviewFocus: 'lowConfidence', filter: '62', sortMode: 'updated' }).map((memory) => memory.id),
+    ['pending-model-low'],
+    'context asset filters combine pending review focus, confidence search, and memory sorting'
+  )
+  assert.equal(hasMemoryAssetFilters('all', 'all', '  '), false, 'context asset filters treat blank memory filters as inactive')
+  assert.equal(hasMemoryAssetFilters('pending', 'all', ''), true, 'context asset filters detect memory status focus')
+  assert.equal(memoryAssetEmptyMessage('pending', '', (key) => key), 'contextPanel.noPendingMemories', 'context asset filters preserve pending-memory empty copy key')
+  const testT = (key, values) => values ? `${key}:${JSON.stringify(values)}` : key
+  assert.equal(capabilityLabel('embedding', testT), 'contextPanel.localModel.capabilities.embedding', 'context asset formatters preserve local capability label keys')
+  assert.equal(memorySourceKindKey('imported'), 'contextPanel.memorySourceImported', 'context asset formatters preserve imported memory source key')
+  assert.equal(memoryReviewFocusKey('model'), 'contextPanel.memoryReviewModelFilter', 'context asset formatters preserve model review filter key')
+  assert.equal(formatMemoryTime(undefined), '-', 'context asset formatters keep missing memory timestamps compact')
+  assert.equal(shortenKnowledgeSource('https://example.com/short.txt'), 'https://example.com/short.txt', 'context asset formatters keep short knowledge sources intact')
+  assert.equal(
+    shortenKnowledgeSource('https://example.com/very/long/path/to/a/knowledge/document/source-file.md'),
+    'https://example.com/very...ent/source-file.md',
+    'context asset formatters shorten long knowledge sources with the existing middle ellipsis shape'
+  )
+  assert.ok(
+    formatMemoryMeta({ id: 'memory-meta', content: 'Meta memory', status: 'active', sourceKind: 'model', sourceDetail: 'agent', confidence: 0.876, conversationId: 'conversation-1234567890', createdAt: 1000, updatedAt: 3500, lastHitAt: 3000 }, testT)
+      .includes('contextPanel.memoryConfidence:{"confidence":88}'),
+    'context asset formatters preserve memory confidence rounding in meta text'
+  )
   const knowledgeRecoverySummary = buildKnowledgeRecoverySummary([
     { id: 'ready-doc', title: 'Ready', mimeType: 'text/plain', size: 1200, chunkCount: 3, status: 'ready', createdAt: 1000, updatedAt: 1000 },
     { id: 'failed-doc', title: 'Failed', mimeType: 'text/plain', size: 800, chunkCount: 0, status: 'error', error: 'Parser failed', createdAt: 1000, updatedAt: 1200 },
@@ -2849,6 +7002,31 @@ https://gateway.example/messages`
       lastError: 'Parser failed',
     },
     'knowledge recovery summary exposes failed documents, empty documents, job failures, and the latest actionable error'
+  )
+  const knowledgeFilterDocuments = [
+    { id: 'ready-doc', title: 'Ready', mimeType: 'text/plain', size: 1200, chunkCount: 3, status: 'ready', createdAt: 1000, updatedAt: 1000 },
+    { id: 'failed-doc', title: 'Failed', mimeType: 'text/plain', size: 800, chunkCount: 0, status: 'error', error: 'Parser failed', createdAt: 1000, updatedAt: 1200 },
+    { id: 'empty-doc', title: 'Empty', mimeType: 'text/plain', size: 0, chunkCount: 0, status: 'ready', createdAt: 1000, updatedAt: 1300 },
+    { id: 'indexing-doc', title: 'Indexing', mimeType: 'text/plain', size: 500, chunkCount: 0, status: 'extracting', createdAt: 1000, updatedAt: 1400 },
+  ]
+  assert.deepEqual(sortKnowledgeDocuments(knowledgeFilterDocuments, 'needsReview').map((document) => document.id), ['failed-doc', 'empty-doc', 'indexing-doc', 'ready-doc'], 'context asset filters keep knowledge review priority sorting')
+  assert.deepEqual(
+    filterAndSortKnowledgeDocuments(knowledgeFilterDocuments, { statusFocus: 'empty', filter: '', sortMode: 'updated' }).map((document) => document.id),
+    ['empty-doc'],
+    'context asset filters preserve empty ready-document focus'
+  )
+  assert.deepEqual(
+    filterAndSortKnowledgeDocuments(knowledgeFilterDocuments, { statusFocus: 'all', filter: 'parser', sortMode: 'updated' }).map((document) => document.id),
+    ['failed-doc'],
+    'context asset filters search knowledge error text'
+  )
+  assert.equal(hasKnowledgeAssetFilters('all', '  '), false, 'context asset filters treat blank knowledge filters as inactive')
+  assert.equal(hasKnowledgeAssetFilters('error', ''), true, 'context asset filters detect knowledge status focus')
+  assert.equal(knowledgeAssetEmptyMessage('error', '', (key) => key), 'contextPanel.noFailedKnowledge', 'context asset filters preserve failed-knowledge empty copy key')
+  assert.ok(
+    formatKnowledgeMeta({ id: 'failed-doc', title: 'Failed', mimeType: 'text/plain', size: 800, chunkCount: 0, status: 'error', error: 'Parser failed', sourceUri: 'https://example.com/very/long/path/to/a/knowledge/document/source-file.md', createdAt: 1000, updatedAt: 1200 }, testT)
+      .includes('contextPanel.knowledgeError:{"error":"Parser failed"}'),
+    'context asset formatters preserve failed knowledge error meta text'
   )
   const onboardingResearch = getOnboardingCompanionProfile('research')
   const onboardingEngineering = getOnboardingCompanionProfile('engineering')
@@ -3166,6 +7344,14 @@ https://gateway.example/messages`
   assert.ok(formatted500.includes('upstream_error'), 'formatted provider errors keep error type')
   assert.ok(formatted500.includes('req_123'), 'formatted provider errors keep request id')
   assert.equal(formatted500.includes('{\"error\"'), false, 'formatted provider errors do not expose raw JSON')
+  assert.deepEqual(success('ok', { value: 1 }, 'group-a'), { ok: true, code: 'ok', message: 'ok', data: { value: 1 }, credentialGroupId: 'group-a' }, 'provider operation result helper preserves success result shape')
+  assert.deepEqual(failure('bad_auth', 'bad key', undefined, 'group-b'), { ok: false, code: 'bad_auth', message: 'bad key', data: undefined, credentialGroupId: 'group-b' }, 'provider operation result helper preserves failure result shape')
+  assert.equal(classifyHttpStatus(429, 'quota exceeded'), 'rate_limited', 'provider operation result helper classifies rate limits')
+  assert.equal(classifyHttpStatus(404, 'missing model', 'model-a'), 'model_unavailable', 'provider operation result helper classifies missing models')
+  assert.ok(
+    extractProviderErrorDetail(JSON.stringify({ error: { type: 'upstream_error', message: 'No auth credentials found', request_id: 'req_123' } })).includes('req_123'),
+    'provider operation result helper extracts request ids from JSON error payloads'
+  )
   const activationSummary = summarizeProviderActivation([
     { providerId: 'ok', providerName: 'OK', enabled: true, hadCredential: true, synced: true, syncAttempted: true, modelCount: 2, syncedGroups: 1, missingToken: false, tested: true, testOk: true, messages: [], failures: [] },
     { providerId: 'models-only', providerName: 'Models Only', enabled: true, hadCredential: true, synced: true, syncAttempted: true, modelCount: 2, syncedGroups: 1, missingToken: false, tested: true, testOk: false, messages: ['test failed'], failures: [{ providerName: 'Models Only', message: 'test failed' }] },
@@ -3178,6 +7364,50 @@ https://gateway.example/messages`
     st('providerSettings.activationProgressMessage', { completed: 2, total: 3, synced: 1, tested: 1, failed: 1 }).includes('2') &&
       st('providerSettings.activationCurrent', { name: 'Example' }).includes('Example'),
     'activation progress copy is structured for live batch status'
+  )
+  const queuedActivationItems = createActivationItems([
+    { id: 'provider-a', name: 'Provider A' },
+    { id: 'provider-b', name: 'Provider B' },
+  ], 'Queued')
+  const patchedActivationItems = patchActivationItem(queuedActivationItems, 'provider-a', {
+    status: 'done',
+    progress: 1.4,
+    synced: true,
+    tested: true,
+  })
+  const lockedActivationItems = patchActivationItem(patchedActivationItems, 'provider-a', {
+    status: 'running',
+    progress: 0.2,
+  })
+  assert.equal(ACTIVATION_STAGE_PROGRESS.testing, 0.76, 'activation job progress keeps the existing testing stage weight')
+  assert.equal(activationItemProgress(Number.POSITIVE_INFINITY), 0, 'activation job progress rejects non-finite progress')
+  assert.equal(lockedActivationItems[0].status, 'done', 'activation job progress does not regress completed items to running')
+  assert.equal(lockedActivationItems[0].progress, 1, 'activation job progress clamps item progress')
+  assert.deepEqual(
+    aggregateActivationItems(lockedActivationItems),
+    { completed: 1, synced: 1, tested: 1, failed: 0, progress: 0.5 },
+    'activation job progress aggregates completed, synced, tested, failed, and average progress'
+  )
+  const providerListFixtures = [
+    { id: 'alpha', type: 'openai-compatible', name: 'Alpha Provider', enabled: true, models: ['gpt-4o'], modelConfigs: [{ id: 'gpt-4o', name: 'Fast Alias' }], lastTestStatus: 'ok', lastModelSyncStatus: 'ok' },
+    { id: 'beta', type: 'openai-compatible', name: 'Beta Provider', enabled: false, models: ['legacy-model'], lastTestStatus: 'bad', lastModelSyncStatus: 'bad' },
+    { id: 'gamma', type: 'openai-compatible', name: 'Gamma Provider', enabled: true, models: ['gpt-4o', 'gpt-5'], lastTestStatus: 'idle', lastModelSyncStatus: 'ok' },
+  ]
+  assert.equal(providerMatchesModelFilter(providerListFixtures[0], 'gpt-4o'), true, 'provider settings filter matches policy-visible model ids')
+  assert.deepEqual(
+    filterAndSortProviders(providerListFixtures, { filter: 'gpt-5', sortMode: 'manual', usageByProvider: new Map() }).map((provider) => provider.id),
+    ['gamma'],
+    'provider settings filter keeps model-id searches behind the shared helper'
+  )
+  assert.equal(
+    [...providerListFixtures].sort((a, b) => compareProviders(a, b, 'health', new Map()))[0].id,
+    'alpha',
+    'provider settings health sort prioritizes passing model tests'
+  )
+  assert.deepEqual(
+    filterAndSortProviders(providerListFixtures, { filter: '', sortMode: 'recent', usageByProvider: new Map([['beta', 30], ['alpha', 10], ['gamma', 20]]) }).map((provider) => provider.id),
+    ['beta', 'gamma', 'alpha'],
+    'provider settings recent sort uses conversation timestamps'
   )
   const activationPolicyProvider = {
     id: 'policy-activation',
@@ -3194,8 +7424,8 @@ https://gateway.example/messages`
   }
   assert.deepEqual(
     buildProviderActivationTestCandidatesForTest(activationPolicyProvider, undefined, { modelAllowlist: ['gpt-*'], modelBlocklist: ['blocked-*'] }).map((candidate) => candidate.model),
-    ['gpt-5.5-mini'],
-    'provider activation auto-tests only one allowed model per credential group'
+    ['gpt-5.5-mini', 'fast'],
+    'provider activation auto-tests a bounded set of allowed models per credential group'
   )
   const activationManyModelProvider = {
     ...activationPolicyProvider,
@@ -3206,11 +7436,11 @@ https://gateway.example/messages`
     ],
   }
   const manyModelActivationCandidates = buildProviderActivationTestCandidatesForTest(activationManyModelProvider)
-  assert.equal(manyModelActivationCandidates.length, 2, 'provider activation does not test every synced model during automatic activation')
+  assert.equal(manyModelActivationCandidates.length, 6, 'provider activation keeps automatic testing bounded to three candidates per credential group')
   assert.deepEqual(
     manyModelActivationCandidates.map((candidate) => candidate.groupId),
-    ['group-a', 'group-b'],
-    'provider activation keeps automatic testing bounded to one candidate per credential group'
+    ['group-a', 'group-a', 'group-a', 'group-b', 'group-b', 'group-b'],
+    'provider activation can try alternate synced models before marking a credential group unhealthy'
   )
   const mimoActivationCandidates = buildProviderActivationTestCandidatesForTest({
     id: 'mimo-activation',
@@ -3276,6 +7506,60 @@ https://gateway.example/messages`
   } finally {
     global.fetch = originalFetchForActivationRateLimit
   }
+  const originalFetchForActivationFallback = global.fetch
+  let resilientActivationProvider = {
+    ...activationPolicyProvider,
+    id: 'activation-resilient-models',
+    name: 'Activation Resilient Models',
+    models: ['bad-model', 'good-model', 'extra-model'],
+    manualModels: [],
+    syncPolicy: { minDelayMs: 0, maxDelayMs: 0, timeoutMs: 18000, strategy: 'sequential-low-rate' },
+    credentialGroups: [
+      { id: 'resilient-group', label: 'Resilient Group', apiKey: FAKE_KEY_A, enabled: true, lastModelSyncStatus: 'idle', availableModels: [] },
+    ],
+  }
+  const resilientTestedModels = []
+  const resilientGroupHealth = []
+  try {
+    global.fetch = async (_url, init = {}) => {
+      if ((init.method ?? 'GET') === 'GET') {
+        return new Response(JSON.stringify({
+          data: [
+            { id: 'bad-model' },
+            { id: 'good-model' },
+            { id: 'extra-model' },
+          ],
+        }), { status: 200, headers: { 'content-type': 'application/json' } })
+      }
+      const body = JSON.parse(init.body)
+      resilientTestedModels.push(body.model)
+      if (body.model === 'bad-model') {
+        return new Response('upstream model temporarily unavailable', { status: 500 })
+      }
+      return new Response(JSON.stringify({ choices: [{ message: { content: 'OK' } }] }), {
+        status: 200,
+        headers: { 'content-type': 'application/json' },
+      })
+    }
+    const resilientActivation = await syncAndTestProvider(resilientActivationProvider, {
+      updateProvider: async (_id, updates) => {
+        resilientActivationProvider = { ...resilientActivationProvider, ...updates }
+      },
+      hydrateProviderKey: async () => resilientActivationProvider,
+      updateProviderCredentialGroupHealth: async (_providerId, groupId, ok) => {
+        resilientGroupHealth.push({ groupId, ok })
+      },
+      delay: async () => undefined,
+    }, { enable: true, checkParameters: false })
+    assert.equal(resilientActivation.testOk, true, 'provider activation succeeds when a later synced model passes')
+    assert.notEqual(resilientActivation.testModel, 'bad-model', 'provider activation records a later passing fallback model')
+    assert.equal(resilientTestedModels[0], 'bad-model', 'provider activation tries the first synced model before fallback candidates')
+    assert.equal(resilientTestedModels.length, 2, 'provider activation stops after the first later synced model passes')
+    assert.deepEqual(resilientGroupHealth.map((item) => item.ok), [false, true], 'provider activation records failed and recovered credential health checks')
+    assert.equal(resilientActivationProvider.lastTestStatus, 'ok', 'provider activation stores ok health after a fallback model passes')
+  } finally {
+    global.fetch = originalFetchForActivationFallback
+  }
   assert.deepEqual(
     buildProviderActivationTestCandidatesForTest(activationPolicyProvider, 'fast', { modelAllowlist: ['gpt-*'] }).map((candidate) => candidate.model),
     ['fast'],
@@ -3286,7 +7570,7 @@ https://gateway.example/messages`
     false,
     'provider activation does not test an explicitly blocked requested model'
   )
-  await assertProviderStoreLifecycleBehavior()
+  await assertSettingsUrlPersistenceBehavior()
 
   const importedDataOk = await importAllData(JSON.stringify({
     app: 'islemind',
@@ -3335,6 +7619,237 @@ https://gateway.example/messages`
     exportedAt: Date.now(),
   }))
   assert.deepEqual(importedDataResult, { ok: true, kind: 'islemind', conversations: 0 }, 'detailed IsleMind imports report full-restore semantics for user-facing feedback')
+  await mergeProviderHealthRecords([{
+    providerId: 'restore-stale-provider',
+    model: 'restore-model',
+    status: 'cooldown',
+    successes: 0,
+    failures: 1,
+    consecutiveFailures: 1,
+    lastFailureAtMs: 1,
+  }], { nowMs: 2 })
+  await saveCompactState({
+    id: 'restore-stale-compact',
+    conversationId: 'restore-stale-conversation',
+    providerId: 'restore-stale-provider',
+    model: 'restore-model',
+    compactItemJson: '{"summary":"stale restore compact"}',
+    sourceMessageStartIndex: 0,
+    sourceMessageEndIndex: 1,
+    status: 'active',
+    createdAt: 1,
+    updatedAt: 1,
+  })
+  clearCompactUsageRecords()
+  recordCompactUsage({
+    mode: 'auto',
+    providerId: 'restore-stale-provider',
+    model: 'restore-model',
+    inputTokens: 9,
+    outputTokens: 3,
+  })
+  secureStorage.set('islemind.key.tavily', FAKE_KEY_C)
+  secureStorage.set('islemind.key.google-search', FAKE_KEY_D)
+  secureStorage.set('islemind.key.bing-search', FAKE_KEY_E)
+  secureStorage.set('islemind.key.custom-search', FAKE_KEY_F)
+  await appendRuntimeLog('storage.operation', { detail: 'restore-stale-runtime-log-seed' }, { enabled: true, maxBytes: 4096 })
+  const restoreRuntimeStateResult = await importAllDataDetailed(JSON.stringify({
+    app: 'islemind',
+    version: 1,
+    conversations: [],
+    settings: null,
+    providers: [],
+    exportedAt: Date.now(),
+  }))
+  assert.deepEqual(restoreRuntimeStateResult, { ok: true, kind: 'islemind', conversations: 0 }, 'portable restore still accepts otherwise valid backups while clearing stale runtime state')
+  assert.deepEqual((await loadProviderHealthSnapshot({ nowMs: 2 })).records, [], 'portable restore clears persisted provider health snapshots before applying imported state')
+  assert.deepEqual(await listActiveCompactStates('restore-stale-conversation', 'restore-stale-provider', 'restore-model'), [], 'portable restore clears persisted remote compact state before applying imported state')
+  assert.deepEqual(listCompactUsageRecords(), [], 'portable restore clears in-memory compact usage records before applying imported state')
+  assert.equal(secureStorage.get('islemind.key.tavily'), undefined, 'portable restore clears stale Tavily search keys before applying imported state')
+  assert.equal(secureStorage.get('islemind.key.google-search'), undefined, 'portable restore clears stale Google search keys before applying imported state')
+  assert.equal(secureStorage.get('islemind.key.bing-search'), undefined, 'portable restore clears stale Bing search keys before applying imported state')
+  assert.equal(secureStorage.get('islemind.key.custom-search'), undefined, 'portable restore clears stale custom-search keys before applying imported state')
+  assert.equal((await getRuntimeLogInfo()).exists, false, 'portable restore clears stale runtime log files before applying imported state')
+  await saveData('SETTINGS', {
+    theme: 'dark',
+    language: 'ja',
+    defaultProvider: 'stale-provider',
+    fontSize: 18,
+    hapticsEnabled: false,
+  })
+  await saveData('SKILLS', [{
+    schema: 'islemind.skill.v1',
+    id: 'stale-skill',
+    name: 'Stale Skill',
+    layer: 'base',
+    priority: 0,
+    systemPrompt: 'stale skill',
+    createdAt: 1,
+    updatedAt: 1,
+    tags: [],
+  }])
+  await saveData('MCP_SERVERS', [{
+    id: 'stale-mcp',
+    name: 'Stale MCP',
+    url: 'https://stale.example.test/mcp',
+    transport: 'sse',
+    enabled: true,
+    status: 'connected',
+    manifestTtlMs: 1000,
+    tools: [],
+    resources: [],
+    prompts: [],
+    approvedToolNames: [],
+    createdAt: 1,
+    updatedAt: 1,
+  }])
+  await importContextSnapshot({
+    memories: [{
+      id: 'stale-restore-memory',
+      content: 'stale restore memory',
+      status: 'active',
+      sourceKind: 'manual',
+      createdAt: 1,
+      updatedAt: 1,
+    }],
+    documents: [{
+      id: 'stale-restore-document',
+      title: 'Stale Restore Knowledge',
+      mimeType: 'text/plain',
+      size: 10,
+      chunkCount: 1,
+      status: 'ready',
+      createdAt: 1,
+      updatedAt: 1,
+    }],
+    chunks: [{
+      id: 'stale-restore-chunk',
+      documentId: 'stale-restore-document',
+      title: 'Stale Restore Knowledge',
+      content: 'stale restore chunk',
+      ordinal: 0,
+      createdAt: 1,
+    }],
+  })
+  const replaceRestoreResult = await importAllDataDetailed(JSON.stringify({
+    app: 'islemind',
+    version: 1,
+    conversations: [],
+    settings: null,
+    providers: [],
+    exportedAt: Date.now(),
+  }))
+  assert.deepEqual(replaceRestoreResult, { ok: true, kind: 'islemind', conversations: 0 }, 'portable restore still accepts backup payloads with omitted optional sections')
+  assert.equal(await loadData('SETTINGS'), null, 'portable restore clears stale settings when the backup omits settings')
+  assert.deepEqual(await loadData('SKILLS'), [], 'portable restore clears stale skills when the backup omits skills')
+  assert.deepEqual(await loadData('MCP_SERVERS'), [], 'portable restore clears stale MCP servers when the backup omits MCP servers')
+  assert.deepEqual(await exportContextSnapshot(), { memories: [], documents: [], chunks: [] }, 'portable restore clears stale context when the backup omits context')
+  const attachmentImportResult = await importAllDataDetailed(JSON.stringify({
+    app: 'islemind',
+    version: 1,
+    conversations: [{
+      id: 'attachment-history-conversation',
+      title: 'Attachment History',
+      providerId: 'openai-main',
+      model: 'gpt-5.2',
+      messages: [{
+        id: 'attachment-history-user',
+        role: 'user',
+        content: 'Keep the attachment label but not the stale temp path.',
+        attachments: [{
+          id: 'attachment-history-file',
+          type: 'text',
+          uri: 'file:///tmp/attachment-history.txt',
+          name: 'attachment-history.txt',
+          mimeType: 'text/plain',
+          size: 512,
+          base64: 'ZmFrZQ==',
+        }],
+        timestamp: 1,
+        status: 'done',
+      }],
+      createdAt: 1,
+      updatedAt: 1,
+    }],
+    settings: null,
+    providers: [],
+    exportedAt: Date.now(),
+  }))
+  assert.deepEqual(attachmentImportResult, { ok: true, kind: 'islemind', conversations: 1 }, 'portable import keeps attachment-bearing conversations restorable')
+  const persistedImportedConversations = await loadData('CONVERSATIONS')
+  const persistedAttachmentConversation = persistedImportedConversations.find((conversation) => conversation.id === 'attachment-history-conversation')
+  assert.equal(persistedAttachmentConversation?.messages[0].attachments[0].base64, undefined, 'portable conversation import strips inline attachment payloads before persistence')
+  assert.equal(persistedAttachmentConversation?.messages[0].attachments[0].uri, '', 'portable conversation import removes stale local attachment URIs before persistence')
+  const sqliteImportedConversations = await localDataStore.loadConversations()
+  const sqliteAttachmentConversation = sqliteImportedConversations.find((conversation) => conversation.id === 'attachment-history-conversation')
+  assert.equal(sqliteAttachmentConversation?.messages[0].attachments[0].uri, '', 'SQLite conversation storage does not retain stale local attachment URIs')
+  const attachmentPortableJson = JSON.parse(await exportAllData())
+  const exportedAttachmentConversation = attachmentPortableJson.conversations.find((conversation) => conversation.id === 'attachment-history-conversation')
+  assert.equal(exportedAttachmentConversation?.messages[0].attachments[0].uri, '', 'portable export does not leak stale local attachment URIs from stored conversations')
+  assert.equal(exportedAttachmentConversation?.messages[0].attachments[0].base64, undefined, 'portable export does not reintroduce stripped inline attachment payloads')
+  await saveData('PROVIDERS', [{
+    id: 'secure-import-provider',
+    type: 'openai-compatible',
+    name: 'Secure Import Provider',
+    enabled: true,
+    models: ['old-model'],
+    credentialGroups: [
+      { id: 'old-group', label: 'Old Group', apiKey: '', enabled: true },
+      { id: 'explicit-empty', label: 'Explicit Empty', apiKey: '', enabled: true },
+    ],
+  }])
+  secureStorage.set('islemind.key.secure-import-provider', 'stale-provider-key')
+  secureStorage.set('islemind.key.secure-import-provider.old-group', 'stale-group-key')
+  secureStorage.set('islemind.key.secure-import-provider.explicit-empty', 'stale-empty-group-key')
+  const secureImportResult = await importAllDataDetailed(JSON.stringify({
+    app: 'islemind',
+    version: 1,
+    conversations: [],
+    settings: null,
+    providers: [{
+      id: 'secure-import-provider',
+      type: 'openai-compatible',
+      name: 'Secure Import Provider',
+      apiKey: FAKE_KEY_A,
+      enabled: true,
+      models: ['good-model'],
+      credentialGroups: [
+        { label: 'Generated Group', apiKey: FAKE_KEY_B, enabled: true, availableModels: ['good-model'] },
+        { id: 'explicit-empty', label: 'Explicit Empty', enabled: true, availableModels: ['good-model'] },
+      ],
+    }],
+    exportedAt: Date.now(),
+  }))
+  assert.deepEqual(secureImportResult, { ok: true, kind: 'islemind', conversations: 0 }, 'detailed IsleMind imports accept provider credentials from JSON payloads')
+  const secureImportedProviders = await loadData('PROVIDERS')
+  assert.equal(secureImportedProviders[0].apiKey, '', 'provider import keeps AsyncStorage provider API keys redacted')
+  assert.equal(secureImportedProviders[0].credentialGroups[0].id, 'group-1', 'provider import normalizes generated credential group ids before secure persistence')
+  assert.equal(secureImportedProviders[0].credentialGroups[0].apiKey, '', 'provider import keeps AsyncStorage credential group API keys redacted')
+  assert.equal(secureStorage.get('islemind.key.secure-import-provider'), FAKE_KEY_A, 'provider import persists provider API keys in SecureStore')
+  assert.equal(secureStorage.get('islemind.key.secure-import-provider.group-1'), FAKE_KEY_B, 'provider import persists generated credential group keys in SecureStore')
+  assert.equal(secureStorage.get('islemind.key.secure-import-provider.old-group'), undefined, 'provider import removes stale credential group keys not present in the payload')
+  assert.equal(secureStorage.get('islemind.key.secure-import-provider.explicit-empty'), undefined, 'provider import removes stale credential group keys when the imported group has no key')
+
+  const importedProviderBaseUrlResult = await importAllDataDetailed(JSON.stringify({
+    app: 'islemind',
+    version: 1,
+    conversations: [],
+    settings: null,
+    providers: [{
+      id: 'storage-credential-url-provider',
+      type: 'openai-compatible',
+      name: 'Storage Credential URL Provider',
+      enabled: true,
+      baseUrl: 'https://user:pass@api.example.test/v1',
+      models: ['model-a'],
+    }],
+    exportedAt: Date.now(),
+  }))
+  assert.deepEqual(importedProviderBaseUrlResult, { ok: true, kind: 'islemind', conversations: 0 }, 'portable provider imports still accept valid payloads')
+  const importedProviderRows = await loadData('PROVIDERS')
+  assert.equal(importedProviderRows[0].baseUrl, undefined, 'portable provider import strips embedded-credential base URLs before disk write')
+  const importedProviderExport = JSON.parse(await exportAllData())
+  assert.equal(importedProviderExport.providers[0].baseUrl, undefined, 'portable provider export omits embedded-credential base URLs after disk normalization')
 
   const packed = packChatMessages({
     messages: Array.from({ length: 18 }, (_, index) => ({
@@ -3462,19 +7977,74 @@ https://gateway.example/messages`
     maxOutputTokens: 256,
   })
   assert.equal(singleLongPacked.messages.length, 1, 'keeps one recent oversized message after compression')
-  assert.ok(singleLongPacked.messages[0].content.includes('前文过长'), 'truncates a single oversized message deterministically')
   assert.ok(singleLongPacked.estimatedInputTokens <= singleLongPacked.budgetTokens, 'single-message truncation stays within budget')
   assert.equal(singleLongPacked.truncatedSingleMessage, true, 'single-message truncation is reflected in trace metadata')
   assert.equal(singleLongPacked.compressionMetadata.strategy, 'single-message-truncation', 'single-message truncation is exposed as a local compression strategy')
   assert.equal(singleLongPacked.compressionMetadata.schemaVersion, 2, 'single-message truncation uses compression metadata schema v2')
   assert.equal(singleLongPacked.compressionMetadata.triggerReason, 'single_message_budget_exceeded', 'single-message truncation reports its trigger reason')
+  assert.ok(singleLongPacked.messages[0].content.includes('...'), 'single-message truncation preserves both head and tail in the retained message')
   assert.equal(singleLongPacked.compressionMetadata.sourceMessageCount, 0, 'single-message truncation does not report summarized source messages')
   assert.equal(singleLongPacked.compressionMetadata.keptMessageCount, 1, 'single-message truncation reports the retained message count')
   assert.deepEqual(singleLongPacked.compressionMetadata.summarySections, [], 'single-message truncation reports no structured summary sections')
   assert.ok(singleLongPacked.compressionMetadata.sourceTokens > singleLongPacked.compressionMetadata.compressedTokens, 'single-message truncation estimates token savings')
   assert.ok(singleLongPacked.compressionMetadata.estimatedSavedTokens > 0, 'single-message truncation reports saved tokens')
   assert.ok(singleLongPacked.compressionMetadata.compressionRatio > 0 && singleLongPacked.compressionMetadata.compressionRatio < 1, 'single-message truncation reports compression ratio below 1')
+  assert.equal(attachmentHasPayload({ id: 'payload-a', type: 'text', uri: 'file:///tmp/a.txt', name: 'a.txt', mimeType: 'text/plain', size: 64, base64: 'YQ==' }), true, 'attachment contract helper recognizes inline payload-bearing attachments')
+  assert.equal(attachmentHasPayload({ id: 'payload-b', type: 'text', uri: 'file:///tmp/b.txt', name: 'b.txt', mimeType: 'text/plain', size: 64 }), false, 'attachment contract helper rejects metadata-only persisted attachments')
+  assert.deepEqual(
+    filterSendableAttachments([
+      { id: 'payload-a', type: 'text', uri: 'file:///tmp/a.txt', name: 'a.txt', mimeType: 'text/plain', size: 64, base64: 'YQ==' },
+      { id: 'payload-b', type: 'text', uri: 'file:///tmp/b.txt', name: 'b.txt', mimeType: 'text/plain', size: 64 },
+    ]).map((attachment) => attachment.id),
+    ['payload-a'],
+    'attachment contract helper keeps only payload-bearing attachments for runtime delivery'
+  )
+  assert.deepEqual(
+    sanitizeAttachmentsForPersistence([
+      { id: 'persist-local', type: 'text', uri: 'file:///tmp/local.txt', name: 'local.txt', mimeType: 'text/plain', size: 64, base64: 'YQ==' },
+      { id: 'persist-remote', type: 'document', uri: 'https://example.com/file.pdf', name: 'file.pdf', mimeType: 'application/pdf', size: 128, base64: 'Yg==' },
+    ]),
+    [
+      { id: 'persist-local', type: 'text', uri: '', name: 'local.txt', mimeType: 'text/plain', size: 64, base64: undefined },
+      { id: 'persist-remote', type: 'document', uri: 'https://example.com/file.pdf', name: 'file.pdf', mimeType: 'application/pdf', size: 128, base64: undefined },
+    ],
+    'attachment persistence helper strips inline payloads and non-web local URIs while preserving display metadata'
+  )
+  assert.equal(
+    estimateMessageTokens([{
+      role: 'user',
+      content: 'metadata-only attachment should not inflate the estimate',
+      attachments: [{ id: 'stale-attachment', type: 'text', uri: '', name: 'stale.txt', mimeType: 'text/plain', size: 20 * 1024 * 1024 }],
+    }]),
+    estimateTextTokens('metadata-only attachment should not inflate the estimate') + 4,
+    'token usage ignores persisted attachment metadata without inline payloads'
+  )
+  assert.deepEqual(
+    buildEstimatedUsage(
+      [{
+        role: 'user',
+        content: 'payload attachment still counts',
+        attachments: [{ id: 'payload-attachment', type: 'text', uri: 'file:///tmp/live.txt', name: 'live.txt', mimeType: 'text/plain', size: 1536, base64: 'YQ==' }],
+      }],
+      'ok'
+    ),
+    {
+      inputTokens: estimateTextTokens('payload attachment still counts') + 4 + 1,
+      outputTokens: estimateTextTokens('ok'),
+      totalTokens: estimateTextTokens('payload attachment still counts') + 4 + 1 + estimateTextTokens('ok'),
+      source: 'estimated',
+    },
+    'token usage still counts live inline attachment payloads after helper extraction'
+  )
   const chatRunnerSource = fs.readFileSync(path.join(root, 'src/services/chatRunner.ts'), 'utf8')
+  assert.ok(
+    chatRunnerSource.includes('const sendableAttachments = filterSendableAttachments(lastUserMessage?.attachments)'),
+    'chat runner derives runtime attachments from payload-bearing attachments only'
+  )
+  const chatWorkspaceCompressionSource = fs.readFileSync(path.join(root, 'src/components/chat/ChatWorkspace.tsx'), 'utf8')
+  assert.ok(chatWorkspaceCompressionSource.includes('function CompressionBanner('), 'chat workspace renders an in-chat compression banner component')
+  assert.ok(chatWorkspaceCompressionSource.includes('lastCompressionToastSignature'), 'chat workspace deduplicates compression toasts across rerenders')
+  assert.ok(chatWorkspaceCompressionSource.includes("findLatestCompressionSummary(runtimeConversation?.messages ?? [])"), 'chat workspace derives banner state from conversation trace metadata')
   assert.ok(
     chatRunnerSource.includes('if (activePrompt.compressionTriggered)'),
     'chat runner emits context-pack trace metadata for every local compression strategy'
@@ -3511,6 +8081,44 @@ https://gateway.example/messages`
     chatRunnerSource.includes('localSummarySections: activePrompt.compressionTriggered ? activePrompt.compressionMetadata.summarySections : undefined'),
     'chat runner records local compression section metadata in compact usage diagnostics'
   )
+  const bufferedChunks = []
+  const chunkBuffer = createStreamingChunkBuffer({
+    flushMs: 50,
+    maxBuffer: 5,
+    appendContent(text) {
+      bufferedChunks.push(text)
+    },
+  })
+  chunkBuffer.push('he')
+  chunkBuffer.push('llo')
+  assert.deepEqual(bufferedChunks, ['hello'], 'chat streaming buffer flushes immediately once the text threshold is reached')
+  chunkBuffer.push('!')
+  chunkBuffer.flush()
+  assert.deepEqual(bufferedChunks, ['hello', '!'], 'chat streaming buffer flushes remaining text on demand')
+  const mergedRunningTrace = mergeBufferedTrace(
+    { id: 'trace-a', type: 'reasoning', title: 'Trace', status: 'running', content: 'hello ', metadata: { phase: 'one' } },
+    { id: 'trace-a', type: 'reasoning', title: 'Trace', status: 'running', content: 'world', metadata: { phase: 'two' } },
+    (content) => content,
+  )
+  assert.equal(mergedRunningTrace.content, 'hello world', 'chat streaming trace helper appends incremental running trace content')
+  assert.deepEqual(mergedRunningTrace.metadata, { phase: 'two' }, 'chat streaming trace helper keeps newer metadata values')
+  const bufferedTraces = []
+  const traceBuffer = createStreamingTraceBuffer({
+    flushMs: 50,
+    maxBuffer: 2,
+    upsertTrace(trace) {
+      bufferedTraces.push(trace)
+    },
+    mergeTrace(current, next) {
+      return mergeBufferedTrace(current, next, (content) => content)
+    },
+  })
+  traceBuffer.push({ id: 'trace-a', type: 'reasoning', title: 'Trace', status: 'running', content: 'hello ' })
+  traceBuffer.push({ id: 'trace-a', type: 'reasoning', title: 'Trace', status: 'running', content: 'world' })
+  traceBuffer.push({ id: 'trace-b', type: 'system', title: 'Done', status: 'done', content: 'complete' })
+  assert.equal(bufferedTraces.length, 2, 'chat streaming trace buffer flushes merged traces when a terminal trace arrives')
+  assert.equal(bufferedTraces[0].content, 'hello world', 'chat streaming trace buffer keeps merged running content for the same trace id')
+  assert.equal(bufferedTraces[1].content, 'complete', 'chat streaming trace buffer preserves terminal traces')
   const highReasoningPacked = packChatMessages({
     messages: [{ role: 'user', content: 'reasoning budget '.repeat(500) }],
     modelContextWindow: 6000,
@@ -4165,6 +8773,35 @@ https://gateway.example/messages`
     [{ type: 'thinking', thinking: 'Checking tool context.', signature: 'thinking-signature-1' }],
     'Anthropic streaming parser preserves thinking blocks and signatures for official tool-result continuation'
   )
+  assert.deepEqual(
+    extractAnthropicReplayContentBlocks({
+      type: 'content_block_delta',
+      index: 2,
+      delta: { type: 'thinking_delta', thinking: 'Thinking ' },
+    }),
+    [{ type: 'thinking', thinking: 'Thinking ' }],
+    'Anthropic replay helper extracts indexed thinking deltas without leaking internal merge indexes'
+  )
+  assert.deepEqual(
+    mergeAnthropicReplayContentBlocks([
+      { type: 'thinking', thinking: 'Thinking ', __islemindAnthropicBlockIndex: 2 },
+      { type: 'thinking', signature: 'signature-2', __islemindAnthropicBlockIndex: 2 },
+      { type: 'redacted_thinking', data: 'encrypted-redacted-thinking', cache_control: { type: 'ephemeral' } },
+    ]),
+    [
+      { type: 'thinking', thinking: 'Thinking ', signature: 'signature-2', __islemindAnthropicBlockIndex: 2 },
+      { type: 'redacted_thinking', data: 'encrypted-redacted-thinking' },
+    ],
+    'Anthropic replay helper merges indexed thinking blocks and strips cache_control'
+  )
+  assert.deepEqual(
+    sanitizeAnthropicReplayContentBlocks([
+      { type: 'thinking', thinking: 'Thinking ', __islemindAnthropicBlockIndex: 2 },
+      { type: 'tool_use', id: 'toolu_ignored', name: 'ignored', input: {} },
+    ]),
+    [{ type: 'thinking', thinking: 'Thinking ' }],
+    'Anthropic replay helper sanitizes replay blocks before assistant message reuse'
+  )
   const anthropicToolThinkingReplayBody = buildAnthropicBodyForTest({
     provider: {
       id: 'anthropic',
@@ -4302,6 +8939,412 @@ https://gateway.example/messages`
   )
   assert.equal(geminiThoughtSseChunk.providerToolCalls?.[0]?.thoughtSignature, 'signature-on-function-call', 'Gemini function call thought signatures stay attached to provider tool calls')
   assert.equal(geminiThoughtSseChunk.usage.reasoningTokens, 5, 'Gemini thoughtsTokenCount is preserved as reasoning token usage')
+  assert.deepEqual(
+    splitSseBuffer('data: one\r\n\r\ndata: two\r\n\r\ndata: partial'),
+    { events: ['data: one', 'data: two'], remainder: 'data: partial' },
+    'provider stream utility normalizes CRLF SSE chunks and preserves partial remainder'
+  )
+  assert.deepEqual(
+    dedupeTraces([
+      { id: 'trace-a', type: 'reasoning', title: 'Trace', content: 'A', status: 'running', timestamp: 1 },
+      { id: 'trace-a', type: 'reasoning', title: 'Trace', content: 'A again', status: 'running', timestamp: 2 },
+      { type: 'tool', title: 'Tool', content: 'B', status: 'done', timestamp: 3 },
+      { type: 'tool', title: 'Tool', content: 'B', status: 'done', timestamp: 4 },
+    ]).map((trace) => trace.timestamp),
+    [1, 3],
+    'provider stream utility dedupes traces by id or fallback trace shape'
+  )
+  assert.equal(asRecord({ ok: true }).ok, true, 'provider JSON utility accepts plain records')
+  assert.equal(asRecord(['not-record']), undefined, 'provider JSON utility rejects arrays as records')
+  assert.equal(stringValue(123), '', 'provider JSON utility keeps string extraction strict')
+  assert.equal(
+    stringifyReasoningDetails(['plain', { reasoning_text: 'detail' }, { summary: 'summary' }, { text: 42 }]),
+    'plain\ndetail\nsummary',
+    'provider JSON utility preserves reasoning detail string fields'
+  )
+  assert.deepEqual(
+    parseProviderJson('{"data":[{"id":"model-a"}]}', new Response('', { status: 200, headers: { 'content-type': 'application/json' } }), { id: 'json-provider', type: 'openai-compatible', name: 'JSON Provider', apiKey: FAKE_KEY_A, models: [], enabled: true }, 'model list'),
+    { data: [{ id: 'model-a' }] },
+    'provider JSON utility parses provider JSON responses'
+  )
+  try {
+    parseProviderJson('<html></html>', new Response('', { status: 200, headers: { 'content-type': 'text/html' } }), { id: 'html-provider', type: 'openai-compatible', name: 'HTML Provider', apiKey: FAKE_KEY_A, models: [], enabled: true }, 'model list')
+    assert.fail('provider JSON utility should reject HTML responses')
+  } catch (error) {
+    assert.equal(error instanceof ProviderHttpError, true, 'provider JSON utility rejects HTML as provider HTTP errors')
+  }
+  const circularPreview = {}
+  circularPreview.self = circularPreview
+  assert.equal(safeJsonPreview(circularPreview), '', 'provider JSON utility handles circular preview input')
+  assert.equal(safeJsonPreview({ text: 'x'.repeat(400) }).endsWith('...'), true, 'provider JSON utility truncates long previews')
+  assert.equal(endpointHost('https://api.example/v1/responses?x=1'), 'api.example', 'provider endpoint utility extracts endpoint hosts')
+  assert.equal(endpointHost('not a url'), undefined, 'provider endpoint utility ignores invalid endpoint URLs')
+  assert.equal(toWebSocketUrl('http://api.example/v1/responses'), 'ws://api.example/v1/responses', 'provider endpoint utility maps http to ws')
+  assert.equal(toWebSocketUrl('https://api.example/v1/responses'), 'wss://api.example/v1/responses', 'provider endpoint utility maps https to wss')
+  assert.equal(
+    resolveNonStreamingProviderEndpoint({ provider: { id: 'openai-endpoint', type: 'openai', name: 'OpenAI Endpoint', apiKey: FAKE_KEY_A, models: [], enabled: true }, model: 'gpt-5.5' }),
+    'https://api.openai.com/v1/responses',
+    'provider endpoint utility preserves OpenAI Responses non-streaming endpoint selection'
+  )
+  assert.equal(
+    resolveNonStreamingProviderEndpoint({ provider: { id: 'compatible-endpoint', type: 'openai-compatible', name: 'Compatible Endpoint', apiKey: FAKE_KEY_A, models: [], enabled: true, baseUrl: 'https://compatible.example/v1' }, model: 'chat-model' }),
+    'https://compatible.example/v1/chat/completions',
+    'provider endpoint utility preserves compatible non-streaming chat endpoint selection'
+  )
+  assert.equal(fallbackModel('anthropic'), 'claude-haiku-4-5-20251001', 'provider default model helper preserves Anthropic fallback')
+  assert.equal(fallbackModel('xiaomi-mimo'), 'mimo-v2.5-pro', 'provider default model helper preserves Xiaomi Mimo fallback')
+  assert.equal(
+    pickEmbeddingModel({ id: 'embed-custom', type: 'openai-compatible', name: 'Embedding Custom', apiKey: FAKE_KEY_A, models: ['chat-model', 'custom-embedding-v1'], enabled: true }),
+    'custom-embedding-v1',
+    'provider default model helper prefers configured embedding-like models'
+  )
+  assert.equal(
+    pickEmbeddingModel({ id: 'mimo-embed', type: 'xiaomi-mimo', name: 'Mimo Embed', apiKey: FAKE_KEY_A, models: ['mimo-v2.5-pro'], enabled: true }),
+    'text-embedding',
+    'provider default model helper preserves Xiaomi Mimo embedding fallback'
+  )
+  assert.equal(arrayBufferToBase64(new Uint8Array([]).buffer), '', 'provider binary utility encodes empty buffers')
+  assert.equal(arrayBufferToBase64(new Uint8Array([77, 97]).buffer), 'TWE=', 'provider binary utility preserves base64 padding')
+  assert.equal(arrayBufferToBase64(new Uint8Array([77, 97, 110]).buffer), 'TWFu', 'provider binary utility encodes full triples')
+  assert.equal(clamp01(-0.5), 0, 'provider number utility clamps lower fraction bounds')
+  assert.equal(clamp01(1.5), 1, 'provider number utility clamps upper fraction bounds')
+  assert.equal(clampInteger(4.8, 1, 0, 5), 4, 'provider number utility truncates finite integer settings')
+  assert.equal(clampInteger(Number.NaN, 3, 1, 20), 3, 'provider number utility uses fallback for non-finite settings')
+  assert.equal(clampInteger(500, 1, 0, 5), 5, 'provider number utility clamps integer upper bounds')
+  assert.equal(
+    toTextContent([{ type: 'text', text: 'A' }, { type: 'function_call', text: '', functionCall: { name: 'tool' } }, { type: 'text', text: 'B' }]),
+    'A\nB',
+    'provider content part helper joins text-only content for OpenAI-compatible chat'
+  )
+  assert.deepEqual(
+    toAnthropicContentBlocks([
+      { type: 'tool_use', text: '', toolUse: { id: 'toolu_1', name: 'read_context', input: { query: 'IsleMind' } } },
+      { type: 'tool_result', text: '', toolResult: { tool_use_id: 'toolu_1', content: 'Context' } },
+    ]),
+    [
+      { type: 'tool_use', id: 'toolu_1', name: 'read_context', input: { query: 'IsleMind' } },
+      { type: 'tool_result', tool_use_id: 'toolu_1', content: 'Context' },
+    ],
+    'provider content part helper maps Anthropic tool use and result blocks'
+  )
+  assert.deepEqual(
+    toGoogleContentParts([{ type: 'function_call', text: '', functionCall: { name: 'read_context', args: { query: 'IsleMind' } }, thoughtSignature: 'sig-1' }]),
+    [{ functionCall: { name: 'read_context', args: { query: 'IsleMind' } }, thoughtSignature: 'sig-1' }],
+    'provider content part helper preserves Gemini functionCall thought signatures'
+  )
+  assert.equal(
+    extractOpenAIText({ output_text: 'A', choices: [{ message: { content: 'B' } }], output: [{ content: [{ text: 'C' }] }] }),
+    'ABC',
+    'provider response text helper combines OpenAI response text sources'
+  )
+  assert.equal(extractResponseId({ response: { id: 'resp-a' }, id: 'root-b' }), 'resp-a', 'provider response text helper prefers nested response id')
+  assert.equal(
+    extractAnthropicText({ content: [{ type: 'thinking', text: 'hidden' }, { type: 'text', text: 'visible' }, { text: 'fallback-visible' }] }),
+    'hiddenvisiblefallback-visible',
+    'provider response text helper preserves existing Anthropic text extraction shape'
+  )
+  assert.equal(
+    extractGoogleText({ candidates: [{ content: { parts: [{ thought: true, text: 'hidden' }, { functionCall: { name: 'tool' }, text: 'tool-hidden' }, { text: 'visible' }] } }] }),
+    'visible',
+    'provider response text helper excludes Google thought and functionCall parts'
+  )
+  assert.equal(
+    stringifyOpenAIReasoningItem({ summary: ['plain', { text: 'detail' }] }),
+    'plain\ndetail',
+    'provider response text helper stringifies OpenAI reasoning summaries'
+  )
+  assert.deepEqual(
+    await readProviderResponseBody(new Response(' {"answer":"ok"} ')),
+    { text: ' {"answer":"ok"} ', json: { answer: 'ok' } },
+    'provider response parsing helper parses JSON-looking response bodies'
+  )
+  assert.deepEqual(
+    await readProviderResponseBody(new Response('plain answer')),
+    { text: 'plain answer', json: null },
+    'provider response parsing helper preserves non-JSON response text'
+  )
+  assert.equal(
+    await parseProviderNonStreamingText(new Response(JSON.stringify({ output_text: 'from-output', choices: [{ message: { content: 'from-choice' } }] })), 'openai'),
+    'from-output',
+    'provider response parsing helper preserves OpenAI output_text precedence'
+  )
+  assert.equal(
+    await parseProviderNonStreamingText(new Response(JSON.stringify({ content: [{ type: 'text', text: 'anthropic text' }] })), 'anthropic'),
+    'anthropic text',
+    'provider response parsing helper delegates Anthropic text extraction'
+  )
+  assert.equal(
+    await parseProviderNonStreamingText(new Response(JSON.stringify({ candidates: [{ content: { parts: [{ thought: true, text: 'hidden' }, { text: 'google text' }] } }] })), 'google'),
+    'google text',
+    'provider response parsing helper delegates Google text extraction'
+  )
+  const nonStreamingTextResult = await parseProviderNonStreamingResponse(new Response('plain response'), {
+    provider: { id: 'plain-provider', type: 'openai', name: 'Plain Provider', apiKey: FAKE_KEY_A, models: [], enabled: true },
+    model: 'gpt-5.5',
+    messages: [],
+    retrievalSources: [{ id: 'plain-source', title: 'Plain Source', excerpt: 'Plain evidence', similarity: 0.8 }],
+  })
+  assert.equal(nonStreamingTextResult.text, 'plain response', 'provider response parsing helper preserves plain non-streaming text')
+  assert.equal(nonStreamingTextResult.citations?.[0]?.id, 'plain-source', 'provider response parsing helper keeps plain-text retrieval citations')
+  const bufferedSseResult = parseProviderBufferedStreamResponse('data: {"type":"response.output_text.delta","delta":"Buffered answer"}', {
+    provider: { id: 'buffered-provider', type: 'openai', name: 'Buffered Provider', apiKey: FAKE_KEY_A, models: [], enabled: true },
+    model: 'gpt-5.5',
+    messages: [],
+    retrievalSources: [{ id: 'buffered-source', title: 'Buffered Source', excerpt: 'Buffered evidence', similarity: 0.7 }],
+  }, 'openai')
+  assert.equal(bufferedSseResult.text, 'Buffered answer', 'provider response parsing helper parses buffered SSE text')
+  assert.equal(bufferedSseResult.citations?.[0]?.id, 'buffered-source', 'provider response parsing helper keeps buffered SSE retrieval citations')
+  const openAIParsedCompletion = parseProviderChatCompletionJson({
+    id: 'resp_parse_1',
+    output_text: 'OpenAI answer',
+    output: [
+      { id: 'rs_parse_1', type: 'reasoning', summary: [{ text: 'reasoning' }] },
+      { id: 'fc_parse_1', type: 'function_call', name: 'search_web', arguments: '{"query":"IsleMind"}' },
+    ],
+    usage: { input_tokens: 3, output_tokens: 5 },
+  }, {
+    provider: { id: 'openai-parse', type: 'openai', name: 'OpenAI Parse', apiKey: FAKE_KEY_A, models: [], enabled: true },
+    model: 'gpt-5.5',
+    messages: [],
+    retrievalSources: [{ id: 'source-parse', title: 'Source Parse', excerpt: 'Evidence', similarity: 0.9 }],
+  })
+  assert.equal(openAIParsedCompletion.text, 'OpenAI answer', 'provider response parsing helper preserves OpenAI completion text')
+  assert.equal(openAIParsedCompletion.traces?.length, 2, 'provider response parsing helper preserves OpenAI JSON traces')
+  assert.equal(openAIParsedCompletion.providerToolCalls?.[0]?.name, 'search_web', 'provider response parsing helper extracts OpenAI tool calls')
+  assert.equal(openAIParsedCompletion.responseId, 'resp_parse_1', 'provider response parsing helper extracts response ids')
+  assert.equal(openAIParsedCompletion.citations?.[0]?.id, 'source-parse', 'provider response parsing helper keeps retrieval citations')
+  const anthropicParsedCompletion = parseProviderChatCompletionJson({
+    content: [
+      { type: 'thinking', thinking: 'anthropic reasoning' },
+      { type: 'tool_use', id: 'tool_parse_1', name: 'read_context', input: { query: 'IsleMind' } },
+      { type: 'text', text: 'Anthropic answer' },
+    ],
+    usage: { input_tokens: 7, output_tokens: 11 },
+  }, {
+    provider: { id: 'anthropic-parse', type: 'anthropic', name: 'Anthropic Parse', apiKey: FAKE_KEY_A, models: [], enabled: true },
+    model: 'claude-sonnet-4-20250514',
+    messages: [],
+  })
+  assert.equal(anthropicParsedCompletion.text, 'Anthropic answer', 'provider response parsing helper preserves Anthropic completion text')
+  assert.equal(anthropicParsedCompletion.providerToolCalls?.[0]?.name, 'read_context', 'provider response parsing helper extracts Anthropic tool calls')
+  assert.equal(anthropicParsedCompletion.providerContentBlocks?.[0]?.type, 'thinking', 'provider response parsing helper keeps Anthropic replay thinking blocks')
+  const bufferedJsonCompletion = parseProviderBufferedStreamJson(JSON.stringify({
+    candidates: [{ content: { parts: [{ text: 'Google answer' }] } }],
+    usageMetadata: { promptTokenCount: 2, candidatesTokenCount: 4 },
+  }), {
+    provider: { id: 'google-parse', type: 'google', name: 'Google Parse', apiKey: FAKE_KEY_A, models: [], enabled: true },
+    model: 'gemini-3-flash-preview',
+    messages: [],
+  })
+  assert.equal(bufferedJsonCompletion?.text, 'Google answer', 'provider response parsing helper parses buffered JSON stream fallbacks')
+  assert.equal(
+    extractOpenAIReasoningContent({ choices: [{ message: { reasoning_content: 'message-' }, delta: { reasoning_content: 'delta-' } }], reasoning_content: 'root' }),
+    'message-delta-root',
+    'OpenAI replay helper preserves reasoning content source order'
+  )
+  assert.deepEqual(
+    extractOpenAIResponseReplayItems({
+      output: [{ type: 'reasoning', id: 'rs_1', encrypted_content: 'encrypted-reasoning', summary: [] }],
+      response: { output: [{ type: 'function_call', id: 'fc_1', call_id: 'call_1', name: 'search_web', arguments: '{"query":"IsleMind"}' }] },
+    }),
+    [
+      { type: 'reasoning', id: 'rs_1', encrypted_content: 'encrypted-reasoning', summary: [] },
+      { type: 'function_call', id: 'fc_1', call_id: 'call_1', name: 'search_web', arguments: '{"query":"IsleMind"}' },
+    ],
+    'OpenAI replay helper extracts reasoning and function_call replay items'
+  )
+  assert.deepEqual(
+    mergeOpenAIResponseReplayItems([
+      { type: 'function_call', id: 'fc_merge', call_id: 'call_merge', arguments: '{"query":' },
+      { type: 'function_call', id: 'fc_merge', name: 'search_web', arguments: '{"query":"IsleMind"}' },
+    ]),
+    [{ type: 'function_call', id: 'fc_merge', call_id: 'call_merge', arguments: '{"query":"IsleMind"}', name: 'search_web' }],
+    'OpenAI replay helper merges replay items by stable id'
+  )
+  assert.equal(isReasoningEventType('response.reasoning.delta'), true, 'provider trace utility detects reasoning events')
+  assert.equal(isToolEventType('response.function_call_arguments.delta'), true, 'provider trace utility detects function call events')
+  assert.equal(isDoneEvent('response.output_item.done'), true, 'provider trace utility detects done events')
+  assert.equal(stableTraceId({ id: 'trace-id', type: 'event-type' }, 'tool'), 'tool-trace-id-event-type', 'provider trace utility builds stable trace ids')
+  const providerTraceToolSummary = summarizeToolEvent({ function: { name: 'search' }, arguments: { query: 'islemind' } })
+  assert.ok(
+    providerTraceToolSummary.includes('search') && providerTraceToolSummary.includes('"query":"islemind"'),
+    'provider trace utility summarizes tool names and arguments'
+  )
+  const providerTraceUtilityToolTrace = createProviderTrace(
+    'tool',
+    'openai',
+    'Tool call: search_web',
+    `${'x'.repeat(780)} token-test-fake`,
+    'done',
+    'trace-tool-test',
+    { custom: true }
+  )
+  assert.equal(providerTraceUtilityToolTrace.id, 'trace-tool-test', 'provider trace utility preserves explicit trace ids')
+  assert.equal(providerTraceUtilityToolTrace.completedAt, providerTraceUtilityToolTrace.startedAt, 'provider trace utility closes done traces immediately')
+  assert.equal(providerTraceUtilityToolTrace.metadata.providerType, 'openai', 'provider trace utility records provider type')
+  assert.equal(providerTraceUtilityToolTrace.metadata.source, 'provider', 'provider trace utility records provider source')
+  assert.equal(providerTraceUtilityToolTrace.metadata.custom, true, 'provider trace utility preserves caller metadata')
+  assert.ok(
+    typeof providerTraceUtilityToolTrace.content === 'string' && providerTraceUtilityToolTrace.content.endsWith('...') && providerTraceUtilityToolTrace.content.length <= 763,
+    'provider trace utility redacts and truncates long trace content'
+  )
+  const openAIJsonTraces = extractTracesFromJson({
+    id: 'resp_trace_1',
+    output: [
+      { id: 'rs_1', type: 'reasoning', summary: [{ text: 'reasoned' }] },
+      { id: 'fc_1', type: 'function_call', name: 'search_web', arguments: '{"query":"IsleMind"}' },
+    ],
+  }, 'openai')
+  assert.equal(openAIJsonTraces.length, 2, 'provider trace utility extracts OpenAI JSON reasoning and tool traces')
+  assert.equal(openAIJsonTraces[0].type, 'reasoning', 'provider trace utility keeps OpenAI reasoning trace type')
+  assert.equal(openAIJsonTraces[1].type, 'tool', 'provider trace utility keeps OpenAI tool trace type')
+  const anthropicJsonTraces = extractTracesFromJson({
+    content: [
+      { type: 'thinking', thinking: 'anthropic thought' },
+      { type: 'tool_use', id: 'tool_1', name: 'read_context', input: { scope: 'note' } },
+    ],
+  }, 'anthropic')
+  assert.deepEqual(
+    anthropicJsonTraces.map((trace) => trace.type),
+    ['reasoning', 'tool'],
+    'provider trace utility extracts Anthropic JSON reasoning and tool traces'
+  )
+  const googleJsonTraces = extractTracesFromJson({
+    candidates: [{ content: { parts: [
+      { thought: true, text: 'google thought' },
+      { functionCall: { name: 'search', args: { query: 'IsleMind' } } },
+      { thoughtSignature: 'hidden-signature' },
+    ] } }],
+  }, 'google')
+  assert.deepEqual(
+    googleJsonTraces.map((trace) => trace.type),
+    ['reasoning', 'tool', 'reasoning'],
+    'provider trace utility extracts Google JSON reasoning, tool, and hidden signature traces'
+  )
+  assert.equal(googleJsonTraces[2].metadata.hiddenSignature, true, 'provider trace utility marks Google hidden signature traces')
+  const extractedOpenAIToolCalls = extractProviderToolCalls({
+    output: [{ id: 'fc_1', call_id: 'call_1', type: 'function_call', name: 'search_web', arguments: '{"query":"IsleMind"}' }],
+  }, 'openai')
+  assert.deepEqual(
+    extractedOpenAIToolCalls?.[0],
+    { id: 'fc_1', callId: 'call_1', name: 'search_web', arguments: { query: 'IsleMind' }, rawArguments: '{"query":"IsleMind"}', argumentsComplete: true },
+    'provider tool call helper extracts OpenAI Responses function calls'
+  )
+  assert.deepEqual(
+    extractProviderToolCalls({ content: [{ type: 'tool_use', id: 'tool_1', name: 'read_context', input: { scope: 'note' } }] }, 'anthropic')?.[0],
+    { id: 'tool_1', name: 'read_context', arguments: { scope: 'note' }, rawArguments: { scope: 'note' }, argumentsComplete: true },
+    'provider tool call helper extracts Anthropic tool_use blocks'
+  )
+  const mergedProviderToolCalls = mergeProviderToolCallParts([
+    { id: 'fc_stream', callId: 'call_stream', index: 0, name: 'search_web', arguments: {}, rawArguments: '{"query":', argumentsComplete: false },
+    { id: 'fc_stream', index: 0, name: '', arguments: {}, rawArguments: '"IsleMind"}', argumentsComplete: false },
+  ])
+  assert.deepEqual(
+    mergedProviderToolCalls[0],
+    { id: 'fc_stream', callId: 'call_stream', index: 0, name: 'search_web', arguments: { query: 'IsleMind' }, rawArguments: '{"query":"IsleMind"}', argumentsComplete: true },
+    'provider tool call helper merges streamed argument fragments'
+  )
+  assert.deepEqual(
+    executableProviderToolCalls([
+      { name: 'partial', arguments: {}, rawArguments: '{"q":', argumentsComplete: false },
+      { id: 'ready', name: 'read_context', arguments: { scope: 'note' }, argumentsComplete: true },
+    ]),
+    [{ id: 'ready', name: 'read_context', arguments: { scope: 'note' }, argumentsComplete: true }],
+    'provider tool call helper filters incomplete tool calls before execution'
+  )
+  const clonedToolDeclarations = cloneProviderToolDeclarations([{ type: 'function', function: { name: 'read_context' } }, null, 'bad'])
+  assert.deepEqual(
+    clonedToolDeclarations,
+    [{ type: 'function', function: { name: 'read_context' } }],
+    'provider tool declaration helper clones only record-shaped declarations'
+  )
+  assert.notStrictEqual(clonedToolDeclarations[0], cloneProviderToolDeclarations([{ type: 'function' }])[0], 'provider tool declaration helper returns cloned records')
+  assert.deepEqual(
+    mergeProviderToolDeclarations([{ name: 'read_context' }], [{ type: 'web_search_preview' }]),
+    [{ type: 'web_search_preview' }, { name: 'read_context' }],
+    'provider tool declaration helper preserves built-in-before-provider ordering'
+  )
+  assert.deepEqual(
+    toOpenAIChatToolCall({ id: 'chat_tool_1', name: 'read_context', arguments: { query: 'IsleMind' }, rawArguments: '{"query":"raw"}', argumentsComplete: true }, 0),
+    { id: 'chat_tool_1', type: 'function', function: { name: 'read_context', arguments: '{"query":"raw"}' } },
+    'provider tool replay helper preserves raw OpenAI Chat tool arguments'
+  )
+  const circularToolArgs = {}
+  circularToolArgs.self = circularToolArgs
+  assert.equal(stringifyProviderToolArguments(circularToolArgs), '{}', 'provider tool replay helper falls back for circular JSON arguments')
+  const clonedResponsesItems = cloneOpenAIResponsesInputItems([{ type: 'reasoning', id: 'rs_clone' }])
+  assert.deepEqual(clonedResponsesItems, [{ type: 'reasoning', id: 'rs_clone' }], 'provider tool replay helper clones Responses replay items')
+  assert.notStrictEqual(clonedResponsesItems[0], cloneOpenAIResponsesInputItems([{ type: 'reasoning', id: 'rs_clone' }])[0], 'provider tool replay helper returns new item objects')
+  assert.equal(
+    hasOpenAIResponsesFunctionCallItem([{ type: 'function_call', id: 'fc_1', call_id: 'call_1', name: 'read_context' }], { id: 'fc_1', name: 'read_context', arguments: {}, argumentsComplete: true }),
+    true,
+    'provider tool replay helper detects existing Responses function_call items by id'
+  )
+  assert.deepEqual(
+    toOpenAIResponsesFunctionCallInput({ name: 'inspect_source', arguments: { sourceId: 'src-1' }, argumentsComplete: true }, 2),
+    { type: 'function_call', call_id: 'islemind-tool-2', name: 'inspect_source', arguments: '{"sourceId":"src-1"}' },
+    'provider tool replay helper builds fallback Responses function_call input'
+  )
+  assert.deepEqual(
+    extractUsage({ usageMetadata: { promptTokenCount: 3, candidatesTokenCount: 4, thoughtsTokenCount: 5 } }, 'google'),
+    { inputTokens: 3, outputTokens: 4, totalTokens: 12, reasoningTokens: 5, source: 'provider' },
+    'provider usage helper computes Google totals with reasoning tokens'
+  )
+  assert.deepEqual(
+    extractUsage({ usage: { input_tokens: 11, output_tokens: 13 } }, 'anthropic'),
+    { inputTokens: 11, outputTokens: 13, totalTokens: 24, source: 'provider' },
+    'provider usage helper computes Anthropic totals'
+  )
+  assert.deepEqual(
+    extractUsage({ usage: { prompt_tokens: 17, completion_tokens: 19, completion_tokens_details: { reasoning_tokens: 7 } } }, 'openai-compatible'),
+    { inputTokens: 17, outputTokens: 19, totalTokens: 36, reasoningTokens: 7, source: 'provider' },
+    'provider usage helper computes OpenAI-compatible totals and reasoning tokens'
+  )
+  assert.equal(numberValue('3'), undefined, 'provider usage helper keeps numeric parsing limited to provider numeric fields')
+  const providerCitationSources = extractCitationsFromText('answer', [{
+    id: 'source-1',
+    type: 'knowledge',
+    title: 'Source One',
+    content: 'Citation source content.',
+    excerpt: '',
+    score: 0.7,
+    sourceUri: 'file://source-one.md',
+    retrievalMode: 'hybrid',
+  }])
+  assert.deepEqual(
+    providerCitationSources[0],
+    { id: 'source-1', type: 'knowledge', title: 'Source One', excerpt: 'Citation source content.', url: undefined, documentId: undefined, chunkId: undefined, score: 0.7, ftsScore: undefined, vectorScore: undefined, chunkIndex: undefined, similarityScore: undefined, sourceUri: 'file://source-one.md', retrievalMode: 'hybrid' },
+    'provider citation helper preserves retrieval source metadata'
+  )
+  assert.deepEqual(
+    extractProviderCitations({
+      content: [{ type: 'web_search_result', url: 'https://example.com/a', title: 'Example A', page_age: '2026-06-17' }],
+    }, 'anthropic'),
+    [{ id: 'https://example.com/a', type: 'web', title: 'Example A', url: 'https://example.com/a', excerpt: '2026-06-17' }],
+    'provider citation helper extracts Anthropic web search citations'
+  )
+  assert.deepEqual(
+    extractProviderCitations({
+      candidates: [{ groundingMetadata: { groundingChunks: [{ web: { uri: 'https://example.com/g', title: 'Example G' } }] } }],
+    }, 'google'),
+    [{ id: 'https://example.com/g', type: 'web', title: 'Example G', url: 'https://example.com/g' }],
+    'provider citation helper extracts Google grounding citations'
+  )
+  assert.deepEqual(
+    extractProviderCitationsFromSse([
+      `data: ${JSON.stringify({ candidates: [{ groundingMetadata: { groundingChunks: [{ web: { uri: 'https://example.com/g', title: 'Example G' } }] } }] })}`,
+      `data: ${JSON.stringify({ candidates: [{ groundingMetadata: { groundingChunks: [{ web: { uri: 'https://example.com/g', title: 'Duplicate G' } }] } }] })}`,
+      'data: [DONE]',
+      '',
+    ].join('\n'), 'google'),
+    [{ id: 'https://example.com/g', type: 'web', title: 'Example G', url: 'https://example.com/g' }],
+    'provider citation helper dedupes SSE provider citations'
+  )
+  assert.deepEqual(
+    dedupeCitations([{ id: 'a', type: 'web', title: 'A', url: 'https://example.com/a' }, { id: 'b', type: 'web', title: 'B', url: 'https://example.com/a' }]),
+    [{ id: 'a', type: 'web', title: 'A', url: 'https://example.com/a' }],
+    'provider citation helper dedupes citations by provider-visible URL'
+  )
   const minimaxReasoningDetailsChunk = parseProviderStreamChunkForTest([
     `data: ${JSON.stringify({
       choices: [{
@@ -4389,6 +9432,16 @@ https://gateway.example/messages`
     '',
   ].join('\n'), 'openai')
   assert.equal(responsesSseChunk.text, 'Hello world', 'Responses SSE delta text is not duplicated by completion events')
+  assert.equal(
+    parseProviderStreamChunk('data: {"type":"response.output_text.delta","delta":"Direct helper"}', 'openai').text,
+    'Direct helper',
+    'provider stream parsing helper parses OpenAI Responses SSE deltas directly'
+  )
+  assert.equal(
+    parseProviderStreamEvent({ type: 'content_block_delta', delta: { type: 'text_delta', text: 'Anthropic direct' } }, 'anthropic').text,
+    'Anthropic direct',
+    'provider stream parsing helper parses Anthropic stream events directly'
+  )
   const xaiReasoningSummaryChunk = parseProviderStreamChunkForTest([
     'data: {"type":"response.reasoning_summary_text.delta","delta":"Thinking about the request"}',
     '',
@@ -5331,6 +10384,84 @@ https://gateway.example/messages`
   assert.equal(parsedAnthropic[0].contextWindow, 1000000, 'Anthropic Models API max_input_tokens is parsed as context window')
   assert.equal(parsedAnthropic[0].maxOutputTokens, 128000, 'Anthropic Models API max_tokens is parsed as output limit')
   assert.equal(parsedAnthropic[0].reasoningMode, 'anthropic-thinking', 'Anthropic model capabilities mark thinking support')
+  assert.deepEqual(dedupeModelIds([' model-a ', 'model-a', '', 'model-b']), [' model-a ', 'model-b'], 'provider model discovery preserves existing model labels while removing duplicates and blanks')
+  assert.equal(normalizeRemoteModelId('xiaomi/mimo-v2.5-pro', 'xiaomi-mimo'), 'mimo-v2.5-pro', 'provider model discovery normalizes Xiaomi namespace prefixes')
+  const openAICompatibleModels = mapOpenAICompatibleModels({
+    data: [
+      { id: 'xiaomi/mimo-v2.5-pro', display_name: 'Mimo Pro', metadata: { context_length: '1000000', output_token_limit: '128000' } },
+      { id: 'xiaomi/mimo-v2.5-pro', display_name: 'Duplicate' },
+      { id: 'mimo-tts-preview' },
+    ],
+  }, 'xiaomi-mimo')
+  const mimoDiscoveryModel = openAICompatibleModels.find((model) => model.id === 'mimo-v2.5-pro')
+  assert.equal(mimoDiscoveryModel?.name, 'Mimo Pro', 'provider model discovery keeps first remote model metadata after id normalization')
+  assert.equal(mimoDiscoveryModel?.contextWindow, 1000000, 'provider model discovery parses numeric context metadata strings')
+  assert.equal(mimoDiscoveryModel?.maxOutputTokens, 128000, 'provider model discovery parses numeric output metadata strings')
+  assert.equal(mimoDiscoveryModel?.supportsVision, true, 'provider model discovery preserves Mimo multimodal vision inference')
+  assert.equal(openAICompatibleModels.find((model) => model.id === 'mimo-tts-preview')?.supportsVision, false, 'provider model discovery does not mark TTS models as vision capable')
+  const googleDiscoveryModels = mapGoogleModels({
+    models: [
+      { name: 'models/gemini-test', displayName: 'Gemini Test', inputTokenLimit: 200000, outputTokenLimit: 16000, supportedGenerationMethods: ['generateContent'] },
+      { name: 'models/embed-test', displayName: 'Embed Test', supportedGenerationMethods: ['embedContent'] },
+    ],
+  })
+  assert.deepEqual(googleDiscoveryModels.map((model) => model.id), ['gemini-test'], 'provider model discovery keeps only Google generateContent models')
+  assert.equal(googleDiscoveryModels[0].supportsFiles, true, 'provider model discovery preserves Google file support')
+  const originalModelDiscoveryFetch = global.fetch
+  const modelDiscoveryCalls = []
+  global.fetch = async (url, init) => {
+    modelDiscoveryCalls.push({ url: String(url), headers: init?.headers })
+    return new Response(JSON.stringify({
+      models: [
+        { name: 'models/gemini-remote', displayName: 'Gemini Remote', inputTokenLimit: 300000, outputTokenLimit: 32000, supportedGenerationMethods: ['generateContent'] },
+        { name: 'models/text-embedding-remote', displayName: 'Embedding Remote', supportedGenerationMethods: ['embedContent'] },
+      ],
+    }), { status: 200, headers: { 'content-type': 'application/json' } })
+  }
+  try {
+    const remoteGoogleModels = await fetchProviderModelConfigsFromRemote({
+      id: 'google-remote',
+      type: 'google',
+      name: 'Google Remote',
+      [API_KEY_FIELD]: 'google-key-test',
+      models: [],
+      enabled: true,
+    }, 1000)
+    assert.deepEqual(remoteGoogleModels.map((model) => model.id), ['gemini-remote'], 'provider model discovery remote helper filters Google non-chat models')
+    assert.equal(remoteGoogleModels[0].contextWindow, 300000, 'provider model discovery remote helper preserves Google input limits')
+    assert.equal(modelDiscoveryCalls[0].url, 'https://generativelanguage.googleapis.com/v1beta/models?key=google-key-test', 'provider model discovery remote helper sends Google API keys in the query string')
+    assert.equal(modelDiscoveryCalls[0].headers, undefined, 'provider model discovery remote helper keeps Google model discovery headers empty')
+  } finally {
+    global.fetch = originalModelDiscoveryFetch
+  }
+  await assert.rejects(
+    () => fetchProviderModelConfigsFromRemote({
+      id: 'invalid-discovery',
+      type: 'openai-compatible',
+      name: 'Invalid Discovery',
+      [API_KEY_FIELD]: 'token-test-fake',
+      baseUrl: 'file:///tmp/provider',
+      models: [],
+      enabled: true,
+    }, 1000),
+    /invalidBaseUrl/,
+    'provider model discovery rejects invalid custom base URLs before fetch'
+  )
+  const invalidBaseUrlProvider = {
+    id: 'invalid-base-url-provider',
+    type: 'openai-compatible',
+    name: 'Invalid Base URL Provider',
+    [API_KEY_FIELD]: 'token-test-fake',
+    baseUrl: 'file:///tmp/provider',
+    models: ['gpt-4o-mini'],
+    enabled: true,
+  }
+  const invalidModelTest = await testProviderModelDetailed(invalidBaseUrlProvider, 'gpt-4o-mini', 'token-test-fake')
+  assert.equal(invalidModelTest.ok, false, 'provider model test rejects invalid custom base URLs before request execution')
+  assert.equal(invalidModelTest.code, 'bad_base_url', 'provider model test reports invalid custom base URLs as bad_base_url')
+  const invalidModelSync = await fetchProviderModelConfigsDetailed(invalidBaseUrlProvider, 'token-test-fake')
+  assert.equal(invalidModelSync.ok, false, 'provider model sync rejects invalid custom base URLs before discovery fetch')
+  assert.equal(invalidModelSync.code, 'bad_base_url', 'provider model sync reports invalid custom base URLs as bad_base_url')
   const anthropicFableAdaptiveBody = buildAnthropicBodyForTest({
     provider: {
       id: 'anthropic',
@@ -5628,154 +10759,339 @@ https://gateway.example/messages`
     'catalog model size matches file sum'
   )
   assert.equal(formatModelBytes(1024 * 1024), '1.0 MB')
+  const downloadableLocalModelView = {
+    model: { id: 'downloadable-local', name: 'Downloadable Local', files: [{ path: 'model.onnx', bytes: 12 }], sizeBytes: 12 },
+    source: 'none',
+    status: 'available',
+    active: false,
+  }
+  const plannedLocalModelView = {
+    model: { id: 'planned-local', name: 'Planned Local', files: [], sizeBytes: 0 },
+    source: 'none',
+    status: 'planned',
+    active: false,
+  }
+  assert.equal(isDownloadableLocalModel(downloadableLocalModelView), true, 'context local model rules classify downloadable model views')
+  assert.equal(isDownloadableLocalModel(plannedLocalModelView), false, 'context local model rules keep capability placeholders out of downloads')
+  assert.deepEqual(
+    splitLocalModelViews([downloadableLocalModelView, plannedLocalModelView]),
+    { downloadable: [downloadableLocalModelView], planned: [plannedLocalModelView] },
+    'context local model rules split downloadable models from planned capabilities'
+  )
+  assert.equal(localCapabilityEnabled('embedding', { embeddingMode: 'provider' }), false, 'context local model rules disable local embedding capability in provider-only mode')
+  assert.equal(localCapabilityEnabled('reranker', { ragCrossEncoderEnabled: false }), false, 'context local model rules honor disabled reranker settings')
+  assert.equal(localCapabilityEnabled('colbert', {}), true, 'context local model rules default optional local capabilities on')
   assert.ok(localModelCacheKey({ localEmbeddingModelId: 'all-MiniLM-L6-v2', localEmbeddingModelSource: 'downloaded' }).includes('downloaded'))
   const textEncoder = new TextEncoder()
-  const apkManifestFixture = {
-    versionName: '1.0.7',
-    versionCode: 107,
-    publishedAt: '2026-06-05T00:00:00Z',
-    releaseUrl: 'https://github.com/domidoremi/IsleMind/releases/tag/v1.0.7',
-    assets: [
-      {
-        abi: 'universal-64',
-        variant: 'no-model',
-        name: 'IsleMind-1.0.7-universal-64-no-model.apk',
-        url: 'https://example.test/IsleMind-1.0.7-universal-64-no-model.apk',
-        sha256: '1'.repeat(64),
-        sizeBytes: 300,
-      },
-      {
-        abi: 'arm64-v8a',
-        variant: 'with-model-small',
-        name: 'IsleMind-1.0.7-arm64-v8a-with-model-small.apk',
-        url: 'https://example.test/IsleMind-1.0.7-arm64-v8a-with-model-small.apk',
-        sha256: '2'.repeat(64),
-        sizeBytes: 200,
-      },
-      {
-        abi: 'arm64-v8a',
-        variant: 'no-model',
-        name: 'IsleMind-1.0.7-arm64-v8a-no-model.apk',
-        url: 'https://example.test/IsleMind-1.0.7-arm64-v8a-no-model.apk',
-        sha256: '3'.repeat(64),
-        sizeBytes: 100,
-      },
-    ],
-  }
-  const selectedManifestRelease = normalizeApkUpdateManifestForTest(apkManifestFixture, ['arm64-v8a', 'armeabi-v7a'])
-  assert.ok(selectedManifestRelease, 'APK manifest produces a selected release')
-  assert.equal(selectedManifestRelease.apkName, 'IsleMind-1.0.7-arm64-v8a-no-model.apk', 'APK manifest selects the device arm64 no-model asset')
-  assert.equal(selectedManifestRelease.versionCode, 107, 'APK manifest preserves Android versionCode')
-  assert.equal(selectedManifestRelease.sha256, '3'.repeat(64), 'APK manifest preserves selected asset checksum')
-  const unknownAbiAsset = selectApkAssetForTest(apkManifestFixture.assets, ['riscv64'])
-  assert.ok(unknownAbiAsset, 'APK asset selection returns a fallback asset for unknown ABIs')
-  assert.equal(unknownAbiAsset.abi, 'universal-64', 'unknown device ABI falls back to universal-64 no-model')
-  assert.ok(
-    compareReleaseToSnapshotForTest(
-      {
-        version: '1.0.6',
-        versionCode: 107,
-        tagName: 'v1.0.6',
-        name: 'IsleMind 1.0.6',
-        htmlUrl: 'https://example.test/release',
-        apkUrl: 'https://example.test/app.apk',
-        apkName: 'app.apk',
-        publishedAt: null,
-      },
-      { appVersion: '9.9.9', buildVersion: '106', updateMode: 'apk', hotUpdateMode: 'disabled' }
-    ) > 0,
-    'APK update comparison uses versionCode before versionName'
-  )
-  assert.equal(shouldRecordApkUpdateCheck({ status: 'available', message: '' }), true, 'available update checks update the last-check timestamp')
-  assert.equal(shouldRecordApkUpdateCheck({ status: 'unavailable', message: '' }), true, 'unavailable update checks update the last-check timestamp')
-  assert.equal(shouldRecordApkUpdateCheck({ status: 'error', message: '', reason: 'network' }), false, 'failed update checks do not update the last-check timestamp')
+  await assertApkUpdateBehavior()
 
   resetLocalModelFileMocks()
-  reactNativePlatform.OS = 'android'
-  const originalFetchForApk = global.fetch
-  const updateFetchUrls = []
-  global.fetch = async (url) => {
-    updateFetchUrls.push(String(url))
-    if (String(url).includes('raw.githubusercontent.com')) {
-      return { ok: false, status: 404, json: async () => ({}) }
-    }
-    return {
-      ok: true,
-      status: 200,
-      json: async () => ({
-        tag_name: 'v1.0.7',
-        name: 'IsleMind 1.0.7',
-        html_url: 'https://github.com/domidoremi/IsleMind/releases/tag/v1.0.7',
-        published_at: '2026-06-05T00:00:00Z',
-        assets: [
-          {
-            name: 'IsleMind-1.0.7-arm64-v8a-no-model.apk',
-            browser_download_url: 'https://example.test/IsleMind-1.0.7-arm64-v8a-no-model.apk',
-            size: 123,
-          },
-        ],
-      }),
-    }
-  }
-  try {
-    const fallbackUpdate = await checkLatestApkRelease()
-    assert.equal(fallbackUpdate.status, 'available', 'GitHub Release API remains the fallback when the manifest is unavailable')
-    assert.ok(fallbackUpdate.release, 'GitHub fallback returns release metadata for available updates')
-    assert.equal(fallbackUpdate.release.apkName, 'IsleMind-1.0.7-arm64-v8a-no-model.apk', 'GitHub fallback still selects the device ABI APK')
-    assert.ok(updateFetchUrls[0].includes('/updates/android.json'), 'APK update check tries the static manifest first')
-    assert.ok(updateFetchUrls[1].includes('/repos/domidoremi/IsleMind/releases/latest'), 'APK update check falls back to the GitHub latest API')
-  } finally {
-    global.fetch = originalFetchForApk
-    reactNativePlatform.OS = 'test'
-  }
-
-  resetLocalModelFileMocks()
-  reactNativePlatform.OS = 'android'
-  expoDeviceModuleAvailable = false
-  const originalFetchForNoDeviceModule = global.fetch
-  global.fetch = async () => ({
-    ok: true,
-    status: 200,
-    json: async () => apkManifestFixture,
+  localFileFixtures.set('file:///tmp/provider-import.txt', Buffer.from('Provider: Example\nBase URL: https://api.example/v1\nKey: token-fake'))
+  const providerImportText = await readUtf8ImportFile('file:///tmp/provider-import.txt', {
+    size: Buffer.byteLength('Provider: Example\nBase URL: https://api.example/v1\nKey: token-fake'),
+    limitBytes: MAX_IMPORT_TEXT_FILE_BYTES,
   })
-  try {
-    const noDeviceModuleUpdate = await checkLatestApkRelease()
-    assert.equal(noDeviceModuleUpdate.status, 'available', 'missing ExpoDevice native module does not crash APK update checks')
-    assert.ok(noDeviceModuleUpdate.release, 'missing ExpoDevice native module still returns selected release metadata')
-    assert.equal(noDeviceModuleUpdate.release.apkName, 'IsleMind-1.0.7-universal-64-no-model.apk', 'missing ExpoDevice native module uses unknown-ABI universal fallback')
-  } finally {
-    global.fetch = originalFetchForNoDeviceModule
-    expoDeviceModuleAvailable = true
-    reactNativePlatform.OS = 'test'
-  }
+  assert.ok(providerImportText.includes('https://api.example/v1'), 'bounded import reader preserves ordinary provider import text')
+  assert.equal(localFileReadRequests.some((request) => request.uri === 'file:///tmp/provider-import.txt'), true, 'bounded import reader reads accepted text imports')
+  localFileReadRequests.length = 0
 
   resetLocalModelFileMocks()
-  reactNativePlatform.OS = 'android'
-  const corruptApkBody = Buffer.from('not the expected apk')
-  const corruptApkUrl = 'https://example.test/corrupt.apk'
-  localDownloadFixtures.set(corruptApkUrl, { status: 200, body: corruptApkBody })
-  const checksumResult = await downloadAndOpenApkInstaller({
-    version: '1.0.7',
-    versionCode: 107,
-    tagName: 'v1.0.7',
-    name: 'IsleMind 1.0.7',
-    htmlUrl: 'https://github.com/domidoremi/IsleMind/releases/tag/v1.0.7',
-    apkUrl: corruptApkUrl,
-    apkName: 'IsleMind-1.0.7-arm64-v8a-no-model.apk',
-    publishedAt: null,
-    sha256: '0'.repeat(64),
-    sizeBytes: corruptApkBody.length,
-    abi: 'arm64-v8a',
-    variant: 'no-model',
-  })
-  assert.equal(checksumResult.status, 'error', 'APK checksum mismatch is reported as an update error')
-  assert.equal(checksumResult.reason, 'checksum_mismatch', 'APK checksum mismatch carries the checksum_mismatch reason')
-  assert.equal(launchedIntents.length, 0, 'APK checksum mismatch blocks Android installer launch')
+  localFileFixtures.set('file:///tmp/import-copy.json', Buffer.from('{"ok":true}', 'utf8'))
+  await deleteTemporaryImportCopy('file:///tmp/import-copy.json', { assumeTemporaryCopy: true })
   assert.ok(
-    localFileOperations.some((operation) => operation.type === 'delete' && operation.uri.endsWith('IsleMind-1.0.7-arm64-v8a-no-model.apk')),
-    'APK checksum mismatch deletes the cached APK'
+    localFileOperations.some((operation) => operation.type === 'delete' && operation.uri === 'file:///tmp/import-copy.json'),
+    'temporary import helper deletes cache-directory import copies'
   )
-  reactNativePlatform.OS = 'test'
+
+  resetLocalModelFileMocks()
+  localFileFixtures.set('file:///docs/import-copy.json', Buffer.from('{"ok":true}', 'utf8'))
+  await deleteTemporaryImportCopy('file:///docs/import-copy.json')
+  assert.equal(
+    localFileOperations.some((operation) => operation.type === 'delete' && operation.uri === 'file:///docs/import-copy.json'),
+    false,
+    'temporary import helper does not delete non-cache document files'
+  )
+  await assert.rejects(
+    () => readUtf8ImportFile('file:///tmp/provider-import.txt', {
+      size: MAX_IMPORT_TEXT_FILE_BYTES + 1,
+      limitBytes: MAX_IMPORT_TEXT_FILE_BYTES,
+    }),
+    /error\.fileTooLarge/,
+    'bounded import reader rejects oversized text files before loading them into memory'
+  )
+  assert.equal(localFileReadRequests.length, 0, 'oversized provider and skill import files are rejected before readAsStringAsync')
+  localFileFixtures.set('file:///tmp/unknown-size-provider-import.txt', Buffer.alloc(MAX_IMPORT_TEXT_FILE_BYTES + 2))
+  await assert.rejects(
+    () => readUtf8ImportFile('file:///tmp/unknown-size-provider-import.txt', {
+      limitBytes: MAX_IMPORT_TEXT_FILE_BYTES,
+    }),
+    /error\.fileTooLarge/,
+    'bounded import reader checks FileSystem metadata when DocumentPicker size is missing'
+  )
+  assert.equal(localFileReadRequests.length, 0, 'metadata-sized oversized imports are rejected before readAsStringAsync')
+
+  resetLocalModelFileMocks()
+  sharingAvailable = true
+  const exportedPortableUri = await exportToJsonFile()
+  assert.match(exportedPortableUri, /^file:\/\/\/cache\/islemind-export-/, 'portable export uses a cache-backed share file when sharing is available')
+  assert.equal(sharedFiles.length, 1, 'portable export invokes the native share sheet when sharing is available')
+  assert.equal(sharedFiles[0].uri, exportedPortableUri, 'portable export shares the generated JSON file')
+  assert.ok(
+    localFileOperations.some((operation) => operation.type === 'delete' && operation.uri === exportedPortableUri),
+    'portable export deletes the temporary shared JSON file after the share flow completes'
+  )
+  assert.equal(localFileFixtures.has(exportedPortableUri), false, 'portable export leaves no shared backup JSON behind after cleanup')
+
+  resetLocalModelFileMocks()
+  nextDocumentPickerResult = {
+    canceled: false,
+    assets: [{
+      uri: 'file:///tmp/oversized-islemind-export.json',
+      name: 'oversized-islemind-export.json',
+      mimeType: 'application/json',
+      size: MAX_IMPORT_JSON_FILE_BYTES + 1,
+    }],
+  }
+  const oversizedPortableImport = await importFromJsonFileDetailed()
+  assert.deepEqual(
+    oversizedPortableImport,
+    { ok: false, kind: 'invalid', reason: 'file_too_large' },
+    'portable data import reports oversized backups without parsing them'
+  )
+  assert.equal(localFileReadRequests.length, 0, 'portable data import rejects oversized JSON backups before readAsStringAsync')
+  assert.ok(
+    localFileOperations.some((operation) => operation.type === 'delete' && operation.uri === 'file:///tmp/oversized-islemind-export.json'),
+    'portable data import clears the cached picker copy even when import is rejected before parsing'
+  )
+
+  resetLocalModelFileMocks()
+  localFileFixtures.set('file:///tmp/islemind-export.json', Buffer.from(JSON.stringify({
+    app: 'islemind',
+    version: 1,
+    conversations: [],
+    settings: null,
+    providers: [],
+    exportedAt: Date.now(),
+  }), 'utf8'))
+  nextDocumentPickerResult = {
+    canceled: false,
+    assets: [{
+      uri: 'file:///tmp/islemind-export.json',
+      name: 'islemind-export.json',
+      mimeType: 'application/json',
+      size: localFileFixtures.get('file:///tmp/islemind-export.json').length,
+    }],
+  }
+  const successfulPortableImport = await importFromJsonFileDetailed()
+  assert.deepEqual(
+    successfulPortableImport,
+    { ok: true, kind: 'islemind', conversations: 0 },
+    'portable data import keeps ordinary restore behavior after temp-file cleanup'
+  )
+  assert.ok(
+    localFileOperations.some((operation) => operation.type === 'delete' && operation.uri === 'file:///tmp/islemind-export.json'),
+    'portable data import clears the cached picker copy after a successful restore'
+  )
+
+  resetLocalModelFileMocks()
+  nextDocumentPickerResult = {
+    canceled: false,
+    assets: [{
+      uri: 'file:///tmp/oversized-knowledge.txt',
+      name: 'oversized-knowledge.txt',
+      mimeType: 'text/plain',
+      size: MAX_IMPORT_TEXT_FILE_BYTES + 1,
+    }],
+  }
+  const oversizedKnowledgeImport = await importKnowledgeFile()
+  assert.equal(oversizedKnowledgeImport.ok, false, 'knowledge import rejects oversized text files')
+  assert.equal(oversizedKnowledgeImport.message, st('chat.fileTooLarge20'), 'knowledge import uses the existing 20MB file-size message')
+  assert.equal(localFileReadRequests.length, 0, 'knowledge import rejects oversized files before text or PDF reads')
+  assert.ok(
+    localFileOperations.some((operation) => operation.type === 'delete' && operation.uri === 'file:///tmp/oversized-knowledge.txt'),
+    'knowledge import clears the cached picker copy after an oversized text rejection'
+  )
+
+  resetLocalModelFileMocks()
+  localFileFixtures.set('file:///tmp/knowledge-import.txt', Buffer.from('# Runbook\nKnowledge import keeps stable provenance.\n', 'utf8'))
+  nextDocumentPickerResult = {
+    canceled: false,
+    assets: [{
+      uri: 'file:///tmp/knowledge-import.txt',
+      name: 'knowledge-import.txt',
+      mimeType: 'text/plain',
+      size: localFileFixtures.get('file:///tmp/knowledge-import.txt').length,
+    }],
+  }
+  const successfulKnowledgeImport = await importKnowledgeFile()
+  assert.equal(successfulKnowledgeImport.ok, true, 'knowledge import still succeeds for ordinary text files')
+  const importedKnowledgeDocuments = await listKnowledgeDocuments()
+  const importedKnowledgeDocument = importedKnowledgeDocuments.find((document) => document.title === 'knowledge-import.txt')
+  assert.equal(importedKnowledgeDocument?.sourceUri, 'knowledge-import.txt', 'knowledge import persists a stable provenance label instead of the temporary picker URI')
+  const importedKnowledgeSnapshot = await exportContextSnapshot()
+  assert.equal(importedKnowledgeSnapshot.documents.find((document) => document.title === 'knowledge-import.txt')?.rawPath, undefined, 'knowledge import does not persist the temporary picker cache URI as rawPath')
+  const importedKnowledgeHits = await searchKnowledge('stable provenance', 5)
+  assert.equal(importedKnowledgeHits[0]?.sourceUri, 'knowledge-import.txt', 'knowledge retrieval sources inherit stable document provenance from document_sources metadata')
+  assert.ok(
+    localFileOperations.some((operation) => operation.type === 'delete' && operation.uri === 'file:///tmp/knowledge-import.txt'),
+    'knowledge import clears the cached picker copy after a successful text import'
+  )
+
+  resetLocalModelFileMocks()
+  localFileFixtures.set('file:///tmp/oversized-knowledge.pdf', Buffer.alloc(MAX_IMPORT_TEXT_FILE_BYTES + 2))
+  nextDocumentPickerResult = {
+    canceled: false,
+    assets: [{
+      uri: 'file:///tmp/oversized-knowledge.pdf',
+      name: 'oversized-knowledge.pdf',
+      mimeType: 'application/pdf',
+    }],
+  }
+  const oversizedKnowledgePdfImport = await importKnowledgeFile({
+    id: 'openai',
+    name: 'OpenAI',
+    type: 'openai',
+    enabled: true,
+    models: ['gpt-4.1'],
+    apiKey: FAKE_KEY_A,
+    baseUrl: 'https://api.openai.com/v1',
+  }, 'gpt-4.1')
+  assert.equal(oversizedKnowledgePdfImport.ok, false, 'knowledge import rejects oversized PDFs even when picker size metadata is missing')
+  assert.equal(oversizedKnowledgePdfImport.message, st('chat.fileTooLarge20'), 'oversized PDF knowledge import reuses the existing 20MB file-size message')
+  assert.equal(localFileReadRequests.length, 0, 'knowledge PDF import rejects oversized size-less files before base64 reads')
+
+  resetLocalModelFileMocks()
+  localFileFixtures.set('file:///tmp/attachment-without-size.txt', Buffer.alloc(MAX_IMPORT_TEXT_FILE_BYTES + 2))
+  nextDocumentPickerResult = {
+    canceled: false,
+    assets: [{
+      uri: 'file:///tmp/attachment-without-size.txt',
+      name: 'attachment-without-size.txt',
+      mimeType: 'text/plain',
+    }],
+  }
+  await assert.rejects(
+    () => pickDocument(),
+    /error\.fileTooLarge/,
+    'attachment picker rejects oversized files even when DocumentPicker does not provide a size'
+  )
+  assert.equal(localFileReadRequests.length, 0, 'attachment picker rejects oversized size-less files before base64 reads')
+  assert.ok(
+    localFileOperations.some((operation) => operation.type === 'delete' && operation.uri === 'file:///tmp/attachment-without-size.txt'),
+    'attachment picker clears the cached picker copy after an oversized rejection'
+  )
+
+  resetLocalModelFileMocks()
+  const attachmentImportFixture = Buffer.from('Attachment import keeps payloads while clearing temp cache copies.\n', 'utf8')
+  localFileFixtures.set('file:///tmp/attachment-import.txt', attachmentImportFixture)
+  nextDocumentPickerResult = {
+    canceled: false,
+    assets: [{
+      uri: 'file:///tmp/attachment-import.txt',
+      name: 'attachment-import.txt',
+      mimeType: 'text/plain',
+      size: attachmentImportFixture.length,
+    }],
+  }
+  const successfulAttachment = await pickDocument()
+  assert.equal(successfulAttachment?.type, 'text', 'attachment picker still classifies text documents correctly')
+  assert.equal(successfulAttachment?.name, 'attachment-import.txt', 'attachment picker preserves the document name')
+  assert.equal(successfulAttachment?.mimeType, 'text/plain', 'attachment picker preserves the document MIME type')
+  assert.equal(successfulAttachment?.size, attachmentImportFixture.length, 'attachment picker preserves the resolved document size')
+  assert.equal(successfulAttachment?.base64, attachmentImportFixture.toString('base64'), 'attachment picker keeps the in-memory base64 payload after temp-file cleanup')
+  assert.ok(
+    localFileOperations.some((operation) => operation.type === 'delete' && operation.uri === 'file:///tmp/attachment-import.txt'),
+    'attachment picker clears the cached picker copy after a successful import'
+  )
+
+  resetLocalModelFileMocks()
+  localFileFixtures.set('file:///cache/attachment-photo.jpg', Buffer.alloc(5 * 1024 * 1024 + 2, 65))
+  nextImageLibraryResult = {
+    canceled: false,
+    assets: [{
+      uri: 'file:///cache/attachment-photo.jpg',
+      fileName: 'attachment-photo.jpg',
+      mimeType: 'image/jpeg',
+      fileSize: localFileFixtures.get('file:///cache/attachment-photo.jpg').length,
+    }],
+  }
+  nextManipulateResultFactory = (sourceUri) => {
+    const compressedUri = 'file:///tmp/attachment-photo-compressed.jpg'
+    localFileFixtures.set(compressedUri, Buffer.from('compressed-photo-bytes', 'utf8'))
+    localFileOperations.push({ type: 'transform', from: sourceUri, to: compressedUri })
+    return { uri: compressedUri }
+  }
+  const pickedImage = await pickImage()
+  assert.equal(pickedImage?.type, 'image', 'image picker returns an image attachment')
+  assert.equal(pickedImage?.uri, 'file:///tmp/attachment-photo-compressed.jpg', 'image picker returns the compressed temp URI for the payload copy')
+  assert.ok(
+    localFileOperations.some((operation) => operation.type === 'delete' && operation.uri === 'file:///tmp/attachment-photo-compressed.jpg'),
+    'image picker clears the compressed temp file after payload extraction'
+  )
+  assert.ok(
+    localFileOperations.some((operation) => operation.type === 'delete' && operation.uri === 'file:///cache/attachment-photo.jpg'),
+    'image picker clears the original picker copy when it is a cache-backed temp file'
+  )
+
+  resetLocalModelFileMocks()
+  localFileFixtures.set('file:///cache/attachment-photo-too-large.jpg', Buffer.alloc(MAX_IMPORT_TEXT_FILE_BYTES + 2))
+  nextImageLibraryResult = {
+    canceled: false,
+    assets: [{
+      uri: 'file:///cache/attachment-photo-too-large.jpg',
+      fileName: 'attachment-photo-too-large.jpg',
+      mimeType: 'image/jpeg',
+    }],
+  }
+  await assert.rejects(
+    () => pickImage(),
+    /error\.fileTooLarge/,
+    'image picker rejects oversized files before compression or base64 conversion'
+  )
+  assert.equal(localFileReadRequests.length, 0, 'image picker rejects oversized files before base64 reads')
+  assert.ok(
+    localFileOperations.some((operation) => operation.type === 'delete' && operation.uri === 'file:///cache/attachment-photo-too-large.jpg'),
+    'image picker clears the oversized cached picker copy after rejection'
+  )
+
+  resetLocalModelFileMocks()
+  localFileFixtures.set('file:///docs/attachment-camera.jpg', Buffer.alloc(5 * 1024 * 1024 + 2, 66))
+  nextCameraResult = {
+    canceled: false,
+    assets: [{
+      uri: 'file:///docs/attachment-camera.jpg',
+      fileName: 'attachment-camera.jpg',
+      mimeType: 'image/jpeg',
+      fileSize: localFileFixtures.get('file:///docs/attachment-camera.jpg').length,
+    }],
+  }
+  nextManipulateResultFactory = (sourceUri) => {
+    const compressedUri = 'file:///tmp/attachment-camera-compressed.jpg'
+    localFileFixtures.set(compressedUri, Buffer.from('compressed-camera-bytes', 'utf8'))
+    localFileOperations.push({ type: 'transform', from: sourceUri, to: compressedUri })
+    return { uri: compressedUri }
+  }
+  const takenPhoto = await takePhoto()
+  assert.equal(takenPhoto?.type, 'image', 'camera capture returns an image attachment')
+  assert.equal(takenPhoto?.uri, 'file:///tmp/attachment-camera-compressed.jpg', 'camera capture returns the compressed temp URI for the payload copy')
+  assert.ok(
+    localFileOperations.some((operation) => operation.type === 'delete' && operation.uri === 'file:///tmp/attachment-camera-compressed.jpg'),
+    'camera capture clears the compressed temp file after payload extraction'
+  )
+  assert.equal(
+    localFileOperations.some((operation) => operation.type === 'delete' && operation.uri === 'file:///docs/attachment-camera.jpg'),
+    false,
+    'camera capture does not delete non-cache original image URIs while still cleaning compressed temp output'
+  )
+
+  resetLocalModelFileMocks()
+  localFileFixtures.set('file:///tmp/recording-too-large.m4a', Buffer.alloc(MAX_IMPORT_TEXT_FILE_BYTES + 2))
+  await assert.rejects(
+    () => transcribeLocalAudio('file:///tmp/recording-too-large.m4a'),
+    /error\.fileTooLarge/,
+    'local audio transcription rejects oversized audio files before base64 conversion'
+  )
+  assert.equal(localFileReadRequests.length, 0, 'local audio transcription rejects oversized recordings before base64 reads')
 
   assert.equal(
     sha256BytesForTest(textEncoder.encode('')),
@@ -5800,6 +11116,55 @@ https://gateway.example/messages`
     '41edece42d63e8d9bf515a9ba6932e1c20cbc9f5a5d134645adb5db1b9737ea3',
     'local model checksum handles incremental file chunks'
   )
+  const originalFetchForSpeech = global.fetch
+  try {
+    resetLocalModelFileMocks()
+    global.fetch = async (url) => {
+      if (String(url).includes('/audio/speech')) {
+        return new Response(Uint8Array.from([73, 68, 51, 4]).buffer, { status: 200 })
+      }
+      throw new Error(`unexpected speech fetch: ${url}`)
+    }
+    const speechProvider = {
+      id: 'openai-speech',
+      type: 'openai',
+      name: 'OpenAI Speech',
+      apiKey: FAKE_KEY_A,
+      enabled: true,
+      models: ['gpt-4o-mini-tts'],
+      capabilities: { speech: true },
+    }
+    await speakText('first remote speech', speechProvider)
+    const firstSpeechUri = [...localFileFixtures.keys()].find((uri) => uri.includes('islemind-tts-'))
+    assert.ok(firstSpeechUri, 'remote speech writes a cache-backed mp3 file before playback')
+    await speakText('second remote speech', speechProvider)
+    assert.ok(
+      localFileOperations.some((operation) => operation.type === 'delete' && operation.uri === firstSpeechUri),
+      'starting a new remote speech playback deletes the previous cached TTS file'
+    )
+    stopSpeaking()
+    assert.ok(
+      localFileOperations.filter((operation) => operation.type === 'delete' && String(operation.uri).includes('islemind-tts-')).length >= 2,
+      'stopping remote speech deletes the active cached TTS file'
+    )
+    localFileOperations.length = 0
+    localFileFixtures.clear()
+    await speakText('finished remote speech', speechProvider)
+    const activeSpeechPlayer = global.__lastExpoAudioPlayer
+    assert.ok(activeSpeechPlayer, 'remote speech creates an audio player for playback status tracking')
+    activeSpeechPlayer.emitPlaybackStatusUpdate({ didJustFinish: true })
+    assert.ok(
+      localFileOperations.some((operation) => operation.type === 'delete' && String(operation.uri).includes('islemind-tts-')),
+      'remote speech playback deletes the cached TTS file when playback finishes naturally'
+    )
+    assert.equal(
+      [...localFileFixtures.keys()].some((uri) => uri.includes('islemind-tts-')),
+      false,
+      'remote speech playback leaves no cached TTS file behind after natural completion'
+    )
+  } finally {
+    global.fetch = originalFetchForSpeech
+  }
   const miniLm = modelCatalog.models.find((model) => model.id === 'all-MiniLM-L6-v2')
   resetLocalModelFileMocks()
   for (const file of miniLm.files) {
@@ -5818,7 +11183,43 @@ https://gateway.example/messages`
     'local model verification reads bounded base64 chunks'
   )
   resetLocalModelFileMocks()
+  memoryStorage.set('@islemind/local-embedding-models', JSON.stringify({
+    records: {
+      'all-MiniLM-L6-v2': {
+        modelId: 'all-MiniLM-L6-v2',
+        source: 'downloaded',
+        downloadedAt: 1,
+        verifiedAt: 1,
+        bytes: miniLm.sizeBytes,
+        sha256: Object.fromEntries(miniLm.files.map((file) => [file.path, file.sha256])),
+      },
+    },
+    failed: {},
+  }))
+  for (const file of miniLm.files) {
+    localFileFixtures.set(
+      `file:///tmp/islemind-models/all-MiniLM-L6-v2/${file.path}`,
+      fs.readFileSync(localModelFixturePath('all-MiniLM-L6-v2', file.path))
+    )
+  }
+  const onnxProvider = await createOnnxEmbeddingProvider({
+    localEmbeddingModelId: 'all-MiniLM-L6-v2',
+    localEmbeddingModelSource: 'downloaded',
+  })
+  assert.ok(onnxProvider, 'ONNX provider resolves when a verified downloaded model is present')
+  assert.equal(await onnxProvider.available(), true, 'ONNX provider remains available after helper extraction')
+  localFileReadRequests.length = 0
+  const embeddedVector = await onnxProvider.embed('hello world')
+  assert.equal(embeddedVector.length, 384, 'ONNX provider returns the expected embedding dimension through the mocked runtime')
+  assert.equal(
+    localFileReadRequests.some((request) => request.uri.endsWith('/onnx/model_quantized.onnx')),
+    false,
+    'ONNX session creation no longer adds FileSystem base64 reads for the model file once provider availability is established'
+  )
+  resetLocalModelFileMocks()
   memoryStorage.delete('@islemind/local-embedding-models')
+  localFileFixtures.set(`file:///tmp/islemind-models/${miniLm.id}.tmp-111/config.json`, Buffer.from('stale-temp', 'utf8'))
+  localFileFixtures.set(`file:///tmp/islemind-models/${miniLm.id}.bak-222/tokenizer.json`, Buffer.from('stale-backup', 'utf8'))
   for (const file of miniLm.files) {
     localDownloadFixtures.set(
       localModelDownloadUrl(miniLm, file.path),
@@ -5847,8 +11248,20 @@ https://gateway.example/messages`
     'download flow leaves no temporary model files after success'
   )
   assert.ok(
+    ![...localFileFixtures.keys()].some((uri) => uri.includes(`${miniLm.id}.bak-`)),
+    'download flow also clears stale backup directories before publishing the new model'
+  )
+  assert.ok(
     localFileOperations.some((operation) => operation.type === 'download' && operation.url === localModelDownloadUrl(miniLm, 'onnx/model_quantized.onnx')),
     'download flow uses the official model file URL'
+  )
+  assert.ok(
+    localFileOperations.some((operation) => operation.type === 'delete' && operation.uri.includes(`${miniLm.id}.tmp-111`)),
+    'download flow deletes stale temporary directories from earlier interrupted downloads'
+  )
+  assert.ok(
+    localFileOperations.some((operation) => operation.type === 'delete' && operation.uri.includes(`${miniLm.id}.bak-222`)),
+    'download flow deletes stale backup directories from earlier interrupted replacements'
   )
   assert.ok(localFileOperations.some((operation) => operation.type === 'move'), 'download flow atomically moves the temporary directory into place')
   const downloadedViews = await listLocalEmbeddingModelViews({
@@ -5856,6 +11269,39 @@ https://gateway.example/messages`
     localEmbeddingModelSource: 'downloaded',
   })
   assert.equal(downloadedViews.find((view) => view.model.id === miniLm.id).status, 'enabled', 'successful download appears as enabled when selected')
+
+  resetLocalModelFileMocks()
+  localFileFixtures.set(`file:///tmp/islemind-models/${miniLm.id}/config.json`, Buffer.from('active-download', 'utf8'))
+  localFileFixtures.set(`file:///tmp/islemind-models/${miniLm.id}.tmp-333/config.json`, Buffer.from('orphan-temp', 'utf8'))
+  localFileFixtures.set(`file:///tmp/islemind-models/${miniLm.id}.bak-444/tokenizer.json`, Buffer.from('orphan-backup', 'utf8'))
+  await deleteDownloadedLocalEmbeddingModel(miniLm.id)
+  assert.equal(
+    [...localFileFixtures.keys()].some((uri) => uri.includes(`file:///tmp/islemind-models/${miniLm.id}/`)),
+    false,
+    'explicit model deletion removes the current downloaded model directory'
+  )
+  assert.equal(
+    [...localFileFixtures.keys()].some((uri) => uri.includes(`${miniLm.id}.tmp-333`) || uri.includes(`${miniLm.id}.bak-444`)),
+    false,
+    'explicit model deletion also removes stale temp and backup directories for the same model'
+  )
+  assert.ok(
+    localFileOperations.some((operation) => operation.type === 'delete' && operation.uri.includes(`${miniLm.id}.tmp-333`)),
+    'explicit model deletion clears orphaned temporary directories'
+  )
+  assert.ok(
+    localFileOperations.some((operation) => operation.type === 'delete' && operation.uri.includes(`${miniLm.id}.bak-444`)),
+    'explicit model deletion clears orphaned backup directories'
+  )
+  const deletedViews = await listLocalEmbeddingModelViews({
+    localEmbeddingModelId: miniLm.id,
+    localEmbeddingModelSource: 'downloaded',
+  })
+  assert.equal(
+    deletedViews.find((view) => view.model.id === miniLm.id).downloaded,
+    false,
+    'explicit model deletion clears the downloaded record after orphan cleanup'
+  )
 
   resetLocalModelFileMocks()
   memoryStorage.delete('@islemind/local-embedding-models')
@@ -5881,6 +11327,26 @@ https://gateway.example/messages`
   assert.ok(
     localFileOperations.some((operation) => operation.type === 'download' && operation.url === localModelMirrorUrl(miniLm, mirrorBaseUrl, 'config.json')),
     'mirror retry uses the configured mirror URL shape'
+  )
+
+  resetLocalModelFileMocks()
+  memoryStorage.delete('@islemind/local-embedding-models')
+  for (const file of miniLm.files) {
+    localDownloadFixtures.set(localModelDownloadUrl(miniLm, file.path), { status: 503, body: Buffer.alloc(0) })
+    localDownloadFixtures.set(
+      localModelMirrorUrl(miniLm, 'https://mirror.example/hf', file.path),
+      { status: 200, body: fs.readFileSync(localModelFixturePath(miniLm.id, file.path)) }
+    )
+  }
+  await assert.rejects(
+    () => downloadLocalEmbeddingModel(miniLm.id, { mirrorBaseUrl: 'file:///tmp/mirror-cache' }),
+    /Download failed: HTTP 503/,
+    'local model mirror helper ignores invalid non-web mirror URLs and keeps the official failure'
+  )
+  assert.equal(
+    localFileOperations.some((operation) => operation.type === 'download' && String(operation.url).includes('mirror.example')),
+    false,
+    'local model mirror helper does not attempt non-web mirror fallback downloads'
   )
 
   resetLocalModelFileMocks()
@@ -5916,6 +11382,120 @@ https://gateway.example/messages`
   assert.equal(failedViews.find((view) => view.model.id === miniLm.id).status, 'verify-failed', 'download failure marks the model as needing attention')
   assert.equal(await createOnnxEmbeddingProvider({ localEmbeddingModelSource: 'none' }), null, 'ONNX provider is absent without bundled or downloaded model')
 
+  await saveData('MCP_SERVERS', [
+    {
+      id: 'mcp-invalid-persisted',
+      name: 'Invalid Persisted MCP',
+      url: 'file:///tmp/mcp',
+      transport: 'sse',
+      enabled: true,
+      status: 'connected',
+      manifestTtlMs: 1000,
+      tools: [],
+      resources: [],
+      prompts: [],
+      approvedToolNames: [],
+      createdAt: 1,
+      updatedAt: 1,
+    },
+    {
+      id: 'mcp-valid-persisted',
+      name: 'Valid Persisted MCP',
+      url: 'https://mcp.example.test',
+      transport: 'sse',
+      enabled: true,
+      status: 'connected',
+      manifestTtlMs: 1000,
+      tools: [],
+      resources: [],
+      prompts: [],
+      approvedToolNames: [],
+      createdAt: 1,
+      updatedAt: 1,
+    },
+  ])
+  const listedMcpServers = await listMcpServers()
+  assert.equal(listedMcpServers.some((server) => server.id === 'mcp-invalid-persisted'), false, 'persisted MCP server list filters invalid non-web URLs before runtime use')
+  assert.equal(listedMcpServers.some((server) => server.id === 'mcp-valid-persisted'), true, 'persisted MCP server list keeps valid HTTPS endpoints')
+  const mcpSettingsSource = fs.readFileSync(path.join(root, 'src/components/settings/McpSettingsContent.tsx'), 'utf8')
+  assert.ok(mcpSettingsSource.includes("import { normalizeMcpServerUrl } from '@/services/mcpUrlPolicy'"), 'MCP settings page reuses the shared MCP URL policy')
+  assert.ok(!mcpSettingsSource.includes('^https?:\\/\\/'), 'MCP settings page does not keep a separate HTTP URL regex boundary')
+
+  const importedMcpServersResult = await importAllDataDetailed(JSON.stringify({
+    app: 'islemind',
+    version: 1,
+    conversations: [],
+    providers: [],
+    mcpServers: [
+      {
+        id: 'mcp-import-invalid',
+        name: 'Imported Invalid MCP',
+        url: 'islemind://external-mcp',
+        transport: 'sse',
+        enabled: true,
+        status: 'connected',
+        manifestTtlMs: 1000,
+        tools: [],
+        resources: [],
+        prompts: [],
+        approvedToolNames: [],
+        createdAt: 1,
+        updatedAt: 1,
+      },
+      {
+        id: 'mcp-import-valid',
+        name: 'Imported Valid MCP',
+        url: 'https://imported.example.test/mcp',
+        transport: 'sse',
+        enabled: true,
+        status: 'connected',
+        manifestTtlMs: 1000,
+        tools: [],
+        resources: [],
+        prompts: [],
+        approvedToolNames: [],
+        createdAt: 1,
+        updatedAt: 1,
+      },
+    ],
+    exportedAt: Date.now(),
+  }))
+  assert.deepEqual(importedMcpServersResult, { ok: true, kind: 'islemind', conversations: 0 }, 'portable import accepts IsleMind payloads with MCP servers')
+  const importedMcpServers = await loadData('MCP_SERVERS')
+  assert.deepEqual(importedMcpServers.map((server) => server.id), ['mcp-import-valid'], 'portable import drops invalid non-web MCP server URLs before persistence')
+
+  const invalidRuntimeMcpServer = {
+    id: 'mcp-runtime-invalid',
+    name: 'Runtime Invalid MCP',
+    url: 'islemind://external-mcp',
+    transport: 'sse',
+    enabled: true,
+    status: 'connected',
+    manifestTtlMs: 1000,
+    tools: [{ name: 'read_remote_fixture', permission: 'read-only', enabled: true, serverId: 'mcp-runtime-invalid' }],
+    resources: [],
+    prompts: [],
+    approvedToolNames: ['read_remote_fixture'],
+    createdAt: 1,
+    updatedAt: 1,
+  }
+  const originalFetchForInvalidMcp = global.fetch
+  try {
+    global.fetch = async () => {
+      throw new Error('invalid MCP URLs must not reach fetch')
+    }
+    const invalidMcpCallResult = await callMcpTool(invalidRuntimeMcpServer, 'read_remote_fixture', {})
+    assert.equal(invalidMcpCallResult.ok, false, 'MCP runtime rejects invalid non-web server URLs before execution')
+    assert.equal(invalidMcpCallResult.trace.status, 'skipped', 'invalid MCP runtime URLs fail closed before tool execution')
+    assert.equal(invalidMcpCallResult.trace.metadata?.errorCode, 'tool_unavailable', 'invalid MCP runtime URLs report tool_unavailable')
+    assert.match(invalidMcpCallResult.error, /HTTP\(S\)/, 'invalid MCP runtime URLs explain the HTTP(S) boundary')
+    const invalidMcpRefreshResult = await refreshMcpManifest(invalidRuntimeMcpServer)
+    assert.equal(invalidMcpRefreshResult.status, 'error', 'manifest refresh rejects invalid non-web MCP server URLs before fetch')
+    assert.match(invalidMcpRefreshResult.lastError ?? '', /HTTP\(S\)/, 'manifest refresh surfaces the MCP HTTP(S) boundary error')
+  } finally {
+    global.fetch = originalFetchForInvalidMcp
+  }
+
   const builtin = builtinMcpServer()
   assert.equal(builtin.transport, 'sse')
   assert.equal(builtin.tools.find((tool) => tool.name === 'app_info').permission, 'read-only')
@@ -5926,7 +11506,95 @@ https://gateway.example/messages`
   assert.ok(truncated[0].text.length < 1000, 'MCP tool output is truncated to budget')
 }
 
-run()
+function assertTraceRedactionBehavior() {
+  const headerTrace = sanitizeTrace({
+    id: 'trace-header-redaction',
+    type: 'tool',
+    title: 'Headers Authorization: Basic QWxhZGRpbjpvcGVuIHNlc2FtZQ==',
+    content: 'proxy-authorization: bearer abcdefghijklmnopqrstuvwxyz123456',
+    status: 'done',
+    metadata: {
+      safeNote: 'Authorization: Basic QWxhZGRpbjpvcGVuIHNlc2FtZQ==',
+      nested: {
+        proxy: 'proxy-authorization: bearer abcdefghijklmnopqrstuvwxyz123456',
+      },
+    },
+  })
+  const serialized = JSON.stringify(headerTrace)
+  assert.ok(!serialized.includes('QWxhZGRpbjpvcGVuIHNlc2FtZQ=='), 'trace redaction removes Basic authorization credential values')
+  assert.ok(!serialized.includes('abcdefghijklmnopqrstuvwxyz123456'), 'trace redaction removes lowercase proxy bearer credential values')
+  assert.equal(headerTrace.title, 'Headers [redacted]', 'trace redaction removes header-like Basic auth from visible titles')
+  assert.equal(headerTrace.content, '[redacted]', 'trace redaction removes header-like proxy bearer auth from visible content')
+  assert.equal(headerTrace.metadata.safeNote, '[redacted]', 'trace metadata value redaction removes header-like Basic auth')
+  assert.equal(headerTrace.metadata.nested.proxy, '[redacted]', 'nested trace metadata value redaction removes header-like proxy bearer auth')
+}
+
+async function runFocused() {
+  const focusArg = process.argv.find((arg) => arg.startsWith('--focus='))
+  const focus = focusArg ? focusArg.slice('--focus='.length) : null
+  if (!focus) {
+    await run()
+    return
+  }
+  if (focus === 'settings-url-persistence') {
+    await assertSettingsUrlPersistenceBehavior()
+    return
+  }
+  if (focus === 'runtime-log') {
+    await assertRuntimeLogFileBehavior()
+    await assertRuntimeDiagnosticsBehavior()
+    return
+  }
+  if (focus === 'runtime-health-log') {
+    await assertStorageFailureRuntimeLogging()
+    await assertRenderGuardRuntimeLogging()
+    await assertMcpRuntimeLogging()
+    await assertContextRuntimeLogging()
+    await assertKnowledgeRetrievalRuntimeLogging()
+    await assertKnowledgeEmbeddingRuntimeLogging()
+    return
+  }
+  if (focus === 'trace-redaction') {
+    assertTraceRedactionBehavior()
+    return
+  }
+  if (focus === 'context-runtime-log') {
+    await assertContextRuntimeLogging()
+    return
+  }
+  if (focus === 'clear-all-data') {
+    await assertClearAllDataBehavior()
+    return
+  }
+  if (focus === 'apk-install-cache') {
+    await assertApkUpdateBehavior()
+    return
+  }
+  if (focus === 'android-app-cache-cleanup') {
+    await assertAndroidAppCacheCleanupBehavior()
+    return
+  }
+  if (focus === 'chat-android-undo-prompt') {
+    assertChatAndroidUndoPromptBehavior()
+    return
+  }
+  if (focus === 'provider-store-cleanup') {
+    await assertProviderStoreLifecycleBehavior()
+    return
+  }
+  if (focus === 'provider-presets') {
+    await assertExpandedProviderPresetCoverage()
+    return
+  }
+  if (focus === 'provider-capability-matrix') {
+    await assertProviderCapabilityMatrixBehavior()
+    await assertRuntimeDiagnosticsBehavior()
+    return
+  }
+  throw new Error(`Unknown focus: ${focus}`)
+}
+
+runFocused()
   .then(() => {
     console.log('provider-intelligence tests passed')
   })

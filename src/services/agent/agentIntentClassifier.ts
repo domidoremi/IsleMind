@@ -1,6 +1,16 @@
 import type { ProcessTrace } from '@/types'
 import type { AgentRequestedOutput, AgentToolRequest, AgentWorkflowIntent } from '@/services/agent/agentToolTypes'
+import {
+  ANDROID_ALARM_WORKFLOW_ID,
+  ANDROID_APK_INSTALL_WORKFLOW_ID,
+  ANDROID_APP_CACHE_CLEANUP_WORKFLOW_ID,
+  ANDROID_CALENDAR_TODO_WORKFLOW_ID,
+  ANDROID_DOWNLOAD_ORGANIZE_WORKFLOW_ID,
+  ANDROID_FILE_COPY_RENAME_WORKFLOW_ID,
+  ANDROID_NOTIFICATION_SETTINGS_WORKFLOW_ID,
+} from '@/services/agent/agentAndroidWorkflows'
 import { createAgentTrace } from '@/services/agent/agentTrace'
+import { sanitizeAndroidApkUri } from '@/services/androidUriPolicy'
 
 export interface AgentIntentClassification {
   intent: AgentWorkflowIntent
@@ -66,6 +76,32 @@ export function classifyAgentIntent(input: ClassifyAgentIntentInput): AgentInten
     })
   }
 
+  const androidUndoToolRequest = inferAndroidTool(goal)
+  if (androidUndoToolRequest?.name === 'android.files.undo_operations') {
+    return buildClassification({
+      input,
+      startedAt,
+      intent: 'tool_task',
+      shouldRunWorkflow: true,
+      confidence: 0.82,
+      reasons: ['android-undo-operations-json'],
+      suggestedToolRequest: androidUndoToolRequest,
+    })
+  }
+
+  const androidToolRequest = inferAndroidTool(goal)
+  if (androidToolRequest) {
+    return buildClassification({
+      input,
+      startedAt,
+      intent: 'tool_task',
+      shouldRunWorkflow: true,
+      confidence: 0.76,
+      reasons: ['android-device-task-keyword'],
+      suggestedToolRequest: androidToolRequest,
+    })
+  }
+
   if (looksLikeSettingsAction(goal)) {
     return buildClassification({
       input,
@@ -94,19 +130,6 @@ export function classifyAgentIntent(input: ClassifyAgentIntentInput): AgentInten
     })
   }
 
-  const androidUndoToolRequest = inferAndroidTool(goal)
-  if (androidUndoToolRequest?.name === 'android.files.undo_operations') {
-    return buildClassification({
-      input,
-      startedAt,
-      intent: 'tool_task',
-      shouldRunWorkflow: true,
-      confidence: 0.82,
-      reasons: ['android-undo-operations-json'],
-      suggestedToolRequest: androidUndoToolRequest,
-    })
-  }
-
   if (looksLikeEvidenceTask(goal)) {
     return buildClassification({
       input,
@@ -121,20 +144,6 @@ export function classifyAgentIntent(input: ClassifyAgentIntentInput): AgentInten
       },
     })
   }
-
-  const androidToolRequest = inferAndroidTool(goal)
-  if (androidToolRequest) {
-    return buildClassification({
-      input,
-      startedAt,
-      intent: 'tool_task',
-      shouldRunWorkflow: true,
-      confidence: 0.76,
-      reasons: ['android-device-task-keyword'],
-      suggestedToolRequest: androidToolRequest,
-    })
-  }
-
   if (looksLikeHandoffTask(goal)) {
     return buildClassification({
       input,
@@ -167,6 +176,18 @@ export function classifyAgentIntent(input: ClassifyAgentIntentInput): AgentInten
     confidence: 0.62,
     reasons: ['no-workflow-trigger'],
   })
+}
+
+export function inferAndroidWorkflowId(goal: string): string | undefined {
+  if (!looksLikeAndroidTask(goal) || looksLikeAndroidUndoTask(goal)) return undefined
+  if (looksLikeAndroidAlarmTask(goal)) return ANDROID_ALARM_WORKFLOW_ID
+  if (looksLikeAndroidReminderTask(goal)) return ANDROID_CALENDAR_TODO_WORKFLOW_ID
+  if (looksLikeAndroidNotificationSettingsTask(goal)) return ANDROID_NOTIFICATION_SETTINGS_WORKFLOW_ID
+  if (looksLikeAndroidApkInstallTask(goal)) return ANDROID_APK_INSTALL_WORKFLOW_ID
+  if (looksLikeAndroidCleanupTask(goal)) return ANDROID_APP_CACHE_CLEANUP_WORKFLOW_ID
+  if (looksLikeAndroidFileCopyRenameTask(goal)) return ANDROID_FILE_COPY_RENAME_WORKFLOW_ID
+  if (looksLikeAndroidFileOrganizeTask(goal)) return ANDROID_DOWNLOAD_ORGANIZE_WORKFLOW_ID
+  return undefined
 }
 
 function buildWorkArtifactToolRequest(input: ClassifyAgentIntentInput): AgentToolRequest {
@@ -282,8 +303,17 @@ function inferAndroidTool(goal: string): AgentToolRequest | undefined {
       },
     }
   }
+  if (looksLikeAndroidNotificationSettingsTask(goal)) {
+    return {
+      name: 'android.notifications.open_settings',
+      source: 'android',
+      arguments: {
+        target: inferAndroidNotificationSettingsTarget(goal),
+      },
+    }
+  }
   if (looksLikeAndroidApkInstallTask(goal)) {
-    const apkUri = inferAndroidUri(goal)
+    const apkUri = inferAndroidApkUri(goal)
     return apkUri
       ? { name: 'android.apk.open_installer', source: 'android', arguments: { apkUri } }
       : { name: 'android.files.request_directory_access', source: 'android', arguments: { initialDirectory: 'downloads' } }
@@ -302,11 +332,19 @@ function inferAndroidTool(goal: string): AgentToolRequest | undefined {
 }
 
 function looksLikeAndroidTask(goal: string): boolean {
-  return /(android|安卓|手机|闹钟|提醒|待办|日历|calendar|alarm|reminder|todo|apk|安装包|download|下载目录|下载文件夹|清理手机|垃圾清理|目录|文件|复制|重命名|整理)/i.test(goal)
+  return /(android|安卓|手机|闹钟|提醒|待办|日历|calendar|alarm|reminder|todo|apk|安装包|download|下载目录|下载文件夹|清理手机|垃圾清理|目录|文件|复制|重命名|整理|通知设置|通知权限|系统通知|状态通知|notification|promoted)/i.test(goal)
 }
 
 function looksLikeAndroidFileTask(goal: string): boolean {
   return /(download|下载目录|下载文件夹|目录|文件|复制|移动|搬到|重命名|整理|归类|分类|rename|copy|move|organize|folder|directory|file)/i.test(goal)
+}
+
+function looksLikeAndroidFileCopyRenameTask(goal: string): boolean {
+  return /(复制|拷贝|移动|搬到|重命名|改名|rename|copy|move)/i.test(goal)
+}
+
+function looksLikeAndroidFileOrganizeTask(goal: string): boolean {
+  return /(整理|归类|分类|organize|download|下载目录|下载文件夹|folder|directory)/i.test(goal)
 }
 
 function looksLikeAndroidUndoTask(goal: string): boolean {
@@ -329,8 +367,21 @@ function looksLikeAndroidReminderTask(goal: string): boolean {
   return /(待办|提醒|日历|todo|reminder|calendar)/i.test(goal)
 }
 
+function looksLikeAndroidNotificationSettingsTask(goal: string): boolean {
+  return /(打开|前往|跳转|去|open|show|launch).{0,12}(通知设置|通知权限|系统通知|状态通知|notification settings|app notifications|promoted notifications)/i.test(goal)
+    || /(通知设置|通知权限|系统通知|状态通知|notification settings|app notifications|promoted notifications).{0,12}(打开|前往|跳转|open|show|launch)/i.test(goal)
+}
+
+function inferAndroidNotificationSettingsTarget(goal: string): 'notifications' | 'promoted' {
+  return /(promoted|推广通知|提升通知)/i.test(goal) ? 'promoted' : 'notifications'
+}
+
 function inferAndroidUri(goal: string): string | undefined {
   return goal.match(/\b(?:content|file):\/\/[^\s"'，。；;、)）]+/i)?.[0]
+}
+
+function inferAndroidApkUri(goal: string): string | undefined {
+  return sanitizeAndroidApkUri(inferAndroidUri(goal))
 }
 
 function inferAndroidUndoOperations(goal: string): unknown[] | undefined {
@@ -403,8 +454,37 @@ export function inferReminderDateTimeIso(goal: string): string | undefined {
 }
 
 export function inferReminderTitle(goal: string): string | undefined {
-  const quoted = goal.match(/[“"']([^“”"']{1,80})[”"']/)?.[1] ?? goal.match(/写上[:：]\s*([^。；;\n]{1,80})/)?.[1]
-  return quoted?.trim()
+  const explicit = firstReminderTitleMatch(goal, [
+    /[“"']([^“”"']{1,80})[”"']/,
+    /(?:写上|标题|名称|叫做|命名为)[:：]?\s*([^。；;\n]{1,80})/i,
+    /\b(?:titled|called|named|label(?:ed)?|with\s+(?:the\s+)?title)\s+([^.;\n]{1,80})/i,
+  ])
+  if (explicit) return cleanReminderTitle(explicit)
+  const task = firstReminderTitleMatch(goal, [
+    /\b(?:create|add|set|make)\s+(?:a\s+)?(?:todo|to-do|reminder|task)\s+(?:to\s+)?([^.;\n]{1,80})/i,
+    /(?:创建|添加|设置|新建)(?:一个)?(?:待办|提醒|任务)\s*([^。；;\n]{1,80})/i,
+  ])
+  return cleanReminderTitle(task)
+}
+
+function firstReminderTitleMatch(value: string, patterns: RegExp[]): string | undefined {
+  for (const pattern of patterns) {
+    const match = value.match(pattern)?.[1]?.trim()
+    if (match) return match
+  }
+  return undefined
+}
+
+function cleanReminderTitle(value: string | undefined): string | undefined {
+  const cleaned = value
+    ?.replace(/\b(?:for|at|on|by)\s+20\d{2}[./-]\d{1,2}[./-]\d{1,2}.*$/i, '')
+    ?.replace(/\b(?:for|at|by)\s+(?:[01]?\d|2[0-3])[:：][0-5]\d.*$/i, '')
+    ?.replace(/(?:在|于)?\s*20\d{2}[./-]\d{1,2}[./-]\d{1,2}.*$/, '')
+    ?.replace(/(?:在|于)?\s*(?:[01]?\d|2[0-3])[:：][0-5]\d.*$/, '')
+    ?.trim()
+    ?.replace(/[，,。.;；:：]+$/, '')
+    ?.trim()
+  return cleaned || undefined
 }
 
 function parseChineseNumber(value: string): number {

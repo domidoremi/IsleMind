@@ -1,21 +1,17 @@
 import { useEffect, useState, type ReactNode } from 'react'
-import { Text, View, useWindowDimensions } from 'react-native'
-import { BookOpen, Brain, Check, Download, Globe2, HardDrive, Trash2, Upload } from 'lucide-react-native'
+import { StyleSheet, Text, View, useWindowDimensions } from 'react-native'
 import { MotiView } from 'moti'
-import type { TFunction } from 'i18next'
 import { useTranslation } from 'react-i18next'
-import type { AIProvider, Conversation, KnowledgeDocument, LocalRagModelCapability, MemoryItem, MemorySourceKind, Message, RagEvaluationLog, RagIndexingJobStatus, Settings } from '@/types'
-import { extractMemories, importKnowledgeFile, importKnowledgePlainText, retrieveContext, searchKnowledgeAgenticIndexes, searchKnowledgeHybrid, searchWeb } from '@/services/context'
+import { AppIcon } from '@/components/ui/AppIcon'
+import type { AIProvider, KnowledgeDocument, LocalRagModelCapability, MemoryItem, RagEvaluationLog, RagIndexingJobStatus, Settings } from '@/types'
+import { importKnowledgeFile, importKnowledgePlainText } from '@/services/context'
 import {
-  addMemory,
   clearKnowledge,
   clearMemories,
   deleteKnowledgeDocument,
   deleteMemory,
   listKnowledgeDocuments,
   listMemories,
-  searchKnowledge,
-  searchMemories,
   updateMemoryStatus,
 } from '@/services/contextStore'
 import {
@@ -30,6 +26,9 @@ import { clearRagQueryCaches, listRagEmbeddingJobs, loadRagDebugSnapshot, loadRa
 import { useAppTheme } from '@/hooks/useAppTheme'
 import { useSettingsStore } from '@/store/settingsStore'
 import { SEARCH_DIAGNOSTIC_QUERY, SEARCH_PROVIDER_CREDENTIAL_FIELDS, SEARCH_PROVIDER_OPTIONS, legacySearchModeForProvider, resolveSearchProvider, searchProviderLabel } from '@/services/searchPolicy'
+import { filterAndSortKnowledgeDocuments, filterAndSortMemories, hasKnowledgeAssetFilters, hasMemoryAssetFilters, knowledgeAssetEmptyMessage, memoryAssetEmptyMessage, type KnowledgeSortMode, type KnowledgeStatusFocus, type MemorySortMode, type MemoryStatusFocus } from '@/services/contextAssetFilters'
+import { capabilityLabel, formatKnowledgeMeta, formatMemoryMeta, memoryReviewFocusKey } from '@/services/contextAssetFormatters'
+import { isDownloadableLocalModel, localCapabilityEnabled, splitLocalModelViews } from '@/services/contextLocalModelRules'
 import { IslePressable } from '@/components/ui/isle'
 import { IsleChip } from '@/components/ui/isle'
 import { IsleField, IsleSection, IsleToggle } from '@/components/ui/isle'
@@ -39,6 +38,10 @@ import { filterPendingMemoriesForReview, buildMemoryReviewSummary, type MemoryRe
 import { buildKnowledgeRecoverySummary } from '@/utils/knowledgeRecovery'
 import { useMotionPreference } from '@/hooks/useMotionPreference'
 import { motionTokens } from '@/theme/animation'
+import { KnowledgeImportSection } from '@/components/settings/KnowledgeImportSection'
+import { runContextSelfTest as runContextSelfTestScenario, type ContextSelfTestStep } from '@/services/contextSelfTest'
+import { ContextDiagnosticsSection } from '@/components/settings/ContextDiagnosticsSection'
+import { MemoryReviewSection } from '@/components/settings/MemoryReviewSection'
 
 interface ContextPanelProps {
   providers: AIProvider[]
@@ -46,23 +49,10 @@ interface ContextPanelProps {
   focus?: 'import' | 'review'
 }
 
-interface SelfTestStep {
-  name: string
-  status: 'ok' | 'warn' | 'fail'
-  detail: string
-}
-
 interface SelfTestResult {
   ranAt: number
-  steps: SelfTestStep[]
+  steps: ContextSelfTestStep[]
 }
-
-type MemoryStatusFocus = 'all' | MemoryItem['status']
-type KnowledgeStatusFocus = 'all' | 'ready' | 'extracting' | 'error' | 'empty'
-type MemorySortMode = 'updated' | 'created' | 'lastUsed'
-type KnowledgeSortMode = 'updated' | 'title' | 'chunks' | 'needsReview'
-
-const memoryReviewSourceFocuses: MemorySourceKind[] = ['imported', 'model', 'deterministic', 'manual', 'legacy']
 
 const contextChipPressableStyle = { minHeight: 44, justifyContent: 'center' as const }
 const localModelActionStyle = {
@@ -88,7 +78,7 @@ const knowledgePreviewLimit = 6
 function primaryActionSurface(colors: ReturnType<typeof useAppTheme>['colors']) {
   return {
     backgroundColor: colors.ui.control.primaryBackground,
-    borderWidth: 1,
+    borderWidth: colors.ui.cartoon ? 1 : StyleSheet.hairlineWidth,
     borderColor: colors.ui.control.primaryBorder,
     borderRadius: colors.ui.radius.controlLarge,
   }
@@ -96,33 +86,41 @@ function primaryActionSurface(colors: ReturnType<typeof useAppTheme>['colors']) 
 
 function secondaryActionSurface(colors: ReturnType<typeof useAppTheme>['colors']) {
   return {
-    backgroundColor: colors.ui.card.defaultBackground,
-    borderWidth: 1,
-    borderColor: colors.material.stroke,
+    backgroundColor: colors.ui.glass ? colors.ui.actionBar.itemBackground : colors.ui.cartoon ? colors.ui.semantic.surface.muted : colors.ui.semantic.surface.muted,
+    borderWidth: colors.ui.cartoon ? 1 : StyleSheet.hairlineWidth,
+    borderColor: colors.ui.glass ? colors.ui.actionBar.itemBorder : colors.ui.cartoon ? colors.material.stroke : colors.ui.semantic.chrome.border,
     borderRadius: colors.ui.radius.controlLarge,
   }
 }
 
 function rowActionSurface(colors: ReturnType<typeof useAppTheme>['colors']) {
   return {
-    backgroundColor: colors.ui.card.defaultBackground,
-    borderWidth: 1,
-    borderColor: colors.material.stroke,
+    backgroundColor: colors.ui.glass ? colors.ui.actionBar.itemBackground : colors.ui.cartoon ? colors.ui.semantic.surface.muted : colors.ui.semantic.surface.base,
+    borderWidth: colors.ui.cartoon ? 1 : StyleSheet.hairlineWidth,
+    borderColor: colors.ui.glass ? colors.ui.actionBar.itemBorder : colors.ui.cartoon ? colors.material.stroke : colors.ui.semantic.chrome.border,
     borderRadius: colors.ui.radius.controlMiddle,
   }
 }
 
 function assetCardSurface(colors: ReturnType<typeof useAppTheme>['colors'], borderColor = colors.material.stroke) {
+  const shadowOpacity = colors.ui.cartoon ? colors.ui.card.shadowOpacity : 0
+  const resolvedBorderColor = colors.ui.cartoon
+    ? borderColor
+    : borderColor === colors.material.stroke
+      ? colors.ui.glass
+        ? colors.ui.actionBar.itemBorder
+        : colors.ui.semantic.chrome.border
+      : borderColor
   return {
     borderRadius: colors.ui.radius.card,
-    backgroundColor: colors.ui.card.defaultBackground,
-    borderWidth: 1,
-    borderColor,
+    backgroundColor: colors.ui.glass ? colors.ui.semantic.chrome.background : colors.ui.cartoon ? colors.ui.semantic.surface.base : colors.ui.semantic.surface.base,
+    borderWidth: colors.ui.cartoon ? 1 : StyleSheet.hairlineWidth,
+    borderColor: resolvedBorderColor,
     shadowColor: colors.ui.control.shadow,
-    shadowOpacity: colors.ui.card.shadowOpacity,
-    shadowRadius: colors.ui.card.shadowRadius,
-    shadowOffset: { width: 0, height: colors.ui.card.shadowOffset },
-    elevation: colors.ui.card.shadowOpacity > 0 ? 1 : 0,
+    shadowOpacity: shadowOpacity > 0 ? Math.min(shadowOpacity, 0.05) : 0,
+    shadowRadius: colors.ui.cartoon ? Math.max(1, colors.ui.card.shadowRadius - 6) : 0,
+    shadowOffset: { width: 0, height: colors.ui.cartoon ? Math.max(1, colors.ui.card.shadowOffset - 3) : 0 },
+    elevation: colors.ui.cartoon && shadowOpacity > 0 ? 1 : 0,
   }
 }
 
@@ -192,52 +190,29 @@ export function ContextPanel({ providers, section = 'all', focus }: ContextPanel
     empty: documents.filter((document) => document.status === 'ready' && document.chunkCount <= 0).length,
   }
   const knowledgeRecoverySummary = buildKnowledgeRecoverySummary(documents, indexingJobs)
-  const normalizedMemoryFilter = memoryFilter.trim().toLocaleLowerCase()
-  const normalizedKnowledgeFilter = knowledgeFilter.trim().toLocaleLowerCase()
-  const statusFocusedMemories = memoryStatusFocus === 'all'
-    ? memories
-    : memories.filter((memory) => memory.status === memoryStatusFocus)
-  const statusFocusedDocuments = knowledgeStatusFocus === 'all'
-    ? documents
-    : documents.filter((document) => {
-      if (knowledgeStatusFocus === 'empty') return document.status === 'ready' && document.chunkCount <= 0
-      if (knowledgeStatusFocus === 'ready') return document.status === 'ready' && document.chunkCount > 0
-      return document.status === knowledgeStatusFocus
-    })
-  const filteredMemories = normalizedMemoryFilter
-    ? statusFocusedMemories.filter((memory) => {
-      const searchableMeta = [
-        memory.content,
-        memory.status,
-        memory.conversationId,
-        memory.sourceKind,
-        memory.sourceDetail,
-        typeof memory.confidence === 'number' ? Math.round(Math.max(0, Math.min(1, memory.confidence)) * 100) : undefined,
-      ].filter(Boolean).join(' ')
-      return searchableMeta.toLocaleLowerCase().includes(normalizedMemoryFilter)
-    })
-    : statusFocusedMemories
-  const filteredDocuments = normalizedKnowledgeFilter
-    ? statusFocusedDocuments.filter((document) => {
-      return `${document.title} ${document.status} ${document.error ?? ''} ${document.chunkCount} ${Math.round(document.size / 1024)}`.toLocaleLowerCase().includes(normalizedKnowledgeFilter)
-    })
-    : statusFocusedDocuments
-  const reviewFilteredMemories = memoryStatusFocus === 'pending' && memoryReviewFocus !== 'all'
-    ? filterPendingMemoriesForReview(filteredMemories, memoryReviewFocus)
-    : filteredMemories
-  const sortedMemories = sortMemories(reviewFilteredMemories, memorySortMode)
-  const sortedDocuments = sortKnowledgeDocuments(filteredDocuments, knowledgeSortMode)
+  const sortedMemories = filterAndSortMemories(memories, {
+    statusFocus: memoryStatusFocus,
+    reviewFocus: memoryReviewFocus,
+    filter: memoryFilter,
+    sortMode: memorySortMode,
+  })
+  const sortedDocuments = filterAndSortKnowledgeDocuments(documents, {
+    statusFocus: knowledgeStatusFocus,
+    filter: knowledgeFilter,
+    sortMode: knowledgeSortMode,
+  })
+  const filteredMemories = sortedMemories
+  const filteredDocuments = sortedDocuments
   const visibleMemories = showAllMemories ? sortedMemories : sortedMemories.slice(0, memoryPreviewLimit)
   const visibleDocuments = showAllKnowledge ? sortedDocuments : sortedDocuments.slice(0, knowledgePreviewLimit)
-  const hasMemoryFilters = memoryStatusFocus !== 'all' || memoryReviewFocus !== 'all' || !!memoryFilter.trim()
-  const hasKnowledgeFilters = knowledgeStatusFocus !== 'all' || !!knowledgeFilter.trim()
+  const hasMemoryFilters = hasMemoryAssetFilters(memoryStatusFocus, memoryReviewFocus, memoryFilter)
+  const hasKnowledgeFilters = hasKnowledgeAssetFilters(knowledgeStatusFocus, knowledgeFilter)
   const filteredPendingMemories = sortedMemories.filter((memory) => memory.status === 'pending')
   const canConfirmFilteredMemories = hasMemoryFilters && filteredPendingMemories.length > 0 && filteredPendingMemories.length < pendingMemories.length
   const canRejectFilteredMemories = (hasMemoryFilters || memoryReviewFocus !== 'all') && filteredPendingMemories.length > 0
-  const memoryEmptyMessage = memoryAssetEmptyMessage(memoryStatusFocus, normalizedMemoryFilter, t)
-  const knowledgeEmptyMessage = knowledgeAssetEmptyMessage(knowledgeStatusFocus, normalizedKnowledgeFilter, t)
-  const downloadableLocalModels = localModels.filter(isDownloadableLocalModel)
-  const plannedLocalCapabilities = localModels.filter((view) => !isDownloadableLocalModel(view))
+  const memoryEmptyMessage = memoryAssetEmptyMessage(memoryStatusFocus, memoryFilter, t)
+  const knowledgeEmptyMessage = knowledgeAssetEmptyMessage(knowledgeStatusFocus, knowledgeFilter, t)
+  const { downloadable: downloadableLocalModels, planned: plannedLocalCapabilities } = splitLocalModelViews(localModels)
 
   async function refresh() {
     const [memoryItems, documentItems, jobs, debug] = await Promise.all([
@@ -407,189 +382,35 @@ export function ContextPanel({ providers, section = 'all', focus }: ContextPanel
   async function runContextSelfTest() {
     if (selfTesting) return
     setSelfTesting(true)
-    const steps: SelfTestStep[] = []
-    const canary = `islemind_canary_${Date.now()}`
-    const primaryProvider = await getPrimaryConfiguredProvider()
-
-    function pushStep(step: SelfTestStep) {
-      steps.push(step)
-      setSelfTestResult({ ranAt: Date.now(), steps: [...steps] })
-    }
-
     try {
-      const knowledgeText = [
-        `IsleMind context self-test marker: ${canary}.`,
-        `The RAG answer for ${canary} is aurora-lantern.`,
-        'This text is intentionally local-only and should be retrievable by SQLite FTS or hybrid retrieval.',
-      ].join(' ')
-      const importResult = await importKnowledgePlainText(`Self test ${canary}`, knowledgeText, primaryProvider ?? undefined)
-      pushStep({
-        name: t('contextPanel.selfTest.knowledgeWrite'),
-        status: importResult.ok ? 'ok' : 'fail',
-        detail: importResult.message,
+      const result = await runContextSelfTestScenario({
+        settings,
+        primaryProvider: await getPrimaryConfiguredProvider(),
+        getTavilyApiKey,
+        t,
+        onStep: (step: ContextSelfTestStep) => setSelfTestResult((current) => ({
+          ranAt: current?.ranAt ?? Date.now(),
+          steps: [...(current?.steps ?? []), step],
+        })),
       })
-
-      const knowledgeHits = await searchKnowledge(`${canary} aurora-lantern`, 3)
-      pushStep({
-        name: t('contextPanel.selfTest.knowledgeFts'),
-        status: knowledgeHits.length ? 'ok' : 'fail',
-        detail: knowledgeHits.length
-          ? t('contextPanel.selfTest.hitFirst', { count: knowledgeHits.length, first: knowledgeHits[0]?.title ?? t('contextPanel.knowledgeChunk') })
-          : t('contextPanel.selfTest.knowledgeMiss'),
-      })
-
-      const hybridKnowledgeHits = await searchKnowledgeHybrid(`${canary} aurora-lantern`, {
-        limit: 3,
-        embeddingMode: settings.embeddingMode ?? 'hybrid',
-        localEmbeddingModelId: settings.localEmbeddingModelId,
-        localEmbeddingModelSource: settings.localEmbeddingModelSource,
-        ...(primaryProvider ? { provider: primaryProvider } : {}),
-      })
-      pushStep({
-        name: t('contextPanel.selfTest.knowledgeHybrid'),
-        status: hybridKnowledgeHits.length ? 'ok' : 'fail',
-        detail: hybridKnowledgeHits.length
-          ? t('contextPanel.selfTest.hitFirst', { count: hybridKnowledgeHits.length, first: hybridKnowledgeHits[0]?.title ?? t('contextPanel.knowledgeChunk') })
-          : t('contextPanel.selfTest.knowledgeMiss'),
-      })
-
-      const agenticKnowledgeHits = await searchKnowledgeAgenticIndexes(`${canary} aurora-lantern`, {
-        limit: 3,
-        techniques: ['raptor', 'graphrag', 'colbert'],
-      })
-      pushStep({
-        name: t('contextPanel.selfTest.knowledgeAgentic'),
-        status: agenticKnowledgeHits.length ? 'ok' : 'fail',
-        detail: agenticKnowledgeHits.length
-          ? t('contextPanel.selfTest.hitFirst', { count: agenticKnowledgeHits.length, first: agenticKnowledgeHits[0]?.title ?? t('contextPanel.knowledgeChunk') })
-          : t('contextPanel.selfTest.knowledgeMiss'),
-      })
-
-      const memoryContent = `User preference: ${canary} preferred answer = mint-echo`
-      await addMemory(memoryContent, undefined, 'active')
-      const memoryHits = await searchMemories(`${canary} mint-echo`, 3)
-      pushStep({
-        name: t('contextPanel.selfTest.memoryWriteSearch'),
-        status: memoryHits.length ? 'ok' : 'fail',
-        detail: memoryHits.length
-          ? t('contextPanel.selfTest.hitFirst', { count: memoryHits.length, first: memoryHits[0]?.excerpt ?? memoryHits[0]?.content ?? t('settings.memory') })
-          : t('contextPanel.selfTest.memoryMiss'),
-      })
-
-      const autoMemoryCanary = `autotest_${Date.now().toString(36)}`
-      const primaryModel = primaryProvider ? getPolicyPreferredProviderModel(primaryProvider, settings) : undefined
-      const extracted = await extractMemories(
-        `self-test-${canary}`,
-        [
-          {
-            id: `self-test-user-${canary}`,
-            role: 'user',
-            content: `My ${autoMemoryCanary} is velvet-river. Remember this fact for related questions.`,
-            timestamp: Date.now(),
-            status: 'done',
-          },
-          {
-            id: `self-test-assistant-${canary}`,
-            role: 'assistant',
-            content: 'I will reference this long-term fact when needed.',
-            timestamp: Date.now(),
-            status: 'done',
-          },
-        ],
-        primaryProvider ?? undefined,
-        primaryModel
-      )
-      const extractedHits = await searchMemories(`${autoMemoryCanary} velvet-river`, 5, ['pending', 'active'])
-      pushStep({
-        name: t('contextPanel.selfTest.autoMemory'),
-        status: extracted.length && extractedHits.length ? 'ok' : 'fail',
-        detail: extracted.length && extractedHits.length
-          ? t('contextPanel.selfTest.extractedHit', { count: extracted.length, first: extractedHits[0]?.excerpt ?? extracted[0] })
-          : t('contextPanel.selfTest.extractedMiss', { count: extracted.length, hits: extractedHits.length }),
-      })
-
-      const conversation: Conversation = {
-        id: `self-test-${canary}`,
-        title: 'Context self-test',
-        providerId: primaryProvider?.id ?? 'self-test',
-        model: primaryModel ?? 'self-test-model',
-        providerModelMode: 'manual',
-        systemPrompt: '',
-        temperature: 0.7,
-        maxTokens: 512,
-        messages: [],
-        createdAt: Date.now(),
-        updatedAt: Date.now(),
-      }
-      const message: Message = {
-        id: `self-test-message-${canary}`,
-        role: 'user',
-        content: `Use ${canary}, aurora-lantern, and mint-echo from local context.`,
-        timestamp: Date.now(),
-        status: 'done',
-      }
-      const context = await retrieveContext(conversation, message)
-      const memoryCount = context.sources.filter((source) => source.type === 'memory').length
-      const knowledgeCount = context.sources.filter((source) => source.type === 'knowledge').length
-      pushStep({
-        name: t('contextPanel.selfTest.chatContext'),
-        status: memoryCount > 0 && knowledgeCount > 0 ? 'ok' : 'fail',
-        detail: t('contextPanel.selfTest.contextHits', { total: context.sources.length, memories: memoryCount, knowledge: knowledgeCount }),
-      })
-
-      const tavilyKey = await getTavilyApiKey()
-      const searchProvider = resolveSearchProvider(settings)
-      if (searchProvider === 'off' || searchProvider === 'native') {
-        pushStep({
-          name: t('settings.webSearch'),
-          status: 'warn',
-          detail: searchProvider === 'native' ? t('contextPanel.selfTest.nativeSearchSkip') : t('contextPanel.selfTest.webSearchOff'),
-        })
-      } else if (searchProvider === 'tavily' && !tavilyKey?.trim()) {
-        pushStep({
-          name: t('contextPanel.selfTest.tavilySearch'),
-          status: 'warn',
-          detail: t('contextPanel.selfTest.tavilyMissingKey'),
-        })
-      } else {
-        try {
-          const webHits = await searchWeb(SEARCH_DIAGNOSTIC_QUERY, 3)
-          pushStep({
-            name: t('contextPanel.selfTest.webAdapter'),
-            status: webHits.length ? 'ok' : 'fail',
-            detail: webHits.length
-              ? t('contextPanel.selfTest.webHitFirst', { count: webHits.length, first: webHits[0]?.title ?? webHits[0]?.url ?? t('source.webSource') })
-              : t('contextPanel.selfTest.webNoResults'),
-          })
-        } catch (error) {
-          pushStep({
-            name: t('contextPanel.selfTest.tavilySearch'),
-            status: 'fail',
-            detail: error instanceof Error ? error.message : t('contextPanel.selfTest.tavilyFailed'),
-          })
-        }
-      }
-
-      const jobs = await listRagEmbeddingJobs(20)
-      pushStep({
-        name: t('contextPanel.selfTest.embeddingFallback'),
-        status: jobs.some((job) => job.status === 'running') ? 'warn' : 'ok',
-        detail: t('contextPanel.selfTest.embeddingJobs', { total: jobs.length, running: jobs.filter((job) => job.status === 'running').length, failed: jobs.filter((job) => job.status === 'error').length }),
-      })
-      const failed = steps.filter((step) => step.status === 'fail').length
-      const warnings = steps.filter((step) => step.status === 'warn').length
       dialog.notice({
-        title: failed ? t('contextPanel.selfTest.doneWithIssues') : t('contextPanel.selfTest.done'),
-        message: t('contextPanel.selfTest.summary', { ok: steps.filter((step) => step.status === 'ok').length, warn: warnings, fail: failed }),
-        tone: failed ? 'danger' : warnings ? 'amber' : 'mint',
+        title: result.fail ? t('contextPanel.selfTest.doneWithIssues') : t('contextPanel.selfTest.done'),
+        message: t('contextPanel.selfTest.summary', { ok: result.ok, warn: result.warn, fail: result.fail }),
+        tone: result.fail ? 'danger' : result.warn ? 'amber' : 'mint',
       })
       await refresh()
     } catch (error) {
-      pushStep({
+      setSelfTestResult((current) => ({
+        ranAt: current?.ranAt ?? Date.now(),
+        steps: [
+          ...(current?.steps ?? []),
+          {
         name: t('contextPanel.selfTest.exception'),
         status: 'fail',
         detail: error instanceof Error ? error.message : t('contextPanel.selfTest.failed'),
-      })
+          },
+        ],
+      }))
       dialog.notice({
         title: t('contextPanel.selfTest.doneWithIssues'),
         message: error instanceof Error ? error.message : t('contextPanel.selfTest.failed'),
@@ -718,32 +539,22 @@ export function ContextPanel({ providers, section = 'all', focus }: ContextPanel
   }
 
   const knowledgeImportControls = showKnowledge ? (
-    <>
-      <IslePressable
-        haptic
-        onPress={importFile}
-        disabled={importing}
-        style={{ marginTop: 12, minHeight: 54, ...primaryActionSurface(colors), alignItems: 'center', justifyContent: 'center', flexDirection: 'row', gap: 8, opacity: importing ? 0.65 : 1 }}
-      >
-        <Upload color={colors.ui.control.primaryForeground} size={18} />
-        <Text style={{ color: colors.ui.control.primaryForeground, fontSize: 14, fontWeight: '800' }}>{importing ? t('contextPanel.importing') : t('contextPanel.importKnowledgeFile')}</Text>
-      </IslePressable>
-
-      <IsleSection title={t('contextPanel.pasteTextKnowledge')} material="raised" style={{ marginTop: 12 }}>
-        <IsleField label={t('contextPanel.knowledgeTitle')} inputProps={{ value: plainTitle, onChangeText: setPlainTitle, placeholder: t('contextPanel.knowledgeTitle') }} />
-        <IsleField label={t('contextPanel.body')} style={{ marginTop: 10 }} inputProps={{ value: plainText, onChangeText: setPlainText, multiline: true, placeholder: t('contextPanel.body'), style: { minHeight: 96, maxHeight: 180 } }} />
-        <IslePressable haptic onPress={importPlainText} disabled={importing || !plainText.trim()} style={{ ...fullWidthActionStyle, ...primaryActionSurface(colors), marginTop: 10, opacity: importing || !plainText.trim() ? 0.45 : 1 }}>
-          <Text style={{ color: colors.ui.control.primaryForeground, fontSize: 14, fontWeight: '800' }}>{t('contextPanel.importPastedText')}</Text>
-        </IslePressable>
-      </IsleSection>
-    </>
+    <KnowledgeImportSection
+      importing={importing}
+      plainTitle={plainTitle}
+      plainText={plainText}
+      onPlainTitleChange={setPlainTitle}
+      onPlainTextChange={setPlainText}
+      onImportFile={() => void importFile()}
+      onImportPlainText={() => void importPlainText()}
+    />
   ) : null
 
   return (
     <View style={{ paddingBottom: showKnowledge ? 96 : 0 }}>
       {showMemory ? (
         <IsleToggle
-          icon={<Brain color={colors.text} size={18} />}
+          icon={<AppIcon name="reasoning" color={colors.text} size={18} />}
           title={t('settings.longMemory')}
           active={!!settings.memoryEnabled}
           onPress={() => updateSettings({ memoryEnabled: !settings.memoryEnabled })}
@@ -751,7 +562,7 @@ export function ContextPanel({ providers, section = 'all', focus }: ContextPanel
       ) : null}
       {showKnowledge ? (
         <IsleToggle
-          icon={<BookOpen color={colors.text} size={18} />}
+          icon={<AppIcon name="knowledge" color={colors.text} size={18} />}
           title={t('settings.localKnowledge')}
           active={!!settings.knowledgeEnabled}
           onPress={() => updateSettings({ knowledgeEnabled: !settings.knowledgeEnabled })}
@@ -759,7 +570,7 @@ export function ContextPanel({ providers, section = 'all', focus }: ContextPanel
       ) : null}
       {showContext ? (
         <IsleToggle
-          icon={<Globe2 color={colors.text} size={18} />}
+          icon={<AppIcon name="globe" color={colors.text} size={18} />}
           title={t('settings.webSearch')}
           active={!!settings.webSearchEnabled}
           onPress={() => updateSettings({ webSearchEnabled: !settings.webSearchEnabled })}
@@ -832,7 +643,7 @@ export function ContextPanel({ providers, section = 'all', focus }: ContextPanel
         </View>
         <View style={{ marginTop: 14 }}>
           <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
-            <HardDrive color={colors.text} size={17} />
+            <AppIcon name="device" color={colors.text} size={17} />
             <Text style={{ color: colors.text, fontSize: 15, fontWeight: '900', flex: 1, minWidth: 0 }}>{t('contextPanel.localModel.title')}</Text>
           </View>
           <Text style={{ color: colors.textTertiary, fontSize: 11, lineHeight: 16, marginTop: 4 }}>
@@ -906,71 +717,27 @@ export function ContextPanel({ providers, section = 'all', focus }: ContextPanel
           </IslePressable>
         </View>
         <IslePressable
-        haptic
-        onPress={async () => {
-          await clearRagQueryCaches()
-          dialog.notice({ title: t('contextPanel.cacheCleared'), message: t('contextPanel.cacheClearedMessage'), tone: 'mint' })
-        }}
+          haptic
+          onPress={async () => {
+            await clearRagQueryCaches()
+            dialog.notice({ title: t('contextPanel.cacheCleared'), message: t('contextPanel.cacheClearedMessage'), tone: 'mint' })
+          }}
           style={{ ...fullWidthActionStyle, ...secondaryActionSurface(colors), marginTop: 12 }}
         >
           <Text style={{ color: colors.textSecondary, fontSize: 13, fontWeight: '800' }}>{t('contextPanel.clearRagCache')}</Text>
         </IslePressable>
-        <IslePressable
-          haptic
-          onPress={() => void runContextSelfTest()}
-          disabled={selfTesting}
-          accessibilityLabel={t('contextPanel.runSelfTest')}
-          testID="context-self-test-button"
-          style={{ ...fullWidthActionStyle, ...primaryActionSurface(colors), marginTop: 10, opacity: selfTesting ? 0.65 : 1 }}
-        >
-          <Text style={{ color: colors.ui.control.primaryForeground, fontSize: 13, fontWeight: '900' }}>{selfTesting ? t('contextPanel.selfTesting') : t('contextPanel.runSelfTest')}</Text>
-        </IslePressable>
-        {selfTestResult ? (
-          <View testID="context-self-test-result" style={{ marginTop: 12, gap: 8 }}>
-            <Text style={{ color: colors.textTertiary, fontSize: 11, fontWeight: '800' }}>
-              {t('contextPanel.lastSelfTest', { time: new Date(selfTestResult.ranAt).toLocaleTimeString() })}
-            </Text>
-            {selfTestResult.steps.map((step, index) => (
-              <AnimatedDiagnosticsRow key={`${step.name}-${index}`} index={index}>
-                <SelfTestRow step={step} />
-              </AnimatedDiagnosticsRow>
-            ))}
-          </View>
-        ) : null}
-        <View style={{ marginTop: 16 }}>
-          <Text style={{ color: colors.text, fontSize: 15, fontWeight: '900' }}>{t('contextPanel.ragDebug.title')}</Text>
-          <Text style={{ color: colors.textTertiary, fontSize: 11, lineHeight: 16, marginTop: 4 }}>{t('contextPanel.ragDebug.subtitle')}</Text>
-          <View style={{ flexDirection: 'row', gap: 8, flexWrap: 'wrap', marginTop: 10 }}>
-            <DebugStat label={t('contextPanel.ragDebug.logs')} value={String(ragLogs.length)} />
-            <DebugStat label={t('contextPanel.ragDebug.indexJobs')} value={String(indexingJobs.length)} />
-            <DebugStat label={t('contextPanel.ragDebug.failedJobs')} value={String(indexingJobs.filter((job) => job.status === 'error').length)} />
-          </View>
-          <IslePressable
-            haptic
-            onPress={() => void runRagEvaluation()}
-            disabled={ragEvaluating}
-            accessibilityLabel={t('contextPanel.ragDebug.runEvaluation')}
-            testID="context-rag-evaluation-button"
-            style={{ ...fullWidthActionStyle, ...primaryActionSurface(colors), marginTop: 10, opacity: ragEvaluating ? 0.65 : 1 }}
-          >
-            <Text style={{ color: colors.ui.control.primaryForeground, fontSize: 13, fontWeight: '900' }}>{ragEvaluating ? t('contextPanel.ragDebug.evaluating') : t('contextPanel.ragDebug.runEvaluation')}</Text>
-          </IslePressable>
-          {ragEvaluation ? (
-            <AnimatedDiagnosticsRow index={0}>
-              <RagEvaluationCard run={ragEvaluation} />
-            </AnimatedDiagnosticsRow>
-          ) : null}
-          {ragLogs.slice(0, 3).map((log, index) => (
-            <AnimatedDiagnosticsRow key={log.id} index={index + 1}>
-              <RagLogRow log={log} />
-            </AnimatedDiagnosticsRow>
-          ))}
-          {indexingJobs.slice(0, 4).map((job, index) => (
-            <AnimatedDiagnosticsRow key={job.id} index={index + 4}>
-              <IndexingJobRow job={job} />
-            </AnimatedDiagnosticsRow>
-          ))}
-        </View>
+        <ContextDiagnosticsSection
+          selfTesting={selfTesting}
+          selfTestResult={selfTestResult}
+          ragEvaluating={ragEvaluating}
+          ragEvaluation={ragEvaluation}
+          ragLogs={ragLogs}
+          indexingJobs={indexingJobs}
+          onRunSelfTest={() => void runContextSelfTest()}
+          onRunRagEvaluation={() => void runRagEvaluation()}
+          primaryActionStyle={{ ...fullWidthActionStyle, ...primaryActionSurface(colors) }}
+          assetCardSurface={(borderColor) => assetCardSurface(colors, borderColor)}
+        />
       </IsleSection> : null}
 
       {showContext ? <IsleSection title={t('contextPanel.searchApi')} material="raised" style={{ marginTop: 12 }}>
@@ -995,213 +762,61 @@ export function ContextPanel({ providers, section = 'all', focus }: ContextPanel
           await refresh()
         }}
       >
-        {memories.length ? (
-          <View testID="memory-lifecycle-summary" style={{ flexDirection: 'row', gap: 8, flexWrap: 'wrap', marginBottom: 10 }}>
-            <DebugStat label={t('contextPanel.memoryPendingCount')} value={String(memoryStatusCounts.pending)} />
-            <DebugStat label={t('contextPanel.memoryActiveCount')} value={String(memoryStatusCounts.active)} />
-            <DebugStat label={t('contextPanel.memoryDisabledCount')} value={String(memoryStatusCounts.disabled)} />
-          </View>
-        ) : null}
-        {memoryReviewSummary.pendingCount ? (
-          <View testID="memory-review-summary" style={{ marginBottom: 10 }}>
-            <Text style={{ color: colors.textTertiary, fontSize: 11, fontWeight: '900', marginBottom: 6 }}>
-              {t('contextPanel.memoryReviewSummary')}
-            </Text>
-            <View style={{ flexDirection: 'row', gap: 8, flexWrap: 'wrap' }}>
-              <DebugStat label={t('contextPanel.memoryReviewModel')} value={String(memoryReviewSummary.modelCount)} />
-              <DebugStat label={t('contextPanel.memoryReviewDeterministic')} value={String(memoryReviewSummary.deterministicCount)} />
-              <DebugStat label={t('contextPanel.memoryReviewImported')} value={String(memoryReviewSummary.importedCount)} />
-              <DebugStat label={t('contextPanel.memoryReviewManual')} value={String(memoryReviewSummary.manualCount)} />
-              <DebugStat label={t('contextPanel.memoryReviewLegacy')} value={String(memoryReviewSummary.legacyCount)} />
-              <DebugStat label={t('contextPanel.memoryReviewLowConfidence')} value={String(memoryReviewSummary.lowConfidenceCount)} />
-              <DebugStat
-                label={t('contextPanel.memoryReviewAverageConfidence')}
-                value={memoryReviewSummary.averageConfidence === undefined ? '-' : `${Math.round(memoryReviewSummary.averageConfidence * 100)}%`}
-              />
-            </View>
-          </View>
-        ) : null}
-        {memories.length ? (
-          <View testID="memory-status-focus" style={{ flexDirection: 'row', gap: 8, flexWrap: 'wrap', marginBottom: 10 }}>
-            {([
-              ['all', t('contextPanel.statusFocusAll', { count: memories.length })],
-              ['pending', t('contextPanel.statusFocusPending', { count: memoryStatusCounts.pending })],
-              ['active', t('contextPanel.statusFocusActive', { count: memoryStatusCounts.active })],
-              ['disabled', t('contextPanel.statusFocusDisabled', { count: memoryStatusCounts.disabled })],
-            ] satisfies Array<[MemoryStatusFocus, string]>).map(([status, label]) => (
-              <IslePressable
-                key={status}
-                haptic
-                onPress={() => {
-                  setMemoryStatusFocus(status)
-                  setMemoryReviewFocus('all')
-                }}
-                style={contextChipPressableStyle}
-              >
-                <IsleChip active={memoryStatusFocus === status}>{label}</IsleChip>
-              </IslePressable>
-            ))}
-          </View>
-        ) : null}
-        {memories.length ? (
-          <IsleField
-            label={t('contextPanel.memoryFilter')}
-            style={{ marginBottom: 10 }}
-            inputProps={{
-              value: memoryFilter,
-              onChangeText: setMemoryFilter,
-              autoCapitalize: 'none',
-              autoCorrect: false,
-              placeholder: t('contextPanel.memoryFilterPlaceholder'),
-            }}
-          />
-        ) : null}
-        {memories.length ? (
-          <View testID="memory-sort-mode" style={{ marginBottom: 10 }}>
-            <Text style={{ color: colors.textTertiary, fontSize: 11, fontWeight: '900', marginBottom: 6 }}>{t('contextPanel.memorySort')}</Text>
-            <View style={{ flexDirection: 'row', gap: 8, flexWrap: 'wrap' }}>
-              {([
-                ['updated', t('contextPanel.memorySortUpdated')],
-                ['created', t('contextPanel.memorySortCreated')],
-                ['lastUsed', t('contextPanel.memorySortLastUsed')],
-              ] satisfies Array<[MemorySortMode, string]>).map(([mode, label]) => (
-                <IslePressable key={mode} haptic onPress={() => setMemorySortMode(mode)} style={contextChipPressableStyle}>
-                  <IsleChip active={memorySortMode === mode}>{label}</IsleChip>
-                </IslePressable>
-              ))}
-            </View>
-          </View>
-        ) : null}
-        {hasMemoryFilters ? (
-          <View testID="memory-filter-summary" style={{ flexDirection: 'row', alignItems: 'center', gap: 10, marginBottom: 10 }}>
-            <Text style={{ color: colors.textTertiary, fontSize: 11, lineHeight: 16, flex: 1, minWidth: 0 }}>
-              {t('contextPanel.memoryFilterSummary', { count: sortedMemories.length, total: memories.length })}
-            </Text>
-            <IslePressable
-              haptic
-              onPress={() => {
-                setMemoryFilter('')
-                setMemoryStatusFocus('all')
-                setMemoryReviewFocus('all')
-                setShowAllMemories(false)
-              }}
-              accessibilityLabel={t('contextPanel.clearMemoryFilters')}
-              style={{ ...itemRowActionStyle, ...rowActionSurface(colors) }}
-            >
-              <Text style={{ color: colors.textSecondary, fontSize: 12, fontWeight: '900' }}>{t('contextPanel.clearMemoryFilters')}</Text>
-            </IslePressable>
-          </View>
-        ) : null}
-        {memoryReviewSummary.pendingCount ? (
-          <View testID="memory-review-focus" style={{ marginBottom: 10 }}>
-            <Text style={{ color: colors.textTertiary, fontSize: 11, fontWeight: '900', marginBottom: 6 }}>{t('contextPanel.memoryReviewQueue')}</Text>
-            <View style={{ flexDirection: 'row', gap: 8, flexWrap: 'wrap' }}>
-              {([
-                ['all', t('contextPanel.memoryReviewAll', { count: pendingMemories.length })],
-                ...memoryReviewSourceFocuses.map((sourceKind) => [
-                  sourceKind,
-                  t(memoryReviewFocusKey(sourceKind), { count: filterPendingMemoriesForReview(pendingMemories, sourceKind).length }),
-                ] satisfies [MemoryReviewQueueFocus, string]),
-                ['lowConfidence', t('contextPanel.memoryReviewLowConfidenceFilter', { count: filterPendingMemoriesForReview(pendingMemories, 'lowConfidence').length })],
-              ] satisfies Array<[MemoryReviewQueueFocus, string]>).map(([reviewFocus, label]) => (
-                <IslePressable
-                  key={reviewFocus}
-                  haptic
-                  onPress={() => {
-                    setMemoryStatusFocus('pending')
-                    setMemoryReviewFocus(reviewFocus)
-                    setShowAllMemories(true)
-                  }}
-                  style={contextChipPressableStyle}
-                >
-                  <IsleChip active={memoryStatusFocus === 'pending' && memoryReviewFocus === reviewFocus}>{label}</IsleChip>
-                </IslePressable>
-              ))}
-            </View>
-          </View>
-        ) : null}
-        {canConfirmFilteredMemories ? (
-          <IslePressable
-            haptic
-            onPress={() => void confirmPendingMemories(filteredPendingMemories, true)}
-            disabled={confirmingMemories}
-            accessibilityLabel={t('contextPanel.confirmFilteredPendingMemoriesTitle', { count: filteredPendingMemories.length })}
-            style={{ ...fullWidthActionStyle, ...secondaryActionSurface(colors), marginBottom: 10, opacity: confirmingMemories ? 0.65 : 1 }}
-          >
-            <Text style={{ color: colors.textSecondary, fontSize: 13, fontWeight: '900' }}>
-              {confirmingMemories ? t('contextPanel.confirmingPendingMemories') : t('contextPanel.confirmFilteredPendingMemories', { count: filteredPendingMemories.length })}
-            </Text>
-          </IslePressable>
-        ) : null}
-        {canRejectFilteredMemories ? (
-          <IslePressable
-            haptic
-            onPress={() => void rejectPendingMemories(filteredPendingMemories)}
-            disabled={confirmingMemories}
-            accessibilityLabel={t('contextPanel.rejectFilteredPendingMemoriesTitle', { count: filteredPendingMemories.length })}
-            style={{ ...fullWidthActionStyle, ...secondaryActionSurface(colors), marginBottom: 10, borderColor: colors.ui.tone.danger.border, opacity: confirmingMemories ? 0.65 : 1 }}
-          >
-            <Text style={{ color: colors.ui.tone.danger.foreground, fontSize: 13, fontWeight: '900' }}>
-              {confirmingMemories ? t('contextPanel.confirmingPendingMemories') : t('contextPanel.rejectFilteredPendingMemories', { count: filteredPendingMemories.length })}
-            </Text>
-          </IslePressable>
-        ) : null}
-        {pendingMemories.length ? (
-          <IslePressable
-            haptic
-            onPress={() => void confirmPendingMemories()}
-            disabled={confirmingMemories}
-            accessibilityLabel={t('contextPanel.confirmPendingMemoriesTitle', { count: pendingMemories.length })}
-            style={{ ...fullWidthActionStyle, ...primaryActionSurface(colors), marginBottom: 10, opacity: confirmingMemories ? 0.65 : 1 }}
-          >
-            <Text style={{ color: colors.ui.control.primaryForeground, fontSize: 13, fontWeight: '900' }}>
-              {confirmingMemories ? t('contextPanel.confirmingPendingMemories') : t('contextPanel.confirmPendingMemories', { count: pendingMemories.length })}
-            </Text>
-          </IslePressable>
-        ) : null}
-        {filteredMemories.length > memoryPreviewLimit ? (
-          <Text testID="memory-list-showing-count" style={{ color: colors.textTertiary, fontSize: 11, lineHeight: 16, marginBottom: 8 }}>
-            {t('contextPanel.memoryListShowing', { shown: visibleMemories.length, total: filteredMemories.length })}
-          </Text>
-        ) : null}
-        {hasMemoryFilters && !filteredMemories.length ? (
-          <Text testID="memory-filter-empty" style={{ color: colors.textSecondary, fontSize: 13, lineHeight: 18, marginBottom: 8 }}>
-            {memoryEmptyMessage}
-          </Text>
-        ) : null}
-        {visibleMemories.map((memory) => (
-          <ItemRow
-            key={memory.id}
-            title={memory.status === 'pending' ? t('contextPanel.pendingMemory') : memory.status === 'active' ? t('settings.longMemory') : t('contextPanel.disabledMemory')}
-            description={memory.content}
-            meta={formatMemoryMeta(memory, t)}
-            deleteName={memory.content}
-            trailing={memory.status === 'pending' ? t('contextPanel.confirmMemory') : memory.status === 'disabled' ? t('contextPanel.restoreMemory') : t('contextPanel.disableMemory')}
-            onToggle={async () => {
-              await updateMemoryStatus(memory.id, memory.status === 'active' ? 'disabled' : 'active')
-              await refresh()
-            }}
-            onDelete={async () => {
-              await deleteMemory(memory.id)
-              await refresh()
-            }}
-          />
-        ))}
-        {filteredMemories.length > memoryPreviewLimit ? (
-          <IslePressable
-            haptic
-            onPress={() => setShowAllMemories((current) => !current)}
-            accessibilityLabel={showAllMemories ? t('contextPanel.showFewerMemories') : t('contextPanel.showAllMemories', { count: filteredMemories.length })}
-            testID="memory-list-toggle"
-            style={{ ...fullWidthActionStyle, ...secondaryActionSurface(colors), marginTop: 10 }}
-          >
-            <Text style={{ color: colors.textSecondary, fontSize: 13, fontWeight: '800' }}>
-              {showAllMemories
-                ? t('contextPanel.showFewerMemories')
-                : t('contextPanel.showMoreMemories', { count: filteredMemories.length - visibleMemories.length })}
-            </Text>
-          </IslePressable>
-        ) : null}
+        <MemoryReviewSection
+          memories={memories}
+          pendingMemories={pendingMemories}
+          filteredMemories={filteredMemories}
+          filteredPendingMemories={filteredPendingMemories}
+          visibleMemories={visibleMemories}
+          memoryStatusCounts={memoryStatusCounts}
+          memoryReviewSummary={memoryReviewSummary}
+          memoryStatusFocus={memoryStatusFocus}
+          memoryReviewFocus={memoryReviewFocus}
+          memorySortMode={memorySortMode}
+          memoryFilter={memoryFilter}
+          hasMemoryFilters={hasMemoryFilters}
+          canConfirmFilteredMemories={canConfirmFilteredMemories}
+          canRejectFilteredMemories={canRejectFilteredMemories}
+          confirmingMemories={confirmingMemories}
+          memoryPreviewLimit={memoryPreviewLimit}
+          showAllMemories={showAllMemories}
+          contextChipPressableStyle={contextChipPressableStyle}
+          itemRowActionStyle={itemRowActionStyle}
+          fullWidthActionStyle={fullWidthActionStyle}
+          rowActionSurface={() => rowActionSurface(colors)}
+          primaryActionSurface={() => primaryActionSurface(colors)}
+          secondaryActionSurface={() => secondaryActionSurface(colors)}
+          memoryEmptyMessage={memoryEmptyMessage}
+          onSetMemoryStatusFocus={setMemoryStatusFocus}
+          onSetMemoryReviewFocus={setMemoryReviewFocus}
+          onSetMemorySortMode={setMemorySortMode}
+          onSetMemoryFilter={setMemoryFilter}
+          onResetMemoryFilters={resetMemoryAssetView}
+          onSetShowAllMemories={setShowAllMemories}
+          onConfirmPendingMemories={(targetMemories, filtered) => void confirmPendingMemories(targetMemories, filtered)}
+          onRejectPendingMemories={(targetMemories) => void rejectPendingMemories(targetMemories)}
+          onToggleMemory={async (memory) => {
+            await updateMemoryStatus(memory.id, memory.status === 'active' ? 'disabled' : 'active')
+            await refresh()
+          }}
+          onDeleteMemory={async (memory) => {
+            await deleteMemory(memory.id)
+            await refresh()
+          }}
+          renderDebugStat={(label, value) => <DebugStat label={label} value={value} />}
+          renderItemRow={({ key, title, description, meta, deleteName, trailing, onToggle, onDelete }) => (
+            <ItemRow
+              key={key}
+              title={title}
+              description={description}
+              meta={meta}
+              deleteName={deleteName}
+              trailing={trailing}
+              onToggle={onToggle}
+              onDelete={onDelete}
+            />
+          )}
+        />
       </ContextList> : null}
 
       {showKnowledge ? <ContextList
@@ -1391,33 +1006,14 @@ function ContextList({ title, empty, children, onClear }: { title: string; empty
         <IslePressable
           onPress={confirmClear}
           accessibilityLabel={t('contextPanel.clearTitle', { title })}
-          style={{ width: 44, height: 44, borderRadius: colors.ui.radius.controlLarge, alignItems: 'center', justifyContent: 'center', backgroundColor: colors.ui.tone.danger.background, borderWidth: 1, borderColor: colors.ui.tone.danger.border }}
+          style={{ width: 44, height: 44, borderRadius: colors.ui.radius.controlLarge, alignItems: 'center', justifyContent: 'center', backgroundColor: colors.ui.tone.danger.background, borderWidth: colors.ui.cartoon ? 1 : StyleSheet.hairlineWidth, borderColor: colors.ui.tone.danger.border }}
         >
-          <Trash2 color={colors.ui.tone.danger.foreground} size={15} />
+          <AppIcon name="delete" color={colors.ui.tone.danger.foreground} size={15} />
         </IslePressable>
       </View>
       {children || <Text style={{ color: colors.textSecondary, fontSize: 13 }}>{empty}</Text>}
     </View>
   )
-}
-
-function AnimatedDiagnosticsRow({ index, children }: { index: number; children: ReactNode }) {
-  const motion = useMotionPreference()
-  return (
-    <MotiView
-      from={motion === 'full' ? { opacity: 0, translateY: 8 } : { opacity: 0 }}
-      animate={{ opacity: 1, translateY: 0 }}
-      transition={motion === 'full'
-        ? { type: 'spring', ...motionTokens.spring.gentle, delay: Math.min(index * 22, 130) }
-        : { type: 'timing', duration: motionTokens.duration.fast }}
-    >
-      {children}
-    </MotiView>
-  )
-}
-
-function isDownloadableLocalModel(view: LocalEmbeddingModelView): boolean {
-  return view.model.files.length > 0 && view.model.sizeBytes > 0
 }
 
 function LocalModelRow({ view, busy, progress, onDownload, onDetails, onEnable, onDelete }: {
@@ -1432,7 +1028,7 @@ function LocalModelRow({ view, busy, progress, onDownload, onDetails, onEnable, 
   const { colors } = useAppTheme()
   const { t } = useTranslation()
   const canEnable = view.source !== 'none'
-  const downloadable = view.model.files.length > 0 && view.model.sizeBytes > 0
+  const downloadable = isDownloadableLocalModel(view)
   const modelMeta = [
     capabilityLabel(view.model.capability ?? 'embedding', t),
     view.model.language,
@@ -1466,7 +1062,7 @@ function LocalModelRow({ view, busy, progress, onDownload, onDetails, onEnable, 
     <View style={{ padding: 12, ...assetCardSurface(colors, view.active ? colors.ui.control.primaryBorder : colors.material.stroke) }}>
       <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
         <View style={{ width: 34, height: 34, borderRadius: colors.ui.radius.controlMiddle, alignItems: 'center', justifyContent: 'center', backgroundColor: view.active ? colors.ui.control.primaryBackground : colors.ui.icon.accentBackground }}>
-          {view.active ? <Check color={colors.ui.control.primaryForeground} size={16} /> : <HardDrive color={colors.textTertiary} size={16} />}
+          {view.active ? <AppIcon name="check" color={colors.ui.control.primaryForeground} size={16} /> : <AppIcon name="device" color={colors.textTertiary} size={16} />}
         </View>
         <View style={{ flex: 1, minWidth: 0 }}>
           <Text numberOfLines={1} style={{ color: colors.text, fontSize: 13, fontWeight: '900' }}>{view.model.name}</Text>
@@ -1498,7 +1094,7 @@ function LocalModelRow({ view, busy, progress, onDownload, onDetails, onEnable, 
       <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginTop: 10 }}>
         {!view.downloaded && !view.bundled && downloadable ? (
           <IslePressable haptic disabled={busy} onPress={onDownload} style={{ ...localModelActionStyle, ...primaryActionSurface(colors), flexDirection: 'row', gap: 6, opacity: busy ? 0.65 : 1 }}>
-            <Download color={colors.ui.control.primaryForeground} size={13} />
+            <AppIcon name="download" color={colors.ui.control.primaryForeground} size={13} />
             <Text style={{ color: colors.ui.control.primaryForeground, fontSize: 12, fontWeight: '900' }}>{busy && progress ? `${progress.percent}%` : busy ? t('contextPanel.localModel.downloading') : t('contextPanel.localModel.download')}</Text>
           </IslePressable>
         ) : null}
@@ -1538,10 +1134,10 @@ function LocalCapabilityRow({ view, settings, onDetails }: {
     view.model.maxTokens ? t('contextPanel.localModel.maxTokens', { count: view.model.maxTokens }) : '',
   ].filter(Boolean).join(' · ')
   return (
-    <View style={{ padding: 12, ...assetCardSurface(colors, active ? colors.material.stroke : colors.ui.tone.warning.border) }}>
+    <View style={{ padding: 12, ...assetCardSurface(colors, active ? colors.ui.control.primaryBorder : colors.ui.tone.warning.border) }}>
       <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
         <View style={{ width: 34, height: 34, borderRadius: colors.ui.radius.controlMiddle, alignItems: 'center', justifyContent: 'center', backgroundColor: active ? colors.ui.control.primaryBackground : colors.ui.tone.warning.background }}>
-          {active ? <Check color={colors.ui.control.primaryForeground} size={16} /> : <HardDrive color={colors.ui.tone.warning.foreground} size={16} />}
+          {active ? <AppIcon name="check" color={colors.ui.control.primaryForeground} size={16} /> : <AppIcon name="device" color={colors.ui.tone.warning.foreground} size={16} />}
         </View>
         <View style={{ flex: 1, minWidth: 0 }}>
           <Text numberOfLines={1} style={{ color: colors.text, fontSize: 13, fontWeight: '900' }}>{view.model.name}</Text>
@@ -1567,147 +1163,6 @@ function LocalCapabilityRow({ view, settings, onDetails }: {
       </View>
     </View>
   )
-}
-
-function capabilityLabel(capability: LocalRagModelCapability, t: TFunction): string {
-  return t(`contextPanel.localModel.capabilities.${capability}`)
-}
-
-function localCapabilityEnabled(capability: LocalRagModelCapability, settings: Settings): boolean {
-  switch (capability) {
-    case 'reranker':
-      return settings.ragCrossEncoderEnabled !== false
-    case 'colbert':
-      return settings.ragColbertEnabled !== false
-    case 'compressor':
-      return settings.ragLlmlinguaEnabled !== false
-    case 'embedding':
-      return (settings.embeddingMode ?? 'hybrid') !== 'provider'
-  }
-}
-
-function sortMemories(memories: MemoryItem[], mode: MemorySortMode): MemoryItem[] {
-  return [...memories].sort((left, right) => {
-    if (mode === 'created') return right.createdAt - left.createdAt
-    if (mode === 'lastUsed') return (right.lastHitAt ?? 0) - (left.lastHitAt ?? 0)
-    return right.updatedAt - left.updatedAt
-  })
-}
-
-function sortKnowledgeDocuments(documents: KnowledgeDocument[], mode: KnowledgeSortMode): KnowledgeDocument[] {
-  return [...documents].sort((left, right) => {
-    if (mode === 'title') return left.title.localeCompare(right.title)
-    if (mode === 'chunks') return right.chunkCount - left.chunkCount
-    if (mode === 'needsReview') return knowledgeReviewWeight(right) - knowledgeReviewWeight(left) || right.updatedAt - left.updatedAt
-    return right.updatedAt - left.updatedAt
-  })
-}
-
-function knowledgeReviewWeight(document: KnowledgeDocument): number {
-  if (document.status === 'error') return 3
-  if (document.status === 'ready' && document.chunkCount <= 0) return 2
-  if (document.status === 'extracting') return 1
-  return 0
-}
-
-function memoryAssetEmptyMessage(focus: MemoryStatusFocus, normalizedFilter: string, t: TFunction): string {
-  if (normalizedFilter || focus === 'all') return t('contextPanel.noMemoryMatches')
-  if (focus === 'pending') return t('contextPanel.noPendingMemories')
-  if (focus === 'active') return t('contextPanel.noActiveMemories')
-  return t('contextPanel.noDisabledMemories')
-}
-
-function knowledgeAssetEmptyMessage(focus: KnowledgeStatusFocus, normalizedFilter: string, t: TFunction): string {
-  if (normalizedFilter || focus === 'all') return t('contextPanel.noKnowledgeMatches')
-  if (focus === 'ready') return t('contextPanel.noReadyKnowledge')
-  if (focus === 'extracting') return t('contextPanel.noIndexingKnowledge')
-  if (focus === 'error') return t('contextPanel.noFailedKnowledge')
-  return t('contextPanel.noEmptyKnowledge')
-}
-
-function formatKnowledgeMeta(document: KnowledgeDocument, t: TFunction): string {
-  const status = document.status === 'ready'
-    ? document.chunkCount > 0
-      ? t('contextPanel.knowledgeStatusReady')
-      : t('contextPanel.knowledgeStatusEmpty')
-    : document.status === 'extracting'
-      ? t('contextPanel.knowledgeStatusIndexing')
-      : t('contextPanel.knowledgeStatusFailed')
-  const updated = t('contextPanel.knowledgeUpdatedAt', { time: formatMemoryTime(document.updatedAt) })
-  const source = document.sourceUri
-    ? t('contextPanel.knowledgeSource', { source: shortenKnowledgeSource(document.sourceUri) })
-    : ''
-  const error = document.status === 'error' && document.error
-    ? t('contextPanel.knowledgeError', { error: document.error })
-    : ''
-  return [status, updated, source, error].filter(Boolean).join(' · ')
-}
-
-function shortenKnowledgeSource(source: string): string {
-  if (source.length <= 48) return source
-  return `${source.slice(0, 24)}...${source.slice(-18)}`
-}
-
-function formatMemoryMeta(memory: MemoryItem, t: TFunction): string {
-  const origin = memory.conversationId
-    ? t('contextPanel.memorySourceConversation', { id: memory.conversationId.slice(0, 8) })
-    : ''
-  const sourceKind = t(memorySourceKindKey(memory.sourceKind))
-  const confidence = typeof memory.confidence === 'number'
-    ? t('contextPanel.memoryConfidence', { confidence: Math.round(Math.max(0, Math.min(1, memory.confidence)) * 100) })
-    : ''
-  const sourceDetail = memory.sourceDetail
-    ? t('contextPanel.memorySourceDetail', { detail: memory.sourceDetail })
-    : ''
-  const created = t('contextPanel.memoryCreatedAt', { time: formatMemoryTime(memory.createdAt) })
-  const used = memory.lastHitAt
-    ? t('contextPanel.memoryLastUsedAt', { time: formatMemoryTime(memory.lastHitAt) })
-    : t('contextPanel.memoryNeverUsed')
-  const updated = Math.abs(memory.updatedAt - memory.createdAt) > 1000
-    ? t('contextPanel.memoryUpdatedAt', { time: formatMemoryTime(memory.updatedAt) })
-    : ''
-  return [origin, sourceKind, confidence, sourceDetail, created, used, updated].filter(Boolean).join(' · ')
-}
-
-function memorySourceKindKey(sourceKind: MemoryItem['sourceKind']): string {
-  switch (sourceKind) {
-    case 'manual':
-      return 'contextPanel.memorySourceManual'
-    case 'deterministic':
-      return 'contextPanel.memorySourceDeterministic'
-    case 'model':
-      return 'contextPanel.memorySourceModel'
-    case 'imported':
-      return 'contextPanel.memorySourceImported'
-    case 'legacy':
-    default:
-      return 'contextPanel.memorySourceLegacy'
-  }
-}
-
-function memoryReviewFocusKey(focus: MemorySourceKind): string {
-  switch (focus) {
-    case 'manual':
-      return 'contextPanel.memoryReviewManualFilter'
-    case 'deterministic':
-      return 'contextPanel.memoryReviewDeterministicFilter'
-    case 'model':
-      return 'contextPanel.memoryReviewModelFilter'
-    case 'imported':
-      return 'contextPanel.memoryReviewImportedFilter'
-    case 'legacy':
-    default:
-      return 'contextPanel.memoryReviewLegacyFilter'
-  }
-}
-
-function formatMemoryTime(value?: number): string {
-  if (!value) return '-'
-  try {
-    return new Date(value).toLocaleString()
-  } catch {
-    return '-'
-  }
 }
 
 interface ItemRowProps {
@@ -1741,7 +1196,7 @@ function ItemRow({ title, description, meta, deleteName, trailing, onToggle, onD
       <Text style={{ color: colors.text, fontSize: 14, fontWeight: '800' }}>{title}</Text>
       <Text numberOfLines={3} style={{ color: colors.textSecondary, fontSize: 12, lineHeight: 17, marginTop: 4 }}>{description}</Text>
       {meta ? <Text numberOfLines={2} style={{ color: colors.textTertiary, fontSize: 11, lineHeight: 16, marginTop: 6 }}>{meta}</Text> : null}
-      <View style={{ flexDirection: 'row', gap: 8, marginTop: 10 }}>
+      <View style={{ flexDirection: 'row', gap: 8, marginTop: 10, flexWrap: 'wrap' }}>
         {trailing && onToggle ? (
           <IslePressable onPress={() => void onToggle()} style={{ ...itemRowActionStyle, ...rowActionSurface(colors) }}>
             <Text style={{ color: colors.textSecondary, fontSize: 12, fontWeight: '800' }}>{trailing}</Text>
@@ -1751,82 +1206,6 @@ function ItemRow({ title, description, meta, deleteName, trailing, onToggle, onD
           <Text style={{ color: colors.ui.tone.danger.foreground, fontSize: 12, fontWeight: '800' }}>{t('common.delete')}</Text>
         </IslePressable>
       </View>
-    </View>
-  )
-}
-
-function SelfTestRow({ step }: { step: SelfTestStep }) {
-  const { colors } = useAppTheme()
-  const { t } = useTranslation()
-  const [expanded, setExpanded] = useState(step.status === 'fail')
-  const statusColor = step.status === 'ok' ? colors.ui.tone.success.foreground : step.status === 'warn' ? colors.ui.tone.warning.foreground : colors.ui.tone.danger.foreground
-  const statusText = step.status === 'ok' ? t('contextPanel.selfTest.passed') : step.status === 'warn' ? t('contextPanel.selfTest.needsConfig') : t('contextPanel.selfTest.failedStatus')
-  return (
-    <IslePressable
-      haptic={step.status !== 'ok'}
-      disabled={step.status === 'ok'}
-      onPress={() => setExpanded((value) => !value)}
-      style={{ padding: 10, ...assetCardSurface(colors) }}
-    >
-      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
-        <View style={{ width: 8, height: 8, borderRadius: 4, backgroundColor: statusColor }} />
-        <Text style={{ color: colors.text, fontSize: 12, fontWeight: '900', flex: 1, minWidth: 0 }}>{step.name}</Text>
-        <Text style={{ color: statusColor, fontSize: 11, fontWeight: '900' }}>{statusText}</Text>
-      </View>
-      {expanded || step.status === 'ok' ? (
-        <Text style={{ color: colors.textSecondary, fontSize: 11, lineHeight: 16, marginTop: 5 }}>{step.detail}</Text>
-      ) : (
-        <Text style={{ color: colors.textTertiary, fontSize: 11, lineHeight: 16, marginTop: 5 }}>{t('contextPanel.selfTest.tapForDetails')}</Text>
-      )}
-    </IslePressable>
-  )
-}
-
-function RagEvaluationCard({ run }: { run: RagEvaluationRun }) {
-  const { colors } = useAppTheme()
-  const { t } = useTranslation()
-  return (
-    <View style={{ marginTop: 10, padding: 12, ...assetCardSurface(colors) }}>
-      <Text style={{ color: colors.text, fontSize: 13, fontWeight: '900' }}>{t('contextPanel.ragDebug.lastEvaluation')}</Text>
-      <View style={{ flexDirection: 'row', gap: 8, flexWrap: 'wrap', marginTop: 8 }}>
-        <DebugStat label={t('contextPanel.ragDebug.confidence')} value={`${Math.round(run.averageConfidence * 100)}%`} />
-        <DebugStat label={t('contextPanel.ragDebug.citation')} value={`${Math.round(run.averageCitationCoverage * 100)}%`} />
-        <DebugStat label={t('contextPanel.ragDebug.precision')} value={`${Math.round(run.averageContextPrecision * 100)}%`} />
-      </View>
-      {run.fallbackReasons.length ? (
-        <Text style={{ color: colors.textTertiary, fontSize: 11, lineHeight: 16, marginTop: 8 }}>{t('contextPanel.ragDebug.fallbacks', { value: run.fallbackReasons.slice(0, 3).join(', ') })}</Text>
-      ) : null}
-    </View>
-  )
-}
-
-function RagLogRow({ log }: { log: RagEvaluationLog }) {
-  const { colors } = useAppTheme()
-  const { t } = useTranslation()
-  const quality = log.quality
-  return (
-    <View style={{ marginTop: 8, padding: 10, ...assetCardSurface(colors) }}>
-      <Text numberOfLines={1} style={{ color: colors.text, fontSize: 12, fontWeight: '900' }}>{log.query}</Text>
-      <Text style={{ color: colors.textTertiary, fontSize: 11, lineHeight: 16, marginTop: 4 }}>
-        {t('contextPanel.ragDebug.logMeta', {
-          profile: log.plan?.profile ?? '-',
-          sources: log.sourceCount,
-          confidence: Math.round((quality?.generationConfidence ?? quality?.confidence ?? 0) * 100),
-          flare: quality?.flareTriggered ? t('contextPanel.ragDebug.yes') : t('contextPanel.ragDebug.no'),
-        })}
-      </Text>
-    </View>
-  )
-}
-
-function IndexingJobRow({ job }: { job: RagIndexingJobStatus }) {
-  const { colors } = useAppTheme()
-  return (
-    <View style={{ marginTop: 8, padding: 10, ...assetCardSurface(colors, job.status === 'error' ? colors.ui.tone.danger.border : colors.material.stroke) }}>
-      <Text numberOfLines={1} style={{ color: colors.text, fontSize: 12, fontWeight: '900' }}>{job.kind}</Text>
-      <Text numberOfLines={2} style={{ color: job.status === 'error' ? colors.ui.tone.danger.foreground : colors.textTertiary, fontSize: 11, lineHeight: 16, marginTop: 4 }}>
-        {job.status}{job.progress !== undefined ? ` · ${Math.round((job.progress ?? 0) * 100)}%` : ''}{job.error ? ` · ${job.error}` : ''}
-      </Text>
     </View>
   )
 }

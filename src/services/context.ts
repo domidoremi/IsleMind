@@ -10,19 +10,18 @@ import {
   searchKnowledge,
   searchMemories,
 } from '@/services/contextStore'
-import { localDataStore, type SearchHybridOptions } from '@/services/localDataStore'
+import { localDataStore } from '@/services/localDataStore'
+import { buildKnowledgeScope, filterKnowledgeSources, type KnowledgeScope } from '@/services/knowledgeScope'
 import { useSettingsStore } from '@/store/settingsStore'
 import { searchWeb as searchWebWithAdapters } from '@/services/searchAdapters'
 import { buildCompressedContextPrompt, buildFlareContextPrompt, runAgenticRag } from '@/services/rag'
 import { st } from '@/i18n/service'
+import { MAX_IMPORT_TEXT_FILE_BYTES, assertImportFileSizeByUri, deleteTemporaryImportCopy, isFileTooLargeError, readUtf8ImportFile } from '@/services/fileImportGuards'
+import { searchAgenticKnowledgeWithScope, searchKnowledgeWithFallback } from '@/services/knowledgeRetrievalRuntime'
+import { logContextOperation } from '@/services/runtimeHealthLog'
 
 const TEXT_MIME_HINTS = ['text/', 'application/json', 'application/javascript', 'application/xml', 'text/xml', 'text/csv']
 const MAX_CONTEXT_ITEMS = 8
-
-type KnowledgeSearchRuntime = Pick<SearchHybridOptions, 'localEmbeddingModelId' | 'localEmbeddingModelSource' | 'provider'> & {
-  mode: 'hybrid'
-  embeddingMode: 'provider' | 'local' | 'hybrid'
-}
 
 export type MemoryCandidateRejectionReason =
   | 'empty'
@@ -64,7 +63,13 @@ export interface KnowledgeAgenticSearchOptions {
 export async function retrieveContext(conversation: Conversation, draftMessage: Message): Promise<RetrievedContext> {
   try {
     await initializeContextStore()
-  } catch {
+  } catch (error) {
+    await logContextOperation({
+      phase: 'initialize',
+      status: 'error',
+      detail: 'retrieve_context',
+      error,
+    })
     return { sources: [], prompt: '' }
   }
   const settings = useSettingsStore.getState().settings
@@ -86,8 +91,17 @@ export async function retrieveContext(conversation: Conversation, draftMessage: 
     settings,
     memorySources,
     maxContextItems: Math.max(settings.knowledgeTopK ?? 4, settings.memoryTopK ?? 4, MAX_CONTEXT_ITEMS),
-    retrieveKnowledge: (variant, limit) => searchKnowledgeSafely(variant, limit, settings.ragMode === 'fts' ? 'fts' : 'hybrid', settings.embeddingMode ?? 'hybrid', provider ?? undefined, knowledgeScope),
-    retrieveAgentic: (variant, plan, limit) => localDataStore.searchAgenticIndexes(variant, { limit, plan }).then((sources) => filterKnowledgeSources(sources, knowledgeScope).slice(0, limit)),
+    retrieveKnowledge: (variant, limit) => searchKnowledgeWithFallback({
+      query: variant,
+      limit,
+      ragMode: settings.ragMode === 'fts' ? 'fts' : 'hybrid',
+      embeddingMode: settings.embeddingMode ?? 'hybrid',
+      localEmbeddingModelId: settings.localEmbeddingModelId,
+      localEmbeddingModelSource: settings.localEmbeddingModelSource,
+      provider: provider ?? undefined,
+      knowledgeScope,
+    }),
+    retrieveAgentic: (variant, plan, limit) => searchAgenticKnowledgeWithScope({ query: variant, plan, limit, knowledgeScope }),
   })
   void localDataStore.logRagEvaluation({
     query,
@@ -121,14 +135,16 @@ export async function retrieveFlareContext(input: {
   }
   const provider = await useSettingsStore.getState().hydrateProviderKey(input.conversation.providerId)
   const startedAt = Date.now()
-  const hits = await searchKnowledgeSafely(
-    input.followupQuery || input.query,
-    input.limit ?? 4,
-    settings.ragMode === 'fts' ? 'fts' : 'hybrid',
-    settings.embeddingMode ?? 'hybrid',
-    provider ?? undefined,
-    buildKnowledgeScope(input.conversation.knowledgeSources ?? input.conversation.skillSnapshot?.knowledgeSources)
-  )
+  const hits = await searchKnowledgeWithFallback({
+    query: input.followupQuery || input.query,
+    limit: input.limit ?? 4,
+    ragMode: settings.ragMode === 'fts' ? 'fts' : 'hybrid',
+    embeddingMode: settings.embeddingMode ?? 'hybrid',
+    localEmbeddingModelId: settings.localEmbeddingModelId,
+    localEmbeddingModelSource: settings.localEmbeddingModelSource,
+    provider: provider ?? undefined,
+    knowledgeScope: buildKnowledgeScope(input.conversation.knowledgeSources ?? input.conversation.skillSnapshot?.knowledgeSources),
+  })
   const excluded = new Set(input.excludeChunkIds ?? [])
   const advanced = await localDataStore.searchAgenticIndexes(input.followupQuery || input.query, {
     limit: input.limit ?? 4,
@@ -198,7 +214,16 @@ export async function extractMemories(conversationId: string, messages: Message[
         maxTokens: 512,
       })
       modelItems = parseMemoryItems(result)
-    } catch {
+    } catch (error) {
+      await logContextOperation({
+        phase: 'memory_extract',
+        status: 'error',
+        detail: 'model_extraction_failed',
+        sourceType: 'memory_model',
+        providerId: provider.id,
+        model,
+        error,
+      })
       // Deterministic extraction keeps explicit user preferences usable even if
       // the provider declines the auxiliary memory request.
     }
@@ -240,163 +265,132 @@ export async function extractMemories(conversationId: string, messages: Message[
 }
 
 export async function importKnowledgeFile(provider?: AIProvider, model?: string): Promise<{ ok: boolean; message: string }> {
-  await initializeContextStore()
-  const picked = await DocumentPicker.getDocumentAsync({
-    copyToCacheDirectory: true,
-    type: ['text/*', 'application/json', 'application/javascript', 'application/xml', 'text/xml', 'text/csv', 'application/pdf'],
-  })
-  if (picked.canceled || !picked.assets[0]) return { ok: false, message: st('contextImport.noFileSelected') }
-  const asset = picked.assets[0]
-  const mimeType = asset.mimeType || 'application/octet-stream'
-  const size = asset.size ?? 0
-
-  if (isTextMime(mimeType) || asset.name.match(/\.(md|txt|json|csv|xml|js|ts|tsx|jsx)$/i)) {
-    const text = await FileSystem.readAsStringAsync(asset.uri, { encoding: FileSystem.EncodingType.UTF8 })
-    const settings = useSettingsStore.getState().settings
-    await importKnowledgeText({ title: asset.name, mimeType, size, text, sourceUri: asset.uri }, { provider, embeddingMode: settings.embeddingMode ?? 'hybrid', localEmbeddingModelId: settings.localEmbeddingModelId, localEmbeddingModelSource: settings.localEmbeddingModelSource })
-    return { ok: true, message: st('contextImport.importedFile', { name: asset.name }) }
-  }
-
-  if (mimeType === 'application/pdf' || asset.name.toLowerCase().endsWith('.pdf')) {
-    if (!provider?.apiKey || !model) {
-      return { ok: false, message: st('contextImport.pdfNeedsKey') }
-    }
-    const base64 = await FileSystem.readAsStringAsync(asset.uri, { encoding: FileSystem.EncodingType.Base64 })
-    const text = await generateText({
-      provider,
-      model,
-      systemPrompt: '请从用户提供的 PDF 中提取可检索的正文。只输出正文，不要总结，不要加解释。',
-      messages: [{ role: 'user', content: '请提取这个 PDF 的正文，保留标题、小节和关键列表。' }],
-      attachments: [{
-        id: `${Date.now()}-pdf`,
-        type: 'pdf',
-        uri: asset.uri,
-        name: asset.name,
-        mimeType,
-        size,
-        base64,
-      }],
-      temperature: 0.1,
-      maxTokens: 12000,
+  let importUri: string | undefined
+  let importTitle: string | undefined
+  let sourceType: 'text' | 'pdf' | undefined
+  try {
+    const picked = await DocumentPicker.getDocumentAsync({
+      copyToCacheDirectory: true,
+      type: ['text/*', 'application/json', 'application/javascript', 'application/xml', 'text/xml', 'text/csv', 'application/pdf'],
     })
-    if (!text.trim()) return { ok: false, message: st('contextImport.pdfExtractFailed') }
-    const settings = useSettingsStore.getState().settings
-    await importKnowledgeText({ title: asset.name, mimeType, size, text, sourceUri: asset.uri }, { provider, embeddingMode: settings.embeddingMode ?? 'hybrid', localEmbeddingModelId: settings.localEmbeddingModelId, localEmbeddingModelSource: settings.localEmbeddingModelSource })
-    return { ok: true, message: st('contextImport.pdfImported', { name: asset.name }) }
-  }
+    if (picked.canceled || !picked.assets[0]) return { ok: false, message: st('contextImport.noFileSelected') }
+    const asset = picked.assets[0]
+    importUri = asset.uri
+    importTitle = asset.name
+    await initializeContextStore()
+    const mimeType = asset.mimeType || 'application/octet-stream'
+    const resolvedSize = (await assertImportFileSizeByUri(importUri, {
+      size: asset.size,
+      limitBytes: MAX_IMPORT_TEXT_FILE_BYTES,
+    })) ?? asset.size ?? 0
 
-  return { ok: false, message: st('contextImport.unsupportedFileType') }
+    if (isTextMime(mimeType) || asset.name.match(/\.(md|txt|json|csv|xml|js|ts|tsx|jsx)$/i)) {
+      sourceType = 'text'
+      const text = await readUtf8ImportFile(importUri, {
+        size: resolvedSize,
+        limitBytes: MAX_IMPORT_TEXT_FILE_BYTES,
+      })
+      const settings = useSettingsStore.getState().settings
+      await importKnowledgeText({ title: asset.name, mimeType, size: resolvedSize, text, sourceUri: asset.name }, { provider, embeddingMode: settings.embeddingMode ?? 'hybrid', localEmbeddingModelId: settings.localEmbeddingModelId, localEmbeddingModelSource: settings.localEmbeddingModelSource })
+      return { ok: true, message: st('contextImport.importedFile', { name: asset.name }) }
+    }
+
+    if (mimeType === 'application/pdf' || asset.name.toLowerCase().endsWith('.pdf')) {
+      sourceType = 'pdf'
+      if (!provider?.apiKey || !model) {
+        return { ok: false, message: st('contextImport.pdfNeedsKey') }
+      }
+      const base64 = await FileSystem.readAsStringAsync(importUri, { encoding: FileSystem.EncodingType.Base64 })
+      const text = await generateText({
+        provider,
+        model,
+        systemPrompt: '请从用户提供的 PDF 中提取可检索的正文。只输出正文，不要总结，不要加解释。',
+        messages: [{ role: 'user', content: '请提取这个 PDF 的正文，保留标题、小节和关键列表。' }],
+        attachments: [{
+          id: `${Date.now()}-pdf`,
+          type: 'pdf',
+          uri: importUri,
+          name: asset.name,
+          mimeType,
+          size: resolvedSize,
+          base64,
+        }],
+        temperature: 0.1,
+        maxTokens: 12000,
+      })
+      if (!text.trim()) return { ok: false, message: st('contextImport.pdfExtractFailed') }
+      const settings = useSettingsStore.getState().settings
+      await importKnowledgeText({ title: asset.name, mimeType, size: resolvedSize, text, sourceUri: asset.name }, { provider, embeddingMode: settings.embeddingMode ?? 'hybrid', localEmbeddingModelId: settings.localEmbeddingModelId, localEmbeddingModelSource: settings.localEmbeddingModelSource })
+      return { ok: true, message: st('contextImport.pdfImported', { name: asset.name }) }
+    }
+
+    return { ok: false, message: st('contextImport.unsupportedFileType') }
+  } catch (error) {
+    if (isFileTooLargeError(error)) return { ok: false, message: st('chat.fileTooLarge20') }
+    await logContextOperation({
+      phase: 'knowledge_import',
+      status: 'error',
+      detail: 'import_knowledge_file_failed',
+      sourceType,
+      title: importTitle,
+      providerId: provider?.id,
+      model,
+      error,
+    })
+    throw error
+  } finally {
+    await deleteTemporaryImportCopy(importUri, { assumeTemporaryCopy: true })
+  }
 }
 
 export async function importKnowledgePlainText(title: string, text: string, provider?: AIProvider): Promise<{ ok: boolean; message: string }> {
-  await initializeContextStore()
-  const content = text.trim()
-  if (!content) return { ok: false, message: st('contextImport.emptyText') }
-  await importKnowledgeText(
-    {
-      title: title.trim() || st('contextImport.pastedTextTitle', { time: new Date().toLocaleString() }),
-      mimeType: 'text/plain',
-      size: content.length,
-      text: content,
-    },
-    { provider, embeddingMode: useSettingsStore.getState().settings.embeddingMode ?? 'hybrid', localEmbeddingModelId: useSettingsStore.getState().settings.localEmbeddingModelId, localEmbeddingModelSource: useSettingsStore.getState().settings.localEmbeddingModelSource }
-  )
-  return { ok: true, message: st('contextImport.pastedTextImported') }
+  const resolvedTitle = title.trim() || st('contextImport.pastedTextTitle', { time: new Date().toLocaleString() })
+  try {
+    await initializeContextStore()
+    const content = text.trim()
+    if (!content) return { ok: false, message: st('contextImport.emptyText') }
+    await importKnowledgeText(
+      {
+        title: resolvedTitle,
+        mimeType: 'text/plain',
+        size: content.length,
+        text: content,
+      },
+      { provider, embeddingMode: useSettingsStore.getState().settings.embeddingMode ?? 'hybrid', localEmbeddingModelId: useSettingsStore.getState().settings.localEmbeddingModelId, localEmbeddingModelSource: useSettingsStore.getState().settings.localEmbeddingModelSource }
+    )
+    return { ok: true, message: st('contextImport.pastedTextImported') }
+  } catch (error) {
+    await logContextOperation({
+      phase: 'knowledge_import',
+      status: 'error',
+      detail: 'import_knowledge_plain_text_failed',
+      sourceType: 'plain_text',
+      title: resolvedTitle,
+      providerId: provider?.id,
+      error,
+    })
+    throw error
+  }
 }
 
 export async function searchKnowledgeHybrid(query: string, options: KnowledgeHybridSearchOptions = {}): Promise<RetrievalSource[]> {
-  try {
-    return await localDataStore.searchHybrid(query, {
-      limit: options.limit,
-      mode: 'hybrid',
-      embeddingMode: options.embeddingMode ?? 'hybrid',
-      localEmbeddingModelId: options.localEmbeddingModelId,
-      localEmbeddingModelSource: options.localEmbeddingModelSource,
-      ...(options.provider ? { provider: options.provider } : {}),
-    })
-  } catch {
-    return searchKnowledge(query, options.limit ?? 4).catch(() => [])
-  }
-}
-
-export async function searchKnowledgeAgenticIndexes(query: string, options: KnowledgeAgenticSearchOptions = {}): Promise<RetrievalSource[]> {
-  try {
-    return await localDataStore.searchAgenticIndexes(query, {
-      limit: options.limit,
-      techniques: options.techniques ?? ['raptor', 'graphrag', 'colbert'],
-    })
-  } catch {
-    return []
-  }
-}
-
-async function searchKnowledgeSafely(
-  query: string,
-  limit: number,
-  ragMode: 'fts' | 'hybrid',
-  embeddingMode: 'provider' | 'local' | 'hybrid',
-  provider?: AIProvider,
-  knowledgeScope?: KnowledgeScope
-): Promise<RetrievalSource[]> {
-  try {
-    const scopedLimit = knowledgeScope ? Math.max(limit * 4, 20) : limit
-    let results: RetrievalSource[]
-    if (ragMode === 'hybrid') {
-      results = await localDataStore.searchHybrid(query, { limit: scopedLimit, ...resolveKnowledgeSearchRuntime(embeddingMode, provider) })
-    } else {
-      results = await searchKnowledge(query, scopedLimit)
-    }
-    return filterKnowledgeSources(results, knowledgeScope).slice(0, limit)
-  } catch {
-    try {
-      const scopedLimit = knowledgeScope ? Math.max(limit * 4, 20) : limit
-      return filterKnowledgeSources(await searchKnowledge(query, scopedLimit), knowledgeScope).slice(0, limit)
-    } catch {
-      return []
-    }
-  }
-}
-
-function resolveKnowledgeSearchRuntime(
-  embeddingMode: 'provider' | 'local' | 'hybrid',
-  provider?: AIProvider
-): KnowledgeSearchRuntime {
-  const settings = useSettingsStore.getState().settings
-  return {
-    mode: 'hybrid',
-    embeddingMode,
-    localEmbeddingModelId: settings.localEmbeddingModelId,
-    localEmbeddingModelSource: settings.localEmbeddingModelSource,
-    ...(provider ? { provider } : {}),
-  }
-}
-
-interface KnowledgeScope {
-  ids: Set<string>
-  terms: string[]
-}
-
-function buildKnowledgeScope(values?: string[]): KnowledgeScope | undefined {
-  const normalized = Array.from(new Set((values ?? []).map((value) => normalizeScopeValue(value)).filter(Boolean)))
-  if (!normalized.length) return undefined
-  return {
-    ids: new Set(normalized),
-    terms: normalized,
-  }
-}
-
-function filterKnowledgeSources(sources: RetrievalSource[], scope?: KnowledgeScope): RetrievalSource[] {
-  if (!scope) return sources
-  return sources.filter((source) => {
-    const documentId = normalizeScopeValue(source.documentId)
-    if (documentId && scope.ids.has(documentId)) return true
-    const title = normalizeScopeValue(source.title)
-    return scope.terms.some((term) => title.includes(term))
+  return searchKnowledgeWithFallback({
+    query,
+    limit: options.limit ?? 4,
+    ragMode: 'hybrid',
+    embeddingMode: options.embeddingMode ?? 'hybrid',
+    localEmbeddingModelId: options.localEmbeddingModelId,
+    localEmbeddingModelSource: options.localEmbeddingModelSource,
+    provider: options.provider,
   })
 }
 
-function normalizeScopeValue(value?: string): string {
-  return typeof value === 'string' ? value.trim().toLowerCase() : ''
+export async function searchKnowledgeAgenticIndexes(query: string, options: KnowledgeAgenticSearchOptions = {}): Promise<RetrievalSource[]> {
+  return searchAgenticKnowledgeWithScope({
+    query,
+    limit: options.limit ?? 8,
+    techniques: options.techniques ?? ['raptor', 'graphrag', 'colbert'],
+  })
 }
 
 export async function searchWeb(query: string, limit = 5): Promise<RetrievalSource[]> {
@@ -562,6 +556,7 @@ function containsCredentialLikeToken(text: string): boolean {
   const tokens = text.match(/[A-Za-z0-9][A-Za-z0-9_+=/.-]{11,}/g) ?? []
   return tokens.some(isCredentialLikeToken)
 }
+
 
 function isCredentialLikeToken(token: string): boolean {
   const clean = token.replace(/^[^A-Za-z0-9]+|[^A-Za-z0-9]+$/g, '')

@@ -1,6 +1,6 @@
 import type { PropsWithChildren } from 'react'
 import { type ViewStyle } from 'react-native'
-import { SafeAreaView } from 'react-native-safe-area-context'
+import { SafeAreaView, type Edges } from 'react-native-safe-area-context'
 import { StatusBar } from 'expo-status-bar'
 import { MotiView } from 'moti'
 import { IsleBackground, resolveBackgroundCanvas, type IsleBackgroundMode, type IsleBackgroundState } from './Background'
@@ -13,15 +13,16 @@ interface ScreenProps extends PropsWithChildren {
   background?: IsleBackgroundMode
   backgroundState?: IsleBackgroundState
   backgroundIntensity?: number
+  edges?: Edges
 }
 
-export function IsleScreen({ children, padded = true, style, background = 'default', backgroundState = 'idle', backgroundIntensity = 1 }: ScreenProps) {
+export function IsleScreen({ children, padded = true, style, background = 'default', backgroundState = 'idle', backgroundIntensity = 1, edges }: ScreenProps) {
   const { colors, isDark } = useAppTheme()
   const motion = useMotionPreference()
   const canvas = resolveBackgroundCanvas(colors, background)
 
   return (
-    <SafeAreaView style={{ flex: 1, backgroundColor: canvas }}>
+    <SafeAreaView edges={edges} style={{ flex: 1, backgroundColor: canvas }}>
       <StatusBar style={isDark ? 'light' : 'dark'} translucent backgroundColor={canvas} />
       <MotiView
         animate={{ opacity: 1, translateY: 0 }}

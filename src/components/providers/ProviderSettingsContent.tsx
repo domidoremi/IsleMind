@@ -1,18 +1,17 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
-import { findNodeHandle, Keyboard, KeyboardAvoidingView, Modal, Platform, ScrollView, Text, TextInput, View, useWindowDimensions, type LayoutChangeEvent } from 'react-native'
+import { findNodeHandle, Keyboard, KeyboardAvoidingView, Modal, Platform, ScrollView, StyleSheet, Text, TextInput, View, useWindowDimensions, type LayoutChangeEvent } from 'react-native'
 import * as Clipboard from 'expo-clipboard'
 import * as DocumentPicker from 'expo-document-picker'
-import * as FileSystem from 'expo-file-system/legacy'
 import { Gesture, GestureDetector } from 'react-native-gesture-handler'
 import Animated, { runOnJS, useAnimatedStyle, useSharedValue, withSpring } from 'react-native-reanimated'
-import { ChevronDown, ClipboardPaste, FileJson, GripVertical, Import, ListChecks, Plus, Search, SlidersHorizontal, X, Zap } from 'lucide-react-native'
 import { MotiView } from 'moti'
 import { router } from 'expo-router'
 import { useTranslation } from 'react-i18next'
+import { AppIcon } from '@/components/ui/AppIcon'
 import { ApiKeyPanel } from '@/components/settings/ApiKeyPanel'
 import { AnimatedNavigationTrigger } from '@/components/navigation/AnimatedNavigationTrigger'
 import { useMainPagerGestureLock } from '@/components/main/MainPagerGestureLock'
-import { IsleField, IsleHeader, IsleIconButton, IsleSection } from '@/components/ui/isle'
+import { IsleField, IsleHeader, IsleIconButton } from '@/components/ui/isle'
 import { IsleButton } from '@/components/ui/isle'
 import { IsleOverlayPressable, IslePressable } from '@/components/ui/isle'
 import type { IsleBackgroundState } from '@/components/ui/isle'
@@ -25,17 +24,22 @@ import type { AIProvider, ProviderPresetId, ProviderWireProtocol } from '@/types
 import { applyProviderPreset, getProviderPreset, parseCredentialGroups, parseProviderImportText, PROVIDER_PRESETS } from '@/services/ai/providerRegistry'
 import { looksLikeProviderImportConnectionText, parseProviderImportDraft } from '@/services/ai/providerImportDraft'
 import { DEFAULT_PROVIDER_PRESET_ID, DEFAULT_PROVIDER_WIRE_PROTOCOL, PROVIDER_WIRE_PROTOCOL_OPTIONS, inferProviderWireProtocolFromBaseUrl, resolveProviderConfigDraft, shouldSyncWireProtocolFromBaseUrl } from '@/services/ai/providerConfigPolicy'
-import { syncAndTestProvider, summarizeProviderActivation, type ProviderActivationResult, type ProviderActivationStageEvent } from '@/services/providerActivation'
+import { activationItemProgress } from '@/services/providerActivationJob'
+import { countDetectedProviderImports, formatProviderNameList } from '@/services/providerImportSummary'
+import { deleteTemporaryImportCopy, isFileTooLargeError, MAX_IMPORT_TEXT_FILE_BYTES, readUtf8ImportFile } from '@/services/fileImportGuards'
+import { buildProviderCapabilityMatrix, summarizeProviderCapabilityMatrix } from '@/services/ai/providerCapabilityMatrix'
 import { IsleMetric } from '@/components/ui/isle'
-import { normalizeSearchText, parseModels } from '@/utils/text'
+import { parseModels } from '@/utils/text'
 import { isProviderConversationReady } from '@/utils/providerModels'
-import { getPolicyAllowedProviderModels, getProviderModelDisplayCandidates, providerHasPolicyAllowedModel, type ProviderModelAccessInput } from '@/services/ai/policy/providerModelAccess'
+import { providerHasPolicyAllowedModel } from '@/services/ai/policy/providerModelAccess'
+import { filterAndSortProviders, type ProviderSortMode } from '@/services/providerSettingsList'
 import { useMotionPreference } from '@/hooks/useMotionPreference'
 import { motionTokens } from '@/theme/animation'
 import { useSafeAreaInsets } from 'react-native-safe-area-context'
+import { useProviderActivationJob } from '@/components/providers/useProviderActivationJob'
 
-type ProviderSortMode = 'manual' | 'recent' | 'enabled' | 'models' | 'health' | 'name'
 type ClipboardReadState = 'idle' | 'requesting'
+type AppThemeColors = ReturnType<typeof useAppTheme>['colors']
 
 const SORT_OPTIONS: { id: ProviderSortMode; labelKey: string }[] = [
   { id: 'manual', labelKey: 'providerSettings.sort.manual' },
@@ -46,14 +50,6 @@ const SORT_OPTIONS: { id: ProviderSortMode; labelKey: string }[] = [
   { id: 'name', labelKey: 'providerSettings.sort.name' },
 ]
 
-const ACTIVATION_STAGE_PROGRESS: Record<ProviderActivationStageEvent['stage'], number> = {
-  enabled: 0.18,
-  syncing: 0.46,
-  testing: 0.76,
-  done: 0.96,
-  failed: 0.96,
-}
-
 const IMPORT_INPUT_LINE_HEIGHT = 20
 const IMPORT_INPUT_VERTICAL_PADDING = 24
 const IMPORT_INPUT_MAX_LINES = 14
@@ -61,7 +57,19 @@ const IMPORT_SHEET_MARGIN = 16
 const IMPORT_HEADER_HEIGHT = 78
 const IMPORT_FOOTER_HEIGHT = 76
 const IMPORT_BODY_FIXED_SPACE = 118
+const PROVIDER_ROW_HEIGHT = 72
+const PROVIDER_DRAG_STEP = 64
+const PROVIDER_CARD_RADIUS = 16
 type ProviderFormFieldId = 'name' | 'baseUrl' | 'tokens' | 'models'
+
+function resolveProviderChrome(colors: AppThemeColors) {
+  const subtleBorderWidth = colors.ui.cartoon ? 1 : StyleSheet.hairlineWidth
+  const chromeSurface = colors.ui.cartoon ? colors.ui.semantic.surface.base : colors.ui.glass ? colors.ui.semantic.chrome.background : colors.ui.semantic.surface.base
+  const chromeBorder = colors.ui.cartoon ? colors.material.stroke : colors.ui.glass ? colors.ui.actionBar.itemBorder : colors.ui.semantic.chrome.border
+  const mutedSurface = colors.ui.cartoon ? colors.ui.semantic.surface.muted : colors.ui.glass ? colors.ui.actionBar.itemBackground : colors.ui.semantic.surface.muted
+  const raisedSurface = colors.ui.cartoon ? colors.ui.semantic.surface.base : colors.ui.glass ? colors.ui.semantic.surface.overlay : colors.ui.semantic.surface.base
+  return { subtleBorderWidth, chromeSurface, chromeBorder, mutedSurface, raisedSurface }
+}
 
 interface ProviderSettingsContentProps {
   embedded?: boolean
@@ -74,6 +82,7 @@ export function ProviderSettingsContent({ embedded = false, onClose, onBackgroun
   const { t } = useTranslation()
   const dialog = useIsleDialog()
   const motion = useMotionPreference()
+  const insets = useSafeAreaInsets()
   const { width } = useWindowDimensions()
   const compactWidth = width < 430
   const pagePadding = compactWidth ? 12 : 16
@@ -82,17 +91,9 @@ export function ProviderSettingsContent({ embedded = false, onClose, onBackgroun
   const addProvider = useSettingsStore((state) => state.addProvider)
   const addProviders = useSettingsStore((state) => state.addProviders)
   const reorderProviders = useSettingsStore((state) => state.reorderProviders)
-  const hydrateProviderKey = useSettingsStore((state) => state.hydrateProviderKey)
-  const updateProvider = useSettingsStore((state) => state.updateProvider)
-  const updateProviderCredentialGroupHealth = useSettingsStore((state) => state.updateProviderCredentialGroupHealth)
+  const updateSettings = useSettingsStore((state) => state.updateSettings)
+  const clearAllProviders = useSettingsStore((state) => state.clearAllProviders)
   const settings = useSettingsStore((state) => state.settings)
-  const modelTestModel = settings.modelTestModel
-  const modelTestCheckParameters = settings.modelTestCheckParameters
-  const activationJob = useActivationJobStore((state) => state.job)
-  const startActivationJob = useActivationJobStore((state) => state.start)
-  const updateActivationJob = useActivationJobStore((state) => state.update)
-  const finishActivationJob = useActivationJobStore((state) => state.finish)
-  const clearActivationJob = useActivationJobStore((state) => state.clear)
   const conversations = useChatStore((state) => state.conversations)
   const [expandedProviderId, setExpandedProviderId] = useState<string | null>(null)
   const [sortMode, setSortMode] = useState<ProviderSortMode>('manual')
@@ -101,25 +102,22 @@ export function ProviderSettingsContent({ embedded = false, onClose, onBackgroun
   const [selectedIds, setSelectedIds] = useState<Set<string>>(() => new Set())
   const [addOpen, setAddOpen] = useState(false)
   const [importOpen, setImportOpen] = useState(false)
-  const [activationBusy, setActivationBusy] = useState(false)
   const [keyboardHeight, setKeyboardHeight] = useState(0)
-  const mountedRef = useRef(true)
+  const { activationBusy, activationJob, clearActivationJob, activateProviders, isActivationRunning } = useProviderActivationJob({
+    onActivationCompleted: () => {
+      setBatchMode(false)
+      setSelectedIds(new Set())
+    },
+  })
   const backgroundState: IsleBackgroundState = keyboardHeight > 0
     ? 'input'
     : addOpen || importOpen
       ? 'modal'
       : activationJob?.status === 'failed'
         ? 'error'
-        : activationBusy || activationJob?.status === 'running'
+        : isActivationRunning
           ? 'active'
           : 'idle'
-
-  useEffect(() => {
-    mountedRef.current = true
-    return () => {
-      mountedRef.current = false
-    }
-  }, [])
 
   useEffect(() => {
     if (!embedded) return undefined
@@ -154,16 +152,22 @@ export function ProviderSettingsContent({ embedded = false, onClose, onBackgroun
   }, [conversations])
 
   const visibleProviders = useMemo(() => {
-    const normalizedFilter = normalizeSearchText(modelFilter)
-    const filtered = normalizedFilter
-      ? providers.filter((provider) => providerMatchesModelFilter(provider, normalizedFilter, settings))
-      : providers
-    return [...filtered].sort((a, b) => compareProviders(a, b, sortMode, usageByProvider, settings))
+    return filterAndSortProviders(providers, { filter: modelFilter, sortMode, usageByProvider, settings })
   }, [modelFilter, providers, settings, sortMode, usageByProvider])
+  const manualOrdering = sortMode === 'manual'
+  const providerOrderById = useMemo(
+    () => new Map(providers.map((provider, index) => [provider.id, index] as const)),
+    [providers]
+  )
 
   const enabled = providers.filter((provider) => provider.enabled).length
   const available = providers.filter((provider) => isProviderConversationReady(provider) && providerHasPolicyAllowedModel(provider, settings)).length
   const credentialGroups = providers.reduce((sum, provider) => sum + (provider.credentialGroups?.length ?? 0), 0)
+  const { subtleBorderWidth, chromeSurface, chromeBorder, mutedSurface, raisedSurface } = resolveProviderChrome(colors)
+  const activeSortLabel = t(SORT_OPTIONS.find((option) => option.id === sortMode)?.labelKey ?? SORT_OPTIONS[0].labelKey)
+  const providerListHint = manualOrdering
+    ? t('providerSettings.manualSortHint')
+    : t('providerSettings.sortedViewHint', { label: activeSortLabel })
 
   async function addProviderFromForm(provider: AIProvider) {
     setAddOpen(false)
@@ -191,7 +195,10 @@ export function ProviderSettingsContent({ embedded = false, onClose, onBackgroun
       return
     }
     setImportOpen(false)
+
     await addProviders(result.providers)
+    updateSettings({ defaultProvider: result.providers[0].id })
+
     setExpandedProviderId(result.providers[0]?.id ?? null)
     setSortMode('manual')
     setModelFilter('')
@@ -201,9 +208,10 @@ export function ProviderSettingsContent({ embedded = false, onClose, onBackgroun
       tone: result.warnings.length ? 'amber' : 'mint',
       durationMs: 1800,
     })
+
     const enableNow = await dialog.confirm({
       title: t('providerSettings.enableImportedTitle'),
-      message: [t('providerSettings.enableImportedMessage', { count: result.providers.length }), providerNameList(result.providers), ...result.warnings].filter(Boolean).join('\n'),
+      message: [t('providerSettings.enableImportedMessage', { count: result.providers.length }), formatProviderNameList(result.providers), ...result.warnings].filter(Boolean).join('\n'),
       confirmLabel: t('providerSettings.enableImportedConfirm'),
       cancelLabel: t('providerSettings.enableLater'),
       tone: result.warnings.length ? 'amber' : 'mint',
@@ -222,178 +230,21 @@ export function ProviderSettingsContent({ embedded = false, onClose, onBackgroun
     void activateProviders(ids, batchMode ? 'batch' : 'all')
   }
 
-  async function activateProviders(ids: string[], mode: 'single' | 'batch' | 'all') {
-    if (activationBusy || activationJob?.status === 'running') return
-    const currentProviders = useSettingsStore.getState().providers
-    const chosen = ids.map((id) => currentProviders.find((provider) => provider.id === id)).filter((provider): provider is AIProvider => !!provider)
-    if (!chosen.length) {
-      dialog.toast({ title: t('providerSettings.enableNone'), tone: 'amber' })
-      return
-    }
-    const startTitle = chosen.length === 1 ? t('providerSettings.activatingProvider') : t('providerSettings.activationStarted')
-    setActivationBusy(true)
-    try {
-      dialog.toast({
-        title: startTitle,
-        message: t('providerSettings.activationStartedMessage', { count: chosen.length }),
-        tone: 'mint',
-        position: 'bottom',
-        durationMs: 1800,
-      })
-      let activationItems = createActivationItems(chosen, t('providerSettings.activationQueued'))
-      const isSingleActivation = chosen.length === 1
-      const publishActivationItems = (nextItems: ActivationJobItemState[], stage?: string, currentName?: string) => {
-        activationItems = nextItems
-        const aggregate = aggregateActivationItems(activationItems)
-        updateActivationJob({
-          status: 'running',
-          total: chosen.length,
-          completed: aggregate.completed,
-          progress: aggregate.progress,
-          synced: aggregate.synced,
-          tested: aggregate.tested,
-          failed: aggregate.failed,
-          currentName,
-          stage: stage ?? t('providerSettings.activationStartedMessage', { count: chosen.length }),
-          items: activationItems,
-        })
-      }
-      const publishActivationItem = (providerId: string, updates: ActivationItemPatch, stage?: string, currentName?: string) => {
-        publishActivationItems(patchActivationItem(activationItems, providerId, updates), stage, currentName)
-      }
-      startActivationJob({
-        status: 'running',
-        total: chosen.length,
-        completed: 0,
-        progress: 0,
-        synced: 0,
-        tested: 0,
-        failed: 0,
-        stage: chosen.length === 1 ? t('providerSettings.activationQueued') : t('providerSettings.activationStartedMessage', { count: chosen.length }),
-        items: activationItems,
-      })
-      const runProviderActivation = async (provider: AIProvider): Promise<ProviderActivationResult> => {
-        const currentStage = t('providerSettings.activationCurrent', { name: provider.name })
-        publishActivationItem(provider.id, {
-          status: 'running',
-          progress: 0.04,
-          stage: currentStage,
-        }, currentStage, provider.name)
-        if (isSingleActivation) {
-          dialog.toast({
-            title: t('providerSettings.activationRunning'),
-            message: currentStage,
-            tone: 'mint',
-            position: 'bottom',
-            durationMs: 1300,
-          })
-        }
-        const result = await syncAndTestProvider(provider, {
-          updateProvider,
-          hydrateProviderKey,
-          updateProviderCredentialGroupHealth,
-          onStage: (event) => {
-            publishActivationItem(event.providerId, {
-              status: event.stage === 'failed' ? 'failed' : 'running',
-              progress: ACTIVATION_STAGE_PROGRESS[event.stage],
-              failed: event.stage === 'failed',
-              stage: event.message,
-            }, event.message, event.providerName)
-            if (isSingleActivation) {
-              dialog.toast({
-                title: stageToastTitle(event.stage, t),
-                message: event.message,
-                tone: event.tone,
-                position: 'bottom',
-                durationMs: 1300,
-              })
-            }
-          },
-        }, { enable: true, testModel: modelTestModel, checkParameters: modelTestCheckParameters, accessSettings: settings }).catch((error): ProviderActivationResult => ({
-          providerId: provider.id,
-          providerName: provider.name,
-          enabled: provider.enabled,
-          hadCredential: !!provider.apiKey?.trim() || !!provider.credentialGroups?.some((group) => group.enabled && group.apiKey?.trim()),
-          synced: false,
-          syncAttempted: true,
-          modelCount: provider.models.length,
-          syncedGroups: 0,
-          missingToken: false,
-          tested: false,
-          testOk: false,
-          messages: [],
-          failures: [{
-            providerName: provider.name,
-            message: error instanceof Error ? error.message : t('providerSettings.activationFailed'),
-          }],
-        }))
-        const resultStage = result.testOk
-          ? t('providerSettings.activationProviderReady', { name: result.providerName })
-          : t('providerSettings.activationProviderNeedsCheck', { name: result.providerName })
-        const resultFailed = result.failures.length > 0 && !result.testOk
-        publishActivationItem(result.providerId, {
-          status: resultFailed ? 'failed' : 'done',
-          progress: 1,
-          synced: result.synced,
-          tested: result.testOk,
-          failed: resultFailed,
-          stage: resultStage,
-        }, resultStage, result.providerName)
-        if (isSingleActivation) {
-          dialog.toast({
-            title: result.testOk ? t('providerSettings.activationSuccess') : t('providerSettings.activationPartial'),
-            message: resultStage,
-            tone: result.testOk ? 'mint' : 'amber',
-            position: 'bottom',
-            durationMs: 1600,
-          })
-        }
-        return result
-      }
-      const results = await Promise.all(chosen.map(runProviderActivation))
-      const finalAggregate = aggregateActivationItems(activationItems)
-      const summary = summarizeProviderActivation(results)
-      const doneTitle = activationDoneTitle(mode, chosen.length, t)
-      const primaryReady = results.find((result) => result.testOk)
-      if (primaryReady) {
-        useSettingsStore.getState().updateSettings({ defaultProvider: primaryReady.providerId, onboardingCompleted: true })
-      }
-      if (mode === 'single') {
-        const result = results[0]
-        const title = result?.testOk
-          ? t('providerSettings.activationSuccess')
-          : result?.synced
-            ? t('providerSettings.activationPartial')
-            : t('providerSettings.activationFailed')
-        dialog.toast({ title, message: summary.message, tone: summary.tone, position: 'bottom', durationMs: 3800 })
-      } else {
-        dialog.toast({
-          title: doneTitle,
-          message: summary.message,
-          tone: summary.tone,
-          position: 'bottom',
-          durationMs: 4200,
-        })
-      }
-      if (mountedRef.current) {
-        setBatchMode(false)
-        setSelectedIds(new Set())
-      }
-      finishActivationJob({
-        status: summary.tone === 'danger' ? 'failed' : 'done',
-        total: chosen.length,
-        completed: finalAggregate.completed,
-        progress: 1,
-        synced: finalAggregate.synced,
-        tested: finalAggregate.tested,
-        failed: finalAggregate.failed,
-        stage: summary.message,
-        items: activationItems,
-      })
-      scheduleActivationJobDismiss(summary.tone, clearActivationJob)
-    } finally {
-      if (mountedRef.current) setActivationBusy(false)
-    }
+  async function confirmClearAllProviders() {
+    const confirmed = await dialog.confirm({
+      title: t('providerSettings.clearAllTitle'),
+      message: t('providerSettings.clearAllMessage', { count: providers.length }),
+      confirmLabel: t('providerSettings.clearAllConfirm'),
+      cancelLabel: t('common.cancel'),
+      tone: 'danger',
+    })
+    if (!confirmed) return
+    await clearAllProviders()
+    setBatchMode(false)
+    setSelectedIds(new Set())
+    setExpandedProviderId(null)
+    setModelFilter('')
+    dialog.toast({ title: t('providerSettings.clearAllDone'), tone: 'mint' })
   }
 
   function toggleSelection(id: string) {
@@ -405,17 +256,23 @@ export function ProviderSettingsContent({ embedded = false, onClose, onBackgroun
     })
   }
 
-  function moveProvider(sourceId: string, direction: -1 | 1) {
+  function moveProvider(sourceId: string, offset: number) {
+    if (!manualOrdering) {
+      setSortMode('manual')
+      dialog.toast({ title: t('providerSettings.manualSortRequired'), tone: 'amber' })
+      return
+    }
+    if (!offset) return
     const currentIndex = providers.findIndex((provider) => provider.id === sourceId)
     if (currentIndex < 0) return
-    const targetIndex = currentIndex + direction
+    const targetIndex = Math.max(0, Math.min(providers.length - 1, currentIndex + offset))
     if (targetIndex < 0 || targetIndex >= providers.length) return
+    if (targetIndex === currentIndex) return
     const ordered = [...providers]
     const [item] = ordered.splice(currentIndex, 1)
     ordered.splice(targetIndex, 0, item)
     reorderProviders(ordered.map((provider) => provider.id))
     setSortMode('manual')
-    dialog.toast({ title: t('providerSettings.orderUpdated'), message: item.name, tone: 'mint' })
   }
 
   const content = (
@@ -424,74 +281,120 @@ export function ProviderSettingsContent({ embedded = false, onClose, onBackgroun
         <ScrollView
           keyboardShouldPersistTaps="handled"
           automaticallyAdjustKeyboardInsets
-          contentContainerStyle={{ paddingHorizontal: pagePadding, paddingTop: 8, paddingBottom: 96 }}
+          contentContainerStyle={{ paddingHorizontal: pagePadding, paddingTop: 0, paddingBottom: Math.max(insets.bottom, 20) + 76 }}
         >
           <IsleHeader
             title={t('settings.providerManagement')}
+            subtitle={providerListHint}
+            collapsed
             leading={
               <HeaderBackButton onPress={onClose ?? closeStandaloneProviderSettings} />
             }
-            trailing={
-              <IsleIconButton label={batchMode ? t('providerSettings.exitBatch') : t('providerSettings.batchMode')} tone={batchMode ? 'amber' : 'default'} onPress={() => {
-                setBatchMode((value) => !value)
-                setSelectedIds(new Set())
-                dialog.toast({ title: batchMode ? t('providerSettings.batchExited') : t('providerSettings.batchEntered'), tone: 'mint' })
-              }}>
-                <ListChecks color={batchMode ? colors.ui.tone.warning.foreground : colors.textSecondary} size={18} strokeWidth={2} />
-              </IsleIconButton>
-            }
           />
 
-          <IsleSection title={t('providerSettings.overview')} style={{ marginTop: 16 }}>
-            <View style={{ flexDirection: 'row', gap: 8, flexWrap: 'wrap' }}>
-              <IsleMetric label={t('providerSettings.enabledCount', { count: enabled })} />
-              <IsleMetric label={t('providerSettings.availableCount', { count: available })} />
-              <IsleMetric label={t('providerSettings.credentialGroupCount', { count: credentialGroups })} />
-              <IsleMetric label={t('providerSettings.providerCount', { count: providers.length })} />
-              <IsleMetric label={t('providerSettings.visibleCount', { count: visibleProviders.length })} />
+          <View style={{ marginTop: 8, gap: 10 }}>
+            <View style={{ borderRadius: colors.ui.radius.panel, paddingHorizontal: 10, paddingVertical: 10, backgroundColor: chromeSurface, borderWidth: subtleBorderWidth, borderColor: chromeBorder, gap: 10 }}>
+              <View style={{ flexDirection: compactWidth ? 'column' : 'row', alignItems: compactWidth ? 'stretch' : 'center', gap: 8 }}>
+                <View style={{ flex: 1, minWidth: 0 }} />
+                {providers.length ? (
+                  <IslePressable
+                    haptic
+                    accessibilityLabel={t('providerSettings.clearAll')}
+                    onPress={() => void confirmClearAllProviders()}
+                    style={{ alignSelf: compactWidth ? 'stretch' : 'center', minHeight: 34, borderRadius: colors.ui.radius.chip, paddingHorizontal: 10, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 5, backgroundColor: colors.ui.tone.danger.background, borderWidth: subtleBorderWidth, borderColor: colors.ui.tone.danger.border }}
+                  >
+                    <AppIcon name="close" color={colors.ui.tone.danger.foreground} size={13} />
+                    <Text style={{ color: colors.ui.tone.danger.foreground, fontSize: 10.5, lineHeight: 13, fontWeight: '900', includeFontPadding: false }}>
+                      {t('providerSettings.clearAll')}
+                    </Text>
+                  </IslePressable>
+                ) : null}
+              </View>
+              <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 6 }}>
+                <OperatorMetric label={t('providerSettings.providerCount', { count: providers.length })} />
+                <OperatorMetric label={t('providerSettings.enabledCount', { count: enabled })} />
+                <OperatorMetric label={t('providerSettings.availableCount', { count: available })} />
+                <OperatorMetric label={t('providerSettings.credentialGroupCount', { count: credentialGroups })} />
+                <OperatorMetric label={t('providerSettings.visibleCount', { count: visibleProviders.length })} />
+              </View>
             </View>
-            <View style={{ flexDirection: 'row', gap: 10, flexWrap: 'wrap', marginTop: 12 }}>
-              <IsleButton label={t('settings.addProvider')} compact icon={<Plus color={colors.textSecondary} size={16} />} onPress={() => setAddOpen(true)} style={compactWidth ? { alignSelf: 'stretch', flexGrow: 1, flexShrink: 1, flexBasis: '100%', minWidth: 0 } : undefined} />
-              <IsleButton label={t('settings.batchImport')} compact icon={<Import color={colors.textSecondary} size={16} />} onPress={() => setImportOpen(true)} style={compactWidth ? { alignSelf: 'stretch', flexGrow: 1, flexShrink: 1, flexBasis: '100%', minWidth: 0 } : undefined} />
-              <IsleButton
-                label={batchMode ? t('providerSettings.enableSelected', { count: selectedIds.size }) : t('settings.enableAll')}
-                compact
-                tone="mint"
-                icon={<Zap color={colors.textSecondary} size={16} />}
-                onPress={() => void enableEffectiveSelection()}
-                disabled={activationBusy || activationJob?.status === 'running' || (batchMode ? !selectedIds.size : !providers.length)}
-                style={compactWidth ? { alignSelf: 'stretch', flexGrow: 1, flexShrink: 1, flexBasis: '100%', minWidth: 0 } : undefined}
-              />
+
+            <View style={{ borderRadius: colors.ui.radius.panel, padding: 9, backgroundColor: chromeSurface, borderWidth: subtleBorderWidth, borderColor: chromeBorder, gap: 8 }}>
+              <View style={{ flexDirection: 'row', gap: 8, flexWrap: 'wrap' }}>
+                <IsleButton
+                  label={t('settings.addProvider')}
+                  compact
+                  block
+                  icon={<AppIcon name="add" color={colors.textSecondary} size={15} />}
+                  onPress={() => setAddOpen(true)}
+                  style={{ flexGrow: 1, flexShrink: 1, flexBasis: '48%', minWidth: 0 }}
+                />
+                <IsleButton
+                  label={t('settings.batchImport')}
+                  compact
+                  block
+                  icon={<AppIcon name="import" color={colors.textSecondary} size={15} />}
+                  onPress={() => setImportOpen(true)}
+                  style={{ flexGrow: 1, flexShrink: 1, flexBasis: '48%', minWidth: 0 }}
+                />
+                <IsleButton
+                  label={batchMode ? t('providerSettings.enableSelected', { count: selectedIds.size }) : t('settings.enableAll')}
+                  compact
+                  block
+                  tone="mint"
+                  icon={<AppIcon name="zap" color={colors.textSecondary} size={15} />}
+                  onPress={() => void enableEffectiveSelection()}
+                  disabled={activationBusy || activationJob?.status === 'running' || (batchMode ? !selectedIds.size : !providers.length)}
+                  style={{ flexGrow: 1, flexShrink: 1, flexBasis: '48%', minWidth: 0 }}
+                />
+                <IsleButton
+                  label={batchMode ? t('providerSettings.exitBatch') : t('providerSettings.batchMode')}
+                  compact
+                  block
+                  tone={batchMode ? 'amber' : 'soft'}
+                  icon={<AppIcon name="list-check" color={batchMode ? colors.ui.tone.warning.foreground : colors.textSecondary} size={15} />}
+                  onPress={() => {
+                    setBatchMode((value) => !value)
+                    setSelectedIds(new Set())
+                    dialog.toast({ title: batchMode ? t('providerSettings.batchExited') : t('providerSettings.batchEntered'), tone: 'mint' })
+                  }}
+                  style={{ flexGrow: 1, flexShrink: 1, flexBasis: '48%', minWidth: 0 }}
+                />
+              </View>
             </View>
-          </IsleSection>
+          </View>
 
           {activationJob ? (
             <ActivationProgressCard job={activationJob} onDismiss={clearActivationJob} />
           ) : null}
 
-          <View style={{ minHeight: 48, borderRadius: colors.ui.radius.controlLarge, paddingHorizontal: 12, marginTop: 14, flexDirection: 'row', alignItems: 'center', gap: 9, backgroundColor: colors.ui.input.background, borderWidth: 1, borderColor: colors.ui.input.border }}>
-            <Search color={colors.textTertiary} size={17} />
-            <TextInput
-              value={modelFilter}
-              onChangeText={setModelFilter}
-              autoCapitalize="none"
-              autoCorrect={false}
-              placeholder={t('providerSettings.filterModels')}
-              placeholderTextColor={colors.textTertiary}
-              style={{ flex: 1, minWidth: 0, minHeight: 46, padding: 0, color: colors.text, fontSize: 14, fontWeight: '800' }}
-            />
-            {modelFilter ? (
-              <IslePressable haptic accessibilityLabel={t('common.clearSearch')} onPress={() => setModelFilter('')} style={{ width: 32, height: 32, borderRadius: colors.ui.radius.controlSmall, alignItems: 'center', justifyContent: 'center', backgroundColor: colors.ui.card.defaultBackground }}>
-                <X color={colors.textSecondary} size={15} />
-              </IslePressable>
-            ) : null}
-          </View>
-
-          <View style={{ flexDirection: 'row', alignItems: 'flex-start', gap: 8, marginTop: 12 }}>
-            <View style={{ width: compactWidth ? 34 : 44, height: 44, alignItems: 'center', justifyContent: 'center' }}>
-              <SlidersHorizontal color={colors.textTertiary} size={16} />
+          <View style={{ borderRadius: colors.ui.radius.panel, padding: 10, marginTop: 2, backgroundColor: chromeSurface, borderWidth: subtleBorderWidth, borderColor: chromeBorder, gap: 8 }}>
+            <View style={{ flexDirection: compactWidth ? 'column' : 'row', alignItems: compactWidth ? 'stretch' : 'center', gap: 8 }}>
+              <View style={{ minHeight: 44, flex: 1, minWidth: 0, borderRadius: colors.ui.radius.controlLarge, paddingHorizontal: 12, flexDirection: 'row', alignItems: 'center', gap: 8, backgroundColor: colors.ui.input.background, borderWidth: subtleBorderWidth, borderColor: colors.ui.input.border }}>
+                <AppIcon name="search" color={colors.textTertiary} size={16} />
+                <TextInput
+                  value={modelFilter}
+                  onChangeText={setModelFilter}
+                  autoCapitalize="none"
+                  autoCorrect={false}
+                  placeholder={t('providerSettings.filterModels')}
+                  placeholderTextColor={colors.textTertiary}
+                  style={{ flex: 1, minWidth: 0, minHeight: 42, padding: 0, color: colors.text, fontSize: 14, fontWeight: '800' }}
+                />
+                {modelFilter ? (
+                  <IslePressable haptic accessibilityLabel={t('common.clearSearch')} onPress={() => setModelFilter('')} style={{ width: 32, height: 32, borderRadius: colors.ui.radius.controlSmall, alignItems: 'center', justifyContent: 'center', backgroundColor: mutedSurface, borderWidth: subtleBorderWidth, borderColor: chromeBorder }}>
+                    <AppIcon name="close" color={colors.textSecondary} size={15} />
+                  </IslePressable>
+                ) : null}
+              </View>
+              {!manualOrdering ? (
+                <IslePressable haptic accessibilityLabel={t('providerSettings.switchToManualSort')} onPress={() => setSortMode('manual')} style={{ minHeight: 44, borderRadius: colors.ui.radius.controlMiddle, paddingHorizontal: 12, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6, backgroundColor: raisedSurface, borderWidth: subtleBorderWidth, borderColor: chromeBorder }}>
+                  <AppIcon name="grab" color={colors.textSecondary} size={14} />
+                  <Text style={{ color: colors.textSecondary, fontSize: 11.5, fontWeight: '900' }}>{t('providerSettings.sort.manual')}</Text>
+                </IslePressable>
+              ) : null}
             </View>
-            <View style={{ flex: 1, minWidth: 0, flexDirection: 'row', flexWrap: 'wrap', gap: 8 }}>
+            <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8 }}>
               {SORT_OPTIONS.map((option) => (
                 <ChoiceIsleChip
                   key={option.id}
@@ -505,9 +408,7 @@ export function ProviderSettingsContent({ embedded = false, onClose, onBackgroun
               ))}
             </View>
           </View>
-
-          <Text style={{ color: colors.text, fontSize: 17, fontWeight: '900', marginTop: 22, marginBottom: 10 }}>{t('providerSettings.list')}</Text>
-          <View style={{ gap: 12 }}>
+          <View style={{ gap: 10, marginTop: 2 }}>
             {visibleProviders.map((provider, index) => (
               <MotiView
                 key={provider.id}
@@ -522,10 +423,14 @@ export function ProviderSettingsContent({ embedded = false, onClose, onBackgroun
                   selected={selectedIds.has(provider.id)}
                   batchMode={batchMode}
                   expanded={expandedProviderId === provider.id || (expandedProviderId === null && index === 0 && !provider.enabled)}
-                  canMoveUp={providers.findIndex((item) => item.id === provider.id) > 0}
-                  canMoveDown={providers.findIndex((item) => item.id === provider.id) < providers.length - 1}
+                  sortEnabled={manualOrdering}
+                  position={(providerOrderById.get(provider.id) ?? index) + 1}
+                  total={providers.length}
+                  canMoveUp={(providerOrderById.get(provider.id) ?? index) > 0}
+                  canMoveDown={(providerOrderById.get(provider.id) ?? index) < providers.length - 1}
                   onToggleSelected={() => toggleSelection(provider.id)}
-                  onMove={(direction) => moveProvider(provider.id, direction)}
+                  onMove={(offset) => moveProvider(provider.id, offset)}
+                  onExpandedChange={(next) => setExpandedProviderId(next ? provider.id : null)}
                 />
               </MotiView>
             ))}
@@ -555,9 +460,14 @@ export default ProviderSettingsContent
 function HeaderBackButton({ onPress }: { onPress: () => void }) {
   const { colors } = useAppTheme()
   const { t } = useTranslation()
+  const { mutedSurface } = resolveProviderChrome(colors)
   return (
-    <AnimatedNavigationTrigger variant="iconButton" label={t('common.back')} size="lg" glyph="back" onNavigate={onPress} color={colors.text} style={{ backgroundColor: colors.ui.card.defaultBackground }} />
+    <AnimatedNavigationTrigger variant="iconButton" label={t('common.back')} size="md" glyph="back" onNavigate={onPress} color={colors.text} style={{ backgroundColor: mutedSurface }} />
   )
+}
+
+function OperatorMetric({ label }: { label: string }) {
+  return <IsleMetric label={label} />
 }
 
 function closeStandaloneProviderSettings() {
@@ -605,81 +515,326 @@ function ProviderListRow({
   selected,
   batchMode,
   expanded,
+  sortEnabled,
+  position,
+  total,
   canMoveUp,
   canMoveDown,
   onToggleSelected,
   onMove,
+  onExpandedChange,
 }: {
   provider: AIProvider
   selected: boolean
   batchMode: boolean
   expanded: boolean
+  sortEnabled: boolean
+  position: number
+  total: number
   canMoveUp: boolean
   canMoveDown: boolean
   onToggleSelected: () => void
-  onMove: (direction: -1 | 1) => void
+  onMove: (offset: number) => void
+  onExpandedChange: (next: boolean) => void
 }) {
   const { colors } = useAppTheme()
   const { t } = useTranslation()
+  const { subtleBorderWidth, mutedSurface, raisedSurface } = resolveProviderChrome(colors)
+  const activityState = provider.enabled
+    ? t('apiKeyPanel.enabledState')
+    : t('apiKeyPanel.disabledState')
+  const statusTone = provider.lastTestStatus === 'ok'
+    ? colors.ui.tone.success
+    : provider.lastTestStatus === 'bad' || provider.lastModelSyncStatus === 'bad'
+      ? colors.ui.tone.warning
+      : colors.ui.tone.neutral
+  const capabilityLabels = [
+    summarizeProviderCapabilityMatrix(buildProviderCapabilityMatrix(provider)),
+    provider.capabilities?.responsesApi === true ? 'Responses' : '',
+    provider.capabilities?.responsesWebSocket === true ? 'WebSocket' : '',
+    provider.capabilities?.remoteCompact === true ? 'Remote compact' : '',
+  ].filter(Boolean)
+  const showDragRail = total > 1 && sortEnabled
   return (
-    <View style={{ flexDirection: 'row', alignItems: 'stretch', gap: 8, minWidth: 0 }}>
-      <DragRail disabledUp={!canMoveUp} disabledDown={!canMoveDown} onMove={onMove} />
-      {batchMode ? (
-        <IslePressable haptic onPress={onToggleSelected} accessibilityLabel={selected ? t('providerSettings.unselectProvider') : t('providerSettings.selectProvider')} style={{ width: 36, borderRadius: colors.ui.radius.chip, alignItems: 'center', justifyContent: 'center', backgroundColor: selected ? colors.ui.control.primaryBackground : colors.ui.card.defaultBackground, borderWidth: 1, borderColor: selected ? colors.ui.control.primaryBorder : colors.material.stroke }}>
-          <Text style={{ color: selected ? colors.ui.control.primaryForeground : colors.textTertiary, fontSize: 13, fontWeight: '900' }}>{selected ? '✓' : ''}</Text>
+    <View
+      style={{
+        borderRadius: PROVIDER_CARD_RADIUS - 2,
+        padding: 10,
+        backgroundColor: raisedSurface,
+        borderWidth: subtleBorderWidth,
+        borderColor: selected ? colors.ui.control.primaryBorder : colors.ui.semantic.chrome.border,
+      }}
+    >
+      <View style={{ flexDirection: 'row', alignItems: 'flex-start', gap: 10, minWidth: 0 }}>
+        {batchMode ? (
+          <IslePressable
+            haptic
+            onPress={onToggleSelected}
+            accessibilityLabel={selected ? t('providerSettings.unselectProvider') : t('providerSettings.selectProvider')}
+            accessibilityState={{ selected }}
+            style={{
+              width: 42,
+              minHeight: 42,
+              borderRadius: colors.ui.radius.controlMiddle,
+              alignItems: 'center',
+              justifyContent: 'center',
+              backgroundColor: selected ? colors.ui.control.primaryBackground : colors.ui.semantic.surface.base,
+              borderWidth: subtleBorderWidth,
+              borderColor: selected ? colors.ui.control.primaryBorder : colors.ui.semantic.chrome.border,
+            }}
+          >
+            {selected ? <AppIcon name="check" color={colors.ui.control.primaryForeground} size={17} /> : <View style={{ width: 12, height: 12, borderRadius: 6, borderWidth: 2, borderColor: colors.textTertiary }} />}
+          </IslePressable>
+        ) : null}
+        <IslePressable
+          haptic
+          onPress={() => onExpandedChange(!expanded)}
+          accessibilityRole="button"
+          accessibilityLabel={provider.name}
+          style={{ flex: 1, minWidth: 0, gap: 8, borderRadius: colors.ui.radius.controlMiddle, paddingVertical: 2 }}
+        >
+          <View style={{ flexDirection: 'row', alignItems: 'flex-start', gap: 10, minWidth: 0 }}>
+            <View style={{ width: 38, height: 38, borderRadius: colors.ui.radius.controlMiddle, alignItems: 'center', justifyContent: 'center', backgroundColor: mutedSurface, flexShrink: 0 }}>
+              <AppIcon name="provider-key" color={colors.ui.icon.accentForeground} size={16} />
+            </View>
+            <View style={{ flex: 1, minWidth: 0, gap: 3, paddingTop: 1 }}>
+              <Text numberOfLines={1} style={{ color: colors.text, fontSize: 14, lineHeight: 18, fontWeight: '900', includeFontPadding: false }}>
+                {provider.name}
+              </Text>
+              <Text numberOfLines={1} style={{ color: colors.textSecondary, fontSize: 11, lineHeight: 15, fontWeight: '800', includeFontPadding: false }}>
+                {provider.baseUrl || t('providerSettings.baseUrl')}
+              </Text>
+            </View>
+            <MotiView animate={{ rotate: expanded ? '180deg' : '0deg' }} transition={{ type: 'timing', duration: 180 }} style={{ paddingTop: 2 }}>
+              <AppIcon name="collapse" color={colors.textTertiary} size={16} />
+            </MotiView>
+          </View>
+          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
+            <View style={{ minHeight: 22, borderRadius: colors.ui.radius.chip, paddingHorizontal: 8, alignItems: 'center', justifyContent: 'center', backgroundColor: statusTone.background, borderWidth: subtleBorderWidth, borderColor: statusTone.border }}>
+              <Text style={{ color: statusTone.foreground, fontSize: 9.5, lineHeight: 11, fontWeight: '900', includeFontPadding: false }}>
+                {activityState}
+              </Text>
+            </View>
+            <Text style={{ color: colors.textTertiary, fontSize: 9.5, lineHeight: 12, fontWeight: '800', includeFontPadding: false }}>
+              {t('providerSettings.orderPosition', { index: position, total })}
+            </Text>
+            {!!provider.models?.length ? (
+              <Text numberOfLines={1} style={{ color: colors.textTertiary, fontSize: 9.5, lineHeight: 12, fontWeight: '800', includeFontPadding: false }}>
+                {t('apiKeyPanel.modelCount', { count: provider.models.length })}
+              </Text>
+            ) : null}
+            {!!provider.credentialGroups?.length ? (
+              <Text numberOfLines={1} style={{ color: colors.textTertiary, fontSize: 9.5, lineHeight: 12, fontWeight: '800', includeFontPadding: false }}>
+                {t('apiKeyPanel.tokenGroups', { count: provider.credentialGroups.length })}
+              </Text>
+            ) : null}
+            {capabilityLabels.length ? (
+              <Text numberOfLines={1} style={{ color: colors.textTertiary, fontSize: 9.5, lineHeight: 12, fontWeight: '800', includeFontPadding: false }}>
+                {capabilityLabels.join(' · ')}
+              </Text>
+            ) : null}
+          </View>
         </IslePressable>
-      ) : null}
-      <View style={{ flex: 1, minWidth: 0 }}>
-        <ApiKeyPanel provider={provider} initiallyExpanded={expanded} />
       </View>
+      {showDragRail ? (
+        <View style={{ marginTop: 10, marginLeft: batchMode ? 52 : 0 }}>
+          <DragRail
+            providerName={provider.name}
+            position={position}
+            total={total}
+            disabled={!sortEnabled}
+            disabledUp={!canMoveUp}
+            disabledDown={!canMoveDown}
+            onMove={onMove}
+          />
+        </View>
+      ) : null}
+      {expanded ? (
+        <View style={{ minWidth: 0, minHeight: PROVIDER_ROW_HEIGHT - 10, marginTop: 3 }}>
+          <ApiKeyPanel
+            provider={provider}
+            expanded={expanded}
+            onExpandedChange={onExpandedChange}
+            hideHeader
+            style={{
+              marginBottom: 0,
+              padding: 0,
+              backgroundColor: 'transparent',
+              borderWidth: 0,
+            }}
+          />
+        </View>
+      ) : null}
     </View>
   )
 }
 
-function DragRail({ disabledUp, disabledDown, onMove }: { disabledUp: boolean; disabledDown: boolean; onMove: (direction: -1 | 1) => void }) {
+function DragRail({
+  providerName,
+  position,
+  total,
+  disabled,
+  disabledUp,
+  disabledDown,
+  onMove,
+}: {
+  providerName: string
+  position: number
+  total: number
+  disabled: boolean
+  disabledUp: boolean
+  disabledDown: boolean
+  onMove: (offset: number) => void
+}) {
   const { colors } = useAppTheme()
+  const { t } = useTranslation()
+  const motion = useMotionPreference()
+  const { subtleBorderWidth, mutedSurface, raisedSurface } = resolveProviderChrome(colors)
   const translateY = useSharedValue(0)
+  const dragging = useSharedValue(0)
+  const dragStepCount = useRef(0)
   const gesture = Gesture.Pan()
-    .activateAfterLongPress(220)
-    .onUpdate((event) => {
-      translateY.value = Math.max(-26, Math.min(26, event.translationY))
+    .enabled(!disabled && !(disabledUp && disabledDown))
+    .activateAfterLongPress(180)
+    .onBegin(() => {
+      dragStepCount.current = 0
+      dragging.value = 1
     })
-    .onEnd((event) => {
-      const direction = event.translationY < -18 ? -1 : event.translationY > 18 ? 1 : 0
+    .onUpdate((event) => {
+      translateY.value = Math.max(-48, Math.min(48, event.translationY))
+      const nextStep = event.translationY < 0
+        ? Math.ceil((event.translationY + PROVIDER_DRAG_STEP * 0.5) / PROVIDER_DRAG_STEP)
+        : Math.floor((event.translationY - PROVIDER_DRAG_STEP * 0.5) / PROVIDER_DRAG_STEP)
+      const boundedStep = Math.max(-(position - 1), Math.min(total - position, nextStep))
+      while (boundedStep > dragStepCount.current) {
+        dragStepCount.current += 1
+        runOnJS(onMove)(1)
+      }
+      while (boundedStep < dragStepCount.current) {
+        dragStepCount.current -= 1
+        runOnJS(onMove)(-1)
+      }
+    })
+    .onEnd(() => {
       translateY.value = withSpring(0)
-      if (direction === -1 && !disabledUp) runOnJS(onMove)(-1)
-      if (direction === 1 && !disabledDown) runOnJS(onMove)(1)
+      dragging.value = withSpring(0)
+      dragStepCount.current = 0
     })
     .onFinalize(() => {
       translateY.value = withSpring(0)
+      dragging.value = withSpring(0)
+      dragStepCount.current = 0
     })
   const animatedStyle = useAnimatedStyle(() => ({
     transform: [{ translateY: translateY.value }],
+    opacity: active ? 1 : 0.58,
   }))
+  const animatedRailStyle = useAnimatedStyle(() => ({
+    transform: [{ scale: dragging.value ? 1.04 : 1 }],
+  }))
+  const active = !disabled && !(disabledUp && disabledDown)
+  const railBorder = disabled ? colors.ui.semantic.chrome.border : colors.ui.control.primaryBorder
+  const railBackground = disabled ? mutedSurface : raisedSurface
+  const positionLabel = total ? t('providerSettings.orderPosition', { index: position, total }) : ''
   return (
-    <GestureDetector gesture={gesture}>
-      <Animated.View style={[{ width: 34, borderRadius: colors.ui.radius.controlSmall, alignItems: 'center', justifyContent: 'center', backgroundColor: colors.ui.card.defaultBackground, borderWidth: 1, borderColor: colors.material.stroke, opacity: disabledUp && disabledDown ? 0.42 : 1 }, animatedStyle]}>
-        <GripVertical color={colors.textTertiary} size={17} />
-      </Animated.View>
-    </GestureDetector>
+    <Animated.View style={[{ flexDirection: 'row', alignItems: 'center', gap: 8, flexShrink: 0 }, animatedRailStyle]}>
+      <MoveButton
+        label={t('providerSettings.moveUpProvider', { name: providerName })}
+        icon="arrow-up"
+        disabled={disabled || disabledUp}
+        onPress={() => onMove(-1)}
+      />
+      <GestureDetector gesture={gesture}>
+        <Animated.View
+          accessibilityRole="adjustable"
+          accessibilityLabel={disabled ? t('providerSettings.dragDisabledLabel', { name: providerName }) : t('providerSettings.dragProviderLabel', { name: providerName })}
+          accessibilityHint={disabled ? t('providerSettings.dragDisabledHint') : t('providerSettings.dragProviderHint')}
+          accessibilityValue={{ text: positionLabel }}
+          style={[{
+            minWidth: 94,
+            height: 40,
+            borderRadius: colors.ui.radius.controlLarge,
+            paddingHorizontal: 10,
+            flexDirection: 'row',
+            alignItems: 'center',
+            justifyContent: 'center',
+            gap: 7,
+            backgroundColor: railBackground,
+            borderWidth: subtleBorderWidth,
+            borderColor: railBorder,
+            shadowColor: colors.shadowTint,
+            shadowOpacity: colors.ui.cartoon && active ? 0.05 : 0,
+            shadowRadius: colors.ui.cartoon ? 8 : 0,
+            shadowOffset: { width: 0, height: colors.ui.cartoon ? 3 : 0 },
+            elevation: colors.ui.cartoon && active ? 1 : 0,
+          }, animatedStyle]}
+          >
+          <MotiView
+            animate={{ scale: active ? 1 : 0.96 }}
+            transition={motion === 'full' ? { type: 'spring', ...motionTokens.spring.gentle } : { type: 'timing', duration: 1 }}
+            style={{ width: 28, height: 28, borderRadius: colors.ui.radius.chip, alignItems: 'center', justifyContent: 'center', backgroundColor: disabled ? mutedSurface : colors.ui.control.primaryBackground }}
+          >
+            <AppIcon name="grab" color={disabled ? colors.textTertiary : colors.ui.control.primaryForeground} size={15} />
+          </MotiView>
+          <Text style={{ color: disabled ? colors.textTertiary : colors.textSecondary, fontSize: 10, lineHeight: 12, fontWeight: '900', includeFontPadding: false }}>
+            {position}
+          </Text>
+        </Animated.View>
+      </GestureDetector>
+      <MoveButton
+        label={t('providerSettings.moveDownProvider', { name: providerName })}
+        icon="arrow-down"
+        disabled={disabled || disabledDown}
+        onPress={() => onMove(1)}
+      />
+    </Animated.View>
+  )
+}
+
+function MoveButton({ label, icon, disabled, onPress }: { label: string; icon: 'arrow-up' | 'arrow-down'; disabled: boolean; onPress: () => void }) {
+  const { colors } = useAppTheme()
+  const { subtleBorderWidth, mutedSurface, chromeBorder } = resolveProviderChrome(colors)
+  return (
+    <IslePressable
+      haptic
+      accessibilityLabel={label}
+      accessibilityState={{ disabled }}
+      disabled={disabled}
+      onPress={onPress}
+      hitSlop={8}
+      style={{
+        width: 40,
+        height: 40,
+        borderRadius: colors.ui.radius.controlMiddle,
+        alignItems: 'center',
+        justifyContent: 'center',
+        backgroundColor: mutedSurface,
+        borderWidth: subtleBorderWidth,
+        borderColor: chromeBorder,
+        opacity: disabled ? 0.42 : 1,
+      }}
+    >
+      <AppIcon name={icon} color={disabled ? colors.textTertiary : colors.textSecondary} size={16} />
+    </IslePressable>
   )
 }
 
 function ChoiceIsleChip({ label, active, onPress }: { label: string; active: boolean; onPress: () => void }) {
   const { colors } = useAppTheme()
   const motion = useMotionPreference()
+  const { subtleBorderWidth, mutedSurface, chromeBorder } = resolveProviderChrome(colors)
   return (
-    <IslePressable haptic onPress={onPress} style={{ minHeight: 44, borderRadius: colors.ui.radius.controlMiddle, alignItems: 'center', justifyContent: 'center' }}>
+    <IslePressable haptic onPress={onPress} style={{ minHeight: 40, borderRadius: colors.ui.radius.controlMiddle, alignItems: 'center', justifyContent: 'center' }}>
       <MotiView
         animate={{
-          backgroundColor: active ? colors.ui.control.primaryBackground : colors.ui.card.defaultBackground,
-          borderColor: active ? colors.ui.control.primaryBorder : colors.material.stroke,
+          backgroundColor: active ? colors.ui.control.primaryBackground : mutedSurface,
+          borderColor: active ? colors.ui.control.primaryBorder : chromeBorder,
           scale: active ? 1.025 : 1,
         }}
         transition={motion === 'full' ? { type: 'spring', ...motionTokens.spring.gentle } : { type: 'timing', duration: 1 }}
-        style={{ minHeight: 44, borderRadius: colors.ui.radius.controlMiddle, paddingHorizontal: 12, alignItems: 'center', justifyContent: 'center', borderWidth: 1 }}
+        style={{ minHeight: 40, borderRadius: colors.ui.radius.controlMiddle, paddingHorizontal: 11, alignItems: 'center', justifyContent: 'center', borderWidth: subtleBorderWidth }}
       >
-        <Text style={{ color: active ? colors.ui.control.primaryForeground : colors.textSecondary, fontSize: 12, lineHeight: 16, fontWeight: '900', includeFontPadding: false }}>{label}</Text>
+        <Text style={{ color: active ? colors.ui.control.primaryForeground : colors.textSecondary, fontSize: 11.5, lineHeight: 15, fontWeight: '900', includeFontPadding: false }}>{label}</Text>
       </MotiView>
     </IslePressable>
   )
@@ -688,6 +843,7 @@ function ChoiceIsleChip({ label, active, onPress }: { label: string; active: boo
 function ActivationProgressCard({ job, onDismiss }: { job: ActivationJobState; onDismiss: () => void }) {
   const { colors } = useAppTheme()
   const { t } = useTranslation()
+  const { subtleBorderWidth, chromeSurface, chromeBorder } = resolveProviderChrome(colors)
   const progress = resolveActivationJobProgress(job)
   const done = job.status !== 'running'
   const providerItems = job.items ?? []
@@ -702,7 +858,7 @@ function ActivationProgressCard({ job, onDismiss }: { job: ActivationJobState; o
       transition={{ type: 'spring', damping: 20, stiffness: 190 }}
       style={{ marginTop: 14 }}
     >
-      <View style={{ borderRadius: colors.ui.radius.panel, padding: 13, backgroundColor: colors.ui.card.defaultBackground, borderWidth: 1, borderColor: colors.material.strokeStrong, shadowColor: colors.ui.control.shadow, shadowOpacity: colors.ui.card.shadowOpacity, shadowRadius: colors.ui.card.shadowRadius, shadowOffset: { width: 0, height: colors.ui.card.shadowOffset }, elevation: colors.ui.card.shadowOpacity > 0 ? 1 : 0, gap: 10 }}>
+      <View style={{ borderRadius: colors.ui.radius.panel, padding: 13, backgroundColor: chromeSurface, borderWidth: subtleBorderWidth, borderColor: chromeBorder, shadowColor: colors.ui.control.shadow, shadowOpacity: colors.ui.cartoon ? Math.min(colors.ui.card.shadowOpacity, 0.08) : 0, shadowRadius: colors.ui.cartoon ? Math.max(2, colors.ui.card.shadowRadius - 4) : 0, shadowOffset: { width: 0, height: colors.ui.cartoon ? Math.max(1, colors.ui.card.shadowOffset - 2) : 0 }, elevation: colors.ui.cartoon && colors.ui.card.shadowOpacity > 0 ? 1 : 0, gap: 10 }}>
         <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
           <View style={{ flex: 1, minWidth: 0 }}>
             <Text style={{ color: colors.text, fontSize: 14, fontWeight: '900' }}>
@@ -714,7 +870,7 @@ function ActivationProgressCard({ job, onDismiss }: { job: ActivationJobState; o
           </View>
           {done ? (
             <IsleIconButton label={t('dialog.close')} size="sm" onPress={onDismiss}>
-              <X color={colors.textSecondary} size={15} />
+              <AppIcon name="close" color={colors.textSecondary} size={15} />
             </IsleIconButton>
           ) : null}
         </View>
@@ -771,6 +927,7 @@ function ActivationProviderProgressList({ items }: { items: ActivationJobItemSta
 
 function ActivationProgressPill({ label, tone = 'default' }: { label: string; tone?: 'default' | 'mint' | 'amber' | 'danger' }) {
   const { colors } = useAppTheme()
+  const { subtleBorderWidth } = resolveProviderChrome(colors)
   const toneToken = tone === 'mint'
     ? colors.ui.tone.success
     : tone === 'amber'
@@ -779,7 +936,7 @@ function ActivationProgressPill({ label, tone = 'default' }: { label: string; to
         ? colors.ui.tone.danger
         : colors.ui.tone.neutral
   return (
-    <View style={{ minHeight: 28, borderRadius: colors.ui.radius.chip, paddingHorizontal: 9, alignItems: 'center', justifyContent: 'center', backgroundColor: toneToken.background, borderWidth: 1, borderColor: toneToken.border }}>
+    <View style={{ minHeight: 28, borderRadius: colors.ui.radius.chip, paddingHorizontal: 9, alignItems: 'center', justifyContent: 'center', backgroundColor: toneToken.background, borderWidth: subtleBorderWidth, borderColor: toneToken.border }}>
       <Text numberOfLines={1} style={{ color: toneToken.foreground, fontSize: 11, fontWeight: '900' }}>{label}</Text>
     </View>
   )
@@ -791,48 +948,6 @@ function activationDoneTitle(mode: 'single' | 'batch' | 'all', total: number, t:
   return t('providerSettings.activationBatchDone')
 }
 
-type ActivationItemPatch = Partial<Omit<ActivationJobItemState, 'providerId' | 'providerName'>>
-
-function createActivationItems(providers: AIProvider[], stage: string): ActivationJobItemState[] {
-  return providers.map((provider) => ({
-    providerId: provider.id,
-    providerName: provider.name,
-    status: 'queued',
-    progress: 0,
-    synced: false,
-    tested: false,
-    failed: false,
-    stage,
-  }))
-}
-
-function patchActivationItem(items: ActivationJobItemState[], providerId: string, updates: ActivationItemPatch): ActivationJobItemState[] {
-  return items.map((item) => {
-    if (item.providerId !== providerId) return item
-    if ((item.status === 'done' || item.status === 'failed') && updates.status === 'running') return item
-    const progress = updates.progress === undefined ? item.progress : Math.max(item.progress, updates.progress)
-    return {
-      ...item,
-      ...updates,
-      progress: activationItemProgress(progress),
-    }
-  })
-}
-
-function aggregateActivationItems(items: ActivationJobItemState[]): { completed: number; synced: number; tested: number; failed: number; progress: number } {
-  const completed = items.filter((item) => item.status === 'done' || item.status === 'failed').length
-  const synced = items.filter((item) => item.synced).length
-  const tested = items.filter((item) => item.tested).length
-  const failed = items.filter((item) => item.failed).length
-  const progress = items.length ? items.reduce((sum, item) => sum + activationItemProgress(item.progress), 0) / items.length : 0
-  return { completed, synced, tested, failed, progress }
-}
-
-function activationItemProgress(progress: number): number {
-  if (!Number.isFinite(progress)) return 0
-  return Math.min(1, Math.max(0, progress))
-}
-
 function activationItemStatusLabel(item: ActivationJobItemState, t: ReturnType<typeof useTranslation>['t']): string {
   if (item.status === 'queued') return t('providerSettings.activationQueued')
   if (item.status === 'running') return t('providerSettings.activationRunning')
@@ -841,28 +956,11 @@ function activationItemStatusLabel(item: ActivationJobItemState, t: ReturnType<t
   return t('providerSettings.activationPartial')
 }
 
-function providerNameList(providers: Pick<AIProvider, 'name'>[]): string {
-  return providers
-    .map((provider) => provider.name.trim())
-    .filter(Boolean)
-    .map((name) => `- ${name}`)
-    .join('\n')
-}
-
 function activationStatusLabel(job: ActivationJobState, t: ReturnType<typeof useTranslation>['t']): string {
   if (job.status === 'running') return t('providerSettings.activationRunning')
   if (job.status === 'failed') return t('providerSettings.activationFailed')
   if (job.failed > 0) return t('providerSettings.activationPartial')
   return t('providerSettings.activationSuccess')
-}
-
-function scheduleActivationJobDismiss(tone: 'mint' | 'amber' | 'danger', clearActivationJob: () => void) {
-  if (tone !== 'mint') return
-  const jobId = useActivationJobStore.getState().job?.id
-  setTimeout(() => {
-    const current = useActivationJobStore.getState().job
-    if (current && current.id === jobId && current.status !== 'running') clearActivationJob()
-  }, 5000)
 }
 
 function isPresetDefaultBaseUrl(value: string, presetId: ProviderPresetId, wireProtocol: ProviderWireProtocol): boolean {
@@ -875,21 +973,6 @@ function isPresetDefaultBaseUrl(value: string, presetId: ProviderPresetId, wireP
 
 function normalizeDraftBaseUrl(value: string): string {
   return value.trim().replace(/\/+$/, '').toLowerCase()
-}
-
-function stageToastTitle(stage: 'enabled' | 'syncing' | 'testing' | 'done' | 'failed', t: ReturnType<typeof useTranslation>['t']): string {
-  switch (stage) {
-    case 'enabled':
-      return t('providerSettings.activationEnabled')
-    case 'syncing':
-      return t('providerSettings.activationSyncing')
-    case 'testing':
-      return t('providerSettings.activationTesting')
-    case 'done':
-      return t('providerSettings.activationSuccess')
-    case 'failed':
-      return t('providerSettings.activationFailed')
-  }
 }
 
 function ProviderFormModal({
@@ -935,6 +1018,7 @@ function ProviderFormModal({
   )
   const sheetMaxHeight = Math.min(availableSheetHeight, height * (compact ? 0.96 : 0.88))
   const sheetMaterial = colors.material.sheet
+  const { subtleBorderWidth, chromeBorder, chromeSurface } = resolveProviderChrome(colors)
   const modalPadding = compactWidth ? 12 : 16
   const modalActionStyle = footerCompact ? { alignSelf: 'stretch' as const, minHeight: 44 } : { flexGrow: 1, flexShrink: 1, flexBasis: '47%' as const, minWidth: 0 }
   const footerScrollReserve = Math.max(insets.bottom, 10) + 132
@@ -1173,7 +1257,7 @@ function ProviderFormModal({
             from={motion === 'full' ? { opacity: 0, translateY: 32, scale: 0.985 } : { opacity: 0 }}
             animate={{ opacity: 1, translateY: 0, scale: 1 }}
             transition={motion === 'full' ? { type: 'spring', damping: 23, stiffness: 190 } : { type: 'timing', duration: motionTokens.duration.fast }}
-            style={{ maxHeight: sheetMaxHeight, borderTopLeftRadius: 30, borderTopRightRadius: 30, backgroundColor: sheetMaterial.surface, borderWidth: 1, borderColor: sheetMaterial.border, overflow: 'hidden' }}
+            style={{ maxHeight: sheetMaxHeight, borderTopLeftRadius: 30, borderTopRightRadius: 30, backgroundColor: sheetMaterial.surface, borderWidth: subtleBorderWidth, borderColor: sheetMaterial.border, overflow: 'hidden' }}
           >
             <View style={{ paddingHorizontal: modalPadding, paddingTop: 16, paddingBottom: 10, backgroundColor: sheetMaterial.chrome, borderBottomWidth: 1, borderBottomColor: sheetMaterial.divider }}>
               <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
@@ -1182,7 +1266,7 @@ function ProviderFormModal({
                   <Text style={{ color: colors.textSecondary, fontSize: 12, marginTop: 3 }}>{t('providerSettings.addSubtitle')}</Text>
                 </View>
                 <IsleIconButton label={t('dialog.close')} onPress={closeWithoutSubmit}>
-                  <X color={colors.textSecondary} size={18} />
+                  <AppIcon name="close" color={colors.textSecondary} size={18} />
                 </IsleIconButton>
               </View>
               <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 8, paddingTop: 12 }}>
@@ -1199,7 +1283,7 @@ function ProviderFormModal({
                 <IsleButton
                   label={clipboardBusy ? t('providerSettings.clipboardChecking') : t('settings.pasteClipboard')}
                   compact
-                  icon={<ClipboardPaste color={colors.textSecondary} size={16} />}
+                  icon={<AppIcon name="paste" color={colors.textSecondary} size={16} />}
                   onPress={() => void readProviderClipboard()}
                   disabled={clipboardBusy}
                   style={compactWidth ? { alignSelf: 'stretch' } : undefined}
@@ -1222,7 +1306,7 @@ function ProviderFormModal({
                 }, onFocus: () => markInputFocused('name'), placeholder: preset.name, autoCapitalize: 'none' }} />
               </View>
               {providerConfigDraft.isProtocolSelectable ? (
-                <View style={{ borderRadius: colors.ui.radius.panel, padding: 11, backgroundColor: colors.ui.card.defaultBackground, borderWidth: 1, borderColor: colors.material.stroke, gap: 9 }}>
+                <View style={{ borderRadius: colors.ui.radius.panel, padding: 11, backgroundColor: chromeSurface, borderWidth: subtleBorderWidth, borderColor: chromeBorder, gap: 9 }}>
                   <Text style={{ color: colors.text, fontSize: 13, fontWeight: '900' }}>{t('providerSettings.protocol.title')}</Text>
                   <View style={{ flexDirection: 'row', gap: 8, flexWrap: 'wrap' }}>
                     {PROVIDER_WIRE_PROTOCOL_OPTIONS.map((protocol) => (
@@ -1255,11 +1339,11 @@ function ProviderFormModal({
               <IslePressable
                 haptic
                 onPress={() => setAdvancedOpen((value) => !value)}
-                style={{ minHeight: 44, borderRadius: colors.ui.radius.controlLarge, paddingHorizontal: 13, flexDirection: 'row', alignItems: 'center', gap: 8, backgroundColor: colors.ui.input.background, borderWidth: 1, borderColor: colors.ui.input.border }}
+                style={{ minHeight: 44, borderRadius: colors.ui.radius.controlLarge, paddingHorizontal: 13, flexDirection: 'row', alignItems: 'center', gap: 8, backgroundColor: colors.ui.input.background, borderWidth: subtleBorderWidth, borderColor: colors.ui.input.border }}
               >
                 <Text style={{ flex: 1, minWidth: 0, color: colors.textSecondary, fontSize: 12, fontWeight: '900' }}>{t('providerSettings.advancedModels')}</Text>
                 <MotiView animate={{ rotate: advancedOpen ? '180deg' : '0deg' }} transition={{ type: 'timing', duration: 160 }}>
-                  <ChevronDown color={colors.textTertiary} size={16} />
+                  <AppIcon name="collapse" color={colors.textTertiary} size={16} />
                 </MotiView>
               </IslePressable>
               {advancedOpen ? (
@@ -1332,12 +1416,12 @@ function ProviderImportModal({
   const inputScrollEnabled = targetInputHeight > maxInputHeight
   const sheetMaxHeight = Math.min(availableSheetHeight, height * (compact ? 0.96 : 0.9))
   const sheetMaterial = colors.material.sheet
+  const { subtleBorderWidth } = resolveProviderChrome(colors)
   const compactWidth = width < 430
   const footerCompact = width < 380
   const modalPadding = compactWidth ? 12 : 16
   const modalActionStyle = footerCompact ? { alignSelf: 'stretch' as const, minHeight: 44 } : { flex: 1, minHeight: 44 }
-  const detectedImport = useMemo(() => input.trim() ? parseProviderImportText(input) : null, [input])
-  const detectedImportCount = detectedImport?.providers.length ?? 0
+  const detectedImportCount = useMemo(() => countDetectedProviderImports(input), [input])
   const clipboardBusy = clipboardState !== 'idle'
   const keyboardRequestClose = useKeyboardAwareModalRequestClose(onClose)
 
@@ -1421,21 +1505,36 @@ function ProviderImportModal({
   }
 
   async function importFromFile() {
-    const result = await DocumentPicker.getDocumentAsync({
-      type: ['text/plain', 'text/csv', 'application/csv', 'application/json', 'text/json', '*/*'],
-      copyToCacheDirectory: true,
-    })
-    if (result.canceled || !result.assets[0]) return
-    const asset = result.assets[0]
-    const name = asset.name.toLowerCase()
-    const supported = /\.(txt|csv|json)$/i.test(name) || ['text/plain', 'text/csv', 'application/csv', 'application/json', 'text/json'].includes(asset.mimeType ?? '')
-    if (!supported) {
-      dialog.toast({ title: t('providerSettings.fileUnsupported'), message: t('providerSettings.fileUnsupportedMessage'), tone: 'amber' })
-      return
+    let importUri: string | undefined
+    try {
+      const result = await DocumentPicker.getDocumentAsync({
+        type: ['text/plain', 'text/csv', 'application/csv', 'application/json', 'text/json', '*/*'],
+        copyToCacheDirectory: true,
+      })
+      if (result.canceled || !result.assets[0]) return
+      const asset = result.assets[0]
+      importUri = asset.uri
+      const name = asset.name.toLowerCase()
+      const supported = /\.(txt|csv|json)$/i.test(name) || ['text/plain', 'text/csv', 'application/csv', 'application/json', 'text/json'].includes(asset.mimeType ?? '')
+      if (!supported) {
+        dialog.toast({ title: t('providerSettings.fileUnsupported'), message: t('providerSettings.fileUnsupportedMessage'), tone: 'amber' })
+        return
+      }
+      const text = await readUtf8ImportFile(importUri, {
+        size: asset.size,
+        limitBytes: MAX_IMPORT_TEXT_FILE_BYTES,
+      })
+      appendInputText(text)
+      dialog.toast({ title: t('providerSettings.fileRead'), message: asset.name, tone: 'mint' })
+    } catch (error) {
+      dialog.toast({
+        title: isFileTooLargeError(error) ? t('error.fileTooLarge') : t('providerSettings.fileUnsupported'),
+        message: isFileTooLargeError(error) ? t('chat.fileTooLarge20') : t('providerSettings.fileUnsupportedMessage'),
+        tone: 'amber',
+      })
+    } finally {
+      await deleteTemporaryImportCopy(importUri, { assumeTemporaryCopy: true })
     }
-    const text = await FileSystem.readAsStringAsync(asset.uri)
-    appendInputText(text)
-    dialog.toast({ title: t('providerSettings.fileRead'), message: asset.name, tone: 'mint' })
   }
 
   return (
@@ -1459,7 +1558,7 @@ function ProviderImportModal({
               borderTopLeftRadius: 30,
               borderTopRightRadius: 30,
               backgroundColor: sheetMaterial.surface,
-              borderWidth: 1,
+              borderWidth: subtleBorderWidth,
               borderColor: sheetMaterial.border,
               overflow: 'hidden',
             }}
@@ -1469,7 +1568,7 @@ function ProviderImportModal({
                 <Text style={{ color: colors.text, fontSize: 18, fontWeight: '900' }}>{t('settings.batchImport')}</Text>
               </View>
               <IsleIconButton label={t('dialog.close')} onPress={onClose}>
-                <X color={colors.textSecondary} size={18} />
+                <AppIcon name="close" color={colors.textSecondary} size={18} />
               </IsleIconButton>
             </View>
             <ScrollView
@@ -1487,7 +1586,7 @@ function ProviderImportModal({
                     <IsleButton
                       label={clipboardBusy ? t('providerSettings.clipboardChecking') : t('settings.pasteClipboard')}
                       compact
-                      icon={<ClipboardPaste color={colors.textSecondary} size={16} />}
+                      icon={<AppIcon name="paste" color={colors.textSecondary} size={16} />}
                       onPress={() => void pasteFromClipboard()}
                       disabled={clipboardBusy}
                       style={modalActionStyle}
@@ -1495,7 +1594,7 @@ function ProviderImportModal({
                     <IsleButton
                       label={t('settings.chooseFile')}
                       compact
-                      icon={<FileJson color={colors.textSecondary} size={16} />}
+                      icon={<AppIcon name="json" color={colors.textSecondary} size={16} />}
                       onPress={() => void importFromFile()}
                       style={modalActionStyle}
                     />
@@ -1508,14 +1607,14 @@ function ProviderImportModal({
                     borderRadius: colors.ui.radius.panel,
                     paddingHorizontal: 14,
                     backgroundColor: colors.ui.input.background,
-                    borderWidth: colors.ui.minimal ? 1 : 2,
+                    borderWidth: colors.ui.cartoon ? 1 : subtleBorderWidth,
                     borderColor: colors.ui.input.border,
                     overflow: 'hidden',
                     shadowColor: colors.shadow.color,
-                    shadowOpacity: colors.ui.minimal ? 0 : 0.16,
+                    shadowOpacity: colors.ui.cartoon ? 0.08 : 0,
                     shadowRadius: 0,
-                    shadowOffset: { width: 0, height: 3 },
-                    elevation: 2,
+                    shadowOffset: { width: 0, height: 2 },
+                    elevation: colors.ui.cartoon ? 1 : 0,
                   }}
                 >
                   <TextInput
@@ -1552,7 +1651,7 @@ function ProviderImportModal({
               </View>
             </ScrollView>
             {!keyboardVisible ? (
-              <View style={{ minHeight: IMPORT_FOOTER_HEIGHT, flexDirection: footerCompact ? 'column' : 'row', alignItems: footerCompact ? 'stretch' : 'center', gap: footerCompact ? 8 : 10, paddingHorizontal: modalPadding, paddingTop: 12, paddingBottom: Math.max(insets.bottom, 10) + 10, backgroundColor: sheetMaterial.chrome, borderTopWidth: 1, borderTopColor: sheetMaterial.divider }}>
+              <View style={{ minHeight: IMPORT_FOOTER_HEIGHT, flexDirection: footerCompact ? 'column' : 'row', alignItems: footerCompact ? 'stretch' : 'center', gap: footerCompact ? 8 : 10, paddingHorizontal: modalPadding, paddingTop: 12, paddingBottom: Math.max(insets.bottom, 10) + 10, backgroundColor: colors.ui.cartoon ? sheetMaterial.chrome : colors.ui.glass ? colors.ui.semantic.chrome.background : sheetMaterial.chrome, borderTopWidth: subtleBorderWidth, borderTopColor: sheetMaterial.divider }}>
                 <IsleButton label={t('common.cancel')} compact onPress={onClose} style={modalActionStyle} />
                 <IsleButton label={t('providerSettings.import')} compact tone="primary" disabled={!input.trim()} onPress={submit} style={modalActionStyle} />
               </View>
@@ -1569,34 +1668,4 @@ function clipboardReadFailureMessage(error: unknown, t: ReturnType<typeof useTra
   return /permission|denied|not.?allowed|nopermission/i.test(message)
     ? t('providerSettings.clipboardPermissionDenied')
     : t('providerSettings.clipboardUnavailable')
-}
-
-function compareProviders(a: AIProvider, b: AIProvider, mode: ProviderSortMode, usageByProvider: Map<string, number>, settings?: ProviderModelAccessInput['settings']): number {
-  if (mode === 'recent') return (usageByProvider.get(b.id) ?? 0) - (usageByProvider.get(a.id) ?? 0)
-  if (mode === 'enabled') return Number(b.enabled) - Number(a.enabled) || a.name.localeCompare(b.name)
-  if (mode === 'models') return getPolicyAllowedProviderModels(b, settings).length - getPolicyAllowedProviderModels(a, settings).length || a.name.localeCompare(b.name)
-  if (mode === 'health') return providerHealthRank(b) - providerHealthRank(a) || a.name.localeCompare(b.name)
-  if (mode === 'name') return a.name.localeCompare(b.name)
-  return 0
-}
-
-function providerHealthRank(provider: AIProvider): number {
-  if (provider.lastTestStatus === 'ok') return 4
-  if (provider.lastModelSyncStatus === 'ok') return 3
-  if (provider.lastTestStatus === 'bad' || provider.lastModelSyncStatus === 'bad') return 1
-  return 2
-}
-
-function providerMatchesModelFilter(provider: AIProvider, filter: string, settings?: ProviderModelAccessInput['settings']): boolean {
-  const policyModels = getProviderModelDisplayCandidates({ providers: [provider], settings, includeDisabled: true, includeLocalSetup: true })[0]?.models ?? []
-  const allowedModelIds = new Set(policyModels.map((model) => model.toLowerCase()))
-  const values = [
-    provider.name,
-    provider.type,
-    ...policyModels,
-    ...(provider.modelConfigs ?? [])
-      .filter((model) => allowedModelIds.has(model.id.toLowerCase()))
-      .flatMap((model) => [model.id, model.name]),
-  ]
-  return values.some((value) => normalizeSearchText(value).includes(filter))
 }

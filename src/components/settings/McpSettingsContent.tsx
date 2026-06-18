@@ -1,16 +1,25 @@
 import { useEffect, useMemo, useState } from 'react'
-import { Text, View, useWindowDimensions } from 'react-native'
-import { Network, Plus, RefreshCw, ShieldCheck, Trash2 } from 'lucide-react-native'
+import { StyleSheet, Text, View, useWindowDimensions } from 'react-native'
 import { useTranslation } from 'react-i18next'
+import { AppIcon } from '@/components/ui/AppIcon'
 import { IsleButton } from '@/components/ui/isle'
 import { useIsleDialog } from '@/components/ui/isle'
 import { IsleField, IsleListItem, IsleSection, IsleToggle } from '@/components/ui/isle'
 import { IsleChip } from '@/components/ui/isle'
 import { useAppTheme } from '@/hooks/useAppTheme'
 import { listMcpServers, refreshMcpManifest, saveMcpServers, upsertMcpServer } from '@/services/mcp'
+import { normalizeMcpServerUrl } from '@/services/mcpUrlPolicy'
 import type { McpPromptManifest, McpResourceManifest, McpServerConfig, McpToolManifest } from '@/types'
 
 const DEFAULT_TTL_MS = 6 * 60 * 60 * 1000
+
+function hostFromUrl(value: string): string {
+  try {
+    return new URL(value).host || value
+  } catch {
+    return value
+  }
+}
 
 export function McpSettingsContent() {
   const { colors } = useAppTheme()
@@ -33,15 +42,15 @@ export function McpSettingsContent() {
   }
 
   async function addServer() {
-    const endpoint = url.trim()
-    if (!/^https?:\/\//i.test(endpoint)) {
+    const endpoint = normalizeMcpServerUrl({ id: '', url })
+    if (!endpoint) {
       dialog.toast({ title: t('mcp.urlRequired'), tone: 'amber' })
       return
     }
     const now = Date.now()
     const server = await upsertMcpServer({
       id: `mcp-${now}-${Math.random().toString(36).slice(2, 8)}`,
-      name: name.trim() || new URL(endpoint).host,
+      name: name.trim() || hostFromUrl(endpoint),
       url: endpoint,
       transport: 'sse',
       enabled: true,
@@ -105,12 +114,12 @@ export function McpSettingsContent() {
       <IsleSection
         title={t('mcp.addServer')}
         subtitle={t('mcp.addServerSubtitle')}
-        action={<Network color={colors.textSecondary} size={18} />}
+        action={<AppIcon name="network" color={colors.textSecondary} size={18} />}
       >
         <View style={{ gap: 10 }}>
           <IsleField label={t('mcp.name')} inputProps={{ value: name, onChangeText: setName, placeholder: 'Local tools' }} />
           <IsleField label={t('mcp.url')} inputProps={{ value: url, onChangeText: setUrl, placeholder: 'https://example.com/mcp', autoCapitalize: 'none', autoCorrect: false }} />
-          <IsleButton label={t('mcp.add')} icon={<Plus color={colors.ui.control.primaryForeground} size={16} />} tone="primary" onPress={() => void addServer()} style={compact ? { alignSelf: 'stretch' } : { alignSelf: 'flex-start', minWidth: 0 }} />
+          <IsleButton label={t('mcp.add')} icon={<AppIcon name="add" color={colors.ui.control.primaryForeground} size={16} />} tone="primary" onPress={() => void addServer()} style={compact ? { alignSelf: 'stretch' } : { alignSelf: 'flex-start', minWidth: 0 }} />
         </View>
       </IsleSection>
 
@@ -151,6 +160,7 @@ function ServerCard({
   const { t } = useTranslation()
   const { width } = useWindowDimensions()
   const compact = width < 430
+  const subtleBorderWidth = colors.ui.cartoon ? 1 : StyleSheet.hairlineWidth
   const resourceItems = server.resources.map((resource) => ({
     key: resource.uri,
     title: resource.name ?? resource.uri,
@@ -164,8 +174,8 @@ function ServerCard({
   const actions = (
     <View style={{ flexDirection: compact ? 'column' : 'row', flexWrap: compact ? 'nowrap' : 'wrap', gap: 8, justifyContent: 'flex-end', alignItems: compact ? 'stretch' : 'center' }}>
       {!readonly ? <IsleButton label={server.enabled ? t('settings.enabledState') : t('settings.disabledState')} compact tone={server.enabled ? 'mint' : 'soft'} onPress={() => void onToggleServer(server)} style={compact ? { alignSelf: 'stretch' } : undefined} /> : null}
-      <IsleButton label={t('settings.sync')} compact icon={<RefreshCw color={colors.textSecondary} size={14} />} onPress={() => void onRefresh(server)} style={compact ? { alignSelf: 'stretch' } : undefined} />
-      {!readonly ? <IsleButton label={t('common.delete')} compact tone="danger" icon={<Trash2 color={colors.ui.tone.danger.foreground} size={14} />} onPress={() => void onDelete(server)} style={compact ? { alignSelf: 'stretch' } : undefined} /> : null}
+      <IsleButton label={t('settings.sync')} compact icon={<AppIcon name="refresh" color={colors.textSecondary} size={14} />} onPress={() => void onRefresh(server)} style={compact ? { alignSelf: 'stretch' } : undefined} />
+      {!readonly ? <IsleButton label={t('common.delete')} compact tone="danger" icon={<AppIcon name="delete" color={colors.ui.control.dangerForeground} size={14} />} onPress={() => void onDelete(server)} style={compact ? { alignSelf: 'stretch' } : undefined} /> : null}
     </View>
   )
   return (
@@ -174,14 +184,14 @@ function ServerCard({
         borderRadius: colors.ui.radius.panel,
         padding: compact ? 10 : 12,
         gap: 10,
-        backgroundColor: colors.ui.card.defaultBackground,
-        borderWidth: colors.ui.minimal ? 1 : 2,
-        borderColor: server.enabled ? colors.material.strokeStrong : colors.material.stroke,
+        backgroundColor: colors.ui.glass ? colors.ui.semantic.chrome.background : colors.ui.cartoon ? colors.ui.semantic.surface.base : colors.ui.semantic.surface.base,
+        borderWidth: subtleBorderWidth,
+        borderColor: server.enabled ? colors.ui.control.primaryBorder : colors.ui.glass ? colors.ui.actionBar.itemBorder : colors.ui.semantic.chrome.border,
         shadowColor: colors.ui.control.shadow,
-        shadowOpacity: colors.ui.card.shadowOpacity,
-        shadowRadius: colors.ui.card.shadowRadius,
-        shadowOffset: { width: 0, height: colors.ui.card.shadowOffset },
-        elevation: colors.ui.card.shadowOpacity > 0 ? 1 : 0,
+        shadowOpacity: colors.ui.cartoon ? Math.min(colors.ui.card.shadowOpacity, 0.04) : 0,
+        shadowRadius: colors.ui.cartoon ? Math.max(2, colors.ui.card.shadowRadius - 4) : 0,
+        shadowOffset: { width: 0, height: colors.ui.cartoon ? Math.max(1, colors.ui.card.shadowOffset - 2) : 0 },
+        elevation: colors.ui.cartoon && colors.ui.card.shadowOpacity > 0 ? 1 : 0,
       }}
     >
       <IsleListItem
@@ -198,7 +208,7 @@ function ServerCard({
             title={tool.name}
             description={tool.description ?? t('mcp.noDescription')}
             active={tool.enabled}
-            icon={<ShieldCheck color={colors.text} size={18} />}
+            icon={<AppIcon name="shield" color={colors.text} size={18} />}
             onPress={() => readonly ? undefined : void onToggleTool(server, tool)}
           />
         ))}

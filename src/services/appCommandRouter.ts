@@ -58,10 +58,11 @@ function parseThemeMode(text: string): 'light' | 'dark' | 'system' | null {
   return null
 }
 
-function parseThemeFamily(text: string): 'island' | 'minimal' | null {
+function parseThemeFamily(text: string): 'minimal' | 'glass' | 'cartoon' | null {
   if (!hasThemeTarget(text)) return null
-  if (/(岛屿|island)/i.test(text)) return 'island'
   if (/(极简|minimal)/i.test(text)) return 'minimal'
+  if (/(玻璃|liquid\s*glass|glass|毛玻璃)/i.test(text)) return 'glass'
+  if (/(卡通|cartoon|岛屿|island)/i.test(text)) return 'cartoon'
   return null
 }
 

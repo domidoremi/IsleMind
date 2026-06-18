@@ -25,6 +25,7 @@ import {
   type LocalEmbeddingTokenizer,
 } from '@/services/localEmbeddingModels'
 import { lazyEmbedding } from '@/services/lazyEmbedding'
+import { logContextOperation } from '@/services/runtimeHealthLog'
 
 export interface SentenceChunk {
   content: string
@@ -510,7 +511,14 @@ export async function createOnnxEmbeddingProvider(settings: Pick<Settings, 'loca
         await loadTokenizer(active.model, active.directoryUri)
         return true
       } catch (error) {
-        console.error('[ONNX] Provider not available:', error)
+        await logContextOperation({
+          phase: 'knowledge_embedding',
+          status: 'error',
+          detail: 'onnx_provider_unavailable',
+          reason: 'availability_check_failed',
+          sourceType: 'text',
+          error,
+        })
         return false
       }
     },
@@ -1039,8 +1047,7 @@ async function loadSession(model: LocalEmbeddingModel, directoryUri: string): Pr
     pending = (async () => {
       const ort = await getOnnxRuntime()
       const modelUri = `${directoryUri}onnx/model_quantized.onnx`
-      const modelInput = await readFileBytes(modelUri)
-      return ort.InferenceSession.create(modelInput, {
+      return ort.InferenceSession.create(modelUri, {
         graphOptimizationLevel: 'all',
         executionMode: 'sequential',
         intraOpNumThreads: 1,
@@ -1079,11 +1086,6 @@ async function loadTokenizer(model: LocalEmbeddingModel, directoryUri: string): 
     tokenizerCache.set(key, pending)
   }
   return pending
-}
-
-async function readFileBytes(uri: string): Promise<Uint8Array> {
-  const base64 = await FileSystem.readAsStringAsync(uri, { encoding: FileSystem.EncodingType.Base64 })
-  return base64ToBytes(base64)
 }
 
 function encodeText(tokenizer: TokenizerState, text: string, maxTokens: number): { inputIds: number[]; attentionMask: number[]; tokenTypeIds: number[] } {

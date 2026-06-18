@@ -1,5 +1,5 @@
 import type { AIProvider, ProviderCapabilities, ProviderCredentialMode, ProviderPresetId, ProviderRegion, ProviderType, ProviderWireProtocol } from '@/types'
-import { getXiaomiMimoOfficialBaseUrl } from '@/types'
+import { getProviderConfigIssue, getXiaomiMimoOfficialBaseUrl } from '@/types'
 import { st } from '@/i18n/service'
 import { inferProviderCredentialModeFromKeyOrBaseUrl, inferProviderTokenPlanRegionFromBaseUrl, inferProviderWireProtocolFromBaseUrl } from '@/services/ai/providerProtocolPolicy'
 import { resolveProviderModelAliasAccess, type ProviderModelAccessInput } from '@/services/ai/policy/providerModelAccess'
@@ -98,6 +98,27 @@ export const PROVIDER_PRESETS: ProviderPreset[] = [
     reasoningEffort: true,
     nativeTools: true,
   }),
+  preset('azure-openai', 'Azure OpenAI', 'openai-compatible', undefined, ['azure openai', 'azure-openai', 'microsoft foundry', 'foundry models'], [/openai\.azure\.com/i, /services\.ai\.azure\.com/i], {
+    vision: true,
+    files: true,
+    nativeSearch: true,
+    reasoningEffort: true,
+    nativeTools: true,
+    responsesApi: true,
+  }),
+  preset('aws-bedrock', 'AWS Bedrock', 'openai-compatible', 'https://bedrock-mantle.us-east-1.api.aws/v1', ['aws bedrock', 'bedrock', 'amazon bedrock'], [/bedrock-mantle\.[\w-]+\.api\.aws/i, /bedrock-runtime\.[\w-]+\.amazonaws\.com/i, /bedrock\.[\w-]+\.amazonaws\.com/i], {
+    vision: true,
+    files: true,
+    reasoningEffort: true,
+    nativeTools: true,
+    responsesApi: true,
+  }),
+  preset('vertex-ai', 'Vertex AI', 'openai-compatible', undefined, ['vertex ai', 'google cloud vertex', 'aiplatform'], [/aiplatform\.googleapis\.com/i], {
+    vision: true,
+    files: true,
+    reasoningEffort: true,
+    nativeTools: true,
+  }),
   preset('deepseek', 'DeepSeek', 'openai-compatible', 'https://api.deepseek.com', ['deepseek'], [/api\.deepseek\.com/i], {
     reasoningEffort: true,
     nativeTools: true,
@@ -130,6 +151,157 @@ export const PROVIDER_PRESETS: ProviderPreset[] = [
     responsesApi: true,
   }),
   preset('xiaomi-mimo', 'Xiaomi MiMo', 'xiaomi-mimo', undefined, ['mimo', 'xiaomi', '小米'], [/xiaomimimo\.com/i], {
+    vision: true,
+    reasoningEffort: true,
+    nativeTools: true,
+  }),
+  preset('mistral', 'Mistral AI', 'openai-compatible', 'https://api.mistral.ai/v1', ['mistral', 'codestral', 'magistral'], [/api\.mistral\.ai/i], {
+    vision: true,
+    files: true,
+    reasoningEffort: true,
+    nativeTools: true,
+  }),
+  preset('groq', 'Groq', 'openai-compatible', 'https://api.groq.com/openai/v1', ['groq'], [/api\.groq\.com/i], {
+    vision: true,
+    audioTranscription: true,
+    speech: true,
+    nativeSearch: true,
+    reasoningEffort: true,
+    nativeTools: true,
+    responsesApi: true,
+  }),
+  preset('together', 'Together AI', 'openai-compatible', 'https://api.together.ai/v1', ['together'], [/api\.together\.ai/i], {
+    vision: true,
+    audioInput: true,
+    audioTranscription: true,
+    speech: true,
+    reasoningEffort: true,
+    nativeTools: true,
+  }),
+  preset('fireworks', 'Fireworks AI', 'openai-compatible', 'https://api.fireworks.ai/inference/v1', ['fireworks'], [/api\.fireworks\.ai/i], {
+    vision: true,
+    files: true,
+    reasoningEffort: true,
+    nativeTools: true,
+    responsesApi: true,
+  }),
+  preset('perplexity', 'Perplexity Sonar', 'openai-compatible', 'https://api.perplexity.ai', ['perplexity', 'sonar'], [/api\.perplexity\.ai/i], {
+    modelList: false,
+    nativeSearch: true,
+    reasoningEffort: true,
+  }),
+  preset('cohere', 'Cohere', 'openai-compatible', 'https://api.cohere.ai/compatibility/v1', ['cohere', 'command'], [/api\.cohere\.ai/i], {
+    audioTranscription: true,
+    reasoningEffort: true,
+    nativeTools: true,
+  }),
+  preset('cerebras', 'Cerebras', 'openai-compatible', 'https://api.cerebras.ai/v1', ['cerebras'], [/api\.cerebras\.ai/i], {
+    reasoningEffort: true,
+    nativeTools: true,
+  }),
+  preset('sambanova', 'SambaNova', 'openai-compatible', 'https://api.sambanova.ai/v1', ['sambanova', 'samba'], [/sambanova\.ai/i], {
+    vision: true,
+    audioInput: true,
+    reasoningEffort: true,
+    nativeTools: true,
+    responsesApi: true,
+  }),
+  preset('nvidia-nim', 'NVIDIA NIM', 'openai-compatible', 'https://integrate.api.nvidia.com/v1', ['nvidia', 'nim', 'build.nvidia'], [/integrate\.api\.nvidia\.com/i, /build\.nvidia\.com/i], {
+    vision: true,
+    reasoningEffort: true,
+    nativeTools: true,
+  }),
+  preset('huggingface', 'Hugging Face Inference Providers', 'openai-compatible', 'https://router.huggingface.co/v1', ['huggingface', 'hugging face', 'hf'], [/router\.huggingface\.co/i, /api-inference\.huggingface\.co/i], {
+    vision: true,
+    files: true,
+    reasoningEffort: true,
+    nativeTools: true,
+  }),
+  preset('github-models', 'GitHub Models', 'openai-compatible', 'https://models.github.ai/inference', ['github models', 'github-models'], [/models\.github\.ai/i], {
+    vision: true,
+    reasoningEffort: true,
+    nativeTools: true,
+  }),
+  preset('deepinfra', 'DeepInfra', 'openai-compatible', 'https://api.deepinfra.com/v1/openai', ['deepinfra'], [/api\.deepinfra\.com/i], {
+    vision: true,
+    reasoningEffort: true,
+    nativeTools: true,
+  }),
+  preset('novita', 'Novita AI', 'openai-compatible', 'https://api.novita.ai/v3/openai', ['novita'], [/api\.novita\.ai/i], {
+    vision: true,
+    files: true,
+    reasoningEffort: true,
+    nativeTools: true,
+  }),
+  preset('siliconflow', 'SiliconFlow', 'openai-compatible', 'https://api.siliconflow.cn/v1', ['siliconflow', 'silicon flow', '硅基流动'], [/api\.siliconflow\.(cn|com)/i], {
+    vision: true,
+    reasoningEffort: true,
+    nativeTools: true,
+  }),
+  preset('modelscope', 'ModelScope', 'openai-compatible', 'https://api-inference.modelscope.cn/v1', ['modelscope', '魔搭'], [/api-inference\.modelscope\.cn/i, /modelscope\.cn/i], {
+    vision: true,
+    reasoningEffort: true,
+    nativeTools: true,
+  }),
+  preset('volcengine-ark', 'Volcengine Ark', 'openai-compatible', 'https://ark.cn-beijing.volces.com/api/v3', ['volcengine', 'ark', 'doubao', '火山', '豆包'], [/ark\.[\w-]+\.volces\.com/i, /volces\.com/i], {
+    vision: true,
+    files: true,
+    audioInput: true,
+    audioTranscription: true,
+    speech: true,
+    reasoningEffort: true,
+    nativeTools: true,
+  }),
+  preset('baidu-qianfan', 'Baidu Qianfan', 'openai-compatible', 'https://qianfan.baidubce.com/v2', ['qianfan', 'ernie', 'baidu', '千帆', '文心'], [/qianfan\.baidubce\.com/i, /aip\.baidubce\.com/i], {
+    vision: true,
+    files: true,
+    reasoningEffort: true,
+    nativeTools: true,
+  }),
+  preset('tencent-hunyuan', 'Tencent Hunyuan', 'openai-compatible', 'https://api.hunyuan.cloud.tencent.com/v1', ['hunyuan', 'tencent', '混元', '腾讯'], [/hunyuan\.cloud\.tencent\.com/i], {
+    vision: true,
+    reasoningEffort: true,
+    nativeTools: true,
+  }),
+  preset('baichuan', 'Baichuan AI', 'openai-compatible', 'https://api.baichuan-ai.com/v1', ['baichuan', '百川'], [/baichuan-ai\.com/i], {
+    vision: true,
+    reasoningEffort: true,
+    nativeTools: true,
+  }),
+  preset('stepfun', 'StepFun', 'openai-compatible', 'https://api.stepfun.com/v1', ['stepfun', 'step', '阶跃'], [/api\.stepfun\.com/i], {
+    vision: true,
+    files: true,
+    reasoningEffort: true,
+    nativeTools: true,
+  }),
+  preset('zero-one', '01.AI', 'openai-compatible', 'https://api.lingyiwanwu.com/v1', ['01.ai', 'zero-one', '零一万物', 'yi-'], [/lingyiwanwu\.com/i, /01\.ai/i], {
+    vision: true,
+    reasoningEffort: true,
+    nativeTools: true,
+  }),
+  preset('ollama', 'Ollama', 'openai-compatible', 'http://localhost:11434/v1', ['ollama'], [/localhost:11434/i, /127\.0\.0\.1:11434/i, /ollama/i], {
+    vision: true,
+    reasoningEffort: true,
+    nativeTools: true,
+  }),
+  preset('lm-studio', 'LM Studio', 'openai-compatible', 'http://localhost:1234/v1', ['lm studio', 'lm-studio', 'lmstudio'], [/localhost:1234/i, /127\.0\.0\.1:1234/i, /lmstudio/i, /lm-studio/i], {
+    vision: true,
+    reasoningEffort: true,
+    nativeTools: true,
+  }),
+  preset('localai', 'LocalAI', 'openai-compatible', 'http://localhost:8080/v1', ['localai', 'local ai'], [/localhost:8080/i, /127\.0\.0\.1:8080/i, /localai/i], {
+    vision: true,
+    audioTranscription: true,
+    speech: true,
+    reasoningEffort: true,
+    nativeTools: true,
+  }),
+  preset('vllm', 'vLLM', 'openai-compatible', 'http://localhost:8000/v1', ['vllm', 'vllm-openai'], [/localhost:8000/i, /127\.0\.0\.1:8000/i, /vllm/i], {
+    vision: true,
+    reasoningEffort: true,
+    nativeTools: true,
+  }),
+  preset('sglang', 'SGLang', 'openai-compatible', 'http://localhost:30000/v1', ['sglang'], [/localhost:30000/i, /127\.0\.0\.1:30000/i, /sglang/i], {
     vision: true,
     reasoningEffort: true,
     nativeTools: true,
@@ -191,6 +363,10 @@ export async function probeProviderPreset(input: ProviderDetectionInput, deps: P
   const apiKey = input.apiKey?.trim()
   if (!baseUrl || !apiKey) {
     return { ...heuristic, ok: false, reason: st('providerRegistry.probeSkippedMissing', { reason: heuristic.reason }) }
+  }
+  const issue = getProviderConfigIssue({ type: 'openai-compatible', baseUrl }, apiKey)
+  if (issue?.code === 'bad_base_url') {
+    return { ...heuristic, ok: false, reason: st(issue.messageKey ?? issue.message, undefined, issue.message) }
   }
   const fetcher = deps.fetch ?? fetch
   const timeoutMs = deps.timeoutMs ?? 6000
@@ -560,10 +736,42 @@ function parseCsvLine(line: string): string[] {
 }
 
 function splitProviderImportChunks(input: string): string[] {
-  return input
+  const rawChunks = input
     .split(/(?:\r?\n\s*\r?\n|;|；)+/)
     .map((item) => item.trim())
     .filter(Boolean)
+
+  // Keep URL-only blocks with following key-only blocks from common copied configs.
+  const grouped: string[] = []
+  let currentGroup: string[] = []
+
+  for (const chunk of rawChunks) {
+    const hasUrl = /https?:\/\//.test(chunk)
+    const hasKeyOnly = /^(?:sk|tp|ak|rk|pk|key|token)-[A-Za-z0-9._:-]+$|^[A-Za-z0-9_-]{24,}$/.test(chunk.trim())
+
+    if (hasUrl) {
+      if (currentGroup.length > 0) {
+        grouped.push(currentGroup.join('\n\n'))
+      }
+      currentGroup = [chunk]
+    } else if (hasKeyOnly && currentGroup.length > 0) {
+      currentGroup.push(chunk)
+    } else if (hasKeyOnly && currentGroup.length === 0) {
+      grouped.push(chunk)
+    } else {
+      if (currentGroup.length > 0) {
+        currentGroup.push(chunk)
+      } else {
+        grouped.push(chunk)
+      }
+    }
+  }
+
+  if (currentGroup.length > 0) {
+    grouped.push(currentGroup.join('\n\n'))
+  }
+
+  return grouped.filter(Boolean)
 }
 
 function expandProviderImportChunk(chunk: string): string[] {

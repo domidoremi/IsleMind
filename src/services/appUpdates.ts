@@ -5,6 +5,9 @@ import * as FileSystem from 'expo-file-system/legacy'
 import * as IntentLauncher from 'expo-intent-launcher'
 import { st } from '@/i18n/service'
 import { sha256File } from '@/services/localEmbeddingModels'
+import { appendRuntimeLog, readStoredRuntimeLogOptions } from '@/services/runtimeLog'
+import { discardDownloadedApk, markDownloadedApkForCleanup } from '@/services/apkInstallCache'
+import { safeHttpUrl } from '@/utils/networkUrlSafety'
 
 export type ApkUpdateStatus = 'available' | 'unavailable' | 'downloaded' | 'unsupported' | 'error'
 export type ApkUpdateReason = 'network' | 'rate_limited' | 'manifest_invalid' | 'checksum_mismatch' | 'installer_failed'
@@ -105,66 +108,98 @@ export function formatUpdateCheckTime(value: number | undefined): string {
 
 export async function checkLatestApkRelease(): Promise<ApkUpdateResult> {
   if (Platform.OS !== 'android') {
-    return { status: 'unsupported', message: st('updates.androidOnly') }
+    const result = { status: 'unsupported', message: st('updates.androidOnly') } satisfies ApkUpdateResult
+    await logAppUpdateEvent('check', result)
+    return result
   }
 
   try {
     const release = await fetchLatestRelease()
     if (!release) {
-      return { status: 'unavailable', message: st('updates.noInstallableApk') }
+      const result = { status: 'unavailable', message: st('updates.noInstallableApk') } satisfies ApkUpdateResult
+      await logAppUpdateEvent('check', result)
+      return result
     }
 
     const snapshot = getVersionSnapshot()
     const currentVersion = normalizeVersion(snapshot.appVersion)
     if (compareReleaseToSnapshot(release, snapshot) <= 0) {
-      return {
+      const result = {
         status: 'unavailable',
         message: st('updates.alreadyLatest', { version: currentVersion }),
         release,
-      }
+      } satisfies ApkUpdateResult
+      await logAppUpdateEvent('check', result)
+      return result
     }
 
-    return {
+    const result = {
       status: 'available',
       message: st('updates.available', { version: release.version, build: release.versionCode ?? '' }),
       release,
-    }
+    } satisfies ApkUpdateResult
+    await logAppUpdateEvent('check', result)
+    return result
   } catch (error) {
     const reason = getUpdateReason(error) ?? 'network'
-    return {
+    const result = {
       status: 'error',
       reason,
       message: formatUpdateErrorMessage(reason, error),
-    }
+    } satisfies ApkUpdateResult
+    await logAppUpdateEvent('check', result, error)
+    return result
   }
 }
 
 export async function downloadAndOpenApkInstaller(release: ApkReleaseInfo): Promise<ApkUpdateResult> {
   if (Platform.OS !== 'android') {
-    return { status: 'unsupported', message: st('updates.androidOnly'), release }
+    const result = { status: 'unsupported', message: st('updates.androidOnly'), release } satisfies ApkUpdateResult
+    await logAppUpdateEvent('install', result)
+    return result
   }
 
   const cacheDirectory = FileSystem.cacheDirectory
   if (!cacheDirectory) {
-    return { status: 'error', message: st('updates.cacheUnavailable'), release }
+    const result = { status: 'error', message: st('updates.cacheUnavailable'), release } satisfies ApkUpdateResult
+    await logAppUpdateEvent('install', result)
+    return result
   }
 
+  let localUri: string | undefined
   let installerPhase = false
   try {
+    const apkUrl = safeHttpUrl(release.apkUrl)
+    if (!apkUrl) {
+      const result = {
+        status: 'error',
+        reason: 'manifest_invalid',
+        message: st('updates.releaseManifestInvalid', { error: 'apkUrl must be an explicit HTTP(S) URL' }),
+        release,
+      } satisfies ApkUpdateResult
+      await logAppUpdateEvent('install', result)
+      return result
+    }
     const safeName = release.apkName.replace(/[^\w.-]+/g, '-')
-    const localUri = `${cacheDirectory}${safeName}`
-    const download = await FileSystem.downloadAsync(release.apkUrl, localUri)
+    localUri = `${cacheDirectory}${safeName}`
+    const download = await FileSystem.downloadAsync(apkUrl, localUri)
     if (download.status < 200 || download.status >= 300) {
-      return {
+      await discardDownloadedApk(download.uri)
+      const result = {
         status: 'error',
         reason: 'network',
         message: st('updates.downloadFailedHttp', { status: download.status }),
         release,
-      }
+      } satisfies ApkUpdateResult
+      await logAppUpdateEvent('install', result)
+      return result
     }
 
     const verificationFailure = await verifyDownloadedApk(release, download.uri)
-    if (verificationFailure) return verificationFailure
+    if (verificationFailure) {
+      await logAppUpdateEvent('install', verificationFailure)
+      return verificationFailure
+    }
 
     installerPhase = true
     const contentUri = await FileSystem.getContentUriAsync(download.uri)
@@ -174,22 +209,30 @@ export async function downloadAndOpenApkInstaller(release: ApkReleaseInfo): Prom
       flags: ANDROID_GRANT_READ_URI_PERMISSION,
     })
 
-    return {
+    const result = {
       status: 'downloaded',
       message: st('updates.installerOpenedMessage'),
       release,
       localUri: download.uri,
-    }
+    } satisfies ApkUpdateResult
+    await logAppUpdateEvent('install', result)
+    await markDownloadedApkForCleanup(download.uri)
+    return result
   } catch (error) {
+    if (localUri) {
+      await discardDownloadedApk(localUri)
+    }
     const reason = installerPhase ? 'installer_failed' : 'network'
-    return {
+    const result = {
       status: 'error',
       reason,
       message: reason === 'installer_failed'
         ? st('updates.installerFailed', { error: formatError(error) })
         : st('updates.downloadOrOpenFailed', { error: formatError(error) }),
       release,
-    }
+    } satisfies ApkUpdateResult
+    await logAppUpdateEvent('install', result, error)
+    return result
   }
 }
 
@@ -289,7 +332,7 @@ function normalizeApkUpdateManifest(payload: unknown, supportedCpuArchitectures:
 function parseApkUpdateManifest(payload: unknown): ApkUpdateManifest {
   const record = asRecord(payload)
   const versionName = readRequiredString(record, 'versionName')
-  const releaseUrl = readRequiredString(record, 'releaseUrl')
+  const releaseUrl = readRequiredWebUrl(record, 'releaseUrl')
   const versionCode = readRequiredPositiveInteger(record, 'versionCode')
   const publishedAt = typeof record.publishedAt === 'string' ? record.publishedAt : null
   if (!Array.isArray(record.assets)) {
@@ -306,7 +349,7 @@ function parseManifestAsset(payload: unknown): ApkManifestAsset {
   const record = asRecord(payload)
   const abi = readRequiredString(record, 'abi')
   const variant = readVariant(record.variant)
-  const url = readRequiredString(record, 'url')
+  const url = readRequiredWebUrl(record, 'url')
   const name = typeof record.name === 'string' && record.name.trim() ? record.name.trim() : apkNameFromUrl(url)
   const sha256 = readRequiredSha256(record, 'sha256')
   const sizeBytes = readRequiredPositiveInteger(record, 'sizeBytes')
@@ -314,12 +357,13 @@ function parseManifestAsset(payload: unknown): ApkManifestAsset {
 }
 
 function normalizeGithubAsset(asset: { name?: string; browser_download_url?: string; size?: number }): ApkManifestAsset | null {
-  if (!asset.name?.toLowerCase().endsWith('.apk') || !asset.browser_download_url) return null
+  const url = safeHttpUrl(asset.browser_download_url)
+  if (!asset.name?.toLowerCase().endsWith('.apk') || !url) return null
   return {
     abi: inferApkAbi(asset.name),
     variant: inferApkVariant(asset.name),
     name: asset.name,
-    url: asset.browser_download_url,
+    url,
     sizeBytes: readOptionalPositiveInteger(asset.size),
   }
 }
@@ -411,10 +455,6 @@ async function verifyDownloadedApk(release: ApkReleaseInfo, uri: string): Promis
   return null
 }
 
-async function discardDownloadedApk(uri: string): Promise<void> {
-  await FileSystem.deleteAsync(uri, { idempotent: true }).catch(() => undefined)
-}
-
 function reasonForHttpStatus(status: number): ApkUpdateReason {
   return status === 403 || status === 429 ? 'rate_limited' : 'network'
 }
@@ -485,6 +525,15 @@ function readRequiredString(record: Record<string, unknown>, key: string): strin
   return value.trim()
 }
 
+function readRequiredWebUrl(record: Record<string, unknown>, key: string): string {
+  const value = readRequiredString(record, key)
+  const url = safeHttpUrl(value)
+  if (!url) {
+    throw createUpdateError('manifest_invalid', `${key} must be an explicit HTTP(S) URL`)
+  }
+  return url
+}
+
 function readOptionalPositiveInteger(value: unknown): number | undefined {
   if (value == null || value === '') return undefined
   if (typeof value !== 'number' || !Number.isInteger(value) || value <= 0) return undefined
@@ -551,4 +600,33 @@ function inferApkVariant(name: string): ApkAssetVariant {
 
 function formatError(error: unknown): string {
   return error instanceof Error ? error.message : String(error)
+}
+
+async function logAppUpdateEvent(phase: 'check' | 'install', result: ApkUpdateResult, error?: unknown): Promise<void> {
+  const options = await readStoredRuntimeLogOptions()
+  return appendRuntimeLog('app.update', {
+    phase,
+    status: result.status,
+    reason: result.reason,
+    message: result.message,
+    release: summarizeReleaseForLog(result.release),
+    localUri: result.localUri,
+    errorName: error instanceof Error ? error.name : undefined,
+    errorText: error instanceof Error ? error.message : undefined,
+  }, options)
+}
+
+function summarizeReleaseForLog(release: ApkReleaseInfo | undefined): Record<string, unknown> | undefined {
+  if (!release) return undefined
+  return {
+    version: release.version,
+    versionCode: release.versionCode,
+    tagName: release.tagName,
+    apkName: release.apkName,
+    apkUrl: release.apkUrl,
+    htmlUrl: release.htmlUrl,
+    abi: release.abi,
+    variant: release.variant,
+    sizeBytes: release.sizeBytes,
+  }
 }

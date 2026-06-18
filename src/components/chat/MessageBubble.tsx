@@ -5,13 +5,14 @@ import { MotiView } from 'moti'
 import type { TFunction } from 'i18next'
 import { useTranslation } from 'react-i18next'
 import * as Haptics from 'expo-haptics'
-import { BookOpen, ChevronRight, Copy, GitBranchPlus, ListChecks, RefreshCcw, RotateCcw, Search, Settings2, ShieldCheck, Sparkles, Trash2, Volume2, Workflow, Zap } from 'lucide-react-native'
 import { useRouter } from 'expo-router'
 import { Gesture, GestureDetector } from 'react-native-gesture-handler'
+import { StyleSheet } from 'react-native'
 import { runOnJS } from 'react-native-reanimated'
 import type { ChatErrorCode, Message, ProcessTrace } from '@/types'
 import { useAppTheme } from '@/hooks/useAppTheme'
 import { messageAnimationForMotion } from '@/theme/animation'
+import { AppIcon, appIconStroke } from '@/components/ui/AppIcon'
 import { IslePressable } from '@/components/ui/isle'
 import { useSettingsStore } from '@/store/settingsStore'
 import { MessageContent } from './MessageContent'
@@ -35,6 +36,19 @@ const STREAMING_RENDER_THROTTLE_MS = 120
 const AGENT_ACTION_PROMPT_VISIBILITY_LIMIT = 900
 const MESSAGE_ACTION_LOCK_MS = 420
 const MESSAGE_BUBBLE_HORIZONTAL_GUTTER = 40
+
+function resolveMessageActionChrome(colors: ReturnType<typeof useAppTheme>['colors'], isGlass: boolean) {
+  return {
+    barSurface: colors.ui.cartoon ? colors.ui.actionBar.background : isGlass ? colors.ui.semantic.chrome.background : colors.ui.semantic.surface.base,
+    barBorder: colors.ui.cartoon ? colors.ui.actionBar.border : colors.ui.semantic.chrome.border,
+    itemSurface: colors.ui.cartoon ? colors.ui.actionBar.itemBackground : isGlass ? colors.ui.actionBar.itemBackground : colors.ui.semantic.surface.muted,
+    itemBorder: colors.ui.cartoon ? colors.ui.actionBar.itemBorder : isGlass ? colors.ui.actionBar.itemBorder : colors.ui.semantic.chrome.border,
+  }
+}
+
+function resolveAssistantBubbleSurface(colors: ReturnType<typeof useAppTheme>['colors'], isGlass: boolean) {
+  return isGlass ? colors.ui.semantic.chrome.background : colors.ui.cartoon ? colors.ui.semantic.surface.base : colors.ui.semantic.surface.base
+}
 
 export interface MessageBubbleProps {
   conversationId: string
@@ -91,8 +105,9 @@ function MessageBubbleComponent({
   onConfigure,
   onTestModel,
 }: MessageBubbleProps) {
-  const { colors } = useAppTheme()
+  const { colors, isGlass } = useAppTheme()
   const { t } = useTranslation()
+  const actionChrome = resolveMessageActionChrome(colors, isGlass)
   const { width: windowWidth } = useWindowDimensions()
   const hapticsEnabled = useSettingsStore((state) => state.settings.hapticsEnabled)
   const [localActionsOpen, setLocalActionsOpen] = useState(false)
@@ -104,7 +119,13 @@ function MessageBubbleComponent({
   const renderedDisplayText = useThrottledStreamingText(displayText, isStreamingContent)
   const streamingLayoutStep = isStreamingContent ? Math.floor(displayText.length / STREAMING_LAYOUT_TEXT_STEP) : 0
   const processTraces = useMemo(() => collectVisibleProcessTraces(message), [message.reasoning, message.retrievalTrace, message.toolCalls])
-  const processLayerVisible = !isUser && (showThinkingStatus || processTraces.some(hasThinkingContent) || processTraces.some(isAgentWorkflowWaitingTrace))
+  const processLayerVisible = !isUser && (
+    isStreamingContent ||
+    showThinkingStatus ||
+    processTraces.some(isActiveProcessTrace) ||
+    processTraces.some(hasThinkingContent) ||
+    processTraces.some(isAgentWorkflowWaitingTrace)
+  )
   const bubbleMaxWidth = useMemo(
     () => resolveMessageBubbleMaxWidth(renderedDisplayText, isUser, processLayerVisible, windowWidth),
     [renderedDisplayText, isUser, processLayerVisible, windowWidth]
@@ -209,7 +230,7 @@ function MessageBubbleComponent({
       >
         <View>
           <IslePanel
-            elevated={false}
+            elevated={colors.ui.cartoon}
             contentStyle={{
               paddingHorizontal: 14,
               paddingVertical: 11,
@@ -219,8 +240,8 @@ function MessageBubbleComponent({
               borderRadius: colors.ui.radius.panel,
               borderBottomRightRadius: isUser ? colors.ui.radius.controlSmall : colors.ui.radius.panel,
               borderBottomLeftRadius: isUser ? colors.ui.radius.panel : colors.ui.radius.controlSmall,
-              backgroundColor: isUser ? colors.ui.message.userBackground : colors.ui.card.defaultBackground,
-              borderColor: message.status === 'error' ? colors.ui.tone.danger.border : isUser ? colors.ui.message.userBorder : colors.material.stroke,
+              backgroundColor: isUser ? colors.ui.message.userBackground : resolveAssistantBubbleSurface(colors, isGlass),
+              borderColor: message.status === 'error' ? colors.ui.tone.danger.border : isUser ? colors.ui.message.userBorder : colors.ui.semantic.chrome.border,
             }}
           >
             {processLayerVisible ? (
@@ -393,7 +414,7 @@ function MessageBody({
 
 function MessageSourceLink({ conversationId, message }: { conversationId: string; message: Message }) {
   const router = useRouter()
-  const { colors } = useAppTheme()
+  const { colors, isGlass } = useAppTheme()
   const { t } = useTranslation()
   const firstCitation = message.citations?.[0]
   const count = message.citations?.length ?? 0
@@ -421,12 +442,12 @@ function MessageSourceLink({ conversationId, message }: { conversationId: string
         flexDirection: 'row',
         alignItems: 'center',
         gap: 7,
-        backgroundColor: colors.ui.icon.accentBackground,
-        borderWidth: 1,
-        borderColor: colors.material.stroke,
+        backgroundColor: isGlass ? colors.ui.actionBar.itemBackground : colors.ui.icon.accentBackground,
+        borderWidth: StyleSheet.hairlineWidth,
+        borderColor: isGlass ? colors.ui.actionBar.itemBorder : colors.material.stroke,
       }}
     >
-      <BookOpen color={colors.ui.icon.accentForeground} size={14} strokeWidth={2.2} />
+      <AppIcon name="knowledge" color={colors.ui.icon.accentForeground} size={14} strokeWidth={appIconStroke.strong} />
       <Text style={{ color: colors.ui.icon.accentForeground, fontSize: 12, lineHeight: 16, fontWeight: '900' }}>
         {t('messageBubble.sources', { count })}
       </Text>
@@ -453,7 +474,8 @@ function MessageProcessLayer({
   onToggle: () => void
   trailingActionSpace?: boolean
 }) {
-  const { colors } = useAppTheme()
+  const { colors, isGlass } = useAppTheme()
+  const actionChrome = resolveMessageActionChrome(colors, isGlass)
   const { t } = useTranslation()
   const active = message.status === 'streaming' || message.status === 'sending'
   const processStatusLabel = processLayerLabel(message, displayText, traces, t)
@@ -485,7 +507,7 @@ function MessageProcessLayer({
         ? colors.ui.tone.warning.background
         : active
           ? colors.ui.tone.info.background
-          : colors.ui.actionBar.itemBackground
+          : actionChrome.itemSurface
   const statusBorder =
     message.status === 'error'
       ? colors.ui.tone.danger.border
@@ -493,7 +515,7 @@ function MessageProcessLayer({
         ? colors.ui.tone.warning.border
         : active
           ? colors.ui.tone.info.border
-          : colors.ui.actionBar.itemBorder
+          : actionChrome.itemBorder
 
   return (
     <View style={{ marginBottom: 8 }}>
@@ -527,7 +549,7 @@ function MessageProcessLayer({
         </Text>
         {canExpand ? (
           <MotiView animate={{ rotate: expanded ? '90deg' : '0deg' }} transition={{ type: 'timing', duration: 150 }}>
-            <ChevronRight color={colors.textTertiary} size={14} strokeWidth={2.2} />
+            <AppIcon name="back-next" color={colors.textTertiary} size={14} strokeWidth={appIconStroke.strong} />
           </MotiView>
         ) : null}
       </IslePressable>
@@ -537,7 +559,7 @@ function MessageProcessLayer({
 }
 
 function MessageProcessPanel({ message, traces, maxHeight }: { message: Message; traces: ProcessTrace[]; maxHeight: number }) {
-  const { colors } = useAppTheme()
+  const { colors, isGlass } = useAppTheme()
   const thinkingSummaries = normalizeTraceStatuses(traces, message.status)
     .filter(hasThinkingContent)
     .map(formatThinkingSummary)
@@ -552,8 +574,8 @@ function MessageProcessPanel({ message, traces, maxHeight }: { message: Message;
       transition={{ type: 'timing', duration: 130 }}
       style={{
         marginTop: 7,
-        borderTopWidth: 1,
-        borderTopColor: colors.material.stroke,
+        borderTopWidth: StyleSheet.hairlineWidth,
+        borderTopColor: isGlass ? colors.ui.actionBar.itemBorder : colors.material.stroke,
         paddingTop: 8,
       }}
     >
@@ -606,6 +628,14 @@ function ThinkingPulse({ active, tone }: { active: boolean; tone: string }) {
 function processLayerLabel(message: Message, displayText: string, traces: ProcessTrace[], t: TFunction): string {
   const waitingLabel = waitingProcessLayerLabel(traces, t)
   if (waitingLabel) return withProcessStageLabel(waitingLabel, traces, message.status)
+
+  const activeTrace = selectProcessStageTrace(traces, message.status)
+  if (activeTrace && (message.status === 'streaming' || message.status === 'sending') && isActiveProcessTrace(activeTrace)) {
+    return t('messageBubble.traceGenerating', {
+      title: traceStageLabel(activeTrace),
+      defaultValue: `${traceStageLabel(activeTrace)}中`,
+    })
+  }
 
   return (() => {
     switch (message.status) {
@@ -853,8 +883,9 @@ function MessageActionBar({
   onRegenerate?: () => void
   onDelete?: () => void
 }) {
-  const { colors } = useAppTheme()
+  const { colors, isGlass } = useAppTheme()
   const { t } = useTranslation()
+  const actionChrome = resolveMessageActionChrome(colors, isGlass)
   const actionLockTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
   const actionLockedRef = useRef(false)
   const [actionLocked, setActionLocked] = useState(false)
@@ -914,14 +945,14 @@ function MessageActionBar({
         minHeight: 52,
         maxWidth: '100%',
         borderRadius: colors.ui.radius.controlLarge,
-        backgroundColor: colors.ui.actionBar.background,
-        borderWidth: 1,
-        borderColor: colors.ui.actionBar.border,
+        backgroundColor: actionChrome.barSurface,
+        borderWidth: StyleSheet.hairlineWidth,
+        borderColor: actionChrome.barBorder,
         shadowColor: colors.shadowTint,
-        shadowOpacity: colors.ui.card.shadowOpacity,
-        shadowRadius: colors.ui.card.shadowRadius,
-        shadowOffset: { width: 0, height: colors.ui.card.shadowOffset },
-        elevation: colors.ui.card.shadowOpacity > 0 ? 1 : 0,
+        shadowOpacity: colors.ui.cartoon ? Math.min(colors.ui.card.shadowOpacity, 0.012) : 0,
+        shadowRadius: colors.ui.cartoon ? Math.max(2, colors.ui.card.shadowRadius - 5) : 0,
+        shadowOffset: { width: 0, height: colors.ui.cartoon ? Math.max(1, colors.ui.card.shadowOffset - 2) : 0 },
+        elevation: colors.ui.cartoon && colors.ui.card.shadowOpacity > 0 ? 1 : 0,
       }}
     >
       <ScrollView
@@ -941,82 +972,82 @@ function MessageActionBar({
       >
       {canCopy ? (
         <ActionIconButton label={t('common.copy')} disabled={actionLocked} onPress={run(onCopy)}>
-          <Copy color={iconColor} size={16} strokeWidth={2.1} />
+          <AppIcon name="copy" color={iconColor} size={16} strokeWidth={appIconStroke.strong} />
         </ActionIconButton>
       ) : null}
       {canCopyProcessTrace ? (
         <ActionIconButton label={t('messageBubble.copyProcessTrace')} disabled={actionLocked} onPress={run(onCopyProcessTrace)}>
-          <GitBranchPlus color={iconColor} size={16} strokeWidth={2.1} />
+          <AppIcon name="trace" color={iconColor} size={16} strokeWidth={appIconStroke.strong} />
         </ActionIconButton>
       ) : null}
       {canSpeak ? (
         <ActionIconButton label={t('messageBubble.speak')} disabled={actionLocked} onPress={run(onSpeak)}>
-          <Volume2 color={iconColor} size={16} strokeWidth={2.1} />
+          <AppIcon name="voice" color={iconColor} size={16} strokeWidth={appIconStroke.strong} />
         </ActionIconButton>
       ) : null}
       {canRegenerate ? (
         <ActionIconButton label={t('messageBubble.regenerate')} disabled={actionLocked} onPress={run(onRegenerate)}>
-          <RefreshCcw color={iconColor} size={16} strokeWidth={2.1} />
+          <AppIcon name="regenerate" color={iconColor} size={16} strokeWidth={appIconStroke.strong} />
         </ActionIconButton>
       ) : null}
       {showContinueAgentWorkflow ? (
         <ActionIconButton label={continueAgentWorkflowLabel} disabled={actionLocked} onPress={run(onContinueAgentWorkflow)}>
-          <ChevronRight color={colors.ui.icon.accentForeground} size={16} strokeWidth={2.1} />
+          <AppIcon name="back-next" color={colors.ui.icon.accentForeground} size={16} strokeWidth={appIconStroke.strong} />
         </ActionIconButton>
       ) : null}
       {showConfirmAgentAction ? (
         <ActionIconButton label={t('messageBubble.confirmAgentAction')} disabled={actionLocked} onPress={run(onConfirmAgentAction)}>
-          <ShieldCheck color={colors.ui.icon.accentForeground} size={16} strokeWidth={2.1} />
+          <AppIcon name="shield" color={colors.ui.icon.accentForeground} size={16} strokeWidth={appIconStroke.strong} />
         </ActionIconButton>
       ) : null}
       {showPrepareAndroidUndo ? (
         <ActionIconButton label={t('messageBubble.prepareAndroidUndo')} disabled={actionLocked} onPress={run(onPrepareAndroidUndo)}>
-          <RotateCcw color={colors.ui.icon.accentForeground} size={16} strokeWidth={2.1} />
+          <AppIcon name="undo" color={colors.ui.icon.accentForeground} size={16} strokeWidth={appIconStroke.strong} />
         </ActionIconButton>
       ) : null}
       {showRepairAgentEvidence ? (
         <ActionIconButton label={t('messageBubble.repairAgentEvidence')} disabled={actionLocked} onPress={run(onRepairAgentEvidence)}>
-          <Search color={colors.ui.icon.accentForeground} size={16} strokeWidth={2.1} />
+          <AppIcon name="search" color={colors.ui.icon.accentForeground} size={16} strokeWidth={appIconStroke.strong} />
         </ActionIconButton>
       ) : null}
       {showOpenWorkflowSettings ? (
         <ActionIconButton label={reviewWorkflowSettingsLabel} disabled={actionLocked} onPress={run(onConfigure)}>
-          <Settings2 color={colors.ui.icon.accentForeground} size={16} strokeWidth={2.1} />
+          <AppIcon name="settings-sliders" color={colors.ui.icon.accentForeground} size={16} strokeWidth={appIconStroke.strong} />
         </ActionIconButton>
       ) : null}
       {showSaveAgentWorkflow ? (
         <ActionIconButton label={t('messageBubble.saveAgentWorkflow')} disabled={actionLocked} onPress={run(onSaveAgentWorkflow)}>
-          <Workflow color={colors.ui.icon.accentForeground} size={16} strokeWidth={2.1} />
+          <AppIcon name="workflow" color={colors.ui.icon.accentForeground} size={16} strokeWidth={appIconStroke.strong} />
         </ActionIconButton>
       ) : null}
       {canUseWorkArtifact && onCopyWorkArtifact ? (
         <ActionIconButton label={t('messageBubble.copyWorkArtifact')} disabled={actionLocked} onPress={run(onCopyWorkArtifact)}>
-          <ListChecks color={iconColor} size={16} strokeWidth={2.1} />
+          <AppIcon name="list-check" color={iconColor} size={16} strokeWidth={appIconStroke.strong} />
         </ActionIconButton>
       ) : null}
       {canUseWorkArtifact && onContinueWorkArtifact ? (
         <ActionIconButton label={t('messageBubble.continueWorkArtifact')} disabled={actionLocked} onPress={run(onContinueWorkArtifact)}>
-          <Sparkles color={iconColor} size={16} strokeWidth={2.1} />
+          <AppIcon name="spark" color={iconColor} size={16} strokeWidth={appIconStroke.strong} />
         </ActionIconButton>
       ) : null}
       {showErrorActions && onConfigure ? (
         <ActionIconButton label={t('messageBubble.configure')} disabled={actionLocked} onPress={run(onConfigure)} danger>
-          <Settings2 color={colors.ui.tone.danger.foreground} size={16} strokeWidth={2.1} />
+          <AppIcon name="settings-sliders" color={colors.ui.tone.danger.foreground} size={16} strokeWidth={appIconStroke.strong} />
         </ActionIconButton>
       ) : null}
       {showErrorActions && onTestModel ? (
         <ActionIconButton label={t('messageBubble.test')} disabled={actionLocked} onPress={run(onTestModel)} danger>
-          <Zap color={colors.ui.tone.danger.foreground} size={16} strokeWidth={2.1} />
+          <AppIcon name="zap" color={colors.ui.tone.danger.foreground} size={16} strokeWidth={appIconStroke.strong} />
         </ActionIconButton>
       ) : null}
       {showErrorActions && onRetry ? (
         <ActionIconButton label={t('messageBubble.retry')} disabled={actionLocked} onPress={run(onRetry)} danger>
-          <RotateCcw color={colors.ui.tone.danger.foreground} size={16} strokeWidth={2.1} />
+          <AppIcon name="retry" color={colors.ui.tone.danger.foreground} size={16} strokeWidth={appIconStroke.strong} />
         </ActionIconButton>
       ) : null}
       {canDelete ? (
         <ActionIconButton label={t('common.delete')} disabled={actionLocked} onPress={run(onDelete)} danger>
-          <Trash2 color={colors.ui.tone.danger.foreground} size={16} strokeWidth={2.1} />
+          <AppIcon name="delete" color={colors.ui.tone.danger.foreground} size={16} strokeWidth={appIconStroke.strong} />
         </ActionIconButton>
       ) : null}
       </ScrollView>
@@ -1028,7 +1059,7 @@ function ErrorHint({ code }: { code?: ChatErrorCode }) {
   const { colors } = useAppTheme()
   const { t } = useTranslation()
   return (
-    <View style={{ borderRadius: colors.ui.radius.field, padding: 9, backgroundColor: colors.ui.tone.danger.background, marginTop: 8, borderWidth: 1, borderColor: colors.ui.tone.danger.border }}>
+    <View style={{ borderRadius: colors.ui.radius.field, padding: 9, backgroundColor: colors.ui.tone.danger.background, marginTop: 8, borderWidth: StyleSheet.hairlineWidth, borderColor: colors.ui.tone.danger.border }}>
       <Text style={{ color: colors.ui.tone.danger.foreground, fontSize: 12, fontWeight: '800' }}>{errorTitle(code, t)}</Text>
       <Text style={{ color: colors.textSecondary, fontSize: 11, lineHeight: 16, marginTop: 3 }}>{errorDescription(code, t)}</Text>
     </View>
@@ -1104,6 +1135,10 @@ function hasThinkingContent(trace: ProcessTrace): boolean {
   return trace.type === 'reasoning' && Boolean(trace.content?.trim())
 }
 
+function isActiveProcessTrace(trace: ProcessTrace): boolean {
+  return trace.status === 'running' || trace.status === 'pending'
+}
+
 function translateMessageBubbleLabel(t: TFunction, key: string, fallback: string): string {
   const translated = t(key, { defaultValue: fallback })
   return typeof translated === 'string' && translated !== key ? translated : fallback
@@ -1164,7 +1199,10 @@ function errorDescription(code: ChatErrorCode | undefined, t: TFunction): string
 }
 
 function ActionIconButton({ label, children, danger = false, disabled = false, onPress }: { label: string; children: ReactNode; danger?: boolean; disabled?: boolean; onPress?: () => void }) {
-  const { colors } = useAppTheme()
+  const { colors, isGlass } = useAppTheme()
+  const actionChrome = resolveMessageActionChrome(colors, isGlass)
+  const idleBackground = danger ? colors.ui.tone.danger.background : actionChrome.itemSurface
+  const idleBorder = danger ? colors.ui.tone.danger.border : actionChrome.itemBorder
 
   return (
     <IslePressable
@@ -1182,10 +1220,10 @@ function ActionIconButton({ label, children, danger = false, disabled = false, o
         borderRadius: colors.ui.radius.controlMiddle,
         alignItems: 'center',
         justifyContent: 'center',
-        backgroundColor: danger ? colors.ui.tone.danger.background : colors.ui.actionBar.itemBackground,
-        borderWidth: 1,
-        borderColor: danger ? colors.ui.tone.danger.border : colors.ui.actionBar.itemBorder,
-        opacity: disabled ? 0.58 : 1,
+        backgroundColor: disabled ? colors.ui.control.disabledBackground : idleBackground,
+        borderWidth: StyleSheet.hairlineWidth,
+        borderColor: disabled ? colors.ui.control.disabledBorder : idleBorder,
+        opacity: 1,
       }}
     >
       {children}
@@ -1239,11 +1277,12 @@ const areMessagesEqual = (
   if (prevMsg.id !== nextMsg.id) return false
   if (prevMsg.role !== nextMsg.role) return false
   if (prevMsg.content !== nextMsg.content) return false
+  if (prevMsg.responseText !== nextMsg.responseText) return false
   if (prevMsg.status !== nextMsg.status) return false
 
   // 附件和 traces 长度比较
   if (prevMsg.attachments?.length !== nextMsg.attachments?.length) return false
-  if (collectVisibleProcessTraces(prevMsg).length !== collectVisibleProcessTraces(nextMsg).length) return false
+  if (processTraceSignature(prevMsg) !== processTraceSignature(nextMsg)) return false
 
   // 其他关键 props 比较
   if (prevProps.index !== nextProps.index) return false
@@ -1252,6 +1291,12 @@ const areMessagesEqual = (
   if (prevProps.activeActionMessageId !== nextProps.activeActionMessageId) return false
 
   return true
+}
+
+function processTraceSignature(message: Message): string {
+  return collectVisibleProcessTraces(message)
+    .map((trace) => `${trace.id}:${trace.type}:${trace.status}:${trace.title}:${trace.content?.length ?? 0}:${trace.completedAt ?? ''}`)
+    .join('|')
 }
 
 /**

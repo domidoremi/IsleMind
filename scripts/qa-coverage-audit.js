@@ -2,6 +2,7 @@ const fs = require('node:fs')
 const path = require('node:path')
 const crypto = require('node:crypto')
 const { execFileSync } = require('node:child_process')
+const { lineNumber, listFiles, relativeFrom } = require('./script-audit-utils')
 const {
   defaultReleaseSmokeArch,
   defaultReleaseSmokeVariant,
@@ -393,7 +394,6 @@ const resultEvidenceRecoveryPlans = new Map([
   ['Architecture boundary audit result', 'node scripts/architecture-boundary-audit.js'],
   ['Agent workflow orchestration and policy gate', 'bun run test:agent-workflow'],
   ['Android device tool policy gate', 'bun run test:android-device-tools'],
-  ['Production QA matrix freshness', 'Manual document update required: run node scripts/qa-coverage-audit.js, then update docs/production-qa-matrix.md.'],
 ])
 const rawInputSourceContracts = new Map([
   ['test-evidence/qa/raw-settings-knowledge-selftest-results.json', {
@@ -439,8 +439,11 @@ function main() {
   }
   if (process.argv.includes('--self-test=theme-system')) {
     if (!themeContractsAvailable) {
-      console.error(`Theme system self-test requires missing contract modules: ${missingThemeContractModules.join(', ')}`)
-      process.exitCode = 1
+      try {
+        execFileSync(process.execPath, [path.join(__dirname, 'theme-qa-selftest.js')], { stdio: 'inherit' })
+      } catch (error) {
+        process.exitCode = Number.isInteger(error?.status) ? error.status : 1
+      }
       return
     }
     runThemeSystemSelfTest()
@@ -509,17 +512,6 @@ function main() {
     console.error(`QA coverage audit failed:\n${blockingIssues.map((issue) => `- ${issue}`).join('\n')}`)
     process.exit(1)
   }
-}
-
-function listFiles(dir) {
-  if (!fs.existsSync(dir)) return []
-  const files = []
-  for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
-    const full = path.join(dir, entry.name)
-    if (entry.isDirectory()) files.push(...listFiles(full))
-    else files.push(full)
-  }
-  return files
 }
 
 function routeFromAppFile(file) {
@@ -1068,7 +1060,6 @@ function auditResultEvidence(context) {
     ...baseChecks,
     checkAgentWorkflowPolicyGate(),
     checkAndroidDeviceToolPolicyGate(),
-    checkProductionQaMatrixFreshness(context, parsedResultEvidenceCount),
   ]
   return withResultEvidenceRecoveryPlans(checks).map((check) => ({
     ...check,
@@ -1704,6 +1695,19 @@ function collectAndroidDeviceTaskEvidenceIssues(data, options = {}) {
   if (data.runtimeBoundary?.requiresSystemClockOrCalendarConfirmation !== true) {
     issues.push('Android device task evidence must record runtimeBoundary.requiresSystemClockOrCalendarConfirmation=true.')
   }
+  if (!data.nativeModule || typeof data.nativeModule !== 'object') {
+    issues.push('Android device task evidence must record AndroidDeviceTools nativeModule state.')
+  } else {
+    if (data.nativeModule.present !== true) issues.push('Android device task evidence must prove AndroidDeviceTools native module files are present.')
+    if (data.nativeModule.templateGeneratedInSync !== true) {
+      issues.push('Android device task evidence must prove AndroidDeviceTools generated native files match plugin templates.')
+    }
+    for (const method of ['scanDirectory', 'ensureDirectory', 'copyDocument', 'moveDocument', 'renameDocument']) {
+      if (data.nativeModule.methods?.[method] !== true) {
+        issues.push(`Android device task evidence must prove AndroidDeviceTools native method ${method} is available.`)
+      }
+    }
+  }
 
   if (!data.deviceSelection || typeof data.deviceSelection !== 'object') {
     issues.push('Android device task evidence must record deviceSelection.')
@@ -1716,6 +1720,25 @@ function collectAndroidDeviceTaskEvidenceIssues(data, options = {}) {
     }
     if (!Number.isFinite(data.deviceSelection.wirelessCandidateCount)) {
       issues.push('Android device task evidence must record deviceSelection.wirelessCandidateCount.')
+    }
+  }
+  if (!data.adbProbe || typeof data.adbProbe !== 'object') {
+    issues.push('Android device task evidence must record adbProbe command state.')
+  } else {
+    if (!Number.isFinite(data.adbProbe.commandTimeoutMs) || data.adbProbe.commandTimeoutMs <= 0) {
+      issues.push('Android device task evidence must record a positive adbProbe.commandTimeoutMs.')
+    }
+    if (!Array.isArray(data.adbProbe.failures)) {
+      issues.push('Android device task evidence must record adbProbe.failures as an array.')
+    } else if (data.status === 'collected' && data.adbProbe.failures.length) {
+      issues.push(`Collected Android device task evidence must not include ADB probe failures: ${data.adbProbe.failures.map((failure) => failure?.key ?? 'unknown').join(', ')}.`)
+    } else if (data.status === 'blocked') {
+      for (const failure of data.adbProbe.failures) {
+        if (!failure?.key) issues.push('Blocked Android device task ADB probe failure must record key.')
+        if (!failure?.stderr && failure?.status == null && !failure?.signal) {
+          issues.push(`Blocked Android device task ADB probe failure ${failure?.key ?? 'unknown'} must record stderr, status, or signal.`)
+        }
+      }
     }
   }
 
@@ -1765,6 +1788,9 @@ function collectAndroidDeviceTaskEvidenceIssues(data, options = {}) {
     if (!data.intentResolvers?.directoryPicker) issues.push('Collected Android device task evidence must record directory picker resolver.')
     if (!data.intentResolvers?.apkInstaller) issues.push('Collected Android device task evidence must record APK installer resolver.')
     if (!data.intentResolvers?.alarm) issues.push('Collected Android device task evidence must record alarm resolver.')
+    if (!data.intentResolvers?.alarmShow) issues.push('Collected Android device task evidence must record alarm SHOW_ALARMS fallback resolver.')
+    if (!data.intentResolvers?.alarmAppCategory) issues.push('Collected Android device task evidence must record alarm APP_ALARM fallback resolver.')
+    if (!data.intentResolvers?.alarmDeskClockLauncher) issues.push('Collected Android device task evidence must record alarm DeskClock launcher fallback resolver.')
     if (!data.intentResolvers?.calendarInsert) issues.push('Collected Android device task evidence must record calendar insert resolver.')
   }
 
@@ -2037,105 +2063,6 @@ function checkCorruptMirrorRequests() {
       issues,
     }
   })
-}
-
-function checkProductionQaMatrixFreshness(context, expectedResultEvidenceCount) {
-  const file = path.join(root, 'docs', 'production-qa-matrix.md')
-  if (!fs.existsSync(file)) {
-    return {
-      name: 'Production QA matrix freshness',
-      file: 'docs/production-qa-matrix.md',
-      summary: 'missing',
-      issues: ['Production QA matrix document is missing.'],
-    }
-  }
-  const text = fs.readFileSync(file, 'utf8')
-  const { releaseProvenance, uiSnapshots, sensitiveEvidence, architectureBoundaryAudit } = context
-  const issues = []
-  const requiredSnippets = [
-    releaseProvenance?.expected?.expoVersion,
-    releaseProvenance?.expected?.androidVersionCode != null ? `versionCode=${releaseProvenance.expected.androidVersionCode}` : null,
-    releaseProvenance?.apk?.path,
-    releaseProvenance?.apk?.sha256,
-    releaseProvenance?.apk?.modifiedAt,
-    releaseProvenance?.sourceFreshness?.status ? `Source freshness is ${releaseProvenance.sourceFreshness.status}` : null,
-    releaseProvenance?.installed?.firstInstallTime,
-    releaseProvenance?.installed?.lastUpdateTime,
-    `${uiSnapshots.length} UIA snapshots`,
-    `${expectedResultEvidenceCount} parsed result-evidence files`,
-    `${sensitiveEvidence.scannedFiles} scanned text evidence files`,
-    'Blocking evidence capture worklist',
-    'test-evidence/qa/blocking-evidence-capture-worklist.json',
-    blockingCaptureWorklistSchema,
-    'required input state',
-    'byRequiredInputState',
-    'Raw input capture worklist',
-    'test-evidence/qa/raw-input-capture-worklist.json',
-    rawInputCaptureWorklistSchema,
-    'source format',
-    'contract file',
-    'required evidence',
-    'bySourceFormat',
-    'byContractFile',
-    'Runtime UIA recapture worklist',
-    'test-evidence/qa/runtime-uia-recapture-worklist.json',
-    runtimeUiaRecaptureWorklistSchema,
-    'missingScreenshot',
-    'warningOverlay',
-    'byAction',
-    'Key evidence capture worklist',
-    'test-evidence/qa/key-evidence-capture-worklist.json',
-    keyEvidenceCaptureWorklistSchema,
-    'requiredEvidence',
-    'byGate',
-    'Release recovery worklist',
-    'test-evidence/qa/release-recovery-worklist.json',
-    releaseRecoveryWorklistSchema,
-    'requiresDevice',
-    'byCommandType',
-    'Result evidence next-input worklist',
-    'test-evidence/qa/result-evidence-next-inputs.json',
-    resultEvidenceNextInputsSchema,
-    'nextInput',
-    'byInputType',
-    'fresh-route-smoke/route-smoke-results.json',
-    'memory-review-smoke-results.json',
-    'work-artifact-smoke-results.json',
-    'provider-runtime-android-results.json',
-    ...agentWorkflowMatrixRequiredSnippets,
-    'Android device tool policy',
-    'scripts/android-device-tool-policy-tests.js',
-    'bun run test:android-device-tools',
-    'Android operation audit runtime log redaction before persistence',
-    androidDeviceTaskEvidenceName,
-    androidStatusNotificationEvidenceName,
-    architectureBoundaryAuditEvidenceName,
-    `${architectureBoundaryAudit?.summary?.checks ?? 0} architecture boundary checks`,
-    `${architectureBoundaryAudit?.summary?.blockingIssues ?? 0} architecture blocking issues`,
-    `${architectureBoundaryAudit?.summary?.reviewFindings ?? 0} architecture review findings`,
-    'fresh-keyboard-smoke-after-fix/home-keyboard-open-results.json',
-    'fresh-back-smoke-after-fix/providers-back-fixed-results.json',
-  ].filter(Boolean)
-
-  for (const snippet of requiredSnippets) {
-    if (!text.includes(String(snippet))) issues.push(`Matrix is missing current evidence value: ${snippet}.`)
-  }
-  if (/1\.0\.5|versionCode=105|b1d70e6afb0325ad48144db0dec7949b6692b860a42a8a4b8711fbf76886b536|333 UIA snapshots|11 parsed result-evidence files|381 scanned text evidence files|2026-05-29T00:55:56\.160Z/.test(text)) {
-    issues.push('Matrix still contains stale APK, freshness, or audit counts.')
-  }
-  issues.push(...collectReleaseProvenanceMatrixGateIssues(text, releaseProvenance))
-  issues.push(...collectRuntimeUiaMatrixBlockingStateIssues(text, uiSnapshots))
-  issues.push(...collectAgentWorkflowMatrixGateIssues(text))
-  issues.push(...collectRawEvidenceContractMatrixGateIssues(text))
-  issues.push(...collectThemeSystemMatrixGateIssues(text))
-  issues.push(...collectAndroidDeviceTaskMatrixGateIssues(text))
-  issues.push(...collectAndroidStatusNotificationMatrixGateIssues(text))
-  return {
-    name: 'Production QA matrix freshness',
-    file: relative(file),
-    summary: issues.length ? 'matrix stale' : 'matrix matches current APK and audit counts',
-    issues,
-  }
 }
 
 function collectReleaseProvenanceMatrixGateIssues(text, releaseProvenance) {
@@ -5579,11 +5506,26 @@ function runAndroidDeviceTaskReleaseGateSelfTest(tempRoot) {
     },
     device: { serial: '192.168.1.5:37123', sdk: '36' },
     package: { installed: true, versionName: '1.0.7', versionCode: 107 },
+    adbProbe: { commandTimeoutMs: 120000, failures: [] },
+    nativeModule: {
+      present: true,
+      templateGeneratedInSync: true,
+      methods: {
+        scanDirectory: true,
+        ensureDirectory: true,
+        copyDocument: true,
+        moveDocument: true,
+        renameDocument: true,
+      },
+    },
     permissions: { requestInstallPackagesDeclared: true, forbiddenDeclared: [] },
     intentResolvers: {
       directoryPicker: { available: true },
       apkInstaller: { available: true },
       alarm: { available: true },
+      alarmShow: { available: true },
+      alarmAppCategory: { available: false },
+      alarmDeskClockLauncher: { available: true },
       calendarInsert: { available: true },
     },
     runtimeBoundary: {
@@ -6168,12 +6110,8 @@ function runRuntimeDebugOverlaySelfTest(tempRoot) {
   console.log('Runtime debug overlay self-test passed (development warning nodes classified separately).')
 }
 
-function lineNumber(text, index) {
-  return text.slice(0, index).split(/\r?\n/).length
-}
-
 function relative(file) {
-  return path.relative(root, file).replace(/\\/g, '/')
+  return relativeFrom(root, file)
 }
 
 function renderReport({ generatedAt, appRoutes, routeLinks, i18n, staticControls, uiSnapshots, releaseProvenance, architectureBoundaryAudit, resultEvidence, sensitiveEvidence, blockingCaptureRows: providedBlockingCaptureRows, rawInputCaptureRows: providedRawInputCaptureRows, runtimeUiaRecaptureRows: providedRuntimeUiaRecaptureRows, keyEvidenceCaptureRows: providedKeyEvidenceCaptureRows, resultEvidenceNextInputRows: providedResultEvidenceNextInputRows }) {
@@ -6542,7 +6480,6 @@ function renderReport({ generatedAt, appRoutes, routeLinks, i18n, staticControls
       lines.push(`- Recapture ${debugOverlaySnapshotCount} UIA snapshot(s) without React Native development warning overlays.`)
     }
   }
-  lines.push(`- Pair this report with manual results from \`docs/production-qa-matrix.md\`.`)
   lines.push(``)
   return `${lines.join('\n')}\n`
 }

@@ -1,18 +1,19 @@
 import { useEffect, useMemo, useState } from 'react'
-import { ScrollView, Text, View, useWindowDimensions } from 'react-native'
+import { ScrollView, StyleSheet, Text, View, useWindowDimensions } from 'react-native'
 import * as Clipboard from 'expo-clipboard'
 import * as DocumentPicker from 'expo-document-picker'
 import * as FileSystem from 'expo-file-system/legacy'
 import * as Sharing from 'expo-sharing'
-import { Download, FileJson, Pencil, Plus, ShieldCheck, Sparkles, ToggleLeft, ToggleRight, Trash2, Upload, Workflow } from 'lucide-react-native'
 import { useTranslation } from 'react-i18next'
 import type { TFunction } from 'i18next'
+import { AppIcon } from '@/components/ui/AppIcon'
 import { IsleButton } from '@/components/ui/isle'
 import { useIsleDialog } from '@/components/ui/isle'
 import { IsleField, IsleListItem, IsleSection } from '@/components/ui/isle'
 import { IsleChip } from '@/components/ui/isle'
 import { useAppTheme } from '@/hooks/useAppTheme'
 import { createBaseSkill, deleteSkill, exportSkill, importSkill, listSkills, upsertSkill } from '@/services/skills'
+import { deleteTemporaryImportCopy, isFileTooLargeError, MAX_IMPORT_TEXT_FILE_BYTES, readUtf8ImportFile } from '@/services/fileImportGuards'
 import { listAndroidBuiltInWorkflowDefinitions } from '@/services/agent/agentAndroidWorkflows'
 import { listStaticAgentToolManifests } from '@/services/agent/agentToolRegistry'
 import { clampAgentOutput, redactSensitiveText } from '@/services/agent/agentTrace'
@@ -51,6 +52,7 @@ export function SkillSettingsContent({ workflowFocus }: { workflowFocus?: AgentW
   const dialog = useIsleDialog()
   const { width } = useWindowDimensions()
   const compact = width < 430
+  const subtleBorderWidth = colors.ui.cartoon ? 1 : StyleSheet.hairlineWidth
   const fieldRowStyle = { flexDirection: compact ? 'column' : 'row', gap: 10 } as const
   const fieldFlexStyle = compact ? undefined : { flex: 1, minWidth: 0 }
   const actionButtonStyle = compact ? { alignSelf: 'stretch' as const } : { flexGrow: 1, flexShrink: 1, flexBasis: '47%' as const, minWidth: 0 }
@@ -152,19 +154,34 @@ export function SkillSettingsContent({ workflowFocus }: { workflowFocus?: AgentW
   }
 
   async function importFromFile() {
-    const result = await DocumentPicker.getDocumentAsync({
-      type: ['application/json', 'text/json', 'text/plain', '*/*'],
-      copyToCacheDirectory: true,
-    })
-    if (result.canceled || !result.assets[0]) return
-    const asset = result.assets[0]
-    const supported = /\.isleskill$/i.test(asset.name) || /\.(json|txt)$/i.test(asset.name) || ['application/json', 'text/json', 'text/plain'].includes(asset.mimeType ?? '')
-    if (!supported) {
-      dialog.toast({ title: t('skills.unsupportedFile'), message: '.isleskill / .json / .txt', tone: 'amber' })
-      return
+    let importUri: string | undefined
+    try {
+      const result = await DocumentPicker.getDocumentAsync({
+        type: ['application/json', 'text/json', 'text/plain', '*/*'],
+        copyToCacheDirectory: true,
+      })
+      if (result.canceled || !result.assets[0]) return
+      const asset = result.assets[0]
+      importUri = asset.uri
+      const supported = /\.isleskill$/i.test(asset.name) || /\.(json|txt)$/i.test(asset.name) || ['application/json', 'text/json', 'text/plain'].includes(asset.mimeType ?? '')
+      if (!supported) {
+        dialog.toast({ title: t('skills.unsupportedFile'), message: '.isleskill / .json / .txt', tone: 'amber' })
+        return
+      }
+      const raw = await readUtf8ImportFile(importUri, {
+        size: asset.size,
+        limitBytes: MAX_IMPORT_TEXT_FILE_BYTES,
+      })
+      await importRaw(raw)
+    } catch (error) {
+      dialog.toast({
+        title: isFileTooLargeError(error) ? t('error.fileTooLarge') : t('skills.importFailed'),
+        message: isFileTooLargeError(error) ? t('chat.fileTooLarge20') : t('skills.importJsonFailed'),
+        tone: 'amber',
+      })
+    } finally {
+      await deleteTemporaryImportCopy(importUri, { assumeTemporaryCopy: true })
     }
-    const raw = await FileSystem.readAsStringAsync(asset.uri, { encoding: FileSystem.EncodingType.UTF8 })
-    await importRaw(raw)
   }
 
   async function importRaw(raw: string) {
@@ -189,12 +206,16 @@ export function SkillSettingsContent({ workflowFocus }: { workflowFocus?: AgentW
     const safeName = skill.name.replace(/[^\w.-]+/g, '-').replace(/^-+|-+$/g, '') || skill.id
     const uri = `${FileSystem.cacheDirectory ?? FileSystem.documentDirectory}${safeName}.isleskill`
     await FileSystem.writeAsStringAsync(uri, raw, { encoding: FileSystem.EncodingType.UTF8 })
-    if (await Sharing.isAvailableAsync()) {
-      await Sharing.shareAsync(uri, {
-        mimeType: 'application/json',
-        dialogTitle: `${skill.name}.isleskill`,
-        UTI: 'public.json',
-      })
+    try {
+      if (await Sharing.isAvailableAsync()) {
+        await Sharing.shareAsync(uri, {
+          mimeType: 'application/json',
+          dialogTitle: `${skill.name}.isleskill`,
+          UTI: 'public.json',
+        })
+      }
+    } finally {
+      await FileSystem.deleteAsync(uri, { idempotent: true }).catch(() => undefined)
     }
     dialog.toast({ title: t('skills.exported'), message: `${skill.name}.isleskill`, tone: 'mint' })
   }
@@ -342,7 +363,7 @@ export function SkillSettingsContent({ workflowFocus }: { workflowFocus?: AgentW
       <IsleSection
         title={editingSkillId ? t('skills.edit') : t('skills.create')}
         subtitle={t('skills.createSubtitle')}
-        action={<Sparkles color={colors.textSecondary} size={18} />}
+        action={<AppIcon name="spark" color={colors.textSecondary} size={18} />}
       >
         <View style={{ gap: 10 }}>
           <IsleField label={t('skills.name')} inputProps={{ value: name, onChangeText: setName, placeholder: t('skills.namePlaceholder') }} />
@@ -396,19 +417,19 @@ export function SkillSettingsContent({ workflowFocus }: { workflowFocus?: AgentW
           />
           <View style={{ flexDirection: compact ? 'column' : 'row', gap: 10 }}>
             {editingSkillId ? <IsleButton label={t('common.cancel')} onPress={resetForm} style={actionButtonStyle} /> : null}
-            <IsleButton label={t('skills.saveSkill')} icon={<Plus color={colors.ui.control.primaryForeground} size={16} />} tone="primary" onPress={() => void saveSkill()} style={actionButtonStyle} />
+            <IsleButton label={t('skills.saveSkill')} icon={<AppIcon name="add" color={colors.ui.control.primaryForeground} size={16} />} tone="primary" onPress={() => void saveSkill()} style={actionButtonStyle} />
           </View>
         </View>
       </IsleSection>
 
       <IsleSection title={t('skills.importExport')}>
         <View style={{ flexDirection: compact ? 'column' : 'row', gap: 10 }}>
-          <IsleButton label={t('skills.importClipboard')} icon={<Upload color={colors.textSecondary} size={16} />} onPress={() => void importFromClipboard()} style={actionButtonStyle} />
-          <IsleButton label={t('settings.chooseFile')} icon={<FileJson color={colors.textSecondary} size={16} />} onPress={() => void importFromFile()} style={actionButtonStyle} />
+          <IsleButton label={t('skills.importClipboard')} icon={<AppIcon name="upload" color={colors.textSecondary} size={16} />} onPress={() => void importFromClipboard()} style={actionButtonStyle} />
+          <IsleButton label={t('settings.chooseFile')} icon={<AppIcon name="json" color={colors.textSecondary} size={16} />} onPress={() => void importFromFile()} style={actionButtonStyle} />
         </View>
       </IsleSection>
 
-      <IsleSection title={t('skills.workflowTemplates')} subtitle={t('skills.workflowTemplatesSubtitle')} action={<ShieldCheck color={colors.textSecondary} size={18} />}>
+      <IsleSection title={t('skills.workflowTemplates')} subtitle={t('skills.workflowTemplatesSubtitle')} action={<AppIcon name="shield" color={colors.textSecondary} size={18} />}>
         <View style={{ gap: 8 }}>
           {workflowTemplates.map((workflow) => {
             const installed = installedWorkflowIds.has(workflow.id)
@@ -423,7 +444,7 @@ export function SkillSettingsContent({ workflowFocus }: { workflowFocus?: AgentW
                     label={t(installed ? 'skills.workflowTemplateAlreadyInstalled' : 'skills.installWorkflowTemplate')}
                     compact
                     disabled={installed}
-                    icon={<Plus color={colors.textSecondary} size={14} />}
+                    icon={<AppIcon name="add" color={colors.textSecondary} size={14} />}
                     onPress={() => void installWorkflowTemplate(workflow.id)}
                     style={compact ? { alignSelf: 'stretch' } : undefined}
                   />
@@ -434,12 +455,12 @@ export function SkillSettingsContent({ workflowFocus }: { workflowFocus?: AgentW
         </View>
       </IsleSection>
 
-      <IsleSection title={`${t('skills.agentWorkflows')} ${agentWorkflowSkills.length}`} subtitle={t('skills.agentWorkflowsSubtitle')} action={<Workflow color={colors.textSecondary} size={18} />}>
+      <IsleSection title={`${t('skills.agentWorkflows')} ${agentWorkflowSkills.length}`} subtitle={t('skills.agentWorkflowsSubtitle')} action={<AppIcon name="workflow" color={colors.textSecondary} size={18} />}>
         <View style={{ gap: 8 }}>
           {safeWorkflowFocus ? (
             <View style={{
               borderRadius: colors.ui.radius.card,
-              borderWidth: 1,
+              borderWidth: subtleBorderWidth,
               borderColor: focusedAgentWorkflowSkill ? colors.ui.tone.success.border : colors.ui.tone.warning.border,
               backgroundColor: focusedAgentWorkflowSkill ? colors.ui.tone.success.background : colors.ui.tone.warning.background,
               padding: 10,
@@ -485,13 +506,13 @@ export function SkillSettingsContent({ workflowFocus }: { workflowFocus?: AgentW
                     <IsleButton
                       label={t(reviewRequired ? 'skills.reviewAndEnableWorkflow' : enabled ? 'skills.disableWorkflow' : 'skills.enableWorkflow')}
                       compact
-                      icon={enabled ? <ToggleRight color={colors.textSecondary} size={14} /> : <ToggleLeft color={colors.textSecondary} size={14} />}
+                      icon={enabled ? <AppIcon name="toggle-on" color={colors.textSecondary} size={14} /> : <AppIcon name="toggle-off" color={colors.textSecondary} size={14} />}
                       onPress={() => void updateAgentWorkflowSkillState(skill)}
                       style={compact ? { alignSelf: 'stretch' } : undefined}
                     />
-                    <IsleButton label={t('common.edit')} compact icon={<Pencil color={colors.textSecondary} size={14} />} onPress={() => editSkill(skill)} style={compact ? { alignSelf: 'stretch' } : undefined} />
-                    <IsleButton label={t('common.share')} compact icon={<Download color={colors.textSecondary} size={14} />} onPress={() => void exportSkillFile(skill)} style={compact ? { alignSelf: 'stretch' } : undefined} />
-                    <IsleButton label={t('common.delete')} compact tone="danger" icon={<Trash2 color={colors.ui.tone.danger.foreground} size={14} />} onPress={() => void removeSkill(skill)} style={compact ? { alignSelf: 'stretch' } : undefined} />
+                    <IsleButton label={t('common.edit')} compact icon={<AppIcon name="edit" color={colors.textSecondary} size={14} />} onPress={() => editSkill(skill)} style={compact ? { alignSelf: 'stretch' } : undefined} />
+                    <IsleButton label={t('common.share')} compact icon={<AppIcon name="download" color={colors.textSecondary} size={14} />} onPress={() => void exportSkillFile(skill)} style={compact ? { alignSelf: 'stretch' } : undefined} />
+                    <IsleButton label={t('common.delete')} compact tone="danger" icon={<AppIcon name="delete" color={colors.ui.control.dangerForeground} size={14} />} onPress={() => void removeSkill(skill)} style={compact ? { alignSelf: 'stretch' } : undefined} />
                   </View>
                 }
               />
@@ -511,9 +532,9 @@ export function SkillSettingsContent({ workflowFocus }: { workflowFocus?: AgentW
               leading={<IsleChip active>{t(`skills.layer.${skill.layer}`)}</IsleChip>}
               trailing={
                 <View style={{ flexDirection: compact ? 'column' : 'row', gap: 8, alignItems: compact ? 'stretch' : 'center' }}>
-                  <IsleButton label={t('common.edit')} compact icon={<Pencil color={colors.textSecondary} size={14} />} onPress={() => editSkill(skill)} style={compact ? { alignSelf: 'stretch' } : undefined} />
-                  <IsleButton label={t('common.share')} compact icon={<Download color={colors.textSecondary} size={14} />} onPress={() => void exportSkillFile(skill)} style={compact ? { alignSelf: 'stretch' } : undefined} />
-                  <IsleButton label={t('common.delete')} compact tone="danger" icon={<Trash2 color={colors.ui.tone.danger.foreground} size={14} />} onPress={() => void removeSkill(skill)} style={compact ? { alignSelf: 'stretch' } : undefined} />
+                  <IsleButton label={t('common.edit')} compact icon={<AppIcon name="edit" color={colors.textSecondary} size={14} />} onPress={() => editSkill(skill)} style={compact ? { alignSelf: 'stretch' } : undefined} />
+                  <IsleButton label={t('common.share')} compact icon={<AppIcon name="download" color={colors.textSecondary} size={14} />} onPress={() => void exportSkillFile(skill)} style={compact ? { alignSelf: 'stretch' } : undefined} />
+                  <IsleButton label={t('common.delete')} compact tone="danger" icon={<AppIcon name="delete" color={colors.ui.control.dangerForeground} size={14} />} onPress={() => void removeSkill(skill)} style={compact ? { alignSelf: 'stretch' } : undefined} />
                 </View>
               }
             />

@@ -15,6 +15,7 @@
 import { resolveActiveLocalEmbeddingModel, type LocalEmbeddingModel } from './localEmbeddingModels'
 import { useSettingsStore } from '@/store/settingsStore'
 import type { Settings } from '@/types'
+import { logContextOperation } from '@/services/runtimeHealthLog'
 
 interface ModelInfo {
   model: LocalEmbeddingModel
@@ -47,7 +48,14 @@ class LazyEmbeddingService {
       void model
       throw new Error('Lazy embedding inference must use the ONNX embedding provider.')
     } catch (error) {
-      console.error('[LazyEmbedding] Inference failed:', error)
+      await logContextOperation({
+        phase: 'knowledge_embedding',
+        status: 'error',
+        detail: 'lazy_embedding_inference_failed',
+        reason: 'onnx_provider_required',
+        sourceType: 'text',
+        error,
+      })
       throw error
     }
   }
@@ -128,8 +136,7 @@ class LazyEmbeddingService {
         console.log('[LazyEmbedding] Model loaded successfully')
       }
       return this.modelInfo
-    } catch (error) {
-      console.error('[LazyEmbedding] Failed to load model:', error)
+    } catch {
       return null
     } finally {
       this.loading = null
@@ -144,7 +151,13 @@ class LazyEmbeddingService {
       const modelInfo = await resolveActiveLocalEmbeddingModel(settings)
 
       if (!modelInfo) {
-        console.warn('[LazyEmbedding] No embedding model available')
+        await logContextOperation({
+          phase: 'knowledge_embedding',
+          status: 'skipped',
+          detail: 'lazy_embedding_model_unavailable',
+          reason: 'no_embedding_model',
+          sourceType: 'text',
+        })
         return null
       }
 
@@ -153,7 +166,14 @@ class LazyEmbeddingService {
 
       return modelInfo
     } catch (error) {
-      console.error('[LazyEmbedding] Failed to load model:', error)
+      await logContextOperation({
+        phase: 'knowledge_embedding',
+        status: 'error',
+        detail: 'lazy_embedding_model_resolve_failed',
+        reason: 'model_resolve_failed',
+        sourceType: 'text',
+        error,
+      })
       throw error
     }
   }

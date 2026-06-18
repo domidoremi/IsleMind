@@ -1,12 +1,12 @@
-import { Text, TextInput, View, useWindowDimensions, type LayoutChangeEvent } from 'react-native'
+import { StyleSheet, Text, TextInput, View, useWindowDimensions, type LayoutChangeEvent } from 'react-native'
 import { memo, useEffect, useMemo, useRef, useState } from 'react'
 import type { TFunction } from 'i18next'
 import { router } from 'expo-router'
 import { useTranslation } from 'react-i18next'
-import { Check, PencilLine, Trash2, X } from 'lucide-react-native'
 import { MotiView } from 'moti'
 import { AnimatedNavigationIcon } from '@/components/navigation/AnimatedNavigationIcon'
 import { NavigationIconBadge, useNavigationTrigger } from '@/components/navigation/AnimatedNavigationTrigger'
+import { AppIcon, appIconStroke } from '@/components/ui/AppIcon'
 import type { Conversation } from '@/types'
 import { getModelName } from '@/types'
 import { useAppTheme } from '@/hooks/useAppTheme'
@@ -27,6 +27,13 @@ const ROW_HOUR_MS = 60 * ROW_MINUTE_MS
 const ROW_DAY_MS = 24 * ROW_HOUR_MS
 const ROW_OPEN_PENDING_RELEASE_MS = 700
 
+function resolveConversationRowSurface(colors: ReturnType<typeof useAppTheme>['colors'], isGlass: boolean, variant: 'muted' | 'chip' = 'muted') {
+  if (variant === 'muted') {
+    return colors.ui.cartoon ? colors.ui.semantic.surface.muted : isGlass ? colors.ui.actionBar.itemBackground : colors.ui.semantic.surface.muted
+  }
+  return colors.ui.cartoon ? colors.ui.semantic.surface.base : isGlass ? colors.ui.actionBar.itemBackground : colors.ui.semantic.surface.base
+}
+
 interface ConversationRowProps {
   conversation: Conversation
   index: number
@@ -46,7 +53,7 @@ interface ConversationRowProps {
 }
 
 export const ConversationRow = memo(function ConversationRow({ conversation, index, active = false, animateEntrance = true, interactionDisabled = false, now = Date.now(), isInteractionBlocked, onInteractionBlocked, modelLabel, onOpen, onRenameFocus, onLayoutHeight, searchMatchSummary, searchMatchFieldLabel, searchMatchAccessibilitySummary }: ConversationRowProps) {
-  const { colors } = useAppTheme()
+  const { colors, isGlass } = useAppTheme()
   const { t } = useTranslation()
   const motion = useMotionPreference()
   const { width } = useWindowDimensions()
@@ -96,6 +103,18 @@ export const ConversationRow = memo(function ConversationRow({ conversation, ind
     () => ({ text: title.trim() || t('conversation.untitled') }),
     [t, title]
   )
+  const rowPanelMaterial = isGlass ? 'chrome' : 'paper'
+  const rowPanelBackground = isGlass ? (active ? colors.ui.semantic.surface.overlay : colors.ui.semantic.chrome.background) : colors.ui.cartoon ? colors.ui.semantic.surface.base : active ? colors.ui.semantic.surface.raised : colors.ui.semantic.surface.base
+  const subtleBorderWidth = colors.ui.cartoon ? 1 : StyleSheet.hairlineWidth
+  const rowPanelBorder = active
+    ? colors.ui.control.primaryBorder
+    : colors.ui.semantic.chrome.border
+  const rowPanelShadowOpacity = colors.ui.cartoon ? colors.ui.card.shadowOpacity : 0
+  const highlightSurface = resolveConversationRowSurface(colors, isGlass, 'muted')
+  const highlightChipSurface = resolveConversationRowSurface(colors, isGlass, 'chip')
+  const iconActionSurface = resolveConversationRowSurface(colors, isGlass, 'chip')
+  const iconActionBorder = colors.ui.cartoon ? colors.material.stroke : colors.ui.semantic.chrome.border
+  const activeChipSurface = active && !colors.ui.cartoon ? colors.ui.semantic.surface.base : colors.ui.control.primaryBackground
 
   useEffect(() => {
     setTitle(conversation.title)
@@ -280,10 +299,10 @@ export const ConversationRow = memo(function ConversationRow({ conversation, ind
       style={{ marginBottom: ROW_CONTAINER_BOTTOM_SPACING }}
     >
       <IslePanel
-        elevated
-        material="paper"
+        elevated={colors.ui.cartoon}
+        material={rowPanelMaterial}
         radius={colors.ui.radius.panel}
-        style={active ? { borderColor: colors.ui.control.primaryBorder } : undefined}
+        style={{ backgroundColor: rowPanelBackground, borderColor: rowPanelBorder, shadowOpacity: rowPanelShadowOpacity, elevation: rowPanelShadowOpacity > 0 ? 1 : 0 }}
         contentStyle={{ minHeight: 92, padding: panelPadding }}
       >
         <View style={{ flexDirection: 'row', alignItems: 'flex-start', gap: rowGap }}>
@@ -352,9 +371,9 @@ export const ConversationRow = memo(function ConversationRow({ conversation, ind
                     borderRadius: colors.ui.radius.card,
                     paddingHorizontal: 8,
                     paddingVertical: 7,
-                    backgroundColor: colors.ui.card.mutedBackground,
-                    borderWidth: 1,
-                    borderColor: colors.material.stroke,
+                    backgroundColor: highlightSurface,
+                    borderWidth: subtleBorderWidth,
+                    borderColor: iconActionBorder,
                   }}
                 >
                   <View
@@ -368,9 +387,9 @@ export const ConversationRow = memo(function ConversationRow({ conversation, ind
                       alignItems: 'center',
                       justifyContent: 'center',
                       flexShrink: 0,
-                      backgroundColor: colors.ui.card.defaultBackground,
-                      borderWidth: 1,
-                      borderColor: colors.ui.control.primaryBorder,
+                      backgroundColor: highlightChipSurface,
+                      borderWidth: subtleBorderWidth,
+                      borderColor: iconActionBorder,
                     }}
                   >
                     <Text numberOfLines={1} style={{ color: colors.ui.icon.accentForeground, fontSize: 11, lineHeight: 14, fontWeight: '900', includeFontPadding: false }}>
@@ -397,8 +416,8 @@ export const ConversationRow = memo(function ConversationRow({ conversation, ind
                       paddingHorizontal: 8,
                       alignItems: 'center',
                       justifyContent: 'center',
-                      backgroundColor: colors.ui.control.primaryBackground,
-                      borderWidth: 1,
+                      backgroundColor: activeChipSurface,
+                      borderWidth: subtleBorderWidth,
                       borderColor: colors.ui.control.primaryBorder,
                     }}
                   >
@@ -418,7 +437,7 @@ export const ConversationRow = memo(function ConversationRow({ conversation, ind
                       alignItems: 'center',
                       justifyContent: 'center',
                       backgroundColor: rowStatusToken.background,
-                      borderWidth: 1,
+                      borderWidth: subtleBorderWidth,
                       borderColor: rowStatusToken.border,
                     }}
                   >
@@ -442,14 +461,24 @@ export const ConversationRow = memo(function ConversationRow({ conversation, ind
               disabled={rowActionDisabled}
               accessibilityRole="button"
               accessibilityLabel={renaming ? t('common.save') : t('conversation.rename')}
-              accessibilityHint={rowActionPausedAccessibilityHint ?? (renaming ? t('conversation.saveRenameAccessibilityHint') : t('conversation.renameAccessibilityHint'))}
-              accessibilityState={rowActionAccessibilityState ?? (renaming ? { selected: true } : undefined)}
-              hitSlop={ROW_ACTION_HIT_SLOP}
-              style={{ width: 44, height: 44, alignItems: 'center', justifyContent: 'center', borderRadius: colors.ui.radius.controlMiddle, backgroundColor: renaming ? colors.ui.control.primaryBackground : colors.ui.card.defaultBackground, borderWidth: 1, borderColor: renaming ? colors.ui.control.primaryBorder : colors.material.stroke, opacity: rowActionDisabled ? 0.55 : 1 }}
-            >
+                accessibilityHint={rowActionPausedAccessibilityHint ?? (renaming ? t('conversation.saveRenameAccessibilityHint') : t('conversation.renameAccessibilityHint'))}
+                accessibilityState={rowActionAccessibilityState ?? (renaming ? { selected: true } : undefined)}
+                hitSlop={ROW_ACTION_HIT_SLOP}
+                style={{
+                  width: 44,
+                  height: 44,
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  borderRadius: colors.ui.radius.controlMiddle,
+                  backgroundColor: renaming ? colors.ui.control.primaryBackground : iconActionSurface,
+                  borderWidth: subtleBorderWidth,
+                  borderColor: renaming ? colors.ui.control.primaryBorder : iconActionBorder,
+                  opacity: rowActionDisabled ? 0.55 : 1,
+                }}
+              >
               {renaming
-                ? <Check color={colors.ui.control.primaryForeground} size={18} strokeWidth={2.2} />
-                : <PencilLine color={colors.textSecondary} size={18} strokeWidth={1.8} />}
+                ? <AppIcon name="check" color={colors.ui.control.primaryForeground} size={18} strokeWidth={appIconStroke.strong} />
+                : <AppIcon name="edit" color={colors.textSecondary} size={18} strokeWidth={appIconStroke.fine} />}
             </IslePressable>
             {renaming ? (
               <IslePressable
@@ -464,9 +493,19 @@ export const ConversationRow = memo(function ConversationRow({ conversation, ind
                 accessibilityHint={rowActionPausedAccessibilityHint ?? t('conversation.cancelRenameAccessibilityHint')}
                 accessibilityState={rowActionAccessibilityState}
                 hitSlop={ROW_ACTION_HIT_SLOP}
-                style={{ width: 44, height: 44, alignItems: 'center', justifyContent: 'center', borderRadius: colors.ui.radius.controlMiddle, backgroundColor: colors.ui.card.defaultBackground, borderWidth: 1, borderColor: colors.material.stroke, opacity: rowActionDisabled ? 0.55 : 1 }}
+                style={{
+                  width: 44,
+                  height: 44,
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  borderRadius: colors.ui.radius.controlMiddle,
+                  backgroundColor: iconActionSurface,
+                  borderWidth: subtleBorderWidth,
+                  borderColor: iconActionBorder,
+                  opacity: rowActionDisabled ? 0.55 : 1,
+                }}
               >
-                <X color={colors.textSecondary} size={18} strokeWidth={2} />
+                <AppIcon name="close" color={colors.textSecondary} size={18} />
               </IslePressable>
             ) : (
               <IslePressable
@@ -477,9 +516,9 @@ export const ConversationRow = memo(function ConversationRow({ conversation, ind
                 accessibilityHint={rowActionPausedAccessibilityHint ?? t('conversation.deleteAccessibilityHint')}
                 accessibilityState={rowActionAccessibilityState}
                 hitSlop={ROW_ACTION_HIT_SLOP}
-                style={{ width: 44, height: 44, alignItems: 'center', justifyContent: 'center', borderRadius: colors.ui.radius.controlMiddle, backgroundColor: colors.ui.tone.danger.background, borderWidth: 1, borderColor: colors.ui.tone.danger.border, opacity: rowActionDisabled ? 0.55 : 1 }}
+                style={{ width: 44, height: 44, alignItems: 'center', justifyContent: 'center', borderRadius: colors.ui.radius.controlMiddle, backgroundColor: colors.ui.tone.danger.background, borderWidth: subtleBorderWidth, borderColor: colors.ui.tone.danger.border, opacity: rowActionDisabled ? 0.55 : 1 }}
               >
-                <Trash2 color={colors.ui.tone.danger.foreground} size={18} strokeWidth={1.8} />
+                <AppIcon name="delete" color={colors.ui.tone.danger.foreground} size={18} strokeWidth={appIconStroke.fine} />
               </IslePressable>
             )}
           </View>

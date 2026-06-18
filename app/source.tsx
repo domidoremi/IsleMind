@@ -5,9 +5,9 @@ import * as Clipboard from 'expo-clipboard'
 import { router, useLocalSearchParams } from 'expo-router'
 import type { TFunction } from 'i18next'
 import { useTranslation } from 'react-i18next'
-import { BookOpen, Copy, ExternalLink, Globe2, ListChecks, RefreshCw } from 'lucide-react-native'
 import { MotiView } from 'moti'
 import { AnimatedNavigationTrigger } from '@/components/navigation/AnimatedNavigationTrigger'
+import { AppIcon, appIconStroke } from '@/components/ui/AppIcon'
 import { IsleScreen, type IsleBackgroundState } from '@/components/ui/isle'
 import { IslePanel } from '@/components/ui/isle'
 import { IsleButton } from '@/components/ui/isle'
@@ -20,6 +20,7 @@ import { useIsleDialog } from '@/components/ui/isle'
 import type { MessageCitation, ProcessTrace } from '@/types'
 import { collectVisibleProcessTraces, formatDuration, formatProcessTraceForCopy, formatProcessTraceForDisplay, isAgentIntentTrace, isAgentPlanTrace, isAgentWorkflowEnvelopeTrace, metadataSummaryForTrace, normalizeTraceStatuses, traceStageLabel, traceStatusLabel } from '@/components/chat/tracePresentation'
 import { WORK_ARTIFACT_WORKFLOW_CONTRACT } from '@/services/agent/workArtifactWorkflow'
+import { isAllowedWebViewNavigation, safeHttpUrl } from '@/utils/sourceUrlSafety'
 
 type ProcessTraceGroupKey = 'agentPlan' | 'context' | 'search' | 'toolActivity' | 'agentSynthesis' | 'agentRecovery' | 'other'
 
@@ -42,11 +43,12 @@ export default function SourceScreen() {
   const traces = useMemo(() => normalizeTraceStatuses(message ? collectVisibleProcessTraces(message) : [], message?.status ?? 'done'), [message])
   const citation = citations.find((item) => item.id === citationId) ?? citations[0]
   const explicitUrl = firstParam(params.url)
+  const rawWebUrl = firstSafeParam(explicitUrl, citation?.url)
   const [webKey, setWebKey] = useState(0)
   const [readerBackgroundState, setReaderBackgroundState] = useState<IsleBackgroundState>('idle')
 
   const mode = firstParam(params.kind) === 'process' ? 'process' : 'source'
-  const webUrl = mode === 'source' ? explicitUrl ?? citation?.url : undefined
+  const webUrl = mode === 'source' ? safeHttpUrl(rawWebUrl) : undefined
   const processBackgroundState: IsleBackgroundState = traces.some((trace) => trace.status === 'error')
     ? 'error'
     : traces.some((trace) => trace.status === 'pending' || trace.status === 'running')
@@ -114,15 +116,15 @@ export default function SourceScreen() {
             trailing={
               <View style={{ flexDirection: 'row', gap: 7 }}>
                 <IsleIconButton label={t('common.copy')} size="sm" onPress={() => void copyCurrent()}>
-                  <Copy color={colors.textSecondary} size={17} strokeWidth={1.9} />
+                  <AppIcon name="copy" color={colors.textSecondary} size={17} strokeWidth={appIconStroke.fine} />
                 </IsleIconButton>
                 {webUrl ? (
                   <>
                     <IsleIconButton label={t('common.refresh')} size="sm" onPress={() => setWebKey((value) => value + 1)}>
-                      <RefreshCw color={colors.textSecondary} size={17} strokeWidth={1.9} />
+                      <AppIcon name="refresh" color={colors.textSecondary} size={17} strokeWidth={appIconStroke.fine} />
                     </IsleIconButton>
                     <IsleIconButton label={t('common.openExternal')} size="sm" onPress={() => void openExternal()}>
-                      <ExternalLink color={colors.textSecondary} size={17} strokeWidth={1.9} />
+                      <AppIcon name="external-link" color={colors.textSecondary} size={17} strokeWidth={appIconStroke.fine} />
                     </IsleIconButton>
                   </>
                 ) : null}
@@ -200,7 +202,7 @@ function WebReader({
         <View style={{ paddingHorizontal: 14, paddingVertical: 11 }}>
           <View style={{ flexDirection: 'row', alignItems: 'center', gap: 9 }}>
             <View style={{ width: 26, height: 26, borderRadius: colors.ui.radius.controlSmall, alignItems: 'center', justifyContent: 'center', backgroundColor: colors.ui.icon.accentBackground }}>
-              <Globe2 color={colors.ui.icon.accentForeground} size={15} strokeWidth={2.1} />
+              <AppIcon name="globe" color={colors.ui.icon.accentForeground} size={15} strokeWidth={appIconStroke.strong} />
             </View>
             <View style={{ flex: 1, minWidth: 0 }}>
               <Text numberOfLines={1} style={{ color: colors.text, fontSize: 14, lineHeight: 19, fontWeight: '900', includeFontPadding: false }}>{citation?.title ?? hostFromUrl(url)}</Text>
@@ -226,7 +228,9 @@ function WebReader({
           {WebViewComponent ? (
             <WebViewComponent
               source={{ uri: url }}
+              originWhitelist={['http://*', 'https://*']}
               startInLoadingState={false}
+              onShouldStartLoadWithRequest={(request) => isAllowedWebViewNavigation(request.url)}
               onLoadEnd={() => setLoading(false)}
               onError={() => {
                 setLoading(false)
@@ -272,7 +276,7 @@ function LocalSourceReader({ citation, citations }: { citation?: MessageCitation
             elevated
             title={source.title || source.type}
             subtitle={formatCitationMeta(source, t)}
-            action={<View style={{ width: 30, height: 30, borderRadius: colors.ui.radius.controlSmall, alignItems: 'center', justifyContent: 'center', backgroundColor: colors.ui.icon.accentBackground }}><BookOpen color={colors.ui.icon.accentForeground} size={15} strokeWidth={2.1} /></View>}
+            action={<View style={{ width: 30, height: 30, borderRadius: colors.ui.radius.controlSmall, alignItems: 'center', justifyContent: 'center', backgroundColor: colors.ui.icon.accentBackground }}><AppIcon name="knowledge" color={colors.ui.icon.accentForeground} size={15} strokeWidth={appIconStroke.strong} /></View>}
           >
             {source.excerpt ? <Text selectable style={{ color: colors.textSecondary, fontSize: 13, lineHeight: 20 }}>{source.excerpt}</Text> : null}
             <View style={{ flexDirection: 'row', gap: 8, flexWrap: 'wrap', marginTop: 10 }}>
@@ -428,7 +432,7 @@ function TraceRow({ trace, isLast }: { trace: ProcessTrace; isLast: boolean }) {
       </View>
       <View style={{ flex: 1, minWidth: 0, paddingBottom: isLast ? 2 : 14 }}>
         <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
-          <ListChecks color={tone} size={15} strokeWidth={2} />
+          <AppIcon name="list-check" color={tone} size={15} />
           <Text numberOfLines={1} style={{ color: colors.text, fontSize: 14, lineHeight: 19, fontWeight: '900', flex: 1, minWidth: 0, includeFontPadding: false }}>{display.title}</Text>
         </View>
         <Text numberOfLines={metaLineCount} style={{ color: tone, fontSize: 11, lineHeight: 15, fontWeight: '900', marginTop: 3, includeFontPadding: false }}>{meta}</Text>
@@ -474,7 +478,7 @@ function ReaderSkeleton({ label }: { label: string }) {
   const { colors } = useAppTheme()
   const { width } = useWindowDimensions()
   const sheetMaterial = colors.material.sheet
-  const skeletonSurface = colors.ui.card.defaultBackground
+  const skeletonSurface = colors.ui.glass ? colors.ui.actionBar.itemBackground : colors.ui.semantic.surface.muted
   const skeletonBlockHeight = Math.max(140, Math.min(260, Math.round(width * (width < 430 ? 0.48 : 0.36))))
   return (
     <View style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, zIndex: 5, padding: 18, backgroundColor: sheetMaterial.body }}>
@@ -556,4 +560,8 @@ function hostFromUrl(url: string): string {
 function firstParam(value: string | string[] | undefined): string | undefined {
   if (Array.isArray(value)) return value[0]
   return value
+}
+
+function firstSafeParam(...values: Array<string | undefined>): string | undefined {
+  return values.find((value) => typeof value === 'string' && Boolean(value.trim()))
 }
