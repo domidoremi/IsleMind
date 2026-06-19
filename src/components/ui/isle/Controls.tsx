@@ -12,6 +12,7 @@ export type IsleMotionPreset = 'none' | 'press' | 'entrance' | 'loop'
 
 export interface IsleButtonProps {
   label: string
+  accessibilityLabel?: string
   icon?: ReactNode
   onPress?: () => void
   disabled?: boolean
@@ -23,10 +24,11 @@ export interface IsleButtonProps {
   textStyle?: StyleProp<TextStyle>
 }
 
-export function IsleButton({ label, icon, onPress, disabled = false, busy = false, tone = 'soft', compact = false, block = false, style, textStyle }: IsleButtonProps) {
+export function IsleButton({ label, accessibilityLabel, icon, onPress, disabled = false, busy = false, tone = 'soft', compact = false, block = false, style, textStyle }: IsleButtonProps) {
   return (
     <BaseIsleButton
       label={label}
+      accessibilityLabel={accessibilityLabel}
       icon={icon}
       type={buttonTypeForTone(tone)}
       danger={tone === 'danger'}

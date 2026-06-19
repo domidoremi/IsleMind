@@ -218,8 +218,12 @@ function MessageBubbleComponent({
       if (success) runOnJS(toggleActionBar)()
     })
 
+  function handleBubbleLayout() {
+    if (isStreamingContent || actionBarOpen || processLayerVisible) onLayoutChangeRequest?.()
+  }
+
   return (
-    <View style={{ marginBottom: actionBarOpen ? 20 : 16 }}>
+    <View onLayout={handleBubbleLayout} style={{ marginBottom: actionBarOpen ? 20 : 16 }}>
       <MotiView
         {...messageAnimationForMotion(index, motion)}
         style={{

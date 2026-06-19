@@ -7,25 +7,33 @@ export interface SearchAdapterResult {
   sources: RetrievalSource[]
   mode: SearchProviderId
   message: string
+  ok: boolean
+  code?: 'disabled' | 'native' | 'empty_query' | 'missing_credentials' | 'no_results'
 }
 
 export async function searchExternalWeb(query: string, limit = 5): Promise<SearchAdapterResult> {
   const settings = useSettingsStore.getState().settings
   const mode = resolveSearchProvider(settings)
   if (!settings.webSearchEnabled || mode === 'off' || mode === 'native') {
-    return { sources: [], mode, message: mode === 'native' ? st('search.nativeMode') : st('search.disabled') }
+    return {
+      sources: [],
+      mode,
+      message: mode === 'native' ? st('search.nativeMode') : st('search.disabled'),
+      ok: false,
+      code: mode === 'native' ? 'native' : 'disabled',
+    }
   }
-  if (!query.trim()) return { sources: [], mode, message: st('search.emptyQuery') }
+  if (!query.trim()) return { sources: [], mode, message: st('search.emptyQuery'), ok: false, code: 'empty_query' }
 
   switch (mode) {
     case 'tavily':
-      return { sources: await searchTavily(query, limit), mode, message: st('search.tavilyDone') }
+      return completeSearchResult(await searchTavily(query, limit), mode, st('search.tavilyDone'))
     case 'google':
-      return { sources: await searchGoogle(query, limit), mode, message: st('search.googleDone') }
+      return completeSearchResult(await searchGoogle(query, limit), mode, st('search.googleDone'))
     case 'bing':
-      return { sources: await searchBingCompatible(query, limit), mode, message: st('search.bingDone') }
+      return completeSearchResult(await searchBingCompatible(query, limit), mode, st('search.bingDone'))
     case 'custom':
-      return { sources: await searchCustomJson(query, limit), mode, message: st('search.customDone') }
+      return completeSearchResult(await searchCustomJson(query, limit), mode, st('search.customDone'))
   }
 }
 
@@ -111,4 +119,17 @@ function normalizeWebResults(items: any[], limit: number, prefix: string): Retri
     url: item.url || item.link,
     score: typeof item.score === 'number' ? item.score : undefined,
   }))
+}
+
+function completeSearchResult(sources: RetrievalSource[], mode: SearchProviderId, message: string): SearchAdapterResult {
+  if (!sources.length) {
+    return {
+      sources,
+      mode,
+      message: st('search.noResults'),
+      ok: false,
+      code: 'no_results',
+    }
+  }
+  return { sources, mode, message, ok: true }
 }

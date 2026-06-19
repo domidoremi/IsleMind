@@ -163,6 +163,7 @@ function disabledContentStyle(palette: ReturnType<typeof useIslePalette>) {
 export function IsleButton({
   children,
   label,
+  accessibilityLabel,
   icon,
   type = 'default',
   size = 'middle',
@@ -177,6 +178,7 @@ export function IsleButton({
 }: {
   children?: ReactNode
   label?: string
+  accessibilityLabel?: string
   icon?: ReactNode
   type?: IsleButtonType
   size?: IsleButtonSize
@@ -234,7 +236,7 @@ export function IsleButton({
       haptic
       disabled={disabled || loading}
       onPress={onPress}
-      accessibilityLabel={label}
+      accessibilityLabel={accessibilityLabel ?? label}
       scaleTo={0.98}
       style={[
         {

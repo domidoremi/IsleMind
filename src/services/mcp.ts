@@ -210,9 +210,11 @@ export async function callMcpTool(
         phase: 'tool_call',
         server,
         tool,
-        status: 'done',
+        status: result.ok ? 'done' : 'error',
         method: 'tools/call',
         resultCount: result.content.length,
+        reason: result.ok ? undefined : 'execution_failed',
+        detail: result.error,
       })
       return options.signal?.aborted ? cancelledTrace(server, toolName, tool, startedAt) : sanitizeMcpCallResult(result)
     }

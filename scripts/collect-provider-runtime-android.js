@@ -79,11 +79,9 @@ function runProviderSettingsRoute(device) {
     expectedState: 'Providers route is visible with provider-management controls and no app error boundary.',
     fixEntry: 'src/components/providers/ProviderSettingsContent.tsx',
   })
-  openUrl(device, 'islemind://settings/providers')
-  sleep(2200)
-  const capture = captureStep(device, record, 'provider-runtime-settings-route')
+  const capture = openUrlAndWaitForText(device, record, 'islemind://settings/providers', 'provider-runtime-settings-route', ['导入服务商', 'Import providers', '添加服务商', 'Add Provider'], 8, 1100)
   const ok = hasAnyText(capture.uiaText, ['供应商', 'Providers', 'プロバイダー'])
-    && hasAnyText(capture.uiaText, ['批量导入', 'Batch Import', '添加服务商', 'Add Provider'])
+    && hasAnyText(capture.uiaText, ['导入服务商', 'Import providers', '批量导入', 'Batch Import', '添加服务商', 'Add Provider'])
     && !hasErrorBoundary(capture.uiaText)
   return completeScenario(record, ok, capture, ok ? 'Providers route rendered.' : 'Providers route controls were not visible.')
 }
@@ -93,15 +91,16 @@ function runProviderImportKeyboard(device) {
     expectedState: 'Provider batch import sheet keeps focused input and import action visible with the Android keyboard open.',
     fixEntry: 'src/components/providers/ProviderSettingsContent.tsx',
   })
-  openUrl(device, 'islemind://settings/providers')
-  sleep(1600)
-  let capture = captureStep(device, record, 'provider-runtime-import-start')
-  if (!tapText(device, capture.uiaText, ['批量导入', 'Batch Import'])) {
+  runCommand('adb', ['-s', device, 'shell', 'am', 'force-stop', appPackageName])
+  sleep(600)
+  let capture = openUrlAndWaitForText(device, record, 'islemind://settings/providers', 'provider-runtime-import-start', ['导入服务商', 'Import providers'], 8, 900)
+  if (!tapExactContentDesc(device, capture.uiaText, ['导入服务商', 'Import providers'])) {
     return completeScenario(record, false, capture, 'Batch import action was not tappable.')
   }
-  sleep(900)
-  capture = captureStep(device, record, 'provider-runtime-import-sheet')
-  tapFirstEditable(device, capture.uiaText)
+  capture = waitForText(device, record, 'provider-runtime-import-sheet', ['https://api.example.com/v1'], 8, 700)
+  if (!tapFirstEditable(device, capture.uiaText)) {
+    return completeScenario(record, false, capture, 'Batch import input was not focusable.')
+  }
   runCommand('adb', ['-s', device, 'shell', 'input', 'text', 'QA_PROVIDER_RUNTIME'])
   sleep(900)
   capture = captureStep(device, record, 'provider-runtime-import-keyboard')
@@ -119,15 +118,17 @@ function runChatModelSwitch(device) {
     expectedState: 'Home chat model picker opens and exposes provider/model switching controls.',
     fixEntry: 'src/components/chat/ChatOptionsPanel.tsx',
   })
+  runCommand('adb', ['-s', device, 'shell', 'am', 'force-stop', appPackageName])
+  sleep(600)
   openUrl(device, 'islemind://')
   sleep(2200)
   let capture = captureStep(device, record, 'provider-runtime-home')
-  const opened = tapText(device, capture.uiaText, ['切换模型', 'Switch model'])
+  const opened = tapText(device, capture.uiaText, ['模型和会话参数', 'Model and chat options'])
+    || tapText(device, capture.uiaText, ['切换模型', 'Switch model'])
     || tapText(device, capture.uiaText, ['模型', 'Model'])
     || tapText(device, capture.uiaText, ['供应商', 'Providers'])
   if (opened) {
-    sleep(900)
-    capture = captureStep(device, record, 'provider-runtime-model-switch')
+    capture = waitForText(device, record, 'provider-runtime-model-switch', ['搜索供应商或模型', 'Search providers or models', '供应商', 'Providers', '模型', 'Model'], 6, 650)
   }
   const ok = opened
     && hasAnyText(capture.uiaText, ['搜索或切换', 'Search or switch', '供应商', 'Providers', '模型', 'Model'])
@@ -167,6 +168,8 @@ function runRuntimeFallbackTrace(device) {
     expectedState: 'Runtime fallback trace or runtime log evidence exists without full credential leakage.',
     fixEntry: 'src/services/ai/base.ts',
   })
+  runCommand('adb', ['-s', device, 'shell', 'am', 'force-stop', appPackageName])
+  sleep(600)
   openUrl(device, 'islemind://settings')
   sleep(1600)
   let capture = captureStep(device, record, 'provider-runtime-fallback')
@@ -191,10 +194,10 @@ function runProviderHealthState(device) {
     expectedState: 'Runtime diagnostics or Provider state exposes provider health without credential values.',
     fixEntry: 'src/components/main/SettingsScreenContent.tsx',
   })
-  openUrl(device, 'islemind://settings')
-  sleep(1800)
-  let capture = captureStep(device, record, 'provider-runtime-health')
-  const found = findByScrolling(device, record, capture, ['运行时诊断', 'Runtime diagnostics', '供应商健康', 'provider health', 'Providers'], 5)
+  runCommand('adb', ['-s', device, 'shell', 'am', 'force-stop', appPackageName])
+  sleep(600)
+  let capture = openUrlAndWaitForText(device, record, 'islemind://settings', 'provider-runtime-health', ['供应商', 'Providers', 'AI 设置', 'AI settings'], 8, 900)
+  const found = findByScrolling(device, record, capture, ['运行时诊断', 'Runtime diagnostics', '供应商健康', 'provider health', '供应商', 'Providers'], 5)
   capture = found.capture
   const ok = found.matched && !hasErrorBoundary(capture.uiaText)
   return completeScenario(record, ok, capture, ok ? 'Provider health diagnostics were visible.' : 'Provider health state was not visible.')
@@ -205,9 +208,9 @@ function runAndroidBack(device) {
     expectedState: 'Android Back returns from Providers to Settings without error boundary.',
     fixEntry: 'app/_layout.tsx',
   })
-  openUrl(device, 'islemind://settings/providers')
-  sleep(1600)
-  const before = captureStep(device, record, 'provider-runtime-android-back-before')
+  runCommand('adb', ['-s', device, 'shell', 'am', 'force-stop', appPackageName])
+  sleep(600)
+  const before = openUrlAndWaitForText(device, record, 'islemind://settings/providers', 'provider-runtime-android-back-before', ['导入服务商', 'Import providers', '添加服务商', 'Add Provider'], 8, 900)
   runCommand('adb', ['-s', device, 'shell', 'input', 'keyevent', '4'])
   sleep(1400)
   const after = captureStep(device, record, 'provider-runtime-android-back')
@@ -350,6 +353,23 @@ function openUrl(device, url) {
   runCommand('adb', ['-s', device, 'shell', 'am', 'start', '-W', '-a', 'android.intent.action.VIEW', '-d', url])
 }
 
+function openUrlAndWaitForText(device, record, url, name, labels, maxAttempts = 6, delayMs = 800) {
+  openUrl(device, url)
+  sleep(delayMs)
+  return waitForText(device, record, name, labels, maxAttempts, delayMs)
+}
+
+function waitForText(device, record, name, labels, maxAttempts = 6, delayMs = 800) {
+  let capture = captureStep(device, record, name)
+  if (hasAnyText(capture.uiaText, labels) || hasErrorBoundary(capture.uiaText)) return capture
+  for (let attempt = 1; attempt < maxAttempts; attempt += 1) {
+    sleep(delayMs)
+    capture = captureStep(device, record, `${name}-wait-${attempt}`)
+    if (hasAnyText(capture.uiaText, labels) || hasErrorBoundary(capture.uiaText)) return capture
+  }
+  return capture
+}
+
 function captureStep(device, record, name) {
   const png = path.join(smokeDir, `${name}.png`)
   const uia = path.join(smokeDir, `${name}.uia.xml`)
@@ -404,6 +424,28 @@ function tapText(device, uiaText, labels) {
   return false
 }
 
+function tapExactContentDesc(device, uiaText, labels) {
+  const nodes = parseNodes(uiaText)
+  for (const label of labels) {
+    const node = nodes.find((item) => item.enabled && item.clickable && item.contentDesc === label)
+    if (!node) continue
+    tapBoundsCenter(device, node.bounds)
+    return true
+  }
+  return false
+}
+
+function tapTextUpperHalf(device, uiaText, labels) {
+  const nodes = parseNodes(uiaText)
+  for (const label of labels) {
+    const node = findTappableTextNode(nodes, label)
+    if (!node) continue
+    tapBoundsAt(device, node.bounds, 0.5, 0.16)
+    return true
+  }
+  return false
+}
+
 function tapFirstEditable(device, uiaText) {
   const node = parseNodes(uiaText).find((item) => item.enabled && item.className.includes('EditText'))
   if (!node) return false
@@ -453,10 +495,14 @@ function textMatches(node, label) {
 }
 
 function tapBoundsCenter(device, bounds) {
+  tapBoundsAt(device, bounds, 0.5, 0.5)
+}
+
+function tapBoundsAt(device, bounds, xRatio, yRatio) {
   const box = parseBounds(bounds)
   if (!box) return
-  const x = Math.round((box.left + box.right) / 2)
-  const y = Math.round((box.top + box.bottom) / 2)
+  const x = Math.round(box.left + (box.right - box.left) * xRatio)
+  const y = Math.round(box.top + (box.bottom - box.top) * yRatio)
   runCommand('adb', ['-s', device, 'shell', 'input', 'tap', String(x), String(y)])
 }
 
