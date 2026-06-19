@@ -2,6 +2,7 @@ import type { ChatCompletionResult } from '@/services/ai/base'
 import type { McpToolRequest } from '@/services/mcpToolRequest'
 import { MCP_TOOL_CALL_TAG } from '@/services/mcpToolRequest'
 import { stripAgentToolRequestBlocks, redactSensitiveText } from '@/services/agent'
+import { stripProviderTextToolCallBlocks } from '@/services/ai/providerToolCalls'
 import type { McpServerConfig, McpToolManifest, ToolContentBlock } from '@/types'
 import { resolveMcpToolIdentity } from '@/services/chatMcpToolIdentityUtils'
 
@@ -19,7 +20,7 @@ export function stringifyToolArguments(args: Record<string, unknown>): string {
 }
 
 export function stripMcpCallBlocks(output: string): string {
-  return stripAgentToolRequestBlocks(output, MCP_TOOL_CALL_TAG)
+  return stripProviderTextToolCallBlocks(stripAgentToolRequestBlocks(output, MCP_TOOL_CALL_TAG))
 }
 
 export function sanitizeToolRevisionAnswerText(output: string): string {

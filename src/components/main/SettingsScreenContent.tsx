@@ -17,7 +17,7 @@ import { useSettingsStore } from '@/store/settingsStore'
 import { useChatStore } from '@/store/chatStore'
 import { exportToJsonFile, importFromJsonFileDetailed } from '@/services/portableData'
 import { formatImportSizeLimit, MAX_IMPORT_JSON_FILE_BYTES } from '@/services/fileImportGuards'
-import { checkLatestApkRelease, downloadAndOpenApkInstaller, formatApkSizeBytes, formatUpdateCheckTime, getVersionSnapshot, shouldRecordApkUpdateCheck, type ApkReleaseInfo } from '@/services/appUpdates'
+import { checkLatestApkRelease, downloadAndOpenApkInstaller, formatApkSizeBytes, formatUpdateCheckTime, getVersionSnapshot, shouldRecordApkUpdateCheck, type ApkInstallProgress, type ApkInstallProgressStage, type ApkReleaseInfo } from '@/services/appUpdates'
 import { useIsleDialog } from '@/components/ui/isle'
 import { resolveSearchProvider, searchProviderLabel } from '@/services/searchPolicy'
 import { clearRuntimeLog, getRuntimeLogInfo, getRuntimeLogPath, readRuntimeLogText } from '@/services/runtimeLog'
@@ -42,6 +42,14 @@ const THEME_FAMILY_OPTIONS: { id: ThemeId; labelKey: string; detailKey: string }
 
 const settingsChipPressableStyle = { minHeight: 44, justifyContent: 'center' as const }
 const themeModeCardHeight = 82
+type ApkUpdateUiStage = 'checking' | ApkInstallProgressStage
+
+function updateStageLabelKey(stage: ApkUpdateUiStage): string {
+  if (stage === 'checking') return 'settings.checkingUpdate'
+  if (stage === 'downloading') return 'settings.downloadingApk'
+  if (stage === 'verifying') return 'settings.verifyingApk'
+  return 'settings.openingInstaller'
+}
 
 const TRANSPORT_OPTIONS: { value: UpstreamTransportMode; labelKey: string }[] = [
   { value: 'auto', labelKey: 'settings.transportAuto' },
@@ -119,7 +127,9 @@ export function SettingsScreenContent({ active = true, onHome }: { active?: bool
   const resetSettings = useSettingsStore((state) => state.clearAll)
   const clearChats = useChatStore((state) => state.clearAll)
   const scrollRef = useRef<ScrollView>(null)
-  const [checkingUpdate, setCheckingUpdate] = useState(false)
+  const [apkUpdateStage, setApkUpdateStage] = useState<ApkUpdateUiStage | null>(null)
+  const [activeApkRelease, setActiveApkRelease] = useState<ApkReleaseInfo | null>(null)
+  const [apkInstallProgress, setApkInstallProgress] = useState<ApkInstallProgress | null>(null)
   const [diagnostics, setDiagnostics] = useState<RuntimeDiagnosticsSummary | null>(null)
   const [refreshingDiagnostics, setRefreshingDiagnostics] = useState(false)
   const [systemStatusNotificationStatus, setSystemStatusNotificationStatus] = useState<AndroidStatusNotificationPermissionStatus | null>(null)
@@ -164,6 +174,13 @@ export function SettingsScreenContent({ active = true, onHome }: { active?: bool
     systemStatusNotificationStatus.granted === true &&
     systemStatusNotificationStatus.promotedNotificationsAvailable === true &&
     systemStatusNotificationStatus.canPostPromotedNotifications === false
+  const updatingApk = apkUpdateStage != null
+  const updateActionLabel = apkUpdateStage ? t(updateStageLabelKey(apkUpdateStage)) : t('settings.checkApk')
+  const updateProgressDetail = apkUpdateStage
+    ? activeApkRelease
+      ? formatApkUpdateProgressDetail(apkUpdateStage, activeApkRelease, apkInstallProgress, t)
+      : t('settings.apkUpdateProgressChecking')
+    : null
 
   useEffect(() => {
     if (!active) return
@@ -237,8 +254,10 @@ export function SettingsScreenContent({ active = true, onHome }: { active?: bool
   }
 
   async function checkApkUpdate() {
-    if (checkingUpdate) return
-    setCheckingUpdate(true)
+    if (updatingApk) return
+    setApkUpdateStage('checking')
+    setActiveApkRelease(null)
+    setApkInstallProgress(null)
     try {
       const result = await checkLatestApkRelease()
       if (shouldRecordApkUpdateCheck(result)) {
@@ -255,16 +274,25 @@ export function SettingsScreenContent({ active = true, onHome }: { active?: bool
         })
         return
       }
+      setActiveApkRelease(result.release)
       const confirmed = await confirmApkInstall(result.release)
       if (!confirmed) return
-      const installResult = await downloadAndOpenApkInstaller(result.release)
+      const installResult = await downloadAndOpenApkInstaller(result.release, {
+        onProgress: (progress) => {
+          setActiveApkRelease(progress.release)
+          setApkUpdateStage(progress.stage)
+          setApkInstallProgress(progress)
+        },
+      })
       dialog.notice({
         title: installResult.status === 'downloaded' ? t('settings.installerOpened') : t('settings.apkUpdateFailed'),
         message: installResult.message,
         tone: installResult.status === 'downloaded' ? 'mint' : 'danger',
       })
     } finally {
-      setCheckingUpdate(false)
+      setApkUpdateStage(null)
+      setActiveApkRelease(null)
+      setApkInstallProgress(null)
     }
   }
 
@@ -967,9 +995,10 @@ export function SettingsScreenContent({ active = true, onHome }: { active?: bool
             <View style={{ flexDirection: 'row', flexWrap: 'wrap', alignItems: 'stretch', gap: 10 }}>
               <View style={{ flexGrow: 1, flexShrink: 1, flexBasis: narrowLayout ? '100%' : '45%', minWidth: 0 }}>
                 <DataButton
-                  label={checkingUpdate ? t('settings.checkingUpdate') : t('settings.checkApk')}
-                  icon={checkingUpdate ? <ActivityIndicator color={colors.ui.control.primaryForeground} size="small" /> : <AppIcon name="device" color={colors.ui.control.primaryForeground} size={18} />}
+                  label={updateActionLabel}
+                  icon={updatingApk ? <ActivityIndicator color={colors.ui.control.primaryForeground} size="small" /> : <AppIcon name="device" color={colors.ui.control.primaryForeground} size={18} />}
                   onPress={() => void checkApkUpdate()}
+                  disabled={updatingApk}
                 />
               </View>
               <View style={{ flexGrow: 1.2, flexShrink: 1, flexBasis: narrowLayout ? '100%' : '50%', minWidth: 0 }}>
@@ -981,6 +1010,12 @@ export function SettingsScreenContent({ active = true, onHome }: { active?: bool
                 />
               </View>
             </View>
+            {updateProgressDetail ? (
+              <View style={{ borderRadius: colors.ui.radius.card, padding: 11, backgroundColor: resolveSettingsFoldoutSurface(colors, colors.ui.glass, 'muted'), borderWidth: subtleBorderWidth, borderColor: resolveSettingsFoldoutBorder(colors, colors.ui.glass) }}>
+                <Text style={{ color: colors.text, fontSize: 12, lineHeight: 17, fontWeight: '900' }}>{updateActionLabel}</Text>
+                <Text style={{ marginTop: 4, color: colors.textSecondary, fontSize: 11, lineHeight: 16, fontWeight: '700' }}>{updateProgressDetail}</Text>
+              </View>
+            ) : null}
           </MotiView>
         ) : null}
         </AnimatePresence>
@@ -1189,6 +1224,31 @@ function joinSettingsList(value: string[] | undefined): string {
   return (value ?? []).join('\n')
 }
 
+function formatApkUpdateProgressDetail(
+  stage: ApkUpdateUiStage,
+  release: ApkReleaseInfo,
+  progress: ApkInstallProgress | null,
+  t: ReturnType<typeof useTranslation>['t']
+): string {
+  const stageLabel = t(updateStageLabelKey(stage))
+  const releaseSize = release.sizeBytes ? formatApkSizeBytes(release.sizeBytes) : t('updates.unknown')
+  if (stage === 'downloading' && progress?.bytesWritten != null) {
+    const written = formatApkSizeBytes(progress.bytesWritten)
+    const expected = progress.bytesExpected ? formatApkSizeBytes(progress.bytesExpected) : releaseSize
+    const percent = progress.percent != null ? `${progress.percent}% · ` : ''
+    return t('settings.apkUpdateDownloadProgressDetail', {
+      stage: stageLabel,
+      name: release.apkName,
+      progress: `${percent}${written} / ${expected}`,
+    })
+  }
+  return t('settings.apkUpdateProgressDetail', {
+    stage: stageLabel,
+    name: release.apkName,
+    size: releaseSize,
+  })
+}
+
 function buildDiagnosticRows(diagnostics: RuntimeDiagnosticsSummary, t: ReturnType<typeof useTranslation>['t']): Array<{ key: string; label: string; value: string; tone: 'mint' | 'amber' | 'danger' | 'default' }> {
   return [
     {
@@ -1340,7 +1400,7 @@ function VersionRow({ label, value }: { label: string; value: string }) {
   )
 }
 
-function DataButton({ label, icon, onPress }: { label: string; icon: ReactNode; onPress: () => void }) {
+function DataButton({ label, icon, onPress, disabled = false }: { label: string; icon: ReactNode; onPress: () => void; disabled?: boolean }) {
   const { colors } = useAppTheme()
   return (
     <IsleButton
@@ -1349,6 +1409,7 @@ function DataButton({ label, icon, onPress }: { label: string; icon: ReactNode; 
       tone="primary"
       block
       onPress={onPress}
+      disabled={disabled}
       style={{ flexGrow: 1, flexShrink: 1, flexBasis: '47%', minWidth: 0, alignSelf: 'stretch', minHeight: 54, borderRadius: colors.ui.radius.controlLarge, justifyContent: 'center', paddingHorizontal: 16 }}
       textStyle={{ textAlign: 'center', textAlignVertical: 'center' }}
     />
