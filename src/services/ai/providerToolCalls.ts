@@ -14,6 +14,10 @@ export interface ProviderToolCall {
   argumentsComplete?: boolean
 }
 
+const TEXT_TOOL_CALL_OPEN_TAG = /<\s*tool_call(?:\s[^>]*)?>/i
+const TEXT_TOOL_CALL_CLOSE_TAG = /<\/\s*tool_call\s*>/i
+const TEXT_TOOL_CALL_PREFIX_GUARD = 24
+
 type ProviderToolCallInput = {
   id?: string
   callId?: string
@@ -42,6 +46,105 @@ export function extractProviderToolCalls(value: unknown, providerType: ProviderT
   }
 
   return calls.length ? mergeProviderToolCallParts(calls) : undefined
+}
+
+export function extractProviderTextToolCalls(text: string): ProviderToolCall[] | undefined {
+  if (!text || !TEXT_TOOL_CALL_OPEN_TAG.test(text)) return undefined
+  const calls: ProviderToolCall[] = []
+  let searchIndex = 0
+  let blockIndex = 0
+  while (searchIndex < text.length) {
+    const remaining = text.slice(searchIndex)
+    const openMatch = remaining.match(TEXT_TOOL_CALL_OPEN_TAG)
+    if (!openMatch || openMatch.index === undefined) break
+    const blockStart = searchIndex + openMatch.index + openMatch[0].length
+    const afterOpen = text.slice(blockStart)
+    const closeMatch = afterOpen.match(TEXT_TOOL_CALL_CLOSE_TAG)
+    if (!closeMatch || closeMatch.index === undefined) break
+    const blockContent = afterOpen.slice(0, closeMatch.index)
+    for (const call of parseTextToolCallBlock(blockContent, blockIndex)) {
+      calls.push({ ...call, index: calls.length })
+    }
+    searchIndex = blockStart + closeMatch.index + closeMatch[0].length
+    blockIndex += 1
+  }
+  return calls.length ? mergeProviderToolCallParts(calls) : undefined
+}
+
+export function stripProviderTextToolCallBlocks(text: string): string {
+  if (!text || !TEXT_TOOL_CALL_OPEN_TAG.test(text)) return text
+  let output = ''
+  let searchIndex = 0
+  while (searchIndex < text.length) {
+    const remaining = text.slice(searchIndex)
+    const openMatch = remaining.match(TEXT_TOOL_CALL_OPEN_TAG)
+    if (!openMatch || openMatch.index === undefined) {
+      output += remaining
+      break
+    }
+    const openStart = searchIndex + openMatch.index
+    const blockStart = openStart + openMatch[0].length
+    const afterOpen = text.slice(blockStart)
+    const closeMatch = afterOpen.match(TEXT_TOOL_CALL_CLOSE_TAG)
+    output += text.slice(searchIndex, openStart)
+    if (!closeMatch || closeMatch.index === undefined) {
+      break
+    }
+    searchIndex = blockStart + closeMatch.index + closeMatch[0].length
+  }
+  return output
+}
+
+export function createProviderTextToolCallStreamFilter() {
+  let buffer = ''
+
+  function drain(final: boolean): string {
+    let visible = ''
+    while (buffer) {
+      const openMatch = buffer.match(TEXT_TOOL_CALL_OPEN_TAG)
+      if (!openMatch || openMatch.index === undefined) {
+        if (final) {
+          visible += buffer
+          buffer = ''
+        } else {
+          const retainFrom = findPotentialToolCallPrefixStart(buffer)
+          if (retainFrom >= 0) {
+            visible += buffer.slice(0, retainFrom)
+            buffer = buffer.slice(retainFrom)
+          } else {
+            visible += buffer
+            buffer = ''
+          }
+        }
+        break
+      }
+
+      if (openMatch.index > 0) {
+        visible += buffer.slice(0, openMatch.index)
+        buffer = buffer.slice(openMatch.index)
+      }
+
+      const afterOpen = buffer.slice(openMatch[0].length)
+      const closeMatch = afterOpen.match(TEXT_TOOL_CALL_CLOSE_TAG)
+      if (!closeMatch || closeMatch.index === undefined) {
+        if (final) buffer = ''
+        break
+      }
+      buffer = afterOpen.slice(closeMatch.index + closeMatch[0].length)
+    }
+    return visible
+  }
+
+  return {
+    push(chunk: string): string {
+      if (!chunk) return ''
+      buffer += chunk
+      return drain(false)
+    },
+    finish(): string {
+      return drain(true)
+    },
+  }
 }
 
 function collectOpenAIProviderToolCalls(root: Record<string, unknown>, add: (input: ProviderToolCallInput) => void) {
@@ -257,4 +360,85 @@ export function executableProviderToolCalls(calls: ProviderToolCall[] | undefine
       argumentsComplete: true,
     }))
   return executable.length ? executable : undefined
+}
+
+function parseTextToolCallBlock(block: string, blockIndex: number): ProviderToolCall[] {
+  const calls: ProviderToolCall[] = []
+  const functionOpenPattern = /<\s*function(?:\s*=\s*([A-Za-z0-9_.:-]+)|\s+name\s*=\s*["']?([^"'>\s]+)["']?)\s*>/gi
+  let functionMatch: RegExpExecArray | null
+  let functionIndex = 0
+  while ((functionMatch = functionOpenPattern.exec(block)) !== null) {
+    const name = decodeToolText(functionMatch[1] || functionMatch[2] || '').trim()
+    if (!name) continue
+    const contentStart = functionOpenPattern.lastIndex
+    const closeMatch = block.slice(contentStart).match(/<\/\s*function\s*>/i)
+    if (!closeMatch || closeMatch.index === undefined) break
+    const content = block.slice(contentStart, contentStart + closeMatch.index)
+    const args = parseTextToolParameters(content)
+    const id = `text-tool-call-${blockIndex}-${functionIndex}`
+    calls.push({
+      id,
+      callId: id,
+      index: calls.length,
+      name,
+      arguments: args,
+      rawArguments: stringifyToolCallArguments(args),
+      argumentsComplete: true,
+    })
+    functionOpenPattern.lastIndex = contentStart + closeMatch.index + closeMatch[0].length
+    functionIndex += 1
+  }
+  return calls
+}
+
+function parseTextToolParameters(content: string): Record<string, unknown> {
+  const args: Record<string, unknown> = {}
+  const parameterPattern = /<\s*parameter(?:\s*=\s*([A-Za-z0-9_.:-]+)|\s+name\s*=\s*["']?([^"'>\s]+)["']?)\s*>([\s\S]*?)<\/\s*parameter\s*>/gi
+  let match: RegExpExecArray | null
+  while ((match = parameterPattern.exec(content)) !== null) {
+    const key = decodeToolText(match[1] || match[2] || '').trim()
+    if (!key) continue
+    args[key] = coerceTextToolParameter(decodeToolText(match[3] ?? ''))
+  }
+  return args
+}
+
+function coerceTextToolParameter(value: string): unknown {
+  const trimmed = value.trim()
+  if (!trimmed) return ''
+  if (/^-?(?:0|[1-9]\d*)(?:\.\d+)?$/.test(trimmed)) {
+    const numeric = Number(trimmed)
+    if (Number.isFinite(numeric)) return numeric
+  }
+  if (/^(?:true|false|null)$/i.test(trimmed) || /^[{[]/.test(trimmed)) {
+    try {
+      return JSON.parse(trimmed)
+    } catch {}
+  }
+  return trimmed
+}
+
+function decodeToolText(value: string): string {
+  return value
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .replace(/&quot;/g, '"')
+    .replace(/&apos;/g, "'")
+    .replace(/&amp;/g, '&')
+}
+
+function stringifyToolCallArguments(args: Record<string, unknown>): string {
+  try {
+    return JSON.stringify(args)
+  } catch {
+    return '{}'
+  }
+}
+
+function findPotentialToolCallPrefixStart(buffer: string): number {
+  const start = Math.max(0, buffer.length - TEXT_TOOL_CALL_PREFIX_GUARD)
+  const index = buffer.toLowerCase().indexOf('<tool_call', start)
+  if (index >= 0) return index
+  const dangling = buffer.lastIndexOf('<')
+  return dangling >= start ? dangling : -1
 }
