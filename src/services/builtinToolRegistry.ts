@@ -128,6 +128,20 @@ export async function callBuiltinTool(toolName: string, args: Record<string, unk
       type: 'text' as const,
       text: `${source.title}\n${source.url ?? ''}\n${source.excerpt ?? source.content}`,
     })))
+    const hasOutput = content.some((block) => block.type === 'text' && (block.text ?? '').trim())
+    if (!result.ok || !hasOutput) {
+      const message = result.message || st('search.noResults')
+      return {
+        ok: false,
+        content: [{ type: 'text', text: message }],
+        error: message,
+        trace: completeBuiltinTrace('search', 'MCP search_web', message, startedAt, {
+          count: result.sources.length,
+          mode: result.mode,
+          code: result.code ?? 'no_output',
+        }, 'error'),
+      }
+    }
     return {
       ok: true,
       content,
@@ -157,14 +171,14 @@ function truncateBuiltinToolBlocks(blocks: ToolContentBlock[], tokenBudget = 120
   })
 }
 
-function completeBuiltinTrace(idPart: string, title: string, content: string, startedAt: number, metadata?: Record<string, unknown>): ProcessTrace {
+function completeBuiltinTrace(idPart: string, title: string, content: string, startedAt: number, metadata?: Record<string, unknown>, status: ProcessTrace['status'] = 'done'): ProcessTrace {
   const completedAt = Date.now()
   return {
     id: `mcp-builtin-${idPart}-${startedAt}`,
     type: 'tool',
     title,
     content,
-    status: 'done',
+    status,
     startedAt,
     completedAt,
     durationMs: completedAt - startedAt,

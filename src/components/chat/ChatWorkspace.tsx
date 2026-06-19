@@ -94,8 +94,8 @@ const MESSAGE_LIST_TOUCH_PAGER_GESTURE_RELEASE_DELAY_MS = 120
 const MESSAGE_LIST_MOMENTUM_ELIGIBILITY_MS = 240
 const QUICK_START_ACTION_HIT_SLOP = { top: 8, right: 8, bottom: 8, left: 8 }
 const QUICK_TOOL_HIT_SLOP = { top: 8, right: 6, bottom: 8, left: 6 }
-const FLOATING_CHROME_SAFE_AREA_GAP = 0
-const FLOATING_CHROME_ANDROID_TOP_GAP = 0
+const FLOATING_CHROME_SAFE_AREA_GAP = 8
+const FLOATING_CHROME_ANDROID_TOP_GAP = 2
 const FLOATING_CHROME_BOTTOM_PADDING = 4
 const FLOATING_CHROME_IDLE_COLLAPSE_DELAY_MS = 1800
 const FLOATING_CHROME_SWIPE_COLLAPSE_DISTANCE = 28
@@ -107,6 +107,8 @@ const MESSAGE_LIST_CHROME_UNDERLAP = 0
 const MESSAGE_LIST_COMPOSER_GAP = 12
 const EMPTY_CONVERSATION_DEFAULT_TOP_PADDING = 20
 const HOME_MODEL_HIGHLIGHT_LIMIT = 4
+const SYSTEM_STATUS_NOTIFICATION_CLEAR_DELAY_MS = 5200
+const SYSTEM_STATUS_NOTIFICATION_PREVIEW_LIMIT = 96
 
 interface PendingStreamingMessage {
   intent: Exclude<StreamingInputIntent, 'interrupt'>
@@ -280,7 +282,7 @@ export function ChatWorkspace({ conversation, showBack = false, embedded = false
   const { t } = useTranslation()
   const dialog = useIsleDialog()
   const insets = useSafeAreaInsets()
-  const visualTopInset = Platform.OS === 'android' ? 0 : Math.max(insets.top, 0)
+  const visualTopInset = Math.max(insets.top, 0)
   const { height: windowHeight, width: windowWidth } = useWindowDimensions()
   const motion = useMotionPreference()
   const chatMotion = Platform.OS === 'android' && motion === 'full' ? 'reduced' : motion
@@ -321,6 +323,8 @@ export function ChatWorkspace({ conversation, showBack = false, embedded = false
   const lastScrollOffset = useRef(0)
   const idleTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
   const autoScrollTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const systemStatusClearTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const systemStatusActiveRef = useRef<{ conversationId: string; messageId?: string; title: string } | null>(null)
   const lastAutoScrollAt = useRef(0)
   const autoStickToBottom = useRef(true)
   const appStateRef = useRef<AppStateStatus | null>(AppState.currentState)
@@ -442,27 +446,84 @@ export function ChatWorkspace({ conversation, showBack = false, embedded = false
   }, [dialog, latestCompression, t])
 
   useEffect(() => {
-    if (!runtimeConversationId || settings.systemStatusNotificationsEnabled !== true || !isStreaming) {
+    if (systemStatusClearTimer.current) {
+      clearTimeout(systemStatusClearTimer.current)
+      systemStatusClearTimer.current = null
+    }
+
+    if (!runtimeConversationId || settings.systemStatusNotificationsEnabled !== true) {
+      systemStatusActiveRef.current = null
       void clearAndroidStatusNotification()
       return
     }
 
-    const activity = activityLabel || t('chat.generating')
     const conversationTitle = runtimeConversationTitle?.trim() || t('conversation.untitled')
+    if (isStreaming && streamingMessage) {
+      const activity = activityLabel || t('chat.generating')
+      systemStatusActiveRef.current = {
+        conversationId: runtimeConversationId,
+        messageId: streamingMessage.id,
+        title: conversationTitle,
+      }
+      void updateAndroidStatusNotification({
+        state: 'generating',
+        title: t('chat.systemStatusGeneratingTitle'),
+        message: t('chat.systemStatusGeneratingMessage', { conversation: conversationTitle, activity }),
+        shortText: activity,
+        conversationId: runtimeConversationId,
+        deepLink: `islemind://chat/${runtimeConversationId}`,
+        indeterminate: true,
+        ongoing: true,
+        requestPromotedOngoing: true,
+      })
+      return
+    }
+
+    const activeStatus = systemStatusActiveRef.current
+    if (!activeStatus || activeStatus.conversationId !== runtimeConversationId) {
+      void clearAndroidStatusNotification()
+      return
+    }
+
+    const completedMessage = runtimeConversation?.messages.find((message) => message.id === activeStatus.messageId) ?? lastMessage
+    if (!completedMessage || completedMessage.status === 'sending' || completedMessage.status === 'streaming') return
+
+    const terminal = completedMessage.status === 'error'
+      ? 'error'
+      : completedMessage.status === 'cancelled'
+        ? 'cancelled'
+        : 'completed'
+    const preview = previewSystemStatusMessage(completedMessage, t)
+    const title = terminal === 'error'
+      ? t('chat.systemStatusErrorTitle')
+      : terminal === 'cancelled'
+        ? t('chat.systemStatusStoppedTitle')
+        : t('chat.systemStatusCompletedTitle')
+    const message = terminal === 'error'
+      ? t('chat.systemStatusErrorMessage', { conversation: conversationTitle, preview })
+      : terminal === 'cancelled'
+        ? t('chat.systemStatusStoppedMessage', { conversation: conversationTitle, preview })
+        : t('chat.systemStatusCompletedMessage', { conversation: conversationTitle, preview })
     void updateAndroidStatusNotification({
-      state: 'generating',
-      title: t('chat.systemStatusGeneratingTitle'),
-      message: t('chat.systemStatusGeneratingMessage', { conversation: conversationTitle, activity }),
-      shortText: activity,
+      state: terminal === 'error' ? 'error' : 'completed',
+      title,
+      message,
+      shortText: preview,
       conversationId: runtimeConversationId,
       deepLink: `islemind://chat/${runtimeConversationId}`,
-      indeterminate: true,
-      ongoing: true,
-      requestPromotedOngoing: true,
+      indeterminate: false,
+      ongoing: false,
+      requestPromotedOngoing: false,
     })
-  }, [activityLabel, isStreaming, runtimeConversationId, runtimeConversationTitle, settings.systemStatusNotificationsEnabled, t])
+    systemStatusActiveRef.current = null
+    systemStatusClearTimer.current = setTimeout(() => {
+      systemStatusClearTimer.current = null
+      void clearAndroidStatusNotification()
+    }, SYSTEM_STATUS_NOTIFICATION_CLEAR_DELAY_MS)
+  }, [activityLabel, isStreaming, lastMessage, runtimeConversation?.messages, runtimeConversationId, runtimeConversationTitle, settings.systemStatusNotificationsEnabled, streamingMessage, t])
 
   useEffect(() => () => {
+    if (systemStatusClearTimer.current) clearTimeout(systemStatusClearTimer.current)
     void clearAndroidStatusNotification()
   }, [])
 
@@ -858,7 +919,7 @@ export function ChatWorkspace({ conversation, showBack = false, embedded = false
               />
             </MotiView>
           ) : null}
-          <View pointerEvents="box-none" style={{ position: 'absolute', top: 0, left: 0, right: 0, zIndex: 40, paddingHorizontal: 14, paddingTop: 0, paddingBottom: 0, flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+          <View pointerEvents="box-none" style={{ position: 'absolute', top: 0, left: 0, right: 0, zIndex: 40, paddingHorizontal: 14, paddingTop: visualTopInset + FLOATING_CHROME_SAFE_AREA_GAP, paddingBottom: 0, flexDirection: 'row', alignItems: 'center', gap: 8 }}>
             <AnimatedNavigationTrigger
               variant="iconButton"
               label={t('conversation.title')}
@@ -868,7 +929,7 @@ export function ChatWorkspace({ conversation, showBack = false, embedded = false
               style={{ width: 36, height: 36, borderRadius: colors.ui.radius.controlLarge, backgroundColor: topChromeItemSurface, borderWidth: topChromeBorderWidth, borderColor: topChromeItemBorder }}
             />
             <View style={{ flex: 1 }}>
-              <Pressable onPress={openSetupFullModelPanel} accessibilityRole="button" accessibilityLabel={t('chat.conversationOptions')} accessibilityHint={t('chat.conversationOptionsAccessibilityHint')} hitSlop={QUICK_START_ACTION_HIT_SLOP} style={{ minHeight: 36, justifyContent: 'center' }}>
+              <Pressable onPress={openSetupFullModelPanel} accessibilityRole="button" accessibilityLabel={t('chat.modelAndConversationOptions')} accessibilityHint={t('chat.conversationOptionsAccessibilityHint')} hitSlop={QUICK_START_ACTION_HIT_SLOP} style={{ minHeight: 36, justifyContent: 'center' }}>
                 <Text numberOfLines={1} style={{ color: colors.text, fontSize: 15, lineHeight: 18, fontWeight: '800', includeFontPadding: false }}>{emptyHeaderTitle}</Text>
                 {emptyHeaderSubtitle ? (
                   <Text numberOfLines={1} style={{ color: colors.textSecondary, fontSize: 10.5, lineHeight: 13, marginTop: 1, includeFontPadding: false }}>
@@ -881,7 +942,7 @@ export function ChatWorkspace({ conversation, showBack = false, embedded = false
               haptic
               onPress={openSetupFullModelPanel}
               accessibilityRole="button"
-              accessibilityLabel={t('chat.conversationOptions')}
+              accessibilityLabel={t('chat.modelAndConversationOptions')}
               accessibilityHint={t('chat.conversationOptionsAccessibilityHint')}
               hitSlop={QUICK_START_ACTION_HIT_SLOP}
               style={{
@@ -1777,7 +1838,7 @@ function ActiveChatWorkspace({
               maintainVisibleContentPosition={messageListMaintainVisibleContentPosition}
               scrollEventThrottle={Platform.OS === 'android' ? 32 : 16}
               drawDistance={Platform.OS === 'android' ? 420 : undefined}
-              maxItemsInRecyclePool={Platform.OS === 'android' ? 18 : undefined}
+              maxItemsInRecyclePool={Platform.OS === 'android' ? 0 : undefined}
               getItemType={getMessageItemType}
               contentContainerStyle={{ paddingLeft: 20, paddingRight: messageListRightPadding, paddingTop: activeConversation.messages.length ? 0 : emptyConversationTopPadding, paddingBottom: messageListBottomPadding }}
               ListHeaderComponent={activeConversation.messages.length ? renderConversationHeaderSpacer(conversationHeaderTopPadding) : null}
@@ -2217,7 +2278,7 @@ function FloatingChrome({
                   ) : null}
                 </View>
                 <View style={{ width: 90, flexShrink: 0, flexDirection: 'row', justifyContent: 'flex-end', gap: 6 }}>
-                  <IsleIconButton label={t('chat.conversationOptions')} onPress={onToggleOptions} tone="default" style={showOptions ? activeChromeIconStyle : chromeIconStyle}>
+                  <IsleIconButton label={t('chat.modelAndConversationOptions')} onPress={onToggleOptions} tone="default" style={showOptions ? activeChromeIconStyle : chromeIconStyle}>
                     <AppIcon name="menu-output" color={showOptions ? colors.ui.control.primaryForeground : colors.textSecondary} size={16} />
                   </IsleIconButton>
                   <AnimatedNavigationTrigger variant="iconButton" label={t('settings.title')} glyph="settings-sliders" onNavigate={onSettings} externalActive={settingsTransitionActive} color={colors.text} style={settingsTransitionActive ? activeChromeIconStyle : chromeIconStyle} />
@@ -2455,7 +2516,6 @@ function FloatingComposer({
     [quickModels]
   )
   const reasoningAvailable = showReasoning && reasoningOptions.length > 0
-  const modelStatusLabel = provider ? getProviderDisplayModel(provider, conversation.model) : t('chat.quickModelUnset')
   const reasoningStatusLabel = reasoningAvailable ? t(`chat.reasoningEffort.${reasoningEffort}`) : t('chat.quickReasoningUnsupported')
   const promptStatusLabel = systemPrompt.trim() ? t('chat.quickPromptActive') : t('chat.quickPromptEmpty')
   const toolsStatusLabel = toolsOpen ? t('chat.quickToolsOpen') : t('chat.quickToolsReady')
@@ -2468,7 +2528,6 @@ function FloatingComposer({
   const quickToolMetrics = useMemo(() => {
     const usableWidth = Math.max(220, composerWindowWidth - 92)
     return {
-      dockButtonWidth: Math.max(124, Math.min(182, usableWidth * 0.46)),
       modelChoiceWidth: Math.max(164, Math.min(234, usableWidth * 0.72)),
     }
   }, [composerWindowWidth])
@@ -2551,32 +2610,32 @@ function FloatingComposer({
 
   const renderComposerDock = () => (
     <View style={{ minHeight: 44, flexDirection: 'row', alignItems: 'center', gap: 7 }}>
-      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 7, flex: 1, minWidth: 0 }}>
+      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 7, flexShrink: 0 }}>
         <ComposerToolButton
-          label={t('chat.quickModel')}
-          stateLabel={modelStatusLabel}
-          accessibilityHint={t('chat.quickModelAccessibilityHint')}
-          accessibilityState={{ expanded: modelOpen }}
-          active={modelOpen}
-          compact
-          maxWidth={quickToolMetrics.dockButtonWidth}
-          onPress={onOpenModelPicker}
+          iconOnly
+          label={t('chat.quickReasoning')}
+          stateLabel={reasoningStatusLabel}
+          accessibilityHint={reasoningAvailable ? t('chat.quickReasoningAccessibilityHint') : t('chat.quickReasoningUnavailableAccessibilityHint')}
+          accessibilityState={{ expanded: reasoningOpen }}
+          active={reasoningOpen}
+          onPress={onOpenReasoningPicker ?? (() => {
+            onPanelChange('reasoning')
+          })}
         >
-          <AppIcon name="model" color={modelOpen ? colors.ui.control.primaryForeground : colors.textSecondary} size={17} />
+          <ReasoningToolIcon effort={reasoningEffort} active={reasoningOpen} available={reasoningAvailable} />
         </ComposerToolButton>
         <ComposerToolButton
+          iconOnly
           label={t('chat.quickTools')}
           stateLabel={toolsStatusLabel}
           accessibilityHint={t('chat.quickToolsAccessibilityHint')}
           accessibilityState={{ expanded: toolsOpen }}
           active={toolsOpen || outputActive || !!systemPrompt.trim()}
-          compact
-          maxWidth={quickToolMetrics.dockButtonWidth}
           onPress={() => {
             onPanelChange(toolsOpen ? null : 'more')
           }}
         >
-          <AppIcon name="tools" color={(toolsOpen || outputActive || systemPrompt.trim()) ? colors.ui.control.primaryForeground : colors.textSecondary} size={17} strokeWidth={appIconStroke.strong} />
+          <AppIcon name="add" color={(toolsOpen || outputActive || systemPrompt.trim()) ? colors.ui.control.primaryForeground : colors.textSecondary} size={18} strokeWidth={appIconStroke.strong} />
         </ComposerToolButton>
         {streaming ? (
           <ComposerToolButton iconOnly label={t('chat.stopGenerating')} accessibilityHint={t('chat.stopGeneratingAccessibilityHint')} accessibilityState={{ busy: true }} active onPress={onStop}>
@@ -2584,11 +2643,13 @@ function FloatingComposer({
           </ComposerToolButton>
         ) : null}
       </View>
-      {streaming ? (
-        <View style={{ flex: 1, minWidth: 0 }}>
+      <View style={{ flex: 1, minWidth: 0, alignItems: 'flex-end' }}>
+        {streaming ? (
           <GenerationStatusPill label={activityLabel || t('chat.generating')} />
-        </View>
-      ) : null}
+        ) : (
+          <GenerationStatusPill label={reasoningStatusLabel} idle />
+        )}
+      </View>
     </View>
   )
 
@@ -2991,10 +3052,10 @@ function QuickChoiceButton({ label, active, accessibilityHint, maxWidth, onPress
   )
 }
 
-function GenerationStatusPill({ label }: { label: string }) {
+function GenerationStatusPill({ label, idle = false }: { label: string; idle?: boolean }) {
   const { colors, isGlass } = useAppTheme()
   const { width } = useWindowDimensions()
-  const labelMaxWidth = Math.max(112, Math.min(160, width * 0.36))
+  const labelMaxWidth = idle ? Math.max(76, Math.min(116, width * 0.28)) : Math.max(112, Math.min(160, width * 0.36))
   const backgroundColor = resolveChatChromeSurface(colors, isGlass)
   const borderColor = resolveChatChromeBorder(colors, isGlass)
   const subtleBorderWidth = colors.ui.cartoon ? 1 : StyleSheet.hairlineWidth
@@ -3004,17 +3065,21 @@ function GenerationStatusPill({ label }: { label: string }) {
       accessibilityLabel={label}
       accessibilityLiveRegion="polite"
       accessibilityRole="text"
-      accessibilityState={{ busy: true }}
-      style={{ minHeight: 44, borderRadius: colors.ui.radius.chip, paddingHorizontal: 12, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 7, backgroundColor, borderWidth: subtleBorderWidth, borderColor }}
+      accessibilityState={idle ? undefined : { busy: true }}
+      style={{ minHeight: 44, borderRadius: colors.ui.radius.chip, paddingHorizontal: idle ? 10 : 12, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 7, backgroundColor, borderWidth: subtleBorderWidth, borderColor }}
     >
-      <MotiView
-        accessibilityElementsHidden
-        importantForAccessibility="no-hide-descendants"
-        from={{ opacity: 0.35, scale: 0.84 }}
-        animate={{ opacity: 1, scale: 1 }}
-        transition={{ loop: true, type: 'timing', duration: 760 }}
-        style={{ width: 6, height: 6, borderRadius: 3, backgroundColor: colors.ui.control.primaryBackground }}
-      />
+      {idle ? (
+        <AppIcon name="reasoning" color={colors.textTertiary} size={13} strokeWidth={appIconStroke.strong} />
+      ) : (
+        <MotiView
+          accessibilityElementsHidden
+          importantForAccessibility="no-hide-descendants"
+          from={{ opacity: 0.35, scale: 0.84 }}
+          animate={{ opacity: 1, scale: 1 }}
+          transition={{ loop: true, type: 'timing', duration: 760 }}
+          style={{ width: 6, height: 6, borderRadius: 3, backgroundColor: colors.ui.control.primaryBackground }}
+        />
+      )}
       <Text accessible={false} importantForAccessibility="no" numberOfLines={1} style={{ maxWidth: labelMaxWidth, color: colors.textSecondary, fontSize: 11, lineHeight: 15, fontWeight: '900', includeFontPadding: false, textAlignVertical: 'center' }}>
         {label}
       </Text>
@@ -3595,6 +3660,14 @@ function messageActivityStatusLabel(message: Message, t: TFunction): string {
     case 'done':
       return t('common.done')
   }
+}
+
+function previewSystemStatusMessage(message: Message, t: TFunction): string {
+  const text = (message.responseText ?? message.content ?? '').replace(/\s+/g, ' ').trim()
+  if (!text) return messageActivityStatusLabel(message, t)
+  return text.length > SYSTEM_STATUS_NOTIFICATION_PREVIEW_LIMIT
+    ? `${text.slice(0, SYSTEM_STATUS_NOTIFICATION_PREVIEW_LIMIT - 1)}...`
+    : text
 }
 
 function previewPendingText(content: string, attachments: Attachment[], t: TFunction): string {
