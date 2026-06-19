@@ -7,7 +7,7 @@ import type { NativeStackNavigationOptions } from '@react-navigation/native-stac
 import { useEffect, useRef } from 'react'
 import { router, Stack, useGlobalSearchParams } from 'expo-router'
 import { GestureHandlerRootView } from 'react-native-gesture-handler'
-import { Platform, Text, View } from 'react-native'
+import { ActivityIndicator, Linking, Platform, Text, View } from 'react-native'
 import { useTranslation } from 'react-i18next'
 import { AnimatedNavigationIcon } from '@/components/navigation/AnimatedNavigationIcon'
 import { useNavigationTrigger } from '@/components/navigation/AnimatedNavigationTrigger'
@@ -20,8 +20,14 @@ import { IslePanel } from '@/components/ui/isle'
 import { IsleDialogProvider } from '@/components/ui/isle'
 import { initI18n } from '@/i18n'
 import { useMotionPreference } from '@/hooks/useMotionPreference'
+import { redirectSystemPath } from './+native-intent'
 
 initI18n()
+
+const SETTINGS_PROVIDER_SCREEN_OPTIONS: NativeStackNavigationOptions = {
+  gestureEnabled: false,
+  fullScreenGestureEnabled: false,
+}
 
 export default function RootLayout() {
   const boot = useBootstrap()
@@ -33,6 +39,7 @@ export default function RootLayout() {
   const qaUpdateMessage = qaUpdateVersion ? t('updates.available', { version: qaUpdateVersion === '1' ? 'QA' : qaUpdateVersion }) : null
   const stackTransitionOptions = resolveStackTransitionOptions(motion === 'full')
   useWebThemeBridge({ colors, mode, themeId })
+  useRuntimeDeepLinks(boot.ready)
 
   return (
     <GestureHandlerRootView style={{ flex: 1, backgroundColor: colors.surface }}>
@@ -51,13 +58,55 @@ export default function RootLayout() {
             <Stack.Screen name="settings/preferences" options={stackTransitionOptions} />
             <Stack.Screen name="settings/skills" options={stackTransitionOptions} />
             <Stack.Screen name="settings/mcp" options={stackTransitionOptions} />
-            <Stack.Screen name="settings/providers" options={stackTransitionOptions} />
+            <Stack.Screen name="settings/providers" options={{ ...stackTransitionOptions, ...SETTINGS_PROVIDER_SCREEN_OPTIONS }} />
           </Stack>
         ) : (
-          <View style={{ flex: 1, backgroundColor: colors.surface }} />
+          <BootFallback />
         )}
       </IsleDialogProvider>
     </GestureHandlerRootView>
+  )
+}
+
+function useRuntimeDeepLinks(ready: boolean) {
+  useEffect(() => {
+    if (!ready || Platform.OS === 'web') return
+    const subscription = Linking.addEventListener('url', ({ url }) => {
+      const target = redirectSystemPath({ path: url, initial: false })
+      if (!shouldHandleRuntimeRoute(target)) return
+      requestAnimationFrame(() => {
+        if (target === '/settings/providers') router.push('/settings')
+        setTimeout(() => {
+          router.push(target)
+        }, target === '/settings/providers' ? 32 : 0)
+      })
+    })
+    return () => {
+      subscription.remove()
+    }
+  }, [ready])
+}
+
+function shouldHandleRuntimeRoute(target: string) {
+  return target === '/' ||
+    target === '/conversations' ||
+    target === '/settings' ||
+    target === '/settings/providers' ||
+    /^\/chat\/[^/]+$/.test(target)
+}
+
+function BootFallback() {
+  const { colors } = useAppTheme()
+  const { t } = useTranslation()
+  return (
+    <IsleScreen padded={false} background="surface">
+      <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 24 }}>
+        <ActivityIndicator color={colors.primary} />
+        <Text accessibilityRole="text" style={{ color: colors.textSecondary, fontSize: 13, lineHeight: 18, fontWeight: '800', marginTop: 12, textAlign: 'center' }}>
+          {t('app.starting')}
+        </Text>
+      </View>
+    </IsleScreen>
   )
 }
 

@@ -965,6 +965,8 @@ const {
   resolveSearchProvider,
   safeCustomSearchEndpoint,
 } = require('../src/services/searchPolicy.ts')
+const { searchExternalWeb } = require('../src/services/searchAdapters.ts')
+const { callBuiltinTool } = require('../src/services/builtinToolRegistry.ts')
 const {
   MAX_IMPORT_JSON_FILE_BYTES,
   MAX_IMPORT_TEXT_FILE_BYTES,
@@ -6671,6 +6673,50 @@ https://gateway.example/messages`
   assert.equal(safeCustomSearchEndpoint('https://user:pass@search.example/query'), null, 'custom search endpoint rejects embedded credentials')
   assert.equal(buildCustomSearchUrl('https://search.example?q={query}&limit={limit}', 'a b', 3), 'https://search.example?q=a%20b&limit=3', 'custom search endpoint builds safe HTTPS query URLs')
   assert.equal(buildCustomSearchUrl('{query}', 'file:///tmp/leak', 3), null, 'custom search endpoint rejects template output that is not an HTTP URL')
+
+  useSettingsStore.setState((state) => ({
+    ...state,
+    settings: {
+      ...state.settings,
+      webSearchEnabled: true,
+      searchProvider: 'native',
+      webSearchMode: 'tavily',
+    },
+  }))
+  const nativeSearch = await searchExternalWeb('latest IsleMind status', 3)
+  assert.equal(nativeSearch.ok, false, 'provider-native search adapter reports a non-local execution path instead of empty success')
+  assert.equal(nativeSearch.code, 'native', 'provider-native search adapter records a native-mode code')
+  const nativeToolSearch = await callBuiltinTool('search_web', { query: 'latest IsleMind status' }, Date.now())
+  assert.equal(nativeToolSearch.ok, false, 'built-in search_web does not treat provider-native search as a successful empty tool result')
+  assert.ok(nativeToolSearch.content[0]?.text?.trim(), 'built-in search_web native-mode result includes visible tool output')
+  assert.equal(nativeToolSearch.trace.status, 'error', 'built-in search_web native-mode trace is marked as an error for provider-native revision')
+
+  useSettingsStore.setState((state) => ({
+    ...state,
+    settings: {
+      ...state.settings,
+      webSearchEnabled: false,
+      searchProvider: 'off',
+      webSearchMode: 'tavily',
+    },
+  }))
+  const disabledToolSearch = await callBuiltinTool('search_web', { query: 'latest IsleMind status' }, Date.now())
+  assert.equal(disabledToolSearch.ok, false, 'disabled search_web returns explicit failure instead of empty success')
+  assert.ok(disabledToolSearch.content[0]?.text?.includes(st('search.disabled')), 'disabled search_web surfaces a localized disabled message')
+
+  useSettingsStore.setState((state) => ({
+    ...state,
+    settings: {
+      ...state.settings,
+      webSearchEnabled: true,
+      searchProvider: 'tavily',
+      webSearchMode: 'tavily',
+    },
+  }))
+  const noResultToolSearch = await callBuiltinTool('search_web', { query: 'latest IsleMind status' }, Date.now())
+  assert.equal(noResultToolSearch.ok, false, 'configured search_web without provider output returns explicit failure')
+  assert.ok(noResultToolSearch.content[0]?.text?.includes(st('search.noResults')), 'configured search_web no-output state includes a visible no-results message')
+
   assert.equal(hasCustomProviderBaseUrl({ baseUrl: ' https://api.example/v1 ' }), true, 'provider base URL helper detects explicit custom endpoints')
   assert.equal(hasCustomProviderBaseUrl({ baseUrl: '   ' }), false, 'provider base URL helper ignores blank custom endpoints')
   assert.equal(isHttpProviderBaseUrl({ type: 'openai-compatible', baseUrl: 'https://api.example/v1' }), true, 'provider base URL helper accepts HTTPS custom endpoints')

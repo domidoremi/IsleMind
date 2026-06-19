@@ -8,6 +8,9 @@ import ProviderSettingsContent from '@/components/providers/ProviderSettingsCont
 export default function ProviderSettingsScreen() {
   const [backgroundState, setBackgroundState] = useState<IsleBackgroundState>('idle')
   const closeProviderSettings = useCallback(() => {
+    router.replace('/settings')
+  }, [])
+  const navigateBackFromProviderSettings = useCallback(() => {
     if (router.canGoBack()) {
       router.back()
       return
@@ -34,7 +37,7 @@ export default function ProviderSettingsScreen() {
           transition={{ type: 'spring', damping: 22, stiffness: 190 }}
           style={{ flex: 1 }}
         >
-          <ProviderSettingsContent onClose={closeProviderSettings} onBackgroundStateChange={setBackgroundState} />
+          <ProviderSettingsContent onClose={navigateBackFromProviderSettings} onBackgroundStateChange={setBackgroundState} />
         </MotiView>
       </IsleScreen>
     </IsleDialogProvider>

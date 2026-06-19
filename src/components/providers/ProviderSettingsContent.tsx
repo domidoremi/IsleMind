@@ -281,7 +281,7 @@ export function ProviderSettingsContent({ embedded = false, onClose, onBackgroun
         <ScrollView
           keyboardShouldPersistTaps="handled"
           automaticallyAdjustKeyboardInsets
-          contentContainerStyle={{ paddingHorizontal: pagePadding, paddingTop: 0, paddingBottom: Math.max(insets.bottom, 20) + 76 }}
+          contentContainerStyle={{ paddingHorizontal: pagePadding, paddingTop: Math.max(insets.top, 0) + 8, paddingBottom: Math.max(insets.bottom, 20) + 76 }}
         >
           <IsleHeader
             title={t('settings.providerManagement')}
@@ -330,7 +330,8 @@ export function ProviderSettingsContent({ embedded = false, onClose, onBackgroun
                   style={{ flexGrow: 1, flexShrink: 1, flexBasis: '48%', minWidth: 0 }}
                 />
                 <IsleButton
-                  label={t('settings.batchImport')}
+                  label={t('providerSettings.batchImportProviders')}
+                  accessibilityLabel={t('providerSettings.batchImportProviders')}
                   compact
                   block
                   icon={<AppIcon name="import" color={colors.textSecondary} size={15} />}
@@ -348,9 +349,10 @@ export function ProviderSettingsContent({ embedded = false, onClose, onBackgroun
                   style={{ flexGrow: 1, flexShrink: 1, flexBasis: '48%', minWidth: 0 }}
                 />
                 <IsleButton
-                  label={batchMode ? t('providerSettings.exitBatch') : t('providerSettings.batchMode')}
+                  label={batchMode ? t('providerSettings.exitBatch') : t('providerSettings.selectionMode')}
                   compact
                   block
+                  accessibilityLabel={batchMode ? t('providerSettings.exitSelectionMode') : t('providerSettings.enterSelectionMode')}
                   tone={batchMode ? 'amber' : 'soft'}
                   icon={<AppIcon name="list-check" color={batchMode ? colors.ui.tone.warning.foreground : colors.textSecondary} size={15} />}
                   onPress={() => {
@@ -1013,10 +1015,10 @@ function ProviderFormModal({
   const keyboardInset = Platform.OS === 'android' ? keyboardHeight : 0
   const keyboardVisible = keyboardHeight > 0
   const availableSheetHeight = Math.max(
-    360,
+    keyboardVisible ? 300 : 360,
     height - insets.top - Math.max(insets.bottom, 10) - keyboardInset - IMPORT_SHEET_MARGIN,
   )
-  const sheetMaxHeight = Math.min(availableSheetHeight, height * (compact ? 0.96 : 0.88))
+  const sheetMaxHeight = Math.min(availableSheetHeight, height * (keyboardVisible ? 0.82 : compact ? 0.96 : 0.88))
   const sheetMaterial = colors.material.sheet
   const { subtleBorderWidth, chromeBorder, chromeSurface } = resolveProviderChrome(colors)
   const modalPadding = compactWidth ? 12 : 16
@@ -1385,15 +1387,16 @@ function ProviderImportModal({
   const { height, width } = useWindowDimensions()
   const motion = useMotionPreference()
   const bodyScrollRef = useRef<ScrollView>(null)
+  const inputRef = useRef<TextInput>(null)
   const [input, setInput] = useState('')
   const [clipboardState, setClipboardState] = useState<ClipboardReadState>('idle')
   const [contentHeight, setContentHeight] = useState(0)
   const [keyboardHeight, setKeyboardHeight] = useState(0)
   const compact = height < 680
-  const keyboardInset = keyboardHeight
+  const keyboardInset = Platform.OS === 'android' ? keyboardHeight : 0
   const keyboardVisible = keyboardHeight > 0
   const availableSheetHeight = Math.max(
-    360,
+    keyboardVisible ? 300 : 360,
     height - insets.top - Math.max(insets.bottom, 10) - keyboardInset - IMPORT_SHEET_MARGIN,
   )
   const availableBodyHeight = Math.max(
@@ -1414,7 +1417,7 @@ function ProviderImportModal({
   const targetInputHeight = Math.max(logicalHeight, measuredHeight)
   const inputHeight = Math.min(targetInputHeight, maxInputHeight)
   const inputScrollEnabled = targetInputHeight > maxInputHeight
-  const sheetMaxHeight = Math.min(availableSheetHeight, height * (compact ? 0.96 : 0.9))
+  const sheetMaxHeight = Math.min(availableSheetHeight, height * (keyboardVisible ? 0.82 : compact ? 0.96 : 0.9))
   const sheetMaterial = colors.material.sheet
   const { subtleBorderWidth } = resolveProviderChrome(colors)
   const compactWidth = width < 430
@@ -1432,6 +1435,9 @@ function ProviderImportModal({
       setClipboardState('idle')
       return
     }
+    const focusTimer = setTimeout(() => {
+      inputRef.current?.focus()
+    }, Platform.OS === 'android' ? 260 : 120)
     const showSub = Keyboard.addListener(Platform.OS === 'ios' ? 'keyboardWillShow' : 'keyboardDidShow', (event) => {
       setKeyboardHeight(event.endCoordinates.height)
       scrollBodyToEndSoon()
@@ -1440,6 +1446,7 @@ function ProviderImportModal({
       setKeyboardHeight(0)
     })
     return () => {
+      clearTimeout(focusTimer)
       showSub.remove()
       hideSub.remove()
     }
@@ -1548,7 +1555,7 @@ function ProviderImportModal({
         >
           <IsleOverlayPressable accessibilityLabel={t('dialog.close')} accessibilityRole="button" onPress={onClose} style={{ flex: 1, backgroundColor: colors.backdrop }} />
         </MotiView>
-        <View style={{ flex: 1, justifyContent: 'flex-end', paddingBottom: keyboardInset }}>
+        <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined} style={{ flex: 1, justifyContent: 'flex-end', paddingBottom: keyboardInset }}>
           <MotiView
             from={motion === 'full' ? { opacity: 0, translateY: 32, scale: 0.985 } : { opacity: 0 }}
             animate={{ opacity: 1, translateY: 0, scale: 1 }}
@@ -1618,6 +1625,7 @@ function ProviderImportModal({
                   }}
                 >
                   <TextInput
+                    ref={inputRef}
                     value={input}
                     onChangeText={setInput}
                     onFocus={keyboardRequestClose.markKeyboardActive}
@@ -1650,14 +1658,12 @@ function ProviderImportModal({
                 </Text>
               </View>
             </ScrollView>
-            {!keyboardVisible ? (
-              <View style={{ minHeight: IMPORT_FOOTER_HEIGHT, flexDirection: footerCompact ? 'column' : 'row', alignItems: footerCompact ? 'stretch' : 'center', gap: footerCompact ? 8 : 10, paddingHorizontal: modalPadding, paddingTop: 12, paddingBottom: Math.max(insets.bottom, 10) + 10, backgroundColor: colors.ui.cartoon ? sheetMaterial.chrome : colors.ui.glass ? colors.ui.semantic.chrome.background : sheetMaterial.chrome, borderTopWidth: subtleBorderWidth, borderTopColor: sheetMaterial.divider }}>
+            <View style={{ minHeight: keyboardVisible ? 56 : IMPORT_FOOTER_HEIGHT, flexDirection: footerCompact ? 'column' : 'row', alignItems: footerCompact ? 'stretch' : 'center', gap: footerCompact ? 8 : 10, paddingHorizontal: modalPadding, paddingTop: keyboardVisible ? 8 : 12, paddingBottom: (keyboardVisible ? 8 : Math.max(insets.bottom, 10) + 10), backgroundColor: colors.ui.cartoon ? sheetMaterial.chrome : colors.ui.glass ? colors.ui.semantic.chrome.background : sheetMaterial.chrome, borderTopWidth: subtleBorderWidth, borderTopColor: sheetMaterial.divider }}>
                 <IsleButton label={t('common.cancel')} compact onPress={onClose} style={modalActionStyle} />
                 <IsleButton label={t('providerSettings.import')} compact tone="primary" disabled={!input.trim()} onPress={submit} style={modalActionStyle} />
-              </View>
-            ) : null}
+            </View>
           </MotiView>
-        </View>
+        </KeyboardAvoidingView>
       </View>
     </Modal>
   )
