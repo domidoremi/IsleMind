@@ -114,14 +114,14 @@ export async function checkLatestApkRelease(): Promise<ApkUpdateResult> {
   }
 
   try {
-    const release = await fetchLatestRelease()
+    const snapshot = getVersionSnapshot()
+    const release = await fetchLatestRelease(snapshot)
     if (!release) {
       const result = { status: 'unavailable', message: st('updates.noInstallableApk') } satisfies ApkUpdateResult
       await logAppUpdateEvent('check', result)
       return result
     }
 
-    const snapshot = getVersionSnapshot()
     const currentVersion = normalizeVersion(snapshot.appVersion)
     if (compareReleaseToSnapshot(release, snapshot) <= 0) {
       const result = {
@@ -236,13 +236,28 @@ export async function downloadAndOpenApkInstaller(release: ApkReleaseInfo): Prom
   }
 }
 
-async function fetchLatestRelease(): Promise<ApkReleaseInfo | null> {
+async function fetchLatestRelease(snapshot?: VersionSnapshot): Promise<ApkReleaseInfo | null> {
+  let manifestRelease: ApkReleaseInfo | null
   try {
-    return await fetchLatestManifestRelease()
+    manifestRelease = await fetchLatestManifestRelease()
   } catch (error) {
     if (getUpdateReason(error) === 'manifest_invalid') throw error
     return fetchLatestGithubRelease()
   }
+
+  if (!manifestRelease) return fetchLatestGithubRelease()
+
+  const manifestComparison = snapshot ? compareReleaseToSnapshot(manifestRelease, snapshot) : 1
+  if (manifestComparison > 0) return manifestRelease
+
+  try {
+    const githubRelease = await fetchLatestGithubRelease()
+    if (githubRelease && snapshot && compareReleaseToSnapshot(githubRelease, snapshot) > 0) return githubRelease
+  } catch (error) {
+    if (manifestComparison < 0) throw error
+  }
+
+  return manifestRelease
 }
 
 async function fetchLatestManifestRelease(): Promise<ApkReleaseInfo | null> {
