@@ -41,6 +41,8 @@ let nextSqliteOpenError = null
 let sharingAvailable = false
 const supportedCpuArchitectures = ['arm64-v8a', 'armeabi-v7a']
 let expoDeviceModuleAvailable = true
+let expoNativeApplicationVersion = '1.0.6'
+let expoNativeBuildVersion = '106'
 const reactNativePlatform = {
   OS: 'test',
   select: (choices) => choices?.[reactNativePlatform.OS] ?? choices?.default,
@@ -512,8 +514,12 @@ Module._load = function loadWithMocks(request, parent, isMain) {
   }
   if (request === 'expo-application') {
     return {
-      nativeApplicationVersion: '1.0.6',
-      nativeBuildVersion: '106',
+      get nativeApplicationVersion() {
+        return expoNativeApplicationVersion
+      },
+      get nativeBuildVersion() {
+        return expoNativeBuildVersion
+      },
     }
   }
   if (request === 'expo-constants') {
@@ -1238,7 +1244,16 @@ function assertStructuredWorkTemplate(value, label, language) {
 function assertReleaseVersionsAligned() {
   const packageJson = JSON.parse(fs.readFileSync(path.join(root, 'package.json'), 'utf8'))
   const appJson = JSON.parse(fs.readFileSync(path.join(root, 'app.json'), 'utf8'))
+  const androidUpdateManifest = JSON.parse(fs.readFileSync(path.join(root, 'updates/android.json'), 'utf8'))
   assert.equal(appJson.expo.version, packageJson.version, 'app.json version follows package.json')
+  assert.equal(androidUpdateManifest.versionName, packageJson.version, 'Android APK update manifest follows package.json version')
+  assert.equal(androidUpdateManifest.versionCode, appJson.expo.android.versionCode, 'Android APK update manifest follows app.json versionCode')
+  assert.equal(androidUpdateManifest.releaseUrl, `https://github.com/domidoremi/IsleMind/releases/tag/v${packageJson.version}`, 'Android APK update manifest points at the current release tag')
+  assert.ok(Array.isArray(androidUpdateManifest.assets) && androidUpdateManifest.assets.length >= 8, 'Android APK update manifest includes installable APK assets')
+  assert.ok(
+    androidUpdateManifest.assets.some((asset) => asset.name === `IsleMind-${packageJson.version}-universal-64-no-model.apk`),
+    'Android APK update manifest includes the universal no-model APK for unknown ABI fallback'
+  )
 
   const currentApkSmokeScript = fs.readFileSync(path.join(root, 'scripts/collect-current-apk-smoke.js'), 'utf8')
   assert.ok(
@@ -4267,6 +4282,49 @@ async function assertApkUpdateBehavior() {
     global.fetch = originalFetchForApk
     reactNativePlatform.OS = 'test'
 }
+
+  resetLocalModelFileMocks()
+  reactNativePlatform.OS = 'android'
+  expoNativeApplicationVersion = '1.0.9'
+  expoNativeBuildVersion = '109'
+  const originalFetchForStaleManifest = global.fetch
+  const staleManifestFetchUrls = []
+  global.fetch = async (url) => {
+    staleManifestFetchUrls.push(String(url))
+    if (String(url).includes('raw.githubusercontent.com')) {
+      return { ok: true, status: 200, json: async () => apkManifestFixture }
+    }
+    return {
+      ok: true,
+      status: 200,
+      json: async () => ({
+        tag_name: 'v1.0.10',
+        name: 'IsleMind 1.0.10',
+        html_url: 'https://github.com/domidoremi/IsleMind/releases/tag/v1.0.10',
+        published_at: '2026-06-19T15:24:19Z',
+        assets: [
+          {
+            name: 'IsleMind-1.0.10-arm64-v8a-no-model.apk',
+            browser_download_url: 'https://example.test/IsleMind-1.0.10-arm64-v8a-no-model.apk',
+            size: 456,
+          },
+        ],
+      }),
+    }
+  }
+  try {
+    const staleManifestUpdate = await checkLatestApkRelease()
+    assert.equal(staleManifestUpdate.status, 'available', 'stale static manifest does not hide a newer GitHub APK release from 1.0.9 clients')
+    assert.equal(staleManifestUpdate.release?.version, '1.0.10', 'stale manifest fallback returns the newer GitHub release version')
+    assert.equal(staleManifestUpdate.release?.apkName, 'IsleMind-1.0.10-arm64-v8a-no-model.apk', 'stale manifest fallback selects the newer GitHub APK asset')
+    assert.ok(staleManifestFetchUrls[0].includes('/updates/android.json'), 'stale manifest scenario checks the static manifest first')
+    assert.ok(staleManifestFetchUrls[1].includes('/repos/domidoremi/IsleMind/releases/latest'), 'stale manifest scenario confirms GitHub latest before reporting no update')
+  } finally {
+    global.fetch = originalFetchForStaleManifest
+    expoNativeApplicationVersion = '1.0.6'
+    expoNativeBuildVersion = '106'
+    reactNativePlatform.OS = 'test'
+  }
 
   resetLocalModelFileMocks()
   reactNativePlatform.OS = 'android'
