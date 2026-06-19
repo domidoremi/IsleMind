@@ -94,8 +94,8 @@ const MESSAGE_LIST_TOUCH_PAGER_GESTURE_RELEASE_DELAY_MS = 120
 const MESSAGE_LIST_MOMENTUM_ELIGIBILITY_MS = 240
 const QUICK_START_ACTION_HIT_SLOP = { top: 8, right: 8, bottom: 8, left: 8 }
 const QUICK_TOOL_HIT_SLOP = { top: 8, right: 6, bottom: 8, left: 6 }
-const FLOATING_CHROME_SAFE_AREA_GAP = 8
-const FLOATING_CHROME_ANDROID_TOP_GAP = 2
+const FLOATING_CHROME_SAFE_AREA_GAP = 4
+const FLOATING_CHROME_ANDROID_TOP_GAP = 0
 const FLOATING_CHROME_BOTTOM_PADDING = 4
 const FLOATING_CHROME_IDLE_COLLAPSE_DELAY_MS = 1800
 const FLOATING_CHROME_SWIPE_COLLAPSE_DISTANCE = 28
@@ -384,7 +384,7 @@ export function ChatWorkspace({ conversation, showBack = false, embedded = false
   const activityLabel = streamingMessage ? getMessageActivityLabel(streamingMessage, t) : ''
   const compactViewport = windowHeight < 620 || windowWidth < 360
   const mobileChatViewport = windowWidth < 600
-  const keepChromeExpanded = true
+  const keepChromeExpanded = !runtimeConversation || showOptions || !!composerPanel || !!intentDraft || !!providerHealth?.code || testingHeader
   const androidResizeInset = Platform.OS === 'android' && keyboardHeight > 0
     ? Math.max(0, keyboardBaselineHeight - windowHeight)
     : 0
@@ -588,6 +588,15 @@ export function ChatWorkspace({ conversation, showBack = false, embedded = false
     if (!keepChromeExpanded) scheduleChromeIdleCollapse()
   }
 
+  function collapseChromeForFocusedInput() {
+    if (keepChromeExpanded) return
+    if (idleTimer.current) {
+      clearTimeout(idleTimer.current)
+      idleTimer.current = null
+    }
+    setChromeCollapsed(true)
+  }
+
   function applyQuickStartDraft(draft: string, attachments: Attachment[] = [], restoreIfEmpty = false) {
     if (!draft.trim() && attachments.length === 0) return
     quickStartSequence.current += 1
@@ -754,7 +763,7 @@ export function ChatWorkspace({ conversation, showBack = false, embedded = false
     return () => {
       if (idleTimer.current) clearTimeout(idleTimer.current)
     }
-  }, [showOptions, providerHealth?.code, testingHeader])
+  }, [keepChromeExpanded])
 
   useEffect(() => {
     const show = Keyboard.addListener(Platform.OS === 'ios' ? 'keyboardWillShow' : 'keyboardDidShow', (event) => {
@@ -897,7 +906,7 @@ export function ChatWorkspace({ conversation, showBack = false, embedded = false
       <ChatScreenFrame embedded={embedded} backgroundState={backgroundState} compactViewport={compactViewport}>
       <View style={{ flex: 1 }}>
         {latestCompression?.metadata ? (
-          <View pointerEvents="box-none" style={{ position: 'absolute', top: visualTopInset + 42, left: 0, right: 0, zIndex: 44, paddingHorizontal: 14 }}>
+          <View pointerEvents="box-none" style={{ position: 'absolute', top: visualTopInset + 38, left: 0, right: 0, zIndex: 44, paddingHorizontal: 14 }}>
             <CompressionBanner
               compression={latestCompression}
               onOpenDetails={() => setShowOptions(true)}
@@ -919,7 +928,12 @@ export function ChatWorkspace({ conversation, showBack = false, embedded = false
               />
             </MotiView>
           ) : null}
-          <View pointerEvents="box-none" style={{ position: 'absolute', top: 0, left: 0, right: 0, zIndex: 40, paddingHorizontal: 14, paddingTop: visualTopInset + FLOATING_CHROME_SAFE_AREA_GAP, paddingBottom: 0, flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+          <MotiView
+            pointerEvents={chromeCollapsed ? 'none' : 'box-none'}
+            animate={{ opacity: chromeCollapsed ? 0 : 1, translateY: chromeCollapsed ? -(visualTopInset + 48) : 0 }}
+            transition={{ type: 'timing', duration: chromeCollapsed ? 150 : 210 }}
+            style={{ position: 'absolute', top: 0, left: 0, right: 0, zIndex: 40, paddingHorizontal: 14, paddingTop: visualTopInset + FLOATING_CHROME_SAFE_AREA_GAP, paddingBottom: 0, flexDirection: 'row', alignItems: 'center', gap: 8 }}
+          >
             <AnimatedNavigationTrigger
               variant="iconButton"
               label={t('conversation.title')}
@@ -967,7 +981,7 @@ export function ChatWorkspace({ conversation, showBack = false, embedded = false
               color={colors.text}
               style={{ width: 36, height: 36, borderRadius: colors.ui.radius.controlLarge, backgroundColor: topChromeMutedSurface, borderWidth: topChromeBorderWidth, borderColor: topChromeItemBorder }}
             />
-          </View>
+          </MotiView>
           <ScrollView
             style={{ flex: 1 }}
             keyboardShouldPersistTaps="handled"
@@ -1084,6 +1098,7 @@ export function ChatWorkspace({ conversation, showBack = false, embedded = false
             onInputFocus={() => {
               collapseQuickTools()
               setComposerFocused(true)
+              setChromeCollapsed(true)
             }}
             onInputBlur={() => setComposerFocused(false)}
             keyboardLift={keyboardLift}
@@ -1361,7 +1376,7 @@ function ActiveChatWorkspace({
   const pagerGestureScrollReleaseTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
   const persistentPagerGestureLockRef = useRef(false)
   const lastLayoutScrollAt = useRef(0)
-  const chromeCollapseLocked = true
+  const chromeCollapseLocked = showOptions || !!composerPanel || !!intentDraft || !!providerHealth?.code || testingHeader
   const collapsedChromeTop = visualTopInset + COLLAPSED_CHROME_TOP_OFFSET + FLOATING_CHROME_ANDROID_TOP_GAP
   const messageListTopInset = !chromeCollapsed
     ? Math.max(0, chromeHeight - MESSAGE_LIST_CHROME_OVERLAY + MESSAGE_LIST_CHROME_GAP)
@@ -2064,6 +2079,7 @@ function ActiveChatWorkspace({
             onInputFocus={() => {
               collapseQuickTools()
               setComposerFocused(true)
+              setChromeCollapsed(true)
               scrollToLatestMessage(false, 0, { replacePending: true })
             }}
             onInputBlur={() => setComposerFocused(false)}

@@ -50,13 +50,13 @@ import { providerRuntimeError, runStreamTask, withCredentialGroup, type Provider
 import { dedupeTraces, splitSseBuffer } from '@/services/ai/providerStreamUtils'
 import { fetchChatStreamWithTimeout, fetchWithTimeout, safeResponseText } from '@/services/ai/providerHttp'
 import { stringValue } from '@/services/ai/providerJsonUtils'
-import { parseProviderBufferedStreamResponse, parseProviderNonStreamingResponse, parseProviderNonStreamingText } from '@/services/ai/providerResponseParsing'
+import { parseProviderBufferedStreamResponse, parseProviderNonStreamingResponse, parseProviderNonStreamingText, withProviderTextToolCallFallback } from '@/services/ai/providerResponseParsing'
 import { mergeOpenAIResponseReplayItems } from '@/services/ai/providerOpenAIReplay'
 import { extractAnthropicText, extractGoogleText } from '@/services/ai/providerResponseText'
 import { mergeProviderToolDeclarations } from '@/services/ai/providerToolDeclarations'
 import { cloneOpenAIResponsesInputItems, hasOpenAIResponsesFunctionCallItem, toOpenAIChatToolCall, toOpenAIResponsesFunctionCallInput } from '@/services/ai/providerToolReplay'
 import { createProviderTrace } from '@/services/ai/providerTraceUtils'
-import { executableProviderToolCalls, mergeProviderToolCallParts, type ProviderToolCall } from '@/services/ai/providerToolCalls'
+import { createProviderTextToolCallStreamFilter, executableProviderToolCalls, mergeProviderToolCallParts, type ProviderToolCall } from '@/services/ai/providerToolCalls'
 import { parseProviderStreamChunk, parseProviderStreamEvent, type ParsedStreamChunk } from '@/services/ai/providerStreamParsing'
 import { getModelTestMaxTokens, getModelTestReasoningEffort, reduceModelTestBody } from '@/services/ai/providerModelTest'
 import { createRuntimeFallbackTrace, createStreamModeTrace, emitRuntimeGovernanceTrace, logPayloadPolicy, logProviderConformance, logProviderRouteDecision, logProxyPolicy, logUpstreamRequest, runtimeLogOptions } from '@/services/ai/providerRuntimeDiagnostics'
@@ -970,7 +970,7 @@ async function executeHttpSseChat(input: {
     input.onTrace?.(createStreamModeTrace('fallback', st('providerTrace.streamFallbackNoReader')))
     const raw = await safeResponseText(response)
     const result = parseProviderBufferedStreamResponse(raw, input.req, getWireProviderType(input.req.provider))
-    if (result.text) {
+    if (result.text || result.providerToolCalls?.length) {
       input.onChunk(result.text)
       if (result.citations?.length) input.onCitations?.(result.citations)
       result.traces?.forEach(input.onTrace ?? (() => undefined))
@@ -994,6 +994,7 @@ async function executeHttpSseChat(input: {
   let providerReasoningContent = ''
   let providerResponseItems: Record<string, unknown>[] = []
   let providerContentBlocks: Record<string, unknown>[] = []
+  const textToolCallFilter = createProviderTextToolCallStreamFilter()
   const wireProviderType = getWireProviderType(input.req.provider)
 
   async function readStream() {
@@ -1003,8 +1004,11 @@ async function executeHttpSseChat(input: {
         const finalParsed = parseProviderStreamChunk(buffer, wireProviderType)
         if (finalParsed.text) {
           fullText += finalParsed.text
-          input.onChunk(finalParsed.text)
+          const visibleText = textToolCallFilter.push(finalParsed.text)
+          if (visibleText) input.onChunk(visibleText)
         }
+        const filterRemainder = textToolCallFilter.finish()
+        if (filterRemainder) input.onChunk(filterRemainder)
         providerTraces = dedupeTraces([...providerTraces, ...finalParsed.traces])
         providerToolCalls = mergeProviderToolCallParts([...providerToolCalls, ...(finalParsed.providerToolCalls ?? [])])
         providerReasoningContent += finalParsed.reasoningContent ?? ''
@@ -1012,8 +1016,17 @@ async function executeHttpSseChat(input: {
         providerContentBlocks = mergeAnthropicReplayContentBlocks([...providerContentBlocks, ...(finalParsed.providerContentBlocks ?? [])])
         finalParsed.traces.forEach(input.onTrace ?? (() => undefined))
         providerUsage = finalParsed.usage ?? providerUsage
-        const citations = dedupeCitations([...extractCitationsFromText(fullText, input.req.retrievalSources), ...providerCitations])
-        const finalProviderToolCalls = executableProviderToolCalls(providerToolCalls)
+        const finalResult = withProviderTextToolCallFallback({
+          text: fullText,
+          citations: dedupeCitations([...extractCitationsFromText(fullText, input.req.retrievalSources), ...providerCitations]),
+          traces: providerTraces,
+          usage: providerUsage,
+          providerToolCalls: executableProviderToolCalls(providerToolCalls),
+          ...(providerReasoningContent ? { reasoningContent: providerReasoningContent } : {}),
+          ...(providerResponseItems.length ? { responseItems: providerResponseItems } : {}),
+          ...(providerContentBlocks.length ? { providerContentBlocks: sanitizeAnthropicReplayContentBlocks(providerContentBlocks) } : {}),
+        }, fullText)
+        const citations = finalResult.citations ?? []
         if (citations.length) input.onCitations?.(citations)
         void appendRuntimeLog('upstream.response', {
           conversationId: input.req.conversationId,
@@ -1025,16 +1038,7 @@ async function executeHttpSseChat(input: {
           usage: providerUsage,
           textLength: fullText.length,
         }, runtimeLogOptions(input.req))
-        input.onDone(withCredentialGroup({
-          text: fullText,
-          citations,
-          traces: providerTraces,
-          usage: providerUsage,
-          ...(finalProviderToolCalls ? { providerToolCalls: finalProviderToolCalls } : {}),
-          ...(providerReasoningContent ? { reasoningContent: providerReasoningContent } : {}),
-          ...(providerResponseItems.length ? { responseItems: providerResponseItems } : {}),
-          ...(providerContentBlocks.length ? { providerContentBlocks: sanitizeAnthropicReplayContentBlocks(providerContentBlocks) } : {}),
-        }, input.credentialGroupId))
+        input.onDone(withCredentialGroup(finalResult, input.credentialGroupId))
         return
       }
       buffer += decoder.decode(value, { stream: true })
@@ -1044,7 +1048,8 @@ async function executeHttpSseChat(input: {
         const parsed = parseProviderStreamChunk(event, wireProviderType)
         if (parsed.text) {
           fullText += parsed.text
-          input.onChunk(parsed.text)
+          const visibleText = textToolCallFilter.push(parsed.text)
+          if (visibleText) input.onChunk(visibleText)
         }
         providerTraces = dedupeTraces([...providerTraces, ...parsed.traces])
         providerToolCalls = mergeProviderToolCallParts([...providerToolCalls, ...(parsed.providerToolCalls ?? [])])

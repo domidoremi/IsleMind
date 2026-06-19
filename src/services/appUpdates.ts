@@ -12,6 +12,7 @@ import { safeHttpUrl } from '@/utils/networkUrlSafety'
 export type ApkUpdateStatus = 'available' | 'unavailable' | 'downloaded' | 'unsupported' | 'error'
 export type ApkUpdateReason = 'network' | 'rate_limited' | 'manifest_invalid' | 'checksum_mismatch' | 'installer_failed'
 export type ApkAssetVariant = 'no-model' | 'with-model-small' | 'universal'
+export type ApkInstallProgressStage = 'downloading' | 'verifying' | 'opening-installer'
 
 export interface VersionSnapshot {
   appVersion: string
@@ -58,6 +59,19 @@ interface ApkUpdateManifest {
   publishedAt: string | null
   releaseUrl: string
   assets: ApkManifestAsset[]
+}
+
+export interface ApkInstallProgress {
+  stage: ApkInstallProgressStage
+  release: ApkReleaseInfo
+  localUri?: string
+  bytesWritten?: number
+  bytesExpected?: number
+  percent?: number
+}
+
+export interface ApkInstallOptions {
+  onProgress?: (progress: ApkInstallProgress) => void
 }
 
 export const APK_UPDATE_MANIFEST_URL = 'https://raw.githubusercontent.com/domidoremi/IsleMind/main/updates/android.json'
@@ -152,7 +166,7 @@ export async function checkLatestApkRelease(): Promise<ApkUpdateResult> {
   }
 }
 
-export async function downloadAndOpenApkInstaller(release: ApkReleaseInfo): Promise<ApkUpdateResult> {
+export async function downloadAndOpenApkInstaller(release: ApkReleaseInfo, options: ApkInstallOptions = {}): Promise<ApkUpdateResult> {
   if (Platform.OS !== 'android') {
     const result = { status: 'unsupported', message: st('updates.androidOnly'), release } satisfies ApkUpdateResult
     await logAppUpdateEvent('install', result)
@@ -182,7 +196,8 @@ export async function downloadAndOpenApkInstaller(release: ApkReleaseInfo): Prom
     }
     const safeName = release.apkName.replace(/[^\w.-]+/g, '-')
     localUri = `${cacheDirectory}${safeName}`
-    const download = await FileSystem.downloadAsync(apkUrl, localUri)
+    options.onProgress?.({ stage: 'downloading', release, localUri })
+    const download = await downloadApkWithProgress(apkUrl, localUri, release, options)
     if (download.status < 200 || download.status >= 300) {
       await discardDownloadedApk(download.uri)
       const result = {
@@ -195,6 +210,7 @@ export async function downloadAndOpenApkInstaller(release: ApkReleaseInfo): Prom
       return result
     }
 
+    options.onProgress?.({ stage: 'verifying', release, localUri: download.uri })
     const verificationFailure = await verifyDownloadedApk(release, download.uri)
     if (verificationFailure) {
       await logAppUpdateEvent('install', verificationFailure)
@@ -202,6 +218,7 @@ export async function downloadAndOpenApkInstaller(release: ApkReleaseInfo): Prom
     }
 
     installerPhase = true
+    options.onProgress?.({ stage: 'opening-installer', release, localUri: download.uri })
     const contentUri = await FileSystem.getContentUriAsync(download.uri)
     await IntentLauncher.startActivityAsync('android.intent.action.INSTALL_PACKAGE', {
       data: contentUri,
@@ -468,6 +485,31 @@ async function verifyDownloadedApk(release: ApkReleaseInfo, uri: string): Promis
   }
 
   return null
+}
+
+async function downloadApkWithProgress(
+  apkUrl: string,
+  localUri: string,
+  release: ApkReleaseInfo,
+  options: ApkInstallOptions
+): Promise<FileSystem.FileSystemDownloadResult> {
+  if (typeof FileSystem.createDownloadResumable === 'function') {
+    const download = FileSystem.createDownloadResumable(apkUrl, localUri, {}, (progress) => {
+      const bytesWritten = progress.totalBytesWritten
+      const bytesExpected = progress.totalBytesExpectedToWrite > 0 ? progress.totalBytesExpectedToWrite : undefined
+      options.onProgress?.({
+        stage: 'downloading',
+        release,
+        localUri,
+        bytesWritten,
+        bytesExpected,
+        percent: bytesExpected ? Math.min(100, Math.max(0, Math.round((bytesWritten / bytesExpected) * 100))) : undefined,
+      })
+    })
+    const result = await download.downloadAsync()
+    if (result) return result
+  }
+  return FileSystem.downloadAsync(apkUrl, localUri)
 }
 
 function reasonForHttpStatus(status: number): ApkUpdateReason {

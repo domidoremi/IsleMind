@@ -939,8 +939,10 @@ const {
 } = require('../src/services/ai/providerTraceUtils.ts')
 const {
   executableProviderToolCalls,
+  extractProviderTextToolCalls,
   extractProviderToolCalls,
   mergeProviderToolCallParts,
+  stripProviderTextToolCallBlocks,
 } = require('../src/services/ai/providerToolCalls.ts')
 const {
   cloneProviderToolDeclarations,
@@ -1739,6 +1741,30 @@ function assertReleaseVersionsAligned() {
     !/function inferModelFamily/.test(chatWorkspaceSource),
     'ChatWorkspace does not keep provider/model family classification rules in the UI layer'
   )
+  assert.ok(
+    chatWorkspaceSource.includes('const FLOATING_CHROME_SAFE_AREA_GAP = 4'),
+    'ChatWorkspace keeps the top chrome safe-area gap compact for mobile status bars'
+  )
+  assert.ok(
+    chatWorkspaceSource.includes('const FLOATING_CHROME_ANDROID_TOP_GAP = 0'),
+    'ChatWorkspace removes extra Android top chrome offset'
+  )
+  assert.ok(
+    !chatWorkspaceSource.includes('const keepChromeExpanded = true'),
+    'ChatWorkspace no longer hard-locks the floating chrome in expanded mode'
+  )
+  assert.ok(
+    !chatWorkspaceSource.includes('const chromeCollapseLocked = true'),
+    'ChatWorkspace no longer hard-locks chrome collapse inside the active message list'
+  )
+  assert.ok(
+    chatWorkspaceSource.includes('function collapseChromeForFocusedInput()'),
+    'ChatWorkspace exposes a focused-input chrome collapse helper'
+  )
+  assert.ok(
+    chatWorkspaceSource.includes('collapseChromeForFocusedInput()'),
+    'ChatWorkspace collapses the top chrome when the composer takes focus'
+  )
   const providerModels = require('../src/utils/providerModels.ts')
   assert.deepEqual(
     providerModels.MODEL_QUICK_GROUPS,
@@ -1923,6 +1949,19 @@ async function assertResponsesWebSocketTransportBehavior() {
       'Responses WebSocket forwards reasoning replay items'
     )
 
+    const textToolCallSuccess = await runFakeWebSocketScenario(({ instance }) => {
+      instance.open()
+      instance.message({ type: 'response.output_text.delta', delta: '我需要搜索。\n<tool_call>\n' })
+      instance.message({ type: 'response.output_text.delta', delta: '<function=search_web>\n<parameter=query>嘉年华 西瓜 品种介绍</parameter>\n' })
+      instance.message({ type: 'response.output_text.delta', delta: '<parameter=limit>5</parameter>\n</function>\n</tool_call>' })
+      instance.message({ type: 'response.completed', response: { id: 'resp-text-tool-ok' } })
+    })
+    assert.deepEqual(textToolCallSuccess.chunks, ['我需要搜索。\n'], 'Responses WebSocket hides XML-style text tool-call chunks from the visible stream')
+    assert.equal(textToolCallSuccess.done?.text, '我需要搜索。', 'Responses WebSocket strips XML-style text tool-call blocks before completion')
+    assert.equal(textToolCallSuccess.done?.providerToolCalls?.[0]?.name, 'search_web', 'Responses WebSocket recovers XML-style text tool-call names')
+    assert.equal(textToolCallSuccess.done?.providerToolCalls?.[0]?.arguments?.query, '嘉年华 西瓜 品种介绍', 'Responses WebSocket recovers XML-style text tool-call query')
+    assert.equal(textToolCallSuccess.done?.providerToolCalls?.[0]?.arguments?.limit, 5, 'Responses WebSocket coerces XML-style numeric text tool-call parameters')
+
     const handshakeFailure = await runFakeWebSocketScenario(({ instance }) => {
       instance.error()
     })
@@ -1958,6 +1997,61 @@ async function assertResponsesWebSocketTransportBehavior() {
       global.WebSocket = originalWebSocket
     }
   }
+}
+
+async function assertProviderTextToolCallFallbackBehavior() {
+  const xmlStyleTextToolCall = [
+    '我需要搜索。',
+    '<tool_call>',
+    '<function=search_web>',
+    '<parameter=query>嘉年华 西瓜 品种介绍</parameter>',
+    '<parameter=limit>5</parameter>',
+    '</function>',
+    '</tool_call>',
+  ].join('\n')
+  assert.deepEqual(
+    extractProviderTextToolCalls(xmlStyleTextToolCall)?.[0],
+    {
+      id: 'text-tool-call-0-0',
+      callId: 'text-tool-call-0-0',
+      index: 0,
+      name: 'search_web',
+      arguments: { query: '嘉年华 西瓜 品种介绍', limit: 5 },
+      rawArguments: '{"query":"嘉年华 西瓜 品种介绍","limit":5}',
+      argumentsComplete: true,
+    },
+    'provider text tool-call helper recovers XML-style search_web calls'
+  )
+  assert.equal(
+    stripProviderTextToolCallBlocks(xmlStyleTextToolCall).trim(),
+    '我需要搜索。',
+    'provider text tool-call helper strips XML-style blocks from visible text'
+  )
+  const nonStreamingTextToolResult = await parseProviderNonStreamingResponse(new Response(xmlStyleTextToolCall), {
+    provider: { id: 'text-tool-provider', type: 'openai-compatible', name: 'Text Tool Provider', apiKey: FAKE_KEY_A, models: [], enabled: true, capabilities: { nativeTools: true } },
+    model: 'gpt-5.5',
+    messages: [],
+  })
+  assert.equal(nonStreamingTextToolResult.text, '我需要搜索。', 'provider response parsing helper removes XML-style text tool-call blocks from plain responses')
+  assert.equal(nonStreamingTextToolResult.providerToolCalls?.[0]?.name, 'search_web', 'provider response parsing helper recovers XML-style text tool calls from plain responses')
+  assert.equal(nonStreamingTextToolResult.providerToolCalls?.[0]?.arguments?.limit, 5, 'provider response parsing helper keeps XML-style numeric arguments executable')
+  const bufferedSseTextToolResult = parseProviderBufferedStreamResponse(`data: ${JSON.stringify({ type: 'response.output_text.delta', delta: xmlStyleTextToolCall })}`, {
+    provider: { id: 'buffered-text-tool-provider', type: 'openai', name: 'Buffered Text Tool Provider', apiKey: FAKE_KEY_A, models: [], enabled: true },
+    model: 'gpt-5.5',
+    messages: [],
+  }, 'openai')
+  assert.equal(bufferedSseTextToolResult.text, '我需要搜索。', 'provider response parsing helper strips XML-style text tool-call blocks from buffered streams')
+  assert.equal(bufferedSseTextToolResult.providerToolCalls?.[0]?.arguments?.query, '嘉年华 西瓜 品种介绍', 'provider response parsing helper recovers XML-style buffered stream tool calls')
+  const openAITextToolParsedCompletion = parseProviderChatCompletionJson({
+    id: 'resp_text_tool_parse',
+    output_text: xmlStyleTextToolCall,
+  }, {
+    provider: { id: 'openai-text-tool-parse', type: 'openai', name: 'OpenAI Text Tool Parse', apiKey: FAKE_KEY_A, models: [], enabled: true },
+    model: 'gpt-5.5',
+    messages: [],
+  })
+  assert.equal(openAITextToolParsedCompletion.text, '我需要搜索。', 'provider response parsing helper strips XML-style text tool-call blocks from JSON completions')
+  assert.equal(openAITextToolParsedCompletion.providerToolCalls?.[0]?.name, 'search_web', 'provider response parsing helper recovers XML-style text tool calls from JSON completions')
 }
 
 async function runFakeWebSocketScenario(script, controller = new AbortController()) {
@@ -4243,6 +4337,11 @@ async function assertApkUpdateBehavior() {
   assert.equal(shouldRecordApkUpdateCheck({ status: 'available', message: '' }), true, 'available update checks update the last-check timestamp')
   assert.equal(shouldRecordApkUpdateCheck({ status: 'unavailable', message: '' }), true, 'unavailable update checks update the last-check timestamp')
   assert.equal(shouldRecordApkUpdateCheck({ status: 'error', message: '', reason: 'network' }), false, 'failed update checks do not update the last-check timestamp')
+  const settingsScreenSource = fs.readFileSync(path.join(root, 'src/components/main/SettingsScreenContent.tsx'), 'utf8')
+  assert.ok(settingsScreenSource.includes("type ApkUpdateUiStage = 'checking' | ApkInstallProgressStage"), 'Settings screen tracks APK update phases beyond a single checking flag')
+  assert.ok(settingsScreenSource.includes('setApkUpdateStage(progress.stage)'), 'Settings screen switches to download/verify/installer progress after confirmation')
+  assert.ok(settingsScreenSource.includes('apkUpdateProgressDetail'), 'Settings screen renders APK download progress details while the installer flow is running')
+  assert.ok(settingsScreenSource.includes('apkUpdateDownloadProgressDetail'), 'Settings screen renders byte-level APK download progress while downloading')
 
   resetLocalModelFileMocks()
   reactNativePlatform.OS = 'android'
@@ -4504,6 +4603,52 @@ async function assertApkUpdateBehavior() {
     false,
     'installer flow never attempts APK downloads with embedded credentials'
   )
+  resetLocalModelFileMocks()
+  reactNativePlatform.OS = 'android'
+  launchedIntents.length = 0
+  const progressApkBody = Buffer.from('valid apk bytes')
+  const progressApkUrl = 'https://example.test/progress.apk'
+  localDownloadFixtures.set(progressApkUrl, { status: 200, body: progressApkBody })
+  const progressEvents = []
+  const progressResult = await downloadAndOpenApkInstaller({
+    version: '1.0.10',
+    versionCode: 110,
+    tagName: 'v1.0.10',
+    name: 'IsleMind 1.0.10',
+    htmlUrl: 'https://github.com/domidoremi/IsleMind/releases/tag/v1.0.10',
+    apkUrl: progressApkUrl,
+    apkName: 'IsleMind-1.0.10-arm64-v8a-no-model.apk',
+    publishedAt: null,
+    sizeBytes: progressApkBody.length,
+    abi: 'arm64-v8a',
+    variant: 'no-model',
+  }, {
+    onProgress: (progress) => progressEvents.push({
+      stage: progress.stage,
+      apkName: progress.release.apkName,
+      localUri: progress.localUri,
+      bytesWritten: progress.bytesWritten,
+      bytesExpected: progress.bytesExpected,
+      percent: progress.percent,
+    }),
+  })
+  assert.equal(progressResult.status, 'downloaded', 'successful APK download opens the installer')
+  assert.ok(progressEvents.some((event) => event.stage === 'downloading'), 'APK installer flow reports a download progress stage')
+  assert.ok(progressEvents.some((event) => event.stage === 'verifying'), 'APK installer flow reports a verification progress stage')
+  assert.ok(progressEvents.some((event) => event.stage === 'opening-installer'), 'APK installer flow reports an installer-opening progress stage')
+  assert.ok(
+    progressEvents.findIndex((event) => event.stage === 'downloading') <
+      progressEvents.findIndex((event) => event.stage === 'verifying') &&
+      progressEvents.findIndex((event) => event.stage === 'verifying') <
+      progressEvents.findIndex((event) => event.stage === 'opening-installer'),
+    'APK installer progress stages stay in download, verification, installer order'
+  )
+  assert.ok(progressEvents.every((event) => event.apkName === 'IsleMind-1.0.10-arm64-v8a-no-model.apk'), 'APK progress events keep the active release metadata')
+  assert.ok(
+    progressEvents.some((event) => event.stage === 'downloading' && event.percent === 100 && event.bytesWritten === progressApkBody.length),
+    'APK installer flow reports byte-level download progress'
+  )
+  assert.equal(launchedIntents.length, 1, 'successful APK download launches the Android installer once')
   resetLocalModelFileMocks()
   reactNativePlatform.OS = 'android'
   const installerFailUrl = 'https://example.test/installer-fail.apk'
@@ -6365,6 +6510,9 @@ async function run() {
   assert.ok(chatWorkspaceSource.includes('if (!continuePrompt)'), 'chat workspace requires a trace follow-up or validated parser-recognized work artifact before composer insertion')
   assert.ok(chatWorkspaceSource.includes('onApplyStarter(continuePrompt)'), 'chat workspace inserts the safe work artifact continuation prompt into the composer')
   assert.ok(chatWorkspaceSource.includes("t('messageBubble.continueWorkArtifactInserted')"), 'chat workspace confirms continuation prompt insertion')
+  const messageContentSource = fs.readFileSync(path.join(root, 'src/components/chat/MessageContent.tsx'), 'utf8')
+  assert.ok(messageContentSource.includes('looksLikeToolCallMarkupLine(trimmed)'), 'message content formula detection excludes provider text tool-call markup lines')
+  assert.ok(messageContentSource.includes('tool_call|function|parameter'), 'message content keeps provider tool-call markup out of formula cards')
 
   const messageBubbleSource = fs.readFileSync(path.join(root, 'src/components/chat/MessageBubble.tsx'), 'utf8')
   assert.ok(messageBubbleSource.includes('onCopyWorkArtifact?: (message: Message) => void'), 'message bubble exposes a typed work artifact copy action')
@@ -9190,6 +9338,41 @@ https://gateway.example/messages`
   })
   assert.equal(nonStreamingTextResult.text, 'plain response', 'provider response parsing helper preserves plain non-streaming text')
   assert.equal(nonStreamingTextResult.citations?.[0]?.id, 'plain-source', 'provider response parsing helper keeps plain-text retrieval citations')
+  const xmlStyleTextToolCall = [
+    '我需要搜索。',
+    '<tool_call>',
+    '<function=search_web>',
+    '<parameter=query>嘉年华 西瓜 品种介绍</parameter>',
+    '<parameter=limit>5</parameter>',
+    '</function>',
+    '</tool_call>',
+  ].join('\n')
+  assert.deepEqual(
+    extractProviderTextToolCalls(xmlStyleTextToolCall)?.[0],
+    {
+      id: 'text-tool-call-0-0',
+      callId: 'text-tool-call-0-0',
+      index: 0,
+      name: 'search_web',
+      arguments: { query: '嘉年华 西瓜 品种介绍', limit: 5 },
+      rawArguments: '{"query":"嘉年华 西瓜 品种介绍","limit":5}',
+      argumentsComplete: true,
+    },
+    'provider text tool-call helper recovers XML-style search_web calls'
+  )
+  assert.equal(
+    stripProviderTextToolCallBlocks(xmlStyleTextToolCall).trim(),
+    '我需要搜索。',
+    'provider text tool-call helper strips XML-style blocks from visible text'
+  )
+  const nonStreamingTextToolResult = await parseProviderNonStreamingResponse(new Response(xmlStyleTextToolCall), {
+    provider: { id: 'text-tool-provider', type: 'openai-compatible', name: 'Text Tool Provider', apiKey: FAKE_KEY_A, models: [], enabled: true, capabilities: { nativeTools: true } },
+    model: 'gpt-5.5',
+    messages: [],
+  })
+  assert.equal(nonStreamingTextToolResult.text, '我需要搜索。', 'provider response parsing helper removes XML-style text tool-call blocks from plain responses')
+  assert.equal(nonStreamingTextToolResult.providerToolCalls?.[0]?.name, 'search_web', 'provider response parsing helper recovers XML-style text tool calls from plain responses')
+  assert.equal(nonStreamingTextToolResult.providerToolCalls?.[0]?.arguments?.limit, 5, 'provider response parsing helper keeps XML-style numeric arguments executable')
   const bufferedSseResult = parseProviderBufferedStreamResponse('data: {"type":"response.output_text.delta","delta":"Buffered answer"}', {
     provider: { id: 'buffered-provider', type: 'openai', name: 'Buffered Provider', apiKey: FAKE_KEY_A, models: [], enabled: true },
     model: 'gpt-5.5',
@@ -9198,6 +9381,13 @@ https://gateway.example/messages`
   }, 'openai')
   assert.equal(bufferedSseResult.text, 'Buffered answer', 'provider response parsing helper parses buffered SSE text')
   assert.equal(bufferedSseResult.citations?.[0]?.id, 'buffered-source', 'provider response parsing helper keeps buffered SSE retrieval citations')
+  const bufferedSseTextToolResult = parseProviderBufferedStreamResponse(`data: ${JSON.stringify({ type: 'response.output_text.delta', delta: xmlStyleTextToolCall })}`, {
+    provider: { id: 'buffered-text-tool-provider', type: 'openai', name: 'Buffered Text Tool Provider', apiKey: FAKE_KEY_A, models: [], enabled: true },
+    model: 'gpt-5.5',
+    messages: [],
+  }, 'openai')
+  assert.equal(bufferedSseTextToolResult.text, '我需要搜索。', 'provider response parsing helper strips XML-style text tool-call blocks from buffered streams')
+  assert.equal(bufferedSseTextToolResult.providerToolCalls?.[0]?.arguments?.query, '嘉年华 西瓜 品种介绍', 'provider response parsing helper recovers XML-style buffered stream tool calls')
   const openAIParsedCompletion = parseProviderChatCompletionJson({
     id: 'resp_parse_1',
     output_text: 'OpenAI answer',
@@ -9217,6 +9407,16 @@ https://gateway.example/messages`
   assert.equal(openAIParsedCompletion.providerToolCalls?.[0]?.name, 'search_web', 'provider response parsing helper extracts OpenAI tool calls')
   assert.equal(openAIParsedCompletion.responseId, 'resp_parse_1', 'provider response parsing helper extracts response ids')
   assert.equal(openAIParsedCompletion.citations?.[0]?.id, 'source-parse', 'provider response parsing helper keeps retrieval citations')
+  const openAITextToolParsedCompletion = parseProviderChatCompletionJson({
+    id: 'resp_text_tool_parse',
+    output_text: xmlStyleTextToolCall,
+  }, {
+    provider: { id: 'openai-text-tool-parse', type: 'openai', name: 'OpenAI Text Tool Parse', apiKey: FAKE_KEY_A, models: [], enabled: true },
+    model: 'gpt-5.5',
+    messages: [],
+  })
+  assert.equal(openAITextToolParsedCompletion.text, '我需要搜索。', 'provider response parsing helper strips XML-style text tool-call blocks from JSON completions')
+  assert.equal(openAITextToolParsedCompletion.providerToolCalls?.[0]?.name, 'search_web', 'provider response parsing helper recovers XML-style text tool calls from JSON completions')
   const anthropicParsedCompletion = parseProviderChatCompletionJson({
     content: [
       { type: 'thinking', thinking: 'anthropic reasoning' },
@@ -11633,6 +11833,34 @@ function assertTraceRedactionBehavior() {
   assert.equal(headerTrace.metadata.nested.proxy, '[redacted]', 'nested trace metadata value redaction removes header-like proxy bearer auth')
 }
 
+function assertChatTopChromeBehavior() {
+  const chatWorkspaceSource = fs.readFileSync(path.join(root, 'src/components/chat/ChatWorkspace.tsx'), 'utf8')
+  assert.ok(
+    chatWorkspaceSource.includes('const FLOATING_CHROME_SAFE_AREA_GAP = 4'),
+    'chat top chrome keeps a compact safe-area gap'
+  )
+  assert.ok(
+    chatWorkspaceSource.includes('const FLOATING_CHROME_ANDROID_TOP_GAP = 0'),
+    'chat top chrome removes extra Android top offset'
+  )
+  assert.ok(
+    !chatWorkspaceSource.includes('const keepChromeExpanded = true'),
+    'chat top chrome is no longer hard-locked in expanded mode'
+  )
+  assert.ok(
+    !chatWorkspaceSource.includes('const chromeCollapseLocked = true'),
+    'chat top chrome is no longer hard-locked against collapse in the message list'
+  )
+  assert.ok(
+    chatWorkspaceSource.includes('function collapseChromeForFocusedInput()'),
+    'chat workspace exposes a focused-input chrome collapse helper'
+  )
+  assert.ok(
+    chatWorkspaceSource.includes('setChromeCollapsed(true)'),
+    'chat workspace collapses top chrome in focus-driven paths'
+  )
+}
+
 async function runFocused() {
   const focusArg = process.argv.find((arg) => arg.startsWith('--focus='))
   const focus = focusArg ? focusArg.slice('--focus='.length) : null
@@ -11693,6 +11921,15 @@ async function runFocused() {
   if (focus === 'provider-capability-matrix') {
     await assertProviderCapabilityMatrixBehavior()
     await assertRuntimeDiagnosticsBehavior()
+    return
+  }
+  if (focus === 'provider-text-tool-calls') {
+    await assertResponsesWebSocketTransportBehavior()
+    await assertProviderTextToolCallFallbackBehavior()
+    return
+  }
+  if (focus === 'chat-top-chrome') {
+    assertChatTopChromeBehavior()
     return
   }
   throw new Error(`Unknown focus: ${focus}`)

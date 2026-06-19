@@ -1174,6 +1174,7 @@ function looksLikeStandaloneFormulaLine(line: string | undefined): boolean {
   const trimmed = line?.trim() ?? ''
   if (!trimmed || trimmed.length > 220) return false
   if (looksLikeMarkdownOrNaturalLanguageListMarker(trimmed)) return false
+  if (looksLikeToolCallMarkupLine(trimmed)) return false
   if (/^(const|let|var|function|return|if|for|while|class|import|export|type|interface)\b/.test(trimmed)) return false
   if (/;$/.test(trimmed)) return false
   if (hasNaturalLanguageScript(trimmed)) return false
@@ -1201,6 +1202,11 @@ function hasStandaloneFormulaSyntax(value: string): boolean {
   if (hasExplicitLatexFormulaCommand(value)) return true
   if (looksLikeFormulaIdentifierWithAffixes(value)) return true
   return /(?:<=|>=|=|->|=>|\\to|\^)/.test(value) && /[A-Za-z0-9\\]/.test(value)
+}
+
+function looksLikeToolCallMarkupLine(value: string): boolean {
+  return /^<\/?\s*(?:tool_call|function|parameter)(?:\s*=\s*[^>]*)?>$/i.test(value) ||
+    /^<\s*parameter\s*=\s*[^>]+>[\s\S]*<\/\s*parameter\s*>$/i.test(value)
 }
 
 function looksLikeFormulaIdentifierWithAffixes(value: string): boolean {

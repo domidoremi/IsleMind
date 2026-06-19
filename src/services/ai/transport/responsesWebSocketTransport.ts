@@ -1,6 +1,7 @@
 import type { ChatCompletionResult, ChatRequest, CitationCallback, DoneCallback, ErrorCallback, StreamCallback, TraceCallback } from '@/services/ai/base'
 import { mergeOpenAIResponseReplayItems } from '@/services/ai/providerOpenAIReplay'
-import { executableProviderToolCalls, mergeProviderToolCallParts, type ProviderToolCall } from '@/services/ai/providerToolCalls'
+import { withProviderTextToolCallFallback } from '@/services/ai/providerResponseParsing'
+import { createProviderTextToolCallStreamFilter, executableProviderToolCalls, mergeProviderToolCallParts, type ProviderToolCall } from '@/services/ai/providerToolCalls'
 import type { MessageCitation, MessageUsage, ProcessTrace, ProviderType } from '@/types'
 
 export interface ResponsesWebSocketTransportInput {
@@ -37,6 +38,7 @@ export function runResponsesWebSocketTransport(input: ResponsesWebSocketTranspor
     let usage: MessageUsage | undefined
     let providerToolCalls: ProviderToolCall[] = []
     let responseItems: Record<string, unknown>[] = []
+    const textToolCallFilter = createProviderTextToolCallStreamFilter()
     const traces: ProcessTrace[] = []
 
     const settle = (error?: Error) => {
@@ -72,7 +74,8 @@ export function runResponsesWebSocketTransport(input: ResponsesWebSocketTranspor
         const parsed = input.parseEvent(payload, input.wireProviderType)
         if (parsed.text) {
           fullText += parsed.text
-          input.onChunk(parsed.text)
+          const visibleText = textToolCallFilter.push(parsed.text)
+          if (visibleText) input.onChunk(visibleText)
         }
         for (const trace of parsed.traces) {
           traces.push(trace)
@@ -83,6 +86,8 @@ export function runResponsesWebSocketTransport(input: ResponsesWebSocketTranspor
         providerToolCalls = mergeProviderToolCallParts([...providerToolCalls, ...(parsed.providerToolCalls ?? [])])
         responseItems = mergeOpenAIResponseReplayItems([...responseItems, ...(parsed.responseItems ?? [])])
         if (payload?.type === 'response.completed' || payload?.type === 'response.done') {
+          const filterRemainder = textToolCallFilter.finish()
+          if (filterRemainder) input.onChunk(filterRemainder)
           const citations = input.extractCitations(fullText, input.req.retrievalSources)
           if (citations.length) input.onCitations?.(citations)
           input.onDone(buildChatCompletionResult({ text: fullText, citations, traces, usage, responseId, providerToolCalls, responseItems }))
@@ -96,6 +101,8 @@ export function runResponsesWebSocketTransport(input: ResponsesWebSocketTranspor
     ws.onclose = () => {
       if (settled) return
       if (fullText) {
+        const filterRemainder = textToolCallFilter.finish()
+        if (filterRemainder) input.onChunk(filterRemainder)
         const citations = input.extractCitations(fullText, input.req.retrievalSources)
         if (citations.length) input.onCitations?.(citations)
         input.onDone(buildChatCompletionResult({ text: fullText, citations, traces, usage, responseId, providerToolCalls, responseItems }))
@@ -117,7 +124,7 @@ function buildChatCompletionResult(input: {
   responseItems?: Record<string, unknown>[]
 }): ChatCompletionResult {
   const executableToolCalls = executableProviderToolCalls(input.providerToolCalls)
-  return {
+  return withProviderTextToolCallFallback({
     text: input.text,
     citations: input.citations,
     traces: input.traces,
@@ -125,5 +132,5 @@ function buildChatCompletionResult(input: {
     responseId: input.responseId,
     ...(executableToolCalls ? { providerToolCalls: executableToolCalls } : {}),
     ...(input.responseItems?.length ? { responseItems: input.responseItems } : {}),
-  }
+  }, input.text)
 }

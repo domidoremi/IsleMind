@@ -6,7 +6,7 @@ import { extractOpenAIReasoningContent, extractOpenAIResponseReplayItems } from 
 import { extractAnthropicText, extractGoogleText, extractOpenAIText, extractResponseId } from '@/services/ai/providerResponseText'
 import { parseProviderStreamChunk } from '@/services/ai/providerStreamParsing'
 import { extractTracesFromJson } from '@/services/ai/providerTraceUtils'
-import { executableProviderToolCalls, extractProviderToolCalls } from '@/services/ai/providerToolCalls'
+import { executableProviderToolCalls, extractProviderTextToolCalls, extractProviderToolCalls, stripProviderTextToolCallBlocks } from '@/services/ai/providerToolCalls'
 import { extractUsage } from '@/services/ai/providerUsage'
 import type { ChatCompletionResult, ChatRequest } from '@/services/ai/base'
 import type { ProviderType } from '@/types'
@@ -49,10 +49,10 @@ export async function parseProviderNonStreamingText(response: Response, provider
 export async function parseProviderNonStreamingResponse(response: Response, req: ChatRequest): Promise<ChatCompletionResult> {
   const body = await readProviderResponseBody(response)
   if (!body.json) {
-    return {
+    return withProviderTextToolCallFallback({
       text: body.text.trim(),
       citations: body.text.trim() ? extractCitationsFromText(body.text, req.retrievalSources) : [],
-    }
+    })
   }
   return parseProviderChatCompletionJson(body.json, req)
 }
@@ -68,12 +68,12 @@ export function parseProviderBufferedStreamResponse(raw: string, req: ChatReques
   }
 
   const parsed = parseProviderStreamChunk(raw, providerType)
-  const text = parsed.text
+  const text = stripProviderTextToolCallBlocks(parsed.text)
   const citations = dedupeCitations([
     ...extractCitationsFromText(text, req.retrievalSources),
     ...extractProviderCitationsFromSse(raw, providerType),
   ])
-  return {
+  return withProviderTextToolCallFallback({
     text,
     citations,
     traces: parsed.traces,
@@ -83,7 +83,7 @@ export function parseProviderBufferedStreamResponse(raw: string, req: ChatReques
     reasoningContent: parsed.reasoningContent,
     responseItems: parsed.responseItems,
     providerContentBlocks: parsed.providerContentBlocks,
-  }
+  }, parsed.text)
 }
 
 export function parseProviderChatCompletionJson(json: any, req: ChatRequest): ChatCompletionResult {
@@ -91,7 +91,7 @@ export function parseProviderChatCompletionJson(json: any, req: ChatRequest): Ch
   switch (providerType) {
     case 'openai': {
       const openAIText = extractOpenAIText(json)
-      return {
+      return withProviderTextToolCallFallback({
         text: openAIText,
         usage: extractUsage(json, providerType),
         citations: extractCitationsFromText(openAIText, req.retrievalSources),
@@ -100,29 +100,29 @@ export function parseProviderChatCompletionJson(json: any, req: ChatRequest): Ch
         reasoningContent: extractOpenAIReasoningContent(json),
         responseItems: extractOpenAIResponseReplayItems(json),
         responseId: extractResponseId(json),
-      }
+      })
     }
     case 'anthropic':
-      return {
+      return withProviderTextToolCallFallback({
         text: extractAnthropicText(json),
         usage: extractUsage(json, 'anthropic'),
         citations: [...extractCitationsFromText('', req.retrievalSources), ...extractProviderCitations(json, 'anthropic')],
         traces: extractTracesFromJson(json, 'anthropic'),
         providerToolCalls: executableProviderToolCalls(extractProviderToolCalls(json, 'anthropic')),
         providerContentBlocks: extractAnthropicReplayContentBlocks(json),
-      }
+      })
     case 'google':
-      return {
+      return withProviderTextToolCallFallback({
         text: extractGoogleText(json),
         usage: extractUsage(json, 'google'),
         citations: [...extractCitationsFromText('', req.retrievalSources), ...extractProviderCitations(json, 'google')],
         traces: extractTracesFromJson(json, 'google'),
         providerToolCalls: executableProviderToolCalls(extractProviderToolCalls(json, 'google')),
-      }
+      })
     case 'openai-compatible':
     case 'xiaomi-mimo': {
       const compatibleText = extractOpenAIText(json)
-      return {
+      return withProviderTextToolCallFallback({
         text: compatibleText,
         usage: extractUsage(json, 'openai-compatible'),
         citations: extractCitationsFromText(compatibleText, req.retrievalSources),
@@ -131,7 +131,7 @@ export function parseProviderChatCompletionJson(json: any, req: ChatRequest): Ch
         reasoningContent: extractOpenAIReasoningContent(json),
         responseItems: extractOpenAIResponseReplayItems(json),
         responseId: extractResponseId(json),
-      }
+      })
     }
   }
 }
@@ -143,5 +143,21 @@ export function parseProviderBufferedStreamJson(raw: string, req: ChatRequest): 
     return parseProviderChatCompletionJson(JSON.parse(trimmed), req)
   } catch {
     return undefined
+  }
+}
+
+export function withProviderTextToolCallFallback(result: ChatCompletionResult, rawText = result.text): ChatCompletionResult {
+  const fallbackCalls = result.providerToolCalls?.length ? undefined : extractProviderTextToolCalls(rawText)
+  const strippedText = stripProviderTextToolCallBlocks(result.text)
+  const removedTextToolCall = strippedText !== result.text || stripProviderTextToolCallBlocks(rawText) !== rawText
+  const text = removedTextToolCall ? strippedText.trim() : strippedText
+  const providerToolCalls = executableProviderToolCalls([
+    ...(result.providerToolCalls ?? []),
+    ...(fallbackCalls ?? []),
+  ])
+  return {
+    ...result,
+    text,
+    ...(providerToolCalls ? { providerToolCalls } : {}),
   }
 }
