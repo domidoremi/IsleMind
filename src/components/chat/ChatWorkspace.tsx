@@ -15,6 +15,7 @@ import {
   View,
   useWindowDimensions,
   type StyleProp,
+  type AccessibilityActionEvent,
   type AppStateStatus,
   type NativeScrollEvent,
   type NativeSyntheticEvent,
@@ -22,7 +23,7 @@ import {
   type LayoutChangeEvent,
   type ViewStyle,
 } from 'react-native'
-import { FlashList, type FlashListRef } from '@shopify/flash-list'
+import { FlashList, type FlashListRef, type ViewToken } from '@shopify/flash-list'
 import * as Clipboard from 'expo-clipboard'
 import * as Linking from 'expo-linking'
 import { router } from 'expo-router'
@@ -30,7 +31,7 @@ import { MotiView } from 'moti'
 import { useTranslation } from 'react-i18next'
 import { AnimatedNavigationIcon, type NavigationGlyph } from '@/components/navigation/AnimatedNavigationIcon'
 import { AnimatedNavigationTrigger, useNavigationTrigger } from '@/components/navigation/AnimatedNavigationTrigger'
-import { AppIcon, appIconStroke, type AppIconName } from '@/components/ui/AppIcon'
+import { AppIcon, appIconStroke } from '@/components/ui/AppIcon'
 import { IsleScreen, type IsleBackgroundState } from '@/components/ui/isle'
 import { IsleOverlayPressable, IslePressable } from '@/components/ui/isle'
 import { IsleField, IsleIconButton, IsleSheet } from '@/components/ui/isle'
@@ -54,7 +55,7 @@ import { buildAndroidUndoPromptContext, boundedAndroidUndoResult, safeChatPrompt
 import type { AgentRequestedOutput } from '@/services/agent'
 import type { AIProvider, Attachment, ChatErrorCode, Conversation, Message, ProviderOperationCode } from '@/types'
 import type { CommandReference, KnowledgeDocument, MemoryItem, SkillDefinition } from '@/types'
-import { collectMessageTraces, collectVisibleProcessTraces, formatProcessTraceForCopy, getActiveTraceTitle } from './tracePresentation'
+import { collectMessageTraces, collectVisibleProcessTraces, formatProcessTraceForCopy, getActiveTraceTitle, getActiveTraceStageLabel } from './tracePresentation'
 import type { PackedCompressionMetadata } from '@/services/contextPacker'
 import { useSafeAreaInsets } from 'react-native-safe-area-context'
 import { useMainPagerGestureLock } from '@/components/main/MainPagerGestureLock'
@@ -63,7 +64,7 @@ import { listKnowledgeDocuments, listMemories } from '@/services/contextStore'
 import { getProviderAvailableModels, getProviderDisplayModel, hasRemoteProviderModelEvidence, inferModelFamily, isProviderConversationReady, MODEL_QUICK_GROUPS, resolveProviderModelAlias, type ModelQuickGroup } from '@/utils/providerModels'
 import { useMotionPreference } from '@/hooks/useMotionPreference'
 import { motionTokens } from '@/theme/animation'
-import { getReasoningEffortOptions, providerSupportsReasoning } from '@/utils/modelReasoning'
+import { getNextReasoningEffort, getReasoningControlValue, getReasoningDisplayEffort, getReasoningEffortOptions, providerSupportsReasoning } from '@/utils/modelReasoning'
 import { getOnboardingConversationDefaults } from '@/utils/onboardingProfile'
 import { summarizeWorkArtifact } from '@/utils/workArtifact'
 import { validateWorkArtifactQuality } from '@/utils/workArtifact'
@@ -85,6 +86,19 @@ interface HomeModelHighlight extends ModelQuickOption {
   selected: boolean
 }
 
+interface AssistantNavigationItem {
+  messageId: string
+  messageIndex: number
+  assistantIndex: number
+  assistantCount: number
+  paragraphCount: number
+}
+
+interface AssistantNavigationScrollOptions {
+  animated?: boolean
+  settle?: boolean
+}
+
 const COMPOSER_COLLAPSED_MIN_HEIGHT = 78
 const AUTO_SCROLL_DELAY_MS = 96
 const USER_SCROLL_PAUSE_THRESHOLD = 72
@@ -97,14 +111,16 @@ const QUICK_TOOL_HIT_SLOP = { top: 8, right: 6, bottom: 8, left: 6 }
 const FLOATING_CHROME_SAFE_AREA_GAP = 4
 const FLOATING_CHROME_ANDROID_TOP_GAP = 0
 const FLOATING_CHROME_BOTTOM_PADDING = 4
-const FLOATING_CHROME_IDLE_COLLAPSE_DELAY_MS = 1800
+const FLOATING_CHROME_IDLE_COLLAPSE_DELAY_MS = 3200
 const FLOATING_CHROME_SWIPE_COLLAPSE_DISTANCE = 28
 const COLLAPSED_CHROME_TOP_OFFSET = 0
-const COLLAPSED_CHROME_HEIGHT = 26
 const MESSAGE_LIST_CHROME_GAP = 8
 const MESSAGE_LIST_CHROME_OVERLAY = 0
 const MESSAGE_LIST_CHROME_UNDERLAP = 0
 const MESSAGE_LIST_COMPOSER_GAP = 12
+const CONVERSATION_NAVIGATION_IDLE_HIDE_DELAY_MS = 1500
+const CONVERSATION_NAVIGATION_INTERACTION_HIDE_DELAY_MS = 2200
+const CONVERSATION_NAVIGATION_PROGRAMMATIC_LOCK_MS = 260
 const EMPTY_CONVERSATION_DEFAULT_TOP_PADDING = 20
 const HOME_MODEL_HIGHLIGHT_LIMIT = 4
 const SYSTEM_STATUS_NOTIFICATION_CLEAR_DELAY_MS = 5200
@@ -315,7 +331,7 @@ export function ChatWorkspace({ conversation, showBack = false, embedded = false
   const [quickStartDraft, setQuickStartDraft] = useState<ComposerDraftPayload | null>(null)
   const quickStartSequence = useRef(0)
   const initialSetupDefaults = useMemo(() => getOnboardingConversationDefaults(settings.onboardingCompanionMode), [settings.onboardingCompanionMode])
-  const [setupReasoningEffort, setSetupReasoningEffort] = useState<NonNullable<Conversation['reasoningEffort']>>(initialSetupDefaults.reasoningEffort)
+  const [setupReasoningEffort, setSetupReasoningEffort] = useState<Conversation['reasoningEffort']>(initialSetupDefaults.reasoningEffort)
   const [setupSystemPrompt, setSetupSystemPrompt] = useState('')
   const [setupSelectedProviderId, setSetupSelectedProviderId] = useState<string | null>(null)
   const [setupSelectedModel, setSetupSelectedModel] = useState<string | null>(null)
@@ -346,7 +362,7 @@ export function ChatWorkspace({ conversation, showBack = false, embedded = false
   const provider = runtimeTarget?.provider
   const setupTemperature = settings.defaultTemperature ?? initialSetupDefaults.temperature
   const setupConversation = useMemo<Conversation>(() => createSetupConversationShell(homeProvider, setupModel, setupReasoningEffort, setupSystemPrompt, setupTemperature), [homeProvider, setupModel, setupReasoningEffort, setupSystemPrompt, setupTemperature])
-  const reasoningEffort = runtimeConversation?.reasoningEffort ?? setupReasoningEffort
+  const reasoningEffort = runtimeConversation ? runtimeConversation.reasoningEffort : setupReasoningEffort
   const runtimeReasoningModel = provider && runtimeConversation ? resolveProviderModelAlias(provider, runtimeConversation.model) : runtimeConversation?.model
   const setupReasoningModel = homeProvider ? resolveProviderModelAlias(homeProvider, setupModel) : setupModel
   const supportsReasoningQuick = !!provider && providerSupportsReasoning(provider, runtimeReasoningModel)
@@ -384,7 +400,7 @@ export function ChatWorkspace({ conversation, showBack = false, embedded = false
   const activityLabel = streamingMessage ? getMessageActivityLabel(streamingMessage, t) : ''
   const compactViewport = windowHeight < 620 || windowWidth < 360
   const mobileChatViewport = windowWidth < 600
-  const keepChromeExpanded = !runtimeConversation || showOptions || !!composerPanel || !!intentDraft || !!providerHealth?.code || testingHeader
+  const keepChromeExpanded = !runtimeConversation || showOptions || !!providerHealth?.code || testingHeader
   const androidResizeInset = Platform.OS === 'android' && keyboardHeight > 0
     ? Math.max(0, keyboardBaselineHeight - windowHeight)
     : 0
@@ -535,6 +551,19 @@ export function ChatWorkspace({ conversation, showBack = false, embedded = false
     }
     setChromeCollapsed(false)
   }, [keepChromeExpanded])
+
+  useEffect(() => {
+    if (!isStreaming || keepChromeExpanded) return
+    if (idleTimer.current) {
+      clearTimeout(idleTimer.current)
+      idleTimer.current = null
+    }
+    setChromeCollapsed(false)
+    idleTimer.current = setTimeout(() => {
+      idleTimer.current = null
+      setChromeCollapsed(true)
+    }, FLOATING_CHROME_IDLE_COLLAPSE_DELAY_MS)
+  }, [isStreaming, keepChromeExpanded])
 
   useEffect(() => {
     if (keyboardHeight <= 0 || windowHeight > keyboardBaselineHeight) {
@@ -879,7 +908,6 @@ export function ChatWorkspace({ conversation, showBack = false, embedded = false
           tone: 'amber',
         })
       }
-      setComposerPanel((current) => current === 'reasoning' ? null : 'reasoning')
     }
 
     function openSetupFullModelPanel() {
@@ -1036,7 +1064,7 @@ export function ChatWorkspace({ conversation, showBack = false, embedded = false
                   onCopyLink={() => dialog.toast({ title: t('chat.noProviderConnected'), message: t('chat.configureProviderBeforeChat'), tone: 'amber' })}
                   onClose={() => setShowOptions(false)}
                   onDraftChange={(updates) => {
-                    if (updates.reasoningEffort !== undefined) setSetupReasoningEffort(updates.reasoningEffort)
+                    if ('reasoningEffort' in updates) setSetupReasoningEffort(updates.reasoningEffort)
                   }}
                 />
               </IsleOverlayPressable>
@@ -1045,7 +1073,6 @@ export function ChatWorkspace({ conversation, showBack = false, embedded = false
           <FloatingComposer
             insets={insets}
             streaming={false}
-            activityLabel=""
             initialDraft={effectiveInitialDraft}
             initialDraftKey={effectiveInitialDraftKey}
             initialAttachments={effectiveInitialAttachments}
@@ -1286,7 +1313,7 @@ function ActiveChatWorkspace({
   composerCommands: ComposerCommand[]
   composerReferences: CommandReference[]
   supportsReasoningQuick: boolean
-  reasoningEffort: NonNullable<Conversation['reasoningEffort']>
+  reasoningEffort: Conversation['reasoningEffort']
   metrics: ConversationMetrics
   regenerableAssistantId?: string
   switchableProviders: AIProvider[]
@@ -1367,8 +1394,22 @@ function ActiveChatWorkspace({
   const messageListAccessibilityState = isStreaming ? { busy: true } : undefined
   const messageListAccessibilityValue = messageListBaseAccessibilityValue
   const userScrollInteractionActive = useRef(false)
+  const assistantNavigationItems = useMemo(() => buildAssistantNavigationItems(activeConversation.messages), [activeConversation.messages])
+  const assistantNavigationVisible = assistantNavigationItems.length > 1
+  const assistantNavigationSignature = assistantNavigationItems.map((item) => item.messageId).join('|')
+  const latestAssistantNavigationId = assistantNavigationItems.at(-1)?.messageId ?? null
+  const [activeAssistantNavigationId, setActiveAssistantNavigationId] = useState<string | null>(latestAssistantNavigationId)
+  const [assistantNavigationFloatingVisible, setAssistantNavigationFloatingVisible] = useState(false)
+  const activeAssistantNavigationItem = assistantNavigationItems.find((item) => item.messageId === activeAssistantNavigationId) ?? assistantNavigationItems.at(-1)
+  const activeAssistantNavigationIndex = activeAssistantNavigationItem
+    ? assistantNavigationItems.findIndex((item) => item.messageId === activeAssistantNavigationItem.messageId)
+    : -1
+  const messageListViewabilityConfig = useMemo(() => ({ itemVisiblePercentThreshold: 36, minimumViewTime: 120 }), [])
   const messageListRightPadding = 20
   const messageListBottomPadding = MESSAGE_LIST_COMPOSER_GAP + composerBottomInset + keyboardLift
+  const assistantNavigationHideTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const assistantNavigationGestureActive = useRef(false)
+  const assistantNavigationProgrammaticLockUntil = useRef(0)
   const layoutScrollTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
   const latestMessageScrollTimers = useRef<Set<ReturnType<typeof setTimeout>>>(new Set())
   const userDragMomentumEligible = useRef(false)
@@ -1376,13 +1417,9 @@ function ActiveChatWorkspace({
   const pagerGestureScrollReleaseTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
   const persistentPagerGestureLockRef = useRef(false)
   const lastLayoutScrollAt = useRef(0)
-  const chromeCollapseLocked = showOptions || !!composerPanel || !!intentDraft || !!providerHealth?.code || testingHeader
-  const collapsedChromeTop = visualTopInset + COLLAPSED_CHROME_TOP_OFFSET + FLOATING_CHROME_ANDROID_TOP_GAP
-  const messageListTopInset = !chromeCollapsed
-    ? Math.max(0, chromeHeight - MESSAGE_LIST_CHROME_OVERLAY + MESSAGE_LIST_CHROME_GAP)
-    : mobileViewport
-      ? 0
-      : collapsedChromeTop + COLLAPSED_CHROME_HEIGHT
+  const chromeCollapseLocked = showOptions || !!providerHealth?.code || testingHeader
+  const expandedMessageListTopInset = Math.max(0, chromeHeight - MESSAGE_LIST_CHROME_OVERLAY + MESSAGE_LIST_CHROME_GAP)
+  const messageListTopInset = expandedMessageListTopInset
   const conversationHeaderTopPadding = Math.max(0, messageListTopInset - MESSAGE_LIST_CHROME_UNDERLAP)
   const emptyConversationTopPadding = Math.max(EMPTY_CONVERSATION_DEFAULT_TOP_PADDING, messageListTopInset - MESSAGE_LIST_CHROME_UNDERLAP + 6)
 
@@ -1395,6 +1432,27 @@ function ActiveChatWorkspace({
     clearTimeout(layoutScrollTimer.current)
     layoutScrollTimer.current = null
   }, [])
+  const clearAssistantNavigationHideTimer = useCallback(() => {
+    if (!assistantNavigationHideTimer.current) return
+    clearTimeout(assistantNavigationHideTimer.current)
+    assistantNavigationHideTimer.current = null
+  }, [])
+  const scheduleAssistantNavigationHide = useCallback((delayMs = CONVERSATION_NAVIGATION_IDLE_HIDE_DELAY_MS) => {
+    clearAssistantNavigationHideTimer()
+    assistantNavigationHideTimer.current = setTimeout(() => {
+      setAssistantNavigationFloatingVisible(false)
+      assistantNavigationHideTimer.current = null
+    }, delayMs)
+  }, [clearAssistantNavigationHideTimer])
+  const revealAssistantNavigation = useCallback((delayMs = CONVERSATION_NAVIGATION_IDLE_HIDE_DELAY_MS) => {
+    if (!assistantNavigationVisible) return
+    clearAssistantNavigationHideTimer()
+    setAssistantNavigationFloatingVisible(true)
+    assistantNavigationHideTimer.current = setTimeout(() => {
+      setAssistantNavigationFloatingVisible(false)
+      assistantNavigationHideTimer.current = null
+    }, delayMs)
+  }, [assistantNavigationVisible, clearAssistantNavigationHideTimer])
   const shouldAutoFollowLatestMessage = useCallback(() => {
     const viewport = messageScrollViewportRef.current
     return autoStickToBottom.current &&
@@ -1405,6 +1463,22 @@ function ActiveChatWorkspace({
   useEffect(() => {
     messageScrollViewportRef.current = messageScrollViewport
   }, [messageScrollViewport])
+
+  useEffect(() => () => clearAssistantNavigationHideTimer(), [clearAssistantNavigationHideTimer])
+
+  useEffect(() => {
+    if (assistantNavigationVisible) return
+    clearAssistantNavigationHideTimer()
+    setAssistantNavigationFloatingVisible(false)
+  }, [assistantNavigationVisible, clearAssistantNavigationHideTimer])
+
+  useEffect(() => {
+    setActiveAssistantNavigationId((current) =>
+      current && assistantNavigationItems.some((item) => item.messageId === current)
+        ? current
+        : latestAssistantNavigationId
+    )
+  }, [activeConversation.id, assistantNavigationSignature, latestAssistantNavigationId])
 
   useEffect(() => {
     persistentPagerGestureLockRef.current = showOptions || !!composerPanel || keyboardVisible || !!intentDraft
@@ -1634,11 +1708,11 @@ function ActiveChatWorkspace({
     } else if (userScrollInteractionActive.current || Math.abs(delta) > 4) {
       autoStickToBottom.current = false
     }
-    if (delta < -10 && chromeCollapsed) {
-      markChromeActive()
-    } else if (delta > 8 && !chromeCollapsed) {
-      collapseChrome()
+    const userDrivenScroll = userScrollInteractionActive.current || userDragMomentumEligible.current
+    if (assistantNavigationVisible && userDrivenScroll) {
+      revealAssistantNavigation()
     }
+    if (userDrivenScroll && delta > 8 && !chromeCollapsed) collapseChrome()
     lastScrollOffset.current = y
   }
 
@@ -1653,6 +1727,8 @@ function ActiveChatWorkspace({
 
   function handleListScrollBeginDrag() {
     lockPagerGestureForMessageScroll()
+    assistantNavigationProgrammaticLockUntil.current = 0
+    revealAssistantNavigation()
     if (userDragMomentumEligibilityTimer.current) {
       clearTimeout(userDragMomentumEligibilityTimer.current)
       userDragMomentumEligibilityTimer.current = null
@@ -1681,6 +1757,7 @@ function ActiveChatWorkspace({
   function handleListMomentumScrollBegin() {
     if (!userDragMomentumEligible.current) return
     lockPagerGestureForMessageScroll()
+    revealAssistantNavigation()
     if (userDragMomentumEligibilityTimer.current) {
       clearTimeout(userDragMomentumEligibilityTimer.current)
       userDragMomentumEligibilityTimer.current = null
@@ -1746,8 +1823,10 @@ function ActiveChatWorkspace({
     latestMessageScrollTimers.current.add(timer)
   }, [autoStickToBottom, clearLatestMessageScrollTimers, clearLayoutScrollTimer, listRef, shouldAutoFollowLatestMessage])
 
-  const requestMessageLayoutScroll = useCallback(() => {
-    if (!shouldAutoFollowLatestMessage()) return
+  const requestMessageLayoutScroll = useCallback((options?: { force?: boolean }) => {
+    const force = options?.force === true
+    if (force) autoStickToBottom.current = true
+    if (!force && !shouldAutoFollowLatestMessage()) return
     const now = Date.now()
     const wait = Math.max(0, AUTO_SCROLL_DELAY_MS - (now - lastLayoutScrollAt.current))
     if (wait === 0) {
@@ -1759,11 +1838,43 @@ function ActiveChatWorkspace({
     clearLayoutScrollTimer()
     layoutScrollTimer.current = setTimeout(() => {
       layoutScrollTimer.current = null
-      if (!shouldAutoFollowLatestMessage()) return
+      if (!force && !shouldAutoFollowLatestMessage()) return
       lastLayoutScrollAt.current = Date.now()
       listRef.current?.scrollToEnd({ animated: false })
     }, wait)
   }, [clearLayoutScrollTimer, listRef, shouldAutoFollowLatestMessage])
+
+  const handleMessageViewableItemsChanged = useCallback(({ viewableItems }: { viewableItems: ViewToken<Message>[] }) => {
+    if (assistantNavigationGestureActive.current || Date.now() < assistantNavigationProgrammaticLockUntil.current) return
+    const firstAssistant = viewableItems
+      .filter((token) => token.isViewable && token.item?.role === 'assistant' && typeof token.index === 'number')
+      .sort((left, right) => (left.index ?? 0) - (right.index ?? 0))[0]
+    if (firstAssistant?.item?.id) setActiveAssistantNavigationId(firstAssistant.item.id)
+  }, [])
+
+  const scrollToAssistantNavigationItem = useCallback((item: AssistantNavigationItem, options?: AssistantNavigationScrollOptions) => {
+    const animated = options?.animated ?? true
+    const settle = options?.settle === true
+    autoStickToBottom.current = false
+    setActiveAssistantNavigationId(item.messageId)
+    assistantNavigationProgrammaticLockUntil.current = Date.now() + (animated ? 520 : CONVERSATION_NAVIGATION_PROGRAMMATIC_LOCK_MS)
+    revealAssistantNavigation(settle ? CONVERSATION_NAVIGATION_INTERACTION_HIDE_DELAY_MS : CONVERSATION_NAVIGATION_IDLE_HIDE_DELAY_MS)
+    closeOptionsFromBackground()
+    const scrollParams = {
+      index: item.messageIndex,
+      animated,
+      viewPosition: 0,
+      viewOffset: Math.max(8, messageListTopInset),
+    }
+    const scrollRequest = listRef.current?.scrollToIndex(scrollParams)
+    void scrollRequest?.catch(() => {
+      setTimeout(() => {
+        assistantNavigationProgrammaticLockUntil.current = Date.now() + CONVERSATION_NAVIGATION_PROGRAMMATIC_LOCK_MS
+        const retryRequest = listRef.current?.scrollToIndex({ ...scrollParams, animated: false })
+        void retryRequest?.catch(() => undefined)
+      }, 80)
+    })
+  }, [autoStickToBottom, listRef, messageListTopInset, revealAssistantNavigation])
 
   useEffect(() => {
     requestMessageLayoutScroll()
@@ -1850,6 +1961,8 @@ function ActiveChatWorkspace({
               onScrollEndDrag={handleListScrollEndDrag}
               onMomentumScrollBegin={handleListMomentumScrollBegin}
               onMomentumScrollEnd={handleListMomentumScrollEnd}
+              viewabilityConfig={messageListViewabilityConfig}
+              onViewableItemsChanged={handleMessageViewableItemsChanged}
               maintainVisibleContentPosition={messageListMaintainVisibleContentPosition}
               scrollEventThrottle={Platform.OS === 'android' ? 32 : 16}
               drawDistance={Platform.OS === 'android' ? 420 : undefined}
@@ -2010,6 +2123,25 @@ function ActiveChatWorkspace({
                 />
               )}
             />
+            {assistantNavigationVisible && activeAssistantNavigationItem ? (
+              <ConversationNavigationRail
+                items={assistantNavigationItems}
+                activeIndex={activeAssistantNavigationIndex}
+                visible={assistantNavigationFloatingVisible}
+                topOffset={Math.max(visualTopInset + 70, messageListTopInset + 8)}
+                bottomOffset={messageListBottomPadding + 12}
+                onSelect={scrollToAssistantNavigationItem}
+                onInteractionStart={() => {
+                  assistantNavigationGestureActive.current = true
+                  revealAssistantNavigation(CONVERSATION_NAVIGATION_INTERACTION_HIDE_DELAY_MS)
+                }}
+                onInteractionEnd={() => {
+                  assistantNavigationGestureActive.current = false
+                  assistantNavigationProgrammaticLockUntil.current = Date.now() + CONVERSATION_NAVIGATION_PROGRAMMATIC_LOCK_MS
+                  scheduleAssistantNavigationHide(CONVERSATION_NAVIGATION_INTERACTION_HIDE_DELAY_MS)
+                }}
+              />
+            ) : null}
           </View>
 
           {intentDraft ? (
@@ -2024,7 +2156,6 @@ function ActiveChatWorkspace({
           <FloatingComposer
             insets={insets}
             streaming={isStreaming}
-            activityLabel={activityLabel}
             pendingNotice={pendingNotice}
             initialDraft={initialDraft}
             initialDraftKey={initialDraftKey}
@@ -2112,6 +2243,190 @@ function ChatScreenFrame({ embedded, backgroundState, compactViewport, children 
   )
 }
 
+function ConversationNavigationRail({
+  items,
+  activeIndex,
+  visible,
+  topOffset,
+  bottomOffset,
+  onSelect,
+  onInteractionStart,
+  onInteractionEnd,
+}: {
+  items: AssistantNavigationItem[]
+  activeIndex: number
+  visible: boolean
+  topOffset: number
+  bottomOffset: number
+  onSelect: (item: AssistantNavigationItem, options?: AssistantNavigationScrollOptions) => void
+  onInteractionStart: () => void
+  onInteractionEnd: () => void
+}) {
+  const { colors, isGlass, isCartoon } = useAppTheme()
+  const { t } = useTranslation()
+  const motion = useMotionPreference()
+  const railBorder = isCartoon ? colors.material.stroke : isGlass ? colors.ui.actionBar.itemBorder : colors.ui.semantic.chrome.border
+  const subtleBorderWidth = isCartoon ? 1 : StyleSheet.hairlineWidth
+  const safeActiveIndex = Math.max(0, Math.min(items.length - 1, activeIndex >= 0 ? activeIndex : items.length - 1))
+  const item = items[safeActiveIndex]
+  const trackVisualHeight = Math.max(94, Math.min(232, 42 + Math.max(0, items.length - 1) * 11))
+  const [measuredTrackHeight, setMeasuredTrackHeight] = useState(trackVisualHeight)
+  const lastSelectedIndexRef = useRef(safeActiveIndex)
+  const gestureSelectedIndexRef = useRef(safeActiveIndex)
+
+  useEffect(() => {
+    lastSelectedIndexRef.current = safeActiveIndex
+    gestureSelectedIndexRef.current = safeActiveIndex
+  }, [safeActiveIndex])
+
+  const selectIndex = useCallback((nextIndex: number, options?: AssistantNavigationScrollOptions) => {
+    if (!items.length) return
+    const boundedIndex = Math.max(0, Math.min(items.length - 1, nextIndex))
+    gestureSelectedIndexRef.current = boundedIndex
+    if (boundedIndex === lastSelectedIndexRef.current && !options?.settle) return
+    lastSelectedIndexRef.current = boundedIndex
+    onSelect(items[boundedIndex], options)
+  }, [items, onSelect])
+
+  const selectFromGesture = useCallback((event: GestureResponderEvent, options?: AssistantNavigationScrollOptions) => {
+    if (items.length <= 1) return
+    const height = Math.max(1, measuredTrackHeight)
+    const ratio = Math.max(0, Math.min(1, (event.nativeEvent.locationY - 4) / height))
+    selectIndex(Math.round(ratio * (items.length - 1)), options)
+  }, [items.length, measuredTrackHeight, selectIndex])
+
+  const handleAccessibilityAction = useCallback((event: AccessibilityActionEvent) => {
+    onInteractionStart()
+    if (event.nativeEvent.actionName === 'increment') {
+      selectIndex(safeActiveIndex + 1, { animated: true, settle: true })
+    } else if (event.nativeEvent.actionName === 'decrement') {
+      selectIndex(safeActiveIndex - 1, { animated: true, settle: true })
+    }
+    onInteractionEnd()
+  }, [onInteractionEnd, onInteractionStart, safeActiveIndex, selectIndex])
+
+  if (!item) return null
+
+  const anchorBaseSize = items.length > 64 ? 2.5 : items.length > 32 ? 3.5 : items.length > 18 ? 5 : 7
+
+  return (
+    <View pointerEvents={visible ? 'box-none' : 'none'} style={{ position: 'absolute', top: topOffset, right: 8, bottom: bottomOffset, width: 48, justifyContent: 'center', zIndex: 34, elevation: 2 }}>
+      <MotiView
+        from={motion === 'full' ? { opacity: 0, translateX: 18, scale: 0.9 } : { opacity: 0 }}
+        animate={{ opacity: visible ? 1 : 0, translateX: visible ? 0 : 18, scale: visible ? 1 : 0.9 }}
+        transition={motion === 'full' ? { type: 'spring', damping: 15, stiffness: 230 } : { type: 'timing', duration: 1 }}
+        style={{
+          width: 48,
+          borderRadius: colors.ui.radius.controlLarge,
+          paddingHorizontal: 4,
+          paddingVertical: 8,
+          alignItems: 'center',
+          backgroundColor: 'transparent',
+          borderWidth: 0,
+          borderColor: 'transparent',
+          shadowOpacity: 0,
+          elevation: 0,
+        }}
+      >
+        <View
+          accessible
+          accessibilityRole="adjustable"
+          accessibilityActions={[
+            { name: 'increment', label: t('chat.nextAssistantReply') },
+            { name: 'decrement', label: t('chat.previousAssistantReply') },
+          ]}
+          accessibilityLabel={t('chat.conversationNavigationPositionAccessibilityLabel', {
+            current: item.assistantIndex,
+            total: item.assistantCount,
+            paragraphs: item.paragraphCount,
+          })}
+          accessibilityValue={{ text: t('chat.conversationNavigationPosition', { current: item.assistantIndex, total: item.assistantCount }) }}
+          onAccessibilityAction={handleAccessibilityAction}
+          onStartShouldSetResponder={() => true}
+          onMoveShouldSetResponder={() => true}
+          onResponderGrant={(event) => {
+            onInteractionStart()
+            selectFromGesture(event, { animated: false })
+          }}
+          onResponderMove={(event) => selectFromGesture(event, { animated: false })}
+          onResponderRelease={() => {
+            selectIndex(gestureSelectedIndexRef.current, { animated: false, settle: true })
+            onInteractionEnd()
+          }}
+          onResponderTerminate={() => {
+            selectIndex(gestureSelectedIndexRef.current, { animated: false, settle: true })
+            onInteractionEnd()
+          }}
+          style={{ width: 42, alignItems: 'center', justifyContent: 'center', paddingVertical: 8 }}
+        >
+          <View
+            onLayout={(event) => setMeasuredTrackHeight(Math.max(1, Math.ceil(event.nativeEvent.layout.height)))}
+            style={{
+              width: 34,
+              height: trackVisualHeight,
+              maxHeight: '100%',
+              alignItems: 'center',
+              justifyContent: 'space-between',
+            }}
+          >
+            <View pointerEvents="none" style={{ position: 'absolute', top: 5, bottom: 5, width: 2, borderRadius: 999, backgroundColor: railBorder, opacity: isGlass ? 0.34 : 0.28 }} />
+            {items.map((navigationItem, index) => {
+              const active = index === safeActiveIndex
+              const anchorSize = active ? 15 : anchorBaseSize
+              return (
+                <MotiView
+                  key={navigationItem.messageId}
+                  pointerEvents="none"
+                  animate={{
+                    width: active ? 28 : Math.max(10, anchorSize + 6),
+                    height: active ? 28 : Math.max(10, anchorSize + 6),
+                    scale: active ? 1 : 0.92,
+                    opacity: active ? 1 : 0.58,
+                  }}
+                  transition={motion === 'full' ? { type: 'spring', damping: 14, stiffness: 260 } : { type: 'timing', duration: 1 }}
+                  style={{
+                    borderRadius: 999,
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    backgroundColor: 'transparent',
+                    borderWidth: 0,
+                  }}
+                >
+                  {active && motion === 'full' ? (
+                    <MotiView
+                      from={{ opacity: 0.16, scale: 0.72 }}
+                      animate={{ opacity: 0, scale: 1.45 }}
+                      transition={{ loop: true, type: 'timing', duration: 980 }}
+                      style={{
+                        position: 'absolute',
+                        width: 26,
+                        height: 26,
+                        borderRadius: 999,
+                        backgroundColor: colors.ui.control.primaryBackground,
+                      }}
+                    />
+                  ) : null}
+                  <View
+                    style={{
+                      width: anchorSize,
+                      height: anchorSize,
+                      borderRadius: 999,
+                      backgroundColor: active ? colors.ui.control.primaryBackground : colors.textSecondary,
+                      borderWidth: active ? 2 : subtleBorderWidth,
+                      borderColor: active ? colors.ui.control.primaryBorder : railBorder,
+                      opacity: active ? 0.96 : (isGlass ? 0.62 : 0.5),
+                    }}
+                  />
+                </MotiView>
+              )
+            })}
+          </View>
+        </View>
+      </MotiView>
+    </View>
+  )
+}
+
 function FloatingChrome({
   colors,
   insets,
@@ -2179,7 +2494,7 @@ function FloatingChrome({
   const chromeSwipeCollapsed = useRef(false)
   const header = getProviderHeaderState(conversation, provider, switchableProviders, metrics, providerHealth, settings, t)
   const modelLabel = conversation.providerId === 'local-setup' ? t('chat.localSetupGuide') : getProviderDisplayModel(provider, conversation.model)
-  const collapsedPeekVisible = false
+  const collapsedPeekVisible = collapsed && !showOptions
   const subtitleLabel = providerHealth?.code
     ? modelLabel
     : provider?.enabled && provider.lastTestStatus !== 'ok'
@@ -2369,7 +2684,7 @@ function FloatingChrome({
           from={{ opacity: 0, translateY: -8 }}
           animate={{ opacity: 1, translateY: 0 }}
           transition={{ type: 'spring', damping: 20, stiffness: 180 }}
-           style={{ position: 'absolute', top: visualTopInset + COLLAPSED_CHROME_TOP_OFFSET + FLOATING_CHROME_ANDROID_TOP_GAP, left: 0, right: 0, alignItems: 'center', zIndex: 80, elevation: 4 }}
+          style={{ position: 'absolute', top: visualTopInset + COLLAPSED_CHROME_TOP_OFFSET + FLOATING_CHROME_ANDROID_TOP_GAP + 4, right: 12, zIndex: 80, elevation: 4 }}
           pointerEvents="box-none"
         >
           <IsleOverlayPressable
@@ -2380,10 +2695,9 @@ function FloatingChrome({
             accessibilityState={streaming ? { busy: true } : undefined}
             hitSlop={12}
             style={{
-              minWidth: streaming ? 126 : 88,
-              minHeight: 36,
-              borderRadius: colors.ui.radius.chip,
-              paddingHorizontal: 12,
+              width: 38,
+              height: 38,
+              borderRadius: colors.ui.radius.controlLarge,
               alignItems: 'center',
               justifyContent: 'center',
               backgroundColor: chromeItemSurface,
@@ -2396,7 +2710,7 @@ function FloatingChrome({
               elevation: colors.ui.cartoon ? 1 : 0,
             }}
           >
-            <Text style={{ color: isGlass ? colors.textSecondary : colors.textTertiary, fontSize: 10, fontWeight: '900' }}>{streaming ? t('chat.generatingShowTopBar') : t('chat.showTopBar')}</Text>
+            <AppIcon name="menu-output" color={isGlass ? colors.textSecondary : colors.textTertiary} size={17} strokeWidth={appIconStroke.strong} />
           </IsleOverlayPressable>
         </MotiView>
       ) : null}
@@ -2407,7 +2721,6 @@ function FloatingChrome({
 function FloatingComposer({
   insets,
   streaming,
-  activityLabel,
   pendingNotice,
   initialDraft,
   initialDraftKey,
@@ -2452,7 +2765,6 @@ function FloatingComposer({
 }: {
   insets: ReturnType<typeof useSafeAreaInsets>
   streaming: boolean
-  activityLabel: string
   pendingNotice?: string
   initialDraft?: string
   initialDraftKey?: string | number
@@ -2460,7 +2772,7 @@ function FloatingComposer({
   restoreInitialDraftIfEmpty?: boolean
   commands: ComposerCommand[]
   references: CommandReference[]
-  reasoningEffort: NonNullable<Conversation['reasoningEffort']>
+  reasoningEffort: Conversation['reasoningEffort']
   provider: AIProvider | undefined
   modelProviders: AIProvider[]
   conversation: Conversation
@@ -2468,7 +2780,7 @@ function FloatingComposer({
   showReasoning: boolean
   systemPrompt: string
   keyboardLift: number
-  onReasoningChange: (effort: NonNullable<Conversation['reasoningEffort']>) => void
+  onReasoningChange: (effort: Conversation['reasoningEffort']) => void
   onSystemPromptChange: (systemPrompt: string) => void
   onSwitchModel: (model: string) => void
   onSwitchProviderModel?: (provider: AIProvider, model: string) => void
@@ -2499,7 +2811,6 @@ function FloatingComposer({
   const { t } = useTranslation()
   const { width: composerWindowWidth } = useWindowDimensions()
   const modelOpen = panel === 'model'
-  const reasoningOpen = panel === 'reasoning'
   const promptOpen = panel === 'prompt'
   const toolsOpen = panel === 'more'
   const reasoningOptions = useMemo(() => {
@@ -2532,7 +2843,9 @@ function FloatingComposer({
     [quickModels]
   )
   const reasoningAvailable = showReasoning && reasoningOptions.length > 0
-  const reasoningStatusLabel = reasoningAvailable ? t(`chat.reasoningEffort.${reasoningEffort}`) : t('chat.quickReasoningUnsupported')
+  const displayedReasoningEffort = getReasoningDisplayEffort(reasoningEffort, reasoningOptions)
+  const reasoningButtonActive = reasoningAvailable && reasoningEffort !== undefined
+  const reasoningStatusLabel = reasoningAvailable ? t(`chat.reasoningEffort.${getReasoningControlValue(reasoningEffort)}`) : t('chat.quickReasoningUnsupported')
   const promptStatusLabel = systemPrompt.trim() ? t('chat.quickPromptActive') : t('chat.quickPromptEmpty')
   const toolsStatusLabel = toolsOpen ? t('chat.quickToolsOpen') : t('chat.quickToolsReady')
   const outputStatusLabel = requestedOutput === 'work-artifact' ? t('chat.quickOutputWorkArtifact') : t('chat.quickOutputAuto')
@@ -2567,6 +2880,15 @@ function FloatingComposer({
     onLayoutHeight(Math.ceil(event.nativeEvent.layout.height))
   }
 
+  function cycleReasoningEffort() {
+    if (!reasoningAvailable) {
+      onOpenReasoningPicker?.()
+      return
+    }
+    onReasoningChange(getNextReasoningEffort(reasoningEffort, reasoningOptions))
+    onPanelChange(null)
+  }
+
   const renderOutputModeButton = ({ iconOnly = false, compact = false, maxWidth }: { iconOnly?: boolean; compact?: boolean; maxWidth?: number } = {}) => (
     <ComposerToolButton
       label={t('chat.quickOutput')}
@@ -2594,15 +2916,13 @@ function FloatingComposer({
         <ComposerToolButton
           label={t('chat.quickReasoning')}
           stateLabel={reasoningStatusLabel}
-          accessibilityHint={reasoningAvailable ? t('chat.quickReasoningAccessibilityHint') : t('chat.quickReasoningUnavailableAccessibilityHint')}
-          accessibilityState={{ expanded: reasoningOpen }}
-          active={reasoningOpen}
+          accessibilityHint={reasoningAvailable ? t('chat.quickReasoningCycleAccessibilityHint') : reasoningUnavailableMessage ?? t('chat.quickReasoningUnavailableAccessibilityHint')}
+          accessibilityState={{ selected: reasoningButtonActive, disabled: !reasoningAvailable }}
+          active={reasoningButtonActive}
           compact
-          onPress={onOpenReasoningPicker ?? (() => {
-            onPanelChange('reasoning')
-          })}
+          onPress={cycleReasoningEffort}
         >
-          <ReasoningToolIcon effort={reasoningEffort} active={reasoningOpen} available={reasoningAvailable} />
+          <ReasoningToolIcon effort={displayedReasoningEffort} active={reasoningButtonActive} available={reasoningAvailable} />
         </ComposerToolButton>
         {renderOutputModeButton({ compact: true })}
       </View>
@@ -2631,14 +2951,12 @@ function FloatingComposer({
           iconOnly
           label={t('chat.quickReasoning')}
           stateLabel={reasoningStatusLabel}
-          accessibilityHint={reasoningAvailable ? t('chat.quickReasoningAccessibilityHint') : t('chat.quickReasoningUnavailableAccessibilityHint')}
-          accessibilityState={{ expanded: reasoningOpen }}
-          active={reasoningOpen}
-          onPress={onOpenReasoningPicker ?? (() => {
-            onPanelChange('reasoning')
-          })}
+          accessibilityHint={reasoningAvailable ? t('chat.quickReasoningCycleAccessibilityHint') : reasoningUnavailableMessage ?? t('chat.quickReasoningUnavailableAccessibilityHint')}
+          accessibilityState={{ selected: reasoningButtonActive, disabled: !reasoningAvailable }}
+          active={reasoningButtonActive}
+          onPress={cycleReasoningEffort}
         >
-          <ReasoningToolIcon effort={reasoningEffort} active={reasoningOpen} available={reasoningAvailable} />
+          <ReasoningToolIcon effort={displayedReasoningEffort} active={reasoningButtonActive} available={reasoningAvailable} />
         </ComposerToolButton>
         <ComposerToolButton
           iconOnly
@@ -2658,13 +2976,6 @@ function FloatingComposer({
             <AppIcon name="stop" color={colors.ui.control.primaryForeground} size={13} strokeWidth={appIconStroke.bold} fill={colors.ui.control.primaryForeground} />
           </ComposerToolButton>
         ) : null}
-      </View>
-      <View style={{ flex: 1, minWidth: 0, alignItems: 'flex-end' }}>
-        {streaming ? (
-          <GenerationStatusPill label={activityLabel || t('chat.generating')} />
-        ) : (
-          <GenerationStatusPill label={reasoningStatusLabel} idle />
-        )}
       </View>
     </View>
   )
@@ -2757,39 +3068,6 @@ function FloatingComposer({
               ) : (
                 <Text style={{ color: colors.textTertiary, fontSize: 12, fontWeight: '800', lineHeight: 17, paddingHorizontal: 4, paddingVertical: 4 }}>
                   {modelPanelEmptyMessage}
-                </Text>
-              )}
-            </MotiView>
-          ) : null}
-          {reasoningOpen ? (
-            <MotiView
-              from={{ opacity: 0, translateY: 4 }}
-              animate={{ opacity: 1, translateY: 0 }}
-              transition={{ type: 'spring', damping: 20, stiffness: 210 }}
-              style={{ flexDirection: 'row', gap: 7, marginBottom: 5, padding: 7, borderRadius: colors.ui.radius.field, backgroundColor: panelChromeSurface, borderWidth: subtleBorderWidth, borderColor: panelChromeBorder }}
-            >
-              {reasoningAvailable ? reasoningOptions.map((effort) => (
-                <IslePressable
-                  key={effort}
-                  haptic
-                  onPress={() => {
-                    onReasoningChange(effort)
-                    onPanelChange(null)
-                  }}
-                  accessibilityRole="button"
-                  accessibilityLabel={t('chat.reasoningChip', { value: t(`chat.reasoningEffort.${effort}`) })}
-                  accessibilityHint={t('chat.reasoningEffortAccessibilityHint', { value: t(`chat.reasoningEffort.${effort}`) })}
-                  accessibilityState={{ selected: reasoningEffort === effort }}
-                  hitSlop={QUICK_TOOL_HIT_SLOP}
-                  style={{ minHeight: 44, borderRadius: colors.ui.radius.chip, paddingHorizontal: 12, alignItems: 'center', justifyContent: 'center', backgroundColor: reasoningEffort === effort ? colors.ui.control.primaryBackground : chipSurface, borderWidth: subtleBorderWidth, borderColor: reasoningEffort === effort ? colors.ui.control.primaryBorder : panelChromeBorder }}
-                >
-                  <Text style={{ color: reasoningEffort === effort ? colors.ui.control.primaryForeground : colors.textSecondary, fontSize: 11, fontWeight: '900' }}>
-                    {t(`chat.reasoningEffort.${effort}`)}
-                  </Text>
-                </IslePressable>
-              )) : (
-                <Text style={{ color: colors.textTertiary, fontSize: 12, fontWeight: '800', lineHeight: 17, paddingHorizontal: 4, paddingVertical: 4 }}>
-                  {reasoningUnavailableMessage ?? t('chat.reasoningUnsupported')}
                 </Text>
               )}
             </MotiView>
@@ -2955,20 +3233,27 @@ function ComposerToolButton({
 function ReasoningToolIcon({ effort, active, available }: { effort: NonNullable<Conversation['reasoningEffort']>; active: boolean; available: boolean }) {
   const { colors, isGlass } = useAppTheme()
   const level = getReasoningVisualLevel(effort)
-  const iconName: AppIconName = level >= 4 ? 'reasoning-deep' : level >= 2 ? 'reasoning-advanced' : 'reasoning'
   const color = !available ? colors.textTertiary : active ? colors.ui.control.primaryForeground : level >= 4 ? colors.ui.icon.accentForeground : colors.textSecondary
-  const showDot = available && level >= 2
-  const showSpark = available && level >= 4
+  const heights = [5, 8, 11, 14, 17]
+  const visibleLevel = available ? level : 0
 
   return (
-    <View style={{ width: 22, height: 22, alignItems: 'center', justifyContent: 'center' }}>
-      <AppIcon name={iconName} color={color} size={17} strokeWidth={level >= 4 ? appIconStroke.bold : appIconStroke.regular} />
-      {showDot ? (
-        <View style={{ position: 'absolute', right: level >= 4 ? 0 : 2, bottom: 1, width: level >= 3 ? 6 : 4, height: level >= 3 ? 6 : 4, borderRadius: 3, backgroundColor: color, opacity: level >= 3 ? 0.88 : 0.62 }} />
-      ) : null}
-      {showSpark ? (
-        <AppIcon name="spark" color={color} size={10} strokeWidth={appIconStroke.strong} style={{ position: 'absolute', right: -3, top: -3 }} />
-      ) : null}
+    <View style={{ width: 22, height: 22, flexDirection: 'row', alignItems: 'flex-end', justifyContent: 'center', gap: 2 }}>
+      {heights.map((height, index) => {
+        const filled = index < visibleLevel
+        return (
+          <View
+            key={height}
+            style={{
+              width: 3,
+              height,
+              borderRadius: 2,
+              backgroundColor: color,
+              opacity: filled ? (active || level >= 4 ? 0.96 : 0.82) : isGlass ? 0.28 : 0.22,
+            }}
+          />
+        )
+      })}
     </View>
   )
 }
@@ -3065,41 +3350,6 @@ function QuickChoiceButton({ label, active, accessibilityHint, maxWidth, onPress
         </Text>
       </MotiView>
     </IslePressable>
-  )
-}
-
-function GenerationStatusPill({ label, idle = false }: { label: string; idle?: boolean }) {
-  const { colors, isGlass } = useAppTheme()
-  const { width } = useWindowDimensions()
-  const labelMaxWidth = idle ? Math.max(76, Math.min(116, width * 0.28)) : Math.max(112, Math.min(160, width * 0.36))
-  const backgroundColor = resolveChatChromeSurface(colors, isGlass)
-  const borderColor = resolveChatChromeBorder(colors, isGlass)
-  const subtleBorderWidth = colors.ui.cartoon ? 1 : StyleSheet.hairlineWidth
-  return (
-    <View
-      accessible
-      accessibilityLabel={label}
-      accessibilityLiveRegion="polite"
-      accessibilityRole="text"
-      accessibilityState={idle ? undefined : { busy: true }}
-      style={{ minHeight: 44, borderRadius: colors.ui.radius.chip, paddingHorizontal: idle ? 10 : 12, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 7, backgroundColor, borderWidth: subtleBorderWidth, borderColor }}
-    >
-      {idle ? (
-        <AppIcon name="reasoning" color={colors.textTertiary} size={13} strokeWidth={appIconStroke.strong} />
-      ) : (
-        <MotiView
-          accessibilityElementsHidden
-          importantForAccessibility="no-hide-descendants"
-          from={{ opacity: 0.35, scale: 0.84 }}
-          animate={{ opacity: 1, scale: 1 }}
-          transition={{ loop: true, type: 'timing', duration: 760 }}
-          style={{ width: 6, height: 6, borderRadius: 3, backgroundColor: colors.ui.control.primaryBackground }}
-        />
-      )}
-      <Text accessible={false} importantForAccessibility="no" numberOfLines={1} style={{ maxWidth: labelMaxWidth, color: colors.textSecondary, fontSize: 11, lineHeight: 15, fontWeight: '900', includeFontPadding: false, textAlignVertical: 'center' }}>
-        {label}
-      </Text>
-    </View>
   )
 }
 
@@ -3213,6 +3463,30 @@ function renderConversationHeaderSpacer(
 function getMessageItemType(message: Message) {
   if (message.status === 'streaming' || message.status === 'sending') return `${message.role}:active`
   return `${message.role}:static`
+}
+
+function buildAssistantNavigationItems(messages: Message[]): AssistantNavigationItem[] {
+  const assistantMessages = messages
+    .map((message, messageIndex) => ({ message, messageIndex }))
+    .filter((item) => item.message.role === 'assistant')
+  const assistantCount = assistantMessages.length
+  return assistantMessages.map((item, index) => ({
+    messageId: item.message.id,
+    messageIndex: item.messageIndex,
+    assistantIndex: index + 1,
+    assistantCount,
+    paragraphCount: countMessageParagraphs(item.message),
+  }))
+}
+
+function countMessageParagraphs(message: Message): number {
+  const text = (message.responseText ?? message.content).trim()
+  if (!text) return 0
+  return text
+    .split(/\n{2,}/)
+    .map((paragraph) => paragraph.trim())
+    .filter(Boolean)
+    .length || 1
 }
 
 function SetupEmptyState({ description, actionLabel, actionHint, glyph, onAction }: { description: string; actionLabel: string; actionHint?: string; glyph: NavigationGlyph; onAction: () => void }) {
@@ -3533,7 +3807,7 @@ function providerHasPolicyAllowedModel(provider: AIProvider, settings?: ReturnTy
 function createSetupConversationShell(
   provider: AIProvider | null,
   model: string,
-  reasoningEffort: NonNullable<Conversation['reasoningEffort']>,
+  reasoningEffort: Conversation['reasoningEffort'],
   systemPrompt: string,
   temperature: number
 ): Conversation {
@@ -3653,14 +3927,14 @@ function QuickStartAction({ label, accessibilityHint, glyph, muted = false, onPr
 
 function getMessageActivityLabel(message: Message, t: TFunction): string {
   const traces = collectMessageTraces(message)
-  const stageLabel = getActiveTraceTitle(traces, message.status)
+  const stageLabel = getActiveTraceStageLabel(traces, message.status)
   if (stageLabel && (message.status === 'streaming' || message.status === 'sending')) {
     return t('messageBubble.traceGenerating', {
       title: stageLabel,
       defaultValue: `${stageLabel}...`,
     })
   }
-  return stageLabel || messageActivityStatusLabel(message, t)
+  return getActiveTraceTitle(traces, message.status) || messageActivityStatusLabel(message, t)
 }
 
 function messageActivityStatusLabel(message: Message, t: TFunction): string {
