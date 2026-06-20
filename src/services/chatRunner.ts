@@ -1000,6 +1000,12 @@ async function createAssistantReply(conversationId: string) {
           remoteCompactMode: compactDecision.mode,
           remoteCompactInputTokens: compactDecision.enabled ? remoteCompactProbe.estimatedInputTokens : undefined,
           previousResponseId,
+        }).catch((error) => {
+          flushStreamingBuffers()
+          if (getActiveStream(conversationId)?.messageId === assistantMessage.id) {
+            clearActiveStream(conversationId)
+          }
+          finishFinalizeError(conversationId, assistantMessage.id, error, provider.id)
         })
       },
       (error) => {
@@ -1696,7 +1702,7 @@ async function generateAnswerWithProviderNativeToolResult(input: {
       model: input.conversation.model,
       systemPrompt: [
         input.systemPrompt,
-        '你正在根据 IsleMind 受控工具结果生成最终回复。不要调用更多工具，不要暴露 provider tool call JSON；只基于工具输出和已有上下文回答用户。如果工具失败，请明确说明失败状态和可继续的下一步。',
+        '你正在把 IsleMind 已取得的工具信息整理成最终回复。不要调用更多工具，不要暴露 provider tool call JSON，也不要把“工具输出”“受控工具”“native-provider”等内部格式复述给用户。工具成功时请像正常回答一样自然综合；涉及新闻、搜索、资料汇总时先给一句简短背景，再用清晰紧凑的条目组织，并保留必要来源指向。工具失败时才说明失败状态和可继续的下一步。',
       ].filter(Boolean).join('\n\n'),
       messages,
       contextPrompt: input.baseContextPrompt,
@@ -1888,6 +1894,27 @@ function finishWithError(conversationId: string, messageId: string, content: str
   })
   useChatStore.getState().setError(content)
   void useChatStore.getState().flushStreamingMessage(conversationId, messageId)
+}
+
+function finishFinalizeError(conversationId: string, messageId: string, error: unknown, providerId?: string) {
+  const message = error instanceof Error ? error.message : st('chatRunner.error.sendFailed')
+  const current = getMessage(conversationId, messageId)
+  upsertTrace(conversationId, messageId, completeTrace({
+    id: traceId('finalize-error'),
+    type: 'system',
+    title: st('chatRunner.trace.modelRequestTitle'),
+    content: toUserFacingError(message),
+    status: 'error',
+    startedAt: current?.startedAt ?? Date.now(),
+    metadata: { errorCode: classifyChatError(message) },
+  }))
+  finishWithError(
+    conversationId,
+    messageId,
+    current?.content?.trim() || toUserFacingError(message),
+    classifyChatError(message),
+    providerId
+  )
 }
 
 function upsertTrace(conversationId: string, messageId: string, trace: ProcessTrace) {

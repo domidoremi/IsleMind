@@ -79,11 +79,42 @@ export function summarizeTraces(traces: ProcessTrace[], messageStatus: Message['
 
 export function getActiveTraceTitle(traces: ProcessTrace[], messageStatus: Message['status']): string {
   const normalized = normalizeTraceStatuses(traces, messageStatus)
-  const activeTrace = normalized.find((trace) => trace.status === 'running' || trace.status === 'pending')
+  const activeTrace = selectActiveProcessTrace(normalized, messageStatus)
   if (activeTrace) return safeProcessTraceTitle(activeTrace)
   const errorTrace = normalized.find((trace) => trace.status === 'error')
   if (errorTrace) return safeProcessTraceTitle(errorTrace)
   return settledWorkflowActivityLabel(normalized) ?? ''
+}
+
+export function getActiveTraceStageLabel(traces: ProcessTrace[], messageStatus: Message['status']): string {
+  const activeTrace = selectActiveProcessTrace(traces, messageStatus)
+  if (activeTrace) return traceActivityStageLabel(activeTrace)
+  return messageStatus === 'streaming' || messageStatus === 'sending' ? st('trace.stage.reasoning') : ''
+}
+
+export function selectActiveProcessTrace(traces: ProcessTrace[], messageStatus: Message['status']): ProcessTrace | undefined {
+  const normalized = normalizeTraceStatuses(traces, messageStatus)
+  const activeTraces = normalized.filter((trace) => trace.status === 'running' || trace.status === 'pending')
+  if (!activeTraces.length) return undefined
+  return [...activeTraces].reverse().find((trace) => !isGenericModelActivityTrace(trace)) ?? activeTraces[activeTraces.length - 1]
+}
+
+export function traceActivityStageLabel(trace: ProcessTrace): string {
+  return isGenericModelActivityTrace(trace) || trace.type === 'system'
+    ? st('trace.stage.reasoning')
+    : traceStageLabel(trace)
+}
+
+function isGenericModelActivityTrace(trace: ProcessTrace): boolean {
+  const metadata = trace.metadata ?? {}
+  return trace.type === 'system' &&
+    (
+      trace.id.startsWith('model-') ||
+      (
+        typeof metadata.providerId === 'string' &&
+        typeof metadata.model === 'string'
+      )
+    )
 }
 
 function settledWorkflowActivityLabel(traces: ProcessTrace[]): string | undefined {

@@ -1,6 +1,8 @@
 import { getModelConfig } from '@/types'
 import type { AIProvider, ReasoningEffort } from '@/types'
 
+export type ReasoningControlValue = ReasoningEffort | 'default'
+
 export function getReasoningEffortOptions(provider: AIProvider | undefined, model: string | undefined): ReasoningEffort[] {
   if (!provider || !model) return []
   const config = getModelConfig(model, provider.type, provider.modelConfigs)
@@ -37,6 +39,55 @@ export function providerSupportsReasoning(provider: AIProvider | undefined, mode
   if (!provider) return false
   if (!model) return false
   return getReasoningEffortOptions(provider, model).length > 0
+}
+
+export function modelSupportsSamplingControls(provider: AIProvider | undefined, model: string | undefined, reasoningEffort?: ReasoningEffort): boolean {
+  if (!provider || !model) return true
+  if (modelDisallowsAnthropicSampling(model)) return false
+  const config = getModelConfig(model, provider.type, provider.modelConfigs)
+  if (config.maxTemperature !== undefined && config.maxTemperature <= 0) return false
+  if (isOpenAIReasoningModel(provider, model) || config.reasoningMode === 'openai-effort') return false
+  if (isKimiThinkingModel(provider, model) || config.reasoningMode === 'kimi-thinking') return false
+  if ((isDeepSeekThinkingModel(provider, model) || config.reasoningMode === 'deepseek-thinking') && reasoningEffort !== 'none' && reasoningEffort !== 'minimal') return false
+  if (isXiaomiMimoReasoningModel(provider, model) && reasoningEffort !== 'none') return false
+
+  const reasoningEnabled = Boolean(reasoningEffort && reasoningEffort !== 'none' && reasoningEffort !== 'minimal')
+  if (!reasoningEnabled) return true
+  return ![
+    'anthropic-thinking',
+    'deepseek-thinking',
+    'dashscope-thinking',
+  ].includes(config.reasoningMode ?? '') &&
+    !isClaudeThinkingModel(provider, model) &&
+    !isDeepSeekThinkingModel(provider, model) &&
+    !isDashScopeThinkingModel(provider, model)
+}
+
+export function getReasoningControlOptions(options: ReasoningEffort[]): ReasoningControlValue[] {
+  return options.length ? ['default', ...options] : []
+}
+
+export function getReasoningControlValue(effort: ReasoningEffort | undefined): ReasoningControlValue {
+  return effort ?? 'default'
+}
+
+export function resolveReasoningControlValue(value: ReasoningControlValue): ReasoningEffort | undefined {
+  return value === 'default' ? undefined : value
+}
+
+export function getReasoningDisplayEffort(effort: ReasoningEffort | undefined, options: ReasoningEffort[]): ReasoningEffort {
+  if (effort && options.includes(effort)) return effort
+  if (options.includes('medium')) return 'medium'
+  return options.find((option) => option !== 'none' && option !== 'minimal') ?? options[0] ?? 'none'
+}
+
+export function getNextReasoningEffort(effort: ReasoningEffort | undefined, options: ReasoningEffort[]): ReasoningEffort | undefined {
+  const controlOptions = getReasoningControlOptions(options)
+  if (!controlOptions.length) return effort
+  const currentValue = effort && options.includes(effort) ? effort : 'default'
+  const currentIndex = controlOptions.indexOf(currentValue)
+  const nextIndex = currentIndex >= 0 ? (currentIndex + 1) % controlOptions.length : 0
+  return resolveReasoningControlValue(controlOptions[nextIndex])
 }
 
 export function isOpenAIReasoningModel(provider: AIProvider, model: string): boolean {
