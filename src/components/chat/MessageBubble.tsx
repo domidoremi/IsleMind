@@ -20,8 +20,11 @@ import {
   collectVisibleProcessTraces,
   formatDuration,
   formatProcessTraceForDisplay,
+  metadataSummaryForTrace,
   isAgentWorkflowEnvelopeTrace,
   normalizeTraceStatuses,
+  selectActiveProcessTrace,
+  traceActivityStageLabel,
   traceStageLabel,
 } from './tracePresentation'
 import { IslePanel } from '@/components/ui/isle'
@@ -60,7 +63,7 @@ export interface MessageBubbleProps {
   showThinkingStatus?: boolean
   activeActionMessageId?: string | null
   onActionMessageChange?: (messageId: string | null) => void
-  onLayoutChangeRequest?: () => void
+  onLayoutChangeRequest?: (options?: { force?: boolean }) => void
   onCopy?: (message: Message) => void
   onCopyProcessTrace?: (message: Message) => void
   onCopyWorkArtifact?: (message: Message) => void
@@ -123,7 +126,7 @@ function MessageBubbleComponent({
     isStreamingContent ||
     showThinkingStatus ||
     processTraces.some(isActiveProcessTrace) ||
-    processTraces.some(hasThinkingContent) ||
+    processTraces.some(hasVisibleProcessContent) ||
     processTraces.some(isAgentWorkflowWaitingTrace)
   )
   const bubbleMaxWidth = useMemo(
@@ -135,7 +138,7 @@ function MessageBubbleComponent({
     return total + display.title.length + display.content.length
   }, 0), [processTraces])
   const processLayoutStep = isStreamingContent ? Math.floor(processTextLength / STREAMING_LAYOUT_TEXT_STEP) : 0
-  const processCanExpand = !isUser && processTraces.some(hasThinkingContent)
+  const processCanExpand = !isUser && processTraces.some(hasVisibleProcessContent)
   const canCopyProcessTrace = !isUser && processTraces.length > 0 && !!onCopyProcessTrace
   const processMaxHeight = Math.min(230, viewportHeight * 0.34)
   const actionBarOpen = activeActionMessageId === undefined ? localActionsOpen : activeActionMessageId === message.id
@@ -207,7 +210,11 @@ function MessageBubbleComponent({
     if (!processCanExpand) return
     if (hapticsEnabled) void Haptics.selectionAsync()
     setActionBarOpen(false)
-    setProcessExpanded((value) => !value)
+    setProcessExpanded((value) => {
+      const next = !value
+      if (next) requestAnimationFrame(() => onLayoutChangeRequest?.({ force: true }))
+      return next
+    })
   }
 
   const tapBubble = Gesture.Tap()
@@ -251,7 +258,6 @@ function MessageBubbleComponent({
             {processLayerVisible ? (
               <MessageProcessLayer
                 message={message}
-                displayText={displayText}
                 traces={processTraces}
                 expanded={processExpanded}
                 canExpand={processCanExpand}
@@ -461,7 +467,6 @@ function MessageSourceLink({ conversationId, message }: { conversationId: string
 
 function MessageProcessLayer({
   message,
-  displayText,
   traces,
   expanded,
   canExpand,
@@ -470,7 +475,6 @@ function MessageProcessLayer({
   trailingActionSpace = false,
 }: {
   message: Message
-  displayText: string
   traces: ProcessTrace[]
   expanded: boolean
   canExpand: boolean
@@ -482,7 +486,7 @@ function MessageProcessLayer({
   const actionChrome = resolveMessageActionChrome(colors, isGlass)
   const { t } = useTranslation()
   const active = message.status === 'streaming' || message.status === 'sending'
-  const processStatusLabel = processLayerLabel(message, displayText, traces, t)
+  const processStatusLabel = processLayerLabel(message, traces, t)
   const emphasizedStatus = message.status === 'error' || message.status === 'cancelled' || traces.some(isAgentWorkflowWaitingTrace)
   const processAccessibilityLabel = canExpand
     ? expanded
@@ -532,11 +536,12 @@ function MessageProcessLayer({
         accessibilityState={processAccessibilityState}
         accessibilityValue={canExpand ? { text: processStatusLabel } : undefined}
         style={{
-           minHeight: 26,
+          minHeight: 26,
           flexDirection: 'row',
           alignItems: 'center',
           gap: 8,
           alignSelf: 'flex-start',
+          width: active ? '100%' : undefined,
           maxWidth: '100%',
           borderRadius: colors.ui.radius.chip,
           paddingVertical: emphasizedStatus ? 5 : 2,
@@ -548,7 +553,11 @@ function MessageProcessLayer({
         }}
       >
         <ThinkingPulse active={active} tone={tone} />
-        <Text numberOfLines={1} style={{ color: tone, fontSize: 12, lineHeight: 16, fontWeight: '800', flex: 1, minWidth: 0 }}>
+        <Text
+          numberOfLines={1}
+          ellipsizeMode="tail"
+          style={{ color: tone, fontSize: 12, lineHeight: 16, fontWeight: '800', flexGrow: 1, flexShrink: 1, minWidth: 120 }}
+        >
           {processStatusLabel}
         </Text>
         {canExpand ? (
@@ -564,12 +573,18 @@ function MessageProcessLayer({
 
 function MessageProcessPanel({ message, traces, maxHeight }: { message: Message; traces: ProcessTrace[]; maxHeight: number }) {
   const { colors, isGlass } = useAppTheme()
+  const { t } = useTranslation()
+  const scrollRef = useRef<ScrollView>(null)
   const thinkingSummaries = normalizeTraceStatuses(traces, message.status)
-    .filter(hasThinkingContent)
-    .map(formatThinkingSummary)
+    .filter(hasVisibleProcessContent)
+    .map((trace) => formatProcessSummary(trace, message.status, t))
     .filter(Boolean)
   const contentLength = thinkingSummaries.reduce((total, summary) => total + summary.length, 0)
   const running = message.status === 'streaming' || message.status === 'sending'
+
+  useEffect(() => {
+    requestAnimationFrame(() => scrollRef.current?.scrollToEnd({ animated: running }))
+  }, [contentLength, running, thinkingSummaries.length])
 
   return (
     <MotiView
@@ -583,7 +598,7 @@ function MessageProcessPanel({ message, traces, maxHeight }: { message: Message;
         paddingTop: 8,
       }}
     >
-      <ScrollView nestedScrollEnabled showsVerticalScrollIndicator={contentLength > 360 || thinkingSummaries.length > 2} style={{ maxHeight }}>
+      <ScrollView ref={scrollRef} nestedScrollEnabled showsVerticalScrollIndicator={contentLength > 360 || thinkingSummaries.length > 2} style={{ maxHeight }}>
         {thinkingSummaries.length ? (
           <View style={{ gap: 8 }}>
             {thinkingSummaries.map((summary, index) => (
@@ -629,26 +644,21 @@ function ThinkingPulse({ active, tone }: { active: boolean; tone: string }) {
   )
 }
 
-function processLayerLabel(message: Message, displayText: string, traces: ProcessTrace[], t: TFunction): string {
+function processLayerLabel(message: Message, traces: ProcessTrace[], t: TFunction): string {
   const waitingLabel = waitingProcessLayerLabel(traces, t)
   if (waitingLabel) return withProcessStageLabel(waitingLabel, traces, message.status)
 
-  const activeTrace = selectProcessStageTrace(traces, message.status)
-  if (activeTrace && (message.status === 'streaming' || message.status === 'sending') && isActiveProcessTrace(activeTrace)) {
-    return t('messageBubble.traceGenerating', {
-      title: traceStageLabel(activeTrace),
-      defaultValue: `${traceStageLabel(activeTrace)}中`,
-    })
+  if (message.status === 'streaming' || message.status === 'sending') {
+    const activeTrace = selectActiveProcessTrace(traces, message.status)
+    const completedTrace = selectLatestCompletedProcessTrace(traces, message.status)
+    if (activeTrace && !isGenericModelRequestTrace(activeTrace)) return thinkingProgressLabel(t, 'active', traceActivityStageLabel(activeTrace))
+    if (completedTrace) return thinkingProgressLabel(t, 'done', traceActivityStageLabel(completedTrace))
+    if (activeTrace) return thinkingProgressLabel(t, 'active', traceActivityStageLabel(activeTrace))
+    return thinkingProgressLabel(t, 'base')
   }
 
   return (() => {
     switch (message.status) {
-      case 'sending':
-        return translateMessageBubbleLabel(t, 'messageBubble.thinking', '正在思考')
-      case 'streaming':
-        return displayText.trim()
-          ? thinkingDoneLabel(message, traces, t)
-          : translateMessageBubbleLabel(t, 'messageBubble.thinking', '正在思考')
       case 'error':
         return translateMessageBubbleLabel(t, 'messageBubble.failed', '失败')
       case 'cancelled':
@@ -660,6 +670,8 @@ function processLayerLabel(message: Message, displayText: string, traces: Proces
 }
 
 function thinkingDoneLabel(message: Message, traces: ProcessTrace[], t: TFunction): string {
+  const settledStage = settledProcessStageLabel(message, traces, t)
+  if (settledStage) return settledStage
   const durationMs = resolveThinkingDurationMs(message, traces)
   if (durationMs) {
     return t('messageBubble.thinkingDoneWithDuration', {
@@ -668,6 +680,12 @@ function thinkingDoneLabel(message: Message, traces: ProcessTrace[], t: TFunctio
     })
   }
   return translateMessageBubbleLabel(t, 'messageBubble.thinkingDone', '已思考')
+}
+
+function settledProcessStageLabel(message: Message, traces: ProcessTrace[], t: TFunction): string {
+  const trace = selectLatestCompletedProcessTrace(traces, message.status)
+  if (!trace) return ''
+  return thinkingProgressLabel(t, 'done', traceActivityStageLabel(trace))
 }
 
 function resolveThinkingDurationMs(message: Message, traces: ProcessTrace[]): number | undefined {
@@ -690,15 +708,47 @@ function traceDurationMs(trace: Pick<ProcessTrace, 'durationMs' | 'startedAt' | 
 function withProcessStageLabel(label: string, traces: ProcessTrace[], messageStatus: Message['status']): string {
   const activeTrace = selectProcessStageTrace(traces, messageStatus)
   if (!activeTrace) return label
-  return `${traceStageLabel(activeTrace)} · ${label}`
+  return `${traceActivityStageLabel(activeTrace)} · ${label}`
 }
 
 function selectProcessStageTrace(traces: ProcessTrace[], messageStatus: Message['status']): ProcessTrace | undefined {
+  const activeTrace = selectActiveProcessTrace(traces, messageStatus)
+  if (activeTrace) return activeTrace
   const normalized = normalizeTraceStatuses(traces, messageStatus)
-  return normalized.find((trace) => trace.status === 'running' || trace.status === 'pending')
-    ?? normalized.find((trace) => trace.status === 'error')
+  return normalized.find((trace) => trace.status === 'error')
     ?? [...normalized].reverse().find((trace) => trace.title.startsWith('Agent ') || trace.metadata?.source || trace.metadata?.inputSummary)
     ?? normalized[normalized.length - 1]
+}
+
+function selectLatestCompletedProcessTrace(traces: ProcessTrace[], messageStatus: Message['status']): ProcessTrace | undefined {
+  return [...normalizeTraceStatuses(traces, messageStatus)].reverse().find((item) =>
+    isCompletedProcessStageTrace(item) &&
+    hasVisibleProcessContent(item)
+  )
+}
+
+function isCompletedProcessStageTrace(trace: ProcessTrace): boolean {
+  return trace.status === 'done' &&
+    trace.type !== 'reasoning' &&
+    trace.type !== 'system'
+}
+
+function thinkingProgressLabel(t: TFunction, state: 'base' | 'active' | 'done', stage = ''): string {
+  if (state === 'active' && stage) {
+    return t('messageBubble.thinkingProgressActive', {
+      stage,
+      defaultValue: `思考中... > 正在${stage}`,
+    })
+  }
+  if (state === 'done' && stage) {
+    return t('messageBubble.thinkingProgressDone', {
+      stage,
+      defaultValue: `思考中... > 已完成${stage}`,
+    })
+  }
+  return t('messageBubble.thinkingProgressBase', {
+    defaultValue: '思考中... >',
+  })
 }
 
 function waitingProcessLayerLabel(traces: ProcessTrace[], t: TFunction): string | undefined {
@@ -806,6 +856,18 @@ function pendingActionReason(value: unknown): string | undefined {
 function formatThinkingSummary(trace: ProcessTrace): string {
   const summary = formatProcessTraceForDisplay(trace, 720).content
   return summary ? `${traceStageLabel(trace)} · ${summary}` : ''
+}
+
+function formatProcessSummary(trace: ProcessTrace, messageStatus: Message['status'], t: TFunction): string {
+  if (hasThinkingContent(trace)) return formatThinkingSummary(trace)
+  const stage = traceActivityStageLabel(trace)
+  if (isActiveProcessTrace(trace)) return thinkingProgressLabel(t, 'active', stage)
+  const normalized = normalizeTraceStatuses([trace], messageStatus)[0] ?? trace
+  if (isCompletedProcessStageTrace(normalized)) return thinkingProgressLabel(t, 'done', stage)
+  if (normalized.status === 'skipped' || normalized.status === 'cancelled') return ''
+  const display = formatProcessTraceForDisplay(trace, 140)
+  const summary = display.content || display.title
+  return summary ? `${stage} · ${summary}` : ''
 }
 
 function hasAndroidUndoFollowUp(traces: ProcessTrace[]): boolean {
@@ -1137,6 +1199,31 @@ function canShowActionBar({
 
 function hasThinkingContent(trace: ProcessTrace): boolean {
   return trace.type === 'reasoning' && Boolean(trace.content?.trim())
+}
+
+function hasVisibleProcessContent(trace: ProcessTrace): boolean {
+  if (trace.metadata?.hiddenSignature) return false
+  if (hasThinkingContent(trace)) return true
+  if (isActiveProcessTrace(trace)) return true
+  if (isAgentWorkflowWaitingTrace(trace)) return true
+  if (trace.type === 'system' && isGenericModelRequestTrace(trace)) return false
+  return Boolean(
+    trace.content?.trim() ||
+    metadataSummaryForTrace(trace) ||
+    (
+      trace.title.trim() &&
+      trace.type !== 'system'
+    )
+  )
+}
+
+function isGenericModelRequestTrace(trace: ProcessTrace): boolean {
+  const metadata = trace.metadata ?? {}
+  return trace.id.startsWith('model-') ||
+    (
+      typeof metadata.providerId === 'string' &&
+      typeof metadata.model === 'string'
+    )
 }
 
 function isActiveProcessTrace(trace: ProcessTrace): boolean {

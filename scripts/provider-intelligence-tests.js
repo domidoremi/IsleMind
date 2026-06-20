@@ -11856,8 +11856,146 @@ function assertChatTopChromeBehavior() {
     'chat workspace exposes a focused-input chrome collapse helper'
   )
   assert.ok(
+    chatWorkspaceSource.includes('const keepChromeExpanded = !runtimeConversation || showOptions || !!providerHealth?.code || testingHeader'),
+    'chat top chrome does not stay expanded for routine composer panels'
+  )
+  assert.ok(
+    chatWorkspaceSource.includes('if (!isStreaming || keepChromeExpanded) return') &&
+      chatWorkspaceSource.includes('setChromeCollapsed(true)'),
+    'chat top chrome collapses while the assistant is generating'
+  )
+  assert.ok(
     chatWorkspaceSource.includes('setChromeCollapsed(true)'),
     'chat workspace collapses top chrome in focus-driven paths'
+  )
+  assert.ok(
+    chatWorkspaceSource.includes('const expandedMessageListTopInset = Math.max(0, chromeHeight - MESSAGE_LIST_CHROME_OVERLAY + MESSAGE_LIST_CHROME_GAP)') &&
+      chatWorkspaceSource.includes('const messageListTopInset = expandedMessageListTopInset'),
+    'chat message list keeps a stable top inset while the floating chrome collapses'
+  )
+  assert.ok(
+    chatWorkspaceSource.includes('const userDrivenScroll = userScrollInteractionActive.current || userDragMomentumEligible.current'),
+    'chat top chrome responds only to user-driven message-list scrolling'
+  )
+  assert.ok(
+    chatWorkspaceSource.includes('const collapsedPeekVisible = collapsed && !showOptions') &&
+      chatWorkspaceSource.includes('width: 38') &&
+      chatWorkspaceSource.includes('<AppIcon name="menu-output"'),
+    'chat collapsed top chrome uses a compact floating icon button instead of a text pill'
+  )
+  assert.ok(
+    !/mobileViewport\s*\?\s*0\s*:\s*collapsedChromeTop/.test(chatWorkspaceSource),
+    'chat message list no longer jumps to zero top inset on mobile collapsed chrome'
+  )
+}
+
+function assertChatActivityStatusBehavior() {
+  const chatWorkspaceSource = fs.readFileSync(path.join(root, 'src/components/chat/ChatWorkspace.tsx'), 'utf8')
+  const messageBubbleSource = fs.readFileSync(path.join(root, 'src/components/chat/MessageBubble.tsx'), 'utf8')
+  const tracePresentationSource = fs.readFileSync(path.join(root, 'src/components/chat/tracePresentation.ts'), 'utf8')
+  assert.ok(
+    chatWorkspaceSource.includes('getActiveTraceStageLabel(traces, message.status)'),
+    'chat activity label uses process stage labels while replies are running'
+  )
+  assert.ok(
+    tracePresentationSource.includes('export function selectActiveProcessTrace') &&
+      tracePresentationSource.includes('!isGenericModelActivityTrace(trace)'),
+    'trace presentation prefers concrete search/tool/retrieval work over generic model-request traces'
+  )
+  assert.ok(
+    tracePresentationSource.includes("trace.type === 'system'") &&
+      tracePresentationSource.includes("st('trace.stage.reasoning')"),
+    'trace presentation maps generic system activity to thinking instead of exposing system as a live status'
+  )
+  assert.ok(
+    messageBubbleSource.includes('selectActiveProcessTrace(traces, messageStatus)') &&
+      messageBubbleSource.includes('traceActivityStageLabel(activeTrace)'),
+    'message process layer uses the same active trace stage selection as chat activity status'
+  )
+  assert.ok(
+    !messageBubbleSource.includes('displayText.trim()\n          ? thinkingDoneLabel(message, traces, t)') &&
+      messageBubbleSource.includes("thinkingProgressLabel(t, 'active'") &&
+      messageBubbleSource.includes("thinkingProgressLabel(t, 'done'"),
+    'message process layer keeps live thinking progress labels while reply text streams'
+  )
+  assert.ok(
+    messageBubbleSource.includes("width: active ? '100%' : undefined") &&
+      messageBubbleSource.includes('minWidth: 120') &&
+      messageBubbleSource.includes('ellipsizeMode="tail"'),
+    'message process layer reserves visible width for live status text instead of collapsing to dots only'
+  )
+  assert.ok(
+    messageBubbleSource.includes('scrollRef.current?.scrollToEnd') &&
+      messageBubbleSource.includes("onLayoutChangeRequest?.({ force: true })"),
+    'expanded thinking process auto-scrolls to the latest process content'
+  )
+  assert.ok(
+    chatWorkspaceSource.includes('const force = options?.force === true') &&
+      chatWorkspaceSource.includes('if (force) autoStickToBottom.current = true'),
+    'message list accepts forced scroll requests when the user opens thinking details'
+  )
+  const zh = require('../src/i18n/resources/zh-CN.json')
+  assert.equal(zh.trace.stage.reasoning, '思考', 'Chinese trace stage labels surface thinking as a user-visible work state')
+  assert.equal(zh.trace.stage.search, '搜索', 'Chinese trace stage labels surface search as a user-visible work state')
+  assert.equal(zh.trace.stage.controlledTool, '调用工具', 'Chinese trace stage labels surface controlled tool calls as a user-visible work state')
+  assert.equal(zh.messageBubble.thinkingProgressBase, '思考中... >', 'Chinese thinking progress base matches the requested status form')
+  assert.equal(zh.messageBubble.thinkingProgressActive, '思考中... > 正在{{stage}}', 'Chinese thinking progress active state names the current work stage')
+  assert.equal(zh.messageBubble.thinkingProgressDone, '思考中... > 已完成{{stage}}', 'Chinese thinking progress completion state names the completed work stage')
+}
+
+function assertChatCompletedProcessBehavior() {
+  const messageBubbleSource = fs.readFileSync(path.join(root, 'src/components/chat/MessageBubble.tsx'), 'utf8')
+  const chatWorkspaceSource = fs.readFileSync(path.join(root, 'src/components/chat/ChatWorkspace.tsx'), 'utf8')
+  assert.ok(
+    messageBubbleSource.includes('processTraces.some(hasVisibleProcessContent)') &&
+      messageBubbleSource.includes('const processCanExpand = !isUser && processTraces.some(hasVisibleProcessContent)'),
+    'completed assistant process layers stay visible and expandable for non-reasoning process traces'
+  )
+  assert.ok(
+    messageBubbleSource.includes('function formatProcessSummary') &&
+      messageBubbleSource.includes('formatProcessTraceForDisplay(trace, 140)') &&
+      messageBubbleSource.includes("thinkingProgressLabel(t, 'done', stage)") &&
+      messageBubbleSource.includes("normalized.status === 'skipped' || normalized.status === 'cancelled'"),
+    'completed process panel favors concise user-facing thinking progress over raw tool metadata'
+  )
+  assert.ok(
+    messageBubbleSource.includes('function settledProcessStageLabel') &&
+      messageBubbleSource.includes('selectLatestCompletedProcessTrace') &&
+      messageBubbleSource.includes('messageBubble.thinkingProgressDone'),
+    'completed process layer labels search/tool/retrieval work as completed instead of only saying thinking done'
+  )
+  assert.ok(
+    messageBubbleSource.includes('function isGenericModelRequestTrace') &&
+      messageBubbleSource.includes("trace.type !== 'system'"),
+    'completed process panel filters generic system traces from persistent user-visible progress labels'
+  )
+  assert.ok(
+    !chatWorkspaceSource.includes('GenerationStatusPill') &&
+      !chatWorkspaceSource.includes("AppIcon name=\"reasoning\"") &&
+      chatWorkspaceSource.includes('const heights = [5, 8, 11, 14, 17]'),
+    'composer dock removes the lower-right status pill and renders reasoning effort as strength bars'
+  )
+}
+
+function assertWebAnswerStyleBehavior() {
+  const promptEngineeringSource = fs.readFileSync(path.join(root, 'src/services/promptEngineering.ts'), 'utf8')
+  const chatRunnerSource = fs.readFileSync(path.join(root, 'src/services/chatRunner.ts'), 'utf8')
+  assert.ok(
+    promptEngineeringSource.includes('webAnswerStyleRule(input.language)') &&
+      promptEngineeringSource.includes('不要像工具日志或搜索结果转写') &&
+      promptEngineeringSource.includes('avoid exposing tool-output wording'),
+    'web system prompt asks models to synthesize source-backed answers naturally'
+  )
+  assert.ok(
+    chatRunnerSource.includes('不要把“工具输出”“受控工具”“native-provider”等内部格式复述给用户') &&
+      chatRunnerSource.includes('工具成功时请像正常回答一样自然综合'),
+    'provider-native tool revision prompt keeps internal tool framing out of final user-facing replies'
+  )
+  assert.ok(
+    chatRunnerSource.includes('}).catch((error) => {') &&
+      chatRunnerSource.includes('finishFinalizeError(conversationId, assistantMessage.id, error, provider.id)') &&
+      chatRunnerSource.includes('function finishFinalizeError'),
+    'chat runner settles streaming messages when asynchronous finalization fails'
   )
 }
 
@@ -11930,6 +12068,15 @@ async function runFocused() {
   }
   if (focus === 'chat-top-chrome') {
     assertChatTopChromeBehavior()
+    return
+  }
+  if (focus === 'chat-activity-status') {
+    assertChatActivityStatusBehavior()
+    return
+  }
+  if (focus === 'chat-completed-process') {
+    assertChatCompletedProcessBehavior()
+    assertWebAnswerStyleBehavior()
     return
   }
   throw new Error(`Unknown focus: ${focus}`)

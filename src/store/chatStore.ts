@@ -26,6 +26,7 @@ function selectSupportedReasoningEffort(
   options: NonNullable<Conversation['reasoningEffort']>[]
 ): Conversation['reasoningEffort'] {
   if (!options.length) return undefined
+  if (requested === undefined) return undefined
   if (requested && options.includes(requested)) return requested
   if (options.includes('medium')) return 'medium'
   return options.find((effort) => effort !== 'none' && effort !== 'minimal') ?? options[0]

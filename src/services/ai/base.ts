@@ -70,7 +70,7 @@ import { getHeaders } from '@/services/ai/providerHeaders'
 import { getHostedProviderSupportIssue } from '@/services/ai/providerHostedBoundary'
 import { isBedrockRuntimeProvider, prepareBedrockRuntimeInvokeModelRequest } from '@/services/ai/providerAwsBedrockRouting'
 import { getWireProviderType, isAnthropicWireRequest } from '@/services/ai/providerWireProtocol'
-import { clampMaxTokens, isXiaomiMimoThinkingActive, normalizeTemperature, normalizeXiaomiMimoThinking } from '@/services/ai/providerRequestParameters'
+import { clampMaxTokens, isXiaomiMimoThinkingActive, normalizeTemperature, normalizeXiaomiMimoThinking, supportsSamplingControls } from '@/services/ai/providerRequestParameters'
 import { isKimiSamplingLocked, normalizeDashScopeThinking, normalizeDeepSeekThinking, normalizeKimiPreservedThinking, normalizeKimiThinking, normalizeMiniMaxThinking, shouldRequestMiniMaxReasoningSplit } from '@/services/ai/providerOpenAICompatibleThinking'
 import { normalizeGoogleThinkingConfig } from '@/services/ai/providerGoogleThinking'
 import { googleAttachmentPart, googleNativeWebSearchTool } from '@/services/ai/providerGoogleRequest'
@@ -376,11 +376,12 @@ function buildOpenAIBody(req: ChatRequest) {
     kimiThinking?.type === 'enabled' ||
     kimiSamplingLocked ||
     isXiaomiMimoThinkingActive(req)
-  const temperature = compatibleReasoningEnabled ? undefined : normalizeTemperature(req)
+  const samplingControlsSupported = supportsSamplingControls(req) && !compatibleReasoningEnabled
+  const temperature = samplingControlsSupported ? normalizeTemperature(req) : undefined
   if (temperature !== undefined) {
     body.temperature = temperature
   }
-  if (req.topP !== undefined && !compatibleReasoningEnabled) body.top_p = clamp01(req.topP)
+  if (req.topP !== undefined && samplingControlsSupported) body.top_p = clamp01(req.topP)
   if (deepSeekThinking) {
     body.thinking = { type: deepSeekThinking.type }
     if (deepSeekThinking.effort) body.reasoning_effort = deepSeekThinking.effort
@@ -415,7 +416,7 @@ function buildAnthropicBody(req: ChatRequest) {
   const thinkingConfig = normalizeAnthropicThinking(req)
   const miniMaxThinking = normalizeMiniMaxThinking(req)
   const mimoThinking = normalizeXiaomiMimoThinking(req)
-  const samplingDisallowed = Boolean(thinkingConfig) || isXiaomiMimoThinkingActive(req) || modelDisallowsAnthropicSampling(req.model)
+  const samplingDisallowed = !supportsSamplingControls(req) || Boolean(thinkingConfig) || isXiaomiMimoThinkingActive(req) || modelDisallowsAnthropicSampling(req.model)
   const temperature = samplingDisallowed ? undefined : isMiniMaxProvider(req.provider) ? normalizeTemperature(req) : req.temperature ?? 0.7
   const topP = samplingDisallowed ? undefined : req.topP ?? 1
 
@@ -556,11 +557,12 @@ function buildOpenAIResponsesBody(req: ChatRequest) {
     req.providerToolDeclarations,
     req.webSearchMode === 'native' ? [openAIResponsesNativeWebSearchTool(req.provider)] : []
   )
+  const samplingControlsSupported = supportsSamplingControls(req)
   return {
     model: req.model,
     input,
-    ...(normalizeTemperature(req) === undefined ? {} : { temperature: normalizeTemperature(req) }),
-    ...(req.topP === undefined ? {} : { top_p: clamp01(req.topP) }),
+    ...(samplingControlsSupported && normalizeTemperature(req) !== undefined ? { temperature: normalizeTemperature(req) } : {}),
+    ...(samplingControlsSupported && req.topP !== undefined ? { top_p: clamp01(req.topP) } : {}),
     ...(responsesReasoning ? { reasoning: responsesReasoning } : {}),
     ...(includeEncryptedReasoning ? { include: ['reasoning.encrypted_content'] } : {}),
     max_output_tokens: clampMaxTokens(req),

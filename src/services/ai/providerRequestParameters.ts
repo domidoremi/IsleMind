@@ -1,6 +1,6 @@
 import type { AIProvider, ReasoningEffort } from '@/types'
 import { getModelConfig } from '@/types'
-import { isXiaomiMimoReasoningModel } from '@/utils/modelReasoning'
+import { isXiaomiMimoReasoningModel, modelSupportsSamplingControls } from '@/utils/modelReasoning'
 import { isMiniMaxProvider } from '@/services/ai/providerIdentity'
 
 export interface ProviderRequestParameterInput {
@@ -24,7 +24,12 @@ export function isXiaomiMimoThinkingActive(req: ProviderRequestParameterInput): 
   return ['mimo-v2.5-pro', 'mimo-v2.5', 'mimo-v2-pro', 'mimo-v2-omni'].includes(modelId)
 }
 
+export function supportsSamplingControls(req: ProviderRequestParameterInput): boolean {
+  return modelSupportsSamplingControls(req.provider, req.model, req.reasoningEffort)
+}
+
 export function normalizeTemperature(req: ProviderRequestParameterInput): number | undefined {
+  if (!supportsSamplingControls(req)) return undefined
   if (req.provider.type === 'xiaomi-mimo') {
     if (isXiaomiMimoThinkingActive(req)) return undefined
     return Math.max(0, Math.min(1.5, req.temperature ?? 0.7))
