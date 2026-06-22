@@ -1,10 +1,14 @@
 import { st } from '@/i18n/service'
 import { buildAgentToolCallTraceMetadata, inferAgentToolNameFromTraceContent } from '@/services/agent/agentToolCallTrace'
 import { asRecord, safeJsonPreview, stringValue, stringifyReasoningDetails } from '@/services/ai/providerJsonUtils'
-import { stringifyOpenAIReasoningItem } from '@/services/ai/providerResponseText'
+import { extractOpenAIContentReasoning, stringifyOpenAIReasoningItem } from '@/services/ai/providerResponseText'
 import { dedupeTraces } from '@/services/ai/providerStreamUtils'
 import type { ProcessTrace, ProviderType } from '@/types'
 import { redactSensitiveText } from '@/utils/traceSafety'
+
+export interface ProviderTraceExtractionOptions {
+  includeReasoning?: boolean
+}
 
 export function stableTraceId(json: any, fallback: string): string {
   const raw = [
@@ -79,23 +83,28 @@ export function createProviderTrace(
   }
 }
 
-export function extractTracesFromJson(json: any, providerType: ProviderType): ProcessTrace[] {
+export function extractTracesFromJson(json: any, providerType: ProviderType, options: ProviderTraceExtractionOptions = {}): ProcessTrace[] {
   const traces: ProcessTrace[] = []
+  const includeReasoning = options.includeReasoning !== false
   if (providerType === 'openai' || providerType === 'openai-compatible' || providerType === 'xiaomi-mimo') {
-    const reasoning = [
-      json.choices?.[0]?.message?.reasoning_content,
-      stringifyReasoningDetails(json.choices?.[0]?.message?.reasoning_details),
-      stringifyReasoningDetails(json.reasoning_details),
-      json.reasoning?.summary?.map?.((item: { text?: string }) => item.text ?? '').join('\n'),
-      Array.isArray(json.output)
-        ? json.output
-            .filter((item: Record<string, unknown>) => stringValue(item.type).includes('reasoning'))
-            .map((item: Record<string, unknown>) => stringifyOpenAIReasoningItem(item))
-            .filter(Boolean)
-            .join('\n')
-        : '',
-    ].map(stringValue).filter(Boolean).join('\n')
-    if (reasoning) traces.push(createProviderTrace('reasoning', providerType, st('providerTrace.reasoningSummary'), reasoning, 'done', stableTraceId(json, 'reasoning-json')))
+    if (includeReasoning) {
+      const reasoning = [
+        json.choices?.[0]?.message?.reasoning_content,
+        json.choices?.[0]?.message?.reasoning,
+        extractOpenAIContentReasoning(json.choices?.[0]?.message?.content),
+        stringifyReasoningDetails(json.choices?.[0]?.message?.reasoning_details),
+        stringifyReasoningDetails(json.reasoning_details),
+        json.reasoning?.summary?.map?.((item: { text?: string }) => item.text ?? '').join('\n'),
+        Array.isArray(json.output)
+          ? json.output
+              .filter((item: Record<string, unknown>) => stringValue(item.type).includes('reasoning'))
+              .map((item: Record<string, unknown>) => stringifyOpenAIReasoningItem(item))
+              .filter(Boolean)
+              .join('\n')
+          : '',
+      ].map(stringValue).filter(Boolean).join('\n')
+      if (reasoning) traces.push(createProviderTrace('reasoning', providerType, st('providerTrace.reasoningSummary'), reasoning, 'done', stableTraceId(json, 'reasoning-json')))
+    }
     if (Array.isArray(json.output)) {
       for (const item of json.output) {
         const record = item as Record<string, unknown>
@@ -108,7 +117,7 @@ export function extractTracesFromJson(json: any, providerType: ProviderType): Pr
   if (providerType === 'anthropic' && Array.isArray(json.content)) {
     for (const part of json.content) {
       const item = part as Record<string, unknown>
-      if (item.type === 'thinking') traces.push(createProviderTrace('reasoning', providerType, st('providerTrace.reasoningSummary'), stringValue(item.thinking), 'done', stableTraceId(item, 'thinking-json')))
+      if (includeReasoning && item.type === 'thinking') traces.push(createProviderTrace('reasoning', providerType, st('providerTrace.reasoningSummary'), stringValue(item.thinking), 'done', stableTraceId(item, 'thinking-json')))
       if (item.type === 'tool_use') traces.push(createProviderTrace('tool', providerType, st('providerTrace.toolCallNamed', { name: stringValue(item.name) || 'tool' }), summarizeToolEvent(item), 'done', stableTraceId(item, 'tool-json')))
     }
   }
@@ -116,9 +125,9 @@ export function extractTracesFromJson(json: any, providerType: ProviderType): Pr
     const parts = json.candidates?.[0]?.content?.parts
     if (Array.isArray(parts)) {
       for (const part of parts) {
-        if (part.thought && part.text) traces.push(createProviderTrace('reasoning', providerType, st('providerTrace.reasoningSummary'), stringValue(part.text), 'done', stableTraceId(part, 'thought-json')))
+        if (includeReasoning && part.thought && part.text) traces.push(createProviderTrace('reasoning', providerType, st('providerTrace.reasoningSummary'), stringValue(part.text), 'done', stableTraceId(part, 'thought-json')))
         if (part.functionCall) traces.push(createProviderTrace('tool', providerType, st('providerTrace.functionCallNamed', { name: part.functionCall.name ?? 'function' }), summarizeToolEvent(part.functionCall), 'done', stableTraceId(part.functionCall, 'function-json')))
-        if (part.thoughtSignature) traces.push(createProviderTrace('reasoning', providerType, st('providerTrace.thoughtSignature'), st('providerTrace.thoughtSignatureSaved'), 'done', stableTraceId(part, 'thought-signature-json'), { hiddenSignature: true }))
+        if (includeReasoning && part.thoughtSignature) traces.push(createProviderTrace('reasoning', providerType, st('providerTrace.thoughtSignature'), st('providerTrace.thoughtSignatureSaved'), 'done', stableTraceId(part, 'thought-signature-json'), { hiddenSignature: true }))
       }
     }
   }

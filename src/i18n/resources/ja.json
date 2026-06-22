@@ -608,9 +608,9 @@
     "thinking": "思考中",
     "thinkingDone": "思考済み",
     "thinkingDoneWithDuration": "{{duration}} 思考済み",
-    "thinkingProgressBase": "思考中... >",
-    "thinkingProgressActive": "思考中... > {{stage}}中",
-    "thinkingProgressDone": "思考中... > {{stage}}完了",
+    "thinkingProgressBase": "準備中",
+    "thinkingProgressActive": "{{stage}}中",
+    "thinkingProgressDone": "{{stage}}完了",
     "traceGenerating": "{{title}}中",
     "completed": "完了",
     "thinkingActive": "思考プロセス",
@@ -883,6 +883,38 @@
     "runtimeDiagnosticProviderCoverageValue": "公式 {{official}} · 集約 {{aggregator}} · リレー {{relay}} · ローカル {{local}} · クラウドホスト {{hosted}}",
     "runtimeDiagnosticProviderSupport": "互換状態",
     "runtimeDiagnosticProviderSupportValue": "完全 {{full}} · 部分 {{partial}} · 計画中 {{planned}} · クラウド課題 {{hosted}} · モデル一覧例外 {{modelList}}",
+    "runtimeDiagnosticProviderSupportEvidence": "互換詳細",
+    "runtimeDiagnosticProviderSupportEvidenceValue": "計画中 {{planned}} · 部分 {{partial}}",
+    "runtimeDiagnosticProviderContract": "契約",
+    "runtimeDiagnosticProviderContractValue": "準備済み {{ready}} · マップ済み {{mapped}} · live要 {{live}} · 参照 {{reference}} · ゲート {{gates}} · 記録 {{logged}}",
+    "runtimeDiagnosticCapabilityStatus": "能力ステータス",
+    "runtimeDiagnosticCapabilityStatusValue": "対応 {{supported}} · 部分 {{partial}} · 非対応 {{unsupported}} · liveキー {{live}} · docs {{docs}}",
+    "runtimeDiagnosticCapabilitySendPolicy": "送信ポリシー",
+    "runtimeDiagnosticCapabilitySendPolicyValue": "契約 {{contract}} · ID {{identity}} · 宣言 {{declared}} · ブロック {{blocked}} · 例 {{examples}}",
+    "runtimeDiagnosticCapabilityEvidence": "証拠の例",
+    "runtimeDiagnosticCapabilityEvidenceValue": "ブロック {{unsupported}} · live {{live}} · 部分 {{partial}}",
+    "runtimeDiagnosticCapabilityEvidenceNone": "なし",
+    "runtimeDiagnosticCapabilitySendSource": {
+      "contract": "契約",
+      "provider_identity": "ID",
+      "explicit_declaration": "宣言",
+      "blocked": "ブロック"
+    },
+    "runtimeDiagnosticCapabilityReason": {
+      "contract_supported": "証明済み",
+      "contract_partial": "部分",
+      "contract_unclaimed": "未宣言",
+      "live_smoke_required": "liveキー",
+      "docs_changed": "docs"
+    },
+    "runtimeDiagnosticCapabilityPath": {
+      "send_allowed": "送信可",
+      "disable_parameter": "param停止",
+      "run_live_smoke": "smoke",
+      "manual_declaration_or_model_metadata": "宣言/モデル",
+      "local_fallback": "fallback",
+      "refresh_docs": "更新"
+    },
     "runtimeDiagnosticLog": "ログ",
     "runtimeDiagnosticLogOn": "書き込み",
     "runtimeDiagnosticLogOff": "オフ",
@@ -1397,7 +1429,7 @@
     "noModels": "モデルなし",
     "capabilityUpdated": "能力を更新しました",
     "capabilityMatrix": "能力マトリクス",
-    "capabilityMatrixDescription": "実行時はこれらの能力で Responses、WebSocket、compact、payload、モデル機能を判定します。",
+    "capabilityMatrixDescription": "実行時はこれらの能力で Responses、WebSocket、compact、埋め込み、payload、モデル機能を判定します。",
     "capabilityDependencyHint": "WebSocket またはリモート compact を有効にすると、Responses 対応も自動的に必要になります。",
     "capability": {
       "modelList": "/models",
@@ -1410,6 +1442,7 @@
       "files": "ファイル",
       "nativeSearch": "ネイティブ検索",
       "reasoningEffort": "推論 effort",
+      "embeddings": "埋め込み",
       "topP": "Top P",
       "chat": "Chat",
       "audioInput": "音声入力",
@@ -2004,7 +2037,8 @@
       "timeout": "リクエストがタイムアウトしました。ネットワーク、プロキシ、プロバイダーアドレスを確認してください。",
       "rateLimited": "プロバイダーのレート制限または残高不足です。後で再試行するか、課金/サブスクリプションを確認してください。",
       "maxTokens": "出力長がモデル上限を超えています。Max Tokens を下げて再試行してください。",
-      "badBaseUrl": "プロバイダー URL またはリクエストパラメータが正しくない可能性があります。Base URL とモデル設定を確認してください。"
+      "badBaseUrl": "プロバイダー URL またはリクエストパラメータが正しくない可能性があります。Base URL とモデル設定を確認してください。",
+      "providerConformanceBlocked": "選択中のプロバイダー契約はこのリクエストに対応していません。未対応の添付やツールを外すか、必要な機能を有効にするか、対応モデル/プロバイダーに切り替えてください。"
     }
   },
   "searchPolicy": {
@@ -2048,6 +2082,8 @@
     "streamFallbackCompleted": "プロバイダーまたは実行環境がチャンクを提供しないため、非ストリーミング応答で完了しました。",
     "streamMode": "ストリーミングモード",
     "requestRectified": "リクエスト整流済み",
+    "providerCompatibilityTitle": "プロバイダー互換性",
+    "providerCompatibilityContent": "契約: {{auditState}}\nプロトコル: {{protocol}}\nドキュメント: {{docs}}\nLive smoke ゲート: {{gates}}",
     "runtimeGovernanceTitle": "ランタイムポリシー",
     "runtimeGovernanceContent": "アクセス: {{access}}\nルート: {{route}}\nトランスポート: {{transport}}\nペイロード: {{payload}}\nプロキシ: {{proxy}}",
     "runtimeFallbackTitle": "ランタイムフォールバック",
@@ -2069,7 +2105,8 @@
     "hosted": {
       "azureOpenAIUnsupported": "Azure OpenAI には /openai/v1 配下の Azure リソース Base URL が必要です。従来の deployment URL やリソース URL 未設定の構成はまだ対応していません。",
       "awsBedrockUnsupported": "AWS Bedrock Runtime には AWS access key 認証情報、region、SigV4 InvokeModel ルーティングが必要です。非ストリーミングのチャットテストは JSON または env 形式の AWS 認証情報で利用できます。モデル一覧、ストリーミング、remote compact、ネイティブツールは Bedrock Mantle を使うか、引き続き planned として扱います。",
-      "vertexAIUnsupported": "Vertex AI のネイティブ Gemini 経路には Google Cloud 認証と project/location 対応ルーティングが必要です。部分的なチャットとモデル同期には OpenAI-compatible の /endpoints/openapi Base URL を設定してください。"
+      "vertexAIUnsupported": "Vertex AI のネイティブ Gemini 経路には Google Cloud 認証と project/location 対応ルーティングが必要です。部分的なチャットには OpenAI-compatible の /endpoints/openapi Base URL を設定してください。",
+      "vertexAIModelListUnsupported": "Vertex AI OpenAI-compatible のモデル一覧同期は現在の互換性契約ではカバーしていません。Google Cloud ドキュメントまたは live smoke で対応する /models ルートが確認できるまで、モデル一覧は手動で管理してください。"
     },
     "jsonEmpty": "{{label}} の応答が空です。",
     "htmlInsteadJson": "{{provider}} は JSON ではなく HTML ページを返しました。Base URL に /v1 が必要か、ログイン/リバースプロキシエラーページが返っていないか確認してください。",

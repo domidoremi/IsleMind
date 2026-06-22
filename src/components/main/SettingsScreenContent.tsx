@@ -1343,6 +1343,62 @@ function buildDiagnosticRows(diagnostics: RuntimeDiagnosticsSummary, t: ReturnTy
       tone: diagnostics.capabilityMatrix.plannedProviders ? 'amber' : diagnostics.capabilityMatrix.partialProviders ? 'default' : 'mint',
     },
     {
+      key: 'provider-support-evidence',
+      label: t('settings.runtimeDiagnosticProviderSupportEvidence'),
+      value: t('settings.runtimeDiagnosticProviderSupportEvidenceValue', {
+        planned: formatCapabilityMatrixExamples(diagnostics.capabilityMatrix.statusExamples.planned, t),
+        partial: formatCapabilityMatrixExamples(diagnostics.capabilityMatrix.statusExamples.partial, t),
+      }),
+      tone: diagnostics.capabilityMatrix.statusExamples.planned.length ? 'amber' : 'default',
+    },
+    {
+      key: 'provider-contract',
+      label: t('settings.runtimeDiagnosticProviderContract'),
+      value: t('settings.runtimeDiagnosticProviderContractValue', {
+        ready: diagnostics.compatibility.conformanceReadyProviders,
+        mapped: diagnostics.compatibility.docsMappedProviders,
+        live: diagnostics.compatibility.needsLiveSmokeProviders,
+        reference: diagnostics.compatibility.protocolReferenceProviders,
+        gates: diagnostics.compatibility.liveSmokeGateCount,
+        logged: diagnostics.compatibility.loggedEvents,
+      }),
+      tone: diagnostics.compatibility.needsLiveSmokeProviders || diagnostics.compatibility.docsMappedProviders ? 'amber' : 'mint',
+    },
+    {
+      key: 'provider-capability-status',
+      label: t('settings.runtimeDiagnosticCapabilityStatus'),
+      value: t('settings.runtimeDiagnosticCapabilityStatusValue', {
+        supported: diagnostics.compatibility.capabilityStatuses.supported,
+        partial: diagnostics.compatibility.capabilityStatuses.partial,
+        unsupported: diagnostics.compatibility.capabilityStatuses.unsupported,
+        live: diagnostics.compatibility.capabilityStatuses.requiresLiveKey,
+        docs: diagnostics.compatibility.capabilityStatuses.docsChanged,
+      }),
+      tone: diagnostics.compatibility.capabilityStatuses.docsChanged || diagnostics.compatibility.capabilityStatuses.requiresLiveKey ? 'amber' : 'default',
+    },
+    {
+      key: 'provider-capability-send-policy',
+      label: t('settings.runtimeDiagnosticCapabilitySendPolicy'),
+      value: t('settings.runtimeDiagnosticCapabilitySendPolicyValue', {
+        contract: diagnostics.compatibility.capabilitySendSources.contract,
+        identity: diagnostics.compatibility.capabilitySendSources.provider_identity,
+        declared: diagnostics.compatibility.capabilitySendSources.explicit_declaration,
+        blocked: diagnostics.compatibility.capabilitySendSources.blocked,
+        examples: formatCapabilitySendPolicyExamples(diagnostics.compatibility.capabilitySendPolicyExamples.explicit_declaration, t),
+      }),
+      tone: diagnostics.compatibility.capabilitySendSources.explicit_declaration ? 'amber' : 'default',
+    },
+    {
+      key: 'provider-capability-evidence',
+      label: t('settings.runtimeDiagnosticCapabilityEvidence'),
+      value: t('settings.runtimeDiagnosticCapabilityEvidenceValue', {
+        unsupported: formatCapabilityStatusExamples(diagnostics.compatibility.capabilityStatusExamples.unsupported, t),
+        live: formatCapabilityStatusExamples(diagnostics.compatibility.capabilityStatusExamples.requiresLiveKey, t),
+        partial: formatCapabilityStatusExamples(diagnostics.compatibility.capabilityStatusExamples.partial, t),
+      }),
+      tone: diagnostics.compatibility.capabilityStatusExamples.requiresLiveKey.length ? 'amber' : 'default',
+    },
+    {
       key: 'log',
       label: t('settings.runtimeDiagnosticLog'),
       value: diagnostics.log.enabled ? t('settings.runtimeDiagnosticLogOn') : t('settings.runtimeDiagnosticLogOff'),
@@ -1354,6 +1410,47 @@ function buildDiagnosticRows(diagnostics: RuntimeDiagnosticsSummary, t: ReturnTy
 function formatCompactRatio(value: number): string {
   if (!Number.isFinite(value) || value <= 0) return '0%'
   return `${Math.round(value * 100)}%`
+}
+
+function formatCapabilityStatusExamples(
+  examples: RuntimeDiagnosticsSummary['compatibility']['capabilityStatusExamples'][keyof RuntimeDiagnosticsSummary['compatibility']['capabilityStatusExamples']],
+  t: ReturnType<typeof useTranslation>['t']
+): string {
+  if (!examples.length) return t('settings.runtimeDiagnosticCapabilityEvidenceNone')
+  return examples.slice(0, 2).map((example) => {
+    const provider = example.providerName || example.providerId || example.compatibilityId
+    const gate = example.liveSmokeGates[0] ? `/${example.liveSmokeGates[0]}` : ''
+    const reason = t(`settings.runtimeDiagnosticCapabilityReason.${example.limitationReason}`)
+    const path = t(`settings.runtimeDiagnosticCapabilityPath.${example.degradationPath}`)
+    return `${provider}:${example.capability} ${reason}/${path}${gate}`
+  }).join(' · ')
+}
+
+function formatCapabilitySendPolicyExamples(
+  examples: RuntimeDiagnosticsSummary['compatibility']['capabilitySendPolicyExamples'][keyof RuntimeDiagnosticsSummary['compatibility']['capabilitySendPolicyExamples']],
+  t: ReturnType<typeof useTranslation>['t']
+): string {
+  if (!examples.length) return t('settings.runtimeDiagnosticCapabilityEvidenceNone')
+  return examples.slice(0, 2).map((example) => {
+    const provider = example.providerName || example.providerId || example.compatibilityId
+    const source = t(`settings.runtimeDiagnosticCapabilitySendSource.${example.sendSource}`)
+    const path = t(`settings.runtimeDiagnosticCapabilityPath.${example.degradationPath}`)
+    return `${provider}:${example.capability} ${source}/${path}`
+  }).join(' · ')
+}
+
+function formatCapabilityMatrixExamples(
+  examples: RuntimeDiagnosticsSummary['capabilityMatrix']['statusExamples'][keyof RuntimeDiagnosticsSummary['capabilityMatrix']['statusExamples']],
+  t: ReturnType<typeof useTranslation>['t']
+): string {
+  if (!examples.length) return t('settings.runtimeDiagnosticCapabilityEvidenceNone')
+  return examples.slice(0, 2).map((example) => {
+    const provider = example.providerName || example.providerId || example.compatibilityId
+    const contract = example.contractStatus ? `/${example.contractStatus}` : ''
+    const reason = example.limitationReason ? t(`settings.runtimeDiagnosticCapabilityReason.${example.limitationReason}`) : example.reason
+    const path = example.degradationPath ? `/${t(`settings.runtimeDiagnosticCapabilityPath.${example.degradationPath}`)}` : ''
+    return `${provider}:${example.area} ${example.level}${contract} ${reason}${path}`
+  }).join(' · ')
 }
 
 function DiagnosticPill({ label, value, tone }: { label: string; value: string; tone: 'mint' | 'amber' | 'danger' | 'default' }) {

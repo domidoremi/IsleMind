@@ -3,10 +3,15 @@ import { asRecord, stringValue } from '@/services/ai/providerJsonUtils'
 export function extractOpenAIReasoningContent(json: any): string | undefined {
   const reasoning = [
     json?.choices?.[0]?.message?.reasoning_content,
+    json?.choices?.[0]?.message?.reasoning,
     json?.choices?.[0]?.delta?.reasoning_content,
+    json?.choices?.[0]?.delta?.reasoning,
     json?.delta?.reasoning_content,
+    json?.delta?.reasoning,
     json?.message?.reasoning_content,
+    json?.message?.reasoning,
     json?.reasoning_content,
+    typeof json?.reasoning === 'string' ? json.reasoning : undefined,
   ].map(stringValue).filter(Boolean).join('')
   return reasoning || undefined
 }

@@ -608,9 +608,9 @@
     "thinking": "Thinking",
     "thinkingDone": "Thought through",
     "thinkingDoneWithDuration": "Thought for {{duration}}",
-    "thinkingProgressBase": "Thinking... >",
-    "thinkingProgressActive": "Thinking... > {{stage}} running",
-    "thinkingProgressDone": "Thinking... > {{stage}} completed",
+    "thinkingProgressBase": "Preparing",
+    "thinkingProgressActive": "{{stage}} running",
+    "thinkingProgressDone": "{{stage}} completed",
     "traceGenerating": "{{title}} running",
     "completed": "Completed",
     "thinkingActive": "Thinking process",
@@ -883,6 +883,38 @@
     "runtimeDiagnosticProviderCoverageValue": "official {{official}} · aggregators {{aggregator}} · relays {{relay}} · local {{local}} · hosted {{hosted}}",
     "runtimeDiagnosticProviderSupport": "Compatibility",
     "runtimeDiagnosticProviderSupportValue": "full {{full}} · partial {{partial}} · planned {{planned}} · hosted gaps {{hosted}} · model-list exceptions {{modelList}}",
+    "runtimeDiagnosticProviderSupportEvidence": "Compatibility detail",
+    "runtimeDiagnosticProviderSupportEvidenceValue": "planned {{planned}} · partial {{partial}}",
+    "runtimeDiagnosticProviderContract": "Contract",
+    "runtimeDiagnosticProviderContractValue": "ready {{ready}} · mapped {{mapped}} · live {{live}} · references {{reference}} · gates {{gates}} · logged {{logged}}",
+    "runtimeDiagnosticCapabilityStatus": "Capability status",
+    "runtimeDiagnosticCapabilityStatusValue": "supported {{supported}} · partial {{partial}} · unsupported {{unsupported}} · live-key {{live}} · docs {{docs}}",
+    "runtimeDiagnosticCapabilitySendPolicy": "Send policy",
+    "runtimeDiagnosticCapabilitySendPolicyValue": "contract {{contract}} · identity {{identity}} · declared {{declared}} · blocked {{blocked}} · examples {{examples}}",
+    "runtimeDiagnosticCapabilityEvidence": "Evidence examples",
+    "runtimeDiagnosticCapabilityEvidenceValue": "blocked {{unsupported}} · live {{live}} · partial {{partial}}",
+    "runtimeDiagnosticCapabilityEvidenceNone": "none",
+    "runtimeDiagnosticCapabilitySendSource": {
+      "contract": "contract",
+      "provider_identity": "identity",
+      "explicit_declaration": "declared",
+      "blocked": "blocked"
+    },
+    "runtimeDiagnosticCapabilityReason": {
+      "contract_supported": "proved",
+      "contract_partial": "partial",
+      "contract_unclaimed": "unclaimed",
+      "live_smoke_required": "live-key",
+      "docs_changed": "docs"
+    },
+    "runtimeDiagnosticCapabilityPath": {
+      "send_allowed": "send",
+      "disable_parameter": "block param",
+      "run_live_smoke": "smoke",
+      "manual_declaration_or_model_metadata": "declare/model",
+      "local_fallback": "fallback",
+      "refresh_docs": "refresh"
+    },
     "runtimeDiagnosticLog": "Log",
     "runtimeDiagnosticLogOn": "Writing",
     "runtimeDiagnosticLogOff": "Off",
@@ -1397,7 +1429,7 @@
     "noModels": "No models",
     "capabilityUpdated": "Capability updated",
     "capabilityMatrix": "Capability matrix",
-    "capabilityMatrixDescription": "Runtime uses these declarations for Responses, WebSocket, compact, payload, and model features.",
+    "capabilityMatrixDescription": "Runtime uses these declarations for Responses, WebSocket, compact, embeddings, payload, and model features.",
     "capabilityDependencyHint": "Enabling WebSocket or remote compact automatically requires Responses support.",
     "capability": {
       "modelList": "/models",
@@ -1410,6 +1442,7 @@
       "files": "Files",
       "nativeSearch": "Native search",
       "reasoningEffort": "Reasoning effort",
+      "embeddings": "Embeddings",
       "topP": "Top P",
       "chat": "Chat",
       "audioInput": "Audio input",
@@ -2004,7 +2037,8 @@
       "timeout": "Request timed out. Check network, proxy, or provider address.",
       "rateLimited": "Provider rate limit or quota exhausted. Retry later or check billing/subscription.",
       "maxTokens": "Output length exceeds the model limit. Lower Max Tokens and retry.",
-      "badBaseUrl": "Provider URL or request parameters may be incorrect. Check Base URL and model configuration."
+      "badBaseUrl": "Provider URL or request parameters may be incorrect. Check Base URL and model configuration.",
+      "providerConformanceBlocked": "The selected provider contract does not support this request. Remove unsupported attachments or tools, enable the required capability, or choose a compatible model/provider."
     }
   },
   "searchPolicy": {
@@ -2048,6 +2082,8 @@
     "streamFallbackCompleted": "Provider or runtime did not provide chunks, so this turn completed with non-streaming response.",
     "streamMode": "Streaming mode",
     "requestRectified": "Request rectified",
+    "providerCompatibilityTitle": "Provider compatibility",
+    "providerCompatibilityContent": "Contract: {{auditState}}\nProtocol: {{protocol}}\nDocs: {{docs}}\nLive smoke gates: {{gates}}",
     "runtimeGovernanceTitle": "Runtime policy",
     "runtimeGovernanceContent": "Access: {{access}}\nRoute: {{route}}\nTransport: {{transport}}\nPayload: {{payload}}\nProxy: {{proxy}}",
     "runtimeFallbackTitle": "Runtime fallback",
@@ -2069,7 +2105,8 @@
     "hosted": {
       "azureOpenAIUnsupported": "Azure OpenAI requires an Azure resource Base URL under /openai/v1. Legacy deployment URLs and missing resource URLs are not supported yet.",
       "awsBedrockUnsupported": "AWS Bedrock Runtime needs AWS access key credentials, region, and SigV4 InvokeModel routing. Non-streaming chat tests can use JSON or env-style AWS credentials; model-list, streaming, remote compact, and native tools should use Bedrock Mantle or remain planned.",
-      "vertexAIUnsupported": "Vertex AI native Gemini paths require Google Cloud auth plus project/location-aware routing. Use the OpenAI-compatible /endpoints/openapi Base URL for partial chat and model-list support."
+      "vertexAIUnsupported": "Vertex AI native Gemini paths require Google Cloud auth plus project/location-aware routing. Use the OpenAI-compatible /endpoints/openapi Base URL for partial chat support.",
+      "vertexAIModelListUnsupported": "Vertex AI OpenAI-compatible model-list sync is not covered by the current compatibility contract. Maintain the model list manually until Google Cloud docs or live smoke prove a supported /models route."
     },
     "jsonEmpty": "{{label}} response is empty.",
     "htmlInsteadJson": "{{provider}} returned an HTML page instead of JSON. Check whether Base URL should include /v1, or whether the provider returned a login/proxy error page.",

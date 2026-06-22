@@ -19,6 +19,9 @@ export function classifyChatError(message: string): ChatErrorCode {
   if (text.includes('credential_mismatch') || text.includes('token plan') || text.includes('tp-') || text.includes('sk-')) {
     return 'credential_mismatch'
   }
+  if (text.includes('provider_conformance_blocked')) {
+    return 'provider_conformance_blocked'
+  }
   if (text.includes('aborterror') || text.includes('timeout') || text.includes('timed out') || text.includes('超时')) {
     return 'timeout'
   }
@@ -60,6 +63,8 @@ export function toUserFacingError(message: string): string {
       return message || st('chatRunner.userError.maxTokens')
     case 'bad_base_url':
       return st('chatRunner.userError.badBaseUrl')
+    case 'provider_conformance_blocked':
+      return st('chatRunner.userError.providerConformanceBlocked')
     case 'missing_key':
     case 'disabled_provider':
     case 'unknown':

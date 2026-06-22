@@ -24,6 +24,7 @@ export type RuntimeLogEvent =
   | 'compact.request'
   | 'compact.usage'
   | 'payload.rule'
+  | 'provider.compatibility'
   | 'provider.conformance'
   | 'route.decision'
   | 'fallback.decision'

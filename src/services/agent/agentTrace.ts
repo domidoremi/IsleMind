@@ -971,7 +971,7 @@ function auditWorkArtifactRunTrace(run: AgentWorkflowRun, errors: string[]): voi
   const requiresCompleteWorkArtifact = run.intent === 'work_artifact'
 
   const outputQuality = workArtifactSteps
-    .map((step) => parseWorkArtifactQualityEvidence(step.observation?.output))
+    .map((step) => parseWorkArtifactQualityEvidence(step.observation?.trace.metadata?.workArtifactOutput, step.observation?.output))
     .find((audit) => audit.found)
   if (!outputQuality?.found) {
     errors.push('Work artifact workflow observations must include qualityAudit, evidenceCount, primaryNextStep, qualitySummary, and followUpPrompt fields.')
@@ -1015,7 +1015,7 @@ function auditWorkArtifactRunTrace(run: AgentWorkflowRun, errors: string[]): voi
   }
 
   const legacyOutputAudit = workArtifactSteps
-    .map((step) => parseWorkArtifactQualityAudit(step.observation?.output))
+    .map((step) => parseWorkArtifactQualityAudit(step.observation?.trace.metadata?.workArtifactOutput, step.observation?.output))
     .find((audit) => audit.found)
   if (requiresCompleteWorkArtifact && legacyOutputAudit?.found && legacyOutputAudit.ok !== true) {
     errors.push('Work artifact workflow qualityAudit must pass before the run can be marked done.')
@@ -1072,18 +1072,36 @@ function auditWorkArtifactRunTrace(run: AgentWorkflowRun, errors: string[]): voi
   }
 }
 
-function parseWorkArtifactQualityAudit(output: string | undefined): { found: boolean; ok?: boolean } {
-  if (!output?.trim()) return { found: false }
+function parseWorkArtifactQualityAudit(value: unknown, legacyOutput?: string): { found: boolean; ok?: boolean } {
+  const parsed = parseWorkArtifactOutputValue(value, legacyOutput)
+  if (!parsed) return { found: false }
+  const ok = parsed.qualityAudit?.ok
+  return typeof ok === 'boolean' ? { found: true, ok } : { found: false }
+}
+
+function parseWorkArtifactOutputValue(value: unknown, legacyOutput?: string): {
+  qualityAudit?: { ok?: unknown }
+  evidenceCount?: unknown
+  primaryNextStep?: unknown
+  qualitySummary?: unknown
+  followUpPrompt?: unknown
+  contract?: unknown
+  artifact?: Record<string, unknown>
+  qualityGaps?: unknown
+  sourceEvidence?: unknown
+} | undefined {
+  if (value && typeof value === 'object' && !Array.isArray(value)) {
+    return value as ReturnType<typeof parseWorkArtifactOutputValue>
+  }
+  if (!legacyOutput?.trim()) return undefined
   try {
-    const parsed = JSON.parse(output) as { qualityAudit?: { ok?: unknown } }
-    const ok = parsed.qualityAudit?.ok
-    return typeof ok === 'boolean' ? { found: true, ok } : { found: false }
+    return JSON.parse(legacyOutput) as ReturnType<typeof parseWorkArtifactOutputValue>
   } catch {
-    return { found: false }
+    return undefined
   }
 }
 
-function parseWorkArtifactQualityEvidence(output: string | undefined): {
+function parseWorkArtifactQualityEvidence(value: unknown, legacyOutput?: string): {
   found: boolean
   ok?: boolean
   evidenceCount?: unknown
@@ -1096,58 +1114,44 @@ function parseWorkArtifactQualityEvidence(output: string | undefined): {
   hasArtifactFields?: boolean
   missingFields?: string[]
 } {
-  if (!output?.trim()) return { found: false }
-  try {
-    const parsed = JSON.parse(output) as {
-      qualityAudit?: { ok?: unknown }
-      evidenceCount?: unknown
-      primaryNextStep?: unknown
-      qualitySummary?: unknown
-      followUpPrompt?: unknown
-      contract?: unknown
-      artifact?: Record<string, unknown>
-      qualityGaps?: unknown
-      sourceEvidence?: unknown
-    }
-    const ok = parsed.qualityAudit?.ok
-    const missingFields: string[] = []
-    if (typeof ok !== 'boolean') missingFields.push('qualityAudit')
-    if (typeof parsed.evidenceCount === 'undefined') missingFields.push('evidenceCount')
-    if (typeof parsed.primaryNextStep === 'undefined') missingFields.push('primaryNextStep')
-    if (typeof parsed.qualitySummary === 'undefined') missingFields.push('qualitySummary')
-    if (typeof parsed.followUpPrompt === 'undefined') missingFields.push('followUpPrompt')
-    if (typeof parsed.contract === 'undefined') missingFields.push('contract')
-    if (typeof parsed.artifact === 'undefined') missingFields.push('artifact')
-    if (typeof parsed.qualityGaps === 'undefined') missingFields.push('qualityGaps')
-    if (typeof parsed.sourceEvidence === 'undefined') missingFields.push('sourceEvidence')
-    return (
-      typeof parsed.qualityAudit?.ok !== 'undefined' ||
-      typeof parsed.evidenceCount !== 'undefined' ||
-      typeof parsed.primaryNextStep !== 'undefined' ||
-      typeof parsed.qualitySummary !== 'undefined' ||
-      typeof parsed.followUpPrompt !== 'undefined' ||
-      typeof parsed.contract !== 'undefined' ||
-      typeof parsed.artifact !== 'undefined' ||
-      typeof parsed.qualityGaps !== 'undefined' ||
-      typeof parsed.sourceEvidence !== 'undefined'
-    )
-      ? {
-          found: true,
-          ok: typeof ok === 'boolean' ? ok : undefined,
-          evidenceCount: parsed.evidenceCount,
-          primaryNextStep: parsed.primaryNextStep,
-          qualitySummary: parsed.qualitySummary,
-          followUpPrompt: parsed.followUpPrompt,
-          contract: parsed.contract,
-          qualityGaps: parsed.qualityGaps,
-          sourceEvidence: parsed.sourceEvidence,
-          hasArtifactFields: hasWorkArtifactWorkflowFields(parsed.artifact),
-          missingFields,
-        }
-      : { found: false }
-  } catch {
-    return { found: false }
-  }
+  const parsed = parseWorkArtifactOutputValue(value, legacyOutput)
+  if (!parsed) return { found: false }
+  const ok = parsed.qualityAudit?.ok
+  const missingFields: string[] = []
+  if (typeof ok !== 'boolean') missingFields.push('qualityAudit')
+  if (typeof parsed.evidenceCount === 'undefined') missingFields.push('evidenceCount')
+  if (typeof parsed.primaryNextStep === 'undefined') missingFields.push('primaryNextStep')
+  if (typeof parsed.qualitySummary === 'undefined') missingFields.push('qualitySummary')
+  if (typeof parsed.followUpPrompt === 'undefined') missingFields.push('followUpPrompt')
+  if (typeof parsed.contract === 'undefined') missingFields.push('contract')
+  if (typeof parsed.artifact === 'undefined') missingFields.push('artifact')
+  if (typeof parsed.qualityGaps === 'undefined') missingFields.push('qualityGaps')
+  if (typeof parsed.sourceEvidence === 'undefined') missingFields.push('sourceEvidence')
+  return (
+    typeof parsed.qualityAudit?.ok !== 'undefined' ||
+    typeof parsed.evidenceCount !== 'undefined' ||
+    typeof parsed.primaryNextStep !== 'undefined' ||
+    typeof parsed.qualitySummary !== 'undefined' ||
+    typeof parsed.followUpPrompt !== 'undefined' ||
+    typeof parsed.contract !== 'undefined' ||
+    typeof parsed.artifact !== 'undefined' ||
+    typeof parsed.qualityGaps !== 'undefined' ||
+    typeof parsed.sourceEvidence !== 'undefined'
+  )
+    ? {
+        found: true,
+        ok: typeof ok === 'boolean' ? ok : undefined,
+        evidenceCount: parsed.evidenceCount,
+        primaryNextStep: parsed.primaryNextStep,
+        qualitySummary: parsed.qualitySummary,
+        followUpPrompt: parsed.followUpPrompt,
+        contract: parsed.contract,
+        qualityGaps: parsed.qualityGaps,
+        sourceEvidence: parsed.sourceEvidence,
+        hasArtifactFields: hasWorkArtifactWorkflowFields(parsed.artifact),
+        missingFields,
+      }
+    : { found: false }
 }
 
 function hasWorkArtifactWorkflowFields(value: unknown): boolean {

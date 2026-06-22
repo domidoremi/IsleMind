@@ -1,12 +1,22 @@
 import type { AIModel, AIProvider, ProcessTrace } from '@/types'
 import type { ChatCompletionResult, ChatRequest, ContentPart, ProviderToolCall } from '@/services/ai/base'
 import {
+  getProviderCompatibilityEvidenceForProvider,
+  providerCompatibilityCapabilityCanBeSentForProvider,
+  resolveProviderCompatibilityCapabilityStatus,
+  type ProviderCompatibilityCapabilityStatus,
+} from '@/services/ai/providerCompatibilityContract'
+import {
   buildAgentToolCallTraceMetadata,
+} from '@/services/agent/agentToolCallTrace'
+import {
   clampAgentOutput,
   redactSensitiveText,
-  type AgentProviderToolAdapterResult,
-  type AgentProviderToolNameMapEntry,
-} from '@/services/agent'
+} from '@/services/agent/agentTrace'
+import type {
+  AgentProviderToolAdapterResult,
+  AgentProviderToolNameMapEntry,
+} from '@/services/agent/agentProviderToolAdapter'
 import { stringifyToolArguments, stripMcpCallBlocks } from '@/services/chatToolResultUtils'
 
 export const PROVIDER_NATIVE_TOOL_OUTPUT_LIMIT = 4800
@@ -30,11 +40,107 @@ export interface BuildProviderNativeToolRevisionMessagesInput {
   ok: boolean
 }
 
+export type ProviderNativeToolSupportReason =
+  | 'supported_explicit_native_tools'
+  | 'supported_model_tools_contract'
+  | 'supported_core_provider_contract'
+  | 'blocked_model_chat_incompatible'
+  | 'blocked_model_tools_disabled'
+  | 'blocked_contract_tools_unclaimed'
+  | 'blocked_model_tools_unclaimed'
+
+export interface ProviderNativeToolSupportDecision {
+  supported: boolean
+  reason: ProviderNativeToolSupportReason
+  providerId: string
+  providerType: AIProvider['type']
+  modelId: string
+  modelSupportsTools: boolean | undefined
+  explicitNativeTools: boolean
+  compatibilityId: string
+  auditState: string
+  behaviorDocs: string[]
+  toolsStatus: ProviderCompatibilityCapabilityStatus
+}
+
+export function resolveProviderNativeToolSupport(provider: AIProvider, modelConfig: AIModel): ProviderNativeToolSupportDecision {
+  const compatibility = getProviderCompatibilityEvidenceForProvider(provider)
+  const toolsStatus = resolveProviderCompatibilityCapabilityStatus(compatibility.id, 'tools')
+  const decisionBase = {
+    providerId: provider.id,
+    providerType: provider.type,
+    modelId: modelConfig.id,
+    modelSupportsTools: modelConfig.supportsTools,
+    explicitNativeTools: provider.capabilities?.nativeTools === true,
+    compatibilityId: compatibility.id,
+    auditState: compatibility.auditState,
+    behaviorDocs: [...compatibility.behaviorDocs],
+    toolsStatus,
+  }
+  if (modelConfig.chatCompatible === false) {
+    return { ...decisionBase, supported: false, reason: 'blocked_model_chat_incompatible' }
+  }
+  if (modelConfig.supportsTools === false) {
+    return { ...decisionBase, supported: false, reason: 'blocked_model_tools_disabled' }
+  }
+  const explicitDeclaration = provider.capabilities?.nativeTools === true || modelConfig.supportsTools === true
+  if (!providerCompatibilityCapabilityCanBeSentForProvider(provider, 'tools', explicitDeclaration)) {
+    return { ...decisionBase, supported: false, reason: 'blocked_contract_tools_unclaimed' }
+  }
+  if (modelConfig.supportsTools === true) {
+    if (customProtocolReferenceDisablesCapability(provider, modelConfig, 'nativeTools')) {
+      return { ...decisionBase, supported: false, reason: 'blocked_contract_tools_unclaimed' }
+    }
+    return { ...decisionBase, supported: true, reason: 'supported_model_tools_contract' }
+  }
+  if (provider.capabilities?.nativeTools === true) {
+    return { ...decisionBase, supported: true, reason: 'supported_explicit_native_tools' }
+  }
+  if (provider.type === 'openai' || provider.type === 'anthropic' || provider.type === 'google') {
+    return { ...decisionBase, supported: true, reason: 'supported_core_provider_contract' }
+  }
+  return { ...decisionBase, supported: false, reason: 'blocked_model_tools_unclaimed' }
+}
+
 export function providerSupportsNativeTools(provider: AIProvider, modelConfig: AIModel): boolean {
-  if (modelConfig.chatCompatible === false) return false
-  if (modelConfig.supportsTools === false) return false
-  if (modelConfig.supportsTools === true || provider.capabilities?.nativeTools === true) return true
-  return provider.type === 'openai' || provider.type === 'anthropic' || provider.type === 'google'
+  return resolveProviderNativeToolSupport(provider, modelConfig).supported
+}
+
+export function providerSupportsVisionInput(provider: AIProvider, modelConfig: AIModel): boolean {
+  return providerInputCapabilitySupported(provider, modelConfig, 'vision', modelConfig.supportsVision === true)
+}
+
+export function providerSupportsFileInput(provider: AIProvider, modelConfig: AIModel): boolean {
+  return providerInputCapabilitySupported(provider, modelConfig, 'files', modelConfig.supportsFiles === true)
+}
+
+export function providerSupportsNativeSearch(provider: AIProvider): boolean {
+  return providerCompatibilityCapabilityCanBeSentForProvider(provider, 'nativeSearch', provider.capabilities?.nativeSearch === true)
+}
+
+function providerInputCapabilitySupported(
+  provider: AIProvider,
+  modelConfig: AIModel,
+  capability: 'vision' | 'files',
+  modelSupported: boolean,
+): boolean {
+  const explicitDeclaration = modelSupported || provider.capabilities?.[capability] === true
+  if (!providerCompatibilityCapabilityCanBeSentForProvider(provider, capability, explicitDeclaration)) return false
+  if (modelSupported) {
+    return !customProtocolReferenceDisablesCapability(provider, modelConfig, capability)
+  }
+  return provider.capabilities?.[capability] === true
+}
+
+function customProtocolReferenceDisablesCapability(
+  provider: AIProvider,
+  modelConfig: AIModel,
+  capability: 'vision' | 'files' | 'nativeTools',
+): boolean {
+  const compatibility = getProviderCompatibilityEvidenceForProvider(provider)
+  if (compatibility.id !== 'custom-openai-compatible' && compatibility.id !== 'custom-anthropic-compatible') return false
+  if (modelConfig.source === 'remote') return false
+  return provider.capabilities?.[capability] !== true
 }
 
 export function buildProviderNativeToolManifestTrace(
@@ -55,6 +161,33 @@ export function buildProviderNativeToolManifestTrace(
       skippedToolCount: context.adapter.skipped.length,
       permissionCeiling: 'read-only',
       maxToolCallsPerStep: context.limits.maxToolCallsPerStep,
+    },
+  })
+}
+
+export function buildProviderNativeToolSkippedTrace(
+  decision: ProviderNativeToolSupportDecision,
+  completeTrace: (trace: ProcessTrace) => ProcessTrace,
+  traceId: (prefix: string) => string,
+): ProcessTrace {
+  return completeTrace({
+    id: traceId('provider-tools-skip'),
+    type: 'tool',
+    title: 'Provider native tools',
+    content: providerNativeToolSkipContent(decision),
+    status: 'skipped',
+    startedAt: Date.now(),
+    metadata: {
+      providerToolReason: decision.reason,
+      providerId: decision.providerId,
+      providerType: decision.providerType,
+      model: decision.modelId,
+      compatibilityId: decision.compatibilityId,
+      auditState: decision.auditState,
+      behaviorDocs: decision.behaviorDocs,
+      toolsStatus: decision.toolsStatus,
+      explicitNativeTools: decision.explicitNativeTools,
+      modelSupportsTools: decision.modelSupportsTools,
     },
   })
 }
@@ -110,6 +243,21 @@ export function buildProviderNativeToolTraceMetadata(input: {
   if (typeof input.requestedToolCallCount === 'number') metadata.requestedToolCallCount = input.requestedToolCallCount
   if (typeof input.maxToolCallsPerStep === 'number') metadata.maxToolCallsPerStep = input.maxToolCallsPerStep
   return metadata
+}
+
+function providerNativeToolSkipContent(decision: ProviderNativeToolSupportDecision): string {
+  switch (decision.reason) {
+    case 'blocked_contract_tools_unclaimed':
+      return `Skipped provider-native IsleMind tool declarations because compatibility evidence ${decision.compatibilityId} does not claim tools.`
+    case 'blocked_model_tools_disabled':
+      return `Skipped provider-native IsleMind tool declarations because model ${decision.modelId} disables tools.`
+    case 'blocked_model_chat_incompatible':
+      return `Skipped provider-native IsleMind tool declarations because model ${decision.modelId} is not chat-compatible.`
+    case 'blocked_model_tools_unclaimed':
+      return `Skipped provider-native IsleMind tool declarations because model ${decision.modelId} does not claim tool support.`
+    default:
+      return 'Skipped provider-native IsleMind tool declarations for this request.'
+  }
 }
 
 export function buildProviderNativeToolRevisionMessages(

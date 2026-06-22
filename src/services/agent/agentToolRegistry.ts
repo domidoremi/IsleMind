@@ -393,7 +393,8 @@ function executeWorkArtifactTool(tool: AgentToolManifest, args: Record<string, u
     sourceMessageId: typeof args.sourceMessageId === 'string' ? args.sourceMessageId : undefined,
     citations: normalizeWorkArtifactCitationArgs(args.citations),
   })
-  const output = sanitizeInternalToolOutput(JSON.stringify(buildCompactWorkArtifactToolOutput(workflowOutput)), options)
+  const compactOutput = buildCompactWorkArtifactToolOutput(workflowOutput)
+  const output = sanitizeInternalToolOutput(formatWorkArtifactToolSummary(workflowOutput), options)
   const block = { type: 'text' as const, text: output }
   return {
     ok: true,
@@ -420,10 +421,22 @@ function executeWorkArtifactTool(tool: AgentToolManifest, args: Record<string, u
         primaryNextStep: workflowOutput.primaryNextStep,
         qualitySummary: workflowOutput.qualitySummary,
         followUpPrompt: workflowOutput.followUpPrompt,
+        workArtifactOutput: compactOutput,
       },
     }),
-    }
   }
+}
+
+function formatWorkArtifactToolSummary(workflowOutput: ReturnType<typeof buildWorkArtifactWorkflowOutput>): string {
+  const missing = workflowOutput.missingKinds.length ? workflowOutput.missingKinds.join(', ') : 'none'
+  return [
+    workflowOutput.handoffText,
+    '',
+    `Quality audit: ${workflowOutput.qualityAudit.ok ? 'passed' : 'needs repair'}`,
+    `Coverage: actions=${workflowOutput.actionItemCount}, decisions=${workflowOutput.decisionCount}, risks=${workflowOutput.riskCount}, questions=${workflowOutput.openQuestionCount}, evidence=${workflowOutput.evidenceCount}`,
+    `Missing gates: ${missing}`,
+  ].filter((line) => line.trim()).join('\n')
+}
 
 function buildCompactWorkArtifactToolOutput(workflowOutput: ReturnType<typeof buildWorkArtifactWorkflowOutput>): Record<string, unknown> {
   return {

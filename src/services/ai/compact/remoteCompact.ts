@@ -1,5 +1,6 @@
 import type { AIProvider, RemoteCompactMode, Settings } from '@/types'
 import { estimateTextTokens } from '@/services/tokenUsage'
+import { providerCompatibilityCapabilityCanBeSentForProvider } from '@/services/ai/providerCompatibilityContract'
 
 export interface RemoteCompactDecisionInput {
   provider: AIProvider
@@ -23,7 +24,11 @@ export interface RemoteCompactDecision {
 export function decideRemoteCompact(input: RemoteCompactDecisionInput): RemoteCompactDecision {
   const mode = input.settings?.remoteCompactMode ?? 'off'
   const required = mode === 'required'
-  const supported = input.provider.capabilities?.remoteCompact === true && input.provider.capabilities?.responsesApi === true
+  const supported =
+    input.provider.capabilities?.responsesApi === true &&
+    input.provider.capabilities?.remoteCompact === true &&
+    providerCompatibilityCapabilityCanBeSentForProvider(input.provider, 'responsesApi', true) &&
+    providerCompatibilityCapabilityCanBeSentForProvider(input.provider, 'remoteCompact', true)
   const pressureRatio = estimatePressureRatio(input)
   if (mode === 'off') return { mode, enabled: false, required, supported, reason: 'disabled', pressureRatio }
   if (!supported) return { mode, enabled: false, required, supported, reason: 'provider_capability_missing', pressureRatio }

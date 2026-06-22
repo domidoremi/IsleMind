@@ -427,7 +427,7 @@ export function createAndroidCalendarTodoWorkflowDefinition(
           arguments: {},
         },
         acceptance: [
-          'sets title from user input',
+          'sets title from user input or runtime goal fallback',
           'sets due time when present',
           'keeps Android calendar confirmation visible',
         ],

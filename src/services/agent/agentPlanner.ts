@@ -258,7 +258,7 @@ function bindRuntimeArgumentsForSelectedWorkflowStep(
   }
 
   if (isAndroidReminderRef(ref)) {
-    const title = inferReminderTitle(content)
+    const title = inferReminderTitle(content) ?? fallbackReminderTitle(content)
     const dueTimeIso = inferReminderDateTimeIso(content)
     if (title && !hasTextArgument(args.title)) {
       args.title = title
@@ -365,6 +365,12 @@ function firstMatch(value: string, patterns: RegExp[]): string | undefined {
 function sanitizeSimpleFileName(value: string | undefined): string | undefined {
   if (!value || value.includes('..') || /[\\/:*?"<>|]/.test(value)) return undefined
   return value
+}
+
+function fallbackReminderTitle(value: string): string | undefined {
+  const text = redactSensitiveText(value).replace(/\s+/g, ' ').trim()
+  if (!text) return undefined
+  return text.length > 80 ? `${text.slice(0, 77).trimEnd()}...` : text
 }
 
 function hasTextArgument(value: unknown): boolean {
