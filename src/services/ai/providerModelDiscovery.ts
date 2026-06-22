@@ -1,4 +1,4 @@
-import type { AIModel, AIProvider, ProviderType } from '@/types'
+import type { AIModel, AIProvider, ModelReasoningMode, ProviderPresetId, ProviderType, ReasoningEffort } from '@/types'
 import { getProviderConfigIssue, mergeModelConfig, sortModelConfigs } from '@/types'
 import { ProviderHttpError } from '@/services/ai/providerOperationResult'
 import { fetchWithTimeout, safeResponseText } from '@/services/ai/providerHttp'
@@ -9,6 +9,7 @@ import {
   normalizeProviderBaseUrl,
 } from '@/services/ai/providerRouteAssembly'
 import { getHeaders } from '@/services/ai/providerHeaders'
+import { providerCompatibilityCapabilityCanBeSentForProvider } from '@/services/ai/providerCompatibilityContract'
 
 export type OpenAIModelListItem = {
   id?: string
@@ -19,15 +20,22 @@ export type OpenAIModelListItem = {
   contextWindow?: number
   context_window?: number
   max_context_length?: number
+  context_size?: number
   max_output_length?: number
+  max_output_tokens?: number
   max_completion_tokens?: number
   max_tokens?: number
   maxOutputTokens?: number
+  features?: string[]
+  supported_parameters?: string[]
+  input_modalities?: string[]
+  output_modalities?: string[]
   architecture?: {
     input_modalities?: string[]
     modality?: string
   }
   metadata?: Record<string, unknown>
+  tags?: unknown
 }
 
 export type OpenAIModelListResponse = {
@@ -57,11 +65,18 @@ export type GoogleModelListResponse = {
   }[]
 }
 
-export function mapOpenAICompatibleModels(json: OpenAIModelListResponse, providerType: ProviderType): AIModel[] {
+type OpenAIModelMappingOptions = {
+  providerPresetId?: ProviderPresetId
+}
+
+const DEEPINFRA_REASONING_EFFORTS: ReasoningEffort[] = ['none', 'low', 'medium', 'high']
+
+export function mapOpenAICompatibleModels(json: OpenAIModelListResponse, providerType: ProviderType, options: OpenAIModelMappingOptions = {}): AIModel[] {
   const items = json.data?.filter((item) => isString(item.id)) ?? []
   return sortModelConfigs(
     dedupeModelIds(items.map((item) => normalizeRemoteModelId(item.id!, providerType))).map((id) => {
       const remote = items.find((item) => normalizeRemoteModelId(item.id!, providerType) === id)
+      const reasoningMode = openAICompatibleReasoningModeFromModel(remote, options)
       return mergeModelConfig(id, providerType, {
         name: remote?.display_name || remote?.name,
         contextWindow: firstNumber(
@@ -69,21 +84,33 @@ export function mapOpenAICompatibleModels(json: OpenAIModelListResponse, provide
           remote?.contextWindow,
           remote?.context_window,
           remote?.max_context_length,
+          remote?.context_size,
           getNumber(remote?.metadata, 'context_length'),
           getNumber(remote?.metadata, 'contextWindow'),
           getNumber(remote?.metadata, 'context_window'),
-          getNumber(remote?.metadata, 'max_context_length')
+          getNumber(remote?.metadata, 'max_context_length'),
+          getNumber(remote?.metadata, 'context_size')
         ),
         maxOutputTokens: firstNumber(
           remote?.max_output_length,
+          remote?.max_output_tokens,
           remote?.maxOutputTokens,
           remote?.max_completion_tokens,
+          remote?.max_tokens,
           getNumber(remote?.metadata, 'max_output_length'),
+          getNumber(remote?.metadata, 'max_output_tokens'),
           getNumber(remote?.metadata, 'maxOutputTokens'),
           getNumber(remote?.metadata, 'max_completion_tokens'),
+          getNumber(remote?.metadata, 'max_tokens'),
           getNumber(remote?.metadata, 'output_token_limit')
         ),
         supportsVision: supportsVisionFromOpenAIModel(remote),
+        supportsTools: supportsToolsFromOpenAIModel(remote),
+        supportedParameters: supportedParametersFromOpenAIModel(remote),
+        ...(reasoningMode ? {
+          reasoningMode,
+          reasoningEfforts: DEEPINFRA_REASONING_EFFORTS,
+        } : {}),
         source: 'remote',
       })
     }),
@@ -156,6 +183,9 @@ export async function fetchProviderModelConfigsFromRemote(provider: AIProvider, 
   if (provider.capabilities?.modelList === false) {
     return []
   }
+  if (!providerCompatibilityCapabilityCanBeSentForProvider(provider, 'modelList', provider.capabilities?.modelList === true)) {
+    return []
+  }
   if (provider.type === 'xiaomi-mimo') {
     return fetchOpenAICompatibleModels(getXiaomiMimoModelDiscoveryProvider(provider), timeoutMs)
   }
@@ -190,7 +220,12 @@ export function normalizeRemoteModelId(modelId: string, providerType: ProviderTy
 }
 
 export function supportsVisionFromOpenAIModel(model?: OpenAIModelListItem): boolean | undefined {
-  const modalities = model?.architecture?.input_modalities ?? []
+  const tags = openAIModelTags(model)
+  if (tags.has('vision') || tags.has('vlm')) return true
+  const modalities = [
+    ...(model?.architecture?.input_modalities ?? []),
+    ...(model?.input_modalities ?? []),
+  ]
   if (modalities.length) {
     return modalities.some((modality) => ['image', 'vision', 'video'].includes(modality.toLowerCase()))
   }
@@ -199,6 +234,42 @@ export function supportsVisionFromOpenAIModel(model?: OpenAIModelListItem): bool
   if (id.includes('mimo-v2.5') && !id.includes('tts')) return true
   if (id.includes('mimo-v2-omni')) return true
   return undefined
+}
+
+export function supportsToolsFromOpenAIModel(model?: OpenAIModelListItem): boolean | undefined {
+  const tags = openAIModelTags(model)
+  if (tags.has('function-calling') || tags.has('function_calling') || tags.has('tools') || tags.has('tool-calling')) return true
+  return undefined
+}
+
+function supportedParametersFromOpenAIModel(model?: OpenAIModelListItem): string[] | undefined {
+  if (!Array.isArray(model?.supported_parameters)) return undefined
+  const values = model.supported_parameters
+    .map((value) => typeof value === 'string' ? value.trim() : '')
+    .filter(Boolean)
+  return values.length ? [...new Set(values)] : undefined
+}
+
+function openAICompatibleReasoningModeFromModel(model: OpenAIModelListItem | undefined, options: OpenAIModelMappingOptions): ModelReasoningMode | undefined {
+  if (options.providerPresetId !== 'deepinfra') return undefined
+  const tags = openAIModelTags(model)
+  return tags.has('reasoning_effort') || tags.has('reasoning') ? 'deepinfra-reasoning-effort' : undefined
+}
+
+function openAIModelTags(model?: OpenAIModelListItem): Set<string> {
+  return new Set([
+    ...tagValues(model?.tags),
+    ...tagValues(model?.features),
+    ...tagValues(model?.metadata?.tags),
+    ...tagValues(model?.metadata?.tag),
+    ...tagValues(model?.metadata?.features),
+  ].map((tag) => tag.toLowerCase()))
+}
+
+function tagValues(value: unknown): string[] {
+  if (Array.isArray(value)) return value.filter(isString)
+  if (typeof value === 'string') return value.split(/[,\s]+/).map((tag) => tag.trim()).filter(Boolean)
+  return []
 }
 
 export function firstNumber(...values: (number | undefined)[]): number | undefined {
@@ -230,7 +301,7 @@ async function fetchOpenAICompatibleModels(provider: AIProvider, timeoutMs: numb
   }, timeoutMs)
   if (!response.ok) throw new ProviderHttpError(response.status, await safeResponseText(response))
   const json = parseProviderJson<OpenAIModelListResponse>(await safeResponseText(response), response, provider, '模型列表')
-  return mapOpenAICompatibleModels(json, provider.type)
+  return mapOpenAICompatibleModels(json, provider.type, { providerPresetId: provider.presetId ?? provider.detectedPresetId })
 }
 
 async function fetchAnthropicModels(provider: AIProvider, timeoutMs: number): Promise<AIModel[]> {

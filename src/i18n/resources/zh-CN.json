@@ -608,9 +608,9 @@
     "thinking": "正在思考",
     "thinkingDone": "已思考",
     "thinkingDoneWithDuration": "已思考（用时 {{duration}}）",
-    "thinkingProgressBase": "思考中... >",
-    "thinkingProgressActive": "思考中... > 正在{{stage}}",
-    "thinkingProgressDone": "思考中... > 已完成{{stage}}",
+    "thinkingProgressBase": "准备中",
+    "thinkingProgressActive": "正在{{stage}}",
+    "thinkingProgressDone": "已完成{{stage}}",
     "traceGenerating": "{{title}}中",
     "completed": "已完成",
     "thinkingActive": "思考过程",
@@ -883,6 +883,38 @@
     "runtimeDiagnosticProviderCoverageValue": "官方 {{official}} · 聚合 {{aggregator}} · 中转 {{relay}} · 本地 {{local}} · 云托管 {{hosted}}",
     "runtimeDiagnosticProviderSupport": "兼容状态",
     "runtimeDiagnosticProviderSupportValue": "完整 {{full}} · 部分 {{partial}} · 计划中 {{planned}} · 云托管缺口 {{hosted}} · 模型列表例外 {{modelList}}",
+    "runtimeDiagnosticProviderSupportEvidence": "兼容细节",
+    "runtimeDiagnosticProviderSupportEvidenceValue": "计划中 {{planned}} · 部分 {{partial}}",
+    "runtimeDiagnosticProviderContract": "契约",
+    "runtimeDiagnosticProviderContractValue": "就绪 {{ready}} · 已映射 {{mapped}} · 需实测 {{live}} · 协议引用 {{reference}} · 门禁 {{gates}} · 已记录 {{logged}}",
+    "runtimeDiagnosticCapabilityStatus": "能力状态",
+    "runtimeDiagnosticCapabilityStatusValue": "支持 {{supported}} · 部分 {{partial}} · 不支持 {{unsupported}} · 需密钥 {{live}} · 文档变更 {{docs}}",
+    "runtimeDiagnosticCapabilitySendPolicy": "发送策略",
+    "runtimeDiagnosticCapabilitySendPolicyValue": "契约 {{contract}} · 身份 {{identity}} · 声明 {{declared}} · 阻断 {{blocked}} · 示例 {{examples}}",
+    "runtimeDiagnosticCapabilityEvidence": "证据示例",
+    "runtimeDiagnosticCapabilityEvidenceValue": "阻断 {{unsupported}} · 实测 {{live}} · 部分 {{partial}}",
+    "runtimeDiagnosticCapabilityEvidenceNone": "无",
+    "runtimeDiagnosticCapabilitySendSource": {
+      "contract": "契约",
+      "provider_identity": "身份",
+      "explicit_declaration": "声明",
+      "blocked": "阻断"
+    },
+    "runtimeDiagnosticCapabilityReason": {
+      "contract_supported": "已证明",
+      "contract_partial": "部分",
+      "contract_unclaimed": "未声明",
+      "live_smoke_required": "需密钥",
+      "docs_changed": "文档"
+    },
+    "runtimeDiagnosticCapabilityPath": {
+      "send_allowed": "可发送",
+      "disable_parameter": "阻断参数",
+      "run_live_smoke": "实测",
+      "manual_declaration_or_model_metadata": "声明/模型",
+      "local_fallback": "降级",
+      "refresh_docs": "刷新"
+    },
     "runtimeDiagnosticLog": "日志",
     "runtimeDiagnosticLogOn": "写入",
     "runtimeDiagnosticLogOff": "关闭",
@@ -1397,7 +1429,7 @@
     "noModels": "暂无模型",
     "capabilityUpdated": "能力已更新",
     "capabilityMatrix": "能力矩阵",
-    "capabilityMatrixDescription": "运行时按这些能力决定 Responses、WebSocket、compact、payload 和模型能力。",
+    "capabilityMatrixDescription": "运行时按这些能力决定 Responses、WebSocket、compact、嵌入、payload 和模型能力。",
     "capabilityDependencyHint": "开启 WebSocket 或远程 compact 时会自动要求 Responses 能力。",
     "capability": {
       "modelList": "/models",
@@ -1410,6 +1442,7 @@
       "files": "文件",
       "nativeSearch": "原生联网",
       "reasoningEffort": "推理档位",
+      "embeddings": "嵌入",
       "topP": "Top P",
       "chat": "Chat",
       "audioInput": "音频输入",
@@ -2004,7 +2037,8 @@
       "timeout": "请求超时，请检查网络、代理或服务商地址。",
       "rateLimited": "服务商限流或额度不足，请稍后重试，或检查订阅/计费状态。",
       "maxTokens": "当前输出长度超过模型上限，请降低 Max Tokens 后重试。",
-      "badBaseUrl": "服务商地址或请求参数可能不正确，请检查 Base URL 和模型配置。"
+      "badBaseUrl": "服务商地址或请求参数可能不正确，请检查 Base URL 和模型配置。",
+      "providerConformanceBlocked": "当前服务商契约不支持这次请求。请移除不兼容的附件或工具，启用对应能力，或切换到兼容的模型/服务商。"
     }
   },
   "searchPolicy": {
@@ -2048,6 +2082,8 @@
     "streamFallbackCompleted": "服务商或当前环境未提供逐段流，已使用非流式响应完成本轮。",
     "streamMode": "流式模式",
     "requestRectified": "请求已整流",
+    "providerCompatibilityTitle": "服务商兼容性",
+    "providerCompatibilityContent": "契约：{{auditState}}\n协议：{{protocol}}\n文档：{{docs}}\nLive smoke 门禁：{{gates}}",
     "runtimeGovernanceTitle": "运行时策略",
     "runtimeGovernanceContent": "访问：{{access}}\n路由：{{route}}\n传输：{{transport}}\n载荷：{{payload}}\n代理：{{proxy}}",
     "runtimeFallbackTitle": "运行时兜底",
@@ -2069,7 +2105,8 @@
     "hosted": {
       "azureOpenAIUnsupported": "Azure OpenAI 需要填写 /openai/v1 下的 Azure 资源 Base URL。旧版 deployment URL 或缺少资源地址的配置暂不支持。",
       "awsBedrockUnsupported": "AWS Bedrock Runtime 需要 AWS access key 凭据、region 和 SigV4 InvokeModel 路由。非流式对话测试可使用 JSON 或 env 风格 AWS 凭据；模型列表、流式响应、远程 compact 和原生工具请使用 Bedrock Mantle，或继续视为计划中能力。",
-      "vertexAIUnsupported": "Vertex AI 原生 Gemini 路径需要 Google Cloud 鉴权以及 project/location 感知路由。若要使用部分对话和模型同步能力，请配置 OpenAI-compatible 的 /endpoints/openapi Base URL。"
+      "vertexAIUnsupported": "Vertex AI 原生 Gemini 路径需要 Google Cloud 鉴权以及 project/location 感知路由。若要使用部分对话能力，请配置 OpenAI-compatible 的 /endpoints/openapi Base URL。",
+      "vertexAIModelListUnsupported": "Vertex AI OpenAI-compatible 模型列表同步尚未纳入当前兼容性契约。请手动维护模型列表，直到 Google Cloud 文档或 live smoke 证明可支持的 /models 路由。"
     },
     "jsonEmpty": "{{label}}响应为空。",
     "htmlInsteadJson": "{{provider}} 返回了 HTML 页面，不是 JSON。请检查 Base URL 是否应包含 /v1，或服务商是否返回登录/反代错误页。",

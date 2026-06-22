@@ -25,9 +25,10 @@ import type {
   AgentToolManifest,
 } from '@/services/agent/agentToolTypes'
 import type { AgentAssistantMessageResolution } from '@/services/agent/agentMessageAdapter'
-import { decideAgenticChatEntry, type AgenticChatEntryInput, type AgenticChatEntryReason, type AgenticChatWorkflowReply } from '@/services/agent/agentChatEntry'
+import { decideAgenticChatEntry, type AgenticChatEntryDecision, type AgenticChatEntryInput, type AgenticChatEntryReason, type AgenticChatWorkflowReply } from '@/services/agent/agentChatEntry'
 import { buildAgentAssistantMessagePatch, resolveAgentAssistantMessagePatch } from '@/services/agent/agentMessageAdapter'
 import { createAgentRagRuntime } from '@/services/agent/agentRagRuntime'
+import { filterLocalSearchToolManifests, isBuiltinSearchToolRequest, shouldExposeLocalSearchTool } from '@/services/agent/agentSearchToolPolicy'
 import { clampAgentOutput, createAgentTrace, redactSensitiveText } from '@/services/agent/agentTrace'
 import { listAgentToolManifests, listStaticAgentToolManifests } from '@/services/agent/agentToolRegistry'
 import { validateAgentWorkflowDefinition } from '@/services/agent/agentWorkflowDefinitions'
@@ -121,7 +122,9 @@ export function decideAgentRuntimeAssistantMessage(input: AgentChatRuntimeInput)
   }
 
   const ragRuntime = input.ragRuntime ?? createRuntimeRagAdapter(input)
-  const manifests = input.manifests ?? (hasBuiltInRuntimeWorkflowCandidate(input.content) ? listStaticAgentToolManifests() : undefined)
+  const manifests = input.manifests
+    ? filterLocalSearchToolManifests(input.manifests, input.settings)
+    : (hasBuiltInRuntimeWorkflowCandidate(input.content) ? filterLocalSearchToolManifests(listStaticAgentToolManifests(), input.settings) : undefined)
   const blockedWorkflowStates = input.blockedAgentWorkflowStates
   const enabledWorkflowIds = filterBlockedWorkflowIds(input.enabledAgentWorkflowIds, blockedWorkflowStates)
   const workflowSelection = !input.explicitToolRequest && manifests
@@ -166,6 +169,13 @@ export function decideAgentRuntimeAssistantMessage(input: AgentChatRuntimeInput)
     signal: input.signal,
     now: input.now,
   })
+  if (shouldDeferAgentSearchTool(input, entry)) {
+    return {
+      shouldHandle: false,
+      reason: 'agent-not-handled',
+      traces: entry.traces,
+    }
+  }
 
   return {
     shouldHandle: entry.shouldHandle,
@@ -184,9 +194,11 @@ export async function resolveAgentRuntimeAssistantMessage(
   const ragRuntime = input.ragRuntime ?? createRuntimeRagAdapter(input)
   const hasWorkflowDefinitions = hasAgentWorkflowDefinitions(input.conversation)
   const hasBuiltInWorkflowCandidate = hasBuiltInRuntimeWorkflowCandidate(input.content)
-  const initialManifests = input.manifests ?? (hasWorkflowDefinitions || hasBuiltInWorkflowCandidate
-    ? await listAgentToolManifests()
-    : undefined)
+  const initialManifests = input.manifests
+    ? filterLocalSearchToolManifests(input.manifests, input.settings)
+    : (hasWorkflowDefinitions || hasBuiltInWorkflowCandidate
+      ? filterLocalSearchToolManifests(await listAgentToolManifests(), input.settings)
+      : undefined)
   const blockedWorkflowStates = input.blockedAgentWorkflowStates ?? (hasWorkflowDefinitions
     ? await listBlockedAgentWorkflowStatesForSkillSnapshot(input.conversation.skillSnapshot, initialManifests ?? [])
     : undefined)
@@ -238,11 +250,14 @@ export async function resolveAgentRuntimeAssistantMessage(
     signal: input.signal,
     now: input.now,
   })
+  if (shouldDeferAgentSearchTool(input, entry)) {
+    return skippedAgentRuntimeResolution('agent-not-handled', formatRuntimeSkip('direct-chat'), entry.traces)
+  }
   if (!entry.shouldHandle) {
     return skippedAgentRuntimeResolution('agent-not-handled', formatRuntimeSkip(entry.reason), entry.traces)
   }
 
-  const manifests = initialManifests ?? await listAgentToolManifests()
+  const manifests = initialManifests ?? filterLocalSearchToolManifests(await listAgentToolManifests(), input.settings)
   const resolution = await resolveAgentAssistantMessagePatch({
     content: input.content,
     conversationTitle: input.conversation.title,
@@ -270,6 +285,11 @@ export async function resolveAgentRuntimeAssistantMessage(
 
 function isBlockedRuntimeWorkflowSelection(selection: RuntimeWorkflowSelection | undefined): boolean {
   return Boolean(selection?.disabledTrace || selection?.ambiguousTrace)
+}
+
+function shouldDeferAgentSearchTool(input: AgentChatRuntimeInput, entry: AgenticChatEntryDecision): boolean {
+  const request = input.explicitToolRequest ?? entry.classification.suggestedToolRequest
+  return isBuiltinSearchToolRequest(request) && !shouldExposeLocalSearchTool(input.settings)
 }
 
 function cancelledRuntimeWorkflowSelectionDecision(
@@ -307,7 +327,7 @@ function createCancelledRuntimeEntryInput(
     conversationTitle: input.conversation.title,
     explicitToolRequest: input.explicitToolRequest,
     requestedOutput: input.requestedOutput,
-    manifests,
+    manifests: manifests ? filterLocalSearchToolManifests(manifests, input.settings) : undefined,
     ragRuntime,
     runtimeLog: {
       enabled: input.settings.runtimeLogEnabled,

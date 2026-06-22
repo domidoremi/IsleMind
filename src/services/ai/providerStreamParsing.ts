@@ -2,7 +2,7 @@ import { st } from '@/i18n/service'
 import { extractAnthropicReplayContentBlocks, mergeAnthropicReplayContentBlocks, sanitizeAnthropicReplayContentBlocks } from '@/services/ai/providerAnthropicReplay'
 import { asRecord, stringValue, stringifyReasoningDetails } from '@/services/ai/providerJsonUtils'
 import { extractOpenAIReasoningContent, extractOpenAIResponseReplayItems, mergeOpenAIResponseReplayItems } from '@/services/ai/providerOpenAIReplay'
-import { extractGoogleText, extractOpenAIText, extractResponseId } from '@/services/ai/providerResponseText'
+import { extractGoogleText, extractOpenAIContentReasoning, extractOpenAIText, extractResponseId } from '@/services/ai/providerResponseText'
 import { dedupeTraces } from '@/services/ai/providerStreamUtils'
 import { createProviderTrace, isDoneEvent, isReasoningEventType, isToolEventType, stableTraceId, summarizeToolEvent } from '@/services/ai/providerTraceUtils'
 import { extractProviderToolCalls, mergeProviderToolCallParts, type ProviderToolCall } from '@/services/ai/providerToolCalls'
@@ -20,11 +20,15 @@ export interface ParsedStreamChunk {
   providerContentBlocks?: Record<string, unknown>[]
 }
 
+export interface ProviderStreamParseOptions {
+  includeReasoning?: boolean
+}
+
 export function extractProviderStreamContent(chunk: string, providerType: ProviderType): string {
   return parseProviderStreamChunk(chunk, providerType).text
 }
 
-export function parseProviderStreamChunk(chunk: string, providerType: ProviderType): ParsedStreamChunk {
+export function parseProviderStreamChunk(chunk: string, providerType: ProviderType, options: ProviderStreamParseOptions = {}): ParsedStreamChunk {
   const traces: ProcessTrace[] = []
   let providerToolCalls: ProviderToolCall[] = []
   let text = ''
@@ -39,7 +43,7 @@ export function parseProviderStreamChunk(chunk: string, providerType: ProviderTy
     sawDataLine = true
     try {
       const json = JSON.parse(line.slice(6))
-      const parsed = parseProviderStreamEvent(json, providerType)
+      const parsed = parseProviderStreamEvent(json, providerType, options)
       text += parsed.text
       traces.push(...parsed.traces)
       providerToolCalls = mergeProviderToolCallParts([...providerToolCalls, ...(parsed.providerToolCalls ?? [])])
@@ -53,7 +57,7 @@ export function parseProviderStreamChunk(chunk: string, providerType: ProviderTy
   const trimmed = chunk.trim()
   if (!sawDataLine && trimmed.startsWith('{')) {
     try {
-      const parsed = parseProviderStreamEvent(JSON.parse(trimmed), providerType)
+      const parsed = parseProviderStreamEvent(JSON.parse(trimmed), providerType, options)
       return {
         text: parsed.text,
         traces: dedupeTraces(parsed.traces),
@@ -78,7 +82,8 @@ export function parseProviderStreamChunk(chunk: string, providerType: ProviderTy
   }
 }
 
-export function parseProviderStreamEvent(json: any, providerType: ProviderType): ParsedStreamChunk {
+export function parseProviderStreamEvent(json: any, providerType: ProviderType, options: ProviderStreamParseOptions = {}): ParsedStreamChunk {
+  const includeReasoning = options.includeReasoning !== false
   switch (providerType) {
     case 'openai':
     case 'openai-compatible':
@@ -89,12 +94,17 @@ export function parseProviderStreamEvent(json: any, providerType: ProviderType):
       if (json.type === 'response.output_text.delta' || json.type === 'response.refusal.delta') {
         text += stringValue(json.delta)
       }
-      const reasoning = [
+      const reasoning = includeReasoning ? [
         delta?.reasoning_content,
+        delta?.reasoning,
+        extractOpenAIContentReasoning(delta?.content),
         stringifyReasoningDetails(delta?.reasoning_details),
         json.choices?.[0]?.message?.reasoning_content,
+        json.choices?.[0]?.message?.reasoning,
+        extractOpenAIContentReasoning(json.choices?.[0]?.message?.content),
         stringifyReasoningDetails(json.choices?.[0]?.message?.reasoning_details),
         json.delta?.reasoning_content,
+        json.delta?.reasoning,
         stringifyReasoningDetails(json.delta?.reasoning_details),
         json.reasoning_content,
         stringifyReasoningDetails(json.reasoning_details),
@@ -102,7 +112,7 @@ export function parseProviderStreamEvent(json: any, providerType: ProviderType):
         json.part?.text,
         json.text && isReasoningEventType(json.type) ? json.text : undefined,
         json.delta && isReasoningEventType(json.type) ? json.delta : undefined,
-      ].map(stringValue).filter(Boolean).join('')
+      ].map(stringValue).filter(Boolean).join('') : ''
       if (reasoning) {
         traces.push(createProviderTrace('reasoning', providerType, st('providerTrace.reasoningSummary'), reasoning, 'running', stableTraceId(json, 'reasoning')))
       }
@@ -112,10 +122,10 @@ export function parseProviderStreamEvent(json: any, providerType: ProviderType):
       return {
         text,
         traces,
-        usage: extractUsage(json, providerType === 'openai' ? 'openai' : 'openai-compatible'),
+        usage: extractUsage(json, providerType === 'openai' ? 'openai' : 'openai-compatible', { includeReasoning }),
         responseId: extractResponseId(json),
         providerToolCalls: extractProviderToolCalls(json, providerType),
-        reasoningContent: extractOpenAIReasoningContent(json),
+        reasoningContent: includeReasoning ? extractOpenAIReasoningContent(json) : undefined,
         responseItems: extractOpenAIResponseReplayItems(json),
       }
     }
@@ -124,9 +134,9 @@ export function parseProviderStreamEvent(json: any, providerType: ProviderType):
       const traces: ProcessTrace[] = []
       if (json.type === 'content_block_delta') {
         text += stringValue(json.delta?.text)
-        const thinking = stringValue(json.delta?.thinking)
+        const thinking = includeReasoning ? stringValue(json.delta?.thinking) : ''
         if (thinking) traces.push(createProviderTrace('reasoning', providerType, st('providerTrace.reasoningSummary'), thinking, 'running', stableTraceId(json, 'thinking')))
-        const signature = stringValue(json.delta?.signature)
+        const signature = includeReasoning ? stringValue(json.delta?.signature) : ''
         if (signature) traces.push(createProviderTrace('reasoning', providerType, st('providerTrace.thoughtSignature'), st('providerTrace.signatureSaved'), 'done', stableTraceId(json, 'signature'), { hiddenSignature: true }))
       }
       if (json.type === 'content_block_start' && json.content_block?.type === 'tool_use') {
@@ -138,7 +148,7 @@ export function parseProviderStreamEvent(json: any, providerType: ProviderType):
       return {
         text,
         traces,
-        usage: extractUsage(json, 'anthropic'),
+        usage: extractUsage(json, 'anthropic', { includeReasoning }),
         providerToolCalls: extractProviderToolCalls(json, 'anthropic'),
         providerContentBlocks: extractAnthropicReplayContentBlocks(json),
       }
@@ -153,19 +163,19 @@ export function parseProviderStreamEvent(json: any, providerType: ProviderType):
           if (!item) continue
           const partText = stringValue(item.text)
           if (item.thought) {
-            if (partText) traces.push(createProviderTrace('reasoning', providerType, st('providerTrace.reasoningSummary'), partText, 'running', stableTraceId(item, 'thought')))
+            if (includeReasoning && partText) traces.push(createProviderTrace('reasoning', providerType, st('providerTrace.reasoningSummary'), partText, 'running', stableTraceId(item, 'thought')))
           } else if (item.functionCall) {
             const functionCall = asRecord(item.functionCall)
             traces.push(createProviderTrace('tool', providerType, st('providerTrace.functionCallNamed', { name: stringValue(functionCall?.name) || 'function' }), summarizeToolEvent(item.functionCall), 'running', stableTraceId(item.functionCall, 'function')))
           } else {
             text += partText
           }
-          if (item.thoughtSignature) {
+          if (includeReasoning && item.thoughtSignature) {
             traces.push(createProviderTrace('reasoning', providerType, st('providerTrace.thoughtSignature'), st('providerTrace.thoughtSignatureSaved'), 'done', stableTraceId(item, 'thought-signature'), { hiddenSignature: true }))
           }
         }
       }
-      return { text, traces, usage: extractUsage(json, 'google'), providerToolCalls: extractProviderToolCalls(json, 'google') }
+      return { text, traces, usage: extractUsage(json, 'google', { includeReasoning }), providerToolCalls: extractProviderToolCalls(json, 'google') }
     }
     default:
       return { text: '', traces: [] }

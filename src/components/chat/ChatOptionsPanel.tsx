@@ -220,8 +220,8 @@ export function ChatOptionsPanel({
       </View>
 
       <ScrollView
-        style={{ maxHeight: panelBodyMaxHeight }}
-        contentContainerStyle={{ padding: 12, paddingBottom: 14, backgroundColor: panelBody }}
+        style={{ maxHeight: panelBodyMaxHeight, backgroundColor: panelBody }}
+        contentContainerStyle={{ padding: 12, paddingBottom: 14 }}
         keyboardShouldPersistTaps="handled"
         showsVerticalScrollIndicator
       >
@@ -229,23 +229,19 @@ export function ChatOptionsPanel({
           <PickerEmptyState title={pickerEmptyTitle} description={pickerEmptyDescription} minHeight={pickerEmptyMinHeight} />
         ) : (
           <View style={{ flexDirection: compactPicker ? 'column' : 'row', gap: 12, alignItems: 'stretch', minHeight: pickerMinHeight }}>
-            <MotiView
-              from={motion === 'full' ? { opacity: 0, translateX: -8 } : { opacity: 0 }}
-              animate={{ opacity: 1, translateX: 0 }}
-              transition={motion === 'full' ? { type: 'spring', ...motionTokens.spring.settle } : { type: 'timing', duration: motionTokens.duration.fast }}
-              style={{ flex: compactPicker ? undefined : 0.42, minWidth: compactPicker ? undefined : 0, gap: 8 }}
-            >
+            <View style={{ flex: compactPicker ? undefined : 0.42, minWidth: compactPicker ? undefined : 0, gap: 8 }}>
               <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 8 }}>
                 <Text style={{ color: colors.textSecondary, fontSize: 11, fontWeight: '900' }}>{t('settings.providerManagement')}</Text>
                 <Text style={{ color: colors.textTertiary, fontSize: 10, fontWeight: '800' }}>
                   {normalizedQuery ? `${visibleProviders.length}/${policySwitchableProviders.length}` : t('chat.countItems', { count: policySwitchableProviders.length })}
                 </Text>
               </View>
-              <ScrollView
-                style={{ maxHeight: compactPicker ? compactProviderMaxHeight : providerListHeight }}
-                contentContainerStyle={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8, paddingBottom: 4 }}
-                showsVerticalScrollIndicator
-                nestedScrollEnabled
+              <MotiView
+                from={motion === 'full' ? { opacity: 0, translateX: -8 } : { opacity: 0 }}
+                animate={{ opacity: 1, translateX: 0 }}
+                transition={motion === 'full' ? { type: 'spring', ...motionTokens.spring.settle } : { type: 'timing', duration: motionTokens.duration.fast }}
+                style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8 }}
+                pointerEvents="box-none"
               >
                 {visibleProviders.map((item) => (
                   <IslePressable
@@ -265,15 +261,10 @@ export function ChatOptionsPanel({
                     />
                   </IslePressable>
                 ))}
-              </ScrollView>
-            </MotiView>
+              </MotiView>
+            </View>
 
-            <MotiView
-              from={motion === 'full' ? { opacity: 0, translateX: 8 } : { opacity: 0 }}
-              animate={{ opacity: 1, translateX: 0 }}
-              transition={motion === 'full' ? { type: 'spring', ...motionTokens.spring.settle, delay: 35 } : { type: 'timing', duration: motionTokens.duration.fast }}
-              style={{ flex: 1, minWidth: 0, gap: 8 }}
-            >
+            <View style={{ flex: 1, minWidth: 0, gap: 8 }}>
               <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 8 }}>
                 <Text style={{ color: colors.textSecondary, fontSize: 11, fontWeight: '900' }}>{t('chat.model')}</Text>
                 <Text numberOfLines={1} style={{ color: colors.textTertiary, fontSize: 10, fontWeight: '800', flexShrink: 1 }}>
@@ -281,11 +272,12 @@ export function ChatOptionsPanel({
                 </Text>
               </View>
               {selectedModels.length ? (
-                <ScrollView
-                  style={{ maxHeight: compactPicker ? compactModelMaxHeight : modelListHeight }}
-                  contentContainerStyle={{ flexDirection: 'row', gap: 8, flexWrap: 'wrap', paddingRight: 4, paddingBottom: 4 }}
-                  showsVerticalScrollIndicator
-                  nestedScrollEnabled
+                <MotiView
+                  from={motion === 'full' ? { opacity: 0, translateX: 8 } : { opacity: 0 }}
+                  animate={{ opacity: 1, translateX: 0 }}
+                  transition={motion === 'full' ? { type: 'spring', ...motionTokens.spring.settle, delay: 35 } : { type: 'timing', duration: motionTokens.duration.fast }}
+                  style={{ flexDirection: 'row', gap: 8, flexWrap: 'wrap', paddingRight: 4, paddingBottom: 2 }}
+                  pointerEvents="box-none"
                 >
                   {selectedModels.map((model) => (
                     <IslePressable
@@ -306,11 +298,11 @@ export function ChatOptionsPanel({
                       />
                     </IslePressable>
                   ))}
-                </ScrollView>
+                </MotiView>
               ) : (
                 <PickerEmptyState title={modelEmptyTitle} description={t('chat.providerNoModelsSyncHint')} minHeight={modelListHeight} />
               )}
-            </MotiView>
+            </View>
           </View>
         )}
         {currentCapabilityBadges.length ? (

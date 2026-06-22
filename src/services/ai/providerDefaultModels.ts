@@ -17,7 +17,7 @@ export function fallbackModel(providerType: ProviderType): string {
 
 export function pickEmbeddingModel(provider: AIProvider): string {
   if (provider.type === 'openai') return 'text-embedding-3-small'
-  const configured = provider.models.find((model) => /embed|embedding|text-embedding/i.test(model))
+  const configured = provider.models.find((model) => /embed|embedding|text-embedding|(?:^|[/_-])bge(?:[/_-]|$)|(?:^|[/_-])e5(?:[/_-]|$)|(?:^|[/_-])gte(?:[/_-]|$)/i.test(model))
   if (configured) return configured
   if (provider.type === 'xiaomi-mimo') return 'text-embedding'
   return 'text-embedding-3-small'

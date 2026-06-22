@@ -6,6 +6,7 @@ import { useSettingsStore } from '@/store/settingsStore'
 import { st } from '@/i18n/service'
 import { getPolicyPreferredProviderModel } from '@/services/ai/policy/providerModelAccess'
 import { assertImportFileSizeByUri, MAX_IMPORT_TEXT_FILE_BYTES } from '@/services/fileImportGuards'
+import { providerCompatibilityCapabilityCanBeSentForProvider } from '@/services/ai/providerCompatibilityContract'
 
 let AudioModule: any = null
 let useAudioRecorderModule: any = null
@@ -57,7 +58,10 @@ export async function transcribeLocalAudio(uri: string, provider?: AIProvider | 
 export async function speakText(text: string, provider?: AIProvider | null): Promise<void> {
   if (!text.trim()) return
   const sourceProvider = provider ?? await useSettingsStore.getState().getPrimaryConfiguredProvider()
-  if (sourceProvider?.capabilities?.speech && createAudioPlayerModule && FileSystem.cacheDirectory) {
+  const providerSpeechSupported = !!sourceProvider &&
+    sourceProvider.capabilities?.speech === true &&
+    providerCompatibilityCapabilityCanBeSentForProvider(sourceProvider, 'audio', true)
+  if (providerSpeechSupported && createAudioPlayerModule && FileSystem.cacheDirectory) {
     try {
       const base64 = await synthesizeSpeechWithProvider({
         provider: sourceProvider,

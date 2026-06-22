@@ -32,6 +32,15 @@ export interface ProviderReasoningPlan {
   downgradeReason?: string
 }
 
+export interface ProviderStructuredOutputPlan {
+  requested: boolean
+  supported: boolean
+  requestShape: string
+  jsonObjectMode: boolean
+  strictJsonSchema: boolean
+  blocked: boolean
+}
+
 export interface ProviderPayloadPlan {
   bodyKeys: string[]
   removedParams: string[]
@@ -60,6 +69,7 @@ export interface ProviderRouteDecision {
   contextPlan: ProviderContextPlan
   modalityPlan: ProviderModalityPlan
   reasoningPlan: ProviderReasoningPlan
+  structuredOutputPlan: ProviderStructuredOutputPlan
   payloadPlan: ProviderPayloadPlan
   transportPlan: ProviderTransportPlan
   fallbackPlan: ProviderFallbackPlan
@@ -107,6 +117,7 @@ function buildRouteDecision(input: ProviderRouteInput, conformance: ProviderConf
   const blockedModalities = conformance.issues
     .filter((issue) => issue.code === 'unsupported_modality' && typeof issue.field === 'string')
     .map((issue) => issue.field!)
+  const structuredOutputBlocked = conformance.issues.some((issue) => issue.code === 'unsupported_structured_output')
 
   return {
     requestedProviderId: input.request.provider.id,
@@ -138,6 +149,14 @@ function buildRouteDecision(input: ProviderRouteInput, conformance: ProviderConf
       providerValue: conformance.reasoning.providerValue,
       requestShape: conformance.reasoning.requestShape,
       downgradeReason: conformance.reasoning.downgradeReason,
+    },
+    structuredOutputPlan: {
+      requested: Boolean(input.request.structuredOutput),
+      supported: manifest.structuredOutput.appRequestControl,
+      requestShape: manifest.structuredOutput.documentedRequestShape,
+      jsonObjectMode: manifest.structuredOutput.jsonObjectMode,
+      strictJsonSchema: manifest.structuredOutput.strictJsonSchema,
+      blocked: structuredOutputBlocked,
     },
     payloadPlan: {
       bodyKeys: conformance.bodyKeys,

@@ -4,10 +4,20 @@ import type { ProxyPolicyDecision } from '@/services/ai/policy/proxyPolicy'
 import type { AccessPolicyDecision } from '@/services/ai/policy/providerModelAccess'
 import type { ProviderFailoverDecision, ProviderFailureClassification } from '@/services/ai/providerFailover'
 import type { ProviderConformanceResult } from '@/services/ai/providerConformance'
+import {
+  CANONICAL_PROVIDER_COMPATIBILITY_BEHAVIORS,
+  buildProviderCompatibilityBehaviorStatusMap,
+  getProviderCompatibilityEvidenceForProvider,
+  getProviderCompatibilityLiveSmokeGates,
+  providerCompatibilityCapabilityExplicitlyDeclaredByProvider,
+  resolveProviderCompatibilityCapabilitySendPolicy,
+  type ProviderCompatibilityEvidenceProviderLike,
+  type ProviderCompatibilityBehavior,
+} from '@/services/ai/providerCompatibilityContract'
 import type { ProviderRouteDecision } from '@/services/ai/providerRouter'
 import type { TransportSelection } from '@/services/ai/transport/transportSelector'
 import { appendRuntimeLog } from '@/services/runtimeLog'
-import type { ProcessTrace } from '@/types'
+import type { ProcessTrace, ProviderCapabilities } from '@/types'
 
 export interface ProviderRuntimeLogRequestLike {
   settings?: {
@@ -17,9 +27,7 @@ export interface ProviderRuntimeLogRequestLike {
 }
 
 export interface ProviderRuntimeTraceRequestLike extends ProviderRuntimeLogRequestLike {
-  provider: {
-    id: string
-  }
+  provider: { id: string, capabilities?: Partial<ProviderCapabilities> } & ProviderCompatibilityEvidenceProviderLike
   model?: string
   requestedModel?: string
 }
@@ -117,6 +125,86 @@ export function buildProviderConformanceLogData(req: ProviderRuntimeRequestLogLi
 export async function logProviderConformance(req: ProviderRuntimeRequestLogLike, result: ProviderConformanceResult): Promise<void> {
   if (!result.issues.length && !req.settings?.runtimeLogEnabled) return
   await appendRuntimeLog('provider.conformance', buildProviderConformanceLogData(req, result), runtimeLogOptions(req))
+}
+
+export function buildProviderCompatibilityLogData(req: ProviderRuntimeRequestLogLike): Record<string, unknown> {
+  const evidence = getProviderCompatibilityEvidenceForProvider(req.provider)
+  const gates = getProviderCompatibilityLiveSmokeGates(evidence.id)
+  const capabilityStatuses = buildProviderCompatibilityBehaviorStatusMap(evidence.id)
+  const capabilitySendPolicies = buildProviderCompatibilitySendPolicyMap(req.provider)
+  return {
+    ...runtimeLogRequestFields(req),
+    compatibilityId: evidence.id,
+    auditState: evidence.auditState,
+    protocol: evidence.protocol,
+    behaviorDocs: [...evidence.behaviorDocs],
+    capabilityStatuses,
+    capabilitySendPolicies,
+    endpointFamilies: [...evidence.endpointFamilies],
+    officialDocsCount: evidence.officialDocs.length,
+    liveSmokeGateCount: gates.length,
+    liveSmokeGateIds: gates.map((gate) => gate.id),
+    liveSmokeRequiredEnv: [...new Set(gates.flatMap((gate) => gate.requiredEnv))].sort(),
+  }
+}
+
+export async function logProviderCompatibility(req: ProviderRuntimeRequestLogLike): Promise<void> {
+  await appendRuntimeLog('provider.compatibility', buildProviderCompatibilityLogData(req), runtimeLogOptions(req))
+}
+
+export function createProviderCompatibilityTrace(req: ProviderRuntimeRequestLogLike): ProcessTrace {
+  const evidence = getProviderCompatibilityEvidenceForProvider(req.provider)
+  const gates = getProviderCompatibilityLiveSmokeGates(evidence.id)
+  const liveSmokeRequiredEnv = [...new Set(gates.flatMap((gate) => gate.requiredEnv))].sort()
+  const capabilityStatuses = buildProviderCompatibilityBehaviorStatusMap(evidence.id)
+  const capabilitySendPolicies = buildProviderCompatibilitySendPolicyMap(req.provider)
+  const now = Date.now()
+  return {
+    id: `provider-compatibility-${now}`,
+    type: 'system',
+    title: st('providerTrace.providerCompatibilityTitle'),
+    content: st('providerTrace.providerCompatibilityContent', {
+      auditState: evidence.auditState,
+      protocol: evidence.protocol,
+      docs: String(evidence.officialDocs.length),
+      gates: String(gates.length),
+    }),
+    status: evidence.auditState === 'conformance-ready' ? 'done' : 'skipped',
+    startedAt: now,
+    completedAt: now,
+    metadata: {
+      source: 'provider-compatibility-contract',
+      providerId: req.provider.id,
+      model: req.model,
+      requestedModel: req.requestedModel,
+      compatibilityId: evidence.id,
+      auditState: evidence.auditState,
+      protocol: evidence.protocol,
+      behaviorDocs: [...evidence.behaviorDocs],
+      capabilityStatuses,
+      capabilitySendPolicies,
+      endpointFamilies: [...evidence.endpointFamilies],
+      officialDocsCount: evidence.officialDocs.length,
+      liveSmokeGateCount: gates.length,
+      liveSmokeGateIds: gates.map((gate) => gate.id),
+      liveSmokeRequiredEnv,
+    },
+  }
+}
+
+function buildProviderCompatibilitySendPolicyMap(
+  provider: ProviderRuntimeTraceRequestLike['provider'],
+): Record<ProviderCompatibilityBehavior, ReturnType<typeof resolveProviderCompatibilityCapabilitySendPolicy>> {
+  return Object.fromEntries(
+    CANONICAL_PROVIDER_COMPATIBILITY_BEHAVIORS.map((behavior) => [
+      behavior,
+      resolveProviderCompatibilityCapabilitySendPolicy(
+        provider,
+        behavior,
+        providerCompatibilityCapabilityExplicitlyDeclaredByProvider(provider, behavior),
+      ),
+    ]),
+  ) as Record<ProviderCompatibilityBehavior, ReturnType<typeof resolveProviderCompatibilityCapabilitySendPolicy>>
 }
 
 export function buildProviderRouteDecisionLogData(req: ProviderRuntimeRequestLogLike, result: ProviderRouteDecision): Record<string, unknown> {

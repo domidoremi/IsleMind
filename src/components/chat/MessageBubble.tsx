@@ -30,7 +30,7 @@ import {
 import { IslePanel } from '@/components/ui/isle'
 import { RenderGuard } from '@/components/ui/RenderGuard'
 import type { MotionIntensity } from '@/hooks/useMotionPreference'
-import { getAgentEvidenceRepairActionFromMessage, getAgentPendingActionFromMessage, getAgentWorkflowContinuationActionFromMessage, getAgentWorkflowRecoveryActionFromMessage, getAgentWorkflowSkillSuggestionFromMessage } from '@/services/agent'
+import { getAgentEvidenceRepairActionFromMessage, getAgentPendingActionFromMessage, getAgentWorkflowContinuationActionFromMessage, getAgentWorkflowRecoveryActionFromMessage, getAgentWorkflowSkillSuggestionFromMessage } from '@/services/agent/agentMessageAdapter'
 import { clampAgentOutput, redactSensitiveText } from '@/services/agent/agentTrace'
 
 const STREAMING_LAYOUT_TEXT_STEP = 160
@@ -737,17 +737,17 @@ function thinkingProgressLabel(t: TFunction, state: 'base' | 'active' | 'done', 
   if (state === 'active' && stage) {
     return t('messageBubble.thinkingProgressActive', {
       stage,
-      defaultValue: `思考中... > 正在${stage}`,
+      defaultValue: `正在${stage}`,
     })
   }
   if (state === 'done' && stage) {
     return t('messageBubble.thinkingProgressDone', {
       stage,
-      defaultValue: `思考中... > 已完成${stage}`,
+      defaultValue: `已完成${stage}`,
     })
   }
   return t('messageBubble.thinkingProgressBase', {
-    defaultValue: '思考中... >',
+    defaultValue: '准备中',
   })
 }
 

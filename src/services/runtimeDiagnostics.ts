@@ -2,7 +2,61 @@ import type { AIProvider, Settings } from '@/types'
 import { getRuntimeLogInfo, readRuntimeLogText, type RuntimeLogEntry, type RuntimeLogInfo } from '@/services/runtimeLog'
 import { listCompactUsageRecords } from '@/services/ai/compact/compactUsage'
 import { safeHttpUrl } from '@/utils/networkUrlSafety'
-import { buildProviderCapabilityMatrix, buildProviderCoverageBuckets, type ProviderHostingProfile, type ProviderSupportLevel } from '@/services/ai/providerCapabilityMatrix'
+import { buildProviderCapabilityMatrix, buildProviderCoverageBuckets, type ProviderCapabilityArea, type ProviderHostingProfile, type ProviderSupportLevel } from '@/services/ai/providerCapabilityMatrix'
+import {
+  buildProviderCompatibilityBehaviorStatusMap,
+  explainProviderCompatibilityCapabilityStatus,
+  getProviderCompatibilityEvidenceForProvider,
+  getProviderCompatibilityLiveSmokeGates,
+  providerCompatibilityCapabilityExplicitlyDeclaredByProvider,
+  providerCompatibilityCapabilityCanBeSentForProvider,
+  resolveProviderCompatibilityCapabilitySendPolicy,
+  type ProviderCompatibilityAuditState,
+  type ProviderCompatibilityBehavior,
+  type ProviderCompatibilityCapabilitySendSource,
+  type ProviderCompatibilityCapabilityStatus,
+  type ProviderCompatibilityDegradationPath,
+  type ProviderCompatibilityLimitationReason,
+} from '@/services/ai/providerCompatibilityContract'
+
+export interface RuntimeDiagnosticsCapabilityStatusExample {
+  providerId?: string
+  providerName?: string
+  compatibilityId: string
+  capability: ProviderCompatibilityBehavior
+  status: ProviderCompatibilityCapabilityStatus
+  limitationReason: ProviderCompatibilityLimitationReason
+  degradationPath: ProviderCompatibilityDegradationPath
+  auditState: ProviderCompatibilityAuditState
+  evidenceUrl?: string
+  liveSmokeGates: string[]
+}
+
+export interface RuntimeDiagnosticsCapabilitySendPolicyExample {
+  providerId?: string
+  providerName?: string
+  compatibilityId: string
+  capability: ProviderCompatibilityBehavior
+  status: ProviderCompatibilityCapabilityStatus
+  allowed: boolean
+  sendSource: ProviderCompatibilityCapabilitySendSource
+  limitationReason: ProviderCompatibilityLimitationReason
+  degradationPath: ProviderCompatibilityDegradationPath
+  auditState: ProviderCompatibilityAuditState
+  evidenceUrl?: string
+}
+
+export interface RuntimeDiagnosticsCapabilityMatrixExample {
+  providerId?: string
+  providerName?: string
+  compatibilityId: string
+  area: ProviderCapabilityArea
+  level: ProviderSupportLevel
+  reason: string
+  contractStatus?: ProviderCompatibilityCapabilityStatus
+  limitationReason?: ProviderCompatibilityLimitationReason
+  degradationPath?: ProviderCompatibilityDegradationPath
+}
 
 export interface RuntimeDiagnosticsSummary {
   responses: {
@@ -64,10 +118,27 @@ export interface RuntimeDiagnosticsSummary {
   capabilityMatrix: {
     hostingProfiles: Record<ProviderHostingProfile, number>
     supportLevels: Record<ProviderSupportLevel, number>
+    statusExamples: Record<ProviderSupportLevel, RuntimeDiagnosticsCapabilityMatrixExample[]>
     partialProviders: number
     plannedProviders: number
     hostedGapProviders: number
     genericModelListSuppressedProviders: number
+  }
+  compatibility: {
+    auditStates: Record<ProviderCompatibilityAuditState, number>
+    capabilityStatuses: Record<ProviderCompatibilityCapabilityStatus, number>
+    capabilityStatusExamples: Record<ProviderCompatibilityCapabilityStatus, RuntimeDiagnosticsCapabilityStatusExample[]>
+    capabilityStatusTotal: number
+    capabilitySendSources: Record<ProviderCompatibilityCapabilitySendSource, number>
+    capabilitySendPolicyExamples: Record<ProviderCompatibilityCapabilitySendSource, RuntimeDiagnosticsCapabilitySendPolicyExample[]>
+    capabilitySendPolicyTotal: number
+    conformanceReadyProviders: number
+    docsMappedProviders: number
+    needsLiveSmokeProviders: number
+    protocolReferenceProviders: number
+    liveSmokeGateProviders: number
+    liveSmokeGateCount: number
+    loggedEvents: number
   }
 }
 
@@ -85,24 +156,35 @@ export async function buildRuntimeDiagnosticsSummary(input: {
   const logEntries = parseRuntimeLogEntries(await readRuntimeLogText())
   const routeProtocolCounts = summarizeRouteProtocols(logEntries)
   const websocketFallbackCount = countRuntimeLogEntries(logEntries, 'transport.fallback')
-  const providerMatrices = providers.map(buildProviderCapabilityMatrix)
+  const providerMatrices = providers.map((provider) => ({
+    provider,
+    matrix: buildProviderCapabilityMatrix(provider),
+    evidence: getProviderCompatibilityEvidenceForProvider(provider),
+  }))
+  const compatibilityEvidence = providers.map((provider) => getProviderCompatibilityEvidenceForProvider(provider))
+  const compatibilityAuditStates = summarizeCompatibilityAuditStates(compatibilityEvidence.map((evidence) => evidence.auditState))
+  const compatibilityCapabilityStatuses = summarizeCompatibilityCapabilityStatuses(compatibilityEvidence.map((evidence) => evidence.id))
+  const compatibilityCapabilityStatusExamples = summarizeCompatibilityCapabilityStatusExamples(providers)
+  const compatibilityCapabilitySendSources = summarizeCompatibilityCapabilitySendSources(providers)
+  const compatibilityCapabilitySendPolicyExamples = summarizeCompatibilityCapabilitySendPolicyExamples(providers)
+  const compatibilityGateCounts = compatibilityEvidence.map((evidence) => getProviderCompatibilityLiveSmokeGates(evidence.id).length)
   return {
     responses: {
-      capableProviders: providers.filter((provider) => provider.capabilities?.responsesApi === true).length,
-      readyProviders: enabledProviders.filter((provider) => provider.capabilities?.responsesApi === true).length,
+      capableProviders: providers.filter(providerSupportsResponsesApi).length,
+      readyProviders: enabledProviders.filter(providerSupportsResponsesApi).length,
       activeProtocols: routeProtocolCounts,
     },
     websocket: {
       mode: settings.transportMode ?? 'auto',
-      capableProviders: providers.filter((provider) => provider.capabilities?.responsesWebSocket === true && provider.capabilities?.responsesApi === true).length,
-      readyProviders: enabledProviders.filter((provider) => provider.capabilities?.responsesWebSocket === true && provider.capabilities?.responsesApi === true).length,
+      capableProviders: providers.filter(providerSupportsResponsesWebSocket).length,
+      readyProviders: enabledProviders.filter(providerSupportsResponsesWebSocket).length,
       enabled: (settings.transportMode ?? 'auto') === 'websocket',
       fallbackCount: websocketFallbackCount,
     },
     compact: {
       mode: settings.remoteCompactMode ?? 'off',
-      capableProviders: providers.filter((provider) => provider.capabilities?.remoteCompact === true && provider.capabilities?.responsesApi === true).length,
-      readyProviders: enabledProviders.filter((provider) => provider.capabilities?.remoteCompact === true && provider.capabilities?.responsesApi === true).length,
+      capableProviders: providers.filter(providerSupportsRemoteCompact).length,
+      readyProviders: enabledProviders.filter(providerSupportsRemoteCompact).length,
       requestCount: compactRecords.length,
       remoteRequestCount: compactRecords.filter((record) => !record.fallbackLocal && !record.failureCode && typeof record.inputTokens === 'number' && typeof record.outputTokens !== 'number').length,
       localCompressionCount: localCompressionRecords.length,
@@ -141,11 +223,28 @@ export async function buildRuntimeDiagnosticsSummary(input: {
     },
     capabilityMatrix: {
       hostingProfiles: buildProviderCoverageBuckets(providers),
-      supportLevels: summarizeSupportLevels(providerMatrices),
-      partialProviders: providerMatrices.filter((matrix) => matrix.summaryLevel === 'partial').length,
-      plannedProviders: providerMatrices.filter((matrix) => matrix.summaryLevel === 'planned').length,
-      hostedGapProviders: providerMatrices.filter((matrix) => matrix.hostingProfile === 'cloud-hosted' && matrix.summaryLevel === 'planned').length,
-      genericModelListSuppressedProviders: providerMatrices.filter((matrix) => matrix.statuses.some((status) => status.area === 'modelCatalog' && status.reason.includes('generic model-list sync is intentionally disabled'))).length,
+      supportLevels: summarizeSupportLevels(providerMatrices.map((entry) => entry.matrix)),
+      statusExamples: summarizeCapabilityMatrixStatusExamples(providerMatrices),
+      partialProviders: providerMatrices.filter((entry) => entry.matrix.summaryLevel === 'partial').length,
+      plannedProviders: providerMatrices.filter((entry) => entry.matrix.summaryLevel === 'planned').length,
+      hostedGapProviders: providerMatrices.filter((entry) => entry.matrix.hostingProfile === 'cloud-hosted' && entry.matrix.summaryLevel === 'planned').length,
+      genericModelListSuppressedProviders: providerMatrices.filter((entry) => entry.matrix.statuses.some((status) => status.area === 'modelCatalog' && status.reason.includes('generic model-list sync is intentionally disabled'))).length,
+    },
+    compatibility: {
+      auditStates: compatibilityAuditStates,
+      capabilityStatuses: compatibilityCapabilityStatuses,
+      capabilityStatusExamples: compatibilityCapabilityStatusExamples,
+      capabilityStatusTotal: Object.values(compatibilityCapabilityStatuses).reduce((sum, count) => sum + count, 0),
+      capabilitySendSources: compatibilityCapabilitySendSources,
+      capabilitySendPolicyExamples: compatibilityCapabilitySendPolicyExamples,
+      capabilitySendPolicyTotal: Object.values(compatibilityCapabilitySendSources).reduce((sum, count) => sum + count, 0),
+      conformanceReadyProviders: compatibilityAuditStates['conformance-ready'],
+      docsMappedProviders: compatibilityAuditStates['docs-mapped'],
+      needsLiveSmokeProviders: compatibilityAuditStates['needs-live-smoke'],
+      protocolReferenceProviders: compatibilityAuditStates['protocol-reference'],
+      liveSmokeGateProviders: compatibilityGateCounts.filter((count) => count > 0).length,
+      liveSmokeGateCount: compatibilityGateCounts.reduce((sum, count) => sum + count, 0),
+      loggedEvents: countRuntimeLogEntries(logEntries, 'provider.compatibility'),
     },
   }
 }
@@ -155,6 +254,23 @@ function hasLocalCompressionRecord(record: ReturnType<typeof listCompactUsageRec
     typeof record.localEstimatedSavedTokens === 'number' ||
     record.localCompressionStrategy === 'structured-v2' ||
     record.localCompressionStrategy === 'single-message-truncation'
+}
+
+function providerSupportsResponsesApi(provider: AIProvider): boolean {
+  return provider.capabilities?.responsesApi === true &&
+    providerCompatibilityCapabilityCanBeSentForProvider(provider, 'responsesApi', true)
+}
+
+function providerSupportsResponsesWebSocket(provider: AIProvider): boolean {
+  return providerSupportsResponsesApi(provider) &&
+    provider.capabilities?.responsesWebSocket === true &&
+    providerCompatibilityCapabilityCanBeSentForProvider(provider, 'responsesWebSocket', true)
+}
+
+function providerSupportsRemoteCompact(provider: AIProvider): boolean {
+  return providerSupportsResponsesApi(provider) &&
+    provider.capabilities?.remoteCompact === true &&
+    providerCompatibilityCapabilityCanBeSentForProvider(provider, 'remoteCompact', true)
 }
 
 function sumFiniteNumbers(values: Array<number | undefined>): number {
@@ -217,4 +333,157 @@ function summarizeSupportLevels(matrices: ReturnType<typeof buildProviderCapabil
     planned: 0,
     unsupported: 0,
   })
+}
+
+function summarizeCapabilityMatrixStatusExamples(
+  entries: Array<{
+    provider: AIProvider
+    matrix: ReturnType<typeof buildProviderCapabilityMatrix>
+    evidence: ReturnType<typeof getProviderCompatibilityEvidenceForProvider>
+  }>
+): Record<ProviderSupportLevel, RuntimeDiagnosticsCapabilityMatrixExample[]> {
+  const examples: Record<ProviderSupportLevel, RuntimeDiagnosticsCapabilityMatrixExample[]> = {
+    full: [],
+    partial: [],
+    planned: [],
+    unsupported: [],
+  }
+  for (const { provider, matrix, evidence } of entries) {
+    for (const status of matrix.statuses) {
+      if (examples[status.level].length >= 3) continue
+      const explanation = status.contractStatus
+        ? explainProviderCompatibilityCapabilityStatus(status.contractStatus, evidence.auditState)
+        : undefined
+      examples[status.level].push({
+        providerId: provider.id,
+        providerName: provider.name,
+        compatibilityId: evidence.id,
+        area: status.area,
+        level: status.level,
+        reason: status.reason,
+        contractStatus: status.contractStatus,
+        limitationReason: explanation?.limitationReason,
+        degradationPath: explanation?.degradationPath,
+      })
+    }
+  }
+  return examples
+}
+
+function summarizeCompatibilityAuditStates(states: ProviderCompatibilityAuditState[]): Record<ProviderCompatibilityAuditState, number> {
+  return states.reduce<Record<ProviderCompatibilityAuditState, number>>((acc, state) => {
+    acc[state] = (acc[state] ?? 0) + 1
+    return acc
+  }, {
+    'conformance-ready': 0,
+    'docs-mapped': 0,
+    'needs-live-smoke': 0,
+    'protocol-reference': 0,
+  })
+}
+
+function summarizeCompatibilityCapabilityStatuses(ids: Array<ReturnType<typeof getProviderCompatibilityEvidenceForProvider>['id']>): Record<ProviderCompatibilityCapabilityStatus, number> {
+  return ids.reduce<Record<ProviderCompatibilityCapabilityStatus, number>>((acc, id) => {
+    const statuses = buildProviderCompatibilityBehaviorStatusMap(id)
+    for (const status of Object.values(statuses)) {
+      acc[status] = (acc[status] ?? 0) + 1
+    }
+    return acc
+  }, {
+    supported: 0,
+    partial: 0,
+    unsupported: 0,
+    requiresLiveKey: 0,
+    docsChanged: 0,
+  })
+}
+
+function summarizeCompatibilityCapabilityStatusExamples(providers: AIProvider[]): Record<ProviderCompatibilityCapabilityStatus, RuntimeDiagnosticsCapabilityStatusExample[]> {
+  const examples: Record<ProviderCompatibilityCapabilityStatus, RuntimeDiagnosticsCapabilityStatusExample[]> = {
+    supported: [],
+    partial: [],
+    unsupported: [],
+    requiresLiveKey: [],
+    docsChanged: [],
+  }
+  for (const provider of providers) {
+    const evidence = getProviderCompatibilityEvidenceForProvider(provider)
+    const liveSmokeGates = getProviderCompatibilityLiveSmokeGates(evidence.id)
+    const statuses = buildProviderCompatibilityBehaviorStatusMap(evidence.id)
+    for (const [capability, status] of Object.entries(statuses) as Array<[ProviderCompatibilityBehavior, ProviderCompatibilityCapabilityStatus]>) {
+      if (examples[status].length >= 3) continue
+      const explanation = explainProviderCompatibilityCapabilityStatus(status, evidence.auditState)
+      examples[status].push({
+        providerId: provider.id,
+        providerName: provider.name,
+        compatibilityId: evidence.id,
+        capability,
+        status,
+        limitationReason: explanation.limitationReason,
+        degradationPath: explanation.degradationPath,
+        auditState: evidence.auditState,
+        evidenceUrl: evidence.officialDocs[0],
+        liveSmokeGates: liveSmokeGates
+          .filter((gate) => gate.validates.includes(capability))
+          .map((gate) => gate.id),
+      })
+    }
+  }
+  return examples
+}
+
+function summarizeCompatibilityCapabilitySendSources(providers: AIProvider[]): Record<ProviderCompatibilityCapabilitySendSource, number> {
+  return providers.reduce<Record<ProviderCompatibilityCapabilitySendSource, number>>((acc, provider) => {
+    const evidence = getProviderCompatibilityEvidenceForProvider(provider)
+    const statuses = buildProviderCompatibilityBehaviorStatusMap(evidence.id)
+    for (const capability of Object.keys(statuses) as ProviderCompatibilityBehavior[]) {
+      const policy = resolveProviderCompatibilityCapabilitySendPolicy(
+        provider,
+        capability,
+        providerCompatibilityCapabilityExplicitlyDeclaredByProvider(provider, capability),
+      )
+      acc[policy.sendSource] = (acc[policy.sendSource] ?? 0) + 1
+    }
+    return acc
+  }, {
+    contract: 0,
+    provider_identity: 0,
+    explicit_declaration: 0,
+    blocked: 0,
+  })
+}
+
+function summarizeCompatibilityCapabilitySendPolicyExamples(providers: AIProvider[]): Record<ProviderCompatibilityCapabilitySendSource, RuntimeDiagnosticsCapabilitySendPolicyExample[]> {
+  const examples: Record<ProviderCompatibilityCapabilitySendSource, RuntimeDiagnosticsCapabilitySendPolicyExample[]> = {
+    contract: [],
+    provider_identity: [],
+    explicit_declaration: [],
+    blocked: [],
+  }
+  for (const provider of providers) {
+    const evidence = getProviderCompatibilityEvidenceForProvider(provider)
+    const statuses = buildProviderCompatibilityBehaviorStatusMap(evidence.id)
+    for (const capability of Object.keys(statuses) as ProviderCompatibilityBehavior[]) {
+      const policy = resolveProviderCompatibilityCapabilitySendPolicy(
+        provider,
+        capability,
+        providerCompatibilityCapabilityExplicitlyDeclaredByProvider(provider, capability),
+      )
+      if (examples[policy.sendSource].length >= 3) continue
+      examples[policy.sendSource].push({
+        providerId: provider.id,
+        providerName: provider.name,
+        compatibilityId: evidence.id,
+        capability,
+        status: policy.status,
+        allowed: policy.allowed,
+        sendSource: policy.sendSource,
+        limitationReason: policy.limitationReason,
+        degradationPath: policy.degradationPath,
+        auditState: evidence.auditState,
+        evidenceUrl: evidence.officialDocs[0],
+      })
+    }
+  }
+  return examples
 }

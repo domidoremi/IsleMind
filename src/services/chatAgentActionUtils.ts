@@ -1,4 +1,4 @@
-import type { AgentPendingAction, AgentToolManifest, AgentToolRequest } from '@/services/agent'
+import type { AgentPendingAction, AgentToolManifest, AgentToolRequest } from '@/services/agent/agentToolTypes'
 
 export type WorkflowSaveBlockedReason =
   | 'approval_required'

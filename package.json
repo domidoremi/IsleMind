@@ -33,6 +33,8 @@
     "test:long-content-request-log:self": "node scripts/collect-long-content-request-log.js --self-test",
     "test:raw-evidence-contracts": "node scripts/raw-evidence-contracts.js",
     "test:provider-intelligence": "node scripts/provider-intelligence-tests.js",
+    "test:provider-live-smoke:plan": "node scripts/provider-compatibility-live-smoke-plan.js",
+    "test:provider-live-smoke:plan:self": "node scripts/provider-compatibility-live-smoke-plan.js --self-test",
     "type-check": "node node_modules/typescript/bin/tsc --noEmit",
     "doctor": "node node_modules/expo-doctor/bin/expo-doctor.js",
     "test:architecture-boundary": "node scripts/architecture-boundary-audit.js",

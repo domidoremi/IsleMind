@@ -1,10 +1,12 @@
-import type { AIModel, Language, RetrievalSource } from '@/types'
+import type { AIModel, AIProvider, Language, RetrievalSource } from '@/types'
+import { providerSupportsFileInput, providerSupportsVisionInput } from '@/services/chatProviderNativeToolUtils'
 
 interface PromptBuildInput {
   baseSystemPrompt?: string
   expectedReplyFormat?: string
   language: Language
   modelConfig: AIModel
+  provider?: AIProvider
   hasMemory: boolean
   hasKnowledge: boolean
   hasWeb: boolean
@@ -15,7 +17,7 @@ export function buildSystemPrompt(input: PromptBuildInput): string {
   const parts = [
     input.baseSystemPrompt?.trim(),
     languageRule(input.language),
-    capabilityRule(input.modelConfig),
+    capabilityRule(input.modelConfig, input.provider),
     input.hasMemory ? '记忆规则：可使用长期记忆辅助个性化回答，但不要暴露“我读取了记忆”；记忆与当前问题冲突时，以用户当前消息为准。' : '',
     input.hasKnowledge ? '知识库规则：使用本机知识库内容时，优先引用来源编号；知识库不足时明确说明，不要补造不存在的资料。' : '',
     input.hasWeb ? '联网搜索规则：联网来源只用于补充当前事实；涉及新闻、价格、法规、版本或时间敏感内容时，回答中保留来源指向。' : '',
@@ -37,13 +39,15 @@ function languageRule(language: Language): string {
   }
 }
 
-function capabilityRule(model: AIModel): string {
+function capabilityRule(model: AIModel, provider?: AIProvider): string {
+  const supportsVision = provider ? providerSupportsVisionInput(provider, model) : model.supportsVision
+  const supportsFiles = provider ? providerSupportsFileInput(provider, model) : model.supportsFiles
   const capabilities = [
     `当前模型：${model.id}`,
     `上下文窗口约 ${model.contextWindow} tokens`,
     `建议输出上限 ${model.defaultMaxTokens} tokens`,
-    model.supportsVision ? '可处理图像输入' : '不假定可处理图像输入',
-    model.supportsFiles ? '可处理文件输入' : '不假定可直接解析文件输入',
+    supportsVision ? '可处理图像输入' : '不假定可处理图像输入',
+    supportsFiles ? '可处理文件输入' : '不假定可直接解析文件输入',
   ]
   return `模型能力提示：${capabilities.join('；')}。请在能力边界内回答。`
 }

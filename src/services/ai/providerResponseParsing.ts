@@ -1,15 +1,18 @@
 import { safeResponseText } from '@/services/ai/providerHttp'
 import { extractAnthropicReplayContentBlocks } from '@/services/ai/providerAnthropicReplay'
-import { dedupeCitations, extractCitationsFromText, extractProviderCitations, extractProviderCitationsFromSse } from '@/services/ai/providerCitations'
+import { dedupeCitations, extractCitationsFromText, extractProviderCitations, extractProviderCitationsFromSse, type ProviderCitationSource } from '@/services/ai/providerCitations'
 import { getWireProviderType } from '@/services/ai/providerWireProtocol'
+import { isPerplexityProvider } from '@/services/ai/providerIdentity'
 import { extractOpenAIReasoningContent, extractOpenAIResponseReplayItems } from '@/services/ai/providerOpenAIReplay'
 import { extractAnthropicText, extractGoogleText, extractOpenAIText, extractResponseId } from '@/services/ai/providerResponseText'
 import { parseProviderStreamChunk } from '@/services/ai/providerStreamParsing'
+import { filterProviderStructuredOutputToolCalls, providerStructuredOutputToolCallText } from '@/services/ai/providerStructuredOutput'
 import { extractTracesFromJson } from '@/services/ai/providerTraceUtils'
 import { executableProviderToolCalls, extractProviderTextToolCalls, extractProviderToolCalls, stripProviderTextToolCallBlocks } from '@/services/ai/providerToolCalls'
 import { extractUsage } from '@/services/ai/providerUsage'
+import { getProviderCompatibilityEvidenceForProvider, providerCompatibilityCapabilityCanBeSentForProvider, providerCompatibilityEvidenceHasBehavior, providerCompatibilityReasoningExplicitlyDeclaredForModel } from '@/services/ai/providerCompatibilityContract'
 import type { ChatCompletionResult, ChatRequest } from '@/services/ai/base'
-import type { ProviderType } from '@/types'
+import { getModelConfig, type ProviderType } from '@/types'
 
 export interface ProviderResponseBody {
   text: string
@@ -67,11 +70,14 @@ export function parseProviderBufferedStreamResponse(raw: string, req: ChatReques
     // Fall through to SSE parsing; some polyfills return concatenated chunks.
   }
 
-  const parsed = parseProviderStreamChunk(raw, providerType)
+  const parsed = parseProviderStreamChunk(raw, providerType, {
+    includeReasoning: providerReasoningResponseCanBeParsed(req),
+  })
   const text = stripProviderTextToolCallBlocks(parsed.text)
+  const source = providerCitationSource(req, providerType)
   const citations = dedupeCitations([
     ...extractCitationsFromText(text, req.retrievalSources),
-    ...extractProviderCitationsFromSse(raw, providerType),
+    ...(source ? extractProviderCitationsFromSse(raw, source) : []),
   ])
   return withProviderTextToolCallFallback({
     text,
@@ -88,52 +94,77 @@ export function parseProviderBufferedStreamResponse(raw: string, req: ChatReques
 
 export function parseProviderChatCompletionJson(json: any, req: ChatRequest): ChatCompletionResult {
   const providerType = getWireProviderType(req.provider)
+  const includeReasoning = providerReasoningResponseCanBeParsed(req)
   switch (providerType) {
     case 'openai': {
       const openAIText = extractOpenAIText(json)
       return withProviderTextToolCallFallback({
         text: openAIText,
-        usage: extractUsage(json, providerType),
+        usage: extractUsage(json, providerType, { includeReasoning }),
         citations: extractCitationsFromText(openAIText, req.retrievalSources),
-        traces: extractTracesFromJson(json, providerType),
+        traces: extractTracesFromJson(json, providerType, { includeReasoning }),
         providerToolCalls: executableProviderToolCalls(extractProviderToolCalls(json, providerType)),
-        reasoningContent: extractOpenAIReasoningContent(json),
+        reasoningContent: includeReasoning ? extractOpenAIReasoningContent(json) : undefined,
         responseItems: extractOpenAIResponseReplayItems(json),
         responseId: extractResponseId(json),
       })
     }
-    case 'anthropic':
+    case 'anthropic': {
+      const anthropicToolCalls = extractProviderToolCalls(json, 'anthropic')
+      const structuredOutputText = providerStructuredOutputToolCallText(anthropicToolCalls, req.structuredOutput)
+      const source = providerCitationSource(req, providerType)
       return withProviderTextToolCallFallback({
-        text: extractAnthropicText(json),
-        usage: extractUsage(json, 'anthropic'),
-        citations: [...extractCitationsFromText('', req.retrievalSources), ...extractProviderCitations(json, 'anthropic')],
-        traces: extractTracesFromJson(json, 'anthropic'),
-        providerToolCalls: executableProviderToolCalls(extractProviderToolCalls(json, 'anthropic')),
+        text: structuredOutputText ?? extractAnthropicText(json),
+        usage: extractUsage(json, 'anthropic', { includeReasoning }),
+        citations: [...extractCitationsFromText('', req.retrievalSources), ...(source ? extractProviderCitations(json, source) : [])],
+        traces: extractTracesFromJson(json, 'anthropic', { includeReasoning }),
+        providerToolCalls: executableProviderToolCalls(filterProviderStructuredOutputToolCalls(anthropicToolCalls, req.structuredOutput)),
         providerContentBlocks: extractAnthropicReplayContentBlocks(json),
       })
-    case 'google':
+    }
+    case 'google': {
+      const source = providerCitationSource(req, providerType)
       return withProviderTextToolCallFallback({
         text: extractGoogleText(json),
-        usage: extractUsage(json, 'google'),
-        citations: [...extractCitationsFromText('', req.retrievalSources), ...extractProviderCitations(json, 'google')],
-        traces: extractTracesFromJson(json, 'google'),
+        usage: extractUsage(json, 'google', { includeReasoning }),
+        citations: [...extractCitationsFromText('', req.retrievalSources), ...(source ? extractProviderCitations(json, source) : [])],
+        traces: extractTracesFromJson(json, 'google', { includeReasoning }),
         providerToolCalls: executableProviderToolCalls(extractProviderToolCalls(json, 'google')),
       })
+    }
     case 'openai-compatible':
     case 'xiaomi-mimo': {
       const compatibleText = extractOpenAIText(json)
+      const source = providerCitationSource(req, providerType)
+      const citations = source
+        ? dedupeCitations([...extractCitationsFromText(compatibleText, req.retrievalSources), ...extractProviderCitations(json, source)])
+        : extractCitationsFromText(compatibleText, req.retrievalSources)
       return withProviderTextToolCallFallback({
         text: compatibleText,
-        usage: extractUsage(json, 'openai-compatible'),
-        citations: extractCitationsFromText(compatibleText, req.retrievalSources),
-        traces: extractTracesFromJson(json, providerType),
+        usage: extractUsage(json, 'openai-compatible', { includeReasoning }),
+        citations,
+        traces: extractTracesFromJson(json, providerType, { includeReasoning }),
         providerToolCalls: executableProviderToolCalls(extractProviderToolCalls(json, providerType)),
-        reasoningContent: extractOpenAIReasoningContent(json),
+        reasoningContent: includeReasoning ? extractOpenAIReasoningContent(json) : undefined,
         responseItems: extractOpenAIResponseReplayItems(json),
         responseId: extractResponseId(json),
       })
     }
   }
+}
+
+export function providerReasoningResponseCanBeParsed(req: ChatRequest): boolean {
+  const evidence = getProviderCompatibilityEvidenceForProvider(req.provider)
+  if (providerCompatibilityEvidenceHasBehavior(evidence.id, 'reasoning')) return true
+  const modelConfig = getModelConfig(req.model, req.provider.type, req.provider.modelConfigs)
+  return providerCompatibilityReasoningExplicitlyDeclaredForModel(req.provider, modelConfig)
+}
+
+function providerCitationSource(req: ChatRequest, providerType: ProviderType): ProviderCitationSource | undefined {
+  if (!providerCompatibilityCapabilityCanBeSentForProvider(req.provider, 'citations')) return undefined
+  if (providerType === 'openai-compatible' && isPerplexityProvider(req.provider)) return 'perplexity'
+  if (providerType === 'anthropic' || providerType === 'google' || providerType === 'xiaomi-mimo') return providerType
+  return undefined
 }
 
 export function parseProviderBufferedStreamJson(raw: string, req: ChatRequest): ChatCompletionResult | undefined {

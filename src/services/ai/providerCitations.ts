@@ -1,5 +1,7 @@
 import type { MessageCitation, ProviderType, RetrievalSource } from '@/types'
 
+export type ProviderCitationSource = ProviderType | 'perplexity'
+
 export function extractCitationsFromText(_text: string, sources: RetrievalSource[] = []): MessageCitation[] {
   return sources.map((source) => ({
     id: source.id,
@@ -19,10 +21,42 @@ export function extractCitationsFromText(_text: string, sources: RetrievalSource
   }))
 }
 
-export function extractProviderCitations(json: unknown, providerType: ProviderType): MessageCitation[] {
+export function extractProviderCitations(json: unknown, providerType: ProviderCitationSource): MessageCitation[] {
   const citations: MessageCitation[] = []
   if (!json || typeof json !== 'object') return citations
   const value = json as Record<string, unknown>
+  if (providerType === 'perplexity') {
+    const searchResults = Array.isArray(value.search_results) ? value.search_results : []
+    for (const result of searchResults) {
+      const item = result as Record<string, unknown>
+      const url = stringField(item.url)
+      const title = stringField(item.title) ?? url ?? 'Perplexity Search Result'
+      const excerpt = stringField(item.snippet) ?? stringField(item.content)
+      citations.push({
+        id: url ?? title,
+        type: 'web',
+        title,
+        url,
+        excerpt,
+        sourceUri: url,
+        sourceReason: 'perplexity_search_result',
+      })
+    }
+    if (!citations.length && Array.isArray(value.citations)) {
+      for (const citation of value.citations) {
+        const url = typeof citation === 'string' ? citation : undefined
+        if (!url) continue
+        citations.push({
+          id: url,
+          type: 'web',
+          title: url,
+          url,
+          sourceUri: url,
+          sourceReason: 'perplexity_citation',
+        })
+      }
+    }
+  }
   if (providerType === 'anthropic') {
     const content = Array.isArray(value.content) ? value.content : []
     for (const part of content) {
@@ -58,10 +92,41 @@ export function extractProviderCitations(json: unknown, providerType: ProviderTy
       }
     }
   }
+  if (providerType === 'xiaomi-mimo') {
+    const choices = Array.isArray(value.choices) ? value.choices : []
+    for (const choice of choices) {
+      const choiceRecord = choice as Record<string, unknown>
+      const records = [
+        choiceRecord.message as Record<string, unknown> | undefined,
+        choiceRecord.delta as Record<string, unknown> | undefined,
+        choiceRecord,
+      ]
+      for (const record of records) {
+        const annotations = Array.isArray(record?.annotations) ? record.annotations : []
+        for (const annotation of annotations) {
+          const item = annotation as Record<string, unknown>
+          if (item.type !== 'url_citation') continue
+          const url = typeof item.url === 'string' ? item.url : undefined
+          const title = typeof item.title === 'string' && item.title.trim()
+            ? item.title
+            : typeof item.site_name === 'string' && item.site_name.trim()
+              ? item.site_name
+              : url || 'MiMo Web Search'
+          citations.push({
+            id: url || title,
+            type: 'web',
+            title,
+            url,
+            excerpt: typeof item.summary === 'string' ? item.summary : undefined,
+          })
+        }
+      }
+    }
+  }
   return citations
 }
 
-export function extractProviderCitationsFromSse(event: string, providerType: ProviderType): MessageCitation[] {
+export function extractProviderCitationsFromSse(event: string, providerType: ProviderCitationSource): MessageCitation[] {
   const citations: MessageCitation[] = []
   for (const line of event.split('\n')) {
     if (!line.startsWith('data: ') || line === 'data: [DONE]') continue
@@ -80,4 +145,8 @@ export function dedupeCitations(citations: MessageCitation[]): MessageCitation[]
     seen.add(key)
     return true
   })
+}
+
+function stringField(value: unknown): string | undefined {
+  return typeof value === 'string' && value.trim() ? value.trim() : undefined
 }

@@ -4,6 +4,10 @@ import { resolveProviderCapabilityManifest } from '@/services/ai/providerConform
 import type { ProviderFailoverCandidate, ProviderFailoverRoute } from '@/services/ai/providerFailover'
 import type { ProviderHealthRecord } from '@/services/ai/providerHealth'
 import { annotateFailoverCandidatesWithHealth } from '@/services/ai/providerHealth'
+import {
+  providerCompatibilityCapabilityCanBeSentForProvider,
+  type ProviderCompatibilityBehavior,
+} from '@/services/ai/providerCompatibilityContract'
 import { resolveProviderModelAlias } from '@/utils/providerModels'
 
 export type ProviderFallbackCandidateRejectionReason =
@@ -163,14 +167,24 @@ function credentialCanUseModel(provider: AIProvider, model: string, group: Provi
 
 function capabilityList(provider: AIProvider, manifest: ReturnType<typeof resolveProviderCapabilityManifest>): string[] {
   const capabilities = ['text']
-  if (manifest.modalities.input.image) capabilities.push('image')
-  if (manifest.modalities.input.file) capabilities.push('file')
-  if (manifest.modalities.input.audio) capabilities.push('audio')
+  if (manifest.modalities.input.image && providerFallbackContractAllows(provider, 'vision', provider.capabilities?.vision === true)) capabilities.push('image')
+  if (manifest.modalities.input.file && providerFallbackContractAllows(provider, 'files', provider.capabilities?.files === true)) capabilities.push('file')
+  if (manifest.modalities.input.audio && providerFallbackContractAllows(provider, 'audio', provider.capabilities?.audioInput === true)) capabilities.push('audio')
   if (manifest.modalities.input.video) capabilities.push('video')
-  if (manifest.reasoning.supported) capabilities.push('reasoning')
-  if (manifest.transport.streaming) capabilities.push('streaming')
-  if (provider.capabilities?.nativeSearch) capabilities.push('native_search')
+  if (manifest.reasoning.supported && providerFallbackContractAllows(provider, 'reasoning', provider.capabilities?.reasoningEffort === true)) capabilities.push('reasoning')
+  if (manifest.transport.streaming && providerFallbackContractAllows(provider, 'streaming', provider.capabilities?.streaming === true)) capabilities.push('streaming')
+  if (manifest.tools.supported && providerFallbackContractAllows(provider, 'tools', provider.capabilities?.nativeTools === true)) capabilities.push('tools')
+  if (manifest.structuredOutput.appRequestControl) capabilities.push('structured_output')
+  if (providerCompatibilityCapabilityCanBeSentForProvider(provider, 'nativeSearch', provider.capabilities?.nativeSearch === true)) capabilities.push('native_search')
   return capabilities
+}
+
+function providerFallbackContractAllows(
+  provider: AIProvider,
+  behavior: ProviderCompatibilityBehavior,
+  explicitDeclaration: boolean,
+): boolean {
+  return providerCompatibilityCapabilityCanBeSentForProvider(provider, behavior, explicitDeclaration)
 }
 
 function capabilitiesSatisfied(required: string[], available: string[]): boolean {

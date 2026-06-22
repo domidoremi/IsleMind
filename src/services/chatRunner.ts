@@ -27,12 +27,15 @@ import { createStreamingChunkBuffer, createStreamingTraceBuffer, mergeBufferedTr
 import { resolveMcpContext, type McpContextResolution, type ResolvedMcpTool } from '@/services/chatMcpContextUtils'
 import {
   buildProviderNativeToolManifestTrace,
+  buildProviderNativeToolSkippedTrace,
   buildProviderNativeToolRevisionMessages,
   buildProviderNativeToolTraceMetadata,
   findProviderToolNameMapEntry,
-  providerSupportsNativeTools,
+  providerSupportsNativeSearch,
+  resolveProviderNativeToolSupport,
   safeProviderNativeToolText,
   PROVIDER_NATIVE_TOOL_TRACE_OUTPUT_LIMIT,
+  type ProviderNativeToolSupportDecision,
 } from '@/services/chatProviderNativeToolUtils'
 import { clampTraceContent, completeTrace, sanitizeTrace, settleMessageTraces, type SettleRunningTracesOptions } from '@/services/chatTraceUtils'
 import { formatToolBlocks, mergeUsage, sanitizeToolRevisionAnswerText, stripMcpCallBlocks } from '@/services/chatToolResultUtils'
@@ -45,7 +48,9 @@ import { decideRemoteCompact } from '@/services/ai/compact/remoteCompact'
 import { recordCompactUsage } from '@/services/ai/compact/compactUsage'
 import { listActiveCompactStates, saveCompactState } from '@/services/ai/compact/compactStateStore'
 import { appendRuntimeLog } from '@/services/runtimeLog'
+import { buildProviderCompatibilityLogData, createProviderCompatibilityTrace } from '@/services/ai/providerRuntimeDiagnostics'
 import { filterSendableAttachments } from '@/services/attachmentContract'
+import { filterLocalSearchToolManifests } from '@/services/agent/agentSearchToolPolicy'
 import {
   clearActiveStream,
   getActiveStream,
@@ -55,29 +60,39 @@ import {
 } from '@/services/chatStreamLifecycle'
 import {
   decideAgentRuntimeAssistantMessage,
+  resolveAgentRuntimeAssistantMessage,
+} from '@/services/agent/agentChatRuntime'
+import {
   extractAgentWorkflowDefinitionsFromSkillSnapshot,
-  getAgentPendingActionFromMessage,
-  getAgentWorkflowSkillSuggestionFromMessage,
-  buildAgentToolCallTraceMetadata,
-  buildAgentProviderToolAdapter,
-  createAgentRagRuntime,
-  executeAgentTool,
   listBlockedAgentWorkflowStatesForSkillSnapshot,
   listEnabledAgentWorkflowIdsForSkillSnapshot,
-  listAgentToolManifests,
-  resolveAgentProviderToolTarget,
-  resolveAgentTool,
-  resolveSettingsAgentRunLimits,
-  resolveAgentRuntimeAssistantMessage,
   saveApprovedAgentWorkflowSkillSuggestion,
-  type AgentAssistantMessagePatch,
-  type AgentProviderToolAdapterResult,
-  type AgentRequestedOutput,
-  type AgentRunLimits,
-  type AgentToolManifest,
-  type AgentToolRequest,
   type AgentWorkflowRuntimeBlockState,
-} from '@/services/agent'
+} from '@/services/agent/agentWorkflowSkills'
+import {
+  getAgentPendingActionFromMessage,
+  getAgentWorkflowSkillSuggestionFromMessage,
+  type AgentAssistantMessagePatch,
+} from '@/services/agent/agentMessageAdapter'
+import { buildAgentToolCallTraceMetadata } from '@/services/agent/agentToolCallTrace'
+import {
+  buildAgentProviderToolAdapter,
+  resolveAgentProviderToolTarget,
+  type AgentProviderToolAdapterResult,
+} from '@/services/agent/agentProviderToolAdapter'
+import { createAgentRagRuntime } from '@/services/agent/agentRagRuntime'
+import {
+  executeAgentTool,
+  listAgentToolManifests,
+  resolveAgentTool,
+} from '@/services/agent/agentToolRegistry'
+import { resolveSettingsAgentRunLimits } from '@/services/agent/agentPolicy'
+import type {
+  AgentRequestedOutput,
+  AgentRunLimits,
+  AgentToolManifest,
+  AgentToolRequest,
+} from '@/services/agent/agentToolTypes'
 
 function generateId(): string {
   return `${Date.now()}-${Math.random().toString(36).slice(2, 10)}`
@@ -224,8 +239,8 @@ export async function sendMessage({ conversation, content, attachments = [], req
       return
     }
   }
-  const agentDecisionContext = await resolveAgentDecisionContext(conversation)
   const settings = useSettingsStore.getState().settings
+  const agentDecisionContext = await resolveAgentDecisionContext(conversation, settings)
   const agentLimits = resolveSettingsAgentRunLimits(settings)
   const agentRuntimeInput = {
     conversation,
@@ -417,9 +432,9 @@ interface AgentDecisionContext {
   blockedAgentWorkflowStates?: AgentWorkflowRuntimeBlockState[]
 }
 
-async function resolveAgentDecisionContext(conversation: Conversation): Promise<AgentDecisionContext> {
+async function resolveAgentDecisionContext(conversation: Conversation, settings: Settings): Promise<AgentDecisionContext> {
   if (!extractAgentWorkflowDefinitionsFromSkillSnapshot(conversation.skillSnapshot).length) return {}
-  const manifests = await listAgentToolManifests()
+  const manifests = filterLocalSearchToolManifests(await listAgentToolManifests(), settings)
   const [enabledAgentWorkflowIds, blockedAgentWorkflowStates] = await Promise.all([
     listEnabledAgentWorkflowIdsForSkillSnapshot(conversation.skillSnapshot),
     listBlockedAgentWorkflowStatesForSkillSnapshot(conversation.skillSnapshot, manifests),
@@ -533,6 +548,13 @@ async function createAssistantReply(conversationId: string) {
     finishWithError(conversationId, assistantMessage.id, st('chatRunner.error.maxTokensExceeded', { current: runtimeConversation.maxTokens, model: runtimeConversation.model, limit: modelConfig.maxOutputTokens }), 'max_tokens_exceeded', provider.id)
     return
   }
+  upsertTrace(conversationId, assistantMessage.id, createProviderCompatibilityTrace({
+    conversationId,
+    provider,
+    model: upstreamModel,
+    requestedModel: runtimeConversation.model,
+    settings: settingsState.settings,
+  }))
 
   const latestConversation = useChatStore
     .getState()
@@ -699,17 +721,36 @@ async function createAssistantReply(conversationId: string) {
   for (const trace of mcpContext.traces) {
     upsertTrace(conversationId, assistantMessage.id, trace)
   }
+  const nativeToolSupport = resolveProviderNativeToolSupport(provider, modelConfig)
   const providerToolContext = await resolveProviderNativeToolContext({
     provider,
     model: upstreamModel,
     modelPreferredEndpoint: modelConfig.preferredEndpoint,
     settings,
+    nativeToolSupport,
   })
   if (providerToolContext) {
     upsertTrace(conversationId, assistantMessage.id, buildProviderNativeToolManifestTrace(providerToolContext, completeTrace, traceId))
+  } else if (nativeToolSupport.reason === 'blocked_contract_tools_unclaimed') {
+    upsertTrace(conversationId, assistantMessage.id, buildProviderNativeToolSkippedTrace(nativeToolSupport, completeTrace, traceId))
+    void appendRuntimeLog('provider.compatibility', {
+      ...buildProviderCompatibilityLogData({
+        conversationId,
+        provider,
+        model: upstreamModel,
+        requestedModel: runtimeConversation.model,
+        settings,
+      }),
+      phase: 'provider_native_tools',
+      detail: 'provider_native_tools_skipped_by_contract',
+      reason: nativeToolSupport.reason,
+      modelSupportsTools: nativeToolSupport.modelSupportsTools,
+      explicitNativeTools: nativeToolSupport.explicitNativeTools,
+    }, { enabled: settings.runtimeLogEnabled, maxBytes: settings.runtimeLogMaxBytes })
   }
   const hasAttachments = sendableAttachments.length > 0
-  const providerWebSearchMode = searchProvider === 'native' && !hasAttachments ? 'native' : 'off'
+  const nativeSearchSupported = providerSupportsNativeSearch(provider)
+  const providerWebSearchMode = searchProvider === 'native' && !hasAttachments && nativeSearchSupported ? 'native' : 'off'
   const nativeSearchTraceId = traceId('native-search')
   upsertTrace(conversationId, assistantMessage.id, completeTrace({
     id: nativeSearchTraceId,
@@ -722,13 +763,19 @@ async function createAssistantReply(conversationId: string) {
         : st('chatRunner.trace.nativeSearchDisabled'),
     status: providerWebSearchMode === 'native' ? 'running' : 'skipped',
     startedAt: Date.now(),
-    metadata: { mode: providerWebSearchMode },
+    metadata: {
+      mode: providerWebSearchMode,
+      requestedMode: searchProvider === 'native' ? 'native' : searchProvider,
+      nativeSearchSupported,
+      ...(searchProvider === 'native' && !nativeSearchSupported ? { reason: 'provider_native_search_unclaimed' } : {}),
+    },
   }))
   const systemPrompt = buildSystemPrompt({
     baseSystemPrompt: runtimeConversation.systemPrompt,
     expectedReplyFormat: runtimeConversation.skillSnapshot?.expectedReplyFormat,
     language: settings.language,
     modelConfig,
+    provider,
     hasMemory: context.sources.some((source) => source.type === 'memory'),
     hasKnowledge: context.sources.some((source) => source.type === 'knowledge'),
     hasWeb: webSources.length > 0 || providerWebSearchMode === 'native',
@@ -1421,9 +1468,11 @@ async function resolveProviderNativeToolContext(input: {
   model: string
   modelPreferredEndpoint?: 'chat-completions' | 'responses'
   settings: Settings
+  nativeToolSupport?: ProviderNativeToolSupportDecision
 }): Promise<AgentProviderToolContext | undefined> {
   const modelConfig = getModelConfig(input.model, input.provider.type, input.provider.modelConfigs)
-  if (!providerSupportsNativeTools(input.provider, modelConfig)) return undefined
+  const nativeToolSupport = input.nativeToolSupport ?? resolveProviderNativeToolSupport(input.provider, modelConfig)
+  if (!nativeToolSupport.supported) return undefined
   const target = resolveAgentProviderToolTarget(input.provider.type, {
     preferredEndpoint: input.modelPreferredEndpoint === 'responses' ? 'responses' : 'chat',
     assumeOpenAICompatibleTools: true,
@@ -1432,7 +1481,7 @@ async function resolveProviderNativeToolContext(input: {
   if (!target) return undefined
   const limits = resolveSettingsAgentRunLimits(input.settings)
   if (!limits.allowReadOnlyTools) return undefined
-  const manifests = await listAgentToolManifests()
+  const manifests = filterLocalSearchToolManifests(await listAgentToolManifests(), input.settings)
   const adapter = buildAgentProviderToolAdapter({
     manifests,
     target,
@@ -1578,11 +1627,14 @@ async function resolveProviderNativeToolRevision(input: {
     result.output || `${safeToolName} returned no output.`,
     input.providerTools.limits.outputCharLimit
   )
+  const nativeSearchPlaceholder = isProviderNativeSearchPlaceholderResult({ result, tool, toolOutput })
   upsertTrace(input.conversationId, input.assistantMessageId, completeTrace({
     id: nativeTraceId,
     type: 'tool',
     title: 'Provider native tool',
-    content: safeProviderNativeToolText(toolOutput, `${safeToolName} returned no output.`, PROVIDER_NATIVE_TOOL_TRACE_OUTPUT_LIMIT),
+    content: nativeSearchPlaceholder
+      ? st('chatRunner.trace.nativeSearchNoSources')
+      : safeProviderNativeToolText(toolOutput, `${safeToolName} returned no output.`, PROVIDER_NATIVE_TOOL_TRACE_OUTPUT_LIMIT),
     status: result.status,
     startedAt,
     metadata: buildProviderNativeToolTraceMetadata({
@@ -1597,6 +1649,11 @@ async function resolveProviderNativeToolRevision(input: {
       maxToolCallsPerStep: input.providerTools.limits.maxToolCallsPerStep,
     }),
   }))
+
+  if (nativeSearchPlaceholder) {
+    const existingAnswer = sanitizeToolRevisionAnswerText(input.firstOutput)
+    return { text: existingAnswer || st('chatRunner.trace.nativeSearchNoSources') }
+  }
 
   if (!toolOutput.trim()) {
     return { text: safeProviderNativeToolText(result.output, `${safeToolName} returned no output.`) }
@@ -1618,7 +1675,7 @@ async function resolveProviderNativeToolRevision(input: {
     upsertTrace(input.conversationId, input.assistantMessageId, completeTrace({
       id: traceId('provider-tool-revise-error'),
       type: 'tool',
-      title: 'Provider native tool result',
+      title: 'Provider tool synthesis',
       content: safeProviderNativeToolText(
         error instanceof Error ? error.message : `${safeToolName} synthesis failed.`,
         `${safeToolName} synthesis failed.`,
@@ -1641,12 +1698,19 @@ async function resolveProviderNativeToolRevision(input: {
   }
 
   return {
-    text: [
-      'Provider native tool result',
-      '',
-      toolOutput,
-    ].join('\n'),
+    text: toolOutput,
   }
+}
+
+function isProviderNativeSearchPlaceholderResult(input: {
+  result: Awaited<ReturnType<typeof executeAgentTool>>
+  tool: NonNullable<AgentProviderToolAdapterResult['toolNameMap'][number]>
+  toolOutput: string
+}): boolean {
+  const metadata = input.result.trace.metadata ?? {}
+  if (input.tool.source !== 'builtin' || input.tool.toolName !== 'search_web') return false
+  if (metadata.code === 'native' || metadata.mode === 'native') return true
+  return /^(Using provider-native search\.|使用服务商原生搜索。|プロバイダーのネイティブ検索を使用します。)$/i.test(input.toolOutput.trim())
 }
 
 function upsertProviderNativeToolFailureTrace(input: {

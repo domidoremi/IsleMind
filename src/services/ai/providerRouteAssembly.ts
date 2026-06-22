@@ -2,9 +2,10 @@ import type { AIProvider, Settings } from '@/types'
 import { getProviderEffectiveBaseUrl } from '@/types'
 import type { TransportSelection } from '@/services/ai/transport/transportSelector'
 import { selectUpstreamTransport } from '@/services/ai/transport/transportSelector'
-import { isPerplexityProvider } from '@/services/ai/providerIdentity'
+import { isNovitaProvider, isPerplexityProvider } from '@/services/ai/providerIdentity'
 import { isBedrockMantleProvider, normalizeBedrockMantleBaseUrl } from '@/services/ai/providerAwsBedrockRouting'
 import { isAzureOpenAIProvider, normalizeAzureOpenAIBaseUrl } from '@/services/ai/providerHostedRouting'
+import { providerCompatibilityCapabilityCanBeSentForProvider } from '@/services/ai/providerCompatibilityContract'
 
 export interface ProviderEndpointInput {
   provider: AIProvider
@@ -39,8 +40,12 @@ export function assembleProviderRoute(input: ProviderRouteAssemblyInput): Provid
 
 export function resolveProviderEndpoint(input: ProviderEndpointInput): string {
   if (input.provider.type === 'google') return getGoogleGenerateEndpoint(input.provider, input.model, input.stream)
-  if (input.usesResponsesApi && (input.provider.type === 'openai' || input.provider.type === 'openai-compatible')) return getOpenAIResponsesEndpoint(input.provider)
+  if (input.usesResponsesApi && providerResponsesApiCanBeSent(input.provider) && (input.provider.type === 'openai' || input.provider.type === 'openai-compatible')) return getOpenAIResponsesEndpoint(input.provider)
   return getProviderApiEndpoint(input.provider)
+}
+
+function providerResponsesApiCanBeSent(provider: AIProvider): boolean {
+  return providerCompatibilityCapabilityCanBeSentForProvider(provider, 'responsesApi', provider.capabilities?.responsesApi === true)
 }
 
 export function getProviderApiEndpoint(provider: AIProvider): string {
@@ -52,7 +57,7 @@ export function getProviderApiEndpoint(provider: AIProvider): string {
     case 'google':
       return getGoogleGenerateEndpoint(provider, provider.models[0] || 'gemini-2.5-flash', true)
     case 'openai-compatible':
-      if (isPerplexityProvider(provider)) return `${defaultOpenAICompatibleBaseUrl(provider)}/chat/completions`
+      if (isPerplexityProvider(provider)) return `${defaultOpenAICompatibleBaseUrl(provider)}/v1/sonar`
       return `${normalizeProviderBaseUrl(defaultOpenAICompatibleBaseUrl(provider))}/chat/completions`
     case 'xiaomi-mimo':
       return provider.wireProtocol === 'anthropic-compatible'
@@ -78,6 +83,7 @@ export function defaultOpenAICompatibleBaseUrl(provider: AIProvider): string {
   const baseUrl = getProviderEffectiveBaseUrl(provider)
   if (!isOpenAICompatibleProvider(provider)) return baseUrl
   if (isPerplexityProvider(provider)) return normalizePerplexityOpenAIBaseUrl(baseUrl)
+  if (isNovitaProvider(provider)) return normalizeNovitaOpenAIBaseUrl(baseUrl)
   if (isAzureOpenAIProvider(provider)) return normalizeAzureOpenAIBaseUrl(provider.baseUrl?.trim() ?? '')
   if (isBedrockMantleProvider(provider)) return normalizeBedrockMantleBaseUrl(provider.baseUrl?.trim() ?? '')
   try {
@@ -93,9 +99,29 @@ export function defaultOpenAICompatibleBaseUrl(provider: AIProvider): string {
   return baseUrl
 }
 
+function normalizeNovitaOpenAIBaseUrl(baseUrl: string): string {
+  try {
+    const parsed = new URL(baseUrl)
+    let path = parsed.pathname.replace(/\/+$/, '')
+    path = path.replace(/\/(?:chat\/completions|models|embeddings|rerank)$/i, '')
+    if (!path || /^\/openai$/i.test(path)) {
+      parsed.pathname = '/openai/v1'
+      return parsed.toString().replace(/\/+$/, '')
+    }
+    return normalizeProviderBaseUrl(parsed.toString())
+  } catch {
+    return baseUrl
+  }
+}
+
 function normalizePerplexityOpenAIBaseUrl(baseUrl: string): string {
   const normalized = normalizeProviderBaseUrl(baseUrl)
-  return normalized.replace(/\/v1$/i, '').replace(/\/chat\/completions$/i, '')
+  return normalized
+    .replace(/\/v1\/sonar$/i, '')
+    .replace(/\/v1\/chat\/completions$/i, '')
+    .replace(/\/v1$/i, '')
+    .replace(/\/sonar$/i, '')
+    .replace(/\/chat\/completions$/i, '')
 }
 
 export function getXiaomiMimoAnthropicMessagesEndpoint(provider: AIProvider): string {

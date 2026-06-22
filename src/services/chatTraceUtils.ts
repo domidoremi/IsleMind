@@ -1,5 +1,5 @@
 import type { Message, ProcessTrace } from '@/types'
-import { redactSensitiveText } from '@/services/agent'
+import { redactSensitiveText } from '@/services/agent/agentTrace'
 import { sanitizeTraceMetadata } from '@/utils/traceSafety'
 
 export interface SettleRunningTracesOptions {

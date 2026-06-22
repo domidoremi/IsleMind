@@ -605,6 +605,7 @@ require.extensions['.ts'] = function compileTypeScript(module, filename) {
 }
 
 const {
+  PROVIDER_PRESETS,
   applyProviderPreset,
   detectProviderPreset,
   maskSecret,
@@ -657,6 +658,7 @@ const {
   buildGoogleBodyForTest,
   buildOpenAIBodyForTest,
   buildOpenAIResponsesBodyForTest,
+  embedTextWithProvider,
   fetchChatStreamWithRetryForTest,
   fetchProviderModelConfigsDetailed,
   formatProviderHttpErrorForTest,
@@ -678,7 +680,9 @@ const {
   resolveRuntimeFallbackPlanForTest,
   selectUpstreamTransportForTest,
   streamChat,
+  synthesizeSpeechWithProvider,
   testProviderModelDetailed,
+  transcribeAudioWithProvider,
 } = require('../src/services/ai/base.ts')
 const { ProviderHttpError, classifyHttpStatus, extractProviderErrorDetail, failure, success } = require('../src/services/ai/providerOperationResult.ts')
 const {
@@ -694,10 +698,20 @@ const {
   reduceModelTestBody,
 } = require('../src/services/ai/providerModelTest.ts')
 const {
+  isCerebrasProvider,
+  isCohereProvider,
   isDashScopeProvider,
+  isDeepInfraProvider,
+  isGitHubModelsProvider,
+  isHuggingFaceProvider,
   isMiniMaxProvider,
+  isModelScopeProvider,
   isMoonshotProvider,
+  isNovitaProvider,
+  isNvidiaNimProvider,
   isPerplexityProvider,
+  isSambaNovaProvider,
+  isSiliconFlowProvider,
   isXAIProvider,
   shouldRequestDashScopeStreamUsage,
 } = require('../src/services/ai/providerIdentity.ts')
@@ -708,12 +722,40 @@ const {
   providerNeedsHostedCompatibilityWork,
   providerSuppressesGenericModelList,
   summarizeProviderCapabilityMatrix,
+  summarizeProviderCapabilityMatrixDetails,
 } = require('../src/services/ai/providerCapabilityMatrix.ts')
 const {
+  CANONICAL_PROVIDER_COMPATIBILITY_BEHAVIORS,
+  CORE_PROVIDER_COMPATIBILITY_BEHAVIORS,
+  PROVIDER_COMPATIBILITY_EVIDENCE,
+  buildProviderCompatibilityBehaviorStatusMap,
+  explainProviderCompatibilityCapabilityStatus,
+  findProviderCompatibilityBehaviorGaps,
+  findProviderCompatibilityEvidenceGaps,
+  findProviderCompatibilityLiveSmokeGaps,
+  getProviderCompatibilityEvidence,
+  getProviderCompatibilityLiveSmokeGates,
+  providerCompatibilityCapabilityCanBeSentForProvider,
+  providerCompatibilityCapabilityCanBeSent,
+  providerCompatibilityCapabilityExplicitlyDeclaredByProvider,
+  providerCompatibilityEvidenceHasBehavior,
+  resolveProviderCompatibilityCapabilitySendPolicy,
+  resolveProviderCompatibilityCapabilityStatus,
+  resolveProviderCompatibilityLiveSmokeStatus,
+} = require('../src/services/ai/providerCompatibilityContract.ts')
+const {
+  collectProviderCompatibilityLiveSmokePlan,
+  defaultOutputPath: providerCompatibilityLiveSmokePlanDefaultOutput,
+  formatProviderCompatibilityLiveSmokePlanSummary,
+  providerCompatibilityLiveSmokePlanSchema,
+} = require('./provider-compatibility-live-smoke-plan')
+const {
   buildPayloadPolicyLogData,
+  buildProviderCompatibilityLogData,
   buildProviderRouteDecisionLogData,
   buildProxyPolicyLogData,
   buildUpstreamRequestLogData,
+  createProviderCompatibilityTrace,
   createRuntimeFallbackTrace,
   createRuntimeGovernanceTrace,
   createStreamModeTrace,
@@ -838,10 +880,15 @@ const { dedupeMessageCitations, formatWebPrompt, normalizeUserContent } = requir
 const { buildAndroidUndoPromptContext, safeChatPromptText } = require('../src/services/chatAndroidUndoPrompt.ts')
 const {
   buildProviderNativeToolManifestTrace,
+  buildProviderNativeToolSkippedTrace,
   buildProviderNativeToolRevisionMessages,
   buildProviderNativeToolTraceMetadata,
   findProviderToolNameMapEntry,
+  providerSupportsNativeSearch,
+  providerSupportsFileInput,
+  providerSupportsVisionInput,
   providerSupportsNativeTools,
+  resolveProviderNativeToolSupport,
   safeProviderNativeToolText,
   usesAnthropicCompatibleToolResultMessages,
   usesOpenAICompatibleToolResultMessages,
@@ -877,11 +924,14 @@ const {
   getOpenAIChatMaxTokensField,
   normalizeOpenAIReasoningEffort,
   openAICompatibleAttachmentPart,
+  openAICompatibleReasoningReplayField,
   openAIResponsesAttachmentPart,
   openAIResponsesNativeWebSearchTool,
   shouldIncludeOpenAIResponsesEncryptedReasoning,
   shouldReplayOpenAICompatibleReasoningContent,
+  supportsXiaomiMimoNativeWebSearch,
   usesOpenAIResponses,
+  xiaomiMimoNativeWebSearchTool,
 } = require('../src/services/ai/providerOpenAIRequest.ts')
 const {
   isKimiSamplingLocked,
@@ -1018,6 +1068,7 @@ const { summarizeWorkArtifact } = require('../src/utils/workArtifact.ts')
 const { isAllowedWebViewNavigation, safeHttpUrl } = require('../src/utils/sourceUrlSafety.ts')
 const { isAllowedAndroidApkUriForTest, sanitizeAndroidApkUriForTest } = require('../src/services/androidUriPolicy.ts')
 const { getReasoningEffortOptions, providerSupportsReasoning } = require('../src/utils/modelReasoning.ts')
+const { buildSystemPrompt } = require('../src/services/promptEngineering.ts')
 const { resolveAgentProviderToolTarget } = require('../src/services/agent/agentProviderToolAdapter.ts')
 const { resolveAgentTool } = require('../src/services/agent/agentToolRegistry.ts')
 const { validateAgentWorkflowDefinition } = require('../src/services/agent/agentWorkflowDefinitions.ts')
@@ -2130,6 +2181,22 @@ async function assertRuntimeLogFileBehavior() {
   assert.deepEqual(entry.body.keys, ['input', 'model'], 'runtime log file stores payload keys only')
   assert.ok(!content.includes('secret prompt text'), 'runtime log file omits raw prompt text')
   assert.ok(!content.includes(FAKE_KEY_A), 'runtime log file omits raw query-string API key values')
+  await appendRuntimeLog('provider.compatibility', {
+    providerId: 'bedrock',
+    model: 'anthropic.claude-3-5-sonnet',
+    compatibilityId: 'aws-bedrock',
+    auditState: 'needs-live-smoke',
+    liveSmokeRequiredEnv: ['AWS_ACCESS_KEY_ID', 'AWS_SECRET_ACCESS_KEY'],
+    secret: 'AKIDEXAMPLE',
+  }, { enabled: true, maxBytes: 4096 })
+  const compatibilityEntry = (localFileFixtures.get(uri)?.toString('utf8') ?? '')
+    .trim()
+    .split('\n')
+    .filter(Boolean)
+    .map((line) => JSON.parse(line))
+    .find((item) => item.event === 'provider.compatibility')
+  assert.equal(compatibilityEntry.compatibilityId, 'aws-bedrock', 'runtime log file writes provider compatibility event family')
+  assert.equal(compatibilityEntry.secret, '[redacted]', 'runtime log file redacts provider compatibility secret fields')
   localFileFixtures.set(uri, Buffer.from(`${'x'.repeat(5000)}\n`))
   await appendRuntimeLog('compact.usage', { providerId: 'openai-main', status: 'completed' }, { enabled: true, maxBytes: 4096 })
   assert.ok((localFileFixtures.get(uri)?.length ?? 0) <= 4096, 'runtime log rotation respects max bytes')
@@ -2179,6 +2246,7 @@ async function assertRuntimeLogFileBehavior() {
 async function assertRuntimeDiagnosticsBehavior() {
   await clearRuntimeLog()
   await appendRuntimeLog('provider.conformance', { protocol: 'openai-responses', providerId: 'openai-main' }, { enabled: true, maxBytes: 4096 })
+  await appendRuntimeLog('provider.compatibility', { compatibilityId: 'openai', auditState: 'conformance-ready', providerId: 'openai-main' }, { enabled: true, maxBytes: 4096 })
   await appendRuntimeLog('transport.fallback', { from: 'responses_websocket', to: 'http_sse', providerId: 'openai-main' }, { enabled: true, maxBytes: 4096 })
   clearCompactUsageRecords()
   recordCompactUsage({ mode: 'auto', providerId: 'openai-main', model: 'gpt-5.2', inputTokens: 1000 })
@@ -2296,6 +2364,84 @@ async function assertRuntimeDiagnosticsBehavior() {
   assert.equal(summary.capabilityMatrix.supportLevels.partial, 2, 'runtime diagnostics reports support-level summaries')
   assert.equal(summary.capabilityMatrix.hostedGapProviders, 0, 'runtime diagnostics reports zero hosted gaps when no hosted providers are configured')
   assert.equal(summary.capabilityMatrix.genericModelListSuppressedProviders, 1, 'runtime diagnostics reports providers that intentionally suppress generic model-list sync')
+  assert.ok(summary.capabilityMatrix.statusExamples.partial.length > 0, 'runtime diagnostics exposes partial provider capability matrix examples')
+  assert.ok(
+    summary.capabilityMatrix.statusExamples.partial.some((example) => example.contractStatus && example.limitationReason && example.degradationPath),
+    'runtime diagnostics attaches contract status, limitation reason, and degradation path to matrix examples when a capability contract is available'
+  )
+  assert.equal(summary.compatibility.conformanceReadyProviders, 1, 'runtime diagnostics counts conformance-ready provider compatibility entries')
+  assert.equal(summary.compatibility.protocolReferenceProviders, 1, 'runtime diagnostics counts protocol-reference provider compatibility entries')
+  assert.equal(summary.compatibility.liveSmokeGateProviders, 1, 'runtime diagnostics counts providers with live-smoke gates')
+  assert.equal(summary.compatibility.liveSmokeGateCount, 1, 'runtime diagnostics counts live-smoke gates from the provider compatibility contract')
+  assert.equal(summary.compatibility.loggedEvents, 1, 'runtime diagnostics counts provider compatibility runtime log events')
+  assert.equal(
+    summary.compatibility.capabilityStatusTotal,
+    2 * CANONICAL_PROVIDER_COMPATIBILITY_BEHAVIORS.length,
+    'runtime diagnostics counts every canonical provider compatibility capability status per provider'
+  )
+  assert.ok(summary.compatibility.capabilityStatuses.supported > 0, 'runtime diagnostics counts supported compatibility capabilities')
+  assert.ok(summary.compatibility.capabilityStatuses.partial > 0, 'runtime diagnostics counts partial compatibility capabilities')
+  assert.ok(summary.compatibility.capabilityStatuses.unsupported > 0, 'runtime diagnostics counts unsupported compatibility capabilities')
+  assert.equal(summary.compatibility.capabilityStatuses.docsChanged, 0, 'runtime diagnostics initializes docsChanged compatibility capabilities even when none are present')
+  assert.equal(
+    summary.compatibility.capabilitySendPolicyTotal,
+    2 * CANONICAL_PROVIDER_COMPATIBILITY_BEHAVIORS.length,
+    'runtime diagnostics counts every canonical provider compatibility send policy per provider'
+  )
+  assert.ok(summary.compatibility.capabilitySendSources.contract > 0, 'runtime diagnostics counts contract-backed send policies')
+  assert.ok(summary.compatibility.capabilitySendSources.provider_identity > 0, 'runtime diagnostics counts identity-bound send policies')
+  assert.equal(summary.compatibility.capabilitySendSources.explicit_declaration, 0, 'runtime diagnostics keeps explicit declarations separate from default provider support')
+  assert.ok(summary.compatibility.capabilitySendSources.blocked > 0, 'runtime diagnostics counts blocked send policies')
+  assert.ok(summary.compatibility.capabilitySendPolicyExamples.contract.length > 0, 'runtime diagnostics provides contract-backed send policy examples')
+  assert.ok(summary.compatibility.capabilitySendPolicyExamples.provider_identity.length > 0, 'runtime diagnostics provides identity-bound send policy examples')
+  assert.ok(summary.compatibility.capabilitySendPolicyExamples.blocked.length > 0, 'runtime diagnostics provides blocked send policy examples')
+  assert.equal(
+    summary.compatibility.capabilitySendPolicyExamples.blocked[0].allowed,
+    false,
+    'runtime diagnostics blocked send policy examples preserve their allowed flag'
+  )
+  assert.ok(summary.compatibility.capabilityStatusExamples.supported.length > 0, 'runtime diagnostics provides supported capability examples')
+  assert.ok(summary.compatibility.capabilityStatusExamples.unsupported.length > 0, 'runtime diagnostics provides unsupported capability examples')
+  assert.ok(summary.compatibility.capabilityStatusExamples.partial.length > 0, 'runtime diagnostics provides partial capability examples')
+  assert.ok(
+    summary.compatibility.capabilityStatusExamples.requiresLiveKey.some((example) => example.liveSmokeGates.length > 0),
+    'runtime diagnostics links requiresLiveKey capability examples to live-smoke gates'
+  )
+  assert.equal(
+    summary.compatibility.capabilityStatusExamples.unsupported[0].status,
+    'unsupported',
+    'runtime diagnostics capability examples preserve their canonical status'
+  )
+  assert.equal(
+    summary.compatibility.capabilityStatusExamples.unsupported[0].limitationReason,
+    'contract_unclaimed',
+    'runtime diagnostics explains unsupported capability examples as unclaimed contract behavior'
+  )
+  assert.ok(
+    ['disable_parameter', 'manual_declaration_or_model_metadata'].includes(summary.compatibility.capabilityStatusExamples.unsupported[0].degradationPath),
+    'runtime diagnostics attaches a degradation path to unsupported capability examples'
+  )
+  assert.equal(
+    summary.compatibility.capabilityStatusExamples.requiresLiveKey.find((example) => example.liveSmokeGates.length > 0)?.degradationPath,
+    'run_live_smoke',
+    'runtime diagnostics explains live-key capability examples with the live smoke path'
+  )
+  assert.deepEqual(
+    explainProviderCompatibilityCapabilityStatus('unsupported', 'conformance-ready'),
+    {
+      limitationReason: 'contract_unclaimed',
+      degradationPath: 'disable_parameter',
+    },
+    'provider compatibility contract owns unsupported capability explanations'
+  )
+  assert.deepEqual(
+    explainProviderCompatibilityCapabilityStatus('partial', 'protocol-reference'),
+    {
+      limitationReason: 'contract_partial',
+      degradationPath: 'manual_declaration_or_model_metadata',
+    },
+    'provider compatibility contract explains protocol-reference partial capabilities as declaration or metadata gated'
+  )
   const invalidProxySummary = await buildRuntimeDiagnosticsSummary({
     providers: [openAiPreset, customProvider],
     settings: {
@@ -2386,17 +2532,70 @@ async function assertRuntimeDiagnosticsBehavior() {
   assert.equal(hostedGapSummary.capabilityMatrix.hostingProfiles['cloud-hosted'], 3, 'runtime diagnostics counts Bedrock and Vertex AI as hosted providers')
   assert.equal(hostedGapSummary.capabilityMatrix.plannedProviders, 2, 'runtime diagnostics counts hosted providers that still need dedicated auth and path implementation')
   assert.equal(hostedGapSummary.capabilityMatrix.hostedGapProviders, 2, 'runtime diagnostics reports Bedrock and native Vertex AI hosted gaps explicitly')
+  assert.ok(
+    hostedGapSummary.capabilityMatrix.statusExamples.planned.some((example) => example.level === 'planned' && example.reason.length > 0),
+    'runtime diagnostics exposes planned provider capability matrix examples with concrete reasons'
+  )
+  assert.equal(hostedGapSummary.compatibility.needsLiveSmokeProviders, 3, 'runtime diagnostics reports Bedrock and both Vertex providers as needing live smoke')
+  assert.equal(hostedGapSummary.compatibility.liveSmokeGateCount, 4, 'runtime diagnostics counts hosted live-smoke gates from the compatibility contract')
 }
 
 async function assertRuntimeDiagnosticsFailurePath() {
   const settingsScreenSource = fs.readFileSync(path.join(root, 'src/components/main/SettingsScreenContent.tsx'), 'utf8')
+  const apiKeyPanelSource = fs.readFileSync(path.join(root, 'src/components/settings/ApiKeyPanel.tsx'), 'utf8')
+  const providerSettingsContentSource = fs.readFileSync(path.join(root, 'src/components/providers/ProviderSettingsContent.tsx'), 'utf8')
+  const providerCompatibilityContractSource = fs.readFileSync(path.join(root, 'src/services/ai/providerCompatibilityContract.ts'), 'utf8')
+  const runtimeDiagnosticsSource = fs.readFileSync(path.join(root, 'src/services/runtimeDiagnostics.ts'), 'utf8')
   assert.ok(settingsScreenSource.includes('runtimeDiagnosticsRefreshFailed'), 'settings diagnostics exposes refresh failure feedback')
   assert.ok(settingsScreenSource.includes('runtimeLogCopyFailed'), 'settings diagnostics exposes copy failure feedback')
   assert.ok(settingsScreenSource.includes('runtimeLogShareFailed'), 'settings diagnostics exposes share failure feedback')
   assert.ok(settingsScreenSource.includes('runtimeLogClearFailed'), 'settings diagnostics exposes clear failure feedback')
+  assert.ok(settingsScreenSource.includes('runtimeDiagnosticProviderContract'), 'settings diagnostics exposes provider compatibility contract summary')
+  assert.ok(settingsScreenSource.includes('runtimeDiagnosticProviderSupportEvidence'), 'settings diagnostics exposes provider capability matrix evidence examples')
+  assert.ok(settingsScreenSource.includes('diagnostics.capabilityMatrix.statusExamples.partial'), 'settings diagnostics reads provider capability matrix partial examples')
+  assert.ok(settingsScreenSource.includes('formatCapabilityMatrixExamples'), 'settings diagnostics formats provider capability matrix examples')
+  assert.ok(apiKeyPanelSource.includes('summarizeProviderCapabilityMatrixDetails(provider, matrix)'), 'API key panel provider summary includes contract-aware capability matrix detail')
+  assert.ok(providerSettingsContentSource.includes('summarizeProviderCapabilityMatrixDetails(provider'), 'provider settings list rows include contract-aware capability matrix detail')
+  assert.ok(settingsScreenSource.includes('diagnostics.compatibility.liveSmokeGateCount'), 'settings diagnostics reads provider compatibility gate counts')
+  assert.ok(settingsScreenSource.includes('runtimeDiagnosticCapabilityStatus'), 'settings diagnostics exposes provider compatibility capability status summary')
+  assert.ok(settingsScreenSource.includes('diagnostics.compatibility.capabilityStatuses.supported'), 'settings diagnostics reads provider compatibility capability status counts')
+  assert.ok(settingsScreenSource.includes('runtimeDiagnosticCapabilitySendPolicy'), 'settings diagnostics exposes provider compatibility send policy summary')
+  assert.ok(settingsScreenSource.includes('diagnostics.compatibility.capabilitySendSources.contract'), 'settings diagnostics reads provider compatibility send policy source counts')
+  assert.ok(settingsScreenSource.includes('formatCapabilitySendPolicyExamples'), 'settings diagnostics formats provider compatibility send policy examples')
+  assert.ok(settingsScreenSource.includes('example.sendSource'), 'settings diagnostics formats provider compatibility send policy sources')
+  assert.ok(settingsScreenSource.includes('runtimeDiagnosticCapabilityEvidence'), 'settings diagnostics exposes provider compatibility evidence examples')
+  assert.ok(settingsScreenSource.includes('diagnostics.compatibility.capabilityStatusExamples.unsupported'), 'settings diagnostics reads provider compatibility capability examples')
+  assert.ok(settingsScreenSource.includes('formatCapabilityStatusExamples'), 'settings diagnostics formats provider compatibility capability examples')
+  assert.ok(settingsScreenSource.includes('example.limitationReason'), 'settings diagnostics formats provider compatibility limitation reasons')
+  assert.ok(settingsScreenSource.includes('example.degradationPath'), 'settings diagnostics formats provider compatibility degradation paths')
+  assert.ok(providerCompatibilityContractSource.includes('export function explainProviderCompatibilityCapabilityStatus'), 'provider compatibility contract owns capability explanation mapping')
+  assert.ok(runtimeDiagnosticsSource.includes('explainProviderCompatibilityCapabilityStatus'), 'runtime diagnostics consumes provider compatibility explanation mapping')
+  assert.ok(!runtimeDiagnosticsSource.includes('function capabilityLimitationReason'), 'runtime diagnostics does not keep a local limitation-reason mapper')
+  assert.ok(!runtimeDiagnosticsSource.includes('function capabilityDegradationPath'), 'runtime diagnostics does not keep a local degradation-path mapper')
+  const chatRunnerSource = fs.readFileSync(path.join(root, 'src/services/chatRunner.ts'), 'utf8')
+  assert.ok(chatRunnerSource.includes('createProviderCompatibilityTrace'), 'chat runtime exposes provider compatibility contract evidence in message traces')
   assert.ok(settingsScreenSource.includes('const logInfo = await getRuntimeLogInfo()'), 'settings diagnostics checks runtime log file metadata before sharing')
   assert.ok(settingsScreenSource.includes('if (!logInfo.exists || logInfo.size <= 0)'), 'settings diagnostics falls back to copy when the runtime log file is missing or empty')
   assert.ok(settingsScreenSource.includes('finally {'), 'settings diagnostics resets refreshing state in a finally block')
+  for (const locale of ['en', 'zh-CN', 'ja']) {
+    const resource = JSON.parse(fs.readFileSync(path.join(root, `src/i18n/resources/${locale}.json`), 'utf8'))
+    assert.ok(resource.settings.runtimeDiagnosticProviderContract, `settings diagnostics ${locale} locale names provider compatibility contract summary`)
+    assert.ok(resource.settings.runtimeDiagnosticProviderContractValue, `settings diagnostics ${locale} locale formats provider compatibility contract summary`)
+    assert.ok(resource.settings.runtimeDiagnosticProviderSupportEvidence, `settings diagnostics ${locale} locale names provider capability matrix evidence examples`)
+    assert.ok(resource.settings.runtimeDiagnosticProviderSupportEvidenceValue, `settings diagnostics ${locale} locale formats provider capability matrix evidence examples`)
+    assert.ok(resource.settings.runtimeDiagnosticCapabilityStatus, `settings diagnostics ${locale} locale names provider compatibility capability status summary`)
+    assert.ok(resource.settings.runtimeDiagnosticCapabilityStatusValue, `settings diagnostics ${locale} locale formats provider compatibility capability status summary`)
+    assert.ok(resource.settings.runtimeDiagnosticCapabilitySendPolicy, `settings diagnostics ${locale} locale names provider compatibility send policy summary`)
+    assert.ok(resource.settings.runtimeDiagnosticCapabilitySendPolicyValue, `settings diagnostics ${locale} locale formats provider compatibility send policy summary`)
+    assert.ok(resource.settings.runtimeDiagnosticCapabilitySendSource?.explicit_declaration, `settings diagnostics ${locale} locale formats provider compatibility send policy sources`)
+    assert.ok(resource.settings.runtimeDiagnosticCapabilityEvidence, `settings diagnostics ${locale} locale names provider compatibility capability evidence examples`)
+    assert.ok(resource.settings.runtimeDiagnosticCapabilityEvidenceValue, `settings diagnostics ${locale} locale formats provider compatibility capability evidence examples`)
+    assert.ok(resource.settings.runtimeDiagnosticCapabilityEvidenceNone, `settings diagnostics ${locale} locale formats empty provider compatibility capability evidence examples`)
+    assert.ok(resource.settings.runtimeDiagnosticCapabilityReason?.contract_unclaimed, `settings diagnostics ${locale} locale formats provider compatibility limitation reasons`)
+    assert.ok(resource.settings.runtimeDiagnosticCapabilityPath?.disable_parameter, `settings diagnostics ${locale} locale formats provider compatibility degradation paths`)
+    assert.ok(resource.providerTrace.providerCompatibilityTitle, `provider trace ${locale} locale names provider compatibility contract trace`)
+    assert.ok(resource.providerTrace.providerCompatibilityContent, `provider trace ${locale} locale formats provider compatibility contract trace`)
+  }
 }
 
 async function assertAppUpdateRuntimeLogging() {
@@ -2859,6 +3058,84 @@ async function assertKnowledgeEmbeddingRuntimeLogging() {
 
   localFileFixtures.delete(runtimeLogPath)
   memoryStorage.clear()
+  await saveData('SETTINGS', { runtimeLogEnabled: true, runtimeLogMaxBytes: 4096 })
+  const originalFetchForUnsupportedProviderEmbedding = global.fetch
+  let unsupportedProviderEmbeddingFetches = 0
+  const unsupportedEmbeddingProvider = {
+    id: 'custom-embed-unsupported',
+    type: 'openai-compatible',
+    presetId: 'custom-openai-compatible',
+    name: 'Custom Compatible',
+    baseUrl: 'https://custom.example/v1',
+    apiKey: FAKE_KEY_A,
+    models: ['chat-model'],
+    enabled: true,
+  }
+  try {
+    global.fetch = async () => {
+      unsupportedProviderEmbeddingFetches += 1
+      return new Response(JSON.stringify({ data: [{ embedding: [0.1, 0.2, 0.3] }] }), { status: 200 })
+    }
+    await localDataStore.upsertChunks([{
+      id: 'unsupported-provider-embedding-chunk',
+      documentId: 'doc-provider-embedding',
+      title: 'Provider embedding contract',
+      content: 'Provider embeddings should be skipped when the compatibility contract does not claim embeddings.',
+      ordinal: 0,
+      chunkIndex: 0,
+      sentenceStart: 0,
+      sentenceEnd: 0,
+      semanticBoundary: 'sentence',
+      qualityScore: 0.8,
+      createdAt: Date.now(),
+    }], {
+      provider: unsupportedEmbeddingProvider,
+      embeddingMode: 'provider',
+      refreshAgenticIndex: false,
+    })
+    await assert.rejects(
+      () => embedTextWithProvider(unsupportedEmbeddingProvider, 'direct embedding bypass check'),
+      /embeddings_unsupported_by_contract/,
+      'provider embedding runtime entrypoint blocks direct calls when the compatibility contract does not claim embeddings'
+    )
+  } finally {
+    global.fetch = originalFetchForUnsupportedProviderEmbedding
+  }
+  assert.equal(unsupportedProviderEmbeddingFetches, 0, 'provider embedding upgrade does not call unsupported compatible endpoints')
+  const unsupportedProviderEntries = (localFileFixtures.get(runtimeLogPath)?.toString('utf8') ?? '')
+    .trim()
+    .split('\n')
+    .filter(Boolean)
+    .map((line) => JSON.parse(line))
+  const unsupportedProviderEntry = unsupportedProviderEntries.find((entry) => entry.event === 'context.operation' && entry.phase === 'knowledge_embedding' && entry.detail === 'provider_embedding_unsupported_by_contract')
+  assert.ok(unsupportedProviderEntry, 'provider embedding compatibility skips append runtime log entries')
+  assert.equal(unsupportedProviderEntry.providerId, 'custom-embed-unsupported', 'provider embedding compatibility skip records provider identity')
+  assert.equal(unsupportedProviderEntry.reason, 'custom-openai-compatible:embeddings_unsupported', 'provider embedding compatibility skip records the canonical contract status')
+
+  const declaredEmbeddingProvider = {
+    ...unsupportedEmbeddingProvider,
+    id: 'custom-embed-declared',
+    capabilities: { embeddings: true },
+    models: ['chat-model', 'declared-embedding-v1'],
+  }
+  const originalFetchForDeclaredProviderEmbedding = global.fetch
+  const declaredProviderEmbeddingFetches = []
+  try {
+    global.fetch = async (input, init = {}) => {
+      declaredProviderEmbeddingFetches.push({ input: String(input), body: JSON.parse(String(init.body)) })
+      return new Response(JSON.stringify({ data: [{ embedding: [0.4, 0.5, 0.6] }] }), { status: 200 })
+    }
+    const declaredEmbedding = await embedTextWithProvider(declaredEmbeddingProvider, 'declared provider embedding')
+    assert.deepEqual(declaredEmbedding.embedding, [0.4, 0.5, 0.6], 'explicit provider embedding declarations can open protocol-reference embedding endpoints')
+    assert.equal(declaredEmbedding.model, 'declared-embedding-v1', 'explicit provider embedding declarations preserve configured embedding model selection')
+  } finally {
+    global.fetch = originalFetchForDeclaredProviderEmbedding
+  }
+  assert.equal(declaredProviderEmbeddingFetches[0].input, 'https://custom.example/v1/embeddings', 'explicit custom embedding declarations use the configured compatible embeddings endpoint')
+  assert.equal(declaredProviderEmbeddingFetches[0].body.model, 'declared-embedding-v1', 'explicit custom embedding declarations send only the selected embedding model id')
+
+  localFileFixtures.delete(runtimeLogPath)
+  memoryStorage.clear()
   await saveData('SETTINGS', { runtimeLogEnabled: false, runtimeLogMaxBytes: 4096, localEmbeddingModelSource: 'downloaded', localEmbeddingModelId: 'all-MiniLM-L6-v2' })
 
   const disabledOnnxProvider = await createOnnxEmbeddingProvider({
@@ -3001,8 +3278,8 @@ async function assertUpstreamGovernanceBehavior() {
       cacheTtl: '5m',
     },
   })
-  assert.deepEqual(optimizedBedrock.thinking, { type: 'adaptive', display: 'summarized' }, 'Bedrock optimizer enables adaptive thinking for supported Claude Opus/Sonnet models')
-  assert.equal(optimizedBedrock.output_config.effort, 'high', 'Bedrock optimizer maps thinking effort')
+  assert.equal(optimizedBedrock.thinking, undefined, 'Bedrock optimizer does not add thinking until the Bedrock contract claims reasoning controls')
+  assert.equal(optimizedBedrock.output_config, undefined, 'Bedrock optimizer does not add output_config until the Bedrock contract claims reasoning controls')
   assert.equal(optimizedBedrock.system[0].cache_control.ttl, '5m', 'Bedrock optimizer injects cache TTL on system text')
   assert.equal(optimizedBedrock.messages[0].content[0].cache_control.ttl, '5m', 'Bedrock optimizer injects cache TTL on message text')
   assert.equal(isBedrockProvider({ id: 'aws-bedrock', type: 'anthropic', name: 'Amazon Bedrock', baseUrl: 'https://bedrock-runtime.us-east-1.amazonaws.com' }), true, 'Bedrock optimizer helper detects Bedrock runtime hosts')
@@ -3094,6 +3371,38 @@ async function assertUpstreamGovernanceBehavior() {
     { thinking: { type: 'enabled', budget_tokens: 511 } },
     'Anthropic thinking helper keeps legacy budget constrained below max_tokens'
   )
+  const customAnthropicThinkingProvider = { id: 'custom-anthropic-compatible', type: 'openai-compatible', presetId: 'custom-anthropic-compatible', wireProtocol: 'anthropic-compatible', name: 'Custom Anthropic', apiKey: FAKE_KEY_A, models: ['claude-sonnet-4-20250514'], enabled: true }
+  assert.equal(
+    normalizeAnthropicThinking({ provider: customAnthropicThinkingProvider, model: 'claude-sonnet-4-20250514', reasoningEffort: 'high', maxTokens: 2048 }),
+    undefined,
+    'Anthropic thinking helper does not infer custom-compatible reasoning from static Claude model ids'
+  )
+  assert.deepEqual(
+    normalizeAnthropicThinking({
+      provider: {
+        ...customAnthropicThinkingProvider,
+        modelConfigs: [{
+          id: 'custom/remote-claude-thinking',
+          name: 'Remote Claude Thinking',
+          provider: 'openai-compatible',
+          contextWindow: 200000,
+          maxTokens: 8192,
+          maxOutputTokens: 8192,
+          defaultMaxTokens: 2048,
+          supportsVision: false,
+          supportsFiles: false,
+          reasoningMode: 'anthropic-thinking',
+          reasoningEfforts: ['low', 'high'],
+          source: 'remote',
+        }],
+      },
+      model: 'custom/remote-claude-thinking',
+      reasoningEffort: 'high',
+      maxTokens: 2048,
+    }),
+    { thinking: { type: 'enabled', budget_tokens: 2047 } },
+    'Anthropic thinking helper allows custom-compatible reasoning from remote model metadata'
+  )
   assert.equal(
     normalizeAnthropicThinking({ provider: anthropicThinkingProvider, model: 'claude-sonnet-4-20250514', reasoningEffort: 'minimal', maxTokens: 512 }),
     undefined,
@@ -3106,8 +3415,8 @@ async function assertUpstreamGovernanceBehavior() {
       reasoningEffort: 'medium',
       fallbackMaxTokens: 2048,
     }),
-    { max_tokens: 4096, thinking: { type: 'enabled', budget_tokens: 2047 } },
-    'Bedrock thinking optimizer keeps legacy thinking-budget fallback behavior'
+    { max_tokens: 2048 },
+    'Bedrock thinking optimizer fails closed while Bedrock reasoning controls are unclaimed by the contract'
   )
   assert.deepEqual(
     injectBedrockCache({ messages: [{ role: 'user', content: [{ type: 'tool_use', id: 'tool-1' }, { type: 'text', text: 'cache me' }] }] }, '1h').messages[0].content[1].cache_control,
@@ -3235,6 +3544,17 @@ async function assertUpstreamGovernanceBehavior() {
     false,
     'OpenAI request helper omits encrypted reasoning when reasoning is explicitly disabled'
   )
+  const customXaiLikeProvider = { id: 'custom-xai-like', type: 'openai-compatible', presetId: 'custom-openai-compatible', name: 'Custom xAI-like', baseUrl: 'https://api.x.ai/v1', apiKey: FAKE_KEY_A, models: ['grok-4.3'], enabled: true }
+  assert.equal(
+    shouldIncludeOpenAIResponsesEncryptedReasoning({ provider: customXaiLikeProvider, model: 'grok-4.3' }, 'high'),
+    false,
+    'OpenAI request helper does not request encrypted reasoning for custom xAI-like endpoints without contract evidence'
+  )
+  assert.equal(
+    shouldIncludeOpenAIResponsesEncryptedReasoning({ provider: { ...customXaiLikeProvider, capabilities: { reasoningEffort: true } }, model: 'grok-4.3' }, 'high'),
+    true,
+    'OpenAI request helper allows encrypted reasoning for custom endpoints with explicit reasoning declarations'
+  )
   assert.equal(
     usesOpenAIResponses({ provider: openAIRequestProvider, model: 'gpt-5.5', webSearchMode: 'native' }),
     true,
@@ -3245,6 +3565,37 @@ async function assertUpstreamGovernanceBehavior() {
     true,
     'OpenAI request helper keeps xAI preferred Responses routing'
   )
+  assert.equal(
+    usesOpenAIResponses({ provider: customXaiLikeProvider, model: 'grok-4.3' }),
+    false,
+    'OpenAI request helper does not route custom xAI-like endpoints to Responses without contract evidence'
+  )
+  assert.equal(
+    usesOpenAIResponses({ provider: { ...customXaiLikeProvider, capabilities: { responsesApi: true } }, model: 'grok-4.3' }),
+    true,
+    'OpenAI request helper allows custom xAI-like Responses routing only after explicit Responses declaration'
+  )
+  assert.equal(
+    resolveProviderEndpoint({ provider: customXaiLikeProvider, model: 'grok-4.3', stream: true, usesResponsesApi: true }),
+    'https://api.x.ai/v1/chat/completions',
+    'provider endpoint resolver refuses custom xAI-like Responses endpoints without contract evidence'
+  )
+  assert.equal(
+    resolveProviderEndpoint({ provider: { ...customXaiLikeProvider, capabilities: { responsesApi: true } }, model: 'grok-4.3', stream: true, usesResponsesApi: true }),
+    'https://api.x.ai/v1/responses',
+    'provider endpoint resolver allows custom xAI-like Responses endpoints after explicit Responses declaration'
+  )
+  const customXaiLikeConformance = resolveProviderRequestConformanceForTest({
+    provider: customXaiLikeProvider,
+    model: 'grok-4.3',
+  }, { messages: [] })
+  assert.equal(customXaiLikeConformance.manifest.family, 'xai', 'provider conformance may classify xAI-like identity separately from protocol routing')
+  assert.equal(customXaiLikeConformance.manifest.protocol, 'openai-compatible', 'provider conformance does not infer Responses protocol for custom xAI-like endpoints without contract evidence')
+  const declaredCustomXaiLikeConformance = resolveProviderRequestConformanceForTest({
+    provider: { ...customXaiLikeProvider, capabilities: { responsesApi: true } },
+    model: 'grok-4.3',
+  }, { input: [] })
+  assert.equal(declaredCustomXaiLikeConformance.manifest.protocol, 'openai-responses', 'provider conformance follows explicit custom xAI-like Responses declarations')
   assert.equal(
     normalizeOpenAIReasoningEffort({ provider: xaiRequestProvider, model: 'grok-4.20-multi-agent', reasoningEffort: 'minimal' }),
     'low',
@@ -3271,6 +3622,16 @@ async function assertUpstreamGovernanceBehavior() {
     'OpenAI request helper preserves xAI reasoning replay'
   )
   assert.equal(
+    openAICompatibleReasoningReplayField({ provider: customXaiLikeProvider, model: 'grok-4.3' }, {}),
+    undefined,
+    'OpenAI request helper does not replay reasoning for custom xAI-like endpoints without contract evidence'
+  )
+  assert.equal(
+    openAICompatibleReasoningReplayField({ provider: { ...customXaiLikeProvider, capabilities: { reasoningEffort: true } }, model: 'grok-4.3' }, {}),
+    'reasoning_content',
+    'OpenAI request helper allows reasoning replay for custom endpoints with explicit reasoning declarations'
+  )
+  assert.equal(
     shouldReplayOpenAICompatibleReasoningContent({ provider: { ...xaiRequestProvider, wireProtocol: 'anthropic-compatible' }, model: 'grok-4.3' }, { toolCalls: [{ id: 'call-1' }] }),
     false,
     'OpenAI request helper does not replay OpenAI-compatible reasoning on Anthropic wire protocol'
@@ -3279,6 +3640,37 @@ async function assertUpstreamGovernanceBehavior() {
     normalizeDeepSeekThinking({ provider: { id: 'deepseek-helper', type: 'openai-compatible', presetId: 'deepseek', name: 'DeepSeek', apiKey: FAKE_KEY_A, models: ['deepseek-v4-pro'], enabled: true }, model: 'deepseek-v4-pro', reasoningEffort: 'xhigh' }),
     { type: 'enabled', effort: 'max' },
     'OpenAI-compatible thinking helper maps DeepSeek xhigh to max effort'
+  )
+  const customReasoningProvider = { id: 'custom-reasoning-static', type: 'openai-compatible', presetId: 'custom-openai-compatible', name: 'Custom Compatible', apiKey: FAKE_KEY_A, models: ['deepseek-v4-pro'], enabled: true }
+  assert.equal(
+    normalizeDeepSeekThinking({ provider: customReasoningProvider, model: 'deepseek-v4-pro', reasoningEffort: 'high' }),
+    undefined,
+    'OpenAI-compatible thinking helper does not infer custom endpoint reasoning from static DeepSeek model ids'
+  )
+  assert.deepEqual(
+    normalizeDeepSeekThinking({
+      provider: {
+        ...customReasoningProvider,
+        modelConfigs: [{
+          id: 'custom/remote-deepseek-thinking',
+          name: 'Remote DeepSeek Thinking',
+          provider: 'openai-compatible',
+          contextWindow: 128000,
+          maxTokens: 8192,
+          maxOutputTokens: 8192,
+          defaultMaxTokens: 2048,
+          supportsVision: false,
+          supportsFiles: false,
+          reasoningMode: 'deepseek-thinking',
+          reasoningEfforts: ['high', 'xhigh'],
+          source: 'remote',
+        }],
+      },
+      model: 'custom/remote-deepseek-thinking',
+      reasoningEffort: 'xhigh',
+    }),
+    { type: 'enabled', effort: 'max' },
+    'OpenAI-compatible thinking helper allows custom endpoint reasoning from remote model metadata'
   )
   assert.deepEqual(
     normalizeDashScopeThinking({ provider: { id: 'qwen-helper', type: 'openai-compatible', presetId: 'dashscope', name: 'DashScope', apiKey: FAKE_KEY_A, models: ['qwen3.7-max'], enabled: true }, model: 'qwen3.7-max', reasoningEffort: 'high' }),
@@ -3610,11 +4002,75 @@ async function assertUpstreamGovernanceBehavior() {
       requiredFallbackCapabilities({
         provider: fallbackOpenAI,
         model: 'gpt-5.5',
+        providerToolDeclarations: [{ type: 'function', function: { name: 'inspect_context' } }],
+        webSearchMode: 'native',
+      }),
+      ['text', 'tools', 'native_search'],
+      'runtime fallback helper derives provider tool and native search requirements'
+    )
+    assert.deepEqual(
+      requiredFallbackCapabilities({
+        provider: {
+          ...fallbackOpenAI,
+          modelConfigs: [{ ...getModelConfig('gpt-5.5', 'openai'), supportsTools: false }],
+        },
+        model: 'gpt-5.5',
+        providerToolDeclarations: [{ type: 'function', function: { name: 'inspect_context' } }],
+      }),
+      ['text', 'tools'],
+      'runtime fallback helper preserves provider tool requirements even when the current provider filters them out'
+    )
+    assert.deepEqual(
+      requiredFallbackCapabilities({
+        provider: fallbackOpenAI,
+        model: 'gpt-5.5',
+        structuredOutput: {
+          type: 'json_schema',
+          name: 'fallback_summary',
+          schema: { type: 'object', properties: { summary: { type: 'string' } }, required: ['summary'] },
+        },
+      }),
+      ['text', 'structured_output'],
+      'runtime fallback helper derives structured-output requirements'
+    )
+    assert.deepEqual(
+      requiredFallbackCapabilities({
+        provider: fallbackOpenAI,
+        model: 'gpt-5.5',
         reasoningEffort: 'high',
         attachments: [{ id: 'stale-image', type: 'image', uri: 'file:///tmp/stale-image.png', name: 'stale-image.png', mimeType: 'image/png', size: 1024 }],
       }),
       ['text', 'reasoning'],
       'runtime fallback helper ignores metadata-only persisted attachments without inline payloads'
+    )
+    const fallbackModelScope = applyProviderPreset({
+      id: 'fallback-modelscope',
+      apiKey: FAKE_KEY_A,
+      models: ['Qwen/Qwen3-VL-Chat'],
+      modelConfigs: [{
+        id: 'Qwen/Qwen3-VL-Chat',
+        name: 'Qwen3 VL via ModelScope',
+        provider: 'openai-compatible',
+        contextWindow: 32768,
+        maxTokens: 8192,
+        maxOutputTokens: 8192,
+        defaultMaxTokens: 2048,
+        supportsVision: true,
+        supportsFiles: true,
+      }],
+      enabled: true,
+    }, 'modelscope')
+    assert.deepEqual(
+      requiredFallbackCapabilities({
+        provider: fallbackModelScope,
+        model: 'Qwen/Qwen3-VL-Chat',
+        attachments: [
+          { id: 'modelscope-image', type: 'image', uri: 'image://fixture', name: 'image.png', mimeType: 'image/png', size: 128, base64: 'aW1n' },
+          { id: 'modelscope-file', type: 'pdf', uri: 'file://fixture.pdf', name: 'fixture.pdf', mimeType: 'application/pdf', size: 256, base64: 'cGRm' },
+        ],
+      }),
+      ['text', 'image', 'file'],
+      'runtime fallback helper preserves multimodal requirements even when the current provider contract filters them out'
     )
     assert.deepEqual(
       fallbackProvidersForRequest({ provider: fallbackOpenAI, model: 'gpt-5.5', fallbackProviders: [fallbackAnthropic] }).map((provider) => provider.id),
@@ -3631,6 +4087,155 @@ async function assertUpstreamGovernanceBehavior() {
       FAKE_KEY_B,
       'runtime fallback helper hydrates selected credential group API key'
     )
+    const customFallbackWithoutTools = {
+      id: 'fallback-custom-compatible',
+      type: 'openai-compatible',
+      name: 'Fallback Custom Compatible',
+      presetId: 'custom-openai-compatible',
+      baseUrl: 'https://fallback-custom.example/v1',
+      apiKey: FAKE_KEY_A,
+      models: ['qwen3.7-max'],
+      enabled: true,
+    }
+    assert.deepEqual(
+      requiredFallbackCapabilities({
+        provider: customFallbackWithoutTools,
+        model: 'qwen3.7-max',
+        reasoningEffort: 'high',
+        providerToolDeclarations: [{ type: 'function', function: { name: 'inspect_context' } }],
+        webSearchMode: 'native',
+        structuredOutput: {
+          type: 'json_schema',
+          name: 'fallback_summary',
+          schema: { type: 'object', properties: { summary: { type: 'string' } }, required: ['summary'] },
+        },
+        attachments: [
+          { id: 'custom-image', type: 'image', uri: 'image://fixture', name: 'image.png', mimeType: 'image/png', size: 128, base64: 'aW1n' },
+          { id: 'custom-file', type: 'pdf', uri: 'file://fixture.pdf', name: 'fixture.pdf', mimeType: 'application/pdf', size: 256, base64: 'cGRm' },
+        ],
+      }),
+      ['text', 'reasoning', 'tools', 'structured_output', 'native_search', 'image', 'file'],
+      'runtime fallback derives required capabilities from request intent before candidate contract filtering'
+    )
+    const toolFallbackCandidates = buildProviderFallbackCandidates({
+      providers: [customFallbackWithoutTools, fallbackOpenAI],
+      original: routeForRuntimeFallback({ provider: fallbackOpenAI, model: 'gpt-5.5', providerToolDeclarations: [{ type: 'function', function: { name: 'inspect_context' } }] }, 'openai-a'),
+      requiredCapabilities: ['text', 'tools'],
+    })
+    assert.ok(toolFallbackCandidates.rejectedCandidates.some((item) => item.providerId === customFallbackWithoutTools.id && item.reason === 'capability_mismatch'), 'runtime fallback rejects custom compatible candidates that do not declare provider tools')
+    assert.ok(toolFallbackCandidates.candidates.some((item) => item.providerId === fallbackOpenAI.id && item.capabilities?.includes('tools')), 'runtime fallback keeps candidates whose provider contract supports tools')
+    const customFallbackWithDeclaredTools = {
+      ...customFallbackWithoutTools,
+      id: 'fallback-custom-compatible-tools',
+      capabilities: { nativeTools: true },
+    }
+    const explicitToolFallbackCandidates = buildProviderFallbackCandidates({
+      providers: [customFallbackWithoutTools, customFallbackWithDeclaredTools],
+      original: routeForRuntimeFallback({ provider: fallbackOpenAI, model: 'gpt-5.5', providerToolDeclarations: [{ type: 'function', function: { name: 'inspect_context' } }] }, 'openai-a'),
+      requiredCapabilities: ['text', 'tools'],
+    })
+    assert.ok(explicitToolFallbackCandidates.rejectedCandidates.some((item) => item.providerId === customFallbackWithoutTools.id && item.reason === 'capability_mismatch'), 'runtime fallback keeps undeclared custom provider tools out of fallback')
+    assert.ok(explicitToolFallbackCandidates.candidates.some((item) => item.providerId === customFallbackWithDeclaredTools.id && item.capabilities?.includes('tools')), 'runtime fallback accepts custom provider tools only after explicit capability declaration')
+    const fallbackXaiSearch = {
+      id: 'fallback-xai-search',
+      type: 'openai-compatible',
+      name: 'Fallback xAI Search',
+      presetId: 'xai',
+      baseUrl: 'https://api.x.ai/v1',
+      apiKey: FAKE_KEY_A,
+      models: ['grok-4.3'],
+      enabled: true,
+      capabilities: { nativeTools: true, nativeSearch: true, responsesApi: true },
+    }
+    const nativeSearchFallbackCandidates = buildProviderFallbackCandidates({
+      providers: [fallbackOpenAI, fallbackXaiSearch],
+      original: routeForRuntimeFallback({ provider: fallbackOpenAI, model: 'gpt-5.5', webSearchMode: 'native' }, 'openai-a'),
+      requiredCapabilities: ['text', 'native_search'],
+    })
+    assert.ok(nativeSearchFallbackCandidates.rejectedCandidates.some((item) => item.providerId === fallbackOpenAI.id && item.reason === 'capability_mismatch'), 'runtime fallback rejects candidates that do not declare native search')
+    assert.ok(nativeSearchFallbackCandidates.candidates.some((item) => item.providerId === fallbackXaiSearch.id && item.capabilities?.includes('native_search')), 'runtime fallback keeps candidates whose provider contract declares native search')
+    const fallbackCerebrasStructuredOutput = applyProviderPreset({
+      id: 'fallback-cerebras-structured-output',
+      baseUrl: 'https://api.cerebras.ai/v1',
+      apiKey: FAKE_KEY_A,
+      models: ['gpt-oss-120b'],
+      enabled: true,
+    }, 'cerebras')
+    const structuredOutputFallbackCandidates = buildProviderFallbackCandidates({
+      providers: [customFallbackWithoutTools, fallbackCerebrasStructuredOutput],
+      original: routeForRuntimeFallback({
+        provider: fallbackOpenAI,
+        model: 'gpt-5.5',
+        structuredOutput: {
+          type: 'json_schema',
+          name: 'fallback_summary',
+          schema: { type: 'object', properties: { summary: { type: 'string' } }, required: ['summary'] },
+        },
+      }, 'openai-a'),
+      requiredCapabilities: ['text', 'structured_output'],
+    })
+    assert.ok(structuredOutputFallbackCandidates.rejectedCandidates.some((item) => item.providerId === customFallbackWithoutTools.id && item.reason === 'capability_mismatch'), 'runtime fallback rejects candidates without structured-output request controls')
+    assert.ok(structuredOutputFallbackCandidates.candidates.some((item) => item.providerId === fallbackCerebrasStructuredOutput.id && item.capabilities?.includes('structured_output')), 'runtime fallback keeps candidates whose provider contract supports structured-output request controls')
+    const fallbackGithubModelsFileOverclaim = applyProviderPreset({
+      id: 'fallback-github-file-overclaim',
+      apiKey: FAKE_KEY_A,
+      models: ['openai/gpt-4.1-mini'],
+      enabled: true,
+      capabilities: { files: true },
+      modelConfigs: [{
+        id: 'openai/gpt-4.1-mini',
+        name: 'GPT-4.1 Mini via GitHub Models',
+        provider: 'openai-compatible',
+        contextWindow: 1047576,
+        maxTokens: 32768,
+        maxOutputTokens: 32768,
+        defaultMaxTokens: 4096,
+        supportsVision: true,
+        supportsFiles: true,
+        source: 'remote',
+        sourceUrl: 'https://docs.github.com/en/github-models/use-github-models/prototyping-with-ai-models',
+      }],
+    }, 'github-models')
+    const fileFallbackCandidates = buildProviderFallbackCandidates({
+      providers: [fallbackGithubModelsFileOverclaim, fallbackOpenAI],
+      original: routeForRuntimeFallback({
+        provider: fallbackOpenAI,
+        model: 'gpt-5.5',
+        attachments: [{ id: 'fallback-file', type: 'pdf', uri: 'file://fixture.pdf', name: 'fixture.pdf', mimeType: 'application/pdf', size: 256, base64: 'cGRm' }],
+      }, 'openai-a'),
+      requiredCapabilities: ['text', 'file'],
+    })
+    assert.ok(fileFallbackCandidates.rejectedCandidates.some((item) => item.providerId === fallbackGithubModelsFileOverclaim.id && item.reason === 'capability_mismatch'), 'runtime fallback rejects file candidates whose provider/model metadata overclaims an unsupported contract capability')
+    assert.ok(fileFallbackCandidates.candidates.some((item) => item.providerId === fallbackOpenAI.id && item.capabilities?.includes('file')), 'runtime fallback keeps contract-backed file candidates')
+    const fallbackGithubModelsReasoningOverclaim = applyProviderPreset({
+      id: 'fallback-github-reasoning-overclaim',
+      apiKey: FAKE_KEY_A,
+      models: ['openai/gpt-4.1-mini'],
+      enabled: true,
+      capabilities: { reasoningEffort: true },
+      modelConfigs: [{
+        id: 'openai/gpt-4.1-mini',
+        name: 'GPT-4.1 Mini via GitHub Models',
+        provider: 'openai-compatible',
+        contextWindow: 1047576,
+        maxTokens: 32768,
+        maxOutputTokens: 32768,
+        defaultMaxTokens: 4096,
+        supportsVision: true,
+        supportsFiles: false,
+        reasoningMode: 'openai-reasoning-effort',
+        reasoningEfforts: ['low', 'medium', 'high'],
+        source: 'remote',
+        sourceUrl: 'https://docs.github.com/en/github-models/use-github-models/prototyping-with-ai-models',
+      }],
+    }, 'github-models')
+    const reasoningFallbackCandidates = buildProviderFallbackCandidates({
+      providers: [fallbackGithubModelsReasoningOverclaim, fallbackOpenAI],
+      original: routeForRuntimeFallback({ provider: fallbackOpenAI, model: 'gpt-5.5', reasoningEffort: 'high' }, 'openai-a'),
+      requiredCapabilities: ['text', 'reasoning'],
+    })
+    assert.ok(reasoningFallbackCandidates.rejectedCandidates.some((item) => item.providerId === fallbackGithubModelsReasoningOverclaim.id && item.reason === 'capability_mismatch'), 'runtime fallback rejects reasoning candidates whose provider/model metadata overclaims an unsupported contract capability')
+    assert.ok(reasoningFallbackCandidates.candidates.some((item) => item.providerId === fallbackOpenAI.id && item.capabilities?.includes('reasoning')), 'runtime fallback keeps contract-backed reasoning candidates')
     assert.equal(retryAfterMsFromFailure(429), 60000, 'runtime fallback helper maps rate limits to retry-after')
     assert.equal(retryAfterMsFromFailure(503), 20000, 'runtime fallback helper maps server errors to retry-after')
     const fallbackPlan = await resolveRuntimeFallbackPlanForTest({
@@ -4873,7 +5478,7 @@ async function assertExpandedProviderPresetCoverage() {
     ['https://api.groq.com/openai/v1', 'groq'],
     ['https://api.together.ai/v1', 'together'],
     ['https://api.fireworks.ai/inference/v1', 'fireworks'],
-    ['https://api.perplexity.ai/chat/completions', 'perplexity'],
+    ['https://api.perplexity.ai/v1/sonar', 'perplexity'],
     ['https://api.cohere.ai/compatibility/v1', 'cohere'],
     ['https://api.cerebras.ai/v1', 'cerebras'],
     ['https://api.sambanova.ai/v1', 'sambanova'],
@@ -4881,9 +5486,11 @@ async function assertExpandedProviderPresetCoverage() {
     ['https://router.huggingface.co/v1', 'huggingface'],
     ['https://models.github.ai/inference', 'github-models'],
     ['https://api.deepinfra.com/v1/openai', 'deepinfra'],
+    ['https://api.novita.ai/openai', 'novita'],
     ['https://api.novita.ai/v3/openai', 'novita'],
     ['https://api.siliconflow.cn/v1', 'siliconflow'],
     ['https://api-inference.modelscope.cn/v1', 'modelscope'],
+    ['https://open.bigmodel.cn/api/paas/v4', 'bigmodel'],
     ['https://ark.cn-beijing.volces.com/api/v3', 'volcengine-ark'],
     ['https://qianfan.baidubce.com/v2', 'baidu-qianfan'],
     ['https://api.hunyuan.cloud.tencent.com/v1', 'tencent-hunyuan'],
@@ -4908,17 +5515,45 @@ async function assertExpandedProviderPresetCoverage() {
     )
   }
 
+  for (const relayPresetId of ['openrouter', 'newapi', 'sub2api']) {
+    const relayPreset = applyProviderPreset({ apiKey: FAKE_KEY_A, models: [], enabled: false }, relayPresetId)
+    assert.equal(relayPreset.capabilities.nativeTools, true, `${relayPresetId} preset preserves OpenAI-format tool pass-through`)
+    if (relayPresetId !== 'openrouter') {
+      assert.equal(relayPreset.capabilities.vision, false, `${relayPresetId} preset waits for relay model metadata before claiming image input`)
+      assert.equal(relayPreset.capabilities.files, false, `${relayPresetId} preset does not claim generic file_data attachments by default`)
+      assert.equal(relayPreset.capabilities.responsesApi, false, `${relayPresetId} preset keeps Responses routing opt-in for mixed upstream relays`)
+    }
+    if (relayPresetId === 'sub2api') {
+      assert.equal(relayPreset.capabilities.reasoningEffort, false, 'Sub2API preset does not flatten upstream reasoning_effort support without endpoint-level docs')
+    }
+  }
+
   const groqPreset = applyProviderPreset({ apiKey: FAKE_KEY_A, models: [], enabled: false }, 'groq')
   assert.equal(groqPreset.type, 'openai-compatible', 'expanded Groq preset stays on OpenAI-compatible request shape')
   assert.equal(groqPreset.capabilities.responsesApi, true, 'expanded Groq preset declares Responses API support')
+  assert.equal(groqPreset.capabilities.nativeSearch, false, 'expanded Groq preset does not claim native search until Compound/web-search request fields are mapped')
+  assert.equal(groqPreset.capabilities.reasoningEffort, true, 'expanded Groq preset exposes documented reasoning_effort controls for supported models')
+  assert.equal(groqPreset.capabilities.audioTranscription, true, 'expanded Groq preset exposes documented speech-to-text endpoint support')
+  assert.equal(groqPreset.capabilities.speech, true, 'expanded Groq preset exposes documented text-to-speech endpoint support')
   assert.equal(groqPreset.capabilities.remoteCompact, false, 'expanded non-official Responses presets do not infer remote compact')
+  const togetherPreset = applyProviderPreset({ apiKey: FAKE_KEY_A, models: ['openai/gpt-oss-20b'], enabled: false }, 'together')
+  assert.equal(togetherPreset.type, 'openai-compatible', 'expanded Together preset stays on OpenAI-compatible request shape')
+  assert.equal(togetherPreset.capabilities.vision, true, 'expanded Together preset exposes documented image_url vision input')
+  assert.equal(togetherPreset.capabilities.audioInput, false, 'expanded Together preset does not claim chat audio_url input until app attachments can route it')
+  assert.equal(togetherPreset.capabilities.audioTranscription, true, 'expanded Together preset exposes documented speech-to-text endpoint support')
+  assert.equal(togetherPreset.capabilities.speech, true, 'expanded Together preset exposes documented text-to-speech endpoint support')
+  assert.equal(togetherPreset.capabilities.reasoningEffort, true, 'expanded Together preset exposes documented GPT-OSS reasoning_effort controls')
+  assert.equal(togetherPreset.capabilities.nativeTools, true, 'expanded Together preset exposes documented OpenAI-format function tools')
+  assert.equal(togetherPreset.capabilities.files, false, 'expanded Together preset does not claim generic file_data attachments')
+  assert.equal(getAPIEndpointForTest(togetherPreset), 'https://api.together.ai/v1/chat/completions', 'Together preset routes chat through the official OpenAI-compatible endpoint')
   const vertexPreset = applyProviderPreset({ apiKey: FAKE_KEY_A, baseUrl: 'https://us-central1-aiplatform.googleapis.com/v1/projects/islemind-dev/locations/us-central1/endpoints/openapi', models: [], enabled: false }, 'vertex-ai')
   assert.equal(vertexPreset.type, 'openai-compatible', 'Vertex AI preset uses its OpenAI-compatible hosted endpoint shape')
-  assert.equal(vertexPreset.capabilities.modelList, true, 'Vertex AI OpenAI-compatible endpoint keeps model-list sync enabled when configured under /endpoints/openapi')
+  assert.equal(vertexPreset.capabilities.modelList, false, 'Vertex AI preset keeps automatic model-list sync disabled until /models is source-backed')
+  assert.equal(vertexPreset.capabilities.files, false, 'Vertex AI preset does not claim generic OpenAI file_data chat attachments')
   const bedrockMantlePreset = applyProviderPreset({ apiKey: FAKE_KEY_A, models: [], enabled: false }, 'aws-bedrock')
   assert.equal(bedrockMantlePreset.type, 'openai-compatible', 'AWS Bedrock preset defaults to the OpenAI-compatible Mantle API shape')
   assert.equal(bedrockMantlePreset.baseUrl, 'https://bedrock-mantle.us-east-1.api.aws/v1', 'AWS Bedrock preset defaults to the Mantle /v1 base URL')
-  assert.equal(bedrockMantlePreset.capabilities.responsesApi, true, 'AWS Bedrock Mantle preset declares Responses API routing')
+  assert.equal(bedrockMantlePreset.capabilities.responsesApi, false, 'AWS Bedrock Mantle preset does not claim Responses routing until current AWS docs or live smoke prove it')
   assert.equal(bedrockMantlePreset.capabilities.modelList, true, 'AWS Bedrock Mantle preset keeps OpenAI-compatible model-list sync enabled')
   assert.equal(isBedrockMantleBaseUrl('https://bedrock-mantle.us-west-2.api.aws/v1/responses'), true, 'Bedrock Mantle helper detects OpenAI-compatible Bedrock API hosts')
   assert.equal(normalizeBedrockMantleBaseUrl('https://bedrock-mantle.us-west-2.api.aws/v1/chat/completions'), 'https://bedrock-mantle.us-west-2.api.aws/v1', 'Bedrock Mantle base URL normalization keeps the /v1 namespace')
@@ -4927,12 +5562,214 @@ async function assertExpandedProviderPresetCoverage() {
   const perplexityPreset = applyProviderPreset({ apiKey: FAKE_KEY_A, models: ['sonar'], enabled: false }, 'perplexity')
   assert.equal(isPerplexityProvider(perplexityPreset), true, 'provider identity helper detects Perplexity presets')
   assert.equal(perplexityPreset.capabilities.modelList, false, 'Perplexity preset disables generic /models sync by default')
-  assert.equal(getAPIEndpointForTest(perplexityPreset), 'https://api.perplexity.ai/chat/completions', 'Perplexity preset keeps chat-completions endpoint under its compatibility root')
+  assert.equal(perplexityPreset.capabilities.vision, true, 'Perplexity preset exposes documented image_url media input')
+  assert.equal(perplexityPreset.capabilities.files, true, 'Perplexity preset exposes documented file_url media input')
+  assert.equal(perplexityPreset.capabilities.nativeSearch, true, 'Perplexity preset records provider-native Sonar search')
+  assert.equal(perplexityPreset.capabilities.nativeTools, false, 'Perplexity preset does not claim OpenAI-format function tools')
+  assert.equal(perplexityPreset.capabilities.responsesApi, false, 'Perplexity preset does not claim OpenAI Responses routing')
+  assert.equal(getAPIEndpointForTest(perplexityPreset), 'https://api.perplexity.ai/v1/sonar', 'Perplexity preset routes chat through the official Sonar endpoint')
+  assert.equal(
+    getAPIEndpointForTest({ ...perplexityPreset, baseUrl: 'https://api.perplexity.ai/v1' }),
+    'https://api.perplexity.ai/v1/sonar',
+    'Perplexity endpoint normalization strips a user-entered /v1 before appending /v1/sonar'
+  )
+  assert.equal(
+    getAPIEndpointForTest({ ...perplexityPreset, baseUrl: 'https://api.perplexity.ai/v1/sonar' }),
+    'https://api.perplexity.ai/v1/sonar',
+    'Perplexity endpoint normalization accepts direct Sonar URLs without duplicating the path'
+  )
   assert.equal(
     getAPIEndpointForTest({ ...perplexityPreset, baseUrl: 'https://api.perplexity.ai/chat/completions' }),
-    'https://api.perplexity.ai/chat/completions',
-    'Perplexity endpoint normalization does not append an extra /v1 to direct chat-completions URLs'
+    'https://api.perplexity.ai/v1/sonar',
+    'Perplexity endpoint normalization migrates older direct chat-completions URLs to Sonar'
   )
+
+  const coherePreset = applyProviderPreset({ apiKey: FAKE_KEY_A, models: ['command-a-plus-05-2026'], enabled: false }, 'cohere')
+  assert.equal(isCohereProvider(coherePreset), true, 'provider identity helper detects Cohere presets')
+  assert.equal(coherePreset.type, 'openai-compatible', 'Cohere preset stays on the OpenAI-compatible Compatibility API shape')
+  assert.equal(coherePreset.capabilities.modelList, false, 'Cohere preset disables generic /models sync because official model listing is native /v1/models')
+  assert.equal(coherePreset.capabilities.vision, false, 'Cohere preset does not claim compatibility image routing until image_url support is source-backed on the Compatibility API')
+  assert.equal(coherePreset.capabilities.files, false, 'Cohere preset does not claim generic OpenAI file_data chat attachments')
+  assert.equal(coherePreset.capabilities.audioInput, false, 'Cohere preset does not claim chat audio input')
+  assert.equal(coherePreset.capabilities.audioTranscription, true, 'Cohere preset exposes documented Compatibility API audio transcription endpoint support')
+  assert.equal(coherePreset.capabilities.reasoningEffort, true, 'Cohere preset exposes documented none/high reasoning_effort controls for supported Command A models')
+  assert.equal(coherePreset.capabilities.nativeTools, true, 'Cohere preset exposes documented OpenAI-format function tools')
+  assert.equal(coherePreset.capabilities.responsesApi, false, 'Cohere preset does not claim OpenAI Responses routing')
+  assert.equal(getAPIEndpointForTest(coherePreset), 'https://api.cohere.ai/compatibility/v1/chat/completions', 'Cohere preset routes chat through the official Compatibility API chat endpoint')
+
+  const cerebrasPreset = applyProviderPreset({ apiKey: FAKE_KEY_A, models: ['gpt-oss-120b', 'zai-glm-4.7'], enabled: false }, 'cerebras')
+  assert.equal(isCerebrasProvider(cerebrasPreset), true, 'provider identity helper detects Cerebras presets')
+  assert.equal(cerebrasPreset.type, 'openai-compatible', 'Cerebras preset stays on the OpenAI-compatible chat shape')
+  assert.equal(cerebrasPreset.capabilities.modelList, true, 'Cerebras preset keeps documented /v1/models sync enabled')
+  assert.equal(cerebrasPreset.capabilities.vision, false, 'Cerebras preset does not claim public shared-endpoint vision input')
+  assert.equal(cerebrasPreset.capabilities.files, false, 'Cerebras preset does not claim generic file_data chat attachments')
+  assert.equal(cerebrasPreset.capabilities.audioInput, false, 'Cerebras preset does not claim chat audio input')
+  assert.equal(cerebrasPreset.capabilities.audioTranscription, false, 'Cerebras preset does not claim audio transcription endpoints')
+  assert.equal(cerebrasPreset.capabilities.reasoningEffort, true, 'Cerebras preset exposes documented model-specific reasoning_effort controls')
+  assert.equal(cerebrasPreset.capabilities.nativeTools, true, 'Cerebras preset exposes documented OpenAI-format function tools')
+  assert.equal(cerebrasPreset.capabilities.responsesApi, false, 'Cerebras preset does not claim OpenAI Responses routing')
+  assert.equal(getAPIEndpointForTest(cerebrasPreset), 'https://api.cerebras.ai/v1/chat/completions', 'Cerebras preset routes chat through the official chat completions endpoint')
+
+  const sambaNovaPreset = applyProviderPreset({ apiKey: FAKE_KEY_A, models: ['gpt-oss-120b'], enabled: false }, 'sambanova')
+  assert.equal(isSambaNovaProvider(sambaNovaPreset), true, 'provider identity helper detects SambaNova presets')
+  assert.equal(sambaNovaPreset.type, 'openai-compatible', 'SambaNova preset stays on the OpenAI-compatible chat shape')
+  assert.equal(sambaNovaPreset.capabilities.modelList, true, 'SambaNova preset keeps documented /v1/models sync enabled')
+  assert.equal(sambaNovaPreset.capabilities.vision, true, 'SambaNova preset exposes documented base64 image_url vision input')
+  assert.equal(sambaNovaPreset.capabilities.files, false, 'SambaNova preset does not claim generic file_data chat attachments')
+  assert.equal(sambaNovaPreset.capabilities.audioInput, false, 'SambaNova preset does not claim chat audio input for default SambaCloud routing')
+  assert.equal(sambaNovaPreset.capabilities.audioTranscription, false, 'SambaNova preset does not claim SambaStack-only audio transcription endpoints')
+  assert.equal(sambaNovaPreset.capabilities.speech, false, 'SambaNova preset does not claim speech output endpoints')
+  assert.equal(sambaNovaPreset.capabilities.reasoningEffort, true, 'SambaNova preset exposes documented gpt-oss-120b reasoning_effort controls')
+  assert.equal(sambaNovaPreset.capabilities.nativeTools, true, 'SambaNova preset exposes documented OpenAI-format function tools')
+  assert.equal(sambaNovaPreset.capabilities.responsesApi, true, 'SambaNova preset declares Responses API routing for models that explicitly select it')
+  assert.equal(getAPIEndpointForTest(sambaNovaPreset), 'https://api.sambanova.ai/v1/chat/completions', 'SambaNova preset routes chat through the official chat completions endpoint')
+
+  const nvidiaNimPreset = applyProviderPreset({ apiKey: FAKE_KEY_A, models: ['nvidia/llama-3.3-nemotron-super-49b-v1'], enabled: false }, 'nvidia-nim')
+  assert.equal(isNvidiaNimProvider(nvidiaNimPreset), true, 'provider identity helper detects NVIDIA NIM presets')
+  assert.equal(nvidiaNimPreset.type, 'openai-compatible', 'NVIDIA NIM preset stays on the OpenAI-compatible chat shape')
+  assert.equal(nvidiaNimPreset.capabilities.modelList, true, 'NVIDIA NIM preset keeps documented /v1/models sync enabled')
+  assert.equal(nvidiaNimPreset.capabilities.vision, true, 'NVIDIA NIM preset exposes documented model-specific image_url vision input')
+  assert.equal(nvidiaNimPreset.capabilities.files, false, 'NVIDIA NIM preset does not claim generic file_data chat attachments')
+  assert.equal(nvidiaNimPreset.capabilities.audioInput, false, 'NVIDIA NIM preset does not claim chat audio input')
+  assert.equal(nvidiaNimPreset.capabilities.audioTranscription, false, 'NVIDIA NIM preset does not claim audio transcription endpoints')
+  assert.equal(nvidiaNimPreset.capabilities.speech, false, 'NVIDIA NIM preset does not claim speech output endpoints')
+  assert.equal(nvidiaNimPreset.capabilities.reasoningEffort, false, 'NVIDIA NIM preset does not claim reasoning_effort until the LLM API documents a request parameter')
+  assert.equal(nvidiaNimPreset.capabilities.nativeTools, false, 'NVIDIA NIM preset does not claim OpenAI-format function tools until source-backed on the LLM API schema')
+  assert.equal(nvidiaNimPreset.capabilities.responsesApi, false, 'NVIDIA NIM preset does not claim OpenAI Responses routing')
+  assert.equal(getAPIEndpointForTest(nvidiaNimPreset), 'https://integrate.api.nvidia.com/v1/chat/completions', 'NVIDIA NIM preset routes chat through the official integrate API chat completions endpoint')
+
+  const huggingFacePreset = applyProviderPreset({ apiKey: FAKE_KEY_A, models: ['openai/gpt-oss-120b'], enabled: false }, 'huggingface')
+  assert.equal(isHuggingFaceProvider(huggingFacePreset), true, 'provider identity helper detects Hugging Face Inference Providers presets')
+  assert.equal(huggingFacePreset.type, 'openai-compatible', 'Hugging Face preset stays on the OpenAI-compatible router shape')
+  assert.equal(huggingFacePreset.capabilities.modelList, true, 'Hugging Face preset keeps documented /v1/models sync enabled')
+  assert.equal(huggingFacePreset.capabilities.vision, true, 'Hugging Face preset exposes documented image_url VLM chat input')
+  assert.equal(huggingFacePreset.capabilities.files, false, 'Hugging Face preset does not claim generic OpenAI file_data chat attachments')
+  assert.equal(huggingFacePreset.capabilities.reasoningEffort, true, 'Hugging Face preset exposes model/provider-dependent reasoning_effort controls')
+  assert.equal(huggingFacePreset.capabilities.nativeTools, true, 'Hugging Face preset exposes documented OpenAI-format function tools')
+  assert.equal(huggingFacePreset.capabilities.responsesApi, true, 'Hugging Face preset declares documented beta Responses API routing for models that explicitly select it')
+  assert.equal(getAPIEndpointForTest(huggingFacePreset), 'https://router.huggingface.co/v1/chat/completions', 'Hugging Face preset routes chat through the official router chat completions endpoint')
+
+  const githubModelsPreset = applyProviderPreset({ apiKey: FAKE_KEY_A, models: ['openai/gpt-4.1'], enabled: false }, 'github-models')
+  assert.equal(isGitHubModelsProvider(githubModelsPreset), true, 'provider identity helper detects GitHub Models presets')
+  assert.equal(githubModelsPreset.type, 'openai-compatible', 'GitHub Models preset stays on the OpenAI-compatible inference shape')
+  assert.equal(githubModelsPreset.capabilities.modelList, true, 'GitHub Models preset keeps documented /models sync enabled')
+  assert.equal(githubModelsPreset.capabilities.vision, false, 'GitHub Models preset waits for model metadata before exposing image_url vision input')
+  assert.equal(githubModelsPreset.capabilities.files, false, 'GitHub Models preset does not claim generic OpenAI file_data chat attachments')
+  assert.equal(githubModelsPreset.capabilities.audioInput, false, 'GitHub Models preset does not claim chat audio input')
+  assert.equal(githubModelsPreset.capabilities.audioTranscription, false, 'GitHub Models preset does not claim audio transcription endpoints')
+  assert.equal(githubModelsPreset.capabilities.speech, false, 'GitHub Models preset does not claim speech output endpoints')
+  assert.equal(githubModelsPreset.capabilities.reasoningEffort, false, 'GitHub Models preset does not claim reasoning_effort without source-backed provider docs')
+  assert.equal(githubModelsPreset.capabilities.nativeTools, true, 'GitHub Models preset exposes OpenAI-format function tools')
+  assert.equal(githubModelsPreset.capabilities.responsesApi, false, 'GitHub Models preset does not claim OpenAI Responses routing')
+  assert.equal(getAPIEndpointForTest(githubModelsPreset), 'https://models.github.ai/inference/chat/completions', 'GitHub Models preset routes chat through the official inference chat endpoint')
+
+  const deepInfraPreset = applyProviderPreset({ apiKey: FAKE_KEY_A, models: ['Qwen/Qwen3-30B-A3B'], enabled: false }, 'deepinfra')
+  assert.equal(isDeepInfraProvider(deepInfraPreset), true, 'provider identity helper detects DeepInfra presets')
+  assert.equal(deepInfraPreset.type, 'openai-compatible', 'DeepInfra preset stays on the OpenAI-compatible chat shape')
+  assert.equal(deepInfraPreset.capabilities.modelList, true, 'DeepInfra preset keeps documented /v1/openai/models sync enabled')
+  assert.equal(deepInfraPreset.capabilities.vision, true, 'DeepInfra preset exposes documented image_url vision input')
+  assert.equal(deepInfraPreset.capabilities.files, false, 'DeepInfra preset does not claim generic OpenAI file_data chat attachments')
+  assert.equal(deepInfraPreset.capabilities.audioInput, false, 'DeepInfra preset does not claim chat audio input')
+  assert.equal(deepInfraPreset.capabilities.audioTranscription, false, 'DeepInfra preset does not claim native speech recognition until /v1/inference routing exists')
+  assert.equal(deepInfraPreset.capabilities.speech, false, 'DeepInfra preset does not claim native text-to-speech until /v1/inference routing exists')
+  assert.equal(deepInfraPreset.capabilities.reasoningEffort, true, 'DeepInfra preset exposes documented model-specific reasoning_effort controls')
+  assert.equal(deepInfraPreset.capabilities.nativeTools, true, 'DeepInfra preset exposes documented OpenAI-format function tools')
+  assert.equal(deepInfraPreset.capabilities.responsesApi, false, 'DeepInfra preset does not claim OpenAI Responses routing')
+  assert.equal(getAPIEndpointForTest(deepInfraPreset), 'https://api.deepinfra.com/v1/openai/chat/completions', 'DeepInfra preset routes chat through the official OpenAI-compatible endpoint')
+
+  const novitaPreset = applyProviderPreset({ apiKey: FAKE_KEY_A, models: ['zai-org/glm-5.2'], enabled: false }, 'novita')
+  assert.equal(isNovitaProvider(novitaPreset), true, 'provider identity helper detects Novita presets')
+  assert.equal(novitaPreset.type, 'openai-compatible', 'Novita preset stays on the OpenAI-compatible chat shape')
+  assert.equal(novitaPreset.baseUrl, 'https://api.novita.ai/openai', 'Novita preset uses the official OpenAI-compatible SDK base URL')
+  assert.equal(novitaPreset.capabilities.modelList, true, 'Novita preset keeps documented /openai/v1/models sync enabled')
+  assert.equal(novitaPreset.capabilities.vision, true, 'Novita preset exposes documented image_url vision input')
+  assert.equal(novitaPreset.capabilities.files, false, 'Novita preset does not claim generic OpenAI file_data chat attachments')
+  assert.equal(novitaPreset.capabilities.audioInput, false, 'Novita preset does not claim chat audio input')
+  assert.equal(novitaPreset.capabilities.audioTranscription, false, 'Novita preset does not claim separate audio transcription APIs')
+  assert.equal(novitaPreset.capabilities.speech, false, 'Novita preset does not claim separate speech output APIs')
+  assert.equal(novitaPreset.capabilities.reasoningEffort, false, 'Novita preset does not expose reasoning_effort because official reasoning docs use response-side reasoning_content')
+  assert.equal(novitaPreset.capabilities.nativeTools, true, 'Novita preset exposes documented OpenAI-format function tools')
+  assert.equal(novitaPreset.capabilities.responsesApi, false, 'Novita preset does not claim OpenAI Responses routing')
+  assert.equal(getAPIEndpointForTest(novitaPreset), 'https://api.novita.ai/openai/v1/chat/completions', 'Novita preset routes chat through the documented /openai/v1 chat endpoint')
+  assert.equal(
+    getAPIEndpointForTest({ ...novitaPreset, baseUrl: 'https://api.novita.ai/v3/openai' }),
+    'https://api.novita.ai/v3/openai/chat/completions',
+    'Novita keeps legacy /v3/openai user-entered bases route-compatible'
+  )
+
+  const siliconFlowPreset = applyProviderPreset({ apiKey: FAKE_KEY_A, models: ['Qwen/Qwen3-8B'], enabled: false }, 'siliconflow')
+  assert.equal(isSiliconFlowProvider(siliconFlowPreset), true, 'provider identity helper detects SiliconFlow presets')
+  assert.equal(isDashScopeProvider(siliconFlowPreset), false, 'SiliconFlow Qwen models do not get misclassified as DashScope providers')
+  assert.equal(siliconFlowPreset.type, 'openai-compatible', 'SiliconFlow preset stays on the OpenAI-compatible chat shape')
+  assert.equal(siliconFlowPreset.capabilities.modelList, true, 'SiliconFlow preset keeps authenticated /v1/models sync enabled')
+  assert.equal(siliconFlowPreset.capabilities.vision, true, 'SiliconFlow preset exposes documented image_url multimodal chat input')
+  assert.equal(siliconFlowPreset.capabilities.files, false, 'SiliconFlow preset does not claim generic OpenAI file_data chat attachments')
+  assert.equal(siliconFlowPreset.capabilities.audioInput, false, 'SiliconFlow preset does not claim chat audio input')
+  assert.equal(siliconFlowPreset.capabilities.audioTranscription, false, 'SiliconFlow preset does not claim audio transcription endpoints')
+  assert.equal(siliconFlowPreset.capabilities.speech, false, 'SiliconFlow preset does not claim TTS through the generic speech route')
+  assert.equal(siliconFlowPreset.capabilities.reasoningEffort, true, 'SiliconFlow preset exposes source-backed thinking_budget controls for reasoning models')
+  assert.equal(siliconFlowPreset.capabilities.nativeTools, true, 'SiliconFlow preset exposes documented OpenAI-format function tools')
+  assert.equal(siliconFlowPreset.capabilities.responsesApi, false, 'SiliconFlow preset does not claim OpenAI Responses routing')
+  assert.equal(getAPIEndpointForTest(siliconFlowPreset), 'https://api.siliconflow.cn/v1/chat/completions', 'SiliconFlow preset routes chat through the official OpenAI-compatible endpoint')
+
+  const modelScopePreset = applyProviderPreset({ apiKey: FAKE_KEY_A, models: ['Qwen/Qwen3-235B-A22B-Instruct-2507'], enabled: false }, 'modelscope')
+  assert.equal(isModelScopeProvider(modelScopePreset), true, 'provider identity helper detects ModelScope presets')
+  assert.equal(isDashScopeProvider(modelScopePreset), false, 'ModelScope Qwen models do not get misclassified as DashScope providers')
+  assert.equal(modelScopePreset.type, 'openai-compatible', 'ModelScope preset stays on the OpenAI-compatible chat shape')
+  assert.equal(modelScopePreset.baseUrl, 'https://api-inference.modelscope.cn/v1', 'ModelScope preset uses the official API-Inference base URL')
+  assert.equal(modelScopePreset.capabilities.modelList, true, 'ModelScope preset keeps live /v1/models sync enabled')
+  assert.equal(modelScopePreset.capabilities.vision, false, 'ModelScope preset does not claim image input without source-backed image_url fixtures')
+  assert.equal(modelScopePreset.capabilities.files, false, 'ModelScope preset does not claim generic OpenAI file_data chat attachments')
+  assert.equal(modelScopePreset.capabilities.audioInput, false, 'ModelScope preset does not claim chat audio input')
+  assert.equal(modelScopePreset.capabilities.audioTranscription, false, 'ModelScope preset does not claim audio transcription endpoints')
+  assert.equal(modelScopePreset.capabilities.speech, false, 'ModelScope preset does not claim speech output endpoints')
+  assert.equal(modelScopePreset.capabilities.reasoningEffort, false, 'ModelScope preset does not expose reasoning_effort or DashScope thinking controls by default')
+  assert.equal(modelScopePreset.capabilities.nativeTools, false, 'ModelScope preset does not claim OpenAI-format function tools until source-backed fixtures exist')
+  assert.equal(modelScopePreset.capabilities.responsesApi, false, 'ModelScope preset does not claim OpenAI Responses routing')
+  assert.equal(shouldRequestDashScopeStreamUsage({ provider: modelScopePreset, stream: true }), false, 'ModelScope streaming requests do not ask for DashScope stream_options.include_usage')
+  assert.equal(getAPIEndpointForTest(modelScopePreset), 'https://api-inference.modelscope.cn/v1/chat/completions', 'ModelScope preset routes chat through the official API-Inference chat endpoint')
+
+  const volcengineArkPreset = applyProviderPreset({ apiKey: FAKE_KEY_A, models: ['doubao-seed-2-0-lite-260215'], enabled: false }, 'volcengine-ark')
+  assert.equal(volcengineArkPreset.type, 'openai-compatible', 'Volcengine Ark preset stays on the OpenAI-compatible chat shape')
+  assert.equal(volcengineArkPreset.baseUrl, 'https://ark.cn-beijing.volces.com/api/v3', 'Volcengine Ark preset uses the official /api/v3 base URL')
+  assert.equal(volcengineArkPreset.capabilities.modelList, true, 'Volcengine Ark preset keeps documented /api/v3/models sync enabled')
+  assert.equal(volcengineArkPreset.capabilities.vision, true, 'Volcengine Ark preset exposes documented image_url vision input')
+  assert.equal(volcengineArkPreset.capabilities.files, false, 'Volcengine Ark preset does not claim generic OpenAI file_data chat attachments')
+  assert.equal(volcengineArkPreset.capabilities.audioInput, false, 'Volcengine Ark preset does not claim chat audio input')
+  assert.equal(volcengineArkPreset.capabilities.audioTranscription, false, 'Volcengine Ark preset does not claim audio transcription endpoints')
+  assert.equal(volcengineArkPreset.capabilities.speech, false, 'Volcengine Ark preset does not claim speech output endpoints')
+  assert.equal(volcengineArkPreset.capabilities.reasoningEffort, false, 'Volcengine Ark preset does not expose reasoning controls until source-backed app mapping exists')
+  assert.equal(volcengineArkPreset.capabilities.nativeTools, true, 'Volcengine Ark preset exposes documented OpenAI-format function tools')
+  assert.equal(volcengineArkPreset.capabilities.responsesApi, false, 'Volcengine Ark preset does not claim OpenAI Responses routing')
+  assert.equal(getAPIEndpointForTest(volcengineArkPreset), 'https://ark.cn-beijing.volces.com/api/v3/chat/completions', 'Volcengine Ark preset routes chat through the official /api/v3 chat endpoint')
+
+  const dashScopePreset = applyProviderPreset({ apiKey: FAKE_KEY_A, models: ['qwen3.7-max'], enabled: false }, 'dashscope')
+  assert.equal(dashScopePreset.capabilities.vision, true, 'DashScope preset keeps source-backed image_url input support')
+  assert.equal(dashScopePreset.capabilities.reasoningEffort, true, 'DashScope preset exposes Qwen thinking controls')
+  assert.equal(dashScopePreset.capabilities.nativeTools, true, 'DashScope preset keeps OpenAI-format tool declarations')
+  assert.equal(dashScopePreset.capabilities.modelList, false, 'DashScope preset disables generic /models sync until official or live-key evidence covers it')
+  assert.equal(dashScopePreset.capabilities.files, false, 'DashScope preset does not claim generic file_data attachments')
+  assert.equal(dashScopePreset.capabilities.audioInput, false, 'DashScope preset does not claim Qwen-Omni audio input until input_audio is mapped')
+  assert.equal(dashScopePreset.capabilities.audioTranscription, false, 'DashScope preset does not claim OpenAI audio transcription endpoints')
+  assert.equal(dashScopePreset.capabilities.speech, false, 'DashScope preset does not claim OpenAI audio speech endpoints')
+  assert.equal(getAPIEndpointForTest(dashScopePreset), 'https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions', 'DashScope preset routes chat through the official compatible-mode chat endpoint')
+
+  const miniMaxPreset = applyProviderPreset({ apiKey: FAKE_KEY_A, models: ['MiniMax-M3'], enabled: false }, 'minimax')
+  assert.equal(miniMaxPreset.capabilities.modelList, false, 'MiniMax preset disables generic /models sync because the official OpenAPI only exposes chat completions')
+  assert.equal(miniMaxPreset.capabilities.files, false, 'MiniMax preset does not claim generic file_data attachments')
+  assert.equal(miniMaxPreset.capabilities.reasoningEffort, true, 'MiniMax preset exposes adaptive thinking controls')
+  assert.equal(miniMaxPreset.capabilities.nativeTools, true, 'MiniMax preset keeps OpenAI-format tool declarations')
+  assert.equal(getAPIEndpointForTest(miniMaxPreset), 'https://api.minimax.io/v1/chat/completions', 'MiniMax preset routes chat through the official OpenAI-compatible chat endpoint')
+
+  const mistralPreset = applyProviderPreset({ apiKey: FAKE_KEY_A, models: ['mistral-medium-latest'], enabled: false }, 'mistral')
+  assert.equal(mistralPreset.capabilities.modelList, true, 'Mistral preset keeps official /v1/models sync enabled')
+  assert.equal(mistralPreset.capabilities.vision, true, 'Mistral preset keeps source-backed image_url input support')
+  assert.equal(mistralPreset.capabilities.files, false, 'Mistral preset does not claim generic OpenAI file_data chat attachments')
+  assert.equal(mistralPreset.capabilities.audioInput, false, 'Mistral preset does not claim Voxtral input_audio chat routing until mapped')
+  assert.equal(mistralPreset.capabilities.audioTranscription, false, 'Mistral preset does not claim /audio/transcriptions until the app routes Mistral audio models')
+  assert.equal(mistralPreset.capabilities.reasoningEffort, false, 'Mistral preset does not expose a reasoning-effort UI control without a documented request parameter')
+  assert.equal(mistralPreset.capabilities.nativeTools, true, 'Mistral preset keeps OpenAI-format function tools')
+  assert.equal(getAPIEndpointForTest(mistralPreset), 'https://api.mistral.ai/v1/chat/completions', 'Mistral preset routes chat through the official chat completions endpoint')
 
   const originalFetch = global.fetch
   try {
@@ -4943,6 +5780,29 @@ async function assertExpandedProviderPresetCoverage() {
       await fetchProviderModelConfigsFromRemote(perplexityPreset, 1),
       [],
       'model discovery skips providers that explicitly disable model-list sync'
+    )
+    assert.deepEqual(
+      await fetchProviderModelConfigsFromRemote(dashScopePreset, 1),
+      [],
+      'DashScope model discovery uses static/manual model ids until generic /models sync has stronger evidence'
+    )
+    assert.deepEqual(
+      await fetchProviderModelConfigsFromRemote(miniMaxPreset, 1),
+      [],
+      'MiniMax model discovery uses static/manual model ids because the official OpenAPI does not expose /models'
+    )
+    assert.deepEqual(
+      await fetchProviderModelConfigsFromRemote(coherePreset, 1),
+      [],
+      'Cohere model discovery stays static/manual until native /v1/models has provider-specific sync mapping'
+    )
+    assert.deepEqual(
+      await fetchProviderModelConfigsFromRemote({
+        ...dashScopePreset,
+        capabilities: { ...dashScopePreset.capabilities, modelList: true },
+      }, 1),
+      [],
+      'model discovery blocks /models even when configuration overclaims modelList without contract support'
     )
   } finally {
     global.fetch = originalFetch
@@ -5018,11 +5878,981 @@ async function assertProviderCapabilityMatrixBehavior() {
     id: 'vertex-openai',
     baseUrl: 'https://us-central1-aiplatform.googleapis.com/v1/projects/islemind-dev/locations/us-central1/endpoints/openapi',
   }
+  const customProvider = {
+    id: 'custom-matrix',
+    type: 'openai-compatible',
+    name: 'Custom Matrix Relay',
+    presetId: 'custom-openai-compatible',
+    baseUrl: 'https://relay.example.test/v1',
+    apiKey: FAKE_KEY_A,
+    models: ['manual-model'],
+    enabled: true,
+  }
+  const customOptimisticProvider = {
+    id: 'custom-optimistic',
+    type: 'openai-compatible',
+    name: 'Custom Optimistic Relay',
+    presetId: 'custom-openai-compatible',
+    baseUrl: 'https://relay.example.test/v1',
+    apiKey: FAKE_KEY_A,
+    models: ['gpt-4o'],
+    enabled: true,
+    capabilities: { responsesApi: true, responsesWebSocket: true, remoteCompact: true, nativeTools: true },
+  }
   const matrix = buildProviderCapabilityMatrix(officialProvider)
   assert.equal(matrix.hostingProfile, 'official', 'official provider is classified as official hosting')
   assert.equal(matrix.summaryLevel, 'partial', 'official provider still reports partial due to cache coverage not being universal')
   assert.ok(matrix.statuses.some((status) => status.area === 'response' && status.level === 'full'), 'official provider has full response support')
   assert.ok(matrix.statuses.some((status) => status.area === 'cache' && status.level === 'partial'), 'official provider cache support remains explicit rather than universal')
+  assert.equal(
+    matrix.statuses.find((status) => status.area === 'response')?.contractStatus,
+    'supported',
+    'provider capability matrix exposes canonical chat status for OpenAI'
+  )
+  assert.equal(
+    matrix.statuses.find((status) => status.area === 'streaming')?.contractStatus,
+    'supported',
+    'provider capability matrix exposes canonical streaming status for OpenAI'
+  )
+  assert.equal(
+    matrix.statuses.find((status) => status.area === 'streaming')?.level,
+    'full',
+    'provider capability matrix reports OpenAI streaming as contract-backed when selected models allow streaming'
+  )
+  assert.equal(
+    describeProviderCapabilityStatus(matrix, 'streaming'),
+    'provider streaming is contract-backed and still narrowed by model catalog metadata before requests are sent',
+    'provider capability matrix explains model-catalog-aware streaming support'
+  )
+  const nonStreamingModelMatrix = buildProviderCapabilityMatrix(applyProviderPreset({ apiKey: FAKE_KEY_A, models: ['gpt-5.5-pro'], enabled: true }, 'openai'))
+  assert.equal(
+    nonStreamingModelMatrix.statuses.find((status) => status.area === 'streaming')?.contractStatus,
+    'supported',
+    'provider capability matrix keeps provider streaming contract status when a specific model is non-streaming'
+  )
+  assert.equal(
+    nonStreamingModelMatrix.statuses.find((status) => status.area === 'streaming')?.level,
+    'partial',
+    'provider capability matrix downgrades streaming when selected model catalog metadata disables streaming'
+  )
+  assert.equal(
+    describeProviderCapabilityStatus(nonStreamingModelMatrix, 'streaming'),
+    'streaming is contract-aware, but gpt-5.5-pro is model-cataloged as non-streaming so runtime and fallback use non-streaming requests for those models',
+    'provider capability matrix explains model-level non-streaming downgrade'
+  )
+  assert.equal(
+    matrix.statuses.find((status) => status.area === 'transport')?.contractStatus,
+    'supported',
+    'provider capability matrix exposes canonical Responses WebSocket status for OpenAI'
+  )
+  assert.equal(
+    matrix.statuses.find((status) => status.area === 'remoteCompact')?.contractStatus,
+    'supported',
+    'provider capability matrix exposes canonical remote compact status for OpenAI'
+  )
+  assert.equal(
+    matrix.statuses.find((status) => status.area === 'contextLimit')?.contractStatus,
+    'supported',
+    'provider capability matrix exposes canonical context-limit status for OpenAI'
+  )
+  assert.equal(
+    describeProviderCapabilityStatus(matrix, 'contextLimit'),
+    'provider context and output limits flow through model catalog metadata and provider conformance clamps before requests are sent',
+    'provider capability matrix reports source-backed context-limit enforcement for OpenAI'
+  )
+  assert.equal(
+    matrix.statuses.find((status) => status.area === 'systemPromptPolicy')?.contractStatus,
+    'supported',
+    'provider capability matrix exposes canonical system-prompt policy status for OpenAI'
+  )
+  assert.equal(
+    describeProviderCapabilityStatus(matrix, 'systemPromptPolicy'),
+    'system prompt is built once with provider-aware capability rules, counted in context budgeting, and emitted through the provider-specific request shape',
+    'provider capability matrix reports source-backed system-prompt policy for OpenAI'
+  )
+  assert.equal(
+    matrix.statuses.find((status) => status.area === 'safetyPolicy')?.contractStatus,
+    'supported',
+    'provider capability matrix exposes canonical safety-policy status for OpenAI'
+  )
+  assert.equal(
+    describeProviderCapabilityStatus(matrix, 'safetyPolicy'),
+    'runtime applies provider-aware capability boundaries, conformance blockers, payload-policy checks, and non-retryable safety-refusal classification before fallback decisions',
+    'provider capability matrix reports source-backed runtime safety policy for OpenAI'
+  )
+  assert.equal(
+    matrix.statuses.find((status) => status.area === 'deprecation')?.contractStatus,
+    'supported',
+    'provider capability matrix exposes canonical deprecation status for OpenAI'
+  )
+  assert.equal(
+    matrix.statuses.find((status) => status.area === 'deprecation')?.level,
+    'full',
+    'provider capability matrix reports current OpenAI model selections as deprecation-clean'
+  )
+  assert.equal(
+    describeProviderCapabilityStatus(matrix, 'deprecation'),
+    'model deprecation state is contract-backed through model catalog metadata and fallback candidate rejection',
+    'provider capability matrix explains model catalog and fallback deprecation handling'
+  )
+  assert.equal(
+    matrix.statuses.find((status) => status.area === 'vision')?.contractStatus,
+    'supported',
+    'provider capability matrix exposes canonical vision status for OpenAI'
+  )
+  assert.equal(
+    matrix.statuses.find((status) => status.area === 'vision')?.level,
+    'full',
+    'provider capability matrix reports OpenAI vision as model-catalog gated and contract-backed'
+  )
+  assert.equal(
+    describeProviderCapabilityStatus(matrix, 'vision'),
+    'vision input is contract-backed and model-catalog gated for gpt-5.5',
+    'provider capability matrix explains OpenAI vision through configured model metadata'
+  )
+  assert.equal(
+    matrix.statuses.find((status) => status.area === 'files')?.contractStatus,
+    'supported',
+    'provider capability matrix exposes canonical file status for OpenAI'
+  )
+  assert.equal(
+    matrix.statuses.find((status) => status.area === 'files')?.level,
+    'full',
+    'provider capability matrix reports OpenAI files as model-catalog gated and contract-backed'
+  )
+  assert.equal(
+    describeProviderCapabilityStatus(matrix, 'files'),
+    'file input is contract-backed and model-catalog gated for gpt-5.5',
+    'provider capability matrix explains OpenAI files through configured model metadata'
+  )
+  const openAINonFileModelMatrix = buildProviderCapabilityMatrix(applyProviderPreset({ apiKey: FAKE_KEY_A, models: ['gpt-4.1'], enabled: true }, 'openai'))
+  assert.equal(
+    openAINonFileModelMatrix.statuses.find((status) => status.area === 'files')?.contractStatus,
+    'supported',
+    'provider capability matrix keeps OpenAI file contract status when a selected model lacks file metadata'
+  )
+  assert.equal(
+    openAINonFileModelMatrix.statuses.find((status) => status.area === 'files')?.level,
+    'partial',
+    'provider capability matrix downgrades files when selected model metadata does not prove file input'
+  )
+  assert.equal(
+    describeProviderCapabilityStatus(openAINonFileModelMatrix, 'files'),
+    'file input is allowed for gpt-4.1, but endpoint/model evidence is not complete enough to treat every configured model as file-capable',
+    'provider capability matrix explains model-level file metadata gaps'
+  )
+  const anthropicFileMatrix = buildProviderCapabilityMatrix({ id: 'anthropic-files', type: 'anthropic', name: 'Anthropic', apiKey: FAKE_KEY_A, models: ['claude-opus-4-8'], enabled: true })
+  assert.equal(
+    anthropicFileMatrix.statuses.find((status) => status.area === 'files')?.contractStatus,
+    'supported',
+    'provider capability matrix exposes canonical file status for Anthropic'
+  )
+  assert.equal(
+    anthropicFileMatrix.statuses.find((status) => status.area === 'files')?.level,
+    'full',
+    'provider capability matrix reports Anthropic files as contract-backed and model-catalog gated'
+  )
+  assert.equal(
+    describeProviderCapabilityStatus(anthropicFileMatrix, 'files'),
+    'file input is contract-backed and model-catalog gated for claude-opus-4-8',
+    'provider capability matrix explains Anthropic files through configured model metadata'
+  )
+  assert.equal(
+    matrix.statuses.find((status) => status.area === 'reasoning')?.contractStatus,
+    'supported',
+    'provider capability matrix exposes canonical reasoning status for OpenAI'
+  )
+  assert.equal(
+    matrix.statuses.find((status) => status.area === 'reasoning')?.level,
+    'full',
+    'provider capability matrix reports OpenAI reasoning as model-catalog gated and contract-backed'
+  )
+  assert.equal(
+    describeProviderCapabilityStatus(matrix, 'reasoning'),
+    'reasoning controls are contract-backed and model-catalog gated for gpt-5.5',
+    'provider capability matrix explains OpenAI reasoning through configured model metadata'
+  )
+  const openAINonReasoningModelMatrix = buildProviderCapabilityMatrix(applyProviderPreset({ apiKey: FAKE_KEY_A, models: ['gpt-4.1'], enabled: true }, 'openai'))
+  assert.equal(
+    openAINonReasoningModelMatrix.statuses.find((status) => status.area === 'reasoning')?.contractStatus,
+    'supported',
+    'provider capability matrix keeps OpenAI reasoning contract status when a selected model lacks reasoning metadata'
+  )
+  assert.equal(
+    openAINonReasoningModelMatrix.statuses.find((status) => status.area === 'reasoning')?.level,
+    'partial',
+    'provider capability matrix downgrades reasoning when selected model metadata does not prove reasoning controls'
+  )
+  assert.equal(
+    describeProviderCapabilityStatus(openAINonReasoningModelMatrix, 'reasoning'),
+    'provider configuration declares reasoning controls, but model metadata or the compatibility contract does not allow reasoning parameters for the configured models',
+    'provider capability matrix explains model-level reasoning metadata gaps'
+  )
+  assert.equal(
+    matrix.statuses.find((status) => status.area === 'audio')?.contractStatus,
+    'supported',
+    'provider capability matrix exposes canonical audio status for OpenAI'
+  )
+  assert.equal(
+    matrix.statuses.find((status) => status.area === 'audio')?.level,
+    'full',
+    'provider capability matrix reports OpenAI audio endpoints as contract-backed when provider flags declare them'
+  )
+  assert.equal(
+    describeProviderCapabilityStatus(matrix, 'audio'),
+    'audio is contract-backed for audio transcription, speech output; transcription and speech requests are still gated by explicit provider flags before runtime sends audio endpoints',
+    'provider capability matrix explains OpenAI audio through explicit provider flags and contract evidence'
+  )
+  const deprecatedModelMatrix = buildProviderCapabilityMatrix(applyProviderPreset({ apiKey: FAKE_KEY_A, models: ['kimi-k2-turbo-preview'], enabled: true }, 'moonshot'))
+  assert.equal(
+    deprecatedModelMatrix.statuses.find((status) => status.area === 'deprecation')?.contractStatus,
+    'supported',
+    'provider capability matrix keeps provider deprecation contract status when a selected model is deprecated'
+  )
+  assert.equal(
+    deprecatedModelMatrix.statuses.find((status) => status.area === 'deprecation')?.level,
+    'partial',
+    'provider capability matrix downgrades deprecation when configured models include retired catalog entries'
+  )
+  assert.ok(
+    describeProviderCapabilityStatus(deprecatedModelMatrix, 'deprecation')?.includes('kimi-k2-turbo-preview: Officially discontinued on 2026-05-25'),
+    'provider capability matrix explains the catalog deprecation reason for selected deprecated models'
+  )
+  assert.equal(
+    matrix.statuses.find((status) => status.area === 'errors')?.contractStatus,
+    'supported',
+    'provider capability matrix exposes canonical error status for OpenAI'
+  )
+  assert.equal(
+    describeProviderCapabilityStatus(matrix, 'errors'),
+    'provider HTTP failures are normalized through shared status classification, safe error-detail extraction, chat error mapping, upstream.error logging, and fallback diagnostics',
+    'provider capability matrix reports source-backed provider error handling for OpenAI'
+  )
+  assert.equal(
+    matrix.statuses.find((status) => status.area === 'rateLimits')?.contractStatus,
+    'supported',
+    'provider capability matrix exposes canonical rate-limit status for OpenAI'
+  )
+  assert.equal(
+    describeProviderCapabilityStatus(matrix, 'rateLimits'),
+    '429 and documented rate-limit failures map to rate_limited, bounded retry/backoff, provider-health cooldown, circuit-breaker logging, and runtime fallback decisions',
+    'provider capability matrix reports source-backed provider rate-limit handling for OpenAI'
+  )
+  assert.equal(
+    matrix.statuses.find((status) => status.area === 'citations')?.contractStatus,
+    'unsupported',
+    'provider capability matrix exposes canonical citation status for OpenAI'
+  )
+  assert.equal(
+    describeProviderCapabilityStatus(matrix, 'citations'),
+    'provider-native citation payloads are unclaimed; IsleMind keeps local RAG, web, and retrieval-source citations as fallback evidence',
+    'provider capability matrix does not overclaim OpenAI provider-native citation payload parsing'
+  )
+  assert.equal(
+    matrix.statuses.find((status) => status.area === 'nativeSearch')?.contractStatus,
+    'supported',
+    'provider capability matrix exposes canonical native-search status for OpenAI'
+  )
+  assert.equal(
+    matrix.statuses.find((status) => status.area === 'nativeSearch')?.level,
+    'full',
+    'provider capability matrix reports OpenAI native search as identity-bound and contract-backed'
+  )
+  assert.equal(
+    describeProviderCapabilityStatus(matrix, 'nativeSearch'),
+    'provider-native search is identity-bound and contract-backed; runtime may emit provider-specific search tools while fallback keeps native-search requirements visible',
+    'provider capability matrix explains identity-bound OpenAI native-search sendability'
+  )
+  assert.equal(
+    matrix.statuses.find((status) => status.area === 'retryPolicy')?.contractStatus,
+    'supported',
+    'provider capability matrix exposes canonical retry-policy status for OpenAI'
+  )
+  assert.equal(
+    describeProviderCapabilityStatus(matrix, 'retryPolicy'),
+    'runtime applies timeout, retry, retry-delay, and circuit-breaker policy before provider fallback decisions',
+    'provider capability matrix reports source-backed retry policy for OpenAI'
+  )
+  assert.equal(
+    matrix.statuses.find((status) => status.area === 'embeddings')?.contractStatus,
+    'supported',
+    'provider capability matrix exposes canonical embeddings status for OpenAI'
+  )
+  assert.equal(
+    matrix.statuses.find((status) => status.area === 'embeddings')?.level,
+    'full',
+    'provider capability matrix reports OpenAI embeddings as a contract-backed RAG upgrade path'
+  )
+  assert.equal(
+    matrix.statuses.find((status) => status.area === 'rerank')?.contractStatus,
+    'unsupported',
+    'provider capability matrix exposes canonical rerank status for OpenAI'
+  )
+  assert.equal(
+    describeProviderCapabilityStatus(matrix, 'rerank'),
+    'provider rerank is unclaimed; RAG uses local statistical, cross-encoder fallback, or ColBERT-lite ordering',
+    'provider capability matrix reports local RAG rerank fallback when provider rerank is unclaimed'
+  )
+  assert.equal(
+    matrix.statuses.find((status) => status.area === 'routingTopology')?.contractStatus,
+    'unsupported',
+    'provider capability matrix marks direct official routing as not using hosted, relay, or local-runtime contract behavior'
+  )
+  assert.equal(
+    describeProviderCapabilityStatus(matrix, 'routingTopology'),
+    'official direct provider routing is modeled without hosted, relay, or local-runtime indirection',
+    'provider capability matrix explains direct official routing separately from compatibility topology contracts'
+  )
+  assert.equal(
+    matrix.statuses.find((status) => status.area === 'tools')?.contractStatus,
+    'supported',
+    'provider capability matrix exposes canonical tool status for OpenAI'
+  )
+  assert.equal(
+    describeProviderCapabilityStatus(matrix, 'structuredOutput'),
+    'provider contract has source-backed OpenAI Responses text.format and Chat Completions response_format controls for JSON object/schema output; live model behavior still needs optional smoke coverage',
+    'provider capability matrix reports source-backed structured output request controls for OpenAI'
+  )
+  assert.ok(
+    summarizeProviderCapabilityMatrixDetails(officialProvider, matrix, 10).includes('structuredOutput:partial/supported contract_supported/send_allowed'),
+    'provider capability matrix detail summary exposes area, level, contract status, limitation reason, and degradation path'
+  )
+  assert.equal(
+    matrix.statuses.find((status) => status.area === 'structuredOutput')?.contractStatus,
+    'supported',
+    'provider capability matrix exposes canonical structured-output status for OpenAI'
+  )
+  assert.equal(
+    describeProviderCapabilityStatus(buildProviderCapabilityMatrix({ id: 'anthropic', type: 'anthropic', name: 'Anthropic', apiKey: FAKE_KEY_A, models: ['claude-opus-4-8'], enabled: true }), 'structuredOutput'),
+    'provider contract has source-backed Anthropic tool input_schema controls for JSON object/schema output; live model behavior still needs optional smoke coverage',
+    'provider capability matrix reports source-backed structured output request controls for Anthropic'
+  )
+  const bareAnthropicNativeSearchMatrix = buildProviderCapabilityMatrix({ id: 'anthropic-no-search', type: 'anthropic', name: 'Anthropic', apiKey: FAKE_KEY_A, models: ['claude-opus-4-20250514'], enabled: true })
+  assert.equal(
+    bareAnthropicNativeSearchMatrix.statuses.find((status) => status.area === 'nativeSearch')?.contractStatus,
+    'supported',
+    'provider capability matrix exposes canonical native-search docs for Anthropic without flattening identity evidence'
+  )
+  assert.equal(
+    bareAnthropicNativeSearchMatrix.statuses.find((status) => status.area === 'nativeSearch')?.level,
+    'partial',
+    'provider capability matrix keeps bare Anthropic native search partial until identity or declaration evidence is present'
+  )
+  assert.equal(
+    describeProviderCapabilityStatus(bareAnthropicNativeSearchMatrix, 'nativeSearch'),
+    'provider-native search is documented, but this provider identity or endpoint has not explicitly proven it can receive native search parameters',
+    'provider capability matrix explains documented-but-blocked Anthropic native search'
+  )
+  assert.equal(
+    describeProviderCapabilityStatus(buildProviderCapabilityMatrix({ id: 'google', type: 'google', name: 'Google', apiKey: FAKE_KEY_A, models: ['gemini-2.5-flash'], enabled: true }), 'structuredOutput'),
+    'provider contract has source-backed Gemini generationConfig responseMimeType/responseSchema controls for JSON object/schema output; live model behavior still needs optional smoke coverage',
+    'provider capability matrix reports source-backed structured output request controls for Gemini'
+  )
+  assert.equal(
+    describeProviderCapabilityStatus(buildProviderCapabilityMatrix(applyProviderPreset({ apiKey: FAKE_KEY_A, models: ['deepseek-chat'], enabled: true }, 'deepseek')), 'structuredOutput'),
+    'provider contract has source-backed DeepSeek response_format JSON object mode; JSON Schema request controls are intentionally unsupported until official docs add them',
+    'provider capability matrix reports DeepSeek JSON object mode without claiming JSON Schema'
+  )
+  assert.equal(
+    describeProviderCapabilityStatus(buildProviderCapabilityMatrix(applyProviderPreset({ apiKey: FAKE_KEY_A, models: ['grok-4.3'], enabled: true }, 'xai')), 'structuredOutput'),
+    'provider contract has source-backed xAI response_format controls for JSON object/schema output on Chat and Responses routes; live model behavior still needs optional smoke coverage',
+    'provider capability matrix reports source-backed xAI response_format request controls'
+  )
+  assert.equal(
+    describeProviderCapabilityStatus(buildProviderCapabilityMatrix(applyProviderPreset({ apiKey: FAKE_KEY_A, models: ['openai/gpt-oss-120b'], enabled: true }, 'openrouter')), 'structuredOutput'),
+    'provider contract has source-backed OpenRouter response_format controls, gated by remote model supported_parameters when available; live upstream behavior still needs optional smoke coverage',
+    'provider capability matrix reports OpenRouter structured-output request controls with model metadata gating'
+  )
+  assert.equal(
+    describeProviderCapabilityStatus(buildProviderCapabilityMatrix(applyProviderPreset({ apiKey: FAKE_KEY_A, models: ['gpt-oss-120b'], enabled: false }, 'cerebras')), 'structuredOutput'),
+    'provider contract has source-backed OpenAI-compatible response_format controls for JSON object/schema output; model-specific schema behavior still needs provider conformance fixtures',
+    'provider capability matrix reports source-backed structured output request controls for Cerebras'
+  )
+  assert.equal(
+    buildProviderCapabilityMatrix(customProvider).statuses.find((status) => status.area === 'structuredOutput')?.contractStatus,
+    'unsupported',
+    'provider capability matrix exposes canonical unsupported status for undeclared custom structured output'
+  )
+  assert.equal(
+    buildProviderCapabilityMatrix(customProvider).statuses.find((status) => status.area === 'embeddings')?.contractStatus,
+    'unsupported',
+    'provider capability matrix exposes canonical unsupported status for undeclared custom embeddings'
+  )
+  assert.equal(
+    buildProviderCapabilityMatrix(customProvider).statuses.find((status) => status.area === 'contextLimit')?.contractStatus,
+    'partial',
+    'provider capability matrix exposes canonical partial status for custom context limits'
+  )
+  assert.equal(
+    describeProviderCapabilityStatus(buildProviderCapabilityMatrix(customProvider), 'contextLimit'),
+    'context-limit policy uses configured or discovered model metadata; provider-specific limits remain partial until endpoint evidence is verified',
+    'provider capability matrix explains partial custom context-limit evidence'
+  )
+  assert.equal(
+    buildProviderCapabilityMatrix(customProvider).statuses.find((status) => status.area === 'streaming')?.contractStatus,
+    'requiresLiveKey',
+    'provider capability matrix exposes canonical live-smoke streaming status for custom relays'
+  )
+  assert.equal(
+    describeProviderCapabilityStatus(buildProviderCapabilityMatrix(customProvider), 'streaming'),
+    'streaming is documented for this provider family, but live smoke is still required before streaming behavior is treated as verified',
+    'provider capability matrix explains live-smoke streaming evidence for custom relays'
+  )
+  const streamingDisabledMatrix = buildProviderCapabilityMatrix({
+    ...customProvider,
+    id: 'custom-streaming-disabled',
+    capabilities: { streaming: false },
+  })
+  assert.equal(
+    streamingDisabledMatrix.statuses.find((status) => status.area === 'streaming')?.level,
+    'partial',
+    'provider capability matrix keeps provider-disabled streaming partial instead of full'
+  )
+  assert.equal(
+    describeProviderCapabilityStatus(streamingDisabledMatrix, 'streaming'),
+    'provider configuration disables streaming; runtime falls back to non-streaming requests even when the provider contract has streaming evidence',
+    'provider capability matrix explains explicit provider streaming disablement'
+  )
+  assert.equal(
+    buildProviderCapabilityMatrix(customProvider).statuses.find((status) => status.area === 'systemPromptPolicy')?.contractStatus,
+    'partial',
+    'provider capability matrix exposes canonical partial status for custom system-prompt policy'
+  )
+  assert.equal(
+    describeProviderCapabilityStatus(buildProviderCapabilityMatrix(customProvider), 'systemPromptPolicy'),
+    'system prompt policy uses the shared prompt builder and provider-specific request shapes; endpoint-specific instruction semantics remain partial until verified',
+    'provider capability matrix explains partial custom system-prompt policy evidence'
+  )
+  assert.equal(
+    buildProviderCapabilityMatrix(customProvider).statuses.find((status) => status.area === 'safetyPolicy')?.contractStatus,
+    'partial',
+    'provider capability matrix exposes canonical partial status for custom safety policy'
+  )
+  assert.equal(
+    describeProviderCapabilityStatus(buildProviderCapabilityMatrix(customProvider), 'safetyPolicy'),
+    'runtime safety guardrails are available through generic conformance and payload policy; provider-specific safety settings remain partially verified',
+    'provider capability matrix explains partial custom safety-policy evidence'
+  )
+  assert.equal(
+    buildProviderCapabilityMatrix(customProvider).statuses.find((status) => status.area === 'errors')?.contractStatus,
+    'requiresLiveKey',
+    'provider capability matrix exposes canonical live-smoke status for custom errors'
+  )
+  assert.equal(
+    describeProviderCapabilityStatus(buildProviderCapabilityMatrix(customProvider), 'errors'),
+    'generic provider error classification is available, but this provider family still needs live smoke to verify provider-specific error payloads',
+    'provider capability matrix explains live-smoke custom error evidence'
+  )
+  assert.equal(
+    buildProviderCapabilityMatrix(customProvider).statuses.find((status) => status.area === 'rateLimits')?.contractStatus,
+    'requiresLiveKey',
+    'provider capability matrix exposes canonical live-smoke status for custom rate limits'
+  )
+  assert.equal(
+    describeProviderCapabilityStatus(buildProviderCapabilityMatrix(customProvider), 'rateLimits'),
+    'generic 429 and rate-limit handling is available, but this provider family still needs live smoke to verify quota, reset, and retry-after behavior',
+    'provider capability matrix explains live-smoke custom rate-limit evidence'
+  )
+  assert.equal(
+    buildProviderCapabilityMatrix(customProvider).statuses.find((status) => status.area === 'deprecation')?.contractStatus,
+    'unsupported',
+    'provider capability matrix exposes canonical unsupported deprecation status for undeclared custom relays'
+  )
+  assert.equal(
+    describeProviderCapabilityStatus(buildProviderCapabilityMatrix(customProvider), 'deprecation'),
+    'model deprecation behavior is unclaimed by the provider contract; fallback only uses local catalog metadata and explicit configured model flags',
+    'provider capability matrix explains local-only deprecation fallback for custom relays'
+  )
+  assert.equal(
+    buildProviderCapabilityMatrix(customProvider).statuses.find((status) => status.area === 'vision')?.contractStatus,
+    'unsupported',
+    'provider capability matrix exposes canonical unsupported vision status for undeclared custom relays'
+  )
+  assert.equal(
+    describeProviderCapabilityStatus(buildProviderCapabilityMatrix(customProvider), 'vision'),
+    'vision input is unclaimed by the provider contract; image attachments remain disabled unless endpoint evidence or remote model metadata proves support',
+    'provider capability matrix explains image attachment fallback for undeclared custom relays'
+  )
+  assert.equal(
+    buildProviderCapabilityMatrix(customProvider).statuses.find((status) => status.area === 'files')?.contractStatus,
+    'unsupported',
+    'provider capability matrix exposes canonical unsupported file status for undeclared custom relays'
+  )
+  assert.equal(
+    describeProviderCapabilityStatus(buildProviderCapabilityMatrix(customProvider), 'files'),
+    'file input is unclaimed by the provider contract; file attachments remain disabled unless endpoint evidence or remote model metadata proves support',
+    'provider capability matrix explains file attachment fallback for undeclared custom relays'
+  )
+  assert.equal(
+    buildProviderCapabilityMatrix(customProvider).statuses.find((status) => status.area === 'reasoning')?.contractStatus,
+    'unsupported',
+    'provider capability matrix exposes canonical unsupported reasoning status for undeclared custom relays'
+  )
+  assert.equal(
+    describeProviderCapabilityStatus(buildProviderCapabilityMatrix(customProvider), 'reasoning'),
+    'reasoning controls are unclaimed by the provider contract; runtime omits reasoning_effort and provider thinking parameters unless endpoint evidence or remote model metadata proves support',
+    'provider capability matrix explains reasoning fallback for undeclared custom relays'
+  )
+  assert.equal(
+    buildProviderCapabilityMatrix(customProvider).statuses.find((status) => status.area === 'audio')?.contractStatus,
+    'unsupported',
+    'provider capability matrix exposes canonical unsupported audio status for undeclared custom relays'
+  )
+  assert.equal(
+    describeProviderCapabilityStatus(buildProviderCapabilityMatrix(customProvider), 'audio'),
+    'audio is unclaimed by the provider contract; runtime omits audio input, transcription, and speech endpoints unless endpoint evidence proves support',
+    'provider capability matrix explains audio fallback for undeclared custom relays'
+  )
+  assert.equal(
+    buildProviderCapabilityMatrix(customProvider).statuses.find((status) => status.area === 'citations')?.contractStatus,
+    'unsupported',
+    'provider capability matrix exposes canonical unsupported status for custom citations'
+  )
+  assert.equal(
+    describeProviderCapabilityStatus(buildProviderCapabilityMatrix(customProvider), 'citations'),
+    'provider-native citation payloads are unclaimed; IsleMind keeps local RAG, web, and retrieval-source citations as fallback evidence',
+    'provider capability matrix explains local citation fallback for custom providers'
+  )
+  const customNativeSearchStatus = buildProviderCapabilityMatrix(customProvider).statuses.find((status) => status.area === 'nativeSearch')
+  assert.equal(
+    customNativeSearchStatus?.contractStatus,
+    'unsupported',
+    'provider capability matrix exposes canonical unsupported status for undeclared custom native search'
+  )
+  assert.equal(
+    customNativeSearchStatus?.level,
+    'partial',
+    'provider capability matrix keeps undeclared custom native search on app-side fallback'
+  )
+  assert.equal(
+    describeProviderCapabilityStatus(buildProviderCapabilityMatrix(customProvider), 'nativeSearch'),
+    'provider-native search is unclaimed; web search falls back to IsleMind app-side search tools instead of provider-specific request parameters',
+    'provider capability matrix explains app-side search fallback for undeclared custom providers'
+  )
+  assert.equal(
+    buildProviderCapabilityMatrix(customProvider).statuses.find((status) => status.area === 'retryPolicy')?.contractStatus,
+    'partial',
+    'provider capability matrix exposes canonical partial status for custom retry policy'
+  )
+  assert.equal(
+    describeProviderCapabilityStatus(buildProviderCapabilityMatrix(customProvider), 'retryPolicy'),
+    'runtime retry policy is available with generic transient-status handling; provider-specific retry and rate-limit semantics remain partially verified',
+    'provider capability matrix explains partial custom retry-policy evidence'
+  )
+  assert.equal(
+    buildProviderCapabilityMatrix(customProvider).statuses.find((status) => status.area === 'routingTopology')?.contractStatus,
+    'unsupported',
+    'provider capability matrix exposes canonical unsupported relay-routing status for undeclared custom relays'
+  )
+  assert.equal(
+    describeProviderCapabilityStatus(buildProviderCapabilityMatrix(customProvider), 'routingTopology'),
+    'relay routing is only protocol-referenced; keep optional provider parameters disabled until endpoint evidence, model metadata, or explicit declarations prove them',
+    'provider capability matrix explains custom relay topology as protocol-referenced rather than conformance-ready'
+  )
+  const customEmbeddingMatrix = buildProviderCapabilityMatrix({
+    ...customProvider,
+    id: 'custom-matrix-embedding',
+    capabilities: { embeddings: true },
+  })
+  assert.equal(
+    customEmbeddingMatrix.statuses.find((status) => status.area === 'embeddings')?.level,
+    'partial',
+    'provider capability matrix keeps explicit custom embeddings partial until endpoint/model behavior is verified'
+  )
+  assert.equal(
+    describeProviderCapabilityStatus(customEmbeddingMatrix, 'embeddings'),
+    'provider embeddings are explicitly declared and can be sent, but provider/model availability remains endpoint-specific',
+    'provider capability matrix explains explicit custom embedding declarations'
+  )
+  const customRerankMatrix = buildProviderCapabilityMatrix({
+    ...customProvider,
+    id: 'custom-matrix-rerank',
+    capabilities: { rerank: true },
+  })
+  assert.equal(
+    customRerankMatrix.statuses.find((status) => status.area === 'rerank')?.contractStatus,
+    'unsupported',
+    'provider capability matrix exposes canonical unsupported status for explicit custom rerank declarations'
+  )
+  assert.equal(
+    describeProviderCapabilityStatus(customRerankMatrix, 'rerank'),
+    'provider configuration declares rerank, but the compatibility contract does not allow provider rerank requests; RAG keeps local statistical, cross-encoder fallback, or ColBERT-lite ordering',
+    'provider capability matrix explains why explicit provider rerank declarations remain blocked'
+  )
+  const customNativeSearchMatrix = buildProviderCapabilityMatrix({
+    ...customProvider,
+    id: 'custom-matrix-native-search',
+    capabilities: { nativeSearch: true },
+  })
+  assert.equal(
+    providerCompatibilityCapabilityCanBeSentForProvider({ ...customProvider, id: 'custom-matrix-native-search', capabilities: { nativeSearch: true } }, 'nativeSearch', true),
+    true,
+    'runtime gates accept explicit protocol-reference native-search declarations'
+  )
+  assert.equal(
+    customNativeSearchMatrix.statuses.find((status) => status.area === 'nativeSearch')?.contractStatus,
+    'unsupported',
+    'provider capability matrix exposes canonical unsupported status for explicit custom native-search declarations'
+  )
+  assert.equal(
+    customNativeSearchMatrix.statuses.find((status) => status.area === 'nativeSearch')?.level,
+    'partial',
+    'provider capability matrix keeps explicit custom native search partial until endpoint behavior is verified'
+  )
+  assert.equal(
+    describeProviderCapabilityStatus(customNativeSearchMatrix, 'nativeSearch'),
+    'provider-native search is explicitly declared and allowed as a protocol-reference capability; endpoint behavior still needs fixture or live-smoke evidence before full support',
+    'provider capability matrix explains explicit custom native-search declarations without overclaiming full support'
+  )
+  const customRemoteFileMatrix = buildProviderCapabilityMatrix({
+    ...customProvider,
+    id: 'custom-matrix-remote-file',
+    models: ['custom/remote-file'],
+    modelConfigs: [{
+      id: 'custom/remote-file',
+      name: 'Custom Remote File',
+      provider: 'openai-compatible',
+      contextWindow: 32768,
+      maxTokens: 4096,
+      maxOutputTokens: 4096,
+      defaultMaxTokens: 1024,
+      supportsVision: false,
+      supportsFiles: true,
+      source: 'remote',
+      sourceUrl: 'https://relay.example.test/v1/models',
+    }],
+  })
+  assert.equal(
+    customRemoteFileMatrix.statuses.find((status) => status.area === 'files')?.contractStatus,
+    'unsupported',
+    'provider capability matrix keeps custom remote file metadata on the canonical unsupported preset contract'
+  )
+  assert.equal(
+    customRemoteFileMatrix.statuses.find((status) => status.area === 'files')?.level,
+    'partial',
+    'provider capability matrix keeps custom remote file support partial until endpoint behavior is verified'
+  )
+  assert.equal(
+    describeProviderCapabilityStatus(customRemoteFileMatrix, 'files'),
+    'file input is allowed for custom/remote-file, but endpoint/model evidence is not complete enough to treat every configured model as file-capable',
+    'provider capability matrix explains remote metadata-backed custom file declarations without promoting the preset'
+  )
+  const customRemoteReasoningMatrix = buildProviderCapabilityMatrix({
+    ...customProvider,
+    id: 'custom-matrix-remote-reasoning',
+    models: ['custom/remote-reasoning'],
+    modelConfigs: [{
+      id: 'custom/remote-reasoning',
+      name: 'Custom Remote Reasoning',
+      provider: 'openai-compatible',
+      contextWindow: 32768,
+      maxTokens: 4096,
+      maxOutputTokens: 4096,
+      defaultMaxTokens: 1024,
+      supportsVision: false,
+      supportsFiles: false,
+      reasoningMode: 'dashscope-thinking',
+      reasoningEfforts: ['none', 'high'],
+      source: 'remote',
+      sourceUrl: 'https://relay.example.test/v1/models',
+    }],
+  })
+  assert.equal(
+    customRemoteReasoningMatrix.statuses.find((status) => status.area === 'reasoning')?.contractStatus,
+    'unsupported',
+    'provider capability matrix keeps custom remote reasoning metadata on the canonical unsupported preset contract'
+  )
+  assert.equal(
+    customRemoteReasoningMatrix.statuses.find((status) => status.area === 'reasoning')?.level,
+    'partial',
+    'provider capability matrix keeps custom remote reasoning support partial until endpoint behavior is verified'
+  )
+  assert.equal(
+    describeProviderCapabilityStatus(customRemoteReasoningMatrix, 'reasoning'),
+    'reasoning controls are allowed for custom/remote-reasoning, but endpoint/model evidence is not complete enough to treat every configured model as reasoning-capable',
+    'provider capability matrix explains remote metadata-backed custom reasoning declarations without promoting the preset'
+  )
+  const customOptimisticMatrix = buildProviderCapabilityMatrix(customOptimisticProvider)
+  assert.ok(
+    summarizeProviderCapabilityMatrixDetails(customOptimisticProvider, customOptimisticMatrix, 20).includes('transport:partial/unsupported contract_unclaimed/manual_declaration_or_model_metadata'),
+    'provider capability matrix detail summary explains custom relay transport overclaims through contract status and declaration path'
+  )
+  assert.ok(
+    summarizeProviderCapabilityMatrixDetails(customOptimisticProvider, customOptimisticMatrix, 20).includes('routingTopology:partial/unsupported contract_unclaimed/manual_declaration_or_model_metadata'),
+    'provider capability matrix detail summary explains custom relay topology through contract status and declaration path'
+  )
+  assert.equal(
+    customOptimisticMatrix.statuses.find((status) => status.area === 'transport')?.contractStatus,
+    'unsupported',
+    'custom relay WebSocket status remains unsupported even when a local flag is toggled'
+  )
+  assert.equal(
+    customOptimisticMatrix.statuses.find((status) => status.area === 'transport')?.level,
+    'partial',
+    'custom relay WebSocket does not become full support without contract evidence'
+  )
+  assert.equal(
+    customOptimisticMatrix.statuses.find((status) => status.area === 'remoteCompact')?.contractStatus,
+    'unsupported',
+    'custom relay remote compact status remains unsupported even when a local flag is toggled'
+  )
+  assert.equal(
+    customOptimisticMatrix.statuses.find((status) => status.area === 'remoteCompact')?.level,
+    'partial',
+    'custom relay remote compact does not become full support without contract evidence'
+  )
+  assert.equal(
+    customOptimisticMatrix.statuses.find((status) => status.area === 'tools')?.contractStatus,
+    'unsupported',
+    'custom relay native tool status remains unsupported even when a local flag is toggled'
+  )
+  assert.equal(
+    customOptimisticMatrix.statuses.find((status) => status.area === 'tools')?.level,
+    'partial',
+    'custom relay native tools do not become full support without contract evidence'
+  )
+  assert.equal(
+    customOptimisticMatrix.statuses.find((status) => status.area === 'modelCatalog')?.contractStatus,
+    'requiresLiveKey',
+    'custom relay model-list status stays live-smoke gated until a declared endpoint proves /models'
+  )
+  assert.equal(
+    customOptimisticMatrix.statuses.find((status) => status.area === 'modelCatalog')?.level,
+    'partial',
+    'custom relay model-list matrix does not become full support from generic compatible protocol evidence alone'
+  )
+  assert.equal(
+    providerCompatibilityCapabilityCanBeSentForProvider(customOptimisticProvider, 'remoteCompact', true),
+    true,
+    'runtime gates accept explicit protocol-reference remote compact declarations while the capability matrix keeps them partial until conformance-ready'
+  )
+  const githubMultimodalOverclaimMatrix = buildProviderCapabilityMatrix({
+    id: 'github-multimodal-overclaim',
+    type: 'openai-compatible',
+    name: 'GitHub Models Overclaim',
+    presetId: 'github-models',
+    baseUrl: 'https://models.github.ai/inference',
+    apiKey: FAKE_KEY_A,
+    models: ['openai/gpt-4.1-mini'],
+    enabled: true,
+    capabilities: {
+      chat: true,
+      streaming: true,
+      modelList: true,
+      vision: true,
+      files: true,
+      audioInput: true,
+      audioTranscription: true,
+      speech: true,
+      nativeSearch: false,
+      reasoningEffort: false,
+      nativeTools: true,
+      topP: true,
+    },
+  })
+  assert.equal(
+    githubMultimodalOverclaimMatrix.statuses.find((status) => status.area === 'multimodal')?.level,
+    'partial',
+    'provider capability matrix does not show full multimodal support when local capability flags overclaim uncontracted files/audio'
+  )
+  assert.equal(
+    githubMultimodalOverclaimMatrix.statuses.find((status) => status.area === 'multimodal')?.contractStatus,
+    'partial',
+    'provider capability matrix reports mixed multimodal contract status when only vision is contract-backed'
+  )
+  assert.ok(
+    describeProviderCapabilityStatus(githubMultimodalOverclaimMatrix, 'multimodal')?.includes('blocked declarations: files, audio input, audio transcription, speech output'),
+    'provider capability matrix names multimodal declarations blocked by the compatibility contract'
+  )
+  const githubVisionMetadataMatrix = buildProviderCapabilityMatrix({
+    id: 'github-vision-metadata',
+    type: 'openai-compatible',
+    name: 'GitHub Models Vision Metadata',
+    presetId: 'github-models',
+    baseUrl: 'https://models.github.ai/inference',
+    apiKey: FAKE_KEY_A,
+    models: ['openai/gpt-4.1-mini'],
+    enabled: true,
+    capabilities: { vision: false },
+    modelConfigs: [{
+      id: 'openai/gpt-4.1-mini',
+      name: 'GPT-4.1 Mini via GitHub Models',
+      provider: 'openai-compatible',
+      contextWindow: 1047576,
+      maxTokens: 32768,
+      maxOutputTokens: 32768,
+      defaultMaxTokens: 4096,
+      supportsVision: true,
+      supportsFiles: false,
+      supportsTools: true,
+      source: 'remote',
+      sourceUrl: 'https://docs.github.com/en/github-models/use-github-models/prototyping-with-ai-models',
+      verifiedAt: '2026-06-21',
+    }],
+  })
+  assert.equal(
+    githubVisionMetadataMatrix.statuses.find((status) => status.area === 'vision')?.contractStatus,
+    'supported',
+    'provider capability matrix exposes canonical vision status for GitHub Models'
+  )
+  assert.equal(
+    githubVisionMetadataMatrix.statuses.find((status) => status.area === 'vision')?.level,
+    'full',
+    'provider capability matrix allows GitHub Models vision from remote model metadata instead of provider flags alone'
+  )
+  assert.equal(
+    describeProviderCapabilityStatus(githubVisionMetadataMatrix, 'vision'),
+    'vision input is contract-backed and model-catalog gated for openai/gpt-4.1-mini',
+    'provider capability matrix explains remote metadata-backed vision support'
+  )
+  assert.equal(
+    githubMultimodalOverclaimMatrix.statuses.find((status) => status.area === 'files')?.contractStatus,
+    'unsupported',
+    'provider capability matrix exposes canonical unsupported files status for GitHub Models overclaims'
+  )
+  assert.equal(
+    githubMultimodalOverclaimMatrix.statuses.find((status) => status.area === 'files')?.level,
+    'partial',
+    'provider capability matrix keeps GitHub Models file overclaims partial instead of full'
+  )
+  assert.equal(
+    describeProviderCapabilityStatus(githubMultimodalOverclaimMatrix, 'files'),
+    'provider configuration declares files, but model metadata or the compatibility contract does not allow file attachments for the configured models',
+    'provider capability matrix explains why GitHub Models file overclaims remain blocked'
+  )
+  const githubReasoningOverclaimMatrix = buildProviderCapabilityMatrix({
+    id: 'github-reasoning-overclaim',
+    type: 'openai-compatible',
+    name: 'GitHub Models Reasoning Overclaim',
+    presetId: 'github-models',
+    baseUrl: 'https://models.github.ai/inference',
+    apiKey: FAKE_KEY_A,
+    models: ['openai/gpt-4.1-mini'],
+    enabled: true,
+    capabilities: { reasoningEffort: true },
+    modelConfigs: [{
+      id: 'openai/gpt-4.1-mini',
+      name: 'GPT-4.1 Mini via GitHub Models',
+      provider: 'openai-compatible',
+      contextWindow: 1047576,
+      maxTokens: 32768,
+      maxOutputTokens: 32768,
+      defaultMaxTokens: 4096,
+      supportsVision: true,
+      supportsFiles: false,
+      supportsTools: true,
+      reasoningMode: 'openai-effort',
+      reasoningEfforts: ['low', 'medium', 'high'],
+      source: 'remote',
+      sourceUrl: 'https://docs.github.com/en/github-models/use-github-models/prototyping-with-ai-models',
+      verifiedAt: '2026-06-21',
+    }],
+  })
+  assert.equal(
+    githubReasoningOverclaimMatrix.statuses.find((status) => status.area === 'reasoning')?.contractStatus,
+    'unsupported',
+    'provider capability matrix exposes canonical unsupported reasoning status for GitHub Models overclaims'
+  )
+  assert.equal(
+    githubReasoningOverclaimMatrix.statuses.find((status) => status.area === 'reasoning')?.level,
+    'partial',
+    'provider capability matrix keeps GitHub Models reasoning overclaims partial instead of full'
+  )
+  assert.equal(
+    describeProviderCapabilityStatus(githubReasoningOverclaimMatrix, 'reasoning'),
+    'provider configuration declares reasoning controls, but model metadata or the compatibility contract does not allow reasoning parameters for the configured models',
+    'provider capability matrix explains why GitHub Models reasoning overclaims remain blocked'
+  )
+  const githubAudioOverclaimMatrix = buildProviderCapabilityMatrix({
+    id: 'github-audio-overclaim',
+    type: 'openai-compatible',
+    name: 'GitHub Models Audio Overclaim',
+    presetId: 'github-models',
+    baseUrl: 'https://models.github.ai/inference',
+    apiKey: FAKE_KEY_A,
+    models: ['openai/gpt-4.1-mini'],
+    enabled: true,
+    capabilities: { audioInput: true, audioTranscription: true, speech: true },
+  })
+  assert.equal(
+    githubAudioOverclaimMatrix.statuses.find((status) => status.area === 'audio')?.contractStatus,
+    'unsupported',
+    'provider capability matrix exposes canonical unsupported audio status for GitHub Models overclaims'
+  )
+  assert.equal(
+    githubAudioOverclaimMatrix.statuses.find((status) => status.area === 'audio')?.level,
+    'partial',
+    'provider capability matrix keeps GitHub Models audio overclaims partial instead of full'
+  )
+  assert.equal(
+    describeProviderCapabilityStatus(githubAudioOverclaimMatrix, 'audio'),
+    'provider configuration declares chat audio input, audio transcription, speech output, but the compatibility contract does not allow audio parameters or audio endpoints for this provider family yet',
+    'provider capability matrix explains why GitHub Models audio overclaims remain blocked'
+  )
+  const groqAudioMatrix = buildProviderCapabilityMatrix(applyProviderPreset({ apiKey: FAKE_KEY_A, models: ['llama-3.3-70b-versatile'], enabled: true }, 'groq'))
+  assert.equal(
+    groqAudioMatrix.statuses.find((status) => status.area === 'audio')?.contractStatus,
+    'supported',
+    'provider capability matrix exposes canonical audio status for Groq'
+  )
+  assert.equal(
+    groqAudioMatrix.statuses.find((status) => status.area === 'audio')?.level,
+    'full',
+    'provider capability matrix reports Groq speech-to-text and text-to-speech endpoints as contract-backed'
+  )
+  assert.equal(
+    describeProviderCapabilityStatus(groqAudioMatrix, 'audio'),
+    'audio is contract-backed for audio transcription, speech output; transcription and speech requests are still gated by explicit provider flags before runtime sends audio endpoints',
+    'provider capability matrix explains Groq audio endpoint support without claiming chat audio input'
+  )
+  const perplexityCitationMatrix = buildProviderCapabilityMatrix(applyProviderPreset({ apiKey: FAKE_KEY_A, models: ['sonar-pro'], enabled: true }, 'perplexity'))
+  assert.equal(
+    perplexityCitationMatrix.statuses.find((status) => status.area === 'citations')?.contractStatus,
+    'supported',
+    'provider capability matrix exposes canonical citation status for Perplexity'
+  )
+  assert.equal(
+    perplexityCitationMatrix.statuses.find((status) => status.area === 'citations')?.level,
+    'full',
+    'provider capability matrix treats Perplexity provider-native citations as parser-backed'
+  )
+  assert.equal(
+    describeProviderCapabilityStatus(perplexityCitationMatrix, 'citations'),
+    'provider-native citation payloads are contract-backed and parsed with local RAG/retrieval-source citations as fallback evidence',
+    'provider capability matrix reports Perplexity native citations without losing local citation fallbacks'
+  )
+  const openRouterRoutingMatrix = buildProviderCapabilityMatrix(applyProviderPreset({ apiKey: FAKE_KEY_A, models: ['openrouter/auto'], enabled: true }, 'openrouter'))
+  assert.equal(
+    openRouterRoutingMatrix.statuses.find((status) => status.area === 'routingTopology')?.contractStatus,
+    'supported',
+    'provider capability matrix exposes canonical relay-routing status for OpenRouter'
+  )
+  assert.equal(
+    describeProviderCapabilityStatus(openRouterRoutingMatrix, 'routingTopology'),
+    'relay routing is contract-backed, while upstream model/provider capability differences still require model metadata, explicit declarations, or fallback planning',
+    'provider capability matrix explains aggregator topology without flattening upstream provider capabilities'
+  )
+  const ollamaRoutingMatrix = buildProviderCapabilityMatrix(applyProviderPreset({ apiKey: FAKE_KEY_A, models: ['llama3.2:latest'], enabled: true }, 'ollama'))
+  assert.equal(
+    ollamaRoutingMatrix.statuses.find((status) => status.area === 'routingTopology')?.contractStatus,
+    'requiresLiveKey',
+    'provider capability matrix exposes canonical local-runtime live-smoke status for Ollama'
+  )
+  assert.equal(
+    describeProviderCapabilityStatus(ollamaRoutingMatrix, 'routingTopology'),
+    'local runtime routing is documented, but reachability and installed-model behavior still need live smoke before requests are treated as verified',
+    'provider capability matrix explains local runtime topology through live smoke and installed-model evidence'
+  )
+  assert.equal(
+    buildProviderCapabilityMatrix(azureV1Provider).statuses.find((status) => status.area === 'routingTopology')?.contractStatus,
+    'supported',
+    'provider capability matrix exposes canonical hosted-routing status for Azure OpenAI v1'
+  )
+  assert.equal(
+    describeProviderCapabilityStatus(buildProviderCapabilityMatrix(azureV1Provider), 'routingTopology'),
+    'hosted routing is contract-backed, but resource, region, deployment, and account-scope differences remain provider-specific',
+    'provider capability matrix explains hosted topology without pretending every deployment is equivalent'
+  )
   assert.equal(summarizeProviderCapabilityMatrix(matrix), 'official · partial', 'matrix summary is human-readable')
   assert.equal(providerSuppressesGenericModelList(applyProviderPreset({ apiKey: FAKE_KEY_A, models: [], enabled: false }, 'perplexity')), true, 'Perplexity suppresses generic model-list sync')
   assert.equal(isAzureOpenAIProvider(azureV1Provider), true, 'hosted routing helper detects Azure OpenAI providers')
@@ -5089,11 +6919,17 @@ async function assertProviderCapabilityMatrixBehavior() {
     'Vertex AI hosted gap exposes an explicit unsupported reason'
   )
   assert.equal(getHostedProviderSupportIssue(vertexOpenAIProvider, 'chat'), null, 'Vertex OpenAI-compatible endpoints pass hosted boundary checks')
+  assert.match(
+    getHostedProviderSupportIssue(vertexOpenAIProvider, 'modelList')?.message ?? '',
+    /model-list|模型列表|モデル一覧|manual|手动|手動|\/models/i,
+    'Vertex OpenAI-compatible model-list remains an explicit hosted gap'
+  )
   assert.equal(buildProviderCapabilityMatrix(bedrockRuntimeProvider).hostingProfile, 'cloud-hosted', 'Bedrock Runtime providers are classified as cloud-hosted')
   assert.equal(buildProviderCapabilityMatrix(bedrockRuntimeProvider).summaryLevel, 'planned', 'Bedrock Runtime remains planned until SigV4 hosted routing is implemented')
   assert.equal(buildProviderCapabilityMatrix(bedrockRuntimeReadyProvider).summaryLevel, 'planned', 'Bedrock Runtime stays planned overall because model-list, remote compact, and tools still need direct Runtime support')
   assert.equal(describeProviderCapabilityStatus(buildProviderCapabilityMatrix(bedrockRuntimeReadyProvider), 'response'), 'AWS Bedrock Runtime InvokeModel request preparation and SigV4 signing are available for non-streaming Anthropic-style chat; streaming and Converse remain planned', 'Bedrock Runtime ready capability matrix shows partial response support')
   assert.equal(buildProviderCapabilityMatrix(bedrockMantleProvider).summaryLevel, 'partial', 'Bedrock Mantle is partial-ready through the OpenAI-compatible hosted path')
+  assert.equal(describeProviderCapabilityStatus(buildProviderCapabilityMatrix(bedrockMantleProvider), 'remoteCompact'), 'AWS Bedrock Mantle Responses routing is not claimed by the current compatibility contract; local compression remains fallback until current AWS docs or live smoke prove Responses compact support', 'Bedrock Mantle capability matrix does not overclaim Responses-based remote compact')
   assert.equal(buildProviderCapabilityMatrix(vertexNativeProvider).summaryLevel, 'planned', 'native Vertex AI remains planned until the hosted route is implemented')
   assert.equal(buildProviderCapabilityMatrix(vertexOpenAIProvider).summaryLevel, 'partial', 'Vertex AI OpenAI-compatible endpoints are partial-ready through the hosted OpenAI path')
   assert.equal(
@@ -5104,7 +6940,7 @@ async function assertProviderCapabilityMatrixBehavior() {
   assert.equal(
     resolveProviderEndpoint({ provider: bedrockMantleProvider, model: 'openai.gpt-oss-120b-1:0', stream: true, usesResponsesApi: true }),
     'https://bedrock-mantle.us-east-1.api.aws/v1/responses',
-    'Bedrock Mantle Responses routing keeps the hosted /v1 namespace'
+    'Bedrock Mantle explicit Responses override would keep the hosted /v1 namespace without making Responses a default capability'
   )
   assert.equal(
     resolveProviderEndpoint({ provider: vertexOpenAIProvider, model: 'gemini-2.5-pro', stream: true }),
@@ -5128,7 +6964,7 @@ async function assertProviderCapabilityMatrixBehavior() {
   )
   assert.equal(
     describeProviderCapabilityStatus(buildProviderCapabilityMatrix(bedrockMantleProvider), 'protocol'),
-    'AWS Bedrock Mantle exposes OpenAI-compatible Chat Completions, Responses, and Models APIs, while Bedrock Runtime Invoke/Converse still needs SigV4 routing',
+    'AWS Bedrock Mantle exposes OpenAI-compatible Chat Completions and Models APIs, while Responses and Bedrock Runtime Converse remain unclaimed until source-backed',
     'Bedrock Mantle capability matrix describes the partial-ready protocol path'
   )
   assert.equal(
@@ -5140,6 +6976,11 @@ async function assertProviderCapabilityMatrixBehavior() {
     describeProviderCapabilityStatus(buildProviderCapabilityMatrix(vertexOpenAIProvider), 'protocol'),
     'Vertex AI OpenAI-compatible endpoints use OpenAI chat-completions shapes, while native Gemini Vertex paths remain provider-specific',
     'Vertex OpenAI-compatible capability matrix describes the partial-ready protocol path'
+  )
+  assert.equal(
+    describeProviderCapabilityStatus(buildProviderCapabilityMatrix(vertexOpenAIProvider), 'modelCatalog'),
+    'Vertex AI OpenAI-compatible automatic model-list routing is not claimed by the current contract; keep model ids manual until Google Cloud docs or live smoke prove /models support',
+    'Vertex OpenAI-compatible capability matrix keeps model-list sync manual until source-backed'
   )
   assert.equal(
     describeProviderCapabilityStatus(
@@ -5272,6 +7113,9 @@ async function assertProviderCapabilityMatrixBehavior() {
   const vertexModelSync = await fetchProviderModelConfigsDetailed(vertexNativeProvider, FAKE_KEY_A)
   assert.equal(vertexModelSync.ok, false, 'native Vertex AI provider model sync fails closed before remote discovery')
   assert.equal(vertexModelSync.code, 'models_endpoint_unavailable', 'native Vertex AI provider model sync uses the hosted boundary error code')
+  const vertexOpenAIModelSync = await fetchProviderModelConfigsDetailed(vertexOpenAIProvider, FAKE_KEY_A)
+  assert.equal(vertexOpenAIModelSync.ok, false, 'Vertex OpenAI-compatible provider model sync fails closed before unclaimed /models discovery')
+  assert.equal(vertexOpenAIModelSync.code, 'models_endpoint_unavailable', 'Vertex OpenAI-compatible model sync uses the hosted boundary error code')
 }
 
 async function run() {
@@ -5491,8 +7335,14 @@ async function run() {
   assert.equal(classifyChatError('max_tokens context length 输出上限'), 'max_tokens_exceeded', 'chat error helper classifies output limit failures')
   assert.equal(classifyChatError('404 model not found'), 'model_unavailable', 'chat error helper classifies missing models')
   assert.equal(classifyChatError('API error 400 unsupported url'), 'bad_base_url', 'chat error helper classifies bad base URLs')
+  assert.equal(classifyChatError('provider_conformance_blocked:unsupported_modality,unsupported_tools'), 'provider_conformance_blocked', 'chat error helper classifies provider conformance blockers')
   assert.equal(toUserFacingError('No response body'), st('chatRunner.userError.emptyResponse'), 'chat error helper preserves empty-response user copy')
   assert.equal(toUserFacingError('401 unauthorized invalid api key'), st('chatRunner.userError.badAuth'), 'chat error helper preserves auth user copy')
+  assert.equal(toUserFacingError('provider_conformance_blocked:unsupported_modality'), st('chatRunner.userError.providerConformanceBlocked'), 'chat error helper maps provider conformance blockers to user-facing copy')
+  for (const locale of ['en', 'zh-CN', 'ja']) {
+    const resource = JSON.parse(fs.readFileSync(path.join(root, `src/i18n/resources/${locale}.json`), 'utf8'))
+    assert.ok(resource.chatRunner.userError.providerConformanceBlocked, `chat error helper ${locale} locale explains provider conformance blockers`)
+  }
   assert.equal(
     providerSupportsNativeTools({ id: 'openai-tools', type: 'openai', name: 'OpenAI', apiKey: '', models: [], enabled: true }, { id: 'gpt-4.1', name: 'GPT', maxOutputTokens: 4096, defaultMaxTokens: 1024, supportsTools: false }),
     false,
@@ -5503,6 +7353,276 @@ async function run() {
     true,
     'chat provider-native helper honors provider native tool capability metadata'
   )
+  assert.equal(
+    providerSupportsNativeTools(
+      { id: 'nvidia-tools-overclaim', type: 'openai-compatible', presetId: 'nvidia-nim', name: 'NVIDIA NIM', apiKey: '', models: [], enabled: true, capabilities: { nativeTools: true } },
+      { id: 'meta/llama-3.2-90b-vision-instruct', name: 'NVIDIA Vision', maxOutputTokens: 4096, defaultMaxTokens: 1024, supportsTools: true },
+    ),
+    false,
+    'chat provider-native helper blocks native tool overclaims when a conformance-ready provider contract does not claim tools'
+  )
+  const customToolInferredProvider = { id: 'custom-tool-inferred', type: 'openai-compatible', presetId: 'custom-openai-compatible', name: 'Custom Compatible', apiKey: '', models: ['qwen3.7-max'], enabled: true }
+  const customToolInferredModel = { id: 'qwen3.7-max', name: 'Qwen', maxOutputTokens: 4096, defaultMaxTokens: 1024, supportsTools: true }
+  assert.equal(
+    providerSupportsNativeTools(customToolInferredProvider, customToolInferredModel),
+    false,
+    'chat provider-native helper does not infer custom endpoint tools from model id without compatibility evidence or explicit declaration'
+  )
+  const customToolSupport = resolveProviderNativeToolSupport(customToolInferredProvider, customToolInferredModel)
+  assert.equal(customToolSupport.supported, false, 'chat provider-native support decision blocks unsupported compatible endpoints')
+  assert.equal(customToolSupport.reason, 'blocked_contract_tools_unclaimed', 'chat provider-native support decision records the contract gap')
+  assert.equal(customToolSupport.compatibilityId, 'custom-openai-compatible', 'chat provider-native support decision records compatibility evidence identity')
+  assert.equal(customToolSupport.toolsStatus, 'unsupported', 'chat provider-native support decision records the canonical contract capability status')
+  const providerToolSkippedTrace = buildProviderNativeToolSkippedTrace(
+    customToolSupport,
+    (trace) => ({ ...trace, completedAt: trace.completedAt ?? 999 }),
+    (prefix) => `${prefix}-fixture`,
+  )
+  assert.equal(providerToolSkippedTrace.id, 'provider-tools-skip-fixture', 'chat provider-native helper keeps skipped trace id prefix')
+  assert.equal(providerToolSkippedTrace.status, 'skipped', 'chat provider-native helper marks contract skips as skipped traces')
+  assert.equal(providerToolSkippedTrace.metadata.providerToolReason, 'blocked_contract_tools_unclaimed', 'chat provider-native helper records contract skip reason in trace metadata')
+  assert.equal(providerToolSkippedTrace.metadata.toolsStatus, 'unsupported', 'chat provider-native helper records canonical tool status in trace metadata')
+  assert.ok(providerToolSkippedTrace.content.includes('does not claim tools'), 'chat provider-native helper explains contract tool gaps in trace content')
+  const customVisionStaticModel = { id: 'kimi-k2.6', name: 'Kimi K2.6', maxOutputTokens: 4096, defaultMaxTokens: 1024, supportsVision: true, supportsFiles: false }
+  assert.equal(providerSupportsVisionInput(customToolInferredProvider, customVisionStaticModel), false, 'chat capability helper does not infer custom endpoint vision from known model id alone')
+  const customVisionRemoteModel = { ...customVisionStaticModel, id: 'custom/remote-vision', source: 'remote' }
+  assert.equal(providerSupportsVisionInput(customToolInferredProvider, customVisionRemoteModel), true, 'chat capability helper allows custom endpoint vision when remote model metadata declares it')
+  assert.equal(
+    providerSupportsVisionInput({ ...customToolInferredProvider, capabilities: { vision: true } }, { ...customVisionStaticModel, supportsVision: false }),
+    true,
+    'chat capability helper honors explicit provider vision declarations'
+  )
+  const customFileStaticModel = { ...customVisionStaticModel, supportsVision: false, supportsFiles: true }
+  assert.equal(providerSupportsFileInput(customToolInferredProvider, customFileStaticModel), false, 'chat capability helper does not infer custom endpoint file support from known model id alone')
+  const customFileRemoteModel = { ...customFileStaticModel, id: 'custom/remote-file', source: 'remote' }
+  assert.equal(providerSupportsFileInput(customToolInferredProvider, customFileRemoteModel), true, 'chat capability helper allows custom endpoint file support when remote model metadata declares it')
+  assert.equal(
+    providerSupportsFileInput({ ...customToolInferredProvider, capabilities: { files: true } }, { ...customFileStaticModel, supportsFiles: false }),
+    true,
+    'chat capability helper honors explicit provider file declarations'
+  )
+  const customStaticPrompt = buildSystemPrompt({
+    language: 'zh-CN',
+    modelConfig: { ...customVisionStaticModel, supportsFiles: true },
+    provider: customToolInferredProvider,
+    hasMemory: false,
+    hasKnowledge: false,
+    hasWeb: false,
+    retrievalSources: [],
+  })
+  assert.ok(customStaticPrompt.includes('不假定可处理图像输入'), 'system prompt does not claim custom endpoint image support from known model id alone')
+  assert.ok(customStaticPrompt.includes('不假定可直接解析文件输入'), 'system prompt does not claim custom endpoint file support from known model id alone')
+  const customRemotePrompt = buildSystemPrompt({
+    language: 'zh-CN',
+    modelConfig: { ...customVisionStaticModel, id: 'custom/remote-multimodal', supportsFiles: true, source: 'remote' },
+    provider: customToolInferredProvider,
+    hasMemory: false,
+    hasKnowledge: false,
+    hasWeb: false,
+    retrievalSources: [],
+  })
+  assert.ok(customRemotePrompt.includes('可处理图像输入'), 'system prompt allows custom endpoint image support from remote metadata')
+  assert.ok(customRemotePrompt.includes('可处理文件输入'), 'system prompt allows custom endpoint file support from remote metadata')
+  assert.equal(providerSupportsNativeSearch(customToolInferredProvider), false, 'chat capability helper does not infer provider-native search without an explicit declaration')
+  assert.equal(providerSupportsNativeSearch({ ...customToolInferredProvider, capabilities: { nativeSearch: true } }), true, 'chat capability helper honors explicit provider-native search declarations')
+  const anthropicNativeSearchUnclaimedBody = buildAnthropicBodyForTest({
+    provider: { id: 'anthropic-no-search', type: 'anthropic', name: 'Anthropic', apiKey: '', models: [], enabled: true },
+    model: 'claude-opus-4-8',
+    messages: [{ role: 'user', content: 'Search the web.' }],
+    webSearchMode: 'native',
+  })
+  assert.equal(anthropicNativeSearchUnclaimedBody.tools, undefined, 'Anthropic native search tools are omitted until nativeSearch is declared')
+  const anthropicNativeSearchDeclaredBody = buildAnthropicBodyForTest({
+    provider: { id: 'anthropic-search', type: 'anthropic', name: 'Anthropic', apiKey: '', models: [], enabled: true, capabilities: { nativeSearch: true } },
+    model: 'claude-opus-4-8',
+    messages: [{ role: 'user', content: 'Search the web.' }],
+    webSearchMode: 'native',
+  })
+  assert.equal(anthropicNativeSearchDeclaredBody.tools[0].type, 'web_search_20260209', 'Anthropic native search tools are emitted when nativeSearch is declared')
+  const googleNativeSearchUnclaimedBody = buildGoogleBodyForTest({
+    provider: { id: 'google-no-search', type: 'google', name: 'Google', apiKey: '', models: [], enabled: true },
+    model: 'gemini-3.5-flash',
+    messages: [{ role: 'user', content: 'Search the web.' }],
+    webSearchMode: 'native',
+  })
+  assert.equal(googleNativeSearchUnclaimedBody.tools, undefined, 'Google native search tools are omitted until nativeSearch is declared')
+  const googleNativeSearchDeclaredBody = buildGoogleBodyForTest({
+    provider: { id: 'google-search', type: 'google', name: 'Google', apiKey: '', models: [], enabled: true, capabilities: { nativeSearch: true } },
+    model: 'gemini-3.5-flash',
+    messages: [{ role: 'user', content: 'Search the web.' }],
+    webSearchMode: 'native',
+  })
+  assert.ok(googleNativeSearchDeclaredBody.tools?.length, 'Google native search tools are emitted when nativeSearch is declared')
+  const mimoNativeSearchUnclaimedBody = getBodyForTest({
+    provider: { id: 'mimo-no-search', type: 'xiaomi-mimo', name: 'MiMo', apiKey: '', models: ['mimo-v2.5-pro'], enabled: true },
+    model: 'mimo-v2.5-pro',
+    messages: [{ role: 'user', content: 'Search the web.' }],
+    webSearchMode: 'native',
+  })
+  assert.equal(mimoNativeSearchUnclaimedBody.tools, undefined, 'MiMo native search tools are omitted until nativeSearch is declared')
+  assert.deepEqual(getReasoningEffortOptions(customToolInferredProvider, 'qwen3.7-max'), [], 'chat reasoning helper does not infer custom endpoint reasoning controls from known model id alone')
+  assert.equal(providerSupportsReasoning(customToolInferredProvider, 'qwen3.7-max'), false, 'chat reasoning helper keeps custom endpoint quick reasoning disabled without contract evidence')
+  assert.deepEqual(
+    getReasoningEffortOptions({ ...customToolInferredProvider, capabilities: { reasoningEffort: true } }, 'qwen3.7-max'),
+    ['none', 'low', 'medium', 'high'],
+    'chat reasoning helper honors explicit custom endpoint reasoning declarations'
+  )
+  assert.deepEqual(
+    getReasoningEffortOptions({
+      ...customToolInferredProvider,
+      modelConfigs: [{
+        id: 'custom/remote-qwen',
+        name: 'Remote Qwen',
+        provider: 'openai-compatible',
+        contextWindow: 65536,
+        maxTokens: 8192,
+        maxOutputTokens: 8192,
+        defaultMaxTokens: 2048,
+        supportsVision: false,
+        supportsFiles: false,
+        reasoningMode: 'dashscope-thinking',
+        reasoningEfforts: ['none', 'high'],
+        source: 'remote',
+      }],
+    }, 'custom/remote-qwen'),
+    ['none', 'high'],
+    'chat reasoning helper allows custom endpoint reasoning when remote model metadata declares it'
+  )
+  const providerToolChatRunnerSource = fs.readFileSync(path.join(root, 'src/services/chatRunner.ts'), 'utf8')
+  assert.ok(providerToolChatRunnerSource.includes('provider_native_tools_skipped_by_contract'), 'chat runtime logs provider-native tool skips caused by missing contract tools evidence')
+  assert.ok(providerToolChatRunnerSource.includes('providerSupportsNativeSearch(provider)'), 'chat runtime gates provider-native search before setting webSearchMode=native')
+  assert.ok(providerToolChatRunnerSource.includes('provider_native_search_unclaimed'), 'chat runtime records provider-native search contract skips in trace metadata')
+  assert.ok(providerToolChatRunnerSource.includes('provider,'), 'chat runtime passes provider identity into the system prompt capability builder')
+  const promptEngineeringSource = fs.readFileSync(path.join(root, 'src/services/promptEngineering.ts'), 'utf8')
+  assert.ok(promptEngineeringSource.includes('capabilityRule(input.modelConfig, input.provider)'), 'system prompt policy is assembled through the shared capability-aware prompt builder')
+  assert.ok(promptEngineeringSource.includes('providerSupportsVisionInput(provider, model)'), 'system prompt capability rule uses provider-aware vision support')
+  assert.ok(promptEngineeringSource.includes('providerSupportsFileInput(provider, model)'), 'system prompt capability rule uses provider-aware file support')
+  const chatProviderNativeToolUtilsSource = fs.readFileSync(path.join(root, 'src/services/chatProviderNativeToolUtils.ts'), 'utf8')
+  assert.ok(chatProviderNativeToolUtilsSource.includes("providerCompatibilityCapabilityCanBeSentForProvider(provider, 'tools', explicitDeclaration)"), 'chat provider-native tool helper gates tool support through the provider compatibility contract')
+  assert.ok(chatProviderNativeToolUtilsSource.includes('providerCompatibilityCapabilityCanBeSentForProvider(provider, capability, explicitDeclaration)'), 'chat provider-native modality helpers gate vision/file support through the provider compatibility contract')
+  const aiBaseSource = fs.readFileSync(path.join(root, 'src/services/ai/base.ts'), 'utf8')
+  assert.ok(aiBaseSource.includes("msgs.push({ role: 'system', content: systemPrompt })"), 'OpenAI-compatible request builders preserve system prompt policy as a system message')
+  assert.ok(aiBaseSource.includes('systemInstruction') && aiBaseSource.includes('systemPrompt'), 'Gemini request builder preserves system prompt policy through systemInstruction')
+  assert.ok(aiBaseSource.includes('const conformanceBlockers = routeResult.conformance.issues.filter((issue) => issue.severity === \'block\')'), 'runtime safety policy blocks conformance failures before upstream dispatch')
+  assert.ok(aiBaseSource.includes('if (payloadPolicy.blocked)'), 'runtime safety policy applies payload blocking before upstream dispatch')
+  assert.ok(aiBaseSource.includes('formatProviderHttpError(response.status, errorText, input.req.provider, input.req.model)'), 'chat runtime formats provider HTTP failures through the shared provider error mapper')
+  assert.ok(aiBaseSource.includes("appendRuntimeLog('upstream.error'"), 'chat runtime records upstream provider errors in runtime logs')
+  assert.ok(aiBaseSource.includes('const canRetryStatus = response.status === 408 || response.status === 409 || response.status === 425 || response.status === 429 || response.status >= 500'), 'chat runtime treats 429 as a bounded retry candidate')
+  assert.ok(aiBaseSource.includes('retryAfterMsFromFailure(input.status)'), 'runtime fallback records retry-after cooldowns for rate-limited routes')
+  assert.ok(aiBaseSource.includes("req.webSearchMode === 'native' && providerSupportsNativeSearch(req.provider)"), 'provider request builders gate native search tool injection on explicit nativeSearch support')
+  assert.ok(aiBaseSource.includes('contractSendableAttachments(req)'), 'provider request builders filter multimodal attachments through the provider compatibility manifest before payload construction')
+  assert.ok(aiBaseSource.includes('manifest.modalities.input.image') && aiBaseSource.includes('manifest.modalities.input.file'), 'provider request builders use manifest image/file support before emitting attachment payload parameters')
+  assert.ok(aiBaseSource.includes('contractProviderToolDeclarations(req)'), 'provider request builders filter app tool declarations through provider conformance before payload construction')
+  assert.ok(aiBaseSource.includes('supportsNativeProviderTools(req.provider, modelConfig)'), 'provider request builders use provider compatibility tool support before emitting app tool declarations')
+  const providerRouteAssemblySource = fs.readFileSync(path.join(root, 'src/services/ai/providerRouteAssembly.ts'), 'utf8')
+  assert.ok(providerRouteAssemblySource.includes('input.usesResponsesApi && providerResponsesApiCanBeSent(input.provider)'), 'provider endpoint resolver rechecks Responses API sendability before emitting /responses endpoints')
+  const providerResponseParsingSource = fs.readFileSync(path.join(root, 'src/services/ai/providerResponseParsing.ts'), 'utf8')
+  assert.ok(providerResponseParsingSource.includes("providerCompatibilityCapabilityCanBeSentForProvider(req.provider, 'citations')"), 'provider response parsing gates provider-native citations through the compatibility contract')
+  assert.ok(providerResponseParsingSource.includes("if (providerType === 'anthropic' || providerType === 'google' || providerType === 'xiaomi-mimo') return providerType"), 'provider response parsing only exposes provider-native citation payload shapes for known contract-backed sources')
+  assert.ok(providerResponseParsingSource.includes('export function providerReasoningResponseCanBeParsed'), 'provider response parsing centralizes response-side reasoning parse eligibility')
+  assert.ok(providerResponseParsingSource.includes('providerCompatibilityEvidenceHasBehavior(evidence.id, \'reasoning\')'), 'provider response parsing uses compatibility evidence before emitting reasoning traces')
+  assert.ok(providerResponseParsingSource.includes("extractUsage(json, 'openai-compatible', { includeReasoning })"), 'provider response parsing gates reasoning token usage through response-side reasoning eligibility')
+  assert.ok(aiBaseSource.includes('const streamParseOptions = { includeReasoning: providerReasoningResponseCanBeParsed(input.req) }'), 'stream runtime passes provider reasoning parse eligibility into SSE parsing')
+  assert.ok(aiBaseSource.includes('function resolveStreamProviderCitationSource'), 'stream runtime centralizes response-side provider citation parse eligibility')
+  assert.ok(aiBaseSource.includes("providerCompatibilityCapabilityCanBeSentForProvider(provider, 'citations')"), 'stream runtime gates provider-native citation metadata through the compatibility contract')
+  const providerStreamParsingSource = fs.readFileSync(path.join(root, 'src/services/ai/providerStreamParsing.ts'), 'utf8')
+  assert.ok(providerStreamParsingSource.includes('includeReasoning ? extractOpenAIReasoningContent(json) : undefined'), 'provider stream parsing gates reasoning_content preservation through parse options')
+  assert.ok(providerStreamParsingSource.includes("extractUsage(json, providerType === 'openai' ? 'openai' : 'openai-compatible', { includeReasoning })"), 'provider stream parsing gates reasoning token usage through parse options')
+  const providerTraceUtilsSource = fs.readFileSync(path.join(root, 'src/services/ai/providerTraceUtils.ts'), 'utf8')
+  assert.ok(providerTraceUtilsSource.includes('const includeReasoning = options.includeReasoning !== false'), 'provider trace extraction supports contract-aware reasoning trace suppression')
+  const providerUsageSource = fs.readFileSync(path.join(root, 'src/services/ai/providerUsage.ts'), 'utf8')
+  assert.ok(providerUsageSource.includes('includeReasoning ? numberValue'), 'provider usage parser gates reasoning token fields through parse options')
+  const providerConformanceSource = fs.readFileSync(path.join(root, 'src/services/ai/providerConformance.ts'), 'utf8')
+  assert.ok(providerConformanceSource.includes("providerCompatibilityCapabilityCanBeSentForProvider(provider, 'tools', explicitDeclaration)"), 'provider conformance gates native tool manifest support through the compatibility contract')
+  assert.ok(providerConformanceSource.includes("providerCompatibilityCapabilityCanBeSentForProvider(provider, capability, explicitDeclaration)"), 'provider conformance gates vision/file manifest support through the compatibility contract')
+  assert.ok(providerConformanceSource.includes("providerCompatibilityCapabilityCanBeSentForProvider(provider, 'audio', true)"), 'provider conformance gates audio/speech manifest support through the compatibility contract')
+  assert.ok(providerConformanceSource.includes('clampTopLevelMaxTokens') && providerConformanceSource.includes('context_exceeded'), 'provider conformance clamps output token requests under the context-limit policy')
+  assert.ok(providerConformanceSource.includes("severity: 'block'"), 'provider conformance records blocking issues for the runtime safety policy')
+  assert.ok(providerConformanceSource.includes('providerCompatibilityReasoningExplicitlyDeclaredForModel(provider, modelConfig)'), 'provider conformance does not treat static model reasoning metadata as a protocol-reference declaration')
+  assert.ok(providerConformanceSource.includes("config.preferredEndpoint === 'responses' && providerResponsesApiCanBeSent(input.provider)"), 'provider conformance does not infer Responses protocol from xAI-like identity without contract evidence')
+  const providerOpenAIRequestSource = fs.readFileSync(path.join(root, 'src/services/ai/providerOpenAIRequest.ts'), 'utf8')
+  assert.ok(providerOpenAIRequestSource.includes('function providerReasoningCanBeSent'), 'OpenAI request helper centralizes reasoning sendability checks')
+  assert.ok(providerOpenAIRequestSource.includes('if (!providerReasoningCanBeSent(req.provider, modelConfig)) return false'), 'OpenAI Responses encrypted reasoning include is gated by the provider reasoning contract')
+  assert.ok(providerOpenAIRequestSource.includes('if (!providerReasoningCanBeSent(req.provider, modelConfig)) return undefined'), 'OpenAI-compatible reasoning replay fields are gated by the provider reasoning contract')
+  assert.ok(providerOpenAIRequestSource.includes('function providerResponsesApiCanBeSent'), 'OpenAI request helper centralizes Responses API sendability checks')
+  assert.ok(providerOpenAIRequestSource.includes('isXAIProvider(req.provider) && providerResponsesApiCanBeSent(req.provider)'), 'OpenAI request helper does not route xAI-like compatible endpoints to Responses without contract evidence')
+  const providerOpenAICompatibleThinkingSource = fs.readFileSync(path.join(root, 'src/services/ai/providerOpenAICompatibleThinking.ts'), 'utf8')
+  assert.ok(providerOpenAICompatibleThinkingSource.includes('providerCompatibilityReasoningExplicitlyDeclaredForModel(req.provider, modelConfig)'), 'OpenAI-compatible thinking helpers use the shared reasoning declaration gate')
+  const providerAnthropicThinkingSource = fs.readFileSync(path.join(root, 'src/services/ai/providerAnthropicThinking.ts'), 'utf8')
+  assert.ok(providerAnthropicThinkingSource.includes('providerCompatibilityReasoningExplicitlyDeclaredForModel(req.provider, config)'), 'Anthropic thinking helper uses the shared reasoning declaration gate')
+  const providerRequestOptimizationSource = fs.readFileSync(path.join(root, 'src/services/ai/providerRequestOptimization.ts'), 'utf8')
+  assert.ok(providerRequestOptimizationSource.includes('resolveProviderCapabilityManifest') && providerRequestOptimizationSource.includes('reasoning.supported'), 'Bedrock optimizer gates thinking injection through provider conformance')
+  const providerRuntimeFallbackSource = fs.readFileSync(path.join(root, 'src/services/ai/providerRuntimeFallback.ts'), 'utf8')
+  assert.ok(!providerRuntimeFallbackSource.includes('resolveProviderCapabilityManifest(req)'), 'runtime fallback required capabilities come from request intent, not current-provider conformance')
+  assert.ok(providerRuntimeFallbackSource.includes("if (req.reasoningEffort && !['none', 'minimal'].includes(req.reasoningEffort)) capabilities.push('reasoning')"), 'runtime fallback preserves reasoning intent before candidate contract filtering')
+  assert.ok(providerRuntimeFallbackSource.includes("if (req.providerToolDeclarations?.length) capabilities.push('tools')"), 'runtime fallback preserves tool requirements before candidate contract filtering')
+  assert.ok(providerRuntimeFallbackSource.includes("if (req.structuredOutput) capabilities.push('structured_output')"), 'runtime fallback preserves structured-output requirements before candidate contract filtering')
+  assert.ok(providerRuntimeFallbackSource.includes("if (req.webSearchMode === 'native') capabilities.push('native_search')"), 'runtime fallback preserves native-search requirements before candidate contract filtering')
+  assert.ok(providerRuntimeFallbackSource.includes("if (attachment.type === 'image') capabilities.push('image')"), 'runtime fallback maps sendable image attachments to image intent')
+  assert.ok(providerRuntimeFallbackSource.includes("if (attachment.type !== 'image') capabilities.push('file')"), 'runtime fallback maps sendable non-image attachments to file intent')
+  const providerRuntimeRetrySource = fs.readFileSync(path.join(root, 'src/services/ai/providerRuntimeRetry.ts'), 'utf8')
+  assert.ok(providerRuntimeRetrySource.includes('resolveProviderRequestTimeoutMs') && providerRuntimeRetrySource.includes('resolveProviderMaxRetries'), 'provider runtime retry centralizes timeout and max-retry policy')
+  assert.ok(providerRuntimeRetrySource.includes('assertProviderCircuitClosed') && providerRuntimeRetrySource.includes('recordProviderCircuitFailure'), 'provider runtime retry applies circuit-breaker policy before provider fallback')
+  assert.ok(providerRuntimeRetrySource.includes("appendRuntimeLog('upstream.retry'") && providerRuntimeRetrySource.includes("appendRuntimeLog('circuit.breaker'"), 'provider runtime retry logs retry and circuit-breaker evidence for error/rate-limit diagnostics')
+  const providerFailoverSource = fs.readFileSync(path.join(root, 'src/services/ai/providerFailover.ts'), 'utf8')
+  assert.ok(providerFailoverSource.includes("if (status === 429) return 'rate_limited'"), 'provider failover classifies HTTP 429 as rate_limited')
+  assert.ok(providerFailoverSource.includes("message.includes('rate limit')"), 'provider failover classifies textual rate-limit failures')
+  assert.ok(providerFailoverSource.includes("if (input.safetyRefusal) return { trigger: 'safety_refusal', retryable: false"), 'runtime safety policy keeps safety refusals non-retryable for provider fallback')
+  const providerOperationResultSource = fs.readFileSync(path.join(root, 'src/services/ai/providerOperationResult.ts'), 'utf8')
+  assert.ok(providerOperationResultSource.includes('export function classifyHttpStatus') && providerOperationResultSource.includes("return 'rate_limited'"), 'provider operation result centralizes HTTP status and rate-limit classification')
+  assert.ok(providerOperationResultSource.includes('extractProviderErrorDetail') && providerOperationResultSource.includes('request_id'), 'provider operation result extracts safe provider error details and request ids')
+  const chatErrorUtilsSource = fs.readFileSync(path.join(root, 'src/services/chatErrorUtils.ts'), 'utf8')
+  assert.ok(chatErrorUtilsSource.includes("return 'rate_limited'") && chatErrorUtilsSource.includes('provider_conformance_blocked'), 'chat error helper maps provider errors into stable UI error codes')
+  const chatOptionsPanelSource = fs.readFileSync(path.join(root, 'src/components/chat/ChatOptionsPanel.tsx'), 'utf8')
+  assert.ok(chatOptionsPanelSource.includes('resolveProviderNativeToolSupport(provider, config).supported'), 'chat model picker tool badge uses the provider compatibility native-tool decision')
+  assert.ok(chatOptionsPanelSource.includes('providerSupportsVisionInput(provider, config)'), 'chat model picker vision badge uses the provider compatibility vision decision')
+  assert.ok(chatOptionsPanelSource.includes('providerSupportsNativeSearch(provider)'), 'chat model picker native-search badge uses the provider compatibility native-search decision')
+  const speechSource = fs.readFileSync(path.join(root, 'src/services/speech.ts'), 'utf8')
+  assert.ok(speechSource.includes("providerCompatibilityCapabilityCanBeSentForProvider(sourceProvider, 'audio', true)"), 'speech service gates optional remote TTS on the provider compatibility audio contract')
+  const providerModelDiscoverySource = fs.readFileSync(path.join(root, 'src/services/ai/providerModelDiscovery.ts'), 'utf8')
+  assert.ok(providerModelDiscoverySource.includes("providerCompatibilityCapabilityCanBeSentForProvider(provider, 'modelList'"), 'provider model discovery gates /models sync on the provider compatibility modelList contract')
+  const modelReasoningSource = fs.readFileSync(path.join(root, 'src/utils/modelReasoning.ts'), 'utf8')
+  assert.ok(modelReasoningSource.includes("providerCompatibilityCapabilityCanBeSentForProvider(provider, 'reasoning', explicitDeclaration)"), 'reasoning UI helpers gate effort options on the provider compatibility reasoning contract')
+  assert.ok(aiBaseSource.includes("providerCompatibilityCapabilityCanBeSentForProvider(provider, 'embeddings', provider.capabilities?.embeddings === true)"), 'provider embedding request boundary gates /embeddings on the provider compatibility embeddings contract plus explicit provider declaration')
+  const localDataStoreSource = fs.readFileSync(path.join(root, 'src/services/localDataStore.ts'), 'utf8')
+  assert.ok(localDataStoreSource.includes("providerCompatibilityCapabilityCanBeSentForProvider(provider, 'embeddings', provider.capabilities?.embeddings === true)"), 'RAG provider embedding preflight uses the provider-aware compatibility embeddings contract plus explicit provider declaration')
+  const providerCapabilityMatrixSource = fs.readFileSync(path.join(root, 'src/services/ai/providerCapabilityMatrix.ts'), 'utf8')
+  assert.ok(providerCapabilityMatrixSource.includes("providerCompatibilityCapabilityCanBeSentForProvider(provider, 'modelList'"), 'provider capability matrix gates model-list summaries on the provider-aware compatibility contract')
+  assert.ok(providerCapabilityMatrixSource.includes("resolveProviderCompatibilityCapabilityStatus(getProviderCompatibilityEvidenceForProvider(provider).id, 'streaming')"), 'provider capability matrix exposes streaming summaries from the compatibility contract')
+  assert.ok(providerCapabilityMatrixSource.includes("getModelConfig(modelId, provider.type, provider.modelConfigs).supportsStreaming === false"), 'provider capability matrix narrows streaming summaries with model catalog metadata')
+  assert.ok(providerCapabilityMatrixSource.includes("resolveProviderCompatibilityCapabilityStatus(getProviderCompatibilityEvidenceForProvider(provider).id, 'contextLimit')"), 'provider capability matrix exposes context-limit summaries from the compatibility contract')
+  assert.ok(providerCapabilityMatrixSource.includes("resolveProviderCompatibilityCapabilityStatus(getProviderCompatibilityEvidenceForProvider(provider).id, 'systemPromptPolicy')"), 'provider capability matrix exposes system-prompt policy summaries from the compatibility contract')
+  assert.ok(providerCapabilityMatrixSource.includes("resolveProviderCompatibilityCapabilityStatus(getProviderCompatibilityEvidenceForProvider(provider).id, 'safetyPolicy')"), 'provider capability matrix exposes safety-policy summaries from the compatibility contract')
+  assert.ok(providerCapabilityMatrixSource.includes("resolveProviderCompatibilityCapabilityStatus(getProviderCompatibilityEvidenceForProvider(provider).id, 'errors')"), 'provider capability matrix exposes provider-error summaries from the compatibility contract')
+  assert.ok(providerCapabilityMatrixSource.includes("resolveProviderCompatibilityCapabilityStatus(getProviderCompatibilityEvidenceForProvider(provider).id, 'rateLimits')"), 'provider capability matrix exposes rate-limit summaries from the compatibility contract')
+  assert.ok(providerCapabilityMatrixSource.includes("resolveProviderCompatibilityCapabilityStatus(getProviderCompatibilityEvidenceForProvider(provider).id, 'deprecation')"), 'provider capability matrix exposes model deprecation summaries from the compatibility contract')
+  assert.ok(providerCapabilityMatrixSource.includes('item.config.deprecated === true'), 'provider capability matrix narrows deprecation summaries with model catalog metadata')
+  assert.ok(providerCapabilityMatrixSource.includes("resolveProviderCompatibilityCapabilityStatus(getProviderCompatibilityEvidenceForProvider(provider).id, 'vision')"), 'provider capability matrix exposes vision summaries from the compatibility contract')
+  assert.ok(providerCapabilityMatrixSource.includes('providerSupportsVisionInput(provider, item.config)'), 'provider capability matrix uses the shared provider/model vision decision')
+  assert.ok(providerCapabilityMatrixSource.includes("resolveProviderCompatibilityCapabilityStatus(getProviderCompatibilityEvidenceForProvider(provider).id, 'files')"), 'provider capability matrix exposes file summaries from the compatibility contract')
+  assert.ok(providerCapabilityMatrixSource.includes('providerSupportsFileInput(provider, item.config)'), 'provider capability matrix uses the shared provider/model file decision')
+  assert.ok(providerCapabilityMatrixSource.includes("resolveProviderCompatibilityCapabilityStatus(getProviderCompatibilityEvidenceForProvider(provider).id, 'audio')"), 'provider capability matrix exposes audio summaries from the compatibility contract')
+  assert.ok(providerCapabilityMatrixSource.includes("providerCompatibilityCapabilityCanBeSentForProvider(provider, 'audio', true)"), 'provider capability matrix gates audio summaries on the provider-aware compatibility contract')
+  assert.ok(providerCapabilityMatrixSource.includes("resolveProviderCompatibilityCapabilityStatus(evidence.id, 'citations')"), 'provider capability matrix exposes provider-native citation summaries from the compatibility contract')
+  assert.ok(providerCapabilityMatrixSource.includes("resolveProviderCompatibilityCapabilityStatus(evidence.id, 'nativeSearch')"), 'provider capability matrix exposes provider-native search summaries from the compatibility contract')
+  assert.ok(providerCapabilityMatrixSource.includes("resolveProviderCompatibilityCapabilitySendPolicy(provider, 'nativeSearch', explicitDeclaration)"), 'provider capability matrix gates native-search summaries on provider-aware send policy evidence')
+  assert.ok(providerCapabilityMatrixSource.includes("resolveProviderCompatibilityCapabilityStatus(getProviderCompatibilityEvidenceForProvider(provider).id, 'reasoning')"), 'provider capability matrix exposes reasoning summaries from the compatibility contract')
+  assert.ok(providerCapabilityMatrixSource.includes('providerSupportsReasoning(provider, item.modelId)'), 'provider capability matrix uses the shared provider/model reasoning decision')
+  assert.ok(providerCapabilityMatrixSource.includes("resolveProviderCompatibilityCapabilityStatus(evidence.id, 'localRuntime')"), 'provider capability matrix exposes local-runtime topology summaries from the compatibility contract')
+  assert.ok(providerCapabilityMatrixSource.includes("resolveProviderCompatibilityCapabilityStatus(evidence.id, 'hostedRouting')"), 'provider capability matrix exposes hosted-routing topology summaries from the compatibility contract')
+  assert.ok(providerCapabilityMatrixSource.includes("resolveProviderCompatibilityCapabilityStatus(evidence.id, 'relayRouting')"), 'provider capability matrix exposes relay-routing topology summaries from the compatibility contract')
+  assert.ok(providerCapabilityMatrixSource.includes("providerCompatibilityCapabilityCanBeSentForProvider(provider, 'embeddings', explicitDeclaration)"), 'provider capability matrix gates embedding summaries on provider-aware explicit declarations')
+  assert.ok(providerCapabilityMatrixSource.includes("providerCompatibilityCapabilityCanBeSentForProvider(provider, 'rerank', explicitDeclaration)"), 'provider capability matrix gates rerank summaries on provider-aware explicit declarations')
+  assert.ok(providerCapabilityMatrixSource.includes("resolveProviderCompatibilityCapabilityStatus(getProviderCompatibilityEvidenceForProvider(provider).id, 'retryPolicy')"), 'provider capability matrix exposes retry-policy summaries from the compatibility contract')
+  assert.ok(providerCapabilityMatrixSource.includes("providerCompatibilityCapabilityCanBeSentForProvider(provider, 'structuredOutput')"), 'provider capability matrix gates structured-output summaries on the provider-aware compatibility contract')
+  assert.ok(providerCapabilityMatrixSource.includes('providerCompatibilityCapabilityCanBeSentForProvider(provider, item.capability, true)'), 'provider capability matrix gates multimodal summaries on provider-aware compatibility declarations')
+  const providerFallbackCandidatesSource = fs.readFileSync(path.join(root, 'src/services/ai/providerFallbackCandidates.ts'), 'utf8')
+  assert.ok(providerFallbackCandidatesSource.includes('config.deprecated === true') && providerFallbackCandidatesSource.includes("reason: 'model_deprecated'"), 'provider fallback candidates reject deprecated model catalog entries before retry planning')
+  assert.ok(providerFallbackCandidatesSource.includes("providerFallbackContractAllows(provider, 'files'"), 'provider fallback candidates gate file retry candidates through the compatibility contract')
+  assert.ok(providerFallbackCandidatesSource.includes("providerFallbackContractAllows(provider, 'reasoning'"), 'provider fallback candidates gate reasoning retry candidates through the compatibility contract')
+  assert.ok(aiBaseSource.includes("providerCompatibilityCapabilityCanBeSentForProvider(provider, 'audio', true)"), 'provider audio request boundaries gate transcription and speech on the provider compatibility audio contract')
+  assert.ok(!chatOptionsPanelSource.includes("config.supportsTools || provider.capabilities?.nativeTools) badges.push({ key: 'tools'"), 'chat model picker does not infer tool badges from model id alone')
+  assert.ok(!chatOptionsPanelSource.includes("config.supportsVision || provider.capabilities?.vision) badges.push({ key: 'vision'"), 'chat model picker does not infer vision badges from model id alone')
   const providerToolEntry = {
     providerName: 'inspect_source',
     toolId: 'tool-source-inspect',
@@ -6141,6 +8261,70 @@ async function run() {
     true,
     'runtime diagnostics builds route decision log data'
   )
+  const compatibilityLogData = buildProviderCompatibilityLogData({
+    ...runtimeLogReq,
+    provider: { id: 'bedrock-log', type: 'anthropic', presetId: 'aws-bedrock' },
+    model: 'anthropic.claude-3-5-sonnet',
+  })
+  assert.equal(compatibilityLogData.compatibilityId, 'aws-bedrock', 'runtime diagnostics builds provider compatibility log data from the provider preset')
+  assert.equal(compatibilityLogData.auditState, 'needs-live-smoke', 'provider compatibility log data records audit state')
+  assert.equal(compatibilityLogData.liveSmokeGateCount, 2, 'provider compatibility log data records live-smoke gate count')
+  assert.equal(
+    compatibilityLogData.capabilityStatuses.chat,
+    'requiresLiveKey',
+    'provider compatibility log data exposes capability-level live-key status'
+  )
+  assert.equal(
+    compatibilityLogData.capabilitySendPolicies.chat.sendSource,
+    'contract',
+    'provider compatibility log data exposes contract-backed send policy source'
+  )
+  assert.equal(
+    compatibilityLogData.capabilityStatuses.structuredOutput,
+    'unsupported',
+    'provider compatibility log data exposes fail-closed unsupported status'
+  )
+  assert.equal(
+    compatibilityLogData.capabilitySendPolicies.structuredOutput.allowed,
+    false,
+    'provider compatibility log data exposes blocked request controls'
+  )
+  assert.ok(
+    compatibilityLogData.liveSmokeRequiredEnv.includes('AWS_ACCESS_KEY_ID') &&
+      !JSON.stringify(compatibilityLogData).includes('AKIDEXAMPLE'),
+    'provider compatibility log data records required env names without env values'
+  )
+  const compatibilityTrace = createProviderCompatibilityTrace({
+    ...runtimeLogReq,
+    provider: { id: 'bedrock-log', type: 'anthropic', presetId: 'aws-bedrock' },
+    model: 'anthropic.claude-3-5-sonnet',
+    requestedModel: 'claude-bedrock-alias',
+  })
+  assert.equal(compatibilityTrace.metadata.source, 'provider-compatibility-contract', 'runtime diagnostics creates provider compatibility traces from the contract')
+  assert.equal(compatibilityTrace.metadata.compatibilityId, 'aws-bedrock', 'provider compatibility trace records the evidence id')
+  assert.equal(compatibilityTrace.metadata.auditState, 'needs-live-smoke', 'provider compatibility trace records audit state')
+  assert.equal(compatibilityTrace.metadata.liveSmokeGateCount, 2, 'provider compatibility trace records live-smoke gate count')
+  assert.equal(
+    compatibilityTrace.metadata.capabilityStatuses.chat,
+    'requiresLiveKey',
+    'provider compatibility trace records capability-level live-key status'
+  )
+  assert.equal(
+    compatibilityTrace.metadata.capabilitySendPolicies.chat.sendSource,
+    'contract',
+    'provider compatibility trace records send policy source'
+  )
+  assert.equal(
+    compatibilityTrace.metadata.capabilitySendPolicies.structuredOutput.allowed,
+    false,
+    'provider compatibility trace records blocked unsupported request controls'
+  )
+  assert.ok(
+    compatibilityTrace.content.includes('needs-live-smoke') &&
+      compatibilityTrace.metadata.liveSmokeRequiredEnv.includes('AWS_ACCESS_KEY_ID') &&
+      !JSON.stringify(compatibilityTrace).includes('AKIDEXAMPLE'),
+    'provider compatibility trace exposes contract evidence without env values'
+  )
   assert.equal(
     buildProxyPolicyLogData(runtimeLogReq, { mode: 'custom-base-url', applied: true, reason: 'custom_base_url', endpointHost: 'proxy.example' }).endpointHost,
     'proxy.example',
@@ -6347,12 +8531,34 @@ async function run() {
     apiKey: FAKE_KEY_A,
     models: ['gpt-5.2'],
     enabled: true,
-    capabilities: { nativeTools: true, responsesApi: true },
+    capabilities: { nativeTools: true, nativeSearch: true, responsesApi: true },
   }
   assert.equal(
     usesOpenAIResponses({ provider: compatibleResponsesProvider, model: 'gpt-5.2', webSearchMode: 'native' }),
     true,
     'openai-compatible providers can opt into Responses routing when relay capabilities declare responsesApi support'
+  )
+  assert.equal(
+    usesOpenAIResponses({ provider: { ...compatibleResponsesProvider, capabilities: { nativeTools: true, nativeSearch: true } }, model: 'gpt-5.2', webSearchMode: 'native' }),
+    false,
+    'openai-compatible providers cannot enter Responses routing from native search unless responsesApi is declared'
+  )
+  assert.equal(
+    usesOpenAIResponses({
+      provider: {
+        ...applyProviderPreset({
+          id: 'groq-files-without-contract',
+          [API_KEY_FIELD]: FAKE_KEY_A,
+          models: ['llama-3.3-70b-versatile'],
+          enabled: true,
+        }, 'groq'),
+        capabilities: { nativeTools: true, responsesApi: true, files: true },
+      },
+      model: 'llama-3.3-70b-versatile',
+      attachments: [{ id: 'relay-file', type: 'file', uri: 'file://relay.pdf', name: 'relay.pdf', mimeType: 'application/pdf', size: 12, base64: 'cGRm' }],
+    }),
+    false,
+    'providers cannot enter Responses routing from file attachments when Responses is supported but the compatibility contract does not allow files'
   )
   const compatibleResponsesBody = getBodyForTest({
     provider: compatibleResponsesProvider,
@@ -6379,6 +8585,22 @@ async function run() {
     'https://relay.example/v1/responses',
     'openai-compatible Responses relays resolve to their configured /responses endpoint'
   )
+  const relayCompactMissing = decideRemoteCompact({
+    provider: compatibleResponsesProvider,
+    model: 'gpt-5.2',
+    messages: [{ role: 'user', content: 'x '.repeat(2000) }],
+    budgetTokens: 100,
+    settings: { remoteCompactMode: 'auto', remoteCompactThreshold: 0.8 },
+  })
+  assert.equal(relayCompactMissing.supported, false, 'remote compact requires a separate remoteCompact declaration even when Responses is available')
+  const relayCompactDeclared = decideRemoteCompact({
+    provider: { ...compatibleResponsesProvider, capabilities: { ...compatibleResponsesProvider.capabilities, remoteCompact: true } },
+    model: 'gpt-5.2',
+    messages: [{ role: 'user', content: 'x '.repeat(2000) }],
+    budgetTokens: 100,
+    settings: { remoteCompactMode: 'auto', remoteCompactThreshold: 0.8 },
+  })
+  assert.equal(relayCompactDeclared.enabled, true, 'remote compact enables for custom Responses relays only after explicit remoteCompact declaration')
   const compactEligible = decideRemoteCompact({
     provider: governedProvider,
     model: 'gpt-5.2',
@@ -8837,6 +11059,26 @@ https://gateway.example/messages`
   })
   assert.equal(openAIResponsesBodyWithTools.tools[0].type, 'web_search_preview', 'OpenAI Responses keeps native web search declaration')
   assert.equal(openAIResponsesBodyWithTools.tools[1].name, 'inspect_source', 'OpenAI Responses appends IsleMind provider tool declarations')
+  const openAIResponsesNoToolsBody = buildOpenAIResponsesBodyForTest({
+    provider: {
+      id: 'openai-no-tools',
+      type: 'openai',
+      name: 'OpenAI',
+      [API_KEY_FIELD]: 'token-test-fake',
+      models: ['gpt-5.5'],
+      modelConfigs: [{ ...getModelConfig('gpt-5.5', 'openai'), supportsTools: false }],
+      enabled: true,
+    },
+    model: 'gpt-5.5',
+    messages: [{ role: 'user', content: 'hello' }],
+    providerToolDeclarations: [{
+      type: 'function',
+      name: 'inspect_source',
+      description: 'Inspect a cited source.',
+      parameters: { type: 'object', properties: { sourceId: { type: 'string' } } },
+    }],
+  })
+  assert.equal(openAIResponsesNoToolsBody.tools, undefined, 'OpenAI Responses omits provider tool declarations when model metadata disables tools')
   const openAIResponsesToolResultBody = buildOpenAIResponsesBodyForTest({
     provider: {
       id: 'openai',
@@ -9121,6 +11363,27 @@ https://gateway.example/messages`
   })
   assert.ok(googleBodyWithTools.tools[0].google_search, 'Google keeps native web search declaration')
   assert.equal(googleBodyWithTools.tools[1].functionDeclarations[0].name, 'read_context', 'Google appends IsleMind provider tool declarations')
+  const googleBodyWithoutTools = buildGoogleBodyForTest({
+    provider: {
+      id: 'google-no-tools',
+      type: 'google',
+      name: 'Google',
+      [API_KEY_FIELD]: 'token-test-fake',
+      models: ['gemini-2.5-flash'],
+      modelConfigs: [{ ...getModelConfig('gemini-2.5-flash', 'google'), supportsTools: false }],
+      enabled: true,
+    },
+    model: 'gemini-2.5-flash',
+    messages: [{ role: 'user', content: 'hello' }],
+    providerToolDeclarations: [{
+      functionDeclarations: [{
+        name: 'read_context',
+        description: 'Read local context.',
+        parameters: { type: 'object', properties: { query: { type: 'string' } } },
+      }],
+    }],
+  })
+  assert.equal(googleBodyWithoutTools.tools, undefined, 'Google request body omits provider tool declarations when model metadata disables tools')
   const googleFunctionResponseBody = buildGoogleBodyForTest({
     provider: {
       id: 'google',
@@ -9407,6 +11670,53 @@ https://gateway.example/messages`
   assert.equal(openAIParsedCompletion.providerToolCalls?.[0]?.name, 'search_web', 'provider response parsing helper extracts OpenAI tool calls')
   assert.equal(openAIParsedCompletion.responseId, 'resp_parse_1', 'provider response parsing helper extracts response ids')
   assert.equal(openAIParsedCompletion.citations?.[0]?.id, 'source-parse', 'provider response parsing helper keeps retrieval citations')
+  const customReasoningProvider = { id: 'custom-reasoning-parse', type: 'openai-compatible', presetId: 'custom-openai-compatible', name: 'Custom Reasoning Parse', apiKey: FAKE_KEY_A, models: ['custom-reasoning-model'], enabled: true }
+  const customReasoningParsedCompletion = parseProviderChatCompletionJson({
+    choices: [{ message: { role: 'assistant', content: 'Custom answer.', reasoning_content: 'Unclaimed hidden reasoning.' } }],
+    usage: { prompt_tokens: 2, completion_tokens: 3, total_tokens: 5, completion_tokens_details: { reasoning_tokens: 4 } },
+  }, {
+    provider: customReasoningProvider,
+    model: 'custom-reasoning-model',
+    messages: [],
+  })
+  assert.equal(customReasoningParsedCompletion.text, 'Custom answer.', 'custom compatible parser still extracts visible response text')
+  assert.equal(customReasoningParsedCompletion.usage?.reasoningTokens, undefined, 'custom compatible parser does not expose reasoning token usage without contract evidence')
+  assert.equal(customReasoningParsedCompletion.reasoningContent, undefined, 'custom compatible parser does not preserve reasoning_content without contract evidence')
+  assert.equal(
+    customReasoningParsedCompletion.traces?.some((trace) => trace.content === 'Unclaimed hidden reasoning.'),
+    false,
+    'custom compatible parser does not emit reasoning traces without contract evidence'
+  )
+  const declaredCustomReasoningParsedCompletion = parseProviderChatCompletionJson({
+    choices: [{ message: { role: 'assistant', content: 'Declared answer.', reasoning_content: 'Declared hidden reasoning.' } }],
+    usage: { prompt_tokens: 2, completion_tokens: 3, total_tokens: 5, completion_tokens_details: { reasoning_tokens: 4 } },
+  }, {
+    provider: { ...customReasoningProvider, capabilities: { reasoningEffort: true } },
+    model: 'custom-reasoning-model',
+    messages: [],
+  })
+  assert.equal(declaredCustomReasoningParsedCompletion.usage?.reasoningTokens, 4, 'custom compatible parser preserves reasoning token usage after explicit reasoning declaration')
+  assert.equal(declaredCustomReasoningParsedCompletion.reasoningContent, 'Declared hidden reasoning.', 'custom compatible parser preserves reasoning_content after explicit reasoning declaration')
+  assert.ok(
+    declaredCustomReasoningParsedCompletion.traces?.some((trace) => trace.content === 'Declared hidden reasoning.'),
+    'custom compatible parser emits reasoning traces after explicit reasoning declaration'
+  )
+  const customReasoningStream = parseProviderBufferedStreamResponse([
+    `data: ${JSON.stringify({ choices: [{ delta: { reasoning_content: 'Unclaimed stream reasoning.' } }] })}`,
+    `data: ${JSON.stringify({ choices: [{ delta: { content: 'Custom stream.' } }] })}`,
+    '',
+  ].join('\n'), {
+    provider: customReasoningProvider,
+    model: 'custom-reasoning-model',
+    messages: [],
+  }, 'openai-compatible')
+  assert.equal(customReasoningStream.text, 'Custom stream.', 'custom compatible buffered stream still extracts visible text')
+  assert.equal(customReasoningStream.reasoningContent, undefined, 'custom compatible buffered stream does not preserve reasoning_content without contract evidence')
+  assert.equal(
+    customReasoningStream.traces?.some((trace) => trace.content === 'Unclaimed stream reasoning.'),
+    false,
+    'custom compatible buffered stream does not emit reasoning traces without contract evidence'
+  )
   const openAITextToolParsedCompletion = parseProviderChatCompletionJson({
     id: 'resp_text_tool_parse',
     output_text: xmlStyleTextToolCall,
@@ -9432,6 +11742,34 @@ https://gateway.example/messages`
   assert.equal(anthropicParsedCompletion.text, 'Anthropic answer', 'provider response parsing helper preserves Anthropic completion text')
   assert.equal(anthropicParsedCompletion.providerToolCalls?.[0]?.name, 'read_context', 'provider response parsing helper extracts Anthropic tool calls')
   assert.equal(anthropicParsedCompletion.providerContentBlocks?.[0]?.type, 'thinking', 'provider response parsing helper keeps Anthropic replay thinking blocks')
+  const customAnthropicCitationParsedCompletion = parseProviderChatCompletionJson({
+    content: [
+      { type: 'web_search_result', title: 'Unclaimed Anthropic-compatible Source', url: 'https://example.com/custom-anthropic-citation' },
+      { type: 'text', text: 'Custom Anthropic-compatible answer' },
+    ],
+  }, {
+    provider: {
+      id: 'custom-anthropic-citation-parse',
+      type: 'openai-compatible',
+      presetId: 'custom-anthropic-compatible',
+      wireProtocol: 'anthropic-compatible',
+      name: 'Custom Anthropic-compatible Parse',
+      apiKey: FAKE_KEY_A,
+      models: ['custom-claude-compatible'],
+      enabled: true,
+    },
+    model: 'custom-claude-compatible',
+    messages: [],
+    retrievalSources: [{ id: 'custom-anthropic-retrieval-source', title: 'Custom Anthropic Retrieval', excerpt: 'Local evidence', similarity: 0.71 }],
+  })
+  assert.equal(customAnthropicCitationParsedCompletion.text, 'Custom Anthropic-compatible answer', 'custom Anthropic-compatible parser still extracts visible text')
+  assert.equal(customAnthropicCitationParsedCompletion.citations?.length, 1, 'custom Anthropic-compatible parser keeps only retrieval citations without citation contract evidence')
+  assert.equal(customAnthropicCitationParsedCompletion.citations?.[0]?.id, 'custom-anthropic-retrieval-source', 'custom Anthropic-compatible parser preserves retrieval citation ids')
+  assert.equal(
+    customAnthropicCitationParsedCompletion.citations?.some((citation) => citation.url === 'https://example.com/custom-anthropic-citation'),
+    false,
+    'custom Anthropic-compatible parser does not expose provider-native citation URLs without contract evidence'
+  )
   const bufferedJsonCompletion = parseProviderBufferedStreamJson(JSON.stringify({
     candidates: [{ content: { parts: [{ text: 'Google answer' }] } }],
     usageMetadata: { promptTokenCount: 2, candidatesTokenCount: 4 },
@@ -10453,6 +12791,54 @@ https://gateway.example/messages`
   assert.equal(gemini25Body.generationConfig.thinkingConfig.thinkingBudget, 1024, 'Gemini 2.5 uses thinkingBudget')
   assert.equal(gemini25Body.generationConfig.thinkingConfig.includeThoughts, true, 'Gemini 2.5 requests thought summaries for visible thinking efforts')
   assert.ok(gemini25Body.generationConfig.maxOutputTokens <= getModelConfig('gemini-2.5-flash', 'google').maxOutputTokens, 'Gemini maxOutputTokens is clamped to output limit')
+  const geminiStructuredSchema = {
+    type: 'object',
+    properties: { summary: { type: 'string' } },
+    required: ['summary'],
+    additionalProperties: false,
+  }
+  const geminiStructuredRequest = {
+    provider: {
+      id: 'google',
+      type: 'google',
+      name: 'Google',
+      [API_KEY_FIELD]: 'token-test-fake',
+      models: ['gemini-2.5-flash'],
+      enabled: true,
+    },
+    model: 'gemini-2.5-flash',
+    messages: [{ role: 'user', content: 'Return JSON.' }],
+    maxTokens: 512,
+    stream: false,
+    structuredOutput: {
+      type: 'json_schema',
+      name: 'gemini_summary',
+      strict: true,
+      schema: geminiStructuredSchema,
+    },
+  }
+  const geminiStructuredBody = buildGoogleBodyForTest(geminiStructuredRequest)
+  assert.equal(geminiStructuredBody.generationConfig.responseMimeType, 'application/json', 'Gemini structured-output requests ask for JSON output through generationConfig')
+  assert.deepEqual(geminiStructuredBody.generationConfig.responseSchema, geminiStructuredSchema, 'Gemini structured-output requests send the official responseSchema')
+  assert.equal(geminiStructuredBody.generationConfig.responseFormat, undefined, 'Gemini generateContent requests avoid the newer Interactions responseFormat shape')
+  const geminiStructuredConformance = resolveProviderRequestConformanceForTest(geminiStructuredRequest, geminiStructuredBody)
+  assert.equal(geminiStructuredConformance.manifest.structuredOutput.contractClaimed, true, 'provider conformance records Gemini structured-output contract evidence')
+  assert.equal(geminiStructuredConformance.manifest.structuredOutput.documentedRequestShape, 'google-response-schema', 'provider conformance records Gemini response schema request shape')
+  assert.equal(geminiStructuredConformance.manifest.structuredOutput.appRequestControl, true, 'provider conformance enables Gemini response schema request controls')
+  assert.equal(geminiStructuredConformance.manifest.structuredOutput.jsonObjectMode, true, 'provider conformance records Gemini JSON object mode support')
+  assert.equal(geminiStructuredConformance.manifest.structuredOutput.strictJsonSchema, false, 'provider conformance does not claim a Gemini strict JSON schema flag')
+  assert.equal(geminiStructuredConformance.issues.some((issue) => issue.code === 'unsupported_structured_output'), false, 'provider conformance accepts Gemini structured-output requests')
+  const geminiStructuredRoute = resolveProviderRouteForTest(geminiStructuredRequest, geminiStructuredBody)
+  assert.equal(geminiStructuredRoute.decision.structuredOutputPlan.requested, true, 'Gemini route decision records structured-output request intent')
+  assert.equal(geminiStructuredRoute.decision.structuredOutputPlan.supported, true, 'Gemini route decision records structured-output request control support')
+  assert.equal(geminiStructuredRoute.decision.structuredOutputPlan.requestShape, 'google-response-schema', 'Gemini route decision records the response schema request shape')
+  assert.equal(geminiStructuredRoute.decision.structuredOutputPlan.strictJsonSchema, false, 'Gemini route decision records lack of strict schema flag support')
+  const geminiJsonObjectBody = buildGoogleBodyForTest({
+    ...geminiStructuredRequest,
+    structuredOutput: { type: 'json_object' },
+  })
+  assert.equal(geminiJsonObjectBody.generationConfig.responseMimeType, 'application/json', 'Gemini JSON object mode requests application/json without a schema')
+  assert.equal(geminiJsonObjectBody.generationConfig.responseSchema, undefined, 'Gemini JSON object mode omits responseSchema when no schema is requested')
   const gemini25DynamicBody = buildGoogleBodyForTest({
     provider: {
       id: 'google',
@@ -11810,6 +14196,4137 @@ https://gateway.example/messages`
   assert.ok(truncated[0].text.length < 1000, 'MCP tool output is truncated to budget')
 }
 
+function assertProviderCompatibilityContractBehavior() {
+  const presetIds = PROVIDER_PRESETS.map((preset) => preset.id)
+  for (const behavior of [
+    'chat',
+    'streaming',
+    'responsesApi',
+    'responsesWebSocket',
+    'remoteCompact',
+    'tools',
+    'structuredOutput',
+    'nativeSearch',
+    'vision',
+    'audio',
+    'files',
+    'reasoning',
+    'embeddings',
+    'rerank',
+    'contextLimit',
+    'systemPromptPolicy',
+    'safetyPolicy',
+    'retryPolicy',
+  ]) {
+    assert.ok(
+      CANONICAL_PROVIDER_COMPATIBILITY_BEHAVIORS.includes(behavior),
+      `canonical provider compatibility contract includes ${behavior}`
+    )
+  }
+  assert.ok(
+    CORE_PROVIDER_COMPATIBILITY_BEHAVIORS.includes('contextLimit') &&
+      CORE_PROVIDER_COMPATIBILITY_BEHAVIORS.includes('systemPromptPolicy') &&
+      CORE_PROVIDER_COMPATIBILITY_BEHAVIORS.includes('safetyPolicy') &&
+      CORE_PROVIDER_COMPATIBILITY_BEHAVIORS.includes('retryPolicy'),
+    'core provider compatibility behavior set covers non-obvious runtime policy axes'
+  )
+  assert.deepEqual(
+    findProviderCompatibilityEvidenceGaps(presetIds),
+    [],
+    'every provider preset has official compatibility evidence'
+  )
+  assert.deepEqual(
+    Object.keys(PROVIDER_COMPATIBILITY_EVIDENCE).sort(),
+    [...new Set(presetIds)].sort(),
+    'provider compatibility evidence stays aligned with the provider preset registry'
+  )
+
+  for (const presetId of presetIds) {
+    const item = getProviderCompatibilityEvidence(presetId)
+    assert.equal(item.id, presetId, `compatibility evidence id matches preset ${presetId}`)
+    assert.ok(item.officialDocs.length > 0, `compatibility evidence for ${presetId} keeps at least one official docs URL`)
+    assert.ok(item.officialDocs.every((url) => /^https?:\/\//.test(url)), `compatibility evidence for ${presetId} uses web docs URLs`)
+    assert.ok(item.endpointFamilies.length > 0, `compatibility evidence for ${presetId} keeps endpoint family notes`)
+    assert.ok(item.behaviorDocs.includes('chat'), `compatibility evidence for ${presetId} includes chat behavior`)
+    assert.ok(item.behaviorDocs.includes('errors'), `compatibility evidence for ${presetId} includes error behavior`)
+    assert.deepEqual(
+      findProviderCompatibilityBehaviorGaps(presetId),
+      [],
+      `compatibility evidence for ${presetId} covers the core provider contract`
+    )
+  }
+
+  assert.deepEqual(
+    findProviderCompatibilityLiveSmokeGaps(presetIds),
+    [],
+    'every non-ready provider family has an explicit env-gated live smoke contract'
+  )
+  const nonReadyPresetIds = presetIds.filter((presetId) => getProviderCompatibilityEvidence(presetId).auditState !== 'conformance-ready')
+  for (const presetId of nonReadyPresetIds) {
+    const gates = getProviderCompatibilityLiveSmokeGates(presetId)
+    assert.ok(gates.length > 0, `compatibility evidence for ${presetId} declares at least one live smoke gate`)
+    assert.ok(
+      gates.every((gate) => gate.requiredEnv.length > 0 && gate.validates.length > 0 && gate.skippedWithout.length > 0),
+      `compatibility live smoke gates for ${presetId} name env requirements, validation scope, and skip reason`
+    )
+    assert.ok(
+      resolveProviderCompatibilityLiveSmokeStatus(presetId, {}).every(
+        (status) => status.ready === false && status.missingEnv.length === status.gate.requiredEnv.length
+      ),
+      `compatibility live smoke gates for ${presetId} stay skipped without explicit env`
+    )
+  }
+  for (const presetId of presetIds) {
+    const statusMap = buildProviderCompatibilityBehaviorStatusMap(presetId)
+    for (const behavior of CANONICAL_PROVIDER_COMPATIBILITY_BEHAVIORS) {
+      assert.ok(
+        ['supported', 'partial', 'unsupported', 'requiresLiveKey', 'docsChanged'].includes(statusMap[behavior]),
+        `compatibility capability ${presetId}:${behavior} resolves to a canonical status`
+      )
+      if (!providerCompatibilityEvidenceHasBehavior(presetId, behavior)) {
+        assert.equal(statusMap[behavior], 'unsupported', `unclaimed compatibility capability ${presetId}:${behavior} fails closed`)
+      }
+    }
+  }
+  assert.equal(
+    resolveProviderCompatibilityCapabilityStatus('openai', 'structuredOutput'),
+    'supported',
+    'conformance-ready documented capabilities resolve as supported'
+  )
+  assert.equal(
+    resolveProviderCompatibilityCapabilityStatus('aws-bedrock', 'chat'),
+    'requiresLiveKey',
+    'hosted capabilities behind live smoke resolve as requiresLiveKey'
+  )
+  assert.equal(
+    resolveProviderCompatibilityCapabilityStatus('sub2api', 'relayRouting'),
+    'requiresLiveKey',
+    'relay capabilities behind supplier smoke resolve as requiresLiveKey'
+  )
+  assert.equal(
+    resolveProviderCompatibilityCapabilityStatus('custom-openai-compatible', 'contextLimit'),
+    'partial',
+    'protocol-reference core policy axes stay partial until a declared endpoint is proven'
+  )
+  assert.equal(
+    resolveProviderCompatibilityCapabilityStatus('bigmodel', 'structuredOutput'),
+    'unsupported',
+    'undocumented request controls remain unsupported even when the provider is otherwise conformance-ready'
+  )
+  assert.equal(
+    providerCompatibilityCapabilityCanBeSent('openai', 'structuredOutput'),
+    true,
+    'supported compatibility capabilities can be used by request builders'
+  )
+  assert.equal(
+    providerCompatibilityCapabilityCanBeSent('bigmodel', 'structuredOutput'),
+    false,
+    'unsupported compatibility capabilities cannot be used by request builders'
+  )
+  const bigmodelDeclaredStructuredPolicy = resolveProviderCompatibilityCapabilitySendPolicy(
+    { id: 'bigmodel', type: 'openai-compatible', presetId: 'bigmodel' },
+    'structuredOutput',
+    true
+  )
+  assert.equal(bigmodelDeclaredStructuredPolicy.allowed, false, 'conformance-ready providers cannot open unsupported request controls through local declarations')
+  assert.equal(bigmodelDeclaredStructuredPolicy.sendSource, 'blocked', 'unsupported conformance-ready request controls stay visibly blocked')
+  const sub2apiDeclaredStructuredPolicy = resolveProviderCompatibilityCapabilitySendPolicy(
+    { id: 'sub2api-relay', type: 'openai-compatible', presetId: 'sub2api' },
+    'structuredOutput',
+    true
+  )
+  assert.equal(sub2apiDeclaredStructuredPolicy.status, 'unsupported', 'Sub2API structured output remains unclaimed by the preset contract')
+  assert.equal(sub2apiDeclaredStructuredPolicy.allowed, true, 'Sub2API relay-specific declarations can still open supplier-proven request controls')
+  assert.equal(sub2apiDeclaredStructuredPolicy.sendSource, 'explicit_declaration', 'declaration-opened Sub2API capabilities are observable as explicit declarations')
+  const newApiDeclaredVisionPolicy = resolveProviderCompatibilityCapabilitySendPolicy(
+    { id: 'newapi-relay', type: 'openai-compatible', presetId: 'newapi' },
+    'vision',
+    true
+  )
+  assert.equal(newApiDeclaredVisionPolicy.status, 'unsupported', 'NewAPI provider-wide vision remains unclaimed by the preset contract')
+  assert.equal(newApiDeclaredVisionPolicy.allowed, true, 'NewAPI relay-specific model metadata can open image input without promoting the whole preset')
+  assert.equal(newApiDeclaredVisionPolicy.sendSource, 'explicit_declaration', 'NewAPI metadata-opened vision is observable as an explicit declaration')
+  const newApiDeclaredFilePolicy = resolveProviderCompatibilityCapabilitySendPolicy(
+    { id: 'newapi-relay', type: 'openai-compatible', presetId: 'newapi' },
+    'files',
+    true
+  )
+  assert.equal(newApiDeclaredFilePolicy.allowed, false, 'NewAPI explicit declarations do not open generic file_data while the Files surface is unimplemented')
+  assert.equal(
+    providerCompatibilityCapabilityExplicitlyDeclaredByProvider({ capabilities: { embeddings: true } }, 'embeddings'),
+    true,
+    'provider capabilities can explicitly declare embeddings as a contract capability'
+  )
+  assert.equal(
+    providerCompatibilityCapabilityExplicitlyDeclaredByProvider({ capabilities: { rerank: true } }, 'rerank'),
+    true,
+    'provider capabilities can explicitly declare rerank without enabling an unimplemented request path'
+  )
+  const customDeclaredEmbeddingPolicy = resolveProviderCompatibilityCapabilitySendPolicy(
+    { id: 'custom-embedding', type: 'openai-compatible', presetId: 'custom-openai-compatible', capabilities: { embeddings: true } },
+    'embeddings',
+    true
+  )
+  assert.equal(customDeclaredEmbeddingPolicy.status, 'unsupported', 'custom OpenAI-compatible embeddings remain unclaimed by the generic preset contract')
+  assert.equal(customDeclaredEmbeddingPolicy.allowed, true, 'custom OpenAI-compatible embeddings can open only through explicit endpoint declaration')
+  assert.equal(customDeclaredEmbeddingPolicy.sendSource, 'explicit_declaration', 'custom embedding send policy records the explicit declaration source')
+  const bigmodelDeclaredEmbeddingPolicy = resolveProviderCompatibilityCapabilitySendPolicy(
+    { id: 'bigmodel-embedding', type: 'openai-compatible', presetId: 'bigmodel', capabilities: { embeddings: true } },
+    'embeddings',
+    true
+  )
+  assert.equal(bigmodelDeclaredEmbeddingPolicy.allowed, false, 'conformance-ready providers cannot open undocumented embeddings through local declarations')
+  const newApiDeclaredEmbeddingPolicy = resolveProviderCompatibilityCapabilitySendPolicy(
+    { id: 'newapi-embedding', type: 'openai-compatible', presetId: 'newapi', capabilities: { embeddings: true } },
+    'embeddings',
+    true
+  )
+  assert.equal(newApiDeclaredEmbeddingPolicy.allowed, false, 'relay providers cannot open embeddings until relay embedding routing is source-backed')
+  assert.equal(
+    providerCompatibilityCapabilityCanBeSentForProvider({ id: 'custom-rerank', type: 'openai-compatible', presetId: 'custom-openai-compatible', capabilities: { rerank: true } }, 'rerank', true),
+    false,
+    'provider rerank declarations stay blocked until an app request path exists'
+  )
+  assert.equal(resolveProviderCompatibilityCapabilityStatus('openai', 'responsesApi'), 'supported', 'OpenAI Responses API is a canonical supported contract capability')
+  assert.equal(resolveProviderCompatibilityCapabilityStatus('openai', 'responsesWebSocket'), 'supported', 'OpenAI Responses WebSocket is a canonical supported contract capability')
+  assert.equal(resolveProviderCompatibilityCapabilityStatus('openai', 'remoteCompact'), 'supported', 'OpenAI remote compact is a canonical supported contract capability')
+  assert.equal(resolveProviderCompatibilityCapabilityStatus('custom-openai-compatible', 'responsesApi'), 'unsupported', 'custom compatible endpoints do not inherit Responses routing by default')
+  assert.equal(
+    providerCompatibilityCapabilityCanBeSentForProvider({ id: 'custom-responses', type: 'openai-compatible', presetId: 'custom-openai-compatible' }, 'responsesApi', true),
+    true,
+    'provider-aware Responses capability accepts explicit custom endpoint declarations'
+  )
+  assert.equal(
+    providerCompatibilityCapabilityCanBeSentForProvider({ id: 'custom-responses', type: 'openai-compatible', presetId: 'custom-openai-compatible' }, 'remoteCompact', true),
+    true,
+    'provider-aware remote compact accepts explicit custom endpoint declarations while UI summaries keep the capability partial until conformance-ready'
+  )
+  assert.equal(
+    providerCompatibilityCapabilityCanBeSentForProvider({ id: 'custom-websocket', type: 'openai-compatible', presetId: 'custom-openai-compatible' }, 'responsesWebSocket', true),
+    false,
+    'provider-aware Responses WebSocket rejects explicit custom endpoint declarations until the transport path has contract evidence'
+  )
+  assert.equal(
+    resolveProviderCompatibilityCapabilityStatus('openai', 'nativeSearch'),
+    'supported',
+    'official native-search providers expose nativeSearch as a canonical contract capability'
+  )
+  assert.equal(
+    resolveProviderCompatibilityCapabilityStatus('custom-openai-compatible', 'nativeSearch'),
+    'unsupported',
+    'custom compatible endpoints do not inherit nativeSearch from OpenAI protocol references'
+  )
+  assert.equal(
+    providerCompatibilityCapabilityCanBeSentForProvider({ id: 'openai', type: 'openai' }, 'nativeSearch'),
+    true,
+    'provider-aware nativeSearch allows canonical official provider identities'
+  )
+  assert.equal(
+    resolveProviderCompatibilityCapabilitySendPolicy({ id: 'openai', type: 'openai' }, 'nativeSearch').sendSource,
+    'provider_identity',
+    'official native-search providers expose identity-bound send policy evidence'
+  )
+  assert.equal(
+    providerCompatibilityCapabilityCanBeSentForProvider({ id: 'anthropic-no-search', type: 'anthropic' }, 'nativeSearch'),
+    false,
+    'provider-aware nativeSearch does not enable a bare provider type without preset identity or declaration'
+  )
+  assert.equal(
+    resolveProviderCompatibilityCapabilitySendPolicy({ id: 'anthropic-no-search', type: 'anthropic' }, 'nativeSearch').sendSource,
+    'blocked',
+    'bare provider-type native search remains visibly blocked until identity or declaration evidence exists'
+  )
+  assert.equal(
+    providerCompatibilityCapabilityCanBeSentForProvider({ id: 'custom-search', type: 'openai-compatible', presetId: 'custom-openai-compatible' }, 'nativeSearch', true),
+    true,
+    'provider-aware nativeSearch accepts explicit custom endpoint declarations'
+  )
+  assert.ok(
+    getProviderCompatibilityLiveSmokeGates('azure-openai').some((gate) => gate.requiredEnv.includes('ISLEMIND_AZURE_OPENAI_API_KEY')),
+    'Azure OpenAI records an optional live smoke gate even though offline conformance is ready'
+  )
+  assert.ok(
+    getProviderCompatibilityLiveSmokeGates('xiaomi-mimo').some((gate) => gate.validates.includes('nativeSearch') && gate.validates.includes('citations')),
+    'Xiaomi MiMo live smoke gate keeps native-search and citation verification explicit'
+  )
+  const bedrockRuntimeSmoke = resolveProviderCompatibilityLiveSmokeStatus('aws-bedrock', {
+    AWS_ACCESS_KEY_ID: 'AKIDEXAMPLE',
+    AWS_SECRET_ACCESS_KEY: 'secret',
+    AWS_REGION: 'us-east-1',
+    ISLEMIND_AWS_BEDROCK_RUNTIME_MODEL: 'anthropic.claude-3-5-sonnet-20240620-v1:0',
+  }).find((status) => status.gate.id === 'aws-bedrock-runtime-invoke')
+  assert.equal(bedrockRuntimeSmoke?.ready, true, 'AWS Bedrock Runtime live smoke gate becomes ready only with SigV4 env and model id')
+  const vertexSmoke = resolveProviderCompatibilityLiveSmokeStatus('vertex-ai', {
+    ISLEMIND_VERTEX_AI_PROJECT: 'islemind-test-project',
+    ISLEMIND_VERTEX_AI_LOCATION: 'us-central1',
+    ISLEMIND_VERTEX_AI_ACCESS_TOKEN: 'ya29.example',
+    ISLEMIND_VERTEX_AI_MODEL: 'google/gemini-2.5-flash',
+  })[0]
+  assert.equal(vertexSmoke.ready, true, 'Vertex AI live smoke gate becomes ready only with project, region, token, and model id')
+  const sub2apiSmoke = resolveProviderCompatibilityLiveSmokeStatus('sub2api', {
+    ISLEMIND_SUB2API_BASE_URL: ' ',
+    ISLEMIND_SUB2API_API_KEY: 'sub2api-key',
+    ISLEMIND_SUB2API_MODEL: 'supplier/gpt-5.2',
+  })[0]
+  assert.deepEqual(
+    sub2apiSmoke.missingEnv,
+    ['ISLEMIND_SUB2API_BASE_URL'],
+    'Sub2API live smoke gate treats blank env as missing and keeps supplier-backed routing explicit'
+  )
+  const emptyLiveSmokePlan = collectProviderCompatibilityLiveSmokePlan({ env: {}, generatedAt: '2026-06-21T00:00:00.000Z' })
+  assert.equal(emptyLiveSmokePlan.schema, providerCompatibilityLiveSmokePlanSchema, 'provider live smoke plan uses the shared plan schema')
+  assert.equal(emptyLiveSmokePlan.mode, 'plan-only', 'provider live smoke plan does not claim live execution')
+  assert.equal(emptyLiveSmokePlan.summary.readyGateCount, 0, 'provider live smoke plan stays skipped without explicit env')
+  assert.ok(
+    emptyLiveSmokePlan.providers.some((provider) => provider.providerId === 'sub2api') &&
+      emptyLiveSmokePlan.providers.some((provider) => provider.providerId === 'aws-bedrock') &&
+      emptyLiveSmokePlan.providers.some((provider) => provider.providerId === 'ollama'),
+    'provider live smoke plan covers relay, hosted, and local-runtime gates'
+  )
+  assert.ok(
+    emptyLiveSmokePlan.summary.missingEnv.includes('ISLEMIND_SUB2API_BASE_URL') &&
+      emptyLiveSmokePlan.summary.missingEnv.includes('ISLEMIND_OLLAMA_BASE_URL'),
+    'provider live smoke plan summarizes missing env names without values'
+  )
+  const readyRuntimePlan = collectProviderCompatibilityLiveSmokePlan({
+    env: {
+      AWS_ACCESS_KEY_ID: 'AKIDEXAMPLE',
+      AWS_SECRET_ACCESS_KEY: 'secret-value',
+      AWS_REGION: 'us-east-1',
+      ISLEMIND_AWS_BEDROCK_RUNTIME_MODEL: 'anthropic.claude-3-5-sonnet-20240620-v1:0',
+    },
+    providerIds: ['aws-bedrock'],
+    generatedAt: '2026-06-21T00:00:00.000Z',
+  })
+  assert.equal(
+    readyRuntimePlan.providers[0].gates.find((gate) => gate.id === 'aws-bedrock-runtime-invoke')?.status,
+    'ready',
+    'provider live smoke plan marks a gate ready only when its env contract is satisfied'
+  )
+  assert.ok(
+    !JSON.stringify(readyRuntimePlan).includes('secret-value') &&
+      !JSON.stringify(readyRuntimePlan).includes('AKIDEXAMPLE'),
+    'provider live smoke plan never serializes credential values'
+  )
+  assert.ok(
+    formatProviderCompatibilityLiveSmokePlanSummary(emptyLiveSmokePlan).includes('skipped=') &&
+      providerCompatibilityLiveSmokePlanDefaultOutput === 'test-evidence/qa/provider-compatibility-live-smoke-plan.json',
+    'provider live smoke plan has a stable ignored evidence output path and human summary'
+  )
+
+  assert.equal(
+    getProviderCompatibilityEvidence('openai').auditState,
+    'conformance-ready',
+    'OpenAI compatibility evidence is ready for provider conformance gates'
+  )
+  assert.ok(
+    getProviderCompatibilityEvidence('openai').endpointFamilies.includes('/v1/responses') &&
+      providerCompatibilityEvidenceHasBehavior('openai', 'structuredOutput') &&
+      providerCompatibilityEvidenceHasBehavior('openai', 'files'),
+    'OpenAI compatibility evidence covers Responses, structured output, and files'
+  )
+  assert.equal(
+    getProviderCompatibilityEvidence('moonshot').auditState,
+    'conformance-ready',
+    'Moonshot/Kimi compatibility evidence is ready once K2 thinking and tool replay have offline coverage'
+  )
+  assert.ok(
+    getProviderCompatibilityEvidence('moonshot').officialDocs.some((url) => url.includes('platform.kimi.ai/docs/guide/use-kimi-k2-thinking-model')) &&
+      providerCompatibilityEvidenceHasBehavior('moonshot', 'reasoning') &&
+      providerCompatibilityEvidenceHasBehavior('moonshot', 'tools') &&
+      providerCompatibilityEvidenceHasBehavior('moonshot', 'vision'),
+    'Moonshot/Kimi compatibility evidence records official docs for thinking, tools, and vision behavior'
+  )
+  assert.equal(
+    getProviderCompatibilityEvidence('bigmodel').auditState,
+    'conformance-ready',
+    'BigModel/GLM compatibility evidence is ready once conservative GLM chat, tools, vision, unsupported surfaces, and diagnostics have focused coverage'
+  )
+  assert.ok(
+    getProviderCompatibilityEvidence('bigmodel').officialDocs.some((url) => url.includes('/api-reference/%E6%A8%A1%E5%9E%8B-api/%E5%AF%B9%E8%AF%9D%E8%A1%A5%E5%85%A8')) &&
+      !getProviderCompatibilityEvidence('bigmodel').officialDocs.some((url) => url.includes('/cn/api/paas/v4/chat-completions')),
+    'BigModel/GLM compatibility evidence uses the current API-reference page instead of the stale 404 path'
+  )
+  assert.ok(
+    !getProviderCompatibilityEvidence('bigmodel').endpointFamilies.some((endpoint) => endpoint.includes('/models')) &&
+      !providerCompatibilityEvidenceHasBehavior('bigmodel', 'modelList') &&
+      !providerCompatibilityEvidenceHasBehavior('bigmodel', 'files') &&
+      !providerCompatibilityEvidenceHasBehavior('bigmodel', 'structuredOutput'),
+    'BigModel/GLM compatibility evidence avoids undocumented generic /models sync, local file_data attachment, and unimplemented response_format claims'
+  )
+  assert.equal(
+    providerCompatibilityEvidenceHasBehavior('bigmodel', 'reasoning'),
+    false,
+    'BigModel/GLM compatibility evidence does not claim reasoning until source-backed GLM thinking fixtures exist'
+  )
+  assert.equal(
+    getProviderCompatibilityEvidence('tencent-hunyuan').auditState,
+    'conformance-ready',
+    'Tencent Hunyuan compatibility evidence is ready once chat, model-list, tools, vision, unsupported surfaces, and diagnostics have focused coverage'
+  )
+  assert.ok(
+    getProviderCompatibilityEvidence('tencent-hunyuan').officialDocs.some((url) => url.includes('cloud.tencent.com/document/product/1729/111007')) &&
+      getProviderCompatibilityEvidence('tencent-hunyuan').endpointFamilies.includes('/v1/models') &&
+      providerCompatibilityEvidenceHasBehavior('tencent-hunyuan', 'tools') &&
+      providerCompatibilityEvidenceHasBehavior('tencent-hunyuan', 'vision') &&
+      providerCompatibilityEvidenceHasBehavior('tencent-hunyuan', 'modelList'),
+    'Tencent Hunyuan compatibility evidence records official docs for chat, models, tools, and vision behavior'
+  )
+  assert.ok(
+    !providerCompatibilityEvidenceHasBehavior('tencent-hunyuan', 'files') &&
+      !providerCompatibilityEvidenceHasBehavior('tencent-hunyuan', 'structuredOutput') &&
+      !providerCompatibilityEvidenceHasBehavior('tencent-hunyuan', 'reasoning') &&
+      !providerCompatibilityEvidenceHasBehavior('tencent-hunyuan', 'audio'),
+    'Tencent Hunyuan compatibility evidence avoids file, response_format, reasoning, and audio claims before source-backed routing exists'
+  )
+  assert.equal(
+    getProviderCompatibilityEvidence('baidu-qianfan').auditState,
+    'conformance-ready',
+    'Baidu Qianfan compatibility evidence is ready once chat, model-list, tools, vision, unsupported surfaces, and diagnostics have focused coverage'
+  )
+  assert.ok(
+    getProviderCompatibilityEvidence('baidu-qianfan').officialDocs.some((url) => url.includes('cloud.baidu.com/doc/WENXINWORKSHOP/s/Fm2vrveyu')) &&
+      getProviderCompatibilityEvidence('baidu-qianfan').endpointFamilies.includes('/v2/models') &&
+      providerCompatibilityEvidenceHasBehavior('baidu-qianfan', 'tools') &&
+      providerCompatibilityEvidenceHasBehavior('baidu-qianfan', 'vision') &&
+      providerCompatibilityEvidenceHasBehavior('baidu-qianfan', 'modelList'),
+    'Baidu Qianfan compatibility evidence records official docs for chat, models, tools, and vision behavior'
+  )
+  assert.ok(
+    !providerCompatibilityEvidenceHasBehavior('baidu-qianfan', 'files') &&
+      !providerCompatibilityEvidenceHasBehavior('baidu-qianfan', 'structuredOutput') &&
+      !providerCompatibilityEvidenceHasBehavior('baidu-qianfan', 'reasoning') &&
+      !providerCompatibilityEvidenceHasBehavior('baidu-qianfan', 'audio'),
+    'Baidu Qianfan compatibility evidence avoids file, response_format, reasoning, and audio claims before source-backed routing exists'
+  )
+  assert.equal(
+    getProviderCompatibilityEvidence('baichuan').auditState,
+    'conformance-ready',
+    'Baichuan compatibility evidence is ready once core chat, unsupported surfaces, and diagnostics have focused coverage'
+  )
+  assert.ok(
+    getProviderCompatibilityEvidence('baichuan').officialDocs.some((url) => url.includes('platform.baichuan-ai.com/docs/api')) &&
+      getProviderCompatibilityEvidence('baichuan').endpointFamilies.includes('/v1/chat/completions'),
+    'Baichuan compatibility evidence records official docs for chat completions behavior'
+  )
+  assert.ok(
+    !getProviderCompatibilityEvidence('baichuan').endpointFamilies.some((endpoint) => endpoint.includes('/models')) &&
+      !providerCompatibilityEvidenceHasBehavior('baichuan', 'modelList') &&
+      !providerCompatibilityEvidenceHasBehavior('baichuan', 'tools') &&
+      !providerCompatibilityEvidenceHasBehavior('baichuan', 'vision') &&
+      !providerCompatibilityEvidenceHasBehavior('baichuan', 'files') &&
+      !providerCompatibilityEvidenceHasBehavior('baichuan', 'structuredOutput') &&
+      !providerCompatibilityEvidenceHasBehavior('baichuan', 'reasoning') &&
+      !providerCompatibilityEvidenceHasBehavior('baichuan', 'audio'),
+    'Baichuan compatibility evidence avoids /models, tools, vision, file, response_format, reasoning, and audio claims before source-backed routing exists'
+  )
+  assert.equal(
+    getProviderCompatibilityEvidence('zero-one').auditState,
+    'conformance-ready',
+    '01.AI compatibility evidence is ready once chat, model-list, tools, vision, unsupported surfaces, and diagnostics have focused coverage'
+  )
+  assert.ok(
+    getProviderCompatibilityEvidence('zero-one').officialDocs.some((url) => url.includes('platform.lingyiwanwu.com/docs/api-reference')) &&
+      getProviderCompatibilityEvidence('zero-one').endpointFamilies.includes('/v1/models') &&
+      providerCompatibilityEvidenceHasBehavior('zero-one', 'tools') &&
+      providerCompatibilityEvidenceHasBehavior('zero-one', 'vision') &&
+      providerCompatibilityEvidenceHasBehavior('zero-one', 'modelList'),
+    '01.AI compatibility evidence records official docs for chat, models, tools, and vision behavior'
+  )
+  assert.ok(
+    !providerCompatibilityEvidenceHasBehavior('zero-one', 'files') &&
+      !providerCompatibilityEvidenceHasBehavior('zero-one', 'structuredOutput') &&
+      !providerCompatibilityEvidenceHasBehavior('zero-one', 'reasoning') &&
+      !providerCompatibilityEvidenceHasBehavior('zero-one', 'audio'),
+    '01.AI compatibility evidence avoids file, response_format, reasoning, and audio claims before source-backed routing exists'
+  )
+  assert.equal(
+    getProviderCompatibilityEvidence('stepfun').auditState,
+    'conformance-ready',
+    'StepFun compatibility evidence is ready once current docs, chat, model-list, tools, vision, unsupported surfaces, and diagnostics have focused coverage'
+  )
+  assert.ok(
+    getProviderCompatibilityEvidence('stepfun').officialDocs.some((url) => url.includes('/docs/zh/api-reference/chat/chat-completion-create')) &&
+      !getProviderCompatibilityEvidence('stepfun').officialDocs.some((url) => url.includes('/docs/llm/chat-completion')) &&
+      getProviderCompatibilityEvidence('stepfun').endpointFamilies.includes('/v1/models') &&
+      providerCompatibilityEvidenceHasBehavior('stepfun', 'tools') &&
+      providerCompatibilityEvidenceHasBehavior('stepfun', 'vision') &&
+      providerCompatibilityEvidenceHasBehavior('stepfun', 'modelList'),
+    'StepFun compatibility evidence records current official docs for chat, models, tools, and vision behavior'
+  )
+  assert.ok(
+    !providerCompatibilityEvidenceHasBehavior('stepfun', 'files') &&
+      !providerCompatibilityEvidenceHasBehavior('stepfun', 'structuredOutput') &&
+      !providerCompatibilityEvidenceHasBehavior('stepfun', 'reasoning') &&
+      !providerCompatibilityEvidenceHasBehavior('stepfun', 'audio'),
+    'StepFun compatibility evidence avoids file, response_format, reasoning, and audio claims before source-backed routing exists'
+  )
+  assert.equal(
+    getProviderCompatibilityEvidence('dashscope').auditState,
+    'conformance-ready',
+    'DashScope/Qwen compatibility evidence is promoted once chat, thinking, stream usage, tools, vision, and unsupported surfaces have focused coverage'
+  )
+  assert.ok(
+    getProviderCompatibilityEvidence('dashscope').officialDocs.some((url) => url.includes('compatibility-of-openai-with-dashscope')) &&
+      getProviderCompatibilityEvidence('dashscope').officialDocs.some((url) => url.includes('/qwen-api-via-openai-chat-completions')) &&
+      getProviderCompatibilityEvidence('dashscope').officialDocs.some((url) => url.includes('/deep-thinking')) &&
+      getProviderCompatibilityEvidence('dashscope').officialDocs.some((url) => url.includes('/qwen-omni')) &&
+      providerCompatibilityEvidenceHasBehavior('dashscope', 'reasoning') &&
+      providerCompatibilityEvidenceHasBehavior('dashscope', 'tools') &&
+      providerCompatibilityEvidenceHasBehavior('dashscope', 'vision'),
+    'DashScope/Qwen compatibility evidence records official docs for compatible chat, Qwen-Omni vision, thinking, and tools'
+  )
+  assert.ok(
+    !getProviderCompatibilityEvidence('dashscope').endpointFamilies.some((endpoint) => endpoint.includes('/models')) &&
+      !providerCompatibilityEvidenceHasBehavior('dashscope', 'modelList') &&
+      !providerCompatibilityEvidenceHasBehavior('dashscope', 'files') &&
+      !providerCompatibilityEvidenceHasBehavior('dashscope', 'structuredOutput') &&
+      !providerCompatibilityEvidenceHasBehavior('dashscope', 'audio'),
+    'DashScope/Qwen compatibility evidence avoids undocumented /models, generic file_data, response_format, and unimplemented chat-audio claims'
+  )
+  assert.equal(
+    getProviderCompatibilityEvidence('minimax').auditState,
+    'conformance-ready',
+    'MiniMax compatibility evidence is ready once adaptive thinking and reasoning-split behavior have focused coverage'
+  )
+  assert.ok(
+    getProviderCompatibilityEvidence('minimax').officialDocs.some((url) => url.includes('openapi-chat-openai.json')) &&
+      getProviderCompatibilityEvidence('minimax').endpointFamilies.includes('/v1/chat/completions') &&
+      providerCompatibilityEvidenceHasBehavior('minimax', 'reasoning') &&
+      providerCompatibilityEvidenceHasBehavior('minimax', 'tools') &&
+      providerCompatibilityEvidenceHasBehavior('minimax', 'vision'),
+    'MiniMax compatibility evidence records official OpenAI-compatible chat docs for reasoning, tools, image, and video behavior'
+  )
+  assert.ok(
+    !getProviderCompatibilityEvidence('minimax').endpointFamilies.some((endpoint) => endpoint.includes('/models')) &&
+      !providerCompatibilityEvidenceHasBehavior('minimax', 'modelList') &&
+      !providerCompatibilityEvidenceHasBehavior('minimax', 'files'),
+    'MiniMax compatibility evidence avoids unsupported /models and generic file_data attachment claims'
+  )
+  assert.equal(
+    getProviderCompatibilityEvidence('mistral').auditState,
+    'conformance-ready',
+    'Mistral compatibility evidence is promoted once chat, model sync, tools, vision, embeddings, and Magistral reasoning chunks have focused coverage'
+  )
+  assert.ok(
+    getProviderCompatibilityEvidence('mistral').officialDocs.some((url) => url.includes('llms-full.txt')) &&
+      getProviderCompatibilityEvidence('mistral').officialDocs.some((url) => url.includes('/api/endpoint/chat')) &&
+      getProviderCompatibilityEvidence('mistral').officialDocs.some((url) => url.includes('mistral-function_calling-function_calling')) &&
+      getProviderCompatibilityEvidence('mistral').officialDocs.some((url) => url.includes('mistral-image_understanding-multimodality_meets_function_calling')) &&
+      getProviderCompatibilityEvidence('mistral').officialDocs.some((url) => url.includes('/api/endpoint/audio/transcriptions')) &&
+      getProviderCompatibilityEvidence('mistral').officialDocs.some((url) => url.includes('/api/endpoint/embeddings')) &&
+      getProviderCompatibilityEvidence('mistral').endpointFamilies.includes('/v1/chat/completions') &&
+      getProviderCompatibilityEvidence('mistral').endpointFamilies.includes('/v1/models') &&
+      getProviderCompatibilityEvidence('mistral').endpointFamilies.includes('/v1/embeddings') &&
+      getProviderCompatibilityEvidence('mistral').endpointFamilies.includes('/v1/audio/transcriptions') &&
+      providerCompatibilityEvidenceHasBehavior('mistral', 'tools') &&
+      providerCompatibilityEvidenceHasBehavior('mistral', 'vision') &&
+      providerCompatibilityEvidenceHasBehavior('mistral', 'reasoning') &&
+      providerCompatibilityEvidenceHasBehavior('mistral', 'embeddings'),
+    'Mistral compatibility evidence records current official docs for chat, model sync, tools, vision, audio endpoint evidence, embeddings, and reasoning'
+  )
+  assert.ok(
+    !providerCompatibilityEvidenceHasBehavior('mistral', 'files') &&
+      !providerCompatibilityEvidenceHasBehavior('mistral', 'audio') &&
+      !providerCompatibilityEvidenceHasBehavior('mistral', 'structuredOutput'),
+    'Mistral compatibility evidence avoids claiming generic file_data attachments, audio runtime paths, and response_format controls before app mapping exists'
+  )
+  assert.equal(
+    getProviderCompatibilityEvidence('groq').auditState,
+    'conformance-ready',
+    'Groq compatibility evidence is promoted once chat, Responses selection, model sync, tools, vision, audio endpoints, and reasoning have focused coverage'
+  )
+  assert.ok(
+    getProviderCompatibilityEvidence('groq').officialDocs.some((url) => url.includes('/docs/openai')) &&
+      getProviderCompatibilityEvidence('groq').officialDocs.some((url) => url.includes('/docs/responses-api')) &&
+      getProviderCompatibilityEvidence('groq').officialDocs.some((url) => url.includes('/docs/speech-to-text')) &&
+      getProviderCompatibilityEvidence('groq').officialDocs.some((url) => url.includes('/docs/text-to-speech')) &&
+      getProviderCompatibilityEvidence('groq').endpointFamilies.includes('/openai/v1/chat/completions') &&
+      getProviderCompatibilityEvidence('groq').endpointFamilies.includes('/openai/v1/responses') &&
+      getProviderCompatibilityEvidence('groq').endpointFamilies.includes('/openai/v1/audio/transcriptions') &&
+      getProviderCompatibilityEvidence('groq').endpointFamilies.includes('/openai/v1/audio/speech') &&
+      providerCompatibilityEvidenceHasBehavior('groq', 'tools') &&
+      providerCompatibilityEvidenceHasBehavior('groq', 'vision') &&
+      providerCompatibilityEvidenceHasBehavior('groq', 'audio') &&
+      providerCompatibilityEvidenceHasBehavior('groq', 'reasoning'),
+    'Groq compatibility evidence records official docs for OpenAI compatibility, Responses, tools, vision, audio, and reasoning'
+  )
+  assert.ok(
+    !providerCompatibilityEvidenceHasBehavior('groq', 'files') &&
+      !providerCompatibilityEvidenceHasBehavior('groq', 'citations') &&
+      !providerCompatibilityEvidenceHasBehavior('groq', 'structuredOutput'),
+    'Groq compatibility evidence avoids claiming files, response_format controls, or Compound/web-search citation behavior before app mapping exists'
+  )
+  assert.equal(
+    getProviderCompatibilityEvidence('together').auditState,
+    'conformance-ready',
+    'Together compatibility evidence is promoted once chat, model sync, tools, vision, embeddings, audio endpoints, and GPT-OSS reasoning have focused coverage'
+  )
+  assert.ok(
+    getProviderCompatibilityEvidence('together').officialDocs.some((url) => url.includes('/docs/inference/openai-compatibility')) &&
+      getProviderCompatibilityEvidence('together').officialDocs.some((url) => url.includes('/reference/chat-completions')) &&
+      getProviderCompatibilityEvidence('together').officialDocs.some((url) => url.includes('/reference/embeddings')) &&
+      getProviderCompatibilityEvidence('together').officialDocs.some((url) => url.includes('/reference/rerank')) &&
+      getProviderCompatibilityEvidence('together').officialDocs.some((url) => url.includes('/reference/audio-transcriptions')) &&
+      getProviderCompatibilityEvidence('together').officialDocs.some((url) => url.includes('/reference/audio-speech')) &&
+      getProviderCompatibilityEvidence('together').endpointFamilies.includes('/v1/chat/completions') &&
+      getProviderCompatibilityEvidence('together').endpointFamilies.includes('/v1/models') &&
+      getProviderCompatibilityEvidence('together').endpointFamilies.includes('/v1/embeddings') &&
+      getProviderCompatibilityEvidence('together').endpointFamilies.includes('/v1/rerank') &&
+      getProviderCompatibilityEvidence('together').endpointFamilies.includes('/v1/audio/transcriptions') &&
+      getProviderCompatibilityEvidence('together').endpointFamilies.includes('/v1/audio/speech') &&
+      providerCompatibilityEvidenceHasBehavior('together', 'tools') &&
+      providerCompatibilityEvidenceHasBehavior('together', 'vision') &&
+      providerCompatibilityEvidenceHasBehavior('together', 'audio') &&
+      providerCompatibilityEvidenceHasBehavior('together', 'embeddings') &&
+      providerCompatibilityEvidenceHasBehavior('together', 'reasoning'),
+    'Together compatibility evidence records official docs for chat, tools, vision, audio, embeddings, rerank endpoint evidence, and reasoning'
+  )
+  assert.ok(
+    !providerCompatibilityEvidenceHasBehavior('together', 'files') &&
+      !providerCompatibilityEvidenceHasBehavior('together', 'structuredOutput') &&
+      !providerCompatibilityEvidenceHasBehavior('together', 'rerank'),
+    'Together compatibility evidence avoids claiming generic file attachments, response_format controls, and native rerank routing before app mapping exists'
+  )
+  assert.equal(
+    getProviderCompatibilityEvidence('fireworks').auditState,
+    'conformance-ready',
+    'Fireworks compatibility evidence is promoted once chat, Responses selection, model sync, tools, vision, embeddings, and reasoning have focused coverage'
+  )
+  assert.ok(
+    getProviderCompatibilityEvidence('fireworks').officialDocs.some((url) => url.includes('/api-reference/post-chatcompletions')) &&
+      getProviderCompatibilityEvidence('fireworks').officialDocs.some((url) => url.includes('/api-reference/post-responses')) &&
+      getProviderCompatibilityEvidence('fireworks').officialDocs.some((url) => url.includes('/guides/reasoning')) &&
+      getProviderCompatibilityEvidence('fireworks').officialDocs.some((url) => url.includes('/structured-responses/structured-response-formatting')) &&
+      getProviderCompatibilityEvidence('fireworks').officialDocs.some((url) => url.includes('/api-reference/rerank-documents')) &&
+      getProviderCompatibilityEvidence('fireworks').endpointFamilies.includes('/inference/v1/chat/completions') &&
+      getProviderCompatibilityEvidence('fireworks').endpointFamilies.includes('/inference/v1/responses') &&
+      getProviderCompatibilityEvidence('fireworks').endpointFamilies.includes('/inference/v1/models') &&
+      getProviderCompatibilityEvidence('fireworks').endpointFamilies.includes('/inference/v1/embeddings') &&
+      getProviderCompatibilityEvidence('fireworks').endpointFamilies.includes('/inference/v1/rerank') &&
+      providerCompatibilityEvidenceHasBehavior('fireworks', 'tools') &&
+      providerCompatibilityEvidenceHasBehavior('fireworks', 'vision') &&
+      providerCompatibilityEvidenceHasBehavior('fireworks', 'embeddings') &&
+      providerCompatibilityEvidenceHasBehavior('fireworks', 'reasoning'),
+    'Fireworks compatibility evidence records official docs for chat, responses, tools, embeddings, rerank endpoint evidence, vision, and reasoning'
+  )
+  assert.ok(
+    !providerCompatibilityEvidenceHasBehavior('fireworks', 'files') &&
+      !providerCompatibilityEvidenceHasBehavior('fireworks', 'audio') &&
+      !providerCompatibilityEvidenceHasBehavior('fireworks', 'structuredOutput') &&
+      !providerCompatibilityEvidenceHasBehavior('fireworks', 'rerank'),
+    'Fireworks compatibility evidence avoids claiming generic file attachments, chat audio/video inputs, response_format controls, and native rerank routing before app mapping exists'
+  )
+  assert.equal(
+    getProviderCompatibilityEvidence('perplexity').auditState,
+    'conformance-ready',
+    'Perplexity compatibility evidence is promoted once Sonar routing, media, reasoning, and citations have focused coverage'
+  )
+  assert.ok(
+    getProviderCompatibilityEvidence('perplexity').officialDocs.some((url) => url.includes('/api-reference/sonar-post.md')) &&
+      getProviderCompatibilityEvidence('perplexity').officialDocs.some((url) => url.includes('/docs/sonar/media.md')) &&
+      getProviderCompatibilityEvidence('perplexity').officialDocs.some((url) => url.includes('/docs/sonar/features.md')) &&
+      getProviderCompatibilityEvidence('perplexity').endpointFamilies.includes('/v1/sonar') &&
+      getProviderCompatibilityEvidence('perplexity').endpointFamilies.includes('/v1/async/sonar') &&
+      providerCompatibilityEvidenceHasBehavior('perplexity', 'structuredOutput') &&
+      providerCompatibilityEvidenceHasBehavior('perplexity', 'vision') &&
+      providerCompatibilityEvidenceHasBehavior('perplexity', 'files') &&
+      providerCompatibilityEvidenceHasBehavior('perplexity', 'reasoning') &&
+      providerCompatibilityEvidenceHasBehavior('perplexity', 'citations'),
+    'Perplexity compatibility evidence records official Sonar docs for chat, JSON schema, media, reasoning, and citations'
+  )
+  assert.ok(
+    !getProviderCompatibilityEvidence('perplexity').endpointFamilies.some((endpoint) => endpoint.includes('/models')) &&
+      !providerCompatibilityEvidenceHasBehavior('perplexity', 'modelList') &&
+      !providerCompatibilityEvidenceHasBehavior('perplexity', 'tools'),
+    'Perplexity compatibility evidence avoids undocumented /models sync and OpenAI-format tool claims'
+  )
+  assert.equal(
+    getProviderCompatibilityEvidence('cohere').auditState,
+    'conformance-ready',
+    'Cohere compatibility evidence is promoted once Compatibility API chat, tools, structured output, audio, embeddings, and none/high reasoning have focused coverage'
+  )
+  assert.ok(
+    getProviderCompatibilityEvidence('cohere').officialDocs.some((url) => url.includes('/docs/compatibility-api.md')) &&
+      getProviderCompatibilityEvidence('cohere').officialDocs.some((url) => url.includes('/docs/models.md')) &&
+      getProviderCompatibilityEvidence('cohere').endpointFamilies.includes('/compatibility/v1/chat/completions') &&
+      getProviderCompatibilityEvidence('cohere').endpointFamilies.includes('/compatibility/v1/embeddings') &&
+      getProviderCompatibilityEvidence('cohere').endpointFamilies.includes('/compatibility/v1/audio/transcriptions') &&
+      getProviderCompatibilityEvidence('cohere').endpointFamilies.includes('/v2/rerank') &&
+      providerCompatibilityEvidenceHasBehavior('cohere', 'tools') &&
+      providerCompatibilityEvidenceHasBehavior('cohere', 'structuredOutput') &&
+      providerCompatibilityEvidenceHasBehavior('cohere', 'reasoning') &&
+      providerCompatibilityEvidenceHasBehavior('cohere', 'audio') &&
+      providerCompatibilityEvidenceHasBehavior('cohere', 'embeddings') &&
+      !providerCompatibilityEvidenceHasBehavior('cohere', 'rerank') &&
+      resolveProviderCompatibilityCapabilityStatus('cohere', 'rerank') === 'unsupported',
+    'Cohere compatibility evidence records official rerank endpoint docs while keeping app-level rerank unsupported until runtime routing exists'
+  )
+  assert.ok(
+    !providerCompatibilityEvidenceHasBehavior('cohere', 'files') &&
+      !providerCompatibilityEvidenceHasBehavior('cohere', 'modelList') &&
+      !providerCompatibilityEvidenceHasBehavior('cohere', 'citations'),
+    'Cohere compatibility evidence avoids generic file attachments, generic model-list sync, and native document citation claims before app routing exists'
+  )
+  assert.equal(
+    getProviderCompatibilityEvidence('cerebras').auditState,
+    'conformance-ready',
+    'Cerebras compatibility evidence is ready once chat, tools, structured output, model list, reasoning, and replay field behavior have focused coverage'
+  )
+  assert.ok(
+    getProviderCompatibilityEvidence('cerebras').officialDocs.some((url) => url.includes('/api-reference/chat-completions.md')) &&
+      getProviderCompatibilityEvidence('cerebras').officialDocs.some((url) => url.includes('/capabilities/reasoning.md')) &&
+      getProviderCompatibilityEvidence('cerebras').officialDocs.some((url) => url.includes('/models/openai-oss.md')) &&
+      getProviderCompatibilityEvidence('cerebras').officialDocs.some((url) => url.includes('/models/zai-glm-47.md')) &&
+      getProviderCompatibilityEvidence('cerebras').endpointFamilies.includes('/v1/chat/completions') &&
+      getProviderCompatibilityEvidence('cerebras').endpointFamilies.includes('/v1/models') &&
+      providerCompatibilityEvidenceHasBehavior('cerebras', 'tools') &&
+      providerCompatibilityEvidenceHasBehavior('cerebras', 'structuredOutput') &&
+      providerCompatibilityEvidenceHasBehavior('cerebras', 'reasoning') &&
+      providerCompatibilityEvidenceHasBehavior('cerebras', 'modelList'),
+    'Cerebras compatibility evidence records official docs for chat, streaming, tools, JSON/schema output, public models, and model-specific reasoning'
+  )
+  assert.ok(
+    !providerCompatibilityEvidenceHasBehavior('cerebras', 'vision') &&
+      !providerCompatibilityEvidenceHasBehavior('cerebras', 'files') &&
+      !providerCompatibilityEvidenceHasBehavior('cerebras', 'audio') &&
+      !providerCompatibilityEvidenceHasBehavior('cerebras', 'embeddings') &&
+      !providerCompatibilityEvidenceHasBehavior('cerebras', 'rerank'),
+    'Cerebras compatibility evidence avoids public shared-endpoint vision, file, audio, embeddings, and rerank claims'
+  )
+  assert.equal(
+    getProviderCompatibilityEvidence('sambanova').auditState,
+    'conformance-ready',
+    'SambaNova compatibility evidence is ready once chat, Responses gating, vision, tools, structured output, model list, and reasoning replay have focused coverage'
+  )
+  assert.ok(
+    getProviderCompatibilityEvidence('sambanova').officialDocs.some((url) => url.includes('/features/openai-compatibility.md')) &&
+      getProviderCompatibilityEvidence('sambanova').officialDocs.some((url) => url.includes('/create-chat-based-completion.md')) &&
+      getProviderCompatibilityEvidence('sambanova').officialDocs.some((url) => url.includes('/features/responses.md')) &&
+      getProviderCompatibilityEvidence('sambanova').officialDocs.some((url) => url.includes('/models/sambacloud-models.md')) &&
+      getProviderCompatibilityEvidence('sambanova').endpointFamilies.includes('/v1/chat/completions') &&
+      getProviderCompatibilityEvidence('sambanova').endpointFamilies.includes('/v1/responses') &&
+      getProviderCompatibilityEvidence('sambanova').endpointFamilies.includes('/v1/models') &&
+      providerCompatibilityEvidenceHasBehavior('sambanova', 'tools') &&
+      providerCompatibilityEvidenceHasBehavior('sambanova', 'structuredOutput') &&
+      providerCompatibilityEvidenceHasBehavior('sambanova', 'vision') &&
+      providerCompatibilityEvidenceHasBehavior('sambanova', 'reasoning') &&
+      providerCompatibilityEvidenceHasBehavior('sambanova', 'modelList'),
+    'SambaNova compatibility evidence records official docs for chat, Responses, tools, JSON/schema output, vision, model list, and reasoning'
+  )
+  assert.ok(
+    !providerCompatibilityEvidenceHasBehavior('sambanova', 'files') &&
+      !providerCompatibilityEvidenceHasBehavior('sambanova', 'audio') &&
+      !providerCompatibilityEvidenceHasBehavior('sambanova', 'embeddings') &&
+      !providerCompatibilityEvidenceHasBehavior('sambanova', 'rerank'),
+    'SambaNova compatibility evidence avoids generic files, SambaStack-only audio/embeddings, and rerank claims for the default SambaCloud preset'
+  )
+  assert.equal(
+    getProviderCompatibilityEvidence('nvidia-nim').auditState,
+    'conformance-ready',
+    'NVIDIA NIM compatibility evidence is ready once conservative chat, model-list, vision, and unsupported-surface boundaries have focused coverage'
+  )
+  assert.ok(
+    getProviderCompatibilityEvidence('nvidia-nim').officialDocs.some((url) => url.includes('/nim/reference/llm-apis')) &&
+      getProviderCompatibilityEvidence('nvidia-nim').officialDocs.some((url) => url.includes('/nim/reference/models-1')) &&
+      getProviderCompatibilityEvidence('nvidia-nim').officialDocs.some((url) => url.includes('/meta-llama-3_2-90b-vision-instruct-infer')) &&
+      getProviderCompatibilityEvidence('nvidia-nim').endpointFamilies.includes('/v1/chat/completions') &&
+      getProviderCompatibilityEvidence('nvidia-nim').endpointFamilies.includes('/v1/models') &&
+      providerCompatibilityEvidenceHasBehavior('nvidia-nim', 'vision') &&
+      providerCompatibilityEvidenceHasBehavior('nvidia-nim', 'modelList'),
+    'NVIDIA NIM compatibility evidence records official docs for LLM chat, model listing, and model-specific image_url vision'
+  )
+  assert.ok(
+    !providerCompatibilityEvidenceHasBehavior('nvidia-nim', 'tools') &&
+      !providerCompatibilityEvidenceHasBehavior('nvidia-nim', 'structuredOutput') &&
+      !providerCompatibilityEvidenceHasBehavior('nvidia-nim', 'reasoning') &&
+      !providerCompatibilityEvidenceHasBehavior('nvidia-nim', 'files') &&
+      !providerCompatibilityEvidenceHasBehavior('nvidia-nim', 'audio') &&
+      !providerCompatibilityEvidenceHasBehavior('nvidia-nim', 'embeddings') &&
+      !providerCompatibilityEvidenceHasBehavior('nvidia-nim', 'rerank'),
+    'NVIDIA NIM compatibility evidence avoids tools, structured output, reasoning, files, audio, embeddings, and rerank until docs and app routing prove those surfaces'
+  )
+  assert.equal(
+    getProviderCompatibilityEvidence('huggingface').auditState,
+    'conformance-ready',
+    'Hugging Face compatibility evidence is ready once router chat, model list, tools, structured output, Responses gating, vision, and GPT-OSS reasoning have focused coverage'
+  )
+  assert.ok(
+    getProviderCompatibilityEvidence('huggingface').officialDocs.some((url) => url.includes('/inference-providers/tasks/chat-completion.md')) &&
+      getProviderCompatibilityEvidence('huggingface').officialDocs.some((url) => url.includes('/guides/function-calling.md')) &&
+      getProviderCompatibilityEvidence('huggingface').officialDocs.some((url) => url.includes('/guides/structured-output.md')) &&
+      getProviderCompatibilityEvidence('huggingface').officialDocs.some((url) => url.includes('/guides/responses-api.md')) &&
+      getProviderCompatibilityEvidence('huggingface').officialDocs.some((url) => url.includes('/guides/gpt-oss.md')) &&
+      getProviderCompatibilityEvidence('huggingface').endpointFamilies.includes('/v1/chat/completions') &&
+      getProviderCompatibilityEvidence('huggingface').endpointFamilies.includes('/v1/responses') &&
+      getProviderCompatibilityEvidence('huggingface').endpointFamilies.includes('/v1/models') &&
+      providerCompatibilityEvidenceHasBehavior('huggingface', 'tools') &&
+      providerCompatibilityEvidenceHasBehavior('huggingface', 'structuredOutput') &&
+      providerCompatibilityEvidenceHasBehavior('huggingface', 'vision') &&
+      providerCompatibilityEvidenceHasBehavior('huggingface', 'reasoning') &&
+      providerCompatibilityEvidenceHasBehavior('huggingface', 'modelList') &&
+      providerCompatibilityEvidenceHasBehavior('huggingface', 'relayRouting'),
+    'Hugging Face compatibility evidence records official docs for router chat, Responses, tools, structured output, image_url vision, model listing, and GPT-OSS reasoning'
+  )
+  assert.ok(
+    !providerCompatibilityEvidenceHasBehavior('huggingface', 'files') &&
+      !providerCompatibilityEvidenceHasBehavior('huggingface', 'audio') &&
+      !providerCompatibilityEvidenceHasBehavior('huggingface', 'embeddings') &&
+      !providerCompatibilityEvidenceHasBehavior('huggingface', 'rerank'),
+    'Hugging Face compatibility evidence avoids generic file_data, audio, embeddings, and rerank claims until app routing proves those surfaces'
+  )
+  assert.equal(
+    getProviderCompatibilityEvidence('github-models').auditState,
+    'conformance-ready',
+    'GitHub Models compatibility evidence is ready once hosted chat, model list, tools, vision, and unsupported-surface boundaries have focused coverage'
+  )
+  assert.ok(
+    getProviderCompatibilityEvidence('github-models').officialDocs.some((url) => url.includes('/github-models')) &&
+      getProviderCompatibilityEvidence('github-models').officialDocs.some((url) => url.includes('/prototyping-with-ai-models')) &&
+      getProviderCompatibilityEvidence('github-models').endpointFamilies.includes('/inference/chat/completions') &&
+      getProviderCompatibilityEvidence('github-models').endpointFamilies.includes('/inference/models') &&
+      providerCompatibilityEvidenceHasBehavior('github-models', 'tools') &&
+      providerCompatibilityEvidenceHasBehavior('github-models', 'vision') &&
+      providerCompatibilityEvidenceHasBehavior('github-models', 'modelList') &&
+      providerCompatibilityEvidenceHasBehavior('github-models', 'hostedRouting'),
+    'GitHub Models compatibility evidence records official docs for hosted OpenAI-compatible chat, model listing, tools, and model-metadata vision'
+  )
+  assert.ok(
+    !providerCompatibilityEvidenceHasBehavior('github-models', 'files') &&
+      !providerCompatibilityEvidenceHasBehavior('github-models', 'audio') &&
+      !providerCompatibilityEvidenceHasBehavior('github-models', 'reasoning') &&
+      !providerCompatibilityEvidenceHasBehavior('github-models', 'embeddings') &&
+      !providerCompatibilityEvidenceHasBehavior('github-models', 'rerank') &&
+      !providerCompatibilityEvidenceHasBehavior('github-models', 'relayRouting'),
+    'GitHub Models compatibility evidence avoids files, audio, reasoning, embeddings, rerank, and relay claims until docs and app routing prove those surfaces'
+  )
+  assert.equal(
+    getProviderCompatibilityEvidence('deepinfra').auditState,
+    'conformance-ready',
+    'DeepInfra compatibility evidence is ready once chat, model list, embeddings, vision, tools, reasoning, and unsupported native surfaces have focused coverage'
+  )
+  assert.ok(
+    getProviderCompatibilityEvidence('deepinfra').officialDocs.some((url) => url.includes('docs.deepinfra.com/chat/overview.md')) &&
+      getProviderCompatibilityEvidence('deepinfra').officialDocs.some((url) => url.includes('/chat/tool-calling.md')) &&
+      getProviderCompatibilityEvidence('deepinfra').officialDocs.some((url) => url.includes('/chat/structured-outputs.md')) &&
+      getProviderCompatibilityEvidence('deepinfra').officialDocs.some((url) => url.includes('/chat/vision.md')) &&
+      getProviderCompatibilityEvidence('deepinfra').officialDocs.some((url) => url.includes('/chat/reasoning.md')) &&
+      getProviderCompatibilityEvidence('deepinfra').officialDocs.some((url) => url.includes('/apis/embeddings.md')) &&
+      getProviderCompatibilityEvidence('deepinfra').officialDocs.some((url) => url.includes('/apis/reranker.md')) &&
+      getProviderCompatibilityEvidence('deepinfra').officialDocs.some((url) => url.includes('/apis/speech.md')) &&
+      getProviderCompatibilityEvidence('deepinfra').endpointFamilies.includes('/v1/openai/chat/completions') &&
+      getProviderCompatibilityEvidence('deepinfra').endpointFamilies.includes('/v1/openai/models') &&
+      getProviderCompatibilityEvidence('deepinfra').endpointFamilies.includes('/v1/openai/embeddings') &&
+      providerCompatibilityEvidenceHasBehavior('deepinfra', 'tools') &&
+      providerCompatibilityEvidenceHasBehavior('deepinfra', 'structuredOutput') &&
+      providerCompatibilityEvidenceHasBehavior('deepinfra', 'vision') &&
+      providerCompatibilityEvidenceHasBehavior('deepinfra', 'reasoning') &&
+      providerCompatibilityEvidenceHasBehavior('deepinfra', 'embeddings') &&
+      providerCompatibilityEvidenceHasBehavior('deepinfra', 'modelList'),
+    'DeepInfra compatibility evidence records official docs for chat, tools, JSON/schema output, vision, reasoning, embeddings, model list, and native rerank/audio docs'
+  )
+  assert.ok(
+    !providerCompatibilityEvidenceHasBehavior('deepinfra', 'files') &&
+      !providerCompatibilityEvidenceHasBehavior('deepinfra', 'audio') &&
+      !providerCompatibilityEvidenceHasBehavior('deepinfra', 'rerank') &&
+      !providerCompatibilityEvidenceHasBehavior('deepinfra', 'relayRouting'),
+    'DeepInfra compatibility evidence avoids generic files, chat audio, native audio, native rerank, and relay claims until app routing proves those surfaces'
+  )
+  assert.equal(
+    getProviderCompatibilityEvidence('novita').auditState,
+    'conformance-ready',
+    'Novita compatibility evidence is ready once official /openai/v1 routing, model sync metadata, tools, vision, embeddings, and reasoning_content parsing have focused coverage'
+  )
+  assert.ok(
+    getProviderCompatibilityEvidence('novita').officialDocs.some((url) => url.includes('/guides/llm-api')) &&
+      getProviderCompatibilityEvidence('novita').officialDocs.some((url) => url.includes('/model-apis-llm-create-chat-completion')) &&
+      getProviderCompatibilityEvidence('novita').officialDocs.some((url) => url.includes('/guides/llm-function-calling')) &&
+      getProviderCompatibilityEvidence('novita').officialDocs.some((url) => url.includes('/guides/llm-structured-outputs')) &&
+      getProviderCompatibilityEvidence('novita').officialDocs.some((url) => url.includes('/guides/llm-vision')) &&
+      getProviderCompatibilityEvidence('novita').officialDocs.some((url) => url.includes('/guides/llm-reasoning')) &&
+      getProviderCompatibilityEvidence('novita').officialDocs.some((url) => url.includes('/model-apis-llm-create-embeddings')) &&
+      getProviderCompatibilityEvidence('novita').officialDocs.some((url) => url.includes('/model-apis-llm-create-rerank')) &&
+      getProviderCompatibilityEvidence('novita').endpointFamilies.includes('/openai/v1/chat/completions') &&
+      getProviderCompatibilityEvidence('novita').endpointFamilies.includes('/openai/v1/models') &&
+      getProviderCompatibilityEvidence('novita').endpointFamilies.includes('/openai/v1/embeddings') &&
+      getProviderCompatibilityEvidence('novita').endpointFamilies.includes('/openai/v1/rerank') &&
+      providerCompatibilityEvidenceHasBehavior('novita', 'tools') &&
+      providerCompatibilityEvidenceHasBehavior('novita', 'structuredOutput') &&
+      providerCompatibilityEvidenceHasBehavior('novita', 'vision') &&
+      providerCompatibilityEvidenceHasBehavior('novita', 'reasoning') &&
+      providerCompatibilityEvidenceHasBehavior('novita', 'embeddings') &&
+      providerCompatibilityEvidenceHasBehavior('novita', 'modelList'),
+    'Novita compatibility evidence records official docs for chat, tools, JSON/schema output, vision, reasoning_content, embeddings, model list, and native rerank docs'
+  )
+  assert.ok(
+    !providerCompatibilityEvidenceHasBehavior('novita', 'files') &&
+      !providerCompatibilityEvidenceHasBehavior('novita', 'audio') &&
+      !providerCompatibilityEvidenceHasBehavior('novita', 'rerank') &&
+      !providerCompatibilityEvidenceHasBehavior('novita', 'relayRouting'),
+    'Novita compatibility evidence avoids generic files, chat audio, native rerank, and relay claims until app routing proves those surfaces'
+  )
+  assert.equal(
+    getProviderCompatibilityEvidence('siliconflow').auditState,
+    'conformance-ready',
+    'SiliconFlow compatibility evidence is ready once chat, tools, JSON mode docs, vision, thinking_budget, model sync, embeddings, and unsupported native surfaces have focused coverage'
+  )
+  assert.ok(
+    getProviderCompatibilityEvidence('siliconflow').officialDocs.some((url) => url.includes('/chat-completions/chat-completions')) &&
+      getProviderCompatibilityEvidence('siliconflow').officialDocs.some((url) => url.includes('/models/get-model-list')) &&
+      getProviderCompatibilityEvidence('siliconflow').officialDocs.some((url) => url.includes('/embeddings/create-embeddings')) &&
+      getProviderCompatibilityEvidence('siliconflow').officialDocs.some((url) => url.includes('/rerank/create-rerank')) &&
+      getProviderCompatibilityEvidence('siliconflow').officialDocs.some((url) => url.includes('/capabilities/reasoning')) &&
+      getProviderCompatibilityEvidence('siliconflow').officialDocs.some((url) => url.includes('/guides/function-calling')) &&
+      getProviderCompatibilityEvidence('siliconflow').officialDocs.some((url) => url.includes('/guides/json-mode')) &&
+      getProviderCompatibilityEvidence('siliconflow').officialDocs.some((url) => url.includes('/faqs/error-code')) &&
+      getProviderCompatibilityEvidence('siliconflow').endpointFamilies.includes('/v1/chat/completions') &&
+      getProviderCompatibilityEvidence('siliconflow').endpointFamilies.includes('/v1/models') &&
+      getProviderCompatibilityEvidence('siliconflow').endpointFamilies.includes('/v1/embeddings') &&
+      getProviderCompatibilityEvidence('siliconflow').endpointFamilies.includes('/v1/rerank') &&
+      providerCompatibilityEvidenceHasBehavior('siliconflow', 'tools') &&
+      providerCompatibilityEvidenceHasBehavior('siliconflow', 'structuredOutput') &&
+      providerCompatibilityEvidenceHasBehavior('siliconflow', 'vision') &&
+      providerCompatibilityEvidenceHasBehavior('siliconflow', 'reasoning') &&
+      providerCompatibilityEvidenceHasBehavior('siliconflow', 'embeddings') &&
+      providerCompatibilityEvidenceHasBehavior('siliconflow', 'modelList'),
+    'SiliconFlow compatibility evidence records official docs for chat, tools, JSON mode, vision, reasoning_content/thinking_budget, embeddings, model list, native rerank, errors, and rate limits'
+  )
+  assert.ok(
+    !providerCompatibilityEvidenceHasBehavior('siliconflow', 'files') &&
+      !providerCompatibilityEvidenceHasBehavior('siliconflow', 'audio') &&
+      !providerCompatibilityEvidenceHasBehavior('siliconflow', 'rerank') &&
+      !providerCompatibilityEvidenceHasBehavior('siliconflow', 'relayRouting'),
+    'SiliconFlow compatibility evidence avoids generic files, chat audio, native rerank, TTS, and relay claims until app routing proves those surfaces'
+  )
+  assert.equal(
+    getProviderCompatibilityEvidence('modelscope').auditState,
+    'conformance-ready',
+    'ModelScope compatibility evidence is ready once chat, model sync, embeddings, auth/error diagnostics, and unsupported native surfaces have focused coverage'
+  )
+  assert.ok(
+    getProviderCompatibilityEvidence('modelscope').officialDocs.some((url) => url.includes('/API-Inference/intro')) &&
+      getProviderCompatibilityEvidence('modelscope').officialDocs.some((url) => url.includes('/chat-completion')) &&
+      getProviderCompatibilityEvidence('modelscope').officialDocs.some((url) => url.includes('api-inference.modelscope.cn/v1/models')) &&
+      getProviderCompatibilityEvidence('modelscope').endpointFamilies.includes('/v1/chat/completions') &&
+      getProviderCompatibilityEvidence('modelscope').endpointFamilies.includes('/v1/models') &&
+      getProviderCompatibilityEvidence('modelscope').endpointFamilies.includes('/v1/embeddings') &&
+      providerCompatibilityEvidenceHasBehavior('modelscope', 'embeddings') &&
+      providerCompatibilityEvidenceHasBehavior('modelscope', 'modelList'),
+    'ModelScope compatibility evidence records official docs/live endpoint evidence for chat, model list, and embeddings'
+  )
+  assert.ok(
+    !providerCompatibilityEvidenceHasBehavior('modelscope', 'tools') &&
+      !providerCompatibilityEvidenceHasBehavior('modelscope', 'structuredOutput') &&
+      !providerCompatibilityEvidenceHasBehavior('modelscope', 'vision') &&
+      !providerCompatibilityEvidenceHasBehavior('modelscope', 'files') &&
+      !providerCompatibilityEvidenceHasBehavior('modelscope', 'audio') &&
+      !providerCompatibilityEvidenceHasBehavior('modelscope', 'reasoning') &&
+      !providerCompatibilityEvidenceHasBehavior('modelscope', 'relayRouting'),
+    'ModelScope compatibility evidence avoids tools, structured output, vision, files, audio, reasoning, and relay claims until source-backed request fixtures exist'
+  )
+  assert.equal(
+    getProviderCompatibilityEvidence('volcengine-ark').auditState,
+    'conformance-ready',
+    'Volcengine Ark compatibility evidence is ready once current docs, chat, model-list, tools, vision, unsupported surfaces, and diagnostics have focused coverage'
+  )
+  assert.ok(
+    getProviderCompatibilityEvidence('volcengine-ark').officialDocs.some((url) => url.includes('/docs/82379/1494384')) &&
+      getProviderCompatibilityEvidence('volcengine-ark').officialDocs.some((url) => url.includes('/docs/82379/1330310')) &&
+      getProviderCompatibilityEvidence('volcengine-ark').officialDocs.some((url) => url.includes('/docs/82379/1262342')) &&
+      getProviderCompatibilityEvidence('volcengine-ark').officialDocs.some((url) => url.includes('/docs/82379/1362931')) &&
+      !getProviderCompatibilityEvidence('volcengine-ark').officialDocs.some((url) => url.includes('/docs/82379/1298454')) &&
+      !getProviderCompatibilityEvidence('volcengine-ark').officialDocs.some((url) => url.includes('/docs/82379/1263482')) &&
+      getProviderCompatibilityEvidence('volcengine-ark').endpointFamilies.includes('/api/v3/models') &&
+      providerCompatibilityEvidenceHasBehavior('volcengine-ark', 'tools') &&
+      providerCompatibilityEvidenceHasBehavior('volcengine-ark', 'vision') &&
+      providerCompatibilityEvidenceHasBehavior('volcengine-ark', 'modelList'),
+    'Volcengine Ark compatibility evidence records current official docs for chat, models, tools, and vision behavior'
+  )
+  assert.ok(
+    !providerCompatibilityEvidenceHasBehavior('volcengine-ark', 'files') &&
+      !providerCompatibilityEvidenceHasBehavior('volcengine-ark', 'structuredOutput') &&
+      !providerCompatibilityEvidenceHasBehavior('volcengine-ark', 'reasoning') &&
+      !providerCompatibilityEvidenceHasBehavior('volcengine-ark', 'audio'),
+    'Volcengine Ark compatibility evidence avoids file, response_format, reasoning, and audio claims before source-backed runtime fixtures exist'
+  )
+  assert.equal(
+    getProviderCompatibilityEvidence('xiaomi-mimo').auditState,
+    'conformance-ready',
+    'MiMo compatibility evidence is promoted once native search request and citation behavior are covered'
+  )
+  assert.ok(
+    providerCompatibilityEvidenceHasBehavior('xiaomi-mimo', 'citations') &&
+      providerCompatibilityEvidenceHasBehavior('xiaomi-mimo', 'reasoning') &&
+      getProviderCompatibilityEvidence('xiaomi-mimo').officialDocs.some((url) => url.includes('xiaomimimo.com')),
+    'MiMo compatibility evidence records official docs for citations/search and reasoning behavior'
+  )
+  assert.equal(
+    getProviderCompatibilityEvidence('custom-openai-compatible').auditState,
+    'protocol-reference',
+    'custom OpenAI-compatible endpoints remain protocol references until declared or probed'
+  )
+  assert.equal(
+    getProviderCompatibilityEvidence('aws-bedrock').auditState,
+    'needs-live-smoke',
+    'hosted Bedrock compatibility keeps live-account evidence separate from offline contract coverage'
+  )
+  assert.ok(
+    getProviderCompatibilityEvidence('azure-openai').auditState === 'conformance-ready' &&
+      getProviderCompatibilityEvidence('azure-openai').officialDocs.some((url) => url.includes('learn.microsoft.com/azure/ai-foundry/openai/reference')) &&
+      getProviderCompatibilityEvidence('azure-openai').endpointFamilies.includes('/openai/v1/responses') &&
+      providerCompatibilityEvidenceHasBehavior('azure-openai', 'hostedRouting'),
+    'Azure OpenAI compatibility evidence records official v1 hosted routing docs and conformance-ready offline coverage'
+  )
+  assert.ok(
+    getProviderCompatibilityEvidence('aws-bedrock').officialDocs.some((url) => url.includes('/inference-chat-completions-mantle')) &&
+      getProviderCompatibilityEvidence('aws-bedrock').officialDocs.some((url) => url.includes('/inference-api')) &&
+      getProviderCompatibilityEvidence('aws-bedrock').officialDocs.some((url) => url.includes('/API_runtime_InvokeModel')) &&
+      getProviderCompatibilityEvidence('aws-bedrock').endpointFamilies.includes('/v1/chat/completions') &&
+      getProviderCompatibilityEvidence('aws-bedrock').endpointFamilies.includes('/v1/models') &&
+      !getProviderCompatibilityEvidence('aws-bedrock').endpointFamilies.includes('/v1/responses') &&
+      getProviderCompatibilityEvidence('aws-bedrock').endpointFamilies.includes('/model/{modelId}/invoke') &&
+      providerCompatibilityEvidenceHasBehavior('aws-bedrock', 'hostedRouting'),
+    'AWS Bedrock compatibility evidence records current Mantle Chat/Models docs and Runtime InvokeModel docs without overclaiming Responses'
+  )
+  assert.ok(
+    getProviderCompatibilityEvidence('vertex-ai').auditState === 'needs-live-smoke' &&
+      getProviderCompatibilityEvidence('vertex-ai').officialDocs.some((url) => url.includes('cloud.google.com/vertex-ai/generative-ai/docs/start/openai')) &&
+      getProviderCompatibilityEvidence('vertex-ai').endpointFamilies.some((endpoint) => endpoint.includes('/endpoints/openapi/chat/completions')) &&
+      !getProviderCompatibilityEvidence('vertex-ai').endpointFamilies.some((endpoint) => endpoint.includes('/endpoints/openapi/models')) &&
+      !providerCompatibilityEvidenceHasBehavior('vertex-ai', 'modelList') &&
+      !providerCompatibilityEvidenceHasBehavior('vertex-ai', 'files') &&
+      providerCompatibilityEvidenceHasBehavior('vertex-ai', 'hostedRouting'),
+    'Vertex AI compatibility evidence records official OpenAI-compatible hosted routing docs without overclaiming model-list or generic files'
+  )
+  assert.equal(
+    getProviderCompatibilityEvidence('localai').auditState,
+    'protocol-reference',
+    'LocalAI remains a protocol reference because installed local model and backend behavior are runtime state'
+  )
+  assert.ok(
+    getProviderCompatibilityEvidence('localai').officialDocs.some((url) => url.includes('/features/text-generation')) &&
+      getProviderCompatibilityEvidence('localai').officialDocs.some((url) => url.includes('/features/openai-functions')) &&
+      getProviderCompatibilityEvidence('localai').officialDocs.some((url) => url.includes('/features/constrained_grammars')) &&
+      getProviderCompatibilityEvidence('localai').officialDocs.some((url) => url.includes('/features/embeddings')) &&
+      getProviderCompatibilityEvidence('localai').officialDocs.some((url) => url.includes('/features/audio-to-text')) &&
+      getProviderCompatibilityEvidence('localai').officialDocs.some((url) => url.includes('/features/text-to-audio')) &&
+      getProviderCompatibilityEvidence('localai').endpointFamilies.includes('/v1/chat/completions') &&
+      getProviderCompatibilityEvidence('localai').endpointFamilies.includes('/v1/models') &&
+      getProviderCompatibilityEvidence('localai').endpointFamilies.includes('/v1/embeddings') &&
+      getProviderCompatibilityEvidence('localai').endpointFamilies.includes('/v1/audio/transcriptions') &&
+      getProviderCompatibilityEvidence('localai').endpointFamilies.includes('/v1/audio/speech') &&
+      providerCompatibilityEvidenceHasBehavior('localai', 'localRuntime') &&
+      providerCompatibilityEvidenceHasBehavior('localai', 'audio') &&
+      providerCompatibilityEvidenceHasBehavior('localai', 'embeddings'),
+    'LocalAI compatibility evidence records official local runtime docs for chat, model list, tools, grammar-constrained outputs, embeddings, transcription, and speech'
+  )
+  assert.ok(
+    getProviderCompatibilityEvidence('vllm').officialDocs.some((url) => url.includes('/serving/online_serving')) &&
+      getProviderCompatibilityEvidence('vllm').officialDocs.some((url) => url.includes('/features/tool_calling')) &&
+      getProviderCompatibilityEvidence('vllm').officialDocs.some((url) => url.includes('/features/structured_outputs')) &&
+      getProviderCompatibilityEvidence('vllm').officialDocs.some((url) => url.includes('/features/reasoning_outputs')) &&
+      getProviderCompatibilityEvidence('vllm').officialDocs.some((url) => url.includes('/models/pooling_models')) &&
+      getProviderCompatibilityEvidence('vllm').endpointFamilies.includes('/v1/responses') &&
+      getProviderCompatibilityEvidence('vllm').endpointFamilies.includes('/v1/embeddings') &&
+      getProviderCompatibilityEvidence('vllm').endpointFamilies.includes('/v1/rerank') &&
+      providerCompatibilityEvidenceHasBehavior('vllm', 'embeddings') &&
+      providerCompatibilityEvidenceHasBehavior('vllm', 'reasoning') &&
+      !providerCompatibilityEvidenceHasBehavior('vllm', 'audio') &&
+      !providerCompatibilityEvidenceHasBehavior('vllm', 'rerank'),
+    'vLLM compatibility evidence records current online serving docs while keeping ASR/rerank app routing unclaimed'
+  )
+  assert.ok(
+    getProviderCompatibilityEvidence('sglang').officialDocs.some((url) => url.includes('docs.sglang.io/docs/basic_usage/openai_api_completions')) &&
+      getProviderCompatibilityEvidence('sglang').officialDocs.some((url) => url.includes('/docs/basic_usage/openai_api_embeddings')) &&
+      getProviderCompatibilityEvidence('sglang').officialDocs.some((url) => url.includes('/docs/basic_usage/openai_api_vision')) &&
+      getProviderCompatibilityEvidence('sglang').officialDocs.some((url) => url.includes('/docs/advanced_features/tool_parser')) &&
+      getProviderCompatibilityEvidence('sglang').officialDocs.some((url) => url.includes('/docs/advanced_features/structured_outputs')) &&
+      getProviderCompatibilityEvidence('sglang').officialDocs.some((url) => url.includes('/docs/advanced_features/separate_reasoning')) &&
+      !getProviderCompatibilityEvidence('sglang').officialDocs.some((url) => url.includes('docs.sglang.ai/backend')) &&
+      getProviderCompatibilityEvidence('sglang').endpointFamilies.includes('/v1/embeddings') &&
+      providerCompatibilityEvidenceHasBehavior('sglang', 'embeddings') &&
+      providerCompatibilityEvidenceHasBehavior('sglang', 'reasoning') &&
+      !providerCompatibilityEvidenceHasBehavior('sglang', 'audio') &&
+      !providerCompatibilityEvidenceHasBehavior('sglang', 'rerank'),
+    'SGLang compatibility evidence records current docs.sglang.io pages while keeping Responses/audio/rerank routing unclaimed'
+  )
+  for (const relayPresetId of ['openrouter', 'newapi', 'sub2api']) {
+    assert.ok(
+      providerCompatibilityEvidenceHasBehavior(relayPresetId, 'relayRouting') &&
+        providerCompatibilityEvidenceHasBehavior(relayPresetId, 'tools') &&
+        providerCompatibilityEvidenceHasBehavior(relayPresetId, 'modelList'),
+      `relay compatibility evidence for ${relayPresetId} preserves mixed upstream capability axes`
+    )
+  }
+  assert.ok(
+    providerCompatibilityEvidenceHasBehavior('openrouter', 'structuredOutput') &&
+      providerCompatibilityEvidenceHasBehavior('newapi', 'structuredOutput') &&
+      !providerCompatibilityEvidenceHasBehavior('sub2api', 'structuredOutput') &&
+      !providerCompatibilityEvidenceHasBehavior('sub2api', 'reasoning'),
+    'Sub2API relay evidence stays conservative until endpoint-level structured-output and reasoning payload docs exist'
+  )
+  assert.equal(
+    getProviderCompatibilityEvidence('openrouter').auditState,
+    'conformance-ready',
+    'OpenRouter relay compatibility is promoted once official Chat/Responses/Models docs and offline relay fixtures are aligned'
+  )
+  assert.equal(
+    getProviderCompatibilityEvidence('newapi').auditState,
+    'conformance-ready',
+    'NewAPI relay compatibility is promoted once current Chat/Responses/Models docs and offline relay fixtures are aligned'
+  )
+  assert.ok(
+    getProviderCompatibilityEvidence('newapi').officialDocs.some((url) => url.includes('/zh/docs/api/ai-model/chat/openai/createchatcompletion')) &&
+      getProviderCompatibilityEvidence('newapi').officialDocs.some((url) => url.includes('/zh/docs/api/ai-model/chat/openai/createresponse')) &&
+      getProviderCompatibilityEvidence('newapi').officialDocs.some((url) => url.includes('/zh/docs/api/ai-model/models/list/listmodels')) &&
+      getProviderCompatibilityEvidence('newapi').officialDocs.some((url) => url.includes('/zh/docs/api/ai-model/unimplemented/files/listfiles')) &&
+      !getProviderCompatibilityEvidence('newapi').officialDocs.some((url) => url.includes('/en/api/openai-chat')) &&
+      getProviderCompatibilityEvidence('newapi').endpointFamilies.includes('/v1/responses') &&
+      providerCompatibilityEvidenceHasBehavior('newapi', 'tools') &&
+      providerCompatibilityEvidenceHasBehavior('newapi', 'structuredOutput') &&
+      providerCompatibilityEvidenceHasBehavior('newapi', 'reasoning') &&
+      providerCompatibilityEvidenceHasBehavior('newapi', 'modelList'),
+    'NewAPI compatibility evidence records current official docs for Chat, Responses, Models, tools, structured output, reasoning, and model sync'
+  )
+  assert.ok(
+    !providerCompatibilityEvidenceHasBehavior('newapi', 'files') &&
+      !providerCompatibilityEvidenceHasBehavior('newapi', 'vision') &&
+      !providerCompatibilityEvidenceHasBehavior('newapi', 'audio'),
+    'NewAPI compatibility evidence avoids files, unproven chat vision, and audio claims before source-backed app routing exists'
+  )
+  assert.equal(
+    getProviderCompatibilityEvidence('sub2api').auditState,
+    'docs-mapped',
+    'Sub2API remains docs-mapped until endpoint-level provider documentation is stronger than the project README'
+  )
+  assert.ok(
+    getProviderCompatibilityEvidence('sub2api').officialDocs.some((url) => url.includes('github.com/Wei-Shaw/sub2api')) &&
+      getProviderCompatibilityEvidence('sub2api').officialDocs.some((url) => url.includes('raw.githubusercontent.com/Wei-Shaw/sub2api')) &&
+      !getProviderCompatibilityEvidence('sub2api').officialDocs.some((url) => url.includes('github.com/sub2api/sub2api')),
+    'Sub2API compatibility evidence points to the current public project source instead of the stale 404 GitHub path'
+  )
+  assert.ok(
+    getProviderCompatibilityEvidence('openrouter').endpointFamilies.includes('/api/v1/responses') &&
+      getProviderCompatibilityEvidence('newapi').endpointFamilies.includes('/v1/responses') &&
+      getProviderCompatibilityEvidence('sub2api').endpointFamilies.includes('/v1/responses') &&
+      getProviderCompatibilityEvidence('openrouter').officialDocs.some((url) => url.includes('/responses/create-responses')) &&
+      getProviderCompatibilityEvidence('newapi').officialDocs.some((url) => url.includes('docs.newapi.pro')),
+    'aggregator compatibility evidence keeps official docs and response/model endpoint coverage explicit'
+  )
+
+  const doc = fs.readFileSync(path.join(root, 'docs/architecture/model-provider-compatibility.md'), 'utf8')
+  assert.ok(
+      doc.includes('src/services/ai/providerCompatibilityContract.ts') &&
+      doc.includes('Moonshot Kimi Thinking And Tool Replay') &&
+      doc.includes('node scripts/provider-intelligence-tests.js --focus=moonshot-provider-compatibility') &&
+      doc.includes('BigModel GLM Documentation Refresh') &&
+      doc.includes('node scripts/provider-intelligence-tests.js --focus=bigmodel-provider-compatibility') &&
+      doc.includes('Tencent Hunyuan Chat Tools Vision And Model Sync') &&
+      doc.includes('node scripts/provider-intelligence-tests.js --focus=tencent-hunyuan-provider-compatibility') &&
+      doc.includes('Baidu Qianfan Chat Tools Vision And Model Sync') &&
+      doc.includes('node scripts/provider-intelligence-tests.js --focus=baidu-qianfan-provider-compatibility') &&
+      doc.includes('Baichuan Core Chat Completions') &&
+      doc.includes('node scripts/provider-intelligence-tests.js --focus=baichuan-provider-compatibility') &&
+      doc.includes('01.AI Yi Chat Tools Vision And Model Sync') &&
+      doc.includes('node scripts/provider-intelligence-tests.js --focus=zero-one-provider-compatibility') &&
+      doc.includes('StepFun Chat Tools Vision And Model Sync') &&
+      doc.includes('node scripts/provider-intelligence-tests.js --focus=stepfun-provider-compatibility') &&
+      doc.includes('Volcengine Ark Chat Tools Vision And Model Sync') &&
+      doc.includes('node scripts/provider-intelligence-tests.js --focus=volcengine-ark-provider-compatibility') &&
+      doc.includes('DashScope Qwen Conservative Compatibility') &&
+      doc.includes('node scripts/provider-intelligence-tests.js --focus=dashscope-provider-compatibility') &&
+      doc.includes('MiniMax M3 Adaptive Thinking') &&
+      doc.includes('node scripts/provider-intelligence-tests.js --focus=minimax-provider-compatibility') &&
+      doc.includes('Mistral Chat Tools Vision And Reasoning Chunks') &&
+      doc.includes('node scripts/provider-intelligence-tests.js --focus=mistral-provider-compatibility') &&
+      doc.includes('Groq Chat Responses Audio And Reasoning') &&
+      doc.includes('node scripts/provider-intelligence-tests.js --focus=groq-provider-compatibility') &&
+      doc.includes('Together Chat Audio Rerank And GPT-OSS Reasoning') &&
+      doc.includes('node scripts/provider-intelligence-tests.js --focus=together-provider-compatibility') &&
+      doc.includes('Fireworks Chat Responses Rerank And Reasoning') &&
+      doc.includes('node scripts/provider-intelligence-tests.js --focus=fireworks-provider-compatibility') &&
+      doc.includes('Perplexity Sonar Search Citations And Media') &&
+      doc.includes('node scripts/provider-intelligence-tests.js --focus=perplexity-provider-compatibility') &&
+      doc.includes('Cohere Compatibility API Chat Reasoning Audio And Rerank') &&
+      doc.includes('node scripts/provider-intelligence-tests.js --focus=cohere-provider-compatibility') &&
+      doc.includes('Cerebras Chat Tools Structured Outputs And Reasoning') &&
+      doc.includes('node scripts/provider-intelligence-tests.js --focus=cerebras-provider-compatibility') &&
+      doc.includes('SambaNova Chat Responses Vision And Reasoning') &&
+      doc.includes('node scripts/provider-intelligence-tests.js --focus=sambanova-provider-compatibility') &&
+      doc.includes('NVIDIA NIM Chat Models And Model-Specific Vision') &&
+      doc.includes('node scripts/provider-intelligence-tests.js --focus=nvidia-nim-provider-compatibility') &&
+      doc.includes('Hugging Face Router Chat Tools Structured Outputs And GPT-OSS Reasoning') &&
+      doc.includes('node scripts/provider-intelligence-tests.js --focus=huggingface-provider-compatibility') &&
+      doc.includes('GitHub Models Hosted OpenAI-Compatible Inference') &&
+      doc.includes('node scripts/provider-intelligence-tests.js --focus=github-models-provider-compatibility') &&
+      doc.includes('DeepInfra OpenAI-Compatible Chat Vision Reasoning And Embeddings') &&
+      doc.includes('node scripts/provider-intelligence-tests.js --focus=deepinfra-provider-compatibility') &&
+      doc.includes('Novita OpenAI-Compatible Chat Vision Tools And Reasoning Content') &&
+      doc.includes('node scripts/provider-intelligence-tests.js --focus=novita-provider-compatibility') &&
+      doc.includes('SiliconFlow OpenAI-Compatible Chat Tools Vision And Thinking Budget') &&
+      doc.includes('node scripts/provider-intelligence-tests.js --focus=siliconflow-provider-compatibility') &&
+      doc.includes('ModelScope API-Inference OpenAI-Compatible Chat And Model Sync') &&
+      doc.includes('node scripts/provider-intelligence-tests.js --focus=modelscope-provider-compatibility') &&
+      doc.includes('Hosted Cloud Provider Routing') &&
+      doc.includes('node scripts/provider-intelligence-tests.js --focus=provider-hosted-compatibility') &&
+      doc.includes('OpenRouter Relay Routing') &&
+      doc.includes('NewAPI And Sub2API Relay Routing') &&
+      doc.includes('Custom Compatible Endpoint Declaration') &&
+      doc.includes('node scripts/provider-intelligence-tests.js --focus=provider-custom-compatible-compatibility') &&
+      doc.includes('Live Smoke Gate Contract') &&
+      doc.includes('scripts/provider-compatibility-live-smoke-plan.js') &&
+      doc.includes('bun run test:provider-live-smoke:plan') &&
+      doc.includes('Structured Output Contract Visibility') &&
+      doc.includes('manifest.structuredOutput.contractClaimed') &&
+      doc.includes('appRequestControl') &&
+      doc.includes('jsonObjectMode') &&
+      doc.includes('unsupported_structured_output') &&
+      doc.includes('structuredOutputPlan') &&
+      doc.includes('structured_output') &&
+      doc.includes('Runtime Diagnostics Contract Consumption') &&
+      doc.includes('provider.compatibility') &&
+      doc.includes('node scripts/provider-intelligence-tests.js --focus=runtime-log') &&
+      doc.includes('OpenAI Responses Structured Output') &&
+      doc.includes('node scripts/provider-intelligence-tests.js --focus=openai-provider-compatibility') &&
+      doc.includes('Anthropic Tool-Schema Structured Output') &&
+      doc.includes('node scripts/provider-intelligence-tests.js --focus=anthropic-provider-compatibility') &&
+      doc.includes('ISLEMIND_SUB2API_BASE_URL') &&
+      doc.includes('ISLEMIND_OLLAMA_BASE_URL') &&
+      doc.includes('Xiaomi MiMo native web search') &&
+      doc.includes('node scripts/provider-intelligence-tests.js --focus=mimo-native-search') &&
+      doc.includes('Context-limit, system-prompt, safety-policy, and retry-policy behavior') &&
+      doc.includes('relayRouting'),
+    'provider compatibility architecture doc points to the evidence source and current focused verification'
+  )
+  const packageJson = JSON.parse(fs.readFileSync(path.join(root, 'package.json'), 'utf8'))
+  assert.equal(
+    packageJson.scripts['test:provider-live-smoke:plan'],
+    'node scripts/provider-compatibility-live-smoke-plan.js',
+    'package scripts expose the provider live smoke plan collector'
+  )
+  assert.equal(
+    packageJson.scripts['test:provider-live-smoke:plan:self'],
+    'node scripts/provider-compatibility-live-smoke-plan.js --self-test',
+    'package scripts expose the provider live smoke plan self-test'
+  )
+}
+
+function assertOpenAIProviderCompatibilityBehavior() {
+  const provider = applyProviderPreset({
+    id: 'openai-focused',
+    apiKey: FAKE_KEY_A,
+    models: ['gpt-5.5', 'gpt-4.1'],
+    enabled: true,
+  }, 'openai')
+  const schema = {
+    type: 'object',
+    properties: {
+      summary: { type: 'string' },
+      sourceIds: { type: 'array', items: { type: 'string' } },
+    },
+    required: ['summary'],
+    additionalProperties: false,
+  }
+  assert.equal(getProviderCompatibilityEvidence('openai').auditState, 'conformance-ready', 'OpenAI evidence stays conformance-ready')
+  assert.ok(providerCompatibilityEvidenceHasBehavior('openai', 'structuredOutput'), 'OpenAI evidence claims source-backed structured output')
+  assert.equal(getProviderCompatibilityEvidence('openai').endpointFamilies.includes('/v1/responses'), true, 'OpenAI evidence tracks the Responses endpoint family')
+  assert.equal(getProviderCompatibilityEvidence('openai').endpointFamilies.includes('/v1/embeddings'), true, 'OpenAI evidence tracks the Embeddings endpoint family')
+  assert.ok(providerCompatibilityEvidenceHasBehavior('openai', 'embeddings'), 'OpenAI evidence claims source-backed embeddings')
+  assert.equal(getModelConfig('gpt-5.5', 'openai').supportsTools, true, 'OpenAI current catalog exposes tool support')
+  assert.equal(getModelConfig('gpt-5.5-pro', 'openai').supportsStreaming, false, 'OpenAI catalog preserves model-level non-streaming constraints')
+
+  const responsesReq = {
+    provider,
+    model: 'gpt-5.5',
+    messages: [{ role: 'user', content: 'Return a concise sourced summary.' }],
+    reasoningEffort: 'xhigh',
+    maxTokens: 999999,
+    stream: true,
+    webSearchMode: 'native',
+    structuredOutput: {
+      type: 'json_schema',
+      name: 'islemind_summary',
+      schema,
+      strict: true,
+    },
+    providerToolDeclarations: [{
+      type: 'function',
+      name: 'inspect_source',
+      description: 'Inspect a cited source.',
+      parameters: { type: 'object', properties: { sourceId: { type: 'string' } }, required: ['sourceId'] },
+    }],
+  }
+  const responsesBody = buildOpenAIResponsesBodyForTest(responsesReq)
+  assert.deepEqual(
+    responsesBody.text,
+    { format: { type: 'json_schema', name: 'islemind_summary', schema, strict: true } },
+    'OpenAI Responses structured-output requests use the official text.format shape'
+  )
+  assert.equal(responsesBody.reasoning.effort, 'xhigh', 'OpenAI Responses preserves source-backed xhigh reasoning effort')
+  assert.equal(responsesBody.reasoning.summary, 'auto', 'OpenAI Responses requests reasoning summaries')
+  assert.deepEqual(responsesBody.include, ['reasoning.encrypted_content'], 'OpenAI Responses requests encrypted reasoning replay items')
+  assert.equal(responsesBody.tools[0].type, 'web_search_preview', 'OpenAI Responses keeps the documented native web search tool')
+  assert.equal(responsesBody.tools[1].name, 'inspect_source', 'OpenAI Responses appends IsleMind provider tool declarations')
+  assert.ok(responsesBody.max_output_tokens <= getModelConfig('gpt-5.5', 'openai').maxOutputTokens, 'OpenAI Responses output tokens are clamped to model metadata')
+
+  const responsesConformance = resolveProviderRequestConformanceForTest(responsesReq, responsesBody)
+  assert.equal(responsesConformance.manifest.family, 'openai', 'OpenAI conformance classifies the official provider family')
+  assert.equal(responsesConformance.manifest.protocol, 'openai-responses', 'OpenAI conformance records Responses protocol routing')
+  assert.equal(responsesConformance.manifest.structuredOutput.contractClaimed, true, 'OpenAI conformance records structured-output contract evidence')
+  assert.equal(responsesConformance.manifest.structuredOutput.documentedRequestShape, 'openai-response-format', 'OpenAI conformance records the documented schema request family')
+  assert.equal(responsesConformance.manifest.structuredOutput.appRequestControl, true, 'OpenAI conformance enables structured-output request controls')
+  assert.equal(responsesConformance.manifest.structuredOutput.strictJsonSchema, true, 'OpenAI conformance records strict JSON schema support')
+  assert.equal(responsesConformance.issues.some((issue) => issue.code === 'unsupported_structured_output'), false, 'OpenAI conformance accepts structured-output requests')
+  const responsesRoute = resolveProviderRouteForTest(responsesReq, responsesBody)
+  assert.equal(responsesRoute.decision.structuredOutputPlan.supported, true, 'OpenAI route decision exposes structured-output support')
+  assert.equal(responsesRoute.decision.structuredOutputPlan.strictJsonSchema, true, 'OpenAI route decision exposes strict JSON schema support')
+  assert.equal(responsesRoute.decision.blocked, false, 'OpenAI route decision does not block source-backed structured-output requests')
+
+  const chatReq = {
+    provider,
+    model: 'gpt-4.1',
+    messages: [{ role: 'user', content: 'Return JSON.' }],
+    structuredOutput: { type: 'json_object' },
+  }
+  const chatBody = buildOpenAIBodyForTest(chatReq)
+  assert.deepEqual(
+    chatBody.response_format,
+    { type: 'json_object' },
+    'OpenAI Chat Completions structured-output requests use response_format'
+  )
+
+  const replayBody = buildOpenAIResponsesBodyForTest({
+    provider,
+    model: 'gpt-5.5',
+    messages: [
+      { role: 'user', content: 'Need source details.' },
+      {
+        role: 'assistant',
+        content: '',
+        responseItems: [{ type: 'reasoning', id: 'rs_1', encrypted_content: 'encrypted-state', summary: [] }],
+        toolCalls: [{ id: 'fc_1', callId: 'call_1', name: 'inspect_source', arguments: { sourceId: 'src-1' } }],
+      },
+      { role: 'tool', name: 'inspect_source', toolCallId: 'call_1', content: 'Source details.' },
+    ],
+    stream: false,
+  })
+  assert.deepEqual(
+    replayBody.input.slice(1, 4),
+    [
+      { type: 'reasoning', id: 'rs_1', encrypted_content: 'encrypted-state', summary: [] },
+      { type: 'function_call', id: 'fc_1', call_id: 'call_1', name: 'inspect_source', arguments: '{"sourceId":"src-1"}' },
+      { type: 'function_call_output', call_id: 'call_1', output: 'Source details.' },
+    ],
+    'OpenAI Responses tool replay preserves reasoning items before function_call_output'
+  )
+  const streamed = parseProviderStreamChunkForTest([
+    'data: {"type":"response.output_text.delta","delta":"Structured "}',
+    'data: {"type":"response.output_text.delta","delta":"answer"}',
+    'data: {"type":"response.completed","response":{"id":"resp_1","usage":{"input_tokens":5,"output_tokens":7}}}',
+  ].join('\n'), 'openai')
+  assert.equal(streamed.text, 'Structured answer', 'OpenAI Responses stream parser merges output_text deltas')
+  assert.equal(streamed.responseId, 'resp_1', 'OpenAI Responses stream parser preserves response ids')
+}
+
+function assertAnthropicProviderCompatibilityBehavior() {
+  const provider = applyProviderPreset({
+    id: 'anthropic-focused',
+    apiKey: FAKE_KEY_A,
+    models: ['claude-opus-4-8', 'claude-sonnet-4-6'],
+    enabled: true,
+  }, 'anthropic')
+  const schema = {
+    type: 'object',
+    properties: {
+      summary: { type: 'string' },
+      confidence: { type: 'number' },
+    },
+    required: ['summary'],
+    additionalProperties: false,
+  }
+  assert.equal(getProviderCompatibilityEvidence('anthropic').auditState, 'conformance-ready', 'Anthropic evidence stays conformance-ready')
+  assert.ok(providerCompatibilityEvidenceHasBehavior('anthropic', 'structuredOutput'), 'Anthropic evidence claims source-backed structured output through tool schemas')
+  assert.equal(getProviderCompatibilityEvidence('anthropic').endpointFamilies.includes('/v1/messages'), true, 'Anthropic evidence tracks the Messages endpoint family')
+  assert.equal(getModelConfig('claude-opus-4-8', 'anthropic').supportsTools, true, 'Anthropic current catalog exposes native tool support')
+  assert.deepEqual(getModelConfig('claude-opus-4-8', 'anthropic').reasoningEfforts, ['none', 'low', 'medium', 'high', 'xhigh', 'max'], 'Anthropic catalog preserves source-backed reasoning tiers')
+
+  const structuredReq = {
+    provider,
+    model: 'claude-opus-4-8',
+    messages: [{ role: 'user', content: 'Return a structured summary.' }],
+    maxTokens: 4096,
+    stream: false,
+    structuredOutput: {
+      type: 'json_schema',
+      name: 'islemind_summary',
+      schema,
+      strict: true,
+    },
+  }
+  const structuredBody = buildAnthropicBodyForTest(structuredReq)
+  const preflightConformance = resolveProviderRequestConformanceForTest(structuredReq, structuredBody)
+  assert.equal(preflightConformance.manifest.structuredOutput.contractClaimed, true, 'Anthropic structured-output preflight sees contract evidence')
+  assert.equal(preflightConformance.manifest.structuredOutput.appRequestControl, true, 'Anthropic structured-output preflight enables app request controls')
+  assert.ok(Array.isArray(structuredBody.tools), 'Anthropic structured-output request emits a tools array')
+  assert.deepEqual(
+    structuredBody.tools.find((tool) => tool.name === 'islemind_summary'),
+    {
+      name: 'islemind_summary',
+      description: 'Return the final answer as structured JSON that matches this input schema.',
+      input_schema: schema,
+    },
+    'Anthropic structured-output requests use the official tool input_schema shape'
+  )
+  assert.deepEqual(
+    structuredBody.tool_choice,
+    { type: 'tool', name: 'islemind_summary' },
+    'Anthropic structured-output requests force the schema tool choice'
+  )
+  assert.equal(structuredBody.response_format, undefined, 'Anthropic structured-output requests do not emit OpenAI response_format')
+  const structuredConformance = resolveProviderRequestConformanceForTest(structuredReq, structuredBody)
+  assert.equal(structuredConformance.manifest.family, 'anthropic', 'Anthropic conformance classifies the official provider family')
+  assert.equal(structuredConformance.manifest.protocol, 'anthropic-messages', 'Anthropic conformance records Messages protocol routing')
+  assert.equal(structuredConformance.manifest.structuredOutput.contractClaimed, true, 'Anthropic conformance records structured-output contract evidence')
+  assert.equal(structuredConformance.manifest.structuredOutput.documentedRequestShape, 'anthropic-tool-schema', 'Anthropic conformance records tool-schema structured-output shape')
+  assert.equal(structuredConformance.manifest.structuredOutput.appRequestControl, true, 'Anthropic conformance enables structured-output request controls')
+  assert.equal(structuredConformance.manifest.structuredOutput.strictJsonSchema, false, 'Anthropic conformance avoids claiming strict JSON schema guarantees')
+  assert.equal(structuredConformance.issues.some((issue) => issue.code === 'unsupported_structured_output'), false, 'Anthropic conformance accepts structured-output requests')
+  const structuredRoute = resolveProviderRouteForTest(structuredReq, structuredBody)
+  assert.equal(structuredRoute.decision.structuredOutputPlan.supported, true, 'Anthropic route decision exposes structured-output support')
+  assert.equal(structuredRoute.decision.structuredOutputPlan.requestShape, 'anthropic-tool-schema', 'Anthropic route decision exposes tool-schema request shape')
+  assert.equal(structuredRoute.decision.blocked, false, 'Anthropic route decision does not block source-backed structured-output requests')
+
+  const parsedCompletion = parseProviderChatCompletionJson({
+    content: [{
+      type: 'tool_use',
+      id: 'toolu_structured',
+      name: 'islemind_summary',
+      input: { summary: 'Anthropic structured output is wired.', confidence: 0.92 },
+    }],
+    usage: { input_tokens: 12, output_tokens: 8 },
+  }, structuredReq)
+  assert.equal(parsedCompletion.text, '{"summary":"Anthropic structured output is wired.","confidence":0.92}', 'Anthropic structured-output parser returns tool input as JSON text')
+  assert.equal(parsedCompletion.providerToolCalls, undefined, 'Anthropic structured-output parser does not expose the synthetic schema tool as executable')
+  assert.equal(parsedCompletion.usage.outputTokens, 8, 'Anthropic structured-output parser preserves token usage')
+
+  const streamed = parseProviderStreamChunkForTest([
+    'data: {"type":"content_block_start","index":0,"content_block":{"type":"tool_use","id":"toolu_stream","name":"islemind_summary","input":{}}}',
+    'data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"{\\"summary\\":\\"streamed\\"}"}}',
+    'data: {"type":"content_block_stop","index":0}',
+  ].join('\n'), 'anthropic')
+  assert.equal(streamed.providerToolCalls?.[0]?.name, 'islemind_summary', 'Anthropic stream parser preserves structured-output tool names')
+  assert.equal(streamed.providerToolCalls?.[0]?.arguments?.summary, 'streamed', 'Anthropic stream parser merges structured-output tool arguments')
+
+  const jsonObjectBody = buildAnthropicBodyForTest({
+    provider,
+    model: 'claude-sonnet-4-6',
+    messages: [{ role: 'user', content: 'Return any JSON object.' }],
+    structuredOutput: { type: 'json_object' },
+  })
+  assert.deepEqual(
+    jsonObjectBody.tools.find((tool) => tool.name === 'islemind_structured_output')?.input_schema,
+    { type: 'object' },
+    'Anthropic JSON object mode uses a minimal object input_schema'
+  )
+}
+
+function assertDeepSeekProviderCompatibilityBehavior() {
+  const provider = applyProviderPreset({
+    id: 'deepseek-focused',
+    apiKey: FAKE_KEY_A,
+    models: ['deepseek-chat', 'deepseek-v4-pro'],
+    enabled: true,
+    capabilities: { reasoningEffort: true, nativeTools: true },
+  }, 'deepseek')
+  const schema = {
+    type: 'object',
+    properties: {
+      summary: { type: 'string' },
+    },
+    required: ['summary'],
+    additionalProperties: false,
+  }
+
+  assert.equal(getProviderCompatibilityEvidence('deepseek').auditState, 'conformance-ready', 'DeepSeek evidence stays conformance-ready')
+  assert.ok(providerCompatibilityEvidenceHasBehavior('deepseek', 'structuredOutput'), 'DeepSeek evidence claims source-backed JSON object output')
+  assert.ok(
+    getProviderCompatibilityEvidence('deepseek').officialDocs.some((url) => url.includes('/guides/json_mode')),
+    'DeepSeek evidence includes the official JSON Output guide'
+  )
+
+  const jsonObjectReq = {
+    provider,
+    model: 'deepseek-chat',
+    messages: [{ role: 'user', content: 'Return JSON with a summary field.' }],
+    maxTokens: 1024,
+    stream: false,
+    structuredOutput: { type: 'json_object' },
+  }
+  const jsonObjectBody = buildOpenAIBodyForTest(jsonObjectReq)
+  assert.deepEqual(
+    jsonObjectBody.response_format,
+    { type: 'json_object' },
+    'DeepSeek JSON object mode uses the official response_format shape'
+  )
+  const jsonObjectConformance = resolveProviderRequestConformanceForTest(jsonObjectReq, jsonObjectBody)
+  assert.equal(jsonObjectConformance.manifest.family, 'deepseek', 'DeepSeek conformance classifies the official provider family')
+  assert.equal(jsonObjectConformance.manifest.structuredOutput.documentedRequestShape, 'openai-json-object-response-format', 'DeepSeek conformance records JSON-object-only request controls')
+  assert.equal(jsonObjectConformance.manifest.structuredOutput.appRequestControl, true, 'DeepSeek conformance enables JSON object request controls')
+  assert.equal(jsonObjectConformance.manifest.structuredOutput.jsonObjectMode, true, 'DeepSeek conformance records JSON object support')
+  assert.equal(jsonObjectConformance.manifest.structuredOutput.strictJsonSchema, false, 'DeepSeek conformance does not claim strict JSON Schema support')
+  assert.equal(jsonObjectConformance.issues.some((issue) => issue.code === 'unsupported_structured_output'), false, 'DeepSeek accepts JSON object structured-output requests')
+  const jsonObjectRoute = resolveProviderRouteForTest(jsonObjectReq, jsonObjectBody)
+  assert.equal(jsonObjectRoute.decision.structuredOutputPlan.requestShape, 'openai-json-object-response-format', 'DeepSeek route decision exposes JSON-object-only request shape')
+  assert.equal(jsonObjectRoute.decision.blocked, false, 'DeepSeek route decision does not block JSON object mode')
+
+  const schemaReq = {
+    ...jsonObjectReq,
+    structuredOutput: {
+      type: 'json_schema',
+      name: 'islemind_summary',
+      schema,
+      strict: true,
+    },
+  }
+  const schemaBody = buildOpenAIBodyForTest(schemaReq)
+  assert.equal(schemaBody.response_format, undefined, 'DeepSeek JSON Schema requests do not emit unsupported response_format payloads')
+  const schemaConformance = resolveProviderRequestConformanceForTest(schemaReq, schemaBody)
+  assert.equal(
+    schemaConformance.issues.some((issue) => issue.code === 'unsupported_structured_output' && issue.severity === 'block'),
+    true,
+    'DeepSeek JSON Schema requests are blocked because official docs only cover JSON object mode'
+  )
+  const schemaRoute = resolveProviderRouteForTest(schemaReq, schemaBody)
+  assert.equal(schemaRoute.decision.structuredOutputPlan.supported, true, 'DeepSeek route still reports provider-level JSON object support')
+  assert.equal(schemaRoute.decision.structuredOutputPlan.blocked, true, 'DeepSeek route blocks unsupported schema requests')
+  assert.equal(schemaRoute.decision.blocked, true, 'DeepSeek schema route is blocked with an explicit reason')
+
+  const thinkingBody = buildOpenAIBodyForTest({
+    provider,
+    model: 'deepseek-v4-pro',
+    messages: [{ role: 'user', content: 'Think through the answer.' }],
+    reasoningEffort: 'xhigh',
+    maxTokens: 999999,
+  })
+  assert.deepEqual(thinkingBody.thinking, { type: 'enabled' }, 'DeepSeek thinking still uses the official thinking toggle')
+  assert.equal(thinkingBody.reasoning_effort, 'max', 'DeepSeek xhigh still maps to official max effort')
+  const deepSeekReasoningContentChunk = parseProviderStreamChunkForTest([
+    `data: ${JSON.stringify({
+      choices: [{
+        delta: {
+          reasoning_content: 'DeepSeek private reasoning trace.',
+          content: 'DeepSeek visible answer.',
+        },
+      }],
+    })}`,
+    '',
+  ].join('\n'), 'openai-compatible')
+  assert.equal(deepSeekReasoningContentChunk.text, 'DeepSeek visible answer.', 'DeepSeek reasoning_content is not emitted as answer text')
+  assert.equal(deepSeekReasoningContentChunk.reasoningContent, 'DeepSeek private reasoning trace.', 'DeepSeek reasoning_content remains available for replay')
+}
+
+function assertXAIProviderCompatibilityBehavior() {
+  const provider = applyProviderPreset({
+    id: 'xai-focused',
+    apiKey: FAKE_KEY_A,
+    models: ['grok-4.3', 'grok-4.20-multi-agent', 'grok-4.20-non-reasoning', 'grok-build-0.1'],
+    enabled: true,
+  }, 'xai')
+  const schema = {
+    type: 'object',
+    properties: {
+      summary: { type: 'string' },
+      sourceIds: { type: 'array', items: { type: 'string' } },
+    },
+    required: ['summary'],
+    additionalProperties: false,
+  }
+  assert.equal(getProviderCompatibilityEvidence('xai').auditState, 'conformance-ready', 'xAI evidence stays conformance-ready')
+  assert.ok(providerCompatibilityEvidenceHasBehavior('xai', 'structuredOutput'), 'xAI evidence claims source-backed structured outputs')
+  assert.ok(getProviderCompatibilityEvidence('xai').officialDocs.some((url) => url.includes('/guides/structured-outputs')), 'xAI evidence includes the official structured outputs guide')
+  assert.ok(getProviderCompatibilityEvidence('xai').officialDocs.some((url) => url.includes('/guides/live-search')), 'xAI evidence includes the official live search guide')
+  assert.equal(getModelConfig('grok-4.3', 'openai-compatible').preferredEndpoint, 'responses', 'xAI current Grok catalog routes Grok 4.3 through Responses')
+  assert.deepEqual(getModelConfig('grok-4.20-multi-agent', 'openai-compatible').reasoningEfforts, ['low', 'medium', 'high', 'xhigh'], 'xAI multi-agent catalog preserves source-backed xhigh effort')
+
+  const responsesReq = {
+    provider,
+    model: 'grok-4.3',
+    messages: [{ role: 'user', content: 'Return JSON with sources.' }],
+    reasoningEffort: 'high',
+    webSearchMode: 'native',
+    maxTokens: 4096,
+    stream: true,
+    structuredOutput: {
+      type: 'json_schema',
+      name: 'islemind_xai_summary',
+      schema,
+      strict: true,
+    },
+    providerToolDeclarations: [{
+      type: 'function',
+      name: 'inspect_source',
+      description: 'Inspect a cited source.',
+      parameters: { type: 'object', properties: { sourceId: { type: 'string' } }, required: ['sourceId'] },
+    }],
+  }
+  const responsesBody = buildOpenAIResponsesBodyForTest(responsesReq)
+  assert.equal(responsesBody.text, undefined, 'xAI Responses structured-output requests do not use OpenAI-only text.format')
+  assert.deepEqual(
+    responsesBody.response_format,
+    { type: 'json_schema', json_schema: { name: 'islemind_xai_summary', schema } },
+    'xAI Responses structured-output requests use the official response_format.json_schema shape'
+  )
+  assert.equal(responsesBody.reasoning.effort, 'high', 'xAI Responses reasoning uses official reasoning.effort')
+  assert.equal(responsesBody.reasoning.summary, undefined, 'xAI Responses does not inherit OpenAI-only reasoning.summary')
+  assert.deepEqual(responsesBody.include, ['reasoning.encrypted_content'], 'xAI Responses requests encrypted reasoning replay state')
+  assert.equal(responsesBody.tools.some((tool) => tool.type === 'web_search'), true, 'xAI Responses native search uses the official web_search tool')
+  assert.equal(responsesBody.tools.some((tool) => tool.name === 'inspect_source'), true, 'xAI Responses preserves IsleMind provider tool declarations')
+
+  const responsesConformance = resolveProviderRequestConformanceForTest(responsesReq, responsesBody)
+  assert.equal(responsesConformance.manifest.family, 'xai', 'xAI conformance classifies the official provider family')
+  assert.equal(responsesConformance.manifest.protocol, 'openai-responses', 'xAI conformance records Responses protocol routing')
+  assert.equal(responsesConformance.manifest.structuredOutput.contractClaimed, true, 'xAI conformance records structured-output contract evidence')
+  assert.equal(responsesConformance.manifest.structuredOutput.documentedRequestShape, 'xai-response-format', 'xAI conformance records response_format structured-output shape')
+  assert.equal(responsesConformance.manifest.structuredOutput.appRequestControl, true, 'xAI conformance enables response_format request controls')
+  assert.equal(responsesConformance.manifest.structuredOutput.strictJsonSchema, true, 'xAI conformance records schema-guaranteed structured outputs')
+  assert.equal(responsesConformance.issues.some((issue) => issue.code === 'unsupported_structured_output'), false, 'xAI conformance accepts structured-output requests')
+  assert.equal(responsesConformance.manifest.tools.nativeWebSearchToolType, 'web_search', 'xAI conformance records the official web_search tool type')
+
+  const responsesRoute = resolveProviderRouteForTest(responsesReq, responsesBody)
+  assert.equal(responsesRoute.decision.structuredOutputPlan.supported, true, 'xAI route decision exposes structured-output support')
+  assert.equal(responsesRoute.decision.structuredOutputPlan.requestShape, 'xai-response-format', 'xAI route decision exposes response_format request shape')
+  assert.equal(responsesRoute.decision.structuredOutputPlan.strictJsonSchema, true, 'xAI route decision exposes schema-guaranteed structured output')
+  assert.equal(responsesRoute.decision.blocked, false, 'xAI route decision does not block source-backed structured-output requests')
+
+  const chatReq = {
+    provider,
+    model: 'grok-build-0.1',
+    messages: [{ role: 'user', content: 'Return any JSON object.' }],
+    maxTokens: 512,
+    stream: false,
+    structuredOutput: { type: 'json_object' },
+  }
+  const chatBody = buildOpenAIBodyForTest(chatReq)
+  assert.deepEqual(chatBody.response_format, { type: 'json_object' }, 'xAI Chat Completions structured-output requests use response_format JSON object mode')
+  const chatConformance = resolveProviderRequestConformanceForTest(chatReq, chatBody)
+  assert.equal(chatConformance.manifest.protocol, 'openai-compatible', 'xAI non-Responses model keeps the Chat Completions protocol')
+  assert.equal(chatConformance.manifest.structuredOutput.documentedRequestShape, 'xai-response-format', 'xAI chat conformance keeps the response_format request shape')
+
+  const replayBody = buildOpenAIResponsesBodyForTest({
+    provider,
+    model: 'grok-4.3',
+    messages: [
+      { role: 'user', content: 'Need source details.' },
+      {
+        role: 'assistant',
+        content: '',
+        responseItems: [{ type: 'reasoning', id: 'rs_xai', encrypted_content: 'encrypted-xai-state', summary: [] }],
+        toolCalls: [{ id: 'fc_xai', callId: 'call_xai', name: 'inspect_source', arguments: { sourceId: 'src-1' } }],
+      },
+      { role: 'tool', name: 'inspect_source', toolCallId: 'call_xai', content: 'Source details.' },
+    ],
+    stream: false,
+  })
+  assert.deepEqual(
+    replayBody.input.slice(1, 4),
+    [
+      { type: 'reasoning', id: 'rs_xai', encrypted_content: 'encrypted-xai-state', summary: [] },
+      { type: 'function_call', id: 'fc_xai', call_id: 'call_xai', name: 'inspect_source', arguments: '{"sourceId":"src-1"}' },
+      { type: 'function_call_output', call_id: 'call_xai', output: 'Source details.' },
+    ],
+    'xAI Responses tool replay preserves encrypted reasoning before function_call_output'
+  )
+
+  const streamed = parseProviderStreamChunkForTest([
+    'data: {"type":"response.output_text.delta","delta":"xAI "}',
+    'data: {"type":"response.output_text.delta","delta":"answer"}',
+    'data: {"type":"response.completed","response":{"id":"resp_xai","usage":{"input_tokens":5,"output_tokens":7}}}',
+  ].join('\n'), 'openai-compatible')
+  assert.equal(streamed.text, 'xAI answer', 'xAI Responses stream parser merges output_text deltas through the OpenAI-compatible parser')
+  assert.equal(streamed.responseId, 'resp_xai', 'xAI Responses stream parser preserves response ids')
+}
+
+function assertOpenRouterProviderCompatibilityBehavior() {
+  const provider = applyProviderPreset({
+    id: 'openrouter-focused',
+    baseUrl: 'https://openrouter.ai/api/v1',
+    apiKey: FAKE_KEY_A,
+    models: ['openai/gpt-oss-120b', 'anthropic/claude-sonnet-4.6', 'openrouter/auto'],
+    enabled: true,
+  }, 'openrouter')
+  const schema = {
+    type: 'object',
+    properties: {
+      summary: { type: 'string' },
+      sourceIds: { type: 'array', items: { type: 'string' } },
+    },
+    required: ['summary'],
+    additionalProperties: false,
+  }
+
+  assert.equal(getProviderCompatibilityEvidence('openrouter').auditState, 'conformance-ready', 'OpenRouter evidence stays conformance-ready')
+  assert.ok(providerCompatibilityEvidenceHasBehavior('openrouter', 'structuredOutput'), 'OpenRouter evidence claims source-backed structured outputs')
+  assert.ok(providerCompatibilityEvidenceHasBehavior('openrouter', 'files'), 'OpenRouter evidence claims documented PDF file input')
+  assert.ok(providerCompatibilityEvidenceHasBehavior('openrouter', 'relayRouting'), 'OpenRouter evidence records aggregator relay routing')
+  assert.ok(getProviderCompatibilityEvidence('openrouter').officialDocs.some((url) => url.includes('/features/structured-outputs')), 'OpenRouter evidence includes the structured outputs guide')
+  assert.ok(getProviderCompatibilityEvidence('openrouter').officialDocs.some((url) => url.includes('/features/multimodal/pdfs')), 'OpenRouter evidence includes the PDF file input guide')
+  assert.ok(getProviderCompatibilityEvidence('openrouter').officialDocs.some((url) => url.includes('/features/provider-routing')), 'OpenRouter evidence includes provider-routing behavior')
+
+  const remoteModels = mapOpenAICompatibleModels({
+    data: [
+      {
+        id: 'openai/gpt-oss-120b',
+        name: 'GPT OSS 120B via OpenRouter',
+        context_length: 131000,
+        max_output_tokens: 40000,
+        supported_parameters: ['tools', 'response_format', 'structured_outputs'],
+        architecture: { input_modalities: ['text'] },
+      },
+      {
+        id: 'text/plain-relay-model',
+        name: 'Plain Relay Model',
+        context_length: 64000,
+        max_output_tokens: 4096,
+        supported_parameters: ['tools'],
+      },
+    ],
+  }, 'openai-compatible', { providerPresetId: 'openrouter' })
+  assert.deepEqual(
+    remoteModels.find((model) => model.id === 'openai/gpt-oss-120b')?.supportedParameters,
+    ['tools', 'response_format', 'structured_outputs'],
+    'OpenRouter model sync preserves supported_parameters for contract gating'
+  )
+
+  const structuredReq = {
+    provider: { ...provider, modelConfigs: remoteModels },
+    model: 'openai/gpt-oss-120b',
+    messages: [{ role: 'user', content: 'Return structured JSON.' }],
+    maxTokens: 4096,
+    stream: false,
+    structuredOutput: {
+      type: 'json_schema',
+      name: 'islemind_openrouter_summary',
+      schema,
+      strict: true,
+    },
+    providerToolDeclarations: [{
+      type: 'function',
+      function: {
+        name: 'inspect_source',
+        description: 'Inspect a cited source.',
+        parameters: { type: 'object', properties: { sourceId: { type: 'string' } }, required: ['sourceId'] },
+      },
+    }],
+  }
+  const structuredBody = buildOpenAIBodyForTest(structuredReq)
+  assert.deepEqual(
+    structuredBody.response_format,
+    { type: 'json_schema', json_schema: { name: 'islemind_openrouter_summary', schema, strict: true } },
+    'OpenRouter Chat Completions structured-output requests use response_format JSON schema'
+  )
+  assert.equal(structuredBody.tools[0].function.name, 'inspect_source', 'OpenRouter Chat Completions preserves OpenAI-format tool declarations')
+  const structuredConformance = resolveProviderRequestConformanceForTest(structuredReq, structuredBody)
+  assert.equal(structuredConformance.manifest.family, 'openrouter', 'OpenRouter conformance keeps the relay provider family')
+  assert.equal(structuredConformance.manifest.protocol, 'openai-compatible', 'OpenRouter default route stays Chat Completions')
+  assert.equal(structuredConformance.manifest.structuredOutput.contractClaimed, true, 'OpenRouter conformance records structured-output contract evidence')
+  assert.equal(structuredConformance.manifest.structuredOutput.documentedRequestShape, 'openrouter-response-format', 'OpenRouter conformance records response_format request shape')
+  assert.equal(structuredConformance.manifest.structuredOutput.appRequestControl, true, 'OpenRouter conformance enables response_format when remote model metadata supports it')
+  assert.equal(structuredConformance.manifest.structuredOutput.strictJsonSchema, true, 'OpenRouter conformance preserves strict JSON schema support')
+  assert.equal(structuredConformance.issues.some((issue) => issue.code === 'unsupported_structured_output'), false, 'OpenRouter accepts source-backed structured-output requests')
+
+  const pdfAttachment = { id: 'openrouter-pdf', type: 'file', uri: 'file://document.pdf', name: 'document.pdf', mimeType: 'application/pdf', size: 12, base64: 'cGRm' }
+  const fileReq = {
+    provider: { ...provider, modelConfigs: remoteModels },
+    model: 'openai/gpt-oss-120b',
+    messages: [{ role: 'user', content: 'Summarize this PDF.' }],
+    attachments: [pdfAttachment],
+  }
+  const fileBody = buildOpenAIBodyForTest(fileReq)
+  assert.deepEqual(
+    fileBody.messages[0].content[1],
+    { type: 'file', file: { filename: 'document.pdf', file_data: 'data:application/pdf;base64,cGRm' } },
+    'OpenRouter PDF attachments use the documented Chat Completions file_data content part'
+  )
+  const fileConformance = resolveProviderRequestConformanceForTest(fileReq, fileBody)
+  assert.equal(fileConformance.manifest.modalities.input.file, true, 'OpenRouter conformance claims documented PDF file input')
+  assert.equal(
+    fileConformance.issues.some((issue) => issue.code === 'unsupported_modality' && issue.field === 'file'),
+    false,
+    'OpenRouter conformance does not block documented PDF file attachments'
+  )
+
+  const blockedReq = {
+    ...structuredReq,
+    model: 'text/plain-relay-model',
+  }
+  const blockedBody = buildOpenAIBodyForTest(blockedReq)
+  assert.equal(blockedBody.response_format, undefined, 'OpenRouter does not emit response_format when remote supported_parameters omit structured outputs')
+  const blockedConformance = resolveProviderRequestConformanceForTest(blockedReq, blockedBody)
+  assert.equal(blockedConformance.manifest.structuredOutput.contractClaimed, true, 'OpenRouter blocked model still records provider-level structured-output evidence')
+  assert.equal(blockedConformance.manifest.structuredOutput.appRequestControl, false, 'OpenRouter disables request controls for models whose metadata omits response_format')
+  assert.equal(
+    blockedConformance.issues.some((issue) => issue.code === 'unsupported_structured_output' && issue.severity === 'block'),
+    true,
+    'OpenRouter blocks structured-output requests when model supported_parameters omit response_format'
+  )
+
+  const responsesReq = {
+    ...structuredReq,
+    provider: { ...provider, capabilities: { ...provider.capabilities, responsesApi: true }, modelConfigs: [{ ...remoteModels[0], preferredEndpoint: 'responses' }] },
+    model: 'openai/gpt-oss-120b',
+    stream: true,
+  }
+  const responsesBody = buildOpenAIResponsesBodyForTest(responsesReq)
+  assert.deepEqual(
+    responsesBody.response_format,
+    { type: 'json_schema', json_schema: { name: 'islemind_openrouter_summary', schema, strict: true } },
+    'OpenRouter Responses structured-output requests use top-level response_format'
+  )
+  assert.equal(responsesBody.text, undefined, 'OpenRouter Responses does not use OpenAI-only text.format')
+  const responsesConformance = resolveProviderRequestConformanceForTest(responsesReq, responsesBody)
+  assert.equal(responsesConformance.manifest.protocol, 'openai-responses', 'OpenRouter Responses stays explicit opt-in through capability and model metadata')
+  assert.equal(responsesConformance.manifest.structuredOutput.appRequestControl, true, 'OpenRouter Responses keeps structured-output request controls enabled')
+
+  const route = resolveProviderRouteForTest(structuredReq, structuredBody)
+  assert.equal(route.decision.structuredOutputPlan.supported, true, 'OpenRouter route decision exposes structured-output support')
+  assert.equal(route.decision.structuredOutputPlan.requestShape, 'openrouter-response-format', 'OpenRouter route decision exposes response_format request shape')
+  assert.equal(route.decision.blocked, false, 'OpenRouter route decision does not block source-backed structured output')
+}
+
+async function assertRelayProviderCompatibilityBehavior() {
+  const relays = [
+    { presetId: 'openrouter', baseUrl: 'https://openrouter.ai/api/v1', chatModel: 'openrouter/auto' },
+    { presetId: 'newapi', baseUrl: 'https://gateway.example/v1', chatModel: 'newapi/gpt-5.2' },
+    { presetId: 'sub2api', baseUrl: 'https://sub2api.example/v1', chatModel: 'sub2api/gpt-5.2' },
+  ]
+  const providerToolDeclaration = {
+    type: 'function',
+    function: {
+      name: 'inspect_source',
+      description: 'Inspect a cited source.',
+      parameters: {
+        type: 'object',
+        properties: { sourceId: { type: 'string' } },
+        required: ['sourceId'],
+      },
+    },
+  }
+
+  for (const relay of relays) {
+    const provider = applyProviderPreset({
+      id: `${relay.presetId}-relay`,
+      baseUrl: relay.baseUrl,
+      [API_KEY_FIELD]: FAKE_KEY_A,
+      models: [relay.chatModel],
+      enabled: true,
+    }, relay.presetId)
+    assert.equal(buildProviderCapabilityMatrix(provider).hostingProfile, 'aggregator', `${relay.presetId} is classified as an aggregator`)
+    assert.equal(
+      resolveProviderEndpoint({ provider, model: relay.chatModel, stream: true }),
+      `${relay.baseUrl}/chat/completions`,
+      `${relay.presetId} chat route preserves the configured relay base URL`
+    )
+    const chatBody = getBodyForTest({
+      provider,
+      model: relay.chatModel,
+      messages: [{ role: 'user', content: 'Summarize this relay response.' }],
+      stream: true,
+      providerToolDeclarations: [providerToolDeclaration],
+    })
+    assert.equal(chatBody.model, relay.chatModel, `${relay.presetId} chat body preserves the selected upstream model id`)
+    assert.equal(chatBody.messages[0].role, 'user', `${relay.presetId} chat body preserves OpenAI-compatible messages`)
+    assert.equal(chatBody.tools[0].function.name, 'inspect_source', `${relay.presetId} chat body preserves provider tool declarations`)
+    const chatConformance = resolveProviderRequestConformanceForTest({
+      provider,
+      model: relay.chatModel,
+      messages: [{ role: 'user', content: 'Summarize this relay response.' }],
+    }, chatBody)
+    assert.equal(chatConformance.manifest.family, relay.presetId, `${relay.presetId} conformance keeps the relay provider family`)
+    assert.equal(chatConformance.manifest.protocol, 'openai-compatible', `${relay.presetId} conformance uses OpenAI-compatible chat by default`)
+    assert.equal(chatConformance.manifest.tools.requestShape, 'openai-tools', `${relay.presetId} conformance records OpenAI-compatible tool declarations`)
+    if (relay.presetId === 'sub2api') {
+      const relaySchema = {
+        type: 'object',
+        properties: { summary: { type: 'string' } },
+        required: ['summary'],
+        additionalProperties: false,
+      }
+      const structuredRelayReq = {
+        provider,
+        model: relay.chatModel,
+        messages: [{ role: 'user', content: 'Return JSON.' }],
+        structuredOutput: {
+          type: 'json_schema',
+          name: 'sub2api_summary',
+          schema: relaySchema,
+          strict: true,
+        },
+      }
+      const structuredRelayBody = getBodyForTest(structuredRelayReq)
+      assert.equal(structuredRelayBody.response_format, undefined, 'Sub2API default body does not emit response_format without endpoint-level docs')
+      const structuredRelayConformance = resolveProviderRequestConformanceForTest(structuredRelayReq, structuredRelayBody)
+      assert.equal(structuredRelayConformance.manifest.structuredOutput.contractClaimed, false, 'Sub2API default conformance does not claim structured output from README-level relay docs')
+      assert.ok(
+        structuredRelayConformance.issues.some((issue) => issue.code === 'unsupported_structured_output' && issue.severity === 'block'),
+        'Sub2API default conformance blocks structured output until explicit relay capability evidence exists'
+      )
+      assert.deepEqual(getReasoningEffortOptions(provider, 'qwen3.7-max'), [], 'Sub2API default preset does not expose known-model reasoning controls without explicit relay evidence')
+
+      const declaredRelayProvider = {
+        ...provider,
+        capabilities: { ...provider.capabilities, reasoningEffort: true },
+        modelConfigs: [{
+          id: 'sub2api/qwen3.7-max',
+          name: 'Sub2API Qwen 3.7 Max',
+          provider: 'openai-compatible',
+          contextWindow: 1000000,
+          maxTokens: 8192,
+          maxOutputTokens: 8192,
+          defaultMaxTokens: 4096,
+          supportsVision: false,
+          supportsFiles: false,
+          supportsTools: true,
+          reasoningMode: 'dashscope-thinking',
+          reasoningEfforts: ['none', 'low', 'medium', 'high'],
+          sourceUrl: `${relay.baseUrl}/models`,
+          verifiedAt: '2026-06-22',
+          source: 'remote',
+        }],
+      }
+      assert.deepEqual(
+        getReasoningEffortOptions(declaredRelayProvider, 'sub2api/qwen3.7-max'),
+        ['none', 'low', 'medium', 'high'],
+        'Sub2API can expose reasoning controls when remote model metadata and explicit relay capability declare them'
+      )
+      const declaredReasoningBody = getBodyForTest({
+        provider: declaredRelayProvider,
+        model: 'sub2api/qwen3.7-max',
+        messages: [{ role: 'user', content: 'Think briefly.' }],
+        reasoningEffort: 'high',
+      })
+      assert.equal(declaredReasoningBody.enable_thinking, true, 'Sub2API explicit relay declaration can route upstream Qwen thinking controls')
+    }
+    if (relay.presetId !== 'openrouter') {
+      const relayTextModel = `${relay.presetId}/text-relay-model`
+      const fileBody = getBodyForTest({
+        provider,
+        model: relayTextModel,
+        messages: [{ role: 'user', content: 'Read this relay document.' }],
+        attachments: [{ id: 'relay-doc', type: 'file', uri: 'file://doc.pdf', name: 'doc.pdf', mimeType: 'application/pdf', size: 12, base64: 'ZG9j' }],
+      })
+      const fileConformance = resolveProviderRequestConformanceForTest({
+        provider,
+        model: relayTextModel,
+        messages: [{ role: 'user', content: 'Read this relay document.' }],
+        attachments: [{ id: 'relay-doc', type: 'file', uri: 'file://doc.pdf', name: 'doc.pdf', mimeType: 'application/pdf', size: 12, base64: 'ZG9j' }],
+      }, fileBody)
+      if (relay.presetId === 'sub2api') {
+        assert.ok(fileConformance.manifest.source.url?.includes('github.com/Wei-Shaw/sub2api'), 'Sub2API conformance source uses the current public project URL for unknown relay models')
+      }
+      assert.equal(fileConformance.manifest.modalities.input.file, false, `${relay.presetId} default conformance does not claim generic file_data input for unknown relay models`)
+      assert.ok(
+        fileConformance.issues.some((issue) => issue.code === 'unsupported_modality' && issue.field === 'file'),
+        `${relay.presetId} default conformance blocks generic file attachments until relay capability metadata declares them`
+      )
+      const imageBody = getBodyForTest({
+        provider,
+        model: relayTextModel,
+        messages: [{ role: 'user', content: 'Describe this relay image.' }],
+        attachments: [{ id: 'relay-image', type: 'image', uri: 'file://image.png', name: 'image.png', mimeType: 'image/png', size: 12, base64: 'aW1n' }],
+      })
+      const imageConformance = resolveProviderRequestConformanceForTest({
+        provider,
+        model: relayTextModel,
+        messages: [{ role: 'user', content: 'Describe this relay image.' }],
+        attachments: [{ id: 'relay-image', type: 'image', uri: 'file://image.png', name: 'image.png', mimeType: 'image/png', size: 12, base64: 'aW1n' }],
+      }, imageBody)
+      assert.equal(imageConformance.manifest.modalities.input.image, false, `${relay.presetId} default conformance waits for model metadata before claiming image input for unknown relay models`)
+      assert.ok(
+        imageConformance.issues.some((issue) => issue.code === 'unsupported_modality' && issue.field === 'image'),
+        `${relay.presetId} default conformance blocks image input until relay model metadata declares it`
+      )
+      const metadataVisionProvider = {
+        ...provider,
+        modelConfigs: [{
+          id: 'relay/vision-model',
+          name: 'Relay Vision Model',
+          provider: 'openai-compatible',
+          contextWindow: 65536,
+          maxTokens: 4096,
+          maxOutputTokens: 4096,
+          defaultMaxTokens: 2048,
+          supportsVision: true,
+          supportsFiles: false,
+          supportsTools: true,
+          sourceUrl: `${relay.baseUrl}/models`,
+          verifiedAt: '2026-06-21',
+          source: 'remote',
+        }],
+      }
+      const metadataVisionBody = getBodyForTest({
+        provider: metadataVisionProvider,
+        model: 'relay/vision-model',
+        messages: [{ role: 'user', content: 'Describe this relay image.' }],
+        attachments: [{ id: 'relay-image', type: 'image', uri: 'file://image.png', name: 'image.png', mimeType: 'image/png', size: 12, base64: 'aW1n' }],
+      })
+      const metadataVisionConformance = resolveProviderRequestConformanceForTest({
+        provider: metadataVisionProvider,
+        model: 'relay/vision-model',
+        messages: [{ role: 'user', content: 'Describe this relay image.' }],
+        attachments: [{ id: 'relay-image', type: 'image', uri: 'file://image.png', name: 'image.png', mimeType: 'image/png', size: 12, base64: 'aW1n' }],
+      }, metadataVisionBody)
+      assert.equal(metadataVisionConformance.manifest.modalities.input.image, true, `${relay.presetId} conformance accepts relay image input from model metadata`)
+      assert.equal(
+        metadataVisionConformance.issues.some((issue) => issue.code === 'unsupported_modality' && issue.field === 'image'),
+        false,
+        `${relay.presetId} metadata-backed vision model avoids unsupported image modality diagnostics`
+      )
+    }
+
+    const responsesProvider = {
+      ...provider,
+      models: ['gpt-5.2'],
+      capabilities: { ...provider.capabilities, responsesApi: true, nativeTools: true },
+    }
+    assert.equal(
+      usesOpenAIResponses({ provider: responsesProvider, model: 'gpt-5.2' }),
+      true,
+      `${relay.presetId} can opt into Responses routing when the relay declares responsesApi`
+    )
+    assert.equal(
+      resolveProviderEndpoint({ provider: responsesProvider, model: 'gpt-5.2', stream: true, usesResponsesApi: true }),
+      `${relay.baseUrl}/responses`,
+      `${relay.presetId} Responses route preserves the configured relay base URL`
+    )
+    const responsesBody = getBodyForTest({
+      provider: responsesProvider,
+      model: 'gpt-5.2',
+      messages: [{ role: 'user', content: 'Use Responses through the relay.' }],
+      stream: true,
+      maxTokens: 128,
+      providerToolDeclarations: [providerToolDeclaration],
+    })
+    assert.equal(Array.isArray(responsesBody.input), true, `${relay.presetId} Responses body uses the Responses input array`)
+    assert.equal(responsesBody.tools[0].function.name, 'inspect_source', `${relay.presetId} Responses body preserves provider tool declarations`)
+    const responsesConformance = resolveProviderRequestConformanceForTest({
+      provider: responsesProvider,
+      model: 'gpt-5.2',
+      messages: [{ role: 'user', content: 'Use Responses through the relay.' }],
+    }, responsesBody)
+    assert.equal(responsesConformance.manifest.protocol, 'openai-responses', `${relay.presetId} conformance matches Responses relay routing`)
+    assert.equal(responsesConformance.manifest.payload.maxTokensField, 'max_output_tokens', `${relay.presetId} Responses conformance uses max_output_tokens`)
+  }
+
+  const originalFetch = global.fetch
+  const modelFetchCalls = []
+  try {
+    global.fetch = async (input, init = {}) => {
+      modelFetchCalls.push({ url: String(input), authorization: init.headers?.Authorization ?? init.headers?.authorization })
+      return new Response(JSON.stringify({
+        data: [
+          {
+            id: 'relay/text-model',
+            display_name: 'Relay Text Model',
+            context_length: 131072,
+            max_completion_tokens: 8192,
+            architecture: { input_modalities: ['text'] },
+          },
+          {
+            id: 'relay/vision-model',
+            name: 'Relay Vision Model',
+            metadata: { context_length: '65536', max_completion_tokens: '4096' },
+            architecture: { input_modalities: ['text', 'image'] },
+          },
+        ],
+      }), { status: 200 })
+    }
+    for (const relay of relays) {
+      const provider = applyProviderPreset({
+        id: `${relay.presetId}-model-sync`,
+        baseUrl: relay.baseUrl,
+        [API_KEY_FIELD]: FAKE_KEY_A,
+        models: [],
+        enabled: true,
+      }, relay.presetId)
+      const models = await fetchProviderModelConfigsFromRemote(provider, 1000)
+      assert.equal(models[0].id, 'relay/text-model', `${relay.presetId} model sync preserves relay model ids`)
+      assert.equal(models[0].contextWindow, 131072, `${relay.presetId} model sync reads relay context limits`)
+      assert.equal(models[0].maxOutputTokens, 8192, `${relay.presetId} model sync reads relay output limits`)
+      assert.equal(models[1].supportsVision, true, `${relay.presetId} model sync preserves vision modality metadata`)
+    }
+  } finally {
+    global.fetch = originalFetch
+  }
+  assert.deepEqual(
+    modelFetchCalls.map((call) => call.url),
+    relays.map((relay) => `${relay.baseUrl}/models`),
+    'relay model sync calls each configured /models endpoint exactly once'
+  )
+  assert.ok(modelFetchCalls.every((call) => call.authorization === `Bearer ${FAKE_KEY_A}`), 'relay model sync uses bearer auth for OpenAI-compatible aggregators')
+
+  const relayProvider = applyProviderPreset({
+    id: 'openrouter-parse-relay',
+    baseUrl: 'https://openrouter.ai/api/v1',
+    [API_KEY_FIELD]: FAKE_KEY_A,
+    models: ['openrouter/auto'],
+    enabled: true,
+  }, 'openrouter')
+  const relayParsedCompletion = parseProviderChatCompletionJson({
+    choices: [{
+      message: {
+        content: 'Relay answer.',
+        tool_calls: [{
+          id: 'call_relay',
+          type: 'function',
+          function: { name: 'inspect_source', arguments: '{"sourceId":"src-relay"}' },
+        }],
+      },
+    }],
+    usage: { prompt_tokens: 11, completion_tokens: 13, total_tokens: 24 },
+  }, {
+    provider: relayProvider,
+    model: 'openrouter/auto',
+    messages: [],
+    retrievalSources: [{ id: 'src-relay', title: 'Relay Source', excerpt: 'Relay evidence', similarity: 0.8 }],
+  })
+  assert.equal(relayParsedCompletion.text, 'Relay answer.', 'relay response parser preserves OpenAI-compatible text')
+  assert.equal(relayParsedCompletion.providerToolCalls?.[0]?.name, 'inspect_source', 'relay response parser extracts OpenAI-compatible tool calls')
+  assert.equal(relayParsedCompletion.providerToolCalls?.[0]?.arguments?.sourceId, 'src-relay', 'relay response parser parses tool arguments')
+  assert.equal(relayParsedCompletion.usage?.totalTokens, 24, 'relay response parser preserves OpenAI-compatible usage')
+  assert.equal(relayParsedCompletion.citations?.[0]?.id, 'src-relay', 'relay response parser preserves retrieval citations')
+
+  const relayStream = parseProviderStreamChunkForTest([
+    `data: ${JSON.stringify({ choices: [{ delta: { content: 'Relay ' } }] })}`,
+    `data: ${JSON.stringify({ choices: [{ delta: { content: 'stream.' } }] })}`,
+    `data: ${JSON.stringify({ choices: [{ delta: { tool_calls: [{ index: 0, id: 'call_stream', type: 'function', function: { name: 'inspect_source', arguments: '{"sourceId":' } }] } }] })}`,
+    `data: ${JSON.stringify({ choices: [{ delta: { tool_calls: [{ index: 0, function: { arguments: '"src-stream"}' } }] } }] })}`,
+    '',
+  ].join('\n'), 'openai-compatible')
+  assert.equal(relayStream.text, 'Relay stream.', 'relay stream parser merges OpenAI-compatible text deltas')
+  assert.equal(relayStream.providerToolCalls?.[0]?.id, 'call_stream', 'relay stream parser preserves streamed tool call ids')
+  assert.equal(relayStream.providerToolCalls?.[0]?.arguments?.sourceId, 'src-stream', 'relay stream parser merges streamed tool arguments')
+
+  const relayRateLimit = JSON.stringify({
+    error: {
+      code: 'rate_limit_exceeded',
+      message: 'Upstream relay provider rate limit exceeded.',
+      request_id: 'relay_req_123',
+    },
+  })
+  assert.equal(classifyHttpStatus(429, relayRateLimit), 'rate_limited', 'relay provider errors classify 429 as rate_limited')
+  assert.ok(extractProviderErrorDetail(relayRateLimit).includes('relay_req_123'), 'relay provider errors preserve request ids for diagnostics')
+}
+
+async function assertNewAPIProviderCompatibilityBehavior() {
+  const schema = {
+    type: 'object',
+    properties: {
+      summary: { type: 'string' },
+      confidence: { type: 'number' },
+    },
+    required: ['summary'],
+    additionalProperties: false,
+  }
+  const provider = applyProviderPreset({
+    id: 'newapi-contract',
+    baseUrl: 'https://gateway.example/v1',
+    [API_KEY_FIELD]: FAKE_KEY_A,
+    models: ['newapi/gpt-5.2'],
+    enabled: true,
+    modelConfigs: [{
+      id: 'newapi/gpt-5.2',
+      name: 'NewAPI GPT 5.2',
+      provider: 'openai-compatible',
+      contextWindow: 400000,
+      maxTokens: 400000,
+      maxOutputTokens: 8192,
+      defaultMaxTokens: 4096,
+      supportsVision: false,
+      supportsFiles: false,
+      supportsTools: true,
+      supportedParameters: ['response_format', 'reasoning_effort', 'tools'],
+      reasoningMode: 'openai-effort',
+      reasoningEfforts: ['low', 'medium', 'high'],
+      preferredEndpoint: 'chat-completions',
+      sourceUrl: 'https://docs.newapi.pro/zh/docs/api/ai-model/chat/openai/createchatcompletion',
+      verifiedAt: '2026-06-22',
+      source: 'remote',
+    }],
+  }, 'newapi')
+  const evidence = getProviderCompatibilityEvidence('newapi')
+  assert.equal(evidence.auditState, 'conformance-ready', 'NewAPI evidence stays conformance-ready')
+  assert.ok(evidence.officialDocs.some((url) => url.includes('/zh/docs/api/ai-model/chat/openai/createchatcompletion')), 'NewAPI evidence records current ChatCompletions docs')
+  assert.ok(evidence.officialDocs.some((url) => url.includes('/zh/docs/api/ai-model/chat/openai/createresponse')), 'NewAPI evidence records current Responses docs')
+  assert.ok(evidence.officialDocs.some((url) => url.includes('/zh/docs/api/ai-model/models/list/listmodels')), 'NewAPI evidence records current model-list docs')
+  assert.ok(evidence.officialDocs.some((url) => url.includes('/zh/docs/api/ai-model/unimplemented/files/listfiles')), 'NewAPI evidence records current unimplemented Files docs')
+  assert.ok(providerCompatibilityEvidenceHasBehavior('newapi', 'structuredOutput'), 'NewAPI evidence claims ChatCompletions structured output')
+  assert.ok(providerCompatibilityEvidenceHasBehavior('newapi', 'reasoning'), 'NewAPI evidence claims documented reasoning request fields')
+  assert.equal(providerCompatibilityEvidenceHasBehavior('newapi', 'files'), false, 'NewAPI evidence avoids file support because Files docs are unimplemented')
+
+  const structuredReq = {
+    provider,
+    model: 'newapi/gpt-5.2',
+    messages: [{ role: 'user', content: 'Return a structured relay answer.' }],
+    stream: false,
+    maxTokens: 256,
+    reasoningEffort: 'high',
+    structuredOutput: {
+      type: 'json_schema',
+      name: 'newapi_summary',
+      schema,
+      strict: true,
+    },
+    providerToolDeclarations: [{
+      type: 'function',
+      function: {
+        name: 'inspect_source',
+        description: 'Inspect a cited source.',
+        parameters: { type: 'object', properties: { sourceId: { type: 'string' } }, required: ['sourceId'] },
+      },
+    }],
+  }
+  const structuredBody = buildOpenAIBodyForTest(structuredReq)
+  assert.deepEqual(
+    structuredBody.response_format,
+    { type: 'json_schema', json_schema: { name: 'newapi_summary', schema } },
+    'NewAPI ChatCompletions structured output uses response_format without adding unverified strict'
+  )
+  assert.equal(structuredBody.reasoning_effort, 'high', 'NewAPI ChatCompletions uses model-metadata-gated reasoning_effort')
+  assert.equal(structuredBody.tools[0].function.name, 'inspect_source', 'NewAPI ChatCompletions preserves OpenAI-format tool declarations')
+  const structuredConformance = resolveProviderRequestConformanceForTest(structuredReq, structuredBody)
+  assert.equal(structuredConformance.manifest.family, 'newapi', 'NewAPI conformance records the relay provider family')
+  assert.equal(structuredConformance.manifest.protocol, 'openai-compatible', 'NewAPI ChatCompletions uses OpenAI-compatible protocol')
+  assert.equal(structuredConformance.manifest.structuredOutput.documentedRequestShape, 'openai-response-format', 'NewAPI conformance records ChatCompletions response_format controls')
+  assert.equal(structuredConformance.manifest.structuredOutput.appRequestControl, true, 'NewAPI conformance enables source-backed ChatCompletions response_format controls')
+  assert.equal(structuredConformance.manifest.structuredOutput.strictJsonSchema, false, 'NewAPI conformance avoids strict JSON schema until source-backed')
+  assert.equal(structuredConformance.manifest.reasoning.requestShape, 'openai-reasoning-effort', 'NewAPI conformance records ChatCompletions reasoning_effort controls')
+  assert.equal(structuredConformance.issues.some((issue) => issue.code === 'unsupported_structured_output'), false, 'NewAPI conformance accepts source-backed ChatCompletions structured-output requests')
+  const structuredRoute = resolveProviderRouteForTest(structuredReq, structuredBody)
+  assert.equal(structuredRoute.decision.structuredOutputPlan.supported, true, 'NewAPI route decision exposes structured-output support')
+  assert.equal(structuredRoute.decision.structuredOutputPlan.requestShape, 'openai-response-format', 'NewAPI route decision exposes response_format request shape')
+  assert.equal(structuredRoute.decision.blocked, false, 'NewAPI route decision does not block source-backed ChatCompletions structured output')
+
+  const responsesProvider = {
+    ...provider,
+    capabilities: { ...provider.capabilities, responsesApi: true },
+    models: ['newapi/gpt-5.2-responses'],
+    modelConfigs: [{
+      ...provider.modelConfigs[0],
+      id: 'newapi/gpt-5.2-responses',
+      name: 'NewAPI GPT 5.2 Responses',
+      preferredEndpoint: 'responses',
+      sourceUrl: 'https://docs.newapi.pro/zh/docs/api/ai-model/chat/openai/createresponse',
+    }],
+  }
+  const responsesReq = {
+    provider: responsesProvider,
+    model: 'newapi/gpt-5.2-responses',
+    messages: [{ role: 'user', content: 'Use Responses through NewAPI.' }],
+    stream: true,
+    maxTokens: 128,
+    reasoningEffort: 'high',
+    structuredOutput: {
+      type: 'json_schema',
+      name: 'newapi_responses_summary',
+      schema,
+      strict: true,
+    },
+    providerToolDeclarations: [structuredReq.providerToolDeclarations[0]],
+  }
+  const responsesBody = buildOpenAIResponsesBodyForTest(responsesReq)
+  assert.deepEqual(responsesBody.reasoning, { effort: 'high' }, 'NewAPI Responses uses the documented reasoning object when model metadata selects Responses')
+  assert.equal(responsesBody.response_format, undefined, 'NewAPI Responses does not invent response_format controls without docs evidence')
+  assert.equal(responsesBody.text, undefined, 'NewAPI Responses does not invent text.format structured-output controls without docs evidence')
+  const responsesConformance = resolveProviderRequestConformanceForTest(responsesReq, responsesBody)
+  assert.equal(responsesConformance.manifest.protocol, 'openai-responses', 'NewAPI conformance records explicit Responses routing')
+  assert.equal(responsesConformance.manifest.reasoning.requestShape, 'openai-responses-reasoning', 'NewAPI conformance records Responses reasoning object controls')
+  assert.equal(responsesConformance.manifest.structuredOutput.appRequestControl, false, 'NewAPI Responses structured output stays unclaimed without source-backed docs')
+  assert.ok(
+    responsesConformance.issues.some((issue) => issue.code === 'unsupported_structured_output' && issue.severity === 'block'),
+    'NewAPI conformance blocks Responses structured output until source-backed request fields exist'
+  )
+
+  const parsedCompletion = parseProviderChatCompletionJson({
+    choices: [{
+      message: {
+        role: 'assistant',
+        content: 'NewAPI answer.',
+        reasoning_content: 'NewAPI hidden reasoning.',
+        tool_calls: [{
+          id: 'call_newapi',
+          type: 'function',
+          function: { name: 'inspect_source', arguments: '{"sourceId":"newapi-src"}' },
+        }],
+      },
+    }],
+    usage: { prompt_tokens: 12, completion_tokens: 9, total_tokens: 21 },
+  }, {
+    provider,
+    model: 'newapi/gpt-5.2',
+    messages: [],
+    retrievalSources: [{ id: 'newapi-src', title: 'NewAPI Source', excerpt: 'Relay source', similarity: 0.81 }],
+  })
+  assert.equal(parsedCompletion.text, 'NewAPI answer.', 'NewAPI parser preserves OpenAI-compatible text')
+  assert.equal(parsedCompletion.reasoningContent, 'NewAPI hidden reasoning.', 'NewAPI parser preserves reasoning_content separately')
+  assert.ok(parsedCompletion.traces?.some((trace) => trace.content === 'NewAPI hidden reasoning.'), 'NewAPI parser emits reasoning_content as a reasoning trace')
+  assert.equal(parsedCompletion.providerToolCalls?.[0]?.arguments?.sourceId, 'newapi-src', 'NewAPI parser extracts OpenAI-compatible tool-call arguments')
+  assert.equal(parsedCompletion.usage?.totalTokens, 21, 'NewAPI parser preserves usage metadata')
+
+  const streamed = parseProviderStreamChunkForTest([
+    `data: ${JSON.stringify({ choices: [{ delta: { reasoning_content: 'NewAPI stream reasoning.' } }] })}`,
+    `data: ${JSON.stringify({ choices: [{ delta: { content: 'NewAPI ' } }] })}`,
+    `data: ${JSON.stringify({ choices: [{ delta: { content: 'stream.' } }] })}`,
+    '',
+  ].join('\n'), 'openai-compatible')
+  assert.equal(streamed.text, 'NewAPI stream.', 'NewAPI stream parser keeps reasoning_content out of visible text')
+  assert.equal(streamed.reasoningContent, 'NewAPI stream reasoning.', 'NewAPI stream parser preserves delta.reasoning_content separately')
+
+  const fileBody = getBodyForTest({
+    provider,
+    model: 'newapi/text-relay-model',
+    messages: [{ role: 'user', content: 'Read this file.' }],
+    attachments: [{ id: 'newapi-file', type: 'file', uri: 'file://doc.pdf', name: 'doc.pdf', mimeType: 'application/pdf', size: 12, base64: 'ZG9j' }],
+  })
+  const fileConformance = resolveProviderRequestConformanceForTest({
+    provider,
+    model: 'newapi/text-relay-model',
+    messages: [{ role: 'user', content: 'Read this file.' }],
+    attachments: [{ id: 'newapi-file', type: 'file', uri: 'file://doc.pdf', name: 'doc.pdf', mimeType: 'application/pdf', size: 12, base64: 'ZG9j' }],
+  }, fileBody)
+  assert.equal(fileConformance.manifest.modalities.input.file, false, 'NewAPI conformance follows the unimplemented Files docs by not claiming generic file_data input')
+  assert.ok(
+    fileConformance.issues.some((issue) => issue.code === 'unsupported_modality' && issue.field === 'file'),
+    'NewAPI conformance blocks generic files until endpoint or model metadata proves support'
+  )
+  const newApiRateLimit = JSON.stringify({ error: { message: 'Too many requests', type: 'rate_limit_error', code: 'rate_limit_exceeded' } })
+  assert.equal(classifyHttpStatus(429, newApiRateLimit), 'rate_limited', 'NewAPI 429 errors classify as rate_limited')
+  const newApiFilesUnimplemented = JSON.stringify({ error: { message: 'Files API is not implemented', type: 'not_implemented', code: 'not_implemented' } })
+  assert.equal(classifyHttpStatus(501, newApiFilesUnimplemented), 'network_error', 'NewAPI unimplemented Files endpoint stays a provider-side server error')
+  assert.ok(extractProviderErrorDetail(newApiFilesUnimplemented).includes('Files API is not implemented'), 'NewAPI unimplemented Files errors preserve provider messages for diagnostics')
+}
+
+async function assertOllamaProviderCompatibilityBehavior() {
+  const provider = applyProviderPreset({
+    id: 'ollama-contract',
+    baseUrl: 'http://localhost:11434/v1',
+    [API_KEY_FIELD]: FAKE_KEY_A,
+    models: ['gpt-oss:20b', 'nomic-embed-text'],
+    enabled: true,
+    modelConfigs: [{
+      id: 'gpt-oss:20b',
+      name: 'GPT OSS 20B',
+      provider: 'openai-compatible',
+      contextWindow: 131072,
+      maxTokens: 131072,
+      maxOutputTokens: 8192,
+      defaultMaxTokens: 2048,
+      supportsVision: false,
+      supportsFiles: false,
+      supportsTools: true,
+      supportedParameters: ['response_format', 'tools', 'reasoning_effort'],
+      reasoningMode: 'openai-effort',
+      reasoningEfforts: ['none', 'low', 'medium', 'high'],
+      preferredEndpoint: 'chat-completions',
+      sourceUrl: 'https://docs.ollama.com/api/openai-compatibility.md',
+      verifiedAt: '2026-06-22',
+      source: 'remote',
+    }],
+  }, 'ollama')
+  const schema = {
+    type: 'object',
+    properties: {
+      answer: { type: 'string' },
+      confidence: { type: 'number' },
+    },
+    required: ['answer'],
+  }
+  const evidence = getProviderCompatibilityEvidence('ollama')
+  assert.ok(evidence.officialDocs.some((url) => url === 'https://docs.ollama.com/api/openai-compatibility.md'), 'Ollama evidence uses the current official OpenAI compatibility docs')
+  assert.ok(evidence.officialDocs.some((url) => url === 'https://docs.ollama.com/capabilities/structured-outputs.md'), 'Ollama evidence records official structured-output docs')
+  assert.ok(evidence.endpointFamilies.includes('/v1/responses'), 'Ollama evidence records the documented OpenAI-compatible Responses endpoint')
+  assert.ok(evidence.endpointFamilies.includes('/v1/embeddings'), 'Ollama evidence records the documented OpenAI-compatible embeddings endpoint')
+  assert.ok(providerCompatibilityEvidenceHasBehavior('ollama', 'structuredOutput'), 'Ollama evidence claims documented structured-output behavior')
+  assert.ok(providerCompatibilityEvidenceHasBehavior('ollama', 'reasoning'), 'Ollama evidence claims documented reasoning controls')
+  assert.ok(providerCompatibilityEvidenceHasBehavior('ollama', 'embeddings'), 'Ollama evidence claims documented embeddings')
+
+  const chatReq = {
+    provider,
+    model: 'gpt-oss:20b',
+    messages: [{ role: 'user', content: 'Return a compact JSON answer.' }],
+    maxTokens: 256,
+    stream: false,
+    reasoningEffort: 'high',
+    structuredOutput: {
+      type: 'json_schema',
+      name: 'islemind_ollama_answer',
+      schema,
+      strict: true,
+    },
+    providerToolDeclarations: [{
+      type: 'function',
+      function: {
+        name: 'read_local_note',
+        description: 'Read a local note.',
+        parameters: { type: 'object', properties: { noteId: { type: 'string' } }, required: ['noteId'] },
+      },
+    }],
+  }
+  const chatBody = buildOpenAIBodyForTest(chatReq)
+  assert.deepEqual(
+    chatBody.response_format,
+    { type: 'json_schema', json_schema: { name: 'islemind_ollama_answer', schema, strict: true } },
+    'Ollama Chat Completions structured-output requests use the documented OpenAI-compatible response_format field'
+  )
+  assert.equal(chatBody.reasoning_effort, 'high', 'Ollama Chat Completions sends reasoning_effort only when model metadata declares OpenAI-style efforts')
+  assert.equal(chatBody.tools[0].function.name, 'read_local_note', 'Ollama Chat Completions preserves OpenAI-compatible tool declarations')
+  const streamingChatBody = buildOpenAIBodyForTest({ ...chatReq, stream: true })
+  assert.deepEqual(
+    streamingChatBody.stream_options,
+    { include_usage: true },
+    'Ollama Chat Completions streaming requests include the documented stream_options.include_usage field'
+  )
+  const nonStreamingChatBody = buildOpenAIBodyForTest({ ...chatReq, stream: false })
+  assert.equal(nonStreamingChatBody.stream_options, undefined, 'Ollama non-streaming Chat Completions requests omit stream_options')
+  const chatConformance = resolveProviderRequestConformanceForTest(chatReq, chatBody)
+  assert.equal(chatConformance.manifest.family, 'ollama', 'Ollama conformance records the local runtime family')
+  assert.equal(chatConformance.manifest.protocol, 'openai-compatible', 'Ollama default route uses Chat Completions')
+  assert.equal(chatConformance.manifest.payload.streamUsageField, 'stream_options.include_usage', 'Ollama conformance records the documented Chat Completions stream usage field')
+  assert.equal(chatConformance.manifest.structuredOutput.documentedRequestShape, 'openai-response-format', 'Ollama conformance records OpenAI-compatible response_format controls')
+  assert.equal(chatConformance.manifest.structuredOutput.appRequestControl, true, 'Ollama conformance enables source-backed response_format request controls')
+  assert.equal(chatConformance.manifest.structuredOutput.strictJsonSchema, true, 'Ollama conformance treats JSON schema as source-backed for OpenAI-compatible chat')
+  assert.equal(chatConformance.manifest.reasoning.requestShape, 'openai-reasoning-effort', 'Ollama conformance records reasoning_effort when model metadata opts in')
+  assert.ok(chatConformance.manifest.source.url?.includes('docs.ollama.com/api/openai-compatibility'), 'Ollama conformance source URL points to current official docs')
+
+  const responsesReq = {
+    ...chatReq,
+    provider: {
+      ...provider,
+      capabilities: { ...provider.capabilities, responsesApi: true },
+      modelConfigs: [{ ...provider.modelConfigs[0], preferredEndpoint: 'responses' }],
+    },
+    stream: true,
+  }
+  const responsesBody = buildOpenAIResponsesBodyForTest(responsesReq)
+  assert.equal(responsesBody.response_format, undefined, 'Ollama Responses requests do not emit response_format because current docs only source-back Chat structured output')
+  const responsesConformance = resolveProviderRequestConformanceForTest(responsesReq, responsesBody)
+  assert.equal(responsesConformance.manifest.protocol, 'openai-responses', 'Ollama Responses route stays explicit through provider capability plus model metadata')
+  assert.equal(responsesConformance.manifest.structuredOutput.appRequestControl, false, 'Ollama Responses keeps structured-output request controls disabled until the docs list response_format')
+  assert.ok(
+    responsesConformance.issues.some((issue) => issue.code === 'unsupported_structured_output' && issue.severity === 'block'),
+    'Ollama Responses structured-output requests are blocked by conformance instead of silently claiming undocumented response_format support'
+  )
+
+  const originalFetch = global.fetch
+  const embeddingCalls = []
+  try {
+    global.fetch = async (input, init = {}) => {
+      embeddingCalls.push({ url: String(input), body: JSON.parse(init.body) })
+      return new Response(JSON.stringify({ data: [{ embedding: [0.1, 0.2, 0.3] }] }), { status: 200 })
+    }
+    const embedding = await embedTextWithProvider(provider, 'hello from local notes')
+    assert.deepEqual(embedding.embedding, [0.1, 0.2, 0.3], 'Ollama embedding parser preserves OpenAI-compatible embedding vectors')
+    assert.equal(embedding.model, 'nomic-embed-text', 'Ollama embedding picker uses an explicitly configured local embedding model')
+  } finally {
+    global.fetch = originalFetch
+  }
+  assert.equal(embeddingCalls[0].url, 'http://localhost:11434/v1/embeddings', 'Ollama embedding requests use the OpenAI-compatible /v1/embeddings endpoint')
+  assert.equal(embeddingCalls[0].body.model, 'nomic-embed-text', 'Ollama embedding requests preserve the installed local embedding model id')
+}
+
+async function assertLMStudioProviderCompatibilityBehavior() {
+  const provider = applyProviderPreset({
+    id: 'lm-studio-contract',
+    baseUrl: 'http://localhost:1234/v1',
+    [API_KEY_FIELD]: FAKE_KEY_A,
+    models: ['local/llama-structured', 'text-embedding-local'],
+    enabled: true,
+    modelConfigs: [{
+      id: 'local/llama-structured',
+      name: 'Local LM Studio Structured Model',
+      provider: 'openai-compatible',
+      contextWindow: 32768,
+      maxTokens: 32768,
+      maxOutputTokens: 4096,
+      defaultMaxTokens: 1024,
+      supportsVision: false,
+      supportsFiles: false,
+      supportsTools: true,
+      supportedParameters: ['response_format', 'tools'],
+      reasoningMode: 'openai-effort',
+      reasoningEfforts: ['none', 'low', 'medium', 'high'],
+      preferredEndpoint: 'chat-completions',
+      sourceUrl: 'https://lmstudio.ai/docs/developer/openai-compat.md',
+      verifiedAt: '2026-06-22',
+      source: 'remote',
+    }],
+  }, 'lm-studio')
+  const schema = {
+    type: 'object',
+    properties: {
+      summary: { type: 'string' },
+      tags: { type: 'array', items: { type: 'string' } },
+    },
+    required: ['summary'],
+  }
+  const evidence = getProviderCompatibilityEvidence('lm-studio')
+  assert.ok(evidence.officialDocs.some((url) => url === 'https://lmstudio.ai/docs/developer/openai-compat.md'), 'LM Studio evidence uses the current Developer OpenAI compatibility docs')
+  assert.ok(evidence.officialDocs.some((url) => url.endsWith('/chat-completions.md')), 'LM Studio evidence records Chat Completions docs')
+  assert.ok(evidence.officialDocs.some((url) => url.endsWith('/responses.md')), 'LM Studio evidence records Responses docs')
+  assert.ok(evidence.officialDocs.some((url) => url.endsWith('/embeddings.md')), 'LM Studio evidence records embeddings docs')
+  assert.ok(evidence.officialDocs.some((url) => url.endsWith('/tools.md')), 'LM Studio evidence records tool-use docs')
+  assert.ok(evidence.officialDocs.some((url) => url.endsWith('/structured-output.md')), 'LM Studio evidence records structured-output docs')
+  assert.ok(evidence.officialDocs.some((url) => url.endsWith('/api-changelog')), 'LM Studio evidence records the API changelog for streaming usage support')
+  assert.ok(evidence.endpointFamilies.includes('/v1/chat/completions'), 'LM Studio evidence records Chat Completions endpoint')
+  assert.ok(evidence.endpointFamilies.includes('/v1/responses'), 'LM Studio evidence records Responses endpoint')
+  assert.ok(evidence.endpointFamilies.includes('/v1/models'), 'LM Studio evidence records model listing endpoint')
+  assert.ok(evidence.endpointFamilies.includes('/v1/embeddings'), 'LM Studio evidence records embeddings endpoint')
+  assert.ok(providerCompatibilityEvidenceHasBehavior('lm-studio', 'structuredOutput'), 'LM Studio evidence claims documented Chat Completions structured output')
+  assert.ok(providerCompatibilityEvidenceHasBehavior('lm-studio', 'tools'), 'LM Studio evidence claims documented OpenAI-format tool use')
+  assert.ok(providerCompatibilityEvidenceHasBehavior('lm-studio', 'reasoning'), 'LM Studio evidence claims documented Responses reasoning controls')
+  assert.ok(providerCompatibilityEvidenceHasBehavior('lm-studio', 'embeddings'), 'LM Studio evidence claims documented embeddings')
+
+  const chatReq = {
+    provider,
+    model: 'local/llama-structured',
+    messages: [{ role: 'user', content: 'Return a structured local answer.' }],
+    maxTokens: 256,
+    stream: false,
+    reasoningEffort: 'high',
+    structuredOutput: {
+      type: 'json_schema',
+      name: 'islemind_lm_studio_answer',
+      schema,
+      strict: true,
+    },
+    providerToolDeclarations: [{
+      type: 'function',
+      function: {
+        name: 'read_local_workspace_note',
+        description: 'Read a local workspace note.',
+        parameters: { type: 'object', properties: { noteId: { type: 'string' } }, required: ['noteId'] },
+      },
+    }],
+  }
+  const chatBody = buildOpenAIBodyForTest(chatReq)
+  assert.deepEqual(
+    chatBody.response_format,
+    { type: 'json_schema', json_schema: { name: 'islemind_lm_studio_answer', schema, strict: true } },
+    'LM Studio Chat Completions structured-output requests use the documented OpenAI-compatible response_format field'
+  )
+  assert.equal(chatBody.reasoning_effort, undefined, 'LM Studio Chat Completions does not emit undocumented reasoning_effort controls')
+  assert.equal(chatBody.tools[0].function.name, 'read_local_workspace_note', 'LM Studio Chat Completions preserves OpenAI-compatible tool declarations')
+  const streamingChatBody = buildOpenAIBodyForTest({ ...chatReq, stream: true })
+  assert.deepEqual(
+    streamingChatBody.stream_options,
+    { include_usage: true },
+    'LM Studio streaming Chat Completions requests include documented stream_options.include_usage'
+  )
+  const nonStreamingChatBody = buildOpenAIBodyForTest({ ...chatReq, stream: false })
+  assert.equal(nonStreamingChatBody.stream_options, undefined, 'LM Studio non-streaming Chat Completions requests omit stream_options')
+  const chatConformance = resolveProviderRequestConformanceForTest(chatReq, chatBody)
+  assert.equal(chatConformance.manifest.family, 'lm-studio', 'LM Studio conformance records the local runtime family')
+  assert.equal(chatConformance.manifest.protocol, 'openai-compatible', 'LM Studio default route uses Chat Completions')
+  assert.equal(chatConformance.manifest.payload.streamUsageField, 'stream_options.include_usage', 'LM Studio conformance records the documented Chat Completions stream usage field')
+  assert.equal(chatConformance.manifest.structuredOutput.documentedRequestShape, 'openai-response-format', 'LM Studio conformance records Chat Completions response_format controls')
+  assert.equal(chatConformance.manifest.structuredOutput.appRequestControl, true, 'LM Studio conformance enables source-backed Chat Completions response_format controls')
+  assert.equal(chatConformance.manifest.structuredOutput.strictJsonSchema, true, 'LM Studio conformance treats strict JSON schema as source-backed for Chat Completions')
+  assert.equal(chatConformance.manifest.reasoning.requestShape, 'none', 'LM Studio Chat Completions conformance avoids unverified reasoning_effort controls')
+  assert.ok(chatConformance.manifest.source.url?.includes('lmstudio.ai/docs/developer/openai-compat'), 'LM Studio conformance source URL points to current official docs')
+
+  const responsesReq = {
+    ...chatReq,
+    provider: {
+      ...provider,
+      capabilities: { ...provider.capabilities, responsesApi: true },
+      modelConfigs: [{ ...provider.modelConfigs[0], preferredEndpoint: 'responses' }],
+    },
+    stream: true,
+    reasoningEffort: 'low',
+  }
+  assert.equal(usesOpenAIResponses({ provider: responsesReq.provider, model: 'local/llama-structured' }), true, 'LM Studio Responses route requires explicit provider capability plus model metadata')
+  const responsesBody = buildOpenAIResponsesBodyForTest(responsesReq)
+  assert.ok(Array.isArray(responsesBody.input), 'LM Studio Responses body uses OpenAI-compatible input items')
+  assert.deepEqual(responsesBody.reasoning, { effort: 'low' }, 'LM Studio Responses reasoning uses the documented reasoning.effort shape')
+  assert.equal(responsesBody.response_format, undefined, 'LM Studio Responses does not emit unverified top-level response_format structured-output controls')
+  assert.equal(responsesBody.text, undefined, 'LM Studio Responses does not inherit OpenAI-only text.format structured-output controls')
+  const responsesConformance = resolveProviderRequestConformanceForTest(responsesReq, responsesBody)
+  assert.equal(responsesConformance.manifest.protocol, 'openai-responses', 'LM Studio Responses route stays explicit through provider capability plus model metadata')
+  assert.equal(responsesConformance.manifest.reasoning.requestShape, 'openai-responses-reasoning', 'LM Studio Responses conformance records reasoning.effort controls')
+  assert.equal(responsesConformance.manifest.structuredOutput.appRequestControl, false, 'LM Studio Responses keeps structured-output request controls disabled until source-backed')
+  assert.ok(
+    responsesConformance.issues.some((issue) => issue.code === 'unsupported_structured_output' && issue.severity === 'block'),
+    'LM Studio Responses structured-output requests are blocked with an explicit conformance issue'
+  )
+
+  const originalFetch = global.fetch
+  const embeddingCalls = []
+  try {
+    global.fetch = async (input, init = {}) => {
+      embeddingCalls.push({ url: String(input), body: JSON.parse(init.body) })
+      return new Response(JSON.stringify({ data: [{ embedding: [0.4, 0.5, 0.6] }] }), { status: 200 })
+    }
+    const embedding = await embedTextWithProvider(provider, 'hello from lm studio')
+    assert.deepEqual(embedding.embedding, [0.4, 0.5, 0.6], 'LM Studio embedding parser preserves OpenAI-compatible embedding vectors')
+    assert.equal(embedding.model, 'text-embedding-local', 'LM Studio embedding picker uses an explicitly configured local embedding model')
+  } finally {
+    global.fetch = originalFetch
+  }
+  assert.equal(embeddingCalls[0].url, 'http://localhost:1234/v1/embeddings', 'LM Studio embedding requests use the OpenAI-compatible /v1/embeddings endpoint')
+  assert.equal(embeddingCalls[0].body.model, 'text-embedding-local', 'LM Studio embedding requests preserve the loaded local embedding model id')
+}
+
+async function assertLocalAIProviderCompatibilityBehavior() {
+  const provider = applyProviderPreset({
+    id: 'localai-contract',
+    baseUrl: 'http://localhost:8080/v1',
+    [API_KEY_FIELD]: FAKE_KEY_A,
+    models: ['localai-chat-model', 'qwen3-embedding-4b'],
+    enabled: true,
+    modelConfigs: [{
+      id: 'localai-chat-model',
+      name: 'LocalAI Chat Model',
+      provider: 'openai-compatible',
+      contextWindow: 32768,
+      maxTokens: 32768,
+      maxOutputTokens: 4096,
+      defaultMaxTokens: 1024,
+      supportsVision: true,
+      supportsFiles: false,
+      supportsTools: true,
+      supportedParameters: ['tools'],
+      preferredEndpoint: 'chat-completions',
+      sourceUrl: 'https://localai.io/features/text-generation/',
+      verifiedAt: '2026-06-22',
+      source: 'remote',
+    }],
+  }, 'localai')
+  const schema = {
+    type: 'object',
+    properties: {
+      answer: { type: 'string' },
+      sourceIds: { type: 'array', items: { type: 'string' } },
+    },
+    required: ['answer'],
+  }
+  const evidence = getProviderCompatibilityEvidence('localai')
+  assert.ok(evidence.officialDocs.some((url) => url === 'https://localai.io/features/text-generation/'), 'LocalAI evidence records Text Generation docs')
+  assert.ok(evidence.officialDocs.some((url) => url === 'https://localai.io/features/openai-functions/'), 'LocalAI evidence records OpenAI functions/tools docs')
+  assert.ok(evidence.officialDocs.some((url) => url === 'https://localai.io/features/constrained_grammars/'), 'LocalAI evidence records constrained grammar docs')
+  assert.ok(evidence.officialDocs.some((url) => url === 'https://localai.io/features/embeddings/'), 'LocalAI evidence records embeddings docs')
+  assert.ok(evidence.officialDocs.some((url) => url === 'https://localai.io/features/audio-to-text/'), 'LocalAI evidence records audio transcription docs')
+  assert.ok(evidence.officialDocs.some((url) => url === 'https://localai.io/features/text-to-audio/'), 'LocalAI evidence records speech docs')
+  assert.ok(evidence.endpointFamilies.includes('/v1/chat/completions'), 'LocalAI evidence records Chat Completions endpoint')
+  assert.ok(evidence.endpointFamilies.includes('/v1/models'), 'LocalAI evidence records model listing endpoint')
+  assert.ok(evidence.endpointFamilies.includes('/v1/embeddings'), 'LocalAI evidence records embeddings endpoint')
+  assert.ok(evidence.endpointFamilies.includes('/v1/audio/transcriptions'), 'LocalAI evidence records audio transcription endpoint')
+  assert.ok(evidence.endpointFamilies.includes('/v1/audio/speech'), 'LocalAI evidence records speech endpoint')
+  assert.ok(providerCompatibilityEvidenceHasBehavior('localai', 'structuredOutput'), 'LocalAI evidence claims documented grammar-constrained output behavior')
+  assert.ok(providerCompatibilityEvidenceHasBehavior('localai', 'tools'), 'LocalAI evidence claims documented OpenAI-format tool use')
+  assert.ok(providerCompatibilityEvidenceHasBehavior('localai', 'embeddings'), 'LocalAI evidence claims documented embeddings')
+  assert.ok(providerCompatibilityEvidenceHasBehavior('localai', 'audio'), 'LocalAI evidence claims documented local audio endpoints')
+
+  const chatReq = {
+    provider,
+    model: 'localai-chat-model',
+    messages: [{ role: 'user', content: 'Return a structured LocalAI answer.' }],
+    maxTokens: 256,
+    stream: false,
+    structuredOutput: {
+      type: 'json_schema',
+      name: 'islemind_localai_answer',
+      schema,
+      strict: true,
+    },
+    providerToolDeclarations: [{
+      type: 'function',
+      function: {
+        name: 'read_localai_context',
+        description: 'Read LocalAI context.',
+        parameters: { type: 'object', properties: { query: { type: 'string' } }, required: ['query'] },
+      },
+    }],
+  }
+  const chatBody = buildOpenAIBodyForTest(chatReq)
+  assert.equal(chatBody.response_format, undefined, 'LocalAI Chat Completions does not emit OpenAI response_format for grammar-backed structured output')
+  assert.equal(chatBody.grammar, undefined, 'LocalAI Chat Completions does not emit grammar until a LocalAI grammar planner exists')
+  assert.equal(chatBody.tools[0].function.name, 'read_localai_context', 'LocalAI Chat Completions preserves OpenAI-compatible tool declarations')
+  const chatConformance = resolveProviderRequestConformanceForTest(chatReq, chatBody)
+  assert.equal(chatConformance.manifest.family, 'localai', 'LocalAI conformance records the local runtime family')
+  assert.equal(chatConformance.manifest.protocol, 'openai-compatible', 'LocalAI default route uses Chat Completions')
+  assert.equal(chatConformance.manifest.structuredOutput.contractClaimed, true, 'LocalAI conformance records grammar-backed structured-output evidence')
+  assert.equal(chatConformance.manifest.structuredOutput.documentedRequestShape, 'localai-grammar', 'LocalAI conformance records the grammar-specific structured-output shape')
+  assert.equal(chatConformance.manifest.structuredOutput.appRequestControl, false, 'LocalAI conformance keeps app request controls disabled until IsleMind maps grammar')
+  assert.equal(chatConformance.manifest.structuredOutput.strictJsonSchema, false, 'LocalAI conformance does not claim OpenAI strict JSON schema support')
+  assert.ok(chatConformance.manifest.source.url?.includes('localai.io/features/text-generation'), 'LocalAI conformance source URL points to official docs')
+  assert.ok(
+    chatConformance.issues.some((issue) => issue.code === 'unsupported_structured_output' && issue.severity === 'block'),
+    'LocalAI structured-output requests are blocked with an explicit conformance issue until grammar planning exists'
+  )
+
+  const originalFetch = global.fetch
+  const embeddingCalls = []
+  try {
+    global.fetch = async (input, init = {}) => {
+      embeddingCalls.push({ url: String(input), body: JSON.parse(init.body), authorization: init.headers?.Authorization ?? init.headers?.authorization })
+      return new Response(JSON.stringify({ data: [{ embedding: [0.11, 0.22, 0.33] }] }), { status: 200 })
+    }
+    const embedding = await embedTextWithProvider(provider, 'hello from localai')
+    assert.deepEqual(embedding.embedding, [0.11, 0.22, 0.33], 'LocalAI embedding parser preserves OpenAI-compatible embedding vectors')
+    assert.equal(embedding.model, 'qwen3-embedding-4b', 'LocalAI embedding picker uses an explicitly configured local embedding model')
+  } finally {
+    global.fetch = originalFetch
+  }
+  assert.equal(embeddingCalls[0].url, 'http://localhost:8080/v1/embeddings', 'LocalAI embedding requests use the configured OpenAI-compatible /v1/embeddings route')
+  assert.equal(embeddingCalls[0].body.model, 'qwen3-embedding-4b', 'LocalAI embedding requests preserve the configured local embedding model id')
+  assert.equal(embeddingCalls[0].authorization, `Bearer ${FAKE_KEY_A}`, 'LocalAI embedding requests use bearer auth when configured')
+
+  const audioCalls = []
+  try {
+    global.fetch = async (input, init = {}) => {
+      audioCalls.push({ url: String(input), method: init.method, authorization: init.headers?.Authorization ?? init.headers?.authorization, body: init.body })
+      if (String(input).endsWith('/audio/transcriptions')) {
+        return new Response(JSON.stringify({ text: 'LocalAI transcript.' }), { status: 200, headers: { 'content-type': 'application/json' } })
+      }
+      if (String(input).endsWith('/audio/speech')) {
+        return new Response(new Uint8Array([7, 8, 9]), { status: 200 })
+      }
+      throw new Error(`Unexpected LocalAI audio endpoint ${input}`)
+    }
+    const transcript = await transcribeAudioWithProvider({
+      provider,
+      model: 'whisper-1',
+      audioBase64: 'aGVsbG8=',
+      mimeType: 'audio/wav',
+      fileName: 'sample.wav',
+    })
+    assert.equal(transcript, 'LocalAI transcript.', 'LocalAI audio transcription parser extracts provider text')
+    const speech = await synthesizeSpeechWithProvider({
+      provider,
+      model: 'tts-1',
+      text: 'hello from localai',
+      voice: 'alloy',
+    })
+    assert.ok(typeof speech === 'string' && speech.length > 0, 'LocalAI speech synthesis returns base64 audio')
+  } finally {
+    global.fetch = originalFetch
+  }
+  assert.equal(audioCalls[0].url, 'http://localhost:8080/v1/audio/transcriptions', 'LocalAI transcription uses the documented OpenAI-compatible audio transcription route')
+  assert.equal(audioCalls[0].authorization, `Bearer ${FAKE_KEY_A}`, 'LocalAI transcription uses bearer auth when configured')
+  assert.equal(typeof audioCalls[0].body?.append, 'function', 'LocalAI transcription sends multipart form data')
+  assert.equal(audioCalls[1].url, 'http://localhost:8080/v1/audio/speech', 'LocalAI speech uses the documented OpenAI-compatible speech route')
+  assert.equal(JSON.parse(audioCalls[1].body).model, 'tts-1', 'LocalAI speech preserves the requested local TTS model id')
+
+  const audioDisabledProvider = {
+    ...provider,
+    id: 'localai-audio-disabled',
+    capabilities: { ...provider.capabilities, audioTranscription: false, speech: false },
+  }
+  let blockedAudioFetches = 0
+  try {
+    global.fetch = async () => {
+      blockedAudioFetches += 1
+      throw new Error('audio capability contract should reject before fetch')
+    }
+    await assert.rejects(
+      () => transcribeAudioWithProvider({
+        provider: audioDisabledProvider,
+        model: 'whisper-1',
+        audioBase64: 'aGVsbG8=',
+        mimeType: 'audio/wav',
+        fileName: 'sample.wav',
+      }),
+      /audio_transcription_unavailable/,
+      'audio transcription is blocked when the provider capability is not declared even if the contract has audio docs'
+    )
+    await assert.rejects(
+      () => synthesizeSpeechWithProvider({
+        provider: audioDisabledProvider,
+        model: 'tts-1',
+        text: 'hello from localai',
+        voice: 'alloy',
+      }),
+      /speech_unavailable/,
+      'speech synthesis is blocked when the provider capability is not declared even if the contract has audio docs'
+    )
+  } finally {
+    global.fetch = originalFetch
+  }
+  assert.equal(blockedAudioFetches, 0, 'audio request boundaries reject disabled provider capabilities before fetch')
+}
+
+async function assertVLLMProviderCompatibilityBehavior() {
+  const provider = applyProviderPreset({
+    id: 'vllm-contract',
+    baseUrl: 'http://localhost:8000/v1',
+    [API_KEY_FIELD]: FAKE_KEY_A,
+    models: ['Qwen/Qwen3-8B', 'BAAI/bge-base-en-v1.5'],
+    enabled: true,
+    modelConfigs: [{
+      id: 'Qwen/Qwen3-8B',
+      name: 'Qwen3 vLLM',
+      provider: 'openai-compatible',
+      contextWindow: 32768,
+      maxTokens: 32768,
+      maxOutputTokens: 4096,
+      defaultMaxTokens: 1024,
+      supportsVision: false,
+      supportsFiles: false,
+      supportsTools: true,
+      supportedParameters: ['response_format', 'tools', 'reasoning_effort'],
+      reasoningMode: 'openai-effort',
+      reasoningEfforts: ['none', 'low', 'medium', 'high'],
+      preferredEndpoint: 'chat-completions',
+      sourceUrl: 'https://docs.vllm.ai/en/latest/serving/online_serving/',
+      verifiedAt: '2026-06-22',
+      source: 'remote',
+    }],
+  }, 'vllm')
+  const schema = {
+    type: 'object',
+    properties: {
+      answer: { type: 'string' },
+      citations: { type: 'array', items: { type: 'string' } },
+    },
+    required: ['answer'],
+  }
+  const evidence = getProviderCompatibilityEvidence('vllm')
+  assert.ok(evidence.officialDocs.some((url) => url.endsWith('/serving/online_serving/')), 'vLLM evidence uses the current online serving docs')
+  assert.ok(evidence.officialDocs.some((url) => url.endsWith('/features/tool_calling.html')), 'vLLM evidence records tool-calling docs')
+  assert.ok(evidence.officialDocs.some((url) => url.endsWith('/features/structured_outputs.html')), 'vLLM evidence records structured-output docs')
+  assert.ok(evidence.officialDocs.some((url) => url.endsWith('/features/reasoning_outputs.html')), 'vLLM evidence records reasoning-output docs')
+  assert.ok(evidence.officialDocs.some((url) => url.endsWith('/models/pooling_models.html')), 'vLLM evidence records pooling and embeddings docs')
+  assert.ok(evidence.endpointFamilies.includes('/v1/chat/completions'), 'vLLM evidence records Chat Completions endpoint')
+  assert.ok(evidence.endpointFamilies.includes('/v1/responses'), 'vLLM evidence records Responses endpoint')
+  assert.ok(evidence.endpointFamilies.includes('/v1/embeddings'), 'vLLM evidence records embeddings endpoint')
+  assert.ok(evidence.endpointFamilies.includes('/v1/rerank'), 'vLLM evidence records rerank endpoint evidence without claiming app routing')
+  assert.ok(evidence.endpointFamilies.includes('/v1/audio/transcriptions'), 'vLLM evidence records ASR endpoint evidence without claiming app routing')
+  assert.ok(providerCompatibilityEvidenceHasBehavior('vllm', 'structuredOutput'), 'vLLM evidence claims documented Chat Completions structured output')
+  assert.ok(providerCompatibilityEvidenceHasBehavior('vllm', 'tools'), 'vLLM evidence claims documented OpenAI-format tool use')
+  assert.ok(providerCompatibilityEvidenceHasBehavior('vllm', 'reasoning'), 'vLLM evidence claims documented reasoning output controls')
+  assert.ok(providerCompatibilityEvidenceHasBehavior('vllm', 'embeddings'), 'vLLM evidence claims documented embeddings')
+  assert.equal(providerCompatibilityEvidenceHasBehavior('vllm', 'audio'), false, 'vLLM evidence avoids app-level audio claims until ASR routing is fixture-backed')
+  assert.equal(providerCompatibilityEvidenceHasBehavior('vllm', 'rerank'), false, 'vLLM evidence avoids app-level rerank claims until native rerank routing exists')
+
+  const chatReq = {
+    provider,
+    model: 'Qwen/Qwen3-8B',
+    messages: [{ role: 'user', content: 'Return structured vLLM output.' }],
+    maxTokens: 256,
+    stream: false,
+    reasoningEffort: 'high',
+    structuredOutput: {
+      type: 'json_schema',
+      name: 'islemind_vllm_answer',
+      schema,
+      strict: true,
+    },
+    providerToolDeclarations: [{
+      type: 'function',
+      function: {
+        name: 'inspect_local_context',
+        description: 'Inspect local context.',
+        parameters: { type: 'object', properties: { query: { type: 'string' } }, required: ['query'] },
+      },
+    }],
+  }
+  const chatBody = buildOpenAIBodyForTest(chatReq)
+  assert.deepEqual(
+    chatBody.response_format,
+    { type: 'json_schema', json_schema: { name: 'islemind_vllm_answer', schema } },
+    'vLLM Chat Completions structured-output requests use response_format without adding unverified strict'
+  )
+  assert.equal(chatBody.reasoning_effort, 'high', 'vLLM Chat Completions sends reasoning_effort only when model metadata declares OpenAI-style efforts')
+  assert.equal(chatBody.tools[0].function.name, 'inspect_local_context', 'vLLM Chat Completions preserves OpenAI-compatible tool declarations')
+  const chatConformance = resolveProviderRequestConformanceForTest(chatReq, chatBody)
+  assert.equal(chatConformance.manifest.family, 'vllm', 'vLLM conformance records the local runtime family')
+  assert.equal(chatConformance.manifest.protocol, 'openai-compatible', 'vLLM default route uses Chat Completions')
+  assert.equal(chatConformance.manifest.structuredOutput.documentedRequestShape, 'openai-response-format', 'vLLM conformance records Chat Completions response_format controls')
+  assert.equal(chatConformance.manifest.structuredOutput.appRequestControl, true, 'vLLM conformance enables source-backed Chat Completions response_format controls')
+  assert.equal(chatConformance.manifest.structuredOutput.strictJsonSchema, false, 'vLLM conformance does not add strict JSON schema until source-backed')
+  assert.equal(chatConformance.manifest.reasoning.requestShape, 'openai-reasoning-effort', 'vLLM Chat Completions conformance records reasoning_effort controls')
+  assert.ok(chatConformance.manifest.source.url?.includes('docs.vllm.ai/en/latest/serving/online_serving'), 'vLLM conformance source URL points to current online serving docs')
+
+  const responsesReq = {
+    ...chatReq,
+    provider: {
+      ...provider,
+      capabilities: { ...provider.capabilities, responsesApi: true },
+      modelConfigs: [{ ...provider.modelConfigs[0], preferredEndpoint: 'responses' }],
+    },
+    stream: true,
+    reasoningEffort: 'low',
+  }
+  assert.equal(usesOpenAIResponses({ provider: responsesReq.provider, model: 'Qwen/Qwen3-8B' }), true, 'vLLM Responses route requires explicit provider capability plus model metadata')
+  const responsesBody = buildOpenAIResponsesBodyForTest(responsesReq)
+  assert.ok(Array.isArray(responsesBody.input), 'vLLM Responses body uses OpenAI-compatible input items')
+  assert.deepEqual(responsesBody.reasoning, { effort: 'low' }, 'vLLM Responses reasoning uses the documented reasoning.effort shape')
+  assert.equal(responsesBody.response_format, undefined, 'vLLM Responses does not emit unverified top-level response_format structured-output controls')
+  assert.equal(responsesBody.text, undefined, 'vLLM Responses does not inherit OpenAI-only text.format structured-output controls')
+  const responsesConformance = resolveProviderRequestConformanceForTest(responsesReq, responsesBody)
+  assert.equal(responsesConformance.manifest.protocol, 'openai-responses', 'vLLM Responses route stays explicit through provider capability plus model metadata')
+  assert.equal(responsesConformance.manifest.reasoning.requestShape, 'openai-responses-reasoning', 'vLLM Responses conformance records reasoning.effort controls')
+  assert.equal(responsesConformance.manifest.structuredOutput.appRequestControl, false, 'vLLM Responses keeps structured-output request controls disabled until source-backed')
+  assert.ok(
+    responsesConformance.issues.some((issue) => issue.code === 'unsupported_structured_output' && issue.severity === 'block'),
+    'vLLM Responses structured-output requests are blocked with an explicit conformance issue'
+  )
+
+  const originalFetch = global.fetch
+  const embeddingCalls = []
+  try {
+    global.fetch = async (input, init = {}) => {
+      embeddingCalls.push({ url: String(input), body: JSON.parse(init.body) })
+      return new Response(JSON.stringify({ data: [{ embedding: [0.7, 0.8, 0.9] }] }), { status: 200 })
+    }
+    const embedding = await embedTextWithProvider(provider, 'hello from vllm')
+    assert.deepEqual(embedding.embedding, [0.7, 0.8, 0.9], 'vLLM embedding parser preserves OpenAI-compatible embedding vectors')
+    assert.equal(embedding.model, 'BAAI/bge-base-en-v1.5', 'vLLM embedding picker uses an explicitly configured local embedding model')
+  } finally {
+    global.fetch = originalFetch
+  }
+  assert.equal(embeddingCalls[0].url, 'http://localhost:8000/v1/embeddings', 'vLLM embedding requests use the OpenAI-compatible /v1/embeddings endpoint')
+  assert.equal(embeddingCalls[0].body.model, 'BAAI/bge-base-en-v1.5', 'vLLM embedding requests preserve the served embedding model id')
+}
+
+async function assertSGLangProviderCompatibilityBehavior() {
+  const provider = applyProviderPreset({
+    id: 'sglang-contract',
+    baseUrl: 'http://localhost:30000/v1',
+    [API_KEY_FIELD]: FAKE_KEY_A,
+    models: ['Qwen/Qwen3-8B', 'BAAI/bge-m3'],
+    enabled: true,
+    modelConfigs: [{
+      id: 'Qwen/Qwen3-8B',
+      name: 'Qwen3 SGLang',
+      provider: 'openai-compatible',
+      contextWindow: 32768,
+      maxTokens: 32768,
+      maxOutputTokens: 4096,
+      defaultMaxTokens: 1024,
+      supportsVision: false,
+      supportsFiles: false,
+      supportsTools: true,
+      supportedParameters: ['response_format', 'tools'],
+      preferredEndpoint: 'chat-completions',
+      sourceUrl: 'https://docs.sglang.io/docs/basic_usage/openai_api_completions.md',
+      verifiedAt: '2026-06-22',
+      source: 'remote',
+    }],
+  }, 'sglang')
+  const schema = {
+    type: 'object',
+    properties: {
+      answer: { type: 'string' },
+      confidence: { type: 'number' },
+    },
+    required: ['answer'],
+  }
+  const evidence = getProviderCompatibilityEvidence('sglang')
+  assert.ok(evidence.officialDocs.some((url) => url === 'https://docs.sglang.io/docs/basic_usage/openai_api_completions.md'), 'SGLang evidence uses the current docs.sglang.io OpenAI Completions docs')
+  assert.ok(evidence.officialDocs.some((url) => url.endsWith('/openai_api_embeddings.md')), 'SGLang evidence records OpenAI-compatible embeddings docs')
+  assert.ok(evidence.officialDocs.some((url) => url.endsWith('/openai_api_vision.md')), 'SGLang evidence records OpenAI-compatible vision docs')
+  assert.ok(evidence.officialDocs.some((url) => url.endsWith('/advanced_features/tool_parser.md')), 'SGLang evidence records tool parser docs')
+  assert.ok(evidence.officialDocs.some((url) => url.endsWith('/advanced_features/structured_outputs.md')), 'SGLang evidence records structured-output docs')
+  assert.ok(evidence.officialDocs.some((url) => url.endsWith('/advanced_features/separate_reasoning.md')), 'SGLang evidence records reasoning-output parser docs')
+  assert.equal(evidence.officialDocs.some((url) => url.includes('docs.sglang.ai/backend')), false, 'SGLang evidence no longer uses stale backend HTML docs')
+  assert.ok(evidence.endpointFamilies.includes('/v1/chat/completions'), 'SGLang evidence records Chat Completions endpoint')
+  assert.ok(evidence.endpointFamilies.includes('/v1/models'), 'SGLang evidence records model listing endpoint')
+  assert.ok(evidence.endpointFamilies.includes('/v1/embeddings'), 'SGLang evidence records embeddings endpoint')
+  assert.equal(evidence.endpointFamilies.includes('/v1/responses'), false, 'SGLang evidence avoids unclaimed Responses routing')
+  assert.ok(providerCompatibilityEvidenceHasBehavior('sglang', 'structuredOutput'), 'SGLang evidence claims documented Chat Completions structured output')
+  assert.ok(providerCompatibilityEvidenceHasBehavior('sglang', 'tools'), 'SGLang evidence claims documented OpenAI-format tool use')
+  assert.ok(providerCompatibilityEvidenceHasBehavior('sglang', 'vision'), 'SGLang evidence claims documented image_url vision input')
+  assert.ok(providerCompatibilityEvidenceHasBehavior('sglang', 'reasoning'), 'SGLang evidence claims documented reasoning-output parsing')
+  assert.ok(providerCompatibilityEvidenceHasBehavior('sglang', 'embeddings'), 'SGLang evidence claims documented embeddings')
+  assert.equal(providerCompatibilityEvidenceHasBehavior('sglang', 'audio'), false, 'SGLang evidence avoids app-level audio claims')
+  assert.equal(providerCompatibilityEvidenceHasBehavior('sglang', 'rerank'), false, 'SGLang evidence avoids app-level rerank claims')
+
+  const chatReq = {
+    provider,
+    model: 'Qwen/Qwen3-8B',
+    messages: [{ role: 'user', content: 'Return structured SGLang output.' }],
+    maxTokens: 256,
+    stream: false,
+    reasoningEffort: 'high',
+    structuredOutput: {
+      type: 'json_schema',
+      name: 'islemind_sglang_answer',
+      schema,
+      strict: true,
+    },
+    providerToolDeclarations: [{
+      type: 'function',
+      function: {
+        name: 'read_sglang_context',
+        description: 'Read local SGLang context.',
+        parameters: { type: 'object', properties: { query: { type: 'string' } }, required: ['query'] },
+      },
+    }],
+  }
+  const chatBody = buildOpenAIBodyForTest(chatReq)
+  assert.deepEqual(
+    chatBody.response_format,
+    { type: 'json_schema', json_schema: { name: 'islemind_sglang_answer', schema } },
+    'SGLang Chat Completions structured-output requests use response_format without adding unverified strict'
+  )
+  assert.equal(chatBody.reasoning_effort, undefined, 'SGLang Chat Completions does not emit undocumented reasoning_effort controls')
+  assert.equal(chatBody.tools[0].function.name, 'read_sglang_context', 'SGLang Chat Completions preserves OpenAI-compatible tool declarations')
+  const chatConformance = resolveProviderRequestConformanceForTest(chatReq, chatBody)
+  assert.equal(chatConformance.manifest.family, 'sglang', 'SGLang conformance records the local runtime family')
+  assert.equal(chatConformance.manifest.protocol, 'openai-compatible', 'SGLang route uses Chat Completions')
+  assert.equal(chatConformance.manifest.structuredOutput.documentedRequestShape, 'openai-response-format', 'SGLang conformance records Chat Completions response_format controls')
+  assert.equal(chatConformance.manifest.structuredOutput.appRequestControl, true, 'SGLang conformance enables source-backed Chat Completions response_format controls')
+  assert.equal(chatConformance.manifest.structuredOutput.strictJsonSchema, false, 'SGLang conformance does not add strict JSON schema until source-backed')
+  assert.equal(chatConformance.manifest.reasoning.requestShape, 'none', 'SGLang conformance avoids unverified request-side reasoning controls')
+  assert.ok(chatConformance.manifest.source.url?.includes('docs.sglang.io/docs/basic_usage/openai_api_completions'), 'SGLang conformance source URL points to current official docs')
+
+  const parsedCompletion = parseProviderChatCompletionJson({
+    choices: [{
+      message: {
+        role: 'assistant',
+        content: 'SGLang final answer.',
+        reasoning_content: 'SGLang hidden reasoning.',
+        tool_calls: [{
+          id: 'call_sglang',
+          type: 'function',
+          function: { name: 'read_sglang_context', arguments: '{"query":"offline"}' },
+        }],
+      },
+    }],
+    usage: { prompt_tokens: 6, completion_tokens: 8, total_tokens: 14 },
+  }, {
+    provider,
+    model: 'Qwen/Qwen3-8B',
+    messages: [],
+    retrievalSources: [{ id: 'sglang-src', title: 'SGLang Source', excerpt: 'SGLang offline fixture', similarity: 0.77 }],
+  })
+  assert.equal(parsedCompletion.text, 'SGLang final answer.', 'SGLang parser extracts OpenAI-compatible response text')
+  assert.equal(parsedCompletion.reasoningContent, 'SGLang hidden reasoning.', 'SGLang parser preserves message.reasoning_content separately from answer text')
+  assert.ok(parsedCompletion.traces?.some((trace) => trace.content === 'SGLang hidden reasoning.'), 'SGLang parser emits message.reasoning_content as a reasoning trace')
+  assert.equal(parsedCompletion.providerToolCalls?.[0]?.id, 'call_sglang', 'SGLang parser preserves OpenAI-compatible tool call ids')
+  assert.equal(parsedCompletion.providerToolCalls?.[0]?.name, 'read_sglang_context', 'SGLang parser extracts OpenAI-compatible tool calls')
+  assert.equal(parsedCompletion.providerToolCalls?.[0]?.arguments?.query, 'offline', 'SGLang parser parses tool-call arguments')
+  assert.equal(parsedCompletion.usage?.totalTokens, 14, 'SGLang parser preserves usage metadata')
+
+  const streamed = parseProviderStreamChunkForTest([
+    `data: ${JSON.stringify({ choices: [{ delta: { reasoning_content: 'SGLang stream reasoning.' } }] })}`,
+    `data: ${JSON.stringify({ choices: [{ delta: { content: 'SGLang ' } }] })}`,
+    `data: ${JSON.stringify({ choices: [{ delta: { content: 'stream answer.' } }] })}`,
+    `data: ${JSON.stringify({ choices: [{ delta: { tool_calls: [{ index: 0, id: 'call_sglang_stream', type: 'function', function: { name: 'read_sglang_context', arguments: '{"query":' } }] } }] })}`,
+    `data: ${JSON.stringify({ choices: [{ delta: { tool_calls: [{ index: 0, function: { arguments: '"stream"}' } }] } }] })}`,
+    '',
+  ].join('\n'), 'openai-compatible')
+  assert.equal(streamed.text, 'SGLang stream answer.', 'SGLang stream parser keeps reasoning_content out of visible text')
+  assert.equal(streamed.reasoningContent, 'SGLang stream reasoning.', 'SGLang stream parser preserves delta.reasoning_content separately')
+  assert.ok(streamed.traces.some((trace) => trace.content === 'SGLang stream reasoning.'), 'SGLang stream parser emits delta.reasoning_content as a reasoning trace')
+  assert.equal(streamed.providerToolCalls?.[0]?.id, 'call_sglang_stream', 'SGLang stream parser preserves streamed tool call ids')
+  assert.equal(streamed.providerToolCalls?.[0]?.arguments?.query, 'stream', 'SGLang stream parser merges streamed tool arguments')
+
+  const originalFetch = global.fetch
+  const embeddingCalls = []
+  try {
+    global.fetch = async (input, init = {}) => {
+      embeddingCalls.push({ url: String(input), body: JSON.parse(init.body) })
+      return new Response(JSON.stringify({ data: [{ embedding: [0.31, 0.32, 0.33] }] }), { status: 200 })
+    }
+    const embedding = await embedTextWithProvider(provider, 'hello from sglang')
+    assert.deepEqual(embedding.embedding, [0.31, 0.32, 0.33], 'SGLang embedding parser preserves OpenAI-compatible embedding vectors')
+    assert.equal(embedding.model, 'BAAI/bge-m3', 'SGLang embedding picker uses an explicitly configured local embedding model')
+  } finally {
+    global.fetch = originalFetch
+  }
+  assert.equal(embeddingCalls[0].url, 'http://localhost:30000/v1/embeddings', 'SGLang embedding requests use the OpenAI-compatible /v1/embeddings endpoint')
+  assert.equal(embeddingCalls[0].body.model, 'BAAI/bge-m3', 'SGLang embedding requests preserve the served embedding model id')
+}
+
+async function assertLocalRuntimeProviderCompatibilityBehavior() {
+  const runtimes = [
+    { presetId: 'ollama', baseUrl: 'http://localhost:11434/v1', model: 'llama3.2:latest', docsHost: 'docs.ollama.com' },
+    { presetId: 'lm-studio', baseUrl: 'http://localhost:1234/v1', model: 'local-model', docsHost: 'lmstudio.ai' },
+    { presetId: 'localai', baseUrl: 'http://localhost:8080/v1', model: 'localai-chat-model', docsHost: 'localai.io', supportsAudio: true },
+    { presetId: 'vllm', baseUrl: 'http://localhost:8000/v1', model: 'Qwen/Qwen3-8B', docsHost: 'docs.vllm.ai' },
+    { presetId: 'sglang', baseUrl: 'http://localhost:30000/v1', model: 'Qwen/Qwen3-8B', docsHost: 'docs.sglang.io' },
+  ]
+  const providerToolDeclaration = {
+    type: 'function',
+    function: {
+      name: 'read_context',
+      description: 'Read local context.',
+      parameters: { type: 'object', properties: { query: { type: 'string' } } },
+    },
+  }
+
+  for (const runtime of runtimes) {
+    const provider = applyProviderPreset({
+      id: `${runtime.presetId}-local-runtime`,
+      baseUrl: runtime.baseUrl,
+      [API_KEY_FIELD]: FAKE_KEY_A,
+      models: [runtime.model],
+      enabled: true,
+    }, runtime.presetId)
+    const evidence = getProviderCompatibilityEvidence(runtime.presetId)
+    assert.equal(buildProviderCapabilityMatrix(provider).hostingProfile, 'local-runtime', `${runtime.presetId} is classified as a local runtime`)
+    assert.equal(evidence.auditState, 'protocol-reference', `${runtime.presetId} remains a protocol reference because installed model behavior is local state`)
+    assert.ok(evidence.officialDocs.some((url) => url.includes(runtime.docsHost)), `${runtime.presetId} compatibility evidence points to official local-runtime docs`)
+    assert.ok(providerCompatibilityEvidenceHasBehavior(runtime.presetId, 'localRuntime'), `${runtime.presetId} compatibility evidence marks local runtime behavior`)
+    if (runtime.supportsAudio) {
+      assert.equal(provider.capabilities.audioTranscription, true, `${runtime.presetId} preset exposes documented local audio transcription capability`)
+      assert.equal(provider.capabilities.speech, true, `${runtime.presetId} preset exposes documented local speech capability`)
+      assert.ok(providerCompatibilityEvidenceHasBehavior(runtime.presetId, 'audio'), `${runtime.presetId} compatibility evidence records documented local audio endpoints`)
+      assert.ok(evidence.endpointFamilies.includes('/v1/audio/transcriptions'), `${runtime.presetId} compatibility evidence records the local transcription endpoint`)
+      assert.ok(evidence.endpointFamilies.includes('/v1/audio/speech'), `${runtime.presetId} compatibility evidence records the local speech endpoint`)
+    }
+    assert.equal(
+      resolveProviderEndpoint({ provider, model: runtime.model, stream: true }),
+      `${runtime.baseUrl}/chat/completions`,
+      `${runtime.presetId} chat route preserves the local OpenAI-compatible base URL`
+    )
+    assert.equal(
+      usesOpenAIResponses({ provider, model: runtime.model }),
+      false,
+      `${runtime.presetId} does not opt into Responses routing without an explicit capability declaration`
+    )
+    const body = getBodyForTest({
+      provider,
+      model: runtime.model,
+      messages: [{ role: 'user', content: 'Use the local runtime.' }],
+      stream: true,
+      providerToolDeclarations: [providerToolDeclaration],
+    })
+    assert.equal(body.model, runtime.model, `${runtime.presetId} request body preserves the installed model id`)
+    assert.equal(body.messages[0].role, 'user', `${runtime.presetId} request body keeps OpenAI-compatible messages`)
+    assert.equal(body.tools[0].function.name, 'read_context', `${runtime.presetId} request body keeps tool declarations`)
+    const conformance = resolveProviderRequestConformanceForTest({
+      provider,
+      model: runtime.model,
+      messages: [{ role: 'user', content: 'Use the local runtime.' }],
+    }, body)
+    assert.equal(conformance.manifest.family, runtime.presetId, `${runtime.presetId} conformance records the local runtime family`)
+    assert.equal(conformance.manifest.protocol, 'openai-compatible', `${runtime.presetId} conformance uses the OpenAI-compatible protocol`)
+    assert.equal(conformance.manifest.tools.requestShape, 'openai-tools', `${runtime.presetId} conformance keeps OpenAI-compatible tool declarations`)
+    assert.equal(conformance.manifest.source.confidence, 'source-backed', `${runtime.presetId} conformance links to local runtime docs`)
+    assert.ok(conformance.manifest.source.url?.includes(runtime.docsHost), `${runtime.presetId} conformance source URL points to the local runtime docs`)
+  }
+
+  const originalFetch = global.fetch
+  const modelFetchCalls = []
+  try {
+    global.fetch = async (input, init = {}) => {
+      modelFetchCalls.push({ url: String(input), authorization: init.headers?.Authorization ?? init.headers?.authorization })
+      return new Response(JSON.stringify({
+        data: [
+          {
+            id: 'local/text-model',
+            name: 'Local Text Model',
+            context_window: 32768,
+            max_completion_tokens: 4096,
+            architecture: { input_modalities: ['text'] },
+          },
+          {
+            id: 'local/vision-model',
+            display_name: 'Local Vision Model',
+            metadata: { contextWindow: '65536', maxOutputTokens: '8192' },
+            architecture: { input_modalities: ['text', 'image'] },
+          },
+        ],
+      }), { status: 200 })
+    }
+    for (const runtime of runtimes) {
+      const provider = applyProviderPreset({
+        id: `${runtime.presetId}-local-model-sync`,
+        baseUrl: runtime.baseUrl,
+        [API_KEY_FIELD]: FAKE_KEY_A,
+        models: [],
+        enabled: true,
+      }, runtime.presetId)
+      const models = await fetchProviderModelConfigsFromRemote(provider, 1000)
+      assert.equal(models[0].id, 'local/text-model', `${runtime.presetId} model sync preserves local model ids`)
+      assert.equal(models[0].contextWindow, 32768, `${runtime.presetId} model sync reads local context limits`)
+      assert.equal(models[0].maxOutputTokens, 4096, `${runtime.presetId} model sync reads local output limits`)
+      assert.equal(models[1].supportsVision, true, `${runtime.presetId} model sync preserves local vision metadata`)
+    }
+  } finally {
+    global.fetch = originalFetch
+  }
+  assert.deepEqual(
+    modelFetchCalls.map((call) => call.url),
+    runtimes.map((runtime) => `${runtime.baseUrl}/models`),
+    'local runtime model sync calls each configured /models endpoint exactly once'
+  )
+  assert.ok(modelFetchCalls.every((call) => call.authorization === `Bearer ${FAKE_KEY_A}`), 'local runtime model sync keeps OpenAI-compatible bearer auth when a token is configured')
+
+  const ollamaProvider = applyProviderPreset({
+    id: 'ollama-local-parse',
+    baseUrl: 'http://localhost:11434/v1',
+    [API_KEY_FIELD]: FAKE_KEY_A,
+    models: ['llama3.2:latest'],
+    enabled: true,
+  }, 'ollama')
+  const parsedCompletion = parseProviderChatCompletionJson({
+    choices: [{
+      message: {
+        content: 'Local answer.',
+        tool_calls: [{
+          id: 'call_local',
+          type: 'function',
+          function: { name: 'read_context', arguments: '{"query":"offline notes"}' },
+        }],
+      },
+    }],
+    usage: { prompt_tokens: 5, completion_tokens: 7, total_tokens: 12 },
+  }, {
+    provider: ollamaProvider,
+    model: 'llama3.2:latest',
+    messages: [],
+    retrievalSources: [{ id: 'local-source', title: 'Local Source', excerpt: 'Local evidence', similarity: 0.6 }],
+  })
+  assert.equal(parsedCompletion.text, 'Local answer.', 'local runtime parser preserves OpenAI-compatible text')
+  assert.equal(parsedCompletion.providerToolCalls?.[0]?.name, 'read_context', 'local runtime parser extracts OpenAI-compatible tool calls')
+  assert.equal(parsedCompletion.providerToolCalls?.[0]?.arguments?.query, 'offline notes', 'local runtime parser parses tool arguments')
+  assert.equal(parsedCompletion.usage?.totalTokens, 12, 'local runtime parser preserves OpenAI-compatible usage')
+  assert.equal(parsedCompletion.citations?.[0]?.id, 'local-source', 'local runtime parser preserves retrieval citations')
+
+  const localStream = parseProviderStreamChunkForTest([
+    `data: ${JSON.stringify({ choices: [{ delta: { content: 'Local ' } }] })}`,
+    `data: ${JSON.stringify({ choices: [{ delta: { content: 'stream.' } }] })}`,
+    `data: ${JSON.stringify({ choices: [{ delta: { tool_calls: [{ index: 0, id: 'call_local_stream', type: 'function', function: { name: 'read_context', arguments: '{"query":' } }] } }] })}`,
+    `data: ${JSON.stringify({ choices: [{ delta: { tool_calls: [{ index: 0, function: { arguments: '"offline"}' } }] } }] })}`,
+    '',
+  ].join('\n'), 'openai-compatible')
+  assert.equal(localStream.text, 'Local stream.', 'local runtime stream parser merges OpenAI-compatible text deltas')
+  assert.equal(localStream.providerToolCalls?.[0]?.id, 'call_local_stream', 'local runtime stream parser preserves streamed tool call ids')
+  assert.equal(localStream.providerToolCalls?.[0]?.arguments?.query, 'offline', 'local runtime stream parser merges streamed tool arguments')
+
+  const localMissingModel = JSON.stringify({ error: { message: 'model llama3.2:latest not found', request_id: 'local_req_1' } })
+  assert.equal(classifyHttpStatus(404, localMissingModel, 'llama3.2:latest'), 'model_unavailable', 'local runtime missing model errors classify as model_unavailable')
+  assert.ok(extractProviderErrorDetail(localMissingModel).includes('local_req_1'), 'local runtime errors preserve request ids for diagnostics')
+}
+
+async function assertAzureOpenAIProviderCompatibilityBehavior() {
+  const providerToolDeclaration = {
+    type: 'function',
+    function: {
+      name: 'inspect_azure_context',
+      description: 'Inspect Azure-hosted context.',
+      parameters: {
+        type: 'object',
+        properties: { query: { type: 'string' } },
+        required: ['query'],
+      },
+    },
+  }
+  const schema = {
+    type: 'object',
+    properties: {
+      answer: { type: 'string' },
+      sourceIds: { type: 'array', items: { type: 'string' } },
+    },
+    required: ['answer'],
+  }
+  const azureV1Provider = {
+    id: 'azure-openai-focused',
+    type: 'openai-compatible',
+    name: 'Azure OpenAI',
+    presetId: 'azure-openai',
+    baseUrl: 'https://example.openai.azure.com/openai/v1',
+    [API_KEY_FIELD]: FAKE_KEY_A,
+    models: ['gpt-4.1', 'azure/gpt-5.2-responses'],
+    enabled: true,
+    capabilities: { responsesApi: true, nativeTools: true, files: true },
+    modelConfigs: [{
+      id: 'gpt-4.1',
+      name: 'Azure GPT Chat',
+      provider: 'openai-compatible',
+      contextWindow: 128000,
+      maxTokens: 128000,
+      maxOutputTokens: 4096,
+      defaultMaxTokens: 1024,
+      supportsVision: true,
+      supportsFiles: false,
+      supportsTools: true,
+      supportedParameters: ['response_format', 'tools'],
+      preferredEndpoint: 'chat-completions',
+      sourceUrl: 'https://learn.microsoft.com/azure/ai-foundry/openai/reference',
+      verifiedAt: '2026-06-22',
+      source: 'remote',
+    }, {
+      id: 'azure/gpt-5.2-responses',
+      name: 'Azure GPT Responses',
+      provider: 'openai-compatible',
+      contextWindow: 128000,
+      maxTokens: 128000,
+      maxOutputTokens: 8192,
+      defaultMaxTokens: 2048,
+      supportsVision: true,
+      supportsFiles: true,
+      supportsTools: true,
+      supportedParameters: ['tools', 'reasoning'],
+      reasoningMode: 'openai-effort',
+      reasoningEfforts: ['low', 'medium', 'high'],
+      preferredEndpoint: 'responses',
+      sourceUrl: 'https://learn.microsoft.com/azure/ai-services/openai/how-to/responses',
+      verifiedAt: '2026-06-22',
+      source: 'remote',
+    }],
+  }
+  const azureLegacyProvider = {
+    ...azureV1Provider,
+    id: 'azure-openai-legacy-deployment',
+    baseUrl: 'https://example.openai.azure.com/openai/deployments/gpt-4o',
+  }
+  const evidence = getProviderCompatibilityEvidence('azure-openai')
+  assert.equal(evidence.auditState, 'conformance-ready', 'Azure OpenAI evidence is conformance-ready for v1 resource routing')
+  assert.ok(evidence.officialDocs.some((url) => url.includes('learn.microsoft.com/azure/ai-foundry/openai/reference')), 'Azure OpenAI evidence records the official API reference')
+  assert.ok(evidence.officialDocs.some((url) => url.includes('/openai/how-to/responses')), 'Azure OpenAI evidence records the Responses how-to docs')
+  assert.ok(evidence.endpointFamilies.includes('/openai/v1/chat/completions'), 'Azure OpenAI evidence records v1 Chat Completions endpoint')
+  assert.ok(evidence.endpointFamilies.includes('/openai/v1/responses'), 'Azure OpenAI evidence records v1 Responses endpoint')
+  assert.ok(evidence.endpointFamilies.includes('/openai/v1/models'), 'Azure OpenAI evidence records v1 Models endpoint')
+  assert.ok(providerCompatibilityEvidenceHasBehavior('azure-openai', 'hostedRouting'), 'Azure OpenAI evidence records hosted routing behavior')
+  assert.ok(providerCompatibilityEvidenceHasBehavior('azure-openai', 'structuredOutput'), 'Azure OpenAI evidence records structured-output docs')
+  assert.ok(providerCompatibilityEvidenceHasBehavior('azure-openai', 'tools'), 'Azure OpenAI evidence records tool-call docs')
+  assert.ok(providerCompatibilityEvidenceHasBehavior('azure-openai', 'files'), 'Azure OpenAI evidence records Responses file input docs')
+  assert.ok(providerCompatibilityEvidenceHasBehavior('azure-openai', 'reasoning'), 'Azure OpenAI evidence records Responses reasoning docs')
+  assert.equal(buildProviderCapabilityMatrix(azureV1Provider).hostingProfile, 'cloud-hosted', 'Azure OpenAI v1 providers are cloud-hosted')
+  assert.equal(providerNeedsHostedCompatibilityWork(azureV1Provider), false, 'Azure OpenAI v1 resource endpoints are not reported as hosted gaps')
+  assert.equal(providerNeedsHostedCompatibilityWork(azureLegacyProvider), true, 'legacy Azure deployment paths remain hosted gaps')
+  assert.deepEqual(getHeaders(azureV1Provider), { 'Content-Type': 'application/json', 'api-key': FAKE_KEY_A }, 'Azure OpenAI v1 uses Azure API-key auth headers')
+  assert.equal(
+    resolveProviderEndpoint({ provider: azureV1Provider, model: 'gpt-4.1', stream: true }),
+    'https://example.openai.azure.com/openai/v1/chat/completions',
+    'Azure OpenAI v1 chat route keeps /openai/v1'
+  )
+
+  const chatReq = {
+    provider: azureV1Provider,
+    model: 'gpt-4.1',
+    messages: [{ role: 'user', content: 'Use Azure hosted chat.' }],
+    maxTokens: 128,
+    structuredOutput: {
+      type: 'json_schema',
+      name: 'islemind_azure_answer',
+      schema,
+      strict: true,
+    },
+    providerToolDeclarations: [providerToolDeclaration],
+  }
+  const chatBody = buildOpenAIBodyForTest(chatReq)
+  assert.deepEqual(
+    chatBody.response_format,
+    { type: 'json_schema', json_schema: { name: 'islemind_azure_answer', schema } },
+    'Azure OpenAI Chat Completions uses source-backed response_format without adding unverified strict'
+  )
+  assert.equal(chatBody.tools[0].function.name, 'inspect_azure_context', 'Azure OpenAI Chat Completions preserves OpenAI-format tools')
+  assert.equal(chatBody.max_tokens, 128, 'Azure OpenAI Chat Completions uses max_tokens')
+  const chatConformance = resolveProviderRequestConformanceForTest(chatReq, chatBody)
+  assert.equal(chatConformance.manifest.family, 'azure-openai', 'Azure OpenAI Chat conformance records the hosted family')
+  assert.equal(chatConformance.manifest.protocol, 'openai-compatible', 'Azure OpenAI Chat conformance records OpenAI-compatible protocol')
+  assert.equal(chatConformance.manifest.structuredOutput.documentedRequestShape, 'openai-response-format', 'Azure OpenAI Chat conformance records response_format structured output')
+  assert.equal(chatConformance.manifest.structuredOutput.appRequestControl, true, 'Azure OpenAI Chat conformance enables source-backed response_format request controls')
+  assert.equal(chatConformance.manifest.structuredOutput.strictJsonSchema, false, 'Azure OpenAI Chat conformance avoids unverified strict JSON schema')
+  assert.ok(chatConformance.manifest.source.url?.includes('learn.microsoft.com/azure/ai-foundry/openai/reference'), 'Azure OpenAI Chat conformance links to Microsoft API docs')
+
+  const attachments = [{
+    id: 'azure-pdf',
+    type: 'pdf',
+    uri: '',
+    name: 'azure-notes.pdf',
+    mimeType: 'application/pdf',
+    size: 128,
+    base64: 'cGRm',
+  }]
+  assert.equal(usesOpenAIResponses({ provider: azureV1Provider, model: 'azure/gpt-5.2-responses', attachments }), true, 'Azure OpenAI Responses routing activates for explicit Responses model metadata and file input')
+  assert.deepEqual(getReasoningEffortOptions(azureV1Provider, 'azure/gpt-5.2-responses'), ['low', 'medium', 'high'], 'Azure OpenAI Responses reasoning efforts come from model metadata')
+  assert.equal(normalizeOpenAIReasoningEffort({ provider: azureV1Provider, model: 'azure/gpt-5.2-responses', reasoningEffort: 'max' }), 'high', 'Azure OpenAI Responses reasoning effort downgrades max to documented high')
+  const responsesReq = {
+    provider: azureV1Provider,
+    model: 'azure/gpt-5.2-responses',
+    messages: [{ role: 'user', content: 'Use Azure hosted Responses with a file.' }],
+    maxTokens: 256,
+    stream: true,
+    attachments,
+    reasoningEffort: 'medium',
+    providerToolDeclarations: [providerToolDeclaration],
+    structuredOutput: {
+      type: 'json_schema',
+      name: 'islemind_azure_responses_answer',
+      schema,
+    },
+  }
+  assert.equal(
+    resolveProviderEndpoint({ provider: azureV1Provider, model: 'azure/gpt-5.2-responses', stream: true, usesResponsesApi: true }),
+    'https://example.openai.azure.com/openai/v1/responses',
+    'Azure OpenAI v1 Responses route keeps /openai/v1'
+  )
+  const responsesBody = buildOpenAIResponsesBodyForTest(responsesReq)
+  assert.equal(Array.isArray(responsesBody.input), true, 'Azure OpenAI Responses body uses Responses input')
+  assert.equal(responsesBody.input[0].content[1].type, 'input_file', 'Azure OpenAI Responses maps non-image attachments to input_file')
+  assert.equal(responsesBody.input[0].content[1].filename, 'azure-notes.pdf', 'Azure OpenAI Responses preserves attachment filenames')
+  assert.equal(responsesBody.tools[0].function.name, 'inspect_azure_context', 'Azure OpenAI Responses preserves OpenAI-format tools')
+  assert.deepEqual(responsesBody.reasoning, { effort: 'medium' }, 'Azure OpenAI Responses emits model-metadata-gated reasoning effort')
+  assert.equal(responsesBody.text, undefined, 'Azure OpenAI Responses does not emit unverified text.format structured-output controls')
+  assert.equal(responsesBody.response_format, undefined, 'Azure OpenAI Responses does not emit unverified top-level response_format controls')
+  const responsesConformance = resolveProviderRequestConformanceForTest(responsesReq, responsesBody)
+  assert.equal(responsesConformance.manifest.protocol, 'openai-responses', 'Azure OpenAI Responses conformance records OpenAI Responses protocol')
+  assert.equal(responsesConformance.manifest.payload.maxTokensField, 'max_output_tokens', 'Azure OpenAI Responses conformance records max_output_tokens')
+  assert.equal(responsesConformance.manifest.reasoning.requestShape, 'openai-responses-reasoning', 'Azure OpenAI Responses conformance records reasoning.effort controls')
+  assert.equal(responsesConformance.manifest.structuredOutput.appRequestControl, false, 'Azure OpenAI Responses keeps structured-output request controls disabled until source-backed')
+  assert.ok(
+    responsesConformance.issues.some((issue) => issue.code === 'unsupported_structured_output' && issue.severity === 'block'),
+    'Azure OpenAI Responses structured-output requests are blocked with an explicit conformance issue'
+  )
+
+  const parsedCompletion = parseProviderChatCompletionJson({
+    choices: [{
+      message: {
+        content: 'Azure answer.',
+        tool_calls: [{
+          id: 'call_azure',
+          type: 'function',
+          function: { name: 'inspect_azure_context', arguments: '{"query":"hosted docs"}' },
+        }],
+      },
+    }],
+    usage: { prompt_tokens: 9, completion_tokens: 4, total_tokens: 13 },
+  }, {
+    provider: azureV1Provider,
+    model: 'gpt-4.1',
+    messages: [],
+    retrievalSources: [{ id: 'azure-source', title: 'Azure Source', excerpt: 'Azure evidence', similarity: 0.7 }],
+  })
+  assert.equal(parsedCompletion.text, 'Azure answer.', 'Azure OpenAI parser preserves OpenAI-compatible text')
+  assert.equal(parsedCompletion.providerToolCalls?.[0]?.arguments?.query, 'hosted docs', 'Azure OpenAI parser extracts tool-call arguments')
+  assert.equal(parsedCompletion.citations?.[0]?.id, 'azure-source', 'Azure OpenAI parser preserves retrieval citations')
+
+  const streamChunk = parseProviderStreamChunkForTest([
+    `data: ${JSON.stringify({ choices: [{ delta: { content: 'Azure ' } }] })}`,
+    `data: ${JSON.stringify({ choices: [{ delta: { content: 'stream.' } }] })}`,
+    '',
+  ].join('\n'), 'openai-compatible')
+  assert.equal(streamChunk.text, 'Azure stream.', 'Azure OpenAI stream parser merges OpenAI-compatible deltas')
+}
+
+async function assertHostedCloudProviderCompatibilityBehavior() {
+  const providerToolDeclaration = {
+    type: 'function',
+    function: {
+      name: 'inspect_hosted_context',
+      description: 'Inspect hosted cloud context.',
+      parameters: {
+        type: 'object',
+        properties: { query: { type: 'string' } },
+        required: ['query'],
+      },
+    },
+  }
+  const azureV1Provider = {
+    id: 'azure-hosted-openai',
+    type: 'openai-compatible',
+    name: 'Azure OpenAI',
+    presetId: 'azure-openai',
+    baseUrl: 'https://example.openai.azure.com/openai/v1',
+    [API_KEY_FIELD]: FAKE_KEY_A,
+    models: ['gpt-4.1', 'gpt-5.2'],
+    enabled: true,
+    capabilities: { responsesApi: true, nativeTools: true },
+  }
+  const azureResponsesProvider = {
+    ...azureV1Provider,
+    modelConfigs: [{
+      id: 'azure/gpt-5.2-responses',
+      name: 'Azure GPT Responses',
+      provider: 'openai-compatible',
+      contextWindow: 128000,
+      maxTokens: 128000,
+      maxOutputTokens: 8192,
+      defaultMaxTokens: 2048,
+      supportsVision: true,
+      supportsFiles: true,
+      supportsTools: true,
+      preferredEndpoint: 'responses',
+      sourceUrl: 'https://learn.microsoft.com/azure/ai-services/openai/how-to/responses',
+      verifiedAt: '2026-06-21',
+      source: 'remote',
+    }],
+  }
+  const azureLegacyProvider = {
+    ...azureV1Provider,
+    id: 'azure-legacy-deployment',
+    baseUrl: 'https://example.openai.azure.com/openai/deployments/gpt-4o',
+  }
+  const azureEvidence = getProviderCompatibilityEvidence('azure-openai')
+  assert.equal(azureEvidence.auditState, 'conformance-ready', 'Azure OpenAI hosted evidence is conformance-ready for v1 resource routing')
+  assert.ok(azureEvidence.officialDocs.some((url) => url.includes('learn.microsoft.com/azure/ai-foundry/openai/reference')), 'Azure OpenAI evidence points to the official API reference')
+  assert.equal(buildProviderCapabilityMatrix(azureV1Provider).hostingProfile, 'cloud-hosted', 'Azure OpenAI v1 providers are cloud-hosted')
+  assert.equal(providerNeedsHostedCompatibilityWork(azureV1Provider), false, 'Azure OpenAI v1 endpoints are not reported as hosted gaps')
+  assert.equal(providerNeedsHostedCompatibilityWork(azureLegacyProvider), true, 'legacy Azure deployment paths remain hosted gaps')
+  assert.equal(resolveProviderEndpoint({ provider: azureV1Provider, model: 'gpt-4.1', stream: true }), 'https://example.openai.azure.com/openai/v1/chat/completions', 'Azure OpenAI v1 chat route keeps /openai/v1')
+  assert.equal(
+    resolveProviderEndpoint({ provider: azureResponsesProvider, model: 'azure/gpt-5.2-responses', stream: true, usesResponsesApi: true }),
+    'https://example.openai.azure.com/openai/v1/responses',
+    'Azure OpenAI v1 Responses route keeps /openai/v1'
+  )
+  assert.deepEqual(getHeaders(azureV1Provider), { 'Content-Type': 'application/json', 'api-key': FAKE_KEY_A }, 'Azure OpenAI v1 uses Azure API-key auth headers')
+  const azureBody = getBodyForTest({
+    provider: azureV1Provider,
+    model: 'gpt-4.1',
+    messages: [{ role: 'user', content: 'Use Azure hosted chat.' }],
+    maxTokens: 128,
+    providerToolDeclarations: [providerToolDeclaration],
+  })
+  assert.equal(azureBody.max_tokens, 128, 'Azure OpenAI chat body uses max_tokens for hosted OpenAI-compatible chat')
+  assert.equal(azureBody.tools[0].function.name, 'inspect_hosted_context', 'Azure OpenAI chat body preserves provider tools')
+  const azureConformance = resolveProviderRequestConformanceForTest({
+    provider: azureV1Provider,
+    model: 'gpt-4.1',
+    messages: [{ role: 'user', content: 'Use Azure hosted chat.' }],
+  }, azureBody)
+  assert.equal(azureConformance.manifest.family, 'azure-openai', 'Azure OpenAI conformance records the hosted family')
+  assert.equal(azureConformance.manifest.protocol, 'openai-compatible', 'Azure OpenAI chat conformance records OpenAI-compatible protocol')
+  assert.ok(azureConformance.manifest.source.url?.includes('learn.microsoft.com/azure/ai-foundry/openai/reference'), 'Azure OpenAI conformance source uses Microsoft hosted docs')
+  assert.equal(azureConformance.manifest.source.confidence, 'source-backed', 'Azure OpenAI conformance is source-backed')
+  const azureResponsesBody = getBodyForTest({
+    provider: azureResponsesProvider,
+    model: 'azure/gpt-5.2-responses',
+    messages: [{ role: 'user', content: 'Use Azure hosted Responses.' }],
+    maxTokens: 128,
+    providerToolDeclarations: [providerToolDeclaration],
+  })
+  assert.equal(Array.isArray(azureResponsesBody.input), true, 'Azure OpenAI Responses body uses Responses input')
+  const azureResponsesConformance = resolveProviderRequestConformanceForTest({
+    provider: azureResponsesProvider,
+    model: 'azure/gpt-5.2-responses',
+    messages: [{ role: 'user', content: 'Use Azure hosted Responses.' }],
+  }, azureResponsesBody)
+  assert.equal(azureResponsesConformance.manifest.protocol, 'openai-responses', 'Azure OpenAI Responses conformance records OpenAI Responses protocol')
+  assert.equal(azureResponsesConformance.manifest.payload.maxTokensField, 'max_output_tokens', 'Azure OpenAI Responses conformance records max_output_tokens')
+
+  const bedrockRuntimeCredentialJson = JSON.stringify({
+    accessKeyId: 'AKIDEXAMPLE',
+    secretAccessKey: 'wJalrXUtnFEMI/K7MDENG+bPxRfiCYEXAMPLEKEY',
+    sessionToken: 'session-token-example',
+  })
+  const bedrockRuntimeProvider = {
+    id: 'bedrock-runtime-hosted',
+    type: 'anthropic',
+    name: 'AWS Bedrock Runtime',
+    presetId: 'aws-bedrock',
+    baseUrl: 'https://bedrock-runtime.us-east-1.amazonaws.com',
+    apiKey: bedrockRuntimeCredentialJson,
+    models: ['anthropic.claude-3-7-sonnet'],
+    enabled: true,
+  }
+  const bedrockMantleProvider = {
+    id: 'bedrock-mantle-hosted',
+    type: 'openai-compatible',
+    name: 'AWS Bedrock Mantle',
+    presetId: 'aws-bedrock',
+    baseUrl: 'https://bedrock-mantle.us-east-1.api.aws/v1',
+    [API_KEY_FIELD]: FAKE_KEY_A,
+    models: ['openai.gpt-oss-120b-1:0'],
+    enabled: true,
+    capabilities: { responsesApi: false, nativeTools: true },
+  }
+  const bedrockEvidence = getProviderCompatibilityEvidence('aws-bedrock')
+  assert.equal(bedrockEvidence.auditState, 'needs-live-smoke', 'AWS Bedrock keeps live account behavior separate from offline hosted coverage')
+  assert.ok(bedrockEvidence.officialDocs.some((url) => url.includes('/inference-chat-completions-mantle')), 'AWS Bedrock evidence maps current Mantle Chat Completions docs')
+  assert.ok(bedrockEvidence.officialDocs.some((url) => url.includes('/API_runtime_InvokeModel')), 'AWS Bedrock evidence maps Runtime InvokeModel API reference docs')
+  assert.equal(bedrockEvidence.endpointFamilies.includes('/v1/responses'), false, 'AWS Bedrock evidence does not claim Responses until current AWS docs or live smoke prove it')
+  assert.equal(getHostedProviderKind(bedrockRuntimeProvider), 'aws-bedrock', 'Bedrock Runtime is classified as AWS Bedrock hosting')
+  assert.equal(getHostedProviderSupportIssue(bedrockRuntimeProvider, 'chat'), null, 'Bedrock Runtime with AWS credentials passes chat hosted boundary checks')
+  assert.match(getHostedProviderSupportIssue(bedrockRuntimeProvider, 'modelList')?.message ?? '', /Mantle|SigV4|Converse|InvokeModel/, 'Bedrock Runtime model-list remains an explicit hosted gap')
+  assert.equal(getHostedProviderSupportIssue(bedrockMantleProvider, 'chat'), null, 'Bedrock Mantle OpenAI-compatible path passes hosted checks')
+  assert.equal(usesOpenAIResponses({ provider: bedrockMantleProvider, model: 'openai.gpt-oss-120b-1:0' }), false, 'Bedrock Mantle default routing stays on Chat Completions while Responses remains unclaimed')
+  assert.equal(resolveProviderEndpoint({ provider: bedrockMantleProvider, model: 'openai.gpt-oss-120b-1:0', stream: true }), 'https://bedrock-mantle.us-east-1.api.aws/v1/chat/completions', 'Bedrock Mantle chat route keeps /v1')
+  const bedrockMantleBody = getBodyForTest({
+    provider: bedrockMantleProvider,
+    model: 'openai.gpt-oss-120b-1:0',
+    messages: [{ role: 'user', content: 'Use Bedrock Mantle chat.' }],
+    maxTokens: 64,
+    providerToolDeclarations: [providerToolDeclaration],
+  })
+  assert.equal(bedrockMantleBody.max_tokens, 64, 'Bedrock Mantle body uses OpenAI-compatible max_tokens')
+  assert.equal(bedrockMantleBody.tools[0].function.name, 'inspect_hosted_context', 'Bedrock Mantle body preserves provider tools')
+  const bedrockMantleConformance = resolveProviderRequestConformanceForTest({
+    provider: bedrockMantleProvider,
+    model: 'openai.gpt-oss-120b-1:0',
+    messages: [{ role: 'user', content: 'Use Bedrock Mantle chat.' }],
+  }, bedrockMantleBody)
+  assert.equal(bedrockMantleConformance.manifest.family, 'aws-bedrock', 'Bedrock Mantle conformance records AWS Bedrock family')
+  assert.equal(bedrockMantleConformance.manifest.protocol, 'openai-compatible', 'Bedrock Mantle conformance records OpenAI-compatible protocol')
+  assert.ok(bedrockMantleConformance.manifest.source.url?.includes('docs.aws.amazon.com/bedrock'), 'Bedrock Mantle conformance source uses AWS Bedrock docs')
+  const bedrockRuntimeBody = getBodyForTest({
+    provider: bedrockRuntimeProvider,
+    model: 'anthropic.claude-3-7-sonnet',
+    messages: [{ role: 'user', content: 'Use Bedrock Runtime InvokeModel.' }],
+    stream: false,
+    maxTokens: 32,
+  })
+  const bedrockRuntimeConformance = resolveProviderRequestConformanceForTest({
+    provider: bedrockRuntimeProvider,
+    model: 'anthropic.claude-3-7-sonnet',
+    messages: [{ role: 'user', content: 'Use Bedrock Runtime InvokeModel.' }],
+  }, bedrockRuntimeBody)
+  assert.equal(bedrockRuntimeConformance.manifest.family, 'aws-bedrock', 'Bedrock Runtime conformance records AWS Bedrock family')
+  assert.equal(bedrockRuntimeConformance.manifest.protocol, 'anthropic-messages', 'Bedrock Runtime conformance records Anthropic Messages payload before InvokeModel wrapping')
+  assert.ok(bedrockRuntimeConformance.manifest.source.url?.includes('docs.aws.amazon.com/bedrock'), 'Bedrock Runtime conformance source uses AWS Bedrock docs')
+  const preparedBedrockRuntime = prepareBedrockRuntimeInvokeModelRequest({
+    provider: bedrockRuntimeProvider,
+    model: 'anthropic.claude-3-7-sonnet',
+    body: bedrockRuntimeBody,
+    now: new Date('2026-06-21T00:00:00Z'),
+  })
+  assert.equal(preparedBedrockRuntime.url, 'https://bedrock-runtime.us-east-1.amazonaws.com/model/anthropic.claude-3-7-sonnet/invoke', 'Bedrock Runtime prepared request targets InvokeModel')
+  assert.match(preparedBedrockRuntime.headers.Authorization, /Credential=AKIDEXAMPLE\/20260621\/us-east-1\/bedrock\/aws4_request/, 'Bedrock Runtime prepared request signs the bedrock service')
+  assert.equal(JSON.parse(preparedBedrockRuntime.body).anthropic_version, 'bedrock-2023-05-31', 'Bedrock Runtime prepared body adds the Bedrock Anthropic API version')
+
+  const vertexNativeProvider = {
+    id: 'vertex-native-hosted',
+    type: 'openai-compatible',
+    name: 'Vertex AI',
+    presetId: 'vertex-ai',
+    baseUrl: 'https://us-central1-aiplatform.googleapis.com',
+    [API_KEY_FIELD]: FAKE_KEY_A,
+    models: ['gemini-2.5-pro'],
+    enabled: true,
+  }
+  const vertexOpenAIProvider = {
+    ...vertexNativeProvider,
+    id: 'vertex-openai-hosted',
+    baseUrl: 'https://us-central1-aiplatform.googleapis.com/v1/projects/islemind-dev/locations/us-central1/endpoints/openapi',
+    capabilities: { nativeTools: true },
+  }
+  const vertexEvidence = getProviderCompatibilityEvidence('vertex-ai')
+  assert.equal(vertexEvidence.auditState, 'needs-live-smoke', 'Vertex AI keeps live project/region behavior separate from offline hosted coverage')
+  assert.ok(vertexEvidence.officialDocs.some((url) => url.includes('/generative-ai/docs/start/openai')), 'Vertex AI evidence maps official OpenAI-compatible docs')
+  assert.equal(isHostedProviderGap(vertexNativeProvider), true, 'native Vertex AI remains a hosted gap before OpenAI-compatible endpoint configuration')
+  assert.equal(isHostedProviderGap(vertexOpenAIProvider), false, 'Vertex AI OpenAI-compatible endpoint passes hosted checks')
+  assert.equal(resolveProviderEndpoint({ provider: vertexOpenAIProvider, model: 'gemini-2.5-pro', stream: true }), 'https://us-central1-aiplatform.googleapis.com/v1/projects/islemind-dev/locations/us-central1/endpoints/openapi/chat/completions', 'Vertex AI OpenAI-compatible chat route keeps /endpoints/openapi')
+  assert.deepEqual(getHeaders(vertexOpenAIProvider), { 'Content-Type': 'application/json', Authorization: `Bearer ${FAKE_KEY_A}` }, 'Vertex AI OpenAI-compatible endpoint uses bearer access-token auth')
+  const vertexBody = getBodyForTest({
+    provider: vertexOpenAIProvider,
+    model: 'gemini-2.5-pro',
+    messages: [{ role: 'user', content: 'Use Vertex OpenAI-compatible chat.' }],
+    maxTokens: 96,
+    providerToolDeclarations: [providerToolDeclaration],
+  })
+  assert.equal(vertexBody.max_tokens, 96, 'Vertex AI OpenAI-compatible body uses max_tokens')
+  assert.equal(vertexBody.tools[0].function.name, 'inspect_hosted_context', 'Vertex AI OpenAI-compatible body preserves provider tools')
+  const vertexConformance = resolveProviderRequestConformanceForTest({
+    provider: vertexOpenAIProvider,
+    model: 'gemini-2.5-pro',
+    messages: [{ role: 'user', content: 'Use Vertex OpenAI-compatible chat.' }],
+  }, vertexBody)
+  assert.equal(vertexConformance.manifest.family, 'vertex-ai', 'Vertex AI conformance records the hosted family')
+  assert.equal(vertexConformance.manifest.protocol, 'openai-compatible', 'Vertex AI OpenAI-compatible conformance records OpenAI-compatible protocol')
+  assert.ok(vertexConformance.manifest.source.url?.includes('cloud.google.com/vertex-ai/generative-ai/docs/start/openai'), 'Vertex AI conformance source uses Google Cloud hosted docs')
+  const vertexModelSync = await fetchProviderModelConfigsDetailed(vertexNativeProvider, FAKE_KEY_A)
+  assert.equal(vertexModelSync.ok, false, 'native Vertex AI model sync fails closed before remote discovery')
+  assert.equal(vertexModelSync.code, 'models_endpoint_unavailable', 'native Vertex AI model sync reports the hosted boundary')
+}
+
+function assertAWSBedrockProviderCompatibilityBehavior() {
+  const providerToolDeclaration = {
+    type: 'function',
+    function: {
+      name: 'inspect_bedrock_context',
+      description: 'Inspect Bedrock hosted context.',
+      parameters: {
+        type: 'object',
+        properties: { topic: { type: 'string' } },
+        required: ['topic'],
+      },
+    },
+  }
+  const bedrockRuntimeCredentialJson = JSON.stringify({
+    accessKeyId: 'AKIDEXAMPLE',
+    secretAccessKey: 'wJalrXUtnFEMI/K7MDENG+bPxRfiCYEXAMPLEKEY',
+    sessionToken: 'session-token-example',
+  })
+  const bedrockRuntimeProvider = {
+    id: 'bedrock-runtime-focus',
+    type: 'anthropic',
+    name: 'AWS Bedrock Runtime',
+    presetId: 'aws-bedrock',
+    baseUrl: 'https://bedrock-runtime.us-east-1.amazonaws.com',
+    apiKey: bedrockRuntimeCredentialJson,
+    models: ['anthropic.claude-3-7-sonnet'],
+    enabled: true,
+  }
+  const bedrockRuntimeMissingCredentials = {
+    ...bedrockRuntimeProvider,
+    id: 'bedrock-runtime-missing-credentials',
+    apiKey: undefined,
+  }
+  const bedrockMantleProvider = {
+    id: 'bedrock-mantle-focus',
+    type: 'openai-compatible',
+    name: 'AWS Bedrock Mantle',
+    presetId: 'aws-bedrock',
+    baseUrl: 'https://bedrock-mantle.us-east-1.api.aws/v1',
+    [API_KEY_FIELD]: FAKE_KEY_A,
+    models: ['openai.gpt-oss-120b-1:0'],
+    enabled: true,
+    capabilities: { responsesApi: false, nativeTools: true },
+  }
+  const evidence = getProviderCompatibilityEvidence('aws-bedrock')
+  assert.equal(evidence.auditState, 'needs-live-smoke', 'AWS Bedrock keeps account/model behavior behind live smoke')
+  assert.ok(evidence.officialDocs.some((url) => url.includes('/inference-chat-completions-mantle')), 'AWS Bedrock evidence uses the current Mantle Chat Completions docs')
+  assert.ok(evidence.officialDocs.some((url) => url.includes('/inference-api')), 'AWS Bedrock evidence uses the current Invoke API overview docs')
+  assert.ok(evidence.officialDocs.some((url) => url.includes('/API_runtime_InvokeModel')), 'AWS Bedrock evidence uses the InvokeModel API reference')
+  assert.equal(evidence.endpointFamilies.includes('/v1/chat/completions'), true, 'AWS Bedrock evidence includes Mantle Chat Completions')
+  assert.equal(evidence.endpointFamilies.includes('/v1/models'), true, 'AWS Bedrock evidence includes Mantle model listing')
+  assert.equal(evidence.endpointFamilies.includes('/model/{modelId}/invoke'), true, 'AWS Bedrock evidence includes Runtime InvokeModel')
+  assert.equal(evidence.endpointFamilies.includes('/v1/responses'), false, 'AWS Bedrock evidence does not claim Responses until current AWS docs or live smoke prove it')
+  assert.equal(providerCompatibilityEvidenceHasBehavior('aws-bedrock', 'structuredOutput'), false, 'AWS Bedrock evidence does not claim structured-output request controls')
+  assert.equal(providerCompatibilityEvidenceHasBehavior('aws-bedrock', 'tools'), false, 'AWS Bedrock evidence does not claim provider tool controls from current AWS docs')
+  assert.equal(providerCompatibilityEvidenceHasBehavior('aws-bedrock', 'vision'), false, 'AWS Bedrock evidence does not claim multimodal chat from the Mantle compatibility page')
+  assert.equal(evidence.liveSmoke.some((gate) => gate.id === 'aws-bedrock-mantle-chat'), true, 'AWS Bedrock evidence keeps a Mantle live smoke gate')
+  assert.equal(evidence.liveSmoke.some((gate) => gate.id === 'aws-bedrock-runtime-invoke'), true, 'AWS Bedrock evidence keeps a Runtime InvokeModel live smoke gate')
+
+  assert.equal(isBedrockMantleProvider(bedrockMantleProvider), true, 'Bedrock Mantle helper detects the OpenAI-compatible host')
+  assert.equal(normalizeBedrockMantleBaseUrl('https://bedrock-mantle.us-west-2.api.aws/v1/chat/completions'), 'https://bedrock-mantle.us-west-2.api.aws/v1', 'Bedrock Mantle normalization keeps the /v1 namespace')
+  assert.equal(resolveProviderEndpoint({ provider: bedrockMantleProvider, model: 'openai.gpt-oss-120b-1:0', stream: true }), 'https://bedrock-mantle.us-east-1.api.aws/v1/chat/completions', 'Bedrock Mantle chat route keeps /v1')
+  assert.equal(usesOpenAIResponses({ provider: bedrockMantleProvider, model: 'openai.gpt-oss-120b-1:0' }), false, 'Bedrock Mantle provider fixture stays on Chat Completions while Responses remains unclaimed')
+  assert.deepEqual(getHeaders(bedrockMantleProvider), { 'Content-Type': 'application/json', Authorization: `Bearer ${FAKE_KEY_A}` }, 'Bedrock Mantle uses Bearer API-key auth')
+  const bedrockMantleBody = getBodyForTest({
+    provider: bedrockMantleProvider,
+    model: 'openai.gpt-oss-120b-1:0',
+    messages: [{ role: 'user', content: 'Use Bedrock Mantle chat.' }],
+    maxTokens: 64,
+    providerToolDeclarations: [providerToolDeclaration],
+  })
+  assert.equal(bedrockMantleBody.max_tokens, 64, 'Bedrock Mantle chat uses OpenAI-compatible max_tokens')
+  assert.equal(bedrockMantleBody.tools[0].function.name, 'inspect_bedrock_context', 'Bedrock Mantle preserves explicitly enabled OpenAI-compatible tool declarations')
+  const bedrockMantleConformance = resolveProviderRequestConformanceForTest({
+    provider: bedrockMantleProvider,
+    model: 'openai.gpt-oss-120b-1:0',
+    messages: [{ role: 'user', content: 'Use Bedrock Mantle chat.' }],
+    structuredOutput: { type: 'json_schema', name: 'bedrock_result', schema: { type: 'object' }, strict: true },
+  }, { ...bedrockMantleBody, response_format: { type: 'json_schema', json_schema: { name: 'bedrock_result', schema: { type: 'object' }, strict: true } } })
+  assert.equal(bedrockMantleConformance.manifest.family, 'aws-bedrock', 'Bedrock Mantle conformance records the AWS Bedrock family')
+  assert.equal(bedrockMantleConformance.manifest.protocol, 'openai-compatible', 'Bedrock Mantle conformance records OpenAI-compatible protocol')
+  assert.equal(bedrockMantleConformance.manifest.structuredOutput.contractClaimed, false, 'Bedrock Mantle conformance does not claim structured-output controls')
+  assert.ok(bedrockMantleConformance.issues.some((issue) => issue.code === 'unsupported_structured_output'), 'Bedrock Mantle structured-output requests fail closed until source-backed')
+
+  assert.equal(isBedrockRuntimeProvider(bedrockRuntimeProvider), true, 'Bedrock Runtime helper detects runtime hosts')
+  assert.equal(getBedrockRuntimeSupportIssue(bedrockRuntimeMissingCredentials), 'missing_aws_credentials', 'Bedrock Runtime fails closed without AWS credentials')
+  assert.equal(getBedrockRuntimeSupportIssue(bedrockRuntimeProvider), null, 'Bedrock Runtime accepts JSON AWS credentials for signed InvokeModel preparation')
+  const bedrockRuntimeBody = getBodyForTest({
+    provider: bedrockRuntimeProvider,
+    model: 'anthropic.claude-3-7-sonnet',
+    messages: [{ role: 'user', content: 'Use Bedrock Runtime InvokeModel.' }],
+    stream: false,
+    maxTokens: 32,
+  })
+  const bedrockRuntimeConformance = resolveProviderRequestConformanceForTest({
+    provider: bedrockRuntimeProvider,
+    model: 'anthropic.claude-3-7-sonnet',
+    messages: [{ role: 'user', content: 'Use Bedrock Runtime InvokeModel.' }],
+  }, bedrockRuntimeBody)
+  assert.equal(bedrockRuntimeConformance.manifest.family, 'aws-bedrock', 'Bedrock Runtime conformance records the AWS Bedrock family')
+  assert.equal(bedrockRuntimeConformance.manifest.protocol, 'anthropic-messages', 'Bedrock Runtime conformance records Anthropic Messages before InvokeModel wrapping')
+  const preparedBedrockRuntime = prepareBedrockRuntimeInvokeModelRequest({
+    provider: bedrockRuntimeProvider,
+    model: 'anthropic.claude-3-7-sonnet',
+    body: bedrockRuntimeBody,
+    now: new Date('2026-06-22T00:00:00Z'),
+  })
+  assert.equal(preparedBedrockRuntime.url, 'https://bedrock-runtime.us-east-1.amazonaws.com/model/anthropic.claude-3-7-sonnet/invoke', 'Bedrock Runtime prepared request targets InvokeModel')
+  assert.match(preparedBedrockRuntime.headers.Authorization, /Credential=AKIDEXAMPLE\/20260622\/us-east-1\/bedrock\/aws4_request/, 'Bedrock Runtime prepared request signs the bedrock service')
+  assert.equal(preparedBedrockRuntime.headers['X-Amz-Security-Token'], 'session-token-example', 'Bedrock Runtime prepared request forwards session tokens')
+  const preparedBody = JSON.parse(preparedBedrockRuntime.body)
+  assert.equal(preparedBody.anthropic_version, 'bedrock-2023-05-31', 'Bedrock Runtime prepared body adds the Bedrock Anthropic API version')
+  assert.equal(preparedBody.stream, undefined, 'Bedrock Runtime InvokeModel body omits stream')
+}
+
+async function assertVertexAIProviderCompatibilityBehavior() {
+  const providerToolDeclaration = {
+    type: 'function',
+    function: {
+      name: 'inspect_vertex_context',
+      description: 'Inspect Vertex AI hosted context.',
+      parameters: {
+        type: 'object',
+        properties: { topic: { type: 'string' } },
+        required: ['topic'],
+      },
+    },
+  }
+  const fileAttachment = { id: 'vertex-file', type: 'file', uri: 'file://vertex.pdf', name: 'vertex.pdf', mimeType: 'application/pdf', size: 12, base64: 'cGRm' }
+  const vertexNativeProvider = {
+    id: 'vertex-native-focus',
+    type: 'openai-compatible',
+    name: 'Vertex AI',
+    presetId: 'vertex-ai',
+    baseUrl: 'https://us-central1-aiplatform.googleapis.com',
+    [API_KEY_FIELD]: FAKE_KEY_A,
+    models: ['gemini-2.5-pro'],
+    enabled: true,
+  }
+  const vertexOpenAIProvider = applyProviderPreset({
+    id: 'vertex-openai-focus',
+    baseUrl: 'https://us-central1-aiplatform.googleapis.com/v1/projects/islemind-dev/locations/us-central1/endpoints/openapi',
+    [API_KEY_FIELD]: FAKE_KEY_A,
+    models: ['gemini-2.5-pro'],
+    modelConfigs: [{
+      id: 'gemini-2.5-pro',
+      name: 'Gemini 2.5 Pro',
+      provider: 'openai-compatible',
+      contextWindow: 1048576,
+      maxTokens: 65536,
+      maxOutputTokens: 65536,
+      defaultMaxTokens: 2048,
+      supportsVision: true,
+      supportsFiles: false,
+      supportsTools: true,
+      reasoningMode: 'openai-effort',
+      reasoningEfforts: ['low', 'medium', 'high'],
+      sourceUrl: 'https://cloud.google.com/vertex-ai/generative-ai/docs/start/openai',
+      verifiedAt: '2026-06-22',
+      source: 'remote',
+    }],
+    enabled: true,
+  }, 'vertex-ai')
+  const evidence = getProviderCompatibilityEvidence('vertex-ai')
+  assert.equal(evidence.auditState, 'needs-live-smoke', 'Vertex AI keeps project and IAM behavior behind live smoke')
+  assert.ok(evidence.officialDocs.some((url) => url.includes('/generative-ai/docs/start/openai')), 'Vertex AI evidence maps OpenAI-compatible docs')
+  assert.ok(evidence.officialDocs.some((url) => url.includes('/generative-ai/docs/model-reference/inference')), 'Vertex AI evidence maps native generateContent docs')
+  assert.equal(evidence.endpointFamilies.some((endpoint) => endpoint.includes('/endpoints/openapi/chat/completions')), true, 'Vertex AI evidence includes OpenAI-compatible Chat Completions')
+  assert.equal(evidence.endpointFamilies.some((endpoint) => endpoint.includes('/endpoints/openapi/models')), false, 'Vertex AI evidence does not claim OpenAI-compatible model-list routing')
+  assert.equal(providerCompatibilityEvidenceHasBehavior('vertex-ai', 'modelList'), false, 'Vertex AI evidence does not claim automatic model-list sync')
+  assert.equal(providerCompatibilityEvidenceHasBehavior('vertex-ai', 'files'), false, 'Vertex AI evidence does not claim generic OpenAI file_data attachments')
+  assert.equal(providerCompatibilityEvidenceHasBehavior('vertex-ai', 'tools'), true, 'Vertex AI evidence keeps OpenAI-format tool support')
+  assert.equal(providerCompatibilityEvidenceHasBehavior('vertex-ai', 'structuredOutput'), true, 'Vertex AI evidence keeps response_format structured output support')
+  assert.equal(providerCompatibilityEvidenceHasBehavior('vertex-ai', 'vision'), true, 'Vertex AI evidence keeps image_url vision support')
+  assert.equal(providerCompatibilityEvidenceHasBehavior('vertex-ai', 'reasoning'), true, 'Vertex AI evidence keeps reasoning_effort support')
+
+  assert.equal(isVertexAIProvider(vertexNativeProvider), true, 'Vertex AI helper detects native aiplatform hosts')
+  assert.equal(isVertexAIOpenAICompatibleProvider(vertexNativeProvider), false, 'Vertex AI helper keeps native aiplatform hosts planned')
+  assert.equal(isVertexAIOpenAICompatibleProvider(vertexOpenAIProvider), true, 'Vertex AI helper detects OpenAI-compatible endpoints')
+  assert.equal(getHostedProviderSupportIssue(vertexOpenAIProvider, 'chat'), null, 'Vertex AI OpenAI-compatible chat passes hosted boundary checks')
+  assert.match(getHostedProviderSupportIssue(vertexOpenAIProvider, 'modelList')?.message ?? '', /manual|手动|手動|\/models|model-list/i, 'Vertex AI OpenAI-compatible model-list sync fails closed')
+  assert.equal(resolveProviderEndpoint({ provider: vertexOpenAIProvider, model: 'gemini-2.5-pro', stream: true }), 'https://us-central1-aiplatform.googleapis.com/v1/projects/islemind-dev/locations/us-central1/endpoints/openapi/chat/completions', 'Vertex AI OpenAI-compatible chat route keeps /endpoints/openapi')
+  assert.deepEqual(getHeaders(vertexOpenAIProvider), { 'Content-Type': 'application/json', Authorization: `Bearer ${FAKE_KEY_A}` }, 'Vertex AI OpenAI-compatible endpoint uses bearer access-token auth')
+  assert.equal(usesOpenAIResponses({ provider: vertexOpenAIProvider, model: 'gemini-2.5-pro', attachments: [fileAttachment] }), false, 'Vertex AI does not switch file attachments to Responses while Responses/files are unclaimed')
+
+  const vertexBody = getBodyForTest({
+    provider: vertexOpenAIProvider,
+    model: 'gemini-2.5-pro',
+    messages: [{ role: 'user', content: 'Use Vertex AI hosted chat.' }],
+    maxTokens: 96,
+    reasoningEffort: 'low',
+    providerToolDeclarations: [providerToolDeclaration],
+    structuredOutput: { type: 'json_schema', name: 'vertex_result', schema: { type: 'object' }, strict: true },
+  })
+  assert.equal(vertexBody.max_tokens, 96, 'Vertex AI OpenAI-compatible body uses max_tokens')
+  assert.equal(vertexBody.reasoning_effort, 'low', 'Vertex AI OpenAI-compatible body preserves documented reasoning_effort')
+  assert.equal(vertexBody.tools[0].function.name, 'inspect_vertex_context', 'Vertex AI OpenAI-compatible body preserves tools')
+  assert.equal(vertexBody.response_format.type, 'json_schema', 'Vertex AI OpenAI-compatible body preserves response_format structured output')
+  const vertexConformance = resolveProviderRequestConformanceForTest({
+    provider: vertexOpenAIProvider,
+    model: 'gemini-2.5-pro',
+    messages: [{ role: 'user', content: 'Use Vertex AI hosted chat.' }],
+    reasoningEffort: 'low',
+    structuredOutput: { type: 'json_schema', name: 'vertex_result', schema: { type: 'object' }, strict: true },
+    attachments: [fileAttachment],
+  }, vertexBody)
+  assert.equal(vertexConformance.manifest.family, 'vertex-ai', 'Vertex AI conformance records the hosted family')
+  assert.equal(vertexConformance.manifest.protocol, 'openai-compatible', 'Vertex AI conformance records OpenAI-compatible protocol')
+  assert.equal(vertexConformance.manifest.modalities.input.file, false, 'Vertex AI conformance does not claim generic OpenAI file_data input')
+  assert.ok(vertexConformance.issues.some((issue) => issue.code === 'unsupported_modality' && issue.field === 'file'), 'Vertex AI file attachments are blocked until source-backed')
+
+  const vertexOpenAIModelSync = await fetchProviderModelConfigsDetailed(vertexOpenAIProvider, FAKE_KEY_A)
+  assert.equal(vertexOpenAIModelSync.ok, false, 'Vertex AI OpenAI-compatible model sync fails closed before unclaimed /models discovery')
+  assert.equal(vertexOpenAIModelSync.code, 'models_endpoint_unavailable', 'Vertex AI OpenAI-compatible model sync reports a hosted boundary error')
+}
+
+function assertCustomCompatibleProviderBehavior() {
+  const providerToolDeclaration = {
+    type: 'function',
+    function: {
+      name: 'read_declared_context',
+      description: 'Read declared provider-side context.',
+      parameters: {
+        type: 'object',
+        properties: { query: { type: 'string' } },
+        required: ['query'],
+      },
+    },
+  }
+  const imageAttachment = { id: 'custom-image', type: 'image', uri: 'file://custom.png', name: 'custom.png', mimeType: 'image/png', size: 10, base64: 'aW1n' }
+  const fileAttachment = { id: 'custom-file', type: 'file', uri: 'file://custom.pdf', name: 'custom.pdf', mimeType: 'application/pdf', size: 12, base64: 'cGRm' }
+
+  const customOpenAI = applyProviderPreset({
+    id: 'custom-compatible-openai',
+    baseUrl: 'https://custom.example/v1',
+    [API_KEY_FIELD]: FAKE_KEY_A,
+    models: ['custom/text-model'],
+    enabled: true,
+  }, 'custom-openai-compatible')
+  const customOpenAIEvidence = getProviderCompatibilityEvidence('custom-openai-compatible')
+  assert.equal(buildProviderCapabilityMatrix(customOpenAI).hostingProfile, 'relay', 'custom OpenAI-compatible endpoints are classified as relay/protocol-reference providers')
+  assert.equal(customOpenAIEvidence.auditState, 'protocol-reference', 'custom OpenAI-compatible evidence remains protocol-reference')
+  assert.ok(customOpenAIEvidence.officialDocs.some((url) => url.includes('platform.openai.com/docs/api-reference/chat')), 'custom OpenAI-compatible evidence links the OpenAI Chat Completions protocol docs')
+  assert.equal(providerCompatibilityEvidenceHasBehavior('custom-openai-compatible', 'modelList'), true, 'custom OpenAI-compatible evidence keeps model-list protocol coverage')
+  assert.equal(providerCompatibilityEvidenceHasBehavior('custom-openai-compatible', 'tools'), false, 'custom OpenAI-compatible evidence does not claim provider-native tools before declaration')
+  assert.equal(providerCompatibilityEvidenceHasBehavior('custom-openai-compatible', 'structuredOutput'), false, 'custom OpenAI-compatible evidence does not claim structured output before declaration')
+  assert.equal(providerCompatibilityEvidenceHasBehavior('custom-openai-compatible', 'vision'), false, 'custom OpenAI-compatible evidence does not claim image input before declaration')
+  assert.equal(providerCompatibilityEvidenceHasBehavior('custom-openai-compatible', 'files'), false, 'custom OpenAI-compatible evidence does not claim file input before declaration')
+  assert.equal(providerCompatibilityEvidenceHasBehavior('custom-openai-compatible', 'reasoning'), false, 'custom OpenAI-compatible evidence does not claim reasoning controls before declaration')
+  assert.equal(customOpenAI.capabilities.nativeTools, false, 'custom OpenAI-compatible preset keeps provider-native tools off by default')
+  assert.equal(customOpenAI.capabilities.vision, false, 'custom OpenAI-compatible preset keeps vision off by default')
+  assert.equal(customOpenAI.capabilities.files, false, 'custom OpenAI-compatible preset keeps files off by default')
+  assert.equal(customOpenAI.capabilities.reasoningEffort, false, 'custom OpenAI-compatible preset keeps reasoning effort off by default')
+  assert.equal(customOpenAI.capabilities.responsesApi, false, 'custom OpenAI-compatible preset keeps Responses routing off by default')
+  assert.equal(resolveProviderEndpoint({ provider: customOpenAI, model: 'custom/text-model', stream: true }), 'https://custom.example/v1/chat/completions', 'custom OpenAI-compatible chat routing preserves the configured base URL')
+  assert.equal(usesOpenAIResponses({ provider: customOpenAI, model: 'custom/text-model' }), false, 'custom OpenAI-compatible providers do not use Responses without explicit capability declaration')
+
+  const customOpenAIBody = getBodyForTest({
+    provider: customOpenAI,
+    model: 'custom/text-model',
+    messages: [{ role: 'user', content: 'Use the compatible endpoint.' }],
+    stream: true,
+    reasoningEffort: 'high',
+    providerToolDeclarations: [providerToolDeclaration],
+  })
+  assert.equal(customOpenAIBody.tools, undefined, 'custom OpenAI-compatible request body omits provider tools until nativeTools is declared')
+  assert.equal(customOpenAIBody.reasoning_effort, undefined, 'custom OpenAI-compatible request body omits reasoning_effort until reasoning is declared')
+  assert.equal(customOpenAIBody.reasoning, undefined, 'custom OpenAI-compatible request body omits Responses reasoning until Responses routing is declared')
+  const customOpenAIMultimodalBody = getBodyForTest({
+    provider: customOpenAI,
+    model: 'custom/text-model',
+    messages: [{ role: 'user', content: 'Read these custom endpoint attachments.' }],
+    attachments: [imageAttachment, fileAttachment],
+    providerToolDeclarations: [providerToolDeclaration],
+  })
+  const customOpenAIConformance = resolveProviderRequestConformanceForTest({
+    provider: customOpenAI,
+    model: 'custom/text-model',
+    messages: [{ role: 'user', content: 'Read these custom endpoint attachments.' }],
+    attachments: [imageAttachment, fileAttachment],
+  }, customOpenAIMultimodalBody)
+  assert.equal(customOpenAIConformance.manifest.family, 'openai-compatible', 'custom OpenAI-compatible conformance uses the generic compatible family')
+  assert.equal(customOpenAIConformance.manifest.protocol, 'openai-compatible', 'custom OpenAI-compatible conformance uses Chat Completions by default')
+  assert.equal(customOpenAIConformance.manifest.source.confidence, 'inferred', 'custom OpenAI-compatible conformance remains inferred until model metadata or docs are declared')
+  assert.equal(customOpenAIConformance.manifest.tools.supported, false, 'custom OpenAI-compatible conformance does not claim tools by default')
+  assert.equal(customOpenAIConformance.manifest.modalities.input.image, false, 'custom OpenAI-compatible conformance does not claim image input by default')
+  assert.equal(customOpenAIConformance.manifest.modalities.input.file, false, 'custom OpenAI-compatible conformance does not claim file input by default')
+  assert.equal(customOpenAIConformance.manifest.reasoning.supported, false, 'custom OpenAI-compatible conformance does not claim reasoning controls by default')
+  assert.equal(customOpenAIConformance.manifest.structuredOutput.contractClaimed, false, 'custom OpenAI-compatible conformance does not claim structured output by default')
+  assert.equal(customOpenAIConformance.manifest.structuredOutput.documentedRequestShape, 'none', 'custom OpenAI-compatible conformance does not inherit response_format shape from protocol docs')
+  assert.equal(customOpenAIConformance.manifest.structuredOutput.appRequestControl, false, 'custom OpenAI-compatible conformance keeps structured-output request controls disabled')
+  assert.ok(customOpenAIConformance.issues.some((issue) => issue.code === 'provider_manifest_inferred'), 'custom OpenAI-compatible conformance records inferred manifest state')
+  assert.ok(customOpenAIConformance.issues.some((issue) => issue.code === 'unsupported_modality' && issue.field === 'image'), 'custom OpenAI-compatible conformance blocks image input until declared')
+  assert.ok(customOpenAIConformance.issues.some((issue) => issue.code === 'unsupported_modality' && issue.field === 'file'), 'custom OpenAI-compatible conformance blocks file input until declared')
+
+  const nvidiaOptimisticBase = applyProviderPreset({
+    id: 'nvidia-optimistic-contract',
+    [API_KEY_FIELD]: FAKE_KEY_A,
+    models: ['nvidia/optimistic-tools-files-audio'],
+    enabled: true,
+  }, 'nvidia-nim')
+  const nvidiaOptimisticProvider = {
+    ...nvidiaOptimisticBase,
+    capabilities: {
+      ...nvidiaOptimisticBase.capabilities,
+      nativeTools: true,
+      files: true,
+      audioInput: true,
+      speech: true,
+    },
+    modelConfigs: [{
+      id: 'nvidia/optimistic-tools-files-audio',
+      name: 'Optimistic NVIDIA Metadata',
+      provider: 'openai-compatible',
+      contextWindow: 131072,
+      maxTokens: 8192,
+      maxOutputTokens: 4096,
+      defaultMaxTokens: 1024,
+      supportsVision: false,
+      supportsFiles: true,
+      supportsTools: true,
+      source: 'remote',
+      sourceUrl: 'https://build.nvidia.com/explore/discover',
+      verifiedAt: '2026-06-22',
+    }],
+  }
+  const nvidiaOptimisticManifest = resolveProviderCapabilityManifest({
+    provider: nvidiaOptimisticProvider,
+    model: 'nvidia/optimistic-tools-files-audio',
+  })
+  assert.equal(nvidiaOptimisticManifest.tools.supported, false, 'conformance-ready providers cannot enable unclaimed native tools from optimistic flags or model metadata')
+  assert.equal(nvidiaOptimisticManifest.modalities.input.file, false, 'conformance-ready providers cannot enable unclaimed file input from optimistic flags or model metadata')
+  assert.equal(nvidiaOptimisticManifest.modalities.input.audio, false, 'conformance-ready providers cannot enable unclaimed audio input from optimistic flags')
+  assert.equal(nvidiaOptimisticManifest.modalities.output.speech, false, 'conformance-ready providers cannot enable unclaimed speech output from optimistic flags')
+
+  const legacyCustomOpenAI = {
+    id: 'custom-compatible-openai-legacy',
+    type: 'openai-compatible',
+    name: 'Legacy Custom OpenAI-Compatible',
+    presetId: 'custom-openai-compatible',
+    baseUrl: 'https://legacy-custom.example/v1',
+    [API_KEY_FIELD]: FAKE_KEY_A,
+    models: ['qwen3.7-max'],
+    enabled: true,
+  }
+  const legacyCustomOpenAIBody = getBodyForTest({
+    provider: legacyCustomOpenAI,
+    model: 'qwen3.7-max',
+    messages: [{ role: 'user', content: 'Use the legacy custom compatible endpoint.' }],
+    attachments: [imageAttachment],
+    reasoningEffort: 'high',
+    providerToolDeclarations: [providerToolDeclaration],
+  })
+  const legacyCustomOpenAIConformance = resolveProviderRequestConformanceForTest({
+    provider: legacyCustomOpenAI,
+    model: 'qwen3.7-max',
+    messages: [{ role: 'user', content: 'Use the legacy custom compatible endpoint.' }],
+    attachments: [imageAttachment],
+    reasoningEffort: 'high',
+  }, legacyCustomOpenAIBody)
+  assert.equal(legacyCustomOpenAIConformance.manifest.tools.supported, false, 'legacy custom OpenAI-compatible providers do not inherit tools from static model ids')
+  assert.equal(legacyCustomOpenAIConformance.manifest.modalities.input.image, false, 'legacy custom OpenAI-compatible providers do not inherit image input from static model ids')
+  assert.equal(legacyCustomOpenAIConformance.manifest.reasoning.requestShape, 'none', 'legacy custom OpenAI-compatible providers do not inherit provider-specific reasoning shapes from static model ids')
+  assert.equal(legacyCustomOpenAIConformance.manifest.reasoning.supported, false, 'legacy custom OpenAI-compatible providers do not expose reasoning from static model ids')
+  assert.ok(legacyCustomOpenAIConformance.issues.some((issue) => issue.code === 'unsupported_modality' && issue.field === 'image'), 'legacy custom OpenAI-compatible conformance blocks image input until declared')
+
+  const legacyCustomOpenAIFileModel = {
+    ...legacyCustomOpenAI,
+    id: 'custom-compatible-openai-legacy-file-model',
+    models: ['sonar-reasoning-pro'],
+  }
+  const legacyCustomOpenAIFileBody = getBodyForTest({
+    provider: legacyCustomOpenAIFileModel,
+    model: 'sonar-reasoning-pro',
+    messages: [{ role: 'user', content: 'Read the file through the legacy custom compatible endpoint.' }],
+    attachments: [fileAttachment],
+    reasoningEffort: 'high',
+  })
+  const legacyCustomOpenAIFileConformance = resolveProviderRequestConformanceForTest({
+    provider: legacyCustomOpenAIFileModel,
+    model: 'sonar-reasoning-pro',
+    messages: [{ role: 'user', content: 'Read the file through the legacy custom compatible endpoint.' }],
+    attachments: [fileAttachment],
+    reasoningEffort: 'high',
+  }, legacyCustomOpenAIFileBody)
+  assert.equal(legacyCustomOpenAIFileConformance.manifest.modalities.input.file, false, 'legacy custom OpenAI-compatible providers do not inherit file input from static model ids')
+  assert.equal(legacyCustomOpenAIFileConformance.manifest.reasoning.requestShape, 'none', 'legacy custom OpenAI-compatible providers do not inherit Perplexity reasoning shapes from static model ids')
+  assert.ok(legacyCustomOpenAIFileConformance.issues.some((issue) => issue.code === 'unsupported_modality' && issue.field === 'file'), 'legacy custom OpenAI-compatible conformance blocks file input until declared')
+
+  const declaredOpenAIProvider = {
+    ...customOpenAI,
+    capabilities: { ...customOpenAI.capabilities, nativeTools: true, responsesApi: true },
+    modelConfigs: [{
+      id: 'custom/declared-vision-file',
+      name: 'Declared Vision File Model',
+      provider: 'openai-compatible',
+      contextWindow: 65536,
+      maxTokens: 8192,
+      maxOutputTokens: 8192,
+      defaultMaxTokens: 2048,
+      supportsVision: true,
+      supportsFiles: true,
+      supportsTools: true,
+      preferredEndpoint: 'responses',
+      sourceUrl: 'https://custom.example/v1/models',
+      verifiedAt: '2026-06-21',
+      source: 'remote',
+    }],
+  }
+  assert.equal(usesOpenAIResponses({ provider: declaredOpenAIProvider, model: 'custom/declared-vision-file' }), true, 'custom OpenAI-compatible endpoints can opt into Responses through declared capability and model metadata')
+  assert.equal(
+    resolveProviderEndpoint({ provider: declaredOpenAIProvider, model: 'custom/declared-vision-file', stream: true, usesResponsesApi: true }),
+    'https://custom.example/v1/responses',
+    'custom OpenAI-compatible Responses routing preserves the configured base URL after declaration'
+  )
+  const declaredOpenAIBody = getBodyForTest({
+    provider: declaredOpenAIProvider,
+    model: 'custom/declared-vision-file',
+    messages: [{ role: 'user', content: 'Use declared compatible capabilities.' }],
+    attachments: [imageAttachment, fileAttachment],
+    providerToolDeclarations: [providerToolDeclaration],
+  })
+  assert.equal(Array.isArray(declaredOpenAIBody.input), true, 'declared custom OpenAI-compatible Responses body uses Responses input')
+  assert.equal(declaredOpenAIBody.tools[0].function.name, 'read_declared_context', 'declared custom OpenAI-compatible body includes provider tools')
+  const declaredOpenAIConformance = resolveProviderRequestConformanceForTest({
+    provider: declaredOpenAIProvider,
+    model: 'custom/declared-vision-file',
+    messages: [{ role: 'user', content: 'Use declared compatible capabilities.' }],
+    attachments: [imageAttachment, fileAttachment],
+  }, declaredOpenAIBody)
+  assert.equal(declaredOpenAIConformance.manifest.protocol, 'openai-responses', 'declared custom OpenAI-compatible conformance follows Responses when selected')
+  assert.equal(declaredOpenAIConformance.manifest.source.confidence, 'source-backed', 'declared custom OpenAI-compatible conformance uses remote model metadata as source-backed evidence')
+  assert.equal(declaredOpenAIConformance.manifest.tools.supported, true, 'declared custom OpenAI-compatible conformance accepts provider tools')
+  assert.equal(declaredOpenAIConformance.manifest.modalities.input.image, true, 'declared custom OpenAI-compatible conformance accepts image input')
+  assert.equal(declaredOpenAIConformance.manifest.modalities.input.file, true, 'declared custom OpenAI-compatible conformance accepts file input')
+  assert.equal(declaredOpenAIConformance.issues.some((issue) => issue.code === 'unsupported_modality'), false, 'declared custom OpenAI-compatible conformance avoids unsupported modality diagnostics')
+
+  const customAnthropic = applyProviderPreset({
+    id: 'custom-compatible-anthropic',
+    baseUrl: 'https://anthropic-compatible.example/v1',
+    [API_KEY_FIELD]: FAKE_KEY_A,
+    models: ['custom-claude-compatible'],
+    enabled: true,
+  }, 'custom-anthropic-compatible')
+  const customAnthropicEvidence = getProviderCompatibilityEvidence('custom-anthropic-compatible')
+  assert.equal(buildProviderCapabilityMatrix(customAnthropic).hostingProfile, 'relay', 'custom Anthropic-compatible endpoints are classified as relay/protocol-reference providers')
+  assert.equal(customAnthropicEvidence.auditState, 'protocol-reference', 'custom Anthropic-compatible evidence remains protocol-reference')
+  assert.ok(customAnthropicEvidence.officialDocs.some((url) => url.includes('docs.anthropic.com/en/api/messages')), 'custom Anthropic-compatible evidence links the Anthropic Messages protocol docs')
+  assert.equal(providerCompatibilityEvidenceHasBehavior('custom-anthropic-compatible', 'tools'), false, 'custom Anthropic-compatible evidence does not claim provider-native tools before declaration')
+  assert.equal(providerCompatibilityEvidenceHasBehavior('custom-anthropic-compatible', 'vision'), false, 'custom Anthropic-compatible evidence does not claim image input before declaration')
+  assert.equal(providerCompatibilityEvidenceHasBehavior('custom-anthropic-compatible', 'files'), false, 'custom Anthropic-compatible evidence does not claim file input before declaration')
+  assert.equal(providerCompatibilityEvidenceHasBehavior('custom-anthropic-compatible', 'reasoning'), false, 'custom Anthropic-compatible evidence does not claim reasoning controls before declaration')
+  assert.equal(customAnthropic.capabilities.nativeTools, false, 'custom Anthropic-compatible preset keeps provider tools off by default')
+  assert.equal(customAnthropic.capabilities.nativeSearch, false, 'custom Anthropic-compatible preset keeps native web search off by default')
+  assert.equal(customAnthropic.capabilities.vision, false, 'custom Anthropic-compatible preset keeps vision off by default')
+  assert.equal(customAnthropic.capabilities.files, false, 'custom Anthropic-compatible preset keeps files off by default')
+  assert.equal(customAnthropic.capabilities.reasoningEffort, false, 'custom Anthropic-compatible preset keeps reasoning effort off by default')
+  assert.equal(resolveProviderEndpoint({ provider: customAnthropic, model: 'custom-claude-compatible', stream: true }), 'https://anthropic-compatible.example/v1/messages', 'custom Anthropic-compatible preset routes Messages through the configured base URL')
+  const customAnthropicBody = getBodyForTest({
+    provider: customAnthropic,
+    model: 'custom-claude-compatible',
+    messages: [{ role: 'user', content: 'Use the Anthropic-compatible endpoint.' }],
+    stream: true,
+    webSearchMode: 'native',
+    providerToolDeclarations: [providerToolDeclaration],
+  })
+  assert.equal(customAnthropicBody.tools, undefined, 'custom Anthropic-compatible body omits provider tools and native search until capability declaration')
+  const customAnthropicConformance = resolveProviderRequestConformanceForTest({
+    provider: customAnthropic,
+    model: 'custom-claude-compatible',
+    messages: [{ role: 'user', content: 'Use the Anthropic-compatible endpoint.' }],
+  }, customAnthropicBody)
+  assert.equal(customAnthropicConformance.manifest.protocol, 'anthropic-messages', 'current custom Anthropic-compatible preset preserves the Anthropic Messages route shape')
+  assert.equal(customAnthropicConformance.manifest.tools.supported, false, 'custom Anthropic-compatible conformance does not claim provider tools by default')
+  assert.equal(customAnthropicConformance.manifest.modalities.input.image, false, 'custom Anthropic-compatible conformance does not claim image input by default')
+  assert.equal(customAnthropicConformance.manifest.modalities.input.file, false, 'custom Anthropic-compatible conformance does not claim file input by default')
+  assert.equal(customAnthropicConformance.manifest.reasoning.supported, false, 'custom Anthropic-compatible conformance does not claim reasoning by default')
+
+  const anthropicWireProvider = {
+    ...customOpenAI,
+    id: 'custom-anthropic-wire-provider',
+    name: 'Custom Anthropic Wire Provider',
+    presetId: 'custom-anthropic-compatible',
+    wireProtocol: 'anthropic-compatible',
+  }
+  const anthropicWireBody = getBodyForTest({
+    provider: anthropicWireProvider,
+    model: 'custom-claude-compatible',
+    messages: [{ role: 'user', content: 'Use explicit Anthropic wire protocol.' }],
+    providerToolDeclarations: [providerToolDeclaration],
+  })
+  const anthropicWireConformance = resolveProviderRequestConformanceForTest({
+    provider: anthropicWireProvider,
+    model: 'custom-claude-compatible',
+    messages: [{ role: 'user', content: 'Use explicit Anthropic wire protocol.' }],
+  }, anthropicWireBody)
+  assert.equal(anthropicWireBody.max_tokens > 0, true, 'explicit Anthropic wire provider builds an Anthropic Messages body')
+  assert.equal(anthropicWireBody.tools, undefined, 'explicit Anthropic wire provider omits tools until nativeTools is declared')
+  assert.equal(anthropicWireConformance.manifest.family, 'anthropic-compatible', 'explicit Anthropic wire provider records the anthropic-compatible conformance family')
+  assert.equal(anthropicWireConformance.manifest.protocol, 'anthropic-compatible', 'explicit Anthropic wire provider records the anthropic-compatible protocol')
+  assert.equal(anthropicWireConformance.manifest.tools.supported, false, 'explicit Anthropic wire provider does not claim tools by default')
+}
+
 function assertTraceRedactionBehavior() {
   const headerTrace = sanitizeTrace({
     id: 'trace-header-redaction',
@@ -11938,9 +18455,14 @@ function assertChatActivityStatusBehavior() {
   assert.equal(zh.trace.stage.reasoning, '思考', 'Chinese trace stage labels surface thinking as a user-visible work state')
   assert.equal(zh.trace.stage.search, '搜索', 'Chinese trace stage labels surface search as a user-visible work state')
   assert.equal(zh.trace.stage.controlledTool, '调用工具', 'Chinese trace stage labels surface controlled tool calls as a user-visible work state')
-  assert.equal(zh.messageBubble.thinkingProgressBase, '思考中... >', 'Chinese thinking progress base matches the requested status form')
-  assert.equal(zh.messageBubble.thinkingProgressActive, '思考中... > 正在{{stage}}', 'Chinese thinking progress active state names the current work stage')
-  assert.equal(zh.messageBubble.thinkingProgressDone, '思考中... > 已完成{{stage}}', 'Chinese thinking progress completion state names the completed work stage')
+  assert.equal(zh.messageBubble.thinkingProgressBase, '准备中', 'Chinese thinking progress base avoids a persistent thinking label before a concrete stage is known')
+  assert.equal(zh.messageBubble.thinkingProgressActive, '正在{{stage}}', 'Chinese thinking progress active state switches to the current work stage')
+  assert.equal(zh.messageBubble.thinkingProgressDone, '已完成{{stage}}', 'Chinese thinking progress completion state switches to the completed work stage')
+  assert.ok(
+    !messageBubbleSource.includes('思考中... >') &&
+      !zh.messageBubble.thinkingProgressActive.includes('思考中'),
+    'message process layer does not keep a persistent thinking prefix while stage labels change'
+  )
 }
 
 function assertChatCompletedProcessBehavior() {
@@ -11980,6 +18502,8 @@ function assertChatCompletedProcessBehavior() {
 function assertWebAnswerStyleBehavior() {
   const promptEngineeringSource = fs.readFileSync(path.join(root, 'src/services/promptEngineering.ts'), 'utf8')
   const chatRunnerSource = fs.readFileSync(path.join(root, 'src/services/chatRunner.ts'), 'utf8')
+  const agentChatRuntimeSource = fs.readFileSync(path.join(root, 'src/services/agent/agentChatRuntime.ts'), 'utf8')
+  const agentSearchToolPolicySource = fs.readFileSync(path.join(root, 'src/services/agent/agentSearchToolPolicy.ts'), 'utf8')
   assert.ok(
     promptEngineeringSource.includes('webAnswerStyleRule(input.language)') &&
       promptEngineeringSource.includes('不要像工具日志或搜索结果转写') &&
@@ -11992,10 +18516,5205 @@ function assertWebAnswerStyleBehavior() {
     'provider-native tool revision prompt keeps internal tool framing out of final user-facing replies'
   )
   assert.ok(
+    chatRunnerSource.includes('filterLocalSearchToolManifests(await listAgentToolManifests(), input.settings)') &&
+      agentSearchToolPolicySource.includes("manifest.source === 'builtin' && manifest.name === 'search_web'") &&
+      agentSearchToolPolicySource.includes("searchProvider !== 'native'"),
+    'provider-native tool declarations skip local search_web when provider-native search is selected'
+  )
+  assert.ok(
+    agentChatRuntimeSource.includes('shouldDeferAgentSearchTool') &&
+      agentChatRuntimeSource.includes('isBuiltinSearchToolRequest(request)') &&
+      agentChatRuntimeSource.includes('!shouldExposeLocalSearchTool(input.settings)') &&
+      agentChatRuntimeSource.includes("formatRuntimeSkip('direct-chat')"),
+    'agent runtime defers native/off built-in search requests back to provider chat instead of executing search_web'
+  )
+  assert.ok(
+    chatRunnerSource.includes('isProviderNativeSearchPlaceholderResult') &&
+      chatRunnerSource.includes('chatRunner.trace.nativeSearchNoSources') &&
+      !chatRunnerSource.includes("'Provider native tool result',"),
+    'provider-native search placeholders do not leak internal tool-result framing into the assistant reply'
+  )
+  assert.ok(
     chatRunnerSource.includes('}).catch((error) => {') &&
       chatRunnerSource.includes('finishFinalizeError(conversationId, assistantMessage.id, error, provider.id)') &&
       chatRunnerSource.includes('function finishFinalizeError'),
     'chat runner settles streaming messages when asynchronous finalization fails'
+  )
+}
+
+function assertMoonshotProviderCompatibilityBehavior() {
+  const kimiProvider = {
+    id: 'moonshot-focused',
+    type: 'openai-compatible',
+    presetId: 'moonshot',
+    name: 'Moonshot AI',
+    baseUrl: 'https://api.moonshot.ai/v1',
+    [API_KEY_FIELD]: FAKE_KEY_A,
+    models: ['kimi-k2.6', 'moonshot-v1-128k'],
+    enabled: true,
+    capabilities: { reasoningEffort: true, nativeTools: true, vision: true },
+  }
+  assert.equal(isMoonshotProvider(kimiProvider), true, 'Moonshot identity helper detects Kimi/Moonshot provider presets')
+  assert.equal(getAPIEndpointForTest(kimiProvider), 'https://api.moonshot.ai/v1/chat/completions', 'Moonshot requests preserve the official OpenAI-compatible chat endpoint')
+
+  const kimiThinkingBody = buildOpenAIBodyForTest({
+    provider: kimiProvider,
+    model: 'kimi-k2.6',
+    messages: [{ role: 'user', content: 'hello' }],
+    reasoningEffort: 'high',
+    maxTokens: 4096,
+    providerToolDeclarations: [{
+      type: 'function',
+      function: {
+        name: 'read_context',
+        description: 'Read local context.',
+        parameters: { type: 'object', properties: { query: { type: 'string' } } },
+      },
+    }],
+  })
+  assert.deepEqual(kimiThinkingBody.thinking, { type: 'enabled' }, 'Kimi K2 thinking requests send the official thinking.type toggle')
+  assert.equal(kimiThinkingBody.max_completion_tokens, 4096, 'Kimi K2 requests use max_completion_tokens')
+  assert.equal(kimiThinkingBody.max_tokens, undefined, 'Kimi K2 requests avoid deprecated max_tokens')
+  assert.equal(kimiThinkingBody.temperature, undefined, 'Kimi K2 thinking requests omit sampling parameters')
+  assert.equal(kimiThinkingBody.tools[0].function.name, 'read_context', 'Kimi K2 requests carry OpenAI-format provider tools')
+
+  const kimiVisionBody = buildOpenAIBodyForTest({
+    provider: kimiProvider,
+    model: 'kimi-k2.6',
+    messages: [{ role: 'user', content: 'describe this screen' }],
+    attachments: [{ type: 'image', name: 'screen.png', mimeType: 'image/png', base64: 'aGVsbG8=' }],
+    maxTokens: 1024,
+    stream: false,
+  })
+  assert.equal(kimiVisionBody.messages[0].content[1].type, 'image_url', 'Kimi vision-capable requests keep OpenAI-compatible image parts')
+  assert.equal(kimiVisionBody.messages[0].content[1].image_url.url, 'data:image/png;base64,aGVsbG8=', 'Kimi image attachment parts preserve data URLs')
+
+  const kimiToolReplayBody = buildOpenAIBodyForTest({
+    provider: kimiProvider,
+    model: 'kimi-k2.6',
+    messages: [
+      { role: 'user', content: 'Need context.' },
+      {
+        role: 'assistant',
+        content: '',
+        reasoningContent: 'Encrypted Kimi reasoning state.',
+        toolCalls: [{
+          id: 'call_read_context',
+          name: 'read_context',
+          arguments: { query: 'IsleMind' },
+        }],
+      },
+      {
+        role: 'tool',
+        name: 'read_context',
+        toolCallId: 'call_read_context',
+        content: 'Context result.',
+      },
+    ],
+    maxTokens: 1024,
+    stream: false,
+  })
+  assert.equal(kimiToolReplayBody.messages[1].reasoning_content, 'Encrypted Kimi reasoning state.', 'Kimi tool-result replay preserves assistant reasoning_content')
+  assert.deepEqual(kimiToolReplayBody.thinking, { type: 'enabled', keep: 'all' }, 'Kimi tool-result replay asks the provider to preserve prior thinking')
+  assert.deepEqual(
+    kimiToolReplayBody.messages[2],
+    { role: 'tool', tool_call_id: 'call_read_context', name: 'read_context', content: 'Context result.' },
+    'Kimi tool-result replay keeps official OpenAI-compatible tool result messages'
+  )
+
+  const kimiConformance = resolveProviderRequestConformanceForTest({
+    provider: kimiProvider,
+    model: 'kimi-k2.6',
+    messages: [{ role: 'user', content: 'hello' }],
+    reasoningEffort: 'high',
+    maxTokens: 4096,
+  }, kimiThinkingBody)
+  assert.equal(kimiConformance.manifest.family, 'moonshot', 'provider conformance classifies Kimi models as Moonshot')
+  assert.equal(kimiConformance.manifest.reasoning.requestShape, 'kimi-thinking', 'provider conformance exposes the Kimi thinking request shape')
+  assert.equal(kimiConformance.manifest.payload.maxTokensField, 'max_completion_tokens', 'provider conformance records Moonshot max_completion_tokens')
+  assert.equal(kimiConformance.manifest.payload.requiresReasoningStatePassthrough, true, 'provider conformance marks Kimi reasoning state passthrough as required')
+  assert.equal(kimiConformance.manifest.payload.reasoningStatePreservationField, 'thinking.keep', 'provider conformance records Kimi thinking.keep preservation')
+  assert.equal(kimiConformance.manifest.tools.requestShape, 'openai-tools', 'provider conformance records OpenAI-format Kimi tool declarations')
+
+  const kimiParsedCompletion = parseProviderChatCompletionJson({
+    choices: [{
+      message: {
+        role: 'assistant',
+        content: 'Context answer.',
+        tool_calls: [{
+          id: 'call_read_context',
+          type: 'function',
+          function: { name: 'read_context', arguments: '{"query":"IsleMind"}' },
+        }],
+      },
+    }],
+    usage: { prompt_tokens: 5, completion_tokens: 7, total_tokens: 12 },
+  }, {
+    provider: kimiProvider,
+    model: 'kimi-k2.6',
+    messages: [{ role: 'user', content: 'hello' }],
+  })
+  assert.equal(kimiParsedCompletion.text, 'Context answer.', 'Kimi OpenAI-compatible parser preserves assistant text')
+  assert.equal(kimiParsedCompletion.providerToolCalls?.[0]?.name, 'read_context', 'Kimi OpenAI-compatible parser extracts provider tool calls')
+  assert.equal(kimiParsedCompletion.providerToolCalls?.[0]?.arguments?.query, 'IsleMind', 'Kimi OpenAI-compatible parser parses tool-call arguments')
+  assert.equal(kimiParsedCompletion.usage?.totalTokens, 12, 'Kimi OpenAI-compatible parser preserves usage metadata')
+}
+
+async function assertBigModelProviderCompatibilityBehavior() {
+  const glmProvider = applyProviderPreset({
+    id: 'bigmodel-focused',
+    baseUrl: 'https://open.bigmodel.cn/api/paas/v4',
+    [API_KEY_FIELD]: FAKE_KEY_A,
+    models: ['glm-5.1', 'glm-5v-turbo'],
+    enabled: true,
+  }, 'bigmodel')
+  assert.equal(detectProviderPreset({ baseUrl: 'https://open.bigmodel.cn/api/paas/v4' }).presetId, 'bigmodel', 'BigModel detection keeps the official OpenAPI base host')
+  assert.deepEqual(
+    getHeaders(glmProvider),
+    { 'Content-Type': 'application/json', Authorization: `Bearer ${FAKE_KEY_A}` },
+    'BigModel requests use Bearer authentication on the OpenAI-compatible endpoint'
+  )
+  assert.equal(glmProvider.capabilities.modelList, false, 'BigModel preset disables generic /models sync because the official OpenAPI does not expose it')
+  assert.equal(glmProvider.capabilities.files, false, 'BigModel preset does not claim generic local file_data attachments')
+  assert.equal(glmProvider.capabilities.reasoningEffort, false, 'BigModel preset does not claim source-backed GLM reasoning controls yet')
+  assert.equal(getAPIEndpointForTest(glmProvider), 'https://open.bigmodel.cn/api/paas/v4/chat/completions', 'BigModel requests preserve the official chat completions endpoint')
+
+  const originalFetch = global.fetch
+  try {
+    global.fetch = async () => {
+      throw new Error('BigModel modelList=false must not call remote /models discovery')
+    }
+    assert.deepEqual(
+      await fetchProviderModelConfigsFromRemote(glmProvider, 1),
+      [],
+      'BigModel model discovery uses static/manual catalog data instead of probing an undocumented /models endpoint'
+    )
+  } finally {
+    global.fetch = originalFetch
+  }
+
+  const glmToolBody = buildOpenAIBodyForTest({
+    provider: glmProvider,
+    model: 'glm-5.1',
+    messages: [{ role: 'user', content: 'hello' }],
+    reasoningEffort: 'high',
+    maxTokens: 4096,
+    providerToolDeclarations: [{
+      type: 'function',
+      function: {
+        name: 'read_context',
+        description: 'Read local context.',
+        parameters: { type: 'object', properties: { query: { type: 'string' } } },
+      },
+    }],
+  })
+  assert.equal(glmToolBody.model, 'glm-5.1', 'BigModel request body preserves the selected GLM model id')
+  assert.equal(glmToolBody.max_tokens, 4096, 'BigModel request body uses the documented max_tokens field')
+  assert.equal(glmToolBody.max_completion_tokens, undefined, 'BigModel request body avoids max_completion_tokens')
+  assert.equal(glmToolBody.reasoning_effort, undefined, 'BigModel request body avoids unsupported generic reasoning_effort')
+  assert.equal(glmToolBody.thinking, undefined, 'BigModel request body avoids unimplemented thinking payloads')
+  assert.equal(glmToolBody.response_format, undefined, 'BigModel JSON output docs are mapped, but IsleMind has no response_format request control yet')
+  assert.equal(glmToolBody.tools[0].function.name, 'read_context', 'BigModel requests carry OpenAI-compatible tool declarations')
+
+  const glmVisionBody = buildOpenAIBodyForTest({
+    provider: glmProvider,
+    model: 'glm-5v-turbo',
+    messages: [{ role: 'user', content: 'describe this image' }],
+    attachments: [{ type: 'image', name: 'screen.png', mimeType: 'image/png', base64: 'aGVsbG8=' }],
+    maxTokens: 1024,
+    stream: false,
+  })
+  assert.equal(glmVisionBody.messages[0].content[1].type, 'image_url', 'BigModel vision requests use the documented image_url content part')
+  assert.equal(glmVisionBody.messages[0].content[1].image_url.url, 'data:image/png;base64,aGVsbG8=', 'BigModel image_url parts preserve inline base64 data URLs')
+  const glmVisionConformance = resolveProviderRequestConformanceForTest({
+    provider: glmProvider,
+    model: 'glm-5v-turbo',
+    messages: [{ role: 'user', content: 'describe this image' }],
+    attachments: [{ type: 'image', name: 'screen.png', mimeType: 'image/png', base64: 'aGVsbG8=' }],
+    maxTokens: 1024,
+  }, glmVisionBody)
+  assert.equal(glmVisionConformance.manifest.family, 'bigmodel', 'provider conformance classifies GLM models as BigModel')
+  assert.equal(glmVisionConformance.manifest.protocol, 'openai-compatible', 'provider conformance keeps the BigModel OpenAI-compatible protocol')
+  assert.equal(glmVisionConformance.manifest.payload.maxTokensField, 'max_tokens', 'provider conformance records BigModel max_tokens')
+  assert.equal(glmVisionConformance.manifest.modalities.input.image, true, 'provider conformance records GLM vision input support')
+  assert.equal(glmVisionConformance.manifest.modalities.input.file, false, 'provider conformance does not claim local file_data attachment support for BigModel')
+  assert.equal(glmVisionConformance.manifest.reasoning.supported, false, 'provider conformance keeps GLM reasoning disabled until source-backed controls exist')
+  assert.equal(glmVisionConformance.manifest.tools.requestShape, 'openai-tools', 'provider conformance records OpenAI-format GLM tool declarations')
+
+  const glmParsedCompletion = parseProviderChatCompletionJson({
+    choices: [{
+      message: {
+        role: 'assistant',
+        content: 'GLM answer.',
+        tool_calls: [{
+          id: 'call_read_context',
+          type: 'function',
+          function: { name: 'read_context', arguments: '{"query":"IsleMind"}' },
+        }],
+      },
+    }],
+    usage: { prompt_tokens: 8, completion_tokens: 13, total_tokens: 21 },
+  }, {
+    provider: glmProvider,
+    model: 'glm-5.1',
+    messages: [{ role: 'user', content: 'hello' }],
+  })
+  assert.equal(glmParsedCompletion.text, 'GLM answer.', 'BigModel parser preserves OpenAI-compatible response text')
+  assert.equal(glmParsedCompletion.providerToolCalls?.[0]?.name, 'read_context', 'BigModel parser extracts OpenAI-compatible tool calls')
+  assert.equal(glmParsedCompletion.providerToolCalls?.[0]?.arguments?.query, 'IsleMind', 'BigModel parser parses tool-call arguments')
+  assert.equal(glmParsedCompletion.usage?.totalTokens, 21, 'BigModel parser preserves usage metadata')
+
+  const glmStream = parseProviderStreamChunkForTest([
+    `data: ${JSON.stringify({ choices: [{ delta: { content: 'GLM ' } }] })}`,
+    `data: ${JSON.stringify({ choices: [{ delta: { content: 'stream.' } }] })}`,
+    `data: ${JSON.stringify({ choices: [{ delta: { tool_calls: [{ index: 0, id: 'call_glm_stream', type: 'function', function: { name: 'read_context', arguments: '{"query":' } }] } }] })}`,
+    `data: ${JSON.stringify({ choices: [{ delta: { tool_calls: [{ index: 0, function: { arguments: '"IsleMind"}' } }] } }] })}`,
+    '',
+  ].join('\n'), 'openai-compatible')
+  assert.equal(glmStream.text, 'GLM stream.', 'BigModel stream parser merges OpenAI-compatible text deltas')
+  assert.equal(glmStream.providerToolCalls?.[0]?.id, 'call_glm_stream', 'BigModel stream parser preserves streamed tool-call ids')
+  assert.equal(glmStream.providerToolCalls?.[0]?.arguments?.query, 'IsleMind', 'BigModel stream parser merges streamed tool-call arguments')
+
+  const glmRateLimit = JSON.stringify({ error: { code: 'rate_limit_exceeded', message: 'request limit exceeded', request_id: 'glm_req_1' } })
+  assert.equal(classifyHttpStatus(429, glmRateLimit), 'rate_limited', 'BigModel 429 errors classify as rate_limited')
+  assert.ok(extractProviderErrorDetail(glmRateLimit).includes('glm_req_1'), 'BigModel errors preserve request ids for diagnostics')
+}
+
+async function assertTencentHunyuanProviderCompatibilityBehavior() {
+  const chatModel = 'hunyuan-turbo'
+  const visionModel = 'hunyuan-vision'
+  const hunyuanProvider = applyProviderPreset({
+    id: 'tencent-hunyuan-focused',
+    baseUrl: 'https://api.hunyuan.cloud.tencent.com/v1',
+    [API_KEY_FIELD]: FAKE_KEY_A,
+    models: [chatModel, visionModel],
+    enabled: true,
+  }, 'tencent-hunyuan')
+  assert.equal(detectProviderPreset({ baseUrl: 'https://api.hunyuan.cloud.tencent.com/v1' }).presetId, 'tencent-hunyuan', 'Tencent Hunyuan detection keeps the official OpenAI-compatible host')
+  assert.deepEqual(
+    getHeaders(hunyuanProvider),
+    { 'Content-Type': 'application/json', Authorization: `Bearer ${FAKE_KEY_A}` },
+    'Tencent Hunyuan requests use Bearer authentication on the OpenAI-compatible endpoint'
+  )
+  assert.equal(hunyuanProvider.capabilities.modelList, true, 'Tencent Hunyuan preset keeps documented /models sync enabled')
+  assert.equal(hunyuanProvider.capabilities.vision, true, 'Tencent Hunyuan preset exposes documented image_url vision input')
+  assert.equal(hunyuanProvider.capabilities.files, false, 'Tencent Hunyuan preset does not claim generic file_data attachments')
+  assert.equal(hunyuanProvider.capabilities.reasoningEffort, false, 'Tencent Hunyuan preset does not claim source-backed reasoning controls yet')
+  assert.equal(hunyuanProvider.capabilities.nativeTools, true, 'Tencent Hunyuan preset exposes OpenAI-format function tools')
+  assert.equal(hunyuanProvider.capabilities.responsesApi, false, 'Tencent Hunyuan preset does not claim OpenAI Responses routing')
+  assert.equal(getAPIEndpointForTest(hunyuanProvider), 'https://api.hunyuan.cloud.tencent.com/v1/chat/completions', 'Tencent Hunyuan requests preserve the official chat completions endpoint')
+
+  const hunyuanToolBody = buildOpenAIBodyForTest({
+    provider: hunyuanProvider,
+    model: chatModel,
+    messages: [{ role: 'user', content: 'hello' }],
+    reasoningEffort: 'high',
+    maxTokens: 4096,
+    providerToolDeclarations: [{
+      type: 'function',
+      function: {
+        name: 'read_context',
+        description: 'Read local context.',
+        parameters: { type: 'object', properties: { query: { type: 'string' } } },
+      },
+    }],
+  })
+  assert.equal(hunyuanToolBody.model, chatModel, 'Tencent Hunyuan request body preserves the selected model id')
+  assert.equal(hunyuanToolBody.max_tokens, 4096, 'Tencent Hunyuan request body uses the OpenAI-compatible max_tokens field')
+  assert.equal(hunyuanToolBody.max_completion_tokens, undefined, 'Tencent Hunyuan request body avoids max_completion_tokens')
+  assert.equal(hunyuanToolBody.reasoning_effort, undefined, 'Tencent Hunyuan request body avoids unsupported reasoning_effort')
+  assert.equal(hunyuanToolBody.response_format, undefined, 'Tencent Hunyuan JSON output docs are mapped, but IsleMind has no response_format request control yet')
+  assert.equal(hunyuanToolBody.tools[0].function.name, 'read_context', 'Tencent Hunyuan requests carry OpenAI-compatible tool declarations')
+
+  const hunyuanVisionBody = buildOpenAIBodyForTest({
+    provider: hunyuanProvider,
+    model: visionModel,
+    messages: [{ role: 'user', content: 'describe this image' }],
+    attachments: [{ type: 'image', name: 'screen.png', mimeType: 'image/png', base64: 'aGVsbG8=' }],
+    maxTokens: 1024,
+    stream: false,
+  })
+  assert.equal(hunyuanVisionBody.messages[0].content[1].type, 'image_url', 'Tencent Hunyuan vision requests use image_url content parts')
+  assert.equal(hunyuanVisionBody.messages[0].content[1].image_url.url, 'data:image/png;base64,aGVsbG8=', 'Tencent Hunyuan image_url parts preserve inline base64 data URLs')
+
+  const hunyuanConformance = resolveProviderRequestConformanceForTest({
+    provider: hunyuanProvider,
+    model: visionModel,
+    messages: [{ role: 'user', content: 'describe this image' }],
+    attachments: [{ type: 'image', name: 'screen.png', mimeType: 'image/png', base64: 'aGVsbG8=' }],
+    maxTokens: 1024,
+    reasoningEffort: 'high',
+  }, hunyuanVisionBody)
+  assert.equal(hunyuanConformance.manifest.family, 'tencent-hunyuan', 'provider conformance classifies Hunyuan models as Tencent Hunyuan')
+  assert.equal(hunyuanConformance.manifest.protocol, 'openai-compatible', 'provider conformance keeps the Tencent Hunyuan OpenAI-compatible protocol')
+  assert.equal(hunyuanConformance.manifest.payload.maxTokensField, 'max_tokens', 'provider conformance records Tencent Hunyuan max_tokens')
+  assert.equal(hunyuanConformance.manifest.modalities.input.image, true, 'provider conformance records Tencent Hunyuan image input support')
+  assert.equal(hunyuanConformance.manifest.modalities.input.file, false, 'provider conformance does not claim Tencent Hunyuan file_data support')
+  assert.equal(hunyuanConformance.manifest.modalities.input.audio, false, 'provider conformance does not claim Tencent Hunyuan chat audio input')
+  assert.equal(hunyuanConformance.manifest.modalities.output.speech, false, 'provider conformance does not claim Tencent Hunyuan speech output')
+  assert.equal(hunyuanConformance.manifest.reasoning.supported, false, 'provider conformance keeps Tencent Hunyuan reasoning disabled until source-backed controls exist')
+  assert.equal(hunyuanConformance.manifest.tools.requestShape, 'openai-tools', 'provider conformance records Tencent Hunyuan OpenAI-format tool declarations')
+  assert.ok(hunyuanConformance.manifest.source.url?.includes('cloud.tencent.com/document/product/1729/111007'), 'provider conformance links Tencent Hunyuan to official docs')
+  assert.equal(hunyuanConformance.manifest.source.confidence, 'source-backed', 'provider conformance marks Tencent Hunyuan as source-backed')
+
+  const originalFetch = global.fetch
+  const modelFetchCalls = []
+  try {
+    global.fetch = async (input, init = {}) => {
+      modelFetchCalls.push({ input: String(input), authorization: init.headers?.Authorization ?? init.headers?.authorization })
+      return new Response(JSON.stringify({
+        data: [
+          {
+            id: chatModel,
+            object: 'model',
+            context_length: 262144,
+            max_completion_tokens: 8192,
+            modalities: ['text'],
+          },
+          {
+            id: visionModel,
+            object: 'model',
+            metadata: { context_length: '131072', max_output_tokens: '4096' },
+            architecture: { input_modalities: ['text', 'image'] },
+          },
+        ],
+      }), { status: 200 })
+    }
+    const remoteModels = await fetchProviderModelConfigsFromRemote(hunyuanProvider, 1000)
+    assert.equal(modelFetchCalls[0].input, 'https://api.hunyuan.cloud.tencent.com/v1/models', 'Tencent Hunyuan model sync calls the official /models endpoint')
+    assert.equal(modelFetchCalls[0].authorization, `Bearer ${FAKE_KEY_A}`, 'Tencent Hunyuan model sync uses bearer auth')
+    assert.equal(remoteModels[0].id, chatModel, 'Tencent Hunyuan model sync preserves model ids')
+    assert.equal(remoteModels[0].contextWindow, 262144, 'Tencent Hunyuan model sync reads context limits')
+    assert.equal(remoteModels[0].maxOutputTokens, 8192, 'Tencent Hunyuan model sync reads output limits')
+    assert.equal(remoteModels[1].supportsVision, true, 'Tencent Hunyuan model sync preserves vision modality metadata')
+  } finally {
+    global.fetch = originalFetch
+  }
+
+  const hunyuanParsedCompletion = parseProviderChatCompletionJson({
+    choices: [{
+      message: {
+        role: 'assistant',
+        content: 'Hunyuan answer.',
+        tool_calls: [{
+          id: 'call_read_context',
+          type: 'function',
+          function: { name: 'read_context', arguments: '{"query":"IsleMind"}' },
+        }],
+      },
+    }],
+    usage: { prompt_tokens: 8, completion_tokens: 13, total_tokens: 21 },
+  }, {
+    provider: hunyuanProvider,
+    model: chatModel,
+    messages: [{ role: 'user', content: 'hello' }],
+  })
+  assert.equal(hunyuanParsedCompletion.text, 'Hunyuan answer.', 'Tencent Hunyuan parser preserves OpenAI-compatible response text')
+  assert.equal(hunyuanParsedCompletion.providerToolCalls?.[0]?.name, 'read_context', 'Tencent Hunyuan parser extracts OpenAI-compatible tool calls')
+  assert.equal(hunyuanParsedCompletion.providerToolCalls?.[0]?.arguments?.query, 'IsleMind', 'Tencent Hunyuan parser parses tool-call arguments')
+  assert.equal(hunyuanParsedCompletion.usage?.totalTokens, 21, 'Tencent Hunyuan parser preserves usage metadata')
+
+  const hunyuanStream = parseProviderStreamChunkForTest([
+    `data: ${JSON.stringify({ choices: [{ delta: { content: 'Hunyuan ' } }] })}`,
+    `data: ${JSON.stringify({ choices: [{ delta: { content: 'stream.' } }] })}`,
+    `data: ${JSON.stringify({ choices: [{ delta: { tool_calls: [{ index: 0, id: 'call_hunyuan_stream', type: 'function', function: { name: 'read_context', arguments: '{"query":' } }] } }] })}`,
+    `data: ${JSON.stringify({ choices: [{ delta: { tool_calls: [{ index: 0, function: { arguments: '"IsleMind"}' } }] } }] })}`,
+    '',
+  ].join('\n'), 'openai-compatible')
+  assert.equal(hunyuanStream.text, 'Hunyuan stream.', 'Tencent Hunyuan stream parser merges OpenAI-compatible text deltas')
+  assert.equal(hunyuanStream.providerToolCalls?.[0]?.id, 'call_hunyuan_stream', 'Tencent Hunyuan stream parser preserves streamed tool-call ids')
+  assert.equal(hunyuanStream.providerToolCalls?.[0]?.arguments?.query, 'IsleMind', 'Tencent Hunyuan stream parser merges streamed tool-call arguments')
+
+  const hunyuanRateLimit = JSON.stringify({ error: { code: 'RequestLimitExceeded', message: 'request limit exceeded', request_id: 'hunyuan_req_1' } })
+  assert.equal(classifyHttpStatus(429, hunyuanRateLimit), 'rate_limited', 'Tencent Hunyuan 429 errors classify as rate_limited')
+  assert.ok(extractProviderErrorDetail(hunyuanRateLimit).includes('hunyuan_req_1'), 'Tencent Hunyuan errors preserve request ids for diagnostics')
+}
+
+async function assertBaiduQianfanProviderCompatibilityBehavior() {
+  const chatModel = 'ernie-4.5-turbo-128k'
+  const visionModel = 'ernie-4.5-turbo-vl'
+  const qianfanProvider = applyProviderPreset({
+    id: 'baidu-qianfan-focused',
+    baseUrl: 'https://qianfan.baidubce.com/v2',
+    [API_KEY_FIELD]: FAKE_KEY_A,
+    models: [chatModel, visionModel],
+    enabled: true,
+  }, 'baidu-qianfan')
+  assert.equal(detectProviderPreset({ baseUrl: 'https://qianfan.baidubce.com/v2' }).presetId, 'baidu-qianfan', 'Baidu Qianfan detection keeps the official v2 OpenAI-compatible host')
+  assert.deepEqual(
+    getHeaders(qianfanProvider),
+    { 'Content-Type': 'application/json', Authorization: `Bearer ${FAKE_KEY_A}` },
+    'Baidu Qianfan requests use Bearer authentication on the OpenAI-compatible endpoint'
+  )
+  assert.equal(qianfanProvider.capabilities.modelList, true, 'Baidu Qianfan preset keeps documented /models sync enabled')
+  assert.equal(qianfanProvider.capabilities.vision, true, 'Baidu Qianfan preset exposes documented image_url vision input')
+  assert.equal(qianfanProvider.capabilities.files, false, 'Baidu Qianfan preset does not claim generic file_data attachments')
+  assert.equal(qianfanProvider.capabilities.reasoningEffort, false, 'Baidu Qianfan preset does not claim source-backed reasoning controls yet')
+  assert.equal(qianfanProvider.capabilities.nativeTools, true, 'Baidu Qianfan preset exposes OpenAI-format function tools')
+  assert.equal(qianfanProvider.capabilities.responsesApi, false, 'Baidu Qianfan preset does not claim OpenAI Responses routing')
+  assert.equal(getAPIEndpointForTest(qianfanProvider), 'https://qianfan.baidubce.com/v2/chat/completions', 'Baidu Qianfan requests preserve the official v2 chat completions endpoint')
+
+  const qianfanToolBody = buildOpenAIBodyForTest({
+    provider: qianfanProvider,
+    model: chatModel,
+    messages: [{ role: 'user', content: 'hello' }],
+    reasoningEffort: 'high',
+    maxTokens: 4096,
+    providerToolDeclarations: [{
+      type: 'function',
+      function: {
+        name: 'read_context',
+        description: 'Read local context.',
+        parameters: { type: 'object', properties: { query: { type: 'string' } } },
+      },
+    }],
+  })
+  assert.equal(qianfanToolBody.model, chatModel, 'Baidu Qianfan request body preserves the selected model id')
+  assert.equal(qianfanToolBody.max_tokens, 4096, 'Baidu Qianfan request body uses the OpenAI-compatible max_tokens field')
+  assert.equal(qianfanToolBody.max_completion_tokens, undefined, 'Baidu Qianfan request body avoids max_completion_tokens')
+  assert.equal(qianfanToolBody.reasoning_effort, undefined, 'Baidu Qianfan request body avoids unsupported reasoning_effort')
+  assert.equal(qianfanToolBody.response_format, undefined, 'Baidu Qianfan JSON/schema output is not claimed until a runtime request fixture exists')
+  assert.equal(qianfanToolBody.tools[0].function.name, 'read_context', 'Baidu Qianfan requests carry OpenAI-compatible tool declarations')
+
+  const qianfanVisionBody = buildOpenAIBodyForTest({
+    provider: qianfanProvider,
+    model: visionModel,
+    messages: [{ role: 'user', content: 'describe this image' }],
+    attachments: [{ type: 'image', name: 'screen.png', mimeType: 'image/png', base64: 'aGVsbG8=' }],
+    maxTokens: 1024,
+    stream: false,
+  })
+  assert.equal(qianfanVisionBody.messages[0].content[1].type, 'image_url', 'Baidu Qianfan vision requests use image_url content parts')
+  assert.equal(qianfanVisionBody.messages[0].content[1].image_url.url, 'data:image/png;base64,aGVsbG8=', 'Baidu Qianfan image_url parts preserve inline base64 data URLs')
+
+  const qianfanConformance = resolveProviderRequestConformanceForTest({
+    provider: qianfanProvider,
+    model: visionModel,
+    messages: [{ role: 'user', content: 'describe this image' }],
+    attachments: [{ type: 'image', name: 'screen.png', mimeType: 'image/png', base64: 'aGVsbG8=' }],
+    maxTokens: 1024,
+    reasoningEffort: 'high',
+  }, qianfanVisionBody)
+  assert.equal(qianfanConformance.manifest.family, 'baidu-qianfan', 'provider conformance classifies ERNIE models as Baidu Qianfan')
+  assert.equal(qianfanConformance.manifest.protocol, 'openai-compatible', 'provider conformance keeps the Baidu Qianfan OpenAI-compatible protocol')
+  assert.equal(qianfanConformance.manifest.payload.maxTokensField, 'max_tokens', 'provider conformance records Baidu Qianfan max_tokens')
+  assert.equal(qianfanConformance.manifest.modalities.input.image, true, 'provider conformance records Baidu Qianfan image input support')
+  assert.equal(qianfanConformance.manifest.modalities.input.file, false, 'provider conformance does not claim Baidu Qianfan file_data support')
+  assert.equal(qianfanConformance.manifest.modalities.input.audio, false, 'provider conformance does not claim Baidu Qianfan chat audio input')
+  assert.equal(qianfanConformance.manifest.modalities.output.speech, false, 'provider conformance does not claim Baidu Qianfan speech output')
+  assert.equal(qianfanConformance.manifest.reasoning.supported, false, 'provider conformance keeps Baidu Qianfan reasoning disabled until source-backed controls exist')
+  assert.equal(qianfanConformance.manifest.tools.requestShape, 'openai-tools', 'provider conformance records Baidu Qianfan OpenAI-format tool declarations')
+  assert.ok(qianfanConformance.manifest.source.url?.includes('cloud.baidu.com/doc/WENXINWORKSHOP/s/Fm2vrveyu'), 'provider conformance links Baidu Qianfan to official docs')
+  assert.equal(qianfanConformance.manifest.source.confidence, 'source-backed', 'provider conformance marks Baidu Qianfan as source-backed')
+
+  const originalFetch = global.fetch
+  const modelFetchCalls = []
+  try {
+    global.fetch = async (input, init = {}) => {
+      modelFetchCalls.push({ input: String(input), authorization: init.headers?.Authorization ?? init.headers?.authorization })
+      return new Response(JSON.stringify({
+        data: [
+          {
+            id: chatModel,
+            object: 'model',
+            context_length: 128000,
+            max_completion_tokens: 8192,
+            modalities: ['text'],
+          },
+          {
+            id: visionModel,
+            object: 'model',
+            metadata: { context_length: '64000', max_output_tokens: '4096' },
+            architecture: { input_modalities: ['text', 'image'] },
+          },
+        ],
+      }), { status: 200 })
+    }
+    const remoteModels = await fetchProviderModelConfigsFromRemote(qianfanProvider, 1000)
+    assert.equal(modelFetchCalls[0].input, 'https://qianfan.baidubce.com/v2/models', 'Baidu Qianfan model sync calls the official /models endpoint')
+    assert.equal(modelFetchCalls[0].authorization, `Bearer ${FAKE_KEY_A}`, 'Baidu Qianfan model sync uses bearer auth')
+    assert.equal(remoteModels[0].id, chatModel, 'Baidu Qianfan model sync preserves model ids')
+    assert.equal(remoteModels[0].contextWindow, 128000, 'Baidu Qianfan model sync reads context limits')
+    assert.equal(remoteModels[0].maxOutputTokens, 8192, 'Baidu Qianfan model sync reads output limits')
+    assert.equal(remoteModels[1].supportsVision, true, 'Baidu Qianfan model sync preserves vision modality metadata')
+  } finally {
+    global.fetch = originalFetch
+  }
+
+  const qianfanParsedCompletion = parseProviderChatCompletionJson({
+    choices: [{
+      message: {
+        role: 'assistant',
+        content: 'Qianfan answer.',
+        tool_calls: [{
+          id: 'call_read_context',
+          type: 'function',
+          function: { name: 'read_context', arguments: '{"query":"IsleMind"}' },
+        }],
+      },
+    }],
+    usage: { prompt_tokens: 8, completion_tokens: 13, total_tokens: 21 },
+  }, {
+    provider: qianfanProvider,
+    model: chatModel,
+    messages: [{ role: 'user', content: 'hello' }],
+  })
+  assert.equal(qianfanParsedCompletion.text, 'Qianfan answer.', 'Baidu Qianfan parser preserves OpenAI-compatible response text')
+  assert.equal(qianfanParsedCompletion.providerToolCalls?.[0]?.name, 'read_context', 'Baidu Qianfan parser extracts OpenAI-compatible tool calls')
+  assert.equal(qianfanParsedCompletion.providerToolCalls?.[0]?.arguments?.query, 'IsleMind', 'Baidu Qianfan parser parses tool-call arguments')
+  assert.equal(qianfanParsedCompletion.usage?.totalTokens, 21, 'Baidu Qianfan parser preserves usage metadata')
+
+  const qianfanStream = parseProviderStreamChunkForTest([
+    `data: ${JSON.stringify({ choices: [{ delta: { content: 'Qianfan ' } }] })}`,
+    `data: ${JSON.stringify({ choices: [{ delta: { content: 'stream.' } }] })}`,
+    `data: ${JSON.stringify({ choices: [{ delta: { tool_calls: [{ index: 0, id: 'call_qianfan_stream', type: 'function', function: { name: 'read_context', arguments: '{"query":' } }] } }] })}`,
+    `data: ${JSON.stringify({ choices: [{ delta: { tool_calls: [{ index: 0, function: { arguments: '"IsleMind"}' } }] } }] })}`,
+    '',
+  ].join('\n'), 'openai-compatible')
+  assert.equal(qianfanStream.text, 'Qianfan stream.', 'Baidu Qianfan stream parser merges OpenAI-compatible text deltas')
+  assert.equal(qianfanStream.providerToolCalls?.[0]?.id, 'call_qianfan_stream', 'Baidu Qianfan stream parser preserves streamed tool-call ids')
+  assert.equal(qianfanStream.providerToolCalls?.[0]?.arguments?.query, 'IsleMind', 'Baidu Qianfan stream parser merges streamed tool-call arguments')
+
+  const qianfanRateLimit = JSON.stringify({ error: { code: 'rate_limit_exceeded', message: 'request limit exceeded', request_id: 'qianfan_req_1' } })
+  assert.equal(classifyHttpStatus(429, qianfanRateLimit), 'rate_limited', 'Baidu Qianfan 429 errors classify as rate_limited')
+  assert.ok(extractProviderErrorDetail(qianfanRateLimit).includes('qianfan_req_1'), 'Baidu Qianfan errors preserve request ids for diagnostics')
+}
+
+async function assertBaichuanProviderCompatibilityBehavior() {
+  const chatModel = 'Baichuan4-Turbo'
+  const baichuanProvider = applyProviderPreset({
+    id: 'baichuan-focused',
+    baseUrl: 'https://api.baichuan-ai.com/v1',
+    [API_KEY_FIELD]: FAKE_KEY_A,
+    models: [chatModel],
+    enabled: true,
+  }, 'baichuan')
+  assert.equal(detectProviderPreset({ baseUrl: 'https://api.baichuan-ai.com/v1' }).presetId, 'baichuan', 'Baichuan detection keeps the official OpenAI-compatible host')
+  assert.deepEqual(
+    getHeaders(baichuanProvider),
+    { 'Content-Type': 'application/json', Authorization: `Bearer ${FAKE_KEY_A}` },
+    'Baichuan requests use Bearer authentication on the OpenAI-compatible endpoint'
+  )
+  assert.equal(baichuanProvider.capabilities.modelList, false, 'Baichuan preset disables generic /models sync until official evidence is source-backed')
+  assert.equal(baichuanProvider.capabilities.vision, false, 'Baichuan preset does not claim image_url vision input')
+  assert.equal(baichuanProvider.capabilities.files, false, 'Baichuan preset does not claim generic file_data attachments')
+  assert.equal(baichuanProvider.capabilities.reasoningEffort, false, 'Baichuan preset does not claim reasoning controls')
+  assert.equal(baichuanProvider.capabilities.nativeTools, false, 'Baichuan preset does not claim OpenAI-format function tools')
+  assert.equal(baichuanProvider.capabilities.responsesApi, false, 'Baichuan preset does not claim OpenAI Responses routing')
+  assert.equal(getAPIEndpointForTest(baichuanProvider), 'https://api.baichuan-ai.com/v1/chat/completions', 'Baichuan requests preserve the official chat completions endpoint')
+
+  const originalFetch = global.fetch
+  try {
+    global.fetch = async () => {
+      throw new Error('Baichuan modelList=false must not call remote /models discovery')
+    }
+    assert.deepEqual(
+      await fetchProviderModelConfigsFromRemote(baichuanProvider, 1),
+      [],
+      'Baichuan model discovery stays static/manual until generic /models sync has source-backed coverage'
+    )
+  } finally {
+    global.fetch = originalFetch
+  }
+
+  const baichuanBody = buildOpenAIBodyForTest({
+    provider: baichuanProvider,
+    model: chatModel,
+    messages: [{ role: 'user', content: 'hello' }],
+    reasoningEffort: 'high',
+    maxTokens: 2048,
+    providerToolDeclarations: [{
+      type: 'function',
+      function: {
+        name: 'read_context',
+        description: 'Read local context.',
+        parameters: { type: 'object', properties: { query: { type: 'string' } } },
+      },
+    }],
+  })
+  assert.equal(baichuanBody.model, chatModel, 'Baichuan request body preserves the selected model id')
+  assert.equal(baichuanBody.max_tokens, 2048, 'Baichuan request body uses the OpenAI-compatible max_tokens field')
+  assert.equal(baichuanBody.max_completion_tokens, undefined, 'Baichuan request body avoids max_completion_tokens')
+  assert.equal(baichuanBody.reasoning_effort, undefined, 'Baichuan request body avoids unsupported reasoning_effort')
+  assert.equal(baichuanBody.response_format, undefined, 'Baichuan request body avoids unclaimed response_format controls')
+  assert.equal(baichuanBody.tools, undefined, 'Baichuan request body omits unclaimed provider tool declarations')
+
+  const baichuanConformance = resolveProviderRequestConformanceForTest({
+    provider: baichuanProvider,
+    model: chatModel,
+    messages: [{ role: 'user', content: 'hello' }],
+    maxTokens: 2048,
+    reasoningEffort: 'high',
+  }, baichuanBody)
+  assert.equal(baichuanConformance.manifest.family, 'baichuan', 'provider conformance classifies Baichuan as its own family')
+  assert.equal(baichuanConformance.manifest.protocol, 'openai-compatible', 'provider conformance keeps the Baichuan OpenAI-compatible protocol')
+  assert.equal(baichuanConformance.manifest.payload.maxTokensField, 'max_tokens', 'provider conformance records Baichuan max_tokens')
+  assert.equal(baichuanConformance.manifest.modalities.input.image, false, 'provider conformance does not claim Baichuan image input')
+  assert.equal(baichuanConformance.manifest.modalities.input.file, false, 'provider conformance does not claim Baichuan file_data support')
+  assert.equal(baichuanConformance.manifest.modalities.input.audio, false, 'provider conformance does not claim Baichuan chat audio input')
+  assert.equal(baichuanConformance.manifest.modalities.output.speech, false, 'provider conformance does not claim Baichuan speech output')
+  assert.equal(baichuanConformance.manifest.reasoning.supported, false, 'provider conformance keeps Baichuan reasoning disabled until source-backed controls exist')
+  assert.equal(baichuanConformance.manifest.tools.supported, false, 'provider conformance does not claim Baichuan provider tools')
+  assert.ok(baichuanConformance.manifest.source.url?.includes('platform.baichuan-ai.com/docs/api'), 'provider conformance links Baichuan to official docs')
+  assert.equal(baichuanConformance.manifest.source.confidence, 'source-backed', 'provider conformance marks Baichuan as source-backed')
+
+  const baichuanImageBody = buildOpenAIBodyForTest({
+    provider: baichuanProvider,
+    model: chatModel,
+    messages: [{ role: 'user', content: 'describe this image' }],
+    attachments: [{ type: 'image', name: 'screen.png', mimeType: 'image/png', base64: 'aGVsbG8=' }],
+    maxTokens: 1024,
+    stream: false,
+  })
+  const baichuanImageConformance = resolveProviderRequestConformanceForTest({
+    provider: baichuanProvider,
+    model: chatModel,
+    messages: [{ role: 'user', content: 'describe this image' }],
+    attachments: [{ type: 'image', name: 'screen.png', mimeType: 'image/png', base64: 'aGVsbG8=' }],
+    maxTokens: 1024,
+  }, baichuanImageBody)
+  assert.ok(
+    baichuanImageConformance.issues.some((issue) => issue.code === 'unsupported_modality' && issue.field === 'image' && issue.severity === 'block'),
+    'Baichuan conformance blocks image attachments until source-backed image_url routing exists'
+  )
+
+  const baichuanParsedCompletion = parseProviderChatCompletionJson({
+    choices: [{
+      message: {
+        role: 'assistant',
+        content: 'Baichuan answer.',
+      },
+    }],
+    usage: { prompt_tokens: 8, completion_tokens: 13, total_tokens: 21 },
+  }, {
+    provider: baichuanProvider,
+    model: chatModel,
+    messages: [{ role: 'user', content: 'hello' }],
+  })
+  assert.equal(baichuanParsedCompletion.text, 'Baichuan answer.', 'Baichuan parser preserves OpenAI-compatible response text')
+  assert.equal(baichuanParsedCompletion.usage?.totalTokens, 21, 'Baichuan parser preserves usage metadata')
+
+  const baichuanStream = parseProviderStreamChunkForTest([
+    `data: ${JSON.stringify({ choices: [{ delta: { content: 'Baichuan ' } }] })}`,
+    `data: ${JSON.stringify({ choices: [{ delta: { content: 'stream.' } }] })}`,
+    '',
+  ].join('\n'), 'openai-compatible')
+  assert.equal(baichuanStream.text, 'Baichuan stream.', 'Baichuan stream parser merges OpenAI-compatible text deltas')
+
+  const baichuanAuthError = JSON.stringify({ error: { code: 'invalid_api_key', message: 'invalid api key', request_id: 'baichuan_req_1' } })
+  assert.equal(classifyHttpStatus(401, baichuanAuthError), 'bad_auth', 'Baichuan 401 errors classify as bad_auth')
+  assert.ok(extractProviderErrorDetail(baichuanAuthError).includes('baichuan_req_1'), 'Baichuan errors preserve request ids for diagnostics')
+}
+
+async function assertZeroOneProviderCompatibilityBehavior() {
+  const chatModel = 'yi-lightning'
+  const visionModel = 'yi-vision-v2'
+  const zeroOneProvider = applyProviderPreset({
+    id: 'zero-one-focused',
+    baseUrl: 'https://api.lingyiwanwu.com/v1',
+    [API_KEY_FIELD]: FAKE_KEY_A,
+    models: [chatModel, visionModel],
+    enabled: true,
+  }, 'zero-one')
+  assert.equal(detectProviderPreset({ baseUrl: 'https://api.lingyiwanwu.com/v1' }).presetId, 'zero-one', '01.AI detection keeps the official OpenAI-compatible host')
+  assert.deepEqual(
+    getHeaders(zeroOneProvider),
+    { 'Content-Type': 'application/json', Authorization: `Bearer ${FAKE_KEY_A}` },
+    '01.AI requests use Bearer authentication on the OpenAI-compatible endpoint'
+  )
+  assert.equal(zeroOneProvider.capabilities.modelList, true, '01.AI preset keeps documented /models sync enabled')
+  assert.equal(zeroOneProvider.capabilities.vision, true, '01.AI preset exposes documented image_url vision input')
+  assert.equal(zeroOneProvider.capabilities.files, false, '01.AI preset does not claim generic file_data attachments')
+  assert.equal(zeroOneProvider.capabilities.reasoningEffort, false, '01.AI preset does not claim reasoning controls')
+  assert.equal(zeroOneProvider.capabilities.nativeTools, true, '01.AI preset exposes documented OpenAI-format function tools')
+  assert.equal(zeroOneProvider.capabilities.responsesApi, false, '01.AI preset does not claim OpenAI Responses routing')
+  assert.equal(getAPIEndpointForTest(zeroOneProvider), 'https://api.lingyiwanwu.com/v1/chat/completions', '01.AI requests preserve the official chat completions endpoint')
+
+  const zeroOneToolBody = buildOpenAIBodyForTest({
+    provider: zeroOneProvider,
+    model: chatModel,
+    messages: [{ role: 'user', content: 'hello' }],
+    reasoningEffort: 'high',
+    maxTokens: 2048,
+    providerToolDeclarations: [{
+      type: 'function',
+      function: {
+        name: 'read_context',
+        description: 'Read local context.',
+        parameters: { type: 'object', properties: { query: { type: 'string' } } },
+      },
+    }],
+  })
+  assert.equal(zeroOneToolBody.model, chatModel, '01.AI request body preserves the selected model id')
+  assert.equal(zeroOneToolBody.max_tokens, 2048, '01.AI request body uses the OpenAI-compatible max_tokens field')
+  assert.equal(zeroOneToolBody.max_completion_tokens, undefined, '01.AI request body avoids max_completion_tokens')
+  assert.equal(zeroOneToolBody.reasoning_effort, undefined, '01.AI request body avoids unsupported reasoning_effort')
+  assert.equal(zeroOneToolBody.response_format, undefined, '01.AI request body avoids unclaimed response_format controls')
+  assert.equal(zeroOneToolBody.tools[0].function.name, 'read_context', '01.AI requests carry OpenAI-compatible tool declarations')
+
+  const zeroOneVisionBody = buildOpenAIBodyForTest({
+    provider: zeroOneProvider,
+    model: visionModel,
+    messages: [{ role: 'user', content: 'describe this image' }],
+    attachments: [{ type: 'image', name: 'screen.png', mimeType: 'image/png', base64: 'aGVsbG8=' }],
+    maxTokens: 1024,
+    stream: false,
+  })
+  assert.equal(zeroOneVisionBody.messages[0].content[1].type, 'image_url', '01.AI vision requests use image_url content parts')
+  assert.equal(zeroOneVisionBody.messages[0].content[1].image_url.url, 'data:image/png;base64,aGVsbG8=', '01.AI image_url parts preserve inline base64 data URLs')
+
+  const zeroOneConformance = resolveProviderRequestConformanceForTest({
+    provider: zeroOneProvider,
+    model: visionModel,
+    messages: [{ role: 'user', content: 'describe this image' }],
+    attachments: [{ type: 'image', name: 'screen.png', mimeType: 'image/png', base64: 'aGVsbG8=' }],
+    maxTokens: 1024,
+    reasoningEffort: 'high',
+  }, zeroOneVisionBody)
+  assert.equal(zeroOneConformance.manifest.family, 'zero-one', 'provider conformance classifies Yi models as 01.AI')
+  assert.equal(zeroOneConformance.manifest.protocol, 'openai-compatible', 'provider conformance keeps the 01.AI OpenAI-compatible protocol')
+  assert.equal(zeroOneConformance.manifest.payload.maxTokensField, 'max_tokens', 'provider conformance records 01.AI max_tokens')
+  assert.equal(zeroOneConformance.manifest.modalities.input.image, true, 'provider conformance records 01.AI image input support')
+  assert.equal(zeroOneConformance.manifest.modalities.input.file, false, 'provider conformance does not claim 01.AI file_data support')
+  assert.equal(zeroOneConformance.manifest.modalities.input.audio, false, 'provider conformance does not claim 01.AI chat audio input')
+  assert.equal(zeroOneConformance.manifest.modalities.output.speech, false, 'provider conformance does not claim 01.AI speech output')
+  assert.equal(zeroOneConformance.manifest.reasoning.supported, false, 'provider conformance keeps 01.AI reasoning disabled until source-backed controls exist')
+  assert.equal(zeroOneConformance.manifest.tools.requestShape, 'openai-tools', 'provider conformance records 01.AI OpenAI-format tool declarations')
+  assert.ok(zeroOneConformance.manifest.source.url?.includes('platform.lingyiwanwu.com/docs/api-reference'), 'provider conformance links 01.AI to official docs')
+  assert.equal(zeroOneConformance.manifest.source.confidence, 'source-backed', 'provider conformance marks 01.AI as source-backed')
+
+  const originalFetch = global.fetch
+  const modelFetchCalls = []
+  try {
+    global.fetch = async (input, init = {}) => {
+      modelFetchCalls.push({ input: String(input), authorization: init.headers?.Authorization ?? init.headers?.authorization })
+      return new Response(JSON.stringify({
+        object: 'list',
+        data: [
+          {
+            id: chatModel,
+            object: 'model',
+            context_length: 16000,
+            max_completion_tokens: 4096,
+            owned_by: '01-ai',
+          },
+          {
+            id: visionModel,
+            object: 'model',
+            metadata: { context_length: '32000', max_output_tokens: '4096' },
+            architecture: { input_modalities: ['text', 'image'] },
+          },
+        ],
+      }), { status: 200 })
+    }
+    const remoteModels = await fetchProviderModelConfigsFromRemote(zeroOneProvider, 1000)
+    assert.equal(modelFetchCalls[0].input, 'https://api.lingyiwanwu.com/v1/models', '01.AI model sync calls the official /models endpoint')
+    assert.equal(modelFetchCalls[0].authorization, `Bearer ${FAKE_KEY_A}`, '01.AI model sync uses bearer auth')
+    assert.equal(remoteModels[0].id, chatModel, '01.AI model sync preserves model ids')
+    assert.equal(remoteModels[0].contextWindow, 16000, '01.AI model sync reads context limits')
+    assert.equal(remoteModels[0].maxOutputTokens, 4096, '01.AI model sync reads output limits')
+    assert.equal(remoteModels[1].supportsVision, true, '01.AI model sync preserves vision modality metadata')
+  } finally {
+    global.fetch = originalFetch
+  }
+
+  const zeroOneParsedCompletion = parseProviderChatCompletionJson({
+    choices: [{
+      message: {
+        role: 'assistant',
+        content: '01.AI answer.',
+        tool_calls: [{
+          id: 'call_read_context',
+          type: 'function',
+          function: { name: 'read_context', arguments: '{"query":"IsleMind"}' },
+        }],
+      },
+    }],
+    usage: { prompt_tokens: 8, completion_tokens: 13, total_tokens: 21 },
+  }, {
+    provider: zeroOneProvider,
+    model: chatModel,
+    messages: [{ role: 'user', content: 'hello' }],
+  })
+  assert.equal(zeroOneParsedCompletion.text, '01.AI answer.', '01.AI parser preserves OpenAI-compatible response text')
+  assert.equal(zeroOneParsedCompletion.providerToolCalls?.[0]?.name, 'read_context', '01.AI parser extracts OpenAI-compatible tool calls')
+  assert.equal(zeroOneParsedCompletion.providerToolCalls?.[0]?.arguments?.query, 'IsleMind', '01.AI parser parses tool-call arguments')
+  assert.equal(zeroOneParsedCompletion.usage?.totalTokens, 21, '01.AI parser preserves usage metadata')
+
+  const zeroOneStream = parseProviderStreamChunkForTest([
+    `data: ${JSON.stringify({ choices: [{ delta: { content: '01.AI ' } }] })}`,
+    `data: ${JSON.stringify({ choices: [{ delta: { content: 'stream.' } }] })}`,
+    `data: ${JSON.stringify({ choices: [{ delta: { tool_calls: [{ index: 0, id: 'call_zero_one_stream', type: 'function', function: { name: 'read_context', arguments: '{"query":' } }] } }] })}`,
+    `data: ${JSON.stringify({ choices: [{ delta: { tool_calls: [{ index: 0, function: { arguments: '"IsleMind"}' } }] } }] })}`,
+    '',
+  ].join('\n'), 'openai-compatible')
+  assert.equal(zeroOneStream.text, '01.AI stream.', '01.AI stream parser merges OpenAI-compatible text deltas')
+  assert.equal(zeroOneStream.providerToolCalls?.[0]?.id, 'call_zero_one_stream', '01.AI stream parser preserves streamed tool-call ids')
+  assert.equal(zeroOneStream.providerToolCalls?.[0]?.arguments?.query, 'IsleMind', '01.AI stream parser merges streamed tool-call arguments')
+
+  const zeroOneRateLimit = JSON.stringify({ error: { code: 'too_many_requests', message: 'Too Many Requests', request_id: 'zero_one_req_1' } })
+  assert.equal(classifyHttpStatus(429, zeroOneRateLimit), 'rate_limited', '01.AI 429 errors classify as rate_limited')
+  assert.ok(extractProviderErrorDetail(zeroOneRateLimit).includes('zero_one_req_1'), '01.AI errors preserve request ids for diagnostics')
+}
+
+async function assertStepFunProviderCompatibilityBehavior() {
+  const chatModel = 'step-3.7-flash'
+  const visionModel = 'step-3.7-flash'
+  const stepFunProvider = applyProviderPreset({
+    id: 'stepfun-focused',
+    baseUrl: 'https://api.stepfun.com/v1',
+    [API_KEY_FIELD]: FAKE_KEY_A,
+    models: [chatModel, visionModel],
+    enabled: true,
+  }, 'stepfun')
+  assert.equal(detectProviderPreset({ baseUrl: 'https://api.stepfun.com/v1' }).presetId, 'stepfun', 'StepFun detection keeps the official OpenAI-compatible host')
+  assert.deepEqual(
+    getHeaders(stepFunProvider),
+    { 'Content-Type': 'application/json', Authorization: `Bearer ${FAKE_KEY_A}` },
+    'StepFun requests use Bearer authentication on the OpenAI-compatible endpoint'
+  )
+  assert.equal(stepFunProvider.capabilities.modelList, true, 'StepFun preset keeps documented /models sync enabled')
+  assert.equal(stepFunProvider.capabilities.vision, true, 'StepFun preset exposes documented image_url vision input')
+  assert.equal(stepFunProvider.capabilities.files, false, 'StepFun preset does not claim generic file_data attachments')
+  assert.equal(stepFunProvider.capabilities.reasoningEffort, false, 'StepFun preset does not claim reasoning controls until app mapping exists')
+  assert.equal(stepFunProvider.capabilities.nativeTools, true, 'StepFun preset exposes documented OpenAI-format function tools')
+  assert.equal(stepFunProvider.capabilities.responsesApi, false, 'StepFun preset does not claim OpenAI Responses routing')
+  assert.equal(getAPIEndpointForTest(stepFunProvider), 'https://api.stepfun.com/v1/chat/completions', 'StepFun requests preserve the official chat completions endpoint')
+
+  const stepFunToolBody = buildOpenAIBodyForTest({
+    provider: stepFunProvider,
+    model: chatModel,
+    messages: [{ role: 'user', content: 'hello' }],
+    reasoningEffort: 'high',
+    maxTokens: 2048,
+    providerToolDeclarations: [{
+      type: 'function',
+      function: {
+        name: 'read_context',
+        description: 'Read local context.',
+        parameters: { type: 'object', properties: { query: { type: 'string' } } },
+      },
+    }],
+  })
+  assert.equal(stepFunToolBody.model, chatModel, 'StepFun request body preserves the selected model id')
+  assert.equal(stepFunToolBody.max_tokens, 2048, 'StepFun request body uses the OpenAI-compatible max_tokens field')
+  assert.equal(stepFunToolBody.max_completion_tokens, undefined, 'StepFun request body avoids max_completion_tokens')
+  assert.equal(stepFunToolBody.reasoning_effort, undefined, 'StepFun request body avoids unsupported reasoning_effort until StepFun-specific mapping exists')
+  assert.equal(stepFunToolBody.response_format, undefined, 'StepFun request body avoids unclaimed response_format controls')
+  assert.equal(stepFunToolBody.tools[0].function.name, 'read_context', 'StepFun requests carry OpenAI-compatible tool declarations')
+
+  const stepFunVisionBody = buildOpenAIBodyForTest({
+    provider: stepFunProvider,
+    model: visionModel,
+    messages: [{ role: 'user', content: 'describe this image' }],
+    attachments: [{ type: 'image', name: 'screen.png', mimeType: 'image/png', base64: 'aGVsbG8=' }],
+    maxTokens: 1024,
+    stream: false,
+  })
+  assert.equal(stepFunVisionBody.messages[0].content[1].type, 'image_url', 'StepFun vision requests use image_url content parts')
+  assert.equal(stepFunVisionBody.messages[0].content[1].image_url.url, 'data:image/png;base64,aGVsbG8=', 'StepFun image_url parts preserve inline base64 data URLs')
+
+  const stepFunConformance = resolveProviderRequestConformanceForTest({
+    provider: stepFunProvider,
+    model: visionModel,
+    messages: [{ role: 'user', content: 'describe this image' }],
+    attachments: [{ type: 'image', name: 'screen.png', mimeType: 'image/png', base64: 'aGVsbG8=' }],
+    maxTokens: 1024,
+    reasoningEffort: 'high',
+  }, stepFunVisionBody)
+  assert.equal(stepFunConformance.manifest.family, 'stepfun', 'provider conformance classifies StepFun models as StepFun')
+  assert.equal(stepFunConformance.manifest.protocol, 'openai-compatible', 'provider conformance keeps the StepFun OpenAI-compatible protocol')
+  assert.equal(stepFunConformance.manifest.payload.maxTokensField, 'max_tokens', 'provider conformance records StepFun max_tokens')
+  assert.equal(stepFunConformance.manifest.modalities.input.image, true, 'provider conformance records StepFun image input support')
+  assert.equal(stepFunConformance.manifest.modalities.input.file, false, 'provider conformance does not claim StepFun file_data support')
+  assert.equal(stepFunConformance.manifest.modalities.input.audio, false, 'provider conformance does not claim StepFun chat audio input')
+  assert.equal(stepFunConformance.manifest.modalities.output.speech, false, 'provider conformance does not claim StepFun speech output')
+  assert.equal(stepFunConformance.manifest.reasoning.supported, false, 'provider conformance keeps StepFun reasoning disabled until source-backed app mapping exists')
+  assert.equal(stepFunConformance.manifest.tools.requestShape, 'openai-tools', 'provider conformance records StepFun OpenAI-format tool declarations')
+  assert.ok(stepFunConformance.manifest.source.url?.includes('platform.stepfun.com/docs/zh/api-reference/chat/chat-completion-create'), 'provider conformance links StepFun to current official docs')
+  assert.equal(stepFunConformance.manifest.source.confidence, 'source-backed', 'provider conformance marks StepFun as source-backed')
+
+  const originalFetch = global.fetch
+  const modelFetchCalls = []
+  try {
+    global.fetch = async (input, init = {}) => {
+      modelFetchCalls.push({ input: String(input), authorization: init.headers?.Authorization ?? init.headers?.authorization })
+      return new Response(JSON.stringify({
+        object: 'list',
+        data: [
+          {
+            id: chatModel,
+            object: 'model',
+            context_length: 128000,
+            max_completion_tokens: 8192,
+            owned_by: 'stepfun',
+          },
+          {
+            id: 'step-3.7-flash-vision',
+            object: 'model',
+            metadata: { context_length: '128000', max_output_tokens: '8192' },
+            architecture: { input_modalities: ['text', 'image'] },
+          },
+        ],
+      }), { status: 200 })
+    }
+    const remoteModels = await fetchProviderModelConfigsFromRemote(stepFunProvider, 1000)
+    assert.equal(modelFetchCalls[0].input, 'https://api.stepfun.com/v1/models', 'StepFun model sync calls the official /models endpoint')
+    assert.equal(modelFetchCalls[0].authorization, `Bearer ${FAKE_KEY_A}`, 'StepFun model sync uses bearer auth')
+    assert.equal(remoteModels[0].id, chatModel, 'StepFun model sync preserves model ids')
+    assert.equal(remoteModels[0].contextWindow, 128000, 'StepFun model sync reads context limits')
+    assert.equal(remoteModels[0].maxOutputTokens, 8192, 'StepFun model sync reads output limits')
+    assert.equal(remoteModels[1].supportsVision, true, 'StepFun model sync preserves vision modality metadata')
+  } finally {
+    global.fetch = originalFetch
+  }
+
+  const stepFunParsedCompletion = parseProviderChatCompletionJson({
+    choices: [{
+      message: {
+        role: 'assistant',
+        content: 'StepFun answer.',
+        tool_calls: [{
+          id: 'call_read_context',
+          type: 'function',
+          function: { name: 'read_context', arguments: '{"query":"IsleMind"}' },
+        }],
+      },
+    }],
+    usage: { prompt_tokens: 8, completion_tokens: 13, total_tokens: 21 },
+  }, {
+    provider: stepFunProvider,
+    model: chatModel,
+    messages: [{ role: 'user', content: 'hello' }],
+  })
+  assert.equal(stepFunParsedCompletion.text, 'StepFun answer.', 'StepFun parser preserves OpenAI-compatible response text')
+  assert.equal(stepFunParsedCompletion.providerToolCalls?.[0]?.name, 'read_context', 'StepFun parser extracts OpenAI-compatible tool calls')
+  assert.equal(stepFunParsedCompletion.providerToolCalls?.[0]?.arguments?.query, 'IsleMind', 'StepFun parser parses tool-call arguments')
+  assert.equal(stepFunParsedCompletion.usage?.totalTokens, 21, 'StepFun parser preserves usage metadata')
+
+  const stepFunStream = parseProviderStreamChunkForTest([
+    `data: ${JSON.stringify({ choices: [{ delta: { content: 'StepFun ' } }] })}`,
+    `data: ${JSON.stringify({ choices: [{ delta: { content: 'stream.' } }] })}`,
+    `data: ${JSON.stringify({ choices: [{ delta: { tool_calls: [{ index: 0, id: 'call_stepfun_stream', type: 'function', function: { name: 'read_context', arguments: '{"query":' } }] } }] })}`,
+    `data: ${JSON.stringify({ choices: [{ delta: { tool_calls: [{ index: 0, function: { arguments: '"IsleMind"}' } }] } }] })}`,
+    '',
+  ].join('\n'), 'openai-compatible')
+  assert.equal(stepFunStream.text, 'StepFun stream.', 'StepFun stream parser merges OpenAI-compatible text deltas')
+  assert.equal(stepFunStream.providerToolCalls?.[0]?.id, 'call_stepfun_stream', 'StepFun stream parser preserves streamed tool-call ids')
+  assert.equal(stepFunStream.providerToolCalls?.[0]?.arguments?.query, 'IsleMind', 'StepFun stream parser merges streamed tool-call arguments')
+
+  const stepFunRateLimit = JSON.stringify({ error: { code: 'rate_limit_exceeded', message: 'Too Many Requests', request_id: 'stepfun_req_1' } })
+  assert.equal(classifyHttpStatus(429, stepFunRateLimit), 'rate_limited', 'StepFun 429 errors classify as rate_limited')
+  assert.ok(extractProviderErrorDetail(stepFunRateLimit).includes('stepfun_req_1'), 'StepFun errors preserve request ids for diagnostics')
+}
+
+async function assertVolcengineArkProviderCompatibilityBehavior() {
+  const chatModel = 'doubao-seed-2-0-lite-260215'
+  const visionModel = 'doubao-seed-1-6-vision-250815'
+  const arkProvider = applyProviderPreset({
+    id: 'volcengine-ark-focused',
+    baseUrl: 'https://ark.cn-beijing.volces.com/api/v3',
+    [API_KEY_FIELD]: FAKE_KEY_A,
+    models: [chatModel, visionModel],
+    enabled: true,
+  }, 'volcengine-ark')
+  assert.equal(detectProviderPreset({ baseUrl: 'https://ark.cn-beijing.volces.com/api/v3' }).presetId, 'volcengine-ark', 'Volcengine Ark detection keeps the official OpenAI-compatible host')
+  assert.deepEqual(
+    getHeaders(arkProvider),
+    { 'Content-Type': 'application/json', Authorization: `Bearer ${FAKE_KEY_A}` },
+    'Volcengine Ark requests use Bearer authentication on the OpenAI-compatible endpoint'
+  )
+  assert.equal(arkProvider.capabilities.modelList, true, 'Volcengine Ark preset keeps documented /api/v3/models sync enabled')
+  assert.equal(arkProvider.capabilities.vision, true, 'Volcengine Ark preset exposes documented image_url vision input')
+  assert.equal(arkProvider.capabilities.files, false, 'Volcengine Ark preset does not claim generic file_data attachments')
+  assert.equal(arkProvider.capabilities.audioInput, false, 'Volcengine Ark preset does not claim chat audio input')
+  assert.equal(arkProvider.capabilities.audioTranscription, false, 'Volcengine Ark preset does not claim audio transcription routing')
+  assert.equal(arkProvider.capabilities.speech, false, 'Volcengine Ark preset does not claim speech output routing')
+  assert.equal(arkProvider.capabilities.reasoningEffort, false, 'Volcengine Ark preset does not claim reasoning controls until app mapping exists')
+  assert.equal(arkProvider.capabilities.nativeTools, true, 'Volcengine Ark preset exposes documented OpenAI-format function tools')
+  assert.equal(arkProvider.capabilities.responsesApi, false, 'Volcengine Ark preset does not claim OpenAI Responses routing')
+  assert.equal(getAPIEndpointForTest(arkProvider), 'https://ark.cn-beijing.volces.com/api/v3/chat/completions', 'Volcengine Ark requests preserve the official /api/v3 chat completions endpoint')
+
+  const arkToolBody = buildOpenAIBodyForTest({
+    provider: arkProvider,
+    model: chatModel,
+    messages: [{ role: 'user', content: 'hello' }],
+    reasoningEffort: 'high',
+    maxTokens: 2048,
+    providerToolDeclarations: [{
+      type: 'function',
+      function: {
+        name: 'read_context',
+        description: 'Read local context.',
+        parameters: { type: 'object', properties: { query: { type: 'string' } } },
+      },
+    }],
+  })
+  assert.equal(arkToolBody.model, chatModel, 'Volcengine Ark request body preserves the selected model id')
+  assert.equal(arkToolBody.max_tokens, 2048, 'Volcengine Ark request body uses the OpenAI-compatible max_tokens field')
+  assert.equal(arkToolBody.max_completion_tokens, undefined, 'Volcengine Ark request body avoids max_completion_tokens')
+  assert.equal(arkToolBody.reasoning_effort, undefined, 'Volcengine Ark request body avoids unsupported reasoning_effort')
+  assert.equal(arkToolBody.response_format, undefined, 'Volcengine Ark request body avoids unclaimed response_format controls')
+  assert.equal(arkToolBody.tools[0].function.name, 'read_context', 'Volcengine Ark requests carry OpenAI-compatible tool declarations')
+
+  const arkVisionBody = buildOpenAIBodyForTest({
+    provider: arkProvider,
+    model: visionModel,
+    messages: [{ role: 'user', content: 'describe this image' }],
+    attachments: [{ type: 'image', name: 'screen.png', mimeType: 'image/png', base64: 'aGVsbG8=' }],
+    maxTokens: 1024,
+    stream: false,
+  })
+  assert.equal(arkVisionBody.messages[0].content[1].type, 'image_url', 'Volcengine Ark vision requests use image_url content parts')
+  assert.equal(arkVisionBody.messages[0].content[1].image_url.url, 'data:image/png;base64,aGVsbG8=', 'Volcengine Ark image_url parts preserve inline base64 data URLs')
+
+  const arkConformance = resolveProviderRequestConformanceForTest({
+    provider: arkProvider,
+    model: visionModel,
+    messages: [{ role: 'user', content: 'describe this image' }],
+    attachments: [{ type: 'image', name: 'screen.png', mimeType: 'image/png', base64: 'aGVsbG8=' }],
+    maxTokens: 1024,
+    reasoningEffort: 'high',
+  }, arkVisionBody)
+  assert.equal(arkConformance.manifest.family, 'volcengine-ark', 'provider conformance classifies Ark/Doubao models as Volcengine Ark')
+  assert.equal(arkConformance.manifest.protocol, 'openai-compatible', 'provider conformance keeps the Volcengine Ark OpenAI-compatible protocol')
+  assert.equal(arkConformance.manifest.payload.maxTokensField, 'max_tokens', 'provider conformance records Volcengine Ark max_tokens')
+  assert.equal(arkConformance.manifest.modalities.input.image, true, 'provider conformance records Volcengine Ark image input support')
+  assert.equal(arkConformance.manifest.modalities.input.file, false, 'provider conformance does not claim Volcengine Ark file_data support')
+  assert.equal(arkConformance.manifest.modalities.input.audio, false, 'provider conformance does not claim Volcengine Ark chat audio input')
+  assert.equal(arkConformance.manifest.modalities.output.speech, false, 'provider conformance does not claim Volcengine Ark speech output')
+  assert.equal(arkConformance.manifest.reasoning.supported, false, 'provider conformance keeps Volcengine Ark reasoning disabled until source-backed app mapping exists')
+  assert.equal(arkConformance.manifest.tools.requestShape, 'openai-tools', 'provider conformance records Volcengine Ark OpenAI-format tool declarations')
+  assert.ok(arkConformance.manifest.source.url?.includes('volcengine.com/docs/82379/1494384'), 'provider conformance links Volcengine Ark to current official Chat API docs')
+  assert.equal(arkConformance.manifest.source.confidence, 'source-backed', 'provider conformance marks Volcengine Ark as source-backed')
+
+  const arkFileBody = buildOpenAIBodyForTest({
+    provider: arkProvider,
+    model: chatModel,
+    messages: [{ role: 'user', content: 'summarize this file' }],
+    attachments: [{ type: 'document', name: 'note.txt', mimeType: 'text/plain', base64: 'aGVsbG8=' }],
+    maxTokens: 1024,
+    stream: false,
+  })
+  const arkFileConformance = resolveProviderRequestConformanceForTest({
+    provider: arkProvider,
+    model: chatModel,
+    messages: [{ role: 'user', content: 'summarize this file' }],
+    attachments: [{ type: 'document', name: 'note.txt', mimeType: 'text/plain', base64: 'aGVsbG8=' }],
+    maxTokens: 1024,
+  }, arkFileBody)
+  assert.ok(
+    arkFileConformance.issues.some((issue) => issue.code === 'unsupported_modality' && issue.field === 'file' && issue.severity === 'block'),
+    'Volcengine Ark conformance blocks generic file attachments until source-backed file_data routing exists'
+  )
+
+  const originalFetch = global.fetch
+  const modelFetchCalls = []
+  try {
+    global.fetch = async (input, init = {}) => {
+      modelFetchCalls.push({ input: String(input), authorization: init.headers?.Authorization ?? init.headers?.authorization })
+      return new Response(JSON.stringify({
+        object: 'list',
+        data: [
+          {
+            id: chatModel,
+            object: 'model',
+            context_length: 128000,
+            max_completion_tokens: 8192,
+            owned_by: 'volcengine',
+          },
+          {
+            id: visionModel,
+            object: 'model',
+            metadata: { context_length: '128000', max_output_tokens: '8192' },
+            architecture: { input_modalities: ['text', 'image'] },
+          },
+        ],
+      }), { status: 200 })
+    }
+    const remoteModels = await fetchProviderModelConfigsFromRemote(arkProvider, 1000)
+    const remoteChatModel = remoteModels.find((model) => model.id === chatModel)
+    const remoteVisionModel = remoteModels.find((model) => model.id === visionModel)
+    assert.equal(modelFetchCalls[0].input, 'https://ark.cn-beijing.volces.com/api/v3/models', 'Volcengine Ark model sync calls the official /api/v3/models endpoint')
+    assert.equal(modelFetchCalls[0].authorization, `Bearer ${FAKE_KEY_A}`, 'Volcengine Ark model sync uses bearer auth')
+    assert.ok(remoteChatModel, 'Volcengine Ark model sync preserves chat model ids')
+    assert.equal(remoteChatModel.contextWindow, 128000, 'Volcengine Ark model sync reads context limits')
+    assert.equal(remoteChatModel.maxOutputTokens, 8192, 'Volcengine Ark model sync reads output limits')
+    assert.equal(remoteVisionModel?.supportsVision, true, 'Volcengine Ark model sync preserves vision modality metadata')
+  } finally {
+    global.fetch = originalFetch
+  }
+
+  const arkParsedCompletion = parseProviderChatCompletionJson({
+    choices: [{
+      message: {
+        role: 'assistant',
+        content: 'Volcengine Ark answer.',
+        tool_calls: [{
+          id: 'call_read_context',
+          type: 'function',
+          function: { name: 'read_context', arguments: '{"query":"IsleMind"}' },
+        }],
+      },
+    }],
+    usage: { prompt_tokens: 8, completion_tokens: 13, total_tokens: 21 },
+  }, {
+    provider: arkProvider,
+    model: chatModel,
+    messages: [{ role: 'user', content: 'hello' }],
+  })
+  assert.equal(arkParsedCompletion.text, 'Volcengine Ark answer.', 'Volcengine Ark parser preserves OpenAI-compatible response text')
+  assert.equal(arkParsedCompletion.providerToolCalls?.[0]?.name, 'read_context', 'Volcengine Ark parser extracts OpenAI-compatible tool calls')
+  assert.equal(arkParsedCompletion.providerToolCalls?.[0]?.arguments?.query, 'IsleMind', 'Volcengine Ark parser parses tool-call arguments')
+  assert.equal(arkParsedCompletion.usage?.totalTokens, 21, 'Volcengine Ark parser preserves usage metadata')
+
+  const arkStream = parseProviderStreamChunkForTest([
+    `data: ${JSON.stringify({ choices: [{ delta: { content: 'Volcengine ' } }] })}`,
+    `data: ${JSON.stringify({ choices: [{ delta: { content: 'Ark stream.' } }] })}`,
+    `data: ${JSON.stringify({ choices: [{ delta: { tool_calls: [{ index: 0, id: 'call_ark_stream', type: 'function', function: { name: 'read_context', arguments: '{"query":' } }] } }] })}`,
+    `data: ${JSON.stringify({ choices: [{ delta: { tool_calls: [{ index: 0, function: { arguments: '"IsleMind"}' } }] } }] })}`,
+    '',
+  ].join('\n'), 'openai-compatible')
+  assert.equal(arkStream.text, 'Volcengine Ark stream.', 'Volcengine Ark stream parser merges OpenAI-compatible text deltas')
+  assert.equal(arkStream.providerToolCalls?.[0]?.id, 'call_ark_stream', 'Volcengine Ark stream parser preserves streamed tool-call ids')
+  assert.equal(arkStream.providerToolCalls?.[0]?.arguments?.query, 'IsleMind', 'Volcengine Ark stream parser merges streamed tool-call arguments')
+
+  const arkRateLimit = JSON.stringify({ error: { code: 'TooManyRequests', message: 'Too Many Requests', request_id: 'ark_req_1' } })
+  assert.equal(classifyHttpStatus(429, arkRateLimit), 'rate_limited', 'Volcengine Ark 429 errors classify as rate_limited')
+  assert.ok(extractProviderErrorDetail(arkRateLimit).includes('ark_req_1'), 'Volcengine Ark errors preserve request ids for diagnostics')
+}
+
+async function assertDashScopeProviderCompatibilityBehavior() {
+  const qwenProvider = applyProviderPreset({
+    id: 'dashscope-focused',
+    baseUrl: 'https://dashscope.aliyuncs.com/compatible-mode/v1',
+    [API_KEY_FIELD]: FAKE_KEY_A,
+    models: ['qwen3.7-max', 'qwen3.5-omni-plus'],
+    enabled: true,
+  }, 'dashscope')
+  assert.equal(detectProviderPreset({ baseUrl: 'https://dashscope.aliyuncs.com/compatible-mode/v1' }).presetId, 'dashscope', 'DashScope detection keeps the official compatible-mode base URL')
+  assert.equal(isDashScopeProvider(qwenProvider), true, 'DashScope identity helper detects the preset')
+  assert.equal(getAPIEndpointForTest(qwenProvider), 'https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions', 'DashScope requests preserve the official compatible-mode chat endpoint')
+  assert.equal(qwenProvider.capabilities.modelList, false, 'DashScope preset disables generic /models sync until source-backed evidence is stronger')
+  assert.equal(qwenProvider.capabilities.files, false, 'DashScope preset does not claim generic file_data attachments')
+  assert.equal(qwenProvider.capabilities.audioInput, false, 'DashScope preset does not claim Qwen-Omni input_audio before runtime mapping exists')
+  assert.equal(qwenProvider.capabilities.audioTranscription, false, 'DashScope preset does not claim /audio/transcriptions')
+  assert.equal(qwenProvider.capabilities.speech, false, 'DashScope preset does not claim /audio/speech')
+  assert.equal(qwenProvider.capabilities.reasoningEffort, true, 'DashScope preset exposes Qwen thinking controls')
+  assert.equal(qwenProvider.capabilities.nativeTools, true, 'DashScope preset exposes OpenAI-format provider tools')
+
+  const originalFetch = global.fetch
+  try {
+    global.fetch = async () => {
+      throw new Error('DashScope modelList=false must not call remote /models discovery')
+    }
+    assert.deepEqual(
+      await fetchProviderModelConfigsFromRemote(qwenProvider, 1),
+      [],
+      'DashScope model discovery stays static/manual until generic /models sync has official or live-key coverage'
+    )
+  } finally {
+    global.fetch = originalFetch
+  }
+
+  const qwenThinkingBody = buildOpenAIBodyForTest({
+    provider: qwenProvider,
+    model: 'qwen3.7-max',
+    messages: [{ role: 'user', content: 'hello' }],
+    reasoningEffort: 'high',
+    maxTokens: 4096,
+    providerToolDeclarations: [{
+      type: 'function',
+      function: {
+        name: 'read_context',
+        description: 'Read local context.',
+        parameters: { type: 'object', properties: { query: { type: 'string' } } },
+      },
+    }],
+  })
+  assert.equal(qwenThinkingBody.enable_thinking, true, 'DashScope Qwen thinking requests send enable_thinking')
+  assert.equal(qwenThinkingBody.thinking_budget, 262144, 'DashScope Qwen high thinking uses the official 256K budget for qwen3.7')
+  assert.deepEqual(qwenThinkingBody.stream_options, { include_usage: true }, 'DashScope streaming requests include usage metadata')
+  assert.equal(qwenThinkingBody.max_tokens, 4096, 'DashScope Qwen requests use OpenAI-compatible max_tokens')
+  assert.equal(qwenThinkingBody.max_completion_tokens, undefined, 'DashScope Qwen requests avoid max_completion_tokens')
+  assert.equal(qwenThinkingBody.modalities, undefined, 'DashScope chat requests do not claim Qwen-Omni audio output before runtime mapping exists')
+  assert.equal(qwenThinkingBody.audio, undefined, 'DashScope chat requests do not send audio output settings before runtime mapping exists')
+  assert.equal(qwenThinkingBody.tools[0].function.name, 'read_context', 'DashScope Qwen requests carry OpenAI-format provider tools')
+
+  const qwenNonStreamingBody = buildOpenAIBodyForTest({
+    provider: qwenProvider,
+    model: 'qwen3.7-max',
+    messages: [{ role: 'user', content: 'hello' }],
+    reasoningEffort: 'medium',
+    maxTokens: 512,
+    stream: false,
+  })
+  assert.equal(qwenNonStreamingBody.stream_options, undefined, 'DashScope non-streaming requests omit stream_options')
+
+  const qwenVisionBody = buildOpenAIBodyForTest({
+    provider: qwenProvider,
+    model: 'qwen3.5-omni-plus',
+    messages: [{ role: 'user', content: 'describe this image' }],
+    attachments: [{ type: 'image', name: 'screen.png', mimeType: 'image/png', base64: 'aGVsbG8=' }],
+    maxTokens: 1024,
+    stream: false,
+  })
+  assert.equal(qwenVisionBody.messages[0].content[1].type, 'image_url', 'DashScope vision requests use the documented image_url content part')
+  assert.equal(qwenVisionBody.messages[0].content[1].image_url.url, 'data:image/png;base64,aGVsbG8=', 'DashScope image_url parts preserve inline base64 data URLs')
+
+  const qwenToolReplayBody = buildOpenAIBodyForTest({
+    provider: qwenProvider,
+    model: 'qwen3.7-max',
+    messages: [
+      { role: 'user', content: 'Need context.' },
+      {
+        role: 'assistant',
+        content: '',
+        toolCalls: [{
+          id: 'call_read_context',
+          name: 'read_context',
+          arguments: { query: 'IsleMind' },
+        }],
+      },
+      {
+        role: 'tool',
+        name: 'read_context',
+        toolCallId: 'call_read_context',
+        content: 'Context result.',
+      },
+    ],
+    maxTokens: 1024,
+    stream: false,
+  })
+  assert.deepEqual(
+    qwenToolReplayBody.messages[1].tool_calls[0],
+    { id: 'call_read_context', type: 'function', function: { name: 'read_context', arguments: '{"query":"IsleMind"}' } },
+    'DashScope Qwen tool replay keeps official OpenAI-compatible assistant tool_calls'
+  )
+  assert.deepEqual(
+    qwenToolReplayBody.messages[2],
+    { role: 'tool', tool_call_id: 'call_read_context', name: 'read_context', content: 'Context result.' },
+    'DashScope Qwen tool replay keeps official OpenAI-compatible tool result messages'
+  )
+
+  const qwenConformance = resolveProviderRequestConformanceForTest({
+    provider: qwenProvider,
+    model: 'qwen3.7-max',
+    messages: [{ role: 'user', content: 'hello' }],
+    reasoningEffort: 'high',
+    maxTokens: 4096,
+  }, qwenThinkingBody)
+  assert.equal(qwenConformance.manifest.family, 'dashscope', 'provider conformance classifies Qwen as DashScope')
+  assert.equal(qwenConformance.manifest.reasoning.requestShape, 'dashscope-thinking', 'provider conformance exposes Qwen thinking request shape')
+  assert.equal(qwenConformance.manifest.payload.streamUsageField, 'stream_options.include_usage', 'provider conformance records DashScope stream usage field')
+  assert.equal(qwenConformance.manifest.payload.maxTokensField, 'max_tokens', 'provider conformance records DashScope max_tokens')
+  assert.equal(qwenConformance.manifest.modalities.input.image, true, 'provider conformance records DashScope image input support')
+  assert.equal(qwenConformance.manifest.modalities.input.file, false, 'provider conformance avoids generic file_data support for DashScope')
+  assert.equal(qwenConformance.manifest.modalities.input.audio, false, 'provider conformance avoids Qwen-Omni audio input before runtime mapping exists')
+  assert.equal(qwenConformance.manifest.modalities.output.speech, false, 'provider conformance avoids OpenAI speech output for DashScope')
+  assert.equal(qwenConformance.manifest.tools.requestShape, 'openai-tools', 'provider conformance records OpenAI-format Qwen tool declarations')
+
+  const qwenParsedCompletion = parseProviderChatCompletionJson({
+    choices: [{
+      message: {
+        role: 'assistant',
+        content: 'Qwen answer.',
+        tool_calls: [{
+          id: 'call_read_context',
+          type: 'function',
+          function: { name: 'read_context', arguments: '{"query":"IsleMind"}' },
+        }],
+      },
+    }],
+    usage: { prompt_tokens: 8, completion_tokens: 13, total_tokens: 21 },
+  }, {
+    provider: qwenProvider,
+    model: 'qwen3.7-max',
+    messages: [{ role: 'user', content: 'hello' }],
+  })
+  assert.equal(qwenParsedCompletion.text, 'Qwen answer.', 'DashScope parser preserves OpenAI-compatible response text')
+  assert.equal(qwenParsedCompletion.providerToolCalls?.[0]?.name, 'read_context', 'DashScope parser extracts OpenAI-compatible tool calls')
+  assert.equal(qwenParsedCompletion.providerToolCalls?.[0]?.arguments?.query, 'IsleMind', 'DashScope parser parses tool-call arguments')
+  assert.equal(qwenParsedCompletion.usage?.totalTokens, 21, 'DashScope parser preserves usage metadata')
+
+  const qwenStream = parseProviderStreamChunkForTest([
+    `data: ${JSON.stringify({ choices: [{ delta: { content: 'Qwen ' } }] })}`,
+    `data: ${JSON.stringify({ choices: [{ delta: { content: 'stream.' } }] })}`,
+    `data: ${JSON.stringify({ choices: [{ delta: { tool_calls: [{ index: 0, id: 'call_qwen_stream', type: 'function', function: { name: 'read_context', arguments: '{"query":' } }] } }] })}`,
+    `data: ${JSON.stringify({ choices: [{ delta: { tool_calls: [{ index: 0, function: { arguments: '"IsleMind"}' } }] } }] })}`,
+    '',
+  ].join('\n'), 'openai-compatible')
+  assert.equal(qwenStream.text, 'Qwen stream.', 'DashScope stream parser merges OpenAI-compatible text deltas')
+  assert.equal(qwenStream.providerToolCalls?.[0]?.id, 'call_qwen_stream', 'DashScope stream parser preserves streamed tool-call ids')
+  assert.equal(qwenStream.providerToolCalls?.[0]?.arguments?.query, 'IsleMind', 'DashScope stream parser merges streamed tool-call arguments')
+
+  const qwenRateLimit = JSON.stringify({ error: { code: 'Throttling.RateQuota', message: 'Requests rate limit exceeded', request_id: 'qwen_req_1' } })
+  assert.equal(classifyHttpStatus(429, qwenRateLimit), 'rate_limited', 'DashScope 429 errors classify as rate_limited')
+  assert.ok(extractProviderErrorDetail(qwenRateLimit).includes('qwen_req_1'), 'DashScope errors preserve request ids for diagnostics')
+}
+
+async function assertMiniMaxProviderCompatibilityBehavior() {
+  const miniMaxProvider = applyProviderPreset({
+    id: 'minimax-focused',
+    baseUrl: 'https://api.minimax.io/v1',
+    [API_KEY_FIELD]: FAKE_KEY_A,
+    models: ['MiniMax-M3', 'MiniMax-M2.7'],
+    enabled: true,
+  }, 'minimax')
+  assert.equal(detectProviderPreset({ baseUrl: 'https://api.minimax.io/v1' }).presetId, 'minimax', 'MiniMax detection keeps the official OpenAI-compatible base URL')
+  assert.equal(isMiniMaxProvider(miniMaxProvider), true, 'MiniMax identity helper detects the preset')
+  assert.equal(getAPIEndpointForTest(miniMaxProvider), 'https://api.minimax.io/v1/chat/completions', 'MiniMax requests preserve the official chat completions endpoint')
+  assert.equal(miniMaxProvider.capabilities.modelList, false, 'MiniMax preset disables generic /models sync')
+  assert.equal(miniMaxProvider.capabilities.files, false, 'MiniMax preset does not claim generic file_data attachments')
+  assert.equal(miniMaxProvider.capabilities.reasoningEffort, true, 'MiniMax preset exposes adaptive thinking controls')
+  assert.equal(miniMaxProvider.capabilities.nativeTools, true, 'MiniMax preset exposes OpenAI-format provider tools')
+
+  const originalFetch = global.fetch
+  try {
+    global.fetch = async () => {
+      throw new Error('MiniMax modelList=false must not call remote /models discovery')
+    }
+    assert.deepEqual(
+      await fetchProviderModelConfigsFromRemote(miniMaxProvider, 1),
+      [],
+      'MiniMax model discovery stays static/manual because the official OpenAPI exposes chat completions only'
+    )
+  } finally {
+    global.fetch = originalFetch
+  }
+
+  const miniMaxToolBody = buildOpenAIBodyForTest({
+    provider: miniMaxProvider,
+    model: 'MiniMax-M3',
+    messages: [{ role: 'user', content: 'hello' }],
+    maxTokens: 4096,
+    providerToolDeclarations: [{
+      type: 'function',
+      function: {
+        name: 'summarize_context',
+        description: 'Summarize context.',
+        parameters: { type: 'object', properties: { sourceId: { type: 'string' } } },
+      },
+    }],
+  })
+  assert.equal(miniMaxToolBody.tools[0].function.name, 'summarize_context', 'MiniMax requests carry OpenAI-format provider tools')
+  assert.equal(miniMaxToolBody.thinking, undefined, 'MiniMax requests omit thinking when unset and rely on the official adaptive default')
+  assert.equal(miniMaxToolBody.reasoning_split, true, 'MiniMax M3 requests split reasoning output from answer text by default')
+  assert.equal(miniMaxToolBody.max_completion_tokens, 4096, 'MiniMax OpenAI-compatible requests use the official max_completion_tokens field')
+  assert.equal(miniMaxToolBody.max_tokens, undefined, 'MiniMax OpenAI-compatible requests avoid max_tokens')
+  assert.equal(miniMaxToolBody.reasoning_effort, undefined, 'MiniMax requests avoid unsupported reasoning_effort')
+
+  const miniMaxThinkingBody = buildOpenAIBodyForTest({
+    provider: miniMaxProvider,
+    model: 'MiniMax-M3',
+    messages: [{ role: 'user', content: 'hello' }],
+    reasoningEffort: 'high',
+    temperature: 0.4,
+    topP: 0.8,
+    maxTokens: 999999,
+  })
+  assert.deepEqual(miniMaxThinkingBody.thinking, { type: 'adaptive' }, 'MiniMax M3 high reasoning uses official adaptive thinking')
+  assert.equal(miniMaxThinkingBody.reasoning_split, true, 'MiniMax M3 high reasoning requests separated reasoning output')
+  assert.equal(miniMaxThinkingBody.reasoning_effort, undefined, 'MiniMax adaptive thinking avoids unsupported reasoning_effort')
+  assert.equal(miniMaxThinkingBody.temperature, 0.4, 'MiniMax M3 thinking requests keep provider-supported temperature')
+  assert.equal(miniMaxThinkingBody.top_p, 0.8, 'MiniMax M3 thinking requests keep provider-supported top_p')
+  assert.equal(miniMaxThinkingBody.max_completion_tokens, getModelConfig('MiniMax-M3', 'openai-compatible').maxOutputTokens, 'MiniMax M3 request max tokens clamp to the official output maximum')
+
+  const miniMaxOffBody = buildOpenAIBodyForTest({
+    provider: miniMaxProvider,
+    model: 'MiniMax-M3',
+    messages: [{ role: 'user', content: 'hello' }],
+    reasoningEffort: 'none',
+    maxTokens: 512,
+  })
+  assert.deepEqual(miniMaxOffBody.thinking, { type: 'disabled' }, 'MiniMax M3 none explicitly disables thinking')
+  assert.equal(miniMaxOffBody.reasoning_split, undefined, 'MiniMax M3 disabled thinking omits reasoning_split')
+
+  const miniMaxVisionBody = buildOpenAIBodyForTest({
+    provider: miniMaxProvider,
+    model: 'MiniMax-M3',
+    messages: [{ role: 'user', content: 'describe this image' }],
+    attachments: [{ type: 'image', name: 'screen.png', mimeType: 'image/png', base64: 'aGVsbG8=' }],
+    maxTokens: 1024,
+    stream: false,
+  })
+  assert.equal(miniMaxVisionBody.messages[0].content[1].type, 'image_url', 'MiniMax M3 image requests use the documented image_url content part')
+  assert.equal(miniMaxVisionBody.messages[0].content[1].image_url.url, 'data:image/png;base64,aGVsbG8=', 'MiniMax M3 image_url parts preserve inline base64 data URLs')
+
+  const miniMaxToolReplayBody = buildOpenAIBodyForTest({
+    provider: miniMaxProvider,
+    model: 'MiniMax-M3',
+    messages: [
+      { role: 'user', content: 'Need a context summary.' },
+      {
+        role: 'assistant',
+        content: '',
+        reasoningContent: 'MiniMax structured thinking is response-only.',
+        toolCalls: [{
+          id: 'call_summarize_context',
+          name: 'summarize_context',
+          arguments: { sourceId: 'ctx-1' },
+        }],
+      },
+      {
+        role: 'tool',
+        name: 'summarize_context',
+        toolCallId: 'call_summarize_context',
+        content: 'Summary.',
+      },
+    ],
+    maxTokens: 4096,
+    stream: false,
+  })
+  assert.equal(miniMaxToolReplayBody.messages[1].reasoning_content, undefined, 'MiniMax tool-result replay avoids non-schema reasoning_content fields')
+  assert.deepEqual(
+    miniMaxToolReplayBody.messages[1].tool_calls[0],
+    { id: 'call_summarize_context', type: 'function', function: { name: 'summarize_context', arguments: '{"sourceId":"ctx-1"}' } },
+    'MiniMax tool-result replay preserves official assistant tool_calls'
+  )
+  assert.deepEqual(
+    miniMaxToolReplayBody.messages[2],
+    { role: 'tool', tool_call_id: 'call_summarize_context', name: 'summarize_context', content: 'Summary.' },
+    'MiniMax tool-result replay keeps official OpenAI-compatible tool result messages'
+  )
+
+  const miniMaxConformance = resolveProviderRequestConformanceForTest({
+    provider: miniMaxProvider,
+    model: 'MiniMax-M3',
+    messages: [{ role: 'user', content: 'hello' }],
+    reasoningEffort: 'high',
+    maxTokens: 4096,
+  }, miniMaxThinkingBody)
+  assert.equal(miniMaxConformance.manifest.family, 'minimax', 'provider conformance classifies MiniMax as MiniMax')
+  assert.equal(miniMaxConformance.manifest.protocol, 'openai-compatible', 'provider conformance records MiniMax OpenAI-compatible protocol')
+  assert.equal(miniMaxConformance.manifest.reasoning.requestShape, 'minimax-thinking', 'provider conformance exposes MiniMax thinking request shape')
+  assert.equal(miniMaxConformance.reasoning.providerValue, 'adaptive', 'provider conformance maps MiniMax active thinking to adaptive')
+  assert.equal(miniMaxConformance.manifest.payload.maxTokensField, 'max_completion_tokens', 'provider conformance records MiniMax max_completion_tokens')
+  assert.equal(miniMaxConformance.manifest.payload.requiresReasoningStatePassthrough, false, 'provider conformance avoids non-schema MiniMax reasoning state passthrough')
+  assert.equal(miniMaxConformance.manifest.payload.reasoningOutputSplitField, 'reasoning_split', 'provider conformance records MiniMax reasoning_split')
+  assert.equal(miniMaxConformance.manifest.modalities.input.image, true, 'provider conformance records MiniMax image input support')
+  assert.equal(miniMaxConformance.manifest.modalities.input.video, true, 'provider conformance records MiniMax provider-side video_url support')
+  assert.equal(miniMaxConformance.manifest.modalities.input.file, false, 'provider conformance does not claim generic file_data attachments for MiniMax')
+  assert.equal(miniMaxConformance.manifest.tools.requestShape, 'openai-tools', 'provider conformance records OpenAI-format MiniMax tool declarations')
+
+  const miniMaxAnthropicBody = buildAnthropicBodyForTest({
+    provider: { ...miniMaxProvider, wireProtocol: 'anthropic-compatible' },
+    model: 'MiniMax-M3',
+    messages: [{ role: 'user', content: 'hello' }],
+    reasoningEffort: 'high',
+    maxTokens: 4096,
+    stream: false,
+  })
+  assert.deepEqual(miniMaxAnthropicBody.thinking, { type: 'adaptive' }, 'MiniMax Anthropic-compatible requests use official adaptive thinking')
+  assert.equal(miniMaxAnthropicBody.output_config, undefined, 'MiniMax Anthropic-compatible requests avoid Claude output_config thinking tiers')
+  assert.equal(miniMaxAnthropicBody.max_tokens, 4096, 'MiniMax Anthropic-compatible requests keep Anthropic max_tokens')
+  const miniMaxAnthropicConformance = resolveProviderRequestConformanceForTest({
+    provider: { ...miniMaxProvider, wireProtocol: 'anthropic-compatible' },
+    model: 'MiniMax-M3',
+    messages: [{ role: 'user', content: 'hello' }],
+    reasoningEffort: 'high',
+    maxTokens: 4096,
+  }, miniMaxAnthropicBody)
+  assert.equal(miniMaxAnthropicConformance.manifest.protocol, 'anthropic-compatible', 'provider conformance records MiniMax Anthropic-compatible protocol')
+  assert.equal(miniMaxAnthropicConformance.manifest.payload.maxTokensField, 'max_tokens', 'provider conformance records MiniMax Anthropic-compatible max_tokens')
+  assert.equal(miniMaxAnthropicConformance.manifest.payload.reasoningOutputSplitField, undefined, 'provider conformance avoids OpenAI-only reasoning_split on MiniMax Anthropic-compatible requests')
+
+  const miniMaxParsedCompletion = parseProviderChatCompletionJson({
+    choices: [{
+      message: {
+        role: 'assistant',
+        content: 'MiniMax answer.',
+        reasoning_details: [{ text: 'Checking MiniMax reasoning.' }],
+        tool_calls: [{
+          id: 'call_summarize_context',
+          type: 'function',
+          function: { name: 'summarize_context', arguments: '{"sourceId":"ctx-1"}' },
+        }],
+      },
+    }],
+    usage: { prompt_tokens: 8, completion_tokens: 13, total_tokens: 21 },
+  }, {
+    provider: miniMaxProvider,
+    model: 'MiniMax-M3',
+    messages: [{ role: 'user', content: 'hello' }],
+  })
+  assert.equal(miniMaxParsedCompletion.text, 'MiniMax answer.', 'MiniMax parser preserves OpenAI-compatible response text')
+  assert.equal(miniMaxParsedCompletion.providerToolCalls?.[0]?.name, 'summarize_context', 'MiniMax parser extracts OpenAI-compatible tool calls')
+  assert.equal(miniMaxParsedCompletion.providerToolCalls?.[0]?.arguments?.sourceId, 'ctx-1', 'MiniMax parser parses tool-call arguments')
+  assert.ok(miniMaxParsedCompletion.traces?.some((trace) => trace.content === 'Checking MiniMax reasoning.'), 'MiniMax parser emits reasoning_details as reasoning traces')
+  assert.equal(miniMaxParsedCompletion.usage?.totalTokens, 21, 'MiniMax parser preserves usage metadata')
+
+  const miniMaxStream = parseProviderStreamChunkForTest([
+    `data: ${JSON.stringify({ choices: [{ delta: { reasoning_details: [{ text: 'MiniMax stream thinking.' }], content: 'MiniMax ' } }] })}`,
+    `data: ${JSON.stringify({ choices: [{ delta: { content: 'stream.' } }] })}`,
+    `data: ${JSON.stringify({ choices: [{ delta: { tool_calls: [{ index: 0, id: 'call_minimax_stream', type: 'function', function: { name: 'summarize_context', arguments: '{"sourceId":' } }] } }] })}`,
+    `data: ${JSON.stringify({ choices: [{ delta: { tool_calls: [{ index: 0, function: { arguments: '"ctx-stream"}' } }] } }] })}`,
+    '',
+  ].join('\n'), 'openai-compatible')
+  assert.equal(miniMaxStream.text, 'MiniMax stream.', 'MiniMax stream parser merges OpenAI-compatible text deltas')
+  assert.ok(miniMaxStream.traces.some((trace) => trace.content === 'MiniMax stream thinking.'), 'MiniMax stream parser emits reasoning_details as traces')
+  assert.equal(miniMaxStream.providerToolCalls?.[0]?.id, 'call_minimax_stream', 'MiniMax stream parser preserves streamed tool-call ids')
+  assert.equal(miniMaxStream.providerToolCalls?.[0]?.arguments?.sourceId, 'ctx-stream', 'MiniMax stream parser merges streamed tool-call arguments')
+
+  const miniMaxRateLimit = JSON.stringify({ error: { type: 'rate_limit_error', message: 'rate limit exceeded', request_id: 'minimax_req_1' } })
+  assert.equal(classifyHttpStatus(429, miniMaxRateLimit), 'rate_limited', 'MiniMax 429 errors classify as rate_limited')
+  assert.ok(extractProviderErrorDetail(miniMaxRateLimit).includes('minimax_req_1'), 'MiniMax errors preserve request ids for diagnostics')
+}
+
+async function assertMistralProviderCompatibilityBehavior() {
+  const mistralProvider = applyProviderPreset({
+    id: 'mistral-focused',
+    baseUrl: 'https://api.mistral.ai/v1',
+    [API_KEY_FIELD]: FAKE_KEY_A,
+    models: ['mistral-medium-latest', 'pixtral-large-latest', 'magistral-medium-latest'],
+    enabled: true,
+  }, 'mistral')
+  assert.equal(detectProviderPreset({ baseUrl: 'https://api.mistral.ai/v1' }).presetId, 'mistral', 'Mistral detection keeps the official La Plateforme base URL')
+  assert.equal(getAPIEndpointForTest(mistralProvider), 'https://api.mistral.ai/v1/chat/completions', 'Mistral requests preserve the official chat completions endpoint')
+  assert.equal(usesOpenAIResponses({ provider: mistralProvider, model: 'mistral-medium-latest' }), false, 'Mistral keeps Chat Completions routing unless a Responses capability is explicitly declared')
+  assert.equal(getOpenAIChatMaxTokensField({ provider: mistralProvider, model: 'mistral-medium-latest' }), 'max_tokens', 'Mistral chat requests use max_tokens')
+  assert.equal(normalizeOpenAIReasoningEffort({ provider: mistralProvider, model: 'magistral-medium-latest', reasoningEffort: 'high' }), undefined, 'Mistral reasoning models do not receive OpenAI reasoning_effort without a documented request mapping')
+  assert.equal(mistralProvider.capabilities.modelList, true, 'Mistral preset keeps official model-list discovery')
+  assert.equal(mistralProvider.capabilities.vision, true, 'Mistral preset exposes image_url vision input')
+  assert.equal(mistralProvider.capabilities.files, false, 'Mistral preset does not claim generic file_data chat attachments')
+  assert.equal(mistralProvider.capabilities.audioInput, false, 'Mistral preset does not claim input_audio chat mapping yet')
+  assert.equal(mistralProvider.capabilities.audioTranscription, false, 'Mistral preset does not claim audio transcription routing yet')
+  assert.equal(mistralProvider.capabilities.reasoningEffort, false, 'Mistral preset does not expose unmapped reasoning-effort controls')
+  assert.equal(mistralProvider.capabilities.nativeTools, true, 'Mistral preset exposes OpenAI-format function tools')
+
+  const originalFetch = global.fetch
+  const modelFetchCalls = []
+  try {
+    global.fetch = async (input, init = {}) => {
+      modelFetchCalls.push({ url: String(input), authorization: init.headers?.Authorization ?? init.headers?.authorization })
+      return new Response(JSON.stringify({
+        data: [
+          {
+            id: 'mistral-medium-latest',
+            display_name: 'Mistral Medium',
+            context_length: 128000,
+            max_completion_tokens: 8192,
+            architecture: { input_modalities: ['text'] },
+          },
+          {
+            id: 'pixtral-large-latest',
+            display_name: 'Pixtral Large',
+            context_length: 128000,
+            max_completion_tokens: 8192,
+            architecture: { input_modalities: ['text', 'image'] },
+          },
+        ],
+      }), { status: 200 })
+    }
+    const models = await fetchProviderModelConfigsFromRemote(mistralProvider, 1000)
+    const pixtral = models.find((model) => model.id === 'pixtral-large-latest')
+    assert.equal(models.find((model) => model.id === 'mistral-medium-latest')?.contextWindow, 128000, 'Mistral model sync reads official OpenAI-compatible context metadata')
+    assert.equal(pixtral?.supportsVision, true, 'Mistral model sync preserves image modality metadata')
+  } finally {
+    global.fetch = originalFetch
+  }
+  assert.deepEqual(modelFetchCalls.map((call) => call.url), ['https://api.mistral.ai/v1/models'], 'Mistral model sync calls the official /v1/models endpoint')
+  assert.equal(modelFetchCalls[0]?.authorization, `Bearer ${FAKE_KEY_A}`, 'Mistral model sync uses bearer auth')
+
+  const embeddingCalls = []
+  try {
+    global.fetch = async (input, init = {}) => {
+      embeddingCalls.push({ input: String(input), body: init.body, authorization: init.headers?.Authorization ?? init.headers?.authorization })
+      return new Response(JSON.stringify({
+        data: [{ embedding: [0.12, 0.34, 0.56] }],
+      }), { status: 200 })
+    }
+    const embedding = await embedTextWithProvider({ ...mistralProvider, models: ['mistral-medium-latest', 'mistral-embed'] }, 'hello world')
+    assert.equal(embeddingCalls[0].input, 'https://api.mistral.ai/v1/embeddings', 'Mistral embeddings use the official /v1/embeddings endpoint')
+    assert.equal(embeddingCalls[0].authorization, `Bearer ${FAKE_KEY_A}`, 'Mistral embeddings use bearer auth')
+    assert.equal(JSON.parse(embeddingCalls[0].body).model, 'mistral-embed', 'Mistral embeddings prefer configured embedding models')
+    assert.deepEqual(embedding.embedding, [0.12, 0.34, 0.56], 'Mistral embeddings parser extracts vector values')
+    assert.equal(embedding.model, 'mistral-embed', 'Mistral embeddings result records the selected model')
+  } finally {
+    global.fetch = originalFetch
+  }
+
+  const providerToolDeclaration = {
+    type: 'function',
+    function: {
+      name: 'read_context',
+      description: 'Read local context.',
+      parameters: { type: 'object', properties: { query: { type: 'string' } }, required: ['query'] },
+    },
+  }
+  const mistralToolBody = buildOpenAIBodyForTest({
+    provider: mistralProvider,
+    model: 'mistral-medium-latest',
+    messages: [{ role: 'user', content: 'hello' }],
+    reasoningEffort: 'high',
+    maxTokens: 4096,
+    providerToolDeclarations: [providerToolDeclaration],
+  })
+  assert.equal(mistralToolBody.model, 'mistral-medium-latest', 'Mistral request body preserves the selected model id')
+  assert.equal(mistralToolBody.max_tokens, 4096, 'Mistral request body uses max_tokens')
+  assert.equal(mistralToolBody.max_completion_tokens, undefined, 'Mistral request body avoids max_completion_tokens')
+  assert.equal(mistralToolBody.reasoning_effort, undefined, 'Mistral request body avoids unsupported reasoning_effort')
+  assert.equal(mistralToolBody.thinking, undefined, 'Mistral request body avoids unimplemented thinking controls')
+  assert.equal(mistralToolBody.response_format, undefined, 'Mistral structured-output docs are mapped, but IsleMind has no response_format request control yet')
+  assert.equal(mistralToolBody.tools[0].function.name, 'read_context', 'Mistral requests carry OpenAI-compatible tool declarations')
+
+  const mistralStructuredBody = buildOpenAIBodyForTest({
+    provider: mistralProvider,
+    model: 'mistral-medium-latest',
+    messages: [{ role: 'user', content: 'Return JSON.' }],
+    maxTokens: 512,
+    stream: false,
+    structuredOutput: {
+      type: 'json_schema',
+      name: 'mistral_summary',
+      strict: true,
+      schema: {
+        type: 'object',
+        properties: { summary: { type: 'string' } },
+        required: ['summary'],
+        additionalProperties: false,
+      },
+    },
+  })
+  assert.equal(mistralStructuredBody.response_format, undefined, 'Mistral structured-output requests do not emit response_format until app request controls are source-backed')
+  const mistralStructuredConformance = resolveProviderRequestConformanceForTest({
+    provider: mistralProvider,
+    model: 'mistral-medium-latest',
+    messages: [{ role: 'user', content: 'Return JSON.' }],
+    maxTokens: 512,
+    structuredOutput: {
+      type: 'json_schema',
+      name: 'mistral_summary',
+      strict: true,
+      schema: {
+        type: 'object',
+        properties: { summary: { type: 'string' } },
+        required: ['summary'],
+        additionalProperties: false,
+      },
+    },
+  }, mistralStructuredBody)
+  assert.ok(
+    mistralStructuredConformance.issues.some((issue) => issue.code === 'unsupported_structured_output' && issue.severity === 'block'),
+    'Mistral conformance blocks structured-output requests until response_format app controls are implemented'
+  )
+  const mistralStructuredRoute = resolveProviderRouteForTest({
+    provider: mistralProvider,
+    model: 'mistral-medium-latest',
+    messages: [{ role: 'user', content: 'Return JSON.' }],
+    maxTokens: 512,
+    structuredOutput: {
+      type: 'json_schema',
+      name: 'mistral_summary',
+      strict: true,
+      schema: {
+        type: 'object',
+        properties: { summary: { type: 'string' } },
+        required: ['summary'],
+        additionalProperties: false,
+      },
+    },
+  }, mistralStructuredBody)
+  assert.equal(mistralStructuredRoute.decision.blocked, true, 'Mistral route decision blocks unsupported structured-output requests')
+  assert.ok(mistralStructuredRoute.decision.blockReasons.includes('unsupported_structured_output'), 'Mistral route decision exposes unsupported structured-output blocker')
+  assert.equal(mistralStructuredRoute.decision.structuredOutputPlan.requested, true, 'Mistral route decision records structured-output request intent')
+  assert.equal(mistralStructuredRoute.decision.structuredOutputPlan.supported, false, 'Mistral route decision records missing structured-output request control support')
+  assert.equal(mistralStructuredRoute.decision.structuredOutputPlan.blocked, true, 'Mistral route decision marks structured-output plan blocked')
+
+  const mistralVisionBody = buildOpenAIBodyForTest({
+    provider: mistralProvider,
+    model: 'pixtral-large-latest',
+    messages: [{ role: 'user', content: 'describe this image' }],
+    attachments: [{ type: 'image', name: 'screen.png', mimeType: 'image/png', base64: 'aGVsbG8=' }],
+    maxTokens: 1024,
+    stream: false,
+  })
+  assert.equal(mistralVisionBody.messages[0].content[1].type, 'image_url', 'Mistral vision requests use the documented image_url content part')
+  assert.equal(mistralVisionBody.messages[0].content[1].image_url.url, 'data:image/png;base64,aGVsbG8=', 'Mistral image_url parts preserve inline base64 data URLs')
+
+  const mistralToolReplayBody = buildOpenAIBodyForTest({
+    provider: mistralProvider,
+    model: 'mistral-medium-latest',
+    messages: [
+      { role: 'user', content: 'Need context.' },
+      {
+        role: 'assistant',
+        content: '',
+        toolCalls: [{
+          id: 'call_read_context',
+          name: 'read_context',
+          arguments: { query: 'IsleMind' },
+        }],
+      },
+      {
+        role: 'tool',
+        name: 'read_context',
+        toolCallId: 'call_read_context',
+        content: 'Context result.',
+      },
+    ],
+    maxTokens: 1024,
+    stream: false,
+  })
+  assert.deepEqual(
+    mistralToolReplayBody.messages[1].tool_calls[0],
+    { id: 'call_read_context', type: 'function', function: { name: 'read_context', arguments: '{"query":"IsleMind"}' } },
+    'Mistral tool replay keeps official OpenAI-compatible assistant tool_calls'
+  )
+  assert.deepEqual(
+    mistralToolReplayBody.messages[2],
+    { role: 'tool', tool_call_id: 'call_read_context', name: 'read_context', content: 'Context result.' },
+    'Mistral tool replay keeps official OpenAI-compatible tool result messages'
+  )
+
+  const mistralConformance = resolveProviderRequestConformanceForTest({
+    provider: mistralProvider,
+    model: 'mistral-medium-latest',
+    messages: [{ role: 'user', content: 'hello' }],
+    reasoningEffort: 'high',
+    maxTokens: 4096,
+  }, mistralToolBody)
+  assert.equal(mistralConformance.manifest.family, 'mistral', 'provider conformance classifies Mistral as its own family')
+  assert.equal(mistralConformance.manifest.protocol, 'openai-compatible', 'provider conformance records Mistral OpenAI-compatible protocol')
+  assert.equal(mistralConformance.manifest.payload.maxTokensField, 'max_tokens', 'provider conformance records Mistral max_tokens')
+  assert.equal(mistralConformance.manifest.modalities.input.image, true, 'provider conformance records Mistral image input support')
+  assert.equal(mistralConformance.manifest.modalities.input.file, false, 'provider conformance does not claim generic file_data support for Mistral')
+  assert.equal(mistralConformance.manifest.modalities.input.audio, false, 'provider conformance does not claim Mistral input_audio before runtime mapping exists')
+  assert.equal(mistralConformance.manifest.reasoning.supported, false, 'provider conformance keeps Mistral reasoning-effort controls disabled')
+  assert.equal(mistralConformance.manifest.tools.requestShape, 'openai-tools', 'provider conformance records OpenAI-format Mistral tool declarations')
+  assert.equal(mistralConformance.manifest.structuredOutput.contractClaimed, false, 'provider conformance does not claim Mistral response_format before app request controls exist')
+  assert.equal(mistralConformance.manifest.structuredOutput.documentedRequestShape, 'none', 'provider conformance leaves unclaimed Mistral structured-output shape unset')
+  assert.equal(mistralConformance.manifest.structuredOutput.appRequestControl, false, 'provider conformance records that Mistral structured-output request controls are not wired')
+  assert.equal(mistralConformance.manifest.source.confidence, 'source-backed', 'provider conformance links Mistral manifest to official docs')
+
+  const mistralFileBody = buildOpenAIBodyForTest({
+    provider: mistralProvider,
+    model: 'mistral-medium-latest',
+    messages: [{ role: 'user', content: 'summarize this document' }],
+    attachments: [{ type: 'file', name: 'notes.pdf', mimeType: 'application/pdf', base64: 'aGVsbG8=' }],
+    maxTokens: 1024,
+    stream: false,
+  })
+  assert.equal(mistralFileBody.messages[0].content[1].type, 'file', 'generic OpenAI-compatible builder still produces a file_data part for document attachments')
+  const mistralFileConformance = resolveProviderRequestConformanceForTest({
+    provider: mistralProvider,
+    model: 'mistral-medium-latest',
+    messages: [{ role: 'user', content: 'summarize this document' }],
+    attachments: [{ type: 'file', name: 'notes.pdf', mimeType: 'application/pdf', base64: 'aGVsbG8=' }],
+    maxTokens: 1024,
+  }, mistralFileBody)
+  assert.ok(
+    mistralFileConformance.issues.some((issue) => issue.code === 'unsupported_modality' && issue.field === 'file' && issue.severity === 'block'),
+    'Mistral conformance blocks generic file_data attachments until document_url or file upload routing exists'
+  )
+
+  const mistralParsedCompletion = parseProviderChatCompletionJson({
+    choices: [{
+      message: {
+        role: 'assistant',
+        content: [
+          { type: 'thinking', thinking: [{ type: 'text', text: 'Mistral reasoning trace.' }] },
+          { type: 'text', text: 'Mistral answer.' },
+        ],
+        tool_calls: [{
+          id: 'call_read_context',
+          type: 'function',
+          function: { name: 'read_context', arguments: '{"query":"IsleMind"}' },
+        }],
+      },
+    }],
+    usage: { prompt_tokens: 8, completion_tokens: 13, total_tokens: 21 },
+  }, {
+    provider: mistralProvider,
+    model: 'magistral-medium-latest',
+    messages: [{ role: 'user', content: 'hello' }],
+  })
+  assert.equal(mistralParsedCompletion.text, 'Mistral answer.', 'Mistral parser extracts text content chunks from Magistral responses')
+  assert.ok(mistralParsedCompletion.traces?.some((trace) => trace.content === 'Mistral reasoning trace.'), 'Mistral parser emits thinking content chunks as reasoning traces')
+  assert.equal(mistralParsedCompletion.providerToolCalls?.[0]?.name, 'read_context', 'Mistral parser extracts OpenAI-compatible tool calls')
+  assert.equal(mistralParsedCompletion.providerToolCalls?.[0]?.arguments?.query, 'IsleMind', 'Mistral parser parses tool-call arguments')
+  assert.equal(mistralParsedCompletion.usage?.totalTokens, 21, 'Mistral parser preserves usage metadata')
+
+  const mistralStream = parseProviderStreamChunkForTest([
+    `data: ${JSON.stringify({ choices: [{ delta: { content: [{ type: 'thinking', thinking: [{ type: 'text', text: 'Mistral stream thinking.' }] }] } }] })}`,
+    `data: ${JSON.stringify({ choices: [{ delta: { content: [{ type: 'text', text: 'Mistral ' }] } }] })}`,
+    `data: ${JSON.stringify({ choices: [{ delta: { content: [{ type: 'text', text: 'stream.' }] } }] })}`,
+    `data: ${JSON.stringify({ choices: [{ delta: { tool_calls: [{ index: 0, id: 'call_mistral_stream', type: 'function', function: { name: 'read_context', arguments: '{"query":' } }] } }] })}`,
+    `data: ${JSON.stringify({ choices: [{ delta: { tool_calls: [{ index: 0, function: { arguments: '"IsleMind"}' } }] } }] })}`,
+    '',
+  ].join('\n'), 'openai-compatible')
+  assert.equal(mistralStream.text, 'Mistral stream.', 'Mistral stream parser merges text content chunks')
+  assert.ok(mistralStream.traces.some((trace) => trace.content === 'Mistral stream thinking.'), 'Mistral stream parser emits thinking chunks as traces')
+  assert.equal(mistralStream.providerToolCalls?.[0]?.id, 'call_mistral_stream', 'Mistral stream parser preserves streamed tool-call ids')
+  assert.equal(mistralStream.providerToolCalls?.[0]?.arguments?.query, 'IsleMind', 'Mistral stream parser merges streamed tool-call arguments')
+
+  const mistralRateLimit = JSON.stringify({ message: 'Requests rate limit exceeded', request_id: 'mistral_req_1' })
+  assert.equal(classifyHttpStatus(429, mistralRateLimit), 'rate_limited', 'Mistral 429 errors classify as rate_limited')
+  assert.ok(extractProviderErrorDetail(mistralRateLimit).includes('mistral_req_1'), 'Mistral errors preserve request ids for diagnostics')
+}
+
+async function assertGroqProviderCompatibilityBehavior() {
+  const groqProvider = applyProviderPreset({
+    id: 'groq-focused',
+    baseUrl: 'https://api.groq.com/openai/v1',
+    [API_KEY_FIELD]: FAKE_KEY_A,
+    models: ['llama-3.3-70b-versatile', 'qwen3-32b', 'openai/gpt-oss-20b'],
+    enabled: true,
+  }, 'groq')
+  assert.equal(detectProviderPreset({ baseUrl: 'https://api.groq.com/openai/v1' }).presetId, 'groq', 'Groq detection keeps the official OpenAI-compatible base URL')
+  assert.equal(getAPIEndpointForTest(groqProvider), 'https://api.groq.com/openai/v1/chat/completions', 'Groq requests preserve the official chat completions endpoint')
+  assert.equal(resolveProviderEndpoint({ provider: groqProvider, model: 'llama-3.3-70b-versatile', stream: true, usesResponsesApi: true }), 'https://api.groq.com/openai/v1/responses', 'Groq Responses requests resolve to the official beta /responses endpoint')
+  assert.equal(getOpenAIChatMaxTokensField({ provider: groqProvider, model: 'llama-3.3-70b-versatile' }), 'max_completion_tokens', 'Groq chat requests use the official max_completion_tokens field')
+  assert.equal(groqProvider.capabilities.modelList, true, 'Groq preset keeps official model-list discovery')
+  assert.equal(groqProvider.capabilities.vision, true, 'Groq preset exposes image_url vision input')
+  assert.equal(groqProvider.capabilities.files, false, 'Groq preset does not claim generic file_data or Responses input_file attachments')
+  assert.equal(groqProvider.capabilities.audioInput, false, 'Groq preset does not claim input_audio chat mapping')
+  assert.equal(groqProvider.capabilities.audioTranscription, true, 'Groq preset exposes official speech-to-text endpoint support')
+  assert.equal(groqProvider.capabilities.speech, true, 'Groq preset exposes official text-to-speech endpoint support')
+  assert.equal(groqProvider.capabilities.nativeSearch, false, 'Groq preset does not claim Compound/web-search fields until the app maps them')
+  assert.equal(groqProvider.capabilities.reasoningEffort, true, 'Groq preset exposes documented reasoning_effort controls for supported model ids')
+  assert.equal(groqProvider.capabilities.nativeTools, true, 'Groq preset exposes OpenAI-format function tools')
+  assert.equal(groqProvider.capabilities.responsesApi, true, 'Groq preset exposes official beta Responses endpoint support')
+  assert.equal(openAIResponsesNativeWebSearchTool(groqProvider), undefined, 'Groq does not reuse OpenAI web_search_preview for unmapped Compound/web-search fields')
+  assert.equal(usesOpenAIResponses({ provider: groqProvider, model: 'llama-3.3-70b-versatile', webSearchMode: 'native' }), false, 'Groq native-search requests do not force Responses routing without a mapped nativeSearch capability')
+  assert.equal(
+    usesOpenAIResponses({
+      provider: groqProvider,
+      model: 'llama-3.3-70b-versatile',
+      attachments: [{ type: 'pdf', name: 'notes.pdf', mimeType: 'application/pdf', base64: 'aGVsbG8=' }],
+    }),
+    false,
+    'Groq file attachments do not force Responses routing while file support is unclaimed'
+  )
+
+  const originalFetch = global.fetch
+  const modelFetchCalls = []
+  try {
+    global.fetch = async (input, init = {}) => {
+      modelFetchCalls.push({ input: String(input), authorization: init.headers?.Authorization ?? init.headers?.authorization })
+      return {
+        ok: true,
+        status: 200,
+        headers: { get: (name) => name.toLowerCase() === 'content-type' ? 'application/json' : null },
+        text: async () => JSON.stringify({
+          data: [{
+            id: 'llama-3.3-70b-versatile',
+            object: 'model',
+            owned_by: 'groq',
+            context_window: 131072,
+          }],
+        }),
+        json: async () => ({
+          data: [{
+            id: 'llama-3.3-70b-versatile',
+            object: 'model',
+            owned_by: 'groq',
+            context_window: 131072,
+          }],
+        }),
+      }
+    }
+    const models = await fetchProviderModelConfigsFromRemote(groqProvider, 1000)
+    assert.equal(modelFetchCalls[0].input, 'https://api.groq.com/openai/v1/models', 'Groq model sync uses the official /models endpoint')
+    assert.equal(modelFetchCalls[0].authorization, `Bearer ${FAKE_KEY_A}`, 'Groq model sync uses bearer auth')
+    assert.equal(models[0].id, 'llama-3.3-70b-versatile', 'Groq model sync preserves remote model ids')
+  } finally {
+    global.fetch = originalFetch
+  }
+
+  const groqAudioCalls = []
+  try {
+    global.fetch = async (input, init = {}) => {
+      groqAudioCalls.push({ input: String(input), method: init.method, authorization: init.headers?.Authorization ?? init.headers?.authorization, body: init.body })
+      if (String(input).endsWith('/audio/transcriptions')) {
+        return new Response(JSON.stringify({ text: 'Groq transcript.' }), { status: 200, headers: { 'content-type': 'application/json' } })
+      }
+      if (String(input).endsWith('/audio/speech')) {
+        return new Response(new Uint8Array([1, 2, 3]), { status: 200 })
+      }
+      throw new Error(`Unexpected Groq audio endpoint ${input}`)
+    }
+    const transcript = await transcribeAudioWithProvider({
+      provider: groqProvider,
+      model: 'whisper-large-v3-turbo',
+      audioBase64: 'aGVsbG8=',
+      mimeType: 'audio/wav',
+      fileName: 'sample.wav',
+    })
+    assert.equal(groqAudioCalls[0].input, 'https://api.groq.com/openai/v1/audio/transcriptions', 'Groq audio transcription uses the official /audio/transcriptions endpoint')
+    assert.equal(groqAudioCalls[0].authorization, `Bearer ${FAKE_KEY_A}`, 'Groq audio transcription uses bearer auth')
+    assert.equal(typeof groqAudioCalls[0].body?.append, 'function', 'Groq audio transcription sends multipart form data')
+    assert.equal(transcript, 'Groq transcript.', 'Groq audio transcription parser extracts provider text')
+    const speech = await synthesizeSpeechWithProvider({
+      provider: groqProvider,
+      model: 'playai-tts',
+      text: 'hello world',
+      voice: 'Fritz-PlayAI',
+    })
+    assert.equal(groqAudioCalls[1].input, 'https://api.groq.com/openai/v1/audio/speech', 'Groq speech synthesis uses the official /audio/speech endpoint')
+    assert.equal(groqAudioCalls[1].authorization, `Bearer ${FAKE_KEY_A}`, 'Groq speech synthesis uses bearer auth')
+    assert.equal(JSON.parse(groqAudioCalls[1].body).model, 'playai-tts', 'Groq speech synthesis preserves the selected TTS model')
+    assert.equal(speech, 'AQID', 'Groq speech synthesis returns base64 audio')
+  } finally {
+    global.fetch = originalFetch
+  }
+
+  const providerToolDeclaration = {
+    type: 'function',
+    function: {
+      name: 'read_context',
+      description: 'Read local context.',
+      parameters: { type: 'object', properties: { query: { type: 'string' } }, required: ['query'] },
+    },
+  }
+  const groqToolBody = buildOpenAIBodyForTest({
+    provider: groqProvider,
+    model: 'qwen3-32b',
+    messages: [{ role: 'user', content: 'hello' }],
+    reasoningEffort: 'high',
+    maxTokens: 2048,
+    providerToolDeclarations: [providerToolDeclaration],
+  })
+  assert.equal(groqToolBody.model, 'qwen3-32b', 'Groq request body preserves the selected model id')
+  assert.equal(groqToolBody.max_completion_tokens, 2048, 'Groq request body uses max_completion_tokens')
+  assert.equal(groqToolBody.max_tokens, undefined, 'Groq request body avoids deprecated max_tokens')
+  assert.equal(groqToolBody.reasoning_effort, 'high', 'Groq Qwen3 reasoning requests send documented reasoning_effort')
+  assert.equal(groqToolBody.response_format, undefined, 'Groq structured-output docs are mapped, but IsleMind has no response_format request control yet')
+  assert.equal(groqToolBody.tools[0].function.name, 'read_context', 'Groq requests carry OpenAI-compatible tool declarations')
+
+  const groqQwenOffBody = buildOpenAIBodyForTest({
+    provider: groqProvider,
+    model: 'qwen3-32b',
+    messages: [{ role: 'user', content: 'answer directly' }],
+    reasoningEffort: 'none',
+    maxTokens: 1024,
+  })
+  assert.equal(groqQwenOffBody.reasoning_effort, 'none', 'Groq Qwen3 requests can disable reasoning with the documented none value')
+  const groqGptOssBody = buildOpenAIBodyForTest({
+    provider: groqProvider,
+    model: 'openai/gpt-oss-20b',
+    messages: [{ role: 'user', content: 'think carefully' }],
+    reasoningEffort: 'max',
+    maxTokens: 1024,
+  })
+  assert.equal(groqGptOssBody.reasoning_effort, 'high', 'Groq GPT-OSS requests downgrade max to the documented high reasoning_effort')
+  const groqGptOssOffBody = buildOpenAIBodyForTest({
+    provider: groqProvider,
+    model: 'openai/gpt-oss-20b',
+    messages: [{ role: 'user', content: 'answer directly' }],
+    reasoningEffort: 'none',
+    maxTokens: 1024,
+  })
+  assert.equal(groqGptOssOffBody.reasoning_effort, undefined, 'Groq GPT-OSS requests do not send unsupported none reasoning_effort')
+
+  const groqVisionBody = buildOpenAIBodyForTest({
+    provider: groqProvider,
+    model: 'meta-llama/llama-4-scout-17b-16e-instruct',
+    messages: [{ role: 'user', content: 'describe this image' }],
+    attachments: [{ type: 'image', name: 'screen.png', mimeType: 'image/png', base64: 'aGVsbG8=' }],
+    maxTokens: 1024,
+    stream: false,
+  })
+  assert.equal(groqVisionBody.messages[0].content[1].type, 'image_url', 'Groq vision requests use the documented image_url content part')
+  assert.equal(groqVisionBody.messages[0].content[1].image_url.url, 'data:image/png;base64,aGVsbG8=', 'Groq image_url parts preserve inline base64 data URLs')
+
+  const groqNativeSearchBody = getBodyForTest({
+    provider: groqProvider,
+    model: 'llama-3.3-70b-versatile',
+    messages: [{ role: 'user', content: 'latest Groq docs?' }],
+    webSearchMode: 'native',
+    maxTokens: 1024,
+    stream: false,
+    providerToolDeclarations: [providerToolDeclaration],
+  })
+  assert.equal(groqNativeSearchBody.input, undefined, 'Groq native-search requests stay on Chat Completions when nativeSearch is unclaimed')
+  assert.equal(groqNativeSearchBody.tools[0].type, 'function', 'Groq native-search fallback does not inject OpenAI web_search_preview')
+  assert.equal(groqNativeSearchBody.tools[0].function.name, 'read_context', 'Groq native-search fallback preserves app provider tools')
+
+  const groqResponsesProvider = {
+    ...groqProvider,
+    modelConfigs: [{
+      id: 'groq-responses-beta',
+      name: 'Groq Responses Beta',
+      provider: 'openai-compatible',
+      contextWindow: 131072,
+      maxTokens: 8192,
+      maxOutputTokens: 8192,
+      defaultMaxTokens: 2048,
+      supportsVision: true,
+      supportsFiles: false,
+      supportsTools: true,
+      preferredEndpoint: 'responses',
+      sourceUrl: 'https://console.groq.com/docs/responses-api',
+      verifiedAt: '2026-06-21',
+      source: 'remote',
+    }],
+  }
+  assert.equal(usesOpenAIResponses({ provider: groqResponsesProvider, model: 'groq-responses-beta' }), true, 'Groq uses Responses only when model metadata selects the beta endpoint')
+  const groqResponsesBody = getBodyForTest({
+    provider: groqResponsesProvider,
+    model: 'groq-responses-beta',
+    messages: [{ role: 'user', content: 'hello responses' }],
+    maxTokens: 1024,
+    stream: false,
+  })
+  assert.equal(groqResponsesBody.input[0].content, 'hello responses', 'Groq Responses body uses the Responses input array when selected')
+  assert.equal(groqResponsesBody.max_output_tokens, 1024, 'Groq Responses body uses max_output_tokens')
+  assert.equal(groqResponsesBody.tools, undefined, 'Groq Responses body does not inject native-search tools without a mapped capability')
+
+  const groqConformance = resolveProviderRequestConformanceForTest({
+    provider: groqProvider,
+    model: 'qwen3-32b',
+    messages: [{ role: 'user', content: 'hello' }],
+    reasoningEffort: 'high',
+    maxTokens: 2048,
+  }, groqToolBody)
+  assert.equal(groqConformance.manifest.family, 'groq', 'provider conformance classifies Groq as its own family')
+  assert.equal(groqConformance.manifest.protocol, 'openai-compatible', 'provider conformance records Groq OpenAI-compatible protocol')
+  assert.equal(groqConformance.manifest.payload.maxTokensField, 'max_completion_tokens', 'provider conformance records Groq max_completion_tokens')
+  assert.equal(groqConformance.manifest.modalities.input.image, true, 'provider conformance records Groq image input support')
+  assert.equal(groqConformance.manifest.modalities.input.file, false, 'provider conformance does not claim generic file support for Groq')
+  assert.equal(groqConformance.manifest.modalities.input.audio, false, 'provider conformance does not claim Groq input_audio chat routing')
+  assert.equal(groqConformance.manifest.modalities.output.speech, true, 'provider conformance records Groq speech output endpoint support')
+  assert.equal(groqConformance.manifest.reasoning.requestShape, 'groq-reasoning-effort', 'provider conformance records Groq reasoning_effort shape')
+  assert.equal(groqConformance.reasoning.providerValue, 'high', 'provider conformance normalizes Groq reasoning effort values')
+  assert.equal(groqConformance.manifest.tools.requestShape, 'openai-tools', 'provider conformance records OpenAI-format Groq tool declarations')
+  assert.equal(groqConformance.manifest.tools.nativeWebSearchToolType, undefined, 'provider conformance does not claim Groq native web-search tool mapping')
+  assert.equal(groqConformance.manifest.source.confidence, 'source-backed', 'provider conformance links Groq manifest to official docs')
+
+  const groqResponsesConformance = resolveProviderRequestConformanceForTest({
+    provider: groqResponsesProvider,
+    model: 'groq-responses-beta',
+    messages: [{ role: 'user', content: 'hello responses' }],
+    maxTokens: 1024,
+  }, groqResponsesBody)
+  assert.equal(groqResponsesConformance.manifest.protocol, 'openai-responses', 'provider conformance records Groq beta Responses protocol when selected')
+  assert.equal(groqResponsesConformance.manifest.payload.maxTokensField, 'max_output_tokens', 'provider conformance records Groq Responses max_output_tokens')
+
+  const groqFileBody = buildOpenAIBodyForTest({
+    provider: groqProvider,
+    model: 'llama-3.3-70b-versatile',
+    messages: [{ role: 'user', content: 'summarize this document' }],
+    attachments: [{ type: 'file', name: 'notes.pdf', mimeType: 'application/pdf', base64: 'aGVsbG8=' }],
+    maxTokens: 1024,
+    stream: false,
+  })
+  const groqFileConformance = resolveProviderRequestConformanceForTest({
+    provider: groqProvider,
+    model: 'llama-3.3-70b-versatile',
+    messages: [{ role: 'user', content: 'summarize this document' }],
+    attachments: [{ type: 'file', name: 'notes.pdf', mimeType: 'application/pdf', base64: 'aGVsbG8=' }],
+    maxTokens: 1024,
+  }, groqFileBody)
+  assert.ok(
+    groqFileConformance.issues.some((issue) => issue.code === 'unsupported_modality' && issue.field === 'file' && issue.severity === 'block'),
+    'Groq conformance blocks generic file attachments until provider-specific file routing exists'
+  )
+
+  const groqParsedCompletion = parseProviderChatCompletionJson({
+    choices: [{
+      message: {
+        role: 'assistant',
+        content: 'Groq answer.',
+        reasoning: 'Groq parsed reasoning.',
+        tool_calls: [{
+          id: 'call_read_context',
+          type: 'function',
+          function: { name: 'read_context', arguments: '{"query":"IsleMind"}' },
+        }],
+      },
+    }],
+    usage: { prompt_tokens: 8, completion_tokens: 13, total_tokens: 21 },
+  }, {
+    provider: groqProvider,
+    model: 'qwen3-32b',
+    messages: [{ role: 'user', content: 'hello' }],
+  })
+  assert.equal(groqParsedCompletion.text, 'Groq answer.', 'Groq parser extracts OpenAI-compatible response text')
+  assert.ok(groqParsedCompletion.traces?.some((trace) => trace.content === 'Groq parsed reasoning.'), 'Groq parser emits parsed reasoning as a reasoning trace')
+  assert.equal(groqParsedCompletion.providerToolCalls?.[0]?.name, 'read_context', 'Groq parser extracts OpenAI-compatible tool calls')
+  assert.equal(groqParsedCompletion.providerToolCalls?.[0]?.arguments?.query, 'IsleMind', 'Groq parser parses tool-call arguments')
+  assert.equal(groqParsedCompletion.usage?.totalTokens, 21, 'Groq parser preserves usage metadata')
+
+  const groqStream = parseProviderStreamChunkForTest([
+    `data: ${JSON.stringify({ choices: [{ delta: { reasoning: 'Groq stream thinking.' } }] })}`,
+    `data: ${JSON.stringify({ choices: [{ delta: { content: 'Groq ' } }] })}`,
+    `data: ${JSON.stringify({ choices: [{ delta: { content: 'stream.' } }] })}`,
+    `data: ${JSON.stringify({ choices: [{ delta: { tool_calls: [{ index: 0, id: 'call_groq_stream', type: 'function', function: { name: 'read_context', arguments: '{"query":' } }] } }] })}`,
+    `data: ${JSON.stringify({ choices: [{ delta: { tool_calls: [{ index: 0, function: { arguments: '"IsleMind"}' } }] } }] })}`,
+    '',
+  ].join('\n'), 'openai-compatible')
+  assert.equal(groqStream.text, 'Groq stream.', 'Groq stream parser merges OpenAI-compatible text deltas')
+  assert.ok(groqStream.traces.some((trace) => trace.content === 'Groq stream thinking.'), 'Groq stream parser emits reasoning deltas as traces')
+  assert.equal(groqStream.providerToolCalls?.[0]?.id, 'call_groq_stream', 'Groq stream parser preserves streamed tool-call ids')
+  assert.equal(groqStream.providerToolCalls?.[0]?.arguments?.query, 'IsleMind', 'Groq stream parser merges streamed tool-call arguments')
+
+  const groqRateLimit = JSON.stringify({ error: { type: 'rate_limit_exceeded', message: 'Too Many Requests', code: 'rate_limit_exceeded' } })
+  assert.equal(classifyHttpStatus(429, groqRateLimit), 'rate_limited', 'Groq 429 errors classify as rate_limited')
+  assert.ok(extractProviderErrorDetail(groqRateLimit).includes('Too Many Requests'), 'Groq errors preserve provider messages for diagnostics')
+}
+
+async function assertTogetherProviderCompatibilityBehavior() {
+  const togetherProvider = applyProviderPreset({
+    id: 'together-focused',
+    baseUrl: 'https://api.together.ai/v1',
+    [API_KEY_FIELD]: FAKE_KEY_A,
+    models: ['meta-llama/Llama-3.3-70B-Instruct-Turbo', 'openai/gpt-oss-20b'],
+    enabled: true,
+  }, 'together')
+  assert.equal(detectProviderPreset({ baseUrl: 'https://api.together.ai/v1' }).presetId, 'together', 'Together detection keeps the official OpenAI-compatible base URL')
+  assert.equal(getAPIEndpointForTest(togetherProvider), 'https://api.together.ai/v1/chat/completions', 'Together requests preserve the official chat completions endpoint')
+  assert.equal(getOpenAIChatMaxTokensField({ provider: togetherProvider, model: 'openai/gpt-oss-20b' }), 'max_tokens', 'Together chat requests use max_tokens')
+  assert.deepEqual(getReasoningEffortOptions(togetherProvider, 'openai/gpt-oss-20b'), ['low', 'medium', 'high'], 'Together GPT-OSS models expose documented reasoning_effort levels')
+  assert.deepEqual(getReasoningEffortOptions(togetherProvider, 'meta-llama/Llama-3.3-70B-Instruct-Turbo'), [], 'Together non-GPT-OSS models do not expose generic reasoning controls')
+  assert.equal(normalizeOpenAIReasoningEffort({ provider: togetherProvider, model: 'openai/gpt-oss-20b', reasoningEffort: 'max' }), 'high', 'Together GPT-OSS requests downgrade max to the documented high reasoning_effort')
+  assert.equal(normalizeOpenAIReasoningEffort({ provider: togetherProvider, model: 'openai/gpt-oss-20b', reasoningEffort: 'none' }), undefined, 'Together GPT-OSS requests do not send unsupported none reasoning_effort')
+  assert.equal(togetherProvider.capabilities.modelList, true, 'Together preset keeps official model-list discovery')
+  assert.equal(togetherProvider.capabilities.vision, true, 'Together preset exposes image_url vision input')
+  assert.equal(togetherProvider.capabilities.files, false, 'Together preset does not claim generic file_data chat attachments')
+  assert.equal(togetherProvider.capabilities.audioInput, false, 'Together preset does not claim chat audio_url input before attachment routing exists')
+  assert.equal(togetherProvider.capabilities.audioTranscription, true, 'Together preset exposes official speech-to-text endpoint support')
+  assert.equal(togetherProvider.capabilities.speech, true, 'Together preset exposes official text-to-speech endpoint support')
+  assert.equal(togetherProvider.capabilities.reasoningEffort, true, 'Together preset exposes GPT-OSS reasoning_effort controls')
+  assert.equal(togetherProvider.capabilities.nativeTools, true, 'Together preset exposes OpenAI-format function tools')
+  assert.equal(usesOpenAIResponses({ provider: togetherProvider, model: 'openai/gpt-oss-20b' }), false, 'Together keeps Chat Completions routing because it does not declare Responses API support')
+
+  const originalFetch = global.fetch
+  const modelFetchCalls = []
+  try {
+    global.fetch = async (input, init = {}) => {
+      modelFetchCalls.push({ input: String(input), authorization: init.headers?.Authorization ?? init.headers?.authorization })
+      return {
+        ok: true,
+        status: 200,
+        headers: { get: (name) => name.toLowerCase() === 'content-type' ? 'application/json' : null },
+        text: async () => JSON.stringify({
+          data: [{
+            id: 'meta-llama/Llama-3.3-70B-Instruct-Turbo',
+            object: 'model',
+            owned_by: 'together',
+            context_length: 131072,
+            metadata: { output_token_limit: 8192 },
+            architecture: { input_modalities: ['text', 'image'] },
+          }],
+        }),
+      }
+    }
+    const models = await fetchProviderModelConfigsFromRemote(togetherProvider, 1000)
+    assert.equal(modelFetchCalls[0].input, 'https://api.together.ai/v1/models', 'Together model sync uses the official /models endpoint')
+    assert.equal(modelFetchCalls[0].authorization, `Bearer ${FAKE_KEY_A}`, 'Together model sync uses bearer auth')
+    assert.equal(models[0].id, 'meta-llama/Llama-3.3-70B-Instruct-Turbo', 'Together model sync preserves remote model ids')
+    assert.equal(models[0].supportsVision, true, 'Together model sync preserves remote vision metadata')
+  } finally {
+    global.fetch = originalFetch
+  }
+
+  const togetherEmbeddingCalls = []
+  try {
+    global.fetch = async (input, init = {}) => {
+      togetherEmbeddingCalls.push({ input: String(input), body: init.body, authorization: init.headers?.Authorization ?? init.headers?.authorization })
+      return new Response(JSON.stringify({
+        data: [{ embedding: [0.21, 0.43, 0.65] }],
+      }), { status: 200 })
+    }
+    const embedding = await embedTextWithProvider({ ...togetherProvider, models: ['meta-llama/Llama-3.3-70B-Instruct-Turbo', 'together-embedding-v1'] }, 'hello world')
+    assert.equal(togetherEmbeddingCalls[0].input, 'https://api.together.ai/v1/embeddings', 'Together embeddings use the official /v1/embeddings endpoint')
+    assert.equal(togetherEmbeddingCalls[0].authorization, `Bearer ${FAKE_KEY_A}`, 'Together embeddings use bearer auth')
+    assert.equal(JSON.parse(togetherEmbeddingCalls[0].body).model, 'together-embedding-v1', 'Together embeddings prefer configured embedding models')
+    assert.deepEqual(embedding.embedding, [0.21, 0.43, 0.65], 'Together embeddings parser extracts vector values')
+    assert.equal(embedding.model, 'together-embedding-v1', 'Together embeddings result records the selected model')
+  } finally {
+    global.fetch = originalFetch
+  }
+
+  const togetherAudioCalls = []
+  try {
+    global.fetch = async (input, init = {}) => {
+      togetherAudioCalls.push({ input: String(input), method: init.method, authorization: init.headers?.Authorization ?? init.headers?.authorization, body: init.body })
+      if (String(input).endsWith('/audio/transcriptions')) {
+        return new Response(JSON.stringify({ text: 'Together transcript.' }), { status: 200, headers: { 'content-type': 'application/json' } })
+      }
+      if (String(input).endsWith('/audio/speech')) {
+        return new Response(new Uint8Array([4, 5, 6]), { status: 200 })
+      }
+      throw new Error(`Unexpected Together audio endpoint ${input}`)
+    }
+    const transcript = await transcribeAudioWithProvider({
+      provider: togetherProvider,
+      model: 'whisper-large-v3',
+      audioBase64: 'aGVsbG8=',
+      mimeType: 'audio/wav',
+      fileName: 'sample.wav',
+    })
+    assert.equal(togetherAudioCalls[0].input, 'https://api.together.ai/v1/audio/transcriptions', 'Together audio transcription uses the official /audio/transcriptions endpoint')
+    assert.equal(togetherAudioCalls[0].authorization, `Bearer ${FAKE_KEY_A}`, 'Together audio transcription uses bearer auth')
+    assert.equal(typeof togetherAudioCalls[0].body?.append, 'function', 'Together audio transcription sends multipart form data')
+    assert.equal(transcript, 'Together transcript.', 'Together audio transcription parser extracts provider text')
+    const speech = await synthesizeSpeechWithProvider({
+      provider: togetherProvider,
+      model: 'cartesia/sonic',
+      text: 'hello world',
+      voice: 'laidback woman',
+    })
+    assert.equal(togetherAudioCalls[1].input, 'https://api.together.ai/v1/audio/speech', 'Together speech synthesis uses the official /audio/speech endpoint')
+    assert.equal(togetherAudioCalls[1].authorization, `Bearer ${FAKE_KEY_A}`, 'Together speech synthesis uses bearer auth')
+    assert.equal(JSON.parse(togetherAudioCalls[1].body).model, 'cartesia/sonic', 'Together speech synthesis preserves the selected TTS model')
+    assert.equal(speech, 'BAUG', 'Together speech synthesis returns base64 audio')
+  } finally {
+    global.fetch = originalFetch
+  }
+
+  const providerToolDeclaration = {
+    type: 'function',
+    function: {
+      name: 'read_context',
+      description: 'Read local context.',
+      parameters: { type: 'object', properties: { query: { type: 'string' } }, required: ['query'] },
+    },
+  }
+  const togetherToolBody = buildOpenAIBodyForTest({
+    provider: togetherProvider,
+    model: 'openai/gpt-oss-20b',
+    messages: [{ role: 'user', content: 'hello' }],
+    reasoningEffort: 'high',
+    maxTokens: 2048,
+    providerToolDeclarations: [providerToolDeclaration],
+  })
+  assert.equal(togetherToolBody.model, 'openai/gpt-oss-20b', 'Together request body preserves the selected model id')
+  assert.equal(togetherToolBody.max_tokens, 2048, 'Together request body uses max_tokens')
+  assert.equal(togetherToolBody.max_completion_tokens, undefined, 'Together request body avoids max_completion_tokens')
+  assert.equal(togetherToolBody.reasoning_effort, 'high', 'Together GPT-OSS requests send documented reasoning_effort')
+  assert.equal(togetherToolBody.response_format, undefined, 'Together structured-output docs are mapped, but IsleMind has no response_format request control yet')
+  assert.equal(togetherToolBody.tools[0].function.name, 'read_context', 'Together requests carry OpenAI-compatible tool declarations')
+
+  const togetherPlainBody = buildOpenAIBodyForTest({
+    provider: togetherProvider,
+    model: 'meta-llama/Llama-3.3-70B-Instruct-Turbo',
+    messages: [{ role: 'user', content: 'hello' }],
+    reasoningEffort: 'high',
+    maxTokens: 1024,
+  })
+  assert.equal(togetherPlainBody.reasoning_effort, undefined, 'Together non-GPT-OSS requests avoid unsupported reasoning_effort')
+
+  const togetherVisionBody = buildOpenAIBodyForTest({
+    provider: togetherProvider,
+    model: 'meta-llama/Llama-3.3-70B-Instruct-Turbo',
+    messages: [{ role: 'user', content: 'describe this image' }],
+    attachments: [{ type: 'image', name: 'screen.png', mimeType: 'image/png', base64: 'aGVsbG8=' }],
+    maxTokens: 1024,
+    stream: false,
+  })
+  assert.equal(togetherVisionBody.messages[0].content[1].type, 'image_url', 'Together vision requests use the documented image_url content part')
+  assert.equal(togetherVisionBody.messages[0].content[1].image_url.url, 'data:image/png;base64,aGVsbG8=', 'Together image_url parts preserve inline base64 data URLs')
+
+  const togetherToolReplayBody = buildOpenAIBodyForTest({
+    provider: togetherProvider,
+    model: 'meta-llama/Llama-3.3-70B-Instruct-Turbo',
+    messages: [
+      { role: 'user', content: 'Need context.' },
+      {
+        role: 'assistant',
+        content: '',
+        toolCalls: [{
+          id: 'call_read_context',
+          name: 'read_context',
+          arguments: { query: 'IsleMind' },
+        }],
+      },
+      {
+        role: 'tool',
+        name: 'read_context',
+        toolCallId: 'call_read_context',
+        content: 'Context result.',
+      },
+    ],
+    maxTokens: 1024,
+    stream: false,
+  })
+  assert.deepEqual(
+    togetherToolReplayBody.messages[1].tool_calls[0],
+    { id: 'call_read_context', type: 'function', function: { name: 'read_context', arguments: '{"query":"IsleMind"}' } },
+    'Together tool replay keeps official OpenAI-compatible assistant tool_calls'
+  )
+  assert.deepEqual(
+    togetherToolReplayBody.messages[2],
+    { role: 'tool', tool_call_id: 'call_read_context', name: 'read_context', content: 'Context result.' },
+    'Together tool replay keeps official OpenAI-compatible tool result messages'
+  )
+
+  const togetherConformance = resolveProviderRequestConformanceForTest({
+    provider: togetherProvider,
+    model: 'openai/gpt-oss-20b',
+    messages: [{ role: 'user', content: 'hello' }],
+    reasoningEffort: 'high',
+    maxTokens: 2048,
+  }, togetherToolBody)
+  assert.equal(togetherConformance.manifest.family, 'together', 'provider conformance classifies Together as its own family')
+  assert.equal(togetherConformance.manifest.protocol, 'openai-compatible', 'provider conformance records Together OpenAI-compatible protocol')
+  assert.equal(togetherConformance.manifest.payload.maxTokensField, 'max_tokens', 'provider conformance records Together max_tokens')
+  assert.equal(togetherConformance.manifest.modalities.input.image, true, 'provider conformance records Together image input support')
+  assert.equal(togetherConformance.manifest.modalities.input.file, false, 'provider conformance does not claim generic file support for Together')
+  assert.equal(togetherConformance.manifest.modalities.input.audio, false, 'provider conformance does not claim Together chat audio_url before attachment routing exists')
+  assert.equal(togetherConformance.manifest.modalities.output.speech, true, 'provider conformance records Together speech output endpoint support')
+  assert.equal(togetherConformance.manifest.reasoning.requestShape, 'together-reasoning-effort', 'provider conformance records Together GPT-OSS reasoning_effort shape')
+  assert.equal(togetherConformance.reasoning.providerValue, 'high', 'provider conformance normalizes Together reasoning effort values')
+  assert.equal(togetherConformance.manifest.tools.requestShape, 'openai-tools', 'provider conformance records OpenAI-format Together tool declarations')
+  assert.equal(togetherConformance.manifest.source.confidence, 'source-backed', 'provider conformance links Together manifest to official docs')
+
+  const togetherFileBody = buildOpenAIBodyForTest({
+    provider: togetherProvider,
+    model: 'meta-llama/Llama-3.3-70B-Instruct-Turbo',
+    messages: [{ role: 'user', content: 'summarize this document' }],
+    attachments: [{ type: 'file', name: 'notes.pdf', mimeType: 'application/pdf', base64: 'aGVsbG8=' }],
+    maxTokens: 1024,
+    stream: false,
+  })
+  const togetherFileConformance = resolveProviderRequestConformanceForTest({
+    provider: togetherProvider,
+    model: 'meta-llama/Llama-3.3-70B-Instruct-Turbo',
+    messages: [{ role: 'user', content: 'summarize this document' }],
+    attachments: [{ type: 'file', name: 'notes.pdf', mimeType: 'application/pdf', base64: 'aGVsbG8=' }],
+    maxTokens: 1024,
+  }, togetherFileBody)
+  assert.ok(
+    togetherFileConformance.issues.some((issue) => issue.code === 'unsupported_modality' && issue.field === 'file' && issue.severity === 'block'),
+    'Together conformance blocks generic file attachments until provider-specific file routing exists'
+  )
+
+  const togetherParsedCompletion = parseProviderChatCompletionJson({
+    choices: [{
+      message: {
+        role: 'assistant',
+        content: 'Together answer.',
+        reasoning: 'Together parsed reasoning.',
+        tool_calls: [{
+          id: 'call_read_context',
+          type: 'function',
+          function: { name: 'read_context', arguments: '{"query":"IsleMind"}' },
+        }],
+      },
+    }],
+    usage: { prompt_tokens: 8, completion_tokens: 13, total_tokens: 21 },
+  }, {
+    provider: togetherProvider,
+    model: 'openai/gpt-oss-20b',
+    messages: [{ role: 'user', content: 'hello' }],
+  })
+  assert.equal(togetherParsedCompletion.text, 'Together answer.', 'Together parser extracts OpenAI-compatible response text')
+  assert.ok(togetherParsedCompletion.traces?.some((trace) => trace.content === 'Together parsed reasoning.'), 'Together parser emits parsed reasoning as a reasoning trace')
+  assert.equal(togetherParsedCompletion.providerToolCalls?.[0]?.name, 'read_context', 'Together parser extracts OpenAI-compatible tool calls')
+  assert.equal(togetherParsedCompletion.providerToolCalls?.[0]?.arguments?.query, 'IsleMind', 'Together parser parses tool-call arguments')
+  assert.equal(togetherParsedCompletion.usage?.totalTokens, 21, 'Together parser preserves usage metadata')
+
+  const togetherStream = parseProviderStreamChunkForTest([
+    `data: ${JSON.stringify({ choices: [{ delta: { reasoning: 'Together stream thinking.' } }] })}`,
+    `data: ${JSON.stringify({ choices: [{ delta: { content: 'Together ' } }] })}`,
+    `data: ${JSON.stringify({ choices: [{ delta: { content: 'stream.' } }] })}`,
+    `data: ${JSON.stringify({ choices: [{ delta: { tool_calls: [{ index: 0, id: 'call_together_stream', type: 'function', function: { name: 'read_context', arguments: '{"query":' } }] } }] })}`,
+    `data: ${JSON.stringify({ choices: [{ delta: { tool_calls: [{ index: 0, function: { arguments: '"IsleMind"}' } }] } }] })}`,
+    '',
+  ].join('\n'), 'openai-compatible')
+  assert.equal(togetherStream.text, 'Together stream.', 'Together stream parser merges OpenAI-compatible text deltas')
+  assert.ok(togetherStream.traces.some((trace) => trace.content === 'Together stream thinking.'), 'Together stream parser emits reasoning deltas as traces')
+  assert.equal(togetherStream.providerToolCalls?.[0]?.id, 'call_together_stream', 'Together stream parser preserves streamed tool-call ids')
+  assert.equal(togetherStream.providerToolCalls?.[0]?.arguments?.query, 'IsleMind', 'Together stream parser merges streamed tool-call arguments')
+
+  const togetherRateLimit = JSON.stringify({ error: { type: 'rate_limit', message: 'Rate limit exceeded' } })
+  assert.equal(classifyHttpStatus(429, togetherRateLimit), 'rate_limited', 'Together 429 errors classify as rate_limited')
+  assert.ok(extractProviderErrorDetail(togetherRateLimit).includes('Rate limit exceeded'), 'Together errors preserve provider messages for diagnostics')
+}
+
+async function assertFireworksProviderCompatibilityBehavior() {
+  const fireworksProvider = applyProviderPreset({
+    id: 'fireworks-focused',
+    baseUrl: 'https://api.fireworks.ai/inference/v1',
+    [API_KEY_FIELD]: FAKE_KEY_A,
+    models: ['accounts/fireworks/models/qwen3-235b-a22b', 'accounts/fireworks/models/gpt-oss-120b'],
+    enabled: true,
+  }, 'fireworks')
+  assert.equal(detectProviderPreset({ baseUrl: 'https://api.fireworks.ai/inference/v1' }).presetId, 'fireworks', 'Fireworks detection keeps the official OpenAI-compatible base URL')
+  assert.equal(getAPIEndpointForTest(fireworksProvider), 'https://api.fireworks.ai/inference/v1/chat/completions', 'Fireworks requests preserve the official chat completions endpoint')
+  assert.equal(getOpenAIChatMaxTokensField({ provider: fireworksProvider, model: 'accounts/fireworks/models/qwen3-235b-a22b' }), 'max_tokens', 'Fireworks chat requests use max_tokens')
+  assert.deepEqual(getReasoningEffortOptions(fireworksProvider, 'accounts/fireworks/models/qwen3-235b-a22b'), ['none', 'low', 'medium', 'high'], 'Fireworks Qwen3 models expose documented reasoning_effort levels')
+  assert.deepEqual(getReasoningEffortOptions(fireworksProvider, 'accounts/fireworks/models/deepseek-v4'), ['none', 'low', 'medium', 'high', 'xhigh', 'max'], 'Fireworks DeepSeek V4 exposes documented high/max reasoning tiers')
+  assert.deepEqual(getReasoningEffortOptions(fireworksProvider, 'accounts/fireworks/models/glm-5.2'), ['none', 'high', 'max'], 'Fireworks GLM 5.2 exposes documented High and Max reasoning tiers')
+  assert.deepEqual(getReasoningEffortOptions(fireworksProvider, 'accounts/fireworks/models/gpt-oss-120b'), ['low', 'medium', 'high'], 'Fireworks Harmony GPT-OSS models expose documented low/medium/high reasoning')
+  assert.deepEqual(getReasoningEffortOptions(fireworksProvider, 'accounts/fireworks/models/llama-v3p3-70b-instruct'), [], 'Fireworks non-reasoning chat models do not expose generic reasoning controls')
+  assert.equal(normalizeOpenAIReasoningEffort({ provider: fireworksProvider, model: 'accounts/fireworks/models/qwen3-235b-a22b', reasoningEffort: 'max' }), 'high', 'Fireworks Qwen3 requests downgrade max to the documented high reasoning_effort')
+  assert.equal(normalizeOpenAIReasoningEffort({ provider: fireworksProvider, model: 'accounts/fireworks/models/deepseek-v4', reasoningEffort: 'xhigh' }), 'max', 'Fireworks DeepSeek V4 requests promote xhigh to max')
+  assert.equal(normalizeOpenAIReasoningEffort({ provider: fireworksProvider, model: 'accounts/fireworks/models/glm-5.2', reasoningEffort: 'medium' }), 'high', 'Fireworks GLM 5.2 requests collapse medium to high')
+  assert.equal(normalizeOpenAIReasoningEffort({ provider: fireworksProvider, model: 'accounts/fireworks/models/gpt-oss-120b', reasoningEffort: 'none' }), undefined, 'Fireworks GPT-OSS requests do not send unsupported none reasoning_effort')
+  assert.equal(fireworksProvider.capabilities.modelList, true, 'Fireworks preset keeps official model-list discovery')
+  assert.equal(fireworksProvider.capabilities.vision, true, 'Fireworks preset exposes image_url vision input')
+  assert.equal(fireworksProvider.capabilities.files, false, 'Fireworks preset does not claim generic file_data chat attachments')
+  assert.equal(fireworksProvider.capabilities.audioInput, false, 'Fireworks preset does not claim chat audio/video inputs before attachment routing exists')
+  assert.equal(fireworksProvider.capabilities.audioTranscription, false, 'Fireworks preset does not claim an audio transcription endpoint')
+  assert.equal(fireworksProvider.capabilities.speech, false, 'Fireworks preset does not claim a text-to-speech endpoint')
+  assert.equal(fireworksProvider.capabilities.responsesApi, true, 'Fireworks preset records official Responses API availability')
+  assert.equal(fireworksProvider.capabilities.reasoningEffort, true, 'Fireworks preset exposes documented reasoning_effort controls')
+  assert.equal(fireworksProvider.capabilities.nativeTools, true, 'Fireworks preset exposes OpenAI-format function tools')
+  assert.equal(usesOpenAIResponses({ provider: fireworksProvider, model: 'accounts/fireworks/models/qwen3-235b-a22b' }), false, 'Fireworks keeps Chat Completions routing unless model metadata selects Responses')
+  assert.equal(
+    usesOpenAIResponses({
+      provider: fireworksProvider,
+      model: 'accounts/fireworks/models/qwen3-235b-a22b',
+      attachments: [{ type: 'file', name: 'notes.pdf', mimeType: 'application/pdf', base64: 'aGVsbG8=' }],
+    }),
+    false,
+    'Fireworks generic file attachments do not force Responses routing because files are not mapped'
+  )
+
+  const fireworksResponsesProvider = {
+    ...fireworksProvider,
+    modelConfigs: [{
+      id: 'accounts/fireworks/models/response-test',
+      name: 'Fireworks Response Test',
+      provider: 'openai-compatible',
+      contextWindow: 131072,
+      maxTokens: 131072,
+      maxOutputTokens: 8192,
+      defaultMaxTokens: 2048,
+      supportsVision: true,
+      supportsTools: true,
+      supportsStreaming: true,
+      preferredEndpoint: 'responses',
+      source: 'remote',
+    }],
+  }
+  assert.equal(usesOpenAIResponses({ provider: fireworksResponsesProvider, model: 'accounts/fireworks/models/response-test' }), true, 'Fireworks uses Responses only when model metadata selects the Responses endpoint')
+
+  const originalFetch = global.fetch
+  const modelFetchCalls = []
+  try {
+    global.fetch = async (input, init = {}) => {
+      modelFetchCalls.push({ input: String(input), authorization: init.headers?.Authorization ?? init.headers?.authorization })
+      return {
+        ok: true,
+        status: 200,
+        headers: { get: (name) => name.toLowerCase() === 'content-type' ? 'application/json' : null },
+        text: async () => JSON.stringify({
+          data: [{
+            id: 'accounts/fireworks/models/qwen3-235b-a22b',
+            object: 'model',
+            owned_by: 'fireworks',
+            context_length: 131072,
+            metadata: { output_token_limit: 8192 },
+            architecture: { input_modalities: ['text', 'image'] },
+          }],
+        }),
+      }
+    }
+    const models = await fetchProviderModelConfigsFromRemote(fireworksProvider, 1000)
+    assert.equal(modelFetchCalls[0].input, 'https://api.fireworks.ai/inference/v1/models', 'Fireworks model sync uses the official /models endpoint')
+    assert.equal(modelFetchCalls[0].authorization, `Bearer ${FAKE_KEY_A}`, 'Fireworks model sync uses bearer auth')
+    assert.equal(models[0].id, 'accounts/fireworks/models/qwen3-235b-a22b', 'Fireworks model sync preserves remote model ids')
+    assert.equal(models[0].supportsVision, true, 'Fireworks model sync preserves remote vision metadata')
+  } finally {
+    global.fetch = originalFetch
+  }
+
+  const fireworksEmbeddingCalls = []
+  try {
+    global.fetch = async (input, init = {}) => {
+      fireworksEmbeddingCalls.push({ input: String(input), body: init.body, authorization: init.headers?.Authorization ?? init.headers?.authorization })
+      return new Response(JSON.stringify({
+        data: [{ embedding: [0.31, 0.53, 0.75] }],
+      }), { status: 200 })
+    }
+    const embedding = await embedTextWithProvider({ ...fireworksProvider, models: ['accounts/fireworks/models/qwen3-235b-a22b', 'nomic-ai/nomic-embed-text-v1.5'] }, 'hello world')
+    assert.equal(fireworksEmbeddingCalls[0].input, 'https://api.fireworks.ai/inference/v1/embeddings', 'Fireworks embeddings use the official /inference/v1/embeddings endpoint')
+    assert.equal(fireworksEmbeddingCalls[0].authorization, `Bearer ${FAKE_KEY_A}`, 'Fireworks embeddings use bearer auth')
+    assert.equal(JSON.parse(fireworksEmbeddingCalls[0].body).model, 'nomic-ai/nomic-embed-text-v1.5', 'Fireworks embeddings prefer configured embedding models')
+    assert.deepEqual(embedding.embedding, [0.31, 0.53, 0.75], 'Fireworks embeddings parser extracts vector values')
+    assert.equal(embedding.model, 'nomic-ai/nomic-embed-text-v1.5', 'Fireworks embeddings result records the selected model')
+  } finally {
+    global.fetch = originalFetch
+  }
+
+  const providerToolDeclaration = {
+    type: 'function',
+    function: {
+      name: 'read_context',
+      description: 'Read local context.',
+      parameters: { type: 'object', properties: { query: { type: 'string' } }, required: ['query'] },
+    },
+  }
+  const fireworksToolBody = buildOpenAIBodyForTest({
+    provider: fireworksProvider,
+    model: 'accounts/fireworks/models/qwen3-235b-a22b',
+    messages: [{ role: 'user', content: 'hello' }],
+    reasoningEffort: 'high',
+    maxTokens: 2048,
+    providerToolDeclarations: [providerToolDeclaration],
+  })
+  assert.equal(fireworksToolBody.model, 'accounts/fireworks/models/qwen3-235b-a22b', 'Fireworks request body preserves the selected model id')
+  assert.equal(fireworksToolBody.max_tokens, 2048, 'Fireworks request body uses max_tokens')
+  assert.equal(fireworksToolBody.max_completion_tokens, undefined, 'Fireworks request body avoids max_completion_tokens because it is only an alias')
+  assert.equal(fireworksToolBody.reasoning_effort, 'high', 'Fireworks Qwen3 requests send documented reasoning_effort')
+  assert.equal(fireworksToolBody.response_format, undefined, 'Fireworks structured-output docs are mapped, but IsleMind has no response_format request control yet')
+  assert.equal(fireworksToolBody.tools[0].function.name, 'read_context', 'Fireworks requests carry OpenAI-compatible tool declarations')
+
+  const fireworksGptOssOffBody = buildOpenAIBodyForTest({
+    provider: fireworksProvider,
+    model: 'accounts/fireworks/models/gpt-oss-120b',
+    messages: [{ role: 'user', content: 'hello' }],
+    reasoningEffort: 'none',
+    maxTokens: 1024,
+  })
+  assert.equal(fireworksGptOssOffBody.reasoning_effort, undefined, 'Fireworks GPT-OSS requests avoid unsupported none reasoning_effort')
+
+  const fireworksVisionBody = buildOpenAIBodyForTest({
+    provider: fireworksProvider,
+    model: 'accounts/fireworks/models/qwen3-vl',
+    messages: [{ role: 'user', content: 'describe this image' }],
+    attachments: [{ type: 'image', name: 'screen.png', mimeType: 'image/png', base64: 'aGVsbG8=' }],
+    maxTokens: 1024,
+    stream: false,
+  })
+  assert.equal(fireworksVisionBody.messages[0].content[1].type, 'image_url', 'Fireworks vision requests use the documented image_url content part')
+  assert.equal(fireworksVisionBody.messages[0].content[1].image_url.url, 'data:image/png;base64,aGVsbG8=', 'Fireworks image_url parts preserve inline base64 data URLs')
+
+  const fireworksToolReplayBody = buildOpenAIBodyForTest({
+    provider: fireworksProvider,
+    model: 'accounts/fireworks/models/qwen3-235b-a22b',
+    messages: [
+      { role: 'user', content: 'Need context.' },
+      {
+        role: 'assistant',
+        content: '',
+        reasoningContent: 'Fireworks previous thinking.',
+        toolCalls: [{
+          id: 'call_read_context',
+          name: 'read_context',
+          arguments: { query: 'IsleMind' },
+        }],
+      },
+      {
+        role: 'tool',
+        name: 'read_context',
+        toolCallId: 'call_read_context',
+        content: 'Context result.',
+      },
+    ],
+    maxTokens: 1024,
+    stream: false,
+  })
+  assert.equal(fireworksToolReplayBody.messages[1].reasoning_content, 'Fireworks previous thinking.', 'Fireworks tool replay includes documented reasoning_content for interleaved thinking')
+  assert.deepEqual(
+    fireworksToolReplayBody.messages[1].tool_calls[0],
+    { id: 'call_read_context', type: 'function', function: { name: 'read_context', arguments: '{"query":"IsleMind"}' } },
+    'Fireworks tool replay keeps official OpenAI-compatible assistant tool_calls'
+  )
+
+  const fireworksConformance = resolveProviderRequestConformanceForTest({
+    provider: fireworksProvider,
+    model: 'accounts/fireworks/models/qwen3-235b-a22b',
+    messages: [{ role: 'user', content: 'hello' }],
+    reasoningEffort: 'high',
+    maxTokens: 2048,
+  }, fireworksToolBody)
+  assert.equal(fireworksConformance.manifest.family, 'fireworks', 'provider conformance classifies Fireworks as its own family')
+  assert.equal(fireworksConformance.manifest.protocol, 'openai-compatible', 'provider conformance records Fireworks OpenAI-compatible protocol')
+  assert.equal(fireworksConformance.manifest.payload.maxTokensField, 'max_tokens', 'provider conformance records Fireworks max_tokens')
+  assert.equal(fireworksConformance.manifest.modalities.input.image, true, 'provider conformance records Fireworks image input support')
+  assert.equal(fireworksConformance.manifest.modalities.input.file, false, 'provider conformance does not claim generic file support for Fireworks')
+  assert.equal(fireworksConformance.manifest.modalities.input.audio, false, 'provider conformance does not claim Fireworks chat audio/video before attachment routing exists')
+  assert.equal(fireworksConformance.manifest.modalities.output.speech, false, 'provider conformance does not claim Fireworks speech output')
+  assert.equal(fireworksConformance.manifest.reasoning.requestShape, 'fireworks-reasoning-effort', 'provider conformance records Fireworks reasoning_effort shape')
+  assert.equal(fireworksConformance.reasoning.providerValue, 'high', 'provider conformance normalizes Fireworks reasoning effort values')
+  assert.equal(fireworksConformance.manifest.payload.reasoningStatePreservationField, 'reasoning_content', 'provider conformance records Fireworks reasoning_content preservation')
+  assert.equal(fireworksConformance.manifest.tools.requestShape, 'openai-tools', 'provider conformance records OpenAI-format Fireworks tool declarations')
+  assert.equal(fireworksConformance.manifest.source.confidence, 'source-backed', 'provider conformance links Fireworks manifest to official docs')
+
+  const fireworksResponseConformance = resolveProviderRequestConformanceForTest({
+    provider: fireworksResponsesProvider,
+    model: 'accounts/fireworks/models/response-test',
+    messages: [{ role: 'user', content: 'hello' }],
+    maxTokens: 1024,
+  }, buildOpenAIResponsesBodyForTest({
+    provider: fireworksResponsesProvider,
+    model: 'accounts/fireworks/models/response-test',
+    messages: [{ role: 'user', content: 'hello' }],
+    maxTokens: 1024,
+  }))
+  assert.equal(fireworksResponseConformance.manifest.protocol, 'openai-responses', 'provider conformance records Fireworks Responses only for Responses-selected models')
+
+  const fireworksFileBody = buildOpenAIBodyForTest({
+    provider: fireworksProvider,
+    model: 'accounts/fireworks/models/qwen3-235b-a22b',
+    messages: [{ role: 'user', content: 'summarize this document' }],
+    attachments: [{ type: 'file', name: 'notes.pdf', mimeType: 'application/pdf', base64: 'aGVsbG8=' }],
+    maxTokens: 1024,
+    stream: false,
+  })
+  const fireworksFileConformance = resolveProviderRequestConformanceForTest({
+    provider: fireworksProvider,
+    model: 'accounts/fireworks/models/qwen3-235b-a22b',
+    messages: [{ role: 'user', content: 'summarize this document' }],
+    attachments: [{ type: 'file', name: 'notes.pdf', mimeType: 'application/pdf', base64: 'aGVsbG8=' }],
+    maxTokens: 1024,
+  }, fireworksFileBody)
+  assert.ok(
+    fireworksFileConformance.issues.some((issue) => issue.code === 'unsupported_modality' && issue.field === 'file' && issue.severity === 'block'),
+    'Fireworks conformance blocks generic file attachments until provider-specific Files API routing exists'
+  )
+
+  const fireworksParsedCompletion = parseProviderChatCompletionJson({
+    choices: [{
+      message: {
+        role: 'assistant',
+        content: 'Fireworks answer.',
+        reasoning_content: 'Fireworks parsed reasoning.',
+        tool_calls: [{
+          id: 'call_read_context',
+          type: 'function',
+          function: { name: 'read_context', arguments: '{"query":"IsleMind"}' },
+        }],
+      },
+    }],
+    usage: { prompt_tokens: 8, completion_tokens: 13, total_tokens: 21 },
+  }, {
+    provider: fireworksProvider,
+    model: 'accounts/fireworks/models/qwen3-235b-a22b',
+    messages: [{ role: 'user', content: 'hello' }],
+  })
+  assert.equal(fireworksParsedCompletion.text, 'Fireworks answer.', 'Fireworks parser extracts OpenAI-compatible response text')
+  assert.ok(fireworksParsedCompletion.traces?.some((trace) => trace.content === 'Fireworks parsed reasoning.'), 'Fireworks parser emits parsed reasoning_content as a reasoning trace')
+  assert.equal(fireworksParsedCompletion.providerToolCalls?.[0]?.name, 'read_context', 'Fireworks parser extracts OpenAI-compatible tool calls')
+  assert.equal(fireworksParsedCompletion.providerToolCalls?.[0]?.arguments?.query, 'IsleMind', 'Fireworks parser parses tool-call arguments')
+  assert.equal(fireworksParsedCompletion.usage?.totalTokens, 21, 'Fireworks parser preserves usage metadata')
+
+  const fireworksStream = parseProviderStreamChunkForTest([
+    `data: ${JSON.stringify({ choices: [{ delta: { reasoning_content: 'Fireworks stream thinking.' } }] })}`,
+    `data: ${JSON.stringify({ choices: [{ delta: { content: 'Fireworks ' } }] })}`,
+    `data: ${JSON.stringify({ choices: [{ delta: { content: 'stream.' } }] })}`,
+    `data: ${JSON.stringify({ choices: [{ delta: { tool_calls: [{ index: 0, id: 'call_fireworks_stream', type: 'function', function: { name: 'read_context', arguments: '{"query":' } }] } }] })}`,
+    `data: ${JSON.stringify({ choices: [{ delta: { tool_calls: [{ index: 0, function: { arguments: '"IsleMind"}' } }] } }] })}`,
+    '',
+  ].join('\n'), 'openai-compatible')
+  assert.equal(fireworksStream.text, 'Fireworks stream.', 'Fireworks stream parser merges OpenAI-compatible text deltas')
+  assert.ok(fireworksStream.traces.some((trace) => trace.content === 'Fireworks stream thinking.'), 'Fireworks stream parser emits reasoning_content deltas as traces')
+  assert.equal(fireworksStream.providerToolCalls?.[0]?.id, 'call_fireworks_stream', 'Fireworks stream parser preserves streamed tool-call ids')
+  assert.equal(fireworksStream.providerToolCalls?.[0]?.arguments?.query, 'IsleMind', 'Fireworks stream parser merges streamed tool-call arguments')
+
+  const fireworksRateLimit = JSON.stringify({ error: { code: 'rate_limit_exceeded', message: 'Rate limit exceeded' } })
+  assert.equal(classifyHttpStatus(429, fireworksRateLimit), 'rate_limited', 'Fireworks 429 errors classify as rate_limited')
+  assert.ok(extractProviderErrorDetail(fireworksRateLimit).includes('Rate limit exceeded'), 'Fireworks errors preserve provider messages for diagnostics')
+}
+
+async function assertPerplexityProviderCompatibilityBehavior() {
+  const perplexityProvider = applyProviderPreset({
+    id: 'perplexity-sonar',
+    apiKey: FAKE_KEY_A,
+    models: ['sonar', 'sonar-pro', 'sonar-reasoning-pro', 'sonar-deep-research'],
+    enabled: true,
+  }, 'perplexity')
+
+  assert.equal(isPerplexityProvider(perplexityProvider), true, 'Perplexity identity helper detects Sonar providers')
+  assert.equal(getAPIEndpointForTest(perplexityProvider), 'https://api.perplexity.ai/v1/sonar', 'Perplexity routes chat through the official /v1/sonar endpoint')
+  assert.equal(getAPIEndpointForTest({ ...perplexityProvider, baseUrl: 'https://api.perplexity.ai/v1' }), 'https://api.perplexity.ai/v1/sonar', 'Perplexity strips /v1 base URLs before appending /v1/sonar')
+  assert.equal(getAPIEndpointForTest({ ...perplexityProvider, baseUrl: 'https://api.perplexity.ai/v1/sonar' }), 'https://api.perplexity.ai/v1/sonar', 'Perplexity keeps direct /v1/sonar URLs stable')
+  assert.equal(getAPIEndpointForTest({ ...perplexityProvider, baseUrl: 'https://api.perplexity.ai/chat/completions' }), 'https://api.perplexity.ai/v1/sonar', 'Perplexity migrates older chat-completions URLs to Sonar routing')
+  assert.equal(perplexityProvider.capabilities.modelList, false, 'Perplexity suppresses generic /models sync because Sonar docs do not expose it')
+  assert.equal(perplexityProvider.capabilities.nativeSearch, true, 'Perplexity records provider-native Sonar search')
+  assert.equal(perplexityProvider.capabilities.vision, true, 'Perplexity exposes documented image_url media input')
+  assert.equal(perplexityProvider.capabilities.files, true, 'Perplexity exposes documented file_url media input')
+  assert.equal(perplexityProvider.capabilities.nativeTools, false, 'Perplexity does not claim OpenAI-format function tools')
+  assert.equal(perplexityProvider.capabilities.responsesApi, false, 'Perplexity does not claim OpenAI Responses API routing')
+  assert.equal(getModelConfig('sonar-pro', 'openai-compatible').contextWindow, 200000, 'Perplexity Sonar Pro model metadata records the documented 200K context window')
+  assert.equal(getModelConfig('sonar', 'openai-compatible').contextWindow, 128000, 'Perplexity Sonar model metadata records the documented 128K context window')
+  assert.equal(getModelConfig('sonar-reasoning-pro', 'openai-compatible').reasoningMode, 'perplexity-reasoning-effort', 'Perplexity reasoning model metadata records the Sonar reasoning_effort shape')
+  assert.deepEqual(getReasoningEffortOptions(perplexityProvider, 'sonar-reasoning-pro'), ['minimal', 'low', 'medium', 'high'], 'Perplexity reasoning models expose documented minimal/low/medium/high efforts')
+  assert.deepEqual(getReasoningEffortOptions(perplexityProvider, 'sonar'), [], 'Plain Sonar does not expose reasoning controls')
+  assert.equal(normalizeOpenAIReasoningEffort({ provider: perplexityProvider, model: 'sonar-reasoning-pro', reasoningEffort: 'max' }), 'high', 'Perplexity oversized UI efforts normalize to documented high')
+  assert.equal(normalizeOpenAIReasoningEffort({ provider: perplexityProvider, model: 'sonar-reasoning-pro', reasoningEffort: 'none' }), undefined, 'Perplexity omits unsupported none reasoning_effort')
+  assert.equal(getOpenAIChatMaxTokensField({ provider: perplexityProvider, model: 'sonar-pro' }), 'max_tokens', 'Perplexity uses the documented max_tokens field')
+  assert.equal(usesOpenAIResponses({ provider: perplexityProvider, model: 'sonar-pro', webSearchMode: 'native' }), false, 'Perplexity native search does not force OpenAI Responses routing')
+  assert.equal(
+    usesOpenAIResponses({
+      provider: perplexityProvider,
+      model: 'sonar-pro',
+      attachments: [{ type: 'file', name: 'notes.pdf', mimeType: 'application/pdf', base64: 'aGVsbG8=' }],
+    }),
+    false,
+    'Perplexity file_url attachments stay on the Sonar chat endpoint rather than Responses'
+  )
+  assert.equal(openAIResponsesNativeWebSearchTool(perplexityProvider), undefined, 'Perplexity native search is not mapped to OpenAI web_search_preview tools')
+  assert.deepEqual(
+    openAICompatibleAttachmentPart({ id: 'perplexity-file', type: 'file', uri: 'file://doc.pdf', name: 'doc.pdf', mimeType: 'application/pdf', size: 12, base64: 'aGVsbG8=' }, perplexityProvider),
+    { type: 'file_url', file_url: { url: 'aGVsbG8=' } },
+    'Perplexity file attachments use file_url with a raw base64 string and no data URL prefix'
+  )
+
+  const perplexityBody = buildOpenAIBodyForTest({
+    provider: perplexityProvider,
+    model: 'sonar-reasoning-pro',
+    messages: [{ role: 'user', content: 'Summarize this document and image.' }],
+    attachments: [
+      { type: 'image', name: 'screen.png', mimeType: 'image/png', base64: 'aW1n' },
+      { type: 'file', name: 'notes.pdf', mimeType: 'application/pdf', base64: 'aGVsbG8=' },
+    ],
+    reasoningEffort: 'max',
+    maxTokens: 2048,
+    stream: false,
+    webSearchMode: 'native',
+  })
+  assert.equal(perplexityBody.max_tokens, 2048, 'Perplexity request body uses max_tokens')
+  assert.equal(perplexityBody.max_completion_tokens, undefined, 'Perplexity request body avoids max_completion_tokens')
+  assert.equal(perplexityBody.reasoning_effort, 'high', 'Perplexity request body sends normalized reasoning_effort')
+  assert.equal(perplexityBody.tools, undefined, 'Perplexity request body does not inject OpenAI native web-search tools')
+  assert.equal(perplexityBody.messages[0].content[1].type, 'image_url', 'Perplexity image attachments use image_url parts')
+  assert.equal(perplexityBody.messages[0].content[1].image_url.url, 'data:image/png;base64,aW1n', 'Perplexity image_url parts preserve data URLs')
+  assert.deepEqual(perplexityBody.messages[0].content[2], { type: 'file_url', file_url: { url: 'aGVsbG8=' } }, 'Perplexity file parts use raw-base64 file_url parts')
+
+  const perplexityConformance = resolveProviderRequestConformanceForTest({
+    provider: perplexityProvider,
+    model: 'sonar-reasoning-pro',
+    messages: [{ role: 'user', content: 'hello' }],
+    attachments: [{ type: 'file', name: 'notes.pdf', mimeType: 'application/pdf', base64: 'aGVsbG8=' }],
+    reasoningEffort: 'max',
+    maxTokens: 2048,
+    webSearchMode: 'native',
+  }, perplexityBody)
+  assert.equal(perplexityConformance.manifest.family, 'perplexity', 'provider conformance classifies Perplexity as its own family')
+  assert.equal(perplexityConformance.manifest.protocol, 'openai-compatible', 'provider conformance records Perplexity Sonar as OpenAI-compatible chat shape')
+  assert.equal(perplexityConformance.manifest.payload.maxTokensField, 'max_tokens', 'provider conformance records Perplexity max_tokens')
+  assert.equal(perplexityConformance.manifest.modalities.input.image, true, 'provider conformance records Perplexity image input support')
+  assert.equal(perplexityConformance.manifest.modalities.input.file, true, 'provider conformance records Perplexity file_url input support')
+  assert.equal(perplexityConformance.manifest.reasoning.requestShape, 'perplexity-reasoning-effort', 'provider conformance records Perplexity reasoning_effort shape')
+  assert.equal(perplexityConformance.reasoning.providerValue, 'high', 'provider conformance normalizes Perplexity reasoning effort values')
+  assert.equal(perplexityConformance.manifest.tools.supported, false, 'provider conformance does not claim Perplexity function tools')
+  assert.equal(perplexityConformance.manifest.tools.nativeWebSearchToolType, undefined, 'provider conformance treats Perplexity native search as provider built-in, not an OpenAI tool')
+  assert.ok(perplexityConformance.manifest.source.url?.includes('docs.perplexity.ai/docs/sonar/models/sonar-reasoning-pro'), 'provider conformance links Perplexity reasoning models to the official Sonar model card')
+  assert.equal(perplexityConformance.manifest.source.confidence, 'source-backed', 'provider conformance marks Perplexity as source-backed')
+
+  const perplexityParsedCompletion = parseProviderChatCompletionJson({
+    choices: [{ message: { role: 'assistant', content: 'Perplexity answer.' } }],
+    citations: ['https://example.com/fallback'],
+    search_results: [{ title: 'Primary Source', url: 'https://example.com/primary', snippet: 'Primary snippet.' }],
+    usage: { prompt_tokens: 8, completion_tokens: 13, total_tokens: 21 },
+  }, {
+    provider: perplexityProvider,
+    model: 'sonar-pro',
+    messages: [{ role: 'user', content: 'hello' }],
+  })
+  assert.equal(perplexityParsedCompletion.text, 'Perplexity answer.', 'Perplexity parser extracts OpenAI-compatible response text')
+  assert.equal(perplexityParsedCompletion.usage?.totalTokens, 21, 'Perplexity parser preserves provider usage metadata')
+  assert.deepEqual(
+    perplexityParsedCompletion.citations,
+    [{ id: 'https://example.com/primary', type: 'web', title: 'Primary Source', url: 'https://example.com/primary', excerpt: 'Primary snippet.', sourceUri: 'https://example.com/primary', sourceReason: 'perplexity_search_result' }],
+    'Perplexity response search_results become provider web citations before fallback citation URLs'
+  )
+  const customPerplexityLikeProvider = {
+    id: 'custom-perplexity-like',
+    type: 'openai-compatible',
+    presetId: 'custom-openai-compatible',
+    name: 'Custom Perplexity-like',
+    baseUrl: 'https://api.perplexity.ai',
+    apiKey: FAKE_KEY_A,
+    models: ['sonar-pro'],
+    enabled: true,
+  }
+  const customPerplexityParsedCompletion = parseProviderChatCompletionJson({
+    choices: [{ message: { role: 'assistant', content: 'Custom answer.' } }],
+    search_results: [{ title: 'Unclaimed Source', url: 'https://example.com/unclaimed', snippet: 'Should stay gated.' }],
+    usage: { prompt_tokens: 2, completion_tokens: 3, total_tokens: 5 },
+  }, {
+    provider: customPerplexityLikeProvider,
+    model: 'sonar-pro',
+    messages: [{ role: 'user', content: 'hello' }],
+    retrievalSources: [{ id: 'custom-retrieval-source', title: 'Custom Retrieval', excerpt: 'Local evidence', similarity: 0.73 }],
+  })
+  assert.equal(customPerplexityParsedCompletion.text, 'Custom answer.', 'custom Perplexity-like parser still extracts OpenAI-compatible response text')
+  assert.equal(customPerplexityParsedCompletion.citations?.length, 1, 'custom Perplexity-like parser keeps only retrieval citations without contract evidence')
+  assert.equal(customPerplexityParsedCompletion.citations?.[0]?.id, 'custom-retrieval-source', 'custom Perplexity-like parser preserves the retrieval citation id')
+  assert.equal(
+    customPerplexityParsedCompletion.citations?.some((citation) => citation.url === 'https://example.com/unclaimed'),
+    false,
+    'custom Perplexity-like parser does not expose provider-native citation URLs without contract evidence'
+  )
+  assert.deepEqual(
+    extractProviderCitations({ citations: ['https://example.com/fallback'] }, 'perplexity'),
+    [{ id: 'https://example.com/fallback', type: 'web', title: 'https://example.com/fallback', url: 'https://example.com/fallback', sourceUri: 'https://example.com/fallback', sourceReason: 'perplexity_citation' }],
+    'Perplexity citation URLs are preserved when search_results are absent'
+  )
+  assert.deepEqual(
+    extractProviderCitationsFromSse(`data: ${JSON.stringify({ search_results: [{ title: 'Live Source', url: 'https://example.com/live', snippet: 'Live snippet.' }] })}\n`, 'perplexity'),
+    [{ id: 'https://example.com/live', type: 'web', title: 'Live Source', url: 'https://example.com/live', excerpt: 'Live snippet.', sourceUri: 'https://example.com/live', sourceReason: 'perplexity_search_result' }],
+    'Perplexity streaming final metadata packets become provider web citations'
+  )
+
+  const perplexityStream = parseProviderBufferedStreamResponse([
+    `data: ${JSON.stringify({ choices: [{ delta: { content: 'Perplexity ' } }] })}`,
+    `data: ${JSON.stringify({ choices: [{ delta: { content: 'stream.' } }] })}`,
+    `data: ${JSON.stringify({ search_results: [{ title: 'Stream Source', url: 'https://example.com/stream', snippet: 'Stream snippet.' }] })}`,
+    '',
+  ].join('\n'), {
+    provider: perplexityProvider,
+    model: 'sonar-pro',
+    messages: [{ role: 'user', content: 'hello' }],
+  }, 'openai-compatible')
+  assert.equal(perplexityStream.text, 'Perplexity stream.', 'Perplexity stream parser merges OpenAI-compatible text deltas')
+  assert.deepEqual(
+    perplexityStream.citations,
+    [{ id: 'https://example.com/stream', type: 'web', title: 'Stream Source', url: 'https://example.com/stream', excerpt: 'Stream snippet.', sourceUri: 'https://example.com/stream', sourceReason: 'perplexity_search_result' }],
+    'Perplexity stream parser preserves final search_results metadata'
+  )
+  const customPerplexityStream = parseProviderBufferedStreamResponse([
+    `data: ${JSON.stringify({ choices: [{ delta: { content: 'Custom stream.' } }] })}`,
+    `data: ${JSON.stringify({ search_results: [{ title: 'Unclaimed Stream Source', url: 'https://example.com/unclaimed-stream', snippet: 'Should stay gated.' }] })}`,
+    '',
+  ].join('\n'), {
+    provider: customPerplexityLikeProvider,
+    model: 'sonar-pro',
+    messages: [{ role: 'user', content: 'hello' }],
+  }, 'openai-compatible')
+  assert.equal(customPerplexityStream.text, 'Custom stream.', 'custom Perplexity-like stream parser still extracts OpenAI-compatible text')
+  assert.deepEqual(customPerplexityStream.citations, [], 'custom Perplexity-like stream parser does not expose provider-native citations without contract evidence')
+
+  const perplexityRateLimit = JSON.stringify({ error: { code: 'rate_limit_exceeded', message: 'Rate limit exceeded' } })
+  assert.equal(classifyHttpStatus(429, perplexityRateLimit), 'rate_limited', 'Perplexity 429 errors classify as rate_limited')
+  assert.ok(extractProviderErrorDetail(perplexityRateLimit).includes('Rate limit exceeded'), 'Perplexity errors preserve provider messages for diagnostics')
+}
+
+async function assertCohereProviderCompatibilityBehavior() {
+  const cohereProvider = applyProviderPreset({
+    id: 'cohere-compatibility',
+    apiKey: FAKE_KEY_A,
+    models: ['command-a-plus-05-2026', 'embed-v4.0', 'cohere-transcribe-03-2026'],
+    enabled: true,
+  }, 'cohere')
+
+  assert.equal(isCohereProvider(cohereProvider), true, 'Cohere identity helper detects Compatibility API providers')
+  assert.equal(getAPIEndpointForTest(cohereProvider), 'https://api.cohere.ai/compatibility/v1/chat/completions', 'Cohere routes chat through the official Compatibility API endpoint')
+  assert.equal(cohereProvider.capabilities.modelList, false, 'Cohere suppresses generic /models sync because official listing is native /v1/models')
+  assert.equal(cohereProvider.capabilities.audioTranscription, true, 'Cohere exposes documented Compatibility API audio transcription support')
+  assert.equal(cohereProvider.capabilities.reasoningEffort, true, 'Cohere exposes documented none/high reasoning_effort controls')
+  assert.equal(cohereProvider.capabilities.nativeTools, true, 'Cohere exposes documented OpenAI-format tool declarations')
+  assert.equal(cohereProvider.capabilities.responsesApi, false, 'Cohere does not claim OpenAI Responses API routing')
+  assert.equal(cohereProvider.capabilities.files, false, 'Cohere does not claim generic file_data chat attachments')
+  assert.equal(cohereProvider.capabilities.vision, false, 'Cohere preset keeps compatibility image routing unclaimed at provider capability level')
+
+  const commandAPlus = getModelConfig('command-a-plus-05-2026', 'openai-compatible')
+  assert.equal(commandAPlus.contextWindow, 128000, 'Cohere Command A+ model metadata records the official 128K context window')
+  assert.equal(commandAPlus.maxOutputTokens, 64000, 'Cohere Command A+ model metadata records the official 64K output limit')
+  assert.equal(commandAPlus.supportsTools, true, 'Cohere Command A+ model metadata records tool-capable chat behavior')
+  assert.equal(commandAPlus.reasoningMode, 'cohere-reasoning-effort', 'Cohere Command A+ metadata records the Compatibility API reasoning_effort shape')
+  assert.deepEqual(getReasoningEffortOptions(cohereProvider, 'command-a-plus-05-2026'), ['none', 'high'], 'Cohere reasoning models expose only documented none/high efforts')
+  assert.equal(providerSupportsReasoning(cohereProvider, 'command-a-plus-05-2026'), true, 'Cohere Command A+ enables the reasoning control')
+  assert.deepEqual(getReasoningEffortOptions(cohereProvider, 'command-r-08-2024'), [], 'Cohere non-Command-A reasoning models do not inherit generic reasoning controls')
+  assert.equal(normalizeOpenAIReasoningEffort({ provider: cohereProvider, model: 'command-a-plus-05-2026', reasoningEffort: 'medium' }), 'high', 'Cohere unsupported UI efforts normalize to the documented high value')
+  assert.equal(normalizeOpenAIReasoningEffort({ provider: cohereProvider, model: 'command-a-plus-05-2026', reasoningEffort: 'none' }), 'none', 'Cohere can explicitly disable reasoning with the documented none value')
+  assert.equal(getOpenAIChatMaxTokensField({ provider: cohereProvider, model: 'command-a-plus-05-2026' }), 'max_tokens', 'Cohere chat requests use max_tokens')
+  assert.equal(usesOpenAIResponses({ provider: cohereProvider, model: 'command-a-plus-05-2026', webSearchMode: 'native' }), false, 'Cohere native search does not force OpenAI Responses routing')
+
+  const cohereBody = buildOpenAIBodyForTest({
+    provider: cohereProvider,
+    model: 'command-a-plus-05-2026',
+    messages: [{ role: 'user', content: 'Summarize this support ticket.' }],
+    reasoningEffort: 'max',
+    maxTokens: 999999,
+    stream: false,
+    providerToolDeclarations: [{
+      type: 'function',
+      function: {
+        name: 'read_context',
+        description: 'Read local context.',
+        parameters: { type: 'object', properties: { query: { type: 'string' } } },
+      },
+    }],
+  })
+  assert.equal(cohereBody.max_tokens, 64000, 'Cohere request max_tokens is clamped to the official model output limit')
+  assert.equal(cohereBody.max_completion_tokens, undefined, 'Cohere request body avoids max_completion_tokens')
+  assert.equal(cohereBody.reasoning_effort, 'high', 'Cohere request body sends the documented high reasoning_effort')
+  assert.equal(cohereBody.tools[0].function.name, 'read_context', 'Cohere request body preserves OpenAI-format tool declarations')
+  const cohereNoneBody = buildOpenAIBodyForTest({
+    provider: cohereProvider,
+    model: 'command-a-plus-05-2026',
+    messages: [{ role: 'user', content: 'hello' }],
+    reasoningEffort: 'none',
+    maxTokens: 512,
+    stream: false,
+  })
+  assert.equal(cohereNoneBody.reasoning_effort, 'none', 'Cohere request body sends none when the user explicitly disables reasoning')
+
+  const cohereConformance = resolveProviderRequestConformanceForTest({
+    provider: cohereProvider,
+    model: 'command-a-plus-05-2026',
+    messages: [{ role: 'user', content: 'hello' }],
+    reasoningEffort: 'high',
+    maxTokens: 2048,
+  }, cohereBody)
+  assert.equal(cohereConformance.manifest.family, 'cohere', 'provider conformance classifies Cohere as its own family')
+  assert.equal(cohereConformance.manifest.protocol, 'openai-compatible', 'provider conformance records Cohere as OpenAI-compatible chat shape')
+  assert.equal(cohereConformance.manifest.payload.maxTokensField, 'max_tokens', 'provider conformance records Cohere max_tokens')
+  assert.equal(cohereConformance.manifest.reasoning.requestShape, 'cohere-reasoning-effort', 'provider conformance records Cohere reasoning_effort shape')
+  assert.deepEqual(cohereConformance.manifest.reasoning.selectableEfforts, ['none', 'high'], 'provider conformance records Cohere none/high reasoning efforts')
+  assert.equal(cohereConformance.reasoning.providerValue, 'high', 'provider conformance normalizes Cohere reasoning values')
+  assert.equal(cohereConformance.manifest.tools.supported, true, 'provider conformance records Cohere OpenAI-format tools')
+  assert.ok(cohereConformance.manifest.source.url?.includes('docs.cohere.com'), 'provider conformance links Cohere to official docs')
+  assert.equal(cohereConformance.manifest.source.confidence, 'source-backed', 'provider conformance marks Cohere as source-backed')
+
+  const cohereParsedCompletion = parseProviderChatCompletionJson({
+    choices: [{ message: { role: 'assistant', content: 'Cohere answer.' } }],
+    usage: { prompt_tokens: 8, completion_tokens: 13, total_tokens: 21 },
+  }, {
+    provider: cohereProvider,
+    model: 'command-a-plus-05-2026',
+    messages: [{ role: 'user', content: 'hello' }],
+  })
+  assert.equal(cohereParsedCompletion.text, 'Cohere answer.', 'Cohere parser extracts OpenAI-compatible response text')
+  assert.equal(cohereParsedCompletion.usage?.totalTokens, 21, 'Cohere parser preserves provider usage metadata')
+
+  const cohereStream = parseProviderBufferedStreamResponse([
+    `data: ${JSON.stringify({ choices: [{ delta: { content: 'Cohere ' } }] })}`,
+    `data: ${JSON.stringify({ choices: [{ delta: { content: 'stream.' } }] })}`,
+    '',
+  ].join('\n'), {
+    provider: cohereProvider,
+    model: 'command-a-plus-05-2026',
+    messages: [{ role: 'user', content: 'hello' }],
+  }, 'openai-compatible')
+  assert.equal(cohereStream.text, 'Cohere stream.', 'Cohere stream parser merges OpenAI-compatible text deltas')
+
+  const originalFetch = global.fetch
+  const embeddingCalls = []
+  try {
+    global.fetch = async (input, init) => {
+      embeddingCalls.push({ input: String(input), init })
+      return {
+        ok: true,
+        status: 200,
+        json: async () => ({ data: [{ embedding: [0.1, 0.2, 0.3] }] }),
+        text: async () => JSON.stringify({ data: [{ embedding: [0.1, 0.2, 0.3] }] }),
+      }
+    }
+    const embedding = await embedTextWithProvider({ ...cohereProvider, models: ['command-a-plus-05-2026', 'embed-v4.0'] }, 'hello world')
+    assert.equal(embeddingCalls[0].input, 'https://api.cohere.ai/compatibility/v1/embeddings', 'Cohere embeddings use the documented Compatibility API endpoint')
+    assert.equal(JSON.parse(embeddingCalls[0].init.body).model, 'embed-v4.0', 'Cohere embeddings prefer configured Cohere embed models')
+    assert.deepEqual(embedding.embedding, [0.1, 0.2, 0.3], 'Cohere embedding response is parsed through the OpenAI-compatible shape')
+  } finally {
+    global.fetch = originalFetch
+  }
+
+  try {
+    global.fetch = async () => {
+      throw new Error('Cohere modelList=false must not call remote /models discovery')
+    }
+    assert.deepEqual(
+      await fetchProviderModelConfigsFromRemote(cohereProvider, 1),
+      [],
+      'Cohere model discovery stays static/manual until native /v1/models mapping is implemented'
+    )
+  } finally {
+    global.fetch = originalFetch
+  }
+
+  const cohereRateLimit = JSON.stringify({ message: 'Too many requests', id: 'cohere-rate-limit' })
+  assert.equal(classifyHttpStatus(429, cohereRateLimit), 'rate_limited', 'Cohere 429 errors classify as rate_limited')
+  assert.ok(extractProviderErrorDetail(cohereRateLimit).includes('Too many requests'), 'Cohere errors preserve provider messages for diagnostics')
+}
+
+async function assertCerebrasProviderCompatibilityBehavior() {
+  const cerebrasProvider = applyProviderPreset({
+    id: 'cerebras-inference',
+    apiKey: FAKE_KEY_A,
+    models: ['gpt-oss-120b', 'zai-glm-4.7'],
+    enabled: true,
+  }, 'cerebras')
+
+  assert.equal(isCerebrasProvider(cerebrasProvider), true, 'Cerebras identity helper detects Inference API providers')
+  assert.equal(getAPIEndpointForTest(cerebrasProvider), 'https://api.cerebras.ai/v1/chat/completions', 'Cerebras routes chat through the official /v1/chat/completions endpoint')
+  assert.equal(cerebrasProvider.capabilities.modelList, true, 'Cerebras keeps generic /v1/models sync enabled because the official API exposes it')
+  assert.equal(cerebrasProvider.capabilities.reasoningEffort, true, 'Cerebras exposes documented model-specific reasoning_effort controls')
+  assert.equal(cerebrasProvider.capabilities.nativeTools, true, 'Cerebras exposes documented OpenAI-format tool declarations')
+  assert.equal(cerebrasProvider.capabilities.vision, false, 'Cerebras does not claim public shared-endpoint vision input')
+  assert.equal(cerebrasProvider.capabilities.files, false, 'Cerebras does not claim generic file_data chat attachments')
+  assert.equal(cerebrasProvider.capabilities.audioInput, false, 'Cerebras does not claim chat audio input')
+  assert.equal(cerebrasProvider.capabilities.audioTranscription, false, 'Cerebras does not claim audio transcription endpoints')
+  assert.equal(cerebrasProvider.capabilities.responsesApi, false, 'Cerebras does not claim OpenAI Responses routing')
+
+  const gptOss = getModelConfig('gpt-oss-120b', 'openai-compatible')
+  assert.equal(gptOss.contextWindow, 131000, 'Cerebras GPT OSS metadata records the documented paid-tier 131K context window')
+  assert.equal(gptOss.maxOutputTokens, 40000, 'Cerebras GPT OSS metadata records the documented paid-tier 40K output limit')
+  assert.equal(gptOss.supportsVision, false, 'Cerebras GPT OSS metadata records text-only input')
+  assert.equal(gptOss.supportsTools, true, 'Cerebras GPT OSS metadata records tool-capable chat behavior')
+  assert.equal(gptOss.reasoningMode, 'cerebras-reasoning-effort', 'Cerebras GPT OSS metadata records the provider-specific reasoning_effort shape')
+  assert.deepEqual(getReasoningEffortOptions(cerebrasProvider, 'gpt-oss-120b'), ['low', 'medium', 'high'], 'Cerebras GPT OSS exposes only documented low/medium/high efforts')
+  assert.equal(providerSupportsReasoning(cerebrasProvider, 'gpt-oss-120b'), true, 'Cerebras GPT OSS enables the reasoning control')
+  assert.equal(normalizeOpenAIReasoningEffort({ provider: cerebrasProvider, model: 'gpt-oss-120b', reasoningEffort: 'max' }), 'high', 'Cerebras GPT OSS oversized UI efforts normalize to documented high')
+  assert.equal(normalizeOpenAIReasoningEffort({ provider: cerebrasProvider, model: 'gpt-oss-120b', reasoningEffort: 'none' }), undefined, 'Cerebras GPT OSS omits unsupported none reasoning_effort')
+
+  const zaiGlm = getModelConfig('zai-glm-4.7', 'openai-compatible')
+  assert.equal(zaiGlm.contextWindow, 131000, 'Cerebras Z.ai GLM metadata records the documented paid-tier 131K context window')
+  assert.equal(zaiGlm.maxOutputTokens, 40000, 'Cerebras Z.ai GLM metadata records the documented 40K output limit')
+  assert.equal(zaiGlm.reasoningMode, 'cerebras-reasoning-effort', 'Cerebras Z.ai GLM metadata records provider-specific reasoning controls')
+  assert.deepEqual(getReasoningEffortOptions(cerebrasProvider, 'zai-glm-4.7'), ['none'], 'Cerebras Z.ai GLM exposes only documented none effort for disabling default reasoning')
+  assert.equal(normalizeOpenAIReasoningEffort({ provider: cerebrasProvider, model: 'zai-glm-4.7', reasoningEffort: 'none' }), 'none', 'Cerebras Z.ai GLM can explicitly disable default reasoning with none')
+  assert.equal(normalizeOpenAIReasoningEffort({ provider: cerebrasProvider, model: 'zai-glm-4.7', reasoningEffort: 'high' }), undefined, 'Cerebras Z.ai GLM does not turn unsupported active efforts into none')
+  assert.equal(getOpenAIChatMaxTokensField({ provider: cerebrasProvider, model: 'gpt-oss-120b' }), 'max_completion_tokens', 'Cerebras chat requests use the documented max_completion_tokens field')
+  assert.equal(usesOpenAIResponses({ provider: cerebrasProvider, model: 'gpt-oss-120b', webSearchMode: 'native' }), false, 'Cerebras native search does not force OpenAI Responses routing')
+
+  const cerebrasBody = buildOpenAIBodyForTest({
+    provider: cerebrasProvider,
+    model: 'gpt-oss-120b',
+    messages: [{ role: 'user', content: 'Summarize the compatibility contract.' }],
+    reasoningEffort: 'max',
+    maxTokens: 999999,
+    stream: false,
+    providerToolDeclarations: [{
+      type: 'function',
+      function: {
+        name: 'read_context',
+        description: 'Read local context.',
+        parameters: { type: 'object', properties: { query: { type: 'string' } }, additionalProperties: false },
+      },
+    }],
+    structuredOutput: {
+      type: 'json_schema',
+      name: 'compatibility_summary',
+      strict: true,
+      schema: {
+        type: 'object',
+        properties: { summary: { type: 'string' } },
+        required: ['summary'],
+        additionalProperties: false,
+      },
+    },
+  })
+  assert.equal(cerebrasBody.max_completion_tokens, 40000, 'Cerebras request max_completion_tokens is clamped to the official model output limit')
+  assert.equal(cerebrasBody.max_tokens, undefined, 'Cerebras request body avoids max_tokens')
+  assert.equal(cerebrasBody.reasoning_effort, 'high', 'Cerebras request body sends normalized reasoning_effort')
+  assert.equal(cerebrasBody.tools[0].function.name, 'read_context', 'Cerebras request body preserves OpenAI-format tool declarations')
+  assert.deepEqual(
+    cerebrasBody.response_format,
+    {
+      type: 'json_schema',
+      json_schema: {
+        name: 'compatibility_summary',
+        schema: {
+          type: 'object',
+          properties: { summary: { type: 'string' } },
+          required: ['summary'],
+          additionalProperties: false,
+        },
+        strict: true,
+      },
+    },
+    'Cerebras request body sends documented strict JSON schema response_format when structured output is requested'
+  )
+  assert.equal(cerebrasBody.stream, false, 'Cerebras request body preserves explicit non-streaming mode')
+
+  const cerebrasGlmBody = buildOpenAIBodyForTest({
+    provider: cerebrasProvider,
+    model: 'zai-glm-4.7',
+    messages: [{ role: 'user', content: 'hello' }],
+    reasoningEffort: 'none',
+    maxTokens: 512,
+    stream: false,
+  })
+  assert.equal(cerebrasGlmBody.reasoning_effort, 'none', 'Cerebras Z.ai GLM request body sends none when disabling default reasoning')
+
+  const cerebrasReplayBody = buildOpenAIBodyForTest({
+    provider: cerebrasProvider,
+    model: 'gpt-oss-120b',
+    messages: [
+      { role: 'assistant', content: 'Previous answer.', reasoningContent: 'Cerebras parsed reasoning.' },
+      { role: 'user', content: 'Continue.' },
+    ],
+    maxTokens: 512,
+    stream: false,
+  })
+  assert.equal(openAICompatibleReasoningReplayField({ provider: cerebrasProvider, model: 'gpt-oss-120b' }, {}), 'reasoning', 'Cerebras replay helper selects the documented reasoning field')
+  assert.equal(shouldReplayOpenAICompatibleReasoningContent({ provider: cerebrasProvider, model: 'gpt-oss-120b' }, {}), true, 'Cerebras reasoning replay is enabled for reasoning-capable models')
+  assert.equal(cerebrasReplayBody.messages[0].reasoning, 'Cerebras parsed reasoning.', 'Cerebras assistant replay preserves reasoning in the documented reasoning field')
+  assert.equal(cerebrasReplayBody.messages[0].reasoning_content, undefined, 'Cerebras assistant replay avoids provider-incompatible reasoning_content')
+
+  const cerebrasConformance = resolveProviderRequestConformanceForTest({
+    provider: cerebrasProvider,
+    model: 'gpt-oss-120b',
+    messages: [{ role: 'user', content: 'hello' }],
+    reasoningEffort: 'max',
+    maxTokens: 2048,
+    structuredOutput: {
+      type: 'json_schema',
+      name: 'compatibility_summary',
+      strict: true,
+      schema: {
+        type: 'object',
+        properties: { summary: { type: 'string' } },
+        required: ['summary'],
+        additionalProperties: false,
+      },
+    },
+  }, cerebrasBody)
+  assert.equal(cerebrasConformance.manifest.family, 'cerebras', 'provider conformance classifies Cerebras as its own family')
+  assert.equal(cerebrasConformance.manifest.protocol, 'openai-compatible', 'provider conformance records Cerebras as OpenAI-compatible chat shape')
+  assert.equal(cerebrasConformance.manifest.payload.maxTokensField, 'max_completion_tokens', 'provider conformance records Cerebras max_completion_tokens')
+  assert.equal(cerebrasConformance.manifest.reasoning.requestShape, 'cerebras-reasoning-effort', 'provider conformance records Cerebras reasoning_effort shape')
+  assert.deepEqual(cerebrasConformance.manifest.reasoning.selectableEfforts, ['low', 'medium', 'high'], 'provider conformance records Cerebras GPT OSS low/medium/high reasoning efforts')
+  assert.equal(cerebrasConformance.reasoning.providerValue, 'high', 'provider conformance normalizes Cerebras reasoning effort values')
+  assert.equal(cerebrasConformance.manifest.payload.requiresReasoningStatePassthrough, true, 'provider conformance records Cerebras reasoning replay requirement')
+  assert.equal(cerebrasConformance.manifest.payload.reasoningStatePreservationField, 'reasoning', 'provider conformance records Cerebras reasoning replay field')
+  assert.equal(cerebrasConformance.manifest.tools.supported, true, 'provider conformance records Cerebras OpenAI-format tools')
+  assert.equal(cerebrasConformance.manifest.structuredOutput.contractClaimed, true, 'provider conformance records Cerebras structured-output contract evidence')
+  assert.equal(cerebrasConformance.manifest.structuredOutput.appRequestControl, true, 'provider conformance enables Cerebras response_format request controls')
+  assert.equal(cerebrasConformance.manifest.structuredOutput.strictJsonSchema, true, 'provider conformance records Cerebras strict JSON schema support')
+  assert.equal(cerebrasConformance.issues.some((issue) => issue.code === 'unsupported_structured_output'), false, 'provider conformance accepts Cerebras structured-output requests')
+  assert.equal(cerebrasConformance.manifest.modalities.input.image, false, 'provider conformance does not claim Cerebras image input')
+  assert.equal(cerebrasConformance.manifest.modalities.input.file, false, 'provider conformance does not claim Cerebras file input')
+  assert.ok(cerebrasConformance.manifest.source.url?.includes('inference-docs.cerebras.ai'), 'provider conformance links Cerebras to official docs')
+  assert.equal(cerebrasConformance.manifest.source.confidence, 'source-backed', 'provider conformance marks Cerebras as source-backed')
+  const cerebrasStructuredRoute = resolveProviderRouteForTest({
+    provider: cerebrasProvider,
+    model: 'gpt-oss-120b',
+    messages: [{ role: 'user', content: 'hello' }],
+    maxTokens: 2048,
+    structuredOutput: {
+      type: 'json_schema',
+      name: 'compatibility_summary',
+      strict: true,
+      schema: {
+        type: 'object',
+        properties: { summary: { type: 'string' } },
+        required: ['summary'],
+        additionalProperties: false,
+      },
+    },
+  }, cerebrasBody)
+  assert.equal(cerebrasStructuredRoute.decision.structuredOutputPlan.requested, true, 'route decision records structured-output request intent')
+  assert.equal(cerebrasStructuredRoute.decision.structuredOutputPlan.supported, true, 'route decision records structured-output request control support')
+  assert.equal(cerebrasStructuredRoute.decision.structuredOutputPlan.requestShape, 'openai-response-format', 'route decision records the structured-output request shape')
+  assert.equal(cerebrasStructuredRoute.decision.structuredOutputPlan.strictJsonSchema, true, 'route decision records strict JSON schema support')
+
+  const cerebrasGlmConformance = resolveProviderRequestConformanceForTest({
+    provider: cerebrasProvider,
+    model: 'zai-glm-4.7',
+    messages: [{ role: 'user', content: 'hello' }],
+    reasoningEffort: 'none',
+    maxTokens: 512,
+  }, cerebrasGlmBody)
+  assert.deepEqual(cerebrasGlmConformance.manifest.reasoning.selectableEfforts, ['none'], 'provider conformance records Z.ai GLM none-only reasoning control')
+  assert.equal(cerebrasGlmConformance.reasoning.providerValue, 'none', 'provider conformance preserves Z.ai GLM none reasoning value')
+  const cerebrasGlmHighConformance = resolveProviderRequestConformanceForTest({
+    provider: cerebrasProvider,
+    model: 'zai-glm-4.7',
+    messages: [{ role: 'user', content: 'hello' }],
+    reasoningEffort: 'high',
+    maxTokens: 512,
+  }, buildOpenAIBodyForTest({
+    provider: cerebrasProvider,
+    model: 'zai-glm-4.7',
+    messages: [{ role: 'user', content: 'hello' }],
+    reasoningEffort: 'high',
+    maxTokens: 512,
+    stream: false,
+  }))
+  assert.equal(cerebrasGlmHighConformance.reasoning.enabled, false, 'provider conformance does not downgrade unsupported Z.ai GLM active efforts into none')
+
+  const cerebrasParsedCompletion = parseProviderChatCompletionJson({
+    choices: [{ message: { role: 'assistant', content: 'Cerebras answer.', reasoning: 'Cerebras parsed reasoning.' } }],
+    usage: { prompt_tokens: 8, completion_tokens: 13, total_tokens: 21 },
+  }, {
+    provider: cerebrasProvider,
+    model: 'gpt-oss-120b',
+    messages: [{ role: 'user', content: 'hello' }],
+  })
+  assert.equal(cerebrasParsedCompletion.text, 'Cerebras answer.', 'Cerebras parser extracts OpenAI-compatible response text')
+  assert.equal(cerebrasParsedCompletion.reasoningContent, 'Cerebras parsed reasoning.', 'Cerebras parser preserves parsed reasoning for replay')
+  assert.ok(cerebrasParsedCompletion.traces?.some((trace) => trace.content === 'Cerebras parsed reasoning.'), 'Cerebras parser emits parsed reasoning as a reasoning trace')
+  assert.equal(cerebrasParsedCompletion.usage?.totalTokens, 21, 'Cerebras parser preserves usage metadata')
+
+  const cerebrasStream = parseProviderBufferedStreamResponse([
+    `data: ${JSON.stringify({ choices: [{ delta: { reasoning: 'Cerebras stream reasoning.' } }] })}`,
+    `data: ${JSON.stringify({ choices: [{ delta: { content: 'Cerebras ' } }] })}`,
+    `data: ${JSON.stringify({ choices: [{ delta: { content: 'stream.' } }] })}`,
+    '',
+  ].join('\n'), {
+    provider: cerebrasProvider,
+    model: 'gpt-oss-120b',
+    messages: [{ role: 'user', content: 'hello' }],
+  }, 'openai-compatible')
+  assert.equal(cerebrasStream.text, 'Cerebras stream.', 'Cerebras stream parser merges OpenAI-compatible text deltas')
+  assert.ok(cerebrasStream.traces.some((trace) => trace.content === 'Cerebras stream reasoning.'), 'Cerebras stream parser emits reasoning deltas as traces')
+  assert.equal(cerebrasStream.reasoningContent, 'Cerebras stream reasoning.', 'Cerebras stream parser preserves reasoning deltas for replay')
+
+  const originalFetch = global.fetch
+  const modelCalls = []
+  try {
+    global.fetch = async (input, init) => {
+      modelCalls.push({ input: String(input), init })
+      return {
+        ok: true,
+        status: 200,
+        headers: { get: (name) => name.toLowerCase() === 'content-type' ? 'application/json' : null },
+        json: async () => ({ object: 'list', data: [{ id: 'gpt-oss-120b', object: 'model', created: 0, owned_by: 'Cerebras' }] }),
+        text: async () => JSON.stringify({ object: 'list', data: [{ id: 'gpt-oss-120b', object: 'model', created: 0, owned_by: 'Cerebras' }] }),
+      }
+    }
+    const remoteModels = await fetchProviderModelConfigsFromRemote(cerebrasProvider, 1)
+    assert.equal(modelCalls[0].input, 'https://api.cerebras.ai/v1/models', 'Cerebras model discovery uses the documented /v1/models endpoint')
+    assert.equal(remoteModels[0].id, 'gpt-oss-120b', 'Cerebras model discovery parses OpenAI-compatible model list items')
+  } finally {
+    global.fetch = originalFetch
+  }
+
+  const cerebrasRateLimit = JSON.stringify({ error: { message: 'Too many requests', type: 'rate_limit_error' } })
+  assert.equal(classifyHttpStatus(429, cerebrasRateLimit), 'rate_limited', 'Cerebras 429 errors classify as rate_limited')
+  assert.ok(extractProviderErrorDetail(cerebrasRateLimit).includes('Too many requests'), 'Cerebras errors preserve provider messages for diagnostics')
+}
+
+async function assertSambaNovaProviderCompatibilityBehavior() {
+  const sambanovaGptOssModel = {
+    id: 'gpt-oss-120b',
+    name: 'GPT OSS 120B',
+    provider: 'openai-compatible',
+    contextWindow: 128000,
+    maxTokens: 128000,
+    maxOutputTokens: 40000,
+    defaultMaxTokens: 8192,
+    supportsVision: false,
+    supportsFiles: false,
+    supportsTools: true,
+    reasoningMode: 'sambanova-reasoning-effort',
+    reasoningEfforts: ['low', 'medium', 'high'],
+    sourceUrl: 'https://sambanova-systems.mintlify.dev/docs/en/features/function-calling.md',
+    verifiedAt: '2026-06-21',
+  }
+  const sambanovaVisionModel = {
+    id: 'gemma-4-31B-it',
+    name: 'Gemma 4 31B IT',
+    provider: 'openai-compatible',
+    contextWindow: 128000,
+    maxTokens: 128000,
+    maxOutputTokens: 8192,
+    defaultMaxTokens: 4096,
+    supportsVision: true,
+    supportsFiles: false,
+    supportsTools: false,
+    sourceUrl: 'https://sambanova-systems.mintlify.dev/docs/en/features/vision.md',
+    verifiedAt: '2026-06-21',
+  }
+  const sambanovaProvider = applyProviderPreset({
+    id: 'sambanova-cloud',
+    apiKey: FAKE_KEY_A,
+    models: ['gpt-oss-120b', 'gemma-4-31B-it'],
+    modelConfigs: [sambanovaGptOssModel, sambanovaVisionModel],
+    enabled: true,
+  }, 'sambanova')
+
+  assert.equal(isSambaNovaProvider(sambanovaProvider), true, 'SambaNova identity helper detects SambaCloud providers')
+  assert.equal(getAPIEndpointForTest(sambanovaProvider), 'https://api.sambanova.ai/v1/chat/completions', 'SambaNova routes chat through the official /v1/chat/completions endpoint')
+  assert.equal(sambanovaProvider.capabilities.modelList, true, 'SambaNova keeps generic /v1/models sync enabled because the official API exposes it')
+  assert.equal(sambanovaProvider.capabilities.vision, true, 'SambaNova exposes documented image_url vision input')
+  assert.equal(sambanovaProvider.capabilities.files, false, 'SambaNova does not claim generic file_data chat attachments')
+  assert.equal(sambanovaProvider.capabilities.audioInput, false, 'SambaNova default SambaCloud routing does not claim chat audio input')
+  assert.equal(sambanovaProvider.capabilities.audioTranscription, false, 'SambaNova default SambaCloud routing does not claim SambaStack-only audio endpoints')
+  assert.equal(sambanovaProvider.capabilities.reasoningEffort, true, 'SambaNova exposes documented gpt-oss-120b reasoning_effort controls')
+  assert.equal(sambanovaProvider.capabilities.nativeTools, true, 'SambaNova exposes documented OpenAI-format tool declarations')
+  assert.equal(sambanovaProvider.capabilities.responsesApi, true, 'SambaNova exposes Responses only through explicit model metadata routing')
+
+  const gptOss = getModelConfig('gpt-oss-120b', 'openai-compatible', sambanovaProvider.modelConfigs)
+  assert.equal(gptOss.contextWindow, 128000, 'SambaNova GPT OSS metadata records the documented 128K context window')
+  assert.equal(gptOss.maxOutputTokens, 40000, 'SambaNova GPT OSS metadata preserves the model-list max_completion_tokens fixture')
+  assert.equal(gptOss.supportsTools, true, 'SambaNova GPT OSS metadata records tool-capable chat behavior')
+  assert.equal(gptOss.reasoningMode, 'sambanova-reasoning-effort', 'SambaNova GPT OSS metadata records the provider-specific reasoning_effort shape')
+  assert.deepEqual(getReasoningEffortOptions(sambanovaProvider, 'gpt-oss-120b'), ['low', 'medium', 'high'], 'SambaNova GPT OSS exposes only documented low/medium/high efforts')
+  assert.deepEqual(getReasoningEffortOptions(sambanovaProvider, 'Meta-Llama-3.3-70B-Instruct'), [], 'SambaNova non-GPT-OSS chat models do not inherit generic reasoning controls')
+  assert.equal(providerSupportsReasoning(sambanovaProvider, 'gpt-oss-120b'), true, 'SambaNova GPT OSS enables the reasoning control')
+  assert.equal(normalizeOpenAIReasoningEffort({ provider: sambanovaProvider, model: 'gpt-oss-120b', reasoningEffort: 'max' }), 'high', 'SambaNova GPT OSS oversized UI efforts normalize to documented high')
+  assert.equal(normalizeOpenAIReasoningEffort({ provider: sambanovaProvider, model: 'gpt-oss-120b', reasoningEffort: 'minimal' }), 'low', 'SambaNova GPT OSS minimal UI effort normalizes to documented low')
+  assert.equal(normalizeOpenAIReasoningEffort({ provider: sambanovaProvider, model: 'gpt-oss-120b', reasoningEffort: 'none' }), undefined, 'SambaNova GPT OSS omits unsupported none reasoning_effort')
+  assert.equal(getOpenAIChatMaxTokensField({ provider: sambanovaProvider, model: 'gpt-oss-120b' }), 'max_tokens', 'SambaNova chat requests use the documented max_tokens field by default')
+  assert.equal(usesOpenAIResponses({ provider: sambanovaProvider, model: 'gpt-oss-120b' }), false, 'SambaNova defaults to Chat Completions even when the preset knows about Responses')
+
+  const sambanovaResponsesProvider = {
+    ...sambanovaProvider,
+    modelConfigs: [{ ...sambanovaGptOssModel, preferredEndpoint: 'responses' }],
+  }
+  assert.equal(usesOpenAIResponses({ provider: sambanovaResponsesProvider, model: 'gpt-oss-120b' }), true, 'SambaNova Responses routing requires explicit model metadata')
+  assert.equal(
+    resolveProviderEndpoint({ provider: sambanovaResponsesProvider, model: 'gpt-oss-120b', stream: false, usesResponsesApi: true }),
+    'https://api.sambanova.ai/v1/responses',
+    'SambaNova Responses metadata routes to the official /v1/responses endpoint'
+  )
+
+  const sambanovaBody = buildOpenAIBodyForTest({
+    provider: sambanovaProvider,
+    model: 'gpt-oss-120b',
+    messages: [{ role: 'user', content: 'Summarize the compatibility contract.' }],
+    reasoningEffort: 'max',
+    maxTokens: 999999,
+    stream: false,
+    providerToolDeclarations: [{
+      type: 'function',
+      function: {
+        name: 'read_context',
+        description: 'Read local context.',
+        parameters: { type: 'object', properties: { query: { type: 'string' } }, additionalProperties: false },
+      },
+    }],
+    structuredOutput: {
+      type: 'json_schema',
+      name: 'sambanova_summary',
+      strict: true,
+      schema: {
+        type: 'object',
+        properties: { summary: { type: 'string' } },
+        required: ['summary'],
+        additionalProperties: false,
+      },
+    },
+  })
+  assert.equal(sambanovaBody.max_tokens, 40000, 'SambaNova request max_tokens is clamped to the model output limit')
+  assert.equal(sambanovaBody.max_completion_tokens, undefined, 'SambaNova request body avoids max_completion_tokens by default')
+  assert.equal(sambanovaBody.reasoning_effort, 'high', 'SambaNova request body sends normalized reasoning_effort')
+  assert.equal(sambanovaBody.tools[0].function.name, 'read_context', 'SambaNova request body preserves OpenAI-format tool declarations')
+  assert.deepEqual(
+    sambanovaBody.response_format,
+    {
+      type: 'json_schema',
+      json_schema: {
+        name: 'sambanova_summary',
+        schema: {
+          type: 'object',
+          properties: { summary: { type: 'string' } },
+          required: ['summary'],
+          additionalProperties: false,
+        },
+      },
+    },
+    'SambaNova request body sends JSON schema response_format without strict because strict is best-effort only'
+  )
+  assert.equal(sambanovaBody.stream, false, 'SambaNova request body preserves explicit non-streaming mode')
+
+  const sambanovaVisionBody = buildOpenAIBodyForTest({
+    provider: sambanovaProvider,
+    model: 'gemma-4-31B-it',
+    messages: [{ role: 'user', content: 'Describe this image.' }],
+    attachments: [{ id: 'sambanova-image', type: 'image', uri: 'file://image.png', name: 'image.png', mimeType: 'image/png', size: 12, base64: 'aW1n' }],
+    maxTokens: 512,
+    stream: false,
+  })
+  assert.equal(sambanovaVisionBody.messages[0].content[1].type, 'image_url', 'SambaNova vision requests keep the OpenAI-compatible image_url content part')
+  assert.equal(sambanovaVisionBody.messages[0].content[1].image_url.url, 'data:image/png;base64,aW1n', 'SambaNova vision requests send base64 data URLs')
+
+  const sambanovaReplayBody = buildOpenAIBodyForTest({
+    provider: sambanovaProvider,
+    model: 'gpt-oss-120b',
+    messages: [
+      { role: 'assistant', content: 'Previous answer.', reasoningContent: 'SambaNova parsed reasoning.' },
+      { role: 'user', content: 'Continue.' },
+    ],
+    maxTokens: 512,
+    stream: false,
+  })
+  assert.equal(openAICompatibleReasoningReplayField({ provider: sambanovaProvider, model: 'gpt-oss-120b' }, {}), 'reasoning', 'SambaNova replay helper selects the documented reasoning field')
+  assert.equal(shouldReplayOpenAICompatibleReasoningContent({ provider: sambanovaProvider, model: 'gpt-oss-120b' }, {}), true, 'SambaNova reasoning replay is enabled for reasoning-capable models')
+  assert.equal(sambanovaReplayBody.messages[0].reasoning, 'SambaNova parsed reasoning.', 'SambaNova assistant replay preserves reasoning in the documented reasoning field')
+  assert.equal(sambanovaReplayBody.messages[0].reasoning_content, undefined, 'SambaNova assistant replay avoids provider-incompatible reasoning_content')
+
+  const sambanovaConformance = resolveProviderRequestConformanceForTest({
+    provider: sambanovaProvider,
+    model: 'gpt-oss-120b',
+    messages: [{ role: 'user', content: 'hello' }],
+    reasoningEffort: 'max',
+    maxTokens: 2048,
+    structuredOutput: {
+      type: 'json_schema',
+      name: 'sambanova_summary',
+      strict: true,
+      schema: {
+        type: 'object',
+        properties: { summary: { type: 'string' } },
+        required: ['summary'],
+        additionalProperties: false,
+      },
+    },
+  }, sambanovaBody)
+  assert.equal(sambanovaConformance.manifest.family, 'sambanova', 'provider conformance classifies SambaNova as its own family')
+  assert.equal(sambanovaConformance.manifest.protocol, 'openai-compatible', 'provider conformance records SambaNova default chat as OpenAI-compatible')
+  assert.equal(sambanovaConformance.manifest.payload.maxTokensField, 'max_tokens', 'provider conformance records SambaNova max_tokens')
+  assert.equal(sambanovaConformance.manifest.reasoning.requestShape, 'sambanova-reasoning-effort', 'provider conformance records SambaNova reasoning_effort shape')
+  assert.deepEqual(sambanovaConformance.manifest.reasoning.selectableEfforts, ['low', 'medium', 'high'], 'provider conformance records SambaNova GPT OSS low/medium/high reasoning efforts')
+  assert.equal(sambanovaConformance.reasoning.providerValue, 'high', 'provider conformance normalizes SambaNova reasoning effort values')
+  assert.equal(sambanovaConformance.manifest.payload.requiresReasoningStatePassthrough, true, 'provider conformance records SambaNova reasoning replay requirement')
+  assert.equal(sambanovaConformance.manifest.payload.reasoningStatePreservationField, 'reasoning', 'provider conformance records SambaNova reasoning replay field')
+  assert.equal(sambanovaConformance.manifest.tools.supported, true, 'provider conformance records SambaNova OpenAI-format tools')
+  assert.equal(sambanovaConformance.manifest.structuredOutput.contractClaimed, true, 'provider conformance records SambaNova structured-output contract evidence')
+  assert.equal(sambanovaConformance.manifest.structuredOutput.appRequestControl, true, 'provider conformance enables SambaNova response_format request controls')
+  assert.equal(sambanovaConformance.manifest.structuredOutput.strictJsonSchema, false, 'provider conformance avoids claiming strict JSON schema guarantees for SambaNova')
+  assert.equal(sambanovaConformance.issues.some((issue) => issue.code === 'unsupported_structured_output'), false, 'provider conformance accepts SambaNova structured-output requests')
+  assert.equal(sambanovaConformance.manifest.modalities.input.image, true, 'provider conformance records SambaNova image input capability')
+  assert.equal(sambanovaConformance.manifest.modalities.input.file, false, 'provider conformance does not claim SambaNova generic file input')
+  assert.ok(sambanovaConformance.manifest.source.url?.includes('sambanova-systems.mintlify.dev'), 'provider conformance links SambaNova to current official docs')
+  assert.equal(sambanovaConformance.manifest.source.confidence, 'source-backed', 'provider conformance marks SambaNova as source-backed')
+
+  const sambanovaResponsesConformance = resolveProviderRequestConformanceForTest({
+    provider: sambanovaResponsesProvider,
+    model: 'gpt-oss-120b',
+    messages: [{ role: 'user', content: 'hello' }],
+    maxTokens: 512,
+  }, buildOpenAIResponsesBodyForTest({
+    provider: sambanovaResponsesProvider,
+    model: 'gpt-oss-120b',
+    messages: [{ role: 'user', content: 'hello' }],
+    maxTokens: 512,
+    stream: false,
+  }))
+  assert.equal(sambanovaResponsesConformance.manifest.protocol, 'openai-responses', 'provider conformance records SambaNova Responses only when model metadata selects it')
+
+  const sambanovaParsedCompletion = parseProviderChatCompletionJson({
+    choices: [{ message: { role: 'assistant', content: 'SambaNova answer.', reasoning: 'SambaNova parsed reasoning.' } }],
+    usage: { prompt_tokens: 8, completion_tokens: 13, total_tokens: 21 },
+  }, {
+    provider: sambanovaProvider,
+    model: 'gpt-oss-120b',
+    messages: [{ role: 'user', content: 'hello' }],
+  })
+  assert.equal(sambanovaParsedCompletion.text, 'SambaNova answer.', 'SambaNova parser extracts OpenAI-compatible response text')
+  assert.equal(sambanovaParsedCompletion.reasoningContent, 'SambaNova parsed reasoning.', 'SambaNova parser preserves parsed reasoning for replay')
+  assert.ok(sambanovaParsedCompletion.traces?.some((trace) => trace.content === 'SambaNova parsed reasoning.'), 'SambaNova parser emits parsed reasoning as a reasoning trace')
+  assert.equal(sambanovaParsedCompletion.usage?.totalTokens, 21, 'SambaNova parser preserves usage metadata')
+
+  const sambanovaStream = parseProviderBufferedStreamResponse([
+    `data: ${JSON.stringify({ choices: [{ delta: { reasoning: 'SambaNova stream reasoning.' } }] })}`,
+    `data: ${JSON.stringify({ choices: [{ delta: { content: 'SambaNova ' } }] })}`,
+    `data: ${JSON.stringify({ choices: [{ delta: { content: 'stream.' } }] })}`,
+    '',
+  ].join('\n'), {
+    provider: sambanovaProvider,
+    model: 'gpt-oss-120b',
+    messages: [{ role: 'user', content: 'hello' }],
+  }, 'openai-compatible')
+  assert.equal(sambanovaStream.text, 'SambaNova stream.', 'SambaNova stream parser merges OpenAI-compatible text deltas')
+  assert.ok(sambanovaStream.traces.some((trace) => trace.content === 'SambaNova stream reasoning.'), 'SambaNova stream parser emits reasoning deltas as traces')
+  assert.equal(sambanovaStream.reasoningContent, 'SambaNova stream reasoning.', 'SambaNova stream parser preserves reasoning deltas for replay')
+
+  const originalFetch = global.fetch
+  const modelCalls = []
+  try {
+    global.fetch = async (input, init) => {
+      modelCalls.push({ input: String(input), init })
+      return {
+        ok: true,
+        status: 200,
+        headers: { get: (name) => name.toLowerCase() === 'content-type' ? 'application/json' : null },
+        json: async () => ({ object: 'list', data: [{ id: 'gpt-oss-120b', object: 'model', owned_by: 'SambaNova', context_length: 128000, max_completion_tokens: 40000 }] }),
+        text: async () => JSON.stringify({ object: 'list', data: [{ id: 'gpt-oss-120b', object: 'model', owned_by: 'SambaNova', context_length: 128000, max_completion_tokens: 40000 }] }),
+      }
+    }
+    const remoteModels = await fetchProviderModelConfigsFromRemote(sambanovaProvider, 1)
+    assert.equal(modelCalls[0].input, 'https://api.sambanova.ai/v1/models', 'SambaNova model discovery uses the documented /v1/models endpoint')
+    assert.equal(remoteModels[0].id, 'gpt-oss-120b', 'SambaNova model discovery parses OpenAI-compatible model list items')
+    assert.equal(remoteModels[0].contextWindow, 128000, 'SambaNova model discovery parses context_length metadata')
+    assert.equal(remoteModels[0].maxOutputTokens, 40000, 'SambaNova model discovery parses max_completion_tokens metadata')
+  } finally {
+    global.fetch = originalFetch
+  }
+
+  const sambanovaRateLimit = JSON.stringify({ error: { message: 'Too many requests', code: 'rate_limit_exceeded', request_id: 'samba-req-1' } })
+  assert.equal(classifyHttpStatus(429, sambanovaRateLimit), 'rate_limited', 'SambaNova 429 errors classify as rate_limited')
+  assert.ok(extractProviderErrorDetail(sambanovaRateLimit).includes('Too many requests'), 'SambaNova errors preserve provider messages for diagnostics')
+}
+
+async function assertNvidiaNimProviderCompatibilityBehavior() {
+  const chatModel = 'nvidia/llama-3.3-nemotron-super-49b-v1'
+  const visionModel = 'meta/llama-3.2-90b-vision-instruct'
+  const nvidiaVisionModel = {
+    id: visionModel,
+    name: 'Meta Llama 3.2 90B Vision Instruct',
+    provider: 'openai-compatible',
+    contextWindow: 128000,
+    maxTokens: 8192,
+    maxOutputTokens: 4096,
+    defaultMaxTokens: 1024,
+    supportsVision: true,
+    supportsFiles: false,
+    supportsTools: false,
+    sourceUrl: 'https://docs.api.nvidia.com/nim/reference/meta-llama-3_2-90b-vision-instruct-infer',
+    verifiedAt: '2026-06-21',
+  }
+  const nvidiaProvider = applyProviderPreset({
+    id: 'nvidia-nim-focused',
+    baseUrl: 'https://integrate.api.nvidia.com/v1',
+    apiKey: FAKE_KEY_A,
+    models: [chatModel, visionModel],
+    modelConfigs: [nvidiaVisionModel],
+    enabled: true,
+  }, 'nvidia-nim')
+
+  assert.equal(isNvidiaNimProvider(nvidiaProvider), true, 'NVIDIA NIM identity helper detects integrate API providers')
+  assert.equal(getAPIEndpointForTest(nvidiaProvider), 'https://integrate.api.nvidia.com/v1/chat/completions', 'NVIDIA NIM routes chat through the official /v1/chat/completions endpoint')
+  assert.equal(nvidiaProvider.capabilities.modelList, true, 'NVIDIA NIM keeps generic /v1/models sync enabled because the official API exposes it')
+  assert.equal(nvidiaProvider.capabilities.vision, true, 'NVIDIA NIM exposes documented model-specific image_url vision input')
+  assert.equal(nvidiaProvider.capabilities.files, false, 'NVIDIA NIM does not claim generic file_data chat attachments')
+  assert.equal(nvidiaProvider.capabilities.audioInput, false, 'NVIDIA NIM does not claim chat audio input')
+  assert.equal(nvidiaProvider.capabilities.audioTranscription, false, 'NVIDIA NIM does not claim audio transcription endpoints')
+  assert.equal(nvidiaProvider.capabilities.speech, false, 'NVIDIA NIM does not claim speech output endpoints')
+  assert.equal(nvidiaProvider.capabilities.reasoningEffort, false, 'NVIDIA NIM does not claim reasoning_effort controls by default')
+  assert.equal(nvidiaProvider.capabilities.nativeTools, false, 'NVIDIA NIM does not claim OpenAI-format function tools by default')
+  assert.equal(nvidiaProvider.capabilities.responsesApi, false, 'NVIDIA NIM does not claim OpenAI Responses routing')
+
+  assert.equal(getOpenAIChatMaxTokensField({ provider: nvidiaProvider, model: chatModel }), 'max_tokens', 'NVIDIA NIM chat requests use max_tokens')
+  assert.equal(usesOpenAIResponses({ provider: nvidiaProvider, model: chatModel }), false, 'NVIDIA NIM keeps Chat Completions routing')
+  assert.deepEqual(getReasoningEffortOptions(nvidiaProvider, chatModel), [], 'NVIDIA NIM models do not inherit generic reasoning controls')
+  assert.equal(providerSupportsReasoning(nvidiaProvider, chatModel), false, 'NVIDIA NIM disables the reasoning control without model-specific evidence')
+  assert.equal(normalizeOpenAIReasoningEffort({ provider: nvidiaProvider, model: chatModel, reasoningEffort: 'high' }), undefined, 'NVIDIA NIM requests omit unsupported reasoning_effort')
+
+  const nvidiaBody = buildOpenAIBodyForTest({
+    provider: nvidiaProvider,
+    model: chatModel,
+    messages: [{ role: 'user', content: 'Summarize the NVIDIA NIM compatibility boundary.' }],
+    reasoningEffort: 'high',
+    maxTokens: 1024,
+    stream: false,
+  })
+  assert.equal(nvidiaBody.max_tokens, 1024, 'NVIDIA NIM request body preserves max_tokens')
+  assert.equal(nvidiaBody.max_completion_tokens, undefined, 'NVIDIA NIM request body avoids max_completion_tokens')
+  assert.equal(nvidiaBody.reasoning_effort, undefined, 'NVIDIA NIM request body avoids unsupported reasoning_effort')
+  assert.equal(nvidiaBody.tools, undefined, 'NVIDIA NIM request body omits tools when no source-backed tool capability is declared')
+  assert.equal(nvidiaBody.response_format, undefined, 'NVIDIA NIM request body avoids unsupported response_format by default')
+
+  const nvidiaVisionBody = buildOpenAIBodyForTest({
+    provider: nvidiaProvider,
+    model: visionModel,
+    messages: [{ role: 'user', content: 'Describe this image.' }],
+    attachments: [{ id: 'nvidia-image', type: 'image', uri: 'file://image.png', name: 'image.png', mimeType: 'image/png', size: 12, base64: 'aW1n' }],
+    maxTokens: 512,
+    stream: false,
+  })
+  assert.equal(nvidiaVisionBody.messages[0].content[1].type, 'image_url', 'NVIDIA NIM vision requests keep the documented image_url content part')
+  assert.equal(nvidiaVisionBody.messages[0].content[1].image_url.url, 'data:image/png;base64,aW1n', 'NVIDIA NIM vision requests send base64 data URLs')
+
+  const nvidiaConformance = resolveProviderRequestConformanceForTest({
+    provider: nvidiaProvider,
+    model: chatModel,
+    messages: [{ role: 'user', content: 'hello' }],
+    reasoningEffort: 'high',
+    maxTokens: 1024,
+  }, nvidiaBody)
+  assert.equal(nvidiaConformance.manifest.family, 'nvidia-nim', 'provider conformance classifies NVIDIA NIM as its own family')
+  assert.equal(nvidiaConformance.manifest.protocol, 'openai-compatible', 'provider conformance records NVIDIA NIM as OpenAI-compatible')
+  assert.equal(nvidiaConformance.manifest.payload.maxTokensField, 'max_tokens', 'provider conformance records NVIDIA NIM max_tokens')
+  assert.equal(nvidiaConformance.manifest.reasoning.requestShape, 'none', 'provider conformance records no default NVIDIA NIM reasoning request shape')
+  assert.equal(nvidiaConformance.manifest.reasoning.supported, false, 'provider conformance records NVIDIA NIM reasoning as unsupported by default')
+  assert.equal(nvidiaConformance.manifest.tools.supported, false, 'provider conformance records NVIDIA NIM tools as unsupported by default')
+  assert.equal(nvidiaConformance.manifest.modalities.input.image, true, 'provider conformance records NVIDIA NIM image input capability')
+  assert.equal(nvidiaConformance.manifest.modalities.input.file, false, 'provider conformance does not claim NVIDIA NIM generic file input')
+  assert.ok(nvidiaConformance.manifest.source.url?.includes('docs.api.nvidia.com/nim/reference/llm-apis'), 'provider conformance links NVIDIA NIM to official LLM API docs')
+  assert.equal(nvidiaConformance.manifest.source.confidence, 'source-backed', 'provider conformance marks NVIDIA NIM as source-backed')
+
+  const nvidiaParsedCompletion = parseProviderChatCompletionJson({
+    choices: [{ message: { role: 'assistant', content: 'NVIDIA NIM answer.' } }],
+    usage: { prompt_tokens: 8, completion_tokens: 13, total_tokens: 21 },
+  }, {
+    provider: nvidiaProvider,
+    model: chatModel,
+    messages: [{ role: 'user', content: 'hello' }],
+  })
+  assert.equal(nvidiaParsedCompletion.text, 'NVIDIA NIM answer.', 'NVIDIA NIM parser extracts OpenAI-compatible response text')
+  assert.equal(nvidiaParsedCompletion.usage?.totalTokens, 21, 'NVIDIA NIM parser preserves usage metadata')
+
+  const nvidiaStream = parseProviderBufferedStreamResponse([
+    `data: ${JSON.stringify({ choices: [{ delta: { content: 'NVIDIA ' } }] })}`,
+    `data: ${JSON.stringify({ choices: [{ delta: { content: 'stream.' } }] })}`,
+    '',
+  ].join('\n'), {
+    provider: nvidiaProvider,
+    model: chatModel,
+    messages: [{ role: 'user', content: 'hello' }],
+  }, 'openai-compatible')
+  assert.equal(nvidiaStream.text, 'NVIDIA stream.', 'NVIDIA NIM stream parser merges OpenAI-compatible text deltas')
+
+  const originalFetch = global.fetch
+  const modelCalls = []
+  try {
+    global.fetch = async (input, init) => {
+      modelCalls.push({ input: String(input), init })
+      return {
+        ok: true,
+        status: 200,
+        headers: { get: (name) => name.toLowerCase() === 'content-type' ? 'application/json' : null },
+        json: async () => ({ object: 'list', data: [{ id: chatModel, object: 'model', owned_by: 'NVIDIA', created: 0 }] }),
+        text: async () => JSON.stringify({ object: 'list', data: [{ id: chatModel, object: 'model', owned_by: 'NVIDIA', created: 0 }] }),
+      }
+    }
+    const remoteModels = await fetchProviderModelConfigsFromRemote(nvidiaProvider, 1)
+    assert.equal(modelCalls[0].input, 'https://integrate.api.nvidia.com/v1/models', 'NVIDIA NIM model discovery uses the documented /v1/models endpoint')
+    assert.equal(remoteModels[0].id, chatModel, 'NVIDIA NIM model discovery parses OpenAI-compatible model list items')
+  } finally {
+    global.fetch = originalFetch
+  }
+
+  const nvidiaRateLimit = JSON.stringify({ error: { message: 'Too many requests', code: 'rate_limit_exceeded', request_id: 'nvidia-req-1' } })
+  assert.equal(classifyHttpStatus(429, nvidiaRateLimit), 'rate_limited', 'NVIDIA NIM 429 errors classify as rate_limited')
+  assert.ok(extractProviderErrorDetail(nvidiaRateLimit).includes('nvidia-req-1'), 'NVIDIA NIM errors preserve request ids for diagnostics')
+}
+
+async function assertHuggingFaceProviderCompatibilityBehavior() {
+  const gptOssModel = 'openai/gpt-oss-120b'
+  const visionModel = 'meta-llama/Llama-3.2-11B-Vision-Instruct'
+  const huggingFaceGptOssModel = {
+    id: gptOssModel,
+    name: 'OpenAI GPT OSS 120B',
+    provider: 'openai-compatible',
+    contextWindow: 131072,
+    maxTokens: 40000,
+    maxOutputTokens: 40000,
+    defaultMaxTokens: 8192,
+    supportsVision: false,
+    supportsFiles: false,
+    supportsTools: true,
+    reasoningMode: 'huggingface-reasoning-effort',
+    reasoningEfforts: ['low', 'medium', 'high'],
+    sourceUrl: 'https://huggingface.co/docs/inference-providers/guides/gpt-oss.md',
+    verifiedAt: '2026-06-21',
+  }
+  const huggingFaceVisionModel = {
+    id: visionModel,
+    name: 'Llama 3.2 11B Vision Instruct',
+    provider: 'openai-compatible',
+    contextWindow: 131072,
+    maxTokens: 8192,
+    maxOutputTokens: 4096,
+    defaultMaxTokens: 1024,
+    supportsVision: true,
+    supportsFiles: false,
+    supportsTools: true,
+    sourceUrl: 'https://huggingface.co/docs/inference-providers/tasks/chat-completion.md',
+    verifiedAt: '2026-06-21',
+  }
+  const huggingFaceProvider = applyProviderPreset({
+    id: 'huggingface-router-focused',
+    baseUrl: 'https://router.huggingface.co/v1',
+    apiKey: FAKE_KEY_A,
+    models: [gptOssModel, visionModel, 'meta-llama/Llama-3.3-70B-Instruct'],
+    modelConfigs: [huggingFaceGptOssModel, huggingFaceVisionModel],
+    enabled: true,
+  }, 'huggingface')
+
+  assert.equal(isHuggingFaceProvider(huggingFaceProvider), true, 'Hugging Face identity helper detects Router providers')
+  assert.equal(getAPIEndpointForTest(huggingFaceProvider), 'https://router.huggingface.co/v1/chat/completions', 'Hugging Face routes chat through the official router Chat Completions endpoint')
+  assert.equal(huggingFaceProvider.capabilities.modelList, true, 'Hugging Face keeps documented /v1/models sync enabled')
+  assert.equal(huggingFaceProvider.capabilities.vision, true, 'Hugging Face exposes documented image_url VLM chat input')
+  assert.equal(huggingFaceProvider.capabilities.files, false, 'Hugging Face does not claim generic OpenAI file_data chat attachments')
+  assert.equal(huggingFaceProvider.capabilities.reasoningEffort, true, 'Hugging Face exposes model/provider-dependent reasoning_effort controls')
+  assert.equal(huggingFaceProvider.capabilities.nativeTools, true, 'Hugging Face exposes documented OpenAI-format function tools')
+  assert.equal(huggingFaceProvider.capabilities.responsesApi, true, 'Hugging Face declares beta Responses API support but gates routing on explicit model metadata')
+
+  const gptOssConfig = getModelConfig(gptOssModel, 'openai-compatible', huggingFaceProvider.modelConfigs)
+  assert.equal(gptOssConfig.reasoningMode, 'huggingface-reasoning-effort', 'Hugging Face GPT-OSS metadata records the Router reasoning_effort shape')
+  assert.deepEqual(getReasoningEffortOptions(huggingFaceProvider, gptOssModel), ['low', 'medium', 'high'], 'Hugging Face GPT-OSS models expose documented low/medium/high reasoning_effort levels')
+  assert.deepEqual(getReasoningEffortOptions(huggingFaceProvider, 'meta-llama/Llama-3.3-70B-Instruct'), [], 'Hugging Face non-GPT-OSS models do not inherit generic reasoning controls')
+  assert.equal(providerSupportsReasoning(huggingFaceProvider, gptOssModel), true, 'Hugging Face GPT-OSS enables the reasoning control')
+  assert.equal(normalizeOpenAIReasoningEffort({ provider: huggingFaceProvider, model: gptOssModel, reasoningEffort: 'max' }), 'high', 'Hugging Face GPT-OSS oversized UI efforts normalize to documented high')
+  assert.equal(normalizeOpenAIReasoningEffort({ provider: huggingFaceProvider, model: gptOssModel, reasoningEffort: 'minimal' }), 'low', 'Hugging Face GPT-OSS minimal UI effort normalizes to documented low')
+  assert.equal(normalizeOpenAIReasoningEffort({ provider: huggingFaceProvider, model: gptOssModel, reasoningEffort: 'none' }), undefined, 'Hugging Face GPT-OSS omits unsupported none reasoning_effort')
+  assert.equal(getOpenAIChatMaxTokensField({ provider: huggingFaceProvider, model: gptOssModel }), 'max_tokens', 'Hugging Face Chat Completions requests use max_tokens')
+  assert.equal(usesOpenAIResponses({ provider: huggingFaceProvider, model: gptOssModel }), false, 'Hugging Face defaults to Chat Completions even when the preset knows about Responses')
+
+  const huggingFaceResponsesProvider = {
+    ...huggingFaceProvider,
+    modelConfigs: [{ ...huggingFaceGptOssModel, preferredEndpoint: 'responses' }, huggingFaceVisionModel],
+  }
+  assert.equal(usesOpenAIResponses({ provider: huggingFaceResponsesProvider, model: gptOssModel }), true, 'Hugging Face Responses routing requires explicit model metadata')
+  assert.equal(
+    resolveProviderEndpoint({ provider: huggingFaceResponsesProvider, model: gptOssModel, stream: false, usesResponsesApi: true }),
+    'https://router.huggingface.co/v1/responses',
+    'Hugging Face Responses metadata routes to the documented /v1/responses endpoint'
+  )
+
+  const providerToolDeclaration = {
+    type: 'function',
+    function: {
+      name: 'read_context',
+      description: 'Read local context.',
+      parameters: { type: 'object', properties: { query: { type: 'string' } }, required: ['query'] },
+    },
+  }
+  const huggingFaceBody = buildOpenAIBodyForTest({
+    provider: huggingFaceProvider,
+    model: gptOssModel,
+    messages: [{ role: 'user', content: 'Summarize the Hugging Face Router compatibility boundary.' }],
+    reasoningEffort: 'max',
+    maxTokens: 999999,
+    stream: false,
+    providerToolDeclarations: [providerToolDeclaration],
+  })
+  assert.equal(huggingFaceBody.max_tokens, 40000, 'Hugging Face request max_tokens is clamped to the model output limit')
+  assert.equal(huggingFaceBody.max_completion_tokens, undefined, 'Hugging Face request body avoids max_completion_tokens')
+  assert.equal(huggingFaceBody.reasoning_effort, 'high', 'Hugging Face GPT-OSS request body sends normalized reasoning_effort')
+  assert.equal(huggingFaceBody.response_format, undefined, 'Hugging Face structured output docs are mapped, but IsleMind has no response_format request control yet')
+  assert.equal(huggingFaceBody.tools[0].function.name, 'read_context', 'Hugging Face request body preserves OpenAI-format tool declarations')
+
+  const huggingFacePlainBody = buildOpenAIBodyForTest({
+    provider: huggingFaceProvider,
+    model: 'meta-llama/Llama-3.3-70B-Instruct',
+    messages: [{ role: 'user', content: 'hello' }],
+    reasoningEffort: 'high',
+    maxTokens: 1024,
+  })
+  assert.equal(huggingFacePlainBody.reasoning_effort, undefined, 'Hugging Face non-GPT-OSS requests avoid unsupported reasoning_effort')
+
+  const huggingFaceVisionBody = buildOpenAIBodyForTest({
+    provider: huggingFaceProvider,
+    model: visionModel,
+    messages: [{ role: 'user', content: 'Describe this image.' }],
+    attachments: [{ id: 'hf-image', type: 'image', uri: 'file://image.png', name: 'image.png', mimeType: 'image/png', size: 12, base64: 'aW1n' }],
+    maxTokens: 512,
+    stream: false,
+  })
+  assert.equal(huggingFaceVisionBody.messages[0].content[1].type, 'image_url', 'Hugging Face vision requests keep the documented image_url content part')
+  assert.equal(huggingFaceVisionBody.messages[0].content[1].image_url.url, 'data:image/png;base64,aW1n', 'Hugging Face vision requests send base64 data URLs')
+
+  const huggingFaceFileBody = buildOpenAIBodyForTest({
+    provider: huggingFaceProvider,
+    model: 'meta-llama/Llama-3.3-70B-Instruct',
+    messages: [{ role: 'user', content: 'summarize this document' }],
+    attachments: [{ id: 'hf-file', type: 'file', uri: 'file://doc.pdf', name: 'doc.pdf', mimeType: 'application/pdf', size: 12, base64: 'ZG9j' }],
+    maxTokens: 512,
+    stream: false,
+  })
+  const huggingFaceFileConformance = resolveProviderRequestConformanceForTest({
+    provider: huggingFaceProvider,
+    model: 'meta-llama/Llama-3.3-70B-Instruct',
+    messages: [{ role: 'user', content: 'summarize this document' }],
+    attachments: [{ id: 'hf-file', type: 'file', uri: 'file://doc.pdf', name: 'doc.pdf', mimeType: 'application/pdf', size: 12, base64: 'ZG9j' }],
+    maxTokens: 512,
+  }, huggingFaceFileBody)
+  assert.ok(
+    huggingFaceFileConformance.issues.some((issue) => issue.code === 'unsupported_modality' && issue.field === 'file' && issue.severity === 'block'),
+    'Hugging Face conformance blocks generic file attachments until provider-specific file routing exists'
+  )
+  assert.ok(
+    huggingFaceFileConformance.manifest.source.url?.includes('huggingface.co/docs/inference-providers/tasks/chat-completion.md'),
+    'Hugging Face generic conformance links to official Chat Completion docs'
+  )
+
+  const huggingFaceConformance = resolveProviderRequestConformanceForTest({
+    provider: huggingFaceProvider,
+    model: gptOssModel,
+    messages: [{ role: 'user', content: 'hello' }],
+    reasoningEffort: 'max',
+    maxTokens: 2048,
+  }, huggingFaceBody)
+  assert.equal(huggingFaceConformance.manifest.family, 'huggingface', 'provider conformance classifies Hugging Face as its own family')
+  assert.equal(huggingFaceConformance.manifest.protocol, 'openai-compatible', 'provider conformance records Hugging Face default chat as OpenAI-compatible')
+  assert.equal(huggingFaceConformance.manifest.payload.maxTokensField, 'max_tokens', 'provider conformance records Hugging Face max_tokens')
+  assert.equal(huggingFaceConformance.manifest.reasoning.requestShape, 'huggingface-reasoning-effort', 'provider conformance records Hugging Face GPT-OSS reasoning_effort shape')
+  assert.deepEqual(huggingFaceConformance.manifest.reasoning.selectableEfforts, ['low', 'medium', 'high'], 'provider conformance records Hugging Face GPT-OSS low/medium/high reasoning efforts')
+  assert.equal(huggingFaceConformance.reasoning.providerValue, 'high', 'provider conformance normalizes Hugging Face reasoning effort values')
+  assert.equal(huggingFaceConformance.manifest.tools.supported, true, 'provider conformance records Hugging Face OpenAI-format tools')
+  assert.equal(huggingFaceConformance.manifest.tools.requestShape, 'openai-tools', 'provider conformance records Hugging Face tool declaration shape')
+  assert.equal(huggingFaceConformance.manifest.modalities.input.image, true, 'provider conformance records Hugging Face image input capability')
+  assert.equal(huggingFaceConformance.manifest.modalities.input.file, false, 'provider conformance does not claim Hugging Face generic file input')
+  assert.ok(huggingFaceConformance.manifest.source.url?.includes('huggingface.co/docs/inference-providers/guides/gpt-oss.md'), 'provider conformance links Hugging Face GPT-OSS to model-specific official docs')
+  assert.equal(huggingFaceConformance.manifest.source.confidence, 'source-backed', 'provider conformance marks Hugging Face as source-backed')
+
+  const huggingFaceResponsesConformance = resolveProviderRequestConformanceForTest({
+    provider: huggingFaceResponsesProvider,
+    model: gptOssModel,
+    messages: [{ role: 'user', content: 'hello' }],
+    maxTokens: 512,
+  }, buildOpenAIResponsesBodyForTest({
+    provider: huggingFaceResponsesProvider,
+    model: gptOssModel,
+    messages: [{ role: 'user', content: 'hello' }],
+    maxTokens: 512,
+    stream: false,
+  }))
+  assert.equal(huggingFaceResponsesConformance.manifest.protocol, 'openai-responses', 'provider conformance records Hugging Face Responses only when model metadata selects it')
+
+  const huggingFaceParsedCompletion = parseProviderChatCompletionJson({
+    choices: [{ message: { role: 'assistant', content: 'Hugging Face answer.' } }],
+    usage: { prompt_tokens: 8, completion_tokens: 13, total_tokens: 21 },
+  }, {
+    provider: huggingFaceProvider,
+    model: gptOssModel,
+    messages: [{ role: 'user', content: 'hello' }],
+  })
+  assert.equal(huggingFaceParsedCompletion.text, 'Hugging Face answer.', 'Hugging Face parser extracts OpenAI-compatible response text')
+  assert.equal(huggingFaceParsedCompletion.usage?.totalTokens, 21, 'Hugging Face parser preserves usage metadata')
+
+  const huggingFaceStream = parseProviderBufferedStreamResponse([
+    `data: ${JSON.stringify({ choices: [{ delta: { content: 'Hugging ' } }] })}`,
+    `data: ${JSON.stringify({ choices: [{ delta: { content: 'Face stream.' } }] })}`,
+    `data: ${JSON.stringify({ choices: [{ delta: { tool_calls: [{ index: 0, id: 'call_hf_stream', type: 'function', function: { name: 'read_context', arguments: '{"query":' } }] } }] })}`,
+    `data: ${JSON.stringify({ choices: [{ delta: { tool_calls: [{ index: 0, function: { arguments: '"IsleMind"}' } }] } }] })}`,
+    '',
+  ].join('\n'), {
+    provider: huggingFaceProvider,
+    model: gptOssModel,
+    messages: [{ role: 'user', content: 'hello' }],
+  }, 'openai-compatible')
+  assert.equal(huggingFaceStream.text, 'Hugging Face stream.', 'Hugging Face stream parser merges OpenAI-compatible text deltas')
+  assert.equal(huggingFaceStream.providerToolCalls?.[0]?.id, 'call_hf_stream', 'Hugging Face stream parser preserves streamed tool-call ids')
+  assert.equal(huggingFaceStream.providerToolCalls?.[0]?.arguments?.query, 'IsleMind', 'Hugging Face stream parser merges streamed tool-call arguments')
+
+  const originalFetch = global.fetch
+  const modelCalls = []
+  try {
+    global.fetch = async (input, init) => {
+      modelCalls.push({ input: String(input), init })
+      return {
+        ok: true,
+        status: 200,
+        headers: { get: (name) => name.toLowerCase() === 'content-type' ? 'application/json' : null },
+        json: async () => ({ object: 'list', data: [{ id: gptOssModel, object: 'model', owned_by: 'Hugging Face', created: 0, context_length: 131072 }] }),
+        text: async () => JSON.stringify({ object: 'list', data: [{ id: gptOssModel, object: 'model', owned_by: 'Hugging Face', created: 0, context_length: 131072 }] }),
+      }
+    }
+    const remoteModels = await fetchProviderModelConfigsFromRemote(huggingFaceProvider, 1)
+    assert.equal(modelCalls[0].input, 'https://router.huggingface.co/v1/models', 'Hugging Face model discovery uses the documented /v1/models endpoint')
+    assert.equal(remoteModels[0].id, gptOssModel, 'Hugging Face model discovery parses OpenAI-compatible model list items')
+    assert.equal(remoteModels[0].contextWindow, 131072, 'Hugging Face model discovery preserves context_length metadata')
+  } finally {
+    global.fetch = originalFetch
+  }
+
+  const huggingFaceRateLimit = JSON.stringify({ error: { message: 'Rate limit exceeded', code: 'rate_limit_exceeded', request_id: 'hf-req-1' } })
+  assert.equal(classifyHttpStatus(429, huggingFaceRateLimit), 'rate_limited', 'Hugging Face 429 errors classify as rate_limited')
+  assert.ok(extractProviderErrorDetail(huggingFaceRateLimit).includes('hf-req-1'), 'Hugging Face errors preserve request ids for diagnostics')
+}
+
+async function assertGitHubModelsProviderCompatibilityBehavior() {
+  const chatModel = 'openai/gpt-4.1'
+  const visionModel = 'openai/gpt-4.1-mini'
+  const githubChatModel = {
+    id: chatModel,
+    name: 'GPT-4.1 via GitHub Models',
+    provider: 'openai-compatible',
+    contextWindow: 1047576,
+    maxTokens: 32768,
+    maxOutputTokens: 32768,
+    defaultMaxTokens: 4096,
+    supportsVision: false,
+    supportsFiles: false,
+    supportsTools: true,
+    sourceUrl: 'https://docs.github.com/en/github-models/use-github-models/prototyping-with-ai-models',
+    verifiedAt: '2026-06-21',
+  }
+  const githubVisionModel = {
+    id: visionModel,
+    name: 'GPT-4.1 Mini via GitHub Models',
+    provider: 'openai-compatible',
+    contextWindow: 1047576,
+    maxTokens: 32768,
+    maxOutputTokens: 32768,
+    defaultMaxTokens: 4096,
+    supportsVision: true,
+    supportsFiles: false,
+    supportsTools: true,
+    sourceUrl: 'https://docs.github.com/en/github-models/use-github-models/prototyping-with-ai-models',
+    verifiedAt: '2026-06-21',
+  }
+  const githubProvider = applyProviderPreset({
+    id: 'github-models-focused',
+    baseUrl: 'https://models.github.ai/inference',
+    apiKey: FAKE_KEY_A,
+    models: [chatModel, visionModel],
+    modelConfigs: [githubChatModel, githubVisionModel],
+    enabled: true,
+  }, 'github-models')
+
+  assert.equal(isGitHubModelsProvider(githubProvider), true, 'GitHub Models identity helper detects hosted inference providers')
+  assert.equal(getAPIEndpointForTest(githubProvider), 'https://models.github.ai/inference/chat/completions', 'GitHub Models routes chat through the official inference chat endpoint')
+  assert.equal(githubProvider.capabilities.modelList, true, 'GitHub Models keeps documented /models sync enabled')
+  assert.equal(githubProvider.capabilities.vision, false, 'GitHub Models waits for model metadata before exposing image_url vision input')
+  assert.equal(githubProvider.capabilities.files, false, 'GitHub Models does not claim generic file_data chat attachments')
+  assert.equal(githubProvider.capabilities.audioInput, false, 'GitHub Models does not claim chat audio input')
+  assert.equal(githubProvider.capabilities.audioTranscription, false, 'GitHub Models does not claim audio transcription endpoints')
+  assert.equal(githubProvider.capabilities.speech, false, 'GitHub Models does not claim speech output endpoints')
+  assert.equal(githubProvider.capabilities.reasoningEffort, false, 'GitHub Models does not claim reasoning_effort by default')
+  assert.equal(githubProvider.capabilities.nativeTools, true, 'GitHub Models exposes OpenAI-format tool declarations')
+  assert.equal(githubProvider.capabilities.responsesApi, false, 'GitHub Models does not claim OpenAI Responses routing')
+
+  const chatConfig = getModelConfig(chatModel, 'openai-compatible', githubProvider.modelConfigs)
+  const visionConfig = getModelConfig(visionModel, 'openai-compatible', githubProvider.modelConfigs)
+  assert.equal(chatConfig.supportsTools, true, 'GitHub Models fixture records tool-capable model metadata')
+  assert.equal(providerSupportsVisionInput(githubProvider, visionConfig), true, 'GitHub Models UI helper exposes vision when model metadata and the provider contract both allow it')
+  assert.equal(getOpenAIChatMaxTokensField({ provider: githubProvider, model: chatModel }), 'max_tokens', 'GitHub Models chat requests use max_tokens')
+  assert.equal(usesOpenAIResponses({ provider: githubProvider, model: chatModel }), false, 'GitHub Models keeps Chat Completions routing')
+  assert.deepEqual(getReasoningEffortOptions(githubProvider, chatModel), [], 'GitHub Models models do not inherit generic reasoning controls')
+  assert.equal(providerSupportsReasoning(githubProvider, chatModel), false, 'GitHub Models disables reasoning controls without source-backed evidence')
+  assert.equal(normalizeOpenAIReasoningEffort({ provider: githubProvider, model: chatModel, reasoningEffort: 'high' }), undefined, 'GitHub Models requests omit unsupported reasoning_effort')
+
+  const githubReasoningOverclaimProvider = {
+    ...githubProvider,
+    capabilities: { ...githubProvider.capabilities, reasoningEffort: true },
+    modelConfigs: [
+      {
+        ...githubChatModel,
+        supportedParameters: ['reasoning_effort'],
+        reasoningMode: 'openai-effort',
+        reasoningEfforts: ['low', 'medium', 'high'],
+      },
+      githubVisionModel,
+    ],
+  }
+  assert.deepEqual(
+    getReasoningEffortOptions(githubReasoningOverclaimProvider, chatModel),
+    [],
+    'GitHub Models overclaim fixture does not expose reasoning UI options when the provider compatibility contract does not claim reasoning'
+  )
+  assert.equal(
+    normalizeOpenAIReasoningEffort({ provider: githubReasoningOverclaimProvider, model: chatModel, reasoningEffort: 'high' }),
+    undefined,
+    'GitHub Models request helper blocks reasoning_effort when the provider compatibility contract does not claim reasoning'
+  )
+
+  const providerToolDeclaration = {
+    type: 'function',
+    function: {
+      name: 'read_context',
+      description: 'Read local context.',
+      parameters: { type: 'object', properties: { query: { type: 'string' } }, required: ['query'] },
+    },
+  }
+  const githubBody = buildOpenAIBodyForTest({
+    provider: githubProvider,
+    model: chatModel,
+    messages: [{ role: 'user', content: 'Summarize the GitHub Models compatibility boundary.' }],
+    reasoningEffort: 'high',
+    maxTokens: 999999,
+    stream: false,
+    providerToolDeclarations: [providerToolDeclaration],
+  })
+  assert.equal(githubBody.max_tokens, 32768, 'GitHub Models request max_tokens is clamped to the model output limit')
+  assert.equal(githubBody.max_completion_tokens, undefined, 'GitHub Models request body avoids max_completion_tokens')
+  assert.equal(githubBody.reasoning_effort, undefined, 'GitHub Models request body avoids unsupported reasoning_effort')
+  assert.equal(githubBody.response_format, undefined, 'GitHub Models request body avoids unclaimed structured-output controls')
+  assert.equal(githubBody.tools[0].function.name, 'read_context', 'GitHub Models request body preserves OpenAI-format tool declarations')
+
+  const githubOverclaimBody = buildOpenAIBodyForTest({
+    provider: githubReasoningOverclaimProvider,
+    model: chatModel,
+    messages: [{ role: 'user', content: 'Do not send uncontracted reasoning controls.' }],
+    reasoningEffort: 'high',
+    maxTokens: 1024,
+    stream: false,
+  })
+  assert.equal(githubOverclaimBody.reasoning_effort, undefined, 'GitHub Models request body still omits reasoning_effort when model metadata overclaims support')
+  const githubOverclaimConformance = resolveProviderRequestConformanceForTest({
+    provider: githubReasoningOverclaimProvider,
+    model: chatModel,
+    messages: [{ role: 'user', content: 'Do not send uncontracted reasoning controls.' }],
+    reasoningEffort: 'high',
+    maxTokens: 1024,
+  }, githubOverclaimBody)
+  assert.equal(githubOverclaimConformance.manifest.reasoning.requestShape, 'none', 'GitHub Models conformance blocks reasoning request shape until the contract claims reasoning')
+  assert.equal(githubOverclaimConformance.reasoning.enabled, false, 'GitHub Models conformance does not enable reasoning from model metadata alone')
+
+  const githubVisionBody = buildOpenAIBodyForTest({
+    provider: githubProvider,
+    model: visionModel,
+    messages: [{ role: 'user', content: 'Describe this image.' }],
+    attachments: [{ id: 'github-image', type: 'image', uri: 'file://image.png', name: 'image.png', mimeType: 'image/png', size: 12, base64: 'aW1n' }],
+    maxTokens: 512,
+    stream: false,
+  })
+  assert.equal(githubVisionBody.messages[0].content[1].type, 'image_url', 'GitHub Models vision requests keep the OpenAI-compatible image_url content part')
+  assert.equal(githubVisionBody.messages[0].content[1].image_url.url, 'data:image/png;base64,aW1n', 'GitHub Models vision requests send base64 data URLs')
+
+  const githubFileBody = buildOpenAIBodyForTest({
+    provider: githubProvider,
+    model: chatModel,
+    messages: [{ role: 'user', content: 'summarize this document' }],
+    attachments: [{ id: 'github-file', type: 'file', uri: 'file://doc.pdf', name: 'doc.pdf', mimeType: 'application/pdf', size: 12, base64: 'ZG9j' }],
+    maxTokens: 512,
+    stream: false,
+  })
+  assert.ok(!JSON.stringify(githubFileBody).includes('file_data'), 'GitHub Models request body omits generic file_data when the contract does not claim files')
+  const githubFileConformance = resolveProviderRequestConformanceForTest({
+    provider: githubProvider,
+    model: chatModel,
+    messages: [{ role: 'user', content: 'summarize this document' }],
+    attachments: [{ id: 'github-file', type: 'file', uri: 'file://doc.pdf', name: 'doc.pdf', mimeType: 'application/pdf', size: 12, base64: 'ZG9j' }],
+    maxTokens: 512,
+  }, githubFileBody)
+  assert.ok(
+    githubFileConformance.issues.some((issue) => issue.code === 'unsupported_modality' && issue.field === 'file' && issue.severity === 'block'),
+    'GitHub Models conformance blocks generic file attachments until provider-specific file routing exists'
+  )
+
+  const githubFileOverclaimProvider = {
+    ...githubProvider,
+    capabilities: { ...githubProvider.capabilities, files: true },
+    modelConfigs: [{ ...githubChatModel, supportsFiles: true }, githubVisionModel],
+  }
+  const githubFileOverclaimConfig = getModelConfig(chatModel, 'openai-compatible', githubFileOverclaimProvider.modelConfigs)
+  assert.equal(
+    providerSupportsFileInput(githubFileOverclaimProvider, githubFileOverclaimConfig),
+    false,
+    'GitHub Models UI helper blocks file badges when provider/model metadata overclaims a capability the provider contract does not claim'
+  )
+  const githubFileOverclaimBody = buildOpenAIBodyForTest({
+    provider: githubFileOverclaimProvider,
+    model: chatModel,
+    messages: [{ role: 'user', content: 'summarize this document' }],
+    attachments: [{ id: 'github-overclaim-file', type: 'file', uri: 'file://doc.pdf', name: 'doc.pdf', mimeType: 'application/pdf', size: 12, base64: 'ZG9j' }],
+    maxTokens: 512,
+    stream: false,
+  })
+  assert.ok(!JSON.stringify(githubFileOverclaimBody).includes('file_data'), 'GitHub Models request body blocks file_data even when provider/model metadata overclaims file support')
+
+  const githubConformance = resolveProviderRequestConformanceForTest({
+    provider: githubProvider,
+    model: chatModel,
+    messages: [{ role: 'user', content: 'hello' }],
+    reasoningEffort: 'high',
+    maxTokens: 2048,
+  }, githubBody)
+  assert.equal(githubConformance.manifest.family, 'github-models', 'provider conformance classifies GitHub Models as its own family')
+  assert.equal(githubConformance.manifest.protocol, 'openai-compatible', 'provider conformance records GitHub Models as OpenAI-compatible')
+  assert.equal(githubConformance.manifest.payload.maxTokensField, 'max_tokens', 'provider conformance records GitHub Models max_tokens')
+  assert.equal(githubConformance.manifest.reasoning.requestShape, 'none', 'provider conformance records no default GitHub Models reasoning request shape')
+  assert.equal(githubConformance.manifest.reasoning.supported, false, 'provider conformance records GitHub Models reasoning as unsupported by default')
+  assert.equal(githubConformance.manifest.tools.supported, true, 'provider conformance records GitHub Models OpenAI-format tools')
+  assert.equal(githubConformance.manifest.tools.requestShape, 'openai-tools', 'provider conformance records GitHub Models tool declaration shape')
+  assert.equal(githubConformance.manifest.modalities.input.image, false, 'provider conformance does not claim GitHub Models image input for non-vision model metadata')
+  assert.equal(githubConformance.manifest.modalities.input.file, false, 'provider conformance does not claim GitHub Models generic file input')
+  assert.ok(githubConformance.manifest.source.url?.includes('docs.github.com/en/github-models/use-github-models/prototyping-with-ai-models'), 'provider conformance links GitHub Models to official docs')
+  assert.equal(githubConformance.manifest.source.confidence, 'source-backed', 'provider conformance marks GitHub Models as source-backed')
+
+  const githubVisionConformance = resolveProviderRequestConformanceForTest({
+    provider: githubProvider,
+    model: visionModel,
+    messages: [{ role: 'user', content: 'Describe this image.' }],
+    attachments: [{ id: 'github-image', type: 'image', uri: 'file://image.png', name: 'image.png', mimeType: 'image/png', size: 12, base64: 'aW1n' }],
+    maxTokens: 512,
+  }, githubVisionBody)
+  assert.equal(githubVisionConformance.manifest.modalities.input.image, true, 'provider conformance records GitHub Models image input when model metadata enables vision')
+
+  const githubParsedCompletion = parseProviderChatCompletionJson({
+    choices: [{ message: { role: 'assistant', content: 'GitHub Models answer.' } }],
+    usage: { prompt_tokens: 8, completion_tokens: 13, total_tokens: 21 },
+  }, {
+    provider: githubProvider,
+    model: chatModel,
+    messages: [{ role: 'user', content: 'hello' }],
+  })
+  assert.equal(githubParsedCompletion.text, 'GitHub Models answer.', 'GitHub Models parser extracts OpenAI-compatible response text')
+  assert.equal(githubParsedCompletion.usage?.totalTokens, 21, 'GitHub Models parser preserves usage metadata')
+
+  const githubStream = parseProviderBufferedStreamResponse([
+    `data: ${JSON.stringify({ choices: [{ delta: { content: 'GitHub ' } }] })}`,
+    `data: ${JSON.stringify({ choices: [{ delta: { content: 'Models stream.' } }] })}`,
+    `data: ${JSON.stringify({ choices: [{ delta: { tool_calls: [{ index: 0, id: 'call_github_stream', type: 'function', function: { name: 'read_context', arguments: '{"query":' } }] } }] })}`,
+    `data: ${JSON.stringify({ choices: [{ delta: { tool_calls: [{ index: 0, function: { arguments: '"IsleMind"}' } }] } }] })}`,
+    '',
+  ].join('\n'), {
+    provider: githubProvider,
+    model: chatModel,
+    messages: [{ role: 'user', content: 'hello' }],
+  }, 'openai-compatible')
+  assert.equal(githubStream.text, 'GitHub Models stream.', 'GitHub Models stream parser merges OpenAI-compatible text deltas')
+  assert.equal(githubStream.providerToolCalls?.[0]?.id, 'call_github_stream', 'GitHub Models stream parser preserves streamed tool-call ids')
+  assert.equal(githubStream.providerToolCalls?.[0]?.arguments?.query, 'IsleMind', 'GitHub Models stream parser merges streamed tool-call arguments')
+
+  const originalFetch = global.fetch
+  const modelCalls = []
+  try {
+    global.fetch = async (input, init = {}) => {
+      modelCalls.push({ input: String(input), authorization: init.headers?.Authorization ?? init.headers?.authorization })
+      return {
+        ok: true,
+        status: 200,
+        headers: { get: (name) => name.toLowerCase() === 'content-type' ? 'application/json' : null },
+        json: async () => ({ object: 'list', data: [{ id: chatModel, object: 'model', owned_by: 'GitHub', created: 0, context_length: 1047576 }] }),
+        text: async () => JSON.stringify({ object: 'list', data: [{ id: chatModel, object: 'model', owned_by: 'GitHub', created: 0, context_length: 1047576 }] }),
+      }
+    }
+    const remoteModels = await fetchProviderModelConfigsFromRemote(githubProvider, 1)
+    assert.equal(modelCalls[0].input, 'https://models.github.ai/inference/models', 'GitHub Models model discovery uses the documented /models endpoint')
+    assert.equal(modelCalls[0].authorization, `Bearer ${FAKE_KEY_A}`, 'GitHub Models model discovery uses bearer auth with the GitHub token')
+    assert.equal(remoteModels[0].id, chatModel, 'GitHub Models model discovery parses OpenAI-compatible model list items')
+    assert.equal(remoteModels[0].contextWindow, 1047576, 'GitHub Models model discovery preserves context_length metadata')
+  } finally {
+    global.fetch = originalFetch
+  }
+
+  const githubRateLimit = JSON.stringify({ error: { message: 'Rate limit exceeded', code: 'rate_limit_exceeded', request_id: 'github-req-1' } })
+  assert.equal(classifyHttpStatus(429, githubRateLimit), 'rate_limited', 'GitHub Models 429 errors classify as rate_limited')
+  assert.ok(extractProviderErrorDetail(githubRateLimit).includes('github-req-1'), 'GitHub Models errors preserve request ids for diagnostics')
+}
+
+async function assertDeepInfraProviderCompatibilityBehavior() {
+  const reasoningModel = 'Qwen/Qwen3-30B-A3B'
+  const visionModel = 'Qwen/Qwen3-VL-30B-A3B-Instruct'
+  const plainModel = 'meta-llama/Llama-3.3-70B-Instruct'
+  const embeddingModel = 'deepinfra/embedding-test'
+  const deepInfraReasoningModel = {
+    id: reasoningModel,
+    name: 'Qwen3 30B A3B on DeepInfra',
+    provider: 'openai-compatible',
+    contextWindow: 131072,
+    maxTokens: 16384,
+    maxOutputTokens: 16384,
+    defaultMaxTokens: 4096,
+    supportsVision: false,
+    supportsFiles: false,
+    supportsTools: true,
+    reasoningMode: 'deepinfra-reasoning-effort',
+    reasoningEfforts: ['none', 'low', 'medium', 'high'],
+    sourceUrl: 'https://docs.deepinfra.com/chat/reasoning.md',
+    verifiedAt: '2026-06-21',
+  }
+  const deepInfraVisionModel = {
+    id: visionModel,
+    name: 'Qwen3 VL 30B A3B Instruct on DeepInfra',
+    provider: 'openai-compatible',
+    contextWindow: 131072,
+    maxTokens: 8192,
+    maxOutputTokens: 4096,
+    defaultMaxTokens: 1024,
+    supportsVision: true,
+    supportsFiles: false,
+    supportsTools: true,
+    sourceUrl: 'https://docs.deepinfra.com/chat/vision.md',
+    verifiedAt: '2026-06-21',
+  }
+  const deepInfraProvider = applyProviderPreset({
+    id: 'deepinfra-focused',
+    baseUrl: 'https://api.deepinfra.com/v1/openai',
+    apiKey: FAKE_KEY_A,
+    models: [reasoningModel, visionModel, plainModel, embeddingModel],
+    modelConfigs: [deepInfraReasoningModel, deepInfraVisionModel],
+    enabled: true,
+  }, 'deepinfra')
+
+  assert.equal(isDeepInfraProvider(deepInfraProvider), true, 'DeepInfra identity helper detects API providers')
+  assert.equal(detectProviderPreset({ baseUrl: 'https://api.deepinfra.com/v1/openai' }).presetId, 'deepinfra', 'DeepInfra preset detection recognizes the official OpenAI-compatible base URL')
+  assert.equal(getAPIEndpointForTest(deepInfraProvider), 'https://api.deepinfra.com/v1/openai/chat/completions', 'DeepInfra routes chat through the official OpenAI-compatible Chat Completions endpoint')
+  assert.equal(deepInfraProvider.capabilities.modelList, true, 'DeepInfra keeps documented /v1/openai/models sync enabled')
+  assert.equal(deepInfraProvider.capabilities.vision, true, 'DeepInfra exposes documented image_url vision input')
+  assert.equal(deepInfraProvider.capabilities.files, false, 'DeepInfra does not claim generic OpenAI file_data chat attachments')
+  assert.equal(deepInfraProvider.capabilities.audioInput, false, 'DeepInfra does not claim chat audio input')
+  assert.equal(deepInfraProvider.capabilities.audioTranscription, false, 'DeepInfra does not claim native speech recognition until /v1/inference routing exists')
+  assert.equal(deepInfraProvider.capabilities.speech, false, 'DeepInfra does not claim native text-to-speech until /v1/inference routing exists')
+  assert.equal(deepInfraProvider.capabilities.reasoningEffort, true, 'DeepInfra exposes documented model-specific reasoning_effort controls')
+  assert.equal(deepInfraProvider.capabilities.nativeTools, true, 'DeepInfra exposes documented OpenAI-format function tools')
+  assert.equal(deepInfraProvider.capabilities.responsesApi, false, 'DeepInfra does not claim OpenAI Responses routing')
+
+  const reasoningConfig = getModelConfig(reasoningModel, 'openai-compatible', deepInfraProvider.modelConfigs)
+  assert.equal(reasoningConfig.reasoningMode, 'deepinfra-reasoning-effort', 'DeepInfra reasoning metadata records the provider-specific reasoning_effort shape')
+  assert.deepEqual(getReasoningEffortOptions(deepInfraProvider, reasoningModel), ['none', 'low', 'medium', 'high'], 'DeepInfra reasoning models expose documented none/low/medium/high efforts')
+  assert.deepEqual(getReasoningEffortOptions(deepInfraProvider, plainModel), [], 'DeepInfra non-reasoning models do not inherit generic reasoning controls')
+  assert.equal(providerSupportsReasoning(deepInfraProvider, reasoningModel), true, 'DeepInfra reasoning models enable the reasoning control')
+  assert.equal(normalizeOpenAIReasoningEffort({ provider: deepInfraProvider, model: reasoningModel, reasoningEffort: 'max' }), 'high', 'DeepInfra oversized UI efforts normalize to documented high')
+  assert.equal(normalizeOpenAIReasoningEffort({ provider: deepInfraProvider, model: reasoningModel, reasoningEffort: 'minimal' }), 'low', 'DeepInfra minimal UI effort normalizes to documented low')
+  assert.equal(normalizeOpenAIReasoningEffort({ provider: deepInfraProvider, model: reasoningModel, reasoningEffort: 'none' }), 'none', 'DeepInfra can explicitly disable reasoning with the documented none value')
+  assert.equal(getOpenAIChatMaxTokensField({ provider: deepInfraProvider, model: reasoningModel }), 'max_tokens', 'DeepInfra chat requests use max_tokens')
+  assert.equal(usesOpenAIResponses({ provider: deepInfraProvider, model: reasoningModel }), false, 'DeepInfra keeps Chat Completions routing because it does not declare Responses API support')
+
+  const providerToolDeclaration = {
+    type: 'function',
+    function: {
+      name: 'read_context',
+      description: 'Read local context.',
+      parameters: { type: 'object', properties: { query: { type: 'string' } }, required: ['query'] },
+    },
+  }
+  const deepInfraBody = buildOpenAIBodyForTest({
+    provider: deepInfraProvider,
+    model: reasoningModel,
+    messages: [{ role: 'user', content: 'Summarize the DeepInfra compatibility boundary.' }],
+    reasoningEffort: 'max',
+    maxTokens: 999999,
+    stream: false,
+    providerToolDeclarations: [providerToolDeclaration],
+  })
+  assert.equal(deepInfraBody.max_tokens, 16384, 'DeepInfra request max_tokens is clamped to the documented model output cap')
+  assert.equal(deepInfraBody.max_completion_tokens, undefined, 'DeepInfra request body avoids max_completion_tokens')
+  assert.equal(deepInfraBody.reasoning_effort, 'high', 'DeepInfra request body sends normalized reasoning_effort')
+  assert.equal(deepInfraBody.response_format, undefined, 'DeepInfra structured output docs are mapped, but IsleMind has no response_format request control yet')
+  assert.equal(deepInfraBody.tools[0].function.name, 'read_context', 'DeepInfra request body preserves OpenAI-format tool declarations')
+
+  const deepInfraOffBody = buildOpenAIBodyForTest({
+    provider: deepInfraProvider,
+    model: reasoningModel,
+    messages: [{ role: 'user', content: 'disable reasoning' }],
+    reasoningEffort: 'none',
+    maxTokens: 1024,
+    stream: false,
+  })
+  assert.equal(deepInfraOffBody.reasoning_effort, 'none', 'DeepInfra request body sends none when explicitly disabling reasoning')
+
+  const deepInfraPlainBody = buildOpenAIBodyForTest({
+    provider: deepInfraProvider,
+    model: plainModel,
+    messages: [{ role: 'user', content: 'hello' }],
+    reasoningEffort: 'high',
+    maxTokens: 1024,
+  })
+  assert.equal(deepInfraPlainBody.reasoning_effort, undefined, 'DeepInfra plain chat models avoid unsupported reasoning_effort')
+
+  const deepInfraVisionBody = buildOpenAIBodyForTest({
+    provider: deepInfraProvider,
+    model: visionModel,
+    messages: [{ role: 'user', content: 'Describe this image.' }],
+    attachments: [{ id: 'deepinfra-image', type: 'image', uri: 'file://image.png', name: 'image.png', mimeType: 'image/png', size: 12, base64: 'aW1n' }],
+    maxTokens: 512,
+    stream: false,
+  })
+  assert.equal(deepInfraVisionBody.messages[0].content[1].type, 'image_url', 'DeepInfra vision requests keep the documented image_url content part')
+  assert.equal(deepInfraVisionBody.messages[0].content[1].image_url.url, 'data:image/png;base64,aW1n', 'DeepInfra vision requests send base64 data URLs')
+
+  const deepInfraFileBody = buildOpenAIBodyForTest({
+    provider: deepInfraProvider,
+    model: plainModel,
+    messages: [{ role: 'user', content: 'summarize this document' }],
+    attachments: [{ id: 'deepinfra-file', type: 'file', uri: 'file://doc.pdf', name: 'doc.pdf', mimeType: 'application/pdf', size: 12, base64: 'ZG9j' }],
+    maxTokens: 512,
+    stream: false,
+  })
+  const deepInfraFileConformance = resolveProviderRequestConformanceForTest({
+    provider: deepInfraProvider,
+    model: plainModel,
+    messages: [{ role: 'user', content: 'summarize this document' }],
+    attachments: [{ id: 'deepinfra-file', type: 'file', uri: 'file://doc.pdf', name: 'doc.pdf', mimeType: 'application/pdf', size: 12, base64: 'ZG9j' }],
+    maxTokens: 512,
+  }, deepInfraFileBody)
+  assert.ok(
+    deepInfraFileConformance.issues.some((issue) => issue.code === 'unsupported_modality' && issue.field === 'file' && issue.severity === 'block'),
+    'DeepInfra conformance blocks generic file attachments until provider-specific file routing exists'
+  )
+  assert.ok(
+    deepInfraFileConformance.manifest.source.url?.includes('docs.deepinfra.com/chat/overview.md'),
+    'DeepInfra generic conformance links to official Chat Completions docs'
+  )
+
+  const deepInfraConformance = resolveProviderRequestConformanceForTest({
+    provider: deepInfraProvider,
+    model: reasoningModel,
+    messages: [{ role: 'user', content: 'hello' }],
+    reasoningEffort: 'max',
+    maxTokens: 2048,
+  }, deepInfraBody)
+  assert.equal(deepInfraConformance.manifest.family, 'deepinfra', 'provider conformance classifies DeepInfra as its own family')
+  assert.equal(deepInfraConformance.manifest.protocol, 'openai-compatible', 'provider conformance records DeepInfra as OpenAI-compatible')
+  assert.equal(deepInfraConformance.manifest.payload.maxTokensField, 'max_tokens', 'provider conformance records DeepInfra max_tokens')
+  assert.equal(deepInfraConformance.manifest.reasoning.requestShape, 'deepinfra-reasoning-effort', 'provider conformance records DeepInfra reasoning_effort shape')
+  assert.deepEqual(deepInfraConformance.manifest.reasoning.selectableEfforts, ['none', 'low', 'medium', 'high'], 'provider conformance records DeepInfra none/low/medium/high reasoning efforts')
+  assert.equal(deepInfraConformance.reasoning.providerValue, 'high', 'provider conformance normalizes DeepInfra reasoning effort values')
+  assert.equal(deepInfraConformance.manifest.tools.supported, true, 'provider conformance records DeepInfra OpenAI-format tools')
+  assert.equal(deepInfraConformance.manifest.tools.requestShape, 'openai-tools', 'provider conformance records DeepInfra tool declaration shape')
+  assert.equal(deepInfraConformance.manifest.modalities.input.image, true, 'provider conformance records DeepInfra image input capability')
+  assert.equal(deepInfraConformance.manifest.modalities.input.file, false, 'provider conformance does not claim DeepInfra generic file input')
+  assert.equal(deepInfraConformance.manifest.modalities.input.audio, false, 'provider conformance does not claim DeepInfra chat audio input')
+  assert.equal(deepInfraConformance.manifest.modalities.output.speech, false, 'provider conformance does not claim DeepInfra native TTS output')
+  assert.equal(deepInfraConformance.manifest.structuredOutput.contractClaimed, true, 'provider conformance records DeepInfra structured-output contract evidence')
+  assert.equal(deepInfraConformance.manifest.structuredOutput.documentedRequestShape, 'openai-response-format', 'provider conformance records DeepInfra OpenAI-compatible response_format shape')
+  assert.equal(deepInfraConformance.manifest.structuredOutput.appRequestControl, false, 'provider conformance keeps DeepInfra response_format request controls disabled until app wiring exists')
+  assert.ok(deepInfraConformance.manifest.source.url?.includes('docs.deepinfra.com/chat/reasoning.md'), 'provider conformance links DeepInfra reasoning to official docs')
+  assert.equal(deepInfraConformance.manifest.source.confidence, 'source-backed', 'provider conformance marks DeepInfra as source-backed')
+
+  const deepInfraParsedCompletion = parseProviderChatCompletionJson({
+    choices: [{ message: { role: 'assistant', content: 'DeepInfra answer.' } }],
+    usage: { prompt_tokens: 8, completion_tokens: 13, total_tokens: 21 },
+  }, {
+    provider: deepInfraProvider,
+    model: reasoningModel,
+    messages: [{ role: 'user', content: 'hello' }],
+  })
+  assert.equal(deepInfraParsedCompletion.text, 'DeepInfra answer.', 'DeepInfra parser extracts OpenAI-compatible response text')
+  assert.equal(deepInfraParsedCompletion.usage?.totalTokens, 21, 'DeepInfra parser preserves usage metadata')
+
+  const deepInfraStream = parseProviderBufferedStreamResponse([
+    `data: ${JSON.stringify({ choices: [{ delta: { content: 'DeepInfra ' } }] })}`,
+    `data: ${JSON.stringify({ choices: [{ delta: { content: 'stream.' } }] })}`,
+    `data: ${JSON.stringify({ choices: [{ delta: { tool_calls: [{ index: 0, id: 'call_deepinfra_stream', type: 'function', function: { name: 'read_context', arguments: '{"query":' } }] } }] })}`,
+    `data: ${JSON.stringify({ choices: [{ delta: { tool_calls: [{ index: 0, function: { arguments: '"IsleMind"}' } }] } }] })}`,
+    '',
+  ].join('\n'), {
+    provider: deepInfraProvider,
+    model: reasoningModel,
+    messages: [{ role: 'user', content: 'hello' }],
+  }, 'openai-compatible')
+  assert.equal(deepInfraStream.text, 'DeepInfra stream.', 'DeepInfra stream parser merges OpenAI-compatible text deltas')
+  assert.equal(deepInfraStream.providerToolCalls?.[0]?.id, 'call_deepinfra_stream', 'DeepInfra stream parser preserves streamed tool-call ids')
+  assert.equal(deepInfraStream.providerToolCalls?.[0]?.arguments?.query, 'IsleMind', 'DeepInfra stream parser merges streamed tool-call arguments')
+
+  const originalFetch = global.fetch
+  const remoteCalls = []
+  try {
+    global.fetch = async (input, init = {}) => {
+      remoteCalls.push({ input: String(input), authorization: init.headers?.Authorization ?? init.headers?.authorization, body: init.body })
+      if (String(input).endsWith('/models')) {
+        const modelListJson = {
+          object: 'list',
+          data: [
+            { id: reasoningModel, object: 'model', owned_by: 'DeepInfra', created: 0, context_length: 131072, max_tokens: 16384, metadata: { tags: ['chat', 'reasoning_effort', 'reasoning'] } },
+            { id: visionModel, object: 'model', owned_by: 'DeepInfra', created: 0, context_length: 131072, max_tokens: 4096, metadata: { tags: ['chat', 'vlm', 'vision'] } },
+          ],
+        }
+        return {
+          ok: true,
+          status: 200,
+          headers: { get: (name) => name.toLowerCase() === 'content-type' ? 'application/json' : null },
+          json: async () => modelListJson,
+          text: async () => JSON.stringify(modelListJson),
+        }
+      }
+      if (String(input).endsWith('/embeddings')) {
+        const body = JSON.parse(String(init.body))
+        assert.equal(body.model, embeddingModel, 'DeepInfra embeddings request uses the configured embedding model')
+        assert.equal(body.input, 'hello world', 'DeepInfra embeddings request sends the input text')
+        return {
+          ok: true,
+          status: 200,
+          headers: { get: (name) => name.toLowerCase() === 'content-type' ? 'application/json' : null },
+          json: async () => ({ object: 'list', data: [{ object: 'embedding', embedding: [0.1, 0.2, 0.3], index: 0 }], usage: { prompt_tokens: 2, total_tokens: 2 } }),
+          text: async () => JSON.stringify({ object: 'list', data: [{ object: 'embedding', embedding: [0.1, 0.2, 0.3], index: 0 }] }),
+        }
+      }
+      throw new Error(`unexpected DeepInfra mock fetch: ${input}`)
+    }
+    const remoteModels = await fetchProviderModelConfigsFromRemote(deepInfraProvider, 1)
+    const syncedReasoning = remoteModels.find((model) => model.id === reasoningModel)
+    const syncedVision = remoteModels.find((model) => model.id === visionModel)
+    assert.equal(remoteCalls[0].input, 'https://api.deepinfra.com/v1/openai/models', 'DeepInfra model discovery uses the documented /v1/openai/models endpoint')
+    assert.equal(remoteCalls[0].authorization, `Bearer ${FAKE_KEY_A}`, 'DeepInfra model discovery uses bearer auth')
+    assert.equal(syncedReasoning?.contextWindow, 131072, 'DeepInfra model discovery preserves context_length metadata')
+    assert.equal(syncedReasoning?.maxOutputTokens, 16384, 'DeepInfra model discovery preserves max_tokens metadata')
+    assert.equal(syncedReasoning?.reasoningMode, 'deepinfra-reasoning-effort', 'DeepInfra model discovery maps reasoning metadata tags to the provider-specific reasoning mode')
+    assert.deepEqual(syncedReasoning?.reasoningEfforts, ['none', 'low', 'medium', 'high'], 'DeepInfra model discovery maps reasoning efforts from metadata tags')
+    assert.equal(syncedVision?.supportsVision, true, 'DeepInfra model discovery maps vlm/vision metadata tags to vision support')
+
+    const embedding = await embedTextWithProvider({ ...deepInfraProvider, models: [embeddingModel] }, 'hello world')
+    assert.equal(remoteCalls.at(-1).input, 'https://api.deepinfra.com/v1/openai/embeddings', 'DeepInfra embeddings use the documented /v1/openai/embeddings endpoint')
+    assert.deepEqual(embedding.embedding, [0.1, 0.2, 0.3], 'DeepInfra embeddings parser extracts vector values')
+    assert.equal(embedding.model, embeddingModel, 'DeepInfra embeddings result records the selected model')
+  } finally {
+    global.fetch = originalFetch
+  }
+
+  const deepInfraRateLimit = JSON.stringify({ error: { message: 'Rate limited', code: 'rate_limited', request_id: 'deepinfra-req-1' } })
+  assert.equal(classifyHttpStatus(429, deepInfraRateLimit), 'rate_limited', 'DeepInfra 429 errors classify as rate_limited')
+  assert.ok(extractProviderErrorDetail(deepInfraRateLimit).includes('deepinfra-req-1'), 'DeepInfra errors preserve request ids for diagnostics')
+}
+
+async function assertNovitaProviderCompatibilityBehavior() {
+  const reasoningModel = 'zai-org/glm-5.2'
+  const visionModel = 'qwen/qwen3-vl-30b-a3b-instruct'
+  const plainModel = 'meta-llama/llama-3.3-70b-instruct'
+  const embeddingModel = 'text-embedding-ada-002'
+  const novitaReasoningModel = {
+    id: reasoningModel,
+    name: 'GLM 5.2 on Novita',
+    provider: 'openai-compatible',
+    contextWindow: 1048576,
+    maxTokens: 1048576,
+    maxOutputTokens: 131072,
+    defaultMaxTokens: 4096,
+    supportsVision: false,
+    supportsFiles: false,
+    supportsTools: true,
+    sourceUrl: 'https://novita.ai/docs/guides/llm-reasoning',
+    verifiedAt: '2026-06-21',
+  }
+  const novitaVisionModel = {
+    id: visionModel,
+    name: 'Qwen3 VL on Novita',
+    provider: 'openai-compatible',
+    contextWindow: 131072,
+    maxTokens: 131072,
+    maxOutputTokens: 8192,
+    defaultMaxTokens: 1024,
+    supportsVision: true,
+    supportsFiles: false,
+    supportsTools: true,
+    sourceUrl: 'https://novita.ai/docs/guides/llm-vision',
+    verifiedAt: '2026-06-21',
+  }
+  const novitaProvider = applyProviderPreset({
+    id: 'novita-focused',
+    baseUrl: 'https://api.novita.ai/openai',
+    apiKey: FAKE_KEY_A,
+    models: [reasoningModel, visionModel, plainModel, embeddingModel],
+    modelConfigs: [novitaReasoningModel, novitaVisionModel],
+    enabled: true,
+  }, 'novita')
+
+  assert.equal(isNovitaProvider(novitaProvider), true, 'Novita identity helper detects API providers')
+  assert.equal(detectProviderPreset({ baseUrl: 'https://api.novita.ai/openai' }).presetId, 'novita', 'Novita preset detection recognizes the official OpenAI-compatible base URL')
+  assert.equal(detectProviderPreset({ baseUrl: 'https://api.novita.ai/v3/openai' }).presetId, 'novita', 'Novita preset detection keeps legacy /v3/openai URLs recognizable')
+  assert.equal(getAPIEndpointForTest(novitaProvider), 'https://api.novita.ai/openai/v1/chat/completions', 'Novita routes chat through the documented /openai/v1 Chat Completions endpoint')
+  assert.equal(getAPIEndpointForTest({ ...novitaProvider, baseUrl: 'https://api.novita.ai' }), 'https://api.novita.ai/openai/v1/chat/completions', 'Novita host-only URLs normalize to the documented OpenAI-compatible namespace')
+  assert.equal(novitaProvider.capabilities.modelList, true, 'Novita keeps documented /openai/v1/models sync enabled')
+  assert.equal(novitaProvider.capabilities.vision, true, 'Novita exposes documented image_url vision input')
+  assert.equal(novitaProvider.capabilities.files, false, 'Novita does not claim generic OpenAI file_data chat attachments')
+  assert.equal(novitaProvider.capabilities.audioInput, false, 'Novita does not claim chat audio input')
+  assert.equal(novitaProvider.capabilities.audioTranscription, false, 'Novita does not claim audio transcription endpoints for the OpenAI-compatible preset')
+  assert.equal(novitaProvider.capabilities.speech, false, 'Novita does not claim speech output endpoints for the OpenAI-compatible preset')
+  assert.equal(novitaProvider.capabilities.reasoningEffort, false, 'Novita does not expose reasoning_effort controls because official reasoning docs expose reasoning_content')
+  assert.equal(novitaProvider.capabilities.nativeTools, true, 'Novita exposes documented OpenAI-format function tools')
+  assert.equal(novitaProvider.capabilities.responsesApi, false, 'Novita does not claim OpenAI Responses routing')
+  assert.equal(providerSupportsReasoning(novitaProvider, reasoningModel), false, 'Novita reasoning_content support does not enable a reasoning_effort UI control')
+  assert.equal(normalizeOpenAIReasoningEffort({ provider: novitaProvider, model: reasoningModel, reasoningEffort: 'high' }), undefined, 'Novita requests omit unsupported reasoning_effort')
+  assert.equal(getOpenAIChatMaxTokensField({ provider: novitaProvider, model: reasoningModel }), 'max_tokens', 'Novita chat requests use max_tokens')
+  assert.equal(usesOpenAIResponses({ provider: novitaProvider, model: reasoningModel }), false, 'Novita keeps Chat Completions routing because it does not declare Responses API support')
+
+  const providerToolDeclaration = {
+    type: 'function',
+    function: {
+      name: 'read_context',
+      description: 'Read local context.',
+      parameters: { type: 'object', properties: { query: { type: 'string' } }, required: ['query'] },
+    },
+  }
+  const novitaBody = buildOpenAIBodyForTest({
+    provider: novitaProvider,
+    model: reasoningModel,
+    messages: [{ role: 'user', content: 'Summarize the Novita compatibility boundary.' }],
+    reasoningEffort: 'high',
+    maxTokens: 999999,
+    stream: false,
+    providerToolDeclarations: [providerToolDeclaration],
+  })
+  assert.equal(novitaBody.max_tokens, 131072, 'Novita request max_tokens is clamped to the documented model output cap')
+  assert.equal(novitaBody.max_completion_tokens, undefined, 'Novita request body avoids max_completion_tokens')
+  assert.equal(novitaBody.reasoning_effort, undefined, 'Novita request body avoids unsupported reasoning_effort')
+  assert.equal(novitaBody.separate_reasoning, undefined, 'Novita request body does not invent separate_reasoning without an app control')
+  assert.equal(novitaBody.response_format, undefined, 'Novita structured output docs are mapped, but IsleMind has no response_format request control yet')
+  assert.equal(novitaBody.tools[0].function.name, 'read_context', 'Novita request body preserves OpenAI-format tool declarations')
+
+  const novitaVisionBody = buildOpenAIBodyForTest({
+    provider: novitaProvider,
+    model: visionModel,
+    messages: [{ role: 'user', content: 'Describe this image.' }],
+    attachments: [{ id: 'novita-image', type: 'image', uri: 'file://image.png', name: 'image.png', mimeType: 'image/png', size: 12, base64: 'aW1n' }],
+    maxTokens: 512,
+    stream: false,
+  })
+  assert.equal(novitaVisionBody.messages[0].content[1].type, 'image_url', 'Novita vision requests keep the documented image_url content part')
+  assert.equal(novitaVisionBody.messages[0].content[1].image_url.url, 'data:image/png;base64,aW1n', 'Novita vision requests send base64 data URLs')
+
+  const novitaFileBody = buildOpenAIBodyForTest({
+    provider: novitaProvider,
+    model: plainModel,
+    messages: [{ role: 'user', content: 'summarize this document' }],
+    attachments: [{ id: 'novita-file', type: 'file', uri: 'file://doc.pdf', name: 'doc.pdf', mimeType: 'application/pdf', size: 12, base64: 'ZG9j' }],
+    maxTokens: 512,
+    stream: false,
+  })
+  const novitaFileConformance = resolveProviderRequestConformanceForTest({
+    provider: novitaProvider,
+    model: plainModel,
+    messages: [{ role: 'user', content: 'summarize this document' }],
+    attachments: [{ id: 'novita-file', type: 'file', uri: 'file://doc.pdf', name: 'doc.pdf', mimeType: 'application/pdf', size: 12, base64: 'ZG9j' }],
+    maxTokens: 512,
+  }, novitaFileBody)
+  assert.ok(
+    novitaFileConformance.issues.some((issue) => issue.code === 'unsupported_modality' && issue.field === 'file' && issue.severity === 'block'),
+    'Novita conformance blocks generic file attachments until provider-specific file routing exists'
+  )
+
+  const novitaConformance = resolveProviderRequestConformanceForTest({
+    provider: novitaProvider,
+    model: reasoningModel,
+    messages: [{ role: 'user', content: 'hello' }],
+    reasoningEffort: 'high',
+    maxTokens: 2048,
+  }, novitaBody)
+  assert.equal(novitaConformance.manifest.family, 'novita', 'provider conformance classifies Novita as its own family')
+  assert.equal(novitaConformance.manifest.protocol, 'openai-compatible', 'provider conformance records Novita as OpenAI-compatible')
+  assert.equal(novitaConformance.manifest.payload.maxTokensField, 'max_tokens', 'provider conformance records Novita max_tokens')
+  assert.equal(novitaConformance.manifest.reasoning.requestShape, 'none', 'provider conformance keeps Novita request-side reasoning controls disabled')
+  assert.deepEqual(novitaConformance.manifest.reasoning.selectableEfforts, [], 'provider conformance exposes no Novita reasoning_effort options')
+  assert.equal(novitaConformance.manifest.tools.supported, true, 'provider conformance records Novita OpenAI-format tools')
+  assert.equal(novitaConformance.manifest.tools.requestShape, 'openai-tools', 'provider conformance records Novita tool declaration shape')
+  assert.equal(novitaConformance.manifest.modalities.input.image, true, 'provider conformance records Novita image input capability')
+  assert.equal(novitaConformance.manifest.modalities.input.file, false, 'provider conformance does not claim Novita generic file input')
+  assert.equal(novitaConformance.manifest.modalities.input.audio, false, 'provider conformance does not claim Novita chat audio input')
+  assert.equal(novitaConformance.manifest.modalities.output.speech, false, 'provider conformance does not claim Novita speech output')
+  assert.ok(novitaConformance.manifest.source.url?.includes('novita.ai/docs'), 'provider conformance links Novita to official docs')
+  assert.equal(novitaConformance.manifest.source.confidence, 'source-backed', 'provider conformance marks Novita as source-backed')
+
+  const novitaParsedCompletion = parseProviderChatCompletionJson({
+    choices: [{
+      message: {
+        role: 'assistant',
+        content: 'Novita answer.',
+        reasoning_content: 'Novita parsed reasoning.',
+        tool_calls: [{
+          id: 'call_novita_read_context',
+          type: 'function',
+          function: { name: 'read_context', arguments: '{"query":"IsleMind"}' },
+        }],
+      },
+    }],
+    usage: { prompt_tokens: 8, completion_tokens: 13, total_tokens: 21 },
+  }, {
+    provider: novitaProvider,
+    model: reasoningModel,
+    messages: [{ role: 'user', content: 'hello' }],
+  })
+  assert.equal(novitaParsedCompletion.text, 'Novita answer.', 'Novita parser extracts OpenAI-compatible response text')
+  assert.ok(novitaParsedCompletion.traces?.some((trace) => trace.content === 'Novita parsed reasoning.'), 'Novita parser emits parsed reasoning_content as a reasoning trace')
+  assert.equal(novitaParsedCompletion.providerToolCalls?.[0]?.name, 'read_context', 'Novita parser extracts OpenAI-compatible tool calls')
+  assert.equal(novitaParsedCompletion.providerToolCalls?.[0]?.arguments?.query, 'IsleMind', 'Novita parser parses tool-call arguments')
+  assert.equal(novitaParsedCompletion.usage?.totalTokens, 21, 'Novita parser preserves usage metadata')
+
+  const novitaStream = parseProviderBufferedStreamResponse([
+    `data: ${JSON.stringify({ choices: [{ delta: { reasoning_content: 'Novita stream thinking.' } }] })}`,
+    `data: ${JSON.stringify({ choices: [{ delta: { content: 'Novita ' } }] })}`,
+    `data: ${JSON.stringify({ choices: [{ delta: { content: 'stream.' } }] })}`,
+    `data: ${JSON.stringify({ choices: [{ delta: { tool_calls: [{ index: 0, id: 'call_novita_stream', type: 'function', function: { name: 'read_context', arguments: '{"query":' } }] } }] })}`,
+    `data: ${JSON.stringify({ choices: [{ delta: { tool_calls: [{ index: 0, function: { arguments: '"IsleMind"}' } }] } }] })}`,
+    '',
+  ].join('\n'), {
+    provider: novitaProvider,
+    model: reasoningModel,
+    messages: [{ role: 'user', content: 'hello' }],
+  }, 'openai-compatible')
+  assert.equal(novitaStream.text, 'Novita stream.', 'Novita stream parser merges OpenAI-compatible text deltas')
+  assert.ok(novitaStream.traces.some((trace) => trace.content === 'Novita stream thinking.'), 'Novita stream parser emits reasoning_content deltas as traces')
+  assert.equal(novitaStream.providerToolCalls?.[0]?.id, 'call_novita_stream', 'Novita stream parser preserves streamed tool-call ids')
+  assert.equal(novitaStream.providerToolCalls?.[0]?.arguments?.query, 'IsleMind', 'Novita stream parser merges streamed tool-call arguments')
+
+  const originalFetch = global.fetch
+  const remoteCalls = []
+  try {
+    global.fetch = async (input, init = {}) => {
+      remoteCalls.push({ input: String(input), authorization: init.headers?.Authorization ?? init.headers?.authorization, body: init.body })
+      if (String(input).endsWith('/models')) {
+        const modelListJson = {
+          object: 'list',
+          data: [
+            { id: reasoningModel, object: 'model', context_size: 1048576, max_output_tokens: 131072, features: ['function-calling', 'structured-outputs', 'reasoning', 'serverless'], input_modalities: ['text'], output_modalities: ['text'] },
+            { id: visionModel, object: 'model', context_size: 131072, max_output_tokens: 8192, features: ['function-calling', 'structured-outputs'], input_modalities: ['text', 'image', 'video'], output_modalities: ['text'] },
+          ],
+        }
+        return {
+          ok: true,
+          status: 200,
+          headers: { get: (name) => name.toLowerCase() === 'content-type' ? 'application/json' : null },
+          json: async () => modelListJson,
+          text: async () => JSON.stringify(modelListJson),
+        }
+      }
+      if (String(input).endsWith('/embeddings')) {
+        const body = JSON.parse(String(init.body))
+        assert.equal(body.model, embeddingModel, 'Novita embeddings request uses the configured embedding model')
+        assert.equal(body.input, 'hello world', 'Novita embeddings request sends the input text')
+        return {
+          ok: true,
+          status: 200,
+          headers: { get: (name) => name.toLowerCase() === 'content-type' ? 'application/json' : null },
+          json: async () => ({ object: 'list', data: [{ object: 'embedding', embedding: [0.4, 0.5, 0.6], index: 0 }], usage: { prompt_tokens: 2, total_tokens: 2 } }),
+          text: async () => JSON.stringify({ object: 'list', data: [{ object: 'embedding', embedding: [0.4, 0.5, 0.6], index: 0 }] }),
+        }
+      }
+      throw new Error(`unexpected Novita mock fetch: ${input}`)
+    }
+    const remoteModels = await fetchProviderModelConfigsFromRemote(novitaProvider, 1)
+    const syncedReasoning = remoteModels.find((model) => model.id === reasoningModel)
+    const syncedVision = remoteModels.find((model) => model.id === visionModel)
+    assert.equal(remoteCalls[0].input, 'https://api.novita.ai/openai/v1/models', 'Novita model discovery uses the documented /openai/v1/models endpoint')
+    assert.equal(remoteCalls[0].authorization, `Bearer ${FAKE_KEY_A}`, 'Novita model discovery uses bearer auth')
+    assert.equal(syncedReasoning?.contextWindow, 1048576, 'Novita model discovery preserves context_size metadata')
+    assert.equal(syncedReasoning?.maxOutputTokens, 131072, 'Novita model discovery preserves max_output_tokens metadata')
+    assert.equal(syncedReasoning?.supportsTools, true, 'Novita model discovery maps function-calling features to tool support')
+    assert.equal(syncedReasoning?.reasoningMode, undefined, 'Novita model discovery does not infer unsupported reasoning_effort from response-side reasoning features')
+    assert.equal(syncedVision?.supportsVision, true, 'Novita model discovery maps image/video input_modalities to vision support')
+    assert.equal(syncedVision?.supportsTools, true, 'Novita model discovery maps vision-model function-calling features to tool support')
+
+    const embedding = await embedTextWithProvider({ ...novitaProvider, models: [embeddingModel] }, 'hello world')
+    assert.equal(remoteCalls.at(-1).input, 'https://api.novita.ai/openai/v1/embeddings', 'Novita embeddings use the documented /openai/v1/embeddings endpoint')
+    assert.deepEqual(embedding.embedding, [0.4, 0.5, 0.6], 'Novita embeddings parser extracts vector values')
+    assert.equal(embedding.model, embeddingModel, 'Novita embeddings result records the selected model')
+  } finally {
+    global.fetch = originalFetch
+  }
+
+  const novitaRateLimit = JSON.stringify({ code: 'RATE_LIMIT_EXCEEDED', message: 'Rate limit exceeded', request_id: 'novita-req-1' })
+  assert.equal(classifyHttpStatus(429, novitaRateLimit), 'rate_limited', 'Novita 429 errors classify as rate_limited')
+  assert.ok(extractProviderErrorDetail(novitaRateLimit).includes('novita-req-1'), 'Novita errors preserve request ids for diagnostics')
+}
+
+async function assertSiliconFlowProviderCompatibilityBehavior() {
+  const reasoningModel = 'Qwen/Qwen3-8B'
+  const visionModel = 'Qwen/Qwen2.5-VL-72B-Instruct'
+  const plainModel = 'deepseek-ai/DeepSeek-V3'
+  const embeddingModel = 'Qwen/Qwen3-Embedding-0.6B'
+  const siliconFlowReasoningModel = {
+    id: reasoningModel,
+    name: 'Qwen3 8B on SiliconFlow',
+    provider: 'openai-compatible',
+    contextWindow: 32768,
+    maxTokens: 32768,
+    maxOutputTokens: 8192,
+    defaultMaxTokens: 4096,
+    supportsVision: false,
+    supportsFiles: false,
+    supportsTools: true,
+    reasoningMode: 'siliconflow-thinking-budget',
+    reasoningEfforts: ['none', 'low', 'medium', 'high'],
+    sourceUrl: 'https://docs.siliconflow.cn/cn/userguide/capabilities/reasoning',
+    verifiedAt: '2026-06-21',
+  }
+  const siliconFlowVisionModel = {
+    id: visionModel,
+    name: 'Qwen2.5 VL on SiliconFlow',
+    provider: 'openai-compatible',
+    contextWindow: 32768,
+    maxTokens: 32768,
+    maxOutputTokens: 4096,
+    defaultMaxTokens: 1024,
+    supportsVision: true,
+    supportsFiles: false,
+    supportsTools: true,
+    sourceUrl: 'https://docs.siliconflow.cn/cn/userguide/capabilities/multimodal-vision',
+    verifiedAt: '2026-06-21',
+  }
+  const siliconFlowProvider = applyProviderPreset({
+    id: 'siliconflow-focused',
+    baseUrl: 'https://api.siliconflow.cn/v1',
+    apiKey: FAKE_KEY_A,
+    models: [reasoningModel, visionModel, plainModel, embeddingModel],
+    modelConfigs: [siliconFlowReasoningModel, siliconFlowVisionModel],
+    enabled: true,
+  }, 'siliconflow')
+
+  assert.equal(isSiliconFlowProvider(siliconFlowProvider), true, 'SiliconFlow identity helper detects API providers')
+  assert.equal(isDashScopeProvider(siliconFlowProvider), false, 'SiliconFlow Qwen models do not inherit DashScope stream usage behavior')
+  assert.equal(detectProviderPreset({ baseUrl: 'https://api.siliconflow.cn/v1' }).presetId, 'siliconflow', 'SiliconFlow preset detection recognizes the official CN OpenAI-compatible base URL')
+  assert.equal(detectProviderPreset({ baseUrl: 'https://api.siliconflow.com/v1' }).presetId, 'siliconflow', 'SiliconFlow preset detection recognizes the international OpenAI-compatible base URL')
+  assert.equal(getAPIEndpointForTest(siliconFlowProvider), 'https://api.siliconflow.cn/v1/chat/completions', 'SiliconFlow routes chat through the official Chat Completions endpoint')
+  assert.equal(siliconFlowProvider.capabilities.modelList, true, 'SiliconFlow keeps authenticated /v1/models sync enabled')
+  assert.equal(siliconFlowProvider.capabilities.vision, true, 'SiliconFlow exposes documented image_url multimodal chat input')
+  assert.equal(siliconFlowProvider.capabilities.files, false, 'SiliconFlow does not claim generic OpenAI file_data chat attachments')
+  assert.equal(siliconFlowProvider.capabilities.audioInput, false, 'SiliconFlow does not claim chat audio input')
+  assert.equal(siliconFlowProvider.capabilities.audioTranscription, false, 'SiliconFlow does not claim audio transcription endpoints')
+  assert.equal(siliconFlowProvider.capabilities.speech, false, 'SiliconFlow does not claim TTS through the generic speech route')
+  assert.equal(siliconFlowProvider.capabilities.reasoningEffort, true, 'SiliconFlow exposes thinking_budget controls for source-backed reasoning models')
+  assert.equal(siliconFlowProvider.capabilities.nativeTools, true, 'SiliconFlow exposes documented OpenAI-format function tools')
+  assert.equal(siliconFlowProvider.capabilities.responsesApi, false, 'SiliconFlow does not claim OpenAI Responses routing')
+  assert.deepEqual(getReasoningEffortOptions(siliconFlowProvider, reasoningModel), ['none', 'low', 'medium', 'high'], 'SiliconFlow reasoning models expose documented thinking_budget effort levels')
+  assert.deepEqual(getReasoningEffortOptions(siliconFlowProvider, plainModel), [], 'SiliconFlow non-reasoning models do not inherit generic thinking controls')
+  assert.equal(providerSupportsReasoning(siliconFlowProvider, reasoningModel), true, 'SiliconFlow reasoning models enable the reasoning control')
+  assert.equal(normalizeOpenAIReasoningEffort({ provider: siliconFlowProvider, model: reasoningModel, reasoningEffort: 'high' }), undefined, 'SiliconFlow requests do not use OpenAI reasoning_effort')
+  assert.equal(getOpenAIChatMaxTokensField({ provider: siliconFlowProvider, model: reasoningModel }), 'max_tokens', 'SiliconFlow chat requests use max_tokens')
+  assert.equal(usesOpenAIResponses({ provider: siliconFlowProvider, model: reasoningModel }), false, 'SiliconFlow keeps Chat Completions routing because it does not declare Responses API support')
+
+  const providerToolDeclaration = {
+    type: 'function',
+    function: {
+      name: 'read_context',
+      description: 'Read local context.',
+      parameters: { type: 'object', properties: { query: { type: 'string' } }, required: ['query'] },
+    },
+  }
+  const siliconFlowBody = buildOpenAIBodyForTest({
+    provider: siliconFlowProvider,
+    model: reasoningModel,
+    messages: [{ role: 'user', content: 'Summarize the SiliconFlow compatibility boundary.' }],
+    reasoningEffort: 'high',
+    maxTokens: 999999,
+    temperature: 0.7,
+    stream: true,
+    providerToolDeclarations: [providerToolDeclaration],
+  })
+  assert.equal(siliconFlowBody.max_tokens, 8192, 'SiliconFlow request max_tokens is clamped to the documented model output cap')
+  assert.equal(siliconFlowBody.max_completion_tokens, undefined, 'SiliconFlow request body avoids max_completion_tokens')
+  assert.equal(siliconFlowBody.thinking_budget, 8192, 'SiliconFlow request body maps high reasoning control to thinking_budget')
+  assert.equal(siliconFlowBody.enable_thinking, undefined, 'SiliconFlow request body avoids DashScope-specific enable_thinking')
+  assert.equal(siliconFlowBody.reasoning_effort, undefined, 'SiliconFlow request body avoids unsupported OpenAI reasoning_effort')
+  assert.equal(siliconFlowBody.stream_options, undefined, 'SiliconFlow request body avoids DashScope-specific stream_options.include_usage')
+  assert.equal(siliconFlowBody.temperature, undefined, 'SiliconFlow thinking requests avoid sampling controls while thinking_budget is active')
+  assert.equal(siliconFlowBody.response_format, undefined, 'SiliconFlow JSON mode docs are mapped, but IsleMind has no response_format request control yet')
+  assert.equal(siliconFlowBody.tools[0].function.name, 'read_context', 'SiliconFlow request body preserves OpenAI-format tool declarations')
+
+  const siliconFlowOffBody = buildOpenAIBodyForTest({
+    provider: siliconFlowProvider,
+    model: reasoningModel,
+    messages: [{ role: 'user', content: 'disable reasoning' }],
+    reasoningEffort: 'none',
+    maxTokens: 1024,
+    stream: false,
+  })
+  assert.equal(siliconFlowOffBody.thinking_budget, undefined, 'SiliconFlow none effort omits thinking_budget instead of sending a provider-specific disable flag')
+  assert.equal(siliconFlowOffBody.enable_thinking, undefined, 'SiliconFlow none effort does not send DashScope enable_thinking false')
+
+  const siliconFlowPlainBody = buildOpenAIBodyForTest({
+    provider: siliconFlowProvider,
+    model: plainModel,
+    messages: [{ role: 'user', content: 'hello' }],
+    reasoningEffort: 'high',
+    maxTokens: 1024,
+  })
+  assert.equal(siliconFlowPlainBody.thinking_budget, undefined, 'SiliconFlow plain chat models avoid unsupported thinking_budget')
+
+  const siliconFlowVisionBody = buildOpenAIBodyForTest({
+    provider: siliconFlowProvider,
+    model: visionModel,
+    messages: [{ role: 'user', content: 'Describe this image.' }],
+    attachments: [{ id: 'siliconflow-image', type: 'image', uri: 'file://image.png', name: 'image.png', mimeType: 'image/png', size: 12, base64: 'aW1n' }],
+    maxTokens: 512,
+    stream: false,
+  })
+  assert.equal(siliconFlowVisionBody.messages[0].content[1].type, 'image_url', 'SiliconFlow vision requests keep the documented image_url content part')
+  assert.equal(siliconFlowVisionBody.messages[0].content[1].image_url.url, 'data:image/png;base64,aW1n', 'SiliconFlow vision requests send base64 data URLs')
+
+  const siliconFlowFileBody = buildOpenAIBodyForTest({
+    provider: siliconFlowProvider,
+    model: plainModel,
+    messages: [{ role: 'user', content: 'summarize this document' }],
+    attachments: [{ id: 'siliconflow-file', type: 'file', uri: 'file://doc.pdf', name: 'doc.pdf', mimeType: 'application/pdf', size: 12, base64: 'ZG9j' }],
+    maxTokens: 512,
+    stream: false,
+  })
+  const siliconFlowFileConformance = resolveProviderRequestConformanceForTest({
+    provider: siliconFlowProvider,
+    model: plainModel,
+    messages: [{ role: 'user', content: 'summarize this document' }],
+    attachments: [{ id: 'siliconflow-file', type: 'file', uri: 'file://doc.pdf', name: 'doc.pdf', mimeType: 'application/pdf', size: 12, base64: 'ZG9j' }],
+    maxTokens: 512,
+  }, siliconFlowFileBody)
+  assert.ok(
+    siliconFlowFileConformance.issues.some((issue) => issue.code === 'unsupported_modality' && issue.field === 'file' && issue.severity === 'block'),
+    'SiliconFlow conformance blocks generic file attachments until provider-specific file routing exists'
+  )
+
+  const siliconFlowConformance = resolveProviderRequestConformanceForTest({
+    provider: siliconFlowProvider,
+    model: reasoningModel,
+    messages: [{ role: 'user', content: 'hello' }],
+    reasoningEffort: 'high',
+    maxTokens: 2048,
+  }, siliconFlowBody)
+  assert.equal(siliconFlowConformance.manifest.family, 'siliconflow', 'provider conformance classifies SiliconFlow as its own family')
+  assert.equal(siliconFlowConformance.manifest.protocol, 'openai-compatible', 'provider conformance records SiliconFlow as OpenAI-compatible')
+  assert.equal(siliconFlowConformance.manifest.payload.maxTokensField, 'max_tokens', 'provider conformance records SiliconFlow max_tokens')
+  assert.equal(siliconFlowConformance.manifest.reasoning.requestShape, 'siliconflow-thinking-budget', 'provider conformance records SiliconFlow thinking_budget shape')
+  assert.deepEqual(siliconFlowConformance.manifest.reasoning.selectableEfforts, ['none', 'low', 'medium', 'high'], 'provider conformance records SiliconFlow thinking_budget efforts')
+  assert.equal(siliconFlowConformance.reasoning.providerValue, 8192, 'provider conformance normalizes SiliconFlow high effort to thinking_budget')
+  assert.equal(siliconFlowConformance.manifest.tools.supported, true, 'provider conformance records SiliconFlow OpenAI-format tools')
+  assert.equal(siliconFlowConformance.manifest.tools.requestShape, 'openai-tools', 'provider conformance records SiliconFlow tool declaration shape')
+  assert.equal(siliconFlowConformance.manifest.modalities.input.image, true, 'provider conformance records SiliconFlow image input capability')
+  assert.equal(siliconFlowConformance.manifest.modalities.input.file, false, 'provider conformance does not claim SiliconFlow generic file input')
+  assert.equal(siliconFlowConformance.manifest.modalities.input.audio, false, 'provider conformance does not claim SiliconFlow chat audio input')
+  assert.equal(siliconFlowConformance.manifest.modalities.output.speech, false, 'provider conformance does not claim SiliconFlow TTS output through generic speech routing')
+  assert.ok(siliconFlowConformance.manifest.source.url?.includes('docs.siliconflow.cn'), 'provider conformance links SiliconFlow to official docs')
+  assert.equal(siliconFlowConformance.manifest.source.confidence, 'source-backed', 'provider conformance marks SiliconFlow as source-backed')
+
+  const siliconFlowParsedCompletion = parseProviderChatCompletionJson({
+    choices: [{
+      message: {
+        role: 'assistant',
+        content: 'SiliconFlow answer.',
+        reasoning_content: 'SiliconFlow parsed reasoning.',
+        tool_calls: [{
+          id: 'call_siliconflow_read_context',
+          type: 'function',
+          function: { name: 'read_context', arguments: '{"query":"IsleMind"}' },
+        }],
+      },
+    }],
+    usage: { prompt_tokens: 8, completion_tokens: 13, total_tokens: 21 },
+  }, {
+    provider: siliconFlowProvider,
+    model: reasoningModel,
+    messages: [{ role: 'user', content: 'hello' }],
+  })
+  assert.equal(siliconFlowParsedCompletion.text, 'SiliconFlow answer.', 'SiliconFlow parser extracts OpenAI-compatible response text')
+  assert.ok(siliconFlowParsedCompletion.traces?.some((trace) => trace.content === 'SiliconFlow parsed reasoning.'), 'SiliconFlow parser emits parsed reasoning_content as a reasoning trace')
+  assert.equal(siliconFlowParsedCompletion.providerToolCalls?.[0]?.name, 'read_context', 'SiliconFlow parser extracts OpenAI-compatible tool calls')
+  assert.equal(siliconFlowParsedCompletion.providerToolCalls?.[0]?.arguments?.query, 'IsleMind', 'SiliconFlow parser parses tool-call arguments')
+  assert.equal(siliconFlowParsedCompletion.usage?.totalTokens, 21, 'SiliconFlow parser preserves usage metadata')
+
+  const siliconFlowStream = parseProviderBufferedStreamResponse([
+    `data: ${JSON.stringify({ choices: [{ delta: { reasoning_content: 'SiliconFlow stream thinking.' } }] })}`,
+    `data: ${JSON.stringify({ choices: [{ delta: { content: 'SiliconFlow ' } }] })}`,
+    `data: ${JSON.stringify({ choices: [{ delta: { content: 'stream.' } }] })}`,
+    `data: ${JSON.stringify({ choices: [{ delta: { tool_calls: [{ index: 0, id: 'call_siliconflow_stream', type: 'function', function: { name: 'read_context', arguments: '{"query":' } }] } }] })}`,
+    `data: ${JSON.stringify({ choices: [{ delta: { tool_calls: [{ index: 0, function: { arguments: '"IsleMind"}' } }] } }] })}`,
+    '',
+  ].join('\n'), {
+    provider: siliconFlowProvider,
+    model: reasoningModel,
+    messages: [{ role: 'user', content: 'hello' }],
+  }, 'openai-compatible')
+  assert.equal(siliconFlowStream.text, 'SiliconFlow stream.', 'SiliconFlow stream parser merges OpenAI-compatible text deltas')
+  assert.ok(siliconFlowStream.traces.some((trace) => trace.content === 'SiliconFlow stream thinking.'), 'SiliconFlow stream parser emits reasoning_content deltas as traces')
+  assert.equal(siliconFlowStream.providerToolCalls?.[0]?.id, 'call_siliconflow_stream', 'SiliconFlow stream parser preserves streamed tool-call ids')
+  assert.equal(siliconFlowStream.providerToolCalls?.[0]?.arguments?.query, 'IsleMind', 'SiliconFlow stream parser merges streamed tool-call arguments')
+
+  const originalFetch = global.fetch
+  const remoteCalls = []
+  try {
+    global.fetch = async (input, init = {}) => {
+      remoteCalls.push({ input: String(input), authorization: init.headers?.Authorization ?? init.headers?.authorization, body: init.body })
+      if (String(input).endsWith('/models')) {
+        const modelListJson = {
+          object: 'list',
+          data: [
+            { id: reasoningModel, object: 'model', context_length: 32768, max_tokens: 8192, features: ['tools', 'reasoning'], tags: ['chat'] },
+            { id: visionModel, object: 'model', context_length: 32768, max_tokens: 4096, features: ['function-calling'], tags: ['vision'] },
+          ],
+        }
+        return {
+          ok: true,
+          status: 200,
+          headers: { get: (name) => name.toLowerCase() === 'content-type' ? 'application/json' : null },
+          json: async () => modelListJson,
+          text: async () => JSON.stringify(modelListJson),
+        }
+      }
+      if (String(input).endsWith('/embeddings')) {
+        const body = JSON.parse(String(init.body))
+        assert.equal(body.model, embeddingModel, 'SiliconFlow embeddings request uses the configured embedding model')
+        assert.equal(body.input, 'hello world', 'SiliconFlow embeddings request sends the input text')
+        return {
+          ok: true,
+          status: 200,
+          headers: { get: (name) => name.toLowerCase() === 'content-type' ? 'application/json' : null },
+          json: async () => ({ object: 'list', model: embeddingModel, data: [{ object: 'embedding', embedding: [0.7, 0.8, 0.9], index: 0 }], usage: { prompt_tokens: 2, total_tokens: 2 } }),
+          text: async () => JSON.stringify({ object: 'list', data: [{ object: 'embedding', embedding: [0.7, 0.8, 0.9], index: 0 }] }),
+        }
+      }
+      throw new Error(`unexpected SiliconFlow mock fetch: ${input}`)
+    }
+    const remoteModels = await fetchProviderModelConfigsFromRemote(siliconFlowProvider, 1)
+    const syncedReasoning = remoteModels.find((model) => model.id === reasoningModel)
+    const syncedVision = remoteModels.find((model) => model.id === visionModel)
+    assert.equal(remoteCalls[0].input, 'https://api.siliconflow.cn/v1/models', 'SiliconFlow model discovery uses the documented authenticated /v1/models endpoint')
+    assert.equal(remoteCalls[0].authorization, `Bearer ${FAKE_KEY_A}`, 'SiliconFlow model discovery uses bearer auth')
+    assert.equal(syncedReasoning?.contextWindow, 32768, 'SiliconFlow model discovery preserves context_length metadata')
+    assert.equal(syncedReasoning?.maxOutputTokens, 8192, 'SiliconFlow model discovery preserves max_tokens metadata')
+    assert.equal(syncedReasoning?.supportsTools, true, 'SiliconFlow model discovery maps tools/function-calling metadata to tool support')
+    assert.equal(syncedReasoning?.reasoningMode, undefined, 'SiliconFlow model discovery does not infer thinking_budget without source-backed model metadata')
+    assert.equal(syncedVision?.supportsVision, true, 'SiliconFlow model discovery maps vision tags to vision support')
+    assert.equal(syncedVision?.supportsTools, true, 'SiliconFlow model discovery maps vision-model function-calling features to tool support')
+
+    const embedding = await embedTextWithProvider({ ...siliconFlowProvider, models: [embeddingModel] }, 'hello world')
+    assert.equal(remoteCalls.at(-1).input, 'https://api.siliconflow.cn/v1/embeddings', 'SiliconFlow embeddings use the documented /v1/embeddings endpoint')
+    assert.deepEqual(embedding.embedding, [0.7, 0.8, 0.9], 'SiliconFlow embeddings parser extracts vector values')
+    assert.equal(embedding.model, embeddingModel, 'SiliconFlow embeddings result records the selected model')
+  } finally {
+    global.fetch = originalFetch
+  }
+
+  const siliconFlowRateLimit = JSON.stringify({ code: 20015, message: '触发了 rate limits', request_id: 'siliconflow-req-1' })
+  assert.equal(classifyHttpStatus(429, siliconFlowRateLimit), 'rate_limited', 'SiliconFlow 429 errors classify as rate_limited')
+  assert.ok(extractProviderErrorDetail(siliconFlowRateLimit).includes('siliconflow-req-1'), 'SiliconFlow errors preserve request ids for diagnostics')
+}
+
+async function assertModelScopeProviderCompatibilityBehavior() {
+  const chatModel = 'Qwen/Qwen3-235B-A22B-Instruct-2507'
+  const visionModel = 'Qwen/Qwen3-VL-8B-Instruct'
+  const embeddingModel = 'iic/gte_Qwen2-7B-instruct-embedding'
+  const modelScopeProvider = applyProviderPreset({
+    id: 'modelscope-focused',
+    baseUrl: 'https://api-inference.modelscope.cn/v1',
+    apiKey: FAKE_KEY_A,
+    models: [chatModel, visionModel, embeddingModel],
+    enabled: true,
+  }, 'modelscope')
+
+  assert.equal(isModelScopeProvider(modelScopeProvider), true, 'ModelScope identity helper detects API-Inference providers')
+  assert.equal(isDashScopeProvider(modelScopeProvider), false, 'ModelScope Qwen models do not inherit DashScope stream usage behavior')
+  assert.equal(detectProviderPreset({ baseUrl: 'https://api-inference.modelscope.cn/v1' }).presetId, 'modelscope', 'ModelScope preset detection recognizes the official API-Inference base URL')
+  assert.equal(getAPIEndpointForTest(modelScopeProvider), 'https://api-inference.modelscope.cn/v1/chat/completions', 'ModelScope routes chat through the official API-Inference chat endpoint')
+  assert.equal(modelScopeProvider.capabilities.modelList, true, 'ModelScope keeps /v1/models sync enabled')
+  assert.equal(modelScopeProvider.capabilities.vision, false, 'ModelScope does not claim image input without source-backed image_url fixtures')
+  assert.equal(modelScopeProvider.capabilities.files, false, 'ModelScope does not claim generic OpenAI file_data chat attachments')
+  assert.equal(modelScopeProvider.capabilities.audioInput, false, 'ModelScope does not claim chat audio input')
+  assert.equal(modelScopeProvider.capabilities.audioTranscription, false, 'ModelScope does not claim audio transcription endpoints')
+  assert.equal(modelScopeProvider.capabilities.speech, false, 'ModelScope does not claim speech output endpoints')
+  assert.equal(modelScopeProvider.capabilities.reasoningEffort, false, 'ModelScope does not expose generic reasoning controls')
+  assert.equal(modelScopeProvider.capabilities.nativeTools, false, 'ModelScope does not claim OpenAI-format function tools until source-backed fixtures exist')
+  assert.equal(modelScopeProvider.capabilities.responsesApi, false, 'ModelScope does not claim OpenAI Responses routing')
+  assert.deepEqual(getReasoningEffortOptions(modelScopeProvider, chatModel), [], 'ModelScope Qwen models do not inherit DashScope thinking controls')
+  assert.equal(providerSupportsReasoning(modelScopeProvider, chatModel), false, 'ModelScope Qwen models do not enable the reasoning control by default')
+  assert.equal(normalizeOpenAIReasoningEffort({ provider: modelScopeProvider, model: chatModel, reasoningEffort: 'high' }), undefined, 'ModelScope requests avoid generic reasoning_effort without source-backed support')
+  assert.equal(shouldRequestDashScopeStreamUsage({ provider: modelScopeProvider, stream: true }), false, 'ModelScope streaming requests avoid DashScope stream_options.include_usage')
+  assert.equal(getOpenAIChatMaxTokensField({ provider: modelScopeProvider, model: chatModel }), 'max_tokens', 'ModelScope chat requests use max_tokens')
+  assert.equal(usesOpenAIResponses({ provider: modelScopeProvider, model: chatModel }), false, 'ModelScope keeps Chat Completions routing because it does not declare Responses API support')
+
+  const modelScopeBody = buildOpenAIBodyForTest({
+    provider: modelScopeProvider,
+    model: chatModel,
+    messages: [{ role: 'user', content: 'hello' }],
+    reasoningEffort: 'high',
+    maxTokens: 2048,
+    stream: true,
+  })
+  assert.equal(modelScopeBody.max_tokens, 2048, 'ModelScope request body sends max_tokens')
+  assert.equal(modelScopeBody.max_completion_tokens, undefined, 'ModelScope request body avoids max_completion_tokens')
+  assert.equal(modelScopeBody.enable_thinking, undefined, 'ModelScope request body avoids DashScope-specific enable_thinking')
+  assert.equal(modelScopeBody.thinking_budget, undefined, 'ModelScope request body avoids DashScope/SiliconFlow thinking_budget')
+  assert.equal(modelScopeBody.reasoning_effort, undefined, 'ModelScope request body avoids unsupported reasoning_effort')
+  assert.equal(modelScopeBody.stream_options, undefined, 'ModelScope request body avoids DashScope-specific stream_options.include_usage')
+
+  const modelScopeImageBody = buildOpenAIBodyForTest({
+    provider: modelScopeProvider,
+    model: visionModel,
+    messages: [{ role: 'user', content: 'Describe this image.' }],
+    attachments: [{ id: 'modelscope-image', type: 'image', uri: 'file://image.png', name: 'image.png', mimeType: 'image/png', size: 12, base64: 'aW1n' }],
+    maxTokens: 512,
+    stream: false,
+  })
+  assert.ok(!JSON.stringify(modelScopeImageBody).includes('image_url'), 'ModelScope request body omits image_url when the compatibility contract does not claim vision')
+  const modelScopeImageConformance = resolveProviderRequestConformanceForTest({
+    provider: modelScopeProvider,
+    model: visionModel,
+    messages: [{ role: 'user', content: 'Describe this image.' }],
+    attachments: [{ id: 'modelscope-image', type: 'image', uri: 'file://image.png', name: 'image.png', mimeType: 'image/png', size: 12, base64: 'aW1n' }],
+    maxTokens: 512,
+  }, modelScopeImageBody)
+  assert.ok(
+    modelScopeImageConformance.issues.some((issue) => issue.code === 'unsupported_modality' && issue.field === 'image' && issue.severity === 'block'),
+    'ModelScope conformance blocks image attachments until source-backed image_url routing exists'
+  )
+
+  const modelScopeFileBody = buildOpenAIBodyForTest({
+    provider: modelScopeProvider,
+    model: chatModel,
+    messages: [{ role: 'user', content: 'summarize this document' }],
+    attachments: [{ id: 'modelscope-file', type: 'file', uri: 'file://doc.pdf', name: 'doc.pdf', mimeType: 'application/pdf', size: 12, base64: 'ZG9j' }],
+    maxTokens: 512,
+    stream: false,
+  })
+  assert.ok(!JSON.stringify(modelScopeFileBody).includes('file_data'), 'ModelScope request body omits file_data when the compatibility contract does not claim files')
+  const modelScopeFileConformance = resolveProviderRequestConformanceForTest({
+    provider: modelScopeProvider,
+    model: chatModel,
+    messages: [{ role: 'user', content: 'summarize this document' }],
+    attachments: [{ id: 'modelscope-file', type: 'file', uri: 'file://doc.pdf', name: 'doc.pdf', mimeType: 'application/pdf', size: 12, base64: 'ZG9j' }],
+    maxTokens: 512,
+  }, modelScopeFileBody)
+  assert.ok(
+    modelScopeFileConformance.issues.some((issue) => issue.code === 'unsupported_modality' && issue.field === 'file' && issue.severity === 'block'),
+    'ModelScope conformance blocks generic file attachments until provider-specific file routing exists'
+  )
+
+  const modelScopeConformance = resolveProviderRequestConformanceForTest({
+    provider: modelScopeProvider,
+    model: chatModel,
+    messages: [{ role: 'user', content: 'hello' }],
+    reasoningEffort: 'high',
+    maxTokens: 2048,
+  }, modelScopeBody)
+  assert.equal(modelScopeConformance.manifest.family, 'modelscope', 'provider conformance classifies ModelScope as its own family')
+  assert.equal(modelScopeConformance.manifest.protocol, 'openai-compatible', 'provider conformance records ModelScope as OpenAI-compatible')
+  assert.equal(modelScopeConformance.manifest.payload.maxTokensField, 'max_tokens', 'provider conformance records ModelScope max_tokens')
+  assert.equal(modelScopeConformance.manifest.reasoning.requestShape, 'none', 'provider conformance does not claim ModelScope request-side reasoning controls')
+  assert.deepEqual(modelScopeConformance.manifest.reasoning.selectableEfforts, [], 'provider conformance exposes no ModelScope reasoning efforts by default')
+  assert.equal(modelScopeConformance.manifest.tools.supported, false, 'provider conformance does not claim ModelScope tool declarations')
+  assert.equal(modelScopeConformance.manifest.modalities.input.image, false, 'provider conformance does not claim ModelScope image input')
+  assert.equal(modelScopeConformance.manifest.modalities.input.file, false, 'provider conformance does not claim ModelScope generic file input')
+  assert.equal(modelScopeConformance.manifest.modalities.input.audio, false, 'provider conformance does not claim ModelScope chat audio input')
+  assert.equal(modelScopeConformance.manifest.modalities.output.speech, false, 'provider conformance does not claim ModelScope speech output')
+  assert.ok(modelScopeConformance.manifest.source.url?.includes('modelscope.cn'), 'provider conformance links ModelScope to official docs')
+  assert.equal(modelScopeConformance.manifest.source.confidence, 'source-backed', 'provider conformance marks ModelScope as source-backed')
+
+  const modelScopeParsedCompletion = parseProviderChatCompletionJson({
+    choices: [{
+      message: {
+        role: 'assistant',
+        content: 'ModelScope answer.',
+      },
+    }],
+    usage: { prompt_tokens: 5, completion_tokens: 7, total_tokens: 12 },
+  }, {
+    provider: modelScopeProvider,
+    model: chatModel,
+    messages: [{ role: 'user', content: 'hello' }],
+  })
+  assert.equal(modelScopeParsedCompletion.text, 'ModelScope answer.', 'ModelScope parser extracts OpenAI-compatible response text')
+  assert.equal(modelScopeParsedCompletion.usage?.totalTokens, 12, 'ModelScope parser preserves usage metadata')
+
+  const modelScopeStream = parseProviderBufferedStreamResponse([
+    `data: ${JSON.stringify({ choices: [{ delta: { content: 'ModelScope ' } }] })}`,
+    `data: ${JSON.stringify({ choices: [{ delta: { content: 'stream.' } }] })}`,
+    '',
+  ].join('\n'), {
+    provider: modelScopeProvider,
+    model: chatModel,
+    messages: [{ role: 'user', content: 'hello' }],
+  }, 'openai-compatible')
+  assert.equal(modelScopeStream.text, 'ModelScope stream.', 'ModelScope stream parser merges OpenAI-compatible text deltas')
+
+  const originalFetch = global.fetch
+  const remoteCalls = []
+  try {
+    global.fetch = async (input, init = {}) => {
+      remoteCalls.push({ input: String(input), authorization: init.headers?.Authorization ?? init.headers?.authorization, body: init.body })
+      if (String(input).endsWith('/models')) {
+        const modelListJson = {
+          object: 'list',
+          data: [
+            { id: chatModel, object: '', owned_by: 'system', created: 1764927217 },
+            { id: visionModel, object: '', owned_by: 'system', created: 1774002312 },
+          ],
+        }
+        return {
+          ok: true,
+          status: 200,
+          headers: { get: (name) => name.toLowerCase() === 'content-type' ? 'application/json' : null },
+          json: async () => modelListJson,
+          text: async () => JSON.stringify(modelListJson),
+        }
+      }
+      if (String(input).endsWith('/embeddings')) {
+        const body = JSON.parse(String(init.body))
+        assert.equal(body.model, embeddingModel, 'ModelScope embeddings request uses the configured embedding model')
+        assert.equal(body.input, 'hello world', 'ModelScope embeddings request sends the input text')
+        return {
+          ok: true,
+          status: 200,
+          headers: { get: (name) => name.toLowerCase() === 'content-type' ? 'application/json' : null },
+          json: async () => ({ object: 'list', model: embeddingModel, data: [{ object: 'embedding', embedding: [0.11, 0.22, 0.33], index: 0 }], usage: { prompt_tokens: 2, total_tokens: 2 } }),
+          text: async () => JSON.stringify({ object: 'list', data: [{ object: 'embedding', embedding: [0.11, 0.22, 0.33], index: 0 }] }),
+        }
+      }
+      throw new Error(`unexpected ModelScope mock fetch: ${input}`)
+    }
+    const remoteModels = await fetchProviderModelConfigsFromRemote(modelScopeProvider, 1)
+    const syncedChat = remoteModels.find((model) => model.id === chatModel)
+    const syncedVision = remoteModels.find((model) => model.id === visionModel)
+    assert.equal(remoteCalls[0].input, 'https://api-inference.modelscope.cn/v1/models', 'ModelScope model discovery uses the live /v1/models endpoint')
+    assert.equal(remoteCalls[0].authorization, `Bearer ${FAKE_KEY_A}`, 'ModelScope model discovery uses bearer auth')
+    assert.equal(syncedChat?.source, 'remote', 'ModelScope model discovery keeps live model ids')
+    assert.equal(syncedChat?.reasoningMode, undefined, 'ModelScope model discovery does not infer DashScope thinking from Qwen ids')
+    assert.equal(syncedVision?.supportsVision, false, 'ModelScope model discovery does not infer vision support from model id alone')
+    assert.equal(syncedVision?.supportsTools, undefined, 'ModelScope model discovery does not infer tool support without source metadata')
+
+    const embedding = await embedTextWithProvider({ ...modelScopeProvider, models: [embeddingModel] }, 'hello world')
+    assert.equal(remoteCalls.at(-1).input, 'https://api-inference.modelscope.cn/v1/embeddings', 'ModelScope embeddings use the live /v1/embeddings endpoint')
+    assert.deepEqual(embedding.embedding, [0.11, 0.22, 0.33], 'ModelScope embeddings parser extracts vector values')
+    assert.equal(embedding.model, embeddingModel, 'ModelScope embeddings result records the selected model')
+  } finally {
+    global.fetch = originalFetch
+  }
+
+  const modelScopeInvalidModel = JSON.stringify({ error: { message: 'Invalid model id: test', request_id: 'modelscope-req-1' } })
+  assert.equal(classifyHttpStatus(400, modelScopeInvalidModel), 'model_unavailable', 'ModelScope invalid-model errors classify as model_unavailable')
+  assert.ok(extractProviderErrorDetail(modelScopeInvalidModel).includes('modelscope-req-1'), 'ModelScope errors preserve request ids for diagnostics')
+  const modelScopeAuthError = JSON.stringify({ errors: { message: 'Authentication failed, please make sure that a valid ModelScope token is supplied.' }, request_id: 'modelscope-auth-1' })
+  assert.equal(classifyHttpStatus(401, modelScopeAuthError), 'bad_auth', 'ModelScope auth errors classify as bad_auth')
+  assert.ok(extractProviderErrorDetail(modelScopeAuthError).includes('modelscope-auth-1'), 'ModelScope auth errors preserve request ids for diagnostics')
+}
+
+function assertMimoNativeSearchBehavior() {
+  const mimoProvider = {
+    id: 'mimo-native-search',
+    type: 'xiaomi-mimo',
+    name: 'Xiaomi MiMo',
+    [API_KEY_FIELD]: FAKE_KEY_A,
+    wireProtocol: 'openai-compatible',
+    models: ['mimo-v2.5-pro'],
+    enabled: true,
+    capabilities: { nativeSearch: true, nativeTools: true, reasoningEffort: true },
+  }
+  assert.deepEqual(
+    xiaomiMimoNativeWebSearchTool('mimo-v2.5-pro'),
+    { type: 'web_search', max_keyword: 3, force_search: true, limit: 1 },
+    'MiMo native search helper follows the official Chat Completions web_search tool shape'
+  )
+  assert.deepEqual(
+    ['mimo-v2.5-pro', 'mimo-v2.5', 'mimo-v2-pro', 'mimo-v2-omni', 'mimo-v2-flash'].map((modelId) => supportsXiaomiMimoNativeWebSearch(modelId)),
+    [true, true, true, true, true],
+    'MiMo native search helper accepts every model listed by the official web search guide'
+  )
+  assert.equal(supportsXiaomiMimoNativeWebSearch('mimo-v2.5-tts'), false, 'MiMo native search helper rejects non-chat TTS models')
+  const mimoNativeBody = getBodyForTest({
+    provider: mimoProvider,
+    model: 'mimo-v2.5-pro',
+    messages: [{ role: 'user', content: '武汉明天天气怎么样？' }],
+    webSearchMode: 'native',
+    reasoningEffort: 'none',
+    stream: false,
+    providerToolDeclarations: [{
+      type: 'function',
+      function: {
+        name: 'inspect_source',
+        description: 'Inspect a cited source.',
+        parameters: { type: 'object', properties: { sourceId: { type: 'string' } } },
+      },
+    }],
+  })
+  assert.deepEqual(
+    mimoNativeBody.tools[0],
+    { type: 'web_search', max_keyword: 3, force_search: true, limit: 1 },
+    'MiMo OpenAI-compatible native search requests declare the official web_search tool'
+  )
+  assert.equal(mimoNativeBody.tools[1].function.name, 'inspect_source', 'MiMo native search requests preserve app provider tools after the built-in web search tool')
+  assert.equal(mimoNativeBody.tool_choice, 'auto', 'MiMo native search requests keep tool choice automatic')
+  assert.equal(mimoNativeBody.thinking.type, 'disabled', 'MiMo native search requests can still disable thinking explicitly')
+  const unsupportedMimoBody = getBodyForTest({
+    provider: mimoProvider,
+    model: 'mimo-v2.5-tts',
+    messages: [{ role: 'user', content: 'hello' }],
+    webSearchMode: 'native',
+    stream: false,
+  })
+  assert.equal(unsupportedMimoBody.tools, undefined, 'MiMo non-chat models do not receive the web_search tool')
+  const mimoAnthropicBody = getBodyForTest({
+    provider: { ...mimoProvider, wireProtocol: 'anthropic-compatible' },
+    model: 'mimo-v2.5-pro',
+    messages: [{ role: 'user', content: 'hello' }],
+    webSearchMode: 'native',
+    stream: false,
+  })
+  assert.equal(mimoAnthropicBody.tools, undefined, 'MiMo Anthropic-compatible requests do not emit unsupported Anthropic web-search tools')
+  const mimoConformance = resolveProviderRequestConformanceForTest({
+    provider: mimoProvider,
+    model: 'mimo-v2.5-pro',
+    messages: [{ role: 'user', content: 'hello' }],
+    webSearchMode: 'native',
+  }, mimoNativeBody)
+  assert.equal(mimoConformance.manifest.tools.nativeWebSearchToolType, 'web_search', 'provider conformance records MiMo OpenAI-compatible web_search')
+  const mimoAnthropicConformance = resolveProviderRequestConformanceForTest({
+    provider: { ...mimoProvider, wireProtocol: 'anthropic-compatible' },
+    model: 'mimo-v2.5-pro',
+    messages: [{ role: 'user', content: 'hello' }],
+    webSearchMode: 'native',
+  }, mimoAnthropicBody)
+  assert.equal(mimoAnthropicConformance.manifest.tools.nativeWebSearchToolType, undefined, 'provider conformance does not claim MiMo Anthropic-compatible web search support')
+  const mimoParsedCompletion = parseProviderChatCompletionJson({
+    choices: [{
+      message: {
+        role: 'assistant',
+        content: '根据搜索结果，武汉明天天气晴。',
+        annotations: [{
+          type: 'url_citation',
+          url: 'https://example.com/weather',
+          title: '武汉天气',
+          summary: '武汉明天天气晴。',
+          site_name: 'Example Weather',
+        }, {
+          type: 'file_citation',
+          url: 'https://example.com/file',
+          title: 'Not a web citation',
+        }],
+      },
+    }],
+    usage: {
+      prompt_tokens: 10,
+      completion_tokens: 5,
+      total_tokens: 15,
+      web_search_usage: { tool_usage: 1, page_usage: 1 },
+    },
+  }, {
+    provider: mimoProvider,
+    model: 'mimo-v2.5-pro',
+    messages: [{ role: 'user', content: '武汉明天天气怎么样？' }],
+  })
+  assert.deepEqual(
+    mimoParsedCompletion.citations,
+    [{ id: 'https://example.com/weather', type: 'web', title: '武汉天气', url: 'https://example.com/weather', excerpt: '武汉明天天气晴。' }],
+    'MiMo response annotations become provider web citations'
+  )
+  assert.deepEqual(
+    extractProviderCitationsFromSse(`data: ${JSON.stringify({
+      choices: [{ delta: { annotations: [{ type: 'url_citation', url: 'https://example.com/live', title: 'Live source' }] } }],
+    })}\n`, 'xiaomi-mimo'),
+    [{ id: 'https://example.com/live', type: 'web', title: 'Live source', url: 'https://example.com/live', excerpt: undefined }],
+    'MiMo streaming annotation packets become provider web citations'
   )
 }
 
@@ -12022,6 +23741,10 @@ async function runFocused() {
     await assertContextRuntimeLogging()
     await assertKnowledgeRetrievalRuntimeLogging()
     await assertKnowledgeEmbeddingRuntimeLogging()
+    return
+  }
+  if (focus === 'upstream-governance') {
+    await assertUpstreamGovernanceBehavior()
     return
   }
   if (focus === 'trace-redaction') {
@@ -12061,6 +23784,182 @@ async function runFocused() {
     await assertRuntimeDiagnosticsBehavior()
     return
   }
+  if (focus === 'provider-compatibility-contract') {
+    assertProviderCompatibilityContractBehavior()
+    return
+  }
+  if (focus === 'openai-provider-compatibility') {
+    assertOpenAIProviderCompatibilityBehavior()
+    return
+  }
+  if (focus === 'anthropic-provider-compatibility') {
+    assertAnthropicProviderCompatibilityBehavior()
+    return
+  }
+  if (focus === 'deepseek-provider-compatibility') {
+    assertDeepSeekProviderCompatibilityBehavior()
+    return
+  }
+  if (focus === 'xai-provider-compatibility') {
+    assertXAIProviderCompatibilityBehavior()
+    return
+  }
+  if (focus === 'openrouter-provider-compatibility') {
+    assertOpenRouterProviderCompatibilityBehavior()
+    return
+  }
+  if (focus === 'newapi-provider-compatibility') {
+    await assertNewAPIProviderCompatibilityBehavior()
+    return
+  }
+  if (focus === 'azure-openai-provider-compatibility') {
+    await assertAzureOpenAIProviderCompatibilityBehavior()
+    return
+  }
+  if (focus === 'aws-bedrock-provider-compatibility') {
+    assertAWSBedrockProviderCompatibilityBehavior()
+    return
+  }
+  if (focus === 'vertex-ai-provider-compatibility') {
+    await assertVertexAIProviderCompatibilityBehavior()
+    return
+  }
+  if (focus === 'ollama-provider-compatibility') {
+    await assertOllamaProviderCompatibilityBehavior()
+    return
+  }
+  if (focus === 'lm-studio-provider-compatibility') {
+    await assertLMStudioProviderCompatibilityBehavior()
+    return
+  }
+  if (focus === 'localai-provider-compatibility') {
+    await assertLocalAIProviderCompatibilityBehavior()
+    return
+  }
+  if (focus === 'vllm-provider-compatibility') {
+    await assertVLLMProviderCompatibilityBehavior()
+    return
+  }
+  if (focus === 'sglang-provider-compatibility') {
+    await assertSGLangProviderCompatibilityBehavior()
+    return
+  }
+  if (focus === 'provider-relay-compatibility') {
+    await assertRelayProviderCompatibilityBehavior()
+    return
+  }
+  if (focus === 'provider-local-runtime-compatibility') {
+    await assertLocalRuntimeProviderCompatibilityBehavior()
+    return
+  }
+  if (focus === 'provider-hosted-compatibility') {
+    await assertHostedCloudProviderCompatibilityBehavior()
+    return
+  }
+  if (focus === 'provider-custom-compatible-compatibility') {
+    assertCustomCompatibleProviderBehavior()
+    return
+  }
+  if (focus === 'moonshot-provider-compatibility') {
+    assertMoonshotProviderCompatibilityBehavior()
+    return
+  }
+  if (focus === 'bigmodel-provider-compatibility') {
+    await assertBigModelProviderCompatibilityBehavior()
+    return
+  }
+  if (focus === 'tencent-hunyuan-provider-compatibility') {
+    await assertTencentHunyuanProviderCompatibilityBehavior()
+    return
+  }
+  if (focus === 'baidu-qianfan-provider-compatibility') {
+    await assertBaiduQianfanProviderCompatibilityBehavior()
+    return
+  }
+  if (focus === 'baichuan-provider-compatibility') {
+    await assertBaichuanProviderCompatibilityBehavior()
+    return
+  }
+  if (focus === 'zero-one-provider-compatibility') {
+    await assertZeroOneProviderCompatibilityBehavior()
+    return
+  }
+  if (focus === 'stepfun-provider-compatibility') {
+    await assertStepFunProviderCompatibilityBehavior()
+    return
+  }
+  if (focus === 'volcengine-ark-provider-compatibility') {
+    await assertVolcengineArkProviderCompatibilityBehavior()
+    return
+  }
+  if (focus === 'dashscope-provider-compatibility') {
+    await assertDashScopeProviderCompatibilityBehavior()
+    return
+  }
+  if (focus === 'minimax-provider-compatibility') {
+    await assertMiniMaxProviderCompatibilityBehavior()
+    return
+  }
+  if (focus === 'mistral-provider-compatibility') {
+    await assertMistralProviderCompatibilityBehavior()
+    return
+  }
+  if (focus === 'groq-provider-compatibility') {
+    await assertGroqProviderCompatibilityBehavior()
+    return
+  }
+  if (focus === 'together-provider-compatibility') {
+    await assertTogetherProviderCompatibilityBehavior()
+    return
+  }
+  if (focus === 'fireworks-provider-compatibility') {
+    await assertFireworksProviderCompatibilityBehavior()
+    return
+  }
+  if (focus === 'perplexity-provider-compatibility') {
+    await assertPerplexityProviderCompatibilityBehavior()
+    return
+  }
+  if (focus === 'cohere-provider-compatibility') {
+    await assertCohereProviderCompatibilityBehavior()
+    return
+  }
+  if (focus === 'cerebras-provider-compatibility') {
+    await assertCerebrasProviderCompatibilityBehavior()
+    return
+  }
+  if (focus === 'sambanova-provider-compatibility') {
+    await assertSambaNovaProviderCompatibilityBehavior()
+    return
+  }
+  if (focus === 'nvidia-nim-provider-compatibility') {
+    await assertNvidiaNimProviderCompatibilityBehavior()
+    return
+  }
+  if (focus === 'huggingface-provider-compatibility') {
+    await assertHuggingFaceProviderCompatibilityBehavior()
+    return
+  }
+  if (focus === 'github-models-provider-compatibility') {
+    await assertGitHubModelsProviderCompatibilityBehavior()
+    return
+  }
+  if (focus === 'deepinfra-provider-compatibility') {
+    await assertDeepInfraProviderCompatibilityBehavior()
+    return
+  }
+  if (focus === 'novita-provider-compatibility') {
+    await assertNovitaProviderCompatibilityBehavior()
+    return
+  }
+  if (focus === 'siliconflow-provider-compatibility') {
+    await assertSiliconFlowProviderCompatibilityBehavior()
+    return
+  }
+  if (focus === 'modelscope-provider-compatibility') {
+    await assertModelScopeProviderCompatibilityBehavior()
+    return
+  }
   if (focus === 'provider-text-tool-calls') {
     await assertResponsesWebSocketTransportBehavior()
     await assertProviderTextToolCallFallbackBehavior()
@@ -12077,6 +23976,10 @@ async function runFocused() {
   if (focus === 'chat-completed-process') {
     assertChatCompletedProcessBehavior()
     assertWebAnswerStyleBehavior()
+    return
+  }
+  if (focus === 'mimo-native-search') {
+    assertMimoNativeSearchBehavior()
     return
   }
   throw new Error(`Unknown focus: ${focus}`)

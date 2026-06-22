@@ -2,6 +2,7 @@ import type { AIProvider, ReasoningEffort } from '@/types'
 import { getModelConfig } from '@/types'
 import { isClaudeThinkingModel } from '@/utils/modelReasoning'
 import { clampMaxTokens } from '@/services/ai/providerRequestParameters'
+import { providerCompatibilityCapabilityCanBeSentForProvider, providerCompatibilityReasoningExplicitlyDeclaredForModel } from '@/services/ai/providerCompatibilityContract'
 
 export interface AnthropicThinkingInput {
   provider: AIProvider
@@ -36,6 +37,7 @@ export function normalizeAnthropicEffort(modelId: string, effort: ReasoningEffor
 export function normalizeAnthropicThinking(req: AnthropicThinkingInput): AnthropicThinkingConfig | undefined {
   if (!req.reasoningEffort || req.reasoningEffort === 'none' || req.reasoningEffort === 'minimal') return undefined
   const config = getModelConfig(req.model, req.provider.type, req.provider.modelConfigs)
+  if (!providerCompatibilityCapabilityCanBeSentForProvider(req.provider, 'reasoning', providerCompatibilityReasoningExplicitlyDeclaredForModel(req.provider, config))) return undefined
   if (config.reasoningMode !== 'anthropic-thinking' && !isClaudeThinkingModel(req.provider, req.model)) return undefined
   if (usesAnthropicOutputConfigOnlyThinking(req.model)) {
     return {

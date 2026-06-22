@@ -12,8 +12,14 @@ import type {
   RetrievalSource,
 } from '@/types'
 import { embedTextWithProvider } from '@/services/ai/base'
+import {
+  getProviderCompatibilityEvidenceForProvider,
+  providerCompatibilityCapabilityCanBeSentForProvider,
+  resolveProviderCompatibilityCapabilityStatus,
+} from '@/services/ai/providerCompatibilityContract'
 import { createOnnxEmbeddingProvider, rerankRetrievalSources } from '@/services/rag'
 import { localModelCacheKey } from '@/services/localEmbeddingModels'
+import { logContextOperation } from '@/services/runtimeHealthLog'
 import { shouldUseSqliteWebFallback, sqliteWebFallbackDb } from '@/services/sqliteFallback'
 export type { ConversationMetrics } from '@/services/conversationMetrics'
 
@@ -275,7 +281,11 @@ export async function upsertChunks(chunks: KnowledgeChunk[], options: UpsertChun
     await upsertAgenticIndexes(chunks, now)
   }
   if (options.provider?.apiKey && options.embeddingMode !== 'local') {
-    void upgradeChunksWithProviderEmbeddings(chunks, options.provider)
+    if (providerCompatibilitySupportsEmbeddings(options.provider)) {
+      void upgradeChunksWithProviderEmbeddings(chunks, options.provider)
+    } else {
+      await logProviderEmbeddingUnsupportedByContract(options.provider)
+    }
   }
 }
 
@@ -610,8 +620,11 @@ async function createQueryEmbedding(query: string, chunks: Partial<ChunkEmbeddin
       }
     }
   }
-  const providerReady = options.embeddingMode !== 'local' && options.provider?.apiKey
+  const providerReady = Boolean(options.embeddingMode !== 'local' && options.provider?.apiKey && providerCompatibilitySupportsEmbeddings(options.provider))
   const providerVectorExists = chunks.some((chunk) => chunk.source === 'provider' && typeof chunk.embeddingJson === 'string')
+  if (!providerReady && options.embeddingMode !== 'local' && options.provider?.apiKey && (options.embeddingMode === 'provider' || providerVectorExists)) {
+    await logProviderEmbeddingUnsupportedByContract(options.provider)
+  }
   if (providerReady && providerVectorExists) {
     try {
       const result = await embedTextWithProvider(options.provider!, query)
@@ -621,6 +634,24 @@ async function createQueryEmbedding(query: string, chunks: Partial<ChunkEmbeddin
     }
   }
   return createLocalEmbedding(query)
+}
+
+function providerCompatibilitySupportsEmbeddings(provider?: AIProvider): boolean {
+  if (!provider) return false
+  return providerCompatibilityCapabilityCanBeSentForProvider(provider, 'embeddings', provider.capabilities?.embeddings === true)
+}
+
+async function logProviderEmbeddingUnsupportedByContract(provider: AIProvider): Promise<void> {
+  const evidence = getProviderCompatibilityEvidenceForProvider(provider)
+  const status = resolveProviderCompatibilityCapabilityStatus(evidence.id, 'embeddings')
+  await logContextOperation({
+    phase: 'knowledge_embedding',
+    status: 'skipped',
+    detail: 'provider_embedding_unsupported_by_contract',
+    reason: `${evidence.id}:embeddings_${status}`,
+    sourceType: 'text',
+    providerId: provider.id,
+  })
 }
 
 function chunkToSource(chunk: KnowledgeChunk & { score?: number }): RetrievalSource {

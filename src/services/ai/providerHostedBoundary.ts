@@ -31,6 +31,13 @@ export function getHostedProviderSupportIssue(provider: AIProvider, operation: H
     }
   }
   if (kind === 'vertex-ai' && isVertexAIOpenAICompatibleProvider(provider)) {
+    if (operation === 'modelList') {
+      return {
+        kind,
+        operation,
+        message: st('providerOperation.hosted.vertexAIModelListUnsupported'),
+      }
+    }
     return null
   }
   if (kind === 'aws-bedrock') {
