@@ -27,7 +27,8 @@ import { DEFAULT_PROVIDER_PRESET_ID, DEFAULT_PROVIDER_WIRE_PROTOCOL, PROVIDER_WI
 import { activationItemProgress } from '@/services/providerActivationJob'
 import { countDetectedProviderImports, formatProviderNameList } from '@/services/providerImportSummary'
 import { deleteTemporaryImportCopy, isFileTooLargeError, MAX_IMPORT_TEXT_FILE_BYTES, readUtf8ImportFile } from '@/services/fileImportGuards'
-import { buildProviderCapabilityMatrix, summarizeProviderCapabilityMatrix } from '@/services/ai/providerCapabilityMatrix'
+import { buildProviderCapabilityMatrix, summarizeProviderCapabilityMatrix, summarizeProviderCapabilityMatrixDetails } from '@/services/ai/providerCapabilityMatrix'
+import { providerCompatibilityCapabilityCanBeSentForProvider, type ProviderCompatibilityBehavior } from '@/services/ai/providerCompatibilityContract'
 import { IsleMetric } from '@/components/ui/isle'
 import { parseModels } from '@/utils/text'
 import { isProviderConversationReady } from '@/utils/providerModels'
@@ -472,6 +473,10 @@ function OperatorMetric({ label }: { label: string }) {
   return <IsleMetric label={label} />
 }
 
+function providerCapabilityLabelEnabled(provider: AIProvider, capability: ProviderCompatibilityBehavior, enabled: boolean | undefined): boolean {
+  return enabled === true && providerCompatibilityCapabilityCanBeSentForProvider(provider, capability, true)
+}
+
 function closeStandaloneProviderSettings() {
   if (router.canGoBack()) {
     router.back()
@@ -552,9 +557,10 @@ function ProviderListRow({
       : colors.ui.tone.neutral
   const capabilityLabels = [
     summarizeProviderCapabilityMatrix(buildProviderCapabilityMatrix(provider)),
-    provider.capabilities?.responsesApi === true ? 'Responses' : '',
-    provider.capabilities?.responsesWebSocket === true ? 'WebSocket' : '',
-    provider.capabilities?.remoteCompact === true ? 'Remote compact' : '',
+    summarizeProviderCapabilityMatrixDetails(provider),
+    providerCapabilityLabelEnabled(provider, 'responsesApi', provider.capabilities?.responsesApi) ? 'Responses' : '',
+    providerCapabilityLabelEnabled(provider, 'responsesWebSocket', provider.capabilities?.responsesWebSocket) ? 'WebSocket' : '',
+    providerCapabilityLabelEnabled(provider, 'remoteCompact', provider.capabilities?.remoteCompact) ? 'Remote compact' : '',
   ].filter(Boolean)
   const showDragRail = total > 1 && sortEnabled
   return (
@@ -1582,9 +1588,10 @@ function ProviderImportModal({
               ref={bodyScrollRef}
               keyboardShouldPersistTaps="handled"
               nestedScrollEnabled
+              automaticallyAdjustKeyboardInsets
               showsVerticalScrollIndicator={compact || inputScrollEnabled}
               style={{ flexShrink: 1 }}
-              contentContainerStyle={{ paddingHorizontal: modalPadding, paddingBottom: 14, backgroundColor: sheetMaterial.body }}
+              contentContainerStyle={{ paddingHorizontal: modalPadding, paddingTop: 12, paddingBottom: keyboardVisible ? Math.max(insets.bottom, 10) + 80 : 14, backgroundColor: sheetMaterial.body }}
             >
               <View>
                 <View style={{ marginBottom: 12 }}>
