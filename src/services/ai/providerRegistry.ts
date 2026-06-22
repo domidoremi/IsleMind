@@ -64,6 +64,8 @@ export const DEFAULT_PROVIDER_CAPABILITIES: ProviderCapabilities = {
   reasoningEffort: false,
   nativeTools: false,
   topP: true,
+  embeddings: false,
+  rerank: false,
   responsesApi: false,
   responsesWebSocket: false,
   remoteCompact: false,
@@ -79,6 +81,7 @@ export const PROVIDER_PRESETS: ProviderPreset[] = [
     nativeSearch: true,
     reasoningEffort: true,
     nativeTools: true,
+    embeddings: true,
     responsesApi: true,
     responsesWebSocket: true,
     remoteCompact: true,
@@ -161,6 +164,7 @@ export const PROVIDER_PRESETS: ProviderPreset[] = [
     files: false,
     reasoningEffort: false,
     nativeTools: true,
+    embeddings: true,
   }),
   preset('groq', 'Groq', 'openai-compatible', 'https://api.groq.com/openai/v1', ['groq'], [/api\.groq\.com/i], {
     vision: true,
@@ -176,12 +180,14 @@ export const PROVIDER_PRESETS: ProviderPreset[] = [
     speech: true,
     reasoningEffort: true,
     nativeTools: true,
+    embeddings: true,
   }),
   preset('fireworks', 'Fireworks AI', 'openai-compatible', 'https://api.fireworks.ai/inference/v1', ['fireworks'], [/api\.fireworks\.ai/i], {
     vision: true,
     files: false,
     reasoningEffort: true,
     nativeTools: true,
+    embeddings: true,
     responsesApi: true,
   }),
   preset('perplexity', 'Perplexity Sonar', 'openai-compatible', 'https://api.perplexity.ai', ['perplexity', 'sonar'], [/api\.perplexity\.ai/i], {
@@ -196,6 +202,7 @@ export const PROVIDER_PRESETS: ProviderPreset[] = [
     audioTranscription: true,
     reasoningEffort: true,
     nativeTools: true,
+    embeddings: true,
   }),
   preset('cerebras', 'Cerebras', 'openai-compatible', 'https://api.cerebras.ai/v1', ['cerebras'], [/api\.cerebras\.ai/i], {
     reasoningEffort: true,
@@ -245,6 +252,7 @@ export const PROVIDER_PRESETS: ProviderPreset[] = [
     speech: false,
     reasoningEffort: true,
     nativeTools: true,
+    embeddings: true,
     responsesApi: false,
   }),
   preset('novita', 'Novita AI', 'openai-compatible', 'https://api.novita.ai/openai', ['novita'], [/api\.novita\.ai/i], {
@@ -255,6 +263,7 @@ export const PROVIDER_PRESETS: ProviderPreset[] = [
     speech: false,
     reasoningEffort: false,
     nativeTools: true,
+    embeddings: true,
     responsesApi: false,
   }),
   preset('siliconflow', 'SiliconFlow', 'openai-compatible', 'https://api.siliconflow.cn/v1', ['siliconflow', 'silicon flow', '硅基流动'], [/api\.siliconflow\.(cn|com)/i], {
@@ -265,6 +274,7 @@ export const PROVIDER_PRESETS: ProviderPreset[] = [
     speech: false,
     reasoningEffort: true,
     nativeTools: true,
+    embeddings: true,
     responsesApi: false,
   }),
   preset('modelscope', 'ModelScope', 'openai-compatible', 'https://api-inference.modelscope.cn/v1', ['modelscope', '魔搭'], [/api-inference\.modelscope\.cn/i, /modelscope\.cn/i], {
@@ -275,6 +285,7 @@ export const PROVIDER_PRESETS: ProviderPreset[] = [
     speech: false,
     reasoningEffort: false,
     nativeTools: false,
+    embeddings: true,
     responsesApi: false,
   }),
   preset('volcengine-ark', 'Volcengine Ark', 'openai-compatible', 'https://ark.cn-beijing.volces.com/api/v3', ['volcengine', 'ark', 'doubao', '火山', '豆包'], [/ark\.[\w-]+\.volces\.com/i, /volces\.com/i], {
@@ -319,11 +330,13 @@ export const PROVIDER_PRESETS: ProviderPreset[] = [
     vision: true,
     reasoningEffort: true,
     nativeTools: true,
+    embeddings: true,
   }),
   preset('lm-studio', 'LM Studio', 'openai-compatible', 'http://localhost:1234/v1', ['lm studio', 'lm-studio', 'lmstudio'], [/localhost:1234/i, /127\.0\.0\.1:1234/i, /lmstudio/i, /lm-studio/i], {
     vision: true,
     reasoningEffort: true,
     nativeTools: true,
+    embeddings: true,
   }),
   preset('localai', 'LocalAI', 'openai-compatible', 'http://localhost:8080/v1', ['localai', 'local ai'], [/localhost:8080/i, /127\.0\.0\.1:8080/i, /localai/i], {
     vision: true,
@@ -331,16 +344,19 @@ export const PROVIDER_PRESETS: ProviderPreset[] = [
     speech: true,
     reasoningEffort: true,
     nativeTools: true,
+    embeddings: true,
   }),
   preset('vllm', 'vLLM', 'openai-compatible', 'http://localhost:8000/v1', ['vllm', 'vllm-openai'], [/localhost:8000/i, /127\.0\.0\.1:8000/i, /vllm/i], {
     vision: true,
     reasoningEffort: true,
     nativeTools: true,
+    embeddings: true,
   }),
   preset('sglang', 'SGLang', 'openai-compatible', 'http://localhost:30000/v1', ['sglang'], [/localhost:30000/i, /127\.0\.0\.1:30000/i, /sglang/i], {
     vision: true,
     reasoningEffort: true,
     nativeTools: true,
+    embeddings: true,
   }),
   preset('openrouter', 'OpenRouter', 'openai-compatible', 'https://openrouter.ai/api/v1', ['openrouter'], [/openrouter\.ai/i], {
     vision: true,
@@ -867,8 +883,28 @@ function expandProviderImportChunk(chunk: string): string[] {
 
 function parseProviderImportChunk(chunk: string, index: number, warnings: string[]): AIProvider | null {
   const fields = readImportFields(chunk)
+  const endpoints = extractLabeledProtocolBaseUrls(chunk)
   const looseBaseUrl = extractLooseBaseUrl(chunk)
-  const baseUrl = pickField(fields, ['baseurl', 'base url', 'url', 'endpoint', '站点', '地址', '接口']) ?? looseBaseUrl
+  const explicitBaseUrl = pickField(fields, ['baseurl', 'base url', 'url', 'endpoint', '站点', '地址', '接口'])
+
+  // When multiple same-host endpoints exist, prefer OpenAI-compatible for model discovery
+  let baseUrl: string | undefined
+  if (explicitBaseUrl && endpoints.length <= 1) {
+    // User explicitly specified a baseUrl and there's only one labeled endpoint (or none)
+    baseUrl = explicitBaseUrl
+  } else if (endpoints.length > 1) {
+    // Multiple labeled endpoints detected, prefer OpenAI-compatible
+    // Ignore explicitBaseUrl in this case as it's likely from loose extraction
+    const openaiEndpoint = endpoints.find((ep) => ep.wireProtocol === 'openai-compatible')
+    baseUrl = openaiEndpoint?.baseUrl ?? endpoints[0]?.baseUrl ?? looseBaseUrl
+  } else if (endpoints.length === 1) {
+    // Single labeled endpoint
+    baseUrl = endpoints[0]?.baseUrl ?? explicitBaseUrl ?? looseBaseUrl
+  } else {
+    // No labeled endpoints, use explicit or loose detection
+    baseUrl = explicitBaseUrl ?? looseBaseUrl
+  }
+
   const explicitName = pickField(fields, ['provider', 'name', '供应商', '服务商', '名称'])
   const name = explicitName ?? inferProviderName(chunk, index, baseUrl)
   const wireProtocolHint = parseProviderWireProtocolText(pickField(fields, ['protocol', 'wireprotocol', 'wire protocol', '协议', '接口协议']))
