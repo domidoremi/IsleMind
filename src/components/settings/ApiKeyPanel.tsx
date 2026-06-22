@@ -21,7 +21,8 @@ import { useIsleDialog } from '@/components/ui/isle'
 import { parseModelEntries } from '@/utils/text'
 import { getProviderManualModels, summarizeProviderModelInventory } from '@/utils/providerModels'
 import { getPolicyAllowedProviderModels, getPolicyPreferredProviderModel } from '@/services/ai/policy/providerModelAccess'
-import { buildProviderCapabilityMatrix, summarizeProviderCapabilityMatrix } from '@/services/ai/providerCapabilityMatrix'
+import { buildProviderCapabilityMatrix, summarizeProviderCapabilityMatrix, summarizeProviderCapabilityMatrixDetails } from '@/services/ai/providerCapabilityMatrix'
+import { providerCompatibilityCapabilityCanBeSentForProvider, type ProviderCompatibilityBehavior } from '@/services/ai/providerCompatibilityContract'
 
 interface ApiKeyPanelProps {
   provider: AIProvider
@@ -45,6 +46,7 @@ const CAPABILITY_KEYS: (keyof ProviderCapabilities)[] = [
   'files',
   'nativeSearch',
   'reasoningEffort',
+  'embeddings',
   'topP',
 ]
 
@@ -980,12 +982,18 @@ function buildCapabilitySummary(provider: AIProvider, preset: ReturnType<typeof 
   const matrix = buildProviderCapabilityMatrix(provider)
   const labels = [
     summarizeProviderCapabilityMatrix(matrix),
-    capabilities.responsesApi === true ? t('apiKeyPanel.capability.responsesApi') : '',
-    capabilities.responsesWebSocket === true ? t('apiKeyPanel.capability.responsesWebSocket') : '',
-    capabilities.remoteCompact === true ? t('apiKeyPanel.capability.remoteCompact') : '',
-    capabilities.nativeSearch === true ? t('apiKeyPanel.capability.nativeSearch') : '',
+    summarizeProviderCapabilityMatrixDetails(provider, matrix),
+    providerCapabilityLabelEnabled(provider, 'responsesApi', capabilities.responsesApi) ? t('apiKeyPanel.capability.responsesApi') : '',
+    providerCapabilityLabelEnabled(provider, 'responsesWebSocket', capabilities.responsesWebSocket) ? t('apiKeyPanel.capability.responsesWebSocket') : '',
+    providerCapabilityLabelEnabled(provider, 'remoteCompact', capabilities.remoteCompact) ? t('apiKeyPanel.capability.remoteCompact') : '',
+    providerCapabilityLabelEnabled(provider, 'nativeSearch', capabilities.nativeSearch) ? t('apiKeyPanel.capability.nativeSearch') : '',
+    providerCapabilityLabelEnabled(provider, 'embeddings', capabilities.embeddings) ? t('apiKeyPanel.capability.embeddings') : '',
   ].filter(Boolean)
   return labels.length ? labels.join(' · ') : t('apiKeyPanel.capabilityMatrix')
+}
+
+function providerCapabilityLabelEnabled(provider: AIProvider, capability: ProviderCompatibilityBehavior, enabled: boolean | undefined): boolean {
+  return enabled === true && providerCompatibilityCapabilityCanBeSentForProvider(provider, capability, true)
 }
 
 function IconIsleChip({ label, children, tone, onPress }: { label: string; children: ReactNode; tone: 'default' | 'mint' | 'danger'; onPress: () => void }) {

@@ -1,4 +1,5 @@
 import type { AIProvider, Settings } from '@/types'
+import { providerCompatibilityCapabilityCanBeSentForProvider } from '@/services/ai/providerCompatibilityContract'
 
 export type UpstreamTransport = 'http_sse' | 'responses_websocket'
 
@@ -21,7 +22,11 @@ export function selectUpstreamTransport(input: TransportSelectionInput): Transpo
   if (requestedMode === 'http') return { transport: 'http_sse', requestedMode, fallbackReason: 'http_forced' }
   if (!input.usesResponsesApi) return { transport: 'http_sse', requestedMode, fallbackReason: 'non_responses_request' }
   if (input.stream === false) return { transport: 'http_sse', requestedMode, fallbackReason: 'streaming_disabled' }
-  const supportsWebSocket = input.provider.capabilities?.responsesApi === true && input.provider.capabilities?.responsesWebSocket === true
+  const supportsWebSocket =
+    input.provider.capabilities?.responsesApi === true &&
+    input.provider.capabilities?.responsesWebSocket === true &&
+    providerCompatibilityCapabilityCanBeSentForProvider(input.provider, 'responsesApi', true) &&
+    providerCompatibilityCapabilityCanBeSentForProvider(input.provider, 'responsesWebSocket', true)
   if (!supportsWebSocket) return { transport: 'http_sse', requestedMode, fallbackReason: 'provider_capability_missing' }
   if (!input.hasWebSocketRuntime) return { transport: 'http_sse', requestedMode, fallbackReason: 'websocket_runtime_missing' }
   return { transport: 'responses_websocket', requestedMode }

@@ -1,10 +1,10 @@
-import { stringValue } from '@/services/ai/providerJsonUtils'
+import { asRecord, stringValue } from '@/services/ai/providerJsonUtils'
 
 export function extractOpenAIText(json: any): string {
   return [
     stringValue(json?.output_text),
-    stringValue(json?.choices?.[0]?.delta?.content),
-    stringValue(json?.choices?.[0]?.message?.content),
+    extractOpenAIContentText(json?.choices?.[0]?.delta?.content),
+    extractOpenAIContentText(json?.choices?.[0]?.message?.content),
     extractOpenAIOutputText(json?.output),
   ].filter(Boolean).join('')
 }
@@ -32,6 +32,40 @@ export function extractOpenAIOutputText(output: unknown): string {
     }
   }
   return parts.filter(Boolean).join('')
+}
+
+export function extractOpenAIContentText(content: unknown): string {
+  if (typeof content === 'string') return content
+  if (!Array.isArray(content)) return ''
+  const parts: string[] = []
+  for (const part of content) {
+    const item = asRecord(part)
+    if (!item) continue
+    const type = stringValue(item.type)
+    if (!type || type === 'text' || type === 'output_text' || type === 'refusal') {
+      parts.push(stringValue(item.text) || stringValue(item.content))
+    }
+  }
+  return parts.filter(Boolean).join('')
+}
+
+export function extractOpenAIContentReasoning(content: unknown): string {
+  if (!Array.isArray(content)) return ''
+  const parts: string[] = []
+  for (const part of content) {
+    const item = asRecord(part)
+    if (!item) continue
+    const type = stringValue(item.type)
+    if (!type.includes('thinking') && !type.includes('reasoning')) continue
+    parts.push(stringValue(item.text) || stringValue(item.content))
+    const thinking = item.thinking
+    if (typeof thinking === 'string') {
+      parts.push(thinking)
+    } else if (Array.isArray(thinking)) {
+      parts.push(extractOpenAIContentText(thinking))
+    }
+  }
+  return parts.filter(Boolean).join('\n')
 }
 
 export function extractAnthropicText(json: any): string {

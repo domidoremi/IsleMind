@@ -13,8 +13,8 @@ import { acquireSessionLease } from '@/services/ai/transport/sessionLeasePool'
 import { runResponsesWebSocketTransport } from '@/services/ai/transport/responsesWebSocketTransport'
 import { appendRuntimeLog } from '@/services/runtimeLog'
 import { resolveProviderModelAlias } from '@/utils/providerModels'
-import type { ProviderConformanceResult } from '@/services/ai/providerConformance'
-import { resolveProviderRequestConformance } from '@/services/ai/providerConformance'
+import type { ProviderConformanceResult, ProviderStructuredOutputRequest } from '@/services/ai/providerConformance'
+import { resolveProviderCapabilityManifest, resolveProviderRequestConformance, supportsNativeProviderTools } from '@/services/ai/providerConformance'
 import type { ProviderRouteContext } from '@/services/ai/providerRouter'
 import { resolveProviderRoute } from '@/services/ai/providerRouter'
 import { buildProviderFallbackCandidates } from '@/services/ai/providerFallbackCandidates'
@@ -38,7 +38,7 @@ import {
   type AnthropicModelListItem,
 } from '@/services/ai/providerModelDiscovery'
 import { toAnthropicContentBlocks, toGoogleContentParts, toTextContent } from '@/services/ai/providerContentParts'
-import { dedupeCitations, extractCitationsFromText, extractProviderCitationsFromSse } from '@/services/ai/providerCitations'
+import { dedupeCitations, extractCitationsFromText, extractProviderCitationsFromSse, type ProviderCitationSource } from '@/services/ai/providerCitations'
 import { normalizeAnthropicThinking } from '@/services/ai/providerAnthropicThinking'
 import { anthropicAttachmentPart, anthropicNativeWebSearchTool } from '@/services/ai/providerAnthropicRequest'
 import { mergeAnthropicReplayContentBlocks, sanitizeAnthropicReplayContentBlocks } from '@/services/ai/providerAnthropicReplay'
@@ -50,18 +50,19 @@ import { providerRuntimeError, runStreamTask, withCredentialGroup, type Provider
 import { dedupeTraces, splitSseBuffer } from '@/services/ai/providerStreamUtils'
 import { fetchChatStreamWithTimeout, fetchWithTimeout, safeResponseText } from '@/services/ai/providerHttp'
 import { stringValue } from '@/services/ai/providerJsonUtils'
-import { parseProviderBufferedStreamResponse, parseProviderNonStreamingResponse, parseProviderNonStreamingText, withProviderTextToolCallFallback } from '@/services/ai/providerResponseParsing'
+import { parseProviderBufferedStreamResponse, parseProviderNonStreamingResponse, parseProviderNonStreamingText, providerReasoningResponseCanBeParsed, withProviderTextToolCallFallback } from '@/services/ai/providerResponseParsing'
 import { mergeOpenAIResponseReplayItems } from '@/services/ai/providerOpenAIReplay'
 import { extractAnthropicText, extractGoogleText } from '@/services/ai/providerResponseText'
 import { mergeProviderToolDeclarations } from '@/services/ai/providerToolDeclarations'
 import { cloneOpenAIResponsesInputItems, hasOpenAIResponsesFunctionCallItem, toOpenAIChatToolCall, toOpenAIResponsesFunctionCallInput } from '@/services/ai/providerToolReplay'
 import { createProviderTrace } from '@/services/ai/providerTraceUtils'
 import { createProviderTextToolCallStreamFilter, executableProviderToolCalls, mergeProviderToolCallParts, type ProviderToolCall } from '@/services/ai/providerToolCalls'
+import { filterProviderStructuredOutputToolCalls, providerStructuredOutputToolCallText, providerStructuredOutputToolName, providerStructuredOutputToolSchema } from '@/services/ai/providerStructuredOutput'
 import { parseProviderStreamChunk, parseProviderStreamEvent, type ParsedStreamChunk } from '@/services/ai/providerStreamParsing'
 import { getModelTestMaxTokens, getModelTestReasoningEffort, reduceModelTestBody } from '@/services/ai/providerModelTest'
-import { createRuntimeFallbackTrace, createStreamModeTrace, emitRuntimeGovernanceTrace, logPayloadPolicy, logProviderConformance, logProviderRouteDecision, logProxyPolicy, logUpstreamRequest, runtimeLogOptions } from '@/services/ai/providerRuntimeDiagnostics'
+import { createRuntimeFallbackTrace, createStreamModeTrace, emitRuntimeGovernanceTrace, logPayloadPolicy, logProviderCompatibility, logProviderConformance, logProviderRouteDecision, logProxyPolicy, logUpstreamRequest, runtimeLogOptions } from '@/services/ai/providerRuntimeDiagnostics'
 import { assertProviderCircuitClosed, delayProviderRetry, logProviderRetryAttempt, providerCircuitKey, providerRetryDelayMs, recordProviderCircuitFailure, recordProviderCircuitSuccess, resolveProviderMaxRetries, resolveProviderRequestTimeoutMs } from '@/services/ai/providerRuntimeRetry'
-import { isMiniMaxProvider, shouldRequestDashScopeStreamUsage } from '@/services/ai/providerIdentity'
+import { isMiniMaxProvider, isPerplexityProvider } from '@/services/ai/providerIdentity'
 import { endpointHost, resolveNonStreamingProviderEndpoint, toWebSocketUrl } from '@/services/ai/providerEndpointUtils'
 import { fallbackModel, pickEmbeddingModel } from '@/services/ai/providerDefaultModels'
 import { arrayBufferToBase64 } from '@/services/ai/providerBinaryUtils'
@@ -71,10 +72,13 @@ import { getHostedProviderSupportIssue } from '@/services/ai/providerHostedBound
 import { isBedrockRuntimeProvider, prepareBedrockRuntimeInvokeModelRequest } from '@/services/ai/providerAwsBedrockRouting'
 import { getWireProviderType, isAnthropicWireRequest } from '@/services/ai/providerWireProtocol'
 import { clampMaxTokens, isXiaomiMimoThinkingActive, normalizeTemperature, normalizeXiaomiMimoThinking, supportsSamplingControls } from '@/services/ai/providerRequestParameters'
-import { isKimiSamplingLocked, normalizeDashScopeThinking, normalizeDeepSeekThinking, normalizeKimiPreservedThinking, normalizeKimiThinking, normalizeMiniMaxThinking, shouldRequestMiniMaxReasoningSplit } from '@/services/ai/providerOpenAICompatibleThinking'
+import { isKimiSamplingLocked, normalizeDashScopeThinking, normalizeDeepSeekThinking, normalizeKimiPreservedThinking, normalizeKimiThinking, normalizeMiniMaxThinking, normalizeSiliconFlowThinking, shouldRequestMiniMaxReasoningSplit } from '@/services/ai/providerOpenAICompatibleThinking'
 import { normalizeGoogleThinkingConfig } from '@/services/ai/providerGoogleThinking'
 import { googleAttachmentPart, googleNativeWebSearchTool } from '@/services/ai/providerGoogleRequest'
-import { buildOpenAIResponsesReasoning, getOpenAIChatMaxTokensField, normalizeOpenAIReasoningEffort, openAICompatibleAttachmentPart, openAIResponsesAttachmentPart, openAIResponsesNativeWebSearchTool, shouldIncludeOpenAIResponsesEncryptedReasoning, shouldReplayOpenAICompatibleReasoningContent, usesOpenAIResponses } from '@/services/ai/providerOpenAIRequest'
+import { buildOpenAIResponsesReasoning, getOpenAIChatMaxTokensField, normalizeOpenAIReasoningEffort, openAICompatibleAttachmentPart, openAICompatibleReasoningReplayField, openAIResponsesAttachmentPart, openAIResponsesNativeWebSearchTool, shouldIncludeOpenAIResponsesEncryptedReasoning, usesOpenAIResponses, xiaomiMimoNativeWebSearchTool } from '@/services/ai/providerOpenAIRequest'
+import { providerCompatibilityCapabilityCanBeSentForProvider } from '@/services/ai/providerCompatibilityContract'
+import { providerSupportsNativeSearch } from '@/services/chatProviderNativeToolUtils'
+import { filterSendableAttachments } from '@/services/attachmentContract'
 
 export type StreamCallback = (chunk: string) => void
 export type DoneCallback = (result: ChatCompletionResult) => void
@@ -171,6 +175,7 @@ export interface ChatRequest {
   requestedModel?: string
   fallbackProviders?: AIProvider[]
   providerToolDeclarations?: readonly unknown[]
+  structuredOutput?: ProviderStructuredOutputRequest
 }
 
 export interface ProviderAudioTranscriptionRequest {
@@ -326,17 +331,19 @@ function buildOpenAIBody(req: ChatRequest) {
       })
       continue
     }
+    const reasoningReplayField = msg.role === 'assistant' && msg.reasoningContent
+      ? openAICompatibleReasoningReplayField(req, msg)
+      : undefined
     msgs.push({
       role: msg.role,
       content,
-      ...(msg.role === 'assistant' && msg.reasoningContent && shouldReplayOpenAICompatibleReasoningContent(req, msg)
-        ? { reasoning_content: msg.reasoningContent }
-        : {}),
+      ...(reasoningReplayField ? { [reasoningReplayField]: msg.reasoningContent } : {}),
       ...(msg.toolCalls?.length ? { tool_calls: msg.toolCalls.map(toOpenAIChatToolCall) } : {}),
     })
   }
 
-  if (req.attachments?.length) {
+  const sendableAttachments = contractSendableAttachments(req)
+  if (sendableAttachments.length) {
     const lastMsg = msgs[msgs.length - 1]
     if (lastMsg && lastMsg.role === 'user') {
       const content = lastMsg.content
@@ -348,9 +355,7 @@ function buildOpenAIBody(req: ChatRequest) {
             : ''
       lastMsg.content = [
         { type: 'text', text: textContent },
-        ...req.attachments
-          .filter((a) => a.base64)
-          .map(openAICompatibleAttachmentPart),
+        ...sendableAttachments.map((attachment) => openAICompatibleAttachmentPart(attachment, req.provider)),
       ]
     }
   }
@@ -360,12 +365,26 @@ function buildOpenAIBody(req: ChatRequest) {
     messages: msgs,
     stream: req.stream ?? true,
   }
-  const providerTools = mergeProviderToolDeclarations(req.providerToolDeclarations)
+  const mimoNativeWebSearchTool = req.provider.type === 'xiaomi-mimo' && req.webSearchMode === 'native' && providerSupportsNativeSearch(req.provider)
+    ? xiaomiMimoNativeWebSearchTool(req.model)
+    : undefined
+  const declaredProviderTools = contractProviderToolDeclarations(req)
+  const providerTools = mergeProviderToolDeclarations(
+    declaredProviderTools,
+    mimoNativeWebSearchTool ? [mimoNativeWebSearchTool] : []
+  )
   if (providerTools) body.tools = providerTools
-  if (shouldRequestDashScopeStreamUsage(req)) body.stream_options = { include_usage: true }
+  if (mimoNativeWebSearchTool) body.tool_choice = 'auto'
+  const chatManifest = resolveProviderCapabilityManifest(req)
+  if ((req.stream ?? true) !== false && chatManifest.payload.streamUsageField === 'stream_options.include_usage') {
+    body.stream_options = { include_usage: true }
+  }
+  const responseFormat = buildOpenAICompatibleStructuredOutputFormat(req)
+  if (responseFormat) body.response_format = responseFormat
 
   const deepSeekThinking = normalizeDeepSeekThinking(req)
   const dashScopeThinking = normalizeDashScopeThinking(req)
+  const siliconFlowThinking = normalizeSiliconFlowThinking(req)
   const kimiThinking = normalizeKimiThinking(req)
   const miniMaxThinking = normalizeMiniMaxThinking(req)
   const mimoThinking = normalizeXiaomiMimoThinking(req)
@@ -373,6 +392,7 @@ function buildOpenAIBody(req: ChatRequest) {
   const compatibleReasoningEnabled =
     deepSeekThinking?.type === 'enabled' ||
     dashScopeThinking?.enabled === true ||
+    siliconFlowThinking !== undefined ||
     kimiThinking?.type === 'enabled' ||
     kimiSamplingLocked ||
     isXiaomiMimoThinkingActive(req)
@@ -390,6 +410,7 @@ function buildOpenAIBody(req: ChatRequest) {
       body.enable_thinking = dashScopeThinking.enabled
       if (dashScopeThinking.budget !== undefined) body.thinking_budget = dashScopeThinking.budget
     }
+    if (siliconFlowThinking) body.thinking_budget = siliconFlowThinking.budget
     const kimiPreservedThinking = normalizeKimiPreservedThinking(req, kimiThinking)
     if (kimiPreservedThinking) body.thinking = kimiPreservedThinking
     else if (kimiThinking) body.thinking = kimiThinking
@@ -406,13 +427,103 @@ function buildOpenAIBody(req: ChatRequest) {
   return body
 }
 
+function buildOpenAICompatibleStructuredOutputFormat(req: ChatRequest): Record<string, unknown> | undefined {
+  const structuredOutput = req.structuredOutput
+  if (!structuredOutput) return undefined
+  const manifest = resolveProviderCapabilityManifest(req)
+  if (!manifest.structuredOutput.appRequestControl) return undefined
+  if (
+    manifest.structuredOutput.documentedRequestShape !== 'openai-response-format' &&
+    manifest.structuredOutput.documentedRequestShape !== 'openai-json-object-response-format' &&
+    manifest.structuredOutput.documentedRequestShape !== 'openrouter-response-format' &&
+    manifest.structuredOutput.documentedRequestShape !== 'xai-response-format'
+  ) return undefined
+  if (manifest.structuredOutput.documentedRequestShape === 'xai-response-format') {
+    return buildXAIResponseFormat(structuredOutput)
+  }
+  if (structuredOutput.type === 'json_object') return { type: 'json_object' }
+  if (manifest.structuredOutput.documentedRequestShape === 'openai-json-object-response-format') return undefined
+  if (!structuredOutput.schema) return undefined
+  const jsonSchema: Record<string, unknown> = {
+    name: structuredOutput.name?.trim() || 'islemind_response',
+    schema: structuredOutput.schema,
+  }
+  if (structuredOutput.strict === true && manifest.structuredOutput.strictJsonSchema) {
+    jsonSchema.strict = true
+  }
+  return {
+    type: 'json_schema',
+    json_schema: jsonSchema,
+  }
+}
+
+function buildOpenAIResponsesTextConfig(req: ChatRequest): Record<string, unknown> | undefined {
+  const structuredOutput = req.structuredOutput
+  if (!structuredOutput) return undefined
+  const manifest = resolveProviderCapabilityManifest(req)
+  if (!manifest.structuredOutput.appRequestControl) return undefined
+  if (manifest.family === 'ollama') return undefined
+  if (
+    manifest.structuredOutput.documentedRequestShape !== 'openai-response-format' &&
+    manifest.structuredOutput.documentedRequestShape !== 'openai-json-object-response-format'
+  ) return undefined
+  if (structuredOutput.type === 'json_object') return { format: { type: 'json_object' } }
+  if (manifest.structuredOutput.documentedRequestShape === 'openai-json-object-response-format') return undefined
+  if (!structuredOutput.schema) return undefined
+  const format: Record<string, unknown> = {
+    type: 'json_schema',
+    name: structuredOutput.name?.trim() || 'islemind_response',
+    schema: structuredOutput.schema,
+  }
+  if (structuredOutput.strict === true && manifest.structuredOutput.strictJsonSchema) {
+    format.strict = true
+  }
+  return { format }
+}
+
+function buildXAIResponseFormat(structuredOutput: ProviderStructuredOutputRequest): Record<string, unknown> | undefined {
+  if (structuredOutput.type === 'json_object') return { type: 'json_object' }
+  if (!structuredOutput.schema) return undefined
+  return {
+    type: 'json_schema',
+    json_schema: {
+      name: structuredOutput.name?.trim() || 'islemind_response',
+      schema: structuredOutput.schema,
+    },
+  }
+}
+
+function buildOpenAIResponsesResponseFormat(req: ChatRequest): Record<string, unknown> | undefined {
+  const structuredOutput = req.structuredOutput
+  if (!structuredOutput) return undefined
+  const manifest = resolveProviderCapabilityManifest(req)
+  if (!manifest.structuredOutput.appRequestControl) return undefined
+  if (manifest.structuredOutput.documentedRequestShape === 'xai-response-format') return buildXAIResponseFormat(structuredOutput)
+  if (manifest.structuredOutput.documentedRequestShape === 'openrouter-response-format') return buildOpenAICompatibleStructuredOutputFormat(req)
+  return undefined
+}
+
 function buildXiaomiMimoAnthropicBody(req: ChatRequest) {
   return buildAnthropicBody({ ...req, stream: req.stream ?? true })
+}
+
+function contractSendableAttachments(req: ChatRequest): Attachment[] {
+  const manifest = resolveProviderCapabilityManifest(req)
+  return filterSendableAttachments(req.attachments).filter((attachment) => {
+    if (attachment.type === 'image') return manifest.modalities.input.image
+    return manifest.modalities.input.file
+  })
+}
+
+function contractProviderToolDeclarations(req: ChatRequest): readonly unknown[] | undefined {
+  const modelConfig = getModelConfig(req.model, req.provider.type, req.provider.modelConfigs)
+  return supportsNativeProviderTools(req.provider, modelConfig) ? req.providerToolDeclarations : undefined
 }
 
 function buildAnthropicBody(req: ChatRequest) {
   const system = [req.systemPrompt, req.contextPrompt].filter(Boolean).join('\n\n') || undefined
   const messages: Record<string, unknown>[] = []
+  const sendableAttachments = contractSendableAttachments(req)
   const thinkingConfig = normalizeAnthropicThinking(req)
   const miniMaxThinking = normalizeMiniMaxThinking(req)
   const mimoThinking = normalizeXiaomiMimoThinking(req)
@@ -424,8 +535,8 @@ function buildAnthropicBody(req: ChatRequest) {
     if (msg.role === 'user') {
       const content = toAnthropicContentBlocks(msg.content)
 
-      if (req.attachments?.length && msg === req.messages[req.messages.length - 1]) {
-        for (const att of req.attachments) {
+      if (sendableAttachments.length && msg === req.messages[req.messages.length - 1]) {
+        for (const att of sendableAttachments) {
           const part = anthropicAttachmentPart(att)
           if (part) content.push(part)
         }
@@ -446,9 +557,18 @@ function buildAnthropicBody(req: ChatRequest) {
     }
   }
 
+  const declaredProviderTools = contractProviderToolDeclarations(req)
+  const nativeWebSearchTools = req.webSearchMode === 'native' && req.provider.type !== 'xiaomi-mimo' && providerSupportsNativeSearch(req.provider)
+    ? [anthropicNativeWebSearchTool(req.model)]
+    : []
+  const structuredOutputTool = buildAnthropicStructuredOutputTool(req)
+  const builtInTools = [
+    ...nativeWebSearchTools,
+    ...(structuredOutputTool ? [structuredOutputTool] : []),
+  ]
   const tools = mergeProviderToolDeclarations(
-    req.providerToolDeclarations,
-    req.webSearchMode === 'native' ? [anthropicNativeWebSearchTool(req.model)] : []
+    declaredProviderTools,
+    builtInTools
   )
   const body: Record<string, unknown> = {
     model: req.model,
@@ -458,6 +578,7 @@ function buildAnthropicBody(req: ChatRequest) {
     stream: req.stream ?? true,
     ...(tools ? { tools } : {}),
   }
+  if (structuredOutputTool) body.tool_choice = { type: 'tool', name: structuredOutputTool.name }
   if (temperature !== undefined) body.temperature = temperature
   if (topP !== undefined) body.top_p = topP
   if (thinkingConfig?.thinking) body.thinking = thinkingConfig.thinking
@@ -467,8 +588,21 @@ function buildAnthropicBody(req: ChatRequest) {
   return body
 }
 
+function buildAnthropicStructuredOutputTool(req: ChatRequest): Record<string, unknown> | undefined {
+  const inputSchema = providerStructuredOutputToolSchema(req.structuredOutput)
+  if (!inputSchema) return undefined
+  const manifest = resolveProviderCapabilityManifest(req)
+  if (!manifest.structuredOutput.appRequestControl || manifest.structuredOutput.documentedRequestShape !== 'anthropic-tool-schema') return undefined
+  return {
+    name: providerStructuredOutputToolName(req.structuredOutput),
+    description: 'Return the final answer as structured JSON that matches this input schema.',
+    input_schema: inputSchema,
+  }
+}
+
 function buildGoogleBody(req: ChatRequest) {
   const contents: Record<string, unknown>[] = []
+  const sendableAttachments = contractSendableAttachments(req)
   const systemPrompt = [req.systemPrompt, req.contextPrompt].filter(Boolean).join('\n\n')
   const systemInstruction = systemPrompt
     ? { parts: [{ text: systemPrompt }] }
@@ -477,8 +611,8 @@ function buildGoogleBody(req: ChatRequest) {
   for (const msg of req.messages) {
     const parts = toGoogleContentParts(msg.content)
 
-    if (msg.role === 'user' && msg === req.messages[req.messages.length - 1] && req.attachments?.length) {
-      for (const att of req.attachments) {
+    if (msg.role === 'user' && msg === req.messages[req.messages.length - 1] && sendableAttachments.length) {
+      for (const att of sendableAttachments) {
         const part = googleAttachmentPart(att)
         if (part) parts.push(part)
       }
@@ -497,10 +631,12 @@ function buildGoogleBody(req: ChatRequest) {
   }
   const thinkingConfig = normalizeGoogleThinkingConfig(req)
   if (thinkingConfig) generationConfig.thinkingConfig = thinkingConfig
+  const structuredOutputConfig = buildGoogleStructuredOutputConfig(req)
+  if (structuredOutputConfig) Object.assign(generationConfig, structuredOutputConfig)
 
   const tools = mergeProviderToolDeclarations(
-    req.providerToolDeclarations,
-    req.webSearchMode === 'native' ? [googleNativeWebSearchTool()] : []
+    contractProviderToolDeclarations(req),
+    req.webSearchMode === 'native' && providerSupportsNativeSearch(req.provider) ? [googleNativeWebSearchTool()] : []
   )
   return {
     contents,
@@ -510,8 +646,22 @@ function buildGoogleBody(req: ChatRequest) {
   }
 }
 
+function buildGoogleStructuredOutputConfig(req: ChatRequest): Record<string, unknown> | undefined {
+  const structuredOutput = req.structuredOutput
+  if (!structuredOutput) return undefined
+  const manifest = resolveProviderCapabilityManifest(req)
+  if (!manifest.structuredOutput.appRequestControl || manifest.structuredOutput.documentedRequestShape !== 'google-response-schema') return undefined
+  if (structuredOutput.type === 'json_object') return { responseMimeType: 'application/json' }
+  if (!structuredOutput.schema) return undefined
+  return {
+    responseMimeType: 'application/json',
+    responseSchema: structuredOutput.schema,
+  }
+}
+
 function buildOpenAIResponsesBody(req: ChatRequest) {
   const input: Record<string, unknown>[] = []
+  const sendableAttachments = contractSendableAttachments(req)
   const systemPrompt = [req.systemPrompt, req.contextPrompt].filter(Boolean).join('\n\n')
   if (systemPrompt) {
     input.push({ role: 'system', content: systemPrompt })
@@ -538,12 +688,12 @@ function buildOpenAIResponsesBody(req: ChatRequest) {
       input.push(...responseItems)
       continue
     }
-    if (message.role === 'user' && isLast && req.attachments?.length) {
+    if (message.role === 'user' && isLast && sendableAttachments.length) {
       input.push({
         role: 'user',
         content: [
           { type: 'input_text', text },
-          ...req.attachments.map(openAIResponsesAttachmentPart),
+          ...sendableAttachments.map(openAIResponsesAttachmentPart),
         ],
       })
     } else {
@@ -553,16 +703,23 @@ function buildOpenAIResponsesBody(req: ChatRequest) {
   const openAIEffort = normalizeOpenAIReasoningEffort(req)
   const responsesReasoning = buildOpenAIResponsesReasoning(openAIEffort, req.provider)
   const includeEncryptedReasoning = shouldIncludeOpenAIResponsesEncryptedReasoning(req, openAIEffort)
+  const responsesNativeWebSearchTool = req.webSearchMode === 'native'
+    ? openAIResponsesNativeWebSearchTool(req.provider)
+    : undefined
   const tools = mergeProviderToolDeclarations(
-    req.providerToolDeclarations,
-    req.webSearchMode === 'native' ? [openAIResponsesNativeWebSearchTool(req.provider)] : []
+    contractProviderToolDeclarations(req),
+    responsesNativeWebSearchTool ? [responsesNativeWebSearchTool] : []
   )
   const samplingControlsSupported = supportsSamplingControls(req)
+  const textConfig = buildOpenAIResponsesTextConfig(req)
+  const responseFormat = buildOpenAIResponsesResponseFormat(req)
   return {
     model: req.model,
     input,
     ...(samplingControlsSupported && normalizeTemperature(req) !== undefined ? { temperature: normalizeTemperature(req) } : {}),
     ...(samplingControlsSupported && req.topP !== undefined ? { top_p: clamp01(req.topP) } : {}),
+    ...(textConfig ? { text: textConfig } : {}),
+    ...(responseFormat ? { response_format: responseFormat } : {}),
     ...(responsesReasoning ? { reasoning: responsesReasoning } : {}),
     ...(includeEncryptedReasoning ? { include: ['reasoning.encrypted_content'] } : {}),
     max_output_tokens: clampMaxTokens(req),
@@ -730,6 +887,7 @@ export async function streamChat(
   })
   const rawBody = optimizeRequestBody(routeResult.body, runtimeReq)
   void logProviderRouteDecision(effectiveReq, routeResult.decision)
+  void logProviderCompatibility(effectiveReq)
   void logProviderConformance(effectiveReq, routeResult.conformance)
   const conformanceBlockers = routeResult.conformance.issues.filter((issue) => issue.severity === 'block')
   if (conformanceBlockers.length) {
@@ -998,12 +1156,14 @@ async function executeHttpSseChat(input: {
   let providerContentBlocks: Record<string, unknown>[] = []
   const textToolCallFilter = createProviderTextToolCallStreamFilter()
   const wireProviderType = getWireProviderType(input.req.provider)
+  const streamParseOptions = { includeReasoning: providerReasoningResponseCanBeParsed(input.req) }
+  const providerCitationSource = resolveStreamProviderCitationSource(input.req.provider, wireProviderType)
 
   async function readStream() {
     while (true) {
       const { done, value } = await reader!.read()
       if (done) {
-        const finalParsed = parseProviderStreamChunk(buffer, wireProviderType)
+        const finalParsed = parseProviderStreamChunk(buffer, wireProviderType, streamParseOptions)
         if (finalParsed.text) {
           fullText += finalParsed.text
           const visibleText = textToolCallFilter.push(finalParsed.text)
@@ -1018,16 +1178,18 @@ async function executeHttpSseChat(input: {
         providerContentBlocks = mergeAnthropicReplayContentBlocks([...providerContentBlocks, ...(finalParsed.providerContentBlocks ?? [])])
         finalParsed.traces.forEach(input.onTrace ?? (() => undefined))
         providerUsage = finalParsed.usage ?? providerUsage
+        const structuredOutputText = providerStructuredOutputToolCallText(providerToolCalls, input.req.structuredOutput)
+        const finalText = structuredOutputText ?? fullText
         const finalResult = withProviderTextToolCallFallback({
-          text: fullText,
-          citations: dedupeCitations([...extractCitationsFromText(fullText, input.req.retrievalSources), ...providerCitations]),
+          text: finalText,
+          citations: dedupeCitations([...extractCitationsFromText(finalText, input.req.retrievalSources), ...providerCitations]),
           traces: providerTraces,
           usage: providerUsage,
-          providerToolCalls: executableProviderToolCalls(providerToolCalls),
+          providerToolCalls: executableProviderToolCalls(filterProviderStructuredOutputToolCalls(providerToolCalls, input.req.structuredOutput)),
           ...(providerReasoningContent ? { reasoningContent: providerReasoningContent } : {}),
           ...(providerResponseItems.length ? { responseItems: providerResponseItems } : {}),
           ...(providerContentBlocks.length ? { providerContentBlocks: sanitizeAnthropicReplayContentBlocks(providerContentBlocks) } : {}),
-        }, fullText)
+        }, finalText)
         const citations = finalResult.citations ?? []
         if (citations.length) input.onCitations?.(citations)
         void appendRuntimeLog('upstream.response', {
@@ -1047,7 +1209,7 @@ async function executeHttpSseChat(input: {
       const { events, remainder } = splitSseBuffer(buffer)
       buffer = remainder
       for (const event of events) {
-        const parsed = parseProviderStreamChunk(event, wireProviderType)
+        const parsed = parseProviderStreamChunk(event, wireProviderType, streamParseOptions)
         if (parsed.text) {
           fullText += parsed.text
           const visibleText = textToolCallFilter.push(parsed.text)
@@ -1060,12 +1222,21 @@ async function executeHttpSseChat(input: {
         providerContentBlocks = mergeAnthropicReplayContentBlocks([...providerContentBlocks, ...(parsed.providerContentBlocks ?? [])])
         parsed.traces.forEach(input.onTrace ?? (() => undefined))
         providerUsage = parsed.usage ?? providerUsage
-        providerCitations = dedupeCitations([...providerCitations, ...extractProviderCitationsFromSse(event, wireProviderType)])
+        if (providerCitationSource) {
+          providerCitations = dedupeCitations([...providerCitations, ...extractProviderCitationsFromSse(event, providerCitationSource)])
+        }
       }
     }
   }
 
   await readStream()
+}
+
+function resolveStreamProviderCitationSource(provider: AIProvider, providerType: ProviderType): ProviderCitationSource | undefined {
+  if (!providerCompatibilityCapabilityCanBeSentForProvider(provider, 'citations')) return undefined
+  if (providerType === 'openai-compatible' && isPerplexityProvider(provider)) return 'perplexity'
+  if (providerType === 'anthropic' || providerType === 'google' || providerType === 'xiaomi-mimo') return providerType
+  return undefined
 }
 
 async function fetchChatStreamWithRetry(input: {
@@ -1253,6 +1424,7 @@ async function tryRuntimeFallback(input: RuntimeFallbackExecutionInput): Promise
     requiredCapabilities: requiredFallbackCapabilities(input.req),
   })
   await logProviderRouteDecision(selectedReq, selectedRouteResult.decision)
+  await logProviderCompatibility(selectedReq)
   await logProviderConformance(selectedReq, selectedRouteResult.conformance)
   if (selectedRouteResult.decision.blocked) {
     input.onTrace?.(createRuntimeFallbackTrace(input.req, plan, 'error', 'route_blocked'))
@@ -1515,6 +1687,9 @@ export async function embedTextWithProvider(provider: AIProvider, text: string):
   if (!(provider.type === 'openai' || provider.type === 'openai-compatible' || provider.type === 'xiaomi-mimo')) {
     throw new Error('embeddings_endpoint_unavailable')
   }
+  if (!providerCompatibilityCapabilityCanBeSentForProvider(provider, 'embeddings', provider.capabilities?.embeddings === true)) {
+    throw new Error('embeddings_unsupported_by_contract')
+  }
   const issue = getProviderConfigIssue(provider, provider.apiKey)
   if (issue) throw new Error(`${issue.code}: ${st(issue.messageKey ?? issue.message, undefined, issue.message)}`)
   const model = pickEmbeddingModel(provider)
@@ -1544,6 +1719,10 @@ export async function transcribeAudioWithProvider(req: ProviderAudioTranscriptio
   if (!provider.apiKey.trim()) throw new Error('missing_key')
   const issue = getProviderConfigIssue(provider, provider.apiKey)
   if (issue) throw new Error(`${issue.code}: ${st(issue.messageKey ?? issue.message, undefined, issue.message)}`)
+  const providerDeclaresAudioTranscription = provider.capabilities?.audioTranscription === true || (provider.type === 'google' && provider.capabilities?.audioInput === true)
+  if (!providerDeclaresAudioTranscription || !providerCompatibilityCapabilityCanBeSentForProvider(provider, 'audio', true)) {
+    throw new Error('audio_transcription_unavailable')
+  }
   if (provider.type === 'openai' || provider.type === 'openai-compatible') {
     const form = new FormData()
     form.append('model', req.model ?? 'whisper-1')
@@ -1592,6 +1771,9 @@ export async function synthesizeSpeechWithProvider(req: ProviderSpeechRequest): 
   if (!provider.apiKey.trim()) throw new Error('missing_key')
   const issue = getProviderConfigIssue(provider, provider.apiKey)
   if (issue) throw new Error(`${issue.code}: ${st(issue.messageKey ?? issue.message, undefined, issue.message)}`)
+  if (provider.capabilities?.speech !== true || !providerCompatibilityCapabilityCanBeSentForProvider(provider, 'audio', true)) {
+    throw new Error('speech_unavailable')
+  }
   if (!(provider.type === 'openai' || provider.type === 'openai-compatible')) {
     throw new Error('speech_unavailable')
   }

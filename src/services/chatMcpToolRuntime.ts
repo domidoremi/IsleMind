@@ -1,6 +1,6 @@
 import type { AIProvider, Conversation, ProcessTrace } from '@/types'
 import { streamChat, type ChatCompletionResult, type ChatRequest } from '@/services/ai/base'
-import { buildAgentToolCallTraceMetadata } from '@/services/agent'
+import { buildAgentToolCallTraceMetadata } from '@/services/agent/agentToolCallTrace'
 import type { ResolvedMcpTool } from '@/services/chatMcpContextUtils'
 import { buildMcpToolRevisionMessages, buildMcpToolRevisionSystemPrompt } from '@/services/chatMcpRevisionUtils'
 import { findMcpTool, formatToolBlocks, sanitizeToolRevisionAnswerText } from '@/services/chatToolResultUtils'

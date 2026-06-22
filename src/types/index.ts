@@ -313,7 +313,7 @@ export type ProcessTraceType = 'reasoning' | 'tool' | 'retrieval' | 'search' | '
 export type ProcessTraceStatus = 'pending' | 'running' | 'done' | 'error' | 'skipped' | 'cancelled'
 export type ConversationProviderModelMode = 'inherited' | 'manual'
 export type ReasoningEffort = 'none' | 'minimal' | 'low' | 'medium' | 'high' | 'xhigh' | 'max'
-export type ModelReasoningMode = 'openai-effort' | 'gemini-thinking-level' | 'gemini-thinking-budget' | 'deepseek-thinking' | 'anthropic-thinking' | 'dashscope-thinking' | 'kimi-thinking' | 'minimax-thinking' | 'xai-reasoning-effort' | 'none'
+export type ModelReasoningMode = 'openai-effort' | 'gemini-thinking-level' | 'gemini-thinking-budget' | 'deepseek-thinking' | 'anthropic-thinking' | 'dashscope-thinking' | 'kimi-thinking' | 'minimax-thinking' | 'xai-reasoning-effort' | 'groq-reasoning-effort' | 'together-reasoning-effort' | 'fireworks-reasoning-effort' | 'perplexity-reasoning-effort' | 'cohere-reasoning-effort' | 'cerebras-reasoning-effort' | 'sambanova-reasoning-effort' | 'huggingface-reasoning-effort' | 'deepinfra-reasoning-effort' | 'siliconflow-thinking-budget' | 'none'
 export type ProviderType = 'openai' | 'anthropic' | 'google' | 'openai-compatible' | 'xiaomi-mimo'
 export type ProviderPresetId =
   | 'openai'
@@ -376,6 +376,7 @@ export type ChatErrorCode =
   | 'timeout'
   | 'rate_limited'
   | 'max_tokens_exceeded'
+  | 'provider_conformance_blocked'
   | 'unknown'
 export type ProviderOperationCode =
   | 'ok'
@@ -575,6 +576,8 @@ export interface ProviderCapabilities {
   reasoningEffort: boolean
   nativeTools?: boolean
   topP: boolean
+  embeddings?: boolean
+  rerank?: boolean
   responsesApi?: boolean
   responsesWebSocket?: boolean
   remoteCompact?: boolean
@@ -701,6 +704,7 @@ export interface AIModel {
   supportsVision: boolean
   supportsFiles: boolean
   supportsTools?: boolean
+  supportedParameters?: string[]
   supportsStreaming?: boolean
   preferredEndpoint?: 'chat-completions' | 'responses'
   reasoningMode?: ModelReasoningMode

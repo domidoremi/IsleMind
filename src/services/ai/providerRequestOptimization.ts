@@ -1,9 +1,12 @@
 import type { AIProvider, ReasoningEffort, Settings } from '@/types'
 import { isAwsBedrockProvider, isBedrockRuntimeProvider } from '@/services/ai/providerAwsBedrockRouting'
 import { normalizeAnthropicEffort, supportsAnthropicAdaptiveThinking, usesAnthropicOutputConfigOnlyThinking } from '@/services/ai/providerAnthropicThinking'
+import { resolveProviderCapabilityManifest } from '@/services/ai/providerConformance'
 import { numberValue } from '@/services/ai/providerUsage'
 
-type ProviderRequestOptimizationProvider = Pick<AIProvider, 'id' | 'name' | 'baseUrl' | 'presetId' | 'detectedPresetId' | 'type' | 'wireProtocol'>
+type ProviderRequestOptimizationProvider =
+  Pick<AIProvider, 'id' | 'name' | 'baseUrl' | 'presetId' | 'detectedPresetId' | 'type' | 'wireProtocol'> &
+  Partial<Pick<AIProvider, 'apiKey' | 'models' | 'enabled' | 'capabilities' | 'modelConfigs'>>
 
 export interface ProviderRequestOptimizationInput {
   provider: ProviderRequestOptimizationProvider
@@ -35,6 +38,7 @@ export function isAnthropicWireProvider(provider: Pick<AIProvider, 'type' | 'wir
 
 export function optimizeBedrockThinking(body: Record<string, unknown>, req: ProviderRequestOptimizationInput): Record<string, unknown> {
   if (!isAnthropicWireProvider(req.provider)) return body
+  if (!bedrockOptimizerCanSendReasoning(req)) return body
   if (usesAnthropicOutputConfigOnlyThinking(req.model)) {
     return {
       ...body,
@@ -55,6 +59,20 @@ export function optimizeBedrockThinking(body: Record<string, unknown>, req: Prov
     thinking: { type: 'enabled', budget_tokens: Math.min(32000, Math.max(1024, maxTokens - 1)) },
     max_tokens: Math.max(maxTokens, 4096),
   }
+}
+
+function bedrockOptimizerCanSendReasoning(req: ProviderRequestOptimizationInput): boolean {
+  const provider: AIProvider = {
+    apiKey: '',
+    models: [req.model],
+    enabled: true,
+    ...req.provider,
+  }
+  return resolveProviderCapabilityManifest({
+    provider,
+    model: req.model,
+    reasoningEffort: req.reasoningEffort,
+  }).reasoning.supported
 }
 
 export function injectBedrockCache(body: Record<string, unknown>, ttl: 'default' | '5m' | '1h'): Record<string, unknown> {

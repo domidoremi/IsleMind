@@ -1,6 +1,7 @@
-import type { AIProvider, Attachment, ReasoningEffort } from '@/types'
+import type { AIProvider, Attachment, ReasoningEffort, WebSearchMode } from '@/types'
 import { filterSendableAttachments } from '@/services/attachmentContract'
 import type { ProviderFailoverRoute } from '@/services/ai/providerFailover'
+import type { ProviderStructuredOutputRequest } from '@/services/ai/providerConformance'
 
 export interface ProviderRuntimeFallbackRequest {
   provider: AIProvider
@@ -8,6 +9,9 @@ export interface ProviderRuntimeFallbackRequest {
   fallbackProviders?: AIProvider[]
   attachments?: Attachment[]
   reasoningEffort?: ReasoningEffort
+  webSearchMode?: WebSearchMode
+  providerToolDeclarations?: readonly unknown[]
+  structuredOutput?: ProviderStructuredOutputRequest
 }
 
 export function routeForRuntimeFallback(req: ProviderRuntimeFallbackRequest, credentialGroupId?: string): ProviderFailoverRoute {
@@ -29,9 +33,12 @@ export function fallbackProvidersForRequest(req: ProviderRuntimeFallbackRequest)
 export function requiredFallbackCapabilities(req: ProviderRuntimeFallbackRequest): string[] {
   const capabilities = ['text']
   if (req.reasoningEffort && !['none', 'minimal'].includes(req.reasoningEffort)) capabilities.push('reasoning')
+  if (req.providerToolDeclarations?.length) capabilities.push('tools')
+  if (req.structuredOutput) capabilities.push('structured_output')
+  if (req.webSearchMode === 'native') capabilities.push('native_search')
   for (const attachment of filterSendableAttachments(req.attachments)) {
     if (attachment.type === 'image') capabilities.push('image')
-    if (attachment.type === 'pdf' || attachment.type === 'text' || attachment.type === 'document') capabilities.push('file')
+    if (attachment.type !== 'image') capabilities.push('file')
   }
   return Array.from(new Set(capabilities))
 }

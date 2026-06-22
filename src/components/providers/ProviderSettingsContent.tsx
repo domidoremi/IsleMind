@@ -561,6 +561,7 @@ function ProviderListRow({
     providerCapabilityLabelEnabled(provider, 'responsesApi', provider.capabilities?.responsesApi) ? 'Responses' : '',
     providerCapabilityLabelEnabled(provider, 'responsesWebSocket', provider.capabilities?.responsesWebSocket) ? 'WebSocket' : '',
     providerCapabilityLabelEnabled(provider, 'remoteCompact', provider.capabilities?.remoteCompact) ? 'Remote compact' : '',
+    providerCapabilityLabelEnabled(provider, 'embeddings', provider.capabilities?.embeddings) ? 'Embeddings' : '',
   ].filter(Boolean)
   const showDragRail = total > 1 && sortEnabled
   return (

@@ -154,8 +154,14 @@ function assertReminderTitleRuntimeBindings() {
   assert.ok(
     plannerSourceText.includes('isAndroidReminderRef(ref)') &&
       plannerSourceText.includes('inferReminderTitle(content)') &&
+      plannerSourceText.includes('fallbackReminderTitle(content)') &&
       plannerSourceText.includes('args.title = title'),
-    'Android calendar workflow planning must bind title from the runtime prompt.',
+    'Android calendar workflow planning must bind title from the runtime prompt or fall back to the goal.',
+  )
+  const calendarTodoBlock = extractWorkflowBlock(workflowSourceText, ANDROID_CALENDAR_TODO_WORKFLOW_ID)
+  assert.ok(
+    calendarTodoBlock.includes('sets title from user input or runtime goal fallback'),
+    'Android calendar workflow template must document the no-title fallback.',
   )
   for (const snippet of ['titled', 'called', 'named', 'with\\s+(?:the\\s+)?title']) {
     assert.ok(classifierSourceText.includes(snippet), `Reminder title inference must handle English "${snippet}" prompts.`)
