@@ -111,13 +111,14 @@ export const PROVIDER_PRESETS: ProviderPreset[] = [
     files: true,
     reasoningEffort: true,
     nativeTools: true,
-    responsesApi: true,
+    responsesApi: false,
   }),
   preset('vertex-ai', 'Vertex AI', 'openai-compatible', undefined, ['vertex ai', 'google cloud vertex', 'aiplatform'], [/aiplatform\.googleapis\.com/i], {
     vision: true,
-    files: true,
+    files: false,
     reasoningEffort: true,
     nativeTools: true,
+    modelList: false,
   }),
   preset('deepseek', 'DeepSeek', 'openai-compatible', 'https://api.deepseek.com', ['deepseek'], [/api\.deepseek\.com/i], {
     reasoningEffort: true,
@@ -125,10 +126,8 @@ export const PROVIDER_PRESETS: ProviderPreset[] = [
   }),
   preset('dashscope', '阿里云百炼', 'openai-compatible', 'https://dashscope.aliyuncs.com/compatible-mode/v1', ['dashscope', 'qwen', 'aliyun', '阿里', '百炼'], [/dashscope\.aliyuncs\.com/i], {
     vision: true,
-    files: true,
-    audioInput: true,
-    audioTranscription: true,
-    speech: true,
+    modelList: false,
+    reasoningEffort: true,
     nativeTools: true,
   }),
   preset('moonshot', 'Moonshot AI', 'openai-compatible', 'https://api.moonshot.ai/v1', ['moonshot', 'kimi', '月之暗面'], [/moonshot\.(ai|cn)/i, /platform\.kimi\.ai/i], {
@@ -137,11 +136,12 @@ export const PROVIDER_PRESETS: ProviderPreset[] = [
   }),
   preset('bigmodel', '智谱 AI', 'openai-compatible', 'https://open.bigmodel.cn/api/paas/v4', ['bigmodel', 'zhipu', 'glm', '智谱'], [/bigmodel\.cn/i], {
     vision: true,
-    files: true,
-    reasoningEffort: true,
     nativeTools: true,
+    modelList: false,
   }),
   preset('minimax', 'MiniMax', 'openai-compatible', 'https://api.minimax.io/v1', ['minimax', 'mini-max', '海螺'], [/minimax\.(io|com)/i, /minimaxi\.com/i], {
+    modelList: false,
+    reasoningEffort: true,
     nativeTools: true,
   }),
   preset('xai', 'xAI', 'openai-compatible', 'https://api.x.ai/v1', ['xai', 'grok'], [/api\.x\.ai/i], {
@@ -152,27 +152,26 @@ export const PROVIDER_PRESETS: ProviderPreset[] = [
   }),
   preset('xiaomi-mimo', 'Xiaomi MiMo', 'xiaomi-mimo', undefined, ['mimo', 'xiaomi', '小米'], [/xiaomimimo\.com/i], {
     vision: true,
+    nativeSearch: true,
     reasoningEffort: true,
     nativeTools: true,
   }),
   preset('mistral', 'Mistral AI', 'openai-compatible', 'https://api.mistral.ai/v1', ['mistral', 'codestral', 'magistral'], [/api\.mistral\.ai/i], {
     vision: true,
-    files: true,
-    reasoningEffort: true,
+    files: false,
+    reasoningEffort: false,
     nativeTools: true,
   }),
   preset('groq', 'Groq', 'openai-compatible', 'https://api.groq.com/openai/v1', ['groq'], [/api\.groq\.com/i], {
     vision: true,
     audioTranscription: true,
     speech: true,
-    nativeSearch: true,
     reasoningEffort: true,
     nativeTools: true,
     responsesApi: true,
   }),
   preset('together', 'Together AI', 'openai-compatible', 'https://api.together.ai/v1', ['together'], [/api\.together\.ai/i], {
     vision: true,
-    audioInput: true,
     audioTranscription: true,
     speech: true,
     reasoningEffort: true,
@@ -180,17 +179,20 @@ export const PROVIDER_PRESETS: ProviderPreset[] = [
   }),
   preset('fireworks', 'Fireworks AI', 'openai-compatible', 'https://api.fireworks.ai/inference/v1', ['fireworks'], [/api\.fireworks\.ai/i], {
     vision: true,
-    files: true,
+    files: false,
     reasoningEffort: true,
     nativeTools: true,
     responsesApi: true,
   }),
   preset('perplexity', 'Perplexity Sonar', 'openai-compatible', 'https://api.perplexity.ai', ['perplexity', 'sonar'], [/api\.perplexity\.ai/i], {
     modelList: false,
+    vision: true,
+    files: true,
     nativeSearch: true,
     reasoningEffort: true,
   }),
   preset('cohere', 'Cohere', 'openai-compatible', 'https://api.cohere.ai/compatibility/v1', ['cohere', 'command'], [/api\.cohere\.ai/i], {
+    modelList: false,
     audioTranscription: true,
     reasoningEffort: true,
     nativeTools: true,
@@ -201,82 +203,116 @@ export const PROVIDER_PRESETS: ProviderPreset[] = [
   }),
   preset('sambanova', 'SambaNova', 'openai-compatible', 'https://api.sambanova.ai/v1', ['sambanova', 'samba'], [/sambanova\.ai/i], {
     vision: true,
-    audioInput: true,
+    files: false,
+    audioInput: false,
+    audioTranscription: false,
+    speech: false,
     reasoningEffort: true,
     nativeTools: true,
     responsesApi: true,
   }),
   preset('nvidia-nim', 'NVIDIA NIM', 'openai-compatible', 'https://integrate.api.nvidia.com/v1', ['nvidia', 'nim', 'build.nvidia'], [/integrate\.api\.nvidia\.com/i, /build\.nvidia\.com/i], {
     vision: true,
-    reasoningEffort: true,
-    nativeTools: true,
+    files: false,
+    audioInput: false,
+    audioTranscription: false,
+    speech: false,
+    reasoningEffort: false,
+    nativeTools: false,
   }),
   preset('huggingface', 'Hugging Face Inference Providers', 'openai-compatible', 'https://router.huggingface.co/v1', ['huggingface', 'hugging face', 'hf'], [/router\.huggingface\.co/i, /api-inference\.huggingface\.co/i], {
     vision: true,
-    files: true,
+    files: false,
     reasoningEffort: true,
     nativeTools: true,
+    responsesApi: true,
   }),
   preset('github-models', 'GitHub Models', 'openai-compatible', 'https://models.github.ai/inference', ['github models', 'github-models'], [/models\.github\.ai/i], {
-    vision: true,
-    reasoningEffort: true,
+    vision: false,
     nativeTools: true,
+    files: false,
+    audioInput: false,
+    audioTranscription: false,
+    speech: false,
+    reasoningEffort: false,
+    responsesApi: false,
   }),
   preset('deepinfra', 'DeepInfra', 'openai-compatible', 'https://api.deepinfra.com/v1/openai', ['deepinfra'], [/api\.deepinfra\.com/i], {
     vision: true,
+    files: false,
+    audioInput: false,
+    audioTranscription: false,
+    speech: false,
     reasoningEffort: true,
     nativeTools: true,
+    responsesApi: false,
   }),
-  preset('novita', 'Novita AI', 'openai-compatible', 'https://api.novita.ai/v3/openai', ['novita'], [/api\.novita\.ai/i], {
+  preset('novita', 'Novita AI', 'openai-compatible', 'https://api.novita.ai/openai', ['novita'], [/api\.novita\.ai/i], {
     vision: true,
-    files: true,
-    reasoningEffort: true,
+    files: false,
+    audioInput: false,
+    audioTranscription: false,
+    speech: false,
+    reasoningEffort: false,
     nativeTools: true,
+    responsesApi: false,
   }),
   preset('siliconflow', 'SiliconFlow', 'openai-compatible', 'https://api.siliconflow.cn/v1', ['siliconflow', 'silicon flow', '硅基流动'], [/api\.siliconflow\.(cn|com)/i], {
     vision: true,
+    files: false,
+    audioInput: false,
+    audioTranscription: false,
+    speech: false,
     reasoningEffort: true,
     nativeTools: true,
+    responsesApi: false,
   }),
   preset('modelscope', 'ModelScope', 'openai-compatible', 'https://api-inference.modelscope.cn/v1', ['modelscope', '魔搭'], [/api-inference\.modelscope\.cn/i, /modelscope\.cn/i], {
-    vision: true,
-    reasoningEffort: true,
-    nativeTools: true,
+    vision: false,
+    files: false,
+    audioInput: false,
+    audioTranscription: false,
+    speech: false,
+    reasoningEffort: false,
+    nativeTools: false,
+    responsesApi: false,
   }),
   preset('volcengine-ark', 'Volcengine Ark', 'openai-compatible', 'https://ark.cn-beijing.volces.com/api/v3', ['volcengine', 'ark', 'doubao', '火山', '豆包'], [/ark\.[\w-]+\.volces\.com/i, /volces\.com/i], {
     vision: true,
-    files: true,
-    audioInput: true,
-    audioTranscription: true,
-    speech: true,
-    reasoningEffort: true,
+    files: false,
+    audioInput: false,
+    audioTranscription: false,
+    speech: false,
+    reasoningEffort: false,
     nativeTools: true,
+    responsesApi: false,
   }),
   preset('baidu-qianfan', 'Baidu Qianfan', 'openai-compatible', 'https://qianfan.baidubce.com/v2', ['qianfan', 'ernie', 'baidu', '千帆', '文心'], [/qianfan\.baidubce\.com/i, /aip\.baidubce\.com/i], {
     vision: true,
-    files: true,
-    reasoningEffort: true,
+    files: false,
+    reasoningEffort: false,
     nativeTools: true,
   }),
   preset('tencent-hunyuan', 'Tencent Hunyuan', 'openai-compatible', 'https://api.hunyuan.cloud.tencent.com/v1', ['hunyuan', 'tencent', '混元', '腾讯'], [/hunyuan\.cloud\.tencent\.com/i], {
     vision: true,
-    reasoningEffort: true,
+    reasoningEffort: false,
     nativeTools: true,
   }),
   preset('baichuan', 'Baichuan AI', 'openai-compatible', 'https://api.baichuan-ai.com/v1', ['baichuan', '百川'], [/baichuan-ai\.com/i], {
-    vision: true,
-    reasoningEffort: true,
-    nativeTools: true,
+    modelList: false,
+    vision: false,
+    reasoningEffort: false,
+    nativeTools: false,
   }),
   preset('stepfun', 'StepFun', 'openai-compatible', 'https://api.stepfun.com/v1', ['stepfun', 'step', '阶跃'], [/api\.stepfun\.com/i], {
     vision: true,
-    files: true,
-    reasoningEffort: true,
+    files: false,
+    reasoningEffort: false,
     nativeTools: true,
   }),
   preset('zero-one', '01.AI', 'openai-compatible', 'https://api.lingyiwanwu.com/v1', ['01.ai', 'zero-one', '零一万物', 'yi-'], [/lingyiwanwu\.com/i, /01\.ai/i], {
     vision: true,
-    reasoningEffort: true,
+    reasoningEffort: false,
     nativeTools: true,
   }),
   preset('ollama', 'Ollama', 'openai-compatible', 'http://localhost:11434/v1', ['ollama'], [/localhost:11434/i, /127\.0\.0\.1:11434/i, /ollama/i], {
@@ -310,26 +346,29 @@ export const PROVIDER_PRESETS: ProviderPreset[] = [
     vision: true,
     files: true,
     reasoningEffort: true,
+    nativeTools: true,
   }),
   preset('newapi', 'NewAPI / OneAPI', 'openai-compatible', undefined, ['newapi', 'new-api', 'oneapi', 'one-api'], [/(^|\.)new-api\./i, /newapi/i, /oneapi/i], {
-    vision: true,
-    files: true,
+    vision: false,
+    files: false,
     reasoningEffort: true,
+    nativeTools: true,
   }),
   preset('sub2api', 'Sub2API', 'openai-compatible', undefined, ['sub2api'], [/sub2api/i], {
-    vision: true,
-    files: true,
-    reasoningEffort: true,
+    vision: false,
+    files: false,
+    reasoningEffort: false,
+    nativeTools: true,
   }),
   preset('custom-anthropic-compatible', 'Anthropic Compatible', 'anthropic', undefined, ['anthropic-compatible'], [], {
-    vision: true,
-    files: true,
-    reasoningEffort: true,
+    vision: false,
+    files: false,
+    reasoningEffort: false,
   }),
   preset('custom-openai-compatible', 'OpenAI Compatible', 'openai-compatible', undefined, ['compatible', 'custom'], [], {
-    vision: true,
-    files: true,
-    reasoningEffort: true,
+    vision: false,
+    files: false,
+    reasoningEffort: false,
   }),
 ]
 
@@ -490,7 +529,15 @@ function splitCredentialText(input: string): string[] {
   return input
     .split(/[\n,，]+/)
     .map((item) => item.trim())
-    .filter(Boolean)
+    .filter((item) => {
+      if (!item) return false
+      // Filter out URLs
+      if (/^https?:\/\//i.test(item)) return false
+      // Filter out protocol labels (兼容 XXX 接口协议)
+      if (/(compatible|compat|protocol|endpoint|api|base\s*url|接口|协议|兼容|入口|地址)[:：=]/i.test(item)) return false
+      // Keep only items that look like API keys
+      return looksLikeApiKey(item)
+    })
 }
 
 function stringField(record: Record<string, unknown>, keys: string[]): string | undefined {
@@ -794,6 +841,21 @@ function expandProviderImportChunk(chunk: string): string[] {
       return true
     })
 
+  // Check if all endpoints share the same host (same provider, different protocols)
+  const hosts = endpoints.map((endpoint) => {
+    try {
+      return new URL(endpoint.baseUrl).hostname
+    } catch {
+      return endpoint.baseUrl
+    }
+  })
+  const uniqueHosts = new Set(hosts)
+
+  // If all endpoints are from the same host, don't expand - keep as single provider
+  if (uniqueHosts.size === 1 && endpoints.length > 1) {
+    return [chunk]
+  }
+
   return endpoints.map((endpoint) => [
     name ? `Provider: ${name}` : '',
     `Base URL: ${endpoint.baseUrl}`,
@@ -966,7 +1028,10 @@ function extractLooseBaseUrl(chunk: string): string | undefined {
 }
 
 function extractLooseKeys(chunk: string): string[] {
-  const textWithoutUrls = chunk.replace(/https?:\/\/[^\s,，;；]+/gi, ' ')
+  // Remove URLs and protocol labels to avoid extracting them as keys
+  const textWithoutUrls = chunk
+    .replace(/https?:\/\/[^\s,，;；]+/gi, ' ')
+    .replace(/[^\n\r:：=]{0,80}(?:openai|anthropic|claude|compatible|compat|protocol|endpoint|api|base\s*url|接口|协议|兼容|入口|地址)[^\n\r:：=]{0,80}\s*[:：=]/gi, ' ')
   const matches = textWithoutUrls.match(/(?:sk|tp|ak|rk|pk|key|token)-[A-Za-z0-9._:-]+|[A-Za-z0-9_-]{24,}/g) ?? []
   return matches.filter(looksLikeApiKey)
 }
