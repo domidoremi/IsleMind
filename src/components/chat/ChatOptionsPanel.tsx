@@ -15,6 +15,7 @@ import { normalizeSearchText } from '@/utils/text'
 import { getReasoningControlOptions, getReasoningControlValue, getReasoningEffortOptions, modelSupportsSamplingControls, resolveReasoningControlValue } from '@/utils/modelReasoning'
 import { getProviderDisplayModel, resolveProviderModelAlias } from '@/utils/providerModels'
 import { getPolicyAllowedProviderModels, getProviderModelDisplayCandidates, type ProviderModelAccessInput } from '@/services/ai/policy/providerModelAccess'
+import { providerSupportsNativeSearch, providerSupportsVisionInput, resolveProviderNativeToolSupport } from '@/services/chatProviderNativeToolUtils'
 import { useMotionPreference } from '@/hooks/useMotionPreference'
 import { motionTokens } from '@/theme/animation'
 
@@ -240,7 +241,12 @@ export function ChatOptionsPanel({
                   {normalizedQuery ? `${visibleProviders.length}/${policySwitchableProviders.length}` : t('chat.countItems', { count: policySwitchableProviders.length })}
                 </Text>
               </View>
-              <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8 }}>
+              <ScrollView
+                style={{ maxHeight: compactPicker ? compactProviderMaxHeight : providerListHeight }}
+                contentContainerStyle={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8, paddingBottom: 4 }}
+                showsVerticalScrollIndicator
+                nestedScrollEnabled
+              >
                 {visibleProviders.map((item) => (
                   <IslePressable
                     key={item.id}
@@ -259,7 +265,7 @@ export function ChatOptionsPanel({
                     />
                   </IslePressable>
                 ))}
-              </View>
+              </ScrollView>
             </MotiView>
 
             <MotiView
@@ -275,7 +281,12 @@ export function ChatOptionsPanel({
                 </Text>
               </View>
               {selectedModels.length ? (
-                <View style={{ flexDirection: 'row', gap: 8, flexWrap: 'wrap', paddingRight: 4, paddingBottom: 2 }}>
+                <ScrollView
+                  style={{ maxHeight: compactPicker ? compactModelMaxHeight : modelListHeight }}
+                  contentContainerStyle={{ flexDirection: 'row', gap: 8, flexWrap: 'wrap', paddingRight: 4, paddingBottom: 4 }}
+                  showsVerticalScrollIndicator
+                  nestedScrollEnabled
+                >
                   {selectedModels.map((model) => (
                     <IslePressable
                       key={model.id}
@@ -295,7 +306,7 @@ export function ChatOptionsPanel({
                       />
                     </IslePressable>
                   ))}
-                </View>
+                </ScrollView>
               ) : (
                 <PickerEmptyState title={modelEmptyTitle} description={t('chat.providerNoModelsSyncHint')} minHeight={modelListHeight} />
               )}
@@ -487,9 +498,9 @@ function ModelCapabilityStrip({ badges }: { badges: ModelCapabilityBadge[] }) {
 function getModelCapabilityBadges(provider: AIProvider, model: string, config: AIModel, t: TFunction): ModelCapabilityBadge[] {
   const badges: ModelCapabilityBadge[] = []
   if (getReasoningEffortOptions(provider, model).length) badges.push({ key: 'reasoning', icon: 'reasoning', label: t('chat.modelCapability.reasoning') })
-  if (provider.capabilities?.nativeSearch) badges.push({ key: 'search', icon: 'search-check', label: t('chat.modelCapability.search') })
-  if (config.supportsVision || provider.capabilities?.vision) badges.push({ key: 'vision', icon: 'image', label: t('chat.modelCapability.vision') })
-  if (config.supportsTools || provider.capabilities?.nativeTools) badges.push({ key: 'tools', icon: 'tools', label: t('chat.modelCapability.tools') })
+  if (providerSupportsNativeSearch(provider)) badges.push({ key: 'search', icon: 'search-check', label: t('chat.modelCapability.search') })
+  if (providerSupportsVisionInput(provider, config)) badges.push({ key: 'vision', icon: 'image', label: t('chat.modelCapability.vision') })
+  if (resolveProviderNativeToolSupport(provider, config).supported) badges.push({ key: 'tools', icon: 'tools', label: t('chat.modelCapability.tools') })
   return badges
 }
 
