@@ -1446,7 +1446,10 @@ function ProviderImportModal({
     }, Platform.OS === 'android' ? 260 : 120)
     const showSub = Keyboard.addListener(Platform.OS === 'ios' ? 'keyboardWillShow' : 'keyboardDidShow', (event) => {
       setKeyboardHeight(event.endCoordinates.height)
-      scrollBodyToEndSoon()
+      // 只在有较多内容时才滚动到底部，避免初始打开时输入框被推到顶部
+      if (input.trim() && input.split(/\r\n|\r|\n/).length > 5) {
+        scrollBodyToEndSoon()
+      }
     })
     const hideSub = Keyboard.addListener(Platform.OS === 'ios' ? 'keyboardWillHide' : 'keyboardDidHide', () => {
       setKeyboardHeight(0)
@@ -1456,7 +1459,7 @@ function ProviderImportModal({
       showSub.remove()
       hideSub.remove()
     }
-  }, [visible])
+  }, [visible, input])
 
   function scrollBodyToEndSoon() {
     requestAnimationFrame(() => {
@@ -1561,7 +1564,7 @@ function ProviderImportModal({
         >
           <IsleOverlayPressable accessibilityLabel={t('dialog.close')} accessibilityRole="button" onPress={onClose} style={{ flex: 1, backgroundColor: colors.backdrop }} />
         </MotiView>
-        <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined} style={{ flex: 1, justifyContent: 'flex-end', paddingBottom: keyboardInset }}>
+        <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined} style={{ flex: 1, justifyContent: 'flex-end' }}>
           <MotiView
             from={motion === 'full' ? { opacity: 0, translateY: 32, scale: 0.985 } : { opacity: 0 }}
             animate={{ opacity: 1, translateY: 0, scale: 1 }}
@@ -1591,7 +1594,7 @@ function ProviderImportModal({
               automaticallyAdjustKeyboardInsets
               showsVerticalScrollIndicator={compact || inputScrollEnabled}
               style={{ flexShrink: 1 }}
-              contentContainerStyle={{ paddingHorizontal: modalPadding, paddingTop: 12, paddingBottom: keyboardVisible ? Math.max(insets.bottom, 10) + 80 : 14, backgroundColor: sheetMaterial.body }}
+              contentContainerStyle={{ paddingHorizontal: modalPadding, paddingTop: 12, paddingBottom: 14, backgroundColor: sheetMaterial.body }}
             >
               <View>
                 <View style={{ marginBottom: 12 }}>
