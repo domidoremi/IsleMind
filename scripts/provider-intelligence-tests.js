@@ -4380,6 +4380,18 @@ async function assertUpstreamGovernanceBehavior() {
     assert.equal(fallbackPlan.decision.selected.model, 'gpt-5.5-mini', 'runtime fallback selects same-provider alternate model')
     assert.ok(fallbackPlan.decision.rejectedCandidates.some((item) => item.providerId === 'fallback-anthropic' && item.reason === 'cross_provider_disallowed'), 'runtime fallback blocks cross-provider candidate by default')
     assert.ok(memoryStorage.get('@islemind/provider-health')?.includes('fallback-openai'), 'runtime fallback persists original route health')
+    const modelChannelFallbackPlan = await resolveRuntimeFallbackPlanForTest({
+      req: {
+        provider: fallbackOpenAI,
+        fallbackProviders: [fallbackOpenAI],
+        model: 'gpt-5.5',
+        messages: [{ role: 'user', content: 'hello' }],
+      },
+      status: 503,
+      credentialGroupId: 'openai-a',
+      responseText: JSON.stringify({ error: { code: 'model_not_found', message: 'No available channel for model gpt-5.5' } }),
+    })
+    assert.equal(modelChannelFallbackPlan.classification.trigger, 'model_unavailable', 'runtime fallback classifies 503 model_not_found bodies as model unavailable before generic server errors')
 
     memoryStorage.clear()
     await clearRuntimeLog()
@@ -5670,6 +5682,11 @@ async function assertExpandedProviderPresetCoverage() {
   assert.equal(togetherPreset.capabilities.nativeTools, true, 'expanded Together preset exposes documented OpenAI-format function tools')
   assert.equal(togetherPreset.capabilities.files, false, 'expanded Together preset does not claim generic file_data attachments')
   assert.equal(getAPIEndpointForTest(togetherPreset), 'https://api.together.ai/v1/chat/completions', 'Together preset routes chat through the official OpenAI-compatible endpoint')
+  const customRelayPrefixProvider = { id: 'custom-prefix', type: 'openai-compatible', name: 'Custom Prefix Relay', baseUrl: 'https://relay.example/codex', apiKey: FAKE_KEY_A, models: ['manual-model'], enabled: true }
+  assert.equal(getAPIEndpointForTest(customRelayPrefixProvider), 'https://relay.example/codex/v1/chat/completions', 'custom OpenAI-compatible relay prefixes append the /v1 namespace before chat routing')
+  assert.equal(getAPIEndpointForTest({ ...customRelayPrefixProvider, baseUrl: 'https://relay.example/codex/v1' }), 'https://relay.example/codex/v1/chat/completions', 'custom OpenAI-compatible relay prefixes do not duplicate an existing /v1 namespace')
+  assert.equal(getAPIEndpointForTest({ ...customRelayPrefixProvider, baseUrl: 'https://relay.example/codex/v1/chat/completions' }), 'https://relay.example/codex/v1/chat/completions', 'custom OpenAI-compatible relay direct chat endpoints normalize back to the stable base route')
+  assert.equal(getAPIEndpointForTest({ ...customRelayPrefixProvider, baseUrl: 'https://relay.example/api/v3' }), 'https://relay.example/api/v3/chat/completions', 'custom OpenAI-compatible relay versioned namespaces beyond /v1 stay stable')
   const vertexPreset = applyProviderPreset({ apiKey: FAKE_KEY_A, baseUrl: 'https://us-central1-aiplatform.googleapis.com/v1/projects/islemind-dev/locations/us-central1/endpoints/openapi', models: [], enabled: false }, 'vertex-ai')
   assert.equal(vertexPreset.type, 'openai-compatible', 'Vertex AI preset uses its OpenAI-compatible hosted endpoint shape')
   assert.equal(vertexPreset.capabilities.modelList, false, 'Vertex AI preset keeps automatic model-list sync disabled until /models is source-backed')
@@ -8865,6 +8882,12 @@ async function run() {
   const messageContentSource = fs.readFileSync(path.join(root, 'src/components/chat/MessageContent.tsx'), 'utf8')
   assert.ok(messageContentSource.includes('looksLikeToolCallMarkupLine(trimmed)'), 'message content formula detection excludes provider text tool-call markup lines')
   assert.ok(messageContentSource.includes('tool_call|function|parameter'), 'message content keeps provider tool-call markup out of formula cards')
+  assert.ok(
+    messageContentSource.includes("style={{ gap: 8, width: '100%', maxWidth: '100%', overflow: 'hidden' }}") &&
+      messageContentSource.includes("contentStyle={{ padding: 10, width: '100%' }}") &&
+      messageContentSource.includes("alignSelf: 'stretch'"),
+    'message content rich cards keep a stable full bubble width while copy feedback changes header text'
+  )
 
   const messageBubbleSource = fs.readFileSync(path.join(root, 'src/components/chat/MessageBubble.tsx'), 'utf8')
   assert.ok(messageBubbleSource.includes('onCopyWorkArtifact?: (message: Message) => void'), 'message bubble exposes a typed work artifact copy action')
@@ -9952,6 +9975,11 @@ https://gateway.example/messages`
   assert.deepEqual(failure('bad_auth', 'bad key', undefined, 'group-b'), { ok: false, code: 'bad_auth', message: 'bad key', data: undefined, credentialGroupId: 'group-b' }, 'provider operation result helper preserves failure result shape')
   assert.equal(classifyHttpStatus(429, 'quota exceeded'), 'rate_limited', 'provider operation result helper classifies rate limits')
   assert.equal(classifyHttpStatus(404, 'missing model', 'model-a'), 'model_unavailable', 'provider operation result helper classifies missing models')
+  assert.equal(
+    classifyHttpStatus(503, JSON.stringify({ error: { code: 'model_not_found', message: 'No available channel for model MiniMax-M3 under group openclaw' } }), 'MiniMax-M3'),
+    'model_unavailable',
+    'provider operation result helper classifies relay 503 model_not_found channel failures as model unavailable'
+  )
   const mimoInvalidRequest = JSON.stringify({ error: { type: 'invalid_request_error', message: 'Unsupported web_search parameter', request_id: 'mimo_req_1' } })
   assert.equal(
     classifyHttpStatus(400, mimoInvalidRequest, 'mimo-v2.5-pro', { type: 'xiaomi-mimo' }),
@@ -18688,6 +18716,9 @@ function assertWebAnswerStyleBehavior() {
   const chatRunnerSource = fs.readFileSync(path.join(root, 'src/services/chatRunner.ts'), 'utf8')
   const agentChatRuntimeSource = fs.readFileSync(path.join(root, 'src/services/agent/agentChatRuntime.ts'), 'utf8')
   const agentSearchToolPolicySource = fs.readFileSync(path.join(root, 'src/services/agent/agentSearchToolPolicy.ts'), 'utf8')
+  const internalOutputGuardSource = fs.readFileSync(path.join(root, 'src/services/chatInternalOutputGuard.ts'), 'utf8')
+  const chatStoreSource = fs.readFileSync(path.join(root, 'src/store/chatStore.ts'), 'utf8')
+  const messageBubbleSource = fs.readFileSync(path.join(root, 'src/components/chat/MessageBubble.tsx'), 'utf8')
   assert.ok(
     promptEngineeringSource.includes('webAnswerStyleRule(input.language)') &&
       promptEngineeringSource.includes('不要像工具日志或搜索结果转写') &&
@@ -18700,10 +18731,16 @@ function assertWebAnswerStyleBehavior() {
     'provider-native tool revision prompt keeps internal tool framing out of final user-facing replies'
   )
   assert.ok(
-    chatRunnerSource.includes('filterLocalSearchToolManifests(await listAgentToolManifests(), input.settings)') &&
+    chatRunnerSource.includes('filterProviderNativeChatToolManifests(await listAgentToolManifests(), input.settings)') &&
       agentSearchToolPolicySource.includes("manifest.source === 'builtin' && manifest.name === 'search_web'") &&
       agentSearchToolPolicySource.includes("searchProvider !== 'native'"),
     'provider-native tool declarations skip local search_web when provider-native search is selected'
+  )
+  assert.ok(
+    chatRunnerSource.includes("import { filterLocalSearchToolManifests, filterProviderNativeChatToolManifests }") &&
+      agentSearchToolPolicySource.includes('function filterProviderNativeChatToolManifests') &&
+      agentSearchToolPolicySource.includes('filter(isBuiltinSearchToolManifest)'),
+    'provider-native chat tool declarations expose only the chat-safe search tool to external chat models'
   )
   assert.ok(
     agentChatRuntimeSource.includes('shouldDeferAgentSearchTool') &&
@@ -18717,6 +18754,21 @@ function assertWebAnswerStyleBehavior() {
       chatRunnerSource.includes('chatRunner.trace.nativeSearchNoSources') &&
       !chatRunnerSource.includes("'Provider native tool result',"),
     'provider-native search placeholders do not leak internal tool-result framing into the assistant reply'
+  )
+  assert.ok(
+    chatRunnerSource.includes('fallbackProviderNativeToolRevisionText') &&
+      chatRunnerSource.includes('isInternalStructuredProviderToolOutput') &&
+      chatRunnerSource.includes('internalOutputHiddenMessage()') &&
+      internalOutputGuardSource.includes('IsleMind mobile runtime') &&
+      internalOutputGuardSource.includes("'contextPrompt' in parsed") &&
+      internalOutputGuardSource.includes("'missingEvidence' in parsed"),
+    'provider-native tool synthesis fallback hides internal structured RAG JSON instead of returning it as chat text'
+  )
+  assert.ok(
+    chatStoreSource.includes('sanitizeMessageInternalOutput') &&
+      messageBubbleSource.includes('sanitizeInternalChatOutputText(message.responseText ?? message.content)') &&
+      internalOutputGuardSource.includes('internalOutputHiddenMessage'),
+    'chat store and message rendering hide already-persisted internal diagnostic outputs'
   )
   assert.ok(
     chatRunnerSource.includes('}).catch((error) => {') &&

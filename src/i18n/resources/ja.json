@@ -1944,7 +1944,9 @@
       "providerDisabled": "現在のプロバイダーは無効です。設定で有効化してから再試行してください。",
       "missingKey": "先に設定で現在のプロバイダーの API キーを保存してください。",
       "maxTokensExceeded": "現在の Max Tokens は {{current}} で、{{model}} の出力上限 {{limit}} を超えています。出力長を下げて再試行してください。",
-      "remoteCompactRequiredFailed": "リモート compact は必須ですが、現在のプロバイダーは対応を宣言していません。"
+      "remoteCompactRequiredFailed": "リモート compact は必須ですが、現在のプロバイダーは対応を宣言していません。",
+      "providerToolSynthesisFailed": "ツール結果を利用可能な返信に整理できなかったため、内部ツール出力は表示しませんでした。再試行するか、Web 検索モードを切り替えてもう一度質問してください。",
+      "internalOutputHidden": "この返信には内部ツール出力が含まれていたため非表示にしました。もう一度質問を送信してください。"
     },
     "setup": {
       "guideTitle": "設定ガイド",

@@ -1944,7 +1944,9 @@
       "providerDisabled": "The current provider is disabled. Enable it in settings and retry.",
       "missingKey": "Save an API Key for the current provider in settings first.",
       "maxTokensExceeded": "Current Max Tokens is {{current}}, exceeding {{model}}'s output limit of {{limit}}. Lower the output length and retry.",
-      "remoteCompactRequiredFailed": "Remote compact is required, but the current provider does not declare support."
+      "remoteCompactRequiredFailed": "Remote compact is required, but the current provider does not declare support.",
+      "providerToolSynthesisFailed": "I could not turn the tool result into a usable reply, so internal tool output was hidden. Retry, or switch the web search mode and ask again.",
+      "internalOutputHidden": "This reply contained internal tool output, so it was hidden. Please send the question again."
     },
     "setup": {
       "guideTitle": "Setup guide",

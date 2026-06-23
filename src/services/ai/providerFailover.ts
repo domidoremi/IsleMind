@@ -160,22 +160,22 @@ export function classifyProviderFailure(input: ProviderFailureClassificationInpu
   if (input.modelUnavailable) return { trigger: 'model_unavailable', retryable: true, source: 'explicit', evidence }
   if (input.overloaded) return { trigger: 'overloaded', retryable: true, source: 'explicit', evidence }
 
-  const statusTrigger = classifyStatus(input.status)
-  if (statusTrigger) {
-    return {
-      trigger: statusTrigger,
-      retryable: ALLOWED_TRIGGERS.has(statusTrigger),
-      source: 'status',
-      evidence,
-    }
-  }
-
   const textTrigger = classifyErrorText(input.errorName, input.errorCode, input.errorMessage)
   if (textTrigger) {
     return {
       trigger: textTrigger.trigger,
       retryable: ALLOWED_TRIGGERS.has(textTrigger.trigger),
       source: textTrigger.source,
+      evidence,
+    }
+  }
+
+  const statusTrigger = classifyStatus(input.status)
+  if (statusTrigger) {
+    return {
+      trigger: statusTrigger,
+      retryable: ALLOWED_TRIGGERS.has(statusTrigger),
+      source: 'status',
       evidence,
     }
   }
@@ -311,7 +311,8 @@ function classifyErrorText(
   if (code.includes('timeout') || message.includes('timeout') || message.includes('aborterror')) return { trigger: 'timeout', source: code ? 'error_code' : 'message' }
   if (code.includes('overload') || message.includes('overload')) return { trigger: 'overloaded', source: code ? 'error_code' : 'message' }
   if (code.includes('model') && (code.includes('unavailable') || code.includes('not_found'))) return { trigger: 'model_unavailable', source: 'error_code' }
-  if (message.includes('model') && (message.includes('unavailable') || message.includes('not found'))) return { trigger: 'model_unavailable', source: 'message' }
+  if (message.includes('model') && (message.includes('unavailable') || message.includes('not found') || message.includes('not exist') || message.includes('does not exist'))) return { trigger: 'model_unavailable', source: 'message' }
+  if (message.includes('no available channel') || message.includes('无可用渠道')) return { trigger: 'model_unavailable', source: 'message' }
   if (code.includes('econnreset') || code.includes('enotfound') || code.includes('network')) return { trigger: 'network_error', source: 'error_code' }
   if (message.includes('network') || message.includes('fetch failed')) return { trigger: 'network_error', source: 'message' }
   return undefined
