@@ -83,6 +83,76 @@ export function summarizeProxyPolicy(proxy: ProxyPolicyDecision | undefined): st
   return `${proxy.mode}:${proxy.applied ? 'applied' : 'not_applied'}:${proxy.reason}`
 }
 
+export function describeRuntimeAccessPolicy(access: AccessPolicyDecision): string {
+  return access.allowed
+    ? st('providerTrace.runtimeAccessAllowed')
+    : st('providerTrace.runtimeAccessBlocked')
+}
+
+export function describeRuntimeRouteDecision(route: ProviderRouteDecision | undefined): string {
+  if (!route) return st('providerTrace.runtimeRoutePending')
+  if (route.blocked) return st('providerTrace.runtimeRouteBlocked')
+  const protocol = runtimeProtocolLabel(route.protocol)
+  return route.warnings.length
+    ? st('providerTrace.runtimeRouteSelectedWithWarnings', { protocol })
+    : st('providerTrace.runtimeRouteSelected', { protocol })
+}
+
+export function describeRuntimeTransportSelection(transport: TransportSelection | undefined): string {
+  if (!transport) return st('providerTrace.runtimeTransportPending')
+  const transportLabel = runtimeTransportLabel(transport.transport)
+  if (!transport.fallbackReason) {
+    return st('providerTrace.runtimeTransportSelected', { transport: transportLabel })
+  }
+  switch (transport.fallbackReason) {
+    case 'http_forced':
+      return st('providerTrace.runtimeTransportHttpForced', { transport: transportLabel })
+    case 'streaming_disabled':
+      return st('providerTrace.runtimeTransportStreamingDisabled', { transport: transportLabel })
+    case 'non_responses_request':
+      return st('providerTrace.runtimeTransportCompatibleHttp', { transport: transportLabel })
+    case 'provider_capability_missing':
+      return st('providerTrace.runtimeTransportProviderFallback', { transport: transportLabel })
+    case 'websocket_runtime_missing':
+      return st('providerTrace.runtimeTransportRuntimeFallback', { transport: transportLabel })
+  }
+  return st('providerTrace.runtimeTransportSelected', { transport: transportLabel })
+}
+
+export function describeRuntimePayloadPolicy(payload: PayloadRuleResult | undefined): string {
+  if (!payload) return st('providerTrace.runtimePayloadPending')
+  if (payload.blocked) return st('providerTrace.runtimePayloadBlocked')
+  return payload.findings.length
+    ? st('providerTrace.runtimePayloadAdjusted')
+    : st('providerTrace.runtimePayloadReady')
+}
+
+export function describeRuntimeProxyPolicy(proxy: ProxyPolicyDecision | undefined): string {
+  if (!proxy) return st('providerTrace.runtimeProxyPending')
+  if (proxy.applied) {
+    return proxy.mode === 'system-detected'
+      ? st('providerTrace.runtimeProxySystem')
+      : st('providerTrace.runtimeProxyCustom')
+  }
+  if (proxy.reason === 'invalid_custom_base_url') return st('providerTrace.runtimeProxyInvalid')
+  return st('providerTrace.runtimeProxyOff')
+}
+
+export function describeRequestRectification(kind: string): string {
+  switch (kind) {
+    case 'thinking_signature':
+      return st('providerTrace.requestRectifiedThinkingSignature')
+    case 'thinking_budget':
+      return st('providerTrace.requestRectifiedThinkingBudget')
+    case 'xiaomi_mimo_thinking_disabled':
+      return st('providerTrace.requestRectifiedMimoThinkingDisabled')
+    case 'xiaomi_mimo_web_search_removed':
+      return st('providerTrace.requestRectifiedMimoWebSearchRemoved')
+    default:
+      return st('providerTrace.requestRectifiedGeneric')
+  }
+}
+
 export function runtimeLogOptions(req: ProviderRuntimeLogRequestLike) {
   return {
     enabled: req.settings?.runtimeLogEnabled,
@@ -287,11 +357,11 @@ export function createRuntimeGovernanceTrace(input: ProviderRuntimeGovernanceTra
     type: 'system',
     title: st('providerTrace.runtimeGovernanceTitle'),
     content: st('providerTrace.runtimeGovernanceContent', {
-      access: input.access.allowed ? 'allowed' : `blocked:${accessReason ?? 'unknown'}`,
-      route: summarizeRouteDecision(input.route),
-      transport: summarizeTransportSelection(input.transport),
-      payload: summarizePayloadPolicy(input.payload),
-      proxy: summarizeProxyPolicy(input.proxy),
+      access: describeRuntimeAccessPolicy(input.access),
+      route: describeRuntimeRouteDecision(input.route),
+      transport: describeRuntimeTransportSelection(input.transport),
+      payload: describeRuntimePayloadPolicy(input.payload),
+      proxy: describeRuntimeProxyPolicy(input.proxy),
     }),
     status: input.status,
     startedAt: now,
@@ -373,6 +443,38 @@ export function createRuntimeFallbackTrace(
 
 function joinTraceCodes(codes: string[]): string {
   return codes.filter(Boolean).join(',') || 'none'
+}
+
+function runtimeProtocolLabel(protocol: string): string {
+  switch (protocol) {
+    case 'openai-responses':
+      return 'OpenAI Responses'
+    case 'openai-compatible':
+      return st('providerTrace.protocolOpenAICompatible')
+    case 'anthropic':
+    case 'anthropic-compatible':
+      return 'Anthropic'
+    case 'google':
+    case 'google-gemini':
+      return 'Google Gemini'
+    case 'xai':
+      return 'xAI'
+    default:
+      return protocol
+        .split(/[-_]+/)
+        .filter(Boolean)
+        .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+        .join(' ') || st('providerTrace.protocolFallback')
+  }
+}
+
+function runtimeTransportLabel(transport: TransportSelection['transport']): string {
+  switch (transport) {
+    case 'http_sse':
+      return st('providerTrace.transportHttpSse')
+    case 'responses_websocket':
+      return st('providerTrace.transportResponsesWebSocket')
+  }
 }
 
 function runtimeLogRequestFields(req: ProviderRuntimeRequestLogLike): Record<string, unknown> {

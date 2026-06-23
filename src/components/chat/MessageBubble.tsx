@@ -576,10 +576,7 @@ function MessageProcessPanel({ message, traces, maxHeight }: { message: Message;
   const { colors, isGlass } = useAppTheme()
   const { t } = useTranslation()
   const scrollRef = useRef<ScrollView>(null)
-  const thinkingSummaries = normalizeTraceStatuses(traces, message.status)
-    .filter(hasVisibleProcessContent)
-    .map((trace) => formatProcessSummary(trace, message.status, t))
-    .filter(Boolean)
+  const thinkingSummaries = collectProcessSummaries(traces, message.status, t)
   const contentLength = thinkingSummaries.reduce((total, summary) => total + summary.length, 0)
   const running = message.status === 'streaming' || message.status === 'sending'
 
@@ -857,6 +854,21 @@ function pendingActionReason(value: unknown): string | undefined {
 function formatThinkingSummary(trace: ProcessTrace): string {
   const summary = formatProcessTraceForDisplay(trace, 720).content
   return summary ? `${traceStageLabel(trace)} · ${summary}` : ''
+}
+
+function collectProcessSummaries(traces: ProcessTrace[], messageStatus: Message['status'], t: TFunction): string[] {
+  const seen = new Set<string>()
+  return normalizeTraceStatuses(traces, messageStatus)
+    .filter(hasVisibleProcessContent)
+    .map((trace) => formatProcessSummary(trace, messageStatus, t))
+    .filter((summary): summary is string => Boolean(summary))
+    .filter((summary) => {
+      const key = summary.replace(/\s+/g, ' ').trim()
+      if (!key) return false
+      if (seen.has(key)) return false
+      seen.add(key)
+      return true
+    })
 }
 
 function formatProcessSummary(trace: ProcessTrace, messageStatus: Message['status'], t: TFunction): string {
