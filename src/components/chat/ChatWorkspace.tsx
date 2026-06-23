@@ -958,14 +958,22 @@ export function ChatWorkspace({ conversation, showBack = false, embedded = false
           ) : null}
           <MotiView
             pointerEvents={chromeCollapsed ? 'none' : 'box-none'}
-            animate={{ opacity: chromeCollapsed ? 0 : 1, translateY: chromeCollapsed ? -(visualTopInset + 48) : 0 }}
-            transition={{ type: 'timing', duration: chromeCollapsed ? 150 : 210 }}
+            animate={chromeCollapsed
+              ? chatMotion === 'full'
+                ? { opacity: 0, translateX: mobileChatViewport ? 120 : 168, translateY: -(visualTopInset + 12), scale: 0.42 }
+                : { opacity: 0, translateX: 0, translateY: 0, scale: 1 }
+              : { opacity: 1, translateX: 0, translateY: 0, scale: 1 }}
+            transition={chatMotion === 'full'
+              ? chromeCollapsed
+                ? { type: 'timing', duration: 140 }
+                : { type: 'spring', ...motionTokens.spring.settle }
+              : { type: 'timing', duration: motionTokens.duration.fast }}
             style={{ position: 'absolute', top: 0, left: 0, right: 0, zIndex: 40, paddingHorizontal: 14, paddingTop: visualTopInset + FLOATING_CHROME_SAFE_AREA_GAP, paddingBottom: 0, flexDirection: 'row', alignItems: 'center', gap: 8 }}
           >
             <AnimatedNavigationTrigger
               variant="iconButton"
-              label={t('conversation.title')}
-              glyph="history"
+              label={t('conversation.viewHistory')}
+              glyph="conversation"
               onNavigate={goHistory}
               color={colors.text}
               style={{ width: 36, height: 36, borderRadius: colors.ui.radius.controlLarge, backgroundColor: topChromeItemSurface, borderWidth: topChromeBorderWidth, borderColor: topChromeItemBorder }}
@@ -998,12 +1006,12 @@ export function ChatWorkspace({ conversation, showBack = false, embedded = false
                 borderColor: showOptions ? colors.ui.control.primaryBorder : topChromeItemBorder,
               }}
             >
-              <AppIcon name="menu-output" color={showOptions ? colors.ui.control.primaryForeground : colors.textSecondary} size={18} strokeWidth={appIconStroke.fine} />
+              <AppIcon name="preferences-sliders" color={showOptions ? colors.ui.control.primaryForeground : colors.textSecondary} size={18} strokeWidth={appIconStroke.fine} />
             </IslePressable>
             <AnimatedNavigationTrigger
               variant="iconButton"
               label={t('settings.title')}
-              glyph="settings-sliders"
+              glyph="settings"
               onNavigate={goSettings}
               externalActive={settingsTransitionActive}
               color={colors.text}
@@ -1037,8 +1045,8 @@ export function ChatWorkspace({ conversation, showBack = false, embedded = false
           </ScrollView>
           {showOptions ? (
             <MotiView
-              from={chatMotion === 'full' ? { opacity: 0, translateY: -8, scale: 0.985 } : { opacity: 0 }}
-              animate={{ opacity: 1, translateY: 0, scale: 1 }}
+              from={chatMotion === 'full' ? optionsPanelEntryState(optionsPanelPlacement) : { opacity: 0 }}
+              animate={{ opacity: 1, translateX: 0, translateY: 0, scale: 1 }}
               transition={chatMotion === 'full' ? { type: 'spring', ...motionTokens.spring.settle } : { type: 'timing', duration: motionTokens.duration.fast }}
               style={optionsPanelOverlayStyle(optionsPanelPlacement, visualTopInset, insets.bottom, optionsPanelKeyboardInset)}
             >
@@ -1914,7 +1922,14 @@ function ActiveChatWorkspace({
             provider={provider}
             providerHealth={providerHealth}
             metrics={metrics}
-            onBack={() => (showBack ? router.back() : goHistory())}
+            onBack={() => {
+              if (showOptions) {
+                setShowOptions(false)
+                return
+              }
+              return showBack ? router.back() : goHistory()
+            }}
+            showBack={showBack}
             onRestore={restoreChrome}
             onCollapse={collapseChrome}
             onToggleOptions={() => {
@@ -2440,6 +2455,7 @@ function FloatingChrome({
   providerHealth,
   metrics,
   onBack,
+  showBack,
   onRestore,
   onCollapse,
   onToggleOptions,
@@ -2470,6 +2486,7 @@ function FloatingChrome({
   providerHealth: ConversationHealth | null
   metrics: ConversationMetrics
   onBack: () => void
+  showBack: boolean
   onRestore: () => void
   onCollapse: () => void
   onToggleOptions: () => void
@@ -2524,6 +2541,16 @@ function FloatingChrome({
     borderWidth: chromeBorderWidth,
     borderColor: chromeBorder,
   }
+  const chromeHiddenState = motion === 'full'
+    ? {
+        opacity: 0,
+        translateX: mobileViewport ? 118 : 176,
+        translateY: -(visualTopInset + 12),
+        scale: 0.42,
+      }
+    : { opacity: 0, translateX: 0, translateY: 0, scale: 1 }
+  const chromeVisibleState = { opacity: 1, translateX: 0, translateY: 0, scale: 1 }
+  const leadingChromeIsBack = showBack || showOptions
   const shellStyle: StyleProp<ViewStyle> = [
     {
       position: 'absolute',
@@ -2562,8 +2589,12 @@ function FloatingChrome({
     <View pointerEvents="box-none" style={shellStyle}>
       <MotiView
         pointerEvents={collapsed ? 'none' : 'auto'}
-        animate={{ opacity: collapsed ? 0 : 1, translateY: collapsed ? -(visualTopInset + 64) : 0 }}
-        transition={{ type: 'timing', duration: collapsed ? 150 : 210 }}
+        animate={collapsed ? chromeHiddenState : chromeVisibleState}
+        transition={motion === 'full'
+          ? collapsed
+            ? { type: 'timing', duration: 140 }
+            : { type: 'spring', ...motionTokens.spring.settle }
+          : { type: 'timing', duration: motionTokens.duration.fast }}
         onTouchStart={handleChromeTouchStart}
         onTouchMove={handleChromeTouchMove}
         onTouchEnd={clearChromeTouch}
@@ -2596,7 +2627,7 @@ function FloatingChrome({
             >
               <View style={{ minHeight: 42, flexDirection: 'row', alignItems: 'center', gap: 6 }}>
                 <View style={{ width: 42, flexShrink: 0, alignItems: 'flex-start' }}>
-                  <AnimatedNavigationTrigger variant="iconButton" label={t('common.back')} glyph={showOptions ? 'back' : 'history'} onNavigate={onBack} color={colors.text} style={chromeIconStyle} />
+                  <AnimatedNavigationTrigger variant="iconButton" label={leadingChromeIsBack ? t('common.back') : t('conversation.viewHistory')} glyph={leadingChromeIsBack ? 'back' : 'conversation'} onNavigate={onBack} color={colors.text} style={chromeIconStyle} />
                 </View>
                 <View style={{ flex: 1, minWidth: 0, justifyContent: 'center', overflow: 'hidden', paddingHorizontal: 2 }}>
                   <Text numberOfLines={1} ellipsizeMode="tail" style={{ color: colors.text, fontSize: 15, lineHeight: 18, fontWeight: '900', letterSpacing: 0, includeFontPadding: false, textAlignVertical: 'center' }}>
@@ -2610,9 +2641,9 @@ function FloatingChrome({
                 </View>
                 <View style={{ width: 90, flexShrink: 0, flexDirection: 'row', justifyContent: 'flex-end', gap: 6 }}>
                   <IsleIconButton label={t('chat.modelAndConversationOptions')} onPress={onToggleOptions} tone="default" style={showOptions ? activeChromeIconStyle : chromeIconStyle}>
-                    <AppIcon name="menu-output" color={showOptions ? colors.ui.control.primaryForeground : colors.textSecondary} size={16} />
+                    <AppIcon name="preferences-sliders" color={showOptions ? colors.ui.control.primaryForeground : colors.textSecondary} size={16} />
                   </IsleIconButton>
-                  <AnimatedNavigationTrigger variant="iconButton" label={t('settings.title')} glyph="settings-sliders" onNavigate={onSettings} externalActive={settingsTransitionActive} color={colors.text} style={settingsTransitionActive ? activeChromeIconStyle : chromeIconStyle} />
+                  <AnimatedNavigationTrigger variant="iconButton" label={t('settings.title')} glyph="settings" onNavigate={onSettings} externalActive={settingsTransitionActive} color={colors.text} style={settingsTransitionActive ? activeChromeIconStyle : chromeIconStyle} />
                 </View>
               </View>
             </View>
@@ -3737,6 +3768,13 @@ function optionsPanelOverlayStyle(placement: ChatOptionsPlacement, topInset: num
     top: Math.max(62, topInset + 70),
     zIndex: 72,
   }
+}
+
+function optionsPanelEntryState(placement: ChatOptionsPlacement) {
+  if (placement === 'sheet') {
+    return { opacity: 0, translateY: 18, scale: 0.985 }
+  }
+  return { opacity: 0, translateX: 24, translateY: -4, scale: 0.965 }
 }
 
 function buildModelQuickOptions(providers: AIProvider[], settings?: ReturnType<typeof useSettingsStore.getState>['settings']): ModelQuickOption[] {
