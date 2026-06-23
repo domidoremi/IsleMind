@@ -100,6 +100,7 @@ export function selectActiveProcessTrace(traces: ProcessTrace[], messageStatus: 
 }
 
 export function traceActivityStageLabel(trace: ProcessTrace): string {
+  if (isProviderRequestStatusTrace(trace)) return st('trace.stage.request')
   return isGenericModelActivityTrace(trace) || trace.type === 'system'
     ? st('trace.stage.reasoning')
     : traceStageLabel(trace)
@@ -114,6 +115,16 @@ function isGenericModelActivityTrace(trace: ProcessTrace): boolean {
         typeof metadata.providerId === 'string' &&
         typeof metadata.model === 'string'
       )
+    )
+}
+
+function isProviderRequestStatusTrace(trace: ProcessTrace): boolean {
+  const metadata = trace.metadata ?? {}
+  return trace.type === 'system' &&
+    (
+      metadata.source === 'runtime-policy' ||
+      metadata.source === 'provider-compatibility-contract' ||
+      typeof metadata.rectificationKind === 'string'
     )
 }
 
@@ -576,6 +587,7 @@ function ragFallbackReasonsMetaSummary(metadata: Record<string, unknown>): strin
 
 export function traceStageLabel(trace: ProcessTrace): string {
   const metadata = trace.metadata ?? {}
+  if (isProviderRequestStatusTrace(trace)) return st('trace.stage.request')
   if (isAgentIntentTrace(trace)) return st('trace.stage.intent')
   if (isAgentPlanTrace(trace)) return st('trace.stage.plan')
   if (isAgentSynthesisTrace(trace)) return st('trace.stage.synthesis')

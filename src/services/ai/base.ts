@@ -60,7 +60,7 @@ import { createProviderTextToolCallStreamFilter, executableProviderToolCalls, me
 import { filterProviderStructuredOutputToolCalls, providerStructuredOutputToolCallText, providerStructuredOutputToolName, providerStructuredOutputToolSchema } from '@/services/ai/providerStructuredOutput'
 import { parseProviderStreamChunk, parseProviderStreamEvent, type ParsedStreamChunk } from '@/services/ai/providerStreamParsing'
 import { getModelTestMaxTokens, getModelTestReasoningEffort, reduceModelTestBody } from '@/services/ai/providerModelTest'
-import { createRuntimeFallbackTrace, createStreamModeTrace, emitRuntimeGovernanceTrace, logPayloadPolicy, logProviderCompatibility, logProviderConformance, logProviderRouteDecision, logProxyPolicy, logUpstreamRequest, runtimeLogOptions } from '@/services/ai/providerRuntimeDiagnostics'
+import { createRuntimeFallbackTrace, createStreamModeTrace, describeRequestRectification, emitRuntimeGovernanceTrace, logPayloadPolicy, logProviderCompatibility, logProviderConformance, logProviderRouteDecision, logProxyPolicy, logUpstreamRequest, runtimeLogOptions } from '@/services/ai/providerRuntimeDiagnostics'
 import { assertProviderCircuitClosed, delayProviderRetry, logProviderRetryAttempt, providerCircuitKey, providerRetryDelayMs, recordProviderCircuitFailure, recordProviderCircuitSuccess, resolveProviderMaxRetries, resolveProviderRequestTimeoutMs } from '@/services/ai/providerRuntimeRetry'
 import { isMiniMaxProvider, isPerplexityProvider } from '@/services/ai/providerIdentity'
 import { endpointHost, resolveNonStreamingProviderEndpoint, toWebSocketUrl } from '@/services/ai/providerEndpointUtils'
@@ -1314,7 +1314,7 @@ async function fetchChatStreamWithRetry(input: {
         if (rectified) {
           body = JSON.stringify(rectified.body)
           rectifiedRequest = true
-          input.onTrace?.(createProviderTrace('system', getWireProviderType(input.req.provider), st('providerTrace.requestRectified'), rectified.kind, 'done', `rectify-${rectified.kind}`))
+          input.onTrace?.(createProviderTrace('system', getWireProviderType(input.req.provider), st('providerTrace.requestRectified'), describeRequestRectification(rectified.kind), 'done', `rectify-${rectified.kind}`, { rectificationKind: rectified.kind }))
           void appendRuntimeLog('request.rectification', {
             conversationId: input.req.conversationId,
             providerId: input.req.provider.id,
@@ -1353,7 +1353,7 @@ async function fetchChatStreamWithRetry(input: {
           body = JSON.stringify(rectified.body)
           if (rectified.kind === 'xiaomi_mimo_thinking_disabled') mimoThinkingRectified = true
           if (rectified.kind === 'xiaomi_mimo_web_search_removed') mimoWebSearchRectified = true
-          input.onTrace?.(createProviderTrace('system', getWireProviderType(input.req.provider), st('providerTrace.requestRectified'), rectified.kind, 'done', `rectify-${rectified.kind}`))
+          input.onTrace?.(createProviderTrace('system', getWireProviderType(input.req.provider), st('providerTrace.requestRectified'), describeRequestRectification(rectified.kind), 'done', `rectify-${rectified.kind}`, { rectificationKind: rectified.kind }))
           void appendRuntimeLog('request.rectification', {
             conversationId: input.req.conversationId,
             providerId: input.req.provider.id,
