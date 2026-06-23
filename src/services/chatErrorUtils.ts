@@ -42,8 +42,7 @@ export function classifyChatError(message: string): ChatErrorCode {
   return 'unknown'
 }
 
-export function toUserFacingError(message: string): string {
-  const code = classifyChatError(message)
+export function toUserFacingError(message: string, code: ChatErrorCode = classifyChatError(message)): string {
   switch (code) {
     case 'bad_auth':
       return st('chatRunner.userError.badAuth')

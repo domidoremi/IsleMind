@@ -672,6 +672,8 @@ const {
   parseProviderStreamEventForTest,
   parseProviderStreamChunkForTest,
   rectifyAnthropicRequestBodyForTest,
+  rectifyXiaomiMimoThinkingRequestBodyForTest,
+  rectifyXiaomiMimoWebSearchRequestBodyForTest,
   resolveProviderModelAccessForTest,
   resolveProviderModelAliasAccessForTest,
   resolveProviderRequestConformanceForTest,
@@ -3250,6 +3252,59 @@ async function assertUpstreamGovernanceBehavior() {
     rectified: true,
   })
   assert.equal(secondRectification, undefined, 'Anthropic rectification is single-retry only')
+  const mimoThinkingRectificationReq = {
+    provider: { id: 'mimo-openai', type: 'xiaomi-mimo', name: 'Xiaomi MiMo', apiKey: FAKE_KEY_A, models: ['mimo-v2.5-pro'], enabled: true, wireProtocol: 'openai-compatible', capabilities: { reasoningEffort: true } },
+    model: 'mimo-v2.5-pro',
+    messages: [{ role: 'user', content: 'hello' }],
+  }
+  const mimoThinkingRectified = rectifyXiaomiMimoThinkingRequestBodyForTest({
+    req: mimoThinkingRectificationReq,
+    body: JSON.stringify({ model: 'mimo-v2.5-pro', messages: [], max_completion_tokens: 128, thinking: { type: 'enabled' } }),
+    status: 400,
+    errorText: 'Param Incorrect',
+    rectified: false,
+  })
+  assert.equal(mimoThinkingRectified.kind, 'xiaomi_mimo_thinking_disabled', 'MiMo thinking rectification detects Param Incorrect from enabled thinking')
+  assert.deepEqual(mimoThinkingRectified.body.thinking, { type: 'disabled' }, 'MiMo thinking rectification retries with thinking disabled')
+  assert.equal(
+    rectifyXiaomiMimoThinkingRequestBodyForTest({
+      req: mimoThinkingRectificationReq,
+      body: JSON.stringify({ model: 'mimo-v2.5-pro', messages: [], max_completion_tokens: 128, thinking: { type: 'enabled' } }),
+      status: 400,
+      errorText: 'Param Incorrect',
+      rectified: true,
+    }),
+    undefined,
+    'MiMo thinking rectification is single-retry only'
+  )
+  const mimoWebSearchRectified = rectifyXiaomiMimoWebSearchRequestBodyForTest({
+    req: mimoThinkingRectificationReq,
+    body: JSON.stringify({
+      model: 'mimo-v2.5-pro',
+      messages: [],
+      max_completion_tokens: 128,
+      tools: [
+        { type: 'web_search', max_keyword: 3, force_search: true, limit: 1 },
+        { type: 'function', function: { name: 'inspect_source', parameters: { type: 'object' } } },
+      ],
+      tool_choice: 'auto',
+    }),
+    status: 400,
+    errorText: 'Param Incorrect',
+    rectified: false,
+  })
+  assert.equal(mimoWebSearchRectified.kind, 'xiaomi_mimo_web_search_removed', 'MiMo web search rectification detects Param Incorrect from native search payloads')
+  assert.equal(mimoWebSearchRectified.body.tools.length, 1, 'MiMo web search rectification preserves custom function tools')
+  assert.equal(mimoWebSearchRectified.body.tools[0].type, 'function', 'MiMo web search rectification removes only the built-in web_search tool')
+  const mimoOnlyWebSearchRectified = rectifyXiaomiMimoWebSearchRequestBodyForTest({
+    req: mimoThinkingRectificationReq,
+    body: JSON.stringify({ model: 'mimo-v2.5-pro', messages: [], tools: [{ type: 'web_search', max_keyword: 3 }], tool_choice: 'auto' }),
+    status: 400,
+    errorText: 'Param Incorrect',
+    rectified: false,
+  })
+  assert.equal(mimoOnlyWebSearchRectified.body.tools, undefined, 'MiMo web search rectification removes empty tools arrays')
+  assert.equal(mimoOnlyWebSearchRectified.body.tool_choice, undefined, 'MiMo web search rectification removes auto tool_choice when no tools remain')
 
   const bedrockBody = {
     model: 'claude-opus-4-7',
@@ -3463,13 +3518,13 @@ async function assertUpstreamGovernanceBehavior() {
   )
   assert.equal(
     isXiaomiMimoThinkingActive({ provider: mimoParameterProvider, model: 'mimo-v2.5-pro' }),
-    true,
-    'provider request parameter helper treats default MiMo reasoning models as thinking-active'
+    false,
+    'provider request parameter helper keeps MiMo thinking inactive unless a provider-safe control is sent'
   )
   assert.equal(
     normalizeTemperature({ provider: mimoParameterProvider, model: 'mimo-v2.5-pro', reasoningEffort: 'high', temperature: 1.2 }),
-    undefined,
-    'provider request parameter helper omits MiMo temperature while thinking is active'
+    1.2,
+    'provider request parameter helper preserves MiMo temperature when high thinking is guarded from the payload'
   )
   assert.equal(
     normalizeTemperature({ provider: mimoParameterProvider, model: 'mimo-chat', temperature: 2 }),
@@ -3616,6 +3671,17 @@ async function assertUpstreamGovernanceBehavior() {
     true,
     'OpenAI request helper preserves Kimi reasoning replay'
   )
+  const mimoReplayProvider = { id: 'mimo-helper', type: 'xiaomi-mimo', name: 'Xiaomi MiMo', apiKey: FAKE_KEY_A, models: ['mimo-v2.5-pro'], enabled: true, capabilities: { reasoningEffort: true } }
+  assert.equal(
+    shouldReplayOpenAICompatibleReasoningContent({ provider: mimoReplayProvider, model: 'mimo-v2.5-pro' }, {}),
+    false,
+    'OpenAI request helper does not replay MiMo reasoning without tool calls'
+  )
+  assert.equal(
+    openAICompatibleReasoningReplayField({ provider: mimoReplayProvider, model: 'mimo-v2.5-pro' }, { toolCalls: [{ id: 'call-1' }] }),
+    'reasoning_content',
+    'OpenAI request helper replays MiMo reasoning_content for thinking-mode tool continuations'
+  )
   assert.equal(
     shouldReplayOpenAICompatibleReasoningContent({ provider: xaiRequestProvider, model: 'grok-4.3' }, {}),
     true,
@@ -3635,6 +3701,11 @@ async function assertUpstreamGovernanceBehavior() {
     shouldReplayOpenAICompatibleReasoningContent({ provider: { ...xaiRequestProvider, wireProtocol: 'anthropic-compatible' }, model: 'grok-4.3' }, { toolCalls: [{ id: 'call-1' }] }),
     false,
     'OpenAI request helper does not replay OpenAI-compatible reasoning on Anthropic wire protocol'
+  )
+  assert.equal(
+    shouldReplayOpenAICompatibleReasoningContent({ provider: { ...mimoReplayProvider, wireProtocol: 'anthropic-compatible' }, model: 'mimo-v2.5-pro' }, { toolCalls: [{ id: 'call-1' }] }),
+    false,
+    'OpenAI request helper does not replay MiMo OpenAI reasoning on Anthropic wire protocol'
   )
   assert.deepEqual(
     normalizeDeepSeekThinking({ provider: { id: 'deepseek-helper', type: 'openai-compatible', presetId: 'deepseek', name: 'DeepSeek', apiKey: FAKE_KEY_A, models: ['deepseek-v4-pro'], enabled: true }, model: 'deepseek-v4-pro', reasoningEffort: 'xhigh' }),
@@ -3965,6 +4036,59 @@ async function assertUpstreamGovernanceBehavior() {
     assert.equal(sentBodies.length, 2, 'Anthropic rectification retries once')
     assert.equal(sentBodies[1].thinking.budget_tokens, 32000, 'rectification retry sends normalized thinking budget')
     assert.equal(sentBodies[1].max_tokens, 64000, 'rectification retry sends normalized max_tokens')
+    const mimoRetryBodies = []
+    global.fetch = async (_url, init) => {
+      mimoRetryBodies.push(JSON.parse(init.body))
+      return new Response(mimoRetryBodies.length === 1
+        ? JSON.stringify({ error: { message: 'Param Incorrect', type: '400' } })
+        : JSON.stringify({ choices: [{ message: { content: 'MiMo OK' } }] }), {
+        status: mimoRetryBodies.length === 1 ? 400 : 200,
+        headers: { 'content-type': 'application/json' },
+      })
+    }
+    const mimoRectifiedResponse = await fetchChatStreamWithRetryForTest({
+      req: {
+        provider: { id: 'mimo-openai', type: 'xiaomi-mimo', name: 'Xiaomi MiMo', apiKey: FAKE_KEY_A, models: ['mimo-v2.5-pro'], enabled: true, wireProtocol: 'openai-compatible', capabilities: { reasoningEffort: true } },
+        model: 'mimo-v2.5-pro',
+        messages: [{ role: 'user', content: 'hello' }],
+        settings: { upstreamMaxRetries: 0, upstreamRequestTimeoutMs: 5000, upstreamCircuitBreakerEnabled: false },
+      },
+      url: 'https://token-plan-cn.xiaomimimo.com/v1/chat/completions',
+      headers: {},
+      body: JSON.stringify({ model: 'mimo-v2.5-pro', messages: [], max_completion_tokens: 128, thinking: { type: 'enabled' } }),
+      stream: false,
+      controller: new AbortController(),
+    })
+    assert.equal(mimoRectifiedResponse.ok, true, 'MiMo thinking Param Incorrect responses retry once with safer parameters')
+    assert.equal(mimoRetryBodies.length, 2, 'MiMo thinking rectification retries once')
+    assert.deepEqual(mimoRetryBodies[1].thinking, { type: 'disabled' }, 'MiMo rectification retry disables thinking for the same request')
+    const mimoWebSearchRetryBodies = []
+    global.fetch = async (_url, init) => {
+      mimoWebSearchRetryBodies.push(JSON.parse(init.body))
+      return new Response(mimoWebSearchRetryBodies.length === 1
+        ? JSON.stringify({ error: { message: 'Param Incorrect', type: '400' } })
+        : JSON.stringify({ choices: [{ message: { content: 'MiMo OK without search' } }] }), {
+        status: mimoWebSearchRetryBodies.length === 1 ? 400 : 200,
+        headers: { 'content-type': 'application/json' },
+      })
+    }
+    const mimoWebSearchRectifiedResponse = await fetchChatStreamWithRetryForTest({
+      req: {
+        provider: { id: 'mimo-openai', type: 'xiaomi-mimo', name: 'Xiaomi MiMo', apiKey: FAKE_KEY_A, models: ['mimo-v2.5-pro'], enabled: true, wireProtocol: 'openai-compatible', capabilities: { nativeSearch: true, reasoningEffort: true } },
+        model: 'mimo-v2.5-pro',
+        messages: [{ role: 'user', content: 'hello' }],
+        webSearchMode: 'native',
+        settings: { upstreamMaxRetries: 0, upstreamRequestTimeoutMs: 5000, upstreamCircuitBreakerEnabled: false },
+      },
+      url: 'https://token-plan-cn.xiaomimimo.com/v1/chat/completions',
+      headers: {},
+      body: JSON.stringify({ model: 'mimo-v2.5-pro', messages: [], max_completion_tokens: 128, tools: [{ type: 'web_search', max_keyword: 3, force_search: true, limit: 1 }], tool_choice: 'auto' }),
+      stream: false,
+      controller: new AbortController(),
+    })
+    assert.equal(mimoWebSearchRectifiedResponse.ok, true, 'MiMo native search Param Incorrect responses retry once without web_search')
+    assert.equal(mimoWebSearchRetryBodies.length, 2, 'MiMo web_search rectification retries once')
+    assert.equal(mimoWebSearchRetryBodies[1].tools, undefined, 'MiMo web_search rectification retry removes web_search tools')
 
     memoryStorage.clear()
     const fallbackOpenAI = {
@@ -7339,6 +7463,11 @@ async function run() {
   assert.equal(toUserFacingError('No response body'), st('chatRunner.userError.emptyResponse'), 'chat error helper preserves empty-response user copy')
   assert.equal(toUserFacingError('401 unauthorized invalid api key'), st('chatRunner.userError.badAuth'), 'chat error helper preserves auth user copy')
   assert.equal(toUserFacingError('provider_conformance_blocked:unsupported_modality'), st('chatRunner.userError.providerConformanceBlocked'), 'chat error helper maps provider conformance blockers to user-facing copy')
+  assert.equal(
+    toUserFacingError('Xiaomi MiMo returned HTTP 400. Base URL is already verified; upstream rejected the payload.', 'unknown'),
+    'Xiaomi MiMo returned HTTP 400. Base URL is already verified; upstream rejected the payload.',
+    'chat error helper honors explicit runtime error codes instead of reclassifying provider text'
+  )
   for (const locale of ['en', 'zh-CN', 'ja']) {
     const resource = JSON.parse(fs.readFileSync(path.join(root, `src/i18n/resources/${locale}.json`), 'utf8'))
     assert.ok(resource.chatRunner.userError.providerConformanceBlocked, `chat error helper ${locale} locale explains provider conformance blockers`)
@@ -8406,9 +8535,10 @@ async function run() {
     { text: 'ok' },
     'provider runtime result helper preserves unscoped results'
   )
-  const runtimeError = providerRuntimeError('blocked', 'group-b')
+  const runtimeError = providerRuntimeError('blocked', 'group-b', 'unknown')
   assert.equal(runtimeError.message, 'blocked', 'provider runtime result helper preserves error messages')
   assert.equal(runtimeError.credentialGroupId, 'group-b', 'provider runtime result helper attaches credential group ids to errors')
+  assert.equal(runtimeError.chatErrorCode, 'unknown', 'provider runtime result helper preserves explicit chat error codes')
   const streamTaskErrors = []
   await runStreamTask(async () => {
     throw new Error('stream failed')
@@ -9822,6 +9952,21 @@ https://gateway.example/messages`
   assert.deepEqual(failure('bad_auth', 'bad key', undefined, 'group-b'), { ok: false, code: 'bad_auth', message: 'bad key', data: undefined, credentialGroupId: 'group-b' }, 'provider operation result helper preserves failure result shape')
   assert.equal(classifyHttpStatus(429, 'quota exceeded'), 'rate_limited', 'provider operation result helper classifies rate limits')
   assert.equal(classifyHttpStatus(404, 'missing model', 'model-a'), 'model_unavailable', 'provider operation result helper classifies missing models')
+  const mimoInvalidRequest = JSON.stringify({ error: { type: 'invalid_request_error', message: 'Unsupported web_search parameter', request_id: 'mimo_req_1' } })
+  assert.equal(
+    classifyHttpStatus(400, mimoInvalidRequest, 'mimo-v2.5-pro', { type: 'xiaomi-mimo' }),
+    'unknown',
+    'MiMo parameter 400 errors do not masquerade as bad Base URL failures'
+  )
+  const formattedMimoInvalidRequest = formatProviderHttpErrorForTest(
+    400,
+    mimoInvalidRequest,
+    { id: 'mimo', type: 'xiaomi-mimo', name: 'Xiaomi MiMo', [API_KEY_FIELD]: 'tp-test-fake', models: ['mimo-v2.5-pro'], enabled: true },
+    'mimo-v2.5-pro'
+  )
+  assert.ok(formattedMimoInvalidRequest.includes('HTTP 400') || formattedMimoInvalidRequest.includes('400'), 'formatted MiMo parameter errors keep HTTP status')
+  assert.ok(formattedMimoInvalidRequest.includes('Unsupported web_search parameter'), 'formatted MiMo parameter errors keep upstream detail')
+  assert.equal(/Base URL|服务商地址|プロバイダー URL/.test(formattedMimoInvalidRequest), false, 'formatted MiMo parameter errors do not point users at the provider address first')
   assert.ok(
     extractProviderErrorDetail(JSON.stringify({ error: { type: 'upstream_error', message: 'No auth credentials found', request_id: 'req_123' } })).includes('req_123'),
     'provider operation result helper extracts request ids from JSON error payloads'
@@ -10734,10 +10879,10 @@ https://gateway.example/messages`
     maxTokens: 128,
     stream: false,
   })
-  assert.deepEqual(mimoOpenAIReasoningBody.thinking, { type: 'enabled' }, 'MiMo OpenAI-compatible requests send the official thinking toggle')
+  assert.equal(mimoOpenAIReasoningBody.thinking, undefined, 'MiMo OpenAI-compatible requests avoid sending thinking enabled after live Param Incorrect evidence')
   assert.equal(mimoOpenAIReasoningBody.reasoning, undefined, 'MiMo OpenAI-compatible requests avoid unsupported reasoning objects')
   assert.equal(mimoOpenAIReasoningBody.reasoning_effort, undefined, 'MiMo OpenAI-compatible requests avoid generic reasoning_effort')
-  assert.equal(mimoOpenAIReasoningBody.temperature, undefined, 'MiMo thinking requests omit custom temperature')
+  assert.equal(mimoOpenAIReasoningBody.temperature, 0.7, 'MiMo guarded high-thinking requests keep normal sampling defaults')
   assert.equal(mimoOpenAIReasoningBody.top_p, undefined, 'MiMo thinking requests omit custom top_p')
   assert.equal(mimoOpenAIReasoningBody.max_completion_tokens, 128, 'MiMo OpenAI-compatible requests reserve enough output room for reasoning plus text')
   const mimoOpenAIReasoningConformance = resolveProviderRequestConformanceForTest({
@@ -10748,8 +10893,8 @@ https://gateway.example/messages`
     maxTokens: 128,
   }, mimoOpenAIReasoningBody)
   assert.equal(mimoOpenAIReasoningConformance.manifest.reasoning.requestShape, 'xiaomi-mimo-thinking', 'provider conformance exposes MiMo thinking request shape')
-  assert.equal(mimoOpenAIReasoningConformance.reasoning.enabled, true, 'provider conformance treats MiMo high as active thinking')
-  assert.equal(mimoOpenAIReasoningConformance.reasoning.providerValue, 'enabled', 'provider conformance maps MiMo active thinking to the accepted provider value')
+  assert.equal(mimoOpenAIReasoningConformance.reasoning.enabled, false, 'provider conformance guards MiMo high thinking from the request payload')
+  assert.equal(mimoOpenAIReasoningConformance.reasoning.providerValue, undefined, 'provider conformance does not claim a MiMo enabled provider value while guarded')
   const mimoOpenAIThinkingOffBody = buildOpenAIBodyForTest({
     provider: { ...mimoAnthropicProvider, id: 'mimo-cn-openai', wireProtocol: 'openai-compatible', baseUrl: 'https://token-plan-cn.xiaomimimo.com/v1' },
     model: 'mimo-v2.5',
@@ -10763,6 +10908,45 @@ https://gateway.example/messages`
   assert.deepEqual(mimoOpenAIThinkingOffBody.thinking, { type: 'disabled' }, 'MiMo none explicitly disables thinking instead of relying on provider defaults')
   assert.equal(mimoOpenAIThinkingOffBody.temperature, 0.4, 'MiMo disabled-thinking requests may customize temperature')
   assert.equal(mimoOpenAIThinkingOffBody.top_p, 0.8, 'MiMo disabled-thinking requests may customize top_p')
+  const mimoOpenAIToolReplayBody = buildOpenAIBodyForTest({
+    provider: { ...mimoAnthropicProvider, id: 'mimo-cn-openai', wireProtocol: 'openai-compatible', baseUrl: 'https://token-plan-cn.xiaomimimo.com/v1' },
+    model: 'mimo-v2.5-pro',
+    messages: [
+      { role: 'user', content: '查一下北京天气' },
+      {
+        role: 'assistant',
+        content: '',
+        reasoningContent: 'I need fresh weather data, so I will call the weather tool.',
+        toolCalls: [{ id: 'call-weather-1', name: 'get_weather', arguments: { city: 'Beijing' }, rawArguments: '{"city":"Beijing"}' }],
+      },
+      { role: 'tool', toolCallId: 'call-weather-1', name: 'get_weather', content: '晴，25C' },
+    ],
+    reasoningEffort: 'high',
+    maxTokens: 128,
+    stream: false,
+  })
+  assert.equal(
+    mimoOpenAIToolReplayBody.messages[1].reasoning_content,
+    'I need fresh weather data, so I will call the weather tool.',
+    'MiMo OpenAI-compatible thinking tool continuations replay assistant reasoning_content required by the official 400 guidance'
+  )
+  assert.equal(mimoOpenAIToolReplayBody.messages[1].tool_calls[0].function.name, 'get_weather', 'MiMo tool replay keeps OpenAI-compatible tool_calls with reasoning content')
+  const mimoOpenAIToolDefaultBody = buildOpenAIBodyForTest({
+    provider: { ...mimoAnthropicProvider, id: 'mimo-cn-openai', wireProtocol: 'openai-compatible', baseUrl: 'https://token-plan-cn.xiaomimimo.com/v1' },
+    model: 'mimo-v2.5-pro',
+    messages: [{ role: 'user', content: '查一下北京天气' }],
+    providerToolDeclarations: [{
+      type: 'function',
+      function: {
+        name: 'get_weather',
+        description: 'Get weather.',
+        parameters: { type: 'object', properties: { city: { type: 'string' } } },
+      },
+    }],
+    maxTokens: 128,
+    stream: false,
+  })
+  assert.deepEqual(mimoOpenAIToolDefaultBody.thinking, { type: 'disabled' }, 'MiMo tool requests default to non-thinking mode to avoid Param Incorrect when history lacks reasoning_content')
   const mimoAnthropicReasoningBody = buildAnthropicBodyForTest({
     provider: mimoAnthropicProvider,
     model: 'mimo-v2.5',
@@ -10771,7 +10955,7 @@ https://gateway.example/messages`
     maxTokens: 128,
     stream: false,
   })
-  assert.deepEqual(mimoAnthropicReasoningBody.thinking, { type: 'enabled' }, 'MiMo Anthropic-compatible requests send the official thinking toggle')
+  assert.equal(mimoAnthropicReasoningBody.thinking, undefined, 'MiMo Anthropic-compatible requests also avoid sending thinking enabled by default')
   assert.equal(mimoAnthropicReasoningBody.reasoning, undefined, 'MiMo Anthropic-compatible requests avoid unsupported reasoning objects')
   assert.equal(mimoAnthropicReasoningBody.output_config, undefined, 'MiMo Anthropic-compatible requests do not use Claude output_config thinking tiers')
   assert.equal(mimoAnthropicReasoningBody.max_tokens, 128, 'MiMo Anthropic-compatible tests reserve enough output room for reasoning plus text')

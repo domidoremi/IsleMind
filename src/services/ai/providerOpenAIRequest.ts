@@ -13,6 +13,7 @@ import {
   isPerplexityReasoningModel,
   isSambaNovaReasoningModel,
   isTogetherReasoningModel,
+  isXiaomiMimoReasoningModel,
   isXAIReasoningModel,
   isXAIMultiAgentReasoningModel,
   normalizeFireworksReasoningEffort,
@@ -285,6 +286,7 @@ export function openAICompatibleReasoningReplayField(
   if (req.provider.wireProtocol === 'anthropic-compatible') return undefined
   const modelConfig = getModelConfig(req.model, req.provider.type, req.provider.modelConfigs)
   if (!providerReasoningCanBeSent(req.provider, modelConfig)) return undefined
+  if (isXiaomiMimoReasoningModel(req.provider, req.model)) return msg.toolCalls?.length ? 'reasoning_content' : undefined
   if (isCerebrasReasoningModel(req.provider, req.model)) return 'reasoning'
   if (isSambaNovaReasoningModel(req.provider, req.model)) return 'reasoning'
   if (isDeepSeekThinkingModel(req.provider, req.model)) return msg.toolCalls?.length ? 'reasoning_content' : undefined

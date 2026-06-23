@@ -1,4 +1,5 @@
 import { st } from '@/i18n/service'
+import type { ChatErrorCode } from '@/types'
 
 export interface CredentialScopedResult {
   credentialGroupId?: string
@@ -6,6 +7,7 @@ export interface CredentialScopedResult {
 
 export interface ProviderRuntimeError extends Error {
   credentialGroupId?: string
+  chatErrorCode?: ChatErrorCode
 }
 
 export type RuntimeErrorCallback = (error: Error) => void
@@ -14,9 +16,10 @@ export function withCredentialGroup<T>(result: T, credentialGroupId: string | un
   return credentialGroupId ? { ...result, credentialGroupId } : result as T & CredentialScopedResult
 }
 
-export function providerRuntimeError(message: string, credentialGroupId?: string): ProviderRuntimeError {
+export function providerRuntimeError(message: string, credentialGroupId?: string, chatErrorCode?: ChatErrorCode): ProviderRuntimeError {
   const error = new Error(message) as ProviderRuntimeError
   error.credentialGroupId = credentialGroupId
+  error.chatErrorCode = chatErrorCode
   return error
 }
 

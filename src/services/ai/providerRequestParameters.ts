@@ -1,4 +1,4 @@
-import type { AIProvider, ReasoningEffort } from '@/types'
+import type { AIProvider, ReasoningEffort, WebSearchMode } from '@/types'
 import { getModelConfig } from '@/types'
 import { isXiaomiMimoReasoningModel, modelSupportsSamplingControls } from '@/utils/modelReasoning'
 import { isMiniMaxProvider } from '@/services/ai/providerIdentity'
@@ -10,21 +10,35 @@ export interface ProviderRequestParameterInput {
   reasoningEffort?: ReasoningEffort
   temperature?: number
   maxTokens?: number
+  webSearchMode?: WebSearchMode
+  providerToolDeclarations?: readonly unknown[]
+  messages?: {
+    role: 'user' | 'assistant' | 'tool'
+    reasoningContent?: string
+    toolCalls?: readonly unknown[]
+  }[]
 }
 
 export function normalizeXiaomiMimoThinking(req: ProviderRequestParameterInput): { type: 'enabled' | 'disabled' } | undefined {
-  if (!req.reasoningEffort) return undefined
   if (!providerReasoningCanBeSent(req)) return undefined
   if (!isXiaomiMimoReasoningModel(req.provider, req.model)) return undefined
-  return { type: req.reasoningEffort === 'none' ? 'disabled' : 'enabled' }
+  if (!req.reasoningEffort && hasXiaomiMimoToolContext(req)) return { type: 'disabled' }
+  if (!req.reasoningEffort) return undefined
+  return req.reasoningEffort === 'none' ? { type: 'disabled' } : undefined
 }
 
 export function isXiaomiMimoThinkingActive(req: ProviderRequestParameterInput): boolean {
   if (!providerReasoningCanBeSent(req)) return false
   if (!isXiaomiMimoReasoningModel(req.provider, req.model)) return false
-  if (req.reasoningEffort) return req.reasoningEffort !== 'none'
-  const modelId = req.model.toLowerCase()
-  return ['mimo-v2.5-pro', 'mimo-v2.5', 'mimo-v2-pro', 'mimo-v2-omni'].includes(modelId)
+  if (req.reasoningEffort) return false
+  if (hasXiaomiMimoToolContext(req)) return false
+  return false
+}
+
+function hasXiaomiMimoToolContext(req: ProviderRequestParameterInput): boolean {
+  return req.webSearchMode === 'native' ||
+    Boolean(req.providerToolDeclarations?.length) ||
+    Boolean(req.messages?.some((msg) => msg.role === 'tool' || msg.toolCalls?.length))
 }
 
 function providerReasoningCanBeSent(req: ProviderRequestParameterInput): boolean {

@@ -1,4 +1,4 @@
-import type { AIModel, Attachment, AIProvider, MessageCitation, MessageUsage, ProcessTrace, ProviderType, ReasoningEffort, RetrievalSource, WebSearchMode } from '@/types'
+import type { AIModel, Attachment, AIProvider, ChatErrorCode, MessageCitation, MessageUsage, ProcessTrace, ProviderOperationCode, ProviderType, ReasoningEffort, RetrievalSource, WebSearchMode } from '@/types'
 import { getModelConfig, getProviderConfigIssue } from '@/types'
 import { st } from '@/i18n/service'
 import { getSecureApiKey } from './secureKey'
@@ -88,6 +88,27 @@ export type ErrorCallback = (error: Error) => void
 export type { ProviderToolCall } from '@/services/ai/providerToolCalls'
 
 export type { ProviderRuntimeError } from '@/services/ai/providerRuntimeResult'
+
+function providerOperationCodeToChatErrorCode(code: ProviderOperationCode): ChatErrorCode {
+  switch (code) {
+    case 'missing_key':
+    case 'credential_mismatch':
+    case 'bad_auth':
+    case 'bad_base_url':
+    case 'model_unavailable':
+    case 'network_error':
+    case 'timeout':
+    case 'rate_limited':
+    case 'max_tokens_exceeded':
+      return code
+    case 'models_endpoint_unavailable':
+      return 'model_unavailable'
+    case 'ok':
+    case 'empty_models':
+    case 'unknown':
+      return 'unknown'
+  }
+}
 
 export interface ChatCompletionResult {
   text: string
@@ -286,6 +307,14 @@ export function fetchChatStreamWithRetryForTest(input: Parameters<typeof fetchCh
 
 export function rectifyAnthropicRequestBodyForTest(input: Parameters<typeof rectifyAnthropicRequestBody>[0]) {
   return rectifyAnthropicRequestBody(input)
+}
+
+export function rectifyXiaomiMimoThinkingRequestBodyForTest(input: Parameters<typeof rectifyXiaomiMimoThinkingRequestBody>[0]) {
+  return rectifyXiaomiMimoThinkingRequestBody(input)
+}
+
+export function rectifyXiaomiMimoWebSearchRequestBodyForTest(input: Parameters<typeof rectifyXiaomiMimoWebSearchRequestBody>[0]) {
+  return rectifyXiaomiMimoWebSearchRequestBody(input)
 }
 
 export function getBodyForTest(req: ChatRequest) {
@@ -1102,7 +1131,12 @@ async function executeHttpSseChat(input: {
       status: response.status,
       endpointHost: endpointHost(input.url),
     }, runtimeLogOptions(input.req))
-    input.onError(providerRuntimeError(formatProviderHttpError(response.status, errorText, input.req.provider, input.req.model), input.credentialGroupId))
+    const errorCode = classifyHttpStatus(response.status, errorText, input.req.model, input.req.provider)
+    input.onError(providerRuntimeError(
+      formatProviderHttpError(response.status, errorText, input.req.provider, input.req.model),
+      input.credentialGroupId,
+      providerOperationCodeToChatErrorCode(errorCode)
+    ))
     return
   }
 
@@ -1255,6 +1289,8 @@ async function fetchChatStreamWithRetry(input: {
   assertProviderCircuitClosed(input.req, circuitKey)
   let body = input.body
   let rectifiedRequest = false
+  let mimoThinkingRectified = false
+  let mimoWebSearchRectified = false
   let retryCount = 0
 
   while (true) {
@@ -1298,6 +1334,41 @@ async function fetchChatStreamWithRetry(input: {
         return new Response(errorText, { status: response.status, statusText: response.statusText, headers: response.headers })
       }
 
+      if (input.req.provider.type === 'xiaomi-mimo' && input.req.provider.wireProtocol !== 'anthropic-compatible' && response.status === 400) {
+        const errorText = await safeResponseText(response)
+        const rectified = rectifyXiaomiMimoThinkingRequestBody({
+          req: input.req,
+          body,
+          status: response.status,
+          errorText,
+          rectified: mimoThinkingRectified,
+        }) ?? rectifyXiaomiMimoWebSearchRequestBody({
+          req: input.req,
+          body,
+          status: response.status,
+          errorText,
+          rectified: mimoWebSearchRectified,
+        })
+        if (rectified) {
+          body = JSON.stringify(rectified.body)
+          if (rectified.kind === 'xiaomi_mimo_thinking_disabled') mimoThinkingRectified = true
+          if (rectified.kind === 'xiaomi_mimo_web_search_removed') mimoWebSearchRectified = true
+          input.onTrace?.(createProviderTrace('system', getWireProviderType(input.req.provider), st('providerTrace.requestRectified'), rectified.kind, 'done', `rectify-${rectified.kind}`))
+          void appendRuntimeLog('request.rectification', {
+            conversationId: input.req.conversationId,
+            providerId: input.req.provider.id,
+            model: input.req.model,
+            kind: rectified.kind,
+            attempt: retryCount,
+          }, runtimeLogOptions(input.req))
+          continue
+        }
+        if (!canRetryStatus || retryCount >= maxRetries) {
+          recordProviderCircuitFailure(input.req, circuitKey)
+          return new Response(errorText, { status: response.status, statusText: response.statusText, headers: response.headers })
+        }
+      }
+
       if (!canRetryStatus || retryCount >= maxRetries) {
         recordProviderCircuitFailure(input.req, circuitKey)
         return response
@@ -1314,6 +1385,65 @@ async function fetchChatStreamWithRetry(input: {
       retryCount += 1
       await delayProviderRetry(providerRetryDelayMs(retryCount - 1))
     }
+  }
+}
+
+function rectifyXiaomiMimoThinkingRequestBody(input: {
+  req: ChatRequest
+  body: string
+  status: number
+  errorText: string
+  rectified: boolean
+}): { kind: 'xiaomi_mimo_thinking_disabled'; body: Record<string, unknown> } | undefined {
+  if (input.rectified) return undefined
+  if (input.req.provider.type !== 'xiaomi-mimo' || input.req.provider.wireProtocol === 'anthropic-compatible') return undefined
+  if (input.status !== 400) return undefined
+  if (!/\bparam\s+incorrect\b|invalid\s+(?:request\s+)?format|invalid_request/i.test(input.errorText)) return undefined
+  let parsed: Record<string, unknown>
+  try {
+    parsed = JSON.parse(input.body)
+  } catch {
+    return undefined
+  }
+  const thinking = parsed.thinking
+  if (!thinking || typeof thinking !== 'object' || Array.isArray(thinking)) return undefined
+  if ((thinking as Record<string, unknown>).type !== 'enabled') return undefined
+  return {
+    kind: 'xiaomi_mimo_thinking_disabled',
+    body: {
+      ...parsed,
+      thinking: { type: 'disabled' },
+    },
+  }
+}
+
+function rectifyXiaomiMimoWebSearchRequestBody(input: {
+  req: ChatRequest
+  body: string
+  status: number
+  errorText: string
+  rectified: boolean
+}): { kind: 'xiaomi_mimo_web_search_removed'; body: Record<string, unknown> } | undefined {
+  if (input.rectified) return undefined
+  if (input.req.provider.type !== 'xiaomi-mimo' || input.req.provider.wireProtocol === 'anthropic-compatible') return undefined
+  if (input.status !== 400) return undefined
+  if (!/\bparam\s+incorrect\b|invalid\s+(?:request\s+)?format|unsupported\s+web[_ -]?search|web[_ -]?search/i.test(input.errorText)) return undefined
+  let parsed: Record<string, unknown>
+  try {
+    parsed = JSON.parse(input.body)
+  } catch {
+    return undefined
+  }
+  if (!Array.isArray(parsed.tools)) return undefined
+  const tools = parsed.tools.filter((tool) => !(tool && typeof tool === 'object' && !Array.isArray(tool) && (tool as Record<string, unknown>).type === 'web_search'))
+  if (tools.length === parsed.tools.length) return undefined
+  const next: Record<string, unknown> = { ...parsed }
+  if (tools.length) next.tools = tools
+  else delete next.tools
+  if (!tools.length && next.tool_choice === 'auto') delete next.tool_choice
+  return {
+    kind: 'xiaomi_mimo_web_search_removed',
+    body: next,
   }
 }
 
@@ -1506,7 +1636,12 @@ async function retryWithoutStreaming(
       const errorText = await safeResponseText(response)
       const recovered = await tryRuntimeFallback({ req: fallbackReq, status: response.status, responseText: errorText, credentialGroupId, onChunk, onDone, onCitations, onTrace })
       if (recovered) return
-      onError(providerRuntimeError(formatProviderHttpError(response.status, errorText, fallbackReq.provider, fallbackReq.model), credentialGroupId))
+      const errorCode = classifyHttpStatus(response.status, errorText, fallbackReq.model, fallbackReq.provider)
+      onError(providerRuntimeError(
+        formatProviderHttpError(response.status, errorText, fallbackReq.provider, fallbackReq.model),
+        credentialGroupId,
+        providerOperationCodeToChatErrorCode(errorCode)
+      ))
       return
     }
   const result = await parseProviderNonStreamingResponse(response, fallbackReq)
@@ -1612,7 +1747,7 @@ export async function testProviderModelDetailed(provider: AIProvider, model: str
     const response = await fetchWithTimeout(prepared.url, { method: 'POST', headers: prepared.headers, body: prepared.body }, MODEL_TEST_TIMEOUT_MS)
     if (!response.ok) {
       const errorText = await safeResponseText(response)
-      return failure(classifyHttpStatus(response.status, errorText, upstreamModel), formatProviderHttpError(response.status, errorText, provider, model), undefined, selectedGroupId)
+      return failure(classifyHttpStatus(response.status, errorText, upstreamModel, provider), formatProviderHttpError(response.status, errorText, provider, model), undefined, selectedGroupId)
     }
     const text = await parseProviderNonStreamingText(response, getWireProviderType(p))
     if (!text.trim()) {
