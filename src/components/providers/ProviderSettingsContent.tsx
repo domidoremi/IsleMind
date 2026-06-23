@@ -55,6 +55,7 @@ const IMPORT_INPUT_LINE_HEIGHT = 20
 const IMPORT_INPUT_VERTICAL_PADDING = 24
 const IMPORT_INPUT_MAX_LINES = 14
 const IMPORT_SHEET_MARGIN = 16
+const IMPORT_KEYBOARD_CLEARANCE = 24
 const IMPORT_HEADER_HEIGHT = 78
 const IMPORT_FOOTER_HEIGHT = 76
 const IMPORT_BODY_FIXED_SPACE = 118
@@ -1400,11 +1401,12 @@ function ProviderImportModal({
   const [contentHeight, setContentHeight] = useState(0)
   const [keyboardHeight, setKeyboardHeight] = useState(0)
   const compact = height < 680
-  const keyboardInset = Platform.OS === 'android' ? keyboardHeight : 0
   const keyboardVisible = keyboardHeight > 0
+  const keyboardInset = Platform.OS === 'android' ? keyboardHeight : 0
+  const keyboardAvoidanceInset = keyboardInset + (Platform.OS === 'android' && keyboardVisible ? IMPORT_KEYBOARD_CLEARANCE : 0)
   const availableSheetHeight = Math.max(
     keyboardVisible ? 300 : 360,
-    height - insets.top - Math.max(insets.bottom, 10) - keyboardInset - IMPORT_SHEET_MARGIN,
+    height - insets.top - Math.max(insets.bottom, 10) - keyboardAvoidanceInset - IMPORT_SHEET_MARGIN,
   )
   const availableBodyHeight = Math.max(
     180,
@@ -1565,7 +1567,7 @@ function ProviderImportModal({
         >
           <IsleOverlayPressable accessibilityLabel={t('dialog.close')} accessibilityRole="button" onPress={onClose} style={{ flex: 1, backgroundColor: colors.backdrop }} />
         </MotiView>
-        <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined} style={{ flex: 1, justifyContent: 'flex-end' }}>
+        <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined} style={{ flex: 1, justifyContent: 'flex-end', paddingBottom: keyboardAvoidanceInset }}>
           <MotiView
             from={motion === 'full' ? { opacity: 0, translateY: 32, scale: 0.985 } : { opacity: 0 }}
             animate={{ opacity: 1, translateY: 0, scale: 1 }}

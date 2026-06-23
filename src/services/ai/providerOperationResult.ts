@@ -43,6 +43,7 @@ export function providerFetchFailure<T>(error: unknown, credentialGroupId?: stri
 
 export function classifyHttpStatus(status: number, responseText = '', model = '', provider?: Pick<AIProvider, 'type'>): ProviderOperationCode {
   const text = responseText.toLowerCase()
+  if (looksLikeModelUnavailable(text)) return 'model_unavailable'
   if (status === 401 || status === 403 || text.includes('invalid api key') || text.includes('unauthorized') || text.includes('permission')) return 'bad_auth'
   if (status === 408 || status === 504) return 'timeout'
   if (status === 429 || text.includes('rate limit') || text.includes('too many requests') || text.includes('quota')) return 'rate_limited'
@@ -84,6 +85,10 @@ export function formatProviderHttpError(status: number, responseText = '', provi
 
 function looksLikeBaseUrlProblem(text: string): boolean {
   return /base[\s_-]?url|endpoint|unsupported url|invalid url|not found|route|path|html|404/.test(text)
+}
+
+function looksLikeModelUnavailable(text: string): boolean {
+  return /model[_ -]?not[_ -]?found|no available channel|无可用渠道|模型[^。.,，]*无可用|model[^。.,]*unavailable|model[^。.,]*(not found|not exist|does not exist)/i.test(text)
 }
 
 export function extractProviderErrorDetail(responseText = ''): string {

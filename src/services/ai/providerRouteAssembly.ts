@@ -2,7 +2,7 @@ import type { AIProvider, Settings } from '@/types'
 import { getProviderEffectiveBaseUrl } from '@/types'
 import type { TransportSelection } from '@/services/ai/transport/transportSelector'
 import { selectUpstreamTransport } from '@/services/ai/transport/transportSelector'
-import { isNovitaProvider, isPerplexityProvider } from '@/services/ai/providerIdentity'
+import { isGitHubModelsProvider, isNovitaProvider, isPerplexityProvider } from '@/services/ai/providerIdentity'
 import { isBedrockMantleProvider, normalizeBedrockMantleBaseUrl } from '@/services/ai/providerAwsBedrockRouting'
 import { isAzureOpenAIProvider, normalizeAzureOpenAIBaseUrl } from '@/services/ai/providerHostedRouting'
 import { providerCompatibilityCapabilityCanBeSentForProvider } from '@/services/ai/providerCompatibilityContract'
@@ -84,13 +84,23 @@ export function defaultOpenAICompatibleBaseUrl(provider: AIProvider): string {
   if (!isOpenAICompatibleProvider(provider)) return baseUrl
   if (isPerplexityProvider(provider)) return normalizePerplexityOpenAIBaseUrl(baseUrl)
   if (isNovitaProvider(provider)) return normalizeNovitaOpenAIBaseUrl(baseUrl)
+  if (isGitHubModelsProvider(provider)) return normalizeProviderBaseUrl(baseUrl)
   if (isAzureOpenAIProvider(provider)) return normalizeAzureOpenAIBaseUrl(provider.baseUrl?.trim() ?? '')
   if (isBedrockMantleProvider(provider)) return normalizeBedrockMantleBaseUrl(provider.baseUrl?.trim() ?? '')
   try {
     const parsed = new URL(baseUrl)
     const path = parsed.pathname.replace(/\/+$/, '')
-    if (!path) {
+    const endpointPath = path.replace(/\/(?:chat\/completions|responses|models|embeddings|audio\/(?:transcriptions|speech)|completions)$/i, '')
+    if (!endpointPath) {
       parsed.pathname = '/v1'
+      return parsed.toString().replace(/\/+$/, '')
+    }
+    if (endpointPath !== path) {
+      parsed.pathname = endpointPath
+      return parsed.toString().replace(/\/+$/, '')
+    }
+    if (!/\/v\d+(?:\/|$)/i.test(path)) {
+      parsed.pathname = `${path}/v1`
       return parsed.toString().replace(/\/+$/, '')
     }
   } catch {

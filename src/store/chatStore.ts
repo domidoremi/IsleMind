@@ -11,6 +11,7 @@ import { resolveProviderModelAlias } from '@/utils/providerModels'
 import { sanitizeProcessTraceForBoundary, sanitizeProcessTracesForBoundary } from '@/utils/traceSafety'
 import { sanitizeAttachmentsForPersistence } from '@/services/attachmentContract'
 import { abortAllStreams, abortStream } from '@/services/chatStreamLifecycle'
+import { sanitizeMessageInternalOutput } from '@/services/chatInternalOutputGuard'
 import { useSettingsStore } from './settingsStore'
 
 function generateId(): string {
@@ -440,7 +441,7 @@ function stripOnboardingSystemPrompts(conversations: Conversation[]): Conversati
 }
 
 function prepareConversationsForStore(conversations: Conversation[]): Conversation[] {
-  return sanitizeConversationAttachmentsForStore(sanitizeConversationTracesForStore(stripOnboardingSystemPrompts(conversations)))
+  return sanitizeConversationInternalOutputsForStore(sanitizeConversationAttachmentsForStore(sanitizeConversationTracesForStore(stripOnboardingSystemPrompts(conversations))))
 }
 
 async function hydrateSqliteConversationsInBackground(): Promise<void> {
@@ -460,7 +461,14 @@ async function hydrateSqliteConversationsInBackground(): Promise<void> {
 }
 
 function sanitizeConversationsForPersistence(conversations: Conversation[]): Conversation[] {
-  return sanitizeConversationAttachmentsForStore(sanitizeConversationTracesForStore(conversations))
+  return sanitizeConversationInternalOutputsForStore(sanitizeConversationAttachmentsForStore(sanitizeConversationTracesForStore(conversations)))
+}
+
+function sanitizeConversationInternalOutputsForStore(conversations: Conversation[]): Conversation[] {
+  return conversations.map((conversation) => ({
+    ...conversation,
+    messages: conversation.messages.map(sanitizeMessageInternalOutput),
+  }))
 }
 
 function sanitizeConversationAttachmentsForStore(conversations: Conversation[]): Conversation[] {
