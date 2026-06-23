@@ -14436,6 +14436,13 @@ https://gateway.example/messages`
 }
 
 function assertProviderModelDiscoveryBehavior() {
+  assert.deepEqual(getModelConfig('Qwen3.7 Max Thinking Console', 'openai-compatible').reasoningEfforts, ['none', 'low', 'medium', 'high'], 'generic console aliases map Qwen display names to reasoning metadata')
+  assert.equal(getModelConfig('Qwen3.7 Max Vision Console', 'openai-compatible').supportsVision, true, 'generic console aliases preserve Qwen vision metadata')
+  assert.deepEqual(getModelConfig('Claude Opus 4.8 High Console', 'anthropic').reasoningEfforts, ['none', 'low', 'medium', 'high', 'xhigh', 'max'], 'generic console aliases map Claude display names to reasoning metadata')
+  assert.deepEqual(getModelConfig('Gemini 2.5 Flash Vision Console', 'google').reasoningEfforts, ['none', 'minimal', 'low', 'medium', 'high', 'xhigh'], 'generic console aliases map Gemini display names to thinking metadata')
+  assert.equal(getModelConfig('Gemini 2.5 Flash Vision Console', 'google').supportsVision, true, 'generic console aliases preserve Gemini vision metadata')
+  assert.deepEqual(getModelConfig('MiniMax M3 Thinking Console', 'openai-compatible').reasoningEfforts, ['none', 'high'], 'generic console aliases map MiniMax display names to thinking metadata')
+  assert.equal(getModelConfig('MiniMax M3 Image Console', 'openai-compatible').supportsVision, true, 'generic console aliases preserve MiniMax vision metadata')
   assert.deepEqual(getModelConfig('Grok 4.20 0309 Reasoning Console', 'openai-compatible').reasoningEfforts, ['none', 'low', 'medium', 'high'], 'Grok console reasoning aliases inherit xAI reasoning metadata')
   assert.deepEqual(getModelConfig('Grok 4.20 Multi Agent Xhigh', 'openai-compatible').reasoningEfforts, ['low', 'medium', 'high', 'xhigh'], 'Grok console multi-agent aliases inherit xAI multi-agent metadata')
   assert.equal(getModelConfig('Grok 4.20 0309 Non Reasoning Console', 'openai-compatible').reasoningMode, undefined, 'Grok console non-reasoning aliases stay non-reasoning')
@@ -14466,6 +14473,22 @@ function assertProviderModelDiscoveryBehavior() {
   assert.equal(grokConsoleNonReasoning?.reasoningMode, undefined, 'provider model discovery keeps Grok console non-reasoning labels without reasoning metadata')
   assert.equal(grokConsoleMultiAgent?.supportsVision, true, 'provider model discovery preserves Grok console vision badges')
   assert.equal(grokConsoleMultiAgent?.supportsTools, true, 'provider model discovery preserves Grok console tool badges')
+
+  const opaqueDisplayNameModels = mapOpenAICompatibleModels({
+    data: [
+      { id: 'relay/model-a', display_name: 'Qwen3.7 Max Thinking Console' },
+      { id: 'relay/model-b', display_name: 'MiniMax M3 Image Console' },
+      { id: 'relay/model-c', display_name: 'Grok 4.20 Multi Agent High' },
+    ],
+  }, 'openai-compatible')
+  const opaqueQwen = opaqueDisplayNameModels.find((model) => model.id === 'relay/model-a')
+  const opaqueMiniMax = opaqueDisplayNameModels.find((model) => model.id === 'relay/model-b')
+  const opaqueGrok = opaqueDisplayNameModels.find((model) => model.id === 'relay/model-c')
+  assert.deepEqual(opaqueQwen?.reasoningEfforts, ['none', 'low', 'medium', 'high'], 'provider model discovery uses display_name to infer Qwen metadata for opaque ids')
+  assert.equal(opaqueQwen?.supportsVision, true, 'provider model discovery uses display_name to infer Qwen vision support for opaque ids')
+  assert.deepEqual(opaqueMiniMax?.reasoningEfforts, ['none', 'high'], 'provider model discovery uses display_name to infer MiniMax thinking metadata for opaque ids')
+  assert.equal(opaqueMiniMax?.supportsVision, true, 'provider model discovery uses display_name to infer MiniMax vision support for opaque ids')
+  assert.deepEqual(opaqueGrok?.reasoningEfforts, ['low', 'medium', 'high', 'xhigh'], 'provider model discovery uses display_name to infer Grok multi-agent metadata for opaque ids')
 }
 
 function assertProviderCompatibilityContractBehavior() {
