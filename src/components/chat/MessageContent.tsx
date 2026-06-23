@@ -120,7 +120,7 @@ export const MessageContent = memo(function MessageContent({ content, isUser = f
   const segments = useMemo(() => safeParseRichContent(content, t, isStreaming), [content, isStreaming, t])
 
   return (
-    <View style={{ gap: 8, maxWidth: '100%', overflow: 'hidden' }}>
+    <View style={{ gap: 8, width: '100%', maxWidth: '100%', overflow: 'hidden' }}>
       {segments.map((segment) => {
         if (segment.type === 'markdown') return <RichMarkdown key={segment.id} content={segment.content} isUser={isUser} isStreaming={isStreaming} />
         if (segment.type === 'table') return <TableBlockCard key={segment.id} rows={segment.rows} title={segment.title} isUser={isUser} />
@@ -899,8 +899,12 @@ function RichCard({ isUser, children }: { isUser: boolean; children: ReactNode }
     <IslePanel
       elevated={!isUser && colors.ui.cartoon}
       material={isUser ? 'transparent' : colors.ui.cartoon ? 'raised' : 'paper'}
-      contentStyle={{ padding: 10 }}
+      contentStyle={{ padding: 10, width: '100%' }}
       style={{
+        alignSelf: 'stretch',
+        width: '100%',
+        maxWidth: '100%',
+        minWidth: 0,
         borderRadius: colors.ui.cartoon ? 18 : 16,
         backgroundColor: isUser ? userMessage.userActionBackground : assistantSurfaces.richCardSurface,
         borderColor: isUser ? userMessage.userActionBackground : assistantSurfaces.blockBorder,

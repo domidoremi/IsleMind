@@ -50,7 +50,8 @@ import { listActiveCompactStates, saveCompactState } from '@/services/ai/compact
 import { appendRuntimeLog } from '@/services/runtimeLog'
 import { buildProviderCompatibilityLogData, createProviderCompatibilityTrace } from '@/services/ai/providerRuntimeDiagnostics'
 import { filterSendableAttachments } from '@/services/attachmentContract'
-import { filterLocalSearchToolManifests } from '@/services/agent/agentSearchToolPolicy'
+import { internalOutputHiddenMessage, isInternalChatDiagnosticOutput } from '@/services/chatInternalOutputGuard'
+import { filterLocalSearchToolManifests, filterProviderNativeChatToolManifests } from '@/services/agent/agentSearchToolPolicy'
 import {
   clearActiveStream,
   getActiveStream,
@@ -1483,7 +1484,7 @@ async function resolveProviderNativeToolContext(input: {
   if (!target) return undefined
   const limits = resolveSettingsAgentRunLimits(input.settings)
   if (!limits.allowReadOnlyTools) return undefined
-  const manifests = filterLocalSearchToolManifests(await listAgentToolManifests(), input.settings)
+  const manifests = filterProviderNativeChatToolManifests(await listAgentToolManifests(), input.settings)
   const adapter = buildAgentProviderToolAdapter({
     manifests,
     target,
@@ -1700,7 +1701,12 @@ async function resolveProviderNativeToolRevision(input: {
   }
 
   return {
-    text: toolOutput,
+    text: fallbackProviderNativeToolRevisionText({
+      tool,
+      toolOutput,
+      firstOutput: input.firstOutput,
+      resultOutput: result.output,
+    }),
   }
 }
 
@@ -1713,6 +1719,27 @@ function isProviderNativeSearchPlaceholderResult(input: {
   if (input.tool.source !== 'builtin' || input.tool.toolName !== 'search_web') return false
   if (metadata.code === 'native' || metadata.mode === 'native') return true
   return /^(Using provider-native search\.|使用服务商原生搜索。|プロバイダーのネイティブ検索を使用します。)$/i.test(input.toolOutput.trim())
+}
+
+function fallbackProviderNativeToolRevisionText(input: {
+  tool: NonNullable<AgentProviderToolAdapterResult['toolNameMap'][number]>
+  toolOutput: string
+  firstOutput: string
+  resultOutput?: string
+}): string {
+  if (!isInternalStructuredProviderToolOutput(input)) return input.toolOutput
+  const existingAnswer = sanitizeToolRevisionAnswerText(input.firstOutput)
+  if (existingAnswer) return existingAnswer
+  return internalOutputHiddenMessage()
+}
+
+function isInternalStructuredProviderToolOutput(input: {
+  tool: NonNullable<AgentProviderToolAdapterResult['toolNameMap'][number]>
+  toolOutput: string
+  resultOutput?: string
+}): boolean {
+  if (input.tool.source === 'rag') return true
+  return isInternalChatDiagnosticOutput(input.toolOutput) || isInternalChatDiagnosticOutput(input.resultOutput)
 }
 
 function upsertProviderNativeToolFailureTrace(input: {

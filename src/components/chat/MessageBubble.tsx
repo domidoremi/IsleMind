@@ -32,6 +32,7 @@ import { RenderGuard } from '@/components/ui/RenderGuard'
 import type { MotionIntensity } from '@/hooks/useMotionPreference'
 import { getAgentEvidenceRepairActionFromMessage, getAgentPendingActionFromMessage, getAgentWorkflowContinuationActionFromMessage, getAgentWorkflowRecoveryActionFromMessage, getAgentWorkflowSkillSuggestionFromMessage } from '@/services/agent/agentMessageAdapter'
 import { clampAgentOutput, redactSensitiveText } from '@/services/agent/agentTrace'
+import { sanitizeInternalChatOutputText } from '@/services/chatInternalOutputGuard'
 
 const STREAMING_LAYOUT_TEXT_STEP = 160
 const STREAMING_RENDER_TEXT_STEP = 120
@@ -118,7 +119,7 @@ function MessageBubbleComponent({
   const previousActionBarOpen = useRef<boolean | null>(null)
   const isUser = message.role === 'user'
   const isStreamingContent = !isUser && (message.status === 'streaming' || message.status === 'sending')
-  const displayText = message.responseText ?? message.content
+  const displayText = sanitizeInternalChatOutputText(message.responseText ?? message.content)
   const renderedDisplayText = useThrottledStreamingText(displayText, isStreamingContent)
   const streamingLayoutStep = isStreamingContent ? Math.floor(displayText.length / STREAMING_LAYOUT_TEXT_STEP) : 0
   const processTraces = useMemo(() => collectVisibleProcessTraces(message), [message.reasoning, message.retrievalTrace, message.toolCalls])

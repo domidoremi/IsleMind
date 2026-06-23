@@ -1944,7 +1944,9 @@
       "providerDisabled": "当前服务商未启用，请在设置中启用后重试。",
       "missingKey": "请先在设置中为当前服务商保存 API Key。",
       "maxTokensExceeded": "当前 Max Tokens 为 {{current}}，超过 {{model}} 的输出上限 {{limit}}。请降低输出长度后重试。",
-      "remoteCompactRequiredFailed": "远程 compact 为必需模式，但当前服务商未声明支持。"
+      "remoteCompactRequiredFailed": "远程 compact 为必需模式，但当前服务商未声明支持。",
+      "providerToolSynthesisFailed": "我没能把工具结果整理成可用回复，已避免展示内部工具输出。请重试，或切换联网搜索方式后再问一次。",
+      "internalOutputHidden": "这条回复包含内部工具输出，已隐藏。请重新发送问题。"
     },
     "setup": {
       "guideTitle": "配置向导",

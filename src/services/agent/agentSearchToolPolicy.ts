@@ -18,6 +18,14 @@ export function filterLocalSearchToolManifests(
   return manifests.filter((manifest) => !isBuiltinSearchToolManifest(manifest))
 }
 
+export function filterProviderNativeChatToolManifests(
+  manifests: AgentToolManifest[],
+  settings: SearchToolSettings
+): AgentToolManifest[] {
+  return filterLocalSearchToolManifests(manifests, settings)
+    .filter(isBuiltinSearchToolManifest)
+}
+
 export function isBuiltinSearchToolRequest(request: AgentToolRequest | undefined): boolean {
   if (!request) return false
   if (request.toolId) return request.toolId === `builtin:${BUILTIN_SERVER_ID}:search_web`
