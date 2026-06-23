@@ -1,4 +1,4 @@
-import { testProviderModelDetailed, type ProviderOperationResult } from '@/services/ai/base'
+import { testProviderModelDetailed, type ProviderModelTestResult, type ProviderOperationResult } from '@/services/ai/base'
 import type { AIProvider } from '@/types'
 
 export interface ProviderModelHealthDeps {
@@ -17,7 +17,7 @@ export async function testProviderModelHealth(
   apiKey: string,
   deps: ProviderModelHealthDeps,
   options: ProviderModelHealthOptions = {},
-): Promise<ProviderOperationResult> {
+): Promise<ProviderOperationResult<ProviderModelTestResult>> {
   const result = await testProviderModelDetailed(provider, model, apiKey, { checkParameters: options.checkParameters })
   await deps.updateProviderCredentialGroupHealth(provider.id, result.credentialGroupId, result.ok)
   await deps.updateProvider(provider.id, {
@@ -26,6 +26,7 @@ export async function testProviderModelHealth(
     ...(options.recordLastTestModel ? { lastTestModel: model } : {}),
     lastTestMessage: result.message,
     lastTestCode: result.code,
+    lastModelTestCapabilityChecks: result.data?.capabilityChecks,
   })
   return result
 }

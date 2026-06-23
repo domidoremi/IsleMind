@@ -4,7 +4,7 @@ import { filterSendableAttachments } from '@/services/attachmentContract'
 import { getReasoningEffortOptions, isCerebrasReasoningModel, isClaudeThinkingModel, isCohereReasoningModel, isDashScopeThinkingModel, isDeepInfraReasoningModel, isDeepSeekThinkingModel, isFireworksReasoningModel, isGeminiThinkingLevelModel, isGeminiThinkingModel, isGroqReasoningModel, isHuggingFaceReasoningModel, isKimiThinkingModel, isMiniMaxThinkingModel, isOpenAIReasoningModel, isPerplexityReasoningModel, isSambaNovaReasoningModel, isSiliconFlowReasoningModel, isTogetherReasoningModel, isXAIReasoningModel, isXAIMultiAgentReasoningModel, isXiaomiMimoReasoningModel, modelDisallowsAnthropicSampling, normalizeFireworksReasoningEffort } from '@/utils/modelReasoning'
 import { supportsXiaomiMimoNativeWebSearch } from '@/services/ai/providerOpenAIRequest'
 import { isBedrockRuntimeProvider } from '@/services/ai/providerAwsBedrockRouting'
-import { getProviderCompatibilityEvidenceForProvider, providerCompatibilityCapabilityCanBeSent, providerCompatibilityCapabilityCanBeSentForProvider, providerCompatibilityReasoningExplicitlyDeclaredForModel } from '@/services/ai/providerCompatibilityContract'
+import { getProviderCompatibilityEvidenceForProvider, providerCompatibilityCapabilityCanBeSentForProvider, providerCompatibilityReasoningExplicitlyDeclaredForModel } from '@/services/ai/providerCompatibilityContract'
 
 export type ProviderConformanceFamily =
   | 'openai'
@@ -509,7 +509,7 @@ function matchesProviderPreset(provider: AIProvider, presetId: string): boolean 
 
 function matchesProviderFamily(provider: AIProvider, presetId: string | undefined, pattern: RegExp): boolean {
   if (presetId && (provider.presetId === presetId || provider.detectedPresetId === presetId)) return true
-  const text = [provider.id, provider.name, provider.baseUrl, provider.models?.join(' ')].filter(Boolean).join(' ')
+  const text = [provider.id, provider.name, provider.baseUrl].filter(Boolean).join(' ')
   return pattern.test(text)
 }
 
@@ -678,8 +678,12 @@ function inferStructuredOutput(
   family: ProviderConformanceFamily,
   protocol: ProviderConformanceProtocol
 ): ProviderCapabilityManifest['structuredOutput'] {
-  const compatibilityId = getProviderCompatibilityEvidenceForProvider(input.provider).id
-  const contractClaimed = providerCompatibilityCapabilityCanBeSent(compatibilityId, 'structuredOutput')
+  const modelConfig = getModelConfig(input.model, input.provider.type, input.provider.modelConfigs)
+  const contractClaimed = providerCompatibilityCapabilityCanBeSentForProvider(
+    input.provider,
+    'structuredOutput',
+    modelSupportsOpenAIResponseFormat(modelConfig, 'openai-compatible'),
+  )
   const appRequestControl = contractClaimed && structuredOutputAppRequestControl(input, family, protocol)
   return {
     contractClaimed,
@@ -708,6 +712,8 @@ function structuredOutputAppRequestControl(
   family: ProviderConformanceFamily,
   protocol: ProviderConformanceProtocol
 ): boolean {
+  const modelConfig = getModelConfig(input.model, input.provider.type, input.provider.modelConfigs)
+  const modelDeclaresOpenAIResponseFormat = modelSupportsOpenAIResponseFormat(modelConfig, protocol)
   if (family === 'openai' && (protocol === 'openai-responses' || protocol === 'openai-chat-completions')) return true
   if (family === 'anthropic' && protocol === 'anthropic-messages') return true
   if (family === 'google' || protocol === 'google-generate-content') return true
@@ -721,7 +727,18 @@ function structuredOutputAppRequestControl(
   if (family === 'sglang' && protocol === 'openai-compatible') return true
   if (family === 'newapi' && protocol === 'openai-compatible') return true
   if (family === 'xai' && (protocol === 'openai-responses' || protocol === 'openai-compatible')) return true
+  if ((protocol === 'openai-compatible' || protocol === 'openai-responses') && modelDeclaresOpenAIResponseFormat) return true
   return protocol === 'openai-compatible' && (family === 'cerebras' || family === 'sambanova')
+}
+
+function modelSupportsOpenAIResponseFormat(modelConfig: ReturnType<typeof getModelConfig>, protocol: ProviderConformanceProtocol): boolean {
+  const supportedParameters = modelConfig.supportedParameters?.map((item) => item.toLowerCase())
+  if (!supportedParameters?.length) return false
+  if (protocol === 'openai-responses') return supportedParameters.includes('text.format')
+  return supportedParameters.includes('response_format') ||
+    supportedParameters.includes('structured_outputs') ||
+    supportedParameters.includes('json_schema') ||
+    supportedParameters.includes('text.format')
 }
 
 function openRouterModelSupportsStructuredOutput(input: ProviderConformanceRequest): boolean {

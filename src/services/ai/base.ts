@@ -1,4 +1,4 @@
-import type { AIModel, Attachment, AIProvider, ChatErrorCode, MessageCitation, MessageUsage, ProcessTrace, ProviderOperationCode, ProviderType, ReasoningEffort, RetrievalSource, WebSearchMode } from '@/types'
+import type { AIModel, Attachment, AIProvider, ChatErrorCode, MessageCitation, MessageUsage, ProcessTrace, ProviderModelTestCapabilityCheck, ProviderOperationCode, ProviderType, ReasoningEffort, RetrievalSource, WebSearchMode } from '@/types'
 import { getModelConfig, getProviderConfigIssue } from '@/types'
 import { st } from '@/i18n/service'
 import { getSecureApiKey } from './secureKey'
@@ -76,6 +76,7 @@ import { isKimiSamplingLocked, normalizeDashScopeThinking, normalizeDeepSeekThin
 import { normalizeGoogleThinkingConfig } from '@/services/ai/providerGoogleThinking'
 import { googleAttachmentPart, googleNativeWebSearchTool } from '@/services/ai/providerGoogleRequest'
 import { buildOpenAIResponsesReasoning, getOpenAIChatMaxTokensField, normalizeOpenAIReasoningEffort, openAICompatibleAttachmentPart, openAICompatibleReasoningReplayField, openAIResponsesAttachmentPart, openAIResponsesNativeWebSearchTool, shouldIncludeOpenAIResponsesEncryptedReasoning, usesOpenAIResponses, xiaomiMimoNativeWebSearchTool } from '@/services/ai/providerOpenAIRequest'
+import { getProviderModelCapabilityStatus, providerModelCapabilityCanBeSent, type ProviderModelCapabilityKey } from '@/services/ai/providerCapabilityMatrix'
 import { providerCompatibilityCapabilityCanBeSentForProvider } from '@/services/ai/providerCompatibilityContract'
 import { providerSupportsNativeSearch } from '@/services/chatProviderNativeToolUtils'
 import { filterSendableAttachments } from '@/services/attachmentContract'
@@ -86,6 +87,14 @@ export type CitationCallback = (citations: MessageCitation[]) => void
 export type TraceCallback = (trace: ProcessTrace) => void
 export type ErrorCallback = (error: Error) => void
 export type { ProviderToolCall } from '@/services/ai/providerToolCalls'
+
+export interface ProviderModelTestResult {
+  requestedModel: string
+  upstreamModel: string
+  usesResponsesApi: boolean
+  checkParameters: boolean
+  capabilityChecks: ProviderModelTestCapabilityCheck[]
+}
 
 export type { ProviderRuntimeError } from '@/services/ai/providerRuntimeResult'
 
@@ -317,6 +326,10 @@ export function rectifyXiaomiMimoWebSearchRequestBodyForTest(input: Parameters<t
   return rectifyXiaomiMimoWebSearchRequestBody(input)
 }
 
+export function rectifyOpenAICompatibleRequestBodyForTest(input: Parameters<typeof rectifyOpenAICompatibleRequestBody>[0]) {
+  return rectifyOpenAICompatibleRequestBody(input)
+}
+
 export function getBodyForTest(req: ChatRequest) {
   return getBody(req)
 }
@@ -459,6 +472,7 @@ function buildOpenAIBody(req: ChatRequest) {
 function buildOpenAICompatibleStructuredOutputFormat(req: ChatRequest): Record<string, unknown> | undefined {
   const structuredOutput = req.structuredOutput
   if (!structuredOutput) return undefined
+  if (!requestModelCapabilityCanBeSent(req, 'responseFormat')) return undefined
   const manifest = resolveProviderCapabilityManifest(req)
   if (!manifest.structuredOutput.appRequestControl) return undefined
   if (
@@ -489,6 +503,8 @@ function buildOpenAICompatibleStructuredOutputFormat(req: ChatRequest): Record<s
 function buildOpenAIResponsesTextConfig(req: ChatRequest): Record<string, unknown> | undefined {
   const structuredOutput = req.structuredOutput
   if (!structuredOutput) return undefined
+  if (!requestModelCapabilityCanBeSent(req, 'responseFormat')) return undefined
+  if (req.provider.type === 'openai-compatible' && !modelDeclaresResponsesTextFormat(req)) return undefined
   const manifest = resolveProviderCapabilityManifest(req)
   if (!manifest.structuredOutput.appRequestControl) return undefined
   if (manifest.family === 'ollama') return undefined
@@ -510,6 +526,11 @@ function buildOpenAIResponsesTextConfig(req: ChatRequest): Record<string, unknow
   return { format }
 }
 
+function modelDeclaresResponsesTextFormat(req: ChatRequest): boolean {
+  const modelConfig = getModelConfig(req.model, req.provider.type, req.provider.modelConfigs)
+  return modelConfig.supportedParameters?.some((item) => item.toLowerCase() === 'text.format') === true
+}
+
 function buildXAIResponseFormat(structuredOutput: ProviderStructuredOutputRequest): Record<string, unknown> | undefined {
   if (structuredOutput.type === 'json_object') return { type: 'json_object' }
   if (!structuredOutput.schema) return undefined
@@ -525,6 +546,7 @@ function buildXAIResponseFormat(structuredOutput: ProviderStructuredOutputReques
 function buildOpenAIResponsesResponseFormat(req: ChatRequest): Record<string, unknown> | undefined {
   const structuredOutput = req.structuredOutput
   if (!structuredOutput) return undefined
+  if (!requestModelCapabilityCanBeSent(req, 'responseFormat')) return undefined
   const manifest = resolveProviderCapabilityManifest(req)
   if (!manifest.structuredOutput.appRequestControl) return undefined
   if (manifest.structuredOutput.documentedRequestShape === 'xai-response-format') return buildXAIResponseFormat(structuredOutput)
@@ -539,14 +561,118 @@ function buildXiaomiMimoAnthropicBody(req: ChatRequest) {
 function contractSendableAttachments(req: ChatRequest): Attachment[] {
   const manifest = resolveProviderCapabilityManifest(req)
   return filterSendableAttachments(req.attachments).filter((attachment) => {
-    if (attachment.type === 'image') return manifest.modalities.input.image
-    return manifest.modalities.input.file
+    if (attachment.type === 'image') {
+      return manifest.modalities.input.image && requestModelCapabilityCanBeSent(req, 'vision')
+    }
+    return manifest.modalities.input.file && requestModelCapabilityCanBeSent(req, 'files')
   })
 }
 
 function contractProviderToolDeclarations(req: ChatRequest): readonly unknown[] | undefined {
   const modelConfig = getModelConfig(req.model, req.provider.type, req.provider.modelConfigs)
-  return supportsNativeProviderTools(req.provider, modelConfig) ? req.providerToolDeclarations : undefined
+  return supportsNativeProviderTools(req.provider, modelConfig) && requestModelCapabilityCanBeSent(req, 'tools')
+    ? req.providerToolDeclarations
+    : undefined
+}
+
+function requestModelCapabilityCanBeSent(req: ChatRequest, capability: ProviderModelCapabilityKey): boolean {
+  if (req.provider.type !== 'openai-compatible') return true
+  if (req.provider.wireProtocol === 'anthropic-compatible') return true
+  return providerModelCapabilityCanBeSent(req.provider, req.model, capability)
+}
+
+const PROVIDER_MODEL_TEST_CAPABILITIES: ProviderModelCapabilityKey[] = [
+  'chat',
+  'streaming',
+  'tools',
+  'vision',
+  'files',
+  'reasoning',
+  'responseFormat',
+  'responsesApi',
+  'nativeSearch',
+]
+
+function buildProviderModelTestResult(input: {
+  req: ChatRequest
+  payload: Record<string, unknown>
+  requestedModel: string
+  upstreamModel: string
+  usesResponsesApi: boolean
+  checkParameters: boolean
+}): ProviderModelTestResult {
+  return {
+    requestedModel: input.requestedModel,
+    upstreamModel: input.upstreamModel,
+    usesResponsesApi: input.usesResponsesApi,
+    checkParameters: input.checkParameters,
+    capabilityChecks: PROVIDER_MODEL_TEST_CAPABILITIES.map((capability) => {
+      const sent = providerModelTestCapabilityWasSent(capability, input.payload, input.usesResponsesApi)
+      const canSend = providerModelCapabilityCanBeSent(input.req.provider, input.req.model, capability)
+      const evidence = getProviderModelCapabilityStatus(input.req.provider, input.req.model, capability)
+      return {
+        capability,
+        status: sent ? 'sent' : canSend ? 'available' : 'blocked',
+        sent,
+        canSend,
+        ...(evidence ? { evidence: { status: evidence.status, source: evidence.source, reason: evidence.reason } } : {}),
+      }
+    }),
+  }
+}
+
+function providerModelTestCapabilityWasSent(
+  capability: ProviderModelCapabilityKey,
+  payload: Record<string, unknown>,
+  usesResponsesApi: boolean
+): boolean {
+  switch (capability) {
+    case 'chat':
+      return payloadHasAnyKey(payload, ['messages', 'input', 'contents'])
+    case 'streaming':
+      return payload.stream === true
+    case 'tools':
+      return payloadHasAnyKey(payload, ['tools', 'functions'])
+    case 'vision':
+      return payloadHasAnyKey(payload, ['image_url', 'input_image', 'inline_data'])
+    case 'files':
+      return payloadHasAnyKey(payload, ['file_data', 'input_file', 'file_id', 'document'])
+    case 'reasoning':
+      return payloadHasAnyKey(payload, ['reasoning', 'reasoning_effort', 'thinking', 'thinkingConfig', 'thinkingBudget', 'thinkingLevel', 'includeThoughts'])
+    case 'responseFormat':
+      return payloadHasResponseFormat(payload)
+    case 'responsesApi':
+      return usesResponsesApi
+    case 'nativeSearch':
+      return payloadHasNativeSearchTool(payload)
+  }
+}
+
+function payloadHasResponseFormat(payload: Record<string, unknown>): boolean {
+  if (Object.prototype.hasOwnProperty.call(payload, 'response_format')) return true
+  const text = payload.text
+  return isPlainRecord(text) && Object.prototype.hasOwnProperty.call(text, 'format')
+}
+
+function payloadHasNativeSearchTool(value: unknown): boolean {
+  if (Array.isArray(value)) return value.some(payloadHasNativeSearchTool)
+  if (!isPlainRecord(value)) return false
+  if (Object.prototype.hasOwnProperty.call(value, 'google_search')) return true
+  if (Object.prototype.hasOwnProperty.call(value, 'web_search_options')) return true
+  const type = typeof value.type === 'string' ? value.type.toLowerCase() : ''
+  if (['web_search', 'web_search_preview'].includes(type)) return true
+  return Object.values(value).some(payloadHasNativeSearchTool)
+}
+
+function payloadHasAnyKey(value: unknown, keys: string[]): boolean {
+  if (Array.isArray(value)) return value.some((item) => payloadHasAnyKey(item, keys))
+  if (!isPlainRecord(value)) return false
+  if (keys.some((key) => Object.prototype.hasOwnProperty.call(value, key))) return true
+  return Object.values(value).some((item) => payloadHasAnyKey(item, keys))
+}
+
+function isPlainRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value)
 }
 
 function buildAnthropicBody(req: ChatRequest) {
@@ -732,8 +858,8 @@ function buildOpenAIResponsesBody(req: ChatRequest) {
   const openAIEffort = normalizeOpenAIReasoningEffort(req)
   const responsesReasoning = buildOpenAIResponsesReasoning(openAIEffort, req.provider)
   const includeEncryptedReasoning = shouldIncludeOpenAIResponsesEncryptedReasoning(req, openAIEffort)
-  const responsesNativeWebSearchTool = req.webSearchMode === 'native'
-    ? openAIResponsesNativeWebSearchTool(req.provider)
+  const responsesNativeWebSearchTool = req.webSearchMode === 'native' && requestModelCapabilityCanBeSent(req, 'nativeSearch')
+    ? openAIResponsesNativeWebSearchTool(req.provider, req.model)
     : undefined
   const tools = mergeProviderToolDeclarations(
     contractProviderToolDeclarations(req),
@@ -1171,7 +1297,7 @@ async function executeHttpSseChat(input: {
       input.onDone(withCredentialGroup(result, input.credentialGroupId))
     } else {
       input.onTrace?.(createStreamModeTrace('buffered', st('providerTrace.streamBufferedFallback')))
-      await retryWithoutStreaming(input.req, input.onChunk, input.onDone, input.onError, input.onCitations, input.onTrace, input.credentialGroupId)
+      await retryWithoutStreaming(input.req, input.onChunk, input.onDone, input.onError, input.onCitations, input.onTrace, input.credentialGroupId, input.controller)
     }
     return
   }
@@ -1291,6 +1417,7 @@ async function fetchChatStreamWithRetry(input: {
   let rectifiedRequest = false
   let mimoThinkingRectified = false
   let mimoWebSearchRectified = false
+  let openAICompatibleMinimalRectification: Pick<OpenAICompatibleRequestRectificationResult, 'kind' | 'failedFields' | 'removedFields' | 'retainedFields'> | undefined
   let retryCount = 0
 
   while (true) {
@@ -1304,6 +1431,19 @@ async function fetchChatStreamWithRetry(input: {
 
       if (response.ok) {
         recordProviderCircuitSuccess(circuitKey)
+        if (openAICompatibleMinimalRectification) {
+          void appendRuntimeLog('request.rectification', {
+            conversationId: input.req.conversationId,
+            providerId: input.req.provider.id,
+            model: input.req.model,
+            kind: openAICompatibleMinimalRectification.kind,
+            failedFields: openAICompatibleMinimalRectification.failedFields,
+            removedFields: openAICompatibleMinimalRectification.removedFields,
+            retainedFields: openAICompatibleMinimalRectification.retainedFields,
+            result: 'success',
+            attempt: retryCount,
+          }, runtimeLogOptions(input.req))
+        }
         return response
       }
 
@@ -1369,6 +1509,64 @@ async function fetchChatStreamWithRetry(input: {
         }
       }
 
+      if (input.req.provider.type === 'openai-compatible' && input.req.provider.wireProtocol !== 'anthropic-compatible' && (response.status === 400 || response.status === 422)) {
+        const errorText = await safeResponseText(response)
+        const rectified = rectifyOpenAICompatibleRequestBody({
+          req: input.req,
+          body,
+          status: response.status,
+          errorText,
+          rectified: openAICompatibleMinimalRectification !== undefined,
+        })
+        if (rectified) {
+          body = JSON.stringify(rectified.body)
+          openAICompatibleMinimalRectification = {
+            kind: rectified.kind,
+            failedFields: rectified.failedFields,
+            removedFields: rectified.removedFields,
+            retainedFields: rectified.retainedFields,
+          }
+          input.onTrace?.(createProviderTrace('system', getWireProviderType(input.req.provider), st('providerTrace.requestRectified'), describeRequestRectification(rectified.kind), 'done', `rectify-${rectified.kind}`, {
+            rectificationKind: rectified.kind,
+            failedFields: rectified.failedFields,
+            removedFields: rectified.removedFields,
+            retainedFields: rectified.retainedFields,
+          }))
+          void appendRuntimeLog('request.rectification', {
+            conversationId: input.req.conversationId,
+            providerId: input.req.provider.id,
+            model: input.req.model,
+            kind: rectified.kind,
+            failedFields: rectified.failedFields,
+            removedFields: rectified.removedFields,
+            retainedFields: rectified.retainedFields,
+            result: 'retrying',
+            attempt: retryCount,
+          }, runtimeLogOptions(input.req))
+          continue
+        }
+        if (openAICompatibleMinimalRectification) {
+          void appendRuntimeLog('request.rectification', {
+            conversationId: input.req.conversationId,
+            providerId: input.req.provider.id,
+            model: input.req.model,
+            kind: openAICompatibleMinimalRectification.kind,
+            failedFields: openAICompatibleMinimalRectification.failedFields,
+            removedFields: openAICompatibleMinimalRectification.removedFields,
+            retainedFields: openAICompatibleMinimalRectification.retainedFields,
+            result: 'failed',
+            status: response.status,
+            attempt: retryCount,
+          }, runtimeLogOptions(input.req))
+          recordProviderCircuitFailure(input.req, circuitKey)
+          return new Response(errorText, { status: response.status, statusText: response.statusText, headers: response.headers })
+        }
+        if (!canRetryStatus || retryCount >= maxRetries) {
+          recordProviderCircuitFailure(input.req, circuitKey)
+          return new Response(errorText, { status: response.status, statusText: response.statusText, headers: response.headers })
+        }
+      }
+
       if (!canRetryStatus || retryCount >= maxRetries) {
         recordProviderCircuitFailure(input.req, circuitKey)
         return response
@@ -1386,6 +1584,139 @@ async function fetchChatStreamWithRetry(input: {
       await delayProviderRetry(providerRetryDelayMs(retryCount - 1))
     }
   }
+}
+
+interface OpenAICompatibleRequestRectificationInput {
+  req: ChatRequest
+  body: string
+  status: number
+  errorText: string
+  rectified: boolean
+}
+
+interface OpenAICompatibleRequestRectificationResult {
+  kind: 'openai_compatible_minimal_chat'
+  body: Record<string, unknown>
+  failedFields: string[]
+  removedFields: string[]
+  retainedFields: string[]
+}
+
+const OPENAI_COMPATIBLE_MINIMAL_CHAT_KEYS = new Set(['model', 'messages', 'stream'])
+const OPENAI_COMPATIBLE_PARAMETER_ERROR_FIELDS = [
+  'tools',
+  'tool_choice',
+  'response_format',
+  'reasoning',
+  'reasoning_effort',
+  'thinking',
+  'enable_thinking',
+  'thinking_budget',
+  'reasoning_split',
+  'stream_options',
+  'parallel_tool_calls',
+  'max_tokens',
+  'max_completion_tokens',
+  'temperature',
+  'top_p',
+  'messages',
+  'content',
+]
+
+function rectifyOpenAICompatibleRequestBody(input: OpenAICompatibleRequestRectificationInput): OpenAICompatibleRequestRectificationResult | undefined {
+  if (input.rectified) return undefined
+  if (input.req.provider.type !== 'openai-compatible' || input.req.provider.wireProtocol === 'anthropic-compatible') return undefined
+  if (input.status !== 400 && input.status !== 422) return undefined
+  if (!isOpenAICompatibleParameterError(input.errorText)) return undefined
+
+  let parsed: Record<string, unknown>
+  try {
+    parsed = JSON.parse(input.body)
+  } catch {
+    return undefined
+  }
+
+  const model = typeof parsed.model === 'string' && parsed.model.trim() ? parsed.model : input.req.model
+  const messages = minimalOpenAICompatibleMessages(parsed.messages)
+  if (!messages.length) return undefined
+
+  const next: Record<string, unknown> = { model, messages }
+  if (typeof parsed.stream === 'boolean') next.stream = parsed.stream
+
+  const messagesChanged = JSON.stringify(parsed.messages) !== JSON.stringify(messages)
+  const parsedKeys = Object.keys(parsed)
+  const removedFields = parsedKeys.filter((key) => !OPENAI_COMPATIBLE_MINIMAL_CHAT_KEYS.has(key) || (key === 'messages' && messagesChanged))
+  const retainedFields = Object.keys(next)
+  const failedFields = inferOpenAICompatibleFailedFields(input.errorText, parsedKeys, removedFields)
+  if (!removedFields.length && !messagesChanged) return undefined
+
+  return {
+    kind: 'openai_compatible_minimal_chat',
+    body: next,
+    failedFields,
+    removedFields,
+    retainedFields,
+  }
+}
+
+function isOpenAICompatibleParameterError(errorText: string): boolean {
+  const text = errorText.toLowerCase()
+  if (/api[_ -]?key|authentication|authorization|permission|quota|billing|rate[_ -]?limit|model\s+(?:not\s+found|not\s+available|does\s+not\s+exist|invalid)/.test(text)) return false
+  return /unsupported|not\s+support(?:ed)?|unknown\s+(?:parameter|param|field)|unrecognized\s+(?:parameter|param|field)|invalid[_ -]?request|invalid\s+(?:request|parameter|param|field|schema)|bad\s+(?:request|schema)|schema|parameter|param|field|tool|response[_ -]?format|reasoning|thinking/.test(text)
+}
+
+function inferOpenAICompatibleFailedFields(errorText: string, bodyKeys: string[], removedFields: string[]): string[] {
+  const text = errorText.toLowerCase()
+  const candidates = [...bodyKeys, ...OPENAI_COMPATIBLE_PARAMETER_ERROR_FIELDS]
+  const matched: string[] = []
+  for (const field of candidates) {
+    if (openAICompatibleErrorMentionsField(text, field) && !matched.includes(field)) matched.push(field)
+  }
+  if (matched.length) return matched
+  return removedFields
+}
+
+function openAICompatibleErrorMentionsField(text: string, field: string): boolean {
+  const normalized = field.toLowerCase()
+  return text.includes(normalized) ||
+    text.includes(normalized.replace(/_/g, ' ')) ||
+    text.includes(normalized.replace(/_/g, '-'))
+}
+
+function minimalOpenAICompatibleMessages(value: unknown): { role: 'system' | 'user' | 'assistant'; content: string }[] {
+  if (!Array.isArray(value)) return []
+  const messages: { role: 'system' | 'user' | 'assistant'; content: string }[] = []
+  for (const item of value) {
+    if (!isOpenAICompatibleRecord(item)) continue
+    const role = item.role === 'system' || item.role === 'user' || item.role === 'assistant' ? item.role : undefined
+    if (!role) continue
+    const content = minimalOpenAICompatibleTextContent(item.content)
+    if (!content.trim()) continue
+    messages.push({ role, content })
+  }
+  return messages
+}
+
+function minimalOpenAICompatibleTextContent(value: unknown): string {
+  if (typeof value === 'string') return value
+  if (Array.isArray(value)) {
+    return value
+      .map((part) => {
+        if (!isOpenAICompatibleRecord(part)) return ''
+        if (typeof part.text === 'string') return part.text
+        if (part.type === 'text' && typeof part.content === 'string') return part.content
+        return ''
+      })
+      .map((part) => part.trim())
+      .filter(Boolean)
+      .join('\n')
+  }
+  if (isOpenAICompatibleRecord(value) && typeof value.text === 'string') return value.text
+  return ''
+}
+
+function isOpenAICompatibleRecord(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === 'object' && !Array.isArray(value)
 }
 
 function rectifyXiaomiMimoThinkingRequestBody(input: {
@@ -1611,7 +1942,8 @@ async function retryWithoutStreaming(
   onError: ErrorCallback,
   onCitations?: CitationCallback,
   onTrace?: TraceCallback,
-  credentialGroupId?: string
+  credentialGroupId?: string,
+  controller?: AbortController
 ): Promise<void> {
   try {
     const fallbackReq = { ...req, stream: false }
@@ -1623,15 +1955,16 @@ async function retryWithoutStreaming(
       headers: getHeaders(fallbackReq.provider),
       body: getBody(fallbackReq),
     })
-    const response = await fetchWithTimeout(
-      fallbackPreparedRequest.url,
-      {
-        method: 'POST',
-        headers: fallbackPreparedRequest.headers,
-        body: fallbackPreparedRequest.body,
-      },
-      CHAT_REQUEST_TIMEOUT_MS
-    )
+    const response = await fetchChatStreamWithRetry({
+      req: fallbackReq,
+      url: fallbackPreparedRequest.url,
+      headers: fallbackPreparedRequest.headers,
+      body: fallbackPreparedRequest.body,
+      stream: false,
+      controller: controller ?? new AbortController(),
+      credentialGroupId,
+      onTrace,
+    })
     if (!response.ok) {
       const errorText = await safeResponseText(response)
       const recovered = await tryRuntimeFallback({ req: fallbackReq, status: response.status, responseText: errorText, credentialGroupId, onChunk, onDone, onCitations, onTrace })
@@ -1697,7 +2030,7 @@ export async function testProviderModel(provider: AIProvider, model: string, api
   return (await testProviderModelDetailed(provider, model, apiKey)).ok
 }
 
-export async function testProviderModelDetailed(provider: AIProvider, model: string, apiKey: string, options: { checkParameters?: boolean } = {}): Promise<ProviderOperationResult> {
+export async function testProviderModelDetailed(provider: AIProvider, model: string, apiKey: string, options: { checkParameters?: boolean; timeoutMs?: number } = {}): Promise<ProviderOperationResult<ProviderModelTestResult>> {
   const upstreamModel = resolveProviderModelAlias(provider, model)
   if (!apiKey.trim()) {
     return failure('missing_key', st('providerOperation.saveApiKeyFirst'))
@@ -1707,16 +2040,17 @@ export async function testProviderModelDetailed(provider: AIProvider, model: str
   const p = { ...provider, apiKey: apiKey.trim() }
   const issue = getProviderConfigIssue(p, apiKey)
   if (issue) {
-    return failure(issue.code === 'bad_base_url' ? 'bad_base_url' : 'credential_mismatch', st(issue.messageKey ?? issue.message, undefined, issue.message))
+    return failure<ProviderModelTestResult>(issue.code === 'bad_base_url' ? 'bad_base_url' : 'credential_mismatch', st(issue.messageKey ?? issue.message, undefined, issue.message))
   }
   const hostedIssue = getHostedProviderSupportIssue(p, 'chat')
   if (hostedIssue) {
-    return failure('models_endpoint_unavailable', hostedIssue.message, undefined, selectedGroupId)
+    return failure<ProviderModelTestResult>('models_endpoint_unavailable', hostedIssue.message, undefined, selectedGroupId)
   }
   if (!upstreamModel.trim()) {
-    return failure('model_unavailable', st('providerOperation.chooseModelFirst'))
+    return failure<ProviderModelTestResult>('model_unavailable', st('providerOperation.chooseModelFirst'))
   }
 
+  let testData: ProviderModelTestResult | undefined
   try {
     const modelTestReasoningEffort = options.checkParameters === false ? undefined : getModelTestReasoningEffort(p, upstreamModel)
     const modelTestReq = {
@@ -1728,11 +2062,12 @@ export async function testProviderModelDetailed(provider: AIProvider, model: str
       maxTokens: getModelTestMaxTokens(p, upstreamModel, modelTestReasoningEffort),
       stream: false,
     }
+    const usesResponsesApi = usesOpenAIResponses(modelTestReq)
     const url = resolveProviderEndpoint({
       provider: p,
       model: upstreamModel,
       stream: false,
-      usesResponsesApi: usesOpenAIResponses(modelTestReq),
+      usesResponsesApi,
     })
     const headers = getHeaders(p)
     const routeResult = getBodyWithRoute(modelTestReq, {
@@ -1742,20 +2077,29 @@ export async function testProviderModelDetailed(provider: AIProvider, model: str
       })
     const rawBody = routeResult.body
     const payload = options.checkParameters === false ? reduceModelTestBody(rawBody) : rawBody
+    testData = buildProviderModelTestResult({
+      req: modelTestReq,
+      payload,
+      requestedModel: model,
+      upstreamModel,
+      usesResponsesApi,
+      checkParameters: options.checkParameters !== false,
+    })
     const prepared = prepareHttpJsonRequest({ provider: p, model: upstreamModel, url, headers, body: payload })
 
-    const response = await fetchWithTimeout(prepared.url, { method: 'POST', headers: prepared.headers, body: prepared.body }, MODEL_TEST_TIMEOUT_MS)
+    const response = await fetchWithTimeout(prepared.url, { method: 'POST', headers: prepared.headers, body: prepared.body }, options.timeoutMs ?? MODEL_TEST_TIMEOUT_MS)
     if (!response.ok) {
       const errorText = await safeResponseText(response)
-      return failure(classifyHttpStatus(response.status, errorText, upstreamModel, provider), formatProviderHttpError(response.status, errorText, provider, model), undefined, selectedGroupId)
+      return failure(classifyHttpStatus(response.status, errorText, upstreamModel, provider), formatProviderHttpError(response.status, errorText, provider, model), testData, selectedGroupId)
     }
     const text = await parseProviderNonStreamingText(response, getWireProviderType(p))
     if (!text.trim()) {
-      return failure('unknown', st('providerOperation.emptyModelResponse'), undefined, selectedGroupId)
+      return failure('unknown', st('providerOperation.emptyModelResponse'), testData, selectedGroupId)
     }
-    return success(st('providerOperation.modelTestPassed'), undefined, selectedGroupId)
+    return success(st('providerOperation.modelTestPassed'), testData, selectedGroupId)
   } catch (error) {
-    return providerFetchFailure(error, selectedGroupId)
+    const result = providerFetchFailure<ProviderModelTestResult>(error, selectedGroupId)
+    return testData ? { ...result, data: testData } : result
   }
 }
 
@@ -1764,7 +2108,7 @@ export async function fetchProviderModelConfigs(provider: AIProvider, apiKey: st
   return result.ok ? result.data ?? [] : []
 }
 
-export async function fetchProviderModelConfigsDetailed(provider: AIProvider, apiKey: string): Promise<ProviderOperationResult<AIModel[]>> {
+export async function fetchProviderModelConfigsDetailed(provider: AIProvider, apiKey: string, options: { timeoutMs?: number } = {}): Promise<ProviderOperationResult<AIModel[]>> {
   if (!apiKey.trim()) {
     return failure('missing_key', st('providerOperation.saveApiKeyFirst'))
   }
@@ -1778,7 +2122,7 @@ export async function fetchProviderModelConfigsDetailed(provider: AIProvider, ap
     return failure<AIModel[]>('models_endpoint_unavailable', hostedIssue.message, undefined, findCredentialGroupIdForKey(provider, apiKey))
   }
   try {
-    const models = await fetchProviderModelConfigsFromRemote(p, PROVIDER_REQUEST_TIMEOUT_MS)
+    const models = await fetchProviderModelConfigsFromRemote(p, options.timeoutMs ?? PROVIDER_REQUEST_TIMEOUT_MS)
     if (!models.length) {
       return failure<AIModel[]>('empty_models', st('providerOperation.emptyModels'), undefined, findCredentialGroupIdForKey(provider, apiKey))
     }
@@ -1789,7 +2133,7 @@ export async function fetchProviderModelConfigsDetailed(provider: AIProvider, ap
   return failure('models_endpoint_unavailable', st('providerOperation.modelsEndpointUnavailable'))
 }
 
-export async function syncProviderCredentialGroupsDetailed(provider: AIProvider): Promise<ProviderOperationResult<AIProvider>> {
+export async function syncProviderCredentialGroupsDetailed(provider: AIProvider, options: { timeoutMs?: number } = {}): Promise<ProviderOperationResult<AIProvider>> {
   const groups = provider.credentialGroups?.filter((group) => group.enabled && group.apiKey?.trim()) ?? []
   if (!groups.length && !provider.apiKey.trim()) {
     return failure('missing_key', st('providerOperation.saveTokenGroupFirst'))
@@ -1801,7 +2145,7 @@ export async function syncProviderCredentialGroupsDetailed(provider: AIProvider)
     { ...provider, credentialGroups: sourceGroups },
     {
       fetchModels: async (source, group) => {
-        const result = await fetchProviderModelConfigsDetailed(source, group.apiKey ?? '')
+        const result = await fetchProviderModelConfigsDetailed(source, group.apiKey ?? '', { timeoutMs: options.timeoutMs })
         if (!result.ok || !result.data?.length) {
           throw new Error(result.message)
         }

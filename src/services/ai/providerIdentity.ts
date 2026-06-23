@@ -120,5 +120,5 @@ export function shouldRequestDashScopeStreamUsage(req: ProviderStreamUsageReques
 }
 
 function providerIdentityText(provider: AIProvider): string {
-  return [provider.id, provider.name, provider.baseUrl, provider.models?.join(' ')].filter(Boolean).join(' ')
+  return [provider.id, provider.name, provider.baseUrl].filter(Boolean).join(' ')
 }

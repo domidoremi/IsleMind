@@ -791,6 +791,7 @@ async function createAssistantReply(conversationId: string) {
     maxOutputTokens: runtimeConversation.maxTokens,
     systemPrompt,
     reasoningEffort: runtimeConversation.reasoningEffort,
+    provider,
     providerType: provider.type,
     model: upstreamModel,
     localCompression: false,
@@ -814,6 +815,7 @@ async function createAssistantReply(conversationId: string) {
       maxOutputTokens: runtimeConversation.maxTokens,
       systemPrompt,
       reasoningEffort: runtimeConversation.reasoningEffort,
+      provider,
       providerType: provider.type,
       model: upstreamModel,
     })

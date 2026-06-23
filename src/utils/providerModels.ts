@@ -2,9 +2,58 @@ import { getModelConfig } from '@/types'
 import type { AIProvider, ModelAlias, ProviderCredentialGroup } from '@/types'
 import { normalizeModelId } from '@/utils/modelReasoning'
 
-export type ModelQuickGroup = 'all' | 'gpt' | 'claude' | 'gemini' | 'deepseek' | 'qwen' | 'kimi' | 'doubao' | 'grok' | 'glm' | 'minimax' | 'mimo' | 'llama' | 'other'
+export type ModelQuickGroup =
+  | 'all'
+  | 'gpt'
+  | 'claude'
+  | 'gemini'
+  | 'gemma'
+  | 'deepseek'
+  | 'qwen'
+  | 'kimi'
+  | 'doubao'
+  | 'grok'
+  | 'glm'
+  | 'minimax'
+  | 'mistral'
+  | 'llama'
+  | 'command'
+  | 'sonar'
+  | 'hunyuan'
+  | 'ernie'
+  | 'yi'
+  | 'baichuan'
+  | 'stepfun'
+  | 'gpt-oss'
+  | 'mimo'
+  | 'other'
 
-export const MODEL_QUICK_GROUPS: ModelQuickGroup[] = ['all', 'gpt', 'claude', 'gemini', 'deepseek', 'qwen', 'kimi', 'doubao', 'grok', 'glm', 'minimax', 'mimo', 'llama', 'other']
+export const MODEL_QUICK_GROUPS: ModelQuickGroup[] = [
+  'all',
+  'gpt',
+  'claude',
+  'gemini',
+  'gemma',
+  'deepseek',
+  'qwen',
+  'kimi',
+  'doubao',
+  'grok',
+  'glm',
+  'minimax',
+  'mistral',
+  'llama',
+  'command',
+  'sonar',
+  'hunyuan',
+  'ernie',
+  'yi',
+  'baichuan',
+  'stepfun',
+  'gpt-oss',
+  'mimo',
+  'other',
+]
 
 const HISTORICAL_DEEPSEEK_MODEL_IDS = new Set([
   'deepseek-v4-pro',
@@ -175,6 +224,7 @@ function isDeepSeekProvider(provider?: AIProvider): boolean {
 
 function inferModelFamilyFromText(text: string, includeProviderIdentity: boolean): Exclude<ModelQuickGroup, 'all'> | null {
   if (!text) return null
+  if (/gpt[-_. ]?oss|open[-_. ]?weight/.test(text)) return 'gpt-oss'
   if (/deepseek/.test(text)) return 'deepseek'
   if (/qwen|qwq|qvq|dashscope|tongyi|aliyun/.test(text)) return 'qwen'
   if (/kimi|moonshot/.test(text)) return 'kimi'
@@ -182,9 +232,18 @@ function inferModelFamilyFromText(text: string, includeProviderIdentity: boolean
   if (/grok|(^|[-_./])xai($|[-_./])|api\.x\.ai/.test(text)) return 'grok'
   if (/glm|bigmodel|zhipu/.test(text)) return 'glm'
   if (/minimax|mini[-_ ]?max|minimaxi/.test(text)) return 'minimax'
+  if (/mistral|codestral|magistral/.test(text)) return 'mistral'
+  if (/cohere|command[-_. ]?(?:a|r|light|nightly|plus)?/.test(text)) return 'command'
+  if (/sonar|perplexity/.test(text)) return 'sonar'
+  if (/hunyuan|tencent/.test(text)) return 'hunyuan'
+  if (/ernie|qianfan|baidu|wenxin/.test(text)) return 'ernie'
+  if (/(^|[-_./])(?:yi|01[-_. ]?ai|zero[-_. ]?one|lingyiwanwu)(?:$|[-_./])/.test(text)) return 'yi'
+  if (/baichuan/.test(text)) return 'baichuan'
+  if (/step[-_. ]?fun|(^|[-_./])step[-_./]?\d/.test(text)) return 'stepfun'
   if (/mimo|xiaomi/.test(text)) return 'mimo'
   if (/claude|anthropic/.test(text)) return 'claude'
   if (/gemini|google/.test(text)) return 'gemini'
+  if (/gemma/.test(text)) return 'gemma'
   if (/llama|(^|[-_./])meta($|[-_./])/.test(text)) return 'llama'
   if (/(^|[-_./])(gpt|o[1-9])/.test(text) || (includeProviderIdentity && /api\.openai\.com/.test(text))) return 'gpt'
   return null

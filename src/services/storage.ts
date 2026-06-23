@@ -321,11 +321,14 @@ function normalizeTraces(traces: ProcessTrace[] | undefined): ProcessTrace[] | u
 
 function normalizeUsage(usage: Conversation['messages'][number]['usage']) {
   if (!usage || (usage.source !== 'provider' && usage.source !== 'estimated')) return undefined
+  const cachedInputTokens = finiteNumber(usage.cachedInputTokens)
+  const reasoningTokens = finiteNumber(usage.reasoningTokens)
   return {
     inputTokens: finiteNumber(usage.inputTokens),
     outputTokens: finiteNumber(usage.outputTokens),
     totalTokens: finiteNumber(usage.totalTokens),
-    reasoningTokens: finiteNumber(usage.reasoningTokens),
+    ...(cachedInputTokens !== undefined ? { cachedInputTokens } : {}),
+    ...(reasoningTokens !== undefined ? { reasoningTokens } : {}),
     source: usage.source,
   }
 }

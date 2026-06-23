@@ -32,6 +32,7 @@ interface SettingsState {
   reorderProviders: (providerIds: string[]) => void
   removeProvider: (id: string) => Promise<void>
   clearAllProviders: () => Promise<void>
+  clearInvalidProviders: () => Promise<number>
   setProviderApiKey: (id: string, apiKey: string) => Promise<void>
   getSecureApiKey: (id: string) => Promise<string | null>
   setProviderCredentialGroupKey: (providerId: string, groupId: string, apiKey: string) => Promise<void>
@@ -328,13 +329,8 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
   },
 
   removeProvider: async (id: string) => {
-    await deleteSecureItem(secureProviderKey(id))
     const provider = get().providers.find((item) => item.id === id)
-    await Promise.all([
-      ...(provider?.credentialGroups ?? []).map((group) => deleteSecureItem(secureProviderGroupKey(id, group.id))),
-      removeProviderHealthRecordsByProviderId(id),
-      invalidateCompactStatesByProvider(id, 'provider_removed'),
-    ])
+    if (provider) await clearProviderArtifacts(provider, 'provider_removed')
     set((state) => {
       const updated = state.providers.filter((p) => p.id !== id)
       const defaultProvider = updated.some((item) => item.id === state.settings.defaultProvider)
@@ -367,6 +363,35 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
         settings,
       }
     })
+  },
+
+  clearInvalidProviders: async () => {
+    const entries = await Promise.all(get().providers.map(async (provider) => ({
+      stored: provider,
+      hydrated: await get().hydrateProviderKey(provider.id) ?? provider,
+    })))
+    const invalidProviders = entries
+      .filter(({ hydrated }) => isInvalidProviderConfiguration(hydrated))
+      .map(({ stored }) => stored)
+    if (!invalidProviders.length) return 0
+
+    const invalidIds = new Set(invalidProviders.map((provider) => provider.id))
+    for (const provider of invalidProviders) {
+      await clearProviderArtifacts(provider, 'invalid_provider_cleared')
+    }
+    set((state) => {
+      const updated = state.providers.filter((provider) => !invalidIds.has(provider.id))
+      const defaultProvider = updated.some((item) => item.id === state.settings.defaultProvider)
+        ? state.settings.defaultProvider
+        : updated[0]?.id ?? null
+      const settings = sanitizeSettingsUrlFields(defaultProvider === state.settings.defaultProvider
+        ? state.settings
+        : { ...state.settings, defaultProvider })
+      saveData('PROVIDERS', updated)
+      saveData('SETTINGS', settings)
+      return { providers: updated, settings }
+    })
+    return invalidProviders.length
   },
 
   setProviderApiKey: async (id: string, apiKey: string) => {
@@ -575,11 +600,30 @@ async function clearProviderCatalogSecrets(providers: AIProvider[]): Promise<voi
   ])
 }
 
+async function clearProviderArtifacts(provider: AIProvider, reason: string): Promise<void> {
+  await Promise.all([
+    deleteSecureItem(secureProviderKey(provider.id)),
+    ...(provider.credentialGroups ?? []).map((group) => deleteSecureItem(secureProviderGroupKey(provider.id, group.id))),
+    removeProviderHealthRecordsByProviderId(provider.id),
+    invalidateCompactStatesByProvider(provider.id, reason),
+  ])
+}
+
 async function clearProviderRuntimeState(): Promise<void> {
   await Promise.all([
     clearProviderHealthSnapshot(),
     invalidateAllCompactStates('providers_cleared'),
   ])
+}
+
+function isInvalidProviderConfiguration(provider: AIProvider): boolean {
+  const credential = providerPrimaryCredential(provider)
+  if (!credential) return true
+  return !!getProviderConfigIssue(provider, credential)
+}
+
+function providerPrimaryCredential(provider: AIProvider): string {
+  return provider.apiKey.trim() || provider.credentialGroups?.find((group) => group.apiKey?.trim())?.apiKey?.trim() || ''
 }
 
 function sanitizeCredentialGroups(groups: ProviderCredentialGroup[] | undefined, provider: AIProvider): ProviderCredentialGroup[] {

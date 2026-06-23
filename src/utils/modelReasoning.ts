@@ -1,6 +1,6 @@
 import { getModelConfig } from '@/types'
 import type { AIProvider, ReasoningEffort } from '@/types'
-import { providerCompatibilityCapabilityCanBeSentForProvider } from '@/services/ai/providerCompatibilityContract'
+import { getProviderCompatibilityEvidenceForProvider, providerCompatibilityCapabilityCanBeSentForProvider } from '@/services/ai/providerCompatibilityContract'
 import { normalizeModelId as normalizeSharedModelId } from '@/utils/modelId'
 
 export type ReasoningControlValue = ReasoningEffort | 'default'
@@ -9,28 +9,31 @@ export function getReasoningEffortOptions(provider: AIProvider | undefined, mode
   if (!provider || !model) return []
   const config = getModelConfig(model, provider.type, provider.modelConfigs)
   if (!providerAllowsReasoningControls(provider, config)) return []
+  const canUseConfigReasoning = canUseModelReasoningMetadata(provider, config)
   if (config.reasoningMode === 'minimax-thinking') {
-    return isMiniMaxThinkingModel(provider, model) ? config.reasoningEfforts ?? ['none', 'high'] : []
+    return canUseConfigReasoning && isMiniMaxThinkingModel(provider, model) ? config.reasoningEfforts ?? ['none', 'high'] : []
   }
-  if (config.reasoningEfforts?.length) return config.reasoningEfforts
-  if (config.reasoningMode === 'openai-effort') return ['low', 'medium', 'high']
-  if (config.reasoningMode === 'deepseek-thinking') return ['none', 'low', 'medium', 'high', 'xhigh']
-  if (config.reasoningMode === 'anthropic-thinking') return ['none', 'low', 'medium', 'high', 'xhigh', 'max']
-  if (config.reasoningMode === 'dashscope-thinking') return ['none', 'low', 'medium', 'high']
-  if (config.reasoningMode === 'kimi-thinking') return ['none', 'high']
-  if (config.reasoningMode === 'xai-reasoning-effort') return isXAIMultiAgentReasoningModel(model) ? ['low', 'medium', 'high', 'xhigh'] : ['none', 'low', 'medium', 'high']
-  if (config.reasoningMode === 'groq-reasoning-effort') return groqReasoningEffortOptions(model)
-  if (config.reasoningMode === 'together-reasoning-effort') return togetherReasoningEffortOptions(model)
-  if (config.reasoningMode === 'fireworks-reasoning-effort') return getFireworksReasoningEffortOptions(model)
-  if (config.reasoningMode === 'perplexity-reasoning-effort') return ['minimal', 'low', 'medium', 'high']
-  if (config.reasoningMode === 'cohere-reasoning-effort') return ['none', 'high']
-  if (config.reasoningMode === 'cerebras-reasoning-effort') return cerebrasReasoningEffortOptions(model)
-  if (config.reasoningMode === 'sambanova-reasoning-effort') return sambanovaReasoningEffortOptions(model)
-  if (config.reasoningMode === 'huggingface-reasoning-effort') return huggingFaceReasoningEffortOptions(model)
-  if (config.reasoningMode === 'deepinfra-reasoning-effort') return deepInfraReasoningEffortOptions(model)
-  if (config.reasoningMode === 'siliconflow-thinking-budget') return siliconFlowThinkingBudgetOptions(model)
-  if (config.reasoningMode === 'gemini-thinking-level') return ['minimal', 'low', 'medium', 'high']
-  if (config.reasoningMode === 'gemini-thinking-budget') return ['none', 'minimal', 'low', 'medium', 'high', 'xhigh']
+  if (canUseConfigReasoning) {
+    if (config.reasoningEfforts?.length) return config.reasoningEfforts
+    if (config.reasoningMode === 'openai-effort') return ['low', 'medium', 'high']
+    if (config.reasoningMode === 'deepseek-thinking') return ['none', 'low', 'medium', 'high', 'xhigh']
+    if (config.reasoningMode === 'anthropic-thinking') return ['none', 'low', 'medium', 'high', 'xhigh', 'max']
+    if (config.reasoningMode === 'dashscope-thinking') return ['none', 'low', 'medium', 'high']
+    if (config.reasoningMode === 'kimi-thinking') return ['none', 'high']
+    if (config.reasoningMode === 'xai-reasoning-effort') return isXAIMultiAgentReasoningModel(model) ? ['low', 'medium', 'high', 'xhigh'] : ['none', 'low', 'medium', 'high']
+    if (config.reasoningMode === 'groq-reasoning-effort') return groqReasoningEffortOptions(model)
+    if (config.reasoningMode === 'together-reasoning-effort') return togetherReasoningEffortOptions(model)
+    if (config.reasoningMode === 'fireworks-reasoning-effort') return getFireworksReasoningEffortOptions(model)
+    if (config.reasoningMode === 'perplexity-reasoning-effort') return ['minimal', 'low', 'medium', 'high']
+    if (config.reasoningMode === 'cohere-reasoning-effort') return ['none', 'high']
+    if (config.reasoningMode === 'cerebras-reasoning-effort') return cerebrasReasoningEffortOptions(model)
+    if (config.reasoningMode === 'sambanova-reasoning-effort') return sambanovaReasoningEffortOptions(model)
+    if (config.reasoningMode === 'huggingface-reasoning-effort') return huggingFaceReasoningEffortOptions(model)
+    if (config.reasoningMode === 'deepinfra-reasoning-effort') return deepInfraReasoningEffortOptions(model)
+    if (config.reasoningMode === 'siliconflow-thinking-budget') return siliconFlowThinkingBudgetOptions(model)
+    if (config.reasoningMode === 'gemini-thinking-level') return ['minimal', 'low', 'medium', 'high']
+    if (config.reasoningMode === 'gemini-thinking-budget') return ['none', 'minimal', 'low', 'medium', 'high', 'xhigh']
+  }
 
   if (isSiliconFlowReasoningModel(provider, model)) return siliconFlowThinkingBudgetOptions(model)
   if (isOpenAIReasoningModel(provider, model)) return ['low', 'medium', 'high']
@@ -70,21 +73,37 @@ function providerAllowsReasoningControls(provider: AIProvider, config: ReturnTyp
   return providerCompatibilityCapabilityCanBeSentForProvider(provider, 'reasoning', explicitDeclaration)
 }
 
+function canUseModelReasoningMetadata(provider: AIProvider, config: ReturnType<typeof getModelConfig>): boolean {
+  if (!config.reasoningMode && !config.reasoningEfforts?.length) return false
+  if (config.source === 'remote') return true
+  if (providerModelConfigWasDeclared(provider, config.id)) return true
+  return getProviderCompatibilityEvidenceForProvider(provider).auditState !== 'protocol-reference'
+}
+
+function providerModelConfigWasDeclared(provider: AIProvider, modelId: string): boolean {
+  return (provider.modelConfigs ?? []).some((item) => sameModelId(item.id, modelId))
+}
+
+function sameModelId(left: string | undefined, right: string | undefined): boolean {
+  return Boolean(left && right && left.trim().toLowerCase() === right.trim().toLowerCase())
+}
+
 export function modelSupportsSamplingControls(provider: AIProvider | undefined, model: string | undefined, reasoningEffort?: ReasoningEffort): boolean {
   if (!provider || !model) return true
   if (modelDisallowsAnthropicSampling(model)) return false
   const config = getModelConfig(model, provider.type, provider.modelConfigs)
   if (config.maxTemperature !== undefined && config.maxTemperature <= 0) return false
-  if (isOpenAIReasoningModel(provider, model) || config.reasoningMode === 'openai-effort') return false
-  if (isKimiThinkingModel(provider, model) || config.reasoningMode === 'kimi-thinking') return false
-  if ((isDeepSeekThinkingModel(provider, model) || config.reasoningMode === 'deepseek-thinking') && reasoningEffort !== 'none' && reasoningEffort !== 'minimal') return false
+  const canUseConfigReasoning = canUseModelReasoningMetadata(provider, config)
+  if (isOpenAIReasoningModel(provider, model) || (canUseConfigReasoning && config.reasoningMode === 'openai-effort')) return false
+  if (isKimiThinkingModel(provider, model) || (canUseConfigReasoning && config.reasoningMode === 'kimi-thinking')) return false
+  if ((isDeepSeekThinkingModel(provider, model) || (canUseConfigReasoning && config.reasoningMode === 'deepseek-thinking')) && reasoningEffort !== 'none' && reasoningEffort !== 'minimal') return false
   const reasoningEnabled = Boolean(reasoningEffort && reasoningEffort !== 'none' && reasoningEffort !== 'minimal')
   if (!reasoningEnabled) return true
   return ![
     'anthropic-thinking',
     'deepseek-thinking',
     'dashscope-thinking',
-  ].includes(config.reasoningMode ?? '') &&
+  ].includes(canUseConfigReasoning ? config.reasoningMode ?? '' : '') &&
     !isClaudeThinkingModel(provider, model) &&
     !isDeepSeekThinkingModel(provider, model) &&
     !isDashScopeThinkingModel(provider, model)
@@ -332,7 +351,7 @@ export function isXiaomiMimoReasoningModel(provider: AIProvider, model: string):
 
 function isProviderFamily(provider: AIProvider, presetId: string, pattern: RegExp): boolean {
   if (provider.presetId === presetId || provider.detectedPresetId === presetId) return true
-  const text = [provider.id, provider.name, provider.baseUrl, provider.models?.join(' ')].filter(Boolean).join(' ')
+  const text = [provider.id, provider.name, provider.baseUrl].filter(Boolean).join(' ')
   return pattern.test(text)
 }
 

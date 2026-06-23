@@ -6,6 +6,16 @@ import { resolveProviderModelAliasAccess, type ProviderModelAccessInput } from '
 
 const ACTIVATION_TEST_MODELS_PER_CREDENTIAL = 3
 
+interface ProviderActivationOptions {
+  enable?: boolean
+  testModel?: string
+  checkParameters?: boolean
+  accessSettings?: ProviderModelAccessInput['settings']
+  maxTestCandidates?: number
+  modelSyncTimeoutMs?: number
+  modelTestTimeoutMs?: number
+}
+
 export interface ProviderActivationResult {
   providerId: string
   providerName: string
@@ -58,9 +68,9 @@ export async function activateProviderWithHealthCheck(
 export async function syncAndTestProvider(
   provider: AIProvider,
   deps: ProviderActivationDeps,
-  options: { enable?: boolean; testModel?: string; checkParameters?: boolean; accessSettings?: ProviderModelAccessInput['settings'] } = {}
+  options: ProviderActivationOptions = {}
 ): Promise<ProviderActivationResult> {
-  if (options.enable) {
+  if (options.enable && !provider.enabled) {
     await deps.updateProvider(provider.id, { enabled: true })
     deps.onStage?.({
       providerId: provider.id,
@@ -110,6 +120,7 @@ export async function syncAndTestProvider(
       lastTestStatus: 'idle',
       lastTestMessage: undefined,
       lastTestCode: undefined,
+      lastModelTestCapabilityChecks: undefined,
     })
     deps.onStage?.({
       providerId: provider.id,
@@ -129,7 +140,7 @@ export async function syncAndTestProvider(
     message: st('providerActivation.stageSyncing', { name: provider.name }),
     tone: 'mint',
   })
-  const sync = await syncProviderCredentialGroupsDetailed(current)
+  const sync = await syncProviderCredentialGroupsDetailed(current, { timeoutMs: options.modelSyncTimeoutMs })
   if (sync.data) {
     await deps.updateProvider(provider.id, sync.data)
     current = await deps.hydrateProviderKey(provider.id) ?? sync.data
@@ -141,13 +152,17 @@ export async function syncAndTestProvider(
     collectSyncFailures(result, current, sync.message)
   }
 
-  const candidates = buildTestCandidates(current, options.testModel, options.accessSettings)
+  const candidates = limitActivationCandidates(
+    buildTestCandidates(current, options.testModel, options.accessSettings),
+    options.maxTestCandidates
+  )
   if (!candidates.length) {
     pushFailure(result, st('providerActivation.noModels'), { code: 'empty_models' })
     await deps.updateProvider(provider.id, {
       lastTestStatus: 'idle',
       lastTestMessage: undefined,
       lastTestCode: undefined,
+      lastModelTestCapabilityChecks: undefined,
     })
     deps.onStage?.({
       providerId: provider.id,
@@ -166,9 +181,11 @@ export async function syncAndTestProvider(
     message: st('providerActivation.stageTesting', { name: provider.name }),
     tone: 'mint',
   })
+  let lastCapabilityChecks: AIProvider['lastModelTestCapabilityChecks'] | undefined
   for (const [index, candidate] of candidates.entries()) {
-    const test = await testProviderModelDetailed(current, candidate.model, candidate.apiKey, { checkParameters: options.checkParameters })
+    const test = await testProviderModelDetailed(current, candidate.model, candidate.apiKey, { checkParameters: options.checkParameters, timeoutMs: options.modelTestTimeoutMs })
     await deps.updateProviderCredentialGroupHealth(provider.id, test.credentialGroupId ?? candidate.groupId, test.ok)
+    lastCapabilityChecks = test.data?.capabilityChecks ?? lastCapabilityChecks
     result.tested = true
     if (test.ok) {
       result.testOk = true
@@ -180,6 +197,7 @@ export async function syncAndTestProvider(
         lastTestModel: candidate.model,
         lastTestMessage: test.message,
         lastTestCode: test.code,
+        lastModelTestCapabilityChecks: test.data?.capabilityChecks,
       })
       deps.onStage?.({
         providerId: provider.id,
@@ -208,6 +226,7 @@ export async function syncAndTestProvider(
     lastTestModel: undefined,
     lastTestMessage: dedupeMessages(result.failures.map((item) => item.message)).slice(0, 3).join('\n') || st('providerActivation.noModels'),
     lastTestCode: lastFailure?.code ?? 'unknown',
+    lastModelTestCapabilityChecks: lastCapabilityChecks,
   })
   deps.onStage?.({
     providerId: provider.id,
@@ -268,6 +287,11 @@ function buildTestCandidates(provider: AIProvider, requestedModel?: string, sett
       .map((model) => ({ apiKey: provider.apiKey.trim(), model }))
   }
   return []
+}
+
+function limitActivationCandidates<T>(candidates: T[], maxCandidates?: number): T[] {
+  if (maxCandidates === undefined || !Number.isFinite(maxCandidates)) return candidates
+  return candidates.slice(0, Math.max(1, Math.floor(maxCandidates)))
 }
 
 function selectActivationTestModels(provider: AIProvider, models: string[], settings?: ProviderModelAccessInput['settings']): string[] {

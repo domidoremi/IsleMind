@@ -162,6 +162,7 @@ export interface MessageUsage {
   inputTokens?: number
   outputTokens?: number
   totalTokens?: number
+  cachedInputTokens?: number
   reasoningTokens?: number
   source: 'provider' | 'estimated'
 }
@@ -196,6 +197,30 @@ export interface AIProvider {
   lastTestModel?: string
   lastTestMessage?: string
   lastTestCode?: ProviderOperationCode
+  lastModelTestCapabilityChecks?: ProviderModelTestCapabilityCheck[]
+}
+
+export type ProviderModelTestCapabilityCheckStatus = 'sent' | 'available' | 'blocked'
+
+export interface ProviderModelTestCapabilityCheck {
+  capability:
+    | 'chat'
+    | 'streaming'
+    | 'tools'
+    | 'vision'
+    | 'files'
+    | 'reasoning'
+    | 'responseFormat'
+    | 'responsesApi'
+    | 'nativeSearch'
+  status: ProviderModelTestCapabilityCheckStatus
+  sent: boolean
+  canSend: boolean
+  evidence?: {
+    status: 'verified' | 'inferred' | 'manual' | 'unsupported'
+    source: string
+    reason: string
+  }
 }
 
 export interface Conversation {

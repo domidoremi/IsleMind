@@ -21,6 +21,7 @@ import {
 } from '@/utils/modelReasoning'
 import { isCerebrasProvider, isFireworksProvider, isGroqProvider, isMiniMaxProvider, isMoonshotProvider, isPerplexityProvider, isTogetherProvider, isXAIProvider } from '@/services/ai/providerIdentity'
 import { providerCompatibilityCapabilityCanBeSentForProvider, providerCompatibilityReasoningExplicitlyDeclaredForModel } from '@/services/ai/providerCompatibilityContract'
+import { providerModelCapabilityCanBeSent, type ProviderModelCapabilityKey } from '@/services/ai/providerCapabilityMatrix'
 
 export interface OpenAIRequestInput {
   provider: AIProvider
@@ -199,21 +200,33 @@ function providerReasoningCanBeSent(
   provider: AIProvider,
   modelConfig: ReturnType<typeof getModelConfig>
 ): boolean {
-  return providerCompatibilityCapabilityCanBeSentForProvider(provider, 'reasoning', providerReasoningExplicitlyDeclared(provider, modelConfig))
+  return providerCompatibilityCapabilityCanBeSentForProvider(provider, 'reasoning', providerReasoningExplicitlyDeclared(provider, modelConfig)) &&
+    openAICompatibleModelCapabilityCanBeSent(provider, modelConfig.id, 'reasoning')
 }
 
-function providerResponsesApiCanBeSent(provider: AIProvider): boolean {
-  return providerCompatibilityCapabilityCanBeSentForProvider(provider, 'responsesApi', provider.capabilities?.responsesApi === true)
+function providerResponsesApiCanBeSent(provider: AIProvider, model: string): boolean {
+  return providerCompatibilityCapabilityCanBeSentForProvider(provider, 'responsesApi', provider.capabilities?.responsesApi === true) &&
+    openAICompatibleModelCapabilityCanBeSent(provider, model, 'responsesApi')
+}
+
+function openAICompatibleModelCapabilityCanBeSent(
+  provider: AIProvider,
+  model: string,
+  capability: ProviderModelCapabilityKey,
+): boolean {
+  if (provider.type !== 'openai-compatible') return true
+  if (provider.wireProtocol === 'anthropic-compatible') return true
+  return providerModelCapabilityCanBeSent(provider, model, capability)
 }
 
 function isLMStudioProvider(provider: AIProvider): boolean {
   if (provider.presetId === 'lm-studio' || provider.detectedPresetId === 'lm-studio') return true
-  return [provider.id, provider.name, provider.baseUrl, provider.models?.join(' ')].filter(Boolean).join(' ').match(/lm[-_ ]?studio|lmstudio|localhost:1234|127\.0\.0\.1:1234/i) !== null
+  return [provider.id, provider.name, provider.baseUrl].filter(Boolean).join(' ').match(/lm[-_ ]?studio|lmstudio|localhost:1234|127\.0\.0\.1:1234/i) !== null
 }
 
 function isVLLMProvider(provider: AIProvider): boolean {
   if (provider.presetId === 'vllm' || provider.detectedPresetId === 'vllm') return true
-  return [provider.id, provider.name, provider.baseUrl, provider.models?.join(' ')].filter(Boolean).join(' ').match(/vllm|localhost:8000|127\.0\.0\.1:8000/i) !== null
+  return [provider.id, provider.name, provider.baseUrl].filter(Boolean).join(' ').match(/vllm|localhost:8000|127\.0\.0\.1:8000/i) !== null
 }
 
 export function buildOpenAIResponsesReasoning(effort: ReasoningEffort | undefined, provider: AIProvider): Record<string, unknown> | undefined {
@@ -224,12 +237,14 @@ export function buildOpenAIResponsesReasoning(effort: ReasoningEffort | undefine
   }
 }
 
-export function openAIResponsesNativeWebSearchTool(provider: AIProvider): Record<string, unknown> | undefined {
-  if (!providerCompatibilityCapabilityCanBeSentForProvider(provider, 'nativeSearch', provider.capabilities?.nativeSearch === true)) return undefined
+export function openAIResponsesNativeWebSearchTool(provider: AIProvider, model?: string): Record<string, unknown> | undefined {
+  const modelDeclaresNativeSearch = model ? openAICompatibleModelCapabilityCanBeSent(provider, model, 'nativeSearch') : false
+  const explicitDeclaration = provider.type === 'openai' || provider.capabilities?.nativeSearch === true || modelDeclaresNativeSearch
+  if (!providerCompatibilityCapabilityCanBeSentForProvider(provider, 'nativeSearch', explicitDeclaration)) return undefined
   if (provider.type === 'openai') return { type: 'web_search_preview' }
   if (isXAIProvider(provider)) return { type: 'web_search' }
   if (isPerplexityProvider(provider)) return undefined
-  if (provider.capabilities?.nativeSearch === true) return { type: 'web_search_preview' }
+  if (provider.capabilities?.nativeSearch === true || modelDeclaresNativeSearch) return { type: 'web_search_preview' }
   return undefined
 }
 
@@ -262,12 +277,16 @@ export function usesOpenAIResponses(req: OpenAIRequestInput): boolean {
     return modelConfig.preferredEndpoint === 'responses' || req.webSearchMode === 'native' || !!req.attachments?.some((attachment) => attachment.type !== 'image')
   }
   if (req.provider.type === 'openai-compatible' && req.provider.wireProtocol !== 'anthropic-compatible') {
-    if (req.provider.capabilities?.responsesApi === true && providerResponsesApiCanBeSent(req.provider)) {
+    if (req.provider.capabilities?.responsesApi === true && providerResponsesApiCanBeSent(req.provider, req.model)) {
       return modelConfig.preferredEndpoint === 'responses'
-        || (req.webSearchMode === 'native' && providerCompatibilityCapabilityCanBeSentForProvider(req.provider, 'nativeSearch', req.provider.capabilities?.nativeSearch === true))
+        || (
+          req.webSearchMode === 'native' &&
+          providerCompatibilityCapabilityCanBeSentForProvider(req.provider, 'nativeSearch', openAICompatibleModelCapabilityCanBeSent(req.provider, req.model, 'nativeSearch')) &&
+          openAICompatibleModelCapabilityCanBeSent(req.provider, req.model, 'nativeSearch')
+        )
         || (providerCompatibilityCapabilityCanBeSentForProvider(req.provider, 'files', req.provider.capabilities?.files === true) && !!req.attachments?.some((attachment) => attachment.type !== 'image'))
     }
-    if (isXAIProvider(req.provider) && providerResponsesApiCanBeSent(req.provider)) {
+    if (isXAIProvider(req.provider) && providerResponsesApiCanBeSent(req.provider, req.model)) {
       return modelConfig.preferredEndpoint === 'responses'
     }
   }

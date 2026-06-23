@@ -102,7 +102,7 @@ interface AssistantNavigationScrollOptions {
 const COMPOSER_COLLAPSED_MIN_HEIGHT = 78
 const AUTO_SCROLL_DELAY_MS = 96
 const USER_SCROLL_PAUSE_THRESHOLD = 72
-const FLASH_LIST_AUTO_SCROLL_THRESHOLD = 8
+const MESSAGE_LIST_ANDROID_DRAW_DISTANCE_MIN = 1200
 const LONG_MESSAGE_LIST_ANIMATION_THRESHOLD = 48
 const MESSAGE_LIST_TOUCH_PAGER_GESTURE_RELEASE_DELAY_MS = 120
 const MESSAGE_LIST_MOMENTUM_ELIGIBILITY_MS = 240
@@ -121,6 +121,9 @@ const MESSAGE_LIST_COMPOSER_GAP = 12
 const CONVERSATION_NAVIGATION_IDLE_HIDE_DELAY_MS = 1500
 const CONVERSATION_NAVIGATION_INTERACTION_HIDE_DELAY_MS = 2200
 const CONVERSATION_NAVIGATION_PROGRAMMATIC_LOCK_MS = 260
+const CONVERSATION_NAVIGATION_RAIL_RIGHT = 8
+const CONVERSATION_NAVIGATION_RAIL_WIDTH = 48
+const CONVERSATION_NAVIGATION_MESSAGE_GAP = 12
 const EMPTY_CONVERSATION_DEFAULT_TOP_PADDING = 20
 const HOME_MODEL_HIGHLIGHT_LIMIT = 4
 const SYSTEM_STATUS_NOTIFICATION_CLEAR_DELAY_MS = 5200
@@ -1384,11 +1387,13 @@ function ActiveChatWorkspace({
   const messageScrollViewportRef = useRef<MessageScrollViewport>(messageScrollViewport)
   const messageListMaintainVisibleContentPosition = useMemo(
     () => ({
-      autoscrollToBottomThreshold: FLASH_LIST_AUTO_SCROLL_THRESHOLD,
-      animateAutoScrollToBottom: false,
+      disabled: true,
     }),
     []
   )
+  const messageListDrawDistance = Platform.OS === 'android'
+    ? Math.max(MESSAGE_LIST_ANDROID_DRAW_DISTANCE_MIN, Math.ceil(viewportHeight * 1.6))
+    : undefined
   const messageListMotion = activeConversation.messages.length >= LONG_MESSAGE_LIST_ANIMATION_THRESHOLD && motion === 'full'
     ? 'reduced'
     : motion
@@ -1412,8 +1417,10 @@ function ActiveChatWorkspace({
   const activeAssistantNavigationIndex = activeAssistantNavigationItem
     ? assistantNavigationItems.findIndex((item) => item.messageId === activeAssistantNavigationItem.messageId)
     : -1
-  const messageListViewabilityConfig = useMemo(() => ({ itemVisiblePercentThreshold: 36, minimumViewTime: 120 }), [])
-  const messageListRightPadding = 20
+  const messageListViewabilityConfig = useMemo(() => ({ viewAreaCoveragePercentThreshold: 18, minimumViewTime: 80 }), [])
+  const messageListRightPadding = assistantNavigationVisible
+    ? CONVERSATION_NAVIGATION_RAIL_RIGHT + CONVERSATION_NAVIGATION_RAIL_WIDTH + CONVERSATION_NAVIGATION_MESSAGE_GAP
+    : 20
   const messageListBottomPadding = MESSAGE_LIST_COMPOSER_GAP + composerBottomInset + keyboardLift
   const assistantNavigationHideTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
   const assistantNavigationGestureActive = useRef(false)
@@ -1465,6 +1472,7 @@ function ActiveChatWorkspace({
     const viewport = messageScrollViewportRef.current
     return autoStickToBottom.current &&
       !userScrollInteractionActive.current &&
+      !userDragMomentumEligible.current &&
       (!viewport.viewportHeight || !viewport.awayFromBottom)
   }, [autoStickToBottom])
 
@@ -1481,11 +1489,11 @@ function ActiveChatWorkspace({
   }, [assistantNavigationVisible, clearAssistantNavigationHideTimer])
 
   useEffect(() => {
-    setActiveAssistantNavigationId((current) =>
-      current && assistantNavigationItems.some((item) => item.messageId === current)
-        ? current
-        : latestAssistantNavigationId
-    )
+    setActiveAssistantNavigationId((current) => {
+      if (autoStickToBottom.current && latestAssistantNavigationId) return latestAssistantNavigationId
+      if (current && assistantNavigationItems.some((item) => item.messageId === current)) return current
+      return latestAssistantNavigationId
+    })
   }, [activeConversation.id, assistantNavigationSignature, latestAssistantNavigationId])
 
   useEffect(() => {
@@ -1713,6 +1721,14 @@ function ActiveChatWorkspace({
     commitMessageScrollViewport({ contentHeight, viewportHeight, scrollY: y, awayFromBottom })
     if (distanceFromBottom <= USER_SCROLL_PAUSE_THRESHOLD) {
       autoStickToBottom.current = true
+      if (
+        assistantNavigationVisible &&
+        latestAssistantNavigationId &&
+        !assistantNavigationGestureActive.current &&
+        Date.now() >= assistantNavigationProgrammaticLockUntil.current
+      ) {
+        setActiveAssistantNavigationId(latestAssistantNavigationId)
+      }
     } else if (userScrollInteractionActive.current || Math.abs(delta) > 4) {
       autoStickToBottom.current = false
     }
@@ -1980,14 +1996,12 @@ function ActiveChatWorkspace({
               onViewableItemsChanged={handleMessageViewableItemsChanged}
               maintainVisibleContentPosition={messageListMaintainVisibleContentPosition}
               scrollEventThrottle={Platform.OS === 'android' ? 32 : 16}
-              drawDistance={Platform.OS === 'android' ? 420 : undefined}
-              maxItemsInRecyclePool={Platform.OS === 'android' ? 0 : undefined}
+              drawDistance={messageListDrawDistance}
               getItemType={getMessageItemType}
               contentContainerStyle={{ paddingLeft: 20, paddingRight: messageListRightPadding, paddingTop: activeConversation.messages.length ? 0 : emptyConversationTopPadding, paddingBottom: messageListBottomPadding }}
               ListHeaderComponent={activeConversation.messages.length ? renderConversationHeaderSpacer(conversationHeaderTopPadding) : null}
               renderItem={({ item: message, index }) => (
                 <MessageBubble
-                  key={message.id}
                   conversationId={activeConversation.id}
                   message={message}
                   index={index}
@@ -2285,9 +2299,14 @@ function ConversationNavigationRail({
   const safeActiveIndex = Math.max(0, Math.min(items.length - 1, activeIndex >= 0 ? activeIndex : items.length - 1))
   const item = items[safeActiveIndex]
   const trackVisualHeight = Math.max(94, Math.min(232, 42 + Math.max(0, items.length - 1) * 11))
-  const [measuredTrackHeight, setMeasuredTrackHeight] = useState(trackVisualHeight)
   const lastSelectedIndexRef = useRef(safeActiveIndex)
   const gestureSelectedIndexRef = useRef(safeActiveIndex)
+  const trackWidth = 34
+  const touchVerticalPadding = 10
+  const activeMarkerFrame = 28
+  const markerTravelInset = activeMarkerFrame / 2
+  const markerTravelHeight = Math.max(1, trackVisualHeight - markerTravelInset * 2)
+  const markerTravelTop = markerTravelInset
 
   useEffect(() => {
     lastSelectedIndexRef.current = safeActiveIndex
@@ -2305,10 +2324,10 @@ function ConversationNavigationRail({
 
   const selectFromGesture = useCallback((event: GestureResponderEvent, options?: AssistantNavigationScrollOptions) => {
     if (items.length <= 1) return
-    const height = Math.max(1, measuredTrackHeight)
-    const ratio = Math.max(0, Math.min(1, (event.nativeEvent.locationY - 4) / height))
+    const trackY = event.nativeEvent.locationY - touchVerticalPadding - markerTravelTop
+    const ratio = Math.max(0, Math.min(1, trackY / markerTravelHeight))
     selectIndex(Math.round(ratio * (items.length - 1)), options)
-  }, [items.length, measuredTrackHeight, selectIndex])
+  }, [items.length, markerTravelHeight, markerTravelTop, selectIndex, touchVerticalPadding])
 
   const handleAccessibilityAction = useCallback((event: AccessibilityActionEvent) => {
     onInteractionStart()
@@ -2325,13 +2344,13 @@ function ConversationNavigationRail({
   const anchorBaseSize = items.length > 64 ? 2.5 : items.length > 32 ? 3.5 : items.length > 18 ? 5 : 7
 
   return (
-    <View pointerEvents={visible ? 'box-none' : 'none'} style={{ position: 'absolute', top: topOffset, right: 8, bottom: bottomOffset, width: 48, justifyContent: 'center', zIndex: 34, elevation: 2 }}>
+    <View pointerEvents={visible ? 'box-none' : 'none'} style={{ position: 'absolute', top: topOffset, right: CONVERSATION_NAVIGATION_RAIL_RIGHT, bottom: bottomOffset, width: CONVERSATION_NAVIGATION_RAIL_WIDTH, justifyContent: 'center', zIndex: 34, elevation: 2 }}>
       <MotiView
         from={motion === 'full' ? { opacity: 0, translateX: 18, scale: 0.9 } : { opacity: 0 }}
         animate={{ opacity: visible ? 1 : 0, translateX: visible ? 0 : 18, scale: visible ? 1 : 0.9 }}
         transition={motion === 'full' ? { type: 'spring', damping: 15, stiffness: 230 } : { type: 'timing', duration: 1 }}
         style={{
-          width: 48,
+          width: CONVERSATION_NAVIGATION_RAIL_WIDTH,
           borderRadius: colors.ui.radius.controlLarge,
           paddingHorizontal: 4,
           paddingVertical: 8,
@@ -2372,34 +2391,37 @@ function ConversationNavigationRail({
             selectIndex(gestureSelectedIndexRef.current, { animated: false, settle: true })
             onInteractionEnd()
           }}
-          style={{ width: 42, alignItems: 'center', justifyContent: 'center', paddingVertical: 8 }}
+          style={{ width: 42, height: trackVisualHeight + touchVerticalPadding * 2, alignItems: 'center', justifyContent: 'center' }}
         >
           <View
-            onLayout={(event) => setMeasuredTrackHeight(Math.max(1, Math.ceil(event.nativeEvent.layout.height)))}
             style={{
-              width: 34,
+              width: trackWidth,
               height: trackVisualHeight,
-              maxHeight: '100%',
               alignItems: 'center',
-              justifyContent: 'space-between',
+              justifyContent: 'center',
             }}
           >
-            <View pointerEvents="none" style={{ position: 'absolute', top: 5, bottom: 5, width: 2, borderRadius: 999, backgroundColor: railBorder, opacity: isGlass ? 0.34 : 0.28 }} />
+            <View pointerEvents="none" style={{ position: 'absolute', top: markerTravelTop, bottom: markerTravelTop, width: 2, borderRadius: 999, backgroundColor: railBorder, opacity: isGlass ? 0.34 : 0.28 }} />
             {items.map((navigationItem, index) => {
               const active = index === safeActiveIndex
+              const travelRatio = items.length <= 1 ? 0.5 : index / (items.length - 1)
+              const markerCenterY = markerTravelTop + travelRatio * markerTravelHeight
               const anchorSize = active ? 15 : anchorBaseSize
               return (
                 <MotiView
                   key={navigationItem.messageId}
                   pointerEvents="none"
                   animate={{
-                    width: active ? 28 : Math.max(10, anchorSize + 6),
-                    height: active ? 28 : Math.max(10, anchorSize + 6),
                     scale: active ? 1 : 0.92,
                     opacity: active ? 1 : 0.58,
                   }}
                   transition={motion === 'full' ? { type: 'spring', damping: 14, stiffness: 260 } : { type: 'timing', duration: 1 }}
                   style={{
+                    position: 'absolute',
+                    top: markerCenterY - activeMarkerFrame / 2,
+                    left: (trackWidth - activeMarkerFrame) / 2,
+                    width: activeMarkerFrame,
+                    height: activeMarkerFrame,
                     borderRadius: 999,
                     alignItems: 'center',
                     justifyContent: 'center',
@@ -4098,20 +4120,14 @@ function ConversationHealthBanner({
 }) {
   const { colors, isGlass } = useAppTheme()
   const { t } = useTranslation()
-  const healthTone = health.inheritedExpired ? colors.ui.tone.danger : colors.ui.tone.warning
+  const healthTone = health.inheritedExpired || health.code === 'provider_missing' ? colors.ui.tone.danger : colors.ui.tone.warning
   const borderColor = healthTone.border
   const subtleBorderWidth = colors.ui.cartoon ? 1 : StyleSheet.hairlineWidth
   if (compact) {
-    const primaryAction = health.code === 'missing_key' || health.code === 'disabled_provider' || health.code === 'provider_missing'
-      ? onConfigure
-      : health.code === 'model_unavailable'
-        ? onSwitch
-        : onTest
-    const primaryGlyph: NavigationGlyph = health.code === 'missing_key' || health.code === 'disabled_provider' || health.code === 'provider_missing'
-      ? 'provider-key'
-      : health.code === 'model_unavailable'
-        ? 'settings-sliders'
-        : 'conversation'
+    const shouldSwitchProvider = health.code === 'provider_missing' || health.code === 'model_unavailable'
+    const shouldConfigureProvider = health.code === 'missing_key' || health.code === 'disabled_provider'
+    const primaryAction = shouldSwitchProvider ? onSwitch : shouldConfigureProvider ? onConfigure : onTest
+    const primaryGlyph: NavigationGlyph = shouldSwitchProvider ? 'settings-sliders' : shouldConfigureProvider ? 'provider-key' : 'conversation'
     return (
       <MotiView
         from={{ opacity: 0, translateY: -6, scale: 0.98 }}
@@ -4126,30 +4142,31 @@ function ConversationHealthBanner({
           accessibilityLabel={health.title}
           accessibilityHint={health.description}
           style={{
-            minHeight: 28,
-            borderRadius: colors.ui.radius.chip,
-            paddingHorizontal: 7,
+            minHeight: 42,
+            borderRadius: colors.ui.radius.card,
+            paddingHorizontal: 10,
+            paddingVertical: 8,
             flexDirection: 'row',
             alignItems: 'center',
-            gap: 6,
+            gap: 9,
             backgroundColor: resolveChatChromeSurface(colors, isGlass, 'toolbar'),
             borderWidth: subtleBorderWidth,
             borderColor,
           }}
         >
-          <View style={{ width: 16, height: 16, borderRadius: colors.ui.radius.controlSmall, alignItems: 'center', justifyContent: 'center', backgroundColor: healthTone.background }}>
-            <AppIcon name="warning" color={healthTone.foreground} size={10} />
+          <View style={{ width: 24, height: 24, borderRadius: colors.ui.radius.controlSmall, alignItems: 'center', justifyContent: 'center', backgroundColor: healthTone.background }}>
+            <AppIcon name="warning" color={healthTone.foreground} size={14} />
           </View>
           <View style={{ flex: 1, minWidth: 0 }}>
-            <Text numberOfLines={1} style={{ color: colors.text, fontSize: 9.5, lineHeight: 11, fontWeight: '900', includeFontPadding: false }}>
+            <Text numberOfLines={1} style={{ color: colors.text, fontSize: 11.5, lineHeight: 15, fontWeight: '900', includeFontPadding: false }}>
               {health.title}
             </Text>
-            <Text numberOfLines={1} style={{ color: colors.textSecondary, fontSize: 8.5, lineHeight: 10, fontWeight: '700', includeFontPadding: false }}>
+            <Text numberOfLines={2} style={{ color: colors.textSecondary, fontSize: 10, lineHeight: 13, fontWeight: '700', marginTop: 2, includeFontPadding: false }}>
               {health.description}
             </Text>
           </View>
-          <View style={{ width: 18, height: 18, borderRadius: colors.ui.radius.controlSmall, alignItems: 'center', justifyContent: 'center', backgroundColor: resolveChatControlSurface(colors, isGlass, false, 'activeAccent') }}>
-            <AnimatedNavigationIcon glyph={primaryGlyph} active={false} color={colors.textSecondary} size={11} />
+          <View style={{ width: 26, height: 26, borderRadius: colors.ui.radius.controlSmall, alignItems: 'center', justifyContent: 'center', backgroundColor: resolveChatControlSurface(colors, isGlass, false, 'activeAccent') }}>
+            <AnimatedNavigationIcon glyph={primaryGlyph} active={false} color={colors.textSecondary} size={14} />
           </View>
         </IslePressable>
       </MotiView>
