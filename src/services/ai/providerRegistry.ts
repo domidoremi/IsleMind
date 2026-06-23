@@ -857,7 +857,8 @@ function expandProviderImportChunk(chunk: string): string[] {
       return true
     })
 
-  // Check if all endpoints share the same host (same provider, different protocols)
+  // Keep duplicate same-host labels together, but split one paste into separate
+  // candidates when the labels describe distinct wire protocols.
   const hosts = endpoints.map((endpoint) => {
     try {
       return new URL(endpoint.baseUrl).hostname
@@ -866,9 +867,9 @@ function expandProviderImportChunk(chunk: string): string[] {
     }
   })
   const uniqueHosts = new Set(hosts)
+  const uniqueProtocols = new Set(endpoints.map((endpoint) => endpoint.wireProtocol))
 
-  // If all endpoints are from the same host, don't expand - keep as single provider
-  if (uniqueHosts.size === 1 && endpoints.length > 1) {
+  if (uniqueHosts.size === 1 && uniqueProtocols.size === 1 && endpoints.length > 1) {
     return [chunk]
   }
 
@@ -1075,7 +1076,7 @@ function extractLooseKeys(chunk: string): string[] {
 function looksLikeApiKey(value: string): boolean {
   const trimmed = value.trim()
   if (/^https?:\/\//i.test(trimmed)) return false
-  return /^(sk|tp|ak|rk|pk|key|token)-/i.test(trimmed) || /^[A-Za-z0-9_-]{24,}$/.test(trimmed)
+  return /^(?:sk|tp|ak|rk|pk|key|token)-[A-Za-z0-9._:-]+$/i.test(trimmed) || /^[A-Za-z0-9_-]{24,}$/.test(trimmed)
 }
 
 function parseModelList(value: string | undefined): string[] {

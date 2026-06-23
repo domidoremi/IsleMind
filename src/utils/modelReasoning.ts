@@ -78,8 +78,6 @@ export function modelSupportsSamplingControls(provider: AIProvider | undefined, 
   if (isOpenAIReasoningModel(provider, model) || config.reasoningMode === 'openai-effort') return false
   if (isKimiThinkingModel(provider, model) || config.reasoningMode === 'kimi-thinking') return false
   if ((isDeepSeekThinkingModel(provider, model) || config.reasoningMode === 'deepseek-thinking') && reasoningEffort !== 'none' && reasoningEffort !== 'minimal') return false
-  if (isXiaomiMimoReasoningModel(provider, model) && reasoningEffort !== 'none') return false
-
   const reasoningEnabled = Boolean(reasoningEffort && reasoningEffort !== 'none' && reasoningEffort !== 'minimal')
   if (!reasoningEnabled) return true
   return ![
