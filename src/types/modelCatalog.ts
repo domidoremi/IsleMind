@@ -1,5 +1,5 @@
 import type { AIModel, ProviderType } from './index'
-import { normalizeModelId } from '../utils/modelId'
+import { modelAliasMatchKey, normalizeModelId } from '../utils/modelId'
 
 export const DEFAULT_MODELS: AIModel[] = [
   model('gpt-5.5', 'GPT-5.5', 'openai', 1050000, 128000, 8192, true, true, false, { supportsTools: true, preferredEndpoint: 'responses', reasoningMode: 'openai-effort', reasoningEfforts: ['none', 'low', 'medium', 'high', 'xhigh'], sourceUrl: 'https://developers.openai.com/api/docs/models/gpt-5.5', verifiedAt: '2026-06-10' }),
@@ -110,15 +110,11 @@ export function getDefaultProviderModelIds(_providerType: ProviderType): string[
   return []
 }
 
-export function getModelConfig(modelId: string, providerType?: ProviderType, modelConfigs: AIModel[] = []): AIModel {
+export function getModelConfig(modelId: string, providerType?: ProviderType, modelConfigs: AIModel[] = [], modelName?: string): AIModel {
   const remoteExact = modelConfigs.find((item) => item.id === modelId)
   if (remoteExact) return mergeKnownModelDefaults(modelId, providerType, remoteExact)
 
-  const exact = DEFAULT_MODELS.find((item) => item.id === modelId)
-  if (exact) return { ...exact, id: modelId, provider: providerType ?? exact.provider }
-
-  const normalized = normalizeModelId(modelId)
-  const known = DEFAULT_MODELS.find((item) => normalizeModelId(item.id) === normalized)
+  const known = findKnownModel(modelId, modelName)
   if (known) {
     const prefix = modelId.includes('/') ? `${titleCase(modelId.split('/')[0])} / ` : ''
     return { ...known, id: modelId, name: `${prefix}${known.name}`, provider: providerType ?? known.provider }
@@ -128,7 +124,7 @@ export function getModelConfig(modelId: string, providerType?: ProviderType, mod
 }
 
 export function mergeModelConfig(modelId: string, providerType: ProviderType, remote?: Partial<AIModel>): AIModel {
-  const base = getModelConfig(modelId, providerType)
+  const base = getModelConfig(modelId, providerType, [], remote?.name)
   const contextWindow = remote?.contextWindow ?? base.contextWindow
   const maxOutputTokens = Math.min(remote?.maxOutputTokens ?? base.maxOutputTokens, contextWindow)
   const defaultMaxTokens = Math.min(remote?.defaultMaxTokens ?? base.defaultMaxTokens, maxOutputTokens)
@@ -155,10 +151,10 @@ export function mergeModelConfig(modelId: string, providerType: ProviderType, re
 }
 
 export function sortModelConfigs(models: AIModel[], providerType: ProviderType): AIModel[] {
-  const knownOrder = getProviderModels(providerType).map((item) => normalizeModelId(item.id))
+  const knownOrder = getProviderModels(providerType).map((item) => item.id)
   return [...models].sort((a, b) => {
-    const aIndex = knownOrder.indexOf(normalizeModelId(a.id))
-    const bIndex = knownOrder.indexOf(normalizeModelId(b.id))
+    const aIndex = knownOrder.indexOf(findKnownModel(a.id, a.name)?.id ?? '')
+    const bIndex = knownOrder.indexOf(findKnownModel(b.id, b.name)?.id ?? '')
     if (aIndex >= 0 && bIndex >= 0) return aIndex - bIndex
     if (aIndex >= 0) return -1
     if (bIndex >= 0) return 1
@@ -167,8 +163,7 @@ export function sortModelConfigs(models: AIModel[], providerType: ProviderType):
 }
 
 function mergeKnownModelDefaults(modelId: string, providerType: ProviderType | undefined, remote: AIModel): AIModel {
-  const normalized = normalizeModelId(modelId)
-  const known = DEFAULT_MODELS.find((item) => item.id === modelId || normalizeModelId(item.id) === normalized)
+  const known = findKnownModel(modelId, remote.name)
   if (!known) return { ...remote, id: modelId, provider: providerType ?? remote.provider }
 
   return {
@@ -214,6 +209,72 @@ function model(
     deprecated,
     ...options,
   }
+}
+
+function findKnownModel(modelId: string, modelName?: string): AIModel | undefined {
+  const normalized = normalizeModelId(modelId)
+  const direct = DEFAULT_MODELS.find((item) => item.id === modelId || normalizeModelId(item.id) === normalized)
+  if (direct) return direct
+
+  const inputKeys = [modelId, modelName ?? '']
+    .map((value) => modelAliasMatchKey(value))
+    .filter(Boolean)
+  let best: { model: AIModel; score: number } | undefined
+  for (const candidate of DEFAULT_MODELS) {
+    const candidateKeys = [candidate.id, candidate.name]
+      .map((value) => modelAliasMatchKey(value))
+      .filter(Boolean)
+    for (const inputKey of inputKeys) {
+      for (const candidateKey of candidateKeys) {
+        const score = modelAliasMatchScore(inputKey, candidateKey)
+        if (score < 0) continue
+        if (!best || score > best.score || (score === best.score && !candidate.deprecated && best.model.deprecated)) {
+          best = { model: candidate, score }
+        }
+      }
+    }
+  }
+  return best?.model
+}
+
+function modelAliasMatchScore(inputKey: string, candidateKey: string): number {
+  if (!inputKey || !candidateKey) return -1
+  if (inputKey === candidateKey) return 10000 + candidateKey.length
+  if (!inputKey.startsWith(`${candidateKey}-`)) return -1
+  return modelAliasDecoratorsOnly(inputKey.slice(candidateKey.length + 1)) ? candidateKey.length : -1
+}
+
+function modelAliasDecoratorsOnly(suffix: string): boolean {
+  const tokens = suffix.split('-').filter(Boolean)
+  return tokens.length > 0 && tokens.every(isModelAliasDecoratorToken)
+}
+
+function isModelAliasDecoratorToken(token: string): boolean {
+  return [
+    'api',
+    'app',
+    'beta',
+    'chat',
+    'console',
+    'function',
+    'high',
+    'image',
+    'latest',
+    'low',
+    'max',
+    'medium',
+    'minimal',
+    'multimodal',
+    'preview',
+    'reasoning',
+    'stable',
+    'text',
+    'thinking',
+    'tool',
+    'tools',
+    'vision',
+    'xhigh',
+  ].includes(token) || /^\d{4,8}$/.test(token)
 }
 
 function inferModelConfig(modelId: string, providerType: ProviderType): AIModel {
