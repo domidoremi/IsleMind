@@ -634,7 +634,9 @@ function buildPendingAction(runId: string, goal: string, step: AgentStep): Agent
   const toolName = typeof request.name === 'string' ? request.name : undefined
   const toolId = typeof request.toolId === 'string' ? request.toolId : typeof metadata.toolId === 'string' ? metadata.toolId : undefined
   const serverId = typeof request.serverId === 'string' ? request.serverId : typeof metadata.serverId === 'string' ? metadata.serverId : undefined
-  const argumentsPreview = summarizeArgumentsPreview(request.arguments)
+  const argumentsPreview = source === 'android'
+    ? summarizeAndroidArgumentsPreview(toolName, request.arguments)
+    : summarizeArgumentsPreview(request.arguments)
   const resumeToolRequest = canPersistResumeRequest(request) ? sanitizeResumeToolRequest(request) : undefined
   const actionLabel = toolName ?? toolId ?? 'agent tool'
   const androidCopy = source === 'android' ? buildAndroidPendingActionCopy(toolName, request.arguments) : undefined
@@ -745,12 +747,13 @@ function countArrayItems(value: unknown): number {
 function formatPendingActionOutput(pendingAction: AgentPendingAction | undefined, fallback: string): string {
   if (!pendingAction) return fallback
   return [
-    'Agentic workflow paused for confirmation.',
-    `Action: ${pendingAction.title}`,
-    pendingAction.stepTitle ? `Step: ${pendingAction.stepTitle}` : '',
-    pendingAction.permission ? `Permission: ${pendingAction.permission}` : '',
-    pendingAction.argumentsPreview ? `Arguments: ${pendingAction.argumentsPreview}` : '',
-    pendingAction.confirmable ? 'Confirmation can continue this workflow from the visible pending action.' : `Confirmation unavailable: ${pendingAction.blockedReason}`,
+    st('messageBubble.agentPendingOutputTitle', undefined, 'Action needs confirmation.'),
+    pendingAction.title,
+    pendingAction.stepTitle ? st('messageBubble.agentPendingOutputStep', { step: pendingAction.stepTitle }, 'Step: {{step}}') : '',
+    pendingAction.argumentsPreview ? st('messageBubble.agentPendingOutputDetails', { details: pendingAction.argumentsPreview }, 'Details: {{details}}') : '',
+    pendingAction.confirmable
+      ? st('messageBubble.agentPendingOutputConfirmable', undefined, 'Use the visible confirmation action to continue.')
+      : st('messageBubble.agentPendingOutputUnavailable', { reason: pendingAction.blockedReason }, 'Confirmation unavailable: {{reason}}'),
     '',
     pendingAction.summary,
   ].filter(Boolean).join('\n')
@@ -1233,6 +1236,63 @@ function summarizeArgumentsPreview(args: Record<string, unknown> | undefined): s
   } catch {
     return '[unserializable arguments]'
   }
+}
+
+function summarizeAndroidArgumentsPreview(toolName: string | undefined, args: Record<string, unknown> | undefined): string | undefined {
+  if (!args || !Object.keys(args).length) return undefined
+  switch (toolName) {
+    case 'android.alarm.open_create_intent': {
+      const hour = readIntegerArgument(args.hour, 0, 23)
+      const minutes = readIntegerArgument(args.minutes, 0, 59)
+      if (hour === undefined || minutes === undefined) return undefined
+      const label = readShortArgumentText(args.message, 80)
+      return label
+        ? st('messageBubble.androidPendingAlarmDetailsWithLabel', { time: formatClockTime(hour, minutes), label }, 'Time {{time}} · label {{label}}')
+        : st('messageBubble.androidPendingAlarmDetails', { time: formatClockTime(hour, minutes) }, 'Time {{time}}')
+    }
+    case 'android.calendar.open_create_event': {
+      const title = readShortArgumentText(args.title, 90)
+      const time = formatAndroidPendingDateTime(args.beginTimeMs, args.beginTimeIso)
+      return title && time
+        ? st('messageBubble.androidPendingCalendarDetailsWithTime', { title, time }, '{{title}} · {{time}}')
+        : title || time
+    }
+    case 'android.reminder.open_create_todo': {
+      const title = readShortArgumentText(args.title, 90)
+      const time = formatAndroidPendingDateTime(args.dueTimeMs, args.dueTimeIso)
+      return title && time
+        ? st('messageBubble.androidPendingReminderDetailsWithTime', { title, time }, '{{title}} · due {{time}}')
+        : title || time
+    }
+    case 'android.notifications.open_settings': {
+      const target = args.target === 'promoted' ? 'promoted' : 'notifications'
+      return st('messageBubble.androidPendingNotificationDetails', { target }, 'Target: {{target}}')
+    }
+    default:
+      return summarizeArgumentsPreview(args)
+  }
+}
+
+function readIntegerArgument(value: unknown, min: number, max: number): number | undefined {
+  if (typeof value !== 'number' || !Number.isInteger(value) || value < min || value > max) return undefined
+  return value
+}
+
+function readShortArgumentText(value: unknown, limit: number): string | undefined {
+  if (typeof value !== 'string' || !value.trim()) return undefined
+  return clampAgentOutput(redactSensitiveText(value.trim()), limit).replace(/\n\[output truncated\]$/, '')
+}
+
+function formatClockTime(hour: number, minutes: number): string {
+  return `${String(hour).padStart(2, '0')}:${String(minutes).padStart(2, '0')}`
+}
+
+function formatAndroidPendingDateTime(timestampMs: unknown, iso: unknown): string | undefined {
+  if (typeof iso === 'string' && iso.trim()) return clampAgentOutput(redactSensitiveText(iso.trim()), 80).replace(/\n\[output truncated\]$/, '')
+  if (typeof timestampMs !== 'number' || !Number.isFinite(timestampMs)) return undefined
+  const date = new Date(timestampMs)
+  if (!Number.isFinite(date.getTime())) return undefined
+  return date.toISOString().replace('T', ' ').replace(/\.\d{3}Z$/, ' UTC')
 }
 
 function canPersistResumeRequest(request: AgentToolRequest): boolean {

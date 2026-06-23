@@ -92,7 +92,6 @@ function providerIdentityText(provider: AIProvider): string {
     provider.id,
     provider.name,
     provider.baseUrl,
-    provider.models?.join(' '),
     provider.presetId,
     provider.detectedPresetId,
   ].filter(Boolean).join(' ')

@@ -12,7 +12,6 @@ export function SettingsPageShell({
   title,
   subtitle,
   children,
-  focusKey,
 }: {
   title: string
   subtitle?: string
@@ -92,7 +91,6 @@ export function SettingsPageShell({
           }
         />
         <MotiView
-          key={focusKey ?? title}
           from={{ opacity: 0, translateY: 10 }}
           animate={{ opacity: 1, translateY: 0 }}
           transition={{ type: 'spring', damping: 22, stiffness: 190 }}

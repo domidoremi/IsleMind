@@ -4,7 +4,7 @@ import * as Clipboard from 'expo-clipboard'
 import { MotiView } from 'moti'
 import type { TFunction } from 'i18next'
 import { useTranslation } from 'react-i18next'
-import type { AIProvider, ProviderCapabilities, ProviderCredentialGroup, ProviderPresetId, ProviderWireProtocol } from '@/types'
+import type { AIProvider, ProviderCapabilities, ProviderCredentialGroup, ProviderModelTestCapabilityCheck, ProviderModelTestCapabilityCheckStatus, ProviderPresetId, ProviderWireProtocol } from '@/types'
 import { getModelName } from '@/types'
 import { applyProviderPreset, detectProviderPreset, getProviderPreset, maskSecret, parseCredentialGroups, probeProviderPreset, PROVIDER_PRESETS } from '@/services/ai/providerRegistry'
 import { looksLikeProviderImportConnectionText, parseProviderImportDraft } from '@/services/ai/providerImportDraft'
@@ -21,7 +21,14 @@ import { useIsleDialog } from '@/components/ui/isle'
 import { parseModelEntries } from '@/utils/text'
 import { getProviderManualModels, summarizeProviderModelInventory } from '@/utils/providerModels'
 import { getPolicyAllowedProviderModels, getPolicyPreferredProviderModel } from '@/services/ai/policy/providerModelAccess'
-import { buildProviderCapabilityMatrix, summarizeProviderCapabilityMatrix, summarizeProviderCapabilityMatrixDetails } from '@/services/ai/providerCapabilityMatrix'
+import {
+  buildProviderCapabilityMatrix,
+  buildProviderModelCapabilityMatrix,
+  PROVIDER_MODEL_CAPABILITY_KEYS,
+  summarizeProviderCapabilityMatrix,
+  summarizeProviderCapabilityMatrixDetails,
+  type ProviderModelCapabilityEvidenceStatus,
+} from '@/services/ai/providerCapabilityMatrix'
 import { providerCompatibilityCapabilityCanBeSentForProvider, type ProviderCompatibilityBehavior } from '@/services/ai/providerCompatibilityContract'
 
 interface ApiKeyPanelProps {
@@ -48,6 +55,18 @@ const CAPABILITY_KEYS: (keyof ProviderCapabilities)[] = [
   'reasoningEffort',
   'embeddings',
   'topP',
+]
+
+const MODEL_TEST_CAPABILITY_DISPLAY_ORDER: ProviderModelTestCapabilityCheck['capability'][] = [
+  'chat',
+  'streaming',
+  'tools',
+  'vision',
+  'reasoning',
+  'responseFormat',
+  'responsesApi',
+  'files',
+  'nativeSearch',
 ]
 
 function panelCardStyle(colors: ReturnType<typeof useAppTheme>['colors'], borderColor = colors.material.stroke) {
@@ -197,6 +216,7 @@ export function ApiKeyPanel({
       lastTestModel: undefined,
       lastTestMessage: undefined,
       lastTestCode: undefined,
+      lastModelTestCapabilityChecks: undefined,
     })
     if (credentialGroups.some((group) => group.enabled)) {
       updateSettings({ onboardingCompleted: true })
@@ -704,7 +724,11 @@ export function ApiKeyPanel({
                 />
               </View>
             ) : (
-              <ModelSummary remoteModels={remoteModels} customModels={customModels} aliases={provider.modelAliases ?? []} manualCount={modelInventory.manualModels} selectableCount={availableModels.length} />
+              <>
+                <ModelSummary remoteModels={remoteModels} customModels={customModels} aliases={provider.modelAliases ?? []} manualCount={modelInventory.manualModels} selectableCount={availableModels.length} />
+                <ModelCapabilityEvidencePanel provider={provider} models={availableModels.length ? availableModels : currentModels} />
+                <ModelTestCapabilityPanel provider={provider} />
+              </>
             )}
           </View>
 
@@ -950,6 +974,116 @@ function ModelChip({ label }: { label: string }) {
   return (
     <View style={{ minHeight: 28, borderRadius: colors.ui.radius.chip, paddingHorizontal: 10, alignItems: 'center', justifyContent: 'center', backgroundColor: colors.ui.glass ? colors.ui.actionBar.itemBackground : colors.ui.cartoon ? colors.ui.semantic.surface.muted : colors.ui.semantic.surface.base, borderWidth: colors.ui.cartoon ? 1 : StyleSheet.hairlineWidth, borderColor: colors.ui.glass ? colors.ui.actionBar.itemBorder : colors.ui.cartoon ? colors.material.stroke : colors.ui.semantic.chrome.border }}>
       <Text numberOfLines={1} style={{ color: colors.textSecondary, fontSize: 11, lineHeight: 15, fontWeight: '900', maxWidth: labelMaxWidth, includeFontPadding: false, textAlignVertical: 'center' }}>{label}</Text>
+    </View>
+  )
+}
+
+function ModelCapabilityEvidencePanel({ provider, models }: { provider: AIProvider; models: string[] }) {
+  const { colors } = useAppTheme()
+  const { t } = useTranslation()
+  const shownModels = Array.from(new Set(models.map((model) => model.trim()).filter(Boolean))).slice(0, 3)
+  if (!shownModels.length) return null
+  return (
+    <View style={{ padding: 11, gap: 10, ...panelCardStyle(colors) }}>
+      <SectionHeader
+        title={t('apiKeyPanel.modelCapabilityEvidence')}
+        description={t('apiKeyPanel.modelCapabilityEvidenceDescription')}
+      />
+      {shownModels.map((modelId) => {
+        const matrix = buildProviderModelCapabilityMatrix(provider, modelId)
+        return (
+          <View key={modelId} style={{ gap: 7 }}>
+            <Text numberOfLines={1} style={{ color: colors.text, fontSize: 12, lineHeight: 16, fontWeight: '900', includeFontPadding: false }}>
+              {getModelName(modelId)}
+            </Text>
+            <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 7 }}>
+              {PROVIDER_MODEL_CAPABILITY_KEYS.map((key) => {
+                const capability = matrix.capabilities.find((item) => item.capability === key)
+                if (!capability) return null
+                return (
+                  <ModelCapabilityEvidenceBadge
+                    key={key}
+                    label={`${t(`apiKeyPanel.modelCapability.${key}`)} ${t(`apiKeyPanel.modelCapabilityStatus.${capability.status}`)}`}
+                    status={capability.status}
+                  />
+                )
+              })}
+            </View>
+          </View>
+        )
+      })}
+    </View>
+  )
+}
+
+function ModelCapabilityEvidenceBadge({ label, status }: { label: string; status: ProviderModelCapabilityEvidenceStatus }) {
+  const { colors } = useAppTheme()
+  const tone = status === 'verified'
+    ? colors.ui.tone.success
+    : status === 'manual'
+      ? colors.ui.tone.warning
+      : colors.ui.tone.neutral
+  return (
+    <View style={{ minHeight: 26, maxWidth: 176, borderRadius: colors.ui.radius.chip, paddingHorizontal: 9, alignItems: 'center', justifyContent: 'center', backgroundColor: tone.background, borderWidth: colors.ui.cartoon ? 1 : StyleSheet.hairlineWidth, borderColor: tone.border }}>
+      <Text numberOfLines={1} adjustsFontSizeToFit minimumFontScale={0.82} style={{ color: tone.foreground, fontSize: 10, lineHeight: 13, fontWeight: '900', includeFontPadding: false }}>
+        {label}
+      </Text>
+    </View>
+  )
+}
+
+function ModelTestCapabilityPanel({ provider }: { provider: AIProvider }) {
+  const { colors } = useAppTheme()
+  const { t } = useTranslation()
+  const checks = sortModelTestCapabilityChecks(provider.lastModelTestCapabilityChecks ?? [])
+  if (!checks.length) return null
+  return (
+    <View style={{ padding: 11, gap: 10, ...panelCardStyle(colors) }}>
+      <SectionHeader
+        title={t('apiKeyPanel.modelTestCapabilityResults')}
+        description={t('apiKeyPanel.modelTestCapabilityResultsDescription', {
+          model: provider.lastTestModel ? getModelName(provider.lastTestModel) : t('apiKeyPanel.noModels'),
+          status: provider.lastTestStatus === 'ok'
+            ? t('apiKeyPanel.modelAvailable')
+            : provider.lastTestStatus === 'bad'
+              ? t('apiKeyPanel.needsCheck')
+              : t('apiKeyPanel.pendingCheck'),
+        })}
+      />
+      <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 7 }}>
+        {checks.map((check) => (
+          <ModelTestCapabilityBadge
+            key={check.capability}
+            label={`${t(`apiKeyPanel.modelCapability.${check.capability}`)} ${t(`apiKeyPanel.modelTestCapabilityStatus.${check.status}`)}`}
+            status={check.status}
+          />
+        ))}
+      </View>
+    </View>
+  )
+}
+
+function sortModelTestCapabilityChecks(checks: ProviderModelTestCapabilityCheck[]): ProviderModelTestCapabilityCheck[] {
+  return [...checks].sort((left, right) => modelTestCapabilityRank(left.capability) - modelTestCapabilityRank(right.capability))
+}
+
+function modelTestCapabilityRank(capability: ProviderModelTestCapabilityCheck['capability']): number {
+  const index = MODEL_TEST_CAPABILITY_DISPLAY_ORDER.indexOf(capability)
+  return index >= 0 ? index : MODEL_TEST_CAPABILITY_DISPLAY_ORDER.length
+}
+
+function ModelTestCapabilityBadge({ label, status }: { label: string; status: ProviderModelTestCapabilityCheckStatus }) {
+  const { colors } = useAppTheme()
+  const tone = status === 'sent'
+    ? colors.ui.tone.success
+    : status === 'available'
+      ? colors.ui.tone.warning
+      : colors.ui.tone.neutral
+  return (
+    <View style={{ minHeight: 26, maxWidth: 176, borderRadius: colors.ui.radius.chip, paddingHorizontal: 9, alignItems: 'center', justifyContent: 'center', backgroundColor: tone.background, borderWidth: colors.ui.cartoon ? 1 : StyleSheet.hairlineWidth, borderColor: tone.border }}>
+      <Text numberOfLines={1} adjustsFontSizeToFit minimumFontScale={0.82} style={{ color: tone.foreground, fontSize: 10, lineHeight: 13, fontWeight: '900', includeFontPadding: false }}>
+        {label}
+      </Text>
     </View>
   )
 }

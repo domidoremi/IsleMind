@@ -41,7 +41,7 @@ const BUILTIN_TOOLS: BuiltinToolDefinition[] = [
   },
   {
     name: 'get_settings',
-    description: 'Read current IsleMind app settings that are safe to show in chat.',
+    description: 'Read a human-readable IsleMind system capability and settings summary that is safe to show in chat.',
     permission: 'read-only',
     action: 'get_settings',
   },

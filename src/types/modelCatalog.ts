@@ -165,15 +165,16 @@ export function sortModelConfigs(models: AIModel[], providerType: ProviderType):
 function mergeKnownModelDefaults(modelId: string, providerType: ProviderType | undefined, remote: AIModel): AIModel {
   const known = findKnownModel(modelId, remote.name)
   if (!known) return { ...remote, id: modelId, provider: providerType ?? remote.provider }
+  const hasRemoteField = (key: keyof AIModel) => Object.prototype.hasOwnProperty.call(remote, key)
 
   return {
     ...known,
     ...remote,
     id: modelId,
     provider: providerType ?? remote.provider,
-    preferredEndpoint: remote.preferredEndpoint ?? known.preferredEndpoint,
-    reasoningMode: remote.reasoningMode ?? known.reasoningMode,
-    reasoningEfforts: remote.reasoningEfforts ?? known.reasoningEfforts,
+    preferredEndpoint: hasRemoteField('preferredEndpoint') ? remote.preferredEndpoint : known.preferredEndpoint,
+    reasoningMode: hasRemoteField('reasoningMode') ? remote.reasoningMode : known.reasoningMode,
+    reasoningEfforts: hasRemoteField('reasoningEfforts') ? remote.reasoningEfforts : known.reasoningEfforts,
     sourceUrl: remote.sourceUrl ?? known.sourceUrl,
     verifiedAt: remote.verifiedAt ?? known.verifiedAt,
     deprecatedReason: remote.deprecatedReason ?? known.deprecatedReason,

@@ -28,11 +28,20 @@ export type OpenAIModelListItem = {
   maxOutputTokens?: number
   features?: string[]
   supported_parameters?: string[]
+  preferred_endpoint?: string
+  preferredEndpoint?: string
+  endpoint?: string
+  endpoints?: unknown
+  supported_endpoints?: unknown
+  supportedEndpoints?: unknown
   input_modalities?: string[]
   output_modalities?: string[]
+  modalities?: unknown
   architecture?: {
     input_modalities?: string[]
+    inputModalities?: string[]
     modality?: string
+    modalities?: unknown
   }
   metadata?: Record<string, unknown>
   tags?: unknown
@@ -70,14 +79,28 @@ type OpenAIModelMappingOptions = {
 }
 
 const DEEPINFRA_REASONING_EFFORTS: ReasoningEffort[] = ['none', 'low', 'medium', 'high']
+const OPENAI_COMPATIBLE_REASONING_EFFORTS: ReasoningEffort[] = ['low', 'medium', 'high']
+const DASHSCOPE_THINKING_EFFORTS: ReasoningEffort[] = ['none', 'low', 'medium', 'high']
+const METADATA_GATED_OPENAI_COMPATIBLE_PRESETS = new Set<ProviderPresetId>([
+  'openrouter',
+  'newapi',
+  'sub2api',
+  'custom-openai-compatible',
+])
 
 export function mapOpenAICompatibleModels(json: OpenAIModelListResponse, providerType: ProviderType, options: OpenAIModelMappingOptions = {}): AIModel[] {
   const items = json.data?.filter((item) => isString(item.id)) ?? []
+  const gateKnownDefaults = shouldGateOpenAICompatibleKnownDefaults(providerType, options)
   return sortModelConfigs(
     dedupeModelIds(items.map((item) => normalizeRemoteModelId(item.id!, providerType))).map((id) => {
       const remote = items.find((item) => normalizeRemoteModelId(item.id!, providerType) === id)
       const reasoningMode = openAICompatibleReasoningModeFromModel(remote, options)
-      return mergeModelConfig(id, providerType, {
+      const supportsVision = supportsVisionFromOpenAIModel(remote)
+      const supportsFiles = supportsFilesFromOpenAIModel(remote)
+      const supportsTools = supportsToolsFromOpenAIModel(remote)
+      const supportedParameters = supportedParametersFromOpenAIModel(remote)
+      const preferredEndpoint = preferredEndpointFromOpenAIModel(remote)
+      const merged = mergeModelConfig(id, providerType, {
         name: remote?.display_name || remote?.name,
         contextWindow: firstNumber(
           remote?.context_length,
@@ -104,15 +127,27 @@ export function mapOpenAICompatibleModels(json: OpenAIModelListResponse, provide
           getNumber(remote?.metadata, 'max_tokens'),
           getNumber(remote?.metadata, 'output_token_limit')
         ),
-        supportsVision: supportsVisionFromOpenAIModel(remote),
-        supportsTools: supportsToolsFromOpenAIModel(remote),
-        supportedParameters: supportedParametersFromOpenAIModel(remote),
+        supportsVision,
+        supportsFiles,
+        supportsTools,
+        supportedParameters,
+        preferredEndpoint,
         ...(reasoningMode ? {
           reasoningMode,
-          reasoningEfforts: DEEPINFRA_REASONING_EFFORTS,
+          reasoningEfforts: openAICompatibleReasoningEffortsFromMode(reasoningMode),
         } : {}),
         source: 'remote',
       })
+      if (!gateKnownDefaults) return merged
+      return {
+        ...merged,
+        supportsVision: supportsVision ?? false,
+        supportsFiles: supportsFiles ?? false,
+        supportsTools: supportsTools ?? false,
+        preferredEndpoint: preferredEndpoint ?? 'chat-completions',
+        reasoningMode,
+        reasoningEfforts: reasoningMode ? openAICompatibleReasoningEffortsFromMode(reasoningMode) : undefined,
+      }
     }),
     providerType
   )
@@ -222,12 +257,9 @@ export function normalizeRemoteModelId(modelId: string, providerType: ProviderTy
 export function supportsVisionFromOpenAIModel(model?: OpenAIModelListItem): boolean | undefined {
   const tags = openAIModelTags(model)
   if (tags.has('vision') || tags.has('vlm')) return true
-  const modalities = [
-    ...(model?.architecture?.input_modalities ?? []),
-    ...(model?.input_modalities ?? []),
-  ]
+  const modalities = openAIModelInputModalities(model)
   if (modalities.length) {
-    return modalities.some((modality) => ['image', 'vision', 'video'].includes(modality.toLowerCase()))
+    return modalities.some((modality) => ['image', 'vision', 'video', 'multimodal'].includes(modality.toLowerCase()))
   }
   const id = model?.id?.toLowerCase() ?? ''
   if (!id) return undefined
@@ -236,24 +268,168 @@ export function supportsVisionFromOpenAIModel(model?: OpenAIModelListItem): bool
   return undefined
 }
 
+export function supportsFilesFromOpenAIModel(model?: OpenAIModelListItem): boolean | undefined {
+  const tags = openAIModelTags(model)
+  if (tags.has('file') || tags.has('files') || tags.has('pdf') || tags.has('document')) return true
+  const supportedParameters = openAIModelSupportedParameterSet(model)
+  if (['file_data', 'file_url', 'input_file', 'attachments', 'attachment'].some((item) => supportedParameters.has(item))) return true
+  const modalities = openAIModelInputModalities(model)
+  if (modalities.length) {
+    return modalities.some((modality) => ['file', 'files', 'pdf', 'document', 'input_file'].includes(modality.toLowerCase()))
+  }
+  return undefined
+}
+
 export function supportsToolsFromOpenAIModel(model?: OpenAIModelListItem): boolean | undefined {
   const tags = openAIModelTags(model)
   if (tags.has('function-calling') || tags.has('function_calling') || tags.has('tools') || tags.has('tool-calling')) return true
+  const supportedParameters = openAIModelSupportedParameterSet(model)
+  if (['tools', 'tool_choice', 'functions', 'function_call', 'function_calling'].some((item) => supportedParameters.has(item))) return true
   return undefined
 }
 
 function supportedParametersFromOpenAIModel(model?: OpenAIModelListItem): string[] | undefined {
   if (!Array.isArray(model?.supported_parameters)) return undefined
   const values = model.supported_parameters
-    .map((value) => typeof value === 'string' ? value.trim() : '')
+    .map((value) => typeof value === 'string' ? normalizeSupportedParameter(value) : '')
     .filter(Boolean)
   return values.length ? [...new Set(values)] : undefined
 }
 
 function openAICompatibleReasoningModeFromModel(model: OpenAIModelListItem | undefined, options: OpenAIModelMappingOptions): ModelReasoningMode | undefined {
-  if (options.providerPresetId !== 'deepinfra') return undefined
-  const tags = openAIModelTags(model)
-  return tags.has('reasoning_effort') || tags.has('reasoning') ? 'deepinfra-reasoning-effort' : undefined
+  const supportedParameters = openAIModelSupportedParameterSet(model)
+  if (options.providerPresetId === 'deepinfra') {
+    const tags = openAIModelTags(model)
+    if (tags.has('reasoning_effort') || tags.has('reasoning') || supportedParameters.has('reasoning_effort')) return 'deepinfra-reasoning-effort'
+  }
+  if (supportedParameters.has('enable_thinking') || supportedParameters.has('thinking_budget')) return 'dashscope-thinking'
+  if (supportedParameters.has('reasoning_effort')) return 'openai-effort'
+  return undefined
+}
+
+function openAICompatibleReasoningEffortsFromMode(mode: ModelReasoningMode): ReasoningEffort[] {
+  if (mode === 'deepinfra-reasoning-effort') return DEEPINFRA_REASONING_EFFORTS
+  if (mode === 'dashscope-thinking') return DASHSCOPE_THINKING_EFFORTS
+  return OPENAI_COMPATIBLE_REASONING_EFFORTS
+}
+
+function preferredEndpointFromOpenAIModel(model?: OpenAIModelListItem): AIModel['preferredEndpoint'] | undefined {
+  const preferred = endpointPreferenceFromValue(model?.preferred_endpoint) ??
+    endpointPreferenceFromValue(model?.preferredEndpoint) ??
+    endpointPreferenceFromValue(model?.endpoint) ??
+    endpointPreferenceFromValue(model?.metadata?.preferred_endpoint) ??
+    endpointPreferenceFromValue(model?.metadata?.preferredEndpoint) ??
+    endpointPreferenceFromValue(model?.metadata?.endpoint)
+  if (preferred) return preferred
+  return endpointPreferenceFromSupportedValues([
+    ...endpointValues(model?.supported_endpoints),
+    ...endpointValues(model?.supportedEndpoints),
+    ...endpointValues(model?.endpoints),
+    ...endpointValues(model?.metadata?.supported_endpoints),
+    ...endpointValues(model?.metadata?.supportedEndpoints),
+    ...endpointValues(model?.metadata?.endpoints),
+  ])
+}
+
+function endpointPreferenceFromValue(value: unknown): AIModel['preferredEndpoint'] | undefined {
+  const values = endpointValues(value)
+  if (values.some(isResponsesEndpointValue)) return 'responses'
+  if (values.some(isChatCompletionsEndpointValue)) return 'chat-completions'
+  return undefined
+}
+
+function endpointPreferenceFromSupportedValues(values: string[]): AIModel['preferredEndpoint'] | undefined {
+  const hasResponses = values.some(isResponsesEndpointValue)
+  const hasChatCompletions = values.some(isChatCompletionsEndpointValue)
+  if (hasResponses && !hasChatCompletions) return 'responses'
+  if (hasChatCompletions) return 'chat-completions'
+  return undefined
+}
+
+function endpointValues(value: unknown): string[] {
+  if (Array.isArray(value)) return value.flatMap(endpointValues)
+  if (typeof value === 'string') return value.split(/[,\s]+/).map((item) => item.trim()).filter(Boolean)
+  if (value && typeof value === 'object') {
+    return Object.entries(value)
+      .flatMap(([key, entry]) => entry === false || entry === null ? [] : [key, ...endpointValues(entry)])
+  }
+  return []
+}
+
+function isResponsesEndpointValue(value: string): boolean {
+  return /(?:^|[/_-])responses?(?:$|[/_-])|response-api|responses-api/i.test(value)
+}
+
+function isChatCompletionsEndpointValue(value: string): boolean {
+  return /chat[_/-]?completions?|chat-completion|\/chat\/completions/i.test(value)
+}
+
+function shouldGateOpenAICompatibleKnownDefaults(providerType: ProviderType, options: OpenAIModelMappingOptions): boolean {
+  return providerType === 'openai-compatible' &&
+    options.providerPresetId !== undefined &&
+    METADATA_GATED_OPENAI_COMPATIBLE_PRESETS.has(options.providerPresetId)
+}
+
+function openAIModelSupportedParameterSet(model?: OpenAIModelListItem): Set<string> {
+  return new Set(supportedParametersFromOpenAIModel(model) ?? [])
+}
+
+function normalizeSupportedParameter(value: string): string {
+  const normalized = value
+    .trim()
+    .replace(/([a-z0-9])([A-Z])/g, '$1_$2')
+    .replace(/[\s-]+/g, '_')
+    .toLowerCase()
+  const key = normalized.replace(/[._]/g, '')
+  if (key === 'responseformat') return 'response_format'
+  if (key === 'structuredoutput' || key === 'structuredoutputs') return 'structured_outputs'
+  if (key === 'textformat') return 'text.format'
+  if (key === 'websearch') return 'web_search'
+  if (key === 'websearchpreview') return 'web_search_preview'
+  if (key === 'websearchoptions') return 'web_search_options'
+  if (key === 'reasoningeffort') return 'reasoning_effort'
+  if (key === 'toolchoice') return 'tool_choice'
+  if (key === 'functioncalling') return 'function_calling'
+  if (key === 'functioncall') return 'function_call'
+  if (key === 'filedata') return 'file_data'
+  if (key === 'fileurl') return 'file_url'
+  if (key === 'inputfile') return 'input_file'
+  if (key === 'enablethinking') return 'enable_thinking'
+  if (key === 'thinkingbudget') return 'thinking_budget'
+  return normalized
+}
+
+function openAIModelInputModalities(model?: OpenAIModelListItem): string[] {
+  return [
+    ...modalityValues(model?.architecture?.input_modalities),
+    ...modalityValues(model?.architecture?.inputModalities),
+    ...modalityValues(model?.architecture?.modality),
+    ...inputModalityValues(model?.architecture?.modalities),
+    ...modalityValues(model?.input_modalities),
+    ...inputModalityValues(model?.modalities),
+    ...modalityValues(model?.metadata?.input_modalities),
+    ...modalityValues(model?.metadata?.inputModalities),
+    ...inputModalityValues(model?.metadata?.modalities),
+  ].map((item) => item.toLowerCase())
+}
+
+function inputModalityValues(value: unknown): string[] {
+  if (Array.isArray(value) || typeof value === 'string') return modalityValues(value)
+  if (value && typeof value === 'object') {
+    const record = value as Record<string, unknown>
+    return [
+      ...modalityValues(record.input),
+      ...modalityValues(record.input_modalities),
+      ...modalityValues(record.inputModalities),
+    ]
+  }
+  return []
+}
+
+function modalityValues(value: unknown): string[] {
+  if (Array.isArray(value)) return value.flatMap(modalityValues)
+  if (typeof value === 'string') return value.split(/[,\s]+/).map((item) => item.trim()).filter(Boolean)
+  return []
 }
 
 function openAIModelTags(model?: OpenAIModelListItem): Set<string> {
@@ -272,6 +448,14 @@ function tagValues(value: unknown): string[] {
   return []
 }
 
+function anthropicCapabilitiesIncludeThinking(capabilities: AnthropicModelListItem['capabilities']): boolean {
+  if (Array.isArray(capabilities)) return capabilities.some((item) => /thinking|reasoning/i.test(item))
+  if (capabilities && typeof capabilities === 'object') {
+    return Object.entries(capabilities).some(([key, value]) => /thinking|reasoning/i.test(key) && value !== false)
+  }
+  return false
+}
+
 export function firstNumber(...values: (number | undefined)[]): number | undefined {
   return values.find((value) => Number.isFinite(value))
 }
@@ -284,14 +468,6 @@ export function getNumber(source: Record<string, unknown> | undefined, key: stri
     return Number.isFinite(parsed) ? parsed : undefined
   }
   return undefined
-}
-
-function anthropicCapabilitiesIncludeThinking(capabilities: AnthropicModelListItem['capabilities']): boolean {
-  if (Array.isArray(capabilities)) return capabilities.some((item) => /thinking|reasoning/i.test(item))
-  if (capabilities && typeof capabilities === 'object') {
-    return Object.entries(capabilities).some(([key, value]) => /thinking|reasoning/i.test(key) && value !== false)
-  }
-  return false
 }
 
 async function fetchOpenAICompatibleModels(provider: AIProvider, timeoutMs: number): Promise<AIModel[]> {
