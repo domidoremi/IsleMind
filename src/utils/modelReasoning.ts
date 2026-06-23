@@ -1,6 +1,7 @@
 import { getModelConfig } from '@/types'
 import type { AIProvider, ReasoningEffort } from '@/types'
 import { providerCompatibilityCapabilityCanBeSentForProvider } from '@/services/ai/providerCompatibilityContract'
+import { normalizeModelId as normalizeSharedModelId } from '@/utils/modelId'
 
 export type ReasoningControlValue = ReasoningEffort | 'default'
 
@@ -355,5 +356,5 @@ function fireworksReasoningProfile(model: string): FireworksReasoningProfile | u
 }
 
 export function normalizeModelId(model: string): string {
-  return (model.toLowerCase().split('/').at(-1) ?? model.toLowerCase()).trim()
+  return normalizeSharedModelId(model)
 }

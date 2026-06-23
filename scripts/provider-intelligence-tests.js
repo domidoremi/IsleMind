@@ -11084,6 +11084,11 @@ https://gateway.example/messages`
   assert.deepEqual(getModelConfig('grok-4.20', 'openai-compatible').reasoningEfforts, ['none', 'low', 'medium', 'high'], 'Grok 4.20 exposes xAI reasoning efforts')
   assert.deepEqual(getModelConfig('grok-4.20-multi-agent', 'openai-compatible').reasoningEfforts, ['low', 'medium', 'high', 'xhigh'], 'Grok 4.20 Multi-Agent exposes official xhigh effort')
   assert.equal(getModelConfig('grok-4.20-non-reasoning', 'openai-compatible').reasoningMode, undefined, 'Grok 4.20 non-reasoning model does not expose reasoning controls')
+  assert.deepEqual(getModelConfig('Grok 4.20 0309 Reasoning Console', 'openai-compatible').reasoningEfforts, ['none', 'low', 'medium', 'high'], 'Grok 4.20 console reasoning label inherits xAI reasoning efforts')
+  assert.deepEqual(getModelConfig('Grok 4.20 Multi Agent Xhigh', 'openai-compatible').reasoningEfforts, ['low', 'medium', 'high', 'xhigh'], 'Grok 4.20 console multi-agent effort label inherits xAI multi-agent reasoning efforts')
+  assert.equal(getModelConfig('Grok 4.20 0309 Non Reasoning Console', 'openai-compatible').reasoningMode, undefined, 'Grok 4.20 console non-reasoning label stays non-reasoning')
+  assert.equal(getModelConfig('Grok 4.20 Multi Agent Console', 'openai-compatible').supportsVision, true, 'Grok 4.20 console labels preserve vision metadata')
+  assert.equal(getModelConfig('Grok 4.20 Multi Agent Console', 'openai-compatible').supportsTools, true, 'Grok 4.20 console labels preserve tool metadata')
   assert.equal(getModelConfig('grok-build-0.1', 'openai-compatible').contextWindow, 256000, 'Grok Build context uses official xAI model metadata')
   assert.equal(getModelConfig('grok-4.1', 'openai-compatible').deprecated, true, 'Grok 4.1 shorthand is treated as a compatibility entry, not a current xAI API model')
   assert.equal(getModelConfig('grok-4', 'openai-compatible').deprecated, true, 'Grok 4 legacy entry is treated as retired/redirected to Grok 4.3')
@@ -11123,6 +11128,9 @@ https://gateway.example/messages`
   assert.deepEqual(getReasoningEffortOptions(grokProvider, 'grok-4.20'), ['none', 'low', 'medium', 'high'], 'Grok 4.20 reasoning model exposes xAI effort levels')
   assert.deepEqual(getReasoningEffortOptions(grokProvider, 'grok-4.20-multi-agent'), ['low', 'medium', 'high', 'xhigh'], 'Grok 4.20 Multi-Agent exposes xAI xhigh effort')
   assert.deepEqual(getReasoningEffortOptions(grokProvider, 'grok-4.20-non-reasoning'), [], 'Grok 4.20 non-reasoning model does not expose reasoning controls')
+  assert.deepEqual(getReasoningEffortOptions(grokProvider, 'Grok 4.20 0309 Reasoning Console'), ['none', 'low', 'medium', 'high'], 'Grok console reasoning aliases expose xAI effort levels')
+  assert.deepEqual(getReasoningEffortOptions(grokProvider, 'Grok 4.20 Multi Agent Medium'), ['low', 'medium', 'high', 'xhigh'], 'Grok console multi-agent aliases expose xAI effort levels')
+  assert.deepEqual(getReasoningEffortOptions(grokProvider, 'Grok 4.20 0309 Non Reasoning Console'), [], 'Grok console non-reasoning aliases do not expose reasoning controls')
   assert.deepEqual(getReasoningEffortOptions(grokProvider, 'grok-4'), [], 'Grok legacy compatibility entries do not expose xAI reasoning_effort controls')
   assert.deepEqual(getReasoningEffortOptions(minimaxProvider, 'MiniMax-M3'), ['none', 'high'], 'MiniMax M3 exposes the provider-supported thinking toggle')
   assert.deepEqual(
@@ -13301,6 +13309,25 @@ https://gateway.example/messages`
   assert.equal(mimoDiscoveryModel?.maxOutputTokens, 128000, 'provider model discovery parses numeric output metadata strings')
   assert.equal(mimoDiscoveryModel?.supportsVision, true, 'provider model discovery preserves Mimo multimodal vision inference')
   assert.equal(openAICompatibleModels.find((model) => model.id === 'mimo-tts-preview')?.supportsVision, false, 'provider model discovery does not mark TTS models as vision capable')
+  const grokConsoleModels = mapOpenAICompatibleModels({
+    data: [
+      { id: 'Grok 4.20 0309 Non Reasoning Console' },
+      { id: 'Grok 4.20 0309 Reasoning Console' },
+      { id: 'Grok 4.20 Multi Agent Console' },
+      { id: 'Grok 4.20 Multi Agent High' },
+      { id: 'Grok 4.20 Multi Agent Low' },
+      { id: 'Grok 4.20 Multi Agent Medium' },
+      { id: 'Grok 4.20 Multi Agent Xhigh' },
+    ],
+  }, 'openai-compatible')
+  const grokConsoleReasoning = grokConsoleModels.find((model) => model.id === 'Grok 4.20 0309 Reasoning Console')
+  const grokConsoleMultiAgent = grokConsoleModels.find((model) => model.id === 'Grok 4.20 Multi Agent Xhigh')
+  const grokConsoleNonReasoning = grokConsoleModels.find((model) => model.id === 'Grok 4.20 0309 Non Reasoning Console')
+  assert.deepEqual(grokConsoleReasoning?.reasoningEfforts, ['none', 'low', 'medium', 'high'], 'provider model discovery maps Grok console reasoning labels to known xAI reasoning metadata')
+  assert.deepEqual(grokConsoleMultiAgent?.reasoningEfforts, ['low', 'medium', 'high', 'xhigh'], 'provider model discovery maps Grok console multi-agent labels to known xAI multi-agent metadata')
+  assert.equal(grokConsoleNonReasoning?.reasoningMode, undefined, 'provider model discovery keeps Grok console non-reasoning labels without reasoning metadata')
+  assert.equal(grokConsoleMultiAgent?.supportsVision, true, 'provider model discovery preserves Grok console vision badges')
+  assert.equal(grokConsoleMultiAgent?.supportsTools, true, 'provider model discovery preserves Grok console tool badges')
   const googleDiscoveryModels = mapGoogleModels({
     models: [
       { name: 'models/gemini-test', displayName: 'Gemini Test', inputTokenLimit: 200000, outputTokenLimit: 16000, supportedGenerationMethods: ['generateContent'] },
@@ -14406,6 +14433,39 @@ https://gateway.example/messages`
   assert.ok(appInfo.content[0].text.includes('stdio is disabled'), 'MCP app_info states mobile transport boundary')
   const truncated = truncateToolBlocks([{ type: 'text', text: 'x'.repeat(2000) }], 50)
   assert.ok(truncated[0].text.length < 1000, 'MCP tool output is truncated to budget')
+}
+
+function assertProviderModelDiscoveryBehavior() {
+  assert.deepEqual(getModelConfig('Grok 4.20 0309 Reasoning Console', 'openai-compatible').reasoningEfforts, ['none', 'low', 'medium', 'high'], 'Grok console reasoning aliases inherit xAI reasoning metadata')
+  assert.deepEqual(getModelConfig('Grok 4.20 Multi Agent Xhigh', 'openai-compatible').reasoningEfforts, ['low', 'medium', 'high', 'xhigh'], 'Grok console multi-agent aliases inherit xAI multi-agent metadata')
+  assert.equal(getModelConfig('Grok 4.20 0309 Non Reasoning Console', 'openai-compatible').reasoningMode, undefined, 'Grok console non-reasoning aliases stay non-reasoning')
+  assert.equal(getModelConfig('Grok 4.20 Multi Agent Console', 'openai-compatible').supportsVision, true, 'Grok console aliases preserve vision metadata')
+  assert.equal(getModelConfig('Grok 4.20 Multi Agent Console', 'openai-compatible').supportsTools, true, 'Grok console aliases preserve tool metadata')
+
+  const grokProvider = { id: 'xai', type: 'openai-compatible', presetId: 'xai', name: 'xAI', baseUrl: 'https://api.x.ai/v1', models: ['Grok 4.20 0309 Reasoning Console', 'Grok 4.20 Multi Agent Medium', 'Grok 4.20 0309 Non Reasoning Console'], enabled: true }
+  assert.deepEqual(getReasoningEffortOptions(grokProvider, 'Grok 4.20 0309 Reasoning Console'), ['none', 'low', 'medium', 'high'], 'Grok console reasoning aliases expose xAI effort levels')
+  assert.deepEqual(getReasoningEffortOptions(grokProvider, 'Grok 4.20 Multi Agent Medium'), ['low', 'medium', 'high', 'xhigh'], 'Grok console multi-agent aliases expose xAI effort levels')
+  assert.deepEqual(getReasoningEffortOptions(grokProvider, 'Grok 4.20 0309 Non Reasoning Console'), [], 'Grok console non-reasoning aliases do not expose reasoning controls')
+
+  const grokConsoleModels = mapOpenAICompatibleModels({
+    data: [
+      { id: 'Grok 4.20 0309 Non Reasoning Console' },
+      { id: 'Grok 4.20 0309 Reasoning Console' },
+      { id: 'Grok 4.20 Multi Agent Console' },
+      { id: 'Grok 4.20 Multi Agent High' },
+      { id: 'Grok 4.20 Multi Agent Low' },
+      { id: 'Grok 4.20 Multi Agent Medium' },
+      { id: 'Grok 4.20 Multi Agent Xhigh' },
+    ],
+  }, 'openai-compatible')
+  const grokConsoleReasoning = grokConsoleModels.find((model) => model.id === 'Grok 4.20 0309 Reasoning Console')
+  const grokConsoleMultiAgent = grokConsoleModels.find((model) => model.id === 'Grok 4.20 Multi Agent Xhigh')
+  const grokConsoleNonReasoning = grokConsoleModels.find((model) => model.id === 'Grok 4.20 0309 Non Reasoning Console')
+  assert.deepEqual(grokConsoleReasoning?.reasoningEfforts, ['none', 'low', 'medium', 'high'], 'provider model discovery maps Grok console reasoning labels to known xAI reasoning metadata')
+  assert.deepEqual(grokConsoleMultiAgent?.reasoningEfforts, ['low', 'medium', 'high', 'xhigh'], 'provider model discovery maps Grok console multi-agent labels to known xAI multi-agent metadata')
+  assert.equal(grokConsoleNonReasoning?.reasoningMode, undefined, 'provider model discovery keeps Grok console non-reasoning labels without reasoning metadata')
+  assert.equal(grokConsoleMultiAgent?.supportsVision, true, 'provider model discovery preserves Grok console vision badges')
+  assert.equal(grokConsoleMultiAgent?.supportsTools, true, 'provider model discovery preserves Grok console tool badges')
 }
 
 function assertProviderCompatibilityContractBehavior() {
@@ -24013,6 +24073,10 @@ async function runFocused() {
   }
   if (focus === 'provider-presets') {
     await assertExpandedProviderPresetCoverage()
+    return
+  }
+  if (focus === 'provider-model-discovery') {
+    assertProviderModelDiscoveryBehavior()
     return
   }
   if (focus === 'provider-capability-matrix') {

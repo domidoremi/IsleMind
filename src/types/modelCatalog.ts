@@ -1,4 +1,5 @@
 import type { AIModel, ProviderType } from './index'
+import { normalizeModelId } from '../utils/modelId'
 
 export const DEFAULT_MODELS: AIModel[] = [
   model('gpt-5.5', 'GPT-5.5', 'openai', 1050000, 128000, 8192, true, true, false, { supportsTools: true, preferredEndpoint: 'responses', reasoningMode: 'openai-effort', reasoningEfforts: ['none', 'low', 'medium', 'high', 'xhigh'], sourceUrl: 'https://developers.openai.com/api/docs/models/gpt-5.5', verifiedAt: '2026-06-10' }),
@@ -117,7 +118,7 @@ export function getModelConfig(modelId: string, providerType?: ProviderType, mod
   if (exact) return { ...exact, id: modelId, provider: providerType ?? exact.provider }
 
   const normalized = normalizeModelId(modelId)
-  const known = DEFAULT_MODELS.find((item) => item.id === normalized)
+  const known = DEFAULT_MODELS.find((item) => normalizeModelId(item.id) === normalized)
   if (known) {
     const prefix = modelId.includes('/') ? `${titleCase(modelId.split('/')[0])} / ` : ''
     return { ...known, id: modelId, name: `${prefix}${known.name}`, provider: providerType ?? known.provider }
@@ -154,7 +155,7 @@ export function mergeModelConfig(modelId: string, providerType: ProviderType, re
 }
 
 export function sortModelConfigs(models: AIModel[], providerType: ProviderType): AIModel[] {
-  const knownOrder = getProviderModels(providerType).map((item) => item.id)
+  const knownOrder = getProviderModels(providerType).map((item) => normalizeModelId(item.id))
   return [...models].sort((a, b) => {
     const aIndex = knownOrder.indexOf(normalizeModelId(a.id))
     const bIndex = knownOrder.indexOf(normalizeModelId(b.id))
@@ -167,7 +168,7 @@ export function sortModelConfigs(models: AIModel[], providerType: ProviderType):
 
 function mergeKnownModelDefaults(modelId: string, providerType: ProviderType | undefined, remote: AIModel): AIModel {
   const normalized = normalizeModelId(modelId)
-  const known = DEFAULT_MODELS.find((item) => item.id === modelId || item.id === normalized)
+  const known = DEFAULT_MODELS.find((item) => item.id === modelId || normalizeModelId(item.id) === normalized)
   if (!known) return { ...remote, id: modelId, provider: providerType ?? remote.provider }
 
   return {
@@ -213,10 +214,6 @@ function model(
     deprecated,
     ...options,
   }
-}
-
-function normalizeModelId(modelId: string): string {
-  return modelId.includes('/') ? modelId.split('/').at(-1) ?? modelId : modelId
 }
 
 function inferModelConfig(modelId: string, providerType: ProviderType): AIModel {
