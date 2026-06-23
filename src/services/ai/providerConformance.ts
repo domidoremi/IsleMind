@@ -828,6 +828,15 @@ function resolveReasoning(input: ProviderConformanceRequest, manifest: ProviderC
       effective,
     })
   }
+  if (manifest.reasoning.requestShape === 'xiaomi-mimo-thinking' && effective && !OFF_EFFORTS.has(effective)) {
+    return {
+      requested,
+      enabled: false,
+      effective,
+      requestShape: manifest.reasoning.requestShape,
+      downgradeReason: 'provider_parameter_guard',
+    }
+  }
   return {
     requested,
     enabled: true,

@@ -41,7 +41,7 @@ export function providerFetchFailure<T>(error: unknown, credentialGroupId?: stri
   return failure<T>('unknown', message || st('providerOperation.requestFailed'), undefined, credentialGroupId)
 }
 
-export function classifyHttpStatus(status: number, responseText = '', model = ''): ProviderOperationCode {
+export function classifyHttpStatus(status: number, responseText = '', model = '', provider?: Pick<AIProvider, 'type'>): ProviderOperationCode {
   const text = responseText.toLowerCase()
   if (status === 401 || status === 403 || text.includes('invalid api key') || text.includes('unauthorized') || text.includes('permission')) return 'bad_auth'
   if (status === 408 || status === 504) return 'timeout'
@@ -50,13 +50,14 @@ export function classifyHttpStatus(status: number, responseText = '', model = ''
   if (status === 404 && (model || text.includes('model'))) return 'model_unavailable'
   if (status === 404) return 'models_endpoint_unavailable'
   if (status === 400 && (text.includes('model') || text.includes('not found') || text.includes('not exist'))) return 'model_unavailable'
+  if (status === 400 && provider?.type === 'xiaomi-mimo' && !looksLikeBaseUrlProblem(text)) return 'unknown'
   if (status === 400) return 'bad_base_url'
   if (status >= 500) return 'network_error'
   return 'unknown'
 }
 
 export function formatProviderHttpError(status: number, responseText = '', provider?: AIProvider, model = ''): string {
-  const code = classifyHttpStatus(status, responseText, model)
+  const code = classifyHttpStatus(status, responseText, model, provider)
   const providerName = provider?.name ?? st('providerOperation.provider')
   const detail = extractProviderErrorDetail(responseText)
   switch (code) {
@@ -79,6 +80,10 @@ export function formatProviderHttpError(status: number, responseText = '', provi
     default:
       return detail ? st('providerOperation.http.errorWithSummary', { provider: providerName, status, detail }) : st('providerOperation.http.error', { provider: providerName, status })
   }
+}
+
+function looksLikeBaseUrlProblem(text: string): boolean {
+  return /base[\s_-]?url|endpoint|unsupported url|invalid url|not found|route|path|html|404/.test(text)
 }
 
 export function extractProviderErrorDetail(responseText = ''): string {
