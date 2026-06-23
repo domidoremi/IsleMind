@@ -69,7 +69,7 @@ function trimUrl(url: URL): string {
 }
 
 function providerIdentityText(provider: AIProvider): string {
-  return [provider.id, provider.name, provider.baseUrl, provider.models?.join(' '), provider.presetId, provider.detectedPresetId]
+  return [provider.id, provider.name, provider.baseUrl, provider.presetId, provider.detectedPresetId]
     .filter(Boolean)
     .join(' ')
 }

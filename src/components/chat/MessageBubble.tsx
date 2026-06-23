@@ -33,6 +33,7 @@ import type { MotionIntensity } from '@/hooks/useMotionPreference'
 import { getAgentEvidenceRepairActionFromMessage, getAgentPendingActionFromMessage, getAgentWorkflowContinuationActionFromMessage, getAgentWorkflowRecoveryActionFromMessage, getAgentWorkflowSkillSuggestionFromMessage } from '@/services/agent/agentMessageAdapter'
 import { clampAgentOutput, redactSensitiveText } from '@/services/agent/agentTrace'
 import { sanitizeInternalChatOutputText } from '@/services/chatInternalOutputGuard'
+import { estimateTextTokens } from '@/services/tokenUsage'
 
 const STREAMING_LAYOUT_TEXT_STEP = 160
 const STREAMING_RENDER_TEXT_STEP = 120
@@ -142,6 +143,23 @@ function MessageBubbleComponent({
   const processCanExpand = !isUser && processTraces.some(hasExpandableThinkingContent)
   const canCopyProcessTrace = !isUser && processTraces.length > 0 && !!onCopyProcessTrace
   const processMaxHeight = Math.min(230, viewportHeight * 0.34)
+  const statusTokenText = useMemo(
+    () => !isUser ? buildMessageTokenStatus(message, renderedDisplayText, isStreamingContent) : '',
+    [
+      isUser,
+      renderedDisplayText,
+      message.estimatedTokens,
+      message.status,
+      message.tokenCount,
+      message.usage?.cachedInputTokens,
+      message.usage?.inputTokens,
+      message.usage?.outputTokens,
+      message.usage?.reasoningTokens,
+      message.usage?.source,
+      message.usage?.totalTokens,
+      isStreamingContent,
+    ]
+  )
   const actionBarOpen = activeActionMessageId === undefined ? localActionsOpen : activeActionMessageId === message.id
   const actionMessage = !isUser && !isStreamingContent ? message : undefined
   const pendingAgentAction = useMemo(() => actionMessage ? getAgentPendingActionFromMessage(actionMessage) : undefined, [actionMessage])
@@ -265,6 +283,7 @@ function MessageBubbleComponent({
                 maxHeight={processMaxHeight}
                 onToggle={toggleProcessLayer}
                 trailingActionSpace={false}
+                tokenText={statusTokenText}
               />
             ) : null}
             <GestureDetector gesture={tapBubble}>
@@ -474,6 +493,7 @@ function MessageProcessLayer({
   maxHeight,
   onToggle,
   trailingActionSpace = false,
+  tokenText,
 }: {
   message: Message
   traces: ProcessTrace[]
@@ -482,6 +502,7 @@ function MessageProcessLayer({
   maxHeight: number
   onToggle: () => void
   trailingActionSpace?: boolean
+  tokenText?: string
 }) {
   const { colors, isGlass } = useAppTheme()
   const actionChrome = resolveMessageActionChrome(colors, isGlass)
@@ -542,7 +563,7 @@ function MessageProcessLayer({
           alignItems: 'center',
           gap: 8,
           alignSelf: 'flex-start',
-          width: active ? '100%' : undefined,
+          width: '100%',
           maxWidth: '100%',
           borderRadius: colors.ui.radius.chip,
           paddingVertical: emphasizedStatus ? 5 : 2,
@@ -557,10 +578,19 @@ function MessageProcessLayer({
         <Text
           numberOfLines={1}
           ellipsizeMode="tail"
-          style={{ color: tone, fontSize: 12, lineHeight: 16, fontWeight: '800', flexGrow: 1, flexShrink: 1, minWidth: 120 }}
+          style={{ color: tone, fontSize: 12, lineHeight: 16, fontWeight: '800', flex: 1, flexShrink: 1, minWidth: 0 }}
         >
           {processStatusLabel}
         </Text>
+        {tokenText ? (
+          <Text
+            numberOfLines={1}
+            ellipsizeMode="tail"
+            style={{ color: tone, opacity: 0.78, fontSize: 10.5, lineHeight: 14, fontWeight: '800', flexShrink: 1, minWidth: 0, maxWidth: '38%', textAlign: 'right' }}
+          >
+            {tokenText}
+          </Text>
+        ) : null}
         {canExpand ? (
           <MotiView animate={{ rotate: expanded ? '90deg' : '0deg' }} transition={{ type: 'timing', duration: 150 }}>
             <AppIcon name="back-next" color={colors.textTertiary} size={14} strokeWidth={appIconStroke.strong} />
@@ -670,15 +700,12 @@ function thinkingDoneLabel(message: Message, traces: ProcessTrace[], t: TFunctio
   const hasThinking = traces.some(hasDisplayableThinkingContent)
   const durationMs = resolveThinkingDurationMs(message, traces)
   if (hasThinking && durationMs) {
-    return t('messageBubble.thinkingDoneWithDuration', {
-      duration: formatDuration(durationMs),
-      defaultValue: `已思考 ${formatDuration(durationMs)}`,
-    })
+    return translateMessageBubbleLabel(t, 'messageBubble.completed', '已完成') + ` · ${formatDuration(durationMs)}`
   }
-  if (hasThinking) return translateMessageBubbleLabel(t, 'messageBubble.thinkingDone', '已思考')
+  if (hasThinking) return translateMessageBubbleLabel(t, 'messageBubble.completed', '已完成')
   const settledStage = settledProcessStageLabel(message, traces, t)
   if (settledStage) return settledStage
-  return translateMessageBubbleLabel(t, 'messageBubble.thinkingDone', '已思考')
+  return translateMessageBubbleLabel(t, 'messageBubble.completed', '已完成')
 }
 
 function settledProcessStageLabel(message: Message, traces: ProcessTrace[], t: TFunction): string {
@@ -748,6 +775,36 @@ function thinkingProgressLabel(t: TFunction, state: 'base' | 'active' | 'done', 
   return t('messageBubble.thinkingProgressBase', {
     defaultValue: '准备中',
   })
+}
+
+function buildMessageTokenStatus(message: Message, renderedText: string, active: boolean): string {
+  const usage = message.usage
+  const estimatedOutputTokens = active ? estimateTextTokens(renderedText) : undefined
+  const outputTokens = usage?.outputTokens ?? estimatedOutputTokens ?? message.tokenCount
+  const inputTokens = usage?.inputTokens
+  const reasoningTokens = usage?.reasoningTokens
+  const totalTokens = active
+    ? sumDefined(inputTokens, outputTokens, reasoningTokens)
+    : usage?.totalTokens ?? sumDefined(inputTokens, outputTokens, reasoningTokens)
+  if (!hasAnyTokenValue(totalTokens)) return ''
+  return formatTokenCount(totalTokens)
+}
+
+function formatTokenCount(value: number | undefined): string {
+  if (typeof value !== 'number' || !Number.isFinite(value) || value <= 0) return '0'
+  if (value >= 1000000) return `${Math.round(value / 100000) / 10}M`
+  if (value >= 10000) return `${Math.round(value / 1000)}K`
+  if (value >= 1000) return `${Math.round(value / 100) / 10}K`
+  return String(Math.round(value))
+}
+
+function hasAnyTokenValue(...values: Array<number | undefined>): boolean {
+  return values.some((value) => typeof value === 'number' && Number.isFinite(value) && value > 0)
+}
+
+function sumDefined(...values: Array<number | undefined>): number | undefined {
+  const numbers = values.filter((value): value is number => typeof value === 'number' && Number.isFinite(value) && value > 0)
+  return numbers.length ? numbers.reduce((total, value) => total + value, 0) : undefined
 }
 
 function waitingProcessLayerLabel(traces: ProcessTrace[], t: TFunction): string | undefined {

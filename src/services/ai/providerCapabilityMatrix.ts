@@ -1,4 +1,4 @@
-import type { AIProvider, ProviderPresetId } from '@/types'
+import type { AIModel, AIProvider, ProviderPresetId } from '@/types'
 import { getModelConfig } from '@/types'
 import { getProviderPreset } from '@/services/ai/providerRegistry'
 import { isPerplexityProvider } from '@/services/ai/providerIdentity'
@@ -6,8 +6,9 @@ import { getBedrockRuntimeSupportIssue, isBedrockMantleProvider, isBedrockRuntim
 import { isBedrockProvider } from '@/services/ai/providerRequestOptimization'
 import { isAzureOpenAIProvider, isAzureOpenAIV1Provider } from '@/services/ai/providerHostedRouting'
 import { getHostedProviderSupportIssue, isAwsBedrockHostedProvider, isHostedProviderGap, isVertexAIOpenAICompatibleProvider, isVertexAIProvider } from '@/services/ai/providerHostedBoundary'
-import { providerSupportsFileInput, providerSupportsVisionInput } from '@/services/chatProviderNativeToolUtils'
+import { providerSupportsFileInput, providerSupportsVisionInput, resolveProviderNativeToolSupport } from '@/services/chatProviderNativeToolUtils'
 import { providerSupportsReasoning } from '@/utils/modelReasoning'
+import { resolveProviderModelAlias } from '@/utils/providerModels'
 import {
   explainProviderCompatibilityCapabilityStatus,
   getProviderCompatibilityEvidenceForProvider,
@@ -74,6 +75,72 @@ export interface ProviderCapabilityMatrix {
   statuses: ProviderCapabilityStatus[]
 }
 
+export type ProviderModelCapabilityKey =
+  | 'chat'
+  | 'streaming'
+  | 'tools'
+  | 'vision'
+  | 'files'
+  | 'reasoning'
+  | 'responseFormat'
+  | 'responsesApi'
+  | 'nativeSearch'
+
+export type ProviderModelCapabilityEvidenceStatus =
+  | 'verified'
+  | 'inferred'
+  | 'manual'
+  | 'unsupported'
+
+export type ProviderModelCapabilityEvidenceSource =
+  | 'provider-test'
+  | 'remote-model-metadata'
+  | 'model-catalog'
+  | 'provider-contract'
+  | 'manual-declaration'
+  | 'protocol-default'
+  | 'unsupported-contract'
+  | 'model-metadata'
+
+export interface ProviderModelCapabilityStatus {
+  capability: ProviderModelCapabilityKey
+  status: ProviderModelCapabilityEvidenceStatus
+  source: ProviderModelCapabilityEvidenceSource
+  reason: string
+}
+
+export interface ProviderModelCapabilityMatrix {
+  providerId: string
+  modelId: string
+  resolvedModelId?: string
+  capabilities: ProviderModelCapabilityStatus[]
+}
+
+export interface ProviderModelCapabilityProviderSummary {
+  providerId: string
+  modelIds: string[]
+  modelCount: number
+  statusCounts: Record<ProviderModelCapabilityEvidenceStatus, number>
+  capabilityStatusCounts: Record<ProviderModelCapabilityKey, Record<ProviderModelCapabilityEvidenceStatus, number>>
+  sendableAdvancedCapabilities: ProviderModelCapabilityKey[]
+  unsupportedAdvancedCapabilities: ProviderModelCapabilityKey[]
+}
+
+export const PROVIDER_MODEL_CAPABILITY_KEYS: ProviderModelCapabilityKey[] = [
+  'chat',
+  'streaming',
+  'tools',
+  'vision',
+  'files',
+  'reasoning',
+  'responseFormat',
+  'responsesApi',
+  'nativeSearch',
+]
+
+const ADVANCED_PROVIDER_MODEL_CAPABILITY_KEYS: ProviderModelCapabilityKey[] = PROVIDER_MODEL_CAPABILITY_KEYS
+  .filter((capability) => capability !== 'chat' && capability !== 'streaming')
+
 export function buildProviderCapabilityMatrix(provider: AIProvider): ProviderCapabilityMatrix {
   const preset = getProviderPreset(provider.presetId ?? provider.detectedPresetId)
   const family = provider.presetId ?? provider.detectedPresetId ?? preset.id
@@ -113,6 +180,82 @@ export function buildProviderCapabilityMatrix(provider: AIProvider): ProviderCap
     summaryLevel: summarizeSupportLevel(statuses),
     statuses,
   }
+}
+
+export function buildProviderModelCapabilityMatrix(provider: AIProvider, modelId: string): ProviderModelCapabilityMatrix {
+  const resolvedModelId = resolveProviderModelAlias(provider, modelId)
+  const modelConfig = getModelConfig(resolvedModelId, provider.type, provider.modelConfigs)
+  return {
+    providerId: provider.id,
+    modelId,
+    ...(sameModelId(modelId, resolvedModelId) ? {} : { resolvedModelId }),
+    capabilities: [
+      buildModelChatCapability(provider, modelConfig),
+      buildModelStreamingCapability(provider, modelConfig),
+      buildModelToolsCapability(provider, modelConfig),
+      buildModelVisionCapability(provider, modelConfig),
+      buildModelFilesCapability(provider, modelConfig),
+      buildModelReasoningCapability(provider, modelConfig),
+      buildModelResponseFormatCapability(provider, modelConfig),
+      buildModelResponsesApiCapability(provider, modelConfig),
+      buildModelNativeSearchCapability(provider, modelConfig),
+    ],
+  }
+}
+
+export function getProviderModelCapabilityModelIds(provider: AIProvider): string[] {
+  return providerKnownModelIds(provider)
+}
+
+export function summarizeProviderModelCapabilityProvider(
+  provider: AIProvider,
+  modelIds = providerKnownModelIds(provider),
+): ProviderModelCapabilityProviderSummary {
+  const knownModelIds = normalizeModelIdList(modelIds)
+  const statusCounts = emptyProviderModelCapabilityStatusCounts()
+  const capabilityStatusCounts = Object.fromEntries(
+    PROVIDER_MODEL_CAPABILITY_KEYS.map((capability) => [capability, emptyProviderModelCapabilityStatusCounts()]),
+  ) as Record<ProviderModelCapabilityKey, Record<ProviderModelCapabilityEvidenceStatus, number>>
+
+  for (const modelId of knownModelIds) {
+    for (const status of buildProviderModelCapabilityMatrix(provider, modelId).capabilities) {
+      statusCounts[status.status] += 1
+      capabilityStatusCounts[status.capability][status.status] += 1
+    }
+  }
+
+  return {
+    providerId: provider.id,
+    modelIds: knownModelIds,
+    modelCount: knownModelIds.length,
+    statusCounts,
+    capabilityStatusCounts,
+    sendableAdvancedCapabilities: ADVANCED_PROVIDER_MODEL_CAPABILITY_KEYS
+      .filter((capability) => capabilityStatusCounts[capability].verified + capabilityStatusCounts[capability].manual > 0),
+    unsupportedAdvancedCapabilities: ADVANCED_PROVIDER_MODEL_CAPABILITY_KEYS
+      .filter((capability) => knownModelIds.length > 0 && capabilityStatusCounts[capability].unsupported === knownModelIds.length),
+  }
+}
+
+export function getProviderModelCapabilityStatus(
+  provider: AIProvider,
+  modelId: string,
+  capability: ProviderModelCapabilityKey,
+): ProviderModelCapabilityStatus | undefined {
+  return buildProviderModelCapabilityMatrix(provider, modelId)
+    .capabilities
+    .find((item) => item.capability === capability)
+}
+
+export function providerModelCapabilityCanBeSent(
+  provider: AIProvider,
+  modelId: string,
+  capability: ProviderModelCapabilityKey,
+): boolean {
+  const status = getProviderModelCapabilityStatus(provider, modelId, capability)?.status
+  if (!status || status === 'unsupported') return false
+  if (capability === 'chat' || capability === 'streaming') return true
+  return status === 'verified' || status === 'manual'
 }
 
 function inferHostingProfile(provider: AIProvider): ProviderHostingProfile {
@@ -172,12 +315,258 @@ function buildStreamingStatus(provider: AIProvider): ProviderCapabilityStatus {
 }
 
 function providerKnownModelIds(provider: AIProvider): string[] {
-  return Array.from(new Set([
+  return normalizeModelIdList([
     ...provider.models,
     ...(provider.manualModels ?? []),
     ...(provider.modelConfigs ?? []).map((model) => model.id),
     ...(provider.modelAliases ?? []).map((alias) => alias.model),
-  ].map((model) => model.trim()).filter(Boolean)))
+  ])
+}
+
+function normalizeModelIdList(modelIds: string[]): string[] {
+  return Array.from(new Set(modelIds.map((model) => model.trim()).filter(Boolean)))
+}
+
+function emptyProviderModelCapabilityStatusCounts(): Record<ProviderModelCapabilityEvidenceStatus, number> {
+  return {
+    verified: 0,
+    inferred: 0,
+    manual: 0,
+    unsupported: 0,
+  }
+}
+
+function buildModelChatCapability(provider: AIProvider, modelConfig: AIModel): ProviderModelCapabilityStatus {
+  if (modelConfig.chatCompatible === false) {
+    return modelCapability('chat', 'unsupported', 'model-metadata', 'model metadata marks this model as non-chat-compatible')
+  }
+  if (providerModelWasTested(provider, modelConfig.id)) {
+    return modelCapability('chat', 'verified', 'provider-test', 'the provider test succeeded with this model')
+  }
+  if (modelConfig.source === 'remote') {
+    return modelCapability('chat', 'verified', 'remote-model-metadata', 'remote model metadata lists this model for the provider')
+  }
+  if (modelHasNonRelayCatalogEvidence(provider, modelConfig)) {
+    return modelCapability('chat', 'verified', 'model-catalog', 'model catalog metadata covers this non-relay provider/model pair')
+  }
+  if (modelWasManuallyDeclared(provider, modelConfig.id)) {
+    return modelCapability('chat', 'manual', 'manual-declaration', 'the model id is manually declared for this provider')
+  }
+  return modelCapability('chat', 'inferred', 'protocol-default', 'basic chat is inferred from the provider protocol and remains validated by runtime fallback')
+}
+
+function buildModelStreamingCapability(provider: AIProvider, modelConfig: AIModel): ProviderModelCapabilityStatus {
+  if (provider.capabilities?.streaming === false || modelConfig.supportsStreaming === false) {
+    return modelCapability('streaming', 'unsupported', 'model-metadata', 'provider or model metadata disables streaming for this model')
+  }
+  if (modelConfig.source === 'remote') {
+    return modelCapability('streaming', 'verified', 'remote-model-metadata', 'remote model metadata does not disable streaming')
+  }
+  const contractStatus = resolveProviderCompatibilityCapabilityStatus(getProviderCompatibilityEvidenceForProvider(provider).id, 'streaming')
+  if (contractStatus === 'supported' && modelHasNonRelayCatalogEvidence(provider, modelConfig)) {
+    return modelCapability('streaming', 'verified', 'provider-contract', 'provider contract supports streaming and model catalog metadata does not disable it')
+  }
+  return modelCapability('streaming', 'inferred', 'protocol-default', 'streaming is inferred from the compatible chat protocol unless provider/model metadata disables it')
+}
+
+function buildModelToolsCapability(provider: AIProvider, modelConfig: AIModel): ProviderModelCapabilityStatus {
+  const decision = resolveProviderNativeToolSupport(provider, modelConfig)
+  if (!decision.supported) {
+    return modelCapability('tools', 'unsupported', decision.reason === 'blocked_model_tools_disabled' ? 'model-metadata' : 'unsupported-contract', `provider-native tools are blocked: ${decision.reason}`)
+  }
+  if (provider.capabilities?.nativeTools === true && providerUsesProtocolReferenceEvidence(provider) && modelConfig.source !== 'remote') {
+    return modelCapability('tools', 'manual', 'manual-declaration', 'provider-native tools are enabled by an explicit relay capability declaration')
+  }
+  if (modelConfig.source === 'remote' && modelConfig.supportsTools === true) {
+    return modelCapability('tools', 'verified', 'remote-model-metadata', 'remote model metadata declares tool support')
+  }
+  if (modelHasNonRelayCatalogEvidence(provider, modelConfig)) {
+    return modelCapability('tools', 'verified', 'provider-contract', 'provider contract and model catalog allow native tool declarations')
+  }
+  if (provider.capabilities?.nativeTools === true) {
+    return modelCapability('tools', 'manual', 'manual-declaration', 'provider-native tools are enabled by explicit provider configuration')
+  }
+  return modelCapability('tools', 'inferred', 'provider-contract', 'provider contract allows native tools, but model-level metadata is not explicit')
+}
+
+function buildModelVisionCapability(provider: AIProvider, modelConfig: AIModel): ProviderModelCapabilityStatus {
+  if (!providerSupportsVisionInput(provider, modelConfig)) {
+    return modelCapability('vision', 'unsupported', unsupportedInputCapabilitySource(provider, modelConfig, 'vision'), 'vision input is not allowed by provider contract, explicit declarations, or model metadata')
+  }
+  if (provider.capabilities?.vision === true && providerUsesProtocolReferenceEvidence(provider) && modelConfig.source !== 'remote') {
+    return modelCapability('vision', 'manual', 'manual-declaration', 'vision is enabled by an explicit relay capability declaration')
+  }
+  if (modelConfig.source === 'remote' && modelConfig.supportsVision === true) {
+    return modelCapability('vision', 'verified', 'remote-model-metadata', 'remote model metadata declares vision support')
+  }
+  if (modelHasNonRelayCatalogEvidence(provider, modelConfig) && modelConfig.supportsVision === true) {
+    return modelCapability('vision', 'verified', 'model-catalog', 'model catalog metadata declares vision support for this provider/model pair')
+  }
+  if (provider.capabilities?.vision === true) {
+    return modelCapability('vision', 'manual', 'manual-declaration', 'vision is enabled by explicit provider configuration')
+  }
+  return modelCapability('vision', 'inferred', 'provider-contract', 'vision is allowed by provider contract, but model-level metadata is not explicit')
+}
+
+function buildModelFilesCapability(provider: AIProvider, modelConfig: AIModel): ProviderModelCapabilityStatus {
+  if (!providerSupportsFileInput(provider, modelConfig)) {
+    return modelCapability('files', 'unsupported', unsupportedInputCapabilitySource(provider, modelConfig, 'files'), 'file input is not allowed by provider contract, explicit declarations, or model metadata')
+  }
+  if (provider.capabilities?.files === true && providerUsesProtocolReferenceEvidence(provider) && modelConfig.source !== 'remote') {
+    return modelCapability('files', 'manual', 'manual-declaration', 'file input is enabled by an explicit relay capability declaration')
+  }
+  if (modelConfig.source === 'remote' && modelConfig.supportsFiles === true) {
+    return modelCapability('files', 'verified', 'remote-model-metadata', 'remote model metadata declares file input support')
+  }
+  if (modelHasNonRelayCatalogEvidence(provider, modelConfig) && modelConfig.supportsFiles === true) {
+    return modelCapability('files', 'verified', 'model-catalog', 'model catalog metadata declares file support for this provider/model pair')
+  }
+  if (provider.capabilities?.files === true) {
+    return modelCapability('files', 'manual', 'manual-declaration', 'file input is enabled by explicit provider configuration')
+  }
+  return modelCapability('files', 'inferred', 'provider-contract', 'file input is allowed by provider contract, but model-level metadata is not explicit')
+}
+
+function buildModelReasoningCapability(provider: AIProvider, modelConfig: AIModel): ProviderModelCapabilityStatus {
+  if (!providerSupportsReasoning(provider, modelConfig.id)) {
+    return modelCapability('reasoning', 'unsupported', providerCompatibilityCapabilityCanBeSentForProvider(provider, 'reasoning', provider.capabilities?.reasoningEffort === true) ? 'model-metadata' : 'unsupported-contract', 'reasoning controls are not allowed by provider contract, explicit declarations, or model metadata')
+  }
+  if (provider.capabilities?.reasoningEffort === true && providerUsesProtocolReferenceEvidence(provider) && modelConfig.source !== 'remote') {
+    return modelCapability('reasoning', 'manual', 'manual-declaration', 'reasoning controls are enabled by an explicit relay capability declaration')
+  }
+  if (modelConfig.source === 'remote' && Boolean(modelConfig.reasoningMode || modelConfig.reasoningEfforts?.length)) {
+    return modelCapability('reasoning', 'verified', 'remote-model-metadata', 'remote model metadata declares reasoning controls')
+  }
+  if (modelHasNonRelayCatalogEvidence(provider, modelConfig) && Boolean(modelConfig.reasoningMode || modelConfig.reasoningEfforts?.length)) {
+    return modelCapability('reasoning', 'verified', 'model-catalog', 'model catalog metadata declares reasoning controls')
+  }
+  if (provider.capabilities?.reasoningEffort === true) {
+    return modelCapability('reasoning', 'manual', 'manual-declaration', 'reasoning controls are enabled by explicit provider configuration')
+  }
+  return modelCapability('reasoning', 'inferred', 'provider-contract', 'reasoning is allowed by provider contract, but model-level controls are not explicit')
+}
+
+function buildModelResponseFormatCapability(provider: AIProvider, modelConfig: AIModel): ProviderModelCapabilityStatus {
+  const modelDeclaresResponseFormat = modelSupportsResponseFormat(modelConfig)
+  const allowed = providerCompatibilityCapabilityCanBeSentForProvider(provider, 'structuredOutput', modelDeclaresResponseFormat)
+  if (!allowed) {
+    return modelCapability('responseFormat', 'unsupported', 'unsupported-contract', 'response_format is not allowed until provider contract, remote metadata, or manual model metadata declares it')
+  }
+  if (modelConfig.source === 'remote' && modelDeclaresResponseFormat) {
+    return modelCapability('responseFormat', 'verified', 'remote-model-metadata', 'remote model metadata declares response_format support')
+  }
+  if (modelOwnConfigWasDeclared(provider, modelConfig.id) && modelDeclaresResponseFormat && modelConfig.source !== 'remote') {
+    return modelCapability('responseFormat', 'manual', 'manual-declaration', 'provider model metadata explicitly declares response_format support')
+  }
+  if (modelHasNonRelayCatalogEvidence(provider, modelConfig) || resolveProviderCompatibilityCapabilityStatus(getProviderCompatibilityEvidenceForProvider(provider).id, 'structuredOutput') === 'supported') {
+    return modelCapability('responseFormat', 'verified', 'provider-contract', 'provider contract maps structured-output request controls for this family')
+  }
+  return modelCapability('responseFormat', 'inferred', 'provider-contract', 'structured output is allowed, but model-level response_format metadata is not explicit')
+}
+
+function buildModelResponsesApiCapability(provider: AIProvider, modelConfig: AIModel): ProviderModelCapabilityStatus {
+  const allowed = providerCompatibilityCapabilityCanBeSentForProvider(provider, 'responsesApi', provider.capabilities?.responsesApi === true)
+  if (!allowed) {
+    return modelCapability('responsesApi', 'unsupported', 'unsupported-contract', 'Responses API routing is not allowed for this provider/model without contract or explicit provider evidence')
+  }
+  if (modelConfig.preferredEndpoint === 'responses' && modelConfig.source === 'remote') {
+    return modelCapability('responsesApi', 'verified', 'remote-model-metadata', 'remote model metadata selects Responses routing')
+  }
+  if (modelConfig.preferredEndpoint === 'responses' && modelHasNonRelayCatalogEvidence(provider, modelConfig)) {
+    return modelCapability('responsesApi', 'verified', 'model-catalog', 'model catalog metadata selects Responses routing')
+  }
+  const contractStatus = resolveProviderCompatibilityCapabilityStatus(getProviderCompatibilityEvidenceForProvider(provider).id, 'responsesApi')
+  if (contractStatus === 'supported' && !providerUsesProtocolReferenceEvidence(provider)) {
+    return modelCapability('responsesApi', 'verified', 'provider-contract', 'provider contract supports Responses API routing')
+  }
+  if (provider.capabilities?.responsesApi === true) {
+    return modelCapability('responsesApi', 'manual', 'manual-declaration', 'Responses API routing is enabled by explicit provider configuration')
+  }
+  return modelCapability('responsesApi', 'inferred', 'provider-contract', 'Responses API routing is allowed, but model-level endpoint preference is not explicit')
+}
+
+function buildModelNativeSearchCapability(provider: AIProvider, modelConfig: AIModel): ProviderModelCapabilityStatus {
+  const modelDeclaresNativeSearch = modelSupportsNativeSearch(modelConfig)
+  const explicitDeclaration = provider.capabilities?.nativeSearch === true || modelDeclaresNativeSearch
+  const allowed = providerCompatibilityCapabilityCanBeSentForProvider(provider, 'nativeSearch', explicitDeclaration)
+  if (!allowed) {
+    return modelCapability('nativeSearch', 'unsupported', 'unsupported-contract', 'provider-native search is not allowed until provider contract, remote metadata, or manual capability declaration proves it')
+  }
+  if (modelConfig.source === 'remote' && modelDeclaresNativeSearch) {
+    return modelCapability('nativeSearch', 'verified', 'remote-model-metadata', 'remote model metadata declares provider-native search support')
+  }
+  const contractStatus = resolveProviderCompatibilityCapabilityStatus(getProviderCompatibilityEvidenceForProvider(provider).id, 'nativeSearch')
+  if (modelHasNonRelayCatalogEvidence(provider, modelConfig) && (modelDeclaresNativeSearch || contractStatus === 'supported')) {
+    return modelCapability('nativeSearch', 'verified', modelDeclaresNativeSearch ? 'model-catalog' : 'provider-contract', 'provider-native search is backed by provider contract and model catalog evidence')
+  }
+  if (provider.capabilities?.nativeSearch === true) {
+    return modelCapability('nativeSearch', 'manual', 'manual-declaration', 'provider-native search is enabled by explicit provider configuration')
+  }
+  return modelCapability('nativeSearch', 'inferred', 'provider-contract', 'provider-native search is allowed by the provider contract, but model-level search metadata is not explicit')
+}
+
+function modelCapability(
+  capability: ProviderModelCapabilityKey,
+  status: ProviderModelCapabilityEvidenceStatus,
+  source: ProviderModelCapabilityEvidenceSource,
+  reason: string,
+): ProviderModelCapabilityStatus {
+  return { capability, status, source, reason }
+}
+
+function providerUsesProtocolReferenceEvidence(provider: AIProvider): boolean {
+  return getProviderCompatibilityEvidenceForProvider(provider).auditState === 'protocol-reference'
+}
+
+function providerModelWasTested(provider: AIProvider, modelId: string): boolean {
+  const testedModel = provider.lastTestModel ? resolveProviderModelAlias(provider, provider.lastTestModel) : undefined
+  return provider.lastTestStatus === 'ok' && sameModelId(testedModel, modelId)
+}
+
+function modelWasManuallyDeclared(provider: AIProvider, modelId: string): boolean {
+  return (provider.manualModels ?? []).some((item) => sameModelId(item, modelId)) ||
+    (providerUsesProtocolReferenceEvidence(provider) && provider.models.some((item) => sameModelId(item, modelId)))
+}
+
+function modelOwnConfigWasDeclared(provider: AIProvider, modelId: string): boolean {
+  return (provider.modelConfigs ?? []).some((item) => sameModelId(item.id, modelId))
+}
+
+function modelHasNonRelayCatalogEvidence(provider: AIProvider, modelConfig: AIModel): boolean {
+  if (providerUsesProtocolReferenceEvidence(provider)) return false
+  return modelConfig.source === 'built-in' || Boolean(modelConfig.sourceUrl || modelConfig.verifiedAt)
+}
+
+function modelSupportsResponseFormat(modelConfig: AIModel): boolean {
+  return modelConfig.supportedParameters?.some((item) => [
+    'response_format',
+    'structured_outputs',
+    'json_schema',
+    'text.format',
+  ].includes(item.toLowerCase())) === true
+}
+
+function modelSupportsNativeSearch(modelConfig: AIModel): boolean {
+  return modelConfig.supportedParameters?.some((item) => [
+    'native_search',
+    'web_search',
+    'web_search_preview',
+    'web_search_options',
+    'search_parameters',
+  ].includes(item.toLowerCase())) === true
+}
+
+function unsupportedInputCapabilitySource(
+  provider: AIProvider,
+  modelConfig: AIModel,
+  capability: 'vision' | 'files',
+): ProviderModelCapabilityEvidenceSource {
+  if (modelConfig[capability === 'vision' ? 'supportsVision' : 'supportsFiles'] === false) return 'model-metadata'
+  return providerCompatibilityCapabilityCanBeSentForProvider(provider, capability, provider.capabilities?.[capability] === true) ? 'model-metadata' : 'unsupported-contract'
+}
+
+function sameModelId(left: string | undefined, right: string | undefined): boolean {
+  return Boolean(left && right && left.trim().toLowerCase() === right.trim().toLowerCase())
 }
 
 function buildModelCatalogStatus(provider: AIProvider, hostingProfile: ProviderHostingProfile): ProviderCapabilityStatus {

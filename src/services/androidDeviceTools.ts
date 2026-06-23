@@ -7,6 +7,7 @@ import { clampAgentOutput, createAgentTrace, redactSensitiveText } from '@/servi
 import { appendRuntimeLog, type RuntimeLogOptions } from '@/services/runtimeLog'
 import { isAllowedAndroidApkUri } from '@/services/androidUriPolicy'
 import { openAndroidStatusNotificationSettings, type AndroidStatusNotificationSettingsTarget } from '@/services/androidStatusNotification'
+import { st } from '@/i18n/service'
 
 export type AndroidFileOperationAction = 'mkdir' | 'move' | 'copy' | 'rename'
 export type AndroidFileConflictPolicy = 'skip' | 'rename'
@@ -800,10 +801,11 @@ async function openAlarmTool(args: Record<string, unknown>): Promise<AndroidTool
   const hour = readInteger(args.hour, -1, 0, 23)
   const minutes = readInteger(args.minutes, -1, 0, 59)
   if (hour < 0 || minutes < 0) throw androidToolError('schema_invalid', 'hour and minutes are required.')
+  const alarmMessage = typeof args.message === 'string' && args.message.trim() ? args.message.trim() : undefined
   const alarmExtras = {
     'android.intent.extra.alarm.HOUR': hour,
     'android.intent.extra.alarm.MINUTES': minutes,
-    'android.intent.extra.alarm.MESSAGE': typeof args.message === 'string' ? args.message : '',
+    'android.intent.extra.alarm.MESSAGE': alarmMessage ?? '',
     'android.intent.extra.alarm.SKIP_UI': false,
   }
   const launchMetadata = await launchAndroidIntentWithFallback([
@@ -850,15 +852,16 @@ async function openAlarmTool(args: Record<string, unknown>): Promise<AndroidTool
       label: 'deskclock-launcher',
     },
   ], 'Android Clock could not be opened for alarm creation.')
-  return jsonExecution({
+  const payload = {
     opened: true,
     target: 'alarm',
     hour,
     minutes,
-    message: typeof args.message === 'string' ? args.message : undefined,
+    message: alarmMessage,
     exactAlarmPermissionRequired: false,
     launchAttempt: launchMetadata.attempt,
-  }, {
+  }
+  return visibleAndroidIntentExecution(formatAlarmIntentOpenedOutput(hour, minutes, alarmMessage), payload, {
     target: 'alarm',
     requiresExternalConfirmation: true,
     launchAttempt: launchMetadata.attempt,
@@ -901,7 +904,7 @@ async function openCalendarEventTool(args: Record<string, unknown>): Promise<And
       label: 'calendar-edit',
     },
   ], 'Android Calendar could not be opened for event creation.')
-  return jsonExecution({
+  const payload = {
     opened: true,
     target: 'calendar-event',
     title,
@@ -909,7 +912,8 @@ async function openCalendarEventTool(args: Record<string, unknown>): Promise<And
     endTimeMs: normalizedEndTimeMs,
     calendarPermissionRequired: false,
     launchAttempt: launchMetadata.attempt,
-  }, {
+  }
+  return visibleAndroidIntentExecution(formatCalendarEventIntentOpenedOutput(title, beginTimeMs, args.beginTimeIso), payload, {
     target: 'calendar-event',
     requiresExternalConfirmation: true,
     launchAttempt: launchMetadata.attempt,
@@ -951,7 +955,7 @@ async function openReminderTool(args: Record<string, unknown>): Promise<AndroidT
       label: 'calendar-todo-edit',
     },
   ], 'Android Calendar could not be opened for to-do creation.')
-  return jsonExecution({
+  const payload = {
     opened: true,
     target: 'calendar-todo',
     title,
@@ -960,7 +964,8 @@ async function openReminderTool(args: Record<string, unknown>): Promise<AndroidT
     calendarPermissionRequired: false,
     localReminderStoreAvailable: false,
     launchAttempt: launchMetadata.attempt,
-  }, {
+  }
+  return visibleAndroidIntentExecution(formatReminderIntentOpenedOutput(title, dueTimeMs, args.dueTimeIso), payload, {
     target: 'calendar-todo',
     requiresExternalConfirmation: true,
     calendarPermissionRequired: false,
@@ -1380,6 +1385,59 @@ function jsonExecution(payload: Record<string, unknown>, metadata: Record<string
     output: JSON.stringify(payload, null, 2),
     metadata,
   }
+}
+
+function visibleAndroidIntentExecution(
+  output: string,
+  payload: Record<string, unknown>,
+  metadata: Record<string, unknown> = {}
+): AndroidToolExecution {
+  return {
+    output,
+    metadata: {
+      ...payload,
+      ...metadata,
+      structuredPayload: payload,
+    },
+  }
+}
+
+function formatAlarmIntentOpenedOutput(hour: number, minutes: number, message: string | undefined): string {
+  const messageSuffix = message
+    ? st('androidTool.alarmMessageSuffix', { message }, ' with label "{{message}}"')
+    : ''
+  return st(
+    'androidTool.alarmIntentOpened',
+    { time: formatClockTime(hour, minutes), messageSuffix },
+    'Android Clock is open for {{time}}{{messageSuffix}}. Confirm it in the system Clock app to create the alarm.'
+  )
+}
+
+function formatCalendarEventIntentOpenedOutput(title: string, beginTimeMs: number, beginTimeIso: unknown): string {
+  return st(
+    'androidTool.calendarEventIntentOpened',
+    { title, time: formatAndroidDateTime(beginTimeMs, beginTimeIso) },
+    'Android Calendar is open for "{{title}}" at {{time}}. Confirm it in the system Calendar app to create the event.'
+  )
+}
+
+function formatReminderIntentOpenedOutput(title: string, dueTimeMs: number, dueTimeIso: unknown): string {
+  return st(
+    'androidTool.reminderIntentOpened',
+    { title, time: formatAndroidDateTime(dueTimeMs, dueTimeIso) },
+    'Android Calendar is open for the reminder "{{title}}" due {{time}}. Confirm it in the system app to create it.'
+  )
+}
+
+function formatClockTime(hour: number, minutes: number): string {
+  return `${String(hour).padStart(2, '0')}:${String(minutes).padStart(2, '0')}`
+}
+
+function formatAndroidDateTime(timestampMs: number, iso: unknown): string {
+  if (typeof iso === 'string' && iso.trim()) return iso.trim()
+  const date = new Date(timestampMs)
+  if (!Number.isFinite(date.getTime())) return st('androidTool.unspecifiedTime', undefined, 'the requested time')
+  return date.toISOString().replace('T', ' ').replace(/\.\d{3}Z$/, ' UTC')
 }
 
 function throwIfAndroidToolCancelled(signal?: AbortSignal, metadata: Record<string, unknown> = {}): void {

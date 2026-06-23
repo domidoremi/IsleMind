@@ -95,6 +95,7 @@ export function ProviderSettingsContent({ embedded = false, onClose, onBackgroun
   const reorderProviders = useSettingsStore((state) => state.reorderProviders)
   const updateSettings = useSettingsStore((state) => state.updateSettings)
   const clearAllProviders = useSettingsStore((state) => state.clearAllProviders)
+  const clearInvalidProviders = useSettingsStore((state) => state.clearInvalidProviders)
   const settings = useSettingsStore((state) => state.settings)
   const conversations = useChatStore((state) => state.conversations)
   const [expandedProviderId, setExpandedProviderId] = useState<string | null>(null)
@@ -249,6 +250,31 @@ export function ProviderSettingsContent({ embedded = false, onClose, onBackgroun
     dialog.toast({ title: t('providerSettings.clearAllDone'), tone: 'mint' })
   }
 
+  async function confirmClearInvalidProviders() {
+    if (!providers.length) {
+      dialog.toast({ title: t('providerSettings.clearInvalidNone'), tone: 'amber' })
+      return
+    }
+    const confirmed = await dialog.confirm({
+      title: t('providerSettings.clearInvalidTitle'),
+      message: t('providerSettings.clearInvalidMessage'),
+      confirmLabel: t('providerSettings.clearInvalidConfirm'),
+      cancelLabel: t('common.cancel'),
+      tone: 'amber',
+    })
+    if (!confirmed) return
+    const count = await clearInvalidProviders()
+    if (!count) {
+      dialog.toast({ title: t('providerSettings.clearInvalidNone'), tone: 'amber' })
+      return
+    }
+    setBatchMode(false)
+    setSelectedIds(new Set())
+    setExpandedProviderId(null)
+    setModelFilter('')
+    dialog.toast({ title: t('providerSettings.clearInvalidDone'), message: t('providerSettings.clearInvalidDoneMessage', { count }), tone: 'mint' })
+  }
+
   function toggleSelection(id: string) {
     setSelectedIds((current) => {
       const next = new Set(current)
@@ -338,6 +364,17 @@ export function ProviderSettingsContent({ embedded = false, onClose, onBackgroun
                   block
                   icon={<AppIcon name="import" color={colors.textSecondary} size={15} />}
                   onPress={() => setImportOpen(true)}
+                  style={{ flexGrow: 1, flexShrink: 1, flexBasis: '48%', minWidth: 0 }}
+                />
+                <IsleButton
+                  label={t('providerSettings.clearInvalid')}
+                  accessibilityLabel={t('providerSettings.clearInvalid')}
+                  compact
+                  block
+                  tone="amber"
+                  icon={<AppIcon name="warning" color={colors.textSecondary} size={15} />}
+                  onPress={() => void confirmClearInvalidProviders()}
+                  disabled={!providers.length}
                   style={{ flexGrow: 1, flexShrink: 1, flexBasis: '48%', minWidth: 0 }}
                 />
                 <IsleButton

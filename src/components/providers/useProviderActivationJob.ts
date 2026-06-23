@@ -2,15 +2,12 @@ import { useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { useIsleDialog } from '@/components/ui/isle'
 import { syncAndTestProvider, summarizeProviderActivation, type ProviderActivationResult } from '@/services/providerActivation'
-import { ACTIVATION_STAGE_PROGRESS, aggregateActivationItems, createActivationItems, patchActivationItem, type ActivationItemPatch } from '@/services/providerActivationJob'
+import { ACTIVATION_STAGE_PROGRESS, aggregateActivationItems, createActivationItems, patchActivationItem, resolveProviderActivationRuntimePolicy, type ActivationItemPatch } from '@/services/providerActivationJob'
 import { useActivationJobStore, type ActivationJobItemState } from '@/store/activationJobStore'
 import { useSettingsStore } from '@/store/settingsStore'
 import type { AIProvider } from '@/types'
 
 export type ProviderActivationMode = 'single' | 'batch' | 'all'
-
-const DEFAULT_PROVIDER_ACTIVATION_CONCURRENCY = 3
-const MAX_PROVIDER_ACTIVATION_CONCURRENCY = 6
 
 interface UseProviderActivationJobInput {
   onActivationCompleted?: () => void
@@ -48,7 +45,8 @@ export function useProviderActivationJob(input: UseProviderActivationJobInput = 
       return
     }
     const startTitle = chosen.length === 1 ? t('providerSettings.activatingProvider') : t('providerSettings.activationStarted')
-    const activationConcurrency = resolveProviderActivationConcurrency(chosen.length, mode)
+    const activationPolicy = resolveProviderActivationRuntimePolicy(chosen.length, mode)
+    const activationConcurrency = activationPolicy.concurrency
     setActivationBusy(true)
     try {
       dialog.toast({
@@ -132,6 +130,9 @@ export function useProviderActivationJob(input: UseProviderActivationJobInput = 
           testModel: settings.modelTestModel,
           checkParameters: settings.modelTestCheckParameters,
           accessSettings: settings,
+          maxTestCandidates: activationPolicy.maxTestCandidates,
+          modelSyncTimeoutMs: activationPolicy.modelSyncTimeoutMs,
+          modelTestTimeoutMs: activationPolicy.modelTestTimeoutMs,
         }).catch((error): ProviderActivationResult => ({
           providerId: provider.id,
           providerName: provider.name,
@@ -177,7 +178,8 @@ export function useProviderActivationJob(input: UseProviderActivationJobInput = 
       if (activationConcurrency > 1) {
         publishActivationItems(activationItems, t('providerSettings.activationStartedMessage', { count: chosen.length, concurrency: activationConcurrency }))
       }
-      const results = await runProviderActivationPool(chosen, activationConcurrency, runProviderActivation)
+      const results = await runProviderActivationPool(chosen, activationConcurrency, runProviderActivation, activationPolicy.afterProviderDelayMs)
+      activationItems = finalizeActivationItemsFromResults(activationItems, results)
 
       const finalAggregate = aggregateActivationItems(activationItems)
       const summary = summarizeProviderActivation(results)
@@ -235,7 +237,8 @@ export function useProviderActivationJob(input: UseProviderActivationJobInput = 
 async function runProviderActivationPool(
   providers: AIProvider[],
   concurrency: number,
-  runProviderActivation: (provider: AIProvider) => Promise<ProviderActivationResult>
+  runProviderActivation: (provider: AIProvider) => Promise<ProviderActivationResult>,
+  afterProviderDelayMs = 0
 ): Promise<ProviderActivationResult[]> {
   const results: ProviderActivationResult[] = new Array(providers.length)
   let nextIndex = 0
@@ -245,15 +248,34 @@ async function runProviderActivationPool(
       const currentIndex = nextIndex
       nextIndex += 1
       results[currentIndex] = await runProviderActivation(providers[currentIndex])
+      if (afterProviderDelayMs > 0 && nextIndex < providers.length) {
+        await delayForInteractions(afterProviderDelayMs)
+      }
     }
   }))
   return results
 }
 
-function resolveProviderActivationConcurrency(total: number, mode: ProviderActivationMode): number {
-  if (mode === 'single' || total <= 1) return 1
-  const scaledConcurrency = Math.max(DEFAULT_PROVIDER_ACTIVATION_CONCURRENCY, Math.ceil(total / 2))
-  return Math.min(total, scaledConcurrency, MAX_PROVIDER_ACTIVATION_CONCURRENCY)
+function finalizeActivationItemsFromResults(items: ActivationJobItemState[], results: ProviderActivationResult[]): ActivationJobItemState[] {
+  const byId = new Map(results.filter(Boolean).map((result) => [result.providerId, result]))
+  return items.map((item) => {
+    if (item.status === 'done' || item.status === 'failed') return item
+    const result = byId.get(item.providerId)
+    if (!result) return { ...item, status: 'failed', progress: 1, failed: true }
+    const failed = result.failures.length > 0 && !result.testOk
+    return {
+      ...item,
+      status: failed ? 'failed' : 'done',
+      progress: 1,
+      synced: result.synced,
+      tested: result.testOk,
+      failed,
+    }
+  })
+}
+
+function delayForInteractions(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms))
 }
 
 function activationDoneTitle(mode: ProviderActivationMode, total: number, t: ReturnType<typeof useTranslation>['t']): string {

@@ -44,11 +44,14 @@ export function formatToolBlocks(blocks: ToolContentBlock[]): string {
 export function mergeUsage(base: ChatCompletionResult['usage'], extra: ChatCompletionResult['usage']): ChatCompletionResult['usage'] {
   if (!base) return extra
   if (!extra) return base
+  const cachedInputTokens = addOptionalNumbers(base.cachedInputTokens, extra.cachedInputTokens)
+  const reasoningTokens = addOptionalNumbers(base.reasoningTokens, extra.reasoningTokens)
   return {
     source: base.source === 'provider' && extra.source === 'provider' ? 'provider' : 'estimated',
     inputTokens: addOptionalNumbers(base.inputTokens, extra.inputTokens),
     outputTokens: addOptionalNumbers(base.outputTokens, extra.outputTokens),
-    reasoningTokens: addOptionalNumbers(base.reasoningTokens, extra.reasoningTokens),
+    ...(cachedInputTokens !== undefined ? { cachedInputTokens } : {}),
+    ...(reasoningTokens !== undefined ? { reasoningTokens } : {}),
     totalTokens: addOptionalNumbers(base.totalTokens, extra.totalTokens) ?? addOptionalNumbers(addOptionalNumbers(base.inputTokens, base.outputTokens), addOptionalNumbers(extra.inputTokens, extra.outputTokens)),
   }
 }

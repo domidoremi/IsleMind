@@ -120,7 +120,7 @@ export const MessageContent = memo(function MessageContent({ content, isUser = f
   const segments = useMemo(() => safeParseRichContent(content, t, isStreaming), [content, isStreaming, t])
 
   return (
-    <View style={{ gap: 8, width: '100%', maxWidth: '100%', overflow: 'hidden' }}>
+    <View style={{ gap: 5, width: '100%', maxWidth: '100%', overflow: 'hidden' }}>
       {segments.map((segment) => {
         if (segment.type === 'markdown') return <RichMarkdown key={segment.id} content={segment.content} isUser={isUser} isStreaming={isStreaming} />
         if (segment.type === 'table') return <TableBlockCard key={segment.id} rows={segment.rows} title={segment.title} isUser={isUser} />
@@ -174,39 +174,39 @@ function RichMarkdown({ content, isUser, isStreaming }: { content: string; isUse
           heading1: { color: isUser ? userMessage.userForeground : colors.text, fontSize: 20, lineHeight: 26, marginTop: 4, marginBottom: 8, fontWeight: '900' },
           heading2: { color: isUser ? userMessage.userForeground : colors.text, fontSize: 18, lineHeight: 24, marginTop: 4, marginBottom: 8, fontWeight: '900' },
           heading3: { color: isUser ? userMessage.userForeground : colors.text, fontSize: 16, lineHeight: 22, marginTop: 4, marginBottom: 7, fontWeight: '900' },
-          paragraph: { marginTop: 0, marginBottom: isUser ? 0 : 8 },
+          paragraph: { marginTop: 0, marginBottom: isUser ? 0 : 5 },
           link: { color: isUser ? userMessage.userForeground : colors.ui.control.link, fontWeight: '900' },
           bullet_list: {
-            marginTop: 4,
-            marginBottom: 10,
-            paddingVertical: 4,
-            paddingHorizontal: 2,
-            borderLeftWidth: isUser ? 0 : 2,
-            borderLeftColor: isUser ? 'transparent' : colors.ui.icon.accentBackground,
+            marginTop: 2,
+            marginBottom: 6,
+            paddingVertical: 0,
+            paddingHorizontal: 0,
+            borderLeftWidth: 0,
+            borderLeftColor: 'transparent',
           },
           ordered_list: {
-            marginTop: 4,
-            marginBottom: 10,
-            paddingVertical: 4,
-            paddingHorizontal: 2,
-            borderLeftWidth: isUser ? 0 : 2,
-            borderLeftColor: isUser ? 'transparent' : colors.ui.icon.accentBackground,
+            marginTop: 2,
+            marginBottom: 6,
+            paddingVertical: 0,
+            paddingHorizontal: 0,
+            borderLeftWidth: 0,
+            borderLeftColor: 'transparent',
           },
           list_item: {
-            marginBottom: 5,
+            marginBottom: 2,
           },
           bullet_list_icon: {
             color: isUser ? userMessage.userForeground : colors.ui.icon.accentForeground,
             fontWeight: '900',
             lineHeight: 23,
-            marginRight: 7,
+            marginRight: 5,
           },
           ordered_list_icon: {
             color: isUser ? userMessage.userForeground : colors.ui.icon.accentForeground,
             fontWeight: '900',
             lineHeight: 23,
-            marginRight: 7,
-            minWidth: 21,
+            marginRight: 5,
+            minWidth: 18,
             textAlign: 'right',
           },
           bullet_list_content: {
@@ -219,18 +219,18 @@ function RichMarkdown({ content, isUser, isStreaming }: { content: string; isUse
           },
           blockquote: {
             backgroundColor: blockSurface,
-            borderLeftWidth: isUser ? 0 : colors.ui.cartoon ? 3 : 2,
+            borderLeftWidth: isUser ? 0 : colors.ui.cartoon ? 2 : 1,
             borderLeftColor: isUser ? userMessage.userForeground : colors.ui.icon.accentForeground,
-            borderRadius: 10,
-            paddingHorizontal: 10,
-            paddingVertical: 8,
-            marginBottom: 8,
+            borderRadius: colors.ui.radius.controlSmall,
+            paddingHorizontal: 8,
+            paddingVertical: 6,
+            marginBottom: 6,
           },
           hr: {
             backgroundColor: blockBorder,
             height: 1,
-            marginTop: 8,
-            marginBottom: 12,
+            marginTop: 6,
+            marginBottom: 8,
           },
           strong: { color: isUser ? userMessage.userForeground : colors.text, fontWeight: '900' },
           em: { color: isUser ? userMessage.userForeground : colors.textSecondary, fontStyle: 'italic' },
@@ -250,7 +250,7 @@ function RichMarkdown({ content, isUser, isStreaming }: { content: string; isUse
             borderColor: isUser ? 'transparent' : colors.ui.code.border,
             borderWidth: isUser ? 0 : colors.ui.cartoon ? 1 : StyleSheet.hairlineWidth,
             borderRadius: colors.ui.radius.card,
-            padding: 10,
+            padding: 8,
           },
           fence: {
             color: isUser ? userMessage.userForeground : colors.ui.code.text,
@@ -258,7 +258,7 @@ function RichMarkdown({ content, isUser, isStreaming }: { content: string; isUse
             borderColor: isUser ? 'transparent' : colors.ui.code.border,
             borderWidth: isUser ? 0 : colors.ui.cartoon ? 1 : StyleSheet.hairlineWidth,
             borderRadius: colors.ui.radius.card,
-            padding: 10,
+            padding: 8,
           },
           table: { borderColor: blockBorder, borderWidth: colors.ui.cartoon ? 1 : StyleSheet.hairlineWidth, borderRadius: colors.ui.radius.card, backgroundColor: blockSurface },
           thead: { backgroundColor: isUser ? userMessage.userActionBackground : colors.ui.table.headerBackground },
@@ -899,13 +899,13 @@ function RichCard({ isUser, children }: { isUser: boolean; children: ReactNode }
     <IslePanel
       elevated={!isUser && colors.ui.cartoon}
       material={isUser ? 'transparent' : colors.ui.cartoon ? 'raised' : 'paper'}
-      contentStyle={{ padding: 10, width: '100%' }}
+      contentStyle={{ padding: 8, width: '100%' }}
       style={{
         alignSelf: 'stretch',
         width: '100%',
         maxWidth: '100%',
         minWidth: 0,
-        borderRadius: colors.ui.cartoon ? 18 : 16,
+        borderRadius: colors.ui.radius.card,
         backgroundColor: isUser ? userMessage.userActionBackground : assistantSurfaces.richCardSurface,
         borderColor: isUser ? userMessage.userActionBackground : assistantSurfaces.blockBorder,
       }}
@@ -1104,11 +1104,11 @@ function parsePlainTextSegments(text: string, startIndex: number, t: TFunction):
     buffer.length = 0
     if (!raw.trim()) return
     const trimmed = raw.trim()
-    if (looksLikeJson(trimmed)) {
+    if (looksLikeJson(trimmed) && shouldPromotePlainJson(trimmed)) {
       segments.push({ id: `data-${index}`, type: 'data', content: trimmed, language: 'json', title: t('messageContent.jsonData') })
-    } else if (looksLikeTsv(trimmed)) {
+    } else if (looksLikeTsv(trimmed) && shouldPromotePlainDelimitedTable(trimmed, '\t')) {
       segments.push({ id: `table-${index}`, type: 'table', rows: parseDelimitedTable(trimmed, '\t') ?? [[trimmed]], title: t('messageContent.tsvData') })
-    } else if (looksLikeCsv(trimmed)) {
+    } else if (looksLikeCsv(trimmed) && shouldPromotePlainDelimitedTable(trimmed, ',')) {
       segments.push({ id: `table-${index}`, type: 'table', rows: parseDelimitedTable(trimmed, ',') ?? [[trimmed]], title: t('messageContent.csvData') })
     } else {
       segments.push({ id: `markdown-${index}`, type: 'markdown', content: normalizeInlineFormulaForMarkdown(raw) })
@@ -1128,11 +1128,11 @@ function parsePlainTextSegments(text: string, startIndex: number, t: TFunction):
       lineIndex -= 1
       segments.push({ id: `table-${index}`, type: 'table', rows: parseMarkdownTable(tableLines), title: t('messageContent.markdownTable') })
       index += 1
-    } else if (looksLikeStandaloneFormulaLine(lines[lineIndex])) {
+    } else if (looksLikeStandaloneFormulaLine(lines[lineIndex], lines)) {
       flushBuffer()
       const formulaLines = [lines[lineIndex]]
       lineIndex += 1
-      while (lineIndex < lines.length && looksLikeStandaloneFormulaLine(lines[lineIndex])) {
+      while (lineIndex < lines.length && looksLikeStandaloneFormulaLine(lines[lineIndex], lines)) {
         formulaLines.push(lines[lineIndex])
         lineIndex += 1
       }
@@ -1174,9 +1174,10 @@ function looksLikeInlineFormula(value: string): boolean {
   return hasInlineFormulaSyntax(value)
 }
 
-function looksLikeStandaloneFormulaLine(line: string | undefined): boolean {
+function looksLikeStandaloneFormulaLine(line: string | undefined, allLines?: string[]): boolean {
   const trimmed = line?.trim() ?? ''
   if (!trimmed || trimmed.length > 220) return false
+  if (allLines && countNonEmptyLines(allLines) > 1 && !/^\s*(?:\$\$|\\\[)/.test(trimmed)) return false
   if (looksLikeMarkdownOrNaturalLanguageListMarker(trimmed)) return false
   if (looksLikeToolCallMarkupLine(trimmed)) return false
   if (/^(const|let|var|function|return|if|for|while|class|import|export|type|interface)\b/.test(trimmed)) return false
@@ -1271,6 +1272,34 @@ function looksLikeTsv(text: string): boolean {
   const rows = parseDelimitedTable(text, '\t')
   if (!rows || rows.length < 2) return false
   return rows[0].length > 1 && rows.every((row) => Math.abs(row.length - rows[0].length) <= 1)
+}
+
+function shouldPromotePlainJson(text: string): boolean {
+  const trimmed = text.trim()
+  const lineCount = countNonEmptyLines(trimmed.split(/\r?\n/))
+  if (lineCount < 3) return false
+  try {
+    const parsed = JSON.parse(trimmed)
+    if (Array.isArray(parsed)) return parsed.length > 1 || parsed.some((item) => item && typeof item === 'object')
+    if (!parsed || typeof parsed !== 'object') return false
+    return Object.keys(parsed as Record<string, unknown>).length >= 2
+  } catch {
+    return false
+  }
+}
+
+function shouldPromotePlainDelimitedTable(text: string, delimiter: ',' | '\t'): boolean {
+  const rows = parseDelimitedTable(text, delimiter)
+  if (!rows || rows.length < 3) return false
+  const columnCount = rows[0].length
+  if (columnCount < 2 || columnCount > 8) return false
+  const consistentRows = rows.filter((row) => Math.abs(row.length - columnCount) <= 1).length
+  if (consistentRows < 3) return false
+  return rows.some((row) => row.some((cell) => cell.length > 0 && cell.length <= 80))
+}
+
+function countNonEmptyLines(lines: string[]): number {
+  return lines.reduce((total, line) => total + (line.trim() ? 1 : 0), 0)
 }
 
 function parseDelimitedTable(text: string, delimiter: ',' | '\t'): string[][] | null {

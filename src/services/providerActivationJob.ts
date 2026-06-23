@@ -2,6 +2,22 @@ import type { ActivationJobItemState } from '@/store/activationJobStore'
 import type { ProviderActivationStageEvent } from '@/services/providerActivation'
 import type { AIProvider } from '@/types'
 
+export type ProviderActivationJobMode = 'single' | 'batch' | 'all'
+
+export interface ProviderActivationRuntimePolicy {
+  concurrency: number
+  maxTestCandidates?: number
+  modelSyncTimeoutMs?: number
+  modelTestTimeoutMs?: number
+  afterProviderDelayMs: number
+}
+
+const DEFAULT_PROVIDER_ACTIVATION_CONCURRENCY = 2
+const MAX_PROVIDER_ACTIVATION_CONCURRENCY = 3
+const LARGE_PROVIDER_BATCH_SIZE = 10
+const LARGE_BATCH_PROVIDER_TIMEOUT_MS = 9000
+const NORMAL_BATCH_PROVIDER_TIMEOUT_MS = 14000
+
 export const ACTIVATION_STAGE_PROGRESS: Record<ProviderActivationStageEvent['stage'], number> = {
   enabled: 0.18,
   syncing: 0.46,
@@ -50,4 +66,21 @@ export function aggregateActivationItems(items: ActivationJobItemState[]): { com
 export function activationItemProgress(progress: number): number {
   if (!Number.isFinite(progress)) return 0
   return Math.min(1, Math.max(0, progress))
+}
+
+export function resolveProviderActivationRuntimePolicy(total: number, mode: ProviderActivationJobMode): ProviderActivationRuntimePolicy {
+  if (mode === 'single' || total <= 1) {
+    return { concurrency: 1, afterProviderDelayMs: 0 }
+  }
+  const largeBatch = total >= LARGE_PROVIDER_BATCH_SIZE
+  const concurrency = largeBatch
+    ? 1
+    : Math.min(total, DEFAULT_PROVIDER_ACTIVATION_CONCURRENCY, MAX_PROVIDER_ACTIVATION_CONCURRENCY)
+  return {
+    concurrency,
+    maxTestCandidates: largeBatch ? 1 : 2,
+    modelSyncTimeoutMs: largeBatch ? LARGE_BATCH_PROVIDER_TIMEOUT_MS : NORMAL_BATCH_PROVIDER_TIMEOUT_MS,
+    modelTestTimeoutMs: largeBatch ? LARGE_BATCH_PROVIDER_TIMEOUT_MS : NORMAL_BATCH_PROVIDER_TIMEOUT_MS,
+    afterProviderDelayMs: largeBatch ? 90 : 45,
+  }
 }

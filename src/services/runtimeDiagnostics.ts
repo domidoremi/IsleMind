@@ -2,7 +2,20 @@ import type { AIProvider, Settings } from '@/types'
 import { getRuntimeLogInfo, readRuntimeLogText, type RuntimeLogEntry, type RuntimeLogInfo } from '@/services/runtimeLog'
 import { listCompactUsageRecords } from '@/services/ai/compact/compactUsage'
 import { safeHttpUrl } from '@/utils/networkUrlSafety'
-import { buildProviderCapabilityMatrix, buildProviderCoverageBuckets, type ProviderCapabilityArea, type ProviderHostingProfile, type ProviderSupportLevel } from '@/services/ai/providerCapabilityMatrix'
+import {
+  buildProviderCapabilityMatrix,
+  buildProviderCoverageBuckets,
+  buildProviderModelCapabilityMatrix,
+  getProviderModelCapabilityModelIds,
+  summarizeProviderModelCapabilityProvider,
+  type ProviderCapabilityArea,
+  type ProviderHostingProfile,
+  type ProviderModelCapabilityEvidenceSource,
+  type ProviderModelCapabilityEvidenceStatus,
+  type ProviderModelCapabilityKey,
+  type ProviderModelCapabilityProviderSummary,
+  type ProviderSupportLevel,
+} from '@/services/ai/providerCapabilityMatrix'
 import {
   buildProviderCompatibilityBehaviorStatusMap,
   explainProviderCompatibilityCapabilityStatus,
@@ -58,6 +71,28 @@ export interface RuntimeDiagnosticsCapabilityMatrixExample {
   degradationPath?: ProviderCompatibilityDegradationPath
 }
 
+export interface RuntimeDiagnosticsModelCapabilityExample {
+  providerId?: string
+  providerName?: string
+  modelId: string
+  capability: ProviderModelCapabilityKey
+  status: ProviderModelCapabilityEvidenceStatus
+  source: ProviderModelCapabilityEvidenceSource
+  canSend: boolean
+  reason: string
+}
+
+export interface RuntimeDiagnosticsRectificationExample {
+  providerId?: string
+  model?: string
+  kind: string
+  result: 'retrying' | 'success' | 'failed' | 'unknown'
+  failedFields: string[]
+  removedFields: string[]
+  retainedFields: string[]
+  status?: number
+}
+
 export interface RuntimeDiagnosticsSummary {
   responses: {
     capableProviders: number
@@ -97,6 +132,15 @@ export interface RuntimeDiagnosticsSummary {
     modelAllowRules: number
     modelBlockRules: number
   }
+  rectification: {
+    total: number
+    retrying: number
+    success: number
+    failed: number
+    unknown: number
+    kindCounts: Record<string, number>
+    recentExamples: RuntimeDiagnosticsRectificationExample[]
+  }
   proxy: {
     mode: NonNullable<Settings['proxyMode']>
     applied: boolean
@@ -123,6 +167,12 @@ export interface RuntimeDiagnosticsSummary {
     plannedProviders: number
     hostedGapProviders: number
     genericModelListSuppressedProviders: number
+    modelCapabilityProviders: number
+    modelCapabilityModels: number
+    modelCapabilityStatuses: Record<ProviderModelCapabilityEvidenceStatus, number>
+    modelCapabilityStatusExamples: Record<ProviderModelCapabilityEvidenceStatus, RuntimeDiagnosticsModelCapabilityExample[]>
+    modelAdvancedSendableProviders: number
+    modelAdvancedUnsupportedProviders: number
   }
   compatibility: {
     auditStates: Record<ProviderCompatibilityAuditState, number>
@@ -156,11 +206,13 @@ export async function buildRuntimeDiagnosticsSummary(input: {
   const logEntries = parseRuntimeLogEntries(await readRuntimeLogText())
   const routeProtocolCounts = summarizeRouteProtocols(logEntries)
   const websocketFallbackCount = countRuntimeLogEntries(logEntries, 'transport.fallback')
+  const requestRectificationSummary = summarizeRequestRectifications(logEntries)
   const providerMatrices = providers.map((provider) => ({
     provider,
     matrix: buildProviderCapabilityMatrix(provider),
     evidence: getProviderCompatibilityEvidenceForProvider(provider),
   }))
+  const providerModelCapabilitySummaries = providers.map((provider) => summarizeProviderModelCapabilityProvider(provider))
   const compatibilityEvidence = providers.map((provider) => getProviderCompatibilityEvidenceForProvider(provider))
   const compatibilityAuditStates = summarizeCompatibilityAuditStates(compatibilityEvidence.map((evidence) => evidence.auditState))
   const compatibilityCapabilityStatuses = summarizeCompatibilityCapabilityStatuses(compatibilityEvidence.map((evidence) => evidence.id))
@@ -207,6 +259,7 @@ export async function buildRuntimeDiagnosticsSummary(input: {
       modelAllowRules: settings.modelAllowlist?.length ?? 0,
       modelBlockRules: settings.modelBlocklist?.length ?? 0,
     },
+    rectification: requestRectificationSummary,
     proxy: buildProxySummary(settings),
     log: {
       ...logInfo,
@@ -229,6 +282,12 @@ export async function buildRuntimeDiagnosticsSummary(input: {
       plannedProviders: providerMatrices.filter((entry) => entry.matrix.summaryLevel === 'planned').length,
       hostedGapProviders: providerMatrices.filter((entry) => entry.matrix.hostingProfile === 'cloud-hosted' && entry.matrix.summaryLevel === 'planned').length,
       genericModelListSuppressedProviders: providerMatrices.filter((entry) => entry.matrix.statuses.some((status) => status.area === 'modelCatalog' && status.reason.includes('generic model-list sync is intentionally disabled'))).length,
+      modelCapabilityProviders: providerModelCapabilitySummaries.filter((summary) => summary.modelCount > 0).length,
+      modelCapabilityModels: providerModelCapabilitySummaries.reduce((sum, summary) => sum + summary.modelCount, 0),
+      modelCapabilityStatuses: summarizeProviderModelCapabilityStatuses(providerModelCapabilitySummaries),
+      modelCapabilityStatusExamples: summarizeProviderModelCapabilityStatusExamples(providers),
+      modelAdvancedSendableProviders: providerModelCapabilitySummaries.filter((summary) => summary.sendableAdvancedCapabilities.length > 0).length,
+      modelAdvancedUnsupportedProviders: providerModelCapabilitySummaries.filter((summary) => summary.unsupportedAdvancedCapabilities.length > 0).length,
     },
     compatibility: {
       auditStates: compatibilityAuditStates,
@@ -247,6 +306,12 @@ export async function buildRuntimeDiagnosticsSummary(input: {
       loggedEvents: countRuntimeLogEntries(logEntries, 'provider.compatibility'),
     },
   }
+}
+
+function modelCapabilityCanBeSentFromStatus(capability: ProviderModelCapabilityKey, status: ProviderModelCapabilityEvidenceStatus): boolean {
+  if (status === 'unsupported') return false
+  if (capability === 'chat' || capability === 'streaming') return true
+  return status === 'verified' || status === 'manual'
 }
 
 function hasLocalCompressionRecord(record: ReturnType<typeof listCompactUsageRecords>[number]): boolean {
@@ -285,6 +350,44 @@ function averageFiniteNumbers(values: Array<number | undefined>): number {
 
 function countRuntimeLogEntries(entries: RuntimeLogEntry[], event: string): number {
   return entries.filter((entry) => entry.event === event).length
+}
+
+function summarizeRequestRectifications(entries: RuntimeLogEntry[]): RuntimeDiagnosticsSummary['rectification'] {
+  const rectifications = entries.filter((entry) => entry.event === 'request.rectification')
+  const summary: RuntimeDiagnosticsSummary['rectification'] = {
+    total: rectifications.length,
+    retrying: 0,
+    success: 0,
+    failed: 0,
+    unknown: 0,
+    kindCounts: {},
+    recentExamples: [],
+  }
+  for (const entry of rectifications) {
+    const result = normalizeRectificationResult(entry.result)
+    summary[result] += 1
+    const kind = typeof entry.kind === 'string' && entry.kind.trim() ? entry.kind : 'unknown'
+    summary.kindCounts[kind] = (summary.kindCounts[kind] ?? 0) + 1
+  }
+  summary.recentExamples = rectifications.slice(-3).reverse().map((entry) => ({
+    providerId: typeof entry.providerId === 'string' ? entry.providerId : undefined,
+    model: typeof entry.model === 'string' ? entry.model : undefined,
+    kind: typeof entry.kind === 'string' && entry.kind.trim() ? entry.kind : 'unknown',
+    result: normalizeRectificationResult(entry.result),
+    failedFields: runtimeLogStringArray(entry.failedFields),
+    removedFields: runtimeLogStringArray(entry.removedFields),
+    retainedFields: runtimeLogStringArray(entry.retainedFields),
+    status: typeof entry.status === 'number' ? entry.status : undefined,
+  }))
+  return summary
+}
+
+function normalizeRectificationResult(value: unknown): RuntimeDiagnosticsRectificationExample['result'] {
+  return value === 'retrying' || value === 'success' || value === 'failed' ? value : 'unknown'
+}
+
+function runtimeLogStringArray(value: unknown): string[] {
+  return Array.isArray(value) ? value.filter((item): item is string => typeof item === 'string') : []
 }
 
 function summarizeRouteProtocols(entries: RuntimeLogEntry[]): Record<string, number> {
@@ -365,6 +468,50 @@ function summarizeCapabilityMatrixStatusExamples(
         limitationReason: explanation?.limitationReason,
         degradationPath: explanation?.degradationPath,
       })
+    }
+  }
+  return examples
+}
+
+function summarizeProviderModelCapabilityStatuses(
+  summaries: ProviderModelCapabilityProviderSummary[],
+): Record<ProviderModelCapabilityEvidenceStatus, number> {
+  return summaries.reduce<Record<ProviderModelCapabilityEvidenceStatus, number>>((acc, summary) => {
+    for (const [status, count] of Object.entries(summary.statusCounts) as Array<[ProviderModelCapabilityEvidenceStatus, number]>) {
+      acc[status] = (acc[status] ?? 0) + count
+    }
+    return acc
+  }, {
+    verified: 0,
+    inferred: 0,
+    manual: 0,
+    unsupported: 0,
+  })
+}
+
+function summarizeProviderModelCapabilityStatusExamples(providers: AIProvider[]): Record<ProviderModelCapabilityEvidenceStatus, RuntimeDiagnosticsModelCapabilityExample[]> {
+  const examples: Record<ProviderModelCapabilityEvidenceStatus, RuntimeDiagnosticsModelCapabilityExample[]> = {
+    verified: [],
+    inferred: [],
+    manual: [],
+    unsupported: [],
+  }
+  for (const provider of providers) {
+    for (const modelId of getProviderModelCapabilityModelIds(provider).slice(0, 8)) {
+      const matrix = buildProviderModelCapabilityMatrix(provider, modelId)
+      for (const capability of matrix.capabilities) {
+        if (examples[capability.status].length >= 3) continue
+        examples[capability.status].push({
+          providerId: provider.id,
+          providerName: provider.name,
+          modelId,
+          capability: capability.capability,
+          status: capability.status,
+          source: capability.source,
+          canSend: modelCapabilityCanBeSentFromStatus(capability.capability, capability.status),
+          reason: capability.reason,
+        })
+      }
     }
   }
   return examples

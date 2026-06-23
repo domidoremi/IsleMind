@@ -124,12 +124,29 @@ function providerInputCapabilitySupported(
   capability: 'vision' | 'files',
   modelSupported: boolean,
 ): boolean {
-  const explicitDeclaration = modelSupported || provider.capabilities?.[capability] === true
-  if (!providerCompatibilityCapabilityCanBeSentForProvider(provider, capability, explicitDeclaration)) return false
+  if (modelConfig.chatCompatible === false) return false
+  if (modelInputCapabilityExplicitlyDisabled(provider, modelConfig, capability)) return false
+  if (provider.capabilities?.[capability] === true) {
+    return providerCompatibilityCapabilityCanBeSentForProvider(provider, capability, true)
+  }
+  if (capability === 'vision' && modelConfig.supportsVision === false) return false
+  if (capability === 'files' && modelConfig.supportsFiles === false) return false
+  if (!providerCompatibilityCapabilityCanBeSentForProvider(provider, capability, modelSupported)) return false
   if (modelSupported) {
     return !customProtocolReferenceDisablesCapability(provider, modelConfig, capability)
   }
-  return provider.capabilities?.[capability] === true
+  return false
+}
+
+function modelInputCapabilityExplicitlyDisabled(
+  provider: AIProvider,
+  modelConfig: AIModel,
+  capability: 'vision' | 'files',
+): boolean {
+  const field = capability === 'vision' ? 'supportsVision' : 'supportsFiles'
+  if (modelConfig[field] !== false) return false
+  if (modelConfig.source === 'remote') return true
+  return (provider.modelConfigs ?? []).some((item) => sameModelId(item.id, modelConfig.id) && item[field] === false)
 }
 
 function customProtocolReferenceDisablesCapability(
@@ -141,6 +158,10 @@ function customProtocolReferenceDisablesCapability(
   if (compatibility.id !== 'custom-openai-compatible' && compatibility.id !== 'custom-anthropic-compatible') return false
   if (modelConfig.source === 'remote') return false
   return provider.capabilities?.[capability] !== true
+}
+
+function sameModelId(left: string | undefined, right: string | undefined): boolean {
+  return (left ?? '').trim().toLowerCase() === (right ?? '').trim().toLowerCase()
 }
 
 export function buildProviderNativeToolManifestTrace(

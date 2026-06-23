@@ -112,10 +112,10 @@ async function runAppAction(request: AppActionRequest): Promise<{ message: strin
   const args = request.arguments ?? {}
   if (request.name === 'get_settings') {
     const snapshot = getSettingsSnapshot()
-    const text = JSON.stringify(snapshot, null, 2)
+    const text = formatSettingsSnapshot(snapshot)
     return {
-      message: st('appAction.settingsRead', undefined, 'Current app settings were read.'),
-      metadata: { action: request.name },
+      message: text,
+      metadata: { action: request.name, snapshot },
       content: [{ type: 'text', text }],
     }
   }
@@ -192,6 +192,33 @@ function normalizeLanguage(value: unknown): Language | undefined {
 function normalizeFeatureFlag(value: unknown): { key: FeatureFlagKey; label: string } | undefined {
   if (typeof value !== 'string') return undefined
   return FEATURE_FLAGS[value.trim().toLowerCase().replace(/[\s-]+/g, '_')]
+}
+
+function formatSettingsSnapshot(snapshot: ReturnType<typeof getSettingsSnapshot>): string {
+  const rows = [
+    st('appAction.settingsSummaryTheme', { theme: snapshot.theme, family: snapshot.themeId }, `Theme: ${snapshot.theme}/${snapshot.themeId}`),
+    st('appAction.settingsSummaryLanguage', { language: snapshot.language }, `Language: ${snapshot.language}`),
+    formatCapabilityLine('memory', snapshot.memoryEnabled),
+    formatCapabilityLine('knowledge', snapshot.knowledgeEnabled),
+    formatCapabilityLine('webSearch', snapshot.webSearchEnabled),
+    formatCapabilityLine('skills', snapshot.skillsEnabled),
+    formatCapabilityLine('mcp', snapshot.mcpEnabled),
+    formatCapabilityLine('commandPalette', snapshot.commandPaletteEnabled),
+    formatCapabilityLine('haptics', snapshot.hapticsEnabled),
+  ]
+  return [
+    st('appAction.settingsSummaryTitle', undefined, 'System capabilities'),
+    ...rows,
+    st('appAction.settingsSummaryHint', undefined, 'You can ask me to enable or disable these capabilities directly.'),
+  ].join('\n')
+}
+
+function formatCapabilityLine(feature: string, enabled?: boolean): string {
+  const label = st(`appAction.featureLabel.${feature}`, undefined, feature)
+  const state = enabled === false
+    ? st('appAction.disabled', undefined, 'Off')
+    : st('appAction.enabled', undefined, 'On')
+  return st('appAction.settingsSummaryLine', { feature: label, state }, `${label}: ${state}`)
 }
 
 function normalizeBoolean(value: unknown): boolean | undefined {

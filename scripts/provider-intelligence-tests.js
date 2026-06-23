@@ -672,6 +672,7 @@ const {
   parseProviderStreamEventForTest,
   parseProviderStreamChunkForTest,
   rectifyAnthropicRequestBodyForTest,
+  rectifyOpenAICompatibleRequestBodyForTest,
   rectifyXiaomiMimoThinkingRequestBodyForTest,
   rectifyXiaomiMimoWebSearchRequestBodyForTest,
   resolveProviderModelAccessForTest,
@@ -719,12 +720,17 @@ const {
 } = require('../src/services/ai/providerIdentity.ts')
 const {
   buildProviderCapabilityMatrix,
+  buildProviderModelCapabilityMatrix,
   buildProviderCoverageBuckets,
   describeProviderCapabilityStatus,
+  getProviderModelCapabilityModelIds,
+  PROVIDER_MODEL_CAPABILITY_KEYS,
+  providerModelCapabilityCanBeSent,
   providerNeedsHostedCompatibilityWork,
   providerSuppressesGenericModelList,
   summarizeProviderCapabilityMatrix,
   summarizeProviderCapabilityMatrixDetails,
+  summarizeProviderModelCapabilityProvider,
 } = require('../src/services/ai/providerCapabilityMatrix.ts')
 const {
   CANONICAL_PROVIDER_COMPATIBILITY_BEHAVIORS,
@@ -1033,6 +1039,7 @@ const {
 } = require('../src/services/searchPolicy.ts')
 const { searchExternalWeb } = require('../src/services/searchAdapters.ts')
 const { callBuiltinTool } = require('../src/services/builtinToolRegistry.ts')
+const { routeLocalAppCommand } = require('../src/services/appCommandRouter.ts')
 const {
   MAX_IMPORT_JSON_FILE_BYTES,
   MAX_IMPORT_TEXT_FILE_BYTES,
@@ -1057,7 +1064,7 @@ const {
 const { MCP_TOOL_CALL_TAG, parseMcpToolRequest } = require('../src/services/mcpToolRequest.ts')
 const { buildMcpContextPrompt, buildMcpManifestTrace, collectResolvedMcpTools } = require('../src/services/chatMcpContextUtils.ts')
 const { buildProviderActivationTestCandidatesForTest, summarizeProviderActivation, syncAndTestProvider } = require('../src/services/providerActivation.ts')
-const { ACTIVATION_STAGE_PROGRESS, activationItemProgress, aggregateActivationItems, createActivationItems, patchActivationItem } = require('../src/services/providerActivationJob.ts')
+const { ACTIVATION_STAGE_PROGRESS, activationItemProgress, aggregateActivationItems, createActivationItems, patchActivationItem, resolveProviderActivationRuntimePolicy } = require('../src/services/providerActivationJob.ts')
 const { countDetectedProviderImports, formatProviderNameList } = require('../src/services/providerImportSummary.ts')
 const { compareProviders, filterAndSortProviders, providerMatchesModelFilter } = require('../src/services/providerSettingsList.ts')
 const {
@@ -1116,6 +1123,7 @@ const {
 } = require('../src/utils/mem0Interop.ts')
 const { buildKnowledgeRecoverySummary } = require('../src/utils/knowledgeRecovery.ts')
 const { setServiceLanguage, st } = require('../src/i18n/service.ts')
+const { sanitizeInternalChatOutputText, sanitizeMessageInternalOutput } = require('../src/services/chatInternalOutputGuard.ts')
 const {
   buildCompressedContextPrompt,
   createRagQueryPlan,
@@ -1824,27 +1832,27 @@ function assertReleaseVersionsAligned() {
     chatWorkspaceSource.includes('collapseChromeForFocusedInput()'),
     'ChatWorkspace collapses the top chrome when the composer takes focus'
   )
-  const providerModels = require('../src/utils/providerModels.ts')
-  assert.deepEqual(
-    providerModels.MODEL_QUICK_GROUPS,
-    ['all', 'gpt', 'claude', 'gemini', 'deepseek', 'qwen', 'kimi', 'doubao', 'grok', 'glm', 'minimax', 'mimo', 'llama', 'other'],
-    'provider model utility owns stable model quick-filter groups'
+  assert.ok(
+    chatWorkspaceSource.includes('const MESSAGE_LIST_ANDROID_DRAW_DISTANCE_MIN = 1200'),
+    'ChatWorkspace keeps a larger Android draw distance so message scrolling does not blank out'
   )
-  assert.equal(
-    providerModels.inferModelFamily({ type: 'anthropic', name: 'Claude', models: [], enabled: true }, 'claude-sonnet-4'),
-    'claude',
-    'provider model utility classifies Claude-compatible models outside UI components'
+  assert.ok(
+    chatWorkspaceSource.includes('disabled: true') && chatWorkspaceSource.includes('maintainVisibleContentPosition={messageListMaintainVisibleContentPosition}'),
+    'ChatWorkspace disables FlashList maintainVisibleContentPosition and uses explicit scroll control'
   )
-  assert.equal(
-    providerModels.inferModelFamily({ type: 'openai-compatible', name: 'Xiaomi MiMo', baseUrl: 'https://api.xiaomimimo.com', models: [], enabled: true }, 'mimo-v2'),
-    'mimo',
-    'provider model utility classifies MiMo-compatible models outside UI components'
+  assert.ok(
+    chatWorkspaceSource.includes('!userDragMomentumEligible.current'),
+    'ChatWorkspace does not auto-scroll to the latest message during user drag momentum'
   )
-  assert.equal(
-    providerModels.inferModelFamily({ type: 'openai-compatible', name: 'MiniMax', baseUrl: 'https://api.minimax.io/v1', models: [], enabled: true }, 'MiniMax-M3'),
-    'minimax',
-    'provider model utility classifies MiniMax-compatible models outside UI components'
+  assert.ok(
+    !/<MessageBubble\s+key=\{message\.id\}/.test(chatWorkspaceSource),
+    'ChatWorkspace does not pass an extra renderItem key that can destabilize FlashList recycling'
   )
+  assert.ok(
+    !/maxItemsInRecyclePool=\{Platform\.OS === 'android' \? 0/.test(chatWorkspaceSource),
+    'ChatWorkspace does not disable FlashList recycling on Android message lists'
+  )
+  assertProviderModelFamilyBehavior()
   const conversationMetrics = require('../src/services/conversationMetrics.ts')
   const metricFixture = conversationMetrics.getConversationMetrics({
     id: 'metric-conversation',
@@ -1860,7 +1868,7 @@ function assertReleaseVersionsAligned() {
   })
   assert.deepEqual(
     metricFixture,
-    { inputTokens: 8, outputTokens: 7, totalTokens: 15, reasoningTokens: 2, estimated: true, durationMs: 1200, messageCount: 2, sourceCount: 1 },
+    { inputTokens: 8, outputTokens: 7, totalTokens: 15, cachedInputTokens: 0, reasoningTokens: 2, estimated: true, durationMs: 1200, messageCount: 2, sourceCount: 1 },
     'pure conversation metrics preserve token, duration, message, and citation totals'
   )
   assert.deepEqual(
@@ -1972,6 +1980,168 @@ function assertReleaseVersionsAligned() {
       assert.ok(readme.includes(marker), `${file} documents AI productivity work artifact capability: ${marker}`)
     }
   }
+}
+
+const WELL_KNOWN_OPENAI_COMPATIBLE_RELAY_MODEL_FAMILIES = [
+  ['gpt-5.5', 'gpt'],
+  ['claude-sonnet-4', 'claude'],
+  ['gemini-2.5-pro', 'gemini'],
+  ['gemma-3-27b-it', 'gemma'],
+  ['deepseek-reasoner', 'deepseek'],
+  ['qwen3.7-max', 'qwen'],
+  ['kimi-k2.6', 'kimi'],
+  ['doubao-seed-1.6', 'doubao'],
+  ['grok-4.3', 'grok'],
+  ['zai-glm-4.7', 'glm'],
+  ['MiniMax-M3', 'minimax'],
+  ['mistral-large-latest', 'mistral'],
+  ['llama-3.3-70b-versatile', 'llama'],
+  ['command-a-plus-05-2026', 'command'],
+  ['sonar-reasoning-pro', 'sonar'],
+  ['hunyuan-turbos-latest', 'hunyuan'],
+  ['ernie-4.5-turbo', 'ernie'],
+  ['01-ai/yi-large', 'yi'],
+  ['baichuan4-turbo', 'baichuan'],
+  ['step-2-mini', 'stepfun'],
+  ['gpt-oss-120b', 'gpt-oss'],
+  ['mimo-v2', 'mimo'],
+]
+
+function assertProviderModelFamilyBehavior() {
+  const providerModels = require('../src/utils/providerModels.ts')
+  const relayProvider = {
+    id: 'model-family-relay',
+    type: 'openai-compatible',
+    presetId: 'custom-openai-compatible',
+    name: 'Custom Model Family Relay',
+    baseUrl: 'https://relay.example',
+    apiKey: FAKE_KEY_A,
+    models: [],
+    enabled: true,
+  }
+
+  assert.deepEqual(
+    providerModels.MODEL_QUICK_GROUPS,
+    [
+      'all',
+      'gpt',
+      'claude',
+      'gemini',
+      'gemma',
+      'deepseek',
+      'qwen',
+      'kimi',
+      'doubao',
+      'grok',
+      'glm',
+      'minimax',
+      'mistral',
+      'llama',
+      'command',
+      'sonar',
+      'hunyuan',
+      'ernie',
+      'yi',
+      'baichuan',
+      'stepfun',
+      'gpt-oss',
+      'mimo',
+      'other',
+    ],
+    'provider model utility owns stable model quick-filter groups'
+  )
+
+  for (const [model, family] of WELL_KNOWN_OPENAI_COMPATIBLE_RELAY_MODEL_FAMILIES) {
+    assert.equal(
+      providerModels.inferModelFamily(relayProvider, model),
+      family,
+      `provider model utility classifies ${model} as ${family} without changing relay protocol`
+    )
+  }
+
+  assert.equal(
+    providerModels.inferModelFamily({ type: 'anthropic', name: 'Claude', models: [], enabled: true }, 'claude-sonnet-4'),
+    'claude',
+    'provider model utility classifies Claude-compatible models outside UI components'
+  )
+  assert.equal(
+    providerModels.inferModelFamily({ type: 'openai-compatible', name: 'Xiaomi MiMo', baseUrl: 'https://api.xiaomimimo.com', models: [], enabled: true }, 'mimo-v2'),
+    'mimo',
+    'provider model utility classifies MiMo-compatible models outside UI components'
+  )
+  assert.equal(
+    providerModels.inferModelFamily({ type: 'openai-compatible', name: 'Perplexity', baseUrl: 'https://api.perplexity.ai', models: [], enabled: true }, 'sonar-pro'),
+    'sonar',
+    'provider model utility maps Sonar models to the Perplexity/Sonar family'
+  )
+  assert.equal(
+    providerModels.inferModelFamily({ type: 'openai-compatible', name: '01.AI', baseUrl: 'https://api.01.ai/v1', models: [], enabled: true }, undefined),
+    'yi',
+    'provider model utility falls back to provider identity only for UI family grouping'
+  )
+
+  for (const [model] of WELL_KNOWN_OPENAI_COMPATIBLE_RELAY_MODEL_FAMILIES) {
+    assert.equal(
+      resolveProviderEndpoint({ provider: relayProvider, model, stream: true }),
+      'https://relay.example/v1/chat/completions',
+      `${model} on a generic OpenAI-compatible relay stays on Chat Completions routing`
+    )
+    const body = buildOpenAIBodyForTest({
+      provider: relayProvider,
+      model,
+      messages: [{ role: 'user', content: 'Use the relay chat protocol.' }],
+      stream: true,
+    })
+    assert.equal(body.model, model, `${model} OpenAI-compatible body preserves the selected upstream model id`)
+    assert.equal(body.messages[0].role, 'user', `${model} OpenAI-compatible body preserves chat messages`)
+    assert.equal(body.contents, undefined, `${model} OpenAI-compatible body does not switch to Google generateContent fields`)
+    assert.equal(body.system, undefined, `${model} OpenAI-compatible body does not switch to Anthropic messages fields`)
+  }
+
+  assert.ok(
+    resolveProviderEndpoint({
+      provider: { id: 'native-google', type: 'google', name: 'Google', apiKey: FAKE_KEY_A, models: ['gemini-2.5-pro'], enabled: true },
+      model: 'gemini-2.5-pro',
+      stream: true,
+    }).includes('/models/gemini-2.5-pro:streamGenerateContent?alt=sse'),
+    'native Google providers still use generateContent routing when provider.type declares Google'
+  )
+  assert.equal(
+    resolveProviderEndpoint({
+      provider: { id: 'native-anthropic', type: 'anthropic', name: 'Anthropic', baseUrl: 'https://api.anthropic.com/v1', apiKey: FAKE_KEY_A, models: ['claude-sonnet-4'], enabled: true },
+      model: 'claude-sonnet-4',
+      stream: true,
+    }),
+    'https://api.anthropic.com/v1/messages',
+    'native Anthropic providers still use Messages routing when provider.type declares Anthropic'
+  )
+
+  const providerToolDeclaration = {
+    type: 'function',
+    function: {
+      name: 'inspect_relay_context',
+      description: 'Inspect relay-side context.',
+      parameters: {
+        type: 'object',
+        properties: { query: { type: 'string' } },
+        required: ['query'],
+      },
+    },
+  }
+  const familyOnlyBody = buildOpenAIBodyForTest({
+    provider: relayProvider,
+    model: 'gpt-oss-120b',
+    messages: [{ role: 'user', content: 'Return JSON and use context.' }],
+    providerToolDeclarations: [providerToolDeclaration],
+    structuredOutput: { type: 'json_schema', name: 'relay_result', schema: { type: 'object' }, strict: true },
+    reasoningEffort: 'high',
+    attachments: [{ id: 'relay-image', type: 'image', uri: 'file://relay.png', name: 'relay.png', mimeType: 'image/png', size: 10, base64: 'aW1n' }],
+    stream: false,
+  })
+  assert.equal(familyOnlyBody.tools, undefined, 'model-family recognition alone does not enable relay tools')
+  assert.equal(familyOnlyBody.response_format, undefined, 'model-family recognition alone does not enable relay structured output')
+  assert.equal(familyOnlyBody.reasoning_effort, undefined, 'model-family recognition alone does not enable relay reasoning controls')
+  assert.equal(familyOnlyBody.messages[0].content, 'Return JSON and use context.', 'model-family recognition alone does not enable relay vision payloads')
 }
 
 async function assertResponsesWebSocketTransportBehavior() {
@@ -2283,6 +2453,24 @@ async function assertRuntimeDiagnosticsBehavior() {
   await appendRuntimeLog('provider.conformance', { protocol: 'openai-responses', providerId: 'openai-main' }, { enabled: true, maxBytes: 4096 })
   await appendRuntimeLog('provider.compatibility', { compatibilityId: 'openai', auditState: 'conformance-ready', providerId: 'openai-main' }, { enabled: true, maxBytes: 4096 })
   await appendRuntimeLog('transport.fallback', { from: 'responses_websocket', to: 'http_sse', providerId: 'openai-main' }, { enabled: true, maxBytes: 4096 })
+  await appendRuntimeLog('request.rectification', {
+    providerId: 'custom',
+    model: 'manual-model',
+    kind: 'openai_compatible_minimal_chat',
+    result: 'retrying',
+    failedFields: ['response_format'],
+    removedFields: ['messages', 'response_format'],
+    retainedFields: ['model', 'messages', 'stream'],
+  }, { enabled: true, maxBytes: 4096 })
+  await appendRuntimeLog('request.rectification', {
+    providerId: 'custom',
+    model: 'manual-model',
+    kind: 'openai_compatible_minimal_chat',
+    result: 'success',
+    failedFields: ['response_format'],
+    removedFields: ['messages', 'response_format'],
+    retainedFields: ['model', 'messages', 'stream'],
+  }, { enabled: true, maxBytes: 4096 })
   clearCompactUsageRecords()
   recordCompactUsage({ mode: 'auto', providerId: 'openai-main', model: 'gpt-5.2', inputTokens: 1000 })
   recordCompactUsage({ mode: 'auto', providerId: 'openai-main', model: 'gpt-5.2', inputTokens: 1000, outputTokens: 120, estimatedSavedTokens: 430 })
@@ -2384,6 +2572,15 @@ async function assertRuntimeDiagnosticsBehavior() {
   assert.equal(summary.policy.modelBlockRules, 1, 'runtime diagnostics counts model block rules')
   assert.equal(summary.proxy.reason, 'system_proxy_platform_stack', 'runtime diagnostics reports system proxy as platform-stack mode')
   assert.equal(summary.log.enabled, true, 'runtime diagnostics reports log enablement')
+  assert.equal(summary.rectification.total, 2, 'runtime diagnostics counts request rectification log entries')
+  assert.equal(summary.rectification.retrying, 1, 'runtime diagnostics counts rectification retrying outcomes')
+  assert.equal(summary.rectification.success, 1, 'runtime diagnostics counts rectification success outcomes')
+  assert.equal(summary.rectification.failed, 0, 'runtime diagnostics initializes rectification failed outcomes')
+  assert.equal(summary.rectification.kindCounts.openai_compatible_minimal_chat, 2, 'runtime diagnostics groups rectification kinds')
+  assert.ok(
+    summary.rectification.recentExamples.some((example) => example.kind === 'openai_compatible_minimal_chat' && example.failedFields.includes('response_format') && example.removedFields.includes('messages') && example.retainedFields.includes('model')),
+    'runtime diagnostics exposes rectification failed, removed, and retained fields as examples'
+  )
   assert.equal(summary.providers.ready, 1, 'runtime diagnostics counts ready providers')
   assert.equal(summary.providers.degraded, 1, 'runtime diagnostics counts degraded providers')
   assert.equal(summary.providers.aliasProviders, 1, 'runtime diagnostics counts alias providers')
@@ -2400,6 +2597,19 @@ async function assertRuntimeDiagnosticsBehavior() {
   assert.equal(summary.capabilityMatrix.hostedGapProviders, 0, 'runtime diagnostics reports zero hosted gaps when no hosted providers are configured')
   assert.equal(summary.capabilityMatrix.genericModelListSuppressedProviders, 1, 'runtime diagnostics reports providers that intentionally suppress generic model-list sync')
   assert.ok(summary.capabilityMatrix.statusExamples.partial.length > 0, 'runtime diagnostics exposes partial provider capability matrix examples')
+  assert.equal(summary.capabilityMatrix.modelCapabilityProviders, 2, 'runtime diagnostics counts providers with model-level capability evidence')
+  assert.equal(summary.capabilityMatrix.modelCapabilityModels, 2, 'runtime diagnostics counts model-level capability rows')
+  assert.ok(summary.capabilityMatrix.modelCapabilityStatuses.manual > 0, 'runtime diagnostics counts manual model capability evidence')
+  assert.ok(summary.capabilityMatrix.modelCapabilityStatuses.inferred > 0, 'runtime diagnostics counts protocol-inferred model capability evidence')
+  assert.ok(summary.capabilityMatrix.modelCapabilityStatuses.unsupported > 0, 'runtime diagnostics counts unsupported model capability evidence')
+  assert.ok(
+    summary.capabilityMatrix.modelCapabilityStatusExamples.manual.some((example) => example.modelId === 'manual-model' && example.capability === 'chat' && example.canSend === true),
+    'runtime diagnostics exposes model-level basic chat evidence examples'
+  )
+  assert.ok(
+    summary.capabilityMatrix.modelCapabilityStatusExamples.unsupported.some((example) => example.modelId === 'manual-model' && example.capability === 'tools' && example.canSend === false),
+    'runtime diagnostics exposes blocked advanced model capability examples'
+  )
   assert.ok(
     summary.capabilityMatrix.statusExamples.partial.some((example) => example.contractStatus && example.limitationReason && example.degradationPath),
     'runtime diagnostics attaches contract status, limitation reason, and degradation path to matrix examples when a capability contract is available'
@@ -2589,8 +2799,20 @@ async function assertRuntimeDiagnosticsFailurePath() {
   assert.ok(settingsScreenSource.includes('runtimeDiagnosticProviderSupportEvidence'), 'settings diagnostics exposes provider capability matrix evidence examples')
   assert.ok(settingsScreenSource.includes('diagnostics.capabilityMatrix.statusExamples.partial'), 'settings diagnostics reads provider capability matrix partial examples')
   assert.ok(settingsScreenSource.includes('formatCapabilityMatrixExamples'), 'settings diagnostics formats provider capability matrix examples')
+  assert.ok(settingsScreenSource.includes('diagnostics.rectification.total'), 'settings diagnostics reads request rectification runtime log counts')
+  assert.ok(settingsScreenSource.includes('formatRectificationExamples'), 'settings diagnostics formats request rectification examples')
   assert.ok(apiKeyPanelSource.includes('summarizeProviderCapabilityMatrixDetails(provider, matrix)'), 'API key panel provider summary includes contract-aware capability matrix detail')
+  assert.ok(apiKeyPanelSource.includes('ModelCapabilityEvidencePanel'), 'API key panel renders model-level capability evidence diagnostics')
+  assert.ok(apiKeyPanelSource.includes('buildProviderModelCapabilityMatrix(provider, modelId)'), 'API key panel builds diagnostics from provider/model capability evidence')
+  assert.ok(apiKeyPanelSource.includes('apiKeyPanel.modelCapabilityEvidence'), 'API key panel localizes the model capability evidence section')
+  assert.ok(apiKeyPanelSource.includes('ModelTestCapabilityPanel'), 'API key panel renders latest provider model test sub-item diagnostics')
+  assert.ok(apiKeyPanelSource.includes('lastModelTestCapabilityChecks'), 'API key panel reads persisted provider model test capability checks')
+  assert.ok(apiKeyPanelSource.includes('MODEL_TEST_CAPABILITY_DISPLAY_ORDER'), 'API key panel owns a stable display order for provider model test capability checks')
+  assert.ok(apiKeyPanelSource.includes("'chat',\n  'streaming',\n  'tools',\n  'vision',\n  'reasoning'"), 'API key panel prioritizes Basic Chat, Streaming, Tools, Vision, and Reasoning checks')
+  assert.ok(apiKeyPanelSource.includes('sortModelTestCapabilityChecks(provider.lastModelTestCapabilityChecks ?? [])'), 'API key panel sorts provider model test checks before rendering')
+  assert.ok(apiKeyPanelSource.includes('apiKeyPanel.modelTestCapabilityStatus'), 'API key panel localizes provider model test capability check statuses')
   assert.ok(providerSettingsContentSource.includes('summarizeProviderCapabilityMatrixDetails(provider'), 'provider settings list rows include contract-aware capability matrix detail')
+  assert.ok(runtimeDiagnosticsSource.includes('modelCapabilityStatusExamples'), 'runtime diagnostics exposes sampled provider/model capability evidence')
   assert.ok(settingsScreenSource.includes('diagnostics.compatibility.liveSmokeGateCount'), 'settings diagnostics reads provider compatibility gate counts')
   assert.ok(settingsScreenSource.includes('runtimeDiagnosticCapabilityStatus'), 'settings diagnostics exposes provider compatibility capability status summary')
   assert.ok(settingsScreenSource.includes('diagnostics.compatibility.capabilityStatuses.supported'), 'settings diagnostics reads provider compatibility capability status counts')
@@ -2620,6 +2842,8 @@ async function assertRuntimeDiagnosticsFailurePath() {
     assert.ok(resource.settings.runtimeDiagnosticProviderSupportEvidenceValue, `settings diagnostics ${locale} locale formats provider capability matrix evidence examples`)
     assert.ok(resource.settings.runtimeDiagnosticCapabilityStatus, `settings diagnostics ${locale} locale names provider compatibility capability status summary`)
     assert.ok(resource.settings.runtimeDiagnosticCapabilityStatusValue, `settings diagnostics ${locale} locale formats provider compatibility capability status summary`)
+    assert.ok(resource.settings.runtimeDiagnosticRectification, `settings diagnostics ${locale} locale names request rectification summary`)
+    assert.ok(resource.settings.runtimeDiagnosticRectificationValue, `settings diagnostics ${locale} locale formats request rectification summary`)
     assert.ok(resource.settings.runtimeDiagnosticCapabilitySendPolicy, `settings diagnostics ${locale} locale names provider compatibility send policy summary`)
     assert.ok(resource.settings.runtimeDiagnosticCapabilitySendPolicyValue, `settings diagnostics ${locale} locale formats provider compatibility send policy summary`)
     assert.ok(resource.settings.runtimeDiagnosticCapabilitySendSource?.explicit_declaration, `settings diagnostics ${locale} locale formats provider compatibility send policy sources`)
@@ -2630,6 +2854,14 @@ async function assertRuntimeDiagnosticsFailurePath() {
     assert.ok(resource.settings.runtimeDiagnosticCapabilityPath?.disable_parameter, `settings diagnostics ${locale} locale formats provider compatibility degradation paths`)
     assert.ok(resource.providerTrace.providerCompatibilityTitle, `provider trace ${locale} locale names provider compatibility contract trace`)
     assert.ok(resource.providerTrace.providerCompatibilityContent, `provider trace ${locale} locale formats provider compatibility contract trace`)
+    assert.ok(resource.apiKeyPanel.modelTestCapabilityResults, `API key panel ${locale} locale names latest model test capability checks`)
+    assert.ok(resource.apiKeyPanel.modelTestCapabilityResultsDescription, `API key panel ${locale} locale formats latest model test capability check context`)
+    for (const capability of ['chat', 'streaming', 'tools', 'vision', 'reasoning']) {
+      assert.ok(resource.apiKeyPanel.modelCapability?.[capability], `API key panel ${locale} locale names the ${capability} model test capability`)
+    }
+    assert.ok(resource.apiKeyPanel.modelTestCapabilityStatus?.sent, `API key panel ${locale} locale formats sent model test capability checks`)
+    assert.ok(resource.apiKeyPanel.modelTestCapabilityStatus?.available, `API key panel ${locale} locale formats available model test capability checks`)
+    assert.ok(resource.apiKeyPanel.modelTestCapabilityStatus?.blocked, `API key panel ${locale} locale formats blocked model test capability checks`)
   }
 }
 
@@ -3338,6 +3570,79 @@ async function assertUpstreamGovernanceBehavior() {
   })
   assert.equal(mimoOnlyWebSearchRectified.body.tools, undefined, 'MiMo web search rectification removes empty tools arrays')
   assert.equal(mimoOnlyWebSearchRectified.body.tool_choice, undefined, 'MiMo web search rectification removes auto tool_choice when no tools remain')
+  const customRelayRectificationReq = {
+    provider: {
+      id: 'custom-relay-rectification',
+      type: 'openai-compatible',
+      presetId: 'custom-openai-compatible',
+      name: 'Custom Relay Rectification',
+      baseUrl: 'https://relay.example/v1',
+      apiKey: FAKE_KEY_A,
+      models: ['gpt-oss-120b'],
+      enabled: true,
+    },
+    model: 'gpt-oss-120b',
+    messages: [{ role: 'user', content: 'hello' }],
+  }
+  const compatibleMinimalRectified = rectifyOpenAICompatibleRequestBodyForTest({
+    req: customRelayRectificationReq,
+    body: JSON.stringify({
+      model: 'gpt-oss-120b',
+      messages: [{ role: 'user', content: [{ type: 'text', text: 'hello' }, { type: 'image_url', image_url: { url: 'data:image/png;base64,aW1n' } }] }],
+      stream: true,
+      tools: [{ type: 'function', function: { name: 'inspect_source', parameters: { type: 'object' } } }],
+      response_format: { type: 'json_schema', json_schema: { name: 'relay_result', schema: { type: 'object' } } },
+      reasoning_effort: 'high',
+      max_completion_tokens: 128,
+    }),
+    status: 400,
+    errorText: 'unsupported parameter: tools; unsupported parameter: response_format; unsupported parameter: reasoning_effort',
+    rectified: false,
+  })
+  assert.equal(compatibleMinimalRectified.kind, 'openai_compatible_minimal_chat', 'OpenAI-compatible relay rectification detects unsupported optional parameters')
+  assert.deepEqual(
+    compatibleMinimalRectified.body,
+    { model: 'gpt-oss-120b', messages: [{ role: 'user', content: 'hello' }], stream: true },
+    'OpenAI-compatible relay rectification retries with a minimal chat payload'
+  )
+  assert.ok(compatibleMinimalRectified.failedFields.includes('tools'), 'OpenAI-compatible relay rectification records failed tool fields')
+  assert.ok(compatibleMinimalRectified.failedFields.includes('response_format'), 'OpenAI-compatible relay rectification records failed structured-output fields')
+  assert.ok(compatibleMinimalRectified.removedFields.includes('messages'), 'OpenAI-compatible relay rectification records multimodal message simplification')
+  assert.ok(compatibleMinimalRectified.removedFields.includes('max_completion_tokens'), 'OpenAI-compatible relay rectification removes optional token aliases in minimal mode')
+  assert.deepEqual(compatibleMinimalRectified.retainedFields, ['model', 'messages', 'stream'], 'OpenAI-compatible relay rectification records the retained minimal chat fields')
+  assert.equal(
+    rectifyOpenAICompatibleRequestBodyForTest({
+      req: customRelayRectificationReq,
+      body: JSON.stringify({ model: 'gpt-oss-120b', messages: [{ role: 'user', content: 'hello' }], tools: [] }),
+      status: 400,
+      errorText: 'unsupported parameter: tools',
+      rectified: true,
+    }),
+    undefined,
+    'OpenAI-compatible relay rectification is single-retry only'
+  )
+  assert.equal(
+    rectifyOpenAICompatibleRequestBodyForTest({
+      req: { ...customRelayRectificationReq, provider: { id: 'openai-native', type: 'openai', name: 'OpenAI', apiKey: FAKE_KEY_A, models: ['gpt-5.5'], enabled: true } },
+      body: JSON.stringify({ model: 'gpt-5.5', messages: [{ role: 'user', content: 'hello' }], tools: [] }),
+      status: 400,
+      errorText: 'unsupported parameter: tools',
+      rectified: false,
+    }),
+    undefined,
+    'OpenAI-compatible relay rectification does not run for native OpenAI providers'
+  )
+  assert.equal(
+    rectifyOpenAICompatibleRequestBodyForTest({
+      req: customRelayRectificationReq,
+      body: JSON.stringify({ model: 'missing-model', messages: [{ role: 'user', content: 'hello' }], tools: [] }),
+      status: 400,
+      errorText: 'model not found',
+      rectified: false,
+    }),
+    undefined,
+    'OpenAI-compatible relay rectification does not mask model availability errors'
+  )
 
   const bedrockBody = {
     model: 'claude-opus-4-7',
@@ -3535,9 +3840,11 @@ async function assertUpstreamGovernanceBehavior() {
   assert.equal(typeof nonBedrock.system, 'string', 'Bedrock cache injection is Bedrock-only')
 
   assert.equal(isMiniMaxProvider({ id: 'custom', type: 'openai-compatible', name: 'Mini Max Proxy', apiKey: FAKE_KEY_A, models: [], enabled: true }), true, 'provider identity helper detects MiniMax names')
-  assert.equal(isDashScopeProvider({ id: 'custom', type: 'openai-compatible', name: 'Custom', apiKey: FAKE_KEY_A, models: ['qwen3-coder'], enabled: true }), true, 'provider identity helper detects DashScope model families')
-  assert.equal(isMoonshotProvider({ id: 'custom', type: 'openai-compatible', name: 'Custom', apiKey: FAKE_KEY_A, models: ['kimi-k2'], enabled: true }), true, 'provider identity helper detects Moonshot/Kimi model families')
+  assert.equal(isDashScopeProvider({ id: 'custom', type: 'openai-compatible', name: 'Custom', apiKey: FAKE_KEY_A, models: ['qwen3-coder'], enabled: true }), false, 'provider identity helper does not classify custom relays as DashScope from model family names')
+  assert.equal(isMoonshotProvider({ id: 'custom', type: 'openai-compatible', name: 'Custom', apiKey: FAKE_KEY_A, models: ['kimi-k2'], enabled: true }), false, 'provider identity helper does not classify custom relays as Moonshot from model family names')
   assert.equal(isXAIProvider({ id: 'custom', type: 'openai-compatible', name: 'Custom', baseUrl: 'https://api.x.ai/v1', apiKey: FAKE_KEY_A, models: [], enabled: true }), true, 'provider identity helper detects xAI hosts')
+  assert.equal(isXAIProvider({ id: 'custom', type: 'openai-compatible', name: 'Custom', apiKey: FAKE_KEY_A, models: ['grok-4.3'], enabled: true }), false, 'provider identity helper does not classify custom relays as xAI from model family names')
+  assert.equal(isPerplexityProvider({ id: 'custom', type: 'openai-compatible', name: 'Custom', apiKey: FAKE_KEY_A, models: ['sonar-reasoning-pro'], enabled: true }), false, 'provider identity helper does not classify custom relays as Perplexity from model family names')
   assert.equal(
     shouldRequestDashScopeStreamUsage({ provider: { id: 'dashscope-stream', type: 'openai-compatible', name: 'DashScope', apiKey: FAKE_KEY_A, models: [], enabled: true }, stream: false }),
     false,
@@ -3897,6 +4204,17 @@ async function assertUpstreamGovernanceBehavior() {
     const reducedModelTest = await testProviderModelDetailed(aliasProvider, 'friendly', FAKE_KEY_A, { checkParameters: false })
     assert.equal(checkedModelTest.ok, true, 'model test accepts aliased requested models')
     assert.equal(reducedModelTest.ok, true, 'model test accepts reduced-parameter checks')
+    assert.equal(checkedModelTest.data.requestedModel, 'friendly', 'model test diagnostics preserve the requested alias')
+    assert.equal(checkedModelTest.data.upstreamModel, 'upstream-model', 'model test diagnostics preserve the resolved upstream model')
+    assert.equal(checkedModelTest.data.usesResponsesApi, false, 'custom compatible model test diagnostics keep chat-completions routing explicit')
+    assert.equal(checkedModelTest.data.checkParameters, true, 'model test diagnostics record full parameter checks')
+    assert.equal(reducedModelTest.data.checkParameters, false, 'model test diagnostics record reduced parameter checks')
+    const findCapabilityCheck = (result, capability) => result.data.capabilityChecks.find((item) => item.capability === capability)
+    assert.equal(findCapabilityCheck(checkedModelTest, 'chat').status, 'sent', 'model test diagnostics mark basic chat as sent')
+    assert.equal(findCapabilityCheck(checkedModelTest, 'streaming').status, 'available', 'model test diagnostics mark streaming as available but not sent by the low-cost test')
+    for (const capability of ['tools', 'vision', 'files', 'reasoning', 'responseFormat', 'responsesApi', 'nativeSearch']) {
+      assert.equal(findCapabilityCheck(checkedModelTest, capability).status, 'blocked', `model test diagnostics block undeclared custom-compatible ${capability}`)
+    }
     assert.equal(modelTestBodies[0].model, 'upstream-model', 'model test sends the upstream alias target')
     assert.equal(modelTestBodies[0].temperature, 0.7, 'model test keeps generation parameters when parameter checks are enabled')
     assert.equal(modelTestBodies[1].temperature, undefined, 'model test removes generation parameters when parameter checks are disabled')
@@ -3918,6 +4236,8 @@ async function assertUpstreamGovernanceBehavior() {
     }, 'gemini-3.5-flash', FAKE_KEY_A, { checkParameters: false })
     assert.equal(checkedGeminiTest.ok, true, 'Gemini model test accepts thought summary parts without treating them as answer text')
     assert.equal(reducedGeminiTest.ok, true, 'Gemini reduced-parameter model test remains low-cost')
+    assert.equal(findCapabilityCheck(checkedGeminiTest, 'reasoning').status, 'sent', 'Gemini model test diagnostics mark reasoning as sent when thinkingConfig is present')
+    assert.equal(findCapabilityCheck(reducedGeminiTest, 'reasoning').status, 'available', 'Gemini reduced-parameter diagnostics keep reasoning available but not sent')
     assert.equal(modelTestBodies[2].generationConfig.thinkingConfig.thinkingLevel, 'medium', 'Gemini 3.5 parameter checks request the official default thinking level')
     assert.equal(modelTestBodies[2].generationConfig.thinkingConfig.includeThoughts, true, 'Gemini 3.5 parameter checks request thought summaries')
     assert.equal(modelTestBodies[2].generationConfig.maxOutputTokens, 128, 'Gemini thinking model tests reserve enough response budget for thought summaries')
@@ -4122,6 +4442,127 @@ async function assertUpstreamGovernanceBehavior() {
     assert.equal(mimoWebSearchRectifiedResponse.ok, true, 'MiMo native search Param Incorrect responses retry once without web_search')
     assert.equal(mimoWebSearchRetryBodies.length, 2, 'MiMo web_search rectification retries once')
     assert.equal(mimoWebSearchRetryBodies[1].tools, undefined, 'MiMo web_search rectification retry removes web_search tools')
+    const compatibleMinimalRuntimeLogPath = getRuntimeLogPath()
+    localFileFixtures.delete(compatibleMinimalRuntimeLogPath)
+    const compatibleMinimalRetryBodies = []
+    const compatibleMinimalRetryTraces = []
+    global.fetch = async (_url, init) => {
+      compatibleMinimalRetryBodies.push(JSON.parse(init.body))
+      return new Response(compatibleMinimalRetryBodies.length === 1
+        ? JSON.stringify({ error: { message: 'unsupported parameter: response_format and reasoning_effort' } })
+        : 'data: [DONE]\n\n', {
+        status: compatibleMinimalRetryBodies.length === 1 ? 400 : 200,
+        headers: { 'content-type': compatibleMinimalRetryBodies.length === 1 ? 'application/json' : 'text/event-stream' },
+      })
+    }
+    const compatibleMinimalRectifiedResponse = await fetchChatStreamWithRetryForTest({
+      req: {
+        provider: {
+          id: 'custom-compatible-minimal-retry',
+          type: 'openai-compatible',
+          presetId: 'custom-openai-compatible',
+          name: 'Custom Compatible Minimal Retry',
+          baseUrl: 'https://relay.example/v1',
+          apiKey: FAKE_KEY_A,
+          models: ['gpt-oss-120b'],
+          enabled: true,
+        },
+        model: 'gpt-oss-120b',
+        messages: [{ role: 'user', content: 'hello' }],
+        settings: { upstreamMaxRetries: 0, upstreamRequestTimeoutMs: 5000, upstreamCircuitBreakerEnabled: false, runtimeLogEnabled: true, runtimeLogMaxBytes: 4096 },
+      },
+      url: 'https://relay.example/v1/chat/completions',
+      headers: {},
+      body: JSON.stringify({
+        model: 'gpt-oss-120b',
+        messages: [{ role: 'user', content: [{ type: 'text', text: 'hello' }, { type: 'image_url', image_url: { url: 'data:image/png;base64,aW1n' } }] }],
+        stream: true,
+        response_format: { type: 'json_schema', json_schema: { name: 'relay_result', schema: { type: 'object' } } },
+        reasoning_effort: 'high',
+        max_completion_tokens: 128,
+      }),
+      stream: true,
+      controller: new AbortController(),
+      onTrace: (trace) => compatibleMinimalRetryTraces.push(trace),
+    })
+    assert.equal(compatibleMinimalRectifiedResponse.ok, true, 'OpenAI-compatible relay parameter errors retry once with a minimal chat payload')
+    assert.equal(compatibleMinimalRetryBodies.length, 2, 'OpenAI-compatible relay rectification sends exactly one retry')
+    assert.deepEqual(
+      compatibleMinimalRetryBodies[1],
+      { model: 'gpt-oss-120b', messages: [{ role: 'user', content: 'hello' }], stream: true },
+      'OpenAI-compatible relay rectification retry strips optional and multimodal fields'
+    )
+  assert.ok(
+      compatibleMinimalRetryTraces.some((trace) => trace.metadata?.rectificationKind === 'openai_compatible_minimal_chat' && trace.metadata?.removedFields?.includes('response_format') && trace.metadata?.retainedFields?.includes('model')),
+      'OpenAI-compatible relay rectification trace records removed and retained fields for diagnostics'
+    )
+    await new Promise((resolve) => setTimeout(resolve, 10))
+    const compatibleMinimalSuccessLogEntries = (localFileFixtures.get(compatibleMinimalRuntimeLogPath)?.toString('utf8') ?? '')
+      .split('\n')
+      .filter(Boolean)
+      .map((line) => JSON.parse(line))
+      .filter((entry) => entry.event === 'request.rectification' && entry.providerId === 'custom-compatible-minimal-retry')
+    assert.deepEqual(
+      compatibleMinimalSuccessLogEntries.map((entry) => entry.result),
+      ['retrying', 'success'],
+      'OpenAI-compatible relay rectification runtime log records retrying and final success'
+    )
+    assert.ok(compatibleMinimalSuccessLogEntries[0].failedFields.includes('response_format'), 'OpenAI-compatible relay rectification runtime log records failed fields')
+    assert.ok(compatibleMinimalSuccessLogEntries[0].removedFields.includes('messages'), 'OpenAI-compatible relay rectification runtime log records downgraded message payloads')
+    assert.deepEqual(compatibleMinimalSuccessLogEntries[0].retainedFields, ['model', 'messages', 'stream'], 'OpenAI-compatible relay rectification runtime log records retained minimal chat fields')
+    assert.deepEqual(compatibleMinimalSuccessLogEntries[1].retainedFields, ['model', 'messages', 'stream'], 'OpenAI-compatible relay rectification success log records retained minimal chat fields')
+
+    localFileFixtures.delete(compatibleMinimalRuntimeLogPath)
+    const compatibleMinimalFailedBodies = []
+    global.fetch = async (_url, init) => {
+      compatibleMinimalFailedBodies.push(JSON.parse(init.body))
+      return new Response(JSON.stringify({ error: { message: 'unsupported parameter: response_format' } }), {
+        status: 400,
+        headers: { 'content-type': 'application/json' },
+      })
+    }
+    const compatibleMinimalFailedResponse = await fetchChatStreamWithRetryForTest({
+      req: {
+        provider: {
+          id: 'custom-compatible-minimal-failed',
+          type: 'openai-compatible',
+          presetId: 'custom-openai-compatible',
+          name: 'Custom Compatible Minimal Failed',
+          baseUrl: 'https://relay.example/v1',
+          apiKey: FAKE_KEY_A,
+          models: ['gpt-oss-120b'],
+          enabled: true,
+        },
+        model: 'gpt-oss-120b',
+        messages: [{ role: 'user', content: 'hello' }],
+        settings: { upstreamMaxRetries: 0, upstreamRequestTimeoutMs: 5000, upstreamCircuitBreakerEnabled: false, runtimeLogEnabled: true, runtimeLogMaxBytes: 4096 },
+      },
+      url: 'https://relay.example/v1/chat/completions',
+      headers: {},
+      body: JSON.stringify({
+        model: 'gpt-oss-120b',
+        messages: [{ role: 'user', content: 'hello' }],
+        stream: true,
+        response_format: { type: 'json_object' },
+      }),
+      stream: true,
+      controller: new AbortController(),
+    })
+    assert.equal(compatibleMinimalFailedResponse.ok, false, 'OpenAI-compatible relay rectification returns the failed retry response when minimal chat still fails')
+    assert.equal(compatibleMinimalFailedBodies.length, 2, 'OpenAI-compatible relay rectification does not loop after the minimal chat retry fails')
+    await new Promise((resolve) => setTimeout(resolve, 10))
+    const compatibleMinimalFailedLogEntries = (localFileFixtures.get(compatibleMinimalRuntimeLogPath)?.toString('utf8') ?? '')
+      .split('\n')
+      .filter(Boolean)
+      .map((line) => JSON.parse(line))
+      .filter((entry) => entry.event === 'request.rectification' && entry.providerId === 'custom-compatible-minimal-failed')
+    assert.deepEqual(
+      compatibleMinimalFailedLogEntries.map((entry) => entry.result),
+      ['retrying', 'failed'],
+      'OpenAI-compatible relay rectification runtime log records retrying and final failure'
+    )
+    assert.equal(compatibleMinimalFailedLogEntries[1].status, 400, 'OpenAI-compatible relay rectification runtime log records the final failed status')
+    assert.deepEqual(compatibleMinimalFailedLogEntries[1].retainedFields, ['model', 'messages', 'stream'], 'OpenAI-compatible relay rectification failed log records retained minimal chat fields')
 
     memoryStorage.clear()
     const fallbackOpenAI = {
@@ -4522,6 +4963,95 @@ async function assertUpstreamGovernanceBehavior() {
     assert.ok(directFallbackLogText.includes('"selectedModel":"gpt-5.5-mini"'), 'direct runtime fallback route evidence records selected fallback model')
     const directRuntimeFallbackTrace = directFallbackTraces.find((trace) => trace.id.startsWith('runtime-fallback-'))
     assert.equal(directRuntimeFallbackTrace.metadata.selectedModel, 'gpt-5.5-mini', 'direct runtime fallback trace records selected route')
+
+    memoryStorage.clear()
+    await clearRuntimeLog()
+    const compatibleFallbackBodies = []
+    const compatibleFallbackChunks = []
+    const compatibleFallbackTraces = []
+    let compatibleFallbackDone
+    let compatibleFallbackError
+    const compatibleFallbackProvider = {
+      id: 'compatible-fallback-relay',
+      type: 'openai-compatible',
+      presetId: 'custom-openai-compatible',
+      name: 'Compatible Fallback Relay',
+      baseUrl: 'https://relay.example/v1',
+      apiKey: FAKE_KEY_A,
+      models: ['gpt-oss-120b'],
+      enabled: true,
+      capabilities: { nativeTools: true, reasoningEffort: true, structuredOutput: true },
+      modelConfigs: [{
+        ...getModelConfig('gpt-oss-120b', 'openai-compatible'),
+        id: 'gpt-oss-120b',
+        provider: 'openai-compatible',
+        supportedParameters: ['response_format'],
+        reasoningMode: 'openai-effort',
+        reasoningEfforts: ['high'],
+        supportsTools: true,
+        source: 'inferred',
+      }],
+    }
+    global.fetch = async (_url, init) => {
+      compatibleFallbackBodies.push(init?.body ? JSON.parse(init.body) : null)
+      if (compatibleFallbackBodies.length === 1) return new Response(null, { status: 200 })
+      if (compatibleFallbackBodies.length === 2) {
+        return new Response(JSON.stringify({ error: { message: 'unsupported parameter: response_format and reasoning_effort' } }), {
+          status: 400,
+          headers: { 'content-type': 'application/json' },
+        })
+      }
+      return new Response(JSON.stringify({ choices: [{ message: { content: 'compatible fallback OK' } }] }), {
+        status: 200,
+        headers: { 'content-type': 'application/json' },
+      })
+    }
+    const compatibleFallbackHandle = await streamChat(
+      {
+        provider: compatibleFallbackProvider,
+        model: 'gpt-oss-120b',
+        messages: [{ role: 'user', content: 'hello' }],
+        structuredOutput: { type: 'json_schema', name: 'relay_result', schema: { type: 'object' }, strict: true },
+        reasoningEffort: 'high',
+        settings: { runtimeLogEnabled: true, runtimeLogMaxBytes: 4096, upstreamMaxRetries: 0, upstreamCircuitBreakerEnabled: false },
+      },
+      (chunk) => compatibleFallbackChunks.push(chunk),
+      (result) => { compatibleFallbackDone = result },
+      (error) => { compatibleFallbackError = error },
+      undefined,
+      (trace) => compatibleFallbackTraces.push(trace)
+    )
+    await compatibleFallbackHandle.done
+    assert.equal(compatibleFallbackError, undefined, compatibleFallbackError?.message)
+    assert.equal(compatibleFallbackChunks.join(''), 'compatible fallback OK', 'OpenAI-compatible no-reader fallback emits rectified non-streaming result')
+    assert.equal(compatibleFallbackDone.text, 'compatible fallback OK', 'OpenAI-compatible no-reader fallback completes after rectified non-streaming retry')
+    assert.equal(compatibleFallbackBodies.length, 3, 'OpenAI-compatible no-reader fallback sends stream probe, rich non-streaming retry, and minimal chat retry')
+    assert.equal(compatibleFallbackBodies[0].stream, true, 'OpenAI-compatible no-reader fallback starts on the requested stream path')
+    assert.equal(compatibleFallbackBodies[1].stream, false, 'OpenAI-compatible no-reader fallback disables streaming before retrying')
+    assert.ok(compatibleFallbackBodies[1].response_format, 'OpenAI-compatible no-reader fallback first retries with declared structured-output fields')
+    assert.equal(compatibleFallbackBodies[1].reasoning_effort, 'high', 'OpenAI-compatible no-reader fallback first retries with declared reasoning fields')
+    assert.deepEqual(
+      compatibleFallbackBodies[2],
+      { model: 'gpt-oss-120b', messages: [{ role: 'user', content: 'hello' }], stream: false },
+      'OpenAI-compatible no-reader fallback rectification strips optional fields from the non-streaming retry'
+    )
+    assert.ok(
+      compatibleFallbackTraces.some((trace) => trace.metadata?.rectificationKind === 'openai_compatible_minimal_chat' && trace.metadata?.removedFields?.includes('response_format') && trace.metadata?.retainedFields?.includes('model')),
+      'OpenAI-compatible no-reader fallback records rectification trace metadata'
+    )
+    await new Promise((resolve) => setTimeout(resolve, 10))
+    const compatibleFallbackLogEntries = (await readRuntimeLogText())
+      .split('\n')
+      .filter(Boolean)
+      .map((line) => JSON.parse(line))
+      .filter((entry) => entry.event === 'request.rectification' && entry.providerId === 'compatible-fallback-relay')
+    assert.deepEqual(
+      compatibleFallbackLogEntries.map((entry) => entry.result),
+      ['retrying', 'success'],
+      'OpenAI-compatible no-reader fallback writes rectification retry and success diagnostics'
+    )
+    assert.ok(compatibleFallbackLogEntries[0].failedFields.includes('response_format'), 'OpenAI-compatible no-reader fallback logs failed fields')
+    assert.deepEqual(compatibleFallbackLogEntries[0].retainedFields, ['model', 'messages', 'stream'], 'OpenAI-compatible no-reader fallback logs retained minimal chat fields')
   } finally {
     global.fetch = originalFetch
   }
@@ -4758,6 +5288,80 @@ async function assertProviderStoreLifecycleBehavior() {
     compactStateRows.find((row) => row.id === 'provider-store-compact-blocked')?.status,
     'active',
     'settings store leaves other providers compact state untouched on single-provider removal'
+  )
+
+  const missingTokenProvider = {
+    id: 'store-invalid-missing-token',
+    type: 'openai-compatible',
+    presetId: 'custom-openai-compatible',
+    name: 'Missing Token Provider',
+    baseUrl: 'https://missing-token.example/v1',
+    apiKey: '',
+    models: ['gpt-5.5-mini'],
+    enabled: true,
+  }
+  const badUrlProvider = {
+    id: 'store-invalid-bad-url',
+    type: 'openai-compatible',
+    presetId: 'custom-openai-compatible',
+    name: 'Bad URL Provider',
+    baseUrl: 'file:///tmp/provider',
+    apiKey: FAKE_KEY_A,
+    models: ['gpt-5.5-mini'],
+    enabled: true,
+  }
+  await useSettingsStore.getState().addProvider(missingTokenProvider)
+  await useSettingsStore.getState().addProvider(badUrlProvider)
+  useSettingsStore.getState().updateSettings({ defaultProvider: badUrlProvider.id })
+  await mergeProviderHealthRecords([
+    {
+      providerId: missingTokenProvider.id,
+      model: 'gpt-5.5-mini',
+      status: 'cooldown',
+      successes: 0,
+      failures: 1,
+      consecutiveFailures: 1,
+      lastFailureAtMs: 18,
+    },
+    {
+      providerId: badUrlProvider.id,
+      model: 'gpt-5.5-mini',
+      status: 'cooldown',
+      successes: 0,
+      failures: 1,
+      consecutiveFailures: 1,
+      lastFailureAtMs: 19,
+    },
+  ], { nowMs: 20 })
+  await saveCompactState({
+    id: 'provider-store-compact-invalid',
+    conversationId: 'invalid-conversation',
+    providerId: badUrlProvider.id,
+    model: 'gpt-5.5-mini',
+    compactItemJson: '{"summary":"invalid stale compact"}',
+    sourceMessageStartIndex: 0,
+    sourceMessageEndIndex: 1,
+    status: 'active',
+    createdAt: 3,
+    updatedAt: 3,
+  })
+  const invalidProviderCount = await useSettingsStore.getState().clearInvalidProviders()
+  assert.equal(invalidProviderCount, 2, 'settings store clears providers with missing credentials or invalid configuration')
+  assert.deepEqual(
+    useSettingsStore.getState().providers.map((provider) => provider.id),
+    [blockedProvider.id],
+    'settings store preserves valid providers when clearing invalid providers'
+  )
+  assert.equal(useSettingsStore.getState().settings.defaultProvider, blockedProvider.id, 'settings store moves the default provider after clearing invalid providers')
+  assert.equal(secureStorage.has('islemind.key.store-invalid-bad-url'), false, 'settings store deletes secure keys for invalid providers')
+  const healthAfterInvalidCleanup = await loadProviderHealthSnapshot({ nowMs: 20 })
+  assert.equal(healthAfterInvalidCleanup.records.some((record) => record.providerId === missingTokenProvider.id), false, 'settings store clears health records for invalid providers')
+  assert.equal(healthAfterInvalidCleanup.records.some((record) => record.providerId === badUrlProvider.id), false, 'settings store clears bad-url provider health records')
+  assert.equal(healthAfterInvalidCleanup.records.some((record) => record.providerId === blockedProvider.id), true, 'settings store keeps unrelated provider health records when clearing invalid providers')
+  assert.equal(
+    compactStateRows.find((row) => row.id === 'provider-store-compact-invalid')?.failureCode,
+    'invalid_provider_cleared',
+    'settings store records invalid_provider_cleared as the compact invalidation reason'
   )
 
   await mergeProviderHealthRecords([
@@ -5584,6 +6188,81 @@ async function assertAndroidAppCacheCleanupBehavior() {
   reactNativePlatform.OS = 'test'
 }
 
+async function assertAndroidIntentOutputBehavior() {
+  resetLocalModelFileMocks()
+  reactNativePlatform.OS = 'android'
+  launchedIntents.length = 0
+  setServiceLanguage('zh-CN')
+  try {
+    const manifests = listAndroidDeviceToolManifests()
+    const alarmTool = manifests.find((tool) => tool.id === 'android:alarm.open_create_intent')
+    const reminderTool = manifests.find((tool) => tool.id === 'android:reminder.open_create_todo')
+    assert.ok(alarmTool, 'Android device tool registry includes the alarm intent tool')
+    assert.ok(reminderTool, 'Android device tool registry includes the reminder intent tool')
+
+    const alarmResult = await executeAndroidDeviceTool(alarmTool, { hour: 7, minutes: 5, message: '起床' })
+    assert.equal(alarmResult.ok, true, 'Android alarm intent handoff succeeds in the mocked runtime')
+    assert.equal(/^\s*\{/.test(alarmResult.output), false, 'Android alarm intent handoff output is readable text, not raw JSON')
+    assert.ok(alarmResult.output.includes('07:05'), 'Android alarm intent handoff output includes the requested alarm time')
+    assert.ok(alarmResult.output.includes('系统时钟应用'), 'Android alarm intent handoff output tells the user to confirm in Clock')
+    assert.equal(alarmResult.output.includes('"opened"'), false, 'Android alarm intent handoff output hides internal JSON fields')
+    assert.equal(alarmResult.trace.content.includes('"target"'), false, 'Android alarm intent trace content does not render raw JSON')
+    assert.equal(alarmResult.metadata?.structuredPayload?.target, 'alarm', 'Android alarm intent keeps structured payload in metadata')
+    assert.equal(alarmResult.metadata?.androidOperationAudit?.operationKind, 'alarm-intent', 'Android alarm intent audit still records operation kind')
+    assert.equal(launchedIntents.at(-1)?.action, 'android.intent.action.SET_ALARM', 'Android alarm intent opens the system alarm action')
+
+    const legacyAlarmJson = JSON.stringify({
+      opened: true,
+      target: 'alarm',
+      hour: 7,
+      minutes: 5,
+      message: '起床',
+      exactAlarmPermissionRequired: false,
+      launchAttempt: 'set-alarm',
+    }, null, 2)
+    assert.equal(
+      sanitizeInternalChatOutputText(legacyAlarmJson),
+      alarmResult.output,
+      'chat output guard converts persisted alarm JSON into the readable handoff message'
+    )
+    const sanitizedAlarmMessage = sanitizeMessageInternalOutput({
+      id: 'assistant-alarm-json',
+      role: 'assistant',
+      content: legacyAlarmJson,
+      timestamp: 1,
+      status: 'done',
+    })
+    assert.equal(sanitizedAlarmMessage.responseText, alarmResult.output, 'persisted alarm JSON assistant messages render with the readable handoff message')
+
+    const reminderResult = await executeAndroidDeviceTool(reminderTool, {
+      title: '买牛奶',
+      dueTimeIso: '2026-06-23T12:00:00+08:00',
+    })
+    assert.equal(reminderResult.ok, true, 'Android reminder intent handoff succeeds in the mocked runtime')
+    assert.equal(/^\s*\{/.test(reminderResult.output), false, 'Android reminder intent handoff output is readable text, not raw JSON')
+    assert.ok(reminderResult.output.includes('买牛奶'), 'Android reminder intent handoff output includes the reminder title')
+    assert.equal(reminderResult.output.includes('"target"'), false, 'Android reminder intent handoff output hides internal JSON fields')
+    assert.equal(reminderResult.trace.content.includes('"calendar-todo"'), false, 'Android reminder intent trace content does not render raw JSON')
+    assert.equal(reminderResult.metadata?.structuredPayload?.target, 'calendar-todo', 'Android reminder intent keeps structured payload in metadata')
+
+    const legacyReminderJson = JSON.stringify({
+      opened: true,
+      target: 'calendar-todo',
+      title: '买牛奶',
+      dueTimeIso: '2026-06-23T12:00:00+08:00',
+      localReminderStoreAvailable: false,
+      launchAttempt: 'calendar-todo-insert',
+    }, null, 2)
+    assert.equal(
+      sanitizeInternalChatOutputText(legacyReminderJson),
+      reminderResult.output,
+      'chat output guard converts persisted reminder JSON into the readable handoff message'
+    )
+  } finally {
+    reactNativePlatform.OS = 'test'
+  }
+}
+
 function assertChatAndroidUndoPromptBehavior() {
   assert.equal(safeChatPromptText('  sk-secret-token-1234567890  ', 120), '[redacted]', 'chat prompt helper redacts provider-looking secrets')
   const prompt = buildAndroidUndoPromptContext({
@@ -5675,6 +6354,7 @@ async function assertExpandedProviderPresetCoverage() {
     ['http://localhost:8080/v1', 'localai'],
     ['http://localhost:8000/v1', 'vllm'],
     ['http://localhost:30000/v1', 'sglang'],
+    ['https://oneapi.example.com/v1', 'newapi'],
   ]
   for (const [baseUrl, presetId] of expandedProviderDetectionFixtures) {
     assert.equal(
@@ -5696,6 +6376,15 @@ async function assertExpandedProviderPresetCoverage() {
       assert.equal(relayPreset.capabilities.reasoningEffort, false, 'Sub2API preset does not flatten upstream reasoning_effort support without endpoint-level docs')
     }
   }
+  const oneApiAliasPreset = applyProviderPreset({ name: 'OneAPI Gateway', baseUrl: 'https://oneapi.example.com/v1', apiKey: FAKE_KEY_A, models: ['oneapi/gemini-relay-pro'], enabled: true }, 'newapi')
+  assert.equal(oneApiAliasPreset.name, 'OneAPI Gateway', 'OneAPI aliases can keep their user-facing provider name while using the NewAPI / OneAPI preset contract')
+  assert.equal(oneApiAliasPreset.presetId, 'newapi', 'OneAPI aliases share the NewAPI / OneAPI preset id instead of requiring a separate protocol branch')
+  assert.equal(oneApiAliasPreset.type, 'openai-compatible', 'OneAPI aliases stay on the OpenAI-compatible provider type')
+  assert.equal(
+    resolveProviderEndpoint({ provider: oneApiAliasPreset, model: 'oneapi/gemini-relay-pro', stream: true }),
+    'https://oneapi.example.com/v1/chat/completions',
+    'OneAPI aliases keep Gemini-family relay models on Chat Completions by default'
+  )
 
   const groqPreset = applyProviderPreset({ apiKey: FAKE_KEY_A, models: [], enabled: false }, 'groq')
   assert.equal(groqPreset.type, 'openai-compatible', 'expanded Groq preset stays on OpenAI-compatible request shape')
@@ -6073,6 +6762,340 @@ async function assertProviderCapabilityMatrixBehavior() {
     enabled: true,
     capabilities: { responsesApi: true, responsesWebSocket: true, remoteCompact: true, nativeTools: true },
   }
+  const modelCapability = (matrix, capability) => matrix.capabilities.find((item) => item.capability === capability)
+  const customModelMatrix = buildProviderModelCapabilityMatrix(customProvider, 'manual-model')
+  assert.deepEqual(
+    PROVIDER_MODEL_CAPABILITY_KEYS,
+    ['chat', 'streaming', 'tools', 'vision', 'files', 'reasoning', 'responseFormat', 'responsesApi', 'nativeSearch'],
+    'provider model capability keys expose the canonical diagnostic order'
+  )
+  assert.deepEqual(
+    customModelMatrix.capabilities.map((item) => item.capability),
+    ['chat', 'streaming', 'tools', 'vision', 'files', 'reasoning', 'responseFormat', 'responsesApi', 'nativeSearch'],
+    'provider model capability matrix exposes the canonical model capability order'
+  )
+  assert.deepEqual(getProviderModelCapabilityModelIds(customProvider), ['manual-model'], 'provider model capability ids reuse the provider visible model surface')
+  assert.equal(modelCapability(customModelMatrix, 'chat')?.status, 'manual', 'custom relay manual model ids are tracked as manual chat evidence')
+  assert.equal(modelCapability(customModelMatrix, 'streaming')?.status, 'inferred', 'custom relay streaming stays protocol-inferred until tested or discovered')
+  assert.equal(modelCapability(customModelMatrix, 'tools')?.status, 'unsupported', 'custom relay tools stay unsupported without evidence')
+  assert.equal(modelCapability(customModelMatrix, 'vision')?.status, 'unsupported', 'custom relay vision stays unsupported without evidence')
+  assert.equal(modelCapability(customModelMatrix, 'files')?.status, 'unsupported', 'custom relay files stay unsupported without evidence')
+  assert.equal(modelCapability(customModelMatrix, 'reasoning')?.status, 'unsupported', 'custom relay reasoning stays unsupported without evidence')
+  assert.equal(modelCapability(customModelMatrix, 'responseFormat')?.status, 'unsupported', 'custom relay response_format stays unsupported without evidence')
+  assert.equal(modelCapability(customModelMatrix, 'responsesApi')?.status, 'unsupported', 'custom relay Responses routing stays unsupported without evidence')
+  assert.equal(modelCapability(customModelMatrix, 'nativeSearch')?.status, 'unsupported', 'custom relay native search stays unsupported without evidence')
+  assert.equal(providerModelCapabilityCanBeSent(customProvider, 'manual-model', 'chat'), true, 'model capability send policy allows inferred/manual relay chat')
+  assert.equal(providerModelCapabilityCanBeSent(customProvider, 'manual-model', 'streaming'), true, 'model capability send policy allows inferred relay streaming')
+  assert.equal(providerModelCapabilityCanBeSent(customProvider, 'manual-model', 'tools'), false, 'model capability send policy blocks relay tools without evidence')
+  assert.equal(providerModelCapabilityCanBeSent(customProvider, 'manual-model', 'vision'), false, 'model capability send policy blocks relay vision without evidence')
+  assert.equal(providerModelCapabilityCanBeSent(customProvider, 'manual-model', 'files'), false, 'model capability send policy blocks relay files without evidence')
+  assert.equal(providerModelCapabilityCanBeSent(customProvider, 'manual-model', 'reasoning'), false, 'model capability send policy blocks relay reasoning without evidence')
+  assert.equal(providerModelCapabilityCanBeSent(customProvider, 'manual-model', 'responseFormat'), false, 'model capability send policy blocks relay response_format without evidence')
+  assert.equal(providerModelCapabilityCanBeSent(customProvider, 'manual-model', 'responsesApi'), false, 'model capability send policy blocks relay Responses routing without evidence')
+  assert.equal(providerModelCapabilityCanBeSent(customProvider, 'manual-model', 'nativeSearch'), false, 'model capability send policy blocks relay native search without evidence')
+  const customModelSummary = summarizeProviderModelCapabilityProvider(customProvider)
+  assert.equal(customModelSummary.modelCount, 1, 'provider model capability summary counts relay-visible models')
+  assert.equal(customModelSummary.capabilityStatusCounts.chat.manual, 1, 'provider model capability summary preserves manual basic chat evidence')
+  assert.equal(customModelSummary.capabilityStatusCounts.streaming.inferred, 1, 'provider model capability summary preserves protocol-inferred streaming evidence')
+  assert.deepEqual(customModelSummary.sendableAdvancedCapabilities, [], 'custom relay summary does not treat advanced capabilities as sendable without evidence')
+  assert.deepEqual(
+    customModelSummary.unsupportedAdvancedCapabilities,
+    ['tools', 'vision', 'files', 'reasoning', 'responseFormat', 'responsesApi', 'nativeSearch'],
+    'custom relay summary reports every advanced capability as unsupported until metadata or manual declaration exists'
+  )
+
+  const providerToolDeclaration = {
+    type: 'function',
+    function: {
+      name: 'inspect_relay_context',
+      description: 'Inspect relay-side context.',
+      parameters: { type: 'object', properties: { query: { type: 'string' } }, required: ['query'] },
+    },
+  }
+  const unsupportedRelayBody = buildOpenAIBodyForTest({
+    provider: customProvider,
+    model: 'manual-model',
+    messages: [{ role: 'user', content: 'Return JSON and inspect the attachment.' }],
+    providerToolDeclarations: [providerToolDeclaration],
+    structuredOutput: { type: 'json_schema', name: 'relay_result', schema: { type: 'object' }, strict: true },
+    reasoningEffort: 'high',
+    attachments: [
+      { id: 'custom-matrix-image', type: 'image', uri: 'file://image.png', name: 'image.png', mimeType: 'image/png', size: 12, base64: 'aW1n' },
+      { id: 'custom-matrix-file', type: 'file', uri: 'file://doc.pdf', name: 'doc.pdf', mimeType: 'application/pdf', size: 12, base64: 'ZG9j' },
+    ],
+    stream: false,
+  })
+  assert.equal(unsupportedRelayBody.tools, undefined, 'custom relay request body omits provider tools until model capability evidence exists')
+  assert.equal(unsupportedRelayBody.response_format, undefined, 'custom relay request body omits response_format until model capability evidence exists')
+  assert.equal(unsupportedRelayBody.reasoning_effort, undefined, 'custom relay request body omits reasoning_effort until model capability evidence exists')
+  assert.equal(JSON.stringify(unsupportedRelayBody).includes('image_url'), false, 'custom relay request body omits image payloads until model capability evidence exists')
+  assert.equal(JSON.stringify(unsupportedRelayBody).includes('file_data'), false, 'custom relay request body omits file payloads until model capability evidence exists')
+  const unsupportedNativeSearchResponsesBody = buildOpenAIResponsesBodyForTest({
+    provider: customProvider,
+    model: 'manual-model',
+    messages: [{ role: 'user', content: 'Search with the relay.' }],
+    webSearchMode: 'native',
+    stream: false,
+  })
+  assert.equal(unsupportedNativeSearchResponsesBody.tools, undefined, 'custom relay Responses body omits native-search tools until model capability evidence exists')
+  assert.equal(
+    usesOpenAIResponses({ provider: { ...customProvider, capabilities: { responsesApi: true } }, model: 'manual-model', webSearchMode: 'native' }),
+    false,
+    'custom relay native search does not force Responses routing without model-level native-search evidence'
+  )
+
+  const manualMetadataProvider = {
+    ...customProvider,
+    id: 'custom-manual-metadata',
+    models: ['gpt-oss-120b'],
+    capabilities: { nativeTools: true, vision: true, files: true, reasoningEffort: true, responsesApi: true, nativeSearch: true },
+    modelConfigs: [{
+      ...getModelConfig('gpt-oss-120b', 'openai-compatible'),
+      id: 'gpt-oss-120b',
+      name: 'Manual GPT OSS',
+      provider: 'openai-compatible',
+      supportsTools: true,
+      supportsVision: true,
+      supportsFiles: true,
+      supportedParameters: ['response_format'],
+      preferredEndpoint: 'chat-completions',
+      reasoningMode: 'openai-effort',
+      reasoningEfforts: ['low', 'medium', 'high'],
+      source: 'inferred',
+    }],
+  }
+  const manualModelMatrix = buildProviderModelCapabilityMatrix(manualMetadataProvider, 'gpt-oss-120b')
+  assert.equal(modelCapability(manualModelMatrix, 'tools')?.status, 'manual', 'custom relay tools can be marked manual by explicit provider/model declaration')
+  assert.equal(modelCapability(manualModelMatrix, 'vision')?.status, 'manual', 'custom relay vision can be marked manual by explicit provider/model declaration')
+  assert.equal(modelCapability(manualModelMatrix, 'files')?.status, 'manual', 'custom relay files can be marked manual by explicit provider/model declaration')
+  assert.equal(modelCapability(manualModelMatrix, 'reasoning')?.status, 'manual', 'custom relay reasoning can be marked manual by explicit provider/model declaration')
+  assert.equal(modelCapability(manualModelMatrix, 'responseFormat')?.status, 'manual', 'custom relay response_format can be marked manual by explicit model metadata')
+  assert.equal(modelCapability(manualModelMatrix, 'responsesApi')?.status, 'manual', 'custom relay Responses routing can be marked manual by explicit provider declaration')
+  assert.equal(modelCapability(manualModelMatrix, 'nativeSearch')?.status, 'manual', 'custom relay native search can be marked manual by explicit provider declaration')
+  for (const capability of ['tools', 'vision', 'files', 'reasoning', 'responseFormat', 'responsesApi', 'nativeSearch']) {
+    assert.equal(providerModelCapabilityCanBeSent(manualMetadataProvider, 'gpt-oss-120b', capability), true, `manual metadata allows ${capability} to be sent`)
+  }
+  const manualRelayBody = buildOpenAIBodyForTest({
+    provider: manualMetadataProvider,
+    model: 'gpt-oss-120b',
+    messages: [{ role: 'user', content: 'Return JSON and inspect the image.' }],
+    providerToolDeclarations: [providerToolDeclaration],
+    structuredOutput: { type: 'json_schema', name: 'relay_result', schema: { type: 'object' }, strict: true },
+    reasoningEffort: 'high',
+    attachments: [{ id: 'manual-matrix-image', type: 'image', uri: 'file://image.png', name: 'image.png', mimeType: 'image/png', size: 12, base64: 'aW1n' }],
+    stream: false,
+  })
+  assert.ok(Array.isArray(manualRelayBody.tools), 'manual relay request body keeps provider tools when model capability is manual')
+  assert.ok(manualRelayBody.response_format, 'manual relay request body keeps response_format when model capability is manual')
+  assert.equal(manualRelayBody.reasoning_effort, 'high', 'manual relay request body keeps reasoning_effort when model capability is manual')
+  assert.equal(JSON.stringify(manualRelayBody).includes('image_url'), true, 'manual relay request body keeps image payloads when model capability is manual')
+  const manualNativeSearchResponsesBody = buildOpenAIResponsesBodyForTest({
+    provider: manualMetadataProvider,
+    model: 'gpt-oss-120b',
+    messages: [{ role: 'user', content: 'Search with the relay.' }],
+    webSearchMode: 'native',
+    stream: false,
+  })
+  assert.equal(manualNativeSearchResponsesBody.tools?.[0]?.type, 'web_search_preview', 'manual relay Responses body keeps native-search tools when model capability is manual')
+  assert.equal(
+    usesOpenAIResponses({ provider: manualMetadataProvider, model: 'gpt-oss-120b', webSearchMode: 'native' }),
+    true,
+    'manual relay native search routes through Responses only after provider and model capability evidence'
+  )
+  assert.equal(
+    usesOpenAIResponses({
+      provider: manualMetadataProvider,
+      model: 'gpt-oss-120b',
+      attachments: [{ id: 'manual-file', type: 'file', uri: 'file://doc.pdf', name: 'doc.pdf', mimeType: 'application/pdf', size: 12, base64: 'ZG9j' }],
+    }),
+    true,
+    'manual relay file input routes through Responses only after provider and model capability evidence'
+  )
+  assert.equal(
+    usesOpenAIResponses({ provider: { ...manualMetadataProvider, capabilities: { ...manualMetadataProvider.capabilities, responsesApi: false } }, model: 'gpt-oss-120b', webSearchMode: 'native' }),
+    false,
+    'manual relay native search stays on Chat Completions when Responses capability is not declared'
+  )
+
+  const remoteMetadataProvider = {
+    ...customProvider,
+    id: 'custom-remote-metadata',
+    models: ['relay/gemini-pro'],
+    capabilities: { responsesApi: true },
+    modelConfigs: [{
+      id: 'relay/gemini-pro',
+      name: 'Relay Gemini Pro',
+      provider: 'openai-compatible',
+      contextWindow: 128000,
+      maxTokens: 8192,
+      maxOutputTokens: 8192,
+      defaultMaxTokens: 4096,
+      supportsVision: true,
+      supportsFiles: true,
+      supportsTools: true,
+      supportsStreaming: true,
+      supportedParameters: ['response_format', 'web_search_preview'],
+      preferredEndpoint: 'responses',
+      reasoningMode: 'openai-effort',
+      reasoningEfforts: ['low', 'medium', 'high'],
+      source: 'remote',
+    }],
+  }
+  const remoteModelMatrix = buildProviderModelCapabilityMatrix(remoteMetadataProvider, 'relay/gemini-pro')
+  for (const capability of ['chat', 'streaming', 'tools', 'vision', 'files', 'reasoning', 'responseFormat', 'responsesApi', 'nativeSearch']) {
+    assert.equal(modelCapability(remoteModelMatrix, capability)?.status, 'verified', `remote metadata verifies ${capability} for a relay model`)
+    assert.equal(providerModelCapabilityCanBeSent(remoteMetadataProvider, 'relay/gemini-pro', capability), true, `remote metadata allows ${capability} to be sent`)
+  }
+  assert.equal(modelCapability(remoteModelMatrix, 'tools')?.source, 'remote-model-metadata', 'model capability matrix records remote metadata as tool evidence')
+  assert.equal(modelCapability(remoteModelMatrix, 'responsesApi')?.reason, 'remote model metadata selects Responses routing', 'model capability matrix explains model-selected Responses routing')
+  const aliasRemoteMetadataProvider = {
+    ...remoteMetadataProvider,
+    id: 'custom-remote-alias-metadata',
+    modelAliases: [{ alias: 'friendly-gemini', model: 'relay/gemini-pro' }],
+  }
+  const aliasModelMatrix = buildProviderModelCapabilityMatrix(aliasRemoteMetadataProvider, 'friendly-gemini')
+  assert.equal(aliasModelMatrix.modelId, 'friendly-gemini', 'model capability matrix preserves the user-facing alias id')
+  assert.equal(aliasModelMatrix.resolvedModelId, 'relay/gemini-pro', 'model capability matrix records the upstream alias target')
+  for (const capability of ['chat', 'streaming', 'tools', 'vision', 'files', 'reasoning', 'responseFormat', 'responsesApi', 'nativeSearch']) {
+    assert.equal(modelCapability(aliasModelMatrix, capability)?.status, 'verified', `alias model capability matrix uses upstream metadata for ${capability}`)
+    assert.equal(providerModelCapabilityCanBeSent(aliasRemoteMetadataProvider, 'friendly-gemini', capability), true, `alias model capability send policy uses upstream metadata for ${capability}`)
+  }
+  const syncedRelayModels = mapOpenAICompatibleModels({
+    data: [
+      {
+        id: 'relay/omni-reasoning',
+        name: 'Relay Omni Reasoning',
+        supported_parameters: ['tools', 'responseFormat', 'webSearchPreview', 'reasoningEffort', 'fileData'],
+        architecture: { input_modalities: ['text', 'image', 'file'] },
+        preferred_endpoint: 'responses',
+      },
+      {
+        id: 'relay/omni-chat',
+        name: 'Relay Omni Chat',
+        supported_parameters: ['tools', 'responseFormat', 'reasoningEffort', 'fileData'],
+        architecture: { input_modalities: ['text', 'image', 'file'] },
+        preferred_endpoint: 'chat-completions',
+      },
+      {
+        id: 'relay/gpt-5.2',
+        name: 'GPT-5.2',
+        architecture: { input_modalities: ['text'] },
+      },
+    ],
+  }, 'openai-compatible', { providerPresetId: 'custom-openai-compatible' })
+  const syncedRelayProvider = {
+    ...customProvider,
+    id: 'custom-synced-model-list',
+    models: syncedRelayModels.map((model) => model.id),
+    capabilities: { responsesApi: true },
+    modelConfigs: syncedRelayModels,
+  }
+  const syncedModelMatrix = buildProviderModelCapabilityMatrix(syncedRelayProvider, 'relay/omni-reasoning')
+  for (const capability of ['tools', 'vision', 'files', 'reasoning', 'responseFormat', 'responsesApi', 'nativeSearch']) {
+    assert.equal(modelCapability(syncedModelMatrix, capability)?.status, 'verified', `synced relay /models metadata verifies ${capability}`)
+    assert.equal(providerModelCapabilityCanBeSent(syncedRelayProvider, 'relay/omni-reasoning', capability), true, `synced relay /models metadata allows ${capability} to be sent`)
+  }
+  const syncedRelayBody = buildOpenAIBodyForTest({
+    provider: syncedRelayProvider,
+    model: 'relay/omni-chat',
+    messages: [{ role: 'user', content: 'Return JSON and inspect this evidence.' }],
+    providerToolDeclarations: [providerToolDeclaration],
+    structuredOutput: { type: 'json_schema', name: 'synced_relay_result', schema: { type: 'object' }, strict: true },
+    reasoningEffort: 'high',
+    attachments: [
+      { id: 'synced-image', type: 'image', uri: 'file://image.png', name: 'image.png', mimeType: 'image/png', size: 12, base64: 'aW1n' },
+      { id: 'synced-file', type: 'file', uri: 'file://doc.pdf', name: 'doc.pdf', mimeType: 'application/pdf', size: 12, base64: 'ZG9j' },
+    ],
+    stream: false,
+  })
+  assert.ok(Array.isArray(syncedRelayBody.tools), 'synced relay request body keeps provider tools when /models metadata declares tools')
+  assert.ok(syncedRelayBody.response_format, 'synced relay request body keeps response_format when /models metadata declares structured output')
+  assert.equal(syncedRelayBody.reasoning_effort, 'high', 'synced relay request body keeps reasoning_effort when /models metadata declares reasoning controls')
+  assert.equal(JSON.stringify(syncedRelayBody.messages).includes('image_url'), true, 'synced relay request body keeps image payloads when /models metadata declares image input')
+  assert.equal(JSON.stringify(syncedRelayBody.messages).includes('file_data'), true, 'synced relay request body keeps file payloads when /models metadata declares file input')
+  const syncedRelayResponsesBody = buildOpenAIResponsesBodyForTest({
+    provider: syncedRelayProvider,
+    model: 'relay/omni-reasoning',
+    messages: [{ role: 'user', content: 'Search with the synced relay model.' }],
+    webSearchMode: 'native',
+    stream: false,
+  })
+  assert.equal(syncedRelayResponsesBody.tools?.[0]?.type, 'web_search_preview', 'synced relay Responses body keeps native-search tools when /models metadata declares web search')
+
+  const weakSyncedRelayProvider = {
+    ...customProvider,
+    id: 'custom-weak-synced-model-list',
+    models: ['relay/gpt-5.2'],
+    modelConfigs: syncedRelayModels.filter((model) => model.id === 'relay/gpt-5.2'),
+  }
+  const weakSyncedMatrix = buildProviderModelCapabilityMatrix(weakSyncedRelayProvider, 'relay/gpt-5.2')
+  for (const capability of ['tools', 'vision', 'files', 'reasoning', 'responseFormat', 'responsesApi', 'nativeSearch']) {
+    assert.equal(modelCapability(weakSyncedMatrix, capability)?.status, 'unsupported', `weak synced relay metadata keeps ${capability} unsupported`)
+    assert.equal(providerModelCapabilityCanBeSent(weakSyncedRelayProvider, 'relay/gpt-5.2', capability), false, `weak synced relay metadata blocks ${capability} request fields`)
+  }
+  const weakSyncedBody = buildOpenAIBodyForTest({
+    provider: weakSyncedRelayProvider,
+    model: 'relay/gpt-5.2',
+    messages: [{ role: 'user', content: 'Return JSON and inspect this evidence.' }],
+    providerToolDeclarations: [providerToolDeclaration],
+    structuredOutput: { type: 'json_schema', name: 'weak_synced_relay_result', schema: { type: 'object' }, strict: true },
+    reasoningEffort: 'high',
+    attachments: [
+      { id: 'weak-image', type: 'image', uri: 'file://image.png', name: 'image.png', mimeType: 'image/png', size: 12, base64: 'aW1n' },
+      { id: 'weak-file', type: 'file', uri: 'file://doc.pdf', name: 'doc.pdf', mimeType: 'application/pdf', size: 12, base64: 'ZG9j' },
+    ],
+    stream: false,
+  })
+  assert.equal(weakSyncedBody.tools, undefined, 'weak synced relay request body omits tools without /models capability evidence')
+  assert.equal(weakSyncedBody.response_format, undefined, 'weak synced relay request body omits response_format without /models capability evidence')
+  assert.equal(weakSyncedBody.reasoning_effort, undefined, 'weak synced relay request body omits reasoning_effort without /models capability evidence')
+  assert.equal(JSON.stringify(weakSyncedBody.messages).includes('image_url'), false, 'weak synced relay request body omits image payloads without /models capability evidence')
+  assert.equal(JSON.stringify(weakSyncedBody.messages).includes('file_data'), false, 'weak synced relay request body omits file payloads without /models capability evidence')
+  const mixedRelayProvider = {
+    ...customProvider,
+    id: 'custom-mixed-model-pool',
+    models: ['relay/gemini-vision', 'relay/claude-tools'],
+    capabilities: { nativeTools: true, vision: true, files: true, responsesApi: true },
+    modelConfigs: [
+      {
+        id: 'relay/gemini-vision',
+        name: 'Relay Gemini Vision',
+        provider: 'openai-compatible',
+        contextWindow: 128000,
+        maxTokens: 8192,
+        maxOutputTokens: 8192,
+        defaultMaxTokens: 4096,
+        supportsVision: true,
+        supportsFiles: false,
+        supportsTools: false,
+        supportedParameters: ['response_format'],
+        source: 'remote',
+      },
+      {
+        id: 'relay/claude-tools',
+        name: 'Relay Claude Tools',
+        provider: 'openai-compatible',
+        contextWindow: 200000,
+        maxTokens: 8192,
+        maxOutputTokens: 8192,
+        defaultMaxTokens: 4096,
+        supportsVision: false,
+        supportsFiles: false,
+        supportsTools: true,
+        source: 'remote',
+      },
+    ],
+  }
+  const mixedGeminiMatrix = buildProviderModelCapabilityMatrix(mixedRelayProvider, 'relay/gemini-vision')
+  const mixedClaudeMatrix = buildProviderModelCapabilityMatrix(mixedRelayProvider, 'relay/claude-tools')
+  assert.equal(modelCapability(mixedGeminiMatrix, 'vision')?.status, 'verified', 'mixed relay keeps Gemini-like vision evidence on the Gemini model')
+  assert.equal(modelCapability(mixedGeminiMatrix, 'tools')?.status, 'unsupported', 'mixed relay does not flatten provider tool declarations onto a model whose metadata disables tools')
+  assert.equal(modelCapability(mixedGeminiMatrix, 'responseFormat')?.status, 'verified', 'mixed relay keeps Gemini-like structured-output metadata')
+  assert.equal(modelCapability(mixedClaudeMatrix, 'tools')?.status, 'verified', 'mixed relay keeps Claude-like tool evidence on the Claude model')
+  assert.equal(modelCapability(mixedClaudeMatrix, 'vision')?.status, 'unsupported', 'mixed relay does not flatten provider vision declarations onto a model whose metadata disables vision')
+  assert.equal(modelCapability(mixedClaudeMatrix, 'files')?.status, 'unsupported', 'mixed relay does not flatten provider file declarations onto a model whose metadata disables files')
+  assert.equal(providerModelCapabilityCanBeSent(mixedRelayProvider, 'relay/gemini-vision', 'tools'), false, 'mixed relay blocks tools for the Gemini-like model without model evidence')
+  assert.equal(providerModelCapabilityCanBeSent(mixedRelayProvider, 'relay/claude-tools', 'tools'), true, 'mixed relay allows tools for the Claude-like model with model evidence')
   const matrix = buildProviderCapabilityMatrix(officialProvider)
   assert.equal(matrix.hostingProfile, 'official', 'official provider is classified as official hosting')
   assert.equal(matrix.summaryLevel, 'partial', 'official provider still reports partial due to cache coverage not being universal')
@@ -6213,7 +7236,7 @@ async function assertProviderCapabilityMatrixBehavior() {
   assert.equal(
     describeProviderCapabilityStatus(openAINonFileModelMatrix, 'files'),
     'file input is allowed for gpt-4.1, but endpoint/model evidence is not complete enough to treat every configured model as file-capable',
-    'provider capability matrix explains model-level file metadata gaps'
+    'provider capability matrix explains user-declared file capability with incomplete model evidence'
   )
   const anthropicFileMatrix = buildProviderCapabilityMatrix({ id: 'anthropic-files', type: 'anthropic', name: 'Anthropic', apiKey: FAKE_KEY_A, models: ['claude-opus-4-8'], enabled: true })
   assert.equal(
@@ -7032,6 +8055,19 @@ async function assertProviderCapabilityMatrixBehavior() {
   assert.equal(isAzureOpenAIProvider(azureV1Provider), true, 'hosted routing helper detects Azure OpenAI providers')
   assert.equal(isAzureOpenAIV1Provider(azureV1Provider), true, 'hosted routing helper detects Azure OpenAI v1-compatible base URLs')
   assert.equal(isAzureOpenAILegacyDeploymentProvider(azureLegacyProvider), true, 'hosted routing helper detects legacy deployment-style Azure OpenAI paths')
+  const relayWithHostedModelNames = {
+    id: 'custom-hosted-name-relay',
+    type: 'openai-compatible',
+    name: 'Custom Relay',
+    baseUrl: 'https://relay.example/v1',
+    [API_KEY_FIELD]: FAKE_KEY_A,
+    models: ['azure-openai/gpt-5.2', 'bedrock/claude-sonnet-4', 'vertex-ai/gemini-2.5-pro'],
+    enabled: true,
+  }
+  assert.equal(isAzureOpenAIProvider(relayWithHostedModelNames), false, 'hosted routing helper does not classify custom relays as Azure from model names')
+  assert.equal(isAwsBedrockHostedProvider(relayWithHostedModelNames), false, 'hosted boundary helper does not classify custom relays as Bedrock from model names')
+  assert.equal(isVertexAIProvider(relayWithHostedModelNames), false, 'hosted boundary helper does not classify custom relays as Vertex AI from model names')
+  assert.equal(buildProviderCapabilityMatrix(relayWithHostedModelNames).hostingProfile, 'relay', 'capability matrix keeps hosted-looking relay model ids in the relay hosting profile')
   assert.equal(normalizeAzureOpenAIBaseUrl('https://example.openai.azure.com'), 'https://example.openai.azure.com/openai/v1', 'Azure OpenAI bare resource endpoints normalize to /openai/v1')
   assert.equal(normalizeAzureOpenAIBaseUrl('https://example.openai.azure.com/openai/v1/chat/completions'), 'https://example.openai.azure.com/openai/v1', 'Azure OpenAI full chat endpoints normalize back to the v1 base namespace')
   assert.equal(
@@ -7643,8 +8679,23 @@ async function run() {
   assert.equal(providerSupportsReasoning(customToolInferredProvider, 'qwen3.7-max'), false, 'chat reasoning helper keeps custom endpoint quick reasoning disabled without contract evidence')
   assert.deepEqual(
     getReasoningEffortOptions({ ...customToolInferredProvider, capabilities: { reasoningEffort: true } }, 'qwen3.7-max'),
-    ['none', 'low', 'medium', 'high'],
-    'chat reasoning helper honors explicit custom endpoint reasoning declarations'
+    [],
+    'chat reasoning helper does not derive DashScope reasoning efforts from Qwen model names on custom relays'
+  )
+  assert.deepEqual(
+    getReasoningEffortOptions({ ...customToolInferredProvider, capabilities: { reasoningEffort: true } }, 'kimi-k2.6'),
+    [],
+    'chat reasoning helper does not derive Moonshot reasoning efforts from Kimi model names on custom relays'
+  )
+  assert.deepEqual(
+    getReasoningEffortOptions({ ...customToolInferredProvider, capabilities: { reasoningEffort: true } }, 'grok-4.3'),
+    [],
+    'chat reasoning helper does not derive xAI reasoning efforts from Grok model names on custom relays'
+  )
+  assert.deepEqual(
+    getReasoningEffortOptions({ ...customToolInferredProvider, capabilities: { reasoningEffort: true } }, 'sonar-reasoning-pro'),
+    [],
+    'chat reasoning helper does not derive Perplexity reasoning efforts from Sonar model names on custom relays'
   )
   assert.deepEqual(
     getReasoningEffortOptions({
@@ -7678,7 +8729,8 @@ async function run() {
   assert.ok(promptEngineeringSource.includes('providerSupportsFileInput(provider, model)'), 'system prompt capability rule uses provider-aware file support')
   const chatProviderNativeToolUtilsSource = fs.readFileSync(path.join(root, 'src/services/chatProviderNativeToolUtils.ts'), 'utf8')
   assert.ok(chatProviderNativeToolUtilsSource.includes("providerCompatibilityCapabilityCanBeSentForProvider(provider, 'tools', explicitDeclaration)"), 'chat provider-native tool helper gates tool support through the provider compatibility contract')
-  assert.ok(chatProviderNativeToolUtilsSource.includes('providerCompatibilityCapabilityCanBeSentForProvider(provider, capability, explicitDeclaration)'), 'chat provider-native modality helpers gate vision/file support through the provider compatibility contract')
+  assert.ok(chatProviderNativeToolUtilsSource.includes('providerCompatibilityCapabilityCanBeSentForProvider(provider, capability, modelSupported)'), 'chat provider-native modality helpers gate model-declared vision/file support through the provider compatibility contract')
+  assert.ok(chatProviderNativeToolUtilsSource.includes('providerCompatibilityCapabilityCanBeSentForProvider(provider, capability, true)'), 'chat provider-native modality helpers gate user-declared vision/file support through the provider compatibility contract')
   const aiBaseSource = fs.readFileSync(path.join(root, 'src/services/ai/base.ts'), 'utf8')
   assert.ok(aiBaseSource.includes("msgs.push({ role: 'system', content: systemPrompt })"), 'OpenAI-compatible request builders preserve system prompt policy as a system message')
   assert.ok(aiBaseSource.includes('systemInstruction') && aiBaseSource.includes('systemPrompt'), 'Gemini request builder preserves system prompt policy through systemInstruction')
@@ -7719,12 +8771,20 @@ async function run() {
   assert.ok(providerConformanceSource.includes("severity: 'block'"), 'provider conformance records blocking issues for the runtime safety policy')
   assert.ok(providerConformanceSource.includes('providerCompatibilityReasoningExplicitlyDeclaredForModel(provider, modelConfig)'), 'provider conformance does not treat static model reasoning metadata as a protocol-reference declaration')
   assert.ok(providerConformanceSource.includes("config.preferredEndpoint === 'responses' && providerResponsesApiCanBeSent(input.provider)"), 'provider conformance does not infer Responses protocol from xAI-like identity without contract evidence')
+  assert.equal(providerConformanceSource.includes('provider.models?.join'), false, 'provider conformance does not use model lists for provider-family identity')
   const providerOpenAIRequestSource = fs.readFileSync(path.join(root, 'src/services/ai/providerOpenAIRequest.ts'), 'utf8')
   assert.ok(providerOpenAIRequestSource.includes('function providerReasoningCanBeSent'), 'OpenAI request helper centralizes reasoning sendability checks')
   assert.ok(providerOpenAIRequestSource.includes('if (!providerReasoningCanBeSent(req.provider, modelConfig)) return false'), 'OpenAI Responses encrypted reasoning include is gated by the provider reasoning contract')
   assert.ok(providerOpenAIRequestSource.includes('if (!providerReasoningCanBeSent(req.provider, modelConfig)) return undefined'), 'OpenAI-compatible reasoning replay fields are gated by the provider reasoning contract')
   assert.ok(providerOpenAIRequestSource.includes('function providerResponsesApiCanBeSent'), 'OpenAI request helper centralizes Responses API sendability checks')
-  assert.ok(providerOpenAIRequestSource.includes('isXAIProvider(req.provider) && providerResponsesApiCanBeSent(req.provider)'), 'OpenAI request helper does not route xAI-like compatible endpoints to Responses without contract evidence')
+  assert.ok(providerOpenAIRequestSource.includes('isXAIProvider(req.provider) && providerResponsesApiCanBeSent(req.provider, req.model)'), 'OpenAI request helper does not route xAI-like compatible endpoints to Responses without contract and model evidence')
+  assert.equal(providerOpenAIRequestSource.includes('provider.models?.join'), false, 'OpenAI request helper does not use model lists for provider identity or local-runtime detection')
+  const providerHostedRoutingSource = fs.readFileSync(path.join(root, 'src/services/ai/providerHostedRouting.ts'), 'utf8')
+  assert.equal(providerHostedRoutingSource.includes('provider.models?.join'), false, 'hosted routing helper does not use model lists for Azure provider identity')
+  const providerHostedBoundarySource = fs.readFileSync(path.join(root, 'src/services/ai/providerHostedBoundary.ts'), 'utf8')
+  assert.equal(providerHostedBoundarySource.includes('provider.models?.join'), false, 'hosted boundary helper does not use model lists for cloud-hosted provider identity')
+  const modelReasoningSource = fs.readFileSync(path.join(root, 'src/utils/modelReasoning.ts'), 'utf8')
+  assert.equal(modelReasoningSource.includes('provider.models?.join'), false, 'model reasoning helpers do not use model lists for provider-family identity')
   const providerOpenAICompatibleThinkingSource = fs.readFileSync(path.join(root, 'src/services/ai/providerOpenAICompatibleThinking.ts'), 'utf8')
   assert.ok(providerOpenAICompatibleThinkingSource.includes('providerCompatibilityReasoningExplicitlyDeclaredForModel(req.provider, modelConfig)'), 'OpenAI-compatible thinking helpers use the shared reasoning declaration gate')
   const providerAnthropicThinkingSource = fs.readFileSync(path.join(root, 'src/services/ai/providerAnthropicThinking.ts'), 'utf8')
@@ -7760,7 +8820,6 @@ async function run() {
   assert.ok(speechSource.includes("providerCompatibilityCapabilityCanBeSentForProvider(sourceProvider, 'audio', true)"), 'speech service gates optional remote TTS on the provider compatibility audio contract')
   const providerModelDiscoverySource = fs.readFileSync(path.join(root, 'src/services/ai/providerModelDiscovery.ts'), 'utf8')
   assert.ok(providerModelDiscoverySource.includes("providerCompatibilityCapabilityCanBeSentForProvider(provider, 'modelList'"), 'provider model discovery gates /models sync on the provider compatibility modelList contract')
-  const modelReasoningSource = fs.readFileSync(path.join(root, 'src/utils/modelReasoning.ts'), 'utf8')
   assert.ok(modelReasoningSource.includes("providerCompatibilityCapabilityCanBeSentForProvider(provider, 'reasoning', explicitDeclaration)"), 'reasoning UI helpers gate effort options on the provider compatibility reasoning contract')
   assert.ok(aiBaseSource.includes("providerCompatibilityCapabilityCanBeSentForProvider(provider, 'embeddings', provider.capabilities?.embeddings === true)"), 'provider embedding request boundary gates /embeddings on the provider compatibility embeddings contract plus explicit provider declaration')
   const localDataStoreSource = fs.readFileSync(path.join(root, 'src/services/localDataStore.ts'), 'utf8')
@@ -8952,9 +10011,11 @@ async function run() {
   assert.ok(messageContentSource.includes('looksLikeToolCallMarkupLine(trimmed)'), 'message content formula detection excludes provider text tool-call markup lines')
   assert.ok(messageContentSource.includes('tool_call|function|parameter'), 'message content keeps provider tool-call markup out of formula cards')
   assert.ok(
-    messageContentSource.includes("style={{ gap: 8, width: '100%', maxWidth: '100%', overflow: 'hidden' }}") &&
-      messageContentSource.includes("contentStyle={{ padding: 10, width: '100%' }}") &&
-      messageContentSource.includes("alignSelf: 'stretch'"),
+    messageContentSource.includes("contentStyle={{ padding: 8, width: '100%' }}") &&
+      messageContentSource.includes("alignSelf: 'stretch'") &&
+      messageContentSource.includes("width: '100%'") &&
+      messageContentSource.includes("maxWidth: '100%'") &&
+      messageContentSource.includes('minWidth: 0'),
     'message content rich cards keep a stable full bubble width while copy feedback changes header text'
   )
 
@@ -9183,6 +10244,7 @@ ${FAKE_KEY_B}
   assert.ok(providerSettingsContentSource.includes('Clipboard.hasStringAsync()'), 'provider import requests clipboard text availability before reading clipboard text')
   assert.ok(providerSettingsContentSource.includes('countDetectedProviderImports(input)'), 'provider import modal routes manual detection through the import summary helper')
   assert.ok(providerImportSummarySource.includes('parseProviderImportText(input)'), 'provider import summary helper detects manually pasted provider configs')
+  assert.ok(providerSettingsContentSource.includes('clearInvalidProviders'), 'provider settings exposes invalid-provider cleanup')
   assert.ok(providerSettingsContentSource.includes("parseProviderImportDraft(text, { requireConnection: source === 'manual', preferredWireProtocol: wireProtocol })"), 'add provider form applies detected provider import drafts from clipboard and manual input')
   assert.ok(providerSettingsContentSource.includes('onChangeText: handleKeysText'), 'add provider form routes token input through provider import auto-detection')
   assert.ok(apiKeyPanelSource.includes('readProviderClipboard'), 'single provider editor exposes clipboard provider import handling')
@@ -10158,6 +11220,16 @@ https://gateway.example/messages`
     ['group-a', 'group-a', 'group-a', 'group-b', 'group-b', 'group-b'],
     'provider activation can try alternate synced models before marking a credential group unhealthy'
   )
+  assert.deepEqual(
+    resolveProviderActivationRuntimePolicy(20, 'all'),
+    { concurrency: 1, maxTestCandidates: 1, modelSyncTimeoutMs: 9000, modelTestTimeoutMs: 9000, afterProviderDelayMs: 90 },
+    'large provider activation batches stay low-rate so the app remains responsive'
+  )
+  assert.deepEqual(
+    resolveProviderActivationRuntimePolicy(3, 'batch'),
+    { concurrency: 2, maxTestCandidates: 2, modelSyncTimeoutMs: 14000, modelTestTimeoutMs: 14000, afterProviderDelayMs: 45 },
+    'small provider activation batches can still make limited progress in parallel'
+  )
   const mimoActivationCandidates = buildProviderActivationTestCandidatesForTest({
     id: 'mimo-activation',
     type: 'xiaomi-mimo',
@@ -10273,8 +11345,51 @@ https://gateway.example/messages`
     assert.equal(resilientTestedModels.length, 2, 'provider activation stops after the first later synced model passes')
     assert.deepEqual(resilientGroupHealth.map((item) => item.ok), [false, true], 'provider activation records failed and recovered credential health checks')
     assert.equal(resilientActivationProvider.lastTestStatus, 'ok', 'provider activation stores ok health after a fallback model passes')
+    assert.ok(resilientActivationProvider.lastModelTestCapabilityChecks?.some((check) => check.capability === 'chat' && check.status === 'sent'), 'provider activation stores successful model test sub-item diagnostics')
+    assert.ok(resilientActivationProvider.lastModelTestCapabilityChecks?.some((check) => check.capability === 'streaming' && check.status === 'available'), 'provider activation keeps available-but-unsent streaming diagnostics')
   } finally {
     global.fetch = originalFetchForActivationFallback
+  }
+  const originalFetchForActivationBatchLimit = global.fetch
+  let batchLimitedActivationProvider = {
+    ...resilientActivationProvider,
+    id: 'activation-batch-limited-models',
+    name: 'Activation Batch Limited Models',
+    lastTestStatus: 'idle',
+    lastTestModel: undefined,
+    credentialGroups: [
+      { id: 'batch-limited-group', label: 'Batch Limited Group', apiKey: FAKE_KEY_A, enabled: true, lastModelSyncStatus: 'idle', availableModels: [] },
+    ],
+  }
+  const batchLimitedTestedModels = []
+  try {
+    global.fetch = async (_url, init = {}) => {
+      if ((init.method ?? 'GET') === 'GET') {
+        return new Response(JSON.stringify({
+          data: [
+            { id: 'bad-model' },
+            { id: 'good-model' },
+            { id: 'extra-model' },
+          ],
+        }), { status: 200, headers: { 'content-type': 'application/json' } })
+      }
+      const body = JSON.parse(init.body)
+      batchLimitedTestedModels.push(body.model)
+      return new Response('upstream model temporarily unavailable', { status: 500 })
+    }
+    const batchLimitedActivation = await syncAndTestProvider(batchLimitedActivationProvider, {
+      updateProvider: async (_id, updates) => {
+        batchLimitedActivationProvider = { ...batchLimitedActivationProvider, ...updates }
+      },
+      hydrateProviderKey: async () => batchLimitedActivationProvider,
+      updateProviderCredentialGroupHealth: async () => undefined,
+      delay: async () => undefined,
+    }, { enable: true, checkParameters: false, maxTestCandidates: 1, modelSyncTimeoutMs: 9000, modelTestTimeoutMs: 9000 })
+    assert.equal(batchLimitedActivation.testOk, false, 'large batch activation can fail fast instead of trying every fallback model')
+    assert.deepEqual(batchLimitedTestedModels, ['bad-model'], 'large batch activation honors the one-candidate health-check cap')
+    assert.ok(batchLimitedActivationProvider.lastModelTestCapabilityChecks?.some((check) => check.capability === 'chat' && check.status === 'sent'), 'provider activation persists failed model test sub-item diagnostics from the attempted request')
+  } finally {
+    global.fetch = originalFetchForActivationBatchLimit
   }
   assert.deepEqual(
     buildProviderActivationTestCandidatesForTest(activationPolicyProvider, 'fast', { modelAllowlist: ['gpt-*'] }).map((candidate) => candidate.model),
@@ -10863,6 +11978,90 @@ https://gateway.example/messages`
   })
   assert.equal(qwenHighReasoningPacked.reasoningReserveTokens, 262144, 'Qwen high reasoning reserves the official 256K thinking budget')
   assert.equal(qwenHighReasoningPacked.reservedOutputTokens, 327680, 'Qwen context packing reserves output plus thinking budget')
+  const customRelayQwenPacked = packChatMessages({
+    messages: [{ role: 'user', content: 'custom relay qwen reasoning budget '.repeat(500) }],
+    modelContextWindow: 1000000,
+    maxOutputTokens: 65536,
+    provider: { id: 'custom-relay-qwen-context', type: 'openai-compatible', presetId: 'custom-openai-compatible', name: 'Custom Relay', apiKey: FAKE_KEY_A, models: ['qwen3.7-max'], enabled: true },
+    providerType: 'openai-compatible',
+    model: 'qwen3.7-max',
+    reasoningEffort: 'high',
+  })
+  assert.equal(customRelayQwenPacked.reasoningReserveTokens, 0, 'custom OpenAI-compatible relay does not reserve DashScope thinking budget from model name alone')
+  const dashScopeQwenPacked = packChatMessages({
+    messages: [{ role: 'user', content: 'dashscope qwen reasoning budget '.repeat(500) }],
+    modelContextWindow: 1000000,
+    maxOutputTokens: 65536,
+    provider: { id: 'dashscope-qwen-context', type: 'openai-compatible', presetId: 'dashscope', name: 'DashScope', apiKey: FAKE_KEY_A, models: ['qwen3.7-max'], enabled: true },
+    providerType: 'openai-compatible',
+    model: 'qwen3.7-max',
+    reasoningEffort: 'high',
+  })
+  assert.equal(dashScopeQwenPacked.reasoningReserveTokens, 262144, 'DashScope Qwen keeps the source-backed thinking budget reserve')
+  const declaredRelayQwenPacked = packChatMessages({
+    messages: [{ role: 'user', content: 'declared relay qwen reasoning budget '.repeat(500) }],
+    modelContextWindow: 1000000,
+    maxOutputTokens: 65536,
+    provider: {
+      id: 'declared-relay-qwen-context',
+      type: 'openai-compatible',
+      presetId: 'custom-openai-compatible',
+      name: 'Declared Relay',
+      apiKey: FAKE_KEY_A,
+      models: ['qwen3.7-max'],
+      modelConfigs: [{
+        id: 'qwen3.7-max',
+        name: 'Qwen3.7 Max',
+        provider: 'openai-compatible',
+        contextWindow: 1000000,
+        maxTokens: 1000000,
+        maxOutputTokens: 65536,
+        defaultMaxTokens: 8192,
+        supportsVision: true,
+        supportsFiles: false,
+        reasoningMode: 'dashscope-thinking',
+        reasoningEfforts: ['none', 'low', 'medium', 'high'],
+        source: 'remote',
+      }],
+      enabled: true,
+    },
+    providerType: 'openai-compatible',
+    model: 'qwen3.7-max',
+    reasoningEffort: 'high',
+  })
+  assert.equal(declaredRelayQwenPacked.reasoningReserveTokens, 262144, 'relay model metadata restores source-backed thinking budget reserve')
+  const remoteAliasQwenPacked = packChatMessages({
+    messages: [{ role: 'user', content: 'remote alias relay qwen reasoning budget '.repeat(500) }],
+    modelContextWindow: 1000000,
+    maxOutputTokens: 65536,
+    provider: {
+      id: 'remote-alias-relay-qwen-context',
+      type: 'openai-compatible',
+      presetId: 'custom-openai-compatible',
+      name: 'Remote Alias Relay',
+      apiKey: FAKE_KEY_A,
+      models: ['relay/qwen3.7-max'],
+      modelConfigs: [{
+        id: 'relay/qwen3.7-max',
+        name: 'Relay Qwen3.7 Max',
+        provider: 'openai-compatible',
+        contextWindow: 1000000,
+        maxTokens: 1000000,
+        maxOutputTokens: 65536,
+        defaultMaxTokens: 8192,
+        supportsVision: true,
+        supportsFiles: false,
+        reasoningMode: 'dashscope-thinking',
+        reasoningEfforts: ['none', 'low', 'medium', 'high'],
+        source: 'remote',
+      }],
+      enabled: true,
+    },
+    providerType: 'openai-compatible',
+    model: 'relay/qwen3.7-max',
+    reasoningEffort: 'high',
+  })
+  assert.equal(remoteAliasQwenPacked.reasoningReserveTokens, 262144, 'relay model metadata restores thinking budget reserve for provider-prefixed model aliases')
 
   const remoteConfig = mergeModelConfig('remote-large', 'openai-compatible', {
     contextWindow: 65536,
@@ -13782,6 +14981,7 @@ https://gateway.example/messages`
   assert.ok(localModelCacheKey({ localEmbeddingModelId: 'all-MiniLM-L6-v2', localEmbeddingModelSource: 'downloaded' }).includes('downloaded'))
   const textEncoder = new TextEncoder()
   await assertApkUpdateBehavior()
+  await assertAndroidIntentOutputBehavior()
 
   resetLocalModelFileMocks()
   localFileFixtures.set('file:///tmp/provider-import.txt', Buffer.from('Provider: Example\nBase URL: https://api.example/v1\nKey: token-fake'))
@@ -14500,6 +15700,15 @@ https://gateway.example/messages`
   const appInfo = await callMcpTool(builtin, 'app_info', {})
   assert.equal(appInfo.ok, true, 'built-in MCP app_info works without network')
   assert.ok(appInfo.content[0].text.includes('stdio is disabled'), 'MCP app_info states mobile transport boundary')
+  const systemCapabilities = await callBuiltinTool('get_settings', {}, Date.now())
+  const systemCapabilitiesText = systemCapabilities.content[0]?.text ?? ''
+  assert.equal(systemCapabilities.ok, true, 'built-in get_settings returns system capabilities')
+  assert.ok(systemCapabilitiesText.includes(st('appAction.settingsSummaryTitle')), 'system capabilities output has a visible title')
+  assert.equal(/^\s*\{/.test(systemCapabilitiesText), false, 'system capabilities output is not raw JSON')
+  assert.equal(systemCapabilitiesText.includes('"memoryEnabled"'), false, 'system capabilities output hides internal setting keys')
+  const localSystemCapabilities = await routeLocalAppCommand('系统能力')
+  assert.equal(localSystemCapabilities?.ok, true, 'local system capability command is recognized')
+  assert.ok(localSystemCapabilities?.message.includes(st('appAction.settingsSummaryTitle')), 'local system capability command returns the readable summary')
   const truncated = truncateToolBlocks([{ type: 'text', text: 'x'.repeat(2000) }], 50)
   assert.ok(truncated[0].text.length < 1000, 'MCP tool output is truncated to budget')
 }
@@ -14558,6 +15767,46 @@ function assertProviderModelDiscoveryBehavior() {
   assert.deepEqual(opaqueMiniMax?.reasoningEfforts, ['none', 'high'], 'provider model discovery uses display_name to infer MiniMax thinking metadata for opaque ids')
   assert.equal(opaqueMiniMax?.supportsVision, true, 'provider model discovery uses display_name to infer MiniMax vision support for opaque ids')
   assert.deepEqual(opaqueGrok?.reasoningEfforts, ['low', 'medium', 'high', 'xhigh'], 'provider model discovery uses display_name to infer Grok multi-agent metadata for opaque ids')
+
+  const newApiSyncedModels = mapOpenAICompatibleModels({
+    data: [
+      {
+        id: 'newapi/gemini-relay-pro',
+        display_name: 'Gemini Relay Pro',
+        supported_parameters: ['tools', 'responseFormat', 'webSearchPreview', 'reasoningEffort', 'fileData'],
+        architecture: { input_modalities: ['text', 'image', 'file'] },
+        preferred_endpoint: 'responses',
+      },
+      {
+        id: 'newapi/gpt-5.2',
+        display_name: 'GPT-5.2',
+        architecture: { input_modalities: ['text'] },
+      },
+    ],
+  }, 'openai-compatible', { providerPresetId: 'newapi' })
+  const newApiRichModel = newApiSyncedModels.find((model) => model.id === 'newapi/gemini-relay-pro')
+  assert.deepEqual(
+    newApiRichModel?.supportedParameters,
+    ['tools', 'response_format', 'web_search_preview', 'reasoning_effort', 'file_data'],
+    'provider model discovery normalizes OpenAI-compatible relay supported_parameters aliases'
+  )
+  assert.equal(newApiRichModel?.supportsTools, true, 'provider model discovery maps relay supported_parameters tools metadata')
+  assert.equal(newApiRichModel?.supportsVision, true, 'provider model discovery maps relay image input metadata')
+  assert.equal(newApiRichModel?.supportsFiles, true, 'provider model discovery maps relay file input metadata')
+  assert.equal(newApiRichModel?.preferredEndpoint, 'responses', 'provider model discovery maps explicit relay Responses endpoint metadata')
+  assert.equal(newApiRichModel?.reasoningMode, 'openai-effort', 'provider model discovery maps reasoning_effort metadata to OpenAI-compatible reasoning controls')
+  const newApiWeakKnownModel = newApiSyncedModels.find((model) => model.id === 'newapi/gpt-5.2')
+  assert.equal(newApiWeakKnownModel?.supportsTools, false, 'metadata-gated relay discovery does not inherit tools from a known model name without remote evidence')
+  assert.equal(newApiWeakKnownModel?.supportsVision, false, 'metadata-gated relay discovery does not inherit vision from a known model name without remote evidence')
+  assert.equal(newApiWeakKnownModel?.supportsFiles, false, 'metadata-gated relay discovery does not inherit files from a known model name without remote evidence')
+  assert.equal(newApiWeakKnownModel?.preferredEndpoint, 'chat-completions', 'metadata-gated relay discovery keeps Chat Completions as the default unless Responses is explicit')
+  assert.equal(newApiWeakKnownModel?.reasoningMode, undefined, 'metadata-gated relay discovery does not inherit reasoning controls from a known model name without remote evidence')
+
+  const sub2apiWeakModels = mapOpenAICompatibleModels({
+    data: [{ id: 'sub2api/qwen3.7-max', name: 'Qwen3.7 Max', architecture: { input_modalities: ['text'] } }],
+  }, 'openai-compatible', { providerPresetId: 'sub2api' })
+  assert.equal(sub2apiWeakModels[0].reasoningMode, undefined, 'Sub2API weak model metadata does not inherit Qwen thinking controls by model name alone')
+  assert.equal(sub2apiWeakModels[0].supportsTools, false, 'Sub2API weak model metadata does not inherit provider-native tools by model name alone')
 }
 
 function assertProviderCompatibilityContractBehavior() {
@@ -16244,7 +17493,7 @@ function assertOpenRouterProviderCompatibilityBehavior() {
         context_length: 131000,
         max_output_tokens: 40000,
         supported_parameters: ['tools', 'response_format', 'structured_outputs'],
-        architecture: { input_modalities: ['text'] },
+        architecture: { input_modalities: ['text', 'file'] },
       },
       {
         id: 'text/plain-relay-model',
@@ -16361,6 +17610,7 @@ async function assertRelayProviderCompatibilityBehavior() {
   const relays = [
     { presetId: 'openrouter', baseUrl: 'https://openrouter.ai/api/v1', chatModel: 'openrouter/auto' },
     { presetId: 'newapi', baseUrl: 'https://gateway.example/v1', chatModel: 'newapi/gpt-5.2' },
+    { presetId: 'newapi', label: 'oneapi', baseUrl: 'https://oneapi.example.com/v1', chatModel: 'oneapi/gemini-relay-pro' },
     { presetId: 'sub2api', baseUrl: 'https://sub2api.example/v1', chatModel: 'sub2api/gpt-5.2' },
   ]
   const providerToolDeclaration = {
@@ -16377,18 +17627,24 @@ async function assertRelayProviderCompatibilityBehavior() {
   }
 
   for (const relay of relays) {
+    const relayLabel = relay.label ?? relay.presetId
+    const relayFamilyModels = WELL_KNOWN_OPENAI_COMPATIBLE_RELAY_MODEL_FAMILIES.map(([model, family]) => ({
+      model: `${relayLabel}/${model}`,
+      family,
+    }))
     const provider = applyProviderPreset({
-      id: `${relay.presetId}-relay`,
+      id: `${relayLabel}-relay`,
       baseUrl: relay.baseUrl,
+      ...(relay.label ? { name: 'OneAPI Gateway' } : {}),
       [API_KEY_FIELD]: FAKE_KEY_A,
-      models: [relay.chatModel],
+      models: [relay.chatModel, ...relayFamilyModels.map((item) => item.model)],
       enabled: true,
     }, relay.presetId)
-    assert.equal(buildProviderCapabilityMatrix(provider).hostingProfile, 'aggregator', `${relay.presetId} is classified as an aggregator`)
+    assert.equal(buildProviderCapabilityMatrix(provider).hostingProfile, 'aggregator', `${relayLabel} is classified as an aggregator`)
     assert.equal(
       resolveProviderEndpoint({ provider, model: relay.chatModel, stream: true }),
       `${relay.baseUrl}/chat/completions`,
-      `${relay.presetId} chat route preserves the configured relay base URL`
+      `${relayLabel} chat route preserves the configured relay base URL`
     )
     const chatBody = getBodyForTest({
       provider,
@@ -16397,17 +17653,42 @@ async function assertRelayProviderCompatibilityBehavior() {
       stream: true,
       providerToolDeclarations: [providerToolDeclaration],
     })
-    assert.equal(chatBody.model, relay.chatModel, `${relay.presetId} chat body preserves the selected upstream model id`)
-    assert.equal(chatBody.messages[0].role, 'user', `${relay.presetId} chat body preserves OpenAI-compatible messages`)
-    assert.equal(chatBody.tools[0].function.name, 'inspect_source', `${relay.presetId} chat body preserves provider tool declarations`)
+    assert.equal(chatBody.model, relay.chatModel, `${relayLabel} chat body preserves the selected upstream model id`)
+    assert.equal(chatBody.messages[0].role, 'user', `${relayLabel} chat body preserves OpenAI-compatible messages`)
+    assert.equal(chatBody.tools[0].function.name, 'inspect_source', `${relayLabel} chat body preserves provider tool declarations`)
+    assert.equal(chatBody.contents, undefined, `${relayLabel} chat body does not switch Gemini-family relay ids to Google native request fields`)
     const chatConformance = resolveProviderRequestConformanceForTest({
       provider,
       model: relay.chatModel,
       messages: [{ role: 'user', content: 'Summarize this relay response.' }],
     }, chatBody)
-    assert.equal(chatConformance.manifest.family, relay.presetId, `${relay.presetId} conformance keeps the relay provider family`)
-    assert.equal(chatConformance.manifest.protocol, 'openai-compatible', `${relay.presetId} conformance uses OpenAI-compatible chat by default`)
-    assert.equal(chatConformance.manifest.tools.requestShape, 'openai-tools', `${relay.presetId} conformance records OpenAI-compatible tool declarations`)
+    assert.equal(chatConformance.manifest.family, relay.presetId, `${relayLabel} conformance keeps the relay provider family`)
+    assert.equal(chatConformance.manifest.protocol, 'openai-compatible', `${relayLabel} conformance uses OpenAI-compatible chat by default`)
+    assert.equal(chatConformance.manifest.tools.requestShape, 'openai-tools', `${relayLabel} conformance records OpenAI-compatible tool declarations`)
+    for (const { model, family } of relayFamilyModels) {
+      assert.equal(
+        resolveProviderEndpoint({ provider, model, stream: true }),
+        `${relay.baseUrl}/chat/completions`,
+        `${relayLabel} ${family} relay model stays on Chat Completions routing`
+      )
+      const familyBody = getBodyForTest({
+        provider,
+        model,
+        messages: [{ role: 'user', content: 'Use the relay chat protocol.' }],
+        stream: true,
+      })
+      assert.equal(familyBody.model, model, `${relayLabel} ${family} relay body preserves the upstream model id`)
+      assert.equal(familyBody.messages[0].role, 'user', `${relayLabel} ${family} relay body preserves OpenAI-compatible messages`)
+      assert.equal(familyBody.contents, undefined, `${relayLabel} ${family} relay body does not switch to Google native request fields`)
+      assert.equal(familyBody.system, undefined, `${relayLabel} ${family} relay body does not switch to Anthropic native request fields`)
+      const familyConformance = resolveProviderRequestConformanceForTest({
+        provider,
+        model,
+        messages: [{ role: 'user', content: 'Use the relay chat protocol.' }],
+      }, familyBody)
+      assert.equal(familyConformance.manifest.family, relay.presetId, `${relayLabel} ${family} relay conformance keeps the provider family`)
+      assert.equal(familyConformance.manifest.protocol, 'openai-compatible', `${relayLabel} ${family} relay conformance stays OpenAI-compatible`)
+    }
     if (relay.presetId === 'sub2api') {
       const relaySchema = {
         type: 'object',
@@ -16769,6 +18050,118 @@ async function assertNewAPIProviderCompatibilityBehavior() {
   assert.equal(structuredRoute.decision.structuredOutputPlan.supported, true, 'NewAPI route decision exposes structured-output support')
   assert.equal(structuredRoute.decision.structuredOutputPlan.requestShape, 'openai-response-format', 'NewAPI route decision exposes response_format request shape')
   assert.equal(structuredRoute.decision.blocked, false, 'NewAPI route decision does not block source-backed ChatCompletions structured output')
+
+  const oneApiProvider = applyProviderPreset({
+    id: 'oneapi-alias-contract',
+    name: 'OneAPI Gateway',
+    baseUrl: 'https://oneapi.example.com/v1',
+    [API_KEY_FIELD]: FAKE_KEY_A,
+    models: ['oneapi/gemini-relay-pro', 'oneapi/gemini-chat-relay'],
+    enabled: true,
+    capabilities: { responsesApi: true, nativeSearch: true, vision: true, files: true },
+    modelConfigs: [{
+      ...provider.modelConfigs[0],
+      id: 'oneapi/gemini-relay-pro',
+      name: 'OneAPI Gemini Relay Pro',
+      supportsVision: true,
+      supportsFiles: true,
+      supportsTools: true,
+      supportedParameters: ['response_format', 'reasoning_effort', 'tools', 'web_search_preview', 'file_data'],
+      preferredEndpoint: 'responses',
+      sourceUrl: 'https://oneapi.example.com/v1/models',
+      source: 'remote',
+    }, {
+      ...provider.modelConfigs[0],
+      id: 'oneapi/gemini-chat-relay',
+      name: 'OneAPI Gemini Chat Relay',
+      supportsVision: true,
+      supportsFiles: true,
+      supportsTools: true,
+      supportedParameters: ['response_format', 'reasoning_effort', 'tools', 'web_search_preview', 'file_data'],
+      preferredEndpoint: 'chat-completions',
+      sourceUrl: 'https://oneapi.example.com/v1/models',
+      source: 'remote',
+    }],
+  }, 'newapi')
+  const oneApiMatrix = buildProviderModelCapabilityMatrix(oneApiProvider, 'oneapi/gemini-relay-pro')
+  for (const capability of ['chat', 'streaming', 'tools', 'vision', 'reasoning', 'responseFormat', 'responsesApi']) {
+    assert.equal(oneApiMatrix.capabilities.find((item) => item.capability === capability)?.status, 'verified', `OneAPI alias remote metadata verifies ${capability}`)
+    assert.equal(providerModelCapabilityCanBeSent(oneApiProvider, 'oneapi/gemini-relay-pro', capability), true, `OneAPI alias remote metadata allows ${capability} to be sent`)
+  }
+  assert.equal(
+    oneApiMatrix.capabilities.find((item) => item.capability === 'nativeSearch')?.status,
+    'unsupported',
+    'OneAPI alias keeps provider-native search blocked until the NewAPI / OneAPI contract maps a search tool request shape'
+  )
+  assert.equal(
+    providerModelCapabilityCanBeSent(oneApiProvider, 'oneapi/gemini-relay-pro', 'nativeSearch'),
+    false,
+    'OneAPI alias does not allow provider-native search even when optimistic remote metadata declares web_search_preview'
+  )
+  assert.equal(
+    oneApiMatrix.capabilities.find((item) => item.capability === 'files')?.status,
+    'unsupported',
+    'OneAPI alias keeps generic file input blocked because the NewAPI / OneAPI Files API is documented as unimplemented'
+  )
+  assert.equal(
+    providerModelCapabilityCanBeSent(oneApiProvider, 'oneapi/gemini-relay-pro', 'files'),
+    false,
+    'OneAPI alias does not allow generic file input even when optimistic remote metadata declares file_data'
+  )
+  assert.equal(
+    resolveProviderEndpoint({ provider: oneApiProvider, model: 'oneapi/gemini-relay-pro', stream: true }),
+    'https://oneapi.example.com/v1/chat/completions',
+    'OneAPI alias keeps Gemini-family relay models on Chat Completions unless Responses is explicitly selected'
+  )
+  assert.equal(
+    usesOpenAIResponses({ provider: oneApiProvider, model: 'oneapi/gemini-chat-relay', webSearchMode: 'native' }),
+    false,
+    'OneAPI alias native search does not switch a Chat Completions model to Responses until the NewAPI / OneAPI contract maps a search tool request shape'
+  )
+  assert.equal(
+    usesOpenAIResponses({
+      provider: oneApiProvider,
+      model: 'oneapi/gemini-chat-relay',
+      attachments: [{ id: 'oneapi-file', type: 'file', uri: 'file://doc.pdf', name: 'doc.pdf', mimeType: 'application/pdf', size: 12, base64: 'ZG9j' }],
+    }),
+    false,
+    'OneAPI alias file input does not switch a Chat Completions model to Responses while the NewAPI / OneAPI Files contract is unimplemented'
+  )
+  const oneApiBody = buildOpenAIBodyForTest({
+    provider: oneApiProvider,
+    model: 'oneapi/gemini-chat-relay',
+    messages: [{ role: 'user', content: 'Return JSON and inspect the image.' }],
+    structuredOutput: structuredReq.structuredOutput,
+    reasoningEffort: 'high',
+    providerToolDeclarations: [structuredReq.providerToolDeclarations[0]],
+    attachments: [{ id: 'oneapi-image', type: 'image', uri: 'file://image.png', name: 'image.png', mimeType: 'image/png', size: 12, base64: 'aW1n' }],
+    stream: false,
+  })
+  assert.equal(oneApiBody.model, 'oneapi/gemini-chat-relay', 'OneAPI alias preserves the selected upstream model id on Chat Completions')
+  assert.ok(oneApiBody.response_format, 'OneAPI alias keeps Chat Completions response_format when remote metadata declares structured output')
+  assert.equal(oneApiBody.reasoning_effort, 'high', 'OneAPI alias keeps Chat Completions reasoning_effort when remote metadata declares reasoning controls')
+  assert.ok(Array.isArray(oneApiBody.tools), 'OneAPI alias keeps OpenAI-format tools on Chat Completions when remote metadata declares tools')
+  assert.equal(JSON.stringify(oneApiBody.messages).includes('image_url'), true, 'OneAPI alias keeps Chat Completions vision payloads when remote metadata declares image input')
+  const oneApiConformance = resolveProviderRequestConformanceForTest({
+    provider: oneApiProvider,
+    model: 'oneapi/gemini-chat-relay',
+    messages: [{ role: 'user', content: 'Return JSON and inspect the image.' }],
+  }, oneApiBody)
+  assert.equal(oneApiConformance.manifest.family, 'newapi', 'OneAPI alias reuses the NewAPI / OneAPI relay family contract')
+  assert.equal(oneApiConformance.manifest.protocol, 'openai-compatible', 'OneAPI alias does not switch Gemini-family relay models to Google native protocol')
+  const oneApiResponsesBody = buildOpenAIResponsesBodyForTest({
+    provider: oneApiProvider,
+    model: 'oneapi/gemini-relay-pro',
+    messages: [{ role: 'user', content: 'Use Responses without unverified native search.' }],
+    webSearchMode: 'native',
+    providerToolDeclarations: [structuredReq.providerToolDeclarations[0]],
+  })
+  assert.equal(
+    oneApiResponsesBody.tools?.some((tool) => tool.type === 'web_search_preview'),
+    false,
+    'OneAPI alias Responses body omits provider-native search tools until the NewAPI / OneAPI contract maps a search request shape'
+  )
+  assert.equal(oneApiResponsesBody.tools?.[0]?.function.name, 'inspect_source', 'OneAPI alias Responses body still preserves verified OpenAI-format function tools')
 
   const responsesProvider = {
     ...provider,
@@ -24169,6 +25562,10 @@ async function runFocused() {
     await assertAndroidAppCacheCleanupBehavior()
     return
   }
+  if (focus === 'android-intent-output') {
+    await assertAndroidIntentOutputBehavior()
+    return
+  }
   if (focus === 'chat-android-undo-prompt') {
     assertChatAndroidUndoPromptBehavior()
     return
@@ -24185,9 +25582,14 @@ async function runFocused() {
     assertProviderModelDiscoveryBehavior()
     return
   }
+  if (focus === 'provider-model-family') {
+    assertProviderModelFamilyBehavior()
+    return
+  }
   if (focus === 'provider-capability-matrix') {
     await assertProviderCapabilityMatrixBehavior()
     await assertRuntimeDiagnosticsBehavior()
+    await assertRuntimeDiagnosticsFailurePath()
     return
   }
   if (focus === 'provider-compatibility-contract') {

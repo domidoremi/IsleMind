@@ -1303,6 +1303,18 @@ function buildDiagnosticRows(diagnostics: RuntimeDiagnosticsSummary, t: ReturnTy
       tone: diagnostics.policy.payloadMode === 'block' ? 'amber' : 'default',
     },
     {
+      key: 'rectification',
+      label: t('settings.runtimeDiagnosticRectification'),
+      value: t('settings.runtimeDiagnosticRectificationValue', {
+        total: diagnostics.rectification.total,
+        retrying: diagnostics.rectification.retrying,
+        success: diagnostics.rectification.success,
+        failed: diagnostics.rectification.failed,
+        examples: formatRectificationExamples(diagnostics.rectification.recentExamples, t),
+      }),
+      tone: diagnostics.rectification.failed ? 'amber' : diagnostics.rectification.success ? 'mint' : 'default',
+    },
+    {
       key: 'proxy',
       label: t('settings.runtimeDiagnosticProxy'),
       value: t(`settings.runtimeProxyReason.${diagnostics.proxy.reason}`),
@@ -1450,6 +1462,20 @@ function formatCapabilityMatrixExamples(
     const reason = example.limitationReason ? t(`settings.runtimeDiagnosticCapabilityReason.${example.limitationReason}`) : example.reason
     const path = example.degradationPath ? `/${t(`settings.runtimeDiagnosticCapabilityPath.${example.degradationPath}`)}` : ''
     return `${provider}:${example.area} ${example.level}${contract} ${reason}${path}`
+  }).join(' · ')
+}
+
+function formatRectificationExamples(
+  examples: RuntimeDiagnosticsSummary['rectification']['recentExamples'],
+  t: ReturnType<typeof useTranslation>['t']
+): string {
+  if (!examples.length) return t('settings.runtimeDiagnosticCapabilityEvidenceNone')
+  return examples.slice(0, 2).map((example) => {
+    const provider = example.providerId || example.model || 'provider'
+    const fields = [...example.failedFields.slice(0, 2), ...example.removedFields.slice(0, 2), ...example.retainedFields.slice(0, 2)]
+    const fieldLabel = fields.length ? `:${Array.from(new Set(fields)).join('/')}` : ''
+    const status = example.status ? `/${example.status}` : ''
+    return `${provider}:${example.kind} ${example.result}${status}${fieldLabel}`
   }).join(' · ')
 }
 

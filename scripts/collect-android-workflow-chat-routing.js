@@ -1018,23 +1018,24 @@ function workflowLabelsForMode(nextMode) {
     case 'alarm':
       return {
         system: ['时钟', '闹钟', 'Clock', 'Alarm', 'set alarm', 'create alarm'],
-        pending: ['Open Android alarm editor', 'Android alarm handoff workflow', 'android.alarm.open_create_intent'],
-        handoff: ['"opened": true', '"target": "alarm"', 'alarm', 'clock'],
+        pending: ['需要你确认后继续', 'Action needs confirmation', 'Open Android alarm editor', '打开 Android 闹钟编辑器', 'Android alarm handoff workflow', 'android.alarm.open_create_intent'],
+        handoff: ['已打开 Android 时钟界面', 'Android Clock is open', '"opened": true', '"target": "alarm"', 'alarm', 'clock'],
       }
     case 'calendar':
       return {
         system: ['日历', 'Calendar', 'Reminder', 'Todo', 'create event', 'create reminder'],
-        pending: ['Open Android calendar editor', 'Android calendar to-do handoff workflow', 'android.reminder.open_create_todo'],
-        handoff: ['"opened": true', '"target": "calendar-todo"', 'calendar', 'reminder', 'todo'],
+        pending: ['需要你确认后继续', 'Action needs confirmation', 'Open Android calendar editor', '打开 Android 日历编辑器', 'Android calendar to-do handoff workflow', 'android.reminder.open_create_todo'],
+        handoff: ['已打开 Android 日历界面', 'Android Calendar is open', '"opened": true', '"target": "calendar-todo"', 'calendar', 'reminder', 'todo'],
       }
     default:
       return {
         system: ['com.android.settings', '通知', '通知设置', '通知管理', '应用通知', 'Notifications', 'App notifications', 'Allow notifications', 'Promoted notifications', 'Settings'],
         pending: [
-          'Agentic workflow paused for confirmation.',
+          'Action needs confirmation',
+          '需要你确认后继续',
           'Open Android notification settings',
           'IsleMind opens Android notification-related system settings for this app.',
-          'Confirmation can continue this workflow from the visible pending action.',
+          'Use the visible confirmation action below to continue.',
           '需要确认后继续',
         ],
         handoff: ['"opened": true', '"target": "notifications"', '"backgroundReliable": false', '"reason": "opened"', 'opened', 'backgroundReliable', 'notification'],

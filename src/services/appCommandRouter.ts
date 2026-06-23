@@ -23,8 +23,10 @@ export async function routeLocalAppCommand(content: string): Promise<LocalAppCom
 function parseLocalAppCommand(content: string): RoutedAppAction | null {
   const raw = content.trim()
   if (!raw || raw.length > 120) return null
-  if (/[?？]/.test(raw)) return null
   const text = raw.toLowerCase()
+  const readOnlyAction = parseReadOnlyAppCommand(text)
+  if (readOnlyAction) return readOnlyAction
+  if (/[?？]/.test(raw)) return null
   if (!hasCommandVerb(text)) return null
 
   const themeMode = parseThemeMode(text)
@@ -39,6 +41,17 @@ function parseLocalAppCommand(content: string): RoutedAppAction | null {
   const featureFlag = parseFeatureFlag(text)
   if (featureFlag) return { name: 'set_feature_flag', arguments: featureFlag }
 
+  return null
+}
+
+function parseReadOnlyAppCommand(text: string): RoutedAppAction | null {
+  const normalized = text.replace(/[。.!！?？\s]+$/g, '').trim()
+  if (/^(系统能力|当前系统能力|应用能力|当前能力|能力状态|系统设置|当前设置|设置状态|system capabilities|app capabilities|current capabilities|current settings|settings)$/i.test(normalized)) {
+    return { name: 'get_settings' }
+  }
+  if (/(查看|显示|读取|列出|看看|show|list|read|view).*(系统能力|应用能力|当前能力|能力状态|系统设置|当前设置|设置状态|capabilities|settings)/i.test(text)) {
+    return { name: 'get_settings' }
+  }
   return null
 }
 

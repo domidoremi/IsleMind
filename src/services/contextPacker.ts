@@ -1,5 +1,7 @@
-import type { Message, ProviderType, ReasoningEffort } from '@/types'
+import type { AIProvider, Message, ProviderType, ReasoningEffort } from '@/types'
+import { getModelConfig } from '@/types'
 import { estimateMessageTokens, estimateTextTokens } from '@/services/tokenUsage'
+import { providerSupportsReasoning } from '@/utils/modelReasoning'
 
 const INPUT_CONTEXT_RATIO = 0.7
 const RECENT_MESSAGE_TARGET = 8
@@ -15,6 +17,7 @@ export interface PackChatMessagesInput {
   maxOutputTokens: number
   systemPrompt?: string
   reasoningEffort?: ReasoningEffort
+  provider?: AIProvider
   providerType?: ProviderType
   model?: string
   localCompression?: boolean
@@ -95,7 +98,7 @@ const SUMMARY_SECTIONS: SummarySectionConfig[] = [
 ]
 
 export function packChatMessages(input: PackChatMessagesInput): PackedChatMessages {
-  const reasoningReserveTokens = estimateReasoningReserve(input.reasoningEffort, input.providerType, input.model)
+  const reasoningReserveTokens = estimateReasoningReserve(input.reasoningEffort, input.provider, input.providerType, input.model)
   const reservedOutputTokens = input.maxOutputTokens + reasoningReserveTokens
   const modelBudget = Math.max(512, Math.floor(input.modelContextWindow * INPUT_CONTEXT_RATIO) - reservedOutputTokens)
   const fixedTokens = estimateTextTokens([input.systemPrompt, input.contextPrompt].filter(Boolean).join('\n\n'))
@@ -512,17 +515,27 @@ function normalizeReferenceMatch(value: string): string {
   return value
 }
 
-function estimateReasoningReserve(reasoningEffort?: ReasoningEffort, providerType?: ProviderType, model?: string): number {
+function estimateReasoningReserve(reasoningEffort?: ReasoningEffort, provider?: AIProvider, providerType?: ProviderType, model?: string): number {
   const normalizedModel = model?.toLowerCase() ?? ''
-  const isDashScopeQwenReasoning = providerType === 'openai-compatible' && /^(qwen3|qwq|qvq)/.test(normalizedModel)
-  const isReasoningModel = providerType === 'openai' && /^(o[1-9]|gpt-5)/.test(normalizedModel)
-    || providerType === 'anthropic' && /claude-(3[.-]7|fable-5|opus-4|sonnet-4|haiku-4|mythos)/.test(normalizedModel)
-    || providerType === 'google' && /^gemini-(2\.5|3)/.test(normalizedModel)
-    || providerType === 'openai-compatible' && /^minimax-m3$/.test(normalizedModel)
+  const modelConfig = provider && model ? getModelConfig(model, provider.type, provider.modelConfigs) : undefined
+  const providerAllowsReasoningReserve = provider && model ? providerSupportsReasoning(provider, model) : true
+  if (provider && model && !providerAllowsReasoningReserve) return 0
+  const modelReasoningMode = providerAllowsReasoningReserve ? modelConfig?.reasoningMode : undefined
+  const effectiveProviderType = provider?.type ?? providerType
+  const normalizedModelTail = normalizedModel.split('/').at(-1) ?? normalizedModel
+  const isDashScopeQwenReasoning = effectiveProviderType === 'openai-compatible' && (
+    modelReasoningMode === 'dashscope-thinking' ||
+    /^(qwen3|qwq|qvq)/.test(normalizedModelTail)
+  )
+  const isReasoningModel = effectiveProviderType === 'openai' && /^(o[1-9]|gpt-5)/.test(normalizedModel)
+    || effectiveProviderType === 'anthropic' && /claude-(3[.-]7|fable-5|opus-4|sonnet-4|haiku-4|mythos)/.test(normalizedModel)
+    || effectiveProviderType === 'google' && /^gemini-(2\.5|3)/.test(normalizedModel)
+    || effectiveProviderType === 'openai-compatible' && /^minimax-m3$/.test(normalizedModel)
+    || Boolean(modelReasoningMode)
     || isDashScopeQwenReasoning
     || /deepseek|reasoner|thinking/.test(normalizedModel)
   if (!isReasoningModel) return 0
-  if (isDashScopeQwenReasoning) return estimateDashScopeQwenReasoningReserve(reasoningEffort, normalizedModel)
+  if (isDashScopeQwenReasoning) return estimateDashScopeQwenReasoningReserve(reasoningEffort, normalizedModelTail)
   switch (reasoningEffort) {
     case 'max':
     case 'xhigh':
