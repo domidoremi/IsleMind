@@ -18841,17 +18841,22 @@ function assertChatCompletedProcessBehavior() {
   const chatWorkspaceSource = fs.readFileSync(path.join(root, 'src/components/chat/ChatWorkspace.tsx'), 'utf8')
   assert.ok(
     messageBubbleSource.includes('processTraces.some(hasVisibleProcessContent)') &&
-      messageBubbleSource.includes('const processCanExpand = !isUser && processTraces.some(hasVisibleProcessContent)'),
-    'completed assistant process layers stay visible and expandable for non-reasoning process traces'
+      messageBubbleSource.includes('const processCanExpand = !isUser && processTraces.some(hasExpandableThinkingContent)'),
+    'completed assistant process layers keep visible status but expand only for model thinking content'
   )
   assert.ok(
-    messageBubbleSource.includes('function formatProcessSummary') &&
-      messageBubbleSource.includes('function collectProcessSummaries') &&
+    messageBubbleSource.includes('function collectThinkingSummaries') &&
+      messageBubbleSource.includes('.filter(hasDisplayableThinkingContent)') &&
+      messageBubbleSource.includes('.map(formatThinkingSummary)') &&
       messageBubbleSource.includes('const seen = new Set<string>()') &&
-      messageBubbleSource.includes('formatProcessTraceForDisplay(trace, 140)') &&
-      messageBubbleSource.includes("thinkingProgressLabel(t, 'done', stage)") &&
-      messageBubbleSource.includes("normalized.status === 'skipped' || normalized.status === 'cancelled'"),
-    'completed process panel favors concise deduplicated user-facing progress over raw tool metadata'
+      messageBubbleSource.includes('function isInternalThinkingStatusContent') &&
+      messageBubbleSource.includes('disabled|enabled|adaptive'),
+    'completed process panel renders only deduplicated model thinking content and filters internal thinking switches'
+  )
+  assert.ok(
+    messageBubbleSource.includes('const hasThinking = traces.some(hasDisplayableThinkingContent)') &&
+      messageBubbleSource.includes("if (hasThinking) return translateMessageBubbleLabel(t, 'messageBubble.thinkingDone', '已思考')"),
+    'completed thinking label prefers real model thinking before settled process stages'
   )
   assert.ok(
     messageBubbleSource.includes('function settledProcessStageLabel') &&

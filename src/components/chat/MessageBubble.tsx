@@ -139,7 +139,7 @@ function MessageBubbleComponent({
     return total + display.title.length + display.content.length
   }, 0), [processTraces])
   const processLayoutStep = isStreamingContent ? Math.floor(processTextLength / STREAMING_LAYOUT_TEXT_STEP) : 0
-  const processCanExpand = !isUser && processTraces.some(hasVisibleProcessContent)
+  const processCanExpand = !isUser && processTraces.some(hasExpandableThinkingContent)
   const canCopyProcessTrace = !isUser && processTraces.length > 0 && !!onCopyProcessTrace
   const processMaxHeight = Math.min(230, viewportHeight * 0.34)
   const actionBarOpen = activeActionMessageId === undefined ? localActionsOpen : activeActionMessageId === message.id
@@ -574,9 +574,8 @@ function MessageProcessLayer({
 
 function MessageProcessPanel({ message, traces, maxHeight }: { message: Message; traces: ProcessTrace[]; maxHeight: number }) {
   const { colors, isGlass } = useAppTheme()
-  const { t } = useTranslation()
   const scrollRef = useRef<ScrollView>(null)
-  const thinkingSummaries = collectProcessSummaries(traces, message.status, t)
+  const thinkingSummaries = collectThinkingSummaries(traces)
   const contentLength = thinkingSummaries.reduce((total, summary) => total + summary.length, 0)
   const running = message.status === 'streaming' || message.status === 'sending'
 
@@ -668,15 +667,17 @@ function processLayerLabel(message: Message, traces: ProcessTrace[], t: TFunctio
 }
 
 function thinkingDoneLabel(message: Message, traces: ProcessTrace[], t: TFunction): string {
-  const settledStage = settledProcessStageLabel(message, traces, t)
-  if (settledStage) return settledStage
+  const hasThinking = traces.some(hasDisplayableThinkingContent)
   const durationMs = resolveThinkingDurationMs(message, traces)
-  if (durationMs) {
+  if (hasThinking && durationMs) {
     return t('messageBubble.thinkingDoneWithDuration', {
       duration: formatDuration(durationMs),
       defaultValue: `已思考 ${formatDuration(durationMs)}`,
     })
   }
+  if (hasThinking) return translateMessageBubbleLabel(t, 'messageBubble.thinkingDone', '已思考')
+  const settledStage = settledProcessStageLabel(message, traces, t)
+  if (settledStage) return settledStage
   return translateMessageBubbleLabel(t, 'messageBubble.thinkingDone', '已思考')
 }
 
@@ -688,7 +689,7 @@ function settledProcessStageLabel(message: Message, traces: ProcessTrace[], t: T
 
 function resolveThinkingDurationMs(message: Message, traces: ProcessTrace[]): number | undefined {
   const traceDurations = normalizeTraceStatuses(traces, message.status)
-    .filter((trace) => trace.type === 'reasoning' && !trace.metadata?.hiddenSignature)
+    .filter(hasDisplayableThinkingContent)
     .map(traceDurationMs)
     .filter((duration): duration is number => typeof duration === 'number' && duration > 0)
   if (traceDurations.length) return Math.max(...traceDurations)
@@ -852,15 +853,16 @@ function pendingActionReason(value: unknown): string | undefined {
 }
 
 function formatThinkingSummary(trace: ProcessTrace): string {
+  if (!hasDisplayableThinkingContent(trace)) return ''
   const summary = formatProcessTraceForDisplay(trace, 720).content
   return summary ? `${traceStageLabel(trace)} · ${summary}` : ''
 }
 
-function collectProcessSummaries(traces: ProcessTrace[], messageStatus: Message['status'], t: TFunction): string[] {
+function collectThinkingSummaries(traces: ProcessTrace[]): string[] {
   const seen = new Set<string>()
-  return normalizeTraceStatuses(traces, messageStatus)
-    .filter(hasVisibleProcessContent)
-    .map((trace) => formatProcessSummary(trace, messageStatus, t))
+  return traces
+    .filter(hasDisplayableThinkingContent)
+    .map(formatThinkingSummary)
     .filter((summary): summary is string => Boolean(summary))
     .filter((summary) => {
       const key = summary.replace(/\s+/g, ' ').trim()
@@ -869,18 +871,6 @@ function collectProcessSummaries(traces: ProcessTrace[], messageStatus: Message[
       seen.add(key)
       return true
     })
-}
-
-function formatProcessSummary(trace: ProcessTrace, messageStatus: Message['status'], t: TFunction): string {
-  if (hasThinkingContent(trace)) return formatThinkingSummary(trace)
-  const stage = traceActivityStageLabel(trace)
-  if (isActiveProcessTrace(trace)) return thinkingProgressLabel(t, 'active', stage)
-  const normalized = normalizeTraceStatuses([trace], messageStatus)[0] ?? trace
-  if (isCompletedProcessStageTrace(normalized)) return thinkingProgressLabel(t, 'done', stage)
-  if (normalized.status === 'skipped' || normalized.status === 'cancelled') return ''
-  const display = formatProcessTraceForDisplay(trace, 140)
-  const summary = display.content || display.title
-  return summary ? `${stage} · ${summary}` : ''
 }
 
 function hasAndroidUndoFollowUp(traces: ProcessTrace[]): boolean {
@@ -1211,7 +1201,22 @@ function canShowActionBar({
 }
 
 function hasThinkingContent(trace: ProcessTrace): boolean {
-  return trace.type === 'reasoning' && Boolean(trace.content?.trim())
+  return hasDisplayableThinkingContent(trace)
+}
+
+function hasExpandableThinkingContent(trace: ProcessTrace): boolean {
+  if (trace.metadata?.hiddenSignature || trace.type !== 'reasoning') return false
+  return isActiveProcessTrace(trace) || hasDisplayableThinkingContent(trace)
+}
+
+function hasDisplayableThinkingContent(trace: ProcessTrace): boolean {
+  if (trace.metadata?.hiddenSignature || trace.type !== 'reasoning') return false
+  const content = trace.content?.trim()
+  return Boolean(content && !isInternalThinkingStatusContent(content))
+}
+
+function isInternalThinkingStatusContent(content: string): boolean {
+  return /^(disabled|enabled|adaptive)$/i.test(content.trim())
 }
 
 function hasVisibleProcessContent(trace: ProcessTrace): boolean {
