@@ -761,6 +761,12 @@ const {
   createRuntimeFallbackTrace,
   createRuntimeGovernanceTrace,
   createStreamModeTrace,
+  describeRequestRectification,
+  describeRuntimeAccessPolicy,
+  describeRuntimePayloadPolicy,
+  describeRuntimeProxyPolicy,
+  describeRuntimeRouteDecision,
+  describeRuntimeTransportSelection,
   emitRuntimeGovernanceTrace,
   runtimeLogOptions,
   summarizePayloadPolicy,
@@ -2247,6 +2253,33 @@ async function assertRuntimeLogFileBehavior() {
 
 async function assertRuntimeDiagnosticsBehavior() {
   await clearRuntimeLog()
+  assert.equal(
+    describeRuntimeTransportSelection({ transport: 'http_sse', requestedMode: 'auto', fallbackReason: 'non_responses_request' }),
+    '使用HTTP 流式兼容通道',
+    'runtime diagnostics hides transport fallback codes from focused user-facing status'
+  )
+  assert.equal(
+    describeRequestRectification('xiaomi_mimo_thinking_disabled'),
+    '已关闭本轮 MiMo 思考参数并重试。',
+    'runtime diagnostics exposes focused readable request rectification status'
+  )
+  const visibleGovernanceTrace = createRuntimeGovernanceTrace({
+    req: { provider: { id: 'runtime-log-visible' } },
+    requestedModel: 'alias-model',
+    upstreamModel: 'upstream-model',
+    access: { allowed: true, matchedRules: [] },
+    route: { blocked: false, blockReasons: [], warnings: [], protocol: 'openai-compatible', capabilitySource: { confidence: 'known' } },
+    transport: { transport: 'http_sse', requestedMode: 'auto', fallbackReason: 'non_responses_request' },
+    payload: { mode: 'warn', blocked: false, findings: [], bodyKeys: ['model'], messageCount: 1, attachmentCount: 0 },
+    proxy: { mode: 'off', applied: false, reason: 'off' },
+    status: 'done',
+  })
+  assert.match(visibleGovernanceTrace.content, /已确认可使用当前模型/, 'runtime diagnostics visible trace includes readable access status')
+  assert.doesNotMatch(
+    visibleGovernanceTrace.content,
+    /allowed|openai-compatible:ok|http_sse|non_responses_request|warn:ok|not_applied/,
+    'runtime diagnostics visible trace hides raw route, transport, payload, and proxy codes'
+  )
   await appendRuntimeLog('provider.conformance', { protocol: 'openai-responses', providerId: 'openai-main' }, { enabled: true, maxBytes: 4096 })
   await appendRuntimeLog('provider.compatibility', { compatibilityId: 'openai', auditState: 'conformance-ready', providerId: 'openai-main' }, { enabled: true, maxBytes: 4096 })
   await appendRuntimeLog('transport.fallback', { from: 'responses_websocket', to: 'http_sse', providerId: 'openai-main' }, { enabled: true, maxBytes: 4096 })
@@ -8372,6 +8405,36 @@ async function run() {
     'custom-base-url:applied:custom_base_url',
     'runtime diagnostics summarize proxy policy decisions'
   )
+  assert.equal(
+    describeRuntimeAccessPolicy({ allowed: true, matchedRules: [] }),
+    '已确认可使用当前模型',
+    'runtime diagnostics exposes user-facing access status'
+  )
+  assert.equal(
+    describeRuntimeRouteDecision({ blocked: false, blockReasons: [], warnings: ['unsupported_audio'], protocol: 'openai-compatible' }),
+    '已选择OpenAI 兼容请求路径，并记录兼容性注意项',
+    'runtime diagnostics exposes user-facing route status'
+  )
+  assert.equal(
+    describeRuntimeTransportSelection({ transport: 'http_sse', requestedMode: 'auto', fallbackReason: 'non_responses_request' }),
+    '使用HTTP 流式兼容通道',
+    'runtime diagnostics hides transport fallback codes from user-facing status'
+  )
+  assert.equal(
+    describeRuntimePayloadPolicy({ mode: 'warn', blocked: false, findings: [{ id: 'attachment_base64', severity: 'warn', message: 'attachment' }], bodyKeys: ['model'], messageCount: 1, attachmentCount: 1 }),
+    '已整理请求参数，并记录需要注意的项目',
+    'runtime diagnostics exposes user-facing payload warning status'
+  )
+  assert.equal(
+    describeRuntimeProxyPolicy({ mode: 'off', applied: false, reason: 'off' }),
+    '未使用代理',
+    'runtime diagnostics exposes user-facing proxy status'
+  )
+  assert.equal(
+    describeRequestRectification('xiaomi_mimo_thinking_disabled'),
+    '已关闭本轮 MiMo 思考参数并重试。',
+    'runtime diagnostics exposes readable request rectification status'
+  )
   assert.deepEqual(
     runtimeLogOptions({ settings: { runtimeLogEnabled: true, runtimeLogMaxBytes: 2048 } }),
     { enabled: true, maxBytes: 2048 },
@@ -8503,6 +8566,12 @@ async function run() {
   assert.equal(governanceTrace.metadata.source, 'runtime-policy', 'runtime diagnostics creates runtime governance traces')
   assert.equal(governanceTrace.metadata.accessReason, 'model_blocked', 'runtime diagnostics records governance access reason')
   assert.deepEqual(governanceTrace.metadata.payloadFindings, ['empty_messages'], 'runtime diagnostics records payload finding ids')
+  assert.match(governanceTrace.content, /访问策略已拦截当前模型/, 'runtime governance trace displays readable access status')
+  assert.doesNotMatch(
+    governanceTrace.content,
+    /allowed|blocked:|unsupported_protocol|http_sse|streaming_disabled|empty_messages|custom_base_url/,
+    'runtime governance trace keeps raw policy codes out of user-visible content'
+  )
   const emittedGovernanceTraces = []
   emitRuntimeGovernanceTrace({
     onTrace: (trace) => emittedGovernanceTraces.push(trace),
@@ -18720,6 +18789,12 @@ function assertChatActivityStatusBehavior() {
     'trace presentation maps generic system activity to thinking instead of exposing system as a live status'
   )
   assert.ok(
+    tracePresentationSource.includes('function isProviderRequestStatusTrace') &&
+      tracePresentationSource.includes("metadata.source === 'runtime-policy'") &&
+      tracePresentationSource.includes("st('trace.stage.request')"),
+    'trace presentation maps provider runtime status to request preparation instead of generic thinking'
+  )
+  assert.ok(
     messageBubbleSource.includes('selectActiveProcessTrace(traces, messageStatus)') &&
       messageBubbleSource.includes('traceActivityStageLabel(activeTrace)'),
     'message process layer uses the same active trace stage selection as chat activity status'
@@ -18748,6 +18823,7 @@ function assertChatActivityStatusBehavior() {
   )
   const zh = require('../src/i18n/resources/zh-CN.json')
   assert.equal(zh.trace.stage.reasoning, '思考', 'Chinese trace stage labels surface thinking as a user-visible work state')
+  assert.equal(zh.trace.stage.request, '准备请求', 'Chinese trace stage labels surface request preparation as a user-visible work state')
   assert.equal(zh.trace.stage.search, '搜索', 'Chinese trace stage labels surface search as a user-visible work state')
   assert.equal(zh.trace.stage.controlledTool, '调用工具', 'Chinese trace stage labels surface controlled tool calls as a user-visible work state')
   assert.equal(zh.messageBubble.thinkingProgressBase, '准备中', 'Chinese thinking progress base avoids a persistent thinking label before a concrete stage is known')
@@ -18770,10 +18846,12 @@ function assertChatCompletedProcessBehavior() {
   )
   assert.ok(
     messageBubbleSource.includes('function formatProcessSummary') &&
+      messageBubbleSource.includes('function collectProcessSummaries') &&
+      messageBubbleSource.includes('const seen = new Set<string>()') &&
       messageBubbleSource.includes('formatProcessTraceForDisplay(trace, 140)') &&
       messageBubbleSource.includes("thinkingProgressLabel(t, 'done', stage)") &&
       messageBubbleSource.includes("normalized.status === 'skipped' || normalized.status === 'cancelled'"),
-    'completed process panel favors concise user-facing thinking progress over raw tool metadata'
+    'completed process panel favors concise deduplicated user-facing progress over raw tool metadata'
   )
   assert.ok(
     messageBubbleSource.includes('function settledProcessStageLabel') &&
