@@ -9,6 +9,7 @@ export type NavigationGlyph =
   | 'home'
   | 'history'
   | 'new-chat'
+  | 'settings'
   | 'settings-sliders'
   | 'provider-key'
   | 'context-globe'
@@ -33,6 +34,7 @@ const navigationGlyphIcons: Record<NavigationGlyph, AppIconName> = {
   home: 'home',
   history: 'history',
   'new-chat': 'new-chat',
+  settings: 'settings',
   'settings-sliders': 'settings-sliders',
   'provider-key': 'provider-key',
   'context-globe': 'context-globe',
