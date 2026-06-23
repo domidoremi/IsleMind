@@ -1060,11 +1060,12 @@ async function createAssistantReply(conversationId: string) {
         if (getActiveStream(conversationId)?.messageId === assistantMessage.id) {
           clearActiveStream(conversationId)
         }
+        const errorCode = resolveChatErrorCode(error)
         upsertTrace(conversationId, assistantMessage.id, completeTrace({
           id: modelTraceId,
           type: 'system',
           title: st('chatRunner.trace.modelRequestTitle'),
-          content: toUserFacingError(error.message),
+          content: toUserFacingError(error.message, errorCode),
           status: 'error',
           startedAt: getMessage(conversationId, assistantMessage.id)?.startedAt ?? Date.now(),
         }))
@@ -1079,7 +1080,7 @@ async function createAssistantReply(conversationId: string) {
             metadata: { mode: providerWebSearchMode },
           }))
         }
-        finishWithError(conversationId, assistantMessage.id, toUserFacingError(error.message), classifyChatError(error.message), provider.id)
+        finishWithError(conversationId, assistantMessage.id, toUserFacingError(error.message, errorCode), errorCode, provider.id)
         void useSettingsStore.getState().updateProviderCredentialGroupHealth(provider.id, (error as ProviderRuntimeError).credentialGroupId, false)
       },
       (citations) => {
@@ -1110,15 +1111,16 @@ async function createAssistantReply(conversationId: string) {
       return
     }
     const message = error instanceof Error ? error.message : st('chatRunner.error.sendFailed')
+    const errorCode = resolveChatErrorCode(error, message)
     upsertTrace(conversationId, assistantMessage.id, completeTrace({
       id: modelTraceId,
       type: 'system',
       title: st('chatRunner.trace.modelRequestTitle'),
-      content: toUserFacingError(message),
+      content: toUserFacingError(message, errorCode),
       status: 'error',
       startedAt: getMessage(conversationId, assistantMessage.id)?.startedAt ?? Date.now(),
     }))
-    finishWithError(conversationId, assistantMessage.id, toUserFacingError(message), classifyChatError(message), provider.id)
+    finishWithError(conversationId, assistantMessage.id, toUserFacingError(message, errorCode), errorCode, provider.id)
   }
 }
 
@@ -1963,22 +1965,28 @@ function finishWithError(conversationId: string, messageId: string, content: str
 function finishFinalizeError(conversationId: string, messageId: string, error: unknown, providerId?: string) {
   const message = error instanceof Error ? error.message : st('chatRunner.error.sendFailed')
   const current = getMessage(conversationId, messageId)
+  const errorCode = resolveChatErrorCode(error, message)
   upsertTrace(conversationId, messageId, completeTrace({
     id: traceId('finalize-error'),
     type: 'system',
     title: st('chatRunner.trace.modelRequestTitle'),
-    content: toUserFacingError(message),
+    content: toUserFacingError(message, errorCode),
     status: 'error',
     startedAt: current?.startedAt ?? Date.now(),
-    metadata: { errorCode: classifyChatError(message) },
+    metadata: { errorCode },
   }))
   finishWithError(
     conversationId,
     messageId,
-    current?.content?.trim() || toUserFacingError(message),
-    classifyChatError(message),
+    current?.content?.trim() || toUserFacingError(message, errorCode),
+    errorCode,
     providerId
   )
+}
+
+function resolveChatErrorCode(error: unknown, message?: string): ChatErrorCode {
+  const runtimeCode = error instanceof Error ? (error as ProviderRuntimeError).chatErrorCode : undefined
+  return runtimeCode ?? classifyChatError(message ?? (error instanceof Error ? error.message : ''))
 }
 
 function upsertTrace(conversationId: string, messageId: string, trace: ProcessTrace) {
