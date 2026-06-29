@@ -51,7 +51,6 @@ const apiKeyPanel = read('src/components/settings/ApiKeyPanel.tsx')
 const contextPanel = read('src/components/settings/ContextPanel.tsx')
 const mcpSettings = read('src/components/settings/McpSettingsContent.tsx')
 const preferenceSettings = read('src/components/settings/PreferenceSettingsContent.tsx')
-const onboardingFlow = read('src/components/onboarding/OnboardingFlow.tsx')
 const sourceRoute = read('app/source.tsx')
 const chip = read('src/components/ui/isle/Chip.tsx')
 const controls = read('src/components/ui/isle/Controls.tsx')
@@ -286,19 +285,6 @@ check(
   'settings foldouts use semantic surfaces in cartoon mode',
   /return colors\.ui\.cartoon \? colors\.ui\.semantic\.surface\.base : isGlass \? colors\.ui\.semantic\.chrome\.background/.test(settingsStore + read('src/components/main/SettingsScreenContent.tsx')) && /backgroundColor: colors\.ui\.cartoon \? colors\.ui\.semantic\.surface\.muted : colors\.ui\.glass \? colors\.ui\.actionBar\.itemBackground/.test(read('src/components/main/SettingsScreenContent.tsx')),
   'settings foldout bodies, cards, and theme selectors should not fall back to cartoon card fills',
-)
-check(
-  'onboarding keeps cartoon panels soft and avoids heavy stage cards',
-  /primaryShadowOpacity = colors\.ui\.cartoon \? 0\.08 : 0\.025/.test(onboardingFlow) && /heroSurface = colors\.ui\.cartoon \? colors\.ui\.semantic\.surface\.muted : colors\.ui\.semantic\.surface\.muted/.test(onboardingFlow) && /ribbonSurface = colors\.ui\.cartoon \? colors\.ui\.semantic\.surface\.base : colors\.ui\.semantic\.surface\.muted/.test(onboardingFlow),
-  'onboarding should stay tactile but lighter than the original stage-card treatment',
-)
-check(
-  'onboarding decorative affordances stay visually lighter than content',
-  /shadowOpacity: colors\.ui\.cartoon \? 0\.08 : 0\.02/.test(onboardingFlow)
-    && /shadowRadius: colors\.ui\.cartoon \? 4 : 2/.test(onboardingFlow)
-    && /shadowRadius: colors\.ui\.cartoon \? 10 : 6/.test(onboardingFlow)
-    && /elevation: colors\.ui\.cartoon \? 1 : 0/.test(onboardingFlow),
-  'drag affordance and landing ribbon should support the scene without reading as primary cards',
 )
 check(
   'provider settings chrome stays on semantic surfaces instead of heavy cards',

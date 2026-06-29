@@ -346,10 +346,10 @@ export function createAndroidAlarmWorkflowDefinition(
 ): AgentWorkflowDefinition {
   return createAgentWorkflowDefinition({
     id: ANDROID_ALARM_WORKFLOW_ID,
-    name: 'Android alarm handoff workflow',
+    name: 'Android alarm creation request workflow',
     description: [
-      'Binds the requested alarm time and opens the Android Clock UI.',
-      'The alarm is created only after the user confirms in the system app.',
+      'Binds the requested alarm time and asks Android Clock to create it directly when supported.',
+      'If Android Clock requires confirmation, the workflow falls back to the visible system editor.',
     ].join(' '),
     enabled: input.enabled ?? true,
     triggerHints: [
@@ -360,18 +360,18 @@ export function createAndroidAlarmWorkflowDefinition(
       'reminder',
     ],
     permissionCeiling: 'read-write',
-    expectedOutput: 'handoff',
+    expectedOutput: 'reply',
     acceptanceChecks: [
       'requires alarm time from user input',
-      'opens Android system clock UI',
-      'requires system clock confirmation',
+      'requests Android system clock alarm creation',
+      'uses visible system clock confirmation only when direct creation is unsupported',
       'does not request exact alarm permission',
       'records Android operation audit',
     ],
     steps: [
       {
-        id: 'open-alarm-editor',
-        title: 'Open Android alarm editor',
+        id: 'request-alarm-creation',
+        title: 'Request Android alarm creation',
         toolRequest: {
           toolId: 'android:alarm.open_create_intent',
           name: 'android.alarm.open_create_intent',
@@ -380,7 +380,7 @@ export function createAndroidAlarmWorkflowDefinition(
         },
         acceptance: [
           'sets hour and minutes from user input',
-          'keeps Android clock confirmation visible',
+          'requests direct Android clock creation and reports visible confirmation fallback',
         ],
       },
     ],

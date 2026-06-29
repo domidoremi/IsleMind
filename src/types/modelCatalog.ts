@@ -74,7 +74,11 @@ export const DEFAULT_MODELS: AIModel[] = [
   model('MiniMax-M2.1-highspeed', 'MiniMax M2.1 Highspeed', 'openai-compatible', 204800, 204800, 65536, false, false, false, { supportsTools: true, sourceUrl: 'https://platform.minimax.io/docs/api-reference/text/api/openapi-chat-openai.json', verifiedAt: '2026-06-11' }),
   model('grok-4.3', 'Grok 4.3', 'openai-compatible', 1000000, 1000000, 8192, true, false, false, { supportsTools: true, preferredEndpoint: 'responses', reasoningMode: 'xai-reasoning-effort', reasoningEfforts: ['none', 'low', 'medium', 'high'], sourceUrl: 'https://docs.x.ai/developers/models/grok-4.3', verifiedAt: '2026-06-12' }),
   model('grok-4.20', 'Grok 4.20', 'openai-compatible', 1000000, 1000000, 8192, true, false, false, { supportsTools: true, preferredEndpoint: 'responses', reasoningMode: 'xai-reasoning-effort', reasoningEfforts: ['none', 'low', 'medium', 'high'], sourceUrl: 'https://docs.x.ai/developers/models/grok-4.20-beta-0309-reasoning', verifiedAt: '2026-06-12' }),
+  model('grok-4.20-0309-reasoning-console', 'Grok 4.20 0309 Reasoning Console', 'openai-compatible', 1000000, 1000000, 8192, true, false, false, { supportsTools: true, preferredEndpoint: 'responses', reasoningMode: 'xai-reasoning-effort', reasoningEfforts: ['none', 'low', 'medium', 'high'], sourceUrl: 'https://docs.x.ai/developers/models/grok-4.20-beta-0309-reasoning', verifiedAt: '2026-06-12' }),
   model('grok-4.20-multi-agent', 'Grok 4.20 Multi-Agent', 'openai-compatible', 1000000, 1000000, 8192, true, false, false, { supportsTools: true, preferredEndpoint: 'responses', reasoningMode: 'xai-reasoning-effort', reasoningEfforts: ['low', 'medium', 'high', 'xhigh'], sourceUrl: 'https://docs.x.ai/developers/model-capabilities/text/multi-agent', verifiedAt: '2026-06-12' }),
+  model('grok-4.20-multi-agent-console', 'Grok 4.20 Multi-Agent Console', 'openai-compatible', 1000000, 1000000, 8192, true, false, false, { supportsTools: true, preferredEndpoint: 'responses', reasoningMode: 'xai-reasoning-effort', reasoningEfforts: ['low', 'medium', 'high', 'xhigh'], sourceUrl: 'https://docs.x.ai/developers/model-capabilities/text/multi-agent', verifiedAt: '2026-06-12' }),
+  model('grok-4.20-multi-agent-high', 'Grok 4.20 Multi-Agent High', 'openai-compatible', 1000000, 1000000, 8192, true, false, false, { supportsTools: true, preferredEndpoint: 'responses', reasoningMode: 'xai-reasoning-effort', reasoningEfforts: ['high'], sourceUrl: 'https://docs.x.ai/developers/model-capabilities/text/multi-agent', verifiedAt: '2026-06-12' }),
+  model('grok-4.20-multi-agent-xhigh', 'Grok 4.20 Multi-Agent XHigh', 'openai-compatible', 1000000, 1000000, 8192, true, false, false, { supportsTools: true, preferredEndpoint: 'responses', reasoningMode: 'xai-reasoning-effort', reasoningEfforts: ['xhigh'], sourceUrl: 'https://docs.x.ai/developers/model-capabilities/text/multi-agent', verifiedAt: '2026-06-12' }),
   model('grok-4.20-non-reasoning', 'Grok 4.20 Non-Reasoning', 'openai-compatible', 1000000, 1000000, 8192, true, false, false, { supportsTools: true, preferredEndpoint: 'responses', sourceUrl: 'https://docs.x.ai/developers/models/grok-4.20-0309-non-reasoning', verifiedAt: '2026-06-12' }),
   model('grok-build-0.1', 'Grok Build 0.1', 'openai-compatible', 256000, 256000, 8192, false, false, false, { supportsTools: true, sourceUrl: 'https://docs.x.ai/developers/models', verifiedAt: '2026-06-11' }),
   model('grok-4.1', 'Grok 4.1', 'openai-compatible', 1000000, 1000000, 8192, true, false, true, { supportsTools: true, sourceUrl: 'https://docs.x.ai/developers/migration/may-15-retirement', verifiedAt: '2026-06-11', deprecatedReason: 'Not listed as a current public xAI API model; use grok-4.3. Retired Grok 4.1 fast slugs redirect to Grok 4.3 after 2026-05-15.' }),
@@ -214,8 +218,17 @@ function model(
 
 function findKnownModel(modelId: string, modelName?: string): AIModel | undefined {
   const normalized = normalizeModelId(modelId)
-  const direct = DEFAULT_MODELS.find((item) => item.id === modelId || normalizeModelId(item.id) === normalized)
+  const exact = DEFAULT_MODELS.find((item) => item.id.toLowerCase() === modelId.trim().toLowerCase())
+  if (exact) return exact
+
+  const direct = DEFAULT_MODELS.find((item) => normalizeModelId(item.id) === normalized)
   if (direct) return direct
+
+  const normalizedName = modelName ? normalizeModelId(modelName) : undefined
+  const namedDirect = normalizedName
+    ? DEFAULT_MODELS.find((item) => normalizeModelId(item.id) === normalizedName)
+    : undefined
+  if (namedDirect) return namedDirect
 
   const inputKeys = [modelId, modelName ?? '']
     .map((value) => modelAliasMatchKey(value))

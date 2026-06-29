@@ -61,10 +61,10 @@ const requiredWorkflowChecks = new Map([
     ],
   }],
   [ANDROID_ALARM_WORKFLOW_ID, {
-    expectedOutput: 'handoff',
+    expectedOutput: 'reply',
     snippets: [
-      'opens Android system clock UI',
-      'requires system clock confirmation',
+      'requests Android system clock alarm creation',
+      'uses visible system clock confirmation only when direct creation is unsupported',
       'does not request exact alarm permission',
     ],
   }],

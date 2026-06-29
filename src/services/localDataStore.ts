@@ -220,6 +220,7 @@ export const localDataStore = {
   clearRagCaches,
   listEmbeddingJobs,
   loadConversations,
+  saveConversation,
   saveConversations,
   clearConversations,
   clearDocumentSources,
@@ -457,18 +458,33 @@ export async function saveConversations(conversations: Conversation[]): Promise<
       const db = await getDb()
       await db.runAsync('DELETE FROM conversation_records')
       for (const conversation of snapshot) {
-        await db.runAsync(
-          'INSERT OR REPLACE INTO conversation_records (id, title, providerId, model, updatedAt, payloadJson) VALUES (?, ?, ?, ?, ?, ?)',
-          conversation.id,
-          conversation.title,
-          conversation.providerId,
-          conversation.model,
-          conversation.updatedAt,
-          JSON.stringify(conversation)
-        )
+        await upsertConversationRecord(db, conversation)
       }
     })
   await conversationWriteQueue
+}
+
+export async function saveConversation(conversation: Conversation): Promise<void> {
+  const snapshot = { ...conversation, messages: [...conversation.messages] }
+  conversationWriteQueue = conversationWriteQueue
+    .catch(() => undefined)
+    .then(async () => {
+      const db = await getDb()
+      await upsertConversationRecord(db, snapshot)
+    })
+  await conversationWriteQueue
+}
+
+async function upsertConversationRecord(db: SQLite.SQLiteDatabase, conversation: Conversation): Promise<void> {
+  await db.runAsync(
+    'INSERT OR REPLACE INTO conversation_records (id, title, providerId, model, updatedAt, payloadJson) VALUES (?, ?, ?, ?, ?, ?)',
+    conversation.id,
+    conversation.title,
+    conversation.providerId,
+    conversation.model,
+    conversation.updatedAt,
+    JSON.stringify(conversation)
+  )
 }
 
 export async function clearConversations(): Promise<void> {

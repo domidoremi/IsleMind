@@ -336,21 +336,27 @@ export function summarizeProviderActivation(results: ProviderActivationResult[])
   const synced = results.filter((item) => item.synced).length
   const testedOk = results.filter((item) => item.testOk).length
   const missingTokens = results.filter((item) => item.missingToken || !item.hadCredential)
-  const noModels = results.filter((item) => item.hadCredential && !item.modelCount)
-  const failed = results.filter((item) => item.failures.length && !missingTokens.includes(item) && !item.testOk)
+  const noModels = results.filter((item) => item.hadCredential && !item.testOk && !item.modelCount)
+  const failed = results.filter((item) =>
+    item.failures.length &&
+    !item.testOk &&
+    !missingTokens.includes(item) &&
+    !noModels.includes(item)
+  )
   const parts = [
     st('providerActivation.summary', { target: results.length, enabled, synced, tested: testedOk, noModels: noModels.length, failed: failed.length }),
   ]
   if (missingTokens.length) parts.push(st('providerActivation.missingTokens', { names: names(missingTokens) }))
   if (noModels.length) parts.push(st('providerActivation.noModelsFor', { names: names(noModels) }))
   if (failed.length) {
-    const details = dedupeMessages(failed.flatMap((item) => item.failures.map((failure) => formatFailure(failure))))
+    const details = summarizeFailureGroups(failed)
     const shown = details.slice(0, 3)
-    const remaining = Math.max(0, details.length - shown.length)
-    parts.push([shown.join('\n'), remaining ? st('providerActivation.moreFailures', { count: remaining }) : ''].filter(Boolean).join('\n'))
+    const remaining = Math.max(0, failed.length - shown.reduce((sum, item) => sum + item.count, 0))
+    parts.push([shown.map((item) => item.line).join('\n'), remaining ? st('providerActivation.moreFailures', { count: remaining }) : ''].filter(Boolean).join('\n'))
   }
+  const hasUsableProgress = testedOk > 0
   return {
-    tone: failed.length ? 'danger' : missingTokens.length || noModels.length ? 'amber' : 'mint',
+    tone: failed.length || missingTokens.length || noModels.length ? hasUsableProgress ? 'amber' : 'danger' : 'mint',
     message: parts.join('\n'),
   }
 }
@@ -361,6 +367,30 @@ function hasAnyCredential(provider: AIProvider): boolean {
 
 function names(items: ProviderActivationResult[]): string {
   return items.map((item) => item.providerName).join(', ')
+}
+
+function summarizeFailureGroups(items: ProviderActivationResult[]): Array<{ line: string; count: number }> {
+  const groups = new Map<string, { count: number; message: string; names: string[] }>()
+  for (const item of items) {
+    const failure = item.failures.at(-1)
+    const message = failure?.message?.trim() || st('providerActivation.stageFailed', { name: item.providerName })
+    const key = `${failure?.code ?? 'unknown'}:${message}`
+    const current = groups.get(key) ?? { count: 0, message, names: [] }
+    current.count += 1
+    current.names.push(item.providerName)
+    groups.set(key, current)
+  }
+  return Array.from(groups.values())
+    .sort((left, right) => right.count - left.count || left.message.localeCompare(right.message))
+    .map((group) => {
+      const shownNames = group.names.slice(0, 3)
+      const remaining = Math.max(0, group.names.length - shownNames.length)
+      const namesText = remaining ? `${shownNames.join(', ')} +${remaining}` : shownNames.join(', ')
+      return {
+        count: group.count,
+        line: st('providerActivation.failureGroup', { count: group.count, message: group.message, names: namesText }),
+      }
+    })
 }
 
 function countSyncedGroups(provider: AIProvider, settings?: ProviderModelAccessInput['settings']): number {

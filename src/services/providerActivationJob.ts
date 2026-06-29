@@ -14,7 +14,9 @@ export interface ProviderActivationRuntimePolicy {
 
 const DEFAULT_PROVIDER_ACTIVATION_CONCURRENCY = 2
 const MAX_PROVIDER_ACTIVATION_CONCURRENCY = 3
+const LARGE_PROVIDER_ACTIVATION_CONCURRENCY = 2
 const LARGE_PROVIDER_BATCH_SIZE = 10
+const SINGLE_PROVIDER_TIMEOUT_MS = 8000
 const LARGE_BATCH_PROVIDER_TIMEOUT_MS = 9000
 const NORMAL_BATCH_PROVIDER_TIMEOUT_MS = 14000
 
@@ -70,11 +72,17 @@ export function activationItemProgress(progress: number): number {
 
 export function resolveProviderActivationRuntimePolicy(total: number, mode: ProviderActivationJobMode): ProviderActivationRuntimePolicy {
   if (mode === 'single' || total <= 1) {
-    return { concurrency: 1, afterProviderDelayMs: 0 }
+    return {
+      concurrency: 1,
+      maxTestCandidates: 1,
+      modelSyncTimeoutMs: SINGLE_PROVIDER_TIMEOUT_MS,
+      modelTestTimeoutMs: SINGLE_PROVIDER_TIMEOUT_MS,
+      afterProviderDelayMs: 0,
+    }
   }
   const largeBatch = total >= LARGE_PROVIDER_BATCH_SIZE
   const concurrency = largeBatch
-    ? 1
+    ? Math.min(total, LARGE_PROVIDER_ACTIVATION_CONCURRENCY)
     : Math.min(total, DEFAULT_PROVIDER_ACTIVATION_CONCURRENCY, MAX_PROVIDER_ACTIVATION_CONCURRENCY)
   return {
     concurrency,

@@ -1,3 +1,5 @@
+export const PROVIDER_FAILOVER_DECISION_SCHEMA = 'islemind.provider-failover-decision.v1'
+
 export type ProviderFailoverMode =
   | 'off'
   | 'same-provider'
@@ -85,6 +87,7 @@ export interface ProviderFailoverInput {
 }
 
 export interface ProviderFailoverDecision {
+  schema: typeof PROVIDER_FAILOVER_DECISION_SCHEMA
   mode: ProviderFailoverMode
   trigger: ProviderFailoverTrigger
   eligible: boolean
@@ -199,6 +202,7 @@ export function resolveFailoverDecision(input: ProviderFailoverInput): ProviderF
 
   const eligible = !blockedReasons.length && !!evaluated.accepted.length
   return {
+    schema: PROVIDER_FAILOVER_DECISION_SCHEMA,
     mode: input.policy.mode,
     trigger: input.trigger,
     eligible,

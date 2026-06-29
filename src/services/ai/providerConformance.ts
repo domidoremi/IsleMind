@@ -6,6 +6,8 @@ import { supportsXiaomiMimoNativeWebSearch } from '@/services/ai/providerOpenAIR
 import { isBedrockRuntimeProvider } from '@/services/ai/providerAwsBedrockRouting'
 import { getProviderCompatibilityEvidenceForProvider, providerCompatibilityCapabilityCanBeSentForProvider, providerCompatibilityReasoningExplicitlyDeclaredForModel } from '@/services/ai/providerCompatibilityContract'
 
+export const PROVIDER_REASONING_RESOLUTION_SCHEMA = 'islemind.provider-reasoning-resolution.v1'
+
 export type ProviderConformanceFamily =
   | 'openai'
   | 'anthropic'
@@ -212,9 +214,28 @@ export interface ProviderReasoningResolution {
   downgradeReason?: string
 }
 
+export interface ProviderReasoningResolutionArtifact {
+  schema: typeof PROVIDER_REASONING_RESOLUTION_SCHEMA
+  requested?: ReasoningEffort
+  enabled: boolean
+  effective?: ReasoningEffort
+  providerValue?: string | number | boolean
+  requestShape: ProviderReasoningRequestShape
+  supported: boolean
+  selectableEfforts: ReasoningEffort[]
+  sourceConfidence: ProviderCapabilityManifest['source']['confidence']
+  sourceUrl?: string
+  disablesSamplingWhenEnabled: boolean
+  unsupportedFieldsWhenReasoning: string[]
+  removedParams: string[]
+  downgradeReason?: string
+  failureCodes: string[]
+}
+
 export interface ProviderConformanceResult {
   manifest: ProviderCapabilityManifest
   reasoning: ProviderReasoningResolution
+  reasoningResolution: ProviderReasoningResolutionArtifact
   requestedModalities: string[]
   issues: ProviderConformanceIssue[]
   removedParams: string[]
@@ -276,7 +297,7 @@ export function resolveProviderCapabilityManifest(input: ProviderConformanceRequ
     },
     payload: {
       maxTokensField: inferMaxTokensField(input, family, protocol),
-      samplingFields: ['temperature', 'top_p', 'topP'],
+      samplingFields: ['temperature', 'top_p', 'topP', 'top_k', 'topK'],
       unsupportedFieldsWhenReasoning: reasoningUnsupportedPayloadFields(requestShape),
       requiresReasoningStatePassthrough: reasoningRequiresStatePassthrough(family, requestShape),
       streamUsageField: streamUsageField(family, protocol),
@@ -398,12 +419,14 @@ export function resolveAndHardenProviderRequest(input: ProviderConformanceReques
       field: removedParams.join(','),
     })
   }
+  const reasoningResolution = buildProviderReasoningResolutionArtifact(manifest, reasoning, issues, removedParams)
 
   return {
     body: next,
     conformance: {
       manifest,
       reasoning,
+      reasoningResolution,
       requestedModalities: requestedModalities(input.attachments),
       issues,
       removedParams,
@@ -419,6 +442,44 @@ export function applyProviderConformanceToBody(input: ProviderConformanceRequest
 
 export function resolveProviderRequestConformance(input: ProviderConformanceRequest, body: Record<string, unknown>): ProviderConformanceResult {
   return resolveAndHardenProviderRequest(input, body).conformance
+}
+
+function buildProviderReasoningResolutionArtifact(
+  manifest: ProviderCapabilityManifest,
+  reasoning: ProviderReasoningResolution,
+  issues: ProviderConformanceIssue[],
+  removedParams: string[],
+): ProviderReasoningResolutionArtifact {
+  const unsupportedFieldsWhenReasoning = manifest.payload.unsupportedFieldsWhenReasoning
+  const removedReasoningParams = removedParams.filter((field) => (
+    manifest.payload.samplingFields.includes(field) ||
+    unsupportedFieldsWhenReasoning.includes(field)
+  ))
+  const failureCodes = new Set<string>()
+  if (reasoning.requested && !reasoning.enabled) {
+    failureCodes.add(manifest.reasoning.supported ? 'reasoning_disabled_by_effort' : 'reasoning_unsupported')
+  }
+  if (reasoning.downgradeReason) failureCodes.add(reasoning.downgradeReason)
+  for (const issue of issues) {
+    if (issue.code === 'reasoning_effort_downgraded' || issue.code === 'param_conflict_removed') failureCodes.add(issue.code)
+  }
+  return {
+    schema: PROVIDER_REASONING_RESOLUTION_SCHEMA,
+    requested: reasoning.requested,
+    enabled: reasoning.enabled,
+    effective: reasoning.effective,
+    providerValue: reasoning.providerValue,
+    requestShape: reasoning.requestShape,
+    supported: manifest.reasoning.supported,
+    selectableEfforts: [...manifest.reasoning.selectableEfforts],
+    sourceConfidence: manifest.source.confidence,
+    sourceUrl: manifest.source.url,
+    disablesSamplingWhenEnabled: manifest.reasoning.disablesSamplingWhenEnabled,
+    unsupportedFieldsWhenReasoning: [...unsupportedFieldsWhenReasoning],
+    removedParams: removedReasoningParams,
+    downgradeReason: reasoning.downgradeReason,
+    failureCodes: [...failureCodes].sort(),
+  }
 }
 
 function inferProviderConformanceFamily(provider: AIProvider): ProviderConformanceFamily {

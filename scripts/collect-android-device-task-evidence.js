@@ -22,6 +22,7 @@ const ADB_PACKAGE_DUMP_TIMEOUT_MS = ADB_DEFAULT_TIMEOUT_MS
 const ANDROID_ALLOWED_DECLARED_PERMISSIONS = [
   'android.permission.REQUEST_INSTALL_PACKAGES',
   'android.permission.POST_NOTIFICATIONS',
+  'com.android.alarm.permission.SET_ALARM',
 ]
 
 const ANDROID_BLOCKED_SHARED_STORAGE_PERMISSIONS = [
@@ -70,9 +71,9 @@ const taskTemplateOrder = [
     evidence: ['REQUEST_INSTALL_PACKAGES declaration', 'installer handoff remains system-confirmed only'],
   },
   {
-    id: 'alarm-intent-handoff',
-    title: 'Android system alarm editor handoff',
-    evidence: ['SET_ALARM resolver', 'exact alarm permission remains unsupported'],
+    id: 'alarm-intent-create-request',
+    title: 'Android system alarm creation request',
+    evidence: ['SET_ALARM permission declaration', 'SET_ALARM resolver', 'exact alarm permission remains unsupported'],
   },
   {
     id: 'calendar-todo-handoff',
@@ -450,7 +451,7 @@ function workflowIdsForTask(taskId) {
     'saf-file-apply-undo': ['agent-workflow-android-download-organize'],
     'saf-file-copy-rename': ['agent-workflow-android-file-copy-rename'],
     'apk-installer-handoff': ['agent-workflow-android-apk-install'],
-    'alarm-intent-handoff': ['agent-workflow-android-alarm'],
+    'alarm-intent-create-request': ['agent-workflow-android-alarm'],
     'calendar-todo-handoff': ['agent-workflow-android-calendar-todo'],
     'app-cache-cleanup': ['agent-workflow-android-app-cache-cleanup'],
   }
@@ -479,7 +480,7 @@ function buildTaskState(task, resolvers) {
       : { ...base, status: 'blocked', reason: 'No Android SAF directory picker activity resolved on the connected device.' }
   }
 
-  if (task.id === 'alarm-intent-handoff') {
+  if (task.id === 'alarm-intent-create-request') {
     return alarmResolverAvailable(resolvers)
       ? { ...base, status: 'ready-for-runtime-verification' }
       : { ...base, status: 'blocked', reason: 'No Android Clock alarm activity resolved on the connected device for SET_ALARM, SHOW_ALARMS, APP_ALARM, or DeskClock launcher fallback.' }

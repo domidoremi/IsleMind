@@ -44,6 +44,7 @@ import { IsleEmptyState } from '@/components/ui/isle'
 import { confirmAgentAction, copyMessageFinalText, recoverStaleStreamingMessages, regenerateLastAssistant, retryMessage, saveAgentWorkflowSkillFromMessage, sendMessage, stopMessage } from '@/services/chatRunner'
 import { useAppTheme } from '@/hooks/useAppTheme'
 import { useChatStore } from '@/store/chatStore'
+import { mergeMessageWithStreamingTraceSnapshot, useChatStreamingStore } from '@/store/chatStreamingStore'
 import { useSettingsStore } from '@/store/settingsStore'
 import { testProviderModelHealth } from '@/services/providerModelHealth'
 import { getConversationMetrics, type ConversationMetrics } from '@/services/conversationMetrics'
@@ -65,11 +66,19 @@ import { getProviderAvailableModels, getProviderDisplayModel, hasRemoteProviderM
 import { useMotionPreference } from '@/hooks/useMotionPreference'
 import { motionTokens } from '@/theme/animation'
 import { getNextReasoningEffort, getReasoningControlValue, getReasoningDisplayEffort, getReasoningEffortOptions, providerSupportsReasoning } from '@/utils/modelReasoning'
-import { getOnboardingConversationDefaults } from '@/utils/onboardingProfile'
 import { summarizeWorkArtifact } from '@/utils/workArtifact'
 import { validateWorkArtifactQuality } from '@/utils/workArtifact'
 import { getPolicyAllowedProviderModels as getAccessAllowedProviderModels, getPolicyPreferredProviderModel as getAccessPreferredProviderModel, providerHasPolicyAllowedModel as accessProviderHasPolicyAllowedModel, resolveProviderModelAliasAccess } from '@/services/ai/policy/providerModelAccess'
+import { PROVIDER_PLATFORM_DEFAULT_TEMPERATURE } from '@/services/ai/providerParameterDefaults'
+import {
+  clampConversationGenerationParameter,
+  conversationGenerationParameterDiffersFromDefault,
+  resolveConversationGenerationParameterDefault,
+  resolveConversationGenerationParameterRanges,
+  type ConversationGenerationParameterRanges,
+} from '@/services/ai/conversationGenerationParameters'
 import { clearAndroidStatusNotification, updateAndroidStatusNotification } from '@/services/androidStatusNotification'
+import { emitRuntimeEvent, type RuntimeControlPlaneEvent } from '@/services/runtimeEvents'
 
 type StreamingInputIntent = 'guide' | 'queue' | 'interrupt'
 type ComposerPanel = 'model' | 'reasoning' | 'prompt' | 'more' | null
@@ -118,16 +127,19 @@ const MESSAGE_LIST_CHROME_GAP = 8
 const MESSAGE_LIST_CHROME_OVERLAY = 0
 const MESSAGE_LIST_CHROME_UNDERLAP = 0
 const MESSAGE_LIST_COMPOSER_GAP = 12
+const MESSAGE_LIST_HORIZONTAL_PADDING = 20
 const CONVERSATION_NAVIGATION_IDLE_HIDE_DELAY_MS = 1500
 const CONVERSATION_NAVIGATION_INTERACTION_HIDE_DELAY_MS = 2200
 const CONVERSATION_NAVIGATION_PROGRAMMATIC_LOCK_MS = 260
-const CONVERSATION_NAVIGATION_RAIL_RIGHT = 8
+// The navigation rail is a floating affordance; keep its visual track inside the base edge padding.
+const CONVERSATION_NAVIGATION_RAIL_RIGHT = -12
 const CONVERSATION_NAVIGATION_RAIL_WIDTH = 48
-const CONVERSATION_NAVIGATION_MESSAGE_GAP = 12
 const EMPTY_CONVERSATION_DEFAULT_TOP_PADDING = 20
 const HOME_MODEL_HIGHLIGHT_LIMIT = 4
 const SYSTEM_STATUS_NOTIFICATION_CLEAR_DELAY_MS = 5200
 const SYSTEM_STATUS_NOTIFICATION_PREVIEW_LIMIT = 96
+const DEFAULT_SETUP_TEMPERATURE = PROVIDER_PLATFORM_DEFAULT_TEMPERATURE
+const DEFAULT_SETUP_REASONING_EFFORT: Conversation['reasoningEffort'] = 'low'
 
 interface PendingStreamingMessage {
   intent: Exclude<StreamingInputIntent, 'interrupt'>
@@ -147,6 +159,27 @@ interface ComposerDraftPayload {
   key: string
   attachments?: Attachment[]
   restoreIfEmpty?: boolean
+}
+
+export interface RuntimeRepairIntent {
+  key: string
+  prompt: string
+  payloadJson: string
+  payloadSchema: string
+  repairStepCount: number
+  scope: string
+  summary: string
+  action: string
+  actionLabel: string
+  target: string
+  targetLabel: string
+  event: string
+  latestEventId?: string
+  sourceEventIds: string[]
+  eventCount: number
+  issueCodes: string[]
+  severity?: string
+  severityLabel?: string
 }
 
 interface MessageScrollViewport {
@@ -291,12 +324,14 @@ interface ChatWorkspaceProps {
   embedded?: boolean
   initialDraft?: string
   initialDraftKey?: string | number
+  restoreInitialDraftIfEmpty?: boolean
+  runtimeRepairIntent?: RuntimeRepairIntent
   settingsTransitionActive?: boolean
   onHistory?: () => void
   onSettings?: () => void
 }
 
-export function ChatWorkspace({ conversation, showBack = false, embedded = false, initialDraft, initialDraftKey, settingsTransitionActive = false, onHistory, onSettings }: ChatWorkspaceProps) {
+export function ChatWorkspace({ conversation, showBack = false, embedded = false, initialDraft, initialDraftKey, restoreInitialDraftIfEmpty, runtimeRepairIntent, settingsTransitionActive = false, onHistory, onSettings }: ChatWorkspaceProps) {
   const { colors, isGlass } = useAppTheme()
   const { t } = useTranslation()
   const dialog = useIsleDialog()
@@ -333,8 +368,8 @@ export function ChatWorkspace({ conversation, showBack = false, embedded = false
   const [composerOutputMode, setComposerOutputMode] = useState<AgentRequestedOutput>('auto')
   const [quickStartDraft, setQuickStartDraft] = useState<ComposerDraftPayload | null>(null)
   const quickStartSequence = useRef(0)
-  const initialSetupDefaults = useMemo(() => getOnboardingConversationDefaults(settings.onboardingCompanionMode), [settings.onboardingCompanionMode])
-  const [setupReasoningEffort, setSetupReasoningEffort] = useState<Conversation['reasoningEffort']>(initialSetupDefaults.reasoningEffort)
+  const [setupReasoningEffort, setSetupReasoningEffort] = useState<Conversation['reasoningEffort']>(DEFAULT_SETUP_REASONING_EFFORT)
+  const [setupParameterOverrides, setSetupParameterOverrides] = useState<Partial<Pick<Conversation, 'temperature' | 'topP' | 'topK' | 'maxTokens'>>>({})
   const [setupSystemPrompt, setSetupSystemPrompt] = useState('')
   const [setupSelectedProviderId, setSetupSelectedProviderId] = useState<string | null>(null)
   const [setupSelectedModel, setSetupSelectedModel] = useState<string | null>(null)
@@ -363,8 +398,8 @@ export function ChatWorkspace({ conversation, showBack = false, embedded = false
   const runtimeTarget = resolveRuntimeTarget(conversation, providers, settings.defaultProvider, settings)
   const runtimeConversation = runtimeTarget?.conversation ?? conversation
   const provider = runtimeTarget?.provider
-  const setupTemperature = settings.defaultTemperature ?? initialSetupDefaults.temperature
-  const setupConversation = useMemo<Conversation>(() => createSetupConversationShell(homeProvider, setupModel, setupReasoningEffort, setupSystemPrompt, setupTemperature), [homeProvider, setupModel, setupReasoningEffort, setupSystemPrompt, setupTemperature])
+  const setupTemperature = settings.defaultTemperature
+  const setupConversation = useMemo<Conversation>(() => createSetupConversationShell(homeProvider, setupModel, setupReasoningEffort, setupSystemPrompt, setupTemperature, setupParameterOverrides), [homeProvider, setupModel, setupReasoningEffort, setupSystemPrompt, setupTemperature, setupParameterOverrides])
   const reasoningEffort = runtimeConversation ? runtimeConversation.reasoningEffort : setupReasoningEffort
   const runtimeReasoningModel = provider && runtimeConversation ? resolveProviderModelAlias(provider, runtimeConversation.model) : runtimeConversation?.model
   const setupReasoningModel = homeProvider ? resolveProviderModelAlias(homeProvider, setupModel) : setupModel
@@ -392,6 +427,9 @@ export function ChatWorkspace({ conversation, showBack = false, embedded = false
   )
   const metrics = useMemo(() => getConversationMetrics(runtimeConversation), [runtimeConversation])
   const streamingMessage = runtimeConversation?.messages.find((message) => message.status === 'streaming')
+  const liveStreamingTraceSnapshot = useChatStreamingStore((state) =>
+    runtimeConversation?.id && streamingMessage ? state.streamingTraces.get(`${runtimeConversation.id}:${streamingMessage.id}`) : undefined
+  )
   const isStreaming = !!streamingMessage
   const runtimeConversationId = runtimeConversation?.id
   const runtimeConversationTitle = runtimeConversation?.title
@@ -399,8 +437,12 @@ export function ChatWorkspace({ conversation, showBack = false, embedded = false
   const latestCompression = useMemo(() => findLatestCompressionSummary(runtimeConversation?.messages ?? []), [runtimeConversation?.messages])
   const lastCompressionToastSignature = useRef('')
   const regenerableAssistantId = lastMessage?.role === 'assistant' ? lastMessage.id : undefined
-  const messageSignature = runtimeConversation?.messages.map((message) => `${message.id}:${message.status}`).join('|')
-  const activityLabel = streamingMessage ? getMessageActivityLabel(streamingMessage, t) : ''
+  const messageSignature = runtimeConversation
+    ? `${runtimeConversation.messages.length}:${lastMessage?.id ?? ''}:${lastMessage?.status ?? ''}:${streamingMessage?.id ?? ''}:${streamingMessage?.status ?? ''}`
+    : 'none'
+  const activityLabel = streamingMessage
+    ? getMessageActivityLabel(mergeMessageWithStreamingTraceSnapshot(streamingMessage, liveStreamingTraceSnapshot), t)
+    : ''
   const compactViewport = windowHeight < 620 || windowWidth < 360
   const mobileChatViewport = windowWidth < 600
   const keepChromeExpanded = !runtimeConversation || showOptions || !!providerHealth?.code || testingHeader
@@ -421,7 +463,7 @@ export function ChatWorkspace({ conversation, showBack = false, embedded = false
   const effectiveInitialDraft = quickStartDraft?.content ?? initialDraft
   const effectiveInitialDraftKey = quickStartDraft?.key ?? initialDraftKey
   const effectiveInitialAttachments = quickStartDraft?.attachments
-  const effectiveRestoreInitialDraftIfEmpty = quickStartDraft?.restoreIfEmpty
+  const effectiveRestoreInitialDraftIfEmpty = quickStartDraft?.restoreIfEmpty ?? restoreInitialDraftIfEmpty
   const composerMinimumHeight = COMPOSER_COLLAPSED_MIN_HEIGHT
   const composerBottomInset = Math.max(composerMinimumHeight, composerHeight + Math.max(insets.bottom, 10) + 4)
   const keyboardVisible = keyboardHeight > 0 || composerFocused
@@ -655,7 +697,7 @@ export function ChatWorkspace({ conversation, showBack = false, embedded = false
     if (!nextSkills.length || !runtimeConversation) return
     const variableValues = await collectSkillVariableValues(nextSkills)
     if (!variableValues) return
-    const result = applySkillStack({ conversation: runtimeConversation, skills: nextSkills, variables: variableValues })
+    const result = applySkillStack({ conversation: runtimeConversation, providers, skills: nextSkills, variables: variableValues })
     let snapshotProvider: AIProvider | undefined
     if (result.snapshot.providerId && result.snapshot.model) {
       snapshotProvider = providers.find((item) => item.id === result.snapshot.providerId)
@@ -762,8 +804,8 @@ export function ChatWorkspace({ conversation, showBack = false, embedded = false
 
   useEffect(() => {
     if (conversation) return
-    setSetupReasoningEffort((current) => current === initialSetupDefaults.reasoningEffort ? current : initialSetupDefaults.reasoningEffort)
-  }, [conversation, initialSetupDefaults.reasoningEffort])
+    setSetupReasoningEffort((current) => current === DEFAULT_SETUP_REASONING_EFFORT ? current : DEFAULT_SETUP_REASONING_EFFORT)
+  }, [conversation])
 
   useEffect(() => {
     if (!homeProvider) {
@@ -854,7 +896,7 @@ export function ChatWorkspace({ conversation, showBack = false, embedded = false
     return () => {
       mounted = false
     }
-  }, [providers.length, conversation?.id, conversation?.messages.length])
+  }, [])
 
   if (!conversation) {
     async function submitSetup(content: string, attachments: Attachment[]) {
@@ -872,12 +914,21 @@ export function ChatWorkspace({ conversation, showBack = false, embedded = false
       const providerModels = getPolicyAllowedProviderModels(readyProvider, currentSettings)
       const model = providerModels.includes(setupModel) ? setupModel : getPolicyPreferredProviderModel(readyProvider, currentSettings)
       if (!model) return
+      const nextSetupConversation = createSetupConversationShell(readyProvider, model, setupReasoningEffort, setupSystemPrompt, setupTemperature, setupParameterOverrides)
       const id = createConversation(readyProvider.id, model)
-      updateConversation(id, { systemPrompt: setupSystemPrompt, reasoningEffort: setupReasoningEffort, temperature: setupTemperature })
+      updateConversation(id, {
+        systemPrompt: setupSystemPrompt,
+        reasoningEffort: setupReasoningEffort,
+        temperature: nextSetupConversation.temperature,
+        topP: nextSetupConversation.topP,
+        topK: nextSetupConversation.topK,
+        maxTokens: nextSetupConversation.maxTokens,
+        generationParameterOverrides: buildExplicitGenerationParameterOverridePatch(nextSetupConversation.generationParameterOverrides),
+      })
       const nextConversation = useChatStore.getState().conversations.find((item) => item.id === id)
       if (nextConversation) {
         try {
-          await sendMessage({ conversation: { ...nextConversation, systemPrompt: setupSystemPrompt, reasoningEffort: setupReasoningEffort, temperature: setupTemperature }, content, attachments, requestedOutput: composerOutputMode })
+          await sendMessage({ conversation: { ...nextConversation, ...nextSetupConversation, id: nextConversation.id, title: nextConversation.title, messages: nextConversation.messages, createdAt: nextConversation.createdAt, updatedAt: nextConversation.updatedAt }, content, attachments, requestedOutput: composerOutputMode })
         } catch (error) {
           dialog.toast({ title: t('chat.sendFailed'), message: error instanceof Error ? error.message : t('chat.sendFailedMessage'), tone: 'danger' })
           throw error
@@ -1076,6 +1127,14 @@ export function ChatWorkspace({ conversation, showBack = false, embedded = false
                   onClose={() => setShowOptions(false)}
                   onDraftChange={(updates) => {
                     if ('reasoningEffort' in updates) setSetupReasoningEffort(updates.reasoningEffort)
+                    const parameterUpdates: Partial<Pick<Conversation, 'temperature' | 'topP' | 'topK' | 'maxTokens'>> = {}
+                    if ('temperature' in updates) parameterUpdates.temperature = updates.temperature
+                    if ('topP' in updates) parameterUpdates.topP = updates.topP
+                    if ('topK' in updates) parameterUpdates.topK = updates.topK
+                    if ('maxTokens' in updates) parameterUpdates.maxTokens = updates.maxTokens
+                    if (Object.keys(parameterUpdates).length) {
+                      setSetupParameterOverrides((current) => ({ ...current, ...parameterUpdates }))
+                    }
                   }}
                 />
               </IsleOverlayPressable>
@@ -1170,6 +1229,7 @@ export function ChatWorkspace({ conversation, showBack = false, embedded = false
       initialDraftKey={effectiveInitialDraftKey}
       initialAttachments={effectiveInitialAttachments}
       restoreInitialDraftIfEmpty={effectiveRestoreInitialDraftIfEmpty}
+      runtimeRepairIntent={runtimeRepairIntent}
       intentDraft={intentDraft}
       composerCommands={composerCommands}
       composerReferences={composerReferences}
@@ -1247,6 +1307,7 @@ function ActiveChatWorkspace({
   initialDraftKey,
   initialAttachments,
   restoreInitialDraftIfEmpty,
+  runtimeRepairIntent,
   intentDraft,
   composerCommands,
   composerReferences,
@@ -1320,6 +1381,7 @@ function ActiveChatWorkspace({
   initialDraftKey?: string | number
   initialAttachments?: Attachment[]
   restoreInitialDraftIfEmpty?: boolean
+  runtimeRepairIntent?: RuntimeRepairIntent
   intentDraft: IntentDraft | null
   composerCommands: ComposerCommand[]
   composerReferences: CommandReference[]
@@ -1381,6 +1443,9 @@ function ActiveChatWorkspace({
   settingsTransitionActive: boolean
 }) {
   const { t } = useTranslation()
+  const [runtimeRepairSubmitKey, setRuntimeRepairSubmitKey] = useState<string | number | undefined>(undefined)
+  const [pendingRuntimeRepairSubmitIntentKey, setPendingRuntimeRepairSubmitIntentKey] = useState<string | undefined>(undefined)
+  const [dismissedRuntimeRepairIntentKey, setDismissedRuntimeRepairIntentKey] = useState<string | undefined>(undefined)
   const [chromeHeight, setChromeHeight] = useState(0)
   const [activeActionMessageId, setActiveActionMessageId] = useState<string | null>(null)
   const [messageScrollViewport, setMessageScrollViewport] = useState<MessageScrollViewport>(() => createEmptyMessageScrollViewport())
@@ -1418,9 +1483,6 @@ function ActiveChatWorkspace({
     ? assistantNavigationItems.findIndex((item) => item.messageId === activeAssistantNavigationItem.messageId)
     : -1
   const messageListViewabilityConfig = useMemo(() => ({ viewAreaCoveragePercentThreshold: 18, minimumViewTime: 80 }), [])
-  const messageListRightPadding = assistantNavigationVisible
-    ? CONVERSATION_NAVIGATION_RAIL_RIGHT + CONVERSATION_NAVIGATION_RAIL_WIDTH + CONVERSATION_NAVIGATION_MESSAGE_GAP
-    : 20
   const messageListBottomPadding = MESSAGE_LIST_COMPOSER_GAP + composerBottomInset + keyboardLift
   const assistantNavigationHideTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
   const assistantNavigationGestureActive = useRef(false)
@@ -1431,6 +1493,9 @@ function ActiveChatWorkspace({
   const userDragMomentumEligibilityTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
   const pagerGestureScrollReleaseTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
   const persistentPagerGestureLockRef = useRef(false)
+  const visibleRuntimeRepairIntent = runtimeRepairIntent && dismissedRuntimeRepairIntentKey !== runtimeRepairIntent.key
+    ? runtimeRepairIntent
+    : undefined
   const lastLayoutScrollAt = useRef(0)
   const chromeCollapseLocked = showOptions || !!providerHealth?.code || testingHeader
   const expandedMessageListTopInset = Math.max(0, chromeHeight - MESSAGE_LIST_CHROME_OVERLAY + MESSAGE_LIST_CHROME_GAP)
@@ -1495,6 +1560,18 @@ function ActiveChatWorkspace({
       return latestAssistantNavigationId
     })
   }, [activeConversation.id, assistantNavigationSignature, latestAssistantNavigationId])
+
+  useEffect(() => {
+    if (!pendingRuntimeRepairSubmitIntentKey) return
+    if (!visibleRuntimeRepairIntent || pendingRuntimeRepairSubmitIntentKey !== visibleRuntimeRepairIntent.key) {
+      setPendingRuntimeRepairSubmitIntentKey(undefined)
+      return
+    }
+    setPendingRuntimeRepairSubmitIntentKey(undefined)
+    setRuntimeRepairSubmitKey(`runtime-repair-submit-${visibleRuntimeRepairIntent.key}-${Date.now()}`)
+    setDismissedRuntimeRepairIntentKey(visibleRuntimeRepairIntent.key)
+    emitRuntimeRepairReplayEvent('runtime.repair.replay.submitted', visibleRuntimeRepairIntent, 'one-click-send')
+  }, [initialDraftKey, pendingRuntimeRepairSubmitIntentKey, visibleRuntimeRepairIntent])
 
   useEffect(() => {
     persistentPagerGestureLockRef.current = showOptions || !!composerPanel || keyboardVisible || !!intentDraft
@@ -1593,6 +1670,48 @@ function ActiveChatWorkspace({
       dialog.toast({ title: t('chat.sendFailed'), message: error instanceof Error ? error.message : t('chat.sendFailedMessage'), tone: 'danger' })
       throw error
     }
+  }
+
+  function sendRuntimeRepairIntent() {
+    if (!visibleRuntimeRepairIntent) return
+    setComposerPanel(null)
+    setShowOptions(false)
+    onApplyStarter(visibleRuntimeRepairIntent.prompt)
+    setPendingRuntimeRepairSubmitIntentKey(visibleRuntimeRepairIntent.key)
+  }
+
+  function applyRuntimeRepairIntentDraft() {
+    if (!visibleRuntimeRepairIntent) return
+    onApplyStarter(visibleRuntimeRepairIntent.prompt, [], true)
+    emitRuntimeRepairReplayEvent('runtime.repair.replay.applied', visibleRuntimeRepairIntent, 'restore-draft')
+  }
+
+  function dismissRuntimeRepairIntent() {
+    if (!visibleRuntimeRepairIntent) return
+    setDismissedRuntimeRepairIntentKey(visibleRuntimeRepairIntent.key)
+    emitRuntimeRepairReplayEvent('runtime.repair.replay.dismissed', visibleRuntimeRepairIntent, 'dismiss')
+  }
+
+  function emitRuntimeRepairReplayEvent(event: RuntimeControlPlaneEvent, intent: RuntimeRepairIntent, trigger: string) {
+    void emitRuntimeEvent({
+      event,
+      conversationId: activeConversation.id,
+      data: {
+        trigger,
+        payloadSchema: intent.payloadSchema,
+        action: intent.action,
+        target: intent.target,
+        runtimeEvent: intent.event,
+        severity: intent.severity,
+        scope: intent.scope,
+        issueCodes: intent.issueCodes.slice(0, 8),
+        latestEventId: intent.latestEventId,
+        sourceEventIds: intent.sourceEventIds.slice(0, 8),
+        eventCount: intent.eventCount,
+        repairStepCount: intent.repairStepCount,
+        summary: intent.summary,
+      },
+    })
   }
 
   function rememberCommandReference(reference: CommandReference) {
@@ -1998,7 +2117,7 @@ function ActiveChatWorkspace({
               scrollEventThrottle={Platform.OS === 'android' ? 32 : 16}
               drawDistance={messageListDrawDistance}
               getItemType={getMessageItemType}
-              contentContainerStyle={{ paddingLeft: 20, paddingRight: messageListRightPadding, paddingTop: activeConversation.messages.length ? 0 : emptyConversationTopPadding, paddingBottom: messageListBottomPadding }}
+              contentContainerStyle={{ paddingLeft: MESSAGE_LIST_HORIZONTAL_PADDING, paddingRight: MESSAGE_LIST_HORIZONTAL_PADDING, paddingTop: activeConversation.messages.length ? 0 : emptyConversationTopPadding, paddingBottom: messageListBottomPadding }}
               ListHeaderComponent={activeConversation.messages.length ? renderConversationHeaderSpacer(conversationHeaderTopPadding) : null}
               renderItem={({ item: message, index }) => (
                 <MessageBubble
@@ -2190,6 +2309,8 @@ function ActiveChatWorkspace({
             initialDraftKey={initialDraftKey}
             initialAttachments={initialAttachments}
             restoreInitialDraftIfEmpty={restoreInitialDraftIfEmpty}
+            externalSubmitKey={runtimeRepairSubmitKey}
+            runtimeRepairIntent={visibleRuntimeRepairIntent}
             commands={composerCommands}
             references={composerReferences}
             reasoningEffort={reasoningEffort}
@@ -2218,6 +2339,9 @@ function ActiveChatWorkspace({
             onOpenKnowledge={goKnowledge}
             onToggleRequestedOutput={onToggleComposerOutputMode}
             onClearPending={() => setPendingStreamingMessage(null)}
+            onRuntimeRepairSubmit={sendRuntimeRepairIntent}
+            onRuntimeRepairApplyDraft={applyRuntimeRepairIntentDraft}
+            onRuntimeRepairDismiss={dismissRuntimeRepairIntent}
             disabled={!provider && activeConversation.providerId !== 'local-setup'}
             onStop={() => safeStopMessage(activeConversation.id)}
             onReferenceSelected={rememberCommandReference}
@@ -2545,6 +2669,8 @@ function FloatingChrome({
   const chromeItemActiveSurface = colors.ui.cartoon ? colors.ui.actionBar.itemActiveBackground : isGlass ? colors.ui.actionBar.itemActiveBackground : colors.ui.composer.statusBackground
   const chromeBorder = colors.ui.composer.toolbarBorder
   const chromeBorderWidth = colors.ui.cartoon ? 1 : StyleSheet.hairlineWidth
+  const providerHealthTone = providerHealth?.inheritedExpired || providerHealth?.code === 'provider_missing' ? colors.ui.tone.danger : colors.ui.tone.warning
+  const chromeAlertActive = Boolean(providerHealth?.code)
   const chromeIconStyle: ViewStyle = {
     width: 42,
     height: 42,
@@ -2638,13 +2764,13 @@ function FloatingChrome({
                 justifyContent: 'center',
                 backgroundColor: chromeSurface,
                 borderRadius: colors.ui.radius.controlLarge,
-                borderWidth: chromeBorderWidth,
-                borderColor: chromeBorder,
+                borderWidth: chromeAlertActive ? 1 : chromeBorderWidth,
+                borderColor: chromeAlertActive ? providerHealthTone.border : chromeBorder,
                 shadowColor: colors.shadowTint,
-                shadowOpacity: colors.ui.cartoon ? Math.min(colors.ui.card.shadowOpacity, 0.04) : 0.02,
-                shadowRadius: colors.ui.cartoon ? Math.max(2, colors.ui.card.shadowRadius - 6) : 0,
-                shadowOffset: { width: 0, height: colors.ui.cartoon ? 1 : 0 },
-                elevation: colors.ui.cartoon && colors.ui.card.shadowOpacity > 0 ? 1 : 0,
+                shadowOpacity: chromeAlertActive ? (colors.ui.cartoon ? Math.min(colors.ui.card.shadowOpacity, 0.1) : 0.08) : colors.ui.cartoon ? Math.min(colors.ui.card.shadowOpacity, 0.04) : 0.02,
+                shadowRadius: chromeAlertActive ? 10 : colors.ui.cartoon ? Math.max(2, colors.ui.card.shadowRadius - 6) : 0,
+                shadowOffset: { width: 0, height: chromeAlertActive ? 3 : colors.ui.cartoon ? 1 : 0 },
+                elevation: chromeAlertActive ? 3 : colors.ui.cartoon && colors.ui.card.shadowOpacity > 0 ? 1 : 0,
               }}
             >
               <View style={{ minHeight: 42, flexDirection: 'row', alignItems: 'center', gap: 6 }}>
@@ -2779,6 +2905,8 @@ function FloatingComposer({
   initialDraftKey,
   initialAttachments,
   restoreInitialDraftIfEmpty,
+  externalSubmitKey,
+  runtimeRepairIntent,
   commands,
   references,
   reasoningEffort,
@@ -2799,6 +2927,9 @@ function FloatingComposer({
   onOpenKnowledge,
   onToggleRequestedOutput,
   onClearPending,
+  onRuntimeRepairSubmit,
+  onRuntimeRepairApplyDraft,
+  onRuntimeRepairDismiss,
   disabled,
   onStop,
   onReferenceSelected,
@@ -2823,6 +2954,8 @@ function FloatingComposer({
   initialDraftKey?: string | number
   initialAttachments?: Attachment[]
   restoreInitialDraftIfEmpty?: boolean
+  externalSubmitKey?: string | number
+  runtimeRepairIntent?: RuntimeRepairIntent
   commands: ComposerCommand[]
   references: CommandReference[]
   reasoningEffort: Conversation['reasoningEffort']
@@ -2843,6 +2976,9 @@ function FloatingComposer({
   onOpenKnowledge: () => void
   onToggleRequestedOutput: () => void
   onClearPending: () => void
+  onRuntimeRepairSubmit?: () => void
+  onRuntimeRepairApplyDraft?: () => void
+  onRuntimeRepairDismiss?: () => void
   disabled: boolean
   onStop: () => void
   onReferenceSelected: (reference: CommandReference) => void
@@ -3172,6 +3308,14 @@ function FloatingComposer({
               </View>
             </MotiView>
           ) : null}
+          {runtimeRepairIntent ? (
+            <RuntimeRepairIntentCard
+              intent={runtimeRepairIntent}
+              onSubmit={onRuntimeRepairSubmit}
+              onApplyDraft={onRuntimeRepairApplyDraft}
+              onDismiss={onRuntimeRepairDismiss}
+            />
+          ) : null}
           <Composer
             disabled={disabled}
             streaming={streaming}
@@ -3180,6 +3324,7 @@ function FloatingComposer({
             initialDraftKey={initialDraftKey}
             initialAttachments={initialAttachments}
             restoreInitialDraftIfEmpty={restoreInitialDraftIfEmpty}
+            externalSubmitKey={externalSubmitKey}
             commands={commands}
             references={references}
             utilitiesOpen={toolsOpen}
@@ -3196,6 +3341,113 @@ function FloatingComposer({
         </View>
       </KeyboardAvoidingView>
     </View>
+  )
+}
+
+function RuntimeRepairIntentCard({
+  intent,
+  onSubmit,
+  onApplyDraft,
+  onDismiss,
+}: {
+  intent: RuntimeRepairIntent
+  onSubmit?: () => void
+  onApplyDraft?: () => void
+  onDismiss?: () => void
+}) {
+  const { colors, isGlass } = useAppTheme()
+  const { t } = useTranslation()
+  const subtleBorderWidth = colors.ui.cartoon ? 1 : StyleSheet.hairlineWidth
+  return (
+    <MotiView
+      from={{ opacity: 0, translateY: 4 }}
+      animate={{ opacity: 1, translateY: 0 }}
+      transition={{ type: 'spring', damping: 20, stiffness: 210 }}
+      style={{
+        marginBottom: 5,
+        borderRadius: colors.ui.radius.panel,
+        padding: 10,
+        backgroundColor: isGlass ? colors.ui.semantic.chrome.background : colors.ui.cartoon ? colors.ui.semantic.surface.base : colors.ui.semantic.surface.base,
+        borderWidth: subtleBorderWidth,
+        borderColor: colors.ui.cartoon ? colors.material.stroke : isGlass ? colors.ui.actionBar.itemBorder : colors.ui.semantic.chrome.border,
+        gap: 8,
+      }}
+    >
+      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+        <View style={{ width: 28, height: 28, borderRadius: colors.ui.radius.controlSmall, alignItems: 'center', justifyContent: 'center', backgroundColor: colors.ui.tone.warning.background, borderWidth: subtleBorderWidth, borderColor: colors.ui.tone.warning.border }}>
+          <AppIcon name="retry" color={colors.ui.tone.warning.foreground} size={15} />
+        </View>
+        <View style={{ flex: 1, minWidth: 0 }}>
+          <Text numberOfLines={1} style={{ color: colors.text, fontSize: 12.5, lineHeight: 17, fontWeight: '900', includeFontPadding: false, textAlignVertical: 'center' }}>{t('chat.runtimeRepairIntentTitle')}</Text>
+          <Text numberOfLines={1} style={{ color: colors.textSecondary, fontSize: 10.5, lineHeight: 15, fontWeight: '900', marginTop: 2, includeFontPadding: false, textAlignVertical: 'center' }}>
+            {t('chat.runtimeRepairIntentMeta', {
+              severity: intent.severityLabel ?? t('common.unknown'),
+              action: intent.actionLabel,
+              target: intent.targetLabel,
+              eventCount: intent.eventCount,
+            })}
+          </Text>
+          <Text numberOfLines={2} style={{ color: colors.textSecondary, fontSize: 10.5, lineHeight: 15, fontWeight: '800', marginTop: 2, includeFontPadding: false, textAlignVertical: 'center' }}>
+            {t('chat.runtimeRepairIntentDetail', { scope: intent.scope, summary: intent.summary })}
+          </Text>
+          <Text numberOfLines={1} style={{ color: colors.textTertiary, fontSize: 10, lineHeight: 14, fontWeight: '800', marginTop: 2, includeFontPadding: false, textAlignVertical: 'center' }}>
+            {t('chat.runtimeRepairIntentIssues', { issueCodes: intent.issueCodes.length ? intent.issueCodes.join(', ') : t('common.none') })}
+          </Text>
+          <Text numberOfLines={1} style={{ color: colors.textTertiary, fontSize: 10, lineHeight: 14, fontWeight: '800', marginTop: 2, includeFontPadding: false, textAlignVertical: 'center' }}>
+            {t('chat.runtimeRepairIntentEventId', { schema: intent.payloadSchema, stepCount: intent.repairStepCount, eventId: intent.latestEventId ?? intent.sourceEventIds[0] ?? t('common.none') })}
+          </Text>
+        </View>
+      </View>
+      <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 7 }}>
+        <RuntimeRepairIntentButton label={t('chat.runtimeRepairIntentSend')} icon="send" primary onPress={onSubmit} />
+        <RuntimeRepairIntentButton label={t('chat.runtimeRepairIntentApplyDraft')} icon="edit" onPress={onApplyDraft} />
+        <RuntimeRepairIntentButton label={t('common.done')} icon="collapse" onPress={onDismiss} />
+      </View>
+    </MotiView>
+  )
+}
+
+function RuntimeRepairIntentButton({
+  label,
+  icon,
+  primary = false,
+  onPress,
+}: {
+  label: string
+  icon: Parameters<typeof AppIcon>[0]['name']
+  primary?: boolean
+  onPress?: () => void
+}) {
+  const { colors } = useAppTheme()
+  const subtleBorderWidth = colors.ui.cartoon ? 1 : StyleSheet.hairlineWidth
+  return (
+    <IslePressable
+      haptic
+      disabled={!onPress}
+      onPress={onPress}
+      accessibilityRole="button"
+      accessibilityLabel={label}
+      hitSlop={QUICK_TOOL_HIT_SLOP}
+      style={{
+        minHeight: 36,
+        flexGrow: primary ? 1.4 : 1,
+        flexShrink: 1,
+        flexBasis: primary ? '42%' : '26%',
+        minWidth: 0,
+        borderRadius: colors.ui.radius.chip,
+        paddingHorizontal: 10,
+        flexDirection: 'row',
+        alignItems: 'center',
+        justifyContent: 'center',
+        gap: 6,
+        backgroundColor: primary ? colors.ui.control.primaryBackground : colors.ui.semantic.surface.muted,
+        borderWidth: subtleBorderWidth,
+        borderColor: primary ? colors.ui.control.primaryBorder : colors.ui.semantic.chrome.border,
+      }}
+    >
+      <AppIcon name={icon} color={primary ? colors.ui.control.primaryForeground : colors.textSecondary} size={13} />
+      <Text numberOfLines={1} style={{ color: primary ? colors.ui.control.primaryForeground : colors.textSecondary, fontSize: 10.5, lineHeight: 14, fontWeight: '900', includeFontPadding: false, textAlignVertical: 'center' }}>{label}</Text>
+    </IslePressable>
   )
 }
 
@@ -3869,23 +4121,83 @@ function createSetupConversationShell(
   model: string,
   reasoningEffort: Conversation['reasoningEffort'],
   systemPrompt: string,
-  temperature: number
+  temperature?: number,
+  overrides: Partial<Pick<Conversation, 'temperature' | 'topP' | 'topK' | 'maxTokens'>> = {}
 ): Conversation {
-  const config = getModelConfig(model, provider?.type, provider?.modelConfigs)
-  return {
+  const upstreamModel = provider ? resolveProviderModelAlias(provider, model) : model
+  const config = getModelConfig(upstreamModel, provider?.type, provider?.modelConfigs)
+  const parameterRanges = resolveConversationGenerationParameterRanges({
+    provider,
+    model: upstreamModel,
+    reasoningEffort,
+    temperature,
+    modelConfig: config,
+  })
+  const conversation: Conversation = {
     id: '__setup__',
     title: '',
     providerId: provider?.id ?? 'setup',
     model,
     providerModelMode: 'inherited',
     systemPrompt,
-    temperature,
-    topP: 1,
+    temperature: resolveConversationGenerationParameterDefault('temperature', parameterRanges, { temperature }) ?? DEFAULT_SETUP_TEMPERATURE,
+    topP: resolveConversationGenerationParameterDefault('topP', parameterRanges) ?? 1,
     reasoningEffort,
-    maxTokens: config.defaultMaxTokens,
+    maxTokens: resolveConversationGenerationParameterDefault('maxTokens', parameterRanges) ?? config.defaultMaxTokens,
     messages: [],
     createdAt: 0,
     updatedAt: 0,
+  }
+  if (typeof overrides.temperature === 'number') {
+    conversation.temperature = clampConversationGenerationParameter('temperature', overrides.temperature, parameterRanges) ?? conversation.temperature
+  }
+  if (typeof overrides.topP === 'number') {
+    conversation.topP = clampConversationGenerationParameter('topP', overrides.topP, parameterRanges)
+  }
+  if (typeof overrides.topK === 'number') {
+    conversation.topK = clampConversationGenerationParameter('topK', overrides.topK, parameterRanges)
+  } else if (Object.prototype.hasOwnProperty.call(overrides, 'topK')) {
+    delete conversation.topK
+  }
+  if (typeof overrides.maxTokens === 'number') {
+    conversation.maxTokens = clampConversationGenerationParameter('maxTokens', overrides.maxTokens, parameterRanges) ?? conversation.maxTokens
+  }
+  const generationParameterOverrides = buildSetupGenerationParameterOverrides(conversation, parameterRanges, overrides, temperature)
+  conversation.generationParameterOverrides = generationParameterOverrides ?? {}
+  return conversation
+}
+
+function buildSetupGenerationParameterOverrides(
+  conversation: Conversation,
+  ranges: ConversationGenerationParameterRanges,
+  overrides: Partial<Pick<Conversation, 'temperature' | 'topP' | 'topK' | 'maxTokens'>>,
+  temperature?: number
+): Conversation['generationParameterOverrides'] {
+  const overrideFlags: Conversation['generationParameterOverrides'] = {}
+  const defaultOverrides = { temperature }
+  if (Object.prototype.hasOwnProperty.call(overrides, 'temperature') && conversationGenerationParameterDiffersFromDefault('temperature', conversation.temperature, ranges, defaultOverrides)) {
+    overrideFlags.temperature = true
+  }
+  if (Object.prototype.hasOwnProperty.call(overrides, 'topP') && conversationGenerationParameterDiffersFromDefault('topP', conversation.topP, ranges, defaultOverrides)) {
+    overrideFlags.topP = true
+  }
+  if (Object.prototype.hasOwnProperty.call(overrides, 'topK') && conversationGenerationParameterDiffersFromDefault('topK', conversation.topK, ranges, defaultOverrides)) {
+    overrideFlags.topK = true
+  }
+  if (Object.prototype.hasOwnProperty.call(overrides, 'maxTokens') && conversationGenerationParameterDiffersFromDefault('maxTokens', conversation.maxTokens, ranges, defaultOverrides)) {
+    overrideFlags.maxTokens = true
+  }
+  return Object.keys(overrideFlags).length ? overrideFlags : undefined
+}
+
+function buildExplicitGenerationParameterOverridePatch(
+  overrides: Conversation['generationParameterOverrides']
+): NonNullable<Conversation['generationParameterOverrides']> {
+  return {
+    temperature: overrides?.temperature === true,
+    topP: overrides?.topP === true,
+    topK: overrides?.topK === true,
+    maxTokens: overrides?.maxTokens === true,
   }
 }
 
@@ -4128,6 +4440,17 @@ function ConversationHealthBanner({
     const shouldConfigureProvider = health.code === 'missing_key' || health.code === 'disabled_provider'
     const primaryAction = shouldSwitchProvider ? onSwitch : shouldConfigureProvider ? onConfigure : onTest
     const primaryGlyph: NavigationGlyph = shouldSwitchProvider ? 'settings-sliders' : shouldConfigureProvider ? 'provider-key' : 'conversation'
+    const primaryLabel = shouldSwitchProvider
+      ? t('chat.switchModel')
+      : shouldConfigureProvider
+        ? t('chat.configure')
+        : testing ? t('chat.testing') : t('chat.testCurrentModel')
+    const actionForeground = colors.ui.control.dangerForeground
+    const bannerSurface = colors.ui.cartoon
+      ? healthTone.background
+      : isGlass
+        ? colors.ui.semantic.surface.overlay
+        : colors.ui.semantic.surface.base
     return (
       <MotiView
         from={{ opacity: 0, translateY: -6, scale: 0.98 }}
@@ -4142,31 +4465,39 @@ function ConversationHealthBanner({
           accessibilityLabel={health.title}
           accessibilityHint={health.description}
           style={{
-            minHeight: 42,
-            borderRadius: colors.ui.radius.card,
-            paddingHorizontal: 10,
-            paddingVertical: 8,
+            minHeight: 50,
+            borderRadius: colors.ui.radius.controlLarge,
+            paddingHorizontal: 11,
+            paddingVertical: 9,
             flexDirection: 'row',
             alignItems: 'center',
-            gap: 9,
-            backgroundColor: resolveChatChromeSurface(colors, isGlass, 'toolbar'),
-            borderWidth: subtleBorderWidth,
+            gap: 10,
+            backgroundColor: bannerSurface,
+            borderWidth: 1,
             borderColor,
+            shadowColor: colors.shadowTint,
+            shadowOpacity: colors.ui.cartoon ? 0.08 : 0.06,
+            shadowRadius: 8,
+            shadowOffset: { width: 0, height: 2 },
+            elevation: 2,
           }}
         >
-          <View style={{ width: 24, height: 24, borderRadius: colors.ui.radius.controlSmall, alignItems: 'center', justifyContent: 'center', backgroundColor: healthTone.background }}>
-            <AppIcon name="warning" color={healthTone.foreground} size={14} />
+          <View style={{ width: 30, height: 30, borderRadius: colors.ui.radius.controlSmall, alignItems: 'center', justifyContent: 'center', backgroundColor: healthTone.background }}>
+            <AppIcon name="warning" color={healthTone.foreground} size={16} />
           </View>
           <View style={{ flex: 1, minWidth: 0 }}>
-            <Text numberOfLines={1} style={{ color: colors.text, fontSize: 11.5, lineHeight: 15, fontWeight: '900', includeFontPadding: false }}>
+            <Text numberOfLines={1} style={{ color: colors.text, fontSize: 12.5, lineHeight: 16, fontWeight: '900', includeFontPadding: false }}>
               {health.title}
             </Text>
-            <Text numberOfLines={2} style={{ color: colors.textSecondary, fontSize: 10, lineHeight: 13, fontWeight: '700', marginTop: 2, includeFontPadding: false }}>
+            <Text numberOfLines={2} style={{ color: colors.textSecondary, fontSize: 10.5, lineHeight: 14, fontWeight: '800', marginTop: 2, includeFontPadding: false }}>
               {health.description}
             </Text>
           </View>
-          <View style={{ width: 26, height: 26, borderRadius: colors.ui.radius.controlSmall, alignItems: 'center', justifyContent: 'center', backgroundColor: resolveChatControlSurface(colors, isGlass, false, 'activeAccent') }}>
-            <AnimatedNavigationIcon glyph={primaryGlyph} active={false} color={colors.textSecondary} size={14} />
+          <View style={{ minHeight: 30, borderRadius: colors.ui.radius.controlSmall, paddingHorizontal: 9, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 5, backgroundColor: healthTone.foreground }}>
+            <AnimatedNavigationIcon glyph={primaryGlyph} active={false} color={actionForeground} size={13} />
+            <Text numberOfLines={1} style={{ maxWidth: 74, color: actionForeground, fontSize: 10.5, lineHeight: 13, fontWeight: '900', includeFontPadding: false }}>
+              {primaryLabel}
+            </Text>
           </View>
         </IslePressable>
       </MotiView>

@@ -9,6 +9,7 @@ import { IsleChip } from '@/components/ui/isle'
 import { useAppTheme } from '@/hooks/useAppTheme'
 import { listMcpServers, refreshMcpManifest, saveMcpServers, upsertMcpServer } from '@/services/mcp'
 import { normalizeMcpServerUrl } from '@/services/mcpUrlPolicy'
+import { createPluginManifestFromMcpServer, validatePluginManifest } from '@/services/pluginManifest'
 import type { McpPromptManifest, McpResourceManifest, McpServerConfig, McpToolManifest } from '@/types'
 
 const DEFAULT_TTL_MS = 6 * 60 * 60 * 1000
@@ -166,6 +167,17 @@ function ServerCard({
     title: resource.name ?? resource.uri,
     description: formatResourceDescription(resource),
   }))
+  const pluginManifest = createPluginManifestFromMcpServer(server)
+  const pluginValidation = validatePluginManifest(pluginManifest)
+  const pluginPermission = pluginManifest.mcp[0]?.permission ?? pluginManifest.permissions[0] ?? 'read-only'
+  const pluginCapabilities = pluginManifest.requiredCapabilities.length ? pluginManifest.requiredCapabilities.join(', ') : t('common.none')
+  const pluginPreview = t('mcp.pluginManifestPreview', {
+    state: t(`mcp.pluginManifestReviewState.${pluginManifest.review.state}`),
+    permission: pluginPermission,
+    capabilities: pluginCapabilities,
+    errors: pluginValidation.errors.length,
+    warnings: pluginValidation.warnings.length,
+  })
   const promptItems = server.prompts.map((prompt) => ({
     key: prompt.name,
     title: prompt.name,
@@ -199,6 +211,10 @@ function ServerCard({
         description={[server.url, t('mcp.refreshSummary', { tools: server.tools.length, resources: server.resources.length, prompts: server.prompts.length })].join('\n')}
         leading={<IsleChip active={server.status === 'connected'}>{t(`mcp.status.${server.status}`)}</IsleChip>}
       />
+      <View style={{ borderRadius: colors.ui.radius.controlMiddle, padding: 9, gap: 4, backgroundColor: colors.ui.glass ? colors.ui.actionBar.itemBackground : colors.ui.semantic.surface.muted, borderWidth: subtleBorderWidth, borderColor: pluginValidation.ok ? colors.ui.semantic.chrome.border : colors.ui.tone.warning.border }}>
+        <Text style={{ color: colors.textSecondary, fontSize: 10, lineHeight: 13, fontWeight: '900', includeFontPadding: false }}>{t('mcp.pluginManifest')}</Text>
+        <Text style={{ color: pluginValidation.ok ? colors.textTertiary : colors.ui.tone.warning.foreground, fontSize: 11, lineHeight: 16, fontWeight: '800', includeFontPadding: false }}>{pluginPreview}</Text>
+      </View>
       {actions}
       <View style={{ gap: 8 }}>
         <Text style={{ color: colors.textSecondary, fontSize: 11, fontWeight: '900', letterSpacing: 0.3 }}>{t('mcp.toolsTitle', { count: server.tools.length })}</Text>

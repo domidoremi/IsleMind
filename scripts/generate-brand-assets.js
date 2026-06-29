@@ -162,7 +162,6 @@ function renderAndroidResources() {
 renderImage(appIconPinkSource, path.join(assetsDir, 'icon.png'), 1024)
 renderImage(appIconBlueSource, path.join(assetsDir, 'adaptive-icon.png'), 1024)
 renderImage(appIconBlueSource, path.join(assetsDir, 'adaptive-foreground.png'), 1024)
-renderTransparentPet(path.join(assetsDir, 'splash-icon.png'), 1024, 760)
 renderImage(appIconPinkSource, path.join(assetsDir, 'favicon.png'), 48)
 renderTransparentPet(path.join(generatedDir, 'isle-pet-icon-transparent.png'), 1024, 820)
 writeIconBackgroundResources()

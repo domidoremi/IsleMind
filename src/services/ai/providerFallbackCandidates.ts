@@ -10,6 +10,8 @@ import {
 } from '@/services/ai/providerCompatibilityContract'
 import { resolveProviderModelAlias } from '@/utils/providerModels'
 
+export const PROVIDER_FALLBACK_CANDIDATE_BUILD_SCHEMA = 'islemind.provider-fallback-candidate-build.v1'
+
 export type ProviderFallbackCandidateRejectionReason =
   | 'provider_disabled'
   | 'no_candidate_models'
@@ -39,6 +41,7 @@ export interface ProviderFallbackCandidateBuildInput {
 }
 
 export interface ProviderFallbackCandidateBuildResult {
+  schema: typeof PROVIDER_FALLBACK_CANDIDATE_BUILD_SCHEMA
   candidates: ProviderFailoverCandidate[]
   rejectedCandidates: ProviderFallbackCandidateRejection[]
   evidence: {
@@ -114,6 +117,7 @@ export function buildProviderFallbackCandidates(input: ProviderFallbackCandidate
     : candidates
 
   return {
+    schema: PROVIDER_FALLBACK_CANDIDATE_BUILD_SCHEMA,
     candidates: dedupeCandidates(annotatedCandidates),
     rejectedCandidates,
     evidence: {

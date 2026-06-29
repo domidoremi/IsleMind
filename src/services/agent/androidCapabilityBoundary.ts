@@ -17,6 +17,7 @@ export type AndroidCapabilitySurface =
   | 'agent-workflow'
   | 'android-tool-registry'
   | 'mcp-orchestrated-tool-request'
+  | 'system-intent-request'
   | 'system-intent-handoff'
   | 'qa-cli-evidence'
 
@@ -26,7 +27,7 @@ export interface AndroidToolBoundary {
   permission: AgentToolPermission
   operationKind: string
   auditScope: string
-  writeGate: 'not-required' | 'visible-user-action' | 'external-system-confirmation' | 'policy-mediated'
+  writeGate: 'not-required' | 'visible-user-action' | 'external-system-confirmation' | 'system-intent-request' | 'policy-mediated'
   allowedScopes: string[]
   rejectedCapabilities: string[]
 }
@@ -56,7 +57,7 @@ export interface AndroidCapabilityBoundaryContract {
     cliRole: 'qa-and-evidence-only'
     mcpRole: 'orchestrated-tool-request-only'
     skillRole: 'user-approved-workflow-template'
-    systemIntentRole: 'visible-external-confirmation'
+    systemIntentRole: 'system intent request with visible fallback'
   }
   permissions: {
     allowedDeclaredPermissions: string[]
@@ -76,6 +77,7 @@ export interface AndroidCapabilityBoundaryContract {
 export const ANDROID_ALLOWED_DECLARED_PERMISSIONS = [
   'android.permission.REQUEST_INSTALL_PACKAGES',
   'android.permission.POST_NOTIFICATIONS',
+  'com.android.alarm.permission.SET_ALARM',
 ] as const
 
 export const ANDROID_BLOCKED_SHARED_STORAGE_PERMISSIONS = [
@@ -217,9 +219,9 @@ export const ANDROID_TOOL_BOUNDARIES: AndroidToolBoundary[] = [
     permission: 'read-write',
     operationKind: 'alarm-intent',
     auditScope: 'system-clock',
-    writeGate: 'external-system-confirmation',
-    allowedScopes: ['Android Clock create-alarm UI'],
-    rejectedCapabilities: ['exact alarm permission', 'background alarm creation'],
+    writeGate: 'system-intent-request',
+    allowedScopes: ['Android Clock alarm creation request', 'Android Clock create-alarm UI fallback'],
+    rejectedCapabilities: ['exact alarm permission', 'private alarm store writes'],
   },
   {
     toolId: 'android:calendar.open_create_event',
@@ -331,19 +333,19 @@ export const ANDROID_CAPABILITY_TASKS: AndroidCapabilityTaskBoundary[] = [
   },
   {
     id: 'alarm-system-clock',
-    title: 'Open Android Clock alarm creation UI',
+    title: 'Request Android Clock alarm creation',
     examplePrompts: ['定一个八点的闹钟，写上：该休息了'],
     workflowId: ANDROID_ALARM_WORKFLOW_ID,
-    expectedOutput: 'handoff',
+    expectedOutput: 'reply',
     permissionCeiling: 'read-write',
-    entrySurfaces: ['skill-template', 'agent-workflow', 'android-tool-registry', 'mcp-orchestrated-tool-request', 'system-intent-handoff', 'qa-cli-evidence'],
+    entrySurfaces: ['skill-template', 'agent-workflow', 'android-tool-registry', 'mcp-orchestrated-tool-request', 'system-intent-request', 'qa-cli-evidence'],
     toolIds: ['android:alarm.open_create_intent'],
-    requiredUserGates: ['system clock confirmation'],
-    externalConfirmations: ['Android Clock'],
-    allowedScopes: ['Android Clock create-alarm UI'],
-    rejectedCapabilities: ['exact alarm permission', 'background alarm creation'],
+    requiredUserGates: ['system clock confirmation when Android Clock ignores direct creation'],
+    externalConfirmations: ['Android Clock when direct creation is unsupported'],
+    allowedScopes: ['Android Clock alarm creation request', 'Android Clock create-alarm UI fallback'],
+    rejectedCapabilities: ['exact alarm permission', 'private alarm store writes'],
     auditOperationKinds: ['alarm-intent'],
-    deviceEvidenceTaskIds: ['alarm-intent-handoff'],
+    deviceEvidenceTaskIds: ['alarm-intent-create-request'],
     evidenceCommands: ['bun run test:android-device-task:evidence -- --device <serial>'],
   },
   {
@@ -389,7 +391,7 @@ export const ANDROID_CAPABILITY_BOUNDARY_CONTRACT: AndroidCapabilityBoundaryCont
     cliRole: 'qa-and-evidence-only',
     mcpRole: 'orchestrated-tool-request-only',
     skillRole: 'user-approved-workflow-template',
-    systemIntentRole: 'visible-external-confirmation',
+    systemIntentRole: 'system intent request with visible fallback',
   },
   permissions: {
     allowedDeclaredPermissions: [...ANDROID_ALLOWED_DECLARED_PERMISSIONS],

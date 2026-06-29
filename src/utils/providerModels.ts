@@ -166,11 +166,29 @@ export function resolveProviderModelAlias(provider: Pick<AIProvider, 'modelAlias
   return match?.model ?? model
 }
 
-export function getProviderDisplayModel(provider: Pick<AIProvider, 'modelAliases'> | undefined, model: string): string {
+export function getProviderDisplayModel(provider: Pick<AIProvider, 'modelAliases' | 'modelConfigs' | 'type'> | undefined, model: string): string {
   const normalized = model.trim()
   if (!normalized) return model
   const match = provider ? normalizeProviderModelAliases(provider).find((item) => item.alias.toLowerCase() === normalized.toLowerCase()) : undefined
-  return match ? `${match.alias} (${match.model})` : getModelConfig(model).name
+  if (match) return `${match.alias} (${match.model})`
+  const exactConfig = provider?.modelConfigs?.find((item) => sameProviderModelId(item.id, normalized))
+  const displayName = exactConfig?.name?.trim() || getModelConfig(model, provider?.type, provider?.modelConfigs).name
+  if (!provider?.modelConfigs?.length) return displayName
+  const normalizedDisplayName = displayName.trim().toLowerCase()
+  const duplicates = provider.modelConfigs.filter((item) =>
+    item.name?.trim().toLowerCase() === normalizedDisplayName && !sameProviderModelId(item.id, normalized)
+  )
+  return duplicates.length ? `${displayName} (${modelDisplaySuffix(normalized)})` : displayName
+}
+
+function sameProviderModelId(left: string | undefined, right: string | undefined): boolean {
+  return Boolean(left && right && left.trim().toLowerCase() === right.trim().toLowerCase())
+}
+
+function modelDisplaySuffix(model: string): string {
+  const normalized = model.trim()
+  const lastSegment = normalized.split('/').filter(Boolean).at(-1) ?? normalized
+  return lastSegment || normalized
 }
 
 export function inferModelFamily(provider: AIProvider | undefined, model: string | undefined): ModelQuickGroup {

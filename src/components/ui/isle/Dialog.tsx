@@ -236,7 +236,12 @@ export function IsleDialogProvider({ children, updateNotice }: { children: React
               style={{ backgroundColor: sheetMaterial.chrome, borderColor: sheetMaterial.border }}
               contentStyle={{ paddingHorizontal: 13, paddingVertical: 11, backgroundColor: sheetMaterial.chrome }}
             >
-              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
+              <View
+                accessible
+                accessibilityRole="alert"
+                accessibilityLabel={[toast.title, toast.message].filter(Boolean).join('. ')}
+                style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}
+              >
                 <ToneBadge tone={toast.tone ?? 'mint'} small />
                 <View style={{ flex: 1, minWidth: 0 }}>
                   <Text numberOfLines={1} style={{ color: colors.text, fontSize: 14, fontWeight: '900' }}>{toast.title}</Text>

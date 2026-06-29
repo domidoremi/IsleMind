@@ -1,5 +1,4 @@
-import { useEffect, useState } from 'react'
-import type { ReactNode } from 'react'
+import { useEffect, useRef, useState, type ReactNode } from 'react'
 import { ActivityIndicator, Platform, StyleSheet, Text, TextInput, View, useWindowDimensions } from 'react-native'
 import { MotiView } from 'moti'
 import { useTranslation } from 'react-i18next'
@@ -29,6 +28,7 @@ interface ComposerProps {
   initialDraftKey?: string | number
   initialAttachments?: Attachment[]
   restoreInitialDraftIfEmpty?: boolean
+  externalSubmitKey?: string | number
   commands?: ComposerCommand[]
   references?: CommandReference[]
   utilitiesOpen?: boolean
@@ -56,6 +56,7 @@ export function Composer({
   initialDraftKey,
   initialAttachments,
   restoreInitialDraftIfEmpty = false,
+  externalSubmitKey,
   commands = [],
   references = [],
   utilitiesOpen = false,
@@ -81,6 +82,7 @@ export function Composer({
   const [focused, setFocused] = useState(false)
   const [sending, setSending] = useState(false)
   const [consumedDraftKey, setConsumedDraftKey] = useState<string | number | undefined>(undefined)
+  const consumedExternalSubmitKey = useRef<string | number | undefined>(undefined)
   const useAudioRecorder = getAudioRecorderHook()
   const recorder = useAudioRecorder ? useAudioRecorder({ extension: '.m4a' }) : null
   const draftCharacterCount = content.length
@@ -164,6 +166,14 @@ export function Composer({
     if (hasAttachments) setAttachments(draftAttachments)
     setConsumedDraftKey(draftKey)
   }, [attachments.length, consumedDraftKey, content, initialAttachments, initialDraft, initialDraftKey, restoreInitialDraftIfEmpty])
+
+  useEffect(() => {
+    if (externalSubmitKey === undefined) return
+    if (consumedExternalSubmitKey.current === externalSubmitKey) return
+    if (!canSend) return
+    consumedExternalSubmitKey.current = externalSubmitKey
+    void submit()
+  }, [canSend, externalSubmitKey])
 
   async function addAttachment(picker: () => Promise<Attachment | null>) {
     try {

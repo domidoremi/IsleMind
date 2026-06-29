@@ -10,13 +10,22 @@ const outputPath = path.join(evidenceDir, 'memory-review-smoke-results.json')
 const fixturePath = path.join(smokeDir, 'islemind-memory-review-smoke.json')
 const remoteFixturePath = '/sdcard/Download/islemind-memory-review-smoke.json'
 const appPackageName = defaultReleaseAppPackageName
+const explicitDeviceRequested = Boolean(process.env.QA_DEVICE_SERIAL)
 const defaultDevice = process.env.QA_DEVICE_SERIAL || 'emulator-5554'
+const importJsonLabels = ['导入 JSON', 'Import JSON', 'JSON インポート']
+const importDoneLabels = ['导入完成', 'Import complete', 'インポート完了']
+const reviewImportedLabels = ['审查导入记忆', 'Review imported memories', 'インポートしたメモリを確認']
+const reviewQueueLabels = ['复核队列', 'Review queue', '確認キュー']
+const importedFilterLabels = ['导入', 'Imported', 'インポート']
+const lowConfidenceLabels = ['低置信', 'Low confidence', '低信頼度']
+const confirmPendingLabels = ['确认全部待确认记忆', 'Confirm all pending memories', '確認待ち記憶をすべて確認']
+const confirmPendingTitleLabels = ['确认 3 条待确认记忆？', 'Confirm 3 pending memories?', '3 件の確認待ち記憶を確認しますか？']
 
 function main() {
   fs.mkdirSync(smokeDir, { recursive: true })
   writeFixture()
 
-  const device = resolveDevice(defaultDevice)
+  const device = resolveDevice(defaultDevice, { strict: explicitDeviceRequested })
   const result = {
     generatedAt: new Date().toISOString(),
     device,
@@ -63,22 +72,22 @@ function main() {
     tapFileInDocumentsUi(device, result)
     sleep(1800)
     const importDialog = captureStep(device, result, 'import-confirm')
-    result.importDialogShown = hasAnyText(importDialog.uiaText, ['导入完成', '审查导入记忆'])
+    result.importDialogShown = hasAnyText(importDialog.uiaText, [...importDoneLabels, ...reviewImportedLabels])
     result.importDialogPng = importDialog.png
     result.importDialogUia = importDialog.uia
     if (!result.importDialogShown) throw new Error('Import completion dialog was not visible after selecting the fixture.')
 
-    result.reviewNowTapped = tapText(device, importDialog.uiaText, ['审查导入记忆'])
+    result.reviewNowTapped = tapText(device, importDialog.uiaText, reviewImportedLabels)
     if (!result.reviewNowTapped) throw new Error('Could not tap the review-imported-memories action.')
     sleep(2500)
 
     const review = captureStep(device, result, 'review-imported')
     result.reviewPng = review.png
     result.reviewUia = review.uia
-    result.reviewRouteShown = hasAnyText(review.uiaText, ['记忆'])
-    result.reviewQueueVisible = hasAnyText(review.uiaText, ['复核队列', '待审记忆质量'])
-    result.importedFilterVisible = /导入\s+\d/.test(review.uiaText) || hasAnyText(review.uiaText, ['导入'])
-    result.lowConfidenceFilterVisible = /低置信\s+\d/.test(review.uiaText) || hasAnyText(review.uiaText, ['低置信'])
+    result.reviewRouteShown = hasAnyText(review.uiaText, ['记忆', 'Memory', 'メモリ'])
+    result.reviewQueueVisible = hasAnyText(review.uiaText, [...reviewQueueLabels, '待审记忆质量'])
+    result.importedFilterVisible = /导入\s+\d/.test(review.uiaText) || /Imported\s+\d/.test(review.uiaText) || /インポート\s+\d/.test(review.uiaText) || hasAnyText(review.uiaText, importedFilterLabels)
+    result.lowConfidenceFilterVisible = /低置信\s+\d/.test(review.uiaText) || /Low confidence\s+\d/.test(review.uiaText) || /低信頼度\s+\d/.test(review.uiaText) || hasAnyText(review.uiaText, lowConfidenceLabels)
     result.pendingImportedMemoryVisible = hasAnyText(review.uiaText, ['MEM0_REVIEW_IMPORTED_HIGH', 'MEM0_REVIEW_IMPORTED_LOW'])
     if (!result.pendingImportedMemoryVisible) {
       for (let index = 0; index < 3; index += 1) {
@@ -97,7 +106,7 @@ function main() {
       throw new Error('Imported pending memories were not visible in the review queue.')
     }
 
-    if (tapText(device, review.uiaText, ['低置信'])) {
+    if (tapText(device, review.uiaText, lowConfidenceLabels)) {
       sleep(900)
       const lowConfidence = captureStep(device, result, 'review-low-confidence')
       result.lowConfidencePng = lowConfidence.png
@@ -105,16 +114,16 @@ function main() {
       result.lowConfidenceMemoryVisible = hasAnyText(lowConfidence.uiaText, ['MEM0_REVIEW_IMPORTED_LOW', 'MEM0_REVIEW_MODEL_LOW'])
     }
 
-    result.confirmAllTapped = tapTextFromLatest(device, result, ['确认全部待确认记忆'])
+    result.confirmAllTapped = tapTextFromLatest(device, result, confirmPendingLabels)
     if (!result.confirmAllTapped) throw new Error('Could not tap the confirm-all pending memories action.')
     sleep(700)
     const confirmDialog = captureStep(device, result, 'confirm-pending-dialog')
     result.confirmDialogPng = confirmDialog.png
     result.confirmDialogUia = confirmDialog.uia
-    result.confirmDialogShown = hasAnyText(confirmDialog.uiaText, ['确认 3 条待确认记忆？', '确认全部待确认记忆'])
+    result.confirmDialogShown = hasAnyText(confirmDialog.uiaText, [...confirmPendingTitleLabels, ...confirmPendingLabels])
     if (!result.confirmDialogShown) throw new Error('Confirm pending memories dialog was not visible.')
 
-    result.confirmDialogAccepted = tapText(device, confirmDialog.uiaText, ['确认全部待确认记忆'])
+    result.confirmDialogAccepted = tapText(device, confirmDialog.uiaText, confirmPendingLabels)
     if (!result.confirmDialogAccepted) throw new Error('Could not accept the confirm pending memories dialog.')
     sleep(1800)
     const afterConfirm = captureStep(device, result, 'after-confirm-pending')
@@ -193,7 +202,7 @@ function writeFixture() {
   fs.writeFileSync(fixturePath, `${JSON.stringify(fixture, null, 2)}\n`, 'utf8')
 }
 
-function resolveDevice(requested) {
+function resolveDevice(requested, options = {}) {
   const output = runCommand('adb', ['devices']) ?? ''
   const serials = output
     .split(/\r?\n/)
@@ -201,6 +210,7 @@ function resolveDevice(requested) {
     .filter(([serial, state]) => serial && state === 'device')
     .map(([serial]) => serial)
   if (serials.includes(requested)) return requested
+  if (options.strict) return null
   return serials[0] ?? null
 }
 
@@ -218,7 +228,7 @@ function openSettings(device) {
 function tapImportJson(device, result) {
   for (let index = 0; index < 8; index += 1) {
     const capture = captureStep(device, result, `settings-import-search-${index}`)
-    if (tapText(device, capture.uiaText, ['导入 JSON'])) {
+    if (tapText(device, capture.uiaText, importJsonLabels)) {
       sleep(1400)
       return
     }
@@ -229,11 +239,19 @@ function tapImportJson(device, result) {
 }
 
 function tapFileInDocumentsUi(device, result) {
-  for (let index = 0; index < 5; index += 1) {
+  const fileName = 'islemind-memory-review-smoke.json'
+  let searched = false
+  for (let index = 0; index < 8; index += 1) {
     const capture = captureStep(device, result, `file-picker-search-${index}`)
-    if (tapFileTitle(device, capture.uiaText, 'islemind-memory-review-smoke.json')) {
+    if (hasAnyText(capture.uiaText, importDoneLabels)) return
+    if (tapFileTitle(device, capture.uiaText, fileName)) {
       sleep(1800)
       return
+    }
+    if (!searched && searchDocumentsUi(device, capture.uiaText, fileName)) {
+      searched = true
+      sleep(1100)
+      continue
     }
     swipeUp(device)
     sleep(350)
@@ -241,10 +259,39 @@ function tapFileInDocumentsUi(device, result) {
   throw new Error('Could not find the mem0 fixture in Android DocumentsUI.')
 }
 
+function searchDocumentsUi(device, uiaText, fileName) {
+  if (!tapText(device, uiaText, ['搜索', 'Search', '検索'])) return false
+  sleep(500)
+  runCommand('adb', ['-s', device, 'shell', 'input', 'text', fileName])
+  return true
+}
+
 function tapFileTitle(device, uiaText, fileName) {
-  const node = parseNodes(uiaText).find((item) => item.enabled && item.text === fileName)
-  if (!node) return false
-  tapBoundsCenter(device, node.bounds)
+  const nodes = parseNodes(uiaText)
+  const titleNodes = nodes
+    .filter((item) => item.enabled && item.text === fileName)
+    .map((item) => ({ item, bounds: parseBounds(item.bounds) }))
+    .filter(({ bounds }) => bounds && bounds.top > 300)
+    .sort((a, b) => a.bounds.top - b.bounds.top)
+  for (const { item: titleNode, bounds: titleBounds } of titleNodes) {
+    const card = nodes
+      .map((item) => ({ item, bounds: parseBounds(item.bounds) }))
+      .filter(({ item, bounds }) => item.enabled && item.clickable && bounds && boundsContains(bounds, titleBounds))
+      .sort((a, b) => boundsArea(a.bounds) - boundsArea(b.bounds))[0]
+    if (card?.bounds) {
+      const x = Math.round(card.bounds.left + (card.bounds.right - card.bounds.left) * 0.35)
+      const y = Math.round(card.bounds.top + (card.bounds.bottom - card.bounds.top) * 0.55)
+      runCommand('adb', ['-s', device, 'shell', 'input', 'tap', String(x), String(y)])
+      return true
+    }
+    tapBoundsCenter(device, titleNode.bounds)
+    return true
+  }
+  const previewNode = nodes.find((item) => item.enabled && item.clickable && item.contentDesc.includes(fileName))
+  if (!previewNode) return false
+  const box = parseBounds(previewNode.bounds)
+  if (!box) return false
+  runCommand('adb', ['-s', device, 'shell', 'input', 'tap', String(Math.max(1, box.left - 80)), String(Math.round((box.top + box.bottom) / 2))])
   return true
 }
 
@@ -327,12 +374,26 @@ function textMatches(node, label) {
 }
 
 function tapBoundsCenter(device, bounds) {
-  const match = bounds.match(/\[(\-?\d+),(\-?\d+)\]\[(\-?\d+),(\-?\d+)\]/)
-  if (!match) return
-  const [, left, top, right, bottom] = match.map(Number)
-  const x = Math.round((left + right) / 2)
-  const y = Math.round((top + bottom) / 2)
+  const box = parseBounds(bounds)
+  if (!box) return
+  const x = Math.round((box.left + box.right) / 2)
+  const y = Math.round((box.top + box.bottom) / 2)
   runCommand('adb', ['-s', device, 'shell', 'input', 'tap', String(x), String(y)])
+}
+
+function parseBounds(bounds) {
+  const match = String(bounds ?? '').match(/\[(\-?\d+),(\-?\d+)\]\[(\-?\d+),(\-?\d+)\]/)
+  if (!match) return null
+  const [, left, top, right, bottom] = match.map(Number)
+  return { left, top, right, bottom }
+}
+
+function boundsContains(outer, inner) {
+  return outer.left <= inner.left && outer.top <= inner.top && outer.right >= inner.right && outer.bottom >= inner.bottom
+}
+
+function boundsArea(bounds) {
+  return Math.max(0, bounds.right - bounds.left) * Math.max(0, bounds.bottom - bounds.top)
 }
 
 function swipeUp(device) {

@@ -13,6 +13,7 @@ import { IsleField, IsleListItem, IsleSection } from '@/components/ui/isle'
 import { IsleChip } from '@/components/ui/isle'
 import { useAppTheme } from '@/hooks/useAppTheme'
 import { createBaseSkill, deleteSkill, exportSkill, importSkill, listSkills, upsertSkill } from '@/services/skills'
+import { clampProviderPlatformOutputTokens, clampProviderPlatformTemperature } from '@/services/ai/providerParameterDefaults'
 import { deleteTemporaryImportCopy, isFileTooLargeError, MAX_IMPORT_TEXT_FILE_BYTES, readUtf8ImportFile } from '@/services/fileImportGuards'
 import { listAndroidBuiltInWorkflowDefinitions } from '@/services/agent/agentAndroidWorkflows'
 import { listStaticAgentToolManifests } from '@/services/agent/agentToolRegistry'
@@ -31,12 +32,14 @@ import {
   saveApprovedAgentWorkflowSkillState,
   saveApprovedAgentWorkflowSkillSuggestion,
 } from '@/services/agent/agentWorkflowSkills'
+import { createPluginManifestFromWorkflowSkill, validatePluginManifest } from '@/services/pluginManifest'
 import type { AgentWorkflowDefinition } from '@/services/agent/agentToolTypes'
 import type { SkillDefinition, SkillLayer, SkillStackPolicy } from '@/types'
 
 const SKILL_LAYERS: SkillLayer[] = ['base', 'advanced', 'adaptive']
 const STACK_POLICIES: SkillStackPolicy[] = ['append', 'override']
 const AGENT_WORKFLOW_SETTINGS_FOCUS_TEXT_LIMIT = 96
+const PLUGIN_MANIFEST_SETTINGS_FOCUS_TEXT_LIMIT = 160
 
 export interface AgentWorkflowSettingsFocus {
   focus: 'agent-workflow'
@@ -46,7 +49,25 @@ export interface AgentWorkflowSettingsFocus {
   workflowExpectedOutput?: string
 }
 
-export function SkillSettingsContent({ workflowFocus }: { workflowFocus?: AgentWorkflowSettingsFocus } = {}) {
+export interface PluginManifestSettingsFocus {
+  focus: 'plugin-manifest'
+  source?: 'runtime-repair'
+  action?: string
+  target?: string
+  event?: string
+  issueCodes?: string[]
+  summary?: string
+  latestEventId?: string
+  sourceEventIds?: string[]
+  eventCount?: number
+}
+
+interface SkillSettingsContentProps {
+  workflowFocus?: AgentWorkflowSettingsFocus
+  pluginManifestFocus?: PluginManifestSettingsFocus
+}
+
+export function SkillSettingsContent({ workflowFocus, pluginManifestFocus }: SkillSettingsContentProps = {}) {
   const { colors } = useAppTheme()
   const { t } = useTranslation()
   const dialog = useIsleDialog()
@@ -78,6 +99,18 @@ export function SkillSettingsContent({ workflowFocus }: { workflowFocus?: AgentW
   const agentWorkflowSkills = useMemo(() => sortedSkills.filter(isAgentWorkflowSkill), [sortedSkills])
   const regularSkills = useMemo(() => sortedSkills.filter((skill) => !isAgentWorkflowSkill(skill)), [sortedSkills])
   const safeWorkflowFocus = useMemo(() => sanitizeAgentWorkflowSettingsFocus(workflowFocus), [workflowFocus?.focus, workflowFocus?.reason, workflowFocus?.workflowId, workflowFocus?.workflowName, workflowFocus?.workflowExpectedOutput])
+  const safePluginManifestFocus = useMemo(() => sanitizePluginManifestSettingsFocus(pluginManifestFocus), [
+    pluginManifestFocus?.focus,
+    pluginManifestFocus?.source,
+    pluginManifestFocus?.action,
+    pluginManifestFocus?.target,
+    pluginManifestFocus?.event,
+    pluginManifestFocus?.issueCodes?.join(','),
+    pluginManifestFocus?.summary,
+    pluginManifestFocus?.latestEventId,
+    pluginManifestFocus?.sourceEventIds?.join(','),
+    pluginManifestFocus?.eventCount,
+  ])
   const focusedAgentWorkflowSkill = useMemo(() => safeWorkflowFocus
     ? findAgentWorkflowFocusSkill(agentWorkflowSkills, safeWorkflowFocus)
     : undefined, [agentWorkflowSkills, safeWorkflowFocus])
@@ -93,6 +126,14 @@ export function SkillSettingsContent({ workflowFocus }: { workflowFocus?: AgentW
       ? t('skills.agentWorkflowRecoveryTarget')
       : t('skills.agentWorkflowRecoveryTargetMissing')
   }, [focusedAgentWorkflowSkill, safeWorkflowFocus, t])
+  const pluginManifestFocusMeta = useMemo(() => safePluginManifestFocus
+    ? formatPluginManifestFocusMeta(safePluginManifestFocus, t)
+    : '', [safePluginManifestFocus, t])
+  const pluginManifestFocusEvents = useMemo(() => safePluginManifestFocus
+    ? formatPluginManifestFocusEvents(safePluginManifestFocus, t)
+    : '', [safePluginManifestFocus, t])
+  const pluginManifestFocusIssueCodes = safePluginManifestFocus?.issueCodes ?? []
+  const pluginManifestFocusCritical = pluginManifestFocusIssueCodes.includes('plugin_hook_executable')
   const workflowTemplates = useMemo(() => listAndroidBuiltInWorkflowDefinitions({ now: 0 }), [])
   const installedWorkflowIds = useMemo(() => new Set(agentWorkflowSkills
     .map((skill) => extractAgentWorkflowIdFromSkill(skill))
@@ -133,8 +174,8 @@ export function SkillSettingsContent({ workflowFocus }: { workflowFocus?: AgentW
       priority: nextPriority,
       providerId: optionalText(providerId),
       model: optionalText(model),
-      temperature: parseBoundedNumber(temperature, 0, 2),
-      maxTokens: parseBoundedNumber(maxTokens, 128, 128000),
+      temperature: parseClampedNumber(temperature, clampProviderPlatformTemperature),
+      maxTokens: parseClampedNumber(maxTokens, clampProviderPlatformOutputTokens),
       enabledTools: parseList(enabledTools),
       knowledgeSources: parseList(knowledgeSources),
       firstUserMessage: optionalText(firstUserMessage),
@@ -193,9 +234,12 @@ export function SkillSettingsContent({ workflowFocus }: { workflowFocus?: AgentW
     await upsertSkill(result.skill)
     await refresh()
     const workflowReviewRequired = isAgentWorkflowSkillReviewRequired(result.skill)
+    const pluginReviewSummary = workflowReviewRequired ? buildPluginManifestImportReviewSummary(result.skill, t) : ''
     dialog.toast({
       title: t(workflowReviewRequired ? 'skills.workflowImportedReviewRequired' : 'skills.imported'),
-      message: workflowReviewRequired ? t('skills.workflowImportedReviewRequiredMessage', { name: result.skill.name }) : result.skill.name,
+      message: workflowReviewRequired
+        ? [t('skills.workflowImportedReviewRequiredMessage', { name: result.skill.name }), pluginReviewSummary].filter(Boolean).join('\n')
+        : result.skill.name,
       tone: workflowReviewRequired ? 'amber' : 'mint',
     })
   }
@@ -457,6 +501,47 @@ export function SkillSettingsContent({ workflowFocus }: { workflowFocus?: AgentW
 
       <IsleSection title={`${t('skills.agentWorkflows')} ${agentWorkflowSkills.length}`} subtitle={t('skills.agentWorkflowsSubtitle')} action={<AppIcon name="workflow" color={colors.textSecondary} size={18} />}>
         <View style={{ gap: 8 }}>
+          {safePluginManifestFocus ? (
+            <View style={{
+              borderRadius: colors.ui.radius.card,
+              borderWidth: subtleBorderWidth,
+              borderColor: pluginManifestFocusCritical ? colors.ui.tone.danger.border : colors.ui.tone.warning.border,
+              backgroundColor: pluginManifestFocusCritical ? colors.ui.tone.danger.background : colors.ui.tone.warning.background,
+              padding: 10,
+              gap: 6,
+            }}>
+              <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 6, alignItems: 'center' }}>
+                <IsleChip active tone={pluginManifestFocusCritical ? 'danger' : 'amber'} style={{ alignSelf: 'flex-start' }}>
+                  {t('skills.pluginManifestRepairTarget')}
+                </IsleChip>
+                {safePluginManifestFocus.source ? (
+                  <IsleChip active tone="amber" style={{ alignSelf: 'flex-start' }}>
+                    {t('skills.pluginManifestRepairSource')}
+                  </IsleChip>
+                ) : null}
+              </View>
+              {pluginManifestFocusMeta ? (
+                <Text style={{ color: pluginManifestFocusCritical ? colors.ui.tone.danger.foreground : colors.ui.tone.warning.foreground, fontSize: 12, lineHeight: 17, fontWeight: '800' }}>
+                  {t('skills.pluginManifestRepairMeta', { meta: pluginManifestFocusMeta })}
+                </Text>
+              ) : null}
+              {pluginManifestFocusIssueCodes.length ? (
+                <Text style={{ color: pluginManifestFocusCritical ? colors.ui.tone.danger.foreground : colors.ui.tone.warning.foreground, fontSize: 12, lineHeight: 17, fontWeight: '800' }}>
+                  {t('skills.pluginManifestRepairIssues', { issueCodes: pluginManifestFocusIssueCodes.join(', ') })}
+                </Text>
+              ) : null}
+              {safePluginManifestFocus.summary ? (
+                <Text style={{ color: pluginManifestFocusCritical ? colors.ui.tone.danger.foreground : colors.ui.tone.warning.foreground, fontSize: 12, lineHeight: 17, fontWeight: '800' }}>
+                  {t('skills.pluginManifestRepairSummary', { summary: safePluginManifestFocus.summary })}
+                </Text>
+              ) : null}
+              {pluginManifestFocusEvents ? (
+                <Text style={{ color: pluginManifestFocusCritical ? colors.ui.tone.danger.foreground : colors.ui.tone.warning.foreground, fontSize: 11, lineHeight: 16, fontWeight: '800' }}>
+                  {t('skills.pluginManifestRepairEvents', { events: pluginManifestFocusEvents })}
+                </Text>
+              ) : null}
+            </View>
+          ) : null}
           {safeWorkflowFocus ? (
             <View style={{
               borderRadius: colors.ui.radius.card,
@@ -571,6 +656,34 @@ function sanitizeAgentWorkflowSettingsFocus(value: AgentWorkflowSettingsFocus | 
   }
 }
 
+function sanitizePluginManifestSettingsFocus(value: PluginManifestSettingsFocus | undefined): PluginManifestSettingsFocus | undefined {
+  if (value?.focus !== 'plugin-manifest') return undefined
+  const source = value.source === 'runtime-repair' ? value.source : undefined
+  const action = safePluginManifestFocusText(value.action, 96)
+  const target = safePluginManifestFocusText(value.target, 96)
+  const event = safePluginManifestFocusText(value.event, 120)
+  const issueCodes = safePluginManifestFocusList(value.issueCodes, 96)
+  const summary = safePluginManifestFocusText(value.summary, 240)
+  const latestEventId = safePluginManifestFocusText(value.latestEventId, 160)
+  const sourceEventIds = safePluginManifestFocusList(value.sourceEventIds, 160)
+  const eventCount = typeof value.eventCount === 'number' && Number.isFinite(value.eventCount) && value.eventCount > 0
+    ? Math.min(Math.floor(value.eventCount), 999)
+    : undefined
+  if (!source && !action && !target && !event && !issueCodes.length && !summary && !latestEventId && !sourceEventIds.length && !eventCount) return undefined
+  return {
+    focus: 'plugin-manifest',
+    ...(source ? { source } : {}),
+    ...(action ? { action } : {}),
+    ...(target ? { target } : {}),
+    ...(event ? { event } : {}),
+    ...(issueCodes.length ? { issueCodes } : {}),
+    ...(summary ? { summary } : {}),
+    ...(latestEventId ? { latestEventId } : {}),
+    ...(sourceEventIds.length ? { sourceEventIds } : {}),
+    ...(eventCount ? { eventCount } : {}),
+  }
+}
+
 function findAgentWorkflowFocusSkill(skills: SkillDefinition[], focus: AgentWorkflowSettingsFocus): SkillDefinition | undefined {
   if (isMatchableWorkflowFocusText(focus.workflowId)) {
     const byWorkflowId = skills.find((skill) => extractAgentWorkflowIdFromSkill(skill) === focus.workflowId)
@@ -595,9 +708,43 @@ function formatAgentWorkflowFocusContext(focus: AgentWorkflowSettingsFocus, t: T
   ].filter(Boolean).join(' · ')
 }
 
+function formatPluginManifestFocusMeta(focus: PluginManifestSettingsFocus, t: TFunction): string {
+  const action = focus.action
+    ? translateRuntimeSettingsLabel(t, `settings.runtimeDiagnosticTimelineNextAction.${focus.action}`, focus.action)
+    : ''
+  const target = focus.target
+    ? translateRuntimeSettingsLabel(t, `settings.runtimeDiagnosticTimelineActionTarget.${focus.target}`, focus.target)
+    : ''
+  return [action, target, focus.event].filter(Boolean).join(' · ')
+}
+
+function formatPluginManifestFocusEvents(focus: PluginManifestSettingsFocus, t: TFunction): string {
+  const sourceEventIds = focus.sourceEventIds?.length ? focus.sourceEventIds.join(', ') : ''
+  return [
+    focus.latestEventId ? t('skills.pluginManifestRepairLatestEvent', { eventId: focus.latestEventId }) : '',
+    focus.eventCount ? t('skills.pluginManifestRepairEventCount', { count: focus.eventCount }) : '',
+    sourceEventIds ? t('skills.pluginManifestRepairSourceEvents', { eventIds: sourceEventIds }) : '',
+  ].filter(Boolean).join(' · ')
+}
+
+function translateRuntimeSettingsLabel(t: TFunction, key: string, fallback: string): string {
+  const label = t(key)
+  return label === key ? fallback : label
+}
+
 function safeWorkflowFocusText(value: unknown): string {
   if (typeof value !== 'string' || !value.trim()) return ''
   return clampAgentOutput(redactSensitiveText(value.trim()), AGENT_WORKFLOW_SETTINGS_FOCUS_TEXT_LIMIT).replace(/\s+/g, ' ')
+}
+
+function safePluginManifestFocusText(value: unknown, limit = PLUGIN_MANIFEST_SETTINGS_FOCUS_TEXT_LIMIT): string {
+  if (typeof value !== 'string' || !value.trim()) return ''
+  return clampAgentOutput(redactSensitiveText(value.trim()), limit).replace(/\s+/g, ' ')
+}
+
+function safePluginManifestFocusList(values: unknown, limit: number): string[] {
+  if (!Array.isArray(values)) return []
+  return values.map((value) => safePluginManifestFocusText(value, limit)).filter(Boolean).slice(0, 8)
 }
 
 function optionalText(value: string): string | undefined {
@@ -616,6 +763,14 @@ function parseBoundedNumber(value: string, min: number, max: number): number | u
   const parsed = Number(text)
   if (!Number.isFinite(parsed)) return undefined
   return Math.max(min, Math.min(max, parsed))
+}
+
+function parseClampedNumber(value: string, clamp: (value: number) => number): number | undefined {
+  const text = value.trim()
+  if (!text) return undefined
+  const parsed = Number(text)
+  if (!Number.isFinite(parsed)) return undefined
+  return clamp(parsed)
 }
 
 function parseVariablesJson(value: string): SkillDefinition['variables'] | null | undefined {
@@ -647,6 +802,19 @@ function buildAgentWorkflowVisibleDefinition(skill: SkillDefinition, t: TFunctio
     : ''
   const ragProfileSummary = buildWorkflowRagProfileSummary(collectWorkflowRagProfileRequirements(workflow), t)
   return [summary, ragProfileSummary, acceptance, skill.description].filter(Boolean).join(' · ')
+}
+
+function buildPluginManifestImportReviewSummary(skill: SkillDefinition, t: TFunction): string {
+  const manifest = createPluginManifestFromWorkflowSkill(skill)
+  const validation = validatePluginManifest(manifest)
+  const skillEntry = manifest.skills[0]
+  return t('skills.pluginManifestImportReview', {
+    state: t(`skills.pluginManifestReviewState.${manifest.review.state}`),
+    permission: skillEntry?.permission ?? manifest.permissions[0] ?? 'read-only',
+    capabilities: manifest.requiredCapabilities.length ? manifest.requiredCapabilities.join(', ') : t('common.none'),
+    errors: validation.errors.length,
+    warnings: validation.warnings.length,
+  })
 }
 
 function buildWorkflowRagProfileSummary(requirements: string[], t: TFunction): string {

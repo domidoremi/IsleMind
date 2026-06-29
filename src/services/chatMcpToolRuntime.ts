@@ -8,6 +8,8 @@ import { st } from '@/i18n/service'
 import { callMcpTool, truncateToolBlocks } from '@/services/mcp'
 import { parseMcpToolRequest, type McpToolRequest } from '@/services/mcpToolRequest'
 import { useSettingsStore } from '@/store/settingsStore'
+import { resolveProviderModelAlias } from '@/utils/providerModels'
+import { resolveConversationGenerationParameterRequest } from '@/services/ai/conversationGenerationParameters'
 
 type TraceCompleter = (trace: ProcessTrace) => ProcessTrace
 type TraceIdFactory = (prefix: string) => string
@@ -154,6 +156,14 @@ export async function generateAnswerWithMcpToolResult(
   let text = ''
   let usage: ChatCompletionResult['usage']
   let failure: Error | null = null
+  const settings = useSettingsStore.getState().settings
+  const requestParameters = resolveConversationGenerationParameterRequest({
+    provider: input.provider,
+    conversation: input.conversation,
+    settings,
+    model: resolveProviderModelAlias(input.provider, input.conversation.model),
+    temperatureCap: 0.4,
+  })
   const handle = await streamChat(
     {
       provider: input.provider,
@@ -161,15 +171,16 @@ export async function generateAnswerWithMcpToolResult(
       systemPrompt: buildMcpToolRevisionSystemPrompt(input.systemPrompt),
       messages: buildMcpToolRevisionMessages(input),
       contextPrompt: input.baseContextPrompt,
-      temperature: Math.min(input.conversation.temperature, 0.4),
-      topP: input.conversation.topP,
+      temperature: requestParameters.temperature,
+      topP: requestParameters.topP,
+      topK: requestParameters.topK,
       reasoningEffort: input.conversation.reasoningEffort,
-      maxTokens: input.conversation.maxTokens,
+      maxTokens: requestParameters.maxTokens,
       stream: false,
       signal: input.signal,
       conversationId: input.conversation.id,
       sessionId: input.conversation.id,
-      settings: useSettingsStore.getState().settings,
+      settings,
       remoteCompactEligible: false,
     },
     (chunk) => {

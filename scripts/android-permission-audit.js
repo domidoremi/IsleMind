@@ -11,6 +11,7 @@ const capabilityBoundaryPath = path.join(root, 'src', 'services', 'agent', 'andr
 const ANDROID_ALLOWED_DECLARED_PERMISSIONS = [
   'android.permission.REQUEST_INSTALL_PACKAGES',
   'android.permission.POST_NOTIFICATIONS',
+  'com.android.alarm.permission.SET_ALARM',
 ]
 
 const ANDROID_BLOCKED_SHARED_STORAGE_PERMISSIONS = [

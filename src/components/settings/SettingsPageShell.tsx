@@ -81,6 +81,7 @@ export function SettingsPageShell({
         ref={scrollRef}
         keyboardShouldPersistTaps="handled"
         automaticallyAdjustKeyboardInsets
+        removeClippedSubviews={Platform.OS === 'android'}
         contentContainerStyle={{ paddingHorizontal: 16, paddingTop: 8, paddingBottom: 56 }}
       >
         <IsleHeader

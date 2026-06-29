@@ -7,8 +7,9 @@ import { clearHistoricalInjectedGroupModels, clearHistoricalInjectedProviderMode
 import { exportMemoriesAsMem0, importMem0Memories, type Mem0MemoryEnvelope } from '@/utils/mem0Interop'
 import { defaultProviderCredentialMode, defaultProviderTokenPlanRegion, defaultProviderWireProtocol } from '@/services/ai/providerProtocolPolicy'
 import { sanitizeAttachmentsForPersistence } from '@/services/attachmentContract'
-import { clearKnownSearchSecureKeys, deleteSecureApiKey, deleteSecureCredentialGroupKey, setSecureApiKey, setSecureCredentialGroupKey } from '@/services/ai/secureKey'
+import { clearKnownObservabilitySecureKeys, clearKnownSearchSecureKeys, deleteSecureApiKey, deleteSecureCredentialGroupKey, setSecureApiKey, setSecureCredentialGroupKey } from '@/services/ai/secureKey'
 import { clearProviderHealthSnapshot } from '@/services/ai/providerHealthStore'
+import { PROVIDER_PLATFORM_DEFAULT_TEMPERATURE } from '@/services/ai/providerParameterDefaults'
 import { clearAllCompactStates } from '@/services/ai/compact/compactStateStore'
 import { clearCompactUsageRecords } from '@/services/ai/compact/compactUsage'
 import { clearRuntimeLog } from '@/services/runtimeLog'
@@ -98,6 +99,7 @@ export async function clearAllData(): Promise<void> {
       clearRuntimeLog(),
       clearImportedProviderSecrets(providers ?? []),
       clearKnownSearchSecureKeys(),
+      clearKnownObservabilitySecureKeys(),
     ])
   } catch (error) {
     await logStorageOperationFailure({ operation: 'clear', detail: 'clearAllData', error })
@@ -150,7 +152,7 @@ export async function importAllDataDetailed(json: string): Promise<ImportAllData
       await clearRestoreRuntimeArtifacts()
       await saveData('CONVERSATIONS', data.conversations.map(normalizeConversation))
       await localDataStore.saveConversations(data.conversations.map(normalizeConversation))
-      await saveData('SETTINGS', data.settings ? sanitizeSettingsUrlFields(data.settings) : null)
+      await saveData('SETTINGS', data.settings ? sanitizeSettingsUrlFields({ ...data.settings, observabilitySinkApiKeyConfigured: false }) : null)
       if (isLanguagePreferenceSource(data.languagePreferenceSource)) await saveLanguagePreferenceSource(data.languagePreferenceSource)
       else await clearLanguagePreferenceSource()
       await persistImportedProviderSecrets(data.providers, existingProviders ?? [])
@@ -228,7 +230,7 @@ function isProviderLike(value: unknown): value is AIProvider {
 }
 
 function normalizeConversation(conversation: Conversation): Conversation {
-  return {
+  const normalized: Conversation = {
     ...conversation,
     providerModelMode: conversation.providerModelMode ?? 'inherited',
     skillIds: Array.isArray(conversation.skillIds) ? conversation.skillIds.filter((item) => typeof item === 'string') : undefined,
@@ -237,7 +239,7 @@ function normalizeConversation(conversation: Conversation): Conversation {
     knowledgeSources: Array.isArray(conversation.knowledgeSources) ? conversation.knowledgeSources.filter((item) => typeof item === 'string') : undefined,
     commandRefs: Array.isArray(conversation.commandRefs) ? conversation.commandRefs : undefined,
     systemPrompt: conversation.systemPrompt ?? '',
-    temperature: Number.isFinite(conversation.temperature) ? conversation.temperature : 0.7,
+    temperature: Number.isFinite(conversation.temperature) ? conversation.temperature : PROVIDER_PLATFORM_DEFAULT_TEMPERATURE,
     topP: Number.isFinite(conversation.topP) ? conversation.topP : 1,
     reasoningEffort: conversation.reasoningEffort ?? 'medium',
     maxTokens: Number.isFinite(conversation.maxTokens) ? conversation.maxTokens : 4096,
@@ -258,6 +260,22 @@ function normalizeConversation(conversation: Conversation): Conversation {
     createdAt: conversation.createdAt ?? Date.now(),
     updatedAt: conversation.updatedAt ?? Date.now(),
   }
+  if (Object.prototype.hasOwnProperty.call(conversation, 'generationParameterOverrides')) {
+    normalized.generationParameterOverrides = normalizeGenerationParameterOverrides(conversation.generationParameterOverrides) ?? {}
+  } else {
+    delete normalized.generationParameterOverrides
+  }
+  return normalized
+}
+
+function normalizeGenerationParameterOverrides(overrides: Conversation['generationParameterOverrides']): Conversation['generationParameterOverrides'] {
+  if (!overrides || typeof overrides !== 'object') return undefined
+  const normalized: Conversation['generationParameterOverrides'] = {}
+  if (overrides.temperature === true) normalized.temperature = true
+  if (overrides.topP === true) normalized.topP = true
+  if (overrides.topK === true) normalized.topK = true
+  if (overrides.maxTokens === true) normalized.maxTokens = true
+  return Object.keys(normalized).length ? normalized : undefined
 }
 
 function normalizeSkill(skill: SkillDefinition): SkillDefinition | null {
@@ -435,6 +453,7 @@ async function clearRestoreRuntimeArtifacts(): Promise<void> {
     clearProviderHealthSnapshot(),
     clearAllCompactStates(),
     clearKnownSearchSecureKeys(),
+    clearKnownObservabilitySecureKeys(),
     clearRuntimeLog(),
   ])
   clearCompactUsageRecords()

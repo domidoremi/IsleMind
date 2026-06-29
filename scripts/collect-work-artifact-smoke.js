@@ -1,5 +1,6 @@
 const fs = require('node:fs')
 const path = require('node:path')
+const assert = require('node:assert/strict')
 const { execFileSync } = require('node:child_process')
 const { defaultReleaseAppPackageName } = require('./release-validation-contract')
 
@@ -10,17 +11,28 @@ const outputPath = path.join(evidenceDir, 'work-artifact-smoke-results.json')
 const fixturePath = path.join(smokeDir, 'islemind-work-artifact-smoke.json')
 const remoteFixturePath = '/sdcard/Download/islemind-work-artifact-smoke.json'
 const appPackageName = defaultReleaseAppPackageName
+const explicitDeviceRequested = Boolean(process.env.QA_DEVICE_SERIAL)
 const defaultDevice = process.env.QA_DEVICE_SERIAL || 'emulator-5554'
 const conversationId = 'qa-work-artifact-fixture'
 const assistantToken = 'QA_WORK_ARTIFACT_RESPONSE_TOKEN'
 const continuationPromptPrefix = '从这个工作产物继续，并执行主要下一步'
 const continuationPromptStep = '捕获工作产物复制与继续提示运行证据'
+const importJsonLabels = ['导入 JSON', 'Import JSON', 'JSON インポート']
+const importExportLabels = ['导入 / 导出', 'Import / Export', 'インポート / エクスポート']
+const importDoneLabels = ['导入完成', 'Import complete', 'インポート完了']
+const skipLabels = ['跳过', 'Skip', 'スキップ']
+const copyWorkArtifactLabels = ['复制工作产物', 'Copy work artifact', '作業成果をコピー']
+const continueWorkArtifactLabels = ['继续这项工作', 'Continue work', 'この作業を続ける']
+const workArtifactActionLabels = [...copyWorkArtifactLabels, ...continueWorkArtifactLabels]
+const copyWorkArtifactToastLabels = ['工作产物已复制到剪贴板', 'Work artifact copied to clipboard', '作業成果をクリップボードにコピーしました', '已复制', 'Copied']
+const continueWorkArtifactToastLabels = ['已插入继续执行提示', 'Continuation prompt inserted', '継続用プロンプトを入力欄に入れました']
+const composerInputLabels = ['给 IsleMind 一个任务', '输入消息', 'Type a message', 'メッセージを入力', continuationPromptPrefix]
 
 function main() {
   fs.mkdirSync(smokeDir, { recursive: true })
   writeFixture()
 
-  const device = resolveDevice(defaultDevice)
+  const device = resolveDevice(defaultDevice, { strict: explicitDeviceRequested })
   const result = {
     generatedAt: new Date().toISOString(),
     device,
@@ -62,10 +74,10 @@ function main() {
     ensureSettingsVisible(device, result)
     tapImportJson(device, result)
     const pickerStart = captureStep(device, result, 'file-picker-start')
-    const importDialog = hasAnyText(pickerStart.uiaText, ['导入完成'])
+    const importDialog = hasAnyText(pickerStart.uiaText, importDoneLabels)
       ? pickerStart
       : selectFileAndCaptureImportDialog(device, result)
-    result.importDialogShown = hasAnyText(importDialog.uiaText, ['导入完成'])
+    result.importDialogShown = hasAnyText(importDialog.uiaText, importDoneLabels)
     result.importDialogPng = importDialog.png
     result.importDialogUia = importDialog.uia
     if (!result.importDialogShown) throw new Error('Import completion dialog was not visible after selecting the fixture.')
@@ -86,28 +98,28 @@ function main() {
     result.actionMenuOpened = true
     result.actionMenuPng = actionMenu.png
     result.actionMenuUia = actionMenu.uia
-    result.copyActionVisible = hasAnyText(actionMenu.uiaText, ['复制工作产物'])
-    result.continueActionVisible = hasAnyText(actionMenu.uiaText, ['继续这项工作'])
+    result.copyActionVisible = hasAnyText(actionMenu.uiaText, copyWorkArtifactLabels)
+    result.continueActionVisible = hasAnyText(actionMenu.uiaText, continueWorkArtifactLabels)
     if (!result.copyActionVisible || !result.continueActionVisible) {
       throw new Error('Work artifact action menu did not expose copy and continue actions.')
     }
 
-    result.continueActionTapped = tapText(device, actionMenu.uiaText, ['继续这项工作'])
+    result.continueActionTapped = tapText(device, actionMenu.uiaText, continueWorkArtifactLabels)
     if (!result.continueActionTapped) throw new Error('Could not tap the continue-work-artifact action.')
     sleep(900)
 
     const continuePrompt = captureStep(device, result, 'continue-prompt')
-    result.continueToastVisible = hasAnyText(continuePrompt.uiaText, ['已插入继续执行提示'])
+    result.continueToastVisible = hasAnyText(continuePrompt.uiaText, continueWorkArtifactToastLabels)
     result.continueToastVisualEvidenceOnly = !result.continueToastVisible && Boolean(continuePrompt.png && continuePrompt.uia)
     result.composerContinuationPromptVisible = hasContinuationPrompt(continuePrompt.uiaText)
     result.continuePromptPng = continuePrompt.png
     result.continuePromptUia = continuePrompt.uia
 
     if (!result.composerContinuationPromptVisible) {
-      tapText(device, continuePrompt.uiaText, ['给 IsleMind 一个任务', '输入消息', continuationPromptPrefix])
+      tapText(device, continuePrompt.uiaText, composerInputLabels)
       sleep(700)
       const focusedPrompt = captureStep(device, result, 'continue-prompt-focused')
-      result.continueToastVisible = result.continueToastVisible || hasAnyText(focusedPrompt.uiaText, ['已插入继续执行提示'])
+      result.continueToastVisible = result.continueToastVisible || hasAnyText(focusedPrompt.uiaText, continueWorkArtifactToastLabels)
       result.continueToastVisualEvidenceOnly = !result.continueToastVisible && Boolean(focusedPrompt.png && focusedPrompt.uia)
       result.composerContinuationPromptVisible = hasContinuationPrompt(focusedPrompt.uiaText)
       result.continuePromptPng = focusedPrompt.png
@@ -116,15 +128,15 @@ function main() {
     if (!result.continueToastVisible && !result.continueToastVisualEvidenceOnly) throw new Error('Continue-work-artifact toast evidence was not captured.')
     if (!result.composerContinuationPromptVisible) throw new Error('Composer did not expose the inserted continuation prompt.')
 
-    const copyMenu = hasAnyText(continuePrompt.uiaText, ['复制工作产物'])
+    const copyMenu = hasAnyText(continuePrompt.uiaText, copyWorkArtifactLabels)
       ? continuePrompt
       : reopenWorkArtifactChatActions(device, result)
-    result.copyActionVisible = result.copyActionVisible || hasAnyText(copyMenu.uiaText, ['复制工作产物'])
-    result.copyActionTapped = tapText(device, copyMenu.uiaText, ['复制工作产物'])
+    result.copyActionVisible = result.copyActionVisible || hasAnyText(copyMenu.uiaText, copyWorkArtifactLabels)
+    result.copyActionTapped = tapText(device, copyMenu.uiaText, copyWorkArtifactLabels)
     if (!result.copyActionTapped) throw new Error('Could not tap the copy-work-artifact action.')
     sleep(700)
     const copyToast = captureStep(device, result, 'copy-toast')
-    result.copyToastVisible = hasAnyText(copyToast.uiaText, ['工作产物已复制到剪贴板', '已复制'])
+    result.copyToastVisible = hasAnyText(copyToast.uiaText, copyWorkArtifactToastLabels)
     result.copyToastVisualEvidenceOnly = !result.copyToastVisible && Boolean(copyToast.png && copyToast.uia)
     result.copyToastPng = copyToast.png
     result.copyToastUia = copyToast.uia
@@ -211,7 +223,6 @@ function writeFixture() {
       webSearchMode: 'native',
       knowledgeTopK: 4,
       memoryTopK: 4,
-      onboardingCompleted: true,
       ragMode: 'hybrid',
       embeddingMode: 'hybrid',
       localEmbeddingModelSource: 'none',
@@ -240,7 +251,7 @@ function writeFixture() {
         detectedPresetId: 'custom-openai-compatible',
         detectionStatus: 'manual',
         name: 'QA Work Artifact Provider',
-        apiKey: '',
+        apiKey: 'islemind-work-artifact-placeholder-key',
         baseUrl: 'http://10.0.2.2:8799/v1',
         models: ['qa-work-artifact-model'],
         enabled: true,
@@ -255,7 +266,7 @@ function writeFixture() {
   fs.writeFileSync(fixturePath, `${JSON.stringify(fixture, null, 2)}\n`, 'utf8')
 }
 
-function resolveDevice(requested) {
+function resolveDevice(requested, options = {}) {
   const output = runCommand('adb', ['devices']) ?? ''
   const serials = output
     .split(/\r?\n/)
@@ -263,6 +274,7 @@ function resolveDevice(requested) {
     .filter(([serial, state]) => serial && state === 'device')
     .map(([serial]) => serial)
   if (serials.includes(requested)) return requested
+  if (options.strict) return null
   return serials[0] ?? null
 }
 
@@ -279,16 +291,7 @@ function openSettings(device) {
 
 function ensureSettingsVisible(device, result) {
   let capture = captureStep(device, result, 'settings-start')
-  if (hasAnyText(capture.uiaText, ['导入 JSON', 'AI 工作区就绪度', '导入 / 导出'])) return capture
-  if (hasAnyText(capture.uiaText, ['欢迎来到 IsleMind', '跳过'])) {
-    if (!tapText(device, capture.uiaText, ['跳过'])) {
-      throw new Error('First-run onboarding blocked Settings and the skip action was not tappable.')
-    }
-    sleep(900)
-    openSettings(device)
-    capture = captureStep(device, result, 'settings-after-onboarding-skip')
-    if (hasAnyText(capture.uiaText, ['导入 JSON', 'AI 工作区就绪度', '导入 / 导出'])) return capture
-  }
+  if (hasAnyText(capture.uiaText, [...importJsonLabels, 'AI 工作区就绪度', ...importExportLabels])) return capture
   return capture
 }
 
@@ -300,7 +303,7 @@ function openChat(device) {
 function tapImportJson(device, result) {
   for (let index = 0; index < 8; index += 1) {
     const capture = captureStep(device, result, `settings-import-search-${index}`)
-    if (tapText(device, capture.uiaText, ['导入 JSON'])) {
+    if (tapText(device, capture.uiaText, importJsonLabels)) {
       sleep(1400)
       return
     }
@@ -311,12 +314,20 @@ function tapImportJson(device, result) {
 }
 
 function tapFileInDocumentsUi(device, result) {
-  for (let index = 0; index < 6; index += 1) {
+  const fileName = 'islemind-work-artifact-smoke.json'
+  let searched = false
+  for (let index = 0; index < 8; index += 1) {
     const capture = captureStep(device, result, `file-picker-search-${index}`)
-    if (hasAnyText(capture.uiaText, ['导入完成'])) return capture
-    if (tapFileTitle(device, capture.uiaText, 'islemind-work-artifact-smoke.json')) {
+    if (hasAnyText(capture.uiaText, importDoneLabels)) return capture
+    const fileCapture = dismissDocumentsSearchKeyboardIfNeeded(device, result, capture, fileName, index)
+    if (tapFileTitle(device, fileCapture.uiaText, fileName)) {
       sleep(1800)
       return captureStep(device, result, 'import-confirm')
+    }
+    if (!searched && searchDocumentsUi(device, capture.uiaText, fileName)) {
+      searched = true
+      sleep(1100)
+      continue
     }
     swipeUp(device)
     sleep(350)
@@ -324,9 +335,25 @@ function tapFileInDocumentsUi(device, result) {
   throw new Error('Could not find the work artifact fixture in Android DocumentsUI.')
 }
 
+function searchDocumentsUi(device, uiaText, fileName) {
+  if (!tapText(device, uiaText, ['搜索', 'Search', '検索'])) return false
+  sleep(500)
+  runCommand('adb', ['-s', device, 'shell', 'input', 'text', fileName])
+  return true
+}
+
+function dismissDocumentsSearchKeyboardIfNeeded(device, result, capture, fileName, index) {
+  if (!documentsFileTitleVisible(capture.uiaText, fileName)) return capture
+  if (!documentsSearchFieldFocused(capture.uiaText)) return capture
+  runCommand('adb', ['-s', device, 'shell', 'input', 'keyevent', '4'])
+  sleep(650)
+  const dismissed = captureStep(device, result, `file-picker-search-${index}-keyboard-dismissed`)
+  return documentsFileTitleVisible(dismissed.uiaText, fileName) ? dismissed : capture
+}
+
 function selectFileAndCaptureImportDialog(device, result) {
   const capture = tapFileInDocumentsUi(device, result)
-  if (capture && hasAnyText(capture.uiaText, ['导入完成'])) return capture
+  if (capture && hasAnyText(capture.uiaText, importDoneLabels)) return capture
   sleep(1800)
   return captureStep(device, result, 'import-confirm')
 }
@@ -344,22 +371,39 @@ function captureChatWithAssistant(device, result) {
 
 function openWorkArtifactActions(device, result) {
   let latest = captureStep(device, result, 'actions-search-start')
-  if (hasAnyText(latest.uiaText, ['复制工作产物', '继续这项工作'])) return latest
+  if (hasAnyText(latest.uiaText, workArtifactActionLabels)) return latest
+  if (tapAssistantMessageBody(device, latest.uiaText)) {
+    sleep(750)
+    const candidate = captureStep(device, result, 'actions-open-message-body')
+    if (hasAnyText(candidate.uiaText, workArtifactActionLabels)) return candidate
+    latest = candidate
+  }
   for (let round = 0; round < 8; round += 1) {
-    const actionNodes = parseNodes(latest.uiaText).filter((node) => node.enabled && textMatches(node, '操作'))
+    const actionNodes = parseNodes(latest.uiaText).filter((node) => node.enabled && ['操作', 'Actions', 'アクション'].some((label) => textMatches(node, label)))
     for (const node of actionNodes.sort((a, b) => parseBounds(b.bounds).top - parseBounds(a.bounds).top)) {
       tapBoundsCenter(device, node.bounds)
       sleep(650)
       const candidate = captureStep(device, result, `actions-open-${round}`)
-      if (hasAnyText(candidate.uiaText, ['复制工作产物', '继续这项工作'])) return candidate
+      if (hasAnyText(candidate.uiaText, workArtifactActionLabels)) return candidate
       tapText(device, candidate.uiaText, ['收起'])
       sleep(200)
+    }
+    if (tapAssistantMessageBody(device, latest.uiaText)) {
+      sleep(750)
+      const candidate = captureStep(device, result, `actions-open-body-${round}`)
+      if (hasAnyText(candidate.uiaText, workArtifactActionLabels)) return candidate
+      latest = candidate
+      continue
     }
     swipeDown(device)
     sleep(350)
     latest = captureStep(device, result, `actions-search-${round}`)
   }
   throw new Error('Could not open the assistant work artifact action menu.')
+}
+
+function tapAssistantMessageBody(device, uiaText) {
+  return tapText(device, uiaText, [assistantToken, '结构化摘要', continuationPromptStep])
 }
 
 function reopenWorkArtifactChatActions(device, result) {
@@ -373,9 +417,12 @@ function reopenWorkArtifactChatActions(device, result) {
 
 function tapFileTitle(device, uiaText, fileName) {
   const nodes = parseNodes(uiaText)
-  const titleNode = nodes.find((item) => item.enabled && item.text === fileName)
-  const titleBounds = titleNode ? parseBounds(titleNode.bounds) : null
-  if (titleBounds) {
+  const titleNodes = nodes
+    .filter((item) => item.enabled && item.text === fileName)
+    .map((item) => ({ item, bounds: parseBounds(item.bounds) }))
+    .filter(({ bounds }) => bounds && bounds.top > 300)
+    .sort((a, b) => a.bounds.top - b.bounds.top)
+  for (const { item: titleNode, bounds: titleBounds } of titleNodes) {
     const card = nodes
       .map((item) => ({ item, bounds: parseBounds(item.bounds) }))
       .filter(({ item, bounds }) => item.enabled && item.clickable && bounds && boundsContains(bounds, titleBounds))
@@ -389,11 +436,11 @@ function tapFileTitle(device, uiaText, fileName) {
     tapBoundsCenter(device, titleNode.bounds)
     return true
   }
-  const previewNode = nodes.find((item) => item.enabled && item.clickable && item.contentDesc === `Preview the file ${fileName}`)
+  const previewNode = nodes.find((item) => item.enabled && item.clickable && item.contentDesc.includes(fileName))
   if (!previewNode) return false
   const box = parseBounds(previewNode.bounds)
   if (!box) return false
-  runCommand('adb', ['-s', device, 'shell', 'input', 'tap', String(Math.max(1, box.left - 80)), String(box.bottom + 320)])
+  runCommand('adb', ['-s', device, 'shell', 'input', 'tap', String(Math.max(1, box.left - 80)), String(Math.round((box.top + box.bottom) / 2))])
   return true
 }
 
@@ -455,12 +502,25 @@ function parseNodes(uiaText) {
     nodes.push({
       text: decodeXml(matchFirst(tag, /text="([^"]*)"/) ?? ''),
       contentDesc: decodeXml(matchFirst(tag, /content-desc="([^"]*)"/) ?? ''),
+      resourceId: decodeXml(matchFirst(tag, /resource-id="([^"]*)"/) ?? ''),
       bounds,
       enabled: matchFirst(tag, /enabled="([^"]+)"/) !== 'false',
       clickable: matchFirst(tag, /clickable="([^"]+)"/) === 'true',
+      focused: matchFirst(tag, /focused="([^"]+)"/) === 'true',
     })
   }
   return nodes
+}
+
+function documentsFileTitleVisible(uiaText, fileName) {
+  return parseNodes(uiaText).some((item) => item.enabled && item.text === fileName && parseBounds(item.bounds)?.top > 300)
+}
+
+function documentsSearchFieldFocused(uiaText) {
+  return parseNodes(uiaText).some((item) =>
+    item.enabled &&
+    item.focused &&
+    item.resourceId === 'com.google.android.documentsui:id/search_src_text')
 }
 
 function textMatches(node, label) {
@@ -535,6 +595,24 @@ function writeLog(result) {
   fs.writeFileSync(path.join(smokeDir, 'work-artifact-smoke.log'), `${lines.join('\n')}\n`, 'utf8')
 }
 
+function runSelfTest() {
+  const fileName = 'islemind-work-artifact-smoke.json'
+  const focusedSearchWithFile = [
+    '<node text="" resource-id="com.google.android.documentsui:id/search_src_text" content-desc="" enabled="true" clickable="true" focused="true" bounds="[220,106][2156,205]" />',
+    `<node text="${fileName}" resource-id="android:id/title" content-desc="" enabled="true" clickable="false" focused="false" bounds="[198,890][886,949]" />`,
+    `<node text="" resource-id="com.google.android.documentsui:id/preview_icon" content-desc="预览“${fileName}”文件" enabled="true" clickable="true" focused="false" bounds="[2112,849][2310,1036]" />`,
+  ].join('\n')
+  const fileHiddenByHeaderOnly = [
+    `<node text="${fileName}" resource-id="com.google.android.documentsui:id/search_src_text" content-desc="" enabled="true" clickable="true" focused="true" bounds="[220,106][2156,205]" />`,
+  ].join('\n')
+
+  assert.equal(documentsFileTitleVisible(focusedSearchWithFile, fileName), true, 'DocumentsUI file row is visible below the header')
+  assert.equal(documentsSearchFieldFocused(focusedSearchWithFile), true, 'DocumentsUI focused search field is detected')
+  assert.equal(documentsFileTitleVisible(fileHiddenByHeaderOnly, fileName), false, 'Search query text is not mistaken for a tappable file row')
+  assert.equal(extractVisibleText(focusedSearchWithFile).includes(`预览“${fileName}”文件`), true, 'localized preview content-desc is decoded')
+  console.log('Work artifact smoke self-test passed')
+}
+
 function isPassing(result) {
   return Boolean(
     result.device &&
@@ -606,4 +684,19 @@ function relative(file) {
   return path.relative(root, file).replace(/\\/g, '/')
 }
 
-main()
+if (require.main === module) {
+  if (process.argv.includes('--self-test')) {
+    runSelfTest()
+  } else {
+    main()
+  }
+}
+
+module.exports = {
+  documentsFileTitleVisible,
+  documentsSearchFieldFocused,
+  extractVisibleText,
+  isPassing,
+  parseNodes,
+  runSelfTest,
+}

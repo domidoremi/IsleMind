@@ -21,7 +21,8 @@
       "softwareKeyboardLayoutMode": "resize",
       "permissions": [
         "android.permission.REQUEST_INSTALL_PACKAGES",
-        "android.permission.POST_NOTIFICATIONS"
+        "android.permission.POST_NOTIFICATIONS",
+        "com.android.alarm.permission.SET_ALARM"
       ],
       "blockedPermissions": [
         "android.permission.READ_EXTERNAL_STORAGE",

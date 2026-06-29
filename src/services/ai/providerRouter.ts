@@ -24,12 +24,16 @@ export interface ProviderModalityPlan {
 }
 
 export interface ProviderReasoningPlan {
+  resolutionSchema: ProviderConformanceResult['reasoningResolution']['schema']
   requested?: string
   enabled: boolean
   effective?: string
   providerValue?: string | number | boolean
   requestShape: string
   downgradeReason?: string
+  sourceConfidence: ProviderConformanceResult['reasoningResolution']['sourceConfidence']
+  failureCodes: string[]
+  removedParams: string[]
 }
 
 export interface ProviderStructuredOutputPlan {
@@ -143,12 +147,16 @@ function buildRouteDecision(input: ProviderRouteInput, conformance: ProviderConf
       blocked: blockedModalities,
     },
     reasoningPlan: {
+      resolutionSchema: conformance.reasoningResolution.schema,
       requested: conformance.reasoning.requested,
       enabled: conformance.reasoning.enabled,
       effective: conformance.reasoning.effective,
       providerValue: conformance.reasoning.providerValue,
       requestShape: conformance.reasoning.requestShape,
       downgradeReason: conformance.reasoning.downgradeReason,
+      sourceConfidence: conformance.reasoningResolution.sourceConfidence,
+      failureCodes: [...conformance.reasoningResolution.failureCodes],
+      removedParams: [...conformance.reasoningResolution.removedParams],
     },
     structuredOutputPlan: {
       requested: Boolean(input.request.structuredOutput),
