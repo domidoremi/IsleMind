@@ -18,6 +18,14 @@ export interface CompactStateRecord {
   inputTokens?: number
   outputTokens?: number
   estimatedSavedTokens?: number
+  activeContextTokens?: number
+  autoCompactScopeTokens?: number
+  prefillInputTokens?: number
+  tokensUntilCompaction?: number
+  previousResponseId?: string
+  lastCompactSummary?: string
+  compactFailureState?: string
+  contextFragmentIdentitiesJson?: string
   status: 'active' | 'invalidated' | 'failed'
   failureCode?: string
   createdAt: number
@@ -43,6 +51,14 @@ async function getDb() {
           inputTokens INTEGER,
           outputTokens INTEGER,
           estimatedSavedTokens INTEGER,
+          activeContextTokens INTEGER,
+          autoCompactScopeTokens INTEGER,
+          prefillInputTokens INTEGER,
+          tokensUntilCompaction INTEGER,
+          previousResponseId TEXT,
+          lastCompactSummary TEXT,
+          compactFailureState TEXT,
+          contextFragmentIdentitiesJson TEXT,
           status TEXT NOT NULL,
           failureCode TEXT,
           createdAt INTEGER NOT NULL,
@@ -50,6 +66,7 @@ async function getDb() {
           expiresAt INTEGER
         );
       `)
+      await ensureCompactStateColumns(db)
       return db
     })
   }
@@ -62,8 +79,10 @@ export async function saveCompactState(record: CompactStateRecord): Promise<void
     `INSERT OR REPLACE INTO compact_states (
       id, conversationId, providerId, model, responseId, sessionId, compactItemJson,
       sourceMessageStartIndex, sourceMessageEndIndex, inputTokens, outputTokens,
-      estimatedSavedTokens, status, failureCode, createdAt, updatedAt, expiresAt
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      estimatedSavedTokens, activeContextTokens, autoCompactScopeTokens, prefillInputTokens,
+      tokensUntilCompaction, previousResponseId, lastCompactSummary, compactFailureState, contextFragmentIdentitiesJson,
+      status, failureCode, createdAt, updatedAt, expiresAt
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     record.id,
     record.conversationId,
     record.providerId,
@@ -76,6 +95,14 @@ export async function saveCompactState(record: CompactStateRecord): Promise<void
     record.inputTokens ?? null,
     record.outputTokens ?? null,
     record.estimatedSavedTokens ?? null,
+    record.activeContextTokens ?? null,
+    record.autoCompactScopeTokens ?? null,
+    record.prefillInputTokens ?? null,
+    record.tokensUntilCompaction ?? null,
+    record.previousResponseId ?? null,
+    record.lastCompactSummary ?? null,
+    record.compactFailureState ?? null,
+    record.contextFragmentIdentitiesJson ?? null,
     record.status,
     record.failureCode ?? null,
     record.createdAt,
@@ -130,4 +157,19 @@ export async function invalidateAllCompactStates(reason = 'all_invalidated'): Pr
 export async function clearAllCompactStates(): Promise<void> {
   const db = await getDb()
   await db.runAsync('DELETE FROM compact_states')
+}
+
+async function ensureCompactStateColumns(db: SQLite.SQLiteDatabase): Promise<void> {
+  const columns = await db.getAllAsync<{ name: string }>('PRAGMA table_info(compact_states)')
+  const names = new Set(columns.map((column) => column.name))
+  const statements: string[] = []
+  if (!names.has('activeContextTokens')) statements.push('ALTER TABLE compact_states ADD COLUMN activeContextTokens INTEGER;')
+  if (!names.has('autoCompactScopeTokens')) statements.push('ALTER TABLE compact_states ADD COLUMN autoCompactScopeTokens INTEGER;')
+  if (!names.has('prefillInputTokens')) statements.push('ALTER TABLE compact_states ADD COLUMN prefillInputTokens INTEGER;')
+  if (!names.has('tokensUntilCompaction')) statements.push('ALTER TABLE compact_states ADD COLUMN tokensUntilCompaction INTEGER;')
+  if (!names.has('previousResponseId')) statements.push('ALTER TABLE compact_states ADD COLUMN previousResponseId TEXT;')
+  if (!names.has('lastCompactSummary')) statements.push('ALTER TABLE compact_states ADD COLUMN lastCompactSummary TEXT;')
+  if (!names.has('compactFailureState')) statements.push('ALTER TABLE compact_states ADD COLUMN compactFailureState TEXT;')
+  if (!names.has('contextFragmentIdentitiesJson')) statements.push('ALTER TABLE compact_states ADD COLUMN contextFragmentIdentitiesJson TEXT;')
+  if (statements.length) await db.execAsync(statements.join('\n'))
 }

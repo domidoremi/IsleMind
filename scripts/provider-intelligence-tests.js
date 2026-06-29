@@ -240,6 +240,14 @@ Module._load = function loadWithMocks(request, parent, isMain) {
               inputTokens,
               outputTokens,
               estimatedSavedTokens,
+              activeContextTokens,
+              autoCompactScopeTokens,
+              prefillInputTokens,
+              tokensUntilCompaction,
+              previousResponseId,
+              lastCompactSummary,
+              compactFailureState,
+              contextFragmentIdentitiesJson,
               status,
               failureCode,
               createdAt,
@@ -260,6 +268,14 @@ Module._load = function loadWithMocks(request, parent, isMain) {
               inputTokens,
               outputTokens,
               estimatedSavedTokens,
+              activeContextTokens,
+              autoCompactScopeTokens,
+              prefillInputTokens,
+              tokensUntilCompaction,
+              previousResponseId,
+              lastCompactSummary,
+              compactFailureState,
+              contextFragmentIdentitiesJson,
               status,
               failureCode,
               createdAt,
@@ -612,6 +628,7 @@ const {
   parseCredentialGroups,
   parseProviderImportText,
   probeProviderPreset,
+  normalizeProviderSyncPolicy,
 } = require('../src/services/ai/providerRegistry.ts')
 const {
   looksLikeProviderImportConnectionText,
@@ -641,7 +658,22 @@ const {
   runCredentialGroupModelSync,
   updateCredentialGroupHealth,
 } = require('../src/services/ai/providerCredentials.ts')
+const {
+  SESSION_AFFINITY_DEFAULT_TTL_MS,
+  SESSION_AFFINITY_MAX_BINDINGS,
+  buildSessionAffinityBinding,
+  deriveSessionAffinityKey,
+  invalidateSessionAffinityBinding,
+  listSessionAffinityBindingsForTest,
+  readSessionAffinityBinding,
+  resolveSessionAffinityBinding,
+  resetSessionAffinityBindingsForTest,
+  rotateSessionAffinityBinding,
+  sessionAffinityFailureShouldInvalidate,
+  storeSessionAffinityBinding,
+} = require('../src/services/ai/providerSessionAffinity.ts')
 const { packChatMessages } = require('../src/services/contextPacker.ts')
+const { CONTEXT_ASSEMBLY_MANIFEST_SCHEMA, CONTEXT_FRAGMENT_SCHEMA, planChatContext } = require('../src/services/contextPlanner.ts')
 const IntentLauncher = require('expo-intent-launcher')
 const {
   DEFAULT_MODELS,
@@ -781,6 +813,15 @@ const {
   summarizeTransportSelection,
 } = require('../src/services/ai/providerRuntimeDiagnostics.ts')
 const {
+  PROVIDER_ROUTE_DECISION_SNAPSHOT_SCHEMA,
+  buildProviderRouteDecisionSnapshot,
+  prepareProviderRuntimePipeline,
+} = require('../src/services/ai/providerRuntimePipeline.ts')
+const {
+  PROVIDER_RUNTIME_GATEWAY_OUTCOME_SCHEMA,
+  buildProviderRuntimeGatewayOutcome,
+} = require('../src/services/ai/providerRuntimeGateway.ts')
+const {
   assertProviderCircuitClosed,
   providerCircuitKey,
   providerRetryDelayMs,
@@ -834,7 +875,7 @@ const {
 const { dedupeTraces, splitSseBuffer } = require('../src/services/ai/providerStreamUtils.ts')
 const { runResponsesWebSocketTransport } = require('../src/services/ai/transport/responsesWebSocketTransport.ts')
 const { activeSessionLeaseCount, acquireSessionLease } = require('../src/services/ai/transport/sessionLeasePool.ts')
-const { resolveProviderCapabilityManifest } = require('../src/services/ai/providerConformance.ts')
+const { PROVIDER_REASONING_RESOLUTION_SCHEMA, resolveProviderCapabilityManifest } = require('../src/services/ai/providerConformance.ts')
 const { resolveProviderEndpoint } = require('../src/services/ai/providerRouteAssembly.ts')
 const {
   bedrockRuntimeInvokeModelUrl,
@@ -888,6 +929,9 @@ const {
   buildCompletedRemoteCompactRuntimeLogPayload,
   buildCompletedRemoteCompactStateRecord,
   buildCompletedRemoteCompactUsageInput,
+  buildFailedRemoteCompactRuntimeLogPayload,
+  buildFailedRemoteCompactStateRecord,
+  buildFailedRemoteCompactUsageInput,
 } = require('../src/services/chatRemoteCompactUtils.ts')
 const { resolveRuntimeConversation, resolveRuntimeResolutionError } = require('../src/services/chatRuntimeResolution.ts')
 const { dedupeMessageCitations, formatWebPrompt, normalizeUserContent } = require('../src/services/chatMessageUtils.ts')
@@ -925,6 +969,12 @@ const {
   stripMcpCallBlocks,
 } = require('../src/services/chatToolResultUtils.ts')
 const { clamp01, clampInteger } = require('../src/services/ai/providerNumberUtils.ts')
+const {
+  PROVIDER_PLATFORM_DEFAULT_TEMPERATURE,
+  PROVIDER_PLATFORM_MAX_TEMPERATURE,
+  PROVIDER_PLATFORM_MIN_CONFIGURED_OUTPUT_TOKENS,
+  PROVIDER_PLATFORM_MAX_OUTPUT_TOKENS,
+} = require('../src/services/ai/providerParameterDefaults.ts')
 const { getHeaders } = require('../src/services/ai/providerHeaders.ts')
 const { getWireProviderType, isAnthropicWireRequest } = require('../src/services/ai/providerWireProtocol.ts')
 const {
@@ -932,6 +982,7 @@ const {
   isXiaomiMimoThinkingActive,
   normalizeTemperature,
   normalizeXiaomiMimoThinking,
+  resolveProviderRequestParameters,
 } = require('../src/services/ai/providerRequestParameters.ts')
 const {
   buildOpenAIResponsesReasoning,
@@ -1020,7 +1071,32 @@ const {
   toOpenAIResponsesFunctionCallInput,
 } = require('../src/services/ai/providerToolReplay.ts')
 const { appendRuntimeLog, clearRuntimeLog, getRuntimeLogInfo, getRuntimeLogPath, readRuntimeLogText, redactRuntimeLogValue } = require('../src/services/runtimeLog.ts')
-const { buildRuntimeDiagnosticsSummary } = require('../src/services/runtimeDiagnostics.ts')
+const {
+  RUNTIME_EVENT_HISTORY_LIMIT,
+  RUNTIME_EVENT_EXPLANATORY_HISTORY_RESERVE,
+  RUNTIME_EVENT_DATA_LIST_LIMIT,
+  RUNTIME_EVENT_DATA_OBJECT_FIELD_LIMIT,
+  buildRuntimeEventEnvelope,
+  clearRuntimeEventHistoryForTest,
+  emitRuntimeEvent,
+  getRuntimeEventHistory,
+  runtimeLogEventForRuntimeEvent,
+  shouldNotifyRuntimeEventSubscribers,
+  shouldPersistRuntimeEvent,
+  subscribeRuntimeEvents,
+} = require('../src/services/runtimeEvents.ts')
+const {
+  RUNTIME_TIMELINE_SCHEMA,
+  buildRuntimeTimelineSnapshot,
+  loadRuntimeTimelineSnapshot,
+} = require('../src/services/runtimeTimeline.ts')
+const {
+  RUNTIME_DIAGNOSTICS_LOG_ENTRY_LIMIT,
+  RUNTIME_DIAGNOSTICS_LOG_TAIL_BYTES,
+  RUNTIME_DIAGNOSTICS_OBSERVABILITY_PREVIEW_EVENT_LIMIT,
+  RUNTIME_DIAGNOSTICS_TIMELINE_EVENT_LIMIT,
+  buildRuntimeDiagnosticsSummary,
+} = require('../src/services/runtimeDiagnostics.ts')
 const {
   decideRemoteCompact,
   estimateRemoteCompactSavedTokens,
@@ -1073,6 +1149,7 @@ const {
   getProviderManualModels,
   getProviderSelectableModels,
   getProviderAvailableModels,
+  getProviderDisplayModel,
   getProviderPreferredModel,
   resolveProviderModelAlias,
   isProviderConversationReady,
@@ -1086,16 +1163,18 @@ const { getReasoningEffortOptions, providerSupportsReasoning } = require('../src
 const { buildSystemPrompt } = require('../src/services/promptEngineering.ts')
 const { resolveAgentProviderToolTarget } = require('../src/services/agent/agentProviderToolAdapter.ts')
 const { resolveAgentTool } = require('../src/services/agent/agentToolRegistry.ts')
-const { validateAgentWorkflowDefinition } = require('../src/services/agent/agentWorkflowDefinitions.ts')
-const { buildAgentWorkflowSkillSavePreview, createAgentWorkflowSkillSuggestionFromRun } = require('../src/services/agent/agentWorkflowSkills.ts')
+const { createAgentWorkflowDefinition, validateAgentWorkflowDefinition } = require('../src/services/agent/agentWorkflowDefinitions.ts')
+const { buildAgentWorkflowSkillSavePreview, createAgentWorkflowSkillSuggestionFromRun, createAgentWorkflowSkillSuggestion, saveAgentWorkflowSkillSuggestion } = require('../src/services/agent/agentWorkflowSkills.ts')
 const { formatAgentToolRequestIdentity } = require('../src/services/agent/agentToolIdentityUtils.ts')
 const {
-  DEFAULT_ONBOARDING_COMPANION_MODE,
-  getOnboardingCompanionProfile,
-  getOnboardingConversationDefaults,
-  getOnboardingSettingsDefaults,
-  isOnboardingSystemPrompt,
-} = require('../src/utils/onboardingProfile.ts')
+  PLUGIN_MANIFEST_SCHEMA,
+  PLUGIN_MANIFEST_CATALOG_SCHEMA,
+  buildPluginManifestCatalogSnapshot,
+  buildPluginManifestCatalogRuntimeEventData,
+  createPluginManifestFromWorkflowSkill,
+  createPluginManifestFromMcpServer,
+  validatePluginManifest,
+} = require('../src/services/pluginManifest.ts')
 const { buildMemoryReviewSummary, filterPendingMemoriesForReview } = require('../src/utils/memoryReview.ts')
 const {
   capabilityLabel,
@@ -1239,77 +1318,6 @@ function resetLocalModelFileMocks() {
   resetAsyncStorageFaults()
 }
 
-const WORK_ARTIFACT_TEMPLATE_GATES = {
-  en: [
-    ['summary', /Structured summary/i],
-    ['decision', /Decision log/i],
-    ['action', /Action items/i],
-    ['risk', /Risks? (and blockers|or blockers)?/i],
-    ['question', /Open questions/i],
-    ['evidence', /Evidence still needed|Verification command or evidence/i],
-    ['shareable', /short version.*(sent to collaborators|send to collaborators)|copy to someone/i],
-  ],
-  zh: [
-    ['summary', /结构化摘要/],
-    ['decision', /决策记录/],
-    ['action', /行动项/],
-    ['risk', /风险和阻塞|风险/],
-    ['question', /待确认问题/],
-    ['evidence', /证据仍需补充|需要补充验证的证据|验证证据/],
-    ['shareable', /可直接发给协作者|可直接复制给他人/],
-  ],
-  ja: [
-    ['summary', /構造化.*要約/],
-    ['decision', /決定ログ/],
-    ['action', /アクション項目/],
-    ['risk', /リスク/],
-    ['question', /確認事項/],
-    ['evidence', /必要な根拠|検証.*根拠|検証コマンドまたは証拠/],
-    ['shareable', /協力者に送れる|コピーできる/],
-  ],
-}
-
-const WORK_ARTIFACT_ACTION_METADATA = {
-  en: /owner\s*\/\s*next step\s*\/\s*(deadline|trigger)/i,
-  zh: /负责人\s*\/\s*下一步\s*\/\s*(截止|触发条件)/,
-  ja: /担当者\s*\/\s*次の一歩\s*\/\s*(期限|発火条件)/,
-}
-
-function assertStructuredWorkTemplate(value, label, language) {
-  assert.ok(value.length >= 80, `${label} is detailed enough to guide a real work artifact`)
-  const hasInput = language === 'zh'
-    ? /输入/.test(value)
-    : language === 'ja'
-      ? /入力/.test(value)
-      : /Input/.test(value)
-  const hasOutputContract = language === 'zh'
-    ? /输出必须包含/.test(value)
-    : language === 'ja'
-      ? /出力には必ず/.test(value)
-      : /Output must include/.test(value)
-  const hasFixedHeadingsContract = language === 'zh'
-    ? /固定标题/.test(value)
-    : language === 'ja'
-      ? /固定見出し/.test(value)
-      : /exact section headings/i.test(value)
-  const hasActionableOutcome = language === 'zh'
-    ? /(行动|下一步|第一步|验证|风险)/.test(value)
-    : language === 'ja'
-      ? /(アクション|次|最初|検証|リスク)/.test(value)
-      : /(Action|Next|first step|validation|risk)/i.test(value)
-  assert.ok(hasInput, `${label} includes an input section`)
-  assert.ok(hasOutputContract, `${label} includes an output contract`)
-  assert.ok(hasFixedHeadingsContract, `${label} requires exact section headings for parser reliability`)
-  assert.ok(hasActionableOutcome, `${label} asks for actionable output`)
-  for (const [gate, pattern] of WORK_ARTIFACT_TEMPLATE_GATES[language]) {
-    assert.ok(pattern.test(value), `${label} includes a parser-recognizable ${gate} section`)
-  }
-  assert.ok(
-    WORK_ARTIFACT_ACTION_METADATA[language].test(value),
-    `${label} requires owner, next step, and deadline/trigger metadata for actions`
-  )
-}
-
 function assertReleaseVersionsAligned() {
   const packageJson = JSON.parse(fs.readFileSync(path.join(root, 'package.json'), 'utf8'))
   const appJson = JSON.parse(fs.readFileSync(path.join(root, 'app.json'), 'utf8'))
@@ -1422,10 +1430,6 @@ function assertReleaseVersionsAligned() {
     'QA audit release provenance does not hardcode the current release version'
   )
   assert.ok(
-    qaAuditScript.includes('first-run onboarding handoff is blocking and app-owned touch targets are blocking'),
-    'QA audit self-test proves first-run onboarding handoff remains a blocking paired-evidence gate'
-  )
-  assert.ok(
     qaAuditScript.includes('app-owned touch targets are blocking'),
     'QA audit self-test proves app-owned small touch targets remain blocking'
   )
@@ -1436,10 +1440,6 @@ function assertReleaseVersionsAligned() {
   assert.ok(
     qaAuditScript.includes('app-owned runtime touch target(s) are below 44dp'),
     'QA audit blocks runtime app touch targets below 44dp'
-  )
-  assert.ok(
-    !/First-run onboarding handoff[\s\S]{0,260}blocking: false/.test(qaAuditScript),
-    'QA audit does not classify first-run onboarding handoff as follow-up evidence'
   )
   assert.ok(
     qaAuditScript.includes("require('./sensitive-evidence-contract')") && qaAuditScript.includes('sensitiveEvidenceExtensions'),
@@ -1484,6 +1484,23 @@ function assertReleaseVersionsAligned() {
   assert.ok(
     buildScript.includes('passes.filter((pass) => pass.arch === args.releaseArch)'),
     'local APK build can target the canonical x86_64 release artifact without rebuilding every ABI'
+  )
+  assert.ok(
+    packageJson.scripts['apk:local:release'].includes('scripts/build-and-validate-local-android-apk.js'),
+    'local release APK package script forwards extra arguments to the build step before strict validation'
+  )
+  assert.ok(
+    !/build-local-android-apk\.js --variant no-model --release &&/.test(packageJson.scripts['apk:local:release']),
+    'local release APK package script does not append forwarded release-arch arguments to the validator'
+  )
+  const buildAndValidateScript = fs.readFileSync(path.join(root, 'scripts/build-and-validate-local-android-apk.js'), 'utf8')
+  assert.ok(
+    buildAndValidateScript.includes("['scripts/build-local-android-apk.js', ...process.argv.slice(2)]"),
+    'local release APK wrapper forwards package-manager arguments into the build command'
+  )
+  assert.ok(
+    buildAndValidateScript.includes("['scripts/validate-android-16kb-apk.js', '--strict']"),
+    'local release APK wrapper keeps strict 16 KB validation after build completion'
   )
   assert.ok(
     !/function formatArtifactName/.test(buildScript),
@@ -1614,6 +1631,33 @@ function assertReleaseVersionsAligned() {
   }
   assert.deepEqual(releaseValidationContract.validateReleaseProvenance(passingReleaseEvidence), [], 'release validation contract accepts current provenance evidence')
   assert.deepEqual(releaseValidationContract.validateCurrentApkSmokeResult(passingReleaseEvidence), [], 'release validation contract accepts current APK smoke evidence')
+  assert.equal(
+    releaseValidationContract.inferReleaseApkArch({ path: `dist-apk/IsleMind-${packageJson.version}-arm64-v8a-no-model.apk` }),
+    'arm64-v8a',
+    'release validation contract infers the APK ABI from release artifact names'
+  )
+  const arm64ReleaseEvidence = {
+    ...passingReleaseEvidence,
+    apk: {
+      ...passingReleaseEvidence.apk,
+      path: `dist-apk/IsleMind-${packageJson.version}-arm64-v8a-no-model.apk`,
+    },
+    installed: {
+      ...passingReleaseEvidence.installed,
+      deviceSerial: 'dadaa813',
+      deviceAbi: 'arm64-v8a',
+      primaryCpuAbi: 'arm64-v8a',
+    },
+  }
+  assert.deepEqual(releaseValidationContract.validateCurrentApkSmokeResult(arm64ReleaseEvidence), [], 'release validation contract accepts current arm64 APK smoke evidence')
+  const wrongArm64AbiIssues = releaseValidationContract.validateCurrentApkSmokeResult({
+    ...arm64ReleaseEvidence,
+    installed: {
+      ...arm64ReleaseEvidence.installed,
+      primaryCpuAbi: 'x86_64',
+    },
+  })
+  assert.ok(wrongArm64AbiIssues.some((issue) => /primaryCpuAbi/i.test(issue)), 'release validation contract rejects installed ABI mismatches for arm64 evidence')
   const missingProvenancePackageIssues = releaseValidationContract.validateReleaseProvenance({
     ...passingReleaseEvidence,
     appPackageName: null,
@@ -2375,6 +2419,225 @@ async function assertRuntimeLogFileBehavior() {
     .find((item) => item.event === 'provider.compatibility')
   assert.equal(compatibilityEntry.compatibilityId, 'aws-bedrock', 'runtime log file writes provider compatibility event family')
   assert.equal(compatibilityEntry.secret, '[redacted]', 'runtime log file redacts provider compatibility secret fields')
+  const runtimeEventEnvelope = buildRuntimeEventEnvelope({
+    event: 'provider.route.decided',
+    conversationId: 'conversation-runtime-event',
+    providerId: 'openai-main',
+    model: 'gpt-5.2',
+    data: {
+      authorization: 'Bearer runtime-event-secret-abcdefghijklmnopqrstuvwxyz',
+      body: JSON.stringify({ model: 'gpt-5.2', input: 'runtime event prompt text' }),
+      nested: { apiKey: FAKE_KEY_A },
+    },
+  }, new Date('2026-01-02T03:04:05.000Z'))
+  assert.equal(runtimeEventEnvelope.schema, 'islemind.runtime-event.v1', 'runtime event envelope writes control-plane schema')
+  assert.equal(runtimeEventEnvelope.ts, '2026-01-02T03:04:05.000Z', 'runtime event envelope uses caller timestamp')
+  assert.equal(runtimeEventEnvelope.data.authorization, '[redacted]', 'runtime event envelope redacts authorization')
+  assert.deepEqual(runtimeEventEnvelope.data.body.keys, ['input', 'model'], 'runtime event envelope stores payload keys only')
+  assert.equal(runtimeEventEnvelope.data.nested.apiKey, '[redacted]', 'runtime event envelope redacts nested credential fields')
+  assert.equal(runtimeLogEventForRuntimeEvent('provider.route.decided'), 'route.decision', 'runtime event maps to legacy route decision event')
+  assert.equal(runtimeLogEventForRuntimeEvent('provider.access.decided'), 'access.policy', 'runtime event maps access policy decisions to legacy logs')
+  assert.equal(runtimeLogEventForRuntimeEvent('provider.route.snapshot.created'), 'route.snapshot', 'runtime event maps route snapshots to the legacy snapshot event')
+  assert.equal(runtimeLogEventForRuntimeEvent('provider.proxy.decided'), 'proxy.policy', 'runtime event maps proxy decisions to legacy logs')
+  assert.equal(runtimeLogEventForRuntimeEvent('provider.fallback.decided'), 'fallback.decision', 'runtime event maps fallback decisions to legacy logs')
+  assert.equal(runtimeLogEventForRuntimeEvent('session.affinity.resolved'), 'session.affinity', 'runtime event maps session affinity resolution to the legacy affinity event')
+  assert.equal(runtimeLogEventForRuntimeEvent('session.affinity.bound'), 'session.affinity', 'runtime event maps session affinity binding to the legacy affinity event')
+  assert.equal(runtimeLogEventForRuntimeEvent('session.affinity.invalidated'), 'session.affinity', 'runtime event maps session affinity invalidation to the legacy affinity event')
+  assert.equal(runtimeLogEventForRuntimeEvent('session.affinity.rotated'), 'session.affinity', 'runtime event maps session affinity rotation to the legacy affinity event')
+  assert.equal(runtimeLogEventForRuntimeEvent('session.lease.acquired'), 'session.lease', 'runtime event maps session lease acquisition to legacy logs')
+  assert.equal(runtimeLogEventForRuntimeEvent('session.lease.rejected'), 'session.lease', 'runtime event maps session lease rejection to legacy logs')
+  assert.equal(runtimeLogEventForRuntimeEvent('context.planned'), 'context.operation', 'runtime event maps context planning to context operation logs')
+  assert.equal(runtimeLogEventForRuntimeEvent('context.fragment.included'), 'context.operation', 'runtime event maps included context fragments to context operation logs')
+  assert.equal(runtimeLogEventForRuntimeEvent('context.fragment.excluded'), 'context.operation', 'runtime event maps excluded context fragments to context operation logs')
+  assert.equal(runtimeLogEventForRuntimeEvent('tool.mcp.compatibility.checked'), 'context.operation', 'MCP compatibility summaries map to context operation logs')
+  assert.equal(runtimeLogEventForRuntimeEvent('agent.security.evaluation.checked'), 'context.operation', 'agent security summaries map to context operation logs')
+  assert.equal(runtimeLogEventForRuntimeEvent('plugin.catalog.snapshot.created'), 'context.operation', 'plugin catalog snapshots map to context operation logs')
+  assert.equal(runtimeLogEventForRuntimeEvent('runtime.repair.replay.submitted'), 'context.operation', 'runtime repair replay submit actions map to context operation logs')
+  assert.equal(runtimeLogEventForRuntimeEvent('runtime.repair.replay.applied'), 'context.operation', 'runtime repair replay draft actions map to context operation logs')
+  assert.equal(runtimeLogEventForRuntimeEvent('runtime.repair.replay.dismissed'), 'context.operation', 'runtime repair replay dismiss actions map to context operation logs')
+  assert.equal(runtimeLogEventForRuntimeEvent('context.compact.decided'), 'compact.request', 'runtime event maps context compact decisions to compact request logs')
+  assert.equal(runtimeLogEventForRuntimeEvent('context.compact.completed'), 'compact.usage', 'runtime event maps compact usage to legacy compact usage logs')
+  const providerRuntimePipelineSource = fs.readFileSync(path.join(root, 'src/services/ai/providerRuntimePipeline.ts'), 'utf8')
+  assert.ok(providerRuntimePipelineSource.includes("event: 'provider.access.decided'"), 'provider runtime pipeline emits typed access decision events')
+  assert.ok(providerRuntimePipelineSource.includes("event: 'provider.route.snapshot.created'"), 'provider runtime pipeline emits typed route snapshot events')
+  assert.ok(!providerRuntimePipelineSource.includes("appendRuntimeLog('access.policy'"), 'provider runtime pipeline does not write access decisions outside runtime events')
+  const providerRuntimeDiagnosticsSource = fs.readFileSync(path.join(root, 'src/services/ai/providerRuntimeDiagnostics.ts'), 'utf8')
+  assert.ok(providerRuntimeDiagnosticsSource.includes("event: 'provider.route.decided'"), 'provider route diagnostics emits typed route decision events')
+  assert.ok(providerRuntimeDiagnosticsSource.includes("event: 'provider.proxy.decided'"), 'provider route diagnostics emits typed proxy decision events')
+  assert.ok(!providerRuntimeDiagnosticsSource.includes("appendRuntimeLog('proxy.policy'"), 'provider proxy decisions do not bypass runtime events')
+  const providerRuntimeFallbackLoggingSource = fs.readFileSync(path.join(root, 'src/services/ai/providerRuntimeFallbackLogging.ts'), 'utf8')
+  assert.ok(providerRuntimeFallbackLoggingSource.includes("event: 'provider.fallback.decided'"), 'runtime fallback decisions emit typed runtime events')
+  assert.ok(!providerRuntimeFallbackLoggingSource.includes("appendRuntimeLog('fallback.decision'"), 'runtime fallback decisions do not bypass runtime events')
+  const providerRuntimeExecutorSourceForEvents = fs.readFileSync(path.join(root, 'src/services/ai/providerRuntimeExecutor.ts'), 'utf8')
+  assert.ok(providerRuntimeExecutorSourceForEvents.includes("event: 'session.lease.acquired'"), 'runtime executor emits typed session lease acquisition events')
+  assert.ok(providerRuntimeExecutorSourceForEvents.includes("event: 'session.lease.rejected'"), 'runtime executor emits typed session lease rejection events')
+  assert.ok(providerRuntimeExecutorSourceForEvents.includes("event: 'context.compact.completed'"), 'runtime executor emits typed compact usage events for fallback paths')
+  assert.ok(!providerRuntimeExecutorSourceForEvents.includes("appendRuntimeLog('session.lease'"), 'runtime executor does not write session lease logs outside runtime events')
+  const chatRunnerRuntimeEventSource = fs.readFileSync(path.join(root, 'src/services/chatRunner.ts'), 'utf8')
+  assert.ok(chatRunnerRuntimeEventSource.includes("event: 'context.compact.decided'"), 'chat runner emits typed compact request events')
+  assert.ok(chatRunnerRuntimeEventSource.includes("event: 'context.compact.completed'"), 'chat runner emits typed compact usage events')
+  assert.ok(!chatRunnerRuntimeEventSource.includes("appendRuntimeLog('compact.request'"), 'chat runner does not write compact request logs outside runtime events')
+  assert.ok(!chatRunnerRuntimeEventSource.includes("appendRuntimeLog('compact.usage'"), 'chat runner does not write compact usage logs outside runtime events')
+  await emitRuntimeEvent({
+    event: 'provider.route.decided',
+    conversationId: 'conversation-runtime-event',
+    providerId: 'openai-main',
+    model: 'gpt-5.2',
+    legacyData: {
+      schema: 'bad-schema',
+      ts: 'bad-ts',
+      event: 'upstream.error',
+      runtimeEvent: { event: 'bad-event' },
+      providerId: 'openai-main',
+      model: 'gpt-5.2',
+      route: { protocol: 'openai-compatible', blocked: false },
+    },
+    data: {
+      requestedModel: 'gpt-5.2',
+      authorization: 'Bearer emitted-runtime-event-secret-abcdefghijklmnopqrstuvwxyz',
+      body: JSON.stringify({ model: 'gpt-5.2', input: 'emitted runtime event prompt text' }),
+    },
+    options: { enabled: true, maxBytes: 4096 },
+  })
+  const runtimeEventContent = localFileFixtures.get(uri)?.toString('utf8') ?? ''
+  const runtimeLogEntry = runtimeEventContent
+    .trim()
+    .split('\n')
+    .filter(Boolean)
+    .map((line) => JSON.parse(line))
+    .find((item) => item.event === 'route.decision' && item.runtimeEvent?.event === 'provider.route.decided')
+  assert.ok(runtimeLogEntry, 'runtime event emit writes route decision entry')
+  assert.equal(runtimeLogEntry.schema, 'islemind.runtime-log.v1', 'runtime event emit preserves legacy runtime log schema')
+  assert.equal(runtimeLogEntry.event, 'route.decision', 'runtime event emit preserves legacy runtime log event family')
+  assert.ok(runtimeLogEntry.ts !== 'bad-ts', 'runtime event emit ignores legacy timestamp override')
+  assert.equal(runtimeLogEntry.providerId, 'openai-main', 'runtime event emit preserves legacy provider id')
+  assert.equal(runtimeLogEntry.runtimeEvent.schema, 'islemind.runtime-event.v1', 'runtime event emit embeds typed envelope')
+  assert.equal(runtimeLogEntry.runtimeEvent.conversationId, 'conversation-runtime-event', 'runtime event emit embeds conversation id')
+  assert.equal(runtimeLogEntry.runtimeEvent.providerId, 'openai-main', 'runtime event emit embeds provider id')
+  assert.equal(runtimeLogEntry.runtimeEvent.model, 'gpt-5.2', 'runtime event emit embeds model')
+  assert.equal(runtimeLogEntry.runtimeEvent.data.authorization, '[redacted]', 'runtime event emit redacts envelope authorization')
+  assert.deepEqual(runtimeLogEntry.runtimeEvent.data.body.keys, ['input', 'model'], 'runtime event emit stores envelope payload keys only')
+  assert.ok(!runtimeEventContent.includes('emitted runtime event prompt text'), 'runtime event emit omits raw prompt text')
+  assert.ok(!runtimeEventContent.includes('emitted-runtime-event-secret'), 'runtime event emit omits raw credential text')
+  await emitRuntimeEvent({
+    event: 'provider.route.snapshot.created',
+    conversationId: 'conversation-runtime-event',
+    providerId: 'openai-main',
+    credentialGroupId: 'group-a',
+    model: 'gpt-5.2',
+    data: {
+      snapshot: {
+        schema: 'islemind.provider-route-decision-snapshot.v1',
+        id: 'snapshot-runtime-log',
+        providerId: 'openai-main',
+        credentialGroupId: 'group-a',
+        requestPolicy: { requestFieldKeys: ['model', 'messages'], findingIds: [] },
+      },
+    },
+    legacyData: {
+      providerId: 'openai-main',
+      model: 'gpt-5.2',
+      credentialGroupId: 'group-a',
+      routeDecisionSnapshot: { id: 'snapshot-runtime-log' },
+    },
+    options: { enabled: true, maxBytes: 4096 },
+  })
+  const routeSnapshotEntry = (localFileFixtures.get(uri)?.toString('utf8') ?? '')
+    .trim()
+    .split('\n')
+    .filter(Boolean)
+    .map((line) => JSON.parse(line))
+    .find((item) => item.event === 'route.snapshot' && item.runtimeEvent?.event === 'provider.route.snapshot.created')
+  assert.ok(routeSnapshotEntry, 'runtime event emit writes route snapshot entries')
+  assert.equal(routeSnapshotEntry.runtimeEvent.credentialGroupId, 'group-a', 'runtime route snapshot event embeds credential group id')
+  const boundedEventEnvelope = buildRuntimeEventEnvelope({
+    event: 'provider.route.decided',
+    data: {
+      items: Array.from({ length: RUNTIME_EVENT_DATA_LIST_LIMIT + 8 }, (_, index) => ({ index })),
+      object: Object.fromEntries(Array.from({ length: RUNTIME_EVENT_DATA_OBJECT_FIELD_LIMIT + 8 }, (_, index) => [`field${index}`, index])),
+    },
+  }, new Date('2026-01-02T03:04:06.000Z'))
+  assert.equal(boundedEventEnvelope.data.items.length, RUNTIME_EVENT_DATA_LIST_LIMIT, 'runtime event envelope caps list data for bounded history')
+  assert.equal(Object.keys(boundedEventEnvelope.data.object).length, RUNTIME_EVENT_DATA_OBJECT_FIELD_LIMIT, 'runtime event envelope caps object fields for bounded history')
+  const beforeTokenUsageEventContent = localFileFixtures.get(uri)?.toString('utf8') ?? ''
+  assert.equal(shouldPersistRuntimeEvent('token_usage.updated'), false, 'runtime events skip high-frequency token usage writes by default')
+  clearRuntimeEventHistoryForTest()
+  const observedRuntimeEvents = []
+  const unsubscribeRuntimeEvents = subscribeRuntimeEvents((event) => observedRuntimeEvents.push(event))
+  const throwingUnsubscribe = subscribeRuntimeEvents(() => {
+    throw new Error('subscriber failure must be isolated')
+  })
+  const tokenUsageEnvelope = await emitRuntimeEvent({
+    event: 'token_usage.updated',
+    conversationId: 'conversation-runtime-event',
+    providerId: 'openai-main',
+    model: 'gpt-5.2',
+    data: { outputTokens: 1, totalTokens: 2 },
+    options: { enabled: true, maxBytes: 4096 },
+  })
+  assert.equal(tokenUsageEnvelope.event, 'token_usage.updated', 'high-frequency runtime events still build typed envelopes')
+  assert.equal(localFileFixtures.get(uri)?.toString('utf8') ?? '', beforeTokenUsageEventContent, 'high-frequency token usage events do not append runtime log lines')
+  assert.equal(shouldNotifyRuntimeEventSubscribers('token_usage.updated'), false, 'runtime events skip high-frequency subscriber notifications by default')
+  assert.equal(observedRuntimeEvents.length, 0, 'high-frequency token usage events do not notify subscribers per token')
+  assert.equal(getRuntimeEventHistory()[0].id, tokenUsageEnvelope.id, 'runtime event history records skipped-log high-frequency events')
+  const routeEventEnvelope = await emitRuntimeEvent({
+    event: 'provider.route.decided',
+    conversationId: 'conversation-runtime-event',
+    providerId: 'openai-main',
+    model: 'gpt-5.2',
+    data: { blocked: false },
+    options: { enabled: false },
+  })
+  assert.equal(observedRuntimeEvents.length, 1, 'runtime event subscribers receive low-frequency emitted envelopes')
+  assert.equal(observedRuntimeEvents[0].id, routeEventEnvelope.id, 'runtime event subscribers receive the exact low-frequency envelope')
+  unsubscribeRuntimeEvents()
+  throwingUnsubscribe()
+  await emitRuntimeEvent({
+    event: 'provider.route.decided',
+    conversationId: 'conversation-runtime-event',
+    providerId: 'openai-main',
+    model: 'gpt-5.2',
+    data: { blocked: false },
+    options: { enabled: false },
+  })
+  assert.equal(observedRuntimeEvents.length, 1, 'runtime event unsubscribe stops future notifications')
+  clearRuntimeEventHistoryForTest()
+  for (let index = 0; index < RUNTIME_EVENT_HISTORY_LIMIT + 5; index += 1) {
+    await emitRuntimeEvent({
+      event: 'token_usage.updated',
+      conversationId: `history-${index}`,
+      data: { index },
+      options: { enabled: true, maxBytes: 4096 },
+    })
+  }
+  const boundedHistory = getRuntimeEventHistory(RUNTIME_EVENT_HISTORY_LIMIT + 10)
+  assert.equal(boundedHistory.length, RUNTIME_EVENT_HISTORY_LIMIT, 'runtime event history stays size-limited')
+  assert.equal(boundedHistory[0].conversationId, 'history-5', 'runtime event history evicts oldest entries beyond the cap')
+  assert.equal(getRuntimeEventHistory(3).length, 3, 'runtime event history supports bounded reads')
+  assert.equal(getRuntimeEventHistory(0).length, 0, 'runtime event history supports explicit empty reads')
+  assert.equal(getRuntimeEventHistory(-1).length, 0, 'runtime event history treats negative read limits as empty')
+  clearRuntimeEventHistoryForTest()
+  await emitRuntimeEvent({
+    event: 'provider.route.decided',
+    conversationId: 'history-explanatory-route',
+    data: { blocked: false },
+    options: { enabled: false },
+  })
+  for (let index = 0; index < RUNTIME_EVENT_HISTORY_LIMIT + 5; index += 1) {
+    await emitRuntimeEvent({
+      event: 'token_usage.updated',
+      conversationId: `history-token-${index}`,
+      data: { index },
+      options: { enabled: true, maxBytes: 4096 },
+    })
+  }
+  const explanatoryHistory = getRuntimeEventHistory()
+  assert.equal(explanatoryHistory.length, RUNTIME_EVENT_HISTORY_LIMIT, 'runtime event history keeps the total cap when high-frequency events flood')
+  assert.ok(
+    explanatoryHistory.some((event) => event.conversationId === 'history-explanatory-route'),
+    'runtime event history preserves explanatory events when token usage floods the cap'
+  )
+  assert.ok(RUNTIME_EVENT_EXPLANATORY_HISTORY_RESERVE > 0, 'runtime event history reserves capacity for explanatory events')
   localFileFixtures.set(uri, Buffer.from(`${'x'.repeat(5000)}\n`))
   await appendRuntimeLog('compact.usage', { providerId: 'openai-main', status: 'completed' }, { enabled: true, maxBytes: 4096 })
   assert.ok((localFileFixtures.get(uri)?.length ?? 0) <= 4096, 'runtime log rotation respects max bytes')
@@ -2423,6 +2686,456 @@ async function assertRuntimeLogFileBehavior() {
 
 async function assertRuntimeDiagnosticsBehavior() {
   await clearRuntimeLog()
+  clearRuntimeEventHistoryForTest()
+  const runtimeDiagnosticsSource = fs.readFileSync(path.join(root, 'src/services/runtimeDiagnostics.ts'), 'utf8')
+  const observabilityCompatibilitySource = fs.readFileSync(path.join(root, 'src/services/observabilityCompatibilityEvaluation.ts'), 'utf8')
+  const settingsTypeSource = fs.readFileSync(path.join(root, 'src/types/index.ts'), 'utf8')
+  const settingsStoreSource = fs.readFileSync(path.join(root, 'src/store/settingsStore.ts'), 'utf8')
+  const settingsUrlPolicySource = fs.readFileSync(path.join(root, 'src/services/settingsUrlPolicy.ts'), 'utf8')
+  const secureKeySource = fs.readFileSync(path.join(root, 'src/services/ai/secureKey.ts'), 'utf8')
+  const storageSource = fs.readFileSync(path.join(root, 'src/services/storage.ts'), 'utf8')
+  assert.ok(runtimeDiagnosticsSource.includes('RUNTIME_DIAGNOSTICS_LOG_TAIL_BYTES'), 'runtime diagnostics declares an explicit bounded log tail')
+  assert.ok(runtimeDiagnosticsSource.includes('RUNTIME_DIAGNOSTICS_LOG_ENTRY_LIMIT'), 'runtime diagnostics declares an explicit parsed-entry budget')
+  assert.ok(runtimeDiagnosticsSource.includes('RUNTIME_DIAGNOSTICS_TIMELINE_EVENT_LIMIT'), 'runtime diagnostics declares an explicit timeline input budget')
+  assert.ok(runtimeDiagnosticsSource.includes('RUNTIME_DIAGNOSTICS_MEMORY_EVENT_LIMIT'), 'runtime diagnostics declares an explicit memory-event read budget')
+  assert.ok(runtimeDiagnosticsSource.includes('readRuntimeLogText(RUNTIME_DIAGNOSTICS_LOG_TAIL_BYTES)'), 'runtime diagnostics parses only the bounded log tail')
+  assert.ok(runtimeDiagnosticsSource.includes('parseRuntimeLogEntries(await readRuntimeLogText(RUNTIME_DIAGNOSTICS_LOG_TAIL_BYTES), RUNTIME_DIAGNOSTICS_LOG_ENTRY_LIMIT)'), 'runtime diagnostics applies the parsed-entry budget to the log tail')
+  assert.ok(runtimeDiagnosticsSource.includes('getRuntimeEventHistory'), 'runtime diagnostics also reads bounded in-memory runtime event history')
+  assert.ok(runtimeDiagnosticsSource.includes('runtimeEventsFromLogEntries(logEntries, RUNTIME_DIAGNOSTICS_TIMELINE_EVENT_LIMIT)'), 'runtime diagnostics applies a timeline input budget before building snapshots')
+  assert.ok(runtimeDiagnosticsSource.includes('performance:'), 'runtime diagnostics exposes performance budget metadata')
+  assert.ok(runtimeDiagnosticsSource.includes('evaluateObservabilitySinkPolicy'), 'runtime diagnostics consumes the observability sink policy gate')
+  assert.ok(runtimeDiagnosticsSource.includes('buildObservabilitySinkExportPreview'), 'runtime diagnostics consumes the observability sink dry-run preview gate')
+  assert.ok(runtimeDiagnosticsSource.includes('RUNTIME_DIAGNOSTICS_OBSERVABILITY_PREVIEW_EVENT_LIMIT'), 'runtime diagnostics bounds observability sink preview events')
+  assert.ok(runtimeDiagnosticsSource.includes('settings.observabilitySinkMode'), 'runtime diagnostics derives observability policy from persisted settings')
+  assert.ok(runtimeDiagnosticsSource.includes('exportSchema: OBSERVABILITY_SINK_EXPORT_SCHEMA'), 'runtime diagnostics pins observability export schema internally')
+  assert.ok(runtimeDiagnosticsSource.includes('previewStatus'), 'runtime diagnostics exposes observability sink preview status')
+  assert.ok(runtimeDiagnosticsSource.includes('observability:'), 'runtime diagnostics exposes observability sink policy state')
+  assert.ok(observabilityCompatibilitySource.includes('OBSERVABILITY_SINK_ADAPTER_PAYLOAD_SCHEMA'), 'observability compatibility declares a sink adapter payload schema')
+  assert.ok(observabilityCompatibilitySource.includes('buildObservabilitySinkAdapterPayload'), 'observability compatibility builds dry-run sink adapter payloads')
+  assert.ok(observabilityCompatibilitySource.includes('networkCallsAllowed: false'), 'observability sink adapter payloads remain dry-run and non-networked')
+  assert.ok(observabilityCompatibilitySource.includes('resourceSpans'), 'observability sink adapter payloads expose OTLP-shaped resource spans')
+  assert.ok(runtimeDiagnosticsSource.includes('buildRuntimeTimelineSnapshot'), 'runtime diagnostics exposes typed runtime events as a timeline snapshot')
+  assert.ok(settingsTypeSource.includes('ObservabilitySinkMode'), 'settings types expose an observability sink mode contract')
+  assert.ok(settingsTypeSource.includes('observabilitySinkEndpointUrl?: string'), 'settings types persist the observability sink endpoint')
+  assert.ok(settingsStoreSource.includes("observabilitySinkMode: 'off'"), 'default settings keep observability export off')
+  assert.ok(settingsStoreSource.includes("observabilitySinkHighFrequencyExportMode: 'coalesced'"), 'default settings coalesce high-frequency observability events')
+  assert.ok(settingsStoreSource.includes('setObservabilitySinkApiKey'), 'settings store keeps observability API keys behind secure storage helpers')
+  assert.ok(settingsStoreSource.includes('OBSERVABILITY_SINK_API_KEY'), 'settings store uses a dedicated secure key for observability sinks')
+  assert.ok(settingsUrlPolicySource.includes('observabilitySinkEndpointUrl'), 'settings URL policy sanitizes observability sink endpoints')
+  assert.ok(secureKeySource.includes('clearKnownObservabilitySecureKeys'), 'secure key utilities clear observability sink keys during destructive data resets')
+  assert.ok(storageSource.includes('observabilitySinkApiKeyConfigured: false'), 'portable restore resets observability key configured state when no secure key is imported')
+  const runtimeTimelineSource = fs.readFileSync(path.join(root, 'src/services/runtimeTimeline.ts'), 'utf8')
+  assert.ok(runtimeTimelineSource.includes('RUNTIME_TIMELINE_SCHEMA'), 'runtime timeline declares a versioned snapshot schema')
+  assert.ok(runtimeTimelineSource.includes('buildRuntimeTimelineSnapshot'), 'runtime timeline builds snapshots from typed runtime events')
+  assert.ok(runtimeTimelineSource.includes('RuntimeTimelineIssue'), 'runtime timeline declares actionable issue summaries')
+  assert.ok(runtimeTimelineSource.includes('RuntimeTimelineNextActionCode'), 'runtime timeline declares next-action codes for issue remediation')
+  assert.ok(runtimeTimelineSource.includes('RuntimeTimelineActionTargetKind'), 'runtime timeline declares machine-readable action targets for issue remediation')
+  assert.ok(runtimeTimelineSource.includes('RuntimeTimelineRepairPlan'), 'runtime timeline declares agent-consumable repair plans')
+  assert.ok(runtimeTimelineSource.includes('buildRuntimeTimelineRepairPlan'), 'runtime timeline can build repair plans from issues')
+  assert.ok(runtimeTimelineSource.includes('loadRuntimeTimelineSnapshot'), 'runtime timeline can read bounded in-memory event history')
+  assert.ok(runtimeTimelineSource.includes('getRuntimeEventHistory'), 'runtime timeline keeps history access behind runtimeEvents')
+  const runtimeEventsSource = fs.readFileSync(path.join(root, 'src/services/runtimeEvents.ts'), 'utf8')
+  const runtimeEventContractSource = fs.readFileSync(path.join(root, 'src/services/runtimeEventContract.ts'), 'utf8')
+  assert.ok(runtimeEventContractSource.includes("'token_usage.updated'"), 'runtime event contract identifies token usage as a high-frequency event')
+  assert.ok(runtimeEventContractSource.includes("'runtime.repair.replay.submitted'"), 'runtime event contract exposes repair replay submit telemetry')
+  assert.ok(runtimeEventContractSource.includes("'runtime.repair.replay.applied'"), 'runtime event contract exposes repair replay draft telemetry')
+  assert.ok(runtimeEventContractSource.includes("'runtime.repair.replay.dismissed'"), 'runtime event contract exposes repair replay dismissal telemetry')
+  assert.ok(runtimeEventContractSource.includes("'tool.mcp.compatibility.checked'"), 'runtime event contract exposes MCP compatibility telemetry')
+  assert.ok(runtimeEventContractSource.includes("'plugin.catalog.snapshot.created'"), 'runtime event contract exposes plugin catalog snapshot telemetry')
+  assert.ok(runtimeEventContractSource.includes('shouldPersistRuntimeEvent'), 'runtime event contract centralizes high-frequency log persistence decisions')
+  const streamingStoreSource = fs.readFileSync(path.join(root, 'src/store/chatStreamingStore.ts'), 'utf8')
+  assert.ok(streamingStoreSource.includes('STREAMING_PERSIST_DELAY_MS = 420'), 'chat streaming store coalesces streaming persistence on a bounded delay')
+  assert.ok(streamingStoreSource.includes('streamingText: Map<string, string>'), 'chat streaming store keeps token text outside conversation arrays during streaming')
+  assert.ok(
+    streamingStoreSource.includes('useChatStore.getState().persistStreamingContentSnapshot(convId, msgId, text)'),
+    'chat streaming store persists debounced snapshots instead of conversation writes for every chunk'
+  )
+  assert.ok(RUNTIME_DIAGNOSTICS_LOG_TAIL_BYTES <= 12000, 'runtime diagnostics tail remains small enough for settings rendering')
+  assert.ok(RUNTIME_DIAGNOSTICS_LOG_ENTRY_LIMIT <= 160, 'runtime diagnostics parsed-entry budget remains small enough for settings rendering')
+  assert.ok(RUNTIME_DIAGNOSTICS_TIMELINE_EVENT_LIMIT <= RUNTIME_EVENT_HISTORY_LIMIT, 'runtime diagnostics timeline input budget stays within bounded runtime history')
+  assert.ok(RUNTIME_DIAGNOSTICS_OBSERVABILITY_PREVIEW_EVENT_LIMIT <= 40, 'runtime diagnostics observability preview stays small enough for settings rendering')
+  const directTimeline = buildRuntimeTimelineSnapshot([
+    buildRuntimeEventEnvelope({
+      event: 'provider.gateway.outcome',
+      providerId: 'timeline-provider',
+      model: 'timeline-model',
+      data: { status: 'blocked', stage: 'conformance', blocked: true },
+    }, new Date('2026-01-01T00:00:00.000Z')),
+    buildRuntimeEventEnvelope({
+      event: 'tool.gateway.outcome',
+      providerId: 'timeline-provider',
+      model: 'timeline-model',
+      data: {
+        status: 'skipped',
+        mcp: { connectedToolCount: 0 },
+        providerNative: { declaredToolCount: 0, supported: false },
+        structuredOutput: { requested: false },
+      },
+    }, new Date('2026-01-01T00:00:01.000Z')),
+    buildRuntimeEventEnvelope({
+      event: 'token_usage.updated',
+      providerId: 'timeline-provider',
+      model: 'timeline-model',
+      data: { totalTokens: 42 },
+    }, new Date('2026-01-01T00:00:02.000Z')),
+    buildRuntimeEventEnvelope({
+      event: 'plugin.catalog.snapshot.created',
+      data: {
+        catalogSchema: 'islemind.plugin-catalog.v1',
+        counts: { total: 2, valid: 2, invalid: 0, hooks: 1, noopHooks: 1, executableHooks: 0 },
+        reviewStates: { approved: 1, unreviewed: 1, rejected: 0 },
+        permissions: { 'read-only': 2, 'read-write': 0, destructive: 0 },
+        sourceKinds: { skill: 0, 'workflow-skill': 1, 'mcp-server': 1, manual: 0 },
+      },
+    }, new Date('2026-01-01T00:00:03.000Z')),
+  ], { limit: 10 })
+  assert.equal(directTimeline.schema, RUNTIME_TIMELINE_SCHEMA, 'runtime timeline exposes a stable schema')
+  assert.deepEqual(directTimeline.entries.map((entry) => entry.stage), ['provider', 'tool', 'token', 'plugin'], 'runtime timeline classifies provider, tool, token, and plugin events')
+  assert.equal(directTimeline.entries[0].status, 'blocked', 'runtime timeline maps blocked gateway outcomes')
+  assert.equal(directTimeline.entries[1].status, 'skipped', 'runtime timeline maps skipped tool outcomes')
+  assert.equal(directTimeline.entries[3].status, 'done', 'runtime timeline maps plugin catalog snapshots as completed diagnostics')
+  assert.equal(directTimeline.entries[3].data.totalManifests, 2, 'runtime timeline extracts bounded plugin catalog counts')
+  assert.equal(directTimeline.counts.byStage.provider, 1, 'runtime timeline counts provider-stage entries')
+  assert.equal(directTimeline.counts.byStage.plugin, 1, 'runtime timeline counts plugin-stage entries')
+  assert.equal(directTimeline.issues[0]?.code, 'provider_blocked', 'runtime timeline extracts blocked provider issues')
+  assert.equal(directTimeline.issues[0]?.severity, 'warning', 'runtime timeline grades blocked provider issues as warnings')
+  assert.deepEqual(directTimeline.issues[0]?.sourceEventIds, [directTimeline.entries[0].id], 'runtime timeline issues preserve source runtime event ids')
+  assert.equal(directTimeline.issues[0]?.latestEventId, directTimeline.entries[0].id, 'runtime timeline issues expose the latest source event id')
+  assert.equal(directTimeline.issues[0]?.actionTarget.kind, 'provider-settings', 'runtime timeline routes provider blockers to provider settings')
+  assert.equal(directTimeline.issues[0]?.actionTarget.providerId, 'timeline-provider', 'runtime timeline carries provider scope into issue action targets')
+  assert.equal(directTimeline.repairPlan.status, 'ready', 'runtime timeline marks repair plans ready when issues exist')
+  assert.equal(directTimeline.repairPlan.taskCount, 1, 'runtime timeline creates one repair task for one provider blocker')
+  assert.equal(directTimeline.repairPlan.tasks[0]?.target.kind, 'provider-settings', 'runtime timeline repair tasks retain action targets')
+  assert.deepEqual(directTimeline.repairPlan.tasks[0]?.sourceEventIds, [directTimeline.entries[0].id], 'runtime timeline repair tasks preserve source runtime event ids')
+  assert.equal(directTimeline.repairPlan.tasks[0]?.latestEventId, directTimeline.entries[0].id, 'runtime timeline repair tasks expose latest runtime event id')
+  const issueTimeline = buildRuntimeTimelineSnapshot([
+    buildRuntimeEventEnvelope({
+      event: 'provider.error',
+      providerId: 'timeline-provider',
+      model: 'timeline-model',
+      data: { code: 'upstream_500', status: 500 },
+    }, new Date('2026-01-01T00:00:03.000Z')),
+    buildRuntimeEventEnvelope({
+      event: 'tool.gateway.outcome',
+      providerId: 'timeline-provider',
+      model: 'timeline-model',
+      data: { status: 'ready', structuredOutput: { requested: true, blocked: true, requestShape: 'json_schema' } },
+    }, new Date('2026-01-01T00:00:04.000Z')),
+    buildRuntimeEventEnvelope({
+      event: 'context.planned',
+      providerId: 'timeline-provider',
+      model: 'timeline-model',
+      data: { cacheDiagnostics: [{ kind: 'unbounded_fragment_blocked' }] },
+    }, new Date('2026-01-01T00:00:05.000Z')),
+    buildRuntimeEventEnvelope({
+      event: 'session.affinity.rotated',
+      providerId: 'timeline-provider',
+      model: 'timeline-model',
+      data: { trigger: 'rate_limited' },
+    }, new Date('2026-01-01T00:00:06.000Z')),
+    buildRuntimeEventEnvelope({
+      event: 'context.compact.decided',
+      providerId: 'timeline-provider',
+      model: 'timeline-model',
+      data: { enabled: false, reason: 'provider_capability_missing' },
+    }, new Date('2026-01-01T00:00:07.000Z')),
+    buildRuntimeEventEnvelope({
+      event: 'plugin.catalog.snapshot.created',
+      data: {
+        catalogSchema: 'islemind.plugin-catalog.v1',
+        counts: { total: 3, valid: 2, invalid: 1, hooks: 1, noopHooks: 1, executableHooks: 0 },
+        reviewStates: { approved: 1, unreviewed: 2, rejected: 0 },
+        sourceKinds: { skill: 0, 'workflow-skill': 2, 'mcp-server': 1, manual: 0 },
+      },
+    }, new Date('2026-01-01T00:00:08.000Z')),
+  ], { limit: 10 })
+  assert.equal(issueTimeline.issues[0].code, 'provider_error', 'runtime timeline sorts critical issues before warnings')
+  assert.deepEqual(
+    issueTimeline.issues.map((issue) => issue.code).sort(),
+    ['compact_skipped', 'context_unbounded_blocked', 'plugin_manifest_invalid', 'provider_error', 'session_failover', 'tool_blocked'],
+    'runtime timeline extracts actionable issue codes'
+  )
+  assert.equal(issueTimeline.issues[0].severity, 'critical', 'runtime timeline grades provider errors as critical')
+  assert.equal(issueTimeline.issues[0].nextAction, 'retry_or_switch_provider', 'runtime timeline recommends retry or provider switch for generic provider errors')
+  assert.equal(issueTimeline.issues[0].actionTarget.kind, 'retry-chat', 'runtime timeline routes transient provider errors to retry chat targets')
+  assert.equal(issueTimeline.issues.find((issue) => issue.code === 'tool_blocked')?.nextAction, 'fix_tool_schema', 'runtime timeline recommends tool schema repair for blocked tool issues')
+  assert.equal(issueTimeline.issues.find((issue) => issue.code === 'tool_blocked')?.actionTarget.kind, 'tool-settings', 'runtime timeline routes tool blockers to tool settings')
+  assert.equal(issueTimeline.issues.find((issue) => issue.code === 'context_unbounded_blocked')?.nextAction, 'cap_context_source', 'runtime timeline recommends context source caps for unbounded context issues')
+  assert.equal(issueTimeline.issues.find((issue) => issue.code === 'context_unbounded_blocked')?.actionTarget.kind, 'context-settings', 'runtime timeline routes context guardrail hits to context settings')
+  assert.equal(issueTimeline.issues.find((issue) => issue.code === 'context_unbounded_blocked')?.count, 1, 'runtime timeline counts unbounded context guardrail hits')
+  assert.equal(issueTimeline.issues.find((issue) => issue.code === 'session_failover')?.actionTarget.kind, 'session-affinity-settings', 'runtime timeline routes session failover to affinity settings')
+  assert.equal(issueTimeline.issues.find((issue) => issue.code === 'compact_skipped')?.actionTarget.kind, 'compact-settings', 'runtime timeline routes compact skips to compact settings')
+  assert.equal(issueTimeline.issues.find((issue) => issue.code === 'plugin_manifest_invalid')?.nextAction, 'review_plugin_manifest', 'runtime timeline recommends plugin manifest review for invalid plugin catalog entries')
+  assert.equal(issueTimeline.issues.find((issue) => issue.code === 'plugin_manifest_invalid')?.actionTarget.kind, 'plugin-settings', 'runtime timeline routes plugin catalog issues to plugin settings')
+  assert.equal(issueTimeline.repairPlan.taskCount, 6, 'runtime timeline builds one repair task per distinct remediation target')
+  assert.equal(issueTimeline.repairPlan.bySeverity.critical, 1, 'runtime timeline repair plans count critical tasks')
+  assert.equal(issueTimeline.repairPlan.tasks[0]?.action, 'retry_or_switch_provider', 'runtime timeline repair plans sort critical provider remediation first')
+  assert.equal(issueTimeline.repairPlan.tasks[0]?.target.kind, 'retry-chat', 'runtime timeline repair plans preserve the target route')
+  const manifestTimeline = buildRuntimeTimelineSnapshot([
+    buildRuntimeEventEnvelope({
+      event: 'context.planned',
+      providerId: 'timeline-provider',
+      model: 'timeline-model',
+      data: {
+        fragmentCount: 3,
+        contextManifest: {
+          id: 'context-manifest-timeline',
+          schema: 'islemind.context-assembly-manifest.v1',
+        },
+        contextManifestFailureCodes: [
+          'context_source_unbounded',
+          'context_budget_overrun',
+          'context_source_hash_changed',
+          'context_fragment_id_churn',
+          'context_full_rewrite_detected',
+        ],
+      },
+    }, new Date('2026-01-01T00:00:09.000Z')),
+  ], { limit: 10 })
+  assert.deepEqual(
+    manifestTimeline.issues.map((issue) => issue.code).sort(),
+    ['context_manifest_budget_overrun', 'context_manifest_source_churn', 'context_unbounded_blocked'],
+    'runtime timeline maps context assembly manifest failure codes to actionable issues'
+  )
+  assert.equal(manifestTimeline.entries[0]?.data.contextManifestSchema, 'islemind.context-assembly-manifest.v1', 'runtime timeline preserves bounded context manifest schema')
+  assert.equal(manifestTimeline.entries[0]?.data.contextManifestId, 'context-manifest-timeline', 'runtime timeline preserves bounded context manifest id')
+  assert.equal(manifestTimeline.entries[0]?.data.contextManifestIssueCount, 5, 'runtime timeline counts context manifest failure codes')
+  assert.equal(manifestTimeline.entries[0]?.data.contextManifestBudgetOverrun, true, 'runtime timeline marks context manifest budget overruns')
+  assert.equal(manifestTimeline.entries[0]?.data.contextManifestSourceChurnCount, 3, 'runtime timeline counts context manifest source churn signals')
+  assert.ok(manifestTimeline.entries[0]?.summary.includes('5 manifest issue'), 'runtime timeline summarizes context manifest issue counts')
+  assert.equal(manifestTimeline.issues.find((issue) => issue.code === 'context_manifest_budget_overrun')?.nextAction, 'cap_context_source', 'runtime timeline maps context budget overruns to source caps')
+  assert.equal(manifestTimeline.issues.find((issue) => issue.code === 'context_manifest_budget_overrun')?.actionTarget.kind, 'context-settings', 'runtime timeline routes context budget overruns to context settings')
+  assert.equal(manifestTimeline.issues.find((issue) => issue.code === 'context_manifest_source_churn')?.nextAction, 'stabilize_context_sources', 'runtime timeline maps context source churn to source stabilization')
+  assert.equal(manifestTimeline.issues.find((issue) => issue.code === 'context_manifest_source_churn')?.actionTarget.kind, 'context-settings', 'runtime timeline routes context source churn to context settings')
+  const manifestCapTask = manifestTimeline.repairPlan.tasks.find((task) => task.action === 'cap_context_source')
+  const manifestStabilizeTask = manifestTimeline.repairPlan.tasks.find((task) => task.action === 'stabilize_context_sources')
+  assert.equal(manifestTimeline.repairPlan.taskCount, 2, 'runtime timeline keeps cap and stabilization repair paths separate')
+  assert.deepEqual(manifestCapTask?.issueCodes.sort(), ['context_manifest_budget_overrun', 'context_unbounded_blocked'], 'runtime timeline merges manifest cap issues into one repair task')
+  assert.equal(manifestCapTask?.target.kind, 'context-settings', 'runtime timeline routes merged manifest cap tasks to context settings')
+  assert.deepEqual(manifestStabilizeTask?.issueCodes, ['context_manifest_source_churn'], 'runtime timeline creates a separate repair task for source stabilization')
+  assert.equal(manifestStabilizeTask?.target.kind, 'context-settings', 'runtime timeline routes source stabilization tasks to context settings')
+  const credentialTimeline = buildRuntimeTimelineSnapshot([
+    buildRuntimeEventEnvelope({
+      event: 'provider.error',
+      providerId: 'timeline-provider',
+      credentialGroupId: 'timeline-credential-a',
+      model: 'timeline-model',
+      data: { code: 'unauthorized', status: 401 },
+    }, new Date('2026-01-01T00:00:08.000Z')),
+    buildRuntimeEventEnvelope({
+      event: 'provider.error',
+      providerId: 'timeline-provider',
+      credentialGroupId: 'timeline-credential-b',
+      model: 'timeline-model',
+      data: { code: 'upstream_500', status: 500 },
+    }, new Date('2026-01-01T00:00:09.000Z')),
+  ], { limit: 10 })
+  assert.equal(credentialTimeline.issues.filter((issue) => issue.code === 'provider_error').length, 2, 'runtime timeline keeps different provider remediation targets separate')
+  assert.equal(credentialTimeline.issues.find((issue) => issue.nextAction === 'check_provider_credentials')?.actionTarget.kind, 'provider-settings', 'runtime timeline routes credential errors to provider settings')
+  assert.equal(credentialTimeline.issues.find((issue) => issue.nextAction === 'check_provider_credentials')?.actionTarget.credentialGroupId, 'timeline-credential-a', 'runtime timeline carries credential scope into action targets')
+  assert.equal(credentialTimeline.issues.find((issue) => issue.nextAction === 'retry_or_switch_provider')?.actionTarget.kind, 'retry-chat', 'runtime timeline routes retryable provider errors to chat retry targets')
+  assert.equal(credentialTimeline.repairPlan.taskCount, 2, 'runtime timeline creates separate repair tasks for credential and retry remediations')
+  const mcpTimeline = buildRuntimeTimelineSnapshot([
+    buildRuntimeEventEnvelope({
+      event: 'tool.mcp.compatibility.checked',
+      data: {
+        schema: 'islemind.mcp-compatibility-runtime-summary.v1',
+        evaluationSchema: 'islemind.mcp-compatibility-eval.v1',
+        evaluationId: 'mcp-compatibility-eval-timeline',
+        status: 'done',
+        serverCount: 4,
+        connectedCount: 3,
+        warningCount: 2,
+        errorCount: 1,
+        toolCount: 8,
+        resourceCount: 3,
+        promptCount: 2,
+        invalidManifestItemCount: 2,
+        destructivePermissionCount: 1,
+        refusedToolCallCount: 1,
+        qualityGatePassed: true,
+        failureCodes: ['unsupported_transport', 'malformed_schema', 'permission_required'],
+        failureCounts: {
+          unsupported_transport: 1,
+          malformed_schema: 2,
+          permission_required: 1,
+          tool_unavailable: 0,
+          execution_failed: 0,
+        },
+      },
+    }, new Date('2026-01-01T00:00:10.000Z')),
+  ], { limit: 10 })
+  assert.equal(mcpTimeline.entries[0]?.stage, 'tool', 'runtime timeline classifies MCP compatibility as a tool-stage control-plane event')
+  assert.equal(mcpTimeline.entries[0]?.status, 'done', 'runtime timeline keeps completed MCP compatibility checks as done events')
+  assert.equal(mcpTimeline.entries[0]?.data.mcpCompatibilitySchema, 'islemind.mcp-compatibility-runtime-summary.v1', 'runtime timeline preserves bounded MCP compatibility schema')
+  assert.deepEqual(
+    mcpTimeline.issues.map((issue) => issue.code).sort(),
+    ['mcp_manifest_invalid', 'mcp_permission_required', 'mcp_transport_unsupported'],
+    'runtime timeline maps MCP compatibility failure codes to actionable issues'
+  )
+  assert.equal(mcpTimeline.issues.find((issue) => issue.code === 'mcp_manifest_invalid')?.count, 2, 'runtime timeline counts invalid MCP manifest entries')
+  assert.equal(mcpTimeline.issues.find((issue) => issue.code === 'mcp_transport_unsupported')?.nextAction, 'review_mcp_transport', 'runtime timeline recommends MCP transport review')
+  assert.equal(mcpTimeline.issues.find((issue) => issue.code === 'mcp_manifest_invalid')?.nextAction, 'review_mcp_manifest', 'runtime timeline recommends MCP manifest review')
+  assert.equal(mcpTimeline.issues.find((issue) => issue.code === 'mcp_permission_required')?.nextAction, 'confirm_mcp_tool_permission', 'runtime timeline recommends MCP permission confirmation')
+  assert.ok(mcpTimeline.issues.every((issue) => issue.actionTarget.kind === 'tool-settings'), 'runtime timeline routes MCP compatibility repair actions to MCP/tool settings')
+  assert.equal(mcpTimeline.repairPlan.taskCount, 3, 'runtime timeline creates separate MCP repair tasks by remediation action')
+  const agentSecurityTimeline = buildRuntimeTimelineSnapshot([
+    buildRuntimeEventEnvelope({
+      event: 'agent.security.evaluation.checked',
+      data: {
+        schema: 'islemind.agent-security-runtime-summary.v1',
+        evaluationSchema: 'islemind.agent-security-eval.v1',
+        evaluationId: 'agent-security-eval-timeline',
+        status: 'done',
+        caseCount: 10,
+        passedCaseCount: 10,
+        failedCaseCount: 0,
+        blockedCaseCount: 8,
+        blockedPromptInjectionCount: 2,
+        blockedToolReplayCount: 1,
+        blockedWorkflowTamperingCount: 1,
+        unexpectedCaseCount: 0,
+        blockingConditions: ['permission_required', 'provider_tool_replay_mismatch', 'workflow_tampering'],
+        actualBehaviors: ['blocked-multi-step-escalation', 'blocked-provider-tool-replay', 'blocked-workflow-tampering'],
+        qualityGatePassed: true,
+      },
+    }, new Date('2026-01-01T00:00:11.000Z')),
+  ], { limit: 10 })
+  assert.equal(agentSecurityTimeline.entries[0]?.stage, 'tool', 'runtime timeline classifies agent security checks as tool/control-plane events')
+  assert.equal(agentSecurityTimeline.entries[0]?.data.agentSecuritySchema, 'islemind.agent-security-runtime-summary.v1', 'runtime timeline preserves bounded agent security summary schema')
+  assert.deepEqual(
+    agentSecurityTimeline.issues.map((issue) => issue.code).sort(),
+    ['agent_prompt_injection_blocked', 'agent_tool_replay_blocked', 'agent_workflow_tampering_blocked'],
+    'runtime timeline maps agent security blocks to actionable issues'
+  )
+  assert.equal(agentSecurityTimeline.issues.find((issue) => issue.code === 'agent_prompt_injection_blocked')?.count, 2, 'runtime timeline counts blocked prompt injection cases')
+  assert.equal(agentSecurityTimeline.issues.find((issue) => issue.code === 'agent_tool_replay_blocked')?.nextAction, 'review_agent_security_policy', 'runtime timeline recommends agent security policy review for replay blocks')
+  assert.equal(agentSecurityTimeline.issues.find((issue) => issue.code === 'agent_workflow_tampering_blocked')?.nextAction, 'review_agent_workflow', 'runtime timeline recommends workflow review for saved workflow tampering')
+  assert.ok(agentSecurityTimeline.issues.every((issue) => issue.actionTarget.kind === 'agent-settings'), 'runtime timeline routes agent security repair actions to agent settings')
+  assert.equal(agentSecurityTimeline.repairPlan.taskCount, 2, 'runtime timeline groups agent security repairs by remediation action')
+  const latestFirstTimeline = buildRuntimeTimelineSnapshot(directTimeline.entries.map((entry) => ({
+    schema: 'islemind.runtime-event.v1',
+    id: entry.id,
+    ts: entry.ts,
+    event: entry.event,
+    providerId: entry.providerId,
+    model: entry.model,
+    data: entry.data,
+    redaction: { applied: true, strategy: 'runtime-log-redaction-v1' },
+  })), { limit: 2, newestFirst: true })
+  assert.deepEqual(latestFirstTimeline.entries.map((entry) => entry.event), ['plugin.catalog.snapshot.created', 'token_usage.updated'], 'runtime timeline can read newest entries first for compact displays')
+  await emitRuntimeEvent({
+    event: 'context.planned',
+    providerId: 'memory-provider',
+    model: 'memory-model',
+    data: {
+      fragmentCount: 1,
+      cappedFragmentCount: 1,
+      cacheDiagnosticCount: 1,
+      cacheDiagnostics: [{ kind: 'full_context_rewrite_detected' }],
+    },
+    options: { enabled: false },
+  })
+  const memoryTimeline = loadRuntimeTimelineSnapshot({ limit: 5 })
+  assert.equal(memoryTimeline.counts.byStage.context, 1, 'runtime timeline loads context events from bounded memory history')
+  const memoryOnlySummary = await buildRuntimeDiagnosticsSummary({ providers: [], settings: {} })
+  assert.equal(memoryOnlySummary.contextControlPlane.planned, 1, 'runtime diagnostics consumes bounded in-memory runtime event history when logs are disabled')
+  assert.equal(memoryOnlySummary.contextControlPlane.cappedFragments, 1, 'runtime diagnostics summarizes in-memory context event data')
+  assert.equal(memoryOnlySummary.contextControlPlane.fullRewriteDetected, 1, 'runtime diagnostics summarizes in-memory cache diagnostics')
+  assert.equal(memoryOnlySummary.timeline.schema, RUNTIME_TIMELINE_SCHEMA, 'runtime diagnostics includes a runtime timeline snapshot')
+  assert.equal(memoryOnlySummary.timeline.counts.byStage.context, 1, 'runtime diagnostics timeline summarizes context stage events')
+  assert.ok(memoryOnlySummary.performance.buildDurationMs >= 0, 'runtime diagnostics exposes non-negative build duration metadata')
+  assert.equal(memoryOnlySummary.performance.logTailBytes, RUNTIME_DIAGNOSTICS_LOG_TAIL_BYTES, 'runtime diagnostics reports the log tail byte budget')
+  assert.equal(memoryOnlySummary.performance.timelineEventLimit, RUNTIME_DIAGNOSTICS_TIMELINE_EVENT_LIMIT, 'runtime diagnostics reports the timeline input event budget')
+  assert.equal(memoryOnlySummary.observability.schema, 'islemind.observability-sink-policy.v1', 'runtime diagnostics exposes the observability sink policy schema')
+  assert.equal(memoryOnlySummary.observability.networkExportAllowed, false, 'runtime diagnostics keeps external observability export disabled by default')
+  assert.equal(memoryOnlySummary.observability.localDiagnosticsAllowed, false, 'runtime diagnostics keeps local observability diagnostics disabled when the sink is off')
+  assert.equal(memoryOnlySummary.observability.previewSchema, 'islemind.observability-sink-preview.v1', 'runtime diagnostics exposes the observability sink preview schema')
+  assert.equal(memoryOnlySummary.observability.previewStatus, 'blocked', 'runtime diagnostics keeps preview blocked when observability is off')
+  assert.equal(memoryOnlySummary.observability.previewEventCount, 1, 'runtime diagnostics reads bounded runtime events for observability preview accounting')
+  assert.equal(memoryOnlySummary.observability.previewSpanCount, 0, 'blocked observability preview does not build spans')
+  assert.ok(memoryOnlySummary.observability.blockReasons.includes('external-export-disabled'), 'runtime diagnostics reports the default external export block reason')
+  assert.ok(memoryOnlySummary.observability.warnings.includes('attribute-limit-defaulted'), 'runtime diagnostics reports defaulted observability attribute budgets')
+  const externalObservabilitySummary = await buildRuntimeDiagnosticsSummary({
+    providers: [],
+    settings: {
+      observabilitySinkMode: 'external',
+      observabilitySinkTarget: 'langfuse',
+      observabilitySinkEndpointUrl: 'https://observe.example/v1/traces',
+      observabilitySinkApiKeyConfigured: true,
+      observabilitySinkUserOptIn: true,
+      observabilitySinkWorkspaceConsent: true,
+      observabilitySinkAttributeLimit: 32,
+      observabilitySinkAttributeStringLimit: 128,
+      observabilitySinkHighFrequencyExportMode: 'coalesced',
+    },
+  })
+  assert.equal(externalObservabilitySummary.observability.networkExportAllowed, true, 'runtime diagnostics allows external observability only when every opt-in gate is satisfied')
+  assert.equal(externalObservabilitySummary.observability.localDiagnosticsAllowed, true, 'runtime diagnostics keeps local diagnostics available when external export is enabled')
+  assert.equal(externalObservabilitySummary.observability.target, 'langfuse', 'runtime diagnostics preserves the configured observability sink target')
+  assert.equal(externalObservabilitySummary.observability.endpointKind, 'https', 'runtime diagnostics classifies secure observability endpoints')
+  assert.equal(externalObservabilitySummary.observability.previewStatus, 'ready', 'runtime diagnostics builds a ready observability preview for fully consented sinks')
+  assert.equal(externalObservabilitySummary.observability.previewExportable, true, 'runtime diagnostics marks fully consented observability preview as exportable')
+  assert.equal(externalObservabilitySummary.observability.previewSpanCount, 1, 'runtime diagnostics preview builds spans from bounded runtime events')
+  assert.equal(externalObservabilitySummary.observability.previewFailureCodes.length, 0, 'runtime diagnostics preview reports no failures for the consented sink')
+  assert.deepEqual(externalObservabilitySummary.observability.blockReasons, [], 'runtime diagnostics reports no observability blockers for a fully consented HTTPS sink')
+  const missingConsentObservabilitySummary = await buildRuntimeDiagnosticsSummary({
+    providers: [],
+    settings: {
+      observabilitySinkMode: 'external',
+      observabilitySinkTarget: 'opentelemetry',
+      observabilitySinkEndpointUrl: 'https://observe.example/v1/traces',
+      observabilitySinkApiKeyConfigured: true,
+      observabilitySinkUserOptIn: true,
+      observabilitySinkWorkspaceConsent: false,
+      observabilitySinkAttributeLimit: 48,
+      observabilitySinkAttributeStringLimit: 160,
+      observabilitySinkHighFrequencyExportMode: 'coalesced',
+    },
+  })
+  assert.equal(missingConsentObservabilitySummary.observability.networkExportAllowed, false, 'runtime diagnostics blocks external observability without workspace consent')
+  assert.equal(missingConsentObservabilitySummary.observability.previewStatus, 'blocked', 'runtime diagnostics blocks preview batch construction when consent is missing')
+  assert.equal(missingConsentObservabilitySummary.observability.previewSpanCount, 0, 'missing-consent observability preview does not build spans')
+  assert.ok(missingConsentObservabilitySummary.observability.blockReasons.includes('missing-workspace-consent'), 'runtime diagnostics exposes missing workspace consent as an observability block reason')
+  await clearRuntimeLog()
+  clearRuntimeEventHistoryForTest()
+  for (let index = 0; index < RUNTIME_DIAGNOSTICS_LOG_ENTRY_LIMIT + 5; index += 1) {
+    await appendRuntimeLog('compact.usage', {}, { enabled: true, maxBytes: 80000 })
+  }
+  const logBudgetSummary = await buildRuntimeDiagnosticsSummary({ providers: [], settings: {} })
+  assert.equal(logBudgetSummary.performance.parsedLogEntries, RUNTIME_DIAGNOSTICS_LOG_ENTRY_LIMIT, 'runtime diagnostics caps parsed log entries after reading the bounded tail')
+  assert.ok(logBudgetSummary.performance.rawParsedLogEntries > logBudgetSummary.performance.parsedLogEntries, 'runtime diagnostics reports when parsed log rows exceed the entry budget')
+  assert.equal(logBudgetSummary.performance.parsedLogEntryLimitApplied, true, 'runtime diagnostics reports parsed log entry limit application')
+  assert.equal(logBudgetSummary.performance.logEntryLimit, RUNTIME_DIAGNOSTICS_LOG_ENTRY_LIMIT, 'runtime diagnostics reports the parsed-entry budget')
+  await clearRuntimeLog()
+  clearRuntimeEventHistoryForTest()
+  for (let index = 0; index < RUNTIME_DIAGNOSTICS_TIMELINE_EVENT_LIMIT + 5; index += 1) {
+    await emitRuntimeEvent({
+      event: 'provider.route.decided',
+      providerId: 'timeline-budget-provider',
+      model: 'timeline-budget-model',
+      data: { blocked: false, index },
+      options: { enabled: false },
+    })
+  }
+  const timelineBudgetSummary = await buildRuntimeDiagnosticsSummary({ providers: [], settings: {} })
+  assert.equal(timelineBudgetSummary.performance.memoryEventEntries, RUNTIME_DIAGNOSTICS_TIMELINE_EVENT_LIMIT + 5, 'runtime diagnostics reports bounded memory event reads')
+  assert.equal(timelineBudgetSummary.performance.timelineInputEvents, RUNTIME_DIAGNOSTICS_TIMELINE_EVENT_LIMIT, 'runtime diagnostics caps timeline input events before snapshot construction')
+  assert.ok(timelineBudgetSummary.performance.timelineOutputEvents <= timelineBudgetSummary.performance.timelineInputEvents, 'runtime diagnostics reports timeline output within the input budget')
+  await clearRuntimeLog()
+  clearRuntimeEventHistoryForTest()
+  await emitRuntimeEvent({
+    event: 'context.compact.decided',
+    providerId: 'memory-provider',
+    model: 'memory-model',
+    data: { mode: 'auto', enabled: true, reason: 'supported' },
+    options: { enabled: true, maxBytes: 4096 },
+  })
+  const dedupedHistorySummary = await buildRuntimeDiagnosticsSummary({ providers: [], settings: {} })
+  assert.equal(dedupedHistorySummary.contextControlPlane.compactDecided, 1, 'runtime diagnostics dedupes runtime events present in both log tail and memory history')
+  assert.equal(dedupedHistorySummary.timeline.counts.byStage.compact, 1, 'runtime diagnostics timeline shares the deduped runtime event stream')
+  await clearRuntimeLog()
+  clearRuntimeEventHistoryForTest()
   assert.equal(
     describeRuntimeTransportSelection({ transport: 'http_sse', requestedMode: 'auto', fallbackReason: 'non_responses_request' }),
     '使用HTTP 流式兼容通道',
@@ -2450,9 +3163,10 @@ async function assertRuntimeDiagnosticsBehavior() {
     /allowed|openai-compatible:ok|http_sse|non_responses_request|warn:ok|not_applied/,
     'runtime diagnostics visible trace hides raw route, transport, payload, and proxy codes'
   )
-  await appendRuntimeLog('provider.conformance', { protocol: 'openai-responses', providerId: 'openai-main' }, { enabled: true, maxBytes: 4096 })
-  await appendRuntimeLog('provider.compatibility', { compatibilityId: 'openai', auditState: 'conformance-ready', providerId: 'openai-main' }, { enabled: true, maxBytes: 4096 })
-  await appendRuntimeLog('transport.fallback', { from: 'responses_websocket', to: 'http_sse', providerId: 'openai-main' }, { enabled: true, maxBytes: 4096 })
+  const diagnosticsLogOptions = { enabled: true, maxBytes: 20000 }
+  await appendRuntimeLog('provider.conformance', { protocol: 'openai-responses', providerId: 'openai-main' }, diagnosticsLogOptions)
+  await appendRuntimeLog('provider.compatibility', { compatibilityId: 'openai', auditState: 'conformance-ready', providerId: 'openai-main' }, diagnosticsLogOptions)
+  await appendRuntimeLog('transport.fallback', { from: 'responses_websocket', to: 'http_sse', providerId: 'openai-main' }, diagnosticsLogOptions)
   await appendRuntimeLog('request.rectification', {
     providerId: 'custom',
     model: 'manual-model',
@@ -2461,7 +3175,173 @@ async function assertRuntimeDiagnosticsBehavior() {
     failedFields: ['response_format'],
     removedFields: ['messages', 'response_format'],
     retainedFields: ['model', 'messages', 'stream'],
-  }, { enabled: true, maxBytes: 4096 })
+  }, diagnosticsLogOptions)
+  await appendRuntimeLog('route.snapshot', {
+    providerId: 'custom',
+    model: 'manual-model',
+    credentialGroupId: 'group-cooldown',
+    routeDecisionSnapshot: {
+      providerId: 'custom',
+      upstreamModel: 'manual-model',
+      credentialGroupId: 'group-cooldown',
+      health: {
+        status: 'cooldown',
+        cooldownUntilMs: 123456,
+      },
+    },
+  }, diagnosticsLogOptions)
+  await appendRuntimeLog('route.snapshot', {
+    providerId: 'custom',
+    model: 'manual-model',
+    credentialGroupId: 'group-circuit',
+    routeDecisionSnapshot: {
+      providerId: 'custom',
+      upstreamModel: 'manual-model',
+      credentialGroupId: 'group-circuit',
+      health: {
+        status: 'circuit-open',
+        circuitOpenUntilMs: 234567,
+      },
+    },
+  }, diagnosticsLogOptions)
+  await appendRuntimeLog('session.affinity', {
+    providerId: 'custom',
+    model: 'manual-model',
+    credentialGroupId: 'group-bound',
+    status: 'bound',
+    reason: 'initial_bind',
+    failoverCount: 0,
+  }, diagnosticsLogOptions)
+  await appendRuntimeLog('session.affinity', {
+    providerId: 'custom',
+    model: 'manual-model',
+    credentialGroupId: 'group-quota',
+    status: 'invalidated',
+    upstreamStatus: 429,
+    trigger: 'rate_limited',
+    fromGroupId: 'group-quota',
+    failoverCount: 0,
+  }, diagnosticsLogOptions)
+  await appendRuntimeLog('session.affinity', {
+    providerId: 'custom',
+    model: 'manual-model',
+    credentialGroupId: 'group-healthy',
+    status: 'rotated',
+    upstreamStatus: 401,
+    trigger: 'credential_unhealthy',
+    fromGroupId: 'group-bad',
+    toGroupId: 'group-healthy',
+    failoverCount: 1,
+  }, diagnosticsLogOptions)
+  await emitRuntimeEvent({
+    event: 'context.planned',
+    providerId: 'custom',
+    model: 'manual-model',
+    data: {
+      fragmentCount: 4,
+      includedFragmentCount: 3,
+      excludedFragmentCount: 1,
+      cappedFragmentCount: 2,
+      cacheDiagnosticCount: 2,
+      tokensUntilCompaction: 128,
+      cacheDiagnostics: [
+        { kind: 'full_context_rewrite_detected', affectedCount: 3, checkedCount: 4 },
+        { kind: 'unbounded_fragment_blocked', sourceId: 'bad-source' },
+      ],
+    },
+    options: diagnosticsLogOptions,
+  })
+  await emitRuntimeEvent({
+    event: 'context.fragment.included',
+    providerId: 'custom',
+    model: 'manual-model',
+    data: { count: 3 },
+    options: diagnosticsLogOptions,
+  })
+  await emitRuntimeEvent({
+    event: 'context.fragment.excluded',
+    providerId: 'custom',
+    model: 'manual-model',
+    data: { count: 1 },
+    options: diagnosticsLogOptions,
+  })
+  await emitRuntimeEvent({
+    event: 'context.compact.decided',
+    providerId: 'custom',
+    model: 'manual-model',
+    data: {
+      mode: 'auto',
+      enabled: true,
+      required: false,
+      supported: true,
+      reason: 'supported',
+      pressureRatio: 0.91,
+      tokensUntilCompaction: 128,
+    },
+    options: diagnosticsLogOptions,
+  })
+  await emitRuntimeEvent({
+    event: 'provider.route.snapshot.created',
+    providerId: 'custom',
+    model: 'manual-model',
+    data: {
+      snapshot: {
+        providerId: 'custom',
+        upstreamModel: 'manual-model',
+        credentialGroupId: 'group-route',
+        route: {
+          protocol: 'openai-compatible',
+          blockReasons: ['unsupported_tool_choice'],
+        },
+        health: {
+          status: 'healthy',
+        },
+        conformance: {
+          protocol: 'openai-compatible',
+          blockerCodes: ['unsupported_tool_choice'],
+        },
+        proxy: {
+          reason: 'custom_base_url',
+        },
+        requestPolicy: {
+          rawPrompt: 'request example raw prompt',
+        },
+      },
+    },
+    options: diagnosticsLogOptions,
+  })
+  await emitRuntimeEvent({
+    event: 'provider.fallback.decided',
+    providerId: 'custom',
+    model: 'manual-model',
+    data: {
+      classification: {
+        trigger: 'rate_limited',
+      },
+      decision: {
+        reason: 'candidate_selected',
+        selected: {
+          providerId: 'openai-main',
+          model: 'gpt-5.2',
+        },
+      },
+      rawPrompt: 'request example raw prompt',
+    },
+    options: diagnosticsLogOptions,
+  })
+  await emitRuntimeEvent({
+    event: 'provider.conformance.checked',
+    providerId: 'custom',
+    model: 'manual-model',
+    data: {
+      protocol: 'openai-compatible',
+      issues: [
+        { severity: 'warn', code: 'optional_metadata' },
+        { severity: 'block', code: 'unsupported_response_format' },
+      ],
+    },
+    options: diagnosticsLogOptions,
+  })
   await appendRuntimeLog('request.rectification', {
     providerId: 'custom',
     model: 'manual-model',
@@ -2470,7 +3350,7 @@ async function assertRuntimeDiagnosticsBehavior() {
     failedFields: ['response_format'],
     removedFields: ['messages', 'response_format'],
     retainedFields: ['model', 'messages', 'stream'],
-  }, { enabled: true, maxBytes: 4096 })
+  }, diagnosticsLogOptions)
   clearCompactUsageRecords()
   recordCompactUsage({ mode: 'auto', providerId: 'openai-main', model: 'gpt-5.2', inputTokens: 1000 })
   recordCompactUsage({ mode: 'auto', providerId: 'openai-main', model: 'gpt-5.2', inputTokens: 1000, outputTokens: 120, estimatedSavedTokens: 430 })
@@ -2581,6 +3461,58 @@ async function assertRuntimeDiagnosticsBehavior() {
     summary.rectification.recentExamples.some((example) => example.kind === 'openai_compatible_minimal_chat' && example.failedFields.includes('response_format') && example.removedFields.includes('messages') && example.retainedFields.includes('model')),
     'runtime diagnostics exposes rectification failed, removed, and retained fields as examples'
   )
+  assert.equal(summary.providerHealth.cooldown, 1, 'runtime diagnostics separates cooldown provider health states')
+  assert.equal(summary.providerHealth.circuitOpen, 1, 'runtime diagnostics separates circuit-open provider health states')
+  assert.equal(summary.providerHealth.quotaExhausted, 1, 'runtime diagnostics separates quota or rate-limit exhaustion states')
+  assert.equal(summary.providerHealth.credentialUnhealthy, 1, 'runtime diagnostics separates credential-unhealthy states')
+  assert.ok(
+    summary.providerHealth.recentExamples.some((example) => example.reason === 'quota_exhausted' && example.credentialGroupId === 'group-quota' && example.status === 429),
+    'runtime diagnostics exposes quota-aware credential group examples without raw request data'
+  )
+  assert.equal(summary.sessionAffinity.bound, 1, 'runtime diagnostics counts session affinity bindings')
+  assert.equal(summary.sessionAffinity.invalidated, 1, 'runtime diagnostics counts session affinity invalidations')
+  assert.equal(summary.sessionAffinity.rotated, 1, 'runtime diagnostics counts session affinity rotations')
+  assert.ok(
+    summary.sessionAffinity.recentExamples.some((example) => example.status === 'rotated' && example.fromGroupId === 'group-bad' && example.toGroupId === 'group-healthy'),
+    'runtime diagnostics exposes session affinity rotation summaries'
+  )
+  assert.ok(!JSON.stringify(summary.sessionAffinity).includes('conversation-session-affinity'), 'runtime diagnostics does not expose derived session keys')
+  assert.equal(summary.contextControlPlane.planned, 1, 'runtime diagnostics counts context planned runtime events')
+  assert.equal(summary.contextControlPlane.compactDecided, 1, 'runtime diagnostics counts context compact decision runtime events')
+  assert.equal(summary.contextControlPlane.fragmentIncluded, 3, 'runtime diagnostics sums included context fragment events')
+  assert.equal(summary.contextControlPlane.fragmentExcluded, 1, 'runtime diagnostics sums excluded context fragment events')
+  assert.equal(summary.contextControlPlane.cappedFragments, 2, 'runtime diagnostics summarizes capped context fragments from runtime events')
+  assert.equal(summary.contextControlPlane.cacheDiagnostics, 2, 'runtime diagnostics summarizes cache diagnostic counts from runtime events')
+  assert.equal(summary.contextControlPlane.fullRewriteDetected, 1, 'runtime diagnostics counts full context rewrite diagnostics')
+  assert.equal(summary.contextControlPlane.unboundedBlocked, 1, 'runtime diagnostics counts unbounded fragment diagnostics')
+  assert.ok(
+    summary.contextControlPlane.recentExamples.some((example) => example.event === 'context.compact.decided' && example.compactEnabled === true && example.compactReason === 'supported'),
+    'runtime diagnostics exposes compact decision examples from runtime event envelopes'
+  )
+  assert.ok(!JSON.stringify(summary.contextControlPlane).includes('bad-source body'), 'runtime diagnostics omits raw context bodies from context control summaries')
+  const requestExampleKinds = new Set(summary.requestExamples.map((example) => example.kind))
+  for (const kind of ['route_snapshot', 'fallback', 'session_binding', 'compact_decision', 'conformance_block']) {
+    assert.ok(requestExampleKinds.has(kind), `runtime diagnostics exposes ${kind} request-level examples`)
+  }
+  const fallbackExample = summary.requestExamples.find((example) => example.kind === 'fallback')
+  assert.equal(fallbackExample?.selectedProviderId, 'openai-main', 'runtime diagnostics captures fallback selected provider without request body data')
+  assert.equal(fallbackExample?.selectedModel, 'gpt-5.2', 'runtime diagnostics captures fallback selected model without request body data')
+  const conformanceBlockExample = summary.requestExamples.find((example) => example.kind === 'conformance_block')
+  assert.equal(conformanceBlockExample?.reason, 'unsupported_response_format', 'runtime diagnostics captures request-level conformance block reason')
+  assert.ok(!JSON.stringify(summary.requestExamples).includes('request example raw prompt'), 'runtime diagnostics request examples omit raw prompt text')
+  assert.ok(!JSON.stringify(summary.requestExamples).includes('bad-source body'), 'runtime diagnostics request examples omit raw context text')
+  const customProviderDetail = summary.providerDetails.find((detail) => detail.providerId === 'custom')
+  assert.equal(customProviderDetail?.declaredProtocol, 'openai-compatible', 'runtime diagnostics provider detail records declared protocol')
+  assert.equal(customProviderDetail?.observedProtocol, 'openai-compatible', 'runtime diagnostics provider detail records observed protocol from route or conformance logs')
+  assert.equal(customProviderDetail?.credentialHealth.cooldown, 1, 'runtime diagnostics provider detail counts cooldown credential group snapshots')
+  assert.equal(customProviderDetail?.credentialHealth.circuitOpen, 1, 'runtime diagnostics provider detail counts circuit-open credential group snapshots')
+  assert.equal(customProviderDetail?.credentialHealth.quotaExhausted, 1, 'runtime diagnostics provider detail counts quota-exhausted session affinity evidence')
+  assert.equal(customProviderDetail?.credentialHealth.credentialUnhealthy, 1, 'runtime diagnostics provider detail counts credential-unhealthy session affinity evidence')
+  assert.equal(customProviderDetail?.sessionAffinity.enabled, false, 'runtime diagnostics provider detail reports disabled session affinity setting')
+  assert.equal(customProviderDetail?.sessionAffinity.status, 'rotated', 'runtime diagnostics provider detail keeps latest session affinity state')
+  assert.equal(customProviderDetail?.lastUnavailableReason, 'conformance_block', 'runtime diagnostics provider detail exposes latest unavailable reason')
+  assert.equal(customProviderDetail?.lastUnavailableDetail, 'unsupported_response_format', 'runtime diagnostics provider detail exposes bounded unavailable detail')
+  assert.ok(!JSON.stringify(summary.providerDetails).includes('request example raw prompt'), 'runtime diagnostics provider details omit raw prompt text')
   assert.equal(summary.providers.ready, 1, 'runtime diagnostics counts ready providers')
   assert.equal(summary.providers.degraded, 1, 'runtime diagnostics counts degraded providers')
   assert.equal(summary.providers.aliasProviders, 1, 'runtime diagnostics counts alias providers')
@@ -2703,6 +3635,26 @@ async function assertRuntimeDiagnosticsBehavior() {
   })
   assert.equal(invalidProxySummary.proxy.applied, false, 'runtime diagnostics rejects non-web custom proxy base URLs')
   assert.equal(invalidProxySummary.proxy.reason, 'invalid_custom_base_url', 'runtime diagnostics records invalid custom proxy base URLs')
+  assert.deepEqual(invalidProxySummary.proxy.warnings, [], 'runtime diagnostics does not warn about sticky proxy headers when the custom URL is invalid')
+
+  const stickyProxySummary = await buildRuntimeDiagnosticsSummary({
+    providers: [openAiPreset, customProvider],
+    settings: {
+      transportMode: 'auto',
+      remoteCompactMode: 'auto',
+      payloadPolicyMode: 'warn',
+      proxyMode: 'custom-base-url',
+      proxyBaseUrl: 'https://proxy.example/v1',
+      sessionAffinityEnabled: true,
+      runtimeLogEnabled: true,
+      runtimeLogMaxBytes: 4096,
+    },
+  })
+  assert.deepEqual(
+    stickyProxySummary.proxy.warnings,
+    ['custom_proxy_session_id_header'],
+    'runtime diagnostics warns when custom proxy sticky routing may depend on underscore session_id headers'
+  )
 
   const hostedSummary = await buildRuntimeDiagnosticsSummary({
     providers: [
@@ -2787,6 +3739,9 @@ async function assertRuntimeDiagnosticsBehavior() {
 
 async function assertRuntimeDiagnosticsFailurePath() {
   const settingsScreenSource = fs.readFileSync(path.join(root, 'src/components/main/SettingsScreenContent.tsx'), 'utf8')
+  const chatDeepLinkSource = fs.readFileSync(path.join(root, 'app/chat/[id].tsx'), 'utf8')
+  const chatWorkspaceSource = fs.readFileSync(path.join(root, 'src/components/chat/ChatWorkspace.tsx'), 'utf8')
+  const composerSource = fs.readFileSync(path.join(root, 'src/components/chat/Composer.tsx'), 'utf8')
   const apiKeyPanelSource = fs.readFileSync(path.join(root, 'src/components/settings/ApiKeyPanel.tsx'), 'utf8')
   const providerSettingsContentSource = fs.readFileSync(path.join(root, 'src/components/providers/ProviderSettingsContent.tsx'), 'utf8')
   const providerCompatibilityContractSource = fs.readFileSync(path.join(root, 'src/services/ai/providerCompatibilityContract.ts'), 'utf8')
@@ -2801,6 +3756,105 @@ async function assertRuntimeDiagnosticsFailurePath() {
   assert.ok(settingsScreenSource.includes('formatCapabilityMatrixExamples'), 'settings diagnostics formats provider capability matrix examples')
   assert.ok(settingsScreenSource.includes('diagnostics.rectification.total'), 'settings diagnostics reads request rectification runtime log counts')
   assert.ok(settingsScreenSource.includes('formatRectificationExamples'), 'settings diagnostics formats request rectification examples')
+  assert.ok(settingsScreenSource.includes('diagnostics.providerHealth.quotaExhausted'), 'settings diagnostics reads quota-aware provider health buckets')
+  assert.ok(settingsScreenSource.includes('formatProviderHealthExamples'), 'settings diagnostics formats provider health examples')
+  assert.ok(settingsScreenSource.includes('diagnostics.sessionAffinity.rotated'), 'settings diagnostics reads session affinity rotation summaries')
+  assert.ok(settingsScreenSource.includes('formatSessionAffinityExamples'), 'settings diagnostics formats session affinity examples')
+  assert.ok(settingsScreenSource.includes('diagnostics.contextControlPlane.cacheDiagnostics'), 'settings diagnostics reads context control-plane cache diagnostic counts')
+  assert.ok(settingsScreenSource.includes('formatContextControlPlaneExamples'), 'settings diagnostics formats context control-plane examples')
+  assert.ok(settingsScreenSource.includes('diagnostics.requestExamples'), 'settings diagnostics reads request-level runtime examples')
+  assert.ok(settingsScreenSource.includes('formatRequestExamples'), 'settings diagnostics formats request-level runtime examples')
+  assert.ok(settingsScreenSource.includes('runtimeDiagnosticTimeline'), 'settings diagnostics exposes the unified runtime timeline')
+  assert.ok(settingsScreenSource.includes('diagnostics.timeline.counts.byStage.provider'), 'settings diagnostics reads runtime timeline stage counts')
+  assert.ok(settingsScreenSource.includes('diagnostics.timeline.counts.byStage.plugin'), 'settings diagnostics reads plugin timeline stage counts')
+  assert.ok(settingsScreenSource.includes('diagnostics.timeline.counts.byStatus.error'), 'settings diagnostics reads runtime timeline status counts')
+  assert.ok(settingsScreenSource.includes('formatRuntimeTimelineExamples'), 'settings diagnostics formats runtime timeline examples')
+  assert.ok(settingsScreenSource.includes('diagnostics.timeline.issues.length'), 'settings diagnostics reads runtime timeline issue counts')
+  assert.ok(settingsScreenSource.includes('diagnostics.timeline.repairPlan.taskCount'), 'settings diagnostics reads runtime timeline repair task counts')
+  assert.ok(settingsScreenSource.includes('formatRuntimeTimelineIssues'), 'settings diagnostics formats runtime timeline issues')
+  assert.ok(settingsScreenSource.includes('formatRuntimeTimelineRepairTasks'), 'settings diagnostics formats runtime timeline repair tasks')
+  assert.ok(settingsScreenSource.includes('runtimeDiagnosticPerformance'), 'settings diagnostics exposes runtime diagnostics performance budgets')
+  assert.ok(settingsScreenSource.includes('diagnostics.performance.buildDurationMs'), 'settings diagnostics reads runtime diagnostics build duration metadata')
+  assert.ok(settingsScreenSource.includes('diagnostics.performance.parsedLogEntryLimitApplied'), 'settings diagnostics surfaces parsed log entry budget pressure')
+  assert.ok(settingsScreenSource.includes('diagnostics.performance.timelineInputEvents'), 'settings diagnostics reads timeline input budget usage')
+  assert.ok(settingsScreenSource.includes('runtimeDiagnosticObservability'), 'settings diagnostics exposes observability sink policy state')
+  assert.ok(settingsScreenSource.includes('diagnostics.observability.networkExportAllowed'), 'settings diagnostics reads observability network export policy state')
+  assert.ok(settingsScreenSource.includes('diagnostics.observability.previewStatus'), 'settings diagnostics reads observability sink preview status')
+  assert.ok(settingsScreenSource.includes('formatObservabilityPreviewFailures'), 'settings diagnostics formats observability preview failure codes')
+  assert.ok(settingsScreenSource.includes('formatObservabilityPolicyBlockReasons'), 'settings diagnostics formats observability policy block reasons')
+  assert.ok(settingsScreenSource.includes('OBSERVABILITY_SINK_MODE_OPTIONS'), 'settings governance exposes observability export mode choices')
+  assert.ok(settingsScreenSource.includes('observabilitySinkEndpointUrl'), 'settings governance exposes observability sink endpoint configuration')
+  assert.ok(settingsScreenSource.includes('getObservabilitySinkApiKey'), 'settings governance loads observability sink API keys from secure storage')
+  assert.ok(settingsScreenSource.includes('setObservabilitySinkApiKey'), 'settings governance saves observability sink API keys through secure storage')
+  assert.ok(settingsScreenSource.includes('observabilitySinkApiKeyDraft'), 'settings governance keeps observability sink API keys in a local secure-input draft')
+  assert.ok(settingsScreenSource.includes('observabilitySinkApiKeyConfigured'), 'settings governance exposes the observability API key readiness gate')
+  assert.ok(settingsScreenSource.includes('observabilitySinkWorkspaceConsent'), 'settings governance exposes the observability workspace consent gate')
+  assert.ok(!settingsScreenSource.includes('onPress={() => updateSettings({ observabilitySinkApiKeyConfigured'), 'settings governance does not let users toggle observability API key configured state manually')
+  assert.ok(settingsScreenSource.includes('RuntimeRepairTaskActions'), 'settings diagnostics renders actionable runtime repair task buttons')
+  assert.ok(settingsScreenSource.includes('openRuntimeRepairTask'), 'settings diagnostics owns runtime repair task navigation handlers')
+  assert.ok(settingsScreenSource.includes("openRuntimeRepairSettingsRoute('/settings/providers'"), 'settings diagnostics routes provider repair tasks to provider settings')
+  assert.ok(settingsScreenSource.includes("openRuntimeRepairSettingsRoute('/settings/mcp'"), 'settings diagnostics routes tool repair tasks to MCP settings')
+  assert.ok(settingsScreenSource.includes("openRuntimeRepairSettingsRoute('/settings/context'"), 'settings diagnostics routes context repair tasks to context settings')
+  assert.ok(settingsScreenSource.includes("openRuntimeRepairSettingsRoute('/settings/skills'"), 'settings diagnostics routes plugin repair tasks to skill settings')
+  assert.ok(settingsScreenSource.includes("pathname: '/chat/[id]'"), 'settings diagnostics routes retry repair tasks back to the chat conversation')
+  assert.ok(settingsScreenSource.includes('issueCodes: task.issueCodes.join'), 'settings diagnostics passes issue codes into retry repair chat links')
+  assert.ok(settingsScreenSource.includes('sourceEventIds: task.sourceEventIds.join'), 'settings diagnostics passes source runtime event ids into retry repair chat links')
+  assert.ok(settingsScreenSource.includes('latestEventId: task.latestEventId'), 'settings diagnostics passes the latest runtime event id into retry repair chat links')
+  assert.ok(settingsScreenSource.includes('summary: task.summary'), 'settings diagnostics passes repair summaries into retry repair chat links')
+  assert.ok(settingsScreenSource.includes('governance: true'), 'settings diagnostics opens governance controls for compact and session-affinity repairs')
+  assert.ok(chatDeepLinkSource.includes('buildRuntimeRepairIntent'), 'chat deep links build retry intents from runtime repair params')
+  assert.ok(chatDeepLinkSource.includes('RUNTIME_REPAIR_REPLAY_PAYLOAD_SCHEMA'), 'chat deep links define a stable runtime repair replay payload schema')
+  assert.ok(chatDeepLinkSource.includes('buildRuntimeRepairReplayPayloadJson'), 'chat deep links build machine-readable runtime repair replay payloads')
+  assert.ok(chatDeepLinkSource.includes('buildRuntimeRepairReplaySteps'), 'chat deep links build machine-readable runtime repair replay steps')
+  assert.ok(chatDeepLinkSource.includes('preserve_user_intent'), 'chat deep links keep original user intent as the first repair replay step')
+  assert.ok(chatDeepLinkSource.includes('retry_and_report_blocker'), 'chat deep links make retry and blocker reporting an explicit repair replay step')
+  assert.ok(chatDeepLinkSource.includes('chat.runtimeRepairRetryPrompt'), 'chat deep links seed localized runtime repair retry prompts')
+  assert.ok(chatDeepLinkSource.includes('findRuntimeRepairReplayContext'), 'chat deep links enrich repair retry drafts with conversation replay context')
+  assert.ok(chatDeepLinkSource.includes('previousUserMessage'), 'chat deep links include the previous user request in repair retry drafts')
+  assert.ok(chatDeepLinkSource.includes('failureSummary'), 'chat deep links include failure summaries in repair retry drafts')
+  assert.ok(chatDeepLinkSource.includes('routeParamList(params.issueCodes)'), 'chat deep links parse structured runtime repair issue codes')
+  assert.ok(chatDeepLinkSource.includes('routeParamList(params.sourceEventIds)'), 'chat deep links parse runtime repair source event ids')
+  assert.ok(chatDeepLinkSource.includes('latestEventId = routeParamText(params.latestEventId)'), 'chat deep links parse latest runtime repair event ids')
+  assert.ok(chatDeepLinkSource.includes('routeParamPositiveInteger(params.eventCount'), 'chat deep links parse bounded runtime repair event counts')
+  assert.ok(chatDeepLinkSource.includes('severity: severity ?'), 'chat deep links add runtime repair severity labels to retry prompts')
+  assert.ok(chatDeepLinkSource.includes('payloadJson'), 'chat deep links inject structured runtime repair payload JSON into retry prompts')
+  assert.ok(chatDeepLinkSource.includes('repairSteps'), 'chat deep links include bounded repair steps in structured replay payloads')
+  assert.ok(chatDeepLinkSource.includes('isRuntimeRepairFailureMessage'), 'chat deep links identify failed assistant turns for repair replay')
+  assert.ok(chatDeepLinkSource.includes('truncateRuntimeRepairText'), 'chat deep links bound repair replay context text')
+  assert.ok(chatDeepLinkSource.includes("routeParamText(params.source) !== 'runtime-repair'"), 'chat deep links gate repair draft seeding to runtime repair links')
+  assert.ok(chatWorkspaceSource.includes('restoreInitialDraftIfEmpty?: boolean'), 'chat workspace exposes draft restoration guards to deep links')
+  assert.ok(chatDeepLinkSource.includes('restoreInitialDraftIfEmpty'), 'runtime repair chat deep links avoid overwriting non-empty composer drafts')
+  assert.ok(chatDeepLinkSource.includes('runtimeRepairIntent={runtimeRepairIntent}'), 'runtime repair chat deep links pass visible repair intents into the chat workspace')
+  assert.ok(chatWorkspaceSource.includes('RuntimeRepairIntentCard'), 'chat workspace renders visible runtime repair replay intents')
+  assert.ok(chatWorkspaceSource.includes('runtimeRepairIntentMeta'), 'chat workspace renders structured runtime repair intent metadata')
+  assert.ok(chatWorkspaceSource.includes('intent.issueCodes'), 'chat workspace renders runtime repair intent issue codes')
+  assert.ok(chatWorkspaceSource.includes('runtimeRepairIntentEventId'), 'chat workspace renders runtime repair source event ids')
+  assert.ok(chatWorkspaceSource.includes('intent.payloadSchema'), 'chat workspace renders the runtime repair replay payload schema')
+  assert.ok(chatWorkspaceSource.includes('intent.repairStepCount'), 'chat workspace renders the runtime repair replay step count')
+  assert.ok(chatWorkspaceSource.includes('externalSubmitKey={runtimeRepairSubmitKey}'), 'chat workspace can submit runtime repair intents without manual composer typing')
+  assert.ok(chatWorkspaceSource.includes('onApplyStarter(visibleRuntimeRepairIntent.prompt)'), 'chat workspace restores the repair prompt before one-click repair submit')
+  assert.ok(chatWorkspaceSource.includes('pendingRuntimeRepairSubmitIntentKey'), 'chat workspace waits for restored repair prompts before submitting runtime repair intents')
+  assert.ok(chatWorkspaceSource.includes('sendRuntimeRepairIntent'), 'chat workspace owns runtime repair intent send actions')
+  assert.ok(chatWorkspaceSource.includes("runtime.repair.replay.submitted"), 'chat workspace emits typed repair replay submit events')
+  assert.ok(chatWorkspaceSource.includes("runtime.repair.replay.applied"), 'chat workspace emits typed repair replay draft events')
+  assert.ok(chatWorkspaceSource.includes("runtime.repair.replay.dismissed"), 'chat workspace emits typed repair replay dismiss events')
+  assert.ok(chatWorkspaceSource.includes('payloadSchema: intent.payloadSchema'), 'chat workspace emits repair replay payload schema metadata')
+  assert.ok(!chatWorkspaceSource.includes('payloadJson: intent.payloadJson'), 'chat workspace repair replay telemetry omits full payload JSON')
+  assert.ok(composerSource.includes('externalSubmitKey?: string | number'), 'composer exposes a bounded external submit trigger for repair replay')
+  assert.ok(composerSource.includes('consumedExternalSubmitKey'), 'composer consumes external submit keys only once')
+  assert.ok(settingsScreenSource.includes('issue.nextAction'), 'settings diagnostics formats runtime timeline next actions')
+  assert.ok(settingsScreenSource.includes('issue.actionTarget.kind'), 'settings diagnostics formats runtime timeline action targets')
+  assert.ok(settingsScreenSource.includes('settings.sessionAffinityEnabled === true'), 'settings governance exposes the session-affinity enablement control')
+  assert.ok(settingsScreenSource.includes("updatePositiveInteger('sessionAffinityTtlMs'"), 'settings governance exposes the session-affinity TTL control')
+  assert.ok(settingsScreenSource.includes("issue.severity === 'critical'"), 'settings diagnostics promotes critical runtime timeline issues')
+  assert.ok(providerSettingsContentSource.includes('buildRuntimeDiagnosticsSummary({ providers, settings })'), 'provider settings loads bounded runtime diagnostics summaries')
+  assert.ok(providerSettingsContentSource.includes('runtimeDetailByProviderId'), 'provider settings maps runtime diagnostics by provider id')
+  assert.ok(providerSettingsContentSource.includes('runtimeObservedProtocol'), 'provider settings shows observed runtime protocol evidence')
+  assert.ok(apiKeyPanelSource.includes('ProviderRuntimeDiagnosticsPanel'), 'API key panel renders provider-level runtime diagnostics')
+  assert.ok(apiKeyPanelSource.includes('runtimeCredentialHealthValue'), 'API key panel formats credential group health diagnostics')
+  assert.ok(apiKeyPanelSource.includes('runtimeSessionAffinityValue'), 'API key panel formats session affinity diagnostics')
+  assert.ok(apiKeyPanelSource.includes('runtimeUnavailableValue'), 'API key panel formats last unavailable reason diagnostics')
+  assert.ok(settingsScreenSource.includes('diagnostics.proxy.warnings'), 'settings diagnostics surfaces custom proxy sticky-routing warnings')
   assert.ok(apiKeyPanelSource.includes('summarizeProviderCapabilityMatrixDetails(provider, matrix)'), 'API key panel provider summary includes contract-aware capability matrix detail')
   assert.ok(apiKeyPanelSource.includes('ModelCapabilityEvidencePanel'), 'API key panel renders model-level capability evidence diagnostics')
   assert.ok(apiKeyPanelSource.includes('buildProviderModelCapabilityMatrix(provider, modelId)'), 'API key panel builds diagnostics from provider/model capability evidence')
@@ -2844,6 +3898,112 @@ async function assertRuntimeDiagnosticsFailurePath() {
     assert.ok(resource.settings.runtimeDiagnosticCapabilityStatusValue, `settings diagnostics ${locale} locale formats provider compatibility capability status summary`)
     assert.ok(resource.settings.runtimeDiagnosticRectification, `settings diagnostics ${locale} locale names request rectification summary`)
     assert.ok(resource.settings.runtimeDiagnosticRectificationValue, `settings diagnostics ${locale} locale formats request rectification summary`)
+    assert.ok(resource.settings.runtimeDiagnosticProviderHealth, `settings diagnostics ${locale} locale names provider health diagnostics`)
+    assert.ok(resource.settings.runtimeDiagnosticProviderHealthValue, `settings diagnostics ${locale} locale formats provider health diagnostics`)
+    assert.ok(resource.settings.runtimeDiagnosticProviderHealthReason?.quota_exhausted, `settings diagnostics ${locale} locale names quota health reason`)
+    assert.ok(resource.settings.runtimeDiagnosticSessionAffinity, `settings diagnostics ${locale} locale names session affinity diagnostics`)
+    assert.ok(resource.settings.runtimeDiagnosticSessionAffinityValue, `settings diagnostics ${locale} locale formats session affinity diagnostics`)
+    assert.ok(resource.settings.runtimeDiagnosticSessionAffinityStatus?.rotated, `settings diagnostics ${locale} locale names session affinity rotation status`)
+    assert.ok(resource.settings.runtimeDiagnosticContextControlPlane, `settings diagnostics ${locale} locale names context control-plane diagnostics`)
+    assert.ok(resource.settings.runtimeDiagnosticContextControlPlaneValue, `settings diagnostics ${locale} locale formats context control-plane diagnostics`)
+    assert.ok(resource.settings.runtimeDiagnosticRequestExamples, `settings diagnostics ${locale} locale names request-level runtime examples`)
+    assert.ok(resource.settings.runtimeDiagnosticRequestExamplesValue, `settings diagnostics ${locale} locale formats request-level runtime examples`)
+    assert.ok(resource.settings.runtimeDiagnosticTimeline, `settings diagnostics ${locale} locale names the runtime timeline summary`)
+    assert.ok(resource.settings.runtimeDiagnosticTimelineValue, `settings diagnostics ${locale} locale formats the runtime timeline summary`)
+    assert.ok(resource.settings.runtimeDiagnosticPerformance, `settings diagnostics ${locale} locale names runtime diagnostics performance budgets`)
+    assert.ok(resource.settings.runtimeDiagnosticPerformanceValue?.includes('duration'), `settings diagnostics ${locale} locale formats diagnostics build duration`)
+    assert.ok(resource.settings.runtimeDiagnosticPerformanceValue?.includes('tail'), `settings diagnostics ${locale} locale formats diagnostics tail budget`)
+    assert.ok(resource.settings.runtimeDiagnosticPerformanceValue?.includes('parsed'), `settings diagnostics ${locale} locale formats parsed log entry counts`)
+    assert.ok(resource.settings.runtimeDiagnosticPerformanceValue?.includes('timelineLimit'), `settings diagnostics ${locale} locale formats timeline input budgets`)
+    assert.ok(resource.settings.runtimeDiagnosticObservability, `settings diagnostics ${locale} locale names observability sink policy state`)
+    assert.ok(resource.settings.runtimeDiagnosticObservabilityValue, `settings diagnostics ${locale} locale formats observability sink policy state`)
+    assert.ok(resource.settings.runtimeDiagnosticObservabilityMode?.off, `settings diagnostics ${locale} locale names disabled observability mode`)
+    assert.ok(resource.settings.runtimeDiagnosticObservabilityPreviewStatus?.ready, `settings diagnostics ${locale} locale names ready observability previews`)
+    assert.ok(resource.settings.runtimeDiagnosticObservabilityPreviewFailuresNone, `settings diagnostics ${locale} locale names empty observability preview failure state`)
+    assert.ok(resource.settings.runtimeDiagnosticObservabilityEndpoint?.none, `settings diagnostics ${locale} locale names absent observability endpoints`)
+    assert.ok(resource.settings.runtimeDiagnosticObservabilityHighFrequency?.coalesced, `settings diagnostics ${locale} locale names coalesced high-frequency observability export`)
+    assert.ok(resource.settings.runtimeDiagnosticObservabilityBlockReason?.['external-export-disabled'], `settings diagnostics ${locale} locale names external observability export blocks`)
+    assert.ok(resource.settings.runtimeDiagnosticObservabilityWarning?.['attribute-limit-defaulted'], `settings diagnostics ${locale} locale names defaulted observability attribute budgets`)
+    assert.ok(resource.settings.observabilitySinkSettings, `settings governance ${locale} locale names observability sink settings`)
+    assert.ok(resource.settings.observabilitySinkMode, `settings governance ${locale} locale names observability export modes`)
+    assert.ok(resource.settings.observabilitySinkExternal, `settings governance ${locale} locale names external observability export`)
+    assert.ok(resource.settings.observabilitySinkTargetOpenTelemetry, `settings governance ${locale} locale names OpenTelemetry sink targets`)
+    assert.ok(resource.settings.observabilitySinkEndpointUrl, `settings governance ${locale} locale names observability sink endpoints`)
+    assert.ok(resource.settings.observabilitySinkHighFrequencyCoalesced, `settings governance ${locale} locale names coalesced observability export`)
+    assert.ok(resource.settings.observabilitySinkApiKey, `settings governance ${locale} locale names observability sink API keys`)
+    assert.ok(resource.settings.observabilitySinkApiKeyNote, `settings governance ${locale} locale explains observability secure key storage`)
+    assert.ok(resource.settings.observabilitySinkApiKeySave, `settings governance ${locale} locale names observability API key save actions`)
+    assert.ok(resource.settings.observabilitySinkApiKeyMissing, `settings governance ${locale} locale names missing observability API key state`)
+    assert.ok(resource.settings.observabilitySinkWorkspaceConsent, `settings governance ${locale} locale names workspace consent gates`)
+    assert.ok(resource.settings.runtimeDiagnosticTimelineStage?.provider, `settings diagnostics ${locale} locale names provider timeline stages`)
+    assert.ok(resource.settings.runtimeDiagnosticTimelineStage?.tool, `settings diagnostics ${locale} locale names tool timeline stages`)
+    assert.ok(resource.settings.runtimeDiagnosticTimelineStage?.plugin, `settings diagnostics ${locale} locale names plugin timeline stages`)
+    assert.ok(resource.settings.runtimeDiagnosticTimelineStatus?.blocked, `settings diagnostics ${locale} locale names blocked timeline statuses`)
+    assert.ok(resource.settings.runtimeDiagnosticTimelineStatus?.error, `settings diagnostics ${locale} locale names error timeline statuses`)
+    assert.ok(resource.settings.runtimeDiagnosticTimelineIssue?.provider_error, `settings diagnostics ${locale} locale names provider error timeline issues`)
+    assert.ok(resource.settings.runtimeDiagnosticTimelineIssue?.context_unbounded_blocked, `settings diagnostics ${locale} locale names unbounded context timeline issues`)
+    assert.ok(resource.settings.runtimeDiagnosticTimelineIssue?.context_manifest_budget_overrun, `settings diagnostics ${locale} locale names context manifest budget issues`)
+    assert.ok(resource.settings.runtimeDiagnosticTimelineIssue?.context_manifest_source_churn, `settings diagnostics ${locale} locale names context manifest source churn issues`)
+    assert.ok(resource.settings.runtimeDiagnosticTimelineIssue?.mcp_transport_unsupported, `settings diagnostics ${locale} locale names MCP transport timeline issues`)
+    assert.ok(resource.settings.runtimeDiagnosticTimelineIssue?.mcp_manifest_invalid, `settings diagnostics ${locale} locale names MCP manifest timeline issues`)
+    assert.ok(resource.settings.runtimeDiagnosticTimelineIssue?.mcp_permission_required, `settings diagnostics ${locale} locale names MCP permission timeline issues`)
+    assert.ok(resource.settings.runtimeDiagnosticTimelineIssue?.agent_prompt_injection_blocked, `settings diagnostics ${locale} locale names agent prompt-injection timeline issues`)
+    assert.ok(resource.settings.runtimeDiagnosticTimelineIssue?.agent_tool_replay_blocked, `settings diagnostics ${locale} locale names agent tool replay timeline issues`)
+    assert.ok(resource.settings.runtimeDiagnosticTimelineIssue?.agent_workflow_tampering_blocked, `settings diagnostics ${locale} locale names agent workflow tampering timeline issues`)
+    assert.ok(resource.settings.runtimeDiagnosticTimelineIssue?.plugin_manifest_invalid, `settings diagnostics ${locale} locale names plugin timeline issues`)
+    assert.ok(resource.settings.runtimeDiagnosticTimelineSeverity?.critical, `settings diagnostics ${locale} locale names critical timeline issue severity`)
+    assert.ok(resource.settings.runtimeDiagnosticTimelineSeverity?.warning, `settings diagnostics ${locale} locale names warning timeline issue severity`)
+    assert.ok(resource.settings.runtimeDiagnosticTimelineNextAction?.retry_or_switch_provider, `settings diagnostics ${locale} locale names provider retry timeline next actions`)
+    assert.ok(resource.settings.runtimeDiagnosticTimelineNextAction?.cap_context_source, `settings diagnostics ${locale} locale names context cap timeline next actions`)
+    assert.ok(resource.settings.runtimeDiagnosticTimelineNextAction?.stabilize_context_sources, `settings diagnostics ${locale} locale names context source stabilization actions`)
+    assert.ok(resource.settings.runtimeDiagnosticTimelineNextAction?.review_mcp_transport, `settings diagnostics ${locale} locale names MCP transport repair actions`)
+    assert.ok(resource.settings.runtimeDiagnosticTimelineNextAction?.review_mcp_manifest, `settings diagnostics ${locale} locale names MCP manifest repair actions`)
+    assert.ok(resource.settings.runtimeDiagnosticTimelineNextAction?.confirm_mcp_tool_permission, `settings diagnostics ${locale} locale names MCP permission repair actions`)
+    assert.ok(resource.settings.runtimeDiagnosticTimelineNextAction?.review_agent_security_policy, `settings diagnostics ${locale} locale names agent security repair actions`)
+    assert.ok(resource.settings.runtimeDiagnosticTimelineNextAction?.review_agent_workflow, `settings diagnostics ${locale} locale names agent workflow repair actions`)
+    assert.ok(resource.settings.runtimeDiagnosticTimelineNextAction?.review_plugin_manifest, `settings diagnostics ${locale} locale names plugin repair actions`)
+    assert.ok(resource.settings.runtimeDiagnosticTimelineActionTarget?.['provider-settings'], `settings diagnostics ${locale} locale names provider action targets`)
+    assert.ok(resource.settings.runtimeDiagnosticTimelineActionTarget?.['tool-settings'], `settings diagnostics ${locale} locale names tool action targets`)
+    assert.ok(resource.settings.runtimeDiagnosticTimelineActionTarget?.['agent-settings'], `settings diagnostics ${locale} locale names agent action targets`)
+    assert.ok(resource.settings.runtimeDiagnosticTimelineActionTarget?.['plugin-settings'], `settings diagnostics ${locale} locale names plugin action targets`)
+    assert.ok(resource.settings.runtimeDiagnosticTimelineActionTarget?.['retry-chat'], `settings diagnostics ${locale} locale names retry chat action targets`)
+    assert.ok(resource.settings.runtimeRepairTasks, `settings diagnostics ${locale} locale names runtime repair task actions`)
+    assert.ok(resource.settings.runtimeRepairTaskButton, `settings diagnostics ${locale} locale formats runtime repair task buttons`)
+    assert.ok(resource.settings.runtimeRepairOpened, `settings diagnostics ${locale} locale names runtime repair navigation feedback`)
+    assert.ok(resource.chat.runtimeRepairRetryPrompt, `chat ${locale} locale formats runtime repair retry prompts`)
+    assert.ok(resource.chat.runtimeRepairRetryPrompt.includes('previousUserMessage'), `chat ${locale} locale includes previous user request in runtime repair prompts`)
+    assert.ok(resource.chat.runtimeRepairRetryPrompt.includes('failureSummary'), `chat ${locale} locale includes failure summaries in runtime repair prompts`)
+    assert.ok(resource.chat.runtimeRepairRetryPrompt.includes('severity'), `chat ${locale} locale includes repair severity in runtime repair prompts`)
+    assert.ok(resource.chat.runtimeRepairRetryPrompt.includes('eventId'), `chat ${locale} locale includes source event ids in runtime repair prompts`)
+    assert.ok(resource.chat.runtimeRepairRetryPrompt.includes('payloadJson'), `chat ${locale} locale includes structured repair payload JSON in runtime repair prompts`)
+    assert.ok(resource.chat.runtimeRepairIntentTitle, `chat ${locale} locale names visible runtime repair intents`)
+    assert.ok(resource.chat.runtimeRepairIntentDetail?.includes('scope'), `chat ${locale} locale formats runtime repair intent scopes`)
+    assert.ok(resource.chat.runtimeRepairIntentDetail?.includes('summary'), `chat ${locale} locale formats runtime repair intent summaries`)
+    assert.ok(resource.chat.runtimeRepairIntentMeta?.includes('action'), `chat ${locale} locale formats runtime repair intent actions`)
+    assert.ok(resource.chat.runtimeRepairIntentMeta?.includes('target'), `chat ${locale} locale formats runtime repair intent targets`)
+    assert.ok(resource.chat.runtimeRepairIntentMeta?.includes('eventCount'), `chat ${locale} locale formats runtime repair intent event counts`)
+    assert.ok(resource.chat.runtimeRepairIntentIssues?.includes('issueCodes'), `chat ${locale} locale formats runtime repair intent issue codes`)
+    assert.ok(resource.chat.runtimeRepairIntentEventId?.includes('eventId'), `chat ${locale} locale formats runtime repair source event ids`)
+    assert.ok(resource.chat.runtimeRepairIntentEventId?.includes('schema'), `chat ${locale} locale formats runtime repair payload schemas`)
+    assert.ok(resource.chat.runtimeRepairIntentEventId?.includes('stepCount'), `chat ${locale} locale formats runtime repair replay step counts`)
+    assert.ok(resource.chat.runtimeRepairIntentSend, `chat ${locale} locale names runtime repair intent send actions`)
+    assert.ok(resource.chat.runtimeRepairIntentApplyDraft, `chat ${locale} locale names runtime repair intent draft restoration`)
+    assert.ok(resource.settings.sessionAffinitySettings, `settings governance ${locale} locale names session affinity settings`)
+    assert.ok(resource.settings.sessionAffinityEnabled, `settings governance ${locale} locale names session affinity enablement`)
+    assert.ok(resource.settings.sessionAffinityTtlMs, `settings governance ${locale} locale names session affinity TTL`)
+    for (const kind of ['route_snapshot', 'fallback', 'session_binding', 'compact_decision', 'conformance_block']) {
+      assert.ok(resource.settings.runtimeDiagnosticRequestExampleKind?.[kind], `settings diagnostics ${locale} locale names ${kind} request-level examples`)
+    }
+    assert.ok(resource.common.unknown, `common ${locale} locale formats unknown values`)
+    assert.ok(resource.providerSettings.runtimeObservedProtocol, `provider settings ${locale} locale formats observed protocol evidence`)
+    assert.ok(resource.providerSettings.runtimeUnavailableReason?.conformance_block, `provider settings ${locale} locale formats conformance block unavailable reason`)
+    assert.ok(resource.providerSettings.runtimeSessionAffinityStatus?.rotated, `provider settings ${locale} locale formats rotated affinity state`)
+    assert.ok(resource.apiKeyPanel.runtimeDiagnostics, `API key panel ${locale} locale names runtime diagnostics section`)
+    assert.ok(resource.apiKeyPanel.runtimeProtocolValue, `API key panel ${locale} locale formats runtime protocol diagnostics`)
+    assert.ok(resource.apiKeyPanel.runtimeCredentialHealthValue, `API key panel ${locale} locale formats runtime credential health diagnostics`)
+    assert.ok(resource.apiKeyPanel.runtimeSessionAffinityValue, `API key panel ${locale} locale formats runtime session affinity diagnostics`)
+    assert.ok(resource.apiKeyPanel.runtimeUnavailableValue, `API key panel ${locale} locale formats runtime unavailable diagnostics`)
+    assert.ok(resource.settings.runtimeProxyWarning?.custom_proxy_session_id_header, `settings diagnostics ${locale} locale explains custom proxy session_id warning`)
     assert.ok(resource.settings.runtimeDiagnosticCapabilitySendPolicy, `settings diagnostics ${locale} locale names provider compatibility send policy summary`)
     assert.ok(resource.settings.runtimeDiagnosticCapabilitySendPolicyValue, `settings diagnostics ${locale} locale formats provider compatibility send policy summary`)
     assert.ok(resource.settings.runtimeDiagnosticCapabilitySendSource?.explicit_declaration, `settings diagnostics ${locale} locale formats provider compatibility send policy sources`)
@@ -2862,6 +4022,215 @@ async function assertRuntimeDiagnosticsFailurePath() {
     assert.ok(resource.apiKeyPanel.modelTestCapabilityStatus?.sent, `API key panel ${locale} locale formats sent model test capability checks`)
     assert.ok(resource.apiKeyPanel.modelTestCapabilityStatus?.available, `API key panel ${locale} locale formats available model test capability checks`)
     assert.ok(resource.apiKeyPanel.modelTestCapabilityStatus?.blocked, `API key panel ${locale} locale formats blocked model test capability checks`)
+  }
+}
+
+async function assertPluginManifestBehavior() {
+  const workflow = createAgentWorkflowDefinition({
+    id: 'workflow-plugin-review',
+    name: 'Plugin review workflow',
+    description: 'Represent imported workflow skills in a plugin manifest.',
+    enabled: false,
+    permissionCeiling: 'read-only',
+    steps: [{
+      id: 'step-1',
+      title: 'Read context',
+      toolRequest: { toolId: 'rag:context_pack', source: 'rag', name: 'rag.context_pack', arguments: { query: 'manifest' } },
+      acceptance: ['context evidence present'],
+    }],
+    expectedOutput: 'rag-evidence',
+    now: 1234,
+  })
+  const workflowSkill = {
+    schema: 'islemind.skill.v1',
+    id: 'skill-agent-workflow-plugin-review',
+    name: 'Plugin review workflow',
+    layer: 'base',
+    version: '1.2.3',
+    description: 'Imported workflow skill.',
+    tags: ['agent-workflow', 'workflow:workflow-plugin-review', 'workflow-import:review-required', 'workflow-status:disabled'],
+    priority: 4,
+    systemPrompt: `Workflow definition:\n${JSON.stringify(workflow, null, 2)}`,
+    createdAt: 1234,
+    updatedAt: 1234,
+  }
+  const workflowSkillTextBefore = JSON.stringify(workflowSkill)
+  const workflowManifest = createPluginManifestFromWorkflowSkill(workflowSkill, 5678)
+  assert.equal(workflowManifest.schema, PLUGIN_MANIFEST_SCHEMA, 'plugin manifest uses the versioned schema')
+  assert.equal(workflowManifest.enabled, false, 'imported workflow plugin manifests stay disabled while review is required')
+  assert.equal(workflowManifest.review.state, 'unreviewed', 'imported workflow plugin manifests preserve visible review state')
+  assert.equal(workflowManifest.skills[0].workflow.id, workflow.id, 'plugin manifest skill entries can represent imported workflow definitions')
+  assert.ok(workflowManifest.requiredCapabilities.includes('agent-workflow'), 'plugin manifest records workflow capability requirements')
+  assert.equal(JSON.stringify(workflowSkill), workflowSkillTextBefore, 'plugin manifest conversion does not mutate existing skill definitions')
+  const workflowManifestValidation = validatePluginManifest(workflowManifest)
+  assert.equal(workflowManifestValidation.ok, true, `workflow plugin manifest validates: ${workflowManifestValidation.errors.join('; ')}`)
+  const importedWorkflowSkill = importSkill(JSON.stringify(workflowSkill))
+  assert.equal(importedWorkflowSkill.ok, true, 'workflow skill imports still use the existing skill import path')
+  assert.equal(importedWorkflowSkill.manifest?.kind, 'agent-workflow-skill', 'workflow skill imports keep portable workflow manifest metadata')
+  assert.equal(importedWorkflowSkill.skill.tags.includes('workflow-import:review-required'), true, 'workflow skill imports keep visible workflow review state')
+
+  const hookManifestValidation = validatePluginManifest({
+    schema: PLUGIN_MANIFEST_SCHEMA,
+    id: 'plugin:hook-review',
+    name: 'Hook review',
+    version: '1.0.0',
+    enabled: true,
+    permissions: ['read-only'],
+    requiredCapabilities: ['runtime-events'],
+    review: { state: 'approved', summary: 'reviewed' },
+    hooks: [{
+      id: 'hook:chat-before-send',
+      name: 'Before send',
+      point: 'chat.beforeSend',
+      handlerRef: 'workflow-plugin-review.beforeSend',
+      enabled: true,
+      permission: 'read-only',
+    }],
+    mcp: [{
+      id: 'mcp:github',
+      name: 'GitHub MCP',
+      serverId: 'github',
+      permission: 'read-only',
+      transport: 'sse',
+    }],
+  })
+  assert.equal(hookManifestValidation.ok, true, `hook plugin manifest validates: ${hookManifestValidation.errors.join('; ')}`)
+  assert.equal(hookManifestValidation.sanitized.hooks[0].enabled, false, 'plugin hooks are validated but forced to no-op by default')
+  assert.equal(hookManifestValidation.sanitized.hooks[0].execution, 'noop', 'plugin hooks record no-op execution until permission review')
+  assert.ok(hookManifestValidation.warnings.some((warning) => warning.includes('disabled')), 'plugin manifest warns when imported hooks request execution')
+  assert.equal(hookManifestValidation.sanitized.mcp[0].permission, 'read-only', 'plugin MCP references remain permission-bound')
+
+  const mcpServerForPluginManifest = {
+    id: 'mcp-plugin-review',
+    name: 'Plugin MCP',
+    url: 'https://example.com/mcp',
+    transport: 'sse',
+    enabled: true,
+    status: 'connected',
+    manifestTtlMs: 1000,
+    manifestCachedAt: 1234,
+    tools: [
+      { name: 'read_repo', description: 'Read', inputSchema: {}, permission: 'read-only', serverId: 'mcp-plugin-review', enabled: true },
+      { name: 'write_issue', description: 'Write', inputSchema: {}, permission: 'read-write', serverId: 'mcp-plugin-review', enabled: false },
+    ],
+    resources: [{ uri: 'repo://main', serverId: 'mcp-plugin-review' }],
+    prompts: [{ name: 'triage', serverId: 'mcp-plugin-review' }],
+    approvedToolNames: ['read_repo'],
+    createdAt: 1234,
+    updatedAt: 1234,
+  }
+  const mcpManifest = createPluginManifestFromMcpServer(mcpServerForPluginManifest, 5678)
+  assert.equal(mcpManifest.schema, PLUGIN_MANIFEST_SCHEMA, 'MCP plugin manifests use the versioned schema')
+  assert.ok(mcpManifest.requiredCapabilities.includes('mcp'), 'MCP plugin manifests declare MCP capability requirements')
+  assert.ok(mcpManifest.permissions.includes('read-only'), 'MCP plugin manifests keep read-only tool permissions')
+  assert.ok(mcpManifest.permissions.includes('read-write'), 'MCP plugin manifests keep read-write tool permissions')
+  assert.equal(mcpManifest.mcp[0].permission, 'read-write', 'MCP plugin manifest entries use the highest requested permission')
+  assert.equal(mcpManifest.mcp[0].serverId, 'mcp-plugin-review', 'MCP plugin manifest entries preserve stable server ids')
+  const mcpManifestValidation = validatePluginManifest(mcpManifest)
+  assert.equal(mcpManifestValidation.ok, true, `MCP plugin manifest validates: ${mcpManifestValidation.errors.join('; ')}`)
+
+  const invalidManifestValidation = validatePluginManifest({
+    schema: PLUGIN_MANIFEST_SCHEMA,
+    id: 'bad id',
+    name: 'Bad plugin',
+    version: '1',
+    enabled: false,
+    hooks: [{ id: 'hook:bad', name: 'Bad hook', point: 'chat.afterToken', handlerRef: 'bad' }],
+    mcp: [{ id: 'mcp:bad', name: 'Bad MCP', serverId: 'github' }],
+  })
+  assert.equal(invalidManifestValidation.ok, false, 'plugin manifest validator rejects invalid manifests')
+  assert.ok(invalidManifestValidation.errors.some((error) => error.includes('stable plugin id')), 'plugin manifest validator requires stable ids')
+  assert.ok(invalidManifestValidation.errors.some((error) => error.includes('semver')), 'plugin manifest validator requires semver versions')
+  assert.ok(invalidManifestValidation.errors.some((error) => error.includes('disabledReason')), 'plugin manifest validator requires disabled reasons')
+  assert.ok(invalidManifestValidation.errors.some((error) => error.includes('point is invalid')), 'plugin manifest validator rejects unknown hook points')
+  assert.ok(invalidManifestValidation.errors.some((error) => error.includes('permission is required')), 'plugin manifest validator requires MCP permissions')
+
+  const pluginCatalog = buildPluginManifestCatalogSnapshot({
+    skills: [workflowSkill],
+    mcpServers: [mcpServerForPluginManifest],
+    manifests: [
+      { manifest: hookManifestValidation.sanitized, sourceKind: 'manual', sourceId: 'hook-review' },
+      { manifest: invalidManifestValidation.sanitized, sourceKind: 'manual', sourceId: 'invalid-review' },
+    ],
+    now: 9876,
+  })
+  assert.equal(pluginCatalog.schema, PLUGIN_MANIFEST_CATALOG_SCHEMA, 'plugin catalog snapshot uses a versioned schema')
+  assert.equal(pluginCatalog.generatedAt, 9876, 'plugin catalog snapshot preserves the generation timestamp')
+  assert.equal(pluginCatalog.counts.total, 4, 'plugin catalog summarizes workflow, MCP, hook, and invalid manifests')
+  assert.equal(pluginCatalog.counts.valid, 3, 'plugin catalog counts valid manifests')
+  assert.equal(pluginCatalog.counts.invalid, 1, 'plugin catalog counts invalid manifests')
+  assert.equal(pluginCatalog.counts.hooks, 2, 'plugin catalog counts declared hooks, including invalid manifests')
+  assert.equal(pluginCatalog.counts.noopHooks, 2, 'plugin catalog records no-op hook execution')
+  assert.equal(pluginCatalog.counts.executableHooks, 0, 'plugin catalog keeps executable hooks at zero by default')
+  assert.equal(pluginCatalog.reviewStates.approved, 2, 'plugin catalog counts approved manifests')
+  assert.equal(pluginCatalog.reviewStates.unreviewed, 2, 'plugin catalog counts unreviewed manifests')
+  assert.equal(pluginCatalog.permissions['read-write'], 1, 'plugin catalog aggregates highest MCP permissions')
+  assert.equal(pluginCatalog.requiredCapabilities['agent-workflow'], 1, 'plugin catalog aggregates workflow capabilities')
+  assert.equal(pluginCatalog.requiredCapabilities.mcp, 1, 'plugin catalog aggregates MCP capabilities')
+  assert.equal(pluginCatalog.requiredCapabilities['runtime-events'], 1, 'plugin catalog aggregates hook capabilities')
+  assert.ok(pluginCatalog.entries.some((entry) => entry.sourceKind === 'workflow-skill' && entry.sourceId === workflowSkill.id), 'plugin catalog preserves workflow skill sources')
+  assert.ok(pluginCatalog.entries.some((entry) => entry.sourceKind === 'mcp-server' && entry.sourceId === mcpServerForPluginManifest.id), 'plugin catalog preserves MCP server sources')
+  const pluginCatalogEventData = buildPluginManifestCatalogRuntimeEventData(pluginCatalog, 'contract-test')
+  assert.equal(pluginCatalogEventData.catalogSchema, PLUGIN_MANIFEST_CATALOG_SCHEMA, 'plugin catalog runtime event data carries the catalog schema')
+  assert.equal(pluginCatalogEventData.trigger, 'contract-test', 'plugin catalog runtime event data records the trigger')
+  assert.equal(pluginCatalogEventData.entryCount, pluginCatalog.entries.length, 'plugin catalog runtime event data records bounded entry count')
+  assert.equal(pluginCatalogEventData.entryLimitApplied, false, 'plugin catalog runtime event data records whether entry limits were applied')
+  assert.deepEqual(pluginCatalogEventData.sourceKinds['workflow-skill'], 1, 'plugin catalog runtime event data summarizes workflow skill sources')
+  assert.deepEqual(pluginCatalogEventData.sourceKinds['mcp-server'], 1, 'plugin catalog runtime event data summarizes MCP sources')
+  assert.ok(pluginCatalogEventData.requiredCapabilityKeys.includes('agent-workflow'), 'plugin catalog runtime event data includes bounded capability keys')
+  assert.equal(pluginCatalogEventData.entries, undefined, 'plugin catalog runtime event data omits catalog entries')
+  assert.ok(!JSON.stringify(pluginCatalogEventData).includes('Workflow definition'), 'plugin catalog runtime event data omits workflow prompt text')
+
+  const skillSettingsSource = fs.readFileSync(path.join(root, 'src/components/settings/SkillSettingsContent.tsx'), 'utf8')
+  assert.ok(skillSettingsSource.includes('createPluginManifestFromWorkflowSkill'), 'skill import UI builds a plugin manifest preview for imported workflow skills')
+  assert.ok(skillSettingsSource.includes('validatePluginManifest'), 'skill import UI validates plugin manifest previews before displaying review state')
+  assert.ok(skillSettingsSource.includes('pluginManifestImportReview'), 'skill import UI surfaces plugin manifest review state in import feedback')
+  assert.ok(skillSettingsSource.includes('export interface PluginManifestSettingsFocus'), 'skill settings exposes a typed plugin manifest focus contract')
+  assert.ok(skillSettingsSource.includes('pluginManifestFocus?: PluginManifestSettingsFocus'), 'skill settings accepts plugin manifest focus props')
+  assert.ok(skillSettingsSource.includes('sanitizePluginManifestSettingsFocus(pluginManifestFocus)'), 'skill settings sanitizes plugin manifest runtime repair focus')
+  assert.ok(skillSettingsSource.includes('safePluginManifestFocusText'), 'skill settings bounds and redacts plugin manifest repair focus text')
+  assert.ok(skillSettingsSource.includes('pluginManifestRepairTarget'), 'skill settings renders a plugin manifest repair focus panel')
+  assert.ok(skillSettingsSource.includes('pluginManifestRepairIssues'), 'skill settings renders plugin manifest repair issue codes')
+  assert.ok(skillSettingsSource.includes('pluginManifestRepairEvents'), 'skill settings renders plugin manifest repair event provenance')
+  assert.ok(skillSettingsSource.includes('sourceEventIds'), 'skill settings preserves bounded plugin manifest repair source event ids')
+  const skillSettingsRouteSource = fs.readFileSync(path.join(root, 'app/settings/skills.tsx'), 'utf8')
+  assert.ok(skillSettingsRouteSource.includes('PluginManifestSettingsFocus'), 'skills settings route imports the plugin manifest focus type')
+  assert.ok(skillSettingsRouteSource.includes("focus: 'plugin-manifest'"), 'skills settings route creates plugin manifest focus objects')
+  assert.ok(skillSettingsRouteSource.includes("runtimeRepairTarget === 'plugin-settings'"), 'skills settings route recognizes plugin runtime repair targets')
+  assert.ok(skillSettingsRouteSource.includes('routeParamList(params.issueCodes)'), 'skills settings route parses plugin repair issue codes')
+  assert.ok(skillSettingsRouteSource.includes('routeParamText(params.latestEventId)'), 'skills settings route parses latest plugin repair event ids')
+  assert.ok(skillSettingsRouteSource.includes('routeParamList(params.sourceEventIds)'), 'skills settings route parses plugin repair source event ids')
+  assert.ok(skillSettingsRouteSource.includes('routeParamPositiveInteger(params.eventCount)'), 'skills settings route parses plugin repair event counts')
+  assert.ok(skillSettingsRouteSource.includes('pluginManifestFocus={pluginManifestFocus}'), 'skills settings route passes plugin manifest focus into settings content')
+  const settingsScreenSource = fs.readFileSync(path.join(root, 'src/components/main/SettingsScreenContent.tsx'), 'utf8')
+  assert.ok(settingsScreenSource.includes('loadPluginManifestCatalogSnapshot'), 'settings diagnostics loads the plugin manifest catalog snapshot')
+  assert.ok(settingsScreenSource.includes('emitPluginManifestCatalogSnapshotEvent'), 'settings diagnostics emits bounded plugin catalog runtime events')
+  assert.ok(settingsScreenSource.includes('runtimeDiagnosticPluginCatalog'), 'settings diagnostics surfaces plugin catalog counts')
+  const mcpSettingsSource = fs.readFileSync(path.join(root, 'src/components/settings/McpSettingsContent.tsx'), 'utf8')
+  assert.ok(mcpSettingsSource.includes('createPluginManifestFromMcpServer'), 'MCP settings builds plugin manifest previews for server references')
+  assert.ok(mcpSettingsSource.includes('validatePluginManifest'), 'MCP settings validates plugin manifest previews before displaying review state')
+  assert.ok(mcpSettingsSource.includes('mcp.pluginManifestPreview'), 'MCP settings surfaces plugin manifest review summaries per server')
+  for (const locale of ['en', 'zh-CN', 'ja']) {
+    const resource = JSON.parse(fs.readFileSync(path.join(root, `src/i18n/resources/${locale}.json`), 'utf8'))
+    assert.ok(resource.skills.pluginManifestImportReview, `skill settings ${locale} locale formats plugin manifest import review`)
+    assert.ok(resource.skills.pluginManifestReviewState?.unreviewed, `skill settings ${locale} locale names unreviewed plugin manifests`)
+    assert.ok(resource.skills.pluginManifestReviewState?.approved, `skill settings ${locale} locale names approved plugin manifests`)
+    assert.ok(resource.skills.pluginManifestReviewState?.rejected, `skill settings ${locale} locale names rejected plugin manifests`)
+    assert.ok(resource.skills.pluginManifestRepairTarget, `skill settings ${locale} locale names plugin manifest repair focus`)
+    assert.ok(resource.skills.pluginManifestRepairSource, `skill settings ${locale} locale names runtime repair plugin focus source`)
+    assert.ok(resource.skills.pluginManifestRepairIssues?.includes('issueCodes'), `skill settings ${locale} locale formats plugin repair issue codes`)
+    assert.ok(resource.skills.pluginManifestRepairSummary?.includes('summary'), `skill settings ${locale} locale formats plugin repair summaries`)
+    assert.ok(resource.skills.pluginManifestRepairEvents?.includes('events'), `skill settings ${locale} locale formats plugin repair event provenance`)
+    assert.ok(resource.skills.pluginManifestRepairLatestEvent?.includes('eventId'), `skill settings ${locale} locale formats latest plugin repair event id`)
+    assert.ok(resource.skills.pluginManifestRepairEventCount?.includes('count'), `skill settings ${locale} locale formats plugin repair event counts`)
+    assert.ok(resource.skills.pluginManifestRepairSourceEvents?.includes('eventIds'), `skill settings ${locale} locale formats plugin repair source event ids`)
+    assert.ok(resource.mcp.pluginManifest, `MCP settings ${locale} locale names plugin manifest previews`)
+    assert.ok(resource.mcp.pluginManifestPreview, `MCP settings ${locale} locale formats plugin manifest previews`)
+    assert.ok(resource.mcp.pluginManifestReviewState?.unreviewed, `MCP settings ${locale} locale names unreviewed plugin manifests`)
+    assert.ok(resource.mcp.pluginManifestReviewState?.approved, `MCP settings ${locale} locale names approved plugin manifests`)
+    assert.ok(resource.mcp.pluginManifestReviewState?.rejected, `MCP settings ${locale} locale names rejected plugin manifests`)
+    assert.ok(resource.settings.runtimeDiagnosticPluginCatalog, `settings ${locale} locale names plugin catalog diagnostics`)
+    assert.ok(resource.settings.runtimeDiagnosticPluginCatalogValue?.includes('hooks'), `settings ${locale} locale formats plugin catalog hook counts`)
   }
 }
 
@@ -3594,9 +4963,10 @@ async function assertUpstreamGovernanceBehavior() {
       response_format: { type: 'json_schema', json_schema: { name: 'relay_result', schema: { type: 'object' } } },
       reasoning_effort: 'high',
       max_completion_tokens: 128,
+      topK: 32,
     }),
     status: 400,
-    errorText: 'unsupported parameter: tools; unsupported parameter: response_format; unsupported parameter: reasoning_effort',
+    errorText: 'unsupported parameter: tools; unsupported parameter: response_format; unsupported parameter: reasoning_effort; unsupported parameter: top-k',
     rectified: false,
   })
   assert.equal(compatibleMinimalRectified.kind, 'openai_compatible_minimal_chat', 'OpenAI-compatible relay rectification detects unsupported optional parameters')
@@ -3607,8 +4977,10 @@ async function assertUpstreamGovernanceBehavior() {
   )
   assert.ok(compatibleMinimalRectified.failedFields.includes('tools'), 'OpenAI-compatible relay rectification records failed tool fields')
   assert.ok(compatibleMinimalRectified.failedFields.includes('response_format'), 'OpenAI-compatible relay rectification records failed structured-output fields')
+  assert.ok(compatibleMinimalRectified.failedFields.includes('top_k'), 'OpenAI-compatible relay rectification canonicalizes failed Top-K fields')
   assert.ok(compatibleMinimalRectified.removedFields.includes('messages'), 'OpenAI-compatible relay rectification records multimodal message simplification')
   assert.ok(compatibleMinimalRectified.removedFields.includes('max_completion_tokens'), 'OpenAI-compatible relay rectification removes optional token aliases in minimal mode')
+  assert.ok(compatibleMinimalRectified.removedFields.includes('topK'), 'OpenAI-compatible relay rectification removes optional Top-K aliases in minimal mode')
   assert.deepEqual(compatibleMinimalRectified.retainedFields, ['model', 'messages', 'stream'], 'OpenAI-compatible relay rectification records the retained minimal chat fields')
   assert.equal(
     rectifyOpenAICompatibleRequestBodyForTest({
@@ -3872,10 +5244,290 @@ async function assertUpstreamGovernanceBehavior() {
     'provider request parameter helper clamps MiMo non-thinking temperature'
   )
   assert.equal(
+    normalizeTemperature({ provider: mimoParameterProvider, model: 'mimo-v2.5-pro' }),
+    1,
+    'provider request parameter helper follows model metadata for default temperature'
+  )
+  assert.equal(
     normalizeTemperature({ provider: { id: 'minimax-temp', type: 'openai-compatible', name: 'MiniMax', apiKey: FAKE_KEY_A, models: ['MiniMax-M3'], enabled: true }, model: 'MiniMax-M3', temperature: 4 }),
     2,
     'provider request parameter helper clamps MiniMax temperature'
   )
+  assert.equal(
+    normalizeTemperature({ provider: { id: 'generic-platform-temp', type: 'openai-compatible', name: 'Generic', apiKey: FAKE_KEY_A, models: ['generic-chat'], enabled: true }, model: 'generic-chat' }),
+    PROVIDER_PLATFORM_DEFAULT_TEMPERATURE,
+    'provider request parameter helper uses the shared platform temperature fallback when model metadata has no recommendation'
+  )
+  const rangedParameterProvider = {
+    id: 'ranged-parameter-provider',
+    type: 'anthropic',
+    name: 'Ranged Parameter Provider',
+    apiKey: FAKE_KEY_A,
+    models: ['range-model'],
+    enabled: true,
+    modelConfigs: [{
+      id: 'range-model',
+      name: 'Range Model',
+      provider: 'anthropic',
+      contextWindow: 4096,
+      maxTokens: 4096,
+      maxOutputTokens: 1024,
+      defaultMaxTokens: 256,
+      defaultTemperature: 0.4,
+      maxTemperature: 0.8,
+      supportsVision: false,
+      supportsFiles: false,
+      supportedParameters: ['temperature', 'top_p', 'top_k', 'max_tokens'],
+      source: 'remote',
+    }],
+  }
+  const rangedParameters = resolveProviderRequestParameters({
+    provider: rangedParameterProvider,
+    model: 'range-model',
+    temperature: 2,
+    topP: 2,
+    topK: 1200,
+    maxTokens: 2048,
+  }, { includeRanges: true })
+  assert.equal(rangedParameters.temperature, 0.8, 'provider request parameter resolver clamps temperature through capability-board ranges')
+  assert.equal(rangedParameters.topP, 1, 'provider request parameter resolver clamps Top-P through capability-board ranges')
+  assert.equal(rangedParameters.topK, 1000, 'provider request parameter resolver clamps Top-K through capability-board ranges')
+  assert.equal(rangedParameters.maxTokens, 1024, 'provider request parameter resolver clamps max tokens through capability-board ranges')
+  assert.deepEqual(rangedParameters.temperatureRange, { min: 0, max: 0.8, defaultValue: 0.4 }, 'provider request parameter resolver exposes temperature range metadata for UI controls')
+  assert.deepEqual(rangedParameters.topPRange, { min: 0, max: 1, defaultValue: 1 }, 'provider request parameter resolver exposes Top-P range metadata for UI controls')
+  assert.deepEqual(rangedParameters.topKRange, { min: 1, max: 1000 }, 'provider request parameter resolver exposes Top-K range metadata for UI controls')
+  assert.deepEqual(rangedParameters.maxTokensRange, { min: 1, max: 1024, defaultValue: 256 }, 'provider request parameter resolver exposes max-token range metadata for UI controls')
+  assert.deepEqual(
+    resolveProviderRequestParameters({
+      provider: { id: 'no-top-p', type: 'openai-compatible', name: 'No Top P', apiKey: FAKE_KEY_A, models: ['generic-chat'], enabled: true, capabilities: { topP: false } },
+      model: 'generic-chat',
+      temperature: 0.4,
+      topP: 0.2,
+      maxTokens: 4096,
+    }),
+    {
+      temperature: 0.4,
+      topP: undefined,
+      topK: undefined,
+      maxTokens: 4096,
+      samplingControlsSupported: true,
+      temperatureSupported: true,
+      topPSupported: false,
+      topKSupported: false,
+    },
+    'provider request parameter resolver prunes Top-P when provider capabilities disable it'
+  )
+  assert.deepEqual(
+    resolveProviderRequestParameters({
+      provider: {
+        id: 'locked-sampling',
+        type: 'openai-compatible',
+        name: 'Locked Sampling',
+        apiKey: FAKE_KEY_A,
+        models: ['locked-model'],
+        enabled: true,
+        modelConfigs: [{
+          id: 'locked-model',
+          name: 'Locked Model',
+          provider: 'openai-compatible',
+          contextWindow: 4096,
+          maxTokens: 4096,
+          maxOutputTokens: 1024,
+          defaultMaxTokens: 512,
+          defaultTemperature: 0,
+          maxTemperature: 0,
+          supportsVision: false,
+          supportsFiles: false,
+          source: 'remote',
+        }],
+      },
+      model: 'locked-model',
+      temperature: 0.7,
+      topP: 0.8,
+      maxTokens: 2048,
+    }),
+    {
+      temperature: undefined,
+      topP: undefined,
+      topK: undefined,
+      maxTokens: 1024,
+      samplingControlsSupported: false,
+      temperatureSupported: false,
+      topPSupported: false,
+      topKSupported: false,
+    },
+    'provider request parameter resolver prunes sampling controls and clamps output for sampling-locked models'
+  )
+  assert.deepEqual(
+    resolveProviderRequestParameters({
+      provider: {
+        id: 'metadata-pruned',
+        type: 'openai-compatible',
+        name: 'Metadata Pruned',
+        apiKey: FAKE_KEY_A,
+        models: ['metadata-pruned-model'],
+        enabled: true,
+        modelConfigs: [{
+          id: 'metadata-pruned-model',
+          name: 'Metadata Pruned Model',
+          provider: 'openai-compatible',
+          contextWindow: 4096,
+          maxTokens: 4096,
+          maxOutputTokens: 1024,
+          defaultMaxTokens: 512,
+          supportsVision: false,
+          supportsFiles: false,
+          supportedParameters: ['max_tokens'],
+          source: 'remote',
+        }],
+      },
+      model: 'metadata-pruned-model',
+      temperature: 0.7,
+      topP: 0.8,
+      topK: 40,
+      maxTokens: 2048,
+    }),
+    {
+      temperature: undefined,
+      topP: undefined,
+      topK: undefined,
+      maxTokens: 1024,
+      samplingControlsSupported: true,
+      temperatureSupported: false,
+      topPSupported: false,
+      topKSupported: false,
+    },
+    'provider request parameter resolver treats supportedParameters as the final model-level parameter allowlist'
+  )
+  const tokenPrunedProvider = {
+    id: 'metadata-token-pruned',
+    type: 'openai-compatible',
+    name: 'Metadata Token Pruned',
+    apiKey: FAKE_KEY_A,
+    models: ['metadata-token-pruned-model'],
+    enabled: true,
+    modelConfigs: [{
+      id: 'metadata-token-pruned-model',
+      name: 'Metadata Token Pruned Model',
+      provider: 'openai-compatible',
+      contextWindow: 4096,
+      maxTokens: 4096,
+      maxOutputTokens: 1024,
+      defaultMaxTokens: 512,
+      supportsVision: false,
+      supportsFiles: false,
+      supportedParameters: ['temperature'],
+      source: 'remote',
+    }],
+  }
+  assert.deepEqual(
+    resolveProviderRequestParameters({
+      provider: tokenPrunedProvider,
+      model: 'metadata-token-pruned-model',
+      temperature: 0.7,
+      maxTokens: 2048,
+    }),
+    {
+      temperature: 0.7,
+      topP: undefined,
+      topK: undefined,
+      maxTokens: undefined,
+      samplingControlsSupported: true,
+      temperatureSupported: true,
+      topPSupported: false,
+      topKSupported: false,
+    },
+    'provider request parameter resolver prunes max-token controls when model metadata excludes all token limit aliases'
+  )
+  const tokenPrunedBody = buildOpenAIBodyForTest({
+    provider: tokenPrunedProvider,
+    model: 'metadata-token-pruned-model',
+    messages: [{ role: 'user', content: 'hello' }],
+    temperature: 0.7,
+    maxTokens: 2048,
+  })
+  assert.equal(tokenPrunedBody.temperature, 0.7, 'OpenAI-compatible body keeps allowlisted temperature when max-token controls are pruned')
+  assert.equal(tokenPrunedBody.max_tokens, undefined, 'OpenAI-compatible body prunes max_tokens when supportedParameters excludes the selected token field')
+  assert.deepEqual(
+    resolveProviderRequestParameters({
+      provider: {
+        id: 'metadata-sampling',
+        type: 'openai-compatible',
+        name: 'Metadata Sampling',
+        apiKey: FAKE_KEY_A,
+        models: ['metadata-sampling-model'],
+        enabled: true,
+        modelConfigs: [{
+          id: 'metadata-sampling-model',
+          name: 'Metadata Sampling Model',
+          provider: 'openai-compatible',
+          contextWindow: 4096,
+          maxTokens: 4096,
+          maxOutputTokens: 1024,
+          defaultMaxTokens: 512,
+          supportsVision: false,
+          supportsFiles: false,
+          supportedParameters: ['temperature', 'top_p', 'top_k', 'max_tokens'],
+          source: 'remote',
+        }],
+      },
+      model: 'metadata-sampling-model',
+      temperature: 0.7,
+      topP: 2,
+      topK: 40.8,
+      maxTokens: 2048,
+    }),
+    {
+      temperature: 0.7,
+      topP: 1,
+      topK: 40,
+      maxTokens: 1024,
+      samplingControlsSupported: true,
+      temperatureSupported: true,
+      topPSupported: true,
+      topKSupported: true,
+    },
+    'provider request parameter resolver preserves sampling controls explicitly declared by model metadata'
+  )
+  const metadataTopKProvider = {
+    id: 'metadata-top-k-provider',
+    type: 'openai-compatible',
+    name: 'Metadata Top-K Provider',
+    apiKey: FAKE_KEY_A,
+    models: ['metadata-top-k-model'],
+    enabled: true,
+    modelConfigs: [{
+      id: 'metadata-top-k-model',
+      name: 'Metadata Top-K Model',
+      provider: 'openai-compatible',
+      contextWindow: 4096,
+      maxTokens: 4096,
+      maxOutputTokens: 1024,
+      defaultMaxTokens: 512,
+      supportsVision: false,
+      supportsFiles: false,
+      supportedParameters: ['temperature', 'top_p', 'top_k', 'max_tokens'],
+      source: 'remote',
+    }],
+  }
+  const metadataTopKBody = buildOpenAIBodyForTest({
+    provider: metadataTopKProvider,
+    model: 'metadata-top-k-model',
+    messages: [{ role: 'user', content: 'hello' }],
+    temperature: 0.2,
+    topP: 0.5,
+    topK: 12.9,
+  })
+  assert.equal(metadataTopKBody.temperature, 0.2, 'OpenAI-compatible body keeps metadata-declared temperature')
+  assert.equal(metadataTopKBody.top_p, 0.5, 'OpenAI-compatible body keeps metadata-declared Top-P')
+  assert.equal(metadataTopKBody.top_k, 12, 'OpenAI-compatible body sends Top-K only when metadata declares support')
+  const genericTopKBody = buildOpenAIBodyForTest({
+    provider: { id: 'generic-top-k-provider', type: 'openai-compatible', name: 'Generic Top-K Provider', apiKey: FAKE_KEY_A, models: ['generic-top-k-model'], enabled: true },
+    model: 'generic-top-k-model',
+    messages: [{ role: 'user', content: 'hello' }],
+    topK: 40,
+  })
+  assert.equal(genericTopKBody.top_k, undefined, 'OpenAI-compatible body prunes Top-K without model metadata allowlist')
   assert.equal(
     clampMaxTokens({ provider: { id: 'token-clamp', type: 'openai-compatible', name: 'Token Clamp', apiKey: FAKE_KEY_A, models: ['MiniMax-M3'], enabled: true }, model: 'MiniMax-M3', maxTokens: 9999999 }),
     getModelConfig('MiniMax-M3', 'openai-compatible').maxOutputTokens,
@@ -4159,10 +5811,12 @@ async function assertUpstreamGovernanceBehavior() {
       model: 'gemini-3.5-flash',
       temperature: 0.7,
       top_p: 0.8,
+      top_k: 40,
       reasoning: { effort: 'medium' },
       generationConfig: {
         temperature: 0.7,
         topP: 0.8,
+        topK: 40,
         thinkingConfig: { thinkingLevel: 'medium' },
         maxOutputTokens: 128,
       },
@@ -4216,7 +5870,7 @@ async function assertUpstreamGovernanceBehavior() {
       assert.equal(findCapabilityCheck(checkedModelTest, capability).status, 'blocked', `model test diagnostics block undeclared custom-compatible ${capability}`)
     }
     assert.equal(modelTestBodies[0].model, 'upstream-model', 'model test sends the upstream alias target')
-    assert.equal(modelTestBodies[0].temperature, 0.7, 'model test keeps generation parameters when parameter checks are enabled')
+    assert.equal(modelTestBodies[0].temperature, PROVIDER_PLATFORM_DEFAULT_TEMPERATURE, 'model test keeps shared platform generation defaults when parameter checks are enabled')
     assert.equal(modelTestBodies[1].temperature, undefined, 'model test removes generation parameters when parameter checks are disabled')
     const checkedGeminiTest = await testProviderModelDetailed({
       id: 'google-test',
@@ -4449,7 +6103,7 @@ async function assertUpstreamGovernanceBehavior() {
     global.fetch = async (_url, init) => {
       compatibleMinimalRetryBodies.push(JSON.parse(init.body))
       return new Response(compatibleMinimalRetryBodies.length === 1
-        ? JSON.stringify({ error: { message: 'unsupported parameter: response_format and reasoning_effort' } })
+        ? JSON.stringify({ error: { message: 'unsupported parameter: response_format and top-k' } })
         : 'data: [DONE]\n\n', {
         status: compatibleMinimalRetryBodies.length === 1 ? 400 : 200,
         headers: { 'content-type': compatibleMinimalRetryBodies.length === 1 ? 'application/json' : 'text/event-stream' },
@@ -4480,6 +6134,7 @@ async function assertUpstreamGovernanceBehavior() {
         response_format: { type: 'json_schema', json_schema: { name: 'relay_result', schema: { type: 'object' } } },
         reasoning_effort: 'high',
         max_completion_tokens: 128,
+        topK: 40,
       }),
       stream: true,
       controller: new AbortController(),
@@ -4493,7 +6148,7 @@ async function assertUpstreamGovernanceBehavior() {
       'OpenAI-compatible relay rectification retry strips optional and multimodal fields'
     )
   assert.ok(
-      compatibleMinimalRetryTraces.some((trace) => trace.metadata?.rectificationKind === 'openai_compatible_minimal_chat' && trace.metadata?.removedFields?.includes('response_format') && trace.metadata?.retainedFields?.includes('model')),
+      compatibleMinimalRetryTraces.some((trace) => trace.metadata?.rectificationKind === 'openai_compatible_minimal_chat' && trace.metadata?.failedFields?.includes('top_k') && trace.metadata?.removedFields?.includes('topK') && trace.metadata?.retainedFields?.includes('model')),
       'OpenAI-compatible relay rectification trace records removed and retained fields for diagnostics'
     )
     await new Promise((resolve) => setTimeout(resolve, 10))
@@ -4508,7 +6163,9 @@ async function assertUpstreamGovernanceBehavior() {
       'OpenAI-compatible relay rectification runtime log records retrying and final success'
     )
     assert.ok(compatibleMinimalSuccessLogEntries[0].failedFields.includes('response_format'), 'OpenAI-compatible relay rectification runtime log records failed fields')
+    assert.ok(compatibleMinimalSuccessLogEntries[0].failedFields.includes('top_k'), 'OpenAI-compatible relay rectification runtime log records failed Top-K fields')
     assert.ok(compatibleMinimalSuccessLogEntries[0].removedFields.includes('messages'), 'OpenAI-compatible relay rectification runtime log records downgraded message payloads')
+    assert.ok(compatibleMinimalSuccessLogEntries[0].removedFields.includes('topK'), 'OpenAI-compatible relay rectification runtime log records removed Top-K aliases')
     assert.deepEqual(compatibleMinimalSuccessLogEntries[0].retainedFields, ['model', 'messages', 'stream'], 'OpenAI-compatible relay rectification runtime log records retained minimal chat fields')
     assert.deepEqual(compatibleMinimalSuccessLogEntries[1].retainedFields, ['model', 'messages', 'stream'], 'OpenAI-compatible relay rectification success log records retained minimal chat fields')
 
@@ -4904,7 +6561,7 @@ async function assertUpstreamGovernanceBehavior() {
     assert.equal(fallbackBodies.length, 3, 'runtime fallback sends stream probe, non-streaming retry, and selected fallback retry')
     assert.equal(fallbackBodies[1].stream, false, 'runtime fallback retry disables streaming')
     assert.equal(fallbackBodies[2].model, 'gpt-5.5-mini', 'runtime fallback retry sends selected model')
-    const fallbackLogText = await readRuntimeLogText()
+    const fallbackLogText = await readRuntimeLogText(65536)
     assert.ok(fallbackLogText.includes('"event":"fallback.decision"'), 'runtime fallback writes decision evidence')
     assert.ok(fallbackLogText.includes('"event":"route.decision"'), 'runtime fallback retry writes route decision evidence')
     assert.ok(fallbackLogText.includes('"selectedModel":"gpt-5.5-mini"'), 'runtime fallback route evidence records selected fallback model')
@@ -4957,7 +6614,7 @@ async function assertUpstreamGovernanceBehavior() {
     assert.equal(directFallbackBodies.length, 2, 'direct runtime fallback sends initial stream request and selected fallback retry')
     assert.equal(directFallbackBodies[0].stream, true, 'direct runtime fallback starts from the requested stream path')
     assert.equal(directFallbackBodies[1].model, 'gpt-5.5-mini', 'direct runtime fallback retry sends selected model')
-    const directFallbackLogText = await readRuntimeLogText()
+    const directFallbackLogText = await readRuntimeLogText(65536)
     assert.ok(directFallbackLogText.includes('"event":"fallback.decision"'), 'direct runtime fallback writes decision evidence')
     assert.ok(directFallbackLogText.includes('"event":"route.decision"'), 'direct runtime fallback retry writes route decision evidence')
     assert.ok(directFallbackLogText.includes('"selectedModel":"gpt-5.5-mini"'), 'direct runtime fallback route evidence records selected fallback model')
@@ -5067,15 +6724,27 @@ async function assertProviderStoreLifecycleBehavior() {
   useSettingsStore.getState().updateSettings({
     customSearchEndpoint: 'https://user:pass@search.example/query?q={query}',
     localModelDownloadMirrorBaseUrl: 'file:///tmp/local-model-mirror',
+    observabilitySinkEndpointUrl: 'https://trace-user:trace-pass@observe.example/v1/traces',
     proxyBaseUrl: 'islemind://proxy',
   })
   assert.equal(useSettingsStore.getState().settings.customSearchEndpoint, '', 'settings store strips embedded-credential custom search endpoints before keeping them in memory')
   assert.equal(useSettingsStore.getState().settings.localModelDownloadMirrorBaseUrl, '', 'settings store strips non-web local-model mirror URLs before keeping them in memory')
+  assert.equal(useSettingsStore.getState().settings.observabilitySinkEndpointUrl, '', 'settings store strips embedded-credential observability sink endpoints before keeping them in memory')
   assert.equal(useSettingsStore.getState().settings.proxyBaseUrl, '', 'settings store strips non-web proxy base URLs before keeping them in memory')
   const persistedUnsafeSettings = await loadData('SETTINGS')
   assert.equal(persistedUnsafeSettings.customSearchEndpoint, '', 'settings store strips embedded-credential custom search endpoints before AsyncStorage persistence')
   assert.equal(persistedUnsafeSettings.localModelDownloadMirrorBaseUrl, '', 'settings store strips non-web local-model mirror URLs before AsyncStorage persistence')
+  assert.equal(persistedUnsafeSettings.observabilitySinkEndpointUrl, '', 'settings store strips embedded-credential observability sink endpoints before AsyncStorage persistence')
   assert.equal(persistedUnsafeSettings.proxyBaseUrl, '', 'settings store strips non-web proxy base URLs before AsyncStorage persistence')
+
+  await useSettingsStore.getState().setObservabilitySinkApiKey(FAKE_KEY_F)
+  assert.equal(secureStorage.get('islemind.key.observability-sink'), FAKE_KEY_F, 'settings store persists observability sink API keys in SecureStore')
+  assert.equal(await useSettingsStore.getState().getObservabilitySinkApiKey(), FAKE_KEY_F, 'settings store reads observability sink API keys from SecureStore')
+  assert.equal(useSettingsStore.getState().settings.observabilitySinkApiKeyConfigured, true, 'settings store marks observability API key configured after secure save')
+  assert.equal((await loadData('SETTINGS')).observabilitySinkApiKeyConfigured, true, 'settings store persists observability API key configured state after secure save')
+  await useSettingsStore.getState().setObservabilitySinkApiKey('')
+  assert.equal(secureStorage.get('islemind.key.observability-sink'), undefined, 'settings store deletes observability sink API keys from SecureStore')
+  assert.equal(useSettingsStore.getState().settings.observabilitySinkApiKeyConfigured, false, 'settings store clears observability API key configured state after secure delete')
 
   useSettingsStore.setState((state) => ({
     ...state,
@@ -5083,19 +6752,30 @@ async function assertProviderStoreLifecycleBehavior() {
       ...state.settings,
       customSearchEndpoint: '',
       localModelDownloadMirrorBaseUrl: '',
+      observabilitySinkEndpointUrl: '',
       proxyBaseUrl: '',
     },
   }))
+  secureStorage.set('islemind.key.observability-sink', FAKE_KEY_E)
   memoryStorage.set('@islemind/settings', JSON.stringify({
     ...persistedUnsafeSettings,
     customSearchEndpoint: 'https://mirror-user:mirror-pass@search.example/import?q={query}',
     localModelDownloadMirrorBaseUrl: 'islemind://mirror-host',
+    observabilitySinkApiKeyConfigured: false,
+    observabilitySinkEndpointUrl: 'https://trace-user:trace-pass@observe.example/import',
     proxyBaseUrl: 'file:///tmp/import-proxy',
   }))
   await useSettingsStore.getState().load()
   assert.equal(useSettingsStore.getState().settings.customSearchEndpoint, '', 'settings store load strips embedded-credential custom search endpoints from persisted settings')
   assert.equal(useSettingsStore.getState().settings.localModelDownloadMirrorBaseUrl, '', 'settings store load strips non-web mirror URLs from persisted settings')
+  assert.equal(useSettingsStore.getState().settings.observabilitySinkEndpointUrl, '', 'settings store load strips embedded-credential observability sink endpoints from persisted settings')
+  assert.equal(useSettingsStore.getState().settings.observabilitySinkApiKeyConfigured, true, 'settings store load derives observability API key configured state from SecureStore')
   assert.equal(useSettingsStore.getState().settings.proxyBaseUrl, '', 'settings store load strips non-web proxy base URLs from persisted settings')
+  await useSettingsStore.getState().setObservabilitySinkApiKey('')
+  assert.equal(useSettingsStore.getState().settings.defaultTemperature, undefined, 'settings store leaves temperature unset so model defaults can apply')
+  const localSetupConversationId = useChatStore.getState().createLocalSetupConversation()
+  assert.equal(useChatStore.getState().getCurrent()?.id, localSetupConversationId, 'chat store selects the local setup conversation')
+  assert.equal(useChatStore.getState().getCurrent()?.temperature, PROVIDER_PLATFORM_DEFAULT_TEMPERATURE, 'chat store uses the shared platform temperature for local setup conversations')
 
   const blockedProvider = {
     id: 'store-blocked-provider',
@@ -5134,6 +6814,173 @@ async function assertProviderStoreLifecycleBehavior() {
 
   await useSettingsStore.getState().addProvider(blockedProvider)
   await useSettingsStore.getState().addProvider(allowedProvider)
+  const mimoDefaultProvider = {
+    id: 'mimo-model-default-temperature',
+    type: 'xiaomi-mimo',
+    name: 'MiMo Model Default Temperature',
+    apiKey: FAKE_KEY_A,
+    models: ['mimo-v2.5'],
+    enabled: true,
+    capabilities: { reasoningEffort: true },
+  }
+  await useSettingsStore.getState().addProvider(mimoDefaultProvider)
+  const modelDefaultTemperatureConversationId = useChatStore.getState().create(mimoDefaultProvider.id, 'mimo-v2.5')
+  assert.equal(useChatStore.getState().getCurrent()?.id, modelDefaultTemperatureConversationId, 'chat store selects the model-default temperature conversation')
+  assert.equal(useChatStore.getState().getCurrent()?.temperature, 1, 'chat store uses model default temperature when no user default override is stored')
+  useSettingsStore.getState().updateSettings({ defaultTemperature: 0.6 })
+  const userDefaultTemperatureConversationId = useChatStore.getState().create(mimoDefaultProvider.id, 'mimo-v2.5')
+  assert.equal(useChatStore.getState().getCurrent()?.id, userDefaultTemperatureConversationId, 'chat store selects the user-default temperature conversation')
+  assert.equal(useChatStore.getState().getCurrent()?.temperature, 0.6, 'chat store lets user default temperature override model defaults')
+  useSettingsStore.getState().updateSettings({ defaultTemperature: undefined })
+  await useSettingsStore.getState().removeProvider(mimoDefaultProvider.id)
+  const layeredDefaultsProvider = {
+    id: 'layered-defaults-provider',
+    type: 'openai-compatible',
+    name: 'Layered Defaults Provider',
+    apiKey: FAKE_KEY_A,
+    models: ['layered-a', 'layered-b'],
+    enabled: true,
+    modelConfigs: [
+      {
+        id: 'layered-a',
+        name: 'Layered A',
+        provider: 'openai-compatible',
+        contextWindow: 4096,
+        maxTokens: 4096,
+        maxOutputTokens: 2000,
+        defaultMaxTokens: 700,
+        defaultTemperature: 0.4,
+        maxTemperature: 1.2,
+        supportsVision: false,
+        supportsFiles: false,
+        source: 'remote',
+      },
+      {
+        id: 'layered-b',
+        name: 'Layered B',
+        provider: 'openai-compatible',
+        contextWindow: 4096,
+        maxTokens: 4096,
+        maxOutputTokens: 1000,
+        defaultMaxTokens: 900,
+        defaultTemperature: 0.9,
+        maxTemperature: 1.5,
+        supportsVision: false,
+        supportsFiles: false,
+        source: 'remote',
+      },
+    ],
+  }
+  await useSettingsStore.getState().addProvider(layeredDefaultsProvider)
+  const layeredConversationId = useChatStore.getState().create(layeredDefaultsProvider.id, 'layered-a')
+  assert.equal(useChatStore.getState().getCurrent()?.temperature, 0.4, 'chat store starts conversations from model temperature defaults')
+  assert.equal(useChatStore.getState().getCurrent()?.maxTokens, 700, 'chat store starts conversations from model max-token defaults')
+  assert.deepEqual(useChatStore.getState().getCurrent()?.generationParameterOverrides, {}, 'chat store persists empty override metadata for model defaults')
+  assert.equal(useChatStore.getState().switchConversationModel(layeredConversationId, layeredDefaultsProvider.id, 'layered-b'), true, 'chat store switches between layered default models')
+  assert.equal(useChatStore.getState().getCurrent()?.temperature, 0.9, 'chat store refreshes model-default temperature on model switch when the old value was not user-customized')
+  assert.equal(useChatStore.getState().getCurrent()?.maxTokens, 900, 'chat store refreshes model-default max tokens on model switch when the old value was not user-customized')
+  assert.deepEqual(useChatStore.getState().getCurrent()?.generationParameterOverrides, {}, 'chat store keeps override metadata empty after default-to-default model switches')
+  useChatStore.getState().updateConversation(layeredConversationId, { temperature: 0.5, maxTokens: 777, topP: 0.7, topK: 44 })
+  assert.deepEqual(
+    useChatStore.getState().getCurrent()?.generationParameterOverrides,
+    { temperature: true, topP: true, topK: true, maxTokens: true },
+    'chat store records explicit user generation-parameter overrides only after parameter edits'
+  )
+  assert.equal(useChatStore.getState().switchConversationModel(layeredConversationId, layeredDefaultsProvider.id, 'layered-a'), true, 'chat store switches back after user parameter edits')
+  assert.equal(useChatStore.getState().getCurrent()?.temperature, 0.5, 'chat store preserves user-customized temperature on model switch')
+  assert.equal(useChatStore.getState().getCurrent()?.maxTokens, 777, 'chat store preserves user-customized max tokens on model switch')
+  assert.equal(useChatStore.getState().getCurrent()?.topP, 0.7, 'chat store preserves user-customized Top-P on model switch')
+  assert.equal(useChatStore.getState().getCurrent()?.topK, 44, 'chat store preserves user-customized Top-K on model switch')
+  useChatStore.getState().updateConversation(layeredConversationId, {
+    temperature: 0.4,
+    topP: 1,
+    topK: undefined,
+    maxTokens: 700,
+  })
+  assert.deepEqual(useChatStore.getState().getCurrent()?.generationParameterOverrides, {}, 'chat store clears override metadata when user values return to active model defaults')
+  useChatStore.getState().updateConversation(layeredConversationId, {
+    temperature: 0.55,
+    maxTokens: 650,
+    generationParameterOverrides: { temperature: false, maxTokens: false },
+  })
+  assert.deepEqual(useChatStore.getState().getCurrent()?.generationParameterOverrides, {}, 'chat store lets system/default writes explicitly suppress user override metadata')
+  assert.equal(useChatStore.getState().switchConversationModel(layeredConversationId, layeredDefaultsProvider.id, 'layered-b'), true, 'chat store switches after explicit override suppression')
+  assert.equal(useChatStore.getState().getCurrent()?.temperature, 0.9, 'chat store refreshes suppressed temperature writes to the next model default')
+  assert.equal(useChatStore.getState().getCurrent()?.maxTokens, 900, 'chat store refreshes suppressed max-token writes to the next model default')
+  const legacyConversationId = 'legacy-layered-defaults'
+  useChatStore.setState({
+    conversations: [{
+      id: legacyConversationId,
+      title: 'Legacy layered defaults',
+      providerId: layeredDefaultsProvider.id,
+      model: 'layered-a',
+      providerModelMode: 'manual',
+      systemPrompt: '',
+      temperature: 0.55,
+      topP: 0.8,
+      topK: 12,
+      reasoningEffort: undefined,
+      maxTokens: 650,
+      messages: [],
+      createdAt: Date.now(),
+      updatedAt: Date.now(),
+    }],
+    currentId: legacyConversationId,
+  })
+  assert.equal(useChatStore.getState().switchConversationModel(legacyConversationId, layeredDefaultsProvider.id, 'layered-b'), true, 'chat store switches imported legacy conversations without override metadata')
+  assert.equal(useChatStore.getState().getCurrent()?.temperature, 0.55, 'chat store preserves legacy custom temperature through fallback equality detection')
+  assert.equal(useChatStore.getState().getCurrent()?.maxTokens, 650, 'chat store preserves legacy custom max tokens through fallback equality detection')
+  assert.equal(useChatStore.getState().getCurrent()?.topP, 0.8, 'chat store preserves legacy custom Top-P through fallback equality detection')
+  assert.equal(useChatStore.getState().getCurrent()?.topK, 12, 'chat store preserves legacy custom Top-K through fallback equality detection')
+  assert.deepEqual(
+    useChatStore.getState().getCurrent()?.generationParameterOverrides,
+    { temperature: true, topP: true, topK: true, maxTokens: true },
+    'chat store migrates inferred legacy custom generation parameters into explicit override metadata on switch'
+  )
+  const anthropicRangeProvider = {
+    id: 'anthropic-range-provider',
+    type: 'anthropic',
+    name: 'Anthropic Range Provider',
+    apiKey: FAKE_KEY_A,
+    models: ['claude-range-a', 'claude-range-b'],
+    enabled: true,
+    modelConfigs: [
+      {
+        id: 'claude-range-a',
+        name: 'Claude Range A',
+        provider: 'anthropic',
+        contextWindow: 4096,
+        maxTokens: 4096,
+        maxOutputTokens: 1000,
+        defaultMaxTokens: 600,
+        defaultTemperature: 0.7,
+        supportsVision: false,
+        supportsFiles: false,
+        source: 'remote',
+      },
+      {
+        id: 'claude-range-b',
+        name: 'Claude Range B',
+        provider: 'anthropic',
+        contextWindow: 4096,
+        maxTokens: 4096,
+        maxOutputTokens: 800,
+        defaultMaxTokens: 500,
+        defaultTemperature: 0.8,
+        supportsVision: false,
+        supportsFiles: false,
+        source: 'remote',
+      },
+    ],
+  }
+  await useSettingsStore.getState().addProvider(anthropicRangeProvider)
+  const anthropicRangeConversationId = useChatStore.getState().create(anthropicRangeProvider.id, 'claude-range-a')
+  useChatStore.getState().updateConversation(anthropicRangeConversationId, { temperature: 1.8, maxTokens: 1200 })
+  assert.equal(useChatStore.getState().switchConversationModel(anthropicRangeConversationId, anthropicRangeProvider.id, 'claude-range-b'), true, 'chat store switches Anthropic range fixture models')
+  assert.equal(useChatStore.getState().getCurrent()?.temperature, 1, 'chat store clamps preserved user temperature through provider request-parameter ranges')
+  assert.equal(useChatStore.getState().getCurrent()?.maxTokens, 800, 'chat store clamps preserved user max tokens through provider request-parameter ranges')
+  await useSettingsStore.getState().removeProvider(anthropicRangeProvider.id)
+  await useSettingsStore.getState().removeProvider(layeredDefaultsProvider.id)
   useSettingsStore.getState().updateSettings({
     defaultProvider: allowedProvider.id,
     modelAllowlist: ['gpt-*'],
@@ -5542,6 +7389,7 @@ async function assertClearAllDataBehavior() {
   secureStorage.set('islemind.key.google-search', FAKE_KEY_D)
   secureStorage.set('islemind.key.bing-search', FAKE_KEY_E)
   secureStorage.set('islemind.key.custom-search', FAKE_KEY_F)
+  secureStorage.set('islemind.key.observability-sink', FAKE_KEY_A)
   await importContextSnapshot({
     memories: [{
       id: 'clear-all-memory',
@@ -5611,6 +7459,7 @@ async function assertClearAllDataBehavior() {
   assert.equal(secureStorage.get('islemind.key.google-search'), undefined, 'clearAllData removes Google search keys')
   assert.equal(secureStorage.get('islemind.key.bing-search'), undefined, 'clearAllData removes Bing search keys')
   assert.equal(secureStorage.get('islemind.key.custom-search'), undefined, 'clearAllData removes custom-search keys')
+  assert.equal(secureStorage.get('islemind.key.observability-sink'), undefined, 'clearAllData removes observability sink keys')
   assert.deepEqual(await exportContextSnapshot(), { memories: [], documents: [], chunks: [] }, 'clearAllData removes context memories, knowledge documents, and knowledge chunks')
   assert.deepEqual(await localDataStore.loadConversations(), [], 'clearAllData removes SQLite conversation records')
   assert.deepEqual(await searchKnowledge('Clear all should remove this knowledge chunk.', 10), [], 'clearAllData removes knowledge source indexes used by retrieval')
@@ -6201,38 +8050,46 @@ async function assertAndroidIntentOutputBehavior() {
     assert.ok(reminderTool, 'Android device tool registry includes the reminder intent tool')
 
     const alarmResult = await executeAndroidDeviceTool(alarmTool, { hour: 7, minutes: 5, message: '起床' })
-    assert.equal(alarmResult.ok, true, 'Android alarm intent handoff succeeds in the mocked runtime')
-    assert.equal(/^\s*\{/.test(alarmResult.output), false, 'Android alarm intent handoff output is readable text, not raw JSON')
-    assert.ok(alarmResult.output.includes('07:05'), 'Android alarm intent handoff output includes the requested alarm time')
-    assert.ok(alarmResult.output.includes('系统时钟应用'), 'Android alarm intent handoff output tells the user to confirm in Clock')
-    assert.equal(alarmResult.output.includes('"opened"'), false, 'Android alarm intent handoff output hides internal JSON fields')
+    assert.equal(alarmResult.ok, true, 'Android alarm creation request succeeds in the mocked runtime')
+    assert.equal(/^\s*\{/.test(alarmResult.output), false, 'Android alarm creation request output is readable text, not raw JSON')
+    assert.ok(alarmResult.output.includes('07:05'), 'Android alarm creation request output includes the requested alarm time')
+    assert.ok(alarmResult.output.includes('闹钟创建请求'), 'Android alarm creation request output says a creation request was sent')
+    assert.equal(alarmResult.output.includes('"opened"'), false, 'Android alarm creation request output hides internal JSON fields')
     assert.equal(alarmResult.trace.content.includes('"target"'), false, 'Android alarm intent trace content does not render raw JSON')
     assert.equal(alarmResult.metadata?.structuredPayload?.target, 'alarm', 'Android alarm intent keeps structured payload in metadata')
     assert.equal(alarmResult.metadata?.androidOperationAudit?.operationKind, 'alarm-intent', 'Android alarm intent audit still records operation kind')
+    assert.equal(alarmResult.metadata?.structuredPayload?.skipUiRequested, true, 'Android alarm creation request asks Clock to skip the editor when supported')
+    assert.equal(alarmResult.metadata?.androidOperationAudit?.externalConfirmationRequired, false, 'Android alarm direct request is not audited as mandatory external confirmation')
     assert.equal(launchedIntents.at(-1)?.action, 'android.intent.action.SET_ALARM', 'Android alarm intent opens the system alarm action')
+    assert.equal(
+      launchedIntents.at(-1)?.params?.extra?.['android.intent.extra.alarm.SKIP_UI'],
+      true,
+      'Android alarm intent asks the system Clock to create the alarm without opening the editor when supported'
+    )
 
-    const legacyAlarmJson = JSON.stringify({
-      opened: true,
+    const directAlarmJson = JSON.stringify({
+      requestSent: true,
+      opened: false,
       target: 'alarm',
       hour: 7,
       minutes: 5,
       message: '起床',
       exactAlarmPermissionRequired: false,
-      launchAttempt: 'set-alarm',
+      launchAttempt: 'set-alarm-direct',
     }, null, 2)
     assert.equal(
-      sanitizeInternalChatOutputText(legacyAlarmJson),
+      sanitizeInternalChatOutputText(directAlarmJson),
       alarmResult.output,
-      'chat output guard converts persisted alarm JSON into the readable handoff message'
+      'chat output guard converts persisted direct alarm JSON into the readable creation request message'
     )
     const sanitizedAlarmMessage = sanitizeMessageInternalOutput({
       id: 'assistant-alarm-json',
       role: 'assistant',
-      content: legacyAlarmJson,
+      content: directAlarmJson,
       timestamp: 1,
       status: 'done',
     })
-    assert.equal(sanitizedAlarmMessage.responseText, alarmResult.output, 'persisted alarm JSON assistant messages render with the readable handoff message')
+    assert.equal(sanitizedAlarmMessage.responseText, alarmResult.output, 'persisted direct alarm JSON assistant messages render with the readable creation request message')
 
     const reminderResult = await executeAndroidDeviceTool(reminderTool, {
       title: '买牛奶',
@@ -8328,12 +10185,120 @@ async function assertProviderCapabilityMatrixBehavior() {
   assert.equal(vertexOpenAIModelSync.code, 'models_endpoint_unavailable', 'Vertex OpenAI-compatible model sync uses the hosted boundary error code')
 }
 
+function assertGenerationParameterCompatibilityBehavior() {
+  const providerParameterDefaultsSource = fs.readFileSync(path.join(root, 'src/services/ai/providerParameterDefaults.ts'), 'utf8')
+  assert.ok(
+    providerParameterDefaultsSource.includes('PROVIDER_PLATFORM_MIN_CONFIGURED_OUTPUT_TOKENS') &&
+    providerParameterDefaultsSource.includes('PROVIDER_PLATFORM_MAX_OUTPUT_TOKENS') &&
+    providerParameterDefaultsSource.includes('clampProviderPlatformOutputTokens'),
+    'platform generation parameter bounds are centralized with shared clamp helpers'
+  )
+  const preferenceSettingsSourceForParams = fs.readFileSync(path.join(root, 'src/components/settings/PreferenceSettingsContent.tsx'), 'utf8')
+  assert.ok(preferenceSettingsSourceForParams.includes('clampProviderPlatformTemperature') && preferenceSettingsSourceForParams.includes('clampProviderPlatformOutputTokens'), 'preference generation defaults use shared platform clamp helpers instead of local hardcoded bounds')
+  assert.ok(!preferenceSettingsSourceForParams.includes('Math.max(0, Math.min(2') && !preferenceSettingsSourceForParams.includes('Math.max(128, Math.min(128000'), 'preference generation defaults do not duplicate provider parameter bounds')
+  const skillSettingsSourceForParams = fs.readFileSync(path.join(root, 'src/components/settings/SkillSettingsContent.tsx'), 'utf8')
+  assert.ok(skillSettingsSourceForParams.includes('parseClampedNumber(temperature, clampProviderPlatformTemperature)') && skillSettingsSourceForParams.includes('parseClampedNumber(maxTokens, clampProviderPlatformOutputTokens)'), 'skill editor generation parameters use shared platform clamp helpers')
+  assert.ok(!skillSettingsSourceForParams.includes('parseBoundedNumber(maxTokens, 128, 128000)'), 'skill editor output-token bounds are not hardcoded locally')
+  const chatWorkspaceSourceForParams = fs.readFileSync(path.join(root, 'src/components/chat/ChatWorkspace.tsx'), 'utf8')
+  assert.ok(chatWorkspaceSourceForParams.includes('applySkillStack({ conversation: runtimeConversation, providers,'), 'skill application passes provider context so skill generation parameters can clamp to target model capabilities')
+  const chatRunnerSourceForParams = fs.readFileSync(path.join(root, 'src/services/chatRunner.ts'), 'utf8')
+  assert.ok(
+    chatRunnerSourceForParams.includes('resolveRuntimeGenerationParameterConversation') &&
+    chatRunnerSourceForParams.includes('resolveConversationGenerationParameterRequest') &&
+    !chatRunnerSourceForParams.includes('runtimeConversation.maxTokens > modelConfig.maxOutputTokens'),
+    'chat runtime clamps stale generation parameters through model capability ranges instead of failing before the adapter can prune'
+  )
+  assert.ok(
+    chatRunnerSourceForParams.includes('maxTokens: runtimeConversation.maxTokens') &&
+    chatRunnerSourceForParams.includes('temperature: runtimeConversation.temperature') &&
+    chatRunnerSourceForParams.includes('topK: runtimeConversation.topK'),
+    'chat runtime forwards normalized conversation generation parameters into provider requests'
+  )
+  assert.ok(!chatRunnerSourceForParams.includes('Math.min(input.conversation.temperature, 0.4)'), 'chat runtime follow-up requests use shared parameter shaping instead of ad-hoc temperature caps')
+  const chatMcpToolRuntimeSourceForParams = fs.readFileSync(path.join(root, 'src/services/chatMcpToolRuntime.ts'), 'utf8')
+  assert.ok(
+    chatMcpToolRuntimeSourceForParams.includes('resolveConversationGenerationParameterRequest') &&
+    chatMcpToolRuntimeSourceForParams.includes('temperatureCap: 0.4') &&
+    !chatMcpToolRuntimeSourceForParams.includes('Math.min(input.conversation.temperature, 0.4)'),
+    'MCP tool revision requests reuse shared generation parameter shaping with a semantic temperature cap'
+  )
+  const skillsSourceForParams = fs.readFileSync(path.join(root, 'src/services/skills.ts'), 'utf8')
+  assert.ok(skillsSourceForParams.includes('resolveSkillGenerationParameterRanges') && skillsSourceForParams.includes('resolveConversationGenerationParameterRanges'), 'skill runtime derives generation clamps from target provider/model ranges when context is available')
+  assert.ok(skillsSourceForParams.includes('clampProviderPlatformTemperature') && skillsSourceForParams.includes('clampProviderPlatformOutputTokens'), 'skill runtime falls back to shared platform generation clamps')
+  assert.ok(skillsSourceForParams.includes('generationParameterOverrides.temperature = true') && skillsSourceForParams.includes('generationParameterOverrides.maxTokens = true'), 'skill runtime marks skill-supplied generation parameters as explicit override metadata')
+  assert.ok(!skillsSourceForParams.includes('Math.max(0, Math.min(2') && !skillsSourceForParams.includes('Math.max(128, Math.min(128000'), 'skill runtime does not duplicate provider parameter bounds')
+
+  const skillApplied = applySkillStack({
+    skills: [createBaseSkill({
+      id: 'skill-generation-focus-temperature',
+      name: 'Generation Focus Temperature',
+      systemPrompt: 'Set generation temperature.',
+      temperature: 0.2,
+    })],
+  })
+  assert.equal(skillApplied.conversationUpdates.temperature, 0.2, 'skill runtime preserves valid temperature edits')
+  assert.deepEqual(skillApplied.conversationUpdates.generationParameterOverrides, { temperature: true }, 'skill-supplied generation parameters are tracked as explicit overrides')
+  const boundedGenerationApplied = applySkillStack({
+    skills: [createBaseSkill({
+      id: 'skill-generation-focus-bounded',
+      name: 'Generation Focus Bounded',
+      systemPrompt: 'Clamp high generation parameters.',
+      temperature: 5,
+      maxTokens: 999999,
+    })],
+  })
+  assert.equal(boundedGenerationApplied.conversationUpdates.temperature, PROVIDER_PLATFORM_MAX_TEMPERATURE, 'skill temperature uses the shared platform clamp')
+  assert.equal(boundedGenerationApplied.conversationUpdates.maxTokens, PROVIDER_PLATFORM_MAX_OUTPUT_TOKENS, 'skill output tokens use the shared platform clamp')
+  assert.deepEqual(boundedGenerationApplied.conversationUpdates.generationParameterOverrides, { temperature: true, maxTokens: true }, 'skill output-token overrides remain explicit even when clamped')
+  const minBoundedGenerationApplied = applySkillStack({
+    skills: [createBaseSkill({
+      id: 'skill-generation-focus-min',
+      name: 'Generation Focus Minimum',
+      systemPrompt: 'Clamp low generation parameters.',
+      maxTokens: 12,
+    })],
+  })
+  assert.equal(minBoundedGenerationApplied.conversationUpdates.maxTokens, PROVIDER_PLATFORM_MIN_CONFIGURED_OUTPUT_TOKENS, 'skill output tokens keep the shared user-configured floor when no provider range is available')
+  const providerBoundedGenerationApplied = applySkillStack({
+    providers: [{
+      id: 'skill-provider',
+      type: 'openai',
+      name: 'Skill Provider',
+      apiKey: 'sk-test',
+      enabled: true,
+      models: ['skill-model'],
+      modelConfigs: [{
+        id: 'skill-model',
+        name: 'Skill Model',
+        provider: 'openai',
+        contextWindow: 4096,
+        maxTokens: 256,
+        maxOutputTokens: 256,
+        defaultMaxTokens: 128,
+        supportsVision: false,
+        supportsFiles: false,
+      }],
+    }],
+    skills: [createBaseSkill({
+      id: 'skill-generation-focus-provider-bounded',
+      name: 'Generation Focus Provider Bounded',
+      systemPrompt: 'Clamp through provider model limits.',
+      providerId: 'skill-provider',
+      model: 'skill-model',
+      maxTokens: 999999,
+    })],
+  })
+  assert.equal(providerBoundedGenerationApplied.conversationUpdates.maxTokens, 256, 'skill output tokens clamp through the target provider/model capability range when available')
+}
+
 async function run() {
   assertReleaseVersionsAligned()
   await assertResponsesWebSocketTransportBehavior()
   await assertRuntimeLogFileBehavior()
   await assertRuntimeDiagnosticsBehavior()
   await assertRuntimeDiagnosticsFailurePath()
+  await assertPluginManifestBehavior()
+  assertRuntimeControlPlanePlanAudit()
   await assertAppUpdateRuntimeLogging()
   await assertStorageFailureRuntimeLogging()
   await assertRenderGuardRuntimeLogging()
@@ -8375,8 +10340,6 @@ async function run() {
   assert.equal(st('messageBubble.copyWorkArtifactCopied'), 'Work artifact copied to clipboard.', 'message actions confirm copied work artifacts')
   assert.equal(st('messageBubble.continueWorkArtifact'), 'Continue work', 'message actions expose work artifact continuation')
   assert.equal(st('messageBubble.continueWorkArtifactInserted'), 'Continuation prompt inserted.', 'message actions confirm inserted continuation prompts')
-  assert.ok(st('onboarding.firstPrompt.samples.engineering').includes('Verification command or evidence'), 'onboarding first prompt seeds structured productivity drafts')
-  assert.ok(st('onboarding.firstPrompt.samples.organize').includes('A version I can copy'), 'onboarding organize prompt produces a shareable work artifact')
   assert.equal(st('chatRunner.trace.compactPolicyTitle'), 'Compact policy', 'chat runner exposes compact policy trace label')
   assert.equal(st('chatRunner.error.remoteCompactRequiredFailed'), 'Remote compact is required, but the current provider does not declare support.', 'chat runner exposes remote compact required failure text')
   assert.equal(normalizeUserContent('  hello%20world  '), 'hello world', 'chat message helper normalizes pasted encoded spaces')
@@ -8732,14 +10695,17 @@ async function run() {
   assert.ok(chatProviderNativeToolUtilsSource.includes('providerCompatibilityCapabilityCanBeSentForProvider(provider, capability, modelSupported)'), 'chat provider-native modality helpers gate model-declared vision/file support through the provider compatibility contract')
   assert.ok(chatProviderNativeToolUtilsSource.includes('providerCompatibilityCapabilityCanBeSentForProvider(provider, capability, true)'), 'chat provider-native modality helpers gate user-declared vision/file support through the provider compatibility contract')
   const aiBaseSource = fs.readFileSync(path.join(root, 'src/services/ai/base.ts'), 'utf8')
+  const providerRuntimePipelineSource = fs.readFileSync(path.join(root, 'src/services/ai/providerRuntimePipeline.ts'), 'utf8')
+  const providerRuntimeExecutorSource = fs.readFileSync(path.join(root, 'src/services/ai/providerRuntimeExecutor.ts'), 'utf8')
   assert.ok(aiBaseSource.includes("msgs.push({ role: 'system', content: systemPrompt })"), 'OpenAI-compatible request builders preserve system prompt policy as a system message')
   assert.ok(aiBaseSource.includes('systemInstruction') && aiBaseSource.includes('systemPrompt'), 'Gemini request builder preserves system prompt policy through systemInstruction')
-  assert.ok(aiBaseSource.includes('const conformanceBlockers = routeResult.conformance.issues.filter((issue) => issue.severity === \'block\')'), 'runtime safety policy blocks conformance failures before upstream dispatch')
-  assert.ok(aiBaseSource.includes('if (payloadPolicy.blocked)'), 'runtime safety policy applies payload blocking before upstream dispatch')
-  assert.ok(aiBaseSource.includes('formatProviderHttpError(response.status, errorText, input.req.provider, input.req.model)'), 'chat runtime formats provider HTTP failures through the shared provider error mapper')
-  assert.ok(aiBaseSource.includes("appendRuntimeLog('upstream.error'"), 'chat runtime records upstream provider errors in runtime logs')
-  assert.ok(aiBaseSource.includes('const canRetryStatus = response.status === 408 || response.status === 409 || response.status === 425 || response.status === 429 || response.status >= 500'), 'chat runtime treats 429 as a bounded retry candidate')
-  assert.ok(aiBaseSource.includes('retryAfterMsFromFailure(input.status)'), 'runtime fallback records retry-after cooldowns for rate-limited routes')
+  assert.ok(aiBaseSource.includes('executeProviderRuntimeChat({'), 'streamChat delegates runtime execution to the provider runtime executor')
+  assert.ok(providerRuntimePipelineSource.includes('const conformanceBlockers = routeResult.conformance.issues.filter((issue) => issue.severity === \'block\')'), 'runtime safety policy blocks conformance failures before upstream dispatch')
+  assert.ok(providerRuntimePipelineSource.includes('if (payloadPolicy.blocked)'), 'runtime safety policy applies payload blocking before upstream dispatch')
+  assert.ok(providerRuntimeExecutorSource.includes('formatProviderHttpError(response.status, errorText, input.req.provider, input.req.model)'), 'chat runtime formats provider HTTP failures through the shared provider error mapper')
+  assert.ok(providerRuntimeExecutorSource.includes("appendRuntimeLog('upstream.error'"), 'chat runtime records upstream provider errors in runtime logs')
+  assert.ok(providerRuntimeExecutorSource.includes('const canRetryStatus = response.status === 408 || response.status === 409 || response.status === 425 || response.status === 429 || response.status >= 500'), 'chat runtime treats 429 as a bounded retry candidate')
+  assert.ok(providerRuntimeExecutorSource.includes('retryAfterMsFromFailure(input.status)'), 'runtime fallback records retry-after cooldowns for rate-limited routes')
   assert.ok(aiBaseSource.includes("req.webSearchMode === 'native' && providerSupportsNativeSearch(req.provider)"), 'provider request builders gate native search tool injection on explicit nativeSearch support')
   assert.ok(aiBaseSource.includes('contractSendableAttachments(req)'), 'provider request builders filter multimodal attachments through the provider compatibility manifest before payload construction')
   assert.ok(aiBaseSource.includes('manifest.modalities.input.image') && aiBaseSource.includes('manifest.modalities.input.file'), 'provider request builders use manifest image/file support before emitting attachment payload parameters')
@@ -8753,9 +10719,9 @@ async function run() {
   assert.ok(providerResponseParsingSource.includes('export function providerReasoningResponseCanBeParsed'), 'provider response parsing centralizes response-side reasoning parse eligibility')
   assert.ok(providerResponseParsingSource.includes('providerCompatibilityEvidenceHasBehavior(evidence.id, \'reasoning\')'), 'provider response parsing uses compatibility evidence before emitting reasoning traces')
   assert.ok(providerResponseParsingSource.includes("extractUsage(json, 'openai-compatible', { includeReasoning })"), 'provider response parsing gates reasoning token usage through response-side reasoning eligibility')
-  assert.ok(aiBaseSource.includes('const streamParseOptions = { includeReasoning: providerReasoningResponseCanBeParsed(input.req) }'), 'stream runtime passes provider reasoning parse eligibility into SSE parsing')
-  assert.ok(aiBaseSource.includes('function resolveStreamProviderCitationSource'), 'stream runtime centralizes response-side provider citation parse eligibility')
-  assert.ok(aiBaseSource.includes("providerCompatibilityCapabilityCanBeSentForProvider(provider, 'citations')"), 'stream runtime gates provider-native citation metadata through the compatibility contract')
+  assert.ok(providerRuntimeExecutorSource.includes('const streamParseOptions = { includeReasoning: providerReasoningResponseCanBeParsed(input.req) }'), 'stream runtime passes provider reasoning parse eligibility into SSE parsing')
+  assert.ok(providerRuntimeExecutorSource.includes('function resolveStreamProviderCitationSource'), 'stream runtime centralizes response-side provider citation parse eligibility')
+  assert.ok(providerRuntimeExecutorSource.includes("providerCompatibilityCapabilityCanBeSentForProvider(provider, 'citations')"), 'stream runtime gates provider-native citation metadata through the compatibility contract')
   const providerStreamParsingSource = fs.readFileSync(path.join(root, 'src/services/ai/providerStreamParsing.ts'), 'utf8')
   assert.ok(providerStreamParsingSource.includes('includeReasoning ? extractOpenAIReasoningContent(json) : undefined'), 'provider stream parsing gates reasoning_content preservation through parse options')
   assert.ok(providerStreamParsingSource.includes("extractUsage(json, providerType === 'openai' ? 'openai' : 'openai-compatible', { includeReasoning })"), 'provider stream parsing gates reasoning token usage through parse options')
@@ -8764,6 +10730,8 @@ async function run() {
   const providerUsageSource = fs.readFileSync(path.join(root, 'src/services/ai/providerUsage.ts'), 'utf8')
   assert.ok(providerUsageSource.includes('includeReasoning ? numberValue'), 'provider usage parser gates reasoning token fields through parse options')
   const providerConformanceSource = fs.readFileSync(path.join(root, 'src/services/ai/providerConformance.ts'), 'utf8')
+  assert.ok(providerConformanceSource.includes('PROVIDER_REASONING_RESOLUTION_SCHEMA'), 'provider conformance exposes a stable reasoning resolution schema')
+  assert.ok(providerConformanceSource.includes('reasoningResolution'), 'provider conformance returns a machine-readable reasoning resolution artifact')
   assert.ok(providerConformanceSource.includes("providerCompatibilityCapabilityCanBeSentForProvider(provider, 'tools', explicitDeclaration)"), 'provider conformance gates native tool manifest support through the compatibility contract')
   assert.ok(providerConformanceSource.includes("providerCompatibilityCapabilityCanBeSentForProvider(provider, capability, explicitDeclaration)"), 'provider conformance gates vision/file manifest support through the compatibility contract')
   assert.ok(providerConformanceSource.includes("providerCompatibilityCapabilityCanBeSentForProvider(provider, 'audio', true)"), 'provider conformance gates audio/speech manifest support through the compatibility contract')
@@ -8816,6 +10784,45 @@ async function run() {
   assert.ok(chatOptionsPanelSource.includes('resolveProviderNativeToolSupport(provider, config).supported'), 'chat model picker tool badge uses the provider compatibility native-tool decision')
   assert.ok(chatOptionsPanelSource.includes('providerSupportsVisionInput(provider, config)'), 'chat model picker vision badge uses the provider compatibility vision decision')
   assert.ok(chatOptionsPanelSource.includes('providerSupportsNativeSearch(provider)'), 'chat model picker native-search badge uses the provider compatibility native-search decision')
+  assert.ok(chatOptionsPanelSource.includes('showMaxTokensControl = requestParameters?.maxTokens !== undefined'), 'chat options panel hides Max Tokens when the shared request-parameter resolver prunes the active token-limit field')
+  assert.ok(chatOptionsPanelSource.includes('showTopKControl') && chatOptionsPanelSource.includes('topK: conversation.topK'), 'chat options panel exposes Top-K only through the shared request-parameter resolver')
+  assert.ok(chatOptionsPanelSource.includes('{ includeRanges: true }') && chatOptionsPanelSource.includes('clampParameterInput'), 'chat options panel clamps parameter edits through resolver-provided range metadata')
+  assert.ok(chatOptionsPanelSource.includes('conversationParameterRanges') && chatOptionsPanelSource.includes('resolveConversationGenerationParameterRanges'), 'chat options panel uses shared conversation parameter ranges instead of hardcoded fallback ranges')
+  assert.ok(chatOptionsPanelSource.includes("patchConversation({ topK: undefined })"), 'chat options panel can clear conversation Top-K back to model/provider defaults')
+  const chatMcpToolRuntimeSourceForParams = fs.readFileSync(path.join(root, 'src/services/chatMcpToolRuntime.ts'), 'utf8')
+  assert.ok(providerToolChatRunnerSource.includes('topK: runtimeConversation.topK') && providerToolChatRunnerSource.includes('topK: requestParameters.topK') && chatMcpToolRuntimeSourceForParams.includes('topK: requestParameters.topK'), 'chat runner forwards normalized conversation Top-K into primary and follow-up provider requests')
+  const storageSourceForParams = fs.readFileSync(path.join(root, 'src/services/storage.ts'), 'utf8')
+  assert.ok(storageSourceForParams.includes('PROVIDER_PLATFORM_DEFAULT_TEMPERATURE'), 'storage normalization uses the shared platform generation default')
+  assert.ok(storageSourceForParams.includes('normalizeGenerationParameterOverrides'), 'storage normalization keeps explicit generation-parameter override metadata while pruning false flags')
+  const chatWorkspaceSourceForParams = fs.readFileSync(path.join(root, 'src/components/chat/ChatWorkspace.tsx'), 'utf8')
+  assert.ok(chatWorkspaceSourceForParams.includes('setupParameterOverrides') && chatWorkspaceSourceForParams.includes('topK: nextSetupConversation.topK'), 'setup chat flow preserves draft parameter overrides including Top-K before the first conversation is persisted')
+  assert.ok(chatWorkspaceSourceForParams.includes('buildExplicitGenerationParameterOverridePatch(nextSetupConversation.generationParameterOverrides)'), 'setup chat flow persists explicit override metadata instead of treating seeded defaults as user edits')
+  assert.ok(chatWorkspaceSourceForParams.includes('resolveConversationGenerationParameterRanges'), 'setup chat flow clamps draft generation parameters through shared resolver-backed ranges')
+  assert.ok(chatWorkspaceSourceForParams.includes('applySkillStack({ conversation: runtimeConversation, providers,'), 'skill application passes provider context so skill generation parameters can clamp to target model capabilities')
+  assert.ok(providerToolChatRunnerSource.includes('resolveRuntimeGenerationParameterConversation') && providerToolChatRunnerSource.includes('resolveConversationGenerationParameterRequest'), 'chat runtime clamps stale generation parameters through shared provider/model ranges before sending requests')
+  assert.ok(!providerToolChatRunnerSource.includes('runtimeConversation.maxTokens > modelConfig.maxOutputTokens'), 'chat runtime does not fail stale max-token settings before the provider adapter can prune or clamp')
+  assert.ok(!providerToolChatRunnerSource.includes('Math.min(input.conversation.temperature, 0.4)'), 'chat runner follow-up requests do not keep local hardcoded temperature caps')
+  assert.ok(chatMcpToolRuntimeSourceForParams.includes('resolveConversationGenerationParameterRequest') && chatMcpToolRuntimeSourceForParams.includes('temperatureCap: 0.4'), 'MCP tool revision requests use shared generation parameter shaping')
+  assert.ok(!chatMcpToolRuntimeSourceForParams.includes('Math.min(input.conversation.temperature, 0.4)'), 'MCP tool revision requests do not keep local hardcoded temperature caps')
+  const chatStoreSourceForParams = fs.readFileSync(path.join(root, 'src/store/chatStore.ts'), 'utf8')
+  assert.ok(chatStoreSourceForParams.includes('generationParameterOverrides') && chatStoreSourceForParams.includes('mergeGenerationParameterOverrides'), 'chat store tracks generation-parameter user overrides separately from normalized parameter values')
+  assert.ok(chatStoreSourceForParams.includes('resolveStoredGenerationParameterOverrides') && chatStoreSourceForParams.includes('inferGenerationParameterOverrides'), 'chat store keeps legacy equality fallback while preferring explicit override metadata')
+  assert.ok(chatStoreSourceForParams.includes('sanitizeConversationGenerationParameterOverridesForStore'), 'chat store prunes imported or persisted generation-parameter override metadata to supported keys')
+  const providerParameterDefaultsSource = fs.readFileSync(path.join(root, 'src/services/ai/providerParameterDefaults.ts'), 'utf8')
+  assert.ok(providerParameterDefaultsSource.includes('PROVIDER_PLATFORM_MIN_CONFIGURED_OUTPUT_TOKENS') && providerParameterDefaultsSource.includes('PROVIDER_PLATFORM_MAX_OUTPUT_TOKENS') && providerParameterDefaultsSource.includes('clampProviderPlatformOutputTokens'), 'platform generation parameter bounds are centralized with shared clamp helpers')
+  const conversationGenerationParametersSource = fs.readFileSync(path.join(root, 'src/services/ai/conversationGenerationParameters.ts'), 'utf8')
+  assert.ok(conversationGenerationParametersSource.includes('resolveProviderRequestParameters') && conversationGenerationParametersSource.includes('includeRanges: true'), 'conversation generation parameter helpers derive ranges from the provider request-parameter resolver')
+  const preferenceSettingsSourceForParams = fs.readFileSync(path.join(root, 'src/components/settings/PreferenceSettingsContent.tsx'), 'utf8')
+  assert.ok(preferenceSettingsSourceForParams.includes('clampProviderPlatformTemperature') && preferenceSettingsSourceForParams.includes('clampProviderPlatformOutputTokens'), 'preference generation defaults use shared platform clamp helpers instead of local hardcoded bounds')
+  assert.ok(!preferenceSettingsSourceForParams.includes('Math.max(0, Math.min(2') && !preferenceSettingsSourceForParams.includes('Math.max(128, Math.min(128000'), 'preference generation defaults do not duplicate provider parameter bounds')
+  const skillSettingsSourceForParams = fs.readFileSync(path.join(root, 'src/components/settings/SkillSettingsContent.tsx'), 'utf8')
+  assert.ok(skillSettingsSourceForParams.includes('parseClampedNumber(temperature, clampProviderPlatformTemperature)') && skillSettingsSourceForParams.includes('parseClampedNumber(maxTokens, clampProviderPlatformOutputTokens)'), 'skill editor generation parameters use shared platform clamp helpers')
+  assert.ok(!skillSettingsSourceForParams.includes('parseBoundedNumber(maxTokens, 128, 128000)'), 'skill editor output-token bounds are not hardcoded locally')
+  const skillsSourceForParams = fs.readFileSync(path.join(root, 'src/services/skills.ts'), 'utf8')
+  assert.ok(skillsSourceForParams.includes('resolveSkillGenerationParameterRanges') && skillsSourceForParams.includes('resolveConversationGenerationParameterRanges'), 'skill runtime derives generation clamps from target provider/model ranges when context is available')
+  assert.ok(skillsSourceForParams.includes('clampProviderPlatformTemperature') && skillsSourceForParams.includes('clampProviderPlatformOutputTokens'), 'skill runtime falls back to shared platform generation clamps')
+  assert.ok(skillsSourceForParams.includes('generationParameterOverrides.temperature = true') && skillsSourceForParams.includes('generationParameterOverrides.maxTokens = true'), 'skill runtime marks skill-supplied generation parameters as explicit override metadata')
+  assert.ok(!skillsSourceForParams.includes('Math.max(0, Math.min(2') && !skillsSourceForParams.includes('Math.max(128, Math.min(128000'), 'skill runtime does not duplicate provider parameter bounds')
   const speechSource = fs.readFileSync(path.join(root, 'src/services/speech.ts'), 'utf8')
   assert.ok(speechSource.includes("providerCompatibilityCapabilityCanBeSentForProvider(sourceProvider, 'audio', true)"), 'speech service gates optional remote TTS on the provider compatibility audio contract')
   const providerModelDiscoverySource = fs.readFileSync(path.join(root, 'src/services/ai/providerModelDiscovery.ts'), 'utf8')
@@ -9314,25 +11321,10 @@ async function run() {
     [['retrieval-a', 'skipped', 'Stopped'], ['tool-a', 'skipped', 'Stopped']],
     'chat trace helper settles only active message traces'
   )
-  ;[
-    'onboarding.firstPrompt.samples.concise',
-    'onboarding.firstPrompt.samples.research',
-    'onboarding.firstPrompt.samples.engineering',
-    'onboarding.firstPrompt.samples.organize',
-    'onboarding.firstPrompt.samples.plan',
-  ].forEach((key) => assertStructuredWorkTemplate(st(key), key, 'en'))
   setServiceLanguage('ja')
   assert.equal(st('search.disabled'), 'Web 検索は無効です。', 'service i18n supports Japanese resources')
   assert.equal(st('messageBubble.copyWorkArtifact'), '作業成果をコピー', 'Japanese message actions expose work artifact copy')
   assert.equal(st('messageBubble.continueWorkArtifact'), 'この作業を続ける', 'Japanese message actions expose work artifact continuation')
-  assert.ok(st('onboarding.firstPrompt.samples.plan').includes('決定ログ'), 'Japanese onboarding first prompt produces parser-recognizable work artifacts')
-  ;[
-    'onboarding.firstPrompt.samples.concise',
-    'onboarding.firstPrompt.samples.research',
-    'onboarding.firstPrompt.samples.engineering',
-    'onboarding.firstPrompt.samples.organize',
-    'onboarding.firstPrompt.samples.plan',
-  ].forEach((key) => assertStructuredWorkTemplate(st(key), key, 'ja'))
   setServiceLanguage('zh-CN')
 
   const governedProvider = {
@@ -9529,6 +11521,224 @@ async function run() {
     true,
     'runtime diagnostics builds route decision log data'
   )
+  const snapshotFailoverDecision = {
+    mode: 'same-provider',
+    trigger: 'rate_limited',
+    eligible: true,
+    selected: { providerId: 'openai-main', model: 'gpt-5.2', credentialGroupId: 'group-b' },
+    acceptedCandidates: [{ providerId: 'openai-main', model: 'gpt-5.2', credentialGroupId: 'group-b' }],
+    rejectedCandidates: [],
+    blockedReasons: [],
+    requiresUserConfirmation: false,
+    reason: 'selected',
+  }
+  const routeDecisionSnapshot = buildProviderRouteDecisionSnapshot({
+    req: {
+      conversationId: 'conv-snapshot',
+      sessionId: 'session-snapshot',
+      provider: {
+        id: 'openai-main',
+        type: 'openai',
+        presetId: 'openai',
+        name: 'OpenAI',
+        apiKey: 'sk-route-snapshot-secret-abcdefghijklmnopqrstuvwxyz',
+        models: ['gpt-5.2'],
+        enabled: true,
+      },
+      model: 'gpt-5.2',
+      requestedModel: 'alias-log-model',
+      messages: [{ role: 'user', content: 'route snapshot prompt text' }],
+    },
+    requestedModel: 'alias-log-model',
+    upstreamModel: 'gpt-5.2',
+    credentialGroupId: 'group-a',
+    access: { allowed: true, matchedRules: ['providerAllowlist:preset:openai'] },
+    routeResult: {
+      body: {
+        model: 'gpt-5.2',
+        messages: [{ role: 'user', content: 'route snapshot prompt text' }],
+        apiKey: 'sk-route-body-secret-abcdefghijklmnopqrstuvwxyz',
+      },
+      conformance: {
+        manifest: {
+          id: 'openai:gpt-5.2',
+          family: 'openai',
+          protocol: 'openai-chat-completions',
+          source: { confidence: 'source-backed', url: 'https://platform.openai.com/docs', verifiedAt: '2026-01-02' },
+        },
+        reasoningResolution: {
+          schema: PROVIDER_REASONING_RESOLUTION_SCHEMA,
+          requested: 'high',
+          enabled: true,
+          effective: 'high',
+          requestShape: 'openai-reasoning-effort',
+          sourceConfidence: 'source-backed',
+          failureCodes: ['param_conflict_removed'],
+          removedParams: ['temperature'],
+        },
+        issues: [{ code: 'param_conflict_removed', severity: 'warn', message: 'temperature removed' }],
+        removedParams: ['temperature'],
+        adjustedParams: { max_tokens: 1000 },
+        bodyKeys: ['messages', 'model'],
+      },
+      decision: {
+        protocol: 'openai-chat-completions',
+        endpoint: 'https://api.openai.com/v1/chat/completions?token=should-not-leak',
+        transport: 'http_sse',
+        requestedTransportMode: 'auto',
+        manifestId: 'openai:gpt-5.2',
+        capabilitySource: { confidence: 'source-backed', url: 'https://platform.openai.com/docs', verifiedAt: '2026-01-02' },
+        fallbackPlan: snapshotFailoverDecision,
+        blocked: false,
+        blockReasons: [],
+        warnings: ['param_conflict_removed'],
+      },
+    },
+    transportSelection: { transport: 'http_sse', requestedMode: 'auto' },
+    payloadPolicy: {
+      mode: 'warn',
+      blocked: false,
+      findings: [{ id: 'temperature_removed', severity: 'warn', message: 'temperature removed' }],
+      bodyKeys: ['messages', 'model'],
+      messageCount: 1,
+      attachmentCount: 0,
+    },
+    proxyPolicy: {
+      mode: 'custom-base-url',
+      effectiveUrl: 'https://proxy.example/v1/chat/completions?token=should-not-leak',
+      applied: true,
+      reason: 'custom_base_url',
+      endpointHost: 'proxy.example',
+      route: { providerId: 'openai-main', model: 'gpt-5.2', credentialGroupId: 'group-a' },
+      failover: { enabled: true, decision: snapshotFailoverDecision },
+      health: { status: 'healthy', successes: 3, failures: 1 },
+      evidence: {
+        source: 'proxy-policy',
+        originalUrl: 'https://api.openai.com/v1/chat/completions?token=should-not-leak',
+        proxyBaseUrl: 'https://proxy.example',
+      },
+    },
+    health: { status: 'healthy', successes: 3, failures: 1, consecutiveFailures: 0, lastSuccessAtMs: 1000 },
+    sessionAffinity: {
+      enabled: false,
+      reusable: false,
+      reason: 'affinity_disabled',
+    },
+    stream: true,
+    usesResponsesApi: false,
+  }, new Date('2026-01-02T03:04:05.000Z'))
+  assert.equal(routeDecisionSnapshot.schema, PROVIDER_ROUTE_DECISION_SNAPSHOT_SCHEMA, 'route decision snapshot writes a versioned schema')
+  assert.equal(routeDecisionSnapshot.ts, '2026-01-02T03:04:05.000Z', 'route decision snapshot uses caller timestamp')
+  assert.equal(routeDecisionSnapshot.providerId, 'openai-main', 'route decision snapshot records provider id')
+  assert.equal(routeDecisionSnapshot.credentialGroupId, 'group-a', 'route decision snapshot records credential group id')
+  assert.equal(routeDecisionSnapshot.compatibility.id, 'openai', 'route decision snapshot records compatibility evidence id')
+  assert.equal(routeDecisionSnapshot.endpointFamily, 'openai-chat-completions', 'route decision snapshot records endpoint family')
+  assert.deepEqual(routeDecisionSnapshot.conformance.adjustedParamKeys, ['max_tokens'], 'route decision snapshot records adjusted parameter keys only')
+  assert.equal(routeDecisionSnapshot.conformance.reasoningResolution.schema, PROVIDER_REASONING_RESOLUTION_SCHEMA, 'route decision snapshot records the reasoning resolution artifact schema')
+  assert.deepEqual(routeDecisionSnapshot.conformance.reasoningResolution.failureCodes, ['param_conflict_removed'], 'route decision snapshot records bounded reasoning resolution failure codes')
+  assert.deepEqual(routeDecisionSnapshot.conformance.reasoningResolution.removedParams, ['temperature'], 'route decision snapshot records bounded reasoning resolution removed params')
+  assert.deepEqual(routeDecisionSnapshot.requestPolicy.requestFieldKeys, ['messages', 'model'], 'route decision snapshot records request field keys only')
+  assert.deepEqual(routeDecisionSnapshot.requestPolicy.findingIds, ['temperature_removed'], 'route decision snapshot records payload policy finding ids')
+  assert.equal(routeDecisionSnapshot.proxy.endpointHost, 'proxy.example', 'route decision snapshot records effective proxy host')
+  assert.equal(routeDecisionSnapshot.fallback.acceptedCandidateCount, 1, 'route decision snapshot summarizes fallback candidates')
+  assert.equal(routeDecisionSnapshot.health.status, 'healthy', 'route decision snapshot records health status')
+  assert.equal(routeDecisionSnapshot.sessionAffinity.enabled, false, 'route decision snapshot records disabled session affinity state')
+  assert.equal(routeDecisionSnapshot.sessionAffinity.bound, false, 'route decision snapshot records no affinity binding when disabled')
+  assert.equal(routeDecisionSnapshot.runtime.stream, true, 'route decision snapshot records runtime stream mode')
+  const routeDecisionSnapshotText = JSON.stringify(routeDecisionSnapshot)
+  assert.ok(!routeDecisionSnapshotText.includes('route snapshot prompt text'), 'route decision snapshot omits raw prompt text')
+  assert.ok(!routeDecisionSnapshotText.includes('sk-route-snapshot-secret'), 'route decision snapshot omits provider API keys')
+  assert.ok(!routeDecisionSnapshotText.includes('sk-route-body-secret'), 'route decision snapshot omits raw body credentials')
+  assert.ok(!routeDecisionSnapshotText.includes('token=should-not-leak'), 'route decision snapshot omits raw endpoint query strings')
+  resetSessionAffinityBindingsForTest()
+  const pipelineResult = await prepareProviderRuntimePipeline({
+    req: {
+      conversationId: 'conv-pipeline-snapshot',
+      provider: {
+        id: 'openai-main',
+        type: 'openai',
+        presetId: 'openai',
+        name: 'OpenAI',
+        apiKey: 'sk-pipeline-provider-secret-abcdefghijklmnopqrstuvwxyz',
+        credentialGroups: [{
+          id: 'pipeline-group',
+          label: 'Pipeline Group',
+          apiKey: 'sk-pipeline-group-secret-abcdefghijklmnopqrstuvwxyz',
+          enabled: true,
+          availableModels: ['gpt-5.2'],
+        }],
+        models: ['gpt-5.2'],
+        enabled: true,
+      },
+      model: 'gpt-5.2',
+      requestedModel: 'gpt-5.2',
+      messages: [{ role: 'user', content: 'pipeline snapshot prompt text' }],
+      stream: false,
+      settings: { runtimeLogEnabled: false },
+    },
+    controller: new AbortController(),
+    resolveRoute: (_req, context) => ({
+      body: {
+        model: 'gpt-5.2',
+        messages: [{ role: 'user', content: 'pipeline snapshot prompt text' }],
+      },
+      conformance: {
+        manifest: {
+          id: 'openai:gpt-5.2',
+          family: 'openai',
+          protocol: 'openai-chat-completions',
+          source: { confidence: 'source-backed', url: 'https://platform.openai.com/docs', verifiedAt: '2026-01-02' },
+        },
+        reasoning: { enabled: false, requestShape: 'none' },
+        reasoningResolution: {
+          schema: PROVIDER_REASONING_RESOLUTION_SCHEMA,
+          enabled: false,
+          requestShape: 'none',
+          sourceConfidence: 'source-backed',
+          failureCodes: [],
+          removedParams: [],
+        },
+        requestedModalities: ['text'],
+        issues: [],
+        removedParams: [],
+        adjustedParams: {},
+        bodyKeys: ['messages', 'model'],
+      },
+      decision: {
+        protocol: 'openai-chat-completions',
+        transport: context?.transport,
+        requestedTransportMode: context?.requestedTransportMode,
+        transportFallbackReason: context?.transportFallbackReason,
+        manifestId: 'openai:gpt-5.2',
+        capabilitySource: { confidence: 'source-backed', url: 'https://platform.openai.com/docs', verifiedAt: '2026-01-02' },
+        fallbackPlan: {
+          mode: 'off',
+          trigger: 'unknown',
+          eligible: false,
+          acceptedCandidates: [],
+          rejectedCandidates: [],
+          blockedReasons: ['policy_off'],
+          requiresUserConfirmation: false,
+          reason: 'not_configured',
+        },
+        blocked: false,
+        blockReasons: [],
+        warnings: [],
+      },
+    }),
+  })
+  assert.equal(pipelineResult.status, 'ready', 'provider runtime pipeline stays ready for a valid snapshot request')
+  assert.equal(pipelineResult.routeDecisionSnapshot.schema, PROVIDER_ROUTE_DECISION_SNAPSHOT_SCHEMA, 'provider runtime pipeline attaches a route decision snapshot')
+  assert.equal(pipelineResult.routeDecisionSnapshot.credentialGroupId, 'pipeline-group', 'provider runtime pipeline snapshot records the selected credential group')
+  assert.equal(pipelineResult.routeDecisionSnapshot.conformance.reasoningResolution.schema, PROVIDER_REASONING_RESOLUTION_SCHEMA, 'provider runtime pipeline snapshot carries reasoning resolution artifacts')
+  assert.equal(pipelineResult.routeDecisionSnapshot.requestPolicy.messageCount, 1, 'provider runtime pipeline snapshot includes payload policy summary')
+  assert.equal(pipelineResult.routeDecisionSnapshot.sessionAffinity.enabled, false, 'provider runtime pipeline leaves session affinity disabled by default')
+  assert.equal(pipelineResult.routeDecisionSnapshot.sessionAffinity.bound, false, 'provider runtime pipeline does not bind affinity when disabled')
+  assert.equal(listSessionAffinityBindingsForTest().length, 0, 'provider runtime pipeline does not mutate session affinity bindings when disabled')
+  const pipelineSnapshotText = JSON.stringify(pipelineResult.routeDecisionSnapshot)
+  assert.ok(!pipelineSnapshotText.includes('pipeline snapshot prompt text'), 'provider runtime pipeline snapshot omits raw prompt text')
+  assert.ok(!pipelineSnapshotText.includes('sk-pipeline-provider-secret'), 'provider runtime pipeline snapshot omits provider API keys')
+  assert.ok(!pipelineSnapshotText.includes('sk-pipeline-group-secret'), 'provider runtime pipeline snapshot omits credential group API keys')
   const compatibilityLogData = buildProviderCompatibilityLogData({
     ...runtimeLogReq,
     provider: { id: 'bedrock-log', type: 'anthropic', presetId: 'aws-bedrock' },
@@ -9750,6 +11960,36 @@ async function run() {
     'invalid_custom_base_url',
     'custom-base-url proxy rejects app-scheme proxy URLs before credentialed fetch'
   )
+  const observableProxyPlan = resolveProxyPolicyForTest({
+    provider: governedProvider,
+    model: 'gpt-5.2',
+    credentialGroupId: 'group-a',
+    url: 'https://api.openai.com/v1/responses?x=1',
+    settings: { proxyMode: 'off' },
+    failoverDecision: {
+      mode: 'same-provider',
+      trigger: 'rate_limited',
+      eligible: true,
+      selected: { providerId: 'openai-main', model: 'gpt-5.2', credentialGroupId: 'group-b' },
+      acceptedCandidates: [{ providerId: 'openai-main', model: 'gpt-5.2', credentialGroupId: 'group-b' }],
+      rejectedCandidates: [],
+      blockedReasons: [],
+      requiresUserConfirmation: false,
+      reason: 'selected',
+    },
+    health: {
+      status: 'cooldown',
+      failures: 2,
+      successes: 1,
+      cooldownUntilMs: 123,
+    },
+  })
+  assert.equal(observableProxyPlan.route.providerId, 'openai-main', 'proxy plan records the selected provider route')
+  assert.equal(observableProxyPlan.route.model, 'gpt-5.2', 'proxy plan records the selected model route')
+  assert.equal(observableProxyPlan.route.credentialGroupId, 'group-a', 'proxy plan records credential-group route granularity')
+  assert.equal(observableProxyPlan.failover.enabled, true, 'proxy plan carries failover eligibility evidence')
+  assert.equal(observableProxyPlan.failover.decision.selected.credentialGroupId, 'group-b', 'proxy plan preserves failover selected route details')
+  assert.equal(observableProxyPlan.health.status, 'cooldown', 'proxy plan carries runtime health state')
   assert.deepEqual(
     selectUpstreamTransportForTest({
       provider: governedProvider,
@@ -9926,9 +12166,95 @@ async function run() {
     previousResponseId: 'resp-prev',
     messageCount: 12,
     now: 123456,
+    contextFragmentIdentities: [
+      { id: 'retrieved-context', sourceId: 'retrieved-context', sourceHash: 'fnv1a32-aaaaaaaa', included: true },
+      { id: 'empty-context', sourceId: 'empty-context', sourceHash: 'fnv1a32-bbbbbbbb', included: false },
+    ],
   })
   assert.equal(completedRemoteCompactState.id, 'compact-state-resp-1', 'chat remote compact helper derives compact state ids from response ids')
   assert.equal(completedRemoteCompactState.sourceMessageEndIndex, 11, 'chat remote compact helper preserves the last source message index')
+  assert.deepEqual(
+    JSON.parse(completedRemoteCompactState.contextFragmentIdentitiesJson),
+    [
+      { id: 'retrieved-context', sourceId: 'retrieved-context', sourceHash: 'fnv1a32-aaaaaaaa', included: true },
+      { id: 'empty-context', sourceId: 'empty-context', sourceHash: 'fnv1a32-bbbbbbbb', included: false },
+    ],
+    'chat remote compact helper persists bounded context fragment identities'
+  )
+  assert.ok(!completedRemoteCompactState.contextFragmentIdentitiesJson.includes('retrieved context body'), 'compact state fragment identities omit raw context text')
+  const windowedRemoteCompactUsageInput = buildCompletedRemoteCompactUsageInput({
+    conversationId: 'conversation-1',
+    providerId: 'openai-main',
+    model: 'gpt-5.2',
+    upstreamModel: 'gpt-5.2',
+    mode: 'auto',
+    responseId: 'resp-2',
+    previousResponseId: 'resp-1',
+    inputTokens: 1600,
+    outputTokens: 100,
+    messageCount: 12,
+    activeContextTokens: 1600,
+    autoCompactScopeTokens: 2200,
+    prefillInputTokens: 1600,
+    tokensUntilCompaction: 400,
+    lastCompactSummary: 'summary-v2',
+  })
+  assert.equal(windowedRemoteCompactUsageInput.activeContextTokens, 1600, 'compact usage records active context tokens')
+  assert.equal(windowedRemoteCompactUsageInput.autoCompactScopeTokens, 2200, 'compact usage records auto compact scope tokens')
+  const windowedRemoteCompactRecord = recordCompactUsage(windowedRemoteCompactUsageInput)
+  const windowedRemoteCompactState = buildCompletedRemoteCompactStateRecord({
+    conversationId: 'conversation-1',
+    record: windowedRemoteCompactRecord,
+    responseId: 'resp-2',
+    previousResponseId: 'resp-1',
+    messageCount: 12,
+    now: 123457,
+  })
+  assert.equal(windowedRemoteCompactState.previousResponseId, 'resp-1', 'compact state stores previous response id for reuse')
+  assert.equal(windowedRemoteCompactState.tokensUntilCompaction, 400, 'compact state stores tokens until compaction')
+  assert.equal(windowedRemoteCompactState.lastCompactSummary, 'summary-v2', 'compact state stores the last local compact summary')
+  const failedRemoteCompactUsageInput = buildFailedRemoteCompactUsageInput({
+    conversationId: 'conversation-1',
+    providerId: 'openai-main',
+    model: 'gpt-5.2',
+    upstreamModel: 'gpt-5.2',
+    mode: 'auto',
+    previousResponseId: 'resp-1',
+    inputTokens: 1600,
+    messageCount: 12,
+    failureCode: 'remote_compact_http_400',
+    fallbackLocal: true,
+    activeContextTokens: 1600,
+    autoCompactScopeTokens: 2200,
+    prefillInputTokens: 1600,
+    tokensUntilCompaction: 0,
+  })
+  const failedRemoteCompactRecord = recordCompactUsage(failedRemoteCompactUsageInput)
+  const failedRemoteCompactLogPayload = buildFailedRemoteCompactRuntimeLogPayload({
+    conversationId: 'conversation-1',
+    record: failedRemoteCompactRecord,
+    previousResponseId: 'resp-1',
+  })
+  assert.equal(failedRemoteCompactLogPayload.status, 'failed', 'remote compact failure logs failed status')
+  assert.equal(failedRemoteCompactLogPayload.fallbackLocal, true, 'remote compact failure logs local fallback')
+  const failedRemoteCompactState = buildFailedRemoteCompactStateRecord({
+    conversationId: 'conversation-1',
+    record: failedRemoteCompactRecord,
+    previousResponseId: 'resp-1',
+    messageCount: 12,
+    now: 123458,
+    contextFragmentIdentities: [
+      { id: 'retrieved-context', sourceId: 'retrieved-context', sourceHash: 'fnv1a32-aaaaaaaa', included: true },
+    ],
+  })
+  assert.equal(failedRemoteCompactState.status, 'failed', 'remote compact failure persists failed compact state')
+  assert.equal(failedRemoteCompactState.compactFailureState, 'remote_compact_http_400', 'remote compact failure persists compact failure state')
+  assert.equal(failedRemoteCompactState.previousResponseId, 'resp-1', 'remote compact failure preserves previous response id')
+  assert.equal(
+    JSON.parse(failedRemoteCompactState.contextFragmentIdentitiesJson)[0].sourceHash,
+    'fnv1a32-aaaaaaaa',
+    'remote compact failure persists context fragment identity for diagnostics'
+  )
   assert.equal(
     buildCompletedRemoteCompactStateRecord({
       conversationId: 'conversation-1',
@@ -9970,7 +12296,6 @@ async function run() {
   )
   assert.equal(st('messageBubble.copyWorkArtifact'), '复制工作产物', 'Chinese message actions expose work artifact copy')
   assert.equal(st('messageBubble.continueWorkArtifact'), '继续这项工作', 'Chinese message actions expose work artifact continuation')
-  assert.ok(st('onboarding.firstPrompt.samples.research').includes('输出必须包含'), 'Chinese onboarding first prompt remains structured')
   const settingsScreenSource = fs.readFileSync(path.join(root, 'src/components/main/SettingsScreenContent.tsx'), 'utf8')
   assert.ok(settingsScreenSource.includes('localSaved: diagnostics.compact.localEstimatedSavedTokens'), 'settings diagnostics surfaces local compact saved-token totals')
   assert.ok(settingsScreenSource.includes('localRatio: formatCompactRatio(diagnostics.compact.localAverageCompressionRatio)'), 'settings diagnostics surfaces local compact average ratio')
@@ -9980,14 +12305,6 @@ async function run() {
     assert.ok(localeSource.includes('{{localSaved}}'), `${locale} compact diagnostics includes localSaved placeholder`)
     assert.ok(localeSource.includes('{{localRatio}}'), `${locale} compact diagnostics includes localRatio placeholder`)
   }
-  ;[
-    'onboarding.firstPrompt.samples.concise',
-    'onboarding.firstPrompt.samples.research',
-    'onboarding.firstPrompt.samples.engineering',
-    'onboarding.firstPrompt.samples.organize',
-    'onboarding.firstPrompt.samples.plan',
-  ].forEach((key) => assertStructuredWorkTemplate(st(key), key, 'zh'))
-
   const chatWorkspaceSource = fs.readFileSync(path.join(root, 'src/components/chat/ChatWorkspace.tsx'), 'utf8')
   assert.ok(!chatWorkspaceSource.includes('WorkStarterActions'), 'chat workspace removes visible work starter actions')
   assert.ok(!chatWorkspaceSource.includes('WORK_STARTERS'), 'chat workspace removes work starter data source')
@@ -10020,8 +12337,14 @@ async function run() {
   )
 
   const messageBubbleSource = fs.readFileSync(path.join(root, 'src/components/chat/MessageBubble.tsx'), 'utf8')
+  assert.ok(messageBubbleSource.includes("import { summarizeWorkArtifact } from '@/utils/workArtifact'"), 'message bubble can recognize structured work artifacts for default actions')
   assert.ok(messageBubbleSource.includes('onCopyWorkArtifact?: (message: Message) => void'), 'message bubble exposes a typed work artifact copy action')
   assert.ok(messageBubbleSource.includes('onContinueWorkArtifact?: (message: Message) => void'), 'message bubble exposes a typed work artifact continuation action')
+  assert.ok(messageBubbleSource.includes('hasDefaultWorkArtifactActions'), 'message bubble keeps completed work artifact actions visible without a hidden menu tap')
+  assert.ok(messageBubbleSource.includes('summarizeWorkArtifact(displayText).hasWorkArtifact'), 'message bubble gates default work artifact actions through the parser')
+  assert.ok(messageBubbleSource.includes('WorkArtifactQuickActions'), 'message bubble renders work artifact quick actions inside the message bubble')
+  assert.ok(messageBubbleSource.includes("label={t('messageBubble.copyWorkArtifact')}"), 'message bubble exposes the copy work artifact action as an accessible quick action')
+  assert.ok(messageBubbleSource.includes("label={t('messageBubble.continueWorkArtifact')}"), 'message bubble exposes the continue work artifact action as an accessible quick action')
   assert.ok(messageBubbleSource.includes("label={t('messageBubble.copyWorkArtifact')}"), 'message bubble renders a localized work artifact action')
   assert.ok(messageBubbleSource.includes("label={t('messageBubble.continueWorkArtifact')}"), 'message bubble renders a localized work artifact continuation action')
   assert.ok(messageBubbleSource.includes('!isUser'), 'work artifact action is guarded to assistant messages')
@@ -10187,6 +12510,26 @@ ${FAKE_KEY_B}
   assert.equal(blankSeparatedUrlKeyImported.providers.length, 1, 'imports URL and following key-only blocks as one provider')
   assert.equal(blankSeparatedUrlKeyImported.providers[0].baseUrl, 'https://blank-key.example/v1')
   assert.equal(blankSeparatedUrlKeyImported.providers[0].credentialGroups.length, 2, 'keeps blank-separated keys on the URL provider')
+  const namedTokenImported = parseProviderImportText(`
+"https://new-api.abrdns.com/
+嵌入模型    ${FAKE_KEY_A}
+国产模型    ${FAKE_KEY_B}
+default    ${FAKE_KEY_C}
+codex    ${FAKE_KEY_D} "
+`)
+  assert.equal(namedTokenImported.providers.length, 1, 'imports one provider from a URL followed by named token lines')
+  assert.equal(namedTokenImported.providers[0].baseUrl, 'https://new-api.abrdns.com/', 'trims copied quote boundaries from base URL')
+  assert.equal(namedTokenImported.providers[0].presetId, 'newapi', 'detects NewAPI preset from copied base URL')
+  assert.deepEqual(
+    namedTokenImported.providers[0].credentialGroups.map((group) => group.label),
+    ['嵌入模型', '国产模型', 'default', 'codex'],
+    'preserves names before token values as credential group labels'
+  )
+  assert.deepEqual(
+    namedTokenImported.providers[0].credentialGroups.map((group) => group.apiKey),
+    [FAKE_KEY_A, FAKE_KEY_B, FAKE_KEY_C, FAKE_KEY_D],
+    'imports named token values in order without echoing surrounding text'
+  )
   assert.equal(countDetectedProviderImports('   '), 0, 'provider import summary treats blank input as no detected providers')
   assert.equal(
     countDetectedProviderImports(`Provider Summary, https://summary.example/v1, ${FAKE_KEY_A}`),
@@ -10652,6 +12995,8 @@ https://gateway.example/messages`
   assert.equal(healthyAgain.credentialGroups[1].failureCount, 0)
   assert.equal(healthyAgain.credentialGroups[1].lastUsedAt, 3000)
 
+  await assertSessionAffinityBehavior(normalized, groups)
+
   const availability = mergeCredentialModelAvailability(normalized.credentialGroups)
   assert.deepEqual(
     availability.find((item) => item.modelId === 'claude-3-5-sonnet-20241022')?.credentialGroupIds,
@@ -10785,37 +13130,6 @@ https://gateway.example/messages`
     formatKnowledgeMeta({ id: 'failed-doc', title: 'Failed', mimeType: 'text/plain', size: 800, chunkCount: 0, status: 'error', error: 'Parser failed', sourceUri: 'https://example.com/very/long/path/to/a/knowledge/document/source-file.md', createdAt: 1000, updatedAt: 1200 }, testT)
       .includes('contextPanel.knowledgeError:{"error":"Parser failed"}'),
     'context asset formatters preserve failed knowledge error meta text'
-  )
-  const onboardingResearch = getOnboardingCompanionProfile('research')
-  const onboardingEngineering = getOnboardingCompanionProfile('engineering')
-  const onboardingConcise = getOnboardingCompanionProfile('concise')
-  const defaultOnboarding = getOnboardingCompanionProfile()
-  const defaultConversationDefaults = getOnboardingConversationDefaults()
-  assert.equal(DEFAULT_ONBOARDING_COMPANION_MODE, 'concise', 'onboarding defaults to concise mode')
-  assert.equal(defaultOnboarding.mode, 'concise', 'missing onboarding mode resolves to concise profile')
-  assert.equal(defaultConversationDefaults.temperature, 0.3, 'default conversation settings stay concise')
-  assert.equal(defaultConversationDefaults.reasoningEffort, 'low', 'default conversation reasoning stays concise')
-  assert.equal(defaultConversationDefaults.systemPrompt, '', 'default conversations start without a preset system prompt')
-  assert.equal(onboardingResearch.ragProfile, 'deep', 'research onboarding defaults to deep RAG')
-  assert.equal(onboardingEngineering.reasoningEffort, 'high', 'engineering onboarding defaults to high reasoning')
-  assert.equal(onboardingConcise.ragProfile, 'fast', 'concise onboarding favors fast retrieval')
-  assert.equal(isOnboardingSystemPrompt(''), false, 'empty system prompts are not treated as legacy onboarding text')
-  assert.equal(isOnboardingSystemPrompt('Custom project prompt'), false, 'custom system prompts are preserved')
-  const creativeConversationDefaults = getOnboardingConversationDefaults('creative')
-  assert.equal(creativeConversationDefaults.reasoningEffort, 'medium', 'creative chat defaults use medium reasoning')
-  assert.equal(creativeConversationDefaults.temperature, 0.9, 'creative chat defaults use a higher temperature')
-  assert.equal(creativeConversationDefaults.systemPrompt, '', 'creative chat defaults do not inject a preset system prompt')
-  const companionSettings = getOnboardingSettingsDefaults('companion')
-  assert.deepEqual(
-    companionSettings,
-    {
-      onboardingCompanionMode: 'companion',
-      defaultTemperature: 0.75,
-      ragProfile: 'balanced',
-      knowledgeTopK: 4,
-      memoryTopK: 6,
-    },
-    'onboarding completion persists runtime defaults, not only the selected mode'
   )
   contextMemoryRows.splice(0, contextMemoryRows.length,
     {
@@ -11055,25 +13369,56 @@ https://gateway.example/messages`
   assert.equal(repeatedMem0Memories[0].id, 'repeated-mem0-a', 'repeated mem0 imports keep the first imported id as the review identity')
   assert.equal(repeatedMem0Memories[0].status, 'pending', 'repeated mem0 imports still require review before retrieval')
   assert.equal(repeatedMem0Memories[0].confidence, 0.9, 'repeated mem0 imports keep the strongest duplicate confidence')
+  assert.deepEqual(
+    normalizeProviderSyncPolicy(undefined),
+    { minDelayMs: 120, maxDelayMs: 260, timeoutMs: 18000, strategy: 'parallel-balanced', concurrency: 3 },
+    'default provider model sync policy uses bounded parallelism for faster token-group model discovery'
+  )
+  assert.deepEqual(
+    normalizeProviderSyncPolicy({ minDelayMs: 1200, maxDelayMs: 1800, timeoutMs: 18000, strategy: 'sequential-low-rate' }),
+    { minDelayMs: 120, maxDelayMs: 260, timeoutMs: 18000, strategy: 'parallel-balanced', concurrency: 3 },
+    'legacy default sequential model sync policy is migrated to the faster bounded parallel default'
+  )
+  assert.deepEqual(
+    normalizeProviderSyncPolicy({ minDelayMs: 0, maxDelayMs: 0, timeoutMs: 18000, strategy: 'sequential-low-rate' }),
+    { minDelayMs: 0, maxDelayMs: 0, timeoutMs: 18000, strategy: 'sequential-low-rate' },
+    'explicit low-rate provider model sync policies stay sequential'
+  )
   const calls = []
+  const pendingFetches = new Map()
   const synced = await runCredentialGroupModelSync(
     {
       ...normalized,
-      credentialGroups: normalized.credentialGroups.slice(0, 2).map((group) => ({ ...group, [API_KEY_FIELD]: `key-${group.id}` })),
+      syncPolicy: { minDelayMs: 0, maxDelayMs: 0, timeoutMs: 18000, strategy: 'parallel-balanced', concurrency: 2 },
+      credentialGroups: normalized.credentialGroups.slice(0, 3).map((group, index) => ({
+        ...group,
+        [API_KEY_FIELD]: index === 2 ? `key-${normalized.credentialGroups[0].id}` : `key-${group.id}`,
+      })),
     },
     {
       delay: async (ms) => calls.push(`delay:${ms}`),
       jitter: () => 0,
       fetchModels: async (_provider, group) => {
         calls.push(`fetch:${group.id}`)
-        return [{ id: `model-${group.id}`, name: `Model ${group.id}`, provider: 'openai-compatible' }]
+        return await new Promise((resolve) => {
+          pendingFetches.set(group.id, () => resolve([{ id: `model-${group.id}`, name: `Model ${group.id}`, provider: 'openai-compatible' }]))
+          if (pendingFetches.has(normalized.credentialGroups[0].id) && pendingFetches.has(normalized.credentialGroups[1].id)) {
+            pendingFetches.get(normalized.credentialGroups[1].id)()
+            pendingFetches.get(normalized.credentialGroups[0].id)()
+          }
+        })
       },
       now: () => 1000,
     }
   )
-  assert.deepEqual(calls, [`fetch:${groups[0].id}`, 'delay:1200', `fetch:${groups[1].id}`])
+  assert.deepEqual(
+    calls.filter((call) => call.startsWith('fetch:')),
+    [`fetch:${groups[0].id}`, `fetch:${groups[1].id}`],
+    'parallel credential model sync starts multiple token groups and reuses duplicate token fetches'
+  )
   assert.equal(synced.models.length, 2)
   assert.equal(synced.credentialGroups[0].lastModelSyncStatus, 'ok')
+  assert.deepEqual(synced.credentialGroups[2].availableModels, synced.credentialGroups[0].availableModels, 'duplicate token groups reuse the first model discovery result')
 
   const failedSynced = await runCredentialGroupModelSync(
     {
@@ -11138,6 +13483,8 @@ https://gateway.example/messages`
   assert.ok(activationSummary.message.includes('目标 3') || activationSummary.message.includes('3 targeted'), 'activation summary includes target count')
   assert.ok(activationSummary.message.includes('测试通过 1') || activationSummary.message.includes('1 tests passed'), 'activation summary separates tested-ok count')
   assert.ok(activationSummary.message.includes('无模型 1') || activationSummary.message.includes('1 no models'), 'activation summary includes no-model count')
+  assert.ok(activationSummary.message.includes('需检查 1') || activationSummary.message.includes('1 need check'), 'activation summary separates check-needed count from no-model count')
+  assert.equal(activationSummary.tone, 'amber', 'activation summary treats partial readiness as a warning instead of a full failure')
   assert.ok(
     st('providerSettings.activationProgressMessage', { completed: 2, total: 3, synced: 1, tested: 1, failed: 1 }).includes('2') &&
       st('providerSettings.activationCurrent', { name: 'Example' }).includes('Example'),
@@ -11222,8 +13569,13 @@ https://gateway.example/messages`
   )
   assert.deepEqual(
     resolveProviderActivationRuntimePolicy(20, 'all'),
-    { concurrency: 1, maxTestCandidates: 1, modelSyncTimeoutMs: 9000, modelTestTimeoutMs: 9000, afterProviderDelayMs: 90 },
-    'large provider activation batches stay low-rate so the app remains responsive'
+    { concurrency: 2, maxTestCandidates: 1, modelSyncTimeoutMs: 9000, modelTestTimeoutMs: 9000, afterProviderDelayMs: 90 },
+    'large provider activation batches keep bounded parallelism so model fetching is faster without flooding the device'
+  )
+  assert.deepEqual(
+    resolveProviderActivationRuntimePolicy(1, 'single'),
+    { concurrency: 1, maxTestCandidates: 1, modelSyncTimeoutMs: 8000, modelTestTimeoutMs: 8000, afterProviderDelayMs: 0 },
+    'single provider activation performs a fast readiness probe instead of an exhaustive model sweep'
   )
   assert.deepEqual(
     resolveProviderActivationRuntimePolicy(3, 'batch'),
@@ -11483,12 +13835,13 @@ https://gateway.example/messages`
   secureStorage.set('islemind.key.google-search', FAKE_KEY_D)
   secureStorage.set('islemind.key.bing-search', FAKE_KEY_E)
   secureStorage.set('islemind.key.custom-search', FAKE_KEY_F)
+  secureStorage.set('islemind.key.observability-sink', FAKE_KEY_A)
   await appendRuntimeLog('storage.operation', { detail: 'restore-stale-runtime-log-seed' }, { enabled: true, maxBytes: 4096 })
   const restoreRuntimeStateResult = await importAllDataDetailed(JSON.stringify({
     app: 'islemind',
     version: 1,
     conversations: [],
-    settings: null,
+    settings: { observabilitySinkApiKeyConfigured: true },
     providers: [],
     exportedAt: Date.now(),
   }))
@@ -11500,6 +13853,8 @@ https://gateway.example/messages`
   assert.equal(secureStorage.get('islemind.key.google-search'), undefined, 'portable restore clears stale Google search keys before applying imported state')
   assert.equal(secureStorage.get('islemind.key.bing-search'), undefined, 'portable restore clears stale Bing search keys before applying imported state')
   assert.equal(secureStorage.get('islemind.key.custom-search'), undefined, 'portable restore clears stale custom-search keys before applying imported state')
+  assert.equal(secureStorage.get('islemind.key.observability-sink'), undefined, 'portable restore clears stale observability sink keys before applying imported state')
+  assert.equal((await loadData('SETTINGS')).observabilitySinkApiKeyConfigured, false, 'portable restore does not import observability key configured state without a secure key')
   assert.equal((await getRuntimeLogInfo()).exists, false, 'portable restore clears stale runtime log files before applying imported state')
   await saveData('SETTINGS', {
     theme: 'dark',
@@ -11800,6 +14155,146 @@ https://gateway.example/messages`
     true,
     'remote compact decisions evaluate the untrimmed prompt before local fallback packing'
   )
+  const plannerMessages = Array.from({ length: 18 }, (_, index) => ({
+    role: index % 2 ? 'assistant' : 'user',
+    content: `message ${index} ${'long text '.repeat(120)}`,
+  }))
+  const plannerLocalPack = packChatMessages({
+    messages: plannerMessages,
+    contextPrompt: 'retrieved context',
+    modelContextWindow: 1200,
+    maxOutputTokens: 256,
+    systemPrompt: 'system prompt',
+    provider: governedProvider,
+    providerType: governedProvider.type,
+    model: 'gpt-5.2',
+  })
+  const plannerLocal = planChatContext({
+    messages: plannerMessages,
+    draft: { text: 'draft user request', requestedOutput: 'reply' },
+    baseContextPrompt: 'retrieved context',
+    modelContextWindow: 1200,
+    maxOutputTokens: 256,
+    modelManifest: getModelConfig('gpt-5.2', governedProvider.type),
+    systemPrompt: 'system prompt',
+    provider: governedProvider,
+    providerType: governedProvider.type,
+    model: 'gpt-5.2',
+    settings: { remoteCompactMode: 'off' },
+    retrievalSources: [{ id: 'source-1', title: 'Source 1', type: 'knowledge', content: 'retrieved context' }],
+    memorySourceCount: 1,
+    attachmentCount: 1,
+    toolOutputCount: 1,
+  })
+  assert.deepEqual(plannerLocal.messages, plannerLocalPack.messages, 'context planner preserves current packed messages when remote compact is off')
+  assert.equal(plannerLocal.contextPrompt, plannerLocalPack.contextPrompt, 'context planner preserves current packed context prompt when remote compact is off')
+  assert.ok(plannerLocal.fragments.every((fragment) => typeof fragment.tokenCap === 'number' && typeof fragment.estimatedTokens === 'number' && fragment.trace), 'context planner fragments expose token caps and trace metadata')
+  assert.ok(plannerLocal.fragments.every((fragment) => fragment.schema === CONTEXT_FRAGMENT_SCHEMA && fragment.sourceVersion === 2), 'context planner fragments expose the v2 schema contract')
+  assert.ok(plannerLocal.fragments.every((fragment) => fragment.sourceId && fragment.sourceHash && fragment.cache?.sourceHash), 'context planner fragments expose stable source identity and cache metadata')
+  assert.ok(plannerLocal.fragments.every((fragment) => typeof fragment.included === 'boolean' && typeof fragment.capped === 'boolean'), 'context planner fragments expose included and capped state')
+  assert.ok(plannerLocal.fragments.some((fragment) => fragment.type === 'history_summary'), 'context planner exposes local history summary fragments')
+  assert.ok(plannerLocal.windowState.activeContextTokens > 0, 'context planner records active context tokens')
+  assert.ok(plannerLocal.windowState.tokensUntilCompaction >= 0, 'context planner records tokens until compaction')
+  assert.equal(plannerLocal.trace.requestedOutput, 'reply', 'context planner traces draft requested output intent')
+  assert.equal(plannerLocal.trace.modelManifest.id, 'gpt-5.2', 'context planner traces the provider/model manifest')
+  const plannerStructuredSources = planChatContext({
+    messages: plannerMessages,
+    contextSources: [
+      { id: 'rag-source', type: 'retrieved_context', text: 'retrieved context', sourceCount: 1 },
+      { id: 'web-source', type: 'retrieved_context', text: 'web context', sourceCount: 1, trace: { source: 'web' } },
+      { id: 'tool-source', type: 'tool_outputs', text: 'tool context', sourceCount: 1, trace: { source: 'mcp' } },
+    ],
+    modelContextWindow: 1200,
+    maxOutputTokens: 256,
+    systemPrompt: 'system prompt',
+    provider: governedProvider,
+    providerType: governedProvider.type,
+    model: 'gpt-5.2',
+    settings: { remoteCompactMode: 'off' },
+    retrievalSources: [{ id: 'source-1', title: 'Source 1', type: 'knowledge', content: 'retrieved context' }],
+  })
+  const plannerEquivalentPrompt = 'retrieved context\n\nweb context\n\ntool context'
+  const plannerEquivalentPack = packChatMessages({
+    messages: plannerMessages,
+    contextPrompt: plannerEquivalentPrompt,
+    modelContextWindow: 1200,
+    maxOutputTokens: 256,
+    systemPrompt: 'system prompt',
+    provider: governedProvider,
+    providerType: governedProvider.type,
+    model: 'gpt-5.2',
+  })
+  assert.equal(plannerStructuredSources.contextPrompt, plannerEquivalentPack.contextPrompt, 'context planner joins structured context sources equivalently to the old prompt')
+  assert.ok(plannerStructuredSources.fragments.some((fragment) => fragment.id === 'web-source' && fragment.trace.source === 'web'), 'context planner keeps source trace metadata for web context')
+  assert.ok(plannerStructuredSources.fragments.some((fragment) => fragment.id === 'tool-source' && fragment.type === 'tool_outputs'), 'context planner represents MCP/tool context as tool output fragments')
+  const oversizedContextText = `oversized context head ${'oversized middle '.repeat(800)}oversized context tail`
+  const plannerCappedSources = planChatContext({
+    messages: [],
+    contextSources: [
+      { id: 'oversized-tool-source', type: 'tool_outputs', text: oversizedContextText, sourceCount: 1, trace: { source: 'mcp' } },
+      { id: 'empty-rag-source', type: 'retrieved_context', text: '   ', sourceCount: 0 },
+    ],
+    modelContextWindow: 1200,
+    maxOutputTokens: 256,
+    provider: governedProvider,
+    providerType: governedProvider.type,
+    model: 'gpt-5.2',
+    settings: { remoteCompactMode: 'off' },
+  })
+  const cappedToolFragment = plannerCappedSources.fragments.find((fragment) => fragment.id === 'oversized-tool-source')
+  assert.ok(cappedToolFragment, 'context planner keeps a fragment record for oversized tool output context')
+  assert.equal(cappedToolFragment.schema, CONTEXT_FRAGMENT_SCHEMA, 'context planner oversized fragment uses v2 schema')
+  assert.equal(cappedToolFragment.included, true, 'context planner includes capped non-message context instead of dropping it')
+  assert.equal(cappedToolFragment.capped, true, 'context planner marks oversized non-message context as capped')
+  assert.equal(cappedToolFragment.exclusionReason, 'token_cap_exceeded', 'context planner records the cap reason for oversized non-message context')
+  assert.ok(cappedToolFragment.originalEstimatedTokens > cappedToolFragment.estimatedTokens, 'context planner records original and capped token estimates')
+  assert.ok(cappedToolFragment.estimatedTokens <= cappedToolFragment.tokenCap, 'context planner caps oversized non-message context before request assembly')
+  assert.ok(plannerCappedSources.contextPrompt.includes('[context fragment capped]'), 'context planner marks capped context in the model-visible prompt')
+  assert.ok(plannerCappedSources.contextPrompt.includes('oversized context head'), 'context planner preserves the head of capped context')
+  assert.ok(plannerCappedSources.contextPrompt.includes('oversized context tail'), 'context planner preserves the tail of capped context')
+  assert.equal(plannerCappedSources.contextPrompt.includes('empty-rag-source'), false, 'context planner excludes empty context source text from request assembly')
+  const emptyContextFragment = plannerCappedSources.fragments.find((fragment) => fragment.id === 'empty-rag-source')
+  assert.equal(emptyContextFragment?.included, false, 'context planner keeps an excluded fragment record for empty context sources')
+  assert.equal(emptyContextFragment?.exclusionReason, 'empty', 'context planner records empty source exclusions')
+  const plannerCappedSourcesAgain = planChatContext({
+    messages: [],
+    contextSources: [{ id: 'oversized-tool-source', type: 'tool_outputs', text: oversizedContextText, sourceCount: 1 }],
+    modelContextWindow: 1200,
+    maxOutputTokens: 256,
+    provider: governedProvider,
+    providerType: governedProvider.type,
+    model: 'gpt-5.2',
+    settings: { remoteCompactMode: 'off' },
+  })
+  assert.equal(
+    plannerCappedSourcesAgain.fragments.find((fragment) => fragment.id === 'oversized-tool-source')?.sourceHash,
+    cappedToolFragment.sourceHash,
+    'context planner source hash is stable for unchanged source id and text'
+  )
+  assert.equal(plannerCappedSources.trace.cappedContextSourceCount, 1, 'context planner traces capped context source count')
+  assert.equal(plannerCappedSources.trace.excludedContextSourceCount, 1, 'context planner traces excluded context source count')
+  assert.equal(providerToolChatRunnerSource.includes("[context.prompt, webSources.length ? formatWebPrompt(webSources) : '', mcpContext.prompt].filter(Boolean).join('\\n\\n')"), false, 'chat runner no longer manually joins RAG, web, and MCP prompts')
+  assert.ok(providerToolChatRunnerSource.includes('buildContextPlannerPrompt({'), 'chat runner reuses context planner prompt assembly for follow-up context')
+  assert.equal(providerToolChatRunnerSource.includes('[input.baseContextPrompt, flare.prompt].filter(Boolean).join'), false, 'chat runner does not manually join FLARE follow-up context')
+  assert.ok(providerToolChatRunnerSource.includes('modelManifest: modelConfig'), 'chat runner passes model manifest into the context planner')
+  assert.ok(providerToolChatRunnerSource.includes('draft: {'), 'chat runner passes draft metadata into the context planner')
+  assert.ok(providerToolChatRunnerSource.includes('previousFragments: previousCompactState.previousFragments'), 'chat runner passes previous compact fragment identities into the context planner')
+  assert.ok(providerToolChatRunnerSource.includes('contextFragmentIdentitiesForCompactState(input.contextFragments)'), 'chat runner persists bounded context fragment identities with compact state')
+  const plannerRemote = planChatContext({
+    messages: plannerMessages,
+    baseContextPrompt: 'retrieved context',
+    modelContextWindow: 1200,
+    maxOutputTokens: 256,
+    systemPrompt: 'system prompt',
+    provider: governedProvider,
+    providerType: governedProvider.type,
+    model: 'gpt-5.2',
+    settings: { remoteCompactMode: 'auto', remoteCompactThreshold: 0.8 },
+  })
+  assert.equal(plannerRemote.compactDecision.enabled, true, 'context planner enables remote compact from the untrimmed probe')
+  assert.equal(plannerRemote.messages.length, plannerMessages.length, 'context planner keeps full history for remote compact requests')
+  assert.equal(plannerRemote.remoteCompactFallback.trace.fallback, 'local-structured-v2', 'context planner prepares a local structured fallback for remote compact failures')
+  assert.ok(plannerRemote.fragments.some((fragment) => fragment.type === 'remote_compact_state'), 'context planner exposes remote compact state fragments')
 
   const singleLongPacked = packChatMessages({
     messages: [{ role: 'user', content: 'oversized '.repeat(1200) }],
@@ -12178,7 +14673,7 @@ https://gateway.example/messages`
   assert.equal(mimoOpenAIReasoningBody.thinking, undefined, 'MiMo OpenAI-compatible requests avoid sending thinking enabled after live Param Incorrect evidence')
   assert.equal(mimoOpenAIReasoningBody.reasoning, undefined, 'MiMo OpenAI-compatible requests avoid unsupported reasoning objects')
   assert.equal(mimoOpenAIReasoningBody.reasoning_effort, undefined, 'MiMo OpenAI-compatible requests avoid generic reasoning_effort')
-  assert.equal(mimoOpenAIReasoningBody.temperature, 0.7, 'MiMo guarded high-thinking requests keep normal sampling defaults')
+  assert.equal(mimoOpenAIReasoningBody.temperature, 1, 'MiMo guarded high-thinking requests follow model default sampling metadata')
   assert.equal(mimoOpenAIReasoningBody.top_p, undefined, 'MiMo thinking requests omit custom top_p')
   assert.equal(mimoOpenAIReasoningBody.max_completion_tokens, 128, 'MiMo OpenAI-compatible requests reserve enough output room for reasoning plus text')
   const mimoOpenAIReasoningConformance = resolveProviderRequestConformanceForTest({
@@ -12191,6 +14686,13 @@ https://gateway.example/messages`
   assert.equal(mimoOpenAIReasoningConformance.manifest.reasoning.requestShape, 'xiaomi-mimo-thinking', 'provider conformance exposes MiMo thinking request shape')
   assert.equal(mimoOpenAIReasoningConformance.reasoning.enabled, false, 'provider conformance guards MiMo high thinking from the request payload')
   assert.equal(mimoOpenAIReasoningConformance.reasoning.providerValue, undefined, 'provider conformance does not claim a MiMo enabled provider value while guarded')
+  assert.equal(mimoOpenAIReasoningConformance.reasoningResolution.enabled, false, 'provider reasoning resolution records MiMo guarded reasoning as disabled')
+  assert.equal(mimoOpenAIReasoningConformance.reasoningResolution.downgradeReason, 'provider_parameter_guard', 'provider reasoning resolution records the MiMo provider parameter guard')
+  assert.deepEqual(
+    mimoOpenAIReasoningConformance.reasoningResolution.failureCodes,
+    ['provider_parameter_guard', 'reasoning_disabled_by_effort'],
+    'provider reasoning resolution records bounded failure codes for guarded MiMo reasoning'
+  )
   const mimoOpenAIThinkingOffBody = buildOpenAIBodyForTest({
     provider: { ...mimoAnthropicProvider, id: 'mimo-cn-openai', wireProtocol: 'openai-compatible', baseUrl: 'https://token-plan-cn.xiaomimimo.com/v1' },
     model: 'mimo-v2.5',
@@ -12351,6 +14853,12 @@ https://gateway.example/messages`
   assert.equal(getModelConfig('grok-4.3', 'openai-compatible').preferredEndpoint, 'responses', 'Grok 4.3 records xAI Responses as the official preferred endpoint')
   assert.deepEqual(getModelConfig('grok-4.20', 'openai-compatible').reasoningEfforts, ['none', 'low', 'medium', 'high'], 'Grok 4.20 exposes xAI reasoning efforts')
   assert.deepEqual(getModelConfig('grok-4.20-multi-agent', 'openai-compatible').reasoningEfforts, ['low', 'medium', 'high', 'xhigh'], 'Grok 4.20 Multi-Agent exposes official xhigh effort')
+  assert.equal(getModelConfig('grok-4.20-0309-reasoning-console', 'openai-compatible').name, 'Grok 4.20 0309 Reasoning Console', 'Grok 4.20 reasoning console slug keeps its exact display name')
+  assert.equal(getModelConfig('grok-4.20-multi-agent-console', 'openai-compatible').name, 'Grok 4.20 Multi-Agent Console', 'Grok 4.20 multi-agent console slug keeps its exact display name')
+  assert.equal(getModelConfig('grok-4.20-multi-agent-high', 'openai-compatible').name, 'Grok 4.20 Multi-Agent High', 'Grok 4.20 multi-agent high slug keeps its exact display name')
+  assert.equal(getModelConfig('grok-4.20-multi-agent-xhigh', 'openai-compatible').name, 'Grok 4.20 Multi-Agent XHigh', 'Grok 4.20 multi-agent xhigh slug keeps its exact display name')
+  assert.deepEqual(getModelConfig('grok-4.20-multi-agent-high', 'openai-compatible').reasoningEfforts, ['high'], 'Grok 4.20 Multi-Agent High exposes its fixed effort')
+  assert.deepEqual(getModelConfig('grok-4.20-multi-agent-xhigh', 'openai-compatible').reasoningEfforts, ['xhigh'], 'Grok 4.20 Multi-Agent XHigh exposes its fixed effort')
   assert.equal(getModelConfig('grok-4.20-non-reasoning', 'openai-compatible').reasoningMode, undefined, 'Grok 4.20 non-reasoning model does not expose reasoning controls')
   assert.deepEqual(getModelConfig('Grok 4.20 0309 Reasoning Console', 'openai-compatible').reasoningEfforts, ['none', 'low', 'medium', 'high'], 'Grok 4.20 console reasoning label inherits xAI reasoning efforts')
   assert.deepEqual(getModelConfig('Grok 4.20 Multi Agent Xhigh', 'openai-compatible').reasoningEfforts, ['low', 'medium', 'high', 'xhigh'], 'Grok 4.20 console multi-agent effort label inherits xAI multi-agent reasoning efforts')
@@ -12381,7 +14889,7 @@ https://gateway.example/messages`
   const deepSeekProvider = { id: 'deepseek', type: 'openai-compatible', presetId: 'deepseek', name: 'DeepSeek', models: ['deepseek-v4-pro'], enabled: true }
   const kimiProvider = { id: 'moonshot', type: 'openai-compatible', presetId: 'moonshot', name: 'Moonshot', models: ['kimi-k2.6', 'kimi-k2.5'], enabled: true }
   const minimaxProvider = { id: 'minimax', type: 'openai-compatible', presetId: 'minimax', name: 'MiniMax', models: ['MiniMax-M3'], enabled: true }
-  const grokProvider = { id: 'xai', type: 'openai-compatible', presetId: 'xai', name: 'xAI', baseUrl: 'https://api.x.ai/v1', models: ['grok-4.3', 'grok-4.20', 'grok-4.20-multi-agent', 'grok-4.20-non-reasoning'], enabled: true }
+  const grokProvider = { id: 'xai', type: 'openai-compatible', presetId: 'xai', name: 'xAI', baseUrl: 'https://api.x.ai/v1', models: ['grok-4.3', 'grok-4.20', 'grok-4.20-multi-agent', 'grok-4.20-multi-agent-high', 'grok-4.20-multi-agent-xhigh', 'grok-4.20-non-reasoning'], enabled: true }
   assert.equal(getModelConfig('qwen3.7-max', 'openai-compatible').supportsTools, true, 'Qwen models expose native tool support')
   assert.equal(getModelConfig('kimi-k2.6', 'openai-compatible').supportsTools, true, 'Kimi models expose native tool support')
   assert.equal(getModelConfig('MiniMax-M3', 'openai-compatible').supportsTools, true, 'MiniMax models expose native tool support')
@@ -12395,6 +14903,8 @@ https://gateway.example/messages`
   assert.deepEqual(getReasoningEffortOptions(grokProvider, 'grok-4.3'), ['none', 'low', 'medium', 'high'], 'Grok reasoning models expose xAI effort levels')
   assert.deepEqual(getReasoningEffortOptions(grokProvider, 'grok-4.20'), ['none', 'low', 'medium', 'high'], 'Grok 4.20 reasoning model exposes xAI effort levels')
   assert.deepEqual(getReasoningEffortOptions(grokProvider, 'grok-4.20-multi-agent'), ['low', 'medium', 'high', 'xhigh'], 'Grok 4.20 Multi-Agent exposes xAI xhigh effort')
+  assert.deepEqual(getReasoningEffortOptions(grokProvider, 'grok-4.20-multi-agent-high'), ['high'], 'Grok 4.20 Multi-Agent High exposes only the high effort')
+  assert.deepEqual(getReasoningEffortOptions(grokProvider, 'grok-4.20-multi-agent-xhigh'), ['xhigh'], 'Grok 4.20 Multi-Agent XHigh exposes only the xhigh effort')
   assert.deepEqual(getReasoningEffortOptions(grokProvider, 'grok-4.20-non-reasoning'), [], 'Grok 4.20 non-reasoning model does not expose reasoning controls')
   assert.deepEqual(getReasoningEffortOptions(grokProvider, 'Grok 4.20 0309 Reasoning Console'), ['none', 'low', 'medium', 'high'], 'Grok console reasoning aliases expose xAI effort levels')
   assert.deepEqual(getReasoningEffortOptions(grokProvider, 'Grok 4.20 Multi Agent Medium'), ['low', 'medium', 'high', 'xhigh'], 'Grok console multi-agent aliases expose xAI effort levels')
@@ -12503,6 +15013,13 @@ https://gateway.example/messages`
   }, openAIMinimalResponsesBody)
   assert.equal(openAIMinimalConformance.reasoning.enabled, true, 'provider conformance treats OpenAI minimal as active reasoning')
   assert.equal(openAIMinimalConformance.reasoning.providerValue, 'minimal', 'provider conformance preserves OpenAI minimal provider value')
+  assert.equal(openAIMinimalConformance.reasoningResolution.schema, PROVIDER_REASONING_RESOLUTION_SCHEMA, 'provider conformance emits a stable reasoning resolution artifact schema')
+  assert.equal(openAIMinimalConformance.reasoningResolution.enabled, true, 'provider reasoning resolution records active reasoning')
+  assert.equal(openAIMinimalConformance.reasoningResolution.requestShape, 'openai-responses-reasoning', 'provider reasoning resolution records OpenAI Responses request shape')
+  assert.equal(openAIMinimalConformance.reasoningResolution.providerValue, 'minimal', 'provider reasoning resolution preserves provider-facing reasoning value')
+  assert.equal(openAIMinimalConformance.reasoningResolution.sourceConfidence, 'source-backed', 'provider reasoning resolution records source-backed capability evidence')
+  assert.deepEqual(openAIMinimalConformance.reasoningResolution.failureCodes, [], 'provider reasoning resolution stays clear when no request hardening was needed')
+  assert.deepEqual(openAIMinimalConformance.reasoningResolution.removedParams, [], 'provider reasoning resolution omits removed params when no reasoning-conflicting fields were sent')
   assert.equal(openAIMinimalConformance.manifest.payload.reasoningSummaryField, 'reasoning.summary', 'provider conformance records OpenAI Responses reasoning summary field')
   const openAIChatBodyWithTools = buildOpenAIBodyForTest({
     provider: {
@@ -14208,6 +16725,25 @@ https://gateway.example/messages`
   assert.equal(qwenConformance.reasoning.providerValue, 262144, 'provider conformance exposes Qwen high thinking budget')
   assert.equal(qwenConformance.manifest.tools.supported, true, 'provider conformance exposes Qwen native tool support')
   assert.equal(qwenConformance.manifest.tools.requestShape, 'openai-tools', 'provider conformance exposes Qwen OpenAI-format tool shape')
+  assert.ok(qwenConformance.manifest.payload.samplingFields.includes('top_k'), 'provider conformance sampling manifest includes snake-case Top-K')
+  assert.ok(qwenConformance.manifest.payload.samplingFields.includes('topK'), 'provider conformance sampling manifest includes camel-case Top-K')
+  const qwenSamplingHardenedConformance = resolveProviderRequestConformanceForTest({
+    provider: { ...qwenProvider, [API_KEY_FIELD]: 'token-test-fake', capabilities: { reasoningEffort: true, nativeTools: true } },
+    model: 'qwen3.7-max',
+    messages: [{ role: 'user', content: 'hello' }],
+    reasoningEffort: 'high',
+    maxTokens: 4096,
+  }, {
+    ...qwenThinkingBody,
+    temperature: 0.3,
+    top_p: 0.8,
+    top_k: 40,
+    topK: 41,
+  })
+  assert.ok(qwenSamplingHardenedConformance.removedParams.includes('top_k'), 'provider conformance removes snake-case Top-K when reasoning disables sampling')
+  assert.ok(qwenSamplingHardenedConformance.removedParams.includes('topK'), 'provider conformance removes camel-case Top-K when reasoning disables sampling')
+  assert.ok(qwenSamplingHardenedConformance.reasoningResolution.removedParams.includes('top_k'), 'provider reasoning resolution records removed snake-case Top-K')
+  assert.ok(qwenSamplingHardenedConformance.reasoningResolution.removedParams.includes('topK'), 'provider reasoning resolution records removed camel-case Top-K')
   const kimiConformance = resolveProviderRequestConformanceForTest({
     provider: { ...kimiProvider, [API_KEY_FIELD]: 'token-test-fake', capabilities: { reasoningEffort: true, nativeTools: true } },
     model: 'kimi-k2.6',
@@ -14253,6 +16789,16 @@ https://gateway.example/messages`
   assert.ok(grokHardenedConformance.removedParams.includes('presence_penalty'), 'provider conformance removes xAI reasoning-incompatible presence_penalty')
   assert.ok(grokHardenedConformance.removedParams.includes('frequency_penalty'), 'provider conformance removes xAI reasoning-incompatible frequency_penalty')
   assert.ok(grokHardenedConformance.removedParams.includes('stop'), 'provider conformance removes xAI reasoning-incompatible stop')
+  assert.deepEqual(
+    grokHardenedConformance.reasoningResolution.removedParams.sort(),
+    ['frequency_penalty', 'presence_penalty', 'stop'],
+    'provider reasoning resolution records reasoning-incompatible params removed from xAI requests'
+  )
+  assert.deepEqual(
+    grokHardenedConformance.reasoningResolution.failureCodes,
+    ['param_conflict_removed'],
+    'provider reasoning resolution records request hardening as bounded failure codes'
+  )
   assert.equal(grokConformance.manifest.tools.supported, true, 'provider conformance exposes Grok native tool support')
   const grokMediumConformance = resolveProviderRequestConformanceForTest({
     provider: { ...grokProvider, [API_KEY_FIELD]: 'token-test-fake', capabilities: { reasoningEffort: true, nativeTools: true } },
@@ -14279,6 +16825,39 @@ https://gateway.example/messages`
   assert.equal(gemini25Body.generationConfig.thinkingConfig.thinkingBudget, 1024, 'Gemini 2.5 uses thinkingBudget')
   assert.equal(gemini25Body.generationConfig.thinkingConfig.includeThoughts, true, 'Gemini 2.5 requests thought summaries for visible thinking efforts')
   assert.ok(gemini25Body.generationConfig.maxOutputTokens <= getModelConfig('gemini-2.5-flash', 'google').maxOutputTokens, 'Gemini maxOutputTokens is clamped to output limit')
+  const googleSamplingLockedBody = buildGoogleBodyForTest({
+    provider: {
+      id: 'google-sampling-locked',
+      type: 'google',
+      name: 'Google Sampling Locked',
+      [API_KEY_FIELD]: 'token-test-fake',
+      models: ['gemini-sampling-locked'],
+      enabled: true,
+      capabilities: { topP: false },
+      modelConfigs: [{
+        id: 'gemini-sampling-locked',
+        name: 'Gemini Sampling Locked',
+        provider: 'google',
+        contextWindow: 4096,
+        maxTokens: 4096,
+        maxOutputTokens: 1024,
+        defaultMaxTokens: 512,
+        defaultTemperature: 0,
+        maxTemperature: 0,
+        supportsVision: false,
+        supportsFiles: false,
+        source: 'remote',
+      }],
+    },
+    model: 'gemini-sampling-locked',
+    messages: [{ role: 'user', content: 'hello' }],
+    temperature: 0.8,
+    topP: 0.6,
+    maxTokens: 4096,
+  })
+  assert.equal(googleSamplingLockedBody.generationConfig.temperature, undefined, 'Google body prunes temperature for sampling-locked models')
+  assert.equal(googleSamplingLockedBody.generationConfig.topP, undefined, 'Google body prunes Top-P when provider capabilities disable it')
+  assert.equal(googleSamplingLockedBody.generationConfig.maxOutputTokens, 1024, 'Google body still preserves clamped output budget after parameter pruning')
   const geminiStructuredSchema = {
     type: 'object',
     properties: { summary: { type: 'string' } },
@@ -14586,16 +17165,36 @@ https://gateway.example/messages`
       { id: 'Grok 4.20 Multi Agent Low' },
       { id: 'Grok 4.20 Multi Agent Medium' },
       { id: 'Grok 4.20 Multi Agent Xhigh' },
+      { id: 'grok-4.20-0309-reasoning-console' },
+      { id: 'grok-4.20-multi-agent-console' },
+      { id: 'grok-4.20-multi-agent-high' },
+      { id: 'grok-4.20-multi-agent-xhigh' },
     ],
   }, 'openai-compatible')
   const grokConsoleReasoning = grokConsoleModels.find((model) => model.id === 'Grok 4.20 0309 Reasoning Console')
   const grokConsoleMultiAgent = grokConsoleModels.find((model) => model.id === 'Grok 4.20 Multi Agent Xhigh')
   const grokConsoleNonReasoning = grokConsoleModels.find((model) => model.id === 'Grok 4.20 0309 Non Reasoning Console')
+  const grokHyphenHigh = grokConsoleModels.find((model) => model.id === 'grok-4.20-multi-agent-high')
+  const grokHyphenXHigh = grokConsoleModels.find((model) => model.id === 'grok-4.20-multi-agent-xhigh')
   assert.deepEqual(grokConsoleReasoning?.reasoningEfforts, ['none', 'low', 'medium', 'high'], 'provider model discovery maps Grok console reasoning labels to known xAI reasoning metadata')
   assert.deepEqual(grokConsoleMultiAgent?.reasoningEfforts, ['low', 'medium', 'high', 'xhigh'], 'provider model discovery maps Grok console multi-agent labels to known xAI multi-agent metadata')
   assert.equal(grokConsoleNonReasoning?.reasoningMode, undefined, 'provider model discovery keeps Grok console non-reasoning labels without reasoning metadata')
   assert.equal(grokConsoleMultiAgent?.supportsVision, true, 'provider model discovery preserves Grok console vision badges')
   assert.equal(grokConsoleMultiAgent?.supportsTools, true, 'provider model discovery preserves Grok console tool badges')
+  assert.equal(grokHyphenHigh?.name, 'Grok 4.20 Multi-Agent High', 'provider model discovery keeps Grok hyphen high display name distinct')
+  assert.equal(grokHyphenXHigh?.name, 'Grok 4.20 Multi-Agent XHigh', 'provider model discovery keeps Grok hyphen xhigh display name distinct')
+  assert.deepEqual(grokHyphenHigh?.reasoningEfforts, ['high'], 'provider model discovery keeps Grok hyphen high fixed effort')
+  assert.deepEqual(grokHyphenXHigh?.reasoningEfforts, ['xhigh'], 'provider model discovery keeps Grok hyphen xhigh fixed effort')
+  assert.equal(
+    getProviderDisplayModel({ id: 'xai-relay', type: 'openai-compatible', name: 'xAI Relay', models: [], enabled: true, modelConfigs: grokConsoleModels }, 'grok-4.20-multi-agent-xhigh'),
+    'Grok 4.20 Multi-Agent XHigh',
+    'provider model display uses exact remote config names for Grok xhigh variants'
+  )
+  assert.equal(
+    getProviderDisplayModel({ id: 'xai-relay', type: 'openai-compatible', name: 'xAI Relay', models: [], enabled: true, modelConfigs: grokConsoleModels }, 'grok-4.20-multi-agent-high'),
+    'Grok 4.20 Multi-Agent High',
+    'provider model display uses exact remote model config names instead of collapsing Grok variants'
+  )
   const googleDiscoveryModels = mapGoogleModels({
     models: [
       { name: 'models/gemini-test', displayName: 'Gemini Test', inputTokenLimit: 200000, outputTokenLimit: 16000, supportedGenerationMethods: ['generateContent'] },
@@ -14851,6 +17450,59 @@ https://gateway.example/messages`
   assert.deepEqual(skillApplied.conversationUpdates.enabledTools, ['app_info'])
   assert.deepEqual(skillApplied.conversationUpdates.knowledgeSources, ['doc-1'])
   assert.equal(skillApplied.conversationUpdates.temperature, 0.2)
+  assert.deepEqual(skillApplied.conversationUpdates.generationParameterOverrides, { temperature: true }, 'skill-supplied generation parameters are tracked as explicit overrides')
+  const boundedGenerationSkill = createBaseSkill({
+    id: 'skill-bounded-generation',
+    name: 'Bounded Generation',
+    systemPrompt: 'Keep generation bounded.',
+    temperature: 5,
+    maxTokens: 999999,
+    priority: 30,
+  })
+  const boundedGenerationApplied = applySkillStack({ skills: [boundedGenerationSkill] })
+  assert.equal(boundedGenerationApplied.conversationUpdates.temperature, PROVIDER_PLATFORM_MAX_TEMPERATURE, 'skill temperature uses the shared platform clamp')
+  assert.equal(boundedGenerationApplied.conversationUpdates.maxTokens, PROVIDER_PLATFORM_MAX_OUTPUT_TOKENS, 'skill output tokens use the shared platform clamp')
+  assert.deepEqual(boundedGenerationApplied.conversationUpdates.generationParameterOverrides, { temperature: true, maxTokens: true }, 'skill output-token overrides remain explicit even when clamped')
+  const minBoundedGenerationSkill = createBaseSkill({
+    id: 'skill-min-bounded-generation',
+    name: 'Min Bounded Generation',
+    systemPrompt: 'Keep generation above configured floor.',
+    maxTokens: 12,
+  })
+  const minBoundedGenerationApplied = applySkillStack({ skills: [minBoundedGenerationSkill] })
+  assert.equal(minBoundedGenerationApplied.conversationUpdates.maxTokens, PROVIDER_PLATFORM_MIN_CONFIGURED_OUTPUT_TOKENS, 'skill output tokens keep the shared user-configured floor when no provider range is available')
+  const providerBoundedGenerationSkill = createBaseSkill({
+    id: 'skill-provider-bounded-generation',
+    name: 'Provider Bounded Generation',
+    systemPrompt: 'Keep provider generation bounded.',
+    providerId: 'skill-provider',
+    model: 'skill-model',
+    temperature: 5,
+    maxTokens: 999999,
+  })
+  const providerBoundedGenerationApplied = applySkillStack({
+    providers: [{
+      id: 'skill-provider',
+      type: 'openai',
+      name: 'Skill Provider',
+      apiKey: 'sk-test',
+      enabled: true,
+      models: ['skill-model'],
+      modelConfigs: [{
+        id: 'skill-model',
+        name: 'Skill Model',
+        provider: 'openai',
+        contextWindow: 4096,
+        maxTokens: 256,
+        maxOutputTokens: 256,
+        defaultMaxTokens: 128,
+        supportsVision: false,
+        supportsFiles: false,
+      }],
+    }],
+    skills: [providerBoundedGenerationSkill],
+  })
+  assert.equal(providerBoundedGenerationApplied.conversationUpdates.maxTokens, 256, 'skill output tokens clamp through the target provider/model capability range when available')
 
   const chunks = splitTextIntoSentenceChunks('第一句。第二句很短。第三句继续说明。Fourth sentence. Fifth sentence.', 18)
   assert.ok(chunks.length >= 2, 'sentence chunker splits long text')
@@ -15722,14 +18374,21 @@ function assertProviderModelDiscoveryBehavior() {
   assert.deepEqual(getModelConfig('MiniMax M3 Thinking Console', 'openai-compatible').reasoningEfforts, ['none', 'high'], 'generic console aliases map MiniMax display names to thinking metadata')
   assert.equal(getModelConfig('MiniMax M3 Image Console', 'openai-compatible').supportsVision, true, 'generic console aliases preserve MiniMax vision metadata')
   assert.deepEqual(getModelConfig('Grok 4.20 0309 Reasoning Console', 'openai-compatible').reasoningEfforts, ['none', 'low', 'medium', 'high'], 'Grok console reasoning aliases inherit xAI reasoning metadata')
-  assert.deepEqual(getModelConfig('Grok 4.20 Multi Agent Xhigh', 'openai-compatible').reasoningEfforts, ['low', 'medium', 'high', 'xhigh'], 'Grok console multi-agent aliases inherit xAI multi-agent metadata')
+  assert.deepEqual(getModelConfig('Grok 4.20 Multi Agent Xhigh', 'openai-compatible').reasoningEfforts, ['low', 'medium', 'high', 'xhigh'], 'Grok display-name console multi-agent aliases inherit xAI multi-agent metadata')
+  assert.equal(getModelConfig('grok-4.20-multi-agent-console', 'openai-compatible').name, 'Grok 4.20 Multi-Agent Console', 'Grok hyphen console slug keeps a distinct model name')
+  assert.equal(getModelConfig('grok-4.20-multi-agent-high', 'openai-compatible').name, 'Grok 4.20 Multi-Agent High', 'Grok hyphen high slug keeps a distinct model name')
+  assert.equal(getModelConfig('grok-4.20-multi-agent-xhigh', 'openai-compatible').name, 'Grok 4.20 Multi-Agent XHigh', 'Grok hyphen xhigh slug keeps a distinct model name')
+  assert.deepEqual(getModelConfig('grok-4.20-multi-agent-high', 'openai-compatible').reasoningEfforts, ['high'], 'Grok hyphen high slug exposes fixed high reasoning')
+  assert.deepEqual(getModelConfig('grok-4.20-multi-agent-xhigh', 'openai-compatible').reasoningEfforts, ['xhigh'], 'Grok hyphen xhigh slug exposes fixed xhigh reasoning')
   assert.equal(getModelConfig('Grok 4.20 0309 Non Reasoning Console', 'openai-compatible').reasoningMode, undefined, 'Grok console non-reasoning aliases stay non-reasoning')
   assert.equal(getModelConfig('Grok 4.20 Multi Agent Console', 'openai-compatible').supportsVision, true, 'Grok console aliases preserve vision metadata')
   assert.equal(getModelConfig('Grok 4.20 Multi Agent Console', 'openai-compatible').supportsTools, true, 'Grok console aliases preserve tool metadata')
 
-  const grokProvider = { id: 'xai', type: 'openai-compatible', presetId: 'xai', name: 'xAI', baseUrl: 'https://api.x.ai/v1', models: ['Grok 4.20 0309 Reasoning Console', 'Grok 4.20 Multi Agent Medium', 'Grok 4.20 0309 Non Reasoning Console'], enabled: true }
+  const grokProvider = { id: 'xai', type: 'openai-compatible', presetId: 'xai', name: 'xAI', baseUrl: 'https://api.x.ai/v1', models: ['Grok 4.20 0309 Reasoning Console', 'Grok 4.20 Multi Agent Medium', 'grok-4.20-multi-agent-high', 'grok-4.20-multi-agent-xhigh', 'Grok 4.20 0309 Non Reasoning Console'], enabled: true }
   assert.deepEqual(getReasoningEffortOptions(grokProvider, 'Grok 4.20 0309 Reasoning Console'), ['none', 'low', 'medium', 'high'], 'Grok console reasoning aliases expose xAI effort levels')
   assert.deepEqual(getReasoningEffortOptions(grokProvider, 'Grok 4.20 Multi Agent Medium'), ['low', 'medium', 'high', 'xhigh'], 'Grok console multi-agent aliases expose xAI effort levels')
+  assert.deepEqual(getReasoningEffortOptions(grokProvider, 'grok-4.20-multi-agent-high'), ['high'], 'Grok hyphen high slug exposes only high reasoning')
+  assert.deepEqual(getReasoningEffortOptions(grokProvider, 'grok-4.20-multi-agent-xhigh'), ['xhigh'], 'Grok hyphen xhigh slug exposes only xhigh reasoning')
   assert.deepEqual(getReasoningEffortOptions(grokProvider, 'Grok 4.20 0309 Non Reasoning Console'), [], 'Grok console non-reasoning aliases do not expose reasoning controls')
 
   const grokConsoleModels = mapOpenAICompatibleModels({
@@ -15741,16 +18400,57 @@ function assertProviderModelDiscoveryBehavior() {
       { id: 'Grok 4.20 Multi Agent Low' },
       { id: 'Grok 4.20 Multi Agent Medium' },
       { id: 'Grok 4.20 Multi Agent Xhigh' },
+      { id: 'grok-4.20-0309-reasoning-console' },
+      { id: 'grok-4.20-multi-agent-console' },
+      { id: 'grok-4.20-multi-agent-high' },
+      { id: 'grok-4.20-multi-agent-xhigh' },
     ],
   }, 'openai-compatible')
   const grokConsoleReasoning = grokConsoleModels.find((model) => model.id === 'Grok 4.20 0309 Reasoning Console')
   const grokConsoleMultiAgent = grokConsoleModels.find((model) => model.id === 'Grok 4.20 Multi Agent Xhigh')
   const grokConsoleNonReasoning = grokConsoleModels.find((model) => model.id === 'Grok 4.20 0309 Non Reasoning Console')
+  const grokHyphenHigh = grokConsoleModels.find((model) => model.id === 'grok-4.20-multi-agent-high')
+  const grokHyphenXHigh = grokConsoleModels.find((model) => model.id === 'grok-4.20-multi-agent-xhigh')
   assert.deepEqual(grokConsoleReasoning?.reasoningEfforts, ['none', 'low', 'medium', 'high'], 'provider model discovery maps Grok console reasoning labels to known xAI reasoning metadata')
   assert.deepEqual(grokConsoleMultiAgent?.reasoningEfforts, ['low', 'medium', 'high', 'xhigh'], 'provider model discovery maps Grok console multi-agent labels to known xAI multi-agent metadata')
   assert.equal(grokConsoleNonReasoning?.reasoningMode, undefined, 'provider model discovery keeps Grok console non-reasoning labels without reasoning metadata')
   assert.equal(grokConsoleMultiAgent?.supportsVision, true, 'provider model discovery preserves Grok console vision badges')
   assert.equal(grokConsoleMultiAgent?.supportsTools, true, 'provider model discovery preserves Grok console tool badges')
+  assert.equal(grokHyphenHigh?.name, 'Grok 4.20 Multi-Agent High', 'provider model discovery keeps Grok hyphen high display name distinct')
+  assert.equal(grokHyphenXHigh?.name, 'Grok 4.20 Multi-Agent XHigh', 'provider model discovery keeps Grok hyphen xhigh display name distinct')
+  assert.deepEqual(grokHyphenHigh?.reasoningEfforts, ['high'], 'provider model discovery keeps Grok hyphen high fixed effort')
+  assert.deepEqual(grokHyphenXHigh?.reasoningEfforts, ['xhigh'], 'provider model discovery keeps Grok hyphen xhigh fixed effort')
+
+  const vendorLabeledModels = mapOpenAICompatibleModels({
+    data: [
+      { id: 'Deepseek / DeepSeek V4 Pro' },
+      { id: 'Deepseek /DeepSeek V4 Flash' },
+      { id: 'Moonshotai/Kimi K2.6' },
+      { id: 'Z-Ai/GLM-5.1' },
+      { id: 'Z-Ai/GLM-5' },
+      { id: 'Minimax / MiniMax M3' },
+      { id: 'Minimax / MiniMax M2.7' },
+      { id: 'Minimax / MiniMax M2.5' },
+      { id: 'Grok 4.20 Multi-Agent(grok-4.20-0309-reasoning-console)' },
+      { id: 'Grok 4.20 Multi-Agent(grok-4.20-multi-agent-console)' },
+      { id: 'Grok 4.20 Multi-Agent(grok-4.20-multi-agent-high)' },
+      { id: 'Grok 4.20 Multi-Agent(grok-4.20-multi-agent-high)' },
+    ],
+  }, 'openai-compatible')
+  const vendorNamesById = Object.fromEntries(vendorLabeledModels.map((model) => [model.id, model.name]))
+  assert.equal(vendorNamesById['Deepseek / DeepSeek V4 Pro'], 'DeepSeek V4 Pro', 'provider model discovery strips redundant DeepSeek relay prefixes')
+  assert.equal(vendorNamesById['Moonshotai/Kimi K2.6'], 'Kimi K2.6', 'provider model discovery strips Moonshot relay prefixes from Kimi labels')
+  assert.equal(vendorNamesById['Z-Ai/GLM-5.1'], 'GLM-5.1', 'provider model discovery strips Z.ai relay prefixes from GLM labels')
+  assert.equal(vendorNamesById['Minimax / MiniMax M3'], 'MiniMax M3', 'provider model discovery strips MiniMax relay prefixes')
+  assert.equal(vendorNamesById['grok-4.20-0309-reasoning-console'], 'Grok 4.20 0309 Reasoning Console', 'provider model discovery extracts parenthesized Grok technical ids')
+  assert.equal(vendorNamesById['grok-4.20-multi-agent-console'], 'Grok 4.20 Multi-Agent Console', 'provider model discovery keeps Grok parenthesized console ids callable')
+  assert.equal(vendorNamesById['grok-4.20-multi-agent-high'], 'Grok 4.20 Multi-Agent High', 'provider model discovery keeps Grok parenthesized high ids distinct')
+  assert.equal(vendorLabeledModels.filter((model) => model.id === 'grok-4.20-multi-agent-high').length, 1, 'provider model discovery deduplicates repeated parenthesized technical ids')
+  assert.deepEqual(
+    vendorLabeledModels.find((model) => model.id === 'grok-4.20-multi-agent-high')?.reasoningEfforts,
+    ['high'],
+    'provider model discovery preserves Grok fixed-effort metadata after parenthesized id extraction'
+  )
 
   const opaqueDisplayNameModels = mapOpenAICompatibleModels({
     data: [
@@ -25513,6 +28213,832 @@ function assertMimoNativeSearchBehavior() {
   )
 }
 
+function createSessionAffinityFixture() {
+  const groups = parseCredentialGroups('sk-a\n\nsk-b, sk-c')
+  const provider = normalizeProviderCredentialGroups(applyProviderPreset(
+    {
+      id: 'newapi-main',
+      type: 'openai-compatible',
+      name: 'NewAPI',
+      apiKey: '',
+      baseUrl: 'https://new-api.abrdns.com',
+      enabled: true,
+      models: [],
+      credentialGroups: groups.map((group, index) => ({
+        ...group,
+        [API_KEY_FIELD]: `token-test-${index}`,
+        lastModelSyncStatus: 'ok',
+        availableModels: index === 0 ? ['gpt-4o-mini'] : ['claude-3-5-sonnet-20241022'],
+      })),
+    },
+    'newapi'
+  ))
+  return { provider, groups }
+}
+
+async function assertSessionAffinityBehavior(normalized, groups) {
+  const sessionAffinityKey = deriveSessionAffinityKey({
+    conversationId: 'conversation-session-affinity',
+    sessionId: 'request-session-affinity',
+    providerId: normalized.id,
+    model: 'claude-3-5-sonnet-20241022',
+  })
+  assert.equal(
+    sessionAffinityKey,
+    'newapi-main:claude-3-5-sonnet-20241022:conversation-session-affinity:request-session-affinity',
+    'session affinity key derives from provider, model, conversation, and explicit session id'
+  )
+  assert.equal(
+    deriveSessionAffinityKey({ providerId: normalized.id, model: 'claude-3-5-sonnet-20241022' }),
+    undefined,
+    'session affinity does not create a global binding without a conversation or session id'
+  )
+  assert.equal(
+    resolveSessionAffinityBinding({
+      enabled: false,
+      provider: normalized,
+      model: 'claude-3-5-sonnet-20241022',
+      conversationId: 'conversation-session-affinity',
+      sessionId: 'request-session-affinity',
+    }).reason,
+    'affinity_disabled',
+    'session affinity fails open when disabled'
+  )
+  const initialSessionAffinityBinding = buildSessionAffinityBinding({
+    sessionKey: sessionAffinityKey,
+    providerId: normalized.id,
+    model: 'claude-3-5-sonnet-20241022',
+    credentialGroupId: groups[1].id,
+    nowMs: 1000,
+    ttlMs: 5000,
+  })
+  assert.deepEqual(
+    initialSessionAffinityBinding,
+    {
+      sessionKey: sessionAffinityKey,
+      providerId: normalized.id,
+      model: 'claude-3-5-sonnet-20241022',
+      credentialGroupId: groups[1].id,
+      boundAt: 1000,
+      expiresAt: 6000,
+      reason: 'initial_bind',
+      failoverCount: 0,
+    },
+    'session affinity initial bind records route identifiers and TTL without serializing secrets'
+  )
+  const reusedSessionAffinity = resolveSessionAffinityBinding({
+    enabled: true,
+    provider: normalized,
+    model: 'claude-3-5-sonnet-20241022',
+    conversationId: 'conversation-session-affinity',
+    sessionId: 'request-session-affinity',
+    binding: initialSessionAffinityBinding,
+    nowMs: 2000,
+  })
+  assert.equal(reusedSessionAffinity.reusable, true, 'session affinity can reuse a live binding')
+  assert.equal(reusedSessionAffinity.credentialGroupId, groups[1].id, 'session affinity reuses the bound credential group')
+  assert.equal(
+    resolveSessionAffinityBinding({
+      enabled: true,
+      provider: normalized,
+      model: 'claude-3-5-sonnet-20241022',
+      conversationId: 'conversation-session-affinity',
+      sessionId: 'request-session-affinity',
+      binding: initialSessionAffinityBinding,
+      nowMs: 6000,
+    }).reason,
+    'binding_expired',
+    'session affinity refuses expired bindings'
+  )
+  assert.equal(
+    resolveSessionAffinityBinding({
+      enabled: true,
+      provider: {
+        ...normalized,
+        credentialGroups: normalized.credentialGroups.map((group) => group.id === groups[1].id ? { ...group, enabled: false } : group),
+      },
+      model: 'claude-3-5-sonnet-20241022',
+      conversationId: 'conversation-session-affinity',
+      sessionId: 'request-session-affinity',
+      binding: initialSessionAffinityBinding,
+      nowMs: 2000,
+    }).reason,
+    'credential_group_disabled',
+    'session affinity refuses disabled credential groups'
+  )
+  const unavailableModelSessionAffinityKey = deriveSessionAffinityKey({
+    conversationId: 'conversation-session-affinity',
+    sessionId: 'request-session-affinity',
+    providerId: normalized.id,
+    model: 'gpt-4o-mini',
+  })
+  const unavailableModelSessionAffinityBinding = buildSessionAffinityBinding({
+    sessionKey: unavailableModelSessionAffinityKey,
+    providerId: normalized.id,
+    model: 'gpt-4o-mini',
+    credentialGroupId: groups[1].id,
+    nowMs: 1000,
+    ttlMs: 5000,
+  })
+  assert.equal(
+    resolveSessionAffinityBinding({
+      enabled: true,
+      provider: normalized,
+      model: 'gpt-4o-mini',
+      conversationId: 'conversation-session-affinity',
+      sessionId: 'request-session-affinity',
+      binding: unavailableModelSessionAffinityBinding,
+      nowMs: 2000,
+    }).reason,
+    'model_unavailable',
+    'session affinity refuses a group that cannot serve the requested model'
+  )
+  assert.equal(
+    resolveSessionAffinityBinding({
+      enabled: true,
+      provider: normalized,
+      model: 'claude-3-5-sonnet-20241022',
+      conversationId: 'conversation-session-affinity',
+      sessionId: 'request-session-affinity',
+      binding: initialSessionAffinityBinding,
+      nowMs: 2000,
+      coolingDownCredentialGroupIds: [groups[1].id],
+    }).reason,
+    'credential_group_cooling_down',
+    'session affinity refuses credential groups that are in runtime cooldown'
+  )
+  const failoverSessionAffinityBinding = buildSessionAffinityBinding({
+    sessionKey: sessionAffinityKey,
+    providerId: normalized.id,
+    model: 'claude-3-5-sonnet-20241022',
+    credentialGroupId: groups[2].id,
+    nowMs: 3000,
+    ttlMs: SESSION_AFFINITY_DEFAULT_TTL_MS,
+    reason: 'failover',
+    previousBinding: initialSessionAffinityBinding,
+  })
+  assert.equal(failoverSessionAffinityBinding.failoverCount, 1, 'session affinity failover bindings increment failover count')
+  assert.ok(!JSON.stringify(failoverSessionAffinityBinding).includes('token-test-'), 'session affinity binding omits API keys')
+  assert.equal(
+    sessionAffinityFailureShouldInvalidate({ status: 429, trigger: 'rate_limited' }),
+    true,
+    'session affinity invalidates on rate limit failures'
+  )
+  assert.equal(
+    sessionAffinityFailureShouldInvalidate({ status: 503, trigger: 'overloaded' }),
+    true,
+    'session affinity invalidates on upstream 5xx failures'
+  )
+  assert.equal(
+    sessionAffinityFailureShouldInvalidate({ status: 400, responseText: 'insufficient_quota for this account' }),
+    true,
+    'session affinity invalidates on quota-like upstream text'
+  )
+  assert.equal(
+    sessionAffinityFailureShouldInvalidate({ status: 400, trigger: 'payload_error', responseText: 'invalid schema' }),
+    false,
+    'session affinity does not invalidate on ordinary payload errors'
+  )
+
+  resetSessionAffinityBindingsForTest()
+  storeSessionAffinityBinding(initialSessionAffinityBinding, { nowMs: 2000 })
+  const mismatchedInvalidation = invalidateSessionAffinityBinding({
+    enabled: true,
+    providerId: normalized.id,
+    model: 'claude-3-5-sonnet-20241022',
+    conversationId: 'conversation-session-affinity',
+    sessionId: 'request-session-affinity',
+    credentialGroupId: groups[2].id,
+    nowMs: 2000,
+  })
+  assert.equal(mismatchedInvalidation, undefined, 'session affinity invalidation preserves bindings for other credential groups')
+  const invalidatedBinding = invalidateSessionAffinityBinding({
+    enabled: true,
+    providerId: normalized.id,
+    model: 'claude-3-5-sonnet-20241022',
+    conversationId: 'conversation-session-affinity',
+    sessionId: 'request-session-affinity',
+    credentialGroupId: groups[1].id,
+    nowMs: 2000,
+  })
+  assert.equal(invalidatedBinding?.credentialGroupId, groups[1].id, 'session affinity invalidation returns the cleared binding')
+  assert.equal(readSessionAffinityBinding(sessionAffinityKey, 2000), undefined, 'session affinity invalidation removes the failed binding')
+  const rotatedBinding = rotateSessionAffinityBinding({
+    enabled: true,
+    providerId: normalized.id,
+    model: 'claude-3-5-sonnet-20241022',
+    conversationId: 'conversation-session-affinity',
+    sessionId: 'request-session-affinity',
+    credentialGroupId: groups[2].id,
+    ttlMs: 5000,
+    nowMs: 3000,
+    previousBinding: initialSessionAffinityBinding,
+  })
+  assert.equal(rotatedBinding?.credentialGroupId, groups[2].id, 'session affinity rotation stores the fallback credential group')
+  assert.equal(rotatedBinding?.failoverCount, 1, 'session affinity rotation preserves failover count from the previous binding')
+  assert.equal(readSessionAffinityBinding(sessionAffinityKey, 3000)?.credentialGroupId, groups[2].id, 'session affinity rotation replaces the stored binding')
+
+  resetSessionAffinityBindingsForTest()
+  const expiredStoreBinding = buildSessionAffinityBinding({
+    sessionKey: 'session-affinity-store-expired',
+    providerId: normalized.id,
+    model: 'claude-3-5-sonnet-20241022',
+    credentialGroupId: groups[1].id,
+    nowMs: 1000,
+    ttlMs: 1,
+  })
+  storeSessionAffinityBinding(expiredStoreBinding, { nowMs: 1002 })
+  assert.equal(readSessionAffinityBinding('session-affinity-store-expired', 1002), undefined, 'session affinity store prunes expired bindings')
+  assert.equal(listSessionAffinityBindingsForTest().length, 0, 'session affinity store does not retain expired bindings')
+  const storeMaxBindings = Math.min(2, SESSION_AFFINITY_MAX_BINDINGS)
+  for (const index of [0, 1, 2]) {
+    storeSessionAffinityBinding(buildSessionAffinityBinding({
+      sessionKey: `session-affinity-store-${index}`,
+      providerId: normalized.id,
+      model: 'claude-3-5-sonnet-20241022',
+      credentialGroupId: groups[1].id,
+      nowMs: 2000 + index,
+      ttlMs: 10000,
+    }), { nowMs: 3000, maxBindings: storeMaxBindings })
+  }
+  assert.deepEqual(
+    listSessionAffinityBindingsForTest().map((binding) => binding.sessionKey).sort(),
+    ['session-affinity-store-1', 'session-affinity-store-2'],
+    'session affinity store evicts the oldest binding when over capacity'
+  )
+  assert.equal(readSessionAffinityBinding('session-affinity-store-0', 3000), undefined, 'session affinity store removes evicted bindings')
+
+  resetSessionAffinityBindingsForTest()
+  assert.equal(
+    chooseCredentialForModel(normalized, 'claude-3-5-sonnet-20241022').credentialGroupId,
+    groups[1].id,
+    'session affinity fixture initially selects the first compatible credential group'
+  )
+  const pipelineRouteResolver = (req, context) => ({
+    body: {
+      model: req.model,
+      messages: req.messages,
+    },
+    conformance: {
+      manifest: {
+        id: `${req.provider.type}:${req.model}`,
+        family: req.provider.type,
+        protocol: 'openai-chat-completions',
+        source: { confidence: 'source-backed', url: 'https://example.invalid/provider-runtime', verifiedAt: '2026-06-26' },
+      },
+      reasoning: { enabled: false, requestShape: 'none' },
+      reasoningResolution: {
+        schema: PROVIDER_REASONING_RESOLUTION_SCHEMA,
+        enabled: false,
+        requestShape: 'none',
+        sourceConfidence: 'source-backed',
+        failureCodes: [],
+        removedParams: [],
+      },
+      requestedModalities: ['text'],
+      issues: [],
+      removedParams: [],
+      adjustedParams: {},
+      bodyKeys: ['messages', 'model'],
+    },
+    decision: {
+      protocol: 'openai-chat-completions',
+      endpoint: context?.endpoint ?? 'https://new-api.abrdns.com/v1/chat/completions',
+      transport: context?.transport,
+      requestedTransportMode: context?.requestedTransportMode,
+      transportFallbackReason: context?.transportFallbackReason,
+      manifestId: `${req.provider.type}:${req.model}`,
+      capabilitySource: { confidence: 'source-backed', url: 'https://example.invalid/provider-runtime', verifiedAt: '2026-06-26' },
+      fallbackPlan: {
+        mode: 'off',
+        trigger: 'unknown',
+        eligible: false,
+        acceptedCandidates: [],
+        rejectedCandidates: [],
+        blockedReasons: ['policy_off'],
+        requiresUserConfirmation: false,
+        reason: 'not_configured',
+      },
+      blocked: false,
+      blockReasons: [],
+      warnings: [],
+    },
+  })
+  const buildAffinityPipelineRequest = (provider) => ({
+    conversationId: 'conversation-session-affinity-pipeline',
+    sessionId: 'request-session-affinity-pipeline',
+    provider,
+    model: 'claude-3-5-sonnet-20241022',
+    requestedModel: 'claude-3-5-sonnet-20241022',
+    messages: [{ role: 'user', content: 'session affinity pipeline prompt text' }],
+    stream: false,
+    settings: {
+      runtimeLogEnabled: false,
+      sessionAffinityEnabled: true,
+      sessionAffinityTtlMs: 120000,
+    },
+  })
+  const pipelineSessionKey = deriveSessionAffinityKey({
+    conversationId: 'conversation-session-affinity-pipeline',
+    sessionId: 'request-session-affinity-pipeline',
+    providerId: normalized.id,
+    model: 'claude-3-5-sonnet-20241022',
+  })
+  const firstPipelineResult = await prepareProviderRuntimePipeline({
+    req: buildAffinityPipelineRequest(normalized),
+    controller: new AbortController(),
+    resolveRoute: pipelineRouteResolver,
+  })
+  assert.equal(firstPipelineResult.status, 'ready', 'session affinity pipeline prepares the first enabled request')
+  assert.equal(firstPipelineResult.credentialGroupId, groups[1].id, 'session affinity pipeline initially binds the selected credential group')
+  assert.equal(firstPipelineResult.routeDecisionSnapshot.sessionAffinity.enabled, true, 'session affinity pipeline snapshot records enabled affinity')
+  assert.equal(firstPipelineResult.routeDecisionSnapshot.sessionAffinity.reusable, false, 'session affinity pipeline first request is not a reuse')
+  assert.equal(firstPipelineResult.routeDecisionSnapshot.sessionAffinity.reason, 'binding_missing', 'session affinity pipeline records missing binding before first bind')
+  assert.equal(firstPipelineResult.routeDecisionSnapshot.sessionAffinity.bound, true, 'session affinity pipeline records that a binding now exists')
+  assert.equal(readSessionAffinityBinding(pipelineSessionKey)?.credentialGroupId, groups[1].id, 'session affinity pipeline stores the selected binding after route preparation')
+  const firstPipelineSnapshotText = JSON.stringify(firstPipelineResult.routeDecisionSnapshot)
+  assert.ok(!firstPipelineSnapshotText.includes('token-test-'), 'session affinity pipeline snapshot omits credential token text')
+  assert.ok(!firstPipelineSnapshotText.includes(pipelineSessionKey), 'session affinity pipeline snapshot omits the raw derived session key')
+
+  const providerThatWouldPreferAnotherGroup = {
+    ...normalized,
+    credentialGroups: normalized.credentialGroups.map((group) => {
+      if (group.id === groups[1].id) return { ...group, failureCount: 10, lastUsedAt: 9000 }
+      if (group.id === groups[2].id) return { ...group, failureCount: 0, lastUsedAt: 0 }
+      return group
+    }),
+  }
+  assert.equal(
+    chooseCredentialForModel(providerThatWouldPreferAnotherGroup, 'claude-3-5-sonnet-20241022').credentialGroupId,
+    groups[2].id,
+    'session affinity fixture would select another compatible credential group without affinity'
+  )
+  const secondPipelineResult = await prepareProviderRuntimePipeline({
+    req: buildAffinityPipelineRequest(providerThatWouldPreferAnotherGroup),
+    controller: new AbortController(),
+    resolveRoute: pipelineRouteResolver,
+  })
+  assert.equal(secondPipelineResult.status, 'ready', 'session affinity pipeline prepares the reuse request')
+  assert.equal(secondPipelineResult.credentialGroupId, groups[1].id, 'session affinity pipeline reuses the stored credential group')
+  assert.equal(secondPipelineResult.runtimeReq.provider.apiKey, 'token-test-1', 'session affinity pipeline reuses the stored credential token')
+  assert.equal(secondPipelineResult.routeDecisionSnapshot.sessionAffinity.reusable, true, 'session affinity pipeline snapshot records reuse')
+  assert.equal(secondPipelineResult.routeDecisionSnapshot.sessionAffinity.reason, 'binding_reused', 'session affinity pipeline snapshot records reuse reason')
+  assert.equal(secondPipelineResult.routeDecisionSnapshot.sessionAffinity.credentialGroupId, groups[1].id, 'session affinity pipeline snapshot records the reused credential group')
+  assert.equal(listSessionAffinityBindingsForTest().length, 1, 'session affinity pipeline keeps one binding for the session key')
+}
+
+async function assertContextPlannerV2Behavior() {
+  const provider = {
+    id: 'context-planner-provider',
+    type: 'openai',
+    name: 'Context Planner Provider',
+    apiKey: '',
+    models: ['gpt-5.2'],
+    enabled: true,
+  }
+  const oversizedContextText = `context planner v2 head ${'context planner v2 middle '.repeat(800)}context planner v2 tail`
+  await clearRuntimeLog()
+  const plan = planChatContext({
+    messages: [],
+    contextSources: [
+      { id: 'oversized-tool-source', type: 'tool_outputs', text: oversizedContextText, sourceCount: 1, trace: { source: 'mcp' } },
+      { id: 'empty-rag-source', type: 'retrieved_context', text: '   ', sourceCount: 0 },
+    ],
+    modelContextWindow: 1200,
+    maxOutputTokens: 256,
+    provider,
+    providerType: provider.type,
+    model: 'gpt-5.2',
+    settings: { remoteCompactMode: 'off', runtimeLogEnabled: true, runtimeLogMaxBytes: 65536 },
+  })
+  await new Promise((resolve) => setTimeout(resolve, 0))
+  const cappedToolFragment = plan.fragments.find((fragment) => fragment.id === 'oversized-tool-source')
+  assert.ok(cappedToolFragment, 'context planner v2 keeps a fragment record for oversized tool output context')
+  assert.equal(cappedToolFragment.schema, CONTEXT_FRAGMENT_SCHEMA, 'context planner v2 fragment uses the schema contract')
+  assert.equal(cappedToolFragment.sourceVersion, 2, 'context planner v2 fragment exposes source version')
+  assert.equal(cappedToolFragment.included, true, 'context planner v2 includes capped non-message context')
+  assert.equal(cappedToolFragment.capped, true, 'context planner v2 marks capped non-message context')
+  assert.equal(cappedToolFragment.exclusionReason, 'token_cap_exceeded', 'context planner v2 records cap reason')
+  assert.ok(cappedToolFragment.sourceHash?.startsWith('fnv1a32-'), 'context planner v2 exposes stable source hash')
+  assert.equal(cappedToolFragment.cache?.sourceHash, cappedToolFragment.sourceHash, 'context planner v2 mirrors source hash into cache metadata')
+  assert.ok(cappedToolFragment.originalEstimatedTokens > cappedToolFragment.estimatedTokens, 'context planner v2 records original and capped token estimates')
+  assert.ok(cappedToolFragment.estimatedTokens <= cappedToolFragment.tokenCap, 'context planner v2 caps non-message context before request assembly')
+  assert.ok(plan.contextPrompt.includes('[context fragment capped]'), 'context planner v2 marks capped context in the model-visible prompt')
+  assert.ok(plan.contextPrompt.includes('context planner v2 head'), 'context planner v2 preserves the head of capped context')
+  assert.ok(plan.contextPrompt.includes('context planner v2 tail'), 'context planner v2 preserves the tail of capped context')
+  assert.equal(plan.manifest.schema, CONTEXT_ASSEMBLY_MANIFEST_SCHEMA, 'context planner v2 exposes a context assembly manifest schema')
+  assert.equal(plan.manifest.fragments.length, plan.fragments.length, 'context planner v2 manifest accounts for every fragment')
+  assert.equal(plan.manifest.guardrails.rawTextSerialized, false, 'context planner v2 manifest does not serialize raw context text')
+  assert.equal(plan.manifest.guardrails.networkCallsAllowed, false, 'context planner v2 manifest is a non-networked control-plane artifact')
+  assert.equal(plan.manifest.guardrails.modelVisibleContextRequiresFiniteCap, true, 'context planner v2 manifest proves model-visible fragments have finite caps')
+  assert.equal(plan.manifest.guardrails.modelVisibleSourcesRequireHash, true, 'context planner v2 manifest proves model-visible fragments have hashes')
+  assert.ok(plan.manifest.failureCodes.includes('context_source_token_cap_exceeded'), 'context planner v2 manifest records capped source failure codes')
+  assert.ok(plan.manifest.failureCodes.includes('context_source_empty'), 'context planner v2 manifest records empty source failure codes')
+  const cappedToolManifest = plan.manifest.fragments.find((fragment) => fragment.fragmentId === 'oversized-tool-source')
+  assert.equal(cappedToolManifest?.sourceHash, cappedToolFragment.sourceHash, 'context planner v2 manifest mirrors source hashes')
+  assert.equal(cappedToolManifest?.authority, 'permissioned-tool', 'context planner v2 manifest records tool authority')
+  assert.equal(cappedToolManifest?.decision, 'capped', 'context planner v2 manifest records capped decisions')
+  assert.equal(cappedToolManifest?.reliability, 'bounded_capped_source', 'context planner v2 manifest records capped source reliability')
+  assert.equal(cappedToolManifest?.reason, 'token_cap_exceeded', 'context planner v2 manifest records cap reasons')
+  assert.equal(JSON.stringify(plan.manifest).includes('context planner v2 middle context planner v2 middle context planner v2 middle'), false, 'context planner v2 manifest omits raw oversized context bodies')
+  const emptyFragment = plan.fragments.find((fragment) => fragment.id === 'empty-rag-source')
+  assert.equal(emptyFragment?.included, false, 'context planner v2 records excluded empty context sources')
+  assert.equal(emptyFragment?.exclusionReason, 'empty', 'context planner v2 records empty exclusion reason')
+  assert.equal(plan.trace.cappedContextSourceCount, 1, 'context planner v2 traces capped source count')
+  assert.equal(plan.trace.excludedContextSourceCount, 1, 'context planner v2 traces excluded source count')
+  const contextRuntimeLogText = await readRuntimeLogText(65536)
+  assert.ok(contextRuntimeLogText.includes('"event":"context.operation"'), 'context planner v2 writes context operation runtime logs when enabled')
+  assert.ok(contextRuntimeLogText.includes('"event":"context.planned"'), 'context planner v2 emits context planned runtime events')
+  assert.ok(contextRuntimeLogText.includes('"event":"context.fragment.included"'), 'context planner v2 emits included fragment runtime events')
+  assert.ok(contextRuntimeLogText.includes('"event":"context.fragment.excluded"'), 'context planner v2 emits excluded fragment runtime events')
+  assert.ok(contextRuntimeLogText.includes('"event":"context.compact.decided"'), 'context planner v2 emits compact decision runtime events')
+  assert.ok(contextRuntimeLogText.includes('"event":"compact.request"'), 'context planner v2 maps compact decision events to compact request logs')
+  assert.ok(contextRuntimeLogText.includes('"fragmentSchema":"islemind.context-fragment.v2"'), 'context planner v2 runtime events record the fragment schema')
+  assert.ok(contextRuntimeLogText.includes('"contextManifestSchema":"islemind.context-assembly-manifest.v1"'), 'context planner v2 runtime events record the assembly manifest schema')
+  assert.ok(contextRuntimeLogText.includes('"contextManifestFailureCodes"'), 'context planner v2 runtime events record assembly manifest failure codes')
+  assert.ok(contextRuntimeLogText.includes('"cappedFragmentCount":1'), 'context planner v2 runtime events record capped fragment counts')
+  assert.ok(!contextRuntimeLogText.includes('context planner v2 middle context planner v2 middle context planner v2 middle context planner v2 middle'), 'context planner v2 runtime events omit raw oversized context bodies')
+  await clearRuntimeLog()
+  planChatContext({
+    messages: [],
+    contextSources: [{ id: 'quiet-source', type: 'retrieved_context', text: 'quiet context source' }],
+    modelContextWindow: 1200,
+    maxOutputTokens: 256,
+    provider,
+    providerType: provider.type,
+    model: 'gpt-5.2',
+    settings: { remoteCompactMode: 'off', runtimeLogEnabled: false, runtimeLogMaxBytes: 65536 },
+  })
+  await new Promise((resolve) => setTimeout(resolve, 0))
+  assert.equal(await readRuntimeLogText(65536), '', 'context planner v2 runtime events stay quiet when runtime logs are disabled')
+  const samePlan = planChatContext({
+    messages: [],
+    contextSources: [{ id: 'oversized-tool-source', type: 'tool_outputs', text: oversizedContextText, sourceCount: 1 }],
+    modelContextWindow: 1200,
+    maxOutputTokens: 256,
+    provider,
+    providerType: provider.type,
+    model: 'gpt-5.2',
+    settings: { remoteCompactMode: 'off' },
+  })
+  assert.equal(
+    samePlan.fragments.find((fragment) => fragment.id === 'oversized-tool-source')?.sourceHash,
+    cappedToolFragment.sourceHash,
+    'context planner v2 source hash is stable for unchanged source id and text'
+  )
+  const fragmentIdentities = (contextPlan) => contextPlan.fragments
+    .filter((fragment) => fragment.type === 'retrieved_context' || fragment.type === 'tool_outputs')
+    .map((fragment) => ({
+      id: fragment.id,
+      sourceId: fragment.sourceId,
+      sourceHash: fragment.sourceHash,
+      included: fragment.included,
+    }))
+  const previousCachePlan = planChatContext({
+    messages: [],
+    contextSources: [
+      { id: 'cache-source-a', type: 'retrieved_context', text: 'cache stable previous alpha body' },
+      { id: 'cache-source-b', type: 'retrieved_context', text: 'cache stable previous beta body' },
+      { id: 'cache-source-c', type: 'tool_outputs', text: 'cache stable previous gamma body' },
+    ],
+    modelContextWindow: 1600,
+    maxOutputTokens: 256,
+    provider,
+    providerType: provider.type,
+    model: 'gpt-5.2',
+    settings: { remoteCompactMode: 'off' },
+  })
+  const previousFragments = fragmentIdentities(previousCachePlan)
+  const reusedCachePlan = planChatContext({
+    messages: [],
+    contextSources: [
+      { id: 'cache-source-a', type: 'retrieved_context', text: 'cache stable previous alpha body' },
+    ],
+    previousFragments,
+    modelContextWindow: 1600,
+    maxOutputTokens: 256,
+    provider,
+    providerType: provider.type,
+    model: 'gpt-5.2',
+    settings: { remoteCompactMode: 'off' },
+  })
+  assert.equal(
+    reusedCachePlan.fragments.find((fragment) => fragment.id === 'cache-source-a')?.cache.reuseHint,
+    'source_hash_reused',
+    'context planner v2 marks unchanged previous source hashes as reusable'
+  )
+  const changedCachePlan = planChatContext({
+    messages: [],
+    contextSources: [
+      { id: 'cache-source-a', type: 'retrieved_context', text: 'cache changed current alpha body' },
+      { id: 'cache-source-b', type: 'retrieved_context', text: 'cache changed current beta body' },
+      { id: 'cache-source-c', type: 'tool_outputs', text: 'cache changed current gamma body' },
+    ],
+    previousFragments,
+    modelContextWindow: 1600,
+    maxOutputTokens: 256,
+    provider,
+    providerType: provider.type,
+    model: 'gpt-5.2',
+    settings: { remoteCompactMode: 'off' },
+  })
+  assert.ok(
+    changedCachePlan.cacheDiagnostics.some((diagnostic) => diagnostic.kind === 'source_hash_changed' && diagnostic.sourceId === 'cache-source-a'),
+    'context planner v2 reports changed source hashes for stable source ids'
+  )
+  assert.ok(
+    changedCachePlan.cacheDiagnostics.some((diagnostic) => diagnostic.kind === 'full_context_rewrite_detected' && diagnostic.affectedCount === 3),
+    'context planner v2 reports likely full-context rewrites when most previous source hashes change'
+  )
+  assert.equal(
+    changedCachePlan.fragments.find((fragment) => fragment.id === 'cache-source-a')?.cache.reuseHint,
+    'source_hash_changed',
+    'context planner v2 marks changed previous source hashes in fragment cache metadata'
+  )
+  const renamedCachePlan = planChatContext({
+    messages: [],
+    contextSources: [
+      { id: 'cache-source-a-renamed', type: 'retrieved_context', text: 'cache stable previous alpha body' },
+    ],
+    previousFragments,
+    modelContextWindow: 1600,
+    maxOutputTokens: 256,
+    provider,
+    providerType: provider.type,
+    model: 'gpt-5.2',
+    settings: { remoteCompactMode: 'off' },
+  })
+  assert.ok(
+    renamedCachePlan.cacheDiagnostics.some((diagnostic) => diagnostic.kind === 'fragment_id_changed_same_source_hash' && diagnostic.previousSourceId === 'cache-source-a'),
+    'context planner v2 reports fragment id churn when the same source hash appears under a new source id'
+  )
+  assert.equal(
+    renamedCachePlan.fragments.find((fragment) => fragment.id === 'cache-source-a-renamed')?.cache.reuseHint,
+    'fragment_id_changed',
+    'context planner v2 marks same-hash fragment id churn in cache metadata'
+  )
+  const unboundedPlan = planChatContext({
+    messages: [],
+    contextSources: [{ id: 'unbounded-source', type: 'retrieved_context', text: 'unbounded context must not be injected' }],
+    modelContextWindow: Number.NaN,
+    maxOutputTokens: 256,
+    provider,
+    providerType: provider.type,
+    model: 'gpt-5.2',
+    settings: { remoteCompactMode: 'off' },
+  })
+  const unboundedFragment = unboundedPlan.fragments.find((fragment) => fragment.id === 'unbounded-source')
+  assert.equal(unboundedFragment?.included, false, 'context planner v2 blocks source injection when no finite token cap can be computed')
+  assert.equal(unboundedFragment?.exclusionReason, 'unbounded_fragment_blocked', 'context planner v2 records unbounded source blocking')
+  assert.equal(unboundedFragment?.cache.reuseHint, 'unbounded_fragment_blocked', 'context planner v2 marks unbounded source cache metadata')
+  assert.ok(unboundedPlan.manifest.failureCodes.includes('context_source_unbounded'), 'context planner v2 manifest records unbounded context source blocking')
+  assert.equal(unboundedPlan.manifest.guardrails.excludedSourcesRequireReason, true, 'context planner v2 manifest proves excluded sources have reasons')
+  assert.equal(JSON.stringify(unboundedPlan.manifest).includes('unbounded context must not be injected'), false, 'context planner v2 manifest omits raw blocked context bodies')
+  assert.ok(
+    unboundedPlan.cacheDiagnostics.some((diagnostic) => diagnostic.kind === 'unbounded_fragment_blocked' && diagnostic.sourceId === 'unbounded-source'),
+    'context planner v2 reports unbounded fragment diagnostics'
+  )
+  await clearRuntimeLog()
+  planChatContext({
+    messages: [],
+    contextSources: [
+      { id: 'cache-source-a', type: 'retrieved_context', text: 'cache changed current alpha body' },
+      { id: 'cache-source-b', type: 'retrieved_context', text: 'cache changed current beta body' },
+      { id: 'cache-source-c', type: 'tool_outputs', text: 'cache changed current gamma body' },
+    ],
+    previousFragments,
+    modelContextWindow: 1600,
+    maxOutputTokens: 256,
+    provider,
+    providerType: provider.type,
+    model: 'gpt-5.2',
+    settings: { remoteCompactMode: 'off', runtimeLogEnabled: true, runtimeLogMaxBytes: 65536 },
+  })
+  await new Promise((resolve) => setTimeout(resolve, 0))
+  const cacheRuntimeLogText = await readRuntimeLogText(65536)
+  assert.ok(cacheRuntimeLogText.includes('"cacheDiagnosticCount":4'), 'context planner v2 runtime event records cache diagnostic count')
+  assert.ok(cacheRuntimeLogText.includes('"kind":"source_hash_changed"'), 'context planner v2 runtime event records cache diagnostics')
+  assert.ok(cacheRuntimeLogText.includes('"kind":"full_context_rewrite_detected"'), 'context planner v2 runtime event records full rewrite diagnostics')
+  assert.ok(cacheRuntimeLogText.includes('"reuseHint":"source_hash_changed"'), 'context planner v2 runtime event records bounded reuse hints')
+  assert.ok(!cacheRuntimeLogText.includes('cache changed current alpha body'), 'context planner v2 runtime event omits raw current context bodies')
+  assert.ok(!cacheRuntimeLogText.includes('cache stable previous alpha body'), 'context planner v2 runtime event omits raw previous context bodies')
+}
+
+function assertRuntimeControlPlanePlanAudit() {
+  const plan = fs.readFileSync(path.join(root, 'docs/architecture/provider-runtime-context-control-plane-plan.md'), 'utf8')
+  for (const phase of [
+    'Phase 0 - Baseline And Plan Acceptance',
+    'Phase 1 - Runtime Event Protocol MVP',
+    'Phase 2 - Provider Route Decision Snapshot',
+    'Phase 3 - Session Affinity And Quota-Aware Routing',
+    'Phase 4 - Context Planner V2',
+    'Phase 5 - Runtime Diagnostics UI',
+    'Phase 6 - Plugin And Hook Manifest',
+    'Phase 7 - Performance Guardrails',
+  ]) {
+    assert.ok(plan.includes(`## ${phase}`), `runtime control-plane plan keeps ${phase}`)
+  }
+  for (const marker of [
+    'Phase 0 audit slice completed',
+    'Phase 1 audit slice completed',
+    'Phase 1 event-bus slice completed',
+    'Phase 2 audit slice completed',
+    'Phase 3 slice 4 completed',
+    'Phase 4 slice 5 completed',
+    'Phase 5 slice 4 completed',
+    'Phase 6 slice 3 completed',
+    'Phase 7 slice 4 completed',
+  ]) {
+    assert.ok(plan.includes(marker), `runtime control-plane plan records ${marker}`)
+  }
+  assert.ok(!plan.includes('Next execution target:'), 'runtime control-plane plan does not keep stale next-target instructions after later phases complete')
+  assert.ok(plan.includes('## Baseline Gaps At Plan Creation'), 'runtime control-plane plan labels original gaps as baseline evidence')
+  assert.ok(!plan.includes('## Current Gaps'), 'runtime control-plane plan does not label completed baseline gaps as current gaps')
+  assert.ok(plan.includes('## Completion Evidence Matrix'), 'runtime control-plane plan includes a completion evidence matrix')
+  assert.ok(plan.includes('## Device Smoke Audit Status'), 'runtime control-plane plan records device smoke audit status')
+  assert.ok(plan.includes('Provider runtime Android smoke collector contract passed'), 'runtime control-plane plan records the provider runtime Android collector self-test')
+  assert.ok(plan.includes('Current blocker: no connected adb device was found'), 'runtime control-plane plan records the current device-smoke blocker')
+  assert.ok(plan.includes('status="blocked"'), 'runtime control-plane plan records blocked no-device smoke scenarios')
+  assert.ok(plan.includes('blockedScenarioCount'), 'runtime control-plane plan records blocked smoke diagnostics')
+  assert.ok(plan.includes('test-evidence/qa/release-recovery-worklist.json'), 'runtime control-plane plan records the QA recovery worklist')
+  assert.ok(plan.includes('APK freshness as `current` / `snapshot_matches`'), 'runtime control-plane plan records refreshed APK freshness')
+  assert.ok(plan.includes('missing/stale installed-package evidence'), 'runtime control-plane plan records remaining device provenance blockers')
+  for (const phase of ['Phase 0', 'Phase 1', 'Phase 2', 'Phase 3', 'Phase 4', 'Phase 5', 'Phase 6', 'Phase 7']) {
+    assert.ok(plan.includes(`| ${phase} |`), `runtime control-plane completion matrix records ${phase}`)
+  }
+
+  const runtimeEventsSource = fs.readFileSync(path.join(root, 'src/services/runtimeEvents.ts'), 'utf8')
+  const runtimeEventContractSource = fs.readFileSync(path.join(root, 'src/services/runtimeEventContract.ts'), 'utf8')
+  for (const event of [
+    'provider.gateway.outcome',
+    'provider.access.decided',
+    'provider.route.decided',
+    'provider.route.snapshot.created',
+    'provider.proxy.decided',
+    'provider.fallback.decided',
+    'tool.gateway.outcome',
+    'session.lease.acquired',
+    'session.lease.rejected',
+    'context.planned',
+    'context.compact.decided',
+    'context.compact.completed',
+    'agent.security.evaluation.checked',
+    'plugin.catalog.snapshot.created',
+    'runtime.repair.replay.submitted',
+    'runtime.repair.replay.applied',
+    'runtime.repair.replay.dismissed',
+    'token_usage.updated',
+  ]) {
+    assert.ok(runtimeEventContractSource.includes(event), `runtime event contract exposes ${event}`)
+  }
+  assert.ok(runtimeEventContractSource.includes('RUNTIME_EVENT_SCHEMA'), 'runtime event contract exposes a versioned schema')
+  assert.ok(runtimeEventsSource.includes('RUNTIME_EVENT_HISTORY_LIMIT'), 'runtime event protocol keeps bounded in-memory history')
+  assert.ok(runtimeEventsSource.includes('RUNTIME_EVENT_EXPLANATORY_HISTORY_RESERVE'), 'runtime event protocol reserves history for explanatory low-frequency events')
+  assert.ok(runtimeEventsSource.includes('subscribeRuntimeEvents'), 'runtime event protocol exposes a local subscriber boundary')
+  assert.ok(runtimeEventsSource.includes('getRuntimeEventHistory'), 'runtime event protocol exposes bounded history reads')
+  assert.ok(runtimeEventContractSource.includes('shouldNotifyRuntimeEventSubscribers'), 'runtime event contract suppresses high-frequency subscriber notifications')
+  assert.ok(runtimeEventContractSource.includes('shouldPersistRuntimeEvent'), 'runtime event contract centralizes high-frequency persistence decisions')
+
+  const providerRuntimePipelineSource = fs.readFileSync(path.join(root, 'src/services/ai/providerRuntimePipeline.ts'), 'utf8')
+  assert.ok(providerRuntimePipelineSource.includes('PROVIDER_ROUTE_DECISION_SNAPSHOT_SCHEMA'), 'provider runtime pipeline declares the route decision snapshot schema')
+  assert.ok(providerRuntimePipelineSource.includes('buildProviderRouteDecisionSnapshot'), 'provider runtime pipeline builds route decision snapshots')
+  assert.ok(providerRuntimePipelineSource.includes('routeDecisionSnapshot'), 'provider runtime pipeline attaches route decision snapshots to ready results')
+  assert.ok(providerRuntimePipelineSource.includes('reasoningResolution'), 'provider runtime pipeline snapshots reasoning resolution artifacts')
+  assert.ok(providerRuntimePipelineSource.includes("event: 'provider.route.snapshot.created'"), 'provider runtime pipeline emits route snapshot runtime events')
+
+  const providerRuntimeGatewaySource = fs.readFileSync(path.join(root, 'src/services/ai/providerRuntimeGateway.ts'), 'utf8')
+  assert.equal(PROVIDER_RUNTIME_GATEWAY_OUTCOME_SCHEMA, 'islemind.provider-runtime-gateway-outcome.v1', 'provider runtime gateway exposes a stable outcome schema')
+  assert.equal(typeof buildProviderRuntimeGatewayOutcome, 'function', 'provider runtime gateway exposes an outcome builder')
+  assert.ok(providerRuntimeGatewaySource.includes('PROVIDER_RUNTIME_GATEWAY_OUTCOME_SCHEMA'), 'provider runtime gateway declares the gateway outcome schema')
+  assert.ok(providerRuntimeGatewaySource.includes('buildProviderRuntimeGatewayOutcome'), 'provider runtime gateway builds ready and blocked outcomes')
+  assert.ok(providerRuntimeGatewaySource.includes("event: 'provider.gateway.outcome'"), 'provider runtime gateway emits typed outcome events')
+  assert.ok(providerRuntimeGatewaySource.includes("status: 'blocked'"), 'provider runtime gateway records blocked outcomes before provider execution')
+
+  const toolCallingGatewaySource = fs.readFileSync(path.join(root, 'src/services/toolCallingGateway.ts'), 'utf8')
+  assert.ok(toolCallingGatewaySource.includes('TOOL_CALLING_GATEWAY_OUTCOME_SCHEMA'), 'tool calling gateway declares an outcome schema')
+  assert.ok(toolCallingGatewaySource.includes('buildToolCallingGatewayOutcome'), 'tool calling gateway builds MCP/provider-native tool outcomes')
+  assert.ok(toolCallingGatewaySource.includes('buildStructuredOutputGatewayPlan'), 'tool calling gateway centralizes structured-output outcome details')
+  assert.ok(toolCallingGatewaySource.includes("event: 'tool.gateway.outcome'"), 'tool calling gateway emits typed runtime events')
+  assert.ok(toolCallingGatewaySource.includes('providerDeclaredToolCount'), 'tool calling gateway records provider-native declaration counts')
+  assert.ok(toolCallingGatewaySource.includes('structuredOutputRequestShape'), 'tool calling gateway records structured-output request shape metadata')
+
+  assert.ok(providerRuntimeGatewaySource.includes('buildStructuredOutputGatewayPlan'), 'provider runtime gateway uses the shared structured-output gateway plan')
+  assert.ok(providerRuntimeGatewaySource.includes('routePlan: result.routeResult.decision.structuredOutputPlan'), 'provider runtime gateway records route-level structured-output decisions')
+
+  const sessionAffinitySource = fs.readFileSync(path.join(root, 'src/services/ai/providerSessionAffinity.ts'), 'utf8')
+  assert.ok(sessionAffinitySource.includes('SESSION_AFFINITY_MAX_BINDINGS'), 'session affinity store has a bounded capacity')
+  assert.ok(sessionAffinitySource.includes('deriveSessionAffinityKey'), 'session affinity derives stable local routing keys')
+  assert.ok(sessionAffinitySource.includes('sessionAffinityFailureShouldInvalidate'), 'session affinity records quota-aware invalidation decisions')
+  assert.ok(sessionAffinitySource.includes('rotateSessionAffinityBinding'), 'session affinity can rotate bindings on failover')
+
+  const contextPlannerSource = fs.readFileSync(path.join(root, 'src/services/contextPlanner.ts'), 'utf8')
+  assert.ok(contextPlannerSource.includes('CONTEXT_FRAGMENT_SCHEMA'), 'context planner exposes versioned context fragments')
+  assert.ok(contextPlannerSource.includes('CONTEXT_ASSEMBLY_MANIFEST_SCHEMA'), 'context planner exposes a versioned context assembly manifest')
+  assert.ok(contextPlannerSource.includes('buildContextAssemblyManifest'), 'context planner builds a first-class context assembly manifest')
+  assert.ok(contextPlannerSource.includes('rawTextSerialized: false'), 'context planner manifest declares raw context text omission')
+  assert.ok(contextPlannerSource.includes('networkCallsAllowed: false'), 'context planner manifest declares a non-networked control-plane artifact')
+  assert.ok(contextPlannerSource.includes('sourceHash'), 'context planner tracks stable source hashes')
+  assert.ok(contextPlannerSource.includes('cacheDiagnostics'), 'context planner records cache diagnostics')
+  assert.ok(contextPlannerSource.includes('unbounded_fragment_blocked'), 'context planner blocks unbounded model-visible context')
+  assert.ok(contextPlannerSource.includes('contextManifestSchema'), 'context planner emits context manifest metadata in runtime events')
+  assert.ok(contextPlannerSource.includes("event: 'context.compact.decided'"), 'context planner emits compact decision runtime events')
+
+  const compactStateStoreSource = fs.readFileSync(path.join(root, 'src/services/ai/compact/compactStateStore.ts'), 'utf8')
+  assert.ok(compactStateStoreSource.includes('contextFragmentIdentitiesJson'), 'compact state persists bounded context fragment identities')
+
+  const runtimeDiagnosticsSource = fs.readFileSync(path.join(root, 'src/services/runtimeDiagnostics.ts'), 'utf8')
+  const observabilityCompatibilitySource = fs.readFileSync(path.join(root, 'src/services/observabilityCompatibilityEvaluation.ts'), 'utf8')
+  const runtimeTimelineSource = fs.readFileSync(path.join(root, 'src/services/runtimeTimeline.ts'), 'utf8')
+  assert.ok(runtimeDiagnosticsSource.includes('RUNTIME_DIAGNOSTICS_LOG_TAIL_BYTES'), 'runtime diagnostics reads a bounded log tail')
+  assert.ok(runtimeDiagnosticsSource.includes('RUNTIME_DIAGNOSTICS_LOG_ENTRY_LIMIT'), 'runtime diagnostics caps parsed log entries')
+  assert.ok(runtimeDiagnosticsSource.includes('RUNTIME_DIAGNOSTICS_TIMELINE_EVENT_LIMIT'), 'runtime diagnostics caps timeline input events')
+  assert.ok(runtimeDiagnosticsSource.includes('RuntimeDiagnosticsPerformanceSummary'), 'runtime diagnostics exposes visible performance budget metadata')
+  assert.ok(runtimeDiagnosticsSource.includes('getRuntimeEventHistory'), 'runtime diagnostics merges bounded in-memory runtime event history')
+  assert.ok(runtimeDiagnosticsSource.includes('seenRuntimeEventIds'), 'runtime diagnostics dedupes logged and in-memory runtime events')
+  assert.ok(runtimeDiagnosticsSource.includes('buildRuntimeTimelineSnapshot'), 'runtime diagnostics exposes a unified runtime timeline')
+  assert.ok(runtimeDiagnosticsSource.includes('requestExamples'), 'runtime diagnostics exposes bounded request examples')
+  assert.ok(runtimeDiagnosticsSource.includes('providerDetails'), 'runtime diagnostics exposes provider-level runtime details')
+  assert.ok(runtimeDiagnosticsSource.includes('custom_proxy_session_id_header'), 'runtime diagnostics exposes custom proxy sticky-routing warnings')
+  assert.ok(runtimeDiagnosticsSource.includes('quotaExhausted'), 'runtime diagnostics separates quota-exhausted provider health')
+  assert.ok(runtimeDiagnosticsSource.includes('credentialUnhealthy'), 'runtime diagnostics separates credential-unhealthy provider health')
+  assert.ok(runtimeDiagnosticsSource.includes('evaluateObservabilitySinkPolicy'), 'runtime diagnostics integrates the observability sink policy gate')
+  assert.ok(runtimeDiagnosticsSource.includes('buildObservabilitySinkExportPreview'), 'runtime diagnostics integrates the observability sink preview gate')
+  assert.ok(runtimeDiagnosticsSource.includes('previewFailureCodes'), 'runtime diagnostics exposes observability preview failure codes')
+  assert.ok(runtimeDiagnosticsSource.includes('manifestFailureCodes'), 'runtime diagnostics summarizes context assembly manifest failure codes')
+  assert.ok(runtimeDiagnosticsSource.includes('contextManifestSchema'), 'runtime diagnostics consumes context assembly manifest runtime metadata')
+  assert.ok(observabilityCompatibilitySource.includes('OBSERVABILITY_SINK_ADAPTER_PAYLOAD_SCHEMA'), 'observability compatibility exposes an adapter payload schema')
+  assert.ok(observabilityCompatibilitySource.includes('buildObservabilitySinkAdapterPayload'), 'observability compatibility exposes dry-run adapter payload serialization')
+  assert.ok(observabilityCompatibilitySource.includes('networkCallsAllowed: false'), 'observability adapter payload serialization stays non-networked')
+  assert.ok(runtimeDiagnosticsSource.includes('settings.observabilitySinkMode'), 'runtime diagnostics reads observability policy inputs from settings')
+  assert.ok(runtimeDiagnosticsSource.includes('observability:'), 'runtime diagnostics exposes observability policy metadata')
+  assert.ok(runtimeTimelineSource.includes('RUNTIME_TIMELINE_SCHEMA'), 'runtime timeline exposes a versioned schema')
+  assert.ok(runtimeTimelineSource.includes('buildRuntimeTimelineSnapshot'), 'runtime timeline builds a unified event timeline')
+  assert.ok(runtimeTimelineSource.includes('RuntimeTimelineIssue'), 'runtime timeline exposes an actionable issue contract')
+  assert.ok(runtimeTimelineSource.includes('RuntimeTimelineNextActionCode'), 'runtime timeline exposes localized next-action codes')
+  assert.ok(runtimeTimelineSource.includes('RuntimeTimelineActionTargetKind'), 'runtime timeline exposes machine-readable action targets')
+  assert.ok(runtimeTimelineSource.includes('RuntimeTimelineRepairPlan'), 'runtime timeline exposes agent-consumable repair plans')
+  assert.ok(runtimeTimelineSource.includes('sourceEventIds'), 'runtime timeline repair provenance keeps source runtime event ids')
+  assert.ok(runtimeTimelineSource.includes('latestEventId'), 'runtime timeline repair provenance exposes the latest source event id')
+  assert.ok(runtimeTimelineSource.includes('buildRuntimeTimelineRepairPlan'), 'runtime timeline builds repair plans from issue targets')
+  assert.ok(runtimeTimelineSource.includes('getRuntimeEventHistory'), 'runtime timeline reads bounded runtime event history')
+  assert.ok(runtimeTimelineSource.includes('provider.gateway.outcome'), 'runtime timeline classifies provider gateway outcomes')
+  assert.ok(runtimeTimelineSource.includes('tool.gateway.outcome'), 'runtime timeline classifies tool gateway outcomes')
+  assert.ok(runtimeTimelineSource.includes('tool.mcp.compatibility.checked'), 'runtime timeline classifies MCP compatibility outcomes')
+  assert.ok(runtimeTimelineSource.includes('agent.security.evaluation.checked'), 'runtime timeline classifies agent security eval outcomes')
+  assert.ok(runtimeTimelineSource.includes('plugin.catalog.snapshot.created'), 'runtime timeline classifies plugin catalog snapshots')
+  assert.ok(runtimeTimelineSource.includes('contextManifestFailureCodes'), 'runtime timeline consumes context assembly manifest failure codes')
+  assert.ok(runtimeTimelineSource.includes('context_manifest_budget_overrun'), 'runtime timeline exposes context manifest budget issues')
+  assert.ok(runtimeTimelineSource.includes('context_manifest_source_churn'), 'runtime timeline exposes context manifest source churn issues')
+  assert.ok(runtimeTimelineSource.includes('stabilize_context_sources'), 'runtime timeline exposes context source stabilization actions')
+  assert.ok(runtimeTimelineSource.includes('plugin_manifest_invalid'), 'runtime timeline exposes invalid plugin manifest issues')
+  assert.ok(runtimeTimelineSource.includes('mcp_transport_unsupported'), 'runtime timeline exposes MCP transport issues')
+  assert.ok(runtimeTimelineSource.includes('review_mcp_manifest'), 'runtime timeline exposes MCP manifest repair actions')
+  assert.ok(runtimeTimelineSource.includes('review_agent_security_policy'), 'runtime timeline exposes agent security repair actions')
+  assert.ok(runtimeTimelineSource.includes('agent-settings'), 'runtime timeline routes agent security issues to agent settings')
+  assert.ok(runtimeTimelineSource.includes('plugin-settings'), 'runtime timeline routes plugin issues to plugin settings')
+  const mcpCompatibilityEvaluationSource = fs.readFileSync(path.join(root, 'src/services/mcpCompatibilityEvaluation.ts'), 'utf8')
+  assert.ok(mcpCompatibilityEvaluationSource.includes('MCP_COMPATIBILITY_RUNTIME_SUMMARY_SCHEMA'), 'MCP compatibility evaluation exposes a runtime summary schema')
+  assert.ok(mcpCompatibilityEvaluationSource.includes('emitMcpCompatibilityRuntimeSummaryEvent'), 'MCP compatibility evaluation can emit bounded runtime telemetry')
+  assert.ok(mcpCompatibilityEvaluationSource.includes("event: 'tool.mcp.compatibility.checked'"), 'MCP compatibility evaluation emits the typed runtime event')
+  const agentSecurityEvaluationSource = fs.readFileSync(path.join(root, 'src/services/agent/agentSecurityEvaluation.ts'), 'utf8')
+  assert.ok(agentSecurityEvaluationSource.includes('AGENT_SECURITY_RUNTIME_SUMMARY_SCHEMA'), 'agent security evaluation exposes a runtime summary schema')
+  assert.ok(agentSecurityEvaluationSource.includes('emitAgentSecurityRuntimeSummaryEvent'), 'agent security evaluation can emit bounded runtime telemetry')
+  assert.ok(agentSecurityEvaluationSource.includes("event: 'agent.security.evaluation.checked'"), 'agent security evaluation emits the typed runtime event')
+
+  const pluginManifestSource = fs.readFileSync(path.join(root, 'src/services/pluginManifest.ts'), 'utf8')
+  assert.ok(pluginManifestSource.includes('PLUGIN_MANIFEST_SCHEMA'), 'plugin manifest exposes a versioned schema')
+  assert.ok(pluginManifestSource.includes('PLUGIN_MANIFEST_CATALOG_SCHEMA'), 'plugin manifest catalog exposes a versioned schema')
+  assert.ok(pluginManifestSource.includes('buildPluginManifestCatalogSnapshot'), 'plugin manifest catalog builds bounded control-plane snapshots')
+  assert.ok(pluginManifestSource.includes('loadPluginManifestCatalogSnapshot'), 'plugin manifest catalog can load configured skills and MCP references')
+  assert.ok(pluginManifestSource.includes('buildPluginManifestCatalogRuntimeEventData'), 'plugin manifest catalog builds bounded runtime event data')
+  assert.ok(pluginManifestSource.includes('emitPluginManifestCatalogSnapshotEvent'), 'plugin manifest catalog emits typed runtime events')
+  assert.ok(pluginManifestSource.includes('createPluginManifestFromWorkflowSkill'), 'plugin manifest represents imported workflow skills')
+  assert.ok(pluginManifestSource.includes('createPluginManifestFromMcpServer'), 'plugin manifest represents MCP server references')
+  assert.ok(pluginManifestSource.includes("execution: 'noop'"), 'plugin hooks remain no-op by default')
+  const settingsScreenSource = fs.readFileSync(path.join(root, 'src/components/main/SettingsScreenContent.tsx'), 'utf8')
+  assert.ok(settingsScreenSource.includes('runtimeDiagnosticPluginCatalog'), 'settings diagnostics surfaces plugin catalog snapshots')
+  assert.ok(settingsScreenSource.includes('runtimeDiagnosticPerformance'), 'settings diagnostics surfaces runtime diagnostics performance budgets')
+  assert.ok(settingsScreenSource.includes('runtimeDiagnosticObservability'), 'settings diagnostics surfaces observability sink policy metadata')
+  assert.ok(settingsScreenSource.includes('diagnostics.observability.previewStatus'), 'settings diagnostics surfaces observability sink preview status')
+  assert.ok(settingsScreenSource.includes('manifestIssues'), 'settings diagnostics surfaces context manifest issue counts')
+  assert.ok(settingsScreenSource.includes('OBSERVABILITY_SINK_TARGET_OPTIONS'), 'settings governance surfaces observability sink target choices')
+  assert.ok(settingsScreenSource.includes('observabilitySinkEndpointUrl'), 'settings governance persists observability sink endpoint choices')
+  assert.ok(settingsScreenSource.includes('getObservabilitySinkApiKey'), 'settings governance loads observability sink API keys from secure storage')
+  assert.ok(settingsScreenSource.includes('setObservabilitySinkApiKey'), 'settings governance saves observability sink API keys through secure storage')
+  assert.ok(settingsScreenSource.includes('formatObservabilityPreviewFailures'), 'settings diagnostics summarizes observability preview failures')
+  assert.ok(settingsScreenSource.includes('formatObservabilityPolicyBlockReasons'), 'settings diagnostics summarizes observability policy block reasons')
+  assert.ok(settingsScreenSource.includes('emitPluginManifestCatalogSnapshotEvent'), 'settings diagnostics emits plugin catalog snapshots as typed events')
+  assert.ok(
+    settingsScreenSource.indexOf('await emitPluginManifestCatalogSnapshotEvent') < settingsScreenSource.indexOf('buildRuntimeDiagnosticsSummary({ providers, settings })'),
+    'settings diagnostics emits plugin catalog events before building runtime summaries'
+  )
+
+  const streamingStoreSource = fs.readFileSync(path.join(root, 'src/store/chatStreamingStore.ts'), 'utf8')
+  assert.ok(streamingStoreSource.includes('STREAMING_PERSIST_DELAY_MS = 420'), 'streaming store coalesces streaming persistence')
+  assert.ok(streamingStoreSource.includes('streamingText: Map<string, string>'), 'streaming store keeps token text outside conversation arrays while streaming')
+  assert.ok(streamingStoreSource.includes('streamingTraces: Map<string, StreamingTraceSnapshot>'), 'streaming store keeps trace updates outside conversation arrays while streaming')
+}
+
 async function runFocused() {
   const focusArg = process.argv.find((arg) => arg.startsWith('--focus='))
   const focus = focusArg ? focusArg.slice('--focus='.length) : null
@@ -25524,9 +29050,21 @@ async function runFocused() {
     await assertSettingsUrlPersistenceBehavior()
     return
   }
+  if (focus === 'generation-parameters') {
+    assertGenerationParameterCompatibilityBehavior()
+    return
+  }
   if (focus === 'runtime-log') {
     await assertRuntimeLogFileBehavior()
     await assertRuntimeDiagnosticsBehavior()
+    return
+  }
+  if (focus === 'plugin-manifest') {
+    await assertPluginManifestBehavior()
+    return
+  }
+  if (focus === 'control-plane-plan') {
+    assertRuntimeControlPlanePlanAudit()
     return
   }
   if (focus === 'runtime-health-log') {
@@ -25788,6 +29326,15 @@ async function runFocused() {
   }
   if (focus === 'mimo-native-search') {
     assertMimoNativeSearchBehavior()
+    return
+  }
+  if (focus === 'session-affinity') {
+    const { provider, groups } = createSessionAffinityFixture()
+    await assertSessionAffinityBehavior(provider, groups)
+    return
+  }
+  if (focus === 'context-planner') {
+    await assertContextPlannerV2Behavior()
     return
   }
   throw new Error(`Unknown focus: ${focus}`)

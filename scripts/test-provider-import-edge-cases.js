@@ -59,8 +59,8 @@ const testCases = [
 https://token-plan-cn.xiaomimimo.com/v1
 兼容 Anthropic 接口协议：
 https://token-plan-cn.xiaomimimo.com/anthropic`,
-    expectedProviders: 1,
-    expectedCredentialGroups: 1,
+    expectedProviders: 2,
+    expectedCredentialGroups: 2,
   },
   {
     name: '多个供应商，不同域名',
@@ -96,6 +96,17 @@ Key: sk-test123`,
     expectedProviders: 1,
     expectedCredentialGroups: 1,
   },
+  {
+    name: 'URL + 命名令牌行',
+    input: `"https://new-api.abrdns.com/
+嵌入模型    sk-embed12345678901234567890
+国产模型    sk-cn123456789012345678901234
+default    sk-default123456789012345678
+codex    sk-codex12345678901234567890 "`,
+    expectedProviders: 1,
+    expectedCredentialGroups: 4,
+    expectedLabels: ['嵌入模型', '国产模型', 'default', 'codex'],
+  },
 ]
 
 console.log('Running provider import edge case tests...\n')
@@ -130,6 +141,16 @@ testCases.forEach((testCase, index) => {
     const totalGroups = result.providers.reduce((sum, p) => sum + (p.credentialGroups?.length || 0), 0)
     if (totalGroups < testCase.minCredentialGroups) {
       errors.push(`Expected at least ${testCase.minCredentialGroups} credential groups, got ${totalGroups}`)
+      testPassed = false
+    }
+  }
+
+  if (testCase.expectedLabels !== undefined) {
+    const labels = result.providers.flatMap((provider) => (provider.credentialGroups ?? []).map((group) => group.label))
+    try {
+      assert.deepEqual(labels, testCase.expectedLabels)
+    } catch {
+      errors.push(`Expected labels ${JSON.stringify(testCase.expectedLabels)}, got ${JSON.stringify(labels)}`)
       testPassed = false
     }
   }

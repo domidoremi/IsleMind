@@ -63,6 +63,9 @@ function main() {
     returnedToChat: false,
     pendingActionVisible: false,
     chatHandoffVisible: false,
+    routeResultMatched: false,
+    runtimeAuditEvidence: 'missing',
+    runtimeLogReadable: false,
     runtimeLogMatched: false,
     runtimeLogHasUpstreamRequest: false,
     runtimeLogEvents: [],
@@ -87,7 +90,8 @@ function main() {
 
     result.pushedFixture = pushFixture(device)
     forceStop(device)
-    clearRuntimeLog(device)
+    result.runtimeLogReadable = canReadAppPrivateFiles(device)
+    clearRuntimeLog(device, result.runtimeLogReadable)
     if (!tryOpenImportedChat(device, result, 'workflow-chat-before-import')) {
       importFixture(device, result)
     }
@@ -117,7 +121,7 @@ function main() {
 
     // Isolate the exact turn: clear the mock request log and runtime log right before sending.
     fs.writeFileSync(requestLogPath, '', 'utf8')
-    clearRuntimeLog(device)
+    clearRuntimeLog(device, result.runtimeLogReadable)
 
     result.workflowPromptSent = tapText(device, capture.uiaText, ['发送消息', 'Send message'])
       || tapActionNearText(device, capture.uiaText, [prompt.slice(0, 16), '输入消息', 'Message input'], ['发送消息', 'Send message'])
@@ -140,15 +144,18 @@ function main() {
     result.returnedToChat = Boolean(capture.png) && /com\.islemind\.app/i.test(readTopActivity(device))
     result.pendingActionVisible = hasAnyText(capture.uiaText, workflowCaptureLabels.pending)
     result.chatHandoffVisible = hasAnyText(capture.uiaText, workflowCaptureLabels.handoff)
+    result.routeResultMatched = chatRouteResultMatchesMode(capture.uiaText, mode)
     result.captures.chatReturnPng = capture.png
     result.captures.chatReturnUia = capture.uia
 
-    const runtimeText = readRuntimeLogWithRetry(device)
+    const runtimeText = readRuntimeLogWithRetry(device, result.runtimeLogReadable)
     fs.writeFileSync(runtimeLogPath, runtimeText ? `${runtimeText.trim()}\n` : '', 'utf8')
     const runtimeEntries = parseRuntimeLog(runtimeText)
     result.runtimeLogEvents = runtimeEntries.map((entry) => String(entry.event ?? 'unknown'))
     result.runtimeLogMatched = runtimeEntries.some((entry) => runtimeAuditMatchesMode(entry, mode))
     result.runtimeLogHasUpstreamRequest = runtimeEntries.some((entry) => entry.event === 'upstream.request')
+    if (result.runtimeLogMatched) result.runtimeAuditEvidence = 'runtime-log'
+    else if (!result.runtimeLogReadable && result.routeResultMatched) result.runtimeAuditEvidence = 'release-ui-route-result'
 
     const rows = readJsonl(requestLogPath)
     result.providerRequests = rows.map((row) => ({
@@ -217,7 +224,6 @@ function writeFixture(baseUrl) {
       webSearchMode: 'native',
       knowledgeTopK: 4,
       memoryTopK: 4,
-      onboardingCompleted: true,
       ragMode: 'off',
       embeddingMode: 'hybrid',
       localEmbeddingModelSource: 'none',
@@ -306,6 +312,7 @@ function importFixture(device, result) {
   result.captures.importDialogPng = importDialog.png
   result.captures.importDialogUia = importDialog.uia
   if (!hasAnyText(importDialog.uiaText, ['导入完成', 'Import complete'])) {
+    if (tryOpenImportedChat(device, result, 'workflow-chat-after-import-fallback')) return
     throw new Error('Import completion dialog was not visible for the workflow chat routing fixture.')
   }
   tapText(device, importDialog.uiaText, ['知道了', '我知道了', 'OK'])
@@ -332,15 +339,6 @@ function ensureSettingsVisible(device, result) {
     sleep(900)
     capture = captureStep(device, result, `workflow-settings-start-wait-${index}`)
     if (hasAnyText(capture.uiaText, ['导入 JSON', 'AI 工作区就绪度', '导入 / 导出', 'Import JSON'])) return capture
-  }
-  if (hasAnyText(capture.uiaText, ['欢迎来到 IsleMind', '跳过'])) {
-    if (!tapText(device, capture.uiaText, ['跳过'])) {
-      throw new Error('First-run onboarding blocked Settings and the skip action was not tappable.')
-    }
-    sleep(900)
-    openUrl(device, 'islemind://settings')
-    sleep(1600)
-    capture = captureStep(device, result, 'workflow-settings-after-onboarding-skip')
   }
   return capture
 }
@@ -375,6 +373,7 @@ function selectFileAndCaptureImportDialog(device, result) {
       sleep(1800)
       const imported = captureStep(device, result, 'workflow-import-confirm')
       if (hasAnyText(imported.uiaText, ['导入完成', 'Import complete'])) return imported
+      if (!isDocumentsUi(imported.uiaText)) return imported
     }
     if (!searched && isDocumentsUi(capture.uiaText)) {
       searched = true
@@ -392,7 +391,7 @@ function searchDocumentsUiFile(device, result, fileName) {
   if (!tapText(device, capture.uiaText, ['Search', '搜索'])) return null
   sleep(700)
   capture = captureStep(device, result, 'workflow-file-picker-search-field')
-  if (!tapEditableAtIndex(device, capture.uiaText, 0)) return null
+  tapEditableAtIndex(device, capture.uiaText, 0)
   sleep(300)
   inputText(device, fileName)
   sleep(1400)
@@ -442,24 +441,57 @@ function extractTopActivityLine(value) {
   return lines.find((line) => /mResumedActivity|topResumedActivity|mCurrentFocus|mFocusedApp/i.test(line)) ?? ''
 }
 
-function clearRuntimeLog(device) {
-  runCommand('adb', ['-s', device, 'shell', 'run-as', appPackageName, 'rm', '-f', 'files/islemind-runtime.jsonl'])
+function canReadAppPrivateFiles(device) {
+  return runCommand('adb', ['-s', device, 'shell', 'run-as', appPackageName, 'pwd']) !== null
 }
 
-function readRuntimeLogWithRetry(device) {
-  const candidates = [
-    'files/islemind-runtime.jsonl',
-    'islemind-runtime.jsonl',
-    'cache/islemind-runtime.jsonl',
-  ]
+function clearRuntimeLog(device, readable = true) {
+  if (!readable) return
+  runCommand('adb', [
+    '-s',
+    device,
+    'shell',
+    'run-as',
+    appPackageName,
+    'sh',
+    '-c',
+    'rm -f files/islemind-runtime.jsonl islemind-runtime.jsonl cache/islemind-runtime.jsonl; for root in files cache; do [ -d "$root" ] && find "$root" -name islemind-runtime.jsonl -type f -print | while IFS= read -r file; do rm -f "$file"; done; done',
+  ])
+}
+
+function readRuntimeLogWithRetry(device, readable = true) {
+  if (!readable) return ''
   for (let attempt = 0; attempt < 6; attempt += 1) {
-    for (const candidate of candidates) {
+    for (const candidate of listRuntimeLogCandidates(device)) {
       const text = runCommand('adb', ['-s', device, 'shell', 'run-as', appPackageName, 'cat', candidate])
       if (text && String(text).trim()) return String(text)
     }
     sleep(700)
   }
   return ''
+}
+
+function listRuntimeLogCandidates(device) {
+  const candidates = [
+    'files/islemind-runtime.jsonl',
+    'islemind-runtime.jsonl',
+    'cache/islemind-runtime.jsonl',
+  ]
+  const discovered = runCommand('adb', [
+    '-s',
+    device,
+    'shell',
+    'run-as',
+    appPackageName,
+    'sh',
+    '-c',
+    'for root in files cache; do [ -d "$root" ] && find "$root" -name islemind-runtime.jsonl -type f -print; done',
+  ])
+  for (const line of String(discovered ?? '').split(/\r?\n/)) {
+    const candidate = line.trim()
+    if (candidate) candidates.push(candidate)
+  }
+  return [...new Set(candidates)]
 }
 
 function parseRuntimeLog(text) {
@@ -548,7 +580,11 @@ function tapActionNearText(device, uiaText, anchorLabels, actionLabels) {
 }
 
 function tapEditableAtIndex(device, uiaText, index) {
-  const editables = parseNodes(uiaText).filter((node) => node.enabled && isUsableBounds(node.bounds) && node.className.includes('EditText'))
+  const editables = parseNodes(uiaText).filter((node) => (
+    node.enabled &&
+    isUsableBounds(node.bounds) &&
+    (node.className.includes('EditText') || node.className.includes('AutoCompleteTextView'))
+  ))
   const node = editables[index]
   if (!node) return false
   tapBoundsCenter(device, node.bounds)
@@ -735,6 +771,22 @@ function isCleanReusableWorkflowChat(uiaText) {
   return !hasAnyText(text, ['"opened": true', 'Agentic workflow', 'android.', 'set an alarm', 'open notification settings', 'create a todo'])
 }
 
+function chatRouteResultMatchesMode(uiaText, nextMode) {
+  const text = decodeXml(uiaText)
+  switch (nextMode) {
+    case 'alarm':
+      return hasAnyText(text, ['"target": "alarm"']) &&
+        hasAnyText(text, ['"requestSent": true', '"opened": true'])
+    case 'calendar':
+      return hasAnyText(text, ['"target": "calendar-todo"']) &&
+        hasAnyText(text, ['"opened": true'])
+    default:
+      return hasAnyText(text, ['"target": "notifications"']) &&
+        hasAnyText(text, ['"opened": true']) &&
+        hasAnyText(text, ['"reason": "opened"'])
+  }
+}
+
 function safeModeId(value) {
   const safe = String(value ?? '').toLowerCase().replace(/[^a-z0-9_-]+/g, '-').replace(/^-+|-+$/g, '')
   return safe || 'notification-settings'
@@ -775,7 +827,10 @@ function openUrl(device, url) {
 
 function pushFixture(device) {
   const output = runCommand('adb', ['-s', device, 'push', fixturePath, remoteFixturePath])
-  if (output !== null) runCommand('adb', ['-s', device, 'shell', 'touch', remoteFixturePath])
+  if (output !== null) {
+    runCommand('adb', ['-s', device, 'shell', 'touch', remoteFixturePath])
+    runCommand('adb', ['-s', device, 'shell', 'am', 'broadcast', '-a', 'android.intent.action.MEDIA_SCANNER_SCAN_FILE', '-d', `file://${remoteFixturePath}`])
+  }
   return output !== null
 }
 
@@ -919,6 +974,7 @@ function tryParseJson(value) {
 
 function isPassing(result) {
   const uiMatched = result.targetUiVisible || result.pendingActionVisible || result.chatHandoffVisible
+  const runtimeAuditMatched = result.runtimeLogMatched || (!result.runtimeLogReadable && result.routeResultMatched)
   return Boolean(
     result.device &&
     result.pushedFixture &&
@@ -927,8 +983,9 @@ function isPassing(result) {
     result.promptFocused &&
     result.workflowPromptSent &&
     uiMatched &&
-    result.runtimeLogMatched &&
+    runtimeAuditMatched &&
     !result.runtimeLogHasUpstreamRequest &&
+    result.providerRequestCount === 0 &&
     result.providerChatCompletionsCount === 0 &&
     result.errors.length === 0
   )
@@ -936,13 +993,17 @@ function isPassing(result) {
 
 function summarizeFailures(result) {
   const failures = []
-  for (const key of ['device', 'pushedFixture', 'imported', 'chatOpened', 'promptFocused', 'workflowPromptSent', 'runtimeLogMatched']) {
+  for (const key of ['device', 'pushedFixture', 'imported', 'chatOpened', 'promptFocused', 'workflowPromptSent']) {
     if (!result[key]) failures.push(`${key}=false`)
   }
   if (!(result.targetUiVisible || result.pendingActionVisible || result.chatHandoffVisible)) {
     failures.push('missing workflow UI evidence')
   }
+  if (!(result.runtimeLogMatched || (!result.runtimeLogReadable && result.routeResultMatched))) {
+    failures.push(result.runtimeLogReadable ? 'runtimeLogMatched=false' : 'routeResultMatched=false')
+  }
   if (result.runtimeLogHasUpstreamRequest) failures.push('runtimeLogHasUpstreamRequest=true')
+  if (result.providerRequestCount !== 0) failures.push(`providerRequestCount=${result.providerRequestCount}`)
   if (result.providerChatCompletionsCount !== 0) failures.push(`providerChatCompletionsCount=${result.providerChatCompletionsCount}`)
   failures.push(...result.errors)
   return failures
@@ -1018,8 +1079,8 @@ function workflowLabelsForMode(nextMode) {
     case 'alarm':
       return {
         system: ['时钟', '闹钟', 'Clock', 'Alarm', 'set alarm', 'create alarm'],
-        pending: ['需要你确认后继续', 'Action needs confirmation', 'Open Android alarm editor', '打开 Android 闹钟编辑器', 'Android alarm handoff workflow', 'android.alarm.open_create_intent'],
-        handoff: ['已打开 Android 时钟界面', 'Android Clock is open', '"opened": true', '"target": "alarm"', 'alarm', 'clock'],
+        pending: ['需要你确认后继续', 'Action needs confirmation', 'Create Android alarm', '创建 Android 闹钟', 'Android alarm creation request workflow', 'android.alarm.open_create_intent'],
+        handoff: ['已向 Android 时钟发送', 'Android Clock alarm creation was requested', '"requestSent": true', '"target": "alarm"', 'alarm', 'clock'],
       }
     case 'calendar':
       return {

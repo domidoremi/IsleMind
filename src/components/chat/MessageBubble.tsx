@@ -1,13 +1,12 @@
 import type { ReactNode } from 'react'
 import { memo, useEffect, useMemo, useRef, useState } from 'react'
-import { ScrollView, Text, View, useWindowDimensions } from 'react-native'
+import { Pressable, ScrollView, StyleSheet, Text, View, useWindowDimensions } from 'react-native'
 import { MotiView } from 'moti'
 import type { TFunction } from 'i18next'
 import { useTranslation } from 'react-i18next'
 import * as Haptics from 'expo-haptics'
 import { useRouter } from 'expo-router'
 import { Gesture, GestureDetector } from 'react-native-gesture-handler'
-import { StyleSheet } from 'react-native'
 import { runOnJS } from 'react-native-reanimated'
 import type { ChatErrorCode, Message, ProcessTrace } from '@/types'
 import { useAppTheme } from '@/hooks/useAppTheme'
@@ -15,6 +14,7 @@ import { messageAnimationForMotion } from '@/theme/animation'
 import { AppIcon, appIconStroke } from '@/components/ui/AppIcon'
 import { IslePressable } from '@/components/ui/isle'
 import { useSettingsStore } from '@/store/settingsStore'
+import { mergeMessageWithStreamingTraceSnapshot, useChatStreamingStore } from '@/store/chatStreamingStore'
 import { MessageContent } from './MessageContent'
 import {
   collectVisibleProcessTraces,
@@ -34,6 +34,7 @@ import { getAgentEvidenceRepairActionFromMessage, getAgentPendingActionFromMessa
 import { clampAgentOutput, redactSensitiveText } from '@/services/agent/agentTrace'
 import { sanitizeInternalChatOutputText } from '@/services/chatInternalOutputGuard'
 import { estimateTextTokens } from '@/services/tokenUsage'
+import { summarizeWorkArtifact } from '@/utils/workArtifact'
 
 const STREAMING_LAYOUT_TEXT_STEP = 160
 const STREAMING_RENDER_TEXT_STEP = 120
@@ -118,12 +119,26 @@ function MessageBubbleComponent({
   const [localActionsOpen, setLocalActionsOpen] = useState(false)
   const [processExpanded, setProcessExpanded] = useState(false)
   const previousActionBarOpen = useRef<boolean | null>(null)
+  const actionButtonPressLock = useRef(false)
   const isUser = message.role === 'user'
   const isStreamingContent = !isUser && (message.status === 'streaming' || message.status === 'sending')
-  const displayText = sanitizeInternalChatOutputText(message.responseText ?? message.content)
+  const liveStreamingTraceSnapshot = useChatStreamingStore((state) =>
+    isStreamingContent ? state.streamingTraces.get(`${conversationId}:${message.id}`) : undefined
+  )
+  const liveStreamingText = useChatStreamingStore((state) =>
+    isStreamingContent ? state.streamingText.get(`${conversationId}:${message.id}`) : undefined
+  )
+  const displayMessage = useMemo(
+    () => mergeMessageWithStreamingTraceSnapshot(message, liveStreamingTraceSnapshot),
+    [liveStreamingTraceSnapshot, message]
+  )
+  const displayText = sanitizeInternalChatOutputText(liveStreamingText ?? message.responseText ?? message.content)
   const renderedDisplayText = useThrottledStreamingText(displayText, isStreamingContent)
   const streamingLayoutStep = isStreamingContent ? Math.floor(displayText.length / STREAMING_LAYOUT_TEXT_STEP) : 0
-  const processTraces = useMemo(() => collectVisibleProcessTraces(message), [message.reasoning, message.retrievalTrace, message.toolCalls])
+  const processTraces = useMemo(
+    () => collectVisibleProcessTraces(displayMessage),
+    [displayMessage.reasoning, displayMessage.retrievalTrace, displayMessage.toolCalls]
+  )
   const processLayerVisible = !isUser && (
     isStreamingContent ||
     showThinkingStatus ||
@@ -196,6 +211,12 @@ function MessageBubbleComponent({
     onConfigure,
     onTestModel,
   })
+  const hasDefaultWorkArtifactActions = useMemo(() => {
+    if (isUser || isStreamingContent || !displayText.trim()) return false
+    if (!onCopyWorkArtifact && !onContinueWorkArtifact) return false
+    return summarizeWorkArtifact(displayText).hasWorkArtifact
+  }, [displayText, isStreamingContent, isUser, onCopyWorkArtifact, onContinueWorkArtifact])
+  const actionBarVisible = actionBarOpen
 
   useEffect(() => {
     setLocalActionsOpen(false)
@@ -210,9 +231,9 @@ function MessageBubbleComponent({
 
   useEffect(() => {
     const previousOpen = previousActionBarOpen.current
-    previousActionBarOpen.current = actionBarOpen
-    if (previousOpen === null ? actionBarOpen : previousOpen !== actionBarOpen) onLayoutChangeRequest?.()
-  }, [actionBarOpen, onLayoutChangeRequest])
+    previousActionBarOpen.current = actionBarVisible
+    if (previousOpen === null ? actionBarVisible : previousOpen !== actionBarVisible) onLayoutChangeRequest?.()
+  }, [actionBarVisible, onLayoutChangeRequest])
 
   function setActionBarOpen(open: boolean) {
     setLocalActionsOpen(open)
@@ -223,6 +244,16 @@ function MessageBubbleComponent({
     if (!canOpenActions) return
     if (hapticsEnabled) void Haptics.selectionAsync()
     setActionBarOpen(!actionBarOpen)
+  }
+
+  function openActionBarFromButton() {
+    if (!canOpenActions || actionBarOpen || actionButtonPressLock.current) return
+    actionButtonPressLock.current = true
+    requestAnimationFrame(() => {
+      actionButtonPressLock.current = false
+    })
+    if (hapticsEnabled) void Haptics.selectionAsync()
+    setActionBarOpen(true)
   }
 
   function toggleProcessLayer() {
@@ -245,11 +276,11 @@ function MessageBubbleComponent({
     })
 
   function handleBubbleLayout() {
-    if (isStreamingContent || actionBarOpen || processLayerVisible) onLayoutChangeRequest?.()
+    if (isStreamingContent || actionBarVisible || processLayerVisible) onLayoutChangeRequest?.()
   }
 
   return (
-    <View onLayout={handleBubbleLayout} style={{ marginBottom: actionBarOpen ? 20 : 16 }}>
+    <View onLayout={handleBubbleLayout} style={{ marginBottom: actionBarVisible ? 20 : 16 }}>
       <MotiView
         {...messageAnimationForMotion(index, motion)}
         style={{
@@ -286,6 +317,30 @@ function MessageBubbleComponent({
                 tokenText={statusTokenText}
               />
             ) : null}
+            {canOpenActions && !hasDefaultWorkArtifactActions ? (
+              <Pressable
+                onPressIn={openActionBarFromButton}
+                onPress={openActionBarFromButton}
+                accessible
+                accessibilityRole="button"
+                accessibilityLabel={t('messageBubble.actions')}
+                hitSlop={8}
+                style={{
+                  alignSelf: isUser ? 'flex-start' : 'flex-end',
+                  marginBottom: 8,
+                  width: 40,
+                  height: 36,
+                  borderRadius: colors.ui.radius.controlSmall,
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  backgroundColor: actionChrome.itemSurface,
+                  borderWidth: StyleSheet.hairlineWidth,
+                  borderColor: actionChrome.itemBorder,
+                }}
+              >
+                <AppIcon name="more" color={colors.textSecondary} size={16} strokeWidth={appIconStroke.strong} />
+              </Pressable>
+            ) : null}
             <GestureDetector gesture={tapBubble}>
               <View>
                 <MessageBody
@@ -298,10 +353,17 @@ function MessageBubbleComponent({
                 />
               </View>
             </GestureDetector>
+            {hasDefaultWorkArtifactActions ? (
+              <WorkArtifactQuickActions
+                hapticsEnabled={hapticsEnabled}
+                onCopy={onCopyWorkArtifact ? () => onCopyWorkArtifact(message) : undefined}
+                onContinue={onContinueWorkArtifact ? () => onContinueWorkArtifact(message) : undefined}
+              />
+            ) : null}
           </IslePanel>
         </View>
 
-        {actionBarOpen ? (
+        {actionBarVisible ? (
           <MessageActionBar
             message={message}
             displayText={displayText}
@@ -1032,6 +1094,23 @@ function MessageActionBar({
   const pendingAgentAction = !isUser ? getAgentPendingActionFromMessage(message) : undefined
   const workflowContinuationAction = !isUser ? getAgentWorkflowContinuationActionFromMessage(message) : undefined
   const continueAgentWorkflowLabel = agentWorkflowContinuationActionLabel(t, pendingAgentAction, workflowContinuationAction)
+  const hasActionRow = (
+    canCopy ||
+    canCopyProcessTrace ||
+    canSpeak ||
+    canRegenerate ||
+    showContinueAgentWorkflow ||
+    showConfirmAgentAction ||
+    showPrepareAndroidUndo ||
+    showRepairAgentEvidence ||
+    showOpenWorkflowSettings ||
+    showSaveAgentWorkflow ||
+    (canUseWorkArtifact && !!onCopyWorkArtifact) ||
+    (canUseWorkArtifact && !!onContinueWorkArtifact) ||
+    (showErrorActions && !!onConfigure) ||
+    (showErrorActions && !!onTestModel) ||
+    (showErrorActions && !!onRetry)
+  )
 
   useEffect(() => {
     return () => {
@@ -1068,12 +1147,13 @@ function MessageActionBar({
       style={{
         alignSelf: isUser ? 'flex-end' : 'flex-start',
         marginTop: 6,
-        minHeight: 52,
+        height: hasActionRow && canDelete ? 114 : 58,
         maxWidth: '100%',
         borderRadius: colors.ui.radius.controlLarge,
         backgroundColor: actionChrome.barSurface,
         borderWidth: StyleSheet.hairlineWidth,
         borderColor: actionChrome.barBorder,
+        overflow: 'hidden',
         shadowColor: colors.shadowTint,
         shadowOpacity: colors.ui.cartoon ? Math.min(colors.ui.card.shadowOpacity, 0.012) : 0,
         shadowRadius: colors.ui.cartoon ? Math.max(2, colors.ui.card.shadowRadius - 5) : 0,
@@ -1081,103 +1161,214 @@ function MessageActionBar({
         elevation: colors.ui.cartoon && colors.ui.card.shadowOpacity > 0 ? 1 : 0,
       }}
     >
-      <ScrollView
-        horizontal
-        showsHorizontalScrollIndicator={false}
-        keyboardShouldPersistTaps="handled"
-        accessibilityLabel={t('messageBubble.actions')}
-        contentContainerStyle={{
-          minHeight: 50,
-          paddingHorizontal: 4,
-          paddingVertical: 4,
-          flexDirection: 'row',
-          alignItems: 'center',
-          gap: 3,
-        }}
-        style={{ maxWidth: '100%' }}
-      >
-      {canCopy ? (
-        <ActionIconButton label={t('common.copy')} disabled={actionLocked} onPress={run(onCopy)}>
-          <AppIcon name="copy" color={iconColor} size={16} strokeWidth={appIconStroke.strong} />
-        </ActionIconButton>
-      ) : null}
-      {canCopyProcessTrace ? (
-        <ActionIconButton label={t('messageBubble.copyProcessTrace')} disabled={actionLocked} onPress={run(onCopyProcessTrace)}>
-          <AppIcon name="trace" color={iconColor} size={16} strokeWidth={appIconStroke.strong} />
-        </ActionIconButton>
-      ) : null}
-      {canSpeak ? (
-        <ActionIconButton label={t('messageBubble.speak')} disabled={actionLocked} onPress={run(onSpeak)}>
-          <AppIcon name="voice" color={iconColor} size={16} strokeWidth={appIconStroke.strong} />
-        </ActionIconButton>
-      ) : null}
-      {canRegenerate ? (
-        <ActionIconButton label={t('messageBubble.regenerate')} disabled={actionLocked} onPress={run(onRegenerate)}>
-          <AppIcon name="regenerate" color={iconColor} size={16} strokeWidth={appIconStroke.strong} />
-        </ActionIconButton>
-      ) : null}
-      {showContinueAgentWorkflow ? (
-        <ActionIconButton label={continueAgentWorkflowLabel} disabled={actionLocked} onPress={run(onContinueAgentWorkflow)}>
-          <AppIcon name="back-next" color={colors.ui.icon.accentForeground} size={16} strokeWidth={appIconStroke.strong} />
-        </ActionIconButton>
-      ) : null}
-      {showConfirmAgentAction ? (
-        <ActionIconButton label={t('messageBubble.confirmAgentAction')} disabled={actionLocked} onPress={run(onConfirmAgentAction)}>
-          <AppIcon name="shield" color={colors.ui.icon.accentForeground} size={16} strokeWidth={appIconStroke.strong} />
-        </ActionIconButton>
-      ) : null}
-      {showPrepareAndroidUndo ? (
-        <ActionIconButton label={t('messageBubble.prepareAndroidUndo')} disabled={actionLocked} onPress={run(onPrepareAndroidUndo)}>
-          <AppIcon name="undo" color={colors.ui.icon.accentForeground} size={16} strokeWidth={appIconStroke.strong} />
-        </ActionIconButton>
-      ) : null}
-      {showRepairAgentEvidence ? (
-        <ActionIconButton label={t('messageBubble.repairAgentEvidence')} disabled={actionLocked} onPress={run(onRepairAgentEvidence)}>
-          <AppIcon name="search" color={colors.ui.icon.accentForeground} size={16} strokeWidth={appIconStroke.strong} />
-        </ActionIconButton>
-      ) : null}
-      {showOpenWorkflowSettings ? (
-        <ActionIconButton label={reviewWorkflowSettingsLabel} disabled={actionLocked} onPress={run(onConfigure)}>
-          <AppIcon name="settings-sliders" color={colors.ui.icon.accentForeground} size={16} strokeWidth={appIconStroke.strong} />
-        </ActionIconButton>
-      ) : null}
-      {showSaveAgentWorkflow ? (
-        <ActionIconButton label={t('messageBubble.saveAgentWorkflow')} disabled={actionLocked} onPress={run(onSaveAgentWorkflow)}>
-          <AppIcon name="workflow" color={colors.ui.icon.accentForeground} size={16} strokeWidth={appIconStroke.strong} />
-        </ActionIconButton>
-      ) : null}
-      {canUseWorkArtifact && onCopyWorkArtifact ? (
-        <ActionIconButton label={t('messageBubble.copyWorkArtifact')} disabled={actionLocked} onPress={run(onCopyWorkArtifact)}>
-          <AppIcon name="list-check" color={iconColor} size={16} strokeWidth={appIconStroke.strong} />
-        </ActionIconButton>
-      ) : null}
-      {canUseWorkArtifact && onContinueWorkArtifact ? (
-        <ActionIconButton label={t('messageBubble.continueWorkArtifact')} disabled={actionLocked} onPress={run(onContinueWorkArtifact)}>
-          <AppIcon name="spark" color={iconColor} size={16} strokeWidth={appIconStroke.strong} />
-        </ActionIconButton>
-      ) : null}
-      {showErrorActions && onConfigure ? (
-        <ActionIconButton label={t('messageBubble.configure')} disabled={actionLocked} onPress={run(onConfigure)} danger>
-          <AppIcon name="settings-sliders" color={colors.ui.tone.danger.foreground} size={16} strokeWidth={appIconStroke.strong} />
-        </ActionIconButton>
-      ) : null}
-      {showErrorActions && onTestModel ? (
-        <ActionIconButton label={t('messageBubble.test')} disabled={actionLocked} onPress={run(onTestModel)} danger>
-          <AppIcon name="zap" color={colors.ui.tone.danger.foreground} size={16} strokeWidth={appIconStroke.strong} />
-        </ActionIconButton>
-      ) : null}
-      {showErrorActions && onRetry ? (
-        <ActionIconButton label={t('messageBubble.retry')} disabled={actionLocked} onPress={run(onRetry)} danger>
-          <AppIcon name="retry" color={colors.ui.tone.danger.foreground} size={16} strokeWidth={appIconStroke.strong} />
-        </ActionIconButton>
+      {hasActionRow ? (
+        <ScrollView
+          horizontal
+          showsHorizontalScrollIndicator={false}
+          keyboardShouldPersistTaps="handled"
+          accessibilityLabel={t('messageBubble.actions')}
+          contentContainerStyle={{
+            minHeight: 50,
+            paddingHorizontal: 4,
+            paddingVertical: 4,
+            flexDirection: 'row',
+            alignItems: 'center',
+            gap: 3,
+          }}
+          style={{ height: 58, maxHeight: 58, maxWidth: '100%' }}
+        >
+          {canCopy ? (
+            <ActionIconButton label={t('common.copy')} disabled={actionLocked} onPress={run(onCopy)}>
+              <AppIcon name="copy" color={iconColor} size={16} strokeWidth={appIconStroke.strong} />
+            </ActionIconButton>
+          ) : null}
+          {canCopyProcessTrace ? (
+            <ActionIconButton label={t('messageBubble.copyProcessTrace')} disabled={actionLocked} onPress={run(onCopyProcessTrace)}>
+              <AppIcon name="trace" color={iconColor} size={16} strokeWidth={appIconStroke.strong} />
+            </ActionIconButton>
+          ) : null}
+          {canSpeak ? (
+            <ActionIconButton label={t('messageBubble.speak')} disabled={actionLocked} onPress={run(onSpeak)}>
+              <AppIcon name="voice" color={iconColor} size={16} strokeWidth={appIconStroke.strong} />
+            </ActionIconButton>
+          ) : null}
+          {canRegenerate ? (
+            <ActionIconButton label={t('messageBubble.regenerate')} disabled={actionLocked} onPress={run(onRegenerate)}>
+              <AppIcon name="regenerate" color={iconColor} size={16} strokeWidth={appIconStroke.strong} />
+            </ActionIconButton>
+          ) : null}
+          {showContinueAgentWorkflow ? (
+            <ActionIconButton label={continueAgentWorkflowLabel} disabled={actionLocked} onPress={run(onContinueAgentWorkflow)}>
+              <AppIcon name="back-next" color={colors.ui.icon.accentForeground} size={16} strokeWidth={appIconStroke.strong} />
+            </ActionIconButton>
+          ) : null}
+          {showConfirmAgentAction ? (
+            <ActionIconButton label={t('messageBubble.confirmAgentAction')} disabled={actionLocked} onPress={run(onConfirmAgentAction)}>
+              <AppIcon name="shield" color={colors.ui.icon.accentForeground} size={16} strokeWidth={appIconStroke.strong} />
+            </ActionIconButton>
+          ) : null}
+          {showPrepareAndroidUndo ? (
+            <ActionIconButton label={t('messageBubble.prepareAndroidUndo')} disabled={actionLocked} onPress={run(onPrepareAndroidUndo)}>
+              <AppIcon name="undo" color={colors.ui.icon.accentForeground} size={16} strokeWidth={appIconStroke.strong} />
+            </ActionIconButton>
+          ) : null}
+          {showRepairAgentEvidence ? (
+            <ActionIconButton label={t('messageBubble.repairAgentEvidence')} disabled={actionLocked} onPress={run(onRepairAgentEvidence)}>
+              <AppIcon name="search" color={colors.ui.icon.accentForeground} size={16} strokeWidth={appIconStroke.strong} />
+            </ActionIconButton>
+          ) : null}
+          {showOpenWorkflowSettings ? (
+            <ActionIconButton label={reviewWorkflowSettingsLabel} disabled={actionLocked} onPress={run(onConfigure)}>
+              <AppIcon name="settings-sliders" color={colors.ui.icon.accentForeground} size={16} strokeWidth={appIconStroke.strong} />
+            </ActionIconButton>
+          ) : null}
+          {showSaveAgentWorkflow ? (
+            <ActionIconButton label={t('messageBubble.saveAgentWorkflow')} disabled={actionLocked} onPress={run(onSaveAgentWorkflow)}>
+              <AppIcon name="workflow" color={colors.ui.icon.accentForeground} size={16} strokeWidth={appIconStroke.strong} />
+            </ActionIconButton>
+          ) : null}
+          {canUseWorkArtifact && onCopyWorkArtifact ? (
+            <ActionIconButton label={t('messageBubble.copyWorkArtifact')} disabled={actionLocked} onPress={run(onCopyWorkArtifact)}>
+              <AppIcon name="list-check" color={iconColor} size={16} strokeWidth={appIconStroke.strong} />
+            </ActionIconButton>
+          ) : null}
+          {canUseWorkArtifact && onContinueWorkArtifact ? (
+            <ActionIconButton label={t('messageBubble.continueWorkArtifact')} disabled={actionLocked} onPress={run(onContinueWorkArtifact)}>
+              <AppIcon name="spark" color={iconColor} size={16} strokeWidth={appIconStroke.strong} />
+            </ActionIconButton>
+          ) : null}
+          {showErrorActions && onConfigure ? (
+            <ActionIconButton label={t('messageBubble.configure')} disabled={actionLocked} onPress={run(onConfigure)} danger>
+              <AppIcon name="settings-sliders" color={colors.ui.tone.danger.foreground} size={16} strokeWidth={appIconStroke.strong} />
+            </ActionIconButton>
+          ) : null}
+          {showErrorActions && onTestModel ? (
+            <ActionIconButton label={t('messageBubble.test')} disabled={actionLocked} onPress={run(onTestModel)} danger>
+              <AppIcon name="zap" color={colors.ui.tone.danger.foreground} size={16} strokeWidth={appIconStroke.strong} />
+            </ActionIconButton>
+          ) : null}
+          {showErrorActions && onRetry ? (
+            <ActionIconButton label={t('messageBubble.retry')} disabled={actionLocked} onPress={run(onRetry)} danger>
+              <AppIcon name="retry" color={colors.ui.tone.danger.foreground} size={16} strokeWidth={appIconStroke.strong} />
+            </ActionIconButton>
+          ) : null}
+        </ScrollView>
       ) : null}
       {canDelete ? (
-        <ActionIconButton label={t('common.delete')} disabled={actionLocked} onPress={run(onDelete)} danger>
-          <AppIcon name="delete" color={colors.ui.tone.danger.foreground} size={16} strokeWidth={appIconStroke.strong} />
-        </ActionIconButton>
+        <View
+          style={{
+            alignSelf: 'stretch',
+            height: hasActionRow ? 56 : 58,
+            paddingHorizontal: 4,
+            paddingTop: hasActionRow ? 2 : 4,
+            paddingBottom: 4,
+            borderTopWidth: hasActionRow ? StyleSheet.hairlineWidth : 0,
+            borderTopColor: actionChrome.barBorder,
+            flexDirection: 'row',
+            alignItems: 'center',
+            justifyContent: 'flex-end',
+          }}
+        >
+          <ActionIconButton label={t('common.delete')} disabled={actionLocked} onPress={run(onDelete)} danger>
+            <AppIcon name="delete" color={colors.ui.tone.danger.foreground} size={16} strokeWidth={appIconStroke.strong} />
+          </ActionIconButton>
+        </View>
       ) : null}
-      </ScrollView>
     </MotiView>
+  )
+}
+
+function WorkArtifactQuickActions({
+  hapticsEnabled,
+  onCopy,
+  onContinue,
+}: {
+  hapticsEnabled: boolean
+  onCopy?: () => void
+  onContinue?: () => void
+}) {
+  const { colors, isGlass } = useAppTheme()
+  const { t } = useTranslation()
+  const actionChrome = resolveMessageActionChrome(colors, isGlass)
+  if (!onCopy && !onContinue) return null
+
+  function run(action?: () => void) {
+    return () => {
+      if (!action) return
+      if (hapticsEnabled) void Haptics.selectionAsync()
+      action()
+    }
+  }
+
+  return (
+    <View
+      style={{
+        alignSelf: 'flex-end',
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 6,
+        marginTop: 10,
+      }}
+    >
+      {onCopy ? (
+        <WorkArtifactQuickActionButton
+          label={t('messageBubble.copyWorkArtifact')}
+          onPress={run(onCopy)}
+          backgroundColor={actionChrome.itemSurface}
+          borderColor={actionChrome.itemBorder}
+        >
+          <AppIcon name="list-check" color={colors.textSecondary} size={16} strokeWidth={appIconStroke.strong} />
+        </WorkArtifactQuickActionButton>
+      ) : null}
+      {onContinue ? (
+        <WorkArtifactQuickActionButton
+          label={t('messageBubble.continueWorkArtifact')}
+          onPress={run(onContinue)}
+          backgroundColor={actionChrome.itemSurface}
+          borderColor={actionChrome.itemBorder}
+        >
+          <AppIcon name="spark" color={colors.ui.icon.accentForeground} size={16} strokeWidth={appIconStroke.strong} />
+        </WorkArtifactQuickActionButton>
+      ) : null}
+    </View>
+  )
+}
+
+function WorkArtifactQuickActionButton({
+  label,
+  children,
+  backgroundColor,
+  borderColor,
+  onPress,
+}: {
+  label: string
+  children: ReactNode
+  backgroundColor: string
+  borderColor: string
+  onPress: () => void
+}) {
+  const { colors } = useAppTheme()
+  return (
+    <Pressable
+      onPress={onPress}
+      accessible
+      accessibilityRole="button"
+      accessibilityLabel={label}
+      hitSlop={8}
+      style={({ pressed }) => ({
+        width: 40,
+        height: 36,
+        borderRadius: colors.ui.radius.controlSmall,
+        alignItems: 'center',
+        justifyContent: 'center',
+        backgroundColor,
+        borderWidth: StyleSheet.hairlineWidth,
+        borderColor,
+        opacity: pressed ? 0.78 : 1,
+      })}
+    >
+      {children}
+    </Pressable>
   )
 }
 

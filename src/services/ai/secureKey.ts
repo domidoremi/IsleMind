@@ -14,6 +14,7 @@ const KNOWN_SEARCH_SECURE_KEYS = [
   'islemind.key.bing-search',
   'islemind.key.custom-search',
 ] as const
+const OBSERVABILITY_SINK_API_KEY = 'islemind.key.observability-sink'
 
 export async function getSecureApiKey(providerId: string): Promise<string | null> {
   try {
@@ -79,4 +80,12 @@ export async function clearKnownSearchSecureKeys(): Promise<void> {
       // silently fail
     }
   }))
+}
+
+export async function clearKnownObservabilitySecureKeys(): Promise<void> {
+  try {
+    await deleteSecureItem(OBSERVABILITY_SINK_API_KEY)
+  } catch {
+    // silently fail
+  }
 }

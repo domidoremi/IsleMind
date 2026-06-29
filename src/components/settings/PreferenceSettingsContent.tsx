@@ -3,6 +3,7 @@ import { useTranslation } from 'react-i18next'
 import { AppIcon } from '@/components/ui/AppIcon'
 import { IsleField, IsleSection, IsleToggle } from '@/components/ui/isle'
 import { useAppTheme } from '@/hooks/useAppTheme'
+import { clampProviderPlatformOutputTokens, clampProviderPlatformTemperature } from '@/services/ai/providerParameterDefaults'
 import { useSettingsStore } from '@/store/settingsStore'
 
 export function PreferenceSettingsContent() {
@@ -32,12 +33,17 @@ export function PreferenceSettingsContent() {
             label={t('chat.temperature')}
             style={fieldFlexStyle}
             inputProps={{
-              value: String(settings.defaultTemperature ?? 0.3),
+              value: settings.defaultTemperature === undefined ? '' : String(settings.defaultTemperature),
               onChangeText: (value) => {
+                if (!value.trim()) {
+                  updateSettings({ defaultTemperature: undefined })
+                  return
+                }
                 const next = Number(value)
-                if (!Number.isNaN(next)) updateSettings({ defaultTemperature: Math.max(0, Math.min(2, next)) })
+                if (!Number.isNaN(next)) updateSettings({ defaultTemperature: clampProviderPlatformTemperature(next) })
               },
               keyboardType: 'numeric',
+              placeholder: t('preferences.followModel'),
             }}
           />
           <IsleField
@@ -51,7 +57,7 @@ export function PreferenceSettingsContent() {
                   return
                 }
                 const next = Number.parseInt(value, 10)
-                if (!Number.isNaN(next)) updateSettings({ defaultMaxTokens: Math.max(128, Math.min(128000, next)) })
+                if (!Number.isNaN(next)) updateSettings({ defaultMaxTokens: clampProviderPlatformOutputTokens(next) })
               },
               keyboardType: 'numeric',
               placeholder: t('preferences.followModel'),

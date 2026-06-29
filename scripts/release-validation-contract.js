@@ -1,3 +1,4 @@
+const path = require('node:path')
 const { defaultReleaseSmokeArch } = require('./release-artifact-contract')
 
 const defaultReleaseAppPackageName = 'com.islemind.app'
@@ -14,7 +15,9 @@ function validateReleaseProvenance(provenance, options = {}) {
   }
   validateReleaseApkEvidence(provenance.apk, issues, 'Release APK')
   validateReleaseExpectedConfig(provenance.expected, issues, { appPackageName })
-  validateReleaseInstalledPackage(provenance.installed, provenance.expected, issues)
+  validateReleaseInstalledPackage(provenance.installed, provenance.expected, issues, {
+    expectedAbi: inferReleaseApkArch(provenance.apk),
+  })
   validateReleaseSourceFreshness(provenance.sourceFreshness, issues, {
     stalePrefix: 'Source/resource file',
     staleSuffix: '; rebuild and clean-install before using this APK as current evidence.',
@@ -34,7 +37,9 @@ function validateCurrentApkSmokeResult(result, options = {}) {
     stalePrefix: 'Current APK smoke used a stale APK:',
     staleSuffix: '.',
   })
-  validateReleaseInstalledPackage(result.installed, expected, issues)
+  validateReleaseInstalledPackage(result.installed, expected, issues, {
+    expectedAbi: inferReleaseApkArch(result.apk),
+  })
   if (!result.launch?.ok) issues.push('Current APK launch smoke did not prove a running app without fatal log lines.')
   if (result.launch?.fatalLog?.fatal) issues.push('Current APK launch log contains fatal app lines.')
   if (!result.compatibility16kb?.ok) issues.push('16KB APK validation did not pass.')
@@ -44,8 +49,8 @@ function validateCurrentApkSmokeResult(result, options = {}) {
 }
 
 function validateReleaseApkEvidence(apk, issues, label, options = {}) {
-  if (!apk?.path) issues.push('No x86_64 no-model release APK was found in dist-apk.')
-  if (options.requireExists && !apk?.exists) issues.push('Canonical x86_64 no-model APK was not present when the smoke ran.')
+  if (!apk?.path) issues.push('No current release APK was found in dist-apk.')
+  if (options.requireExists && !apk?.exists) issues.push('Current release APK was not present when the smoke ran.')
   if (!apk?.sha256) issues.push(`${label} SHA256 could not be calculated.`)
   if (!apk?.sidecarSha256) issues.push(`${label} .sha256 sidecar file is missing or unreadable.`)
   if (apk?.sha256 && apk?.sidecarSha256 && apk.sha256 !== apk.sidecarSha256) issues.push(`${label} SHA256 does not match its .sha256 sidecar.`)
@@ -65,7 +70,8 @@ function validateReleaseExpectedConfig(expected, issues, options = {}) {
   if (expected?.expoVersion && expected?.packageVersion && expected.expoVersion !== expected.packageVersion) issues.push('package.json version and app.json expo.version differ.')
 }
 
-function validateReleaseInstalledPackage(installed, expected, issues) {
+function validateReleaseInstalledPackage(installed, expected, issues, options = {}) {
+  const expectedAbi = options.expectedAbi || defaultReleaseSmokeArch
   if (!installed) {
     issues.push('Installed package provenance was not collected from an Android device or valid cache.')
     return
@@ -74,8 +80,12 @@ function validateReleaseInstalledPackage(installed, expected, issues) {
   if (expected?.expoVersion && installed.versionName !== expected.expoVersion) issues.push(`Installed versionName ${installed.versionName ?? 'missing'} does not match app.json version ${expected.expoVersion}.`)
   if (expected?.androidVersionCode != null && installed.versionCode !== expected.androidVersionCode) issues.push(`Installed versionCode ${installed.versionCode ?? 'missing'} does not match app.json android.versionCode ${expected.androidVersionCode}.`)
   if (expected?.androidPackage && !String(installed.packagePath ?? '').includes(expected.androidPackage)) issues.push(`Installed package path does not include expected Android package ${expected.androidPackage}.`)
-  if (installed.primaryCpuAbi !== defaultReleaseSmokeArch) issues.push(`Installed primaryCpuAbi is ${installed.primaryCpuAbi ?? 'missing'}, expected ${defaultReleaseSmokeArch}.`)
-  if (installed.deviceAbi && installed.deviceAbi !== defaultReleaseSmokeArch) issues.push(`Device ABI is ${installed.deviceAbi}, expected ${defaultReleaseSmokeArch}.`)
+  if (!isInstalledAbiCompatible(installed.primaryCpuAbi, expectedAbi)) {
+    issues.push(`Installed primaryCpuAbi is ${installed.primaryCpuAbi ?? 'missing'}, expected ${formatExpectedAbi(expectedAbi)}.`)
+  }
+  if (installed.deviceAbi && !isInstalledAbiCompatible(installed.deviceAbi, expectedAbi)) {
+    issues.push(`Device ABI is ${installed.deviceAbi}, expected ${formatExpectedAbi(expectedAbi)}.`)
+  }
   if (!installed.firstInstallTime || !installed.lastUpdateTime) issues.push('Installed package timestamps are missing.')
   if (!installed.cleanInstall) issues.push(`Installed package timestamps are outside the ${cleanInstallWindowMs}ms clean-install window, so clean install is not proven.`)
   if (!Number.isFinite(installed.cleanInstallWindowMs)) {
@@ -85,6 +95,26 @@ function validateReleaseInstalledPackage(installed, expected, issues) {
   } else if (installed.cleanInstallWindowMs > cleanInstallWindowMs) {
     issues.push(`Installed package clean-install window ${installed.cleanInstallWindowMs}ms exceeds ${cleanInstallWindowMs}ms.`)
   }
+}
+
+function inferReleaseApkArch(apk) {
+  const name = path.basename(String(apk?.path ?? ''))
+  const match = name.match(/^IsleMind-[^-]+-(.+)-(?:no-model|with-model-small)\.apk$/)
+  return match?.[1] || defaultReleaseSmokeArch
+}
+
+function isInstalledAbiCompatible(installedAbi, releaseArch = defaultReleaseSmokeArch) {
+  const abi = String(installedAbi ?? '').trim()
+  if (!abi) return false
+  if (releaseArch === 'universal-64') return abi === 'arm64-v8a' || abi === 'x86_64'
+  if (releaseArch === 'armeabi-v7a-legacy') return abi === 'armeabi-v7a'
+  return abi === releaseArch
+}
+
+function formatExpectedAbi(releaseArch) {
+  if (releaseArch === 'universal-64') return 'arm64-v8a or x86_64'
+  if (releaseArch === 'armeabi-v7a-legacy') return 'armeabi-v7a'
+  return releaseArch
 }
 
 function cleanInstallState(firstInstallTime, lastUpdateTime) {
@@ -128,6 +158,8 @@ module.exports = {
   cleanInstallState,
   cleanInstallWindowMs,
   defaultReleaseAppPackageName,
+  inferReleaseApkArch,
+  isInstalledAbiCompatible,
   defaultReleaseSmokeArch,
   validateCurrentApkSmokeResult,
   validateReleaseProvenance,

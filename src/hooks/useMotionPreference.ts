@@ -1,19 +1,21 @@
 import { useEffect, useState } from 'react'
-import { AccessibilityInfo } from 'react-native'
+import { AccessibilityInfo, Platform } from 'react-native'
 
 export type MotionIntensity = 'full' | 'reduced' | 'none'
 
+const DEFAULT_MOTION_INTENSITY: MotionIntensity = Platform.OS === 'android' ? 'reduced' : 'full'
+
 export function useMotionPreference(): MotionIntensity {
-  const [intensity, setIntensity] = useState<MotionIntensity>('full')
+  const [intensity, setIntensity] = useState<MotionIntensity>(DEFAULT_MOTION_INTENSITY)
 
   useEffect(() => {
     let mounted = true
     void AccessibilityInfo.isReduceMotionEnabled().then((enabled) => {
-      if (mounted) setIntensity(enabled ? 'reduced' : 'full')
+      if (mounted) setIntensity(enabled ? 'reduced' : DEFAULT_MOTION_INTENSITY)
     })
 
     const subscription = AccessibilityInfo.addEventListener('reduceMotionChanged', (enabled) => {
-      setIntensity(enabled ? 'reduced' : 'full')
+      setIntensity(enabled ? 'reduced' : DEFAULT_MOTION_INTENSITY)
     })
 
     return () => {

@@ -25,111 +25,9 @@
     "openExternal": "Open externally",
     "refresh": "Refresh",
     "loading": "Loading",
-    "saved": "Saved"
-  },
-  "onboarding": {
-    "skip": "Skip",
-    "dragHint": "Drag the light or tap to continue",
-    "tapHint": "Tap to continue",
-    "awaken": {
-      "eyebrow": "Welcome to IsleMind",
-      "title": "Get Isle ready for your work",
-      "body": "Set your defaults in about a minute. You can change them later in Settings.",
-      "action": "Start",
-      "signals": {
-        "local": "Chats, knowledge, and preferences stay local-first",
-        "private": "Keys are used only for the providers you configure",
-        "ready": "After setup, you return Home ready to type"
-      }
-    },
-    "privacy": {
-      "eyebrow": "Privacy boundary",
-      "title": "Important data stays under your control",
-      "body": "IsleMind keeps major capabilities separately configurable so you can enable them one by one.",
-      "action": "Review",
-      "beacons": {
-        "chat": {
-          "title": "Chat history",
-          "body": "Stored locally, exportable, and clearable."
-        },
-        "key": {
-          "title": "Provider keys",
-          "body": "Used only for the model endpoints you choose."
-        },
-        "knowledge": {
-          "title": "Knowledge and memory",
-          "body": "Enable, delete, or re-index them independently."
-        }
-      }
-    },
-    "companion": {
-      "eyebrow": "Working style",
-      "title": "Choose Isle's default tone",
-      "body": "This shapes the first chat tendency without limiting later instructions.",
-      "action": "Continue",
-      "modes": {
-        "concise": {
-          "title": "Concise",
-          "body": "Prioritizes short answers, conclusions, and executable steps."
-        },
-        "research": {
-          "title": "Research",
-          "body": "Focuses on context, sources, evidence, and multiple angles."
-        },
-        "creative": {
-          "title": "Creative",
-          "body": "Useful for writing, naming, brainstorming, and divergent options."
-        },
-        "engineering": {
-          "title": "Engineering",
-          "body": "Leans toward code, architecture, debugging, and verifiable implementation paths."
-        },
-        "companion": {
-          "title": "Companion",
-          "body": "A softer tone for organizing thoughts and ongoing conversation."
-        }
-      }
-    },
-    "capability": {
-      "eyebrow": "Capability entry points",
-      "title": "Enable extensions as needed",
-      "body": "Search, knowledge, memory, and skills can each be enabled independently.",
-      "action": "Got it",
-      "providerLater": "No provider yet is fine. Configure one later from the top bar or Settings.",
-      "items": {
-        "knowledge": {
-          "title": "Local knowledge",
-          "body": "Import material and cite it in answers."
-        },
-        "memory": {
-          "title": "Long-term memory",
-          "body": "Keep confirmed personal preferences."
-        },
-        "search": {
-          "title": "Web search",
-          "body": "Connect search only when fresh information is needed."
-        },
-        "skills": {
-          "title": "Skill",
-          "body": "Use preset capabilities for specialized work."
-        }
-      }
-    },
-    "firstPrompt": {
-      "eyebrow": "First prompt",
-      "title": "Start with one question",
-      "body": "Choose a sample, or finish and type your own.",
-      "action": "Enter chat",
-      "samples": {
-        "concise": "Turn my three tasks for today into the shortest executable work artifact.\n\nInput:\n- Tasks:\n- Available time:\n- Must avoid:\n\nOutput must include these exact section headings:\n1. Structured summary\n2. Decision log\n3. Action items (owner / next step / deadline or trigger)\n4. Risks and blockers\n5. Open questions\n6. Evidence still needed\n7. A short version I can copy to someone else",
-        "research": "Help me compare two options and list the key evidence I need to verify.\n\nInput:\n- Option A:\n- Option B:\n\nOutput must include these exact section headings:\n1. Structured summary\n2. Decision log\n3. Action items (owner / next step / deadline or trigger)\n4. Risks and blockers\n5. Open questions\n6. Evidence still needed\n7. A short version that can be sent to collaborators",
-        "creative": "Generate naming directions for a private AI workspace.\n\nInput:\n- Mood: warm, restrained, reliable\n- Avoid: exaggerated or marketing-heavy names\n\nOutput must include these exact section headings:\n1. Structured summary\n2. Decision log\n3. Action items (owner / next step / deadline or trigger)\n4. Risks and blockers\n5. Open questions\n6. Evidence still needed\n7. A short version that can be sent to collaborators",
-        "engineering": "Break a complex feature into verifiable development steps.\n\nInput:\n- Feature goal:\n- Current constraints:\n\nOutput must include these exact section headings:\n1. Structured summary\n2. Decision log\n3. Action items (owner / next step / deadline or trigger)\n4. Risks and blockers\n5. Open questions\n6. Evidence still needed (Verification command or evidence for each step)\n7. A short version that can be sent to collaborators",
-        "companion": "Help me untangle what I am stuck on and suggest the next step.\n\nInput:\n- What is stuck:\n- What I have tried:\n\nOutput must include these exact section headings:\n1. Structured summary\n2. Decision log\n3. Action items (owner / next step / deadline or trigger)\n4. Risks and blockers\n5. Open questions\n6. Evidence still needed\n7. A short version that can be sent to collaborators",
-        "organize": "Organize the following ideas into an executable structure.\n\nInput:\n\n\nOutput must include these exact section headings:\n1. Structured summary\n2. Decision log\n3. Action items (owner / next step / deadline or trigger)\n4. Risks and blockers\n5. Open questions\n6. Evidence still needed\n7. A version I can copy to someone else",
-        "plan": "Make a lightweight but executable plan for the next week.\n\nInput:\n- Weekly goal:\n- Time limits:\n\nOutput must include these exact section headings:\n1. Structured summary\n2. Decision log\n3. Action items (owner / next step / deadline or trigger)\n4. Risks and blockers\n5. Open questions\n6. Evidence still needed\n7. A short version that can be sent to collaborators"
-      }
-    }
+    "saved": "Saved",
+    "none": "None",
+    "unknown": "Unknown"
   },
   "chat": {
     "newConversation": "New Chat",
@@ -214,6 +112,8 @@
     "maxTokensAccessibilityHint": "Enter an output token limit from 128 to {{limit}}.",
     "topP": "Top P",
     "topPAccessibilityHint": "Enter a value from 0 to 1.",
+    "topK": "Top K",
+    "topKAccessibilityHint": "Enter a positive integer. It is sent only when model metadata declares support.",
     "streamingEnabled": "Streaming",
     "sendMessage": "Send message",
     "sendMessageAccessibilityHint": "Sends the current message when input is ready.",
@@ -249,6 +149,7 @@
     "composerDraftStatus": "{{count}}/{{limit}} characters",
     "composerDraftStatusWithAttachments": "{{count}}/{{limit}} characters · {{attachments}} attachments",
     "composerDraftRemaining": "{{count}} left",
+    "composerDraftExceeded": "{{count}} characters over the limit",
     "attachmentUnavailable": "Attachment unavailable",
     "fileTooLarge20": "Files cannot exceed 20MB.",
     "attachmentReadFailed": "Could not read this attachment. Try another file.",
@@ -286,6 +187,7 @@
     "noProviderModelMatchesDescription": "Clear search, or enter a provider or model name.",
     "notSelected": "Not selected",
     "none": "None",
+    "unknown": "Unknown",
     "deprecated": "Deprecated",
     "providerNoModels": "This provider has no available models.",
     "providerNoModelsSyncHint": "This provider has no available models. Go to Providers to sync and test.",
@@ -333,6 +235,14 @@
     "pendingSendFailedMessage": "The queued message was not sent.",
     "sendFailed": "Send failed",
     "sendFailedMessage": "The message was not sent. Try again later.",
+    "runtimeRepairRetryPrompt": "Retry the last failed turn with this runtime repair context. Keep the original user intent, adjust the provider/tool/context path if the repair target calls for it, and explain any remaining blocker before retrying.\n\nPrevious user request: {{previousUserMessage}}\nFailure summary: {{failureSummary}}\nRepair severity: {{severity}}\nRepair action: {{action}}\nTarget: {{target}}\nRuntime event: {{event}}\nLatest event id: {{eventId}}\nScope: {{scope}}\nIssue codes: {{issueCodes}}\nEvent count: {{eventCount}}\nSummary: {{summary}}\n\nStructured repair payload:\n{{payloadJson}}",
+    "runtimeRepairIntentTitle": "Repair replay ready",
+    "runtimeRepairIntentDetail": "{{scope}} · {{summary}}",
+    "runtimeRepairIntentMeta": "{{severity}} · {{action}} · {{target}} · events {{eventCount}}",
+    "runtimeRepairIntentIssues": "Issues {{issueCodes}}",
+    "runtimeRepairIntentEventId": "Payload {{schema}} · steps {{stepCount}} · event {{eventId}}",
+    "runtimeRepairIntentSend": "Send repair replay",
+    "runtimeRepairIntentApplyDraft": "Restore draft",
     "interruptedSendFailedMessage": "The interrupt message was not sent.",
     "modelAvailable": "Model available",
     "modelUnavailable": "Model unavailable",
@@ -548,6 +458,7 @@
   },
   "androidTool": {
     "alarmIntentOpened": "Android Clock is open for {{time}}{{messageSuffix}}. Confirm it in the system Clock app to create the alarm.",
+    "alarmCreationRequested": "Android Clock alarm creation was requested for {{time}}{{messageSuffix}}. If the Clock app still shows an editor, confirm it there.",
     "alarmMessageSuffix": " with label \"{{message}}\"",
     "calendarEventIntentOpened": "Android Calendar is open for \"{{title}}\" at {{time}}. Confirm it in the system Calendar app to create the event.",
     "reminderIntentOpened": "Android Calendar is open for the reminder \"{{title}}\" due {{time}}. Confirm it in the system app to create it.",
@@ -579,14 +490,16 @@
     "androidPendingApkInstallerSummary": "IsleMind can only hand the APK to the Android system installer. The system installer requires your confirmation; silent install is unsupported.",
     "androidPendingClearCacheTitle": "Clear IsleMind app cache",
     "androidPendingClearCacheSummary": "Only IsleMind app-cache entries are eligible. User files, arbitrary shared storage cleanup, and full-phone cleaning are unsupported.",
-    "androidPendingAlarmTitle": "Open Android alarm editor",
-    "androidPendingAlarmSummary": "IsleMind opens the Android Clock UI with the requested alarm fields. The alarm is created only after you confirm it in the system app.",
+    "androidPendingAlarmTitle": "Create Android alarm",
+    "androidPendingAlarmSummary": "IsleMind asks Android Clock to create the alarm directly. If the Clock app requires confirmation, it opens the editor for you to confirm.",
     "androidPendingAlarmDetails": "Time {{time}}",
     "androidPendingAlarmDetailsWithLabel": "Time {{time}} · label {{label}}",
     "androidPendingCalendarTitle": "Open Android calendar editor",
     "androidPendingCalendarSummary": "IsleMind opens the Android Calendar UI with the requested entry fields. The reminder or event is created only after you confirm it in the system app.",
     "androidPendingCalendarDetailsWithTime": "{{title}} · {{time}}",
     "androidPendingReminderDetailsWithTime": "{{title}} · {{time}}",
+    "androidPendingNotificationSettingsTitle": "Open Android notification settings",
+    "androidPendingNotificationSettingsSummary": "IsleMind opens Android notification-related system settings for this app. Final notification permission or promoted-notification changes still happen in the system UI.",
     "androidPendingNotificationDetails": "Target: {{target}}",
     "agentPendingOutputTitle": "Action needs confirmation",
     "agentPendingOutputStep": "Step: {{step}}",
@@ -902,7 +815,7 @@
     "upstreamGovernance": "Upstream governance",
     "upstreamGovernanceSubtitle": "Controls model request transport, compact, proxy, logs, and access rules.",
     "runtimeDiagnostics": "Runtime diagnostics",
-    "runtimeDiagnosticsSubtitle": "Shows transport, compact, proxy, log, policy, and provider health.",
+    "runtimeDiagnosticsSubtitle": "Shows transport, compact, timeline, proxy, log, policy, and provider health.",
     "runtimeDiagnosticsReady": "Ready",
     "runtimeDiagnosticsLoading": "Loading",
     "runtimeDiagnosticsRefresh": "Refresh",
@@ -917,10 +830,148 @@
     "runtimeDiagnosticCompactReasonBelowThreshold": "below threshold {{count}}",
     "runtimeDiagnosticCompactReasonCapabilityMissing": "missing capability {{count}}",
     "runtimeDiagnosticCompactReasonDisabled": "disabled {{count}}",
+    "runtimeDiagnosticContextControlPlane": "Context control",
+    "runtimeDiagnosticContextControlPlaneValue": "planned {{planned}} · compact {{compact}} · capped {{capped}} · cache {{cache}} · rewrites {{rewrite}} · unbounded {{unbounded}} · manifests {{manifest}} · manifest issues {{manifestIssues}} · examples {{examples}}",
     "runtimeDiagnosticPolicy": "Policy",
     "runtimeDiagnosticPolicyValue": "{{payload}} · {{rules}} rules",
     "runtimeDiagnosticRectification": "Request rectification",
     "runtimeDiagnosticRectificationValue": "total {{total}} · retrying {{retrying}} · success {{success}} · failed {{failed}} · examples {{examples}}",
+    "runtimeDiagnosticProviderHealth": "Provider health",
+    "runtimeDiagnosticProviderHealthValue": "cooldown {{cooldown}} · circuit {{circuit}} · quota {{quota}} · credential {{credential}} · examples {{examples}}",
+    "runtimeDiagnosticSessionAffinity": "Session affinity",
+    "runtimeDiagnosticSessionAffinityValue": "resolved {{resolved}} · bound {{bound}} · invalidated {{invalidated}} · rotated {{rotated}} · examples {{examples}}",
+    "runtimeDiagnosticRequestExamples": "Request examples",
+    "runtimeDiagnosticRequestExamplesValue": "{{examples}}",
+    "runtimeDiagnosticTimeline": "Runtime timeline",
+    "runtimeDiagnosticTimelineValue": "events {{total}} · provider {{provider}} · context {{context}} · compact {{compact}} · plugin {{plugin}} · tools {{tool}} · sessions {{session}} · blocked {{blocked}} · errors {{error}} · running {{running}} · issues {{issues}} · repair tasks {{repairs}} · examples {{examples}} · issue samples {{issueExamples}} · repair targets {{repairExamples}}",
+    "runtimeDiagnosticPerformance": "Diagnostics budget",
+    "runtimeDiagnosticPerformanceValue": "{{duration}}ms · tail {{tail}}B · parsed {{parsed}}/{{rawParsed}} of {{logLimit}} · merged {{merged}} · memory {{memory}} · timeline {{timeline}}/{{timelineLimit}}",
+    "runtimeDiagnosticObservability": "Observability export",
+    "runtimeDiagnosticObservabilityValue": "{{mode}} · network {{network}} · local {{local}} · endpoint {{endpoint}} · high freq {{highFrequency}} · attrs {{attr}}/{{string}} · preview {{preview}} · events {{events}}/{{eventLimit}} · spans {{spans}} · failures {{failures}} · blocks {{blocks}} · warnings {{warnings}}",
+    "runtimeDiagnosticObservabilityAllowed": "allowed",
+    "runtimeDiagnosticObservabilityBlocked": "blocked",
+    "runtimeDiagnosticObservabilityPreviewFailuresNone": "none",
+    "runtimeDiagnosticObservabilityPreviewStatus": {
+      "ready": "ready",
+      "blocked": "blocked",
+      "empty": "empty",
+      "failed": "failed"
+    },
+    "runtimeDiagnosticObservabilityMode": {
+      "off": "off",
+      "local-only": "local only",
+      "external": "external"
+    },
+    "runtimeDiagnosticObservabilityEndpoint": {
+      "none": "none",
+      "https": "HTTPS",
+      "local-http": "local HTTP",
+      "unsafe-http": "unsafe HTTP",
+      "invalid": "invalid"
+    },
+    "runtimeDiagnosticObservabilityHighFrequency": {
+      "drop": "drop",
+      "coalesced": "coalesced",
+      "per-event": "per event"
+    },
+    "runtimeDiagnosticObservabilityBlockReason": {
+      "external-export-disabled": "external export off",
+      "local-only": "local only",
+      "missing-target": "missing target",
+      "unsupported-target": "unsupported target",
+      "missing-endpoint": "missing endpoint",
+      "invalid-endpoint": "invalid endpoint",
+      "insecure-remote-endpoint": "insecure remote endpoint",
+      "missing-api-key": "missing API key",
+      "missing-user-opt-in": "missing user opt-in",
+      "missing-workspace-consent": "missing workspace consent",
+      "raw-payload-export-blocked": "raw payload blocked",
+      "invalid-export-schema": "invalid export schema",
+      "invalid-redaction-strategy": "invalid redaction strategy",
+      "per-event-high-frequency-blocked": "per-event high frequency blocked",
+      "attribute-limit-too-high": "attribute limit too high",
+      "attribute-string-limit-too-high": "attribute string limit too high"
+    },
+    "runtimeDiagnosticObservabilityWarning": {
+      "local-http-development-only": "local HTTP is development-only",
+      "attribute-limit-defaulted": "attribute limit defaulted",
+      "attribute-string-limit-defaulted": "attribute string limit defaulted"
+    },
+    "runtimeDiagnosticPluginCatalog": "Plugin catalog",
+    "runtimeDiagnosticPluginCatalogValue": "manifests {{total}} · valid {{valid}} · invalid {{invalid}} · enabled {{enabled}} · hooks {{hooks}} · noop {{noop}} · executable {{executable}} · approved {{approved}} · unreviewed {{unreviewed}} · caps {{capabilities}}",
+    "runtimeDiagnosticTimelineStage": {
+      "context": "context",
+      "provider": "provider",
+      "tool": "tool",
+      "session": "session",
+      "compact": "compact",
+      "plugin": "plugin",
+      "token": "token",
+      "other": "other"
+    },
+    "runtimeDiagnosticTimelineStatus": {
+      "done": "done",
+      "blocked": "blocked",
+      "error": "error",
+      "skipped": "skipped",
+      "running": "running",
+      "info": "info"
+    },
+    "runtimeDiagnosticTimelineIssue": {
+      "provider_blocked": "provider blocked",
+      "provider_error": "provider error",
+      "tool_blocked": "tool blocked",
+      "mcp_transport_unsupported": "MCP transport unsupported",
+      "mcp_manifest_invalid": "MCP manifest invalid",
+      "mcp_permission_required": "MCP permission required",
+      "agent_prompt_injection_blocked": "agent prompt injection blocked",
+      "agent_tool_replay_blocked": "agent tool replay blocked",
+      "agent_workflow_tampering_blocked": "agent workflow tampering blocked",
+      "agent_security_eval_failed": "agent security eval failed",
+      "context_unbounded_blocked": "unbounded context blocked",
+      "context_manifest_budget_overrun": "context budget overrun",
+      "context_manifest_source_churn": "context source churn",
+      "session_failover": "session failover",
+      "compact_skipped": "compact skipped",
+      "plugin_manifest_invalid": "plugin manifest invalid",
+      "plugin_hook_executable": "plugin hook execution requested"
+    },
+    "runtimeDiagnosticTimelineSeverity": {
+      "critical": "critical",
+      "warning": "warning",
+      "info": "info"
+    },
+    "runtimeDiagnosticTimelineNextAction": {
+      "check_provider_credentials": "check credentials",
+      "review_provider_policy": "review policy",
+      "retry_or_switch_provider": "retry or switch provider",
+      "fix_tool_schema": "fix tool schema",
+      "review_mcp_transport": "review MCP transport",
+      "review_mcp_manifest": "review MCP manifest",
+      "confirm_mcp_tool_permission": "confirm MCP tool permission",
+      "review_agent_security_policy": "review agent security policy",
+      "review_agent_workflow": "review agent workflow",
+      "cap_context_source": "cap context source",
+      "stabilize_context_sources": "stabilize context sources",
+      "review_session_affinity": "review session affinity",
+      "enable_compact_or_reduce_history": "enable compact or reduce history",
+      "review_plugin_manifest": "review plugin manifest"
+    },
+    "runtimeDiagnosticTimelineActionTarget": {
+      "provider-settings": "provider settings",
+      "tool-settings": "tool settings",
+      "context-settings": "context settings",
+      "session-affinity-settings": "session affinity settings",
+      "compact-settings": "compact settings",
+      "agent-settings": "agent settings",
+      "plugin-settings": "plugin settings",
+      "retry-chat": "retry chat"
+    },
+    "runtimeRepairTasks": "Repair tasks",
+    "runtimeRepairTasksValue": "{{count}} tasks · critical {{critical}} · warning {{warning}}",
+    "runtimeRepairTaskButton": "{{action}} @ {{target}}",
+    "runtimeRepairOpened": "Repair target opened",
+    "runtimeRepairChatUnavailable": "Chat target unavailable",
     "runtimeDiagnosticProxy": "Proxy",
     "runtimeDiagnosticProviders": "Providers",
     "runtimeDiagnosticProvidersValue": "ready {{ready}}/{{enabled}} · aliases {{alias}}",
@@ -960,6 +1011,26 @@
       "local_fallback": "fallback",
       "refresh_docs": "refresh"
     },
+    "runtimeDiagnosticProviderHealthReason": {
+      "cooldown": "cooldown",
+      "circuit_open": "circuit",
+      "quota_exhausted": "quota",
+      "credential_unhealthy": "credential"
+    },
+    "runtimeDiagnosticSessionAffinityStatus": {
+      "resolved": "resolved",
+      "bound": "bound",
+      "invalidated": "invalidated",
+      "rotated": "rotated",
+      "unknown": "unknown"
+    },
+    "runtimeDiagnosticRequestExampleKind": {
+      "route_snapshot": "route",
+      "fallback": "fallback",
+      "session_binding": "session",
+      "compact_decision": "compact",
+      "conformance_block": "blocked"
+    },
     "runtimeDiagnosticLog": "Log",
     "runtimeDiagnosticLogOn": "Writing",
     "runtimeDiagnosticLogOff": "Off",
@@ -979,6 +1050,9 @@
       "custom_base_url": "Custom URL",
       "system_proxy_platform_stack": "System proxy",
       "invalid_custom_base_url": "Invalid URL"
+    },
+    "runtimeProxyWarning": {
+      "custom_proxy_session_id_header": "Custom proxy may drop underscore session_id headers used by sticky routing"
     },
     "policySummary": "Rule summary",
     "policyPayloadSummary": "Payload {{mode}}",
@@ -1010,8 +1084,44 @@
     "proxySystemDetected": "System detected",
     "proxyBaseUrl": "Proxy Base URL",
     "proxyBaseUrlNote": "Custom URL keeps the original endpoint path and query string.",
+    "observabilitySinkSettings": "Observability export",
+    "observabilitySinkMode": "Export mode",
+    "observabilitySinkOff": "Off",
+    "observabilitySinkLocalOnly": "Local only",
+    "observabilitySinkExternal": "External",
+    "observabilitySinkTarget": "Sink target",
+    "observabilitySinkTargetOpenTelemetry": "OpenTelemetry",
+    "observabilitySinkTargetLangfuse": "Langfuse",
+    "observabilitySinkTargetPhoenix": "Phoenix",
+    "observabilitySinkEndpointUrl": "Sink endpoint",
+    "observabilitySinkEndpointUrlNote": "HTTPS for external sinks; localhost HTTP is development-only.",
+    "observabilitySinkHighFrequencyMode": "High-frequency events",
+    "observabilitySinkHighFrequencyDrop": "Drop",
+    "observabilitySinkHighFrequencyCoalesced": "Coalesced",
+    "observabilitySinkHighFrequencyPerEvent": "Per event",
+    "observabilitySinkAttributeLimit": "Attribute count",
+    "observabilitySinkAttributeStringLimit": "Attribute length",
+    "observabilitySinkApiKey": "Sink API key",
+    "observabilitySinkApiKeyNote": "Stored in secure storage; diagnostics only read whether a key exists.",
+    "observabilitySinkApiKeyPlaceholder": "Paste the sink key",
+    "observabilitySinkApiKeyConfigured": "API key configured",
+    "observabilitySinkApiKeyMissing": "API key missing",
+    "observabilitySinkApiKeySave": "Save key",
+    "observabilitySinkApiKeySaving": "Saving…",
+    "observabilitySinkApiKeyClear": "Clear key",
+    "observabilitySinkApiKeySaved": "Observability API key saved",
+    "observabilitySinkApiKeyCleared": "Observability API key cleared",
+    "observabilitySinkApiKeySaveFailed": "Observability API key update failed",
+    "observabilitySinkUserOptIn": "User opt-in",
+    "observabilitySinkWorkspaceConsent": "Workspace consent",
+    "observabilitySinkDevelopmentOnly": "Development endpoint",
     "sessionConcurrencyLimit": "Session concurrency",
     "sessionQueueTimeoutMs": "Queue ms",
+    "sessionAffinitySettings": "Session affinity",
+    "sessionAffinityEnabled": "Pin compatible requests to a credential group",
+    "sessionAffinityEnabledDescription": "Keep long conversations on the same healthy credential until it expires or fails.",
+    "sessionAffinityTtlMs": "Session affinity TTL (ms)",
+    "sessionAffinityTtlMsNote": "How long a credential binding can be reused before it is refreshed.",
     "retryTimeoutSettings": "Retry and timeout settings",
     "upstreamRequestTimeoutMs": "Request timeout ms",
     "upstreamMaxRetries": "Max retries",
@@ -1172,6 +1282,21 @@
     "reviewAndEnableWorkflow": "Review and enable",
     "workflowReviewRequired": "Review required",
     "workflowReviewRequiredNote": "Imported workflow; review locally before enabling.",
+    "pluginManifestImportReview": "Plugin review {{state}} · {{permission}} · capabilities {{capabilities}} · errors {{errors}} · warnings {{warnings}}",
+    "pluginManifestRepairTarget": "Plugin manifest review",
+    "pluginManifestRepairSource": "Runtime repair",
+    "pluginManifestRepairMeta": "{{meta}}",
+    "pluginManifestRepairIssues": "Issue codes: {{issueCodes}}",
+    "pluginManifestRepairSummary": "{{summary}}",
+    "pluginManifestRepairEvents": "{{events}}",
+    "pluginManifestRepairLatestEvent": "latest {{eventId}}",
+    "pluginManifestRepairEventCount": "{{count}} events",
+    "pluginManifestRepairSourceEvents": "sources {{eventIds}}",
+    "pluginManifestReviewState": {
+      "unreviewed": "unreviewed",
+      "approved": "approved",
+      "rejected": "rejected"
+    },
     "reviewAgentWorkflowTitle": "Review imported workflow?",
     "reviewAgentWorkflowMessage": "{{name}} was imported and stays disabled until you approve it locally.",
     "enableAgentWorkflowTitle": "Enable workflow?",
@@ -1209,6 +1334,13 @@
     "connected": "MCP connected",
     "refreshFailed": "MCP sync failed",
     "refreshSummary": "Tools {{tools}} · resources {{resources}} · prompts {{prompts}}",
+    "pluginManifest": "Plugin manifest",
+    "pluginManifestPreview": "{{state}} · {{permission}} · capabilities {{capabilities}} · errors {{errors}} · warnings {{warnings}}",
+    "pluginManifestReviewState": {
+      "unreviewed": "unreviewed",
+      "approved": "approved",
+      "rejected": "rejected"
+    },
     "enabled": "MCP Server enabled",
     "disabled": "MCP Server disabled",
     "deleteTitle": "Delete MCP Server?",
@@ -1252,6 +1384,17 @@
     "importEmptyMessage": "No importable providers were recognized.",
     "importDone": "Batch import complete",
     "importDoneMessage": "{{count}} providers imported and disabled by default.",
+    "importFailed": "Import failed",
+    "importFailedMessage": "Import did not finish. Check the content and try again.",
+    "importProgress": {
+      "parsing": "Parsing import content",
+      "saving": "Saving providers",
+      "finishing": "Refreshing provider list"
+    },
+    "importProgressWorking": "Importing...",
+    "importProgressIndeterminate": "Preparing import results...",
+    "importProgressSavingDetail": "{{completed}} / {{total}} providers saved.",
+    "importProgressCurrent": "Current: {{name}}",
     "enableImportedTitle": "Enable imported providers?",
     "enableImportedMessage": "Enable the {{count}} providers imported in this batch? IsleMind will fetch models and test available models in parallel, and ready providers can be used first.",
     "enableImportedConfirm": "Enable imported",
@@ -1268,13 +1411,14 @@
     "activationEnabled": "Provider enabled",
     "activationSyncing": "Fetching models",
     "activationTesting": "Testing model",
-    "activationProgressMessage": "{{completed}}/{{total}} done · {{synced}} synced · {{tested}} ready · {{failed}} failed",
+    "activationProgressMessage": "{{completed}}/{{total}} done · {{synced}} synced · {{tested}} ready · {{failed}} need check",
     "activationProviderReady": "{{name}} is ready",
     "activationProviderNeedsCheck": "{{name}} needs checking",
     "activatingProvider": "Enabling and fetching models",
     "activationSuccess": "Provider enabled",
-    "activationPartial": "Enabled, some tokens need checking",
+    "activationPartial": "Enabled, some items need checking",
     "activationFailed": "Enable failed or no models available",
+    "activationNeedsCheck": "Needs check",
     "orderUpdated": "Order updated",
     "exitBatch": "Exit batch",
     "batchMode": "Batch mode",
@@ -1299,6 +1443,8 @@
     "clearInvalid": "Clean invalid",
     "clearInvalidTitle": "Clean invalid providers?",
     "clearInvalidMessage": "Delete providers with no saved token or invalid Base URL/protocol configuration, and clear their runtime state. This cannot be undone.",
+    "clearInvalidPendingList": "{{count}} provider(s) will be cleaned:",
+    "clearInvalidMore": "{{count}} more not shown",
     "clearInvalidConfirm": "Clean invalid",
     "clearInvalidDone": "Invalid providers cleaned",
     "clearInvalidDoneMessage": "{{count}} invalid providers deleted.",
@@ -1354,6 +1500,25 @@
     "failedProviders": "Failed: {{names}}",
     "missingModels": "No models: {{names}}",
     "missingKeys": "Missing tokens: {{names}}",
+    "runtimeObservedProtocol": "observed {{protocol}}",
+    "runtimeUnavailableReason": {
+      "disabled": "disabled",
+      "sync_failed": "sync failed",
+      "test_failed": "test failed",
+      "cooldown": "cooldown",
+      "circuit_open": "circuit",
+      "quota_exhausted": "quota",
+      "credential_unhealthy": "credential",
+      "conformance_block": "blocked",
+      "fallback": "fallback"
+    },
+    "runtimeSessionAffinityStatus": {
+      "resolved": "affinity resolved",
+      "bound": "affinity bound",
+      "invalidated": "affinity invalidated",
+      "rotated": "affinity rotated",
+      "unknown": "affinity unknown"
+    },
     "protocol": {
       "title": "Interface protocol",
       "openai-compatible": "OpenAI compatible",
@@ -1362,12 +1527,13 @@
     }
   },
   "providerActivation": {
-    "summary": "{{target}} targeted · {{enabled}} enabled · {{synced}} synced · {{tested}} tests passed · {{noModels}} no models · {{failed}} failed",
+    "summary": "{{target}} targeted · {{enabled}} enabled · {{synced}} synced · {{tested}} tests passed · {{noModels}} no models · {{failed}} need check",
     "missingToken": "Missing token",
     "missingTokens": "Missing tokens: {{names}}",
     "noModels": "No available models",
     "noModelsFor": "No available models: {{names}}",
-    "moreFailures": "{{count}} more failures hidden",
+    "failureGroup": "{{count}} need check: {{message}} ({{names}})",
+    "moreFailures": "{{count}} more check items hidden",
     "providerMissing": "Provider not found",
     "stageEnabled": "{{name}} enabled",
     "stageSyncing": "{{name}} is fetching models",
@@ -1466,6 +1632,7 @@
     "editing": "Editing",
     "modelId": "Model ID",
     "remoteModels": "Remote models",
+    "providerMergedModels": "Provider models",
     "customModels": "Custom models",
     "customModelAliases": "Custom models and aliases",
     "modelAliasHelp": "Use one model ID per line. Aliases use “display name=model” or “display name -> model”.",
@@ -1480,6 +1647,17 @@
     "failureCount": "{{count}} failed",
     "noModels": "No models",
     "capabilityUpdated": "Capability updated",
+    "runtimeDiagnostics": "Runtime diagnostics",
+    "runtimeProtocol": "Protocol",
+    "runtimeProtocolValue": "declared {{declared}} · ready {{ready}} · observed {{observed}}",
+    "runtimeCredentialHealth": "Token health",
+    "runtimeCredentialHealthValue": "healthy {{healthy}}/{{enabled}}/{{total}} · cooldown {{cooldown}} · circuit {{circuit}} · quota {{quota}} · credential {{credential}}",
+    "runtimeSessionAffinity": "Session affinity",
+    "runtimeSessionAffinityValue": "{{status}} · {{group}} · {{trigger}}",
+    "runtimeSessionAffinityOff": "Off",
+    "runtimeUnavailable": "Unavailable",
+    "runtimeUnavailableValue": "{{reason}} · {{detail}}",
+    "runtimeUnavailableNone": "None",
     "capabilityMatrix": "Capability matrix",
     "capabilityMatrixDescription": "Runtime uses these declarations for Responses, WebSocket, compact, embeddings, payload, and model features.",
     "capabilityDependencyHint": "Enabling WebSocket or remote compact automatically requires Responses support.",

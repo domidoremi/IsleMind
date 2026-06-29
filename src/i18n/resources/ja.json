@@ -25,111 +25,9 @@
     "openExternal": "外部で開く",
     "refresh": "更新",
     "loading": "読み込み中",
-    "saved": "保存済み"
-  },
-  "onboarding": {
-    "skip": "スキップ",
-    "dragHint": "光をドラッグするかタップして続行",
-    "tapHint": "タップして続行",
-    "awaken": {
-      "eyebrow": "IsleMind へようこそ",
-      "title": "Isle を仕事に使える状態にする",
-      "body": "約 1 分で既定値を設定します。後から設定で変更できます。",
-      "action": "開始",
-      "signals": {
-        "local": "会話、ナレッジ、設定はローカル優先で保存",
-        "private": "キーは設定したプロバイダーにのみ使用",
-        "ready": "完了後はホームに戻り、そのまま入力開始"
-      }
-    },
-    "privacy": {
-      "eyebrow": "プライバシー境界",
-      "title": "重要なデータは自分で管理",
-      "body": "IsleMind は主要機能を個別に設定できるように分けています。",
-      "action": "確認",
-      "beacons": {
-        "chat": {
-          "title": "会話履歴",
-          "body": "ローカル保存。エクスポートや削除ができます。"
-        },
-        "key": {
-          "title": "プロバイダーキー",
-          "body": "選択したモデルエンドポイントにのみ使用します。"
-        },
-        "knowledge": {
-          "title": "ナレッジと記憶",
-          "body": "個別に有効化、削除、再インデックスできます。"
-        }
-      }
-    },
-    "companion": {
-      "eyebrow": "作業スタイル",
-      "title": "Isle の既定トーンを選択",
-      "body": "最初の会話傾向に反映されますが、後の指示は制限しません。",
-      "action": "続行",
-      "modes": {
-        "concise": {
-          "title": "簡潔",
-          "body": "短い回答、結論、実行手順を優先します。"
-        },
-        "research": {
-          "title": "調査",
-          "body": "背景、出典、根拠、複数視点を重視します。"
-        },
-        "creative": {
-          "title": "創造",
-          "body": "文章、命名、ブレスト、発散案に向いています。"
-        },
-        "engineering": {
-          "title": "開発",
-          "body": "コード、設計、デバッグ、検証可能な実装手順を重視します。"
-        },
-        "companion": {
-          "title": "伴走",
-          "body": "考えの整理や継続的な対話向けの柔らかいトーンです。"
-        }
-      }
-    },
-    "capability": {
-      "eyebrow": "機能入口",
-      "title": "必要に応じて拡張機能を有効化",
-      "body": "検索、ナレッジ、記憶、スキルは個別に有効化できます。",
-      "action": "了解",
-      "providerLater": "プロバイダー未設定でも問題ありません。後で上部バーまたは設定から構成できます。",
-      "items": {
-        "knowledge": {
-          "title": "ローカルナレッジ",
-          "body": "資料をインポートし、回答で引用します。"
-        },
-        "memory": {
-          "title": "長期記憶",
-          "body": "確認済みの個人設定を保持します。"
-        },
-        "search": {
-          "title": "Web 検索",
-          "body": "新しい情報が必要な時だけ検索を接続します。"
-        },
-        "skills": {
-          "title": "Skill",
-          "body": "専門タスクにプリセット能力を使用します。"
-        }
-      }
-    },
-    "firstPrompt": {
-      "eyebrow": "最初のプロンプト",
-      "title": "ひとつの質問から始める",
-      "body": "サンプルを選ぶか、完了後に自分で入力します。",
-      "action": "チャットへ",
-      "samples": {
-        "concise": "今日やる 3 つのことを最短の実行可能な作業成果にしてください。\n\n入力:\n- タスク:\n- 使える時間:\n- 避けたいこと:\n\n出力には必ず以下の固定見出しを含めてください:\n1. 構造化された要約\n2. 決定ログ\n3. アクション項目（担当者 / 次の一歩 / 期限または発火条件）\n4. リスクとブロッカー\n5. 確認事項\n6. 必要な根拠\n7. コピーできる短い版",
-        "research": "2 つの案を比較し、検証すべき重要な根拠を挙げてください。\n\n入力:\n- 案 A:\n- 案 B:\n\n出力には必ず以下の固定見出しを含めてください:\n1. 構造化された要約\n2. 決定ログ\n3. アクション項目（担当者 / 次の一歩 / 期限または発火条件）\n4. リスクとブロッカー\n5. 確認事項\n6. 必要な根拠\n7. 協力者に送れる短い版",
-        "creative": "プライベート AI ワークスペース向けの命名方向を作ってください。\n\n入力:\n- 雰囲気: 温かい、控えめ、信頼できる\n- 避けたいもの: 大げさ、マーケティング感\n\n出力には必ず以下の固定見出しを含めてください:\n1. 構造化された要約\n2. 決定ログ\n3. アクション項目（担当者 / 次の一歩 / 期限または発火条件）\n4. リスクとブロッカー\n5. 確認事項\n6. 必要な根拠\n7. 協力者に送れる短い版",
-        "engineering": "複雑な機能を検証可能な開発ステップに分解してください。\n\n入力:\n- 機能目標:\n- 現在の制約:\n\n出力には必ず以下の固定見出しを含めてください:\n1. 構造化された要約\n2. 決定ログ\n3. アクション項目（担当者 / 次の一歩 / 期限または発火条件）\n4. リスクとブロッカー\n5. 確認事項\n6. 必要な根拠（各ステップの検証コマンドまたは証拠）\n7. 協力者に送れる短い版",
-        "companion": "最近詰まっていることを整理し、次の一歩を提案してください。\n\n入力:\n- 詰まっていること:\n- すでに試したこと:\n\n出力には必ず以下の固定見出しを含めてください:\n1. 構造化された要約\n2. 決定ログ\n3. アクション項目（担当者 / 次の一歩 / 期限または発火条件）\n4. リスクとブロッカー\n5. 確認事項\n6. 必要な根拠\n7. 協力者に送れる短い版",
-        "organize": "以下の考えを実行可能な構造に整理してください。\n\n入力:\n\n\n出力には必ず以下の固定見出しを含めてください:\n1. 構造化された要約\n2. 決定ログ\n3. アクション項目（担当者 / 次の一歩 / 期限または発火条件）\n4. リスクとブロッカー\n5. 確認事項\n6. 必要な根拠\n7. コピーできる短い版",
-        "plan": "次の 1 週間の軽量で実行可能な計画を作ってください。\n\n入力:\n- 今週の目標:\n- 時間制約:\n\n出力には必ず以下の固定見出しを含めてください:\n1. 構造化された要約\n2. 決定ログ\n3. アクション項目（担当者 / 次の一歩 / 期限または発火条件）\n4. リスクとブロッカー\n5. 確認事項\n6. 必要な根拠\n7. 協力者に送れる短い版"
-      }
-    }
+    "saved": "保存済み",
+    "none": "なし",
+    "unknown": "不明"
   },
   "chat": {
     "newConversation": "新規チャット",
@@ -214,6 +112,8 @@
     "maxTokensAccessibilityHint": "128 から {{limit}} の出力トークン上限を入力します。",
     "topP": "Top P",
     "topPAccessibilityHint": "0 から 1 の値を入力します。",
+    "topK": "Top K",
+    "topKAccessibilityHint": "正の整数を入力します。モデルメタデータが対応を宣言した場合のみ送信されます。",
     "streamingEnabled": "ストリーミング",
     "sendMessage": "メッセージを送信",
     "sendMessageAccessibilityHint": "入力が送信可能なとき、現在のメッセージを送信します。",
@@ -249,6 +149,7 @@
     "composerDraftStatus": "{{count}}/{{limit}} 文字",
     "composerDraftStatusWithAttachments": "{{count}}/{{limit}} 文字 · 添付 {{attachments}} 件",
     "composerDraftRemaining": "残り {{count}}",
+    "composerDraftExceeded": "上限を {{count}} 文字超過",
     "attachmentUnavailable": "添付できません",
     "fileTooLarge20": "ファイルは 20MB 以下にしてください。",
     "attachmentReadFailed": "この添付ファイルを読み取れません。別のファイルを試してください。",
@@ -286,6 +187,7 @@
     "noProviderModelMatchesDescription": "検索をクリアするか、プロバイダー名またはモデル名を入力してください。",
     "notSelected": "未選択",
     "none": "なし",
+    "unknown": "不明",
     "deprecated": "非推奨",
     "providerNoModels": "このプロバイダーには利用可能なモデルがありません。",
     "providerNoModelsSyncHint": "このプロバイダーには利用可能なモデルがありません。プロバイダー画面で同期とテストを行ってください。",
@@ -333,6 +235,14 @@
     "pendingSendFailedMessage": "キュー内のメッセージを送信できませんでした。",
     "sendFailed": "送信失敗",
     "sendFailedMessage": "メッセージを送信できませんでした。後で再試行してください。",
+    "runtimeRepairRetryPrompt": "この実行時修復コンテキストを使って、前回失敗したターンを再試行してください。元のユーザー意図を保ち、修復ターゲットが provider/tool/context 経路を示す場合は実行経路を調整し、まだブロックされる場合は再試行前に残っているブロッカーを説明してください。\n\n前回のユーザー依頼: {{previousUserMessage}}\n失敗サマリー: {{failureSummary}}\n修復重大度: {{severity}}\n修復アクション: {{action}}\nターゲット: {{target}}\n実行イベント: {{event}}\n最新イベント ID: {{eventId}}\nスコープ: {{scope}}\nissue codes: {{issueCodes}}\nイベント数: {{eventCount}}\nサマリー: {{summary}}\n\n構造化修復 payload:\n{{payloadJson}}",
+    "runtimeRepairIntentTitle": "修復リプレイの準備完了",
+    "runtimeRepairIntentDetail": "{{scope}} · {{summary}}",
+    "runtimeRepairIntentMeta": "{{severity}} · {{action}} · {{target}} · イベント {{eventCount}}",
+    "runtimeRepairIntentIssues": "課題 {{issueCodes}}",
+    "runtimeRepairIntentEventId": "Payload {{schema}} · 手順 {{stepCount}} · イベント {{eventId}}",
+    "runtimeRepairIntentSend": "修復リプレイを送信",
+    "runtimeRepairIntentApplyDraft": "下書きを復元",
     "interruptedSendFailedMessage": "中断後のメッセージを送信できませんでした。",
     "modelAvailable": "モデル利用可能",
     "modelUnavailable": "モデル利用不可",
@@ -548,6 +458,7 @@
   },
   "androidTool": {
     "alarmIntentOpened": "Android 時計画面を {{time}}{{messageSuffix}} のアラーム用に開きました。システムの時計アプリで確認すると作成されます。",
+    "alarmCreationRequested": "Android 時計へアラーム作成をリクエストしました: {{time}}{{messageSuffix}}。時計アプリに編集画面が表示された場合は、そこで確認してください。",
     "alarmMessageSuffix": "、ラベル「{{message}}」",
     "calendarEventIntentOpened": "Android カレンダーを「{{title}}」({{time}}) の予定用に開きました。システムのカレンダーアプリで確認すると作成されます。",
     "reminderIntentOpened": "Android カレンダーを「{{title}}」({{time}}) のリマインダー用に開きました。システムアプリで確認すると作成されます。",
@@ -579,14 +490,16 @@
     "androidPendingApkInstallerSummary": "IsleMind は APK を Android システムインストーラーへ渡すことだけできます。システムインストーラーでの確認が必要で、サイレントインストールは非対応です。",
     "androidPendingClearCacheTitle": "IsleMind アプリキャッシュを消去",
     "androidPendingClearCacheSummary": "対象は IsleMind のアプリキャッシュ項目だけです。ユーザーファイル、任意の共有ストレージ消去、端末全体クリーニングは非対応です。",
-    "androidPendingAlarmTitle": "Android アラーム編集画面を開く",
-    "androidPendingAlarmSummary": "IsleMind は指定されたアラーム項目で Android 時計 UI を開きます。システムアプリで確認した後だけアラームが作成されます。",
+    "androidPendingAlarmTitle": "Android アラームを作成",
+    "androidPendingAlarmSummary": "IsleMind は Android 時計へアラームの直接作成をリクエストします。時計アプリが確認を求める場合は、編集画面を開いて確認します。",
     "androidPendingAlarmDetails": "時刻 {{time}}",
     "androidPendingAlarmDetailsWithLabel": "時刻 {{time}} · ラベル {{label}}",
     "androidPendingCalendarTitle": "Android カレンダー編集画面を開く",
     "androidPendingCalendarSummary": "IsleMind は指定された項目で Android カレンダー UI を開きます。システムアプリで確認した後だけリマインダーまたは予定が作成されます。",
     "androidPendingCalendarDetailsWithTime": "{{title}} · {{time}}",
     "androidPendingReminderDetailsWithTime": "{{title}} · {{time}}",
+    "androidPendingNotificationSettingsTitle": "Android 通知設定を開く",
+    "androidPendingNotificationSettingsSummary": "IsleMind はこのアプリの Android 通知関連システム設定を開きます。最終的な通知権限や重要通知の変更は、引き続きシステム UI で行います。",
     "androidPendingNotificationDetails": "対象: {{target}}",
     "agentPendingOutputTitle": "確認が必要です",
     "agentPendingOutputStep": "ステップ: {{step}}",
@@ -902,7 +815,7 @@
     "upstreamGovernance": "上流ガバナンス",
     "upstreamGovernanceSubtitle": "モデルリクエストの転送、compact、プロキシ、ログ、アクセスルールを制御します。",
     "runtimeDiagnostics": "実行診断",
-    "runtimeDiagnosticsSubtitle": "転送、compact、プロキシ、ログ、ポリシー、プロバイダー状態を表示します。",
+    "runtimeDiagnosticsSubtitle": "転送、compact、タイムライン、プロキシ、ログ、ポリシー、プロバイダー状態を表示します。",
     "runtimeDiagnosticsReady": "集計済み",
     "runtimeDiagnosticsLoading": "読み込み中",
     "runtimeDiagnosticsRefresh": "更新",
@@ -917,10 +830,148 @@
     "runtimeDiagnosticCompactReasonBelowThreshold": "しきい値未満 {{count}}",
     "runtimeDiagnosticCompactReasonCapabilityMissing": "能力不足 {{count}}",
     "runtimeDiagnosticCompactReasonDisabled": "無効 {{count}}",
+    "runtimeDiagnosticContextControlPlane": "コンテキスト制御",
+    "runtimeDiagnosticContextControlPlaneValue": "計画 {{planned}} · compact {{compact}} · 上限 {{capped}} · cache {{cache}} · 書換 {{rewrite}} · 無制限 {{unbounded}} · manifest {{manifest}} · manifest 問題 {{manifestIssues}} · 例 {{examples}}",
     "runtimeDiagnosticPolicy": "ポリシー",
     "runtimeDiagnosticPolicyValue": "{{payload}} · {{rules}} ルール",
     "runtimeDiagnosticRectification": "リクエスト整流",
     "runtimeDiagnosticRectificationValue": "合計 {{total}} · 再試行 {{retrying}} · 成功 {{success}} · 失敗 {{failed}} · 例 {{examples}}",
+    "runtimeDiagnosticProviderHealth": "プロバイダー状態",
+    "runtimeDiagnosticProviderHealthValue": "クールダウン {{cooldown}} · サーキット {{circuit}} · quota {{quota}} · 認証 {{credential}} · 例 {{examples}}",
+    "runtimeDiagnosticSessionAffinity": "セッション粘着",
+    "runtimeDiagnosticSessionAffinityValue": "解決 {{resolved}} · バインド {{bound}} · 無効 {{invalidated}} · ローテート {{rotated}} · 例 {{examples}}",
+    "runtimeDiagnosticRequestExamples": "リクエスト例",
+    "runtimeDiagnosticRequestExamplesValue": "{{examples}}",
+    "runtimeDiagnosticTimeline": "実行タイムライン",
+    "runtimeDiagnosticTimelineValue": "イベント {{total}} · provider {{provider}} · context {{context}} · compact {{compact}} · plugin {{plugin}} · tools {{tool}} · sessions {{session}} · blocked {{blocked}} · errors {{error}} · running {{running}} · issues {{issues}} · repair tasks {{repairs}} · 例 {{examples}} · issue例 {{issueExamples}} · repair targets {{repairExamples}}",
+    "runtimeDiagnosticPerformance": "診断バジェット",
+    "runtimeDiagnosticPerformanceValue": "{{duration}}ms · tail {{tail}}B · 解析 {{parsed}}/{{rawParsed}} / {{logLimit}} · マージ {{merged}} · メモリ {{memory}} · timeline {{timeline}}/{{timelineLimit}}",
+    "runtimeDiagnosticObservability": "観測エクスポート",
+    "runtimeDiagnosticObservabilityValue": "{{mode}} · ネットワーク {{network}} · ローカル {{local}} · endpoint {{endpoint}} · 高頻度 {{highFrequency}} · 属性 {{attr}}/{{string}} · preview {{preview}} · events {{events}}/{{eventLimit}} · spans {{spans}} · failures {{failures}} · ブロック {{blocks}} · 警告 {{warnings}}",
+    "runtimeDiagnosticObservabilityAllowed": "許可",
+    "runtimeDiagnosticObservabilityBlocked": "ブロック",
+    "runtimeDiagnosticObservabilityPreviewFailuresNone": "なし",
+    "runtimeDiagnosticObservabilityPreviewStatus": {
+      "ready": "準備完了",
+      "blocked": "ブロック",
+      "empty": "イベントなし",
+      "failed": "失敗"
+    },
+    "runtimeDiagnosticObservabilityMode": {
+      "off": "オフ",
+      "local-only": "ローカルのみ",
+      "external": "外部"
+    },
+    "runtimeDiagnosticObservabilityEndpoint": {
+      "none": "なし",
+      "https": "HTTPS",
+      "local-http": "ローカル HTTP",
+      "unsafe-http": "非安全 HTTP",
+      "invalid": "無効"
+    },
+    "runtimeDiagnosticObservabilityHighFrequency": {
+      "drop": "破棄",
+      "coalesced": "集約",
+      "per-event": "イベントごと"
+    },
+    "runtimeDiagnosticObservabilityBlockReason": {
+      "external-export-disabled": "外部送信オフ",
+      "local-only": "ローカルのみ",
+      "missing-target": "target不足",
+      "unsupported-target": "未対応target",
+      "missing-endpoint": "endpoint不足",
+      "invalid-endpoint": "endpoint無効",
+      "insecure-remote-endpoint": "非安全なリモートendpoint",
+      "missing-api-key": "API key不足",
+      "missing-user-opt-in": "ユーザー許可不足",
+      "missing-workspace-consent": "ワークスペース同意不足",
+      "raw-payload-export-blocked": "raw payload禁止",
+      "invalid-export-schema": "export schema無効",
+      "invalid-redaction-strategy": "redaction strategy無効",
+      "per-event-high-frequency-blocked": "高頻度の逐次送信禁止",
+      "attribute-limit-too-high": "属性上限が高すぎます",
+      "attribute-string-limit-too-high": "属性文字列上限が高すぎます"
+    },
+    "runtimeDiagnosticObservabilityWarning": {
+      "local-http-development-only": "ローカル HTTP は開発用のみ",
+      "attribute-limit-defaulted": "属性上限は既定値",
+      "attribute-string-limit-defaulted": "属性文字列上限は既定値"
+    },
+    "runtimeDiagnosticPluginCatalog": "プラグインカタログ",
+    "runtimeDiagnosticPluginCatalogValue": "manifest {{total}} · 有効 {{valid}} · 無効 {{invalid}} · 使用中 {{enabled}} · hooks {{hooks}} · noop {{noop}} · 実行可 {{executable}} · 承認 {{approved}} · 未確認 {{unreviewed}} · 能力 {{capabilities}}",
+    "runtimeDiagnosticTimelineStage": {
+      "context": "context",
+      "provider": "provider",
+      "tool": "tool",
+      "session": "session",
+      "compact": "compact",
+      "plugin": "plugin",
+      "token": "token",
+      "other": "other"
+    },
+    "runtimeDiagnosticTimelineStatus": {
+      "done": "完了",
+      "blocked": "ブロック",
+      "error": "エラー",
+      "skipped": "スキップ",
+      "running": "実行中",
+      "info": "情報"
+    },
+    "runtimeDiagnosticTimelineIssue": {
+      "provider_blocked": "providerブロック",
+      "provider_error": "providerエラー",
+      "tool_blocked": "toolブロック",
+      "mcp_transport_unsupported": "MCP transport非対応",
+      "mcp_manifest_invalid": "MCP manifest無効",
+      "mcp_permission_required": "MCP権限確認",
+      "agent_prompt_injection_blocked": "agent prompt injectionをブロック",
+      "agent_tool_replay_blocked": "agent tool replayをブロック",
+      "agent_workflow_tampering_blocked": "agent workflow改ざんをブロック",
+      "agent_security_eval_failed": "agent security eval失敗",
+      "context_unbounded_blocked": "無制限contextブロック",
+      "context_manifest_budget_overrun": "context予算超過",
+      "context_manifest_source_churn": "contextソース変動",
+      "session_failover": "sessionフェイルオーバー",
+      "compact_skipped": "compactスキップ",
+      "plugin_manifest_invalid": "plugin manifest無効",
+      "plugin_hook_executable": "plugin hook実行要求"
+    },
+    "runtimeDiagnosticTimelineSeverity": {
+      "critical": "重大",
+      "warning": "警告",
+      "info": "情報"
+    },
+    "runtimeDiagnosticTimelineNextAction": {
+      "check_provider_credentials": "認証情報を確認",
+      "review_provider_policy": "ポリシーを確認",
+      "retry_or_switch_provider": "再試行または切替",
+      "fix_tool_schema": "tool schemaを修正",
+      "review_mcp_transport": "MCP transportを確認",
+      "review_mcp_manifest": "MCP manifestを確認",
+      "confirm_mcp_tool_permission": "MCP tool権限を確認",
+      "review_agent_security_policy": "agent security policyを確認",
+      "review_agent_workflow": "agent workflowを確認",
+      "cap_context_source": "contextソースを制限",
+      "stabilize_context_sources": "contextソースを安定化",
+      "review_session_affinity": "session粘着を確認",
+      "enable_compact_or_reduce_history": "compact有効化または履歴短縮",
+      "review_plugin_manifest": "plugin manifestを確認"
+    },
+    "runtimeDiagnosticTimelineActionTarget": {
+      "provider-settings": "provider設定",
+      "tool-settings": "tool設定",
+      "context-settings": "context設定",
+      "session-affinity-settings": "session粘着設定",
+      "compact-settings": "compact設定",
+      "agent-settings": "agent設定",
+      "plugin-settings": "plugin設定",
+      "retry-chat": "chat再試行"
+    },
+    "runtimeRepairTasks": "修復タスク",
+    "runtimeRepairTasksValue": "{{count}} tasks · 重大 {{critical}} · 警告 {{warning}}",
+    "runtimeRepairTaskButton": "{{action}} @ {{target}}",
+    "runtimeRepairOpened": "修復ターゲットを開きました",
+    "runtimeRepairChatUnavailable": "chatターゲットを利用できません",
     "runtimeDiagnosticProxy": "プロキシ",
     "runtimeDiagnosticProviders": "プロバイダー",
     "runtimeDiagnosticProvidersValue": "準備 {{ready}}/{{enabled}} · 別名 {{alias}}",
@@ -960,6 +1011,26 @@
       "local_fallback": "fallback",
       "refresh_docs": "更新"
     },
+    "runtimeDiagnosticProviderHealthReason": {
+      "cooldown": "クールダウン",
+      "circuit_open": "サーキット",
+      "quota_exhausted": "quota",
+      "credential_unhealthy": "認証"
+    },
+    "runtimeDiagnosticSessionAffinityStatus": {
+      "resolved": "解決",
+      "bound": "バインド",
+      "invalidated": "無効",
+      "rotated": "ローテート",
+      "unknown": "不明"
+    },
+    "runtimeDiagnosticRequestExampleKind": {
+      "route_snapshot": "ルート",
+      "fallback": "フォールバック",
+      "session_binding": "セッション",
+      "compact_decision": "圧縮",
+      "conformance_block": "ブロック"
+    },
     "runtimeDiagnosticLog": "ログ",
     "runtimeDiagnosticLogOn": "書き込み",
     "runtimeDiagnosticLogOff": "オフ",
@@ -979,6 +1050,9 @@
       "custom_base_url": "カスタム URL",
       "system_proxy_platform_stack": "システムプロキシ",
       "invalid_custom_base_url": "URL 無効"
+    },
+    "runtimeProxyWarning": {
+      "custom_proxy_session_id_header": "カスタムプロキシは粘着ルーティング用の session_id ヘッダーを落とす場合があります"
     },
     "policySummary": "ルール概要",
     "policyPayloadSummary": "Payload {{mode}}",
@@ -1010,8 +1084,44 @@
     "proxySystemDetected": "システム検出",
     "proxyBaseUrl": "プロキシ Base URL",
     "proxyBaseUrlNote": "カスタム URL は元の endpoint パスとクエリを保持します。",
+    "observabilitySinkSettings": "観測エクスポート",
+    "observabilitySinkMode": "エクスポートモード",
+    "observabilitySinkOff": "オフ",
+    "observabilitySinkLocalOnly": "ローカルのみ",
+    "observabilitySinkExternal": "外部",
+    "observabilitySinkTarget": "送信先",
+    "observabilitySinkTargetOpenTelemetry": "OpenTelemetry",
+    "observabilitySinkTargetLangfuse": "Langfuse",
+    "observabilitySinkTargetPhoenix": "Phoenix",
+    "observabilitySinkEndpointUrl": "送信 endpoint",
+    "observabilitySinkEndpointUrlNote": "外部送信先は HTTPS。localhost HTTP は開発用です。",
+    "observabilitySinkHighFrequencyMode": "高頻度イベント",
+    "observabilitySinkHighFrequencyDrop": "破棄",
+    "observabilitySinkHighFrequencyCoalesced": "集約",
+    "observabilitySinkHighFrequencyPerEvent": "イベントごと",
+    "observabilitySinkAttributeLimit": "属性数",
+    "observabilitySinkAttributeStringLimit": "属性長",
+    "observabilitySinkApiKey": "送信先 API key",
+    "observabilitySinkApiKeyNote": "secure storage に保存し、診断は key の有無だけを読み取ります。",
+    "observabilitySinkApiKeyPlaceholder": "送信先 key を貼り付け",
+    "observabilitySinkApiKeyConfigured": "API key 設定済み",
+    "observabilitySinkApiKeyMissing": "API key 未設定",
+    "observabilitySinkApiKeySave": "key を保存",
+    "observabilitySinkApiKeySaving": "保存中…",
+    "observabilitySinkApiKeyClear": "key を削除",
+    "observabilitySinkApiKeySaved": "観測 API key を保存しました",
+    "observabilitySinkApiKeyCleared": "観測 API key を削除しました",
+    "observabilitySinkApiKeySaveFailed": "観測 API key の更新に失敗しました",
+    "observabilitySinkUserOptIn": "ユーザー opt-in",
+    "observabilitySinkWorkspaceConsent": "ワークスペース同意",
+    "observabilitySinkDevelopmentOnly": "開発 endpoint",
     "sessionConcurrencyLimit": "セッション同時数",
     "sessionQueueTimeoutMs": "待機 ms",
+    "sessionAffinitySettings": "セッション粘着",
+    "sessionAffinityEnabled": "互換リクエストを同じ認証グループに固定",
+    "sessionAffinityEnabledDescription": "長い会話は期限切れまたは失敗まで同じ健全な認証情報を再利用します。",
+    "sessionAffinityTtlMs": "セッション粘着 TTL ms",
+    "sessionAffinityTtlMsNote": "認証情報のバインドを更新前に再利用できる時間です。",
     "retryTimeoutSettings": "リトライとタイムアウト設定",
     "upstreamRequestTimeoutMs": "リクエスト timeout ms",
     "upstreamMaxRetries": "最大リトライ回数",
@@ -1172,6 +1282,21 @@
     "reviewAndEnableWorkflow": "確認して有効化",
     "workflowReviewRequired": "確認が必要",
     "workflowReviewRequiredNote": "インポートされた workflow です。ローカルで確認してから有効化します。",
+    "pluginManifestImportReview": "プラグイン確認 {{state}} · {{permission}} · 能力 {{capabilities}} · エラー {{errors}} · 警告 {{warnings}}",
+    "pluginManifestRepairTarget": "プラグインマニフェスト確認",
+    "pluginManifestRepairSource": "実行時修復",
+    "pluginManifestRepairMeta": "{{meta}}",
+    "pluginManifestRepairIssues": "issue codes: {{issueCodes}}",
+    "pluginManifestRepairSummary": "{{summary}}",
+    "pluginManifestRepairEvents": "{{events}}",
+    "pluginManifestRepairLatestEvent": "最新 {{eventId}}",
+    "pluginManifestRepairEventCount": "{{count}} 件のイベント",
+    "pluginManifestRepairSourceEvents": "ソース {{eventIds}}",
+    "pluginManifestReviewState": {
+      "unreviewed": "未確認",
+      "approved": "承認済み",
+      "rejected": "却下"
+    },
     "reviewAgentWorkflowTitle": "インポートした workflow を確認しますか？",
     "reviewAgentWorkflowMessage": "{{name}} はインポートされたため、ローカル承認まで無効のままです。",
     "enableAgentWorkflowTitle": "この workflow を有効化しますか？",
@@ -1209,6 +1334,13 @@
     "connected": "MCP 接続済み",
     "refreshFailed": "MCP 同期失敗",
     "refreshSummary": "ツール {{tools}} · リソース {{resources}} · プロンプト {{prompts}}",
+    "pluginManifest": "プラグインマニフェスト",
+    "pluginManifestPreview": "{{state}} · {{permission}} · 能力 {{capabilities}} · エラー {{errors}} · 警告 {{warnings}}",
+    "pluginManifestReviewState": {
+      "unreviewed": "未確認",
+      "approved": "承認済み",
+      "rejected": "却下"
+    },
     "enabled": "MCP Server を有効にしました",
     "disabled": "MCP Server を無効にしました",
     "deleteTitle": "MCP Server を削除しますか？",
@@ -1252,6 +1384,17 @@
     "importEmptyMessage": "インポートできるプロバイダーを認識できませんでした。",
     "importDone": "一括インポート完了",
     "importDoneMessage": "{{count}} 件のプロバイダーをインポートしました。既定では無効です。",
+    "importFailed": "インポートに失敗しました",
+    "importFailedMessage": "インポートは完了しませんでした。内容を確認して再試行してください。",
+    "importProgress": {
+      "parsing": "インポート内容を解析中",
+      "saving": "プロバイダーを保存中",
+      "finishing": "一覧を更新中"
+    },
+    "importProgressWorking": "インポート中...",
+    "importProgressIndeterminate": "インポート結果を準備しています...",
+    "importProgressSavingDetail": "{{completed}} / {{total}} 件のプロバイダーを保存しました。",
+    "importProgressCurrent": "現在: {{name}}",
     "enableImportedTitle": "インポート項目を有効化しますか？",
     "enableImportedMessage": "今回インポートした {{count}} 件のプロバイダーを今すぐ有効化しますか？モデル取得とテストを並列で実行し、準備できたものから会話に使えます。",
     "enableImportedConfirm": "インポート項目を有効化",
@@ -1268,13 +1411,14 @@
     "activationEnabled": "プロバイダーを有効化しました",
     "activationSyncing": "モデルを取得中",
     "activationTesting": "モデルをテスト中",
-    "activationProgressMessage": "{{completed}}/{{total}} 完了 · 同期 {{synced}} · 利用可 {{tested}} · 失敗 {{failed}}",
+    "activationProgressMessage": "{{completed}}/{{total}} 完了 · 同期 {{synced}} · 利用可 {{tested}} · 要確認 {{failed}}",
     "activationProviderReady": "{{name}} は利用できます",
     "activationProviderNeedsCheck": "{{name}} は確認が必要です",
     "activatingProvider": "有効化してモデルを取得中",
     "activationSuccess": "プロバイダーを有効化しました",
-    "activationPartial": "有効化しました。一部のトークンは確認が必要です",
+    "activationPartial": "有効化しました。一部の項目は確認が必要です",
     "activationFailed": "有効化に失敗、または利用可能なモデルがありません",
+    "activationNeedsCheck": "要確認",
     "orderUpdated": "順序を更新しました",
     "exitBatch": "一括を終了",
     "batchMode": "一括モード",
@@ -1299,6 +1443,8 @@
     "clearInvalid": "無効項目を整理",
     "clearInvalidTitle": "無効なプロバイダーを整理しますか？",
     "clearInvalidMessage": "保存済みトークンがない、または Base URL/プロトコル設定が無効なプロバイダーを削除し、対応する実行状態も消去します。この操作は元に戻せません。",
+    "clearInvalidPendingList": "{{count}} 件のプロバイダーを整理します:",
+    "clearInvalidMore": "ほか {{count}} 件は表示していません",
     "clearInvalidConfirm": "整理する",
     "clearInvalidDone": "無効なプロバイダーを整理しました",
     "clearInvalidDoneMessage": "{{count}} 件の無効なプロバイダーを削除しました。",
@@ -1354,6 +1500,25 @@
     "failedProviders": "異常: {{names}}",
     "missingModels": "モデルなし: {{names}}",
     "missingKeys": "トークンなし: {{names}}",
+    "runtimeObservedProtocol": "観測 {{protocol}}",
+    "runtimeUnavailableReason": {
+      "disabled": "無効",
+      "sync_failed": "同期失敗",
+      "test_failed": "テスト失敗",
+      "cooldown": "クールダウン",
+      "circuit_open": "サーキット",
+      "quota_exhausted": "quota",
+      "credential_unhealthy": "認証",
+      "conformance_block": "ブロック",
+      "fallback": "フォールバック"
+    },
+    "runtimeSessionAffinityStatus": {
+      "resolved": "粘着解決",
+      "bound": "粘着バインド",
+      "invalidated": "粘着無効",
+      "rotated": "粘着ローテート",
+      "unknown": "粘着不明"
+    },
     "protocol": {
       "title": "インターフェースプロトコル",
       "openai-compatible": "OpenAI 互換",
@@ -1362,12 +1527,13 @@
     }
   },
   "providerActivation": {
-    "summary": "対象 {{target}} 件 · 有効化 {{enabled}} 件 · 同期成功 {{synced}} 件 · テスト成功 {{tested}} 件 · モデルなし {{noModels}} 件 · 失敗 {{failed}} 件",
+    "summary": "対象 {{target}} 件 · 有効化 {{enabled}} 件 · 同期成功 {{synced}} 件 · テスト成功 {{tested}} 件 · モデルなし {{noModels}} 件 · 要確認 {{failed}} 件",
     "missingToken": "トークンなし",
     "missingTokens": "トークンなし: {{names}}",
     "noModels": "利用可能なモデルなし",
     "noModelsFor": "利用可能なモデルなし: {{names}}",
-    "moreFailures": "ほか {{count}} 件の失敗を省略",
+    "failureGroup": "{{count}} 件要確認: {{message}}（{{names}}）",
+    "moreFailures": "ほか {{count}} 件の確認項目を省略",
     "providerMissing": "プロバイダーが見つかりません",
     "stageEnabled": "{{name}} を有効化しました",
     "stageSyncing": "{{name}} のモデルを取得中",
@@ -1466,6 +1632,7 @@
     "editing": "編集中",
     "modelId": "モデル ID",
     "remoteModels": "リモートモデル",
+    "providerMergedModels": "プロバイダーモデル",
     "customModels": "カスタムモデル",
     "customModelAliases": "カスタムモデルと別名",
     "modelAliasHelp": "1 行に 1 つのモデル ID を入力します。別名は「表示名=実モデル」または「表示名 -> 実モデル」です。",
@@ -1480,6 +1647,17 @@
     "failureCount": "失敗 {{count}}",
     "noModels": "モデルなし",
     "capabilityUpdated": "能力を更新しました",
+    "runtimeDiagnostics": "実行診断",
+    "runtimeProtocol": "プロトコル",
+    "runtimeProtocolValue": "宣言 {{declared}} · 準備 {{ready}} · 観測 {{observed}}",
+    "runtimeCredentialHealth": "トークン状態",
+    "runtimeCredentialHealthValue": "正常 {{healthy}}/{{enabled}}/{{total}} · クールダウン {{cooldown}} · サーキット {{circuit}} · quota {{quota}} · 認証 {{credential}}",
+    "runtimeSessionAffinity": "セッション粘着",
+    "runtimeSessionAffinityValue": "{{status}} · {{group}} · {{trigger}}",
+    "runtimeSessionAffinityOff": "オフ",
+    "runtimeUnavailable": "利用不可理由",
+    "runtimeUnavailableValue": "{{reason}} · {{detail}}",
+    "runtimeUnavailableNone": "なし",
     "capabilityMatrix": "能力マトリクス",
     "capabilityMatrixDescription": "実行時はこれらの能力で Responses、WebSocket、compact、埋め込み、payload、モデル機能を判定します。",
     "capabilityDependencyHint": "WebSocket またはリモート compact を有効にすると、Responses 対応も自動的に必要になります。",

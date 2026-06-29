@@ -299,7 +299,7 @@ export function listAndroidDeviceToolManifests(): AgentToolManifest[] {
       id: 'android:alarm.open_create_intent',
       source: 'android',
       name: 'android.alarm.open_create_intent',
-      description: 'Open the Android clock UI to create an alarm. The user confirms in the system app.',
+      description: 'Ask Android Clock to create an alarm directly when supported, falling back to the system editor when confirmation is required.',
       permission: 'read-write',
       enabled: true,
       inputSchema: objectSchema({
@@ -307,7 +307,7 @@ export function listAndroidDeviceToolManifests(): AgentToolManifest[] {
         minutes: { type: 'integer', minimum: 0, maximum: 59 },
         message: { type: 'string' },
       }, ['hour', 'minutes']),
-      metadata: { androidOnly: true, requiresExternalConfirmation: true, exactAlarmPermissionRequired: false },
+      metadata: { androidOnly: true, directSystemIntentRequest: true, externalConfirmationMayBeRequired: true, exactAlarmPermissionRequired: false },
     },
     {
       id: 'android:calendar.open_create_event',
@@ -802,10 +802,17 @@ async function openAlarmTool(args: Record<string, unknown>): Promise<AndroidTool
   const minutes = readInteger(args.minutes, -1, 0, 59)
   if (hour < 0 || minutes < 0) throw androidToolError('schema_invalid', 'hour and minutes are required.')
   const alarmMessage = typeof args.message === 'string' && args.message.trim() ? args.message.trim() : undefined
-  const alarmExtras = {
+  const alarmBaseExtras = {
     'android.intent.extra.alarm.HOUR': hour,
     'android.intent.extra.alarm.MINUTES': minutes,
     'android.intent.extra.alarm.MESSAGE': alarmMessage ?? '',
+  }
+  const directAlarmExtras = {
+    ...alarmBaseExtras,
+    'android.intent.extra.alarm.SKIP_UI': true,
+  }
+  const editorAlarmExtras = {
+    ...alarmBaseExtras,
     'android.intent.extra.alarm.SKIP_UI': false,
   }
   const launchMetadata = await launchAndroidIntentWithFallback([
@@ -813,24 +820,47 @@ async function openAlarmTool(args: Record<string, unknown>): Promise<AndroidTool
       action: 'android.intent.action.SET_ALARM',
       params: {
         packageName: 'com.android.deskclock',
-        extra: alarmExtras,
+        extra: directAlarmExtras,
       },
-      label: 'set-alarm-deskclock',
+      label: 'set-alarm-direct-deskclock',
     },
     {
       action: 'android.intent.action.SET_ALARM',
       params: {
         packageName: 'com.google.android.deskclock',
-        extra: alarmExtras,
+        extra: directAlarmExtras,
       },
-      label: 'set-alarm-google-clock',
+      label: 'set-alarm-direct-google-clock',
     },
     {
       action: 'android.intent.action.SET_ALARM',
       params: {
-        extra: alarmExtras,
+        extra: directAlarmExtras,
       },
-      label: 'set-alarm',
+      label: 'set-alarm-direct',
+    },
+    {
+      action: 'android.intent.action.SET_ALARM',
+      params: {
+        packageName: 'com.android.deskclock',
+        extra: editorAlarmExtras,
+      },
+      label: 'set-alarm-editor-deskclock',
+    },
+    {
+      action: 'android.intent.action.SET_ALARM',
+      params: {
+        packageName: 'com.google.android.deskclock',
+        extra: editorAlarmExtras,
+      },
+      label: 'set-alarm-editor-google-clock',
+    },
+    {
+      action: 'android.intent.action.SET_ALARM',
+      params: {
+        extra: editorAlarmExtras,
+      },
+      label: 'set-alarm-editor',
     },
     {
       action: 'android.intent.action.SHOW_ALARMS',
@@ -852,20 +882,35 @@ async function openAlarmTool(args: Record<string, unknown>): Promise<AndroidTool
       label: 'deskclock-launcher',
     },
   ], 'Android Clock could not be opened for alarm creation.')
+  const directRequest = launchMetadata.attempt.startsWith('set-alarm-direct')
+  const requiresExternalConfirmation = !directRequest
   const payload = {
-    opened: true,
+    requestSent: true,
+    opened: requiresExternalConfirmation,
     target: 'alarm',
     hour,
     minutes,
     message: alarmMessage,
+    skipUiRequested: directRequest,
+    directSystemIntentRequest: directRequest,
+    externalConfirmationMayBeRequired: directRequest,
+    requiresExternalConfirmation,
     exactAlarmPermissionRequired: false,
     launchAttempt: launchMetadata.attempt,
   }
-  return visibleAndroidIntentExecution(formatAlarmIntentOpenedOutput(hour, minutes, alarmMessage), payload, {
-    target: 'alarm',
-    requiresExternalConfirmation: true,
-    launchAttempt: launchMetadata.attempt,
-  })
+  return visibleAndroidIntentExecution(
+    directRequest
+      ? formatAlarmCreationRequestedOutput(hour, minutes, alarmMessage)
+      : formatAlarmIntentOpenedOutput(hour, minutes, alarmMessage),
+    payload,
+    {
+      target: 'alarm',
+      requiresExternalConfirmation,
+      externalConfirmationMayBeRequired: directRequest,
+      skipUiRequested: directRequest,
+      launchAttempt: launchMetadata.attempt,
+    }
+  )
 }
 
 async function openCalendarEventTool(args: Record<string, unknown>): Promise<AndroidToolExecution> {
@@ -1410,6 +1455,17 @@ function formatAlarmIntentOpenedOutput(hour: number, minutes: number, message: s
     'androidTool.alarmIntentOpened',
     { time: formatClockTime(hour, minutes), messageSuffix },
     'Android Clock is open for {{time}}{{messageSuffix}}. Confirm it in the system Clock app to create the alarm.'
+  )
+}
+
+function formatAlarmCreationRequestedOutput(hour: number, minutes: number, message: string | undefined): string {
+  const messageSuffix = message
+    ? st('androidTool.alarmMessageSuffix', { message }, ' with label "{{message}}"')
+    : ''
+  return st(
+    'androidTool.alarmCreationRequested',
+    { time: formatClockTime(hour, minutes), messageSuffix },
+    'Android Clock alarm creation was requested for {{time}}{{messageSuffix}}. If the Clock app still shows an editor, confirm it there.'
   )
 }
 

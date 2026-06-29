@@ -69,7 +69,7 @@ function normalizeDiagnosticText(value: string | undefined): string {
 
 function formatAndroidIntentDiagnosticOutput(text: string): string | undefined {
   const record = parseDiagnosticObject(text)
-  if (!record || record.opened !== true || typeof record.target !== 'string') return undefined
+  if (!record || (record.opened !== true && record.requestSent !== true) || typeof record.target !== 'string') return undefined
   switch (record.target) {
     case 'alarm': {
       const hour = readInteger(record.hour, 0, 23)
@@ -79,6 +79,13 @@ function formatAndroidIntentDiagnosticOutput(text: string): string | undefined {
       const messageSuffix = message
         ? st('androidTool.alarmMessageSuffix', { message }, ' with label "{{message}}"')
         : ''
+      if (record.requestSent === true && record.requiresExternalConfirmation !== true) {
+        return st(
+          'androidTool.alarmCreationRequested',
+          { time: formatClockTime(hour, minutes), messageSuffix },
+          'Android Clock alarm creation was requested for {{time}}{{messageSuffix}}. If the Clock app still shows an editor, confirm it there.'
+        )
+      }
       return st(
         'androidTool.alarmIntentOpened',
         { time: formatClockTime(hour, minutes), messageSuffix },

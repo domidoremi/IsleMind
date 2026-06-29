@@ -1,4 +1,4 @@
-import { StyleSheet, View } from 'react-native'
+import { Platform, StyleSheet, View } from 'react-native'
 import { MotiView } from 'moti'
 import Svg, { Path, Rect } from 'react-native-svg'
 import type { MotionIntensity } from '@/hooks/useMotionPreference'
@@ -19,6 +19,7 @@ interface IsleBackgroundProps {
 export function IsleBackground({ colors, motion, mode = 'default', state = 'idle', intensity = 1 }: IsleBackgroundProps) {
   const resolvedMode = resolveBackgroundMode(colors, mode)
   if (resolvedMode === 'none' || resolvedMode === 'plain') return null
+  if (Platform.OS === 'android' && colors.ui.minimal) return null
 
   const animated = shouldAnimateBackground(colors, motion, state)
   const profile = backgroundProfile(colors, resolvedMode, state, intensity)

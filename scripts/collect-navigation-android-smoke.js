@@ -17,7 +17,7 @@ const routeCases = [
   {
     name: 'home',
     url: 'islemind://',
-    markerGroups: [['输入消息', '问点什么', 'Input message'], ['会话参数', 'Session settings', '配置服务商']],
+    markerGroups: [['输入消息', '问点什么', 'Input message'], ['会话参数', 'Session settings', '配置服务商', '显示顶部栏', 'Show top bar']],
   },
   {
     name: 'conversations',
@@ -205,8 +205,7 @@ function runHomeKeyboardSmoke(device) {
   const logPath = path.join(keyboardDir, 'home-keyboard-open.log')
   const startedAt = Date.now()
   openUrl(device, 'islemind://')
-  sleep(1700)
-  let capture = captureStep(device, keyboardDir, 'home-keyboard-before-focus')
+  let capture = waitForHomeComposer(device, 'home-keyboard-before-focus', 8)
   const tapped = tapFirstEditable(device, capture.uiaText)
   if (tapped) {
     sleep(500)
@@ -233,6 +232,22 @@ function runHomeKeyboardSmoke(device) {
     log: relative(logPath),
     visibleText: extractVisibleText(capture.uiaText).slice(0, 60),
   }
+}
+
+function waitForHomeComposer(device, captureName, maxAttempts) {
+  let capture = captureStep(device, keyboardDir, captureName)
+  if (hasHomeComposer(capture.uiaText)) return capture
+  for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+    sleep(500 + attempt * 150)
+    capture = captureStep(device, keyboardDir, captureName)
+    if (hasHomeComposer(capture.uiaText)) return capture
+  }
+  return capture
+}
+
+function hasHomeComposer(uiaText) {
+  return hasAnyText(uiaText, ['输入消息', '问点什么', 'Input message'])
+    && hasAnyText(uiaText, ['发送消息', 'Send message', 'Send'])
 }
 
 function writeProviderBackResult(backRows) {

@@ -25,111 +25,9 @@
     "openExternal": "外部打开",
     "refresh": "刷新",
     "loading": "载入中",
-    "saved": "已保存"
-  },
-  "onboarding": {
-    "skip": "跳过",
-    "dragHint": "拖动光点或点击继续",
-    "tapHint": "点击继续",
-    "awaken": {
-      "eyebrow": "欢迎来到 IsleMind",
-      "title": "让 Isle 准备好陪你工作",
-      "body": "先用一分钟设置偏好，之后可以随时在设置中修改。",
-      "action": "开始",
-      "signals": {
-        "local": "本地优先保存对话、知识与偏好",
-        "private": "密钥只用于你配置的服务商",
-        "ready": "完成后会回到主页直接开始输入"
-      }
-    },
-    "privacy": {
-      "eyebrow": "隐私边界",
-      "title": "重要数据由你掌控",
-      "body": "IsleMind 会把关键能力拆开配置，你可以逐项开启。",
-      "action": "了解",
-      "beacons": {
-        "chat": {
-          "title": "对话记录",
-          "body": "本地保存，可导出或清理。"
-        },
-        "key": {
-          "title": "服务商密钥",
-          "body": "仅用于请求你选择的模型接口。"
-        },
-        "knowledge": {
-          "title": "知识与记忆",
-          "body": "可单独启用、删除或重新索引。"
-        }
-      }
-    },
-    "companion": {
-      "eyebrow": "工作方式",
-      "title": "选择 Isle 的默认语气",
-      "body": "这会影响新对话的初始倾向，不会限制你之后的指令。",
-      "action": "继续",
-      "modes": {
-        "concise": {
-          "title": "简洁",
-          "body": "优先给出短答案、结论和可执行步骤。"
-        },
-        "research": {
-          "title": "研究",
-          "body": "更关注背景、来源、证据和多角度分析。"
-        },
-        "creative": {
-          "title": "创意",
-          "body": "适合写作、命名、头脑风暴和发散方案。"
-        },
-        "engineering": {
-          "title": "工程",
-          "body": "偏向代码、架构、排错和可验证的实现路径。"
-        },
-        "companion": {
-          "title": "陪伴",
-          "body": "语气更柔和，适合整理想法和持续对话。"
-        }
-      }
-    },
-    "capability": {
-      "eyebrow": "能力入口",
-      "title": "按需要开启扩展能力",
-      "body": "联网、知识库、记忆和技能都可以独立启用。",
-      "action": "我知道了",
-      "providerLater": "还没有服务商也没关系，之后可从顶部或设置中配置。",
-      "items": {
-        "knowledge": {
-          "title": "本地知识",
-          "body": "导入资料并在回答中引用。"
-        },
-        "memory": {
-          "title": "长期记忆",
-          "body": "保留经过确认的个人偏好。"
-        },
-        "search": {
-          "title": "联网搜索",
-          "body": "需要新信息时再接入搜索。"
-        },
-        "skills": {
-          "title": "Skill",
-          "body": "用预设能力处理专业任务。"
-        }
-      }
-    },
-    "firstPrompt": {
-      "eyebrow": "第一条提示",
-      "title": "带着一个问题开始",
-      "body": "选择一个示例，或者完成后直接输入自己的内容。",
-      "action": "进入对话",
-      "samples": {
-        "concise": "把我今天要做的三件事整理成最短可执行工作产物。\n\n输入：\n- 任务：\n- 可用时间：\n- 必须避开的事项：\n\n输出必须包含以下固定标题：\n1. 结构化摘要\n2. 决策记录\n3. 行动项（负责人 / 下一步 / 截止或触发条件）\n4. 风险和阻塞\n5. 待确认问题\n6. 证据仍需补充\n7. 可直接复制给他人的版本",
-        "research": "帮我比较两个方案，并列出需要验证的关键证据。\n\n输入：\n- 方案 A：\n- 方案 B：\n\n输出必须包含以下固定标题：\n1. 结构化摘要\n2. 决策记录\n3. 行动项（负责人 / 下一步 / 截止或触发条件）\n4. 风险和阻塞\n5. 待确认问题\n6. 证据仍需补充\n7. 可直接发给协作者的版本",
-        "creative": "帮我为一个私人 AI 工作台生成命名方向。\n\n输入：\n- 气质：温暖、克制、可靠\n- 避免：浮夸、营销感\n\n输出必须包含以下固定标题：\n1. 结构化摘要\n2. 决策记录\n3. 行动项（负责人 / 下一步 / 截止或触发条件）\n4. 风险和阻塞\n5. 待确认问题\n6. 证据仍需补充\n7. 可直接发给协作者的版本",
-        "engineering": "帮我把一个复杂功能拆成可验证的开发步骤。\n\n输入：\n- 功能目标：\n- 当前约束：\n\n输出必须包含以下固定标题：\n1. 结构化摘要\n2. 决策记录\n3. 行动项（负责人 / 下一步 / 截止或触发条件）\n4. 风险和阻塞\n5. 待确认问题\n6. 证据仍需补充（每一步的验证证据或命令）\n7. 可直接发给协作者的版本",
-        "companion": "陪我梳理一下最近卡住的事情，并提出下一步。\n\n输入：\n- 卡住的问题：\n- 已经尝试过：\n\n输出必须包含以下固定标题：\n1. 结构化摘要\n2. 决策记录\n3. 行动项（负责人 / 下一步 / 截止或触发条件）\n4. 风险和阻塞\n5. 待确认问题\n6. 证据仍需补充\n7. 可直接发给协作者的版本",
-        "organize": "把下面的想法整理成可执行结构。\n\n输入：\n- 零散想法：\n- 目标读者：\n- 使用场景：\n\n输出必须包含以下固定标题：\n1. 结构化摘要\n2. 决策记录\n3. 行动项（负责人 / 下一步 / 截止或触发条件）\n4. 风险和阻塞\n5. 待确认问题\n6. 证据仍需补充\n7. 可直接复制给他人的版本",
-        "plan": "为接下来一周制定一个轻量但可执行的计划。\n\n输入：\n- 本周目标：\n- 时间限制：\n\n输出必须包含以下固定标题：\n1. 结构化摘要\n2. 决策记录\n3. 行动项（负责人 / 下一步 / 截止或触发条件）\n4. 风险和阻塞\n5. 待确认问题\n6. 证据仍需补充\n7. 可直接发给协作者的版本"
-      }
-    }
+    "saved": "已保存",
+    "none": "无",
+    "unknown": "未知"
   },
   "chat": {
     "newConversation": "新对话",
@@ -214,6 +112,8 @@
     "maxTokensAccessibilityHint": "输入 128 到 {{limit}} 之间的输出 Token 上限。",
     "topP": "Top P",
     "topPAccessibilityHint": "输入 0 到 1 之间的数值。",
+    "topK": "Top K",
+    "topKAccessibilityHint": "输入正整数；仅在模型元数据声明支持时发送。",
     "streamingEnabled": "流式输出",
     "sendMessage": "发送消息",
     "sendMessageAccessibilityHint": "在输入可发送时发送当前消息。",
@@ -249,6 +149,7 @@
     "composerDraftStatus": "{{count}}/{{limit}} 字符",
     "composerDraftStatusWithAttachments": "{{count}}/{{limit}} 字符 · {{attachments}} 个附件",
     "composerDraftRemaining": "剩余 {{count}}",
+    "composerDraftExceeded": "超出上限 {{count}} 个字符",
     "attachmentUnavailable": "附件不可用",
     "fileTooLarge20": "文件不能超过 20MB。",
     "attachmentReadFailed": "无法读取这个附件，请换一个文件试试。",
@@ -286,6 +187,7 @@
     "noProviderModelMatchesDescription": "请清空搜索，或输入供应商 / 模型名称。",
     "notSelected": "未选择",
     "none": "无",
+    "unknown": "未知",
     "deprecated": "不推荐",
     "providerNoModels": "这个供应商还没有可用模型。",
     "providerNoModelsSyncHint": "这个供应商还没有可用模型，请到供应商页同步并测试。",
@@ -333,6 +235,14 @@
     "pendingSendFailedMessage": "队列中的消息没有成功发送。",
     "sendFailed": "发送失败",
     "sendFailedMessage": "消息没有成功发送，请稍后重试。",
+    "runtimeRepairRetryPrompt": "带着下面的运行时修复上下文重试上一次失败回合。保留原始用户意图；如果修复目标指向供应商、工具或上下文路径，请先调整执行路径；如果仍被阻断，先说明剩余阻断原因再重试。\n\n上一条用户请求：{{previousUserMessage}}\n失败摘要：{{failureSummary}}\n修复级别：{{severity}}\n修复动作：{{action}}\n目标：{{target}}\n运行事件：{{event}}\n最新事件 ID：{{eventId}}\n范围：{{scope}}\n问题代码：{{issueCodes}}\n事件次数：{{eventCount}}\n摘要：{{summary}}\n\n结构化修复载荷：\n{{payloadJson}}",
+    "runtimeRepairIntentTitle": "修复重放已就绪",
+    "runtimeRepairIntentDetail": "{{scope}} · {{summary}}",
+    "runtimeRepairIntentMeta": "{{severity}} · {{action}} · {{target}} · 事件 {{eventCount}}",
+    "runtimeRepairIntentIssues": "问题 {{issueCodes}}",
+    "runtimeRepairIntentEventId": "Payload {{schema}} · 步骤 {{stepCount}} · 事件 {{eventId}}",
+    "runtimeRepairIntentSend": "发送修复重放",
+    "runtimeRepairIntentApplyDraft": "恢复草稿",
     "interruptedSendFailedMessage": "打断后的消息没有成功发送。",
     "modelAvailable": "模型可用",
     "modelUnavailable": "模型不可用",
@@ -548,6 +458,7 @@
   },
   "androidTool": {
     "alarmIntentOpened": "已打开 Android 时钟界面，闹钟时间为 {{time}}{{messageSuffix}}。请在系统时钟应用中确认后创建。",
+    "alarmCreationRequested": "已向 Android 时钟发送闹钟创建请求：{{time}}{{messageSuffix}}。如果系统时钟仍显示编辑界面，请在其中确认。",
     "alarmMessageSuffix": "，标签：{{message}}",
     "calendarEventIntentOpened": "已打开 Android 日历界面，事件「{{title}}」时间为 {{time}}。请在系统日历应用中确认后创建。",
     "reminderIntentOpened": "已打开 Android 日历界面，提醒「{{title}}」时间为 {{time}}。请在系统应用中确认后创建。",
@@ -579,14 +490,16 @@
     "androidPendingApkInstallerSummary": "IsleMind 只能把 APK 交给 Android 系统安装器。系统安装器需要你确认；不支持静默安装。",
     "androidPendingClearCacheTitle": "清理 IsleMind 应用缓存",
     "androidPendingClearCacheSummary": "仅 IsleMind 应用缓存条目可被清理。用户文件、任意共享存储清理和全手机清理均不支持。",
-    "androidPendingAlarmTitle": "打开 Android 闹钟编辑器",
-    "androidPendingAlarmSummary": "IsleMind 会用请求的闹钟字段打开 Android 时钟界面。只有你在系统应用中确认后，闹钟才会创建。",
+    "androidPendingAlarmTitle": "创建 Android 闹钟",
+    "androidPendingAlarmSummary": "IsleMind 会请求 Android 时钟直接创建闹钟；如果系统时钟要求确认，会打开编辑界面让你确认。",
     "androidPendingAlarmDetails": "时间 {{time}}",
     "androidPendingAlarmDetailsWithLabel": "时间 {{time}} · 标签 {{label}}",
     "androidPendingCalendarTitle": "打开 Android 日历编辑器",
     "androidPendingCalendarSummary": "IsleMind 会用请求的事项字段打开 Android 日历界面。只有你在系统应用中确认后，提醒或事件才会创建。",
     "androidPendingCalendarDetailsWithTime": "{{title}} · {{time}}",
     "androidPendingReminderDetailsWithTime": "{{title}} · {{time}}",
+    "androidPendingNotificationSettingsTitle": "打开 Android 通知设置",
+    "androidPendingNotificationSettingsSummary": "IsleMind 会打开此应用相关的 Android 通知系统设置。最终通知权限或重要通知更改仍需在系统界面中完成。",
     "androidPendingNotificationDetails": "目标：{{target}}",
     "agentPendingOutputTitle": "需要你确认后继续",
     "agentPendingOutputStep": "步骤：{{step}}",
@@ -902,7 +815,7 @@
     "upstreamGovernance": "上游治理",
     "upstreamGovernanceSubtitle": "控制模型请求的传输、compact、代理、日志和访问规则。",
     "runtimeDiagnostics": "运行时诊断",
-    "runtimeDiagnosticsSubtitle": "显示传输、compact、代理、日志、策略和供应商健康状态。",
+    "runtimeDiagnosticsSubtitle": "显示传输、compact、时间线、代理、日志、策略和供应商健康状态。",
     "runtimeDiagnosticsReady": "已汇总",
     "runtimeDiagnosticsLoading": "读取中",
     "runtimeDiagnosticsRefresh": "刷新",
@@ -917,10 +830,148 @@
     "runtimeDiagnosticCompactReasonBelowThreshold": "低于阈值 {{count}}",
     "runtimeDiagnosticCompactReasonCapabilityMissing": "缺少能力 {{count}}",
     "runtimeDiagnosticCompactReasonDisabled": "已关闭 {{count}}",
+    "runtimeDiagnosticContextControlPlane": "上下文控制面",
+    "runtimeDiagnosticContextControlPlaneValue": "规划 {{planned}} · compact {{compact}} · 截断 {{capped}} · 缓存 {{cache}} · 重写 {{rewrite}} · 无界 {{unbounded}} · 清单 {{manifest}} · 清单问题 {{manifestIssues}} · 样本 {{examples}}",
     "runtimeDiagnosticPolicy": "策略",
     "runtimeDiagnosticPolicyValue": "{{payload}} · {{rules}} 条规则",
     "runtimeDiagnosticRectification": "请求整流",
     "runtimeDiagnosticRectificationValue": "总计 {{total}} · 重试 {{retrying}} · 成功 {{success}} · 失败 {{failed}} · 样本 {{examples}}",
+    "runtimeDiagnosticProviderHealth": "供应商健康",
+    "runtimeDiagnosticProviderHealthValue": "冷却 {{cooldown}} · 熔断 {{circuit}} · 配额 {{quota}} · 凭据 {{credential}} · 样本 {{examples}}",
+    "runtimeDiagnosticSessionAffinity": "会话粘性",
+    "runtimeDiagnosticSessionAffinityValue": "解析 {{resolved}} · 绑定 {{bound}} · 失效 {{invalidated}} · 轮换 {{rotated}} · 样本 {{examples}}",
+    "runtimeDiagnosticRequestExamples": "请求样本",
+    "runtimeDiagnosticRequestExamplesValue": "{{examples}}",
+    "runtimeDiagnosticTimeline": "运行时间线",
+    "runtimeDiagnosticTimelineValue": "事件 {{total}} · 供应商 {{provider}} · 上下文 {{context}} · compact {{compact}} · 插件 {{plugin}} · 工具 {{tool}} · 会话 {{session}} · 阻断 {{blocked}} · 错误 {{error}} · 运行中 {{running}} · 问题 {{issues}} · 修复任务 {{repairs}} · 样本 {{examples}} · 问题样本 {{issueExamples}} · 修复目标 {{repairExamples}}",
+    "runtimeDiagnosticPerformance": "诊断预算",
+    "runtimeDiagnosticPerformanceValue": "{{duration}}ms · tail {{tail}}B · 解析 {{parsed}}/{{rawParsed}} / {{logLimit}} · 合并 {{merged}} · 内存 {{memory}} · 时间线 {{timeline}}/{{timelineLimit}}",
+    "runtimeDiagnosticObservability": "观测外发",
+    "runtimeDiagnosticObservabilityValue": "{{mode}} · 网络 {{network}} · 本地 {{local}} · 端点 {{endpoint}} · 高频 {{highFrequency}} · 属性 {{attr}}/{{string}} · 预演 {{preview}} · 事件 {{events}}/{{eventLimit}} · span {{spans}} · 失败 {{failures}} · 阻断 {{blocks}} · 提示 {{warnings}}",
+    "runtimeDiagnosticObservabilityAllowed": "允许",
+    "runtimeDiagnosticObservabilityBlocked": "阻断",
+    "runtimeDiagnosticObservabilityPreviewFailuresNone": "无",
+    "runtimeDiagnosticObservabilityPreviewStatus": {
+      "ready": "就绪",
+      "blocked": "阻断",
+      "empty": "无事件",
+      "failed": "失败"
+    },
+    "runtimeDiagnosticObservabilityMode": {
+      "off": "关闭",
+      "local-only": "仅本地",
+      "external": "外部"
+    },
+    "runtimeDiagnosticObservabilityEndpoint": {
+      "none": "无",
+      "https": "HTTPS",
+      "local-http": "本地 HTTP",
+      "unsafe-http": "不安全 HTTP",
+      "invalid": "无效"
+    },
+    "runtimeDiagnosticObservabilityHighFrequency": {
+      "drop": "丢弃",
+      "coalesced": "合并",
+      "per-event": "逐事件"
+    },
+    "runtimeDiagnosticObservabilityBlockReason": {
+      "external-export-disabled": "外发关闭",
+      "local-only": "仅本地",
+      "missing-target": "缺少目标",
+      "unsupported-target": "目标不支持",
+      "missing-endpoint": "缺少端点",
+      "invalid-endpoint": "端点无效",
+      "insecure-remote-endpoint": "远端非安全端点",
+      "missing-api-key": "缺少密钥",
+      "missing-user-opt-in": "缺少用户授权",
+      "missing-workspace-consent": "缺少工作区同意",
+      "raw-payload-export-blocked": "禁止原始 payload",
+      "invalid-export-schema": "导出 schema 无效",
+      "invalid-redaction-strategy": "脱敏策略无效",
+      "per-event-high-frequency-blocked": "禁止高频逐事件",
+      "attribute-limit-too-high": "属性上限过高",
+      "attribute-string-limit-too-high": "属性文本上限过高"
+    },
+    "runtimeDiagnosticObservabilityWarning": {
+      "local-http-development-only": "本地 HTTP 仅开发",
+      "attribute-limit-defaulted": "属性上限使用默认值",
+      "attribute-string-limit-defaulted": "属性文本上限使用默认值"
+    },
+    "runtimeDiagnosticPluginCatalog": "插件目录",
+    "runtimeDiagnosticPluginCatalogValue": "清单 {{total}} · 有效 {{valid}} · 无效 {{invalid}} · 启用 {{enabled}} · Hooks {{hooks}} · noop {{noop}} · 可执行 {{executable}} · 已审 {{approved}} · 待审 {{unreviewed}} · 能力 {{capabilities}}",
+    "runtimeDiagnosticTimelineStage": {
+      "context": "上下文",
+      "provider": "供应商",
+      "tool": "工具",
+      "session": "会话",
+      "compact": "压缩",
+      "plugin": "插件",
+      "token": "token",
+      "other": "其他"
+    },
+    "runtimeDiagnosticTimelineStatus": {
+      "done": "完成",
+      "blocked": "阻断",
+      "error": "错误",
+      "skipped": "跳过",
+      "running": "运行中",
+      "info": "信息"
+    },
+    "runtimeDiagnosticTimelineIssue": {
+      "provider_blocked": "供应商阻断",
+      "provider_error": "供应商错误",
+      "tool_blocked": "工具阻断",
+      "mcp_transport_unsupported": "MCP 传输不支持",
+      "mcp_manifest_invalid": "MCP 清单无效",
+      "mcp_permission_required": "MCP 权限待确认",
+      "agent_prompt_injection_blocked": "Agent 提示注入已阻断",
+      "agent_tool_replay_blocked": "Agent 工具回放已阻断",
+      "agent_workflow_tampering_blocked": "Agent 工作流篡改已阻断",
+      "agent_security_eval_failed": "Agent 安全评测失败",
+      "context_unbounded_blocked": "无界上下文阻断",
+      "context_manifest_budget_overrun": "上下文预算超限",
+      "context_manifest_source_churn": "上下文来源抖动",
+      "session_failover": "会话故障切换",
+      "compact_skipped": "compact 跳过",
+      "plugin_manifest_invalid": "插件清单无效",
+      "plugin_hook_executable": "插件 Hook 请求执行"
+    },
+    "runtimeDiagnosticTimelineSeverity": {
+      "critical": "严重",
+      "warning": "警告",
+      "info": "信息"
+    },
+    "runtimeDiagnosticTimelineNextAction": {
+      "check_provider_credentials": "检查凭据",
+      "review_provider_policy": "检查策略",
+      "retry_or_switch_provider": "重试或切换供应商",
+      "fix_tool_schema": "修正工具 schema",
+      "review_mcp_transport": "检查 MCP 传输",
+      "review_mcp_manifest": "检查 MCP 清单",
+      "confirm_mcp_tool_permission": "确认 MCP 工具权限",
+      "review_agent_security_policy": "检查 Agent 安全策略",
+      "review_agent_workflow": "检查 Agent 工作流",
+      "cap_context_source": "限制上下文来源",
+      "stabilize_context_sources": "稳定上下文来源",
+      "review_session_affinity": "检查会话粘性",
+      "enable_compact_or_reduce_history": "启用 compact 或缩短历史",
+      "review_plugin_manifest": "检查插件清单"
+    },
+    "runtimeDiagnosticTimelineActionTarget": {
+      "provider-settings": "供应商设置",
+      "tool-settings": "工具设置",
+      "context-settings": "上下文设置",
+      "session-affinity-settings": "会话粘性设置",
+      "compact-settings": "compact 设置",
+      "agent-settings": "Agent 设置",
+      "plugin-settings": "插件设置",
+      "retry-chat": "重试对话"
+    },
+    "runtimeRepairTasks": "修复任务",
+    "runtimeRepairTasksValue": "{{count}} 个任务 · 严重 {{critical}} · 警告 {{warning}}",
+    "runtimeRepairTaskButton": "{{action}} @ {{target}}",
+    "runtimeRepairOpened": "已打开修复目标",
+    "runtimeRepairChatUnavailable": "对话目标不可用",
     "runtimeDiagnosticProxy": "代理",
     "runtimeDiagnosticProviders": "供应商",
     "runtimeDiagnosticProvidersValue": "就绪 {{ready}}/{{enabled}} · 别名 {{alias}}",
@@ -960,6 +1011,26 @@
       "local_fallback": "降级",
       "refresh_docs": "刷新"
     },
+    "runtimeDiagnosticProviderHealthReason": {
+      "cooldown": "冷却",
+      "circuit_open": "熔断",
+      "quota_exhausted": "配额",
+      "credential_unhealthy": "凭据"
+    },
+    "runtimeDiagnosticSessionAffinityStatus": {
+      "resolved": "解析",
+      "bound": "绑定",
+      "invalidated": "失效",
+      "rotated": "轮换",
+      "unknown": "未知"
+    },
+    "runtimeDiagnosticRequestExampleKind": {
+      "route_snapshot": "路由",
+      "fallback": "回退",
+      "session_binding": "会话",
+      "compact_decision": "压缩",
+      "conformance_block": "阻断"
+    },
     "runtimeDiagnosticLog": "日志",
     "runtimeDiagnosticLogOn": "写入",
     "runtimeDiagnosticLogOff": "关闭",
@@ -979,6 +1050,9 @@
       "custom_base_url": "自定义地址",
       "system_proxy_platform_stack": "系统代理",
       "invalid_custom_base_url": "地址无效"
+    },
+    "runtimeProxyWarning": {
+      "custom_proxy_session_id_header": "自定义代理可能丢弃粘性路由使用的下划线 session_id 头"
     },
     "policySummary": "规则摘要",
     "policyPayloadSummary": "Payload {{mode}}",
@@ -1010,8 +1084,44 @@
     "proxySystemDetected": "系统检测",
     "proxyBaseUrl": "代理 Base URL",
     "proxyBaseUrlNote": "自定义地址会保留原始 endpoint 路径和查询参数。",
+    "observabilitySinkSettings": "观测外发",
+    "observabilitySinkMode": "外发模式",
+    "observabilitySinkOff": "关闭",
+    "observabilitySinkLocalOnly": "仅本地",
+    "observabilitySinkExternal": "外部",
+    "observabilitySinkTarget": "目标",
+    "observabilitySinkTargetOpenTelemetry": "OpenTelemetry",
+    "observabilitySinkTargetLangfuse": "Langfuse",
+    "observabilitySinkTargetPhoenix": "Phoenix",
+    "observabilitySinkEndpointUrl": "外发端点",
+    "observabilitySinkEndpointUrlNote": "外部目标使用 HTTPS；localhost HTTP 仅限开发。",
+    "observabilitySinkHighFrequencyMode": "高频事件",
+    "observabilitySinkHighFrequencyDrop": "丢弃",
+    "observabilitySinkHighFrequencyCoalesced": "合并",
+    "observabilitySinkHighFrequencyPerEvent": "逐事件",
+    "observabilitySinkAttributeLimit": "属性数量",
+    "observabilitySinkAttributeStringLimit": "属性长度",
+    "observabilitySinkApiKey": "外发 API key",
+    "observabilitySinkApiKeyNote": "存入 secure storage；诊断只读取是否存在 key。",
+    "observabilitySinkApiKeyPlaceholder": "粘贴外发目标 key",
+    "observabilitySinkApiKeyConfigured": "API key 已配置",
+    "observabilitySinkApiKeyMissing": "API key 未配置",
+    "observabilitySinkApiKeySave": "保存 key",
+    "observabilitySinkApiKeySaving": "保存中…",
+    "observabilitySinkApiKeyClear": "清除 key",
+    "observabilitySinkApiKeySaved": "观测 API key 已保存",
+    "observabilitySinkApiKeyCleared": "观测 API key 已清除",
+    "observabilitySinkApiKeySaveFailed": "观测 API key 更新失败",
+    "observabilitySinkUserOptIn": "用户同意",
+    "observabilitySinkWorkspaceConsent": "工作区同意",
+    "observabilitySinkDevelopmentOnly": "开发端点",
     "sessionConcurrencyLimit": "会话并发",
     "sessionQueueTimeoutMs": "排队毫秒",
+    "sessionAffinitySettings": "会话粘性",
+    "sessionAffinityEnabled": "将兼容请求固定到同一凭据组",
+    "sessionAffinityEnabledDescription": "长对话会复用健康凭据，直到绑定过期或失败。",
+    "sessionAffinityTtlMs": "会话粘性 TTL 毫秒",
+    "sessionAffinityTtlMsNote": "凭据绑定在刷新前可复用的时长。",
     "retryTimeoutSettings": "重试与超时设置",
     "upstreamRequestTimeoutMs": "请求超时毫秒",
     "upstreamMaxRetries": "最大重试次数",
@@ -1172,6 +1282,21 @@
     "reviewAndEnableWorkflow": "审核并启用",
     "workflowReviewRequired": "需审核",
     "workflowReviewRequiredNote": "导入的 workflow；本地审核后才能启用。",
+    "pluginManifestImportReview": "插件审核 {{state}} · {{permission}} · 能力 {{capabilities}} · 错误 {{errors}} · 警告 {{warnings}}",
+    "pluginManifestRepairTarget": "插件清单审核",
+    "pluginManifestRepairSource": "运行时修复",
+    "pluginManifestRepairMeta": "{{meta}}",
+    "pluginManifestRepairIssues": "问题代码：{{issueCodes}}",
+    "pluginManifestRepairSummary": "{{summary}}",
+    "pluginManifestRepairEvents": "{{events}}",
+    "pluginManifestRepairLatestEvent": "最新 {{eventId}}",
+    "pluginManifestRepairEventCount": "{{count}} 个事件",
+    "pluginManifestRepairSourceEvents": "来源 {{eventIds}}",
+    "pluginManifestReviewState": {
+      "unreviewed": "未审核",
+      "approved": "已批准",
+      "rejected": "已拒绝"
+    },
     "reviewAgentWorkflowTitle": "审核导入的 workflow？",
     "reviewAgentWorkflowMessage": "{{name}} 来自导入，必须本地批准后才会启用。",
     "enableAgentWorkflowTitle": "启用这个 workflow？",
@@ -1209,6 +1334,13 @@
     "connected": "MCP 已连接",
     "refreshFailed": "MCP 同步失败",
     "refreshSummary": "工具 {{tools}} · 资源 {{resources}} · 提示词 {{prompts}}",
+    "pluginManifest": "插件清单",
+    "pluginManifestPreview": "{{state}} · {{permission}} · 能力 {{capabilities}} · 错误 {{errors}} · 警告 {{warnings}}",
+    "pluginManifestReviewState": {
+      "unreviewed": "未审核",
+      "approved": "已批准",
+      "rejected": "已拒绝"
+    },
     "enabled": "MCP Server 已启用",
     "disabled": "MCP Server 已停用",
     "deleteTitle": "删除 MCP Server？",
@@ -1252,6 +1384,17 @@
     "importEmptyMessage": "没有识别到可导入的供应商。",
     "importDone": "批量导入完成",
     "importDoneMessage": "已导入 {{count}} 个供应商，默认停用。",
+    "importFailed": "导入失败",
+    "importFailedMessage": "导入未完成，请检查内容后重试。",
+    "importProgress": {
+      "parsing": "正在解析导入内容",
+      "saving": "正在保存服务商",
+      "finishing": "正在刷新列表"
+    },
+    "importProgressWorking": "导入中...",
+    "importProgressIndeterminate": "正在准备导入结果...",
+    "importProgressSavingDetail": "已保存 {{completed}} / {{total}} 个服务商。",
+    "importProgressCurrent": "当前：{{name}}",
     "enableImportedTitle": "启用导入项？",
     "enableImportedMessage": "是否立即启用本次导入的 {{count}} 个供应商？会并行获取模型并测试可用模型，先就绪的供应商可先用于对话。",
     "enableImportedConfirm": "启用导入项",
@@ -1268,13 +1411,14 @@
     "activationEnabled": "服务商已启用",
     "activationSyncing": "正在获取模型",
     "activationTesting": "正在测试模型",
-    "activationProgressMessage": "已完成 {{completed}}/{{total}} · 同步 {{synced}} · 可用 {{tested}} · 失败 {{failed}}",
+    "activationProgressMessage": "已完成 {{completed}}/{{total}} · 同步 {{synced}} · 可用 {{tested}} · 需检查 {{failed}}",
     "activationProviderReady": "{{name}} 已可用",
     "activationProviderNeedsCheck": "{{name}} 需检查",
     "activatingProvider": "正在启用并获取模型",
     "activationSuccess": "服务商已启用",
-    "activationPartial": "已启用，部分令牌需检查",
+    "activationPartial": "已启用，部分项需检查",
     "activationFailed": "启用失败或无可用模型",
+    "activationNeedsCheck": "需检查",
     "orderUpdated": "顺序已更新",
     "exitBatch": "退出批量",
     "batchMode": "批量模式",
@@ -1299,6 +1443,8 @@
     "clearInvalid": "清理无效",
     "clearInvalidTitle": "清理无效供应商？",
     "clearInvalidMessage": "将删除没有已保存令牌、或 Base URL/协议配置无效的供应商，并清理对应运行状态。此操作无法撤销。",
+    "clearInvalidPendingList": "即将清理 {{count}} 个供应商：",
+    "clearInvalidMore": "还有 {{count}} 个未显示",
     "clearInvalidConfirm": "确认清理",
     "clearInvalidDone": "已清理无效供应商",
     "clearInvalidDoneMessage": "已删除 {{count}} 个无效供应商。",
@@ -1354,6 +1500,25 @@
     "failedProviders": "异常：{{names}}",
     "missingModels": "无模型：{{names}}",
     "missingKeys": "缺令牌：{{names}}",
+    "runtimeObservedProtocol": "观测 {{protocol}}",
+    "runtimeUnavailableReason": {
+      "disabled": "已关闭",
+      "sync_failed": "同步失败",
+      "test_failed": "测试失败",
+      "cooldown": "冷却",
+      "circuit_open": "熔断",
+      "quota_exhausted": "配额",
+      "credential_unhealthy": "凭据",
+      "conformance_block": "阻断",
+      "fallback": "回退"
+    },
+    "runtimeSessionAffinityStatus": {
+      "resolved": "粘性已解析",
+      "bound": "粘性已绑定",
+      "invalidated": "粘性已失效",
+      "rotated": "粘性已轮换",
+      "unknown": "粘性未知"
+    },
     "protocol": {
       "title": "接口协议",
       "openai-compatible": "OpenAI 兼容",
@@ -1362,12 +1527,13 @@
     }
   },
   "providerActivation": {
-    "summary": "目标 {{target}} 个 · 已启用 {{enabled}} 个 · 同步成功 {{synced}} 个 · 测试通过 {{tested}} 个 · 无模型 {{noModels}} 个 · 失败 {{failed}} 个",
+    "summary": "目标 {{target}} 个 · 已启用 {{enabled}} 个 · 同步成功 {{synced}} 个 · 测试通过 {{tested}} 个 · 无模型 {{noModels}} 个 · 需检查 {{failed}} 个",
     "missingToken": "缺少令牌",
     "missingTokens": "缺令牌：{{names}}",
     "noModels": "无可用模型",
     "noModelsFor": "无可用模型：{{names}}",
-    "moreFailures": "另有 {{count}} 条失败已折叠",
+    "failureGroup": "{{count}} 个需检查：{{message}}（{{names}}）",
+    "moreFailures": "另有 {{count}} 个需检查项已折叠",
     "providerMissing": "供应商不存在",
     "stageEnabled": "{{name}} 已启用",
     "stageSyncing": "{{name}} 正在获取模型",
@@ -1466,6 +1632,7 @@
     "editing": "编辑中",
     "modelId": "模型 ID",
     "remoteModels": "远程模型",
+    "providerMergedModels": "服务商模型",
     "customModels": "自定义模型",
     "customModelAliases": "自定义模型与别名",
     "modelAliasHelp": "每行一个模型 ID；别名使用“显示名=实际模型”或“显示名 -> 实际模型”。",
@@ -1480,6 +1647,17 @@
     "failureCount": "失败 {{count}}",
     "noModels": "暂无模型",
     "capabilityUpdated": "能力已更新",
+    "runtimeDiagnostics": "运行诊断",
+    "runtimeProtocol": "协议",
+    "runtimeProtocolValue": "声明 {{declared}} · 就绪 {{ready}} · 观测 {{observed}}",
+    "runtimeCredentialHealth": "令牌健康",
+    "runtimeCredentialHealthValue": "健康 {{healthy}}/{{enabled}}/{{total}} · 冷却 {{cooldown}} · 熔断 {{circuit}} · 配额 {{quota}} · 凭据 {{credential}}",
+    "runtimeSessionAffinity": "会话粘性",
+    "runtimeSessionAffinityValue": "{{status}} · {{group}} · {{trigger}}",
+    "runtimeSessionAffinityOff": "关闭",
+    "runtimeUnavailable": "不可用原因",
+    "runtimeUnavailableValue": "{{reason}} · {{detail}}",
+    "runtimeUnavailableNone": "无",
     "capabilityMatrix": "能力矩阵",
     "capabilityMatrixDescription": "运行时按这些能力决定 Responses、WebSocket、compact、嵌入、payload 和模型能力。",
     "capabilityDependencyHint": "开启 WebSocket 或远程 compact 时会自动要求 Responses 能力。",

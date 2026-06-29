@@ -3,6 +3,7 @@ import { getPolicyAllowedProviderModels, getProviderModelDisplayCandidates, type
 import { normalizeSearchText } from '@/utils/text'
 
 export type ProviderSortMode = 'manual' | 'recent' | 'enabled' | 'models' | 'health' | 'name'
+export type ProviderPolicyModelCache = Map<string, string[]>
 
 export function filterAndSortProviders(
   providers: AIProvider[],
@@ -11,13 +12,14 @@ export function filterAndSortProviders(
     sortMode: ProviderSortMode
     usageByProvider: Map<string, number>
     settings?: ProviderModelAccessInput['settings']
+    policyModelsByProviderId?: ProviderPolicyModelCache
   }
 ): AIProvider[] {
   const normalizedFilter = normalizeSearchText(options.filter)
   const filtered = normalizedFilter
-    ? providers.filter((provider) => providerMatchesModelFilter(provider, normalizedFilter, options.settings))
+    ? providers.filter((provider) => providerMatchesModelFilter(provider, normalizedFilter, options.settings, options.policyModelsByProviderId))
     : providers
-  return [...filtered].sort((a, b) => compareProviders(a, b, options.sortMode, options.usageByProvider, options.settings))
+  return [...filtered].sort((a, b) => compareProviders(a, b, options.sortMode, options.usageByProvider, options.settings, options.policyModelsByProviderId))
 }
 
 export function compareProviders(
@@ -25,11 +27,12 @@ export function compareProviders(
   b: AIProvider,
   mode: ProviderSortMode,
   usageByProvider: Map<string, number>,
-  settings?: ProviderModelAccessInput['settings']
+  settings?: ProviderModelAccessInput['settings'],
+  policyModelsByProviderId?: ProviderPolicyModelCache
 ): number {
   if (mode === 'recent') return (usageByProvider.get(b.id) ?? 0) - (usageByProvider.get(a.id) ?? 0)
   if (mode === 'enabled') return Number(b.enabled) - Number(a.enabled) || a.name.localeCompare(b.name)
-  if (mode === 'models') return getPolicyAllowedProviderModels(b, settings).length - getPolicyAllowedProviderModels(a, settings).length || a.name.localeCompare(b.name)
+  if (mode === 'models') return getCachedPolicyModels(b, settings, policyModelsByProviderId).length - getCachedPolicyModels(a, settings, policyModelsByProviderId).length || a.name.localeCompare(b.name)
   if (mode === 'health') return providerHealthRank(b) - providerHealthRank(a) || a.name.localeCompare(b.name)
   if (mode === 'name') return a.name.localeCompare(b.name)
   return 0
@@ -42,8 +45,8 @@ function providerHealthRank(provider: AIProvider): number {
   return 2
 }
 
-export function providerMatchesModelFilter(provider: AIProvider, filter: string, settings?: ProviderModelAccessInput['settings']): boolean {
-  const policyModels = getProviderModelDisplayCandidates({ providers: [provider], settings, includeDisabled: true, includeLocalSetup: true })[0]?.models ?? []
+export function providerMatchesModelFilter(provider: AIProvider, filter: string, settings?: ProviderModelAccessInput['settings'], policyModelsByProviderId?: ProviderPolicyModelCache): boolean {
+  const policyModels = policyModelsByProviderId?.get(provider.id) ?? getProviderModelDisplayCandidates({ providers: [provider], settings, includeDisabled: true, includeLocalSetup: true })[0]?.models ?? []
   const allowedModelIds = new Set(policyModels.map((model) => model.toLowerCase()))
   const values = [
     provider.name,
@@ -54,4 +57,8 @@ export function providerMatchesModelFilter(provider: AIProvider, filter: string,
       .flatMap((model) => [model.id, model.name]),
   ]
   return values.some((value) => normalizeSearchText(value).includes(filter))
+}
+
+function getCachedPolicyModels(provider: AIProvider, settings?: ProviderModelAccessInput['settings'], policyModelsByProviderId?: ProviderPolicyModelCache): string[] {
+  return policyModelsByProviderId?.get(provider.id) ?? getPolicyAllowedProviderModels(provider, settings)
 }

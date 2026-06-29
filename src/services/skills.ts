@@ -1,7 +1,10 @@
-import type { Conversation, SkillDefinition, SkillSnapshot } from '@/types'
+import type { AIProvider, Conversation, SkillDefinition, SkillSnapshot } from '@/types'
 import { loadData, saveData } from '@/services/storage'
 import { st } from '@/i18n/service'
 import { sanitizeSkillForPortable } from '@/utils/skillSafety'
+import { clampProviderPlatformOutputTokens, clampProviderPlatformTemperature } from '@/services/ai/providerParameterDefaults'
+import { clampConversationGenerationParameter, resolveConversationGenerationParameterRanges } from '@/services/ai/conversationGenerationParameters'
+import { resolveProviderModelAlias } from '@/utils/providerModels'
 
 export interface SkillImportResult {
   ok: boolean
@@ -12,6 +15,7 @@ export interface SkillImportResult {
 
 export interface SkillApplyInput {
   conversation?: Conversation
+  providers?: AIProvider[]
   skills: SkillDefinition[]
   variables?: Record<string, string | number | boolean>
 }
@@ -186,9 +190,49 @@ export function applySkillStack(input: SkillApplyInput): SkillApplyResult {
   }
   if (providerId) conversationUpdates.providerId = providerId
   if (model) conversationUpdates.model = model
-  if (typeof temperature === 'number') conversationUpdates.temperature = Math.max(0, Math.min(2, temperature))
-  if (typeof maxTokens === 'number') conversationUpdates.maxTokens = Math.max(128, Math.min(128000, maxTokens))
+  const parameterRanges = resolveSkillGenerationParameterRanges({
+    conversation: input.conversation,
+    providers: input.providers,
+    providerId,
+    model,
+    temperature,
+    maxTokens,
+  })
+  const generationParameterOverrides: Conversation['generationParameterOverrides'] = {}
+  if (typeof temperature === 'number') {
+    conversationUpdates.temperature = (parameterRanges ? clampConversationGenerationParameter('temperature', temperature, parameterRanges) : undefined) ?? clampProviderPlatformTemperature(temperature)
+    generationParameterOverrides.temperature = true
+  }
+  if (typeof maxTokens === 'number') {
+    conversationUpdates.maxTokens = (parameterRanges ? clampConversationGenerationParameter('maxTokens', maxTokens, parameterRanges) : undefined) ?? clampProviderPlatformOutputTokens(maxTokens)
+    generationParameterOverrides.maxTokens = true
+  }
+  if (Object.keys(generationParameterOverrides).length) {
+    conversationUpdates.generationParameterOverrides = generationParameterOverrides
+  }
   return { snapshot, conversationUpdates }
+}
+
+function resolveSkillGenerationParameterRanges(input: {
+  conversation?: Conversation
+  providers?: AIProvider[]
+  providerId?: string
+  model?: string
+  temperature?: number
+  maxTokens?: number
+}) {
+  const targetProviderId = input.providerId ?? input.conversation?.providerId
+  const targetProvider = targetProviderId ? input.providers?.find((provider) => provider.id === targetProviderId) : undefined
+  const targetModel = input.model ?? input.conversation?.model
+  if (!targetModel) return undefined
+  const upstreamModel = targetProvider ? resolveProviderModelAlias(targetProvider, targetModel) : targetModel
+  return resolveConversationGenerationParameterRanges({
+    provider: targetProvider,
+    model: upstreamModel,
+    reasoningEffort: input.conversation?.reasoningEffort,
+    temperature: input.temperature,
+    maxTokens: input.maxTokens,
+  })
 }
 
 export function extractSkillVariables(skill: SkillDefinition): string[] {

@@ -57,7 +57,6 @@ export function useProviderActivationJob(input: UseProviderActivationJobInput = 
         durationMs: 1800,
       })
       let activationItems = createActivationItems(chosen, t('providerSettings.activationQueued'))
-      const isSingleActivation = chosen.length === 1
       const publishActivationItems = (nextItems: ActivationJobItemState[], stage?: string, currentName?: string) => {
         activationItems = nextItems
         const aggregate = aggregateActivationItems(activationItems)
@@ -95,15 +94,6 @@ export function useProviderActivationJob(input: UseProviderActivationJobInput = 
           progress: 0.04,
           stage: currentStage,
         }, currentStage, provider.name)
-        if (isSingleActivation) {
-          dialog.toast({
-            title: t('providerSettings.activationRunning'),
-            message: currentStage,
-            tone: 'mint',
-            position: 'bottom',
-            durationMs: 1300,
-          })
-        }
         const result = await syncAndTestProvider(provider, {
           updateProvider,
           hydrateProviderKey,
@@ -115,20 +105,11 @@ export function useProviderActivationJob(input: UseProviderActivationJobInput = 
               failed: event.stage === 'failed',
               stage: event.message,
             }, event.message, event.providerName)
-            if (isSingleActivation) {
-              dialog.toast({
-                title: stageToastTitle(event.stage, t),
-                message: event.message,
-                tone: event.tone,
-                position: 'bottom',
-                durationMs: 1300,
-              })
-            }
           },
         }, {
           enable: true,
           testModel: settings.modelTestModel,
-          checkParameters: settings.modelTestCheckParameters,
+          checkParameters: false,
           accessSettings: settings,
           maxTestCandidates: activationPolicy.maxTestCandidates,
           modelSyncTimeoutMs: activationPolicy.modelSyncTimeoutMs,
@@ -153,7 +134,7 @@ export function useProviderActivationJob(input: UseProviderActivationJobInput = 
         }))
         const resultStage = result.testOk
           ? t('providerSettings.activationProviderReady', { name: result.providerName })
-          : t('providerSettings.activationProviderNeedsCheck', { name: result.providerName })
+          : activationResultIssueStage(result, t)
         const resultFailed = result.failures.length > 0 && !result.testOk
         publishActivationItem(result.providerId, {
           status: resultFailed ? 'failed' : 'done',
@@ -163,15 +144,6 @@ export function useProviderActivationJob(input: UseProviderActivationJobInput = 
           failed: resultFailed,
           stage: resultStage,
         }, resultStage, result.providerName)
-        if (isSingleActivation) {
-          dialog.toast({
-            title: result.testOk ? t('providerSettings.activationSuccess') : t('providerSettings.activationPartial'),
-            message: resultStage,
-            tone: result.testOk ? 'mint' : 'amber',
-            position: 'bottom',
-            durationMs: 1600,
-          })
-        }
         return result
       }
 
@@ -186,7 +158,7 @@ export function useProviderActivationJob(input: UseProviderActivationJobInput = 
       const doneTitle = activationDoneTitle(mode, chosen.length, t)
       const primaryReady = results.find((result) => result.testOk)
       if (primaryReady) {
-        updateSettings({ defaultProvider: primaryReady.providerId, onboardingCompleted: true })
+        updateSettings({ defaultProvider: primaryReady.providerId })
       }
       if (mode === 'single') {
         const result = results[0]
@@ -293,17 +265,20 @@ function scheduleActivationJobDismiss(tone: 'mint' | 'amber' | 'danger', clearAc
   }, 5000)
 }
 
-function stageToastTitle(stage: 'enabled' | 'syncing' | 'testing' | 'done' | 'failed', t: ReturnType<typeof useTranslation>['t']): string {
-  switch (stage) {
-    case 'enabled':
-      return t('providerSettings.activationEnabled')
-    case 'syncing':
-      return t('providerSettings.activationSyncing')
-    case 'testing':
-      return t('providerSettings.activationTesting')
-    case 'done':
-      return t('providerSettings.activationSuccess')
-    case 'failed':
-      return t('providerSettings.activationFailed')
-  }
+function activationResultIssueStage(result: ProviderActivationResult, t: ReturnType<typeof useTranslation>['t']): string {
+  if (result.missingToken || !result.hadCredential) return t('providerActivation.missingToken')
+  if (!result.modelCount) return t('providerActivation.noModels')
+  const messages = dedupeActivationMessages(result.failures.map((failure) => failure.message))
+  return messages[0] ?? t('providerSettings.activationProviderNeedsCheck', { name: result.providerName })
+}
+
+function dedupeActivationMessages(messages: string[]): string[] {
+  const seen = new Set<string>()
+  return messages
+    .map((message) => message.trim())
+    .filter((message) => {
+      if (!message || seen.has(message)) return false
+      seen.add(message)
+      return true
+    })
 }

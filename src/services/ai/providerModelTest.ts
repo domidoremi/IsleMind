@@ -41,6 +41,8 @@ export function reduceModelTestBody(body: Record<string, unknown>): Record<strin
   delete next.temperature
   delete next.top_p
   delete next.topP
+  delete next.top_k
+  delete next.topK
   delete next.reasoning
   delete next.reasoning_effort
   delete next.thinking
@@ -50,6 +52,7 @@ export function reduceModelTestBody(body: Record<string, unknown>): Record<strin
     const reduced = { ...generationConfig }
     delete reduced.temperature
     delete reduced.topP
+    delete reduced.topK
     delete reduced.thinkingConfig
     next.generationConfig = reduced
   }

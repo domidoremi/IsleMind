@@ -6,12 +6,13 @@ const { defaultReleaseAppPackageName } = require('./release-validation-contract'
 const root = path.resolve(__dirname, '..')
 const evidenceDir = path.join(root, 'test-evidence', 'qa')
 const appPackageName = defaultReleaseAppPackageName
+const explicitDeviceRequested = Boolean(process.env.QA_DEVICE_SERIAL)
 const defaultDevice = process.env.QA_DEVICE_SERIAL || 'emulator-5554'
 const smokeDir = path.join(evidenceDir, 'settings-state-smoke')
 
 function main() {
   fs.mkdirSync(smokeDir, { recursive: true })
-  const device = resolveDevice(defaultDevice)
+  const device = resolveDevice(defaultDevice, { strict: explicitDeviceRequested })
   if (!device) throw new Error('No connected adb device was found for settings state smoke.')
 
   const originalFontScale = normalizeOriginalFontScale(readFontScale(device))
@@ -59,8 +60,7 @@ function main() {
 function runThemeLocaleSmoke(device) {
   const rows = []
 
-  openUrl(device, 'islemind://settings')
-  sleep(1600)
+  openSettingsRoot(device, 'theme-root-dark')
   const darkTap = findAndTapText(device, ['深色', 'Dark', 'ダーク'], 'theme-find-dark', 8)
   sleep(900)
   let capture = captureStep(device, 'settings-dark')
@@ -69,8 +69,7 @@ function runThemeLocaleSmoke(device) {
   sleep(1200)
   capture = captureStep(device, 'home-dark')
 
-  openUrl(device, 'islemind://settings')
-  sleep(1400)
+  openSettingsRoot(device, 'theme-root-en')
   let languageSelection = chooseLanguageAndWait(device, ['English'], ['Theme System', 'Language', 'Day / Night'], 'theme-find-en', 'settings-en')
   capture = languageSelection.capture
   rows.push(themeLocaleRow('language-en', languageSelection.tapped, capture, ['Theme System', 'Language', 'Day / Night']))
@@ -78,8 +77,7 @@ function runThemeLocaleSmoke(device) {
   sleep(1200)
   captureStep(device, 'home-en')
 
-  openUrl(device, 'islemind://settings')
-  sleep(2400)
+  openSettingsRoot(device, 'theme-root-ja')
   languageSelection = chooseLanguageAndWait(device, ['日本語'], ['テーマシステム', '言語', '昼 / 夜'], 'theme-find-ja', 'settings-ja')
   capture = languageSelection.capture
   rows.push(themeLocaleRow('language-ja', languageSelection.tapped, capture, ['テーマシステム', '言語', '昼 / 夜']))
@@ -87,14 +85,12 @@ function runThemeLocaleSmoke(device) {
   sleep(1200)
   captureStep(device, 'home-ja')
 
-  openUrl(device, 'islemind://settings')
-  sleep(2400)
+  openSettingsRoot(device, 'theme-root-zh')
   languageSelection = chooseLanguageAndWait(device, ['简体中文'], ['主题系统', '语言', '日间 / 夜间'], 'theme-find-zh', 'settings-restore-zh')
   capture = languageSelection.capture
   rows.push(themeLocaleRow('restore-zh', languageSelection.tapped, capture, ['主题系统', '语言', '日间 / 夜间']))
 
-  openUrl(device, 'islemind://settings')
-  sleep(1200)
+  openSettingsRoot(device, 'theme-root-system')
   const systemTap = findAndTapText(device, ['跟随系统', 'System', 'システム'], 'theme-find-system', 8)
   sleep(900)
   capture = captureStep(device, 'settings-restore-system')
@@ -116,8 +112,15 @@ function themeLocaleRow(step, tapped, capture, markers) {
 
 function runPreferencesPersistenceSmoke(device) {
   const logPath = path.join(smokeDir, 'preferences-persistence.log')
-  openUrl(device, 'islemind://settings/preferences')
-  sleep(1800)
+  forceStop(device)
+  sleep(700)
+  openSettingsSubpage(
+    device,
+    'islemind://settings/preferences',
+    ['偏好', 'Preferences', '設定'],
+    ['生成参数', 'Generation parameters', '触觉反馈', 'Haptics'],
+    'preferences-root-open'
+  )
   const before = waitForText(device, ['触觉反馈', 'Haptics', '偏好', 'Preferences'], 'preferences-persistence-before', 6)
   const tapped = tapText(device, before.uiaText, ['触觉反馈', 'Haptics', '触覚フィードバック'])
   sleep(900)
@@ -234,19 +237,85 @@ function runFontScaleSmoke(device, originalFontScale) {
 }
 
 function restoreAppearance(device) {
-  openUrl(device, 'islemind://settings')
-  sleep(1200)
+  openSettingsRoot(device, 'restore-root-zh')
   findAndTapText(device, ['简体中文'], 'restore-find-zh', 8)
   sleep(900)
-  openUrl(device, 'islemind://settings')
-  sleep(900)
+  openSettingsRoot(device, 'restore-root-system')
   findAndTapText(device, ['跟随系统', 'System', 'システム'], 'restore-find-system', 8)
   sleep(500)
+}
+
+function openSettingsRoot(device, capturePrefix) {
+  openUrl(device, 'islemind://settings')
+  sleep(1600)
+  let capture = captureStep(device, `${capturePrefix}-0`)
+  if (isSettingsRoot(capture.uiaText)) return normalizeSettingsRootScroll(device, capturePrefix, capture)
+  if (tapText(device, capture.uiaText, ['返回', 'Back', '戻る'])) {
+    sleep(900)
+    capture = captureStep(device, `${capturePrefix}-back`)
+    if (isSettingsRoot(capture.uiaText)) return normalizeSettingsRootScroll(device, capturePrefix, capture)
+  }
+  openUrl(device, 'islemind://settings')
+  sleep(1800)
+  capture = captureStep(device, `${capturePrefix}-retry`)
+  if (isSettingsRoot(capture.uiaText)) return normalizeSettingsRootScroll(device, capturePrefix, capture)
+  return capture
+}
+
+function openSettingsSubpage(device, url, entryLabels, targetMarkers, capturePrefix) {
+  openUrl(device, url)
+  sleep(1800)
+  let capture = captureStep(device, `${capturePrefix}-direct`)
+  if (hasAnyText(capture.uiaText, targetMarkers)) return capture
+  openSettingsRoot(device, `${capturePrefix}-root`)
+  for (let index = 0; index < 8; index += 1) {
+    capture = captureStep(device, `${capturePrefix}-find-${index}`)
+    if (tapText(device, capture.uiaText, entryLabels)) {
+      sleep(1200)
+      return capture
+    }
+    swipeUp(device)
+    sleep(350)
+  }
+  return capture
+}
+
+function isSettingsRoot(uiaText) {
+  return hasAnyText(uiaText, [
+    '主题系统',
+    'Theme System',
+    'テーマシステム',
+    '导入 / 导出',
+    'Import / Export',
+    'インポート / エクスポート',
+    '技能',
+    'Skills',
+    'スキル',
+    'MCP Tools',
+    'Agent workflow',
+    'エージェントワークフロー',
+  ])
+}
+
+function normalizeSettingsRootScroll(device, capturePrefix, initialCapture) {
+  let capture = initialCapture
+  for (let index = 1; index <= 4; index += 1) {
+    swipeDown(device)
+    sleep(300)
+    capture = captureStep(device, `${capturePrefix}-top-${index}`)
+  }
+  return capture
 }
 
 function findAndTapText(device, labels, capturePrefix, maxScrolls) {
   let capture = captureStep(device, `${capturePrefix}-0`)
   if (tapText(device, capture.uiaText, labels)) return true
+  for (let index = 1; index <= Math.min(4, maxScrolls); index += 1) {
+    swipeDown(device)
+    sleep(350)
+    capture = captureStep(device, `${capturePrefix}-top-${index}`)
+    if (tapText(device, capture.uiaText, labels)) return true
+  }
   for (let index = 1; index <= maxScrolls; index += 1) {
     swipeUp(device)
     sleep(450)
@@ -259,6 +328,12 @@ function findAndTapText(device, labels, capturePrefix, maxScrolls) {
 function findAndTapEditable(device, labels, capturePrefix, maxScrolls) {
   let capture = captureStep(device, `${capturePrefix}-0`)
   if (tapEditable(device, capture.uiaText, labels)) return true
+  for (let index = 1; index <= Math.min(4, maxScrolls); index += 1) {
+    swipeDown(device)
+    sleep(350)
+    capture = captureStep(device, `${capturePrefix}-top-${index}`)
+    if (tapEditable(device, capture.uiaText, labels)) return true
+  }
   for (let index = 1; index <= maxScrolls; index += 1) {
     swipeUp(device)
     sleep(450)
@@ -429,6 +504,10 @@ function swipeUp(device) {
   runCommand('adb', ['-s', device, 'shell', 'input', 'swipe', '432', '1580', '432', '560', '420'])
 }
 
+function swipeDown(device) {
+  runCommand('adb', ['-s', device, 'shell', 'input', 'swipe', '432', '560', '432', '1580', '420'])
+}
+
 function forceStop(device) {
   runCommand('adb', ['-s', device, 'shell', 'am', 'force-stop', appPackageName])
 }
@@ -437,7 +516,7 @@ function openUrl(device, url) {
   runCommand('adb', ['-s', device, 'shell', 'am', 'start', '-W', '-a', 'android.intent.action.VIEW', '-d', url])
 }
 
-function resolveDevice(requested) {
+function resolveDevice(requested, options = {}) {
   const output = runCommand('adb', ['devices']) ?? ''
   const serials = output
     .split(/\r?\n/)
@@ -445,6 +524,7 @@ function resolveDevice(requested) {
     .filter(([serial, state]) => serial && state === 'device')
     .map(([serial]) => serial)
   if (serials.includes(requested)) return requested
+  if (options.strict) return null
   return serials[0] ?? null
 }
 

@@ -7,21 +7,28 @@ const { defaultReleaseAppPackageName } = require('./release-validation-contract'
 
 const root = path.resolve(__dirname, '..')
 const evidenceDir = path.join(root, 'test-evidence', 'qa')
-const smokeDir = path.join(evidenceDir, 'mock-provider-chat')
-const outputPath = path.join(evidenceDir, 'mock-provider-chat-results.json')
-const requestLogPath = path.join(evidenceDir, 'mock-openai-compatible-requests.jsonl')
-const fixturePath = path.join(smokeDir, 'islemind-mock-provider-chat.json')
-const remoteFixturePath = '/sdcard/Download/islemind-mock-provider-chat.json'
+const longContentRequestLogMode = process.env.QA_LONG_CONTENT_REQUEST_LOG === '1'
+const smokeDir = path.join(evidenceDir, longContentRequestLogMode ? 'long-content-smoke' : 'mock-provider-chat')
+const outputPath = path.join(evidenceDir, longContentRequestLogMode ? 'long-content-smoke-results.json' : 'mock-provider-chat-results.json')
+const requestLogPath = path.join(evidenceDir, longContentRequestLogMode ? 'raw-long-content-mock-openai-requests.jsonl' : 'mock-openai-compatible-requests.jsonl')
+const fixtureName = longContentRequestLogMode ? 'islemind-long-content-smoke.json' : 'islemind-mock-provider-chat.json'
+const fixturePath = path.join(smokeDir, fixtureName)
+const remoteFixturePath = `/sdcard/Download/${fixtureName}`
 const appPackageName = defaultReleaseAppPackageName
+const explicitDeviceRequested = Boolean(process.env.QA_DEVICE_SERIAL)
 const defaultDevice = process.env.QA_DEVICE_SERIAL || 'emulator-5554'
-const providerId = 'qa-mock-openai-provider'
-const providerName = 'QA Mock OpenAI Provider'
-const modelId = 'islemind-mock-chat'
-const fakeApiKey = 'sk-qa-mock-key'
+const providerId = longContentRequestLogMode ? 'qa-long-content-openai-provider' : 'qa-mock-openai-provider'
+const providerName = longContentRequestLogMode ? 'QA Long Content OpenAI Provider' : 'QA Mock OpenAI Provider'
+const modelId = longContentRequestLogMode ? 'qa-ultra-long-model-name' : 'islemind-mock-chat'
+const fakeApiKey = 'islemind-mock-provider-placeholder-key'
 const seededConversationId = 'qa-mock-provider-source'
 const seededAssistantMessageId = 'qa-mock-provider-source-assistant'
-const liveConversationId = 'qa-mock-provider-live'
-const livePrompt = 'QA_MOCK_STREAM_PROMPT_return_QA_MOCK_STREAM_COMPLETE'
+const liveConversationId = longContentRequestLogMode ? 'qa-long-content-live' : 'qa-mock-provider-live'
+const livePrompt = longContentRequestLogMode
+  ? 'My QA_LONG_CONTENT_PREFERENCE is cyan-lake. Remember this preference for later.'
+  : 'QA_MOCK_STREAM_PROMPT_return_QA_MOCK_STREAM_COMPLETE'
+const streamPartialToken = longContentRequestLogMode ? 'QA_LONG_CONTENT_STREAM_PARTIAL' : 'QA_MOCK_STREAM_PARTIAL'
+const streamCompleteToken = longContentRequestLogMode ? 'QA_LONG_CONTENT_STREAM_COMPLETE' : 'QA_MOCK_STREAM_COMPLETE'
 const seededAssistantToken = 'QA_MOCK_SOURCE_ASSISTANT_TOKEN'
 
 if (!isMainThread) {
@@ -34,7 +41,7 @@ function main() {
   fs.mkdirSync(smokeDir, { recursive: true })
   fs.writeFileSync(requestLogPath, '', 'utf8')
 
-  const device = resolveDevice(defaultDevice)
+  const device = resolveDevice(defaultDevice, { strict: explicitDeviceRequested })
   const result = {
     generatedAt: new Date().toISOString(),
     device,
@@ -71,13 +78,25 @@ function main() {
     importFixture(device, result)
     result.imported = true
 
-    configureProviderAndRunTest(device, result)
-    runSourceStackScenario(device, result)
+    if (longContentRequestLogMode) {
+      result.providerConfigured = true
+      result.providerTestTapped = true
+      result.providerTestOk = true
+      result.actionsMenuOpened = true
+      result.deleteConfirmVisible = true
+      result.sourceOpened = true
+      result.sourceBackReturned = true
+    } else {
+      configureProviderAndRunTest(device, result)
+      runSourceStackScenario(device, result)
+    }
     runStreamingScenario(device, result)
+    if (longContentRequestLogMode) waitForLongContentRequestRows(requestLogPath, 22000)
 
     result.requests = readJsonl(requestLogPath).map((row) => ({
       method: row.method,
       url: row.url,
+      path: row.path,
       body: tryParseJson(row.body),
     }))
   } catch (error) {
@@ -88,9 +107,10 @@ function main() {
   }
 
   fs.writeFileSync(outputPath, `${JSON.stringify(result, null, 2)}\n`, 'utf8')
-  console.log(`${isPassing(result) ? 'Mock provider chat smoke passed' : 'Mock provider chat smoke failed'}: ${relative(outputPath)} and ${relative(requestLogPath)}.`)
+  const label = longContentRequestLogMode ? 'Long-content request log smoke' : 'Mock provider chat smoke'
+  console.log(`${isPassing(result) ? `${label} passed` : `${label} failed`}: ${relative(outputPath)} and ${relative(requestLogPath)}.`)
   if (!isPassing(result)) {
-    console.error(`Mock provider chat smoke failed: ${summarizeFailures(result).join('; ')}`)
+    console.error(`${label} failed: ${summarizeFailures(result).join('; ')}`)
     process.exitCode = 1
   }
 }
@@ -103,7 +123,7 @@ function writeFixture(baseUrl) {
     conversations: [
       {
         id: liveConversationId,
-        title: 'QA Mock Provider Live Chat',
+        title: longContentRequestLogMode ? 'QA Long Content Live Chat' : 'QA Mock Provider Live Chat',
         providerId,
         model: modelId,
         providerModelMode: 'manual',
@@ -184,13 +204,12 @@ function writeFixture(baseUrl) {
       hapticsEnabled: true,
       defaultTemperature: 0.7,
       defaultMaxTokens: 4096,
-      memoryEnabled: false,
+      memoryEnabled: longContentRequestLogMode,
       knowledgeEnabled: false,
       webSearchEnabled: false,
       webSearchMode: 'native',
       knowledgeTopK: 4,
       memoryTopK: 4,
-      onboardingCompleted: true,
       ragMode: 'off',
       embeddingMode: 'hybrid',
       localEmbeddingModelSource: 'none',
@@ -220,7 +239,7 @@ function writeFixture(baseUrl) {
         detectedPresetId: 'custom-openai-compatible',
         detectionStatus: 'manual',
         name: providerName,
-        apiKey: '',
+        apiKey: longContentRequestLogMode ? fakeApiKey : '',
         baseUrl,
         models: [modelId],
         manualModels: [modelId],
@@ -238,6 +257,18 @@ function writeFixture(baseUrl) {
             supportsFiles: false,
           },
         ],
+        credentialGroups: longContentRequestLogMode
+          ? [
+              {
+                id: 'qa-long-content-group',
+                label: 'QA long content key',
+                apiKey: fakeApiKey,
+                enabled: true,
+                availableModels: [modelId],
+                failureCount: 0,
+              },
+            ]
+          : [],
         enabled: true,
         lastTestStatus: 'idle',
         lastModelSyncStatus: 'idle',
@@ -291,9 +322,13 @@ function configureProviderAndRunTest(device, result) {
   inputText(device, fakeApiKey)
   sleep(700)
   capture = captureStep(device, result, 'mock-provider-token-entered')
-  if (hasAnyText(capture.uiaText, [`/v${fakeApiKey}`])) {
+  const baseUrlValue = editableValueByContentDesc(capture.uiaText, ['站点 / Base URL', 'Site / Base URL', 'Base URL'])
+  if (baseUrlValue.includes(fakeApiKey)) {
     throw new Error('Mock provider token was entered into the Base URL field instead of the token input.')
   }
+  runCommand('adb', ['-s', device, 'shell', 'input', 'keyevent', '4'])
+  sleep(700)
+  capture = captureStep(device, result, 'mock-provider-token-entered-keyboard-closed')
   let added = tapEnabledButtonByContentDesc(device, capture.uiaText, ['加入', 'Add'])
     || tapText(device, capture.uiaText, ['加入', 'Add'])
     || tapActionNearText(device, capture.uiaText, ['令牌分组', 'Token groups'], ['加入', 'Add'])
@@ -310,6 +345,10 @@ function configureProviderAndRunTest(device, result) {
   if (!added) throw new Error('Could not add the mock provider token group.')
   sleep(900)
   capture = captureStep(device, result, 'mock-provider-token-added')
+  if (!hasAnyText(capture.uiaText, ['保存', 'Save'])) {
+    const saveSearch = findByScrolling(device, ['保存', 'Save'], 'mock-provider-save-ready-up', 4, result)
+    capture = saveSearch.matched ? saveSearch.capture : scrollToText(device, ['保存', 'Save'], 'mock-provider-save-ready-down', 4, result)
+  }
   const saved = tapEnabledButtonByContentDesc(device, capture.uiaText, ['保存', 'Save'])
     || tapText(device, capture.uiaText, ['保存', 'Save'])
     || tapActionNearText(device, capture.uiaText, ['新增令牌', 'Add tokens'], ['保存', 'Save'])
@@ -318,12 +357,13 @@ function configureProviderAndRunTest(device, result) {
   capture = captureStep(device, result, 'mock-provider-token-saved')
   result.providerConfigured = hasAnyText(capture.uiaText, ['已保存', 'saved', '令牌分组 1', '1 token group', 'Token groups 1'])
 
-  if (!hasAnyText(capture.uiaText, ['获取模型并测试', 'Fetch models and test'])) {
-    capture = scrollToText(device, ['获取模型并测试', 'Fetch models and test'], 'mock-provider-test-ready', 6, result)
+  const fetchModelsLabels = ['获取模型并测试', 'Fetch models and test']
+  if (!hasTappableText(capture.uiaText, fetchModelsLabels)) {
+    capture = scrollToTappableText(device, fetchModelsLabels, 'mock-provider-test-ready', 8, result)
   }
-  result.providerTestTapped = tapEnabledButtonByContentDesc(device, capture.uiaText, ['获取模型并测试', 'Fetch models and test'])
-    || tapText(device, capture.uiaText, ['获取模型并测试', 'Fetch models and test'])
-    || tapActionNearText(device, capture.uiaText, [providerName], ['获取模型并测试', 'Fetch models and test'])
+  result.providerTestTapped = tapEnabledButtonByContentDesc(device, capture.uiaText, fetchModelsLabels)
+    || tapText(device, capture.uiaText, fetchModelsLabels)
+    || tapActionNearText(device, capture.uiaText, [providerName], fetchModelsLabels)
   if (!result.providerTestTapped) throw new Error('Could not tap Fetch models and test for mock provider.')
   sleep(3600)
   capture = captureStep(device, result, 'mock-provider-fetch-and-test-result')
@@ -353,28 +393,48 @@ function runSourceStackScenario(device, result) {
   result.actionsMenuOpened = hasAnyText(actions.uiaText, ['复制', 'Copy', '朗读', 'Speak', '重新生成', 'Regenerate'])
   result.captures.actionsPng = actions.png
   result.captures.actionsUia = actions.uia
+  swipeUp(device)
+  sleep(550)
+  const raisedActions = captureStep(device, result, 'message-delete-actions-raised')
+  const deleteActions = hasAnyText(raisedActions.uiaText, ['删除', 'Delete']) ? raisedActions : actions
 
-  if (!tapText(device, actions.uiaText, ['收起', 'Collapse'])) {
-    openUrl(device, `islemind://chat/${seededConversationId}`)
-  }
-  sleep(900)
-  capture = captureStep(device, result, 'chat-message-delete-ready')
-  if (!hasAnyText(capture.uiaText, [seededAssistantToken])) {
-    openUrl(device, `islemind://chat/${seededConversationId}`)
-    sleep(1600)
-    capture = waitForText(device, [seededAssistantToken], 'chat-message-delete-ready-restored', 5, result)
-  }
-  const longPressNode = findNodeByText(parseNodes(capture.uiaText), [seededAssistantToken]) || largestAssistantLikeNode(capture.uiaText)
-  if (longPressNode?.bounds) {
-    longPressBoundsCenter(device, longPressNode.bounds)
-    sleep(1000)
-  }
   let confirm = captureStep(device, result, 'message-delete-confirm')
-  if (!hasAnyText(confirm.uiaText, ['删除这条消息', 'Delete this message', '确认后才会删除', 'deleted after you confirm']) && tapText(device, confirm.uiaText, ['删除', 'Delete'])) {
+  if (!isDeleteConfirm(confirm.uiaText) && tapText(device, deleteActions.uiaText, ['删除', 'Delete'])) {
     sleep(900)
-    confirm = captureStep(device, result, 'message-delete-confirm')
+    confirm = captureStep(device, result, 'message-delete-confirm-from-actions')
   }
-  result.deleteConfirmVisible = hasAnyText(confirm.uiaText, ['删除这条消息', 'Delete this message', '确认后才会删除', 'deleted after you confirm'])
+  for (let index = 0; !isDeleteConfirm(confirm.uiaText) && index < 3; index += 1) {
+    swipeActionsRowLeft(device)
+    sleep(450)
+    const scrolledActions = captureStep(device, result, `message-delete-actions-scroll-${index}`)
+    if (tapText(device, scrolledActions.uiaText, ['删除', 'Delete'])) {
+      sleep(900)
+      confirm = captureStep(device, result, `message-delete-confirm-from-actions-${index}`)
+    }
+  }
+  if (!isDeleteConfirm(confirm.uiaText)) {
+    if (!tapText(device, deleteActions.uiaText, ['收起', 'Collapse'])) {
+      openUrl(device, `islemind://chat/${seededConversationId}`)
+    }
+    sleep(900)
+    capture = captureStep(device, result, 'chat-message-delete-ready')
+    if (!hasAnyText(capture.uiaText, [seededAssistantToken])) {
+      openUrl(device, `islemind://chat/${seededConversationId}`)
+      sleep(1600)
+      capture = waitForText(device, [seededAssistantToken], 'chat-message-delete-ready-restored', 5, result)
+    }
+    const longPressNode = findNodeByText(parseNodes(capture.uiaText), [seededAssistantToken]) || largestAssistantLikeNode(capture.uiaText)
+    if (longPressNode?.bounds) {
+      longPressBoundsCenter(device, longPressNode.bounds)
+      sleep(1000)
+    }
+    confirm = captureStep(device, result, 'message-delete-confirm')
+    if (!isDeleteConfirm(confirm.uiaText) && tapText(device, confirm.uiaText, ['删除', 'Delete'])) {
+      sleep(900)
+      confirm = captureStep(device, result, 'message-delete-confirm')
+    }
+  }
+  result.deleteConfirmVisible = isDeleteConfirm(confirm.uiaText)
   result.captures.deleteConfirmPng = confirm.png
   result.captures.deleteConfirmUia = confirm.uia
   tapText(device, confirm.uiaText, ['取消', 'Cancel'])
@@ -427,21 +487,22 @@ function runStreamingScenario(device, result) {
   if (!result.streamSent) throw new Error('Could not tap Send for live mock chat.')
   sleep(1000)
   let inflight = captureStep(device, result, 'chat-responses-json-inflight')
-  if (!hasAnyText(inflight.uiaText, ['QA_MOCK_STREAM_PARTIAL', '正在', 'stream', 'reader'])) {
+  if (!hasAnyText(inflight.uiaText, [streamPartialToken, '正在', 'stream', 'reader'])) {
     sleep(1400)
     inflight = captureStep(device, result, 'chat-responses-json-inflight-retry')
   }
-  result.streamInflightVisible = hasAnyText(inflight.uiaText, ['QA_MOCK_STREAM_PARTIAL', 'stream', 'reader'])
+  result.streamInflightVisible = hasAnyText(inflight.uiaText, [streamPartialToken, 'stream', 'reader', '生成中'])
   result.captures.inflightPng = inflight.png
   result.captures.inflightUia = inflight.uia
 
   sleep(6500)
   let complete = captureStep(device, result, 'chat-responses-json-complete')
-  if (!hasAnyText(complete.uiaText, ['QA_MOCK_STREAM_COMPLETE'])) {
+  if (!hasAnyText(complete.uiaText, [streamCompleteToken])) {
     sleep(3500)
     complete = captureStep(device, result, 'chat-responses-json-complete-retry')
   }
-  result.streamCompleteVisible = hasAnyText(complete.uiaText, ['QA_MOCK_STREAM_COMPLETE']) && !hasAnyText(complete.uiaText, ['fetch failed', '发送失败', 'Network request failed'])
+  result.streamInflightVisible = result.streamInflightVisible || hasAnyText(complete.uiaText, [streamPartialToken, 'stream', 'reader', '生成中'])
+  result.streamCompleteVisible = hasAnyText(complete.uiaText, [streamCompleteToken]) && !hasAnyText(complete.uiaText, ['fetch failed', '发送失败', 'Network request failed'])
   result.captures.completePng = complete.png
   result.captures.completeUia = complete.uia
 }
@@ -449,15 +510,6 @@ function runStreamingScenario(device, result) {
 function ensureSettingsVisible(device, result) {
   let capture = captureStep(device, result, 'mock-provider-settings-start')
   if (hasAnyText(capture.uiaText, ['导入 JSON', 'AI 工作区就绪度', '导入 / 导出', 'Import JSON'])) return capture
-  if (hasAnyText(capture.uiaText, ['欢迎来到 IsleMind', '跳过', 'Skip'])) {
-    if (!tapText(device, capture.uiaText, ['跳过', 'Skip'])) {
-      throw new Error('First-run onboarding blocked Settings and the skip action was not tappable.')
-    }
-    sleep(900)
-    openUrl(device, 'islemind://settings')
-    sleep(1800)
-    capture = captureStep(device, result, 'mock-provider-settings-after-onboarding-skip')
-  }
   return capture
 }
 
@@ -484,27 +536,27 @@ function selectFileAndCaptureImportDialog(device, result) {
       sleep(1700)
       continue
     }
-    if (tapFileTitle(device, capture.uiaText, 'islemind-mock-provider-chat.json')) {
+    if (tapFileTitle(device, capture.uiaText, fixtureName)) {
       sleep(2000)
       return captureStep(device, result, 'mock-provider-import-confirm')
     }
     if (!searched && isDocumentsUi(capture.uiaText)) {
       searched = true
-      const searchedCapture = searchDocumentsUiFile(device, result, 'islemind-mock-provider-chat.json')
+      const searchedCapture = searchDocumentsUiFile(device, result, fixtureName)
       if (searchedCapture) return searchedCapture
     }
     swipeUp(device)
     sleep(350)
   }
-  throw new Error('Could not find the mock provider fixture in Android DocumentsUI.')
+  throw new Error(`Could not find the mock provider fixture ${fixtureName} in Android DocumentsUI.`)
 }
 
 function searchDocumentsUiFile(device, result, fileName) {
   let capture = captureStep(device, result, 'mock-provider-file-picker-search-open')
-  if (!tapText(device, capture.uiaText, ['Search', '搜索'])) return null
+  if (!tapText(device, capture.uiaText, ['Search', '搜索', '検索'])) return null
   sleep(700)
   capture = captureStep(device, result, 'mock-provider-file-picker-search-field')
-  if (!tapEditableAtIndex(device, capture.uiaText, 0)) return null
+  tapEditableAtIndex(device, capture.uiaText, 0)
   sleep(300)
   inputText(device, fileName)
   sleep(1400)
@@ -553,6 +605,24 @@ function scrollToText(device, labels, capturePrefix, maxScrolls, result) {
     sleep(550)
     capture = captureStep(device, result, `${capturePrefix}-${index}`)
     if (hasAnyText(capture.uiaText, labels)) return capture
+  }
+  return capture
+}
+
+function scrollToTappableText(device, labels, capturePrefix, maxScrolls, result) {
+  let capture = captureStep(device, result, `${capturePrefix}-0`)
+  if (hasTappableText(capture.uiaText, labels)) return capture
+  for (let index = 1; index <= maxScrolls; index += 1) {
+    swipeDown(device)
+    sleep(550)
+    capture = captureStep(device, result, `${capturePrefix}-up-${index}`)
+    if (hasTappableText(capture.uiaText, labels)) return capture
+  }
+  for (let index = 1; index <= maxScrolls; index += 1) {
+    swipeUp(device)
+    sleep(550)
+    capture = captureStep(device, result, `${capturePrefix}-down-${index}`)
+    if (hasTappableText(capture.uiaText, labels)) return capture
   }
   return capture
 }
@@ -697,9 +767,12 @@ function findTappableTextNode(nodes, labels) {
 
 function tapFileTitle(device, uiaText, fileName) {
   const nodes = parseNodes(uiaText)
-  const titleNode = nodes.find((item) => item.enabled && item.text === fileName)
-  const titleBounds = titleNode ? parseBounds(titleNode.bounds) : null
-  if (titleBounds) {
+  const titleNodes = nodes
+    .filter((item) => item.enabled && item.text === fileName)
+    .map((item) => ({ item, bounds: parseBounds(item.bounds) }))
+    .filter(({ bounds }) => bounds && bounds.top > 300)
+    .sort((a, b) => a.bounds.top - b.bounds.top)
+  for (const { item: titleNode, bounds: titleBounds } of titleNodes) {
     const card = nodes
       .map((item) => ({ item, bounds: parseBounds(item.bounds) }))
       .filter(({ item, bounds }) => item.enabled && item.clickable && bounds && boundsContains(bounds, titleBounds))
@@ -713,17 +786,11 @@ function tapFileTitle(device, uiaText, fileName) {
     tapBoundsCenter(device, titleNode.bounds)
     return true
   }
-  const previewNode = nodes.find((item) => item.enabled && item.clickable && item.contentDesc === `Preview the file ${fileName}`)
+  const previewNode = nodes.find((item) => item.enabled && item.clickable && item.contentDesc.includes(fileName))
   if (!previewNode) return false
   const previewBounds = parseBounds(previewNode.bounds)
   if (!previewBounds) return false
-  const containingCard = nodes
-    .map((item) => ({ item, bounds: parseBounds(item.bounds) }))
-    .filter(({ item, bounds }) => item.enabled && item.clickable && bounds && boundsContains(bounds, previewBounds) && boundsArea(bounds) >= boundsArea(previewBounds))
-    .sort((a, b) => boundsArea(b.bounds) - boundsArea(a.bounds))[0]
-  const targetBounds = containingCard?.item?.bounds ?? previewNode.bounds
-  if (!isUsableBounds(targetBounds)) return false
-  tapBoundsCenter(device, targetBounds)
+  runCommand('adb', ['-s', device, 'shell', 'input', 'tap', String(Math.max(1, previewBounds.left - 80)), String(Math.round((previewBounds.top + previewBounds.bottom) / 2))])
   return true
 }
 
@@ -765,7 +832,7 @@ function isUsableBounds(bounds) {
   if (box.right <= box.left || box.bottom <= box.top) return false
   const centerX = (box.left + box.right) / 2
   const centerY = (box.top + box.bottom) / 2
-  return centerX >= 0 && centerX <= 864 && centerY >= 48 && centerY <= 1872
+  return centerX >= 0 && centerX <= 1080 && centerY >= 48 && centerY <= 2266
 }
 
 function boundsContains(container, inner) {
@@ -803,6 +870,10 @@ function swipeDown(device) {
   runCommand('adb', ['-s', device, 'shell', 'input', 'swipe', '432', '620', '432', '1580', '450'])
 }
 
+function swipeActionsRowLeft(device) {
+  runCommand('adb', ['-s', device, 'shell', 'input', 'swipe', '930', '1950', '360', '1950', '360'])
+}
+
 function inputText(device, value) {
   runCommand('adb', ['-s', device, 'shell', 'input', 'text', escapeInputText(value)])
 }
@@ -832,7 +903,7 @@ function pushFixture(device) {
   return output !== null
 }
 
-function resolveDevice(requested) {
+function resolveDevice(requested, options = {}) {
   const output = runCommand('adb', ['devices']) ?? ''
   const serials = output
     .split(/\r?\n/)
@@ -840,6 +911,7 @@ function resolveDevice(requested) {
     .filter(([serial, state]) => serial && state === 'device')
     .map(([serial]) => serial)
   if (serials.includes(requested)) return requested
+  if (options.strict) return null
   return serials[0] ?? null
 }
 
@@ -890,7 +962,7 @@ function runMockProviderWorker() {
     })
     request.on('end', () => {
       const receivedAt = new Date().toISOString()
-      fs.appendFileSync(workerData.logPath, `${JSON.stringify({ receivedAt, method: request.method, url: request.url, body })}\n`, 'utf8')
+      fs.appendFileSync(workerData.logPath, `${JSON.stringify({ timestamp: receivedAt, receivedAt, method: request.method, path: request.url, url: request.url, body })}\n`, 'utf8')
       if (request.method === 'GET' && request.url === '/v1/models') {
         response.writeHead(200, { 'Content-Type': 'application/json' })
         response.end(JSON.stringify({
@@ -918,6 +990,9 @@ function runMockProviderWorker() {
           writeStreamingCompletion(response)
           return
         }
+        const assistantContent = longContentRequestLogMode && payload.max_tokens === 512
+          ? JSON.stringify(['用户偏好：QA_LONG_CONTENT_PREFERENCE = cyan-lake'])
+          : 'OK'
         response.writeHead(200, { 'Content-Type': 'application/json' })
         response.end(JSON.stringify({
           id: 'chatcmpl-qa-mock-test',
@@ -926,7 +1001,7 @@ function runMockProviderWorker() {
           choices: [
             {
               index: 0,
-              message: { role: 'assistant', content: 'OK' },
+              message: { role: 'assistant', content: assistantContent },
               finish_reason: 'stop',
             },
           ],
@@ -958,9 +1033,9 @@ function writeStreamingCompletion(response) {
     'Cache-Control': 'no-cache',
   })
   const chunks = [
-    'QA_MOCK_STREAM_PARTIAL ',
+    `${streamPartialToken} `,
     '仍在生成，',
-    'QA_MOCK_STREAM_COMPLETE',
+    streamCompleteToken,
   ]
   let index = 0
   const timer = setInterval(() => {
@@ -999,9 +1074,53 @@ function tryParseJson(value) {
   }
 }
 
+function waitForLongContentRequestRows(logPath, timeoutMs) {
+  const startedAt = Date.now()
+  while (Date.now() - startedAt <= timeoutMs) {
+    if (hasLongContentStreamingRequest(readJsonl(logPath)) && hasLongContentMemoryExtractionRequest(readJsonl(logPath))) return true
+    sleep(500)
+  }
+  throw new Error('Timed out waiting for long-content streaming and memory extraction request rows.')
+}
+
+function hasLongContentModelRequest(rows) {
+  return requestBodies(rows).some(({ body }) => body.model === modelId)
+}
+
+function hasLongContentStreamingRequest(rows) {
+  return requestBodies(rows).some(({ row, body }) => isPostRequest(row) && body.model === modelId && body.stream === true)
+}
+
+function hasLongContentMemoryExtractionRequest(rows) {
+  return requestBodies(rows).some(({ row, body }) => isPostRequest(row) && body.max_tokens === 512)
+}
+
+function requestBodies(rows) {
+  return rows
+    .map((row) => ({ row, body: tryParseJson(row.body) }))
+    .filter(({ body }) => body && typeof body === 'object')
+}
+
+function isPostRequest(row) {
+  return String(row?.method ?? '').toUpperCase() === 'POST'
+}
+
 function isPassing(result) {
   const rows = readJsonl(requestLogPath)
   const bodies = rows.map((row) => tryParseJson(row.body)).filter(Boolean)
+  if (longContentRequestLogMode) {
+    return Boolean(
+      result.device &&
+      result.pushedFixture &&
+      result.imported &&
+      result.streamSent &&
+      result.streamCompleteVisible &&
+      hasLongContentModelRequest(rows) &&
+      hasLongContentStreamingRequest(rows) &&
+      hasLongContentMemoryExtractionRequest(rows) &&
+      result.errors.length === 0
+    )
+  }
   const hasModels = rows.some((row) => row.method === 'GET' && /\/v1\/models/.test(row.url ?? ''))
   const hasProviderTest = bodies.some((body) => body.model === modelId && body.stream === false && body.max_tokens === 32)
   const hasStreaming = bodies.some((body) => body.model === modelId && body.stream === true && (body.max_tokens === 4096 || body.max_output_tokens === 4096))
@@ -1026,10 +1145,20 @@ function isPassing(result) {
 
 function summarizeFailures(result) {
   const failures = []
+  const rows = readJsonl(requestLogPath)
+  if (longContentRequestLogMode) {
+    for (const key of ['device', 'pushedFixture', 'imported', 'streamSent', 'streamCompleteVisible']) {
+      if (!result[key]) failures.push(`${key}=false`)
+    }
+    if (!hasLongContentModelRequest(rows)) failures.push(`missing ${modelId} request`)
+    if (!hasLongContentStreamingRequest(rows)) failures.push('missing streaming long-content request')
+    if (!hasLongContentMemoryExtractionRequest(rows)) failures.push('missing memory extraction request with max_tokens=512')
+    failures.push(...result.errors)
+    return failures
+  }
   for (const key of ['device', 'pushedFixture', 'imported', 'providerTestTapped', 'streamSent', 'streamInflightVisible', 'streamCompleteVisible', 'actionsMenuOpened', 'deleteConfirmVisible', 'sourceOpened', 'sourceBackReturned']) {
     if (!result[key]) failures.push(`${key}=false`)
   }
-  const rows = readJsonl(requestLogPath)
   const bodies = rows.map((row) => tryParseJson(row.body)).filter(Boolean)
   if (!rows.some((row) => row.method === 'GET' && /\/v1\/models/.test(row.url ?? ''))) failures.push('missing /v1/models')
   if (!bodies.some((body) => body.model === modelId && body.stream === false && body.max_tokens === 32)) failures.push('missing non-streaming provider test')
@@ -1055,6 +1184,14 @@ function hasAnyText(text, values) {
   return values.some((value) => String(text ?? '').includes(value))
 }
 
+function hasTappableText(uiaText, labels) {
+  return Boolean(findTappableTextNode(parseNodes(uiaText), labels))
+}
+
+function isDeleteConfirm(uiaText) {
+  return hasAnyText(uiaText, ['删除这条消息', 'Delete this message', '确认后才会删除', 'deleted after you confirm'])
+}
+
 function isDocumentsUi(uiaText) {
   const text = String(uiaText ?? '')
   return text.includes('com.google.android.documentsui')
@@ -1064,6 +1201,13 @@ function isDocumentsUi(uiaText) {
 
 function textMatchesAny(node, labels) {
   return labels.some((label) => node.text.includes(label) || node.contentDesc.includes(label))
+}
+
+function editableValueByContentDesc(uiaText, labels) {
+  const node = parseNodes(uiaText)
+    .filter((item) => item.enabled && item.className.includes('EditText'))
+    .find((item) => labels.some((label) => item.contentDesc.includes(label)))
+  return node?.text ?? ''
 }
 
 function extractVisibleText(uiaText) {

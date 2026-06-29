@@ -26,6 +26,11 @@ export interface CompactUsageInput {
   localSummarySectionCount?: number
   localSummaryItemCount?: number
   localSummarySections?: PackedCompressionSectionMetadata[]
+  activeContextTokens?: number
+  autoCompactScopeTokens?: number
+  prefillInputTokens?: number
+  tokensUntilCompaction?: number
+  lastCompactSummary?: string
   failureCode?: string
   fallbackLocal?: boolean
 }

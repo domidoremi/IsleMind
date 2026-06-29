@@ -3,8 +3,22 @@ const path = require('node:path')
 
 const projectRoot = path.resolve(__dirname, '..')
 const buildGradlePath = path.join(projectRoot, 'android', 'app', 'build.gradle')
+const gradlePropertiesPath = path.join(projectRoot, 'android', 'gradle.properties')
+const mainApplicationPath = path.join(
+  projectRoot,
+  'android',
+  'app',
+  'src',
+  'main',
+  'java',
+  'com',
+  'islemind',
+  'app',
+  'MainApplication.kt',
+)
 const args = new Set(process.argv.slice(2))
 const skipSigning = args.has('--skip-signing')
+const releaseGradleJvmArgs = '-Xmx2048m -XX:MaxMetaspaceSize=1024m'
 
 if (!fs.existsSync(buildGradlePath)) {
   throw new Error(`Android build.gradle was not found at ${buildGradlePath}. Run expo prebuild first.`)
@@ -21,7 +35,43 @@ function ensureLauncherBackgroundDrawable() {
   )
 }
 
+function ensureGradleJvmArgs() {
+  if (!fs.existsSync(gradlePropertiesPath)) return
+
+  const source = fs.readFileSync(gradlePropertiesPath, 'utf8')
+  const lines = source.split(/\r?\n/)
+  let found = false
+  const nextLines = lines.map((line) => {
+    if (!line.startsWith('org.gradle.jvmargs=')) return line
+    found = true
+    return `org.gradle.jvmargs=${releaseGradleJvmArgs}`
+  })
+
+  if (!found) {
+    nextLines.push(`org.gradle.jvmargs=${releaseGradleJvmArgs}`)
+  }
+
+  fs.writeFileSync(gradlePropertiesPath, `${nextLines.join('\n').replace(/\n+$/, '')}\n`, 'utf8')
+}
+
+function ensureMainApplicationDeprecationSuppress() {
+  if (!fs.existsSync(mainApplicationPath)) return
+
+  const source = fs.readFileSync(mainApplicationPath, 'utf8')
+  if (!source.includes('ReactNativeHost') || source.includes('@file:Suppress(')) return
+
+  const nextSource = source.replace(
+    /^package /,
+    '@file:Suppress("DEPRECATION", "OVERRIDE_DEPRECATION")\n\npackage ',
+  )
+  if (nextSource !== source) {
+    fs.writeFileSync(mainApplicationPath, nextSource, 'utf8')
+  }
+}
+
 ensureLauncherBackgroundDrawable()
+ensureGradleJvmArgs()
+ensureMainApplicationDeprecationSuppress()
 
 let source = fs.readFileSync(buildGradlePath, 'utf8')
 

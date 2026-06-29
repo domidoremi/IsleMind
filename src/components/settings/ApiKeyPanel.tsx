@@ -30,9 +30,12 @@ import {
   type ProviderModelCapabilityEvidenceStatus,
 } from '@/services/ai/providerCapabilityMatrix'
 import { providerCompatibilityCapabilityCanBeSentForProvider, type ProviderCompatibilityBehavior } from '@/services/ai/providerCompatibilityContract'
+import type { RuntimeDiagnosticsProviderDetail } from '@/services/runtimeDiagnostics'
+import { useProviderActivationJob } from '@/components/providers/useProviderActivationJob'
 
 interface ApiKeyPanelProps {
   provider: AIProvider
+  runtimeDetail?: RuntimeDiagnosticsProviderDetail
   initiallyExpanded?: boolean
   expanded?: boolean
   onExpandedChange?: (expanded: boolean) => void
@@ -41,6 +44,15 @@ interface ApiKeyPanelProps {
 }
 
 type PanelTask = 'idle' | 'saving' | 'syncing' | 'testing' | 'probing' | 'clipboard'
+type TokenModelGroupTone = 'success' | 'warning' | 'danger' | 'muted'
+
+interface TokenModelGroup {
+  id: string
+  label: string
+  models: string[]
+  tone: TokenModelGroupTone
+  statusLabel: string
+}
 
 const CAPABILITY_KEYS: (keyof ProviderCapabilities)[] = [
   'modelList',
@@ -107,6 +119,7 @@ function quietControlSurface(colors: ReturnType<typeof useAppTheme>['colors'], a
 
 export function ApiKeyPanel({
   provider,
+  runtimeDetail,
   initiallyExpanded = false,
   expanded: controlledExpanded,
   onExpandedChange,
@@ -126,6 +139,7 @@ export function ApiKeyPanel({
   const modelTestModel = settings.modelTestModel
   const modelTestCheckParameters = settings.modelTestCheckParameters
   const hydrateProviderKey = useSettingsStore((state) => state.hydrateProviderKey)
+  const { activateProviders, isActivationRunning } = useProviderActivationJob()
   const [localExpanded, setLocalExpanded] = useState(initiallyExpanded)
   const [baseUrl, setBaseUrl] = useState(provider.baseUrl ?? '')
   const [presetId, setPresetId] = useState<ProviderPresetId>(initialProviderPresetId(provider))
@@ -148,6 +162,7 @@ export function ApiKeyPanel({
   const customModels = useMemo(() => getProviderManualModels(provider), [provider])
   const availableModels = useMemo(() => getPolicyAllowedProviderModels(provider, settings), [provider, settings])
   const remoteModels = useMemo(() => getRemoteModelIds(provider, availableModels), [availableModels, provider])
+  const remoteModelGroups = useMemo(() => buildRemoteModelGroups(provider, availableModels, t), [availableModels, provider, t])
   const modelInventory = useMemo(() => summarizeProviderModelInventory(provider), [provider])
   const preferredModel = getPolicyPreferredProviderModel(provider, settings)
   const primaryModel = preferredModel ?? availableModels[0] ?? currentModels[0] ?? t('apiKeyPanel.noModelSet')
@@ -218,9 +233,6 @@ export function ApiKeyPanel({
       lastTestCode: undefined,
       lastModelTestCapabilityChecks: undefined,
     })
-    if (credentialGroups.some((group) => group.enabled)) {
-      updateSettings({ onboardingCompleted: true })
-    }
     setCredentialText('')
     setModelEditing(false)
     setTask('idle')
@@ -366,13 +378,14 @@ export function ApiKeyPanel({
     setTask('idle')
     const summary = summarizeProviderActivation([result])
     if (result.testOk) {
-      updateSettings({ defaultProvider: result.providerId, onboardingCompleted: true })
+      updateSettings({ defaultProvider: result.providerId })
     }
     setNotice(summary.message)
     dialog.notice({ title: result.testOk ? t('apiKeyPanel.fetchAndTestDone') : t('apiKeyPanel.fetchAndTestNeedsCheck'), message: summary.message, tone: summary.tone })
   }
 
   async function toggleProviderEnabled() {
+    if (isBusy || isActivationRunning) return
     const enabled = !provider.enabled
     if (!enabled) {
       await updateProvider(provider.id, { enabled })
@@ -380,25 +393,12 @@ export function ApiKeyPanel({
       return
     }
     await save(false)
-    setTask('syncing')
-    dialog.toast({ title: t('providerSettings.activatingProvider'), message: provider.name, tone: 'mint', durationMs: 1600 })
-    const current = useSettingsStore.getState().providers.find((item) => item.id === provider.id) ?? provider
-    const result = await syncAndTestProvider(current, {
-      updateProvider: useSettingsStore.getState().updateProvider,
-      hydrateProviderKey: useSettingsStore.getState().hydrateProviderKey,
-      updateProviderCredentialGroupHealth: useSettingsStore.getState().updateProviderCredentialGroupHealth,
-    }, { enable: true, testModel: modelTestModel, checkParameters: modelTestCheckParameters, accessSettings: settings })
-    const summary = summarizeProviderActivation([result])
-    if (result.testOk) {
-      updateSettings({ defaultProvider: result.providerId, onboardingCompleted: true })
-    }
-    setTask('idle')
-    setNotice(summary.message)
-    dialog.toast({ title: t('apiKeyPanel.providerEnabled', { name: provider.name }), message: summary.message, tone: summary.tone, position: 'bottom', durationMs: summary.tone === 'danger' ? 6500 : summary.tone === 'amber' ? 5200 : 3600 })
+    setNotice(t('providerSettings.activationQueued'))
+    void activateProviders([provider.id], 'single')
   }
 
   function setDefaultProvider() {
-    updateSettings({ defaultProvider: provider.id, onboardingCompleted: true })
+    updateSettings({ defaultProvider: provider.id })
     dialog.toast({ title: t('apiKeyPanel.defaultUpdated'), message: provider.name, tone: 'mint' })
   }
 
@@ -527,7 +527,7 @@ export function ApiKeyPanel({
             <MiniAction active={isDefault} label={isDefault ? t('settings.default') : t('apiKeyPanel.setDefault')} onPress={setDefaultProvider}>
               <AppIcon name="star" color={isDefault ? colors.ui.control.primaryForeground : colors.textTertiary} size={15} fill={isDefault ? colors.ui.control.primaryForeground : 'transparent'} />
             </MiniAction>
-            <MiniAction active={provider.enabled} label={provider.enabled ? t('apiKeyPanel.enabledState') : t('apiKeyPanel.disabledState')} onPress={() => void toggleProviderEnabled()}>
+            <MiniAction active={provider.enabled} label={provider.enabled ? t('apiKeyPanel.enabledState') : t('apiKeyPanel.disabledState')} onPress={() => void toggleProviderEnabled()} disabled={isBusy || isActivationRunning}>
               <AppIcon name="power" color={provider.enabled ? colors.ui.control.primaryForeground : colors.textTertiary} size={15} />
             </MiniAction>
             <MiniAction label={t('common.delete')} onPress={() => void confirmRemoveProvider()} disabled={isBusy}>
@@ -548,6 +548,10 @@ export function ApiKeyPanel({
               </View>
               <Text style={{ color: colors.textTertiary, fontSize: 11, lineHeight: 16 }}>{t('providerSettings.protocol.endpointNote')}</Text>
             </View>
+          ) : null}
+
+          {runtimeDetail ? (
+            <ProviderRuntimeDiagnosticsPanel detail={runtimeDetail} />
           ) : null}
 
           <IsleField
@@ -694,15 +698,10 @@ export function ApiKeyPanel({
             />
             {modelEditing ? (
               <View style={{ gap: 10 }}>
-                {remoteModels.length ? (
-                  <View style={{ padding: 11, gap: 8, ...panelCardStyle(colors) }}>
+                {remoteModelGroups.length ? (
+                  <View style={{ padding: 11, gap: 10, ...panelCardStyle(colors) }}>
                     <Text style={{ color: colors.text, fontSize: 12, fontWeight: '900' }}>{t('apiKeyPanel.remoteModels')}</Text>
-                    <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 7 }}>
-                      {remoteModels.slice(0, 16).map((model) => (
-                        <ChoiceButton key={model} active={false} label={getModelName(model)} onPress={() => appendModelEntry(model)} />
-                      ))}
-                      {remoteModels.length > 16 ? <Text style={{ color: colors.textTertiary, fontSize: 11, fontWeight: '800' }}>+{remoteModels.length - 16}</Text> : null}
-                    </View>
+                    <RemoteModelChoiceGroups groups={remoteModelGroups} onModelPress={appendModelEntry} />
                   </View>
                 ) : null}
                 <IsleField
@@ -725,7 +724,7 @@ export function ApiKeyPanel({
               </View>
             ) : (
               <>
-                <ModelSummary remoteModels={remoteModels} customModels={customModels} aliases={provider.modelAliases ?? []} manualCount={modelInventory.manualModels} selectableCount={availableModels.length} />
+                <ModelSummary remoteModels={remoteModels} remoteModelGroups={remoteModelGroups} customModels={customModels} aliases={provider.modelAliases ?? []} manualCount={modelInventory.manualModels} selectableCount={availableModels.length} />
                 <ModelCapabilityEvidencePanel provider={provider} models={availableModels.length ? availableModels : currentModels} />
                 <ModelTestCapabilityPanel provider={provider} />
               </>
@@ -783,13 +782,15 @@ function Badge({ label, tone }: { label: string; tone: 'success' | 'warning' | '
   return <IsleChip tone={tone === 'warning' ? 'amber' : tone === 'danger' ? 'danger' : tone === 'success' ? 'mint' : 'default'}>{label}</IsleChip>
 }
 
-function MiniBadge({ label, tone }: { label: string; tone: 'success' | 'warning' | 'muted' }) {
+function MiniBadge({ label, tone }: { label: string; tone: TokenModelGroupTone }) {
   const { colors } = useAppTheme()
   const toneToken = tone === 'success'
     ? colors.ui.tone.success
     : tone === 'warning'
       ? colors.ui.tone.warning
-      : colors.ui.tone.neutral
+      : tone === 'danger'
+        ? colors.ui.tone.danger
+        : colors.ui.tone.neutral
   return (
     <View style={{ minHeight: 22, borderRadius: colors.ui.radius.chip, paddingHorizontal: 8, alignItems: 'center', justifyContent: 'center', backgroundColor: toneToken.background, borderWidth: colors.ui.cartoon ? 1 : StyleSheet.hairlineWidth, borderColor: toneToken.border }}>
       <Text style={{ color: toneToken.foreground, fontSize: 10, fontWeight: '900' }}>{label}</Text>
@@ -815,6 +816,59 @@ function SectionHeader({ title, description, action }: { title: string; descript
         {description ? <Text numberOfLines={2} style={{ color: colors.textSecondary, fontSize: 11, lineHeight: 16, marginTop: 2, includeFontPadding: false }}>{description}</Text> : null}
       </View>
       {action}
+    </View>
+  )
+}
+
+function ProviderRuntimeDiagnosticsPanel({ detail }: { detail: RuntimeDiagnosticsProviderDetail }) {
+  const { colors } = useAppTheme()
+  const { t } = useTranslation()
+  const health = detail.credentialHealth
+  const protocolValue = t('apiKeyPanel.runtimeProtocolValue', {
+    declared: detail.declaredProtocol ?? t('common.unknown'),
+    ready: detail.readyProtocol ?? t('common.unknown'),
+    observed: detail.observedProtocol ?? t('common.unknown'),
+  })
+  const credentialValue = t('apiKeyPanel.runtimeCredentialHealthValue', {
+    healthy: health.healthy,
+    enabled: health.enabled,
+    total: health.total,
+    cooldown: health.cooldown,
+    circuit: health.circuitOpen,
+    quota: health.quotaExhausted,
+    credential: health.credentialUnhealthy,
+  })
+  const sessionStatus = detail.sessionAffinity.status ?? 'unknown'
+  const sessionValue = detail.sessionAffinity.enabled
+    ? t('apiKeyPanel.runtimeSessionAffinityValue', {
+        status: t(`providerSettings.runtimeSessionAffinityStatus.${sessionStatus}`),
+        group: detail.sessionAffinity.credentialGroupId ?? t('common.none'),
+        trigger: detail.sessionAffinity.trigger ?? t('common.none'),
+      })
+    : t('apiKeyPanel.runtimeSessionAffinityOff')
+  const unavailableValue = detail.lastUnavailableReason
+    ? t('apiKeyPanel.runtimeUnavailableValue', {
+        reason: t(`providerSettings.runtimeUnavailableReason.${detail.lastUnavailableReason}`),
+        detail: detail.lastUnavailableDetail ?? t('common.none'),
+      })
+    : t('apiKeyPanel.runtimeUnavailableNone')
+  const rows = [
+    { key: 'protocol', label: t('apiKeyPanel.runtimeProtocol'), value: protocolValue },
+    { key: 'credentials', label: t('apiKeyPanel.runtimeCredentialHealth'), value: credentialValue },
+    { key: 'session', label: t('apiKeyPanel.runtimeSessionAffinity'), value: sessionValue },
+    { key: 'unavailable', label: t('apiKeyPanel.runtimeUnavailable'), value: unavailableValue, warning: Boolean(detail.lastUnavailableReason) },
+  ]
+  return (
+    <View style={{ padding: 11, gap: 10, ...panelCardStyle(colors, detail.lastUnavailableReason ? colors.ui.tone.warning.border : colors.material.stroke) }}>
+      <SectionHeader title={t('apiKeyPanel.runtimeDiagnostics')} />
+      <View style={{ gap: 8 }}>
+        {rows.map((row) => (
+          <View key={row.key} style={{ gap: 3 }}>
+            <Text numberOfLines={1} style={{ color: colors.textTertiary, fontSize: 10, lineHeight: 13, fontWeight: '900', includeFontPadding: false }}>{row.label}</Text>
+            <Text numberOfLines={2} style={{ color: row.warning ? colors.ui.tone.warning.foreground : colors.textSecondary, fontSize: 11, lineHeight: 16, fontWeight: '800', includeFontPadding: false }}>{row.value}</Text>
+          </View>
+        ))}
+      </View>
     </View>
   )
 }
@@ -914,12 +968,61 @@ function getRemoteModelIds(provider: AIProvider, allowedModels: string[]): strin
     })
 }
 
-function ModelSummary({ remoteModels, customModels, aliases, manualCount, selectableCount }: { remoteModels: string[]; customModels: string[]; aliases: NonNullable<AIProvider['modelAliases']>; manualCount: number; selectableCount: number }) {
+function buildRemoteModelGroups(provider: AIProvider, allowedModels: string[], t: TFunction): TokenModelGroup[] {
+  const manual = new Set(getProviderManualModels(provider))
+  const allowed = new Set(allowedModels)
+  const normalizeModels = (models: string[] | undefined): string[] => {
+    const seen = new Set<string>()
+    return (models ?? [])
+      .map((model) => model.trim())
+      .filter((model) => {
+        if (!model || manual.has(model) || seen.has(model)) return false
+        if (allowed.size && !allowed.has(model)) return false
+        seen.add(model)
+        return true
+      })
+  }
+  const groups = (provider.credentialGroups ?? []).map((group, index): TokenModelGroup => ({
+    id: group.id,
+    label: group.label || t('apiKeyPanel.groupName', { index: index + 1 }),
+    models: normalizeModels(group.availableModels),
+    tone: group.lastModelSyncStatus === 'ok'
+      ? 'success'
+      : group.lastModelSyncStatus === 'bad'
+        ? 'danger'
+        : group.enabled ? 'warning' : 'muted',
+    statusLabel: group.lastModelSyncStatus === 'ok'
+      ? t('apiKeyPanel.synced')
+      : group.lastModelSyncStatus === 'bad'
+        ? t('apiKeyPanel.syncFailed')
+        : group.enabled ? t('apiKeyPanel.pendingCheck') : t('apiKeyPanel.disabled'),
+  }))
+  if (groups.length) return groups
+  const models = normalizeModels([
+    ...provider.models,
+    ...(provider.modelAvailability ?? []).map((item) => item.modelId),
+  ])
+  return models.length
+    ? [{
+      id: 'provider',
+      label: t('apiKeyPanel.providerMergedModels'),
+      models,
+      tone: provider.lastModelSyncStatus === 'bad' ? 'danger' : provider.lastModelSyncStatus === 'ok' ? 'success' : 'muted',
+      statusLabel: provider.lastModelSyncStatus === 'bad'
+        ? t('apiKeyPanel.syncFailed')
+        : provider.lastModelSyncStatus === 'ok'
+          ? t('apiKeyPanel.synced')
+          : t('apiKeyPanel.pendingCheck'),
+    }]
+    : []
+}
+
+function ModelSummary({ remoteModels, remoteModelGroups, customModels, aliases, manualCount, selectableCount }: { remoteModels: string[]; remoteModelGroups: TokenModelGroup[]; customModels: string[]; aliases: NonNullable<AIProvider['modelAliases']>; manualCount: number; selectableCount: number }) {
   const { colors } = useAppTheme()
   const { t } = useTranslation()
-  const shownRemote = remoteModels.slice(0, 8)
   const shownCustom = customModels.slice(0, 8)
-  if (!shownRemote.length && !shownCustom.length && !aliases.length) {
+  const hasRemoteGroupModels = remoteModelGroups.some((group) => group.models.length)
+  if (!remoteModelGroups.length && !shownCustom.length && !aliases.length) {
     return (
       <View style={{ padding: 12, ...panelCardStyle(colors) }}>
         <Text style={{ color: colors.textSecondary, fontSize: 12, lineHeight: 18, fontWeight: '800' }}>{t('apiKeyPanel.noModels')}</Text>
@@ -934,8 +1037,11 @@ function ModelSummary({ remoteModels, customModels, aliases, manualCount, select
         <MiniBadge label={t('apiKeyPanel.aliasShort', { count: aliases.length })} tone={aliases.length ? 'warning' : 'muted'} />
         <MiniBadge label={t('apiKeyPanel.selectableModelShort', { count: selectableCount })} tone={selectableCount ? 'success' : 'muted'} />
       </View>
-      {shownRemote.length ? (
-        <ModelChipGroup title={t('apiKeyPanel.remoteModels')} models={shownRemote} remaining={remoteModels.length - shownRemote.length} />
+      {remoteModelGroups.length ? (
+        <TokenModelGroupList groups={remoteModelGroups} />
+      ) : null}
+      {remoteModelGroups.length && !hasRemoteGroupModels ? (
+        <Text style={{ color: colors.textSecondary, fontSize: 12, lineHeight: 18, fontWeight: '800' }}>{t('apiKeyPanel.noModels')}</Text>
       ) : null}
       {shownCustom.length ? (
         <ModelChipGroup title={t('apiKeyPanel.customModels')} models={shownCustom} remaining={customModels.length - shownCustom.length} />
@@ -950,6 +1056,73 @@ function ModelSummary({ remoteModels, customModels, aliases, manualCount, select
           {aliases.length > 4 ? <Text style={{ color: colors.textTertiary, fontSize: 11, fontWeight: '800' }}>+{aliases.length - 4}</Text> : null}
         </View>
       ) : null}
+    </View>
+  )
+}
+
+function TokenModelGroupList({ groups }: { groups: TokenModelGroup[] }) {
+  return (
+    <View style={{ gap: 8 }}>
+      {groups.map((group) => (
+        <TokenModelGroupPreview key={group.id} group={group} />
+      ))}
+    </View>
+  )
+}
+
+function TokenModelGroupPreview({ group }: { group: TokenModelGroup }) {
+  const { colors } = useAppTheme()
+  const { t } = useTranslation()
+  const shownModels = group.models.slice(0, 6)
+  return (
+    <View style={{ gap: 7 }}>
+      <View style={{ minHeight: 22, flexDirection: 'row', alignItems: 'center', gap: 7, flexWrap: 'wrap' }}>
+        <Text numberOfLines={1} style={{ flex: 1, minWidth: 0, color: colors.textSecondary, fontSize: 11, lineHeight: 15, fontWeight: '900', includeFontPadding: false }}>
+          {group.label}
+        </Text>
+        <MiniBadge label={t('apiKeyPanel.modelCount', { count: group.models.length })} tone={group.models.length ? group.tone : 'muted'} />
+        <MiniBadge label={group.statusLabel} tone={group.tone} />
+      </View>
+      {shownModels.length ? (
+        <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 7 }}>
+          {shownModels.map((model) => <ModelChip key={`${group.id}:${model}`} label={getModelName(model)} />)}
+          {group.models.length > shownModels.length ? <Text style={{ color: colors.textTertiary, fontSize: 11, fontWeight: '800' }}>+{group.models.length - shownModels.length}</Text> : null}
+        </View>
+      ) : (
+        <Text style={{ color: colors.textTertiary, fontSize: 11, lineHeight: 15, fontWeight: '800', includeFontPadding: false }}>{t('apiKeyPanel.noModels')}</Text>
+      )}
+    </View>
+  )
+}
+
+function RemoteModelChoiceGroups({ groups, onModelPress }: { groups: TokenModelGroup[]; onModelPress: (model: string) => void }) {
+  const { colors } = useAppTheme()
+  const { t } = useTranslation()
+  return (
+    <View style={{ gap: 10 }}>
+      {groups.map((group) => {
+        const shownModels = group.models.slice(0, 8)
+        return (
+          <View key={group.id} style={{ gap: 7 }}>
+            <View style={{ minHeight: 22, flexDirection: 'row', alignItems: 'center', gap: 7, flexWrap: 'wrap' }}>
+              <Text numberOfLines={1} style={{ flex: 1, minWidth: 0, color: colors.textSecondary, fontSize: 11, lineHeight: 15, fontWeight: '900', includeFontPadding: false }}>
+                {group.label}
+              </Text>
+              <MiniBadge label={t('apiKeyPanel.modelCount', { count: group.models.length })} tone={group.models.length ? group.tone : 'muted'} />
+            </View>
+            {shownModels.length ? (
+              <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 7 }}>
+                {shownModels.map((model) => (
+                  <ChoiceButton key={`${group.id}:${model}`} active={false} label={getModelName(model)} onPress={() => onModelPress(model)} />
+                ))}
+                {group.models.length > shownModels.length ? <Text style={{ color: colors.textTertiary, fontSize: 11, fontWeight: '800' }}>+{group.models.length - shownModels.length}</Text> : null}
+              </View>
+            ) : (
+              <Text style={{ color: colors.textTertiary, fontSize: 11, lineHeight: 15, fontWeight: '800', includeFontPadding: false }}>{t('apiKeyPanel.noModels')}</Text>
+            )}
+          </View>
+        )
+      })}
     </View>
   )
 }

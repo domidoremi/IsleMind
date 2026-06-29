@@ -17,6 +17,8 @@ const {
 const {
   cleanInstallState,
   defaultReleaseAppPackageName,
+  inferReleaseApkArch,
+  isInstalledAbiCompatible,
   validateCurrentApkSmokeResult,
   validateReleaseProvenance,
 } = require('./release-validation-contract')
@@ -230,6 +232,8 @@ const keyEvidenceCaptureWorklistPath = path.join(evidenceDir, 'key-evidence-capt
 const releaseRecoveryWorklistPath = path.join(evidenceDir, 'release-recovery-worklist.json')
 const resultEvidenceNextInputsPath = path.join(evidenceDir, 'result-evidence-next-inputs.json')
 const provenancePath = path.join(evidenceDir, 'apk-provenance.json')
+const currentApkSmokePath = path.join(evidenceDir, 'current-apk-smoke-results.json')
+const keyVisualGapsResultsPath = path.join(evidenceDir, 'key-visual-gaps-results.json')
 const blockingCaptureWorklistSchema = 'islemind.qa-blocking-evidence-capture-worklist.v1'
 const rawInputCaptureWorklistSchema = 'islemind.qa-raw-input-capture-worklist.v3'
 const runtimeUiaRecaptureWorklistSchema = 'islemind.qa-runtime-uia-recapture-worklist.v1'
@@ -239,7 +243,17 @@ const resultEvidenceNextInputsSchema = 'islemind.qa-result-evidence-next-inputs.
 const rawEvidenceContractResultsName = 'raw-evidence-contract-results.json'
 const rawEvidenceContractResultsSchema = 'islemind.qa-raw-evidence-contract-results.v1'
 const releaseSourceStabilityCommand = 'bun run release:source-stability -- --duration-ms 30000 --interval-ms 5000'
-const releaseInstallCurrentApkCommand = "$env:QA_DEVICE_SERIAL='emulator-5554'; bun run release:install-current-apk"
+const releaseRecoveryApkArch = resolveReleaseSmokeArch()
+const releaseRebuildCommand = `bun run apk:local:release -- --release-arch ${releaseRecoveryApkArch}`
+const releaseRecoveryDeviceSerial = process.env.QA_DEVICE_SERIAL || readJsonFile(currentApkSmokePath)?.device || 'emulator-5554'
+const releaseRecoveryDeviceAssignment = `$env:QA_DEVICE_SERIAL='${psSingleQuote(releaseRecoveryDeviceSerial)}'`
+const releaseInstallCurrentApkCommand = `${releaseRecoveryDeviceAssignment}; bun run release:install-current-apk`
+const releaseCurrentApkSmokeCommand = `${releaseRecoveryDeviceAssignment}; bun run test:current-apk-smoke`
+const releaseMemoryReviewSmokeCommand = `${releaseRecoveryDeviceAssignment}; bun run test:memory-review-smoke`
+const releaseWorkArtifactSmokeCommand = `${releaseRecoveryDeviceAssignment}; bun run test:work-artifact-smoke`
+const releaseProviderRuntimeAndroidCommand = `${releaseRecoveryDeviceAssignment}; bun run test:provider-runtime-android`
+const releaseAndroidStatusNotificationEvidenceCommand = `${releaseRecoveryDeviceAssignment}; bun run test:android-status-notification:evidence -- --device ${releaseRecoveryDeviceSerial}`
+const releaseAndroidDeviceTaskEvidenceCommand = `${releaseRecoveryDeviceAssignment}; bun run test:android-device-task:evidence -- --device ${releaseRecoveryDeviceSerial}`
 const agentWorkflowMatrixRequiredSnippets = [
   'Agent workflow orchestration and policy',
   'scripts/agentic-workflow-tests.js',
@@ -376,24 +390,28 @@ const resultEvidenceRecoveryPlans = new Map([
   ['Fresh provider Back regression result', 'Manual collector required: run the provider Back regression smoke and refresh test-evidence/qa/fresh-back-smoke-after-fix/providers-back-fixed-results.json.'],
   ['Fresh route smoke result', 'Manual collector required: run the fresh route smoke and refresh test-evidence/qa/fresh-route-smoke/route-smoke-results.json.'],
   ['Fresh home keyboard avoidance result', 'Manual collector required: run the home keyboard avoidance smoke and refresh test-evidence/qa/fresh-keyboard-smoke-after-fix/home-keyboard-open-results.json.'],
-  ['Current APK launch and 16KB compatibility result', "$env:QA_DEVICE_SERIAL='emulator-5554'; bun run test:current-apk-smoke"],
-  ['Imported memory review smoke result', "$env:QA_DEVICE_SERIAL='emulator-5554'; bun run test:memory-review-smoke"],
-  ['Structured work artifact smoke result', "$env:QA_DEVICE_SERIAL='emulator-5554'; bun run test:work-artifact-smoke"],
+  ['Current APK launch and 16KB compatibility result', releaseCurrentApkSmokeCommand],
+  ['Imported memory review smoke result', releaseMemoryReviewSmokeCommand],
+  ['Structured work artifact smoke result', releaseWorkArtifactSmokeCommand],
   ['Local embedding model download result', 'node scripts/collect-local-model-download-result.js --source test-evidence/qa/raw-settings-context-local-model-download-emulator-results.json'],
   ['MCP offline and online functional result', 'Manual collector required: run the MCP offline/online Android smoke and refresh test-evidence/qa/settings-mcp-offline-results.json.'],
   ['MCP online server request log', 'Manual collector required: run the MCP online sync smoke with request logging and refresh test-evidence/qa/settings-mcp-online-cleartext-server-requests.jsonl.'],
   ['Preferences persistence result', 'node scripts/collect-settings-state-android.js'],
   ['Theme and locale switch result', 'node scripts/collect-settings-state-android.js'],
   ['Font scale result', 'node scripts/collect-settings-state-android.js'],
-  ['Provider Runtime Android result', "$env:QA_DEVICE_SERIAL='emulator-5554'; bun run test:provider-runtime-android"],
-  ['Android device task evidence', "$env:QA_DEVICE_SERIAL='emulator-5554'; bun run test:android-device-task:evidence -- --device emulator-5554"],
-  ['Android status notification evidence', "$env:QA_DEVICE_SERIAL='emulator-5554'; bun run test:android-status-notification:evidence -- --device emulator-5554"],
+  ['Provider Runtime Android result', releaseProviderRuntimeAndroidCommand],
+  ['Android device task evidence', releaseAndroidDeviceTaskEvidenceCommand],
+  ['Android status notification evidence', releaseAndroidStatusNotificationEvidenceCommand],
   ['Mock provider chat request log', 'node scripts/collect-mock-provider-chat-android.js'],
   ['Long content provider request log', 'node scripts/collect-long-content-request-log.js --source test-evidence/qa/raw-long-content-mock-openai-requests.jsonl'],
   ['Local model corrupt mirror request log', 'node scripts/collect-local-model-corrupt-mirror-log.js --source test-evidence/qa/raw-local-model-corrupt-mirror-requests.jsonl'],
   ['Architecture boundary audit result', 'node scripts/architecture-boundary-audit.js'],
   ['Agent workflow orchestration and policy gate', 'bun run test:agent-workflow'],
   ['Android device tool policy gate', 'bun run test:android-device-tools'],
+])
+const deviceRequiredNodeResultCollectors = new Set([
+  'node scripts/collect-settings-state-android.js',
+  'node scripts/collect-mock-provider-chat-android.js',
 ])
 const rawInputSourceContracts = new Map([
   ['test-evidence/qa/raw-settings-knowledge-selftest-results.json', {
@@ -679,15 +697,18 @@ function auditUiaSnapshots() {
   const files = listFiles(evidenceDir).filter((file) => file.endsWith('.uia.xml'))
   if (!files.length) return []
   const density = readDeviceDensity()
+  const invalidKeyVisualCaptures = collectInvalidKeyVisualCaptureNames()
   return files
     .sort((a, b) => relative(a).localeCompare(relative(b), 'en'))
-    .map((file) => auditUiaSnapshot(file, density))
+    .map((file) => auditUiaSnapshot(file, density, invalidKeyVisualCaptures))
 }
 
-function auditUiaSnapshot(file, density) {
+function auditUiaSnapshot(file, density, invalidKeyVisualCaptures = new Set()) {
   const xml = fs.readFileSync(file, 'utf8')
   const screenshotPath = file.replace(/\.uia\.xml$/, '.png')
   const screenshotFile = fs.existsSync(screenshotPath) ? relative(screenshotPath) : null
+  const keyVisualCaptureName = keyVisualCaptureNameFromFile(file)
+  const semanticInvalid = keyVisualCaptureName ? invalidKeyVisualCaptures.has(keyVisualCaptureName) : false
   const nodes = [...xml.matchAll(/<node\b([^>]*)>/g)].map((match) => parseAttributes(match[1]))
   const viewport = detectSnapshotViewport(nodes)
   const clickable = nodes.filter((node) => node.clickable === 'true')
@@ -738,6 +759,7 @@ function auditUiaSnapshot(file, density) {
   return {
     file: relative(file),
     screenshotFile,
+    semanticInvalid,
     nodeCount: nodes.length,
     clickableCount: clickable.length,
     unlabeled,
@@ -859,27 +881,42 @@ function collectReleaseProvenance() {
   const expected = readExpectedAppConfig()
   const apk = findCurrentReleaseApk(expected)
   const installed = readInstalledPackageInfo()
+  const currentSmokeInstalled = installed ? null : readCurrentApkSmokeInstalled(readJsonFile(currentApkSmokePath), apk)
   const sourceFreshness = collectReleaseSourceFreshness(root, apk)
   const releaseProvenance = {
     generatedAt: new Date().toISOString(),
     appPackageName,
     apk,
     expected,
-    installed,
+    installed: installed ?? currentSmokeInstalled,
     sourceFreshness,
-    source: installed?.deviceSerial ? 'adb' : cached ? 'cached' : 'missing',
+    source: installed?.deviceSerial ? 'adb' : currentSmokeInstalled ? 'current-apk-smoke' : cached ? 'cached' : 'missing',
   }
-  const effective = installed ? releaseProvenance : normalizeCachedProvenance(cached, apk, expected, sourceFreshness)
+  const effective = installed || currentSmokeInstalled ? releaseProvenance : normalizeCachedProvenance(cached, apk, expected, sourceFreshness)
   fs.writeFileSync(provenancePath, `${JSON.stringify(effective, null, 2)}\n`, 'utf8')
   return effective
+}
+
+function readCurrentApkSmokeInstalled(currentSmoke, apk) {
+  if (!currentSmoke?.installed || !currentSmoke?.apk) return null
+  const currentSha = apk?.sha256 ?? null
+  const smokeSha = currentSmoke.apk?.sha256 ?? null
+  if (!currentSha || !smokeSha || currentSha !== smokeSha) return null
+  const explicitRequest = typeof process.env.QA_DEVICE_SERIAL === 'string' && process.env.QA_DEVICE_SERIAL.trim()
+  if (explicitRequest && currentSmoke.installed.deviceSerial !== explicitRequest) return null
+  const expectedAbi = inferReleaseApkArch(apk)
+  if (!isInstalledAbiCompatible(currentSmoke.installed.primaryCpuAbi, expectedAbi)) return null
+  if (currentSmoke.installed.deviceAbi && !isInstalledAbiCompatible(currentSmoke.installed.deviceAbi, expectedAbi)) return null
+  return currentSmoke.installed
 }
 
 function findCurrentReleaseApk(expected = readExpectedAppConfig()) {
   const version = expected?.packageVersion || expected?.expoVersion
   if (!version) return null
+  const arch = resolveReleaseSmokeArch()
   const apkPath = path.join(root, formatApkArtifactRelativePath({
     version,
-    arch: defaultReleaseSmokeArch,
+    arch,
     variant: defaultReleaseSmokeVariant,
   }))
   if (!apkPath) return null
@@ -987,11 +1024,12 @@ function normalizeCachedProvenance(cached, apk, expected, sourceFreshness) {
   const cachedSha = cached.apk?.sha256 ?? null
   const cacheMatchesCurrentApk = currentSha && cachedSha && currentSha === cachedSha
   const requested = process.env.QA_DEVICE_SERIAL || 'emulator-5554'
+  const expectedAbi = inferReleaseApkArch(apk)
   const hasCachedInstall = !!cached.installed
   const cachedInstallMatchesTarget =
     cached.installed?.deviceSerial === requested &&
-    cached.installed?.primaryCpuAbi === defaultReleaseSmokeArch &&
-    cached.installed?.deviceAbi === defaultReleaseSmokeArch
+    isInstalledAbiCompatible(cached.installed?.primaryCpuAbi, expectedAbi) &&
+    isInstalledAbiCompatible(cached.installed?.deviceAbi, expectedAbi)
   const hasValidCachedInstall = hasCachedInstall && cachedInstallMatchesTarget
   const hasStaleInstalledCache = currentSha && cachedSha && !cacheMatchesCurrentApk
   return {
@@ -1011,6 +1049,11 @@ function normalizeCachedProvenance(cached, apk, expected, sourceFreshness) {
   }
 }
 
+function resolveReleaseSmokeArch() {
+  if (process.env.QA_APK_ARCH) return process.env.QA_APK_ARCH
+  return inferReleaseApkArch(readJsonFile(currentApkSmokePath)?.apk) || defaultReleaseSmokeArch
+}
+
 function readJsonFile(file) {
   if (!fs.existsSync(file)) return null
   try {
@@ -1018,6 +1061,32 @@ function readJsonFile(file) {
   } catch {
     return null
   }
+}
+
+function collectInvalidKeyVisualCaptureNames(result = readJsonFile(keyVisualGapsResultsPath)) {
+  const invalid = new Set()
+  if (!result || typeof result !== 'object') return invalid
+  for (const capture of Array.isArray(result.captures) ? result.captures : []) {
+    if (!capture?.name) continue
+    if (Array.isArray(capture.semanticIssues) && capture.semanticIssues.length) invalid.add(capture.name)
+    if (capture.semanticPassed === false) invalid.add(capture.name)
+  }
+  for (const issue of Array.isArray(result.errors) ? result.errors : []) {
+    const match = String(issue).match(/^([A-Za-z0-9][A-Za-z0-9-]+)\s+(?:missing|contains|trigger|was|failed)\b/)
+    if (match) invalid.add(match[1])
+  }
+  return invalid
+}
+
+function keyVisualCaptureNameFromFile(file) {
+  const normalized = relative(file)
+  const prefix = 'test-evidence/qa/key-visual-gaps/'
+  if (!normalized.startsWith(prefix) || !normalized.endsWith('.uia.xml')) return null
+  return path.basename(normalized, '.uia.xml')
+}
+
+function psSingleQuote(value) {
+  return String(value ?? '').replace(/'/g, "''")
 }
 
 function matchFirst(text, pattern) {
@@ -1139,6 +1208,7 @@ function describeDirectResultEvidenceInput(item) {
   if (recovery.startsWith('Manual document update required:')) return item.file
   if (recovery.startsWith('Manual collector required:')) return 'manual Android capture'
   if (recovery.startsWith('bun run')) return 'scripted runtime result'
+  if (deviceRequiredNodeResultCollectors.has(recovery)) return 'current Android device evidence'
   if (recovery.startsWith('node scripts/')) return 'scripted local result'
   return item.file
 }
@@ -1178,7 +1248,7 @@ function checkArchitectureBoundaryAudit(context) {
 
 function checkAgentWorkflowPolicyGate(options = {}) {
   const repoRoot = options.repoRoot ?? root
-  const scriptRelatives = options.scriptRelatives ?? [options.scriptRelative ?? 'scripts/agentic-workflow-tests.js', ...(options.scriptRelative ? [] : ['scripts/agent-rag-quality-tests.js', 'scripts/agent-trace-contract-tests.js', 'scripts/agent-work-artifact-workflow-tests.js', 'scripts/agent-tool-policy-tests.js'])]
+  const scriptRelatives = options.scriptRelatives ?? [options.scriptRelative ?? 'scripts/agentic-workflow-tests.js', ...(options.scriptRelative ? [] : ['scripts/agent-rag-quality-tests.js', 'scripts/agent-trace-contract-tests.js', 'scripts/agent-work-artifact-workflow-tests.js', 'scripts/agent-tool-policy-tests.js', 'scripts/agent-completion-evidence-audit.js'])]
   const missingScript = scriptRelatives.find((scriptRelative) => !fs.existsSync(path.join(repoRoot, scriptRelative)))
   if (missingScript) {
     return {
@@ -1189,12 +1259,7 @@ function checkAgentWorkflowPolicyGate(options = {}) {
     }
   }
   try {
-    const outputs = scriptRelatives.map((scriptRelative) => execFileSync(options.nodePath ?? process.execPath, [path.join(repoRoot, scriptRelative)], {
-        cwd: repoRoot,
-        encoding: 'utf8',
-        maxBuffer: 1024 * 1024 * 4,
-        stdio: ['ignore', 'pipe', 'pipe'],
-      }).trim())
+    const outputs = scriptRelatives.map((scriptRelative) => runNodeScriptGate(repoRoot, scriptRelative, options))
     return {
       name: 'Agent workflow orchestration and policy gate',
       file: scriptRelatives.join(', '),
@@ -1215,6 +1280,55 @@ function checkAgentWorkflowPolicyGate(options = {}) {
   }
 }
 
+function runNodeScriptGate(repoRoot, scriptRelative, options = {}) {
+  const scriptPath = path.join(repoRoot, scriptRelative)
+  try {
+    if (options.execFileSync) {
+      return options.execFileSync(options.nodePath ?? process.execPath, [scriptPath], {
+        cwd: repoRoot,
+        encoding: 'utf8',
+        maxBuffer: 1024 * 1024 * 4,
+        stdio: ['ignore', 'pipe', 'pipe'],
+      }).trim()
+    }
+    return execFileSync(options.nodePath ?? process.execPath, [scriptPath], {
+        cwd: repoRoot,
+        encoding: 'utf8',
+        maxBuffer: 1024 * 1024 * 4,
+        stdio: ['ignore', 'pipe', 'pipe'],
+      }).trim()
+  } catch (error) {
+    if (!options.disableInProcessFallback && isNodeSpawnBlocked(error)) {
+      return runNodeScriptGateInProcess(repoRoot, scriptRelative, options)
+    }
+    throw error
+  }
+}
+
+function isNodeSpawnBlocked(error) {
+  return error?.code === 'EPERM' || error?.code === 'EACCES'
+}
+
+function runNodeScriptGateInProcess(repoRoot, scriptRelative, options = {}) {
+  const scriptPath = path.join(repoRoot, scriptRelative)
+  const exported = options.inProcessModules?.[scriptRelative] ?? require(scriptPath)
+  if (typeof exported.run !== 'function') {
+    throw new Error(`Node script gate ${scriptRelative} could not spawn Node and does not export run().`)
+  }
+  const output = []
+  const originalLog = console.log
+  const originalError = console.error
+  try {
+    console.log = (...args) => output.push(args.join(' '))
+    console.error = (...args) => output.push(args.join(' '))
+    exported.run()
+  } finally {
+    console.log = originalLog
+    console.error = originalError
+  }
+  return (output.join('\n').trim() || 'passed')
+}
+
 function checkAndroidDeviceToolPolicyGate(options = {}) {
   const repoRoot = options.repoRoot ?? root
   const scriptRelative = options.scriptRelative ?? 'scripts/android-device-tool-policy-tests.js'
@@ -1227,12 +1341,7 @@ function checkAndroidDeviceToolPolicyGate(options = {}) {
     }
   }
   try {
-    const output = execFileSync(options.nodePath ?? process.execPath, [path.join(repoRoot, scriptRelative)], {
-      cwd: repoRoot,
-      encoding: 'utf8',
-      maxBuffer: 1024 * 1024 * 4,
-      stdio: ['ignore', 'pipe', 'pipe'],
-    }).trim()
+    const output = runNodeScriptGate(repoRoot, scriptRelative, options)
     return {
       name: 'Android device tool policy gate',
       file: scriptRelative,
@@ -1666,7 +1775,7 @@ function collectAndroidDeviceTaskEvidenceIssues(data, options = {}) {
     'saf-file-apply-undo',
     'saf-file-copy-rename',
     'apk-installer-handoff',
-    'alarm-intent-handoff',
+    'alarm-intent-create-request',
     'calendar-todo-handoff',
     'app-cache-cleanup',
   ]
@@ -1970,12 +2079,15 @@ function formatProviderRuntimeAndroidSummary(data, scenarios) {
   const failedIds = Array.isArray(diagnostics.failedScenarioIds) && diagnostics.failedScenarioIds.length
     ? ` failed=${diagnostics.failedScenarioIds.join(',')}`
     : ''
+  const blockedIds = Array.isArray(diagnostics.blockedScenarioIds) && diagnostics.blockedScenarioIds.length
+    ? ` blocked=${diagnostics.blockedScenarioIds.join(',')}`
+    : ''
   return [
     `${diagnostics.passedScenarioCount ?? 0}/${diagnostics.requiredScenarioCount ?? requiredProviderRuntimeAndroidScenarios.length} required scenarios passed`,
     `contractIssues=${diagnostics.contractIssueCount ?? 'missing'}`,
     `errors=${diagnostics.errorCount ?? 'missing'}`,
     `credentialHits=${diagnostics.sensitiveData?.hitCount ?? 'missing'}`,
-  ].join(', ') + failedIds
+  ].join(', ') + failedIds + blockedIds
 }
 
 function formatProviderRuntimeAndroidIssue(issue) {
@@ -2072,7 +2184,7 @@ function collectReleaseProvenanceMatrixGateIssues(text, releaseProvenance) {
       'newest source/resource',
       'test-evidence/qa/coverage-report.md',
       releaseSourceStabilityCommand,
-      'bun run apk:local:release -- --release-arch x86_64',
+      releaseRebuildCommand,
       releaseInstallCurrentApkCommand,
       'bun run test:current-apk-smoke',
     ]
@@ -2091,7 +2203,7 @@ function collectReleaseProvenanceMatrixGateIssues(text, releaseProvenance) {
     }
     const staleRecoverySnippets = [
       releaseSourceStabilityCommand,
-      'bun run apk:local:release -- --release-arch x86_64',
+      releaseRebuildCommand,
     ]
     for (const snippet of staleRecoverySnippets) {
       if (text.includes(snippet)) issues.push(`Matrix current release provenance must not require stale-APK recovery command: ${snippet}.`)
@@ -3410,7 +3522,7 @@ function collectAndroidDeviceTaskMatrixGateIssues(text, options = {}) {
     'qa-and-evidence-only',
     'orchestrated-tool-request-only',
     'user-approved-workflow-template',
-    'visible-external-confirmation',
+    'system intent request with visible fallback',
     'mcp-orchestrated-tool-request',
     'raw filesystem path access',
     'silent install',
@@ -3439,7 +3551,7 @@ function collectAndroidDeviceTaskMatrixGateIssues(text, options = {}) {
     'saf-file-apply-undo',
     'saf-file-copy-rename',
     'apk-installer-handoff',
-    'alarm-intent-handoff',
+    'alarm-intent-create-request',
     'calendar-todo-handoff',
     'app-cache-cleanup',
     'runtimeBoundary.intrusive=false',
@@ -3604,7 +3716,7 @@ function runWorkArtifactSmokeBlockedSelfTest(tempRoot) {
     status: 'blocked',
     blockedReason: 'No connected adb device was found.',
     requiredInputState: 'device_required',
-    recoveryCommand: "$env:QA_DEVICE_SERIAL='emulator-5554'; bun run test:work-artifact-smoke",
+    recoveryCommand: releaseWorkArtifactSmokeCommand,
     device: null,
     fixture: 'test-evidence/qa/work-artifact-smoke/islemind-work-artifact-smoke.json',
     errors: ['No connected adb device was found.'],
@@ -3655,6 +3767,7 @@ function runResultEvidenceRecoveryPlanSelfTest() {
   const nextInputs = collectResultEvidenceNextInputs(withResultEvidenceRecoveryPlans([
     { name: 'Knowledge and memory self-test result', file: 'test-evidence/qa/settings-knowledge-selftest-results.json', summary: 'missing', issues: ['missing'] },
     { name: 'Provider Runtime Android result', file: providerRuntimeAndroidResultRelativePath, summary: 'stale', issues: ['stale evidence'] },
+    { name: 'Preferences persistence result', file: 'test-evidence/qa/settings-preferences-persistence-results.json', summary: 'stale', issues: ['stale evidence'] },
     { name: 'Current APK launch and 16KB compatibility result', file: 'test-evidence/qa/current-apk-smoke-results.json', summary: 'passed', issues: [] },
   ]))
   const knowledgeInput = nextInputs.find((item) => item.name === 'Knowledge and memory self-test result')
@@ -3665,6 +3778,10 @@ function runResultEvidenceRecoveryPlanSelfTest() {
   if (runtimeInput?.input !== 'current Android device evidence') {
     throw new Error('Result evidence next-input self-test did not classify Provider Runtime Android as device evidence.')
   }
+  const settingsStateInput = nextInputs.find((item) => item.name === 'Preferences persistence result')
+  if (settingsStateInput?.input !== 'current Android device evidence') {
+    throw new Error('Result evidence next-input self-test did not classify settings-state Android collector as device evidence.')
+  }
   if (nextInputs.some((item) => item.name === 'Current APK launch and 16KB compatibility result')) {
     throw new Error('Result evidence next-input self-test included a passing result gate.')
   }
@@ -3673,8 +3790,8 @@ function runResultEvidenceRecoveryPlanSelfTest() {
   if (normalizedKnowledgeInput?.inputType !== 'raw-source') {
     throw new Error(`Result evidence next-input self-test expected raw-source type, got ${normalizedKnowledgeInput?.inputType}.`)
   }
-  if (normalizedKnowledgeInput?.inputState !== 'device_required') {
-    throw new Error(`Result evidence next-input self-test expected device-required raw source state, got ${normalizedKnowledgeInput?.inputState}.`)
+  if (!['present', 'device_required'].includes(normalizedKnowledgeInput?.inputState)) {
+    throw new Error(`Result evidence next-input self-test expected present or device-required raw source state, got ${normalizedKnowledgeInput?.inputState}.`)
   }
   const normalizedRuntimeInput = normalizedNextInputs.find((item) => item.name === 'Provider Runtime Android result')
   if (normalizedRuntimeInput?.inputType !== 'device') {
@@ -3687,11 +3804,12 @@ function runResultEvidenceRecoveryPlanSelfTest() {
   if (nextInputSummary.total !== normalizedNextInputs.length) {
     throw new Error('Result evidence next-input self-test expected summary total to match row count.')
   }
-  if (nextInputSummary.byInputType['raw-source'] !== 1 || nextInputSummary.byInputType.device !== 1) {
+  if (nextInputSummary.byInputType['raw-source'] !== 1 || nextInputSummary.byInputType.device !== 2) {
     throw new Error(`Result evidence next-input self-test expected raw-source and device summaries, got ${JSON.stringify(nextInputSummary.byInputType)}.`)
   }
-  if (nextInputSummary.byInputState.device_required !== 1 || nextInputSummary.byInputState.required !== 1) {
-    throw new Error(`Result evidence next-input self-test expected device-required and required input states, got ${JSON.stringify(nextInputSummary.byInputState)}.`)
+  const rawSourceInputStateCount = (nextInputSummary.byInputState.present ?? 0) + (nextInputSummary.byInputState.device_required ?? 0)
+  if (rawSourceInputStateCount !== 1 || nextInputSummary.byInputState.required !== 2) {
+    throw new Error(`Result evidence next-input self-test expected one raw source state and required device input states, got ${JSON.stringify(nextInputSummary.byInputState)}.`)
   }
   console.log('Result evidence recovery plan self-test passed (planned gates and missing-plan gates).')
 }
@@ -4154,7 +4272,7 @@ function runReleaseProvenanceMatrixGateSelfTest() {
     '| Release APK provenance | `dist-apk/IsleMind-1.0.7-x86_64-no-model.apk` | Source freshness is stale; the current newest source/resource path and timestamp must be read from `test-evidence/qa/coverage-report.md`. |',
     '- Release APK provenance is blocked because the newest source/resource recorded in `test-evidence/qa/coverage-report.md` is newer than the APK.',
     `- Confirm release source stability with \`${releaseSourceStabilityCommand}\` before rebuilding.`,
-    `- Rebuild with \`bun run apk:local:release -- --release-arch x86_64\`, then clean-install with \`${releaseInstallCurrentApkCommand}\` before refreshing installed-package evidence with \`$env:QA_DEVICE_SERIAL=emulator-5554; bun run test:current-apk-smoke\`.`,
+    `- Rebuild with \`${releaseRebuildCommand}\`, then clean-install with \`${releaseInstallCurrentApkCommand}\` before refreshing installed-package evidence with \`${releaseCurrentApkSmokeCommand}\`.`,
   ].join('\n')
   const validIssues = collectReleaseProvenanceMatrixGateIssues(validText, releaseProvenance)
   if (validIssues.length) throw new Error(`Release provenance matrix self-test rejected valid stale-state row: ${validIssues.join(', ')}`)
@@ -4180,7 +4298,7 @@ function runReleaseProvenanceMatrixGateSelfTest() {
   }
   const currentNoDeviceText = [
     '| Release APK provenance | `dist-apk/IsleMind-1.0.7-x86_64-no-model.apk` | Source freshness is current; release sign-off remains blocked until installed-package provenance matches the current APK SHA256. |',
-    `- Release APK provenance is blocked only by installed-package provenance. Clean-install with \`${releaseInstallCurrentApkCommand}\`, then refresh installed-package evidence with \`$env:QA_DEVICE_SERIAL=emulator-5554; bun run test:current-apk-smoke\`.`,
+    `- Release APK provenance is blocked only by installed-package provenance. Clean-install with \`${releaseInstallCurrentApkCommand}\`, then refresh installed-package evidence with \`${releaseCurrentApkSmokeCommand}\`.`,
   ].join('\n')
   const currentNoDeviceIssues = collectReleaseProvenanceMatrixGateIssues(currentNoDeviceText, currentNoDeviceProvenance)
   if (currentNoDeviceIssues.length) throw new Error(`Release provenance matrix self-test rejected valid current no-device row: ${currentNoDeviceIssues.join(', ')}`)
@@ -4199,7 +4317,7 @@ function runReleaseProvenanceMatrixGateSelfTest() {
 
   const currentNoDeviceRebuildText = [
     currentNoDeviceText,
-    `- Run \`${releaseSourceStabilityCommand}\` and \`bun run apk:local:release -- --release-arch x86_64\` before device install.`,
+    `- Run \`${releaseSourceStabilityCommand}\` and \`${releaseRebuildCommand}\` before device install.`,
   ].join('\n')
   const currentNoDeviceRebuildIssues = collectReleaseProvenanceMatrixGateIssues(currentNoDeviceRebuildText, currentNoDeviceProvenance)
   if (!currentNoDeviceRebuildIssues.some((issue) => issue.includes('must not require stale-APK recovery command'))) {
@@ -4223,12 +4341,12 @@ function runReleaseRecoveryWorklistSelfTest() {
   const commands = staleRows.map((row) => row.command)
   for (const expected of [
     releaseSourceStabilityCommand,
-    'bun run apk:local:release -- --release-arch x86_64',
+    releaseRebuildCommand,
     releaseInstallCurrentApkCommand,
-    "$env:QA_DEVICE_SERIAL='emulator-5554'; bun run test:current-apk-smoke",
-    "$env:QA_DEVICE_SERIAL='emulator-5554'; bun run test:provider-runtime-android",
-    "$env:QA_DEVICE_SERIAL='emulator-5554'; bun run test:android-status-notification:evidence -- --device emulator-5554",
-    "$env:QA_DEVICE_SERIAL='emulator-5554'; bun run test:android-device-task:evidence -- --device emulator-5554",
+    releaseCurrentApkSmokeCommand,
+    releaseProviderRuntimeAndroidCommand,
+    releaseAndroidStatusNotificationEvidenceCommand,
+    releaseAndroidDeviceTaskEvidenceCommand,
   ]) {
     if (!commands.includes(expected)) throw new Error(`Release recovery worklist self-test missed command: ${expected}`)
   }
@@ -5297,8 +5415,8 @@ function runAgentWorkflowPolicyGateSelfTest(tempRoot) {
   const repoRoot = path.join(tempRoot, 'agent-workflow-gate-fixture')
   const scriptDir = path.join(repoRoot, 'scripts')
   fs.mkdirSync(scriptDir, { recursive: true })
-  fs.writeFileSync(path.join(scriptDir, 'agent-pass.js'), "console.log('agent fixture passed')\n", 'utf8')
-  fs.writeFileSync(path.join(scriptDir, 'agent-fail.js'), "console.error('agent fixture failed')\nprocess.exit(1)\n", 'utf8')
+  fs.writeFileSync(path.join(scriptDir, 'agent-pass.js'), "function run() { console.log('agent fixture passed') }\nif (require.main === module) run()\nmodule.exports = { run }\n", 'utf8')
+  fs.writeFileSync(path.join(scriptDir, 'agent-fail.js'), "function run() { console.error('agent fixture failed'); throw new Error('agent fixture failed') }\nif (require.main === module) run()\nmodule.exports = { run }\n", 'utf8')
 
   const passed = checkAgentWorkflowPolicyGate({
     repoRoot,
@@ -5306,6 +5424,19 @@ function runAgentWorkflowPolicyGateSelfTest(tempRoot) {
   })
   if (passed.issues.length || passed.summary !== 'agent fixture passed') {
     throw new Error(`Agent workflow policy gate self-test rejected passing script: ${passed.issues.join(', ') || passed.summary}`)
+  }
+
+  const fallbackPassed = checkAgentWorkflowPolicyGate({
+    repoRoot,
+    scriptRelative: 'scripts/agent-pass.js',
+    execFileSync: () => {
+      const error = new Error('spawnSync node.exe EPERM')
+      error.code = 'EPERM'
+      throw error
+    },
+  })
+  if (fallbackPassed.issues.length || fallbackPassed.summary !== 'agent fixture passed') {
+    throw new Error(`Agent workflow policy gate self-test rejected in-process fallback: ${fallbackPassed.issues.join(', ') || fallbackPassed.summary}`)
   }
 
   const failed = checkAgentWorkflowPolicyGate({
@@ -5421,8 +5552,8 @@ function runAndroidDeviceToolPolicyGateSelfTest(tempRoot) {
   const repoRoot = path.join(tempRoot, 'android-device-tool-gate-fixture')
   const scriptDir = path.join(repoRoot, 'scripts')
   fs.mkdirSync(scriptDir, { recursive: true })
-  fs.writeFileSync(path.join(scriptDir, 'android-device-pass.js'), "console.log('android device fixture passed')\n", 'utf8')
-  fs.writeFileSync(path.join(scriptDir, 'android-device-fail.js'), "console.error('android device fixture failed')\nprocess.exit(1)\n", 'utf8')
+  fs.writeFileSync(path.join(scriptDir, 'android-device-pass.js'), "function run() { console.log('android device fixture passed') }\nif (require.main === module) run()\nmodule.exports = { run }\n", 'utf8')
+  fs.writeFileSync(path.join(scriptDir, 'android-device-fail.js'), "function run() { console.error('android device fixture failed'); throw new Error('android device fixture failed') }\nif (require.main === module) run()\nmodule.exports = { run }\n", 'utf8')
 
   const passed = checkAndroidDeviceToolPolicyGate({
     repoRoot,
@@ -5430,6 +5561,19 @@ function runAndroidDeviceToolPolicyGateSelfTest(tempRoot) {
   })
   if (passed.issues.length || passed.summary !== 'android device fixture passed') {
     throw new Error(`Android device tool policy gate self-test rejected passing script: ${passed.issues.join(', ') || passed.summary}`)
+  }
+
+  const fallbackPassed = checkAndroidDeviceToolPolicyGate({
+    repoRoot,
+    scriptRelative: 'scripts/android-device-pass.js',
+    execFileSync: () => {
+      const error = new Error('spawnSync node.exe EPERM')
+      error.code = 'EPERM'
+      throw error
+    },
+  })
+  if (fallbackPassed.issues.length || fallbackPassed.summary !== 'android device fixture passed') {
+    throw new Error(`Android device tool policy gate self-test rejected in-process fallback: ${fallbackPassed.issues.join(', ') || fallbackPassed.summary}`)
   }
 
   const failed = checkAndroidDeviceToolPolicyGate({
@@ -5480,7 +5624,7 @@ function runAndroidDeviceTaskReleaseGateSelfTest(tempRoot) {
     'saf-file-apply-undo',
     'saf-file-copy-rename',
     'apk-installer-handoff',
-    'alarm-intent-handoff',
+    'alarm-intent-create-request',
     'calendar-todo-handoff',
     'app-cache-cleanup',
   ]
@@ -5623,7 +5767,7 @@ function runAndroidDeviceTaskReleaseGateSelfTest(tempRoot) {
     '`qa-and-evidence-only`',
     '`orchestrated-tool-request-only`',
     '`user-approved-workflow-template`',
-    '`visible-external-confirmation`',
+    '`system intent request with visible fallback`',
     '`mcp-orchestrated-tool-request`',
     '`raw filesystem path access`',
     '`silent install`',
@@ -5656,7 +5800,7 @@ function runAndroidDeviceTaskReleaseGateSelfTest(tempRoot) {
     '`saf-file-apply-undo`',
     '`saf-file-copy-rename`',
     '`apk-installer-handoff`',
-    '`alarm-intent-handoff`',
+    '`alarm-intent-create-request`',
     '`calendar-todo-handoff`',
     '`app-cache-cleanup`',
     '`runtimeBoundary.intrusive=false`',
@@ -5926,29 +6070,17 @@ function runRuntimeUiaRecaptureTargetSelfTest() {
 
 function runEvidenceCoverageSelfTest() {
   const missingCoverage = summarizeEvidenceCoverage([])
-  const missingOnboarding = missingCoverage.find((item) => item.area === 'First-run onboarding handoff')
-  if (!missingOnboarding) throw new Error('Evidence coverage self-test requires first-run onboarding handoff coverage.')
-  if (missingOnboarding.covered) throw new Error('Evidence coverage self-test expected missing first-run onboarding evidence without snapshots.')
-  if (!missingOnboarding.blocking) throw new Error('Evidence coverage self-test requires first-run onboarding handoff to be blocking.')
   const missingProviderRuntime = missingCoverage.find((item) => item.area === 'Provider Runtime Android governance')
   if (!missingProviderRuntime) throw new Error('Evidence coverage self-test requires Provider Runtime Android governance coverage.')
   if (missingProviderRuntime.covered) throw new Error('Evidence coverage self-test expected missing Provider Runtime Android governance evidence without snapshots.')
   if (!missingProviderRuntime.blocking) throw new Error('Evidence coverage self-test requires Provider Runtime Android governance to be blocking.')
 
-  const unpairedCoverage = summarizeEvidenceCoverage([
-    { file: 'test-evidence/qa/current-onboarding-live/onboarding-step-1-awaken.uia.xml', screenshotFile: null },
-    { file: 'test-evidence/qa/onboarding-complete-draft.uia.xml', screenshotFile: null },
+  const semanticInvalidCoverage = summarizeEvidenceCoverage([
+    { file: 'test-evidence/qa/key-visual-gaps/app-shell-error-boundary.uia.xml', screenshotFile: 'test-evidence/qa/key-visual-gaps/app-shell-error-boundary.png', semanticInvalid: true },
+    { file: 'test-evidence/qa/key-visual-gaps/app-shell-update-notice.uia.xml', screenshotFile: 'test-evidence/qa/key-visual-gaps/app-shell-update-notice.png' },
   ])
-  const unpairedOnboarding = unpairedCoverage.find((item) => item.area === 'First-run onboarding handoff')
-  if (unpairedOnboarding?.covered) throw new Error('Evidence coverage self-test must reject unpaired first-run onboarding UIA evidence.')
-
-  const pairedCoverage = summarizeEvidenceCoverage([
-    { file: 'test-evidence/qa/current-onboarding-live/onboarding-step-1-awaken.uia.xml', screenshotFile: 'test-evidence/qa/current-onboarding-live/onboarding-step-1-awaken.png' },
-    { file: 'test-evidence/qa/onboarding-complete-draft.uia.xml', screenshotFile: 'test-evidence/qa/onboarding-complete-draft.png' },
-  ])
-  const pairedOnboarding = pairedCoverage.find((item) => item.area === 'First-run onboarding handoff')
-  if (!pairedOnboarding?.covered) throw new Error('Evidence coverage self-test expected paired first-run onboarding evidence to pass.')
-  if (!pairedOnboarding.blocking) throw new Error('Evidence coverage self-test requires paired first-run onboarding evidence to remain blocking.')
+  const semanticInvalidAppShell = semanticInvalidCoverage.find((item) => item.area === 'App shell error/update notice')
+  if (semanticInvalidAppShell?.covered) throw new Error('Evidence coverage self-test must reject semantically invalid key visual captures.')
 
   const pairedProviderRuntimeCoverage = summarizeEvidenceCoverage([
     { file: 'test-evidence/qa/provider-runtime-settings-route.uia.xml', screenshotFile: 'test-evidence/qa/provider-runtime-settings-route.png' },
@@ -5997,7 +6129,7 @@ function runEvidenceCoverageSelfTest() {
     ]).map((item) => ({ ...item, passed: item.issues.length === 0 })),
     uiSnapshots: [{ file: 'test-evidence/qa/warning.uia.xml', debugOverlayNodes: [{ bounds: '[0,0][1,1]' }] }],
   })
-  for (const category of ['release-provenance', 'raw-result', 'device-result', 'screenshot-pair', 'warning-free-uia', 'onboarding-capture']) {
+  for (const category of ['release-provenance', 'raw-result', 'device-result', 'screenshot-pair', 'warning-free-uia']) {
     if (!captureWorklist.some((row) => row.category === category)) {
       throw new Error(`Evidence capture worklist self-test missed ${category}.`)
     }
@@ -6009,7 +6141,7 @@ function runEvidenceCoverageSelfTest() {
     if (!row.recovery) throw new Error(`Evidence capture worklist self-test expected row-level recovery for ${row.category}.`)
   }
   const rawCaptureRow = captureWorklist.find((row) => row.category === 'raw-result')
-  if (rawCaptureRow?.requiredInputState !== 'device_required') throw new Error(`Evidence capture worklist self-test expected device_required raw input state, got ${rawCaptureRow?.requiredInputState}.`)
+  if (!['present', 'device_required'].includes(rawCaptureRow?.requiredInputState)) throw new Error(`Evidence capture worklist self-test expected present or device_required raw input state, got ${rawCaptureRow?.requiredInputState}.`)
   const deviceCaptureRow = captureWorklist.find((row) => row.category === 'device-result')
   if (deviceCaptureRow?.requiredInputState !== 'device_required') throw new Error(`Evidence capture worklist self-test expected device_required state, got ${deviceCaptureRow?.requiredInputState}.`)
   const deviceProvenanceRows = collectBlockingEvidenceCaptureWorklist({
@@ -6044,6 +6176,7 @@ function runEvidenceCoverageSelfTest() {
   if (phaseRanks.some((rank, index) => index > 0 && rank < phaseRanks[index - 1])) {
     throw new Error(`Evidence capture worklist self-test expected phase-sorted rows, got ${phaseRanks.join(',')}.`)
   }
+  const allowedRawSourceStates = new Set(['present', 'device_required'])
   const captureSummary = summarizeBlockingEvidenceCaptureWorklist(captureWorklist)
   if (captureSummary.total !== captureWorklist.length) throw new Error('Evidence capture worklist self-test expected summary total to match row count.')
   if (captureSummary.byPhase['1 release rebuild'] !== 1) throw new Error('Evidence capture worklist self-test expected release rebuild summary count.')
@@ -6052,32 +6185,26 @@ function runEvidenceCoverageSelfTest() {
   if (captureSummary.byRequiredInputState.device_or_review_required !== 1) throw new Error('Evidence capture worklist self-test expected one screenshot-pair device-or-review row.')
   const rawInputCaptureRows = collectRawInputCaptureWorklist(captureWorklist)
   if (rawInputCaptureRows.length !== 1) throw new Error(`Evidence capture worklist self-test expected one raw input row, got ${rawInputCaptureRows.length}.`)
-  if (rawInputCaptureRows[0].sourceState !== 'device_required') throw new Error(`Evidence capture worklist self-test expected raw input source state device_required, got ${rawInputCaptureRows[0].sourceState}.`)
+  if (!allowedRawSourceStates.has(rawInputCaptureRows[0].sourceState)) throw new Error(`Evidence capture worklist self-test expected raw input source state present or device_required, got ${rawInputCaptureRows[0].sourceState}.`)
   if (rawInputCaptureRows[0].sourceFormat !== 'json') throw new Error(`Evidence capture worklist self-test expected raw input source format json, got ${rawInputCaptureRows[0].sourceFormat}.`)
   if (rawInputCaptureRows[0].contractFile !== 'scripts/settings-knowledge-selftest-contract.js') throw new Error(`Evidence capture worklist self-test expected raw input contract file, got ${rawInputCaptureRows[0].contractFile}.`)
   if (!/失败 0/.test(rawInputCaptureRows[0].requiredEvidence)) throw new Error('Evidence capture worklist self-test expected raw input requiredEvidence contract summary.')
   if (!rawInputCaptureRows[0].captureScenario.includes('Settings Knowledge self-test')) throw new Error('Evidence capture worklist self-test expected raw input capture scenario.')
-  if (!rawInputCaptureRows[0].blockingReason.includes('must not be generated')) throw new Error('Evidence capture worklist self-test expected raw input blocking reason.')
+  if (rawInputCaptureRows[0].sourceState === 'present' && !rawInputCaptureRows[0].blockingReason.includes('raw input exists')) throw new Error('Evidence capture worklist self-test expected present raw input blocking reason.')
+  if (rawInputCaptureRows[0].sourceState !== 'present' && !rawInputCaptureRows[0].blockingReason.includes('must not be generated')) throw new Error('Evidence capture worklist self-test expected missing raw input blocking reason.')
   if (rawInputCaptureRows[0].validationCommand !== 'node scripts/collect-settings-knowledge-selftest-result.js --self-test') throw new Error(`Evidence capture worklist self-test expected raw input validation command, got ${rawInputCaptureRows[0].validationCommand}.`)
   if (!rawInputCaptureRows[0].collectorCommand.startsWith('node scripts/')) throw new Error('Evidence capture worklist self-test expected raw input collector command.')
   const rawInputSummary = summarizeRawInputCaptureWorklist(rawInputCaptureRows)
-  if (rawInputSummary.bySourceState.device_required !== 1) throw new Error('Evidence capture worklist self-test expected raw input device-required summary count.')
+  if (((rawInputSummary.bySourceState.present ?? 0) + (rawInputSummary.bySourceState.device_required ?? 0)) !== 1) throw new Error('Evidence capture worklist self-test expected one raw input source-state summary count.')
   if (rawInputSummary.bySourceFormat.json !== 1) throw new Error('Evidence capture worklist self-test expected raw input source-format summary count.')
   if (rawInputSummary.byContractFile['scripts/settings-knowledge-selftest-contract.js'] !== 1) throw new Error('Evidence capture worklist self-test expected raw input contract-file summary count.')
   const keyEvidenceRows = collectKeyEvidenceCaptureWorklist(missingCoverage)
-  const keyOnboardingRow = keyEvidenceRows.find((row) => row.area === 'First-run onboarding handoff')
-  if (!keyOnboardingRow) throw new Error('Evidence coverage self-test expected missing onboarding row in key evidence worklist.')
-  if (keyOnboardingRow.status !== 'missing') throw new Error(`Evidence coverage self-test expected missing status for key evidence row, got ${keyOnboardingRow.status}.`)
-  if (keyOnboardingRow.gate !== 'blocking') throw new Error(`Evidence coverage self-test expected blocking gate for key evidence row, got ${keyOnboardingRow.gate}.`)
-  if (keyOnboardingRow.requiredEvidence !== 'paired screenshot/UIA evidence') throw new Error(`Evidence coverage self-test expected paired evidence requirement, got ${keyOnboardingRow.requiredEvidence}.`)
-  if (keyOnboardingRow.captureInputState !== 'device_required') throw new Error(`Evidence coverage self-test expected device-required key evidence capture state, got ${keyOnboardingRow.captureInputState}.`)
-  if (!keyOnboardingRow.followUp.includes('first-run onboarding')) throw new Error('Evidence coverage self-test expected actionable onboarding follow-up.')
   const keyEvidenceSummary = summarizeKeyEvidenceCaptureWorklist(keyEvidenceRows)
   if (keyEvidenceSummary.total !== keyEvidenceRows.length) throw new Error('Evidence coverage self-test expected key evidence summary total to match row count.')
   if (keyEvidenceSummary.byStatus.missing !== keyEvidenceRows.length) throw new Error('Evidence coverage self-test expected key evidence missing status summary count.')
   if (!keyEvidenceSummary.byGate.blocking) throw new Error('Evidence coverage self-test expected blocking gate summary count.')
   if (keyEvidenceSummary.byCaptureInputState.device_required !== keyEvidenceRows.length) throw new Error('Evidence coverage self-test expected all missing key evidence captures to require Android device evidence.')
-  console.log('Evidence coverage self-test passed (first-run onboarding handoff is blocking and app-owned touch targets are blocking).')
+  console.log('Evidence coverage self-test passed (app-owned touch targets are blocking).')
 }
 
 function runRuntimeDebugOverlaySelfTest(tempRoot) {
@@ -6582,7 +6709,7 @@ function buildReleaseProvenanceCaptureRow(releaseProvenance) {
       requiredInputState: 'stale',
       action: 'run Release Recovery Worklist serially after memory and device availability are confirmed',
       evidence: 'dist-apk APK, current-apk-smoke-results.json, and dependent Android evidence',
-      recovery: 'bun run apk:local:release -- --release-arch x86_64',
+      recovery: releaseRebuildCommand,
     }
   }
   return {
@@ -6922,7 +7049,6 @@ function classifyEvidenceCaptureCategory(item) {
   if (text.includes('local model')) return 'local-model-capture'
   if (text.includes('long')) return 'long-content-capture'
   if (text.includes('knowledge') || text.includes('memory')) return 'knowledge-memory-capture'
-  if (text.includes('onboarding')) return 'onboarding-capture'
   if (text.includes('app-shell') || text.includes('update-notice')) return 'app-shell-capture'
   return 'screenshot-uia-capture'
 }
@@ -7031,7 +7157,7 @@ function collectReleaseRecoveryWorklist(provenance) {
     rows.push({
       gate: 'Release APK rebuild',
       condition: `newest source/resource ${provenance.sourceFreshness.newestInput?.path ?? 'unknown'} is newer than APK`,
-      command: 'bun run apk:local:release -- --release-arch x86_64',
+      command: releaseRebuildCommand,
       evidence: 'dist-apk APK and SHA256 sidecar refreshed',
     })
   }
@@ -7045,25 +7171,25 @@ function collectReleaseRecoveryWorklist(provenance) {
     {
       gate: 'Current APK smoke',
       condition: 'release APK or installed package provenance is stale or missing',
-      command: "$env:QA_DEVICE_SERIAL='emulator-5554'; bun run test:current-apk-smoke",
+      command: releaseCurrentApkSmokeCommand,
       evidence: 'test-evidence/qa/current-apk-smoke-results.json',
     },
     {
       gate: 'Provider Runtime Android',
       condition: 'runtime evidence must match the rebuilt installed APK',
-      command: "$env:QA_DEVICE_SERIAL='emulator-5554'; bun run test:provider-runtime-android",
+      command: releaseProviderRuntimeAndroidCommand,
       evidence: 'test-evidence/qa/provider-runtime-android-results.json',
     },
     {
       gate: 'Android status notification evidence',
       condition: 'notification evidence must match current Android sources and installed APK',
-      command: "$env:QA_DEVICE_SERIAL='emulator-5554'; bun run test:android-status-notification:evidence -- --device emulator-5554",
+      command: releaseAndroidStatusNotificationEvidenceCommand,
       evidence: `test-evidence/qa/${androidStatusNotificationEvidenceName}`,
     },
     {
       gate: 'Android device task evidence',
       condition: 'device task boundary evidence must match current Android sources and installed APK',
-      command: "$env:QA_DEVICE_SERIAL='emulator-5554'; bun run test:android-device-task:evidence -- --device emulator-5554",
+      command: releaseAndroidDeviceTaskEvidenceCommand,
       evidence: `test-evidence/qa/${androidDeviceTaskEvidenceName}`,
     }
   )
@@ -7129,7 +7255,7 @@ function releaseProvenanceStatusLabel(provenance) {
 
 function summarizeEvidenceCoverage(snapshots) {
   const files = snapshots
-    .filter((snapshot) => snapshot.screenshotFile)
+    .filter((snapshot) => snapshot.screenshotFile && !snapshot.semanticInvalid)
     .map((snapshot) => snapshot.file)
   const matchAny = (patterns) => files.filter((file) => patterns.some((pattern) => pattern.test(file)))
   const anyItem = (area, patterns, followUp, options = {}) => {
@@ -7178,7 +7304,6 @@ function summarizeEvidenceCoverage(snapshots) {
     anyItem('Home model panel overlay', [/home-bottom-model-panel/], 'Capture the model picker overlay, including long and empty model-list states.'),
     anyItem('Composer More panel overlay', [/home-more-panel/], 'Capture the More tools panel and verify vertical gestures do not trigger page swipes.'),
     anyItem('Top session options overlay', [/home-session-options-panel/], 'Capture the top provider/model/settings overlay and Android Back close behavior.'),
-    allItem('First-run onboarding handoff', [[/onboarding.*awaken/, /first-run-onboarding/], [/onboarding.*first-prompt/, /onboarding-complete.*draft/]], 'Capture first-run onboarding entry, completion, and the selected first prompt handed into the Home composer.'),
     anyItem('Provider batch import keyboard', [/settings-providers-batch-keyboard-open/, /current-.*provider-import-filled/], 'Capture provider batch import while the keyboard is open and actions remain visible.'),
     allItem('Provider activation progress/result', [[/provider-activation-progress/], [/provider-activation-result/]], 'Capture provider activation start/progress/result to prove immediate feedback and final readiness.'),
     allItem('Provider Runtime Android governance', [

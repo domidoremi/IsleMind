@@ -7,20 +7,25 @@ import { verifyRagGeneration } from '@/services/rag'
 import { buildSystemPrompt } from '@/services/promptEngineering'
 import { buildEstimatedUsage, estimateTextTokens, mergeUsageWithEstimate } from '@/services/tokenUsage'
 import { useChatStore } from '@/store/chatStore'
-import { useChatStreamingStore } from '@/store/chatStreamingStore'
+import { mergeMessageWithStreamingTraceSnapshot, useChatStreamingStore } from '@/store/chatStreamingStore'
 import { useSettingsStore } from '@/store/settingsStore'
-import { packChatMessages } from '@/services/contextPacker'
+import { buildContextPlannerPrompt, planChatContext, type ContextFragment, type ContextWindowState, type PreviousContextFragmentIdentity } from '@/services/contextPlanner'
+import { buildChatContextRuntime } from '@/services/contextRuntime'
+import { buildToolCallingGatewayTrace, emitToolCallingGatewayOutcome } from '@/services/toolCallingGateway'
 import { resolveSearchProvider } from '@/services/searchPolicy'
 import { MCP_TOOL_CALL_TAG } from '@/services/mcpToolRequest'
 import { formatAgentWorkflowSaveBlockedReason, resolveConfirmedPendingActionTool } from '@/services/chatAgentActionUtils'
 import { buildSetupGuide, classifyChatError, toUserFacingError } from '@/services/chatErrorUtils'
 import { resolveMcpToolRevision } from '@/services/chatMcpToolRuntime'
-import { dedupeMessageCitations, formatWebPrompt, normalizeUserContent } from '@/services/chatMessageUtils'
+import { dedupeMessageCitations, normalizeUserContent } from '@/services/chatMessageUtils'
 import { searchAgenticKnowledgeWithScope, searchKnowledgeWithFallback } from '@/services/knowledgeRetrievalRuntime'
 import {
   buildCompletedRemoteCompactRuntimeLogPayload,
   buildCompletedRemoteCompactStateRecord,
   buildCompletedRemoteCompactUsageInput,
+  buildFailedRemoteCompactRuntimeLogPayload,
+  buildFailedRemoteCompactStateRecord,
+  buildFailedRemoteCompactUsageInput,
 } from '@/services/chatRemoteCompactUtils'
 import { resolveRuntimeConversation, resolveRuntimeResolutionError } from '@/services/chatRuntimeResolution'
 import { createStreamingChunkBuffer, createStreamingTraceBuffer, mergeBufferedTrace } from '@/services/chatStreamingBuffers'
@@ -44,11 +49,14 @@ import { buildKnowledgeScope, type KnowledgeScope } from '@/services/knowledgeSc
 import { routeLocalAppCommand, type LocalAppCommandResult } from '@/services/appCommandRouter'
 import { st } from '@/i18n/service'
 import { resolveProviderModelAlias } from '@/utils/providerModels'
-import { decideRemoteCompact } from '@/services/ai/compact/remoteCompact'
 import { recordCompactUsage } from '@/services/ai/compact/compactUsage'
 import { listActiveCompactStates, saveCompactState } from '@/services/ai/compact/compactStateStore'
 import { appendRuntimeLog } from '@/services/runtimeLog'
+import { emitRuntimeEvent } from '@/services/runtimeEvents'
 import { buildProviderCompatibilityLogData, createProviderCompatibilityTrace } from '@/services/ai/providerRuntimeDiagnostics'
+import {
+  resolveConversationGenerationParameterRequest,
+} from '@/services/ai/conversationGenerationParameters'
 import { filterSendableAttachments } from '@/services/attachmentContract'
 import { internalOutputHiddenMessage, isInternalChatDiagnosticOutput } from '@/services/chatInternalOutputGuard'
 import { filterLocalSearchToolManifests, filterProviderNativeChatToolManifests } from '@/services/agent/agentSearchToolPolicy'
@@ -129,8 +137,8 @@ export interface SaveAgentWorkflowSkillFromMessageResult {
 
 const STREAM_TEXT_FLUSH_MS = 64
 const STREAM_TEXT_MAX_BUFFER = 128
-const STREAM_TRACE_FLUSH_MS = 180
-const STREAM_TRACE_MAX_BUFFER = 6
+const STREAM_TRACE_FLUSH_MS = 280
+const STREAM_TRACE_MAX_BUFFER = 8
 
 interface AgentProviderToolContext {
   adapter: AgentProviderToolAdapterResult
@@ -191,6 +199,8 @@ export function stopMessage(conversationId: string) {
   const active = getActiveStream(conversationId)
   if (!active) return
   active.flush?.()
+  useChatStreamingStore.getState().commitStreamingText(conversationId, active.messageId)
+  useChatStreamingStore.getState().commitStreamingTraces(conversationId, active.messageId)
   active.controller.abort()
   clearActiveStream(conversationId)
   const current = getMessage(conversationId, active.messageId)
@@ -205,6 +215,7 @@ export function stopMessage(conversationId: string) {
     estimatedTokens: true,
     tokenCount: estimateTextTokens(current?.responseText ?? current?.content ?? ''),
   })
+  useChatStreamingStore.getState().clearStreaming(conversationId, active.messageId)
   upsertTrace(conversationId, active.messageId, completeTrace({
     id: traceId('stop'),
     type: 'system',
@@ -213,7 +224,6 @@ export function stopMessage(conversationId: string) {
     status: 'done',
     startedAt: completedAt,
   }))
-  void useChatStreamingStore.getState().flushStreamingMessage(conversationId, active.messageId)
 }
 
 registerStreamAborter(stopMessage)
@@ -507,6 +517,7 @@ async function createAssistantReply(conversationId: string) {
   }
 
   chatStore.addMessage(conversationId, assistantMessage)
+  useChatStreamingStore.getState().setStreaming(conversationId, assistantMessage.id)
   const requestController = new AbortController()
   setActiveStream(conversationId, { controller: requestController, messageId: assistantMessage.id })
 
@@ -516,7 +527,7 @@ async function createAssistantReply(conversationId: string) {
     providers: settingsState.providers,
     settings: settingsState.settings,
   })
-  const runtimeConversation = resolvedRuntime?.conversation ?? conversation
+  let runtimeConversation = resolvedRuntime?.conversation ?? conversation
   if (isReplyCancelled(conversationId, assistantMessage.id, requestController)) return
   if (runtimeConversation.providerId === 'local-setup') {
     finishWithError(conversationId, assistantMessage.id, buildSetupGuide(), 'missing_key')
@@ -545,10 +556,13 @@ async function createAssistantReply(conversationId: string) {
 
   const upstreamModel = resolveProviderModelAlias(provider, runtimeConversation.model)
   const modelConfig = getModelConfig(upstreamModel, provider.type, provider.modelConfigs)
-  if (runtimeConversation.maxTokens > modelConfig.maxOutputTokens) {
-    finishWithError(conversationId, assistantMessage.id, st('chatRunner.error.maxTokensExceeded', { current: runtimeConversation.maxTokens, model: runtimeConversation.model, limit: modelConfig.maxOutputTokens }), 'max_tokens_exceeded', provider.id)
-    return
-  }
+  runtimeConversation = resolveRuntimeGenerationParameterConversation({
+    conversation: runtimeConversation,
+    provider,
+    upstreamModel,
+    settings: settingsState.settings,
+    modelConfig,
+  })
   upsertTrace(conversationId, assistantMessage.id, createProviderCompatibilityTrace({
     conversationId,
     provider,
@@ -711,7 +725,6 @@ async function createAssistantReply(conversationId: string) {
       startedAt: Date.now(),
     }))
   }
-  const retrievalSources = [...context.sources, ...webSources]
   const mcpContext = await resolveMcpContext({
     conversation: runtimeConversation,
     mcpEnabled: settings.mcpEnabled !== false,
@@ -749,6 +762,25 @@ async function createAssistantReply(conversationId: string) {
       explicitNativeTools: nativeToolSupport.explicitNativeTools,
     }, { enabled: settings.runtimeLogEnabled, maxBytes: settings.runtimeLogMaxBytes })
   }
+  const toolGatewayOutcome = emitToolCallingGatewayOutcome({
+    conversationId,
+    provider,
+    model: upstreamModel,
+    mcpEnabled: settings.mcpEnabled !== false,
+    mcpToolCount: mcpContext.tools.length,
+    mcpPrompt: mcpContext.prompt,
+    nativeToolSupport,
+    providerToolContext,
+    runtimeLog: { enabled: settings.runtimeLogEnabled, maxBytes: settings.runtimeLogMaxBytes },
+  })
+  upsertTrace(conversationId, assistantMessage.id, completeTrace(buildToolCallingGatewayTrace(toolGatewayOutcome)))
+  const contextRuntime = buildChatContextRuntime({
+    retrievedContext: context,
+    webSources,
+    mcpPrompt: mcpContext.prompt,
+    mcpToolCount: mcpContext.tools.length,
+  })
+  const retrievalSources = contextRuntime.retrievalSources
   const hasAttachments = sendableAttachments.length > 0
   const nativeSearchSupported = providerSupportsNativeSearch(provider)
   const providerWebSearchMode = searchProvider === 'native' && !hasAttachments && nativeSearchSupported ? 'native' : 'off'
@@ -777,49 +809,45 @@ async function createAssistantReply(conversationId: string) {
     language: settings.language,
     modelConfig,
     provider,
-    hasMemory: context.sources.some((source) => source.type === 'memory'),
-    hasKnowledge: context.sources.some((source) => source.type === 'knowledge'),
-    hasWeb: webSources.length > 0 || providerWebSearchMode === 'native',
+    hasMemory: contextRuntime.counts.memory > 0,
+    hasKnowledge: contextRuntime.counts.knowledge > 0,
+    hasWeb: contextRuntime.counts.web > 0 || providerWebSearchMode === 'native',
     retrievalSources,
   })
   const sourceMessages = latestConversation?.messages.filter((message) => message.id !== assistantMessage.id) ?? []
-  const baseContextPrompt = [context.prompt, webSources.length ? formatWebPrompt(webSources) : '', mcpContext.prompt].filter(Boolean).join('\n\n')
-  const remoteCompactProbe = packChatMessages({
+  const previousCompactState = await resolvePreviousCompactState(
+    conversationId,
+    provider.id,
+    runtimeConversation.model,
+    settings
+  )
+  const contextPlan = planChatContext({
     messages: sourceMessages,
-    contextPrompt: baseContextPrompt,
+    contextSources: contextRuntime.contextSources,
+    draft: {
+      text: lastUserMessage?.content,
+      requestedOutput: runtimeConversation.skillSnapshot?.expectedReplyFormat,
+    },
     modelContextWindow: modelConfig.contextWindow,
     maxOutputTokens: runtimeConversation.maxTokens,
+    modelManifest: modelConfig,
     systemPrompt,
     reasoningEffort: runtimeConversation.reasoningEffort,
     provider,
     providerType: provider.type,
     model: upstreamModel,
-    localCompression: false,
-  })
-  const compactDecision = decideRemoteCompact({
-    provider,
-    model: upstreamModel,
-    contextPrompt: remoteCompactProbe.contextPrompt,
-    messages: remoteCompactProbe.messages,
-    budgetTokens: remoteCompactProbe.budgetTokens,
-    estimatedInputTokens: remoteCompactProbe.estimatedInputTokens,
     settings,
+    retrievalSources,
+    memorySourceCount: contextRuntime.counts.memory,
+    attachmentCount: sendableAttachments.length,
+    toolOutputCount: contextRuntime.counts.tools + (providerToolContext?.adapter.tools.length ?? 0),
+    previousResponseId: previousCompactState.previousResponseId,
+    previousFragments: previousCompactState.previousFragments,
   })
-  const blocksForMissingRequiredRemote = compactDecision.required && !compactDecision.supported
-  const activePrompt = compactDecision.enabled || blocksForMissingRequiredRemote
-    ? remoteCompactProbe
-    : packChatMessages({
-      messages: sourceMessages,
-      contextPrompt: baseContextPrompt,
-      modelContextWindow: modelConfig.contextWindow,
-      maxOutputTokens: runtimeConversation.maxTokens,
-      systemPrompt,
-      reasoningEffort: runtimeConversation.reasoningEffort,
-      provider,
-      providerType: provider.type,
-      model: upstreamModel,
-    })
-  void appendRuntimeLog('compact.request', {
+  const remoteCompactProbe = contextPlan.remoteCompactProbe
+  const compactDecision = contextPlan.compactDecision
+  const activePrompt = contextPlan.packed
+  const compactRequestLogData = {
     conversationId,
     providerId: provider.id,
     model: runtimeConversation.model,
@@ -830,7 +858,17 @@ async function createAssistantReply(conversationId: string) {
     supported: compactDecision.supported,
     reason: compactDecision.reason,
     pressureRatio: compactDecision.pressureRatio,
-  }, { enabled: settings.runtimeLogEnabled, maxBytes: settings.runtimeLogMaxBytes })
+  }
+  void emitRuntimeEvent({
+    event: 'context.compact.decided',
+    conversationId,
+    providerId: provider.id,
+    model: runtimeConversation.model,
+    data: compactRequestLogData,
+    legacyEvent: 'compact.request',
+    legacyData: compactRequestLogData,
+    options: { enabled: settings.runtimeLogEnabled, maxBytes: settings.runtimeLogMaxBytes },
+  })
   const compactRecord = recordCompactUsage({
     mode: compactDecision.mode,
     providerId: provider.id,
@@ -859,7 +897,7 @@ async function createAssistantReply(conversationId: string) {
     failureCode: compactDecision.required && !compactDecision.supported ? 'provider_capability_missing' : undefined,
     fallbackLocal: compactDecision.mode === 'auto' && !compactDecision.enabled && activePrompt.compressionTriggered,
   })
-  void appendRuntimeLog('compact.usage', {
+  const compactUsageLogData = {
     conversationId,
     providerId: provider.id,
     model: runtimeConversation.model,
@@ -887,7 +925,17 @@ async function createAssistantReply(conversationId: string) {
     localSummarySections: compactRecord.localSummarySections,
     failureCode: compactRecord.failureCode,
     fallbackLocal: compactRecord.fallbackLocal,
-  }, { enabled: settings.runtimeLogEnabled, maxBytes: settings.runtimeLogMaxBytes })
+  }
+  void emitRuntimeEvent({
+    event: 'context.compact.completed',
+    conversationId,
+    providerId: provider.id,
+    model: runtimeConversation.model,
+    data: compactUsageLogData,
+    legacyEvent: 'compact.usage',
+    legacyData: compactUsageLogData,
+    options: { enabled: settings.runtimeLogEnabled, maxBytes: settings.runtimeLogMaxBytes },
+  })
   upsertTrace(conversationId, assistantMessage.id, completeTrace({
     id: traceId('compact'),
     type: 'system',
@@ -906,15 +954,32 @@ async function createAssistantReply(conversationId: string) {
       inputTokens: compactRecord.inputTokens,
       failureCode: compactRecord.failureCode,
       fallbackLocal: compactRecord.fallbackLocal,
+      contextRuntime: contextRuntime.trace,
+      contextPlanner: contextPlan.trace,
+      contextFragments: contextPlan.fragments.map((fragment) => ({
+        schema: fragment.schema,
+        id: fragment.id,
+        type: fragment.type,
+        priority: fragment.priority,
+        sourceId: fragment.sourceId,
+        sourceHash: fragment.sourceHash,
+        sourceVersion: fragment.sourceVersion,
+        tokenCap: fragment.tokenCap,
+        estimatedTokens: fragment.estimatedTokens,
+        originalEstimatedTokens: fragment.originalEstimatedTokens,
+        included: fragment.included,
+        capped: fragment.capped,
+        exclusionReason: fragment.exclusionReason,
+        cache: fragment.cache,
+        trace: fragment.trace,
+      })),
     },
   }))
   if (compactDecision.required && !compactDecision.supported) {
     finishWithError(conversationId, assistantMessage.id, st('chatRunner.error.remoteCompactRequiredFailed'), 'unknown', provider.id)
     return
   }
-  const previousResponseId = compactDecision.enabled
-    ? await resolvePreviousCompactResponseId(conversationId, provider.id, runtimeConversation.model, settings)
-    : undefined
+  const previousResponseId = compactDecision.enabled ? previousCompactState.previousResponseId : undefined
   if (activePrompt.compressionTriggered) {
     upsertTrace(conversationId, assistantMessage.id, completeTrace({
       id: traceId('context-pack'),
@@ -1007,6 +1072,7 @@ async function createAssistantReply(conversationId: string) {
         systemPrompt,
         temperature: runtimeConversation.temperature,
         topP: runtimeConversation.topP,
+        topK: runtimeConversation.topK,
         reasoningEffort: runtimeConversation.reasoningEffort,
         maxTokens: runtimeConversation.maxTokens,
         attachments: sendableAttachments,
@@ -1020,6 +1086,7 @@ async function createAssistantReply(conversationId: string) {
         settings,
         fallbackProviders,
         remoteCompactEligible: compactDecision.enabled,
+        remoteCompactFallback: contextPlan.remoteCompactFallback,
         previousResponseId,
         providerToolDeclarations: providerToolContext?.adapter.tools,
       },
@@ -1050,6 +1117,8 @@ async function createAssistantReply(conversationId: string) {
           remoteCompactMode: compactDecision.mode,
           remoteCompactInputTokens: compactDecision.enabled ? remoteCompactProbe.estimatedInputTokens : undefined,
           previousResponseId,
+          contextWindowState: contextPlan.windowState,
+          contextFragments: contextPlan.fragments,
         }).catch((error) => {
           flushStreamingBuffers()
           if (getActiveStream(conversationId)?.messageId === assistantMessage.id) {
@@ -1079,7 +1148,7 @@ async function createAssistantReply(conversationId: string) {
             title: st('chatRunner.trace.nativeSearchTitle'),
             content: st('chatRunner.trace.nativeSearchFailedWithModel'),
             status: 'error',
-            startedAt: getMessage(conversationId, assistantMessage.id)?.retrievalTrace?.find((trace) => trace.id === nativeSearchTraceId)?.startedAt ?? Date.now(),
+            startedAt: getMessageWithStreamingTraceState(conversationId, assistantMessage.id)?.retrievalTrace?.find((trace) => trace.id === nativeSearchTraceId)?.startedAt ?? Date.now(),
             metadata: { mode: providerWebSearchMode },
           }))
         }
@@ -1150,8 +1219,11 @@ async function finalizeAssistantResult(input: {
   remoteCompactMode?: RemoteCompactMode
   remoteCompactInputTokens?: number
   previousResponseId?: string
+  contextWindowState?: ContextWindowState
+  contextFragments?: ContextFragment[]
 }) {
   input.chunkFlush()
+  await useChatStreamingStore.getState().flushStreamingMessage(input.conversationId, input.assistantMessageId)
   if (getActiveStream(input.conversationId)?.messageId === input.assistantMessageId) {
     clearActiveStream(input.conversationId)
   }
@@ -1275,7 +1347,12 @@ async function finalizeAssistantResult(input: {
           conversation: input.runtimeConversation,
           systemPrompt: input.systemPrompt,
           messages: input.packedMessages,
-          contextPrompt: [input.baseContextPrompt, flare.prompt].filter(Boolean).join('\n\n'),
+          contextPrompt: buildContextPlannerPrompt({
+            contextSources: [
+              { id: 'base-context', type: 'retrieved_context', text: input.baseContextPrompt },
+              { id: 'flare-context', type: 'retrieved_context', text: flare.prompt, sourceCount: flare.sources.length, trace: { source: 'flare' } },
+            ],
+          }) ?? '',
           originalAnswer: firstOutput,
           sources: [...input.retrievalSources, ...flare.sources],
           signal: input.requestController.signal,
@@ -1317,19 +1394,32 @@ async function finalizeAssistantResult(input: {
   const inputMessages = latest?.messages.filter((message) => message.id !== input.assistantMessageId && message.status !== 'error') ?? []
   const usage = mergeUsageWithEstimate(finalResult.usage, inputMessages, finalOutput)
   if (input.remoteCompactEligible) {
-    recordCompletedRemoteCompact({
+    const compactRecordBase = {
       conversationId: input.conversationId,
       provider: input.provider,
       model: input.runtimeConversation.model,
       upstreamModel: input.upstreamModel,
       mode: input.remoteCompactMode ?? 'auto',
-      result: finalResult,
       inputTokens: input.remoteCompactInputTokens ?? usage.inputTokens,
-      outputTokens: finalResult.usage?.outputTokens,
       messageCount: inputMessages.length,
       settings: useSettingsStore.getState().settings,
       previousResponseId: input.previousResponseId,
-    })
+      contextWindowState: input.contextWindowState,
+      contextFragments: input.contextFragments,
+    }
+    if (finalResult.remoteCompactFallbackUsed) {
+      recordFailedRemoteCompact({
+        ...compactRecordBase,
+        failureCode: finalResult.remoteCompactFallbackReason ?? 'remote_compact_local_fallback',
+        fallbackLocal: true,
+      })
+    } else {
+      recordCompletedRemoteCompact({
+        ...compactRecordBase,
+        result: finalResult,
+        outputTokens: finalResult.usage?.outputTokens,
+      })
+    }
   }
   useChatStore.getState().updateMessage(input.conversationId, input.assistantMessageId, {
     status: 'done',
@@ -1406,7 +1496,7 @@ async function finalizeAssistantResult(input: {
         ? st('chatRunner.trace.nativeSearchSourceCount', { count: providerCitationCount })
         : st('chatRunner.trace.nativeSearchNoSources'),
       status: hasProviderSources ? 'done' : 'skipped',
-      startedAt: getMessage(input.conversationId, input.assistantMessageId)?.retrievalTrace?.find((trace) => trace.id === input.nativeSearchTraceId)?.startedAt ?? current.startedAt ?? Date.now(),
+      startedAt: getMessageWithStreamingTraceState(input.conversationId, input.assistantMessageId)?.retrievalTrace?.find((trace) => trace.id === input.nativeSearchTraceId)?.startedAt ?? current.startedAt ?? Date.now(),
       metadata: { mode: input.providerWebSearchMode, providerCitationCount, sourceVerified: hasProviderSources },
     }))
   }
@@ -1418,7 +1508,6 @@ async function finalizeAssistantResult(input: {
   if (updated) {
     void extractMemoriesWithTrace(input.conversationId, input.assistantMessageId, updated.messages, input.provider, input.upstreamModel)
   }
-  void useChatStreamingStore.getState().flushStreamingMessage(input.conversationId, input.assistantMessageId)
 }
 
 function recordCompletedRemoteCompact(input: {
@@ -1433,6 +1522,8 @@ function recordCompletedRemoteCompact(input: {
   messageCount: number
   settings: { runtimeLogEnabled?: boolean; runtimeLogMaxBytes?: number }
   previousResponseId?: string
+  contextWindowState?: ContextWindowState
+  contextFragments?: ContextFragment[]
 }) {
   const record = recordCompactUsage(buildCompletedRemoteCompactUsageInput({
     conversationId: input.conversationId,
@@ -1445,17 +1536,28 @@ function recordCompletedRemoteCompact(input: {
     outputTokens: input.outputTokens,
     messageCount: input.messageCount,
     previousResponseId: input.previousResponseId,
+    activeContextTokens: input.contextWindowState?.activeContextTokens,
+    autoCompactScopeTokens: input.contextWindowState?.autoCompactScopeTokens,
+    prefillInputTokens: input.contextWindowState?.prefillInputTokens,
+    tokensUntilCompaction: input.contextWindowState?.tokensUntilCompaction,
+    lastCompactSummary: input.contextWindowState?.lastCompactSummary,
   }))
-  void appendRuntimeLog(
-    'compact.usage',
-    buildCompletedRemoteCompactRuntimeLogPayload({
-      conversationId: input.conversationId,
-      record,
-      responseId: input.result.responseId,
-      previousResponseId: input.previousResponseId,
-    }),
-    { enabled: input.settings.runtimeLogEnabled, maxBytes: input.settings.runtimeLogMaxBytes }
-  )
+  const compactUsageLogData = buildCompletedRemoteCompactRuntimeLogPayload({
+    conversationId: input.conversationId,
+    record,
+    responseId: input.result.responseId,
+    previousResponseId: input.previousResponseId,
+  })
+  void emitRuntimeEvent({
+    event: 'context.compact.completed',
+    conversationId: input.conversationId,
+    providerId: input.provider.id,
+    model: input.model,
+    data: compactUsageLogData,
+    legacyEvent: 'compact.usage',
+    legacyData: compactUsageLogData,
+    options: { enabled: input.settings.runtimeLogEnabled, maxBytes: input.settings.runtimeLogMaxBytes },
+  })
   const stateRecord = buildCompletedRemoteCompactStateRecord({
     conversationId: input.conversationId,
     record,
@@ -1463,8 +1565,67 @@ function recordCompletedRemoteCompact(input: {
     previousResponseId: input.previousResponseId,
     messageCount: input.messageCount,
     now: Date.now(),
+    contextFragmentIdentities: contextFragmentIdentitiesForCompactState(input.contextFragments),
   })
   if (!stateRecord) return
+  void saveCompactState(stateRecord).catch(() => undefined)
+}
+
+function recordFailedRemoteCompact(input: {
+  conversationId: string
+  provider: AIProvider
+  model: string
+  upstreamModel?: string
+  mode: RemoteCompactMode
+  inputTokens?: number
+  messageCount: number
+  settings: { runtimeLogEnabled?: boolean; runtimeLogMaxBytes?: number }
+  previousResponseId?: string
+  contextWindowState?: ContextWindowState
+  contextFragments?: ContextFragment[]
+  failureCode: string
+  fallbackLocal?: boolean
+}) {
+  const record = recordCompactUsage(buildFailedRemoteCompactUsageInput({
+    conversationId: input.conversationId,
+    providerId: input.provider.id,
+    model: input.model,
+    upstreamModel: input.upstreamModel,
+    mode: input.mode,
+    inputTokens: input.inputTokens,
+    messageCount: input.messageCount,
+    previousResponseId: input.previousResponseId,
+    failureCode: input.failureCode,
+    fallbackLocal: input.fallbackLocal,
+    activeContextTokens: input.contextWindowState?.activeContextTokens,
+    autoCompactScopeTokens: input.contextWindowState?.autoCompactScopeTokens,
+    prefillInputTokens: input.contextWindowState?.prefillInputTokens,
+    tokensUntilCompaction: input.contextWindowState?.tokensUntilCompaction,
+    lastCompactSummary: input.contextWindowState?.lastCompactSummary,
+  }))
+  const compactUsageLogData = buildFailedRemoteCompactRuntimeLogPayload({
+    conversationId: input.conversationId,
+    record,
+    previousResponseId: input.previousResponseId,
+  })
+  void emitRuntimeEvent({
+    event: 'context.compact.completed',
+    conversationId: input.conversationId,
+    providerId: input.provider.id,
+    model: input.model,
+    data: compactUsageLogData,
+    legacyEvent: 'compact.usage',
+    legacyData: compactUsageLogData,
+    options: { enabled: input.settings.runtimeLogEnabled, maxBytes: input.settings.runtimeLogMaxBytes },
+  })
+  const stateRecord = buildFailedRemoteCompactStateRecord({
+    conversationId: input.conversationId,
+    record,
+    previousResponseId: input.previousResponseId,
+    messageCount: input.messageCount,
+    now: Date.now(),
+    contextFragmentIdentities: contextFragmentIdentitiesForCompactState(input.contextFragments),
+  })
   void saveCompactState(stateRecord).catch(() => undefined)
 }
 
@@ -1791,6 +1952,14 @@ async function generateAnswerWithProviderNativeToolResult(input: {
   let failure: Error | null = null
   const assistantContent = stripMcpCallBlocks(input.firstOutput) || `Provider requested IsleMind tool ${input.tool.toolName}.`
   const messages = buildProviderNativeToolRevisionMessages(input, assistantContent)
+  const settings = useSettingsStore.getState().settings
+  const requestParameters = resolveConversationGenerationParameterRequest({
+    provider: input.provider,
+    conversation: input.conversation,
+    settings,
+    model: resolveProviderModelAlias(input.provider, input.conversation.model),
+    temperatureCap: 0.4,
+  })
   const handle = await streamChat(
     {
       provider: input.provider,
@@ -1801,15 +1970,16 @@ async function generateAnswerWithProviderNativeToolResult(input: {
       ].filter(Boolean).join('\n\n'),
       messages,
       contextPrompt: input.baseContextPrompt,
-      temperature: Math.min(input.conversation.temperature, 0.4),
-      topP: input.conversation.topP,
+      temperature: requestParameters.temperature,
+      topP: requestParameters.topP,
+      topK: requestParameters.topK,
       reasoningEffort: input.conversation.reasoningEffort,
-      maxTokens: input.conversation.maxTokens,
+      maxTokens: requestParameters.maxTokens,
       stream: false,
       signal: input.signal,
       conversationId: input.conversation.id,
       sessionId: input.conversation.id,
-      settings: useSettingsStore.getState().settings,
+      settings,
       remoteCompactEligible: false,
     },
     (chunk) => {
@@ -1872,24 +2042,71 @@ async function searchAgentKnowledge(
   })
 }
 
-async function resolvePreviousCompactResponseId(
+async function resolvePreviousCompactState(
   conversationId: string,
   providerId: string,
   model: string,
-  settings: { runtimeLogEnabled?: boolean; runtimeLogMaxBytes?: number }
-): Promise<string | undefined> {
+  settings: { remoteCompactMode?: RemoteCompactMode; runtimeLogEnabled?: boolean; runtimeLogMaxBytes?: number }
+): Promise<{ previousResponseId?: string; previousFragments?: PreviousContextFragmentIdentity[] }> {
+  if ((settings.remoteCompactMode ?? 'off') === 'off') return {}
   try {
     const [state] = await listActiveCompactStates(conversationId, providerId, model)
-    if (!state?.responseId) return undefined
-    void appendRuntimeLog('compact.request', {
+    if (!state?.responseId) return {}
+    const previousFragments = parseContextFragmentIdentities(state.contextFragmentIdentitiesJson)
+    const compactRequestLogData = {
       conversationId,
       providerId,
       model,
       previousResponseId: state.responseId,
       compactStateId: state.id,
+      previousFragmentCount: previousFragments?.length ?? 0,
       status: 'state_reused',
-    }, { enabled: settings.runtimeLogEnabled, maxBytes: settings.runtimeLogMaxBytes })
-    return state.responseId
+    }
+    void emitRuntimeEvent({
+      event: 'context.compact.decided',
+      conversationId,
+      providerId,
+      model,
+      data: compactRequestLogData,
+      legacyEvent: 'compact.request',
+      legacyData: compactRequestLogData,
+      options: { enabled: settings.runtimeLogEnabled, maxBytes: settings.runtimeLogMaxBytes },
+    })
+    return { previousResponseId: state.responseId, previousFragments }
+  } catch {
+    return {}
+  }
+}
+
+function contextFragmentIdentitiesForCompactState(fragments: ContextFragment[] | undefined): PreviousContextFragmentIdentity[] | undefined {
+  if (!fragments?.length) return undefined
+  return fragments.slice(0, 32).map((fragment) => ({
+    id: fragment.id,
+    sourceId: fragment.sourceId,
+    sourceHash: fragment.sourceHash,
+    included: fragment.included,
+  }))
+}
+
+function parseContextFragmentIdentities(value: string | undefined): PreviousContextFragmentIdentity[] | undefined {
+  if (!value) return undefined
+  try {
+    const parsed = JSON.parse(value) as unknown
+    if (!Array.isArray(parsed)) return undefined
+    const identities = parsed
+      .map((item): PreviousContextFragmentIdentity | undefined => {
+        if (!item || typeof item !== 'object') return undefined
+        const fragment = item as Record<string, unknown>
+        if (typeof fragment.id !== 'string' || typeof fragment.sourceId !== 'string') return undefined
+        return {
+          id: fragment.id,
+          sourceId: fragment.sourceId,
+          sourceHash: typeof fragment.sourceHash === 'string' ? fragment.sourceHash : undefined,
+          included: typeof fragment.included === 'boolean' ? fragment.included : undefined,
+        }
+      })
+      .filter((item): item is PreviousContextFragmentIdentity => Boolean(item))
+    return identities.length ? identities.slice(0, 32) : undefined
   } catch {
     return undefined
   }
@@ -1907,6 +2124,14 @@ async function reviseAnswerWithFlare(input: {
 }): Promise<string> {
   let text = ''
   let failure: Error | null = null
+  const settings = useSettingsStore.getState().settings
+  const requestParameters = resolveConversationGenerationParameterRequest({
+    provider: input.provider,
+    conversation: input.conversation,
+    settings,
+    model: resolveProviderModelAlias(input.provider, input.conversation.model),
+    temperatureCap: 0.4,
+  })
   const handle = await streamChat(
     {
       provider: input.provider,
@@ -1922,15 +2147,16 @@ async function reviseAnswerWithFlare(input: {
       ],
       contextPrompt: input.contextPrompt,
       retrievalSources: input.sources,
-      temperature: Math.min(input.conversation.temperature, 0.4),
-      topP: input.conversation.topP,
+      temperature: requestParameters.temperature,
+      topP: requestParameters.topP,
+      topK: requestParameters.topK,
       reasoningEffort: input.conversation.reasoningEffort,
-      maxTokens: input.conversation.maxTokens,
+      maxTokens: requestParameters.maxTokens,
       stream: false,
       signal: input.signal,
       conversationId: input.conversation.id,
       sessionId: input.conversation.id,
-      settings: useSettingsStore.getState().settings,
+      settings,
       remoteCompactEligible: false,
     },
     (chunk) => {
@@ -1954,6 +2180,37 @@ function isReplyCancelled(conversationId: string, messageId: string, controller:
   return current?.status === 'cancelled'
 }
 
+function resolveRuntimeGenerationParameterConversation(input: {
+  conversation: Conversation
+  provider: AIProvider
+  upstreamModel: string
+  settings: Settings
+  modelConfig: ReturnType<typeof getModelConfig>
+}): Conversation {
+  const requestParameters = resolveConversationGenerationParameterRequest({
+    provider: input.provider,
+    conversation: input.conversation,
+    settings: input.settings,
+    model: input.upstreamModel,
+    modelConfig: input.modelConfig,
+  })
+  if (
+    requestParameters.temperature === input.conversation.temperature &&
+    requestParameters.topP === input.conversation.topP &&
+    requestParameters.topK === input.conversation.topK &&
+    requestParameters.maxTokens === input.conversation.maxTokens
+  ) {
+    return input.conversation
+  }
+  return {
+    ...input.conversation,
+    temperature: requestParameters.temperature,
+    topP: requestParameters.topP,
+    topK: requestParameters.topK,
+    maxTokens: requestParameters.maxTokens,
+  }
+}
+
 function finishWithRuntimeResolutionError(conversationId: string, messageId: string, conversation: Conversation) {
   const error = resolveRuntimeResolutionError({
     conversation,
@@ -1968,8 +2225,11 @@ function finishWithRuntimeResolutionError(conversationId: string, messageId: str
 function finishWithError(conversationId: string, messageId: string, content: string, errorCode: ChatErrorCode = 'unknown', providerId?: string) {
   const active = getActiveStream(conversationId)
   if (active?.messageId === messageId) {
+    active.flush?.()
     clearActiveStream(conversationId)
   }
+  useChatStreamingStore.getState().commitStreamingText(conversationId, messageId)
+  useChatStreamingStore.getState().commitStreamingTraces(conversationId, messageId)
   const current = getMessage(conversationId, messageId)
   const conversation = useChatStore.getState().conversations.find((item) => item.id === conversationId)
   const inputMessages = conversation?.messages.filter((message) => message.id !== messageId && message.status !== 'error') ?? []
@@ -1987,8 +2247,8 @@ function finishWithError(conversationId: string, messageId: string, content: str
     estimatedTokens: true,
     tokenCount: estimateTextTokens(outputText),
   })
+  useChatStreamingStore.getState().clearStreaming(conversationId, messageId)
   useChatStore.getState().setError(content)
-  void useChatStore.getState().flushStreamingMessage(conversationId, messageId)
 }
 
 function finishFinalizeError(conversationId: string, messageId: string, error: unknown, providerId?: string) {
@@ -2019,7 +2279,12 @@ function resolveChatErrorCode(error: unknown, message?: string): ChatErrorCode {
 }
 
 function upsertTrace(conversationId: string, messageId: string, trace: ProcessTrace) {
-  useChatStore.getState().upsertMessageTrace(conversationId, messageId, sanitizeTrace(trace))
+  const safeTrace = sanitizeTrace(trace)
+  if (hasLiveStreamingState(conversationId, messageId)) {
+    useChatStreamingStore.getState().upsertTrace(conversationId, messageId, safeTrace)
+    return
+  }
+  useChatStore.getState().upsertMessageTrace(conversationId, messageId, safeTrace)
 }
 
 function settleRunningTraces(
@@ -2027,7 +2292,7 @@ function settleRunningTraces(
   messageId: string,
   options: SettleRunningTracesOptions
 ) {
-  const message = getMessage(conversationId, messageId)
+  const message = getMessageWithStreamingTraceState(conversationId, messageId)
   for (const trace of settleMessageTraces(message, options)) {
     upsertTrace(conversationId, messageId, trace)
   }
@@ -2095,4 +2360,15 @@ async function extractMemoriesWithTrace(conversationId: string, messageId: strin
 function getMessage(conversationId: string, messageId: string): Message | null {
   const conversation = useChatStore.getState().conversations.find((item) => item.id === conversationId)
   return conversation?.messages.find((message) => message.id === messageId) ?? null
+}
+
+function getMessageWithStreamingTraceState(conversationId: string, messageId: string): Message | null {
+  const message = getMessage(conversationId, messageId)
+  if (!message) return null
+  const snapshot = useChatStreamingStore.getState().getStreamingTraceSnapshot(conversationId, messageId)
+  return mergeMessageWithStreamingTraceSnapshot(message, snapshot)
+}
+
+function hasLiveStreamingState(conversationId: string, messageId: string): boolean {
+  return useChatStreamingStore.getState().activeStreams.get(`${conversationId}:${messageId}`) === true
 }

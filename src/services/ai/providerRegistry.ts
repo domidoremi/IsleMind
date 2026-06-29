@@ -44,6 +44,8 @@ export interface ProviderImportOptions {
   accessSettings?: ProviderModelAccessInput['settings']
 }
 
+type CredentialEntry = { apiKey: string; label?: string; enabled?: boolean }
+
 interface ProviderProbeDeps {
   fetch?: typeof fetch
   timeoutMs?: number
@@ -476,14 +478,18 @@ export function applyProviderPreset<T extends Partial<AIProvider>>(provider: T, 
     name: provider.name?.trim() || target.name,
     baseUrl: provider.baseUrl ?? target.baseUrl,
     capabilities: { ...target.capabilities, ...provider.capabilities },
-    syncPolicy: provider.syncPolicy ?? defaultProviderSyncPolicy(),
+    syncPolicy: normalizeProviderSyncPolicy(provider.syncPolicy),
     models: currentModels,
   }
 }
 
 export function parseCredentialGroups(input: string): NonNullable<AIProvider['credentialGroups']> {
+  return credentialEntriesToGroups(extractCredentialEntries(input))
+}
+
+function credentialEntriesToGroups(entries: CredentialEntry[]): NonNullable<AIProvider['credentialGroups']> {
   const seen = new Set<string>()
-  return extractCredentialEntries(input)
+  return entries
     .filter((item) => {
       const apiKey = item.apiKey.trim()
       if (!apiKey || seen.has(apiKey)) return false
@@ -501,12 +507,19 @@ export function parseCredentialGroups(input: string): NonNullable<AIProvider['cr
     })
 }
 
-function extractCredentialEntries(input: string): Array<{ apiKey: string; label?: string; enabled?: boolean }> {
-  const trimmed = input.trim()
+function extractCredentialEntries(input: string): CredentialEntry[] {
+  const trimmed = stripImportBoundary(input.trim())
   if (!trimmed) return []
   const parsed = parseCredentialJson(trimmed)
   if (parsed !== null) return collectCredentialEntries(parsed)
-  return splitCredentialText(trimmed).map((apiKey) => ({ apiKey }))
+  const labeledEntries = extractLabeledCredentialEntries(trimmed)
+  const labeledKeys = new Set(labeledEntries.map((item) => item.apiKey))
+  return [
+    ...labeledEntries,
+    ...splitCredentialText(trimmed)
+      .filter((apiKey) => !labeledKeys.has(apiKey))
+      .map((apiKey) => ({ apiKey })),
+  ]
 }
 
 function parseCredentialJson(input: string): unknown | null {
@@ -518,7 +531,7 @@ function parseCredentialJson(input: string): unknown | null {
   }
 }
 
-function collectCredentialEntries(value: unknown, context: { label?: string; enabled?: boolean } = {}): Array<{ apiKey: string; label?: string; enabled?: boolean }> {
+function collectCredentialEntries(value: unknown, context: { label?: string; enabled?: boolean } = {}): CredentialEntry[] {
   if (typeof value === 'string') {
     return splitCredentialText(value).map((apiKey) => ({ ...context, apiKey }))
   }
@@ -556,6 +569,52 @@ function splitCredentialText(input: string): string[] {
     })
 }
 
+function extractLabeledCredentialEntries(input: string): CredentialEntry[] {
+  const entries: CredentialEntry[] = []
+  const segments = input
+    .replace(/https?:\/\/[^\s,，;；"'“”‘’<>]+/gi, ' ')
+    .split(/[\n,，;；]+/)
+    .map((item) => item.trim())
+    .filter(Boolean)
+
+  for (const segment of segments) {
+    const matches = Array.from(segment.matchAll(/(?:sk|tp|ak|rk|pk|key|token)-[A-Za-z0-9._:-]+|[A-Za-z0-9_-]{24,}/gi))
+    if (!matches.length) continue
+    const rawLabel = segment.slice(0, matches[0].index ?? 0)
+    if (isNonCredentialImportLabel(rawLabel)) continue
+    const label = normalizeCredentialEntryLabel(rawLabel)
+    for (const match of matches) {
+      const apiKey = match[0]?.trim()
+      if (!apiKey || !looksLikeApiKey(apiKey)) continue
+      entries.push(label ? { apiKey, label } : { apiKey })
+    }
+  }
+
+  return entries
+}
+
+function normalizeCredentialEntryLabel(value: string): string | undefined {
+  const label = stripImportBoundary(value)
+    .replace(/^[\s:：=|｜\-–—]+|[\s:：=|｜\-–—]+$/g, '')
+    .trim()
+  if (!label || isCredentialMetadataLabel(label) || looksLikeApiKey(label) || /^https?:\/\//i.test(label)) return undefined
+  return label.length > 42 ? label.slice(0, 42).trim() : label
+}
+
+function isCredentialMetadataLabel(value: string): boolean {
+  const normalized = normalizeImportFieldKey(value).replace(/\d+$/, '')
+  return ['apikey', 'key', 'keys', 'token', 'tokens', 'secret', 'accesstoken', '秘钥', '密钥', '令牌'].includes(normalized)
+}
+
+function isNonCredentialImportLabel(value: string): boolean {
+  const normalized = normalizeImportFieldKey(stripImportBoundary(value).replace(/^[\s:：=|｜\-–—]+|[\s:：=|｜\-–—]+$/g, ''))
+  return ['model', 'models', '模型', '模型列表', 'baseurl', 'url', 'endpoint', 'protocol', 'wireprotocol', '站点', '地址', '接口', '协议', '接口协议'].includes(normalized)
+}
+
+function stripImportBoundary(value: string): string {
+  return value.replace(/^[\s"'“”‘’`]+|[\s"'“”‘’`]+$/g, '').trim()
+}
+
 function stringField(record: Record<string, unknown>, keys: string[]): string | undefined {
   for (const key of keys) {
     const value = record[key]
@@ -585,11 +644,40 @@ export function maskSecret(value: string): string {
 
 export function defaultProviderSyncPolicy() {
   return {
-    minDelayMs: 1200,
-    maxDelayMs: 1800,
+    minDelayMs: 120,
+    maxDelayMs: 260,
     timeoutMs: 18000,
-    strategy: 'sequential-low-rate' as const,
+    strategy: 'parallel-balanced' as const,
+    concurrency: 3,
   }
+}
+
+export function normalizeProviderSyncPolicy(policy: AIProvider['syncPolicy'] | undefined): NonNullable<AIProvider['syncPolicy']> {
+  if (!policy) return defaultProviderSyncPolicy()
+  if (
+    policy.strategy === 'sequential-low-rate' &&
+    policy.minDelayMs === 1200 &&
+    policy.maxDelayMs === 1800 &&
+    policy.timeoutMs === 18000
+  ) {
+    return defaultProviderSyncPolicy()
+  }
+  if (policy.strategy === 'parallel-balanced') {
+    return {
+      ...defaultProviderSyncPolicy(),
+      ...policy,
+      concurrency: normalizeSyncConcurrency(policy.concurrency),
+    }
+  }
+  return {
+    ...policy,
+    strategy: 'sequential-low-rate',
+  }
+}
+
+function normalizeSyncConcurrency(value: number | undefined): number {
+  if (typeof value !== 'number' || !Number.isFinite(value)) return 3
+  return Math.min(6, Math.max(1, Math.floor(value)))
 }
 
 function preset(
@@ -665,7 +753,7 @@ function hashKey(value: string): string {
 }
 
 function normalizeProviderImportInput(input: string, warnings: string[]): { text: string; sourceType: ProviderImportResult['sourceType'] } {
-  const trimmed = input.trim()
+  const trimmed = stripImportBoundary(input.trim())
   if (!trimmed) return { text: '', sourceType: 'text' }
   const jsonText = tryNormalizeJsonProviderImport(trimmed, warnings)
   if (jsonText) return { text: jsonText, sourceType: 'json' }
@@ -844,16 +932,13 @@ function expandProviderImportChunk(chunk: string): string[] {
   const fields = readImportFields(chunk)
   const name = pickField(fields, ['provider', 'name', '供应商', '服务商', '名称'])
   const modelsText = pickField(fields, ['models', 'model', '模型', '模型列表'])
-  const keys = [
-    ...pickFields(fields, ['apikey', 'api key', 'key', 'keys', 'token', 'tokens', '秘钥', '密钥', '令牌']),
-    ...extractLooseKeys(chunk),
-  ]
-  const seenKeys = new Set<string>()
-  const uniqueKeys = keys
-    .map((key) => key.trim())
-    .filter((key) => {
-      if (!key || seenKeys.has(key)) return false
-      seenKeys.add(key)
+  const credentialEntries = extractProviderImportCredentialEntries(chunk, fields)
+  const seenCredentials = new Set<string>()
+  const uniqueCredentials = credentialEntries
+    .map((entry) => ({ ...entry, apiKey: entry.apiKey.trim(), label: entry.label?.trim() }))
+    .filter((entry) => {
+      if (!entry.apiKey || seenCredentials.has(entry.apiKey)) return false
+      seenCredentials.add(entry.apiKey)
       return true
     })
 
@@ -877,15 +962,16 @@ function expandProviderImportChunk(chunk: string): string[] {
     name ? `Provider: ${name}` : '',
     `Base URL: ${endpoint.baseUrl}`,
     `Protocol: ${endpoint.wireProtocol}`,
-    ...uniqueKeys.map((key, index) => `Key${index + 1}: ${key}`),
+    ...uniqueCredentials.map((entry, index) => `${entry.label || `Key${index + 1}`}: ${entry.apiKey}`),
     modelsText ? `Models: ${modelsText}` : '',
   ].filter(Boolean).join('\n'))
 }
 
 function parseProviderImportChunk(chunk: string, index: number, warnings: string[]): AIProvider | null {
-  const fields = readImportFields(chunk)
-  const endpoints = extractLabeledProtocolBaseUrls(chunk)
-  const looseBaseUrl = extractLooseBaseUrl(chunk)
+  const normalizedChunk = stripImportBoundary(chunk)
+  const fields = readImportFields(normalizedChunk)
+  const endpoints = extractLabeledProtocolBaseUrls(normalizedChunk)
+  const looseBaseUrl = extractLooseBaseUrl(normalizedChunk)
   const explicitBaseUrl = pickField(fields, ['baseurl', 'base url', 'url', 'endpoint', '站点', '地址', '接口'])
 
   // When multiple same-host endpoints exist, prefer OpenAI-compatible for model discovery
@@ -907,14 +993,12 @@ function parseProviderImportChunk(chunk: string, index: number, warnings: string
   }
 
   const explicitName = pickField(fields, ['provider', 'name', '供应商', '服务商', '名称'])
-  const name = explicitName ?? inferProviderName(chunk, index, baseUrl)
+  const name = explicitName ?? inferProviderName(normalizedChunk, index, baseUrl)
   const wireProtocolHint = parseProviderWireProtocolText(pickField(fields, ['protocol', 'wireprotocol', 'wire protocol', '协议', '接口协议']))
     ?? inferExplicitProviderWireProtocolFromBaseUrl(baseUrl)
   const modelsText = pickField(fields, ['models', 'model', '模型', '模型列表'])
-  const keysText = [
-    ...pickFields(fields, ['apikey', 'api key', 'key', 'keys', 'token', 'tokens', '秘钥', '密钥', '令牌']),
-    ...extractLooseKeys(chunk),
-  ].join('\n')
+  const credentialEntries = extractProviderImportCredentialEntries(normalizedChunk, fields)
+  const keysText = credentialEntries.map((item) => item.apiKey).join('\n')
   const detection = detectProviderPreset({ baseUrl, name, apiKey: keysText })
   const presetId = resolveImportPresetId(detection, wireProtocolHint)
   const preset = getProviderPreset(presetId)
@@ -923,7 +1007,7 @@ function parseProviderImportChunk(chunk: string, index: number, warnings: string
   const tokenPlanRegion = isMimo ? inferProviderTokenPlanRegionFromBaseUrl(baseUrl) : undefined
   const wireProtocol = isMimo ? wireProtocolHint ?? inferProviderWireProtocolFromBaseUrl(baseUrl) : wireProtocolHint
   const models = parseModelList(modelsText)
-  const credentialGroups = parseCredentialGroups(keysText)
+  const credentialGroups = credentialEntriesToGroups(credentialEntries)
   const providerName = explicitName ?? (isMimo ? preset.name : name)
 
   if (!name && !baseUrl && !credentialGroups.length) {
@@ -975,6 +1059,19 @@ function readImportFields(chunk: string): Map<string, string[]> {
     fields.set('provider', [csvParts[0]])
   }
   return fields
+}
+
+function extractProviderImportCredentialEntries(chunk: string, fields: Map<string, string[]>): CredentialEntry[] {
+  const fieldEntries = pickFields(fields, ['apikey', 'api key', 'key', 'keys', 'token', 'tokens', '秘钥', '密钥', '令牌'])
+    .flatMap(extractCredentialEntries)
+  const looseEntries = extractCredentialEntries(chunk)
+  const seen = new Set<string>()
+  return [...fieldEntries, ...looseEntries].filter((entry) => {
+    const apiKey = entry.apiKey.trim()
+    if (!apiKey || seen.has(apiKey)) return false
+    seen.add(apiKey)
+    return true
+  })
 }
 
 function pickField(fields: Map<string, string[]>, keys: string[]): string | undefined {
@@ -1039,11 +1136,11 @@ function isImportMetadataField(value: string): boolean {
 function extractLabeledProtocolBaseUrls(chunk: string): Array<{ baseUrl: string; wireProtocol: ProviderWireProtocol }> {
   const endpoints: Array<{ baseUrl: string; wireProtocol: ProviderWireProtocol }> = []
   const seen = new Set<string>()
-  const pattern = /([^\n\r:：=]{0,80}(?:openai|anthropic|claude)[^\n\r:：=]{0,80})\s*[:：=]\s*(https?:\/\/[^\s,，;；]+)/gi
+  const pattern = /([^\n\r:：=]{0,80}(?:openai|anthropic|claude)[^\n\r:：=]{0,80})\s*[:：=]\s*(https?:\/\/[^\s,，;；"'“”‘’<>]+)/gi
   let match: RegExpExecArray | null
   while ((match = pattern.exec(chunk))) {
     const wireProtocol = protocolLabelWireProtocol(match[1] ?? '')
-    const baseUrl = match[2]?.trim()
+    const baseUrl = match[2] ? stripImportBoundary(match[2]) : ''
     if (!wireProtocol || !baseUrl) continue
     const key = `${wireProtocol}|${baseUrl.toLowerCase()}`
     if (seen.has(key)) continue
@@ -1061,20 +1158,21 @@ function protocolLabelWireProtocol(label: string): ProviderWireProtocol | undefi
 }
 
 function extractLooseBaseUrl(chunk: string): string | undefined {
-  return chunk.match(/https?:\/\/[^\s,，;；]+/i)?.[0]?.trim()
+  const match = chunk.match(/https?:\/\/[^\s,，;；"'“”‘’<>]+/i)?.[0]
+  return match ? stripImportBoundary(match) : undefined
 }
 
 function extractLooseKeys(chunk: string): string[] {
   // Remove URLs and protocol labels to avoid extracting them as keys
   const textWithoutUrls = chunk
-    .replace(/https?:\/\/[^\s,，;；]+/gi, ' ')
+    .replace(/https?:\/\/[^\s,，;；"'“”‘’<>]+/gi, ' ')
     .replace(/[^\n\r:：=]{0,80}(?:openai|anthropic|claude|compatible|compat|protocol|endpoint|api|base\s*url|接口|协议|兼容|入口|地址)[^\n\r:：=]{0,80}\s*[:：=]/gi, ' ')
   const matches = textWithoutUrls.match(/(?:sk|tp|ak|rk|pk|key|token)-[A-Za-z0-9._:-]+|[A-Za-z0-9_-]{24,}/g) ?? []
-  return matches.filter(looksLikeApiKey)
+  return matches.map(stripImportBoundary).filter(looksLikeApiKey)
 }
 
 function looksLikeApiKey(value: string): boolean {
-  const trimmed = value.trim()
+  const trimmed = stripImportBoundary(value.trim())
   if (/^https?:\/\//i.test(trimmed)) return false
   return /^(?:sk|tp|ak|rk|pk|key|token)-[A-Za-z0-9._:-]+$/i.test(trimmed) || /^[A-Za-z0-9_-]{24,}$/.test(trimmed)
 }

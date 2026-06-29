@@ -8,6 +8,15 @@ import { createAgentPlan } from '@/services/agent/agentPlanner'
 import { resolveAgentRunLimits } from '@/services/agent/agentPolicy'
 import { validateAgentWorkflowDefinition } from '@/services/agent/agentWorkflowDefinitions'
 import { formatAgentToolRequestIdentity } from '@/services/agent/agentToolIdentityUtils'
+import {
+  advanceAgentWorkflowRuntime,
+  agentWorkflowRuntimeTraceMetadata,
+  applyAgentWorkflowRuntimeToRun,
+  createAgentWorkflowRuntime,
+  observeAgentWorkflowRuntimeStep,
+  type AgentWorkflowRuntimeState,
+  type AgentWorkflowRuntimeTransitionReason,
+} from '@/services/agent/agentWorkflowRuntime'
 import { st } from '@/i18n/service'
 
 const RAG_EVIDENCE_MIN_CONFIDENCE = 0.5
@@ -39,15 +48,16 @@ export async function runAgenticWorkflow(input: RunAgenticWorkflowInput): Promis
     traces: [],
     startedAt,
   }
+  const runtime = createAgentWorkflowRuntime(run)
 
   if (input.signal?.aborted) {
     const progress = buildCancelledProgressMetadata(input.goal, 0, 0)
-    return completeRun(run, 'cancelled', 'cancelled', formatCancelledOutput('Agent workflow execution was cancelled before planning.', progress), undefined, limits, progress)
+    return completeRun(run, runtime, 'cancelled', 'cancelled', formatCancelledOutput('Agent workflow execution was cancelled before planning.', progress), undefined, limits, progress, undefined, 'cancelled')
   }
 
   const workflowDefinition = resolveExecutableWorkflowDefinition(input.workflowDefinition, input.manifests)
   if (input.workflowDefinition && !workflowDefinition) {
-    return completeRun(run, 'error', 'schema_invalid', 'Agent workflow definition failed validation.', undefined, limits)
+    return completeRun(run, runtime, 'error', 'schema_invalid', 'Agent workflow definition failed validation.', undefined, limits, undefined, undefined, 'definition-invalid')
   }
 
   const plan = createAgentPlan({
@@ -62,15 +72,19 @@ export async function runAgenticWorkflow(input: RunAgenticWorkflowInput): Promis
   run.traces.push(plan.classification.trace)
   run.traces.push(plan.trace)
   if (!plan.shouldRunWorkflow) {
-    return completeRun(run, 'done', undefined, 'Direct chat path selected by intent classification.', undefined, limits)
+    return completeRun(run, runtime, 'done', undefined, 'Direct chat path selected by intent classification.', undefined, limits, undefined, undefined, 'direct-chat')
   }
-  run.status = 'running'
+  applyAgentWorkflowRuntimeToRun(run, advanceAgentWorkflowRuntime(runtime, {
+    status: 'running',
+    reason: 'plan-ready',
+    at: startedAt,
+  }))
   const runtimeState: WorkflowRuntimeState = {}
 
   for (let index = 0; index < Math.min(plan.steps.length, limits.maxSteps); index += 1) {
     if (input.signal?.aborted) {
       const progress = buildCancelledProgressMetadata(input.goal, plan.steps.length, countCompletedSteps(run.steps), plan.steps)
-      return completeRun(run, 'cancelled', 'cancelled', formatCancelledOutput('Agent workflow execution was cancelled.', progress), undefined, limits, progress)
+      return completeRun(run, runtime, 'cancelled', 'cancelled', formatCancelledOutput('Agent workflow execution was cancelled.', progress), undefined, limits, progress, undefined, 'cancelled')
     }
 
     const planned = plan.steps[index]
@@ -93,26 +107,30 @@ export async function runAgenticWorkflow(input: RunAgenticWorkflowInput): Promis
       },
     })
     run.steps.push(step)
+    observeAgentWorkflowRuntimeStep(runtime, run.steps)
     run.traces.push(...step.trace)
 
     if (step.status === 'cancelled') {
       const progress = buildCancelledProgressMetadata(input.goal, plan.steps.length, countCompletedSteps(run.steps), plan.steps)
-      return completeRun(run, 'cancelled', 'cancelled', formatCancelledOutput(step.observation?.output, progress), undefined, limits, progress)
+      return completeRun(run, runtime, 'cancelled', 'cancelled', formatCancelledOutput(step.observation?.output, progress), undefined, limits, progress, undefined, 'cancelled', step)
     }
     if (step.observation?.errorCode === 'permission_required') {
       const pendingAction = buildPendingAction(run.id, input.goal, step)
-      return completeRun(run, 'waiting', 'permission_required', formatPendingActionOutput(pendingAction, step.observation.output), pendingAction, limits)
+      return completeRun(run, runtime, 'waiting', 'permission_required', formatPendingActionOutput(pendingAction, step.observation.output), pendingAction, limits, undefined, undefined, 'permission-required', step)
     }
     if (step.observation?.errorCode) {
       return completeRun(
         run,
+        runtime,
         'error',
         step.observation.errorCode,
         formatToolFailureDetails(step),
         undefined,
         limits,
         undefined,
-        buildFailureTraceMetadata(step)
+        buildFailureTraceMetadata(step),
+        'tool-error',
+        step
       )
     }
     mergeWorkflowRuntimeState(runtimeState, extractWorkflowRuntimeState(step.observation))
@@ -120,7 +138,7 @@ export async function runAgenticWorkflow(input: RunAgenticWorkflowInput): Promis
 
   if (plan.steps.length > limits.maxSteps) {
     const pendingAction = buildStepLimitPendingAction(run.id, input.goal, plan.steps, run.steps.length, buildWorkflowTraceMetadata(run.traces))
-    return completeRun(run, 'waiting', 'step_limit_reached', formatStepLimitOutput(pendingAction), pendingAction, limits)
+    return completeRun(run, runtime, 'waiting', 'step_limit_reached', formatStepLimitOutput(pendingAction), pendingAction, limits, undefined, undefined, 'step-limit')
   }
 
   const finalOutput = run.steps.map((step) => step.observation?.output).filter(Boolean).join('\n\n')
@@ -129,6 +147,7 @@ export async function runAgenticWorkflow(input: RunAgenticWorkflowInput): Promis
     const pendingAction = buildRagEvidencePendingAction(run.id, input.goal, ragEvidenceIssue)
     return completeRun(
       run,
+      runtime,
       'waiting',
       'evidence_insufficient',
       formatRagEvidenceRepairOutput(pendingAction, ragEvidenceIssue, finalOutput),
@@ -138,10 +157,11 @@ export async function runAgenticWorkflow(input: RunAgenticWorkflowInput): Promis
       {
         ...(ragEvidenceIssue.stepAttribution ?? {}),
         repairNextStep: pendingAction.blockedReason,
-      }
+      },
+      'evidence-insufficient'
     )
   }
-  return completeRun(run, 'done', undefined, finalOutput || 'Agent workflow completed.', undefined, limits)
+  return completeRun(run, runtime, 'done', undefined, finalOutput || 'Agent workflow completed.', undefined, limits, undefined, undefined, 'completed')
 }
 
 interface RagEvidenceQualityIssue {
@@ -322,24 +342,36 @@ function resolveExecutableWorkflowDefinition(
 
 function completeRun(
   run: AgentWorkflowRun,
+  runtime: AgentWorkflowRuntimeState,
   status: AgentWorkflowRun['status'],
   failureCode?: AgentWorkflowRun['failureCode'],
   finalOutput?: string,
   pendingAction?: AgentPendingAction,
   limits?: AgentRunLimits,
   progressMetadata?: AgentRunProgressTraceMetadata,
-  failureMetadata?: AgentFailureTraceMetadata
+  failureMetadata?: AgentFailureTraceMetadata,
+  transitionReason: AgentWorkflowRuntimeTransitionReason = status === 'done' ? 'completed' : status === 'cancelled' ? 'cancelled' : 'tool-error',
+  transitionStep?: AgentStep
 ): AgentWorkflowRun {
   const completedAt = Date.now()
+  observeAgentWorkflowRuntimeStep(runtime, run.steps)
+  applyAgentWorkflowRuntimeToRun(run, advanceAgentWorkflowRuntime(runtime, {
+    status,
+    reason: transitionReason,
+    at: completedAt,
+    failureCode,
+    pendingAction,
+    step: transitionStep,
+  }))
   const failureNextStep = status === 'error' ? resolveFailureNextStep(failureCode, finalOutput) : undefined
   const undoFollowUp = status === 'done' || status === 'error' ? buildAndroidUndoFollowUp(run) : undefined
   const stepStatusMetadata = buildStepStatusMetadata(run.steps)
   const workflowTraceMetadata = buildWorkflowTraceMetadata(run.traces)
+  const runtimeTraceMetadata = agentWorkflowRuntimeTraceMetadata(runtime)
   const rawOutput = status === 'error'
     ? formatFailureOutput(failureCode, finalOutput)
     : appendAndroidUndoFollowUp(finalOutput?.trim(), undoFollowUp)
   const output = finalizeAgentRunOutput(rawOutput, limits, failureNextStep)
-  run.status = status
   run.completedAt = completedAt
   run.failureCode = failureCode
   run.finalOutput = output
@@ -359,6 +391,7 @@ function completeRun(
       outputCharCount: output?.length ?? 0,
       ...stepStatusMetadata,
       ...workflowTraceMetadata,
+      ...runtimeTraceMetadata,
       pendingActionReason: pendingAction?.reason,
       ...(failureNextStep ? { failureNextStep } : {}),
       ...failureMetadata,
@@ -380,6 +413,7 @@ function completeRun(
       stepCount: run.steps.length,
       ...stepStatusMetadata,
       ...workflowTraceMetadata,
+      ...runtimeTraceMetadata,
       ...agentRunLimitMetadata(limits),
       ...(failureNextStep ? { failureNextStep } : {}),
       ...failureMetadata,
@@ -721,8 +755,8 @@ function buildAndroidPendingActionCopy(toolName: string | undefined, args: Recor
       }
     case 'android.alarm.open_create_intent':
       return {
-        title: st('messageBubble.androidPendingAlarmTitle', undefined, 'Open Android alarm editor'),
-        summary: st('messageBubble.androidPendingAlarmSummary', undefined, 'IsleMind opens the Android clock UI with the requested alarm fields. The alarm is created only after you confirm it in the system app.'),
+        title: st('messageBubble.androidPendingAlarmTitle', undefined, 'Create Android alarm'),
+        summary: st('messageBubble.androidPendingAlarmSummary', undefined, 'IsleMind asks Android Clock to create the alarm directly. If the Clock app requires confirmation, it opens the editor for you to confirm.'),
       }
     case 'android.notifications.open_settings':
       return {

@@ -9,7 +9,6 @@ import { useAppTheme } from '@/hooks/useAppTheme'
 import { AppIcon, appIconStroke } from '@/components/ui/AppIcon'
 import { IslePressable } from '@/components/ui/isle'
 import { IslePanel } from '@/components/ui/isle'
-import { normalizeStreamingMarkdown } from '@/utils/streamingMarkdown'
 
 interface MessageContentProps {
   content: string
@@ -142,8 +141,10 @@ function areMessageContentPropsEqual(previous: MessageContentProps, next: Messag
 
 function safeParseRichContent(content: string, t: TFunction, isStreaming: boolean): RichSegment[] {
   try {
-    const input = isStreaming ? normalizeStreamingMarkdown(content, true) : content
-    const segments = parseRichContent(input, t)
+    if (isStreaming) {
+      return [{ id: 'markdown-streaming', type: 'markdown', content }]
+    }
+    const segments = parseRichContent(content, t)
     return segments.length ? segments : [{ id: 'markdown-empty', type: 'markdown', content }]
   } catch {
     return [{ id: 'markdown-fallback', type: 'markdown', content }]
@@ -160,10 +161,23 @@ function RichMarkdown({ content, isUser, isStreaming }: { content: string; isUse
   const codeSurface = isUser ? userMessage.userActionBackground : colors.ui.code.background
   const mutedForeground = isUser ? userMessage.userForeground : colors.textTertiary
 
-  const normalizedContent = useMemo(
-    () => normalizeStreamingMarkdown(content, isStreaming),
-    [content, isStreaming]
-  )
+  if (isStreaming) {
+    return (
+      <View style={{ maxWidth: '100%', overflow: 'hidden' }}>
+        <Text
+          selectable
+          style={{
+            color: isUser ? userMessage.userForeground : colors.text,
+            fontSize: 15,
+            lineHeight: 23,
+            includeFontPadding: !isUser,
+          }}
+        >
+          {content}
+        </Text>
+      </View>
+    )
+  }
 
   return (
     <View style={{ maxWidth: '100%', overflow: 'hidden' }}>
@@ -268,7 +282,7 @@ function RichMarkdown({ content, isUser, isStreaming }: { content: string; isUse
           td: { borderColor: blockBorder, backgroundColor: blockSurface },
         }}
       >
-        {normalizedContent}
+        {content}
       </Markdown>
     </View>
   )
@@ -368,7 +382,7 @@ function SourceLineRows({
             {index + 1}
           </Text>
           <Text
-            selectable
+            selectable={false}
             style={{
               flex: 1,
               minWidth: 0,
