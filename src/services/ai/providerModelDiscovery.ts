@@ -1,5 +1,5 @@
 import type { AIModel, AIProvider, ModelReasoningMode, ProviderPresetId, ProviderType, ReasoningEffort } from '@/types'
-import { getProviderConfigIssue, mergeModelConfig, sortModelConfigs } from '@/types'
+import { getModelConfig, getProviderConfigIssue, mergeModelConfig, sortModelConfigs } from '@/types'
 import { ProviderHttpError } from '@/services/ai/providerOperationResult'
 import { fetchWithTimeout, safeResponseText } from '@/services/ai/providerHttp'
 import { parseProviderJson } from '@/services/ai/providerJsonUtils'
@@ -91,9 +91,13 @@ const METADATA_GATED_OPENAI_COMPATIBLE_PRESETS = new Set<ProviderPresetId>([
 export function mapOpenAICompatibleModels(json: OpenAIModelListResponse, providerType: ProviderType, options: OpenAIModelMappingOptions = {}): AIModel[] {
   const items = json.data?.filter((item) => isString(item.id)) ?? []
   const gateKnownDefaults = shouldGateOpenAICompatibleKnownDefaults(providerType, options)
+  const itemsById = new Map<string, OpenAIModelListItem>()
+  for (const item of items) {
+    const id = normalizeRemoteModelId(item.id!, providerType)
+    if (!itemsById.has(id)) itemsById.set(id, item)
+  }
   return sortModelConfigs(
-    dedupeModelIds(items.map((item) => normalizeRemoteModelId(item.id!, providerType))).map((id) => {
-      const remote = items.find((item) => normalizeRemoteModelId(item.id!, providerType) === id)
+    Array.from(itemsById.entries()).map(([id, remote]) => {
       const reasoningMode = openAICompatibleReasoningModeFromModel(remote, options)
       const supportsVision = supportsVisionFromOpenAIModel(remote)
       const supportsFiles = supportsFilesFromOpenAIModel(remote)
@@ -101,7 +105,7 @@ export function mapOpenAICompatibleModels(json: OpenAIModelListResponse, provide
       const supportedParameters = supportedParametersFromOpenAIModel(remote)
       const preferredEndpoint = preferredEndpointFromOpenAIModel(remote)
       const merged = mergeModelConfig(id, providerType, {
-        name: remote?.display_name || remote?.name,
+        name: normalizeRemoteModelDisplayName(remote?.id ?? id, id, remote, providerType),
         contextWindow: firstNumber(
           remote?.context_length,
           remote?.contextWindow,
@@ -164,9 +168,13 @@ export function getXiaomiMimoModelDiscoveryProvider(provider: AIProvider): AIPro
 }
 
 export function mapAnthropicModels(json: AnthropicModelListResponse): AIModel[] {
+  const itemsById = new Map<string, AnthropicModelListItem>()
+  for (const item of json.data ?? []) {
+    if (!isString(item.id) || itemsById.has(item.id)) continue
+    itemsById.set(item.id, item)
+  }
   return sortModelConfigs(
-    dedupeModelIds(json.data?.map((item) => item.id).filter(isString) ?? []).map((id) => {
-      const remote = json.data?.find((item) => item.id === id)
+    Array.from(itemsById.entries()).map(([id, remote]) => {
       return mergeModelConfig(id, 'anthropic', {
         name: remote?.display_name,
         contextWindow: remote?.max_input_tokens,
@@ -181,12 +189,13 @@ export function mapAnthropicModels(json: AnthropicModelListResponse): AIModel[] 
 }
 
 export function mapGoogleModels(json: GoogleModelListResponse): AIModel[] {
-  const remoteModels: { id: string; name?: string; contextWindow?: number; maxOutputTokens?: number }[] = []
+  const remoteModelsById = new Map<string, { id: string; name?: string; contextWindow?: number; maxOutputTokens?: number }>()
   for (const model of json.models ?? []) {
     if (!model.supportedGenerationMethods?.some((method) => method.includes('generateContent'))) continue
     const id = model.name?.replace(/^models\//, '')
     if (!isString(id)) continue
-    remoteModels.push({
+    if (remoteModelsById.has(id)) continue
+    remoteModelsById.set(id, {
       id,
       name: model.displayName,
       contextWindow: model.inputTokenLimit,
@@ -194,8 +203,7 @@ export function mapGoogleModels(json: GoogleModelListResponse): AIModel[] {
     })
   }
   return sortModelConfigs(
-    dedupeModelIds(remoteModels.map((model) => model.id)).map((id) => {
-      const remote = remoteModels.find((model) => model.id === id)
+    Array.from(remoteModelsById.entries()).map(([id, remote]) => {
       return mergeModelConfig(id, 'google', {
         name: remote?.name,
         contextWindow: remote?.contextWindow,
@@ -248,10 +256,113 @@ export function dedupeModelIds(models: string[]): string[] {
 
 export function normalizeRemoteModelId(modelId: string, providerType: ProviderType): string {
   const trimmed = modelId.trim()
-  if (providerType === 'xiaomi-mimo' && trimmed.startsWith('xiaomi/')) {
-    return trimmed.split('/').at(-1) ?? trimmed
+  const technicalId = extractTrailingTechnicalModelId(trimmed) ?? trimmed
+  if (providerType === 'xiaomi-mimo' && technicalId.startsWith('xiaomi/')) {
+    return technicalId.split('/').at(-1) ?? technicalId
   }
-  return trimmed
+  return technicalId
+}
+
+function normalizeRemoteModelDisplayName(rawModelId: string, normalizedModelId: string, model: OpenAIModelListItem | undefined, providerType: ProviderType): string | undefined {
+  const explicitName = firstStringValue(model?.display_name, model?.name)
+  const knownName = knownRemoteModelDisplayName(normalizedModelId, providerType)
+  if (extractTrailingTechnicalModelId(rawModelId) && knownName) return knownName
+
+  const source = explicitName ?? rawModelId
+  const canonical = canonicalizeRemoteModelDisplayName(stripTrailingTechnicalModelId(source))
+  if (!canonical) return undefined
+  if (!explicitName && !remoteModelIdLooksLikeDisplayLabel(rawModelId)) return undefined
+  if (knownName && modelNameLooksLikeTechnicalId(canonical)) return knownName
+  if (!knownName && modelNameLooksLikeTechnicalId(canonical) && canonical === canonical.toLowerCase()) return undefined
+  return canonical
+}
+
+function knownRemoteModelDisplayName(modelId: string, providerType: ProviderType): string | undefined {
+  const known = getModelConfig(modelId, providerType)
+  return known.source === 'built-in' ? known.name : undefined
+}
+
+function canonicalizeRemoteModelDisplayName(value: string): string {
+  const providerStripped = stripRedundantProviderPrefix(
+    value
+      .replace(/[\t\r\n]+/g, ' ')
+      .replace(/\s+/g, ' ')
+      .trim()
+  )
+  return providerStripped
+    .replace(/\bDeep\s*Seek\b|\bDeepseek\b/gi, 'DeepSeek')
+    .replace(/\bMoonshot\s*AI\b|\bMoonshotai\b/gi, 'Moonshot AI')
+    .replace(/\bZ[\s.-]*AI\b/gi, 'Z.ai')
+    .replace(/\bMini\s*Max\b|\bMinimax\b/gi, 'MiniMax')
+    .replace(/\bMulti\s+Agent\b/gi, 'Multi-Agent')
+    .replace(/\bNon\s+Reasoning\b/gi, 'Non-Reasoning')
+    .replace(/\bXhigh\b/gi, 'XHigh')
+    .replace(/\bGLM\s*[- ]\s*(\d)/gi, 'GLM-$1')
+    .replace(/\s+/g, ' ')
+    .trim()
+}
+
+function stripRedundantProviderPrefix(value: string): string {
+  const match = value.match(/^([^/]+?)\s*\/\s*(.+)$/)
+  if (!match) return value
+  const prefix = match[1]?.trim() ?? ''
+  const modelName = match[2]?.trim() ?? ''
+  if (isKnownProviderPrefix(prefix) && isRecognizedModelFamilyName(modelName)) return modelName
+  return value.replace(/\s*\/\s*/g, ' / ')
+}
+
+function remoteModelIdLooksLikeDisplayLabel(rawModelId: string): boolean {
+  const stripped = stripTrailingTechnicalModelId(rawModelId)
+  if (stripped !== rawModelId) return true
+  const match = stripped.match(/^([^/]+?)\s*\/\s*(.+)$/)
+  return Boolean(match && isKnownProviderPrefix(match[1] ?? '') && isRecognizedModelFamilyName(match[2] ?? ''))
+}
+
+function isKnownProviderPrefix(value: string): boolean {
+  return [
+    'anthropic',
+    'dashscope',
+    'deepseek',
+    'google',
+    'minimax',
+    'moonshot',
+    'moonshotai',
+    'openai',
+    'xai',
+    'zai',
+    'zhipuai',
+  ].includes(value.replace(/[\s._-]+/g, '').toLowerCase())
+}
+
+function isRecognizedModelFamilyName(value: string): boolean {
+  return /^(?:claude|deep\s*seek|deepseek|gemini|glm|gpt|grok|kimi|mini\s*max|minimax|mimo|moonshot|qwen)\b/i.test(value.trim())
+}
+
+function modelNameLooksLikeTechnicalId(value: string): boolean {
+  return /^[a-z0-9._:/-]+$/i.test(value.trim()) && /[-_/:]/.test(value)
+}
+
+function stripTrailingTechnicalModelId(value: string): string {
+  const technicalId = extractTrailingTechnicalModelId(value)
+  if (!technicalId) return value.trim()
+  return value.replace(/\s*\([^()]+\)\s*$/, '').trim()
+}
+
+function extractTrailingTechnicalModelId(value: string): string | undefined {
+  const candidate = value.trim().match(/\(([^()]+)\)\s*$/)?.[1]?.trim()
+  if (!candidate) return undefined
+  if (/\s/.test(candidate)) return undefined
+  if (!/[a-z0-9]/i.test(candidate)) return undefined
+  if (!/[._:/-]/.test(candidate)) return undefined
+  if (!/^[a-z0-9][a-z0-9._:/+-]*[a-z0-9]$/i.test(candidate)) return undefined
+  return candidate
+}
+
+function firstStringValue(...values: unknown[]): string | undefined {
+  for (const value of values) {
+    if (typeof value === 'string' && value.trim()) return value.trim()
+  }
+  return undefined
 }
 
 export function supportsVisionFromOpenAIModel(model?: OpenAIModelListItem): boolean | undefined {

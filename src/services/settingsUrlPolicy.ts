@@ -1,11 +1,12 @@
 import type { Settings } from '@/types'
 import { safeHttpUrl } from '@/utils/networkUrlSafety'
 
-type UrlBackedSettingsField = 'customSearchEndpoint' | 'localModelDownloadMirrorBaseUrl' | 'proxyBaseUrl'
+type UrlBackedSettingsField = 'customSearchEndpoint' | 'localModelDownloadMirrorBaseUrl' | 'proxyBaseUrl' | 'observabilitySinkEndpointUrl'
 
 const URL_BACKED_SETTINGS_FIELDS: UrlBackedSettingsField[] = [
   'customSearchEndpoint',
   'localModelDownloadMirrorBaseUrl',
+  'observabilitySinkEndpointUrl',
   'proxyBaseUrl',
 ]
 

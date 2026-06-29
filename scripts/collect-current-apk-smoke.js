@@ -10,13 +10,14 @@ const root = path.resolve(__dirname, '..')
 const evidenceDir = path.join(root, 'test-evidence', 'qa')
 const outputPath = path.join(evidenceDir, 'current-apk-smoke-results.json')
 const appPackageName = defaultReleaseAppPackageName
+const explicitDeviceRequested = Boolean(process.env.QA_DEVICE_SERIAL)
 const defaultDevice = process.env.QA_DEVICE_SERIAL || 'emulator-5554'
 const expectedApp = readExpectedAppConfig()
 const apkPath = resolveApkPath(expectedApp)
 
 function main() {
   fs.mkdirSync(evidenceDir, { recursive: true })
-  const device = resolveDevice(defaultDevice)
+  const device = resolveDevice(defaultDevice, { strict: explicitDeviceRequested })
   const apk = collectApkEvidence(apkPath)
   const result = {
     generatedAt: new Date().toISOString(),
@@ -45,7 +46,7 @@ function main() {
   if (!isPassing(result)) process.exitCode = 1
 }
 
-function resolveDevice(requested) {
+function resolveDevice(requested, options = {}) {
   const output = runCommand('adb', ['devices']) ?? ''
   const serials = output
     .split(/\r?\n/)
@@ -53,6 +54,7 @@ function resolveDevice(requested) {
     .filter(([serial, state]) => serial && state === 'device')
     .map(([serial]) => serial)
   if (serials.includes(requested)) return requested
+  if (options.strict) return null
   return serials[0] ?? null
 }
 

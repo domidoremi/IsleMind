@@ -21,12 +21,14 @@ export type RuntimeLogEvent =
   | 'circuit.breaker'
   | 'transport.fallback'
   | 'session.lease'
+  | 'session.affinity'
   | 'compact.request'
   | 'compact.usage'
   | 'payload.rule'
   | 'provider.compatibility'
   | 'provider.conformance'
   | 'route.decision'
+  | 'route.snapshot'
   | 'fallback.decision'
   | 'request.rectification'
   | 'access.policy'
@@ -219,6 +221,7 @@ function utf8ByteLength(value: string): number {
 }
 
 function isSensitiveKey(key: string): boolean {
+  if (/^credential[-_ ]?group[-_ ]?ids?$/i.test(key)) return false
   return /authorization|api[-_]?key|token|secret|password|credential|bearer/i.test(key)
 }
 
@@ -231,7 +234,16 @@ function summarizePayloadBody(value: unknown): unknown {
     return { redacted: true, length: value.length, keys: parseJsonKeys(value) }
   }
   if (Array.isArray(value)) return { redacted: true, itemCount: value.length }
-  if (value && typeof value === 'object') return { redacted: true, keys: Object.keys(value as Record<string, unknown>).sort() }
+  if (value && typeof value === 'object') {
+    const existingSummary = value as Record<string, unknown>
+    if (
+      existingSummary.redacted === true &&
+      (Array.isArray(existingSummary.keys) || typeof existingSummary.length === 'number' || typeof existingSummary.itemCount === 'number')
+    ) {
+      return value
+    }
+    return { redacted: true, keys: Object.keys(existingSummary).sort() }
+  }
   return value
 }
 

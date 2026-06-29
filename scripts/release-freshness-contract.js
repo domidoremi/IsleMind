@@ -90,7 +90,6 @@ function collectReleaseInputFiles(root) {
     path.join(root, 'assets', 'icon.png'),
     path.join(root, 'assets', 'adaptive-icon.png'),
     path.join(root, 'assets', 'adaptive-foreground.png'),
-    path.join(root, 'assets', 'splash-icon.png'),
     path.join(root, 'assets', 'favicon.png'),
   ]
   for (const dir of roots) {

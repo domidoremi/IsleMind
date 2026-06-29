@@ -39,6 +39,7 @@ function main() {
       name: `QA_MCP_ONLINE_${runToken}`,
       status: 'failed',
       emulatorUrl: null,
+      deviceUrl: null,
       methods: [],
       captures: {},
     },
@@ -47,6 +48,7 @@ function main() {
   }
 
   let worker = null
+  let reversedPort = null
   try {
     if (!device) throw new Error('No connected adb device was found for MCP smoke.')
     runCommand('adb', ['-s', device, 'logcat', '-c'])
@@ -65,6 +67,11 @@ function main() {
 
     worker = startMockMcpServer(requestLogPath)
     result.externalOnlineServer.emulatorUrl = `http://10.0.2.2:${worker.port}/mcp`
+    result.externalOnlineServer.deviceUrl = buildDeviceLoopbackUrl(device, worker.port)
+    if (!isEmulatorDevice(device)) {
+      runCommand('adb', ['-s', device, 'reverse', `tcp:${worker.port}`, `tcp:${worker.port}`])
+      reversedPort = worker.port
+    }
     runOnlineScenario(device, result)
     result.externalOnlineServer.methods = readJsonl(requestLogPath).map((row) => row.payload?.method).filter(Boolean)
     const requiredMethods = ['resources/list', 'prompts/list', 'tools/list', 'initialize']
@@ -74,6 +81,7 @@ function main() {
   } catch (error) {
     result.errors.push(error?.message ?? String(error))
   } finally {
+    if (reversedPort) runCommand('adb', ['-s', device, 'reverse', '--remove', `tcp:${reversedPort}`])
     if (worker) worker.instance.terminate()
   }
 
@@ -115,9 +123,14 @@ function runOfflineScenario(device, result) {
     sleep(2500)
     offline = captureStep(device, 'settings-mcp-offline-sync-failed')
   }
-  const offlineFailed = syncTapped && hasAnyText(offline.uiaText, ['MCP 同步失败', 'failed', 'Network request failed', 'HTTP'])
+  const offlineDisconnected = hasAnyText(offline.uiaText, ['未连接', 'Disconnected'])
+    && hasAnyText(offline.uiaText, [result.offlineServer.name, '工具 0', '资源 0', '提示词 0'])
+  const offlineFailed = syncTapped
+    && !hasErrorBoundary(offline.uiaText)
+    && (hasAnyText(offline.uiaText, ['MCP 同步失败', 'failed', 'Network request failed', 'HTTP']) || offlineDisconnected)
   result.offlineServer.captures.offlinePng = offline.png
   result.offlineServer.captures.offlineUia = offline.uia
+  result.offlineServer.captures.syncTapped = syncTapped
   result.offlineServer.checks.push({
     name: 'offline-sync-failure-visible',
     status: offlineFailed ? 'passed' : 'failed',
@@ -137,7 +150,7 @@ function runOfflineScenario(device, result) {
 function runOnlineScenario(device, result) {
   const added = addServerThroughUi(device, {
     name: result.externalOnlineServer.name,
-    url: result.externalOnlineServer.emulatorUrl,
+    url: result.externalOnlineServer.deviceUrl ?? result.externalOnlineServer.emulatorUrl,
     keyboardCaptureName: 'settings-mcp-online-keyboard-open',
     addedCaptureName: 'settings-mcp-online-added',
   })
@@ -157,7 +170,11 @@ function runOnlineScenario(device, result) {
   result.externalOnlineServer.captures.syncPng = online.png
   result.externalOnlineServer.captures.syncUia = online.uia
   result.externalOnlineServer.captures.syncTapped = syncTapped
-  result.externalOnlineServer.captures.syncSucceeded = syncTapped && hasAnyText(online.uiaText, ['MCP 已连接', '工具 1', '资源 1', '提示词 1', 'QA_MCP_ONLINE'])
+  result.externalOnlineServer.captures.syncSucceeded = syncTapped
+    && hasAnyText(online.uiaText, ['MCP 已连接', 'Connected', '已连接'])
+    && hasAnyText(online.uiaText, ['工具 1', 'Tools 1'])
+    && hasAnyText(online.uiaText, ['资源 1', 'Resources 1'])
+    && hasAnyText(online.uiaText, ['提示词 1', 'Prompts 1'])
 
   tapText(device, online.uiaText, ['知道了', 'OK', '关闭', 'Close'])
   sleep(800)
@@ -441,6 +458,14 @@ function resolveDevice(requested) {
     .map(([serial]) => serial)
   if (serials.includes(requested)) return requested
   return serials[0] ?? null
+}
+
+function isEmulatorDevice(device) {
+  return String(device ?? '').startsWith('emulator-')
+}
+
+function buildDeviceLoopbackUrl(device, port) {
+  return isEmulatorDevice(device) ? `http://10.0.2.2:${port}/mcp` : `http://127.0.0.1:${port}/mcp`
 }
 
 function runCommand(command, args) {

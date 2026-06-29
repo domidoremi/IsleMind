@@ -23,9 +23,16 @@ const evidenceDir = path.join(root, 'test-evidence', 'qa')
 const smokeDir = path.join(root, providerRuntimeAndroidEvidenceDirRelativePath)
 const outputPath = path.join(root, providerRuntimeAndroidResultRelativePath)
 const appPackageName = defaultReleaseAppPackageName
+const explicitDeviceRequested = Boolean(process.env.QA_DEVICE_SERIAL)
 const defaultDevice = process.env.QA_DEVICE_SERIAL || 'emulator-5554'
-const remoteFixturePath = '/sdcard/Download/islemind-provider-runtime-android.json'
+const fixtureFileName = 'islemind-provider-runtime-android.json'
+const remoteFixturePath = `/sdcard/Download/${fixtureFileName}`
 const runtimeLogEvidence = path.join(root, providerRuntimeAndroidRunLogRelativePath)
+const providerId = 'qa-provider-runtime-provider'
+const providerName = 'QA Provider Runtime Provider'
+const modelId = 'islemind-provider-runtime-chat'
+const providerBaseUrl = 'http://127.0.0.1:49501/v1'
+const recoveryConversationId = 'qa-provider-runtime-recovery'
 
 function main() {
   if (process.argv.includes('--self-test')) {
@@ -36,7 +43,7 @@ function main() {
   fs.mkdirSync(smokeDir, { recursive: true })
   const expected = readExpectedAppConfig()
   const apkPath = resolveApkPath(expected)
-  const device = resolveDevice(defaultDevice)
+  const device = resolveDevice(defaultDevice, { strict: explicitDeviceRequested })
   const result = createBaseResult({
     deviceSerial: device,
     apkPath: relative(apkPath),
@@ -79,6 +86,9 @@ function runProviderSettingsRoute(device) {
     expectedState: 'Providers route is visible with provider-management controls and no app error boundary.',
     fixEntry: 'src/components/providers/ProviderSettingsContent.tsx',
   })
+  runCommand('adb', ['-s', device, 'shell', 'am', 'force-stop', appPackageName])
+  sleep(600)
+  importRuntimeFixture(device, record)
   const capture = openUrlAndWaitForText(device, record, 'islemind://settings/providers', 'provider-runtime-settings-route', ['导入服务商', 'Import providers', '添加服务商', 'Add Provider'], 8, 1100)
   const ok = hasAnyText(capture.uiaText, ['供应商', 'Providers', 'プロバイダー'])
     && hasAnyText(capture.uiaText, ['导入服务商', 'Import providers', '批量导入', 'Batch Import', '添加服务商', 'Add Provider'])
@@ -123,6 +133,7 @@ function runChatModelSwitch(device) {
   openUrl(device, 'islemind://')
   sleep(2200)
   let capture = captureStep(device, record, 'provider-runtime-home')
+  capture = ensureChatTopBarVisible(device, record, capture, 'provider-runtime-home-topbar')
   const opened = tapText(device, capture.uiaText, ['模型和会话参数', 'Model and chat options'])
     || tapText(device, capture.uiaText, ['切换模型', 'Switch model'])
     || tapText(device, capture.uiaText, ['模型', 'Model'])
@@ -143,7 +154,8 @@ function runBlockedModelRecovery(device) {
   })
   openUrl(device, 'islemind://')
   sleep(1800)
-  const capture = captureStep(device, record, 'provider-runtime-blocked-model')
+  let capture = captureStep(device, record, 'provider-runtime-blocked-model')
+  capture = ensureChatTopBarVisible(device, record, capture, 'provider-runtime-blocked-model-topbar')
   const ok = hasAnyText(capture.uiaText, [
     '模型不可用',
     'Model unavailable',
@@ -251,12 +263,14 @@ function scenarioRecord(id, { expectedState, fixEntry }) {
 }
 
 function failedScenario(id, expectedState, actualState) {
+  const blockedReason = sanitizeEvidenceText(actualState)
   return {
     id,
-    status: 'failed',
-    steps: ['collector-start'],
+    status: 'blocked',
+    blockedReason,
+    steps: [{ name: 'collector-start', actualState: blockedReason }],
     expectedState,
-    actualState: sanitizeEvidenceText(actualState),
+    actualState: blockedReason,
     fixEntry: 'scripts/collect-provider-runtime-android.js',
     png: null,
     uia: null,
@@ -292,7 +306,7 @@ function createBaseResult({ deviceSerial, apkPath, packageName, expected = null 
   }
 }
 
-function resolveDevice(requested) {
+function resolveDevice(requested, options = {}) {
   const output = runCommand('adb', ['devices']) ?? ''
   const serials = output
     .split(/\r?\n/)
@@ -300,6 +314,7 @@ function resolveDevice(requested) {
     .filter(([serial, state]) => serial && state === 'device')
     .map(([serial]) => serial)
   if (serials.includes(requested)) return requested
+  if (options.strict) return null
   return serials[0] ?? null
 }
 
@@ -326,27 +341,155 @@ function readInstalledPackageInfo(device) {
 }
 
 function writeFixture(device) {
-  const fixturePath = path.join(smokeDir, 'islemind-provider-runtime-android.json')
+  const fixturePath = path.join(smokeDir, fixtureFileName)
+  const now = 1772100000000
   const fixture = {
     app: 'islemind',
     version: 1,
     exportedAt: Date.now(),
     settings: {
       language: 'zh-CN',
-      onboardingCompleted: true,
       runtimeLogEnabled: true,
+      defaultProvider: providerId,
+      defaultTemperature: 0.7,
+      defaultMaxTokens: 4096,
+      memoryEnabled: false,
+      knowledgeEnabled: false,
+      webSearchEnabled: false,
+      providerCatalogVersion: 1,
       providerAllowlist: [],
       providerBlocklist: [],
       modelAllowlist: [],
       modelBlocklist: [],
     },
-    conversations: [],
-    providers: [],
+    conversations: [
+      {
+        id: recoveryConversationId,
+        title: 'QA Provider Runtime Recovery',
+        providerId,
+        model: modelId,
+        providerModelMode: 'manual',
+        systemPrompt: '',
+        temperature: 0.7,
+        topP: 1,
+        reasoningEffort: 'medium',
+        maxTokens: 4096,
+        messages: [],
+        createdAt: now,
+        updatedAt: now,
+      },
+    ],
+    providers: [
+      {
+        id: providerId,
+        type: 'openai-compatible',
+        presetId: 'custom-openai-compatible',
+        detectedPresetId: 'custom-openai-compatible',
+        detectionStatus: 'manual',
+        name: providerName,
+        apiKey: '',
+        baseUrl: providerBaseUrl,
+        models: [modelId],
+        manualModels: [modelId],
+        modelAliases: [],
+        modelConfigs: [
+          {
+            id: modelId,
+            name: modelId,
+            provider: 'openai-compatible',
+            contextWindow: 32768,
+            maxTokens: 32768,
+            maxOutputTokens: 4096,
+            defaultMaxTokens: 4096,
+            supportsVision: false,
+            supportsFiles: false,
+          },
+        ],
+        credentialGroups: [],
+        enabled: true,
+        lastTestStatus: 'idle',
+        lastModelSyncStatus: 'idle',
+      },
+    ],
     skills: [],
     mcpServers: [],
   }
   fs.writeFileSync(fixturePath, `${JSON.stringify(fixture, null, 2)}\n`, 'utf8')
   runCommand('adb', ['-s', device, 'push', fixturePath, remoteFixturePath])
+}
+
+function importRuntimeFixture(device, record) {
+  openUrl(device, 'islemind://settings')
+  sleep(2200)
+  ensureSettingsVisible(device, record)
+  const pickerStart = tapSettingsImportJson(device, record)
+  const importDialog = hasAnyText(pickerStart.uiaText, ['导入完成', 'Import complete'])
+    ? pickerStart
+    : selectFixtureFileAndCaptureImportDialog(device, record)
+  if (!hasAnyText(importDialog.uiaText, ['导入完成', 'Import complete'])) {
+    throw new Error('Provider Runtime fixture import completion dialog was not visible.')
+  }
+  tapText(device, importDialog.uiaText, ['知道了', '我知道了', 'OK', 'Close'])
+  sleep(900)
+}
+
+function ensureSettingsVisible(device, record) {
+  let capture = captureStep(device, record, 'provider-runtime-import-settings-start')
+  if (hasAnyText(capture.uiaText, ['导入 JSON', 'AI 工作区就绪度', '导入 / 导出', 'Import JSON'])) return capture
+  return capture
+}
+
+function tapSettingsImportJson(device, record) {
+  for (let index = 0; index < 8; index += 1) {
+    const capture = captureStep(device, record, `provider-runtime-import-search-${index}`)
+    if (tapText(device, capture.uiaText, ['导入 JSON', 'Import JSON'])) {
+      sleep(1700)
+      const afterTap = captureStep(device, record, `provider-runtime-import-after-tap-${index}`)
+      if (isDocumentsUi(afterTap.uiaText) || hasAnyText(afterTap.uiaText, ['导入完成', 'Import complete'])) return afterTap
+    }
+    swipeUp(device)
+    sleep(350)
+  }
+  throw new Error('Could not find the Settings import JSON action for Provider Runtime fixture.')
+}
+
+function selectFixtureFileAndCaptureImportDialog(device, record) {
+  let searched = false
+  for (let index = 0; index < 8; index += 1) {
+    const capture = captureStep(device, record, `provider-runtime-file-picker-search-${index}`)
+    if (hasAnyText(capture.uiaText, ['导入完成', 'Import complete'])) return capture
+    if (!isDocumentsUi(capture.uiaText) && tapText(device, capture.uiaText, ['导入 JSON', 'Import JSON'])) {
+      sleep(1700)
+      continue
+    }
+    if (tapFileTitle(device, capture.uiaText, fixtureFileName)) {
+      sleep(2200)
+      return captureStep(device, record, 'provider-runtime-import-confirm')
+    }
+    if (!searched && isDocumentsUi(capture.uiaText)) {
+      searched = true
+      const searchedCapture = searchDocumentsUiFile(device, record, fixtureFileName)
+      if (searchedCapture) return searchedCapture
+    }
+    swipeUp(device)
+    sleep(350)
+  }
+  throw new Error('Could not find the Provider Runtime fixture in Android DocumentsUI.')
+}
+
+function searchDocumentsUiFile(device, record, fileName) {
+  let capture = captureStep(device, record, 'provider-runtime-file-picker-search-open')
+  if (!tapText(device, capture.uiaText, ['Search', '搜索', '検索'])) return null
+  sleep(700)
+  capture = captureStep(device, record, 'provider-runtime-file-picker-search-field')
+  tapFirstEditable(device, capture.uiaText)
+  sleep(300)
+  inputText(device, fileName)
+  sleep(1400)
+  capture = captureStep(device, record, 'provider-runtime-file-picker-search-result')
+  if (!tapFileTitle(device, capture.uiaText, fileName)) return null
+  sleep(2200)
+  return captureStep(device, record, 'provider-runtime-import-confirm')
 }
 
 function openUrl(device, url) {
@@ -373,11 +516,14 @@ function waitForText(device, record, name, labels, maxAttempts = 6, delayMs = 80
 function captureStep(device, record, name) {
   const png = path.join(smokeDir, `${name}.png`)
   const uia = path.join(smokeDir, `${name}.uia.xml`)
-  captureFileWithRetry(device, `/sdcard/${name}.png`, png, () => {
-    runCommand('adb', ['-s', device, 'shell', 'screencap', '-p', `/sdcard/${name}.png`])
+  const uniqueName = `${name}-${Date.now()}`
+  const remotePng = `/sdcard/${uniqueName}.png`
+  const remoteUia = `/sdcard/${uniqueName}.uia.xml`
+  captureFileWithRetry(device, remotePng, png, () => {
+    runCommand('adb', ['-s', device, 'shell', 'screencap', '-p', remotePng])
   })
-  captureFileWithRetry(device, `/sdcard/${name}.uia.xml`, uia, () => {
-    runCommand('adb', ['-s', device, 'shell', 'uiautomator', 'dump', `/sdcard/${name}.uia.xml`])
+  captureFileWithRetry(device, remoteUia, uia, () => {
+    runCommand('adb', ['-s', device, 'shell', 'uiautomator', 'dump', remoteUia])
   })
   const uiaText = fs.existsSync(uia) ? sanitizePersistedTextEvidence(uia) : ''
   const step = {
@@ -453,6 +599,13 @@ function tapFirstEditable(device, uiaText) {
   return true
 }
 
+function ensureChatTopBarVisible(device, record, capture, captureName) {
+  if (!hasAnyText(capture.uiaText, ['显示顶部栏', 'Show top bar'])) return capture
+  if (!tapText(device, capture.uiaText, ['显示顶部栏', 'Show top bar'])) return capture
+  sleep(900)
+  return captureStep(device, record, captureName)
+}
+
 function findTappableTextNode(nodes, label) {
   const clickable = nodes.filter((item) => item.enabled && item.clickable)
   const exactClickable = clickable.find((item) => item.text === label || item.contentDesc === label)
@@ -506,6 +659,57 @@ function tapBoundsAt(device, bounds, xRatio, yRatio) {
   runCommand('adb', ['-s', device, 'shell', 'input', 'tap', String(x), String(y)])
 }
 
+function tapFileTitle(device, uiaText, fileName) {
+  const nodes = parseNodes(uiaText)
+  const titleNodes = nodes
+    .filter((item) => item.enabled && item.text === fileName)
+    .map((item) => ({ item, bounds: parseBounds(item.bounds) }))
+    .filter(({ bounds }) => bounds && bounds.top > 300)
+    .sort((a, b) => a.bounds.top - b.bounds.top)
+  for (const { item: titleNode, bounds: titleBounds } of titleNodes) {
+    const card = nodes
+      .map((item) => ({ item, bounds: parseBounds(item.bounds) }))
+      .filter(({ item, bounds }) => item.enabled && item.clickable && bounds && boundsContains(bounds, titleBounds))
+      .sort((a, b) => boundsArea(a.bounds) - boundsArea(b.bounds))[0]
+    if (card?.bounds) {
+      const x = Math.round(card.bounds.left + (card.bounds.right - card.bounds.left) * 0.35)
+      const y = Math.round(card.bounds.top + (card.bounds.bottom - card.bounds.top) * 0.55)
+      runCommand('adb', ['-s', device, 'shell', 'input', 'tap', String(x), String(y)])
+      return true
+    }
+    tapBoundsCenter(device, titleNode.bounds)
+    return true
+  }
+  const previewNode = nodes.find((item) => item.enabled && item.clickable && item.contentDesc.includes(fileName))
+  const previewBounds = parseBounds(previewNode?.bounds)
+  if (!previewBounds) return false
+  runCommand('adb', [
+    '-s',
+    device,
+    'shell',
+    'input',
+    'tap',
+    String(Math.max(1, previewBounds.left - 80)),
+    String(Math.round((previewBounds.top + previewBounds.bottom) / 2)),
+  ])
+  return true
+}
+
+function inputText(device, value) {
+  runCommand('adb', ['-s', device, 'shell', 'input', 'text', escapeInputText(value)])
+}
+
+function escapeInputText(value) {
+  return String(value)
+    .replace(/%/g, '%25')
+    .replace(/\s/g, '%s')
+    .replace(/&/g, '\\&')
+    .replace(/</g, '\\<')
+    .replace(/>/g, '\\>')
+    .replace(/\(/g, '\\(')
+    .replace(/\)/g, '\\)')
+}
+
 function swipeUp(device) {
   runCommand('adb', ['-s', device, 'shell', 'input', 'swipe', '432', '1580', '432', '620', '450'])
 }
@@ -521,6 +725,18 @@ function hasErrorBoundary(uiaText) {
 function hasRuntimeFallbackEvidence(logText, uiaText) {
   return /fallback\.decision|runtime-fallback|transport\.fallback/i.test(logText)
     || hasAnyText(uiaText, ['fallback', 'Fallback', '降级', '运行时诊断', 'Runtime diagnostics'])
+}
+
+function isDocumentsUi(uiaText) {
+  return hasAnyText(uiaText, [
+    'com.google.android.documentsui',
+    'com.android.documentsui',
+    'Recent',
+    '最近',
+    'Search',
+    '搜索',
+    '検索',
+  ])
 }
 
 function collectRuntimeLogText(device) {
@@ -874,6 +1090,32 @@ function runSelfTest() {
   })
   if (diagnosticsIssues.length) {
     throw new Error(`Provider Runtime Android self-test rejected diagnostics summary: ${diagnosticsIssues.join('; ')}`)
+  }
+  const blockedNoDeviceResult = createBaseResult({
+    deviceSerial: null,
+    apkPath: 'dist-apk/IsleMind-self-test.apk',
+    packageName: appPackageName,
+    expected: fixture.expected,
+  })
+  for (const id of requiredProviderRuntimeAndroidScenarios) {
+    blockedNoDeviceResult.scenarios.push(failedScenario(id, 'Scenario was not executed.', 'No connected adb device was found.'))
+  }
+  finalizeResult(blockedNoDeviceResult)
+  if (blockedNoDeviceResult.passed !== false) throw new Error('Provider Runtime Android self-test accepted blocked no-device evidence as passing.')
+  if (!blockedNoDeviceResult.scenarios.every((scenario) => scenario.status === 'blocked' && scenario.blockedReason)) {
+    throw new Error('Provider Runtime Android self-test did not mark no-device scenarios as blocked with a reason.')
+  }
+  if (!blockedNoDeviceResult.contractIssues.some((issue) => issue.includes('does not record deviceSerial'))) {
+    throw new Error('Provider Runtime Android self-test did not keep device precondition failures in blocked evidence.')
+  }
+  if (blockedNoDeviceResult.contractIssues.some((issue) => issue.includes('referenced png evidence is missing') || issue.includes('referenced uia evidence is missing') || issue.includes('step 1 is not an object'))) {
+    throw new Error(`Provider Runtime Android self-test kept capture-evidence noise for blocked no-device scenarios: ${blockedNoDeviceResult.contractIssues.join('; ')}`)
+  }
+  if (blockedNoDeviceResult.diagnostics?.blockedScenarioCount !== requiredProviderRuntimeAndroidScenarios.length) {
+    throw new Error('Provider Runtime Android self-test did not summarize blocked no-device scenarios.')
+  }
+  if (!blockedNoDeviceResult.diagnostics?.blockedScenarioIds?.includes('provider-settings-route')) {
+    throw new Error('Provider Runtime Android self-test did not expose blocked scenario ids.')
   }
   const finalizedMissingDevice = finalizeResult(createBaseResult({
     deviceSerial: null,

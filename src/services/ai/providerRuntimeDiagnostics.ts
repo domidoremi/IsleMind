@@ -16,6 +16,7 @@ import {
 } from '@/services/ai/providerCompatibilityContract'
 import type { ProviderRouteDecision } from '@/services/ai/providerRouter'
 import type { TransportSelection } from '@/services/ai/transport/transportSelector'
+import { emitRuntimeEvent } from '@/services/runtimeEvents'
 import { appendRuntimeLog } from '@/services/runtimeLog'
 import type { ProcessTrace, ProviderCapabilities } from '@/types'
 
@@ -184,6 +185,7 @@ export function buildProviderConformanceLogData(req: ProviderRuntimeRequestLogLi
     protocol: result.manifest.protocol,
     source: result.manifest.source,
     reasoning: result.reasoning,
+    reasoningResolution: result.reasoningResolution,
     requestedModalities: result.requestedModalities,
     removedParams: result.removedParams,
     adjustedParams: result.adjustedParams,
@@ -289,7 +291,23 @@ export function buildProviderRouteDecisionLogData(req: ProviderRuntimeRequestLog
 
 export async function logProviderRouteDecision(req: ProviderRuntimeRequestLogLike, result: ProviderRouteDecision): Promise<void> {
   if (!result.blocked && !result.warnings.length && !req.settings?.runtimeLogEnabled) return
-  await appendRuntimeLog('route.decision', buildProviderRouteDecisionLogData(req, result), runtimeLogOptions(req))
+  await emitRuntimeEvent({
+    event: 'provider.route.decided',
+    conversationId: req.conversationId,
+    providerId: req.provider.id,
+    model: req.model,
+    data: {
+      requestedModel: req.requestedModel,
+      blocked: result.blocked,
+      blockReasons: result.blockReasons,
+      warnings: result.warnings,
+      protocol: result.protocol,
+      capabilitySource: result.capabilitySource,
+    },
+    legacyEvent: 'route.decision',
+    legacyData: buildProviderRouteDecisionLogData(req, result),
+    options: runtimeLogOptions(req),
+  })
 }
 
 export function buildProxyPolicyLogData(req: ProviderRuntimeRequestLogLike, result: ProxyPolicyDecision): Record<string, unknown> {
@@ -299,11 +317,32 @@ export function buildProxyPolicyLogData(req: ProviderRuntimeRequestLogLike, resu
     applied: result.applied,
     reason: result.reason,
     endpointHost: result.endpointHost,
+    route: result.route,
+    failover: result.failover,
+    health: result.health,
+    evidence: result.evidence,
   }
 }
 
 export async function logProxyPolicy(req: ProviderRuntimeRequestLogLike, result: ProxyPolicyDecision): Promise<void> {
-  await appendRuntimeLog('proxy.policy', buildProxyPolicyLogData(req, result), runtimeLogOptions(req))
+  await emitRuntimeEvent({
+    event: 'provider.proxy.decided',
+    conversationId: req.conversationId,
+    providerId: req.provider.id,
+    model: req.model,
+    data: {
+      mode: result.mode,
+      applied: result.applied,
+      reason: result.reason,
+      endpointHost: result.endpointHost,
+      route: result.route,
+      failover: result.failover,
+      health: result.health,
+    },
+    legacyEvent: 'proxy.policy',
+    legacyData: buildProxyPolicyLogData(req, result),
+    options: runtimeLogOptions(req),
+  })
 }
 
 export function buildUpstreamRequestLogData(

@@ -75,10 +75,11 @@ function useRuntimeDeepLinks(ready: boolean) {
       const target = redirectSystemPath({ path: url, initial: false })
       if (!shouldHandleRuntimeRoute(target)) return
       requestAnimationFrame(() => {
-        if (target === '/settings/providers') router.push('/settings')
+        const targetRoute = target.split('?')[0]
+        if (targetRoute === '/settings/providers') router.push('/settings')
         setTimeout(() => {
           router.push(target)
-        }, target === '/settings/providers' ? 32 : 0)
+        }, targetRoute === '/settings/providers' ? 32 : 0)
       })
     })
     return () => {
@@ -88,11 +89,13 @@ function useRuntimeDeepLinks(ready: boolean) {
 }
 
 function shouldHandleRuntimeRoute(target: string) {
-  return target === '/' ||
-    target === '/conversations' ||
-    target === '/settings' ||
-    target === '/settings/providers' ||
-    /^\/chat\/[^/]+$/.test(target)
+  const route = target.split('?')[0]
+  return route === '/' ||
+    route === '/conversations' ||
+    route === '/settings' ||
+    /^\/settings\/(?:context|memory|knowledge|preferences|skills|mcp|providers)$/.test(route) ||
+    route === '/source' ||
+    /^\/chat\/[^/]+$/.test(route)
 }
 
 function BootFallback() {

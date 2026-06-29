@@ -129,6 +129,7 @@ function validateProviderRuntimeScenarioState(id, scenario, options = {}) {
   const issues = []
   if (!scenario || typeof scenario !== 'object' || Array.isArray(scenario)) return [`${scenarioLabel} is not an object`]
   if (scenario.status !== 'passed') issues.push(`${scenarioLabel} did not pass`)
+  if (scenario.status === 'blocked' && !scenario.blockedReason) issues.push(`${scenarioLabel} does not record blockedReason`)
   if (!scenario.expectedState) issues.push(`${scenarioLabel} does not record expectedState`)
   if (!scenario.actualState) issues.push(`${scenarioLabel} does not record actualState`)
   if (!scenario.fixEntry) issues.push(`${scenarioLabel} does not record fixEntry`)
@@ -195,6 +196,7 @@ function isProviderRuntimeScenarioStepsPassing(id, steps, options = {}) {
 function validateProviderRuntimeScenario(id, scenario, options = {}) {
   const issues = validateProviderRuntimeScenarioState(id, scenario, options)
   if (!scenario || typeof scenario !== 'object' || Array.isArray(scenario)) return issues
+  if (scenario.status === 'blocked') return issues
   issues.push(...validateProviderRuntimeScenarioEvidence(id, scenario, options))
   issues.push(...validateProviderRuntimeScenarioSteps(id, scenario.steps, options))
   if (id === 'provider-import-keyboard') {
@@ -452,6 +454,7 @@ function summarizeProviderRuntimeAndroidDiagnostics(result, options = {}) {
     ? result.scenarios.filter((scenario) => scenario && typeof scenario === 'object')
     : []
   const failedScenarios = []
+  const blockedScenarios = []
   let passedScenarioCount = 0
   for (const id of requiredProviderRuntimeAndroidScenarios) {
     const scenario = scenarios.find((item) => item.id === id)
@@ -459,12 +462,14 @@ function summarizeProviderRuntimeAndroidDiagnostics(result, options = {}) {
       passedScenarioCount += 1
       continue
     }
-    failedScenarios.push({
+    const failedScenario = {
       id,
       status: scenario?.status ?? 'missing',
       actualState: scenario?.actualState ? String(scenario.actualState).slice(0, 160) : 'missing',
       fixEntry: scenario?.fixEntry ?? null,
-    })
+    }
+    failedScenarios.push(failedScenario)
+    if (scenario?.status === 'blocked') blockedScenarios.push(failedScenario)
   }
   const errors = Array.isArray(result?.errors) ? result.errors : []
   const sensitiveData = result?.sensitiveData && typeof result.sensitiveData === 'object'
@@ -480,6 +485,9 @@ function summarizeProviderRuntimeAndroidDiagnostics(result, options = {}) {
     failedScenarioCount: requiredProviderRuntimeAndroidScenarios.length - passedScenarioCount,
     failedScenarioIds: failedScenarios.map((scenario) => scenario.id),
     failedScenarios,
+    blockedScenarioCount: blockedScenarios.length,
+    blockedScenarioIds: blockedScenarios.map((scenario) => scenario.id),
+    blockedScenarios,
     sensitiveData: {
       fullCredentialLeak: sensitiveData.fullCredentialLeak === true,
       scannedFiles: Number.isInteger(sensitiveData.scannedFiles) ? sensitiveData.scannedFiles : 0,

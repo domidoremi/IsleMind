@@ -1,31 +1,23 @@
-import type { AIModel, Attachment, AIProvider, ChatErrorCode, MessageCitation, MessageUsage, ProcessTrace, ProviderModelTestCapabilityCheck, ProviderOperationCode, ProviderType, ReasoningEffort, RetrievalSource, WebSearchMode } from '@/types'
+import type { AIModel, Attachment, AIProvider, MessageCitation, MessageUsage, ProcessTrace, ProviderModelTestCapabilityCheck, ProviderType, ReasoningEffort, RetrievalSource, WebSearchMode } from '@/types'
 import { getModelConfig, getProviderConfigIssue } from '@/types'
 import { st } from '@/i18n/service'
 import { getSecureApiKey } from './secureKey'
-import { chooseCredentialForModel, findCredentialGroupIdForKey, runCredentialGroupModelSync, updateCredentialGroupHealth } from './providerCredentials'
+import { chooseCredentialForModel, findCredentialGroupIdForKey, runCredentialGroupModelSync } from './providerCredentials'
 import { modelDisallowsAnthropicSampling } from '@/utils/modelReasoning'
 import { evaluatePayloadRules } from '@/services/ai/policy/payloadRules'
 import { resolveProxyPolicy } from '@/services/ai/policy/proxyPolicy'
 import { mergeRuntimeAliasAccessPolicy, resolveProviderModelAccess, resolveProviderModelAliasAccess } from '@/services/ai/policy/providerModelAccess'
 import { ProviderHttpError, classifyHttpStatus, failure, formatProviderHttpError, providerFetchFailure, success, type ProviderOperationResult } from '@/services/ai/providerOperationResult'
 import { selectUpstreamTransport } from '@/services/ai/transport/transportSelector'
-import { acquireSessionLease } from '@/services/ai/transport/sessionLeasePool'
-import { runResponsesWebSocketTransport } from '@/services/ai/transport/responsesWebSocketTransport'
-import { appendRuntimeLog } from '@/services/runtimeLog'
 import { resolveProviderModelAlias } from '@/utils/providerModels'
 import type { ProviderConformanceResult, ProviderStructuredOutputRequest } from '@/services/ai/providerConformance'
 import { resolveProviderCapabilityManifest, resolveProviderRequestConformance, supportsNativeProviderTools } from '@/services/ai/providerConformance'
 import type { ProviderRouteContext } from '@/services/ai/providerRouter'
 import { resolveProviderRoute } from '@/services/ai/providerRouter'
-import { buildProviderFallbackCandidates } from '@/services/ai/providerFallbackCandidates'
 
 export type { ProviderOperationResult } from '@/services/ai/providerOperationResult'
-import type { ProviderFailoverDecision, ProviderFailoverInput, ProviderFailoverRoute } from '@/services/ai/providerFailover'
-import { classifyProviderFailure, resolveFailoverDecision } from '@/services/ai/providerFailover'
-import { indexProviderHealthRecords, providerHealthKey, recordProviderFailure, recordProviderSuccess } from '@/services/ai/providerHealth'
-import { loadProviderHealthSnapshot, mergeProviderHealthRecords } from '@/services/ai/providerHealthStore'
+import type { ProviderFailoverInput } from '@/services/ai/providerFailover'
 import {
-  assembleProviderRoute,
   defaultOpenAICompatibleBaseUrl,
   getProviderApiEndpoint,
   normalizeProviderBaseUrl,
@@ -38,40 +30,32 @@ import {
   type AnthropicModelListItem,
 } from '@/services/ai/providerModelDiscovery'
 import { toAnthropicContentBlocks, toGoogleContentParts, toTextContent } from '@/services/ai/providerContentParts'
-import { dedupeCitations, extractCitationsFromText, extractProviderCitationsFromSse, type ProviderCitationSource } from '@/services/ai/providerCitations'
 import { normalizeAnthropicThinking } from '@/services/ai/providerAnthropicThinking'
 import { anthropicAttachmentPart, anthropicNativeWebSearchTool } from '@/services/ai/providerAnthropicRequest'
-import { mergeAnthropicReplayContentBlocks, sanitizeAnthropicReplayContentBlocks } from '@/services/ai/providerAnthropicReplay'
+import { sanitizeAnthropicReplayContentBlocks } from '@/services/ai/providerAnthropicReplay'
 import { rectifyAnthropicRequestBody } from '@/services/ai/providerAnthropicRectification'
 import { optimizeRequestBody as optimizeProviderRequestBody } from '@/services/ai/providerRequestOptimization'
-import { fallbackProvidersForRequest, providerForRuntimeFallback, requiredFallbackCapabilities, retryAfterMsFromFailure, routeForRuntimeFallback } from '@/services/ai/providerRuntimeFallback'
-import { logRuntimeFallbackDecision, recordRuntimeFallbackFailure, recordRuntimeFallbackSuccess } from '@/services/ai/providerRuntimeFallbackLogging'
-import { providerRuntimeError, runStreamTask, withCredentialGroup, type ProviderRuntimeError } from '@/services/ai/providerRuntimeResult'
-import { dedupeTraces, splitSseBuffer } from '@/services/ai/providerStreamUtils'
+import type { ProviderRuntimeError } from '@/services/ai/providerRuntimeResult'
 import { fetchChatStreamWithTimeout, fetchWithTimeout, safeResponseText } from '@/services/ai/providerHttp'
 import { stringValue } from '@/services/ai/providerJsonUtils'
-import { parseProviderBufferedStreamResponse, parseProviderNonStreamingResponse, parseProviderNonStreamingText, providerReasoningResponseCanBeParsed, withProviderTextToolCallFallback } from '@/services/ai/providerResponseParsing'
-import { mergeOpenAIResponseReplayItems } from '@/services/ai/providerOpenAIReplay'
+import { parseProviderNonStreamingText } from '@/services/ai/providerResponseParsing'
 import { extractAnthropicText, extractGoogleText } from '@/services/ai/providerResponseText'
 import { mergeProviderToolDeclarations } from '@/services/ai/providerToolDeclarations'
 import { cloneOpenAIResponsesInputItems, hasOpenAIResponsesFunctionCallItem, toOpenAIChatToolCall, toOpenAIResponsesFunctionCallInput } from '@/services/ai/providerToolReplay'
-import { createProviderTrace } from '@/services/ai/providerTraceUtils'
-import { createProviderTextToolCallStreamFilter, executableProviderToolCalls, mergeProviderToolCallParts, type ProviderToolCall } from '@/services/ai/providerToolCalls'
-import { filterProviderStructuredOutputToolCalls, providerStructuredOutputToolCallText, providerStructuredOutputToolName, providerStructuredOutputToolSchema } from '@/services/ai/providerStructuredOutput'
+import type { ProviderToolCall } from '@/services/ai/providerToolCalls'
+import { providerStructuredOutputToolName, providerStructuredOutputToolSchema } from '@/services/ai/providerStructuredOutput'
 import { parseProviderStreamChunk, parseProviderStreamEvent, type ParsedStreamChunk } from '@/services/ai/providerStreamParsing'
 import { getModelTestMaxTokens, getModelTestReasoningEffort, reduceModelTestBody } from '@/services/ai/providerModelTest'
-import { createRuntimeFallbackTrace, createStreamModeTrace, describeRequestRectification, emitRuntimeGovernanceTrace, logPayloadPolicy, logProviderCompatibility, logProviderConformance, logProviderRouteDecision, logProxyPolicy, logUpstreamRequest, runtimeLogOptions } from '@/services/ai/providerRuntimeDiagnostics'
-import { assertProviderCircuitClosed, delayProviderRetry, logProviderRetryAttempt, providerCircuitKey, providerRetryDelayMs, recordProviderCircuitFailure, recordProviderCircuitSuccess, resolveProviderMaxRetries, resolveProviderRequestTimeoutMs } from '@/services/ai/providerRuntimeRetry'
-import { isMiniMaxProvider, isPerplexityProvider } from '@/services/ai/providerIdentity'
-import { endpointHost, resolveNonStreamingProviderEndpoint, toWebSocketUrl } from '@/services/ai/providerEndpointUtils'
+import { buildProviderProtocolBody, resolveProviderProtocolAdapter } from '@/services/ai/providerProtocolAdapter'
+import { prepareProviderRuntimePipeline, prepareHttpJsonRequest } from '@/services/ai/providerRuntimePipeline'
+import { emitProviderRuntimeGatewayOutcome } from '@/services/ai/providerRuntimeGateway'
+import { executeProviderRuntimeChat, fetchChatStreamWithRetry, rectifyOpenAICompatibleRequestBody, rectifyXiaomiMimoThinkingRequestBody, rectifyXiaomiMimoWebSearchRequestBody, resolveRuntimeFallbackPlan, type RuntimeFallbackPlanInput } from '@/services/ai/providerRuntimeExecutor'
 import { fallbackModel, pickEmbeddingModel } from '@/services/ai/providerDefaultModels'
 import { arrayBufferToBase64 } from '@/services/ai/providerBinaryUtils'
-import { clamp01 } from '@/services/ai/providerNumberUtils'
 import { getHeaders } from '@/services/ai/providerHeaders'
 import { getHostedProviderSupportIssue } from '@/services/ai/providerHostedBoundary'
-import { isBedrockRuntimeProvider, prepareBedrockRuntimeInvokeModelRequest } from '@/services/ai/providerAwsBedrockRouting'
-import { getWireProviderType, isAnthropicWireRequest } from '@/services/ai/providerWireProtocol'
-import { clampMaxTokens, isXiaomiMimoThinkingActive, normalizeTemperature, normalizeXiaomiMimoThinking, supportsSamplingControls } from '@/services/ai/providerRequestParameters'
+import { getWireProviderType } from '@/services/ai/providerWireProtocol'
+import { clampMaxTokens, isXiaomiMimoThinkingActive, normalizeXiaomiMimoThinking, resolveProviderRequestParameters } from '@/services/ai/providerRequestParameters'
 import { isKimiSamplingLocked, normalizeDashScopeThinking, normalizeDeepSeekThinking, normalizeKimiPreservedThinking, normalizeKimiThinking, normalizeMiniMaxThinking, normalizeSiliconFlowThinking, shouldRequestMiniMaxReasoningSplit } from '@/services/ai/providerOpenAICompatibleThinking'
 import { normalizeGoogleThinkingConfig } from '@/services/ai/providerGoogleThinking'
 import { googleAttachmentPart, googleNativeWebSearchTool } from '@/services/ai/providerGoogleRequest'
@@ -98,27 +82,6 @@ export interface ProviderModelTestResult {
 
 export type { ProviderRuntimeError } from '@/services/ai/providerRuntimeResult'
 
-function providerOperationCodeToChatErrorCode(code: ProviderOperationCode): ChatErrorCode {
-  switch (code) {
-    case 'missing_key':
-    case 'credential_mismatch':
-    case 'bad_auth':
-    case 'bad_base_url':
-    case 'model_unavailable':
-    case 'network_error':
-    case 'timeout':
-    case 'rate_limited':
-    case 'max_tokens_exceeded':
-      return code
-    case 'models_endpoint_unavailable':
-      return 'model_unavailable'
-    case 'ok':
-    case 'empty_models':
-    case 'unknown':
-      return 'unknown'
-  }
-}
-
 export interface ChatCompletionResult {
   text: string
   usage?: MessageUsage
@@ -130,6 +93,8 @@ export interface ChatCompletionResult {
   providerContentBlocks?: Record<string, unknown>[]
   credentialGroupId?: string
   responseId?: string
+  remoteCompactFallbackUsed?: boolean
+  remoteCompactFallbackReason?: string
 }
 
 export interface StreamHandle {
@@ -159,6 +124,7 @@ export interface ChatRequest {
   systemPrompt?: string
   temperature?: number
   topP?: number
+  topK?: number
   reasoningEffort?: ReasoningEffort
   maxTokens?: number
   attachments?: Attachment[]
@@ -182,6 +148,8 @@ export interface ChatRequest {
     runtimeLogMaxBytes?: number
     sessionConcurrencyLimit?: number
     sessionQueueTimeoutMs?: number
+    sessionAffinityEnabled?: boolean
+    sessionAffinityTtlMs?: number
       remoteCompactMode?: 'off' | 'auto' | 'required'
       remoteCompactThreshold?: number
       remoteCompactThresholdTokens?: number
@@ -201,6 +169,11 @@ export interface ChatRequest {
     modelTestCheckParameters?: boolean
   }
   remoteCompactEligible?: boolean
+  remoteCompactFallback?: {
+    messages: { role: 'user' | 'assistant'; content: string }[]
+    contextPrompt: string
+    trace?: Record<string, unknown>
+  }
   previousResponseId?: string
   requestedModel?: string
   fallbackProviders?: AIProvider[]
@@ -304,6 +277,10 @@ export function mergeAliasAccessPolicyForTest(
 
 export function resolveProxyPolicyForTest(input: Parameters<typeof resolveProxyPolicy>[0]) {
   return resolveProxyPolicy(input)
+}
+
+export function resolveProviderProtocolAdapterForTest(req: ChatRequest) {
+  return resolveProviderProtocolAdapter(req)
 }
 
 export function optimizeRequestBodyForTest(body: Record<string, unknown>, req: ChatRequest) {
@@ -438,12 +415,16 @@ function buildOpenAIBody(req: ChatRequest) {
     kimiThinking?.type === 'enabled' ||
     kimiSamplingLocked ||
     isXiaomiMimoThinkingActive(req)
-  const samplingControlsSupported = supportsSamplingControls(req) && !compatibleReasoningEnabled
-  const temperature = samplingControlsSupported ? normalizeTemperature(req) : undefined
-  if (temperature !== undefined) {
-    body.temperature = temperature
+  const maxTokensKey = getOpenAIChatMaxTokensField(req)
+  const requestParameters = resolveProviderRequestParameters(req, {
+    omitSampling: compatibleReasoningEnabled,
+    maxTokenParameterNames: [maxTokensKey],
+  })
+  if (requestParameters.temperature !== undefined) {
+    body.temperature = requestParameters.temperature
   }
-  if (req.topP !== undefined && samplingControlsSupported) body.top_p = clamp01(req.topP)
+  if (requestParameters.topP !== undefined) body.top_p = requestParameters.topP
+  if (requestParameters.topK !== undefined) body.top_k = requestParameters.topK
   if (deepSeekThinking) {
     body.thinking = { type: deepSeekThinking.type }
     if (deepSeekThinking.effort) body.reasoning_effort = deepSeekThinking.effort
@@ -463,8 +444,7 @@ function buildOpenAIBody(req: ChatRequest) {
     if (mimoThinking) body.thinking = mimoThinking
   }
 
-  const maxTokensKey = getOpenAIChatMaxTokensField(req)
-  body[maxTokensKey] = clampMaxTokens(req)
+  if (requestParameters.maxTokens !== undefined) body[maxTokensKey] = requestParameters.maxTokens
 
   return body
 }
@@ -682,9 +662,12 @@ function buildAnthropicBody(req: ChatRequest) {
   const thinkingConfig = normalizeAnthropicThinking(req)
   const miniMaxThinking = normalizeMiniMaxThinking(req)
   const mimoThinking = normalizeXiaomiMimoThinking(req)
-  const samplingDisallowed = !supportsSamplingControls(req) || Boolean(thinkingConfig) || isXiaomiMimoThinkingActive(req) || modelDisallowsAnthropicSampling(req.model)
-  const temperature = samplingDisallowed ? undefined : isMiniMaxProvider(req.provider) ? normalizeTemperature(req) : req.temperature ?? 0.7
-  const topP = samplingDisallowed ? undefined : req.topP ?? 1
+  const samplingDisallowed = Boolean(thinkingConfig) || isXiaomiMimoThinkingActive(req) || modelDisallowsAnthropicSampling(req.model)
+  const requestParameters = resolveProviderRequestParameters(req, {
+    omitSampling: samplingDisallowed,
+    includeDefaultTopP: true,
+    maxTokenParameterNames: ['max_tokens'],
+  })
 
   for (const msg of req.messages) {
     if (msg.role === 'user') {
@@ -729,13 +712,14 @@ function buildAnthropicBody(req: ChatRequest) {
     model: req.model,
     system,
     messages,
-    max_tokens: clampMaxTokens(req),
     stream: req.stream ?? true,
     ...(tools ? { tools } : {}),
   }
+  if (requestParameters.maxTokens !== undefined) body.max_tokens = requestParameters.maxTokens
   if (structuredOutputTool) body.tool_choice = { type: 'tool', name: structuredOutputTool.name }
-  if (temperature !== undefined) body.temperature = temperature
-  if (topP !== undefined) body.top_p = topP
+  if (requestParameters.temperature !== undefined) body.temperature = requestParameters.temperature
+  if (requestParameters.topP !== undefined) body.top_p = requestParameters.topP
+  if (requestParameters.topK !== undefined) body.top_k = requestParameters.topK
   if (thinkingConfig?.thinking) body.thinking = thinkingConfig.thinking
   if (thinkingConfig?.outputConfig) body.output_config = thinkingConfig.outputConfig
   if (miniMaxThinking) body.thinking = miniMaxThinking
@@ -779,11 +763,15 @@ function buildGoogleBody(req: ChatRequest) {
     })
   }
 
-  const generationConfig: Record<string, unknown> = {
-    temperature: req.temperature ?? 0.7,
-    topP: req.topP ?? 1,
-    maxOutputTokens: clampMaxTokens(req),
-  }
+  const requestParameters = resolveProviderRequestParameters(req, {
+    includeDefaultTopP: true,
+    maxTokenParameterNames: ['maxOutputTokens', 'generationConfig.maxOutputTokens'],
+  })
+  const generationConfig: Record<string, unknown> = {}
+  if (requestParameters.maxTokens !== undefined) generationConfig.maxOutputTokens = requestParameters.maxTokens
+  if (requestParameters.temperature !== undefined) generationConfig.temperature = requestParameters.temperature
+  if (requestParameters.topP !== undefined) generationConfig.topP = requestParameters.topP
+  if (requestParameters.topK !== undefined) generationConfig.topK = requestParameters.topK
   const thinkingConfig = normalizeGoogleThinkingConfig(req)
   if (thinkingConfig) generationConfig.thinkingConfig = thinkingConfig
   const structuredOutputConfig = buildGoogleStructuredOutputConfig(req)
@@ -865,19 +853,21 @@ function buildOpenAIResponsesBody(req: ChatRequest) {
     contractProviderToolDeclarations(req),
     responsesNativeWebSearchTool ? [responsesNativeWebSearchTool] : []
   )
-  const samplingControlsSupported = supportsSamplingControls(req)
+  const requestParameters = resolveProviderRequestParameters(req, {
+    maxTokenParameterNames: ['max_output_tokens', 'maxOutputTokens'],
+  })
   const textConfig = buildOpenAIResponsesTextConfig(req)
   const responseFormat = buildOpenAIResponsesResponseFormat(req)
   return {
     model: req.model,
     input,
-    ...(samplingControlsSupported && normalizeTemperature(req) !== undefined ? { temperature: normalizeTemperature(req) } : {}),
-    ...(samplingControlsSupported && req.topP !== undefined ? { top_p: clamp01(req.topP) } : {}),
+    ...(requestParameters.temperature !== undefined ? { temperature: requestParameters.temperature } : {}),
+    ...(requestParameters.topP !== undefined ? { top_p: requestParameters.topP } : {}),
     ...(textConfig ? { text: textConfig } : {}),
     ...(responseFormat ? { response_format: responseFormat } : {}),
     ...(responsesReasoning ? { reasoning: responsesReasoning } : {}),
     ...(includeEncryptedReasoning ? { include: ['reasoning.encrypted_content'] } : {}),
-    max_output_tokens: clampMaxTokens(req),
+    ...(requestParameters.maxTokens !== undefined ? { max_output_tokens: requestParameters.maxTokens } : {}),
     stream: req.stream ?? true,
     ...(req.previousResponseId ? { previous_response_id: req.previousResponseId } : {}),
     ...(req.remoteCompactEligible
@@ -897,26 +887,13 @@ function getBody(req: ChatRequest) {
 }
 
 function getBodyWithRoute(req: ChatRequest, context?: ProviderRouteContext, failover?: ProviderFailoverInput) {
-  let body: Record<string, unknown>
-  switch (req.provider.type) {
-    case 'openai':
-      body = usesOpenAIResponses(req) ? buildOpenAIResponsesBody(req) : buildOpenAIBody(req)
-      break
-    case 'anthropic':
-      body = buildAnthropicBody(req)
-      break
-    case 'google':
-      body = buildGoogleBody(req)
-      break
-    case 'openai-compatible':
-      body = req.provider.wireProtocol === 'anthropic-compatible'
-        ? buildAnthropicBody(req)
-        : usesOpenAIResponses(req) ? buildOpenAIResponsesBody(req) : buildOpenAIBody(req)
-      break
-    case 'xiaomi-mimo':
-      body = req.provider.wireProtocol === 'anthropic-compatible' ? buildXiaomiMimoAnthropicBody(req) : buildOpenAIBody(req)
-      break
-  }
+  const { body } = buildProviderProtocolBody(req, {
+    openAIChat: buildOpenAIBody,
+    openAIResponses: buildOpenAIResponsesBody,
+    anthropic: buildAnthropicBody,
+    google: buildGoogleBody,
+    xiaomiMimoAnthropic: buildXiaomiMimoAnthropicBody,
+  })
   return resolveProviderRoute({ request: req, body, context, failover })
 }
 
@@ -930,27 +907,6 @@ function optimizeRequestBody(body: Record<string, unknown>, req: ChatRequest): R
   })
 }
 
-function prepareHttpJsonRequest(input: {
-  provider: AIProvider
-  model: string
-  url: string
-  headers: Record<string, string>
-  body: Record<string, unknown>
-}) {
-  if (isBedrockRuntimeProvider(input.provider)) {
-    return prepareBedrockRuntimeInvokeModelRequest({
-      provider: input.provider,
-      model: input.model,
-      body: input.body,
-    })
-  }
-  return {
-    url: input.url,
-    headers: input.headers,
-    body: JSON.stringify(input.body),
-  }
-}
-
 export async function streamChat(
   req: ChatRequest,
   onChunk: StreamCallback,
@@ -960,1045 +916,29 @@ export async function streamChat(
   onTrace?: TraceCallback
 ): Promise<StreamHandle> {
   const controller = new AbortController()
-  const requestedModel = req.requestedModel ?? req.model
-  const upstreamModel = resolveProviderModelAlias(req.provider, requestedModel)
-  const effectiveReq = upstreamModel === req.model && requestedModel === req.model ? req : { ...req, requestedModel, model: upstreamModel }
-  const credential = chooseCredentialForModel(req.provider, requestedModel)
-  const requestedAccess = resolveProviderModelAccess({ provider: req.provider, model: requestedModel, settings: req.settings })
-  const upstreamAccess = requestedModel === upstreamModel
-    ? requestedAccess
-    : resolveProviderModelAccess({ provider: req.provider, model: upstreamModel, settings: req.settings })
-  const access = mergeRuntimeAliasAccessPolicy(requestedAccess, upstreamAccess)
-  void appendRuntimeLog('access.policy', {
-    conversationId: effectiveReq.conversationId,
-    providerId: effectiveReq.provider.id,
-    model: upstreamModel,
-    requestedModel,
-    upstreamModel,
-    allowed: access.allowed,
-    matchedRules: access.matchedRules,
-    reason: access.allowed ? undefined : access.reason,
-  }, runtimeLogOptions(effectiveReq))
-  if (!access.allowed) {
-    emitRuntimeGovernanceTrace({
-      onTrace,
-      req: effectiveReq,
-      requestedModel,
-      upstreamModel,
-      access,
-      status: 'error',
-    })
-    const done = Promise.resolve().then(() => onError(providerRuntimeError(`access_policy_${access.reason}`, credential.credentialGroupId)))
-    return { controller, done }
-  }
-  const runtimeReq = {
-    ...effectiveReq,
-    provider: {
-      ...effectiveReq.provider,
-      apiKey: credential.apiKey || effectiveReq.provider.apiKey,
-    },
-  }
-  const issue = getProviderConfigIssue(runtimeReq.provider, runtimeReq.provider.apiKey)
-  if (issue) {
-    effectiveReq.provider = updateCredentialGroupHealth(effectiveReq.provider, credential.credentialGroupId, false)
-    const error = providerRuntimeError(`${issue.code}: ${issue.message}`, credential.credentialGroupId)
-    const done = Promise.resolve().then(() => onError(error))
-    return { controller, done }
-  }
-  const hostedIssue = getHostedProviderSupportIssue(runtimeReq.provider, 'chat')
-  if (hostedIssue) {
-    effectiveReq.provider = updateCredentialGroupHealth(effectiveReq.provider, credential.credentialGroupId, false)
-    const error = providerRuntimeError(hostedIssue.message, credential.credentialGroupId)
-    const done = Promise.resolve().then(() => onError(error))
-    return { controller, done }
-  }
-  if (effectiveReq.signal) {
-    effectiveReq.signal.addEventListener('abort', () => controller.abort(), { once: true })
-  }
-  const runtimeModelConfig = getModelConfig(runtimeReq.model, runtimeReq.provider.type, runtimeReq.provider.modelConfigs)
-  const stream = runtimeModelConfig.supportsStreaming === false ? false : (effectiveReq.stream ?? true)
-  if (!runtimeReq.provider.apiKey.trim()) {
-    effectiveReq.provider = updateCredentialGroupHealth(effectiveReq.provider, credential.credentialGroupId, false)
-    const done = Promise.resolve().then(() => onError(providerRuntimeError('missing_key', credential.credentialGroupId)))
-    return { controller, done }
-  }
-  const usesResponsesApi = usesOpenAIResponses(runtimeReq)
-  const routeAssembly = assembleProviderRoute({
-    provider: runtimeReq.provider,
-    model: runtimeReq.model,
-    stream,
-    usesResponsesApi,
-    settings: effectiveReq.settings,
+  const pipeline = await prepareProviderRuntimePipeline({
+    req,
+    controller,
+    resolveRoute: getBodyWithRoute,
+    onTrace,
     hasWebSocketRuntime: typeof WebSocket !== 'undefined',
   })
-  const url = routeAssembly.endpoint
-  const transportSelection = routeAssembly.transportSelection
-  const headers = getHeaders(runtimeReq.provider)
-  const routeResult = getBodyWithRoute({ ...runtimeReq, stream }, {
-    endpoint: url,
-    transport: transportSelection.transport,
-    requestedTransportMode: transportSelection.requestedMode,
-    transportFallbackReason: transportSelection.fallbackReason,
-  })
-  const rawBody = optimizeRequestBody(routeResult.body, runtimeReq)
-  void logProviderRouteDecision(effectiveReq, routeResult.decision)
-  void logProviderCompatibility(effectiveReq)
-  void logProviderConformance(effectiveReq, routeResult.conformance)
-  const conformanceBlockers = routeResult.conformance.issues.filter((issue) => issue.severity === 'block')
-  if (conformanceBlockers.length) {
-    emitRuntimeGovernanceTrace({
-      onTrace,
-      req: effectiveReq,
-      requestedModel,
-      upstreamModel,
-      access,
-      route: routeResult.decision,
-      transport: transportSelection,
-      status: 'error',
-    })
-    const done = Promise.resolve().then(() => onError(providerRuntimeError(`provider_conformance_blocked:${conformanceBlockers.map((issue) => issue.code).join(',')}`, credential.credentialGroupId)))
+  emitProviderRuntimeGatewayOutcome({ result: pipeline, onTrace })
+  if (pipeline.status === 'blocked') {
+    const done = Promise.resolve().then(() => onError(pipeline.error))
     return { controller, done }
   }
-  const payloadPolicy = evaluatePayloadRules({
-    body: rawBody,
-    messages: runtimeReq.messages,
-    attachments: runtimeReq.attachments,
-    mode: effectiveReq.settings?.payloadPolicyMode,
-  })
-  void logPayloadPolicy(effectiveReq, payloadPolicy)
-  if (payloadPolicy.blocked) {
-    emitRuntimeGovernanceTrace({
-      onTrace,
-      req: effectiveReq,
-      requestedModel,
-      upstreamModel,
-      access,
-      route: routeResult.decision,
-      transport: transportSelection,
-      payload: payloadPolicy,
-      status: 'error',
-    })
-    const done = Promise.resolve().then(() => onError(providerRuntimeError(`payload_policy_blocked:${payloadPolicy.findings.map((item) => item.id).join(',')}`, credential.credentialGroupId)))
-    return { controller, done }
-  }
-  const proxyPolicy = resolveProxyPolicy({ provider: runtimeReq.provider, url, settings: effectiveReq.settings })
-  void logProxyPolicy(effectiveReq, proxyPolicy)
-  void logUpstreamRequest(effectiveReq, transportSelection, payloadPolicy, proxyPolicy)
-  emitRuntimeGovernanceTrace({
-    onTrace,
-    req: effectiveReq,
-    requestedModel,
-    upstreamModel,
-    access,
-    route: routeResult.decision,
-    transport: transportSelection,
-    payload: payloadPolicy,
-    proxy: proxyPolicy,
-    status: 'done',
-  })
-  const preparedHttpRequest = prepareHttpJsonRequest({
-    provider: runtimeReq.provider,
-    model: runtimeReq.model,
-    url: proxyPolicy.effectiveUrl,
-    headers,
-    body: rawBody,
-  })
-  let lease: Awaited<ReturnType<typeof acquireSessionLease>> | null = null
-  if (transportSelection.transport === 'responses_websocket') {
-    try {
-      lease = await acquireSessionLease({
-        key: `${runtimeReq.provider.id}:${runtimeReq.model}:${effectiveReq.conversationId ?? 'global'}:${effectiveReq.sessionId ?? 'default'}`,
-        limit: effectiveReq.settings?.sessionConcurrencyLimit,
-        timeoutMs: effectiveReq.settings?.sessionQueueTimeoutMs,
-      })
-      void appendRuntimeLog('session.lease', {
-        conversationId: effectiveReq.conversationId,
-        providerId: runtimeReq.provider.id,
-        model: runtimeReq.model,
-        requestedModel: runtimeReq.requestedModel,
-        upstreamModel: runtimeReq.model,
-        status: 'acquired',
-        key: lease.key,
-      }, runtimeLogOptions(effectiveReq))
-    } catch {
-      const done = Promise.resolve().then(() => onError(providerRuntimeError('session_queue_timeout', credential.credentialGroupId)))
-      void appendRuntimeLog('session.lease', {
-        conversationId: effectiveReq.conversationId,
-        providerId: runtimeReq.provider.id,
-        model: runtimeReq.model,
-        requestedModel: runtimeReq.requestedModel,
-        upstreamModel: runtimeReq.model,
-        status: 'timeout',
-      }, runtimeLogOptions(effectiveReq))
-      return { controller, done }
-    }
-  }
-  if (transportSelection.transport === 'responses_websocket') {
-    const done = runStreamTask(async () => {
-      let emittedText = false
-      try {
-        await runResponsesWebSocketTransport({
-          req: runtimeReq,
-          url: toWebSocketUrl(proxyPolicy.effectiveUrl),
-          headers,
-          body: rawBody as Record<string, unknown>,
-          signal: controller.signal,
-          parseEvent: parseProviderStreamEvent,
-          wireProviderType: getWireProviderType(runtimeReq.provider),
-          extractCitations: extractCitationsFromText,
-          onChunk: (chunk) => {
-            emittedText = emittedText || !!chunk
-            onChunk(chunk)
-          },
-          onDone: (result) => {
-            void appendRuntimeLog('upstream.response', {
-              conversationId: runtimeReq.conversationId,
-              providerId: runtimeReq.provider.id,
-              model: runtimeReq.model,
-              requestedModel: runtimeReq.requestedModel,
-              upstreamModel: runtimeReq.model,
-              transport: 'responses_websocket',
-              usage: result.usage,
-              textLength: result.text.length,
-              responseId: result.responseId,
-            }, runtimeLogOptions(runtimeReq))
-            onDone(withCredentialGroup(result, credential.credentialGroupId))
-          },
-          onError,
-          onCitations,
-          onTrace,
-        })
-      } catch (error) {
-        if ((effectiveReq.settings?.transportMode ?? 'auto') === 'websocket' || emittedText) throw error
-        onTrace?.(createStreamModeTrace('fallback', 'Responses WebSocket handshake failed; HTTP/SSE fallback is running.'))
-        void appendRuntimeLog('transport.fallback', {
-          conversationId: effectiveReq.conversationId,
-          providerId: runtimeReq.provider.id,
-          model: runtimeReq.model,
-          requestedModel: runtimeReq.requestedModel,
-          upstreamModel: runtimeReq.model,
-          from: 'responses_websocket',
-          to: 'http_sse',
-          reason: error instanceof Error ? error.message : 'websocket_transport_error',
-        }, runtimeLogOptions(effectiveReq))
-        await executeHttpSseChat({
-          req: runtimeReq,
-          url: preparedHttpRequest.url,
-          headers: preparedHttpRequest.headers,
-          body: preparedHttpRequest.body,
-          stream,
-          controller,
-          credentialGroupId: credential.credentialGroupId,
-          onChunk,
-          onDone,
-          onError,
-          onCitations,
-          onTrace,
-        })
-      } finally {
-        lease?.release()
-      }
-    }, onError, credential.credentialGroupId)
-    return { controller, done }
-  }
-  const done = runStreamTask(() => executeHttpSseChat({
-    req: runtimeReq,
-    url: preparedHttpRequest.url,
-    headers: preparedHttpRequest.headers,
-    body: preparedHttpRequest.body,
-    stream,
+  const done = executeProviderRuntimeChat({
+    pipeline,
     controller,
-    credentialGroupId: credential.credentialGroupId,
+    resolveRoute: getBodyWithRoute,
     onChunk,
     onDone,
     onError,
     onCitations,
     onTrace,
-  }), onError, credential.credentialGroupId)
+  })
   return { controller, done }
-}
-
-async function executeHttpSseChat(input: {
-  req: ChatRequest
-  url: string
-  headers: Record<string, string>
-  body: string
-  stream: boolean
-  controller: AbortController
-  credentialGroupId?: string
-  onChunk: StreamCallback
-  onDone: DoneCallback
-  onError: ErrorCallback
-  onCitations?: CitationCallback
-  onTrace?: TraceCallback
-}): Promise<void> {
-  const response = await fetchChatStreamWithRetry(input)
-
-  if (!response.ok) {
-    const errorText = await safeResponseText(response)
-    const recovered = await tryRuntimeFallback({
-      req: input.req,
-      status: response.status,
-      responseText: errorText,
-      credentialGroupId: input.credentialGroupId,
-      onChunk: input.onChunk,
-      onDone: input.onDone,
-      onCitations: input.onCitations,
-      onTrace: input.onTrace,
-    })
-    if (recovered) return
-    input.req.provider = updateCredentialGroupHealth(input.req.provider, input.credentialGroupId, false)
-    void appendRuntimeLog('upstream.error', {
-      conversationId: input.req.conversationId,
-      providerId: input.req.provider.id,
-      model: input.req.model,
-      requestedModel: input.req.requestedModel,
-      upstreamModel: input.req.model,
-      status: response.status,
-      endpointHost: endpointHost(input.url),
-    }, runtimeLogOptions(input.req))
-    const errorCode = classifyHttpStatus(response.status, errorText, input.req.model, input.req.provider)
-    input.onError(providerRuntimeError(
-      formatProviderHttpError(response.status, errorText, input.req.provider, input.req.model),
-      input.credentialGroupId,
-      providerOperationCodeToChatErrorCode(errorCode)
-    ))
-    return
-  }
-
-  if (!input.stream) {
-    const result = await parseProviderNonStreamingResponse(response, input.req)
-    if (result.text) input.onChunk(result.text)
-    if (result.citations?.length) input.onCitations?.(result.citations)
-    result.traces?.forEach(input.onTrace ?? (() => undefined))
-    void appendRuntimeLog('upstream.response', {
-      conversationId: input.req.conversationId,
-      providerId: input.req.provider.id,
-      model: input.req.model,
-      requestedModel: input.req.requestedModel,
-      upstreamModel: input.req.model,
-      transport: 'http_sse',
-      usage: result.usage,
-      textLength: result.text.length,
-    }, runtimeLogOptions(input.req))
-    input.onDone(withCredentialGroup(result, input.credentialGroupId))
-    return
-  }
-
-  const reader = response.body?.getReader()
-  if (!reader) {
-    input.onTrace?.(createStreamModeTrace('fallback', st('providerTrace.streamFallbackNoReader')))
-    const raw = await safeResponseText(response)
-    const result = parseProviderBufferedStreamResponse(raw, input.req, getWireProviderType(input.req.provider))
-    if (result.text || result.providerToolCalls?.length) {
-      input.onChunk(result.text)
-      if (result.citations?.length) input.onCitations?.(result.citations)
-      result.traces?.forEach(input.onTrace ?? (() => undefined))
-      input.onDone(withCredentialGroup(result, input.credentialGroupId))
-    } else {
-      input.onTrace?.(createStreamModeTrace('buffered', st('providerTrace.streamBufferedFallback')))
-      await retryWithoutStreaming(input.req, input.onChunk, input.onDone, input.onError, input.onCitations, input.onTrace, input.credentialGroupId, input.controller)
-    }
-    return
-  }
-
-  input.onTrace?.(createStreamModeTrace('reader', st('providerTrace.streamReader')))
-
-  const decoder = new TextDecoder()
-  let fullText = ''
-  let buffer = ''
-  let providerCitations: MessageCitation[] = []
-  let providerTraces: ProcessTrace[] = []
-  let providerToolCalls: ProviderToolCall[] = []
-  let providerUsage: MessageUsage | undefined
-  let providerReasoningContent = ''
-  let providerResponseItems: Record<string, unknown>[] = []
-  let providerContentBlocks: Record<string, unknown>[] = []
-  const textToolCallFilter = createProviderTextToolCallStreamFilter()
-  const wireProviderType = getWireProviderType(input.req.provider)
-  const streamParseOptions = { includeReasoning: providerReasoningResponseCanBeParsed(input.req) }
-  const providerCitationSource = resolveStreamProviderCitationSource(input.req.provider, wireProviderType)
-
-  async function readStream() {
-    while (true) {
-      const { done, value } = await reader!.read()
-      if (done) {
-        const finalParsed = parseProviderStreamChunk(buffer, wireProviderType, streamParseOptions)
-        if (finalParsed.text) {
-          fullText += finalParsed.text
-          const visibleText = textToolCallFilter.push(finalParsed.text)
-          if (visibleText) input.onChunk(visibleText)
-        }
-        const filterRemainder = textToolCallFilter.finish()
-        if (filterRemainder) input.onChunk(filterRemainder)
-        providerTraces = dedupeTraces([...providerTraces, ...finalParsed.traces])
-        providerToolCalls = mergeProviderToolCallParts([...providerToolCalls, ...(finalParsed.providerToolCalls ?? [])])
-        providerReasoningContent += finalParsed.reasoningContent ?? ''
-        providerResponseItems = mergeOpenAIResponseReplayItems([...providerResponseItems, ...(finalParsed.responseItems ?? [])])
-        providerContentBlocks = mergeAnthropicReplayContentBlocks([...providerContentBlocks, ...(finalParsed.providerContentBlocks ?? [])])
-        finalParsed.traces.forEach(input.onTrace ?? (() => undefined))
-        providerUsage = finalParsed.usage ?? providerUsage
-        const structuredOutputText = providerStructuredOutputToolCallText(providerToolCalls, input.req.structuredOutput)
-        const finalText = structuredOutputText ?? fullText
-        const finalResult = withProviderTextToolCallFallback({
-          text: finalText,
-          citations: dedupeCitations([...extractCitationsFromText(finalText, input.req.retrievalSources), ...providerCitations]),
-          traces: providerTraces,
-          usage: providerUsage,
-          providerToolCalls: executableProviderToolCalls(filterProviderStructuredOutputToolCalls(providerToolCalls, input.req.structuredOutput)),
-          ...(providerReasoningContent ? { reasoningContent: providerReasoningContent } : {}),
-          ...(providerResponseItems.length ? { responseItems: providerResponseItems } : {}),
-          ...(providerContentBlocks.length ? { providerContentBlocks: sanitizeAnthropicReplayContentBlocks(providerContentBlocks) } : {}),
-        }, finalText)
-        const citations = finalResult.citations ?? []
-        if (citations.length) input.onCitations?.(citations)
-        void appendRuntimeLog('upstream.response', {
-          conversationId: input.req.conversationId,
-          providerId: input.req.provider.id,
-          model: input.req.model,
-          requestedModel: input.req.requestedModel,
-          upstreamModel: input.req.model,
-          transport: 'http_sse',
-          usage: providerUsage,
-          textLength: fullText.length,
-        }, runtimeLogOptions(input.req))
-        input.onDone(withCredentialGroup(finalResult, input.credentialGroupId))
-        return
-      }
-      buffer += decoder.decode(value, { stream: true })
-      const { events, remainder } = splitSseBuffer(buffer)
-      buffer = remainder
-      for (const event of events) {
-        const parsed = parseProviderStreamChunk(event, wireProviderType, streamParseOptions)
-        if (parsed.text) {
-          fullText += parsed.text
-          const visibleText = textToolCallFilter.push(parsed.text)
-          if (visibleText) input.onChunk(visibleText)
-        }
-        providerTraces = dedupeTraces([...providerTraces, ...parsed.traces])
-        providerToolCalls = mergeProviderToolCallParts([...providerToolCalls, ...(parsed.providerToolCalls ?? [])])
-        providerReasoningContent += parsed.reasoningContent ?? ''
-        providerResponseItems = mergeOpenAIResponseReplayItems([...providerResponseItems, ...(parsed.responseItems ?? [])])
-        providerContentBlocks = mergeAnthropicReplayContentBlocks([...providerContentBlocks, ...(parsed.providerContentBlocks ?? [])])
-        parsed.traces.forEach(input.onTrace ?? (() => undefined))
-        providerUsage = parsed.usage ?? providerUsage
-        if (providerCitationSource) {
-          providerCitations = dedupeCitations([...providerCitations, ...extractProviderCitationsFromSse(event, providerCitationSource)])
-        }
-      }
-    }
-  }
-
-  await readStream()
-}
-
-function resolveStreamProviderCitationSource(provider: AIProvider, providerType: ProviderType): ProviderCitationSource | undefined {
-  if (!providerCompatibilityCapabilityCanBeSentForProvider(provider, 'citations')) return undefined
-  if (providerType === 'openai-compatible' && isPerplexityProvider(provider)) return 'perplexity'
-  if (providerType === 'anthropic' || providerType === 'google' || providerType === 'xiaomi-mimo') return providerType
-  return undefined
-}
-
-async function fetchChatStreamWithRetry(input: {
-  req: ChatRequest
-  url: string
-  headers: Record<string, string>
-  body: string
-  stream: boolean
-  controller: AbortController
-  credentialGroupId?: string
-  onTrace?: TraceCallback
-}): Promise<Response> {
-  const timeoutMs = resolveProviderRequestTimeoutMs(input.req, CHAT_REQUEST_TIMEOUT_MS)
-  const maxRetries = resolveProviderMaxRetries(input.req)
-  const circuitKey = providerCircuitKey(input.req)
-  assertProviderCircuitClosed(input.req, circuitKey)
-  let body = input.body
-  let rectifiedRequest = false
-  let mimoThinkingRectified = false
-  let mimoWebSearchRectified = false
-  let openAICompatibleMinimalRectification: Pick<OpenAICompatibleRequestRectificationResult, 'kind' | 'failedFields' | 'removedFields' | 'retainedFields'> | undefined
-  let retryCount = 0
-
-  while (true) {
-    try {
-      const response = await fetchChatStreamWithTimeout(input.url, {
-        method: 'POST',
-        headers: input.headers,
-        body,
-        signal: input.controller.signal,
-      }, timeoutMs)
-
-      if (response.ok) {
-        recordProviderCircuitSuccess(circuitKey)
-        if (openAICompatibleMinimalRectification) {
-          void appendRuntimeLog('request.rectification', {
-            conversationId: input.req.conversationId,
-            providerId: input.req.provider.id,
-            model: input.req.model,
-            kind: openAICompatibleMinimalRectification.kind,
-            failedFields: openAICompatibleMinimalRectification.failedFields,
-            removedFields: openAICompatibleMinimalRectification.removedFields,
-            retainedFields: openAICompatibleMinimalRectification.retainedFields,
-            result: 'success',
-            attempt: retryCount,
-          }, runtimeLogOptions(input.req))
-        }
-        return response
-      }
-
-      const canRetryStatus = response.status === 408 || response.status === 409 || response.status === 425 || response.status === 429 || response.status >= 500
-      if (isAnthropicWireRequest(input.req)) {
-        const errorText = await safeResponseText(response)
-        const rectified = rectifyAnthropicRequestBody({ req: input.req, body, errorText, rectified: rectifiedRequest })
-        if (rectified) {
-          body = JSON.stringify(rectified.body)
-          rectifiedRequest = true
-          input.onTrace?.(createProviderTrace('system', getWireProviderType(input.req.provider), st('providerTrace.requestRectified'), describeRequestRectification(rectified.kind), 'done', `rectify-${rectified.kind}`, { rectificationKind: rectified.kind }))
-          void appendRuntimeLog('request.rectification', {
-            conversationId: input.req.conversationId,
-            providerId: input.req.provider.id,
-            model: input.req.model,
-            kind: rectified.kind,
-            attempt: retryCount,
-          }, runtimeLogOptions(input.req))
-          continue
-        }
-        if (canRetryStatus && retryCount < maxRetries) {
-          logProviderRetryAttempt(input.req, retryCount + 1, maxRetries, { status: response.status })
-          retryCount += 1
-          await delayProviderRetry(providerRetryDelayMs(retryCount - 1))
-          continue
-        }
-        recordProviderCircuitFailure(input.req, circuitKey)
-        return new Response(errorText, { status: response.status, statusText: response.statusText, headers: response.headers })
-      }
-
-      if (input.req.provider.type === 'xiaomi-mimo' && input.req.provider.wireProtocol !== 'anthropic-compatible' && response.status === 400) {
-        const errorText = await safeResponseText(response)
-        const rectified = rectifyXiaomiMimoThinkingRequestBody({
-          req: input.req,
-          body,
-          status: response.status,
-          errorText,
-          rectified: mimoThinkingRectified,
-        }) ?? rectifyXiaomiMimoWebSearchRequestBody({
-          req: input.req,
-          body,
-          status: response.status,
-          errorText,
-          rectified: mimoWebSearchRectified,
-        })
-        if (rectified) {
-          body = JSON.stringify(rectified.body)
-          if (rectified.kind === 'xiaomi_mimo_thinking_disabled') mimoThinkingRectified = true
-          if (rectified.kind === 'xiaomi_mimo_web_search_removed') mimoWebSearchRectified = true
-          input.onTrace?.(createProviderTrace('system', getWireProviderType(input.req.provider), st('providerTrace.requestRectified'), describeRequestRectification(rectified.kind), 'done', `rectify-${rectified.kind}`, { rectificationKind: rectified.kind }))
-          void appendRuntimeLog('request.rectification', {
-            conversationId: input.req.conversationId,
-            providerId: input.req.provider.id,
-            model: input.req.model,
-            kind: rectified.kind,
-            attempt: retryCount,
-          }, runtimeLogOptions(input.req))
-          continue
-        }
-        if (!canRetryStatus || retryCount >= maxRetries) {
-          recordProviderCircuitFailure(input.req, circuitKey)
-          return new Response(errorText, { status: response.status, statusText: response.statusText, headers: response.headers })
-        }
-      }
-
-      if (input.req.provider.type === 'openai-compatible' && input.req.provider.wireProtocol !== 'anthropic-compatible' && (response.status === 400 || response.status === 422)) {
-        const errorText = await safeResponseText(response)
-        const rectified = rectifyOpenAICompatibleRequestBody({
-          req: input.req,
-          body,
-          status: response.status,
-          errorText,
-          rectified: openAICompatibleMinimalRectification !== undefined,
-        })
-        if (rectified) {
-          body = JSON.stringify(rectified.body)
-          openAICompatibleMinimalRectification = {
-            kind: rectified.kind,
-            failedFields: rectified.failedFields,
-            removedFields: rectified.removedFields,
-            retainedFields: rectified.retainedFields,
-          }
-          input.onTrace?.(createProviderTrace('system', getWireProviderType(input.req.provider), st('providerTrace.requestRectified'), describeRequestRectification(rectified.kind), 'done', `rectify-${rectified.kind}`, {
-            rectificationKind: rectified.kind,
-            failedFields: rectified.failedFields,
-            removedFields: rectified.removedFields,
-            retainedFields: rectified.retainedFields,
-          }))
-          void appendRuntimeLog('request.rectification', {
-            conversationId: input.req.conversationId,
-            providerId: input.req.provider.id,
-            model: input.req.model,
-            kind: rectified.kind,
-            failedFields: rectified.failedFields,
-            removedFields: rectified.removedFields,
-            retainedFields: rectified.retainedFields,
-            result: 'retrying',
-            attempt: retryCount,
-          }, runtimeLogOptions(input.req))
-          continue
-        }
-        if (openAICompatibleMinimalRectification) {
-          void appendRuntimeLog('request.rectification', {
-            conversationId: input.req.conversationId,
-            providerId: input.req.provider.id,
-            model: input.req.model,
-            kind: openAICompatibleMinimalRectification.kind,
-            failedFields: openAICompatibleMinimalRectification.failedFields,
-            removedFields: openAICompatibleMinimalRectification.removedFields,
-            retainedFields: openAICompatibleMinimalRectification.retainedFields,
-            result: 'failed',
-            status: response.status,
-            attempt: retryCount,
-          }, runtimeLogOptions(input.req))
-          recordProviderCircuitFailure(input.req, circuitKey)
-          return new Response(errorText, { status: response.status, statusText: response.statusText, headers: response.headers })
-        }
-        if (!canRetryStatus || retryCount >= maxRetries) {
-          recordProviderCircuitFailure(input.req, circuitKey)
-          return new Response(errorText, { status: response.status, statusText: response.statusText, headers: response.headers })
-        }
-      }
-
-      if (!canRetryStatus || retryCount >= maxRetries) {
-        recordProviderCircuitFailure(input.req, circuitKey)
-        return response
-      }
-      logProviderRetryAttempt(input.req, retryCount + 1, maxRetries, { status: response.status })
-      retryCount += 1
-      await delayProviderRetry(providerRetryDelayMs(retryCount - 1))
-    } catch (error) {
-      if (retryCount >= maxRetries || input.controller.signal.aborted) {
-        recordProviderCircuitFailure(input.req, circuitKey)
-        throw error
-      }
-      logProviderRetryAttempt(input.req, retryCount + 1, maxRetries, { error: error instanceof Error ? error.message : 'request_failed' })
-      retryCount += 1
-      await delayProviderRetry(providerRetryDelayMs(retryCount - 1))
-    }
-  }
-}
-
-interface OpenAICompatibleRequestRectificationInput {
-  req: ChatRequest
-  body: string
-  status: number
-  errorText: string
-  rectified: boolean
-}
-
-interface OpenAICompatibleRequestRectificationResult {
-  kind: 'openai_compatible_minimal_chat'
-  body: Record<string, unknown>
-  failedFields: string[]
-  removedFields: string[]
-  retainedFields: string[]
-}
-
-const OPENAI_COMPATIBLE_MINIMAL_CHAT_KEYS = new Set(['model', 'messages', 'stream'])
-const OPENAI_COMPATIBLE_PARAMETER_ERROR_FIELDS = [
-  'tools',
-  'tool_choice',
-  'response_format',
-  'reasoning',
-  'reasoning_effort',
-  'thinking',
-  'enable_thinking',
-  'thinking_budget',
-  'reasoning_split',
-  'stream_options',
-  'parallel_tool_calls',
-  'max_tokens',
-  'max_completion_tokens',
-  'temperature',
-  'top_p',
-  'messages',
-  'content',
-]
-
-function rectifyOpenAICompatibleRequestBody(input: OpenAICompatibleRequestRectificationInput): OpenAICompatibleRequestRectificationResult | undefined {
-  if (input.rectified) return undefined
-  if (input.req.provider.type !== 'openai-compatible' || input.req.provider.wireProtocol === 'anthropic-compatible') return undefined
-  if (input.status !== 400 && input.status !== 422) return undefined
-  if (!isOpenAICompatibleParameterError(input.errorText)) return undefined
-
-  let parsed: Record<string, unknown>
-  try {
-    parsed = JSON.parse(input.body)
-  } catch {
-    return undefined
-  }
-
-  const model = typeof parsed.model === 'string' && parsed.model.trim() ? parsed.model : input.req.model
-  const messages = minimalOpenAICompatibleMessages(parsed.messages)
-  if (!messages.length) return undefined
-
-  const next: Record<string, unknown> = { model, messages }
-  if (typeof parsed.stream === 'boolean') next.stream = parsed.stream
-
-  const messagesChanged = JSON.stringify(parsed.messages) !== JSON.stringify(messages)
-  const parsedKeys = Object.keys(parsed)
-  const removedFields = parsedKeys.filter((key) => !OPENAI_COMPATIBLE_MINIMAL_CHAT_KEYS.has(key) || (key === 'messages' && messagesChanged))
-  const retainedFields = Object.keys(next)
-  const failedFields = inferOpenAICompatibleFailedFields(input.errorText, parsedKeys, removedFields)
-  if (!removedFields.length && !messagesChanged) return undefined
-
-  return {
-    kind: 'openai_compatible_minimal_chat',
-    body: next,
-    failedFields,
-    removedFields,
-    retainedFields,
-  }
-}
-
-function isOpenAICompatibleParameterError(errorText: string): boolean {
-  const text = errorText.toLowerCase()
-  if (/api[_ -]?key|authentication|authorization|permission|quota|billing|rate[_ -]?limit|model\s+(?:not\s+found|not\s+available|does\s+not\s+exist|invalid)/.test(text)) return false
-  return /unsupported|not\s+support(?:ed)?|unknown\s+(?:parameter|param|field)|unrecognized\s+(?:parameter|param|field)|invalid[_ -]?request|invalid\s+(?:request|parameter|param|field|schema)|bad\s+(?:request|schema)|schema|parameter|param|field|tool|response[_ -]?format|reasoning|thinking/.test(text)
-}
-
-function inferOpenAICompatibleFailedFields(errorText: string, bodyKeys: string[], removedFields: string[]): string[] {
-  const text = errorText.toLowerCase()
-  const candidates = [...bodyKeys, ...OPENAI_COMPATIBLE_PARAMETER_ERROR_FIELDS]
-  const matched: string[] = []
-  for (const field of candidates) {
-    if (openAICompatibleErrorMentionsField(text, field) && !matched.includes(field)) matched.push(field)
-  }
-  if (matched.length) return matched
-  return removedFields
-}
-
-function openAICompatibleErrorMentionsField(text: string, field: string): boolean {
-  const normalized = field.toLowerCase()
-  return text.includes(normalized) ||
-    text.includes(normalized.replace(/_/g, ' ')) ||
-    text.includes(normalized.replace(/_/g, '-'))
-}
-
-function minimalOpenAICompatibleMessages(value: unknown): { role: 'system' | 'user' | 'assistant'; content: string }[] {
-  if (!Array.isArray(value)) return []
-  const messages: { role: 'system' | 'user' | 'assistant'; content: string }[] = []
-  for (const item of value) {
-    if (!isOpenAICompatibleRecord(item)) continue
-    const role = item.role === 'system' || item.role === 'user' || item.role === 'assistant' ? item.role : undefined
-    if (!role) continue
-    const content = minimalOpenAICompatibleTextContent(item.content)
-    if (!content.trim()) continue
-    messages.push({ role, content })
-  }
-  return messages
-}
-
-function minimalOpenAICompatibleTextContent(value: unknown): string {
-  if (typeof value === 'string') return value
-  if (Array.isArray(value)) {
-    return value
-      .map((part) => {
-        if (!isOpenAICompatibleRecord(part)) return ''
-        if (typeof part.text === 'string') return part.text
-        if (part.type === 'text' && typeof part.content === 'string') return part.content
-        return ''
-      })
-      .map((part) => part.trim())
-      .filter(Boolean)
-      .join('\n')
-  }
-  if (isOpenAICompatibleRecord(value) && typeof value.text === 'string') return value.text
-  return ''
-}
-
-function isOpenAICompatibleRecord(value: unknown): value is Record<string, unknown> {
-  return value !== null && typeof value === 'object' && !Array.isArray(value)
-}
-
-function rectifyXiaomiMimoThinkingRequestBody(input: {
-  req: ChatRequest
-  body: string
-  status: number
-  errorText: string
-  rectified: boolean
-}): { kind: 'xiaomi_mimo_thinking_disabled'; body: Record<string, unknown> } | undefined {
-  if (input.rectified) return undefined
-  if (input.req.provider.type !== 'xiaomi-mimo' || input.req.provider.wireProtocol === 'anthropic-compatible') return undefined
-  if (input.status !== 400) return undefined
-  if (!/\bparam\s+incorrect\b|invalid\s+(?:request\s+)?format|invalid_request/i.test(input.errorText)) return undefined
-  let parsed: Record<string, unknown>
-  try {
-    parsed = JSON.parse(input.body)
-  } catch {
-    return undefined
-  }
-  const thinking = parsed.thinking
-  if (!thinking || typeof thinking !== 'object' || Array.isArray(thinking)) return undefined
-  if ((thinking as Record<string, unknown>).type !== 'enabled') return undefined
-  return {
-    kind: 'xiaomi_mimo_thinking_disabled',
-    body: {
-      ...parsed,
-      thinking: { type: 'disabled' },
-    },
-  }
-}
-
-function rectifyXiaomiMimoWebSearchRequestBody(input: {
-  req: ChatRequest
-  body: string
-  status: number
-  errorText: string
-  rectified: boolean
-}): { kind: 'xiaomi_mimo_web_search_removed'; body: Record<string, unknown> } | undefined {
-  if (input.rectified) return undefined
-  if (input.req.provider.type !== 'xiaomi-mimo' || input.req.provider.wireProtocol === 'anthropic-compatible') return undefined
-  if (input.status !== 400) return undefined
-  if (!/\bparam\s+incorrect\b|invalid\s+(?:request\s+)?format|unsupported\s+web[_ -]?search|web[_ -]?search/i.test(input.errorText)) return undefined
-  let parsed: Record<string, unknown>
-  try {
-    parsed = JSON.parse(input.body)
-  } catch {
-    return undefined
-  }
-  if (!Array.isArray(parsed.tools)) return undefined
-  const tools = parsed.tools.filter((tool) => !(tool && typeof tool === 'object' && !Array.isArray(tool) && (tool as Record<string, unknown>).type === 'web_search'))
-  if (tools.length === parsed.tools.length) return undefined
-  const next: Record<string, unknown> = { ...parsed }
-  if (tools.length) next.tools = tools
-  else delete next.tools
-  if (!tools.length && next.tool_choice === 'auto') delete next.tool_choice
-  return {
-    kind: 'xiaomi_mimo_web_search_removed',
-    body: next,
-  }
-}
-
-interface RuntimeFallbackPlanInput {
-  req: ChatRequest
-  status?: number
-  error?: unknown
-  responseText?: string
-  credentialGroupId?: string
-  streamStarted?: boolean
-}
-
-interface RuntimeFallbackPlan {
-  classification: ReturnType<typeof classifyProviderFailure>
-  decision: ProviderFailoverDecision
-  candidates: ReturnType<typeof buildProviderFallbackCandidates>
-}
-
-interface RuntimeFallbackExecutionInput {
-  req: ChatRequest
-  status: number
-  responseText: string
-  credentialGroupId?: string
-  onChunk: StreamCallback
-  onDone: DoneCallback
-  onCitations?: CitationCallback
-  onTrace?: TraceCallback
-}
-
-async function resolveRuntimeFallbackPlan(input: RuntimeFallbackPlanInput): Promise<RuntimeFallbackPlan> {
-  const nowMs = Date.now()
-  const original = routeForRuntimeFallback(input.req, input.credentialGroupId)
-  const classification = classifyProviderFailure({
-    status: input.status,
-    errorName: input.error instanceof Error ? input.error.name : undefined,
-    errorMessage: input.error instanceof Error ? input.error.message : input.responseText,
-    streamStarted: input.streamStarted,
-  })
-  const snapshot = await loadProviderHealthSnapshot({ nowMs })
-  const existing = snapshot.records.find((record) => providerHealthKey(record) === providerHealthKey(original))
-  const failureRecord = recordProviderFailure(existing, {
-    key: original,
-    trigger: classification.trigger,
-    nowMs,
-    retryAfterMs: retryAfterMsFromFailure(input.status),
-  })
-  const updatedSnapshot = await mergeProviderHealthRecords([failureRecord], { nowMs })
-  const healthRecords = indexProviderHealthRecords(updatedSnapshot.records)
-  const requiredCapabilities = requiredFallbackCapabilities(input.req)
-  const candidates = buildProviderFallbackCandidates({
-    providers: fallbackProvidersForRequest(input.req),
-    original,
-    requiredCapabilities,
-    healthRecords,
-    nowMs,
-  })
-  const decision = resolveFailoverDecision({
-    policy: { mode: 'same-provider' },
-    trigger: classification.trigger,
-    original,
-    candidates: candidates.candidates,
-    requiredCapabilities,
-    streamStarted: input.streamStarted,
-  })
-  return { classification, decision, candidates }
-}
-
-async function tryRuntimeFallback(input: RuntimeFallbackExecutionInput): Promise<boolean> {
-  const plan = await resolveRuntimeFallbackPlan({
-    req: input.req,
-    status: input.status,
-    responseText: input.responseText,
-    credentialGroupId: input.credentialGroupId,
-  })
-  await logRuntimeFallbackDecision(input.req, plan)
-  if (!plan.decision.eligible || !plan.decision.selected) {
-    input.onTrace?.(createRuntimeFallbackTrace(input.req, plan, 'skipped'))
-    return false
-  }
-
-  const selectedRoute = plan.decision.selected
-  const selectedProvider = providerForRuntimeFallback(input.req, selectedRoute)
-  const selectedReq = {
-    ...input.req,
-    provider: selectedProvider,
-    model: selectedRoute.model,
-    requestedModel: selectedRoute.model,
-    stream: false,
-  }
-  const selectedAssembly = assembleProviderRoute({
-    provider: selectedReq.provider,
-    model: selectedReq.model,
-    stream: false,
-    usesResponsesApi: usesOpenAIResponses(selectedReq),
-    settings: selectedReq.settings,
-    hasWebSocketRuntime: typeof WebSocket !== 'undefined',
-  })
-  const selectedRouteResult = getBodyWithRoute(selectedReq, {
-    endpoint: selectedAssembly.endpoint,
-    transport: selectedAssembly.transportSelection.transport,
-    requestedTransportMode: selectedAssembly.transportSelection.requestedMode,
-    transportFallbackReason: selectedAssembly.transportSelection.fallbackReason,
-  }, {
-    policy: { mode: 'same-provider' },
-    trigger: plan.classification.trigger,
-    original: routeForRuntimeFallback(input.req, input.credentialGroupId),
-    candidates: plan.candidates.candidates,
-    requiredCapabilities: requiredFallbackCapabilities(input.req),
-  })
-  await logProviderRouteDecision(selectedReq, selectedRouteResult.decision)
-  await logProviderCompatibility(selectedReq)
-  await logProviderConformance(selectedReq, selectedRouteResult.conformance)
-  if (selectedRouteResult.decision.blocked) {
-    input.onTrace?.(createRuntimeFallbackTrace(input.req, plan, 'error', 'route_blocked'))
-    return false
-  }
-  const selectedPreparedRequest = prepareHttpJsonRequest({
-    provider: selectedReq.provider,
-    model: selectedReq.model,
-    url: selectedAssembly.endpoint,
-    headers: getHeaders(selectedReq.provider),
-    body: selectedRouteResult.body,
-  })
-  const selectedResponse = await fetchWithTimeout(
-    selectedPreparedRequest.url,
-    {
-      method: 'POST',
-      headers: selectedPreparedRequest.headers,
-      body: selectedPreparedRequest.body,
-    },
-    CHAT_REQUEST_TIMEOUT_MS
-  )
-  if (!selectedResponse.ok) {
-    await recordRuntimeFallbackFailure(selectedRoute, selectedResponse.status, await safeResponseText(selectedResponse))
-    input.onTrace?.(createRuntimeFallbackTrace(input.req, plan, 'error', `upstream_${selectedResponse.status}`))
-    return false
-  }
-
-  await recordRuntimeFallbackSuccess(selectedRoute)
-  const selectedResult = await parseProviderNonStreamingResponse(selectedResponse, selectedReq)
-  input.onTrace?.(createRuntimeFallbackTrace(input.req, plan, 'done'))
-  input.onTrace?.(createStreamModeTrace('fallback', st('providerTrace.streamFallbackCompleted')))
-  if (selectedResult.text) input.onChunk(selectedResult.text)
-  if (selectedResult.citations?.length) input.onCitations?.(selectedResult.citations)
-  selectedResult.traces?.forEach(input.onTrace ?? (() => undefined))
-  void appendRuntimeLog('upstream.response', {
-    conversationId: input.req.conversationId,
-    providerId: selectedReq.provider.id,
-    model: selectedReq.model,
-    requestedModel: selectedReq.requestedModel,
-    upstreamModel: selectedReq.model,
-    transport: 'http_sse',
-    fallback: true,
-    usage: selectedResult.usage,
-    textLength: selectedResult.text.length,
-  }, runtimeLogOptions(input.req))
-  input.onDone(withCredentialGroup(selectedResult, selectedRoute.credentialGroupId))
-  return true
-}
-
-async function retryWithoutStreaming(
-  req: ChatRequest,
-  onChunk: StreamCallback,
-  onDone: DoneCallback,
-  onError: ErrorCallback,
-  onCitations?: CitationCallback,
-  onTrace?: TraceCallback,
-  credentialGroupId?: string,
-  controller?: AbortController
-): Promise<void> {
-  try {
-    const fallbackReq = { ...req, stream: false }
-    const url = resolveNonStreamingProviderEndpoint(fallbackReq)
-    const fallbackPreparedRequest = prepareHttpJsonRequest({
-      provider: fallbackReq.provider,
-      model: fallbackReq.model,
-      url,
-      headers: getHeaders(fallbackReq.provider),
-      body: getBody(fallbackReq),
-    })
-    const response = await fetchChatStreamWithRetry({
-      req: fallbackReq,
-      url: fallbackPreparedRequest.url,
-      headers: fallbackPreparedRequest.headers,
-      body: fallbackPreparedRequest.body,
-      stream: false,
-      controller: controller ?? new AbortController(),
-      credentialGroupId,
-      onTrace,
-    })
-    if (!response.ok) {
-      const errorText = await safeResponseText(response)
-      const recovered = await tryRuntimeFallback({ req: fallbackReq, status: response.status, responseText: errorText, credentialGroupId, onChunk, onDone, onCitations, onTrace })
-      if (recovered) return
-      const errorCode = classifyHttpStatus(response.status, errorText, fallbackReq.model, fallbackReq.provider)
-      onError(providerRuntimeError(
-        formatProviderHttpError(response.status, errorText, fallbackReq.provider, fallbackReq.model),
-        credentialGroupId,
-        providerOperationCodeToChatErrorCode(errorCode)
-      ))
-      return
-    }
-  const result = await parseProviderNonStreamingResponse(response, fallbackReq)
-  onTrace?.(createStreamModeTrace('fallback', st('providerTrace.streamFallbackCompleted')))
-  if (result.text) onChunk(result.text)
-  if (result.citations?.length) onCitations?.(result.citations)
-  result.traces?.forEach(onTrace ?? (() => undefined))
-  void appendRuntimeLog('upstream.response', {
-    conversationId: req.conversationId,
-    providerId: req.provider.id,
-    model: req.model,
-    requestedModel: req.requestedModel,
-    upstreamModel: req.model,
-    transport: 'http_sse',
-    fallback: true,
-    usage: result.usage,
-    textLength: result.text.length,
-  }, runtimeLogOptions(req))
-  onDone(withCredentialGroup(result, credentialGroupId))
-  } catch (error) {
-    const runtimeError = error instanceof Error ? error as ProviderRuntimeError : providerRuntimeError(st('providerOperation.requestFailed'))
-    runtimeError.credentialGroupId = runtimeError.credentialGroupId ?? credentialGroupId
-    onError(runtimeError)
-  }
 }
 
 export async function generateText(req: ChatRequest): Promise<string> {

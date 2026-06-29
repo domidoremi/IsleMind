@@ -3,7 +3,7 @@ import { getModelConfig, getProviderConfigIssue, XIAOMI_MIMO_PAYG_BASE_URL, getX
 import type { Settings, AIProvider, Language, ProviderCredentialGroup, ThemeId, ThemeMode } from '@/types'
 import { loadData, saveData } from '@/services/storage'
 import { deleteSecureItem, getSecureItem, setSecureItem } from '@/services/secureStorage'
-import { applyProviderPreset, defaultProviderSyncPolicy, detectProviderPreset, getProviderPreset } from '@/services/ai/providerRegistry'
+import { applyProviderPreset, detectProviderPreset, getProviderPreset, normalizeProviderSyncPolicy } from '@/services/ai/providerRegistry'
 import { normalizeProviderCredentialGroups } from '@/services/ai/providerCredentials'
 import { legacySearchModeForProvider, resolveSearchProvider } from '@/services/searchPolicy'
 import { clearHistoricalInjectedGroupModels, clearHistoricalInjectedProviderModels, getProviderPreferredModel, hasRemoteProviderModelEvidence, isProviderConversationReady, normalizeProviderModelAliases } from '@/utils/providerModels'
@@ -26,13 +26,14 @@ interface SettingsState {
   setThemeId: (themeId: ThemeId) => void
   setLanguage: (language: Language) => void
   addProvider: (provider: AIProvider) => Promise<void>
-  addProviders: (providers: AIProvider[]) => Promise<void>
+  addProviders: (providers: AIProvider[], options?: AddProvidersOptions) => Promise<void>
   updateProvider: (id: string, updates: Partial<AIProvider>) => Promise<void>
   updateProviders: (ids: string[], updates: Partial<AIProvider>) => Promise<void>
   reorderProviders: (providerIds: string[]) => void
   removeProvider: (id: string) => Promise<void>
   clearAllProviders: () => Promise<void>
-  clearInvalidProviders: () => Promise<number>
+  listInvalidProviders: () => Promise<AIProvider[]>
+  clearInvalidProviders: (ids?: string[]) => Promise<number>
   setProviderApiKey: (id: string, apiKey: string) => Promise<void>
   getSecureApiKey: (id: string) => Promise<string | null>
   setProviderCredentialGroupKey: (providerId: string, groupId: string, apiKey: string) => Promise<void>
@@ -46,10 +47,23 @@ interface SettingsState {
   getBingSearchApiKey: () => Promise<string | null>
   setCustomSearchApiKey: (apiKey: string) => Promise<void>
   getCustomSearchApiKey: () => Promise<string | null>
+  setObservabilitySinkApiKey: (apiKey: string) => Promise<void>
+  getObservabilitySinkApiKey: () => Promise<string | null>
   hydrateProviderKey: (id: string) => Promise<AIProvider | null>
   getConfiguredProviders: () => Promise<AIProvider[]>
   getPrimaryConfiguredProvider: () => Promise<AIProvider | null>
   clearAll: () => Promise<void>
+}
+
+interface AddProvidersProgress {
+  completed: number
+  total: number
+  currentProviderName?: string
+}
+
+interface AddProvidersOptions {
+  onProgress?: (progress: AddProvidersProgress) => void
+  yieldEvery?: number
 }
 
 const defaultSettings: Settings = {
@@ -60,7 +74,7 @@ const defaultSettings: Settings = {
   fontSize: 16,
   hapticsEnabled: true,
   systemStatusNotificationsEnabled: false,
-  defaultTemperature: 0.3,
+  defaultTemperature: undefined,
   defaultMaxTokens: undefined,
   memoryEnabled: true,
   knowledgeEnabled: true,
@@ -68,8 +82,6 @@ const defaultSettings: Settings = {
   webSearchMode: 'native',
   knowledgeTopK: 4,
   memoryTopK: 4,
-  onboardingCompleted: false,
-  onboardingCompanionMode: 'concise',
   ragMode: 'hybrid',
   embeddingMode: 'hybrid',
   localEmbeddingModelId: undefined,
@@ -103,6 +115,17 @@ const defaultSettings: Settings = {
   payloadPolicyMode: 'warn',
   proxyMode: 'off',
   proxyBaseUrl: '',
+  observabilitySinkMode: 'off',
+  observabilitySinkTarget: 'opentelemetry',
+  observabilitySinkEndpointUrl: '',
+  observabilitySinkApiKeyConfigured: false,
+  observabilitySinkUserOptIn: false,
+  observabilitySinkWorkspaceConsent: false,
+  observabilitySinkDevelopmentOnly: false,
+  observabilitySinkAllowRawPayloads: false,
+  observabilitySinkAttributeLimit: 48,
+  observabilitySinkAttributeStringLimit: 160,
+  observabilitySinkHighFrequencyExportMode: 'coalesced',
   providerAllowlist: [],
   providerBlocklist: [],
   modelAllowlist: [],
@@ -111,6 +134,8 @@ const defaultSettings: Settings = {
   runtimeLogMaxBytes: 1048576,
   sessionConcurrencyLimit: 1,
   sessionQueueTimeoutMs: 1500,
+  sessionAffinityEnabled: false,
+  sessionAffinityTtlMs: 30 * 60 * 1000,
   upstreamRequestTimeoutMs: 60000,
   upstreamMaxRetries: 1,
   upstreamCircuitBreakerEnabled: true,
@@ -124,10 +149,15 @@ const defaultSettings: Settings = {
   cacheInjectionEnabled: false,
   cacheTtl: 'default',
   modelTestModel: '',
-  modelTestCheckParameters: true,
+  modelTestCheckParameters: false,
 }
 
 const PROVIDER_CATALOG_VERSION = 1
+const OPTIONAL_SETTINGS_KEYS_WITHOUT_DEFAULT = [
+  'googleSearchCx',
+  'customSearchEndpoint',
+  'lastApkUpdateCheckAt',
+] as const satisfies readonly (keyof Settings)[]
 const LEGACY_DEFAULT_PROVIDER_IDS = [
   'openai',
   'anthropic',
@@ -158,6 +188,7 @@ const TAVILY_KEY = 'islemind.key.tavily'
 const GOOGLE_SEARCH_KEY = 'islemind.key.google-search'
 const BING_SEARCH_KEY = 'islemind.key.bing-search'
 const CUSTOM_SEARCH_KEY = 'islemind.key.custom-search'
+const OBSERVABILITY_SINK_API_KEY = 'islemind.key.observability-sink'
 
 async function setSecureKey(key: string, value: string): Promise<void> {
   if (value) {
@@ -172,10 +203,11 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
   providers: [],
 
   load: async () => {
-    const [settings, providers, languageSource] = await Promise.all([
+    const [settings, providers, languageSource, observabilitySinkApiKey] = await Promise.all([
       loadData<Settings>('SETTINGS'),
       loadData<AIProvider[]>('PROVIDERS'),
       loadLanguagePreferenceSource(),
+      getSecureItem(OBSERVABILITY_SINK_API_KEY),
     ])
     const storedSettings = stripLegacySettingsFields(settings ? { ...defaultSettings, ...settings } : defaultSettings)
     const rawSettings = sanitizeSettingsUrlFields(storedSettings)
@@ -186,12 +218,14 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
       await clearProviderCatalogSecrets(providers ?? [])
     }
     const normalizedThemeId = normalizeThemeId(rawSettings.themeId)
+    const observabilitySinkApiKeyConfigured = !!observabilitySinkApiKey?.trim()
     const mergedSettings = sanitizeSettingsUrlFields({
       ...rawSettings,
       language: effectiveLanguage,
       themeId: normalizedThemeId,
       providerCatalogVersion: PROVIDER_CATALOG_VERSION,
       defaultProvider: resetCatalog ? null : rawSettings.defaultProvider,
+      observabilitySinkApiKeyConfigured,
       searchProvider: resolvedSearchProvider,
       webSearchMode: legacySearchModeForProvider(resolvedSearchProvider),
       webSearchEnabled: resolvedSearchProvider !== 'off',
@@ -207,7 +241,8 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
     setServiceLanguage(effectiveLanguage)
     const themeIdMigrated = rawSettings.themeId !== normalizedThemeId
     const settingsUrlMigrated = rawSettings !== storedSettings
-    if (resetCatalog || themeIdMigrated || settingsUrlMigrated) {
+    const observabilitySecretStateMigrated = rawSettings.observabilitySinkApiKeyConfigured !== observabilitySinkApiKeyConfigured
+    if (resetCatalog || themeIdMigrated || settingsUrlMigrated || observabilitySecretStateMigrated) {
       saveData('SETTINGS', { ...mergedSettings, defaultProvider: resetCatalog ? null : defaultProvider })
     }
     if (resetCatalog) {
@@ -288,14 +323,26 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
     })
   },
 
-  addProviders: async (providers: AIProvider[]) => {
+  addProviders: async (providers: AIProvider[], options?: AddProvidersOptions) => {
     if (!providers.length) return
-    await Promise.all(providers.map(async (provider) => {
+    const total = providers.length
+    const yieldEvery = normalizeYieldEvery(options?.yieldEvery)
+    options?.onProgress?.({ completed: 0, total })
+    await yieldToUi()
+    for (let index = 0; index < providers.length; index += 1) {
+      const provider = providers[index]
       if (provider.apiKey) {
         await setSecureItem(secureProviderKey(provider.id), provider.apiKey)
       }
-      await persistCredentialGroupKeys(provider.id, provider.credentialGroups)
-    }))
+      await persistCredentialGroupKeys(provider.id, provider.credentialGroups, { shouldYield: true, yieldEvery })
+      const completed = index + 1
+      if (completed === 1 || completed === total || completed % yieldEvery === 0) {
+        options?.onProgress?.({ completed, total, currentProviderName: provider.name })
+      }
+      if (completed === total || completed % yieldEvery === 0) {
+        await yieldToUi()
+      }
+    }
     set((state) => {
       const normalized = providers.map((provider) => normalizeProvider({ ...provider, apiKey: '' } as AIProvider))
       const existingIds = new Set(normalized.map((provider) => provider.id))
@@ -365,14 +412,17 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
     })
   },
 
-  clearInvalidProviders: async () => {
-    const entries = await Promise.all(get().providers.map(async (provider) => ({
-      stored: provider,
-      hydrated: await get().hydrateProviderKey(provider.id) ?? provider,
-    })))
-    const invalidProviders = entries
-      .filter(({ hydrated }) => isInvalidProviderConfiguration(hydrated))
-      .map(({ stored }) => stored)
+  listInvalidProviders: async () => {
+    return collectInvalidProviders(get().providers, (provider) => get().hydrateProviderKey(provider.id))
+  },
+
+  clearInvalidProviders: async (ids?: string[]) => {
+    if (ids && !ids.length) return 0
+    const targetIds = ids ? new Set(ids) : null
+    const candidates = targetIds
+      ? get().providers.filter((provider) => targetIds.has(provider.id))
+      : get().providers
+    const invalidProviders = await collectInvalidProviders(candidates, (provider) => get().hydrateProviderKey(provider.id))
     if (!invalidProviders.length) return 0
 
     const invalidIds = new Set(invalidProviders.map((provider) => provider.id))
@@ -460,6 +510,13 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
   getBingSearchApiKey: async () => getSecureItem(BING_SEARCH_KEY),
   setCustomSearchApiKey: async (apiKey: string) => setSecureKey(CUSTOM_SEARCH_KEY, apiKey),
   getCustomSearchApiKey: async () => getSecureItem(CUSTOM_SEARCH_KEY),
+  setObservabilitySinkApiKey: async (apiKey: string) => {
+    const trimmed = apiKey.trim()
+    await setSecureKey(OBSERVABILITY_SINK_API_KEY, trimmed)
+    const stored = await getSecureItem(OBSERVABILITY_SINK_API_KEY)
+    get().updateSettings({ observabilitySinkApiKeyConfigured: !!stored?.trim() })
+  },
+  getObservabilitySinkApiKey: async () => getSecureItem(OBSERVABILITY_SINK_API_KEY),
 
   hydrateProviderKey: async (id: string) => {
     const provider = get().providers.find((item) => item.id === id)
@@ -493,7 +550,7 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
 
   clearAll: async () => {
     const resetLanguage = resolveEffectiveLanguage(undefined, 'system', getSystemLanguage())
-    const resetSettings = sanitizeSettingsUrlFields({ ...defaultSettings, language: resetLanguage, defaultProvider: null, onboardingCompleted: false, providerCatalogVersion: PROVIDER_CATALOG_VERSION })
+    const resetSettings = sanitizeSettingsUrlFields({ ...defaultSettings, language: resetLanguage, defaultProvider: null, providerCatalogVersion: PROVIDER_CATALOG_VERSION })
     const providers = get().providers
     const providerIds = new Set([...LEGACY_DEFAULT_PROVIDER_IDS, ...providers.map((provider) => provider.id)])
     await Promise.all([
@@ -502,6 +559,7 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
       deleteSecureItem(GOOGLE_SEARCH_KEY),
       deleteSecureItem(BING_SEARCH_KEY),
       deleteSecureItem(CUSTOM_SEARCH_KEY),
+      deleteSecureItem(OBSERVABILITY_SINK_API_KEY),
       ...providers.flatMap((provider) => (provider.credentialGroups ?? []).map((group) => deleteSecureItem(secureProviderGroupKey(provider.id, group.id)))),
       clearProviderRuntimeState(),
       clearLanguagePreferenceSource(),
@@ -520,8 +578,12 @@ function mergeProviders(saved: AIProvider[]): AIProvider[] {
 
 function stripLegacySettingsFields(settings: Settings): Settings {
   const currentSettings: Settings & Partial<Record<string, unknown>> = { ...settings }
-  for (const key of ['page' + 'TransitionStyle']) {
-    delete currentSettings[key]
+  const currentKeys = new Set<string>([
+    ...Object.keys(defaultSettings),
+    ...OPTIONAL_SETTINGS_KEYS_WITHOUT_DEFAULT,
+  ])
+  for (const key of Object.keys(currentSettings)) {
+    if (!currentKeys.has(key)) delete currentSettings[key]
   }
   return currentSettings
 }
@@ -542,7 +604,7 @@ function normalizeProvider(provider: AIProvider): AIProvider {
     detectedPresetId,
     detectionStatus: provider.detectionStatus ?? (provider.presetId ? 'manual' : 'detected'),
     capabilities: { ...preset.capabilities, ...provider.capabilities },
-    syncPolicy: provider.syncPolicy ?? defaultProviderSyncPolicy(),
+    syncPolicy: normalizeProviderSyncPolicy(provider.syncPolicy),
     enabled: provider.enabled ?? false,
     models,
     manualModels,
@@ -585,11 +647,50 @@ function normalizeProviderBaseUrl(provider: AIProvider): string | undefined {
   return baseUrl
 }
 
-async function persistCredentialGroupKeys(providerId: string, groups: ProviderCredentialGroup[] | undefined): Promise<void> {
-  await Promise.all((groups ?? []).map(async (group) => {
-    if (!group.apiKey) return
+async function persistCredentialGroupKeys(
+  providerId: string,
+  groups: ProviderCredentialGroup[] | undefined,
+  options?: { shouldYield?: boolean; yieldEvery?: number }
+): Promise<void> {
+  if (!options?.shouldYield) {
+    await Promise.all((groups ?? []).map(async (group) => {
+      if (!group.apiKey) return
+      await setSecureItem(secureProviderGroupKey(providerId, group.id), group.apiKey)
+    }))
+    return
+  }
+  const yieldEvery = normalizeYieldEvery(options.yieldEvery)
+  const groupsWithKeys = (groups ?? []).filter((group) => !!group.apiKey)
+  for (let index = 0; index < groupsWithKeys.length; index += 1) {
+    const group = groupsWithKeys[index]
+    if (!group.apiKey) continue
     await setSecureItem(secureProviderGroupKey(providerId, group.id), group.apiKey)
-  }))
+    const completed = index + 1
+    if (completed === groupsWithKeys.length || completed % yieldEvery === 0) {
+      await yieldToUi()
+    }
+  }
+}
+
+function normalizeYieldEvery(value: number | undefined): number {
+  return Math.max(1, Math.floor(value ?? 8))
+}
+
+async function yieldToUi(): Promise<void> {
+  await new Promise<void>((resolve) => setTimeout(resolve, 0))
+}
+
+async function collectInvalidProviders(
+  providers: AIProvider[],
+  hydrateProvider: (provider: AIProvider) => Promise<AIProvider | null>
+): Promise<AIProvider[]> {
+  const entries = await Promise.all(providers.map(async (provider) => ({
+    stored: provider,
+    hydrated: await hydrateProvider(provider) ?? provider,
+  })))
+  return entries
+    .filter(({ hydrated }) => isInvalidProviderConfiguration(hydrated))
+    .map(({ stored }) => stored)
 }
 
 async function clearProviderCatalogSecrets(providers: AIProvider[]): Promise<void> {

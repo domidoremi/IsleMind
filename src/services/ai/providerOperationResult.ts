@@ -1,5 +1,8 @@
 import { st } from '@/i18n/service'
 import type { AIProvider, ProviderOperationCode } from '@/types'
+import { redactSensitiveText } from '@/utils/traceSafety'
+
+export const PROVIDER_OPERATION_RESULT_SCHEMA = 'islemind.provider-operation-result.v1'
 
 export interface ProviderOperationResult<T = undefined> {
   ok: boolean
@@ -38,7 +41,7 @@ export function providerFetchFailure<T>(error: unknown, credentialGroupId?: stri
   if (/failed to fetch|network|network request failed/i.test(message)) {
     return failure<T>('network_error', st('providerOperation.networkError'), undefined, credentialGroupId)
   }
-  return failure<T>('unknown', message || st('providerOperation.requestFailed'), undefined, credentialGroupId)
+  return failure<T>('unknown', redactSensitiveText(message) || st('providerOperation.requestFailed'), undefined, credentialGroupId)
 }
 
 export function classifyHttpStatus(status: number, responseText = '', model = '', provider?: Pick<AIProvider, 'type'>): ProviderOperationCode {
@@ -98,8 +101,8 @@ export function extractProviderErrorDetail(responseText = ''): string {
   try {
     const parsed = JSON.parse(trimmed) as Record<string, unknown>
     const error = typeof parsed.error === 'object' && parsed.error ? errorObject(parsed.error) : parsed
-    const type = stringFromUnknown(error.type) || stringFromUnknown(error.code) || stringFromUnknown(parsed.code)
-    const message = stringFromUnknown(error.message) || stringFromUnknown(parsed.message)
+    const type = redactSensitiveText(stringFromUnknown(error.type) || stringFromUnknown(error.code) || stringFromUnknown(parsed.code))
+    const message = redactSensitiveText(stringFromUnknown(error.message) || stringFromUnknown(parsed.message))
     const requestId = stringFromUnknown(error.request_id) || stringFromUnknown(error.requestId) || stringFromUnknown(parsed.request_id) || stringFromUnknown(parsed.requestId) || findRequestId(trimmed)
     return [
       type ? st('providerOperation.http.errorType', { type }) : '',
@@ -108,7 +111,7 @@ export function extractProviderErrorDetail(responseText = ''): string {
       st('providerOperation.http.suggestion'),
     ].filter(Boolean).join(' · ')
   } catch {
-    const plain = trimmed.replace(/\s+/g, ' ').slice(0, 180)
+    const plain = redactSensitiveText(trimmed.replace(/\s+/g, ' ')).slice(0, 180)
     const requestId = findRequestId(trimmed)
     return [
       plain,

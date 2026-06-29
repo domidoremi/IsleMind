@@ -2,8 +2,7 @@ import type { AIModel, AIProvider, ProviderPresetId } from '@/types'
 import { getModelConfig } from '@/types'
 import { getProviderPreset } from '@/services/ai/providerRegistry'
 import { isPerplexityProvider } from '@/services/ai/providerIdentity'
-import { getBedrockRuntimeSupportIssue, isBedrockMantleProvider, isBedrockRuntimeProvider } from '@/services/ai/providerAwsBedrockRouting'
-import { isBedrockProvider } from '@/services/ai/providerRequestOptimization'
+import { getBedrockRuntimeSupportIssue, isAwsBedrockProvider, isBedrockMantleProvider, isBedrockRuntimeProvider } from '@/services/ai/providerAwsBedrockRouting'
 import { isAzureOpenAIProvider, isAzureOpenAIV1Provider } from '@/services/ai/providerHostedRouting'
 import { getHostedProviderSupportIssue, isAwsBedrockHostedProvider, isHostedProviderGap, isVertexAIOpenAICompatibleProvider, isVertexAIProvider } from '@/services/ai/providerHostedBoundary'
 import { providerSupportsFileInput, providerSupportsVisionInput, resolveProviderNativeToolSupport } from '@/services/chatProviderNativeToolUtils'
@@ -1021,7 +1020,7 @@ function buildCacheStatus(provider: AIProvider, hostingProfile: ProviderHostingP
   if (isBedrockMantleProvider(provider)) {
     return { area: 'cache', level: 'partial', reason: 'AWS Bedrock Mantle can route OpenAI-compatible requests, while prompt-cache semantics remain model/provider-specific and require runtime observation' }
   }
-  if (isBedrockProvider(provider)) {
+  if (isAwsBedrockProvider(provider)) {
     return { area: 'cache', level: 'partial', reason: 'Bedrock-style cache injection is implemented through request optimization, not generic provider cache detection' }
   }
   return { area: 'cache', level: 'partial', reason: 'cache behavior is provider-specific and only partially implemented outside Bedrock-style paths' }

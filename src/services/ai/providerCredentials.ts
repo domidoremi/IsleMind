@@ -1,7 +1,7 @@
 import type { AIModel, AIProvider, ProviderCredentialGroup, ProviderOperationCode } from '@/types'
 import { getModelConfig, mergeModelConfig, sortModelConfigs } from '@/types'
 import { st } from '@/i18n/service'
-import { defaultProviderSyncPolicy, getProviderPreset } from './providerRegistry'
+import { getProviderPreset, normalizeProviderSyncPolicy } from './providerRegistry'
 import { clearHistoricalInjectedGroupModels, resolveProviderModelAlias } from '@/utils/providerModels'
 
 interface CredentialSyncDeps {
@@ -21,6 +21,11 @@ interface ProviderOperationResult<T = undefined> {
 export interface CredentialSelection {
   credentialGroupId?: string
   apiKey: string
+}
+
+export interface CredentialSelectionOptions {
+  preferredCredentialGroupId?: string
+  excludedCredentialGroupIds?: readonly string[]
 }
 
 export function updateCredentialGroupHealth(
@@ -69,7 +74,7 @@ export function normalizeProviderCredentialGroups(provider: AIProvider): AIProvi
     ...provider,
     credentialGroups: normalizedGroups,
     modelAvailability: mergeCredentialModelAvailability(normalizedGroups),
-    syncPolicy: provider.syncPolicy ?? defaultProviderSyncPolicy(),
+    syncPolicy: normalizeProviderSyncPolicy(provider.syncPolicy),
   }
 }
 
@@ -87,14 +92,23 @@ export function mergeCredentialModelAvailability(groups: ProviderCredentialGroup
   return Array.from(byModel.values()).sort((a, b) => a.modelId.localeCompare(b.modelId))
 }
 
-export function chooseCredentialForModel(provider: AIProvider, modelId: string): CredentialSelection {
+export function chooseCredentialForModel(
+  provider: AIProvider,
+  modelId: string,
+  options: CredentialSelectionOptions = {}
+): CredentialSelection {
   const normalized = normalizeProviderCredentialGroups(provider)
   const upstreamModel = resolveProviderModelAlias(provider, modelId)
+  const excluded = new Set(options.excludedCredentialGroupIds ?? [])
   const candidates = (normalized.credentialGroups ?? [])
     .filter((group) => group.enabled)
+    .filter((group) => !excluded.has(group.id))
     .filter((group) => !group.availableModels?.length || group.availableModels.includes(upstreamModel) || group.availableModels.includes(modelId))
     .sort((a, b) => (a.failureCount ?? 0) - (b.failureCount ?? 0) || (a.lastUsedAt ?? 0) - (b.lastUsedAt ?? 0))
-  const selected = candidates[0] ?? normalized.credentialGroups?.find((group) => group.enabled) ?? null
+  const preferred = options.preferredCredentialGroupId
+    ? candidates.find((group) => group.id === options.preferredCredentialGroupId)
+    : undefined
+  const selected = preferred ?? candidates[0] ?? normalized.credentialGroups?.find((group) => group.enabled && !excluded.has(group.id)) ?? null
   return {
     credentialGroupId: selected?.id,
     apiKey: selected?.apiKey ?? provider.apiKey,
@@ -111,27 +125,18 @@ export async function runCredentialGroupModelSync(provider: AIProvider, deps: Cr
   const now = deps.now ?? Date.now
   const jitter = deps.jitter ?? Math.random
   const wait = deps.delay ?? defaultDelay
-  const policy = provider.syncPolicy ?? defaultProviderSyncPolicy()
+  const policy = normalizeProviderSyncPolicy(provider.syncPolicy)
   const groups = normalizeProviderCredentialGroups(provider).credentialGroups ?? []
-  const nextGroups: ProviderCredentialGroup[] = []
+  const nextGroups: ProviderCredentialGroup[] = new Array(groups.length)
+  const syncedConfigsByGroup: AIModel[][] = new Array(groups.length)
   const configsById = new Map<string, AIModel>()
-
-  for (const [index, group] of groups.entries()) {
-    if (!group.enabled) {
-      nextGroups.push(group)
-      continue
-    }
-    if (index > 0) {
-      const span = Math.max(0, policy.maxDelayMs - policy.minDelayMs)
-      await wait(Math.round(policy.minDelayMs + span * jitter()))
-    }
+  const requestCache = new Map<string, Promise<Pick<AIModel, 'id' | 'name' | 'provider'>[] | AIModel[]>>()
+  const syncEnabledGroup = async (group: ProviderCredentialGroup, index: number): Promise<void> => {
     try {
-      const remote = await deps.fetchModels({ ...provider, apiKey: group.apiKey?.trim() || provider.apiKey }, group)
+      const remote = await fetchModelsForCredentialGroup(provider, group, deps, requestCache)
       const configs = remote.map((model) => mergeModelConfig(model.id, provider.type, model))
-      for (const config of configs) {
-        configsById.set(config.id, config)
-      }
-      nextGroups.push({
+      syncedConfigsByGroup[index] = configs
+      nextGroups[index] = {
         ...group,
         availableModels: configs.map((item) => item.id),
         lastModelSyncAt: now(),
@@ -139,20 +144,44 @@ export async function runCredentialGroupModelSync(provider: AIProvider, deps: Cr
         lastModelSyncMessage: st('providerOperation.modelsFetched', { count: configs.length }),
         lastModelSyncCode: 'ok',
         failureCount: 0,
-      })
+      }
     } catch (error) {
       const message = error instanceof Error ? error.message : st('apiKeyPanel.modelSyncFailed')
-      nextGroups.push({
+      nextGroups[index] = {
         ...group,
         lastModelSyncAt: now(),
         lastModelSyncStatus: 'bad',
         lastModelSyncMessage: message,
         lastModelSyncCode: 'unknown',
         failureCount: (group.failureCount ?? 0) + 1,
-      })
+      }
+    }
+  }
+  if (policy.strategy === 'parallel-balanced') {
+    await runCredentialGroupSyncPool(groups, policy.concurrency ?? 3, async (group, index) => {
+      if (!group.enabled) {
+        nextGroups[index] = group
+        return
+      }
+      if (index > 0) await wait(nextCredentialSyncDelay(policy, jitter))
+      await syncEnabledGroup(group, index)
+    })
+  } else {
+    for (const [index, group] of groups.entries()) {
+      if (!group.enabled) {
+        nextGroups[index] = group
+        continue
+      }
+      if (index > 0) await wait(nextCredentialSyncDelay(policy, jitter))
+      await syncEnabledGroup(group, index)
     }
   }
 
+  for (const configs of syncedConfigsByGroup) {
+    for (const config of configs ?? []) {
+      configsById.set(config.id, config)
+    }
+  }
   const modelConfigs = sortModelConfigs(Array.from(configsById.values()), provider.type)
   const models = modelConfigs.length ? modelConfigs.map((item) => item.id) : provider.models
   const merged: AIProvider = {
@@ -174,6 +203,45 @@ export async function runCredentialGroupModelSync(provider: AIProvider, deps: Cr
 
 export function providerCredentialResult<T>(ok: boolean, message: string, data?: T): ProviderOperationResult<T> {
   return { ok, code: ok ? 'ok' : 'unknown', message, data }
+}
+
+async function fetchModelsForCredentialGroup(
+  provider: AIProvider,
+  group: ProviderCredentialGroup,
+  deps: CredentialSyncDeps,
+  requestCache: Map<string, Promise<Pick<AIModel, 'id' | 'name' | 'provider'>[] | AIModel[]>>
+): Promise<Pick<AIModel, 'id' | 'name' | 'provider'>[] | AIModel[]> {
+  const apiKey = group.apiKey?.trim() || provider.apiKey
+  const cacheKey = `${provider.id}:${provider.type}:${provider.baseUrl ?? ''}:${provider.presetId ?? ''}:${apiKey}`
+  const cached = requestCache.get(cacheKey)
+  if (cached) return cached
+  const request = deps.fetchModels({ ...provider, apiKey }, group)
+  requestCache.set(cacheKey, request)
+  return request
+}
+
+async function runCredentialGroupSyncPool(
+  groups: ProviderCredentialGroup[],
+  concurrency: number,
+  runGroup: (group: ProviderCredentialGroup, index: number) => Promise<void>
+): Promise<void> {
+  let nextIndex = 0
+  const workerCount = Math.min(groups.length, Math.max(1, Math.floor(concurrency)))
+  await Promise.all(Array.from({ length: workerCount }, async () => {
+    while (nextIndex < groups.length) {
+      const currentIndex = nextIndex
+      nextIndex += 1
+      await runGroup(groups[currentIndex], currentIndex)
+    }
+  }))
+}
+
+function nextCredentialSyncDelay(
+  policy: NonNullable<AIProvider['syncPolicy']>,
+  jitter: () => number
+): number {
+  const span = Math.max(0, policy.maxDelayMs - policy.minDelayMs)
+  return Math.round(policy.minDelayMs + span * jitter())
 }
 
 function defaultDelay(ms: number): Promise<void> {

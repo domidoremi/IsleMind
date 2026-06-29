@@ -30,7 +30,7 @@ export default function SourceScreen() {
   const dialog = useIsleDialog()
   const { width } = useWindowDimensions()
   const compact = width < 430
-  const params = useLocalSearchParams<{ conversationId?: string; messageId?: string; citationId?: string; kind?: string; url?: string; qaErrorBoundary?: string }>()
+  const params = useLocalSearchParams<{ conversationId?: string; messageId?: string; citationId?: string; kind?: string; url?: string; qaErrorBoundary?: string; qaCapture?: string }>()
   const conversations = useChatStore((state) => state.conversations)
   const loadConversations = useChatStore((state) => state.load)
   const hydrationAttempted = useRef(false)
@@ -64,7 +64,7 @@ export default function SourceScreen() {
     ? [t('source.completed', { count: traces.filter((trace) => trace.status === 'done').length }), t('source.errors', { count: traces.filter((trace) => trace.status === 'error').length }), t('source.cancelled', { count: traces.filter((trace) => trace.status === 'cancelled').length }), t('source.skipped', { count: traces.filter((trace) => trace.status === 'skipped').length })].join(' · ')
     : getSourceSubtitle(citation, webUrl, t)
 
-  if (__DEV__ && firstParam(params.qaErrorBoundary) === '1') {
+  if (firstParam(params.qaErrorBoundary) === '1' && firstParam(params.qaCapture) === 'key-visual-gaps') {
     throw new Error('QA forced source render failure')
   }
 

@@ -223,6 +223,9 @@ export interface ProviderModelTestCapabilityCheck {
   }
 }
 
+export type ConversationGenerationParameterKey = 'temperature' | 'topP' | 'topK' | 'maxTokens'
+export type ConversationGenerationParameterOverrides = Partial<Record<ConversationGenerationParameterKey, boolean>>
+
 export interface Conversation {
   id: string
   title: string
@@ -237,8 +240,10 @@ export interface Conversation {
   systemPrompt: string
   temperature: number
   topP?: number
+  topK?: number
   reasoningEffort?: ReasoningEffort
   maxTokens: number
+  generationParameterOverrides?: ConversationGenerationParameterOverrides
   messages: Message[]
   createdAt: number
   updatedAt: number
@@ -247,11 +252,13 @@ export interface Conversation {
 export type ThemeMode = 'light' | 'dark' | 'system'
 export type ThemeId = 'minimal' | 'glass' | 'cartoon'
 export type Language = 'zh-CN' | 'en' | 'ja'
-export type OnboardingCompanionMode = 'concise' | 'research' | 'creative' | 'engineering' | 'companion'
 export type UpstreamTransportMode = 'auto' | 'http' | 'websocket'
 export type RemoteCompactMode = 'off' | 'auto' | 'required'
 export type PayloadPolicyMode = 'off' | 'warn' | 'block'
 export type ProxyMode = 'off' | 'custom-base-url' | 'system-detected'
+export type ObservabilitySinkMode = 'off' | 'local-only' | 'external'
+export type ObservabilitySinkTarget = 'opentelemetry' | 'langfuse' | 'phoenix'
+export type ObservabilitySinkHighFrequencyExportMode = 'drop' | 'coalesced' | 'per-event'
 export type BedrockCacheTtl = 'default' | '5m' | '1h'
 
 export interface Settings {
@@ -270,8 +277,6 @@ export interface Settings {
   webSearchMode?: WebSearchMode
   knowledgeTopK?: number
   memoryTopK?: number
-  onboardingCompleted?: boolean
-  onboardingCompanionMode?: OnboardingCompanionMode
   ragMode?: 'off' | 'fts' | 'hybrid'
   embeddingMode?: 'provider' | 'local' | 'hybrid'
   localEmbeddingModelId?: string
@@ -308,6 +313,17 @@ export interface Settings {
   payloadPolicyMode?: PayloadPolicyMode
   proxyMode?: ProxyMode
   proxyBaseUrl?: string
+  observabilitySinkMode?: ObservabilitySinkMode
+  observabilitySinkTarget?: ObservabilitySinkTarget
+  observabilitySinkEndpointUrl?: string
+  observabilitySinkApiKeyConfigured?: boolean
+  observabilitySinkUserOptIn?: boolean
+  observabilitySinkWorkspaceConsent?: boolean
+  observabilitySinkDevelopmentOnly?: boolean
+  observabilitySinkAllowRawPayloads?: boolean
+  observabilitySinkAttributeLimit?: number
+  observabilitySinkAttributeStringLimit?: number
+  observabilitySinkHighFrequencyExportMode?: ObservabilitySinkHighFrequencyExportMode
   providerAllowlist?: string[]
   providerBlocklist?: string[]
   modelAllowlist?: string[]
@@ -316,6 +332,8 @@ export interface Settings {
   runtimeLogMaxBytes?: number
   sessionConcurrencyLimit?: number
   sessionQueueTimeoutMs?: number
+  sessionAffinityEnabled?: boolean
+  sessionAffinityTtlMs?: number
   upstreamRequestTimeoutMs?: number
   upstreamMaxRetries?: number
   upstreamCircuitBreakerEnabled?: boolean
@@ -624,7 +642,8 @@ export interface ProviderSyncPolicy {
   minDelayMs: number
   maxDelayMs: number
   timeoutMs: number
-  strategy: 'sequential-low-rate'
+  strategy: 'sequential-low-rate' | 'parallel-balanced'
+  concurrency?: number
 }
 
 export interface MessageCitation {

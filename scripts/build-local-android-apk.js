@@ -14,7 +14,7 @@ const packageJson = require(path.join(projectRoot, 'package.json'))
 const apkOutputWaitMs = 10 * 60 * 1000
 const apkOutputPollMs = 2000
 const gradleNativeRetryAttempts = 3
-const preferredCmakeVersions = ['4.1.2']
+const preferredCmakeVersions = ['3.22.1', '4.1.2']
 const releaseBuildPasses = [
   {
     label: 'universal-64',
@@ -117,6 +117,24 @@ function gradleCommand() {
   return process.platform === 'win32' ? 'gradlew.bat' : './gradlew'
 }
 
+function childEnv(overrides = {}) {
+  const env = { ...process.env, ...overrides }
+  if (!Object.prototype.hasOwnProperty.call(overrides, 'FORCE_COLOR')) {
+    delete env.FORCE_COLOR
+  }
+  if (!Object.prototype.hasOwnProperty.call(overrides, 'NO_COLOR')) {
+    delete env.NO_COLOR
+  }
+  if (env.FORCE_COLOR && env.NO_COLOR) {
+    delete env.NO_COLOR
+  }
+  return env
+}
+
+function releaseEnv(overrides = {}) {
+  return childEnv({ NODE_ENV: 'production', ...overrides })
+}
+
 function run(command, args, options = {}) {
   const label = [command, ...args].join(' ')
   console.log(`\n> ${label}`)
@@ -125,7 +143,7 @@ function run(command, args, options = {}) {
   const spawnArgs = isWindowsScript ? ['/d', '/s', '/c', command, ...args] : args
   const result = spawnSync(executable, spawnArgs, {
     cwd: options.cwd || projectRoot,
-    env: { ...process.env, ...(options.env || {}) },
+    env: childEnv(options.env),
     shell: false,
     stdio: 'inherit',
   })
@@ -373,12 +391,13 @@ function assertReleaseOutputs(outputs, variant, pass) {
 }
 
 function prepareAndroidProjectForRelease() {
-  run(commandName('node'), ['scripts/patch-onnxruntime-16kb.js'])
-  run(commandName('node'), ['node_modules/expo/bin/cli', 'prebuild', '--platform', 'android'])
+  const env = releaseEnv()
+  run(commandName('node'), ['scripts/patch-onnxruntime-16kb.js'], { env })
+  run(commandName('node'), ['node_modules/expo/bin/cli', 'prebuild', '--platform', 'android'], { env })
   ensureAndroidLocalProperties()
   allowReleaseCleartextTraffic()
-  run(commandName('node'), ['scripts/patch-onnxruntime-16kb.js'])
-  run(commandName('node'), ['scripts/configure-android-release.js', '--skip-signing'])
+  run(commandName('node'), ['scripts/patch-onnxruntime-16kb.js'], { env })
+  run(commandName('node'), ['scripts/configure-android-release.js', '--skip-signing'], { env })
 }
 
 function buildVariant(variant, args) {
@@ -410,6 +429,7 @@ function buildVariant(variant, args) {
       `-PislemindUniversalApk=${pass.universalApk}`,
       `-PreactNativeArchitectures=${pass.reactNativeArchitectures}`,
     ], {
+      ...(args.buildType === 'release' ? { NODE_ENV: 'production' } : {}),
       ISLEMIND_MODEL_BUNDLE: variant,
       EXPO_PUBLIC_ISLEMIND_MODEL_BUNDLE: variant,
     })

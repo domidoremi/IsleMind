@@ -8,7 +8,9 @@ const outputPath = path.join(root, 'test-evidence', 'qa', 'android-status-notifi
 const appJsonPath = path.join(root, 'app.json')
 const manifestPath = path.join(root, 'android', 'app', 'src', 'main', 'AndroidManifest.xml')
 const modulePath = path.join(root, 'plugins', 'android-status-notification', 'AndroidStatusNotificationModule.kt')
-const defaultDevice = readDeviceArg() || process.env.QA_DEVICE_SERIAL || 'emulator-5554'
+const requestedDeviceArg = readDeviceArg()
+const explicitDeviceRequested = Boolean(requestedDeviceArg || process.env.QA_DEVICE_SERIAL)
+const defaultDevice = requestedDeviceArg || process.env.QA_DEVICE_SERIAL || 'emulator-5554'
 const selfTest = process.argv.includes('--self-test')
 
 function main() {
@@ -18,7 +20,7 @@ function main() {
   }
 
   fs.mkdirSync(path.dirname(outputPath), { recursive: true })
-  const selectedDevice = resolveDevice(defaultDevice)
+  const selectedDevice = resolveDevice(defaultDevice, { strict: explicitDeviceRequested })
   const result = createBaseResult(selectedDevice?.serial ?? null)
 
   try {
@@ -129,10 +131,11 @@ function listDevices() {
     .filter((item) => item.serial && item.state === 'device')
 }
 
-function resolveDevice(requested) {
+function resolveDevice(requested, options = {}) {
   const devices = listDevices()
   const exact = devices.find((item) => item.serial === requested)
   if (exact) return exact
+  if (options.strict) return null
   const wireless = devices.find((item) => item.serial.includes(':'))
   if (wireless) return wireless
   return devices[0] ?? null
