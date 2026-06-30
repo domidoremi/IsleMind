@@ -46,6 +46,9 @@ interface ApiKeyPanelProps {
 type PanelTask = 'idle' | 'saving' | 'syncing' | 'testing' | 'probing' | 'clipboard'
 type TokenModelGroupTone = 'success' | 'warning' | 'danger' | 'muted'
 
+const API_KEY_PANEL_MODEL_SAMPLE_LIMIT = 96
+const API_KEY_PANEL_CAPABILITY_MODEL_LIMIT = 6
+
 interface TokenModelGroup {
   id: string
   label: string
@@ -160,7 +163,7 @@ export function ApiKeyPanel({
   const modelEntries = useMemo(() => parseModelEntries(modelsText), [modelsText])
   const currentModels = modelEntries.models
   const customModels = useMemo(() => getProviderManualModels(provider), [provider])
-  const availableModels = useMemo(() => getPolicyAllowedProviderModels(provider, settings), [provider, settings])
+  const availableModels = useMemo(() => getPolicyAllowedProviderModels(provider, settings, { limit: API_KEY_PANEL_MODEL_SAMPLE_LIMIT }), [provider, settings])
   const remoteModels = useMemo(() => getRemoteModelIds(provider, availableModels), [availableModels, provider])
   const remoteModelGroups = useMemo(() => buildRemoteModelGroups(provider, availableModels, t), [availableModels, provider, t])
   const modelInventory = useMemo(() => summarizeProviderModelInventory(provider), [provider])
@@ -725,7 +728,7 @@ export function ApiKeyPanel({
             ) : (
               <>
                 <ModelSummary remoteModels={remoteModels} remoteModelGroups={remoteModelGroups} customModels={customModels} aliases={provider.modelAliases ?? []} manualCount={modelInventory.manualModels} selectableCount={availableModels.length} />
-                <ModelCapabilityEvidencePanel provider={provider} models={availableModels.length ? availableModels : currentModels} />
+                <ModelCapabilityEvidencePanel provider={provider} models={(availableModels.length ? availableModels : currentModels).slice(0, API_KEY_PANEL_CAPABILITY_MODEL_LIMIT)} />
                 <ModelTestCapabilityPanel provider={provider} />
               </>
             )}

@@ -34,6 +34,9 @@ interface ModelPickerGroup {
   models: ModelPickerItem[]
 }
 
+const MODEL_PICKER_PROVIDER_MODEL_LIMIT = 96
+const MODEL_PICKER_QUERY_MODEL_LIMIT = 160
+
 export function ChatOptionsPanel({
   conversation,
   provider,
@@ -69,7 +72,7 @@ export function ChatOptionsPanel({
   const currentProvider = provider
   const normalizedQuery = normalizeSearchText(modelPickerQuery)
   const policySwitchableProviders = useMemo(
-    () => getProviderModelDisplayCandidates({ providers: switchableProviders, settings }).map((candidate) => candidate.provider),
+    () => getProviderModelDisplayCandidates({ providers: switchableProviders, settings, modelLimit: 1, includePreferredModel: false }).map((candidate) => candidate.provider),
     [settings, switchableProviders]
   )
   const orderedProviders = useMemo(
@@ -582,7 +585,7 @@ function getModelCapabilityBadges(provider: AIProvider, model: string, config: A
 }
 
 function getSwitchableProviderModels(provider: AIProvider, query = '', settings?: ProviderModelAccessInput['settings']): string[] {
-  const models = getPolicyAllowedProviderModels(provider, settings)
+  const models = getPolicyAllowedProviderModels(provider, settings, { limit: query ? MODEL_PICKER_QUERY_MODEL_LIMIT : MODEL_PICKER_PROVIDER_MODEL_LIMIT })
     .filter((id) => getModelConfig(resolveProviderModelAlias(provider, id), provider.type, provider.modelConfigs).chatCompatible !== false)
   if (!query) return models
   return models.filter((id) => normalizeSearchText(`${id} ${getProviderDisplayModel(provider, id)} ${resolveProviderModelAlias(provider, id)}`).includes(query))
