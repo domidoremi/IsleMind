@@ -1,8 +1,9 @@
 import type { AIModel, AIProvider, ProviderCredentialGroup, ProviderOperationCode } from '@/types'
-import { getModelConfig, mergeModelConfig, sortModelConfigs } from '@/types'
+import { mergeModelConfig, sortModelConfigs } from '@/types'
 import { st } from '@/i18n/service'
 import { getProviderPreset, normalizeProviderSyncPolicy } from './providerRegistry'
 import { clearHistoricalInjectedGroupModels, resolveProviderModelAlias } from '@/utils/providerModels'
+import { PROVIDER_CREDENTIAL_GROUP_MODEL_STORAGE_LIMIT, PROVIDER_MODEL_AVAILABILITY_INDEX_LIMIT, limitModelIdsForStorage } from '@/utils/providerModelStorage'
 
 interface CredentialSyncDeps {
   fetchModels: (provider: AIProvider, group: ProviderCredentialGroup) => Promise<Pick<AIModel, 'id' | 'name' | 'provider'>[] | AIModel[]>
@@ -67,7 +68,9 @@ export function normalizeProviderCredentialGroups(provider: AIProvider): AIProvi
     id: group.id || `group-${index + 1}`,
     label: group.label || st('apiKeyPanel.groupName', { index: index + 1 }),
     enabled: group.enabled ?? true,
-    availableModels: group.availableModels ? clearHistoricalInjectedGroupModels(group, provider) : [],
+    availableModels: group.availableModels
+      ? limitModelIdsForStorage(clearHistoricalInjectedGroupModels(group, provider), [provider.lastTestModel], PROVIDER_CREDENTIAL_GROUP_MODEL_STORAGE_LIMIT)
+      : [],
     failureCount: group.failureCount ?? 0,
   }))
   return {
@@ -87,7 +90,9 @@ export function mergeCredentialModelAvailability(groups: ProviderCredentialGroup
       current.credentialGroupIds.push(group.id)
       current.lastSyncedAt = Math.max(current.lastSyncedAt ?? 0, group.lastModelSyncAt ?? 0) || undefined
       byModel.set(modelId, current)
+      if (byModel.size >= PROVIDER_MODEL_AVAILABILITY_INDEX_LIMIT) break
     }
+    if (byModel.size >= PROVIDER_MODEL_AVAILABILITY_INDEX_LIMIT) break
   }
   return Array.from(byModel.values()).sort((a, b) => a.modelId.localeCompare(b.modelId))
 }
@@ -134,7 +139,9 @@ export async function runCredentialGroupModelSync(provider: AIProvider, deps: Cr
   const syncEnabledGroup = async (group: ProviderCredentialGroup, index: number): Promise<void> => {
     try {
       const remote = await fetchModelsForCredentialGroup(provider, group, deps, requestCache)
-      const configs = remote.map((model) => mergeModelConfig(model.id, provider.type, model))
+      const remoteModels = limitModelIdsForStorage(remote.map((model) => model.id), [provider.lastTestModel], PROVIDER_CREDENTIAL_GROUP_MODEL_STORAGE_LIMIT)
+      const remoteById = new Map(remote.map((model) => [model.id, model]))
+      const configs = remoteModels.map((modelId) => mergeModelConfig(modelId, provider.type, remoteById.get(modelId)))
       syncedConfigsByGroup[index] = configs
       nextGroups[index] = {
         ...group,

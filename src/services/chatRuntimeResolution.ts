@@ -1,5 +1,5 @@
 import type { AIProvider, ChatErrorCode, Conversation, Settings } from '@/types'
-import { getPolicyAllowedProviderModels } from '@/services/ai/policy/providerModelAccess'
+import { providerHasPolicyModel } from '@/services/ai/policy/providerModelAccess'
 
 export interface RuntimeConversationResolution {
   conversation: Conversation
@@ -17,12 +17,13 @@ export function resolveRuntimeConversation(input: {
   settings: Settings
 }): RuntimeConversationResolution | null {
   const currentProvider = input.providers.find((item) => item.id === input.conversation.providerId)
+  const currentModelValid = !!currentProvider && providerHasPolicyModel(currentProvider, input.conversation.model, input.settings)
   if ((input.conversation.providerModelMode ?? 'inherited') !== 'inherited') {
-    return currentProvider && getPolicyAllowedProviderModels(currentProvider, input.settings).includes(input.conversation.model)
+    return currentProvider && currentModelValid
       ? { conversation: input.conversation, provider: currentProvider }
       : null
   }
-  if (currentProvider?.enabled && getPolicyAllowedProviderModels(currentProvider, input.settings).includes(input.conversation.model)) {
+  if (currentProvider?.enabled && currentModelValid) {
     return { conversation: input.conversation, provider: currentProvider }
   }
   return null

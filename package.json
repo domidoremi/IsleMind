@@ -28,6 +28,7 @@
     "test:provider-fallback-candidate-compatibility": "node scripts/provider-fallback-candidate-compatibility-tests.js",
     "test:provider-operation-result-compatibility": "node scripts/provider-operation-result-compatibility-tests.js",
     "test:provider-model-lifecycle-compatibility": "node scripts/provider-model-lifecycle-compatibility-tests.js",
+    "test:provider-performance-guards": "node scripts/provider-performance-guards-tests.js",
     "test:realtime-interaction-compatibility": "node scripts/realtime-interaction-compatibility-tests.js",
     "test:runtime-budget-governance-compatibility": "node scripts/runtime-budget-governance-compatibility-tests.js",
     "test:credential-governance-compatibility": "node scripts/credential-governance-compatibility-tests.js",

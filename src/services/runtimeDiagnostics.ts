@@ -21,7 +21,6 @@ import {
   buildProviderCapabilityMatrix,
   buildProviderCoverageBuckets,
   buildProviderModelCapabilityMatrix,
-  getProviderModelCapabilityModelIds,
   summarizeProviderModelCapabilityProvider,
   type ProviderCapabilityArea,
   type ProviderHostingProfile,
@@ -52,6 +51,8 @@ export const RUNTIME_DIAGNOSTICS_LOG_ENTRY_LIMIT = 120
 export const RUNTIME_DIAGNOSTICS_TIMELINE_EVENT_LIMIT = 120
 export const RUNTIME_DIAGNOSTICS_MEMORY_EVENT_LIMIT = RUNTIME_EVENT_HISTORY_LIMIT
 export const RUNTIME_DIAGNOSTICS_OBSERVABILITY_PREVIEW_EVENT_LIMIT = OBSERVABILITY_SINK_PREVIEW_EVENT_LIMIT
+const RUNTIME_DIAGNOSTICS_PROVIDER_HEAVY_LIMIT = 24
+const RUNTIME_DIAGNOSTICS_MODEL_CAPABILITY_LIMIT = 32
 
 export interface RuntimeDiagnosticsCapabilityStatusExample {
   providerId?: string
@@ -415,18 +416,21 @@ export async function buildRuntimeDiagnosticsSummary(input: {
   const requestExamples = summarizeRequestLevelExamples(logEntries)
   const timeline = buildRuntimeTimelineSnapshot(timelineEvents)
   const providerDetails = summarizeProviderRuntimeDetails(providers, settings, logEntries)
-  const providerMatrices = providers.map((provider) => ({
+  const heavyProviders = providers.slice(0, RUNTIME_DIAGNOSTICS_PROVIDER_HEAVY_LIMIT)
+  const providerMatrices = heavyProviders.map((provider) => ({
     provider,
     matrix: buildProviderCapabilityMatrix(provider),
     evidence: getProviderCompatibilityEvidenceForProvider(provider),
   }))
-  const providerModelCapabilitySummaries = providers.map((provider) => summarizeProviderModelCapabilityProvider(provider))
-  const compatibilityEvidence = providers.map((provider) => getProviderCompatibilityEvidenceForProvider(provider))
+  const providerModelCapabilitySummaries = heavyProviders.map((provider) =>
+    summarizeProviderModelCapabilityProvider(provider, runtimeDiagnosticsModelCapabilityIds(provider))
+  )
+  const compatibilityEvidence = heavyProviders.map((provider) => getProviderCompatibilityEvidenceForProvider(provider))
   const compatibilityAuditStates = summarizeCompatibilityAuditStates(compatibilityEvidence.map((evidence) => evidence.auditState))
   const compatibilityCapabilityStatuses = summarizeCompatibilityCapabilityStatuses(compatibilityEvidence.map((evidence) => evidence.id))
-  const compatibilityCapabilityStatusExamples = summarizeCompatibilityCapabilityStatusExamples(providers)
-  const compatibilityCapabilitySendSources = summarizeCompatibilityCapabilitySendSources(providers)
-  const compatibilityCapabilitySendPolicyExamples = summarizeCompatibilityCapabilitySendPolicyExamples(providers)
+  const compatibilityCapabilityStatusExamples = summarizeCompatibilityCapabilityStatusExamples(heavyProviders)
+  const compatibilityCapabilitySendSources = summarizeCompatibilityCapabilitySendSources(heavyProviders)
+  const compatibilityCapabilitySendPolicyExamples = summarizeCompatibilityCapabilitySendPolicyExamples(heavyProviders)
   const compatibilityGateCounts = compatibilityEvidence.map((evidence) => getProviderCompatibilityLiveSmokeGates(evidence.id).length)
   return {
     responses: {
@@ -504,7 +508,7 @@ export async function buildRuntimeDiagnosticsSummary(input: {
     },
     providerDetails,
     capabilityMatrix: {
-      hostingProfiles: buildProviderCoverageBuckets(providers),
+      hostingProfiles: buildProviderCoverageBuckets(heavyProviders),
       supportLevels: summarizeSupportLevels(providerMatrices.map((entry) => entry.matrix)),
       statusExamples: summarizeCapabilityMatrixStatusExamples(providerMatrices),
       partialProviders: providerMatrices.filter((entry) => entry.matrix.summaryLevel === 'partial').length,
@@ -514,7 +518,7 @@ export async function buildRuntimeDiagnosticsSummary(input: {
       modelCapabilityProviders: providerModelCapabilitySummaries.filter((summary) => summary.modelCount > 0).length,
       modelCapabilityModels: providerModelCapabilitySummaries.reduce((sum, summary) => sum + summary.modelCount, 0),
       modelCapabilityStatuses: summarizeProviderModelCapabilityStatuses(providerModelCapabilitySummaries),
-      modelCapabilityStatusExamples: summarizeProviderModelCapabilityStatusExamples(providers),
+      modelCapabilityStatusExamples: summarizeProviderModelCapabilityStatusExamples(heavyProviders),
       modelAdvancedSendableProviders: providerModelCapabilitySummaries.filter((summary) => summary.sendableAdvancedCapabilities.length > 0).length,
       modelAdvancedUnsupportedProviders: providerModelCapabilitySummaries.filter((summary) => summary.unsupportedAdvancedCapabilities.length > 0).length,
     },
@@ -1317,7 +1321,7 @@ function summarizeProviderModelCapabilityStatusExamples(providers: AIProvider[])
     unsupported: [],
   }
   for (const provider of providers) {
-    for (const modelId of getProviderModelCapabilityModelIds(provider).slice(0, 8)) {
+    for (const modelId of runtimeDiagnosticsModelCapabilityIds(provider).slice(0, 8)) {
       const matrix = buildProviderModelCapabilityMatrix(provider, modelId)
       for (const capability of matrix.capabilities) {
         if (examples[capability.status].length >= 3) continue
@@ -1335,6 +1339,27 @@ function summarizeProviderModelCapabilityStatusExamples(providers: AIProvider[])
     }
   }
   return examples
+}
+
+function runtimeDiagnosticsModelCapabilityIds(provider: AIProvider): string[] {
+  return normalizeRuntimeDiagnosticsModelIds([
+    provider.lastTestModel,
+    ...provider.models,
+    ...(provider.manualModels ?? []),
+    ...(provider.modelConfigs ?? []).map((model) => model.id),
+    ...(provider.modelAliases ?? []).map((alias) => alias.model),
+  ]).slice(0, RUNTIME_DIAGNOSTICS_MODEL_CAPABILITY_LIMIT)
+}
+
+function normalizeRuntimeDiagnosticsModelIds(modelIds: Array<string | undefined>): string[] {
+  const seen = new Set<string>()
+  return modelIds
+    .map((model) => model?.trim() ?? '')
+    .filter((model) => {
+      if (!model || seen.has(model)) return false
+      seen.add(model)
+      return true
+    })
 }
 
 function summarizeCompatibilityAuditStates(states: ProviderCompatibilityAuditState[]): Record<ProviderCompatibilityAuditState, number> {

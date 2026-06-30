@@ -3,7 +3,8 @@ import type { AIProvider, Conversation, McpServerConfig, MessageStatus, ProcessT
 import { getModelConfig } from '@/types'
 import { exportContextSnapshot, importContextSnapshot, importMemoriesForReview, type ContextSnapshot } from '@/services/contextStore'
 import { localDataStore } from '@/services/localDataStore'
-import { clearHistoricalInjectedGroupModels, clearHistoricalInjectedProviderModels, hasRemoteProviderModelEvidence } from '@/utils/providerModels'
+import { clearHistoricalInjectedProviderModels, hasRemoteProviderModelEvidence } from '@/utils/providerModels'
+import { buildProviderModelConfigsForStorage, pruneCredentialGroupModelsForStorage, pruneProviderModelsForStorage } from '@/utils/providerModelStorage'
 import { exportMemoriesAsMem0, importMem0Memories, type Mem0MemoryEnvelope } from '@/utils/mem0Interop'
 import { defaultProviderCredentialMode, defaultProviderTokenPlanRegion, defaultProviderWireProtocol } from '@/services/ai/providerProtocolPolicy'
 import { sanitizeAttachmentsForPersistence } from '@/services/attachmentContract'
@@ -374,12 +375,12 @@ function normalizeProvider(provider: AIProvider): AIProvider {
     credentialMode: provider.type === 'xiaomi-mimo' ? defaultProviderCredentialMode(provider.credentialMode) : provider.credentialMode,
     tokenPlanRegion: provider.type === 'xiaomi-mimo' ? defaultProviderTokenPlanRegion(provider.tokenPlanRegion) : provider.tokenPlanRegion,
     wireProtocol: provider.type === 'xiaomi-mimo' ? defaultProviderWireProtocol(provider.wireProtocol) : provider.wireProtocol,
-    modelConfigs: uniqueStrings([...models, ...manualModels, ...modelAliases.map((item) => item.model)]).map((modelId) => getModelConfig(modelId, provider.type, provider.modelConfigs)),
+    modelConfigs: buildProviderModelConfigsForStorage(provider, models, manualModels, modelAliases),
     credentialGroups: provider.credentialGroups?.map((group, index) => ({
       ...group,
       apiKey: '',
       id: group.id || `group-${index + 1}`,
-      availableModels: group.availableModels?.length ? clearHistoricalInjectedGroupModels(group, provider) : [],
+      availableModels: group.availableModels?.length ? pruneCredentialGroupModelsForStorage(group, provider) : [],
       enabled: group.enabled ?? true,
     })),
     lastTestStatus: provider.lastTestStatus ?? 'idle',
@@ -460,7 +461,7 @@ async function clearRestoreRuntimeArtifacts(): Promise<void> {
 }
 
 function normalizeProviderModels(provider: AIProvider): string[] {
-  const models = clearHistoricalInjectedProviderModels(provider)
+  const models = pruneProviderModelsForStorage(provider)
   const existing = models.filter((model) => {
     const config = getModelConfig(model, provider.type, provider.modelConfigs)
     return !config.deprecated
