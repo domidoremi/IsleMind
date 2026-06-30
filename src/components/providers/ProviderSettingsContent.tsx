@@ -28,8 +28,6 @@ import { DEFAULT_PROVIDER_PRESET_ID, DEFAULT_PROVIDER_WIRE_PROTOCOL, PROVIDER_WI
 import { activationItemProgress } from '@/services/providerActivationJob'
 import { countDetectedProviderImports, formatProviderNameList } from '@/services/providerImportSummary'
 import { deleteTemporaryImportCopy, isFileTooLargeError, MAX_IMPORT_TEXT_FILE_BYTES, readUtf8ImportFile } from '@/services/fileImportGuards'
-import { buildProviderCapabilityMatrix, summarizeProviderCapabilityMatrix, summarizeProviderCapabilityMatrixDetails } from '@/services/ai/providerCapabilityMatrix'
-import { providerCompatibilityCapabilityCanBeSentForProvider, type ProviderCompatibilityBehavior } from '@/services/ai/providerCompatibilityContract'
 import { IsleMetric } from '@/components/ui/isle'
 import { parseModels } from '@/utils/text'
 import { isProviderConversationReady } from '@/utils/providerModels'
@@ -73,6 +71,8 @@ const PROVIDER_ROW_HEIGHT = 72
 const PROVIDER_DRAG_STEP = 64
 const PROVIDER_CARD_RADIUS = 16
 const CLEAR_INVALID_PROVIDER_LIST_LIMIT = 12
+const PROVIDER_POLICY_MODEL_UI_LIMIT = 96
+const RUNTIME_DIAGNOSTICS_DEBOUNCE_MS = 900
 type ProviderFormFieldId = 'name' | 'baseUrl' | 'tokens' | 'models'
 
 function resolveProviderChrome(colors: AppThemeColors) {
@@ -108,6 +108,7 @@ export function ProviderSettingsContent({ embedded = false, onClose, onBackgroun
   const clearAllProviders = useSettingsStore((state) => state.clearAllProviders)
   const listInvalidProviders = useSettingsStore((state) => state.listInvalidProviders)
   const clearInvalidProviders = useSettingsStore((state) => state.clearInvalidProviders)
+  const compactProviderStorage = useSettingsStore((state) => state.compactProviderStorage)
   const settings = useSettingsStore((state) => state.settings)
   const conversations = useChatStore((state) => state.conversations)
   const [expandedProviderId, setExpandedProviderId] = useState<string | null>(null)
@@ -120,6 +121,7 @@ export function ProviderSettingsContent({ embedded = false, onClose, onBackgroun
   const [importProgress, setImportProgress] = useState<ProviderImportProgress | null>(null)
   const [keyboardHeight, setKeyboardHeight] = useState(0)
   const [runtimeDiagnostics, setRuntimeDiagnostics] = useState<RuntimeDiagnosticsSummary | null>(null)
+  const runtimeDiagnosticsRunRef = useRef(0)
   const { activationBusy, activationJob, clearActivationJob, activateProviders, isActivationRunning } = useProviderActivationJob({
     onActivationCompleted: () => {
       setBatchMode(false)
@@ -160,18 +162,32 @@ export function ProviderSettingsContent({ embedded = false, onClose, onBackgroun
   }, [backgroundState, onBackgroundStateChange])
 
   useEffect(() => {
+    if (isActivationRunning || importProgress) return undefined
+    const timer = setTimeout(() => {
+      compactProviderStorage()
+    }, 600)
+    return () => clearTimeout(timer)
+  }, [compactProviderStorage, importProgress, isActivationRunning, providers])
+
+  useEffect(() => {
+    if (isActivationRunning || importProgress) return undefined
     let cancelled = false
-    void buildRuntimeDiagnosticsSummary({ providers, settings })
-      .then((summary) => {
-        if (!cancelled) setRuntimeDiagnostics(summary)
-      })
-      .catch(() => {
-        if (!cancelled) setRuntimeDiagnostics(null)
-      })
+    const runId = runtimeDiagnosticsRunRef.current + 1
+    runtimeDiagnosticsRunRef.current = runId
+    const timer = setTimeout(() => {
+      void buildRuntimeDiagnosticsSummary({ providers, settings })
+        .then((summary) => {
+          if (!cancelled && runtimeDiagnosticsRunRef.current === runId) setRuntimeDiagnostics(summary)
+        })
+        .catch(() => {
+          if (!cancelled && runtimeDiagnosticsRunRef.current === runId) setRuntimeDiagnostics(null)
+        })
+    }, RUNTIME_DIAGNOSTICS_DEBOUNCE_MS)
     return () => {
       cancelled = true
+      clearTimeout(timer)
     }
-  }, [providers, settings])
+  }, [providers, settings, isActivationRunning, importProgress])
 
   const usageByProvider = useMemo(() => {
     const usage = new Map<string, number>()
@@ -185,7 +201,7 @@ export function ProviderSettingsContent({ embedded = false, onClose, onBackgroun
   const visibleProviders = useMemo(() => {
     const policyModelsByProviderId = new Map<string, string[]>()
     for (const provider of providers) {
-      policyModelsByProviderId.set(provider.id, getPolicyAllowedProviderModels(provider, settings))
+      policyModelsByProviderId.set(provider.id, getPolicyAllowedProviderModels(provider, settings, { limit: PROVIDER_POLICY_MODEL_UI_LIMIT }))
     }
     return {
       providers: filterAndSortProviders(providers, { filter: modelFilter, sortMode, usageByProvider, settings, policyModelsByProviderId }),
@@ -621,10 +637,6 @@ function OperatorMetric({ label }: { label: string }) {
   return <IsleMetric label={label} />
 }
 
-function providerCapabilityLabelEnabled(provider: AIProvider, capability: ProviderCompatibilityBehavior, enabled: boolean | undefined): boolean {
-  return enabled === true && providerCompatibilityCapabilityCanBeSentForProvider(provider, capability, true)
-}
-
 function formatClearInvalidProviderList(providers: AIProvider[], t: ReturnType<typeof useTranslation>['t']): string {
   const visibleProviders = providers.slice(0, CLEAR_INVALID_PROVIDER_LIST_LIMIT)
   const lines = visibleProviders.map((provider) => {
@@ -724,12 +736,10 @@ function ProviderListRow({
       ? colors.ui.tone.warning
       : colors.ui.tone.neutral
   const capabilityLabels = [
-    summarizeProviderCapabilityMatrix(buildProviderCapabilityMatrix(provider)),
-    summarizeProviderCapabilityMatrixDetails(provider),
-    providerCapabilityLabelEnabled(provider, 'responsesApi', provider.capabilities?.responsesApi) ? 'Responses' : '',
-    providerCapabilityLabelEnabled(provider, 'responsesWebSocket', provider.capabilities?.responsesWebSocket) ? 'WebSocket' : '',
-    providerCapabilityLabelEnabled(provider, 'remoteCompact', provider.capabilities?.remoteCompact) ? 'Remote compact' : '',
-    providerCapabilityLabelEnabled(provider, 'embeddings', provider.capabilities?.embeddings) ? 'Embeddings' : '',
+    provider.capabilities?.responsesApi === true ? 'Responses' : '',
+    provider.capabilities?.responsesWebSocket === true ? 'WebSocket' : '',
+    provider.capabilities?.remoteCompact === true ? 'Remote compact' : '',
+    provider.capabilities?.embeddings === true ? 'Embeddings' : '',
   ].filter(Boolean)
   const runtimeStatus = runtimeDetail
     ? [

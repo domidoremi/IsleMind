@@ -9,6 +9,8 @@ import type { AIProvider } from '@/types'
 
 export type ProviderActivationMode = 'single' | 'batch' | 'all'
 
+const ACTIVATION_JOB_VISIBLE_ITEM_LIMIT = 8
+
 interface UseProviderActivationJobInput {
   onActivationCompleted?: () => void
 }
@@ -20,6 +22,7 @@ export function useProviderActivationJob(input: UseProviderActivationJobInput = 
   const hydrateProviderKey = useSettingsStore((state) => state.hydrateProviderKey)
   const updateProvider = useSettingsStore((state) => state.updateProvider)
   const updateProviderCredentialGroupHealth = useSettingsStore((state) => state.updateProviderCredentialGroupHealth)
+  const flushProviderPersistence = useSettingsStore((state) => state.flushProviderPersistence)
   const updateSettings = useSettingsStore((state) => state.updateSettings)
   const activationJob = useActivationJobStore((state) => state.job)
   const startActivationJob = useActivationJobStore((state) => state.start)
@@ -57,10 +60,40 @@ export function useProviderActivationJob(input: UseProviderActivationJobInput = 
         durationMs: 1800,
       })
       let activationItems = createActivationItems(chosen, t('providerSettings.activationQueued'))
+      const progressThrottleMs = chosen.length > 1 ? 240 : 0
+      let lastProgressPublishedAt = 0
+      let pendingProgressUpdate: Parameters<typeof updateActivationJob>[0] | null = null
+      let progressPublishTimer: ReturnType<typeof setTimeout> | null = null
+      const flushActivationProgress = () => {
+        if (progressPublishTimer) {
+          clearTimeout(progressPublishTimer)
+          progressPublishTimer = null
+        }
+        if (!pendingProgressUpdate) return
+        updateActivationJob(pendingProgressUpdate)
+        pendingProgressUpdate = null
+        lastProgressPublishedAt = Date.now()
+      }
+      const publishActivationJobUpdate = (updates: Parameters<typeof updateActivationJob>[0], force = false) => {
+        if (force || progressThrottleMs <= 0 || Date.now() - lastProgressPublishedAt >= progressThrottleMs) {
+          if (progressPublishTimer) {
+            clearTimeout(progressPublishTimer)
+            progressPublishTimer = null
+          }
+          pendingProgressUpdate = null
+          updateActivationJob(updates)
+          lastProgressPublishedAt = Date.now()
+          return
+        }
+        pendingProgressUpdate = updates
+        if (!progressPublishTimer) {
+          progressPublishTimer = setTimeout(flushActivationProgress, progressThrottleMs)
+        }
+      }
       const publishActivationItems = (nextItems: ActivationJobItemState[], stage?: string, currentName?: string) => {
         activationItems = nextItems
         const aggregate = aggregateActivationItems(activationItems)
-        updateActivationJob({
+        publishActivationJobUpdate({
           status: 'running',
           total: chosen.length,
           completed: aggregate.completed,
@@ -70,7 +103,7 @@ export function useProviderActivationJob(input: UseProviderActivationJobInput = 
           failed: aggregate.failed,
           currentName,
           stage: stage ?? t('providerSettings.activationStartedMessage', { count: chosen.length, concurrency: activationConcurrency }),
-          items: activationItems,
+          items: compactActivationItemsForUi(activationItems),
         })
       }
       const publishActivationItem = (providerId: string, updates: ActivationItemPatch, stage?: string, currentName?: string) => {
@@ -85,7 +118,7 @@ export function useProviderActivationJob(input: UseProviderActivationJobInput = 
         tested: 0,
         failed: 0,
         stage: chosen.length === 1 ? t('providerSettings.activationQueued') : t('providerSettings.activationStartedMessage', { count: chosen.length, concurrency: activationConcurrency }),
-        items: activationItems,
+        items: compactActivationItemsForUi(activationItems),
       })
       const runProviderActivation = async (provider: AIProvider): Promise<ProviderActivationResult> => {
         const currentStage = t('providerSettings.activationCurrent', { name: provider.name })
@@ -95,9 +128,9 @@ export function useProviderActivationJob(input: UseProviderActivationJobInput = 
           stage: currentStage,
         }, currentStage, provider.name)
         const result = await syncAndTestProvider(provider, {
-          updateProvider,
+          updateProvider: (providerId, updates) => updateProvider(providerId, updates, { persist: mode === 'single' ? 'immediate' : 'deferred' }),
           hydrateProviderKey,
-          updateProviderCredentialGroupHealth,
+          updateProviderCredentialGroupHealth: (providerId, groupId, ok) => updateProviderCredentialGroupHealth(providerId, groupId, ok, { persist: mode === 'single' ? 'immediate' : 'deferred' }),
           onStage: (event) => {
             publishActivationItem(event.providerId, {
               status: event.stage === 'failed' ? 'failed' : 'running',
@@ -152,6 +185,7 @@ export function useProviderActivationJob(input: UseProviderActivationJobInput = 
       }
       const results = await runProviderActivationPool(chosen, activationConcurrency, runProviderActivation, activationPolicy.afterProviderDelayMs)
       activationItems = finalizeActivationItemsFromResults(activationItems, results)
+      flushActivationProgress()
 
       const finalAggregate = aggregateActivationItems(activationItems)
       const summary = summarizeProviderActivation(results)
@@ -189,8 +223,13 @@ export function useProviderActivationJob(input: UseProviderActivationJobInput = 
         tested: finalAggregate.tested,
         failed: finalAggregate.failed,
         stage: summary.message,
-        items: activationItems,
+        items: compactActivationItemsForUi(activationItems),
       })
+      if (mode !== 'single') {
+        setTimeout(() => {
+          void flushProviderPersistence()
+        }, 1200)
+      }
       scheduleActivationJobDismiss(summary.tone, clearActivationJob)
     } finally {
       if (mountedRef.current) setActivationBusy(false)
@@ -243,6 +282,31 @@ function finalizeActivationItemsFromResults(items: ActivationJobItemState[], res
       tested: result.testOk,
       failed,
     }
+  })
+}
+
+function compactActivationItemsForUi(items: ActivationJobItemState[]): ActivationJobItemState[] {
+  if (items.length <= ACTIVATION_JOB_VISIBLE_ITEM_LIMIT) return items
+  const active = items.filter((item) => item.status === 'running')
+  const failed = items.filter((item) => item.status === 'failed' || item.failed)
+  const done = items.filter((item) => item.status === 'done' && !item.failed)
+  const queued = items.filter((item) => item.status === 'queued')
+  const compacted = dedupeActivationItems([
+    ...active,
+    ...failed,
+    ...done.slice(-Math.max(0, ACTIVATION_JOB_VISIBLE_ITEM_LIMIT - active.length - failed.length)),
+    ...queued,
+  ]).slice(0, ACTIVATION_JOB_VISIBLE_ITEM_LIMIT)
+  if (compacted.length >= ACTIVATION_JOB_VISIBLE_ITEM_LIMIT) return compacted
+  return dedupeActivationItems([...compacted, ...items]).slice(0, ACTIVATION_JOB_VISIBLE_ITEM_LIMIT)
+}
+
+function dedupeActivationItems(items: ActivationJobItemState[]): ActivationJobItemState[] {
+  const seen = new Set<string>()
+  return items.filter((item) => {
+    if (seen.has(item.providerId)) return false
+    seen.add(item.providerId)
+    return true
   })
 }
 

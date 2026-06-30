@@ -68,7 +68,7 @@ import { motionTokens } from '@/theme/animation'
 import { getNextReasoningEffort, getReasoningControlValue, getReasoningDisplayEffort, getReasoningEffortOptions, providerSupportsReasoning } from '@/utils/modelReasoning'
 import { summarizeWorkArtifact } from '@/utils/workArtifact'
 import { validateWorkArtifactQuality } from '@/utils/workArtifact'
-import { getPolicyAllowedProviderModels as getAccessAllowedProviderModels, getPolicyPreferredProviderModel as getAccessPreferredProviderModel, providerHasPolicyAllowedModel as accessProviderHasPolicyAllowedModel, resolveProviderModelAliasAccess } from '@/services/ai/policy/providerModelAccess'
+import { getPolicyAllowedProviderModels as getAccessAllowedProviderModels, getPolicyPreferredProviderModel as getAccessPreferredProviderModel, providerHasPolicyAllowedModel as accessProviderHasPolicyAllowedModel, providerHasPolicyModel as accessProviderHasPolicyModel, resolveProviderModelAliasAccess } from '@/services/ai/policy/providerModelAccess'
 import { PROVIDER_PLATFORM_DEFAULT_TEMPERATURE } from '@/services/ai/providerParameterDefaults'
 import {
   clampConversationGenerationParameter,
@@ -136,6 +136,9 @@ const CONVERSATION_NAVIGATION_RAIL_RIGHT = -12
 const CONVERSATION_NAVIGATION_RAIL_WIDTH = 48
 const EMPTY_CONVERSATION_DEFAULT_TOP_PADDING = 20
 const HOME_MODEL_HIGHLIGHT_LIMIT = 4
+const MODEL_QUICK_OPTION_PROVIDER_LIMIT = 24
+const COMPOSER_REFERENCE_MODEL_LIMIT = 12
+const MODEL_VALIDATION_LOOKUP_LIMIT = 64
 const SYSTEM_STATUS_NOTIFICATION_CLEAR_DELAY_MS = 5200
 const SYSTEM_STATUS_NOTIFICATION_PREVIEW_LIMIT = 96
 const DEFAULT_SETUP_TEMPERATURE = PROVIDER_PLATFORM_DEFAULT_TEMPERATURE
@@ -383,15 +386,14 @@ export function ChatWorkspace({ conversation, showBack = false, embedded = false
   const autoStickToBottom = useRef(true)
   const appStateRef = useRef<AppStateStatus | null>(AppState.currentState)
   const enabledProviders = useMemo(() => providers.filter((item) => item.id !== 'local-setup' && item.enabled), [providers])
-  const policyEnabledProviders = useMemo(() => enabledProviders.filter((provider) => providerHasPolicyAllowedModel(provider, settings)), [enabledProviders, settings])
   const hasEnabledProvider = enabledProviders.length > 0
-  const readyProviders = useMemo(() => policyEnabledProviders.filter((item) => isProviderConversationReady(item)), [policyEnabledProviders])
-  const quickModelProviders = useMemo(() => policyEnabledProviders.filter((item) => getPolicyAllowedProviderModels(item, settings).length > 0), [policyEnabledProviders, settings])
+  const readyProviders = useMemo(() => enabledProviders.filter((item) => isProviderConversationReady(item)), [enabledProviders])
+  const quickModelProviders = useMemo(() => readyProviders.filter((item) => providerHasPolicyAllowedModel(item, settings)), [readyProviders, settings])
   const hasAvailableModel = quickModelProviders.length > 0
-  const defaultHomeProvider = pickReadyProviderForNewConversation(providers, settings.defaultProvider, settings) ?? quickModelProviders[0] ?? null
+  const defaultHomeProvider = useMemo(() => pickReadyProviderForNewConversation(providers, settings.defaultProvider, settings), [providers, settings])
   const setupSelectedProvider = setupSelectedProviderId ? quickModelProviders.find((item) => item.id === setupSelectedProviderId) : undefined
   const homeProvider = setupSelectedProvider ?? defaultHomeProvider
-  const homeProviderModels = homeProvider ? getPolicyAllowedProviderModels(homeProvider, settings) : []
+  const homeProviderModels = useMemo(() => homeProvider ? getPolicyAllowedProviderModels(homeProvider, settings, { limit: MODEL_QUICK_OPTION_PROVIDER_LIMIT }) : [], [homeProvider, settings])
   const setupModel = homeProvider && homeProviderModels.includes(setupSelectedModel ?? '')
     ? setupSelectedModel!
     : homeProvider ? getPolicyPreferredProviderModel(homeProvider, settings) ?? homeProviderModels[0] ?? 'setup-model' : 'setup-model'
@@ -411,7 +413,7 @@ export function ChatWorkspace({ conversation, showBack = false, embedded = false
   const providerHealthKey = useMemo(() => provider ? [
     provider.id,
     provider.enabled ? 'on' : 'off',
-    getPolicyAllowedProviderModels(provider, settings).join(','),
+    getPolicyAllowedProviderModels(provider, settings, { limit: MODEL_QUICK_OPTION_PROVIDER_LIMIT }).join(','),
     provider.baseUrl ?? '',
     provider.credentialMode ?? '',
     provider.tokenPlanRegion ?? '',
@@ -421,10 +423,7 @@ export function ChatWorkspace({ conversation, showBack = false, embedded = false
     provider.lastTestModel ?? '',
     provider.lastTestMessage ?? '',
   ].join('|') : runtimeConversation?.providerId ?? 'none', [runtimeConversation?.providerId, provider, settings])
-  const switchableProviders = useMemo(
-    () => providers.filter((item) => item.id !== 'local-setup' && providerHasPolicyAllowedModel(item, settings)),
-    [providers, settings]
-  )
+  const switchableProviders = quickModelProviders
   const metrics = useMemo(() => getConversationMetrics(runtimeConversation), [runtimeConversation])
   const streamingMessage = runtimeConversation?.messages.find((message) => message.status === 'streaming')
   const liveStreamingTraceSnapshot = useChatStreamingStore((state) =>
@@ -911,7 +910,7 @@ export function ChatWorkspace({ conversation, showBack = false, embedded = false
         dialog.toast({ title: t('chat.noProviderConnected'), message: t('chat.configureProviderBeforeChat'), tone: 'amber' })
         return
       }
-      const providerModels = getPolicyAllowedProviderModels(readyProvider, currentSettings)
+      const providerModels = getPolicyAllowedProviderModels(readyProvider, currentSettings, { limit: MODEL_VALIDATION_LOOKUP_LIMIT })
       const model = providerModels.includes(setupModel) ? setupModel : getPolicyPreferredProviderModel(readyProvider, currentSettings)
       if (!model) return
       const nextSetupConversation = createSetupConversationShell(readyProvider, model, setupReasoningEffort, setupSystemPrompt, setupTemperature, setupParameterOverrides)
@@ -3009,6 +3008,7 @@ function FloatingComposer({
   const quickModelSourceProviders = useMemo(() => {
     const source = modelProviders.length ? modelProviders : provider ? [provider] : []
     if (!provider) return source
+    if (!isProviderConversationReady(provider)) return source.filter((item) => item.id !== provider.id)
     return [provider, ...source.filter((item) => item.id !== provider.id)]
   }, [modelProviders, provider])
   const quickModels = useMemo(() => buildModelQuickOptions(quickModelSourceProviders, settings), [quickModelSourceProviders, settings])
@@ -3976,7 +3976,13 @@ function buildComposerReferences({
   memoryItems: MemoryItem[]
   settings: ReturnType<typeof useSettingsStore.getState>['settings']
 }): CommandReference[] {
-  const cleanedProviders = providers.filter((provider) => provider.id !== 'local-setup' && !hasOnlyHistoricalDefaultModels(provider) && providerHasPolicyAllowedModel(provider, settings))
+  const cleanedProviders = providers.filter((provider) =>
+    provider.id !== 'local-setup' &&
+    provider.enabled &&
+    isProviderConversationReady(provider) &&
+    !hasOnlyHistoricalDefaultModels(provider) &&
+    providerHasPolicyAllowedModel(provider, settings)
+  )
   const providerRefs = cleanedProviders.map((provider) => ({
     id: provider.id,
     type: 'provider' as const,
@@ -3985,7 +3991,7 @@ function buildComposerReferences({
     metadata: { enabled: provider.enabled },
   }))
   const modelRefs = cleanedProviders.flatMap((provider) =>
-    getPolicyAllowedProviderModels(provider, settings).slice(0, 12).map((model) => ({
+    getPolicyAllowedProviderModels(provider, settings, { limit: COMPOSER_REFERENCE_MODEL_LIMIT }).map((model) => ({
       id: `${provider.id}:${model}`,
       type: 'model' as const,
       label: getProviderDisplayModel(provider, model),
@@ -4053,7 +4059,7 @@ function optionsPanelEntryState(placement: ChatOptionsPlacement) {
 
 function buildModelQuickOptions(providers: AIProvider[], settings?: ReturnType<typeof useSettingsStore.getState>['settings']): ModelQuickOption[] {
   return providers.flatMap((provider) =>
-    getPolicyAllowedProviderModels(provider, settings).map((model) => ({
+    getPolicyAllowedProviderModels(provider, settings, { limit: MODEL_QUICK_OPTION_PROVIDER_LIMIT }).map((model) => ({
       id: `${provider.id}:${model}`,
       provider,
       model,
@@ -4072,7 +4078,7 @@ function buildHomeModelHighlights(
   const seen = new Set<string>()
   const push = (itemProvider: AIProvider | undefined, model: string | undefined) => {
     if (!itemProvider || !model) return
-    const available = getPolicyAllowedProviderModels(itemProvider, settings)
+    const available = getPolicyAllowedProviderModels(itemProvider, settings, { limit: MODEL_QUICK_OPTION_PROVIDER_LIMIT })
     if (!available.includes(model)) return
     const id = `${itemProvider.id}:${model}`
     if (seen.has(id) || highlights.length >= HOME_MODEL_HIGHLIGHT_LIMIT) return
@@ -4089,7 +4095,7 @@ function buildHomeModelHighlights(
   push(provider, conversation.model)
   if (provider) {
     push(provider, getPolicyPreferredProviderModel(provider, settings))
-    for (const model of getPolicyAllowedProviderModels(provider, settings)) push(provider, model)
+    for (const model of getPolicyAllowedProviderModels(provider, settings, { limit: HOME_MODEL_HIGHLIGHT_LIMIT })) push(provider, model)
   }
 
   for (const readyProvider of readyProviders) {
@@ -4104,8 +4110,8 @@ function pickReadyProviderForNewConversation(providers: AIProvider[], defaultPro
   return enabled.find((provider) => provider.id === defaultProvider) ?? enabled[0] ?? null
 }
 
-function getPolicyAllowedProviderModels(provider: AIProvider, settings?: ReturnType<typeof useSettingsStore.getState>['settings']): string[] {
-  return getAccessAllowedProviderModels(provider, settings)
+function getPolicyAllowedProviderModels(provider: AIProvider, settings?: ReturnType<typeof useSettingsStore.getState>['settings'], options?: { limit?: number }): string[] {
+  return getAccessAllowedProviderModels(provider, settings, options)
 }
 
 function getPolicyPreferredProviderModel(provider: AIProvider, settings?: ReturnType<typeof useSettingsStore.getState>['settings']): string | undefined {
@@ -4114,6 +4120,10 @@ function getPolicyPreferredProviderModel(provider: AIProvider, settings?: Return
 
 function providerHasPolicyAllowedModel(provider: AIProvider, settings?: ReturnType<typeof useSettingsStore.getState>['settings']): boolean {
   return accessProviderHasPolicyAllowedModel(provider, settings)
+}
+
+function providerHasSpecificPolicyModel(provider: AIProvider, model: string, settings?: ReturnType<typeof useSettingsStore.getState>['settings']): boolean {
+  return accessProviderHasPolicyModel(provider, model, settings)
 }
 
 function createSetupConversationShell(
@@ -4210,7 +4220,7 @@ function resolveRuntimeTarget(
   if (!conversation) return null
   if (conversation.providerId === 'local-setup') return { conversation }
   const currentProvider = providers.find((item) => item.id === conversation.providerId)
-  const currentModelValid = !!currentProvider && getPolicyAllowedProviderModels(currentProvider, settings).includes(conversation.model)
+  const currentModelValid = !!currentProvider && providerHasSpecificPolicyModel(currentProvider, conversation.model, settings)
   if ((conversation.providerModelMode ?? 'inherited') === 'manual' && currentProvider && currentModelValid) {
     return { conversation, provider: currentProvider }
   }
@@ -4373,8 +4383,7 @@ async function resolveConversationHealth(
   if (!access.allowed) {
     return health('model_unavailable', inheritedExpired, provider.id, provider.name, t('chat.modelNotInProvider', { model: conversation.model, provider: provider.name }), t)
   }
-  const availableModels = getPolicyAllowedProviderModels(provider, settings)
-  if (!availableModels.includes(conversation.model)) {
+  if (!providerHasSpecificPolicyModel(provider, conversation.model, settings)) {
     return health('model_unavailable', inheritedExpired, provider.id, provider.name, t('chat.modelNotInProvider', { model: conversation.model, provider: provider.name }), t)
   }
   const keyedProvider = await hydrateProviderKey(provider.id)
@@ -4821,7 +4830,7 @@ function getProviderHeaderState(
   t: TFunction
 ): { title: string; subtitle?: string } {
   const enabledProviders = providers.filter((item) => item.id !== 'local-setup' && item.enabled)
-  const modelCapableProviders = enabledProviders.filter((item) => providerHasPolicyAllowedModel(item, settings))
+  const modelCapableProviders = enabledProviders.filter((item) => isProviderConversationReady(item) && providerHasPolicyAllowedModel(item, settings))
   const hasEnabledProvider = enabledProviders.length > 0
   const hasAvailableModel = modelCapableProviders.length > 0
   if (!hasEnabledProvider) return { title: t('chat.noProviderConnected') }
