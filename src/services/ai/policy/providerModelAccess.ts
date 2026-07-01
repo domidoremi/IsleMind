@@ -51,6 +51,15 @@ export interface ProviderModelDisplayCandidate {
   preferredModel?: string
 }
 
+export function hasProviderModelAccessRules(settings?: ProviderModelAccessInput['settings']): boolean {
+  return Boolean(
+    settings?.providerAllowlist?.length ||
+    settings?.providerBlocklist?.length ||
+    settings?.modelAllowlist?.length ||
+    settings?.modelBlocklist?.length
+  )
+}
+
 export function resolveProviderModelAccess(input: ProviderModelAccessInput): AccessPolicyDecision {
   const providerId = input.provider.id
   const model = input.model
@@ -99,6 +108,7 @@ export function mergeRuntimeAliasAccessPolicy(requested: AccessPolicyDecision, u
 
 export function getPolicyAllowedProviderModels(provider: AIProvider, settings?: ProviderModelAccessInput['settings'], options: { limit?: number } = {}): string[] {
   const limit = normalizeModelLimit(options.limit)
+  const enforceAccessRules = hasProviderModelAccessRules(settings)
   const allowed: string[] = []
   const seen = new Set<string>()
   const pushAllowed = (model: string | undefined): boolean => {
@@ -106,7 +116,7 @@ export function getPolicyAllowedProviderModels(provider: AIProvider, settings?: 
     if (!normalized || seen.has(normalized)) return false
     seen.add(normalized)
     if (!isProviderChatCompatibleModel(provider, normalized)) return false
-    if (!resolveProviderModelAliasAccess({ provider, model: normalized, settings }).allowed) return false
+    if (enforceAccessRules && !resolveProviderModelAliasAccess({ provider, model: normalized, settings }).allowed) return false
     allowed.push(normalized)
     return limit !== undefined && allowed.length >= limit
   }
@@ -145,7 +155,7 @@ export function getPolicyAllowedProviderModels(provider: AIProvider, settings?: 
 
 export function getPolicyPreferredProviderModel(provider: AIProvider, settings?: ProviderModelAccessInput['settings']): string | undefined {
   const preferred = getProviderPreferredModel(provider)
-  if (preferred && resolveProviderModelAliasAccess({ provider, model: preferred, settings }).allowed) return preferred
+  if (preferred && (!hasProviderModelAccessRules(settings) || resolveProviderModelAliasAccess({ provider, model: preferred, settings }).allowed)) return preferred
   return getPolicyAllowedProviderModels(provider, settings, { limit: 1 })[0]
 }
 
@@ -157,7 +167,7 @@ export function providerHasPolicyModel(provider: AIProvider, model: string, sett
   const normalized = model.trim()
   return !!normalized &&
     isProviderChatCompatibleModel(provider, normalized) &&
-    resolveProviderModelAliasAccess({ provider, model: normalized, settings }).allowed &&
+    (!hasProviderModelAccessRules(settings) || resolveProviderModelAliasAccess({ provider, model: normalized, settings }).allowed) &&
     providerHasAvailableSourceModel(provider, normalized)
 }
 
