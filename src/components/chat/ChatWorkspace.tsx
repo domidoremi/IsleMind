@@ -68,7 +68,7 @@ import { motionTokens } from '@/theme/animation'
 import { getNextReasoningEffort, getReasoningControlValue, getReasoningDisplayEffort, getReasoningEffortOptions, providerSupportsReasoning } from '@/utils/modelReasoning'
 import { summarizeWorkArtifact } from '@/utils/workArtifact'
 import { validateWorkArtifactQuality } from '@/utils/workArtifact'
-import { getPolicyAllowedProviderModels as getAccessAllowedProviderModels, getPolicyPreferredProviderModel as getAccessPreferredProviderModel, providerHasPolicyAllowedModel as accessProviderHasPolicyAllowedModel, providerHasPolicyModel as accessProviderHasPolicyModel, resolveProviderModelAliasAccess } from '@/services/ai/policy/providerModelAccess'
+import { getPolicyAllowedProviderModels as getAccessAllowedProviderModels, getPolicyPreferredProviderModel as getAccessPreferredProviderModel, hasProviderModelAccessRules, providerHasPolicyAllowedModel as accessProviderHasPolicyAllowedModel, providerHasPolicyModel as accessProviderHasPolicyModel, resolveProviderModelAliasAccess, type ProviderModelAccessInput } from '@/services/ai/policy/providerModelAccess'
 import { PROVIDER_PLATFORM_DEFAULT_TEMPERATURE } from '@/services/ai/providerParameterDefaults'
 import {
   clampConversationGenerationParameter,
@@ -94,6 +94,8 @@ interface ModelQuickOption {
 interface HomeModelHighlight extends ModelQuickOption {
   selected: boolean
 }
+
+type ModelAccessSettings = NonNullable<ProviderModelAccessInput['settings']>
 
 interface AssistantNavigationItem {
   messageId: string
@@ -198,6 +200,15 @@ function createEmptyMessageScrollViewport(): MessageScrollViewport {
     viewportHeight: 0,
     scrollY: 0,
     awayFromBottom: false,
+  }
+}
+
+function pickModelAccessSettings(settings: ReturnType<typeof useSettingsStore.getState>['settings']): ModelAccessSettings {
+  return {
+    providerAllowlist: settings.providerAllowlist,
+    providerBlocklist: settings.providerBlocklist,
+    modelAllowlist: settings.modelAllowlist,
+    modelBlocklist: settings.modelBlocklist,
   }
 }
 
@@ -387,17 +398,28 @@ export function ChatWorkspace({ conversation, showBack = false, embedded = false
   const appStateRef = useRef<AppStateStatus | null>(AppState.currentState)
   const enabledProviders = useMemo(() => providers.filter((item) => item.id !== 'local-setup' && item.enabled), [providers])
   const hasEnabledProvider = enabledProviders.length > 0
+  const modelAccessSettings = useMemo(
+    () => pickModelAccessSettings(settings),
+    [settings.providerAllowlist, settings.providerBlocklist, settings.modelAllowlist, settings.modelBlocklist]
+  )
+  const modelAccessHasRules = useMemo(
+    () => hasProviderModelAccessRules(modelAccessSettings),
+    [modelAccessSettings]
+  )
   const readyProviders = useMemo(() => enabledProviders.filter((item) => isProviderConversationReady(item)), [enabledProviders])
-  const quickModelProviders = useMemo(() => readyProviders.filter((item) => providerHasPolicyAllowedModel(item, settings)), [readyProviders, settings])
+  const quickModelProviders = useMemo(
+    () => modelAccessHasRules ? readyProviders.filter((item) => providerHasPolicyAllowedModel(item, modelAccessSettings)) : readyProviders,
+    [modelAccessHasRules, modelAccessSettings, readyProviders]
+  )
   const hasAvailableModel = quickModelProviders.length > 0
-  const defaultHomeProvider = useMemo(() => pickReadyProviderForNewConversation(providers, settings.defaultProvider, settings), [providers, settings])
+  const defaultHomeProvider = useMemo(() => pickReadyProviderForNewConversation(providers, settings.defaultProvider, modelAccessSettings, modelAccessHasRules), [modelAccessHasRules, modelAccessSettings, providers, settings.defaultProvider])
   const setupSelectedProvider = setupSelectedProviderId ? quickModelProviders.find((item) => item.id === setupSelectedProviderId) : undefined
   const homeProvider = setupSelectedProvider ?? defaultHomeProvider
-  const homeProviderModels = useMemo(() => homeProvider ? getPolicyAllowedProviderModels(homeProvider, settings, { limit: MODEL_QUICK_OPTION_PROVIDER_LIMIT }) : [], [homeProvider, settings])
+  const homeProviderModels = useMemo(() => homeProvider ? getPolicyAllowedProviderModels(homeProvider, modelAccessSettings, { limit: MODEL_QUICK_OPTION_PROVIDER_LIMIT }) : [], [homeProvider, modelAccessSettings])
   const setupModel = homeProvider && homeProviderModels.includes(setupSelectedModel ?? '')
     ? setupSelectedModel!
-    : homeProvider ? getPolicyPreferredProviderModel(homeProvider, settings) ?? homeProviderModels[0] ?? 'setup-model' : 'setup-model'
-  const runtimeTarget = resolveRuntimeTarget(conversation, providers, settings.defaultProvider, settings)
+    : homeProvider ? getPolicyPreferredProviderModel(homeProvider, modelAccessSettings) ?? homeProviderModels[0] ?? 'setup-model' : 'setup-model'
+  const runtimeTarget = resolveRuntimeTarget(conversation, providers, modelAccessSettings)
   const runtimeConversation = runtimeTarget?.conversation ?? conversation
   const provider = runtimeTarget?.provider
   const setupTemperature = settings.defaultTemperature
@@ -408,12 +430,12 @@ export function ChatWorkspace({ conversation, showBack = false, embedded = false
   const supportsReasoningQuick = !!provider && providerSupportsReasoning(provider, runtimeReasoningModel)
   const supportsSetupReasoningQuick = !!homeProvider && providerSupportsReasoning(homeProvider, setupReasoningModel)
   const emptyHeaderTitle = !hasEnabledProvider ? t('chat.noProviderConnected') : hasAvailableModel ? homeProvider?.name ?? t('settings.providerManagement') : t('chat.noAvailableModels')
-  const homeProviderModel = homeProvider ? getPolicyPreferredProviderModel(homeProvider, settings) : undefined
+  const homeProviderModel = homeProvider ? getPolicyPreferredProviderModel(homeProvider, modelAccessSettings) : undefined
   const emptyHeaderSubtitle = homeProvider && homeProviderModel ? getProviderDisplayModel(homeProvider, homeProviderModel) : undefined
   const providerHealthKey = useMemo(() => provider ? [
     provider.id,
     provider.enabled ? 'on' : 'off',
-    getPolicyAllowedProviderModels(provider, settings, { limit: MODEL_QUICK_OPTION_PROVIDER_LIMIT }).join(','),
+    getPolicyAllowedProviderModels(provider, modelAccessSettings, { limit: MODEL_QUICK_OPTION_PROVIDER_LIMIT }).join(','),
     provider.baseUrl ?? '',
     provider.credentialMode ?? '',
     provider.tokenPlanRegion ?? '',
@@ -422,7 +444,7 @@ export function ChatWorkspace({ conversation, showBack = false, embedded = false
     provider.lastTestCode ?? '',
     provider.lastTestModel ?? '',
     provider.lastTestMessage ?? '',
-  ].join('|') : runtimeConversation?.providerId ?? 'none', [runtimeConversation?.providerId, provider, settings])
+  ].join('|') : runtimeConversation?.providerId ?? 'none', [runtimeConversation?.providerId, provider, modelAccessSettings])
   const switchableProviders = quickModelProviders
   const metrics = useMemo(() => getConversationMetrics(runtimeConversation), [runtimeConversation])
   const streamingMessage = runtimeConversation?.messages.find((message) => message.status === 'streaming')
@@ -635,9 +657,10 @@ export function ChatWorkspace({ conversation, showBack = false, embedded = false
       skills: selectableSkills,
       knowledgeDocuments,
       memoryItems,
-      settings,
+      settings: modelAccessSettings,
+      hasRules: modelAccessHasRules,
     }),
-    [knowledgeDocuments, memoryItems, providers, settings, selectableSkills]
+    [knowledgeDocuments, memoryItems, modelAccessHasRules, modelAccessSettings, providers, selectableSkills]
   )
   function scheduleChromeIdleCollapse() {
     if (idleTimer.current) clearTimeout(idleTimer.current)
@@ -700,7 +723,7 @@ export function ChatWorkspace({ conversation, showBack = false, embedded = false
     let snapshotProvider: AIProvider | undefined
     if (result.snapshot.providerId && result.snapshot.model) {
       snapshotProvider = providers.find((item) => item.id === result.snapshot.providerId)
-      if (!snapshotProvider || !resolveProviderModelAliasAccess({ provider: snapshotProvider, model: result.snapshot.model, settings }).allowed) {
+      if (!snapshotProvider || !resolveProviderModelAliasAccess({ provider: snapshotProvider, model: result.snapshot.model, settings: modelAccessSettings }).allowed) {
         dialog.toast({ title: t('chat.modelSwitchBlocked'), message: t('chat.modelSwitchBlockedMessage', { model: result.snapshot.model, provider: snapshotProvider?.name ?? result.snapshot.providerId }), tone: 'danger' })
         return
       }
@@ -768,7 +791,7 @@ export function ChatWorkspace({ conversation, showBack = false, embedded = false
 
   useEffect(() => {
     let mounted = true
-    void resolveConversationHealth(runtimeConversation, providers, hydrateProviderKey, t, settings).then((health) => {
+    void resolveConversationHealth(runtimeConversation, providers, hydrateProviderKey, t, modelAccessSettings).then((health) => {
       if (mounted) setProviderHealth(health)
     })
     return () => {
@@ -816,8 +839,8 @@ export function ChatWorkspace({ conversation, showBack = false, embedded = false
       setSetupSelectedProviderId(homeProvider.id)
     }
     if (setupSelectedModel && homeProviderModels.includes(setupSelectedModel)) return
-    setSetupSelectedModel(getPolicyPreferredProviderModel(homeProvider, settings) ?? homeProviderModels[0] ?? null)
-  }, [homeProvider?.id, homeProviderModels.join('|'), quickModelProviders, settings, setupSelectedModel, setupSelectedProviderId])
+    setSetupSelectedModel(getPolicyPreferredProviderModel(homeProvider, modelAccessSettings) ?? homeProviderModels[0] ?? null)
+  }, [homeProvider?.id, homeProviderModels.join('|'), modelAccessSettings, quickModelProviders, setupSelectedModel, setupSelectedProviderId])
 
   useEffect(() => {
     if (!isStreaming && pendingStreamingMessage && runtimeConversation) {
@@ -900,7 +923,13 @@ export function ChatWorkspace({ conversation, showBack = false, embedded = false
   if (!conversation) {
     async function submitSetup(content: string, attachments: Attachment[]) {
       const currentSettings = useSettingsStore.getState().settings
-      const readyProvider = homeProvider ?? pickReadyProviderForNewConversation(useSettingsStore.getState().providers, currentSettings.defaultProvider, currentSettings)
+      const currentAccessSettings = pickModelAccessSettings(currentSettings)
+      const readyProvider = homeProvider ?? pickReadyProviderForNewConversation(
+        useSettingsStore.getState().providers,
+        currentSettings.defaultProvider,
+        currentAccessSettings,
+        hasProviderModelAccessRules(currentAccessSettings),
+      )
       if (!readyProvider) {
         if (content.trim()) applyQuickStartDraft(content)
         if (hasEnabledProvider && !hasAvailableModel) {
@@ -910,8 +939,8 @@ export function ChatWorkspace({ conversation, showBack = false, embedded = false
         dialog.toast({ title: t('chat.noProviderConnected'), message: t('chat.configureProviderBeforeChat'), tone: 'amber' })
         return
       }
-      const providerModels = getPolicyAllowedProviderModels(readyProvider, currentSettings, { limit: MODEL_VALIDATION_LOOKUP_LIMIT })
-      const model = providerModels.includes(setupModel) ? setupModel : getPolicyPreferredProviderModel(readyProvider, currentSettings)
+      const providerModels = getPolicyAllowedProviderModels(readyProvider, currentAccessSettings, { limit: MODEL_VALIDATION_LOOKUP_LIMIT })
+      const model = providerModels.includes(setupModel) ? setupModel : getPolicyPreferredProviderModel(readyProvider, currentAccessSettings)
       if (!model) return
       const nextSetupConversation = createSetupConversationShell(readyProvider, model, setupReasoningEffort, setupSystemPrompt, setupTemperature, setupParameterOverrides)
       const id = createConversation(readyProvider.id, model)
@@ -974,7 +1003,7 @@ export function ChatWorkspace({ conversation, showBack = false, embedded = false
 
     function switchSetupModel(nextModel: string) {
       if (!homeProvider) return
-      if (!resolveProviderModelAliasAccess({ provider: homeProvider, model: nextModel, settings }).allowed) {
+      if (!resolveProviderModelAliasAccess({ provider: homeProvider, model: nextModel, settings: modelAccessSettings }).allowed) {
         dialog.toast({ title: t('chat.modelSwitchBlocked'), message: t('chat.modelSwitchBlockedMessage', { model: nextModel, provider: homeProvider.name }), tone: 'danger' })
         return
       }
@@ -1090,8 +1119,14 @@ export function ChatWorkspace({ conversation, showBack = false, embedded = false
               glyph={hasAvailableModel ? 'new-chat' : 'provider-key'}
               onAction={hasAvailableModel ? () => {
                 const currentSettings = useSettingsStore.getState().settings
-                const readyProvider = pickReadyProviderForNewConversation(useSettingsStore.getState().providers, currentSettings.defaultProvider, currentSettings)
-                const model = readyProvider ? getPolicyPreferredProviderModel(readyProvider, currentSettings) : undefined
+                const currentAccessSettings = pickModelAccessSettings(currentSettings)
+                const readyProvider = pickReadyProviderForNewConversation(
+                  useSettingsStore.getState().providers,
+                  currentSettings.defaultProvider,
+                  currentAccessSettings,
+                  hasProviderModelAccessRules(currentAccessSettings),
+                )
+                const model = readyProvider ? getPolicyPreferredProviderModel(readyProvider, currentAccessSettings) : undefined
                 if (readyProvider && model) createConversation(readyProvider.id, model)
               } : goProviders}
             />
@@ -1111,9 +1146,9 @@ export function ChatWorkspace({ conversation, showBack = false, embedded = false
                   colors={colors}
                   maxHeight={optionsPanelHeight}
                   placement={optionsPanelPlacement}
-                  settings={settings}
+                  settings={modelAccessSettings}
                   onSwitchModel={(nextProvider, nextModel) => {
-                    if (!resolveProviderModelAliasAccess({ provider: nextProvider, model: nextModel, settings }).allowed) {
+                    if (!resolveProviderModelAliasAccess({ provider: nextProvider, model: nextModel, settings: modelAccessSettings }).allowed) {
                       dialog.toast({ title: t('chat.modelSwitchBlocked'), message: t('chat.modelSwitchBlockedMessage', { model: nextModel, provider: nextProvider.name }), tone: 'danger' })
                       return
                     }
@@ -1159,7 +1194,7 @@ export function ChatWorkspace({ conversation, showBack = false, embedded = false
             onSystemPromptChange={setSetupSystemPrompt}
             onSwitchModel={switchSetupModel}
             onSwitchProviderModel={(nextProvider, nextModel) => {
-              if (!resolveProviderModelAliasAccess({ provider: nextProvider, model: nextModel, settings }).allowed) {
+              if (!resolveProviderModelAliasAccess({ provider: nextProvider, model: nextModel, settings: modelAccessSettings }).allowed) {
                 dialog.toast({ title: t('chat.modelSwitchBlocked'), message: t('chat.modelSwitchBlockedMessage', { model: nextModel, provider: nextProvider.name }), tone: 'danger' })
                 return
               }
@@ -1205,7 +1240,7 @@ export function ChatWorkspace({ conversation, showBack = false, embedded = false
             reasoningUnavailableMessage={supportsSetupReasoningQuick ? undefined : (hasAvailableModel ? t('chat.reasoningUnsupported') : t('chat.syncModelsBeforeChat'))}
             onLayoutHeight={setComposerHeight}
             motion={chatMotion}
-            settings={settings}
+            settings={modelAccessSettings}
           />
         </View>
       </ChatScreenFrame>
@@ -1285,6 +1320,7 @@ export function ChatWorkspace({ conversation, showBack = false, embedded = false
       keyboardLift={keyboardLift}
       keyboardVisible={keyboardVisible}
       settings={settings}
+      modelAccessSettings={modelAccessSettings}
       setComposerFocused={setComposerFocused}
       setPagerGestureLocked={setPagerGestureLocked}
       settingsTransitionActive={settingsTransitionActive}
@@ -1363,6 +1399,7 @@ function ActiveChatWorkspace({
   keyboardLift,
   keyboardVisible,
   settings,
+  modelAccessSettings,
   setComposerFocused,
   setPagerGestureLocked,
   settingsTransitionActive,
@@ -1437,6 +1474,7 @@ function ActiveChatWorkspace({
   keyboardLift: number
   keyboardVisible: boolean
   settings: ReturnType<typeof useSettingsStore.getState>['settings']
+  modelAccessSettings: ModelAccessSettings
   setComposerFocused: React.Dispatch<React.SetStateAction<boolean>>
   setPagerGestureLocked?: (locked: boolean) => void
   settingsTransitionActive: boolean
@@ -1786,14 +1824,14 @@ function ActiveChatWorkspace({
       updateProviderCredentialGroupHealth: useSettingsStore.getState().updateProviderCredentialGroupHealth,
     }, { checkParameters: settings.modelTestCheckParameters, recordLastTestModel: true })
     const currentState = useSettingsStore.getState()
-    setProviderHealth(await resolveConversationHealth(activeConversation, currentState.providers, hydrateProviderKey, t, currentState.settings))
+    setProviderHealth(await resolveConversationHealth(activeConversation, currentState.providers, hydrateProviderKey, t, pickModelAccessSettings(currentState.settings)))
     setTestingHeader(false)
     dialog.toast({ title: result.ok ? t('chat.modelAvailable') : t('chat.modelUnavailable'), message: result.ok ? t('chat.modelTestPassed', { model: activeConversation.model }) : result.message, tone: result.ok ? 'mint' : 'danger' })
   }
 
   function confirmSwitchModel(nextProvider: AIProvider, nextModel: string) {
     if (nextProvider.id === activeConversation.providerId && nextModel === activeConversation.model) return
-    const access = resolveProviderModelAliasAccess({ provider: nextProvider, model: nextModel, settings })
+    const access = resolveProviderModelAliasAccess({ provider: nextProvider, model: nextModel, settings: modelAccessSettings })
     if (!access.allowed) {
       dialog.toast({ title: t('chat.modelSwitchBlocked'), message: t('chat.modelSwitchBlockedMessage', { model: nextModel, provider: nextProvider.name }), tone: 'danger' })
       return
@@ -2085,7 +2123,8 @@ function ActiveChatWorkspace({
             optionsPanelKeyboardInset={optionsPanelKeyboardInset}
             onLayoutHeight={setChromeHeight}
             motion={motion}
-            settings={settings}
+            settings={modelAccessSettings}
+            modelAccessSettings={modelAccessSettings}
             settingsTransitionActive={settingsTransitionActive}
           />
 
@@ -2262,7 +2301,7 @@ function ActiveChatWorkspace({
                   conversation={activeConversation}
                   provider={provider}
                   readyProviders={readyProviders}
-                  settings={settings}
+                  settings={modelAccessSettings}
                   onHistory={goHistory}
                   onProviders={goProviders}
                   onSwitchProviderModel={confirmSwitchModel}
@@ -2372,7 +2411,7 @@ function ActiveChatWorkspace({
             onCollapseTools={collapseQuickTools}
             onLayoutHeight={setComposerHeight}
             motion={motion}
-            settings={settings}
+            settings={modelAccessSettings}
           />
         </View>
     </ChatScreenFrame>
@@ -2617,6 +2656,7 @@ function FloatingChrome({
   onLayoutHeight,
   motion,
   settings,
+  modelAccessSettings,
   settingsTransitionActive,
 }: {
   colors: ReturnType<typeof useAppTheme>['colors']
@@ -2647,14 +2687,15 @@ function FloatingChrome({
   optionsPanelKeyboardInset: number
   onLayoutHeight: (height: number) => void
   motion: ReturnType<typeof useMotionPreference>
-  settings: ReturnType<typeof useSettingsStore.getState>['settings']
+  settings: ModelAccessSettings
+  modelAccessSettings: ModelAccessSettings
   settingsTransitionActive: boolean
 }) {
   const { t } = useTranslation()
   const isGlass = colors.ui.glass
   const chromeSwipeStartY = useRef<number | null>(null)
   const chromeSwipeCollapsed = useRef(false)
-  const header = getProviderHeaderState(conversation, provider, switchableProviders, metrics, providerHealth, settings, t)
+  const header = getProviderHeaderState(conversation, provider, switchableProviders, metrics, providerHealth, modelAccessSettings, t)
   const modelLabel = conversation.providerId === 'local-setup' ? t('chat.localSetupGuide') : getProviderDisplayModel(provider, conversation.model)
   const collapsedPeekVisible = collapsed && !showOptions
   const subtitleLabel = providerHealth?.code
@@ -2824,7 +2865,7 @@ function FloatingChrome({
                   colors={colors}
                   maxHeight={optionsPanelHeight}
                   placement={optionsPanelPlacement}
-                  settings={settings}
+                  settings={modelAccessSettings}
                   onSwitchModel={onSwitchModel}
                   onCopyLink={onCopyLink}
                   onClose={onCloseOptions}
@@ -2849,7 +2890,7 @@ function FloatingChrome({
               colors={colors}
               maxHeight={optionsPanelHeight}
               placement={optionsPanelPlacement}
-              settings={settings}
+              settings={modelAccessSettings}
               onSwitchModel={onSwitchModel}
               onCopyLink={onCopyLink}
               onClose={onCloseOptions}
@@ -2993,7 +3034,7 @@ function FloatingComposer({
   reasoningUnavailableMessage?: string
   onLayoutHeight: (height: number) => void
   motion: ReturnType<typeof useMotionPreference>
-  settings: ReturnType<typeof useSettingsStore.getState>['settings']
+  settings: ModelAccessSettings
 }) {
   const { colors, isGlass } = useAppTheme()
   const { t } = useTranslation()
@@ -3837,7 +3878,7 @@ function EmptyConversationState({
   conversation: Conversation
   provider: AIProvider | undefined
   readyProviders: AIProvider[]
-  settings: ReturnType<typeof useSettingsStore.getState>['settings']
+  settings: ModelAccessSettings
   onHistory: () => void
   onProviders: () => void
   onSwitchProviderModel: (provider: AIProvider, model: string) => void
@@ -3969,19 +4010,21 @@ function buildComposerReferences({
   knowledgeDocuments,
   memoryItems,
   settings,
+  hasRules = hasProviderModelAccessRules(settings),
 }: {
   providers: AIProvider[]
   skills: SkillDefinition[]
   knowledgeDocuments: KnowledgeDocument[]
   memoryItems: MemoryItem[]
-  settings: ReturnType<typeof useSettingsStore.getState>['settings']
+  settings: ModelAccessSettings
+  hasRules?: boolean
 }): CommandReference[] {
   const cleanedProviders = providers.filter((provider) =>
     provider.id !== 'local-setup' &&
     provider.enabled &&
     isProviderConversationReady(provider) &&
     !hasOnlyHistoricalDefaultModels(provider) &&
-    providerHasPolicyAllowedModel(provider, settings)
+    (!hasRules || providerHasPolicyAllowedModel(provider, settings))
   )
   const providerRefs = cleanedProviders.map((provider) => ({
     id: provider.id,
@@ -4057,7 +4100,7 @@ function optionsPanelEntryState(placement: ChatOptionsPlacement) {
   return { opacity: 0, translateX: 24, translateY: -4, scale: 0.965 }
 }
 
-function buildModelQuickOptions(providers: AIProvider[], settings?: ReturnType<typeof useSettingsStore.getState>['settings']): ModelQuickOption[] {
+function buildModelQuickOptions(providers: AIProvider[], settings?: ProviderModelAccessInput['settings']): ModelQuickOption[] {
   return providers.flatMap((provider) =>
     getPolicyAllowedProviderModels(provider, settings, { limit: MODEL_QUICK_OPTION_PROVIDER_LIMIT }).map((model) => ({
       id: `${provider.id}:${model}`,
@@ -4072,14 +4115,25 @@ function buildHomeModelHighlights(
   conversation: Conversation,
   provider: AIProvider | undefined,
   readyProviders: AIProvider[],
-  settings?: ReturnType<typeof useSettingsStore.getState>['settings']
+  settings?: ProviderModelAccessInput['settings']
 ): HomeModelHighlight[] {
   const highlights: HomeModelHighlight[] = []
   const seen = new Set<string>()
+  const availableByProviderId = new Map<string, string[]>()
+  const getAvailable = (itemProvider: AIProvider): string[] => {
+    const cached = availableByProviderId.get(itemProvider.id)
+    if (cached) return cached
+    const available = getPolicyAllowedProviderModels(itemProvider, settings, { limit: MODEL_QUICK_OPTION_PROVIDER_LIMIT })
+    availableByProviderId.set(itemProvider.id, available)
+    return available
+  }
   const push = (itemProvider: AIProvider | undefined, model: string | undefined) => {
     if (!itemProvider || !model) return
-    const available = getPolicyAllowedProviderModels(itemProvider, settings, { limit: MODEL_QUICK_OPTION_PROVIDER_LIMIT })
-    if (!available.includes(model)) return
+    const available = getAvailable(itemProvider)
+    if (!available.includes(model)) {
+      const policyAllowsAlias = !hasProviderModelAccessRules(settings) || resolveProviderModelAliasAccess({ provider: itemProvider, model, settings }).allowed
+      if (!policyAllowsAlias || !available.includes(resolveProviderModelAlias(itemProvider, model))) return
+    }
     const id = `${itemProvider.id}:${model}`
     if (seen.has(id) || highlights.length >= HOME_MODEL_HIGHLIGHT_LIMIT) return
     seen.add(id)
@@ -4105,24 +4159,29 @@ function buildHomeModelHighlights(
   return highlights
 }
 
-function pickReadyProviderForNewConversation(providers: AIProvider[], defaultProvider: string | null | undefined, settings?: ReturnType<typeof useSettingsStore.getState>['settings']): AIProvider | null {
-  const enabled = providers.filter((provider) => isProviderConversationReady(provider) && providerHasPolicyAllowedModel(provider, settings))
+function pickReadyProviderForNewConversation(
+  providers: AIProvider[],
+  defaultProvider: string | null | undefined,
+  settings?: ProviderModelAccessInput['settings'],
+  hasRules = hasProviderModelAccessRules(settings)
+): AIProvider | null {
+  const enabled = providers.filter((provider) => isProviderConversationReady(provider) && (!hasRules || providerHasPolicyAllowedModel(provider, settings)))
   return enabled.find((provider) => provider.id === defaultProvider) ?? enabled[0] ?? null
 }
 
-function getPolicyAllowedProviderModels(provider: AIProvider, settings?: ReturnType<typeof useSettingsStore.getState>['settings'], options?: { limit?: number }): string[] {
+function getPolicyAllowedProviderModels(provider: AIProvider, settings?: ProviderModelAccessInput['settings'], options?: { limit?: number }): string[] {
   return getAccessAllowedProviderModels(provider, settings, options)
 }
 
-function getPolicyPreferredProviderModel(provider: AIProvider, settings?: ReturnType<typeof useSettingsStore.getState>['settings']): string | undefined {
+function getPolicyPreferredProviderModel(provider: AIProvider, settings?: ProviderModelAccessInput['settings']): string | undefined {
   return getAccessPreferredProviderModel(provider, settings)
 }
 
-function providerHasPolicyAllowedModel(provider: AIProvider, settings?: ReturnType<typeof useSettingsStore.getState>['settings']): boolean {
+function providerHasPolicyAllowedModel(provider: AIProvider, settings?: ProviderModelAccessInput['settings']): boolean {
   return accessProviderHasPolicyAllowedModel(provider, settings)
 }
 
-function providerHasSpecificPolicyModel(provider: AIProvider, model: string, settings?: ReturnType<typeof useSettingsStore.getState>['settings']): boolean {
+function providerHasSpecificPolicyModel(provider: AIProvider, model: string, settings?: ProviderModelAccessInput['settings']): boolean {
   return accessProviderHasPolicyModel(provider, model, settings)
 }
 
@@ -4214,8 +4273,7 @@ function buildExplicitGenerationParameterOverridePatch(
 function resolveRuntimeTarget(
   conversation: Conversation | null,
   providers: AIProvider[],
-  _defaultProvider: string | null | undefined,
-  settings?: ReturnType<typeof useSettingsStore.getState>['settings']
+  settings?: ProviderModelAccessInput['settings']
 ): { conversation: Conversation; provider?: AIProvider } | null {
   if (!conversation) return null
   if (conversation.providerId === 'local-setup') return { conversation }
@@ -4361,7 +4419,7 @@ async function resolveConversationHealth(
   providers: AIProvider[],
   hydrateProviderKey: (id: string) => Promise<AIProvider | null>,
   t: TFunction,
-  settings?: ReturnType<typeof useSettingsStore.getState>['settings']
+  settings?: ProviderModelAccessInput['settings']
 ): Promise<ConversationHealth | null> {
   if (!conversation || conversation.providerId === 'local-setup') return null
   const provider = providers.find((item) => item.id === conversation.providerId)
@@ -4826,11 +4884,12 @@ function getProviderHeaderState(
   providers: AIProvider[],
   metrics: ConversationMetrics,
   providerHealth: ConversationHealth | null,
-  settings: ReturnType<typeof useSettingsStore.getState>['settings'],
+  settings: ProviderModelAccessInput['settings'],
   t: TFunction
 ): { title: string; subtitle?: string } {
   const enabledProviders = providers.filter((item) => item.id !== 'local-setup' && item.enabled)
-  const modelCapableProviders = enabledProviders.filter((item) => isProviderConversationReady(item) && providerHasPolicyAllowedModel(item, settings))
+  const accessHasRules = hasProviderModelAccessRules(settings)
+  const modelCapableProviders = enabledProviders.filter((item) => isProviderConversationReady(item) && (!accessHasRules || providerHasPolicyAllowedModel(item, settings)))
   const hasEnabledProvider = enabledProviders.length > 0
   const hasAvailableModel = modelCapableProviders.length > 0
   if (!hasEnabledProvider) return { title: t('chat.noProviderConnected') }

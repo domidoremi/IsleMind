@@ -14,6 +14,15 @@ export interface ActivationJobItemState {
   stage?: string
 }
 
+export interface ActivationJobIssueGroupState {
+  key: string
+  message: string
+  count: number
+  providerNames: string[]
+  hiddenProviderCount: number
+  line: string
+}
+
 export interface ActivationJobState {
   id: string
   status: ActivationJobStatus
@@ -26,6 +35,7 @@ export interface ActivationJobState {
   currentName?: string
   stage?: string
   items?: ActivationJobItemState[]
+  issueGroups?: ActivationJobIssueGroupState[]
   updatedAt: number
 }
 

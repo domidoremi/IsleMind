@@ -1,5 +1,5 @@
-import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
-import { ActivityIndicator, findNodeHandle, Keyboard, KeyboardAvoidingView, Modal, Platform, ScrollView, StyleSheet, Text, TextInput, View, useWindowDimensions, type LayoutChangeEvent } from 'react-native'
+import { useDeferredValue, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
+import { ActivityIndicator, findNodeHandle, InteractionManager, Keyboard, KeyboardAvoidingView, Modal, Platform, ScrollView, StyleSheet, Text, TextInput, View, useWindowDimensions, type LayoutChangeEvent } from 'react-native'
 import * as Clipboard from 'expo-clipboard'
 import * as DocumentPicker from 'expo-document-picker'
 import { Gesture, GestureDetector } from 'react-native-gesture-handler'
@@ -31,8 +31,8 @@ import { deleteTemporaryImportCopy, isFileTooLargeError, MAX_IMPORT_TEXT_FILE_BY
 import { IsleMetric } from '@/components/ui/isle'
 import { parseModels } from '@/utils/text'
 import { isProviderConversationReady } from '@/utils/providerModels'
-import { getPolicyAllowedProviderModels } from '@/services/ai/policy/providerModelAccess'
-import { filterAndSortProviders, type ProviderSortMode } from '@/services/providerSettingsList'
+import { providerHasPolicyAllowedModel } from '@/services/ai/policy/providerModelAccess'
+import { buildProviderSettingsPolicyModelCache, buildProviderSettingsSearchIndex, filterAndSortProviders, hasProviderModelAccessRules, PROVIDER_SETTINGS_MODEL_SAMPLE_LIMIT, type ProviderSortMode } from '@/services/providerSettingsList'
 import { useMotionPreference } from '@/hooks/useMotionPreference'
 import { motionTokens } from '@/theme/animation'
 import { useSafeAreaInsets } from 'react-native-safe-area-context'
@@ -71,8 +71,15 @@ const PROVIDER_ROW_HEIGHT = 72
 const PROVIDER_DRAG_STEP = 64
 const PROVIDER_CARD_RADIUS = 16
 const CLEAR_INVALID_PROVIDER_LIST_LIMIT = 12
-const PROVIDER_POLICY_MODEL_UI_LIMIT = 96
+const PROVIDER_POLICY_MODEL_UI_LIMIT = PROVIDER_SETTINGS_MODEL_SAMPLE_LIMIT
 const RUNTIME_DIAGNOSTICS_DEBOUNCE_MS = 900
+const PROVIDER_RUNTIME_DIAGNOSTICS_AUTO_PROVIDER_LIMIT = 8
+const PROVIDER_RUNTIME_DIAGNOSTICS_AUTO_MODEL_ENTRY_LIMIT = 256
+const PROVIDER_ROW_ANIMATION_LIMIT = 8
+const PROVIDER_MANUAL_SORT_RAIL_PROVIDER_LIMIT = 8
+const PROVIDER_DETAILS_DEFER_PROVIDER_LIMIT = 8
+const PROVIDER_DETAILS_DEFER_FALLBACK_MS = 180
+const PROVIDER_LIST_DRAW_DISTANCE = 64
 type ProviderFormFieldId = 'name' | 'baseUrl' | 'tokens' | 'models'
 
 function resolveProviderChrome(colors: AppThemeColors) {
@@ -82,6 +89,17 @@ function resolveProviderChrome(colors: AppThemeColors) {
   const mutedSurface = colors.ui.cartoon ? colors.ui.semantic.surface.muted : colors.ui.glass ? colors.ui.actionBar.itemBackground : colors.ui.semantic.surface.muted
   const raisedSurface = colors.ui.cartoon ? colors.ui.semantic.surface.base : colors.ui.glass ? colors.ui.semantic.surface.overlay : colors.ui.semantic.surface.base
   return { subtleBorderWidth, chromeSurface, chromeBorder, mutedSurface, raisedSurface }
+}
+
+function countProviderRuntimeDiagnosticsModelEntries(providers: AIProvider[]): number {
+  return providers.reduce((sum, provider) => {
+    const groupModels = (provider.credentialGroups ?? []).reduce((groupSum, group) => groupSum + (group.availableModels?.length ?? 0), 0)
+    return sum +
+      (provider.models?.length ?? 0) +
+      (provider.modelConfigs?.length ?? 0) +
+      (provider.modelAvailability?.length ?? 0) +
+      groupModels
+  }, 0)
 }
 
 interface ProviderSettingsContentProps {
@@ -114,6 +132,7 @@ export function ProviderSettingsContent({ embedded = false, onClose, onBackgroun
   const [expandedProviderId, setExpandedProviderId] = useState<string | null>(null)
   const [sortMode, setSortMode] = useState<ProviderSortMode>('manual')
   const [modelFilter, setModelFilter] = useState('')
+  const deferredModelFilter = useDeferredValue(modelFilter)
   const [batchMode, setBatchMode] = useState(false)
   const [selectedIds, setSelectedIds] = useState<Set<string>>(() => new Set())
   const [addOpen, setAddOpen] = useState(false)
@@ -122,6 +141,31 @@ export function ProviderSettingsContent({ embedded = false, onClose, onBackgroun
   const [keyboardHeight, setKeyboardHeight] = useState(0)
   const [runtimeDiagnostics, setRuntimeDiagnostics] = useState<RuntimeDiagnosticsSummary | null>(null)
   const runtimeDiagnosticsRunRef = useRef(0)
+  const providerModelAccessSettings = useMemo(() => ({
+    providerAllowlist: settings.providerAllowlist,
+    providerBlocklist: settings.providerBlocklist,
+    modelAllowlist: settings.modelAllowlist,
+    modelBlocklist: settings.modelBlocklist,
+  }), [settings.providerAllowlist, settings.providerBlocklist, settings.modelAllowlist, settings.modelBlocklist])
+  const providerModelAccessHasRules = useMemo(
+    () => hasProviderModelAccessRules(providerModelAccessSettings),
+    [providerModelAccessSettings]
+  )
+  const providerPolicyCacheRequired = sortMode === 'models' || (providerModelAccessHasRules && deferredModelFilter.trim().length > 0)
+  const policyModelsByProviderId = useMemo(
+    () => providerPolicyCacheRequired ? buildProviderSettingsPolicyModelCache(providers, providerModelAccessSettings, { modelLimit: PROVIDER_POLICY_MODEL_UI_LIMIT }) : undefined,
+    [providers, providerModelAccessSettings, providerPolicyCacheRequired]
+  )
+  const providerSearchTextById = useMemo(
+    () => deferredModelFilter.trim().length ? buildProviderSettingsSearchIndex(providers, policyModelsByProviderId) : undefined,
+    [deferredModelFilter, providers, policyModelsByProviderId]
+  )
+  const providerRuntimeDiagnosticsModelEntries = useMemo(
+    () => countProviderRuntimeDiagnosticsModelEntries(providers),
+    [providers]
+  )
+  const autoRuntimeDiagnosticsEnabled = providers.length <= PROVIDER_RUNTIME_DIAGNOSTICS_AUTO_PROVIDER_LIMIT &&
+    providerRuntimeDiagnosticsModelEntries <= PROVIDER_RUNTIME_DIAGNOSTICS_AUTO_MODEL_ENTRY_LIMIT
   const { activationBusy, activationJob, clearActivationJob, activateProviders, isActivationRunning } = useProviderActivationJob({
     onActivationCompleted: () => {
       setBatchMode(false)
@@ -170,6 +214,10 @@ export function ProviderSettingsContent({ embedded = false, onClose, onBackgroun
   }, [compactProviderStorage, importProgress, isActivationRunning, providers])
 
   useEffect(() => {
+    if (!autoRuntimeDiagnosticsEnabled) {
+      setRuntimeDiagnostics(null)
+      return undefined
+    }
     if (isActivationRunning || importProgress) return undefined
     let cancelled = false
     const runId = runtimeDiagnosticsRunRef.current + 1
@@ -187,7 +235,7 @@ export function ProviderSettingsContent({ embedded = false, onClose, onBackgroun
       cancelled = true
       clearTimeout(timer)
     }
-  }, [providers, settings, isActivationRunning, importProgress])
+  }, [providers, settings, isActivationRunning, importProgress, autoRuntimeDiagnosticsEnabled])
 
   const usageByProvider = useMemo(() => {
     const usage = new Map<string, number>()
@@ -198,18 +246,17 @@ export function ProviderSettingsContent({ embedded = false, onClose, onBackgroun
     return usage
   }, [conversations])
 
-  const visibleProviders = useMemo(() => {
-    const policyModelsByProviderId = new Map<string, string[]>()
-    for (const provider of providers) {
-      policyModelsByProviderId.set(provider.id, getPolicyAllowedProviderModels(provider, settings, { limit: PROVIDER_POLICY_MODEL_UI_LIMIT }))
-    }
-    return {
-      providers: filterAndSortProviders(providers, { filter: modelFilter, sortMode, usageByProvider, settings, policyModelsByProviderId }),
+  const visibleProviderItems = useMemo(
+    () => filterAndSortProviders(providers, {
+      filter: deferredModelFilter,
+      sortMode,
+      usageByProvider,
+      settings: providerModelAccessSettings,
       policyModelsByProviderId,
-    }
-  }, [modelFilter, providers, settings, sortMode, usageByProvider])
-  const visibleProviderItems = visibleProviders.providers
-  const policyModelsByProviderId = visibleProviders.policyModelsByProviderId
+      searchTextByProviderId: providerSearchTextById,
+    }),
+    [deferredModelFilter, providers, providerModelAccessSettings, providerSearchTextById, policyModelsByProviderId, sortMode, usageByProvider]
+  )
   const manualOrdering = sortMode === 'manual'
   const providerOrderById = useMemo(
     () => new Map(providers.map((provider, index) => [provider.id, index] as const)),
@@ -219,16 +266,34 @@ export function ProviderSettingsContent({ embedded = false, onClose, onBackgroun
     () => new Map((runtimeDiagnostics?.providerDetails ?? []).map((detail) => [detail.providerId, detail] as const)),
     [runtimeDiagnostics]
   )
+  const hasModelFilter = deferredModelFilter.trim().length > 0
+  const providerListIsSmall = providers.length <= PROVIDER_MANUAL_SORT_RAIL_PROVIDER_LIMIT
+  const showManualSortControls = manualOrdering && providerListIsSmall && !hasModelFilter
 
   const enabled = providers.filter((provider) => provider.enabled).length
-  const available = providers.filter((provider) => isProviderConversationReady(provider) && (policyModelsByProviderId.get(provider.id)?.length ?? 0) > 0).length
+  const available = useMemo(
+    () => providers.filter((provider) => isProviderConversationReady(provider) && (!providerModelAccessHasRules || providerHasPolicyAllowedModel(provider, providerModelAccessSettings))).length,
+    [providers, providerModelAccessHasRules, providerModelAccessSettings]
+  )
   const credentialGroups = providers.reduce((sum, provider) => sum + (provider.credentialGroups?.length ?? 0), 0)
   const { subtleBorderWidth, chromeSurface, chromeBorder, mutedSurface, raisedSurface } = resolveProviderChrome(colors)
   const activeSortLabel = t(SORT_OPTIONS.find((option) => option.id === sortMode)?.labelKey ?? SORT_OPTIONS[0].labelKey)
   const providerListHint = manualOrdering
     ? t('providerSettings.manualSortHint')
     : t('providerSettings.sortedViewHint', { label: activeSortLabel })
-  const animateProviderRows = motion === 'full' && visibleProviderItems.length <= 32
+  const animateProviderRows = motion === 'full' && providers.length <= PROVIDER_ROW_ANIMATION_LIMIT && visibleProviderItems.length <= PROVIDER_ROW_ANIMATION_LIMIT
+  const flashListExtraData = useMemo(() => ({
+    animateProviderRows,
+    batchMode,
+    expandedProviderId,
+    manualOrdering,
+    motion,
+    providerOrderById,
+    providersLength: providers.length,
+    showManualSortControls,
+    selectedIds,
+    runtimeProviderDetails: runtimeDiagnostics?.providerDetails,
+  }), [animateProviderRows, batchMode, expandedProviderId, manualOrdering, motion, providerOrderById, providers.length, selectedIds, showManualSortControls, runtimeDiagnostics?.providerDetails])
 
   async function addProviderFromForm(provider: AIProvider) {
     setAddOpen(false)
@@ -405,7 +470,7 @@ export function ProviderSettingsContent({ embedded = false, onClose, onBackgroun
         selected={selectedIds.has(provider.id)}
         batchMode={batchMode}
         expanded={expandedProviderId === provider.id || (expandedProviderId === null && index === 0 && !provider.enabled)}
-        sortEnabled={manualOrdering}
+        sortEnabled={manualOrdering && showManualSortControls}
         position={providerIndex + 1}
         total={providers.length}
         canMoveUp={providerIndex > 0}
@@ -576,17 +641,9 @@ export function ProviderSettingsContent({ embedded = false, onClose, onBackgroun
       <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined} keyboardVerticalOffset={0} style={{ flex: 1 }}>
         <FlashList
           data={visibleProviderItems}
-          extraData={{
-            animateProviderRows,
-            batchMode,
-            expandedProviderId,
-            manualOrdering,
-            motion,
-            providerOrderById,
-            providersLength: providers.length,
-            selectedIds,
-            runtimeProviderDetails: runtimeDiagnostics?.providerDetails,
-          }}
+          extraData={flashListExtraData}
+          drawDistance={PROVIDER_LIST_DRAW_DISTANCE}
+          maintainVisibleContentPosition={{ disabled: true }}
           keyboardShouldPersistTaps="handled"
           automaticallyAdjustKeyboardInsets
           contentContainerStyle={{ paddingHorizontal: pagePadding, paddingTop: Math.max(insets.top, 0) + 8, paddingBottom: Math.max(insets.bottom, 20) + 76 }}
@@ -848,23 +905,98 @@ function ProviderListRow({
           />
         </View>
       ) : null}
-      {expanded ? (
-        <View style={{ minWidth: 0, minHeight: PROVIDER_ROW_HEIGHT - 10, marginTop: 3 }}>
-          <ApiKeyPanel
-            provider={provider}
-            runtimeDetail={runtimeDetail}
-            expanded={expanded}
-            onExpandedChange={onExpandedChange}
-            hideHeader
-            style={{
-              marginBottom: 0,
-              padding: 0,
-              backgroundColor: 'transparent',
-              borderWidth: 0,
-            }}
-          />
+      <DeferredProviderDetails
+        provider={provider}
+        runtimeDetail={runtimeDetail}
+        expanded={expanded}
+        onExpandedChange={onExpandedChange}
+        deferMount={total > PROVIDER_DETAILS_DEFER_PROVIDER_LIMIT}
+      />
+    </View>
+  )
+}
+
+function DeferredProviderDetails({
+  provider,
+  runtimeDetail,
+  expanded,
+  onExpandedChange,
+  deferMount,
+}: {
+  provider: AIProvider
+  runtimeDetail?: RuntimeDiagnosticsProviderDetail
+  expanded: boolean
+  onExpandedChange: (next: boolean) => void
+  deferMount: boolean
+}) {
+  const { colors } = useAppTheme()
+  const { t } = useTranslation()
+  const [ready, setReady] = useState(!deferMount)
+
+  useEffect(() => {
+    if (!expanded) {
+      setReady(!deferMount)
+      return
+    }
+    if (!deferMount) {
+      setReady(true)
+      return
+    }
+
+    let cancelled = false
+    setReady(false)
+    const task = InteractionManager.runAfterInteractions(() => {
+      if (!cancelled) setReady(true)
+    })
+    const fallback = setTimeout(() => {
+      if (cancelled) return
+      task.cancel?.()
+      setReady(true)
+    }, PROVIDER_DETAILS_DEFER_FALLBACK_MS)
+
+    return () => {
+      cancelled = true
+      clearTimeout(fallback)
+      task.cancel?.()
+    }
+  }, [deferMount, expanded, provider.id])
+
+  if (!expanded) return null
+
+  return (
+    <View style={{ minWidth: 0, minHeight: PROVIDER_ROW_HEIGHT - 10, marginTop: 3 }}>
+      {ready ? (
+        <ApiKeyPanel
+          provider={provider}
+          runtimeDetail={runtimeDetail}
+          expanded={expanded}
+          onExpandedChange={onExpandedChange}
+          hideHeader
+          style={{
+            marginBottom: 0,
+            padding: 0,
+            backgroundColor: 'transparent',
+            borderWidth: 0,
+          }}
+        />
+      ) : (
+        <View
+          accessibilityLabel={t('common.loading')}
+          style={{
+            minHeight: PROVIDER_ROW_HEIGHT - 10,
+            borderRadius: colors.ui.radius.controlMiddle,
+            alignItems: 'center',
+            justifyContent: 'center',
+            flexDirection: 'row',
+            gap: 8,
+          }}
+        >
+          <ActivityIndicator color={colors.textTertiary} size="small" />
+          <Text style={{ color: colors.textTertiary, fontSize: 11, lineHeight: 14, fontWeight: '800', includeFontPadding: false }}>
+            {t('common.loading')}
+          </Text>
         </View>
-      ) : null}
+      )}
     </View>
   )
 }
@@ -1080,6 +1212,7 @@ function ActivationProgressCard({ job, onDismiss }: { job: ActivationJobState; o
           <ActivationProgressPill label={activationStatusLabel(job, t)} tone={job.status === 'failed' ? 'danger' : job.failed ? 'amber' : done ? 'mint' : 'default'} />
         </View>
         {showProviderItems ? <ActivationProviderProgressList items={providerItems} /> : null}
+        {done && job.issueGroups?.length ? <ActivationIssueGroupList groups={job.issueGroups} /> : null}
         <View style={{ height: 8, borderRadius: colors.ui.radius.chip, backgroundColor: colors.ui.section.divider, overflow: 'hidden' }}>
           <MotiView
             animate={{ width: `${Math.max(4, Math.round(progress * 100))}%` }}
@@ -1092,6 +1225,25 @@ function ActivationProgressCard({ job, onDismiss }: { job: ActivationJobState; o
         </Text>
       </View>
     </MotiView>
+  )
+}
+
+function ActivationIssueGroupList({ groups }: { groups: NonNullable<ActivationJobState['issueGroups']> }) {
+  const { colors } = useAppTheme()
+  const { subtleBorderWidth } = resolveProviderChrome(colors)
+  return (
+    <View style={{ gap: 6 }}>
+      {groups.map((group) => (
+        <View key={`${group.key}-${group.count}`} style={{ borderRadius: colors.ui.radius.chip, paddingVertical: 7, paddingHorizontal: 9, backgroundColor: colors.ui.tone.warning.background, borderWidth: subtleBorderWidth, borderColor: colors.ui.tone.warning.border }}>
+          <Text numberOfLines={2} style={{ color: colors.ui.tone.warning.foreground, fontSize: 11, lineHeight: 15, fontWeight: '900' }}>
+            {group.line}
+          </Text>
+          <Text numberOfLines={1} style={{ color: colors.textTertiary, fontSize: 10, lineHeight: 14, marginTop: 2, fontWeight: '800' }}>
+            {group.providerNames.join(', ')}{group.hiddenProviderCount ? ` +${group.hiddenProviderCount}` : ''}
+          </Text>
+        </View>
+      ))}
+    </View>
   )
 }
 
