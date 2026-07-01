@@ -29,6 +29,7 @@ interface SettingsState {
   addProvider: (provider: AIProvider) => Promise<void>
   addProviders: (providers: AIProvider[], options?: AddProvidersOptions) => Promise<void>
   updateProvider: (id: string, updates: Partial<AIProvider>, options?: ProviderUpdateOptions) => Promise<void>
+  updateProviderPatches: (patches: ProviderPatch[], options?: ProviderUpdateOptions) => Promise<void>
   updateProviders: (ids: string[], updates: Partial<AIProvider>, options?: ProviderUpdateOptions) => Promise<void>
   flushProviderPersistence: () => Promise<void>
   compactProviderStorage: () => boolean
@@ -71,6 +72,11 @@ interface AddProvidersOptions {
 
 interface ProviderUpdateOptions {
   persist?: 'immediate' | 'deferred'
+}
+
+interface ProviderPatch {
+  id: string
+  updates: Partial<AIProvider>
 }
 
 const defaultSettings: Settings = {
@@ -375,6 +381,40 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
     })
   },
 
+  updateProviderPatches: async (patches: ProviderPatch[], options?: ProviderUpdateOptions) => {
+    const mergedPatches = new Map<string, Partial<AIProvider>>()
+    for (const patch of patches) {
+      if (!patch.id) continue
+      mergedPatches.set(patch.id, { ...(mergedPatches.get(patch.id) ?? {}), ...patch.updates })
+    }
+    if (!mergedPatches.size) return
+
+    const currentProviders = get().providers
+    for (const [id, updates] of mergedPatches) {
+      if (updates.apiKey) {
+        await setSecureItem(secureProviderKey(id), updates.apiKey)
+      }
+      if (updates.credentialGroups) {
+        const previous = currentProviders.find((provider) => provider.id === id)?.credentialGroups ?? []
+        const nextIds = new Set(updates.credentialGroups.map((group) => group.id))
+        await Promise.all(previous
+          .filter((group) => !nextIds.has(group.id))
+          .map((group) => deleteSecureItem(secureProviderGroupKey(id, group.id)))
+        )
+        await persistCredentialGroupKeys(id, updates.credentialGroups)
+      }
+    }
+
+    set((state) => {
+      const updated = state.providers.map((provider) => {
+        const updates = mergedPatches.get(provider.id)
+        return updates ? normalizeProvider({ ...provider, ...updates, apiKey: '' } as AIProvider) : provider
+      })
+      persistProvidersSnapshot(updated, options?.persist)
+      return { providers: updated }
+    })
+  },
+
   addProviders: async (providers: AIProvider[], options?: AddProvidersOptions) => {
     if (!providers.length) return
     const total = providers.length
@@ -672,6 +712,7 @@ function normalizeProvider(provider: AIProvider): AIProvider {
   const detectedPresetId = provider.detectedPresetId ?? detectProviderPreset({ baseUrl, apiKey: provider.apiKey, name: provider.name }).presetId
   const presetId = provider.presetId ?? (provider.id === 'custom-openai' ? 'custom-openai-compatible' : detectedPresetId)
   const preset = getProviderPreset(presetId)
+  const credentialGroups = sanitizeCredentialGroups(provider.credentialGroups, { ...provider, models, manualModels, modelAliases } as AIProvider)
   const normalized = applyProviderPreset({
     ...provider,
     apiKey: '',
@@ -688,14 +729,15 @@ function normalizeProvider(provider: AIProvider): AIProvider {
     credentialMode: provider.type === 'xiaomi-mimo' ? provider.credentialMode ?? 'token-plan' : provider.credentialMode,
     tokenPlanRegion: provider.type === 'xiaomi-mimo' ? provider.tokenPlanRegion ?? 'cn' : provider.tokenPlanRegion,
     wireProtocol: provider.type === 'xiaomi-mimo' ? provider.wireProtocol ?? 'openai-compatible' : provider.wireProtocol,
-    modelConfigs: buildProviderModelConfigsForStorage(provider, models, manualModels, modelAliases),
+    credentialGroups,
+    modelConfigs: buildProviderModelConfigsForStorage({ ...provider, credentialGroups }, models, manualModels, modelAliases),
     lastTestStatus: provider.lastTestStatus ?? 'idle',
     lastModelSyncStatus: provider.lastModelSyncStatus ?? 'idle',
   } as AIProvider, presetId)
   return normalizeProviderCredentialGroups({
     ...normalized,
     apiKey: '',
-    credentialGroups: sanitizeCredentialGroups(normalized.credentialGroups, normalized),
+    credentialGroups,
     modelAvailability: normalized.modelAvailability,
   })
 }

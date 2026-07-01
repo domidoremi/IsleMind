@@ -1,10 +1,11 @@
 import type { AIProvider } from '@/types'
-import { getPolicyAllowedProviderModels, getProviderModelDisplayCandidates, type ProviderModelAccessInput } from '@/services/ai/policy/providerModelAccess'
+import { getPolicyAllowedProviderModels, getProviderModelDisplayCandidates, hasProviderModelAccessRules, type ProviderModelAccessInput } from '@/services/ai/policy/providerModelAccess'
 import { normalizeSearchText } from '@/utils/text'
 
 export type ProviderSortMode = 'manual' | 'recent' | 'enabled' | 'models' | 'health' | 'name'
 export type ProviderPolicyModelCache = Map<string, string[]>
-const PROVIDER_SETTINGS_MODEL_SAMPLE_LIMIT = 96
+export type ProviderSearchTextCache = Map<string, string>
+export const PROVIDER_SETTINGS_MODEL_SAMPLE_LIMIT = 96
 
 export function filterAndSortProviders(
   providers: AIProvider[],
@@ -14,13 +15,38 @@ export function filterAndSortProviders(
     usageByProvider: Map<string, number>
     settings?: ProviderModelAccessInput['settings']
     policyModelsByProviderId?: ProviderPolicyModelCache
+    searchTextByProviderId?: ProviderSearchTextCache
   }
 ): AIProvider[] {
   const normalizedFilter = normalizeSearchText(options.filter)
   const filtered = normalizedFilter
-    ? providers.filter((provider) => providerMatchesModelFilter(provider, normalizedFilter, options.settings, options.policyModelsByProviderId))
+    ? providers.filter((provider) => providerMatchesModelFilter(provider, normalizedFilter, options.settings, options.policyModelsByProviderId, options.searchTextByProviderId))
     : providers
   return [...filtered].sort((a, b) => compareProviders(a, b, options.sortMode, options.usageByProvider, options.settings, options.policyModelsByProviderId))
+}
+
+export function buildProviderSettingsPolicyModelCache(
+  providers: AIProvider[],
+  settings?: ProviderModelAccessInput['settings'],
+  options: { modelLimit?: number } = {},
+): ProviderPolicyModelCache {
+  const modelLimit = options.modelLimit ?? PROVIDER_SETTINGS_MODEL_SAMPLE_LIMIT
+  const cache: ProviderPolicyModelCache = new Map()
+  for (const provider of providers) {
+    cache.set(provider.id, getPolicyAllowedProviderModels(provider, settings, { limit: modelLimit }))
+  }
+  return cache
+}
+
+export function buildProviderSettingsSearchIndex(
+  providers: AIProvider[],
+  policyModelsByProviderId?: ProviderPolicyModelCache,
+): ProviderSearchTextCache {
+  const index: ProviderSearchTextCache = new Map()
+  for (const provider of providers) {
+    index.set(provider.id, buildProviderSearchText(provider, policyModelsByProviderId?.get(provider.id)))
+  }
+  return index
 }
 
 export function compareProviders(
@@ -46,20 +72,49 @@ function providerHealthRank(provider: AIProvider): number {
   return 2
 }
 
-export function providerMatchesModelFilter(provider: AIProvider, filter: string, settings?: ProviderModelAccessInput['settings'], policyModelsByProviderId?: ProviderPolicyModelCache): boolean {
-  const policyModels = policyModelsByProviderId?.get(provider.id) ?? getProviderModelDisplayCandidates({ providers: [provider], settings, includeDisabled: true, includeLocalSetup: true, modelLimit: PROVIDER_SETTINGS_MODEL_SAMPLE_LIMIT, includePreferredModel: false })[0]?.models ?? []
-  const allowedModelIds = new Set(policyModels.map((model) => model.toLowerCase()))
-  const values = [
+export function providerMatchesModelFilter(
+  provider: AIProvider,
+  filter: string,
+  settings?: ProviderModelAccessInput['settings'],
+  policyModelsByProviderId?: ProviderPolicyModelCache,
+  searchTextByProviderId?: ProviderSearchTextCache,
+): boolean {
+  const cachedSearchText = searchTextByProviderId?.get(provider.id)
+  if (cachedSearchText !== undefined) return cachedSearchText.includes(filter)
+  const policyModels = policyModelsByProviderId?.get(provider.id) ?? (hasProviderModelAccessRules(settings)
+    ? getProviderModelDisplayCandidates({ providers: [provider], settings, includeDisabled: true, includeLocalSetup: true, modelLimit: PROVIDER_SETTINGS_MODEL_SAMPLE_LIMIT, includePreferredModel: false })[0]?.models ?? []
+    : undefined)
+  return buildProviderSearchText(provider, policyModels).includes(filter)
+}
+
+function buildProviderSearchText(provider: AIProvider, policyModels?: string[]): string {
+  const values: Array<string | undefined> = [
     provider.name,
     provider.type,
-    ...policyModels,
-    ...(provider.modelConfigs ?? [])
-      .filter((model) => allowedModelIds.has(model.id.toLowerCase()))
-      .flatMap((model) => [model.id, model.name]),
   ]
-  return values.some((value) => normalizeSearchText(value).includes(filter))
+  if (policyModels) {
+    const allowedModelIds = new Set(policyModels.map((model) => model.toLowerCase()))
+    values.push(
+      ...policyModels,
+      ...(provider.modelConfigs ?? [])
+        .filter((model) => allowedModelIds.has(model.id.toLowerCase()))
+        .flatMap((model) => [model.id, model.name]),
+    )
+  } else {
+    values.push(
+      provider.baseUrl,
+      ...(provider.models ?? []),
+      ...(provider.modelConfigs ?? []).flatMap((model) => [model.id, model.name]),
+      ...(provider.credentialGroups ?? []).flatMap((group) => group.availableModels ?? []),
+      ...(provider.modelAliases ?? []).flatMap((alias) => [alias.alias, alias.model]),
+      provider.lastTestModel,
+    )
+  }
+  return normalizeSearchText(values.filter(Boolean).join(' '))
 }
 
 function getCachedPolicyModels(provider: AIProvider, settings?: ProviderModelAccessInput['settings'], policyModelsByProviderId?: ProviderPolicyModelCache): string[] {
   return policyModelsByProviderId?.get(provider.id) ?? getPolicyAllowedProviderModels(provider, settings, { limit: PROVIDER_SETTINGS_MODEL_SAMPLE_LIMIT })
 }
+
+export { hasProviderModelAccessRules }

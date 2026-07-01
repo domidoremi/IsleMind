@@ -2,6 +2,8 @@ import { useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { useIsleDialog } from '@/components/ui/isle'
 import { syncAndTestProvider, summarizeProviderActivation, type ProviderActivationResult } from '@/services/providerActivation'
+import { summarizeProviderActivationIssueGroups } from '@/services/providerActivationIssueSummary'
+import { createProviderActivationPatchBuffer } from '@/services/providerActivationPatchBuffer'
 import { ACTIVATION_STAGE_PROGRESS, aggregateActivationItems, createActivationItems, patchActivationItem, resolveProviderActivationRuntimePolicy, type ActivationItemPatch } from '@/services/providerActivationJob'
 import { useActivationJobStore, type ActivationJobItemState } from '@/store/activationJobStore'
 import { useSettingsStore } from '@/store/settingsStore'
@@ -10,6 +12,8 @@ import type { AIProvider } from '@/types'
 export type ProviderActivationMode = 'single' | 'batch' | 'all'
 
 const ACTIVATION_JOB_VISIBLE_ITEM_LIMIT = 8
+const ACTIVATION_PROVIDER_PATCH_FLUSH_LIMIT = 8
+const ACTIVATION_PROVIDER_PATCH_FLUSH_MS = 320
 
 interface UseProviderActivationJobInput {
   onActivationCompleted?: () => void
@@ -21,6 +25,7 @@ export function useProviderActivationJob(input: UseProviderActivationJobInput = 
   const settings = useSettingsStore((state) => state.settings)
   const hydrateProviderKey = useSettingsStore((state) => state.hydrateProviderKey)
   const updateProvider = useSettingsStore((state) => state.updateProvider)
+  const updateProviderPatches = useSettingsStore((state) => state.updateProviderPatches)
   const updateProviderCredentialGroupHealth = useSettingsStore((state) => state.updateProviderCredentialGroupHealth)
   const flushProviderPersistence = useSettingsStore((state) => state.flushProviderPersistence)
   const updateSettings = useSettingsStore((state) => state.updateSettings)
@@ -61,6 +66,18 @@ export function useProviderActivationJob(input: UseProviderActivationJobInput = 
       })
       let activationItems = createActivationItems(chosen, t('providerSettings.activationQueued'))
       const progressThrottleMs = chosen.length > 1 ? 240 : 0
+      const patchBuffer = mode === 'single'
+        ? null
+        : createProviderActivationPatchBuffer({
+            flushPatches: (patches) => updateProviderPatches(patches, { persist: 'deferred' }),
+            hydrateProviderKey,
+            flushLimit: ACTIVATION_PROVIDER_PATCH_FLUSH_LIMIT,
+            flushMs: ACTIVATION_PROVIDER_PATCH_FLUSH_MS,
+          })
+      const hydrateProviderForActivation = async (providerId: string) => {
+        const hydrated = await hydrateProviderKey(providerId)
+        return patchBuffer?.apply(providerId, hydrated) ?? hydrated
+      }
       let lastProgressPublishedAt = 0
       let pendingProgressUpdate: Parameters<typeof updateActivationJob>[0] | null = null
       let progressPublishTimer: ReturnType<typeof setTimeout> | null = null
@@ -128,9 +145,13 @@ export function useProviderActivationJob(input: UseProviderActivationJobInput = 
           stage: currentStage,
         }, currentStage, provider.name)
         const result = await syncAndTestProvider(provider, {
-          updateProvider: (providerId, updates) => updateProvider(providerId, updates, { persist: mode === 'single' ? 'immediate' : 'deferred' }),
-          hydrateProviderKey,
-          updateProviderCredentialGroupHealth: (providerId, groupId, ok) => updateProviderCredentialGroupHealth(providerId, groupId, ok, { persist: mode === 'single' ? 'immediate' : 'deferred' }),
+          updateProvider: (providerId, updates) => mode === 'single'
+            ? updateProvider(providerId, updates, { persist: 'immediate' })
+            : patchBuffer!.enqueue(providerId, updates),
+          hydrateProviderKey: hydrateProviderForActivation,
+          updateProviderCredentialGroupHealth: (providerId, groupId, ok) => mode === 'single'
+            ? updateProviderCredentialGroupHealth(providerId, groupId, ok, { persist: 'immediate' })
+            : patchBuffer!.enqueueCredentialGroupHealth(providerId, groupId, ok),
           onStage: (event) => {
             publishActivationItem(event.providerId, {
               status: event.stage === 'failed' ? 'failed' : 'running',
@@ -184,11 +205,13 @@ export function useProviderActivationJob(input: UseProviderActivationJobInput = 
         publishActivationItems(activationItems, t('providerSettings.activationStartedMessage', { count: chosen.length, concurrency: activationConcurrency }))
       }
       const results = await runProviderActivationPool(chosen, activationConcurrency, runProviderActivation, activationPolicy.afterProviderDelayMs)
+      await patchBuffer?.flush()
       activationItems = finalizeActivationItemsFromResults(activationItems, results)
       flushActivationProgress()
 
       const finalAggregate = aggregateActivationItems(activationItems)
       const summary = summarizeProviderActivation(results)
+      const issueGroups = summarizeProviderActivationIssueGroups(results)
       const doneTitle = activationDoneTitle(mode, chosen.length, t)
       const primaryReady = results.find((result) => result.testOk)
       if (primaryReady) {
@@ -224,6 +247,7 @@ export function useProviderActivationJob(input: UseProviderActivationJobInput = 
         failed: finalAggregate.failed,
         stage: summary.message,
         items: compactActivationItemsForUi(activationItems),
+        issueGroups,
       })
       if (mode !== 'single') {
         setTimeout(() => {

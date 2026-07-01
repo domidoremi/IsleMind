@@ -100,13 +100,34 @@ export function getProviderAvailableModels(provider: AIProvider): string[] {
 }
 
 export function getProviderPreferredModel(provider: AIProvider): string | undefined {
-  const models = getProviderAvailableModels(provider)
-  if (!models.length) return undefined
-  if (provider.lastTestStatus === 'ok' && provider.lastTestModel) {
-    const tested = models.find((model) => model === provider.lastTestModel)
-    if (tested) return tested
+  const manualModels = getProviderManualModels(provider)
+  const testedModel = provider.lastTestStatus === 'ok' ? provider.lastTestModel?.trim() : undefined
+  const pickTestedModel = (sourceModels: string[]): string | undefined => {
+    if (!testedModel) return undefined
+    if (![...sourceModels, ...manualModels].some((model) => sameProviderModelId(model, testedModel))) return undefined
+    return isProviderChatCompatibleModel(provider, testedModel) ? testedModel : undefined
   }
-  return models[0]
+  const pickFirstModel = (sourceModels: string[]): string | undefined =>
+    firstChatCompatibleModel(provider, [...sourceModels, ...manualModels])
+
+  const syncedGroupModels = (provider.credentialGroups ?? [])
+    .filter((group) => group.enabled !== false && group.lastModelSyncStatus === 'ok')
+    .flatMap((group) => clearHistoricalInjectedGroupModels(group, provider))
+  if (syncedGroupModels.length) {
+    return pickTestedModel(syncedGroupModels) ?? pickFirstModel(syncedGroupModels)
+  }
+
+  if (provider.lastModelSyncStatus === 'ok') {
+    const syncedProviderModels = clearHistoricalInjectedProviderModels(provider)
+    if (syncedProviderModels.length) {
+      return pickTestedModel(syncedProviderModels) ?? pickFirstModel(syncedProviderModels)
+    }
+  }
+
+  if (testedModel) {
+    return firstChatCompatibleModel(provider, [testedModel, ...manualModels])
+  }
+  return firstChatCompatibleModel(provider, manualModels)
 }
 
 export function getProviderManualModels(provider: AIProvider): string[] {
@@ -280,6 +301,17 @@ export function isProviderChatCompatibleModel(provider: AIProvider, model: strin
 
 function filterChatCompatibleModels(provider: AIProvider, models: string[]): string[] {
   return uniqueModels(models).filter((model) => isProviderChatCompatibleModel(provider, model))
+}
+
+function firstChatCompatibleModel(provider: AIProvider, models: string[]): string | undefined {
+  const seen = new Set<string>()
+  for (const model of models) {
+    const normalized = model.trim()
+    if (!normalized || seen.has(normalized)) continue
+    seen.add(normalized)
+    if (isProviderChatCompatibleModel(provider, normalized)) return normalized
+  }
+  return undefined
 }
 
 function uniqueModels(models: string[]): string[] {
