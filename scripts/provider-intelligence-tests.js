@@ -6641,14 +6641,14 @@ function assertProviderClientSimulationBehavior() {
   )
 
   const cases = [
-    [openAIProvider, 'gpt-5.6', 'openai-api', 'OpenAI-API/1.0 (IsleMind/1.0.14)'],
-    [openAIProvider, 'gpt-5.6-codex', 'codex-cli', 'codex_cli_rs/0.147.0 (Android; mobile) IsleMind/1.0.14'],
+    [openAIProvider, 'gpt-5.6', 'openai-api', 'OpenAI-API/1.0 (IsleMind/1.0.15)'],
+    [openAIProvider, 'gpt-5.6-codex', 'codex-cli', 'codex_cli_rs/0.147.0 (Android; mobile) IsleMind/1.0.15'],
     [openAIProvider, 'grok-4.6', 'grok-build', 'grok-pager/1.0.3 grok-shell/1.0.3 (windows; x86_64)'],
-    [compatibleProvider, 'claude-sonnet-4-20250514', 'claude-code', 'claude-code/2.1.229 (cli; IsleMind/1.0.14)'],
-    [compatibleProvider, 'deepseek-chat', 'deepseek-api', 'DeepSeek-API/1.0 (IsleMind/1.0.14)'],
-    [compatibleProvider, 'glm-4.6', 'glm-api', 'GLM-API/1.0 (IsleMind/1.0.14)'],
-    [{ ...openAIProvider, id: 'codex-desktop' }, 'custom-model', 'codex-desktop', 'Codex Desktop/0.147.0 (Android; mobile) IsleMind/1.0.14'],
-    [{ ...anthropicProvider, name: 'Claude Code Desktop' }, 'custom-model', 'claude-code-desktop', 'claude-code/2.1.229 (desktop; IsleMind/1.0.14)'],
+    [compatibleProvider, 'claude-sonnet-4-20250514', 'claude-code', 'claude-code/2.1.229 (cli; IsleMind/1.0.15)'],
+    [compatibleProvider, 'deepseek-chat', 'deepseek-api', 'DeepSeek-API/1.0 (IsleMind/1.0.15)'],
+    [compatibleProvider, 'glm-4.6', 'glm-api', 'GLM-API/1.0 (IsleMind/1.0.15)'],
+    [{ ...openAIProvider, id: 'codex-desktop' }, 'custom-model', 'codex-desktop', 'Codex Desktop/0.147.0 (Android; mobile) IsleMind/1.0.15'],
+    [{ ...anthropicProvider, name: 'Claude Code Desktop' }, 'custom-model', 'claude-code-desktop', 'claude-code/2.1.229 (desktop; IsleMind/1.0.15)'],
     [{ ...compatibleProvider, id: 'grok-build' }, 'custom-model', 'grok-build', 'grok-pager/1.0.3 grok-shell/1.0.3 (windows; x86_64)'],
   ]
 
@@ -6675,14 +6675,14 @@ function assertProviderClientSimulationBehavior() {
     model: 'gpt-5.6',
   })
   assert.equal(explicitProfile.profileId, 'codex-desktop', 'explicit compatible profiles override automatic provider identity')
-  assert.equal(explicitProfile.userAgent, 'Codex Desktop/0.147.0 (Android; mobile) IsleMind/1.0.14', 'explicit Codex Desktop profiles use the versioned client shape')
+  assert.equal(explicitProfile.userAgent, 'Codex Desktop/0.147.0 (Android; mobile) IsleMind/1.0.15', 'explicit Codex Desktop profiles use the versioned client shape')
   assert.equal(explicitProfile.match, 'explicit-profile', 'explicit compatible profiles remain distinguishable in diagnostics')
   const explicitIsleMind = resolveProviderClientSimulationPolicy({
     provider: { ...openAIProvider, clientCompatibilityProfile: 'islemind' },
     model: 'gpt-5.6-codex',
   })
   assert.equal(explicitIsleMind.profileId, 'islemind', 'the IsleMind override disables branded provider inference')
-  assert.equal(explicitIsleMind.userAgent, 'IsleMind/1.0.14', 'the explicit IsleMind profile remains versioned and stable')
+  assert.equal(explicitIsleMind.userAgent, 'IsleMind/1.0.15', 'the explicit IsleMind profile remains versioned and stable')
   assert.equal(explicitIsleMind.match, 'explicit-islemind', 'the IsleMind override remains distinguishable in diagnostics')
   const incompatibleProfile = resolveProviderClientSimulationPolicy({
     provider: { ...openAIProvider, clientCompatibilityProfile: 'claude-code' },
@@ -6715,7 +6715,7 @@ function assertProviderClientSimulationBehavior() {
     canonicalApiKeyHeaders,
     {
       Authorization: `Bearer ${FAKE_KEY_A}`,
-      'User-Agent': 'codex_cli_rs/0.147.0 (Android; mobile) IsleMind/1.0.14',
+      'User-Agent': 'codex_cli_rs/0.147.0 (Android; mobile) IsleMind/1.0.15',
     },
     'model-driven client simulation replaces caller identity and removes stale Grok OAuth headers on API-key requests',
   )
@@ -6746,7 +6746,7 @@ function assertProviderClientSimulationBehavior() {
     {
       'Content-Type': 'application/json',
       Authorization: `Bearer ${FAKE_KEY_A}`,
-      'User-Agent': 'codex_cli_rs/0.147.0 (Android; mobile) IsleMind/1.0.14',
+      'User-Agent': 'codex_cli_rs/0.147.0 (Android; mobile) IsleMind/1.0.15',
     },
     'selected Codex models automatically use the Codex client UA',
   )
@@ -6760,7 +6760,7 @@ function assertProviderClientSimulationBehavior() {
       'x-api-key': FAKE_KEY_A,
       'anthropic-version': '2023-06-01',
       'anthropic-beta': ANTHROPIC_COMPACTION_BETA,
-      'User-Agent': 'claude-code/2.1.229 (cli; IsleMind/1.0.14)',
+      'User-Agent': 'claude-code/2.1.229 (cli; IsleMind/1.0.15)',
     },
     'selected Claude models automatically use the Claude client UA while preserving provider headers',
   )
@@ -6768,7 +6768,7 @@ function assertProviderClientSimulationBehavior() {
   const providerCatalogBefore = JSON.stringify({ models: compatibleProvider.models, manualModels: compatibleProvider.manualModels })
   const firstModelHeaders = getProviderRequestHeaders(compatibleProvider, { model: 'gpt-5.6-codex' })
   const fallbackModelHeaders = getProviderRequestHeaders(compatibleProvider, { model: 'grok-build-fast' })
-  assert.equal(firstModelHeaders['User-Agent'], 'codex_cli_rs/0.147.0 (Android; mobile) IsleMind/1.0.14', 'initial model selection uses the matching Codex client identity')
+  assert.equal(firstModelHeaders['User-Agent'], 'codex_cli_rs/0.147.0 (Android; mobile) IsleMind/1.0.15', 'initial model selection uses the matching Codex client identity')
   assert.equal(fallbackModelHeaders['User-Agent'], 'grok-pager/1.0.3 grok-shell/1.0.3 (windows; x86_64)', 'fallback model selection recomputes the matching model UA')
   assert.equal(firstModelHeaders.Authorization, fallbackModelHeaders.Authorization, 'model switching preserves provider authentication')
   assert.equal(JSON.stringify({ models: compatibleProvider.models, manualModels: compatibleProvider.manualModels }), providerCatalogBefore, 'client profile selection does not mutate provider model records')
@@ -6791,7 +6791,7 @@ function assertProviderClientSimulationBehavior() {
     body: { messages: [{ role: 'user', content: 'hello' }], max_tokens: 32 },
     now: new Date('2026-08-13T00:00:00Z'),
   })
-  assert.equal(signedBedrockRequest.headers['User-Agent'], 'claude-code/2.1.229 (cli; IsleMind/1.0.14)', 'direct Bedrock adds the selected Claude model UA before signing')
+  assert.equal(signedBedrockRequest.headers['User-Agent'], 'claude-code/2.1.229 (cli; IsleMind/1.0.15)', 'direct Bedrock adds the selected Claude model UA before signing')
   assert.match(signedBedrockRequest.headers.Authorization, /SignedHeaders=[^,]*user-agent/, 'direct Bedrock includes User-Agent in SigV4 SignedHeaders')
 
   const pipelineSource = fs.readFileSync(path.join(root, 'src/bootstrap/providerRuntimePipeline.ts'), 'utf8')
@@ -10882,9 +10882,9 @@ async function assertApkUpdateBehavior() {
         apkName: 'app.apk',
         publishedAt: null,
       },
-      { appVersion: '1.0.14', buildVersion: '114', updateMode: 'apk', hotUpdateMode: 'disabled' }
+      { appVersion: '1.0.15', buildVersion: '115', updateMode: 'apk', hotUpdateMode: 'disabled' }
     ) < 0,
-    'published 1.0.13 build 113 is never offered to a 1.0.14 build 114 client'
+    'published 1.0.13 build 113 is never offered to a 1.0.15 build 115 client'
   )
   assert.equal(shouldRecordApkUpdateCheck({ status: 'available', message: '' }), true, 'available update checks update the last-check timestamp')
   assert.equal(shouldRecordApkUpdateCheck({ status: 'unavailable', message: '' }), true, 'unavailable update checks update the last-check timestamp')
@@ -10964,8 +10964,8 @@ async function assertApkUpdateBehavior() {
 
   resetLocalModelFileMocks()
   reactNativePlatform.OS = 'android'
-  expoNativeApplicationVersion = '1.0.14'
-  expoNativeBuildVersion = '114'
+  expoNativeApplicationVersion = '1.0.15'
+  expoNativeBuildVersion = '115'
   const olderTagFetchUrls = []
   const originalFetchForOlderTag = global.fetch
   global.fetch = createGithubTagFetch({
@@ -10978,7 +10978,7 @@ async function assertApkUpdateBehavior() {
   })
   try {
     const olderTagUpdate = await checkLatestApkRelease()
-    assert.equal(olderTagUpdate.status, 'unavailable', 'tag v0.0.13 app build 113 is not offered to app build 114')
+    assert.equal(olderTagUpdate.status, 'unavailable', 'tag v0.0.13 app build 113 is not offered to app build 115')
     assert.equal(olderTagFetchUrls.some((url) => url.includes('/updates/android.json')), false, 'older tags are rejected before fetching the APK manifest')
     assert.equal(olderTagFetchUrls.some((url) => url.includes('/releases/expanded_assets/')), false, 'older tags do not fail because historical APK assets were removed')
   } finally {
@@ -22884,7 +22884,7 @@ https://gateway.example/messages`
   assert.equal(probed.wireProtocol, 'openai-compatible')
   assert.equal(probeCalls.length, 1, 'network probe stops after first successful protocol')
   assert.equal(probed.endpoint, 'https://unknown.example/v1/models', 'provider probe result exposes endpoint without credential material')
-  assert.equal(probeCalls[0].headers['User-Agent'], 'IsleMind/1.0.14', 'custom registry probes use the same provider-scoped UA policy as runtime discovery')
+  assert.equal(probeCalls[0].headers['User-Agent'], 'IsleMind/1.0.15', 'custom registry probes use the same provider-scoped UA policy as runtime discovery')
 
   const rootNewApiProbeCalls = []
   const rootNewApiProbe = await probeProviderPreset(
@@ -22923,7 +22923,7 @@ https://gateway.example/messages`
   assert.equal(googleProbe.ok, true, 'provider probe calls Google model listing with documented header auth')
   assert.equal(googleProbe.endpoint, 'https://generativelanguage.googleapis.com/v1beta/models', 'provider probe diagnostics keep Google credentials out of URLs')
   assert.equal(googleProbeCalls[2].headers['x-goog-api-key'], 'google-probe-secret', 'provider probe sends the Google API key through x-goog-api-key')
-  assert.equal(googleProbeCalls[2].headers['User-Agent'], 'IsleMind/1.0.14', 'Google registry probes use the canonical IsleMind client identity')
+  assert.equal(googleProbeCalls[2].headers['User-Agent'], 'IsleMind/1.0.15', 'Google registry probes use the canonical IsleMind client identity')
   assert.doesNotMatch(googleProbeCalls[2].url, /google-probe-secret|[?&]key=/, 'provider probe never places the Google API key in the request URL')
 
   const githubProbeCalls = []
@@ -22945,7 +22945,7 @@ https://gateway.example/messages`
   assert.equal(githubProbeCalls[0].headers.Authorization, 'Bearer github-probe-token', 'GitHub Models catalog probe preserves Bearer auth')
   assert.equal(githubProbeCalls[0].headers.Accept, 'application/vnd.github+json', 'GitHub Models catalog probe sends the documented media type')
   assert.equal(githubProbeCalls[0].headers['X-GitHub-Api-Version'], '2022-11-28', 'GitHub Models catalog probe sends the documented API version')
-  assert.equal(githubProbeCalls[0].headers['User-Agent'], 'IsleMind/1.0.14', 'GitHub Models registry probes preserve the canonical client identity')
+  assert.equal(githubProbeCalls[0].headers['User-Agent'], 'IsleMind/1.0.15', 'GitHub Models registry probes preserve the canonical client identity')
 
   const failedProbe = await probeProviderPreset(
     { baseUrl: 'https://unknown.example/v1', [API_KEY_FIELD]: 'token-probe-fake' },
