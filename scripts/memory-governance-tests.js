@@ -6,6 +6,8 @@ const ts = require('typescript')
 
 const root = path.resolve(__dirname, '..')
 const originalResolve = Module._resolveFilename
+const targetEvaluatorPath = path.join(root, 'src/modules/knowledge/testing/memoryGovernanceEvaluation.ts')
+const retiredServiceEvaluatorPath = path.join(root, 'src/services/memoryGovernanceEvaluation.ts')
 
 registerTypeScriptSupport()
 
@@ -14,7 +16,7 @@ const {
   MEMORY_GOVERNANCE_FIXTURE_IDS,
   MEMORY_GOVERNANCE_REFERENCE_STACKS,
   runMemoryGovernanceEvaluation,
-} = require('../src/services/memoryGovernanceEvaluation.ts')
+} = require('../src/modules/knowledge/testing/memoryGovernanceEvaluation.ts')
 
 function registerTypeScriptSupport() {
   if (require.extensions['.ts']?.isMemoryGovernanceHook) return
@@ -61,6 +63,8 @@ function assertTraceable(item) {
 }
 
 function run() {
+  assert.equal(fs.existsSync(targetEvaluatorPath), true, 'Knowledge owns the private memory-governance evaluator')
+  assert.equal(fs.existsSync(retiredServiceEvaluatorPath), false, 'the service-owned memory-governance evaluator stays deleted')
   assert.equal(MEMORY_GOVERNANCE_EVAL_SCHEMA, 'islemind.memory-governance-eval.v1', 'memory governance schema is versioned')
   assert.deepEqual(MEMORY_GOVERNANCE_REFERENCE_STACKS, ['mem0', 'zep-graphiti', 'letta'], 'memory governance tracks current reference stacks')
   assert.deepEqual(

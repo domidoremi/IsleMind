@@ -1,11 +1,36 @@
-import type { AIProvider } from '@/types'
-import { getPolicyAllowedProviderModels, getProviderModelDisplayCandidates, hasProviderModelAccessRules, type ProviderModelAccessInput } from '@/services/ai/policy/providerModelAccess'
+import type { AIProvider } from '@/types/providerContracts'
+import { getPolicyAllowedProviderModels, getProviderModelDisplayCandidates, hasProviderModelAccessRules, resolveProviderModelAliasAccess, type ProviderModelAccessInput } from '@/bootstrap/providerModelAccess'
 import { normalizeSearchText } from '@/utils/text'
-
 export type ProviderSortMode = 'manual' | 'recent' | 'enabled' | 'models' | 'health' | 'name'
 export type ProviderPolicyModelCache = Map<string, string[]>
 export type ProviderSearchTextCache = Map<string, string>
 export const PROVIDER_SETTINGS_MODEL_SAMPLE_LIMIT = 96
+export const PROVIDER_SETTINGS_SEARCH_FIELD_SAMPLE_LIMIT = 160
+
+export interface ProviderSettingsGroup {
+  id: string
+  label: string
+  providers: AIProvider[]
+}
+
+/** Groups visual cards without merging provider records, credentials, or IDs. */
+export function groupProviderSettingsCards(providers: AIProvider[]): ProviderSettingsGroup[] {
+  const groups = new Map<string, ProviderSettingsGroup>()
+  for (const provider of providers) {
+    const id = providerSettingsSupplierKey(provider)
+    const current = groups.get(id)
+    if (current) {
+      current.providers.push(provider)
+      continue
+    }
+    groups.set(id, {
+      id,
+      label: providerSettingsSupplierLabel(provider),
+      providers: [provider],
+    })
+  }
+  return [...groups.values()]
+}
 
 export function filterAndSortProviders(
   providers: AIProvider[],
@@ -72,6 +97,33 @@ function providerHealthRank(provider: AIProvider): number {
   return 2
 }
 
+function providerSettingsSupplierKey(provider: AIProvider): string {
+  const presetId = provider.detectedPresetId ?? provider.presetId
+  if (presetId && presetId !== 'custom-endpoint') return `preset:${presetId}`
+  const endpoint = provider.baseUrl?.trim()
+  if (endpoint) {
+    try {
+      return `endpoint:${new URL(endpoint).hostname.toLowerCase()}:${provider.wireProtocol ?? provider.type}`
+    } catch {
+      return `endpoint:${endpoint.toLowerCase().replace(/\/+$/u, '')}:${provider.wireProtocol ?? provider.type}`
+    }
+  }
+  return `type:${provider.type}`
+}
+
+function providerSettingsSupplierLabel(provider: AIProvider): string {
+  const presetId = provider.detectedPresetId ?? provider.presetId
+  if (presetId && presetId !== 'custom-endpoint') return presetId
+  if (provider.baseUrl?.trim()) {
+    try {
+      return new URL(provider.baseUrl).hostname
+    } catch {
+      return provider.name
+    }
+  }
+  return provider.name
+}
+
 export function providerMatchesModelFilter(
   provider: AIProvider,
   filter: string,
@@ -80,7 +132,9 @@ export function providerMatchesModelFilter(
   searchTextByProviderId?: ProviderSearchTextCache,
 ): boolean {
   const cachedSearchText = searchTextByProviderId?.get(provider.id)
-  if (cachedSearchText !== undefined) return cachedSearchText.includes(filter)
+  if (cachedSearchText !== undefined) {
+    return cachedSearchText.includes(filter) || providerSourceModelMatchesFilter(provider, filter, settings)
+  }
   const policyModels = policyModelsByProviderId?.get(provider.id) ?? (hasProviderModelAccessRules(settings)
     ? getProviderModelDisplayCandidates({ providers: [provider], settings, includeDisabled: true, includeLocalSetup: true, modelLimit: PROVIDER_SETTINGS_MODEL_SAMPLE_LIMIT, includePreferredModel: false })[0]?.models ?? []
     : undefined)
@@ -96,21 +150,112 @@ function buildProviderSearchText(provider: AIProvider, policyModels?: string[]):
     const allowedModelIds = new Set(policyModels.map((model) => model.toLowerCase()))
     values.push(
       ...policyModels,
-      ...(provider.modelConfigs ?? [])
-        .filter((model) => allowedModelIds.has(model.id.toLowerCase()))
-        .flatMap((model) => [model.id, model.name]),
     )
+    for (const model of provider.modelConfigs ?? []) {
+      if (allowedModelIds.has(model.id.toLowerCase())) values.push(model.id, model.name)
+    }
   } else {
     values.push(
       provider.baseUrl,
-      ...(provider.models ?? []),
-      ...(provider.modelConfigs ?? []).flatMap((model) => [model.id, model.name]),
-      ...(provider.credentialGroups ?? []).flatMap((group) => group.availableModels ?? []),
-      ...(provider.modelAliases ?? []).flatMap((alias) => [alias.alias, alias.model]),
       provider.lastTestModel,
     )
+    appendSampledProviderSearchValues(values, provider.models ?? [])
+    appendSampledProviderModelConfigValues(values, provider.modelConfigs ?? [])
+    appendSampledProviderCredentialGroupValues(values, provider.credentialGroups ?? [])
+    appendSampledProviderAliasValues(values, provider.modelAliases ?? [])
   }
   return normalizeSearchText(values.filter(Boolean).join(' '))
+}
+
+function appendSampledProviderSearchValues(target: Array<string | undefined>, values: readonly string[]): void {
+  appendSampledProviderSearchItems(target, values, (value) => [value])
+}
+
+function appendSampledProviderModelConfigValues(target: Array<string | undefined>, models: NonNullable<AIProvider['modelConfigs']>): void {
+  appendSampledProviderSearchItems(target, models, (model) => [model.id, model.name])
+}
+
+function appendSampledProviderCredentialGroupValues(target: Array<string | undefined>, groups: NonNullable<AIProvider['credentialGroups']>): void {
+  let appended = 0
+  const append = (value: string | undefined): boolean => {
+    const normalized = value?.trim()
+    if (!normalized) return false
+    target.push(normalized)
+    appended += 1
+    return appended >= PROVIDER_SETTINGS_SEARCH_FIELD_SAMPLE_LIMIT
+  }
+  for (const group of groups) {
+    for (const model of group.availableModels ?? []) {
+      if (append(model)) return
+    }
+  }
+}
+
+function appendSampledProviderAliasValues(target: Array<string | undefined>, aliases: NonNullable<AIProvider['modelAliases']>): void {
+  appendSampledProviderSearchItems(target, aliases, (alias) => [alias.alias, alias.model])
+}
+
+function appendSampledProviderSearchItems<T>(
+  target: Array<string | undefined>,
+  items: readonly T[],
+  valuesForItem: (item: T) => Array<string | undefined>,
+): void {
+  if (items.length <= PROVIDER_SETTINGS_SEARCH_FIELD_SAMPLE_LIMIT) {
+    appendProviderSearchItemRange(target, items, valuesForItem, 0, items.length)
+    return
+  }
+  const headCount = Math.ceil(PROVIDER_SETTINGS_SEARCH_FIELD_SAMPLE_LIMIT / 2)
+  const tailCount = Math.floor(PROVIDER_SETTINGS_SEARCH_FIELD_SAMPLE_LIMIT / 2)
+  appendProviderSearchItemRange(target, items, valuesForItem, 0, headCount)
+  appendProviderSearchItemRange(target, items, valuesForItem, items.length - tailCount, items.length)
+}
+
+function appendProviderSearchItemRange<T>(
+  target: Array<string | undefined>,
+  items: readonly T[],
+  valuesForItem: (item: T) => Array<string | undefined>,
+  start: number,
+  end: number,
+): void {
+  for (let index = start; index < end; index += 1) {
+    for (const value of valuesForItem(items[index])) {
+      const normalized = value?.trim()
+      if (normalized) target.push(normalized)
+    }
+  }
+}
+
+function providerSourceModelMatchesFilter(provider: AIProvider, filter: string, settings?: ProviderModelAccessInput['settings']): boolean {
+  const policyScoped = hasProviderModelAccessRules(settings)
+  const modelAllowed = (model: string | undefined): boolean => {
+    const normalized = model?.trim()
+    return !!normalized && (!policyScoped || resolveProviderModelAliasAccess({ provider, model: normalized, settings }).allowed)
+  }
+  const modelMatches = (model: string | undefined, label?: string): boolean => {
+    if (!modelAllowed(model)) return false
+    return providerSearchValueMatchesFilter(model, filter) || providerSearchValueMatchesFilter(label, filter)
+  }
+
+  if (modelMatches(provider.lastTestModel)) return true
+  for (const model of provider.models ?? []) {
+    if (modelMatches(model)) return true
+  }
+  for (const model of provider.modelConfigs ?? []) {
+    if (modelMatches(model.id, model.name)) return true
+  }
+  for (const group of provider.credentialGroups ?? []) {
+    for (const model of group.availableModels ?? []) {
+      if (modelMatches(model)) return true
+    }
+  }
+  for (const alias of provider.modelAliases ?? []) {
+    if (modelMatches(alias.alias) || modelMatches(alias.model)) return true
+  }
+  return false
+}
+
+function providerSearchValueMatchesFilter(value: string | undefined, filter: string): boolean {
+  return normalizeSearchText(value ?? '').includes(filter)
 }
 
 function getCachedPolicyModels(provider: AIProvider, settings?: ProviderModelAccessInput['settings'], policyModelsByProviderId?: ProviderPolicyModelCache): string[] {

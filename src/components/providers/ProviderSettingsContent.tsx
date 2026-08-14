@@ -1,18 +1,16 @@
 import { useDeferredValue, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
-import { ActivityIndicator, findNodeHandle, InteractionManager, Keyboard, KeyboardAvoidingView, Modal, Platform, ScrollView, StyleSheet, Text, TextInput, View, useWindowDimensions, type LayoutChangeEvent } from 'react-native'
-import * as Clipboard from 'expo-clipboard'
-import * as DocumentPicker from 'expo-document-picker'
+import { AppState, findNodeHandle, InteractionManager, Keyboard, KeyboardAvoidingView, Modal, Platform, Pressable, ScrollView, StyleSheet, Text, TextInput, View, useWindowDimensions, type KeyboardEvent, type LayoutChangeEvent } from 'react-native'
 import { Gesture, GestureDetector } from 'react-native-gesture-handler'
-import Animated, { runOnJS, useAnimatedStyle, useSharedValue, withSpring } from 'react-native-reanimated'
-import { FlashList } from '@shopify/flash-list'
+import Animated, { runOnJS, useAnimatedStyle, useSharedValue, withTiming } from 'react-native-reanimated'
 import { MotiView } from 'moti'
 import { router } from 'expo-router'
 import { useTranslation } from 'react-i18next'
 import { AppIcon } from '@/components/ui/AppIcon'
+import { HighFrameSpinner } from '@/components/ui/HighFrameSpinner'
 import { ApiKeyPanel } from '@/components/settings/ApiKeyPanel'
-import { AnimatedNavigationTrigger } from '@/components/navigation/AnimatedNavigationTrigger'
+import { SettingsSummaryStrip, type SettingsSummaryItem } from '@/components/settings/SettingsSummaryStrip'
 import { useMainPagerGestureLock } from '@/components/main/MainPagerGestureLock'
-import { IsleField, IsleHeader, IsleIconButton } from '@/components/ui/isle'
+import { IsleField, IsleIconButton, IsleProgress } from '@/components/ui/isle'
 import { IsleButton } from '@/components/ui/isle'
 import { IsleOverlayPressable, IslePressable } from '@/components/ui/isle'
 import type { IsleBackgroundState } from '@/components/ui/isle'
@@ -21,23 +19,32 @@ import { useAppTheme } from '@/hooks/useAppTheme'
 import { useChatStore } from '@/store/chatStore'
 import { useSettingsStore } from '@/store/settingsStore'
 import { resolveActivationJobProgress, useActivationJobStore, type ActivationJobItemState, type ActivationJobState } from '@/store/activationJobStore'
-import type { AIProvider, ProviderPresetId, ProviderWireProtocol } from '@/types'
-import { applyProviderPreset, getProviderPreset, parseCredentialGroups, parseProviderImportText, PROVIDER_PRESETS } from '@/services/ai/providerRegistry'
-import { looksLikeProviderImportConnectionText, parseProviderImportDraft } from '@/services/ai/providerImportDraft'
-import { DEFAULT_PROVIDER_PRESET_ID, DEFAULT_PROVIDER_WIRE_PROTOCOL, PROVIDER_WIRE_PROTOCOL_OPTIONS, inferProviderWireProtocolFromBaseUrl, resolveProviderConfigDraft, shouldSyncWireProtocolFromBaseUrl } from '@/services/ai/providerConfigPolicy'
+import * as Clipboard from 'expo-clipboard'
+import * as DocumentPicker from 'expo-document-picker'
+import type { AIProvider } from '@/types/providerContracts'
+import type { ProviderPresetId, ProviderWireProtocol } from '@/types/providerContracts'
+import { applyProviderPreset, countDetectedProviderImports, formatProviderNameList, getProviderPreset, looksLikeProviderImportConnectionText, parseCredentialGroups, parseProviderImportDraft, parseProviderImportText, probeProviderPreset, PROVIDER_VENDOR_PRESETS } from '@/bootstrap/providerRegistry'
+import { DEFAULT_PROVIDER_PRESET_ID, DEFAULT_PROVIDER_WIRE_PROTOCOL, PROVIDER_USAGE_QUERY_EXAMPLE, PROVIDER_WIRE_PROTOCOL_OPTIONS, inferProviderWireProtocolFromBaseUrl, shouldSyncWireProtocolFromBaseUrl } from '@/modules/providers'
+import { resolveProviderConfigDraft } from '@/bootstrap/providerPolicies'
 import { activationItemProgress } from '@/services/providerActivationJob'
-import { countDetectedProviderImports, formatProviderNameList } from '@/services/providerImportSummary'
-import { deleteTemporaryImportCopy, isFileTooLargeError, MAX_IMPORT_TEXT_FILE_BYTES, readUtf8ImportFile } from '@/services/fileImportGuards'
-import { IsleMetric } from '@/components/ui/isle'
+import { deleteTemporaryImportCopy, isFileTooLargeError, MAX_IMPORT_TEXT_FILE_BYTES, readUtf8ImportFile } from '@/platform/native/boundedImportFile'
 import { parseModels } from '@/utils/text'
 import { isProviderConversationReady } from '@/utils/providerModels'
-import { providerHasPolicyAllowedModel } from '@/services/ai/policy/providerModelAccess'
-import { buildProviderSettingsPolicyModelCache, buildProviderSettingsSearchIndex, filterAndSortProviders, hasProviderModelAccessRules, PROVIDER_SETTINGS_MODEL_SAMPLE_LIMIT, type ProviderSortMode } from '@/services/providerSettingsList'
+import { providerHasPolicyAllowedModel } from '@/bootstrap/providerModelAccess'
+import { buildProviderSettingsPolicyModelCache, buildProviderSettingsSearchIndex, filterAndSortProviders, groupProviderSettingsCards, hasProviderModelAccessRules, PROVIDER_SETTINGS_MODEL_SAMPLE_LIMIT, type ProviderSortMode } from '@/services/providerSettingsList'
 import { useMotionPreference } from '@/hooks/useMotionPreference'
 import { motionTokens } from '@/theme/animation'
 import { useSafeAreaInsets } from 'react-native-safe-area-context'
 import { useProviderActivationJob } from '@/components/providers/useProviderActivationJob'
+import { PROVIDER_CARD_DETAIL_MAX_WIDTH } from '@/components/providers/ProviderCardGrid'
+import {
+  LimeRoadProviderSettingsExperience,
+  MarkdownProviderSettingsExperience,
+  MinimalProviderSettingsExperience,
+} from '@/components/providers/theme-experiences/ProviderSettingsExperiences'
 import { buildRuntimeDiagnosticsSummary, type RuntimeDiagnosticsProviderDetail, type RuntimeDiagnosticsSummary } from '@/services/runtimeDiagnostics'
+import { clearAndroidStatusNotification, updateAndroidStatusNotification } from '@/services/androidStatusNotification'
+import { resolveProviderDisplayName } from '@/presentation/features/settings/providerPresentation'
 
 type ClipboardReadState = 'idle' | 'requesting'
 type AppThemeColors = ReturnType<typeof useAppTheme>['colors']
@@ -60,34 +67,36 @@ const SORT_OPTIONS: { id: ProviderSortMode; labelKey: string }[] = [
 ]
 
 const IMPORT_INPUT_LINE_HEIGHT = 20
-const IMPORT_INPUT_VERTICAL_PADDING = 24
+const IMPORT_INPUT_VERTICAL_PADDING = 18
 const IMPORT_INPUT_MAX_LINES = 14
 const IMPORT_SHEET_MARGIN = 16
-const IMPORT_KEYBOARD_CLEARANCE = 24
-const IMPORT_HEADER_HEIGHT = 78
-const IMPORT_FOOTER_HEIGHT = 76
-const IMPORT_BODY_FIXED_SPACE = 118
+const PROVIDER_MODAL_KEYBOARD_BRIDGE_HEIGHT = 48
+const PROVIDER_MODAL_KEYBOARD_TOOLBAR_OVERLAP = 48
+const IMPORT_HEADER_HEIGHT = 64
+const IMPORT_FOOTER_HEIGHT = 64
+const IMPORT_BODY_FIXED_SPACE = 100
 const PROVIDER_ROW_HEIGHT = 72
 const PROVIDER_DRAG_STEP = 64
-const PROVIDER_CARD_RADIUS = 16
+const PROVIDER_CARD_RADIUS = 8
 const CLEAR_INVALID_PROVIDER_LIST_LIMIT = 12
 const PROVIDER_POLICY_MODEL_UI_LIMIT = PROVIDER_SETTINGS_MODEL_SAMPLE_LIMIT
 const RUNTIME_DIAGNOSTICS_DEBOUNCE_MS = 900
 const PROVIDER_RUNTIME_DIAGNOSTICS_AUTO_PROVIDER_LIMIT = 8
 const PROVIDER_RUNTIME_DIAGNOSTICS_AUTO_MODEL_ENTRY_LIMIT = 256
-const PROVIDER_ROW_ANIMATION_LIMIT = 8
 const PROVIDER_MANUAL_SORT_RAIL_PROVIDER_LIMIT = 8
 const PROVIDER_DETAILS_DEFER_PROVIDER_LIMIT = 8
 const PROVIDER_DETAILS_DEFER_FALLBACK_MS = 180
-const PROVIDER_LIST_DRAW_DISTANCE = 64
+const PROVIDER_IMPORT_PERSISTENCE_FLUSH_DELAY_MS = 1400
+const PROVIDER_OPERATION_NOTIFICATION_CLEAR_DELAY_MS = 5000
+const PROVIDER_IMPORT_LIVE_DETECTION_CHAR_LIMIT = 120000
 type ProviderFormFieldId = 'name' | 'baseUrl' | 'tokens' | 'models'
 
 function resolveProviderChrome(colors: AppThemeColors) {
-  const subtleBorderWidth = colors.ui.cartoon ? 1 : StyleSheet.hairlineWidth
-  const chromeSurface = colors.ui.cartoon ? colors.ui.semantic.surface.base : colors.ui.glass ? colors.ui.semantic.chrome.background : colors.ui.semantic.surface.base
-  const chromeBorder = colors.ui.cartoon ? colors.material.stroke : colors.ui.glass ? colors.ui.actionBar.itemBorder : colors.ui.semantic.chrome.border
-  const mutedSurface = colors.ui.cartoon ? colors.ui.semantic.surface.muted : colors.ui.glass ? colors.ui.actionBar.itemBackground : colors.ui.semantic.surface.muted
-  const raisedSurface = colors.ui.cartoon ? colors.ui.semantic.surface.base : colors.ui.glass ? colors.ui.semantic.surface.overlay : colors.ui.semantic.surface.base
+  const subtleBorderWidth = colors.ui.limeRoad ? 1 : StyleSheet.hairlineWidth
+  const chromeSurface = colors.ui.limeRoad ? colors.ui.semantic.surface.base : colors.ui.glass ? colors.ui.semantic.chrome.background : colors.ui.semantic.surface.base
+  const chromeBorder = colors.ui.limeRoad ? colors.material.stroke : colors.ui.glass ? colors.ui.actionBar.itemBorder : colors.ui.semantic.chrome.border
+  const mutedSurface = colors.ui.limeRoad ? colors.ui.semantic.surface.muted : colors.ui.glass ? colors.ui.actionBar.itemBackground : colors.ui.semantic.surface.muted
+  const raisedSurface = colors.ui.limeRoad ? colors.ui.semantic.surface.base : colors.ui.glass ? colors.ui.semantic.surface.overlay : colors.ui.semantic.surface.base
   return { subtleBorderWidth, chromeSurface, chromeBorder, mutedSurface, raisedSurface }
 }
 
@@ -104,11 +113,13 @@ function countProviderRuntimeDiagnosticsModelEntries(providers: AIProvider[]): n
 
 interface ProviderSettingsContentProps {
   embedded?: boolean
+  autoOpenAdd?: boolean
   onClose?: () => void
+  onProviderConnected?: () => void
   onBackgroundStateChange?: (state: IsleBackgroundState) => void
 }
 
-export function ProviderSettingsContent({ embedded = false, onClose, onBackgroundStateChange }: ProviderSettingsContentProps) {
+export function ProviderSettingsContent({ embedded = false, autoOpenAdd = false, onClose, onProviderConnected, onBackgroundStateChange }: ProviderSettingsContentProps) {
   const { colors } = useAppTheme()
   const { t } = useTranslation()
   const dialog = useIsleDialog()
@@ -116,6 +127,7 @@ export function ProviderSettingsContent({ embedded = false, onClose, onBackgroun
   const insets = useSafeAreaInsets()
   const { width } = useWindowDimensions()
   const compactWidth = width < 430
+  const veryCompactWidth = width < 360
   const pagePadding = compactWidth ? 12 : 16
   const pagerGestureLock = useMainPagerGestureLock()
   const providers = useSettingsStore((state) => state.providers)
@@ -127,20 +139,26 @@ export function ProviderSettingsContent({ embedded = false, onClose, onBackgroun
   const listInvalidProviders = useSettingsStore((state) => state.listInvalidProviders)
   const clearInvalidProviders = useSettingsStore((state) => state.clearInvalidProviders)
   const compactProviderStorage = useSettingsStore((state) => state.compactProviderStorage)
+  const flushProviderPersistence = useSettingsStore((state) => state.flushProviderPersistence)
   const settings = useSettingsStore((state) => state.settings)
   const conversations = useChatStore((state) => state.conversations)
   const [expandedProviderId, setExpandedProviderId] = useState<string | null>(null)
+  const selectedProvider = expandedProviderId ? providers.find((provider) => provider.id === expandedProviderId) : undefined
   const [sortMode, setSortMode] = useState<ProviderSortMode>('manual')
   const [modelFilter, setModelFilter] = useState('')
   const deferredModelFilter = useDeferredValue(modelFilter)
   const [batchMode, setBatchMode] = useState(false)
   const [selectedIds, setSelectedIds] = useState<Set<string>>(() => new Set())
-  const [addOpen, setAddOpen] = useState(false)
+  const [addOpen, setAddOpen] = useState(autoOpenAdd)
   const [importOpen, setImportOpen] = useState(false)
+  const [batchActionsOpen, setBatchActionsOpen] = useState(false)
+  const [listToolsOpen, setListToolsOpen] = useState(false)
   const [importProgress, setImportProgress] = useState<ProviderImportProgress | null>(null)
   const [keyboardHeight, setKeyboardHeight] = useState(0)
   const [runtimeDiagnostics, setRuntimeDiagnostics] = useState<RuntimeDiagnosticsSummary | null>(null)
   const runtimeDiagnosticsRunRef = useRef(0)
+  const providerNotificationClearTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const providerPersistenceFlushTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
   const providerModelAccessSettings = useMemo(() => ({
     providerAllowlist: settings.providerAllowlist,
     providerBlocklist: settings.providerBlocklist,
@@ -170,11 +188,12 @@ export function ProviderSettingsContent({ embedded = false, onClose, onBackgroun
     onActivationCompleted: () => {
       setBatchMode(false)
       setSelectedIds(new Set())
+      onProviderConnected?.()
     },
   })
   const backgroundState: IsleBackgroundState = keyboardHeight > 0
     ? 'input'
-    : addOpen || importOpen
+    : addOpen || importOpen || Boolean(selectedProvider)
       ? 'modal'
       : activationJob?.status === 'failed'
         ? 'error'
@@ -187,6 +206,10 @@ export function ProviderSettingsContent({ embedded = false, onClose, onBackgroun
     pagerGestureLock?.setLocked(true)
     return () => pagerGestureLock?.setLocked(false)
   }, [embedded, pagerGestureLock])
+
+  useEffect(() => {
+    if (autoOpenAdd) setAddOpen(true)
+  }, [autoOpenAdd])
 
   useEffect(() => {
     const showSub = Keyboard.addListener(Platform.OS === 'ios' ? 'keyboardWillShow' : 'keyboardDidShow', (event) => {
@@ -204,6 +227,11 @@ export function ProviderSettingsContent({ embedded = false, onClose, onBackgroun
   useEffect(() => {
     onBackgroundStateChange?.(backgroundState)
   }, [backgroundState, onBackgroundStateChange])
+
+  useEffect(() => () => {
+    if (providerNotificationClearTimer.current) clearTimeout(providerNotificationClearTimer.current)
+    if (providerPersistenceFlushTimer.current) clearTimeout(providerPersistenceFlushTimer.current)
+  }, [])
 
   useEffect(() => {
     if (isActivationRunning || importProgress) return undefined
@@ -257,6 +285,13 @@ export function ProviderSettingsContent({ embedded = false, onClose, onBackgroun
     }),
     [deferredModelFilter, providers, providerModelAccessSettings, providerSearchTextById, policyModelsByProviderId, sortMode, usageByProvider]
   )
+  const featuredProviderId = useMemo(() => {
+    if (settings.defaultProvider && visibleProviderItems.some((provider) => provider.id === settings.defaultProvider)) {
+      return settings.defaultProvider
+    }
+    return [...visibleProviderItems]
+      .sort((left, right) => (usageByProvider.get(right.id) ?? 0) - (usageByProvider.get(left.id) ?? 0))[0]?.id
+  }, [settings.defaultProvider, usageByProvider, visibleProviderItems])
   const manualOrdering = sortMode === 'manual'
   const providerOrderById = useMemo(
     () => new Map(providers.map((provider, index) => [provider.id, index] as const)),
@@ -275,73 +310,136 @@ export function ProviderSettingsContent({ embedded = false, onClose, onBackgroun
     () => providers.filter((provider) => isProviderConversationReady(provider) && (!providerModelAccessHasRules || providerHasPolicyAllowedModel(provider, providerModelAccessSettings))).length,
     [providers, providerModelAccessHasRules, providerModelAccessSettings]
   )
-  const credentialGroups = providers.reduce((sum, provider) => sum + (provider.credentialGroups?.length ?? 0), 0)
+  const providerAttentionItems: SettingsSummaryItem[] = []
+  if (providers.length && !enabled) {
+    providerAttentionItems.push({
+      key: 'enabled',
+      label: t('settings.enabled'),
+      value: String(enabled),
+      detail: t('providerSettings.providerCount', { count: providers.length }),
+      icon: <AppIcon name="toggle-on" color={colors.textTertiary} size={15} />,
+      tone: 'amber',
+    })
+  }
+  if (providers.length && enabled > 0 && !available) {
+    providerAttentionItems.push({
+      key: 'available',
+      label: t('providerSettings.overviewAvailable'),
+      value: String(available),
+      detail: t('providerSettings.availableCount', { count: available }),
+      icon: <AppIcon name="health" color={colors.textTertiary} size={15} />,
+      tone: 'amber',
+    })
+  }
+  if (providers.length && providerModelAccessHasRules) {
+    providerAttentionItems.push({
+      key: 'policy',
+      label: t('settings.upstreamGovernance'),
+      value: t('settings.policySummary'),
+      detail: t('settings.policyAllowRules', { count: (settings.providerAllowlist?.length ?? 0) + (settings.modelAllowlist?.length ?? 0) }),
+      icon: <AppIcon name="shield" color={colors.textTertiary} size={15} />,
+      tone: 'default',
+    })
+  }
   const { subtleBorderWidth, chromeSurface, chromeBorder, mutedSurface, raisedSurface } = resolveProviderChrome(colors)
   const activeSortLabel = t(SORT_OPTIONS.find((option) => option.id === sortMode)?.labelKey ?? SORT_OPTIONS[0].labelKey)
   const providerListHint = manualOrdering
     ? t('providerSettings.manualSortHint')
     : t('providerSettings.sortedViewHint', { label: activeSortLabel })
-  const animateProviderRows = motion === 'full' && providers.length <= PROVIDER_ROW_ANIMATION_LIMIT && visibleProviderItems.length <= PROVIDER_ROW_ANIMATION_LIMIT
-  const flashListExtraData = useMemo(() => ({
-    animateProviderRows,
-    batchMode,
-    expandedProviderId,
-    manualOrdering,
-    motion,
-    providerOrderById,
-    providersLength: providers.length,
-    showManualSortControls,
-    selectedIds,
-    runtimeProviderDetails: runtimeDiagnostics?.providerDetails,
-  }), [animateProviderRows, batchMode, expandedProviderId, manualOrdering, motion, providerOrderById, providers.length, selectedIds, showManualSortControls, runtimeDiagnostics?.providerDetails])
-
+  const listToolsActive = modelFilter.trim().length > 0
+  const listToolsExpanded = listToolsOpen || listToolsActive
+  const batchActionsActive = batchMode || Boolean(activationJob)
+  const batchActionsExpanded = batchActionsOpen || batchActionsActive
+  const providerActionButtonStyle = { flexGrow: 1, flexShrink: 1, flexBasis: veryCompactWidth ? '100%' : '48%', minWidth: 0, minHeight: 44 } as const
   async function addProviderFromForm(provider: AIProvider) {
     setAddOpen(false)
-    await addProvider(provider)
-    setExpandedProviderId(provider.id)
+    const previousDefaultProvider = settings.defaultProvider
+    const providerDisplayName = resolveProviderDisplayName(provider, t('providerSettings.customProvider'))
+    dialog.toast({
+      title: t('providerSettings.autoDetect'),
+      message: providerDisplayName,
+      tone: 'mint',
+      durationMs: 1400,
+    })
+    const probeApiKey = provider.apiKey.trim()
+      || provider.credentialGroups?.find((group) => group.enabled && group.apiKey?.trim())?.apiKey?.trim()
+      || provider.credentialGroups?.find((group) => group.apiKey?.trim())?.apiKey?.trim()
+      || ''
+    const detection = await probeProviderPreset({
+      baseUrl: provider.baseUrl,
+      name: provider.name,
+      apiKey: probeApiKey,
+    }, { timeoutMs: 2500 })
+    const detectedProvider = applyProviderPreset({
+      ...provider,
+      presetId: detection.presetId,
+      detectedPresetId: detection.presetId,
+      wireProtocol: detection.presetId === DEFAULT_PROVIDER_PRESET_ID
+        ? detection.wireProtocol ?? provider.wireProtocol ?? DEFAULT_PROVIDER_WIRE_PROTOCOL
+        : provider.wireProtocol,
+      detectionStatus: 'detected',
+    }, detection.presetId)
+    await addProvider(detectedProvider)
+    if (!previousDefaultProvider) updateSettings({ defaultProvider: null })
+    setExpandedProviderId(detectedProvider.id)
     setSortMode('manual')
     setModelFilter('')
-    dialog.toast({ title: t('providerSettings.added'), message: t('providerSettings.addedMessage', { name: provider.name }), tone: 'mint' })
-    const enableNow = await dialog.confirm({
-      title: t('providerSettings.enableAddedTitle'),
-      message: t('providerSettings.enableAddedMessage', { name: provider.name }),
-      confirmLabel: t('providerSettings.enableAddedConfirm'),
-      cancelLabel: t('providerSettings.enableLater'),
-      tone: 'mint',
-    })
-    if (enableNow) {
-      void activateProviders([provider.id], 'single')
-    }
+    await activateProviders([detectedProvider.id], 'single')
+  }
+
+  async function publishImportProgress(progress: ProviderImportProgress, options: { waitForNotification?: boolean } = {}) {
+    setImportProgress(progress)
+    const notification = publishProviderImportStatusNotification(progress, t)
+    if (options.waitForNotification) await notification
+  }
+
+  function scheduleProviderOperationNotificationClear(delayMs = PROVIDER_OPERATION_NOTIFICATION_CLEAR_DELAY_MS) {
+    if (providerNotificationClearTimer.current) clearTimeout(providerNotificationClearTimer.current)
+    providerNotificationClearTimer.current = setTimeout(() => {
+      providerNotificationClearTimer.current = null
+      void clearAndroidStatusNotification()
+    }, delayMs)
+  }
+
+  function scheduleProviderPersistenceFlush() {
+    if (providerPersistenceFlushTimer.current) clearTimeout(providerPersistenceFlushTimer.current)
+    providerPersistenceFlushTimer.current = setTimeout(() => {
+      providerPersistenceFlushTimer.current = null
+      void flushProviderPersistence()
+    }, PROVIDER_IMPORT_PERSISTENCE_FLUSH_DELAY_MS)
   }
 
   async function importProvidersFromText(input: string): Promise<boolean> {
     if (importProgress) return false
-    setImportProgress({ stage: 'parsing', completed: 0, total: 0 })
+    await publishImportProgress({ stage: 'parsing', completed: 0, total: 0 }, { waitForNotification: true })
     Keyboard.dismiss()
     await yieldToNextPaint()
     try {
       const result = parseProviderImportText(input, { accessSettings: settings })
       if (!result.providers.length) {
         setImportProgress(null)
+        void clearAndroidStatusNotification()
         dialog.notice({ title: t('providerSettings.importEmpty'), message: result.warnings.join('\n') || t('providerSettings.importEmptyMessage'), tone: 'amber' })
         return false
       }
 
-      setImportProgress({ stage: 'saving', completed: 0, total: result.providers.length })
+      await publishImportProgress({ stage: 'saving', completed: 0, total: result.providers.length }, { waitForNotification: true })
       await yieldToNextPaint()
       await addProviders(result.providers, {
+        persist: 'deferred',
         yieldEvery: 4,
         onProgress: ({ completed, total, currentProviderName }) => {
-          setImportProgress({ stage: 'saving', completed, total, currentProviderName })
+          void publishImportProgress({ stage: 'saving', completed, total, currentProviderName })
         },
       })
-      setImportProgress({ stage: 'finishing', completed: result.providers.length, total: result.providers.length })
+      void publishImportProgress({ stage: 'finishing', completed: result.providers.length, total: result.providers.length })
       await yieldToNextPaint()
       updateSettings({ defaultProvider: result.providers[0].id })
+      scheduleProviderPersistenceFlush()
 
       setImportProgress(null)
       setImportOpen(false)
-      setExpandedProviderId(result.providers[0]?.id ?? null)
+      setExpandedProviderId(result.providers.length === 1 ? result.providers[0]?.id ?? null : null)
       setSortMode('manual')
       setModelFilter('')
       dialog.toast({
@@ -350,6 +448,8 @@ export function ProviderSettingsContent({ embedded = false, onClose, onBackgroun
         tone: result.warnings.length ? 'amber' : 'mint',
         durationMs: 1800,
       })
+      publishProviderImportCompletedNotification(result.providers.length, t)
+      scheduleProviderOperationNotificationClear()
 
       const enableNow = await dialog.confirm({
         title: t('providerSettings.enableImportedTitle'),
@@ -363,10 +463,13 @@ export function ProviderSettingsContent({ embedded = false, onClose, onBackgroun
       }
       return true
     } catch (error) {
+      const failureMessage = providerImportFailureMessage(error, t)
       setImportProgress(null)
+      publishProviderImportFailedNotification(failureMessage, t)
+      scheduleProviderOperationNotificationClear(7000)
       dialog.notice({
         title: t('providerSettings.importFailed'),
-        message: providerImportFailureMessage(error, t),
+        message: failureMessage,
         tone: 'danger',
       })
       return false
@@ -463,196 +566,250 @@ export function ProviderSettingsContent({ embedded = false, onClose, onBackgroun
 
   function renderProviderItem({ item: provider, index }: { item: AIProvider; index: number }) {
     const providerIndex = providerOrderById.get(provider.id) ?? index
-    const row = (
+    return (
       <ProviderListRow
         provider={provider}
-        runtimeDetail={runtimeDetailByProviderId.get(provider.id)}
+        position={providerIndex + 1}
+        featured={colors.ui.family === 'lime-road' && provider.id === featuredProviderId}
         selected={selectedIds.has(provider.id)}
         batchMode={batchMode}
-        expanded={expandedProviderId === provider.id || (expandedProviderId === null && index === 0 && !provider.enabled)}
-        sortEnabled={manualOrdering && showManualSortControls}
-        position={providerIndex + 1}
-        total={providers.length}
-        canMoveUp={providerIndex > 0}
-        canMoveDown={providerIndex < providers.length - 1}
+        expanded={expandedProviderId === provider.id}
+        grouped
         onToggleSelected={() => toggleSelection(provider.id)}
-        onMove={(offset) => moveProvider(provider.id, offset)}
         onExpandedChange={(next) => setExpandedProviderId(next ? provider.id : null)}
       />
     )
-    if (!animateProviderRows) return row
-    return (
-      <MotiView
-        from={{ opacity: 0, translateY: 10, scale: 0.99 }}
-        animate={{ opacity: 1, translateY: 0, scale: 1 }}
-        transition={{ type: 'spring', ...motionTokens.spring.gentle, delay: Math.min(index * 24, 160) }}
-      >
-        {row}
-      </MotiView>
-    )
   }
 
-  const providerListHeader = (
-    <>
-      <IsleHeader
-        title={t('settings.providerManagement')}
-        subtitle={providerListHint}
-        collapsed
-        leading={
-          <HeaderBackButton onPress={onClose ?? closeStandaloneProviderSettings} />
-        }
-      />
-
-      <View style={{ marginTop: 8, gap: 10 }}>
-        <View style={{ borderRadius: colors.ui.radius.panel, paddingHorizontal: 10, paddingVertical: 10, backgroundColor: chromeSurface, borderWidth: subtleBorderWidth, borderColor: chromeBorder, gap: 10 }}>
-          <View style={{ flexDirection: compactWidth ? 'column' : 'row', alignItems: compactWidth ? 'stretch' : 'center', gap: 8 }}>
-            <View style={{ flex: 1, minWidth: 0 }} />
-            {providers.length ? (
-              <IslePressable
-                haptic
-                accessibilityLabel={t('providerSettings.clearAll')}
-                onPress={() => void confirmClearAllProviders()}
-                style={{ alignSelf: compactWidth ? 'stretch' : 'center', minHeight: 34, borderRadius: colors.ui.radius.chip, paddingHorizontal: 10, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 5, backgroundColor: colors.ui.tone.danger.background, borderWidth: subtleBorderWidth, borderColor: colors.ui.tone.danger.border }}
-              >
-                <AppIcon name="close" color={colors.ui.tone.danger.foreground} size={13} />
-                <Text style={{ color: colors.ui.tone.danger.foreground, fontSize: 10.5, lineHeight: 13, fontWeight: '900', includeFontPadding: false }}>
-                  {t('providerSettings.clearAll')}
-                </Text>
-              </IslePressable>
-            ) : null}
-          </View>
-          <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 6 }}>
-            <OperatorMetric label={t('providerSettings.providerCount', { count: providers.length })} />
-            <OperatorMetric label={t('providerSettings.enabledCount', { count: enabled })} />
-            <OperatorMetric label={t('providerSettings.availableCount', { count: available })} />
-            <OperatorMetric label={t('providerSettings.credentialGroupCount', { count: credentialGroups })} />
-            <OperatorMetric label={t('providerSettings.visibleCount', { count: visibleProviderItems.length })} />
-          </View>
-        </View>
-
-        <View style={{ borderRadius: colors.ui.radius.panel, padding: 9, backgroundColor: chromeSurface, borderWidth: subtleBorderWidth, borderColor: chromeBorder, gap: 8 }}>
-          <View style={{ flexDirection: 'row', gap: 8, flexWrap: 'wrap' }}>
-            <IsleButton
-              label={t('settings.addProvider')}
-              compact
-              block
-              icon={<AppIcon name="add" color={colors.textSecondary} size={15} />}
-              onPress={() => setAddOpen(true)}
-              style={{ flexGrow: 1, flexShrink: 1, flexBasis: '48%', minWidth: 0 }}
-            />
-            <IsleButton
-              label={t('providerSettings.batchImportProviders')}
-              accessibilityLabel={t('providerSettings.batchImportProviders')}
-              compact
-              block
-              icon={<AppIcon name="import" color={colors.textSecondary} size={15} />}
-              onPress={() => setImportOpen(true)}
-              style={{ flexGrow: 1, flexShrink: 1, flexBasis: '48%', minWidth: 0 }}
-            />
-            <IsleButton
-              label={t('providerSettings.clearInvalid')}
-              accessibilityLabel={t('providerSettings.clearInvalid')}
-              compact
-              block
-              tone="amber"
-              icon={<AppIcon name="warning" color={colors.textSecondary} size={15} />}
-              onPress={() => void confirmClearInvalidProviders()}
-              disabled={!providers.length}
-              style={{ flexGrow: 1, flexShrink: 1, flexBasis: '48%', minWidth: 0 }}
-            />
-            <IsleButton
-              label={batchMode ? t('providerSettings.enableSelected', { count: selectedIds.size }) : t('settings.enableAll')}
-              compact
-              block
-              tone="mint"
-              icon={<AppIcon name="zap" color={colors.textSecondary} size={15} />}
-              onPress={() => void enableEffectiveSelection()}
-              disabled={activationBusy || activationJob?.status === 'running' || (batchMode ? !selectedIds.size : !providers.length)}
-              style={{ flexGrow: 1, flexShrink: 1, flexBasis: '48%', minWidth: 0 }}
-            />
-            <IsleButton
-              label={batchMode ? t('providerSettings.exitBatch') : t('providerSettings.selectionMode')}
-              compact
-              block
-              accessibilityLabel={batchMode ? t('providerSettings.exitSelectionMode') : t('providerSettings.enterSelectionMode')}
-              tone={batchMode ? 'amber' : 'soft'}
-              icon={<AppIcon name="list-check" color={batchMode ? colors.ui.tone.warning.foreground : colors.textSecondary} size={15} />}
-              onPress={() => {
-                setBatchMode((value) => !value)
-                setSelectedIds(new Set())
-                dialog.toast({ title: batchMode ? t('providerSettings.batchExited') : t('providerSettings.batchEntered'), tone: 'mint' })
-              }}
-              style={{ flexGrow: 1, flexShrink: 1, flexBasis: '48%', minWidth: 0 }}
-            />
-          </View>
-        </View>
-      </View>
-
-      {activationJob ? (
-        <ActivationProgressCard job={activationJob} onDismiss={clearActivationJob} />
+  const ProviderSettingsExperience = colors.ui.family === 'lime-road'
+    ? LimeRoadProviderSettingsExperience
+    : colors.ui.family === 'markdown'
+      ? MarkdownProviderSettingsExperience
+      : MinimalProviderSettingsExperience
+  const providerAttention = providerAttentionItems.length ? <SettingsSummaryStrip items={providerAttentionItems} /> : undefined
+  const providerActivation = activationJob
+    ? <ActivationProgressCard job={activationJob} onDismiss={clearActivationJob} />
+    : undefined
+  const providerTools = providers.length > 3 || listToolsActive || providers.length > 1 || batchActionsActive ? (
+    <View style={{ gap: 8 }}>
+      {providers.length > 3 || listToolsActive ? (
+        <>
+          <ProviderToolbarDisclosureRow
+            title={t('providerSettings.listTools')}
+            detail={listToolsActive ? t('providerSettings.listToolsActive', { label: activeSortLabel, count: visibleProviderItems.length }) : t('providerSettings.listToolsCollapsedDetail', { label: activeSortLabel, count: visibleProviderItems.length })}
+            icon={<AppIcon name="filter" color={colors.textTertiary} size={15} />}
+            open={listToolsExpanded}
+            onPress={() => setListToolsOpen((value) => !value)}
+          />
+          {listToolsExpanded ? (
+            <View style={{ gap: 8 }}>
+              <View style={{ flexDirection: veryCompactWidth ? 'column' : 'row', alignItems: veryCompactWidth ? 'stretch' : 'center', gap: 8 }}>
+                <View style={{ minHeight: 42, flex: 1, minWidth: 0, borderRadius: Math.min(colors.ui.radius.controlLarge, 8), paddingHorizontal: 12, flexDirection: 'row', alignItems: 'center', gap: 8, backgroundColor: colors.ui.input.background, borderWidth: subtleBorderWidth, borderColor: colors.ui.input.border }}>
+                  <AppIcon name="search" color={colors.textTertiary} size={16} />
+                  <TextInput
+                    value={modelFilter}
+                    onChangeText={setModelFilter}
+                    autoCapitalize="none"
+                    autoCorrect={false}
+                    placeholder={t('providerSettings.filterModels')}
+                    placeholderTextColor={colors.textTertiary}
+                    style={{ flex: 1, minWidth: 0, minHeight: 40, padding: 0, color: colors.text, fontSize: 14, lineHeight: 19, fontWeight: '800', includeFontPadding: false, textAlignVertical: 'center' }}
+                  />
+                  {modelFilter ? (
+                    <IslePressable haptic accessibilityLabel={t('common.clearSearch')} onPress={() => setModelFilter('')} style={{ width: 32, height: 32, borderRadius: Math.min(colors.ui.radius.controlSmall, 8), alignItems: 'center', justifyContent: 'center', backgroundColor: mutedSurface, borderWidth: subtleBorderWidth, borderColor: chromeBorder }}>
+                      <AppIcon name="close" color={colors.textSecondary} size={15} />
+                    </IslePressable>
+                  ) : null}
+                </View>
+                {!manualOrdering ? (
+                  <IslePressable haptic accessibilityLabel={t('providerSettings.switchToManualSort')} onPress={() => setSortMode('manual')} style={{ minHeight: 42, borderRadius: Math.min(colors.ui.radius.controlMiddle, 8), paddingHorizontal: 12, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6, backgroundColor: raisedSurface, borderWidth: subtleBorderWidth, borderColor: chromeBorder }}>
+                    <AppIcon name="grab" color={colors.textSecondary} size={14} />
+                    <Text style={{ color: colors.textSecondary, fontSize: 11.5, fontWeight: '800' }}>{t('providerSettings.sort.manual')}</Text>
+                  </IslePressable>
+                ) : null}
+              </View>
+              <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8 }}>
+                {SORT_OPTIONS.map((option) => (
+                  <ChoiceIsleChip
+                    key={option.id}
+                    label={t(option.labelKey)}
+                    active={sortMode === option.id}
+                    onPress={() => {
+                      setSortMode(option.id)
+                      dialog.toast({ title: t('providerSettings.sortChanged', { label: t(option.labelKey) }), tone: 'mint' })
+                    }}
+                  />
+                ))}
+              </View>
+            </View>
+          ) : null}
+        </>
       ) : null}
 
-      <View style={{ borderRadius: colors.ui.radius.panel, padding: 10, marginTop: 2, backgroundColor: chromeSurface, borderWidth: subtleBorderWidth, borderColor: chromeBorder, gap: 8 }}>
-        <View style={{ flexDirection: compactWidth ? 'column' : 'row', alignItems: compactWidth ? 'stretch' : 'center', gap: 8 }}>
-          <View style={{ minHeight: 44, flex: 1, minWidth: 0, borderRadius: colors.ui.radius.controlLarge, paddingHorizontal: 12, flexDirection: 'row', alignItems: 'center', gap: 8, backgroundColor: colors.ui.input.background, borderWidth: subtleBorderWidth, borderColor: colors.ui.input.border }}>
-            <AppIcon name="search" color={colors.textTertiary} size={16} />
-            <TextInput
-              value={modelFilter}
-              onChangeText={setModelFilter}
-              autoCapitalize="none"
-              autoCorrect={false}
-              placeholder={t('providerSettings.filterModels')}
-              placeholderTextColor={colors.textTertiary}
-              style={{ flex: 1, minWidth: 0, minHeight: 42, padding: 0, color: colors.text, fontSize: 14, fontWeight: '800' }}
-            />
-            {modelFilter ? (
-              <IslePressable haptic accessibilityLabel={t('common.clearSearch')} onPress={() => setModelFilter('')} style={{ width: 32, height: 32, borderRadius: colors.ui.radius.controlSmall, alignItems: 'center', justifyContent: 'center', backgroundColor: mutedSurface, borderWidth: subtleBorderWidth, borderColor: chromeBorder }}>
-                <AppIcon name="close" color={colors.textSecondary} size={15} />
-              </IslePressable>
-            ) : null}
-          </View>
-          {!manualOrdering ? (
-            <IslePressable haptic accessibilityLabel={t('providerSettings.switchToManualSort')} onPress={() => setSortMode('manual')} style={{ minHeight: 44, borderRadius: colors.ui.radius.controlMiddle, paddingHorizontal: 12, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6, backgroundColor: raisedSurface, borderWidth: subtleBorderWidth, borderColor: chromeBorder }}>
-              <AppIcon name="grab" color={colors.textSecondary} size={14} />
-              <Text style={{ color: colors.textSecondary, fontSize: 11.5, fontWeight: '900' }}>{t('providerSettings.sort.manual')}</Text>
-            </IslePressable>
+      {providers.length > 1 || batchActionsActive ? (
+        <>
+          <ProviderToolbarDisclosureRow
+            title={t('providerSettings.batchActions')}
+            detail={batchMode ? t('providerSettings.batchActionsSelectionDetail', { selected: selectedIds.size, total: providers.length }) : t('providerSettings.batchActionsCollapsedDetail', { total: providers.length })}
+            icon={<AppIcon name="list-check" color={batchMode ? colors.ui.tone.warning.foreground : colors.textTertiary} size={15} />}
+            open={batchActionsExpanded}
+            tone={batchMode ? 'amber' : undefined}
+            onPress={() => setBatchActionsOpen((value) => !value)}
+          />
+          {batchActionsExpanded ? (
+            <View style={{ flexDirection: 'row', gap: 8, flexWrap: 'wrap' }}>
+              <IsleButton
+                label={batchMode ? t('providerSettings.enableSelected', { count: selectedIds.size }) : t('settings.enableAll')}
+                compact
+                block
+                tone="mint"
+                icon={<AppIcon name="zap" color={colors.textSecondary} size={15} />}
+                onPress={() => void enableEffectiveSelection()}
+                disabled={activationBusy || activationJob?.status === 'running' || (batchMode ? !selectedIds.size : !providers.length)}
+                style={providerActionButtonStyle}
+              />
+              <IsleButton
+                label={batchMode ? t('providerSettings.exitBatch') : t('providerSettings.selectionMode')}
+                compact
+                block
+                accessibilityLabel={batchMode ? t('providerSettings.exitSelectionMode') : t('providerSettings.enterSelectionMode')}
+                tone={batchMode ? 'amber' : 'soft'}
+                icon={<AppIcon name="list-check" color={batchMode ? colors.ui.tone.warning.foreground : colors.textSecondary} size={15} />}
+                onPress={() => {
+                  setBatchMode((value) => !value)
+                  setSelectedIds(new Set())
+                  dialog.toast({ title: batchMode ? t('providerSettings.batchExited') : t('providerSettings.batchEntered'), tone: 'mint' })
+                }}
+                style={providerActionButtonStyle}
+              />
+              <IsleButton
+                label={t('providerSettings.clearInvalid')}
+                accessibilityLabel={t('providerSettings.clearInvalid')}
+                compact
+                block
+                tone="amber"
+                icon={<AppIcon name="warning" color={colors.textSecondary} size={15} />}
+                onPress={() => void confirmClearInvalidProviders()}
+                disabled={!providers.length}
+                style={providerActionButtonStyle}
+              />
+              {providers.length ? (
+                <IsleButton
+                  label={t('providerSettings.clearAll')}
+                  compact
+                  block
+                  tone="danger"
+                  icon={<AppIcon name="delete" color={colors.ui.control.dangerForeground} size={15} />}
+                  onPress={() => void confirmClearAllProviders()}
+                  style={providerActionButtonStyle}
+                />
+              ) : null}
+            </View>
           ) : null}
-        </View>
-        <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8 }}>
-          {SORT_OPTIONS.map((option) => (
-            <ChoiceIsleChip
-              key={option.id}
-              label={t(option.labelKey)}
-              active={sortMode === option.id}
-              onPress={() => {
-                setSortMode(option.id)
-                dialog.toast({ title: t('providerSettings.sortChanged', { label: t(option.labelKey) }), tone: 'mint' })
-              }}
-            />
-          ))}
-        </View>
+        </>
+      ) : null}
+    </View>
+  ) : undefined
+
+  const providerCardGroups = groupProviderSettingsCards(visibleProviderItems)
+  const providerRegistry = providerCardGroups.length ? (
+    <View accessibilityRole="list" style={{ width: '100%', maxWidth: PROVIDER_CARD_DETAIL_MAX_WIDTH, alignSelf: 'center', gap: 12 }}>
+      {providerCardGroups.map((group) => {
+        const groupFeatured = group.providers.some((provider) => provider.id === featuredProviderId)
+        const groupEnabledCount = group.providers.filter((provider) => provider.enabled).length
+        const firstProvider = group.providers[0]
+        const groupPresetId = firstProvider?.detectedPresetId ?? firstProvider?.presetId
+        const groupLabel = groupPresetId && groupPresetId !== DEFAULT_PROVIDER_PRESET_ID
+          ? getProviderPreset(groupPresetId).name
+          : group.label
+        return (
+          <View
+            key={group.id}
+            role="listitem"
+            testID={`provider-supplier-group-${group.id}`}
+            style={{
+              width: '100%',
+              overflow: 'hidden',
+              borderRadius: colors.ui.family === 'markdown' ? 0 : Math.min(colors.ui.radius.card, 8),
+              backgroundColor: colors.ui.family === 'minimal' ? 'transparent' : raisedSurface,
+              borderWidth: colors.ui.family === 'minimal' ? StyleSheet.hairlineWidth : 1,
+              borderColor: groupFeatured ? colors.ui.control.primaryBorder : colors.ui.family === 'lime-road' ? colors.material.stroke : colors.ui.section.divider,
+            }}
+          >
+            <View style={{ minHeight: 48, paddingHorizontal: 12, flexDirection: 'row', alignItems: 'center', gap: 10, backgroundColor: colors.ui.semantic.surface.muted, borderBottomWidth: colors.ui.family === 'lime-road' ? 1 : StyleSheet.hairlineWidth, borderBottomColor: colors.ui.family === 'lime-road' ? colors.material.stroke : colors.ui.section.divider }}>
+              <View style={{ width: 30, height: 30, borderRadius: Math.min(colors.ui.radius.controlSmall, 8), alignItems: 'center', justifyContent: 'center', backgroundColor: colors.ui.icon.accentBackground }}>
+                <AppIcon name="provider-key" color={colors.ui.icon.accentForeground} size={15} />
+              </View>
+              <View style={{ flex: 1, minWidth: 0 }}>
+                <Text numberOfLines={1} style={{ color: colors.text, fontSize: 13, lineHeight: 18, fontWeight: '900' }}>{groupLabel}</Text>
+                <Text numberOfLines={1} style={{ marginTop: 1, color: colors.textTertiary, fontSize: 10, lineHeight: 14, fontWeight: '700' }}>{`${t('settings.enabled')} ${groupEnabledCount}/${group.providers.length}`}</Text>
+              </View>
+              <Text style={{ color: colors.textTertiary, fontSize: 10, lineHeight: 14, fontWeight: '800' }}>{group.providers.length}</Text>
+            </View>
+            <View accessibilityRole="list">
+              {group.providers.map((provider, index) => (
+                <View key={provider.id} role="listitem" style={{ borderBottomWidth: index === group.providers.length - 1 ? 0 : StyleSheet.hairlineWidth, borderBottomColor: colors.ui.section.divider }}>
+                  {renderProviderItem({ item: provider, index: providerOrderById.get(provider.id) ?? 0 })}
+                </View>
+              ))}
+            </View>
+          </View>
+        )
+      })}
+    </View>
+  ) : colors.ui.family === 'markdown' ? (
+    <View testID="provider-empty-markdown" style={{ minHeight: 84, paddingHorizontal: 12, paddingVertical: 10, borderLeftWidth: 3, borderLeftColor: colors.ui.section.divider, backgroundColor: colors.ui.semantic.surface.muted }}>
+      <Text style={{ color: colors.textSecondary, fontSize: 12, lineHeight: 18, fontWeight: '800' }}>{providers.length ? t('providerSettings.noMatches') : t('providerSettings.noProviders')}</Text>
+      {!providers.length ? <Text style={{ marginTop: 3, color: colors.textTertiary, fontSize: 11, lineHeight: 16, fontWeight: '600' }}>{t('providerSettings.noProvidersDetail')}</Text> : null}
+    </View>
+  ) : colors.ui.family === 'lime-road' ? (
+    <View testID="provider-empty-lime-road" style={{ minHeight: 96, borderRadius: Math.min(colors.ui.radius.card, 8), paddingHorizontal: 12, paddingVertical: 10, flexDirection: 'row', alignItems: 'center', gap: 10, backgroundColor: colors.ui.semantic.surface.muted, borderWidth: 1, borderColor: colors.material.stroke }}>
+      <View style={{ width: 34, alignItems: 'center' }}>
+        <View style={{ width: 12, height: 12, borderRadius: 6, backgroundColor: colors.ui.control.primaryBackground, borderWidth: 3, borderColor: colors.ui.semantic.surface.base }} />
+        <View style={{ width: 2, height: 30, backgroundColor: colors.material.stroke }} />
       </View>
-      <View style={{ height: 10 }} />
-    </>
+      <View style={{ flex: 1, minWidth: 0 }}>
+        <Text style={{ color: colors.text, fontSize: 13, lineHeight: 18, fontWeight: '900' }}>{providers.length ? t('providerSettings.noMatches') : t('providerSettings.noProviders')}</Text>
+      {!providers.length ? <Text style={{ marginTop: 3, color: colors.textSecondary, fontSize: 11, lineHeight: 16, fontWeight: '600' }}>{t('providerSettings.noProvidersDetail')}</Text> : null}
+      </View>
+    </View>
+  ) : (
+    <View testID="provider-empty-minimal" style={{ minHeight: providers.length ? 54 : 76, paddingVertical: 12, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: colors.ui.section.divider }}>
+      <Text style={{ color: colors.textSecondary, fontSize: 12, lineHeight: 17, fontWeight: '700' }}>{providers.length ? t('providerSettings.noMatches') : t('providerSettings.noProviders')}</Text>
+      {!providers.length ? <Text style={{ marginTop: 3, color: colors.textTertiary, fontSize: 11, lineHeight: 16, fontWeight: '500' }}>{t('providerSettings.noProvidersDetail')}</Text> : null}
+    </View>
   )
 
   const content = (
     <>
       <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined} keyboardVerticalOffset={0} style={{ flex: 1 }}>
-        <FlashList
-          data={visibleProviderItems}
-          extraData={flashListExtraData}
-          drawDistance={PROVIDER_LIST_DRAW_DISTANCE}
-          maintainVisibleContentPosition={{ disabled: true }}
+        <ScrollView
           keyboardShouldPersistTaps="handled"
           automaticallyAdjustKeyboardInsets
-          contentContainerStyle={{ paddingHorizontal: pagePadding, paddingTop: Math.max(insets.top, 0) + 8, paddingBottom: Math.max(insets.bottom, 20) + 76 }}
-          ListHeaderComponent={providerListHeader}
-          ItemSeparatorComponent={ProviderListSeparator}
-          ListEmptyComponent={<Text style={{ color: colors.textSecondary, fontSize: 12, fontWeight: '800', marginTop: 16 }}>{t('providerSettings.noMatches')}</Text>}
-          keyExtractor={(provider) => provider.id}
-          renderItem={renderProviderItem}
-        />
+          contentContainerStyle={{ paddingHorizontal: pagePadding, paddingTop: embedded ? Math.max(insets.top, 0) + 8 : 8, paddingBottom: Math.max(insets.bottom, 20) + 76 }}
+        >
+          <ProviderSettingsExperience
+            title={t('settings.providerManagement')}
+            subtitle={providerListHint}
+            backLabel={t('common.back')}
+            addLabel={t('settings.addProvider')}
+            importLabel={t('providerSettings.batchImportProviders')}
+            enabledSummary={`${t('settings.enabled')} ${enabled}/${providers.length}`}
+            visibleSummary={t('providerSettings.providerCount', { count: visibleProviderItems.length })}
+            enabledCount={enabled}
+            totalCount={providers.length}
+            visibleCount={visibleProviderItems.length}
+            compact={compactWidth}
+            onBack={onClose ?? closeStandaloneProviderSettings}
+            onAdd={() => setAddOpen(true)}
+            onImport={() => setImportOpen(true)}
+            attention={providerAttention}
+            activation={providerActivation}
+            tools={providerTools}
+          >
+            {providerRegistry}
+          </ProviderSettingsExperience>
+        </ScrollView>
       </KeyboardAvoidingView>
       <ProviderFormModal
         visible={addOpen}
@@ -668,6 +825,24 @@ export function ProviderSettingsContent({ embedded = false, onClose, onBackgroun
         }}
         onSubmit={importProvidersFromText}
       />
+      <ProviderConfigurationSheet
+        visible={Boolean(selectedProvider)}
+        provider={selectedProvider}
+        runtimeDetail={selectedProvider ? runtimeDetailByProviderId.get(selectedProvider.id) : undefined}
+        deferMount={providers.length > PROVIDER_DETAILS_DEFER_PROVIDER_LIMIT}
+        sortControl={selectedProvider && manualOrdering && showManualSortControls && providers.length > 1 ? (
+          <DragRail
+            providerName={resolveProviderDisplayName(selectedProvider, t('providerSettings.customProvider'))}
+            position={(providerOrderById.get(selectedProvider.id) ?? 0) + 1}
+            total={providers.length}
+            disabled={false}
+            disabledUp={(providerOrderById.get(selectedProvider.id) ?? 0) <= 0}
+            disabledDown={(providerOrderById.get(selectedProvider.id) ?? 0) >= providers.length - 1}
+            onMove={(offset) => moveProvider(selectedProvider.id, offset)}
+          />
+        ) : undefined}
+        onClose={() => setExpandedProviderId(null)}
+      />
     </>
   )
 
@@ -677,27 +852,111 @@ export function ProviderSettingsContent({ embedded = false, onClose, onBackgroun
 
 export default ProviderSettingsContent
 
-function HeaderBackButton({ onPress }: { onPress: () => void }) {
+function ProviderConfigurationSheet({
+  visible,
+  provider,
+  runtimeDetail,
+  deferMount,
+  sortControl,
+  onClose,
+}: {
+  visible: boolean
+  provider?: AIProvider
+  runtimeDetail?: RuntimeDiagnosticsProviderDetail
+  deferMount: boolean
+  sortControl?: ReactNode
+  onClose: () => void
+}) {
   const { colors } = useAppTheme()
   const { t } = useTranslation()
-  const { mutedSurface } = resolveProviderChrome(colors)
+  const insets = useSafeAreaInsets()
+  const { height } = useWindowDimensions()
+  const { handleRequestClose } = useKeyboardAwareModalRequestClose(onClose)
+  const sheetHeight = Math.max(360, Math.min(Math.round(height * 0.9), height - Math.max(insets.top, 12) - 8))
+  const providerName = provider ? resolveProviderDisplayName(provider, t('providerSettings.customProvider')) : ''
+
   return (
-    <AnimatedNavigationTrigger variant="iconButton" label={t('common.back')} size="md" glyph="back" onNavigate={onPress} color={colors.text} style={{ backgroundColor: mutedSurface }} />
+    <Modal transparent visible={visible && Boolean(provider)} animationType="slide" statusBarTranslucent navigationBarTranslucent onRequestClose={handleRequestClose}>
+      <View accessibilityViewIsModal style={{ flex: 1, justifyContent: 'flex-end' }}>
+        <Pressable accessibilityRole="button" accessibilityLabel={t('dialog.closeLayer')} onPress={onClose} style={[StyleSheet.absoluteFill, { backgroundColor: colors.backdrop }]} />
+        <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
+          <View style={{ height: sheetHeight, overflow: 'hidden', borderTopLeftRadius: 8, borderTopRightRadius: 8, backgroundColor: colors.material.sheet.surface, borderWidth: colors.ui.limeRoad ? 1 : StyleSheet.hairlineWidth, borderBottomWidth: 0, borderColor: colors.material.sheet.border }}>
+            <View style={{ alignItems: 'center', paddingTop: 6 }}>
+              <View style={{ width: 34, height: 3, borderRadius: 2, backgroundColor: colors.textTertiary, opacity: 0.34 }} />
+            </View>
+            <View style={{ minHeight: 50, paddingHorizontal: 12, flexDirection: 'row', alignItems: 'center', gap: 10, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: colors.material.sheet.border }}>
+              <View style={{ width: 32, height: 32, borderRadius: 8, alignItems: 'center', justifyContent: 'center', backgroundColor: colors.ui.icon.accentBackground }}>
+                <AppIcon name="provider-key" color={colors.ui.icon.accentForeground} size={16} />
+              </View>
+              <Text numberOfLines={1} ellipsizeMode="tail" style={{ flex: 1, minWidth: 0, color: colors.text, fontSize: 15, lineHeight: 20, fontWeight: '800', includeFontPadding: false }}>
+                {providerName}
+              </Text>
+              <IslePressable haptic accessibilityRole="button" accessibilityLabel={t('common.close')} onPress={onClose} style={{ width: 40, height: 40, borderRadius: 8, alignItems: 'center', justifyContent: 'center' }}>
+                <AppIcon name="close" color={colors.textSecondary} size={17} />
+              </IslePressable>
+            </View>
+            <ScrollView nestedScrollEnabled keyboardShouldPersistTaps="handled" automaticallyAdjustKeyboardInsets contentContainerStyle={{ width: '100%', maxWidth: PROVIDER_CARD_DETAIL_MAX_WIDTH, alignSelf: 'center', paddingHorizontal: 12, paddingTop: 10, paddingBottom: Math.max(insets.bottom, 18) + 20 }}>
+              {sortControl ? <View style={{ marginBottom: 10 }}>{sortControl}</View> : null}
+              {provider ? (
+                <>
+                  <DeferredProviderDetails
+                    provider={provider}
+                    runtimeDetail={runtimeDetail}
+                    expanded
+                    onExpandedChange={(next) => {
+                      if (!next) onClose()
+                    }}
+                    deferMount={deferMount}
+                  />
+                  <View style={{ marginTop: 14, gap: 7 }}>
+                    <Text style={{ color: colors.textSecondary, fontSize: 12, lineHeight: 17, fontWeight: '900' }}>Usage query configuration</Text>
+                    <Text style={{ color: colors.textTertiary, fontSize: 10.5, lineHeight: 15, fontWeight: '700' }}>Displayed in the requested compatible format. IsleMind executes its data-only JSON Pointer equivalent and never evaluates this function.</Text>
+                    <ScrollView horizontal showsHorizontalScrollIndicator>
+                      <Text selectable style={{ color: colors.textSecondary, fontSize: 10, lineHeight: 15, fontFamily: Platform.select({ ios: 'Menlo', android: 'monospace', default: 'monospace' }), paddingVertical: 8 }}>
+                        {PROVIDER_USAGE_QUERY_EXAMPLE}
+                      </Text>
+                    </ScrollView>
+                  </View>
+                </>
+              ) : null}
+            </ScrollView>
+          </View>
+        </KeyboardAvoidingView>
+      </View>
+    </Modal>
   )
 }
 
-function ProviderListSeparator() {
-  return <View style={{ height: 10 }} />
-}
-
-function OperatorMetric({ label }: { label: string }) {
-  return <IsleMetric label={label} />
+function ProviderToolbarDisclosureRow({ title, detail, icon, open, tone, onPress }: { title: string; detail: string; icon: ReactNode; open: boolean; tone?: 'amber'; onPress: () => void }) {
+  const { colors } = useAppTheme()
+  const borderColor = tone === 'amber' ? colors.ui.tone.warning.border : colors.ui.glass ? colors.ui.actionBar.itemBorder : colors.ui.semantic.chrome.border
+  const backgroundColor = tone === 'amber' ? colors.ui.tone.warning.background : colors.ui.glass ? colors.ui.actionBar.itemBackground : colors.ui.semantic.surface.muted
+  const textColor = tone === 'amber' ? colors.ui.tone.warning.foreground : colors.textSecondary
+  return (
+    <IslePressable
+      haptic
+      accessibilityRole="button"
+      accessibilityLabel={`${title}. ${detail}`}
+      accessibilityState={{ expanded: open }}
+      onPress={onPress}
+      style={{ minHeight: 44, borderRadius: Math.min(colors.ui.radius.controlLarge, 8), paddingHorizontal: 12, flexDirection: 'row', alignItems: 'center', gap: 8, backgroundColor, borderWidth: colors.ui.limeRoad ? 1 : StyleSheet.hairlineWidth, borderColor }}
+    >
+      {icon}
+      <View style={{ flex: 1, minWidth: 0 }}>
+        <Text numberOfLines={1} style={{ color: textColor, fontSize: 12.5, lineHeight: 16, fontWeight: '800' }}>{title}</Text>
+        <Text numberOfLines={1} style={{ color: colors.textTertiary, fontSize: 11, lineHeight: 15, marginTop: 1, fontWeight: '700' }}>{detail}</Text>
+      </View>
+      <MotiView animate={{ rotate: open ? '180deg' : '0deg' }} transition={{ type: 'timing', duration: 160 }}>
+        <AppIcon name="collapse" color={colors.textTertiary} size={16} />
+      </MotiView>
+    </IslePressable>
+  )
 }
 
 function formatClearInvalidProviderList(providers: AIProvider[], t: ReturnType<typeof useTranslation>['t']): string {
   const visibleProviders = providers.slice(0, CLEAR_INVALID_PROVIDER_LIST_LIMIT)
   const lines = visibleProviders.map((provider) => {
-    const name = provider.name.trim() || provider.id
+    const name = resolveProviderDisplayName(provider, t('providerSettings.customProvider'))
     const baseUrl = provider.baseUrl?.trim()
     return baseUrl ? `- ${name} (${baseUrl})` : `- ${name}`
   })
@@ -717,7 +976,80 @@ function closeStandaloneProviderSettings() {
 }
 
 async function yieldToNextPaint(): Promise<void> {
-  await new Promise<void>((resolve) => setTimeout(resolve, 0))
+  if (AppState.currentState !== 'active') return
+  await new Promise<void>((resolve) => {
+    let settled = false
+    let frame: number | null = null
+    let timer: ReturnType<typeof setTimeout> | null = null
+    let appStateSubscription: { remove: () => void } | null = null
+    const settle = () => {
+      if (settled) return
+      settled = true
+      if (frame != null) cancelAnimationFrame(frame)
+      if (timer) clearTimeout(timer)
+      appStateSubscription?.remove()
+      resolve()
+    }
+    appStateSubscription = AppState.addEventListener('change', (state) => {
+      if (state !== 'active') settle()
+    })
+    frame = requestAnimationFrame(settle)
+    timer = setTimeout(settle, 32)
+  })
+}
+
+function publishProviderImportStatusNotification(progress: ProviderImportProgress, t: ReturnType<typeof useTranslation>['t']) {
+  const determinate = progress.total > 0
+  const progressValue = determinate ? Math.min(1, Math.max(0, progress.completed / progress.total)) : 0
+  const stage = t(`providerSettings.importProgress.${progress.stage}`)
+  const detail = progress.stage === 'saving'
+    ? t('providerSettings.importProgressSavingDetail', { completed: progress.completed, total: progress.total })
+    : t('providerSettings.importProgressIndeterminate')
+  const current = progress.currentProviderName
+    ? t('providerSettings.importProgressCurrent', { name: progress.currentProviderName })
+    : ''
+
+  return updateAndroidStatusNotification({
+    state: 'running',
+    title: t('settings.batchImport'),
+    message: [stage, detail, current].filter(Boolean).join('\n'),
+    shortText: determinate ? `${progress.completed}/${progress.total}` : stage,
+    deepLink: 'islemind://settings/providers',
+    progress: progressValue,
+    indeterminate: !determinate,
+    ongoing: true,
+    requestPromotedOngoing: true,
+    foregroundService: true,
+  })
+}
+
+function publishProviderImportCompletedNotification(count: number, t: ReturnType<typeof useTranslation>['t']) {
+  void updateAndroidStatusNotification({
+    state: 'completed',
+    title: t('providerSettings.importDone'),
+    message: t('providerSettings.importDoneMessage', { count }),
+    shortText: t('providerSettings.importDone'),
+    deepLink: 'islemind://settings/providers',
+    progress: 1,
+    indeterminate: false,
+    ongoing: false,
+    requestPromotedOngoing: false,
+    foregroundService: true,
+  })
+}
+
+function publishProviderImportFailedNotification(message: string, t: ReturnType<typeof useTranslation>['t']) {
+  void updateAndroidStatusNotification({
+    state: 'error',
+    title: t('providerSettings.importFailed'),
+    message,
+    shortText: t('providerSettings.importFailed'),
+    deepLink: 'islemind://settings/providers',
+    indeterminate: false,
+    ongoing: false,
+    requestPromotedOngoing: false,
+    foregroundService: true,
+  })
 }
 
 function useKeyboardAwareModalRequestClose(onClose: () => void) {
@@ -752,166 +1084,274 @@ function useKeyboardAwareModalRequestClose(onClose: () => void) {
   return { handleRequestClose, markKeyboardActive }
 }
 
+type VisualViewportLike = {
+  height?: number
+  offsetTop?: number
+  addEventListener?: (type: 'resize' | 'scroll', listener: () => void) => void
+  removeEventListener?: (type: 'resize' | 'scroll', listener: () => void) => void
+}
+
+type WindowWithVisualViewport = {
+  innerHeight?: number
+  visualViewport?: VisualViewportLike
+  addEventListener?: (type: 'resize', listener: () => void) => void
+  removeEventListener?: (type: 'resize', listener: () => void) => void
+}
+
+function runtimeWindow(): WindowWithVisualViewport | undefined {
+  return (globalThis as { window?: WindowWithVisualViewport }).window
+}
+
+type KeyboardFrameSnapshot = {
+  height: number
+  screenY?: number
+}
+
+function keyboardFrameSnapshotFromEvent(event: KeyboardEvent): KeyboardFrameSnapshot {
+  return {
+    height: event.endCoordinates.height,
+    screenY: event.endCoordinates.screenY,
+  }
+}
+
+function resolveKeyboardInsetFromFrame(frame: KeyboardFrameSnapshot | null, windowHeight: number): number {
+  if (!frame) return 0
+  if (Platform.OS !== 'android') return frame.height
+  const screenY = frame.screenY
+  const frameHeight = Math.round(Math.max(0, frame.height))
+  if (typeof screenY === 'number' && Number.isFinite(screenY) && screenY > 0) {
+    return Math.max(frameHeight, Math.round(Math.max(0, windowHeight - screenY)))
+  }
+  return frameHeight
+}
+
+function resolveModalKeyboardInset(rawInset: number): number {
+  if (rawInset <= 0) return 0
+  return Platform.OS === 'android' ? rawInset + PROVIDER_MODAL_KEYBOARD_TOOLBAR_OVERLAP : rawInset
+}
+
+function useWebVisualKeyboardInset(active: boolean): number {
+  const [inset, setInset] = useState(0)
+
+  useEffect(() => {
+    if (!active || Platform.OS !== 'web') {
+      setInset(0)
+      return undefined
+    }
+    const win = runtimeWindow()
+    const viewport = win?.visualViewport
+    const update = () => {
+      const innerHeight = win?.innerHeight ?? viewport?.height ?? 0
+      const viewportHeight = viewport?.height ?? innerHeight
+      const offsetTop = Math.max(0, viewport?.offsetTop ?? 0)
+      setInset(Math.round(Math.max(0, innerHeight - viewportHeight - offsetTop)))
+    }
+    update()
+    viewport?.addEventListener?.('resize', update)
+    viewport?.addEventListener?.('scroll', update)
+    win?.addEventListener?.('resize', update)
+    return () => {
+      viewport?.removeEventListener?.('resize', update)
+      viewport?.removeEventListener?.('scroll', update)
+      win?.removeEventListener?.('resize', update)
+    }
+  }, [active])
+
+  return inset
+}
+
 function ProviderListRow({
   provider,
-  runtimeDetail,
+  position,
+  featured,
   selected,
   batchMode,
   expanded,
-  sortEnabled,
-  position,
-  total,
-  canMoveUp,
-  canMoveDown,
+  grouped = false,
   onToggleSelected,
-  onMove,
   onExpandedChange,
 }: {
   provider: AIProvider
-  runtimeDetail?: RuntimeDiagnosticsProviderDetail
+  position: number
+  featured: boolean
   selected: boolean
   batchMode: boolean
   expanded: boolean
-  sortEnabled: boolean
-  position: number
-  total: number
-  canMoveUp: boolean
-  canMoveDown: boolean
+  grouped?: boolean
   onToggleSelected: () => void
-  onMove: (offset: number) => void
   onExpandedChange: (next: boolean) => void
 }) {
   const { colors } = useAppTheme()
   const { t } = useTranslation()
+  const providerDisplayName = resolveProviderDisplayName(provider, t('providerSettings.customProvider'))
   const { subtleBorderWidth, mutedSurface, raisedSurface } = resolveProviderChrome(colors)
-  const activityState = provider.enabled
-    ? t('apiKeyPanel.enabledState')
-    : t('apiKeyPanel.disabledState')
-  const statusTone = provider.lastTestStatus === 'ok'
-    ? colors.ui.tone.success
-    : provider.lastTestStatus === 'bad' || provider.lastModelSyncStatus === 'bad'
-      ? colors.ui.tone.warning
-      : colors.ui.tone.neutral
-  const capabilityLabels = [
-    provider.capabilities?.responsesApi === true ? 'Responses' : '',
-    provider.capabilities?.responsesWebSocket === true ? 'WebSocket' : '',
-    provider.capabilities?.remoteCompact === true ? 'Remote compact' : '',
-    provider.capabilities?.embeddings === true ? 'Embeddings' : '',
-  ].filter(Boolean)
-  const runtimeStatus = runtimeDetail
-    ? [
-        runtimeDetail.observedProtocol ? t('providerSettings.runtimeObservedProtocol', { protocol: runtimeDetail.observedProtocol }) : undefined,
-        runtimeDetail.lastUnavailableReason ? t(`providerSettings.runtimeUnavailableReason.${runtimeDetail.lastUnavailableReason}`) : undefined,
-        runtimeDetail.sessionAffinity.enabled && runtimeDetail.sessionAffinity.status ? t(`providerSettings.runtimeSessionAffinityStatus.${runtimeDetail.sessionAffinity.status}`) : undefined,
-      ].filter(Boolean).join(' · ')
-    : ''
-  const showDragRail = total > 1 && sortEnabled
+  const providerUrl = provider.baseUrl?.trim() || t('providerSettings.baseUrl')
+  const providerStateLabel = provider.enabled ? t('settings.enabled') : t('settings.disabled')
+  const selectionControl = batchMode ? (
+    <IslePressable
+      haptic
+      focusable
+      onPress={onToggleSelected}
+      accessibilityRole="checkbox"
+      accessibilityLabel={selected ? t('providerSettings.unselectProvider') : t('providerSettings.selectProvider')}
+      accessibilityState={{ checked: selected }}
+      style={{ position: 'absolute', top: colors.ui.family === 'lime-road' ? 4 : 10, right: 4, width: 44, height: 44, borderRadius: colors.ui.family === 'markdown' ? 0 : 8, alignItems: 'center', justifyContent: 'center', backgroundColor: selected ? colors.ui.control.primaryBackground : colors.ui.semantic.surface.base, borderWidth: subtleBorderWidth, borderColor: selected ? colors.ui.control.primaryBorder : colors.ui.semantic.chrome.border }}
+    >
+      {selected ? <AppIcon name="check" color={colors.ui.control.primaryForeground} size={17} /> : <View style={{ width: 12, height: 12, borderRadius: 6, borderWidth: 2, borderColor: colors.textTertiary }} />}
+    </IslePressable>
+  ) : null
+
+  if (grouped) {
+    return (
+      <View style={{ minHeight: 68, backgroundColor: selected || expanded ? colors.ui.semantic.surface.muted : 'transparent' }}>
+        <IslePressable
+          haptic
+          focusable
+          onPress={() => onExpandedChange(!expanded)}
+          accessibilityRole="button"
+          accessibilityLabel={`${providerDisplayName}. ${providerStateLabel}. ${providerUrl}`}
+          accessibilityState={{ expanded }}
+          style={{ minHeight: 68, paddingHorizontal: 12, paddingRight: batchMode ? 54 : 12, flexDirection: 'row', alignItems: 'center', gap: 10 }}
+        >
+          <Text style={{ width: 23, color: colors.textTertiary, fontSize: 9.5, lineHeight: 13, fontWeight: '800' }}>{String(position).padStart(2, '0')}</Text>
+          <View style={{ flex: 1, minWidth: 0 }}>
+            <Text numberOfLines={1} ellipsizeMode="tail" style={{ color: colors.text, fontSize: 13, lineHeight: 18, fontWeight: '800', includeFontPadding: false }}>{providerDisplayName}</Text>
+            <Text numberOfLines={1} ellipsizeMode="tail" style={{ marginTop: 2, color: colors.textTertiary, fontSize: 10, lineHeight: 14, fontWeight: '600', includeFontPadding: false }}>{providerUrl}</Text>
+          </View>
+          <Text style={{ color: provider.enabled ? colors.ui.tone.success.foreground : colors.textTertiary, fontSize: 9.5, lineHeight: 13, fontWeight: '800' }}>{providerStateLabel}</Text>
+          {!batchMode ? <AppIcon name="back-next" color={colors.textTertiary} size={14} /> : null}
+        </IslePressable>
+        {selectionControl}
+      </View>
+    )
+  }
+
+  if (colors.ui.family === 'minimal') {
+    return (
+      <View style={{ minHeight: 74, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: colors.ui.section.divider, backgroundColor: selected ? colors.ui.semantic.surface.muted : 'transparent' }}>
+        <IslePressable
+          haptic
+          focusable
+          onPress={() => onExpandedChange(!expanded)}
+          accessibilityRole="button"
+           accessibilityLabel={`${providerDisplayName}. ${providerStateLabel}. ${providerUrl}`}
+          accessibilityState={{ expanded }}
+          style={{ minHeight: 74, paddingHorizontal: 4, paddingRight: batchMode ? 52 : 8, flexDirection: 'row', alignItems: 'center', gap: 11 }}
+        >
+          <View style={{ width: 34, height: 34, borderRadius: 8, alignItems: 'center', justifyContent: 'center', backgroundColor: provider.enabled ? colors.ui.icon.accentBackground : mutedSurface }}>
+            <AppIcon name="provider-key" color={provider.enabled ? colors.ui.icon.accentForeground : colors.textSecondary} size={17} />
+          </View>
+          <View style={{ flex: 1, minWidth: 0 }}>
+            <Text numberOfLines={1} ellipsizeMode="tail" style={{ color: colors.text, fontSize: 13.5, lineHeight: 18, fontWeight: '800', includeFontPadding: false }}>{providerDisplayName}</Text>
+             <Text numberOfLines={1} ellipsizeMode="tail" style={{ marginTop: 2, color: colors.textTertiary, fontSize: 10.5, lineHeight: 14, fontWeight: '600', includeFontPadding: false }}>{providerUrl}</Text>
+          </View>
+          {!batchMode ? (
+            <AppIcon name="back-next" color={colors.textTertiary} size={14} />
+          ) : null}
+        </IslePressable>
+        {selectionControl}
+      </View>
+    )
+  }
+
+  if (colors.ui.family === 'markdown') {
+    return (
+      <View style={{ minHeight: 66, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: colors.ui.section.divider, backgroundColor: expanded ? colors.ui.semantic.surface.muted : 'transparent' }}>
+        <IslePressable
+          haptic
+          focusable
+          onPress={() => onExpandedChange(!expanded)}
+          accessibilityRole="button"
+           accessibilityLabel={`${providerDisplayName}. ${providerStateLabel}. ${providerUrl}`}
+          accessibilityState={{ expanded }}
+          style={{ minHeight: 66, paddingHorizontal: 8, paddingRight: batchMode ? 52 : 8, flexDirection: 'row', alignItems: 'center', gap: 10 }}
+        >
+          <Text style={{ width: 24, color: colors.textTertiary, fontSize: 10, lineHeight: 14, fontWeight: '700' }}>{String(position).padStart(2, '0')}</Text>
+          <View style={{ flex: 1, minWidth: 0, justifyContent: 'center' }}>
+            <Text numberOfLines={1} ellipsizeMode="tail" style={{ color: colors.text, fontSize: 12.5, lineHeight: 17, fontWeight: '800', includeFontPadding: false }}>{providerDisplayName}</Text>
+          </View>
+           {!batchMode ? (
+             <Text numberOfLines={1} ellipsizeMode="tail" style={{ maxWidth: 142, color: colors.textTertiary, fontSize: 9.5, lineHeight: 13, fontWeight: '600' }}>{providerUrl}</Text>
+          ) : null}
+          {!batchMode ? <AppIcon name="back-next" color={colors.textTertiary} size={14} /> : null}
+        </IslePressable>
+        {selectionControl}
+      </View>
+    )
+  }
+
+  if (featured) {
+    return (
+      <View style={{ flex: 1, borderRadius: PROVIDER_CARD_RADIUS, backgroundColor: raisedSurface, borderWidth: 1, borderColor: expanded || selected ? colors.ui.control.primaryBorder : colors.material.strokeStrong, overflow: 'hidden' }}>
+        <IslePressable
+          haptic
+          focusable
+          onPress={() => onExpandedChange(!expanded)}
+          accessibilityRole="button"
+           accessibilityLabel={`${providerDisplayName}. ${providerStateLabel}. ${providerUrl}`}
+          accessibilityState={{ expanded }}
+          style={{ flex: 1, minWidth: 0, paddingHorizontal: 15, paddingVertical: 13, paddingRight: batchMode ? 52 : 15, flexDirection: 'row', alignItems: 'center', gap: 13 }}
+        >
+          <View style={{ width: 46, height: 46, borderRadius: 8, alignItems: 'center', justifyContent: 'center', backgroundColor: colors.ui.icon.accentBackground }}>
+            <AppIcon name="provider-key" color={colors.ui.icon.accentForeground} size={21} />
+          </View>
+          <View style={{ flex: 1, minWidth: 0, gap: 4 }}>
+            <Text numberOfLines={1} ellipsizeMode="tail" style={{ color: colors.text, fontSize: 16, lineHeight: 21, fontWeight: '900', includeFontPadding: false }}>
+              {providerDisplayName}
+            </Text>
+            <Text numberOfLines={1} ellipsizeMode="tail" style={{ color: colors.textSecondary, fontSize: 11, lineHeight: 15, fontWeight: '700', includeFontPadding: false }}>
+               {providerUrl}
+            </Text>
+          </View>
+          {!batchMode ? (
+            <View style={{ alignItems: 'flex-end' }}>
+              <AppIcon name="back-next" color={colors.textTertiary} size={15} />
+            </View>
+          ) : null}
+        </IslePressable>
+        {selectionControl}
+      </View>
+    )
+  }
+
   return (
     <View
       style={{
+        flex: 1,
         borderRadius: PROVIDER_CARD_RADIUS - 2,
-        padding: 10,
         backgroundColor: raisedSurface,
         borderWidth: subtleBorderWidth,
-        borderColor: selected ? colors.ui.control.primaryBorder : colors.ui.semantic.chrome.border,
+        borderColor: selected
+          ? colors.ui.control.primaryBorder
+          : colors.ui.semantic.chrome.border,
+        overflow: 'hidden',
       }}
     >
-      <View style={{ flexDirection: 'row', alignItems: 'flex-start', gap: 10, minWidth: 0 }}>
-        {batchMode ? (
-          <IslePressable
-            haptic
-            onPress={onToggleSelected}
-            accessibilityLabel={selected ? t('providerSettings.unselectProvider') : t('providerSettings.selectProvider')}
-            accessibilityState={{ selected }}
-            style={{
-              width: 42,
-              minHeight: 42,
-              borderRadius: colors.ui.radius.controlMiddle,
-              alignItems: 'center',
-              justifyContent: 'center',
-              backgroundColor: selected ? colors.ui.control.primaryBackground : colors.ui.semantic.surface.base,
-              borderWidth: subtleBorderWidth,
-              borderColor: selected ? colors.ui.control.primaryBorder : colors.ui.semantic.chrome.border,
-            }}
-          >
-            {selected ? <AppIcon name="check" color={colors.ui.control.primaryForeground} size={17} /> : <View style={{ width: 12, height: 12, borderRadius: 6, borderWidth: 2, borderColor: colors.textTertiary }} />}
-          </IslePressable>
-        ) : null}
-        <IslePressable
-          haptic
-          onPress={() => onExpandedChange(!expanded)}
-          accessibilityRole="button"
-          accessibilityLabel={provider.name}
-          style={{ flex: 1, minWidth: 0, gap: 8, borderRadius: colors.ui.radius.controlMiddle, paddingVertical: 2 }}
-        >
-          <View style={{ flexDirection: 'row', alignItems: 'flex-start', gap: 10, minWidth: 0 }}>
-            <View style={{ width: 38, height: 38, borderRadius: colors.ui.radius.controlMiddle, alignItems: 'center', justifyContent: 'center', backgroundColor: mutedSurface, flexShrink: 0 }}>
-              <AppIcon name="provider-key" color={colors.ui.icon.accentForeground} size={16} />
-            </View>
-            <View style={{ flex: 1, minWidth: 0, gap: 3, paddingTop: 1 }}>
-              <Text numberOfLines={1} style={{ color: colors.text, fontSize: 14, lineHeight: 18, fontWeight: '900', includeFontPadding: false }}>
-                {provider.name}
-              </Text>
-              <Text numberOfLines={1} style={{ color: colors.textSecondary, fontSize: 11, lineHeight: 15, fontWeight: '800', includeFontPadding: false }}>
-                {provider.baseUrl || t('providerSettings.baseUrl')}
-              </Text>
-            </View>
-            <MotiView animate={{ rotate: expanded ? '180deg' : '0deg' }} transition={{ type: 'timing', duration: 180 }} style={{ paddingTop: 2 }}>
-              <AppIcon name="collapse" color={colors.textTertiary} size={16} />
-            </MotiView>
+      <IslePressable
+        haptic
+        focusable
+        onPress={() => onExpandedChange(!expanded)}
+        accessibilityRole="button"
+         accessibilityLabel={`${providerDisplayName}. ${providerStateLabel}. ${providerUrl}`}
+        accessibilityState={{ expanded }}
+        style={{ flex: 1, minWidth: 0, padding: 14, paddingRight: batchMode ? 52 : 14, justifyContent: 'space-between' }}
+      >
+        <View style={{ flexDirection: 'row', alignItems: 'flex-start', justifyContent: 'space-between', gap: 8 }}>
+          <View style={{ width: 38, height: 38, borderRadius: 8, alignItems: 'center', justifyContent: 'center', backgroundColor: provider.enabled ? colors.ui.icon.accentBackground : mutedSurface }}>
+            <AppIcon name="provider-key" color={provider.enabled ? colors.ui.icon.accentForeground : colors.textSecondary} size={18} />
           </View>
-          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
-            <View style={{ minHeight: 22, borderRadius: colors.ui.radius.chip, paddingHorizontal: 8, alignItems: 'center', justifyContent: 'center', backgroundColor: statusTone.background, borderWidth: subtleBorderWidth, borderColor: statusTone.border }}>
-              <Text style={{ color: statusTone.foreground, fontSize: 9.5, lineHeight: 11, fontWeight: '900', includeFontPadding: false }}>
-                {activityState}
-              </Text>
-            </View>
-            <Text style={{ color: colors.textTertiary, fontSize: 9.5, lineHeight: 12, fontWeight: '800', includeFontPadding: false }}>
-              {t('providerSettings.orderPosition', { index: position, total })}
-            </Text>
-            {!!provider.models?.length ? (
-              <Text numberOfLines={1} style={{ color: colors.textTertiary, fontSize: 9.5, lineHeight: 12, fontWeight: '800', includeFontPadding: false }}>
-                {t('apiKeyPanel.modelCount', { count: provider.models.length })}
-              </Text>
-            ) : null}
-            {!!provider.credentialGroups?.length ? (
-              <Text numberOfLines={1} style={{ color: colors.textTertiary, fontSize: 9.5, lineHeight: 12, fontWeight: '800', includeFontPadding: false }}>
-                {t('apiKeyPanel.tokenGroups', { count: provider.credentialGroups.length })}
-              </Text>
-            ) : null}
-            {capabilityLabels.length ? (
-              <Text numberOfLines={1} style={{ color: colors.textTertiary, fontSize: 9.5, lineHeight: 12, fontWeight: '800', includeFontPadding: false }}>
-                {capabilityLabels.join(' · ')}
-              </Text>
-            ) : null}
-            {runtimeStatus ? (
-              <Text numberOfLines={1} style={{ color: runtimeDetail?.lastUnavailableReason ? colors.ui.tone.warning.foreground : colors.textTertiary, fontSize: 9.5, lineHeight: 12, fontWeight: '800', includeFontPadding: false }}>
-                {runtimeStatus}
-              </Text>
-            ) : null}
-          </View>
-        </IslePressable>
-      </View>
-      {showDragRail ? (
-        <View style={{ marginTop: 10, marginLeft: batchMode ? 52 : 0 }}>
-          <DragRail
-            providerName={provider.name}
-            position={position}
-            total={total}
-            disabled={!sortEnabled}
-            disabledUp={!canMoveUp}
-            disabledDown={!canMoveDown}
-            onMove={onMove}
-          />
+          <AppIcon name="back-next" color={colors.textTertiary} size={14} />
         </View>
-      ) : null}
-      <DeferredProviderDetails
-        provider={provider}
-        runtimeDetail={runtimeDetail}
-        expanded={expanded}
-        onExpandedChange={onExpandedChange}
-        deferMount={total > PROVIDER_DETAILS_DEFER_PROVIDER_LIMIT}
-      />
+        <Text numberOfLines={2} ellipsizeMode="tail" style={{ color: colors.text, fontSize: 14, lineHeight: 19, fontWeight: '900', includeFontPadding: false }}>
+          {providerDisplayName}
+        </Text>
+        <View style={{ gap: 5 }}>
+          <Text numberOfLines={1} style={{ color: colors.textSecondary, fontSize: 10.5, lineHeight: 14, fontWeight: '800', includeFontPadding: false }}>
+             {providerUrl}
+          </Text>
+        </View>
+      </IslePressable>
+      {selectionControl}
     </View>
   )
 }
@@ -984,14 +1424,14 @@ function DeferredProviderDetails({
           accessibilityLabel={t('common.loading')}
           style={{
             minHeight: PROVIDER_ROW_HEIGHT - 10,
-            borderRadius: colors.ui.radius.controlMiddle,
+            borderRadius: Math.min(colors.ui.radius.controlMiddle, 8),
             alignItems: 'center',
             justifyContent: 'center',
             flexDirection: 'row',
             gap: 8,
           }}
         >
-          <ActivityIndicator color={colors.textTertiary} size="small" />
+          <HighFrameSpinner color={colors.textTertiary} size={16} />
           <Text style={{ color: colors.textTertiary, fontSize: 11, lineHeight: 14, fontWeight: '800', includeFontPadding: false }}>
             {t('common.loading')}
           </Text>
@@ -1025,6 +1465,7 @@ function DragRail({
   const translateY = useSharedValue(0)
   const dragging = useSharedValue(0)
   const dragStepCount = useRef(0)
+  const active = !disabled && !(disabledUp && disabledDown)
   const gesture = Gesture.Pan()
     .enabled(!disabled && !(disabledUp && disabledDown))
     .activateAfterLongPress(180)
@@ -1048,13 +1489,13 @@ function DragRail({
       }
     })
     .onEnd(() => {
-      translateY.value = withSpring(0)
-      dragging.value = withSpring(0)
+      translateY.value = withTiming(0, { duration: 112 })
+      dragging.value = withTiming(0, { duration: 112 })
       dragStepCount.current = 0
     })
     .onFinalize(() => {
-      translateY.value = withSpring(0)
-      dragging.value = withSpring(0)
+      translateY.value = withTiming(0, { duration: 112 })
+      dragging.value = withTiming(0, { duration: 112 })
       dragStepCount.current = 0
     })
   const animatedStyle = useAnimatedStyle(() => ({
@@ -1062,9 +1503,8 @@ function DragRail({
     opacity: active ? 1 : 0.58,
   }))
   const animatedRailStyle = useAnimatedStyle(() => ({
-    transform: [{ scale: dragging.value ? 1.04 : 1 }],
+    opacity: dragging.value ? 0.92 : 1,
   }))
-  const active = !disabled && !(disabledUp && disabledDown)
   const railBorder = disabled ? colors.ui.semantic.chrome.border : colors.ui.control.primaryBorder
   const railBackground = disabled ? mutedSurface : raisedSurface
   const positionLabel = total ? t('providerSettings.orderPosition', { index: position, total }) : ''
@@ -1084,8 +1524,8 @@ function DragRail({
           accessibilityValue={{ text: positionLabel }}
           style={[{
             minWidth: 94,
-            height: 40,
-            borderRadius: colors.ui.radius.controlLarge,
+            height: 44,
+            borderRadius: Math.min(colors.ui.radius.controlLarge, 8),
             paddingHorizontal: 10,
             flexDirection: 'row',
             alignItems: 'center',
@@ -1095,20 +1535,20 @@ function DragRail({
             borderWidth: subtleBorderWidth,
             borderColor: railBorder,
             shadowColor: colors.shadowTint,
-            shadowOpacity: colors.ui.cartoon && active ? 0.05 : 0,
-            shadowRadius: colors.ui.cartoon ? 8 : 0,
-            shadowOffset: { width: 0, height: colors.ui.cartoon ? 3 : 0 },
-            elevation: colors.ui.cartoon && active ? 1 : 0,
+            shadowOpacity: 0,
+            shadowRadius: 0,
+            shadowOffset: { width: 0, height: 0 },
+            elevation: 0,
           }, animatedStyle]}
           >
           <MotiView
-            animate={{ scale: active ? 1 : 0.96 }}
-            transition={motion === 'full' ? { type: 'spring', ...motionTokens.spring.gentle } : { type: 'timing', duration: 1 }}
-            style={{ width: 28, height: 28, borderRadius: colors.ui.radius.chip, alignItems: 'center', justifyContent: 'center', backgroundColor: disabled ? mutedSurface : colors.ui.control.primaryBackground }}
+            animate={{ opacity: active ? 1 : 0.82 }}
+            transition={{ type: 'timing', duration: motion === 'full' ? motionTokens.duration.fast : 1 }}
+            style={{ width: 28, height: 28, borderRadius: Math.min(colors.ui.radius.controlSmall, 8), alignItems: 'center', justifyContent: 'center', backgroundColor: disabled ? mutedSurface : colors.ui.control.primaryBackground }}
           >
             <AppIcon name="grab" color={disabled ? colors.textTertiary : colors.ui.control.primaryForeground} size={15} />
           </MotiView>
-          <Text style={{ color: disabled ? colors.textTertiary : colors.textSecondary, fontSize: 10, lineHeight: 12, fontWeight: '900', includeFontPadding: false }}>
+          <Text style={{ color: disabled ? colors.textTertiary : colors.textSecondary, fontSize: 10, lineHeight: 12, fontWeight: '800', includeFontPadding: false }}>
             {position}
           </Text>
         </Animated.View>
@@ -1135,9 +1575,9 @@ function MoveButton({ label, icon, disabled, onPress }: { label: string; icon: '
       onPress={onPress}
       hitSlop={8}
       style={{
-        width: 40,
-        height: 40,
-        borderRadius: colors.ui.radius.controlMiddle,
+        width: 44,
+        height: 44,
+        borderRadius: Math.min(colors.ui.radius.controlMiddle, 8),
         alignItems: 'center',
         justifyContent: 'center',
         backgroundColor: mutedSurface,
@@ -1156,17 +1596,16 @@ function ChoiceIsleChip({ label, active, onPress }: { label: string; active: boo
   const motion = useMotionPreference()
   const { subtleBorderWidth, mutedSurface, chromeBorder } = resolveProviderChrome(colors)
   return (
-    <IslePressable haptic onPress={onPress} style={{ minHeight: 40, borderRadius: colors.ui.radius.controlMiddle, alignItems: 'center', justifyContent: 'center' }}>
+    <IslePressable haptic accessibilityLabel={label} accessibilityState={{ selected: active }} onPress={onPress} style={{ minHeight: 40, borderRadius: Math.min(colors.ui.radius.controlMiddle, 8), alignItems: 'center', justifyContent: 'center' }}>
       <MotiView
         animate={{
           backgroundColor: active ? colors.ui.control.primaryBackground : mutedSurface,
           borderColor: active ? colors.ui.control.primaryBorder : chromeBorder,
-          scale: active ? 1.025 : 1,
         }}
-        transition={motion === 'full' ? { type: 'spring', ...motionTokens.spring.gentle } : { type: 'timing', duration: 1 }}
-        style={{ minHeight: 40, borderRadius: colors.ui.radius.controlMiddle, paddingHorizontal: 11, alignItems: 'center', justifyContent: 'center', borderWidth: subtleBorderWidth }}
+        transition={{ type: 'timing', duration: motion === 'full' ? motionTokens.duration.fast : 1 }}
+        style={{ minHeight: 40, borderRadius: Math.min(colors.ui.radius.controlMiddle, 8), paddingHorizontal: 11, alignItems: 'center', justifyContent: 'center', borderWidth: subtleBorderWidth }}
       >
-        <Text style={{ color: active ? colors.ui.control.primaryForeground : colors.textSecondary, fontSize: 11.5, lineHeight: 15, fontWeight: '900', includeFontPadding: false }}>{label}</Text>
+        <Text style={{ color: active ? colors.ui.control.primaryForeground : colors.textSecondary, fontSize: 11.5, lineHeight: 15, fontWeight: '800', includeFontPadding: false }}>{label}</Text>
       </MotiView>
     </IslePressable>
   )
@@ -1184,16 +1623,11 @@ function ActivationProgressCard({ job, onDismiss }: { job: ActivationJobState; o
     ? job.status === 'failed' ? t('providerSettings.activationFailed') : activationDoneTitle(job.total === 1 ? 'single' : 'batch', job.total, t)
     : t('providerSettings.activationRunning')
   return (
-    <MotiView
-      from={{ opacity: 0, translateY: 8 }}
-      animate={{ opacity: 1, translateY: 0 }}
-      transition={{ type: 'spring', damping: 20, stiffness: 190 }}
-      style={{ marginTop: 14 }}
-    >
-      <View style={{ borderRadius: colors.ui.radius.panel, padding: 13, backgroundColor: chromeSurface, borderWidth: subtleBorderWidth, borderColor: chromeBorder, shadowColor: colors.ui.control.shadow, shadowOpacity: colors.ui.cartoon ? Math.min(colors.ui.card.shadowOpacity, 0.08) : 0, shadowRadius: colors.ui.cartoon ? Math.max(2, colors.ui.card.shadowRadius - 4) : 0, shadowOffset: { width: 0, height: colors.ui.cartoon ? Math.max(1, colors.ui.card.shadowOffset - 2) : 0 }, elevation: colors.ui.cartoon && colors.ui.card.shadowOpacity > 0 ? 1 : 0, gap: 10 }}>
+    <View style={{ marginTop: 10 }}>
+      <View style={{ borderRadius: Math.min(colors.ui.radius.panel, 8), padding: 10, backgroundColor: chromeSurface, borderWidth: subtleBorderWidth, borderColor: chromeBorder, shadowColor: colors.ui.control.shadow, shadowOpacity: 0, shadowRadius: 0, shadowOffset: { width: 0, height: 0 }, elevation: 0, gap: 8 }}>
         <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
           <View style={{ flex: 1, minWidth: 0 }}>
-            <Text style={{ color: colors.text, fontSize: 14, fontWeight: '900' }}>
+            <Text style={{ color: colors.text, fontSize: 14, fontWeight: '800' }}>
               {title}
             </Text>
             <Text numberOfLines={2} style={{ color: colors.textSecondary, fontSize: 12, lineHeight: 17, marginTop: 2, fontWeight: '800' }}>
@@ -1213,18 +1647,12 @@ function ActivationProgressCard({ job, onDismiss }: { job: ActivationJobState; o
         </View>
         {showProviderItems ? <ActivationProviderProgressList items={providerItems} /> : null}
         {done && job.issueGroups?.length ? <ActivationIssueGroupList groups={job.issueGroups} /> : null}
-        <View style={{ height: 8, borderRadius: colors.ui.radius.chip, backgroundColor: colors.ui.section.divider, overflow: 'hidden' }}>
-          <MotiView
-            animate={{ width: `${Math.max(4, Math.round(progress * 100))}%` }}
-            transition={{ type: 'timing', duration: 180 }}
-            style={{ height: 8, borderRadius: colors.ui.radius.chip, backgroundColor: job.failed ? colors.ui.tone.warning.foreground : colors.ui.control.primaryBackground }}
-          />
-        </View>
-        <Text style={{ color: colors.textTertiary, fontSize: 11, lineHeight: 16, fontWeight: '900' }}>
+        <IsleProgress percent={progress * 100} size="middle" showInfo={false} fillColor={job.failed ? colors.ui.tone.warning.foreground : colors.ui.control.primaryBackground} />
+        <Text style={{ color: colors.textTertiary, fontSize: 11, lineHeight: 16, fontWeight: '700' }}>
           {t('providerSettings.activationProgressMessage', { completed: job.completed, total: job.total, synced: job.synced, tested: job.tested, failed: job.failed })}
         </Text>
       </View>
-    </MotiView>
+    </View>
   )
 }
 
@@ -1234,8 +1662,8 @@ function ActivationIssueGroupList({ groups }: { groups: NonNullable<ActivationJo
   return (
     <View style={{ gap: 6 }}>
       {groups.map((group) => (
-        <View key={`${group.key}-${group.count}`} style={{ borderRadius: colors.ui.radius.chip, paddingVertical: 7, paddingHorizontal: 9, backgroundColor: colors.ui.tone.warning.background, borderWidth: subtleBorderWidth, borderColor: colors.ui.tone.warning.border }}>
-          <Text numberOfLines={2} style={{ color: colors.ui.tone.warning.foreground, fontSize: 11, lineHeight: 15, fontWeight: '900' }}>
+        <View key={`${group.key}-${group.count}`} style={{ borderRadius: Math.min(colors.ui.radius.card, 8), paddingVertical: 7, paddingHorizontal: 9, backgroundColor: colors.ui.tone.warning.background, borderWidth: subtleBorderWidth, borderColor: colors.ui.tone.warning.border }}>
+          <Text numberOfLines={2} style={{ color: colors.ui.tone.warning.foreground, fontSize: 11, lineHeight: 15, fontWeight: '800' }}>
             {group.line}
           </Text>
           <Text numberOfLines={1} style={{ color: colors.textTertiary, fontSize: 10, lineHeight: 14, marginTop: 2, fontWeight: '800' }}>
@@ -1259,14 +1687,12 @@ function ActivationProviderProgressList({ items }: { items: ActivationJobItemSta
         return (
           <View key={item.providerId} style={{ gap: 5 }}>
             <View style={{ minHeight: 20, flexDirection: 'row', alignItems: 'center', gap: 8 }}>
-              <Text numberOfLines={1} style={{ flex: 1, minWidth: 0, color: colors.text, fontSize: 12, lineHeight: 16, fontWeight: '900' }}>{item.providerName}</Text>
-              <Text numberOfLines={1} style={{ color: warning ? colors.ui.tone.warning.foreground : ready ? colors.ui.control.link : colors.textSecondary, fontSize: 10, lineHeight: 14, fontWeight: '900' }}>
+              <Text numberOfLines={1} style={{ flex: 1, minWidth: 0, color: colors.text, fontSize: 12, lineHeight: 16, fontWeight: '800' }}>{item.providerName}</Text>
+              <Text numberOfLines={1} style={{ color: warning ? colors.ui.tone.warning.foreground : ready ? colors.ui.control.link : colors.textSecondary, fontSize: 10, lineHeight: 14, fontWeight: '800' }}>
                 {activationItemStatusLabel(item, t)}
               </Text>
             </View>
-            <View style={{ height: 5, borderRadius: colors.ui.radius.chip, backgroundColor: colors.ui.section.divider, overflow: 'hidden' }}>
-              <View style={{ width: `${Math.max(4, Math.round(progress * 100))}%`, height: 5, borderRadius: colors.ui.radius.chip, backgroundColor: warning ? colors.ui.tone.warning.foreground : colors.ui.control.primaryBackground }} />
-            </View>
+            <IsleProgress percent={progress * 100} size="small" showInfo={false} durationMs={1} fillColor={warning ? colors.ui.tone.warning.foreground : colors.ui.control.primaryBackground} />
             {item.stage ? (
               <Text numberOfLines={1} style={{ color: colors.textTertiary, fontSize: 10, lineHeight: 14, fontWeight: '800' }}>{item.stage}</Text>
             ) : null}
@@ -1289,7 +1715,7 @@ function ActivationProgressPill({ label, tone = 'default' }: { label: string; to
         : colors.ui.tone.neutral
   return (
     <View style={{ minHeight: 28, borderRadius: colors.ui.radius.chip, paddingHorizontal: 9, alignItems: 'center', justifyContent: 'center', backgroundColor: toneToken.background, borderWidth: subtleBorderWidth, borderColor: toneToken.border }}>
-      <Text numberOfLines={1} style={{ color: toneToken.foreground, fontSize: 11, fontWeight: '900' }}>{label}</Text>
+      <Text numberOfLines={1} style={{ color: toneToken.foreground, fontSize: 11, fontWeight: '800' }}>{label}</Text>
     </View>
   )
 }
@@ -1300,23 +1726,17 @@ function ProviderImportProgressCard({ progress }: { progress: ProviderImportProg
   const { subtleBorderWidth, chromeSurface, chromeBorder } = resolveProviderChrome(colors)
   const determinate = progress.total > 0
   const progressValue = determinate ? Math.min(1, Math.max(0, progress.completed / progress.total)) : 0
-  const progressWidth = determinate ? Math.max(4, Math.round(progressValue * 100)) : 18
   const detail = progress.stage === 'saving'
     ? t('providerSettings.importProgressSavingDetail', { completed: progress.completed, total: progress.total })
     : t('providerSettings.importProgressIndeterminate')
 
   return (
-    <MotiView
-      from={{ opacity: 0, translateY: 6 }}
-      animate={{ opacity: 1, translateY: 0 }}
-      transition={{ type: 'timing', duration: 160 }}
-      style={{ marginBottom: 12 }}
-    >
-      <View style={{ borderRadius: colors.ui.radius.panel, padding: 12, backgroundColor: chromeSurface, borderWidth: subtleBorderWidth, borderColor: chromeBorder, gap: 9 }}>
+    <View style={{ marginBottom: 10 }}>
+      <View style={{ borderRadius: Math.min(colors.ui.radius.panel, 8), padding: 10, backgroundColor: chromeSurface, borderWidth: subtleBorderWidth, borderColor: chromeBorder, gap: 9 }}>
         <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
-          <ActivityIndicator size="small" color={colors.ui.icon.accentForeground} />
+          <HighFrameSpinner color={colors.ui.icon.accentForeground} size={16} />
           <View style={{ flex: 1, minWidth: 0 }}>
-            <Text style={{ color: colors.text, fontSize: 13, lineHeight: 17, fontWeight: '900' }}>
+            <Text style={{ color: colors.text, fontSize: 13, lineHeight: 17, fontWeight: '800' }}>
               {t(`providerSettings.importProgress.${progress.stage}`)}
             </Text>
             <Text style={{ color: colors.textSecondary, fontSize: 11, lineHeight: 15, marginTop: 2, fontWeight: '800' }}>
@@ -1324,20 +1744,14 @@ function ProviderImportProgressCard({ progress }: { progress: ProviderImportProg
             </Text>
           </View>
         </View>
-        <View accessibilityRole="progressbar" style={{ height: 7, borderRadius: colors.ui.radius.chip, backgroundColor: colors.ui.section.divider, overflow: 'hidden' }}>
-          <MotiView
-            animate={{ width: `${progressWidth}%` }}
-            transition={{ type: 'timing', duration: 180 }}
-            style={{ height: 7, borderRadius: colors.ui.radius.chip, backgroundColor: colors.ui.control.primaryBackground }}
-          />
-        </View>
+        <IsleProgress percent={progressValue * 100} size="small" showInfo={false} indeterminate={!determinate} />
         {progress.currentProviderName ? (
           <Text numberOfLines={1} style={{ color: colors.textTertiary, fontSize: 10.5, lineHeight: 14, fontWeight: '800' }}>
             {t('providerSettings.importProgressCurrent', { name: progress.currentProviderName })}
           </Text>
         ) : null}
       </View>
-    </MotiView>
+    </View>
   )
 }
 
@@ -1400,23 +1814,31 @@ function ProviderFormModal({
   const [wireProtocol, setWireProtocol] = useState<ProviderWireProtocol>(DEFAULT_PROVIDER_WIRE_PROTOCOL)
   const [modelsText, setModelsText] = useState('')
   const [keysText, setKeysText] = useState('')
+  const [protocolOpen, setProtocolOpen] = useState(false)
   const [advancedOpen, setAdvancedOpen] = useState(false)
   const [clipboardState, setClipboardState] = useState<ClipboardReadState>('idle')
-  const [keyboardHeight, setKeyboardHeight] = useState(0)
+  const [keyboardFrame, setKeyboardFrame] = useState<KeyboardFrameSnapshot | null>(null)
+  const webKeyboardInset = useWebVisualKeyboardInset(visible)
   const preset = getProviderPreset(presetId)
   const providerConfigDraft = resolveProviderConfigDraft({ provider: {}, presetId, baseUrl, wireProtocol })
   const compact = height < 680
   const compactWidth = width < 430
+  const actionCompact = width < 360
   const footerCompact = width < 380
   const clipboardBusy = clipboardState !== 'idle'
-  const keyboardInset = Platform.OS === 'android' ? keyboardHeight : 0
-  const keyboardVisible = keyboardHeight > 0
+  const rawKeyboardInset = Platform.OS === 'web' ? webKeyboardInset : Platform.OS === 'android' ? resolveKeyboardInsetFromFrame(keyboardFrame, height) : 0
+  const keyboardInset = resolveModalKeyboardInset(rawKeyboardInset)
+  const keyboardFrameVisible = Platform.OS === 'android' && keyboardFrame !== null
+  const keyboardVisible = keyboardInset > 0 || keyboardFrameVisible
+  const keyboardBridgeHeight = keyboardInset > 0 ? Math.min(PROVIDER_MODAL_KEYBOARD_BRIDGE_HEIGHT, keyboardInset) : 0
+  const keyboardLayoutInset = Math.max(0, keyboardInset - keyboardBridgeHeight)
   const availableSheetHeight = Math.max(
     keyboardVisible ? 300 : 360,
     height - insets.top - Math.max(insets.bottom, 10) - keyboardInset - IMPORT_SHEET_MARGIN,
   )
   const sheetMaxHeight = Math.min(availableSheetHeight, height * (keyboardVisible ? 0.82 : compact ? 0.96 : 0.88))
   const sheetMaterial = colors.material.sheet
+  const footerSurface = sheetMaterial.chrome
   const { subtleBorderWidth, chromeBorder, chromeSurface } = resolveProviderChrome(colors)
   const modalPadding = compactWidth ? 12 : 16
   const modalActionStyle = footerCompact ? { alignSelf: 'stretch' as const, minHeight: 44 } : { flexGrow: 1, flexShrink: 1, flexBasis: '47%' as const, minWidth: 0 }
@@ -1436,6 +1858,7 @@ function ProviderFormModal({
     setBaseUrlDirty(false)
     setModelsText('')
     setKeysText('')
+    setProtocolOpen(false)
     setAdvancedOpen(false)
     setClipboardState('idle')
     setPresetId(DEFAULT_PROVIDER_PRESET_ID)
@@ -1451,24 +1874,24 @@ function ProviderFormModal({
 
   useEffect(() => {
     if (!visible) {
-      setKeyboardHeight(0)
+      setKeyboardFrame(null)
       return undefined
     }
     const showSub = Keyboard.addListener(Platform.OS === 'ios' ? 'keyboardWillShow' : 'keyboardDidShow', (event) => {
-      setKeyboardHeight(event.endCoordinates.height)
+      setKeyboardFrame(keyboardFrameSnapshotFromEvent(event))
       scrollFocusedInputAboveKeyboard()
       scheduleFocusedFieldScroll()
-      setTimeout(scrollFocusedInputAboveKeyboard, 120)
-      setTimeout(scheduleFocusedFieldScroll, 180)
+      setTimeout(scrollFocusedInputAboveKeyboard, 112)
+      setTimeout(scheduleFocusedFieldScroll, 176)
     })
     const hideSub = Keyboard.addListener(Platform.OS === 'ios' ? 'keyboardWillHide' : 'keyboardDidHide', () => {
-      setKeyboardHeight(0)
+      setKeyboardFrame(null)
     })
     return () => {
       showSub.remove()
       hideSub.remove()
     }
-  }, [visible])
+  }, [height, visible])
 
   function rememberFieldLayout(id: ProviderFormFieldId) {
     return (event: LayoutChangeEvent) => {
@@ -1524,8 +1947,8 @@ function ProviderFormModal({
     keyboardRequestClose.markKeyboardActive()
     scrollFocusedInputAboveKeyboard()
     scheduleFocusedFieldScroll()
-    setTimeout(scrollFocusedInputAboveKeyboard, 120)
-    setTimeout(scheduleFocusedFieldScroll, 180)
+    setTimeout(scrollFocusedInputAboveKeyboard, 112)
+    setTimeout(scheduleFocusedFieldScroll, 176)
   }
 
   function submit() {
@@ -1536,7 +1959,7 @@ function ProviderFormModal({
       detectedPresetId: presetId,
       detectionStatus: 'manual',
       type: preset.type,
-      name: name.trim() || preset.name,
+      name: name.trim() || (presetId === DEFAULT_PROVIDER_PRESET_ID ? t('providerSettings.customProvider') : preset.name),
       baseUrl: providerConfigDraft.baseUrl,
       credentialMode: providerConfigDraft.credentialMode,
       tokenPlanRegion: providerConfigDraft.tokenPlanRegion,
@@ -1563,7 +1986,10 @@ function ProviderFormModal({
     setBaseUrl(nextDraft.baseUrl)
     setBaseUrlDirty(!shouldReplaceBaseUrl)
     if (shouldReplaceName) {
-      setName(nextPreset.name)
+      const nextName = nextPresetId === DEFAULT_PROVIDER_PRESET_ID
+        ? ''
+        : nextPreset.name
+      setName(nextName)
       setNameDirty(false)
     }
   }
@@ -1641,51 +2067,33 @@ function ProviderFormModal({
   }
 
   return (
-    <Modal transparent visible={visible} animationType="none" statusBarTranslucent onRequestClose={keyboardRequestClose.handleRequestClose}>
+    <Modal transparent visible={visible} animationType="none" statusBarTranslucent navigationBarTranslucent onRequestClose={keyboardRequestClose.handleRequestClose}>
       <View style={{ flex: 1 }}>
-        <MotiView
-          from={{ opacity: 0 }}
-          animate={{ opacity: 1 }}
-          transition={{ type: 'timing', duration: motion === 'full' ? motionTokens.duration.fast : 1 }}
-          style={{ position: 'absolute', top: 0, right: 0, bottom: 0, left: 0 }}
-        >
+        <View style={{ position: 'absolute', top: 0, right: 0, bottom: 0, left: 0 }}>
           <IsleOverlayPressable accessibilityLabel={t('dialog.close')} accessibilityRole="button" onPress={closeWithoutSubmit} style={{ flex: 1, backgroundColor: colors.backdrop }} />
-        </MotiView>
-        <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined} style={{ flex: 1, justifyContent: 'flex-end', paddingBottom: keyboardInset }}>
-          <MotiView
-            from={motion === 'full' ? { opacity: 0, translateY: 32, scale: 0.985 } : { opacity: 0 }}
-            animate={{ opacity: 1, translateY: 0, scale: 1 }}
-            transition={motion === 'full' ? { type: 'spring', damping: 23, stiffness: 190 } : { type: 'timing', duration: motionTokens.duration.fast }}
-            style={{ maxHeight: sheetMaxHeight, borderTopLeftRadius: 30, borderTopRightRadius: 30, backgroundColor: sheetMaterial.surface, borderWidth: subtleBorderWidth, borderColor: sheetMaterial.border, overflow: 'hidden' }}
+        </View>
+        <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined} style={{ flex: 1, justifyContent: 'flex-end', paddingBottom: keyboardLayoutInset }}>
+          <View
+            style={{ maxHeight: sheetMaxHeight, borderTopLeftRadius: Math.min(colors.ui.radius.panel, 8), borderTopRightRadius: Math.min(colors.ui.radius.panel, 8), backgroundColor: sheetMaterial.surface, borderWidth: subtleBorderWidth, borderBottomWidth: keyboardBridgeHeight > 0 ? 0 : subtleBorderWidth, borderColor: sheetMaterial.border, overflow: 'hidden' }}
           >
-            <View style={{ paddingHorizontal: modalPadding, paddingTop: 16, paddingBottom: 10, backgroundColor: sheetMaterial.chrome, borderBottomWidth: 1, borderBottomColor: sheetMaterial.divider }}>
+            <View style={{ paddingHorizontal: modalPadding, paddingTop: 10, paddingBottom: 8, backgroundColor: sheetMaterial.chrome, borderBottomWidth: 1, borderBottomColor: sheetMaterial.divider }}>
               <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
                 <View style={{ flex: 1, minWidth: 0 }}>
-                  <Text style={{ color: colors.text, fontSize: 18, fontWeight: '900' }}>{t('settings.addProvider')}</Text>
+                  <Text style={{ color: colors.text, fontSize: 15, fontWeight: '800' }}>{t('settings.addProvider')}</Text>
                   <Text style={{ color: colors.textSecondary, fontSize: 12, marginTop: 3 }}>{t('providerSettings.addSubtitle')}</Text>
                 </View>
                 <IsleIconButton label={t('dialog.close')} onPress={closeWithoutSubmit}>
                   <AppIcon name="close" color={colors.textSecondary} size={18} />
                 </IsleIconButton>
               </View>
-              <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 8, paddingTop: 12 }}>
-                {PROVIDER_PRESETS.map((item) => (
-                  <ChoiceIsleChip
-                    key={item.id}
-                    label={item.name}
-                    active={presetId === item.id}
-                    onPress={() => selectPreset(item.id)}
-                  />
-                ))}
-              </ScrollView>
-              <View style={{ paddingTop: 10, alignItems: compactWidth ? 'stretch' : 'flex-start' }}>
+              <View style={{ paddingTop: 10, alignItems: actionCompact ? 'stretch' : 'flex-start' }}>
                 <IsleButton
                   label={clipboardBusy ? t('providerSettings.clipboardChecking') : t('settings.pasteClipboard')}
                   compact
                   icon={<AppIcon name="paste" color={colors.textSecondary} size={16} />}
                   onPress={() => void readProviderClipboard()}
                   disabled={clipboardBusy}
-                  style={compactWidth ? { alignSelf: 'stretch' } : undefined}
+                  style={actionCompact ? { alignSelf: 'stretch' } : undefined}
                 />
               </View>
             </View>
@@ -1693,29 +2101,11 @@ function ProviderFormModal({
               ref={bodyScrollRef}
               keyboardShouldPersistTaps="handled"
               nestedScrollEnabled
-              automaticallyAdjustKeyboardInsets
               removeClippedSubviews={Platform.OS === 'android'}
               showsVerticalScrollIndicator={compact}
               style={{ flexShrink: 1 }}
-              contentContainerStyle={{ gap: 10, paddingHorizontal: modalPadding, paddingBottom: 12, backgroundColor: sheetMaterial.body }}
+              contentContainerStyle={{ gap: 8, paddingHorizontal: modalPadding, paddingBottom: 10, backgroundColor: sheetMaterial.body }}
             >
-              <View onLayout={rememberFieldLayout('name')}>
-                <IsleField label={t('providerSettings.name')} inputProps={{ value: name, onChangeText: (value) => {
-                  setName(value)
-                  setNameDirty(true)
-                }, onFocus: () => markInputFocused('name'), placeholder: preset.name, autoCapitalize: 'none' }} />
-              </View>
-              {providerConfigDraft.isProtocolSelectable ? (
-                <View style={{ borderRadius: colors.ui.radius.panel, padding: 11, backgroundColor: chromeSurface, borderWidth: subtleBorderWidth, borderColor: chromeBorder, gap: 9 }}>
-                  <Text style={{ color: colors.text, fontSize: 13, fontWeight: '900' }}>{t('providerSettings.protocol.title')}</Text>
-                  <View style={{ flexDirection: 'row', gap: 8, flexWrap: 'wrap' }}>
-                    {PROVIDER_WIRE_PROTOCOL_OPTIONS.map((protocol) => (
-                      <ChoiceIsleChip key={protocol} active={wireProtocol === protocol} label={t(`providerSettings.protocol.${protocol}`)} onPress={() => selectWireProtocol(protocol)} />
-                    ))}
-                  </View>
-                  <Text style={{ color: colors.textTertiary, fontSize: 11, lineHeight: 16 }}>{t('providerSettings.protocol.endpointNote')}</Text>
-                </View>
-              ) : null}
               <View onLayout={rememberFieldLayout('baseUrl')}>
                 <IsleField
                   label={t('providerSettings.baseUrl')}
@@ -1733,40 +2123,102 @@ function ProviderFormModal({
                 <IsleField
                   label={t('providerSettings.tokens')}
                   note={t('providerSettings.tokensNote')}
-                  inputProps={{ value: keysText, onChangeText: handleKeysText, onFocus: () => markInputFocused('tokens'), placeholder: 'sk-...\nsk-...', autoCapitalize: 'none', autoCorrect: false, multiline: true, secureTextEntry: false, style: { minHeight: compact ? 72 : 92, maxHeight: compact ? 110 : 140 } }}
+                  inputProps={{ value: keysText, onChangeText: handleKeysText, onFocus: () => markInputFocused('tokens'), placeholder: 'sk-...\nsk-...', autoCapitalize: 'none', autoCorrect: false, multiline: true, secureTextEntry: false, style: { minHeight: compact ? 64 : 80, maxHeight: compact ? 96 : 124 } }}
                 />
               </View>
               <IslePressable
                 haptic
+                accessibilityRole="button"
+                accessibilityLabel={t('providerSettings.advancedInterfaceSettings')}
+                accessibilityState={{ expanded: advancedOpen }}
                 onPress={() => setAdvancedOpen((value) => !value)}
-                style={{ minHeight: 44, borderRadius: colors.ui.radius.controlLarge, paddingHorizontal: 13, flexDirection: 'row', alignItems: 'center', gap: 8, backgroundColor: colors.ui.input.background, borderWidth: subtleBorderWidth, borderColor: colors.ui.input.border }}
+                style={{ minHeight: 42, borderRadius: Math.min(colors.ui.radius.controlLarge, 8), paddingHorizontal: 12, flexDirection: 'row', alignItems: 'center', gap: 8, backgroundColor: colors.ui.input.background, borderWidth: subtleBorderWidth, borderColor: colors.ui.input.border }}
               >
-                <Text style={{ flex: 1, minWidth: 0, color: colors.textSecondary, fontSize: 12, fontWeight: '900' }}>{t('providerSettings.advancedModels')}</Text>
+                <Text style={{ flex: 1, minWidth: 0, color: colors.textSecondary, fontSize: 12, fontWeight: '800' }}>{t('providerSettings.advancedInterfaceSettings')}</Text>
                 <MotiView animate={{ rotate: advancedOpen ? '180deg' : '0deg' }} transition={{ type: 'timing', duration: 160 }}>
                   <AppIcon name="collapse" color={colors.textTertiary} size={16} />
                 </MotiView>
               </IslePressable>
               {advancedOpen ? (
-                <View onLayout={rememberFieldLayout('models')}>
-                  <IsleField
-                    label={t('settings.models')}
-                    note={t('providerSettings.modelsNote')}
-                    inputProps={{ value: modelsText, onChangeText: setModelsText, onFocus: () => markInputFocused('models'), placeholder: t('providerSettings.oneModelPerLine'), autoCapitalize: 'none', autoCorrect: false, multiline: true, style: { minHeight: 76, maxHeight: 120 } }}
-                  />
+                <View style={{ gap: 8 }}>
+                  <View onLayout={rememberFieldLayout('name')}>
+                    <IsleField label={t('providerSettings.name')} inputProps={{ value: name, onChangeText: (value) => {
+                      setName(value)
+                      setNameDirty(true)
+                    }, onFocus: () => markInputFocused('name'), placeholder: presetId === DEFAULT_PROVIDER_PRESET_ID ? t('providerSettings.customProviderNamePlaceholder') : preset.name, autoCapitalize: 'none' }} />
+                  </View>
+                  <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 8 }}>
+                    {PROVIDER_VENDOR_PRESETS.map((item) => (
+                      <ChoiceIsleChip key={item.id} label={item.name} active={presetId === item.id} onPress={() => selectPreset(item.id)} />
+                    ))}
+                  </ScrollView>
+                  {providerConfigDraft.isProtocolSelectable ? (
+                    <View style={{ gap: 8 }}>
+                      <ProviderToolbarDisclosureRow
+                        title={t('providerSettings.protocol.title')}
+                        detail={t('providerSettings.protocol.collapsedDetail', {
+                          protocol: t(`providerSettings.protocol.${providerConfigDraft.wireProtocol}`),
+                          endpoint: providerConfigDraft.baseUrl || t('common.none'),
+                        })}
+                        icon={<AppIcon name="network" color={colors.textTertiary} size={15} />}
+                        open={protocolOpen}
+                        onPress={() => setProtocolOpen((value) => !value)}
+                      />
+                      {protocolOpen ? (
+                        <MotiView
+                          from={motion === 'full' ? { opacity: 0, translateY: 6 } : { opacity: 0 }}
+                          animate={{ opacity: 1, translateY: 0 }}
+                          exit={motion === 'full' ? { opacity: 0, translateY: -4 } : { opacity: 0 }}
+                          transition={{ type: 'timing', duration: motion === 'full' ? motionTokens.duration.fast : 1 }}
+                          style={{ borderRadius: Math.min(colors.ui.radius.panel, 8), padding: 10, backgroundColor: chromeSurface, borderWidth: subtleBorderWidth, borderColor: chromeBorder, gap: 8 }}
+                        >
+                          <View style={{ flexDirection: 'row', gap: 8, flexWrap: 'wrap' }}>
+                            {PROVIDER_WIRE_PROTOCOL_OPTIONS.map((protocol) => (
+                              <ChoiceIsleChip key={protocol} active={wireProtocol === protocol} label={t(`providerSettings.protocol.${protocol}`)} onPress={() => selectWireProtocol(protocol)} />
+                            ))}
+                          </View>
+                          <Text style={{ color: colors.textTertiary, fontSize: 11, lineHeight: 16 }}>{t('providerSettings.protocol.endpointNote')}</Text>
+                        </MotiView>
+                      ) : null}
+                    </View>
+                  ) : null}
+                  <View onLayout={rememberFieldLayout('models')}>
+                    <IsleField
+                      label={t('settings.models')}
+                      note={t('providerSettings.modelsNote')}
+                      inputProps={{ value: modelsText, onChangeText: setModelsText, onFocus: () => markInputFocused('models'), placeholder: t('providerSettings.oneModelPerLine'), autoCapitalize: 'none', autoCorrect: false, multiline: true, style: { minHeight: 56, maxHeight: 96 } }}
+                    />
+                  </View>
                 </View>
               ) : null}
             </ScrollView>
             {!keyboardVisible ? (
-              <View style={{ flexDirection: footerCompact ? 'column' : 'row', gap: 10, paddingHorizontal: modalPadding, paddingTop: 10, paddingBottom: Math.max(insets.bottom, 10) + 10, backgroundColor: sheetMaterial.chrome, borderTopWidth: 1, borderTopColor: sheetMaterial.divider }}>
+              <View style={{ flexDirection: footerCompact ? 'column' : 'row', gap: 8, paddingHorizontal: modalPadding, paddingTop: 8, paddingBottom: Math.max(insets.bottom, 10) + 8, backgroundColor: footerSurface, borderTopWidth: 1, borderTopColor: sheetMaterial.divider }}>
                 <IsleButton label={t('common.cancel')} onPress={closeWithoutSubmit} style={modalActionStyle} />
-                <IsleButton label={t('common.save')} tone="primary" onPress={submit} style={modalActionStyle} />
+                <IsleButton label={t('providerSettings.addAndConnect')} tone="primary" onPress={submit} style={modalActionStyle} />
               </View>
             ) : null}
-          </MotiView>
+          </View>
+          {keyboardBridgeHeight > 0 ? (
+            <View pointerEvents="none" style={{ height: keyboardBridgeHeight, backgroundColor: footerSurface }} />
+          ) : null}
         </KeyboardAvoidingView>
       </View>
     </Modal>
   )
+}
+
+function countLogicalTextLines(value: string, stopAfter: number): number {
+  if (!value) return 1
+  let lines = 1
+  for (let index = 0; index < value.length; index += 1) {
+    const char = value[index]
+    if (char !== '\n' && char !== '\r') continue
+    lines += 1
+    if (char === '\r' && value[index + 1] === '\n') index += 1
+    if (lines >= stopAfter) return lines
+  }
+  return lines
 }
 
 function ProviderImportModal({
@@ -1789,16 +2241,22 @@ function ProviderImportModal({
   const bodyScrollRef = useRef<ScrollView>(null)
   const inputRef = useRef<TextInput>(null)
   const [input, setInput] = useState('')
+  const deferredInput = useDeferredValue(input)
   const [clipboardState, setClipboardState] = useState<ClipboardReadState>('idle')
   const [contentHeight, setContentHeight] = useState(0)
-  const [keyboardHeight, setKeyboardHeight] = useState(0)
+  const [keyboardFrame, setKeyboardFrame] = useState<KeyboardFrameSnapshot | null>(null)
+  const webKeyboardInset = useWebVisualKeyboardInset(visible && importProgress === null)
   const compact = height < 680
-  const keyboardVisible = keyboardHeight > 0
-  const keyboardInset = Platform.OS === 'android' ? keyboardHeight : 0
-  const keyboardAvoidanceInset = keyboardInset + (Platform.OS === 'android' && keyboardVisible ? IMPORT_KEYBOARD_CLEARANCE : 0)
+  const compactWidth = width < 430
+  const rawKeyboardInset = Platform.OS === 'web' ? webKeyboardInset : Platform.OS === 'android' ? resolveKeyboardInsetFromFrame(keyboardFrame, height) : 0
+  const keyboardInset = resolveModalKeyboardInset(rawKeyboardInset)
+  const keyboardFrameVisible = Platform.OS === 'android' && keyboardFrame !== null
+  const keyboardVisible = keyboardInset > 0 || keyboardFrameVisible
+  const keyboardBridgeHeight = keyboardInset > 0 ? Math.min(PROVIDER_MODAL_KEYBOARD_BRIDGE_HEIGHT, keyboardInset) : 0
+  const keyboardLayoutInset = Math.max(0, keyboardInset - keyboardBridgeHeight)
   const availableSheetHeight = Math.max(
     keyboardVisible ? 300 : 360,
-    height - insets.top - Math.max(insets.bottom, 10) - keyboardAvoidanceInset - IMPORT_SHEET_MARGIN,
+    height - insets.top - Math.max(insets.bottom, 10) - keyboardInset - IMPORT_SHEET_MARGIN,
   )
   const availableBodyHeight = Math.max(
     180,
@@ -1811,7 +2269,7 @@ function ProviderImportModal({
       IMPORT_INPUT_LINE_HEIGHT * IMPORT_INPUT_MAX_LINES + IMPORT_INPUT_VERTICAL_PADDING,
     ),
   )
-  const logicalLines = Math.max(1, input.split(/\r\n|\r|\n/).length)
+  const logicalLines = countLogicalTextLines(input, IMPORT_INPUT_MAX_LINES + 1)
   const logicalVisibleLines = Math.max(2, logicalLines + 1)
   const logicalHeight = IMPORT_INPUT_VERTICAL_PADDING + logicalVisibleLines * IMPORT_INPUT_LINE_HEIGHT
   const measuredHeight = contentHeight ? contentHeight + IMPORT_INPUT_VERTICAL_PADDING : logicalHeight
@@ -1820,46 +2278,48 @@ function ProviderImportModal({
   const inputScrollEnabled = targetInputHeight > maxInputHeight
   const sheetMaxHeight = Math.min(availableSheetHeight, height * (keyboardVisible ? 0.82 : compact ? 0.96 : 0.9))
   const sheetMaterial = colors.material.sheet
+  const footerSurface = colors.ui.limeRoad ? sheetMaterial.chrome : colors.ui.glass ? colors.ui.semantic.chrome.background : sheetMaterial.chrome
   const { subtleBorderWidth } = resolveProviderChrome(colors)
-  const compactWidth = width < 430
   const footerCompact = width < 380
   const modalPadding = compactWidth ? 12 : 16
   const modalActionStyle = footerCompact ? { alignSelf: 'stretch' as const, minHeight: 44 } : { flex: 1, minHeight: 44 }
-  const detectedImportCount = useMemo(() => countDetectedProviderImports(input), [input])
+  const detectionLimited = deferredInput.length > PROVIDER_IMPORT_LIVE_DETECTION_CHAR_LIMIT
+  const liveDetectionInput = detectionLimited ? deferredInput.slice(0, PROVIDER_IMPORT_LIVE_DETECTION_CHAR_LIMIT) : deferredInput
+  const detectedImportCount = useMemo(() => countDetectedProviderImports(liveDetectionInput), [liveDetectionInput])
   const clipboardBusy = clipboardState !== 'idle'
   const importBusy = importProgress !== null
   const keyboardRequestClose = useKeyboardAwareModalRequestClose(onClose)
 
   useEffect(() => {
     if (!visible) {
-      setKeyboardHeight(0)
+      setKeyboardFrame(null)
       setContentHeight(0)
       setClipboardState('idle')
       return
     }
     if (importBusy) {
-      setKeyboardHeight(0)
+      setKeyboardFrame(null)
       return undefined
     }
     const focusTimer = setTimeout(() => {
       inputRef.current?.focus()
     }, Platform.OS === 'android' ? 260 : 120)
     const showSub = Keyboard.addListener(Platform.OS === 'ios' ? 'keyboardWillShow' : 'keyboardDidShow', (event) => {
-      setKeyboardHeight(event.endCoordinates.height)
+      setKeyboardFrame(keyboardFrameSnapshotFromEvent(event))
       // 只在有较多内容时才滚动到底部，避免初始打开时输入框被推到顶部
-      if (input.trim() && input.split(/\r\n|\r|\n/).length > 5) {
+      if (input.trim() && countLogicalTextLines(input, 6) > 5) {
         scrollBodyToEndSoon()
       }
     })
     const hideSub = Keyboard.addListener(Platform.OS === 'ios' ? 'keyboardWillHide' : 'keyboardDidHide', () => {
-      setKeyboardHeight(0)
+      setKeyboardFrame(null)
     })
     return () => {
       clearTimeout(focusTimer)
       showSub.remove()
       hideSub.remove()
     }
-  }, [visible, input, importBusy])
+  }, [height, visible, input, importBusy])
 
   function scrollBodyToEndSoon() {
     requestAnimationFrame(() => {
@@ -1869,15 +2329,31 @@ function ProviderImportModal({
     })
   }
 
-  function appendInputText(text: string) {
-    if (importBusy) return
-    setInput((current) => [current.trim(), text.trim()].filter(Boolean).join('\n\n'))
+  function appendInputText(text: string): boolean {
+    if (importBusy) return false
+    const trimmed = text.trim()
+    if (!trimmed) return false
+    const nextInput = [input.trim(), trimmed].filter(Boolean).join('\n\n')
+    if (nextInput.length > MAX_IMPORT_TEXT_FILE_BYTES) {
+      toastImportTextTooLarge()
+      return false
+    }
+    setInput(nextInput)
     scrollBodyToEndSoon()
+    return true
+  }
+
+  function toastImportTextTooLarge() {
+    dialog.toast({ title: t('error.fileTooLarge'), message: t('chat.fileTooLarge20'), tone: 'amber' })
   }
 
   async function submit() {
     const text = input.trim()
     if (!text || importBusy) return
+    if (text.length > MAX_IMPORT_TEXT_FILE_BYTES) {
+      toastImportTextTooLarge()
+      return
+    }
     const imported = await onSubmit(text)
     if (!imported) return
     setInput('')
@@ -1904,7 +2380,11 @@ function ProviderImportModal({
         dialog.toast({ title: t('providerSettings.clipboardEmpty'), tone: 'amber' })
         return
       }
-      appendInputText(text)
+      if (!appendInputText(text)) return
+      if (text.length > PROVIDER_IMPORT_LIVE_DETECTION_CHAR_LIMIT) {
+        dialog.toast({ title: t('providerSettings.clipboardRead'), message: t('providerSettings.importDetectionLimited'), tone: 'amber' })
+        return
+      }
       const detected = parseProviderImportText(text)
       dialog.toast({
         title: detected.providers.length ? t('providerSettings.clipboardDetected') : t('providerSettings.clipboardRead'),
@@ -1959,34 +2439,27 @@ function ProviderImportModal({
   }
 
   return (
-    <Modal transparent visible={visible} animationType="none" statusBarTranslucent onRequestClose={keyboardRequestClose.handleRequestClose}>
+    <Modal transparent visible={visible} animationType="none" statusBarTranslucent navigationBarTranslucent onRequestClose={keyboardRequestClose.handleRequestClose}>
       <View style={{ flex: 1 }}>
-        <MotiView
-          from={{ opacity: 0 }}
-          animate={{ opacity: 1 }}
-          transition={{ type: 'timing', duration: motion === 'full' ? motionTokens.duration.fast : 1 }}
-          style={{ position: 'absolute', top: 0, right: 0, bottom: 0, left: 0 }}
-        >
+        <View style={{ position: 'absolute', top: 0, right: 0, bottom: 0, left: 0 }}>
           <IsleOverlayPressable accessibilityLabel={t('dialog.close')} accessibilityRole="button" onPress={onClose} style={{ flex: 1, backgroundColor: colors.backdrop }} />
-        </MotiView>
-        <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined} style={{ flex: 1, justifyContent: 'flex-end', paddingBottom: keyboardAvoidanceInset }}>
-          <MotiView
-            from={motion === 'full' ? { opacity: 0, translateY: 32, scale: 0.985 } : { opacity: 0 }}
-            animate={{ opacity: 1, translateY: 0, scale: 1 }}
-            transition={motion === 'full' ? { type: 'spring', damping: 23, stiffness: 190 } : { type: 'timing', duration: motionTokens.duration.fast }}
+        </View>
+        <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined} style={{ flex: 1, justifyContent: 'flex-end', paddingBottom: keyboardLayoutInset }}>
+          <View
             style={{
               maxHeight: sheetMaxHeight,
-              borderTopLeftRadius: 30,
-              borderTopRightRadius: 30,
+              borderTopLeftRadius: Math.min(colors.ui.radius.panel, 8),
+              borderTopRightRadius: Math.min(colors.ui.radius.panel, 8),
               backgroundColor: sheetMaterial.surface,
               borderWidth: subtleBorderWidth,
+              borderBottomWidth: keyboardBridgeHeight > 0 ? 0 : subtleBorderWidth,
               borderColor: sheetMaterial.border,
               overflow: 'hidden',
             }}
           >
-            <View style={{ minHeight: IMPORT_HEADER_HEIGHT, flexDirection: 'row', alignItems: 'center', gap: 10, paddingHorizontal: modalPadding, paddingTop: 16, paddingBottom: 12, backgroundColor: sheetMaterial.chrome, borderBottomWidth: 1, borderBottomColor: sheetMaterial.divider }}>
+            <View style={{ minHeight: IMPORT_HEADER_HEIGHT, flexDirection: 'row', alignItems: 'center', gap: 10, paddingHorizontal: modalPadding, paddingTop: 10, paddingBottom: 8, backgroundColor: sheetMaterial.chrome, borderBottomWidth: 1, borderBottomColor: sheetMaterial.divider }}>
               <View style={{ flex: 1, minWidth: 0 }}>
-                <Text style={{ color: colors.text, fontSize: 18, fontWeight: '900' }}>{t('settings.batchImport')}</Text>
+                <Text style={{ color: colors.text, fontSize: 15, fontWeight: '800' }}>{t('settings.batchImport')}</Text>
               </View>
               <IsleIconButton label={t('dialog.close')} onPress={onClose} disabled={importBusy}>
                 <AppIcon name="close" color={colors.textSecondary} size={18} />
@@ -1996,15 +2469,14 @@ function ProviderImportModal({
               ref={bodyScrollRef}
               keyboardShouldPersistTaps="handled"
               nestedScrollEnabled
-              automaticallyAdjustKeyboardInsets
               removeClippedSubviews={Platform.OS === 'android'}
               showsVerticalScrollIndicator={compact || inputScrollEnabled}
               style={{ flexShrink: 1 }}
-              contentContainerStyle={{ paddingHorizontal: modalPadding, paddingTop: 12, paddingBottom: 14, backgroundColor: sheetMaterial.body }}
+              contentContainerStyle={{ paddingHorizontal: modalPadding, paddingTop: 10, paddingBottom: 10, backgroundColor: sheetMaterial.body }}
             >
               <View>
-                <View style={{ marginBottom: 12 }}>
-                  <Text style={{ color: colors.text, fontSize: 12, fontWeight: '900', marginBottom: 7 }}>{t('providerSettings.importSources')}</Text>
+                <View style={{ marginBottom: 10 }}>
+                  <Text style={{ color: colors.text, fontSize: 12, fontWeight: '800', marginBottom: 7 }}>{t('providerSettings.importSources')}</Text>
                   <View style={{ flexDirection: footerCompact ? 'column' : 'row', gap: 8 }}>
                     <IsleButton
                       label={clipboardBusy ? t('providerSettings.clipboardChecking') : t('settings.pasteClipboard')}
@@ -2025,27 +2497,28 @@ function ProviderImportModal({
                   </View>
                 </View>
                 {importProgress ? <ProviderImportProgressCard progress={importProgress} /> : null}
-                <Text style={{ color: colors.text, fontSize: 12, fontWeight: '900', marginBottom: 6 }}>{t('providerSettings.importContent')}</Text>
+                <Text style={{ color: colors.text, fontSize: 12, fontWeight: '800', marginBottom: 6 }}>{t('providerSettings.importContent')}</Text>
                 <View
                   style={{
                     height: inputHeight,
-                    borderRadius: colors.ui.radius.panel,
-                    paddingHorizontal: 14,
+                    borderRadius: Math.min(colors.ui.radius.panel, 8),
+                    paddingHorizontal: 12,
                     backgroundColor: colors.ui.input.background,
-                    borderWidth: colors.ui.cartoon ? 1 : subtleBorderWidth,
+                    borderWidth: colors.ui.limeRoad ? 1 : subtleBorderWidth,
                     borderColor: colors.ui.input.border,
                     overflow: 'hidden',
                     shadowColor: colors.shadow.color,
-                    shadowOpacity: colors.ui.cartoon ? 0.08 : 0,
+                    shadowOpacity: 0,
                     shadowRadius: 0,
-                    shadowOffset: { width: 0, height: 2 },
-                    elevation: colors.ui.cartoon ? 1 : 0,
+                    shadowOffset: { width: 0, height: 0 },
+                    elevation: 0,
                   }}
                 >
                   <TextInput
                     ref={inputRef}
                     value={input}
                     onChangeText={setInput}
+                    maxLength={MAX_IMPORT_TEXT_FILE_BYTES}
                     editable={!importBusy}
                     onFocus={keyboardRequestClose.markKeyboardActive}
                     onContentSizeChange={(event) => setContentHeight(event.nativeEvent.contentSize.height)}
@@ -2058,26 +2531,29 @@ function ProviderImportModal({
                     textAlignVertical="top"
                     style={{
                       height: inputHeight,
-                      paddingTop: 12,
-                      paddingBottom: 12,
+                      paddingTop: 10,
+                      paddingBottom: 10,
                       paddingHorizontal: 0,
                       color: colors.text,
                       fontSize: 14,
                       fontWeight: '700',
                       lineHeight: IMPORT_INPUT_LINE_HEIGHT,
+                      includeFontPadding: false,
                     }}
                   />
                 </View>
                 <Text style={{ color: detectedImportCount ? colors.ui.tone.success.foreground : colors.textTertiary, fontSize: 11, lineHeight: 16, marginTop: 8, fontWeight: detectedImportCount ? '900' : '700' }}>
                   {input.trim()
-                    ? detectedImportCount
+                    ? detectionLimited
+                      ? t('providerSettings.importDetectionLimited')
+                      : detectedImportCount
                       ? t('providerSettings.importDetected', { count: detectedImportCount })
                       : t('providerSettings.importDetectionEmpty')
                     : t('providerSettings.importNote')}
                 </Text>
               </View>
             </ScrollView>
-            <View style={{ minHeight: keyboardVisible ? 56 : IMPORT_FOOTER_HEIGHT, flexDirection: footerCompact ? 'column' : 'row', alignItems: footerCompact ? 'stretch' : 'center', gap: footerCompact ? 8 : 10, paddingHorizontal: modalPadding, paddingTop: keyboardVisible ? 8 : 12, paddingBottom: (keyboardVisible ? 8 : Math.max(insets.bottom, 10) + 10), backgroundColor: colors.ui.cartoon ? sheetMaterial.chrome : colors.ui.glass ? colors.ui.semantic.chrome.background : sheetMaterial.chrome, borderTopWidth: subtleBorderWidth, borderTopColor: sheetMaterial.divider }}>
+            <View style={{ minHeight: keyboardVisible ? 56 : IMPORT_FOOTER_HEIGHT, flexDirection: footerCompact ? 'column' : 'row', alignItems: footerCompact ? 'stretch' : 'center', gap: footerCompact ? 8 : 10, paddingHorizontal: modalPadding, paddingTop: keyboardVisible ? 8 : 12, paddingBottom: (keyboardVisible ? 8 : Math.max(insets.bottom, 10) + 10), backgroundColor: footerSurface, borderTopWidth: subtleBorderWidth, borderTopColor: sheetMaterial.divider }}>
                 <IsleButton label={t('common.cancel')} compact onPress={onClose} disabled={importBusy} style={modalActionStyle} />
                 <IsleButton
                   label={importBusy ? t('providerSettings.importProgressWorking') : t('providerSettings.import')}
@@ -2089,7 +2565,10 @@ function ProviderImportModal({
                   style={modalActionStyle}
                 />
             </View>
-          </MotiView>
+          </View>
+          {keyboardBridgeHeight > 0 ? (
+            <View pointerEvents="none" style={{ height: keyboardBridgeHeight, backgroundColor: footerSurface }} />
+          ) : null}
         </KeyboardAvoidingView>
       </View>
     </Modal>

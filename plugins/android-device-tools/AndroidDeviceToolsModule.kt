@@ -1,8 +1,12 @@
 package com.islemind.app
 
+import android.content.ContentValues
+import android.content.Intent
 import android.net.Uri
 import android.os.Build
+import android.os.Environment
 import android.provider.DocumentsContract
+import android.provider.MediaStore
 import com.facebook.react.bridge.Arguments
 import com.facebook.react.bridge.Promise
 import com.facebook.react.bridge.ReactApplicationContext
@@ -11,6 +15,7 @@ import com.facebook.react.bridge.ReactMethod
 import com.facebook.react.bridge.WritableMap
 import com.facebook.react.module.annotations.ReactModule
 import java.io.File
+import java.io.FileOutputStream
 
 @ReactModule(name = AndroidDeviceToolsModule.NAME)
 class AndroidDeviceToolsModule(
@@ -144,6 +149,52 @@ class AndroidDeviceToolsModule(
       promise.resolve(operationResult("rename", "done", source, renamed, "renamed"))
     } catch (error: Exception) {
       promise.reject("android_device_rename_failed", error.message, error)
+    }
+  }
+
+  @ReactMethod
+  fun publishPortableJsonFileToDownloads(sourceUri: String, displayName: String, mimeType: String?, promise: Promise) {
+    try {
+      val source = Uri.parse(sourceUri)
+      val safeName = sanitizeDisplayName(displayName)
+      val resolvedMimeType = mimeType?.takeIf { it.isNotBlank() } ?: "application/json"
+      val downloadsDir = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS)
+      val publicFile = File(downloadsDir, safeName)
+      if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+        val values = ContentValues().apply {
+          put(MediaStore.MediaColumns.DISPLAY_NAME, safeName)
+          put(MediaStore.MediaColumns.MIME_TYPE, resolvedMimeType)
+          put(MediaStore.MediaColumns.RELATIVE_PATH, Environment.DIRECTORY_DOWNLOADS)
+          put(MediaStore.MediaColumns.IS_PENDING, 1)
+        }
+        val collection = MediaStore.Downloads.getContentUri(MediaStore.VOLUME_EXTERNAL_PRIMARY)
+        val published = reactContext.contentResolver.insert(collection, values)
+            ?: throw IllegalStateException("Download publication returned no URI.")
+        reactContext.contentResolver.openInputStream(source).use { input ->
+          reactContext.contentResolver.openOutputStream(published, "w").use { output ->
+            if (input == null || output == null) throw IllegalStateException("Unable to open portable export file streams.")
+            input.copyTo(output)
+          }
+        }
+        ContentValues().apply {
+          put(MediaStore.MediaColumns.IS_PENDING, 0)
+          reactContext.contentResolver.update(published, this, null, null)
+        }
+      } else {
+        if (!downloadsDir.exists() && !downloadsDir.mkdirs()) {
+          throw IllegalStateException("Unable to create the Downloads directory.")
+        }
+        reactContext.contentResolver.openInputStream(source).use { input ->
+          FileOutputStream(publicFile).use { output ->
+            if (input == null) throw IllegalStateException("Unable to open portable export source file.")
+            input.copyTo(output)
+          }
+        }
+      }
+      reactContext.sendBroadcast(Intent(Intent.ACTION_MEDIA_SCANNER_SCAN_FILE, Uri.fromFile(publicFile)))
+      promise.resolve(Uri.fromFile(publicFile).toString())
+    } catch (error: Exception) {
+      promise.reject("android_device_publish_failed", error.message, error)
     }
   }
 

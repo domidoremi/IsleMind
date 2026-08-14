@@ -1,6 +1,5 @@
-import type { ChatErrorCode } from '@/types'
+import type { ChatErrorCode } from '@/types/providerContracts'
 import { st } from '@/i18n/service'
-
 export function buildSetupGuide(): string {
   return [
     st('chatRunner.setup.noProvider'),
@@ -42,6 +41,10 @@ export function classifyChatError(message: string): ChatErrorCode {
   return 'unknown'
 }
 
+function hasProviderHttpStatusDetail(message: string): boolean {
+  return /\bHTTP\s*[45]\d{2}\b/i.test(message) || /\bstatus[_ -]?code\s*=?\s*[45]\d{2}\b/i.test(message) || /\bbad response status code\s*[45]\d{2}\b/i.test(message)
+}
+
 export function toUserFacingError(message: string, code: ChatErrorCode = classifyChatError(message)): string {
   switch (code) {
     case 'bad_auth':
@@ -51,6 +54,7 @@ export function toUserFacingError(message: string, code: ChatErrorCode = classif
     case 'model_unavailable':
       return st('chatRunner.userError.modelUnavailable')
     case 'network_error':
+      if (hasProviderHttpStatusDetail(message)) return message
       return message.toLowerCase().includes('no response body') || message.toLowerCase().includes('empty response')
         ? st('chatRunner.userError.emptyResponse')
         : st('chatRunner.userError.network')

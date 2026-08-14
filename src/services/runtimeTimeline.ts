@@ -3,7 +3,6 @@ import {
   type RuntimeControlPlaneEvent,
   type RuntimeEventEnvelope,
 } from '@/services/runtimeEvents'
-
 export const RUNTIME_TIMELINE_SCHEMA = 'islemind.runtime-timeline.v1'
 export const RUNTIME_TIMELINE_DEFAULT_LIMIT = 40
 export const RUNTIME_TIMELINE_MAX_LIMIT = 80

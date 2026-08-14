@@ -1,44 +1,37 @@
-import { StyleSheet, Text, TextInput, View, useWindowDimensions, type LayoutChangeEvent } from 'react-native'
 import { memo, useEffect, useMemo, useRef, useState } from 'react'
+import { StyleSheet, TextInput, View, useWindowDimensions, type LayoutChangeEvent } from 'react-native'
 import type { TFunction } from 'i18next'
 import { router } from 'expo-router'
 import { useTranslation } from 'react-i18next'
 import { MotiView } from 'moti'
-import { AnimatedNavigationIcon } from '@/components/navigation/AnimatedNavigationIcon'
-import { NavigationIconBadge, useNavigationTrigger } from '@/components/navigation/AnimatedNavigationTrigger'
+import { useNavigationTrigger } from '@/components/navigation/AnimatedNavigationTrigger'
 import { AppIcon, appIconStroke } from '@/components/ui/AppIcon'
-import type { Conversation } from '@/types'
-import { getModelName } from '@/types'
+import type { Conversation } from '@/types/chatContracts'
+import { getModelName } from '@/types/modelCatalog'
 import { useAppTheme } from '@/hooks/useAppTheme'
 import { useChatStore } from '@/store/chatStore'
 import { IslePressable } from '@/components/ui/isle'
-import { IslePanel } from '@/components/ui/isle'
 import { useMotionPreference } from '@/hooks/useMotionPreference'
 import { motionTokens } from '@/theme/animation'
 import { useIsleDialog } from '@/components/ui/isle'
+import type { ThemeId } from '@/types/settingsContracts'
+import { HistoryRowContent, HistoryRowFrame, type HistoryVisualTokens } from '@/components/main/history/HistoryPresentation'
 
 const ROW_MESSAGE_PREVIEW_LIMIT = 180
 const ROW_MESSAGE_PREVIEW_SCAN_LIMIT = 1200
 const ROW_MESSAGE_PREVIEW_SEPARATOR = ' ... '
 const ROW_ACTION_HIT_SLOP = { top: 10, right: 10, bottom: 10, left: 10 }
-const ROW_CONTAINER_BOTTOM_SPACING = 12
+const ROW_CONTAINER_BOTTOM_SPACING = 0
 const ROW_MINUTE_MS = 60 * 1000
 const ROW_HOUR_MS = 60 * ROW_MINUTE_MS
 const ROW_DAY_MS = 24 * ROW_HOUR_MS
 const ROW_OPEN_PENDING_RELEASE_MS = 700
 
-function resolveConversationRowSurface(colors: ReturnType<typeof useAppTheme>['colors'], isGlass: boolean, variant: 'muted' | 'chip' = 'muted') {
-  if (variant === 'muted') {
-    return colors.ui.cartoon ? colors.ui.semantic.surface.muted : isGlass ? colors.ui.actionBar.itemBackground : colors.ui.semantic.surface.muted
-  }
-  return colors.ui.cartoon ? colors.ui.semantic.surface.base : isGlass ? colors.ui.actionBar.itemBackground : colors.ui.semantic.surface.base
-}
-
 interface ConversationRowProps {
   conversation: Conversation
   index: number
+  themeId: ThemeId
   active?: boolean
-  animateEntrance?: boolean
   interactionDisabled?: boolean
   now?: number
   isInteractionBlocked?: () => boolean
@@ -52,20 +45,18 @@ interface ConversationRowProps {
   searchMatchAccessibilitySummary?: string
 }
 
-export const ConversationRow = memo(function ConversationRow({ conversation, index, active = false, animateEntrance = true, interactionDisabled = false, now = Date.now(), isInteractionBlocked, onInteractionBlocked, modelLabel, onOpen, onRenameFocus, onLayoutHeight, searchMatchSummary, searchMatchFieldLabel, searchMatchAccessibilitySummary }: ConversationRowProps) {
-  const { colors, isGlass } = useAppTheme()
+export const ConversationRow = memo(function ConversationRow({ conversation, index, themeId, active = false, interactionDisabled = false, now = Date.now(), isInteractionBlocked, onInteractionBlocked, modelLabel, onOpen, onRenameFocus, onLayoutHeight, searchMatchSummary, searchMatchFieldLabel, searchMatchAccessibilitySummary }: ConversationRowProps) {
+  const { colors } = useAppTheme()
   const { t } = useTranslation()
   const motion = useMotionPreference()
   const { width } = useWindowDimensions()
   const compact = width < 390
-  const panelPadding = compact ? 12 : 16
-  const rowGap = compact ? 8 : 12
-  const actionGap = compact ? 6 : 8
   const remove = useChatStore((state) => state.delete)
   const rename = useChatStore((state) => state.rename)
   const select = useChatStore((state) => state.select)
   const dialog = useIsleDialog()
   const [renaming, setRenaming] = useState(false)
+  const [actionsOpen, setActionsOpen] = useState(false)
   const [title, setTitle] = useState(conversation.title)
   const [deleteConfirming, setDeleteConfirming] = useState(false)
   const skipNextRenameSubmit = useRef(false)
@@ -88,11 +79,15 @@ export const ConversationRow = memo(function ConversationRow({ conversation, ind
   const rowStatusTone = lastMessage ? conversationRowStatusTone(lastMessage.status) : undefined
   const rowStatusToken = rowStatusTone ? colors.ui.tone[rowStatusTone] : undefined
   const rowTimestamp = getConversationUpdatedTimestamp(conversation)
-  const rowMeta = useMemo(() => t('conversation.rowMeta', {
-    model: modelLabel ?? getModelName(conversation.model),
-    messageLabel: formatConversationMessageCount(conversation.messages.length, t),
-    time: formatConversationUpdatedAt(rowTimestamp, now, t),
-  }), [conversation.messages.length, conversation.model, modelLabel, now, rowTimestamp, t])
+  const conversationTokens = useMemo(() => sumConversationTokens(conversation), [conversation.messages])
+  const rowMeta = useMemo(() => [
+    t('conversation.rowMeta', {
+      model: modelLabel ?? getModelName(conversation.model),
+      messageLabel: formatConversationMessageCount(conversation.messages.length, t),
+      time: formatConversationUpdatedAt(rowTimestamp, now, t),
+    }),
+    conversationTokens > 0 ? t('conversation.rowUsageTokens', { value: formatCompactTokenCount(conversationTokens) }) : null,
+  ].filter(Boolean).join(' · '), [conversation.messages.length, conversation.model, conversationTokens, modelLabel, now, rowTimestamp, t])
   const rowStatusMeta = rowStatusLabel ? t('conversation.rowStatusMeta', { status: rowStatusLabel, meta: rowMeta }) : rowMeta
   const rowAccessibilityMeta = active ? t('conversation.rowActiveMeta', { meta: rowStatusMeta }) : rowStatusMeta
   const rowAccessibilityValue = useMemo(() => t('conversation.rowAccessibilityValue', {
@@ -103,21 +98,29 @@ export const ConversationRow = memo(function ConversationRow({ conversation, ind
     () => ({ text: title.trim() || t('conversation.untitled') }),
     [t, title]
   )
-  const rowPanelMaterial = isGlass ? 'chrome' : 'paper'
-  const rowPanelBackground = isGlass ? (active ? colors.ui.semantic.surface.overlay : colors.ui.semantic.chrome.background) : colors.ui.cartoon ? colors.ui.semantic.surface.base : active ? colors.ui.semantic.surface.raised : colors.ui.semantic.surface.base
-  const subtleBorderWidth = colors.ui.cartoon ? 1 : StyleSheet.hairlineWidth
-  const rowPanelBorder = active
-    ? colors.ui.control.primaryBorder
-    : colors.ui.semantic.chrome.border
-  const rowPanelShadowOpacity = colors.ui.cartoon ? colors.ui.card.shadowOpacity : 0
-  const highlightSurface = resolveConversationRowSurface(colors, isGlass, 'muted')
-  const highlightChipSurface = resolveConversationRowSurface(colors, isGlass, 'chip')
-  const iconActionSurface = resolveConversationRowSurface(colors, isGlass, 'chip')
-  const iconActionBorder = colors.ui.cartoon ? colors.material.stroke : colors.ui.semantic.chrome.border
-  const activeChipSurface = active && !colors.ui.cartoon ? colors.ui.semantic.surface.base : colors.ui.control.primaryBackground
+  const subtleBorderWidth = colors.ui.limeRoad ? 1 : StyleSheet.hairlineWidth
+  const iconActionSurface = colors.ui.semantic.surface.muted
+  const iconActionBorder = colors.ui.semantic.chrome.border
+  const historyVisualTokens = useMemo<HistoryVisualTokens>(() => ({
+    text: colors.text,
+    textSecondary: colors.textSecondary,
+    textTertiary: colors.textTertiary,
+    canvas: colors.ui.semantic.surface.canvas,
+    surface: colors.ui.semantic.surface.base,
+    surfaceMuted: colors.ui.semantic.surface.muted,
+    border: colors.ui.semantic.chrome.border,
+    borderStrong: colors.material.strokeStrong,
+    accent: colors.ui.icon.accentForeground,
+    accentBackground: colors.ui.icon.accentBackground,
+    accentBorder: colors.ui.control.primaryBorder,
+    dangerBackground: colors.ui.tone.danger.background,
+    dangerForeground: colors.ui.tone.danger.foreground,
+    dangerBorder: colors.ui.tone.danger.border,
+  }), [colors])
 
   useEffect(() => {
     setTitle(conversation.title)
+    setActionsOpen(false)
   }, [conversation.id, conversation.title])
 
   useEffect(() => {
@@ -226,6 +229,7 @@ export const ConversationRow = memo(function ConversationRow({ conversation, ind
         })
         if (!confirmed) return
         restoreButton = false
+        setActionsOpen(false)
         remove(conversation.id)
         dialog.toast({
           title: t('conversation.deleteCompleted'),
@@ -271,12 +275,14 @@ export const ConversationRow = memo(function ConversationRow({ conversation, ind
     renameSubmitHandled.current = true
     setTitle(conversation.title)
     setRenaming(false)
+    setActionsOpen(false)
   }
 
   function startRename() {
     if (renameFocusFrame.current !== null) cancelAnimationFrame(renameFocusFrame.current)
     skipNextRenameSubmit.current = false
     renameSubmitHandled.current = false
+    setActionsOpen(false)
     setRenaming(true)
     renameFocusFrame.current = requestAnimationFrame(() => {
       renameFocusFrame.current = null
@@ -291,35 +297,17 @@ export const ConversationRow = memo(function ConversationRow({ conversation, ind
   return (
     <MotiView
       onLayout={reportRowLayout}
-      from={animateEntrance ? (motion === 'full' ? { opacity: 0, translateY: 16 } : { opacity: 0 }) : { opacity: 1, translateY: 0 }}
       animate={{ opacity: rowBusy || rowTemporarilyBlocked ? 0.72 : 1, translateY: 0 }}
-      transition={animateEntrance
-        ? (motion === 'full' ? { type: 'spring', ...motionTokens.spring.settle, delay: Math.min(index * 35, 280) } : { type: 'timing', duration: motionTokens.duration.fast })
-        : { type: 'timing', duration: 0 }}
+      transition={{ type: 'timing', duration: motion === 'full' ? motionTokens.duration.fast : 1 }}
       style={{ marginBottom: ROW_CONTAINER_BOTTOM_SPACING }}
     >
-      <IslePanel
-        elevated={colors.ui.cartoon}
-        material={rowPanelMaterial}
-        radius={colors.ui.radius.panel}
-        style={{ backgroundColor: rowPanelBackground, borderColor: rowPanelBorder, shadowOpacity: rowPanelShadowOpacity, elevation: rowPanelShadowOpacity > 0 ? 1 : 0 }}
-        contentStyle={{ minHeight: 92, padding: panelPadding }}
-      >
-        <View style={{ flexDirection: 'row', alignItems: 'flex-start', gap: rowGap }}>
-          {active ? (
-            <View
-              accessibilityElementsHidden
-              importantForAccessibility="no-hide-descendants"
-              style={{
-                alignSelf: 'stretch',
-                width: 4,
-                minHeight: 54,
-                borderRadius: 999,
-                backgroundColor: colors.ui.icon.accentForeground,
-                opacity: rowTemporarilyBlocked ? 0.62 : 1,
-              }}
-            />
-          ) : null}
+      <HistoryRowFrame
+        themeId={themeId}
+        tokens={historyVisualTokens}
+        compact={compact}
+        index={index}
+        active={active}
+        content={
           <IslePressable
             haptic={!openInteractionDisabled && !rowTemporarilyBlocked}
             onPress={openInteractionDisabled ? undefined : guardedOpenConversation}
@@ -329,201 +317,125 @@ export const ConversationRow = memo(function ConversationRow({ conversation, ind
             accessibilityHint={rowOpenAccessibilityHint}
             accessibilityState={renaming ? undefined : rowOpenAccessibilityState}
             accessibilityValue={renaming ? undefined : { text: rowAccessibilityValue }}
-            style={{ flex: 1, minWidth: 0, minHeight: 54, flexDirection: 'row', alignItems: 'flex-start', gap: rowGap }}
+            style={{ flex: 1, minWidth: 0, minHeight: 54 }}
           >
-            <View style={{ flex: 1, minWidth: 0 }}>
-              {renaming ? (
-                <TextInput
-                  autoFocus
-                  value={title}
-                  onChangeText={setTitle}
-                  onBlur={submitRename}
-                  onSubmitEditing={submitRename}
-                  onFocus={() => onRenameFocus?.(index)}
-                  accessibilityLabel={t('conversation.renameAccessibilityLabel', { title: displayTitle })}
-                  accessibilityHint={t('conversation.saveRenameAccessibilityHint')}
-                  accessibilityValue={renameInputAccessibilityValue}
-                  returnKeyType="done"
-                  blurOnSubmit
-                  style={{
-                    color: colors.text,
-                    fontSize: 17,
-                    fontWeight: '900',
-                    minHeight: 48,
-                    paddingHorizontal: 0,
-                    paddingVertical: 8,
-                    textAlignVertical: 'center',
-                  }}
-                />
-              ) : (
-                <Text numberOfLines={2} style={{ minWidth: 0, flexShrink: 1, color: colors.text, fontSize: 17, lineHeight: 22, fontWeight: '900', includeFontPadding: false }}>
-                  {displayTitle}
-                </Text>
-              )}
-              {searchMatchSummary && searchMatchFieldLabel ? (
-                <View
-                  style={{
-                    flexDirection: 'row',
-                    alignItems: 'flex-start',
-                    gap: 7,
-                    marginTop: 8,
-                    minWidth: 0,
-                    borderRadius: colors.ui.radius.card,
-                    paddingHorizontal: 8,
-                    paddingVertical: 7,
-                    backgroundColor: highlightSurface,
-                    borderWidth: subtleBorderWidth,
-                    borderColor: iconActionBorder,
-                  }}
-                >
-                  <View
-                    accessibilityElementsHidden
-                    importantForAccessibility="no-hide-descendants"
-                    style={{
-                      minHeight: 20,
-                      maxWidth: compact ? 74 : 96,
-                      borderRadius: colors.ui.radius.chip,
-                      paddingHorizontal: 7,
-                      alignItems: 'center',
-                      justifyContent: 'center',
-                      flexShrink: 0,
-                      backgroundColor: highlightChipSurface,
-                      borderWidth: subtleBorderWidth,
-                      borderColor: iconActionBorder,
-                    }}
-                  >
-                    <Text numberOfLines={1} style={{ color: colors.ui.icon.accentForeground, fontSize: 11, lineHeight: 14, fontWeight: '900', includeFontPadding: false }}>
-                      {searchMatchFieldLabel}
-                    </Text>
-                  </View>
-                  <Text numberOfLines={compact ? 2 : 3} style={{ flex: 1, minWidth: 0, flexShrink: 1, color: colors.ui.icon.accentForeground, fontSize: 13, lineHeight: 18, fontWeight: '800', includeFontPadding: false }}>
-                    {secondaryPreview}
-                  </Text>
-                </View>
-              ) : (
-                <Text numberOfLines={1} style={{ minWidth: 0, flexShrink: 1, color: colors.textSecondary, fontSize: 13, lineHeight: 18, marginTop: 6, fontWeight: '700', includeFontPadding: false }}>
-                  {secondaryPreview}
-                </Text>
-              )}
-              <View style={{ flexDirection: 'row', alignItems: 'center', flexWrap: 'wrap', gap: 6, marginTop: 10 }}>
-                {active ? (
-                  <View
-                    accessibilityElementsHidden
-                    importantForAccessibility="no-hide-descendants"
-                    style={{
-                      minHeight: 20,
-                      borderRadius: colors.ui.radius.chip,
-                      paddingHorizontal: 8,
-                      alignItems: 'center',
-                      justifyContent: 'center',
-                      backgroundColor: activeChipSurface,
-                      borderWidth: subtleBorderWidth,
-                      borderColor: colors.ui.control.primaryBorder,
-                    }}
-                  >
-                    <Text numberOfLines={1} style={{ color: colors.ui.control.primaryForeground, fontSize: 11, lineHeight: 14, fontWeight: '900', includeFontPadding: false }}>
-                      {t('conversation.current')}
-                    </Text>
-                  </View>
-                ) : null}
-                {rowStatusLabel && rowStatusToken ? (
-                  <View
-                    accessibilityElementsHidden
-                    importantForAccessibility="no-hide-descendants"
-                    style={{
-                      minHeight: 20,
-                      borderRadius: colors.ui.radius.chip,
-                      paddingHorizontal: 8,
-                      alignItems: 'center',
-                      justifyContent: 'center',
-                      backgroundColor: rowStatusToken.background,
-                      borderWidth: subtleBorderWidth,
-                      borderColor: rowStatusToken.border,
-                    }}
-                  >
-                    <Text numberOfLines={1} style={{ color: rowStatusToken.foreground, fontSize: 11, lineHeight: 14, fontWeight: '900', includeFontPadding: false }}>
-                      {rowStatusLabel}
-                    </Text>
-                  </View>
-                ) : null}
-                <Text numberOfLines={1} style={{ minWidth: 0, flexShrink: 1, color: colors.textTertiary, fontSize: 12, lineHeight: 16, fontWeight: '900', includeFontPadding: false }}>{rowMeta}</Text>
-              </View>
-            </View>
-            {compact ? null : (
-              <NavigationIconBadge>
-                <AnimatedNavigationIcon glyph="conversation" active={opening || openPending} color={colors.textSecondary} accentColor={colors.ui.icon.accentForeground} />
-              </NavigationIconBadge>
+            {renaming ? (
+              <TextInput
+                autoFocus
+                value={title}
+                onChangeText={setTitle}
+                onBlur={submitRename}
+                onSubmitEditing={submitRename}
+                onFocus={() => onRenameFocus?.(index)}
+                accessibilityLabel={t('conversation.renameAccessibilityLabel', { title: displayTitle })}
+                accessibilityHint={t('conversation.saveRenameAccessibilityHint')}
+                accessibilityValue={renameInputAccessibilityValue}
+                returnKeyType="done"
+                blurOnSubmit
+                style={{
+                  color: colors.text,
+                  fontSize: historyRenameInputFontSize(themeId),
+                  fontWeight: '700',
+                  minHeight: 46,
+                  paddingHorizontal: 0,
+                  paddingVertical: 6,
+                  textAlignVertical: 'center',
+                }}
+              />
+            ) : (
+              <HistoryRowContent
+                themeId={themeId}
+                tokens={historyVisualTokens}
+                title={displayTitle}
+                preview={lastMessagePreview}
+                meta={rowMeta}
+                active={active}
+                activeLabel={t('conversation.current')}
+                searchMatchSummary={searchMatchSummary}
+                searchMatchFieldLabel={searchMatchFieldLabel}
+                statusLabel={rowStatusLabel || undefined}
+                statusColor={rowStatusToken?.foreground}
+              />
             )}
           </IslePressable>
-          <View style={{ flexDirection: 'row', alignItems: 'center', gap: actionGap, flexShrink: 0 }}>
+        }
+        actions={renaming ? (
+          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4, flexShrink: 0 }}>
             <IslePressable
-              onPress={rowActionDisabled ? undefined : renaming ? guardedSubmitRename : guardedStartRename}
+              onPress={rowActionDisabled ? undefined : guardedSubmitRename}
               disabled={rowActionDisabled}
               accessibilityRole="button"
-              accessibilityLabel={renaming ? t('common.save') : t('conversation.rename')}
-                accessibilityHint={rowActionPausedAccessibilityHint ?? (renaming ? t('conversation.saveRenameAccessibilityHint') : t('conversation.renameAccessibilityHint'))}
-                accessibilityState={rowActionAccessibilityState ?? (renaming ? { selected: true } : undefined)}
-                hitSlop={ROW_ACTION_HIT_SLOP}
-                style={{
-                  width: 44,
-                  height: 44,
-                  alignItems: 'center',
-                  justifyContent: 'center',
-                  borderRadius: colors.ui.radius.controlMiddle,
-                  backgroundColor: renaming ? colors.ui.control.primaryBackground : iconActionSurface,
-                  borderWidth: subtleBorderWidth,
-                  borderColor: renaming ? colors.ui.control.primaryBorder : iconActionBorder,
-                  opacity: rowActionDisabled ? 0.55 : 1,
-                }}
-              >
-              {renaming
-                ? <AppIcon name="check" color={colors.ui.control.primaryForeground} size={18} strokeWidth={appIconStroke.strong} />
-                : <AppIcon name="edit" color={colors.textSecondary} size={18} strokeWidth={appIconStroke.fine} />}
+              accessibilityLabel={t('common.save')}
+              accessibilityHint={rowActionPausedAccessibilityHint ?? t('conversation.saveRenameAccessibilityHint')}
+              accessibilityState={rowActionAccessibilityState ?? { selected: true }}
+              hitSlop={ROW_ACTION_HIT_SLOP}
+              style={{ width: 44, height: 44, alignItems: 'center', justifyContent: 'center', borderRadius: 8, backgroundColor: colors.ui.control.primaryBackground, borderWidth: subtleBorderWidth, borderColor: colors.ui.control.primaryBorder, opacity: rowActionDisabled ? 0.55 : 1 }}
+            >
+              <AppIcon name="check" color={colors.ui.control.primaryForeground} size={17} strokeWidth={appIconStroke.strong} />
             </IslePressable>
-            {renaming ? (
-              <IslePressable
-                onPress={rowActionDisabled ? undefined : guardedCancelRename}
-                onPressIn={() => {
-                  if (rowActionDisabled || transientInteractionBlocked()) return
-                  skipNextRenameSubmit.current = true
-                }}
-                disabled={rowActionDisabled}
-                accessibilityRole="button"
-                accessibilityLabel={t('common.cancel')}
-                accessibilityHint={rowActionPausedAccessibilityHint ?? t('conversation.cancelRenameAccessibilityHint')}
-                accessibilityState={rowActionAccessibilityState}
-                hitSlop={ROW_ACTION_HIT_SLOP}
-                style={{
-                  width: 44,
-                  height: 44,
-                  alignItems: 'center',
-                  justifyContent: 'center',
-                  borderRadius: colors.ui.radius.controlMiddle,
-                  backgroundColor: iconActionSurface,
-                  borderWidth: subtleBorderWidth,
-                  borderColor: iconActionBorder,
-                  opacity: rowActionDisabled ? 0.55 : 1,
-                }}
-              >
-                <AppIcon name="close" color={colors.textSecondary} size={18} />
-              </IslePressable>
-            ) : (
-              <IslePressable
-                onPress={rowActionDisabled ? undefined : guardedConfirmDelete}
-                disabled={rowActionDisabled}
-                accessibilityRole="button"
-                accessibilityLabel={t('conversation.deleteAccessibilityLabel', { title: displayTitle })}
-                accessibilityHint={rowActionPausedAccessibilityHint ?? t('conversation.deleteAccessibilityHint')}
-                accessibilityState={rowActionAccessibilityState}
-                hitSlop={ROW_ACTION_HIT_SLOP}
-                style={{ width: 44, height: 44, alignItems: 'center', justifyContent: 'center', borderRadius: colors.ui.radius.controlMiddle, backgroundColor: colors.ui.tone.danger.background, borderWidth: subtleBorderWidth, borderColor: colors.ui.tone.danger.border, opacity: rowActionDisabled ? 0.55 : 1 }}
-              >
-                <AppIcon name="delete" color={colors.ui.tone.danger.foreground} size={18} strokeWidth={appIconStroke.fine} />
-              </IslePressable>
-            )}
+            <IslePressable
+              onPress={rowActionDisabled ? undefined : guardedCancelRename}
+              onPressIn={() => {
+                if (rowActionDisabled || transientInteractionBlocked()) return
+                skipNextRenameSubmit.current = true
+              }}
+              disabled={rowActionDisabled}
+              accessibilityRole="button"
+              accessibilityLabel={t('common.cancel')}
+              accessibilityHint={rowActionPausedAccessibilityHint ?? t('conversation.cancelRenameAccessibilityHint')}
+              accessibilityState={rowActionAccessibilityState}
+              hitSlop={ROW_ACTION_HIT_SLOP}
+              style={{ width: 44, height: 44, alignItems: 'center', justifyContent: 'center', borderRadius: 8, backgroundColor: iconActionSurface, borderWidth: subtleBorderWidth, borderColor: iconActionBorder, opacity: rowActionDisabled ? 0.55 : 1 }}
+            >
+              <AppIcon name="close" color={colors.textSecondary} size={17} />
+            </IslePressable>
           </View>
-        </View>
-      </IslePanel>
+        ) : (
+          <IslePressable
+            onPress={rowActionDisabled ? undefined : () => setActionsOpen((current) => !current)}
+            disabled={rowActionDisabled}
+            accessibilityRole="button"
+            accessibilityLabel={`${t('messageBubble.actions')}: ${displayTitle}`}
+            accessibilityHint={rowActionPausedAccessibilityHint}
+            accessibilityState={rowActionAccessibilityState ?? { expanded: actionsOpen }}
+            hitSlop={ROW_ACTION_HIT_SLOP}
+            style={{ width: 44, height: 44, alignItems: 'center', justifyContent: 'center', borderRadius: 8, opacity: rowActionDisabled ? 0.55 : actionsOpen ? 1 : 0.72 }}
+          >
+            <AppIcon name={actionsOpen ? 'close' : 'more'} color={actionsOpen ? colors.ui.icon.accentForeground : colors.textSecondary} size={18} strokeWidth={appIconStroke.strong} />
+          </IslePressable>
+        )}
+        expandedActions={actionsOpen && !renaming ? (
+          <MotiView
+            from={motion === 'full' ? { opacity: 0, translateY: -3 } : { opacity: 1 }}
+            animate={{ opacity: 1, translateY: 0 }}
+            transition={{ type: 'timing', duration: motion === 'full' ? 112 : 1 }}
+            style={{ flexDirection: 'row', justifyContent: 'flex-end', gap: 6, marginTop: 9 }}
+          >
+            <IslePressable
+              onPress={rowActionDisabled ? undefined : guardedStartRename}
+              disabled={rowActionDisabled}
+              accessibilityRole="button"
+              accessibilityLabel={t('conversation.rename')}
+              accessibilityHint={rowActionPausedAccessibilityHint ?? t('conversation.renameAccessibilityHint')}
+              accessibilityState={rowActionAccessibilityState}
+              style={{ width: 44, height: 44, alignItems: 'center', justifyContent: 'center', borderRadius: 8, backgroundColor: iconActionSurface, borderWidth: subtleBorderWidth, borderColor: iconActionBorder }}
+            >
+              <AppIcon name="edit" color={colors.textSecondary} size={17} strokeWidth={appIconStroke.fine} />
+            </IslePressable>
+            <IslePressable
+              onPress={rowActionDisabled ? undefined : guardedConfirmDelete}
+              disabled={rowActionDisabled}
+              accessibilityRole="button"
+              accessibilityLabel={t('conversation.deleteAccessibilityLabel', { title: displayTitle })}
+              accessibilityHint={rowActionPausedAccessibilityHint ?? t('conversation.deleteAccessibilityHint')}
+              accessibilityState={rowActionAccessibilityState}
+              style={{ width: 44, height: 44, alignItems: 'center', justifyContent: 'center', borderRadius: 8, backgroundColor: colors.ui.tone.danger.background, borderWidth: subtleBorderWidth, borderColor: colors.ui.tone.danger.border }}
+            >
+              <AppIcon name="delete" color={colors.ui.tone.danger.foreground} size={17} strokeWidth={appIconStroke.fine} />
+            </IslePressable>
+          </MotiView>
+        ) : null}
+      />
     </MotiView>
   )
 }, areConversationRowPropsEqual)
@@ -532,8 +444,8 @@ function areConversationRowPropsEqual(previous: ConversationRowProps, next: Conv
   if (
     !areConversationRowConversationsEqual(previous.conversation, next.conversation) ||
     previous.index !== next.index ||
+    previous.themeId !== next.themeId ||
     previous.active !== next.active ||
-    previous.animateEntrance !== next.animateEntrance ||
     previous.interactionDisabled !== next.interactionDisabled ||
     previous.isInteractionBlocked !== next.isInteractionBlocked ||
     previous.onInteractionBlocked !== next.onInteractionBlocked ||
@@ -569,8 +481,30 @@ function areConversationRowConversationsEqual(previous: Conversation, next: Conv
       previousLastMessage?.timestamp === nextLastMessage?.timestamp &&
       previousLastMessage?.status === nextLastMessage?.status &&
       previousLastMessage?.content === nextLastMessage?.content &&
-      previousLastMessage?.responseText === nextLastMessage?.responseText
+      previousLastMessage?.responseText === nextLastMessage?.responseText &&
+      previousLastMessage?.durationMs === nextLastMessage?.durationMs &&
+      previousLastMessage?.tokenCount === nextLastMessage?.tokenCount &&
+      previousLastMessage?.usage?.totalTokens === nextLastMessage?.usage?.totalTokens &&
+      previousLastMessage?.usage?.inputTokens === nextLastMessage?.usage?.inputTokens &&
+      previousLastMessage?.usage?.outputTokens === nextLastMessage?.usage?.outputTokens
   )
+}
+
+function sumConversationTokens(conversation: Conversation): number {
+  return conversation.messages.reduce((total, message) => {
+    const usage = message.usage
+    const tokens = usage?.totalTokens ?? [usage?.inputTokens, usage?.outputTokens, usage?.reasoningTokens]
+      .filter((value): value is number => typeof value === 'number' && Number.isFinite(value) && value > 0)
+      .reduce((sum, value) => sum + value, 0)
+    return total + (tokens || message.tokenCount || 0)
+  }, 0)
+}
+
+function formatCompactTokenCount(value: number): string {
+  if (value >= 1_000_000) return `${Math.round(value / 100_000) / 10}M`
+  if (value >= 10_000) return `${Math.round(value / 1_000)}K`
+  if (value >= 1_000) return `${Math.round(value / 100) / 10}K`
+  return String(Math.round(value))
 }
 
 function previewConversationMessage(content: string): string {
@@ -600,6 +534,17 @@ function getRelativeTimeRenderToken(timestamp: number | undefined, now: number):
 
 function formatConversationMessageCount(count: number, t: TFunction): string {
   return t(count === 1 ? 'conversation.messageCountOne' : 'conversation.messageCountOther', { count })
+}
+
+function historyRenameInputFontSize(themeId: ThemeId): number {
+  switch (themeId) {
+    case 'markdown':
+      return 14.5
+    case 'lime-road':
+    case 'minimal':
+    default:
+      return 15.5
+  }
 }
 
 function conversationRowStatusLabel(status: Conversation['messages'][number]['status'], t: TFunction): string {

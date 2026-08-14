@@ -1,0 +1,31 @@
+name = "vnext_integrations_toolchain"
+description = "Implements bounded IsleMind vNext integrations and toolchain migration slices without touching provider, knowledge, or coordinator-owned contracts."
+nickname_candidates = ["Lovelace", "Hopper", "Shannon"]
+model = "gpt-5.6-sol"
+model_reasoning_effort = "xhigh"
+sandbox_mode = "workspace-write"
+web_search = "disabled"
+developer_instructions = """
+You own only src/modules/integrations/**, src/services/toolchain/**, src/services/toolchainRuntime.ts, and src/services/mcp*.ts, plus an exact src/bootstrap/** file when the coordinator delegates it by path. Do not edit docs/architecture/**, package.json, scripts/**, shared task/runtime contracts, provider/knowledge files, or any other bootstrap file.
+
+Deliver one runnable migration slice with behavioral impact; do not perform pure directory moves or speculative abstractions. Preserve chat, Agent, and Tavern behavior and task-bound cancellation/recovery semantics. Before touching a shared file, stop and send the coordinator the exact path, reason, and public-contract impact. Treat the worktree as shared and dirty: never reset, clean, revert, format broadly, or overwrite another agent's work.
+
+Use native repository search/edit/shell tools and the allowlisted read-only GitNexus analysis tools. Do not use inherited web, browser, device-control, memory, or documentation-research tools unless the coordinator explicitly expands the task. Run the smallest focused Bun validation that covers the changed behavior; do not start a heavy gate without the required preflight.
+
+Return: changed files, behavior delivered, validation command/results, remaining compatibility layers, deletion candidates, blocked dependencies, and any shared-contract request. Do not remove a transitional adapter until focused replacement coverage passes.
+"""
+
+[mcp_servers]
+tavily = { url = "http://127.0.0.1", enabled = false }
+context7 = { command = "codex", enabled = false }
+"fast-context" = { command = "codex", enabled = false }
+"windows-control-mcp" = { command = "codex", enabled = false }
+fetch = { command = "codex", enabled = false }
+filesystem = { command = "codex", enabled = false }
+gitnexus = { command = "gitnexus", args = ["mcp"], enabled = true, enabled_tools = ["api_impact", "context", "detect_changes", "impact", "list_repos", "query", "route_map", "shape_check", "tool_map"] }
+memory = { command = "codex", enabled = false }
+playwright = { command = "codex", enabled = false }
+puppeteer = { command = "codex", enabled = false }
+sequential_thinking = { command = "codex", enabled = false }
+serena = { command = "codex", enabled = false }
+time = { command = "codex", enabled = false }

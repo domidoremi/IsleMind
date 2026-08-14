@@ -6,7 +6,6 @@ import {
 } from '@/services/runtimeEventContract'
 import type { RuntimeEventEnvelope } from '@/services/runtimeEvents'
 import { safeHttpUrl } from '@/utils/networkUrlSafety'
-
 export const OBSERVABILITY_COMPATIBILITY_EVAL_SCHEMA = 'islemind.observability-compatibility-eval.v1'
 export const OBSERVABILITY_SINK_EXPORT_SCHEMA = 'islemind.observability-sink-export.v1'
 export const OBSERVABILITY_SINK_PREVIEW_SCHEMA = 'islemind.observability-sink-preview.v1'

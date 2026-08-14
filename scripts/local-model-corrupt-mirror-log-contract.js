@@ -3,6 +3,11 @@ const requiredLocalModelCorruptMirrorFiles = [
   'config.json',
   'special_tokens_map.json',
 ]
+const requiredLocalModelCorruptFailure = {
+  relative: 'onnx/model_quantized.onnx',
+  status: 500,
+  error: 'corrupt mirror fixture',
+}
 
 function createLocalModelCorruptMirrorRowsFixture() {
   return [
@@ -21,7 +26,7 @@ function createLocalModelCorruptMirrorRowsFixture() {
     {
       timestamp: '2026-01-01T00:00:02.000Z',
       method: 'GET',
-      relative: 'model_quantized.onnx',
+      relative: 'onnx/model_quantized.onnx',
       status: 500,
       error: 'corrupt mirror fixture',
     },
@@ -37,18 +42,29 @@ function validateLocalModelCorruptMirrorRows(rows) {
       issues.push(`Local-model corrupt mirror request log is missing ${relative}.`)
     }
   }
+  const corruptFailure = rows.find((row) => {
+    const relative = String(row?.relative ?? '').replace(/\\/g, '/')
+    return relative === requiredLocalModelCorruptFailure.relative
+      && row?.status === requiredLocalModelCorruptFailure.status
+      && row?.error === requiredLocalModelCorruptFailure.error
+  })
+  if (!corruptFailure) {
+    issues.push('Local-model corrupt mirror request log must record onnx/model_quantized.onnx with status 500 and error "corrupt mirror fixture".')
+  }
   return issues
 }
 
 function summarizeLocalModelCorruptMirrorRows(rows) {
   const count = Array.isArray(rows) ? rows.length : 0
   const relatives = Array.isArray(rows) ? new Set(rows.map((row) => row?.relative).filter(Boolean)) : new Set()
-  return `${count} requests, ${relatives.size} unique files`
+  const corruptFailure = Array.isArray(rows) && rows.some((row) => row?.relative === requiredLocalModelCorruptFailure.relative && row?.status === requiredLocalModelCorruptFailure.status)
+  return `${count} requests, ${relatives.size} unique files, corrupt ONNX ${corruptFailure ? 'proven' : 'missing'}`
 }
 
 module.exports = {
   createLocalModelCorruptMirrorRowsFixture,
   localModelCorruptMirrorLogName,
+  requiredLocalModelCorruptFailure,
   requiredLocalModelCorruptMirrorFiles,
   summarizeLocalModelCorruptMirrorRows,
   validateLocalModelCorruptMirrorRows,

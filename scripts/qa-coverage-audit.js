@@ -1,6 +1,7 @@
 const fs = require('node:fs')
 const path = require('node:path')
 const crypto = require('node:crypto')
+const os = require('node:os')
 const { execFileSync } = require('node:child_process')
 const { lineNumber, listFiles, relativeFrom } = require('./script-audit-utils')
 const {
@@ -28,7 +29,35 @@ const {
   runArchitectureBoundaryAuditSelfTest,
   writeArchitectureBoundaryAuditResult,
 } = require('./architecture-boundary-audit')
+const {
+  REQUIRED_APP_PERMISSIONS: androidDeviceTaskAllowedPermissions,
+  REQUIRED_BLOCKED_PERMISSIONS: androidDeviceTaskBlockedPermissions,
+} = require('./android-permission-audit')
 const { sensitiveEvidenceExtensions, sensitiveEvidencePatterns, collectSensitiveEvidenceHits } = require('./sensitive-evidence-contract')
+const {
+  mcpAndroidSmokeSchema,
+  requiredMcpMethods,
+  requiredMcpOfflineChecks,
+  validateMcpAndroidSmokeResult,
+  validateMcpOnlineRequestRows,
+} = require('./mcp-android-smoke-contract')
+const {
+  createLongContentDurableStateFixture,
+  longContentStressEvidenceMarkers,
+  longContentStressEvidencePaths,
+  validateLongContentDurableState,
+} = require('./collect-mock-provider-chat-android')
+const {
+  appearanceThemeLocaleCases,
+  collectThemeLocaleContractIssues,
+  createPortableRoundTripFixture,
+  portableLargeBackupMinJsonBytes,
+  portableLargeBackupRoundTripResultName,
+  portableRoundTripResultName,
+  summarizePortableRoundTripResult,
+  themeLocaleExpectedSteps,
+  validatePortableRoundTripResult,
+} = require('./collect-settings-state-android')
 
 function optionalLocalRequire(modulePath) {
   try {
@@ -190,6 +219,13 @@ const {
   validateLongContentRequestRows,
 } = require('./long-content-request-log-contract')
 const {
+  canonicalEvidenceSha256,
+  createSourceProvenance,
+  rawEvidenceContractResultsName,
+  rawEvidenceContractResultsSchema,
+  sha256Buffer,
+} = require('./raw-evidence-contracts')
+const {
   createLocalModelCorruptMirrorRowsFixture,
   localModelCorruptMirrorLogName,
   summarizeLocalModelCorruptMirrorRows,
@@ -210,11 +246,13 @@ const {
 const {
   providerRuntimeAndroidResultRelativePath,
   providerRuntimeAndroidRunLogRelativePath,
+  providerRuntimeActivationEvidencePaths,
   requiredProviderRuntimeAndroidScenarios,
   validateProviderRuntimeAndroidEvidencePath,
   validateProviderRuntimeAndroidResult,
   validateProviderRuntimeSensitiveData: validateProviderRuntimeSensitiveDataContract,
   validateProviderRuntimeKeyboardState: validateProviderRuntimeKeyboardStateContract,
+  validateProviderRuntimeActivationEvidence: validateProviderRuntimeActivationEvidenceContract,
   validateProviderRuntimeScenario: validateProviderRuntimeScenarioContract,
   validateProviderRuntimeScenarioState: validateProviderRuntimeScenarioStateContract,
   validateProviderRuntimeScenarioEvidence: validateProviderRuntimeScenarioEvidenceContract,
@@ -225,6 +263,47 @@ const ts = require('typescript')
 const root = path.resolve(__dirname, '..')
 const evidenceDir = path.join(root, 'test-evidence', 'qa')
 const outputPath = path.join(evidenceDir, 'coverage-report.md')
+const mockProviderChatResultName = 'mock-provider-chat-results.json'
+const mockProviderChatRequestLogName = 'mock-openai-compatible-requests.jsonl'
+const mockProviderChatRequestLogRelativePath = `test-evidence/qa/${mockProviderChatRequestLogName}`
+const mockProviderChatFixtureRelativePath = 'test-evidence/qa/mock-provider-chat/islemind-mock-provider-chat.json'
+const longContentSmokeResultName = 'long-content-smoke-results.json'
+const longContentFixtureRelativePath = 'test-evidence/qa/long-content-smoke/islemind-long-content-smoke.json'
+const longContentRawRequestLogRelativePath = 'test-evidence/qa/raw-long-content-mock-openai-requests.jsonl'
+const requiredMockProviderChatStates = [
+  'pushedFixture',
+  'imported',
+  'providerConfigured',
+  'providerTestTapped',
+  'providerTestOk',
+  'streamSent',
+  'streamInflightVisible',
+  'streamCompleteVisible',
+  'actionsMenuOpened',
+  'deleteConfirmVisible',
+  'sourceOpened',
+  'sourceBackReturned',
+]
+const requiredMockProviderChatCaptures = {
+  importDialogPng: 'test-evidence/qa/mock-provider-chat/mock-provider-import-confirm.png',
+  importDialogUia: 'test-evidence/qa/mock-provider-chat/mock-provider-import-confirm.uia.xml',
+  providerTestPng: 'test-evidence/qa/mock-provider-chat/mock-provider-fetch-and-test-result.png',
+  providerTestUia: 'test-evidence/qa/mock-provider-chat/mock-provider-fetch-and-test-result.uia.xml',
+  seededChatPng: 'test-evidence/qa/mock-provider-chat/chat-responses-json-complete.png',
+  seededChatUia: 'test-evidence/qa/mock-provider-chat/chat-responses-json-complete.uia.xml',
+  actionsPng: 'test-evidence/qa/mock-provider-chat/chat-message-actions-menu.png',
+  actionsUia: 'test-evidence/qa/mock-provider-chat/chat-message-actions-menu.uia.xml',
+  deleteConfirmPng: 'test-evidence/qa/mock-provider-chat/message-delete-confirm-from-actions-0.png',
+  deleteConfirmUia: 'test-evidence/qa/mock-provider-chat/message-delete-confirm-from-actions-0.uia.xml',
+  sourcePng: 'test-evidence/qa/mock-provider-chat/source-from-chat.png',
+  sourceUia: 'test-evidence/qa/mock-provider-chat/source-from-chat.uia.xml',
+  sourceBackPng: 'test-evidence/qa/mock-provider-chat/source-from-chat-back.png',
+  sourceBackUia: 'test-evidence/qa/mock-provider-chat/source-from-chat-back.uia.xml',
+  inflightPng: 'test-evidence/qa/mock-provider-chat/chat-responses-json-inflight.png',
+  inflightUia: 'test-evidence/qa/mock-provider-chat/chat-responses-json-inflight.uia.xml',
+  completePng: 'test-evidence/qa/mock-provider-chat/chat-responses-json-complete.png',
+  completeUia: 'test-evidence/qa/mock-provider-chat/chat-responses-json-complete.uia.xml',
+}
 const blockingCaptureWorklistPath = path.join(evidenceDir, 'blocking-evidence-capture-worklist.json')
 const rawInputCaptureWorklistPath = path.join(evidenceDir, 'raw-input-capture-worklist.json')
 const runtimeUiaRecaptureWorklistPath = path.join(evidenceDir, 'runtime-uia-recapture-worklist.json')
@@ -240,13 +319,12 @@ const runtimeUiaRecaptureWorklistSchema = 'islemind.qa-runtime-uia-recapture-wor
 const keyEvidenceCaptureWorklistSchema = 'islemind.qa-key-evidence-capture-worklist.v1'
 const releaseRecoveryWorklistSchema = 'islemind.qa-release-recovery-worklist.v1'
 const resultEvidenceNextInputsSchema = 'islemind.qa-result-evidence-next-inputs.v1'
-const rawEvidenceContractResultsName = 'raw-evidence-contract-results.json'
-const rawEvidenceContractResultsSchema = 'islemind.qa-raw-evidence-contract-results.v1'
 const releaseSourceStabilityCommand = 'bun run release:source-stability -- --duration-ms 30000 --interval-ms 5000'
 const releaseRecoveryApkArch = resolveReleaseSmokeArch()
 const releaseRebuildCommand = `bun run apk:local:release -- --release-arch ${releaseRecoveryApkArch}`
 const releaseRecoveryDeviceSerial = process.env.QA_DEVICE_SERIAL || readJsonFile(currentApkSmokePath)?.device || 'emulator-5554'
 const releaseRecoveryDeviceAssignment = `$env:QA_DEVICE_SERIAL='${psSingleQuote(releaseRecoveryDeviceSerial)}'`
+const localModelAndroidEvidenceCommand = "$env:QA_DEVICE_SERIAL='emulator-5554'; $env:QA_APK_ARCH='x86_64'; $env:QA_APK_VARIANT='no-model'; bun run test:local-model-android:evidence"
 const releaseInstallCurrentApkCommand = `${releaseRecoveryDeviceAssignment}; bun run release:install-current-apk`
 const releaseCurrentApkSmokeCommand = `${releaseRecoveryDeviceAssignment}; bun run test:current-apk-smoke`
 const releaseMemoryReviewSmokeCommand = `${releaseRecoveryDeviceAssignment}; bun run test:memory-review-smoke`
@@ -261,17 +339,13 @@ const agentWorkflowMatrixRequiredSnippets = [
   'scripts/agent-trace-contract-tests.js',
   'scripts/agent-work-artifact-workflow-tests.js',
   'scripts/agent-tool-policy-tests.js',
-  'scripts/agent-completion-evidence-audit.js',
   'bun run test:agent-workflow',
-  'bun run test:agent-completion-evidence',
   'trace-only running state with empty assistant message content',
   'RAG profile selection trace contract',
   'provider-native request and controlled execution trace presentation',
   'provider-native read-only policy suppression',
   'settings-visible workflow limits and permission controls',
-  'durable goal contract for scoped, reviewable, validated continuation passes',
-  'completion evidence map for every agent workflow completion target',
-  'direct unsafe AgentRunLimits normalization',
+  'direct unsafe workflow run-limit normalization',
   'work artifact workflow output contract including work artifact follow-up prompt trace readout',
   'handoff and diagnostic intents route to work-artifact summarization instead of planner-tool-missing',
   'incomplete handoff and diagnostic work artifact traces expose quality gaps without requiring fabricated complete artifacts',
@@ -291,9 +365,11 @@ const agentWorkflowMatrixRequiredSnippets = [
 ]
 const contextCompressionV2MatrixRequiredSnippets = [
   'Context compression v2',
-  'src/services/contextPacker.ts',
-  'src/services/chatRunner.ts',
-  'src/services/ai/compact/compactUsage.ts',
+  'src/modules/assistant-runtime/application/contextPackingPolicy.ts',
+  'src/bootstrap/contextPacking.ts',
+  'src/modules/assistant-runtime/application/assistantConversationReplyStartRuntime.ts',
+  'src/modules/providers/providerCompactUsageStore.ts',
+  'src/bootstrap/providerCompactUsage.ts',
   'src/services/runtimeDiagnostics.ts',
   'scripts/context-compression-v2-tests.js',
   'bun run test:context-compression-v2',
@@ -344,6 +420,21 @@ const expectedRoutes = [
   '/settings/skills',
   '/settings/mcp',
 ]
+const freshRouteSmokeCases = [
+  { name: 'home', url: 'islemind://' },
+  { name: 'conversations', url: 'islemind://conversations' },
+  { name: 'settings', url: 'islemind://settings' },
+  { name: 'settings-providers', url: 'islemind://settings/providers' },
+  { name: 'settings-context', url: 'islemind://settings/context' },
+  { name: 'settings-memory', url: 'islemind://settings/memory' },
+  { name: 'settings-knowledge', url: 'islemind://settings/knowledge' },
+  { name: 'settings-preferences', url: 'islemind://settings/preferences' },
+  { name: 'settings-skills', url: 'islemind://settings/skills' },
+  { name: 'settings-mcp', url: 'islemind://settings/mcp' },
+  { name: 'source-fallback', url: 'islemind://source' },
+]
+const settingsBackExpectedCases = ['providers', 'context', 'memory', 'knowledge', 'preferences', 'skills', 'mcp']
+const androidStableCaptureCount = 2
 const androidStatusNotificationEvidenceName = 'android-status-notification-evidence.json'
 const androidDeviceTaskEvidenceName = 'android-device-task-evidence.json'
 const androidDeviceTaskUndoManualFollowUp =
@@ -367,12 +458,14 @@ const androidStatusNotificationRuntimeInputs = [
 ]
 const androidDeviceTaskRuntimeInputs = [
   'app.json',
+  'src/modules/tasks/application/androidWorkflowCatalog.ts',
+  'src/modules/integrations/conversationToolCatalog.ts',
   'src/services/androidDeviceTools.ts',
-  'src/services/agent/androidCapabilityBoundary.ts',
-  'src/services/agent/agentOrchestrator.ts',
   'plugins/android-device-tools/AndroidDeviceToolsModule.kt',
   'plugins/android-device-tools/AndroidDeviceToolsPackage.kt',
   'plugins/android-device-tools/withAndroidDeviceTools.js',
+  'scripts/android-capability-boundary-audit.js',
+  'scripts/android-permission-audit.js',
   'scripts/android-device-tool-policy-tests.js',
   'scripts/collect-android-device-task-evidence.js',
 ]
@@ -386,32 +479,41 @@ const androidStatusNotificationVisibleSurfaceOutcomes = new Set([
 ])
 const resultEvidenceRecoveryPlans = new Map([
   ['Knowledge and memory self-test result', 'node scripts/collect-settings-knowledge-selftest-result.js --source test-evidence/qa/raw-settings-knowledge-selftest-results.json'],
-  ['Settings child-page Back results', 'Manual collector required: run the Settings child-page Android Back smoke and refresh test-evidence/qa/settings-back-dynamic-results.json.'],
-  ['Fresh provider Back regression result', 'Manual collector required: run the provider Back regression smoke and refresh test-evidence/qa/fresh-back-smoke-after-fix/providers-back-fixed-results.json.'],
-  ['Fresh route smoke result', 'Manual collector required: run the fresh route smoke and refresh test-evidence/qa/fresh-route-smoke/route-smoke-results.json.'],
-  ['Fresh home keyboard avoidance result', 'Manual collector required: run the home keyboard avoidance smoke and refresh test-evidence/qa/fresh-keyboard-smoke-after-fix/home-keyboard-open-results.json.'],
+  ['Settings child-page Back results', 'node scripts/collect-navigation-android-smoke.js'],
+  ['Fresh route smoke result', 'node scripts/collect-navigation-android-smoke.js'],
+  ['Fresh home keyboard avoidance result', 'node scripts/collect-navigation-android-smoke.js'],
   ['Current APK launch and 16KB compatibility result', releaseCurrentApkSmokeCommand],
   ['Imported memory review smoke result', releaseMemoryReviewSmokeCommand],
   ['Structured work artifact smoke result', releaseWorkArtifactSmokeCommand],
-  ['Local embedding model download result', 'node scripts/collect-local-model-download-result.js --source test-evidence/qa/raw-settings-context-local-model-download-emulator-results.json'],
-  ['MCP offline and online functional result', 'Manual collector required: run the MCP offline/online Android smoke and refresh test-evidence/qa/settings-mcp-offline-results.json.'],
-  ['MCP online server request log', 'Manual collector required: run the MCP online sync smoke with request logging and refresh test-evidence/qa/settings-mcp-online-cleartext-server-requests.jsonl.'],
+  ['Local embedding model download result', localModelAndroidEvidenceCommand],
+  ['MCP offline and online functional result', 'bun run test:mcp-android:evidence'],
+  ['MCP online server request log', 'bun run test:mcp-android:evidence'],
   ['Preferences persistence result', 'node scripts/collect-settings-state-android.js'],
   ['Theme and locale switch result', 'node scripts/collect-settings-state-android.js'],
   ['Font scale result', 'node scripts/collect-settings-state-android.js'],
+  ['Settings portable data round-trip result', 'node scripts/collect-settings-state-android.js --portable-roundtrip'],
+  ['Settings portable large-backup round-trip result', 'node scripts/collect-settings-state-android.js --portable-large-backup-only'],
   ['Provider Runtime Android result', releaseProviderRuntimeAndroidCommand],
   ['Android device task evidence', releaseAndroidDeviceTaskEvidenceCommand],
   ['Android status notification evidence', releaseAndroidStatusNotificationEvidenceCommand],
   ['Mock provider chat request log', 'node scripts/collect-mock-provider-chat-android.js'],
   ['Long content provider request log', 'node scripts/collect-long-content-request-log.js --source test-evidence/qa/raw-long-content-mock-openai-requests.jsonl'],
-  ['Local model corrupt mirror request log', 'node scripts/collect-local-model-corrupt-mirror-log.js --source test-evidence/qa/raw-local-model-corrupt-mirror-requests.jsonl'],
+  ['Local model corrupt mirror request log', localModelAndroidEvidenceCommand],
   ['Architecture boundary audit result', 'node scripts/architecture-boundary-audit.js'],
   ['Agent workflow orchestration and policy gate', 'bun run test:agent-workflow'],
   ['Android device tool policy gate', 'bun run test:android-device-tools'],
 ])
 const deviceRequiredNodeResultCollectors = new Set([
   'node scripts/collect-settings-state-android.js',
+  'node scripts/collect-settings-state-android.js --portable-roundtrip',
+  'node scripts/collect-settings-state-android.js --portable-large-backup-only',
+  'node scripts/collect-navigation-android-smoke.js',
+  'node scripts/collect-mcp-android-smoke.js',
   'node scripts/collect-mock-provider-chat-android.js',
+])
+const deviceRequiredResultCollectors = new Set([
+  ...deviceRequiredNodeResultCollectors,
+  'bun run test:mcp-android:evidence',
 ])
 const rawInputSourceContracts = new Map([
   ['test-evidence/qa/raw-settings-knowledge-selftest-results.json', {
@@ -426,9 +528,9 @@ const rawInputSourceContracts = new Map([
     sourceFormat: 'json',
     missingSourceState: 'device_required',
     contractFile: 'scripts/local-model-download-result-contract.js',
-    requiredEvidence: 'startedFromFreshInstall=true; mirror.emulatorUrl recorded; observations include confirm, start, download-progress, verify, success-dialog, and final-row with 已启用',
-    captureScenario: 'Run the local embedding model download flow from a fresh emulator install using a recorded mirror URL and export the observed step JSON.',
-    validationCommand: 'node scripts/collect-local-model-download-result.js --self-test',
+    requiredEvidence: 'startedFromFreshInstall=true; x86_64 no-model APK SHA-256 and emulator serial recorded; mirror.emulatorUrl recorded; observations include confirm, start, download-progress, verify, success-dialog, and final-row with 已启用 or Enabled',
+    captureScenario: 'Run the local embedding model download flow from a fresh install of the current x86_64 no-model APK on explicit emulator-5554 using a recorded mirror URL and export the observed step JSON.',
+    validationCommand: 'bun scripts/collect-local-model-download-result.js --self-test',
   }],
   ['test-evidence/qa/raw-long-content-mock-openai-requests.jsonl', {
     sourceFormat: 'jsonl',
@@ -442,9 +544,9 @@ const rawInputSourceContracts = new Map([
     sourceFormat: 'jsonl',
     missingSourceState: 'device_required',
     contractFile: 'scripts/local-model-corrupt-mirror-log-contract.js',
-    requiredEvidence: 'request rows include relative=config.json and relative=special_tokens_map.json',
-    captureScenario: 'Run the corrupt local-model mirror flow against the emulator mirror server and save the raw file-request JSONL.',
-    validationCommand: 'node scripts/collect-local-model-corrupt-mirror-log.js --self-test',
+    requiredEvidence: 'request rows include relative=config.json, relative=special_tokens_map.json, and relative=onnx/model_quantized.onnx with status=500 and error=corrupt mirror fixture',
+    captureScenario: 'Run the corrupt local-model mirror flow on explicit emulator-5554 against the emulator mirror server and save the raw file-request JSONL.',
+    validationCommand: 'bun scripts/collect-local-model-corrupt-mirror-log.js --self-test',
   }],
 ])
 
@@ -578,13 +680,7 @@ function auditI18n(files) {
     locale,
     JSON.parse(fs.readFileSync(path.join(root, 'src', 'i18n', 'resources', `${locale}.json`), 'utf8')),
   ]))
-  const keys = new Set()
-  for (const file of files) {
-    const text = fs.readFileSync(file, 'utf8')
-    for (const match of text.matchAll(/\b(?:t|st)\(\s*['"]([^'"`]+)['"]/g)) {
-      keys.add(match[1])
-    }
-  }
+  const keys = collectStaticI18nKeys(files)
   const missing = []
   for (const key of [...keys].sort()) {
     for (const locale of locales) {
@@ -592,6 +688,18 @@ function auditI18n(files) {
     }
   }
   return { checkedKeyCount: keys.size, missing }
+}
+
+function collectStaticI18nKeys(files) {
+  const keys = new Set()
+  for (const file of files) {
+    const text = fs.readFileSync(file, 'utf8')
+    for (const match of text.matchAll(/\b(?:t|st)\(\s*['"]([^'"`]+)['"]/g)) {
+      const key = match[1]
+      if (!key.endsWith('.')) keys.add(key)
+    }
+  }
+  return keys
 }
 
 function hasNestedKey(resource, key) {
@@ -709,7 +817,9 @@ function auditUiaSnapshot(file, density, invalidKeyVisualCaptures = new Set()) {
   const screenshotFile = fs.existsSync(screenshotPath) ? relative(screenshotPath) : null
   const keyVisualCaptureName = keyVisualCaptureNameFromFile(file)
   const semanticInvalid = keyVisualCaptureName ? invalidKeyVisualCaptures.has(keyVisualCaptureName) : false
-  const nodes = [...xml.matchAll(/<node\b([^>]*)>/g)].map((match) => parseAttributes(match[1]))
+  const nodes = xml.includes('android.widget.HorizontalScrollView')
+    ? parseUiaNodes(xml)
+    : [...xml.matchAll(/<node\b([^>]*)>/g)].map((match) => parseAttributes(match[1]))
   const viewport = detectSnapshotViewport(nodes)
   const clickable = nodes.filter((node) => node.clickable === 'true')
   const debugOverlayRegions = collectReactNativeDebugOverlayRegions(nodes)
@@ -717,23 +827,31 @@ function auditUiaSnapshot(file, density, invalidKeyVisualCaptures = new Set()) {
   const debugOverlayNodeSet = new Set(debugOverlayNodes)
   const productClickable = clickable.filter((node) => !debugOverlayNodeSet.has(node))
   const measuredTargets = productClickable
-    .map((node) => ({ ...node, box: parseBounds(node.bounds), label: node['content-desc'] || node.text || '(unlabeled)' }))
+    .map((sourceNode) => ({
+      sourceNode,
+      box: parseBounds(sourceNode.bounds),
+      label: sourceNode['content-desc'] || sourceNode.text || '(unlabeled)',
+    }))
     .filter((node) => node.box)
     .map((node) => {
+      const sourceNode = node.sourceNode
       const widthDp = density ? Math.round(node.box.width / (density / 160)) : null
       const heightDp = density ? Math.round(node.box.height / (density / 160)) : null
       const belowTarget = density ? widthDp < 44 || heightDp < 44 : node.box.width < 44 || node.box.height < 44
       const invalidBounds = node.box.invalid
-      const edgePartial = isViewportEdgePartial(node.box, viewport)
+      const horizontalScrollViewport = findScrollableAncestorBounds(sourceNode, nodes, 'android.widget.HorizontalScrollView')
+      const edgePartial = isViewportEdgePartial(node.box, viewport) ||
+        ((belowTarget || invalidBounds) && horizontalScrollViewport &&
+          isHorizontalScrollEdgePartial(sourceNode, node.box, horizontalScrollViewport, nodes))
       const collapsedHidden = isCollapsedHiddenBounds(node.box)
       return {
         label: node.label,
-        hasAccessibleName: !!(node.text || node['content-desc']),
-        class: node.class,
-        className: node.class,
-        package: node.package,
-        packageName: node.package,
-        bounds: node.bounds,
+        hasAccessibleName: !!(sourceNode.text || sourceNode['content-desc']),
+        class: sourceNode.class,
+        className: sourceNode.class,
+        package: sourceNode.package,
+        packageName: sourceNode.package,
+        bounds: sourceNode.bounds,
         widthDp,
         heightDp,
         widthPx: node.box.width,
@@ -812,6 +930,31 @@ function parseAttributes(input) {
   return attrs
 }
 
+function parseUiaNodes(xml) {
+  const nodes = []
+  const stack = []
+  for (const match of xml.matchAll(/<node\b[^>]*>|<\/node>/g)) {
+    const token = match[0]
+    if (token === '</node>') {
+      const closedIndex = stack.pop()
+      if (Number.isInteger(closedIndex)) nodes[closedIndex]._endIndex = nodes.length
+      continue
+    }
+    const selfClosing = token.endsWith('/>')
+    const node = parseAttributes(token.slice(5, selfClosing ? -2 : -1))
+    Object.defineProperties(node, {
+      _index: { value: nodes.length },
+      _parentIndex: { value: stack.length ? stack[stack.length - 1] : null },
+      _endIndex: { value: null, writable: true },
+    })
+    nodes.push(node)
+    if (selfClosing) node._endIndex = nodes.length
+    else stack.push(node._index)
+  }
+  for (const openIndex of stack) nodes[openIndex]._endIndex = nodes.length
+  return nodes
+}
+
 function decodeXml(value) {
   return value
     .replace(/&quot;/g, '"')
@@ -863,6 +1006,36 @@ function isViewportEdgePartial(box, viewport) {
     box.bottom > viewport.top &&
     (box.left <= viewport.left || box.right <= viewport.left || box.left >= viewport.right || box.right >= viewport.right)
   return verticalEdgeCrop || horizontalEdgeCrop
+}
+
+function findScrollableAncestorBounds(node, nodes, className) {
+  let parentIndex = node._parentIndex
+  while (Number.isInteger(parentIndex)) {
+    const parent = nodes[parentIndex]
+    if (parent?.class === className && parent.scrollable === 'true') return parseBounds(parent.bounds)
+    parentIndex = parent?._parentIndex
+  }
+  return null
+}
+
+function isHorizontalScrollEdgePartial(node, box, viewport, nodes) {
+  const verticallyOverlaps = box.top < viewport.bottom && box.bottom > viewport.top
+  if (!verticallyOverlaps) return false
+  const crossesViewport = box.left < viewport.left || box.right > viewport.right ||
+    (box.width <= 0 && (box.right < viewport.left || box.left > viewport.right))
+  if (crossesViewport || box.width <= 0) return crossesViewport
+  const flushWithEdge = box.left === viewport.left || box.right === viewport.right
+  if (!flushWithEdge) return false
+  const endIndex = Number.isInteger(node._endIndex) ? node._endIndex : node._index + 1
+  for (let index = node._index + 1; index < endIndex; index += 1) {
+    if (horizontalBoundsCrossViewport(nodes[index].bounds, viewport)) return true
+  }
+  return false
+}
+
+function horizontalBoundsCrossViewport(bounds, viewport) {
+  const box = parseBounds(bounds)
+  return Boolean(box) && (box.left < viewport.left || box.right > viewport.right)
 }
 
 function readDeviceDensity() {
@@ -945,6 +1118,92 @@ function sha256File(file) {
   return hash.digest('hex')
 }
 
+function collectRawEvidenceBindingIssues({
+  sourceRelative,
+  normalizedData,
+  normalizedFile,
+  format,
+  repoRoot = root,
+  requireByteIdentity = false,
+}) {
+  const issues = []
+  const sourceFile = path.join(repoRoot, sourceRelative)
+  const contractResultsFile = path.join(repoRoot, 'test-evidence', 'qa', rawEvidenceContractResultsName)
+  if (!fs.existsSync(sourceFile)) {
+    issues.push(`Raw evidence source is missing: ${sourceRelative}.`)
+    return issues
+  }
+  if (!fs.existsSync(contractResultsFile)) {
+    issues.push(`Raw evidence contract results are missing: test-evidence/qa/${rawEvidenceContractResultsName}.`)
+    return issues
+  }
+
+  const sourceBuffer = fs.readFileSync(sourceFile)
+  let sourceData
+  try {
+    sourceData = format === 'jsonl'
+      ? parseJsonlText(sourceBuffer.toString('utf8'))
+      : JSON.parse(sourceBuffer.toString('utf8'))
+  } catch (error) {
+    issues.push(`Raw evidence source ${sourceRelative} could not be parsed: ${error.message}.`)
+    return issues
+  }
+
+  const contractResults = readJsonFile(contractResultsFile)
+  if (contractResults?.schema !== rawEvidenceContractResultsSchema) {
+    issues.push(`Raw evidence contract results schema must be ${rawEvidenceContractResultsSchema}.`)
+  }
+  const contract = Array.isArray(contractResults?.results)
+    ? contractResults.results.find((result) => result?.source === sourceRelative)
+    : null
+  if (!contract) {
+    issues.push(`Raw evidence contract results do not include ${sourceRelative}.`)
+    return issues
+  }
+  if (contract.status !== 'passed') {
+    issues.push(`Raw evidence contract for ${sourceRelative} is ${contract.status ?? 'missing'}.`)
+  }
+
+  const sourceSha256 = sha256Buffer(sourceBuffer)
+  const canonicalSha256 = canonicalEvidenceSha256(sourceData, format)
+  const normalizedCanonicalSha256 = canonicalEvidenceSha256(normalizedData, format)
+  const provenance = contract.provenance
+  if (provenance?.sourceSha256 !== sourceSha256) {
+    issues.push(`Raw evidence source SHA-256 is stale for ${sourceRelative}.`)
+  }
+  if (provenance?.canonicalSha256 !== canonicalSha256) {
+    issues.push(`Raw evidence canonical digest is stale for ${sourceRelative}.`)
+  }
+  if (provenance?.sizeBytes !== sourceBuffer.length) {
+    issues.push(`Raw evidence source size is stale for ${sourceRelative}.`)
+  }
+  const sourceStat = fs.statSync(sourceFile)
+  const provenanceModifiedAtMs = provenance?.modifiedAtMs
+  const timestampMatches = Number.isFinite(provenanceModifiedAtMs)
+    ? Math.abs(provenanceModifiedAtMs - sourceStat.mtimeMs) < 0.001
+    : Number.isFinite(Date.parse(provenance?.modifiedAt))
+      && Math.abs(Date.parse(provenance.modifiedAt) - sourceStat.mtimeMs) <= 1
+  if (!timestampMatches) {
+    issues.push(`Raw evidence source timestamp is stale for ${sourceRelative}.`)
+  }
+  const expectedRecordCount = format === 'jsonl' ? sourceData.length : 1
+  if (provenance?.recordCount !== expectedRecordCount) {
+    issues.push(`Raw evidence record count is stale for ${sourceRelative}.`)
+  }
+  if (normalizedCanonicalSha256 !== canonicalSha256) {
+    issues.push(`Normalized result content does not match raw evidence for ${sourceRelative}.`)
+  }
+  if (requireByteIdentity) {
+    const normalizedBuffer = normalizedFile && fs.existsSync(normalizedFile)
+      ? fs.readFileSync(normalizedFile)
+      : null
+    if (!normalizedBuffer || !normalizedBuffer.equals(sourceBuffer)) {
+      issues.push(`Normalized result bytes do not preserve raw evidence for ${sourceRelative}.`)
+    }
+  }
+  return issues
+}
+
 function readSha256Sidecar(apkPath) {
   const sidecar = `${apkPath}.sha256`
   if (!fs.existsSync(sidecar)) return null
@@ -971,11 +1230,13 @@ function readInstalledPackageInfo() {
   const packageDump = runAdb(deviceSerial, ['shell', 'dumpsys', 'package', appPackageName])
   if (!packageDump || /Unable to find package|not found/i.test(packageDump)) return null
   const installPath = runAdb(deviceSerial, ['shell', 'pm', 'path', appPackageName])?.trim() ?? null
+  const packageSha256 = hashInstalledBaseApk(deviceSerial, installPath)
   const deviceAbi = runAdb(deviceSerial, ['shell', 'getprop', 'ro.product.cpu.abi'])?.trim() ?? null
   const info = {
     deviceSerial,
     deviceAbi,
     packagePath: installPath || null,
+    packageSha256,
     versionName: matchFirst(packageDump, /versionName=([^\s]+)/),
     versionCode: toNumber(matchFirst(packageDump, /versionCode=(\d+)/)),
     primaryCpuAbi: matchFirst(packageDump, /primaryCpuAbi=([^\s]+)/),
@@ -984,6 +1245,32 @@ function readInstalledPackageInfo() {
   }
   Object.assign(info, cleanInstallState(info.firstInstallTime, info.lastUpdateTime))
   return info
+}
+
+function hashInstalledBaseApk(deviceSerial, packagePathOutput) {
+  const baseApkPath = parseBaseApkPath(packagePathOutput)
+  if (!baseApkPath) return null
+  const temporaryApkPath = path.join(os.tmpdir(), `islemind-installed-${process.pid}-${Date.now()}.apk`)
+  try {
+    const pulled = runAdb(deviceSerial, ['pull', baseApkPath, temporaryApkPath], { timeout: 60_000 })
+    if (pulled === null || !fs.existsSync(temporaryApkPath)) return null
+    return sha256File(temporaryApkPath)
+  } finally {
+    try {
+      fs.rmSync(temporaryApkPath, { force: true })
+    } catch {
+      // Best-effort cleanup must not hide the provenance result.
+    }
+  }
+}
+
+function parseBaseApkPath(packagePathOutput) {
+  const paths = String(packagePathOutput ?? '')
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .map((line) => line.replace(/^package:/, ''))
+  return paths.find((value) => /(?:^|\/)base\.apk$/i.test(value)) ?? paths[0] ?? null
 }
 
 function resolveAdbDeviceSerial() {
@@ -1001,17 +1288,17 @@ function resolveAdbDeviceSerial() {
   return serials[0] ?? null
 }
 
-function runAdb(deviceSerial, args) {
-  return runCommand('adb', ['-s', deviceSerial, ...args])
+function runAdb(deviceSerial, args, options) {
+  return runCommand('adb', ['-s', deviceSerial, ...args], options)
 }
 
-function runCommand(command, args) {
+function runCommand(command, args, options = {}) {
   try {
     return execFileSync(command, args, {
       cwd: root,
       encoding: 'utf8',
       stdio: ['ignore', 'pipe', 'pipe'],
-      timeout: 15000,
+      timeout: options.timeout ?? 15000,
     })
   } catch {
     return null
@@ -1104,7 +1391,6 @@ function auditResultEvidence(context) {
   const baseChecks = [
     checkKnowledgeSelfTest(),
     checkSettingsBackResults(),
-    checkFreshProviderBackSmoke(),
     checkFreshRouteSmoke(),
     checkFreshKeyboardSmoke(),
     checkCurrentApkSmoke(),
@@ -1116,6 +1402,8 @@ function auditResultEvidence(context) {
     checkPreferencesPersistence(),
     checkThemeLocaleResults(),
     checkFontScaleResults(),
+    checkSettingsPortableRoundTrip(),
+    checkSettingsPortableLargeBackupRoundTrip(),
     checkProviderRuntimeAndroidResults(),
     checkAndroidDeviceTaskEvidence(),
     checkAndroidStatusNotificationEvidence(),
@@ -1208,7 +1496,7 @@ function describeDirectResultEvidenceInput(item) {
   if (recovery.startsWith('Manual document update required:')) return item.file
   if (recovery.startsWith('Manual collector required:')) return 'manual Android capture'
   if (recovery.startsWith('bun run')) return 'scripted runtime result'
-  if (deviceRequiredNodeResultCollectors.has(recovery)) return 'current Android device evidence'
+  if (deviceRequiredResultCollectors.has(recovery)) return 'current Android device evidence'
   if (recovery.startsWith('node scripts/')) return 'scripted local result'
   return item.file
 }
@@ -1224,9 +1512,13 @@ function checkArchitectureBoundaryAudit(context) {
     }
   }
   const issues = []
+  const checks = Array.isArray(result.checks) ? result.checks : []
   if (result.schema !== 'islemind.architecture-boundary-audit.v1') issues.push('Architecture boundary evidence schema is invalid.')
-  if ((result.summary?.checks ?? 0) !== requiredArchitectureBoundaryCheckIds.length) {
-    issues.push(`Architecture boundary audit must run ${requiredArchitectureBoundaryCheckIds.length} required checks.`)
+  if ((result.summary?.checks ?? 0) < requiredArchitectureBoundaryCheckIds.length) {
+    issues.push(`Architecture boundary audit must run at least ${requiredArchitectureBoundaryCheckIds.length} required checks.`)
+  }
+  if ((result.summary?.checks ?? 0) !== checks.length) {
+    issues.push('Architecture boundary audit summary check count must match its check records.')
   }
   if ((result.summary?.blockingIssues ?? 0) > 0) {
     issues.push(`Architecture boundary audit has ${result.summary.blockingIssues} blocking issue(s).`)
@@ -1234,9 +1526,12 @@ function checkArchitectureBoundaryAudit(context) {
   if ((result.summary?.reviewFindings ?? 0) > 0) {
     issues.push(`Architecture boundary audit has ${result.summary.reviewFindings} review finding(s).`)
   }
-  const checkIds = new Set((result.checks ?? []).map((check) => check.id))
+  const checkIds = new Set(checks.map((check) => check.id))
   for (const id of requiredArchitectureBoundaryCheckIds) {
     if (!checkIds.has(id)) issues.push(`Architecture boundary audit is missing ${id}.`)
+  }
+  for (const check of checks) {
+    if (check.status !== 'passed') issues.push(`Architecture boundary audit check ${check.id ?? 'unknown'} is not passing.`)
   }
   return {
     name: 'Architecture boundary audit result',
@@ -1248,7 +1543,7 @@ function checkArchitectureBoundaryAudit(context) {
 
 function checkAgentWorkflowPolicyGate(options = {}) {
   const repoRoot = options.repoRoot ?? root
-  const scriptRelatives = options.scriptRelatives ?? [options.scriptRelative ?? 'scripts/agentic-workflow-tests.js', ...(options.scriptRelative ? [] : ['scripts/agent-rag-quality-tests.js', 'scripts/agent-trace-contract-tests.js', 'scripts/agent-work-artifact-workflow-tests.js', 'scripts/agent-tool-policy-tests.js', 'scripts/agent-completion-evidence-audit.js'])]
+  const scriptRelatives = options.scriptRelatives ?? [options.scriptRelative ?? 'scripts/agentic-workflow-tests.js', ...(options.scriptRelative ? [] : ['scripts/agent-rag-quality-tests.js', 'scripts/agent-trace-contract-tests.js', 'scripts/agent-work-artifact-workflow-tests.js', 'scripts/agent-tool-policy-tests.js'])]
   const missingScript = scriptRelatives.find((scriptRelative) => !fs.existsSync(path.join(repoRoot, scriptRelative)))
   if (missingScript) {
     return {
@@ -1379,10 +1674,249 @@ function resultCheck(name, fileName, validate) {
   }
 }
 
+function evidencePathIssue(value, label, validatePath = validateRepositoryEvidencePath) {
+  if (typeof value !== 'string' || !value.trim()) return `${label} evidence path is missing.`
+  const issue = validatePath(value)
+  return issue ? `${label} evidence path ${value} is ${issue}.` : null
+}
+
+function validBounds(bounds) {
+  return Boolean(bounds)
+    && Number.isFinite(bounds.left)
+    && Number.isFinite(bounds.top)
+    && Number.isFinite(bounds.right)
+    && Number.isFinite(bounds.bottom)
+    && bounds.left >= 0
+    && bounds.top >= 0
+    && bounds.right > bounds.left
+    && bounds.bottom > bounds.top
+}
+
+function collectStableCaptureIssues(row, attemptsKey, stableKey, sequenceKey, label) {
+  const issues = []
+  const attempts = row?.[attemptsKey]
+  const stableCount = row?.[stableKey]
+  const sequence = row?.[sequenceKey]
+  if (!Number.isInteger(attempts) || attempts < androidStableCaptureCount) {
+    issues.push(`${label} must record at least ${androidStableCaptureCount} capture attempts.`)
+  }
+  if (stableCount !== androidStableCaptureCount) {
+    issues.push(`${label} must record stableCaptureCount=${androidStableCaptureCount}.`)
+  }
+  if (!Array.isArray(sequence) || sequence.length !== attempts) {
+    issues.push(`${label} transition sequence length must equal attempts.`)
+    return issues
+  }
+  sequence.forEach((entry, index) => {
+    if (!entry || entry.attempt !== index + 1 || typeof entry.matched !== 'boolean' || typeof entry.errorVisible !== 'boolean') {
+      issues.push(`${label} transition sequence entry ${index + 1} is malformed.`)
+    }
+  })
+  const stableTail = sequence.slice(-androidStableCaptureCount)
+  if (stableTail.length !== androidStableCaptureCount || stableTail.some((entry) => entry?.matched !== true || entry?.errorVisible !== false)) {
+    issues.push(`${label} must end with two matched, error-free captures.`)
+  }
+  return issues
+}
+
+function collectNamedResultShapeIssues(rows, key, expectedNames, label) {
+  const issues = []
+  if (!Array.isArray(rows)) return [`${label} must be an array.`]
+  const seen = new Set()
+  for (const row of rows) {
+    const name = row?.[key]
+    if (seen.has(name)) issues.push(`Duplicate ${label} result for ${name ?? 'unknown'}.`)
+    seen.add(name)
+    if (!expectedNames.includes(name)) issues.push(`Unexpected ${label} result ${name ?? 'unknown'}.`)
+  }
+  for (const name of expectedNames) {
+    if (!seen.has(name)) issues.push(`Missing ${label} result for ${name}.`)
+  }
+  if (rows.length !== expectedNames.length) issues.push(`${label} must contain exactly ${expectedNames.length} results.`)
+  return issues
+}
+
+function collectFreshRouteSmokeIssues(rows, validatePath = validateRepositoryEvidencePath) {
+  const issues = collectNamedResultShapeIssues(rows, 'name', freshRouteSmokeCases.map((item) => item.name), 'fresh route')
+  if (!Array.isArray(rows)) return issues
+  const expectedByName = new Map(freshRouteSmokeCases.map((item) => [item.name, item]))
+  for (const row of rows) {
+    const expected = expectedByName.get(row?.name)
+    if (!expected) continue
+    if (row.url !== expected.url) issues.push(`${row.name} recorded URL ${row.url ?? 'missing'}, expected ${expected.url}.`)
+    if (row.expectedOk !== true) issues.push(`${row.name} did not prove its expected route marker.`)
+    if (row.siblingVisible !== false) issues.push(`${row.name} did not prove sibling-page rejection.`)
+    if (typeof row.errorText !== 'string' || row.errorText.trim()) issues.push(`${row.name} recorded error text.`)
+    issues.push(...collectStableCaptureIssues(row, 'attempts', 'stableCaptureCount', 'transitionSequence', `${row.name} route`))
+    for (const key of ['png', 'uia']) {
+      const issue = evidencePathIssue(row[key], `${row.name} ${key}`, validatePath)
+      if (issue) issues.push(issue)
+    }
+    if (!Array.isArray(row.visibleText) || !row.visibleText.length) issues.push(`${row.name} must record visible text.`)
+  }
+  return issues
+}
+
+function collectSettingsBackResultIssues(rows, validatePath = validateRepositoryEvidencePath) {
+  const issues = collectNamedResultShapeIssues(rows, 'Case', settingsBackExpectedCases, 'Settings Back')
+  if (!Array.isArray(rows)) return issues
+  for (const row of rows) {
+    if (!settingsBackExpectedCases.includes(row?.Case)) continue
+    for (const [key, expected] of [
+      ['Found', true],
+      ['ChildOk', true],
+      ['BackOk', true],
+      ['StayedOnChild', false],
+      ['errorAfterBack', false],
+    ]) {
+      if (row[key] !== expected) issues.push(`${row.Case} must record ${key}=${expected}.`)
+    }
+    issues.push(...collectStableCaptureIssues(row, 'childAttempts', 'childStableCaptureCount', 'childTransitionSequence', `${row.Case} child`))
+    issues.push(...collectStableCaptureIssues(row, 'afterAttempts', 'afterStableCaptureCount', 'afterTransitionSequence', `${row.Case} after Back`))
+    for (const key of ['childPng', 'childUia', 'afterPng', 'afterUia']) {
+      const issue = evidencePathIssue(row[key], `${row.Case} ${key}`, validatePath)
+      if (issue) issues.push(issue)
+    }
+    if (!Array.isArray(row.childVisibleText) || !row.childVisibleText.length) issues.push(`${row.Case} child must record visible text.`)
+    if (!Array.isArray(row.afterVisibleText) || !row.afterVisibleText.length) issues.push(`${row.Case} after Back must record visible text.`)
+  }
+  return issues
+}
+
+function collectFreshKeyboardSmokeIssues(data, validatePath = validateRepositoryEvidencePath) {
+  const issues = []
+  if (!data || typeof data !== 'object' || Array.isArray(data)) return ['Keyboard result must be an object.']
+  for (const key of ['tappedInput', 'inputFocused', 'sendButtonPresent', 'homeStillVisible']) {
+    if (data[key] !== true) issues.push(`Keyboard result must record ${key}=true.`)
+  }
+  if (data.errorVisible !== false) issues.push('Keyboard result must record errorVisible=false.')
+  if (!Number.isInteger(data.imeAttempts) || data.imeAttempts < 1) issues.push('Keyboard result must record a positive imeAttempts count.')
+  const ime = data.ime
+  if (!ime || typeof ime !== 'object') {
+    issues.push('Keyboard result must record IME state.')
+  } else {
+    for (const key of ['visible', 'inputShown', 'windowVisible']) {
+      if (ime[key] !== true) issues.push(`Keyboard IME must record ${key}=true.`)
+    }
+    if (!validBounds(ime.bounds)) issues.push('Keyboard IME bounds are missing or invalid.')
+  }
+  if (!validBounds(data.inputBounds)) issues.push('Keyboard input bounds are missing or invalid.')
+  if (!validBounds(data.sendBounds)) issues.push('Keyboard send bounds are missing or invalid.')
+  const imeTop = ime?.bounds?.top
+  const inputAboveIme = validBounds(data.inputBounds) && Number.isFinite(imeTop) && data.inputBounds.bottom <= imeTop
+  const sendAboveIme = validBounds(data.sendBounds) && Number.isFinite(imeTop) && data.sendBounds.bottom <= imeTop
+  if (data.inputAboveIme !== inputAboveIme) issues.push('Keyboard inputAboveIme does not match recorded bounds.')
+  if (data.sendAboveIme !== sendAboveIme) issues.push('Keyboard sendAboveIme does not match recorded bounds.')
+  if (data.nonOccluded !== true || !inputAboveIme || !sendAboveIme) issues.push('Keyboard result must prove non-occluded controls above the IME.')
+  for (const key of ['png', 'uia', 'log']) {
+    const issue = evidencePathIssue(data[key], `Keyboard ${key}`, validatePath)
+    if (issue) issues.push(issue)
+  }
+  return issues
+}
+
+function collectPreferencePersistenceIssues(data, validatePath = validateRepositoryEvidencePath) {
+  const issues = []
+  if (!data || typeof data !== 'object' || Array.isArray(data)) return ['Preferences result must be an object.']
+  for (const key of ['interactionOpened', 'restartInteractionOpened', 'changedAfterToggle', 'persistedAfterRestart', 'restoreTapped', 'restoredOriginal']) {
+    if (data[key] !== true) issues.push(`Preferences result must record ${key}=true.`)
+  }
+  if (typeof data.stateEvidence !== 'string' || !data.stateEvidence.trim()) issues.push('Preferences result must describe checked-state evidence.')
+  const states = ['before', 'afterToggle', 'afterRestart', 'restored']
+  for (const stateName of states) {
+    const state = data[stateName]
+    if (!state || typeof state !== 'object' || typeof state.checked !== 'boolean') {
+      issues.push(`Preferences result must record boolean ${stateName}.checked.`)
+      continue
+    }
+    if (stateName !== 'restored') {
+      const node = state.node
+      if (!node || node.checkable !== true || typeof node.checked !== 'boolean' || node.checked !== state.checked || !validBounds(node.bounds)) {
+        issues.push(`Preferences result must record checked/checkable node evidence for ${stateName}.`)
+      }
+    } else if (state.node && (state.node.checked !== state.checked || state.node.checkable !== true || !validBounds(state.node.bounds))) {
+      issues.push('Preferences restored node evidence is inconsistent.')
+    }
+  }
+  const before = data.before?.checked
+  const after = data.afterToggle?.checked
+  const afterRestart = data.afterRestart?.checked
+  const restored = data.restored?.checked
+  if (typeof before === 'boolean' && typeof after === 'boolean' && before === after) issues.push('Preferences toggle did not change checked state.')
+  if (typeof after === 'boolean' && afterRestart !== after) issues.push('Preferences checked state did not persist after restart.')
+  if (typeof before === 'boolean' && restored !== before) issues.push('Preferences checked state was not restored to its original value.')
+  for (const stateName of states) {
+    const state = data[stateName]
+    for (const key of ['png', 'uia']) {
+      const issue = evidencePathIssue(state?.[key], `Preferences ${stateName} ${key}`, validatePath)
+      if (issue) issues.push(issue)
+    }
+  }
+  const logIssue = evidencePathIssue(data.log, 'Preferences log', validatePath)
+  if (logIssue) issues.push(logIssue)
+  return issues
+}
+
+function collectThemeLocaleIssues(rows, validatePath = validateRepositoryEvidencePath) {
+  const issues = collectThemeLocaleContractIssues(rows)
+  if (!Array.isArray(rows)) return issues
+  for (const row of rows) {
+    if (!themeLocaleExpectedSteps.includes(row?.Step)) continue
+    for (const key of ['ok', 'tapped', 'homeOk']) {
+      if (row[key] !== true) issues.push(`${row.Step} must record ${key}=true.`)
+    }
+    if (row.errorBoundaryVisible !== false) issues.push(`${row.Step} must record errorBoundaryVisible=false.`)
+    for (const key of ['png', 'uia', 'homePng', 'homeUia']) {
+      const issue = evidencePathIssue(row[key], `${row.Step} ${key}`, validatePath)
+      if (issue) issues.push(issue)
+    }
+    if (!Array.isArray(row.visibleText) || !row.visibleText.length) issues.push(`${row.Step} must record Settings visible text.`)
+    if (!Array.isArray(row.homeVisibleText) || !row.homeVisibleText.length) issues.push(`${row.Step} must record Home visible text.`)
+    if (row.Step.startsWith('appearance-')) {
+      for (const key of ['family', 'mode', 'accent']) {
+        const evidence = row.selectionEvidence?.[key]
+        for (const pathKey of ['png', 'uia']) {
+          const issue = evidencePathIssue(evidence?.[pathKey], `${row.Step} ${key} ${pathKey}`, validatePath)
+          if (issue) issues.push(issue)
+        }
+      }
+    }
+  }
+  return issues
+}
+
+function collectFontScaleIssues(data, validatePath = validateRepositoryEvidencePath) {
+  const issues = []
+  if (!data || typeof data !== 'object' || Array.isArray(data)) return ['Font-scale result must be an object.']
+  if (data.testFontScale !== '1.30') issues.push(`Font scale test recorded ${data.testFontScale ?? 'missing'}, expected 1.30.`)
+  if (data.observedFontScale !== '1.30') issues.push(`Font scale observed ${data.observedFontScale ?? 'missing'}, expected 1.30.`)
+  if (typeof data.serial !== 'string' || !data.serial.trim()) issues.push('Font scale device serial was not recorded.')
+  const original = Number.parseFloat(String(data.originalFontScale ?? ''))
+  const restored = Number.parseFloat(String(data.restoredFontScale ?? ''))
+  if (!Number.isFinite(original) || original <= 0) issues.push('Original font scale must be a positive number.')
+  if (!Number.isFinite(restored) || Math.abs(restored - original) > 0.01) issues.push('Font scale was not restored to the original value.')
+  if (data.settingsOk !== true) issues.push('Font scale Settings surface was not proven.')
+  if (data.homeOk !== true) issues.push('Font scale Home surface was not proven.')
+  if (!Array.isArray(data.settingsVisibleText) || !data.settingsVisibleText.length) issues.push('Font scale Settings visible text is missing.')
+  if (!Array.isArray(data.homeVisibleText) || !data.homeVisibleText.length) issues.push('Font scale Home visible text is missing.')
+  for (const key of ['settingsPng', 'settingsUia', 'homePng', 'homeUia']) {
+    const issue = evidencePathIssue(data[key], `Font scale ${key}`, validatePath)
+    if (issue) issues.push(issue)
+  }
+  return issues
+}
+
 function checkKnowledgeSelfTest() {
   return resultCheck('Knowledge and memory self-test result', settingsKnowledgeSelfTestResultName, (file) => {
     const data = JSON.parse(fs.readFileSync(file, 'utf8'))
-    const issues = validateSettingsKnowledgeSelfTestResult(data)
+    const issues = [
+      ...validateSettingsKnowledgeSelfTestResult(data),
+      ...collectRawEvidenceBindingIssues({
+        sourceRelative: 'test-evidence/qa/raw-settings-knowledge-selftest-results.json',
+        normalizedData: data,
+        format: 'json',
+      }),
+    ]
     return {
       name: 'Knowledge and memory self-test result',
       file: relative(file),
@@ -1393,16 +1927,9 @@ function checkKnowledgeSelfTest() {
 }
 
 function checkSettingsBackResults() {
-  const expectedCases = ['providers', 'context', 'memory', 'knowledge', 'preferences', 'skills', 'mcp']
   return resultCheck('Settings child-page Back results', 'settings-back-dynamic-results.json', (file) => {
     const rows = JSON.parse(fs.readFileSync(file, 'utf8'))
-    const byCase = new Map(rows.map((row) => [row.Case, row]))
-    const issues = []
-    for (const name of expectedCases) {
-      const row = byCase.get(name)
-      if (!row) issues.push(`Missing Back result for ${name}.`)
-      else if (!row.Found || !row.ChildOk || !row.BackOk) issues.push(`${name} Back result is not fully passing.`)
-    }
+    const issues = collectSettingsBackResultIssues(rows)
     return {
       name: 'Settings child-page Back results',
       file: relative(file),
@@ -1412,56 +1939,10 @@ function checkSettingsBackResults() {
   })
 }
 
-function checkFreshProviderBackSmoke() {
-  return resultCheck('Fresh provider Back regression result', path.join('fresh-back-smoke-after-fix', 'providers-back-fixed-results.json'), (file) => {
-    const data = JSON.parse(fs.readFileSync(file, 'utf8'))
-    const issues = []
-    if (!data.childOk) issues.push('Provider child page was not detected before Android Back.')
-    if (!data.backToSettings) issues.push('Android Back did not return from providers to Settings.')
-    if (data.stayedOnProviders) issues.push('Provider page was still visible after Android Back.')
-    if (data.errorAfterBack) issues.push('Error boundary was visible after provider Android Back.')
-    for (const key of ['beforePng', 'afterPng', 'log']) {
-      if (!data[key] || !fs.existsSync(data[key])) issues.push(`Referenced ${key} evidence is missing.`)
-    }
-    return {
-      name: 'Fresh provider Back regression result',
-      file: relative(file),
-      summary: data.backToSettings && !data.stayedOnProviders ? 'providers -> settings passed' : 'providers Back not proven',
-      issues,
-    }
-  })
-}
-
 function checkFreshRouteSmoke() {
-  const expectedNames = [
-    'home',
-    'conversations',
-    'settings',
-    'settings-providers',
-    'settings-context',
-    'settings-memory',
-    'settings-knowledge',
-    'settings-preferences',
-    'settings-skills',
-    'settings-mcp',
-    'source-fallback',
-  ]
   return resultCheck('Fresh route smoke result', path.join('fresh-route-smoke', 'route-smoke-results.json'), (file) => {
     const rows = JSON.parse(fs.readFileSync(file, 'utf8'))
-    const byName = new Map(rows.map((row) => [row.name, row]))
-    const issues = []
-    for (const name of expectedNames) {
-      const row = byName.get(name)
-      if (!row) {
-        issues.push(`Missing fresh route smoke result for ${name}.`)
-        continue
-      }
-      if (!row.expectedOk) issues.push(`${name} did not show its expected route marker.`)
-      if (row.errorText) issues.push(`${name} recorded error text: ${row.errorText}.`)
-      for (const key of ['png', 'uia']) {
-        if (!row[key] || !fs.existsSync(row[key])) issues.push(`${name} referenced ${key} evidence is missing.`)
-      }
-    }
+    const issues = collectFreshRouteSmokeIssues(rows)
     const logFile = path.join(evidenceDir, 'fresh-route-smoke', 'route-smoke-current.log')
     if (!fs.existsSync(logFile)) {
       issues.push('Fresh route smoke log is missing.')
@@ -1483,18 +1964,11 @@ function checkFreshRouteSmoke() {
 function checkFreshKeyboardSmoke() {
   return resultCheck('Fresh home keyboard avoidance result', path.join('fresh-keyboard-smoke-after-fix', 'home-keyboard-open-results.json'), (file) => {
     const data = JSON.parse(fs.readFileSync(file, 'utf8'))
-    const issues = []
-    if (!data.inputFocused) issues.push('Home composer input was not focused.')
-    if (!data.sendButtonPresent) issues.push('Send button was not visible while keyboard smoke ran.')
-    if (!data.homeStillVisible) issues.push('Home route content was not visible while the input was focused.')
-    if (data.errorVisible) issues.push('Error boundary was visible during home keyboard smoke.')
-    for (const key of ['png', 'uia', 'log']) {
-      if (!data[key] || !fs.existsSync(data[key])) issues.push(`Referenced ${key} evidence is missing.`)
-    }
+    const issues = collectFreshKeyboardSmokeIssues(data)
     return {
       name: 'Fresh home keyboard avoidance result',
       file: relative(file),
-      summary: data.inputFocused && data.sendButtonPresent && data.homeStillVisible ? 'composer focused and visible' : 'keyboard state not proven',
+      summary: issues.length ? 'keyboard state not proven' : 'composer focused and non-occluded',
       issues,
     }
   })
@@ -1604,11 +2078,19 @@ function checkWorkArtifactSmoke(options = {}) {
 function checkLocalModelDownloadResults() {
   return resultCheck('Local embedding model download result', localModelDownloadResultName, (file) => {
     const data = JSON.parse(fs.readFileSync(file, 'utf8'))
+    const issues = [
+      ...validateLocalModelDownloadResult(data),
+      ...collectRawEvidenceBindingIssues({
+        sourceRelative: 'test-evidence/qa/raw-settings-context-local-model-download-emulator-results.json',
+        normalizedData: data,
+        format: 'json',
+      }),
+    ]
     return {
       name: 'Local embedding model download result',
       file: relative(file),
       summary: summarizeLocalModelDownloadResult(data),
-      issues: validateLocalModelDownloadResult(data),
+      issues,
     }
   })
 }
@@ -1616,17 +2098,12 @@ function checkLocalModelDownloadResults() {
 function checkMcpOfflineResults() {
   return resultCheck('MCP offline and online functional result', 'settings-mcp-offline-results.json', (file) => {
     const data = JSON.parse(fs.readFileSync(file, 'utf8'))
+    const issues = validateMcpAndroidSmokeResult(data)
     const offlineChecks = data.offlineServer?.checks ?? []
-    const issues = []
-    if (data.builtInServer?.status !== '已连接') issues.push('Built-in MCP server is not recorded as 已连接.')
-    for (const check of offlineChecks) {
-      if (check.status !== 'passed') issues.push(`MCP offline check ${check.name} did not pass.`)
-    }
-    if (data.externalOnlineServer?.status !== 'passed') issues.push('External online MCP sync did not pass.')
     return {
       name: 'MCP offline and online functional result',
       file: relative(file),
-      summary: `${offlineChecks.length} offline checks, online=${data.externalOnlineServer?.status ?? 'missing'}`,
+      summary: `${offlineChecks.length}/${requiredMcpOfflineChecks.length} offline checks, online=${data.externalOnlineServer?.status ?? 'missing'}, schema=${data.schema ?? 'missing'}`,
       issues,
     }
   })
@@ -1635,15 +2112,18 @@ function checkMcpOfflineResults() {
 function checkMcpOnlineRequests() {
   return resultCheck('MCP online server request log', 'settings-mcp-online-cleartext-server-requests.jsonl', (file) => {
     const rows = readJsonl(file)
-    const methods = new Set(rows.map((row) => row.payload?.method).filter(Boolean))
     const issues = []
-    for (const method of ['resources/list', 'prompts/list', 'tools/list', 'initialize']) {
-      if (!methods.has(method)) issues.push(`MCP request log is missing ${method}.`)
+    const result = readJsonFile(path.join(evidenceDir, 'settings-mcp-offline-results.json'))
+    if (!result) {
+      issues.push('MCP request log cannot be correlated because the result JSON is missing.')
+    } else {
+      issues.push(...validateMcpOnlineRequestRows(rows, { runToken: result.runToken }))
     }
+    const methods = new Set(rows.map((row) => row.payload?.method).filter(Boolean))
     return {
       name: 'MCP online server request log',
       file: relative(file),
-      summary: [...methods].join(', ') || 'no methods',
+      summary: `${[...methods].join(', ') || 'no methods'}; required=${requiredMcpMethods.length}`,
       issues,
     }
   })
@@ -1652,24 +2132,20 @@ function checkMcpOnlineRequests() {
 function checkPreferencesPersistence() {
   return resultCheck('Preferences persistence result', 'settings-preferences-persistence-results.json', (file) => {
     const data = JSON.parse(fs.readFileSync(file, 'utf8'))
-    const issues = []
-    if (!data.changedAfterToggle) issues.push('Preference switch did not change after tap.')
-    if (!data.persistedAfterRestart) issues.push('Preference switch did not persist after restart.')
+    const issues = collectPreferencePersistenceIssues(data)
     return {
       name: 'Preferences persistence result',
       file: relative(file),
-      summary: `${data.label ?? 'preference'} ${data.before?.inferredState ?? '?'} -> ${data.afterRestart?.inferredState ?? '?'}`,
+      summary: `${data.label ?? 'preference'} ${String(data.before?.checked ?? '?')} -> ${String(data.afterRestart?.checked ?? '?')}`,
       issues,
     }
   })
 }
 
 function checkThemeLocaleResults() {
-  const expectedSteps = ['theme-dark', 'language-en', 'language-ja', 'restore-zh', 'restore-system']
   return resultCheck('Theme and locale switch result', 'theme-locale-results.json', (file) => {
     const rows = JSON.parse(fs.readFileSync(file, 'utf8'))
-    const steps = new Set(rows.map((row) => row.Step))
-    const issues = expectedSteps.filter((step) => !steps.has(step)).map((step) => `Missing theme/locale step ${step}.`)
+    const issues = collectThemeLocaleIssues(rows)
     return {
       name: 'Theme and locale switch result',
       file: relative(file),
@@ -1682,14 +2158,43 @@ function checkThemeLocaleResults() {
 function checkFontScaleResults() {
   return resultCheck('Font scale result', 'font-scale-results.json', (file) => {
     const data = JSON.parse(fs.readFileSync(file, 'utf8'))
-    const issues = []
-    if (data.testFontScale !== '1.30') issues.push(`Font scale test recorded ${data.testFontScale}, expected 1.30.`)
-    if (data.originalFontScale !== '1.0') issues.push(`Original font scale recorded ${data.originalFontScale}, expected 1.0.`)
-    if (!data.serial) issues.push('Font scale device serial was not recorded.')
+    const issues = collectFontScaleIssues(data)
     return {
       name: 'Font scale result',
       file: relative(file),
-      summary: `${data.originalFontScale ?? '?'} -> ${data.testFontScale ?? '?'}`,
+      summary: `${data.originalFontScale ?? '?'} -> ${data.testFontScale ?? '?'} -> restored ${data.restoredFontScale ?? '?'}`,
+      issues,
+    }
+  })
+}
+
+function checkSettingsPortableRoundTrip() {
+  return resultCheck('Settings portable data round-trip result', portableRoundTripResultName, (file) => {
+    const data = JSON.parse(fs.readFileSync(file, 'utf8'))
+    const issues = validatePortableRoundTripResult(data, { validatePath: validateRepositoryEvidencePath })
+    return {
+      name: 'Settings portable data round-trip result',
+      file: relative(file),
+      summary: summarizePortableRoundTripResult(data),
+      issues,
+    }
+  })
+}
+
+function checkSettingsPortableLargeBackupRoundTrip() {
+  return resultCheck('Settings portable large-backup round-trip result', portableLargeBackupRoundTripResultName, (file) => {
+    const data = JSON.parse(fs.readFileSync(file, 'utf8'))
+    const issues = validatePortableRoundTripResult(data, {
+      minExportBytes: portableLargeBackupMinJsonBytes,
+      minFixtureBytes: portableLargeBackupMinJsonBytes,
+      minSystemPromptBytes: portableLargeBackupMinJsonBytes,
+      validatePath: validateRepositoryEvidencePath,
+    })
+    if (data.scenario !== 'large-backup') issues.push('Portable large-backup result must record scenario=large-backup.')
+    return {
+      name: 'Settings portable large-backup round-trip result',
+      file: relative(file),
+      summary: summarizePortableRoundTripResult(data),
       issues,
     }
   })
@@ -1699,6 +2204,7 @@ function checkProviderRuntimeAndroidResults() {
   return resultCheck('Provider Runtime Android result', path.basename(providerRuntimeAndroidResultRelativePath), (file) => {
     const data = JSON.parse(fs.readFileSync(file, 'utf8'))
     const expected = readExpectedAppConfig()
+    const currentApkSmoke = readJsonFile(currentApkSmokePath)
     const scenarios = Array.isArray(data.scenarios)
       ? data.scenarios.filter((row) => row && typeof row === 'object')
       : []
@@ -1709,6 +2215,7 @@ function checkProviderRuntimeAndroidResults() {
       runLogPath: providerRuntimeAndroidRunLogRelativePath,
       validatePath: validateRepositoryEvidencePath,
     }).map(formatProviderRuntimeAndroidIssue)
+    issues.push(...collectProviderRuntimeCurrentArtifactIssues(data, currentApkSmoke))
 
     return {
       name: 'Provider Runtime Android result',
@@ -1717,6 +2224,159 @@ function checkProviderRuntimeAndroidResults() {
       issues,
     }
   })
+}
+
+function collectProviderRuntimeCurrentArtifactIssues(result, currentApkSmoke) {
+  if (!currentApkSmoke || typeof currentApkSmoke !== 'object') {
+    return ['Provider Runtime Android result cannot be correlated because current APK smoke evidence is missing.']
+  }
+
+  const issues = []
+  const smokeApk = currentApkSmoke.apk && typeof currentApkSmoke.apk === 'object' ? currentApkSmoke.apk : {}
+  const smokeInstalled = currentApkSmoke.installed && typeof currentApkSmoke.installed === 'object' ? currentApkSmoke.installed : {}
+  const smokeDevice = currentApkSmoke.device ?? smokeInstalled.deviceSerial ?? null
+  if (!smokeApk.path || result?.apkPath !== smokeApk.path) {
+    issues.push(`Provider Runtime Android apkPath ${result?.apkPath ?? 'missing'} does not match current APK smoke ${smokeApk.path ?? 'missing'}.`)
+  }
+  if (!smokeDevice || result?.deviceSerial !== smokeDevice || result?.installed?.deviceSerial !== smokeDevice) {
+    issues.push(`Provider Runtime Android device ${result?.deviceSerial ?? 'missing'} does not match current APK smoke ${smokeDevice ?? 'missing'}.`)
+  }
+  if (!smokeInstalled.lastUpdateTime || result?.installed?.lastUpdateTime !== smokeInstalled.lastUpdateTime) {
+    issues.push('Provider Runtime Android installed-package timestamp does not match current APK smoke.')
+  }
+
+  const generatedAtMs = Date.parse(result?.generatedAt ?? '')
+  const apkModifiedAtMs = Date.parse(smokeApk.modifiedAt ?? '')
+  if (!Number.isFinite(apkModifiedAtMs)) {
+    issues.push('Current APK smoke does not record a parseable APK modification time for Provider Runtime correlation.')
+  } else if (!Number.isFinite(generatedAtMs) || generatedAtMs < apkModifiedAtMs) {
+    issues.push('Provider Runtime Android result predates the current APK artifact.')
+  }
+
+  const apkSha256 = typeof smokeApk.sha256 === 'string' ? smokeApk.sha256.toLowerCase() : ''
+  const installedSha256 = typeof smokeInstalled.packageSha256 === 'string' ? smokeInstalled.packageSha256.toLowerCase() : ''
+  if (!/^[a-f0-9]{64}$/.test(apkSha256) || !/^[a-f0-9]{64}$/.test(installedSha256) || apkSha256 !== installedSha256) {
+    issues.push('Current APK smoke does not prove APK/device SHA256 parity for Provider Runtime evidence.')
+  }
+  return issues
+}
+
+function collectProviderActivationCoverage() {
+  const result = readJsonFile(path.join(root, providerRuntimeAndroidResultRelativePath))
+  const currentApkSmoke = readJsonFile(currentApkSmokePath)
+  const scenario = Array.isArray(result?.scenarios)
+    ? result.scenarios.find((item) => item?.id === 'provider-activation')
+    : null
+  const issues = result
+    ? validateProviderRuntimeAndroidResult(result, {
+        expectedPackageName: appPackageName,
+        expected: readExpectedAppConfig(),
+        resultPath: providerRuntimeAndroidResultRelativePath,
+        runLogPath: providerRuntimeAndroidRunLogRelativePath,
+        validatePath: validateRepositoryEvidencePath,
+      })
+    : ['Provider Runtime Android result is missing.']
+  if (result) issues.push(...collectProviderRuntimeCurrentArtifactIssues(result, currentApkSmoke))
+  if (scenario) {
+    issues.push(...validateProviderRuntimeActivationEvidenceContract(scenario.activationEvidence, {
+      validatePath: validateRepositoryEvidencePath,
+    }))
+  } else {
+    issues.push('Provider Runtime Android activation scenario is missing.')
+  }
+  return {
+    qualified: scenario?.status === 'passed' && issues.length === 0,
+    progressUia: scenario?.activationEvidence?.progress?.uia ?? providerRuntimeActivationEvidencePaths.progress.uia,
+    resultUia: scenario?.activationEvidence?.result?.uia ?? providerRuntimeActivationEvidencePaths.result.uia,
+    issues,
+  }
+}
+
+function collectLongContentStressCoverage(options = {}) {
+  const repoRoot = options.repoRoot ?? root
+  const qaEvidenceDir = options.evidenceDir ?? path.join(repoRoot, 'test-evidence', 'qa')
+  const resultPath = options.resultPath ?? path.join(qaEvidenceDir, longContentSmokeResultName)
+  if (!fs.existsSync(resultPath)) return { qualified: false, issues: ['Long-content smoke result is missing visual stress evidence.'] }
+  let result
+  try {
+    result = JSON.parse(fs.readFileSync(resultPath, 'utf8'))
+  } catch (error) {
+    return { qualified: false, issues: [`Long-content smoke result could not be parsed: ${error.message}`] }
+  }
+  const issues = []
+  const generatedAtMs = Date.parse(result?.generatedAt ?? '')
+  if (!Number.isFinite(generatedAtMs)) issues.push('Long-content smoke result has an invalid generatedAt timestamp.')
+  if (typeof result?.device !== 'string' || !result.device.trim()) issues.push('Long-content smoke result does not identify a device.')
+  if (result?.fixture !== longContentFixtureRelativePath) {
+    issues.push(`Long-content smoke result fixture must be ${longContentFixtureRelativePath}.`)
+  }
+  if (result?.requestLog !== longContentRawRequestLogRelativePath) {
+    issues.push(`Long-content smoke result requestLog must be ${longContentRawRequestLogRelativePath}.`)
+  }
+  if (!Array.isArray(result?.errors)) {
+    issues.push('Long-content smoke result errors must be an array.')
+  } else if (result.errors.length) {
+    issues.push(...result.errors.map((error) => `Long-content collector error: ${error}.`))
+  }
+
+  const resultModifiedMs = fs.statSync(resultPath).mtimeMs
+  const requestLogPath = path.join(repoRoot, longContentRawRequestLogRelativePath)
+  if (!fs.existsSync(requestLogPath)) {
+    issues.push('Long-content smoke raw request log is missing.')
+  } else {
+    const requestRows = readJsonl(requestLogPath)
+    issues.push(...validateLongContentRequestRows(requestRows).map((issue) => `Long-content smoke raw request log: ${issue}`))
+    const projectedRows = requestRows.map((row) => ({
+      method: row.method,
+      url: row.url,
+      path: row.path,
+      body: parseRequestBody(row.body),
+    }))
+    if (!Array.isArray(result?.requests)) {
+      issues.push('Long-content smoke result requests must be an array.')
+    } else if (JSON.stringify(result.requests) !== JSON.stringify(projectedRows)) {
+      issues.push('Long-content smoke result requests do not match the canonical raw request log rows.')
+    }
+    const requestLogModifiedMs = fs.statSync(requestLogPath).mtimeMs
+    if (Number.isFinite(generatedAtMs) && requestLogModifiedMs + releaseFreshnessToleranceMs < generatedAtMs) {
+      issues.push('Long-content smoke raw request log predates the recorded collector run.')
+    }
+    if (resultModifiedMs + releaseFreshnessToleranceMs < requestLogModifiedMs) {
+      issues.push('Long-content smoke raw request log is newer than the collector result.')
+    }
+  }
+
+  const evidence = result?.longContentStressEvidence
+  if (evidence?.passed !== true) issues.push('Long-content smoke result does not report passed visual stress evidence.')
+  for (const [kind, expected] of Object.entries(longContentStressEvidencePaths)) {
+    const capture = evidence?.captures?.[kind]
+    if (capture?.png !== expected.png || capture?.uia !== expected.uia) {
+      issues.push(`Long-content ${kind} evidence is not bound to the canonical screenshot/UIA pair.`)
+      continue
+    }
+    const uiaPath = path.join(repoRoot, expected.uia)
+    const resolvedPngPath = path.join(repoRoot, expected.png)
+    if (!fs.existsSync(resolvedPngPath) || fs.statSync(resolvedPngPath).size <= 0) issues.push(`Long-content ${kind} screenshot is missing or empty.`)
+    if (!fs.existsSync(uiaPath) || fs.statSync(uiaPath).size <= 0) {
+      issues.push(`Long-content ${kind} UIA evidence is missing or empty.`)
+      continue
+    }
+    const uia = fs.readFileSync(uiaPath, 'utf8')
+    for (const marker of longContentStressEvidenceMarkers[kind] ?? []) {
+      if (!uia.includes(marker)) issues.push(`Long-content ${kind} UIA evidence is missing marker ${marker}.`)
+    }
+    for (const [label, file] of [['screenshot', resolvedPngPath], ['UIA', uiaPath]]) {
+      if (!fs.existsSync(file)) continue
+      const modifiedMs = fs.statSync(file).mtimeMs
+      if (Number.isFinite(generatedAtMs) && modifiedMs + releaseFreshnessToleranceMs < generatedAtMs) {
+        issues.push(`Long-content ${kind} ${label} evidence predates the recorded collector run.`)
+      }
+      if (resultModifiedMs + releaseFreshnessToleranceMs < modifiedMs) {
+        issues.push(`Long-content ${kind} ${label} evidence is newer than the collector result.`)
+      }
+    }
+  }
+  return { qualified: issues.length === 0, issues }
 }
 
 function checkAndroidStatusNotificationEvidence() {
@@ -1767,6 +2427,12 @@ function formatAndroidDeviceTaskEvidenceSummary(data) {
   return `${status}, ${ready}/${total} ready, ${device}, ${boundary}`
 }
 
+function arraysEqual(actual, expected) {
+  return Array.isArray(actual)
+    && actual.length === expected.length
+    && actual.every((value, index) => value === expected[index])
+}
+
 function collectAndroidDeviceTaskEvidenceIssues(data, options = {}) {
   if (!data || typeof data !== 'object') return ['Android device task evidence is not an object.']
   const issues = []
@@ -1804,6 +2470,25 @@ function collectAndroidDeviceTaskEvidenceIssues(data, options = {}) {
   if (data.runtimeBoundary?.requiresSystemClockOrCalendarConfirmation !== true) {
     issues.push('Android device task evidence must record runtimeBoundary.requiresSystemClockOrCalendarConfirmation=true.')
   }
+  for (const check of [
+    'canonicalWorkflowCatalogAligned',
+    'integrationsToolCatalogAligned',
+    'runtimeAuditVerified',
+    'nativePluginScoped',
+  ]) {
+    if (data.contractChecks?.[check] !== true) {
+      issues.push(`Android device task evidence must record contractChecks.${check}=true.`)
+    }
+  }
+  if (!arraysEqual(data.permissions?.allowedDeclared, androidDeviceTaskAllowedPermissions)) {
+    issues.push('Android device task evidence must record the exact canonical allowed permission declarations.')
+  }
+  if (!arraysEqual(data.permissions?.blockedDeclared, androidDeviceTaskBlockedPermissions)) {
+    issues.push('Android device task evidence must record the exact canonical blocked permission declarations.')
+  }
+  if (!Array.isArray(data.permissions?.forbiddenDeclared) || data.permissions.forbiddenDeclared.length) {
+    issues.push('Android device task evidence must record no forbidden permission declarations.')
+  }
   if (!data.nativeModule || typeof data.nativeModule !== 'object') {
     issues.push('Android device task evidence must record AndroidDeviceTools nativeModule state.')
   } else {
@@ -1811,7 +2496,7 @@ function collectAndroidDeviceTaskEvidenceIssues(data, options = {}) {
     if (data.nativeModule.templateGeneratedInSync !== true) {
       issues.push('Android device task evidence must prove AndroidDeviceTools generated native files match plugin templates.')
     }
-    for (const method of ['scanDirectory', 'ensureDirectory', 'copyDocument', 'moveDocument', 'renameDocument']) {
+    for (const method of ['scanDirectory', 'ensureDirectory', 'copyDocument', 'moveDocument', 'renameDocument', 'publishPortableJsonFileToDownloads']) {
       if (data.nativeModule.methods?.[method] !== true) {
         issues.push(`Android device task evidence must prove AndroidDeviceTools native method ${method} is available.`)
       }
@@ -1891,9 +2576,6 @@ function collectAndroidDeviceTaskEvidenceIssues(data, options = {}) {
   if (data.status === 'collected') {
     if (!data.selectedDevice?.serial) issues.push('Collected Android device task evidence must record selectedDevice.serial.')
     if (data.package?.installed !== true) issues.push('Collected Android device task evidence must prove the app package is installed.')
-    if (Array.isArray(data.permissions?.forbiddenDeclared) && data.permissions.forbiddenDeclared.length) {
-      issues.push(`Collected Android device task evidence found forbidden permissions: ${data.permissions.forbiddenDeclared.join(', ')}.`)
-    }
     if (!data.intentResolvers?.directoryPicker) issues.push('Collected Android device task evidence must record directory picker resolver.')
     if (!data.intentResolvers?.apkInstaller) issues.push('Collected Android device task evidence must record APK installer resolver.')
     if (!data.intentResolvers?.alarm) issues.push('Collected Android device task evidence must record alarm resolver.')
@@ -2132,7 +2814,7 @@ function validateRepositoryEvidencePath(value) {
 }
 
 function checkMockChatRequests() {
-  return resultCheck('Mock provider chat request log', 'mock-openai-compatible-requests.jsonl', (file) => {
+  return resultCheck('Mock provider chat request log', mockProviderChatRequestLogName, (file) => {
     const rows = readJsonl(file)
     const bodies = rows.map((row) => parseRequestBody(row.body)).filter(Boolean)
     const hasModels = rows.some((row) => row.method === 'GET' && /\/v1\/models/.test(row.url ?? ''))
@@ -2142,23 +2824,122 @@ function checkMockChatRequests() {
     if (!hasModels) issues.push('Mock provider log does not include /v1/models discovery.')
     if (!hasProviderTest) issues.push('Mock provider log does not include non-streaming test request.')
     if (!hasStreaming) issues.push('Mock provider log does not include streaming chat request.')
+    const resultFile = path.join(evidenceDir, mockProviderChatResultName)
+    if (!fs.existsSync(resultFile)) {
+      issues.push(`Missing result evidence file ${mockProviderChatResultName}.`)
+    } else {
+      const result = readJsonFile(resultFile)
+      issues.push(...validateMockProviderChatResult(result, rows, {
+        resultFile,
+        requestLogFile: file,
+      }))
+    }
     return {
       name: 'Mock provider chat request log',
       file: relative(file),
-      summary: `${rows.length} requests`,
+      summary: `${rows.length} requests with Chat interaction result`,
       issues,
     }
   })
 }
 
+function validateMockProviderChatResult(result, rows, options = {}) {
+  const issues = []
+  if (!result || typeof result !== 'object' || Array.isArray(result)) {
+    return ['Mock provider chat result is not an object.']
+  }
+  const generatedAtMs = Date.parse(result.generatedAt)
+  if (!Number.isFinite(generatedAtMs)) issues.push('Mock provider chat result has an invalid generatedAt timestamp.')
+  if (typeof result.device !== 'string' || !result.device.trim()) issues.push('Mock provider chat result does not identify a device.')
+  if (result.fixture !== mockProviderChatFixtureRelativePath) {
+    issues.push(`Mock provider chat result fixture must be ${mockProviderChatFixtureRelativePath}.`)
+  }
+  if (result.requestLog !== mockProviderChatRequestLogRelativePath) {
+    issues.push(`Mock provider chat result requestLog must be ${mockProviderChatRequestLogRelativePath}.`)
+  }
+  for (const key of requiredMockProviderChatStates) {
+    if (result[key] !== true) issues.push(`Mock provider chat result must record ${key}=true.`)
+  }
+  if (!Array.isArray(result.errors)) {
+    issues.push('Mock provider chat result errors must be an array.')
+  } else if (result.errors.length) {
+    issues.push(...result.errors.map((error) => `Mock provider chat collector error: ${error}.`))
+  }
+
+  const validatePath = options.validatePath === false
+    ? null
+    : options.validatePath ?? validateRepositoryEvidencePath
+  const captures = result.captures && typeof result.captures === 'object' && !Array.isArray(result.captures)
+    ? result.captures
+    : {}
+  for (const [key, expectedPath] of Object.entries(requiredMockProviderChatCaptures)) {
+    if (captures[key] !== expectedPath) {
+      issues.push(`Mock provider chat result ${key} must reference ${expectedPath}.`)
+      continue
+    }
+    if (validatePath) {
+      const pathIssue = validatePath(captures[key])
+      if (pathIssue) issues.push(`Mock provider chat result ${key} evidence is ${pathIssue}.`)
+    }
+  }
+
+  const projectedRows = Array.isArray(rows)
+    ? rows.map((row) => ({
+        method: row.method,
+        url: row.url,
+        path: row.path,
+        body: parseRequestBody(row.body),
+      }))
+    : []
+  if (!Array.isArray(result.requests)) {
+    issues.push('Mock provider chat result requests must be an array.')
+  } else if (JSON.stringify(result.requests) !== JSON.stringify(projectedRows)) {
+    issues.push('Mock provider chat result requests do not match the canonical request log rows.')
+  }
+
+  if (Number.isFinite(generatedAtMs) && options.resultFile && options.requestLogFile) {
+    const resultModifiedMs = fs.statSync(options.resultFile).mtimeMs
+    const requestLogModifiedMs = fs.statSync(options.requestLogFile).mtimeMs
+    if (requestLogModifiedMs + releaseFreshnessToleranceMs < generatedAtMs) {
+      issues.push('Mock provider chat request log predates the recorded collector run.')
+    }
+    if (resultModifiedMs + releaseFreshnessToleranceMs < requestLogModifiedMs) {
+      issues.push('Mock provider chat request log is newer than the collector result.')
+    }
+  }
+  return issues
+}
+
 function checkLongContentRequests() {
   return resultCheck('Long content provider request log', longContentRequestLogName, (file) => {
     const rows = readJsonl(file)
-    const issues = validateLongContentRequestRows(rows)
+    const issues = [
+      ...validateLongContentRequestRows(rows),
+      ...collectRawEvidenceBindingIssues({
+        sourceRelative: 'test-evidence/qa/raw-long-content-mock-openai-requests.jsonl',
+        normalizedData: rows,
+        normalizedFile: file,
+        format: 'jsonl',
+        requireByteIdentity: true,
+      }),
+    ]
+    const smokeResultPath = path.join(evidenceDir, 'long-content-smoke-results.json')
+    if (!fs.existsSync(smokeResultPath)) {
+      issues.push('Long-content smoke result is missing durable SQLite state evidence.')
+    } else {
+      const smokeResult = JSON.parse(fs.readFileSync(smokeResultPath, 'utf8'))
+      issues.push(...validateLongContentDurableState(smokeResult.durableState).map((issue) => `Long-content durable state: ${issue}.`))
+      if (Array.isArray(smokeResult.durableStateIssues) && smokeResult.durableStateIssues.length) {
+        issues.push(...smokeResult.durableStateIssues.map((issue) => `Long-content collector reported durable-state issue: ${issue}.`))
+      }
+      if (Array.isArray(smokeResult.errors) && smokeResult.errors.length) {
+        issues.push(...smokeResult.errors.map((issue) => `Long-content collector error: ${issue}.`))
+      }
+    }
     return {
       name: 'Long content provider request log',
       file: relative(file),
-      summary: `${rows.length} requests`,
+      summary: `${rows.length} requests with durable SQLite state`,
       issues,
     }
   })
@@ -2167,7 +2948,14 @@ function checkLongContentRequests() {
 function checkCorruptMirrorRequests() {
   return resultCheck('Local model corrupt mirror request log', localModelCorruptMirrorLogName, (file) => {
     const rows = readJsonl(file)
-    const issues = validateLocalModelCorruptMirrorRows(rows)
+    const issues = [
+      ...validateLocalModelCorruptMirrorRows(rows),
+      ...collectRawEvidenceBindingIssues({
+        sourceRelative: 'test-evidence/qa/raw-local-model-corrupt-mirror-requests.jsonl',
+        normalizedData: rows,
+        format: 'jsonl',
+      }),
+    ]
     return {
       name: 'Local model corrupt mirror request log',
       file: relative(file),
@@ -3508,102 +4296,12 @@ function collectAndroidStatusNotificationMatrixGateIssues(text, options = {}) {
   return issues
 }
 
-function collectAndroidDeviceTaskMatrixGateIssues(text, options = {}) {
-  const repoRoot = options.repoRoot ?? root
-  const packageJson = options.packageJson ?? readJsonFile(path.join(repoRoot, 'package.json')) ?? {}
-  const scripts = packageJson.scripts ?? {}
-  const issues = []
-  const requiredSnippets = [
-    'Android capability boundary audit',
-    'src/services/agent/androidCapabilityBoundary.ts',
-    'scripts/android-capability-boundary-audit.js',
-    'islemind.android.capability-boundary.v1',
-    'islemind-android-app-runtime',
-    'qa-and-evidence-only',
-    'orchestrated-tool-request-only',
-    'user-approved-workflow-template',
-    'system intent request with visible fallback',
-    'mcp-orchestrated-tool-request',
-    'raw filesystem path access',
-    'silent install',
-    'full phone cleaner',
-    'exact alarm permission',
-    'calendar read/write permissions',
-    'Android workflow template audit',
-    'scripts/android-workflow-template-audit.js',
-    'agent-workflow-android-download-organize',
-    'agent-workflow-android-file-copy-rename',
-    'agent-workflow-android-apk-install',
-    'agent-workflow-android-app-cache-cleanup',
-    'agent-workflow-android-alarm',
-    'agent-workflow-android-calendar-todo',
-    'Android permission audit',
-    'scripts/android-permission-audit.js',
-    'REQUEST_INSTALL_PACKAGES',
-    'READ_CALENDAR',
-    'WRITE_CALENDAR',
-    'READ_MEDIA_IMAGES',
-    'blockedPermissions',
-    'tools:node="remove"',
-    'Android device task evidence',
-    'test-evidence/qa/android-device-task-evidence.json',
-    'download-directory-access',
-    'saf-file-apply-undo',
-    'saf-file-copy-rename',
-    'apk-installer-handoff',
-    'alarm-intent-create-request',
-    'calendar-todo-handoff',
-    'app-cache-cleanup',
-    'runtimeBoundary.intrusive=false',
-    'runtimeBoundary.installsApk=false',
-    'runtimeBoundary.modifiesFiles=false',
-    'runtimeBoundary.createsAlarmOrCalendarEntry=false',
-    'visible Android undo entry',
-    'android.files.undo_operations',
-    'Undo operations JSON',
-    'pending visible confirmation',
-    'operationKind=file-undo',
-    'confirmationState=visible-action-recorded',
-    'deleteSupported=false',
-  ]
-  for (const snippet of requiredSnippets) {
-    if (!text.includes(snippet)) issues.push(`Matrix is missing Android device task gate value: ${snippet}.`)
-  }
-  const requiredCommands = [
-    ['bun run test:android-capability-boundary', /(^|[^:\w-])bun run test:android-capability-boundary([^:\w-]|$)/],
-    ['bun run test:android-permission-audit', /(^|[^:\w-])bun run test:android-permission-audit([^:\w-]|$)/],
-    ['bun run test:android-workflow-templates', /(^|[^:\w-])bun run test:android-workflow-templates([^:\w-]|$)/],
-    ['bun run test:android-device-task:evidence -- --self-test', /bun run test:android-device-task:evidence -- --self-test/],
-    ['bun run test:android-device-task:evidence', /(^|[^:\w-])bun run test:android-device-task:evidence([^:\w-]|$)/],
-  ]
-  for (const [command, pattern] of requiredCommands) {
-    if (!pattern.test(text)) issues.push(`Matrix is missing Android device task command: ${command}.`)
-  }
-
-  const expectedScripts = {
-    'test:android-capability-boundary': 'node scripts/android-capability-boundary-audit.js',
-    'test:android-permission-audit': 'node scripts/android-permission-audit.js',
-    'test:android-workflow-templates': 'node scripts/android-workflow-template-audit.js',
-    'test:android-device-task:evidence': 'node scripts/collect-android-device-task-evidence.js',
-  }
-  for (const [name, expected] of Object.entries(expectedScripts)) {
-    if (scripts[name] !== expected) issues.push(`package.json script ${name} must be ${expected}.`)
-  }
-  for (const relativePath of [
-    'src/services/agent/androidCapabilityBoundary.ts',
-    'scripts/android-capability-boundary-audit.js',
-    'scripts/android-permission-audit.js',
-    'scripts/collect-android-device-task-evidence.js',
-    'scripts/android-workflow-template-audit.js',
-    `test-evidence/qa/${androidDeviceTaskEvidenceName}`,
-  ]) {
-    if (!fs.existsSync(path.join(repoRoot, relativePath))) issues.push(`Android device task release gate file is missing: ${relativePath}.`)
-  }
-  return issues
+function readJsonl(file) {
+  return parseJsonlText(fs.readFileSync(file, 'utf8'))
 }
 
-function readJsonl(file) {
-  return fs.readFileSync(file, 'utf8')
+function parseJsonlText(text) {
+  return text
     .split(/\r?\n/)
     .map((line) => line.trim())
     .filter(Boolean)
@@ -3671,12 +4369,15 @@ function runSelfTest() {
     const cleanHits = result.hits.filter((hit) => hit.file.endsWith('clean-evidence.log'))
     if (cleanHits.length) throw new Error(`Sensitive evidence self-test flagged masked samples: ${cleanHits.map((hit) => hit.label).join(', ')}`)
     console.log(`Sensitive evidence self-test passed (${result.hits.length} hits across ${result.scannedFiles} files).`)
+    runI18nStaticKeyAuditSelfTest(tempRoot)
     runProviderRuntimeSensitiveDataSelfTest(tempRoot)
     runProviderRuntimeKeyboardStateSelfTest(tempRoot)
+    runProviderRuntimeActivationEvidenceSelfTest()
     runProviderRuntimeScenarioSelfTest(tempRoot)
     runProviderRuntimeScenarioStateSelfTest()
     runProviderRuntimeScenarioEvidenceSelfTest(tempRoot)
     runProviderRuntimeScenarioStepsSelfTest(tempRoot)
+    runProviderRuntimeCurrentArtifactSelfTest()
     runReleaseFreshnessSelfTest(tempRoot)
     runReleaseProvenanceMatrixGateSelfTest()
     runReleaseRecoveryWorklistSelfTest()
@@ -3696,16 +4397,118 @@ function runSelfTest() {
     runRuntimeUiaRecaptureTargetSelfTest()
     runArchitectureBoundaryAuditSelfTest()
     runResultEvidenceRecoveryPlanSelfTest()
+    runMilestoneFResultValidatorSelfTest()
+    runMcpAndroidSmokeContractSelfTest()
     runSettingsKnowledgeSelfTestContractSelfTest()
+    runSettingsPortableRoundTripContractSelfTest()
     runLocalModelDownloadResultContractSelfTest()
     runLongContentRequestLogContractSelfTest()
+    runLongContentStressCoverageSelfTest(tempRoot)
+    runMockProviderChatResultSelfTest()
+    runRawEvidenceProvenanceSelfTest(tempRoot)
     runLocalModelCorruptMirrorLogContractSelfTest()
     runEvidenceCoverageSelfTest()
+    runHorizontalScrollEdgePartialSelfTest(tempRoot)
     runRuntimeDebugOverlaySelfTest(tempRoot)
     runArchitectureBoundaryEvidenceGateSelfTest()
   } finally {
     fs.rmSync(tempRoot, { recursive: true, force: true })
   }
+}
+
+function runHorizontalScrollEdgePartialSelfTest(tempRoot) {
+  const file = path.join(tempRoot, 'runtime-horizontal-scroll-edge.uia.xml')
+  fs.writeFileSync(file, [
+    '<?xml version="1.0" encoding="UTF-8"?>',
+    '<hierarchy>',
+    '<node class="android.widget.FrameLayout" package="com.islemind.app" clickable="false" text="" content-desc="" bounds="[0,0][1080,2400]">',
+    '<node class="android.widget.HorizontalScrollView" package="com.islemind.app" clickable="false" scrollable="true" text="" content-desc="Actions" bounds="[55,400][958,539]">',
+    '<node class="android.widget.Button" package="com.islemind.app" clickable="true" text="" content-desc="Copy trace" bounds="[55,411][44,530]" />',
+    '<node class="android.widget.Button" package="com.islemind.app" clickable="true" text="" content-desc="Actual small target" bounds="[55,430][75,450]" />',
+    '<node class="android.widget.Button" package="com.islemind.app" clickable="true" text="" content-desc="Continue work" bounds="[957,411][958,530]">',
+    '<node class="android.view.View" package="com.islemind.app" clickable="false" text="" content-desc="" bounds="[1000,433][1038,474]" />',
+    '</node>',
+    '</node>',
+    '</node>',
+    '</hierarchy>',
+  ].join(''), 'utf8')
+
+  const snapshot = auditUiaSnapshot(file, null)
+  if (snapshot.edgePartialTargets.length !== 2) {
+    throw new Error(`Horizontal scroll edge self-test expected two clipped edge children, got ${snapshot.edgePartialTargets.length}.`)
+  }
+  if (snapshot.invalidBoundsTargets.length !== 0) {
+    throw new Error(`Horizontal scroll edge self-test expected no blocking invalid bounds, got ${snapshot.invalidBoundsTargets.length}.`)
+  }
+  if (snapshot.smallTargets.length !== 1 || snapshot.smallTargets[0].label !== 'Actual small target') {
+    throw new Error('Horizontal scroll edge self-test must retain a genuinely small in-viewport control as blocking.')
+  }
+  console.log('Horizontal scroll edge self-test passed (clipped children are partial; in-viewport small targets still block).')
+}
+
+function runMockProviderChatResultSelfTest() {
+  const rows = [
+    { method: 'GET', url: '/v1/models', path: '/v1/models', body: null },
+    {
+      method: 'POST',
+      url: '/v1/chat/completions',
+      path: '/v1/chat/completions',
+      body: JSON.stringify({ model: 'islemind-mock-chat', stream: false, max_tokens: 32 }),
+    },
+    {
+      method: 'POST',
+      url: '/v1/chat/completions',
+      path: '/v1/chat/completions',
+      body: JSON.stringify({ model: 'islemind-mock-chat', stream: true, max_tokens: 4096 }),
+    },
+  ]
+  const result = {
+    generatedAt: '2026-07-20T00:00:00.000Z',
+    device: 'emulator-self-test',
+    fixture: mockProviderChatFixtureRelativePath,
+    requestLog: mockProviderChatRequestLogRelativePath,
+    captures: { ...requiredMockProviderChatCaptures },
+    errors: [],
+    requests: rows.map((row) => ({ ...row, body: parseRequestBody(row.body) })),
+  }
+  for (const key of requiredMockProviderChatStates) result[key] = true
+  const validIssues = validateMockProviderChatResult(result, rows, { validatePath: false })
+  if (validIssues.length) {
+    throw new Error(`Mock provider chat result self-test rejected a passing fixture: ${validIssues.join(', ')}`)
+  }
+
+  const missingDelete = { ...result, deleteConfirmVisible: false }
+  if (!validateMockProviderChatResult(missingDelete, rows, { validatePath: false }).some((issue) => issue.includes('deleteConfirmVisible=true'))) {
+    throw new Error('Mock provider chat result self-test accepted a missing Delete confirmation.')
+  }
+  const mismatchedRequests = { ...result, requests: result.requests.slice(0, -1) }
+  if (!validateMockProviderChatResult(mismatchedRequests, rows, { validatePath: false }).some((issue) => issue.includes('do not match'))) {
+    throw new Error('Mock provider chat result self-test accepted request rows from a different run.')
+  }
+  const missingCapture = {
+    ...result,
+    captures: { ...result.captures, sourceBackUia: null },
+  }
+  if (!validateMockProviderChatResult(missingCapture, rows, { validatePath: false }).some((issue) => issue.includes('sourceBackUia'))) {
+    throw new Error('Mock provider chat result self-test accepted a missing paired capture.')
+  }
+  console.log('Mock provider chat result contract self-test passed (interaction, request binding, and paired captures fail closed).')
+}
+
+function runI18nStaticKeyAuditSelfTest(tempRoot) {
+  const sourceFile = path.join(tempRoot, 'i18n-static-key-self-test.ts')
+  fs.writeFileSync(sourceFile, [
+    "const dynamicLabel = st('appAction.featureLabel.' + feature, { defaultValue: feature })",
+    "const staticLabel = t('chat.memory')",
+  ].join('\n'), 'utf8')
+  const keys = collectStaticI18nKeys([sourceFile])
+  if (keys.has('appAction.featureLabel.')) {
+    throw new Error('i18n static-key self-test accepted an incomplete dynamic translation-key prefix.')
+  }
+  if (!keys.has('chat.memory') || keys.size !== 1) {
+    throw new Error(`i18n static-key self-test did not retain the concrete key: ${[...keys].join(', ')}`)
+  }
+  console.log('i18n static-key audit self-test passed (dynamic prefixes ignored, concrete keys retained).')
 }
 
 function runWorkArtifactSmokeBlockedSelfTest(tempRoot) {
@@ -3814,6 +4617,385 @@ function runResultEvidenceRecoveryPlanSelfTest() {
   console.log('Result evidence recovery plan self-test passed (planned gates and missing-plan gates).')
 }
 
+function runMilestoneFResultValidatorSelfTest() {
+  const knownPaths = new Set()
+  const evidencePath = (name, extension = 'json') => {
+    const value = `test-evidence/qa/self-test/${name}.${extension}`
+    knownPaths.add(value)
+    return value
+  }
+  const validatePath = (value) => knownPaths.has(value) ? null : 'missing'
+  const clone = (value) => JSON.parse(JSON.stringify(value))
+  const stableSequence = () => [
+    { attempt: 1, matched: true, errorVisible: false, visibleText: ['target'] },
+    { attempt: 2, matched: true, errorVisible: false, visibleText: ['target'] },
+  ]
+  const assertValid = (label, issues) => {
+    if (issues.length) throw new Error(`${label} self-test rejected valid evidence: ${issues.join(', ')}`)
+  }
+  const assertInvalid = (label, issues, pattern) => {
+    if (!issues.some((issue) => pattern.test(issue))) {
+      throw new Error(`${label} self-test missed ${pattern}: ${issues.join(', ')}`)
+    }
+  }
+
+  const routes = freshRouteSmokeCases.map((item) => ({
+    ...item,
+    expectedOk: true,
+    siblingVisible: false,
+    errorText: '',
+    png: evidencePath(`route-${item.name}`, 'png'),
+    uia: evidencePath(`route-${item.name}`, 'uia.xml'),
+    stableCaptureCount: 2,
+    attempts: 2,
+    transitionSequence: stableSequence(),
+    visibleText: ['target'],
+  }))
+  assertValid('Fresh route validator', collectFreshRouteSmokeIssues(routes, validatePath))
+  const duplicateRoutes = clone(routes)
+  duplicateRoutes[duplicateRoutes.length - 1] = clone(duplicateRoutes[0])
+  assertInvalid('Fresh route duplicate', collectFreshRouteSmokeIssues(duplicateRoutes, validatePath), /Duplicate fresh route/)
+  const unstableRoutes = clone(routes)
+  unstableRoutes[0].stableCaptureCount = 1
+  unstableRoutes[0].attempts = 1
+  unstableRoutes[0].transitionSequence = stableSequence().slice(0, 1)
+  assertInvalid('Fresh route stability', collectFreshRouteSmokeIssues(unstableRoutes, validatePath), /stableCaptureCount=2/)
+  const siblingRoute = clone(routes)
+  siblingRoute[1].siblingVisible = true
+  assertInvalid('Fresh route sibling rejection', collectFreshRouteSmokeIssues(siblingRoute, validatePath), /sibling-page rejection/)
+  const wrongRouteUrl = clone(routes)
+  wrongRouteUrl[2].url = 'islemind://wrong'
+  assertInvalid('Fresh route URL', collectFreshRouteSmokeIssues(wrongRouteUrl, validatePath), /expected islemind:\/\/settings/)
+  const missingRouteCapture = clone(routes)
+  missingRouteCapture[3].png = 'test-evidence/qa/self-test/missing-route.png'
+  assertInvalid('Fresh route capture', collectFreshRouteSmokeIssues(missingRouteCapture, validatePath), /is missing/)
+
+  const backRows = settingsBackExpectedCases.map((name) => ({
+    Case: name,
+    Found: true,
+    ChildOk: true,
+    BackOk: true,
+    StayedOnChild: false,
+    errorAfterBack: false,
+    childAttempts: 2,
+    childStableCaptureCount: 2,
+    childTransitionSequence: stableSequence(),
+    afterAttempts: 2,
+    afterStableCaptureCount: 2,
+    afterTransitionSequence: stableSequence(),
+    childPng: evidencePath(`back-${name}-child`, 'png'),
+    childUia: evidencePath(`back-${name}-child`, 'uia.xml'),
+    afterPng: evidencePath(`back-${name}-after`, 'png'),
+    afterUia: evidencePath(`back-${name}-after`, 'uia.xml'),
+    childVisibleText: ['child'],
+    afterVisibleText: ['settings'],
+  }))
+  assertValid('Settings Back validator', collectSettingsBackResultIssues(backRows, validatePath))
+  const stayedOnChild = clone(backRows)
+  stayedOnChild[0].StayedOnChild = true
+  assertInvalid('Settings Back child rejection', collectSettingsBackResultIssues(stayedOnChild, validatePath), /StayedOnChild=false/)
+  const backError = clone(backRows)
+  backError[1].errorAfterBack = true
+  assertInvalid('Settings Back error', collectSettingsBackResultIssues(backError, validatePath), /errorAfterBack=false/)
+  const unstableBack = clone(backRows)
+  unstableBack[2].afterStableCaptureCount = 1
+  assertInvalid('Settings Back stability', collectSettingsBackResultIssues(unstableBack, validatePath), /stableCaptureCount=2/)
+  const missingBackCapture = clone(backRows)
+  missingBackCapture[3].afterUia = 'test-evidence/qa/self-test/missing-back.uia.xml'
+  assertInvalid('Settings Back capture', collectSettingsBackResultIssues(missingBackCapture, validatePath), /is missing/)
+
+  const keyboard = {
+    tappedInput: true,
+    inputFocused: true,
+    sendButtonPresent: true,
+    homeStillVisible: true,
+    errorVisible: false,
+    imeAttempts: 1,
+    ime: { visible: true, inputShown: true, windowVisible: true, bounds: { left: 0, top: 1200, right: 864, bottom: 1920 } },
+    inputBounds: { left: 100, top: 1000, right: 650, bottom: 1100 },
+    sendBounds: { left: 660, top: 1000, right: 750, bottom: 1100 },
+    inputAboveIme: true,
+    sendAboveIme: true,
+    nonOccluded: true,
+    png: evidencePath('keyboard', 'png'),
+    uia: evidencePath('keyboard', 'uia.xml'),
+    log: evidencePath('keyboard', 'log'),
+  }
+  assertValid('Keyboard validator', collectFreshKeyboardSmokeIssues(keyboard, validatePath))
+  const missingImeBounds = clone(keyboard)
+  missingImeBounds.ime.bounds = null
+  assertInvalid('Keyboard IME bounds', collectFreshKeyboardSmokeIssues(missingImeBounds, validatePath), /IME bounds/)
+  const occludedKeyboard = clone(keyboard)
+  occludedKeyboard.inputBounds.bottom = 1300
+  assertInvalid('Keyboard geometry', collectFreshKeyboardSmokeIssues(occludedKeyboard, validatePath), /inputAboveIme|non-occluded/)
+  const missingKeyboardCapture = clone(keyboard)
+  missingKeyboardCapture.uia = 'test-evidence/qa/self-test/missing-keyboard.uia.xml'
+  assertInvalid('Keyboard capture', collectFreshKeyboardSmokeIssues(missingKeyboardCapture, validatePath), /is missing/)
+
+  const toggleState = (name, checked) => ({
+    checked,
+    node: {
+      className: 'android.widget.Switch',
+      checkable: true,
+      checked,
+      bounds: { left: 10, top: 10, right: 200, bottom: 80 },
+    },
+    png: evidencePath(`preference-${name}`, 'png'),
+    uia: evidencePath(`preference-${name}`, 'uia.xml'),
+  })
+  const preferences = {
+    interactionOpened: true,
+    restartInteractionOpened: true,
+    changedAfterToggle: true,
+    persistedAfterRestart: true,
+    restoreTapped: true,
+    restoredOriginal: true,
+    stateEvidence: 'checked state captured',
+    before: toggleState('before', true),
+    afterToggle: toggleState('after', false),
+    afterRestart: toggleState('restart', false),
+    restored: toggleState('restored', true),
+    log: evidencePath('preference', 'log'),
+  }
+  assertValid('Preferences validator', collectPreferencePersistenceIssues(preferences, validatePath))
+  const unchangedPreference = clone(preferences)
+  unchangedPreference.afterToggle.checked = true
+  unchangedPreference.afterToggle.node.checked = true
+  assertInvalid('Preferences transition', collectPreferencePersistenceIssues(unchangedPreference, validatePath), /did not change checked state/)
+  const lostPreference = clone(preferences)
+  lostPreference.afterRestart.checked = true
+  lostPreference.afterRestart.node.checked = true
+  assertInvalid('Preferences persistence', collectPreferencePersistenceIssues(lostPreference, validatePath), /did not persist/)
+  const unRestoredPreference = clone(preferences)
+  unRestoredPreference.restored.checked = false
+  unRestoredPreference.restored.node.checked = false
+  assertInvalid('Preferences restoration', collectPreferencePersistenceIssues(unRestoredPreference, validatePath), /not restored/)
+
+  const themeRows = themeLocaleExpectedSteps.map((step) => ({
+    Step: step,
+    ok: true,
+    tapped: true,
+    errorBoundaryVisible: false,
+    homeOk: true,
+    png: evidencePath(`${step}-settings`, 'png'),
+    uia: evidencePath(`${step}-settings`, 'uia.xml'),
+    homePng: evidencePath(`${step}-home`, 'png'),
+    homeUia: evidencePath(`${step}-home`, 'uia.xml'),
+    visibleText: ['settings'],
+    homeVisibleText: ['home'],
+  }))
+  for (const appearanceCase of appearanceThemeLocaleCases) {
+    const row = themeRows.find((item) => item.Step === appearanceCase.Step)
+    const selectionEvidence = (choice, key) => ({
+      value: choice.value,
+      tapped: true,
+      checked: true,
+      node: {
+        text: choice.labels[0],
+        contentDesc: choice.labels[0],
+        className: 'android.view.View',
+        bounds: { left: 10, top: 10, right: 220, bottom: 90 },
+        checkable: true,
+        checked: true,
+      },
+      png: evidencePath(`${appearanceCase.Step}-${key}`, 'png'),
+      uia: evidencePath(`${appearanceCase.Step}-${key}`, 'uia.xml'),
+    })
+    row.appearance = {
+      family: appearanceCase.family.value,
+      mode: appearanceCase.mode.value,
+      accent: appearanceCase.accent.value,
+      customAccent: appearanceCase.accent.custom ?? null,
+    }
+    row.selectionEvidence = {
+      family: selectionEvidence(appearanceCase.family, 'family'),
+      mode: selectionEvidence(appearanceCase.mode, 'mode'),
+      accent: selectionEvidence(appearanceCase.accent, 'accent'),
+    }
+    row.customAccentApplied = appearanceCase.accent.custom ? true : null
+    row.customAccentInputValue = appearanceCase.accent.custom ?? null
+  }
+  assertValid('Theme and locale validator', collectThemeLocaleIssues(themeRows, validatePath))
+  const failedTheme = clone(themeRows)
+  failedTheme[0].ok = false
+  assertInvalid('Theme and locale status', collectThemeLocaleIssues(failedTheme, validatePath), /ok=true/)
+  const duplicateTheme = clone(themeRows)
+  duplicateTheme[duplicateTheme.length - 1] = clone(duplicateTheme[0])
+  assertInvalid('Theme and locale duplicate', collectThemeLocaleIssues(duplicateTheme, validatePath), /Duplicate theme\/locale/)
+  const missingThemeHome = clone(themeRows)
+  missingThemeHome[1].homePng = 'test-evidence/qa/self-test/missing-theme-home.png'
+  assertInvalid('Theme and locale Home capture', collectThemeLocaleIssues(missingThemeHome, validatePath), /is missing/)
+  const uncheckedAppearance = clone(themeRows)
+  uncheckedAppearance[0].selectionEvidence.family.checked = false
+  assertInvalid('Appearance checked selection', collectThemeLocaleIssues(uncheckedAppearance, validatePath), /checked family evidence/)
+  const wrongCustomAccent = clone(themeRows)
+  const customRow = wrongCustomAccent.find((row) => row.Step === 'appearance-markdown-dark-custom-indigo')
+  customRow.customAccentInputValue = '#4455B8'
+  assertInvalid('Appearance custom accent', collectThemeLocaleIssues(wrongCustomAccent, validatePath), /#4455B7/)
+  const visibleErrorBoundary = clone(themeRows)
+  visibleErrorBoundary[2].errorBoundaryVisible = true
+  assertInvalid('Appearance error boundary', collectThemeLocaleIssues(visibleErrorBoundary, validatePath), /errorBoundaryVisible=false/)
+
+  const fontScale = {
+    serial: 'fixture-device',
+    originalFontScale: '1.25',
+    testFontScale: '1.30',
+    observedFontScale: '1.30',
+    restoredFontScale: '1.25',
+    settingsOk: true,
+    homeOk: true,
+    settingsPng: evidencePath('font-settings', 'png'),
+    settingsUia: evidencePath('font-settings', 'uia.xml'),
+    homePng: evidencePath('font-home', 'png'),
+    homeUia: evidencePath('font-home', 'uia.xml'),
+    settingsVisibleText: ['settings'],
+    homeVisibleText: ['home'],
+  }
+  assertValid('Font scale validator', collectFontScaleIssues(fontScale, validatePath))
+  const wrongObservedScale = clone(fontScale)
+  wrongObservedScale.observedFontScale = '1.20'
+  assertInvalid('Font scale observation', collectFontScaleIssues(wrongObservedScale, validatePath), /observed 1.20/)
+  const invalidFontSurface = clone(fontScale)
+  invalidFontSurface.settingsOk = false
+  assertInvalid('Font scale surface', collectFontScaleIssues(invalidFontSurface, validatePath), /Settings surface/)
+  const unRestoredFontScale = clone(fontScale)
+  unRestoredFontScale.restoredFontScale = '1.00'
+  assertInvalid('Font scale restoration', collectFontScaleIssues(unRestoredFontScale, validatePath), /not restored/)
+
+  console.log('Milestone F result validator self-test passed (route, Back, keyboard, preferences, theme/locale, and font scale fail closed).')
+}
+
+function runMcpAndroidSmokeContractSelfTest() {
+  const knownPaths = new Set()
+  const evidencePath = (name, extension) => {
+    const value = `test-evidence/qa/mcp-self-test/${name}.${extension}`
+    knownPaths.add(value)
+    return value
+  }
+  const validatePath = (value) => knownPaths.has(value) ? null : 'missing'
+  const clone = (value) => JSON.parse(JSON.stringify(value))
+  const capturePairs = (prefix, names) => Object.fromEntries(names.flatMap(([pngKey, uiaKey]) => [
+    [pngKey, evidencePath(`${prefix}-${pngKey}`, 'png')],
+    [uiaKey, evidencePath(`${prefix}-${uiaKey}`, 'uia.xml')],
+  ]))
+  const offlinePairs = [
+    ['keyboardPng', 'keyboardUia'],
+    ['addedPng', 'addedUia'],
+    ['offlinePng', 'offlineUia'],
+    ['deleteConfirmPng', 'deleteConfirmUia'],
+    ['deletedPng', 'deletedUia'],
+  ]
+  const onlinePairs = [
+    ['keyboardPng', 'keyboardUia'],
+    ['addedPng', 'addedUia'],
+    ['syncPng', 'syncUia'],
+    ['togglePng', 'toggleUia'],
+    ['deleteConfirmPng', 'deleteConfirmUia'],
+    ['deletedPng', 'deletedUia'],
+  ]
+  const offlineCaptures = {
+    ...capturePairs('offline', offlinePairs),
+    syncTapped: true,
+    deleteTapped: true,
+    deleteConfirmVisible: true,
+    deleteConfirmed: true,
+    confirmed: true,
+    deleted: true,
+  }
+  const onlineCaptures = {
+    ...capturePairs('online', onlinePairs),
+    syncTapped: true,
+    syncSucceeded: true,
+    toggleTapped: true,
+    toggleSucceeded: true,
+    deleteTapped: true,
+    deleteConfirmVisible: true,
+    deleteConfirmed: true,
+    confirmed: true,
+    deleted: true,
+  }
+  const runToken = 'QA1234'
+  const result = {
+    schema: mcpAndroidSmokeSchema,
+    generatedAt: '2026-07-18T00:00:00.000Z',
+    runToken,
+    device: 'fixture-device',
+    builtInServer: {
+      status: 'Connected',
+      png: evidencePath('built-in', 'png'),
+      uia: evidencePath('built-in', 'uia.xml'),
+    },
+    offlineServer: {
+      name: 'QA_MCP_OFFLINE_QA1234',
+      url: 'http://10.0.2.2:9/mcp',
+      checks: [
+        { name: 'keyboard-open-input', status: 'passed', evidence: offlineCaptures.keyboardUia },
+        { name: 'server-added', status: 'passed', evidence: offlineCaptures.addedUia },
+        { name: 'offline-sync-failure-visible', status: 'passed', evidence: offlineCaptures.offlineUia },
+      ],
+      captures: offlineCaptures,
+    },
+    externalOnlineServer: {
+      name: 'QA_MCP_ONLINE_QA1234',
+      status: 'passed',
+      emulatorUrl: 'http://10.0.2.2:1234/mcp',
+      deviceUrl: 'http://127.0.0.1:1234/mcp',
+      methods: [...requiredMcpMethods],
+      captures: onlineCaptures,
+    },
+    requestLog: evidencePath('requests', 'jsonl'),
+    errors: [],
+  }
+  const resultIssues = validateMcpAndroidSmokeResult(result, { validatePath })
+  if (resultIssues.length) throw new Error(`MCP Android result self-test rejected valid evidence: ${resultIssues.join(', ')}`)
+
+  const assertResultIssue = (name, mutation, pattern) => {
+    const candidate = clone(result)
+    mutation(candidate)
+    const issues = validateMcpAndroidSmokeResult(candidate, { validatePath })
+    if (!issues.some((issue) => pattern.test(issue))) throw new Error(`MCP Android result self-test missed ${name}: ${issues.join(', ')}`)
+  }
+  assertResultIssue('schema', (candidate) => { delete candidate.schema }, /schema must be/)
+  assertResultIssue('run token', (candidate) => { delete candidate.runToken }, /runToken/)
+  assertResultIssue('exact offline checks', (candidate) => { candidate.offlineServer.checks.pop() }, /offline checks must be exactly/)
+  assertResultIssue('failed offline check', (candidate) => { candidate.offlineServer.checks[0].status = 'failed' }, /must pass/)
+  assertResultIssue('missing capture', (candidate) => { candidate.externalOnlineServer.captures.syncPng = 'test-evidence/qa/missing.png' }, /syncPng capture is missing/)
+  assertResultIssue('missing request log', (candidate) => { candidate.requestLog = 'test-evidence/qa/missing.jsonl' }, /request log is missing/)
+
+  const responseByMethod = {
+    initialize: { protocolVersion: '2025-03-26', serverInfo: { name: 'qa-cleartext-mcp', version: '1.0.0' } },
+    'notifications/initialized': {},
+    'tools/list': { tools: [{ name: 'qa_echo', inputSchema: { type: 'object' } }] },
+    'resources/list': { resources: [{ uri: 'qa://resource', name: 'QA Resource' }] },
+    'prompts/list': { prompts: [{ name: 'qa_prompt' }] },
+  }
+  const requestRows = requiredMcpMethods.map((method, index) => ({
+    schema: mcpAndroidSmokeSchema,
+    runToken,
+    receivedAt: `2026-07-18T00:00:0${index}.000Z`,
+    method: 'POST',
+    url: 'http://127.0.0.1:1234/mcp',
+    status: 200,
+    payload: { jsonrpc: '2.0', ...(method === 'notifications/initialized' ? {} : { id: index + 1 }), method },
+    response: { jsonrpc: '2.0', ...(method === 'notifications/initialized' ? {} : { id: index + 1 }), result: responseByMethod[method] },
+  }))
+  const requestIssues = validateMcpOnlineRequestRows(requestRows, { runToken })
+  if (requestIssues.length) throw new Error(`MCP request-log self-test rejected valid rows: ${requestIssues.join(', ')}`)
+
+  const assertRequestIssue = (name, mutation, pattern) => {
+    const candidate = clone(requestRows)
+    mutation(candidate)
+    const issues = validateMcpOnlineRequestRows(candidate, { runToken })
+    if (!issues.some((issue) => pattern.test(issue))) throw new Error(`MCP request-log self-test missed ${name}: ${issues.join(', ')}`)
+  }
+  assertRequestIssue('run-token mismatch', (candidate) => { candidate[0].runToken = 'STALE1' }, /runToken does not match/)
+  assertRequestIssue('missing method', (candidate) => { candidate.pop() }, /missing tools\/list/)
+  assertRequestIssue('parse error', (candidate) => { candidate[1].payload = { parseError: true } }, /payload is invalid/)
+  assertRequestIssue('response shape', (candidate) => { candidate.find((row) => row.payload.method === 'tools/list').response.result.tools = [] }, /does not contain qa_echo/)
+
+  console.log('MCP Android smoke contract self-test passed (schema, captures, lifecycle, correlation, and response shapes fail closed).')
+}
+
 function runSettingsKnowledgeSelfTestContractSelfTest() {
   const valid = createSettingsKnowledgeSelfTestFixture()
   const validIssues = validateSettingsKnowledgeSelfTestResult(valid)
@@ -3842,6 +5024,123 @@ function runSettingsKnowledgeSelfTestContractSelfTest() {
   console.log('Settings Knowledge self-test contract self-test passed.')
 }
 
+function runSettingsPortableRoundTripContractSelfTest() {
+  const fixture = createPortableRoundTripFixture(1_768_000_000_000)
+  const serializedFixture = JSON.stringify(fixture)
+  const validateSelfTestPath = (value) => String(value ?? '').startsWith('test-evidence/qa/self-test/') ? null : 'outside self-test evidence'
+  const valid = {
+    generatedAt: new Date(fixture.exportedAt).toISOString(),
+    serial: 'emulator-self-test',
+    fixture: {
+      file: 'test-evidence/qa/self-test/islemind-portable-data-roundtrip.json',
+      sha256: crypto.createHash('sha256').update(serializedFixture).digest('hex'),
+      sizeBytes: Buffer.byteLength(serializedFixture, 'utf8'),
+      conversationId: fixture.conversations[0].id,
+      providerId: fixture.providers[0].id,
+      model: fixture.conversations[0].model,
+      tavernScopeId: Object.keys(fixture.tavernSnapshots)[0],
+      hapticsExpected: fixture.settings.hapticsEnabled,
+    },
+    importedFixture: {
+      ok: true,
+      conversations: 1,
+      providers: 1,
+      tavernScopes: 1,
+      restoredAfterRoundTrip: true,
+      restoredConversationId: fixture.conversations[0].id,
+      restoredConversationTitle: fixture.conversations[0].title,
+      restoredProviderName: fixture.providers[0].name,
+      restoredTavernCharacter: fixture.tavernSnapshots['qa-portable-scope'].characters[0].name,
+      restoredTavernScene: fixture.tavernSnapshots['qa-portable-scope'].scenes[0].title,
+      hapticsRestored: true,
+      workspaceVerification: { source: 'portable-export', ok: true, scopeId: 'qa-portable-scope' },
+    },
+    exportedFixture: {
+      filename: 'islemind-export-2026-07-22T00-00-00-000Z.json',
+      publicPath: '/sdcard/Download/islemind-export-2026-07-22T00-00-00-000Z.json',
+      sha256: crypto.createHash('sha256').update(`${serializedFixture}\n`).digest('hex'),
+      sizeBytes: Buffer.byteLength(`${serializedFixture}\n`, 'utf8'),
+      workspaceScopes: 1,
+      activeWorkspaceLinks: 1,
+      workspaceScopeId: 'qa-portable-scope',
+      workspaceCharacterMarker: 'QA Portable Keeper',
+      workspaceSceneMarker: 'QA Portable Scene',
+    },
+    restoredExportedFixture: null,
+    clearedData: {
+      chatsCleared: true,
+      settingsCleared: true,
+      tavernCleared: true,
+    },
+    uiEvidence: {
+      importPng: 'test-evidence/qa/self-test/portable-import.png',
+      importUia: 'test-evidence/qa/self-test/portable-import.uia.xml',
+      exportPng: 'test-evidence/qa/self-test/portable-export.png',
+      exportUia: 'test-evidence/qa/self-test/portable-export.uia.xml',
+      restorePng: 'test-evidence/qa/self-test/portable-restore.png',
+      restoreUia: 'test-evidence/qa/self-test/portable-restore.uia.xml',
+      restoredExportPng: 'test-evidence/qa/self-test/portable-restored-export.png',
+      restoredExportUia: 'test-evidence/qa/self-test/portable-restored-export.uia.xml',
+    },
+  }
+  valid.restoredExportedFixture = { ...valid.exportedFixture }
+  const validIssues = validatePortableRoundTripResult(valid, { validatePath: validateSelfTestPath })
+  if (validIssues.length) throw new Error(`Settings portable round-trip contract rejected valid fixture: ${validIssues.join(', ')}`)
+  const missingClearIssues = validatePortableRoundTripResult({
+    ...valid,
+    clearedData: { ...valid.clearedData, tavernCleared: false },
+  }, { validatePath: validateSelfTestPath })
+  if (!missingClearIssues.some((issue) => issue.includes('tavernCleared=true'))) {
+    throw new Error(`Settings portable round-trip contract missed clear-all proof: ${missingClearIssues.join(', ')}`)
+  }
+  const missingEvidenceIssues = validatePortableRoundTripResult({
+    ...valid,
+    uiEvidence: { ...valid.uiEvidence, restorePng: 'tmp/portable-restore.png' },
+  }, { validatePath: validateSelfTestPath })
+  if (!missingEvidenceIssues.some((issue) => issue.includes('restorePng evidence path'))) {
+    throw new Error(`Settings portable round-trip contract missed evidence path validation: ${missingEvidenceIssues.join(', ')}`)
+  }
+  const largeValid = {
+    ...valid,
+    scenario: 'large-backup',
+    fixture: {
+      ...valid.fixture,
+      sizeBytes: portableLargeBackupMinJsonBytes,
+      systemPromptBytes: portableLargeBackupMinJsonBytes,
+    },
+    exportedFixture: {
+      ...valid.exportedFixture,
+      sizeBytes: portableLargeBackupMinJsonBytes,
+      systemPromptBytes: portableLargeBackupMinJsonBytes,
+    },
+    restoredExportedFixture: {
+      ...valid.restoredExportedFixture,
+      sizeBytes: portableLargeBackupMinJsonBytes,
+      systemPromptBytes: portableLargeBackupMinJsonBytes,
+    },
+  }
+  const largeIssues = validatePortableRoundTripResult(largeValid, {
+    minExportBytes: portableLargeBackupMinJsonBytes,
+    minFixtureBytes: portableLargeBackupMinJsonBytes,
+    minSystemPromptBytes: portableLargeBackupMinJsonBytes,
+    validatePath: validateSelfTestPath,
+  })
+  if (largeIssues.length) throw new Error(`Settings portable large-backup contract rejected valid fixture: ${largeIssues.join(', ')}`)
+  const undersizedLargeIssues = validatePortableRoundTripResult({
+    ...largeValid,
+    fixture: { ...largeValid.fixture, sizeBytes: portableLargeBackupMinJsonBytes - 1 },
+  }, {
+    minExportBytes: portableLargeBackupMinJsonBytes,
+    minFixtureBytes: portableLargeBackupMinJsonBytes,
+    minSystemPromptBytes: portableLargeBackupMinJsonBytes,
+    validatePath: validateSelfTestPath,
+  })
+  if (!undersizedLargeIssues.some((issue) => issue.includes('fixture sizeBytes'))) {
+    throw new Error(`Settings portable large-backup contract missed minimum fixture size: ${undersizedLargeIssues.join(', ')}`)
+  }
+  console.log('Settings portable round-trip contract self-test passed.')
+}
+
 function runLocalModelDownloadResultContractSelfTest() {
   const valid = createLocalModelDownloadResultFixture()
   const validIssues = validateLocalModelDownloadResult(valid)
@@ -3860,12 +5159,33 @@ function runLocalModelDownloadResultContractSelfTest() {
   if (!missingFreshInstallIssues.some((issue) => issue.includes('fresh install'))) {
     throw new Error(`Local-model download result contract missed fresh-install coverage: ${missingFreshInstallIssues.join(', ')}`)
   }
+  const englishEnabledIssues = validateLocalModelDownloadResult({
+    ...valid,
+    observations: valid.observations.map((item) => item.step === 'final-row' ? { ...item, visibleText: ['all-MiniLM-L6-v2', 'Enabled'] } : item),
+  })
+  if (englishEnabledIssues.length) {
+    throw new Error(`Local-model download result contract rejected an English enabled row: ${englishEnabledIssues.join(', ')}`)
+  }
   const missingEnabledTextIssues = validateLocalModelDownloadResult({
     ...valid,
     observations: valid.observations.map((item) => item.step === 'final-row' ? { ...item, visibleText: ['未启用'] } : item),
   })
   if (!missingEnabledTextIssues.some((issue) => issue.includes('已启用'))) {
     throw new Error(`Local-model download result contract missed final enabled-row coverage: ${missingEnabledTextIssues.join(', ')}`)
+  }
+  const physicalDeviceIssues = validateLocalModelDownloadResult({
+    ...valid,
+    device: { ...valid.device, serial: 'dadaa813', emulator: false },
+  })
+  if (!physicalDeviceIssues.some((issue) => issue.includes('emulator device serial'))) {
+    throw new Error(`Local-model download result contract accepted physical-device evidence: ${physicalDeviceIssues.join(', ')}`)
+  }
+  const missingApkDigestIssues = validateLocalModelDownloadResult({
+    ...valid,
+    apk: { ...valid.apk, sha256: '' },
+  })
+  if (!missingApkDigestIssues.some((issue) => issue.includes('APK SHA-256'))) {
+    throw new Error(`Local-model download result contract accepted missing APK provenance: ${missingApkDigestIssues.join(', ')}`)
   }
   console.log('Local-model download result contract self-test passed.')
 }
@@ -3882,7 +5202,156 @@ function runLongContentRequestLogContractSelfTest() {
   if (!missingExtractionIssues.some((issue) => issue.includes('memory extraction request'))) {
     throw new Error(`Long-content request log self-test missed memory extraction coverage: ${missingExtractionIssues.join(', ')}`)
   }
+  const durableStateIssues = validateLongContentDurableState(createLongContentDurableStateFixture())
+  if (durableStateIssues.length) {
+    throw new Error(`Long-content durable-state self-test rejected valid state: ${durableStateIssues.join(', ')}`)
+  }
+  const missingTraceIssues = validateLongContentDurableState({
+    ...createLongContentDurableStateFixture(),
+    memoryTrace: null,
+  })
+  if (!missingTraceIssues.some((issue) => issue.includes('memory extraction trace'))) {
+    throw new Error(`Long-content durable-state self-test missed missing trace coverage: ${missingTraceIssues.join(', ')}`)
+  }
   console.log('Long-content request log contract self-test passed.')
+}
+
+function runLongContentStressCoverageSelfTest(tempRoot) {
+  const repoRoot = path.join(tempRoot, 'long-content-stress')
+  const qaEvidenceDir = path.join(repoRoot, 'test-evidence', 'qa')
+  const resultPath = path.join(qaEvidenceDir, longContentSmokeResultName)
+  const requestLogPath = path.join(repoRoot, longContentRawRequestLogRelativePath)
+  const requestRows = createLongContentRequestRowsFixture()
+  const generatedAt = '2026-01-01T00:00:10.000Z'
+  const captureTime = new Date('2026-01-01T00:00:11.000Z')
+  const requestTime = new Date('2026-01-01T00:00:12.000Z')
+  const resultTime = new Date('2026-01-01T00:00:13.000Z')
+
+  fs.mkdirSync(path.dirname(requestLogPath), { recursive: true })
+  fs.writeFileSync(requestLogPath, `${requestRows.map((row) => JSON.stringify(row)).join('\n')}\n`, 'utf8')
+  fs.utimesSync(requestLogPath, requestTime, requestTime)
+  for (const [kind, capture] of Object.entries(longContentStressEvidencePaths)) {
+    const pngPath = path.join(repoRoot, capture.png)
+    const uiaPath = path.join(repoRoot, capture.uia)
+    fs.mkdirSync(path.dirname(pngPath), { recursive: true })
+    fs.writeFileSync(pngPath, 'png', 'utf8')
+    fs.writeFileSync(uiaPath, (longContentStressEvidenceMarkers[kind] ?? []).join('\n'), 'utf8')
+    fs.utimesSync(pngPath, captureTime, captureTime)
+    fs.utimesSync(uiaPath, captureTime, captureTime)
+  }
+
+  const validResult = {
+    generatedAt,
+    device: 'emulator-self-test',
+    fixture: longContentFixtureRelativePath,
+    requestLog: longContentRawRequestLogRelativePath,
+    errors: [],
+    requests: requestRows.map((row) => ({
+      method: row.method,
+      url: row.url,
+      path: row.path,
+      body: parseRequestBody(row.body),
+    })),
+    longContentStressEvidence: {
+      passed: true,
+      captures: structuredClone(longContentStressEvidencePaths),
+    },
+  }
+  const writeResult = (result) => {
+    fs.writeFileSync(resultPath, `${JSON.stringify(result, null, 2)}\n`, 'utf8')
+    fs.utimesSync(resultPath, resultTime, resultTime)
+  }
+  const collect = () => collectLongContentStressCoverage({ repoRoot, evidenceDir: qaEvidenceDir, resultPath })
+
+  writeResult(validResult)
+  const validCoverage = collect()
+  if (!validCoverage.qualified) {
+    throw new Error(`Long-content stress coverage self-test rejected valid evidence: ${validCoverage.issues.join(', ')}`)
+  }
+
+  writeResult({
+    ...validResult,
+    longContentStressEvidence: {
+      ...validResult.longContentStressEvidence,
+      captures: {
+        ...validResult.longContentStressEvidence.captures,
+        trace: { ...validResult.longContentStressEvidence.captures.trace, png: 'test-evidence/qa/other.png' },
+      },
+    },
+  })
+  if (!collect().issues.some((issue) => issue.includes('canonical screenshot/UIA pair'))) {
+    throw new Error('Long-content stress coverage self-test accepted a non-canonical capture binding.')
+  }
+
+  writeResult(validResult)
+  const missingPngPath = path.join(repoRoot, longContentStressEvidencePaths.providerModel.png)
+  fs.rmSync(missingPngPath)
+  if (!collect().issues.some((issue) => issue.includes('providerModel screenshot is missing or empty'))) {
+    throw new Error('Long-content stress coverage self-test accepted a missing screenshot.')
+  }
+  fs.writeFileSync(missingPngPath, 'png', 'utf8')
+  fs.utimesSync(missingPngPath, captureTime, captureTime)
+
+  const traceUiaPath = path.join(repoRoot, longContentStressEvidencePaths.trace.uia)
+  fs.writeFileSync(traceUiaPath, 'missing markers', 'utf8')
+  fs.utimesSync(traceUiaPath, captureTime, captureTime)
+  if (!collect().issues.some((issue) => issue.includes('trace UIA evidence is missing marker'))) {
+    throw new Error('Long-content stress coverage self-test accepted missing UIA markers.')
+  }
+  fs.writeFileSync(traceUiaPath, longContentStressEvidenceMarkers.trace.join('\n'), 'utf8')
+  fs.utimesSync(traceUiaPath, captureTime, captureTime)
+
+  const staleRequestTime = new Date('2026-01-01T00:00:20.000Z')
+  fs.utimesSync(requestLogPath, staleRequestTime, staleRequestTime)
+  if (!collect().issues.some((issue) => issue.includes('raw request log is newer than the collector result'))) {
+    throw new Error('Long-content stress coverage self-test accepted a stale collector result.')
+  }
+  console.log('Long-content stress coverage self-test passed (binding, pairs, markers, and same-run provenance fail closed).')
+}
+
+function runRawEvidenceProvenanceSelfTest(tempRoot) {
+  const repoRoot = path.join(tempRoot, 'raw-evidence-provenance')
+  const sourceRelative = 'test-evidence/qa/raw-long-content-mock-openai-requests.jsonl'
+  const sourceFile = path.join(repoRoot, sourceRelative)
+  const normalizedFile = path.join(repoRoot, 'test-evidence', 'qa', longContentRequestLogName)
+  const contractResultsFile = path.join(repoRoot, 'test-evidence', 'qa', rawEvidenceContractResultsName)
+  const rows = createLongContentRequestRowsFixture()
+  const sourceText = `${rows.map((row) => JSON.stringify(row)).join('\n')}\n`
+  fs.mkdirSync(path.dirname(sourceFile), { recursive: true })
+  fs.writeFileSync(sourceFile, sourceText, 'utf8')
+  fs.writeFileSync(normalizedFile, sourceText, 'utf8')
+  const sourceBuffer = fs.readFileSync(sourceFile)
+  fs.writeFileSync(contractResultsFile, `${JSON.stringify({
+    schema: rawEvidenceContractResultsSchema,
+    results: [{
+      source: sourceRelative,
+      status: 'passed',
+      provenance: createSourceProvenance(sourceBuffer, fs.statSync(sourceFile), rows, 'jsonl'),
+    }],
+  })}\n`, 'utf8')
+  const validIssues = collectRawEvidenceBindingIssues({
+    repoRoot,
+    sourceRelative,
+    normalizedData: rows,
+    normalizedFile,
+    format: 'jsonl',
+    requireByteIdentity: true,
+  })
+  if (validIssues.length) throw new Error(`Raw evidence provenance self-test rejected valid binding: ${validIssues.join(', ')}`)
+
+  fs.appendFileSync(sourceFile, `${JSON.stringify({ timestamp: '2026-01-01T00:00:02.000Z', method: 'GET', path: '/v1/models' })}\n`, 'utf8')
+  const staleIssues = collectRawEvidenceBindingIssues({
+    repoRoot,
+    sourceRelative,
+    normalizedData: rows,
+    normalizedFile,
+    format: 'jsonl',
+    requireByteIdentity: true,
+  })
+  if (!staleIssues.some((issue) => /SHA-256|canonical digest|content does not match/i.test(issue))) {
+    throw new Error(`Raw evidence provenance self-test missed source substitution: ${staleIssues.join(', ')}`)
+  }
+  console.log('Raw evidence provenance self-test passed (source digest, canonical content, and output binding).')
 }
 
 function runLocalModelCorruptMirrorLogContractSelfTest() {
@@ -3896,6 +5365,10 @@ function runLocalModelCorruptMirrorLogContractSelfTest() {
   const missingSpecialTokensIssues = validateLocalModelCorruptMirrorRows(validRows.filter((row) => row.relative !== 'special_tokens_map.json'))
   if (!missingSpecialTokensIssues.some((issue) => issue.includes('special_tokens_map.json'))) {
     throw new Error(`Local-model corrupt mirror log self-test missed special_tokens_map.json coverage: ${missingSpecialTokensIssues.join(', ')}`)
+  }
+  const missingCorruptFailureIssues = validateLocalModelCorruptMirrorRows(validRows.filter((row) => row.relative !== 'onnx/model_quantized.onnx'))
+  if (!missingCorruptFailureIssues.some((issue) => issue.includes('onnx/model_quantized.onnx'))) {
+    throw new Error(`Local-model corrupt mirror log self-test missed the corrupt ONNX failure: ${missingCorruptFailureIssues.join(', ')}`)
   }
   console.log('Local-model corrupt mirror log contract self-test passed.')
 }
@@ -4042,6 +5515,28 @@ function runProviderRuntimeKeyboardStateSelfTest(tempRoot) {
     }
   }
   console.log(`Provider Runtime keyboard state self-test passed (${invalidCases.length} invalid states rejected).`)
+}
+
+function runProviderRuntimeActivationEvidenceSelfTest() {
+  const valid = {
+    progress: { visible: true, ...providerRuntimeActivationEvidencePaths.progress },
+    result: { visible: true, ...providerRuntimeActivationEvidencePaths.result },
+  }
+  const validIssues = validateProviderRuntimeActivationEvidenceContract(valid, { validatePath: false })
+  if (validIssues.length) throw new Error(`Provider Runtime activation evidence self-test rejected valid evidence: ${validIssues.join(', ')}`)
+  const invalidCases = [
+    ['missing progress', { result: valid.result }, 'progress evidence is missing'],
+    ['progress not visible', { ...valid, progress: { ...valid.progress, visible: false } }, 'progress evidence does not prove visible=true'],
+    ['missing result UIA', { ...valid, result: { ...valid.result, uia: null } }, 'result evidence uia is missing'],
+    ['noncanonical result PNG', { ...valid, result: { ...valid.result, png: 'test-evidence/qa/provider-activation-result.png' } }, 'result evidence png is'],
+  ]
+  for (const [name, evidence, expectedIssue] of invalidCases) {
+    const issues = validateProviderRuntimeActivationEvidenceContract(evidence, { validatePath: false })
+    if (!issues.some((issue) => issue.includes(expectedIssue))) {
+      throw new Error(`Provider Runtime activation evidence self-test missed ${name}: ${issues.join(', ')}`)
+    }
+  }
+  console.log(`Provider Runtime activation evidence self-test passed (${invalidCases.length} invalid states rejected).`)
 }
 
 function runProviderRuntimeScenarioSelfTest(tempRoot) {
@@ -4205,6 +5700,52 @@ function runProviderRuntimeScenarioStepsSelfTest(tempRoot) {
   console.log(`Provider Runtime scenario steps self-test passed (${invalidCases.length} invalid states rejected).`)
 }
 
+function runProviderRuntimeCurrentArtifactSelfTest() {
+  const sha256 = 'a'.repeat(64)
+  const result = {
+    generatedAt: '2026-01-01T00:00:02.000Z',
+    deviceSerial: 'emulator-self-test',
+    apkPath: 'dist-apk/fixture.apk',
+    installed: {
+      deviceSerial: 'emulator-self-test',
+      lastUpdateTime: '2026-01-01 00:00:01',
+    },
+  }
+  const currentApkSmoke = {
+    device: 'emulator-self-test',
+    apk: {
+      path: 'dist-apk/fixture.apk',
+      modifiedAt: '2026-01-01T00:00:00.000Z',
+      sha256,
+    },
+    installed: {
+      deviceSerial: 'emulator-self-test',
+      lastUpdateTime: '2026-01-01 00:00:01',
+      packageSha256: sha256,
+    },
+  }
+  const validIssues = collectProviderRuntimeCurrentArtifactIssues(result, currentApkSmoke)
+  if (validIssues.length) {
+    throw new Error(`Provider Runtime current-artifact self-test rejected valid parity: ${validIssues.join(', ')}`)
+  }
+
+  const invalidCases = [
+    ['missing smoke', null, 'current APK smoke evidence is missing'],
+    ['stale result', { ...currentApkSmoke, apk: { ...currentApkSmoke.apk, modifiedAt: '2026-01-01T00:00:03.000Z' } }, 'predates the current APK artifact'],
+    ['different APK', { ...currentApkSmoke, apk: { ...currentApkSmoke.apk, path: 'dist-apk/other.apk' } }, 'does not match current APK smoke'],
+    ['different device', { ...currentApkSmoke, device: 'other-device', installed: { ...currentApkSmoke.installed, deviceSerial: 'other-device' } }, 'does not match current APK smoke'],
+    ['different install', { ...currentApkSmoke, installed: { ...currentApkSmoke.installed, lastUpdateTime: '2026-01-01 00:00:02' } }, 'installed-package timestamp'],
+    ['digest mismatch', { ...currentApkSmoke, installed: { ...currentApkSmoke.installed, packageSha256: 'b'.repeat(64) } }, 'APK/device SHA256 parity'],
+  ]
+  for (const [name, smoke, expectedIssue] of invalidCases) {
+    const issues = collectProviderRuntimeCurrentArtifactIssues(result, smoke)
+    if (!issues.some((issue) => issue.includes(expectedIssue))) {
+      throw new Error(`Provider Runtime current-artifact self-test missed ${name}: ${issues.join(', ')}`)
+    }
+  }
+  console.log(`Provider Runtime current-artifact self-test passed (${invalidCases.length} invalid states rejected).`)
+}
+
 function runReleaseFreshnessSelfTest(tempRoot) {
   const releaseRoot = path.join(tempRoot, 'release-fixture')
   const appDir = path.join(releaseRoot, 'app')
@@ -4328,15 +5869,29 @@ function runReleaseProvenanceMatrixGateSelfTest() {
 }
 
 function runReleaseRecoveryWorklistSelfTest() {
+  const fixtureSha256 = 'a'.repeat(64)
+  const fixtureInstalled = {
+    versionName: '1.0.7',
+    versionCode: 107,
+    firstInstallTime: '2026-01-01',
+    lastUpdateTime: '2026-01-01',
+    deviceSerial: 'emulator-5554',
+    packagePath: 'package:/com.islemind.app/base.apk',
+    packageSha256: fixtureSha256,
+    primaryCpuAbi: 'x86_64',
+    deviceAbi: 'x86_64',
+    cleanInstall: true,
+    cleanInstallWindowMs: 0,
+  }
   const staleRows = collectReleaseRecoveryWorklist({
     appPackageName,
-    apk: { path: 'dist-apk/fixture.apk', modifiedAt: '2026-01-01T00:00:00.000Z', sha256: 'a', sidecarSha256: 'a', sizeBytes: 1 },
+    apk: { path: 'dist-apk/fixture.apk', modifiedAt: '2026-01-01T00:00:00.000Z', sha256: fixtureSha256, sidecarSha256: fixtureSha256, sizeBytes: 1 },
     sourceFreshness: {
       status: 'stale',
       newestInput: { path: 'src/services/context.ts', modifiedAt: '2026-01-01T00:00:10.000Z' },
     },
     expected: { androidPackage: 'com.islemind.app', packageVersion: '1.0.7', expoVersion: '1.0.7', androidVersionCode: 107 },
-    installed: { versionName: '1.0.7', versionCode: 107, firstInstallTime: '2026-01-01', lastUpdateTime: '2026-01-01', deviceSerial: 'emulator-5554', packagePath: 'package:/com.islemind.app/base.apk', primaryCpuAbi: 'x86_64', deviceAbi: 'x86_64', cleanInstall: true, cleanInstallWindowMs: 0 },
+    installed: fixtureInstalled,
   })
   const commands = staleRows.map((row) => row.command)
   for (const expected of [
@@ -4360,12 +5915,30 @@ function runReleaseRecoveryWorklistSelfTest() {
   if (summary.byCommandType.device !== 5) throw new Error('Release recovery worklist self-test expected five device commands.')
   const currentRows = collectReleaseRecoveryWorklist({
     appPackageName,
-    apk: { path: 'dist-apk/fixture.apk', modifiedAt: '2026-01-01T00:00:10.000Z', sha256: 'a', sidecarSha256: 'a', sizeBytes: 1 },
+    apk: { path: 'dist-apk/fixture.apk', modifiedAt: '2026-01-01T00:00:10.000Z', sha256: fixtureSha256, sidecarSha256: fixtureSha256, sizeBytes: 1 },
     sourceFreshness: { status: 'current' },
     expected: { androidPackage: 'com.islemind.app', packageVersion: '1.0.7', expoVersion: '1.0.7', androidVersionCode: 107 },
-    installed: { versionName: '1.0.7', versionCode: 107, firstInstallTime: '2026-01-01', lastUpdateTime: '2026-01-01', deviceSerial: 'emulator-5554', packagePath: 'package:/com.islemind.app/base.apk', primaryCpuAbi: 'x86_64', deviceAbi: 'x86_64', cleanInstall: true, cleanInstallWindowMs: 0 },
+    installed: fixtureInstalled,
   })
   if (currentRows.length) throw new Error(`Release recovery worklist self-test expected no rows for valid provenance, got ${currentRows.length}.`)
+
+  const missingDigestRows = collectReleaseRecoveryWorklist({
+    appPackageName,
+    apk: { path: 'dist-apk/fixture.apk', modifiedAt: '2026-01-01T00:00:10.000Z', sha256: fixtureSha256, sidecarSha256: fixtureSha256, sizeBytes: 1 },
+    sourceFreshness: { status: 'current' },
+    expected: { androidPackage: 'com.islemind.app', packageVersion: '1.0.7', expoVersion: '1.0.7', androidVersionCode: 107 },
+    installed: { ...fixtureInstalled, packageSha256: null },
+  })
+  if (!missingDigestRows.length) throw new Error('Release recovery worklist self-test accepted missing installed APK SHA256.')
+
+  const mismatchedDigestRows = collectReleaseRecoveryWorklist({
+    appPackageName,
+    apk: { path: 'dist-apk/fixture.apk', modifiedAt: '2026-01-01T00:00:10.000Z', sha256: fixtureSha256, sidecarSha256: fixtureSha256, sizeBytes: 1 },
+    sourceFreshness: { status: 'current' },
+    expected: { androidPackage: 'com.islemind.app', packageVersion: '1.0.7', expoVersion: '1.0.7', androidVersionCode: 107 },
+    installed: { ...fixtureInstalled, packageSha256: 'b'.repeat(64) },
+  })
+  if (!mismatchedDigestRows.length) throw new Error('Release recovery worklist self-test accepted mismatched installed APK SHA256.')
   console.log('Release recovery worklist self-test passed (rebuild and dependent device commands).')
 }
 
@@ -5464,18 +7037,6 @@ function runAgentWorkflowMatrixGateSelfTest() {
     throw new Error(`Agent workflow matrix gate self-test rejected valid matrix row: ${validIssues.join(', ')}`)
   }
 
-  const missingDurableGoal = matrixText.replace('durable goal contract for scoped, reviewable, validated continuation passes', '')
-  const missingDurableGoalIssues = collectAgentWorkflowMatrixGateIssues(missingDurableGoal)
-  if (!missingDurableGoalIssues.some((issue) => issue.includes('durable goal contract'))) {
-    throw new Error(`Agent workflow matrix gate self-test missed durable goal contract: ${missingDurableGoalIssues.join(', ')}`)
-  }
-
-  const missingCompletionEvidence = matrixText.replace('completion evidence map for every agent workflow completion target', '')
-  const missingCompletionEvidenceIssues = collectAgentWorkflowMatrixGateIssues(missingCompletionEvidence)
-  if (!missingCompletionEvidenceIssues.some((issue) => issue.includes('completion evidence map'))) {
-    throw new Error(`Agent workflow matrix gate self-test missed completion evidence map: ${missingCompletionEvidenceIssues.join(', ')}`)
-  }
-
   const missingHandoffDiagnostic = matrixText.replace('handoff and diagnostic intents route to work-artifact summarization instead of planner-tool-missing', '')
   const missingHandoffDiagnosticIssues = collectAgentWorkflowMatrixGateIssues(missingHandoffDiagnostic)
   if (!missingHandoffDiagnosticIssues.some((issue) => issue.includes('handoff and diagnostic intents'))) {
@@ -5494,7 +7055,7 @@ function runAgentWorkflowMatrixGateSelfTest() {
     throw new Error(`Agent workflow matrix gate self-test missed validated body fallback contract: ${missingValidatedBodyFallbackIssues.join(', ')}`)
   }
 
-  console.log('Agent workflow matrix gate self-test passed (durable goal, completion evidence, handoff/diagnostic routing, incomplete artifact gaps, and validated body fallback markers).')
+  console.log('Agent workflow matrix gate self-test passed (behavior scripts, handoff/diagnostic routing, incomplete artifact gaps, and validated body fallback markers).')
 }
 
 function runArchitectureBoundaryEvidenceGateSelfTest() {
@@ -5508,11 +7069,25 @@ function runArchitectureBoundaryEvidenceGateSelfTest() {
       blockingIssues: 0,
       reviewFindings: 0,
     },
-    checks: requiredArchitectureBoundaryCheckIds.map((id) => ({ id })),
+    checks: requiredArchitectureBoundaryCheckIds.map((id) => ({ id, status: 'passed' })),
   }
   const valid = checkArchitectureBoundaryAudit({ architectureBoundaryAudit: completeEvidence })
   if (valid.issues.length) {
     throw new Error(`Architecture boundary evidence gate self-test rejected complete evidence: ${valid.issues.join(', ')}`)
+  }
+
+  const expandedEvidence = {
+    ...completeEvidence,
+    summary: {
+      ...completeEvidence.summary,
+      checks: completeEvidence.summary.checks + 1,
+      passed: completeEvidence.summary.passed + 1,
+    },
+    checks: [...completeEvidence.checks, { id: 'future-passing-boundary', status: 'passed' }],
+  }
+  const expanded = checkArchitectureBoundaryAudit({ architectureBoundaryAudit: expandedEvidence })
+  if (expanded.issues.length) {
+    throw new Error(`Architecture boundary evidence gate self-test rejected an additional passing check: ${expanded.issues.join(', ')}`)
   }
 
   const missingBudget = checkArchitectureBoundaryAudit({
@@ -5531,7 +7106,7 @@ function runArchitectureBoundaryEvidenceGateSelfTest() {
       summary: { ...completeEvidence.summary, checks: 8 },
     },
   })
-  if (!weakCount.issues.some((issue) => issue.includes(`${requiredArchitectureBoundaryCheckIds.length} required checks`))) {
+  if (!weakCount.issues.some((issue) => issue.includes(`at least ${requiredArchitectureBoundaryCheckIds.length} required checks`))) {
     throw new Error(`Architecture boundary evidence gate self-test accepted weak check count: ${weakCount.issues.join(', ')}`)
   }
 
@@ -5545,7 +7120,7 @@ function runArchitectureBoundaryEvidenceGateSelfTest() {
     throw new Error(`Architecture boundary evidence gate self-test accepted review findings: ${reviewFinding.issues.join(', ')}`)
   }
 
-  console.log('Architecture boundary evidence gate self-test passed (required checks, review budget, and zero-review state).')
+  console.log('Architecture boundary evidence gate self-test passed (required subset, additional passing checks, review budget, and zero-review state).')
 }
 
 function runAndroidDeviceToolPolicyGateSelfTest(tempRoot) {
@@ -5605,20 +7180,6 @@ function runAndroidDeviceTaskReleaseGateSelfTest(tempRoot) {
   const evidenceFile = path.join(releaseRoot, 'test-evidence', 'qa', androidDeviceTaskEvidenceName)
   fs.mkdirSync(path.dirname(evidenceFile), { recursive: true })
   fs.writeFileSync(evidenceFile, '{}\n', 'utf8')
-  fs.mkdirSync(path.join(releaseRoot, 'scripts'), { recursive: true })
-  fs.writeFileSync(path.join(releaseRoot, 'scripts', 'android-capability-boundary-audit.js'), 'test\n', 'utf8')
-  fs.writeFileSync(path.join(releaseRoot, 'scripts', 'android-permission-audit.js'), 'test\n', 'utf8')
-  fs.writeFileSync(path.join(releaseRoot, 'scripts', 'android-workflow-template-audit.js'), 'test\n', 'utf8')
-  const packageJson = {
-    scripts: {
-      'test:android-capability-boundary': 'node scripts/android-capability-boundary-audit.js',
-      'test:android-permission-audit': 'node scripts/android-permission-audit.js',
-      'test:android-workflow-templates': 'node scripts/android-workflow-template-audit.js',
-      'test:android-device-task:evidence': 'node scripts/collect-android-device-task-evidence.js',
-    },
-  }
-  fs.writeFileSync(path.join(releaseRoot, 'package.json'), `${JSON.stringify(packageJson)}\n`, 'utf8')
-
   const validTaskIds = [
     'download-directory-access',
     'saf-file-apply-undo',
@@ -5660,9 +7221,20 @@ function runAndroidDeviceTaskReleaseGateSelfTest(tempRoot) {
         copyDocument: true,
         moveDocument: true,
         renameDocument: true,
+        publishPortableJsonFileToDownloads: true,
       },
     },
-    permissions: { requestInstallPackagesDeclared: true, forbiddenDeclared: [] },
+    permissions: {
+      allowedDeclared: [...androidDeviceTaskAllowedPermissions],
+      blockedDeclared: [...androidDeviceTaskBlockedPermissions],
+      forbiddenDeclared: [],
+    },
+    contractChecks: {
+      canonicalWorkflowCatalogAligned: true,
+      integrationsToolCatalogAligned: true,
+      runtimeAuditVerified: true,
+      nativePluginScoped: true,
+    },
     intentResolvers: {
       directoryPicker: { available: true },
       apkInstaller: { available: true },
@@ -5697,8 +7269,8 @@ function runAndroidDeviceTaskReleaseGateSelfTest(tempRoot) {
     selectedDevice: null,
     device: null,
     package: null,
-    permissions: null,
     intentResolvers: null,
+    permissions: validEvidence.permissions,
     tasks: validTaskIds.map((id) => ({
       id,
       status: 'blocked',
@@ -5709,6 +7281,41 @@ function runAndroidDeviceTaskReleaseGateSelfTest(tempRoot) {
   }
   const blockedIssues = collectAndroidDeviceTaskEvidenceIssues(blockedEvidence, { evidenceFile, freshnessRoot: releaseRoot })
   if (blockedIssues.length) throw new Error(`Android device task evidence self-test rejected blocked no-device evidence: ${blockedIssues.join(', ')}`)
+
+  const missingContractCheckIssues = collectAndroidDeviceTaskEvidenceIssues({
+    ...validEvidence,
+    contractChecks: undefined,
+  }, { evidenceFile, freshnessRoot: releaseRoot })
+  if (!missingContractCheckIssues.some((issue) => issue.includes('contractChecks.canonicalWorkflowCatalogAligned=true'))) {
+    throw new Error(`Android device task evidence self-test missed absent contract checks: ${missingContractCheckIssues.join(', ')}`)
+  }
+  const falseContractCheckIssues = collectAndroidDeviceTaskEvidenceIssues({
+    ...validEvidence,
+    contractChecks: {
+      ...validEvidence.contractChecks,
+      nativePluginScoped: false,
+    },
+  }, { evidenceFile, freshnessRoot: releaseRoot })
+  if (!falseContractCheckIssues.some((issue) => issue.includes('contractChecks.nativePluginScoped=true'))) {
+    throw new Error(`Android device task evidence self-test missed a false contract check: ${falseContractCheckIssues.join(', ')}`)
+  }
+  const mismatchedPermissionIssues = collectAndroidDeviceTaskEvidenceIssues({
+    ...validEvidence,
+    permissions: {
+      allowedDeclared: validEvidence.permissions.allowedDeclared.slice(1),
+      blockedDeclared: [...validEvidence.permissions.blockedDeclared].reverse(),
+      forbiddenDeclared: ['android.permission.MANAGE_EXTERNAL_STORAGE'],
+    },
+  }, { evidenceFile, freshnessRoot: releaseRoot })
+  for (const expectedIssue of [
+    'exact canonical allowed permission declarations',
+    'exact canonical blocked permission declarations',
+    'no forbidden permission declarations',
+  ]) {
+    if (!mismatchedPermissionIssues.some((issue) => issue.includes(expectedIssue))) {
+      throw new Error(`Android device task evidence self-test missed ${expectedIssue}: ${mismatchedPermissionIssues.join(', ')}`)
+    }
+  }
 
   const invalidBoundaryIssues = collectAndroidDeviceTaskEvidenceIssues({
     ...validEvidence,
@@ -5757,72 +7364,7 @@ function runAndroidDeviceTaskReleaseGateSelfTest(tempRoot) {
     throw new Error(`Android device task evidence self-test missed stale evidence: ${staleIssues.join(', ')}`)
   }
 
-  const matrixText = [
-    'Android capability boundary audit',
-    '`src/services/agent/androidCapabilityBoundary.ts`',
-    '`scripts/android-capability-boundary-audit.js`',
-    '`bun run test:android-capability-boundary`',
-    '`islemind.android.capability-boundary.v1`',
-    '`islemind-android-app-runtime`',
-    '`qa-and-evidence-only`',
-    '`orchestrated-tool-request-only`',
-    '`user-approved-workflow-template`',
-    '`system intent request with visible fallback`',
-    '`mcp-orchestrated-tool-request`',
-    '`raw filesystem path access`',
-    '`silent install`',
-    '`full phone cleaner`',
-    '`exact alarm permission`',
-    '`calendar read/write permissions`',
-    'Android permission audit',
-    '`scripts/android-permission-audit.js`',
-    '`bun run test:android-permission-audit`',
-    '`REQUEST_INSTALL_PACKAGES`',
-    '`READ_CALENDAR`',
-    '`WRITE_CALENDAR`',
-    '`READ_MEDIA_IMAGES`',
-    '`blockedPermissions`',
-    '`tools:node="remove"`',
-    'Android workflow template audit',
-    '`scripts/android-workflow-template-audit.js`',
-    '`bun run test:android-workflow-templates`',
-    '`agent-workflow-android-download-organize`',
-    '`agent-workflow-android-file-copy-rename`',
-    '`agent-workflow-android-apk-install`',
-    '`agent-workflow-android-app-cache-cleanup`',
-    '`agent-workflow-android-alarm`',
-    '`agent-workflow-android-calendar-todo`',
-    'Android device task evidence',
-    '`test-evidence/qa/android-device-task-evidence.json`',
-    '`bun run test:android-device-task:evidence -- --self-test`',
-    '`bun run test:android-device-task:evidence`',
-    '`download-directory-access`',
-    '`saf-file-apply-undo`',
-    '`saf-file-copy-rename`',
-    '`apk-installer-handoff`',
-    '`alarm-intent-create-request`',
-    '`calendar-todo-handoff`',
-    '`app-cache-cleanup`',
-    '`runtimeBoundary.intrusive=false`',
-    '`runtimeBoundary.installsApk=false`',
-    '`runtimeBoundary.modifiesFiles=false`',
-    '`runtimeBoundary.createsAlarmOrCalendarEntry=false`',
-    '`visible Android undo entry`',
-    '`android.files.undo_operations`',
-    '`Undo operations JSON`',
-    '`pending visible confirmation`',
-    '`operationKind=file-undo`',
-    '`confirmationState=visible-action-recorded`',
-    '`deleteSupported=false`',
-  ].join('\n')
-  const matrixIssues = collectAndroidDeviceTaskMatrixGateIssues(matrixText, { repoRoot: releaseRoot, packageJson })
-  if (matrixIssues.length) throw new Error(`Android device task matrix self-test rejected valid matrix: ${matrixIssues.join(', ')}`)
-
-  const missingMatrixIssues = collectAndroidDeviceTaskMatrixGateIssues('Android device task evidence', { repoRoot: releaseRoot, packageJson })
-  if (!missingMatrixIssues.some((issue) => issue.includes('runtimeBoundary.intrusive=false'))) {
-    throw new Error(`Android device task matrix self-test missed non-intrusive boundary row: ${missingMatrixIssues.join(', ')}`)
-  }
-  console.log('Android device task release gate self-test passed (evidence boundary, freshness, and matrix rows).')
+  console.log('Android device task release gate self-test passed (evidence boundary and freshness).')
 }
 
 function runAndroidStatusNotificationReleaseGateSelfTest(tempRoot) {
@@ -6069,7 +7611,7 @@ function runRuntimeUiaRecaptureTargetSelfTest() {
 }
 
 function runEvidenceCoverageSelfTest() {
-  const missingCoverage = summarizeEvidenceCoverage([])
+  const missingCoverage = summarizeEvidenceCoverage([], { providerActivationCoverage: { qualified: false } })
   const missingProviderRuntime = missingCoverage.find((item) => item.area === 'Provider Runtime Android governance')
   if (!missingProviderRuntime) throw new Error('Evidence coverage self-test requires Provider Runtime Android governance coverage.')
   if (missingProviderRuntime.covered) throw new Error('Evidence coverage self-test expected missing Provider Runtime Android governance evidence without snapshots.')
@@ -6081,6 +7623,61 @@ function runEvidenceCoverageSelfTest() {
   ])
   const semanticInvalidAppShell = semanticInvalidCoverage.find((item) => item.area === 'App shell error/update notice')
   if (semanticInvalidAppShell?.covered) throw new Error('Evidence coverage self-test must reject semantically invalid key visual captures.')
+
+  const invalidTopSessionNames = collectInvalidKeyVisualCaptureNames({
+    captures: [{
+      name: 'home-session-options-panel',
+      semanticPassed: false,
+      semanticIssues: ['home-session-options-panel top-session control is unavailable on the direct Chat route.'],
+    }],
+    errors: ['home-session-options-panel top-session control is unavailable on the direct Chat route.'],
+  })
+  const staleTopSessionFile = 'test-evidence/qa/key-visual-gaps/home-session-options-panel.uia.xml'
+  if (!invalidTopSessionNames.has('home-session-options-panel')) {
+    throw new Error('Evidence coverage self-test must classify the current invalid top-session collector result.')
+  }
+  const staleTopSessionCoverage = summarizeEvidenceCoverage([{
+    file: staleTopSessionFile,
+    screenshotFile: 'test-evidence/qa/key-visual-gaps/home-session-options-panel.png',
+    semanticInvalid: invalidTopSessionNames.has(keyVisualCaptureNameFromFile(staleTopSessionFile)),
+  }])
+  const staleTopSession = staleTopSessionCoverage.find((item) => item.area === 'Top session options overlay')
+  if (staleTopSession?.covered) {
+    throw new Error('Evidence coverage self-test must reject a stale top-session file when the current collector result marks it invalid.')
+  }
+
+  const knowledgeMemoryCaptureNames = [
+    'settings-context-selftest-dialog',
+    'settings-context-selftest-result',
+    'knowledge-delete-start',
+    'knowledge-clear-confirm',
+    'memory-delete-start',
+    'memory-clear-confirm',
+  ]
+  const knowledgeMemorySnapshots = knowledgeMemoryCaptureNames.map((name) => ({
+    file: `test-evidence/qa/key-visual-gaps/${name}.uia.xml`,
+    screenshotFile: `test-evidence/qa/key-visual-gaps/${name}.png`,
+  }))
+  const completeKnowledgeMemory = summarizeEvidenceCoverage(knowledgeMemorySnapshots)
+    .find((item) => item.area === 'Knowledge and memory data flows')
+  if (!completeKnowledgeMemory?.covered) {
+    throw new Error('Evidence coverage self-test must accept complete paired Knowledge/Memory data-flow evidence.')
+  }
+  const knowledgeMemoryGroups = [
+    ['settings-context-selftest-dialog', 'settings-context-selftest-result'],
+    ['knowledge-delete-start'],
+    ['knowledge-clear-confirm'],
+    ['memory-delete-start'],
+    ['memory-clear-confirm'],
+  ]
+  for (const group of knowledgeMemoryGroups) {
+    const withoutGroup = summarizeEvidenceCoverage(knowledgeMemorySnapshots.filter((snapshot) => (
+      !group.some((name) => snapshot.file.includes(`/${name}.uia.xml`))
+    ))).find((item) => item.area === 'Knowledge and memory data flows')
+    if (withoutGroup?.covered) {
+      throw new Error(`Evidence coverage self-test must require Knowledge/Memory group ${group.join(' or ')}.`)
+    }
+  }
 
   const pairedProviderRuntimeCoverage = summarizeEvidenceCoverage([
     { file: 'test-evidence/qa/provider-runtime-settings-route.uia.xml', screenshotFile: 'test-evidence/qa/provider-runtime-settings-route.png' },
@@ -6095,6 +7692,60 @@ function runEvidenceCoverageSelfTest() {
   const pairedProviderRuntime = pairedProviderRuntimeCoverage.find((item) => item.area === 'Provider Runtime Android governance')
   if (!pairedProviderRuntime?.covered) throw new Error('Evidence coverage self-test expected paired Provider Runtime Android governance evidence to pass.')
   if (!pairedProviderRuntime.blocking) throw new Error('Evidence coverage self-test requires paired Provider Runtime Android governance evidence to remain blocking.')
+
+  const providerBatchKeyboard = summarizeEvidenceCoverage([{
+    file: 'test-evidence/qa/provider-runtime-android/provider-runtime-import-keyboard.uia.xml',
+    screenshotFile: 'test-evidence/qa/provider-runtime-android/provider-runtime-import-keyboard.png',
+  }]).find((item) => item.area === 'Provider batch import keyboard')
+  if (!providerBatchKeyboard?.covered) {
+    throw new Error('Evidence coverage self-test must accept the canonical paired Provider Runtime import-keyboard capture.')
+  }
+
+  const activationSnapshots = [
+    { file: providerRuntimeActivationEvidencePaths.progress.uia, screenshotFile: providerRuntimeActivationEvidencePaths.progress.png },
+    { file: providerRuntimeActivationEvidencePaths.result.uia, screenshotFile: providerRuntimeActivationEvidencePaths.result.png },
+  ]
+  const activationCoverage = summarizeEvidenceCoverage(activationSnapshots, {
+    providerActivationCoverage: {
+      qualified: true,
+      progressUia: providerRuntimeActivationEvidencePaths.progress.uia,
+      resultUia: providerRuntimeActivationEvidencePaths.result.uia,
+    },
+  }).find((item) => item.area === 'Provider activation progress/result')
+  if (!activationCoverage?.covered) throw new Error('Evidence coverage self-test must accept qualified paired Provider activation evidence.')
+  const activationMissingProgress = summarizeEvidenceCoverage(activationSnapshots.slice(1), {
+    providerActivationCoverage: {
+      qualified: true,
+      progressUia: providerRuntimeActivationEvidencePaths.progress.uia,
+      resultUia: providerRuntimeActivationEvidencePaths.result.uia,
+    },
+  }).find((item) => item.area === 'Provider activation progress/result')
+  if (activationMissingProgress?.covered) throw new Error('Evidence coverage self-test must require the Provider activation progress pair.')
+  const activationUnqualified = summarizeEvidenceCoverage(activationSnapshots, {
+    providerActivationCoverage: {
+      qualified: false,
+      progressUia: providerRuntimeActivationEvidencePaths.progress.uia,
+      resultUia: providerRuntimeActivationEvidencePaths.result.uia,
+    },
+  }).find((item) => item.area === 'Provider activation progress/result')
+  if (activationUnqualified?.covered) throw new Error('Evidence coverage self-test must reject filename-only Provider activation evidence.')
+
+  const longContentSnapshots = Object.values(longContentStressEvidencePaths).map((item) => ({
+    file: item.uia,
+    screenshotFile: item.png,
+  }))
+  const longContentCoverage = summarizeEvidenceCoverage(longContentSnapshots, {
+    longContentStressCoverage: { qualified: true },
+  }).find((item) => item.area === 'Long content stress states')
+  if (!longContentCoverage?.covered) throw new Error('Evidence coverage self-test must accept qualified paired long-content stress evidence.')
+  const longContentMissingTrace = summarizeEvidenceCoverage(longContentSnapshots.filter((snapshot) => snapshot.file !== longContentStressEvidencePaths.trace.uia), {
+    longContentStressCoverage: { qualified: true },
+  }).find((item) => item.area === 'Long content stress states')
+  if (longContentMissingTrace?.covered) throw new Error('Evidence coverage self-test must require the canonical long-content trace pair.')
+  const longContentUnqualified = summarizeEvidenceCoverage(longContentSnapshots, {
+    longContentStressCoverage: { qualified: false },
+  }).find((item) => item.area === 'Long content stress states')
+  if (longContentUnqualified?.covered) throw new Error('Evidence coverage self-test must reject filename-only long-content stress evidence.')
 
   const touchTargetCoverage = summarizeBlockingTouchTargets([
     {
@@ -7233,6 +8884,11 @@ function renderReleaseProvenance(lines, provenance) {
   lines.push(`| Expected package/version | ${escapeCell(`${provenance.expected?.androidPackage ?? 'missing'} / ${provenance.expected?.expoVersion ?? 'missing'} (${provenance.expected?.androidVersionCode ?? 'missing'})`)} |`)
   lines.push(`| Installed device | ${escapeCell(provenance.installed?.deviceSerial ?? 'missing')} |`)
   lines.push(`| Installed package path | ${escapeCell(provenance.installed?.packagePath ?? 'missing')} |`)
+  lines.push(`| Installed package SHA256 | ${provenance.installed?.packageSha256 ? `\`${provenance.installed.packageSha256}\`` : 'missing'} |`)
+  const apkSha256 = provenance.apk?.sha256 ?? null
+  const installedSha256 = provenance.installed?.packageSha256 ?? null
+  const digestParity = apkSha256 && installedSha256 ? (apkSha256 === installedSha256 ? 'match' : 'mismatch') : 'missing'
+  lines.push(`| APK/device SHA256 parity | ${digestParity} |`)
   lines.push(`| Installed version | ${escapeCell(`${provenance.installed?.versionName ?? 'missing'} (${provenance.installed?.versionCode ?? 'missing'})`)} |`)
   lines.push(`| Installed ABI | ${escapeCell(`${provenance.installed?.primaryCpuAbi ?? 'missing'} on ${provenance.installed?.deviceAbi ?? 'missing'}`)} |`)
   lines.push(`| Clean install timestamps | ${escapeCell(`${provenance.installed?.firstInstallTime ?? 'missing'} / ${provenance.installed?.lastUpdateTime ?? 'missing'}`)} |`)
@@ -7253,10 +8909,41 @@ function releaseProvenanceStatusLabel(provenance) {
   return `failed (${issues.length})`
 }
 
-function summarizeEvidenceCoverage(snapshots) {
+function providerActivationItem(files, coverage) {
+  const expectedFiles = [
+    providerRuntimeActivationEvidencePaths.progress.uia,
+    providerRuntimeActivationEvidencePaths.result.uia,
+  ]
+  const matches = files.filter((file) => expectedFiles.includes(file))
+  const covered = coverage?.qualified === true && expectedFiles.every((file) => files.includes(file))
+  return {
+    area: 'Provider activation progress/result',
+    covered,
+    evidence: matches.length ? formatEvidenceList(matches) : 'missing',
+    followUp: 'Capture provider activation start/progress/result to prove immediate feedback and final readiness.',
+    blocking: true,
+  }
+}
+
+function longContentStressItem(files, coverage) {
+  const expectedFiles = Object.values(longContentStressEvidencePaths).map((item) => item.uia)
+  const matches = files.filter((file) => expectedFiles.includes(file))
+  const covered = coverage?.qualified === true && expectedFiles.every((file) => files.includes(file))
+  return {
+    area: 'Long content stress states',
+    covered,
+    evidence: matches.length ? formatEvidenceList(matches) : 'missing',
+    followUp: 'Seed long provider/model names, long tool traces, long citations, and long knowledge documents.',
+    blocking: true,
+  }
+}
+
+function summarizeEvidenceCoverage(snapshots, options = {}) {
   const files = snapshots
     .filter((snapshot) => snapshot.screenshotFile && !snapshot.semanticInvalid)
     .map((snapshot) => snapshot.file)
+  const providerActivationCoverage = options.providerActivationCoverage ?? collectProviderActivationCoverage()
+  const longContentStressCoverage = options.longContentStressCoverage ?? collectLongContentStressCoverage()
   const matchAny = (patterns) => files.filter((file) => patterns.some((pattern) => pattern.test(file)))
   const anyItem = (area, patterns, followUp, options = {}) => {
     const matches = files.filter((file) => patterns.some((pattern) => pattern.test(file)))
@@ -7304,8 +8991,8 @@ function summarizeEvidenceCoverage(snapshots) {
     anyItem('Home model panel overlay', [/home-bottom-model-panel/], 'Capture the model picker overlay, including long and empty model-list states.'),
     anyItem('Composer More panel overlay', [/home-more-panel/], 'Capture the More tools panel and verify vertical gestures do not trigger page swipes.'),
     anyItem('Top session options overlay', [/home-session-options-panel/], 'Capture the top provider/model/settings overlay and Android Back close behavior.'),
-    anyItem('Provider batch import keyboard', [/settings-providers-batch-keyboard-open/, /current-.*provider-import-filled/], 'Capture provider batch import while the keyboard is open and actions remain visible.'),
-    allItem('Provider activation progress/result', [[/provider-activation-progress/], [/provider-activation-result/]], 'Capture provider activation start/progress/result to prove immediate feedback and final readiness.'),
+    anyItem('Provider batch import keyboard', [/settings-providers-batch-keyboard-open/, /current-.*provider-import-filled/, /provider-runtime.*import.*keyboard/], 'Capture provider batch import while the keyboard is open and actions remain visible.'),
+    providerActivationItem(files, providerActivationCoverage),
     allItem('Provider Runtime Android governance', [
       [/settings-providers.*route/, /provider-runtime.*settings/],
       [/provider-runtime.*import.*keyboard/, /settings-providers-batch-keyboard-open/],
@@ -7342,7 +9029,7 @@ function summarizeEvidenceCoverage(snapshots) {
     allItem('MCP keyboard/offline/online', [[/settings-mcp.*keyboard-open/], [/settings-mcp-offline/], [/settings-mcp-online/]], 'Capture MCP server input, offline error, sync success, toggle, and delete states.'),
     allItem('Theme and locale', [[/settings-dark/, /home-dark/], [/settings-en/, /home-en/], [/settings-ja/, /home-ja/]], 'Capture Simplified Chinese, English, Japanese, and dark-mode surfaces.'),
     anyItem('130 percent text scale', [/fontscale-130/], 'Capture key routes and overlays at 130 percent Android font scale.'),
-    allItem('Long content stress states', [[/long-provider/, /long-model/], [/long-trace/], [/long-citation/], [/long-knowledge/]], 'Seed long provider/model names, long tool traces, long citations, and long knowledge documents.'),
+    longContentStressItem(files, longContentStressCoverage),
   ]
 }
 

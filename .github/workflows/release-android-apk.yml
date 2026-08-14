@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: Release tag. Defaults to package.json version, for example v1.0.0.
+        description: Release tag. Defaults to package.json version, for example v0.0.0.
         required: false
         type: string
 
@@ -26,11 +26,10 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v6
 
-      - name: Setup Node
-        uses: actions/setup-node@v6
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
         with:
-          node-version: 22
-          cache: npm
+          bun-version: 1.3.14
 
       - name: Setup Java
         uses: actions/setup-java@v5
@@ -46,7 +45,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          PACKAGE_VERSION="$(node -p "require('./package.json').version")"
+          PACKAGE_VERSION="$(bun -e "console.log(require('./package.json').version)")"
           if [ "${GITHUB_REF_TYPE:-}" = "tag" ]; then
             TAG="${GITHUB_REF_NAME}"
           elif [ -n "${REQUESTED_TAG:-}" ]; then
@@ -78,13 +77,25 @@ jobs:
           fi
 
       - name: Install dependencies
-        run: npm ci
+        run: bun install --frozen-lockfile
 
       - name: Type check
-        run: npm run type-check
+        run: bun run type-check
+
+      - name: Release quality contracts
+        run: |
+          bun run test:release-readiness-compatibility
+          bun run test:runtime-budget-governance-compatibility
+          bun run test:runtime-privacy-retention-compatibility
+
+      - name: Architecture and recovery contracts
+        run: |
+          bun run test:vnext-architecture-contract
+          bun run test:vnext-walking-skeleton
+          bun run test:vnext-task-runtime
 
       - name: Generate Android project
-        run: CI=1 npx expo prebuild --platform android --clean
+        run: CI=1 bunx expo prebuild --platform android --clean
 
       - name: Configure release signing and ABI splits
         shell: bash
@@ -97,7 +108,7 @@ jobs:
             echo "ISLEMIND_UPLOAD_STORE_PASSWORD=$ANDROID_KEYSTORE_PASSWORD"
             echo "ISLEMIND_UPLOAD_KEY_PASSWORD=$ANDROID_KEY_PASSWORD"
           } >> android/gradle.properties
-          node scripts/configure-android-release.js
+          bun scripts/configure-android-release.js
 
       - name: Build release APKs
         shell: bash
@@ -110,7 +121,7 @@ jobs:
             if [ "$model_variant" = "with-model-small" ]; then
               extra_args+=(--fail-on-missing-models)
             fi
-            node scripts/prepare-model-bundle.js --variant "$model_variant" "${extra_args[@]}"
+            bun scripts/prepare-model-bundle.js --variant "$model_variant" "${extra_args[@]}"
             copied=0
             for build_pass in "universal-64:arm64-v8a,x86_64" "arm64-v8a:arm64-v8a" "x86_64:x86_64" "armeabi-v7a-legacy:armeabi-v7a"; do
               IFS=':' read -r arch abi_filters <<< "$build_pass"
@@ -141,7 +152,7 @@ jobs:
             echo "::error::Expected 8 APK assets, found $count."
             exit 1
           fi
-          node scripts/validate-android-16kb-apk.js dist-apk/*-universal-64-*.apk dist-apk/*-arm64-v8a-*.apk dist-apk/*-x86_64-*.apk
+          bun scripts/validate-android-16kb-apk.js dist-apk/*-universal-64-*.apk dist-apk/*-arm64-v8a-*.apk dist-apk/*-x86_64-*.apk
 
       - name: Upload APK artifact
         uses: actions/upload-artifact@v7

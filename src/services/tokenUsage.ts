@@ -1,4 +1,4 @@
-import type { Message, MessageUsage } from '@/types'
+import type { Message, MessageUsage } from '@/types/chatContracts'
 import { filterSendableAttachments } from '@/services/attachmentContract'
 
 const CJK_RE = /[\u3400-\u9fff\u3040-\u30ff\uac00-\ud7af]/g

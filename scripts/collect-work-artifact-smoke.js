@@ -247,8 +247,9 @@ function writeFixture() {
       {
         id: 'qa-work-artifact-provider',
         type: 'openai-compatible',
-        presetId: 'custom-openai-compatible',
-        detectedPresetId: 'custom-openai-compatible',
+        presetId: 'custom-endpoint',
+        detectedPresetId: 'custom-endpoint',
+        wireProtocol: 'openai-compatible',
         detectionStatus: 'manual',
         name: 'QA Work Artifact Provider',
         apiKey: 'islemind-work-artifact-placeholder-key',
@@ -302,8 +303,14 @@ function openChat(device) {
 
 function tapImportJson(device, result) {
   for (let index = 0; index < 8; index += 1) {
-    const capture = captureStep(device, result, `settings-import-search-${index}`)
-    if (tapText(device, capture.uiaText, importJsonLabels)) {
+    let capture = captureStep(device, result, `settings-import-search-${index}`)
+    let importTapped = tapText(device, capture.uiaText, importJsonLabels)
+    if (!importTapped && tapText(device, capture.uiaText, importExportLabels)) {
+      sleep(900)
+      capture = captureStep(device, result, `settings-import-expanded-${index}`)
+      importTapped = tapText(device, capture.uiaText, importJsonLabels)
+    }
+    if (importTapped) {
       sleep(1400)
       return
     }
@@ -371,7 +378,9 @@ function captureChatWithAssistant(device, result) {
 
 function openWorkArtifactActions(device, result) {
   let latest = captureStep(device, result, 'actions-search-start')
-  if (hasAnyText(latest.uiaText, workArtifactActionLabels)) return latest
+  if (hasAnyText(latest.uiaText, workArtifactActionLabels)) {
+    return captureStep(device, result, 'actions-open')
+  }
   if (tapAssistantMessageBody(device, latest.uiaText)) {
     sleep(750)
     const candidate = captureStep(device, result, 'actions-open-message-body')
@@ -474,13 +483,25 @@ function tapText(device, uiaText, labels) {
 }
 
 function findTappableTextNode(nodes, label) {
-  const clickable = nodes.filter((item) => item.enabled && item.clickable)
+  const clickable = nodes.filter((item) => item.enabled && item.clickable && isUsableBounds(item.bounds))
   const exactClickable = clickable.find((item) => item.text === label || item.contentDesc === label)
   if (exactClickable) return exactClickable
   const containingClickable = clickable.find((item) => textMatches(item, label))
   if (containingClickable) return containingClickable
 
-  const visibleLabel = nodes.find((item) => item.enabled && textMatches(item, label))
+  const clippedExactClickable = nodes.find((item) =>
+    item.enabled &&
+    item.clickable &&
+    (item.text === label || item.contentDesc === label) &&
+    normalizeVerticallyClippedBounds(item.bounds))
+  if (clippedExactClickable) {
+    return {
+      ...clippedExactClickable,
+      bounds: normalizeVerticallyClippedBounds(clippedExactClickable.bounds),
+    }
+  }
+
+  const visibleLabel = nodes.find((item) => item.enabled && isUsableBounds(item.bounds) && textMatches(item, label))
   const visibleBounds = visibleLabel ? parseBounds(visibleLabel.bounds) : null
   if (!visibleBounds) return visibleLabel ?? null
 
@@ -529,7 +550,7 @@ function textMatches(node, label) {
 
 function tapBoundsCenter(device, bounds) {
   const box = parseBounds(bounds)
-  if (!box) return
+  if (!box || !isUsableBounds(bounds)) return
   const x = Math.round((box.left + box.right) / 2)
   const y = Math.round((box.top + box.bottom) / 2)
   runCommand('adb', ['-s', device, 'shell', 'input', 'tap', String(x), String(y)])
@@ -548,6 +569,18 @@ function boundsContains(outer, inner) {
 
 function boundsArea(bounds) {
   return Math.max(0, bounds.right - bounds.left) * Math.max(0, bounds.bottom - bounds.top)
+}
+
+function isUsableBounds(boundsText) {
+  const bounds = parseBounds(boundsText)
+  return Boolean(bounds && bounds.right > bounds.left && bounds.bottom > bounds.top)
+}
+
+function normalizeVerticallyClippedBounds(boundsText) {
+  const bounds = parseBounds(boundsText)
+  if (!bounds || bounds.right <= bounds.left || bounds.bottom > bounds.top || bounds.top < 0 || bounds.top >= 1920) return null
+  const size = Math.max(1, bounds.right - bounds.left)
+  return `[${bounds.left},${bounds.top}][${bounds.right},${Math.min(1920, bounds.top + size)}]`
 }
 
 function swipeUp(device) {
@@ -610,6 +643,11 @@ function runSelfTest() {
   assert.equal(documentsSearchFieldFocused(focusedSearchWithFile), true, 'DocumentsUI focused search field is detected')
   assert.equal(documentsFileTitleVisible(fileHiddenByHeaderOnly, fileName), false, 'Search query text is not mistaken for a tappable file row')
   assert.equal(extractVisibleText(focusedSearchWithFile).includes(`预览“${fileName}”文件`), true, 'localized preview content-desc is decoded')
+  const clippedActionNodes = parseNodes('<node text="" content-desc="Continue work" enabled="true" clickable="true" bounds="[598,1438][630,1272]" />')
+  assert.equal(findTappableTextNode(clippedActionNodes, 'Continue work')?.bounds, '[598,1438][630,1470]', 'vertically clipped exact action bounds are normalized from their visible top edge')
+  assert.equal(findTappableTextNode(clippedActionNodes, 'Continue') ?? null, null, 'vertically clipped actions require an exact accessibility label')
+  const collectorSource = fs.readFileSync(__filename, 'utf8')
+  assert.match(collectorSource, /hasAnyText\(latest\.uiaText, workArtifactActionLabels\)[\s\S]*captureStep\(device, result, 'actions-open'\)/, 'visible default work-artifact actions produce a semantic actions-open evidence pair')
   console.log('Work artifact smoke self-test passed')
 }
 

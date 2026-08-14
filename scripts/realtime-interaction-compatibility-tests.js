@@ -13,7 +13,7 @@ const {
   REALTIME_INTERACTION_COMPATIBILITY_EVAL_SCHEMA,
   REALTIME_INTERACTION_COMPATIBILITY_FIXTURE_IDS,
   runRealtimeInteractionCompatibilityEvaluation,
-} = require('../src/services/realtimeInteractionCompatibilityEvaluation.ts')
+} = require('../src/modules/providers/testing/realtimeInteractionCompatibilityEvaluation.ts')
 
 function registerTypeScriptSupport() {
   if (require.extensions['.ts']?.isRealtimeInteractionCompatibilityHook) return

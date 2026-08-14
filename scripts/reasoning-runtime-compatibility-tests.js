@@ -13,7 +13,7 @@ const {
   REASONING_RUNTIME_COMPATIBILITY_EVAL_SCHEMA,
   REASONING_RUNTIME_COMPATIBILITY_FIXTURE_IDS,
   runReasoningRuntimeCompatibilityEvaluation,
-} = require('../src/services/reasoningRuntimeCompatibilityEvaluation.ts')
+} = require('../src/modules/assistant-runtime/testing/reasoningRuntimeCompatibilityEvaluation.ts')
 
 function registerTypeScriptSupport() {
   if (require.extensions['.ts']?.isReasoningRuntimeCompatibilityHook) return

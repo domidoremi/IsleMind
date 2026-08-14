@@ -1,8 +1,9 @@
-import type { AIProvider, Settings } from '@/types'
+import type { AIProvider } from '@/types/providerContracts'
+import type { Settings } from '@/types/settingsContracts'
 import { getRuntimeLogInfo, readRuntimeLogText, type RuntimeLogEntry, type RuntimeLogInfo } from '@/services/runtimeLog'
 import { RUNTIME_EVENT_HISTORY_LIMIT, RUNTIME_EVENT_SCHEMA, getRuntimeEventHistory, runtimeLogEventForRuntimeEvent, type RuntimeEventEnvelope } from '@/services/runtimeEvents'
 import { buildRuntimeTimelineSnapshot, type RuntimeTimelineSnapshot } from '@/services/runtimeTimeline'
-import { listCompactUsageRecords } from '@/services/ai/compact/compactUsage'
+import { listCompactUsageRecords } from '@/bootstrap/providerCompactUsage'
 import {
   OBSERVABILITY_SINK_EXPORT_SCHEMA,
   OBSERVABILITY_SINK_PREVIEW_EVENT_LIMIT,
@@ -22,14 +23,16 @@ import {
   buildProviderCoverageBuckets,
   buildProviderModelCapabilityMatrix,
   summarizeProviderModelCapabilityProvider,
-  type ProviderCapabilityArea,
-  type ProviderHostingProfile,
-  type ProviderModelCapabilityEvidenceSource,
-  type ProviderModelCapabilityEvidenceStatus,
-  type ProviderModelCapabilityKey,
-  type ProviderModelCapabilityProviderSummary,
-  type ProviderSupportLevel,
-} from '@/services/ai/providerCapabilityMatrix'
+} from '@/bootstrap/providerCapabilityMatrix'
+import type {
+  ProviderCapabilityArea,
+  ProviderHostingProfile,
+  ProviderModelCapabilityEvidenceSource,
+  ProviderModelCapabilityEvidenceStatus,
+  ProviderModelCapabilityKey,
+  ProviderModelCapabilityProviderSummary,
+  ProviderSupportLevel,
+} from '@/modules/providers'
 import {
   buildProviderCompatibilityBehaviorStatusMap,
   explainProviderCompatibilityCapabilityStatus,
@@ -44,8 +47,19 @@ import {
   type ProviderCompatibilityCapabilityStatus,
   type ProviderCompatibilityDegradationPath,
   type ProviderCompatibilityLimitationReason,
-} from '@/services/ai/providerCompatibilityContract'
-
+} from '@/modules/providers'
+import {
+  MEDIA_GENERATION_DEFAULT_ENABLEMENT_AUDIT_SCHEMA,
+  auditMediaGenerationDefaultEnablement,
+  collectMediaGenerationProviderGateEvidence,
+  resolveMediaGenerationProviderCapabilityEvidence,
+  summarizeMediaGenerationAdapterProofWorklist,
+  type MediaGenerationAdapterProofWorklistSummary,
+  type MediaGenerationDefaultEnablementAudit,
+  type MediaGenerationProviderCapabilityEvidenceSource,
+  type MediaGenerationProviderCapabilityKind,
+} from '@/services/mediaGenerationContract'
+import type { ChatMediaGenerationAdapterGateId } from '@/presentation/features/chat/chatMultimodalPolicy'
 export const RUNTIME_DIAGNOSTICS_LOG_TAIL_BYTES = 12000
 export const RUNTIME_DIAGNOSTICS_LOG_ENTRY_LIMIT = 120
 export const RUNTIME_DIAGNOSTICS_TIMELINE_EVENT_LIMIT = 120
@@ -102,6 +116,21 @@ export interface RuntimeDiagnosticsModelCapabilityExample {
   source: ProviderModelCapabilityEvidenceSource
   canSend: boolean
   reason: string
+}
+
+export interface RuntimeDiagnosticsMediaGenerationExample {
+  providerId?: string
+  providerName?: string
+  model: string
+  kind: MediaGenerationProviderCapabilityKind
+  supported: boolean
+  source: MediaGenerationProviderCapabilityEvidenceSource
+  reason: string
+  ready: number
+  total: number
+  blockedGateIds: readonly ChatMediaGenerationAdapterGateId[]
+  sourceUrl?: string
+  verifiedAt?: string
 }
 
 export interface RuntimeDiagnosticsRectificationExample {
@@ -389,6 +418,17 @@ export interface RuntimeDiagnosticsSummary {
     liveSmokeGateCount: number
     loggedEvents: number
   }
+  mediaGeneration: {
+    schema: typeof MEDIA_GENERATION_DEFAULT_ENABLEMENT_AUDIT_SCHEMA
+    sourceBackedModels: number
+    unsafeProviderWideDeclarations: number
+    inferredOnlyModels: number
+    missingModels: number
+    maxReady: number
+    total: number
+    adapterProofWorklist: MediaGenerationAdapterProofWorklistSummary
+    examples: RuntimeDiagnosticsMediaGenerationExample[]
+  }
 }
 
 export async function buildRuntimeDiagnosticsSummary(input: {
@@ -432,6 +472,7 @@ export async function buildRuntimeDiagnosticsSummary(input: {
   const compatibilityCapabilitySendSources = summarizeCompatibilityCapabilitySendSources(heavyProviders)
   const compatibilityCapabilitySendPolicyExamples = summarizeCompatibilityCapabilitySendPolicyExamples(heavyProviders)
   const compatibilityGateCounts = compatibilityEvidence.map((evidence) => getProviderCompatibilityLiveSmokeGates(evidence.id).length)
+  const mediaGeneration = summarizeMediaGenerationDiagnostics(heavyProviders)
   return {
     responses: {
       capableProviders: providers.filter(providerSupportsResponsesApi).length,
@@ -446,7 +487,7 @@ export async function buildRuntimeDiagnosticsSummary(input: {
       fallbackCount: websocketFallbackCount,
     },
     compact: {
-      mode: settings.remoteCompactMode ?? 'off',
+      mode: settings.remoteCompactMode ?? 'auto',
       capableProviders: providers.filter(providerSupportsRemoteCompact).length,
       readyProviders: enabledProviders.filter(providerSupportsRemoteCompact).length,
       requestCount: compactRecords.length,
@@ -538,6 +579,7 @@ export async function buildRuntimeDiagnosticsSummary(input: {
       liveSmokeGateCount: compatibilityGateCounts.reduce((sum, count) => sum + count, 0),
       loggedEvents: countRuntimeLogEntries(logEntries, 'provider.compatibility'),
     },
+    mediaGeneration,
   }
 }
 
@@ -1339,6 +1381,75 @@ function summarizeProviderModelCapabilityStatusExamples(providers: AIProvider[])
     }
   }
   return examples
+}
+
+function summarizeMediaGenerationDiagnostics(providers: AIProvider[]): RuntimeDiagnosticsSummary['mediaGeneration'] {
+  const examples: RuntimeDiagnosticsMediaGenerationExample[] = []
+  const counts: Record<MediaGenerationProviderCapabilityEvidenceSource, number> = {
+    'source-backed-model-metadata': 0,
+    'unsafe-provider-wide-declaration': 0,
+    'inferred-only': 0,
+    missing: 0,
+  }
+  let maxReady = 0
+  let total = auditMediaGenerationDefaultEnablement({}).total
+  for (const provider of providers) {
+    for (const model of runtimeDiagnosticsModelCapabilityIds(provider).slice(0, 8)) {
+      for (const kind of ['image-generation', 'video-generation'] as const) {
+        const evidence = resolveMediaGenerationProviderCapabilityEvidence({ provider, model, kind })
+        counts[evidence.source] += 1
+        const audit = auditMediaGenerationDefaultEnablement(collectMediaGenerationProviderGateEvidence({ provider, model, kind }))
+        maxReady = Math.max(maxReady, audit.ready)
+        total = audit.total
+        if (shouldKeepMediaGenerationExample(evidence.source, examples)) {
+          examples.push(mediaGenerationEvidenceExample(provider, model, kind, evidence, audit))
+        }
+      }
+    }
+  }
+  return {
+    schema: MEDIA_GENERATION_DEFAULT_ENABLEMENT_AUDIT_SCHEMA,
+    sourceBackedModels: counts['source-backed-model-metadata'],
+    unsafeProviderWideDeclarations: counts['unsafe-provider-wide-declaration'],
+    inferredOnlyModels: counts['inferred-only'],
+    missingModels: counts.missing,
+    maxReady,
+    total,
+    adapterProofWorklist: summarizeMediaGenerationAdapterProofWorklist(),
+    examples,
+  }
+}
+
+function shouldKeepMediaGenerationExample(
+  source: MediaGenerationProviderCapabilityEvidenceSource,
+  examples: RuntimeDiagnosticsMediaGenerationExample[],
+): boolean {
+  if (examples.length >= 6) return false
+  if (source === 'missing') return examples.filter((example) => example.source === 'missing').length < 1
+  return examples.filter((example) => example.source === source).length < 2
+}
+
+function mediaGenerationEvidenceExample(
+  provider: AIProvider,
+  model: string,
+  kind: MediaGenerationProviderCapabilityKind,
+  evidence: ReturnType<typeof resolveMediaGenerationProviderCapabilityEvidence>,
+  audit: MediaGenerationDefaultEnablementAudit,
+): RuntimeDiagnosticsMediaGenerationExample {
+  return {
+    providerId: provider.id,
+    providerName: provider.name,
+    model,
+    kind,
+    supported: evidence.supported,
+    source: evidence.source,
+    reason: evidence.reason,
+    ready: audit.ready,
+    total: audit.total,
+    blockedGateIds: audit.blockedGateIds,
+    sourceUrl: evidence.sourceUrl,
+    verifiedAt: evidence.verifiedAt,
+  }
 }
 
 function runtimeDiagnosticsModelCapabilityIds(provider: AIProvider): string[] {

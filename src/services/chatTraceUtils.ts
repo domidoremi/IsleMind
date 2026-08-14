@@ -1,7 +1,6 @@
-import type { Message, ProcessTrace } from '@/types'
-import { redactSensitiveText } from '@/services/agent/agentTrace'
-import { sanitizeTraceMetadata } from '@/utils/traceSafety'
-
+import type { Message } from '@/types/chatContracts'
+import type { ProcessTrace } from '@/core'
+import { redactSensitiveText, sanitizeTraceMetadata } from '@/core'
 export interface SettleRunningTracesOptions {
   fallbackStatus: ProcessTrace['status']
   fallbackContent: string

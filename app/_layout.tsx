@@ -2,12 +2,12 @@ import '../src/devLogFilters'
 import '../src/global.css'
 import 'react-native-gesture-handler'
 import * as Clipboard from 'expo-clipboard'
-import type { ErrorBoundaryProps } from 'expo-router'
-import type { NativeStackNavigationOptions } from '@react-navigation/native-stack'
+import type { ErrorBoundaryProps, NativeStackNavigationOptions } from 'expo-router'
 import { useEffect, useRef } from 'react'
 import { router, Stack, useGlobalSearchParams } from 'expo-router'
 import { GestureHandlerRootView } from 'react-native-gesture-handler'
-import { ActivityIndicator, Linking, Platform, Text, View } from 'react-native'
+import { ActivityIndicator, Platform, Text, View } from 'react-native'
+import { SafeAreaView } from 'react-native-safe-area-context'
 import { useTranslation } from 'react-i18next'
 import { AnimatedNavigationIcon } from '@/components/navigation/AnimatedNavigationIcon'
 import { useNavigationTrigger } from '@/components/navigation/AnimatedNavigationTrigger'
@@ -19,8 +19,8 @@ import { IsleButton } from '@/components/ui/isle'
 import { IslePanel } from '@/components/ui/isle'
 import { IsleDialogProvider } from '@/components/ui/isle'
 import { initI18n } from '@/i18n'
-import { useMotionPreference } from '@/hooks/useMotionPreference'
-import { redirectSystemPath } from './+native-intent'
+import { GlobalGenerationStatusLayer } from '@/components/ui/GlobalGenerationStatusLayer'
+import { GlobalSystemStatusNotificationLayer } from '@/components/ui/GlobalSystemStatusNotificationLayer'
 
 initI18n()
 
@@ -31,15 +31,13 @@ const SETTINGS_PROVIDER_SCREEN_OPTIONS: NativeStackNavigationOptions = {
 
 export default function RootLayout() {
   const boot = useBootstrap()
-  const { colors, mode, themeId } = useAppTheme()
+  const { colors, mode, themeId, themeAccent } = useAppTheme()
   const { t } = useTranslation()
-  const motion = useMotionPreference()
   const params = useGlobalSearchParams<{ qaUpdateNotice?: string | string[] }>()
   const qaUpdateVersion = firstQueryParam(params.qaUpdateNotice)
   const qaUpdateMessage = qaUpdateVersion ? t('updates.available', { version: qaUpdateVersion === '1' ? 'QA' : qaUpdateVersion }) : null
-  const stackTransitionOptions = resolveStackTransitionOptions(motion === 'full')
-  useWebThemeBridge({ colors, mode, themeId })
-  useRuntimeDeepLinks(boot.ready)
+  const stackTransitionOptions = resolveStackTransitionOptions()
+  useWebThemeBridge({ colors, mode, themeId, themeAccent })
 
   return (
     <GestureHandlerRootView style={{ flex: 1, backgroundColor: colors.surface }}>
@@ -63,63 +61,35 @@ export default function RootLayout() {
         ) : (
           <BootFallback />
         )}
+        {boot.ready ? <GlobalSystemStatusNotificationLayer /> : null}
+        {boot.ready ? <GlobalGenerationStatusLayer /> : null}
       </IsleDialogProvider>
     </GestureHandlerRootView>
   )
-}
-
-function useRuntimeDeepLinks(ready: boolean) {
-  useEffect(() => {
-    if (!ready || Platform.OS === 'web') return
-    const subscription = Linking.addEventListener('url', ({ url }) => {
-      const target = redirectSystemPath({ path: url, initial: false })
-      if (!shouldHandleRuntimeRoute(target)) return
-      requestAnimationFrame(() => {
-        const targetRoute = target.split('?')[0]
-        if (targetRoute === '/settings/providers') router.push('/settings')
-        setTimeout(() => {
-          router.push(target)
-        }, targetRoute === '/settings/providers' ? 32 : 0)
-      })
-    })
-    return () => {
-      subscription.remove()
-    }
-  }, [ready])
-}
-
-function shouldHandleRuntimeRoute(target: string) {
-  const route = target.split('?')[0]
-  return route === '/' ||
-    route === '/conversations' ||
-    route === '/settings' ||
-    /^\/settings\/(?:context|memory|knowledge|preferences|skills|mcp|providers)$/.test(route) ||
-    route === '/source' ||
-    /^\/chat\/[^/]+$/.test(route)
 }
 
 function BootFallback() {
   const { colors } = useAppTheme()
   const { t } = useTranslation()
   return (
-    <IsleScreen padded={false} background="surface">
+    <SafeAreaView style={{ flex: 1, backgroundColor: colors.surface }}>
       <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 24 }}>
         <ActivityIndicator color={colors.primary} />
         <Text accessibilityRole="text" style={{ color: colors.textSecondary, fontSize: 13, lineHeight: 18, fontWeight: '800', marginTop: 12, textAlign: 'center' }}>
           {t('app.starting')}
         </Text>
       </View>
-    </IsleScreen>
+    </SafeAreaView>
   )
 }
 
-function resolveStackTransitionOptions(motionFull: boolean): NativeStackNavigationOptions {
+function resolveStackTransitionOptions(): NativeStackNavigationOptions {
   return {
-    animation: 'slide_from_right',
-    animationDuration: motionFull ? 300 : 1,
-    gestureEnabled: true,
-    fullScreenGestureEnabled: true,
-    animationMatchesGesture: true,
+    animation: 'none',
+    animationDuration: 0,
+    gestureEnabled: false,
+    fullScreenGestureEnabled: false,
+    animationMatchesGesture: false,
   }
 }
 
@@ -134,7 +104,7 @@ type WebDocumentLike = {
   documentElement?: WebThemeRoot
 }
 
-function useWebThemeBridge({ colors, mode, themeId }: Pick<ReturnType<typeof useAppTheme>, 'colors' | 'mode' | 'themeId'>) {
+function useWebThemeBridge({ colors, mode, themeId, themeAccent }: Pick<ReturnType<typeof useAppTheme>, 'colors' | 'mode' | 'themeId' | 'themeAccent'>) {
   useEffect(() => {
     if (Platform.OS !== 'web') return
     const documentRef = (globalThis as typeof globalThis & { document?: WebDocumentLike }).document
@@ -144,8 +114,10 @@ function useWebThemeBridge({ colors, mode, themeId }: Pick<ReturnType<typeof use
     root.setAttribute('data-theme-id', themeId)
     root.setAttribute('data-theme-mode', mode)
     root.setAttribute('data-theme-family', colors.ui.family)
+    root.setAttribute('data-theme-markdown', colors.ui.markdown ? 'true' : 'false')
     root.setAttribute('data-theme-glass', colors.ui.glass ? 'true' : 'false')
-    root.setAttribute('data-theme-cartoon', colors.ui.cartoon ? 'true' : 'false')
+    root.setAttribute('data-theme-lime-road', colors.ui.limeRoad ? 'true' : 'false')
+    root.setAttribute('data-theme-custom-accent', themeAccent ? 'true' : 'false')
     root.setAttribute('data-theme-ambient', colors.ui.ambient)
     root.setAttribute('data-theme-background', colors.background.defaultMode)
 
@@ -267,8 +239,9 @@ function useWebThemeBridge({ colors, mode, themeId }: Pick<ReturnType<typeof use
       ['--color-semanticControlBorder', colors.ui.semantic.control.border],
       ['--color-semanticControlFocus', colors.ui.semantic.control.focus],
       ['--theme-family', colors.ui.family],
+      ['--theme-markdown-enabled', colors.ui.markdown ? '1' : '0'],
       ['--theme-glass-enabled', colors.ui.glass ? '1' : '0'],
-      ['--theme-cartoon-enabled', colors.ui.cartoon ? '1' : '0'],
+      ['--theme-lime-road-enabled', colors.ui.limeRoad ? '1' : '0'],
       ['--background-canvas', colors.background.canvas],
       ['--background-focusCanvas', colors.background.focusCanvas],
       ['--background-surfaceCanvas', colors.background.surfaceCanvas],
@@ -308,7 +281,7 @@ function useWebThemeBridge({ colors, mode, themeId }: Pick<ReturnType<typeof use
     for (const [name, value] of variables) {
       root.style.setProperty(name, value)
     }
-  }, [colors, mode, themeId])
+  }, [colors, mode, themeAccent, themeId])
 }
 
 function firstQueryParam(value?: string | string[]): string | undefined {
@@ -332,11 +305,11 @@ export function ErrorBoundary({ error, retry }: ErrorBoundaryProps) {
     <GestureHandlerRootView style={{ flex: 1, backgroundColor: colors.surface }}>
       <IsleScreen padded={false} background="surface" backgroundState="error">
         <View style={{ flex: 1, justifyContent: 'center', paddingHorizontal: 18 }}>
-          <IslePanel elevated radius={30} contentStyle={{ padding: 18 }}>
-            <View style={{ width: 48, height: 48, borderRadius: 24, alignItems: 'center', justifyContent: 'center', backgroundColor: colors.coralWash }}>
+          <IslePanel elevated radius={colors.ui.radius.card} contentStyle={{ padding: 18 }}>
+            <View style={{ width: 48, height: 48, borderRadius: colors.ui.radius.controlLarge, alignItems: 'center', justifyContent: 'center', backgroundColor: colors.coralWash }}>
               <AppIcon name="warning" color={colors.error} size={22} strokeWidth={appIconStroke.strong} />
             </View>
-            <Text style={{ color: colors.text, fontSize: 20, lineHeight: 26, fontWeight: '900', marginTop: 14 }}>
+            <Text style={{ color: colors.text, fontSize: 20, lineHeight: 26, fontWeight: '800', marginTop: 14 }}>
               {t('app.pageUnavailable')}
             </Text>
             <Text style={{ color: colors.textSecondary, fontSize: 13, lineHeight: 19, marginTop: 8 }}>

@@ -68,9 +68,15 @@ Android 架构变体：
 - RAG 模型文件缺失时，本地模型页面必须保留下载和校验入口；检索流程必须保留降级路径。
 - APK 下载失败时，已安装版本必须保持不变；安装生效必须经过系统安装器确认。
 
+## 架构与维护
+
+- [vNext 架构重构计划](docs/architecture/islemind-vnext-architecture-refactor-plan.md)：目标边界、运行时内核、迁移顺序和完成条件。
+- [vNext 模块公共 API](docs/architecture/vnext-module-public-api.md)：允许的跨模块导入面。
+- [vNext 当前迁移状态](docs/architecture/vnext-migration-status.md)：可运行路径、兼容层、删除队列和最新验证。
+
 ## 资源与署名
 
-- Isle UI 是 `animal-island-ui` 的 React Native 适配实现。上游项目由 `guokaigdg` 发布，许可证为 MIT：<https://github.com/guokaigdg/animal-island-ui>。
+- Isle UI 是 `animal-island-ui` 的 React Native 适配实现。上游项目由 `guokaigdg` 发布，许可证为 CC BY-NC 4.0；IsleMind 不内置上游 React DOM 包、CSS、字体或图片资产：<https://github.com/guokaigdg/animal-island-ui>。
 - 默认 APK 不包含模型权重。可选模型记录在 `assets/models/catalog.json`，来源与署名说明记录在 `assets/models/NOTICE.md`。
 - 应用图标源图保存为 `assets/brand/source/isle-pet-preview-base.png`。生成资产会去除黄色背景，并输出到 `assets/` 与 Android launcher 资源目录。
 
@@ -80,6 +86,6 @@ Android 架构变体：
 - 移动目标：[Android APK](https://developer.android.com/build/building-cmdline)、[EAS](https://docs.expo.dev/eas/) 配置、[Expo iOS metadata](https://docs.expo.dev/versions/latest/config/app/)。
 - UI 与动效：[NativeWind](https://www.nativewind.dev/)、[Tailwind CSS](https://tailwindcss.com/)、[Isle UI](src/components/ui/isle/README.md)、[lucide-react-native](https://lucide.dev/)、[moti](https://moti.fyi/)、[React Native Reanimated](https://docs.swmansion.com/react-native-reanimated/)、[Gesture Handler](https://docs.swmansion.com/react-native-gesture-handler/)、[Safe Area Context](https://github.com/AppAndFlow/react-native-safe-area-context)、[Screens](https://github.com/software-mansion/react-native-screens)、[SVG](https://github.com/software-mansion/react-native-svg)、[Expo Blur](https://docs.expo.dev/versions/latest/sdk/blur-view/)。
 - 本地存储与设备 API：[AsyncStorage](https://react-native-async-storage.github.io/async-storage/)、[Expo SecureStore](https://docs.expo.dev/versions/latest/sdk/securestore/)、[Expo SQLite](https://docs.expo.dev/versions/latest/sdk/sqlite/)、[Expo FileSystem](https://docs.expo.dev/versions/latest/sdk/filesystem/)、[Expo Document Picker](https://docs.expo.dev/versions/latest/sdk/document-picker/)、[Expo Image Picker](https://docs.expo.dev/versions/latest/sdk/imagepicker/)、[Expo Clipboard](https://docs.expo.dev/versions/latest/sdk/clipboard/)、[Expo Sharing](https://docs.expo.dev/versions/latest/sdk/sharing/)、[Expo Application](https://docs.expo.dev/versions/latest/sdk/application/)、[Expo Constants](https://docs.expo.dev/versions/latest/sdk/constants/)、[Expo Haptics](https://docs.expo.dev/versions/latest/sdk/haptics/)、[Expo Audio](https://docs.expo.dev/versions/latest/sdk/audio/)、[Expo Speech](https://docs.expo.dev/versions/latest/sdk/speech/)。
-- AI 服务商运行时：[OpenAI](https://platform.openai.com/docs/)、[Anthropic](https://docs.anthropic.com/)、[Google Gemini](https://ai.google.dev/gemini-api/docs)、[Xiaomi MiMo](https://mimo.mi.com/)、[OpenAI-compatible providers](https://platform.openai.com/docs/api-reference)、[自定义兼容端点](https://platform.openai.com/docs/api-reference)，以及 [DeepSeek](https://api-docs.deepseek.com/)、[DashScope/Qwen](https://www.alibabacloud.com/help/en/model-studio/use-qwen-by-calling-api)、[Zhipu/GLM](https://docs.bigmodel.cn/)、[xAI](https://docs.x.ai/)、[OpenRouter](https://openrouter.ai/docs/api/reference)、[NewAPI](https://docs.newapi.pro/)、[OneAPI](https://github.com/songquanpeng/one-api)、[Sub2API](https://sub2api.info/) 预设。
+- AI 服务商运行时：[OpenAI](https://platform.openai.com/docs/)、[Anthropic](https://docs.anthropic.com/)、[Google Gemini](https://ai.google.dev/gemini-api/docs/)、[Xiaomi MiMo](https://mimo.mi.com/)、[DeepSeek](https://api-docs.deepseek.com/)、[DashScope/Qwen](https://www.alibabacloud.com/help/en/model-studio/use-qwen-by-calling-api)、[Zhipu/GLM](https://docs.bigmodel.cn/)、[xAI](https://docs.x.ai/)、[OpenRouter](https://openrouter.ai/docs/api/reference)、[NewAPI](https://docs.newapi.pro/)、[OneAPI](https://github.com/songquanpeng/one-api)、[Sub2API](https://sub2api.info/) 等预设；接口层另行支持 [OpenAI API 兼容协议](https://platform.openai.com/docs/api-reference) 与自定义兼容端点。
 - 检索与本地模型：Agentic RAG、[ONNX Runtime React Native](https://onnxruntime.ai/docs/get-started/with-javascript/react-native.html)、[local embedding model catalog](assets/models/catalog.json)、模型下载校验、[Xenova](https://huggingface.co/Xenova) 与 [BAAI](https://huggingface.co/BAAI) 模型来源、hash embedding fallback。
 - 多语言：[i18next](https://www.i18next.com/)、[React i18next](https://react.i18next.com/)、[Expo Localization](https://docs.expo.dev/versions/latest/sdk/localization/)、`zh-CN`、`en`、`ja` 资源文件。

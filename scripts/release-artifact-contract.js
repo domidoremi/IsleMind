@@ -4,6 +4,13 @@ const apkOutputDirName = 'dist-apk'
 const defaultReleaseSmokeArch = 'x86_64'
 const defaultReleaseSmokeVariant = 'no-model'
 
+function resolveReleaseArchForAndroidAbi(value) {
+  const abi = String(value ?? '').trim()
+  if (abi === 'arm64-v8a' || abi === 'x86_64') return abi
+  if (abi === 'armeabi-v7a') return 'armeabi-v7a-legacy'
+  return null
+}
+
 function formatApkArtifactName({ version, buildType = 'release', variant = defaultReleaseSmokeVariant, arch = defaultReleaseSmokeArch }) {
   if (!version) throw new Error('APK artifact version is required.')
   if (!buildType) throw new Error('APK artifact buildType is required.')
@@ -29,5 +36,6 @@ module.exports = {
   defaultReleaseSmokeVariant,
   formatApkArtifactName,
   formatApkArtifactRelativePath,
+  resolveReleaseArchForAndroidAbi,
   resolveApkArtifactPath,
 }

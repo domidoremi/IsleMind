@@ -1,6 +1,8 @@
 import { create } from 'zustand'
-import type { Message, ProcessTrace } from '@/types'
+import type { Message } from '@/types/chatContracts'
+import type { ProcessTrace } from '@/core'
 import { clampTraceContent } from '@/services/chatTraceUtils'
+import { registerStreamStateCleaner } from '@/services/chatStreamLifecycle'
 import { useChatStore } from './chatStore'
 
 type StreamingPersistHandle = ReturnType<typeof setTimeout>
@@ -17,6 +19,7 @@ interface StreamingState {
 
   setStreaming: (convId: string, msgId: string) => void
   appendContent: (convId: string, msgId: string, content: string) => void
+  resetContent: (convId: string, msgId: string, content?: string) => void
   upsertTrace: (convId: string, msgId: string, trace: ProcessTrace) => void
   getStreamingText: (convId: string, msgId: string) => string
   getStreamingTraceSnapshot: (convId: string, msgId: string) => StreamingTraceSnapshot | undefined
@@ -24,10 +27,16 @@ interface StreamingState {
   commitStreamingTraces: (convId: string, msgId: string) => StreamingTraceSnapshot | undefined
   flushStreamingMessage: (convId: string, msgId: string) => Promise<void>
   clearStreaming: (convId: string, msgId: string) => void
+  clearConversationStreaming: (convId: string) => void
+  clearAllStreaming: () => void
 }
 
 function streamingKey(convId: string, msgId: string): string {
   return `${convId}:${msgId}`
+}
+
+function streamingKeyPrefix(convId: string): string {
+  return `${convId}:`
 }
 
 export const useChatStreamingStore = create<StreamingState>((set, get) => ({
@@ -39,6 +48,7 @@ export const useChatStreamingStore = create<StreamingState>((set, get) => ({
   setStreaming: (convId: string, msgId: string) => {
     const key = streamingKey(convId, msgId)
     set((state) => {
+      if (state.activeStreams.get(key) === true) return state
       const updated = new Map(state.activeStreams)
       updated.set(key, true)
       return { activeStreams: updated }
@@ -46,28 +56,47 @@ export const useChatStreamingStore = create<StreamingState>((set, get) => ({
   },
 
   appendContent: (convId: string, msgId: string, content: string) => {
+    if (!content) return
     const key = streamingKey(convId, msgId)
-    set((state) => {
-      const updated = new Map(state.streamingText)
-      updated.set(key, `${updated.get(key) ?? ''}${content}`)
-      return { streamingText: updated }
-    })
-
-    // Schedule debounced persist
     const state = get()
     const existing = state.persistTimers.get(key)
     if (existing) clearTimeout(existing)
 
     const timer = setTimeout(() => {
-      get().persistTimers.delete(key)
       const text = get().streamingText.get(key)
+      set((s) => {
+        if (!s.persistTimers.has(key)) return s
+        const persistTimers = new Map(s.persistTimers)
+        persistTimers.delete(key)
+        return { persistTimers }
+      })
       if (text) useChatStore.getState().persistStreamingContentSnapshot(convId, msgId, text)
     }, STREAMING_PERSIST_DELAY_MS)
 
     set((s) => {
-      const updated = new Map(s.persistTimers)
-      updated.set(key, timer)
-      return { persistTimers: updated }
+      const streamingText = new Map(s.streamingText)
+      const persistTimers = new Map(s.persistTimers)
+      streamingText.set(key, `${streamingText.get(key) ?? ''}${content}`)
+      persistTimers.set(key, timer)
+      return { streamingText, persistTimers }
+    })
+  },
+
+  resetContent: (convId: string, msgId: string, content = '') => {
+    const key = streamingKey(convId, msgId)
+    const timer = get().persistTimers.get(key)
+    if (timer) clearTimeout(timer)
+    set((state) => {
+      const streamingText = new Map(state.streamingText)
+      const persistTimers = new Map(state.persistTimers)
+      if (content) streamingText.set(key, content)
+      else streamingText.delete(key)
+      persistTimers.delete(key)
+      return { streamingText, persistTimers }
+    })
+    useChatStore.getState().updateMessage(convId, msgId, {
+      content,
+      responseText: content,
     })
   },
 
@@ -76,7 +105,9 @@ export const useChatStreamingStore = create<StreamingState>((set, get) => ({
     set((state) => {
       const updated = new Map(state.streamingTraces)
       const current = updated.get(key) ?? cloneMessageTraceSnapshot(resolveBaseMessageTraceSnapshot(convId, msgId))
-      updated.set(key, upsertTraceSnapshot(current, trace))
+      const next = upsertTraceSnapshot(current, trace)
+      if (next === current && updated.has(key)) return state
+      updated.set(key, next)
       return { streamingTraces: updated }
     })
   },
@@ -153,7 +184,58 @@ export const useChatStreamingStore = create<StreamingState>((set, get) => ({
       return { activeStreams, streamingText, streamingTraces, persistTimers }
     })
   },
+
+  clearConversationStreaming: (convId: string) => {
+    const prefix = streamingKeyPrefix(convId)
+    set((state) => clearStreamingEntriesMatching(state, (key) => key.startsWith(prefix)))
+  },
+
+  clearAllStreaming: () => {
+    set((state) => clearStreamingEntriesMatching(state, () => true))
+  },
 }))
+
+registerStreamStateCleaner({
+  clearConversation: (conversationId) => useChatStreamingStore.getState().clearConversationStreaming(conversationId),
+  clearAll: () => useChatStreamingStore.getState().clearAllStreaming(),
+})
+
+function clearStreamingEntriesMatching(
+  state: StreamingState,
+  matches: (key: string) => boolean
+): Partial<StreamingState> | StreamingState {
+  let changed = false
+  const activeStreams = new Map(state.activeStreams)
+  const streamingText = new Map(state.streamingText)
+  const streamingTraces = new Map(state.streamingTraces)
+  const persistTimers = new Map(state.persistTimers)
+
+  for (const [key, timer] of persistTimers) {
+    if (!matches(key)) continue
+    clearTimeout(timer)
+    persistTimers.delete(key)
+    changed = true
+  }
+  for (const key of activeStreams.keys()) {
+    if (!matches(key)) continue
+    activeStreams.delete(key)
+    changed = true
+  }
+  for (const key of streamingText.keys()) {
+    if (!matches(key)) continue
+    streamingText.delete(key)
+    changed = true
+  }
+  for (const key of streamingTraces.keys()) {
+    if (!matches(key)) continue
+    streamingTraces.delete(key)
+    changed = true
+  }
+
+  return changed
+    ? { activeStreams, streamingText, streamingTraces, persistTimers }
+    : state
+}
 
 export function mergeMessageWithStreamingTraceSnapshot(
   message: Message,
@@ -186,9 +268,12 @@ function cloneMessageTraceSnapshot(
 
 function upsertTraceSnapshot(snapshot: StreamingTraceSnapshot, trace: ProcessTrace): StreamingTraceSnapshot {
   const key = trace.type === 'reasoning' ? 'reasoning' : trace.type === 'tool' ? 'toolCalls' : 'retrievalTrace'
+  const current = snapshot[key] ?? []
+  const next = upsertTraceList(current, trace)
+  if (next === current) return snapshot
   return {
     ...snapshot,
-    [key]: upsertTraceList(snapshot[key] ?? [], trace),
+    [key]: next,
   }
 }
 
@@ -228,5 +313,21 @@ function areStreamingTracesEquivalent(current: ProcessTrace, next: ProcessTrace)
     current.startedAt === next.startedAt &&
     current.completedAt === next.completedAt &&
     current.durationMs === next.durationMs &&
-    JSON.stringify(current.metadata ?? null) === JSON.stringify(next.metadata ?? null)
+    areStreamingTraceMetadataEquivalent(current.metadata, next.metadata)
+}
+
+function areStreamingTraceMetadataEquivalent(
+  current: ProcessTrace['metadata'],
+  next: ProcessTrace['metadata'],
+): boolean {
+  if (current === next) return true
+  const currentKeys = Object.keys(current ?? {})
+  const nextKeys = Object.keys(next ?? {})
+  if (currentKeys.length !== nextKeys.length) return false
+  for (const key of currentKeys) {
+    if ((current as Record<string, unknown> | undefined)?.[key] !== (next as Record<string, unknown> | undefined)?.[key]) {
+      return false
+    }
+  }
+  return true
 }

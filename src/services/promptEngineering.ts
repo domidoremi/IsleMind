@@ -1,4 +1,6 @@
-import type { AIModel, AIProvider, Language, RetrievalSource } from '@/types'
+import type { RetrievalSource } from '@/types/contextContracts'
+import type { AIModel, AIProvider } from '@/types/providerContracts'
+import type { Language } from '@/types/settingsContracts'
 import { providerSupportsFileInput, providerSupportsVisionInput } from '@/services/chatProviderNativeToolUtils'
 
 interface PromptBuildInput {

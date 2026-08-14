@@ -6,7 +6,6 @@ import {
   runtimeLogEventForRuntimeEvent,
   type RuntimeControlPlaneEvent,
 } from '@/services/runtimeEventContract'
-
 export const RUNTIME_EVENT_DATA_LIST_LIMIT = 24
 export const RUNTIME_EVENT_DATA_OBJECT_FIELD_LIMIT = 32
 export const RUNTIME_EVENT_HISTORY_LIMIT = 200
@@ -20,7 +19,6 @@ export {
   shouldPersistRuntimeEvent,
 } from '@/services/runtimeEventContract'
 export type { RuntimeControlPlaneEvent } from '@/services/runtimeEventContract'
-
 export interface RuntimeEventEnvelope {
   schema: typeof RUNTIME_EVENT_SCHEMA
   id: string
@@ -65,12 +63,12 @@ export function buildRuntimeEventEnvelope(input: RuntimeEventInput, now = new Da
     id: createRuntimeEventId(now),
     ts: now.toISOString(),
     event: input.event,
-    conversationId: input.conversationId,
-    turnId: input.turnId,
-    messageId: input.messageId,
-    providerId: input.providerId,
-    credentialGroupId: input.credentialGroupId,
-    model: input.model,
+    ...(input.conversationId !== undefined ? { conversationId: input.conversationId } : {}),
+    ...(input.turnId !== undefined ? { turnId: input.turnId } : {}),
+    ...(input.messageId !== undefined ? { messageId: input.messageId } : {}),
+    ...(input.providerId !== undefined ? { providerId: input.providerId } : {}),
+    ...(input.credentialGroupId !== undefined ? { credentialGroupId: input.credentialGroupId } : {}),
+    ...(input.model !== undefined ? { model: input.model } : {}),
     data: normalizeRuntimeEventData(redactRuntimeLogValue(input.data ?? {})),
     redaction: {
       applied: true,
@@ -112,9 +110,10 @@ export function clearRuntimeEventHistoryForTest(): void {
 }
 
 function sanitizeLegacyRuntimeLogData(data: Record<string, unknown>): Record<string, unknown> {
-  return Object.fromEntries(
+  const sanitized = Object.fromEntries(
     Object.entries(data).filter(([key]) => !RESERVED_LEGACY_LOG_KEYS.has(key)),
   )
+  return normalizeRuntimeEventData(redactRuntimeLogValue(sanitized))
 }
 
 function recordRuntimeEventEnvelope(envelope: RuntimeEventEnvelope): void {
@@ -146,6 +145,8 @@ function normalizeRuntimeEventData(data: unknown): Record<string, unknown> {
 }
 
 function normalizeRuntimeEventValue(data: unknown, depth: number): unknown {
+  if (data === undefined || typeof data === 'function' || typeof data === 'symbol' || typeof data === 'bigint') return null
+  if (typeof data === 'number' && !Number.isFinite(data)) return null
   if (Array.isArray(data)) return data.slice(0, RUNTIME_EVENT_DATA_LIST_LIMIT).map((item) => normalizeRuntimeEventValue(item, depth + 1))
   if (!data || typeof data !== 'object') return data
   if (depth >= 6) return '[truncated]'

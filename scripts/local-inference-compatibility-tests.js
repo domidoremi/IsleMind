@@ -14,7 +14,7 @@ const {
   LOCAL_INFERENCE_COMPATIBILITY_FIXTURE_IDS,
   LOCAL_INFERENCE_RUNTIME_FAMILIES,
   runLocalInferenceCompatibilityEvaluation,
-} = require('../src/services/localInferenceCompatibilityEvaluation.ts')
+} = require('../src/modules/knowledge/testing/localInferenceCompatibilityEvaluation.ts')
 
 function registerTypeScriptSupport() {
   if (require.extensions['.ts']?.isLocalInferenceCompatibilityHook) return

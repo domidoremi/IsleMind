@@ -1,5 +1,5 @@
 import AsyncStorage from '@react-native-async-storage/async-storage'
-import type { Language } from '@/types'
+import type { Language } from '@/types/settingsContracts'
 
 const LANGUAGE_SOURCE_KEY = '@islemind/language-source'
 

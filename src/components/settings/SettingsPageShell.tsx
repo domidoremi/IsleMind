@@ -1,17 +1,20 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react'
-import { BackHandler, findNodeHandle, Keyboard, Platform, ScrollView, TextInput, View } from 'react-native'
+import { BackHandler, findNodeHandle, Keyboard, Platform, ScrollView, TextInput, useWindowDimensions } from 'react-native'
 import { router, usePathname } from 'expo-router'
-import { MotiView } from 'moti'
 import { useTranslation } from 'react-i18next'
 import { AnimatedNavigationTrigger } from '@/components/navigation/AnimatedNavigationTrigger'
-import { IsleHeader } from '@/components/ui/isle'
 import { IsleScreen } from '@/components/ui/isle'
 import { useAppTheme } from '@/hooks/useAppTheme'
-
+import {
+  LimeRoadSettingsPageExperience,
+  MarkdownSettingsPageExperience,
+  MinimalSettingsPageExperience,
+} from '@/components/settings/theme-experiences/SettingsPageExperiences'
 export function SettingsPageShell({
   title,
   subtitle,
   children,
+  focusKey,
 }: {
   title: string
   subtitle?: string
@@ -21,6 +24,8 @@ export function SettingsPageShell({
   const { colors } = useAppTheme()
   const { t } = useTranslation()
   const pathname = usePathname()
+  const { width } = useWindowDimensions()
+  const compact = width < 430
   const scrollRef = useRef<ScrollView>(null)
   const [keyboardHeight, setKeyboardHeight] = useState(0)
 
@@ -55,7 +60,7 @@ export function SettingsPageShell({
     const showSub = Keyboard.addListener(Platform.OS === 'ios' ? 'keyboardWillShow' : 'keyboardDidShow', (event) => {
       setKeyboardHeight(event.endCoordinates.height)
       scrollFocusedInputAboveKeyboard()
-      setTimeout(scrollFocusedInputAboveKeyboard, 120)
+      setTimeout(scrollFocusedInputAboveKeyboard, 112)
     })
     const hideSub = Keyboard.addListener(Platform.OS === 'ios' ? 'keyboardWillHide' : 'keyboardDidHide', () => {
       setKeyboardHeight(0)
@@ -75,6 +80,19 @@ export function SettingsPageShell({
     return () => subscription.remove()
   }, [pathname])
 
+  useEffect(() => {
+    scrollRef.current?.scrollTo({ y: 0, animated: false })
+  }, [focusKey])
+
+  const Experience = colors.ui.experience.navigation === 'route'
+    ? LimeRoadSettingsPageExperience
+    : colors.ui.experience.navigation === 'document'
+      ? MarkdownSettingsPageExperience
+      : MinimalSettingsPageExperience
+  const leading = (
+    <AnimatedNavigationTrigger variant="iconButton" label={t('common.back')} size="sm" glyph="back" onNavigate={() => router.replace('/settings')} color={colors.text} />
+  )
+
   return (
     <IsleScreen padded={false} background="surface" backgroundState={keyboardHeight > 0 ? 'input' : 'idle'}>
       <ScrollView
@@ -82,25 +100,11 @@ export function SettingsPageShell({
         keyboardShouldPersistTaps="handled"
         automaticallyAdjustKeyboardInsets
         removeClippedSubviews={Platform.OS === 'android'}
-        contentContainerStyle={{ paddingHorizontal: 16, paddingTop: 8, paddingBottom: 56 }}
+        contentContainerStyle={{ alignItems: 'center', paddingHorizontal: compact ? 14 : 18, paddingTop: compact ? 6 : 10, paddingBottom: compact ? 40 : 48 }}
       >
-        <IsleHeader
-          title={title}
-          subtitle={subtitle}
-          leading={
-            <AnimatedNavigationTrigger variant="iconButton" label={t('common.back')} size="lg" glyph="back" onNavigate={() => router.replace('/settings')} color={colors.text} />
-          }
-        />
-        <MotiView
-          from={{ opacity: 0, translateY: 10 }}
-          animate={{ opacity: 1, translateY: 0 }}
-          transition={{ type: 'spring', damping: 22, stiffness: 190 }}
-          style={{ paddingTop: 16 }}
-        >
-          <View style={{ gap: 12 }}>
-            {children}
-          </View>
-        </MotiView>
+        <Experience title={title} subtitle={subtitle} rootTitle={t('settings.title')} routeKey={pathname.split('/').filter(Boolean).pop() ?? 'settings'} compact={compact} leading={leading}>
+          {children}
+        </Experience>
       </ScrollView>
     </IsleScreen>
   )

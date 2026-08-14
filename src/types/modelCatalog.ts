@@ -1,6 +1,5 @@
-import type { AIModel, ProviderType } from './index'
+import type { AIModel, ProviderType } from './providerContracts'
 import { modelAliasMatchKey, normalizeModelId } from '../utils/modelId'
-
 export const DEFAULT_MODELS: AIModel[] = [
   model('gpt-5.5', 'GPT-5.5', 'openai', 1050000, 128000, 8192, true, true, false, { supportsTools: true, preferredEndpoint: 'responses', reasoningMode: 'openai-effort', reasoningEfforts: ['none', 'low', 'medium', 'high', 'xhigh'], sourceUrl: 'https://developers.openai.com/api/docs/models/gpt-5.5', verifiedAt: '2026-06-10' }),
   model('gpt-5.5-pro', 'GPT-5.5 Pro', 'openai', 1050000, 128000, 8192, true, true, false, { supportsTools: true, supportsStreaming: false, preferredEndpoint: 'responses', reasoningMode: 'openai-effort', reasoningEfforts: ['medium', 'high', 'xhigh'], sourceUrl: 'https://developers.openai.com/api/docs/models/gpt-5.5-pro', verifiedAt: '2026-06-10' }),

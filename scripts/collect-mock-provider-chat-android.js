@@ -1,5 +1,6 @@
 const fs = require('node:fs')
 const http = require('node:http')
+const os = require('node:os')
 const path = require('node:path')
 const { execFileSync } = require('node:child_process')
 const { Worker, isMainThread, parentPort, workerData } = require('node:worker_threads')
@@ -15,31 +16,92 @@ const fixtureName = longContentRequestLogMode ? 'islemind-long-content-smoke.jso
 const fixturePath = path.join(smokeDir, fixtureName)
 const remoteFixturePath = `/sdcard/Download/${fixtureName}`
 const appPackageName = defaultReleaseAppPackageName
+const contextDatabaseRemotePath = `/data/user/0/${appPackageName}/files/SQLite/islemind-context.db`
 const explicitDeviceRequested = Boolean(process.env.QA_DEVICE_SERIAL)
 const defaultDevice = process.env.QA_DEVICE_SERIAL || 'emulator-5554'
-const providerId = longContentRequestLogMode ? 'qa-long-content-openai-provider' : 'qa-mock-openai-provider'
-const providerName = longContentRequestLogMode ? 'QA Long Content OpenAI Provider' : 'QA Mock OpenAI Provider'
-const modelId = longContentRequestLogMode ? 'qa-ultra-long-model-name' : 'islemind-mock-chat'
-const fakeApiKey = 'islemind-mock-provider-placeholder-key'
+const longContentProviderId = 'qa-long-content-openai-provider'
+const longContentModelId = 'qa-ultra-long-model-name-with-an-intentionally-verbose-display-label-for-layout-stress'
+const longContentConversationId = 'qa-long-content-live'
+const longContentStreamCompleteToken = 'QA_LONG_CONTENT_STREAM_COMPLETE'
+const longContentProviderName = 'QA_LONG_PROVIDER_NAME_Provider_With_An_Intentionally_Verbose_Display_Label_For_Layout_Stress'
+const longContentTraceTitle = 'QA_LONG_TRACE_TITLE_Tool_Trace_With_A_Very_Long_Operation_Name_For_Layout_Stress'
+const longContentTraceContent = 'QA_LONG_TRACE_CONTENT_This deterministic tool trace contains enough detail to exercise wrapping, clipping, and scroll behavior without exposing secrets.'
+const longContentCitationTitle = 'QA_LONG_CITATION_TITLE_A_Very_Long_Citation_Title_For_Source_Reader_Layout_Stress'
+const longContentCitationExcerpt = 'QA_LONG_CITATION_EXCERPT_This long citation excerpt verifies readable wrapping and bounded source-reader content while preserving the source metadata contract.'
+const longContentKnowledgeTitle = 'QA_LONG_KNOWLEDGE_DOCUMENT_TITLE_A_Very_Long_Local_Knowledge_Document_Name_For_Layout_Stress'
+const longContentKnowledgeExcerpt = 'QA_LONG_KNOWLEDGE_EXCERPT_This long local knowledge document excerpt exercises document-title, excerpt, metadata-chip, and scroll layout together.'
+const longContentStressEvidencePaths = {
+  providerModel: {
+    png: 'test-evidence/qa/long-content-smoke/long-provider-model.png',
+    uia: 'test-evidence/qa/long-content-smoke/long-provider-model.uia.xml',
+  },
+  trace: {
+    png: 'test-evidence/qa/long-content-smoke/long-trace.png',
+    uia: 'test-evidence/qa/long-content-smoke/long-trace.uia.xml',
+  },
+  citation: {
+    png: 'test-evidence/qa/long-content-smoke/long-citation.png',
+    uia: 'test-evidence/qa/long-content-smoke/long-citation.uia.xml',
+  },
+  knowledge: {
+    png: 'test-evidence/qa/long-content-smoke/long-knowledge.png',
+    uia: 'test-evidence/qa/long-content-smoke/long-knowledge.uia.xml',
+  },
+}
+const longContentStressEvidenceMarkers = {
+  providerModel: [longContentProviderName, longContentModelId],
+  trace: [longContentTraceTitle, longContentTraceContent],
+  citation: [longContentCitationTitle, longContentCitationExcerpt],
+  knowledge: [longContentKnowledgeTitle, longContentKnowledgeExcerpt],
+}
+const providerId = longContentRequestLogMode ? longContentProviderId : 'qa-mock-openai-provider'
+const providerName = longContentRequestLogMode ? longContentProviderName : 'QA Mock OpenAI Provider'
+const modelId = longContentRequestLogMode ? longContentModelId : 'islemind-mock-chat'
+const fakeApiKey = 'sk-qa-mock'
 const seededConversationId = 'qa-mock-provider-source'
 const seededAssistantMessageId = 'qa-mock-provider-source-assistant'
-const liveConversationId = longContentRequestLogMode ? 'qa-long-content-live' : 'qa-mock-provider-live'
+const liveConversationId = longContentRequestLogMode ? longContentConversationId : 'qa-mock-provider-live'
 const livePrompt = longContentRequestLogMode
   ? 'My QA_LONG_CONTENT_PREFERENCE is cyan-lake. Remember this preference for later.'
   : 'QA_MOCK_STREAM_PROMPT_return_QA_MOCK_STREAM_COMPLETE'
 const streamPartialToken = longContentRequestLogMode ? 'QA_LONG_CONTENT_STREAM_PARTIAL' : 'QA_MOCK_STREAM_PARTIAL'
-const streamCompleteToken = longContentRequestLogMode ? 'QA_LONG_CONTENT_STREAM_COMPLETE' : 'QA_MOCK_STREAM_COMPLETE'
+const streamCompleteToken = longContentRequestLogMode ? longContentStreamCompleteToken : 'QA_MOCK_STREAM_COMPLETE'
 const seededAssistantToken = 'QA_MOCK_SOURCE_ASSISTANT_TOKEN'
+const serveOnly = process.argv.includes('--serve-only')
+const selfTest = process.argv.includes('--self-test')
+const requestedMockProviderPort = Number(process.env.QA_MOCK_PROVIDER_PORT ?? process.argv[process.argv.indexOf('--port') + 1] ?? 0) || 0
 
 if (!isMainThread) {
   runMockProviderWorker()
-} else {
-  main()
+} else if (require.main === module) {
+  if (serveOnly) serveMockProviderOnly()
+  else if (selfTest) runSelfTest()
+  else main()
+}
+
+function serveMockProviderOnly() {
+  const device = resolveDevice(defaultDevice, { strict: explicitDeviceRequested })
+  if (!device) throw new Error(`Requested adb device ${defaultDevice} was not found for mock-provider server.`)
+  const logPath = path.join(smokeDir, 'persistent-mock-provider-requests.jsonl')
+  fs.mkdirSync(smokeDir, { recursive: true })
+  fs.writeFileSync(logPath, '', 'utf8')
+  const worker = startMockProviderServer(logPath, requestedMockProviderPort)
+  if (!configureAdbReverse(device, worker.port)) {
+    worker.instance.terminate()
+    throw new Error(`Could not establish adb reverse for mock-provider port ${worker.port}.`)
+  }
+  const shutdown = () => {
+    clearAdbReverse(device, worker.port)
+    worker.instance.terminate()
+    process.exit(0)
+  }
+  process.once('SIGINT', shutdown)
+  process.once('SIGTERM', shutdown)
+  console.log(`Persistent mock provider ready: device=${device} port=${worker.port} baseUrl=http://127.0.0.1:${worker.port}/v1`)
 }
 
 function main() {
   fs.mkdirSync(smokeDir, { recursive: true })
-  fs.writeFileSync(requestLogPath, '', 'utf8')
 
   const device = resolveDevice(defaultDevice, { strict: explicitDeviceRequested })
   const result = {
@@ -64,12 +126,21 @@ function main() {
     steps: [],
     errors: [],
     requests: [],
+    durableState: null,
+    durableStateIssues: [],
+    longContentStressEvidence: null,
   }
 
   let worker = null
   try {
     if (!device) throw new Error('No connected adb device was found.')
-    worker = startMockProviderServer(requestLogPath)
+    // Do not erase the canonical request evidence until the requested device is confirmed.
+    fs.writeFileSync(requestLogPath, '', 'utf8')
+    const externalPort = requestedMockProviderPort
+    const externalServer = externalPort > 0
+    worker = externalServer
+      ? { instance: null, port: externalPort, external: true }
+      : startMockProviderServer(requestLogPath, 0)
     const reverseReady = configureAdbReverse(device, worker.port)
     writeFixture(reverseReady ? `http://127.0.0.1:${worker.port}/v1` : `http://10.0.2.2:${worker.port}/v1`)
     result.pushedFixture = pushFixture(device)
@@ -82,10 +153,7 @@ function main() {
       result.providerConfigured = true
       result.providerTestTapped = true
       result.providerTestOk = true
-      result.actionsMenuOpened = true
-      result.deleteConfirmVisible = true
-      result.sourceOpened = true
-      result.sourceBackReturned = true
+      result.longContentStressEvidence = captureLongContentStressStates(device, result)
     } else {
       configureProviderAndRunTest(device, result)
       runSourceStackScenario(device, result)
@@ -99,11 +167,22 @@ function main() {
       path: row.path,
       body: tryParseJson(row.body),
     }))
+    if (longContentRequestLogMode) {
+      // The extraction is intentionally detached from the request stream. Give
+      // its persistence path time to settle, then verify the durable records
+      // from a quiescent SQLite snapshot rather than trusting the HTTP log.
+      sleep(2500)
+      result.durableState = captureLongContentDurableState(device)
+      result.durableStateIssues = validateLongContentDurableState(result.durableState)
+      if (result.durableStateIssues.length) {
+        throw new Error(`Long-content durable state failed: ${result.durableStateIssues.join('; ')}`)
+      }
+    }
   } catch (error) {
     result.errors.push(error?.message ?? String(error))
   } finally {
-    if (device && worker) clearAdbReverse(device, worker.port)
-    if (worker) worker.instance.terminate()
+    if (device && worker && !worker.external) clearAdbReverse(device, worker.port)
+    if (worker?.instance) worker.instance.terminate()
   }
 
   fs.writeFileSync(outputPath, `${JSON.stringify(result, null, 2)}\n`, 'utf8')
@@ -161,7 +240,40 @@ function writeFixture(baseUrl) {
             content: `${seededAssistantToken}\n\n这是带有本地引用的 QA 回复，用于验证来源详情页和 Android Back 返回。`,
             timestamp: now + 1000,
             status: 'done',
-            citations: [
+            citations: longContentRequestLogMode ? [
+              {
+                id: 'qa-long-content-citation',
+                type: 'knowledge',
+                title: longContentCitationTitle,
+                excerpt: longContentCitationExcerpt,
+                score: 0.96,
+                similarityScore: 0.94,
+                rerankScore: 0.92,
+                chunkIndex: 17,
+                documentId: 'qa-long-content-citation-document-with-a-verbose-identifier',
+                chunkId: 'qa-long-content-citation-chunk-with-a-verbose-identifier',
+                sourceUri: 'qa://long-content/citation/source/with/a/verbose/path',
+                headingPath: ['QA long-content stress evidence', 'Citation layout with verbose metadata'],
+                retrievalStage: 'hybrid-long-content-layout-stress',
+                sourceReason: 'qa-long-citation-layout-stress',
+              },
+              {
+                id: 'qa-long-content-knowledge',
+                type: 'knowledge',
+                title: longContentKnowledgeTitle,
+                excerpt: longContentKnowledgeExcerpt,
+                score: 0.93,
+                similarityScore: 0.91,
+                rerankScore: 0.9,
+                chunkIndex: 42,
+                documentId: 'qa-long-knowledge-document-with-a-verbose-identifier',
+                chunkId: 'qa-long-knowledge-chunk-with-a-verbose-identifier',
+                sourceUri: 'qa://long-content/knowledge/document/with/a/verbose/path',
+                headingPath: ['QA long knowledge document', 'Deep section with a deliberately verbose heading'],
+                retrievalStage: 'local-knowledge-long-content-stress',
+                sourceReason: 'qa-long-knowledge-document-layout-stress',
+              },
+            ] : [
               {
                 id: 'qa-mock-citation-1',
                 type: 'knowledge',
@@ -179,7 +291,33 @@ function writeFixture(baseUrl) {
                 sourceReason: 'qa-source-stack',
               },
             ],
-            retrievalTrace: [
+            retrievalTrace: longContentRequestLogMode ? [
+              {
+                id: 'qa-long-tool-trace',
+                type: 'tool',
+                title: longContentTraceTitle,
+                content: longContentTraceContent,
+                status: 'done',
+                startedAt: now + 100,
+                completedAt: now + 920,
+                durationMs: 820,
+                metadata: {
+                  toolName: 'qa_long_content_tool_with_an_intentionally_verbose_operation_name',
+                  inputSummary: 'A bounded deterministic input summary used only for long trace visual evidence.',
+                  source: 'qa-long-content-stress',
+                },
+              },
+              {
+                id: 'qa-long-knowledge-trace',
+                type: 'knowledge',
+                title: 'QA_LONG_KNOWLEDGE_TRACE_Local_Knowledge_Retrieval_With_A_Verbose_Title',
+                content: 'QA_LONG_KNOWLEDGE_TRACE_CONTENT_Local knowledge retrieval completed with two deterministic citations and bounded metadata.',
+                status: 'done',
+                startedAt: now + 930,
+                completedAt: now + 1400,
+                durationMs: 470,
+              },
+            ] : [
               {
                 id: 'qa-mock-retrieval-trace',
                 type: 'knowledge',
@@ -235,8 +373,9 @@ function writeFixture(baseUrl) {
       {
         id: providerId,
         type: 'openai-compatible',
-        presetId: 'custom-openai-compatible',
-        detectedPresetId: 'custom-openai-compatible',
+        presetId: 'custom-endpoint',
+        detectedPresetId: 'custom-endpoint',
+        wireProtocol: 'openai-compatible',
         detectionStatus: 'manual',
         name: providerName,
         apiKey: longContentRequestLogMode ? fakeApiKey : '',
@@ -286,16 +425,24 @@ function importFixture(device, result) {
   sleep(2200)
   ensureSettingsVisible(device, result)
   const pickerStart = tapImportJson(device, result) ?? captureStep(device, result, 'mock-provider-file-picker-start')
-  const importDialog = hasAnyText(pickerStart.uiaText, ['导入完成', 'Import complete'])
+  const importDialog = classifyImportTerminalState(pickerStart.uiaText) === 'success'
     ? pickerStart
     : selectFileAndCaptureImportDialog(device, result)
   result.captures.importDialogPng = importDialog.png
   result.captures.importDialogUia = importDialog.uia
-  if (!hasAnyText(importDialog.uiaText, ['导入完成', 'Import complete'])) {
+  const importState = classifyImportTerminalState(importDialog.uiaText)
+  if (importState === 'failure') {
+    throw new Error('Mock provider fixture was rejected by the IsleMind import dialog.')
+  }
+  if (importState !== 'success') {
     throw new Error('Import completion dialog was not visible for mock provider fixture.')
   }
   tapText(device, importDialog.uiaText, ['知道了', '我知道了', 'OK'])
   sleep(900)
+  // Imported settings are persisted by the settings screen; restart before
+  // the chat step so the mounted store observes the imported feature flags.
+  forceStop(device)
+  sleep(1200)
 }
 
 function configureProviderAndRunTest(device, result) {
@@ -310,8 +457,15 @@ function configureProviderAndRunTest(device, result) {
   if (!expanded) throw new Error('Mock provider card was not tappable.')
   sleep(800)
   capture = captureStep(device, result, 'mock-provider-expanded')
-  if (!hasAnyText(capture.uiaText, ['新增令牌', 'Add tokens'])) {
+  if (!hasUsableText(capture.uiaText, ['新增令牌', 'Add tokens'])) {
     capture = scrollToText(device, ['新增令牌', 'Add tokens'], 'mock-provider-token-field', 6, result)
+  }
+  if (hasUsableText(capture.uiaText, ['新增令牌', 'Add tokens'])) {
+    const tokenDisclosureTapped = tapText(device, capture.uiaText, ['新增令牌', 'Add tokens'])
+    if (tokenDisclosureTapped) {
+      sleep(700)
+      capture = captureStep(device, result, 'mock-provider-token-editor-open')
+    }
   }
 
   const tokenEntered = tapEditableByContentDesc(device, capture.uiaText, ['新增令牌', 'Add tokens'])
@@ -325,6 +479,10 @@ function configureProviderAndRunTest(device, result) {
   const baseUrlValue = editableValueByContentDesc(capture.uiaText, ['站点 / Base URL', 'Site / Base URL', 'Base URL'])
   if (baseUrlValue.includes(fakeApiKey)) {
     throw new Error('Mock provider token was entered into the Base URL field instead of the token input.')
+  }
+  const tokenDraftValue = editableValueByContentDesc(capture.uiaText, ['新增令牌', 'Add tokens'])
+  if (tokenDraftValue !== fakeApiKey) {
+    throw new Error(`Mock provider token input did not preserve the exact fixture key (${tokenDraftValue.length}/${fakeApiKey.length} characters).`)
   }
   runCommand('adb', ['-s', device, 'shell', 'input', 'keyevent', '4'])
   sleep(700)
@@ -403,10 +561,12 @@ function runSourceStackScenario(device, result) {
     sleep(900)
     confirm = captureStep(device, result, 'message-delete-confirm-from-actions')
   }
+  let actionsForHorizontalScroll = confirm
   for (let index = 0; !isDeleteConfirm(confirm.uiaText) && index < 3; index += 1) {
-    swipeActionsRowLeft(device)
+    swipeActionsRowLeft(device, actionsForHorizontalScroll.uiaText)
     sleep(450)
     const scrolledActions = captureStep(device, result, `message-delete-actions-scroll-${index}`)
+    actionsForHorizontalScroll = scrolledActions
     if (tapText(device, scrolledActions.uiaText, ['删除', 'Delete'])) {
       sleep(900)
       confirm = captureStep(device, result, `message-delete-confirm-from-actions-${index}`)
@@ -470,6 +630,75 @@ function runSourceStackScenario(device, result) {
   result.captures.sourceBackUia = back.uia
 }
 
+function captureLongContentStressStates(device, result) {
+  const captures = {}
+  openUrl(device, `islemind://chat/${liveConversationId}`)
+  sleep(1800)
+  let provider = waitForText(device, ['Message input', '输入消息', 'メッセージ入力'], 'long-provider-model-chat-ready', 6, result)
+  if (!tapText(device, provider.uiaText, ['Tools: Files/Knowledge', '工具: 附件/知识', '工具', 'Tools', 'ツール'])) {
+    throw new Error('Long-content provider/model evidence could not open the chat tools panel.')
+  }
+  sleep(650)
+  const toolsPanel = waitForText(device, ['Model:', '模型:', 'モデル:'], 'long-provider-model-tools-ready', 6, result)
+  const modelTrigger = findHomeModelTriggerNode(toolsPanel.uiaText)
+  if (!modelTrigger || !tapBoundsCenter(device, modelTrigger.bounds)) {
+    throw new Error('Long-content provider/model evidence could not open the chat model picker.')
+  }
+  sleep(850)
+  provider = waitForText(device, [longContentModelId], 'long-provider-model-ready', 6, result)
+  assertLongContentStressCapture(provider, 'providerModel')
+  provider = captureStep(device, result, 'long-provider-model')
+  assertLongContentStressCapture(provider, 'providerModel')
+  captures.providerModel = { png: provider.png, uia: provider.uia }
+
+  openUrl(device, `islemind://source?conversationId=${seededConversationId}&messageId=${seededAssistantMessageId}&kind=process`)
+  sleep(1400)
+  const trace = waitForText(device, [longContentTraceTitle], 'long-trace-ready', 6, result)
+  if (!hasAnyText(trace.uiaText, [longContentTraceTitle])) throw new Error('Long-content trace evidence did not render the verbose tool trace title.')
+  const traceCapture = captureStep(device, result, 'long-trace')
+  assertLongContentStressCapture(traceCapture, 'trace')
+  captures.trace = { png: traceCapture.png, uia: traceCapture.uia }
+
+  openUrl(device, `islemind://source?conversationId=${seededConversationId}&messageId=${seededAssistantMessageId}&citationId=qa-long-content-citation`)
+  sleep(1400)
+  const citation = waitForText(device, [longContentCitationTitle], 'long-citation-ready', 6, result)
+  if (!hasAnyText(citation.uiaText, [longContentCitationTitle])) throw new Error('Long-content citation evidence did not render the verbose citation title.')
+  const citationCapture = captureStep(device, result, 'long-citation')
+  assertLongContentStressCapture(citationCapture, 'citation')
+  captures.citation = { png: citationCapture.png, uia: citationCapture.uia }
+
+  openUrl(device, `islemind://source?conversationId=${seededConversationId}&messageId=${seededAssistantMessageId}&citationId=qa-long-content-knowledge`)
+  sleep(1400)
+  const knowledge = waitForText(device, [longContentKnowledgeTitle], 'long-knowledge-ready', 6, result)
+  if (!hasAnyText(knowledge.uiaText, [longContentKnowledgeTitle])) throw new Error('Long-content knowledge evidence did not render the verbose document title.')
+  const knowledgeCapture = captureStep(device, result, 'long-knowledge')
+  assertLongContentStressCapture(knowledgeCapture, 'knowledge')
+  captures.knowledge = { png: knowledgeCapture.png, uia: knowledgeCapture.uia }
+
+  return { passed: true, captures }
+}
+
+function assertLongContentStressCapture(capture, kind) {
+  if (!capture?.png || !capture?.uia) throw new Error(`Long-content ${kind} evidence did not produce a paired screenshot/UIA capture.`)
+  const markers = longContentStressEvidenceMarkers[kind] ?? []
+  if (markers.some((marker) => !String(capture.uiaText ?? '').includes(marker))) {
+    throw new Error(`Long-content ${kind} evidence is missing one or more required UIA markers.`)
+  }
+}
+
+function findHomeModelTriggerNode(uiaText) {
+  const prefixes = ['模型:', 'Model:', 'モデル:']
+  return parseNodes(uiaText)
+    .filter((node) => (
+      node.enabled &&
+      node.clickable &&
+      isUsableBounds(node.bounds) &&
+      prefixes.some((prefix) => node.contentDesc.trimStart().startsWith(prefix) || node.text.trimStart().startsWith(prefix))
+    ))
+    .map((node) => ({ node, bounds: parseBounds(node.bounds) }))
+    .sort((left, right) => boundsArea(right.bounds) - boundsArea(left.bounds))[0]?.node ?? null
+}
+
 function runStreamingScenario(device, result) {
   openUrl(device, `islemind://chat/${liveConversationId}`)
   sleep(2200)
@@ -515,7 +744,20 @@ function ensureSettingsVisible(device, result) {
 
 function tapImportJson(device, result) {
   for (let index = 0; index < 8; index += 1) {
-    const capture = captureStep(device, result, `mock-provider-import-search-${index}`)
+    let capture = captureStep(device, result, `mock-provider-import-search-${index}`)
+    if (!hasAnyText(capture.uiaText, ['导入 JSON', 'Import JSON'])) {
+      const disclosureTapped = tapText(device, capture.uiaText, [
+        '展开导入 / 导出',
+        'Expand Import / Export',
+        'Import / Export',
+        'インポート / エクスポートを展開',
+        'インポート / エクスポート',
+      ])
+      if (disclosureTapped) {
+        sleep(700)
+        capture = captureStep(device, result, `mock-provider-import-disclosure-${index}`)
+      }
+    }
     if (tapText(device, capture.uiaText, ['导入 JSON', 'Import JSON'])) {
       sleep(1700)
       const afterTap = captureStep(device, result, `mock-provider-import-after-tap-${index}`)
@@ -531,14 +773,13 @@ function selectFileAndCaptureImportDialog(device, result) {
   let searched = false
   for (let index = 0; index < 8; index += 1) {
     const capture = captureStep(device, result, `mock-provider-file-picker-search-${index}`)
-    if (hasAnyText(capture.uiaText, ['导入完成', 'Import complete'])) return capture
+    if (classifyImportTerminalState(capture.uiaText) !== 'pending') return capture
     if (!isDocumentsUi(capture.uiaText) && tapText(device, capture.uiaText, ['导入 JSON', 'Import JSON'])) {
       sleep(1700)
       continue
     }
     if (tapFileTitle(device, capture.uiaText, fixtureName)) {
-      sleep(2000)
-      return captureStep(device, result, 'mock-provider-import-confirm')
+      return completeDocumentsUiSelection(device, result, 'mock-provider-import-confirm')
     }
     if (!searched && isDocumentsUi(capture.uiaText)) {
       searched = true
@@ -561,25 +802,74 @@ function searchDocumentsUiFile(device, result, fileName) {
   inputText(device, fileName)
   sleep(1400)
   capture = captureStep(device, result, 'mock-provider-file-picker-search-result')
+  if (tapFileTitle(device, capture.uiaText, fileName)) {
+    return completeDocumentsUiSelection(device, result, 'mock-provider-import-confirm')
+  }
+  return selectDocumentsUiFileFromDownloads(device, result, fileName)
+}
+
+function selectDocumentsUiFileFromDownloads(device, result, fileName) {
+  const clearQuery = captureStep(device, result, 'mock-provider-file-picker-search-clear')
+  if (tapText(device, clearQuery.uiaText, ['Clear query', '清除查询', 'クリア'])) {
+    sleep(250)
+  }
+  back(device)
+  sleep(650)
+  let capture = captureStep(device, result, 'mock-provider-file-picker-recent')
+  if (!isDocumentsUi(capture.uiaText)) return null
+  if (!tapText(device, capture.uiaText, ['Show roots', '显示根目录', 'ルートを表示'])) return null
+  sleep(650)
+  capture = captureStep(device, result, 'mock-provider-file-picker-roots')
+  if (!tapText(device, capture.uiaText, ['Downloads', 'Download', '下载'])) return null
+  sleep(1200)
+  capture = captureStep(device, result, 'mock-provider-file-picker-downloads')
   if (!tapFileTitle(device, capture.uiaText, fileName)) return null
-  sleep(2200)
-  return captureStep(device, result, 'mock-provider-import-confirm')
+  return completeDocumentsUiSelection(device, result, 'mock-provider-import-confirm')
+}
+
+function completeDocumentsUiSelection(device, result, captureName) {
+  sleep(1400)
+  let capture = captureStep(device, result, `${captureName}-selection`)
+  if (isDocumentsUi(capture.uiaText) && hasAnyText(capture.uiaText, ['selected', '已选择', '已選取'])) {
+    const confirmed = tapText(device, capture.uiaText, ['Select', '选择', '選取'])
+    if (confirmed) sleep(2200)
+  }
+  capture = captureStep(device, result, captureName)
+  return waitForImportTerminalState(device, result, captureName, capture)
+}
+
+function classifyImportTerminalState(uiaText) {
+  if (hasAnyText(uiaText, ['导入完成', 'Import complete', 'インポート完了'])) return 'success'
+  if (hasAnyText(uiaText, ['未导入', 'Not imported', 'インポートされませんでした'])) return 'failure'
+  return 'pending'
+}
+
+function waitForImportTerminalState(device, result, captureName, initialCapture, maxAttempts = 10) {
+  let capture = initialCapture
+  if (classifyImportTerminalState(capture.uiaText) !== 'pending') return capture
+  for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+    sleep(700)
+    capture = captureStep(device, result, `${captureName}-wait-${attempt}`)
+    if (classifyImportTerminalState(capture.uiaText) !== 'pending') return capture
+  }
+  return capture
 }
 
 function openMessageActions(device, result, initialCapture, captureName) {
   let latest = initialCapture
   if (hasAnyText(latest.uiaText, ['复制工作产物', 'Copy work artifact', '朗读', 'Speak'])) return latest
   for (let round = 0; round < 8; round += 1) {
-    const actionNodes = parseNodes(latest.uiaText).filter((node) => node.enabled && textMatchesAny(node, ['操作', 'Actions']))
-    for (const node of actionNodes.sort((a, b) => parseBounds(b.bounds).top - parseBounds(a.bounds).top)) {
-      tapBoundsCenter(device, node.bounds)
+    const longPressNode = findNodeByText(parseNodes(latest.uiaText), [seededAssistantToken])
+      || largestAssistantLikeNode(latest.uiaText)
+    if (longPressNode?.bounds) {
+      longPressBoundsCenter(device, longPressNode.bounds)
       sleep(650)
       const candidate = captureStep(device, result, round === 0 ? captureName : `${captureName}-${round}`)
       if (hasAnyText(candidate.uiaText, ['复制', 'Copy', '朗读', 'Speak', '重新生成', 'Regenerate'])) return candidate
       tapText(device, candidate.uiaText, ['收起', 'Collapse'])
       sleep(200)
     }
-    swipeDown(device)
+    swipeUp(device)
     sleep(350)
     latest = captureStep(device, result, `${captureName}-search-${round}`)
   }
@@ -599,12 +889,12 @@ function waitForText(device, labels, captureName, maxAttempts, result, intervalM
 
 function scrollToText(device, labels, capturePrefix, maxScrolls, result) {
   let capture = captureStep(device, result, `${capturePrefix}-0`)
-  if (hasAnyText(capture.uiaText, labels)) return capture
+  if (hasUsableText(capture.uiaText, labels)) return capture
   for (let index = 1; index <= maxScrolls; index += 1) {
     swipeUp(device)
     sleep(550)
     capture = captureStep(device, result, `${capturePrefix}-${index}`)
-    if (hasAnyText(capture.uiaText, labels)) return capture
+    if (hasUsableText(capture.uiaText, labels)) return capture
   }
   return capture
 }
@@ -629,12 +919,12 @@ function scrollToTappableText(device, labels, capturePrefix, maxScrolls, result)
 
 function findByScrolling(device, labels, capturePrefix, maxScrolls, result) {
   let capture = captureStep(device, result, `${capturePrefix}-0`)
-  if (hasAnyText(capture.uiaText, labels)) return { matched: true, capture }
+  if (hasUsableText(capture.uiaText, labels)) return { matched: true, capture }
   for (let index = 1; index <= maxScrolls; index += 1) {
     swipeDown(device)
     sleep(550)
     capture = captureStep(device, result, `${capturePrefix}-${index}`)
-    if (hasAnyText(capture.uiaText, labels)) return { matched: true, capture }
+    if (hasUsableText(capture.uiaText, labels)) return { matched: true, capture }
   }
   return { matched: false, capture }
 }
@@ -664,9 +954,19 @@ function captureStep(device, result, name) {
 
 function captureFileWithRetry(device, remotePath, localPath, captureRemote) {
   for (let attempt = 0; attempt < 3; attempt += 1) {
-    captureRemote()
-    runCommand('adb', ['-s', device, 'pull', remotePath, localPath])
-    if (fs.existsSync(localPath) && fs.statSync(localPath).size > 0) return true
+    const stagingPath = `${localPath}.${process.pid}.${Date.now()}.${attempt}.tmp`
+    runCommand('adb', ['-s', device, 'shell', 'rm', '-f', remotePath])
+    try {
+      captureRemote()
+      const pulled = runCommand('adb', ['-s', device, 'pull', remotePath, stagingPath]) !== null
+      if (pulled && fs.existsSync(stagingPath) && fs.statSync(stagingPath).size > 0) {
+        fs.copyFileSync(stagingPath, localPath)
+        return true
+      }
+    } finally {
+      fs.rmSync(stagingPath, { force: true })
+      runCommand('adb', ['-s', device, 'shell', 'rm', '-f', remotePath])
+    }
     sleep(350 + attempt * 350)
   }
   return false
@@ -675,14 +975,14 @@ function captureFileWithRetry(device, remotePath, localPath, captureRemote) {
 function tapText(device, uiaText, labels) {
   const node = findTappableTextNode(parseNodes(uiaText), labels)
   if (!node) return false
-  tapBoundsCenter(device, node.bounds)
-  return true
+  return tapBoundsCenter(device, node.bounds)
 }
 
 function tapActionNearText(device, uiaText, anchorLabels, actionLabels) {
   const nodes = parseNodes(uiaText)
   const anchor = nodes.find((node) => isUsableBounds(node.bounds) && textMatchesAny(node, anchorLabels))
   const anchorBounds = parseBounds(anchor?.bounds)
+  if (!anchorBounds) return false
   const candidates = nodes
     .filter((node) => node.enabled && isUsableBounds(node.bounds) && textMatchesAny(node, actionLabels))
     .map((node) => ({ node, bounds: parseBounds(node.bounds) }))
@@ -692,10 +992,9 @@ function tapActionNearText(device, uiaText, anchorLabels, actionLabels) {
       if (!anchorBounds) return left.bounds.top - right.bounds.top
       return Math.abs(left.bounds.top - anchorBounds.top) - Math.abs(right.bounds.top - anchorBounds.top)
     })
-  const candidate = candidates[0]?.node ?? findTappableTextNode(nodes, actionLabels)
+  const candidate = candidates[0]?.node
   if (!candidate) return false
-  tapBoundsCenter(device, candidate.bounds)
-  return true
+  return tapBoundsCenter(device, candidate.bounds)
 }
 
 function tapEditableAtIndex(device, uiaText, index) {
@@ -845,8 +1144,9 @@ function boundsArea(bounds) {
 
 function tapBoundsCenter(device, bounds) {
   const box = parseBounds(bounds)
-  if (!box || !isUsableBounds(bounds)) return
+  if (!box || !isUsableBounds(bounds)) return false
   runCommand('adb', ['-s', device, 'shell', 'input', 'tap', String(Math.round((box.left + box.right) / 2)), String(Math.round((box.top + box.bottom) / 2))])
+  return true
 }
 
 function longPressBoundsCenter(device, bounds) {
@@ -870,8 +1170,36 @@ function swipeDown(device) {
   runCommand('adb', ['-s', device, 'shell', 'input', 'swipe', '432', '620', '432', '1580', '450'])
 }
 
-function swipeActionsRowLeft(device) {
-  runCommand('adb', ['-s', device, 'shell', 'input', 'swipe', '930', '1950', '360', '1950', '360'])
+function swipeActionsRowLeft(device, uiaText) {
+  const swipe = resolveActionsRowSwipe(uiaText)
+  runCommand('adb', [
+    '-s',
+    device,
+    'shell',
+    'input',
+    'swipe',
+    String(swipe.startX),
+    String(swipe.startY),
+    String(swipe.endX),
+    String(swipe.endY),
+    String(swipe.durationMs),
+  ])
+}
+
+function resolveActionsRowSwipe(uiaText) {
+  const bounds = parseNodes(uiaText)
+    .filter((node) => node.className.includes('HorizontalScrollView') && textMatchesAny(node, ['操作', 'Actions', 'アクション']))
+    .map((node) => parseBounds(node.bounds))
+    .filter((box) => box && box.right > box.left && box.bottom > box.top)
+    .sort((a, b) => boundsArea(b) - boundsArea(a))[0]
+  if (!bounds) {
+    return { startX: 930, startY: 1950, endX: 360, endY: 1950, durationMs: 360 }
+  }
+  const rowWidth = bounds.right - bounds.left
+  const startX = Math.max(bounds.left + 1, bounds.right - 28)
+  const endX = Math.min(startX - 1, bounds.left + Math.min(305, Math.floor(rowWidth * 0.35)))
+  const centerY = Math.round((bounds.top + bounds.bottom) / 2)
+  return { startX, startY: centerY, endX, endY: centerY, durationMs: 360 }
 }
 
 function inputText(device, value) {
@@ -894,12 +1222,30 @@ function forceStop(device) {
 }
 
 function openUrl(device, url) {
-  runCommand('adb', ['-s', device, 'shell', 'am', 'start', '-W', '-a', 'android.intent.action.VIEW', '-d', url])
+  const remoteCommand = ['am', 'start', '-W', '-a', 'android.intent.action.VIEW', '-d', quoteAndroidShellArgument(url)].join(' ')
+  runCommand('adb', ['-s', device, 'shell', remoteCommand])
+}
+
+function quoteAndroidShellArgument(value) {
+  return `'${String(value).replace(/'/g, `'\\''`)}'`
 }
 
 function pushFixture(device) {
   const output = runCommand('adb', ['-s', device, 'push', fixturePath, remoteFixturePath])
-  if (output !== null) runCommand('adb', ['-s', device, 'shell', 'touch', remoteFixturePath])
+  if (output !== null) {
+    runCommand('adb', ['-s', device, 'shell', 'touch', remoteFixturePath])
+    runCommand('adb', [
+      '-s',
+      device,
+      'shell',
+      'am',
+      'broadcast',
+      '-a',
+      'android.intent.action.MEDIA_SCANNER_SCAN_FILE',
+      '-d',
+      `file://${remoteFixturePath}`,
+    ])
+  }
   return output !== null
 }
 
@@ -940,10 +1286,10 @@ function runCommand(command, args) {
   }
 }
 
-function startMockProviderServer(logPath) {
+function startMockProviderServer(logPath, requestedPort = 0) {
   const stateBuffer = new SharedArrayBuffer(3 * Int32Array.BYTES_PER_ELEMENT)
   const state = new Int32Array(stateBuffer)
-  const instance = new Worker(__filename, { workerData: { logPath, stateBuffer } })
+  const instance = new Worker(__filename, { workerData: { logPath, requestedPort, stateBuffer } })
   Atomics.wait(state, 1, 0, 5000)
   if (Atomics.load(state, 1) !== 1) {
     instance.terminate()
@@ -1018,7 +1364,7 @@ function runMockProviderWorker() {
     Atomics.store(state, 1, 2)
     Atomics.notify(state, 1)
   })
-  server.listen(0, '0.0.0.0', () => {
+  server.listen(workerData.requestedPort || 0, '0.0.0.0', () => {
     Atomics.store(state, 0, server.address().port)
     Atomics.store(state, 1, 1)
     Atomics.notify(state, 1)
@@ -1083,6 +1429,265 @@ function waitForLongContentRequestRows(logPath, timeoutMs) {
   throw new Error('Timed out waiting for long-content streaming and memory extraction request rows.')
 }
 
+function captureLongContentDurableState(device) {
+  const snapshotDir = fs.mkdtempSync(path.join(os.tmpdir(), 'islemind-long-content-state-'))
+  const localDatabasePath = path.join(snapshotDir, 'islemind-context.db')
+  try {
+    forceStop(device)
+    const pulled = runCommand('adb', ['-s', device, 'pull', contextDatabaseRemotePath, localDatabasePath])
+    if (pulled === null || !fs.existsSync(localDatabasePath)) {
+      throw new Error(`Could not pull the release SQLite database from ${contextDatabaseRemotePath}; a rooted or debuggable device is required for durable-state proof.`)
+    }
+    for (const suffix of ['-wal', '-shm']) {
+      runCommand('adb', [
+        '-s',
+        device,
+        'pull',
+        `${contextDatabaseRemotePath}${suffix}`,
+        `${localDatabasePath}${suffix}`,
+      ])
+    }
+    return readLongContentDurableState(localDatabasePath)
+  } finally {
+    fs.rmSync(snapshotDir, { recursive: true, force: true })
+  }
+}
+
+function readLongContentDurableState(databasePath) {
+  let Database
+  try {
+    ({ Database } = require('bun:sqlite'))
+  } catch {
+    throw new Error('Durable SQLite evidence requires the Bun runtime.')
+  }
+  const database = new Database(databasePath, { readonly: true })
+  try {
+    const run = database.query(`
+      SELECT id, kind, conversationId, responseMessageId, providerId, model,
+             status, completedAt, journalSequence, resultJson
+      FROM assistant_runs
+      WHERE conversationId = ?
+      ORDER BY createdAt DESC
+      LIMIT 1
+    `).get(longContentConversationId)
+    const journal = run
+      ? database.query(`
+          SELECT sequence, type, occurredAt
+          FROM assistant_run_journal
+          WHERE runId = ?
+          ORDER BY sequence ASC
+        `).all(run.id)
+      : []
+    const conversationRow = database.query(
+      'SELECT payloadJson FROM conversation_records WHERE id = ? LIMIT 1',
+    ).get(longContentConversationId)
+    const conversation = tryParseJson(conversationRow?.payloadJson)
+    const messages = Array.isArray(conversation?.messages) ? conversation.messages : []
+    const assistantMessage = messages.find((message) => message?.id === run?.responseMessageId)
+      ?? [...messages].reverse().find((message) => message?.role === 'assistant')
+    const retrievalTrace = Array.isArray(assistantMessage?.retrievalTrace)
+      ? assistantMessage.retrievalTrace
+      : []
+    const memoryTrace = [...retrievalTrace]
+      .reverse()
+      .find((trace) => trace?.type === 'memory')
+    const memories = database.query(`
+      SELECT id, content, status, conversationId, sourceKind, sourceDetail, confidence,
+             createdAt, updatedAt
+      FROM memories
+      WHERE conversationId = ? AND content LIKE ?
+      ORDER BY updatedAt ASC
+    `).all(longContentConversationId, '%QA_LONG_CONTENT_PREFERENCE%')
+    const result = tryParseJson(run?.resultJson)
+    return {
+      capturedAt: new Date().toISOString(),
+      conversationId: longContentConversationId,
+      run: run
+        ? {
+            id: run.id,
+            kind: run.kind,
+            conversationId: run.conversationId,
+            responseMessageId: run.responseMessageId,
+            providerId: run.providerId,
+            model: run.model,
+            status: run.status,
+            completedAt: run.completedAt,
+            journalSequence: run.journalSequence,
+            outputText: result?.outputText,
+            streamEventCount: result?.streamEventCount,
+          }
+        : null,
+      journal: journal.map((entry) => ({
+        sequence: entry.sequence,
+        type: entry.type,
+        occurredAt: entry.occurredAt,
+      })),
+      message: assistantMessage
+        ? {
+            id: assistantMessage.id,
+            role: assistantMessage.role,
+            status: assistantMessage.status,
+            content: assistantMessage.content,
+            retrievalTraceCount: retrievalTrace.length,
+          }
+        : null,
+      memoryTrace: memoryTrace
+        ? {
+            id: memoryTrace.id,
+            type: memoryTrace.type,
+            status: memoryTrace.status,
+            content: memoryTrace.content,
+            startedAt: memoryTrace.startedAt,
+            completedAt: memoryTrace.completedAt,
+            durationMs: memoryTrace.durationMs,
+            metadata: {
+              memoryEnabled: memoryTrace.metadata?.memoryEnabled,
+              providerAvailable: memoryTrace.metadata?.providerAvailable,
+              signalAborted: memoryTrace.metadata?.signalAborted,
+              transitionStatus: memoryTrace.metadata?.transitionStatus,
+              addedCount: memoryTrace.metadata?.addedCount,
+            },
+          }
+        : null,
+      memories: memories.map((memory) => ({
+        id: memory.id,
+        content: memory.content,
+        status: memory.status,
+        conversationId: memory.conversationId,
+        sourceKind: memory.sourceKind,
+        sourceDetail: memory.sourceDetail,
+        confidence: memory.confidence,
+        createdAt: memory.createdAt,
+        updatedAt: memory.updatedAt,
+      })),
+    }
+  } finally {
+    database.close()
+  }
+}
+
+function validateLongContentDurableState(state) {
+  const issues = []
+  const run = state?.run
+  const message = state?.message
+  const memoryTrace = state?.memoryTrace
+  const memories = Array.isArray(state?.memories) ? state.memories : []
+  const journal = Array.isArray(state?.journal) ? state.journal : []
+  if (state?.conversationId !== longContentConversationId) issues.push('durable state has the wrong conversation id')
+  if (!run) issues.push('missing persisted assistant run')
+  else {
+    if (run.kind !== 'chat') issues.push('persisted assistant run is not a chat run')
+    if (run.status !== 'succeeded') issues.push(`persisted assistant run status is ${run.status ?? 'missing'}`)
+    if (run.providerId !== longContentProviderId) issues.push('persisted assistant run provider identity changed')
+    if (run.model !== longContentModelId) issues.push('persisted assistant run model identity changed')
+    if (!run.responseMessageId) issues.push('persisted assistant run has no response message id')
+    if (!journal.some((entry) => entry.type === 'run.succeeded')) issues.push('missing run.succeeded journal entry')
+    if (!String(run.outputText ?? '').includes(longContentStreamCompleteToken)) issues.push('persisted run output is missing the complete stream token')
+  }
+  if (!message) issues.push('missing persisted assistant message')
+  else {
+    if (message.role !== 'assistant' || message.status !== 'done') issues.push('persisted assistant message is not done')
+    if (!String(message.content ?? '').includes(longContentStreamCompleteToken)) issues.push('persisted assistant message is missing the complete stream token')
+    if (run?.responseMessageId && message.id !== run.responseMessageId) issues.push('persisted message identity does not match the run')
+  }
+  if (!memoryTrace) issues.push('missing persisted memory extraction trace')
+  else {
+    if (memoryTrace.type !== 'memory' || memoryTrace.status !== 'done') issues.push('memory extraction trace is not terminal done')
+    if (memoryTrace.metadata?.transitionStatus !== 'completed') issues.push('memory extraction trace did not record completed transition')
+    if (memoryTrace.metadata?.signalAborted !== false) issues.push('memory extraction trace reports an aborted or unknown signal')
+    if (!(Number(memoryTrace.metadata?.addedCount) > 0)) issues.push('memory extraction trace reports no added memories')
+  }
+  if (!memories.some((memory) =>
+    memory.sourceKind === 'model' &&
+    memory.status === 'pending' &&
+    String(memory.content ?? '').includes('QA_LONG_CONTENT_PREFERENCE') &&
+    String(memory.content ?? '').includes('cyan-lake'),
+  )) {
+    issues.push('missing pending model memory containing QA_LONG_CONTENT_PREFERENCE')
+  }
+  return issues
+}
+
+function createLongContentDurableStateFixture() {
+  return {
+    conversationId: longContentConversationId,
+    run: {
+      id: 'run-self-test',
+      kind: 'chat',
+      conversationId: longContentConversationId,
+      responseMessageId: 'message-self-test',
+      providerId: longContentProviderId,
+      model: longContentModelId,
+      status: 'succeeded',
+      completedAt: 100,
+      journalSequence: 2,
+      outputText: longContentStreamCompleteToken,
+      streamEventCount: 2,
+    },
+    journal: [{ sequence: 2, type: 'run.succeeded', occurredAt: 100 }],
+    message: {
+      id: 'message-self-test',
+      role: 'assistant',
+      status: 'done',
+      content: longContentStreamCompleteToken,
+      retrievalTraceCount: 1,
+    },
+    memoryTrace: {
+      id: 'memory-self-test',
+      type: 'memory',
+      status: 'done',
+      metadata: {
+        signalAborted: false,
+        transitionStatus: 'completed',
+        addedCount: 1,
+      },
+    },
+    memories: [{
+      id: 'memory-row-self-test',
+      content: '用户偏好：QA_LONG_CONTENT_PREFERENCE = cyan-lake',
+      status: 'pending',
+      sourceKind: 'model',
+    }],
+  }
+}
+
+function runSelfTest() {
+  if (longContentProviderName.includes(longContentModelId)) {
+    throw new Error('Long-content provider evidence must not satisfy the model marker through the provider name.')
+  }
+  const quotedUrl = quoteAndroidShellArgument("islemind://source?conversationId=qa-source&messageId=assistant's-message&kind=process")
+  if (quotedUrl !== "'islemind://source?conversationId=qa-source&messageId=assistant'\\''s-message&kind=process'") {
+    throw new Error(`Android-shell URI quoting self-test failed: ${quotedUrl}`)
+  }
+  const valid = createLongContentDurableStateFixture()
+  const validIssues = validateLongContentDurableState(valid)
+  if (validIssues.length) throw new Error(`Durable-state self-test rejected valid fixture: ${validIssues.join(', ')}`)
+  const invalid = JSON.parse(JSON.stringify(valid))
+  invalid.memoryTrace.metadata.signalAborted = true
+  if (!validateLongContentDurableState(invalid).some((issue) => issue.includes('aborted'))) {
+    throw new Error('Durable-state self-test did not reject an aborted memory trace.')
+  }
+  const floatingActionRow = '<node text="" content-desc="Actions" class="android.widget.HorizontalScrollView" bounds="[55,400][958,539]" enabled="true" />'
+  const floatingSwipe = resolveActionsRowSwipe(floatingActionRow)
+  if (JSON.stringify(floatingSwipe) !== JSON.stringify({ startX: 930, startY: 470, endX: 360, endY: 470, durationMs: 360 })) {
+    throw new Error(`Action-row self-test did not derive the floating UIA bounds: ${JSON.stringify(floatingSwipe)}`)
+  }
+  const fallbackSwipe = resolveActionsRowSwipe('<node text="Chat" class="android.widget.TextView" bounds="[0,0][100,100]" enabled="true" />')
+  if (JSON.stringify(fallbackSwipe) !== JSON.stringify({ startX: 930, startY: 1950, endX: 360, endY: 1950, durationMs: 360 })) {
+    throw new Error(`Action-row self-test did not preserve the fallback gesture: ${JSON.stringify(fallbackSwipe)}`)
+  }
+  if (classifyImportTerminalState('<node text="Import complete" />') !== 'success') {
+    throw new Error('Import-dialog self-test did not recognize a successful terminal state.')
+  }
+  if (classifyImportTerminalState('<node text="Not imported" />') !== 'failure') {
+    throw new Error('Import-dialog self-test did not recognize a failed terminal state.')
+  }
+  if (classifyImportTerminalState('<node text="Settings" />') !== 'pending') {
+    throw new Error('Import-dialog self-test did not preserve a pending import state.')
+  }
+  console.log('Mock provider collector self-test passed.')
+}
+
 function hasLongContentModelRequest(rows) {
   return requestBodies(rows).some(({ body }) => body.model === modelId)
 }
@@ -1118,6 +1723,9 @@ function isPassing(result) {
       hasLongContentModelRequest(rows) &&
       hasLongContentStreamingRequest(rows) &&
       hasLongContentMemoryExtractionRequest(rows) &&
+      result.longContentStressEvidence?.passed === true &&
+      result.durableState &&
+      result.durableStateIssues.length === 0 &&
       result.errors.length === 0
     )
   }
@@ -1153,6 +1761,7 @@ function summarizeFailures(result) {
     if (!hasLongContentModelRequest(rows)) failures.push(`missing ${modelId} request`)
     if (!hasLongContentStreamingRequest(rows)) failures.push('missing streaming long-content request')
     if (!hasLongContentMemoryExtractionRequest(rows)) failures.push('missing memory extraction request with max_tokens=512')
+    if (result.longContentStressEvidence?.passed !== true) failures.push('missing qualified long-content stress evidence')
     failures.push(...result.errors)
     return failures
   }
@@ -1182,6 +1791,10 @@ function largestAssistantLikeNode(uiaText) {
 
 function hasAnyText(text, values) {
   return values.some((value) => String(text ?? '').includes(value))
+}
+
+function hasUsableText(uiaText, labels) {
+  return parseNodes(uiaText).some((node) => node.enabled && isUsableBounds(node.bounds) && textMatchesAny(node, labels))
 }
 
 function hasTappableText(uiaText, labels) {
@@ -1239,4 +1852,11 @@ function sleep(ms) {
 
 function relative(file) {
   return path.relative(root, file).replace(/\\/g, '/')
+}
+
+module.exports = {
+  createLongContentDurableStateFixture,
+  longContentStressEvidenceMarkers,
+  longContentStressEvidencePaths,
+  validateLongContentDurableState,
 }

@@ -1,5 +1,4 @@
 import { create } from 'zustand'
-
 export type ActivationJobStatus = 'running' | 'done' | 'failed'
 export type ActivationJobItemStatus = 'queued' | 'running' | 'done' | 'failed'
 

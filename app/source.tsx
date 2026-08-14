@@ -6,21 +6,23 @@ import { router, useLocalSearchParams } from 'expo-router'
 import type { TFunction } from 'i18next'
 import { useTranslation } from 'react-i18next'
 import { MotiView } from 'moti'
-import { AnimatedNavigationTrigger } from '@/components/navigation/AnimatedNavigationTrigger'
 import { AppIcon, appIconStroke } from '@/components/ui/AppIcon'
-import { IsleScreen, type IsleBackgroundState } from '@/components/ui/isle'
+import { type IsleBackgroundState } from '@/components/ui/isle'
 import { IslePanel } from '@/components/ui/isle'
 import { IsleButton } from '@/components/ui/isle'
 import { IsleChip } from '@/components/ui/isle'
-import { IsleHeader, IsleIconButton, IsleSection } from '@/components/ui/isle'
+import { IsleIconButton, IsleSection } from '@/components/ui/isle'
 import { RenderGuard } from '@/components/ui/RenderGuard'
 import { useAppTheme } from '@/hooks/useAppTheme'
+import { useMotionPreference } from '@/hooks/useMotionPreference'
 import { useChatStore } from '@/store/chatStore'
 import { useIsleDialog } from '@/components/ui/isle'
-import type { MessageCitation, ProcessTrace } from '@/types'
+import type { MessageCitation } from '@/types/contextContracts'
+import type { ProcessTrace } from '@/core'
 import { collectVisibleProcessTraces, formatDuration, formatProcessTraceForCopy, formatProcessTraceForDisplay, isAgentIntentTrace, isAgentPlanTrace, isAgentWorkflowEnvelopeTrace, metadataSummaryForTrace, normalizeTraceStatuses, traceStageLabel, traceStatusLabel } from '@/components/chat/tracePresentation'
-import { WORK_ARTIFACT_WORKFLOW_CONTRACT } from '@/services/agent/workArtifactWorkflow'
-import { isAllowedWebViewNavigation, safeHttpUrl } from '@/utils/sourceUrlSafety'
+import { WORK_ARTIFACT_WORKFLOW_CONTRACT } from '@/modules/integrations'
+import { isAllowedWebViewNavigation, safeHttpUrl, webViewOriginWhitelist } from '@/utils/sourceUrlSafety'
+import { ThemeDetailFrame } from '@/presentation/app-shell/ThemeDetailFrame'
 
 type ProcessTraceGroupKey = 'agentPlan' | 'context' | 'search' | 'toolActivity' | 'agentSynthesis' | 'agentRecovery' | 'other'
 
@@ -104,35 +106,32 @@ export default function SourceScreen() {
   }
 
   return (
-    <IsleScreen padded={false} background={mode === 'process' ? 'surface' : 'focus'} backgroundState={backgroundState}>
-      <View style={{ flex: 1 }}>
-        <View pointerEvents="box-none" style={{ paddingHorizontal: compact ? 10 : 12, paddingTop: 6, paddingBottom: 8 }}>
-          <IsleHeader
-            title={title}
-            subtitle={subtitle}
-            leading={
-              <AnimatedNavigationTrigger variant="iconButton" label={t('source.backToChat')} glyph="back" onNavigate={() => router.back()} color={colors.text} />
-            }
-            trailing={
-              <View style={{ flexDirection: 'row', gap: 7 }}>
-                <IsleIconButton label={t('common.copy')} size="sm" onPress={() => void copyCurrent()}>
-                  <AppIcon name="copy" color={colors.textSecondary} size={17} strokeWidth={appIconStroke.fine} />
-                </IsleIconButton>
-                {webUrl ? (
-                  <>
-                    <IsleIconButton label={t('common.refresh')} size="sm" onPress={() => setWebKey((value) => value + 1)}>
-                      <AppIcon name="refresh" color={colors.textSecondary} size={17} strokeWidth={appIconStroke.fine} />
-                    </IsleIconButton>
-                    <IsleIconButton label={t('common.openExternal')} size="sm" onPress={() => void openExternal()}>
-                      <AppIcon name="external-link" color={colors.textSecondary} size={17} strokeWidth={appIconStroke.fine} />
-                    </IsleIconButton>
-                  </>
-                ) : null}
-              </View>
-            }
-          />
+    <ThemeDetailFrame
+      kind="source"
+      title={title}
+      subtitle={subtitle}
+      onBack={() => router.back()}
+      backLabel={t('source.backToChat')}
+      backgroundState={backgroundState}
+      actions={
+        <View style={{ flexDirection: 'row', gap: 7 }}>
+          <IsleIconButton label={t('common.copy')} size="sm" onPress={() => void copyCurrent()}>
+            <AppIcon name="copy" color={colors.textSecondary} size={17} strokeWidth={appIconStroke.fine} />
+          </IsleIconButton>
+          {webUrl ? (
+            <>
+              <IsleIconButton label={t('common.refresh')} size="sm" onPress={() => setWebKey((value) => value + 1)}>
+                <AppIcon name="refresh" color={colors.textSecondary} size={17} strokeWidth={appIconStroke.fine} />
+              </IsleIconButton>
+              <IsleIconButton label={t('common.openExternal')} size="sm" onPress={() => void openExternal()}>
+                <AppIcon name="external-link" color={colors.textSecondary} size={17} strokeWidth={appIconStroke.fine} />
+              </IsleIconButton>
+            </>
+          ) : null}
         </View>
-
+      }
+    >
+      <View style={{ flex: 1 }}>
         <RenderGuard label={mode === 'process' ? t('source.process') : t('source.source')}>
           {mode === 'process' ? (
             <ProcessReader traces={traces} />
@@ -143,7 +142,7 @@ export default function SourceScreen() {
           )}
         </RenderGuard>
       </View>
-    </IsleScreen>
+    </ThemeDetailFrame>
   )
 }
 
@@ -205,7 +204,7 @@ function WebReader({
               <AppIcon name="globe" color={colors.ui.icon.accentForeground} size={15} strokeWidth={appIconStroke.strong} />
             </View>
             <View style={{ flex: 1, minWidth: 0 }}>
-              <Text numberOfLines={1} style={{ color: colors.text, fontSize: 14, lineHeight: 19, fontWeight: '900', includeFontPadding: false }}>{citation?.title ?? hostFromUrl(url)}</Text>
+              <Text numberOfLines={1} style={{ color: colors.text, fontSize: 14, lineHeight: 19, fontWeight: '800', includeFontPadding: false }}>{citation?.title ?? hostFromUrl(url)}</Text>
               <Text numberOfLines={1} style={{ color: colors.textTertiary, fontSize: 11, lineHeight: 15, marginTop: 1, includeFontPadding: false }}>{hostFromUrl(url)}</Text>
             </View>
           </View>
@@ -216,7 +215,7 @@ function WebReader({
       </IslePanel>
       {failed ? (
         <View style={{ flex: 1, padding: 24, justifyContent: 'center' }}>
-          <Text style={{ color: colors.text, fontSize: 19, fontWeight: '900' }}>{t('source.previewUnavailable')}</Text>
+          <Text style={{ color: colors.text, fontSize: 19, fontWeight: '800' }}>{t('source.previewUnavailable')}</Text>
           <Text style={{ color: colors.textSecondary, fontSize: 13, lineHeight: 19, marginTop: 8 }}>
             {t('source.previewUnavailableMessage')}
           </Text>
@@ -228,9 +227,9 @@ function WebReader({
           {WebViewComponent ? (
             <WebViewComponent
               source={{ uri: url }}
-              originWhitelist={['http://*', 'https://*']}
+              originWhitelist={webViewOriginWhitelist(url)}
               startInLoadingState={false}
-              onShouldStartLoadWithRequest={(request) => isAllowedWebViewNavigation(request.url)}
+              onShouldStartLoadWithRequest={(request) => isAllowedWebViewNavigation(request.url, url)}
               onLoadEnd={() => setLoading(false)}
               onError={() => {
                 setLoading(false)
@@ -257,7 +256,7 @@ function LocalSourceReader({ citation, citations }: { citation?: MessageCitation
   if (!sources.length) {
     return (
       <View style={{ flex: 1, padding: 24, justifyContent: 'center' }}>
-        <Text style={{ color: colors.text, fontSize: 19, fontWeight: '900' }}>{t('source.noSource')}</Text>
+        <Text style={{ color: colors.text, fontSize: 19, fontWeight: '800' }}>{t('source.noSource')}</Text>
         <Text style={{ color: colors.textSecondary, fontSize: 13, lineHeight: 19, marginTop: 8 }}>{t('source.noSourceMessage')}</Text>
       </View>
     )
@@ -265,14 +264,12 @@ function LocalSourceReader({ citation, citations }: { citation?: MessageCitation
   return (
     <ScrollView style={{ flex: 1 }} contentContainerStyle={{ paddingHorizontal: 18, paddingTop: 12, paddingBottom: 42 }}>
       {sources.map((source, index) => (
-        <MotiView
+        <View
           key={`${source.id}-${index}`}
-          from={{ opacity: 0, translateY: 8 }}
-          animate={{ opacity: 1, translateY: 0 }}
-          transition={{ type: 'spring', damping: 20, stiffness: 180, delay: index * 35 }}
           style={{ marginBottom: 10 }}
         >
           <IsleSection
+            material="raised"
             elevated
             title={source.title || source.type}
             subtitle={formatCitationMeta(source, t)}
@@ -295,7 +292,7 @@ function LocalSourceReader({ citation, citations }: { citation?: MessageCitation
               {source.chunkId ? <SourceMetaChip label={`chunk ${source.chunkId.slice(0, 8)}`} /> : null}
             </View>
           </IsleSection>
-        </MotiView>
+        </View>
       ))}
     </ScrollView>
   )
@@ -311,7 +308,7 @@ function ProcessReader({ traces }: { traces: ProcessTrace[] }) {
   if (!traces.length) {
     return (
       <View style={{ flex: 1, padding: 24, justifyContent: 'center' }}>
-        <Text style={{ color: colors.text, fontSize: 19, fontWeight: '900' }}>{t('source.noProcess')}</Text>
+        <Text style={{ color: colors.text, fontSize: 19, fontWeight: '800' }}>{t('source.noProcess')}</Text>
         <Text style={{ color: colors.textSecondary, fontSize: 13, lineHeight: 19, marginTop: 8 }}>{t('source.noProcessMessage')}</Text>
       </View>
     )
@@ -322,9 +319,9 @@ function ProcessReader({ traces }: { traces: ProcessTrace[] }) {
       {groups.map((group) => (
         <View key={group.key} style={{ marginBottom: 20 }}>
           <View style={{ minHeight: 24, flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 6 }}>
-            <View style={{ width: 3, height: 14, borderRadius: colors.ui.radius.chip, backgroundColor: colors.ui.section.marker }} />
-            <Text numberOfLines={1} style={{ color: colors.ui.section.title, fontSize: 12, lineHeight: 16, fontWeight: '900', includeFontPadding: false, textAlignVertical: 'center' }}>{group.title}</Text>
-            <View style={{ flex: 1, height: 1, borderRadius: colors.ui.radius.chip, backgroundColor: colors.ui.section.divider }} />
+            <View style={{ width: 3, height: 14, borderRadius: 2, backgroundColor: colors.ui.section.marker }} />
+            <Text numberOfLines={1} style={{ color: colors.ui.section.title, fontSize: 12, lineHeight: 16, fontWeight: '800', includeFontPadding: false, textAlignVertical: 'center' }}>{group.title}</Text>
+            <View style={{ flex: 1, height: 1, borderRadius: 0, backgroundColor: colors.ui.section.divider }} />
           </View>
           {group.traces.map((trace, index) => (
           <TraceRow key={trace.id} trace={trace} isLast={index === group.traces.length - 1} />
@@ -433,9 +430,9 @@ function TraceRow({ trace, isLast }: { trace: ProcessTrace; isLast: boolean }) {
       <View style={{ flex: 1, minWidth: 0, paddingBottom: isLast ? 2 : 14 }}>
         <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
           <AppIcon name="list-check" color={tone} size={15} />
-          <Text numberOfLines={1} style={{ color: colors.text, fontSize: 14, lineHeight: 19, fontWeight: '900', flex: 1, minWidth: 0, includeFontPadding: false }}>{display.title}</Text>
+          <Text numberOfLines={1} style={{ color: colors.text, fontSize: 14, lineHeight: 19, fontWeight: '800', flex: 1, minWidth: 0, includeFontPadding: false }}>{display.title}</Text>
         </View>
-        <Text numberOfLines={metaLineCount} style={{ color: tone, fontSize: 11, lineHeight: 15, fontWeight: '900', marginTop: 3, includeFontPadding: false }}>{meta}</Text>
+        <Text numberOfLines={metaLineCount} style={{ color: tone, fontSize: 11, lineHeight: 15, fontWeight: '800', marginTop: 3, includeFontPadding: false }}>{meta}</Text>
         {display.content ? (
           <Text style={{ color: colors.textSecondary, fontSize: 12, lineHeight: 18, marginTop: 7 }}>{display.content}</Text>
         ) : null}
@@ -476,6 +473,7 @@ function hasTraceMetadataText(value: unknown): value is string {
 
 function ReaderSkeleton({ label }: { label: string }) {
   const { colors } = useAppTheme()
+  const motion = useMotionPreference()
   const { width } = useWindowDimensions()
   const sheetMaterial = colors.material.sheet
   const skeletonSurface = colors.ui.glass ? colors.ui.actionBar.itemBackground : colors.ui.semantic.surface.muted
@@ -483,9 +481,9 @@ function ReaderSkeleton({ label }: { label: string }) {
   return (
     <View style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, zIndex: 5, padding: 18, backgroundColor: sheetMaterial.body }}>
       <MotiView
-        from={{ opacity: 0.38 }}
+        from={{ opacity: 0.9 }}
         animate={{ opacity: 0.9 }}
-        transition={{ loop: true, type: 'timing', duration: 860 }}
+        transition={{ loop: motion === 'full', type: 'timing', duration: motion === 'full' ? 864 : 1 }}
         style={{ gap: 12 }}
       >
         <View style={{ width: '42%', height: 14, borderRadius: 7, backgroundColor: skeletonSurface }} />
@@ -493,14 +491,14 @@ function ReaderSkeleton({ label }: { label: string }) {
         <View style={{ width: '84%', height: 10, borderRadius: 5, backgroundColor: skeletonSurface }} />
         <View style={{ width: '96%', height: skeletonBlockHeight, borderRadius: colors.ui.radius.panel, backgroundColor: skeletonSurface, marginTop: 8 }} />
       </MotiView>
-      <View style={{ position: 'absolute', top: 12, alignSelf: 'center', minHeight: 30, borderRadius: colors.ui.radius.chip, paddingHorizontal: 11, flexDirection: 'row', alignItems: 'center', gap: 7, backgroundColor: sheetMaterial.chrome, borderWidth: 1, borderColor: sheetMaterial.border }}>
+      <View style={{ position: 'absolute', top: 12, alignSelf: 'center', minHeight: 30, borderRadius: colors.ui.radius.controlMiddle, paddingHorizontal: 11, flexDirection: 'row', alignItems: 'center', gap: 7, backgroundColor: sheetMaterial.chrome, borderWidth: 1, borderColor: sheetMaterial.border }}>
         <MotiView
-          from={{ opacity: 0.4, scale: 0.85 }}
-          animate={{ opacity: 1, scale: 1 }}
-          transition={{ loop: true, type: 'timing', duration: 760 }}
+          from={{ opacity: 1 }}
+          animate={{ opacity: 1 }}
+          transition={{ loop: motion === 'full', type: 'timing', duration: motion === 'full' ? 768 : 1 }}
           style={{ width: 7, height: 7, borderRadius: 4, backgroundColor: colors.ui.control.primaryBackground }}
         />
-        <Text numberOfLines={1} style={{ color: colors.textSecondary, fontSize: 11, fontWeight: '900' }}>{label}</Text>
+        <Text numberOfLines={1} style={{ color: colors.textSecondary, fontSize: 11, fontWeight: '700' }}>{label}</Text>
       </View>
     </View>
   )

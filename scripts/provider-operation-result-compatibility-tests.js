@@ -19,7 +19,7 @@ const {
   formatProviderHttpError,
   providerFetchFailure,
   success,
-} = require('../src/services/ai/providerOperationResult.ts')
+} = require('../src/bootstrap/providerResponsePolicies.ts')
 
 function registerTypeScriptSupport() {
   if (require.extensions['.ts']?.isProviderOperationResultCompatibilityHook) return
@@ -35,14 +35,6 @@ function registerTypeScriptSupport() {
     if (request === '@/i18n/service') {
       return {
         st: (key, values = {}) => `${key}${Object.keys(values).length ? ` ${JSON.stringify(values)}` : ''}`,
-      }
-    }
-    if (request === '@/utils/traceSafety') {
-      return {
-        redactSensitiveText: (value) => String(value)
-          .replace(/sk-[A-Za-z0-9_-]+/g, '[redacted]')
-          .replace(/Bearer\s+[A-Za-z0-9._-]+/gi, 'Bearer [redacted]')
-          .replace(/api[_-]?key\s*[:=]\s*[^,\s}]+/gi, 'api_key=[redacted]'),
       }
     }
     return originalLoad.call(this, request, parent, isMain)
@@ -130,10 +122,10 @@ function run() {
   assert.ok(formatted.includes('req_500'), 'formatted HTTP errors preserve request ids')
   assertNoSecret(formatted, 'formatted HTTP error')
 
-  const source = readSource('src/services/ai/providerOperationResult.ts')
+  const source = readSource('src/modules/providers/providerOperationResult.ts')
   assert.ok(source.includes('PROVIDER_OPERATION_RESULT_SCHEMA'), 'provider operation result source declares the schema')
-  assert.ok(source.includes('redactSensitiveText'), 'provider operation result source redacts error details')
-  assert.ok(source.includes('looksLikeModelUnavailable'), 'provider operation result source centralizes model-unavailable text classification')
+  assert.ok(source.includes('messages.redact'), 'provider operation result source redacts error details through its injected boundary')
+  assert.ok(source.includes('no available channel'), 'provider operation result source centralizes model-unavailable text classification')
   assert.ok(source.includes('findRequestId'), 'provider operation result source extracts request ids')
 
   console.log('Provider operation result compatibility tests passed')

@@ -4,7 +4,6 @@ import { MotiView } from 'moti'
 import { useAppTheme } from '@/hooks/useAppTheme'
 import { useMotionPreference } from '@/hooks/useMotionPreference'
 import { motionTokens } from '@/theme/animation'
-
 export type IsleChipTone = 'default' | 'mint' | 'amber' | 'danger'
 
 export interface IsleChipProps {
@@ -17,6 +16,7 @@ export interface IsleChipProps {
 export function IsleChip({ children, active = false, tone = 'default', style }: IsleChipProps) {
   const { colors } = useAppTheme()
   const motion = useMotionPreference()
+  const ornamented = colors.ui.limeRoad && colors.ui.ornamented
   const toneToken = tone === 'danger'
     ? colors.ui.tone.danger
     : tone === 'mint'
@@ -32,7 +32,7 @@ export function IsleChip({ children, active = false, tone = 'default', style }: 
   const background = active
     ? colors.ui.control.primaryBackground
     : tone === 'default'
-      ? colors.ui.cartoon
+      ? ornamented
         ? colors.ui.semantic.surface.base
         : colors.ui.glass
           ? colors.ui.actionBar.itemBackground
@@ -41,42 +41,40 @@ export function IsleChip({ children, active = false, tone = 'default', style }: 
   const borderColor = active
     ? colors.ui.control.primaryBorder
     : tone === 'default'
-      ? colors.ui.cartoon
+      ? ornamented
         ? colors.material.stroke
         : colors.ui.glass
           ? colors.ui.actionBar.itemBorder
           : colors.ui.semantic.chrome.border
       : toneToken.border
-  const activeScale = colors.ui.cartoon ? 1.02 : colors.ui.glass ? 1.006 : 1
-  const activeShadowOpacity = colors.ui.cartoon ? 0.03 : 0
+  const activeShadowOpacity = 0
 
   return (
     <MotiView
       animate={{
         backgroundColor: background,
         borderColor,
-        scale: active ? activeScale : 1,
-        translateY: active && colors.ui.glass ? -0.5 : 0,
+        translateY: 0,
       }}
-      transition={motion === 'full' ? { type: 'spring', ...motionTokens.spring.gentle } : { type: 'timing', duration: 1 }}
+      transition={{ type: 'timing', duration: motion === 'full' ? motionTokens.duration.fast : 1 }}
       style={[
         {
-          minHeight: 32,
+          minHeight: 28,
           borderRadius: colors.ui.radius.chip,
           paddingHorizontal: 11,
           alignItems: 'center',
           justifyContent: 'center',
-          borderWidth: colors.ui.cartoon ? 1 : StyleSheet.hairlineWidth,
+          borderWidth: ornamented ? 1 : StyleSheet.hairlineWidth,
           shadowColor: colors.shadowTint,
           shadowOpacity: active ? activeShadowOpacity : 0,
-          shadowRadius: active && colors.ui.cartoon ? 4 : 0,
-          shadowOffset: { width: 0, height: active && colors.ui.cartoon ? 1 : 0 },
-          elevation: active && colors.ui.cartoon ? 1 : 0,
+          shadowRadius: 0,
+          shadowOffset: { width: 0, height: 0 },
+          elevation: 0,
         },
         style,
       ]}
     >
-      <Text style={{ color: foreground, fontSize: 12, lineHeight: 16, fontWeight: '900', includeFontPadding: false, textAlignVertical: 'center' }}>{children}</Text>
+      <Text style={{ color: foreground, fontSize: 12, lineHeight: 16, fontWeight: '700', includeFontPadding: false, textAlignVertical: 'center' }}>{children}</Text>
     </MotiView>
   )
 }

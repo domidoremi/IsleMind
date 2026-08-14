@@ -14,7 +14,7 @@ const {
   DOCUMENT_INGESTION_BENCHMARK_SCHEMA,
   DOCUMENT_INGESTION_PARSERS,
   runDocumentIngestionBenchmark,
-} = require('../src/services/documentIngestionBenchmark.ts')
+} = require('../src/modules/knowledge/testing/documentIngestionBenchmark.ts')
 
 function registerTypeScriptSupport() {
   if (require.extensions['.ts']?.isDocumentIngestionBenchmarkHook) return

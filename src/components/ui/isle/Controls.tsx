@@ -3,7 +3,6 @@ import { StyleSheet, Text, View, type StyleProp, type TextStyle, type ViewStyle 
 import { useAppTheme } from '@/hooks/useAppTheme'
 import { IsleButton as BaseIsleButton, type IsleButtonType } from './IsleKit'
 import { IsleChip as BaseIsleChip, type IsleChipTone } from './Chip'
-
 export type IsleTone = 'primary' | 'soft' | 'danger' | 'mint' | 'amber' | 'default' | 'sky' | 'ink'
 export type IsleSize = 'sm' | 'md' | 'lg'
 export type IsleVariant = IsleButtonType
@@ -13,6 +12,7 @@ export type IsleMotionPreset = 'none' | 'press' | 'entrance' | 'loop'
 export interface IsleButtonProps {
   label: string
   accessibilityLabel?: string
+  testID?: string
   icon?: ReactNode
   onPress?: () => void
   disabled?: boolean
@@ -24,11 +24,12 @@ export interface IsleButtonProps {
   textStyle?: StyleProp<TextStyle>
 }
 
-export function IsleButton({ label, accessibilityLabel, icon, onPress, disabled = false, busy = false, tone = 'soft', compact = false, block = false, style, textStyle }: IsleButtonProps) {
+export function IsleButton({ label, accessibilityLabel, testID, icon, onPress, disabled = false, busy = false, tone = 'soft', compact = false, block = false, style, textStyle }: IsleButtonProps) {
   return (
     <BaseIsleButton
       label={label}
       accessibilityLabel={accessibilityLabel}
+      testID={testID}
       icon={icon}
       type={buttonTypeForTone(tone)}
       danger={tone === 'danger'}
@@ -53,12 +54,12 @@ export function IsleChip({ children, active = false, tone = 'default', style }: 
 
 export function IsleMetric({ label }: { label: string }) {
   const { colors } = useAppTheme()
-  const backgroundColor = colors.ui.cartoon
+  const backgroundColor = colors.ui.limeRoad
     ? colors.ui.semantic.surface.base
     : colors.ui.glass
       ? colors.ui.actionBar.itemBackground
       : colors.ui.semantic.surface.muted
-  const borderColor = colors.ui.cartoon
+  const borderColor = colors.ui.limeRoad
     ? colors.material.stroke
     : colors.ui.glass
       ? colors.ui.actionBar.itemBorder
@@ -73,11 +74,11 @@ export function IsleMetric({ label }: { label: string }) {
         alignItems: 'center',
         justifyContent: 'center',
         backgroundColor,
-        borderWidth: colors.ui.cartoon ? 1 : StyleSheet.hairlineWidth,
+        borderWidth: colors.ui.limeRoad ? 1 : StyleSheet.hairlineWidth,
         borderColor,
       }}
     >
-      <Text style={{ color: colors.textSecondary, fontSize: 11, lineHeight: 14, fontWeight: '900', includeFontPadding: false, textAlignVertical: 'center' }}>{label}</Text>
+      <Text style={{ color: colors.textSecondary, fontSize: 11, lineHeight: 14, fontWeight: '700', includeFontPadding: false, textAlignVertical: 'center' }}>{label}</Text>
     </View>
   )
 }

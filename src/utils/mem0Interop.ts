@@ -1,5 +1,4 @@
-import type { MemoryItem, MemorySourceKind, MemoryStatus } from '@/types'
-
+import type { MemoryItem, MemorySourceKind, MemoryStatus } from '@/types/contextContracts'
 export type Mem0EntityKey = 'user_id' | 'agent_id' | 'app_id' | 'run_id'
 export type Mem0EntityScope = Partial<Record<Mem0EntityKey, string>>
 

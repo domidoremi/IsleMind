@@ -1,5 +1,4 @@
 import { Platform } from 'react-native'
-
 export const shouldUseSqliteWebFallback = Platform.OS === 'web'
 
 export const sqliteWebFallbackDb = {

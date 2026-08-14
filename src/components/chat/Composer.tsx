@@ -1,17 +1,25 @@
-import { useEffect, useRef, useState, type ReactNode } from 'react'
-import { ActivityIndicator, Platform, StyleSheet, Text, TextInput, View, useWindowDimensions } from 'react-native'
-import { MotiView } from 'moti'
+import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react'
+import { Platform, StyleSheet, Text, TextInput, View, useWindowDimensions } from 'react-native'
 import { useTranslation } from 'react-i18next'
-import { AppIcon, appIconStroke } from '@/components/ui/AppIcon'
-import type { Attachment, CommandReference } from '@/types'
+import { AppIcon, appIconStroke, type AppIconName } from '@/components/ui/AppIcon'
+import type { Attachment, CommandReference } from '@/types/chatContracts'
 import { pickDocument, pickImage, takePhoto } from '@/services/attachment'
 import { useAppTheme } from '@/hooks/useAppTheme'
 import { IslePressable } from '@/components/ui/isle'
 import { IslePanel } from '@/components/ui/isle'
-import { useIsleDialog } from '@/components/ui/isle'
-import { getAudioRecorderHook, isAudioRecordingAvailable, requestMicrophonePermission, transcribeLocalAudio } from '@/services/speech'
+import { HighFrameSpinner } from '@/components/ui/HighFrameSpinner'
 import { normalizeSearchText } from '@/utils/text'
-
+import { type ChatMultimodalEntry, type ChatMultimodalPolicy } from '@/presentation/features/chat/chatMultimodalPolicy'
+import { resolveProductMobileComposerToolsLayout } from '@/presentation/layout/productMobileLayout'
+import {
+  resolveAppliedInitialDraftKeyAfterSuccessfulSend,
+  resolveComposerInitialDraft,
+  resolveExternalSubmitKey,
+  restoreRejectedComposerAttachments,
+  restoreRejectedComposerText,
+} from './composerDraftState'
+import { appendComposerVoiceTranscript, composerVoiceIsBusy, formatComposerVoiceDuration, type ComposerVoiceState } from './composerVoiceState'
+import { useComposerVoiceInput } from './useComposerVoiceInput'
 export interface ComposerCommand {
   id: string
   label: string
@@ -31,15 +39,20 @@ interface ComposerProps {
   externalSubmitKey?: string | number
   commands?: ComposerCommand[]
   references?: CommandReference[]
+  multimodalPolicy?: ChatMultimodalPolicy
   utilitiesOpen?: boolean
   showInlineUtilities?: boolean
+  showCommandAction?: boolean
+  placeholder?: string
   leadingAccessory?: ReactNode
+  trailingAccessory?: ReactNode
   bottomAccessory?: ReactNode
   onClearPending?: () => void
   onReferenceSelected?: (reference: CommandReference) => void
   onFocus?: () => void
   onBlur?: () => void
   onOpenKnowledge?: () => void
+  onRequestCloseUtilities?: () => void
   onSend: (content: string, attachments: Attachment[]) => Promise<void> | void
   onSendWhileStreaming?: (content: string, attachments: Attachment[]) => Promise<void> | void
 }
@@ -47,6 +60,14 @@ interface ComposerProps {
 const COMPOSER_CONTROL_HIT_SLOP = { top: 8, right: 8, bottom: 8, left: 8 }
 const COMPOSER_PILL_HIT_SLOP = { top: 10, right: 8, bottom: 10, left: 8 }
 const COMPOSER_MAX_LENGTH = 12000
+const COMPOSER_INPUT_MIN_HEIGHT = 52
+const COMPOSER_INPUT_LINE_HEIGHT = 22
+const COMPOSER_INPUT_VERTICAL_PADDING = 10
+const COMPOSER_INPUT_MAX_LINES = 6
+const COMPOSER_DOCK_CONTROL_SIZE = 44
+const COMPOSER_INPUT_WEB_SCROLLBAR_PROPS = Platform.OS === 'web'
+  ? ({ className: 'composer-input-no-scrollbar' } as Record<string, unknown>)
+  : undefined
 
 export function Composer({
   disabled = false,
@@ -59,38 +80,67 @@ export function Composer({
   externalSubmitKey,
   commands = [],
   references = [],
+  multimodalPolicy,
   utilitiesOpen = false,
   showInlineUtilities = true,
+  showCommandAction = true,
+  placeholder,
   leadingAccessory,
+  trailingAccessory,
   bottomAccessory,
   onClearPending,
   onReferenceSelected,
   onFocus,
   onBlur,
   onOpenKnowledge,
+  onRequestCloseUtilities,
   onSend,
   onSendWhileStreaming,
 }: ComposerProps) {
   const { colors, isGlass } = useAppTheme()
   const { t } = useTranslation()
-  const dialog = useIsleDialog()
   const { width: composerWindowWidth } = useWindowDimensions()
   const [content, setContent] = useState('')
   const [attachments, setAttachments] = useState<Attachment[]>([])
   const [attachmentsOpen, setAttachmentsOpen] = useState(false)
-  const [recording, setRecording] = useState(false)
   const [focused, setFocused] = useState(false)
   const [sending, setSending] = useState(false)
+  const [inputContentHeight, setInputContentHeight] = useState(COMPOSER_INPUT_MIN_HEIGHT)
   const [consumedDraftKey, setConsumedDraftKey] = useState<string | number | undefined>(undefined)
+  const [appliedInitialDraftKey, setAppliedInitialDraftKey] = useState<string | number | undefined>(undefined)
   const consumedExternalSubmitKey = useRef<string | number | undefined>(undefined)
-  const useAudioRecorder = getAudioRecorderHook()
-  const recorder = useAudioRecorder ? useAudioRecorder({ extension: '.m4a' }) : null
+  const appendVoiceTranscript = useCallback((transcript: string) => {
+    setContent((draft) => appendComposerVoiceTranscript(draft, transcript))
+  }, [])
+  const voiceInput = useComposerVoiceInput({
+    enabled: !disabled && isMultimodalEntryAvailable('voice'),
+    onTranscript: appendVoiceTranscript,
+  })
+  const recording = voiceInput.state.phase === 'recording'
+  const voiceBusy = composerVoiceIsBusy(voiceInput.state)
+  const voiceHardUnavailable = voiceInput.state.phase === 'error' && (
+    voiceInput.state.kind === 'unavailable' ||
+    voiceInput.state.kind === 'web-insecure' ||
+    voiceInput.state.kind === 'web-unsupported'
+  )
+  const voiceControlDisabled = !recording && (
+    disabled ||
+    !isMultimodalEntryAvailable('voice') ||
+    voiceBusy ||
+    voiceInput.state.phase === 'success' ||
+    voiceHardUnavailable
+  )
+  const blockedAttachmentEntry = attachments.find((attachment) => !isMultimodalEntryAvailable(attachment.type === 'image' ? 'image' : 'file'))
+  const blockedAttachmentPolicy = blockedAttachmentEntry
+    ? multimodalEntryPolicy(blockedAttachmentEntry.type === 'image' ? 'image' : 'file')
+    : null
   const draftCharacterCount = content.length
   const draftOverLimit = draftCharacterCount > COMPOSER_MAX_LENGTH
   const draftExcessCharacters = Math.max(0, draftCharacterCount - COMPOSER_MAX_LENGTH)
   const hasSendableDraft = !!content.trim() || attachments.length > 0
-  const canSend = hasSendableDraft && !disabled && !sending && !draftOverLimit
-  const draftStatusVisible = draftOverLimit
+  const hasBlockedAttachment = !!blockedAttachmentPolicy
+  const canSend = hasSendableDraft && !disabled && !sending && !draftOverLimit && !hasBlockedAttachment
+  const draftStatusVisible = draftOverLimit || hasBlockedAttachment
   const draftStatusLabel = attachments.length > 0
     ? t('chat.composerDraftStatusWithAttachments', {
       count: draftCharacterCount,
@@ -101,7 +151,11 @@ export function Composer({
       count: draftCharacterCount,
       limit: COMPOSER_MAX_LENGTH,
     })
-  const draftWarningLabel = draftOverLimit ? t('chat.composerDraftExceeded', { count: draftExcessCharacters }) : ''
+  const draftWarningLabel = draftOverLimit
+    ? t('chat.composerDraftExceeded', { count: draftExcessCharacters })
+    : blockedAttachmentPolicy
+      ? multimodalUnavailableMessage(blockedAttachmentPolicy.entry)
+      : ''
   const draftAccessibilityValue = draftStatusVisible
     ? { text: draftWarningLabel ? `${draftStatusLabel}. ${draftWarningLabel}` : draftStatusLabel }
     : undefined
@@ -124,68 +178,107 @@ export function Composer({
     trigger.type === 'command'
   )
   const isMultilineDraft = content.includes('\n') || content.length > 70
+  const multilineInput = isMultilineDraft
+  const inputMaxHeight = COMPOSER_INPUT_LINE_HEIGHT * COMPOSER_INPUT_MAX_LINES + COMPOSER_INPUT_VERTICAL_PADDING * 2
+  const inputHeight = Math.max(COMPOSER_INPUT_MIN_HEIGHT, Math.min(inputMaxHeight, Math.ceil(inputContentHeight)))
+  const inputPaddingVertical = isMultilineDraft ? COMPOSER_INPUT_VERTICAL_PADDING : (COMPOSER_INPUT_MIN_HEIGHT - COMPOSER_INPUT_LINE_HEIGHT) / 2
   const panelRadius = colors.ui.radius.panel
   const fieldRadius = colors.ui.radius.field
-  const chipRadius = colors.ui.radius.chip
+  const chipRadius = colors.ui.radius.controlLarge
   const compactControlRadius = colors.ui.radius.controlMiddle
-  const largeControlRadius = colors.ui.radius.controlLarge
-  const subtleBorderWidth = colors.ui.cartoon ? 1 : StyleSheet.hairlineWidth
-  const raisedSurface = colors.ui.glass ? colors.ui.semantic.chrome.background : colors.ui.cartoon ? colors.ui.semantic.surface.base : colors.ui.semantic.surface.base
-  const raisedBorder = colors.ui.glass ? colors.ui.actionBar.itemBorder : colors.ui.cartoon ? colors.material.stroke : colors.ui.semantic.chrome.border
-  const utilitySurface = colors.ui.glass ? colors.ui.actionBar.itemBackground : colors.ui.cartoon ? colors.ui.semantic.surface.muted : colors.ui.semantic.surface.muted
-  const chipSurface = colors.ui.glass ? colors.ui.actionBar.itemBackground : colors.ui.cartoon ? colors.ui.semantic.surface.base : colors.ui.semantic.surface.base
-  const chipBorder = colors.ui.glass ? colors.ui.actionBar.itemBorder : colors.ui.cartoon ? colors.material.stroke : colors.ui.semantic.chrome.border
-  const shellBorder = colors.ui.cartoon
-    ? (focused ? colors.material.strokeStrong : colors.material.stroke)
-    : focused
-      ? colors.ui.semantic.control.focus
-      : colors.ui.glass
-        ? colors.ui.actionBar.border
-        : colors.ui.semantic.chrome.border
+  const subtleBorderWidth = colors.ui.limeRoad ? 1 : StyleSheet.hairlineWidth
+  const raisedSurface = colors.ui.glass ? colors.ui.semantic.chrome.background : colors.ui.limeRoad ? colors.ui.semantic.surface.base : colors.ui.semantic.surface.base
+  const raisedBorder = colors.ui.glass ? colors.ui.actionBar.itemBorder : colors.ui.limeRoad ? colors.material.stroke : colors.ui.semantic.chrome.border
+  const utilitySurface = colors.ui.glass ? colors.ui.actionBar.itemBackground : colors.ui.limeRoad ? colors.ui.semantic.surface.muted : colors.ui.semantic.surface.muted
+  const chipSurface = colors.ui.glass ? colors.ui.actionBar.itemBackground : colors.ui.limeRoad ? colors.ui.semantic.surface.base : colors.ui.semantic.surface.base
+  const chipBorder = colors.ui.glass ? colors.ui.actionBar.itemBorder : colors.ui.limeRoad ? colors.material.stroke : colors.ui.semantic.chrome.border
+  const shellBorder = colors.ui.limeRoad
+    ? colors.material.stroke
+    : colors.ui.glass
+      ? colors.ui.actionBar.border
+      : colors.ui.semantic.chrome.border
   const compactComposer = composerWindowWidth < 390
   const attachmentLabelMaxWidth = Math.max(108, Math.min(compactComposer ? 132 : 180, composerWindowWidth * 0.42))
-  const utilityControlWidth = compactComposer ? 36 : 38
-  const sendButtonMinWidth = compactComposer ? 46 : 52
-  const composerShadowOpacity = colors.ui.cartoon
-    ? (focused ? 0.05 : 0.018)
-    : 0
+  const utilityControlWidth = COMPOSER_DOCK_CONTROL_SIZE
+  const sendButtonSize = COMPOSER_DOCK_CONTROL_SIZE
+  const showSendAction = !streaming || hasSendableDraft || sending
+  const toolsLayout = resolveProductMobileComposerToolsLayout(composerWindowWidth, {
+    entryCount: 5 + (onOpenKnowledge ? 1 : 0),
+    unavailableEntryCount: (multimodalPolicy?.unavailableCount ?? 0) + (multimodalPolicy?.generationUnavailableCount ?? 0),
+  })
+  const composerShadowOpacity = 0
 
   useEffect(() => {
-    const draft = initialDraft ?? ''
-    const draftAttachments = initialAttachments ?? []
-    const hasDraft = !!draft.trim()
-    const hasAttachments = draftAttachments.length > 0
-    if (!hasDraft && !hasAttachments) return
-    const draftKey = initialDraftKey ?? [draft ?? '', ...draftAttachments.map((item) => `${item.id}:${item.uri}`)].join('|')
-    if (consumedDraftKey === draftKey) return
-    if (restoreInitialDraftIfEmpty && (content.trim() || attachments.length > 0)) {
-      setConsumedDraftKey(draftKey)
-      return
-    }
-    setContent(draft ?? '')
-    if (hasAttachments) setAttachments(draftAttachments)
-    setConsumedDraftKey(draftKey)
+    const decision = resolveComposerInitialDraft({
+      initialDraft,
+      initialDraftKey,
+      initialAttachments,
+      consumedDraftKey,
+      restoreInitialDraftIfEmpty,
+      currentContent: content,
+      currentAttachmentCount: attachments.length,
+    })
+    if (decision.kind === 'ignore') return
+    if (decision.kind === 'preserve-current') return
+
+    setConsumedDraftKey(decision.draftKey)
+    setContent(decision.content)
+    if (decision.attachments.length > 0) setAttachments(decision.attachments)
+    setAppliedInitialDraftKey(decision.draftKey)
   }, [attachments.length, consumedDraftKey, content, initialAttachments, initialDraft, initialDraftKey, restoreInitialDraftIfEmpty])
 
   useEffect(() => {
-    if (externalSubmitKey === undefined) return
-    if (consumedExternalSubmitKey.current === externalSubmitKey) return
-    if (!canSend) return
-    consumedExternalSubmitKey.current = externalSubmitKey
+    const admittedSubmitKey = resolveExternalSubmitKey({
+      externalSubmitKey,
+      consumedExternalSubmitKey: consumedExternalSubmitKey.current,
+      canSend,
+    })
+    if (admittedSubmitKey === undefined) return
+    consumedExternalSubmitKey.current = admittedSubmitKey
     void submit()
   }, [canSend, externalSubmitKey])
 
-  async function addAttachment(picker: () => Promise<Attachment | null>) {
+  function multimodalEntryPolicy(entry: ChatMultimodalEntry) {
+    return multimodalPolicy?.entries[entry]
+  }
+
+  function isMultimodalEntryAvailable(entry: ChatMultimodalEntry): boolean {
+    return multimodalEntryPolicy(entry)?.available !== false
+  }
+
+  function multimodalUnavailableMessage(entry: ChatMultimodalEntry): string {
+    const policy = multimodalEntryPolicy(entry)
+    return policy?.reasonKey
+      ? t(policy.reasonKey, policy.reasonParams)
+      : t('chat.multimodalUnavailableGeneric')
+  }
+
+  function multimodalAccessibilityHint(entry: ChatMultimodalEntry, fallbackKey: string): string {
+    return isMultimodalEntryAvailable(entry) ? t(fallbackKey) : multimodalUnavailableMessage(entry)
+  }
+
+  async function addAttachment(entry: ChatMultimodalEntry, picker: () => Promise<Attachment | null>) {
+    if (!isMultimodalEntryAvailable(entry)) return
     try {
       const attachment = await picker()
       if (attachment) setAttachments((items) => [...items, attachment])
-    } catch (error) {
-      dialog.toast({
-        title: t('chat.attachmentUnavailable'),
-        message: error instanceof Error && error.message === 'error.fileTooLarge' ? t('chat.fileTooLarge20') : t('chat.attachmentReadFailed'),
-        tone: 'danger',
-      })
+    } catch {
     }
+  }
+
+  function closeUtilities() {
+    setAttachmentsOpen(false)
+    onRequestCloseUtilities?.()
+  }
+
+  function openCommandEntry() {
+    closeUtilities()
+    setContent((value) => value.trim() ? `${value} /` : '/')
+  }
+
+  function openKnowledge() {
+    closeUtilities()
+    onOpenKnowledge?.()
   }
 
   async function submit() {
@@ -201,9 +294,13 @@ export function Composer({
       } else {
         await onSend(text, files)
       }
+      const nextAppliedInitialDraftKey = resolveAppliedInitialDraftKeyAfterSuccessfulSend(appliedInitialDraftKey, initialDraftKey)
+      if (nextAppliedInitialDraftKey !== appliedInitialDraftKey) {
+        setAppliedInitialDraftKey(nextAppliedInitialDraftKey)
+      }
     } catch {
-      setContent((current) => current ? current : text)
-      setAttachments((current) => current.length > 0 ? current : files)
+      setContent((current) => restoreRejectedComposerText(current, text))
+      setAttachments((current) => restoreRejectedComposerAttachments(current, files))
     } finally {
       setSending(false)
     }
@@ -231,52 +328,14 @@ export function Composer({
     replaceActiveToken(`@${reference.label}`)
   }
 
-  async function toggleRecording() {
-    if (!isAudioRecordingAvailable() || !recorder) {
-      dialog.toast({ title: t('chat.voiceUnavailable'), message: t('chat.voiceUnavailableMessage'), tone: 'amber' })
-      return
-    }
-    try {
-      if (!recording) {
-        const granted = await requestMicrophonePermission()
-        if (!granted) {
-          dialog.toast({ title: t('chat.recordingUnavailable'), message: t('chat.microphonePermissionMissing'), tone: 'danger' })
-          return
-        }
-        await recorder.prepareToRecordAsync()
-        recorder.record()
-        setRecording(true)
-        return
-      }
-      await recorder.stop()
-      setRecording(false)
-      const uri = recorder.uri
-      if (!uri) return
-      dialog.toast({ title: t('chat.transcribing'), message: t('chat.transcribingMessage'), tone: 'mint' })
-      const text = await transcribeLocalAudio(uri)
-      if (text.trim()) {
-        setContent((value) => [value, text.trim()].filter(Boolean).join(value.trim() ? '\n' : ''))
-      }
-    } catch (error) {
-      setRecording(false)
-      dialog.toast({
-        title: t('chat.voiceFailed'),
-        message: error instanceof Error && error.message === 'error.fileTooLarge' ? t('chat.fileTooLarge20') : error instanceof Error ? error.message : t('chat.voiceFailedMessage'),
-        tone: 'danger',
-      })
-    }
-  }
-
   return (
-    <MotiView
-      animate={{ scale: focused && !compactComposer ? 1.01 : 1, translateY: focused ? -1 : 0 }}
-      transition={{ type: 'spring', damping: 18, stiffness: 180 }}
+    <View
       style={{
         shadowColor: colors.shadowTint,
         shadowRadius: focused ? 12 : 6,
         shadowOffset: { width: 0, height: 6 },
         shadowOpacity: composerShadowOpacity,
-        elevation: colors.ui.cartoon && composerShadowOpacity > 0.02 ? 1 : 0,
+        elevation: colors.ui.limeRoad && composerShadowOpacity > 0.02 ? 1 : 0,
         backgroundColor: 'transparent',
       }}
     >
@@ -301,41 +360,41 @@ export function Composer({
         </View>
       ) : null}
       {(attachmentsOpen || utilitiesOpen) ? (
-        <MotiView
-          from={{ opacity: 0, translateY: -4 }}
-          animate={{ opacity: 1, translateY: 0 }}
-          transition={{ type: 'spring', damping: 20, stiffness: 200 }}
-          style={{ gap: 10, paddingHorizontal: 12, paddingTop: 10 }}
+        <View
+          style={{ gap: 10, paddingHorizontal: toolsLayout.panelHorizontalPadding, paddingTop: 10 }}
         >
           <UtilityGroupTitle label={t('chat.inputTools')} />
-          <View style={{ flexDirection: 'row', gap: 8, flexWrap: 'wrap' }}>
-            <AttachmentChip label={t('chat.attachImage')} accessibilityHint={t('chat.attachImageAccessibilityHint')} onPress={() => addAttachment(pickImage)}>
-              <AppIcon name="image" color={colors.textSecondary} size={15} strokeWidth={appIconStroke.fine} />
+          <View style={{ flexDirection: 'row', gap: toolsLayout.chipGap, flexWrap: 'wrap' }}>
+            <AttachmentChip label={t('chat.attachImage')} accessibilityHint={multimodalAccessibilityHint('image', 'chat.attachImageAccessibilityHint')} disabled={!isMultimodalEntryAvailable('image')} minWidth={toolsLayout.chipMinWidth} maxWidth={toolsLayout.chipMaxWidth} onPress={() => addAttachment('image', pickImage)}>
+              <AppIcon name="image" color={isMultimodalEntryAvailable('image') ? colors.textSecondary : colors.ui.control.disabledForeground} size={15} strokeWidth={appIconStroke.fine} />
             </AttachmentChip>
-            <AttachmentChip label={t('chat.attachCamera')} accessibilityHint={t('chat.attachCameraAccessibilityHint')} onPress={() => addAttachment(takePhoto)}>
-              <AppIcon name="camera" color={colors.textSecondary} size={15} strokeWidth={appIconStroke.fine} />
+            <AttachmentChip label={t('chat.attachCamera')} accessibilityHint={multimodalAccessibilityHint('camera', 'chat.attachCameraAccessibilityHint')} disabled={!isMultimodalEntryAvailable('camera')} minWidth={toolsLayout.chipMinWidth} maxWidth={toolsLayout.chipMaxWidth} onPress={() => addAttachment('camera', takePhoto)}>
+              <AppIcon name="camera" color={isMultimodalEntryAvailable('camera') ? colors.textSecondary : colors.ui.control.disabledForeground} size={15} strokeWidth={appIconStroke.fine} />
             </AttachmentChip>
-            <AttachmentChip label={t('chat.attachFile')} accessibilityHint={t('chat.attachFileAccessibilityHint')} onPress={() => addAttachment(pickDocument)}>
-              <AppIcon name="attachment" color={colors.textSecondary} size={15} strokeWidth={appIconStroke.fine} />
+            <AttachmentChip label={t('chat.attachFile')} accessibilityHint={multimodalAccessibilityHint('file', 'chat.attachFileAccessibilityHint')} disabled={!isMultimodalEntryAvailable('file')} minWidth={toolsLayout.chipMinWidth} maxWidth={toolsLayout.chipMaxWidth} onPress={() => addAttachment('file', pickDocument)}>
+              <AppIcon name="attachment" color={isMultimodalEntryAvailable('file') ? colors.textSecondary : colors.ui.control.disabledForeground} size={15} strokeWidth={appIconStroke.fine} />
             </AttachmentChip>
             <AttachmentChip
               label={recording ? t('chat.stopRecording') : t('chat.voiceInput')}
-              accessibilityHint={recording ? t('chat.stopRecordingAccessibilityHint') : t('chat.voiceInputAccessibilityHint')}
+              accessibilityHint={recording ? t('chat.stopRecordingAccessibilityHint') : multimodalAccessibilityHint('voice', 'chat.voiceInputAccessibilityHint')}
               active={recording}
-              onPress={() => void toggleRecording()}
+              disabled={voiceControlDisabled || (!recording && !isMultimodalEntryAvailable('voice'))}
+              minWidth={toolsLayout.chipMinWidth}
+              maxWidth={toolsLayout.chipMaxWidth}
+              onPress={() => void (recording ? voiceInput.stop() : voiceInput.begin())}
             >
-              <AppIcon name="microphone" color={recording ? colors.ui.tone.danger.foreground : colors.textSecondary} size={15} strokeWidth={appIconStroke.fine} />
+              <AppIcon name="microphone" color={recording ? colors.ui.tone.danger.foreground : isMultimodalEntryAvailable('voice') ? colors.textSecondary : colors.ui.control.disabledForeground} size={15} strokeWidth={appIconStroke.fine} />
             </AttachmentChip>
-            <AttachmentChip label={t('chat.openCommandPanel')} accessibilityHint={t('chat.openCommandPanelAccessibilityHint')} onPress={() => setContent((value) => value.trim() ? `${value} /` : '/')}>
+            <AttachmentChip label={t('chat.openCommandPanel')} accessibilityHint={t('chat.openCommandPanelAccessibilityHint')} minWidth={toolsLayout.chipMinWidth} maxWidth={toolsLayout.chipMaxWidth} onPress={openCommandEntry}>
               <AppIcon name="slash-command" color={colors.textSecondary} size={15} strokeWidth={appIconStroke.fine} />
             </AttachmentChip>
             {onOpenKnowledge ? (
-              <AttachmentChip label={t('chat.importKnowledge')} accessibilityHint={t('chat.importKnowledgeAccessibilityHint')} onPress={onOpenKnowledge}>
+              <AttachmentChip label={t('chat.importKnowledge')} accessibilityHint={t('chat.importKnowledgeAccessibilityHint')} minWidth={toolsLayout.chipMinWidth} maxWidth={toolsLayout.chipMaxWidth} onPress={openKnowledge}>
                 <AppIcon name="knowledge" color={colors.textSecondary} size={15} strokeWidth={appIconStroke.fine} />
               </AttachmentChip>
             ) : null}
           </View>
-        </MotiView>
+        </View>
       ) : null}
       {pendingNotice ? (
         <IslePressable
@@ -360,16 +419,20 @@ export function Composer({
             borderColor: colors.ui.tone.warning.border,
           }}
         >
-          <Text accessible={false} importantForAccessibility="no" numberOfLines={1} style={{ color: colors.ui.tone.warning.foreground, fontSize: 11, fontWeight: '900' }}>
+          <Text accessible={false} importantForAccessibility="no" numberOfLines={1} style={{ color: colors.ui.tone.warning.foreground, fontSize: 11, fontWeight: '800' }}>
             {pendingNotice}
           </Text>
         </IslePressable>
       ) : null}
+      <ComposerVoiceStatus
+        state={voiceInput.state}
+        onStop={() => void voiceInput.stop()}
+        onCancel={() => void voiceInput.cancel()}
+        onRetry={() => void voiceInput.retry()}
+        onOpenSettings={() => void voiceInput.openSettings()}
+      />
       {showCommandPanel ? (
-        <MotiView
-          from={{ opacity: 0, translateY: 5 }}
-          animate={{ opacity: 1, translateY: 0 }}
-          transition={{ type: 'spring', damping: 20, stiffness: 210 }}
+        <View
           style={{ paddingHorizontal: 10, paddingTop: 10 }}
         >
           <View style={{ borderRadius: fieldRadius, padding: 8, backgroundColor: raisedSurface, borderWidth: subtleBorderWidth, borderColor: raisedBorder, gap: 6 }}>
@@ -399,79 +462,32 @@ export function Composer({
               </Text>
             ) : null}
           </View>
-        </MotiView>
+        </View>
       ) : null}
-      <View style={{ flexDirection: 'row', alignItems: 'center', paddingHorizontal: 7, paddingTop: 7, paddingBottom: bottomAccessory ? 5 : 7, gap: 6 }}>
-        {leadingAccessory ? (
-          <View style={{ flexShrink: 0 }}>
-            {leadingAccessory}
-          </View>
-        ) : null}
-        {showInlineUtilities ? (
-          <>
-            <IslePressable
-              haptic
-              onPress={() => setAttachmentsOpen((value) => !value)}
-              accessibilityRole="button"
-              accessibilityLabel={attachmentsOpen ? t('chat.collapseAttachments') : t('chat.expandAttachments')}
-              accessibilityHint={attachmentsOpen ? t('chat.collapseAttachmentsAccessibilityHint') : t('chat.expandAttachmentsAccessibilityHint')}
-              accessibilityState={{ expanded: attachmentsOpen }}
-              hitSlop={COMPOSER_CONTROL_HIT_SLOP}
-              style={{
-                width: utilityControlWidth,
-                height: 40,
-                alignItems: 'center',
-                justifyContent: 'center',
-                borderRadius: compactControlRadius,
-                backgroundColor: attachmentsOpen ? colors.ui.control.primaryBackground : utilitySurface,
-                borderWidth: subtleBorderWidth,
-                borderColor: attachmentsOpen ? colors.ui.control.primaryBorder : raisedBorder,
-              }}
-            >
-              {attachmentsOpen ? <AppIcon name="collapse" color={colors.ui.control.primaryForeground} size={16} /> : <AppIcon name="add" color={colors.textSecondary} size={16} />}
-            </IslePressable>
-            <IslePressable
-              haptic
-              onPress={() => void toggleRecording()}
-              accessibilityRole="button"
-              accessibilityLabel={recording ? t('chat.stopRecording') : t('chat.voiceInput')}
-              accessibilityHint={recording ? t('chat.stopRecordingAccessibilityHint') : t('chat.voiceInputAccessibilityHint')}
-              accessibilityState={{ selected: recording, busy: recording }}
-              hitSlop={COMPOSER_CONTROL_HIT_SLOP}
-              style={{
-                width: utilityControlWidth,
-                height: 40,
-                alignItems: 'center',
-                justifyContent: 'center',
-                borderRadius: compactControlRadius,
-                backgroundColor: recording ? colors.ui.tone.danger.foreground : utilitySurface,
-                borderWidth: subtleBorderWidth,
-                borderColor: recording ? colors.ui.tone.danger.border : raisedBorder,
-              }}
-            >
-              <AppIcon name="microphone" color={recording ? colors.ui.control.dangerForeground : colors.textSecondary} size={16} />
-            </IslePressable>
-          </>
-        ) : null}
-        <View style={{ flex: 1, minHeight: 44, justifyContent: 'center' }}>
+      <View style={{ paddingHorizontal: 12, paddingTop: 8, paddingBottom: 2 }}>
+        <View style={{ minHeight: COMPOSER_INPUT_MIN_HEIGHT, justifyContent: 'center' }}>
           <TextInput
             value={content}
             onChangeText={setContent}
-            multiline
+            multiline={multilineInput}
+            scrollEnabled={multilineInput}
+            {...COMPOSER_INPUT_WEB_SCROLLBAR_PROPS}
             editable={!disabled}
             accessibilityLabel={t('chat.inputAccessibility')}
             accessibilityHint={streaming ? t('chat.keepTypingInputAccessibilityHint') : t('chat.inputAccessibilityHint')}
             accessibilityState={{ disabled }}
             accessibilityValue={draftAccessibilityValue}
             returnKeyType="send"
-            submitBehavior={Platform.OS === 'ios' ? 'newline' : 'submit'}
+            submitBehavior={Platform.OS === 'ios' && multilineInput ? 'newline' : 'submit'}
             onSubmitEditing={() => {
-              if (Platform.OS === 'android') {
-                void submit()
-              }
+              if (Platform.OS === 'ios' && multilineInput) return
+              void submit()
             }}
-            placeholder={streaming ? t('chat.keepTyping') : t('chat.askAnything')}
+            placeholder={streaming ? t('chat.keepTyping') : placeholder ?? t('chat.askAnything')}
             placeholderTextColor={colors.ui.input.placeholderForeground}
+            onContentSizeChange={(event) => {
+              setInputContentHeight(event.nativeEvent.contentSize.height)
+            }}
             onFocus={() => {
               setFocused(true)
               onFocus?.()
@@ -481,50 +497,128 @@ export function Composer({
               onBlur?.()
             }}
             style={{
-              flex: 1,
+              flexGrow: 0,
+              flexShrink: 0,
               width: '100%',
-              minHeight: 44,
-              maxHeight: 120,
+              height: inputHeight,
+              minHeight: COMPOSER_INPUT_MIN_HEIGHT,
+              maxHeight: inputMaxHeight,
               color: colors.text,
               fontSize: 15,
-              lineHeight: 22,
-              paddingTop: isMultilineDraft ? 8 : 0,
-              paddingBottom: isMultilineDraft ? 8 : 0,
-              paddingHorizontal: 8,
-              textAlignVertical: isMultilineDraft ? 'top' : 'center',
+              lineHeight: COMPOSER_INPUT_LINE_HEIGHT,
+              includeFontPadding: false,
+              paddingTop: inputPaddingVertical,
+              paddingBottom: inputPaddingVertical,
+              paddingHorizontal: 2,
+              textAlignVertical: multilineInput ? 'top' : 'center',
             }}
           />
         </View>
+      </View>
+      <View style={{ minHeight: 54, flexDirection: 'row', alignItems: 'center', paddingHorizontal: 8, paddingTop: 2, paddingBottom: bottomAccessory ? 4 : 8, gap: 6 }}>
+        {leadingAccessory ? <View style={{ flexShrink: 1, minWidth: 0 }}>{leadingAccessory}</View> : null}
+        {showInlineUtilities ? (
+          <IslePressable
+            haptic
+            onPress={() => setAttachmentsOpen((value) => !value)}
+            accessibilityRole="button"
+            accessibilityLabel={attachmentsOpen ? t('chat.collapseAttachments') : t('chat.expandAttachments')}
+            accessibilityHint={attachmentsOpen ? t('chat.collapseAttachmentsAccessibilityHint') : t('chat.expandAttachmentsAccessibilityHint')}
+            accessibilityState={{ expanded: attachmentsOpen }}
+            hitSlop={COMPOSER_CONTROL_HIT_SLOP}
+            style={{
+              width: utilityControlWidth,
+              height: COMPOSER_DOCK_CONTROL_SIZE,
+              alignItems: 'center',
+              justifyContent: 'center',
+              borderRadius: compactControlRadius,
+              backgroundColor: attachmentsOpen ? colors.ui.control.primaryBackground : utilitySurface,
+              borderWidth: subtleBorderWidth,
+              borderColor: attachmentsOpen ? colors.ui.control.primaryBorder : raisedBorder,
+            }}
+          >
+            {attachmentsOpen ? <AppIcon name="collapse" color={colors.ui.control.primaryForeground} size={16} /> : <AppIcon name="add" color={colors.textSecondary} size={16} />}
+          </IslePressable>
+        ) : null}
+        {showCommandAction ? (
+          <IslePressable
+            haptic
+            onPress={openCommandEntry}
+            accessibilityRole="button"
+            accessibilityLabel={t('chat.openCommandPanel')}
+            accessibilityHint={t('chat.openCommandPanelAccessibilityHint')}
+            hitSlop={COMPOSER_CONTROL_HIT_SLOP}
+            style={{
+              width: utilityControlWidth,
+              height: COMPOSER_DOCK_CONTROL_SIZE,
+              borderRadius: compactControlRadius,
+              alignItems: 'center',
+              justifyContent: 'center',
+              backgroundColor: utilitySurface,
+              borderWidth: subtleBorderWidth,
+              borderColor: raisedBorder,
+            }}
+          >
+            <AppIcon name="slash-command" color={colors.textSecondary} size={16} strokeWidth={appIconStroke.strong} />
+          </IslePressable>
+        ) : null}
+        <View style={{ flex: 1, minWidth: 0 }} />
         <IslePressable
           haptic
-          disabled={!canSend}
-          onPress={submit}
+          onPress={() => void (recording ? voiceInput.stop() : voiceInput.begin())}
+          disabled={voiceControlDisabled || (!recording && !isMultimodalEntryAvailable('voice'))}
           accessibilityRole="button"
-          accessibilityLabel={streaming ? t('chat.keepTypingAction') : t('chat.sendMessage')}
-          accessibilityHint={sendButtonAccessibilityHint}
-          accessibilityState={{ disabled: !canSend, busy: sending }}
-          hitSlop={{ top: 12, right: 10, bottom: 12, left: 10 }}
+          accessibilityLabel={recording ? t('chat.stopRecording') : t('chat.voiceInput')}
+          accessibilityHint={recording ? t('chat.stopRecordingAccessibilityHint') : multimodalAccessibilityHint('voice', 'chat.voiceInputAccessibilityHint')}
+          accessibilityState={{ selected: recording, busy: voiceBusy, disabled: voiceControlDisabled }}
+          hitSlop={COMPOSER_CONTROL_HIT_SLOP}
           style={{
-            minWidth: sendButtonMinWidth,
-            height: 44,
-            borderRadius: largeControlRadius,
+            width: utilityControlWidth,
+            height: COMPOSER_DOCK_CONTROL_SIZE,
             alignItems: 'center',
             justifyContent: 'center',
-            flexDirection: 'row',
-            gap: 7,
-            paddingHorizontal: 0,
-            backgroundColor: canSend ? colors.ui.control.primaryBackground : colors.ui.control.disabledBackground,
+            borderRadius: compactControlRadius,
+            backgroundColor: recording ? colors.ui.tone.danger.foreground : !isMultimodalEntryAvailable('voice') ? colors.ui.control.disabledBackground : utilitySurface,
             borderWidth: subtleBorderWidth,
-            borderColor: canSend ? colors.ui.control.primaryBorder : colors.ui.control.disabledBorder,
-            opacity: 1,
+            borderColor: recording ? colors.ui.tone.danger.border : !isMultimodalEntryAvailable('voice') ? colors.ui.control.disabledBorder : raisedBorder,
           }}
         >
-          {sending ? (
-            <ActivityIndicator color={colors.ui.control.primaryForeground} size="small" />
-          ) : (
-            <AppIcon name="send" color={canSend ? colors.ui.control.primaryForeground : colors.ui.control.disabledForeground} size={19} strokeWidth={appIconStroke.bold} />
-          )}
+          <AppIcon name="microphone" color={recording ? colors.ui.control.dangerForeground : isMultimodalEntryAvailable('voice') ? colors.textSecondary : colors.ui.control.disabledForeground} size={16} />
         </IslePressable>
+        {trailingAccessory ? <View style={{ flexShrink: 0 }}>{trailingAccessory}</View> : null}
+        {showSendAction ? (
+          <IslePressable
+            haptic
+            disabled={!canSend}
+            onPress={submit}
+            accessibilityRole="button"
+            accessibilityLabel={streaming ? t('chat.keepTypingAction') : t('chat.sendMessage')}
+            accessibilityHint={sendButtonAccessibilityHint}
+            accessibilityState={{ disabled: !canSend, busy: sending }}
+            hitSlop={{ top: 12, right: 10, bottom: 12, left: 10 }}
+            style={{
+              width: sendButtonSize,
+              minWidth: sendButtonSize,
+              height: sendButtonSize,
+              borderRadius: colors.ui.radius.controlLarge,
+              alignItems: 'center',
+              justifyContent: 'center',
+              flexDirection: 'row',
+              gap: 7,
+              paddingHorizontal: 0,
+              backgroundColor: canSend ? colors.ui.control.primaryBackground : colors.ui.control.disabledBackground,
+              borderWidth: canSend ? 0 : subtleBorderWidth,
+              borderColor: canSend ? 'transparent' : colors.ui.control.disabledBorder,
+              opacity: 1,
+            }}
+          >
+            {sending ? (
+              <HighFrameSpinner color={colors.ui.control.primaryForeground} size={16} />
+            ) : (
+              <AppIcon name="send" color={canSend ? colors.ui.control.primaryForeground : colors.ui.control.disabledForeground} size={18} strokeWidth={appIconStroke.bold} />
+            )}
+          </IslePressable>
+        ) : null}
       </View>
       {bottomAccessory ? (
         <View style={{ paddingHorizontal: 7, paddingTop: 0, paddingBottom: 7 }}>
@@ -540,14 +634,204 @@ export function Composer({
             {draftStatusLabel}
           </Text>
           {draftWarningLabel ? (
-            <Text numberOfLines={1} style={{ color: colors.ui.tone.warning.foreground, fontSize: 10.5, lineHeight: 14, fontWeight: '900' }}>
+            <Text numberOfLines={1} style={{ color: colors.ui.tone.warning.foreground, fontSize: 10.5, lineHeight: 14, fontWeight: '800' }}>
               {draftWarningLabel}
             </Text>
           ) : null}
         </View>
       ) : null}
       </IslePanel>
-    </MotiView>
+    </View>
+  )
+}
+
+function ComposerVoiceStatus({
+  state,
+  onStop,
+  onCancel,
+  onRetry,
+  onOpenSettings,
+}: {
+  state: ComposerVoiceState
+  onStop: () => void
+  onCancel: () => void
+  onRetry: () => void
+  onOpenSettings: () => void
+}) {
+  const { colors } = useAppTheme()
+  const { t } = useTranslation()
+  if (state.phase === 'idle') return null
+
+  const durationLabel = 'durationMillis' in state ? formatComposerVoiceDuration(state.durationMillis) : null
+  const isError = state.phase === 'error'
+  const isSuccess = state.phase === 'success'
+  const isRecording = state.phase === 'recording'
+  const needsSettings = isError && state.kind === 'permission' && !state.canAskAgain
+  const canRetry = isError && !needsSettings && state.kind !== 'unavailable' && state.kind !== 'web-insecure' && state.kind !== 'web-unsupported'
+  const canCancel = state.phase === 'permission-request' || state.phase === 'recording' || state.phase === 'stopping' || state.phase === 'transcribing'
+
+  let title = t('chat.voiceInput')
+  let message = t('chat.voiceInputAccessibilityHint')
+  if (state.phase === 'permission-request') {
+    title = t('chat.voicePermissionRequesting')
+    message = t('chat.voicePermissionRequestingMessage')
+  } else if (state.phase === 'recording') {
+    title = t('chat.voiceRecording')
+    message = t('chat.voiceRecordingMessage')
+  } else if (state.phase === 'stopping') {
+    title = t('chat.voiceStopping')
+    message = t('chat.voiceStoppingMessage')
+  } else if (state.phase === 'cancelling') {
+    title = t('chat.voiceCancelling')
+    message = t('chat.voiceCancellingMessage')
+  } else if (state.phase === 'transcribing') {
+    title = t('chat.transcribing')
+    message = t('chat.transcribingMessage')
+  } else if (state.phase === 'success') {
+    title = t('chat.voiceAddedToDraft')
+    message = t('chat.voiceAddedToDraftMessage')
+  } else if (state.kind === 'permission') {
+    title = t('chat.microphonePermissionMissing')
+    message = state.canAskAgain ? t('chat.microphonePermissionRetryMessage') : t('chat.microphonePermissionSettingsMessage')
+  } else if (state.kind === 'web-insecure') {
+    title = t('chat.voiceUnavailable')
+    message = t('chat.voiceWebInsecureMessage')
+  } else if (state.kind === 'web-unsupported') {
+    title = t('chat.voiceUnavailable')
+    message = t('chat.voiceWebUnsupportedMessage')
+  } else if (state.kind === 'unavailable') {
+    title = t('chat.voiceUnavailable')
+    message = t('chat.voiceUnavailableMessage')
+  } else {
+    title = t('chat.voiceFailed')
+    message = state.kind === 'transcription' ? t('chat.voiceTranscriptionFailedMessage') : t('chat.voiceFailedMessage')
+  }
+
+  return (
+    <View
+      style={{
+        marginHorizontal: 10,
+        marginTop: 10,
+        padding: 8,
+        borderRadius: colors.ui.radius.field,
+        backgroundColor: isError
+          ? colors.ui.tone.warning.background
+          : isSuccess
+            ? colors.ui.tone.success.background
+            : colors.ui.semantic.surface.muted,
+        borderWidth: StyleSheet.hairlineWidth,
+        borderColor: isError
+          ? colors.ui.tone.warning.border
+          : isSuccess
+            ? colors.ui.tone.success.border
+            : colors.ui.semantic.chrome.border,
+        gap: 8,
+      }}
+    >
+      <View style={{ minHeight: 28, flexDirection: 'row', alignItems: 'center', gap: 9 }}>
+        <View
+          accessible={false}
+          importantForAccessibility="no-hide-descendants"
+          style={{ width: 24, height: 24, alignItems: 'center', justifyContent: 'center' }}
+        >
+          {isRecording ? (
+            <View style={{ width: 10, height: 10, borderRadius: 5, backgroundColor: colors.ui.tone.danger.foreground }} />
+          ) : state.phase === 'permission-request' || state.phase === 'stopping' || state.phase === 'cancelling' || state.phase === 'transcribing' ? (
+            <HighFrameSpinner color={colors.textSecondary} size={16} />
+          ) : (
+            <AppIcon name={isSuccess ? 'check' : 'microphone'} color={isError ? colors.ui.tone.warning.foreground : colors.textSecondary} size={16} />
+          )}
+        </View>
+        <View
+          accessible
+          accessibilityRole="text"
+          accessibilityLiveRegion="polite"
+          accessibilityLabel={`${title}. ${message}`}
+          accessibilityValue={durationLabel ? { text: durationLabel } : undefined}
+          style={{ flex: 1, minWidth: 0 }}
+        >
+          <View style={{ flexDirection: 'row', alignItems: 'baseline', gap: 8 }}>
+            <Text numberOfLines={1} style={{ flex: 1, minWidth: 0, color: colors.text, fontSize: 12, lineHeight: 16, fontWeight: '800' }}>
+              {title}
+            </Text>
+            {durationLabel ? (
+              <Text accessible={false} importantForAccessibility="no" style={{ color: colors.textSecondary, fontSize: 12, lineHeight: 16, fontVariant: ['tabular-nums'], fontWeight: '800' }}>
+                {durationLabel}
+              </Text>
+            ) : null}
+          </View>
+          <Text numberOfLines={2} style={{ color: colors.textTertiary, fontSize: 10.5, lineHeight: 14, fontWeight: '600' }}>
+            {message}
+          </Text>
+        </View>
+      </View>
+
+      {isRecording || canCancel || canRetry || needsSettings || isError ? (
+        <View style={{ flexDirection: 'row', flexWrap: 'wrap', justifyContent: 'flex-end', gap: 6 }}>
+          {isRecording ? (
+            <ComposerVoiceAction label={t('chat.stopRecording')} hint={t('chat.stopRecordingAccessibilityHint')} icon="stop" emphasized onPress={onStop} />
+          ) : null}
+          {canRetry ? (
+            <ComposerVoiceAction label={t('chat.retryVoiceInput')} hint={t('chat.retryVoiceInputAccessibilityHint')} icon="retry" emphasized onPress={onRetry} />
+          ) : null}
+          {needsSettings ? (
+            <ComposerVoiceAction label={t('chat.openMicrophoneSettings')} hint={t('chat.openMicrophoneSettingsAccessibilityHint')} icon="settings" emphasized onPress={onOpenSettings} />
+          ) : null}
+          {canCancel || isError ? (
+            <ComposerVoiceAction
+              label={isError ? t('chat.dismissVoiceError') : t('chat.cancelVoiceInput')}
+              hint={isError ? t('chat.dismissVoiceErrorAccessibilityHint') : t('chat.cancelVoiceInputAccessibilityHint')}
+              icon="close"
+              onPress={onCancel}
+            />
+          ) : null}
+        </View>
+      ) : null}
+    </View>
+  )
+}
+
+function ComposerVoiceAction({
+  label,
+  hint,
+  icon,
+  emphasized = false,
+  onPress,
+}: {
+  label: string
+  hint: string
+  icon: AppIconName
+  emphasized?: boolean
+  onPress: () => void
+}) {
+  const { colors } = useAppTheme()
+  return (
+    <IslePressable
+      haptic
+      onPress={onPress}
+      accessibilityRole="button"
+      accessibilityLabel={label}
+      accessibilityHint={hint}
+      hitSlop={COMPOSER_CONTROL_HIT_SLOP}
+      style={{
+        minWidth: 44,
+        minHeight: 44,
+        paddingHorizontal: 11,
+        borderRadius: colors.ui.radius.controlLarge,
+        flexDirection: 'row',
+        alignItems: 'center',
+        justifyContent: 'center',
+        gap: 6,
+        backgroundColor: emphasized ? colors.ui.control.primaryBackground : colors.ui.semantic.surface.base,
+        borderWidth: StyleSheet.hairlineWidth,
+        borderColor: emphasized ? colors.ui.control.primaryBorder : colors.ui.semantic.chrome.border,
+      }}
+    >
+      <AppIcon name={icon} color={emphasized ? colors.ui.control.primaryForeground : colors.textSecondary} size={15} strokeWidth={appIconStroke.strong} />
+      <Text numberOfLines={1} style={{ color: emphasized ? colors.ui.control.primaryForeground : colors.textSecondary, fontSize: 11, fontWeight: '800' }}>
+        {label}
+      </Text>
+    </IslePressable>
   )
 }
 
@@ -566,8 +850,8 @@ function ComposerPickRow({
 }) {
   const { colors, isGlass } = useAppTheme()
   const rowRadius = colors.ui.radius.field
-  const rowBackground = isGlass ? colors.ui.actionBar.itemBackground : colors.ui.cartoon ? colors.ui.semantic.surface.muted : colors.ui.semantic.surface.muted
-  const rowBorderColor = isGlass ? colors.ui.actionBar.itemBorder : colors.ui.cartoon ? colors.material.stroke : colors.ui.semantic.chrome.border
+  const rowBackground = isGlass ? colors.ui.actionBar.itemBackground : colors.ui.limeRoad ? colors.ui.semantic.surface.muted : colors.ui.semantic.surface.muted
+  const rowBorderColor = isGlass ? colors.ui.actionBar.itemBorder : colors.ui.limeRoad ? colors.material.stroke : colors.ui.semantic.chrome.border
   const iconBackground = isGlass ? colors.ui.actionBar.itemActiveBackground : colors.ui.icon.accentBackground
   return (
     <IslePressable
@@ -578,13 +862,13 @@ function ComposerPickRow({
       accessibilityHint={accessibilityHint}
       accessibilityValue={description ? { text: description } : undefined}
       hitSlop={COMPOSER_CONTROL_HIT_SLOP}
-      style={{ minHeight: 44, borderRadius: rowRadius, paddingHorizontal: 10, flexDirection: 'row', alignItems: 'center', gap: 9, backgroundColor: rowBackground, borderWidth: colors.ui.cartoon ? 1 : StyleSheet.hairlineWidth, borderColor: rowBorderColor }}
+      style={{ minHeight: 44, borderRadius: rowRadius, paddingHorizontal: 10, flexDirection: 'row', alignItems: 'center', gap: 9, backgroundColor: rowBackground, borderWidth: colors.ui.limeRoad ? 1 : StyleSheet.hairlineWidth, borderColor: rowBorderColor }}
     >
       <View style={{ width: 24, height: 24, borderRadius: colors.ui.radius.controlSmall, alignItems: 'center', justifyContent: 'center', backgroundColor: iconBackground }}>
         {icon}
       </View>
       <View style={{ flex: 1 }}>
-        <Text numberOfLines={1} style={{ color: colors.text, fontSize: 12, fontWeight: '900' }}>
+        <Text numberOfLines={1} style={{ color: colors.text, fontSize: 12, fontWeight: '800' }}>
           {title}
         </Text>
         {description ? (
@@ -641,17 +925,21 @@ interface IconButtonProps {
   label: string
   accessibilityHint?: string
   active?: boolean
+  disabled?: boolean
+  minWidth?: number
+  maxWidth?: number
   children: ReactNode
   onPress: () => void
 }
 
-function AttachmentChip({ label, accessibilityHint, active = false, children, onPress }: IconButtonProps) {
+function AttachmentChip({ label, accessibilityHint, active = false, disabled = false, minWidth, maxWidth, children, onPress }: IconButtonProps) {
   const { colors, isGlass } = useAppTheme()
-  const idleBackground = isGlass ? colors.ui.actionBar.itemBackground : colors.ui.cartoon ? colors.ui.semantic.surface.base : colors.ui.semantic.surface.base
-  const idleBorder = isGlass ? colors.ui.actionBar.itemBorder : colors.ui.cartoon ? colors.material.stroke : colors.ui.semantic.chrome.border
+  const idleBackground = isGlass ? colors.ui.actionBar.itemBackground : colors.ui.limeRoad ? colors.ui.semantic.surface.base : colors.ui.semantic.surface.base
+  const idleBorder = isGlass ? colors.ui.actionBar.itemBorder : colors.ui.limeRoad ? colors.material.stroke : colors.ui.semantic.chrome.border
   return (
     <IslePressable
       haptic
+      disabled={disabled}
       onPress={onPress}
       accessibilityRole="button"
       accessibilityLabel={label}
@@ -660,18 +948,20 @@ function AttachmentChip({ label, accessibilityHint, active = false, children, on
       hitSlop={COMPOSER_CONTROL_HIT_SLOP}
       style={{
         minHeight: 44,
+        minWidth,
+        maxWidth,
         paddingHorizontal: 12,
-        borderRadius: colors.ui.radius.chip,
+        borderRadius: colors.ui.radius.controlLarge,
         flexDirection: 'row',
         alignItems: 'center',
         gap: 6,
-        backgroundColor: active ? colors.ui.tone.danger.background : idleBackground,
-        borderWidth: colors.ui.cartoon ? 1 : StyleSheet.hairlineWidth,
-        borderColor: active ? colors.ui.tone.danger.border : idleBorder,
+        backgroundColor: disabled ? colors.ui.control.disabledBackground : active ? colors.ui.tone.danger.background : idleBackground,
+        borderWidth: colors.ui.limeRoad ? 1 : StyleSheet.hairlineWidth,
+        borderColor: disabled ? colors.ui.control.disabledBorder : active ? colors.ui.tone.danger.border : idleBorder,
       }}
     >
       {children}
-      <Text style={{ color: active ? colors.ui.tone.danger.foreground : colors.textSecondary, fontSize: 11, fontWeight: '800' }}>{label}</Text>
+      <Text numberOfLines={1} style={{ color: disabled ? colors.ui.control.disabledForeground : active ? colors.ui.tone.danger.foreground : colors.textSecondary, fontSize: 11, fontWeight: '800', flexShrink: 1 }}>{label}</Text>
     </IslePressable>
   )
 }
@@ -679,7 +969,7 @@ function AttachmentChip({ label, accessibilityHint, active = false, children, on
 function UtilityGroupTitle({ label }: { label: string }) {
   const { colors } = useAppTheme()
   return (
-    <Text style={{ color: colors.textTertiary, fontSize: 10, fontWeight: '900', textTransform: 'uppercase' }}>
+    <Text style={{ color: colors.textTertiary, fontSize: 10, fontWeight: '700', textTransform: 'uppercase' }}>
       {label}
     </Text>
   )

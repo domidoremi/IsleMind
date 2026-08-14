@@ -1,6 +1,3 @@
-// Jest setup file
-import '@testing-library/react-native/extend-expect'
-
 // Mock AsyncStorage
 jest.mock('@react-native-async-storage/async-storage', () => ({
   setItem: jest.fn(),
@@ -40,15 +37,14 @@ jest.mock('expo-sqlite', () => ({
   })),
 }))
 
-// Mock react-native-reanimated
-jest.mock('react-native-reanimated', () => {
-  const Reanimated = require('react-native-reanimated/mock')
-  Reanimated.default.call = () => {}
-  return Reanimated
-})
+// Reanimated 4 delegates its Jest runtime primitives to Worklets.
+jest.mock('react-native-worklets', () =>
+  require('react-native-worklets/src/mock')
+)
+require('react-native-reanimated').setUpTests()
 
 // Silence the warning: Animated: `useNativeDriver` is not supported
-jest.mock('react-native/Libraries/Animated/NativeAnimatedHelper')
+jest.mock('react-native/src/private/animated/NativeAnimatedHelper')
 
 // Mock console methods to reduce noise in test output
 global.console = {

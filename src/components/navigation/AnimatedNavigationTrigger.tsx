@@ -5,8 +5,7 @@ import { IsleIconButton, IsleListItem, type IsleSize, type IsleTone } from '@/co
 import { useAppTheme } from '@/hooks/useAppTheme'
 import { useMotionPreference } from '@/hooks/useMotionPreference'
 import { AnimatedNavigationIcon, type NavigationGlyph } from './AnimatedNavigationIcon'
-
-export const NAVIGATION_TRIGGER_DURATION_MS = 230
+export const NAVIGATION_TRIGGER_DURATION_MS = 224
 export type { NavigationGlyph } from './AnimatedNavigationIcon'
 
 type NavigateHandler = () => void | Promise<void>
@@ -139,7 +138,7 @@ export function AnimatedNavigationTrigger(props: AnimatedNavigationTriggerProps)
 export function NavigationIconBadge({ children }: { children: ReactNode }) {
   const { colors } = useAppTheme()
   return (
-    <View style={{ width: 40, height: 40, borderRadius: colors.ui.radius.controlLarge, alignItems: 'center', justifyContent: 'center', backgroundColor: colors.ui.icon.accentBackground }}>
+    <View style={{ width: 40, height: 40, borderRadius: colors.ui.radius.controlLarge, alignItems: 'center', justifyContent: 'center', backgroundColor: colors.ui.minimal ? 'transparent' : colors.ui.icon.accentBackground }}>
       {children}
     </View>
   )

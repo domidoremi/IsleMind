@@ -1,6 +1,5 @@
 import type { TFunction } from 'i18next'
-import type { KnowledgeDocument, LocalRagModelCapability, MemoryItem, MemorySourceKind } from '@/types'
-
+import type { KnowledgeDocument, LocalRagModelCapability, MemoryItem, MemorySourceKind } from '@/types/contextContracts'
 export function capabilityLabel(capability: LocalRagModelCapability, t: TFunction): string {
   return t(`contextPanel.localModel.capabilities.${capability}`)
 }

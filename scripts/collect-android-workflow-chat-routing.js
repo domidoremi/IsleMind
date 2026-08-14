@@ -257,8 +257,9 @@ function writeFixture(baseUrl) {
       {
         id: providerId,
         type: 'openai-compatible',
-        presetId: 'custom-openai-compatible',
-        detectedPresetId: 'custom-openai-compatible',
+        presetId: 'custom-endpoint',
+        detectedPresetId: 'custom-endpoint',
+        wireProtocol: 'openai-compatible',
         detectionStatus: 'manual',
         name: providerName,
         apiKey: fakeApiKey,

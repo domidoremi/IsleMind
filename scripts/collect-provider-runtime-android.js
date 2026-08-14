@@ -1,6 +1,9 @@
 const fs = require('node:fs')
+const http = require('node:http')
+const os = require('node:os')
 const path = require('node:path')
 const { execFileSync } = require('node:child_process')
+const { Worker, isMainThread, parentPort, workerData } = require('node:worker_threads')
 const { resolveApkArtifactPath, defaultReleaseSmokeArch, defaultReleaseSmokeVariant } = require('./release-artifact-contract')
 const { cleanInstallState, defaultReleaseAppPackageName } = require('./release-validation-contract')
 const { sensitiveEvidenceExtensions, sensitiveEvidencePatterns, collectSensitiveEvidenceHits, redactSensitiveEvidenceText } = require('./sensitive-evidence-contract')
@@ -10,7 +13,12 @@ const {
   providerRuntimeAndroidResultRelativePath,
   providerRuntimeAndroidRunLogRelativePath,
   requiredProviderRuntimeAndroidScenarios,
+  providerRuntimeActivationEvidencePaths,
+  providerRuntimeRestartRecoveryEvidencePath,
+  providerRuntimeRestartRecoveryConversationId,
+  providerRuntimeRestartRecoveryVisibleEvidencePaths,
   validateProviderRuntimeAndroidEvidencePath,
+  validateProviderRuntimeRestartRecoveryEvidence,
   isProviderRuntimeSensitiveDataPassing,
   collectProviderRuntimeAndroidResultContractIssues,
   validateProviderRuntimeAndroidResult,
@@ -31,12 +39,27 @@ const runtimeLogEvidence = path.join(root, providerRuntimeAndroidRunLogRelativeP
 const providerId = 'qa-provider-runtime-provider'
 const providerName = 'QA Provider Runtime Provider'
 const modelId = 'islemind-provider-runtime-chat'
-const providerBaseUrl = 'http://127.0.0.1:49501/v1'
-const recoveryConversationId = 'qa-provider-runtime-recovery'
+const providerFailureRequestEvidence = path.join(smokeDir, 'provider-runtime-failure-requests.jsonl')
+const recoveryConversationId = providerRuntimeRestartRecoveryConversationId
+const recoveryRequestMarker = 'QA_PROVIDER_RUNTIME_RECOVERY_REQUEST'
+const recoveryCompletionMarker = 'QA_PROVIDER_RUNTIME_RECOVERY_COMPLETE'
+const contextDatabaseRemotePath = `/data/user/0/${appPackageName}/files/SQLite/islemind-context.db`
+const restartRecoveryEvidence = path.join(root, providerRuntimeRestartRecoveryEvidencePath)
+const providerFailureWorkerMode = 'provider-runtime-failure-server'
 
-function main() {
+if (workerData?.mode === providerFailureWorkerMode || !isMainThread || Boolean(parentPort)) {
+  runProviderFailureWorker()
+} else {
+  main().catch((error) => {
+    console.error(error)
+    process.exitCode = 1
+  })
+}
+
+async function main() {
   if (process.argv.includes('--self-test')) {
-    runSelfTest()
+    await runSelfTest()
+    process.exitCode = 0
     return
   }
 
@@ -51,20 +74,26 @@ function main() {
     expected,
   })
 
+  let providerFailureServer = null
   try {
     if (!device) throw new Error('No connected adb device was found.')
     result.device = readDeviceState(device)
     result.installed = readInstalledPackageInfo(device)
-    writeFixture(device)
+    providerFailureServer = startProviderFailureServer(providerFailureRequestEvidence)
+    if (!configureAdbReverse(device, providerFailureServer.port)) {
+      throw new Error(`Could not configure adb reverse for provider failure fixture port ${providerFailureServer.port}.`)
+    }
+    writeFixture(device, `http://127.0.0.1:${providerFailureServer.port}/v1`)
 
     result.scenarios.push(runProviderSettingsRoute(device))
     result.scenarios.push(runProviderImportKeyboard(device))
     result.scenarios.push(runChatModelSwitch(device))
     result.scenarios.push(runBlockedModelRecovery(device))
-    result.scenarios.push(runRuntimeFallbackTrace(device))
+    result.scenarios.push(runRuntimeFallbackTrace(device, providerFailureServer))
     result.scenarios.push(runProviderHealthState(device))
     result.scenarios.push(runAndroidBack(device))
-    result.scenarios.push(runRestartRecovery(device))
+    result.scenarios.push(runRestartRecovery(device, providerFailureServer))
+    result.scenarios.push(runProviderActivation(device, providerFailureServer))
   } catch (error) {
     const errorMessage = sanitizeEvidenceText(error?.message ?? error)
     result.errors.push(errorMessage)
@@ -73,6 +102,9 @@ function main() {
         result.scenarios.push(failedScenario(id, 'Scenario was not executed.', errorMessage))
       }
     }
+  } finally {
+    if (device && providerFailureServer) clearAdbReverse(device, providerFailureServer.port)
+    if (providerFailureServer) stopProviderFailureServer(providerFailureServer)
   }
 
   finalizeResult(result)
@@ -115,12 +147,57 @@ function runProviderImportKeyboard(device) {
   sleep(900)
   capture = captureStep(device, record, 'provider-runtime-import-keyboard')
   record.keyboardState = captureKeyboardState(device, 'provider-runtime-import-keyboard-state')
-  const ok = hasAnyText(capture.uiaText, ['导入', 'Import'])
-    && hasAnyText(capture.uiaText, ['QA_PROVIDER_RUNTIME', '批量导入', 'Batch Import'])
+  const ok = hasEnabledClickableExactLabel(capture.uiaText, ['导入', 'Import'])
+    && hasAnyText(capture.uiaText, ['QA_PROVIDER_RUNTIME'])
+    && hasAnyText(capture.uiaText, ['批量导入', 'Batch Import'])
     && record.keyboardState.imeVisible === true
     && record.keyboardState.editableFocused === true
     && !hasErrorBoundary(capture.uiaText)
   return completeScenario(record, ok, capture, ok ? 'Keyboard-open provider import was visible.' : 'Keyboard-open provider import state was not proven.')
+}
+
+function runProviderActivation(device, providerFailureServer) {
+  const record = scenarioRecord('provider-activation', {
+    expectedState: 'Enable All shows app-owned activation progress and a final ready result for the credential-bearing Provider Runtime fixture.',
+    fixEntry: 'src/components/providers/ProviderSettingsContent.tsx',
+  })
+  record.activationEvidence = emptyProviderActivationEvidence()
+  runCommand('adb', ['-s', device, 'shell', 'am', 'force-stop', appPackageName])
+  sleep(600)
+  fs.writeFileSync(providerFailureRequestEvidence, '', 'utf8')
+  writeFixture(device, providerFailureServer.baseUrl, 'qa-placeholder-key')
+  importRuntimeFixture(device, record)
+
+  let capture = openUrlAndWaitForText(device, record, 'islemind://settings/providers', 'provider-activation-start', [providerName], 8, 850)
+  if (!tapText(device, capture.uiaText, ['批量操作', 'Batch actions', '一括操作'])) {
+    return completeScenario(record, false, capture, 'Provider activation Batch actions disclosure was not tappable.')
+  }
+  capture = waitForText(device, record, 'provider-activation-actions', ['启用所有', 'Enable All', 'すべて有効'], 6, 450)
+  if (!hasEnabledClickableExactLabel(capture.uiaText, ['启用所有', 'Enable All', 'すべて有効'])) {
+    return completeScenario(record, false, capture, 'Provider activation Enable All action was not enabled and clickable.')
+  }
+  if (!tapText(device, capture.uiaText, ['启用所有', 'Enable All', 'すべて有効'])) {
+    return completeScenario(record, false, capture, 'Provider activation Enable All action was not tappable.')
+  }
+
+  const progressProbeText = waitForUiaText(device, 'provider-activation-progress-probe', ['正在启用供应商', 'Enabling providers', 'プロバイダーを有効化中'], 8, 200)
+  const progress = captureStepUiaFirst(device, record, 'provider-activation-progress')
+  const progressVisible = hasProviderActivationProgressEvidence(progress.uiaText)
+  record.activationEvidence.progress = activationCaptureEvidence(progressVisible, progress, providerRuntimeActivationEvidencePaths.progress)
+  if (!progressVisible) {
+    return completeScenario(record, false, progress, `Provider activation progress semantics were not proven after probe=${hasProviderActivationProgressEvidence(progressProbeText)}.`)
+  }
+
+  const resultProbeText = waitForUiaText(device, 'provider-activation-result-probe', ['服务商启用完成', 'Provider enable complete', 'プロバイダー有効化完了'], 14, 250)
+  const resultCapture = captureStepUiaFirst(device, record, 'provider-activation-result')
+  const resultVisible = hasProviderActivationResultEvidence(resultCapture.uiaText)
+  record.activationEvidence.result = activationCaptureEvidence(resultVisible, resultCapture, providerRuntimeActivationEvidencePaths.result)
+  const requestReceived = readProviderFailureRequestEvidence().some((entry) => entry.method === 'GET' && entry.url === '/v1/models' && entry.status === 200)
+  const ok = resultVisible && requestReceived && !hasErrorBoundary(resultCapture.uiaText)
+  const actualState = ok
+    ? 'Provider activation showed app-owned progress and completed 1/1 ready after a successful local model sync.'
+    : `Provider activation result semantics=${resultVisible}; successful model request=${requestReceived}; result probe=${hasProviderActivationResultEvidence(resultProbeText)}.`
+  return completeScenario(record, ok, resultCapture, actualState)
 }
 
 function runChatModelSwitch(device) {
@@ -175,30 +252,66 @@ function runBlockedModelRecovery(device) {
   return completeScenario(record, ok, capture, ok ? 'Recoverable blocked-model state was visible.' : 'Blocked-model recovery state was not visible in the current fixture state.')
 }
 
-function runRuntimeFallbackTrace(device) {
+function runRuntimeFallbackTrace(device, providerFailureServer) {
   const record = scenarioRecord('runtime-fallback-trace', {
-    expectedState: 'Runtime fallback trace or runtime log evidence exists without full credential leakage.',
-    fixEntry: 'src/services/ai/base.ts',
+    expectedState: 'One provider request receives the deterministic HTTP failure and the resulting fallback decision is captured in runtime-log or Chat trace evidence without credential leakage.',
+    fixEntry: 'src/bootstrap/providerRequestBinding.ts',
   })
   runCommand('adb', ['-s', device, 'shell', 'am', 'force-stop', appPackageName])
   sleep(600)
-  openUrl(device, 'islemind://settings')
-  sleep(1600)
-  let capture = captureStep(device, record, 'provider-runtime-fallback')
-  const logText = collectRuntimeLogText(device)
-  let ok = hasRuntimeFallbackEvidence(logText, capture.uiaText)
-  if (!ok) {
-    const found = findByScrolling(device, record, capture, [
-      'fallback',
-      'Fallback',
-      '降级',
-      '运行时诊断',
-      'Runtime diagnostics',
-    ], 5)
-    capture = found.capture
-    ok = found.matched || hasRuntimeFallbackEvidence(logText, capture.uiaText)
+  const runtimeLogReadable = canReadAppPrivateFiles(device)
+  if (runtimeLogReadable) clearRuntimeLog(device)
+  fs.writeFileSync(providerFailureRequestEvidence, '', 'utf8')
+  writeFixture(device, providerFailureServer.baseUrl, 'qa-placeholder-key')
+  importRuntimeFixture(device, record)
+  openUrl(device, `islemind://chat/${recoveryConversationId}`)
+  sleep(2600)
+  let capture = captureStep(device, record, 'provider-runtime-fallback-chat')
+  const prompt = 'QA_PROVIDER_RUNTIME_FALLBACK'
+  const focused = tapText(device, capture.uiaText, ['输入消息', 'Message input', '给 IsleMind 一个任务'])
+    || tapFirstEditable(device, capture.uiaText)
+  if (!focused) return completeScenario(record, false, capture, 'Provider runtime fallback chat composer was not focusable.')
+  inputText(device, prompt)
+  sleep(700)
+  capture = captureStep(device, record, 'provider-runtime-fallback-entered')
+  if (runtimeLogReadable) clearRuntimeLog(device)
+  runCommand('adb', ['-s', device, 'shell', 'logcat', '-c'])
+  const sent = tapText(device, capture.uiaText, ['发送消息', 'Send message'])
+    || tapActionNearText(device, capture.uiaText, [prompt, '输入消息', 'Message input'], ['发送消息', 'Send message'])
+    || tapBottomRight(device, capture.uiaText)
+  if (!sent) return completeScenario(record, false, capture, 'Provider runtime fallback prompt could not be sent.')
+  let runtimeEvidence = { text: '', privateText: '' }
+  let requestReceived = false
+  for (let attempt = 0; attempt < 12; attempt += 1) {
+    sleep(700)
+    requestReceived = readProviderFailureRequestEvidence().some((entry) => entry.method === 'POST' && entry.url === '/v1/chat/completions' && entry.status === 503)
+    runtimeEvidence = collectRuntimeLogText(device, runtimeLogReadable)
+    if (requestReceived && hasRuntimeFallbackEventEvidence(runtimeEvidence.privateText)) break
   }
-  return completeScenario(record, ok, capture, ok ? 'Runtime fallback evidence was visible or logged.' : 'Runtime fallback evidence was not present in current app state.')
+  capture = captureStep(device, record, 'provider-runtime-fallback-result')
+  const privateFallbackEvidence = hasRuntimeFallbackEventEvidence(runtimeEvidence.privateText)
+  let fallbackEvidence = privateFallbackEvidence
+    || hasRuntimeFallbackChatTraceEvidence(capture.uiaText)
+    || hasRuntimeFallbackDiagnosticsEvidence(capture.uiaText)
+  let fallbackEvidenceSource = privateFallbackEvidence ? 'app-private runtime log' : (fallbackEvidence ? 'Chat trace' : null)
+  if (!fallbackEvidence && requestReceived) {
+    openUrl(device, 'islemind://settings')
+    sleep(1400)
+    const diagnosticsStart = captureStep(device, record, 'provider-runtime-fallback-diagnostics')
+    const diagnostics = openRuntimeDiagnostics(device, record, diagnosticsStart, 'provider-runtime-fallback', 12)
+    capture = diagnostics.capture
+    if (diagnostics.opened) {
+      const found = findRuntimeFallbackDiagnosticsEvidence(device, record, capture, 14)
+      capture = found.capture
+      fallbackEvidence = found.matched
+      if (fallbackEvidence) fallbackEvidenceSource = 'Runtime diagnostics request examples'
+    }
+  }
+  const ok = requestReceived && fallbackEvidence && !hasErrorBoundary(capture.uiaText)
+  const actualState = ok
+    ? `Deterministic HTTP 503 provider request was received and fallback evidence was captured (${fallbackEvidenceSource}).`
+    : `Provider request received=${requestReceived}; runtime fallback evidence captured=${fallbackEvidence}.`
+  return completeScenario(record, ok, capture, actualState)
 }
 
 function runProviderHealthState(device) {
@@ -209,9 +322,13 @@ function runProviderHealthState(device) {
   runCommand('adb', ['-s', device, 'shell', 'am', 'force-stop', appPackageName])
   sleep(600)
   let capture = openUrlAndWaitForText(device, record, 'islemind://settings', 'provider-runtime-health', ['供应商', 'Providers', 'AI 设置', 'AI settings'], 8, 900)
-  const found = findByScrolling(device, record, capture, ['运行时诊断', 'Runtime diagnostics', '供应商健康', 'provider health', '供应商', 'Providers'], 5)
+  const diagnostics = openRuntimeDiagnostics(device, record, capture, 'provider-runtime-health', 12)
+  capture = diagnostics.capture
+  const found = diagnostics.opened
+    ? findProviderHealthDiagnosticsEvidence(device, record, capture, 14)
+    : { matched: false, capture }
   capture = found.capture
-  const ok = found.matched && !hasErrorBoundary(capture.uiaText)
+  const ok = diagnostics.opened && found.matched && !hasErrorBoundary(capture.uiaText)
   return completeScenario(record, ok, capture, ok ? 'Provider health diagnostics were visible.' : 'Provider health state was not visible.')
 }
 
@@ -233,19 +350,95 @@ function runAndroidBack(device) {
   return completeScenario(record, ok, after, ok ? 'Android Back returned to Settings.' : 'Android Back did not prove provider-to-settings recovery.')
 }
 
-function runRestartRecovery(device) {
+function runRestartRecovery(device, providerFailureServer) {
   const record = scenarioRecord('restart-recovery', {
-    expectedState: 'Force-stop and relaunch restores the home/settings shell without blank screen or error boundary.',
-    fixEntry: 'app/_layout.tsx',
+    expectedState: 'A known ordinary Chat request completes, survives force-stop with a linked terminal AssistantRun and journal entry, and restores its assistant response after relaunch.',
+    fixEntry: 'src/modules/assistant-runtime/application/assistantRuntime.ts',
   })
-  runCommand('adb', ['-s', device, 'shell', 'am', 'force-stop', appPackageName])
-  sleep(900)
-  openUrl(device, 'islemind://')
+  fs.rmSync(restartRecoveryEvidence, { force: true })
+  writeFixture(device, providerFailureServer.baseUrl, 'qa-placeholder-key')
+  importRuntimeFixture(device, record)
+  let capture = openUrlAndWaitForText(device, record, `islemind://chat/${recoveryConversationId}`, 'provider-runtime-restart-chat', ['输入消息', 'Message input', '给 IsleMind 一个任务'], 8, 750)
+  const focused = tapText(device, capture.uiaText, ['输入消息', 'Message input', '给 IsleMind 一个任务'])
+    || tapFirstEditable(device, capture.uiaText)
+  if (!focused) return completeScenario(record, false, capture, 'Restart recovery Chat composer was not focusable.')
+  inputText(device, recoveryRequestMarker)
+  sleep(650)
+  capture = captureStep(device, record, 'provider-runtime-restart-request-entered')
+  const sent = tapText(device, capture.uiaText, ['发送消息', 'Send message'])
+    || tapActionNearText(device, capture.uiaText, [recoveryRequestMarker, '输入消息', 'Message input'], ['发送消息', 'Send message'])
+    || tapBottomRight(device, capture.uiaText)
+  if (!sent) return completeScenario(record, false, capture, 'Restart recovery fixture request could not be sent.')
+
+  let completed = false
+  let requestReceived = false
+  for (let attempt = 0; attempt < 16; attempt += 1) {
+    sleep(650)
+    capture = captureStep(device, record, `provider-runtime-restart-complete-${attempt}`)
+    requestReceived = readProviderFailureRequestEvidence().some((entry) => (
+      entry.method === 'POST'
+      && entry.url === '/v1/chat/completions'
+      && entry.status === 200
+      && entry.kind === 'restart-recovery'
+    ))
+    completed = requestReceived && hasAnyText(capture.uiaText, [recoveryCompletionMarker])
+    if (completed || hasErrorBoundary(capture.uiaText)) break
+  }
+  if (!completed) {
+    return completeScenario(record, false, capture, `Restart recovery fixture completion was not observed; request received=${requestReceived}.`)
+  }
+
+  let durableState = null
+  let durableIssues = []
+  let privateStorageInspectionUnavailable = false
+  try {
+    durableState = captureRestartRecoveryDurableState(device)
+    writeRestartRecoveryDurableEvidence(durableState)
+    record.restartRecoveryEvidence = durableState
+      ? { proofKind: 'durable-linked-state', evidence: providerRuntimeRestartRecoveryEvidencePath, ...durableState }
+      : null
+    durableIssues = validateProviderRuntimeRestartRecoveryEvidence(record.restartRecoveryEvidence, {
+      root,
+      validatePath: validateRepositoryEvidencePath,
+    })
+  } catch (error) {
+    const message = sanitizeEvidenceText(error?.message ?? error)
+    privateStorageInspectionUnavailable = message.includes('durable restart proof requires a rooted or debuggable device')
+    durableIssues = privateStorageInspectionUnavailable ? [] : [message]
+  }
+
+  openUrl(device, `islemind://chat/${recoveryConversationId}`)
   sleep(2600)
-  const capture = captureStep(device, record, 'provider-runtime-restart')
-  const ok = hasAnyText(capture.uiaText, ['IsleMind', '给 IsleMind 一个任务', 'Settings', '设置', 'Providers', '供应商'])
+  capture = captureStep(device, record, 'provider-runtime-restart-restored')
+  const restoredMessage = hasAnyText(capture.uiaText, [recoveryCompletionMarker])
+  const restoredConversation = hasAnyText(capture.uiaText, [recoveryRequestMarker])
+  if (privateStorageInspectionUnavailable) {
+    record.restartRecoveryEvidence = {
+      proofKind: 'visible-release-recovery',
+      capturedAt: new Date().toISOString(),
+      conversationId: recoveryConversationId,
+      requestMatched: restoredConversation,
+      responseMatched: restoredMessage,
+      forceStopPerformed: true,
+      relaunchPerformed: true,
+      privateStorageInspection: 'unavailable-on-nondebuggable-release',
+      ...providerRuntimeRestartRecoveryVisibleEvidencePaths,
+    }
+    durableIssues = validateProviderRuntimeRestartRecoveryEvidence(record.restartRecoveryEvidence, {
+      root,
+      validatePath: validateRepositoryEvidencePath,
+    })
+  }
+  const ok = !durableIssues.length
+    && restoredMessage
+    && restoredConversation
     && !hasErrorBoundary(capture.uiaText)
-  return completeScenario(record, ok, capture, ok ? 'App shell restored after restart.' : 'Restart recovery was not proven.')
+  const actualState = ok
+    ? privateStorageInspectionUnavailable
+      ? 'Known ordinary Chat request and assistant response were restored after force-stop; private AssistantRun/journal inspection was unavailable on the non-debuggable release APK.'
+      : 'Known ordinary Chat request, terminal AssistantRun/journal, and restored assistant response were proven after force-stop.'
+    : `Restart recovery durable issues=${durableIssues.join(' | ') || 'none'}; restored request=${restoredConversation}; restored response=${restoredMessage}.`
+  return completeScenario(record, ok, capture, actualState)
 }
 
 function scenarioRecord(id, { expectedState, fixEntry }) {
@@ -276,6 +469,21 @@ function failedScenario(id, expectedState, actualState) {
     uia: null,
     log: relative(runtimeLogEvidence),
     keyboardState: id === 'provider-import-keyboard' ? emptyKeyboardState() : undefined,
+  }
+}
+
+function emptyProviderActivationEvidence() {
+  return {
+    progress: { visible: false, png: null, uia: null },
+    result: { visible: false, png: null, uia: null },
+  }
+}
+
+function activationCaptureEvidence(visible, capture, canonicalPaths = null) {
+  return {
+    visible,
+    png: canonicalPaths?.png ?? capture?.png ?? null,
+    uia: canonicalPaths?.uia ?? capture?.uia ?? null,
   }
 }
 
@@ -340,7 +548,116 @@ function readInstalledPackageInfo(device) {
   return info
 }
 
-function writeFixture(device) {
+function captureRestartRecoveryDurableState(device) {
+  const snapshotDir = fs.mkdtempSync(path.join(os.tmpdir(), 'islemind-provider-runtime-restart-'))
+  const localDatabasePath = path.join(snapshotDir, 'islemind-context.db')
+  try {
+    if (runCommand('adb', ['-s', device, 'shell', 'am', 'force-stop', appPackageName]) === null) {
+      throw new Error('Could not force-stop the app before durable restart capture.')
+    }
+    sleep(900)
+    const pulled = runCommand('adb', ['-s', device, 'pull', contextDatabaseRemotePath, localDatabasePath])
+    if (pulled === null || !fs.existsSync(localDatabasePath)) {
+      throw new Error(`Could not pull the release SQLite database from ${contextDatabaseRemotePath}; durable restart proof requires a rooted or debuggable device.`)
+    }
+    for (const suffix of ['-wal', '-shm']) {
+      runCommand('adb', ['-s', device, 'pull', `${contextDatabaseRemotePath}${suffix}`, `${localDatabasePath}${suffix}`])
+    }
+    return readRestartRecoveryDurableState(localDatabasePath)
+  } finally {
+    fs.rmSync(snapshotDir, { recursive: true, force: true })
+  }
+}
+
+function readRestartRecoveryDurableState(databasePath) {
+  let Database
+  try {
+    ({ Database } = require('bun:sqlite'))
+  } catch {
+    throw new Error('Durable restart evidence requires the Bun runtime.')
+  }
+  const database = new Database(databasePath, { readonly: true })
+  try {
+    const run = database.query(`
+      SELECT id, kind, conversationId, responseMessageId, providerId, model,
+             status, completedAt, journalSequence, resultJson
+      FROM assistant_runs
+      WHERE conversationId = ? AND status = 'succeeded'
+      ORDER BY createdAt DESC
+      LIMIT 1
+    `).get(recoveryConversationId)
+    const journal = run
+      ? database.query(`
+          SELECT runId, sequence, type, occurredAt
+          FROM assistant_run_journal
+          WHERE runId = ?
+          ORDER BY sequence ASC
+        `).all(run.id)
+      : []
+    const conversationRow = database.query(
+      'SELECT payloadJson FROM conversation_records WHERE id = ? LIMIT 1',
+    ).get(recoveryConversationId)
+    const conversation = tryParseJson(conversationRow?.payloadJson)
+    const messages = Array.isArray(conversation?.messages) ? conversation.messages : []
+    const userMessage = [...messages].reverse().find((message) => (
+      message?.role === 'user' && String(message.content ?? '').includes(recoveryRequestMarker)
+    ))
+    const assistantMessage = messages.find((message) => message?.id === run?.responseMessageId)
+      ?? [...messages].reverse().find((message) => (
+        message?.role === 'assistant' && String(message.content ?? '').includes(recoveryCompletionMarker)
+      ))
+    const result = tryParseJson(run?.resultJson)
+    return {
+      capturedAt: new Date().toISOString(),
+      conversationId: recoveryConversationId,
+      conversation: conversation ? { id: conversation.id ?? null } : null,
+      userMessage: userMessage
+        ? {
+            id: userMessage.id ?? null,
+            role: userMessage.role ?? null,
+            contentMatched: String(userMessage.content ?? '').includes(recoveryRequestMarker),
+          }
+        : null,
+      assistantMessage: assistantMessage
+        ? {
+            id: assistantMessage.id ?? null,
+            role: assistantMessage.role ?? null,
+            status: assistantMessage.status ?? null,
+            contentMatched: String(assistantMessage.content ?? '').includes(recoveryCompletionMarker),
+          }
+        : null,
+      run: run
+        ? {
+            id: run.id ?? null,
+            kind: run.kind ?? null,
+            conversationId: run.conversationId ?? null,
+            responseMessageId: run.responseMessageId ?? null,
+            providerId: run.providerId ?? null,
+            model: run.model ?? null,
+            status: run.status ?? null,
+            completedAt: run.completedAt ?? null,
+            journalSequence: run.journalSequence ?? null,
+            outputMatched: String(result?.outputText ?? '').includes(recoveryCompletionMarker),
+          }
+        : null,
+      journal: journal.map((entry) => ({
+        runId: entry.runId,
+        sequence: entry.sequence,
+        type: entry.type,
+        occurredAt: entry.occurredAt,
+      })),
+    }
+  } finally {
+    database.close()
+  }
+}
+
+function writeRestartRecoveryDurableEvidence(durableState) {
+  fs.writeFileSync(restartRecoveryEvidence, `${JSON.stringify(durableState, null, 2)}\n`, 'utf8')
+  sanitizePersistedTextEvidence(restartRecoveryEvidence)
+}
+
+function writeFixture(device, providerBaseUrl, apiKey = '') {
   const fixturePath = path.join(smokeDir, fixtureFileName)
   const now = 1772100000000
   const fixture = {
@@ -356,6 +673,7 @@ function writeFixture(device) {
       memoryEnabled: false,
       knowledgeEnabled: false,
       webSearchEnabled: false,
+      mcpEnabled: false,
       providerCatalogVersion: 1,
       providerAllowlist: [],
       providerBlocklist: [],
@@ -383,11 +701,12 @@ function writeFixture(device) {
       {
         id: providerId,
         type: 'openai-compatible',
-        presetId: 'custom-openai-compatible',
-        detectedPresetId: 'custom-openai-compatible',
+        presetId: 'custom-endpoint',
+        detectedPresetId: 'custom-endpoint',
+        wireProtocol: 'openai-compatible',
         detectionStatus: 'manual',
         name: providerName,
-        apiKey: '',
+        apiKey,
         baseUrl: providerBaseUrl,
         models: [modelId],
         manualModels: [modelId],
@@ -405,7 +724,9 @@ function writeFixture(device) {
             supportsFiles: false,
           },
         ],
-        credentialGroups: [],
+        credentialGroups: apiKey
+          ? [{ id: 'qa-placeholder-group', label: 'QA placeholder', apiKey, enabled: true, availableModels: [modelId] }]
+          : [],
         enabled: true,
         lastTestStatus: 'idle',
         lastModelSyncStatus: 'idle',
@@ -415,7 +736,10 @@ function writeFixture(device) {
     mcpServers: [],
   }
   fs.writeFileSync(fixturePath, `${JSON.stringify(fixture, null, 2)}\n`, 'utf8')
-  runCommand('adb', ['-s', device, 'push', fixturePath, remoteFixturePath])
+  if (runCommand('adb', ['-s', device, 'push', fixturePath, remoteFixturePath]) !== null) {
+    runCommand('adb', ['-s', device, 'shell', 'touch', remoteFixturePath])
+    runCommand('adb', ['-s', device, 'shell', 'am', 'broadcast', '-a', 'android.intent.action.MEDIA_SCANNER_SCAN_FILE', '-d', `file://${remoteFixturePath}`])
+  }
 }
 
 function importRuntimeFixture(device, record) {
@@ -426,11 +750,19 @@ function importRuntimeFixture(device, record) {
   const importDialog = hasAnyText(pickerStart.uiaText, ['导入完成', 'Import complete'])
     ? pickerStart
     : selectFixtureFileAndCaptureImportDialog(device, record)
-  if (!hasAnyText(importDialog.uiaText, ['导入完成', 'Import complete'])) {
-    throw new Error('Provider Runtime fixture import completion dialog was not visible.')
+  if (hasAnyText(importDialog.uiaText, ['导入完成', 'Import complete'])) {
+    tapText(device, importDialog.uiaText, ['知道了', '我知道了', 'OK', 'Close'])
+    sleep(900)
+    return
   }
-  tapText(device, importDialog.uiaText, ['知道了', '我知道了', 'OK', 'Close'])
-  sleep(900)
+  runCommand('adb', ['-s', device, 'shell', 'am', 'force-stop', appPackageName])
+  sleep(600)
+  openUrl(device, 'islemind://settings/providers')
+  sleep(2200)
+  const importedState = captureStep(device, record, 'provider-runtime-import-state')
+  if (!hasAnyText(importedState.uiaText, [providerName])) {
+    throw new Error('Provider Runtime fixture import was not confirmed by dialog or provider state.')
+  }
 }
 
 function ensureSettingsVisible(device, record) {
@@ -441,8 +773,14 @@ function ensureSettingsVisible(device, record) {
 
 function tapSettingsImportJson(device, record) {
   for (let index = 0; index < 8; index += 1) {
-    const capture = captureStep(device, record, `provider-runtime-import-search-${index}`)
-    if (tapText(device, capture.uiaText, ['导入 JSON', 'Import JSON'])) {
+    let capture = captureStep(device, record, `provider-runtime-import-search-${index}`)
+    let importTapped = tapText(device, capture.uiaText, ['导入 JSON', 'Import JSON', 'JSON インポート'])
+    if (!importTapped && tapText(device, capture.uiaText, ['导入 / 导出', 'Import / Export', 'インポート / エクスポート'])) {
+      sleep(900)
+      capture = captureStep(device, record, `provider-runtime-import-expanded-${index}`)
+      importTapped = tapText(device, capture.uiaText, ['导入 JSON', 'Import JSON', 'JSON インポート'])
+    }
+    if (importTapped) {
       sleep(1700)
       const afterTap = captureStep(device, record, `provider-runtime-import-after-tap-${index}`)
       if (isDocumentsUi(afterTap.uiaText) || hasAnyText(afterTap.uiaText, ['导入完成', 'Import complete'])) return afterTap
@@ -513,18 +851,56 @@ function waitForText(device, record, name, labels, maxAttempts = 6, delayMs = 80
   return capture
 }
 
+function waitForUiaText(device, name, labels, maxAttempts = 6, delayMs = 250) {
+  let uiaText = ''
+  for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
+    uiaText = captureUiaProbe(device, `${name}-${attempt}`)
+    if (hasAnyText(uiaText, labels) || hasErrorBoundary(uiaText)) return uiaText
+    if (attempt + 1 < maxAttempts) sleep(delayMs)
+  }
+  return uiaText
+}
+
+function captureUiaProbe(device, name) {
+  const localUia = path.join(smokeDir, `.${name}-${process.pid}.uia.tmp`)
+  const remoteUia = `/sdcard/${name}-${Date.now()}.uia.xml`
+  try {
+    captureFileWithRetry(device, remoteUia, localUia, () => {
+      runCommand('adb', ['-s', device, 'shell', 'uiautomator', 'dump', remoteUia])
+    })
+    return fs.existsSync(localUia) ? sanitizePersistedTextEvidence(localUia) : ''
+  } finally {
+    fs.rmSync(localUia, { force: true })
+  }
+}
+
 function captureStep(device, record, name) {
+  return captureStepWithOrder(device, record, name, false)
+}
+
+function captureStepUiaFirst(device, record, name) {
+  return captureStepWithOrder(device, record, name, true)
+}
+
+function captureStepWithOrder(device, record, name, uiaFirst) {
   const png = path.join(smokeDir, `${name}.png`)
   const uia = path.join(smokeDir, `${name}.uia.xml`)
   const uniqueName = `${name}-${Date.now()}`
   const remotePng = `/sdcard/${uniqueName}.png`
   const remoteUia = `/sdcard/${uniqueName}.uia.xml`
-  captureFileWithRetry(device, remotePng, png, () => {
+  const capturePng = () => captureFileWithRetry(device, remotePng, png, () => {
     runCommand('adb', ['-s', device, 'shell', 'screencap', '-p', remotePng])
   })
-  captureFileWithRetry(device, remoteUia, uia, () => {
+  const captureUia = () => captureFileWithRetry(device, remoteUia, uia, () => {
     runCommand('adb', ['-s', device, 'shell', 'uiautomator', 'dump', remoteUia])
   })
+  if (uiaFirst) {
+    captureUia()
+    capturePng()
+  } else {
+    capturePng()
+    captureUia()
+  }
   const uiaText = fs.existsSync(uia) ? sanitizePersistedTextEvidence(uia) : ''
   const step = {
     name,
@@ -559,15 +935,115 @@ function findByScrolling(device, record, initialCapture, labels, maxScrolls) {
   return { matched: false, capture }
 }
 
+function openRuntimeDiagnostics(device, record, initialCapture, capturePrefix, maxScrolls = 12) {
+  const advanced = openDisclosureByScrolling(
+    device,
+    record,
+    initialCapture,
+    ['高级接口设置', 'Advanced interface settings', '詳細インターフェース設定'],
+    `${capturePrefix}-advanced`,
+    maxScrolls
+  )
+  if (!advanced.opened) return advanced
+
+  const diagnostics = openDisclosureByScrolling(
+    device,
+    record,
+    advanced.capture,
+    ['运行时诊断', 'Runtime diagnostics', '実行診断'],
+    `${capturePrefix}-runtime-diagnostics`,
+    maxScrolls
+  )
+  if (!diagnostics.opened) return diagnostics
+
+  return openDisclosureByScrolling(
+    device,
+    record,
+    diagnostics.capture,
+    ['诊断明细', 'Diagnostic details', '診断詳細'],
+    `${capturePrefix}-details`,
+    maxScrolls
+  )
+}
+
+function openDisclosureByScrolling(device, record, initialCapture, labels, capturePrefix, maxScrolls) {
+  let capture = initialCapture
+  for (let index = 0; index <= maxScrolls; index += 1) {
+    if (hasExpandedDisclosure(capture.uiaText, labels)) return { opened: true, capture }
+    if (tapText(device, capture.uiaText, labels)) {
+      sleep(900)
+      capture = captureStep(device, record, `${capturePrefix}-opened`)
+      if (hasExpandedDisclosure(capture.uiaText, labels)) return { opened: true, capture }
+    }
+    if (index === maxScrolls) break
+    swipeUp(device)
+    sleep(450)
+    capture = captureStep(device, record, `${capturePrefix}-scroll-${index}`)
+  }
+  return { opened: false, capture }
+}
+
+function hasExpandedDisclosure(uiaText, labels) {
+  const nodes = parseNodes(uiaText)
+  return labels.some((label) => nodes.some((node) => (
+    node.contentDesc.includes(label)
+      && /(?:collapse|收起|折叠|折りたた)/i.test(node.contentDesc)
+  )))
+}
+
+function findRuntimeFallbackDiagnosticsEvidence(device, record, initialCapture, maxScrolls) {
+  let capture = initialCapture
+  for (let index = 0; index <= maxScrolls; index += 1) {
+    if (hasRuntimeFallbackDiagnosticsEvidence(capture.uiaText)) return { matched: true, capture }
+    if (index === maxScrolls) break
+    swipeUp(device)
+    sleep(450)
+    capture = captureStep(device, record, `${record.id}-request-examples-${index}`)
+  }
+  return { matched: false, capture }
+}
+
+function findProviderHealthDiagnosticsEvidence(device, record, initialCapture, maxScrolls) {
+  let capture = initialCapture
+  for (let index = 0; index <= maxScrolls; index += 1) {
+    if (hasProviderHealthDiagnosticsEvidence(capture.uiaText)) return { matched: true, capture }
+    if (index === maxScrolls) break
+    swipeUp(device)
+    sleep(450)
+    capture = captureStep(device, record, `${record.id}-diagnostic-details-${index}`)
+  }
+  return { matched: false, capture }
+}
+
 function tapText(device, uiaText, labels) {
   const nodes = parseNodes(uiaText)
   for (const label of labels) {
     const node = findTappableTextNode(nodes, label)
     if (!node) continue
-    tapBoundsCenter(device, node.bounds)
-    return true
+    return tapBoundsCenter(device, node.bounds)
   }
   return false
+}
+
+function tapActionNearText(device, uiaText, anchorLabels, actionLabels) {
+  const nodes = parseNodes(uiaText)
+  const anchor = nodes.find((node) => anchorLabels.some((label) => textMatches(node, label)))
+  const anchorBounds = parseBounds(anchor?.bounds)
+  const candidates = []
+  for (const label of actionLabels) {
+    for (const node of nodes.filter((item) => item.enabled && textMatches(item, label))) {
+      const bounds = parseBounds(node.bounds)
+      if (!bounds || (anchorBounds && bounds.top < anchorBounds.top - 20)) continue
+      candidates.push({ node, bounds })
+    }
+  }
+  candidates.sort((left, right) => anchorBounds
+    ? Math.abs(left.bounds.top - anchorBounds.top) - Math.abs(right.bounds.top - anchorBounds.top)
+    : left.bounds.top - right.bounds.top)
+  const candidate = candidates[0]?.node
+  if (!candidate) return false
+  tapBoundsCenter(device, candidate.bounds)
+  return true
 }
 
 function tapExactContentDesc(device, uiaText, labels) {
@@ -579,6 +1055,14 @@ function tapExactContentDesc(device, uiaText, labels) {
     return true
   }
   return false
+}
+
+function hasEnabledClickableExactLabel(uiaText, labels) {
+  return parseNodes(uiaText).some((item) => (
+    item.enabled
+    && item.clickable
+    && labels.some((label) => item.text === label || item.contentDesc === label)
+  ))
 }
 
 function tapTextUpperHalf(device, uiaText, labels) {
@@ -595,8 +1079,7 @@ function tapTextUpperHalf(device, uiaText, labels) {
 function tapFirstEditable(device, uiaText) {
   const node = parseNodes(uiaText).find((item) => item.enabled && item.className.includes('EditText'))
   if (!node) return false
-  tapBoundsCenter(device, node.bounds)
-  return true
+  return tapBoundsCenter(device, node.bounds)
 }
 
 function ensureChatTopBarVisible(device, record, capture, captureName) {
@@ -635,6 +1118,7 @@ function parseNodes(uiaText) {
       text: decodeXml(matchFirst(tag, /text="([^"]*)"/) ?? ''),
       contentDesc: decodeXml(matchFirst(tag, /content-desc="([^"]*)"/) ?? ''),
       className: decodeXml(matchFirst(tag, /class="([^"]*)"/) ?? ''),
+      packageName: decodeXml(matchFirst(tag, /package="([^"]*)"/) ?? ''),
       bounds,
       enabled: matchFirst(tag, /enabled="([^"]+)"/) !== 'false',
       clickable: matchFirst(tag, /clickable="([^"]+)"/) === 'true',
@@ -648,15 +1132,24 @@ function textMatches(node, label) {
 }
 
 function tapBoundsCenter(device, bounds) {
-  tapBoundsAt(device, bounds, 0.5, 0.5)
+  return tapBoundsAt(device, bounds, 0.5, 0.5)
+}
+
+function tapBottomRight(device, uiaText) {
+  const nodes = parseNodes(uiaText)
+  for (const label of ['发送消息', 'Send message', 'メッセージを送信']) {
+    const node = findTappableTextNode(nodes, label)
+    if (node) return tapBoundsCenter(device, node.bounds)
+  }
+  return false
 }
 
 function tapBoundsAt(device, bounds, xRatio, yRatio) {
   const box = parseBounds(bounds)
-  if (!box) return
+  if (!box) return false
   const x = Math.round(box.left + (box.right - box.left) * xRatio)
   const y = Math.round(box.top + (box.bottom - box.top) * yRatio)
-  runCommand('adb', ['-s', device, 'shell', 'input', 'tap', String(x), String(y)])
+  return runCommand('adb', ['-s', device, 'shell', 'input', 'tap', String(x), String(y)]) !== null
 }
 
 function tapFileTitle(device, uiaText, fileName) {
@@ -722,9 +1215,50 @@ function hasErrorBoundary(uiaText) {
   return hasAnyText(uiaText, ['页面暂时无法显示', 'Page is unavailable', 'Render Error', 'ReferenceError', 'TypeError'])
 }
 
-function hasRuntimeFallbackEvidence(logText, uiaText) {
-  return /fallback\.decision|runtime-fallback|transport\.fallback/i.test(logText)
-    || hasAnyText(uiaText, ['fallback', 'Fallback', '降级', '运行时诊断', 'Runtime diagnostics'])
+function hasRuntimeFallbackChatTraceEvidence(uiaText) {
+  const exactTitles = new Set(['Runtime fallback', '运行时兜底', 'ランタイムフォールバック'])
+  return extractVisibleText(uiaText).some((value) => exactTitles.has(value.trim()))
+}
+
+function hasRuntimeFallbackEventEvidence(logText) {
+  return /"event"\s*:\s*"(?:provider\.fallback\.decided|fallback\.decision)"/i.test(String(logText ?? ''))
+}
+
+function hasRuntimeFallbackDiagnosticsEvidence(uiaText) {
+  return hasAnyText(uiaText, ['Request examples', '请求样本', 'リクエスト例'])
+    && hasAnyText(uiaText, ['fallback', '回退', 'フォールバック'])
+    && hasAnyText(uiaText, [providerId, modelId])
+}
+
+function hasProviderHealthDiagnosticsEvidence(uiaText) {
+  return hasAnyText(uiaText, ['Provider health', '供应商健康', 'プロバイダー状態'])
+    && hasAnyText(uiaText, ['cooldown', '冷却', 'クールダウン'])
+    && hasAnyText(uiaText, ['credential', '凭据', '認証'])
+}
+
+function hasProviderActivationProgressEvidence(uiaText) {
+  return hasAppOwnedAnyText(uiaText, ['正在启用供应商', 'Enabling providers', 'プロバイダーを有効化中'])
+    && hasAppOwnedAnyText(uiaText, [providerName])
+    && hasAppOwnedAnyText(uiaText, ['0/1'])
+    && !hasErrorBoundary(uiaText)
+}
+
+function hasProviderActivationResultEvidence(uiaText) {
+  const completionBanner = hasAppOwnedAnyText(uiaText, ['服务商启用完成', 'Provider enable complete', 'プロバイダー有効化完了'])
+    && hasAppOwnedAnyText(uiaText, [`${providerName} 已可用`, `${providerName} is ready`, `${providerName} は利用可能です`, '服务商已启用', 'Provider enabled', 'プロバイダーが有効になりました'])
+    && hasAppOwnedAnyText(uiaText, ['1/1'])
+  const readyProviderCard = hasAppOwnedAnyText(uiaText, [providerName])
+    && hasAppOwnedAnyText(uiaText, ['已同步可用', 'Synced and ready', '同期済み・利用可能'])
+    && hasAppOwnedAnyText(uiaText, ['1 个模型', '1 model', '1 モデル'])
+    && hasAppOwnedAnyText(uiaText, ['1 组令牌', '1 credential group', '1 認証グループ'])
+  return (completionBanner || readyProviderCard) && !hasErrorBoundary(uiaText)
+}
+
+function hasAppOwnedAnyText(uiaText, labels) {
+  return parseNodes(uiaText).some((node) => (
+    node.packageName === appPackageName
+    && labels.some((label) => textMatches(node, label))
+  ))
 }
 
 function isDocumentsUi(uiaText) {
@@ -739,16 +1273,17 @@ function isDocumentsUi(uiaText) {
   ])
 }
 
-function collectRuntimeLogText(device) {
+function collectRuntimeLogText(device, runtimeLogReadable = true) {
+  const privateLog = readRuntimeLogWithRetry(device, runtimeLogReadable, 1)
   const logcat = runCommand('adb', ['-s', device, 'logcat', '-d', '-v', 'time', '-t', '600']) ?? ''
-  const lines = logcat
+  const logcatLines = logcat
     .split(/\r?\n/)
     .filter((line) => line.includes(appPackageName) || /fallback|runtime|provider|ReactNativeJS/i.test(line))
     .slice(-200)
     .map(sanitizeEvidenceText)
-  const text = lines.join('\n')
+  const text = [sanitizeEvidenceText(privateLog).trim(), logcatLines.join('\n')].filter(Boolean).join('\n')
   fs.writeFileSync(runtimeLogEvidence, `${text}\n`, 'utf8')
-  return text
+  return { text, privateText: sanitizeEvidenceText(privateLog).trim() }
 }
 
 function writeRunLog(result) {
@@ -855,7 +1390,108 @@ function formatResultJson(result) {
   return JSON.stringify(result, null, 2)
 }
 
-function runSelfTest() {
+function createRestartRecoveryEvidenceFixture() {
+  return {
+    evidence: providerRuntimeRestartRecoveryEvidencePath,
+    capturedAt: '2026-07-21T00:00:00.000Z',
+    conversationId: recoveryConversationId,
+    conversation: { id: recoveryConversationId },
+    userMessage: {
+      id: 'restart-user-self-test',
+      role: 'user',
+      contentMatched: true,
+    },
+    assistantMessage: {
+      id: 'restart-assistant-self-test',
+      role: 'assistant',
+      status: 'done',
+      contentMatched: true,
+    },
+    run: {
+      id: 'restart-run-self-test',
+      kind: 'chat',
+      conversationId: recoveryConversationId,
+      responseMessageId: 'restart-assistant-self-test',
+      providerId,
+      model: modelId,
+      status: 'succeeded',
+      completedAt: 1776643200000,
+      journalSequence: 4,
+      outputMatched: true,
+    },
+    journal: [{ runId: 'restart-run-self-test', sequence: 4, type: 'run.succeeded', occurredAt: 1776643200000 }],
+  }
+}
+
+async function runSelfTest() {
+  const enabledImportAction = '<node text="" content-desc="Import" class="android.widget.Button" bounds="[0,0][100,100]" enabled="true" clickable="true" />'
+  if (!hasEnabledClickableExactLabel(enabledImportAction, ['导入', 'Import'])) {
+    throw new Error('Provider Runtime Android self-test rejected an enabled exact Import action.')
+  }
+  for (const invalidImportAction of [
+    '<node text="Batch Import" content-desc="" class="android.widget.TextView" bounds="[0,0][100,100]" enabled="true" clickable="false" />',
+    '<node text="" content-desc="Import" class="android.widget.Button" bounds="[0,0][100,100]" enabled="false" clickable="true" />',
+    '<node text="" content-desc="Import providers" class="android.widget.Button" bounds="[0,0][100,100]" enabled="true" clickable="true" />',
+  ]) {
+    if (hasEnabledClickableExactLabel(invalidImportAction, ['导入', 'Import'])) {
+      throw new Error('Provider Runtime Android self-test accepted a non-action or non-exact Import label.')
+    }
+  }
+  await assertProviderFailureServerSelfTest()
+  const activationProgressUia = `<node package="${appPackageName}" text="正在启用供应商" bounds="[0,0][100,20]" /><node package="${appPackageName}" text="${providerName}" bounds="[0,20][100,40]" /><node package="${appPackageName}" text="0/1" bounds="[0,40][100,60]" />`
+  if (!hasProviderActivationProgressEvidence(activationProgressUia)) {
+    throw new Error('Provider Runtime Android self-test rejected app-owned activation progress semantics.')
+  }
+  if (hasProviderActivationProgressEvidence(activationProgressUia.replaceAll(appPackageName, 'com.android.systemui'))) {
+    throw new Error('Provider Runtime Android self-test accepted external activation progress semantics.')
+  }
+  const activationResultUia = `<node package="${appPackageName}" text="服务商启用完成" bounds="[0,0][100,20]" /><node package="${appPackageName}" text="${providerName} 已可用" bounds="[0,20][100,40]" /><node package="${appPackageName}" text="1/1" bounds="[0,40][100,60]" />`
+  if (!hasProviderActivationResultEvidence(activationResultUia)) {
+    throw new Error('Provider Runtime Android self-test rejected app-owned activation result semantics.')
+  }
+  const activationReadyCardUia = `<node package="${appPackageName}" text="${providerName}" bounds="[0,0][100,20]" /><node package="${appPackageName}" text="已同步可用" bounds="[0,20][100,40]" /><node package="${appPackageName}" text="1 个模型" bounds="[0,40][100,60]" /><node package="${appPackageName}" text="1 组令牌" bounds="[0,60][100,80]" />`
+  if (!hasProviderActivationResultEvidence(activationReadyCardUia)) {
+    throw new Error('Provider Runtime Android self-test rejected the app-owned ready provider card.')
+  }
+  if (hasProviderActivationResultEvidence(activationReadyCardUia.replaceAll(appPackageName, 'com.android.systemui'))) {
+    throw new Error('Provider Runtime Android self-test accepted an external ready provider card.')
+  }
+  if (!hasRuntimeFallbackEventEvidence('{"event":"provider.fallback.decided"}')) {
+    throw new Error('Provider Runtime Android self-test did not accept the typed fallback event.')
+  }
+  if (!hasRuntimeFallbackEventEvidence('{"event":"fallback.decision"}')) {
+    throw new Error('Provider Runtime Android self-test did not accept the legacy fallback event.')
+  }
+  for (const genericText of [
+    '{"event":"transport.fallback"}',
+    'provider runtime-fallback line from logcat',
+    'generic fallback text',
+  ]) {
+    if (hasRuntimeFallbackEventEvidence(genericText)) {
+      throw new Error(`Provider Runtime Android self-test accepted generic fallback evidence: ${genericText}`)
+    }
+  }
+  for (const exactTitle of ['Runtime fallback', '运行时兜底', 'ランタイムフォールバック']) {
+    const exactTitleUia = `<node text="${exactTitle}" content-desc="" bounds="[0,0][1,1]" enabled="true" />`
+    if (!hasRuntimeFallbackChatTraceEvidence(exactTitleUia)) {
+      throw new Error(`Provider Runtime Android self-test rejected an exact fallback UI title: ${exactTitle}`)
+    }
+  }
+  if (hasRuntimeFallbackChatTraceEvidence('<node text="Runtime fallback details" content-desc="" bounds="[0,0][1,1]" enabled="true" />')) {
+    throw new Error('Provider Runtime Android self-test accepted generic fallback UI text.')
+  }
+  if (!hasRuntimeFallbackDiagnosticsEvidence(`Request examples ${providerId}/${modelId} fallback:503`)) {
+    throw new Error('Provider Runtime Android self-test did not accept bounded fallback diagnostics evidence.')
+  }
+  if (hasRuntimeFallbackDiagnosticsEvidence('Runtime diagnostics fallback')) {
+    throw new Error('Provider Runtime Android self-test accepted an unbounded diagnostics title as fallback evidence.')
+  }
+  if (!hasProviderHealthDiagnosticsEvidence('Provider health cooldown 1 credential healthy')) {
+    throw new Error('Provider Runtime Android self-test did not accept provider health diagnostics evidence.')
+  }
+  if (hasProviderHealthDiagnosticsEvidence(`Provider health ${providerName}`)) {
+    throw new Error('Provider Runtime Android self-test accepted the provider card as health evidence.')
+  }
   const fixture = createBaseResult({
     deviceSerial: 'emulator-self-test',
     apkPath: 'dist-apk/IsleMind-self-test.apk',
@@ -869,10 +1505,11 @@ function runSelfTest() {
   })
   fixture.sensitiveData = {
     fullCredentialLeak: false,
-    scannedFiles: 2,
+    scannedFiles: 3,
     scannedPaths: [
       providerRuntimeAndroidResultRelativePath,
       providerRuntimeAndroidRunLogRelativePath,
+      providerRuntimeRestartRecoveryEvidencePath,
     ],
     hits: [],
   }
@@ -913,6 +1550,15 @@ function runSelfTest() {
             signals: { inputShown: true, inputViewShown: true, servedEditText: true, currentFocusEditText: true, imeWindowVisible: true },
           }
         : undefined,
+      activationEvidence: id === 'provider-activation'
+        ? {
+            progress: { visible: true, ...providerRuntimeActivationEvidencePaths.progress },
+            result: { visible: true, ...providerRuntimeActivationEvidencePaths.result },
+          }
+        : undefined,
+      restartRecoveryEvidence: id === 'restart-recovery'
+        ? createRestartRecoveryEvidenceFixture()
+        : undefined,
     })
   }
   const knownSensitivePaths = new Set(fixture.sensitiveData.scannedPaths)
@@ -939,7 +1585,11 @@ function runSelfTest() {
     createdSelfTestEvidenceFiles.push(absolutePath)
   }
   try {
-    for (const evidencePath of [providerRuntimeAndroidResultRelativePath, providerRuntimeAndroidRunLogRelativePath]) {
+    for (const evidencePath of [
+      providerRuntimeAndroidResultRelativePath,
+      providerRuntimeAndroidRunLogRelativePath,
+      providerRuntimeRestartRecoveryEvidencePath,
+    ]) {
       ensureSelfTestEvidenceFile(evidencePath)
     }
     for (const scenario of fixture.scenarios) {
@@ -951,6 +1601,13 @@ function runSelfTest() {
         scenario.uia,
         ...stepEvidencePaths,
         ...(scenario.keyboardState?.evidence ? [scenario.keyboardState.evidence] : []),
+        ...(scenario.activationEvidence ? [
+          scenario.activationEvidence.progress.png,
+          scenario.activationEvidence.progress.uia,
+          scenario.activationEvidence.result.png,
+          scenario.activationEvidence.result.uia,
+        ] : []),
+        ...(scenario.restartRecoveryEvidence?.evidence ? [scenario.restartRecoveryEvidence.evidence] : []),
       ].filter(Boolean)) {
         ensureSelfTestEvidenceFile(evidencePath)
       }
@@ -959,7 +1616,11 @@ function runSelfTest() {
       ...fixture,
       sensitiveData: {
         ...fixture.sensitiveData,
-        scannedPaths: [relative(outputPath), relative(runtimeLogEvidence)],
+        scannedPaths: [
+          relative(outputPath),
+          relative(runtimeLogEvidence),
+          providerRuntimeRestartRecoveryEvidencePath,
+        ],
       },
     }
     if (!isPassing(passingFixture)) throw new Error('Provider Runtime Android self-test rejected normalized scenario evidence paths.')
@@ -1018,6 +1679,7 @@ function runSelfTest() {
     ['duplicate scanned path', { ...fixture.sensitiveData, scannedFiles: 3, scannedPaths: [relative(outputPath), relative(runtimeLogEvidence), relative(runtimeLogEvidence)] }],
     ['missing result path', { ...fixture.sensitiveData, scannedPaths: [relative(runtimeLogEvidence), 'test-evidence/qa/provider-runtime-android/step.uia.xml'] }],
     ['missing run log path', { ...fixture.sensitiveData, scannedPaths: [relative(outputPath), 'test-evidence/qa/provider-runtime-android/step.uia.xml'] }],
+    ['missing restart durable evidence path', { ...fixture.sensitiveData, scannedFiles: 2, scannedPaths: [relative(outputPath), relative(runtimeLogEvidence)] }],
     ['missing referenced path', { ...fixture.sensitiveData, scannedFiles: 3, scannedPaths: [relative(outputPath), relative(runtimeLogEvidence), 'test-evidence/qa/provider-runtime-android/missing.log'] }],
     ['missing hits array', { ...fixture.sensitiveData, hits: undefined }],
     ['non-empty hits', { ...fixture.sensitiveData, hits: [{ file: 'test-evidence/qa/provider-runtime-android/leak.log' }] }],
@@ -1063,11 +1725,89 @@ function runSelfTest() {
     ['errors array', { ...fixture, errors: null }, 'does not record errors as an array'],
     ['non-string error', { ...fixture, errors: ['valid collector error', ''] }, 'records non-string errors'],
     ['scenarios array', { ...fixture, scenarios: null }, 'does not record scenarios as an array'],
-    ['non-object scenario record', { ...fixture, scenarios: [...fixture.scenarios, null] }, 'scenario record 9 is not an object'],
-    ['missing scenario id', { ...fixture, scenarios: [...fixture.scenarios, { ...fixture.scenarios[0], id: '' }] }, 'scenario record 9 does not record id'],
-    ['unknown scenario id', { ...fixture, scenarios: [...fixture.scenarios, { ...fixture.scenarios[0], id: 'unexpected-provider-runtime-scenario' }] }, 'scenario record 9 id unexpected-provider-runtime-scenario is not required'],
+    ['non-object scenario record', { ...fixture, scenarios: [...fixture.scenarios, null] }, `scenario record ${requiredProviderRuntimeAndroidScenarios.length + 1} is not an object`],
+    ['missing scenario id', { ...fixture, scenarios: [...fixture.scenarios, { ...fixture.scenarios[0], id: '' }] }, `scenario record ${requiredProviderRuntimeAndroidScenarios.length + 1} does not record id`],
+    ['unknown scenario id', { ...fixture, scenarios: [...fixture.scenarios, { ...fixture.scenarios[0], id: 'unexpected-provider-runtime-scenario' }] }, `scenario record ${requiredProviderRuntimeAndroidScenarios.length + 1} id unexpected-provider-runtime-scenario is not required`],
     ['missing required scenario', { ...fixture, scenarios: fixture.scenarios.filter((scenario) => scenario.id !== 'android-back') }, 'Missing Provider Runtime Android scenario android-back'],
     ['duplicate required scenario', { ...fixture, scenarios: [...fixture.scenarios, fixture.scenarios.find((scenario) => scenario.id === 'android-back')] }, 'Provider Runtime Android scenario android-back is duplicated'],
+    ['activation progress semantics', {
+      ...fixture,
+      scenarios: fixture.scenarios.map((scenario) => scenario.id === 'provider-activation'
+        ? { ...scenario, activationEvidence: { ...scenario.activationEvidence, progress: { ...scenario.activationEvidence.progress, visible: false } } }
+        : scenario),
+    }, 'progress evidence does not prove visible=true'],
+    ['activation result capture', {
+      ...fixture,
+      scenarios: fixture.scenarios.map((scenario) => scenario.id === 'provider-activation'
+        ? { ...scenario, activationEvidence: { ...scenario.activationEvidence, result: { ...scenario.activationEvidence.result, uia: null } } }
+        : scenario),
+    }, 'result evidence uia is missing'],
+    ['restart recovery durable state', {
+      ...fixture,
+      scenarios: fixture.scenarios.map((scenario) => scenario.id === 'restart-recovery'
+        ? { ...scenario, restartRecoveryEvidence: { ...scenario.restartRecoveryEvidence, assistantMessage: null } }
+        : scenario),
+    }, 'durable state assistant message is missing'],
+    ['restart recovery conversation identity', {
+      ...fixture,
+      scenarios: fixture.scenarios.map((scenario) => scenario.id === 'restart-recovery'
+        ? { ...scenario, restartRecoveryEvidence: { ...scenario.restartRecoveryEvidence, conversationId: 'other-conversation' } }
+        : scenario),
+    }, 'durable state conversationId is other-conversation'],
+    ['restart recovery ordinary chat kind', {
+      ...fixture,
+      scenarios: fixture.scenarios.map((scenario) => scenario.id === 'restart-recovery'
+        ? {
+            ...scenario,
+            restartRecoveryEvidence: {
+              ...scenario.restartRecoveryEvidence,
+              run: { ...scenario.restartRecoveryEvidence.run, kind: 'agent' },
+            },
+          }
+        : scenario),
+    }, 'durable state assistant run is not chat'],
+    ['restart recovery terminal run state', {
+      ...fixture,
+      scenarios: fixture.scenarios.map((scenario) => scenario.id === 'restart-recovery'
+        ? {
+            ...scenario,
+            restartRecoveryEvidence: {
+              ...scenario.restartRecoveryEvidence,
+              run: { ...scenario.restartRecoveryEvidence.run, status: 'running' },
+            },
+          }
+        : scenario),
+    }, 'durable state assistant run is not succeeded'],
+    ['restart recovery terminal journal', {
+      ...fixture,
+      scenarios: fixture.scenarios.map((scenario) => scenario.id === 'restart-recovery'
+        ? { ...scenario, restartRecoveryEvidence: { ...scenario.restartRecoveryEvidence, journal: [] } }
+        : scenario),
+    }, 'durable state journal is missing'],
+    ['restart recovery journal linkage', {
+      ...fixture,
+      scenarios: fixture.scenarios.map((scenario) => scenario.id === 'restart-recovery'
+        ? {
+            ...scenario,
+            restartRecoveryEvidence: {
+              ...scenario.restartRecoveryEvidence,
+              journal: scenario.restartRecoveryEvidence.journal.map((entry) => ({ ...entry, runId: 'other-run' })),
+            },
+          }
+        : scenario),
+    }, 'journal has no linked terminal run.succeeded entry'],
+    ['restart recovery message linkage', {
+      ...fixture,
+      scenarios: fixture.scenarios.map((scenario) => scenario.id === 'restart-recovery'
+        ? {
+            ...scenario,
+            restartRecoveryEvidence: {
+              ...scenario.restartRecoveryEvidence,
+              run: { ...scenario.restartRecoveryEvidence.run, responseMessageId: 'wrong-response-message' },
+            },
+          }
+        : scenario),
+    }, 'response message does not match assistant message'],
     ['missing diagnostics', { ...fixture, diagnostics: null }, 'does not record diagnostics'],
     ['stale diagnostics', { ...fixture, diagnostics: { ...fixture.diagnostics, contractIssueCount: 99 } }, 'diagnostics do not match current contract state'],
   ]
@@ -1305,6 +2045,212 @@ function runCommand(command, args) {
   }
 }
 
+function startProviderFailureServer(logPath, options = {}) {
+  fs.writeFileSync(logPath, '', 'utf8')
+  const stateBuffer = new SharedArrayBuffer(4 * Int32Array.BYTES_PER_ELEMENT)
+  const state = new Int32Array(stateBuffer)
+  const instance = new Worker(__filename, {
+    workerData: {
+      mode: providerFailureWorkerMode,
+      logPath,
+      stateBuffer,
+      modelsDelayMs: options.modelsDelayMs ?? 6500,
+    },
+  })
+  Atomics.wait(state, 1, 0, 5000)
+  if (Atomics.load(state, 1) !== 1) {
+    instance.terminate()
+    throw new Error('Provider failure fixture server did not start.')
+  }
+  instance.unref?.()
+  const port = Atomics.load(state, 0)
+  return { instance, port, baseUrl: `http://127.0.0.1:${port}/v1`, state }
+}
+
+async function assertProviderFailureServerSelfTest() {
+  const temporaryLogPath = path.join(smokeDir, `.provider-runtime-server-self-test-${process.pid}.jsonl`)
+  fs.mkdirSync(smokeDir, { recursive: true })
+  let providerFailureServer = null
+  try {
+    providerFailureServer = startProviderFailureServer(temporaryLogPath, { modelsDelayMs: 5 })
+    const response = await fetch(`${providerFailureServer.baseUrl}/chat/completions`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', authorization: 'Bearer qa-self-test-key' },
+      body: JSON.stringify({ model: modelId, messages: [{ role: 'user', content: 'self-test' }] }),
+    })
+    if (response.status !== 503) throw new Error(`Provider Runtime Android self-test expected HTTP 503, got ${response.status}.`)
+    await response.arrayBuffer()
+    let entries = readProviderFailureRequestEvidenceFromPath(temporaryLogPath)
+    if (entries.length !== 1 || entries[0].method !== 'POST' || entries[0].url !== '/v1/chat/completions' || entries[0].status !== 503 || entries[0].kind !== 'fallback-failure') {
+      throw new Error(`Provider Runtime Android self-test recorded an invalid failure request: ${JSON.stringify(entries)}.`)
+    }
+    const recoveryResponse = await fetch(`${providerFailureServer.baseUrl}/chat/completions`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', authorization: 'Bearer qa-self-test-key' },
+      body: JSON.stringify({ model: modelId, stream: true, messages: [{ role: 'user', content: recoveryRequestMarker }] }),
+    })
+    if (recoveryResponse.status !== 200) throw new Error(`Provider Runtime Android self-test expected recovery HTTP 200, got ${recoveryResponse.status}.`)
+    const recoveryText = await recoveryResponse.text()
+    if (!recoveryText.includes(recoveryCompletionMarker)) {
+      throw new Error('Provider Runtime Android self-test did not receive the recovery completion sentinel.')
+    }
+    entries = readProviderFailureRequestEvidenceFromPath(temporaryLogPath)
+    if (entries.length !== 2 || entries[1].method !== 'POST' || entries[1].url !== '/v1/chat/completions' || entries[1].status !== 200 || entries[1].kind !== 'restart-recovery') {
+      throw new Error(`Provider Runtime Android self-test recorded an invalid recovery request: ${JSON.stringify(entries)}.`)
+    }
+    if (JSON.stringify(entries).includes('qa-self-test-key')) {
+      throw new Error('Provider Runtime Android self-test persisted a request credential.')
+    }
+    const modelsResponse = await fetch(`${providerFailureServer.baseUrl}/models`, {
+      headers: { authorization: 'Bearer qa-self-test-key' },
+    })
+    if (modelsResponse.status !== 200) throw new Error(`Provider Runtime Android self-test expected models HTTP 200, got ${modelsResponse.status}.`)
+    const modelsBody = await modelsResponse.json()
+    if (!Array.isArray(modelsBody.data) || modelsBody.data[0]?.id !== modelId) {
+      throw new Error(`Provider Runtime Android self-test received an invalid models response: ${JSON.stringify(modelsBody)}.`)
+    }
+  } finally {
+    if (providerFailureServer) stopProviderFailureServer(providerFailureServer)
+    fs.rmSync(temporaryLogPath, { force: true })
+  }
+  if (providerFailureServer && Atomics.load(providerFailureServer.state, 2) !== 1) {
+    throw new Error('Provider Runtime Android self-test did not close the failure server cleanly.')
+  }
+}
+
+function runProviderFailureWorker() {
+  const state = new Int32Array(workerData.stateBuffer)
+  const server = http.createServer((request, response) => {
+    let body = ''
+    request.setEncoding('utf8')
+    request.on('data', (chunk) => {
+      body += chunk
+    })
+    request.on('end', () => {
+      const isChatRequest = request.method === 'POST' && request.url === '/v1/chat/completions'
+      const isModelsRequest = request.method === 'GET' && request.url === '/v1/models'
+      const payload = tryParseJson(body) ?? {}
+      const isRestartRecoveryRequest = isChatRequest && JSON.stringify(payload.messages ?? []).includes(recoveryRequestMarker)
+      const status = isRestartRecoveryRequest ? 200 : isChatRequest ? 503 : isModelsRequest ? 200 : 404
+      const kind = isRestartRecoveryRequest ? 'restart-recovery' : isChatRequest ? 'fallback-failure' : isModelsRequest ? 'model-list' : 'not-found'
+      const finish = () => {
+        fs.appendFileSync(workerData.logPath, `${JSON.stringify({ method: request.method, url: request.url, status, kind })}\n`, 'utf8')
+        if (isRestartRecoveryRequest) {
+          writeProviderRuntimeRecoveryCompletion(response, payload.stream === true)
+          return
+        }
+        response.writeHead(status, { 'Connection': 'close', 'Content-Type': 'application/json' })
+        response.end(isModelsRequest
+          ? JSON.stringify({ object: 'list', data: [{ id: modelId, object: 'model', owned_by: 'islemind-qa' }] })
+          : JSON.stringify({ error: { message: 'qa_provider_runtime_failure', type: 'qa_http_failure' } }))
+      }
+      if (isModelsRequest) setTimeout(finish, Math.max(0, Number(workerData.modelsDelayMs) || 0))
+      else finish()
+    })
+  })
+  server.on('error', () => {
+    Atomics.store(state, 1, 2)
+    Atomics.notify(state, 1)
+  })
+  server.listen(0, '0.0.0.0', () => {
+    Atomics.store(state, 0, server.address().port)
+    Atomics.store(state, 1, 1)
+    Atomics.notify(state, 1)
+  })
+  parentPort?.on('message', (message) => {
+    if (message?.type !== 'close') return
+    server.close(() => {
+      Atomics.store(state, 2, 1)
+      Atomics.notify(state, 2)
+      parentPort?.close()
+    })
+    server.closeAllConnections?.()
+  })
+}
+
+function writeProviderRuntimeRecoveryCompletion(response, streaming) {
+  if (streaming) {
+    response.writeHead(200, {
+      'Content-Type': 'text/event-stream',
+      Connection: 'keep-alive',
+      'Cache-Control': 'no-cache',
+    })
+    response.write(`data: ${JSON.stringify({ choices: [{ delta: { content: recoveryCompletionMarker }, index: 0, finish_reason: null }] })}\n\n`)
+    response.write(`data: ${JSON.stringify({ choices: [{ delta: {}, index: 0, finish_reason: 'stop' }], usage: { prompt_tokens: 8, completion_tokens: 2, total_tokens: 10 } })}\n\n`)
+    response.write('data: [DONE]\n\n')
+    response.end()
+    return
+  }
+  response.writeHead(200, { 'Connection': 'close', 'Content-Type': 'application/json' })
+  response.end(JSON.stringify({
+    id: 'chatcmpl-provider-runtime-restart',
+    object: 'chat.completion',
+    model: modelId,
+    choices: [{ index: 0, message: { role: 'assistant', content: recoveryCompletionMarker }, finish_reason: 'stop' }],
+    usage: { prompt_tokens: 8, completion_tokens: 2, total_tokens: 10 },
+  }))
+}
+
+function stopProviderFailureServer(providerFailureServer) {
+  providerFailureServer.instance.postMessage({ type: 'close' })
+  Atomics.wait(providerFailureServer.state, 2, 0, 3000)
+  const closed = Atomics.load(providerFailureServer.state, 2) === 1
+  if (!closed) providerFailureServer.instance.terminate()
+  return closed
+}
+
+function configureAdbReverse(device, port) {
+  clearAdbReverse(device, port)
+  return runCommand('adb', ['-s', device, 'reverse', `tcp:${port}`, `tcp:${port}`]) !== null
+}
+
+function clearAdbReverse(device, port) {
+  runCommand('adb', ['-s', device, 'reverse', '--remove', `tcp:${port}`])
+}
+
+function readProviderFailureRequestEvidence() {
+  return readProviderFailureRequestEvidenceFromPath(providerFailureRequestEvidence)
+}
+
+function readProviderFailureRequestEvidenceFromPath(filePath) {
+  if (!fs.existsSync(filePath)) return []
+  return fs.readFileSync(filePath, 'utf8')
+    .split(/\r?\n/)
+    .filter(Boolean)
+    .map((line) => {
+      try { return JSON.parse(line) } catch { return null }
+    })
+    .filter(Boolean)
+}
+
+function canReadAppPrivateFiles(device) {
+  return runCommand('adb', ['-s', device, 'shell', 'run-as', appPackageName, 'pwd']) !== null
+}
+
+function clearRuntimeLog(device) {
+  runCommand('adb', [
+    '-s', device,
+    'shell',
+    'run-as',
+    appPackageName,
+    'sh',
+    '-c',
+    'rm -f files/islemind-runtime.jsonl islemind-runtime.jsonl cache/islemind-runtime.jsonl; for root in files cache; do [ -d "$root" ] && find "$root" -name islemind-runtime.jsonl -type f -print | while IFS= read -r file; do rm -f "$file"; done; done',
+  ])
+}
+
+function readRuntimeLogWithRetry(device, readable = true, maxAttempts = 6) {
+  if (!readable) return ''
+  for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
+    for (const candidate of ['files/islemind-runtime.jsonl', 'islemind-runtime.jsonl', 'cache/islemind-runtime.jsonl']) {
+      const text = runCommand('adb', ['-s', device, 'shell', 'run-as', appPackageName, 'cat', candidate])
+      if (text && String(text).trim()) return String(text)
+    }
+    if (attempt + 1 < maxAttempts) sleep(450)
+  }
+  return ''
+}
+
 function sleep(ms) {
   Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms)
 }
@@ -1363,6 +2309,14 @@ function readJsonFile(file) {
   }
 }
 
+function tryParseJson(value) {
+  try {
+    return value ? JSON.parse(value) : null
+  } catch {
+    return null
+  }
+}
+
 function resolveApkPath(expected = readExpectedAppConfig()) {
   if (process.env.QA_APK_PATH) return path.resolve(root, process.env.QA_APK_PATH)
   const version = expected.packageVersion || expected.expoVersion || 'missing-version'
@@ -1374,5 +2328,3 @@ function resolveApkPath(expected = readExpectedAppConfig()) {
 function relative(file) {
   return path.relative(root, file).replace(/\\/g, '/')
 }
-
-main()

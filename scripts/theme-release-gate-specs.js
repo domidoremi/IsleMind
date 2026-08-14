@@ -8,9 +8,10 @@ const root = path.resolve(__dirname, '..')
 const requiredThemeScripts = {
   'test:theme-system:source': 'node scripts/verify-theme-web-render.js --source-only',
   'test:theme-system:audit': 'node scripts/theme-system-audit.js',
+  'test:theme-contrast': 'bun scripts/theme-contrast-selftest.js',
   'test:theme-system:qa': 'node scripts/qa-coverage-audit.js --self-test=theme-system',
   'theme:release-gate-status': 'node scripts/theme-release-gate-specs.js --status',
-  'test:theme-system': 'bun run test:theme-system:source && bun run test:theme-system:audit && bun run test:theme-system:qa',
+  'test:theme-system': 'bun run test:theme-system:source && bun run test:theme-system:audit && bun run test:theme-contrast && bun run test:theme-system:qa',
 }
 
 const requiredThemeFiles = [
@@ -20,13 +21,11 @@ const requiredThemeFiles = [
   'src/types/index.ts',
   'app/_layout.tsx',
   'app/settings/preferences.tsx',
-  'docs/architecture/theme-system-liquid-glass-audit.md',
   'src/global.css',
   'src/components/main/SettingsScreenContent.tsx',
-  'src/services/appActionPolicy.ts',
-  'src/services/appCommandRouter.ts',
-  'src/services/builtinToolRegistry.ts',
-  'src/services/agent/agentToolRegistry.ts',
+  'src/presentation/features/settings/settingsActionCommand.ts',
+  'src/modules/integrations/conversationToolCatalog.ts',
+  'src/bootstrap/conversationToolCatalog.ts',
   'src/i18n/resources/en.json',
   'src/i18n/resources/zh-CN.json',
   'src/i18n/resources/ja.json',
@@ -40,6 +39,7 @@ const requiredThemeFiles = [
   'src/components/ui/isle/Dialog.tsx',
   'scripts/verify-theme-web-render.js',
   'scripts/theme-system-audit.js',
+  'scripts/theme-contrast-selftest.js',
   'scripts/qa-coverage-audit.js',
   'scripts/theme-qa-selftest.js',
 ]

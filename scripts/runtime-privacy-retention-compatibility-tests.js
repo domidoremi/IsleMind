@@ -13,7 +13,7 @@ const {
   RUNTIME_PRIVACY_RETENTION_COMPATIBILITY_EVAL_SCHEMA,
   RUNTIME_PRIVACY_RETENTION_COMPATIBILITY_FIXTURE_IDS,
   runRuntimePrivacyRetentionCompatibilityEvaluation,
-} = require('../src/services/runtimePrivacyRetentionCompatibilityEvaluation.ts')
+} = require('../src/modules/diagnostics/testing/runtimePrivacyRetentionCompatibilityEvaluation.ts')
 
 function registerTypeScriptSupport() {
   if (require.extensions['.ts']?.isRuntimePrivacyRetentionCompatibilityHook) return
@@ -73,6 +73,7 @@ function assertBaseline(item) {
   assert.equal(item.policy.portableExportSanitizesTraces, true, `${item.fixtureId} sanitizes traces`)
   assert.equal(item.policy.portableExportSanitizesAttachments, true, `${item.fixtureId} sanitizes attachments`)
   assert.equal(item.policy.portableExportSanitizesSkills, true, `${item.fixtureId} sanitizes skills`)
+  assert.equal(item.policy.portableExportSanitizesMcpServers, true, `${item.fixtureId} sanitizes MCP servers`)
   assert.equal(item.policy.resetClearsRuntimeLog, true, `${item.fixtureId} clears runtime logs on reset`)
   assert.equal(item.policy.resetClearsCompactState, true, `${item.fixtureId} clears compact state on reset`)
   assert.equal(item.policy.resetClearsProviderHealth, true, `${item.fixtureId} clears provider health on reset`)
@@ -87,6 +88,16 @@ function assertBaseline(item) {
   assert.equal(item.policy.rawContextBlocked, true, `${item.fixtureId} blocks raw context`)
   assert.equal(item.policy.rawToolArgumentsBlocked, true, `${item.fixtureId} blocks raw tool arguments`)
   assert.equal(item.policy.rawMediaFileDataBlocked, true, `${item.fixtureId} blocks raw media/file data`)
+  assert.equal(item.policy.generatedArtifactManifestSchema, 'islemind.media-generation-artifact-manifest.v1', `${item.fixtureId} uses the generated artifact manifest schema`)
+  assert.equal(item.policy.generatedArtifactManifestRequired, true, `${item.fixtureId} requires generated artifact manifests`)
+  assert.equal(item.policy.generatedArtifactLocalUriOnly, true, `${item.fixtureId} keeps generated artifact storage local-only`)
+  assert.equal(item.policy.generatedArtifactPromptDigestOnly, true, `${item.fixtureId} stores prompt digests instead of raw prompts`)
+  assert.equal(item.policy.generatedArtifactRawProviderPayloadBlocked, true, `${item.fixtureId} blocks generated artifact raw provider payloads`)
+  assert.equal(item.policy.generatedArtifactRetentionCleanupProven, true, `${item.fixtureId} proves generated artifact cleanup`)
+  assert.equal(item.policy.generatedArtifactCancellationLinked, true, `${item.fixtureId} links generated artifact cancellation`)
+  assert.equal(item.policy.mediaGenerationAdapterImplemented, false, `${item.fixtureId} keeps media generation adapter disabled`)
+  assert.equal(item.policy.mediaGenerationExecutionActionsAllowed, false, `${item.fixtureId} keeps media generation execution actions hidden`)
+  assert.equal(item.policy.mediaGenerationDefaultEnablementBlocked, true, `${item.fixtureId} keeps default media generation enablement blocked`)
   assert.equal(item.policy.networkCallsAllowed, false, `${item.fixtureId} does not enable network calls`)
 }
 
@@ -132,14 +143,16 @@ function run() {
       'full-reset-clears-runtime-artifacts',
       'restore-clears-prior-runtime-artifacts',
       'observability-sink-consent-policy',
+      'generated-media-artifact-cleanup-proof',
       'blocked-raw-runtime-diagnostics',
       'blocked-raw-media-file-retention',
+      'blocked-generated-media-artifact-cleanup',
       'blocked-unbounded-runtime-log',
       'blocked-high-frequency-telemetry-persistence',
       'blocked-portable-export-secret-leak',
       'blocked-reset-retaining-runtime-artifacts',
     ],
-    'runtime privacy fixtures cover runtime logs, runtime events, export/import, reset/restore, observability, and blocked paths',
+    'runtime privacy fixtures cover runtime logs, runtime events, export/import, reset/restore, observability, media generation cleanup, and blocked paths',
   )
 
   const evaluation = runRuntimePrivacyRetentionCompatibilityEvaluation({ now: () => 2940000000000 })
@@ -147,7 +160,7 @@ function run() {
   assert.equal(evaluation.diagnostics.length, RUNTIME_PRIVACY_RETENTION_COMPATIBILITY_FIXTURE_IDS.length, 'evaluation emits one diagnostic per fixture')
   assert.equal(evaluation.qualityGate.passed, true, `runtime privacy retention gate should pass: ${evaluation.qualityGate.failures.join(', ')}`)
 
-  for (const surface of ['runtime-log', 'runtime-event', 'export-import', 'reset-restore', 'observability-sink', 'blocked']) {
+  for (const surface of ['runtime-log', 'runtime-event', 'export-import', 'reset-restore', 'observability-sink', 'media-generation', 'blocked']) {
     assert.ok(evaluation.qualityGate.requiredSurfaces.includes(surface), `quality gate tracks ${surface}`)
   }
 
@@ -162,6 +175,13 @@ function run() {
   assertBlocked(diagnostic(evaluation, 'blocked-raw-media-file-retention'), [
     'raw-payload-persisted',
     'raw-media-file-retention',
+  ])
+  assertBlocked(diagnostic(evaluation, 'blocked-generated-media-artifact-cleanup'), [
+    'missing-generated-artifact-manifest',
+    'generated-artifact-raw-payload-retained',
+    'generated-artifact-cleanup-missing',
+    'generated-artifact-cancellation-missing',
+    'media-generation-execution-enabled',
   ])
   assertBlocked(diagnostic(evaluation, 'blocked-unbounded-runtime-log'), [
     'missing-retention-cap',
@@ -206,26 +226,43 @@ function run() {
   assertSourceIncludes(runtimeEventsSource, "strategy: 'runtime-log-redaction-v1'", 'runtime events carry redaction strategy')
 
   const runtimeEventContractSource = readSource('src/services/runtimeEventContract.ts')
-  assertSourceIncludes(runtimeEventContractSource, "RUNTIME_EVENT_SKIPPED_LOG_EVENTS: RuntimeControlPlaneEvent[] = ['token_usage.updated']", 'token usage skips runtime log persistence')
-  assertSourceIncludes(runtimeEventContractSource, "RUNTIME_EVENT_SKIPPED_SUBSCRIBER_EVENTS: RuntimeControlPlaneEvent[] = ['token_usage.updated']", 'token usage skips subscriber fan-out')
+  assertSourceIncludes(runtimeEventContractSource, "RUNTIME_EVENT_SKIPPED_LOG_EVENTS: readonly RuntimeControlPlaneEvent[] = Object.freeze(['token_usage.updated'])", 'token usage skips runtime log persistence')
+  assertSourceIncludes(runtimeEventContractSource, "RUNTIME_EVENT_SKIPPED_SUBSCRIBER_EVENTS: readonly RuntimeControlPlaneEvent[] = Object.freeze(['token_usage.updated'])", 'token usage skips subscriber fan-out')
 
-  const storageSource = readSource('src/services/storage.ts')
-  assertSourceIncludes(storageSource, 'sanitizeSettingsUrlFields(settings)', 'portable export sanitizes settings URL fields')
-  assertSourceIncludes(storageSource, 'providers: (providers ?? []).filter(isProviderLike).map(normalizeProvider)', 'portable export normalizes providers')
-  assertSourceIncludes(storageSource, 'apiKey: \'\',', 'portable export removes provider API keys')
-  assertSourceIncludes(storageSource, 'sanitizeAttachmentsForPersistence(message.attachments)', 'portable export sanitizes attachments')
-  assertSourceIncludes(storageSource, 'sanitizeTraceMetadata(trace.metadata)', 'portable export sanitizes trace metadata')
-  assertSourceIncludes(storageSource, 'redactSensitiveText(trace.content)', 'portable export redacts trace content')
-  assertSourceIncludes(storageSource, 'sanitizeSkillForBackup(skill)', 'portable export sanitizes skills')
-  assertSourceIncludes(storageSource, 'clearRuntimeLog()', 'reset and restore clear runtime logs')
-  assertSourceIncludes(storageSource, 'clearAllCompactStates()', 'reset and restore clear compact state')
-  assertSourceIncludes(storageSource, 'clearProviderHealthSnapshot()', 'reset and restore clear provider health')
-  assertSourceIncludes(storageSource, 'clearLocalEmbeddingArtifacts()', 'reset clears local embedding artifacts')
-  assertSourceIncludes(storageSource, 'clearStagedApkDownloads()', 'reset clears staged APK downloads')
-  assertSourceIncludes(storageSource, 'clearKnownSearchSecureKeys()', 'reset and restore clear search keys')
-  assertSourceIncludes(storageSource, 'clearKnownObservabilitySecureKeys()', 'reset and restore clear observability keys')
-  assertSourceIncludes(storageSource, 'clearRestoreRuntimeArtifacts()', 'import restore clears prior runtime artifacts')
-  assertSourceIncludes(storageSource, 'observabilitySinkApiKeyConfigured: false', 'import restore resets observability key configured state')
+  const portableResetSource = readSource('src/bootstrap/portableDataReset.ts')
+  const portablePayloadSource = readSource('src/modules/data-management/application/portableDataPayload.ts')
+  const portableImportRecoverySource = readSource('src/bootstrap/portableImportRecovery.ts')
+  assertSourceIncludes(portablePayloadSource, 'sanitizeSettingsForPortableExport(settings)', 'portable export delegates settings URL sanitization to the Settings module')
+  const settingsPortableExportSource = readSource('src/modules/settings/settingsPortableExportPolicy.ts')
+  assertSourceIncludes(settingsPortableExportSource, 'PORTABLE_SETTINGS_URL_FIELDS', 'Settings owns the portable URL-field allowlist')
+  assertSourceIncludes(settingsPortableExportSource, 'sanitizeProviderPortableExportUrl', 'Settings sanitizes every portable URL field through the provider-neutral URL policy')
+  assertSourceIncludes(portablePayloadSource, '.filter(isProviderLike)', 'portable export normalizes admitted providers')
+  assertSourceIncludes(portablePayloadSource, 'apiKey: \'\',', 'portable export removes provider API keys')
+  assertSourceIncludes(portablePayloadSource, 'sanitizeAttachmentsForPortableData(message.attachments)', 'portable export sanitizes attachments')
+  assertSourceIncludes(portablePayloadSource, 'sanitizeTraceMetadata(trace.metadata)', 'portable export sanitizes trace metadata')
+  assertSourceIncludes(portablePayloadSource, 'redactSensitiveText(trace.content)', 'portable export redacts trace content')
+  assertSourceIncludes(portablePayloadSource, 'sanitizeSkillForBackup(skill)', 'portable export sanitizes skills')
+  assertSourceIncludes(portablePayloadSource, 'sanitizeMcpServerForPortableExport', 'portable export sanitizes MCP server metadata')
+  assertSourceIncludes(portablePayloadSource, 'sanitizeProviderPortableExportUrl(normalized.url)', 'portable export redacts MCP URL userinfo, query secrets, and fragments through the Providers policy')
+  const providerPortableExportSource = readSource('src/modules/providers/providerPortableExportPolicy.ts')
+  assertSourceIncludes(providerPortableExportSource, 'isSensitiveProviderPortableQueryParamKey', 'Providers identifies sensitive portable URL query parameters')
+  assertSourceIncludes(providerPortableExportSource, 'if (parsed.username || parsed.password) return undefined', 'Providers rejects portable URLs containing userinfo')
+  assertSourceIncludes(providerPortableExportSource, "parsed.hash = ''", 'Providers removes portable URL fragments')
+  assertSourceIncludes(portableResetSource, 'clearRuntimeLog()', 'reset clears runtime logs')
+  assertSourceIncludes(portableResetSource, 'clearAllCompactStates()', 'reset clears compact state')
+  assertSourceIncludes(portableResetSource, 'clearProviderHealthSnapshot()', 'reset clears provider health')
+  assertSourceIncludes(portableResetSource, 'clearLocalEmbeddingArtifacts', 'reset clears local embedding artifacts')
+  assertSourceIncludes(portableResetSource, 'clearStagedApkDownloads()', 'reset clears staged APK downloads')
+  assertSourceIncludes(portableResetSource, 'clearKnownSearchSecureKeys()', 'reset clears search keys')
+  assertSourceIncludes(portableResetSource, 'clearKnownObservabilitySecureKeys()', 'reset clears observability keys')
+  assertSourceIncludes(portableImportRecoverySource, 'postCommit: async () =>', 'portable import invalidates derived state only after commit')
+  assertSourceIncludes(portableImportRecoverySource, 'clearProviderHealthSnapshot()', 'committed portable import clears provider health')
+  assertSourceIncludes(portableImportRecoverySource, 'clearAllCompactStates()', 'committed portable import clears compact state')
+  assertSourceIncludes(portableImportRecoverySource, 'clearRuntimeLog()', 'committed portable import clears runtime logs')
+  assertSourceIncludes(portableImportRecoverySource, 'clearCompactUsageRecords()', 'committed portable import clears compact usage')
+  assertSourceIncludes(portableImportRecoverySource, '[...KNOWN_SEARCH_SECURE_KEYS, OBSERVABILITY_SINK_API_KEY]', 'portable import includes search and observability secrets in verified recovery')
+  assertSourceIncludes(portableImportRecoverySource, "kind: 'secure_key', secureKey, target: null", 'portable import clears auxiliary secrets through its secure-state participant')
+  assertSourceIncludes(portablePayloadSource, 'observabilitySinkApiKeyConfigured: false', 'import restore resets observability key configured state')
 
   const observabilitySource = readSource('src/services/observabilityCompatibilityEvaluation.ts')
   assertSourceIncludes(observabilitySource, 'missing-user-opt-in', 'observability policy blocks missing user opt-in')
@@ -234,6 +271,23 @@ function run() {
   assertSourceIncludes(observabilitySource, 'per-event-high-frequency-blocked', 'observability policy blocks per-event high-frequency export')
   assertSourceIncludes(observabilitySource, 'observability-sink-redaction-v1', 'observability sink uses an explicit redaction strategy')
   assertSourceIncludes(observabilitySource, 'networkCallsAllowed: false', 'observability adapter payload remains dry-run and non-networked')
+
+  const mediaGenerationSource = readSource('src/services/mediaGenerationContract.ts')
+  const mediaGenerationCoreSource = readSource('src/core/mediaGenerationContracts.ts')
+  assertSourceIncludes(mediaGenerationCoreSource, 'MEDIA_GENERATION_ARTIFACT_MANIFEST_SCHEMA', 'core owns the generated artifact manifest schema')
+  assertSourceIncludes(mediaGenerationCoreSource, 'MEDIA_GENERATION_ADAPTER_IMPLEMENTED = false', 'media generation adapter remains disabled while cleanup proof is only diagnostic')
+  assertSourceIncludes(mediaGenerationSource, 'summarizeMediaGenerationAdapterProofWorklist', 'media generation contract exposes adapter proof worklist counts')
+  assertSourceIncludes(mediaGenerationSource, 'rawPrompt', 'media generation manifest blocks raw prompts')
+  assertSourceIncludes(mediaGenerationSource, 'base64Data', 'media generation manifest blocks base64 payload persistence')
+  assertSourceIncludes(mediaGenerationSource, 'cleanupState', 'media generation manifest requires cleanup state')
+  assertSourceIncludes(mediaGenerationSource, 'abortControllerLinked', 'media generation manifest requires cancellation linkage')
+
+  const runtimePrivacySource = readSource('src/modules/diagnostics/testing/runtimePrivacyRetentionCompatibilityEvaluation.ts')
+  assertSourceIncludes(runtimePrivacySource, 'generated-media-artifact-cleanup-proof', 'runtime privacy retention gate includes generated media cleanup proof')
+  assertSourceIncludes(runtimePrivacySource, 'blocked-generated-media-artifact-cleanup', 'runtime privacy retention gate blocks missing generated media cleanup proof')
+  assertSourceIncludes(runtimePrivacySource, 'MEDIA_GENERATION_ARTIFACT_MANIFEST_SCHEMA', 'runtime privacy retention gate shares the media generation artifact schema')
+  assertSourceIncludes(runtimePrivacySource, 'MEDIA_GENERATION_ADAPTER_IMPLEMENTED', 'runtime privacy retention gate mirrors disabled generation adapter state')
+  assertSourceIncludes(runtimePrivacySource, 'mediaGenerationExecutionActionsAllowed: summarizeMediaGenerationAdapterProofWorklist().composerExecutionActionAllowed', 'runtime privacy retention gate keeps generation execution actions controlled by the proof worklist')
 
   console.log('Runtime privacy retention compatibility tests passed')
 }

@@ -1,11 +1,18 @@
-import type { Message } from '@/types'
+import type { Message } from '@/types/chatContracts'
 import { st } from '@/i18n/service'
-
 export function internalOutputHiddenMessage(): string {
   return st(
     'chatRunner.error.internalOutputHidden',
     undefined,
     '这条回复包含内部工具输出，已隐藏。请重新发送问题。'
+  )
+}
+
+export function providerToolSynthesisFailureMessage(): string {
+  return st(
+    'chatRunner.error.providerToolSynthesisFailed',
+    undefined,
+    '工具调用已经完成，但最终回复生成失败。请重试本次回复，无需重新发送问题。'
   )
 }
 
@@ -36,10 +43,43 @@ export function isInternalChatDiagnosticOutput(value: string | undefined): boole
 }
 
 export function sanitizeInternalChatOutputText(value: string | undefined): string {
-  const text = value ?? ''
+  const text = stripInternalToolProtocolBlocks(
+    stripInternalStatusPreamble(splitTaggedThinkingOutputText(value).visibleText),
+  )
   const androidIntentOutput = formatAndroidIntentDiagnosticOutput(normalizeDiagnosticText(text))
   if (androidIntentOutput) return androidIntentOutput
   return isInternalChatDiagnosticOutput(text) ? internalOutputHiddenMessage() : text
+}
+
+export function extractTaggedThinkingOutputText(value: string | undefined): string {
+  return splitTaggedThinkingOutputText(value).thinkingText
+}
+
+export function splitTaggedThinkingOutputText(value: string | undefined): { visibleText: string; thinkingText: string } {
+  const text = value ?? ''
+  if (!/<\/?(?:think|thinking|thought|reasoning)\b/i.test(text)) {
+    return { visibleText: text, thinkingText: '' }
+  }
+  const thinkingParts: string[] = []
+  let visibleText = ''
+  let cursor = 0
+  const tagPattern = /<(think|thinking|thought|reasoning)\b[^>]*>([\s\S]*?)(?:<\/\1\s*>|$)/gi
+  let match: RegExpExecArray | null
+  while ((match = tagPattern.exec(text))) {
+    visibleText += text.slice(cursor, match.index)
+    const thinking = (match[2] ?? '').trim()
+    if (thinking) thinkingParts.push(thinking)
+    cursor = tagPattern.lastIndex
+  }
+  visibleText += text.slice(cursor)
+  visibleText = visibleText
+    .replace(/<\/(?:think|thinking|thought|reasoning)\s*>/gi, '')
+    .replace(/^\s+/, '')
+    .replace(/\n{3,}/g, '\n\n')
+  return {
+    visibleText,
+    thinkingText: thinkingParts.join('\n\n').trim(),
+  }
 }
 
 export function sanitizeMessageInternalOutput(message: Message): Message {
@@ -65,6 +105,18 @@ function normalizeDiagnosticText(value: string | undefined): string {
     .replace(/^```(?:json|jsonc)?\s*/i, '')
     .replace(/\s*```$/i, '')
     .trim()
+}
+
+function stripInternalStatusPreamble(text: string): string {
+  return text.replace(/^\s*(?:生成|思考|推理|检索|搜索|工具|generating|thinking|reasoning|retrieving|searching)\s*[·:：-]\s*\.{1,6}\s*(?:\r?\n)+/i, '')
+}
+
+function stripInternalToolProtocolBlocks(text: string): string {
+  return text
+    .replace(/<\s*(islemind_mcp_call|tool_call)\b[^>]*>[\s\S]*?(?:<\/\s*\1\s*>|$)/gi, '')
+    .replace(/<\/\s*(?:islemind_mcp_call|tool_call)\s*>/gi, '')
+    .replace(/\n{3,}/g, '\n\n')
+    .trimStart()
 }
 
 function formatAndroidIntentDiagnosticOutput(text: string): string | undefined {

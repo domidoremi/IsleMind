@@ -15,7 +15,7 @@ const {
   PROVIDER_RUNTIME_GATEWAY_OUTCOME_SCHEMA,
   buildProviderRuntimeGatewayOutcome,
   emitProviderRuntimeGatewayOutcome,
-} = require('../src/services/ai/providerRuntimeGateway.ts')
+} = require('../src/bootstrap/providerRuntimeGateway.ts')
 const { runtimeLogEventForRuntimeEvent } = require('../src/services/runtimeEventContract.ts')
 
 function registerTypeScriptSupport() {
@@ -29,12 +29,12 @@ function registerTypeScriptSupport() {
   }
 
   Module._load = function loadWithMocks(request, parent, isMain) {
-    if (request === '@/services/ai/providerRuntimeDiagnostics') {
+    if (request === '@/bootstrap/providerRuntimeDiagnostics') {
       return {
         runtimeLogOptions: (req) => req.runtimeLog,
       }
     }
-    if (request === '@/services/ai/providerTraceUtils') {
+    if (request === '@/bootstrap/providerTracePolicy') {
       return {
         createProviderTrace: (type, providerType, title, content, status, id, metadata) => ({
           id,
@@ -68,13 +68,6 @@ function registerTypeScriptSupport() {
           emittedEvents.push(event)
           return event
         },
-      }
-    }
-    if (request === '@/utils/traceSafety') {
-      return {
-        redactSensitiveText: (value) => String(value)
-          .replace(/sk-[A-Za-z0-9_-]+/g, '[redacted]')
-          .replace(/Authorization:\s*Bearer\s+[A-Za-z0-9_.-]+/gi, 'Authorization: Bearer [redacted]'),
       }
     }
     return originalLoad.call(this, request, parent, isMain)
@@ -269,13 +262,15 @@ async function run() {
   assert.equal(emittedEvents[0].legacyData.transport, 'sse', 'ready legacy gateway events carry transport')
   assert.equal(emittedEvents[0].legacyData.structuredOutputRequestShape, 'responses-json-schema', 'ready legacy gateway events carry route-level structured-output shape')
 
-  const providerRuntimeGatewaySource = readSource('src/services/ai/providerRuntimeGateway.ts')
+  const providerRuntimeGatewaySource = readSource('src/bootstrap/providerRuntimeGateway.ts')
   assert.ok(providerRuntimeGatewaySource.includes('buildStructuredOutputGatewayPlan'), 'provider runtime gateway reuses shared structured-output gateway planning')
   assert.ok(providerRuntimeGatewaySource.includes("event: 'provider.gateway.outcome'"), 'provider runtime gateway emits typed runtime events')
   assert.ok(providerRuntimeGatewaySource.includes('legacyData'), 'provider runtime gateway preserves legacy runtime-log summaries')
   assert.ok(providerRuntimeGatewaySource.includes('runtimeLogOptions(req)'), 'provider runtime gateway honors runtime log options')
   assert.ok(providerRuntimeGatewaySource.includes('sanitizeGatewayText'), 'provider runtime gateway sanitizes blocked error text')
   assert.ok(providerRuntimeGatewaySource.includes('420'), 'provider runtime gateway bounds blocked error text')
+  assert.equal(fs.existsSync(path.join(root, 'src/services/ai/providerRuntimeGateway.ts')), false, 'retired service gateway cannot return')
+  assert.equal(fs.existsSync(path.join(root, 'src/services/ai/providerRuntimePipeline.ts')), false, 'retired service pipeline cannot return')
 
   const runtimeTimelineSource = readSource('src/services/runtimeTimeline.ts')
   assert.ok(runtimeTimelineSource.includes('provider.gateway.outcome'), 'runtime timeline classifies provider gateway outcomes')

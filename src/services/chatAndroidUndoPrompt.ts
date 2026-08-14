@@ -1,5 +1,6 @@
-import type { Message, ProcessTrace } from '@/types'
-import { clampAgentOutput, redactSensitiveText } from '@/services/agent/agentTrace'
+import type { Message } from '@/types/chatContracts'
+import type { ProcessTrace } from '@/core'
+import { clampTraceText, redactSensitiveText } from '@/core'
 
 const ANDROID_UNDO_OPERATIONS_PROMPT_LIMIT = 2400
 const ANDROID_UNDO_OPERATION_PROMPT_ITEM_LIMIT = 1200
@@ -39,7 +40,7 @@ export function boundedAndroidUndoResult(message: Message): string {
 
 export function safeChatPromptText(value: unknown, limit: number): string {
   if (typeof value !== 'string') return ''
-  return clampAgentOutput(redactSensitiveText(value.trim()), limit).trim()
+  return clampTraceText(redactSensitiveText(value.trim()), limit).trim()
 }
 
 function collectAndroidUndoOperationsFromMessage(message: Message): unknown[] {

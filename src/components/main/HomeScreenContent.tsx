@@ -2,18 +2,24 @@ import { useEffect, useMemo, useState } from 'react'
 import { ChatWorkspace } from '@/components/chat/ChatWorkspace'
 import { useChatStore } from '@/store/chatStore'
 import { useSettingsStore } from '@/store/settingsStore'
-import { getPolicyPreferredProviderModel } from '@/services/ai/policy/providerModelAccess'
+import { getPolicyPreferredProviderModel } from '@/bootstrap/providerModelAccess'
 
 interface HomeScreenContentProps {
+  active?: boolean
   embedded?: boolean
   initialDraft?: string
   initialDraftKey?: string | number
+  restoreInitialDraftIfEmpty?: boolean
+  requestedOutputMode?: 'auto' | 'reply' | 'work-artifact'
+  shellNavigation?: boolean
+  topChromeInset?: number
+  showSetupEmptyState?: boolean
   settingsTransitionActive?: boolean
   onHistory?: () => void
   onSettings?: () => void
 }
 
-export function HomeScreenContent({ embedded = false, initialDraft, initialDraftKey, settingsTransitionActive = false, onHistory, onSettings }: HomeScreenContentProps) {
+export function HomeScreenContent({ active = true, embedded = false, initialDraft, initialDraftKey, restoreInitialDraftIfEmpty, requestedOutputMode = 'auto', shellNavigation = false, topChromeInset = 0, showSetupEmptyState = true, settingsTransitionActive = false, onHistory, onSettings }: HomeScreenContentProps) {
   const conversations = useChatStore((state) => state.conversations)
   const currentId = useChatStore((state) => state.currentId)
   const create = useChatStore((state) => state.create)
@@ -28,6 +34,7 @@ export function HomeScreenContent({ embedded = false, initialDraft, initialDraft
   )
 
   useEffect(() => {
+    if (!active) return
     let mounted = true
     void getConfiguredProviders().then((configuredProviders) => {
       if (!mounted) return
@@ -56,7 +63,8 @@ export function HomeScreenContent({ embedded = false, initialDraft, initialDraft
       if (existing) {
         select(existing.id)
       } else {
-        create(primary.id, model)
+        const id = create(primary.id, model)
+        select(id)
       }
     })
     return () => {
@@ -73,6 +81,7 @@ export function HomeScreenContent({ embedded = false, initialDraft, initialDraft
     getConfiguredProviders,
     select,
     settings,
+    active,
   ])
 
   const visibleConversation = useMemo(() => {
@@ -86,9 +95,15 @@ export function HomeScreenContent({ embedded = false, initialDraft, initialDraft
   return (
     <ChatWorkspace
       conversation={visibleConversation}
+      active={active}
       embedded={embedded}
       initialDraft={initialDraft}
       initialDraftKey={initialDraftKey}
+      restoreInitialDraftIfEmpty={restoreInitialDraftIfEmpty}
+      initialRequestedOutputMode={requestedOutputMode}
+      shellNavigation={shellNavigation}
+      topChromeInset={topChromeInset}
+      showSetupEmptyState={showSetupEmptyState}
       settingsTransitionActive={settingsTransitionActive}
       onHistory={onHistory}
       onSettings={onSettings}

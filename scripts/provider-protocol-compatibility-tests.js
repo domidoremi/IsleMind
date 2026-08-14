@@ -13,7 +13,7 @@ const {
   PROVIDER_PROTOCOL_COMPATIBILITY_EVAL_SCHEMA,
   PROVIDER_PROTOCOL_COMPATIBILITY_FIXTURE_IDS,
   runProviderProtocolCompatibilityEvaluation,
-} = require('../src/services/providerProtocolCompatibilityEvaluation.ts')
+} = require('../src/modules/providers/testing/providerProtocolCompatibilityEvaluation.ts')
 
 function registerTypeScriptSupport() {
   if (require.extensions['.ts']?.isProviderProtocolCompatibilityHook) return
