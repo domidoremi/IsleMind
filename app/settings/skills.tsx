@@ -1,11 +1,11 @@
 import { useLocalSearchParams } from 'expo-router'
 import { useTranslation } from 'react-i18next'
 import { SettingsPageShell } from '@/components/settings/SettingsPageShell'
-import { type AgentWorkflowSettingsFocus, type PluginManifestSettingsFocus } from '@/components/settings/SkillSettingsContent'
-import { createLazyComponent } from '@/utils/lazyLoad'
+import { type PluginManifestSettingsFocus, type WorkflowSettingsFocus } from '@/components/settings/SkillSettingsContent'
+import { createLazyComponentWithPreload } from '@/utils/lazyLoad'
 
 // 懒加载技能设置内容
-const SkillSettingsContent = createLazyComponent(
+const SkillSettingsContent = createLazyComponentWithPreload(
   () => import('@/components/settings/SkillSettingsContent').then((module) => ({ default: module.SkillSettingsContent }))
 )
 
@@ -15,9 +15,9 @@ export default function SkillsSettingsScreen() {
   const requestedFocus = routeParamText(params.focus)
   const runtimeRepairSource = routeParamText(params.source)
   const runtimeRepairTarget = routeParamText(params.target)
-  const workflowFocus: AgentWorkflowSettingsFocus | undefined = requestedFocus === 'agent-workflow'
+  const workflowFocus: WorkflowSettingsFocus | undefined = requestedFocus === 'workflow'
     ? {
-        focus: 'agent-workflow',
+        focus: 'workflow',
         reason: routeParamText(params.reason),
         workflowId: routeParamText(params.workflowId),
         workflowName: routeParamText(params.workflowName),

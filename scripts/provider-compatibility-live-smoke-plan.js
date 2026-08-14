@@ -12,7 +12,7 @@ registerTypeScriptSupport()
 const {
   PROVIDER_COMPATIBILITY_EVIDENCE,
   resolveProviderCompatibilityLiveSmokeStatus,
-} = require('../src/services/ai/providerCompatibilityContract.ts')
+} = require('../src/modules/providers/providerCompatibilityCatalog.ts')
 
 function registerTypeScriptSupport() {
   if (require.extensions['.ts']?.isProviderCompatibilityLiveSmokePlanHook) return

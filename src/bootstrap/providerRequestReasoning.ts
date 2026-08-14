@@ -1,0 +1,40 @@
+import { createProviderRequestReasoningPolicy, type ProviderRuntimeChatRequest } from '@/modules/providers'
+import { modelDisallowsAnthropicSampling } from '@/utils/modelReasoning'
+import {
+  buildOpenAIResponsesReasoning,
+  isKimiSamplingLocked,
+  isXiaomiMimoThinkingActive,
+  normalizeAnthropicThinking,
+  normalizeDashScopeThinking,
+  normalizeDeepSeekThinking,
+  normalizeGoogleThinkingConfig,
+  normalizeKimiPreservedThinking,
+  normalizeKimiThinking,
+  normalizeMiniMaxThinking,
+  normalizeOpenAIReasoningEffort,
+  normalizeSiliconFlowThinking,
+  normalizeXiaomiMimoThinking,
+  resolveProviderRequestParameters,
+  shouldIncludeOpenAIResponsesEncryptedReasoning,
+  shouldRequestMiniMaxReasoningSplit,
+} from './providerRequestPolicies'
+
+export const providerRequestReasoningPolicy = createProviderRequestReasoningPolicy<ProviderRuntimeChatRequest>({
+  normalizeDeepSeekThinking,
+  normalizeDashScopeThinking,
+  normalizeSiliconFlowThinking,
+  normalizeKimiThinking,
+  normalizeKimiPreservedThinking,
+  normalizeMiniMaxThinking,
+  shouldRequestMiniMaxReasoningSplit,
+  normalizeOpenAIReasoningEffort,
+  normalizeXiaomiMimoThinking,
+  isKimiSamplingLocked,
+  isXiaomiMimoThinkingActive,
+  normalizeAnthropicThinking,
+  modelDisallowsAnthropicSampling,
+  normalizeGoogleThinkingConfig,
+  buildOpenAIResponsesReasoning,
+  shouldIncludeOpenAIResponsesEncryptedReasoning,
+  resolveParameters: (request, options) => resolveProviderRequestParameters(request, options),
+})

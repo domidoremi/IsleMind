@@ -13,7 +13,7 @@ const {
   MODEL_ROUTING_COMPATIBILITY_EVAL_SCHEMA,
   MODEL_ROUTING_COMPATIBILITY_FIXTURE_IDS,
   runModelRoutingCompatibilityEvaluation,
-} = require('../src/services/modelRoutingCompatibilityEvaluation.ts')
+} = require('../src/modules/providers/testing/modelRoutingCompatibilityEvaluation.ts')
 
 function registerTypeScriptSupport() {
   if (require.extensions['.ts']?.isModelRoutingCompatibilityHook) return

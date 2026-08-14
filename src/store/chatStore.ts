@@ -1,30 +1,33 @@
 import { create } from 'zustand'
-import type {
-  Conversation,
-  ConversationGenerationParameterKey,
-  ConversationGenerationParameterOverrides,
-  Message,
-  ProcessTrace,
-} from '@/types'
-import { getModelConfig } from '@/types'
-import { loadData, saveData } from '@/services/storage'
-import { localDataStore } from '@/services/localDataStore'
+import type { Conversation, ConversationGenerationParameterKey, ConversationGenerationParameterOverrides, Message } from '@/types/chatContracts'
+import type { ProcessTrace } from '@/core'
+import { getModelConfig } from '@/types/modelCatalog'
+import {
+  loadConversationRecords,
+  readActiveConversationSelection,
+  replaceConversationRecords,
+  saveConversationRecord,
+  writeActiveConversationSelection,
+} from '@/presentation/features/conversations/conversationStorePersistenceCommand'
+import {
+  cancelAllConversationAssistantDetachedWork,
+  cancelConversationAssistantDetachedWork,
+} from '@/bootstrap/conversationAssistantDetachedWorkRegistry'
 import { st } from '@/i18n/service'
-import { resolveProviderModelAliasAccess } from '@/services/ai/policy/providerModelAccess'
+import { resolveProviderModelAliasAccess } from '@/bootstrap/providerModelAccess'
 import { getReasoningEffortOptions } from '@/utils/modelReasoning'
 import { resolveProviderModelAlias } from '@/utils/providerModels'
-import { sanitizeProcessTraceForBoundary, sanitizeProcessTracesForBoundary } from '@/utils/traceSafety'
+import { sanitizeProcessTraceForBoundary, sanitizeProcessTracesForBoundary } from '@/core'
 import { sanitizeAttachmentsForPersistence } from '@/services/attachmentContract'
 import { abortAllStreams, abortStream } from '@/services/chatStreamLifecycle'
 import { sanitizeMessageInternalOutput } from '@/services/chatInternalOutputGuard'
-import { PROVIDER_PLATFORM_DEFAULT_TEMPERATURE } from '@/services/ai/providerParameterDefaults'
+import { PROVIDER_PLATFORM_DEFAULT_TEMPERATURE } from '@/modules/providers'
 import {
   clampConversationGenerationParameter,
-  conversationGenerationParameterDiffersFromDefault,
   resolveConversationGenerationParameterDefault,
   resolveConversationGenerationParameterRanges,
-  type ConversationGenerationParameterRanges,
-} from '@/services/ai/conversationGenerationParameters'
+} from '@/bootstrap/providerConversationGeneration'
+import type { ConversationGenerationParameterRanges } from '@/modules/providers'
 import { useSettingsStore } from './settingsStore'
 
 function generateId(): string {
@@ -103,53 +106,32 @@ function getConversationGenerationParameterValue(
   return typeof value === 'number' && Number.isFinite(value) ? value : undefined
 }
 
-function generationParameterDiffersFromDefault(
-  key: ConversationGenerationParameterKey,
-  value: number | undefined,
-  settings: ReturnType<typeof useSettingsStore.getState>['settings'],
-  ranges: ConversationGenerationParameterRanges
-): boolean {
-  return conversationGenerationParameterDiffersFromDefault(key, value, ranges, {
-    temperature: settings.defaultTemperature,
-    maxTokens: settings.defaultMaxTokens,
-  })
-}
-
 function inferGenerationParameterOverrides(
   conversation: Conversation,
-  settings: ReturnType<typeof useSettingsStore.getState>['settings'],
-  ranges: ConversationGenerationParameterRanges
 ): ConversationGenerationParameterOverrides | undefined {
   const inferred: ConversationGenerationParameterOverrides = {}
   for (const key of GENERATION_PARAMETER_KEYS) {
-    if (generationParameterDiffersFromDefault(key, getConversationGenerationParameterValue(conversation, key), settings, ranges)) {
-      inferred[key] = true
-    }
+    if (getConversationGenerationParameterValue(conversation, key) !== undefined) inferred[key] = true
   }
   return compactGenerationParameterOverrides(inferred)
 }
 
 function resolveStoredGenerationParameterOverrides(
   conversation: Conversation,
-  settings: ReturnType<typeof useSettingsStore.getState>['settings'],
-  ranges: ConversationGenerationParameterRanges
 ): ConversationGenerationParameterOverrides | undefined {
   if (hasOwnProperty(conversation, 'generationParameterOverrides')) {
     return compactGenerationParameterOverrides(conversation.generationParameterOverrides, true)
   }
-  return inferGenerationParameterOverrides(conversation, settings, ranges)
+  return inferGenerationParameterOverrides(conversation)
 }
 
 function mergeGenerationParameterOverrides(
   conversation: Conversation,
   updates: Partial<Conversation>,
-  settings: ReturnType<typeof useSettingsStore.getState>['settings'],
-  providers: ReturnType<typeof useSettingsStore.getState>['providers']
 ): ConversationGenerationParameterOverrides | undefined {
-  const ranges = resolveConversationParameterRanges(conversation, providers)
   const explicitOverrides = updates.generationParameterOverrides
   const merged: ConversationGenerationParameterOverrides = {
-    ...(resolveStoredGenerationParameterOverrides(conversation, settings, ranges) ?? {}),
+    ...(resolveStoredGenerationParameterOverrides(conversation) ?? {}),
   }
 
   for (const key of GENERATION_PARAMETER_KEYS) {
@@ -163,11 +145,7 @@ function mergeGenerationParameterOverrides(
     }
     if (hasOwnProperty(updates, key)) {
       const value = getConversationGenerationParameterValue(updates as Pick<Conversation, ConversationGenerationParameterKey>, key)
-      if (generationParameterDiffersFromDefault(key, value, settings, ranges)) {
-        merged[key] = true
-      } else {
-        delete merged[key]
-      }
+      if (value !== undefined) merged[key] = true
     }
   }
 
@@ -213,7 +191,6 @@ interface ChatState {
   getCurrent: () => Conversation | null
 }
 
-const ACTIVE_CONVERSATION_KEY = 'ACTIVE_CONVERSATION'
 const DEFAULT_CONVERSATION_TEMPERATURE = PROVIDER_PLATFORM_DEFAULT_TEMPERATURE
 const DEFAULT_CONVERSATION_REASONING_EFFORT: Conversation['reasoningEffort'] = 'low'
 const GENERATION_PARAMETER_KEYS = ['temperature', 'topP', 'topK', 'maxTokens'] as const satisfies readonly ConversationGenerationParameterKey[]
@@ -226,36 +203,22 @@ export const useChatStore = create<ChatState>((set, get) => ({
 
   load: async () => {
     set({ isLoading: true })
-    const sqliteData = await localDataStore.loadConversations()
+    const sqliteData = await loadConversationRecords()
     if (sqliteData.length) {
-      const conversations = prepareConversationsForStore(sqliteData)
-      const currentId = await loadData<string | null>(ACTIVE_CONVERSATION_KEY)
-      const selectedId = conversations.some((conversation) => conversation.id === currentId) ? currentId : conversations[0]?.id ?? null
+      const conversations = prepareConversationsForStore([...sqliteData])
+      const currentId = await readActiveConversationSelection()
+      const selectedId = resolveLoadedActiveConversationId(conversations, currentId)
       set({
         conversations,
         currentId: selectedId,
         isLoading: false,
       })
-      void saveData(ACTIVE_CONVERSATION_KEY, selectedId)
+      void writeActiveConversationSelection(selectedId)
       return
     }
 
-    const data = await loadData<Conversation[]>('CONVERSATIONS')
-    if (data?.length) {
-      const conversations = prepareConversationsForStore(data)
-      const currentId = await loadData<string | null>(ACTIVE_CONVERSATION_KEY)
-      const selectedId = conversations.some((conversation) => conversation.id === currentId) ? currentId : conversations[0]?.id ?? null
-      set({
-        conversations,
-        currentId: selectedId,
-        isLoading: false,
-      })
-      void saveData(ACTIVE_CONVERSATION_KEY, selectedId)
-      void persistConversations(conversations)
-      return
-    }
-
-    set({ isLoading: false })
+    set({ conversations: [], currentId: null, isLoading: false })
+    await writeActiveConversationSelection(null)
     void hydrateSqliteConversationsInBackground()
   },
 
@@ -293,7 +256,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
     set((state) => {
       const updated = [conversation, ...state.conversations]
       void persistConversations(updated)
-      void saveData(ACTIVE_CONVERSATION_KEY, id)
+      void writeActiveConversationSelection(id)
       return { conversations: updated, currentId: id }
     })
     return id
@@ -318,7 +281,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
     set((state) => {
       const updated = [conversation, ...state.conversations]
       void persistConversations(updated)
-      void saveData(ACTIVE_CONVERSATION_KEY, id)
+      void writeActiveConversationSelection(id)
       return { conversations: updated, currentId: id }
     })
     return id
@@ -326,16 +289,17 @@ export const useChatStore = create<ChatState>((set, get) => ({
 
   select: (id: string) => {
     set({ currentId: id })
-    void saveData(ACTIVE_CONVERSATION_KEY, id)
+    void writeActiveConversationSelection(id)
   },
 
   delete: (id: string) => {
+    cancelConversationAssistantDetachedWork(id)
     abortStream(id)
     set((state) => {
       const updated = state.conversations.filter((c) => c.id !== id)
       void persistConversations(updated)
       const nextCurrentId = state.currentId === id ? updated[0]?.id ?? null : state.currentId
-      void saveData(ACTIVE_CONVERSATION_KEY, nextCurrentId)
+      void writeActiveConversationSelection(nextCurrentId)
       return {
         conversations: updated,
         currentId: nextCurrentId,
@@ -355,13 +319,12 @@ export const useChatStore = create<ChatState>((set, get) => ({
 
   updateConversation: (id: string, updates: Partial<Conversation>) => {
     const shouldMergeParameterOverrides = updateContainsGenerationParameterPatch(updates)
-    const { providers, settings } = useSettingsStore.getState()
     set((state) => {
       const updated = state.conversations.map((c) => {
         if (c.id !== id) return c
         const next: Conversation = { ...c, ...updates, updatedAt: Date.now() }
         if (shouldMergeParameterOverrides) {
-          const generationParameterOverrides = mergeGenerationParameterOverrides(c, updates, settings, providers)
+          const generationParameterOverrides = mergeGenerationParameterOverrides(c, updates)
           if (generationParameterOverrides) {
             next.generationParameterOverrides = generationParameterOverrides
           } else {
@@ -381,12 +344,12 @@ export const useChatStore = create<ChatState>((set, get) => ({
     const { providers, settings } = useSettingsStore.getState()
     const provider = providers.find((item) => item.id === providerId)
     if (!provider) {
-      set({ error: st('chat.providerMissingDescription', { providerId }) })
+      get().setError(st('chat.providerMissingDescription', { providerId }))
       return false
     }
     const access = resolveProviderModelAliasAccess({ provider, model: nextModel, settings })
     if (!access.allowed) {
-      set({ error: st('chat.modelSwitchBlockedMessage', { model: nextModel, provider: provider.name }) })
+      get().setError(st('chat.modelSwitchBlockedMessage', { model: nextModel, provider: provider.name }))
       return false
     }
     const upstreamModel = resolveProviderModelAlias(provider, nextModel)
@@ -408,7 +371,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
           maxTokens: c.maxTokens,
           modelConfig: currentModelConfig,
         })
-        const currentOverrides = resolveStoredGenerationParameterOverrides(c, settings, currentRanges)
+        const currentOverrides = resolveStoredGenerationParameterOverrides(c)
         const nextReasoningEffort = selectSupportedReasoningEffort(c.reasoningEffort, reasoningOptions)
         const nextRanges = resolveConversationGenerationParameterRanges({
           provider,
@@ -433,10 +396,10 @@ export const useChatStore = create<ChatState>((set, get) => ({
           ? clampConversationGenerationParameter('topK', c.topK, nextRanges)
           : undefined
         const nextGenerationParameterOverrides = compactGenerationParameterOverrides({
-          temperature: currentOverrides?.temperature === true && generationParameterDiffersFromDefault('temperature', nextTemperature, settings, nextRanges),
-          topP: currentOverrides?.topP === true && generationParameterDiffersFromDefault('topP', nextTopP, settings, nextRanges),
-          topK: currentOverrides?.topK === true && generationParameterDiffersFromDefault('topK', nextTopK, settings, nextRanges),
-          maxTokens: currentOverrides?.maxTokens === true && generationParameterDiffersFromDefault('maxTokens', nextMaxTokens, settings, nextRanges),
+          temperature: currentOverrides?.temperature === true,
+          topP: currentOverrides?.topP === true,
+          topK: currentOverrides?.topK === true,
+          maxTokens: currentOverrides?.maxTokens === true,
         }, true)
         const nextConversation: Conversation = {
           ...c,
@@ -591,7 +554,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
   persistStreamingContentSnapshot: (convId: string, msgId: string, content: string) => {
     const snapshot = buildStreamingContentSnapshot(get().conversations, convId, msgId, content)
     if (!snapshot) return
-    void persistStreamingConversationQueued(snapshot, convId, { forceAsyncStorageBackup: false })
+    void persistStreamingConversationQueued(snapshot, convId)
   },
 
   flushStreamingMessage: async (convId: string, msgId: string) => {
@@ -603,17 +566,28 @@ export const useChatStore = create<ChatState>((set, get) => ({
   },
 
   clearAll: () => {
+    cancelAllConversationAssistantDetachedWork()
     abortAllStreams()
-    set({ conversations: [], currentId: null })
-    void saveData(ACTIVE_CONVERSATION_KEY, null)
+    set({
+      conversations: [],
+      currentId: null,
+      error: null,
+    })
+    void writeActiveConversationSelection(null)
     void persistConversations([])
   },
 
   importData: (conversations: Conversation[]) => {
+    cancelAllConversationAssistantDetachedWork()
+    abortAllStreams()
     const cleaned = prepareConversationsForStore(conversations)
     const currentId = cleaned[0]?.id ?? null
-    set({ conversations: cleaned, currentId })
-    void saveData(ACTIVE_CONVERSATION_KEY, currentId)
+    set({
+      conversations: cleaned,
+      currentId,
+      error: null,
+    })
+    void writeActiveConversationSelection(currentId)
     void persistConversations(cleaned)
   },
 
@@ -626,10 +600,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
 type StreamingPersistHandle = ReturnType<typeof setTimeout>
 
 const STREAMING_PERSIST_DELAY_MS = 420
-const STREAMING_ASYNC_STORAGE_BACKUP_MS = 8000
 const streamingPersistTimers = new Map<string, StreamingPersistHandle>()
-let asyncStorageWriteQueue: Promise<void> = Promise.resolve()
-let lastStreamingAsyncStorageBackupAt = 0
 
 function streamingPersistKey(convId: string, msgId: string): string {
   return `${convId}:${msgId}`
@@ -707,7 +678,7 @@ function scheduleStreamingPersist(getState: () => ChatState, convId: string, msg
   if (existing) clearTimeout(existing)
   const timer = setTimeout(() => {
     streamingPersistTimers.delete(key)
-    void persistStreamingConversationQueued(getState().conversations, convId, { forceAsyncStorageBackup: false })
+    void persistStreamingConversationQueued(getState().conversations, convId)
   }, STREAMING_PERSIST_DELAY_MS)
   streamingPersistTimers.set(key, timer)
 }
@@ -719,15 +690,7 @@ async function flushStreamingPersist(getState: () => ChatState, convId: string, 
     clearTimeout(timer)
     streamingPersistTimers.delete(key)
   }
-  await persistStreamingConversationQueued(getState().conversations, convId, { forceAsyncStorageBackup: true })
-}
-
-async function saveAsyncStorageConversationsQueued(conversations: Conversation[]): Promise<void> {
-  const snapshot = sanitizeConversationsForPersistence(conversations)
-  asyncStorageWriteQueue = asyncStorageWriteQueue
-    .catch(() => undefined)
-    .then(() => saveData('CONVERSATIONS', snapshot))
-  await asyncStorageWriteQueue
+  await persistStreamingConversationQueued(getState().conversations, convId)
 }
 
 async function persistConversationsQueued(conversations: Conversation[]): Promise<void> {
@@ -737,27 +700,15 @@ async function persistConversationsQueued(conversations: Conversation[]): Promis
 async function persistStreamingConversationQueued(
   conversations: Conversation[],
   convId: string,
-  options: { forceAsyncStorageBackup?: boolean } = {}
 ): Promise<void> {
   const snapshot = sanitizeConversationsForPersistence(conversations)
   const conversation = snapshot.find((item) => item.id === convId)
-  const now = Date.now()
-  const shouldBackupAsyncStorage =
-    options.forceAsyncStorageBackup ||
-    now - lastStreamingAsyncStorageBackupAt >= STREAMING_ASYNC_STORAGE_BACKUP_MS
-  if (shouldBackupAsyncStorage) lastStreamingAsyncStorageBackupAt = now
-  await Promise.all([
-    conversation ? localDataStore.saveConversation(conversation) : Promise.resolve(),
-    shouldBackupAsyncStorage ? saveAsyncStorageConversationsQueued(snapshot) : Promise.resolve(),
-  ])
+  if (conversation) await saveConversationRecord(conversation)
 }
 
 async function persistConversations(conversations: Conversation[]): Promise<void> {
   const snapshot = sanitizeConversationsForPersistence(conversations)
-  await Promise.all([
-    localDataStore.saveConversations(snapshot),
-    saveAsyncStorageConversationsQueued(snapshot),
-  ])
+  await replaceConversationRecords(snapshot)
 }
 
 function prepareConversationsForStore(conversations: Conversation[]): Conversation[] {
@@ -766,13 +717,13 @@ function prepareConversationsForStore(conversations: Conversation[]): Conversati
 
 async function hydrateSqliteConversationsInBackground(): Promise<void> {
   try {
-    const sqliteData = await localDataStore.loadConversations()
+    const sqliteData = await loadConversationRecords()
     if (!sqliteData.length) return
-    const conversations = prepareConversationsForStore(sqliteData)
-    const currentId = await loadData<string | null>(ACTIVE_CONVERSATION_KEY)
-    const selectedId = conversations.some((conversation) => conversation.id === currentId) ? currentId : conversations[0]?.id ?? null
+    const conversations = prepareConversationsForStore([...sqliteData])
+    const currentId = await readActiveConversationSelection()
+    const selectedId = resolveLoadedActiveConversationId(conversations, currentId)
     useChatStore.setState({ conversations, currentId: selectedId })
-    void saveData(ACTIVE_CONVERSATION_KEY, selectedId)
+    void writeActiveConversationSelection(selectedId)
   } catch (error) {
     const message = error instanceof Error ? error.message : st('error.unknownError')
     useChatStore.getState().setError(st('storage.sqliteRestoreFailed', { message }))
@@ -783,9 +734,23 @@ function sanitizeConversationsForPersistence(conversations: Conversation[]): Con
   return sanitizeConversationGenerationParameterOverridesForStore(sanitizeConversationInternalOutputsForStore(sanitizeConversationAttachmentsForStore(sanitizeConversationTracesForStore(conversations))))
 }
 
+function resolveLoadedActiveConversationId(
+  conversations: Conversation[],
+  currentId: string | null,
+): string | null {
+  return conversations.some((conversation) => conversation.id === currentId)
+    ? currentId
+    : conversations[0]?.id ?? null
+}
+
 function sanitizeConversationGenerationParameterOverridesForStore(conversations: Conversation[]): Conversation[] {
   return conversations.map((conversation) => {
-    if (!hasOwnProperty(conversation, 'generationParameterOverrides')) return conversation
+    if (!hasOwnProperty(conversation, 'generationParameterOverrides')) {
+      return {
+        ...conversation,
+        generationParameterOverrides: inferGenerationParameterOverrides(conversation) ?? {},
+      }
+    }
     return {
       ...conversation,
       generationParameterOverrides: compactGenerationParameterOverrides(conversation.generationParameterOverrides, true) ?? {},

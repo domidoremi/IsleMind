@@ -1,12 +1,14 @@
-import type { ChatCompletionResult } from '@/services/ai/base'
-import type { McpToolRequest } from '@/services/mcpToolRequest'
-import { MCP_TOOL_CALL_TAG } from '@/services/mcpToolRequest'
-import { stripAgentToolRequestBlocks } from '@/services/agent/agentToolCallTrace'
-import { redactSensitiveText } from '@/services/agent/agentTrace'
-import { stripProviderTextToolCallBlocks } from '@/services/ai/providerToolCalls'
-import type { McpServerConfig, McpToolManifest, ToolContentBlock } from '@/types'
-import { resolveMcpToolIdentity } from '@/services/chatMcpToolIdentityUtils'
-
+import type { ProviderRuntimeCompletionResult } from '@/modules/providers'
+import {
+  MCP_TOOL_CALL_TAG,
+  resolveMcpConversationToolIdentity,
+  type McpToolRequest,
+} from '@/modules/integrations'
+import { stripWorkflowToolRequestBlocks } from '@/bootstrap/workflowToolCallTrace'
+import { redactSensitiveText } from '@/core'
+import { stripProviderTextToolCallBlocks } from '@/modules/providers'
+import type { McpServerConfig, McpToolManifest } from '@/types/mcpContracts'
+import type { ToolContentBlock } from '@/core'
 export interface ResolvedMcpToolLike {
   server: Pick<McpServerConfig, 'id' | 'name'>
   tool: Pick<McpToolManifest, 'name'>
@@ -21,7 +23,7 @@ export function stringifyToolArguments(args: Record<string, unknown>): string {
 }
 
 export function stripMcpCallBlocks(output: string): string {
-  return stripProviderTextToolCallBlocks(stripAgentToolRequestBlocks(output, MCP_TOOL_CALL_TAG))
+  return stripProviderTextToolCallBlocks(stripWorkflowToolRequestBlocks(output, MCP_TOOL_CALL_TAG))
 }
 
 export function sanitizeToolRevisionAnswerText(output: string): string {
@@ -29,7 +31,7 @@ export function sanitizeToolRevisionAnswerText(output: string): string {
 }
 
 export function findMcpTool<T extends ResolvedMcpToolLike>(tools: T[], request: McpToolRequest): T | undefined {
-  return resolveMcpToolIdentity(tools, request)
+  return resolveMcpConversationToolIdentity(tools, request)
 }
 
 export function formatToolBlocks(blocks: ToolContentBlock[]): string {
@@ -41,15 +43,19 @@ export function formatToolBlocks(blocks: ToolContentBlock[]): string {
   }).filter(Boolean).join('\n\n')
 }
 
-export function mergeUsage(base: ChatCompletionResult['usage'], extra: ChatCompletionResult['usage']): ChatCompletionResult['usage'] {
+export function mergeUsage(base: ProviderRuntimeCompletionResult['usage'], extra: ProviderRuntimeCompletionResult['usage']): ProviderRuntimeCompletionResult['usage'] {
   if (!base) return extra
   if (!extra) return base
+  const cacheCreationInputTokens = addOptionalNumbers(base.cacheCreationInputTokens, extra.cacheCreationInputTokens)
+  const cacheReadInputTokens = addOptionalNumbers(base.cacheReadInputTokens, extra.cacheReadInputTokens)
   const cachedInputTokens = addOptionalNumbers(base.cachedInputTokens, extra.cachedInputTokens)
   const reasoningTokens = addOptionalNumbers(base.reasoningTokens, extra.reasoningTokens)
   return {
     source: base.source === 'provider' && extra.source === 'provider' ? 'provider' : 'estimated',
     inputTokens: addOptionalNumbers(base.inputTokens, extra.inputTokens),
     outputTokens: addOptionalNumbers(base.outputTokens, extra.outputTokens),
+    ...(cacheCreationInputTokens !== undefined ? { cacheCreationInputTokens } : {}),
+    ...(cacheReadInputTokens !== undefined ? { cacheReadInputTokens } : {}),
     ...(cachedInputTokens !== undefined ? { cachedInputTokens } : {}),
     ...(reasoningTokens !== undefined ? { reasoningTokens } : {}),
     totalTokens: addOptionalNumbers(base.totalTokens, extra.totalTokens) ?? addOptionalNumbers(addOptionalNumbers(base.inputTokens, base.outputTokens), addOptionalNumbers(extra.inputTokens, extra.outputTokens)),

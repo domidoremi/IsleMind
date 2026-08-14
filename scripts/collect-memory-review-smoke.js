@@ -13,6 +13,7 @@ const appPackageName = defaultReleaseAppPackageName
 const explicitDeviceRequested = Boolean(process.env.QA_DEVICE_SERIAL)
 const defaultDevice = process.env.QA_DEVICE_SERIAL || 'emulator-5554'
 const importJsonLabels = ['导入 JSON', 'Import JSON', 'JSON インポート']
+const importExportLabels = ['导入 / 导出', 'Import / Export', 'インポート / エクスポート']
 const importDoneLabels = ['导入完成', 'Import complete', 'インポート完了']
 const reviewImportedLabels = ['审查导入记忆', 'Review imported memories', 'インポートしたメモリを確認']
 const reviewQueueLabels = ['复核队列', 'Review queue', '確認キュー']
@@ -227,8 +228,14 @@ function openSettings(device) {
 
 function tapImportJson(device, result) {
   for (let index = 0; index < 8; index += 1) {
-    const capture = captureStep(device, result, `settings-import-search-${index}`)
-    if (tapText(device, capture.uiaText, importJsonLabels)) {
+    let capture = captureStep(device, result, `settings-import-search-${index}`)
+    let importTapped = tapText(device, capture.uiaText, importJsonLabels)
+    if (!importTapped && tapText(device, capture.uiaText, importExportLabels)) {
+      sleep(900)
+      capture = captureStep(device, result, `settings-import-expanded-${index}`)
+      importTapped = tapText(device, capture.uiaText, importJsonLabels)
+    }
+    if (importTapped) {
       sleep(1400)
       return
     }

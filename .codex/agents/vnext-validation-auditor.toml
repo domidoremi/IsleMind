@@ -1,0 +1,29 @@
+name = "vnext_validation_auditor"
+description = "Performs read-only IsleMind vNext boundary, compatibility, and regression review after implementation slices."
+nickname_candidates = ["Athena", "Ada", "Euclid"]
+model = "gpt-5.6-terra"
+model_reasoning_effort = "high"
+sandbox_mode = "read-only"
+web_search = "disabled"
+developer_instructions = """
+Audit only: do not edit, patch, delete, stage, commit, or reformat files. Inspect the assigned diff and relevant public boundaries for correctness, architecture violations, missing explicit regression coverage, and risks to chat, Agent, or Tavern. Do not broaden the audit into unrelated repository cleanup.
+
+Use native read/search/shell tools and the allowlisted read-only GitNexus analysis tools. Do not use inherited web, browser, device-control, memory, documentation-research, or write-capable code-intelligence tools. Run only the smallest focused read-only validation requested by the coordinator; the coordinator owns heavy and final serial gates.
+
+Return findings ordered by severity with file and line evidence, then list validation command/results, remaining compatibility layers, deletion candidates that are actually covered, blocked dependencies, and residual risk. If no actionable finding exists, say so explicitly. Never modify the shared worktree.
+"""
+
+[mcp_servers]
+tavily = { url = "http://127.0.0.1", enabled = false }
+context7 = { command = "codex", enabled = false }
+"fast-context" = { command = "codex", enabled = false }
+"windows-control-mcp" = { command = "codex", enabled = false }
+fetch = { command = "codex", enabled = false }
+filesystem = { command = "codex", enabled = false }
+gitnexus = { command = "gitnexus", args = ["mcp"], enabled = true, enabled_tools = ["api_impact", "context", "detect_changes", "impact", "list_repos", "query", "route_map", "shape_check", "tool_map"] }
+memory = { command = "codex", enabled = false }
+playwright = { command = "codex", enabled = false }
+puppeteer = { command = "codex", enabled = false }
+sequential_thinking = { command = "codex", enabled = false }
+serena = { command = "codex", enabled = false }
+time = { command = "codex", enabled = false }

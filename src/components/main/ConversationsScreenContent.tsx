@@ -1,24 +1,28 @@
 import { router } from 'expo-router'
 import { useCallback, useDeferredValue, useEffect, useMemo, useRef, useState } from 'react'
-import { ActivityIndicator, AppState, Keyboard, KeyboardAvoidingView, Platform, StyleSheet, Text, TextInput, View, useWindowDimensions, type NativeScrollEvent, type NativeSyntheticEvent, type ViewToken } from 'react-native'
+import { AppState, Keyboard, KeyboardAvoidingView, Platform, StyleSheet, Text, TextInput, View, useWindowDimensions, type NativeScrollEvent, type NativeSyntheticEvent, type ViewToken } from 'react-native'
 import { FlashList, type FlashListRef } from '@shopify/flash-list'
-import { useTranslation } from 'react-i18next'
-import { useSafeAreaInsets } from 'react-native-safe-area-context'
-import { AnimatedNavigationTrigger } from '@/components/navigation/AnimatedNavigationTrigger'
 import { AppIcon, appIconStroke } from '@/components/ui/AppIcon'
-import { IsleEmptyState, IsleHeader, IslePressable, useIsleDialog } from '@/components/ui/isle'
+import { IsleHeader, IslePressable, useIsleDialog } from '@/components/ui/isle'
 import { ConversationRow } from '@/components/conversations/ConversationRow'
 import { useMainPagerGestureLock } from './MainPagerGestureLock'
 import { useAppTheme } from '@/hooks/useAppTheme'
 import { useChatStore } from '@/store/chatStore'
 import { useSettingsStore } from '@/store/settingsStore'
 import { normalizeSearchText } from '@/utils/text'
-import { getPolicyPreferredProviderModel } from '@/services/ai/policy/providerModelAccess'
+import { getPolicyPreferredProviderModel } from '@/bootstrap/providerModelAccess'
 import { getProviderDisplayModel } from '@/utils/providerModels'
-import type { AIProvider, Conversation } from '@/types'
+import type { Conversation } from '@/types/chatContracts'
+import { useTranslation } from 'react-i18next'
+import { useSafeAreaInsets } from 'react-native-safe-area-context'
+import { AnimatedNavigationTrigger } from '@/components/navigation/AnimatedNavigationTrigger'
+import { HighFrameSpinner } from '@/components/ui/HighFrameSpinner'
+import type { AIProvider } from '@/types/providerContracts'
+import { HistoryEmptyStateFrame, HistoryHeaderFrame, type HistoryVisualTokens } from './history/HistoryPresentation'
 
 interface ConversationsScreenContentProps {
   active?: boolean
+  shellNavigation?: boolean
   onHome?: () => void
   onSettings?: () => void
 }
@@ -32,16 +36,16 @@ const SEARCH_MESSAGE_FIELD_SCAN_MULTIPLIER = 4
 const SEARCH_MATCH_CONTEXT_RADIUS = 72
 const SEARCH_MESSAGE_INDEX_BUDGET = 12000
 const LIST_INITIAL_RENDER_COUNT = 10
-const LIST_ENTRANCE_ANIMATION_MAX_COUNT = 14
 const LIST_RENDER_BATCH_SIZE = 8
 const LIST_WINDOW_SIZE = 7
+const LIST_DRAW_DISTANCE = 1600
 const LIST_END_FEEDBACK_MIN_COUNT = LIST_INITIAL_RENDER_COUNT + 1
 const SCROLL_TOP_ACTION_OFFSET = 360
 const SCROLL_TOP_ACTION_SIZE = 44
 const FLOATING_HISTORY_ACTION_GAP = 10
 const SCROLL_TOP_ACTION_CLEARANCE = 12
-const SCROLL_TOP_ACTION_LOCK_MS = 420
-const CURRENT_CONVERSATION_ACTION_LOCK_MS = 420
+const SCROLL_TOP_ACTION_LOCK_MS = 416
+const CURRENT_CONVERSATION_ACTION_LOCK_MS = 416
 const CURRENT_CONVERSATION_SCROLL_VIEW_POSITION = 0.28
 const CONVERSATION_ROW_ESTIMATED_HEIGHT = 104
 const CURRENT_CONVERSATION_VISIBLE_MARGIN = 48
@@ -49,14 +53,14 @@ const CONVERSATION_LIST_RESERVED_HEIGHT = 168
 const CONVERSATION_VIEWABILITY_VISIBLE_PERCENT = 36
 const CONVERSATION_ROW_HEIGHT_CACHE_PREFIX_DEFAULT = 'default'
 const CONVERSATION_ROW_HEIGHT_CACHE_PREFIX_SEARCH = 'search'
-const RENAME_SCROLL_RETRY_DELAY_MS = 140
+const RENAME_SCROLL_RETRY_DELAY_MS = 144
 const RELATIVE_TIME_REFRESH_MS = 60 * 1000
 const RELATIVE_TIME_SCROLL_RELEASE_DELAY_MS = 160
 const LIST_INTERACTION_FAILSAFE_MS = 1200
 const LIST_TAP_AFTER_USER_SCROLL_GUARD_MS = 96
-const LIST_TAP_AFTER_PROGRAMMATIC_SCROLL_GUARD_MS = 120
-const LIST_TOUCH_PAGER_GESTURE_RELEASE_DELAY_MS = 120
-const PROGRAMMATIC_LIST_SCROLL_GUARD_MS = 520
+const LIST_TAP_AFTER_PROGRAMMATIC_SCROLL_GUARD_MS = 112
+const LIST_TOUCH_PAGER_GESTURE_RELEASE_DELAY_MS = 112
+const PROGRAMMATIC_LIST_SCROLL_GUARD_MS = 512
 const LIST_BLOCKED_FEEDBACK_THROTTLE_MS = 1600
 const ICON_ACTION_HIT_SLOP = { top: 10, right: 10, bottom: 10, left: 10 }
 
@@ -109,8 +113,8 @@ interface VisibleConversationRange {
   searchActive: boolean
 }
 
-export function ConversationsScreenContent({ active = true, onHome, onSettings }: ConversationsScreenContentProps) {
-  const { colors, isGlass } = useAppTheme()
+export function ConversationsScreenContent({ active = true, shellNavigation = false, onHome, onSettings }: ConversationsScreenContentProps) {
+  const { colors, themeId } = useAppTheme()
   const { t } = useTranslation()
   const dialog = useIsleDialog()
   const pagerGestureLock = useMainPagerGestureLock()
@@ -118,24 +122,37 @@ export function ConversationsScreenContent({ active = true, onHome, onSettings }
   const insets = useSafeAreaInsets()
   const { height, width } = useWindowDimensions()
   const compact = width < 390
-  const pageHorizontalPadding = compact ? 14 : 16
   const listHorizontalPadding = compact ? 14 : 20
   const scrollTopActionBottom = Math.max(insets.bottom, 10) + 18
   const listSafeBottomPadding = Math.max(insets.bottom, 10) + 18
   const scrollTopListBottomPadding = scrollTopActionBottom + SCROLL_TOP_ACTION_SIZE + SCROLL_TOP_ACTION_CLEARANCE
   const primaryActionSize = compact ? 46 : 50
-  const currentConversationActionWidth = Math.max(SCROLL_TOP_ACTION_SIZE, Math.min(width - listHorizontalPadding * 2, compact ? 176 : 206))
   const searchHorizontalPadding = compact ? 12 : 14
-  const subtleBorderWidth = colors.ui.cartoon ? 1 : StyleSheet.hairlineWidth
-  const chromeIconSurface = colors.ui.cartoon ? colors.ui.semantic.surface.muted : isGlass ? colors.ui.actionBar.itemBackground : colors.ui.semantic.surface.muted
-  const chromeIconBorder = colors.ui.cartoon ? colors.material.stroke : colors.ui.semantic.chrome.border
-  const searchShellBackground = isGlass ? colors.ui.semantic.chrome.background : colors.ui.cartoon ? colors.ui.semantic.surface.muted : colors.ui.semantic.surface.muted
-  const searchShellBorder = isGlass ? colors.ui.semantic.chrome.border : colors.ui.cartoon ? colors.ui.input.border : colors.ui.semantic.chrome.border
-  const floatingSecondarySurface = isGlass ? colors.ui.actionBar.itemBackground : colors.ui.cartoon ? colors.ui.semantic.surface.muted : colors.ui.semantic.surface.muted
-  const floatingSecondaryBorder = colors.ui.cartoon ? colors.material.strokeStrong : colors.ui.semantic.chrome.border
-  const floatingSecondaryShadowOpacity = colors.ui.cartoon ? Math.min(colors.ui.card.shadowOpacity, 0.08) : 0
-  const floatingSecondaryShadowRadius = colors.ui.cartoon ? Math.max(2, colors.ui.card.shadowRadius - 4) : 0
-  const floatingSecondaryShadowOffset = colors.ui.cartoon ? Math.max(1, colors.ui.card.shadowOffset - 2) : 0
+  const subtleBorderWidth = colors.ui.limeRoad ? 1 : StyleSheet.hairlineWidth
+  const searchShellBackground = shellNavigation ? colors.ui.input.background : colors.ui.semantic.surface.muted
+  const searchShellBorder = shellNavigation ? 'transparent' : colors.ui.limeRoad ? colors.ui.input.border : colors.ui.semantic.chrome.border
+  const searchShellBorderWidth = shellNavigation ? 0 : subtleBorderWidth
+  const floatingSecondarySurface = colors.ui.semantic.surface.muted
+  const floatingSecondaryBorder = colors.ui.limeRoad ? colors.material.strokeStrong : colors.ui.semantic.chrome.border
+  const floatingSecondaryShadowOpacity = colors.ui.limeRoad ? Math.min(colors.ui.card.shadowOpacity, 0.08) : 0
+  const floatingSecondaryShadowRadius = colors.ui.limeRoad ? Math.max(2, colors.ui.card.shadowRadius - 4) : 0
+  const floatingSecondaryShadowOffset = colors.ui.limeRoad ? Math.max(1, colors.ui.card.shadowOffset - 2) : 0
+  const historyVisualTokens = useMemo<HistoryVisualTokens>(() => ({
+    text: colors.text,
+    textSecondary: colors.textSecondary,
+    textTertiary: colors.textTertiary,
+    canvas: colors.ui.semantic.surface.canvas,
+    surface: colors.ui.semantic.surface.base,
+    surfaceMuted: colors.ui.semantic.surface.muted,
+    border: colors.ui.semantic.chrome.border,
+    borderStrong: colors.material.strokeStrong,
+    accent: colors.ui.icon.accentForeground,
+    accentBackground: colors.ui.icon.accentBackground,
+    accentBorder: colors.ui.control.primaryBorder,
+    dangerBackground: colors.ui.tone.danger.background,
+    dangerForeground: colors.ui.tone.danger.foreground,
+    dangerBorder: colors.ui.tone.danger.border,
+  }), [colors])
   const conversations = useChatStore((state) => state.conversations)
   const currentId = useChatStore((state) => state.currentId)
   const create = useChatStore((state) => state.create)
@@ -188,12 +205,12 @@ export function ConversationsScreenContent({ active = true, onHome, onSettings }
   const [searchInputFocused, setSearchInputFocused] = useState(false)
   const [visibleConversationRange, setVisibleConversationRange] = useState<VisibleConversationRange | null>(null)
   const [relativeTimeNow, setRelativeTimeNow] = useState(() => Date.now())
-  const newConversationLabel = t('chat.newConversation')
   const deferredQuery = useDeferredValue(query)
   const trimmedQuery = query.trim()
   const hasRawSearchInput = query.length > 0
   const hasSearchInput = trimmedQuery.length > 0
   const searchActive = hasSearchInput
+  const newConversationLabel = t('chat.newConversation')
   const reserveScrollTopActionSpace = !hasSearchInput && (showScrollTopAction || lastNonSearchScrollOffsetRef.current > SCROLL_TOP_ACTION_OFFSET)
   const reserveCurrentConversationActionSpace = !hasSearchInput && showCurrentConversationAction
   const floatingHistoryActionCount = (reserveScrollTopActionSpace ? 1 : 0) + (reserveCurrentConversationActionSpace ? 1 : 0)
@@ -259,14 +276,9 @@ export function ConversationsScreenContent({ active = true, onHome, onSettings }
       searchMatchByConversationId: searchMatches,
     }
   }, [conversationSearchIndex, conversations, deferredNormalizedQuery, t])
-  const conversationEntranceAnimationEnabled =
-    !searchActive &&
-    !searchPending &&
-    conversations.length > 0 &&
-    conversations.length <= LIST_ENTRANCE_ANIMATION_MAX_COUNT
   const conversationListExtraData = useMemo(
-    () => ({ currentId, relativeTimeNow, searchActive, searchMatchByConversationId, searchPending }),
-    [currentId, relativeTimeNow, searchActive, searchMatchByConversationId, searchPending]
+    () => ({ currentId, relativeTimeNow, searchActive, searchMatchByConversationId, searchPending, themeId }),
+    [currentId, relativeTimeNow, searchActive, searchMatchByConversationId, searchPending, themeId]
   )
   const currentConversationIndex = useMemo(
     () => currentId ? conversations.findIndex((conversation) => conversation.id === currentId) : -1,
@@ -280,9 +292,6 @@ export function ConversationsScreenContent({ active = true, onHome, onSettings }
   )
   const currentConversationPositionLabel = currentConversationIndex >= 0
     ? t('conversation.currentConversationPosition', { current: currentConversationIndex + 1, total: conversations.length })
-    : ''
-  const currentConversationActionPositionLabel = currentConversationIndex >= 0
-    ? t('conversation.currentConversationActionPosition', { current: currentConversationIndex + 1, total: conversations.length })
     : ''
   const visibleConversationRangeLabel = visibleConversationRange &&
     !searchPending &&
@@ -311,6 +320,7 @@ export function ConversationsScreenContent({ active = true, onHome, onSettings }
     : ''
   const listSummaryDisplayLabel = [listSummaryLabel, visibleConversationRangeLabel, currentSearchConversationLabel].filter(Boolean).join(' · ')
   const listSummaryAccessibilityLabel = [listSummaryLabel, currentSearchConversationLabel].filter(Boolean).join(' · ')
+  const showHistoryListSummary = searchActive || searchPending
   const searchInputAccessibilityValue = searchActive && listSummaryDisplayLabel ? { text: listSummaryDisplayLabel } : undefined
   const listAccessibilityValue = listSummaryDisplayLabel ? { text: listSummaryDisplayLabel } : undefined
   const listAccessibilityState = searchPending ? { busy: true } : undefined
@@ -339,12 +349,12 @@ export function ConversationsScreenContent({ active = true, onHome, onSettings }
     )
   }, [colors.textTertiary, listFooterLabel])
   const conversationOffsetCacheKey = useMemo(
-    () => conversations.map((conversation) => conversation.id).join('|'),
-    [conversations]
+    () => `${themeId}:${conversations.map((conversation) => conversation.id).join('|')}`,
+    [conversations, themeId]
   )
   const filteredConversationOffsetCacheKey = useMemo(
-    () => filteredConversations.map((conversation) => conversation.id).join('|'),
-    [filteredConversations]
+    () => `${themeId}:${filteredConversations.map((conversation) => conversation.id).join('|')}`,
+    [filteredConversations, themeId]
   )
   const scrollTopActionAvailable = showScrollTopAction && !searchInputFocused && !hasSearchInput
   const scrollTopActionAccessibilityState = scrollTopActionLocked
@@ -363,22 +373,6 @@ export function ConversationsScreenContent({ active = true, onHome, onSettings }
   const currentConversationActionAccessibilityValue = currentConversationPositionLabel
     ? { text: currentConversationPositionLabel }
     : undefined
-  const firstSearchResultActionHasMatch = hasSearchInput && !searchPending && filteredConversations.length > 0
-  const firstSearchResultActionDisabled = hasSearchInput && searchPending
-  const firstSearchResultActionAccessibilityLabel = firstSearchResultActionDisabled
-    ? t('conversation.searchPendingForQuery', { query: trimmedQuery })
-    : firstSearchResultActionHasMatch
-      ? t('conversation.openFirstSearchResult')
-      : t('conversation.openFirstSearchResultNoMatch')
-  const firstSearchResultActionAccessibilityHint = firstSearchResultActionDisabled
-    ? t('conversation.openFirstSearchResultWaitingHint')
-    : firstSearchResultActionHasMatch
-      ? t('conversation.openFirstSearchResultHint')
-      : t('conversation.openFirstSearchResultNoMatchHint')
-  const firstSearchResultActionAccessibilityValue = listSummaryDisplayLabel
-    ? { text: listSummaryDisplayLabel }
-    : undefined
-
   const clearScrollToIndexRetry = useCallback(() => {
     if (scrollToIndexRetry.current) clearTimeout(scrollToIndexRetry.current)
     scrollToIndexRetry.current = null
@@ -390,8 +384,8 @@ export function ConversationsScreenContent({ active = true, onHome, onSettings }
   }, [])
 
   const conversationRowHeightCacheKey = useCallback((conversationId: string, searchMode = searchActive) => (
-    `${searchMode ? CONVERSATION_ROW_HEIGHT_CACHE_PREFIX_SEARCH : CONVERSATION_ROW_HEIGHT_CACHE_PREFIX_DEFAULT}:${conversationId}`
-  ), [searchActive])
+    `${themeId}:${searchMode ? CONVERSATION_ROW_HEIGHT_CACHE_PREFIX_SEARCH : CONVERSATION_ROW_HEIGHT_CACHE_PREFIX_DEFAULT}:${conversationId}`
+  ), [searchActive, themeId])
 
   const getMeasuredConversationRowHeight = useCallback((conversationId: string, fallbackHeight = CONVERSATION_ROW_ESTIMATED_HEIGHT, searchMode = searchActive) => {
     const primaryHeight = conversationRowHeightsRef.current.get(conversationRowHeightCacheKey(conversationId, searchMode))
@@ -659,7 +653,7 @@ export function ConversationsScreenContent({ active = true, onHome, onSettings }
   useEffect(() => {
     const conversationIds = new Set(conversations.map((conversation) => conversation.id))
     for (const key of conversationRowHeightsRef.current.keys()) {
-      const separatorIndex = key.indexOf(':')
+      const separatorIndex = key.lastIndexOf(':')
       const conversationId = separatorIndex >= 0 ? key.slice(separatorIndex + 1) : key
       if (!conversationIds.has(conversationId)) conversationRowHeightsRef.current.delete(key)
     }
@@ -692,6 +686,18 @@ export function ConversationsScreenContent({ active = true, onHome, onSettings }
     }
   }, [conversations.length, requestRelativeTimeRefresh])
 
+  const navigateToChat = useCallback((conversationId?: string) => {
+    if (conversationId) {
+      router.push(`/chat/${encodeURIComponent(conversationId)}`)
+      return
+    }
+    if (onHome) {
+      onHome()
+      return
+    }
+    router.push('/')
+  }, [onHome])
+
   const createConversation = useCallback(async () => {
     if (creatingConversationRef.current) return
     Keyboard.dismiss()
@@ -717,13 +723,12 @@ export function ConversationsScreenContent({ active = true, onHome, onSettings }
       select(id)
       requestCurrentConversationReveal()
       if (hasRawSearchInput) resetSearchAfterConversationOpen()
-      if (onHome) onHome()
-      else router.push('/')
+      navigateToChat(id)
     } finally {
       creatingConversationRef.current = false
       if (mountedRef.current) setCreatingConversation(false)
     }
-  }, [create, dialog, getPrimaryConfiguredProvider, hasRawSearchInput, onHome, onSettings, requestCurrentConversationReveal, resetSearchAfterConversationOpen, select, settings, t])
+  }, [create, dialog, getPrimaryConfiguredProvider, hasRawSearchInput, navigateToChat, onSettings, requestCurrentConversationReveal, resetSearchAfterConversationOpen, select, settings, t])
 
   const openConversation = useCallback((id: string) => {
     Keyboard.dismiss()
@@ -731,9 +736,8 @@ export function ConversationsScreenContent({ active = true, onHome, onSettings }
     select(id)
     if (hasRawSearchInput) requestCurrentConversationReveal()
     if (hasRawSearchInput) resetSearchAfterConversationOpen()
-    if (onHome) onHome()
-    else router.push({ pathname: '/chat/[id]', params: { id } })
-  }, [hasRawSearchInput, onHome, requestCurrentConversationReveal, resetSearchAfterConversationOpen, select])
+    navigateToChat(id)
+  }, [hasRawSearchInput, navigateToChat, requestCurrentConversationReveal, resetSearchAfterConversationOpen, select])
 
   const keepRenameInputVisible = useCallback((index: number) => {
     clearRenameFocusFrame()
@@ -758,6 +762,7 @@ export function ConversationsScreenContent({ active = true, onHome, onSettings }
 
   const scrollConversationIndexIntoView = useCallback((index: number) => {
     clearActiveConversationScrollFrame()
+    setCurrentConversationActionVisibility(false)
     activeConversationScrollFrame.current = requestAnimationFrame(() => {
       activeConversationScrollFrame.current = null
       guardProgrammaticListScroll()
@@ -767,7 +772,7 @@ export function ConversationsScreenContent({ active = true, onHome, onSettings }
         animated: true,
       })
     })
-  }, [clearActiveConversationScrollFrame, guardProgrammaticListScroll])
+  }, [clearActiveConversationScrollFrame, guardProgrammaticListScroll, setCurrentConversationActionVisibility])
 
   const isConversationIndexLikelyVisible = useCallback((index: number) => {
     if (index < 0) return false
@@ -790,6 +795,8 @@ export function ConversationsScreenContent({ active = true, onHome, onSettings }
       active &&
       !searchActive &&
       !searchPending &&
+      !listInteractionActiveRef.current &&
+      Date.now() >= listInteractionGuardUntilRef.current &&
       currentConversationIndex >= 0 &&
       !isConversationIndexLikelyVisible(currentConversationIndex)
     )
@@ -1072,8 +1079,8 @@ export function ConversationsScreenContent({ active = true, onHome, onSettings }
         <ConversationRow
           conversation={item}
           index={index}
+          themeId={themeId}
           active={item.id === currentId}
-          animateEntrance={conversationEntranceAnimationEnabled && index < LIST_INITIAL_RENDER_COUNT}
           interactionDisabled={searchPending}
           isInteractionBlocked={isListInteractionBlocked}
           onInteractionBlocked={showListInteractionBlockedFeedback}
@@ -1088,155 +1095,179 @@ export function ConversationsScreenContent({ active = true, onHome, onSettings }
         />
       )
     },
-    [conversationEntranceAnimationEnabled, currentId, handleConversationRowLayout, isListInteractionBlocked, keepRenameInputVisible, modelLabelByConversationId, openConversation, relativeTimeNow, searchActive, searchMatchByConversationId, searchPending, showListInteractionBlockedFeedback]
+    [currentId, handleConversationRowLayout, isListInteractionBlocked, keepRenameInputVisible, modelLabelByConversationId, openConversation, relativeTimeNow, searchActive, searchMatchByConversationId, searchPending, showListInteractionBlockedFeedback, themeId]
   )
+
+  const historyHeader = shellNavigation ? (
+    <View style={{ minHeight: 44, flexDirection: 'row', alignItems: 'center', gap: 12 }}>
+      <View style={{ flex: 1, minWidth: 0 }}>
+        <Text numberOfLines={1} style={{ color: colors.textTertiary, fontSize: 13, lineHeight: 18, fontWeight: '600', includeFontPadding: false }}>
+          {conversations.length ? t('conversation.historyCount', { count: conversations.length }) : t('conversation.emptyHistory')}
+        </Text>
+      </View>
+      <AnimatedNavigationTrigger
+        variant="iconButton"
+        label={newConversationLabel}
+        glyph="new-chat"
+        onNavigate={createConversation}
+        externalActive={creatingConversation}
+        disabled={creatingConversation}
+        color={colors.ui.control.primaryForeground}
+        style={{
+          width: 44,
+          height: 44,
+          borderRadius: 8,
+          alignItems: 'center',
+          justifyContent: 'center',
+          backgroundColor: colors.ui.control.primaryBackground,
+          borderWidth: subtleBorderWidth,
+          borderColor: colors.ui.control.primaryBorder,
+        }}
+      />
+    </View>
+  ) : (
+    <IsleHeader
+      title={t('conversation.title')}
+      leading={
+        <AnimatedNavigationTrigger
+          variant="iconButton"
+          label={t('common.backToChat')}
+          size="lg"
+          glyph="back"
+          onNavigate={() => navigateToChat()}
+          color={colors.text}
+        />
+      }
+      trailing={
+        <AnimatedNavigationTrigger
+          variant="iconButton"
+          label={newConversationLabel}
+          glyph="new-chat"
+          onNavigate={createConversation}
+          externalActive={creatingConversation}
+          disabled={creatingConversation}
+          color={colors.ui.control.primaryForeground}
+          style={{
+            width: primaryActionSize,
+            height: primaryActionSize,
+            borderRadius: colors.ui.radius.controlLarge,
+            alignItems: 'center',
+            justifyContent: 'center',
+            backgroundColor: colors.ui.control.primaryBackground,
+            borderWidth: subtleBorderWidth,
+            borderColor: colors.ui.control.primaryBorder,
+            shadowColor: colors.ui.control.shadow,
+            shadowOpacity: 0,
+            shadowRadius: colors.ui.limeRoad ? colors.ui.control.primaryShadowRadius : 0,
+            shadowOffset: { width: 0, height: colors.ui.limeRoad ? colors.ui.control.primaryShadowOffset : 0 },
+            elevation: colors.ui.limeRoad ? 1 : 0,
+          }}
+        />
+      }
+    />
+  )
+
+  const historySearch = (
+    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
+      <View
+        style={{
+          flex: 1,
+          minWidth: 0,
+          minHeight: 46,
+          borderRadius: colors.ui.radius.controlMiddle,
+          paddingHorizontal: searchHorizontalPadding,
+          flexDirection: 'row',
+          alignItems: 'center',
+          gap: 10,
+          backgroundColor: searchShellBackground,
+          borderWidth: searchShellBorderWidth,
+          borderColor: searchShellBorder,
+        }}
+      >
+        <AppIcon name="search" color={colors.textTertiary} size={18} strokeWidth={appIconStroke.fine} />
+        <TextInput
+          ref={searchInputRef}
+          value={query}
+          onChangeText={handleSearchChange}
+          autoCapitalize="none"
+          autoCorrect={false}
+          returnKeyType="search"
+          onSubmitEditing={openFirstSearchResult}
+          onFocus={handleSearchFocus}
+          onBlur={handleSearchBlur}
+          placeholder={t('conversation.searchConversations')}
+          placeholderTextColor={colors.textTertiary}
+          accessibilityLabel={t('conversation.searchConversations')}
+          accessibilityHint={t('conversation.searchConversationsAccessibilityHint')}
+          accessibilityState={searchPending ? { busy: true } : undefined}
+          accessibilityValue={searchInputAccessibilityValue}
+          style={{ flex: 1, minWidth: 0, minHeight: 44, color: colors.text, fontSize: 15, lineHeight: 20, fontWeight: '500', padding: 0, includeFontPadding: false, textAlignVertical: 'center' }}
+        />
+        {hasRawSearchInput ? (
+          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, flexShrink: 0 }}>
+            {searchPending ? (
+              <View
+                accessibilityRole="progressbar"
+                accessibilityLabel={t('conversation.searchPendingForQuery', { query: trimmedQuery })}
+                style={{ width: 28, height: 44, alignItems: 'center', justifyContent: 'center' }}
+              >
+                <HighFrameSpinner color={colors.ui.icon.accentForeground} size={16} />
+              </View>
+            ) : null}
+            <IslePressable
+              onPress={clearSearch}
+              accessibilityRole="button"
+              accessibilityLabel={t('common.clearSearch')}
+              accessibilityHint={t('common.clearSearchHint')}
+              hitSlop={ICON_ACTION_HIT_SLOP}
+              style={{
+                width: 36,
+                height: 36,
+                borderRadius: 8,
+                alignItems: 'center',
+                justifyContent: 'center',
+                opacity: 0.72,
+              }}
+            >
+              <AppIcon name="close" color={colors.textSecondary} size={16} />
+            </IslePressable>
+          </View>
+        ) : null}
+      </View>
+    </View>
+  )
+
+  const historySummary = showHistoryListSummary && listSummaryDisplayLabel ? (
+    <Text
+      accessibilityLabel={listSummaryAccessibilityLabel || undefined}
+      accessibilityLiveRegion={searchActive || searchPending ? 'polite' : 'none'}
+      style={{
+        color: colors.textTertiary,
+        fontSize: 12,
+        lineHeight: 16,
+        marginTop: 8,
+        paddingHorizontal: 2,
+        fontWeight: '500',
+      }}
+    >
+      {listSummaryDisplayLabel}
+    </Text>
+  ) : null
 
   return (
     <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined} style={{ flex: 1 }}>
-      <View style={{ paddingHorizontal: pageHorizontalPadding, paddingTop: 10, paddingBottom: 14 }}>
-        <IsleHeader
-          title={t('conversation.title')}
-          leading={
-            onHome ? (
-              <AnimatedNavigationTrigger variant="iconButton" label={t('common.home')} size="lg" glyph="home" onNavigate={onHome} color={colors.text} />
-            ) : undefined
-          }
-          trailing={
-            <AnimatedNavigationTrigger
-              variant="iconButton"
-              label={newConversationLabel}
-              glyph="new-chat"
-              onNavigate={createConversation}
-              externalActive={creatingConversation}
-              disabled={creatingConversation}
-              color={colors.ui.control.primaryForeground}
-              style={{
-                width: primaryActionSize,
-                height: primaryActionSize,
-                borderRadius: colors.ui.radius.controlLarge,
-                alignItems: 'center',
-                justifyContent: 'center',
-                backgroundColor: colors.ui.control.primaryBackground,
-                borderWidth: subtleBorderWidth,
-                borderColor: colors.ui.control.primaryBorder,
-                shadowColor: colors.ui.control.shadow,
-                shadowOpacity: colors.ui.cartoon ? Math.min(colors.ui.control.primaryShadowOpacity, 0.08) : 0,
-                shadowRadius: colors.ui.cartoon ? colors.ui.control.primaryShadowRadius : 0,
-                shadowOffset: { width: 0, height: colors.ui.cartoon ? colors.ui.control.primaryShadowOffset : 0 },
-                elevation: colors.ui.cartoon ? 1 : 0,
-              }}
-            />
-          }
-        />
-        <View
-          style={{
-            minHeight: 50,
-            borderRadius: colors.ui.radius.controlMiddle,
-            paddingHorizontal: searchHorizontalPadding,
-            marginTop: 16,
-            flexDirection: 'row',
-            alignItems: 'center',
-            gap: 10,
-            backgroundColor: searchShellBackground,
-            borderWidth: subtleBorderWidth,
-            borderColor: searchShellBorder,
-          }}
-        >
-          <AppIcon name="search" color={colors.textTertiary} size={18} strokeWidth={appIconStroke.fine} />
-          <TextInput
-            ref={searchInputRef}
-            value={query}
-            onChangeText={handleSearchChange}
-            autoCapitalize="none"
-            autoCorrect={false}
-            returnKeyType="search"
-            onSubmitEditing={openFirstSearchResult}
-            onFocus={handleSearchFocus}
-            onBlur={handleSearchBlur}
-            placeholder={t('conversation.searchConversations')}
-            placeholderTextColor={colors.textTertiary}
-            accessibilityLabel={t('conversation.searchConversations')}
-            accessibilityHint={t('conversation.searchConversationsAccessibilityHint')}
-            accessibilityState={searchPending ? { busy: true } : undefined}
-            accessibilityValue={searchInputAccessibilityValue}
-            style={{ flex: 1, minWidth: 0, minHeight: 48, color: colors.text, fontSize: 15, fontWeight: '700', padding: 0 }}
-          />
-          {hasRawSearchInput ? (
-            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, flexShrink: 0 }}>
-              {searchPending ? (
-                <View
-                  accessibilityRole="progressbar"
-                  accessibilityLabel={t('conversation.searchPendingForQuery', { query: trimmedQuery })}
-                  style={{ width: 28, height: 44, alignItems: 'center', justifyContent: 'center' }}
-                >
-                  <ActivityIndicator color={colors.ui.icon.accentForeground} size="small" />
-                </View>
-              ) : null}
-              {hasSearchInput ? (
-                <IslePressable
-                  haptic={!firstSearchResultActionDisabled}
-                  disabled={firstSearchResultActionDisabled}
-                  onPress={firstSearchResultActionDisabled ? undefined : openFirstSearchResult}
-                  accessibilityRole="button"
-                  accessibilityLabel={firstSearchResultActionAccessibilityLabel}
-                  accessibilityHint={firstSearchResultActionAccessibilityHint}
-                  accessibilityState={firstSearchResultActionDisabled ? { busy: true, disabled: true } : undefined}
-                  accessibilityValue={firstSearchResultActionAccessibilityValue}
-                  hitSlop={ICON_ACTION_HIT_SLOP}
-                  style={{
-                    width: 44,
-                    height: 44,
-                    borderRadius: colors.ui.radius.controlMiddle,
-                    alignItems: 'center',
-                    justifyContent: 'center',
-                    backgroundColor: firstSearchResultActionHasMatch ? colors.ui.control.primaryBackground : chromeIconSurface,
-                    borderWidth: subtleBorderWidth,
-                    borderColor: firstSearchResultActionHasMatch ? colors.ui.control.primaryBorder : chromeIconBorder,
-                    opacity: firstSearchResultActionDisabled ? 0.55 : 1,
-                  }}
-                >
-                  <AppIcon name="arrow-right" color={firstSearchResultActionHasMatch ? colors.ui.control.primaryForeground : colors.textSecondary} size={16} strokeWidth={appIconStroke.strong} />
-                </IslePressable>
-              ) : null}
-              <IslePressable
-                onPress={clearSearch}
-                accessibilityRole="button"
-                accessibilityLabel={t('common.clearSearch')}
-                accessibilityHint={t('common.clearSearchHint')}
-                hitSlop={ICON_ACTION_HIT_SLOP}
-                style={{
-                  width: 44,
-                  height: 44,
-                  borderRadius: colors.ui.radius.controlMiddle,
-                  alignItems: 'center',
-                  justifyContent: 'center',
-                  backgroundColor: chromeIconSurface,
-                  borderWidth: subtleBorderWidth,
-                  borderColor: chromeIconBorder,
-                }}
-              >
-                <AppIcon name="close" color={colors.textSecondary} size={16} />
-              </IslePressable>
-            </View>
-          ) : null}
-        </View>
-        {listSummaryDisplayLabel ? (
-          <Text
-            accessibilityLabel={listSummaryAccessibilityLabel || undefined}
-            accessibilityLiveRegion={searchActive || searchPending ? 'polite' : 'none'}
-            style={{
-              color: colors.textTertiary,
-              fontSize: 12,
-              lineHeight: 16,
-              marginTop: 8,
-              paddingHorizontal: 2,
-              fontWeight: '800',
-            }}
-          >
-            {listSummaryDisplayLabel}
-          </Text>
-        ) : null}
-      </View>
+      <HistoryHeaderFrame
+        themeId={themeId}
+        tokens={historyVisualTokens}
+        compact={compact}
+        shellNavigation={shellNavigation}
+        conversationCount={conversations.length}
+        sectionLabel={t('conversation.title')}
+        documentPath={t('conversation.title')}
+        header={historyHeader}
+        search={historySearch}
+        summary={historySummary}
+      />
       <FlashList
         ref={listRef}
         data={filteredConversations}
@@ -1260,39 +1291,44 @@ export function ConversationsScreenContent({ active = true, onHome, onSettings }
         onMomentumScrollEnd={handleListMomentumScrollEnd}
         onViewableItemsChanged={handleListViewableItemsChanged}
         viewabilityConfig={listViewabilityConfig}
-        scrollEventThrottle={32}
+        scrollEventThrottle={16}
+        drawDistance={LIST_DRAW_DISTANCE}
         contentContainerStyle={{ paddingHorizontal: listHorizontalPadding, paddingBottom: listBottomPadding }}
         ListEmptyComponent={
           trimmedQuery
             ? searchPending
               ? (
-                <IsleEmptyState
+                <HistoryEmptyStateFrame
+                  themeId={themeId}
+                  tokens={historyVisualTokens}
+                  kind="search-pending"
                   title={t('conversation.searchPendingForQuery', { query: trimmedQuery })}
                   description={t('conversation.searchPendingDescription', { query: trimmedQuery })}
-                  contextual
                 />
               )
               : (
-                <IsleEmptyState
+                <HistoryEmptyStateFrame
+                  themeId={themeId}
+                  tokens={historyVisualTokens}
+                  kind="search-empty"
                   title={t('conversation.noSearchResults')}
                   description={t('conversation.noSearchResultsDescription', { query: trimmedQuery })}
                   actionLabel={t('common.clearSearch')}
                   onAction={clearSearch}
-                  contextual
                 />
               )
             : (
-              <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 12 }}>
-                <IsleEmptyState
-                  title={t('conversation.emptyHistory')}
-                  actionLabel={newConversationLabel}
-                  actionGlyph="new-chat"
-                  actionBusy={creatingConversation}
-                  actionDisabled={creatingConversation}
-                  onAction={() => void createConversation()}
-                  contextual
-                />
-              </View>
+              <HistoryEmptyStateFrame
+                themeId={themeId}
+                tokens={historyVisualTokens}
+                kind="history-empty"
+                title={t('conversation.emptyHistory')}
+                actionLabel={shellNavigation ? undefined : newConversationLabel}
+                actionGlyph={shellNavigation ? undefined : 'new-chat'}
+                actionBusy={creatingConversation}
+                actionDisabled={creatingConversation}
+                onAction={shellNavigation ? undefined : () => void createConversation()}
+              />
             )
         }
         ListFooterComponent={listFooter}
@@ -1311,59 +1347,18 @@ export function ConversationsScreenContent({ active = true, onHome, onSettings }
             accessibilityValue={currentConversationActionAccessibilityValue}
             hitSlop={ICON_ACTION_HIT_SLOP}
             style={{
-              width: currentConversationActionWidth,
+              width: SCROLL_TOP_ACTION_SIZE,
               height: SCROLL_TOP_ACTION_SIZE,
-              borderRadius: colors.ui.radius.controlMiddle,
+              borderRadius: 8,
               alignItems: 'center',
               justifyContent: 'center',
-              flexDirection: 'row',
-              gap: 7,
-              paddingHorizontal: 12,
               backgroundColor: colors.ui.control.primaryBackground,
               borderWidth: subtleBorderWidth,
               borderColor: colors.ui.control.primaryBorder,
-              shadowColor: colors.ui.control.shadow,
-              shadowOpacity: colors.ui.cartoon ? Math.min(colors.ui.control.primaryShadowOpacity, 0.08) : 0,
-              shadowRadius: colors.ui.cartoon ? colors.ui.control.primaryShadowRadius : 0,
-              shadowOffset: { width: 0, height: colors.ui.cartoon ? colors.ui.control.primaryShadowOffset : 0 },
-              elevation: colors.ui.cartoon ? 1 : 0,
               opacity: currentConversationActionLocked ? 0.64 : 1,
             }}
           >
             <AppIcon name="message" color={colors.ui.control.primaryForeground} size={17} strokeWidth={appIconStroke.strong} />
-            <View style={{ flexShrink: 1, minWidth: 0, justifyContent: 'center', gap: 1 }}>
-              <Text
-                numberOfLines={1}
-                adjustsFontSizeToFit
-                minimumFontScale={0.78}
-                style={{
-                  color: colors.ui.control.primaryForeground,
-                  fontSize: 12,
-                  lineHeight: 15,
-                  fontWeight: '900',
-                  includeFontPadding: false,
-                }}
-              >
-                {t('conversation.scrollToCurrent')}
-              </Text>
-              {currentConversationActionPositionLabel ? (
-                <Text
-                  numberOfLines={1}
-                  adjustsFontSizeToFit
-                  minimumFontScale={0.78}
-                  style={{
-                    color: colors.ui.control.primaryForeground,
-                    fontSize: 10,
-                    lineHeight: 12,
-                    fontWeight: '900',
-                    includeFontPadding: false,
-                    opacity: 0.82,
-                  }}
-                >
-                  {currentConversationActionPositionLabel}
-                </Text>
-              ) : null}
-            </View>
           </IslePressable>
         </View>
       ) : null}
@@ -1399,7 +1394,7 @@ export function ConversationsScreenContent({ active = true, onHome, onSettings }
               shadowOpacity: floatingSecondaryShadowOpacity,
               shadowRadius: floatingSecondaryShadowRadius,
               shadowOffset: { width: 0, height: floatingSecondaryShadowOffset },
-              elevation: colors.ui.cartoon && floatingSecondaryShadowOpacity > 0 ? 1 : 0,
+              elevation: colors.ui.limeRoad && floatingSecondaryShadowOpacity > 0 ? 1 : 0,
               opacity: scrollTopActionLocked ? 0.64 : 1,
             }}
           >

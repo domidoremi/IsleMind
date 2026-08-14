@@ -1,5 +1,4 @@
-import type { KnowledgeDocument, RagIndexingJobStatus } from '@/types'
-
+import type { KnowledgeDocument, RagIndexingJobStatus } from '@/types/contextContracts'
 export interface KnowledgeRecoverySummary {
   failedDocuments: number
   emptyDocuments: number

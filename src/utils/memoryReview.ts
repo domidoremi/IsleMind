@@ -1,5 +1,4 @@
-import type { MemoryItem, MemorySourceKind } from '@/types'
-
+import type { MemoryItem, MemorySourceKind } from '@/types/contextContracts'
 export const MEMORY_REVIEW_LOW_CONFIDENCE_THRESHOLD = 0.7
 
 export type MemoryReviewQueueFocus = 'all' | MemorySourceKind | 'lowConfidence'

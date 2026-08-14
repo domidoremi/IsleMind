@@ -1,5 +1,5 @@
 import { memo, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
-import { StyleSheet, Text, View, useWindowDimensions } from 'react-native'
+import { ScrollView, StyleSheet, Text, View, useWindowDimensions } from 'react-native'
 import * as Clipboard from 'expo-clipboard'
 import Markdown from 'react-native-markdown-display'
 import type { RenderRules } from 'react-native-markdown-display'
@@ -9,12 +9,22 @@ import { useAppTheme } from '@/hooks/useAppTheme'
 import { AppIcon, appIconStroke } from '@/components/ui/AppIcon'
 import { IslePressable } from '@/components/ui/isle'
 import { IslePanel } from '@/components/ui/isle'
+import { shouldPromotePlainDelimitedRows } from './messageContentTablePromotion'
+import {
+  hasComplexDisplayFormulaStructure,
+  hasUnambiguousPlainFormulaStructure,
+  looksLikeUserAgentText,
+  normalizeUserAgentText,
+  shouldRenderFencedUserAgentAsText,
+} from './messageContentSpecialFormatPolicy'
+import { MessageContentThemeSurface } from './theme-surfaces/ChatThemeSurfaces'
 
 interface MessageContentProps {
   content: string
   isUser?: boolean
   isStreaming?: boolean
   onLayoutChangeRequest?: () => void
+  selectionEnabled?: boolean
 }
 
 type RichSegment =
@@ -22,7 +32,7 @@ type RichSegment =
   | { id: string; type: 'code'; content: string; language?: string }
   | { id: string; type: 'formula'; content: string }
   | { id: string; type: 'diagram'; content: string; language?: string }
-  | { id: string; type: 'table'; rows: string[][]; title?: string }
+  | { id: string; type: 'table'; rows: string[][]; title?: string; totalRowCount?: number; hiddenRowCount?: number; copyText?: string }
   | { id: string; type: 'data'; content: string; language?: string; title: string }
 
 const FORMULA_LANGUAGES = new Set(['math', 'latex', 'tex', 'formula', 'equation'])
@@ -36,6 +46,12 @@ const RICH_BLOCK_COPY_FEEDBACK_MS = 1300
 const DIAGRAM_PREVIEW_NODE_LIMIT = 8
 const DIAGRAM_PREVIEW_EDGE_LIMIT = 6
 const STACKED_TABLE_COLUMN_THRESHOLD = 4
+const MARKDOWN_RENDER_CHAR_LIMIT = 12000
+const DATA_PREVIEW_CHAR_LIMIT = 12000
+const SOURCE_LINE_RENDER_LIMIT = 220
+const TABLE_ROW_RENDER_LIMIT = 80
+const TABLE_DETECTION_ROW_LIMIT = 24
+const STREAMING_MARKDOWN_RENDER_CHAR_LIMIT = 8000
 
 type FormulaTokenKind = 'plain' | 'operator' | 'function' | 'number' | 'symbol'
 
@@ -61,22 +77,35 @@ interface DataSummaryItem {
   label: string
   value: string
 }
-const SELECTABLE_MARKDOWN_RULES: RenderRules = {
+
+interface DataPreview {
+  text: string
+  hiddenCharCount: number
+}
+
+interface ParsedTablePreview {
+  rows: string[][]
+  totalRowCount: number
+  hiddenRowCount: number
+}
+function createMarkdownRenderRules(selectionEnabled: boolean): RenderRules {
+  return {
   text: (node, _children, _parent, styles, inheritedStyles = {}) => (
-    <Text key={node.key} selectable style={[inheritedStyles, styles.text]}>
+    <Text key={node.key} selectable={selectionEnabled} style={[inheritedStyles, styles.text]}>
       {node.content}
     </Text>
   ),
   textgroup: (node, children, _parent, styles) => (
-    <Text key={node.key} selectable style={styles.textgroup}>
+    <Text key={node.key} selectable={selectionEnabled} style={styles.textgroup}>
       {children}
     </Text>
   ),
   code_inline: (node, _children, _parent, styles, inheritedStyles = {}) => (
-    <Text key={node.key} selectable style={[inheritedStyles, styles.code_inline]}>
+    <Text key={node.key} selectable={selectionEnabled} style={[inheritedStyles, styles.code_inline]}>
       {node.content}
     </Text>
   ),
+  }
 }
 
 interface RichCardAction {
@@ -88,19 +117,19 @@ interface RichCardAction {
 
 function resolveAssistantRichSurfaces(colors: ReturnType<typeof useAppTheme>['colors']) {
   return {
-    blockSurface: colors.ui.glass ? colors.ui.actionBar.itemBackground : colors.ui.cartoon ? colors.ui.semantic.surface.muted : colors.ui.semantic.surface.muted,
-    blockRaisedSurface: colors.ui.glass ? colors.ui.semantic.chrome.background : colors.ui.cartoon ? colors.ui.semantic.surface.base : colors.ui.semantic.surface.muted,
-    blockBorder: colors.ui.cartoon ? colors.material.stroke : colors.ui.glass ? colors.ui.actionBar.itemBorder : colors.ui.semantic.chrome.border,
-    gutterSurface: colors.ui.glass ? colors.ui.semantic.chrome.background : colors.ui.cartoon ? colors.ui.semantic.surface.muted : colors.ui.semantic.surface.muted,
-    stripeSurface: colors.ui.glass ? colors.ui.actionBar.itemActiveBackground : colors.ui.cartoon ? colors.ui.semantic.surface.muted : colors.ui.semantic.surface.overlay,
-    headerActionSurface: colors.ui.glass ? colors.ui.actionBar.itemBackground : colors.ui.cartoon ? colors.ui.semantic.surface.muted : colors.ui.semantic.surface.muted,
-    richCardSurface: colors.ui.glass ? colors.ui.actionBar.itemBackground : colors.ui.cartoon ? colors.ui.semantic.surface.muted : colors.ui.semantic.surface.muted,
-    nestedPanelSurface: colors.ui.glass ? colors.ui.semantic.chrome.background : colors.ui.cartoon ? colors.ui.semantic.surface.base : 'transparent',
-    inlineMetaSurface: colors.ui.glass ? colors.ui.actionBar.itemActiveBackground : colors.ui.cartoon ? colors.ui.semantic.surface.muted : 'transparent',
-    inlineMetaBorder: colors.ui.cartoon ? colors.material.stroke : colors.ui.glass ? colors.ui.actionBar.itemBorder : colors.ui.semantic.chrome.border,
-    nodeSurface: colors.ui.glass ? colors.ui.actionBar.itemActiveBackground : colors.ui.cartoon ? colors.ui.semantic.surface.muted : colors.ui.semantic.surface.muted,
-    nestedBorderWidth: colors.ui.cartoon ? 1 : StyleSheet.hairlineWidth,
-    chipBorderWidth: colors.ui.cartoon ? 1 : StyleSheet.hairlineWidth,
+    blockSurface: colors.ui.glass ? colors.ui.actionBar.itemBackground : colors.ui.limeRoad ? colors.ui.semantic.surface.muted : colors.ui.semantic.surface.muted,
+    blockRaisedSurface: colors.ui.glass ? colors.ui.semantic.chrome.background : colors.ui.limeRoad ? colors.ui.semantic.surface.base : colors.ui.semantic.surface.muted,
+    blockBorder: colors.ui.limeRoad ? colors.material.stroke : colors.ui.glass ? colors.ui.actionBar.itemBorder : colors.ui.semantic.chrome.border,
+    gutterSurface: colors.ui.glass ? colors.ui.semantic.chrome.background : colors.ui.limeRoad ? colors.ui.semantic.surface.muted : colors.ui.semantic.surface.muted,
+    stripeSurface: colors.ui.glass ? colors.ui.actionBar.itemActiveBackground : colors.ui.limeRoad ? colors.ui.semantic.surface.muted : colors.ui.semantic.surface.overlay,
+    headerActionSurface: colors.ui.glass ? colors.ui.actionBar.itemBackground : colors.ui.limeRoad ? colors.ui.semantic.surface.muted : colors.ui.semantic.surface.muted,
+    richCardSurface: colors.ui.glass ? colors.ui.actionBar.itemBackground : colors.ui.limeRoad ? colors.ui.semantic.surface.muted : colors.ui.semantic.surface.muted,
+    nestedPanelSurface: colors.ui.glass ? colors.ui.semantic.chrome.background : colors.ui.limeRoad ? colors.ui.semantic.surface.base : 'transparent',
+    inlineMetaSurface: colors.ui.glass ? colors.ui.actionBar.itemActiveBackground : colors.ui.limeRoad ? colors.ui.semantic.surface.muted : 'transparent',
+    inlineMetaBorder: colors.ui.limeRoad ? colors.material.stroke : colors.ui.glass ? colors.ui.actionBar.itemBorder : colors.ui.semantic.chrome.border,
+    nodeSurface: colors.ui.glass ? colors.ui.actionBar.itemActiveBackground : colors.ui.limeRoad ? colors.ui.semantic.surface.muted : colors.ui.semantic.surface.muted,
+    nestedBorderWidth: colors.ui.limeRoad ? 1 : StyleSheet.hairlineWidth,
+    chipBorderWidth: colors.ui.limeRoad ? 1 : StyleSheet.hairlineWidth,
   }
 }
 
@@ -114,21 +143,39 @@ function tableCellMetrics(windowWidth: number) {
   }
 }
 
-export const MessageContent = memo(function MessageContent({ content, isUser = false, isStreaming = false }: MessageContentProps) {
+function maxTableColumnCount(rows: string[][]): number {
+  return rows.reduce((max, row) => Math.max(max, row.length), 1)
+}
+
+export const MessageContent = memo(function MessageContent({ content, isUser = false, isStreaming = false, selectionEnabled = true }: MessageContentProps) {
   const { t } = useTranslation()
+  const { colors, themeId } = useAppTheme()
   const segments = useMemo(() => safeParseRichContent(content, t, isStreaming), [content, isStreaming, t])
 
   return (
-    <View style={{ gap: 5, width: '100%', maxWidth: '100%', overflow: 'hidden' }}>
+    <MessageContentThemeSurface themeId={themeId} colors={colors} isUser={isUser}>
       {segments.map((segment) => {
-        if (segment.type === 'markdown') return <RichMarkdown key={segment.id} content={segment.content} isUser={isUser} isStreaming={isStreaming} />
-        if (segment.type === 'table') return <TableBlockCard key={segment.id} rows={segment.rows} title={segment.title} isUser={isUser} />
-        if (segment.type === 'formula') return <FormulaBlockCard key={segment.id} content={segment.content} isUser={isUser} />
+        if (segment.type === 'markdown') return <RichMarkdown key={segment.id} content={segment.content} isUser={isUser} isStreaming={isStreaming} selectionEnabled={selectionEnabled} />
+        if (segment.type === 'table') {
+          return (
+            <TableBlockCard
+              key={segment.id}
+              rows={segment.rows}
+              title={segment.title}
+              isUser={isUser}
+              totalRowCount={segment.totalRowCount}
+              hiddenRowCount={segment.hiddenRowCount}
+              copyText={segment.copyText}
+              selectionEnabled={selectionEnabled}
+            />
+          )
+        }
+        if (segment.type === 'formula') return <FormulaBlockCard key={segment.id} content={segment.content} isUser={isUser} selectionEnabled={selectionEnabled} />
         if (segment.type === 'diagram') return <DiagramBlockCard key={segment.id} content={segment.content} language={segment.language} isUser={isUser} />
-        if (segment.type === 'data') return <DataBlockCard key={segment.id} content={segment.content} language={segment.language} title={segment.title} isUser={isUser} />
+        if (segment.type === 'data') return <DataBlockCard key={segment.id} content={segment.content} language={segment.language} title={segment.title} isUser={isUser} selectionEnabled={selectionEnabled} />
         return <CodeBlockCard key={segment.id} content={segment.content} language={segment.language} isUser={isUser} />
       })}
-    </View>
+    </MessageContentThemeSurface>
   )
 }, areMessageContentPropsEqual)
 
@@ -136,7 +183,8 @@ function areMessageContentPropsEqual(previous: MessageContentProps, next: Messag
   return previous.content === next.content &&
     previous.isUser === next.isUser &&
     previous.isStreaming === next.isStreaming &&
-    previous.onLayoutChangeRequest === next.onLayoutChangeRequest
+    previous.onLayoutChangeRequest === next.onLayoutChangeRequest &&
+    previous.selectionEnabled === next.selectionEnabled
 }
 
 function safeParseRichContent(content: string, t: TFunction, isStreaming: boolean): RichSegment[] {
@@ -151,8 +199,10 @@ function safeParseRichContent(content: string, t: TFunction, isStreaming: boolea
   }
 }
 
-function RichMarkdown({ content, isUser, isStreaming }: { content: string; isUser: boolean; isStreaming: boolean }) {
+function RichMarkdown({ content, isUser, isStreaming, selectionEnabled }: { content: string; isUser: boolean; isStreaming: boolean; selectionEnabled: boolean }) {
+  const { t } = useTranslation()
   const { colors } = useAppTheme()
+  const markdownRules = useMemo(() => createMarkdownRenderRules(selectionEnabled), [selectionEnabled])
   const userMessage = colors.ui.message
   const assistantSurfaces = resolveAssistantRichSurfaces(colors)
   const inlineCodeBackground = isUser ? userMessage.userActionBackground : assistantSurfaces.blockSurface
@@ -162,10 +212,14 @@ function RichMarkdown({ content, isUser, isStreaming }: { content: string; isUse
   const mutedForeground = isUser ? userMessage.userForeground : colors.textTertiary
 
   if (isStreaming) {
+    const hiddenCharCount = Math.max(0, content.length - STREAMING_MARKDOWN_RENDER_CHAR_LIMIT)
+    const visibleContent = hiddenCharCount > 0
+      ? `${content.slice(0, STREAMING_MARKDOWN_RENDER_CHAR_LIMIT).trimEnd()}\n\n…`
+      : content
     return (
       <View style={{ maxWidth: '100%', overflow: 'hidden' }}>
         <Text
-          selectable
+          selectable={selectionEnabled}
           style={{
             color: isUser ? userMessage.userForeground : colors.text,
             fontSize: 15,
@@ -173,23 +227,33 @@ function RichMarkdown({ content, isUser, isStreaming }: { content: string; isUse
             includeFontPadding: !isUser,
           }}
         >
-          {content}
+          {visibleContent}
         </Text>
+        {hiddenCharCount > 0 ? (
+          <Text style={{ color: isUser ? userMessage.userForeground : colors.textTertiary, fontSize: 11, lineHeight: 16, fontWeight: '800', marginTop: 4 }}>
+            {t('messageContent.truncatedMarkdownContent', { count: hiddenCharCount })}
+          </Text>
+        ) : null}
       </View>
     )
   }
 
+  const hiddenCharCount = Math.max(0, content.length - MARKDOWN_RENDER_CHAR_LIMIT)
+  const visibleContent = hiddenCharCount > 0
+    ? `${content.slice(0, MARKDOWN_RENDER_CHAR_LIMIT).trimEnd()}\n\n…`
+    : content
+
   return (
     <View style={{ maxWidth: '100%', overflow: 'hidden' }}>
       <Markdown
-        rules={SELECTABLE_MARKDOWN_RULES}
+        rules={markdownRules}
         style={{
-          body: { color: isUser ? userMessage.userForeground : colors.text, fontSize: 15, lineHeight: 23, includeFontPadding: !isUser },
-          heading1: { color: isUser ? userMessage.userForeground : colors.text, fontSize: 20, lineHeight: 26, marginTop: 4, marginBottom: 8, fontWeight: '900' },
-          heading2: { color: isUser ? userMessage.userForeground : colors.text, fontSize: 18, lineHeight: 24, marginTop: 4, marginBottom: 8, fontWeight: '900' },
-          heading3: { color: isUser ? userMessage.userForeground : colors.text, fontSize: 16, lineHeight: 22, marginTop: 4, marginBottom: 7, fontWeight: '900' },
-          paragraph: { marginTop: 0, marginBottom: isUser ? 0 : 5 },
-          link: { color: isUser ? userMessage.userForeground : colors.ui.control.link, fontWeight: '900' },
+          body: { color: isUser ? userMessage.userForeground : colors.text, fontSize: 15, lineHeight: 22, includeFontPadding: !isUser },
+          heading1: { color: isUser ? userMessage.userForeground : colors.text, fontSize: 20, lineHeight: 26, marginTop: 4, marginBottom: 8, fontWeight: '800' },
+          heading2: { color: isUser ? userMessage.userForeground : colors.text, fontSize: 18, lineHeight: 24, marginTop: 4, marginBottom: 8, fontWeight: '800' },
+          heading3: { color: isUser ? userMessage.userForeground : colors.text, fontSize: 16, lineHeight: 22, marginTop: 4, marginBottom: 7, fontWeight: '800' },
+          paragraph: { marginTop: 0, marginBottom: isUser ? 0 : 4 },
+          link: { color: isUser ? userMessage.userForeground : colors.ui.control.link, fontWeight: '800' },
           bullet_list: {
             marginTop: 2,
             marginBottom: 6,
@@ -211,14 +275,14 @@ function RichMarkdown({ content, isUser, isStreaming }: { content: string; isUse
           },
           bullet_list_icon: {
             color: isUser ? userMessage.userForeground : colors.ui.icon.accentForeground,
-            fontWeight: '900',
-            lineHeight: 23,
+            fontWeight: '800',
+            lineHeight: 22,
             marginRight: 5,
           },
           ordered_list_icon: {
             color: isUser ? userMessage.userForeground : colors.ui.icon.accentForeground,
-            fontWeight: '900',
-            lineHeight: 23,
+            fontWeight: '800',
+            lineHeight: 22,
             marginRight: 5,
             minWidth: 18,
             textAlign: 'right',
@@ -233,7 +297,7 @@ function RichMarkdown({ content, isUser, isStreaming }: { content: string; isUse
           },
           blockquote: {
             backgroundColor: blockSurface,
-            borderLeftWidth: isUser ? 0 : colors.ui.cartoon ? 2 : 1,
+            borderLeftWidth: isUser ? 0 : colors.ui.limeRoad ? 2 : 1,
             borderLeftColor: isUser ? userMessage.userForeground : colors.ui.icon.accentForeground,
             borderRadius: colors.ui.radius.controlSmall,
             paddingHorizontal: 8,
@@ -246,23 +310,23 @@ function RichMarkdown({ content, isUser, isStreaming }: { content: string; isUse
             marginTop: 6,
             marginBottom: 8,
           },
-          strong: { color: isUser ? userMessage.userForeground : colors.text, fontWeight: '900' },
+          strong: { color: isUser ? userMessage.userForeground : colors.text, fontWeight: '800' },
           em: { color: isUser ? userMessage.userForeground : colors.textSecondary, fontStyle: 'italic' },
           s: { color: mutedForeground, textDecorationLine: 'line-through' },
           code_inline: {
-            color: isUser ? userMessage.userForeground : colors.ui.code.text,
+            color: isUser ? userMessage.userForeground : colors.text,
             backgroundColor: inlineCodeBackground,
             borderRadius: 7,
             paddingHorizontal: 5,
-            paddingVertical: 1,
+            paddingVertical: 0,
             fontSize: 13,
-            lineHeight: 20,
+            lineHeight: 19,
           },
           code_block: {
             color: isUser ? userMessage.userForeground : colors.ui.code.text,
             backgroundColor: codeSurface,
             borderColor: isUser ? 'transparent' : colors.ui.code.border,
-            borderWidth: isUser ? 0 : colors.ui.cartoon ? 1 : StyleSheet.hairlineWidth,
+            borderWidth: isUser ? 0 : colors.ui.limeRoad ? 1 : StyleSheet.hairlineWidth,
             borderRadius: colors.ui.radius.card,
             padding: 8,
           },
@@ -270,11 +334,11 @@ function RichMarkdown({ content, isUser, isStreaming }: { content: string; isUse
             color: isUser ? userMessage.userForeground : colors.ui.code.text,
             backgroundColor: codeSurface,
             borderColor: isUser ? 'transparent' : colors.ui.code.border,
-            borderWidth: isUser ? 0 : colors.ui.cartoon ? 1 : StyleSheet.hairlineWidth,
+            borderWidth: isUser ? 0 : colors.ui.limeRoad ? 1 : StyleSheet.hairlineWidth,
             borderRadius: colors.ui.radius.card,
             padding: 8,
           },
-          table: { borderColor: blockBorder, borderWidth: colors.ui.cartoon ? 1 : StyleSheet.hairlineWidth, borderRadius: colors.ui.radius.card, backgroundColor: blockSurface },
+          table: { borderColor: blockBorder, borderWidth: colors.ui.limeRoad ? 1 : StyleSheet.hairlineWidth, borderRadius: colors.ui.radius.card, backgroundColor: blockSurface },
           thead: { backgroundColor: isUser ? userMessage.userActionBackground : colors.ui.table.headerBackground },
           tbody: { backgroundColor: blockSurface },
           th: { borderColor: blockBorder, backgroundColor: isUser ? userMessage.userActionBackground : colors.ui.table.headerBackground },
@@ -282,8 +346,13 @@ function RichMarkdown({ content, isUser, isStreaming }: { content: string; isUse
           td: { borderColor: blockBorder, backgroundColor: blockSurface },
         }}
       >
-        {content}
+        {visibleContent}
       </Markdown>
+      {hiddenCharCount > 0 ? (
+        <Text style={{ color: isUser ? userMessage.userForeground : colors.textTertiary, fontSize: 11, lineHeight: 16, fontWeight: '800', marginTop: 4 }}>
+          {t('messageContent.truncatedMarkdownContent', { count: hiddenCharCount })}
+        </Text>
+      ) : null}
     </View>
   )
 }
@@ -339,6 +408,9 @@ function SourceLineRows({
   gutterBackground: string
 }) {
   const { colors } = useAppTheme()
+  const { t } = useTranslation()
+  const hiddenLineCount = Math.max(0, lines.length - SOURCE_LINE_RENDER_LIMIT)
+  const visibleLines = hiddenLineCount > 0 ? lines.slice(0, SOURCE_LINE_RENDER_LIMIT) : lines
   const lineNumberWidth = Math.max(34, String(lines.length).length * 8 + 18)
   const assistantSurfaces = resolveAssistantRichSurfaces(colors)
   return (
@@ -353,7 +425,7 @@ function SourceLineRows({
         borderColor,
       }}
     >
-      {lines.map((line, index) => (
+      {visibleLines.map((line, index) => (
         <View
           key={`${index}-${line.slice(0, 12)}`}
           style={{
@@ -366,15 +438,15 @@ function SourceLineRows({
             selectable={false}
             style={{
               width: lineNumberWidth,
-              paddingTop: index === 0 ? 12 : 2,
-              paddingBottom: index === lines.length - 1 ? 12 : 2,
-              paddingRight: 9,
-              paddingLeft: 8,
+              paddingTop: index === 0 ? 9 : 1,
+              paddingBottom: index === visibleLines.length - 1 ? 9 : 1,
+              paddingRight: 8,
+              paddingLeft: 7,
               textAlign: 'right',
               color: numberColor,
               fontFamily: 'monospace',
-              fontSize: 11,
-              lineHeight: 18,
+              fontSize: 10.5,
+              lineHeight: 17,
               backgroundColor: gutterBackground,
               opacity: isUser ? 0.78 : 1,
             }}
@@ -388,96 +460,127 @@ function SourceLineRows({
               minWidth: 0,
               flexShrink: 1,
               flexBasis: 0,
-              paddingTop: index === 0 ? 12 : 2,
-              paddingBottom: index === lines.length - 1 ? 12 : 2,
-              paddingHorizontal: 10,
+              paddingTop: index === 0 ? 9 : 1,
+              paddingBottom: index === lines.length - 1 ? 9 : 1,
+              paddingHorizontal: 8,
               color: textColor,
               fontFamily: 'monospace',
-              fontSize: 12,
-              lineHeight: 18,
+              fontSize: 11.5,
+              lineHeight: 17,
             }}
           >
             {line || ' '}
           </Text>
         </View>
       ))}
+      {hiddenLineCount > 0 ? (
+        <View
+          style={{
+            minHeight: 38,
+            paddingHorizontal: 10,
+            paddingVertical: 10,
+            backgroundColor: !isUser && !colors.ui.minimal ? assistantSurfaces.stripeSurface : undefined,
+            borderTopWidth: isUser ? 0 : assistantSurfaces.nestedBorderWidth,
+            borderTopColor: borderColor,
+          }}
+        >
+          <Text style={{ color: numberColor, fontSize: 11, lineHeight: 16, fontWeight: '800' }}>
+            {t('messageContent.truncatedSourceLines', { count: hiddenLineCount })}
+          </Text>
+        </View>
+      ) : null}
     </View>
   )
 }
 
-function FormulaBlockCard({ content, isUser }: { content: string; isUser: boolean }) {
+function FormulaBlockCard({ content, isUser, selectionEnabled }: { content: string; isUser: boolean; selectionEnabled: boolean }) {
   const { colors } = useAppTheme()
-  const { t } = useTranslation()
   const userMessage = colors.ui.message
-  const assistantSurfaces = resolveAssistantRichSurfaces(colors)
   const formula = normalizeFormulaContent(content)
   const formulaTokens = useMemo(() => tokenizeFormula(formula), [formula])
-  const lineCount = countContentLines(formula)
-  const formulaSurface = isUser ? userMessage.userActionBackground : assistantSurfaces.blockSurface
+  const nonEmptyLines = formula.split(/\r?\n/).filter((line) => line.trim())
+  const longestLineLength = nonEmptyLines.reduce((max, line) => Math.max(max, line.trim().length), 0)
+  const compactFormula = nonEmptyLines.length <= 1 && longestLineLength <= 24
+  const denseFormula = nonEmptyLines.length > 3 || longestLineLength > 64
+  const formulaFontSize = compactFormula ? 22 : denseFormula ? 16 : 18
+  const formulaLineHeight = compactFormula ? 30 : denseFormula ? 25 : 27
   const tokenColors: Record<FormulaTokenKind, string> = {
     plain: isUser ? userMessage.userForeground : colors.text,
     operator: isUser ? userMessage.userForeground : colors.ui.icon.accentForeground,
     function: isUser ? userMessage.userForeground : colors.ui.control.link,
-    number: isUser ? userMessage.userForeground : colors.ui.tone.warning.foreground,
+    number: isUser ? userMessage.userForeground : colors.text,
     symbol: isUser ? userMessage.userForeground : colors.textSecondary,
   }
 
   return (
-    <RichCard isUser={isUser}>
-      <CardHeader
-        icon={<AppIcon name="sigma" color={isUser ? userMessage.userForeground : colors.ui.icon.accentForeground} size={14} strokeWidth={appIconStroke.strong} />}
-        title={t('messageContent.formulaBlockTitle', { count: lineCount })}
-        isUser={isUser}
-        actions={isUser ? [] : [
-          { label: t('common.copy'), kind: 'copy', onPress: () => Clipboard.setStringAsync(formula) },
-        ]}
-      />
-      <View
+    <View
+      style={{
+        width: '100%',
+        minWidth: 0,
+        alignItems: 'center',
+        justifyContent: 'center',
+        paddingHorizontal: 4,
+        paddingVertical: compactFormula ? 10 : 8,
+      }}
+    >
+      <Text
+        selectable={selectionEnabled}
         style={{
           width: '100%',
-          paddingHorizontal: 13,
-          paddingVertical: 12,
-          borderRadius: colors.ui.radius.card,
-          backgroundColor: formulaSurface,
-          borderWidth: isUser ? 0 : assistantSurfaces.nestedBorderWidth,
-          borderColor: assistantSurfaces.blockBorder,
+          color: isUser ? userMessage.userForeground : colors.text,
+          fontFamily: 'monospace',
+          fontSize: formulaFontSize,
+          lineHeight: formulaLineHeight,
+          fontWeight: '600',
+          textAlign: 'center',
+          includeFontPadding: false,
         }}
       >
-        <Text
-          selectable
-          style={{
-            color: isUser ? userMessage.userForeground : colors.text,
-            fontFamily: 'monospace',
-            fontSize: 14,
-            lineHeight: 22,
-          }}
-        >
-          {formulaTokens.map((token, index) => (
-            <Text key={`${index}-${token.kind}-${token.content}`} style={{ color: tokenColors[token.kind], fontWeight: token.kind === 'operator' || token.kind === 'function' ? '900' : '700' }}>
-              {token.content}
-            </Text>
-          ))}
-        </Text>
-      </View>
-    </RichCard>
+        {formulaTokens.map((token, index) => (
+          <Text key={`${index}-${token.kind}-${token.content}`} style={{ color: tokenColors[token.kind], fontWeight: token.kind === 'operator' || token.kind === 'function' ? '800' : '600' }}>
+            {token.content}
+          </Text>
+        ))}
+      </Text>
+    </View>
   )
 }
 
-function TableBlockCard({ rows, title, isUser }: { rows: string[][]; title?: string; isUser: boolean }) {
+function TableBlockCard({
+  rows,
+  title,
+  isUser,
+  totalRowCount,
+  hiddenRowCount: providedHiddenRowCount,
+  copyText,
+  selectionEnabled = true,
+}: {
+  rows: string[][]
+  title?: string
+  isUser: boolean
+  totalRowCount?: number
+  hiddenRowCount?: number
+  copyText?: string
+  selectionEnabled?: boolean
+}) {
   const { colors } = useAppTheme()
   const { t } = useTranslation()
   const { width } = useWindowDimensions()
   const safeRows = rows.length ? rows : [['']]
-  const columnCount = Math.max(...safeRows.map((row) => row.length), 1)
-  const normalizedRows = safeRows.map((row) => Array.from({ length: columnCount }, (_, index) => row[index] ?? ''))
-  const displayTitle = t('messageContent.tableTitleWithShape', { title: title ?? t('messageContent.table'), rows: normalizedRows.length, columns: columnCount })
+  const displayRowCount = totalRowCount ?? safeRows.length
+  const visibleRawRows = safeRows.slice(0, TABLE_ROW_RENDER_LIMIT)
+  const hiddenRowCount = providedHiddenRowCount ?? Math.max(0, displayRowCount - visibleRawRows.length)
+  const columnCount = maxTableColumnCount(safeRows)
+  const normalizedRows = visibleRawRows.map((row) => Array.from({ length: columnCount }, (_, index) => row[index] ?? ''))
+  const displayTitle = t('messageContent.tableTitleWithShape', { title: title ?? t('messageContent.table'), rows: displayRowCount, columns: columnCount })
+  const tableCopyText = copyText ?? rows.map((row) => row.join('\t')).join('\n')
   const userMessage = colors.ui.message
   const assistantSurfaces = resolveAssistantRichSurfaces(colors)
   const userDivider = userMessage.userActionBackground
   const tableBorder = isUser ? userDivider : assistantSurfaces.blockBorder
   const tableHeaderBackground = isUser ? userMessage.userActionBackground : colors.ui.table.headerBackground
   const tableRowBackground = isUser ? 'transparent' : assistantSurfaces.blockSurface
-  const tableStripeBackground = isUser ? undefined : colors.ui.glass ? assistantSurfaces.stripeSurface : colors.ui.cartoon ? assistantSurfaces.blockRaisedSurface : undefined
+  const tableStripeBackground = isUser ? undefined : colors.ui.glass ? assistantSurfaces.stripeSurface : colors.ui.limeRoad ? assistantSurfaces.blockRaisedSurface : undefined
   const cellMetrics = tableCellMetrics(width)
   const columnWidths = Array.from({ length: columnCount }, (_, columnIndex) => {
     const maxCellLength = Math.max(...normalizedRows.map((row) => visualTextLength(row[columnIndex] ?? '')))
@@ -487,9 +590,45 @@ function TableBlockCard({ rows, title, isUser }: { rows: string[][]; title?: str
     )
   })
   const tableMinWidth = columnWidths.reduce((total, columnWidth) => total + columnWidth, 0)
-  const shouldStackRows = columnCount > STACKED_TABLE_COLUMN_THRESHOLD || width < 420 || tableMinWidth > width - 32
+  const shouldStackRows = false
   const headers = normalizedRows[0] ?? []
   const bodyRows = normalizedRows.slice(1)
+  const tableGrid = (
+    <View style={{ minWidth: tableMinWidth, borderRadius: colors.ui.radius.card, overflow: 'hidden', borderWidth: isUser ? 0 : assistantSurfaces.nestedBorderWidth, borderColor: tableBorder }}>
+      {normalizedRows.map((row, rowIndex) => (
+        <View key={`${rowIndex}-${row.join('|')}`} style={{ flexDirection: 'row', alignItems: 'stretch', backgroundColor: rowIndex === 0 ? tableHeaderBackground : tableRowBackground }}>
+          {row.map((cell, cellIndex) => (
+            <View
+              key={`${rowIndex}-${cellIndex}`}
+              style={{
+                flexBasis: columnWidths[cellIndex] ?? cellMetrics.minWidth,
+                width: columnWidths[cellIndex] ?? cellMetrics.minWidth,
+                minHeight: 34,
+                paddingHorizontal: 8,
+                paddingVertical: 7,
+                borderRightWidth: cellIndex === row.length - 1 ? 0 : assistantSurfaces.nestedBorderWidth,
+                borderBottomWidth: rowIndex === normalizedRows.length - 1 ? 0 : assistantSurfaces.nestedBorderWidth,
+                borderColor: tableBorder,
+                backgroundColor: rowIndex > 0 && rowIndex % 2 === 0 ? tableStripeBackground : undefined,
+              }}
+            >
+              <Text
+                selectable={selectionEnabled}
+                style={{
+                  color: isUser ? userMessage.userForeground : rowIndex === 0 ? colors.text : colors.textSecondary,
+                  fontSize: 11.5,
+                  lineHeight: 16,
+                  fontWeight: rowIndex === 0 ? '900' : '700',
+                }}
+              >
+                {cell || ' '}
+              </Text>
+            </View>
+          ))}
+        </View>
+      ))}
+    </View>
+  )
 
   return (
     <RichCard isUser={isUser}>
@@ -498,7 +637,7 @@ function TableBlockCard({ rows, title, isUser }: { rows: string[][]; title?: str
         title={displayTitle}
         isUser={isUser}
         actions={isUser ? [] : [
-          { label: t('common.copy'), kind: 'copy', onPress: () => Clipboard.setStringAsync(rows.map((row) => row.join('\t')).join('\n')) },
+          { label: t('common.copy'), kind: 'copy', onPress: () => Clipboard.setStringAsync(tableCopyText) },
         ]}
       />
       {shouldStackRows ? (
@@ -506,43 +645,18 @@ function TableBlockCard({ rows, title, isUser }: { rows: string[][]; title?: str
           headers={headers}
           rows={bodyRows}
           isUser={isUser}
+          selectionEnabled={selectionEnabled}
         />
       ) : (
-        <View style={{ minWidth: tableMinWidth, borderRadius: colors.ui.radius.card, overflow: 'hidden', borderWidth: isUser ? 0 : assistantSurfaces.nestedBorderWidth, borderColor: tableBorder }}>
-          {normalizedRows.map((row, rowIndex) => (
-            <View key={`${rowIndex}-${row.join('|')}`} style={{ flexDirection: 'row', alignItems: 'stretch', backgroundColor: rowIndex === 0 ? tableHeaderBackground : tableRowBackground }}>
-              {row.map((cell, cellIndex) => (
-                <View
-                  key={`${rowIndex}-${cellIndex}`}
-                  style={{
-                    flexBasis: columnWidths[cellIndex] ?? cellMetrics.minWidth,
-                    width: columnWidths[cellIndex] ?? cellMetrics.minWidth,
-                    minHeight: 38,
-                    paddingHorizontal: 10,
-                    paddingVertical: 9,
-                    borderRightWidth: cellIndex === row.length - 1 ? 0 : assistantSurfaces.nestedBorderWidth,
-                    borderBottomWidth: rowIndex === normalizedRows.length - 1 ? 0 : assistantSurfaces.nestedBorderWidth,
-                    borderColor: tableBorder,
-                    backgroundColor: rowIndex > 0 && rowIndex % 2 === 0 ? tableStripeBackground : undefined,
-                  }}
-                >
-                  <Text
-                    selectable
-                    style={{
-                      color: isUser ? userMessage.userForeground : rowIndex === 0 ? colors.text : colors.textSecondary,
-                      fontSize: 12,
-                      lineHeight: 17,
-                      fontWeight: rowIndex === 0 ? '900' : '700',
-                    }}
-                  >
-                    {cell || ' '}
-                  </Text>
-                </View>
-              ))}
-            </View>
-          ))}
-        </View>
+        <ScrollView horizontal nestedScrollEnabled showsHorizontalScrollIndicator={tableMinWidth > width - 32}>
+          {tableGrid}
+        </ScrollView>
       )}
+      {hiddenRowCount > 0 ? (
+        <Text style={{ color: isUser ? userMessage.userForeground : colors.textTertiary, fontSize: 11, lineHeight: 16, fontWeight: '800', marginTop: 8 }}>
+          {t('messageContent.truncatedTableRows', { count: hiddenRowCount })}
+        </Text>
+      ) : null}
     </RichCard>
   )
 }
@@ -586,17 +700,22 @@ function DiagramBlockCard({ content, language, isUser }: { content: string; lang
   )
 }
 
-function DataBlockCard({ content, language, title, isUser }: { content: string; language?: string; title: string; isUser: boolean }) {
+function DataBlockCard({ content, language, title, isUser, selectionEnabled }: { content: string; language?: string; title: string; isUser: boolean; selectionEnabled: boolean }) {
   const { colors } = useAppTheme()
   const { t } = useTranslation()
   const userMessage = colors.ui.message
   const assistantSurfaces = resolveAssistantRichSurfaces(colors)
-  const formattedContent = formatDataPreview(content, language)
-  const dataLines = useMemo(() => splitSourceLines(formattedContent), [formattedContent])
-  const csvRows = language === 'csv' || language === 'tsv' ? parseDelimitedTable(content, language === 'tsv' ? '\t' : ',') : null
+  const dataPreview = useMemo(() => formatDataPreview(content, language), [content, language])
+  const dataLines = useMemo(() => splitSourceLines(dataPreview.text), [dataPreview.text])
+  const csvTable = useMemo(() => {
+    if (language !== 'csv' && language !== 'tsv') return null
+    return parseDelimitedTablePreview(content, language === 'tsv' ? '\t' : ',', TABLE_ROW_RENDER_LIMIT)
+  }, [content, language])
   const summaryItems = useMemo(() => summarizeDataPreview(content, language, t), [content, language, t])
 
-  if (csvRows?.length) return <TableBlockCard rows={csvRows} title={title} isUser={isUser} />
+  if (csvTable?.rows.length) {
+    return <TableBlockCard rows={csvTable.rows} title={title} isUser={isUser} totalRowCount={csvTable.totalRowCount} hiddenRowCount={csvTable.hiddenRowCount} copyText={content} selectionEnabled={selectionEnabled} />
+  }
 
   return (
     <RichCard isUser={isUser}>
@@ -618,6 +737,11 @@ function DataBlockCard({ content, language, title, isUser }: { content: string; 
         numberColor={isUser ? userMessage.userForeground : colors.textTertiary}
         gutterBackground={isUser ? userMessage.userActionBackground : assistantSurfaces.gutterSurface}
       />
+      {dataPreview.hiddenCharCount > 0 ? (
+        <Text style={{ color: isUser ? userMessage.userForeground : colors.textTertiary, fontSize: 11, lineHeight: 16, fontWeight: '800', marginTop: 8 }}>
+          {t('messageContent.truncatedDataPreview', { count: dataPreview.hiddenCharCount })}
+        </Text>
+      ) : null}
     </RichCard>
   )
 }
@@ -635,7 +759,7 @@ function DataSummaryPanel({ items, isUser }: { items: DataSummaryItem[]; isUser:
             minHeight: 30,
             maxWidth: 180,
             justifyContent: 'center',
-            borderRadius: colors.ui.radius.chip,
+            borderRadius: colors.ui.radius.controlSmall,
             paddingHorizontal: 9,
             paddingVertical: 5,
             backgroundColor: isUser ? userMessage.userActionBackground : assistantSurfaces.inlineMetaSurface,
@@ -643,7 +767,7 @@ function DataSummaryPanel({ items, isUser }: { items: DataSummaryItem[]; isUser:
             borderColor: assistantSurfaces.inlineMetaBorder,
           }}
         >
-          <Text numberOfLines={1} style={{ color: isUser ? userMessage.userForeground : colors.textSecondary, fontSize: 11, lineHeight: 15, fontWeight: '900' }}>
+          <Text numberOfLines={1} style={{ color: isUser ? userMessage.userForeground : colors.textSecondary, fontSize: 11, lineHeight: 15, fontWeight: '800' }}>
             {item.label}: {item.value}
           </Text>
         </View>
@@ -656,10 +780,12 @@ function StackedTableRows({
   headers,
   rows,
   isUser,
+  selectionEnabled,
 }: {
   headers: string[]
   rows: string[][]
   isUser: boolean
+  selectionEnabled: boolean
 }) {
   const { colors } = useAppTheme()
   const { t } = useTranslation()
@@ -683,7 +809,7 @@ function StackedTableRows({
             gap: 6,
           }}
         >
-          <Text style={{ color: labelColor, fontSize: 11, lineHeight: 15, fontWeight: '900' }}>
+          <Text style={{ color: labelColor, fontSize: 11, lineHeight: 15, fontWeight: '800' }}>
             {t('messageContent.recordLabel', { index: rowIndex + 1 })}
           </Text>
           <View style={{ gap: 6 }}>
@@ -694,7 +820,7 @@ function StackedTableRows({
                   borderRadius: colors.ui.radius.controlSmall,
                   paddingHorizontal: 10,
                   paddingVertical: 7,
-                  backgroundColor: isUser ? userMessage.userActionBackground : colors.ui.cartoon ? assistantSurfaces.blockSurface : 'transparent',
+                  backgroundColor: isUser ? userMessage.userActionBackground : colors.ui.limeRoad ? assistantSurfaces.blockSurface : 'transparent',
                   borderTopWidth: cellIndex === 0 || isUser ? 0 : assistantSurfaces.nestedBorderWidth,
                   borderTopColor: assistantSurfaces.blockBorder,
                 }}
@@ -702,7 +828,7 @@ function StackedTableRows({
                 <Text style={{ color: labelColor, fontSize: 11, lineHeight: 15, fontWeight: '800', marginBottom: 2 }}>
                   {(headers[cellIndex] || `C${cellIndex + 1}`).trim() || `C${cellIndex + 1}`}
                 </Text>
-                <Text selectable style={{ color: valueColor, fontSize: 12, lineHeight: 18, fontWeight: '700' }}>
+                <Text selectable={selectionEnabled} style={{ color: valueColor, fontSize: 12, lineHeight: 18, fontWeight: '700' }}>
                   {cell || ' '}
                 </Text>
               </View>
@@ -723,7 +849,7 @@ function DiagramPreviewPanel({ preview, isUser }: { preview: DiagramPreview; isU
   const nodeForeground = isUser ? userMessage.userForeground : colors.text
   const nodeSurface = isUser ? userMessage.userActionBackground : assistantSurfaces.nodeSurface
   const connectorColor = isUser ? userMessage.userForeground : colors.ui.icon.accentForeground
-  const nodeBorderWidth = colors.ui.cartoon ? 1 : StyleSheet.hairlineWidth
+  const nodeBorderWidth = colors.ui.limeRoad ? 1 : StyleSheet.hairlineWidth
 
   return (
     <View
@@ -744,7 +870,7 @@ function DiagramPreviewPanel({ preview, isUser }: { preview: DiagramPreview; isU
               <DiagramNodePill label={edge.from} foreground={nodeForeground} surface={nodeSurface} border={assistantSurfaces.blockBorder} borderWidth={nodeBorderWidth} />
               <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4, flexShrink: 0 }}>
                 <View style={{ width: 18, height: 1, backgroundColor: connectorColor, opacity: 0.75 }} />
-                <Text style={{ color: connectorColor, fontSize: 13, fontWeight: '900' }}>›</Text>
+                <Text style={{ color: connectorColor, fontSize: 13, fontWeight: '800' }}>›</Text>
               </View>
               <DiagramNodePill label={edge.to} foreground={nodeForeground} surface={nodeSurface} border={assistantSurfaces.blockBorder} borderWidth={nodeBorderWidth} />
               {edge.label ? (
@@ -780,13 +906,13 @@ function DiagramNodePill({ label, foreground, surface, border, borderWidth }: { 
         minHeight: 30,
         justifyContent: 'center',
         paddingHorizontal: 10,
-        borderRadius: 999,
+        borderRadius: 8,
         backgroundColor: surface,
         borderWidth,
         borderColor: border,
       }}
     >
-      <Text numberOfLines={1} style={{ color: foreground, fontSize: 11, lineHeight: 15, fontWeight: '900' }}>
+      <Text numberOfLines={1} style={{ color: foreground, fontSize: 11, lineHeight: 15, fontWeight: '800' }}>
         {label}
       </Text>
     </View>
@@ -911,9 +1037,9 @@ function RichCard({ isUser, children }: { isUser: boolean; children: ReactNode }
   const assistantSurfaces = resolveAssistantRichSurfaces(colors)
   return (
     <IslePanel
-      elevated={!isUser && colors.ui.cartoon}
-      material={isUser ? 'transparent' : colors.ui.cartoon ? 'raised' : 'paper'}
-      contentStyle={{ padding: 8, width: '100%' }}
+      elevated={!isUser && colors.ui.limeRoad}
+      material={isUser ? 'transparent' : colors.ui.limeRoad ? 'raised' : 'paper'}
+      contentStyle={{ padding: 7, width: '100%' }}
       style={{
         alignSelf: 'stretch',
         width: '100%',
@@ -979,11 +1105,11 @@ function CardHeader({
   }
 
   return (
-    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 7, marginBottom: 8 }}>
-      <View style={{ width: 22, height: 22, borderRadius: colors.ui.radius.controlSmall, alignItems: 'center', justifyContent: 'center', backgroundColor: actionSurface }}>
+    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 7, marginBottom: 6 }}>
+      <View style={{ width: 20, height: 20, borderRadius: colors.ui.radius.controlSmall, alignItems: 'center', justifyContent: 'center', backgroundColor: actionSurface }}>
         {icon}
       </View>
-      <Text numberOfLines={1} style={{ flex: 1, minWidth: 0, color: isUser ? userMessage.userForeground : colors.text, fontSize: 12, fontWeight: '900' }}>
+      <Text numberOfLines={1} style={{ flex: 1, minWidth: 0, color: isUser ? userMessage.userForeground : colors.text, fontSize: 11.5, fontWeight: '800' }}>
         {title}
       </Text>
       {actions.map((action) => {
@@ -1002,9 +1128,9 @@ function CardHeader({
             accessibilityHint={accessibilityHint}
             hitSlop={RICH_BLOCK_ACTION_HIT_SLOP}
             style={{
-              minHeight: 36,
-              borderRadius: colors.ui.radius.chip,
-              paddingHorizontal: 9,
+              minHeight: 32,
+              borderRadius: colors.ui.radius.controlMiddle,
+              paddingHorizontal: 8,
               flexDirection: 'row',
               alignItems: 'center',
               gap: 4,
@@ -1013,8 +1139,8 @@ function CardHeader({
               borderColor: feedback?.failed ? colors.ui.tone.danger.border : 'transparent',
             }}
           >
-            <AppIcon name="copy" color={foreground} size={11} strokeWidth={appIconStroke.strong} />
-              <Text numberOfLines={1} accessibilityLiveRegion={feedback ? 'polite' : undefined} style={{ color: foreground, fontSize: 10.5, fontWeight: '900', maxWidth: 84 }}>
+            <AppIcon name="copy" color={foreground} size={10.5} strokeWidth={appIconStroke.strong} />
+              <Text numberOfLines={1} accessibilityLiveRegion={feedback ? 'polite' : undefined} style={{ color: foreground, fontSize: 10, fontWeight: '800', maxWidth: 78 }}>
                 {displayLabel}
               </Text>
           </IslePressable>
@@ -1065,6 +1191,9 @@ function createFencedSegment(index: number, language: string | undefined, conten
       return { id: `data-${index}`, type: 'data', content, language, title: t('messageContent.jsonData') }
     }
     return { id: `data-${index}`, type: 'data', content, language, title: t('messageContent.chartData') }
+  }
+  if (shouldRenderFencedUserAgentAsText(language, content)) {
+    return { id: `markdown-${index}`, type: 'markdown', content: normalizeUserAgentText(content) }
   }
   return { id: `code-${index}`, type: 'code', content, language }
 }
@@ -1121,11 +1250,30 @@ function parsePlainTextSegments(text: string, startIndex: number, t: TFunction):
     if (looksLikeJson(trimmed) && shouldPromotePlainJson(trimmed)) {
       segments.push({ id: `data-${index}`, type: 'data', content: trimmed, language: 'json', title: t('messageContent.jsonData') })
     } else if (looksLikeTsv(trimmed) && shouldPromotePlainDelimitedTable(trimmed, '\t')) {
-      segments.push({ id: `table-${index}`, type: 'table', rows: parseDelimitedTable(trimmed, '\t') ?? [[trimmed]], title: t('messageContent.tsvData') })
+      const tablePreview = parseDelimitedTablePreview(trimmed, '\t', TABLE_ROW_RENDER_LIMIT)
+      segments.push({
+        id: `table-${index}`,
+        type: 'table',
+        rows: tablePreview?.rows ?? [[trimmed]],
+        title: t('messageContent.tsvData'),
+        totalRowCount: tablePreview?.totalRowCount,
+        hiddenRowCount: tablePreview?.hiddenRowCount,
+        copyText: trimmed,
+      })
     } else if (looksLikeCsv(trimmed) && shouldPromotePlainDelimitedTable(trimmed, ',')) {
-      segments.push({ id: `table-${index}`, type: 'table', rows: parseDelimitedTable(trimmed, ',') ?? [[trimmed]], title: t('messageContent.csvData') })
+      const tablePreview = parseDelimitedTablePreview(trimmed, ',', TABLE_ROW_RENDER_LIMIT)
+      segments.push({
+        id: `table-${index}`,
+        type: 'table',
+        rows: tablePreview?.rows ?? [[trimmed]],
+        title: t('messageContent.csvData'),
+        totalRowCount: tablePreview?.totalRowCount,
+        hiddenRowCount: tablePreview?.hiddenRowCount,
+        copyText: trimmed,
+      })
     } else {
-      segments.push({ id: `markdown-${index}`, type: 'markdown', content: normalizeInlineFormulaForMarkdown(raw) })
+      const markdown = looksLikeUserAgentText(raw) ? normalizeUserAgentText(raw) : raw
+      segments.push({ id: `markdown-${index}`, type: 'markdown', content: normalizeInlineFormulaForMarkdown(markdown) })
     }
     index += 1
   }
@@ -1188,17 +1336,16 @@ function looksLikeInlineFormula(value: string): boolean {
   return hasInlineFormulaSyntax(value)
 }
 
-function looksLikeStandaloneFormulaLine(line: string | undefined, allLines?: string[]): boolean {
+function looksLikeStandaloneFormulaLine(line: string | undefined, _allLines?: string[]): boolean {
   const trimmed = line?.trim() ?? ''
   if (!trimmed || trimmed.length > 220) return false
-  if (allLines && countNonEmptyLines(allLines) > 1 && !/^\s*(?:\$\$|\\\[)/.test(trimmed)) return false
   if (looksLikeMarkdownOrNaturalLanguageListMarker(trimmed)) return false
   if (looksLikeToolCallMarkupLine(trimmed)) return false
   if (/^(const|let|var|function|return|if|for|while|class|import|export|type|interface)\b/.test(trimmed)) return false
   if (/;$/.test(trimmed)) return false
   if (hasNaturalLanguageScript(trimmed)) return false
-  if (!looksLikeInlineFormula(trimmed)) return false
-  if (!hasStandaloneFormulaSyntax(trimmed)) return false
+  if (!hasComplexDisplayFormulaStructure(trimmed)) return false
+  if (!hasUnambiguousPlainFormulaStructure(trimmed)) return false
   const wordCount = trimmed.split(/\s+/).filter(Boolean).length
   return wordCount <= 18 || /[\\^_{}]/.test(trimmed)
 }
@@ -1267,29 +1414,37 @@ function splitPipeRow(line: string): string[] {
 }
 
 function looksLikeJson(text: string): boolean {
-  if (!/^[[{]/.test(text)) return false
+  const trimmed = text.trim()
+  if (!looksLikeJsonBoundary(trimmed) || trimmed.length > DATA_PREVIEW_CHAR_LIMIT) return false
   try {
-    JSON.parse(text)
+    JSON.parse(trimmed)
     return true
   } catch {
     return false
   }
 }
 
+function looksLikeJsonBoundary(text: string): boolean {
+  return (text.startsWith('{') && text.endsWith('}')) || (text.startsWith('[') && text.endsWith(']'))
+}
+
 function looksLikeCsv(text: string): boolean {
-  const rows = parseDelimitedTable(text, ',')
+  const rows = parseDelimitedTablePreview(text, ',', TABLE_DETECTION_ROW_LIMIT)?.rows
   if (!rows || rows.length < 2) return false
-  return rows[0].length > 1 && rows.every((row) => Math.abs(row.length - rows[0].length) <= 1)
+  const columnCount = rows[0]?.length ?? 0
+  return columnCount > 1 && rows.every((row) => Math.abs(row.length - columnCount) <= 1)
 }
 
 function looksLikeTsv(text: string): boolean {
-  const rows = parseDelimitedTable(text, '\t')
+  const rows = parseDelimitedTablePreview(text, '\t', TABLE_DETECTION_ROW_LIMIT)?.rows
   if (!rows || rows.length < 2) return false
-  return rows[0].length > 1 && rows.every((row) => Math.abs(row.length - rows[0].length) <= 1)
+  const columnCount = rows[0]?.length ?? 0
+  return columnCount > 1 && rows.every((row) => Math.abs(row.length - columnCount) <= 1)
 }
 
 function shouldPromotePlainJson(text: string): boolean {
   const trimmed = text.trim()
+  if (trimmed.length > DATA_PREVIEW_CHAR_LIMIT) return false
   const lineCount = countNonEmptyLines(trimmed.split(/\r?\n/))
   if (lineCount < 3) return false
   try {
@@ -1303,26 +1458,41 @@ function shouldPromotePlainJson(text: string): boolean {
 }
 
 function shouldPromotePlainDelimitedTable(text: string, delimiter: ',' | '\t'): boolean {
-  const rows = parseDelimitedTable(text, delimiter)
-  if (!rows || rows.length < 3) return false
-  const columnCount = rows[0].length
-  if (columnCount < 2 || columnCount > 8) return false
-  const consistentRows = rows.filter((row) => Math.abs(row.length - columnCount) <= 1).length
-  if (consistentRows < 3) return false
-  return rows.some((row) => row.some((cell) => cell.length > 0 && cell.length <= 80))
+  const rows = parseDelimitedTablePreview(text, delimiter, TABLE_DETECTION_ROW_LIMIT)?.rows
+  return shouldPromotePlainDelimitedRows(rows)
 }
 
 function countNonEmptyLines(lines: string[]): number {
   return lines.reduce((total, line) => total + (line.trim() ? 1 : 0), 0)
 }
 
-function parseDelimitedTable(text: string, delimiter: ',' | '\t'): string[][] | null {
-  const rows = text
-    .trim()
-    .split(/\r?\n/)
-    .map((line) => delimiter === ',' ? parseCsvLine(line) : line.split('\t').map((cell) => cell.trim()))
-    .filter((row) => row.some(Boolean))
-  return rows.length ? rows : null
+function parseDelimitedTablePreview(text: string, delimiter: ',' | '\t', rowLimit: number): ParsedTablePreview | null {
+  const trimmed = text.trim()
+  if (!trimmed) return null
+
+  const rows: string[][] = []
+  let totalRowCount = 0
+  let lineStart = 0
+  for (let index = 0; index <= trimmed.length; index += 1) {
+    const isLineEnd = index === trimmed.length || trimmed[index] === '\n'
+    if (!isLineEnd) continue
+
+    const rawLine = trimmed.slice(lineStart, index).replace(/\r$/, '')
+    lineStart = index + 1
+    if (!rawLine.trim()) continue
+
+    if (rows.length < rowLimit) {
+      const row = delimiter === ',' ? parseCsvLine(rawLine) : rawLine.split('\t').map((cell) => cell.trim())
+      if (!row.some(Boolean)) continue
+      rows.push(row)
+    }
+
+    totalRowCount += 1
+  }
+
+  return totalRowCount > 0
+    ? { rows, totalRowCount, hiddenRowCount: Math.max(0, totalRowCount - rows.length) }
+    : null
 }
 
 function parseCsvLine(line: string): string[] {
@@ -1348,20 +1518,36 @@ function parseCsvLine(line: string): string[] {
   return cells
 }
 
-function formatDataPreview(content: string, language?: string): string {
+function formatDataPreview(content: string, language?: string): DataPreview {
   const trimmed = content.trim()
+  if (trimmed.length > DATA_PREVIEW_CHAR_LIMIT) {
+    return createBoundedDataPreview(trimmed)
+  }
+
   if (language === 'json' || language === 'jsonc' || looksLikeJson(trimmed)) {
     try {
-      return JSON.stringify(JSON.parse(trimmed), null, 2)
+      return createBoundedDataPreview(JSON.stringify(JSON.parse(trimmed), null, 2))
     } catch {
-      return trimmed
+      return createBoundedDataPreview(trimmed)
     }
   }
-  return trimmed
+  return createBoundedDataPreview(trimmed)
+}
+
+function createBoundedDataPreview(text: string): DataPreview {
+  if (text.length <= DATA_PREVIEW_CHAR_LIMIT) {
+    return { text, hiddenCharCount: 0 }
+  }
+
+  return {
+    text: `${text.slice(0, DATA_PREVIEW_CHAR_LIMIT).trimEnd()}\n…`,
+    hiddenCharCount: Math.max(0, text.length - DATA_PREVIEW_CHAR_LIMIT),
+  }
 }
 
 function summarizeDataPreview(content: string, language: string | undefined, t: TFunction): DataSummaryItem[] {
   const trimmed = content.trim()
+  if (trimmed.length > DATA_PREVIEW_CHAR_LIMIT) return []
   if (!(language === 'json' || language === 'jsonc' || language === 'chart' || language === 'vega' || language === 'vega-lite' || language === 'echarts' || looksLikeJson(trimmed))) {
     return []
   }

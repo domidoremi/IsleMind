@@ -1,7 +1,6 @@
 import type { TFunction } from 'i18next'
-import type { KnowledgeDocument, MemoryItem } from '@/types'
+import type { KnowledgeDocument, MemoryItem } from '@/types/contextContracts'
 import { filterPendingMemoriesForReview, type MemoryReviewQueueFocus } from '@/utils/memoryReview'
-
 export type MemoryStatusFocus = 'all' | MemoryItem['status']
 export type KnowledgeStatusFocus = 'all' | 'ready' | 'extracting' | 'error' | 'empty'
 export type MemorySortMode = 'updated' | 'created' | 'lastUsed'

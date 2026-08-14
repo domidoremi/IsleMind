@@ -67,7 +67,7 @@ class RenderGuardBoundary extends Component<RenderGuardBoundaryProps, RenderGuar
     if (!this.state.error) return this.props.children
 
     const { colors, strings } = this.props
-    const subtleBorderWidth = colors.ui.cartoon ? 1 : StyleSheet.hairlineWidth
+    const subtleBorderWidth = colors.ui.limeRoad ? 1 : StyleSheet.hairlineWidth
     const title = this.props.compact ? strings.compactTitle : `${this.props.label ?? strings.content}${strings.titleSuffix}`
     return (
       <IslePanel elevated={false} style={{ borderRadius: this.props.compact ? colors.ui.radius.card : colors.ui.radius.panel }} contentStyle={{ padding: this.props.compact ? 10 : 14 }}>
@@ -76,7 +76,7 @@ class RenderGuardBoundary extends Component<RenderGuardBoundaryProps, RenderGuar
             <AppIcon name="warning" color={colors.ui.tone.danger.foreground} size={15} strokeWidth={appIconStroke.strong} />
           </View>
           <View style={{ flex: 1, minWidth: 0 }}>
-            <Text style={{ color: colors.text, fontSize: 13, lineHeight: 18, fontWeight: '900' }}>{title}</Text>
+            <Text style={{ color: colors.text, fontSize: 13, lineHeight: 18, fontWeight: '800' }}>{title}</Text>
             <Text numberOfLines={this.props.compact ? 2 : 4} style={{ color: colors.textSecondary, fontSize: 11, lineHeight: 16, marginTop: 3 }}>
               {strings.description}
             </Text>

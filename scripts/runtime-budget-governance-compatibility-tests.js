@@ -13,7 +13,7 @@ const {
   RUNTIME_BUDGET_GOVERNANCE_COMPATIBILITY_EVAL_SCHEMA,
   RUNTIME_BUDGET_GOVERNANCE_COMPATIBILITY_FIXTURE_IDS,
   runRuntimeBudgetGovernanceCompatibilityEvaluation,
-} = require('../src/services/runtimeBudgetGovernanceCompatibilityEvaluation.ts')
+} = require('../src/modules/diagnostics/testing/runtimeBudgetGovernanceCompatibilityEvaluation.ts')
 
 function registerTypeScriptSupport() {
   if (require.extensions['.ts']?.isRuntimeBudgetGovernanceCompatibilityHook) return
@@ -64,6 +64,13 @@ function assertBaseline(item) {
   assert.equal(item.policy.fallbackBudgetPolicy, 'preserve-or-reduce', `${item.fixtureId} preserves or reduces fallback budgets`)
   assert.equal(item.policy.fallbackVisible, true, `${item.fixtureId} exposes fallback`)
   assert.ok(item.policy.maxToolCalls > 0, `${item.fixtureId} has tool-loop limit`)
+  assert.ok(item.policy.artifactByteBudget > 0, `${item.fixtureId} has generated artifact byte budget`)
+  assert.ok(item.policy.mediaDurationBudgetMs > 0, `${item.fixtureId} has generated media duration budget`)
+  assert.equal(item.policy.mediaGenerationStreamCleanupScope, 'media-generation', `${item.fixtureId} uses the generated media cleanup scope`)
+  assert.equal(item.policy.mediaGenerationAbortControllerRequired, true, `${item.fixtureId} requires generated media AbortController cleanup`)
+  assert.equal(item.policy.mediaGenerationPartialArtifactCleanupRequired, true, `${item.fixtureId} requires generated media partial artifact cleanup`)
+  assert.equal(item.policy.mediaGenerationAdapterImplemented, false, `${item.fixtureId} keeps media generation adapter disabled`)
+  assert.equal(item.policy.mediaGenerationExecutionDisabled, true, `${item.fixtureId} keeps media generation execution disabled`)
   assert.ok(item.policy.localMemoryBudgetMb > 0, `${item.fixtureId} has local memory budget`)
   assert.equal(item.policy.thermalPolicy, true, `${item.fixtureId} has thermal policy`)
   assert.equal(item.policy.budgetLedger, true, `${item.fixtureId} records budget ledger`)
@@ -73,6 +80,8 @@ function assertBaseline(item) {
   assert.ok(item.policy.estimatedOutputTokens <= item.policy.outputTokenBudget, `${item.fixtureId} output tokens are within budget`)
   assert.ok(item.policy.estimatedCostUsd <= item.policy.costBudgetUsd, `${item.fixtureId} estimated cost is within budget`)
   assert.ok(item.policy.observedLatencyMs <= item.policy.latencyBudgetMs, `${item.fixtureId} observed latency is within budget`)
+  assert.ok(item.policy.estimatedArtifactBytes <= item.policy.artifactByteBudget, `${item.fixtureId} generated artifact bytes are within budget`)
+  assert.ok(item.policy.estimatedMediaDurationMs <= item.policy.mediaDurationBudgetMs, `${item.fixtureId} generated media duration is within budget`)
   assert.ok(item.policy.estimatedLocalMemoryMb <= item.policy.localMemoryBudgetMb, `${item.fixtureId} local memory is within budget`)
 }
 
@@ -113,15 +122,17 @@ function run() {
       'visible-fallback-with-budget-preservation',
       'local-inference-resource-budget',
       'tool-loop-budget-boundary',
+      'generated-media-task-budget-governance',
       'observability-budget-accounting',
       'blocked-unbounded-retries',
       'blocked-missing-timeout',
       'blocked-fallback-budget-escalation',
       'blocked-no-cancellation',
+      'blocked-generated-media-task-budget',
       'blocked-unmetered-tool-loop',
       'blocked-unbounded-local-resource-use',
     ],
-    'runtime budget fixtures cover token, cost, latency, retry, streaming, cancellation, fallback, local resource, tool loop, observability, and blocked paths',
+    'runtime budget fixtures cover token, cost, latency, retry, streaming, cancellation, fallback, local resource, tool loop, media generation, observability, and blocked paths',
   )
 
   const evaluation = runRuntimeBudgetGovernanceCompatibilityEvaluation({ now: () => 2930000000000 })
@@ -129,10 +140,10 @@ function run() {
   assert.equal(evaluation.diagnostics.length, RUNTIME_BUDGET_GOVERNANCE_COMPATIBILITY_FIXTURE_IDS.length, 'evaluation emits one diagnostic per fixture')
   assert.equal(evaluation.qualityGate.passed, true, `runtime budget governance gate should pass: ${evaluation.qualityGate.failures.join(', ')}`)
 
-  for (const surface of ['provider-request', 'provider-stream', 'retry', 'fallback', 'local-inference', 'tool-loop', 'observability', 'blocked']) {
+  for (const surface of ['provider-request', 'provider-stream', 'retry', 'fallback', 'local-inference', 'tool-loop', 'media-generation', 'observability', 'blocked']) {
     assert.ok(evaluation.qualityGate.requiredSurfaces.includes(surface), `quality gate tracks ${surface}`)
   }
-  for (const kind of ['input-tokens', 'output-tokens', 'cost', 'latency', 'timeout', 'retry', 'stream-idle', 'tool-calls', 'local-memory', 'thermal']) {
+  for (const kind of ['input-tokens', 'output-tokens', 'cost', 'latency', 'timeout', 'retry', 'stream-idle', 'tool-calls', 'local-memory', 'thermal', 'artifact-bytes', 'media-duration']) {
     assert.ok(evaluation.qualityGate.requiredBudgetKinds.includes(kind), `quality gate tracks ${kind}`)
   }
 
@@ -176,6 +187,12 @@ function run() {
   assertReady(tools)
   assert.ok(tools.policy.estimatedToolCalls <= tools.policy.maxToolCalls, 'tool loop stays within call budget')
 
+  const generatedMedia = diagnostic(evaluation, 'generated-media-task-budget-governance')
+  assertDegraded(generatedMedia)
+  assert.ok(generatedMedia.policy.budgetKinds.includes('artifact-bytes'), 'generated media tracks artifact byte budget')
+  assert.ok(generatedMedia.policy.budgetKinds.includes('media-duration'), 'generated media tracks media duration budget')
+  assert.equal(generatedMedia.policy.mediaGenerationExecutionDisabled, true, 'generated media execution stays disabled while budget governance is diagnostic')
+
   const observability = diagnostic(evaluation, 'observability-budget-accounting')
   assertReady(observability)
   assert.equal(observability.policy.budgetLedger, true, 'observability fixture records budget ledger')
@@ -195,6 +212,14 @@ function run() {
     'budget-exceeded',
   ])
   assertBlocked(diagnostic(evaluation, 'blocked-no-cancellation'), ['missing-cancellation'])
+  assertBlocked(diagnostic(evaluation, 'blocked-generated-media-task-budget'), [
+    'missing-cancellation',
+    'missing-artifact-size-budget',
+    'missing-media-duration-budget',
+    'missing-media-cleanup-contract',
+    'media-generation-execution-enabled',
+    'budget-exceeded',
+  ])
   assertBlocked(diagnostic(evaluation, 'blocked-unmetered-tool-loop'), [
     'missing-tool-loop-limit',
     'unmetered-tool-loop',
@@ -204,6 +229,19 @@ function run() {
     'budget-exceeded',
     'unbounded-local-resource-use',
   ])
+
+  const budgetSource = fs.readFileSync(path.join(root, 'src/modules/diagnostics/testing/runtimeBudgetGovernanceCompatibilityEvaluation.ts'), 'utf8')
+  assert.ok(budgetSource.includes('generated-media-task-budget-governance'), 'runtime budget governance includes generated media task fixture')
+  assert.ok(budgetSource.includes('blocked-generated-media-task-budget'), 'runtime budget governance includes generated media blocked fixture')
+  assert.ok(budgetSource.includes('MEDIA_GENERATION_STREAM_CLEANUP_SCOPE'), 'runtime budget governance shares generated media stream cleanup scope')
+  assert.ok(budgetSource.includes('MEDIA_GENERATION_ADAPTER_IMPLEMENTED'), 'runtime budget governance mirrors disabled media generation adapter state')
+  assert.ok(budgetSource.includes('artifactByteBudget'), 'runtime budget governance tracks generated artifact byte budget')
+  assert.ok(budgetSource.includes('mediaDurationBudgetMs'), 'runtime budget governance tracks generated media duration budget')
+
+  const mediaGenerationSource = fs.readFileSync(path.join(root, 'src/services/mediaGenerationContract.ts'), 'utf8')
+  const mediaGenerationCoreSource = fs.readFileSync(path.join(root, 'src/core/mediaGenerationContracts.ts'), 'utf8')
+  assert.ok(mediaGenerationSource.includes('buildMediaGenerationCancellationCleanupContract'), 'media generation contract exposes cancellation cleanup contract')
+  assert.ok(mediaGenerationCoreSource.includes('MEDIA_GENERATION_CANCELLATION_CLEANUP_CONTRACT_SCHEMA'), 'media generation cleanup contract is versioned in core')
 
   console.log('Runtime budget governance compatibility tests passed')
 }

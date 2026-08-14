@@ -1,9 +1,9 @@
 import * as FileSystem from 'expo-file-system/legacy'
 import * as ImagePicker from 'expo-image-picker'
 import * as DocumentPicker from 'expo-document-picker'
-import type { Attachment, AttachmentType } from '@/types'
+import type { Attachment, AttachmentType } from '@/types/chatContracts'
 import { smartCompressImage } from './imageCompression'
-import { assertImportFileSizeByUri, deleteTemporaryImportCopy, MAX_IMPORT_TEXT_FILE_BYTES } from './fileImportGuards'
+import { assertImportFileSizeByUri, deleteTemporaryImportCopy, MAX_IMPORT_TEXT_FILE_BYTES } from '@/platform/native/boundedImportFile'
 
 function generateId(): string {
   return `${Date.now()}-${Math.random().toString(36).slice(2, 10)}`

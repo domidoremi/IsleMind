@@ -1,0 +1,1263 @@
+import type { AIProvider, ProviderCapabilities, ProviderCredentialGroup, ProviderCredentialMode, ProviderPresetId, ProviderRegion, ProviderType, ProviderWireProtocol } from '@/types/providerContracts'
+import { getXiaomiMimoOfficialBaseUrl } from '@/types/providerBaseUrls'
+import type { Settings } from '@/types/settingsContracts'
+import { createProviderRegistryPolicy } from './providerRegistryPolicy'
+import { DEFAULT_PROVIDER_PRESET_ID, DEFAULT_PROVIDER_WIRE_PROTOCOL, inferProviderCredentialModeFromKeyOrBaseUrl, inferProviderTokenPlanRegionFromBaseUrl, inferProviderWireProtocolFromBaseUrl, normalizeProviderPresetSelection } from './providerConfigPolicy'
+import { normalizeProviderClientCompatibilityMode } from './providerClientSimulationPolicy'
+export interface ProviderPreset {
+  id: ProviderPresetId
+  name: string
+  type: ProviderType
+  baseUrl?: string
+  aliases: string[]
+  hostPatterns: RegExp[]
+  capabilities: ProviderCapabilities
+  defaultModels: string[]
+}
+
+export interface ProviderDetectionInput {
+  baseUrl?: string
+  apiKey?: string
+  name?: string
+}
+
+export interface ProviderDetectionResult {
+  presetId: ProviderPresetId
+  wireProtocol?: ProviderWireProtocol
+  confidence: 'high' | 'medium' | 'low'
+  reason: string
+}
+
+export interface ProviderProbeResult extends ProviderDetectionResult {
+  ok: boolean
+  endpoint?: string
+  status?: number
+}
+
+export interface ProviderImportResult {
+  providers: AIProvider[]
+  warnings: string[]
+  duplicates: string[]
+  sourceType: 'text' | 'json' | 'csv'
+}
+
+export interface ProviderImportOptions {
+  accessSettings?: Pick<Settings, 'providerAllowlist' | 'providerBlocklist' | 'modelAllowlist' | 'modelBlocklist'>
+}
+
+export interface ProviderImportDraft {
+  provider: AIProvider
+  result: ProviderImportResult
+  count: number
+  presetId: ProviderPresetId
+  baseUrl: string
+  wireProtocol: ProviderWireProtocol
+  credentialText: string
+  modelText: string
+}
+
+export interface ProviderImportDraftOptions {
+  requireConnection?: boolean
+  preferredWireProtocol?: ProviderWireProtocol
+}
+
+export interface ProviderRegistryDependencies {
+  translate(key: string, variables?: Record<string, unknown>, fallback?: string): string
+  configurationIssue(baseUrl: string, apiKey: string): { code: string; message: string; messageKey?: string } | null
+  resolveModelAccess(input: { provider: AIProvider; model: string; settings?: ProviderImportOptions['accessSettings'] }): { allowed: boolean; reason?: string }
+  fetch: typeof fetch
+}
+
+type CredentialEntry = { apiKey: string; label?: string; enabled?: boolean }
+
+interface ProviderProbeDeps {
+  fetch?: typeof fetch
+  timeoutMs?: number
+  signal?: AbortSignal
+}
+
+const NEWAPI_CHANNEL_CONN_TYPE = 'newapi_channel_conn'
+
+export const DEFAULT_PROVIDER_CAPABILITIES: ProviderCapabilities = {
+  chat: true,
+  streaming: true,
+  modelList: true,
+  vision: false,
+  files: false,
+  audioInput: false,
+  audioTranscription: false,
+  speech: false,
+  nativeSearch: false,
+  reasoningEffort: false,
+  nativeTools: false,
+  topP: true,
+  embeddings: false,
+  rerank: false,
+  responsesApi: false,
+  responsesWebSocket: false,
+  remoteCompact: false,
+  payloadPolicy: true,
+}
+
+export const PROVIDER_PRESETS: ProviderPreset[] = [
+  preset('custom-endpoint', 'Custom endpoint', 'openai-compatible', undefined, ['custom endpoint', 'custom gateway'], [], {
+    vision: false,
+    files: false,
+    reasoningEffort: false,
+  }),
+  preset('openai', 'OpenAI', 'openai', 'https://api.openai.com/v1', ['openai'], [/api\.openai\.com/i], {
+    vision: true,
+    files: true,
+    audioTranscription: true,
+    speech: true,
+    nativeSearch: true,
+    reasoningEffort: true,
+    nativeTools: true,
+    embeddings: true,
+    responsesApi: true,
+    responsesWebSocket: true,
+    remoteCompact: true,
+  }),
+  preset('anthropic', 'Anthropic', 'anthropic', 'https://api.anthropic.com/v1', ['anthropic', 'claude'], [/api\.anthropic\.com/i], {
+    vision: true,
+    files: true,
+    nativeSearch: true,
+    reasoningEffort: true,
+    nativeTools: true,
+    // Official Messages server-side compaction (beta compact-2026-01-12 / compact_20260112).
+    remoteCompact: true,
+  }),
+  preset('google', 'Google Gemini', 'google', 'https://generativelanguage.googleapis.com/v1beta', ['google', 'gemini'], [/generativelanguage\.googleapis\.com/i], {
+    vision: true,
+    files: true,
+    audioInput: true,
+    nativeSearch: true,
+    reasoningEffort: true,
+    nativeTools: true,
+  }),
+  preset('azure-openai', 'Azure OpenAI', 'openai-compatible', undefined, ['azure openai', 'azure-openai', 'microsoft foundry', 'foundry models'], [/openai\.azure\.com/i, /services\.ai\.azure\.com/i], {
+    vision: true,
+    files: true,
+    nativeSearch: true,
+    reasoningEffort: true,
+    nativeTools: true,
+    responsesApi: true,
+  }),
+  preset('aws-bedrock', 'AWS Bedrock', 'openai-compatible', 'https://bedrock-mantle.us-east-1.api.aws/v1', ['aws bedrock', 'bedrock', 'amazon bedrock'], [/bedrock-mantle\.[\w-]+\.api\.aws/i, /bedrock-runtime\.[\w-]+\.amazonaws\.com/i, /bedrock\.[\w-]+\.amazonaws\.com/i], {
+    vision: true,
+    files: true,
+    reasoningEffort: true,
+    nativeTools: true,
+    responsesApi: false,
+  }),
+  preset('vertex-ai', 'Vertex AI', 'openai-compatible', undefined, ['vertex ai', 'google cloud vertex', 'aiplatform'], [/aiplatform\.googleapis\.com/i], {
+    vision: true,
+    files: false,
+    reasoningEffort: true,
+    nativeTools: true,
+    modelList: false,
+  }),
+  preset('deepseek', 'DeepSeek', 'openai-compatible', 'https://api.deepseek.com', ['deepseek'], [/api\.deepseek\.com/i], {
+    reasoningEffort: true,
+    nativeTools: true,
+  }),
+  preset('dashscope', '阿里云百炼', 'openai-compatible', 'https://dashscope.aliyuncs.com/compatible-mode/v1', ['dashscope', 'qwen', 'aliyun', '阿里', '百炼'], [/dashscope\.aliyuncs\.com/i], {
+    vision: true,
+    modelList: false,
+    reasoningEffort: true,
+    nativeTools: true,
+  }),
+  preset('moonshot', 'Moonshot AI', 'openai-compatible', 'https://api.moonshot.ai/v1', ['moonshot', 'kimi', '月之暗面'], [/moonshot\.(ai|cn)/i, /platform\.kimi\.ai/i], {
+    reasoningEffort: true,
+    nativeTools: true,
+  }),
+  preset('bigmodel', '智谱 AI', 'openai-compatible', 'https://open.bigmodel.cn/api/paas/v4', ['bigmodel', 'zhipu', 'glm', '智谱'], [/bigmodel\.cn/i], {
+    vision: true,
+    nativeTools: true,
+    modelList: false,
+  }),
+  preset('minimax', 'MiniMax', 'openai-compatible', 'https://api.minimax.io/v1', ['minimax', 'mini-max', '海螺'], [/minimax\.(io|com)/i, /minimaxi\.com/i], {
+    modelList: false,
+    reasoningEffort: true,
+    nativeTools: true,
+  }),
+  preset('xai', 'xAI', 'openai-compatible', 'https://api.x.ai/v1', ['xai', 'grok'], [/api\.x\.ai/i], {
+    vision: true,
+    reasoningEffort: true,
+    nativeTools: true,
+    responsesApi: true,
+  }),
+  preset('xiaomi-mimo', 'Xiaomi MiMo', 'xiaomi-mimo', undefined, ['mimo', 'xiaomi', '小米'], [/xiaomimimo\.com/i], {
+    vision: true,
+    nativeSearch: true,
+    reasoningEffort: true,
+    nativeTools: true,
+  }),
+  preset('mistral', 'Mistral AI', 'openai-compatible', 'https://api.mistral.ai/v1', ['mistral', 'codestral', 'magistral'], [/api\.mistral\.ai/i], {
+    vision: true,
+    files: false,
+    reasoningEffort: false,
+    nativeTools: true,
+    embeddings: true,
+  }),
+  preset('groq', 'Groq', 'openai-compatible', 'https://api.groq.com/openai/v1', ['groq'], [/api\.groq\.com/i], {
+    vision: true,
+    audioTranscription: true,
+    speech: true,
+    reasoningEffort: true,
+    nativeTools: true,
+    responsesApi: true,
+  }),
+  preset('together', 'Together AI', 'openai-compatible', 'https://api.together.ai/v1', ['together'], [/api\.together\.ai/i], {
+    vision: true,
+    audioTranscription: true,
+    speech: true,
+    reasoningEffort: true,
+    nativeTools: true,
+    embeddings: true,
+  }),
+  preset('fireworks', 'Fireworks AI', 'openai-compatible', 'https://api.fireworks.ai/inference/v1', ['fireworks'], [/api\.fireworks\.ai/i], {
+    vision: true,
+    files: false,
+    reasoningEffort: true,
+    nativeTools: true,
+    embeddings: true,
+    responsesApi: true,
+  }),
+  preset('perplexity', 'Perplexity Sonar', 'openai-compatible', 'https://api.perplexity.ai', ['perplexity', 'sonar'], [/api\.perplexity\.ai/i], {
+    modelList: false,
+    vision: true,
+    files: true,
+    nativeSearch: true,
+    reasoningEffort: true,
+  }),
+  preset('cohere', 'Cohere', 'openai-compatible', 'https://api.cohere.ai/compatibility/v1', ['cohere', 'command'], [/api\.cohere\.ai/i], {
+    modelList: false,
+    audioTranscription: true,
+    reasoningEffort: true,
+    nativeTools: true,
+    embeddings: true,
+  }),
+  preset('cerebras', 'Cerebras', 'openai-compatible', 'https://api.cerebras.ai/v1', ['cerebras'], [/api\.cerebras\.ai/i], {
+    reasoningEffort: true,
+    nativeTools: true,
+  }),
+  preset('sambanova', 'SambaNova', 'openai-compatible', 'https://api.sambanova.ai/v1', ['sambanova', 'samba'], [/sambanova\.ai/i], {
+    vision: true,
+    files: false,
+    audioInput: false,
+    audioTranscription: false,
+    speech: false,
+    reasoningEffort: true,
+    nativeTools: true,
+    responsesApi: true,
+  }),
+  preset('nvidia-nim', 'NVIDIA NIM', 'openai-compatible', 'https://integrate.api.nvidia.com/v1', ['nvidia', 'nim', 'build.nvidia'], [/integrate\.api\.nvidia\.com/i, /build\.nvidia\.com/i], {
+    vision: true,
+    files: false,
+    audioInput: false,
+    audioTranscription: false,
+    speech: false,
+    reasoningEffort: false,
+    nativeTools: false,
+  }),
+  preset('huggingface', 'Hugging Face Inference Providers', 'openai-compatible', 'https://router.huggingface.co/v1', ['huggingface', 'hugging face', 'hf'], [/router\.huggingface\.co/i, /api-inference\.huggingface\.co/i], {
+    vision: true,
+    files: false,
+    reasoningEffort: true,
+    nativeTools: true,
+    responsesApi: true,
+  }),
+  preset('github-models', 'GitHub Models', 'openai-compatible', 'https://models.github.ai/inference', ['github models', 'github-models'], [/models\.github\.ai/i], {
+    vision: false,
+    nativeTools: true,
+    files: false,
+    audioInput: false,
+    audioTranscription: false,
+    speech: false,
+    reasoningEffort: false,
+    responsesApi: false,
+  }),
+  preset('deepinfra', 'DeepInfra', 'openai-compatible', 'https://api.deepinfra.com/v1/openai', ['deepinfra'], [/api\.deepinfra\.com/i], {
+    vision: true,
+    files: false,
+    audioInput: false,
+    audioTranscription: false,
+    speech: false,
+    reasoningEffort: true,
+    nativeTools: true,
+    embeddings: true,
+    responsesApi: false,
+  }),
+  preset('novita', 'Novita AI', 'openai-compatible', 'https://api.novita.ai/openai', ['novita'], [/api\.novita\.ai/i], {
+    vision: true,
+    files: false,
+    audioInput: false,
+    audioTranscription: false,
+    speech: false,
+    reasoningEffort: false,
+    nativeTools: true,
+    embeddings: true,
+    responsesApi: false,
+  }),
+  preset('siliconflow', 'SiliconFlow', 'openai-compatible', 'https://api.siliconflow.cn/v1', ['siliconflow', 'silicon flow', '硅基流动'], [/api\.siliconflow\.(cn|com)/i], {
+    vision: true,
+    files: false,
+    audioInput: false,
+    audioTranscription: false,
+    speech: false,
+    reasoningEffort: true,
+    nativeTools: true,
+    embeddings: true,
+    responsesApi: false,
+  }),
+  preset('modelscope', 'ModelScope', 'openai-compatible', 'https://api-inference.modelscope.cn/v1', ['modelscope', '魔搭'], [/api-inference\.modelscope\.cn/i, /modelscope\.cn/i], {
+    vision: false,
+    files: false,
+    audioInput: false,
+    audioTranscription: false,
+    speech: false,
+    reasoningEffort: false,
+    nativeTools: false,
+    embeddings: true,
+    responsesApi: false,
+  }),
+  preset('volcengine-ark', 'Volcengine Ark', 'openai-compatible', 'https://ark.cn-beijing.volces.com/api/v3', ['volcengine', 'ark', 'doubao', '火山', '豆包'], [/ark\.[\w-]+\.volces\.com/i, /volces\.com/i], {
+    vision: true,
+    files: false,
+    audioInput: false,
+    audioTranscription: false,
+    speech: false,
+    reasoningEffort: false,
+    nativeTools: true,
+    responsesApi: false,
+  }),
+  preset('baidu-qianfan', 'Baidu Qianfan', 'openai-compatible', 'https://qianfan.baidubce.com/v2', ['qianfan', 'ernie', 'baidu', '千帆', '文心'], [/qianfan\.baidubce\.com/i, /aip\.baidubce\.com/i], {
+    vision: true,
+    files: false,
+    reasoningEffort: false,
+    nativeTools: true,
+  }),
+  preset('tencent-hunyuan', 'Tencent Hunyuan', 'openai-compatible', 'https://api.hunyuan.cloud.tencent.com/v1', ['hunyuan', 'tencent', '混元', '腾讯'], [/hunyuan\.cloud\.tencent\.com/i], {
+    vision: true,
+    reasoningEffort: false,
+    nativeTools: true,
+  }),
+  preset('baichuan', 'Baichuan AI', 'openai-compatible', 'https://api.baichuan-ai.com/v1', ['baichuan', '百川'], [/baichuan-ai\.com/i], {
+    modelList: false,
+    vision: false,
+    reasoningEffort: false,
+    nativeTools: false,
+  }),
+  preset('stepfun', 'StepFun', 'openai-compatible', 'https://api.stepfun.com/v1', ['stepfun', 'step', '阶跃'], [/api\.stepfun\.com/i], {
+    vision: true,
+    files: false,
+    reasoningEffort: false,
+    nativeTools: true,
+  }),
+  preset('zero-one', '01.AI', 'openai-compatible', 'https://api.lingyiwanwu.com/v1', ['01.ai', 'zero-one', '零一万物', 'yi-'], [/lingyiwanwu\.com/i, /01\.ai/i], {
+    vision: true,
+    reasoningEffort: false,
+    nativeTools: true,
+  }),
+  preset('ollama', 'Ollama', 'openai-compatible', 'http://localhost:11434/v1', ['ollama'], [/localhost:11434/i, /127\.0\.0\.1:11434/i, /ollama/i], {
+    vision: true,
+    reasoningEffort: true,
+    nativeTools: true,
+    embeddings: true,
+  }),
+  preset('lm-studio', 'LM Studio', 'openai-compatible', 'http://localhost:1234/v1', ['lm studio', 'lm-studio', 'lmstudio'], [/localhost:1234/i, /127\.0\.0\.1:1234/i, /lmstudio/i, /lm-studio/i], {
+    vision: true,
+    reasoningEffort: true,
+    nativeTools: true,
+    embeddings: true,
+  }),
+  preset('localai', 'LocalAI', 'openai-compatible', 'http://localhost:8080/v1', ['localai', 'local ai'], [/localhost:8080/i, /127\.0\.0\.1:8080/i, /localai/i], {
+    vision: true,
+    audioTranscription: true,
+    speech: true,
+    reasoningEffort: true,
+    nativeTools: true,
+    embeddings: true,
+  }),
+  preset('vllm', 'vLLM', 'openai-compatible', 'http://localhost:8000/v1', ['vllm', 'vllm-openai'], [/localhost:8000/i, /127\.0\.0\.1:8000/i, /vllm/i], {
+    vision: true,
+    reasoningEffort: true,
+    nativeTools: true,
+    embeddings: true,
+  }),
+  preset('sglang', 'SGLang', 'openai-compatible', 'http://localhost:30000/v1', ['sglang'], [/localhost:30000/i, /127\.0\.0\.1:30000/i, /sglang/i], {
+    vision: true,
+    reasoningEffort: true,
+    nativeTools: true,
+    embeddings: true,
+  }),
+  preset('openrouter', 'OpenRouter', 'openai-compatible', 'https://openrouter.ai/api/v1', ['openrouter'], [/openrouter\.ai/i], {
+    vision: true,
+    files: true,
+    reasoningEffort: true,
+    nativeTools: true,
+  }),
+  preset('newapi', 'NewAPI / OneAPI', 'openai-compatible', undefined, ['newapi', 'new-api', 'oneapi', 'one-api'], [/(^|\.)new-api\./i, /newapi/i, /oneapi/i], {
+    vision: false,
+    files: false,
+    reasoningEffort: true,
+    nativeTools: true,
+  }),
+  preset('sub2api', 'Sub2API', 'openai-compatible', undefined, ['sub2api'], [/sub2api/i], {
+    vision: false,
+    files: false,
+    reasoningEffort: false,
+    nativeTools: true,
+  }),
+]
+
+export const PROVIDER_VENDOR_PRESETS: ProviderPreset[] = PROVIDER_PRESETS
+
+export function isProviderPresetId(value: unknown): value is ProviderPresetId {
+  return typeof value === 'string'
+    && PROVIDER_PRESETS.some((provider) => provider.id === value)
+}
+
+function providerRegistryPolicy(dependencies: ProviderRegistryDependencies) {
+  return createProviderRegistryPolicy({
+    presets: PROVIDER_PRESETS,
+    messages: {
+      detectedHost: (value) => dependencies.translate('providerRegistry.detectedHost', { value }),
+      nameContains: (name) => dependencies.translate('providerRegistry.nameContains', { name }),
+      skCompatible: () => dependencies.translate('providerRegistry.skCompatible'),
+      unknownCompatible: () => dependencies.translate('providerRegistry.unknownCompatible'),
+      probeSkippedMissing: (reason) => dependencies.translate('providerRegistry.probeSkippedMissing', { reason }),
+      invalidConfiguration: (messageKey, fallback) => dependencies.translate(messageKey, undefined, fallback),
+      probeSuccess: (name) => dependencies.translate('providerRegistry.probeSuccess', { name }),
+      probeMiss: (reason) => dependencies.translate('providerRegistry.probeMiss', { reason }),
+    },
+    configurationIssue(baseUrl, apiKey) {
+      return dependencies.configurationIssue(baseUrl, apiKey)
+    },
+    normalizeSyncPolicy: normalizeProviderSyncPolicy,
+  })
+}
+
+export function createProviderRegistry(dependencies: ProviderRegistryDependencies) {
+  const policy = providerRegistryPolicy(dependencies)
+  return {
+    getProviderPreset: policy.getPreset,
+    detectProviderPreset: policy.detect,
+    probeProviderPreset: (input: ProviderDetectionInput, options: ProviderProbeDeps = {}) => policy.probe(input, { fetch: options.fetch ?? dependencies.fetch, timeoutMs: options.timeoutMs, signal: options.signal }),
+    applyProviderPreset: policy.apply,
+    parseCredentialGroups: (input: string) => credentialEntriesToGroups(extractCredentialEntries(input), dependencies),
+    parseProviderImportText: (input: string, options: ProviderImportOptions = {}) => parseProviderImportText(input, options, dependencies),
+    parseProviderImportDraft: (input: string, options: ProviderImportDraftOptions = {}) => parseProviderImportDraft(input, options, dependencies),
+    countDetectedProviderImports: (input: string) => countDetectedProviderImports(input, dependencies),
+    formatProviderNameList,
+    looksLikeProviderImportConnectionText,
+    maskSecret,
+    normalizeProviderSyncPolicy,
+    defaultProviderSyncPolicy,
+  }
+}
+
+function countDetectedProviderImports(input: string, dependencies: ProviderRegistryDependencies): number {
+  return input.trim() ? parseProviderImportText(input, {}, dependencies).providers.length : 0
+}
+
+function formatProviderNameList(providers: Pick<AIProvider, 'name'>[]): string {
+  return providers
+    .map((provider) => provider.name.trim())
+    .filter(Boolean)
+    .map((name) => `- ${name}`)
+    .join('\n')
+}
+
+function parseProviderImportDraft(input: string, options: ProviderImportDraftOptions, dependencies: ProviderRegistryDependencies): ProviderImportDraft | null {
+  const result = parseProviderImportText(input, {}, dependencies)
+  const candidates = result.providers.filter((item) => isProviderImportDraftCandidate(item, options.requireConnection))
+  const provider = selectProviderImportDraftCandidate(candidates, options)
+  if (!provider) return null
+  const credentialText = providerCredentialGroupsToText(provider.credentialGroups, provider.apiKey)
+  const baseUrl = provider.baseUrl?.trim() ?? ''
+  const selection = normalizeProviderPresetSelection(provider)
+  const presetId = selection.presetId
+  const wireProtocol = selection.wireProtocol ?? providerImportWireProtocol(provider)
+  return {
+    provider,
+    result,
+    count: result.providers.length,
+    presetId,
+    baseUrl,
+    wireProtocol,
+    credentialText,
+    modelText: provider.models.join('\n'),
+  }
+}
+
+function selectProviderImportDraftCandidate(providers: AIProvider[], options: ProviderImportDraftOptions): AIProvider | undefined {
+  if (!options.preferredWireProtocol) return providers[0]
+  return providers.find((provider) => providerImportWireProtocol(provider) === options.preferredWireProtocol) ?? providers[0]
+}
+
+function providerImportWireProtocol(provider: AIProvider): ProviderWireProtocol {
+  const baseUrl = provider.baseUrl?.trim() ?? ''
+  return provider.wireProtocol ?? (baseUrl ? inferProviderWireProtocolFromBaseUrl(baseUrl) : DEFAULT_PROVIDER_WIRE_PROTOCOL)
+}
+
+export function looksLikeProviderImportConnectionText(input: string): boolean {
+  const trimmed = input.trim()
+  if (!trimmed) return false
+  if (/^[\[{]/.test(trimmed)) return true
+  return /https?:\/\//i.test(trimmed) && /(?:sk|tp|ak|rk|pk|key|token)-[A-Za-z0-9._:-]+|[A-Za-z0-9_-]{24,}/i.test(trimmed)
+}
+
+export function providerCredentialGroupsToText(groups: ProviderCredentialGroup[] | undefined, apiKey = ''): string {
+  const seen = new Set<string>()
+  return [
+    apiKey,
+    ...(groups ?? []).map((group) => group.apiKey ?? ''),
+  ]
+    .map((key) => key.trim())
+    .filter((key) => {
+      if (!key || seen.has(key)) return false
+      seen.add(key)
+      return true
+    })
+    .join('\n')
+}
+
+function isProviderImportDraftCandidate(provider: AIProvider, requireConnection = false): boolean {
+  const hasCredential = !!provider.apiKey.trim() || !!provider.credentialGroups?.some((group) => group.apiKey?.trim())
+  if (!hasCredential) return false
+  return !requireConnection || !!provider.baseUrl?.trim()
+}
+
+function credentialEntriesToGroups(entries: CredentialEntry[], dependencies: ProviderRegistryDependencies): NonNullable<AIProvider['credentialGroups']> {
+  const seen = new Set<string>()
+  return entries
+    .filter((item) => {
+      const apiKey = item.apiKey.trim()
+      if (!apiKey || seen.has(apiKey)) return false
+      seen.add(apiKey)
+      return true
+    })
+    .map((item, index) => {
+      const apiKey = item.apiKey.trim()
+      return {
+        id: `group-${Date.now().toString(36)}-${index + 1}-${hashKey(apiKey)}`,
+        label: item.label?.trim() || dependencies.translate('apiKeyPanel.groupName', { index: index + 1 }),
+        apiKey,
+        enabled: item.enabled ?? true,
+      }
+    })
+}
+
+function extractCredentialEntries(input: string): CredentialEntry[] {
+  const trimmed = stripImportBoundary(input.trim())
+  if (!trimmed) return []
+  const parsed = parseCredentialJson(trimmed)
+  if (parsed !== null) return collectCredentialEntries(parsed)
+  const labeledEntries = extractLabeledCredentialEntries(trimmed)
+  const labeledKeys = new Set(labeledEntries.map((item) => item.apiKey))
+  return [
+    ...labeledEntries,
+    ...splitCredentialText(trimmed)
+      .filter((apiKey) => !labeledKeys.has(apiKey))
+      .map((apiKey) => ({ apiKey })),
+  ]
+}
+
+function parseCredentialJson(input: string): unknown | null {
+  if (!/^[\[{"]/.test(input)) return null
+  try {
+    return JSON.parse(input)
+  } catch {
+    return null
+  }
+}
+
+function collectCredentialEntries(value: unknown, context: { label?: string; enabled?: boolean } = {}): CredentialEntry[] {
+  if (typeof value === 'string') {
+    return splitCredentialText(value).map((apiKey) => ({ ...context, apiKey }))
+  }
+  if (Array.isArray(value)) {
+    return value.flatMap((item) => collectCredentialEntries(item, context))
+  }
+  if (!value || typeof value !== 'object') return []
+  const record = value as Record<string, unknown>
+  const label = stringField(record, ['label', 'name', 'title']) ?? context.label
+  const enabled = typeof record.enabled === 'boolean' ? record.enabled : context.enabled
+  const nextContext: { label?: string; enabled?: boolean } = {}
+  if (label) nextContext.label = label
+  if (enabled !== undefined) nextContext.enabled = enabled
+  const direct = stringField(record, ['apiKey', 'api_key', 'key', 'token', 'secret', 'accessToken', 'access_token'])
+  const directEntries = direct ? splitCredentialText(direct).map((apiKey) => ({ ...nextContext, apiKey })) : []
+  const nestedKeys = ['keys', 'apiKeys', 'api_keys', 'tokens', 'credentialGroups', 'credential_groups', 'groups', 'credentials']
+  return [
+    ...directEntries,
+    ...nestedKeys.flatMap((key) => collectCredentialEntries(record[key], nextContext)),
+  ]
+}
+
+function splitCredentialText(input: string): string[] {
+  return input
+    .split(/[\n,，]+/)
+    .map((item) => item.trim())
+    .filter((item) => {
+      if (!item) return false
+      // Filter out URLs
+      if (/^https?:\/\//i.test(item)) return false
+      // Filter out protocol labels (兼容 XXX 接口协议)
+      if (/(compatible|compat|protocol|endpoint|api|base\s*url|接口|协议|兼容|入口|地址)[:：=]/i.test(item)) return false
+      // Keep only items that look like API keys
+      return looksLikeApiKey(item)
+    })
+}
+
+function extractLabeledCredentialEntries(input: string): CredentialEntry[] {
+  const entries: CredentialEntry[] = []
+  const segments = input
+    .replace(/https?:\/\/[^\s,，;；"'“”‘’<>]+/gi, ' ')
+    .split(/[\n,，;；]+/)
+    .map((item) => item.trim())
+    .filter(Boolean)
+
+  for (const segment of segments) {
+    const matches = Array.from(segment.matchAll(/(?:sk|tp|ak|rk|pk|key|token)-[A-Za-z0-9._:-]+|[A-Za-z0-9_-]{24,}/gi))
+    if (!matches.length) continue
+    const rawLabel = segment.slice(0, matches[0].index ?? 0)
+    if (isNonCredentialImportLabel(rawLabel)) continue
+    const label = normalizeCredentialEntryLabel(rawLabel)
+    for (const match of matches) {
+      const apiKey = match[0]?.trim()
+      if (!apiKey || !looksLikeApiKey(apiKey)) continue
+      entries.push(label ? { apiKey, label } : { apiKey })
+    }
+  }
+
+  return entries
+}
+
+function normalizeCredentialEntryLabel(value: string): string | undefined {
+  const label = stripImportBoundary(value)
+    .replace(/^[\s:：=|｜\-–—]+|[\s:：=|｜\-–—]+$/g, '')
+    .trim()
+  if (!label || isCredentialMetadataLabel(label) || looksLikeApiKey(label) || /^https?:\/\//i.test(label)) return undefined
+  return label.length > 42 ? label.slice(0, 42).trim() : label
+}
+
+function isCredentialMetadataLabel(value: string): boolean {
+  const normalized = normalizeImportFieldKey(value).replace(/\d+$/, '')
+  return ['apikey', 'key', 'keys', 'token', 'tokens', 'secret', 'accesstoken', '秘钥', '密钥', '令牌'].includes(normalized)
+}
+
+function isNonCredentialImportLabel(value: string): boolean {
+  const normalized = normalizeImportFieldKey(stripImportBoundary(value).replace(/^[\s:：=|｜\-–—]+|[\s:：=|｜\-–—]+$/g, ''))
+  return ['model', 'models', '模型', '模型列表', 'baseurl', 'url', 'endpoint', 'protocol', 'wireprotocol', 'clientcompatibility', 'clientcompatibilityprofile', '站点', '地址', '接口', '协议', '接口协议'].includes(normalized)
+}
+
+function stripImportBoundary(value: string): string {
+  return value.replace(/^[\s"'“”‘’`]+|[\s"'“”‘’`]+$/g, '').trim()
+}
+
+function stringField(record: Record<string, unknown>, keys: string[]): string | undefined {
+  for (const key of keys) {
+    const value = record[key]
+    if (typeof value === 'string' && value.trim()) return value
+  }
+  return undefined
+}
+
+function parseProviderImportText(input: string, options: ProviderImportOptions, dependencies: ProviderRegistryDependencies): ProviderImportResult {
+  const warnings: string[] = []
+  const duplicates: string[] = []
+  const normalizedInput = normalizeProviderImportInput(input, warnings, dependencies)
+  const chunks = splitProviderImportChunks(normalizedInput.text).flatMap(expandProviderImportChunk)
+  const providers = chunks
+    .map((chunk, index) => parseProviderImportChunk(chunk, index, warnings, dependencies))
+    .filter((provider): provider is AIProvider => !!provider)
+  const dedupedProviders = dedupeImportedProviders(providers, warnings, duplicates, dependencies)
+  return { providers: applyImportedProviderAccessPolicy(dedupedProviders, warnings, options.accessSettings, dependencies), warnings, duplicates, sourceType: normalizedInput.sourceType }
+}
+
+export function maskSecret(value: string): string {
+  const trimmed = value.trim()
+  if (!trimmed) return ''
+  if (trimmed.length <= 8) return `${trimmed.slice(0, 2)}...`
+  return `${trimmed.slice(0, 4)}...${trimmed.slice(-4)}`
+}
+
+export function defaultProviderSyncPolicy() {
+  return {
+    minDelayMs: 120,
+    maxDelayMs: 260,
+    timeoutMs: 18000,
+    strategy: 'parallel-balanced' as const,
+    concurrency: 3,
+  }
+}
+
+export function normalizeProviderSyncPolicy(policy: AIProvider['syncPolicy'] | undefined): NonNullable<AIProvider['syncPolicy']> {
+  if (!policy) return defaultProviderSyncPolicy()
+  if (
+    policy.strategy === 'sequential-low-rate' &&
+    policy.minDelayMs === 1200 &&
+    policy.maxDelayMs === 1800 &&
+    policy.timeoutMs === 18000
+  ) {
+    return defaultProviderSyncPolicy()
+  }
+  if (policy.strategy === 'parallel-balanced') {
+    return {
+      ...defaultProviderSyncPolicy(),
+      ...policy,
+      concurrency: normalizeSyncConcurrency(policy.concurrency),
+    }
+  }
+  return {
+    ...policy,
+    strategy: 'sequential-low-rate',
+  }
+}
+
+function normalizeSyncConcurrency(value: number | undefined): number {
+  if (typeof value !== 'number' || !Number.isFinite(value)) return 3
+  return Math.min(6, Math.max(1, Math.floor(value)))
+}
+
+function preset(
+  id: ProviderPresetId,
+  name: string,
+  type: ProviderType,
+  baseUrl: string | undefined,
+  aliases: string[],
+  hostPatterns: RegExp[],
+  capabilities: Partial<ProviderCapabilities>,
+): ProviderPreset {
+  return {
+    id,
+    name,
+    type,
+    baseUrl,
+    aliases,
+    hostPatterns,
+    defaultModels: [],
+    capabilities: { ...DEFAULT_PROVIDER_CAPABILITIES, ...capabilities },
+  }
+}
+
+function getHost(value: string): string {
+  try {
+    return new URL(value).host
+  } catch {
+    return value.replace(/^https?:\/\//i, '').split('/')[0] ?? ''
+  }
+}
+
+function hashKey(value: string): string {
+  let hash = 0
+  for (let index = 0; index < value.length; index += 1) {
+    hash = (hash * 31 + value.charCodeAt(index)) >>> 0
+  }
+  return hash.toString(36)
+}
+
+function normalizeProviderImportInput(input: string, warnings: string[], dependencies: ProviderRegistryDependencies): { text: string; sourceType: ProviderImportResult['sourceType'] } {
+  const trimmed = stripImportBoundary(input.trim())
+  if (!trimmed) return { text: '', sourceType: 'text' }
+  const jsonText = tryNormalizeJsonProviderImport(trimmed, warnings, dependencies)
+  if (jsonText) return { text: jsonText, sourceType: 'json' }
+  if (looksLikeCsvImport(trimmed)) {
+    return { text: normalizeCsvProviderImport(trimmed), sourceType: 'csv' }
+  }
+  return { text: trimmed, sourceType: 'text' }
+}
+
+function tryNormalizeJsonProviderImport(input: string, warnings: string[], dependencies: ProviderRegistryDependencies): string | null {
+  if (!/^[\[{]/.test(input)) return null
+  try {
+    const parsed = JSON.parse(input)
+    const blocks = jsonImportBlocks(parsed, dependencies)
+    if (!blocks.length) {
+      warnings.push(dependencies.translate('providerRegistry.jsonNoProviders'))
+      return ''
+    }
+    return blocks.join('\n\n')
+  } catch {
+    warnings.push(dependencies.translate('providerRegistry.jsonParseFallback'))
+    return null
+  }
+}
+
+function jsonImportBlocks(value: unknown, dependencies: ProviderRegistryDependencies): string[] {
+  if (Array.isArray(value)) return value.flatMap((item) => jsonImportBlocks(item, dependencies))
+  if (!value || typeof value !== 'object') return []
+  const record = value as Record<string, unknown>
+  const providersValue = record.providers ?? record.items ?? record.data
+  if (Array.isArray(providersValue)) return providersValue.flatMap((item) => jsonImportBlocks(item, dependencies))
+  const directBlock = jsonProviderObjectToBlock(record, dependencies)
+  if (directBlock) return [directBlock]
+  return Object.entries(record)
+    .flatMap(([name, item]) => {
+      if (item && typeof item === 'object') {
+        const block = jsonProviderObjectToBlock({ name, ...(item as Record<string, unknown>) }, dependencies)
+        return block ? [block] : []
+      }
+      return []
+    })
+}
+
+function jsonProviderObjectToBlock(record: Record<string, unknown>, dependencies: ProviderRegistryDependencies): string | null {
+  const type = firstString(record._type, record.type)
+  const isNewApiChannelConnection = type === NEWAPI_CHANNEL_CONN_TYPE
+  const baseUrl = firstString(record.baseUrl, record.base_url, record.url, record.endpoint, record.apiBase, record.api_base, record['站点'], record['地址'], record['接口'])
+  const name = firstString(record.provider, record.name, record.title, record.channel, record.channelName, record.channel_name, record['供应商'], record['服务商'], record['名称'])
+  const models = stringArray(record.models, record.model, record['模型'], record['模型列表'])
+  const keys = stringArray(record.apiKey, record.api_key, record.apiKeys, record.api_keys, record.key, record.keys, record.token, record.tokens, record['秘钥'], record['密钥'], record['令牌'])
+  const clientCompatibilityProfile = firstString(record.clientCompatibilityProfile, record.client_compatibility_profile)
+  if (isNewApiChannelConnection && (!baseUrl || !keys.length)) return null
+  if (!baseUrl && !name && !keys.length) return null
+  const resolvedName = name ?? (isNewApiChannelConnection ? providerRegistryPolicy(dependencies).getPreset('newapi').name : undefined)
+  const parts = [
+    resolvedName ? `供应商: ${resolvedName}` : '',
+    baseUrl ? `Base URL: ${baseUrl}` : '',
+    ...keys.map((key, index) => `Key${index + 1}: ${key}`),
+    models.length ? `Models: ${models.join('|')}` : '',
+    clientCompatibilityProfile ? `Client compatibility profile: ${clientCompatibilityProfile}` : '',
+  ].filter(Boolean)
+  return parts.join('\n')
+}
+
+function firstString(...values: unknown[]): string | undefined {
+  for (const value of values) {
+    if (typeof value === 'string' && value.trim()) return value.trim()
+  }
+  return undefined
+}
+
+function stringArray(...values: unknown[]): string[] {
+  return values.flatMap((value) => {
+    if (typeof value === 'string') return value.split(/[\n,，;；|]+/)
+    if (Array.isArray(value)) return value.flatMap((item) => typeof item === 'string' ? item.split(/[\n,，;；|]+/) : [])
+    return []
+  }).map((item) => item.trim()).filter(Boolean)
+}
+
+function looksLikeCsvImport(input: string): boolean {
+  const lines = input.split(/\r?\n/).map((line) => line.trim()).filter(Boolean)
+  if (lines.length < 2) return false
+  const header = lines[0].toLowerCase()
+  return header.includes(',') && /(provider|name|base.?url|api.?key|keys|models|供应商|服务商|地址|密钥|秘钥|令牌|模型)/i.test(header)
+}
+
+function normalizeCsvProviderImport(input: string): string {
+  const lines = input.split(/\r?\n/).map((line) => line.trim()).filter(Boolean)
+  const headers = parseCsvLine(lines[0]).map(normalizeImportFieldKey)
+  return lines.slice(1)
+    .map((line) => {
+      const cells = parseCsvLine(line)
+      return cells
+        .map((cell, index) => {
+          const key = headers[index] || `field${index + 1}`
+          const value = key === 'models' || key === 'model' || key === '模型' || key === '模型列表'
+            ? cell.trim().replace(/[,，]+/g, '|')
+            : cell.trim()
+          return value ? `${key}: ${value}` : ''
+        })
+        .filter(Boolean)
+        .join('\n')
+    })
+    .filter(Boolean)
+    .join('\n\n')
+}
+
+function parseCsvLine(line: string): string[] {
+  const result: string[] = []
+  let current = ''
+  let quoted = false
+  for (let index = 0; index < line.length; index += 1) {
+    const char = line[index]
+    const next = line[index + 1]
+    if (char === '"' && quoted && next === '"') {
+      current += '"'
+      index += 1
+      continue
+    }
+    if (char === '"') {
+      quoted = !quoted
+      continue
+    }
+    if (char === ',' && !quoted) {
+      result.push(current)
+      current = ''
+      continue
+    }
+    current += char
+  }
+  result.push(current)
+  return result
+}
+
+function splitProviderImportChunks(input: string): string[] {
+  const rawChunks = input
+    .split(/(?:\r?\n\s*\r?\n|;|；)+/)
+    .map((item) => item.trim())
+    .filter(Boolean)
+
+  // Keep URL-only blocks with following key-only blocks from common copied configs.
+  const grouped: string[] = []
+  let currentGroup: string[] = []
+
+  for (const chunk of rawChunks) {
+    const hasUrl = /https?:\/\//.test(chunk)
+    const hasKeyOnly = /^(?:sk|tp|ak|rk|pk|key|token)-[A-Za-z0-9._:-]+$|^[A-Za-z0-9_-]{24,}$/.test(chunk.trim())
+
+    if (hasUrl) {
+      if (currentGroup.length > 0) {
+        grouped.push(currentGroup.join('\n\n'))
+      }
+      currentGroup = [chunk]
+    } else if (hasKeyOnly && currentGroup.length > 0) {
+      currentGroup.push(chunk)
+    } else if (hasKeyOnly && currentGroup.length === 0) {
+      grouped.push(chunk)
+    } else {
+      if (currentGroup.length > 0) {
+        currentGroup.push(chunk)
+      } else {
+        grouped.push(chunk)
+      }
+    }
+  }
+
+  if (currentGroup.length > 0) {
+    grouped.push(currentGroup.join('\n\n'))
+  }
+
+  return grouped.filter(Boolean)
+}
+
+function expandProviderImportChunk(chunk: string): string[] {
+  const endpoints = extractLabeledProtocolBaseUrls(chunk)
+  if (!endpoints.length) return [chunk]
+
+  const fields = readImportFields(chunk)
+  const name = pickField(fields, ['provider', 'name', '供应商', '服务商', '名称'])
+  const modelsText = pickField(fields, ['models', 'model', '模型', '模型列表'])
+  const clientCompatibilityProfile = normalizeProviderClientCompatibilityMode(pickField(fields, ['clientcompatibilityprofile', 'client compatibility profile', 'clientcompatibility', 'client compatibility']))
+  const credentialEntries = extractProviderImportCredentialEntries(chunk, fields)
+  const seenCredentials = new Set<string>()
+  const uniqueCredentials = credentialEntries
+    .map((entry) => ({ ...entry, apiKey: entry.apiKey.trim(), label: entry.label?.trim() }))
+    .filter((entry) => {
+      if (!entry.apiKey || seenCredentials.has(entry.apiKey)) return false
+      seenCredentials.add(entry.apiKey)
+      return true
+    })
+
+  // Keep duplicate same-host labels together, but split one paste into separate
+  // candidates when the labels describe distinct wire protocols.
+  const hosts = endpoints.map((endpoint) => {
+    try {
+      return new URL(endpoint.baseUrl).hostname
+    } catch {
+      return endpoint.baseUrl
+    }
+  })
+  const uniqueHosts = new Set(hosts)
+  const uniqueProtocols = new Set(endpoints.map((endpoint) => endpoint.wireProtocol))
+
+  if (uniqueHosts.size === 1 && uniqueProtocols.size === 1 && endpoints.length > 1) {
+    return [chunk]
+  }
+
+  return endpoints.map((endpoint) => [
+    name ? `Provider: ${name}` : '',
+    `Base URL: ${endpoint.baseUrl}`,
+    `Protocol: ${endpoint.wireProtocol}`,
+    ...uniqueCredentials.map((entry, index) => `${entry.label || `Key${index + 1}`}: ${entry.apiKey}`),
+    modelsText ? `Models: ${modelsText}` : '',
+    `Client compatibility profile: ${clientCompatibilityProfile}`,
+  ].filter(Boolean).join('\n'))
+}
+
+function parseProviderImportChunk(chunk: string, index: number, warnings: string[], dependencies: ProviderRegistryDependencies): AIProvider | null {
+  const registry = providerRegistryPolicy(dependencies)
+  const normalizedChunk = stripImportBoundary(chunk)
+  const fields = readImportFields(normalizedChunk)
+  const endpoints = extractLabeledProtocolBaseUrls(normalizedChunk)
+  const looseBaseUrl = extractLooseBaseUrl(normalizedChunk)
+  const explicitBaseUrl = pickField(fields, ['baseurl', 'base url', 'url', 'endpoint', '站点', '地址', '接口'])
+
+  // When multiple same-host endpoints exist, prefer OpenAI-compatible for model discovery
+  let baseUrl: string | undefined
+  if (explicitBaseUrl && endpoints.length <= 1) {
+    // User explicitly specified a baseUrl and there's only one labeled endpoint (or none)
+    baseUrl = explicitBaseUrl
+  } else if (endpoints.length > 1) {
+    // Multiple labeled endpoints detected, prefer OpenAI-compatible
+    // Ignore explicitBaseUrl in this case as it's likely from loose extraction
+    const openaiEndpoint = endpoints.find((ep) => ep.wireProtocol === 'openai-compatible')
+    baseUrl = openaiEndpoint?.baseUrl ?? endpoints[0]?.baseUrl ?? looseBaseUrl
+  } else if (endpoints.length === 1) {
+    // Single labeled endpoint
+    baseUrl = endpoints[0]?.baseUrl ?? explicitBaseUrl ?? looseBaseUrl
+  } else {
+    // No labeled endpoints, use explicit or loose detection
+    baseUrl = explicitBaseUrl ?? looseBaseUrl
+  }
+
+  const explicitName = pickField(fields, ['provider', 'name', '供应商', '服务商', '名称'])
+  const name = explicitName ?? inferProviderName(normalizedChunk, index, baseUrl, dependencies)
+  const wireProtocolHint = parseProviderWireProtocolText(pickField(fields, ['protocol', 'wireprotocol', 'wire protocol', '协议', '接口协议']))
+    ?? inferExplicitProviderWireProtocolFromBaseUrl(baseUrl)
+  const modelsText = pickField(fields, ['models', 'model', '模型', '模型列表'])
+  const clientCompatibilityProfile = normalizeProviderClientCompatibilityMode(pickField(fields, ['clientcompatibilityprofile', 'client compatibility profile', 'clientcompatibility', 'client compatibility']))
+  const credentialEntries = extractProviderImportCredentialEntries(normalizedChunk, fields)
+  const keysText = credentialEntries.map((item) => item.apiKey).join('\n')
+  const detection = registry.detect({ baseUrl, name, apiKey: keysText })
+  const presetId = resolveImportPresetId(detection)
+  const preset = registry.getPreset(presetId)
+  const isMimo = presetId === 'xiaomi-mimo'
+  const credentialMode = isMimo ? inferProviderCredentialModeFromKeyOrBaseUrl(keysText, baseUrl) : undefined
+  const tokenPlanRegion = isMimo ? inferProviderTokenPlanRegionFromBaseUrl(baseUrl) : undefined
+  const wireProtocol = isMimo
+    ? wireProtocolHint ?? inferProviderWireProtocolFromBaseUrl(baseUrl)
+    : presetId === DEFAULT_PROVIDER_PRESET_ID
+      ? wireProtocolHint ?? detection.wireProtocol ?? inferProviderWireProtocolFromBaseUrl(baseUrl)
+      : undefined
+  const models = parseModelList(modelsText)
+  const credentialGroups = credentialEntriesToGroups(credentialEntries, dependencies)
+  const providerName = explicitName ?? (isMimo ? preset.name : name)
+
+  if (!name && !baseUrl && !credentialGroups.length) {
+    warnings.push(dependencies.translate('providerRegistry.chunkUnrecognized', { index: index + 1 }))
+    return null
+  }
+
+  const provider = registry.apply({
+    id: importProviderId(providerName || preset.name, index),
+    presetId,
+    detectedPresetId: presetId,
+    detectionStatus: 'detected',
+    type: preset.type,
+    name: providerName || preset.name,
+    baseUrl: baseUrl?.trim() || (isMimo ? getXiaomiMimoOfficialBaseUrl(credentialMode, tokenPlanRegion, wireProtocol) : preset.baseUrl),
+    credentialMode,
+    tokenPlanRegion,
+    wireProtocol,
+    apiKey: '',
+    credentialGroups,
+    models,
+    clientCompatibilityProfile,
+    enabled: false,
+  } satisfies AIProvider, presetId)
+
+  if (!credentialGroups.length) warnings.push(dependencies.translate('providerRegistry.noTokens', { name: provider.name }))
+  return provider
+}
+
+function readImportFields(chunk: string): Map<string, string[]> {
+  const fields = new Map<string, string[]>()
+  const normalized = chunk.replace(/[，]/g, ',')
+  const pattern = /(?:^|[,;\n\r])\s*([^:：=,\n\r]{1,28})\s*[:：=]\s*([^,;\n\r]+)/g
+  let match: RegExpExecArray | null
+  while ((match = pattern.exec(normalized))) {
+    const key = normalizeImportFieldKey(match[1])
+    const value = match[2]?.trim()
+    if (/^https?$/i.test(key) || /^https?:\/\//i.test(match[0].trim())) continue
+    if (!key || !value) continue
+    const current = fields.get(key) ?? []
+    current.push(value)
+    fields.set(key, current)
+  }
+  const csvParts = normalized.split(',').map((part) => part.trim()).filter(Boolean)
+  const url = extractLooseBaseUrl(normalized)
+  if (url && !fields.has('baseurl')) fields.set('baseurl', [url])
+  const looseKeys = csvParts.filter((part) => looksLikeApiKey(part))
+  if (looseKeys.length && !fields.has('key')) fields.set('key', looseKeys)
+  if (!fields.size && csvParts.length >= 2) {
+    fields.set('provider', [csvParts[0]])
+  }
+  return fields
+}
+
+function extractProviderImportCredentialEntries(chunk: string, fields: Map<string, string[]>): CredentialEntry[] {
+  const fieldEntries = pickFields(fields, ['apikey', 'api key', 'key', 'keys', 'token', 'tokens', '秘钥', '密钥', '令牌'])
+    .flatMap(extractCredentialEntries)
+  const looseEntries = extractCredentialEntries(chunk)
+  const seen = new Set<string>()
+  return [...fieldEntries, ...looseEntries].filter((entry) => {
+    const apiKey = entry.apiKey.trim()
+    if (!apiKey || seen.has(apiKey)) return false
+    seen.add(apiKey)
+    return true
+  })
+}
+
+function pickField(fields: Map<string, string[]>, keys: string[]): string | undefined {
+  return pickFields(fields, keys)[0]
+}
+
+function pickFields(fields: Map<string, string[]>, keys: string[]): string[] {
+  const normalized = keys.map(normalizeImportFieldKey)
+  return normalized.flatMap((key) => fields.get(key) ?? []).filter(Boolean)
+}
+
+function normalizeImportFieldKey(value: string): string {
+  return value.toLowerCase().replace(/[\s_-]+/g, '').trim()
+}
+
+function inferProviderName(chunk: string, index: number, baseUrl: string | undefined, dependencies: ProviderRegistryDependencies): string {
+  const first = chunk.split(/[,，\n\r]/)[0]?.trim()
+  const prefix = first?.split(/[:：=]/)[0]?.trim()
+  const host = baseUrl ? getHost(baseUrl) : ''
+  if (first && /^https?:\/\//i.test(first) && host) return host
+  if (prefix && isImportMetadataField(prefix)) return host || dependencies.translate('providerRegistry.importedProviderName', { index: index + 1 })
+  if (prefix && !/^https?$/i.test(prefix) && !looksLikeApiKey(prefix) && !/^https?:\/\//i.test(prefix)) return prefix
+  if (host) return host
+  return dependencies.translate('providerRegistry.importedProviderName', { index: index + 1 })
+}
+
+function resolveImportPresetId(detection: ProviderDetectionResult): ProviderPresetId {
+  return detection.presetId
+}
+
+function parseProviderWireProtocolText(value?: string): ProviderWireProtocol | undefined {
+  if (!value?.trim()) return undefined
+  if (/anthropic|claude/i.test(value)) return 'anthropic-compatible'
+  if (/openai|gpt/i.test(value)) return 'openai-compatible'
+  return undefined
+}
+
+function inferExplicitProviderWireProtocolFromBaseUrl(value?: string): ProviderWireProtocol | undefined {
+  return /\/anthropic(?:\/v1)?(?:\/|$)/i.test(value ?? '') ? 'anthropic-compatible' : undefined
+}
+
+function isImportMetadataField(value: string): boolean {
+  return [
+    'baseurl',
+    'url',
+    'endpoint',
+    'protocol',
+    'wireprotocol',
+    '站点',
+    '地址',
+    '接口',
+    '协议',
+    '接口协议',
+  ].includes(normalizeImportFieldKey(value))
+}
+
+function extractLabeledProtocolBaseUrls(chunk: string): Array<{ baseUrl: string; wireProtocol: ProviderWireProtocol }> {
+  const endpoints: Array<{ baseUrl: string; wireProtocol: ProviderWireProtocol }> = []
+  const seen = new Set<string>()
+  const pattern = /([^\n\r:：=]{0,80}(?:openai|anthropic|claude)[^\n\r:：=]{0,80})\s*[:：=]\s*(https?:\/\/[^\s,，;；"'“”‘’<>]+)/gi
+  let match: RegExpExecArray | null
+  while ((match = pattern.exec(chunk))) {
+    const wireProtocol = protocolLabelWireProtocol(match[1] ?? '')
+    const baseUrl = match[2] ? stripImportBoundary(match[2]) : ''
+    if (!wireProtocol || !baseUrl) continue
+    const key = `${wireProtocol}|${baseUrl.toLowerCase()}`
+    if (seen.has(key)) continue
+    seen.add(key)
+    endpoints.push({ baseUrl, wireProtocol })
+  }
+  return endpoints
+}
+
+function protocolLabelWireProtocol(label: string): ProviderWireProtocol | undefined {
+  if (!/(compatible|compat|protocol|endpoint|api|base\s*url|接口|协议|兼容|入口|地址)/i.test(label)) return undefined
+  if (/anthropic|claude/i.test(label)) return 'anthropic-compatible'
+  if (/openai|gpt/i.test(label)) return 'openai-compatible'
+  return undefined
+}
+
+function extractLooseBaseUrl(chunk: string): string | undefined {
+  const match = chunk.match(/https?:\/\/[^\s,，;；"'“”‘’<>]+/i)?.[0]
+  return match ? stripImportBoundary(match) : undefined
+}
+
+function extractLooseKeys(chunk: string): string[] {
+  // Remove URLs and protocol labels to avoid extracting them as keys
+  const textWithoutUrls = chunk
+    .replace(/https?:\/\/[^\s,，;；"'“”‘’<>]+/gi, ' ')
+    .replace(/[^\n\r:：=]{0,80}(?:openai|anthropic|claude|compatible|compat|protocol|endpoint|api|base\s*url|接口|协议|兼容|入口|地址)[^\n\r:：=]{0,80}\s*[:：=]/gi, ' ')
+  const matches = textWithoutUrls.match(/(?:sk|tp|ak|rk|pk|key|token)-[A-Za-z0-9._:-]+|[A-Za-z0-9_-]{24,}/g) ?? []
+  return matches.map(stripImportBoundary).filter(looksLikeApiKey)
+}
+
+function looksLikeApiKey(value: string): boolean {
+  const trimmed = stripImportBoundary(value.trim())
+  if (/^https?:\/\//i.test(trimmed)) return false
+  return /^(?:sk|tp|ak|rk|pk|key|token)-[A-Za-z0-9._:-]+$/i.test(trimmed) || /^[A-Za-z0-9_-]{24,}$/.test(trimmed)
+}
+
+function parseModelList(value: string | undefined): string[] {
+  const seen = new Set<string>()
+  return (value ?? '')
+    .split(/[\n,，|/]+/)
+    .map((item) => item.trim())
+    .filter((item) => {
+      if (!item || seen.has(item)) return false
+      seen.add(item)
+      return true
+    })
+}
+
+function importProviderId(name: string, index: number): string {
+  const slug = name
+    .toLowerCase()
+    .replace(/https?:\/\//g, '')
+    .replace(/[^a-z0-9\u4e00-\u9fa5]+/g, '-')
+    .replace(/^-+|-+$/g, '')
+    .slice(0, 28) || `provider-${index + 1}`
+  return `import-${Date.now().toString(36)}-${index + 1}-${slug}`
+}
+
+function dedupeImportedProviders(providers: AIProvider[], warnings: string[], duplicates: string[], dependencies: ProviderRegistryDependencies): AIProvider[] {
+  const seen = new Set<string>()
+  return providers.filter((provider) => {
+    const key = `${provider.name.toLowerCase()}|${provider.baseUrl ?? ''}`
+    if (seen.has(key)) {
+      const message = dependencies.translate('providerRegistry.duplicateSkipped', { name: provider.name })
+      duplicates.push(provider.name)
+      warnings.push(message)
+      return false
+    }
+    seen.add(key)
+    return true
+  })
+}
+
+function applyImportedProviderAccessPolicy(providers: AIProvider[], warnings: string[], settings: ProviderImportOptions['accessSettings'], dependencies: ProviderRegistryDependencies): AIProvider[] {
+  if (!settings) return providers
+  return providers
+    .filter((provider) => {
+      if (importedProviderAllowedByPolicy(provider, settings, dependencies)) return true
+      warnings.push(dependencies.translate('providerRegistry.providerSkippedByPolicy', { name: provider.name }))
+      return false
+    })
+    .map((provider) => filterImportedProviderModelsByPolicy(provider, warnings, settings, dependencies))
+}
+
+function importedProviderAllowedByPolicy(provider: AIProvider, settings: ProviderImportOptions['accessSettings'], dependencies: ProviderRegistryDependencies): boolean {
+  const probe = dependencies.resolveModelAccess({ provider, model: '__provider_import_policy_probe__', settings })
+  return probe.allowed || probe.reason === 'model_blocked' || probe.reason === 'model_not_allowed'
+}
+
+function filterImportedProviderModelsByPolicy(provider: AIProvider, warnings: string[], settings: ProviderImportOptions['accessSettings'], dependencies: ProviderRegistryDependencies): AIProvider {
+  const models = filterImportedModelsByPolicy(provider, provider.models, settings, dependencies)
+  const manualModels = Array.isArray(provider.manualModels)
+    ? filterImportedModelsByPolicy(provider, provider.manualModels, settings, dependencies)
+    : provider.manualModels
+  const skipped = provider.models.length - models.length + (Array.isArray(provider.manualModels) ? provider.manualModels.length - (manualModels?.length ?? 0) : 0)
+  if (skipped > 0) warnings.push(dependencies.translate('providerRegistry.modelsSkippedByPolicy', { name: provider.name, count: skipped }))
+  return {
+    ...provider,
+    models,
+    ...(Array.isArray(provider.manualModels) ? { manualModels } : {}),
+  }
+}
+
+function filterImportedModelsByPolicy(provider: AIProvider, models: string[], settings: ProviderImportOptions['accessSettings'], dependencies: ProviderRegistryDependencies): string[] {
+  return models.filter((model) => dependencies.resolveModelAccess({ provider, model, settings }).allowed)
+}

@@ -1,6 +1,6 @@
 #!/usr/bin/env bun
 
-const { themePalettes } = await import('../src/theme/colors')
+const { getColors, normalizeThemeAccent, themePalettes } = await import('../src/theme/colors')
 
 function parseColor(input) {
   const value = String(input).trim()
@@ -84,47 +84,80 @@ const checks = [
   ['minimal/dark accentForeground on action item', themePalettes.minimal.dark, themePalettes.minimal.dark.ui.icon.accentForeground, themePalettes.minimal.dark.ui.actionBar.itemBackground, 4.5],
   ['minimal/dark body text on code surface', themePalettes.minimal.dark, themePalettes.minimal.dark.ui.code.text, themePalettes.minimal.dark.ui.code.background, 7],
   ['minimal/dark user message foreground', themePalettes.minimal.dark, themePalettes.minimal.dark.ui.message.userForeground, themePalettes.minimal.dark.ui.message.userBackground, 7],
-  ['glass/light textTertiary', themePalettes.glass.light, themePalettes.glass.light.textTertiary, themePalettes.glass.light.ui.card.defaultBackground, 3.5],
-  ['glass/light input placeholder', themePalettes.glass.light, themePalettes.glass.light.ui.input.placeholderForeground, themePalettes.glass.light.ui.input.background, 3.5],
-  ['glass/light disabled input foreground', themePalettes.glass.light, themePalettes.glass.light.ui.input.disabledForeground, themePalettes.glass.light.ui.input.disabledBackground, 4.5],
-  ['glass/light disabled control foreground', themePalettes.glass.light, themePalettes.glass.light.ui.control.disabledForeground, themePalettes.glass.light.ui.control.disabledBackground, 4.5],
-  ['glass/light textSecondary on chrome background', themePalettes.glass.light, themePalettes.glass.light.textSecondary, themePalettes.glass.light.ui.semantic.chrome.background, 4.5],
-  ['glass/light textSecondary on action item', themePalettes.glass.light, themePalettes.glass.light.textSecondary, themePalettes.glass.light.ui.actionBar.itemBackground, 4.5],
-  ['glass/light body text on code surface', themePalettes.glass.light, themePalettes.glass.light.ui.code.text, themePalettes.glass.light.ui.code.background, 7],
-  ['glass/light user message foreground', themePalettes.glass.light, themePalettes.glass.light.ui.message.userForeground, themePalettes.glass.light.ui.message.userBackground, 7],
-  ['glass/light tertiary text on table header', themePalettes.glass.light, themePalettes.glass.light.textSecondary, themePalettes.glass.light.ui.table.headerBackground, 4.5],
-  ['glass/light warning tone', themePalettes.glass.light, themePalettes.glass.light.ui.tone.warning.foreground, themePalettes.glass.light.ui.tone.warning.background, 4.5],
-  ['glass/light danger tone', themePalettes.glass.light, themePalettes.glass.light.ui.tone.danger.foreground, themePalettes.glass.light.ui.tone.danger.background, 4.5],
-  ['glass/light info tone', themePalettes.glass.light, themePalettes.glass.light.ui.tone.info.foreground, themePalettes.glass.light.ui.tone.info.background, 4.5],
-  ['glass/dark textTertiary', themePalettes.glass.dark, themePalettes.glass.dark.textTertiary, themePalettes.glass.dark.ui.card.defaultBackground, 4.5],
-  ['glass/dark input placeholder', themePalettes.glass.dark, themePalettes.glass.dark.ui.input.placeholderForeground, themePalettes.glass.dark.ui.input.background, 4.5],
-  ['glass/dark disabled input foreground', themePalettes.glass.dark, themePalettes.glass.dark.ui.input.disabledForeground, themePalettes.glass.dark.ui.input.disabledBackground, 4.5],
-  ['glass/dark disabled control foreground', themePalettes.glass.dark, themePalettes.glass.dark.ui.control.disabledForeground, themePalettes.glass.dark.ui.control.disabledBackground, 4.5],
-  ['glass/dark textSecondary on chrome background', themePalettes.glass.dark, themePalettes.glass.dark.textSecondary, themePalettes.glass.dark.ui.semantic.chrome.background, 4.5],
-  ['glass/dark action item', themePalettes.glass.dark, themePalettes.glass.dark.textSecondary, themePalettes.glass.dark.ui.actionBar.itemBackground, 4.5],
-  ['glass/dark body text on code surface', themePalettes.glass.dark, themePalettes.glass.dark.ui.code.text, themePalettes.glass.dark.ui.code.background, 7],
-  ['glass/dark user message foreground', themePalettes.glass.dark, themePalettes.glass.dark.ui.message.userForeground, themePalettes.glass.dark.ui.message.userBackground, 7],
-  ['glass/dark textSecondary on table header', themePalettes.glass.dark, themePalettes.glass.dark.textSecondary, themePalettes.glass.dark.ui.table.headerBackground, 4.5],
-  ['cartoon/light textTertiary', themePalettes.cartoon.light, themePalettes.cartoon.light.textTertiary, themePalettes.cartoon.light.ui.card.defaultBackground, 3.5],
-  ['cartoon/light input placeholder', themePalettes.cartoon.light, themePalettes.cartoon.light.ui.input.placeholderForeground, themePalettes.cartoon.light.ui.input.background, 3.5],
-  ['cartoon/light disabled input foreground', themePalettes.cartoon.light, themePalettes.cartoon.light.ui.input.disabledForeground, themePalettes.cartoon.light.ui.input.disabledBackground, 4.5],
-  ['cartoon/light disabled control foreground', themePalettes.cartoon.light, themePalettes.cartoon.light.ui.control.disabledForeground, themePalettes.cartoon.light.ui.control.disabledBackground, 4.5],
-  ['cartoon/light textSecondary on muted card', themePalettes.cartoon.light, themePalettes.cartoon.light.textSecondary, themePalettes.cartoon.light.ui.card.mutedBackground, 4.5],
-  ['cartoon/light body text on code surface', themePalettes.cartoon.light, themePalettes.cartoon.light.ui.code.text, themePalettes.cartoon.light.ui.code.background, 7],
-  ['cartoon/light user message foreground', themePalettes.cartoon.light, themePalettes.cartoon.light.ui.message.userForeground, themePalettes.cartoon.light.ui.message.userBackground, 7],
-  ['cartoon/light danger tone', themePalettes.cartoon.light, themePalettes.cartoon.light.ui.tone.danger.foreground, themePalettes.cartoon.light.ui.tone.danger.background, 4.5],
-  ['cartoon/dark textTertiary', themePalettes.cartoon.dark, themePalettes.cartoon.dark.textTertiary, themePalettes.cartoon.dark.ui.card.defaultBackground, 4.5],
-  ['cartoon/dark input placeholder', themePalettes.cartoon.dark, themePalettes.cartoon.dark.ui.input.placeholderForeground, themePalettes.cartoon.dark.ui.input.background, 4.5],
-  ['cartoon/dark disabled input foreground', themePalettes.cartoon.dark, themePalettes.cartoon.dark.ui.input.disabledForeground, themePalettes.cartoon.dark.ui.input.disabledBackground, 4.5],
-  ['cartoon/dark disabled control foreground', themePalettes.cartoon.dark, themePalettes.cartoon.dark.ui.control.disabledForeground, themePalettes.cartoon.dark.ui.control.disabledBackground, 4.5],
-  ['cartoon/dark textSecondary on muted card', themePalettes.cartoon.dark, themePalettes.cartoon.dark.textSecondary, themePalettes.cartoon.dark.ui.card.mutedBackground, 4.5],
-  ['cartoon/dark body text on code surface', themePalettes.cartoon.dark, themePalettes.cartoon.dark.ui.code.text, themePalettes.cartoon.dark.ui.code.background, 7],
-  ['cartoon/dark user message foreground', themePalettes.cartoon.dark, themePalettes.cartoon.dark.ui.message.userForeground, themePalettes.cartoon.dark.ui.message.userBackground, 7],
-  ['cartoon/dark danger tone on muted surface', themePalettes.cartoon.dark, themePalettes.cartoon.dark.ui.tone.danger.foreground, themePalettes.cartoon.dark.ui.semantic.surface.muted, 4.5],
-  ['cartoon/light action item', themePalettes.cartoon.light, themePalettes.cartoon.light.textSecondary, themePalettes.cartoon.light.ui.card.mutedBackground, 4.5],
-  ['cartoon/light title on base surface', themePalettes.cartoon.light, themePalettes.cartoon.light.text, themePalettes.cartoon.light.ui.semantic.surface.base, 7],
-  ['cartoon/dark title on base surface', themePalettes.cartoon.dark, themePalettes.cartoon.dark.text, themePalettes.cartoon.dark.ui.semantic.surface.base, 7],
+  ['markdown/light textTertiary', themePalettes.markdown.light, themePalettes.markdown.light.textTertiary, themePalettes.markdown.light.ui.card.defaultBackground, 3.5],
+  ['markdown/light input placeholder', themePalettes.markdown.light, themePalettes.markdown.light.ui.input.placeholderForeground, themePalettes.markdown.light.ui.input.background, 3.5],
+  ['markdown/light disabled input foreground', themePalettes.markdown.light, themePalettes.markdown.light.ui.input.disabledForeground, themePalettes.markdown.light.ui.input.disabledBackground, 4.5],
+  ['markdown/light disabled control foreground', themePalettes.markdown.light, themePalettes.markdown.light.ui.control.disabledForeground, themePalettes.markdown.light.ui.control.disabledBackground, 4.5],
+  ['markdown/light textSecondary on chrome background', themePalettes.markdown.light, themePalettes.markdown.light.textSecondary, themePalettes.markdown.light.ui.semantic.chrome.background, 4.5],
+  ['markdown/light textSecondary on action item', themePalettes.markdown.light, themePalettes.markdown.light.textSecondary, themePalettes.markdown.light.ui.actionBar.itemBackground, 4.5],
+  ['markdown/light body text on code surface', themePalettes.markdown.light, themePalettes.markdown.light.ui.code.text, themePalettes.markdown.light.ui.code.background, 7],
+  ['markdown/light user message foreground', themePalettes.markdown.light, themePalettes.markdown.light.ui.message.userForeground, themePalettes.markdown.light.ui.message.userBackground, 7],
+  ['markdown/light tertiary text on table header', themePalettes.markdown.light, themePalettes.markdown.light.textSecondary, themePalettes.markdown.light.ui.table.headerBackground, 4.5],
+  ['markdown/light warning tone', themePalettes.markdown.light, themePalettes.markdown.light.ui.tone.warning.foreground, themePalettes.markdown.light.ui.tone.warning.background, 4.5],
+  ['markdown/light danger tone', themePalettes.markdown.light, themePalettes.markdown.light.ui.tone.danger.foreground, themePalettes.markdown.light.ui.tone.danger.background, 4.5],
+  ['markdown/light info tone', themePalettes.markdown.light, themePalettes.markdown.light.ui.tone.info.foreground, themePalettes.markdown.light.ui.tone.info.background, 4.5],
+  ['markdown/dark textTertiary', themePalettes.markdown.dark, themePalettes.markdown.dark.textTertiary, themePalettes.markdown.dark.ui.card.defaultBackground, 4.5],
+  ['markdown/dark input placeholder', themePalettes.markdown.dark, themePalettes.markdown.dark.ui.input.placeholderForeground, themePalettes.markdown.dark.ui.input.background, 4.5],
+  ['markdown/dark disabled input foreground', themePalettes.markdown.dark, themePalettes.markdown.dark.ui.input.disabledForeground, themePalettes.markdown.dark.ui.input.disabledBackground, 4.5],
+  ['markdown/dark disabled control foreground', themePalettes.markdown.dark, themePalettes.markdown.dark.ui.control.disabledForeground, themePalettes.markdown.dark.ui.control.disabledBackground, 4.5],
+  ['markdown/dark textSecondary on chrome background', themePalettes.markdown.dark, themePalettes.markdown.dark.textSecondary, themePalettes.markdown.dark.ui.semantic.chrome.background, 4.5],
+  ['markdown/dark action item', themePalettes.markdown.dark, themePalettes.markdown.dark.textSecondary, themePalettes.markdown.dark.ui.actionBar.itemBackground, 4.5],
+  ['markdown/dark body text on code surface', themePalettes.markdown.dark, themePalettes.markdown.dark.ui.code.text, themePalettes.markdown.dark.ui.code.background, 7],
+  ['markdown/dark user message foreground', themePalettes.markdown.dark, themePalettes.markdown.dark.ui.message.userForeground, themePalettes.markdown.dark.ui.message.userBackground, 7],
+  ['markdown/dark textSecondary on table header', themePalettes.markdown.dark, themePalettes.markdown.dark.textSecondary, themePalettes.markdown.dark.ui.table.headerBackground, 4.5],
+  ['lime-road/light textTertiary', themePalettes['lime-road'].light, themePalettes['lime-road'].light.textTertiary, themePalettes['lime-road'].light.ui.card.defaultBackground, 3.5],
+  ['lime-road/light input placeholder', themePalettes['lime-road'].light, themePalettes['lime-road'].light.ui.input.placeholderForeground, themePalettes['lime-road'].light.ui.input.background, 3.5],
+  ['lime-road/light disabled input foreground', themePalettes['lime-road'].light, themePalettes['lime-road'].light.ui.input.disabledForeground, themePalettes['lime-road'].light.ui.input.disabledBackground, 4.5],
+  ['lime-road/light disabled control foreground', themePalettes['lime-road'].light, themePalettes['lime-road'].light.ui.control.disabledForeground, themePalettes['lime-road'].light.ui.control.disabledBackground, 4.5],
+  ['lime-road/light textSecondary on muted card', themePalettes['lime-road'].light, themePalettes['lime-road'].light.textSecondary, themePalettes['lime-road'].light.ui.card.mutedBackground, 4.5],
+  ['lime-road/light body text on code surface', themePalettes['lime-road'].light, themePalettes['lime-road'].light.ui.code.text, themePalettes['lime-road'].light.ui.code.background, 7],
+  ['lime-road/light user message foreground', themePalettes['lime-road'].light, themePalettes['lime-road'].light.ui.message.userForeground, themePalettes['lime-road'].light.ui.message.userBackground, 7],
+  ['lime-road/light danger tone', themePalettes['lime-road'].light, themePalettes['lime-road'].light.ui.tone.danger.foreground, themePalettes['lime-road'].light.ui.tone.danger.background, 4.5],
+  ['lime-road/dark textTertiary', themePalettes['lime-road'].dark, themePalettes['lime-road'].dark.textTertiary, themePalettes['lime-road'].dark.ui.card.defaultBackground, 4.5],
+  ['lime-road/dark input placeholder', themePalettes['lime-road'].dark, themePalettes['lime-road'].dark.ui.input.placeholderForeground, themePalettes['lime-road'].dark.ui.input.background, 4.5],
+  ['lime-road/dark disabled input foreground', themePalettes['lime-road'].dark, themePalettes['lime-road'].dark.ui.input.disabledForeground, themePalettes['lime-road'].dark.ui.input.disabledBackground, 4.5],
+  ['lime-road/dark disabled control foreground', themePalettes['lime-road'].dark, themePalettes['lime-road'].dark.ui.control.disabledForeground, themePalettes['lime-road'].dark.ui.control.disabledBackground, 4.5],
+  ['lime-road/dark textSecondary on muted card', themePalettes['lime-road'].dark, themePalettes['lime-road'].dark.textSecondary, themePalettes['lime-road'].dark.ui.card.mutedBackground, 4.5],
+  ['lime-road/dark body text on code surface', themePalettes['lime-road'].dark, themePalettes['lime-road'].dark.ui.code.text, themePalettes['lime-road'].dark.ui.code.background, 7],
+  ['lime-road/dark user message foreground', themePalettes['lime-road'].dark, themePalettes['lime-road'].dark.ui.message.userForeground, themePalettes['lime-road'].dark.ui.message.userBackground, 7],
+  ['lime-road/dark danger tone on muted surface', themePalettes['lime-road'].dark, themePalettes['lime-road'].dark.ui.tone.danger.foreground, themePalettes['lime-road'].dark.ui.semantic.surface.muted, 4.5],
+  ['lime-road/light action item', themePalettes['lime-road'].light, themePalettes['lime-road'].light.textSecondary, themePalettes['lime-road'].light.ui.card.mutedBackground, 4.5],
+  ['lime-road/light title on base surface', themePalettes['lime-road'].light, themePalettes['lime-road'].light.text, themePalettes['lime-road'].light.ui.semantic.surface.base, 7],
+  ['lime-road/dark title on base surface', themePalettes['lime-road'].dark, themePalettes['lime-road'].dark.text, themePalettes['lime-road'].dark.ui.semantic.surface.base, 7],
 ]
+
+for (const family of ['minimal', 'lime-road', 'markdown']) {
+  for (const mode of ['light', 'dark']) {
+    for (const accent of ['#000', '#FFF', '#FF0', '#4963A6']) {
+      const theme = getColors(mode, family, undefined, accent)
+      checks.push([
+        `${family}/${mode} custom ${accent} action foreground`,
+        theme,
+        theme.ui.control.primaryForeground,
+        theme.ui.control.primaryBackground,
+        4.5,
+      ])
+      checks.push([
+        `${family}/${mode} custom ${accent} loading indicator`,
+        theme,
+        theme.ui.loading.dot,
+        theme.ui.loading.background,
+        3,
+      ])
+      checks.push([
+        `${family}/${mode} custom ${accent} table header`,
+        theme,
+        theme.textSecondary,
+        theme.ui.table.headerBackground,
+        4.5,
+      ])
+    }
+  }
+}
+
+if (normalizeThemeAccent('#abc') !== '#AABBCC' || normalizeThemeAccent('not-a-color') !== undefined) {
+  throw new Error('theme accent normalization rejected a valid shorthand or accepted invalid input')
+}
 
 const failures = []
 for (const [label, theme, fg, bg, minRatio] of checks) {

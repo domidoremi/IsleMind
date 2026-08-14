@@ -13,7 +13,12 @@ const {
   STRUCTURED_OUTPUT_COMPATIBILITY_EVAL_SCHEMA,
   STRUCTURED_OUTPUT_FIXTURE_IDS,
   runStructuredOutputCompatibilityEvaluation,
-} = require('../src/services/structuredOutputCompatibilityEvaluation.ts')
+} = require('../src/modules/providers/testing/structuredOutputCompatibilityEvaluation.ts')
+const {
+  buildProviderOpenAIChatResponseFormat,
+  buildProviderOpenAIResponsesResponseFormat,
+  buildProviderOpenAIResponsesTextConfig,
+} = require('../src/modules/providers/providerStructuredOutput.ts')
 
 function registerTypeScriptSupport() {
   if (require.extensions['.ts']?.isStructuredOutputCompatibilityHook) return
@@ -60,6 +65,11 @@ function assertReady(item, shape) {
 }
 
 function run() {
+  const targetEvaluatorPath = path.join(root, 'src', 'modules', 'providers', 'testing', 'structuredOutputCompatibilityEvaluation.ts')
+  const retiredEvaluatorPath = path.join(root, 'src', 'services', 'structuredOutputCompatibilityEvaluation.ts')
+  assert.equal(fs.existsSync(targetEvaluatorPath), true, 'structured output evaluator is privately Providers-owned')
+  assert.equal(fs.existsSync(retiredEvaluatorPath), false, 'service-owned structured output evaluator stays deleted')
+
   assert.equal(STRUCTURED_OUTPUT_COMPATIBILITY_EVAL_SCHEMA, 'islemind.structured-output-compatibility-eval.v1', 'structured output schema is versioned')
   assert.deepEqual(
     STRUCTURED_OUTPUT_FIXTURE_IDS,
@@ -140,7 +150,63 @@ function run() {
   assert.equal(fallback.parsed, true, 'JSON object fallback parser extracts JSON from prose wrapper')
   assert.equal(fallback.requiredFieldCoverage, 1, 'JSON object fallback still validates required fields')
 
+  assertTargetRequestPolicy()
+
   console.log('Structured output compatibility tests passed')
+}
+
+function assertTargetRequestPolicy() {
+  const request = {
+    type: 'json_schema',
+    name: ' result ',
+    schema: { type: 'object', properties: { answer: { type: 'string' } } },
+    strict: true,
+  }
+  const openAI = {
+    request,
+    capabilityAllowed: true,
+    appRequestControl: true,
+    documentedRequestShape: 'openai-response-format',
+    strictJsonSchema: true,
+  }
+  assert.deepEqual(buildProviderOpenAIChatResponseFormat(openAI), {
+    type: 'json_schema',
+    json_schema: { name: 'result', schema: request.schema, strict: true },
+  }, 'target Chat policy emits strict OpenAI response_format')
+  assert.deepEqual(buildProviderOpenAIResponsesTextConfig(openAI), {
+    format: { type: 'json_schema', name: 'result', schema: request.schema, strict: true },
+  }, 'target Responses policy emits text.format')
+  assert.deepEqual(buildProviderOpenAIResponsesResponseFormat({
+    ...openAI,
+    documentedRequestShape: 'openrouter-response-format',
+  }), {
+    type: 'json_schema',
+    json_schema: { name: 'result', schema: request.schema, strict: true },
+  }, 'target Responses policy preserves OpenRouter response_format')
+  assert.deepEqual(buildProviderOpenAIChatResponseFormat({
+    ...openAI,
+    documentedRequestShape: 'xai-response-format',
+  }), {
+    type: 'json_schema',
+    json_schema: { name: 'result', schema: request.schema },
+  }, 'target Chat policy preserves xAI schema without unclaimed strict')
+  assert.deepEqual(buildProviderOpenAIChatResponseFormat({
+    ...openAI,
+    request: { type: 'json_object' },
+    documentedRequestShape: 'openai-json-object-response-format',
+  }), { type: 'json_object' }, 'target Chat policy preserves JSON object mode')
+  assert.equal(buildProviderOpenAIChatResponseFormat({
+    ...openAI,
+    capabilityAllowed: false,
+  }), undefined, 'target Chat policy fails closed when model capability is blocked')
+  assert.equal(buildProviderOpenAIChatResponseFormat({
+    ...openAI,
+    documentedRequestShape: 'localai-grammar',
+  }), undefined, 'target Chat policy fails closed for unsupported request shapes')
+  assert.equal(buildProviderOpenAIResponsesTextConfig({
+    ...openAI,
+    responsesTextFormatAllowed: false,
+  }), undefined, 'target Responses policy requires declared text.format support')
 }
 
 if (require.main === module) run()

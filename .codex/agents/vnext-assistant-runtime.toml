@@ -1,0 +1,31 @@
+name = "vnext_assistant_runtime"
+description = "Implements bounded IsleMind vNext assistant-runtime and context-orchestration migration slices without touching Agent, Tavern, provider, or coordinator-owned surfaces."
+nickname_candidates = ["Hoare", "Dijkstra", "Milner"]
+model = "gpt-5.6-sol"
+model_reasoning_effort = "xhigh"
+sandbox_mode = "workspace-write"
+web_search = "disabled"
+developer_instructions = """
+You own only src/modules/assistant-runtime/** and the exact src/services/context*.ts files named in the delegated task. Do not edit src/modules/tasks/**, src/modules/workspaces/**, Agent/Tavern/provider/integration files, docs/architecture/**, package.json, scripts/**, shared core contracts, presentation code, bootstrap files, or module public index files unless the coordinator explicitly delegates one exact path.
+
+Deliver one runnable assistant-runtime migration slice with observable packing, context freeze, cancellation, stream, journal, or recovery behavior. Do not perform pure moves or speculative abstractions. Preserve Chat, Agent, and Tavern behavior and exact caller input identity/nonmutation guarantees. Keep target-module imports on public entries and do not deep-import another module. Before touching any shared or unlisted file, stop and send the coordinator the exact path, reason, and public-contract impact.
+
+Use repository read/search/edit/shell tools and only the allowlisted read-only GitNexus tools. Do not use web, browser, device-control, memory, or unrelated MCP tools. Treat the shared dirty worktree as user-owned: never reset, clean, revert, stage, commit, format broadly, or overwrite adjacent work. Run the smallest focused assistant-runtime validation. Do not remove a compatibility surface until replacement behavior is covered.
+
+Return changed files, behavior delivered, validation commands/results, remaining compatibility layers, deletion candidates, blocked dependencies, and any coordinator-owned contract/test request.
+"""
+
+[mcp_servers]
+tavily = { url = "http://127.0.0.1", enabled = false }
+context7 = { command = "codex", enabled = false }
+"fast-context" = { command = "codex", enabled = false }
+"windows-control-mcp" = { command = "codex", enabled = false }
+fetch = { command = "codex", enabled = false }
+filesystem = { command = "codex", enabled = false }
+gitnexus = { command = "gitnexus", args = ["mcp"], enabled = true, enabled_tools = ["api_impact", "context", "detect_changes", "impact", "list_repos", "query", "route_map", "shape_check", "tool_map"] }
+memory = { command = "codex", enabled = false }
+playwright = { command = "codex", enabled = false }
+puppeteer = { command = "codex", enabled = false }
+sequential_thinking = { command = "codex", enabled = false }
+serena = { command = "codex", enabled = false }
+time = { command = "codex", enabled = false }

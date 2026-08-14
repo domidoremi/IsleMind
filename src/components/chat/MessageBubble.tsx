@@ -1,21 +1,23 @@
 import type { ReactNode } from 'react'
 import { memo, useEffect, useMemo, useRef, useState } from 'react'
-import { Pressable, ScrollView, StyleSheet, Text, View, useWindowDimensions } from 'react-native'
+import { Modal, Pressable, ScrollView, StyleSheet, Text, View, useWindowDimensions } from 'react-native'
+import { useSafeAreaInsets } from 'react-native-safe-area-context'
 import { MotiView } from 'moti'
 import type { TFunction } from 'i18next'
 import { useTranslation } from 'react-i18next'
 import * as Haptics from 'expo-haptics'
 import { useRouter } from 'expo-router'
 import { Gesture, GestureDetector } from 'react-native-gesture-handler'
-import { runOnJS } from 'react-native-reanimated'
-import type { ChatErrorCode, Message, ProcessTrace } from '@/types'
+import { Easing, runOnJS } from 'react-native-reanimated'
+import type { Message } from '@/types/chatContracts'
+import type { ProcessTrace } from '@/core'
 import { useAppTheme } from '@/hooks/useAppTheme'
-import { messageAnimationForMotion } from '@/theme/animation'
-import { AppIcon, appIconStroke } from '@/components/ui/AppIcon'
+import { AppIcon, appIconStroke, type AppIconName } from '@/components/ui/AppIcon'
 import { IslePressable } from '@/components/ui/isle'
 import { useSettingsStore } from '@/store/settingsStore'
 import { mergeMessageWithStreamingTraceSnapshot, useChatStreamingStore } from '@/store/chatStreamingStore'
 import { MessageContent } from './MessageContent'
+import { containsDisplayFormulaBlock } from './messageContentSpecialFormatPolicy'
 import {
   collectVisibleProcessTraces,
   formatDuration,
@@ -27,33 +29,34 @@ import {
   traceActivityStageLabel,
   traceStageLabel,
 } from './tracePresentation'
-import { IslePanel } from '@/components/ui/isle'
+import { MessageBubbleThemeSurface } from './theme-surfaces/ChatThemeSurfaces'
 import { RenderGuard } from '@/components/ui/RenderGuard'
 import type { MotionIntensity } from '@/hooks/useMotionPreference'
-import { getAgentEvidenceRepairActionFromMessage, getAgentPendingActionFromMessage, getAgentWorkflowContinuationActionFromMessage, getAgentWorkflowRecoveryActionFromMessage, getAgentWorkflowSkillSuggestionFromMessage } from '@/services/agent/agentMessageAdapter'
-import { clampAgentOutput, redactSensitiveText } from '@/services/agent/agentTrace'
-import { sanitizeInternalChatOutputText } from '@/services/chatInternalOutputGuard'
-import { estimateTextTokens } from '@/services/tokenUsage'
+import { getWorkflowContinuationActionFromMessage, getWorkflowEvidenceRepairActionFromMessage, getWorkflowPendingActionFromMessage, getWorkflowRecoveryActionFromMessage } from '@/presentation/features/conversations/workflowMessageActionSelectors'
+import { getWorkflowSkillSuggestionFromMessage } from '@/presentation/features/conversations/workflowSkillSuggestionSelector'
+import { clampTraceText, redactSensitiveText } from '@/core'
+import { extractTaggedThinkingOutputText, sanitizeInternalChatOutputText } from '@/services/chatInternalOutputGuard'
 import { summarizeWorkArtifact } from '@/utils/workArtifact'
+import { resolveChatAssistantDisplayName } from './chatIdentityPresentation'
+import { getAssistantThinkingLabel } from './messageActivityPreview'
 
 const STREAMING_LAYOUT_TEXT_STEP = 160
-const STREAMING_RENDER_TEXT_STEP = 120
-const STREAMING_RENDER_THROTTLE_MS = 120
+const STREAMING_RENDER_TEXT_STEP = 32
+const STREAMING_RENDER_FAST_FORWARD_THRESHOLD = 240
+const STREAMING_RENDER_THROTTLE_MS = 16
 const AGENT_ACTION_PROMPT_VISIBILITY_LIMIT = 900
 const MESSAGE_ACTION_LOCK_MS = 420
 const MESSAGE_BUBBLE_HORIZONTAL_GUTTER = 40
+const MESSAGE_ACTION_SHEET_MAX_WIDTH = 540
+const MESSAGE_ACTION_PRIMARY_LIMIT = 5
 
 function resolveMessageActionChrome(colors: ReturnType<typeof useAppTheme>['colors'], isGlass: boolean) {
   return {
-    barSurface: colors.ui.cartoon ? colors.ui.actionBar.background : isGlass ? colors.ui.semantic.chrome.background : colors.ui.semantic.surface.base,
-    barBorder: colors.ui.cartoon ? colors.ui.actionBar.border : colors.ui.semantic.chrome.border,
-    itemSurface: colors.ui.cartoon ? colors.ui.actionBar.itemBackground : isGlass ? colors.ui.actionBar.itemBackground : colors.ui.semantic.surface.muted,
-    itemBorder: colors.ui.cartoon ? colors.ui.actionBar.itemBorder : isGlass ? colors.ui.actionBar.itemBorder : colors.ui.semantic.chrome.border,
+    barSurface: colors.ui.limeRoad ? colors.ui.actionBar.background : isGlass ? colors.ui.semantic.chrome.background : colors.ui.semantic.surface.base,
+    barBorder: colors.ui.limeRoad ? colors.ui.actionBar.border : colors.ui.semantic.chrome.border,
+    itemSurface: colors.ui.limeRoad ? colors.ui.actionBar.itemBackground : isGlass ? colors.ui.actionBar.itemBackground : colors.ui.semantic.surface.muted,
+    itemBorder: colors.ui.limeRoad ? colors.ui.actionBar.itemBorder : isGlass ? colors.ui.actionBar.itemBorder : colors.ui.semantic.chrome.border,
   }
-}
-
-function resolveAssistantBubbleSurface(colors: ReturnType<typeof useAppTheme>['colors'], isGlass: boolean) {
-  return isGlass ? colors.ui.semantic.chrome.background : colors.ui.cartoon ? colors.ui.semantic.surface.base : colors.ui.semantic.surface.base
 }
 
 export interface MessageBubbleProps {
@@ -72,16 +75,21 @@ export interface MessageBubbleProps {
   onCopyWorkArtifact?: (message: Message) => void
   onContinueWorkArtifact?: (message: Message) => void
   onContinueAgentWorkflow?: (message: Message) => void
-  onConfirmAgentAction?: (message: Message) => void
+  onConfirmAction?: (message: Message) => void
   onPrepareAndroidUndo?: (message: Message) => void
   onRepairAgentEvidence?: (message: Message) => void
-  onSaveAgentWorkflow?: (message: Message) => void
+  onSaveWorkflowSkill?: (message: Message) => void
   onRetry?: (message: Message) => void
   onRegenerate?: () => void
   onSpeak?: (message: Message) => void
   onDelete?: (message: Message) => void
+  onQuote?: (message: Message) => void
+  onEdit?: (message: Message) => void
+  onStartMultiSelect?: (message: Message) => void
+  onToggleSelected?: (message: Message) => void
   onConfigure?: (message: Message) => void
-  onTestModel?: (message: Message) => void
+  multiSelectActive?: boolean
+  selected?: boolean
 }
 
 function MessageBubbleComponent({
@@ -100,26 +108,30 @@ function MessageBubbleComponent({
   onCopyWorkArtifact,
   onContinueWorkArtifact,
   onContinueAgentWorkflow,
-  onConfirmAgentAction,
+  onConfirmAction,
   onPrepareAndroidUndo,
   onRepairAgentEvidence,
-  onSaveAgentWorkflow,
+  onSaveWorkflowSkill,
   onRetry,
   onRegenerate,
   onSpeak,
   onDelete,
+  onQuote,
+  onEdit,
+  onStartMultiSelect,
+  onToggleSelected,
   onConfigure,
-  onTestModel,
+  multiSelectActive = false,
+  selected = false,
 }: MessageBubbleProps) {
-  const { colors, isGlass } = useAppTheme()
+  const { colors, isGlass, themeId } = useAppTheme()
   const { t } = useTranslation()
-  const actionChrome = resolveMessageActionChrome(colors, isGlass)
   const { width: windowWidth } = useWindowDimensions()
   const hapticsEnabled = useSettingsStore((state) => state.settings.hapticsEnabled)
+  const configuredAssistantDisplayName = useSettingsStore((state) => state.settings.assistantDisplayName)
+  const assistantDisplayName = resolveChatAssistantDisplayName(configuredAssistantDisplayName)
   const [localActionsOpen, setLocalActionsOpen] = useState(false)
   const [processExpanded, setProcessExpanded] = useState(false)
-  const previousActionBarOpen = useRef<boolean | null>(null)
-  const actionButtonPressLock = useRef(false)
   const isUser = message.role === 'user'
   const isStreamingContent = !isUser && (message.status === 'streaming' || message.status === 'sending')
   const liveStreamingTraceSnapshot = useChatStreamingStore((state) =>
@@ -132,24 +144,54 @@ function MessageBubbleComponent({
     () => mergeMessageWithStreamingTraceSnapshot(message, liveStreamingTraceSnapshot),
     [liveStreamingTraceSnapshot, message]
   )
-  const displayText = sanitizeInternalChatOutputText(liveStreamingText ?? message.responseText ?? message.content)
+  const rawDisplayText = liveStreamingText ?? message.responseText ?? message.content
+  const displayText = sanitizeInternalChatOutputText(rawDisplayText)
   const renderedDisplayText = useThrottledStreamingText(displayText, isStreamingContent)
+  const displayFormulaLayout = useMemo(
+    () => containsDisplayFormulaBlock(renderedDisplayText),
+    [renderedDisplayText]
+  )
   const streamingLayoutStep = isStreamingContent ? Math.floor(displayText.length / STREAMING_LAYOUT_TEXT_STEP) : 0
+  const taggedThinkingText = useMemo(() => extractTaggedThinkingOutputText(rawDisplayText), [rawDisplayText])
+  const taggedThinkingTrace = useMemo<ProcessTrace | undefined>(() => {
+    if (!taggedThinkingText) return undefined
+    const now = Date.now()
+    return {
+      id: `tagged-thinking-output:${message.id}`,
+      type: 'reasoning',
+      title: t('providerTrace.reasoningSummary'),
+      content: taggedThinkingText,
+      status: isStreamingContent ? 'running' : 'done',
+      startedAt: message.startedAt ?? now,
+      completedAt: isStreamingContent ? undefined : message.completedAt ?? now,
+    }
+  }, [isStreamingContent, message.completedAt, message.id, message.startedAt, taggedThinkingText, t])
   const processTraces = useMemo(
-    () => collectVisibleProcessTraces(displayMessage),
-    [displayMessage.reasoning, displayMessage.retrievalTrace, displayMessage.toolCalls]
+    () => {
+      const traces = collectVisibleProcessTraces(displayMessage)
+      if (!taggedThinkingTrace) return traces
+      if (traces.some((trace) => trace.type === 'reasoning' && trace.content?.includes(taggedThinkingText.slice(0, 48)))) {
+        return traces
+      }
+      return [...traces, taggedThinkingTrace]
+    },
+    [displayMessage.reasoning, displayMessage.retrievalTrace, displayMessage.toolCalls, taggedThinkingText, taggedThinkingTrace]
   )
   const processLayerVisible = !isUser && (
     isStreamingContent ||
     showThinkingStatus ||
+    processTraces.some(hasExpandableThinkingContent) ||
     processTraces.some(isActiveProcessTrace) ||
-    processTraces.some(hasVisibleProcessContent) ||
+    processTraces.some((trace) => shouldKeepBlockingProcessTraceVisible(trace, message.status)) ||
     processTraces.some(isAgentWorkflowWaitingTrace)
   )
   const bubbleMaxWidth = useMemo(
-    () => resolveMessageBubbleMaxWidth(renderedDisplayText, isUser, processLayerVisible, windowWidth),
-    [renderedDisplayText, isUser, processLayerVisible, windowWidth]
+    () => resolveMessageBubbleMaxWidth(renderedDisplayText, isUser, processLayerVisible, windowWidth, displayFormulaLayout),
+    [displayFormulaLayout, renderedDisplayText, isUser, processLayerVisible, windowWidth]
   )
+  const bubbleUsesAvailableWidth = displayFormulaLayout || (!isUser && (
+    processLayerVisible || hasWideMessageContent(renderedDisplayText)
+  ))
   const processTextLength = useMemo(() => processTraces.reduce((total, trace) => {
     const display = formatProcessTraceForDisplay(trace)
     return total + display.title.length + display.content.length
@@ -158,38 +200,24 @@ function MessageBubbleComponent({
   const processCanExpand = !isUser && processTraces.some(hasExpandableThinkingContent)
   const canCopyProcessTrace = !isUser && processTraces.length > 0 && !!onCopyProcessTrace
   const processMaxHeight = Math.min(230, viewportHeight * 0.34)
-  const statusTokenText = useMemo(
-    () => !isUser ? buildMessageTokenStatus(message, renderedDisplayText, isStreamingContent) : '',
-    [
-      isUser,
-      renderedDisplayText,
-      message.estimatedTokens,
-      message.status,
-      message.tokenCount,
-      message.usage?.cachedInputTokens,
-      message.usage?.inputTokens,
-      message.usage?.outputTokens,
-      message.usage?.reasoningTokens,
-      message.usage?.source,
-      message.usage?.totalTokens,
-      isStreamingContent,
-    ]
-  )
   const actionBarOpen = activeActionMessageId === undefined ? localActionsOpen : activeActionMessageId === message.id
   const actionMessage = !isUser && !isStreamingContent ? message : undefined
-  const pendingAgentAction = useMemo(() => actionMessage ? getAgentPendingActionFromMessage(actionMessage) : undefined, [actionMessage])
-  const evidenceRepairAction = useMemo(() => actionMessage ? getAgentEvidenceRepairActionFromMessage(actionMessage) : undefined, [actionMessage])
-  const workflowRecoveryAction = useMemo(() => actionMessage ? getAgentWorkflowRecoveryActionFromMessage(actionMessage) : undefined, [actionMessage])
-  const workflowContinuationAction = useMemo(() => actionMessage ? getAgentWorkflowContinuationActionFromMessage(actionMessage) : undefined, [actionMessage])
-  const canConfirmAgentAction = !!pendingAgentAction?.confirmable && !!pendingAgentAction.resumeToolRequest && !!onConfirmAgentAction
-  const canContinueAgentWorkflow = (pendingAgentAction?.reason === 'step_limit_reached' || (pendingAgentAction?.reason === 'permission_required' && hasSafeAgentActionPrompt(pendingAgentAction.suggestedUserPrompt)) || !!workflowContinuationAction) && !!onContinueAgentWorkflow
+  const pendingWorkflowAction = useMemo(() => actionMessage ? getWorkflowPendingActionFromMessage(actionMessage) : undefined, [actionMessage])
+  const evidenceRepairAction = useMemo(() => actionMessage ? getWorkflowEvidenceRepairActionFromMessage(actionMessage) : undefined, [actionMessage])
+  const workflowRecoveryAction = useMemo(() => actionMessage ? getWorkflowRecoveryActionFromMessage(actionMessage) : undefined, [actionMessage])
+  const workflowContinuationAction = useMemo(() => actionMessage ? getWorkflowContinuationActionFromMessage(actionMessage) : undefined, [actionMessage])
+  const canConfirmAction = !!pendingWorkflowAction?.confirmable && !!pendingWorkflowAction.resumeToolRequest && !!onConfirmAction
+  const canContinueAgentWorkflow = (pendingWorkflowAction?.reason === 'step_limit_reached' || (pendingWorkflowAction?.reason === 'permission_required' && hasSafeAgentActionPrompt(pendingWorkflowAction.suggestedUserPrompt)) || !!workflowContinuationAction) && !!onContinueAgentWorkflow
   const canRepairAgentEvidence = !!evidenceRepairAction && !!onRepairAgentEvidence
   const canPrepareAndroidUndo = !isUser && hasAndroidUndoFollowUp(processTraces) && !!onPrepareAndroidUndo
   const canOpenWorkflowSettings = !!workflowRecoveryAction && workflowRecoveryAction.reason !== 'workflow-selection-ambiguous' && !!onConfigure
   const reviewWorkflowSettingsLabel = agentWorkflowRecoveryActionLabel(t, workflowRecoveryAction)
-  const agentWorkflowSuggestion = !isUser ? getAgentWorkflowSkillSuggestionFromMessage(message) : undefined
-  const canSaveAgentWorkflow = message.status === 'done' && !!agentWorkflowSuggestion?.ok && !!agentWorkflowSuggestion.skill && !!onSaveAgentWorkflow
+  const workflowSkillSuggestion = !isUser ? getWorkflowSkillSuggestionFromMessage(message) : undefined
+  const canSaveWorkflowSkill = message.status === 'done' && !!workflowSkillSuggestion?.ok && !!workflowSkillSuggestion.skill && !!onSaveWorkflowSkill
   const canDeleteMessage = !!onDelete && message.status !== 'sending' && message.status !== 'streaming'
+  const canQuoteMessage = !!displayText.trim() && !!onQuote && message.status !== 'sending' && message.status !== 'streaming'
+  const canEditMessage = isUser && !!displayText.trim() && !!onEdit && message.status !== 'sending' && message.status !== 'streaming'
+  const canStartMessageMultiSelect = !!onStartMultiSelect && message.status !== 'sending' && message.status !== 'streaming'
   const canOpenActions = !isStreamingContent && canShowActionBar({
     message,
     displayText,
@@ -198,26 +226,26 @@ function MessageBubbleComponent({
     canCopyProcessTrace,
     onCopyWorkArtifact,
     onContinueWorkArtifact,
-    canConfirmAgentAction,
+    canConfirmAction,
     canContinueAgentWorkflow,
     canPrepareAndroidUndo,
     canRepairAgentEvidence,
     canOpenWorkflowSettings,
-    canSaveAgentWorkflow,
+    canSaveWorkflowSkill,
     canDeleteMessage,
+    canQuoteMessage,
+    canEditMessage,
+    canStartMessageMultiSelect,
     onRetry,
     onRegenerate,
     onSpeak,
     onConfigure,
-    onTestModel,
-  })
+  }) && !multiSelectActive
   const hasDefaultWorkArtifactActions = useMemo(() => {
     if (isUser || isStreamingContent || !displayText.trim()) return false
     if (!onCopyWorkArtifact && !onContinueWorkArtifact) return false
     return summarizeWorkArtifact(displayText).hasWorkArtifact
   }, [displayText, isStreamingContent, isUser, onCopyWorkArtifact, onContinueWorkArtifact])
-  const actionBarVisible = actionBarOpen
-
   useEffect(() => {
     setLocalActionsOpen(false)
     setProcessExpanded(false)
@@ -229,29 +257,22 @@ function MessageBubbleComponent({
     onLayoutChangeRequest?.()
   }, [isStreamingContent, processTraces.length, processLayoutStep, streamingLayoutStep, onLayoutChangeRequest])
 
-  useEffect(() => {
-    const previousOpen = previousActionBarOpen.current
-    previousActionBarOpen.current = actionBarVisible
-    if (previousOpen === null ? actionBarVisible : previousOpen !== actionBarVisible) onLayoutChangeRequest?.()
-  }, [actionBarVisible, onLayoutChangeRequest])
-
   function setActionBarOpen(open: boolean) {
     setLocalActionsOpen(open)
     onActionMessageChange?.(open ? message.id : null)
   }
 
-  function toggleActionBar() {
-    if (!canOpenActions) return
-    if (hapticsEnabled) void Haptics.selectionAsync()
-    setActionBarOpen(!actionBarOpen)
+  function toggleSelectedFromTap() {
+    if (!multiSelectActive) return
+    onToggleSelected?.(message)
   }
 
-  function openActionBarFromButton() {
-    if (!canOpenActions || actionBarOpen || actionButtonPressLock.current) return
-    actionButtonPressLock.current = true
-    requestAnimationFrame(() => {
-      actionButtonPressLock.current = false
-    })
+  function openActionBarFromLongPress() {
+    if (multiSelectActive) {
+      onToggleSelected?.(message)
+      return
+    }
+    if (!canOpenActions) return
     if (hapticsEnabled) void Haptics.selectionAsync()
     setActionBarOpen(true)
   }
@@ -268,80 +289,78 @@ function MessageBubbleComponent({
   }
 
   const tapBubble = Gesture.Tap()
-    .enabled(canOpenActions)
+    .enabled(multiSelectActive)
     .maxDuration(220)
     .maxDistance(14)
     .onEnd((_event, success) => {
-      if (success) runOnJS(toggleActionBar)()
+      if (success) runOnJS(toggleSelectedFromTap)()
     })
+  const longPressBubble = Gesture.LongPress()
+    .enabled(canOpenActions || multiSelectActive)
+    .minDuration(360)
+    .maxDistance(16)
+    .onEnd((_event, success) => {
+      if (success) runOnJS(openActionBarFromLongPress)()
+    })
+  const bubbleGesture = Gesture.Exclusive(longPressBubble, tapBubble)
 
   function handleBubbleLayout() {
-    if (isStreamingContent || actionBarVisible || processLayerVisible) onLayoutChangeRequest?.()
+    if (isStreamingContent || processLayerVisible || hasDefaultWorkArtifactActions) onLayoutChangeRequest?.()
   }
 
   return (
-    <View onLayout={handleBubbleLayout} style={{ marginBottom: actionBarVisible ? 20 : 16 }}>
-      <MotiView
-        {...messageAnimationForMotion(index, motion)}
+    <View onLayout={handleBubbleLayout} style={{ marginBottom: 16 }}>
+      <View
         style={{
-          alignSelf: isUser ? 'flex-end' : 'flex-start',
+          alignSelf: displayFormulaLayout ? 'center' : isUser ? 'flex-end' : 'flex-start',
+          width: bubbleUsesAvailableWidth ? bubbleMaxWidth : undefined,
           maxWidth: bubbleMaxWidth,
           flexShrink: 1,
+          position: 'relative',
         }}
       >
-        <View>
-          <IslePanel
-            elevated={colors.ui.cartoon}
-            contentStyle={{
-              paddingHorizontal: 14,
-              paddingVertical: 11,
-              position: 'relative',
-            }}
-            style={{
-              borderRadius: colors.ui.radius.panel,
-              borderBottomRightRadius: isUser ? colors.ui.radius.controlSmall : colors.ui.radius.panel,
-              borderBottomLeftRadius: isUser ? colors.ui.radius.panel : colors.ui.radius.controlSmall,
-              backgroundColor: isUser ? colors.ui.message.userBackground : resolveAssistantBubbleSurface(colors, isGlass),
-              borderColor: message.status === 'error' ? colors.ui.tone.danger.border : isUser ? colors.ui.message.userBorder : colors.ui.semantic.chrome.border,
-            }}
-          >
+        <View style={{ position: 'relative' }}>
+          <MessageBubbleThemeSurface themeId={themeId} colors={colors} isUser={isUser} selected={selected}>
+            {multiSelectActive ? (
+              <IslePressable
+                haptic
+                accessibilityRole="checkbox"
+                accessibilityLabel={t('messageBubble.toggleMessageSelection')}
+                accessibilityState={{ checked: selected }}
+                onPress={() => onToggleSelected?.(message)}
+                style={{
+                  position: 'absolute',
+                  top: 7,
+                  right: 7,
+                  zIndex: 3,
+                  width: 44,
+                  height: 44,
+                  borderRadius: colors.ui.radius.controlSmall,
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  backgroundColor: selected ? colors.ui.control.primaryBackground : colors.ui.semantic.surface.base,
+                  borderWidth: StyleSheet.hairlineWidth,
+                  borderColor: selected ? colors.ui.control.primaryBorder : colors.ui.semantic.chrome.border,
+                }}
+              >
+                <AppIcon name={selected ? 'check' : 'list-check'} color={selected ? colors.ui.control.primaryForeground : colors.textTertiary} size={17} strokeWidth={appIconStroke.strong} />
+              </IslePressable>
+            ) : null}
             {processLayerVisible ? (
               <MessageProcessLayer
                 message={message}
                 traces={processTraces}
+                assistantDisplayName={assistantDisplayName}
                 expanded={processExpanded}
                 canExpand={processCanExpand}
                 maxHeight={processMaxHeight}
                 onToggle={toggleProcessLayer}
                 trailingActionSpace={false}
-                tokenText={statusTokenText}
+                motion={motion}
+                writingResponse={isStreamingContent && !!renderedDisplayText.trim()}
               />
             ) : null}
-            {canOpenActions && !hasDefaultWorkArtifactActions ? (
-              <Pressable
-                onPressIn={openActionBarFromButton}
-                onPress={openActionBarFromButton}
-                accessible
-                accessibilityRole="button"
-                accessibilityLabel={t('messageBubble.actions')}
-                hitSlop={8}
-                style={{
-                  alignSelf: isUser ? 'flex-start' : 'flex-end',
-                  marginBottom: 8,
-                  width: 40,
-                  height: 36,
-                  borderRadius: colors.ui.radius.controlSmall,
-                  alignItems: 'center',
-                  justifyContent: 'center',
-                  backgroundColor: actionChrome.itemSurface,
-                  borderWidth: StyleSheet.hairlineWidth,
-                  borderColor: actionChrome.itemBorder,
-                }}
-              >
-                <AppIcon name="more" color={colors.textSecondary} size={16} strokeWidth={appIconStroke.strong} />
-              </Pressable>
-            ) : null}
-            <GestureDetector gesture={tapBubble}>
+            <GestureDetector gesture={bubbleGesture}>
               <View>
                 <MessageBody
                   conversationId={conversationId}
@@ -349,10 +368,14 @@ function MessageBubbleComponent({
                   displayText={renderedDisplayText}
                   isUser={isUser}
                   isStreamingContent={isStreamingContent}
+                  motion={motion}
                   onLayoutChangeRequest={onLayoutChangeRequest}
                 />
               </View>
             </GestureDetector>
+            {canConfirmAction && !multiSelectActive ? (
+              <PendingActionQuickAction onPress={() => onConfirmAction?.(message)} />
+            ) : null}
             {hasDefaultWorkArtifactActions ? (
               <WorkArtifactQuickActions
                 hapticsEnabled={hapticsEnabled}
@@ -360,11 +383,10 @@ function MessageBubbleComponent({
                 onContinue={onContinueWorkArtifact ? () => onContinueWorkArtifact(message) : undefined}
               />
             ) : null}
-          </IslePanel>
-        </View>
+          </MessageBubbleThemeSurface>
 
-        {actionBarVisible ? (
-          <MessageActionBar
+          {actionBarOpen ? (
+            <MessageActionSheet
             message={message}
             displayText={displayText}
             isLastAssistant={isLastAssistant}
@@ -376,25 +398,98 @@ function MessageBubbleComponent({
             onContinueWorkArtifact={onContinueWorkArtifact ? () => onContinueWorkArtifact(message) : undefined}
             canContinueAgentWorkflow={canContinueAgentWorkflow}
             onContinueAgentWorkflow={onContinueAgentWorkflow ? () => onContinueAgentWorkflow(message) : undefined}
-            canConfirmAgentAction={canConfirmAgentAction}
-            onConfirmAgentAction={onConfirmAgentAction ? () => onConfirmAgentAction(message) : undefined}
+            canConfirmAction={canConfirmAction}
+            onConfirmAction={onConfirmAction ? () => onConfirmAction(message) : undefined}
             canPrepareAndroidUndo={canPrepareAndroidUndo}
             onPrepareAndroidUndo={onPrepareAndroidUndo ? () => onPrepareAndroidUndo(message) : undefined}
             canRepairAgentEvidence={canRepairAgentEvidence}
             onRepairAgentEvidence={onRepairAgentEvidence ? () => onRepairAgentEvidence(message) : undefined}
             canOpenWorkflowSettings={canOpenWorkflowSettings}
             reviewWorkflowSettingsLabel={reviewWorkflowSettingsLabel}
-            canSaveAgentWorkflow={canSaveAgentWorkflow}
-            onSaveAgentWorkflow={onSaveAgentWorkflow ? () => onSaveAgentWorkflow(message) : undefined}
+            canSaveWorkflowSkill={canSaveWorkflowSkill}
+            onSaveWorkflowSkill={onSaveWorkflowSkill ? () => onSaveWorkflowSkill(message) : undefined}
             onSpeak={onSpeak ? () => onSpeak(message) : undefined}
             onConfigure={onConfigure ? () => onConfigure(message) : undefined}
-            onTestModel={onTestModel ? () => onTestModel(message) : undefined}
             onRetry={onRetry ? () => onRetry(message) : undefined}
             onRegenerate={onRegenerate}
             onDelete={canDeleteMessage && onDelete ? () => onDelete(message) : undefined}
-          />
-        ) : null}
-      </MotiView>
+            onQuote={canQuoteMessage && onQuote ? () => onQuote(message) : undefined}
+            onEdit={canEditMessage && onEdit ? () => onEdit(message) : undefined}
+            onStartMultiSelect={canStartMessageMultiSelect && onStartMultiSelect ? () => onStartMultiSelect(message) : undefined}
+            />
+          ) : null}
+        </View>
+      </View>
+    </View>
+  )
+}
+
+function PendingActionQuickAction({ onPress }: { onPress: () => void }) {
+  const { colors } = useAppTheme()
+  const { t } = useTranslation()
+  const [locked, setLocked] = useState(false)
+  const lockTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
+
+  useEffect(() => () => {
+    if (lockTimer.current) clearTimeout(lockTimer.current)
+  }, [])
+
+  function confirm() {
+    if (locked) return
+    setLocked(true)
+    onPress()
+    lockTimer.current = setTimeout(() => {
+      lockTimer.current = null
+      setLocked(false)
+    }, MESSAGE_ACTION_LOCK_MS)
+  }
+
+  return (
+    <View style={{ minHeight: 44, marginTop: 10, flexDirection: 'row', alignItems: 'center' }}>
+      <IslePressable
+        haptic
+        accessibilityRole="button"
+        accessibilityLabel={t('messageBubble.confirmAgentAction')}
+        accessibilityState={{ disabled: locked }}
+        disabled={locked}
+        onPress={confirm}
+        testID="message-pending-action-confirm"
+        style={{
+          minHeight: 44,
+          maxWidth: '100%',
+          borderRadius: Math.min(colors.ui.radius.controlMiddle, 8),
+          paddingHorizontal: 13,
+          flexDirection: 'row',
+          alignItems: 'center',
+          justifyContent: 'center',
+          gap: 8,
+          backgroundColor: locked
+            ? colors.ui.control.disabledBackground
+            : colors.ui.control.primaryBackground,
+          borderWidth: StyleSheet.hairlineWidth,
+          borderColor: locked
+            ? colors.ui.control.disabledBorder
+            : colors.ui.control.primaryBorder,
+        }}
+      >
+        <AppIcon
+          name="shield"
+          color={locked ? colors.textTertiary : colors.ui.control.primaryForeground}
+          size={16}
+          strokeWidth={appIconStroke.strong}
+        />
+        <Text
+          numberOfLines={1}
+          style={{
+            color: locked ? colors.textTertiary : colors.ui.control.primaryForeground,
+            fontSize: 12,
+            lineHeight: 17,
+            fontWeight: '800',
+          }}
+        >
+          {t('messageBubble.confirmAgentAction')}
+        </Text>
+      </IslePressable>
     </View>
   )
 }
@@ -406,6 +501,22 @@ function useThrottledStreamingText(text: string, active: boolean): string {
 
   useEffect(() => {
     latestText.current = text
+
+    const scheduleRenderFlush = () => {
+      if (renderTimer.current) return
+      renderTimer.current = setTimeout(() => {
+        renderTimer.current = null
+        let needsAnotherFrame = false
+        setRenderedText((current) => {
+          const next = latestText.current
+          const updated = nextStreamingTextFrame(current, next)
+          needsAnotherFrame = updated !== next
+          return updated
+        })
+        if (needsAnotherFrame) scheduleRenderFlush()
+      }, STREAMING_RENDER_THROTTLE_MS)
+    }
+
     if (!active) {
       if (renderTimer.current) {
         clearTimeout(renderTimer.current)
@@ -417,16 +528,11 @@ function useThrottledStreamingText(text: string, active: boolean): string {
 
     setRenderedText((current) => {
       if (text.length < current.length) return text
-      if (text.length - current.length >= STREAMING_RENDER_TEXT_STEP) return text
+      if (!text.startsWith(current)) return text
       return current
     })
 
-    if (!renderTimer.current) {
-      renderTimer.current = setTimeout(() => {
-        renderTimer.current = null
-        setRenderedText((current) => current === latestText.current ? current : latestText.current)
-      }, STREAMING_RENDER_THROTTLE_MS)
-    }
+    scheduleRenderFlush()
   }, [active, text])
 
   useEffect(() => () => {
@@ -436,10 +542,21 @@ function useThrottledStreamingText(text: string, active: boolean): string {
   return renderedText
 }
 
-function resolveMessageBubbleMaxWidth(displayText: string, isUser: boolean, processLayerVisible: boolean, windowWidth: number): number {
+function nextStreamingTextFrame(current: string, next: string): string {
+  if (current === next) return current
+  if (next.length < current.length || !next.startsWith(current)) return next
+  const backlog = next.length - current.length
+  if (backlog <= STREAMING_RENDER_TEXT_STEP) return next
+  const frameStep = backlog > STREAMING_RENDER_FAST_FORWARD_THRESHOLD
+    ? Math.max(STREAMING_RENDER_TEXT_STEP, Math.ceil(backlog * 0.55))
+    : STREAMING_RENDER_TEXT_STEP
+  return next.slice(0, current.length + frameStep)
+}
+
+function resolveMessageBubbleMaxWidth(displayText: string, isUser: boolean, processLayerVisible: boolean, windowWidth: number, displayFormulaLayout = false): number {
   const availableWidth = Math.max(220, windowWidth - MESSAGE_BUBBLE_HORIZONTAL_GUTTER)
-  const fullWidth = Math.floor(availableWidth * (isUser ? 0.84 : 0.94))
-  if (isUser || processLayerVisible || hasWideMessageContent(displayText)) return fullWidth
+  const fullWidth = Math.floor(availableWidth * (displayFormulaLayout ? 0.94 : isUser ? 0.84 : 0.94))
+  if (displayFormulaLayout || isUser || processLayerVisible || hasWideMessageContent(displayText)) return fullWidth
 
   const normalizedText = displayText.trim().replace(/\s+/g, ' ')
   const charCount = Array.from(normalizedText).length
@@ -464,6 +581,7 @@ function MessageBody({
   displayText,
   isUser,
   isStreamingContent,
+  motion,
   onLayoutChangeRequest,
 }: {
   conversationId: string
@@ -471,6 +589,7 @@ function MessageBody({
   displayText: string
   isUser: boolean
   isStreamingContent: boolean
+  motion: MotionIntensity
   onLayoutChangeRequest?: () => void
 }) {
   const { colors } = useAppTheme()
@@ -487,19 +606,18 @@ function MessageBody({
       <RenderGuard label={t('messageBubble.messageContent')} fallbackText={displayText || message.content} compact>
         {displayText ? (
           <MessageBodyReveal active={isStreamingContent}>
-            <MessageContent content={displayText} isUser={isUser} isStreaming={isStreamingContent} onLayoutChangeRequest={onLayoutChangeRequest} />
+            <MessageContent content={displayText} isUser={isUser} isStreaming={isStreamingContent} onLayoutChangeRequest={onLayoutChangeRequest} selectionEnabled={false} />
           </MessageBodyReveal>
-        ) : !isUser && !isStreamingContent ? (
+        ) : !isUser && !isStreamingContent && message.status !== 'cancelled' ? (
           <Text style={{ color: isUser ? userMessage.userForeground : colors.textSecondary, fontSize: 13, lineHeight: 20 }}>
             {t('messageBubble.emptyResponse')}
           </Text>
         ) : isUser ? (
-          <TypingDots />
+          <TypingDots motion={motion} />
         ) : null}
       </RenderGuard>
       {!isUser && message.citations?.length ? <MessageSourceLink conversationId={conversationId} message={message} /> : null}
-      {isStreamingContent && displayText ? <Cursor /> : null}
-      {message.status === 'error' ? <ErrorHint code={message.errorCode} /> : null}
+      {isStreamingContent && displayText ? <Cursor motion={motion} /> : null}
     </>
   )
 }
@@ -540,7 +658,7 @@ function MessageSourceLink({ conversationId, message }: { conversationId: string
       }}
     >
       <AppIcon name="knowledge" color={colors.ui.icon.accentForeground} size={14} strokeWidth={appIconStroke.strong} />
-      <Text style={{ color: colors.ui.icon.accentForeground, fontSize: 12, lineHeight: 16, fontWeight: '900' }}>
+      <Text style={{ color: colors.ui.icon.accentForeground, fontSize: 12, lineHeight: 16, fontWeight: '800' }}>
         {t('messageBubble.sources', { count })}
       </Text>
     </IslePressable>
@@ -550,28 +668,34 @@ function MessageSourceLink({ conversationId, message }: { conversationId: string
 function MessageProcessLayer({
   message,
   traces,
+  assistantDisplayName,
   expanded,
   canExpand,
   maxHeight,
   onToggle,
   trailingActionSpace = false,
-  tokenText,
+  motion,
+  writingResponse,
 }: {
   message: Message
   traces: ProcessTrace[]
+  assistantDisplayName?: string
   expanded: boolean
   canExpand: boolean
   maxHeight: number
   onToggle: () => void
   trailingActionSpace?: boolean
-  tokenText?: string
+  motion: MotionIntensity
+  writingResponse: boolean
 }) {
   const { colors, isGlass } = useAppTheme()
   const actionChrome = resolveMessageActionChrome(colors, isGlass)
   const { t } = useTranslation()
   const active = message.status === 'streaming' || message.status === 'sending'
-  const processStatusLabel = processLayerLabel(message, traces, t)
-  const emphasizedStatus = message.status === 'error' || message.status === 'cancelled' || traces.some(isAgentWorkflowWaitingTrace)
+  const processStatusLabel = processLayerLabel(message, traces, t, writingResponse, assistantDisplayName)
+  const showStatusLabel = active || message.status === 'error' || message.status === 'cancelled'
+  const inlinePreview = !writingResponse && active ? activeProcessInlinePreview(traces) : ''
+  const emphasizedStatus = message.status === 'cancelled' || traces.some(isAgentWorkflowWaitingTrace)
   const processAccessibilityLabel = canExpand
     ? expanded
       ? t('messageBubble.collapseThinking')
@@ -586,7 +710,7 @@ function MessageProcessLayer({
       : undefined
   const tone =
     message.status === 'error'
-      ? colors.ui.tone.danger.foreground
+      ? colors.textTertiary
         : message.status === 'cancelled'
           ? colors.ui.tone.warning.foreground
           : active
@@ -594,7 +718,7 @@ function MessageProcessLayer({
             : colors.textTertiary
   const statusBackground =
     message.status === 'error'
-      ? colors.ui.tone.danger.background
+      ? actionChrome.itemSurface
       : message.status === 'cancelled'
         ? colors.ui.tone.warning.background
         : active
@@ -602,7 +726,7 @@ function MessageProcessLayer({
           : actionChrome.itemSurface
   const statusBorder =
     message.status === 'error'
-      ? colors.ui.tone.danger.border
+      ? actionChrome.itemBorder
       : message.status === 'cancelled'
         ? colors.ui.tone.warning.border
         : active
@@ -610,24 +734,25 @@ function MessageProcessLayer({
           : actionChrome.itemBorder
 
   return (
-    <View style={{ marginBottom: 8 }}>
+    <View style={{ marginBottom: 8, minWidth: showStatusLabel ? 176 : undefined }}>
       <IslePressable
         haptic
         disabled={!canExpand}
         onPress={onToggle}
         accessibilityLabel={processAccessibilityLabel}
         accessibilityRole={canExpand ? 'button' : 'text'}
+        accessibilityLiveRegion="polite"
         accessibilityState={processAccessibilityState}
         accessibilityValue={canExpand ? { text: processStatusLabel } : undefined}
         style={{
           minHeight: 26,
           flexDirection: 'row',
           alignItems: 'center',
-          gap: 8,
+          gap: 0,
           alignSelf: 'flex-start',
           width: '100%',
           maxWidth: '100%',
-          borderRadius: colors.ui.radius.chip,
+          borderRadius: colors.ui.radius.controlSmall,
           paddingVertical: emphasizedStatus ? 5 : 2,
           paddingHorizontal: emphasizedStatus ? 8 : 0,
           paddingRight: emphasizedStatus && trailingActionSpace ? 48 : emphasizedStatus ? 8 : 0,
@@ -636,35 +761,81 @@ function MessageProcessLayer({
           borderColor: emphasizedStatus ? statusBorder : 'transparent',
         }}
       >
-        <ThinkingPulse active={active} tone={tone} />
-        <Text
-          numberOfLines={1}
-          ellipsizeMode="tail"
-          style={{ color: tone, fontSize: 12, lineHeight: 16, fontWeight: '800', flex: 1, flexShrink: 1, minWidth: 0 }}
-        >
-          {processStatusLabel}
-        </Text>
-        {tokenText ? (
-          <Text
-            numberOfLines={1}
-            ellipsizeMode="tail"
-            style={{ color: tone, opacity: 0.78, fontSize: 10.5, lineHeight: 14, fontWeight: '800', flexShrink: 1, minWidth: 0, maxWidth: '38%', textAlign: 'right' }}
+        <View style={{ flexGrow: showStatusLabel ? 1 : 0, flexBasis: showStatusLabel ? 0 : 'auto', flexShrink: 1, minWidth: 0 }}>
+          <View
+            key={writingResponse ? 'writing' : active ? 'active-process' : 'settled-process'}
+            style={{ flexDirection: 'row', alignItems: 'center', gap: 8, minHeight: 16 }}
           >
-            {tokenText}
-          </Text>
-        ) : null}
+            {showStatusLabel ? (
+              <AnimatedProcessStatusText active={active} label={processStatusLabel} tone={tone} motion={motion} />
+            ) : null}
+          </View>
+        </View>
         {canExpand ? (
-          <MotiView animate={{ rotate: expanded ? '90deg' : '0deg' }} transition={{ type: 'timing', duration: 150 }}>
+          <MotiView animate={{ rotate: expanded ? '90deg' : '0deg' }} transition={{ type: 'timing', duration: motion === 'full' ? 112 : 1, easing: Easing.out(Easing.cubic) }}>
             <AppIcon name="back-next" color={colors.textTertiary} size={14} strokeWidth={appIconStroke.strong} />
           </MotiView>
         ) : null}
       </IslePressable>
-      {expanded && canExpand ? <MessageProcessPanel message={message} traces={traces} maxHeight={maxHeight} /> : null}
+      {inlinePreview ? (
+        <InlineProcessPreview
+          preview={inlinePreview}
+          tone={tone}
+        />
+      ) : null}
+      {expanded && canExpand ? <MessageProcessPanel message={message} traces={traces} maxHeight={maxHeight} motion={motion} /> : null}
     </View>
   )
 }
 
-function MessageProcessPanel({ message, traces, maxHeight }: { message: Message; traces: ProcessTrace[]; maxHeight: number }) {
+function AnimatedProcessStatusText({ active, label, tone, motion }: { active: boolean; label: string; tone: string; motion: MotionIntensity }) {
+  const [dotCount, setDotCount] = useState(1)
+  const shimmer = active && motion === 'full'
+  const baseLabel = label.replace(/[.\u2026]+$/u, '').trimEnd()
+  const displayLabel = active
+    ? `${baseLabel}${'.'.repeat(motion === 'none' ? 3 : dotCount)}`
+    : label
+
+  useEffect(() => {
+    if (!active || motion === 'none') {
+      setDotCount(3)
+      return
+    }
+    setDotCount(1)
+    const timer = setInterval(() => {
+      setDotCount((current) => current >= 3 ? 1 : current + 1)
+    }, motion === 'full' ? 360 : 520)
+    return () => clearInterval(timer)
+  }, [active, motion])
+
+  return (
+    <View style={{ flex: 1, flexShrink: 1, minWidth: 0, minHeight: 16, justifyContent: 'center', overflow: 'hidden' }}>
+      <View
+        key={label}
+      >
+        <Text
+          numberOfLines={1}
+          ellipsizeMode="tail"
+          accessibilityLabel={label}
+          style={{ color: tone, fontSize: 12, lineHeight: 16, fontWeight: '800', includeFontPadding: false }}
+        >
+          {displayLabel}
+        </Text>
+      </View>
+      <MotiView
+        accessible={false}
+        accessibilityElementsHidden
+        importantForAccessibility="no-hide-descendants"
+        from={{ translateX: -48, opacity: 0 }}
+        animate={shimmer ? { translateX: 320, opacity: 0.16 } : { translateX: -48, opacity: 0 }}
+        transition={{ loop: shimmer, type: 'timing', duration: shimmer ? 1260 : 1, easing: Easing.inOut(Easing.cubic) }}
+        style={{ position: 'absolute', top: -6, bottom: -6, left: 0, width: 28, borderRadius: 8, backgroundColor: tone, transform: [{ rotate: '12deg' }] }}
+      />
+    </View>
+  )
+}
+
+function MessageProcessPanel({ message, traces, maxHeight, motion }: { message: Message; traces: ProcessTrace[]; maxHeight: number; motion: MotionIntensity }) {
   const { colors, isGlass } = useAppTheme()
   const scrollRef = useRef<ScrollView>(null)
   const thinkingSummaries = collectThinkingSummaries(traces)
@@ -676,10 +847,7 @@ function MessageProcessPanel({ message, traces, maxHeight }: { message: Message;
   }, [contentLength, running, thinkingSummaries.length])
 
   return (
-    <MotiView
-      from={{ opacity: 0, translateY: -3 }}
-      animate={{ opacity: 1, translateY: 0 }}
-      transition={{ type: 'timing', duration: 130 }}
+    <View
       style={{
         marginTop: 7,
         borderTopWidth: StyleSheet.hairlineWidth,
@@ -697,53 +865,55 @@ function MessageProcessPanel({ message, traces, maxHeight }: { message: Message;
             ))}
           </View>
         ) : running ? (
-          <TypingDots />
+          <TypingDots motion={motion} />
         ) : null}
       </ScrollView>
-    </MotiView>
-  )
-}
-
-function ThinkingPulse({ active, tone }: { active: boolean; tone: string }) {
-  if (!active) {
-    return (
-      <View style={{ width: 22, height: 10, flexDirection: 'row', alignItems: 'center', gap: 3 }}>
-        {[0, 1, 2].map((item) => (
-          <View
-            key={item}
-            style={{ width: 4, height: 4, borderRadius: 2, backgroundColor: tone, opacity: 0.65 }}
-          />
-        ))}
-      </View>
-    )
-  }
-
-  return (
-    <View style={{ width: 22, height: 10, flexDirection: 'row', alignItems: 'center', gap: 3 }}>
-      {[0, 1, 2].map((item) => (
-        <MotiView
-          key={item}
-          from={{ opacity: active ? 0.3 : 0.65, translateY: 0 }}
-          animate={{ opacity: active ? 1 : 0.65, translateY: active ? -2 : 0 }}
-          transition={{ loop: active, type: 'timing', duration: 560, delay: item * 120 }}
-          style={{ width: 4, height: 4, borderRadius: 2, backgroundColor: tone }}
-        />
-      ))}
     </View>
   )
 }
 
-function processLayerLabel(message: Message, traces: ProcessTrace[], t: TFunction): string {
+function InlineProcessPreview({ preview, tone }: { preview: string; tone: string }) {
+  return (
+    <View style={{ marginTop: 2, paddingRight: 4 }}>
+      <Text
+        numberOfLines={2}
+        ellipsizeMode="tail"
+        style={{ color: tone, opacity: 0.72, fontSize: 11, lineHeight: 16, fontWeight: '700' }}
+      >
+        {preview}
+      </Text>
+    </View>
+  )
+}
+
+function processLayerLabel(
+  message: Message,
+  traces: ProcessTrace[],
+  t: TFunction,
+  writingResponse = false,
+  assistantDisplayName?: string,
+): string {
   const waitingLabel = waitingProcessLayerLabel(traces, t)
   if (waitingLabel) return withProcessStageLabel(waitingLabel, traces, message.status)
 
   if (message.status === 'streaming' || message.status === 'sending') {
     const activeTrace = selectActiveProcessTrace(traces, message.status)
+    if (activeTrace && !isGenericModelRequestTrace(activeTrace)) return activeProcessLayerLabel(activeTrace, t)
+    if (writingResponse) {
+      return t('messageBubble.responseStreaming', {
+        defaultValue: '正在生成回复',
+      })
+    }
     const completedTrace = selectLatestCompletedProcessTrace(traces, message.status)
-    if (activeTrace && !isGenericModelRequestTrace(activeTrace)) return thinkingProgressLabel(t, 'active', traceActivityStageLabel(activeTrace))
-    if (completedTrace) return thinkingProgressLabel(t, 'done', traceActivityStageLabel(completedTrace))
-    if (activeTrace) return thinkingProgressLabel(t, 'active', traceActivityStageLabel(activeTrace))
-    return thinkingProgressLabel(t, 'base')
+    if (completedTrace) {
+      return t('messageBubble.responseStreaming', {
+        defaultValue: '正在生成回复',
+      })
+    }
+    if (activeTrace) return activeProcessLayerLabel(activeTrace, t)
+    return assistantDisplayName
+      ? getAssistantThinkingLabel(assistantDisplayName, t)
+      : thinkingProgressLabel(t, 'base')
   }
 
   return (() => {
@@ -758,6 +928,29 @@ function processLayerLabel(message: Message, traces: ProcessTrace[], t: TFunctio
   })()
 }
 
+function activeProcessLayerLabel(trace: ProcessTrace, t: TFunction): string {
+  const stage = traceActivityStageLabel(trace)
+  if (trace.type === 'tool') {
+    return t('messageBubble.runningTool', {
+      tool: processTraceOperationName(trace, stage),
+      defaultValue: `正在调用 ${processTraceOperationName(trace, stage)}`,
+    })
+  }
+  if (trace.type === 'search') {
+    return t('messageBubble.runningSearch', { defaultValue: '正在搜索' })
+  }
+  if (trace.type === 'retrieval' || trace.type === 'memory' || trace.type === 'knowledge') {
+    return t('messageBubble.runningRetrieval', { defaultValue: '正在检索资料' })
+  }
+  if (isGenericModelRequestTrace(trace)) {
+    return t('messageBubble.runningRequest', { defaultValue: '正在准备请求' })
+  }
+  if (trace.type === 'reasoning') {
+    return t('chat.thinking', { defaultValue: '思考中...' })
+  }
+  return thinkingProgressLabel(t, 'active', stage)
+}
+
 function thinkingDoneLabel(message: Message, traces: ProcessTrace[], t: TFunction): string {
   const hasThinking = traces.some(hasDisplayableThinkingContent)
   const durationMs = resolveThinkingDurationMs(message, traces)
@@ -765,8 +958,6 @@ function thinkingDoneLabel(message: Message, traces: ProcessTrace[], t: TFunctio
     return translateMessageBubbleLabel(t, 'messageBubble.completed', '已完成') + ` · ${formatDuration(durationMs)}`
   }
   if (hasThinking) return translateMessageBubbleLabel(t, 'messageBubble.completed', '已完成')
-  const settledStage = settledProcessStageLabel(message, traces, t)
-  if (settledStage) return settledStage
   return translateMessageBubbleLabel(t, 'messageBubble.completed', '已完成')
 }
 
@@ -777,11 +968,13 @@ function settledProcessStageLabel(message: Message, traces: ProcessTrace[], t: T
 }
 
 function resolveThinkingDurationMs(message: Message, traces: ProcessTrace[]): number | undefined {
-  const traceDurations = normalizeTraceStatuses(traces, message.status)
-    .filter(hasDisplayableThinkingContent)
-    .map(traceDurationMs)
-    .filter((duration): duration is number => typeof duration === 'number' && duration > 0)
-  if (traceDurations.length) return Math.max(...traceDurations)
+  let maxTraceDuration = 0
+  for (const trace of normalizeTraceStatuses(traces, message.status)) {
+    if (!hasDisplayableThinkingContent(trace)) continue
+    const duration = traceDurationMs(trace)
+    if (duration && duration > maxTraceDuration) maxTraceDuration = duration
+  }
+  if (maxTraceDuration > 0) return maxTraceDuration
   return message.durationMs && message.durationMs > 0 ? message.durationMs : traceDurationMs(message)
 }
 
@@ -834,39 +1027,7 @@ function thinkingProgressLabel(t: TFunction, state: 'base' | 'active' | 'done', 
       defaultValue: `已完成${stage}`,
     })
   }
-  return t('messageBubble.thinkingProgressBase', {
-    defaultValue: '准备中',
-  })
-}
-
-function buildMessageTokenStatus(message: Message, renderedText: string, active: boolean): string {
-  const usage = message.usage
-  const estimatedOutputTokens = active ? estimateTextTokens(renderedText) : undefined
-  const outputTokens = usage?.outputTokens ?? estimatedOutputTokens ?? message.tokenCount
-  const inputTokens = usage?.inputTokens
-  const reasoningTokens = usage?.reasoningTokens
-  const totalTokens = active
-    ? sumDefined(inputTokens, outputTokens, reasoningTokens)
-    : usage?.totalTokens ?? sumDefined(inputTokens, outputTokens, reasoningTokens)
-  if (!hasAnyTokenValue(totalTokens)) return ''
-  return formatTokenCount(totalTokens)
-}
-
-function formatTokenCount(value: number | undefined): string {
-  if (typeof value !== 'number' || !Number.isFinite(value) || value <= 0) return '0'
-  if (value >= 1000000) return `${Math.round(value / 100000) / 10}M`
-  if (value >= 10000) return `${Math.round(value / 1000)}K`
-  if (value >= 1000) return `${Math.round(value / 100) / 10}K`
-  return String(Math.round(value))
-}
-
-function hasAnyTokenValue(...values: Array<number | undefined>): boolean {
-  return values.some((value) => typeof value === 'number' && Number.isFinite(value) && value > 0)
-}
-
-function sumDefined(...values: Array<number | undefined>): number | undefined {
-  const numbers = values.filter((value): value is number => typeof value === 'number' && Number.isFinite(value) && value > 0)
-  return numbers.length ? numbers.reduce((total, value) => total + value, 0) : undefined
+  return t('chat.thinking', { defaultValue: '思考中...' })
 }
 
 function waitingProcessLayerLabel(traces: ProcessTrace[], t: TFunction): string | undefined {
@@ -907,8 +1068,8 @@ function isAgentWorkflowWaitingTrace(trace: ProcessTrace): boolean {
 
 function agentWorkflowContinuationActionLabel(
   t: TFunction,
-  pendingAction: ReturnType<typeof getAgentPendingActionFromMessage>,
-  continuationAction: ReturnType<typeof getAgentWorkflowContinuationActionFromMessage>,
+  pendingAction: ReturnType<typeof getWorkflowPendingActionFromMessage>,
+  continuationAction: ReturnType<typeof getWorkflowContinuationActionFromMessage>,
 ): string {
   const context = workflowContextLabelFromRecords(t, pendingAction, continuationAction, true)
   if (continuationAction?.reason === 'failed') {
@@ -923,7 +1084,7 @@ function agentWorkflowContinuationActionLabel(
 
 function agentWorkflowRecoveryActionLabel(
   t: TFunction,
-  recoveryAction: ReturnType<typeof getAgentWorkflowRecoveryActionFromMessage>,
+  recoveryAction: ReturnType<typeof getWorkflowRecoveryActionFromMessage>,
 ): string {
   const context = workflowContextLabelFromRecords(t, recoveryAction, undefined, true)
   return context
@@ -958,7 +1119,7 @@ function workflowContextLabelFromRecords(t: TFunction, primary: unknown, seconda
 
 function workflowContextText(value: unknown, limit: number): string {
   if (typeof value !== 'string' || !value.trim()) return ''
-  return clampAgentOutput(redactSensitiveText(value.trim()), limit).replace(/\s+/g, ' ')
+  return clampTraceText(redactSensitiveText(value.trim()), limit).replace(/\s+/g, ' ')
 }
 
 function asWorkflowContextRecord(value: unknown): Record<string, unknown> | undefined {
@@ -971,25 +1132,47 @@ function pendingActionReason(value: unknown): string | undefined {
   return typeof reason === 'string' ? reason : undefined
 }
 
-function formatThinkingSummary(trace: ProcessTrace): string {
-  if (!hasDisplayableThinkingContent(trace)) return ''
-  const summary = formatProcessTraceForDisplay(trace, 720).content
-  return summary ? `${traceStageLabel(trace)} · ${summary}` : ''
-}
-
 function collectThinkingSummaries(traces: ProcessTrace[]): string[] {
   const seen = new Set<string>()
-  return traces
-    .filter(hasDisplayableThinkingContent)
-    .map(formatThinkingSummary)
-    .filter((summary): summary is string => Boolean(summary))
-    .filter((summary) => {
-      const key = summary.replace(/\s+/g, ' ').trim()
-      if (!key) return false
-      if (seen.has(key)) return false
-      seen.add(key)
-      return true
-    })
+  const summaries: string[] = []
+  for (const trace of traces) {
+    if (!hasDisplayableThinkingContent(trace)) continue
+    const content = formatProcessTraceForDisplay(trace, 720).content
+    if (!content) continue
+    const summary = `${traceStageLabel(trace)} · ${content}`
+    const key = summary.replace(/\s+/g, ' ').trim()
+    if (!key || seen.has(key)) continue
+    seen.add(key)
+    summaries.push(summary)
+  }
+  return summaries
+}
+
+function activeProcessInlinePreview(traces: ProcessTrace[]): string {
+  const activeTrace = [...traces].reverse().find((trace) => isActiveProcessTrace(trace) && hasDisplayableThinkingContent(trace))
+  const fallbackTrace = activeTrace ?? [...traces].reverse().find(hasDisplayableThinkingContent)
+  if (!fallbackTrace) return ''
+  const content = formatProcessTraceForDisplay(fallbackTrace, 220).content
+  if (!content) return ''
+  const summary = `${traceStageLabel(fallbackTrace)} · ${content}`
+  return clampTraceText(redactSensitiveText(summary.trim()), 180).replace(/\s+/g, ' ')
+}
+
+function processTraceOperationName(trace: ProcessTrace, fallback: string): string {
+  const metadata = trace.metadata ?? {}
+  const candidates = [
+    metadata.toolName,
+    metadata.providerToolName,
+    metadata.failedToolName,
+    metadata.source,
+    trace.title,
+    fallback,
+  ]
+  for (const candidate of candidates) {
+    if (typeof candidate !== 'string' || !candidate.trim()) continue
+    return clampTraceText(redactSensitiveText(candidate.trim()), 48).replace(/\s+/g, ' ')
+  }
+  return fallback
 }
 
 function hasAndroidUndoFollowUp(traces: ProcessTrace[]): boolean {
@@ -1011,10 +1194,19 @@ function isWorkflowAndroidUndoFollowUpTrace(trace: ProcessTrace): boolean {
 
 function hasSafeAgentActionPrompt(value: unknown): boolean {
   if (typeof value !== 'string') return false
-  return Boolean(clampAgentOutput(redactSensitiveText(value.trim()), AGENT_ACTION_PROMPT_VISIBILITY_LIMIT).trim())
+  return Boolean(clampTraceText(redactSensitiveText(value.trim()), AGENT_ACTION_PROMPT_VISIBILITY_LIMIT).trim())
 }
 
-function MessageActionBar({
+type MessageActionSheetAction = {
+  id: string
+  label: string
+  icon: AppIconName
+  onPress: () => void
+  danger?: boolean
+  emphasized?: boolean
+}
+
+function MessageActionSheet({
   message,
   displayText,
   isLastAssistant,
@@ -1026,22 +1218,24 @@ function MessageActionBar({
   onContinueWorkArtifact,
   canContinueAgentWorkflow,
   onContinueAgentWorkflow,
-  canConfirmAgentAction,
-  onConfirmAgentAction,
+  canConfirmAction,
+  onConfirmAction,
   canPrepareAndroidUndo,
   onPrepareAndroidUndo,
   canRepairAgentEvidence,
   onRepairAgentEvidence,
   canOpenWorkflowSettings,
   reviewWorkflowSettingsLabel,
-  canSaveAgentWorkflow,
-  onSaveAgentWorkflow,
+  canSaveWorkflowSkill,
+  onSaveWorkflowSkill,
   onSpeak,
   onConfigure,
-  onTestModel,
   onRetry,
   onRegenerate,
   onDelete,
+  onQuote,
+  onEdit,
+  onStartMultiSelect,
 }: {
   message: Message
   displayText: string
@@ -1054,227 +1248,219 @@ function MessageActionBar({
   onContinueWorkArtifact?: () => void
   canContinueAgentWorkflow: boolean
   onContinueAgentWorkflow?: () => void
-  canConfirmAgentAction: boolean
-  onConfirmAgentAction?: () => void
+  canConfirmAction: boolean
+  onConfirmAction?: () => void
   canPrepareAndroidUndo: boolean
   onPrepareAndroidUndo?: () => void
   canRepairAgentEvidence: boolean
   onRepairAgentEvidence?: () => void
   canOpenWorkflowSettings: boolean
   reviewWorkflowSettingsLabel: string
-  canSaveAgentWorkflow: boolean
-  onSaveAgentWorkflow?: () => void
+  canSaveWorkflowSkill: boolean
+  onSaveWorkflowSkill?: () => void
   onSpeak?: () => void
   onConfigure?: () => void
-  onTestModel?: () => void
   onRetry?: () => void
   onRegenerate?: () => void
   onDelete?: () => void
+  onQuote?: () => void
+  onEdit?: () => void
+  onStartMultiSelect?: () => void
 }) {
   const { colors, isGlass } = useAppTheme()
   const { t } = useTranslation()
+  const insets = useSafeAreaInsets()
+  const { width, height } = useWindowDimensions()
   const actionChrome = resolveMessageActionChrome(colors, isGlass)
-  const actionLockTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const [showMore, setShowMore] = useState(false)
   const actionLockedRef = useRef(false)
-  const [actionLocked, setActionLocked] = useState(false)
+  const unlockTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
   const isUser = message.role === 'user'
-  const canCopy = !!displayText && !!onCopy
-  const canSpeak = !!displayText && !isUser && !!onSpeak
-  const canRegenerate = !isUser && isLastAssistant && message.status !== 'streaming' && !!onRegenerate
-  const canUseWorkArtifact = !!displayText && !isUser
-  const showContinueAgentWorkflow = !isUser && canContinueAgentWorkflow && !!onContinueAgentWorkflow
-  const showConfirmAgentAction = !isUser && canConfirmAgentAction && !!onConfirmAgentAction
-  const showPrepareAndroidUndo = !isUser && canPrepareAndroidUndo && !!onPrepareAndroidUndo
-  const showRepairAgentEvidence = !isUser && canRepairAgentEvidence && !!onRepairAgentEvidence
-  const showOpenWorkflowSettings = !isUser && canOpenWorkflowSettings && !!onConfigure
-  const showSaveAgentWorkflow = !isUser && canSaveAgentWorkflow && !!onSaveAgentWorkflow
-  const showErrorActions = !isUser && message.status === 'error'
-  const canDelete = !!onDelete && message.status !== 'sending' && message.status !== 'streaming'
-  const iconColor = colors.textSecondary
-  const pendingAgentAction = !isUser ? getAgentPendingActionFromMessage(message) : undefined
-  const workflowContinuationAction = !isUser ? getAgentWorkflowContinuationActionFromMessage(message) : undefined
-  const continueAgentWorkflowLabel = agentWorkflowContinuationActionLabel(t, pendingAgentAction, workflowContinuationAction)
-  const hasActionRow = (
-    canCopy ||
-    canCopyProcessTrace ||
-    canSpeak ||
-    canRegenerate ||
-    showContinueAgentWorkflow ||
-    showConfirmAgentAction ||
-    showPrepareAndroidUndo ||
-    showRepairAgentEvidence ||
-    showOpenWorkflowSettings ||
-    showSaveAgentWorkflow ||
-    (canUseWorkArtifact && !!onCopyWorkArtifact) ||
-    (canUseWorkArtifact && !!onContinueWorkArtifact) ||
-    (showErrorActions && !!onConfigure) ||
-    (showErrorActions && !!onTestModel) ||
-    (showErrorActions && !!onRetry)
-  )
+  const hasText = !!displayText.trim()
+  const pendingWorkflowAction = !isUser ? getWorkflowPendingActionFromMessage(message) : undefined
+  const workflowContinuationAction = !isUser ? getWorkflowContinuationActionFromMessage(message) : undefined
+  const continueAgentWorkflowLabel = agentWorkflowContinuationActionLabel(t, pendingWorkflowAction, workflowContinuationAction)
 
-  useEffect(() => {
-    return () => {
-      if (actionLockTimer.current) clearTimeout(actionLockTimer.current)
-      actionLockTimer.current = null
-    }
+  useEffect(() => () => {
+    if (unlockTimer.current) clearTimeout(unlockTimer.current)
   }, [])
 
-  function run(action?: () => void) {
-    return () => {
-      if (actionLockedRef.current) return
-      actionLockedRef.current = true
-      setActionLocked(true)
-      if (actionLockTimer.current) clearTimeout(actionLockTimer.current)
-      actionLockTimer.current = setTimeout(() => {
-        actionLockTimer.current = null
-        actionLockedRef.current = false
-        setActionLocked(false)
-      }, MESSAGE_ACTION_LOCK_MS)
-      onClose()
-      action?.()
-    }
+  function action(id: string, label: string, icon: AppIconName, onPress: (() => void) | undefined, options: Pick<MessageActionSheetAction, 'danger' | 'emphasized'> = {}): MessageActionSheetAction | null {
+    return onPress ? { id, label, icon, onPress, ...options } : null
   }
 
-  if (message.status === 'sending') return null
-  if (isUser && !canCopy && !canDelete) return null
-  if (!isUser && !canCopy && !canCopyProcessTrace && !canSpeak && !canRegenerate && !onCopyWorkArtifact && !onContinueWorkArtifact && !showContinueAgentWorkflow && !showConfirmAgentAction && !showPrepareAndroidUndo && !showRepairAgentEvidence && !showOpenWorkflowSettings && !showSaveAgentWorkflow && !showErrorActions && !canDelete) return null
+  const workflowActions = [
+    !isUser && canConfirmAction ? action('confirm', t('messageBubble.confirmAgentAction'), 'shield', onConfirmAction, { emphasized: true }) : null,
+    !isUser && canContinueAgentWorkflow ? action('continue-workflow', continueAgentWorkflowLabel, 'back-next', onContinueAgentWorkflow, { emphasized: true }) : null,
+    !isUser && canRepairAgentEvidence ? action('repair-evidence', t('messageBubble.repairAgentEvidence'), 'search', onRepairAgentEvidence, { emphasized: true }) : null,
+    !isUser && canPrepareAndroidUndo ? action('android-undo', t('messageBubble.prepareAndroidUndo'), 'undo', onPrepareAndroidUndo, { emphasized: true }) : null,
+  ].filter((item): item is MessageActionSheetAction => item !== null)
+  const commonActions = [
+    hasText ? action('copy', t('common.copy'), 'copy', onCopy) : null,
+    isUser && hasText ? action('edit', t('common.edit'), 'edit', onEdit) : null,
+    !isUser && message.status === 'error' ? action('retry', t('messageBubble.retry'), 'retry', onRetry, { emphasized: true }) : null,
+    !isUser && isLastAssistant && message.status !== 'streaming' ? action('regenerate', t('messageBubble.regenerate'), 'regenerate', onRegenerate) : null,
+    hasText ? action('quote', t('messageBubble.quote'), 'paste', onQuote) : null,
+    !isUser && hasText ? action('speak', t('messageBubble.speak'), 'voice', onSpeak) : null,
+  ].filter((item): item is MessageActionSheetAction => item !== null)
+  const secondaryActions = [
+    canCopyProcessTrace ? action('copy-trace', t('messageBubble.copyProcessTrace'), 'trace', onCopyProcessTrace) : null,
+    hasText && !isUser ? action('copy-artifact', t('messageBubble.copyWorkArtifact'), 'list-check', onCopyWorkArtifact) : null,
+    hasText && !isUser ? action('continue-artifact', t('messageBubble.continueWorkArtifact'), 'spark', onContinueWorkArtifact) : null,
+    !isUser && canOpenWorkflowSettings ? action('workflow-settings', reviewWorkflowSettingsLabel, 'settings-sliders', onConfigure) : null,
+    !isUser && canSaveWorkflowSkill ? action('save-workflow', t('messageBubble.saveAgentWorkflow'), 'workflow', onSaveWorkflowSkill) : null,
+    action('multi-select', t('messageBubble.multiSelect'), 'list-check', onStartMultiSelect),
+    !isUser && message.status === 'error' ? action('configure', t('messageBubble.configure'), 'settings-sliders', onConfigure) : null,
+    action('delete', t('common.delete'), 'delete', onDelete, { danger: true }),
+  ].filter((item): item is MessageActionSheetAction => item !== null)
+  const prioritizedActions = [...workflowActions, ...commonActions]
+  const primaryActions = prioritizedActions.slice(0, MESSAGE_ACTION_PRIMARY_LIMIT)
+  const overflowActions = [...prioritizedActions.slice(MESSAGE_ACTION_PRIMARY_LIMIT), ...secondaryActions]
+  const visibleActions = showMore ? overflowActions : primaryActions
 
+  function run(item: MessageActionSheetAction) {
+    if (actionLockedRef.current) return
+    actionLockedRef.current = true
+    if (unlockTimer.current) clearTimeout(unlockTimer.current)
+    unlockTimer.current = setTimeout(() => {
+      actionLockedRef.current = false
+      unlockTimer.current = null
+    }, MESSAGE_ACTION_LOCK_MS)
+    onClose()
+    item.onPress()
+  }
+
+  const sheetMaxHeight = Math.max(260, height - Math.max(insets.top, 12) - 24)
   return (
-    <MotiView
-      from={{ opacity: 0, translateY: -3, scale: 0.97 }}
-      animate={{ opacity: 1, translateY: 0, scale: 1 }}
-      transition={{ type: 'timing', duration: 120 }}
-      style={{
-        alignSelf: isUser ? 'flex-end' : 'flex-start',
-        marginTop: 6,
-        height: hasActionRow && canDelete ? 114 : 58,
-        maxWidth: '100%',
-        borderRadius: colors.ui.radius.controlLarge,
-        backgroundColor: actionChrome.barSurface,
-        borderWidth: StyleSheet.hairlineWidth,
-        borderColor: actionChrome.barBorder,
-        overflow: 'hidden',
-        shadowColor: colors.shadowTint,
-        shadowOpacity: colors.ui.cartoon ? Math.min(colors.ui.card.shadowOpacity, 0.012) : 0,
-        shadowRadius: colors.ui.cartoon ? Math.max(2, colors.ui.card.shadowRadius - 5) : 0,
-        shadowOffset: { width: 0, height: colors.ui.cartoon ? Math.max(1, colors.ui.card.shadowOffset - 2) : 0 },
-        elevation: colors.ui.cartoon && colors.ui.card.shadowOpacity > 0 ? 1 : 0,
-      }}
+    <Modal
+      transparent
+      visible
+      animationType="none"
+      statusBarTranslucent
+      onRequestClose={onClose}
     >
-      {hasActionRow ? (
-        <ScrollView
-          horizontal
-          showsHorizontalScrollIndicator={false}
-          keyboardShouldPersistTaps="handled"
-          accessibilityLabel={t('messageBubble.actions')}
-          contentContainerStyle={{
-            minHeight: 50,
-            paddingHorizontal: 4,
-            paddingVertical: 4,
-            flexDirection: 'row',
-            alignItems: 'center',
-            gap: 3,
-          }}
-          style={{ height: 58, maxHeight: 58, maxWidth: '100%' }}
-        >
-          {canCopy ? (
-            <ActionIconButton label={t('common.copy')} disabled={actionLocked} onPress={run(onCopy)}>
-              <AppIcon name="copy" color={iconColor} size={16} strokeWidth={appIconStroke.strong} />
-            </ActionIconButton>
-          ) : null}
-          {canCopyProcessTrace ? (
-            <ActionIconButton label={t('messageBubble.copyProcessTrace')} disabled={actionLocked} onPress={run(onCopyProcessTrace)}>
-              <AppIcon name="trace" color={iconColor} size={16} strokeWidth={appIconStroke.strong} />
-            </ActionIconButton>
-          ) : null}
-          {canSpeak ? (
-            <ActionIconButton label={t('messageBubble.speak')} disabled={actionLocked} onPress={run(onSpeak)}>
-              <AppIcon name="voice" color={iconColor} size={16} strokeWidth={appIconStroke.strong} />
-            </ActionIconButton>
-          ) : null}
-          {canRegenerate ? (
-            <ActionIconButton label={t('messageBubble.regenerate')} disabled={actionLocked} onPress={run(onRegenerate)}>
-              <AppIcon name="regenerate" color={iconColor} size={16} strokeWidth={appIconStroke.strong} />
-            </ActionIconButton>
-          ) : null}
-          {showContinueAgentWorkflow ? (
-            <ActionIconButton label={continueAgentWorkflowLabel} disabled={actionLocked} onPress={run(onContinueAgentWorkflow)}>
-              <AppIcon name="back-next" color={colors.ui.icon.accentForeground} size={16} strokeWidth={appIconStroke.strong} />
-            </ActionIconButton>
-          ) : null}
-          {showConfirmAgentAction ? (
-            <ActionIconButton label={t('messageBubble.confirmAgentAction')} disabled={actionLocked} onPress={run(onConfirmAgentAction)}>
-              <AppIcon name="shield" color={colors.ui.icon.accentForeground} size={16} strokeWidth={appIconStroke.strong} />
-            </ActionIconButton>
-          ) : null}
-          {showPrepareAndroidUndo ? (
-            <ActionIconButton label={t('messageBubble.prepareAndroidUndo')} disabled={actionLocked} onPress={run(onPrepareAndroidUndo)}>
-              <AppIcon name="undo" color={colors.ui.icon.accentForeground} size={16} strokeWidth={appIconStroke.strong} />
-            </ActionIconButton>
-          ) : null}
-          {showRepairAgentEvidence ? (
-            <ActionIconButton label={t('messageBubble.repairAgentEvidence')} disabled={actionLocked} onPress={run(onRepairAgentEvidence)}>
-              <AppIcon name="search" color={colors.ui.icon.accentForeground} size={16} strokeWidth={appIconStroke.strong} />
-            </ActionIconButton>
-          ) : null}
-          {showOpenWorkflowSettings ? (
-            <ActionIconButton label={reviewWorkflowSettingsLabel} disabled={actionLocked} onPress={run(onConfigure)}>
-              <AppIcon name="settings-sliders" color={colors.ui.icon.accentForeground} size={16} strokeWidth={appIconStroke.strong} />
-            </ActionIconButton>
-          ) : null}
-          {showSaveAgentWorkflow ? (
-            <ActionIconButton label={t('messageBubble.saveAgentWorkflow')} disabled={actionLocked} onPress={run(onSaveAgentWorkflow)}>
-              <AppIcon name="workflow" color={colors.ui.icon.accentForeground} size={16} strokeWidth={appIconStroke.strong} />
-            </ActionIconButton>
-          ) : null}
-          {canUseWorkArtifact && onCopyWorkArtifact ? (
-            <ActionIconButton label={t('messageBubble.copyWorkArtifact')} disabled={actionLocked} onPress={run(onCopyWorkArtifact)}>
-              <AppIcon name="list-check" color={iconColor} size={16} strokeWidth={appIconStroke.strong} />
-            </ActionIconButton>
-          ) : null}
-          {canUseWorkArtifact && onContinueWorkArtifact ? (
-            <ActionIconButton label={t('messageBubble.continueWorkArtifact')} disabled={actionLocked} onPress={run(onContinueWorkArtifact)}>
-              <AppIcon name="spark" color={iconColor} size={16} strokeWidth={appIconStroke.strong} />
-            </ActionIconButton>
-          ) : null}
-          {showErrorActions && onConfigure ? (
-            <ActionIconButton label={t('messageBubble.configure')} disabled={actionLocked} onPress={run(onConfigure)} danger>
-              <AppIcon name="settings-sliders" color={colors.ui.tone.danger.foreground} size={16} strokeWidth={appIconStroke.strong} />
-            </ActionIconButton>
-          ) : null}
-          {showErrorActions && onTestModel ? (
-            <ActionIconButton label={t('messageBubble.test')} disabled={actionLocked} onPress={run(onTestModel)} danger>
-              <AppIcon name="zap" color={colors.ui.tone.danger.foreground} size={16} strokeWidth={appIconStroke.strong} />
-            </ActionIconButton>
-          ) : null}
-          {showErrorActions && onRetry ? (
-            <ActionIconButton label={t('messageBubble.retry')} disabled={actionLocked} onPress={run(onRetry)} danger>
-              <AppIcon name="retry" color={colors.ui.tone.danger.foreground} size={16} strokeWidth={appIconStroke.strong} />
-            </ActionIconButton>
-          ) : null}
-        </ScrollView>
-      ) : null}
-      {canDelete ? (
+      <View style={{ flex: 1, justifyContent: 'flex-end', paddingHorizontal: width < 380 ? 10 : 16, paddingBottom: Math.max(insets.bottom, 10) }}>
+        <Pressable
+          accessibilityLabel={t('messageBubble.closeActions')}
+          onPress={onClose}
+          style={{ position: 'absolute', top: 0, right: 0, bottom: 0, left: 0, backgroundColor: colors.backdrop }}
+        />
         <View
+          testID="message-action-sheet"
+          accessibilityRole="menu"
+          accessibilityLabel={t('messageBubble.actions')}
           style={{
-            alignSelf: 'stretch',
-            height: hasActionRow ? 56 : 58,
-            paddingHorizontal: 4,
-            paddingTop: hasActionRow ? 2 : 4,
-            paddingBottom: 4,
-            borderTopWidth: hasActionRow ? StyleSheet.hairlineWidth : 0,
-            borderTopColor: actionChrome.barBorder,
-            flexDirection: 'row',
-            alignItems: 'center',
-            justifyContent: 'flex-end',
+            width: '100%',
+            maxWidth: MESSAGE_ACTION_SHEET_MAX_WIDTH,
+            maxHeight: sheetMaxHeight,
+            alignSelf: 'center',
+            borderRadius: 8,
+            borderWidth: StyleSheet.hairlineWidth,
+            borderColor: actionChrome.barBorder,
+            backgroundColor: actionChrome.barSurface,
+            overflow: 'hidden',
+            elevation: 18,
+            shadowColor: colors.shadowTint,
+            shadowOpacity: 0.2,
+            shadowRadius: 20,
+            shadowOffset: { width: 0, height: 8 },
           }}
         >
-          <ActionIconButton label={t('common.delete')} disabled={actionLocked} onPress={run(onDelete)} danger>
-            <AppIcon name="delete" color={colors.ui.tone.danger.foreground} size={16} strokeWidth={appIconStroke.strong} />
-          </ActionIconButton>
+          <View style={{ minHeight: 54, flexDirection: 'row', alignItems: 'center', gap: 10, paddingLeft: 16, paddingRight: 7, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: actionChrome.barBorder }}>
+            {showMore ? (
+              <IslePressable
+                haptic
+                accessibilityRole="button"
+                accessibilityLabel={t('common.back')}
+                onPress={() => setShowMore(false)}
+                style={{ width: 44, height: 44, alignItems: 'center', justifyContent: 'center' }}
+              >
+                <AppIcon name="back-previous" color={colors.textSecondary} size={18} strokeWidth={appIconStroke.strong} />
+              </IslePressable>
+            ) : null}
+            <View style={{ flex: 1, minWidth: 0 }}>
+              <Text numberOfLines={1} style={{ color: colors.text, fontSize: 15, lineHeight: 20, fontWeight: '900' }}>
+                {showMore ? t('messageBubble.moreActions') : t('messageBubble.actions')}
+              </Text>
+              <Text numberOfLines={1} style={{ color: colors.textTertiary, fontSize: 11, lineHeight: 15, marginTop: 1 }}>
+                {isUser ? t('messageBubble.userMessage') : t('messageBubble.assistantMessage')}
+              </Text>
+            </View>
+            <IslePressable
+              accessibilityRole="button"
+              accessibilityLabel={t('common.close')}
+              onPress={onClose}
+              style={{ width: 44, height: 44, alignItems: 'center', justifyContent: 'center' }}
+            >
+              <AppIcon name="close" color={colors.textTertiary} size={18} strokeWidth={appIconStroke.strong} />
+            </IslePressable>
+          </View>
+          <ScrollView
+            keyboardShouldPersistTaps="handled"
+            showsVerticalScrollIndicator={visibleActions.length > 6}
+            contentContainerStyle={{ padding: 8, gap: 2 }}
+          >
+            {visibleActions.map((item) => (
+              <MessageActionSheetRow key={item.id} action={item} onPress={() => run(item)} />
+            ))}
+            {!showMore && overflowActions.length ? (
+              <MessageActionSheetRow
+                action={{
+                  id: 'more',
+                  label: t('messageBubble.moreActionsCount', { count: overflowActions.length }),
+                  icon: 'more',
+                  onPress: () => setShowMore(true),
+                }}
+                onPress={() => setShowMore(true)}
+              />
+            ) : null}
+          </ScrollView>
         </View>
-      ) : null}
-    </MotiView>
+      </View>
+    </Modal>
+  )
+}
+
+function MessageActionSheetRow({ action, onPress }: { action: MessageActionSheetAction; onPress: () => void }) {
+  const { colors, isGlass } = useAppTheme()
+  const actionChrome = resolveMessageActionChrome(colors, isGlass)
+  const foreground = action.danger
+    ? colors.ui.tone.danger.foreground
+    : action.emphasized
+      ? colors.ui.icon.accentForeground
+      : colors.textSecondary
+  const background = action.danger
+    ? colors.ui.tone.danger.background
+    : action.emphasized
+      ? colors.ui.actionBar.itemActiveBackground
+      : actionChrome.itemSurface
+  return (
+    <IslePressable
+      haptic
+      accessibilityRole="menuitem"
+      accessibilityLabel={action.label}
+      onPress={onPress}
+      style={({ pressed }) => ({
+        minHeight: 50,
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 12,
+        paddingHorizontal: 12,
+        borderRadius: 7,
+        backgroundColor: pressed ? colors.ui.actionBar.itemActiveBackground : background,
+        borderWidth: StyleSheet.hairlineWidth,
+        borderColor: action.danger ? colors.ui.tone.danger.border : actionChrome.itemBorder,
+        opacity: pressed ? 0.78 : 1,
+      })}
+    >
+      <View style={{ width: 30, height: 30, borderRadius: 7, alignItems: 'center', justifyContent: 'center', backgroundColor: actionChrome.barSurface }}>
+        <AppIcon name={action.icon} color={foreground} size={17} strokeWidth={appIconStroke.strong} />
+      </View>
+      <Text numberOfLines={2} style={{ flex: 1, minWidth: 0, color: foreground, fontSize: 13, lineHeight: 18, fontWeight: '800' }}>
+        {action.label}
+      </Text>
+      {action.id === 'more' ? <AppIcon name="back-next" color={colors.textTertiary} size={16} /> : null}
+    </IslePressable>
   )
 }
 
@@ -1306,6 +1492,8 @@ function WorkArtifactQuickActions({
         alignSelf: 'flex-end',
         flexDirection: 'row',
         alignItems: 'center',
+        minHeight: 44,
+        flexShrink: 0,
         gap: 6,
         marginTop: 10,
       }}
@@ -1349,15 +1537,14 @@ function WorkArtifactQuickActionButton({
 }) {
   const { colors } = useAppTheme()
   return (
-    <Pressable
+    <IslePressable
       onPress={onPress}
       accessible
       accessibilityRole="button"
       accessibilityLabel={label}
-      hitSlop={8}
       style={({ pressed }) => ({
-        width: 40,
-        height: 36,
+        width: 44,
+        height: 44,
         borderRadius: colors.ui.radius.controlSmall,
         alignItems: 'center',
         justifyContent: 'center',
@@ -1368,18 +1555,7 @@ function WorkArtifactQuickActionButton({
       })}
     >
       {children}
-    </Pressable>
-  )
-}
-
-function ErrorHint({ code }: { code?: ChatErrorCode }) {
-  const { colors } = useAppTheme()
-  const { t } = useTranslation()
-  return (
-    <View style={{ borderRadius: colors.ui.radius.field, padding: 9, backgroundColor: colors.ui.tone.danger.background, marginTop: 8, borderWidth: StyleSheet.hairlineWidth, borderColor: colors.ui.tone.danger.border }}>
-      <Text style={{ color: colors.ui.tone.danger.foreground, fontSize: 12, fontWeight: '800' }}>{errorTitle(code, t)}</Text>
-      <Text style={{ color: colors.textSecondary, fontSize: 11, lineHeight: 16, marginTop: 3 }}>{errorDescription(code, t)}</Text>
-    </View>
+    </IslePressable>
   )
 }
 
@@ -1387,14 +1563,9 @@ function MessageBodyReveal({ active, children }: { active: boolean; children: Re
   if (!active) return <View>{children}</View>
 
   return (
-    <MotiView
-      from={{ opacity: 0.92, translateY: active ? 2 : 0 }}
-      animate={{ opacity: 1, translateY: 0 }}
-      transition={{ type: 'timing', duration: 90 }}
-      style={{ marginTop: active ? 4 : 0 }}
-    >
+    <View style={{ marginTop: active ? 4 : 0 }}>
       {children}
-    </MotiView>
+    </View>
   )
 }
 
@@ -1406,18 +1577,20 @@ function canShowActionBar({
   canCopyProcessTrace,
   onCopyWorkArtifact,
   onContinueWorkArtifact,
-  canConfirmAgentAction,
+  canConfirmAction,
   canContinueAgentWorkflow,
   canPrepareAndroidUndo,
   canRepairAgentEvidence,
   canOpenWorkflowSettings,
-  canSaveAgentWorkflow,
+  canSaveWorkflowSkill,
   canDeleteMessage,
+  canQuoteMessage,
+  canEditMessage,
+  canStartMessageMultiSelect,
   onRetry,
   onRegenerate,
   onSpeak,
   onConfigure,
-  onTestModel,
 }: {
   message: Message
   displayText: string
@@ -1426,26 +1599,28 @@ function canShowActionBar({
   canCopyProcessTrace: boolean
   onCopyWorkArtifact?: (message: Message) => void
   onContinueWorkArtifact?: (message: Message) => void
-  canConfirmAgentAction: boolean
+  canConfirmAction: boolean
   canContinueAgentWorkflow: boolean
   canPrepareAndroidUndo: boolean
   canRepairAgentEvidence: boolean
   canOpenWorkflowSettings: boolean
-  canSaveAgentWorkflow: boolean
+  canSaveWorkflowSkill: boolean
   canDeleteMessage: boolean
+  canQuoteMessage: boolean
+  canEditMessage: boolean
+  canStartMessageMultiSelect: boolean
   onRetry?: (message: Message) => void
   onRegenerate?: () => void
   onSpeak?: (message: Message) => void
   onConfigure?: (message: Message) => void
-  onTestModel?: (message: Message) => void
 }): boolean {
   if (message.status === 'sending') return false
   const hasText = displayText.length > 0
-  if (message.role === 'user') return (hasText && !!onCopy) || canDeleteMessage
-  const hasCommonActions = (hasText && (!!onCopy || !!onSpeak || !!onCopyWorkArtifact || !!onContinueWorkArtifact)) || canCopyProcessTrace
+  if (message.role === 'user') return (hasText && !!onCopy) || canDeleteMessage || canQuoteMessage || canEditMessage || canStartMessageMultiSelect
+  const hasCommonActions = (hasText && (!!onCopy || !!onSpeak || !!onCopyWorkArtifact || !!onContinueWorkArtifact)) || canCopyProcessTrace || canQuoteMessage
   const hasRegenerate = isLastAssistant && message.status !== 'streaming' && !!onRegenerate
-  const hasErrorActions = message.status === 'error' && (!!onConfigure || !!onTestModel || !!onRetry)
-  return hasCommonActions || hasRegenerate || canConfirmAgentAction || canContinueAgentWorkflow || canPrepareAndroidUndo || canRepairAgentEvidence || canOpenWorkflowSettings || canSaveAgentWorkflow || hasErrorActions || canDeleteMessage
+  const hasErrorActions = message.status === 'error' && (!!onConfigure || !!onRetry)
+  return hasCommonActions || hasRegenerate || canConfirmAction || canContinueAgentWorkflow || canPrepareAndroidUndo || canRepairAgentEvidence || canOpenWorkflowSettings || canSaveWorkflowSkill || hasErrorActions || canDeleteMessage || canStartMessageMultiSelect
 }
 
 function hasThinkingContent(trace: ProcessTrace): boolean {
@@ -1483,6 +1658,15 @@ function hasVisibleProcessContent(trace: ProcessTrace): boolean {
   )
 }
 
+function shouldKeepBlockingProcessTraceVisible(trace: ProcessTrace, messageStatus: Message['status']): boolean {
+  if (messageStatus === 'streaming' || messageStatus === 'sending') return false
+  const normalized = normalizeTraceStatuses([trace], messageStatus)[0]
+  if (!normalized || !hasVisibleProcessContent(normalized)) return false
+  if (normalized.status === 'error' || normalized.status === 'cancelled') return true
+  if (isAgentWorkflowWaitingTrace(normalized)) return true
+  return false
+}
+
 function isGenericModelRequestTrace(trace: ProcessTrace): boolean {
   const metadata = trace.metadata ?? {}
   return trace.id.startsWith('model-') ||
@@ -1501,94 +1685,7 @@ function translateMessageBubbleLabel(t: TFunction, key: string, fallback: string
   return typeof translated === 'string' && translated !== key ? translated : fallback
 }
 
-function errorTitle(code: ChatErrorCode | undefined, t: TFunction): string {
-  switch (code) {
-    case 'missing_key':
-      return t('messageBubble.error.missing_key')
-    case 'disabled_provider':
-      return t('messageBubble.error.disabled_provider')
-    case 'credential_mismatch':
-      return t('messageBubble.error.credential_mismatch')
-    case 'bad_auth':
-      return t('messageBubble.error.bad_auth')
-    case 'bad_base_url':
-      return t('messageBubble.error.bad_base_url')
-    case 'model_unavailable':
-      return t('messageBubble.error.model_unavailable')
-    case 'network_error':
-      return t('messageBubble.error.network_error')
-    case 'timeout':
-      return t('messageBubble.error.timeout')
-    case 'rate_limited':
-      return t('messageBubble.error.rate_limited')
-    case 'max_tokens_exceeded':
-      return t('messageBubble.error.max_tokens_exceeded')
-    default:
-      return t('messageBubble.error.default')
-  }
-}
-
-function errorDescription(code: ChatErrorCode | undefined, t: TFunction): string {
-  switch (code) {
-    case 'missing_key':
-      return t('messageBubble.errorDescription.missing_key')
-    case 'disabled_provider':
-      return t('messageBubble.errorDescription.disabled_provider')
-    case 'credential_mismatch':
-      return t('messageBubble.errorDescription.credential_mismatch')
-    case 'bad_auth':
-      return t('messageBubble.errorDescription.bad_auth')
-    case 'bad_base_url':
-      return t('messageBubble.errorDescription.bad_base_url')
-    case 'model_unavailable':
-      return t('messageBubble.errorDescription.model_unavailable')
-    case 'network_error':
-      return t('messageBubble.errorDescription.network_error')
-    case 'timeout':
-      return t('messageBubble.errorDescription.timeout')
-    case 'rate_limited':
-      return t('messageBubble.errorDescription.rate_limited')
-    case 'max_tokens_exceeded':
-      return t('messageBubble.errorDescription.max_tokens_exceeded')
-    default:
-      return t('messageBubble.errorDescription.default')
-  }
-}
-
-function ActionIconButton({ label, children, danger = false, disabled = false, onPress }: { label: string; children: ReactNode; danger?: boolean; disabled?: boolean; onPress?: () => void }) {
-  const { colors, isGlass } = useAppTheme()
-  const actionChrome = resolveMessageActionChrome(colors, isGlass)
-  const idleBackground = danger ? colors.ui.tone.danger.background : actionChrome.itemSurface
-  const idleBorder = danger ? colors.ui.tone.danger.border : actionChrome.itemBorder
-
-  return (
-    <IslePressable
-      haptic={!disabled}
-      disabled={disabled}
-      onPress={disabled ? undefined : onPress}
-      accessible
-      accessibilityLabel={label}
-      accessibilityRole="button"
-      accessibilityState={disabled ? { disabled: true, busy: true } : undefined}
-      style={{
-        width: 44,
-        height: 44,
-        margin: 3,
-        borderRadius: colors.ui.radius.controlMiddle,
-        alignItems: 'center',
-        justifyContent: 'center',
-        backgroundColor: disabled ? colors.ui.control.disabledBackground : idleBackground,
-        borderWidth: StyleSheet.hairlineWidth,
-        borderColor: disabled ? colors.ui.control.disabledBorder : idleBorder,
-        opacity: 1,
-      }}
-    >
-      {children}
-    </IslePressable>
-  )
-}
-
-function TypingDots() {
+function TypingDots({ motion }: { motion: MotionIntensity }) {
   const { colors } = useAppTheme()
 
   return (
@@ -1596,9 +1693,9 @@ function TypingDots() {
       {[0, 1, 2].map((item) => (
         <MotiView
           key={item}
-          from={{ opacity: 0.25, translateY: 0 }}
-          animate={{ opacity: 1, translateY: -3 }}
-          transition={{ loop: true, type: 'timing', duration: 520, delay: item * 120 }}
+          from={motion === 'full' ? { opacity: 0.22, scale: 0.92 } : { opacity: 0.82, scale: 1 }}
+          animate={{ opacity: 0.82, scale: 1 }}
+          transition={{ loop: motion === 'full', type: 'timing', duration: motion === 'full' ? 512 : 1, delay: motion === 'full' ? item * 112 : 0 }}
           style={{ width: 6, height: 6, borderRadius: 3, backgroundColor: colors.textSecondary }}
         />
       ))}
@@ -1606,15 +1703,15 @@ function TypingDots() {
   )
 }
 
-function Cursor() {
+function Cursor({ motion }: { motion: MotionIntensity }) {
   const { colors } = useAppTheme()
 
   return (
     <MotiView
-      from={{ opacity: 0.2, scaleY: 0.8 }}
-      animate={{ opacity: 1, scaleY: 1.05 }}
-      transition={{ loop: true, type: 'timing', duration: 620 }}
-      style={{ width: 8, height: 18, borderRadius: 4, backgroundColor: colors.ui.control.primaryBackground, marginTop: 2 }}
+      from={motion === 'full' ? { opacity: 0.28, scaleY: 0.82 } : { opacity: 0.82, scaleY: 1 }}
+      animate={{ opacity: 0.82, scaleY: 1 }}
+      transition={{ loop: motion === 'full', type: 'timing', duration: motion === 'full' ? 768 : 1 }}
+      style={{ width: 2, height: 18, borderRadius: 1, backgroundColor: colors.ui.icon.accentForeground, marginTop: 3, marginLeft: 1 }}
     />
   )
 }
@@ -1643,9 +1740,12 @@ const areMessagesEqual = (
 
   // 其他关键 props 比较
   if (prevProps.index !== nextProps.index) return false
+  if (prevProps.motion !== nextProps.motion) return false
   if (prevProps.isLastAssistant !== nextProps.isLastAssistant) return false
   if (prevProps.showThinkingStatus !== nextProps.showThinkingStatus) return false
   if (prevProps.activeActionMessageId !== nextProps.activeActionMessageId) return false
+  if (prevProps.multiSelectActive !== nextProps.multiSelectActive) return false
+  if (prevProps.selected !== nextProps.selected) return false
 
   return true
 }

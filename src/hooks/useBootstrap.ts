@@ -2,14 +2,25 @@ import { useEffect, useState } from 'react'
 import * as SystemUI from 'expo-system-ui'
 import { useChatStore } from '@/store/chatStore'
 import { useSettingsStore } from '@/store/settingsStore'
-import { initializeContextStore } from '@/services/contextStore'
-import { localDataStore } from '@/services/localDataStore'
 import { checkLatestApkReleaseSilently, shouldAutoCheckApkUpdate, shouldRecordApkUpdateCheck } from '@/services/appUpdates'
 import { clearStagedApkDownloads } from '@/services/apkInstallCache'
+import {
+  createVNextConversationRuntime,
+  initializePortableDataApplication,
+  recoverInterruptedPortableImport,
+  recoverConversationWorkspaceWritebackReceipts,
+  recoverVNextInterruptedTasks,
+  recoverVNextWorkflowCheckpoints,
+} from '@/bootstrap'
+import { initializeConversationReplyStart } from '@/bootstrap/conversationReplyStart'
+import { initializeConversationSkills } from '@/bootstrap/conversationSkills'
+import { initializeConversationStorePersistence } from '@/bootstrap/conversationStorePersistence'
+import { initializeSettingsStorePersistence } from '@/bootstrap/settingsStorePersistence'
+import { cancelAllConversationAssistantDetachedWork } from '@/bootstrap/conversationAssistantDetachedWorkRegistry'
+import { recoverVNextChatRuns } from '@/presentation/features/conversations/vnextPlainChatCommand'
 import { initI18n } from '@/i18n'
 import { st } from '@/i18n/service'
 import { useAppTheme } from './useAppTheme'
-
 export function useBootstrap() {
   const loadChats = useChatStore((state) => state.load)
   const loadSettings = useSettingsStore((state) => state.load)
@@ -23,24 +34,61 @@ export function useBootstrap() {
 
   useEffect(() => {
     let mounted = true
+    const recoveryController = new AbortController()
     async function load() {
+      try {
+        const portableImportRecovery = await recoverInterruptedPortableImport()
+        if (portableImportRecovery.status === 'recovery_required') {
+          throw new Error('Portable import recovery requires attention.')
+        }
+      } catch (error) {
+        const message = error instanceof Error ? error.message : st('error.unknownError')
+        useChatStore.getState().setError(st('bootstrap.failed', {
+          label: st('bootstrap.chatData'),
+          message,
+        }))
+        if (mounted) {
+          setState((current) => ({ ...current, errorCount: current.errorCount + 1 }))
+        }
+        return
+      }
+      initializePortableDataApplication()
+      initializeConversationStorePersistence()
+      initializeSettingsStorePersistence()
+      initializeConversationSkills()
+      initializeConversationReplyStart()
       const results = await Promise.allSettled([
         safeBootstrap(st('bootstrap.chatData'), loadChats),
         safeBootstrap(st('bootstrap.settings'), loadSettings),
       ])
-      const initialErrors = results.filter((result) => result.status === 'rejected').length
+      let initialErrors = results.filter((result) => result.status === 'rejected').length
+      try {
+        const recoveredRuns = await recoverVNextChatRuns(createVNextConversationRuntime())
+        const workflowCheckpointRecovery = await recoverVNextWorkflowCheckpoints(
+          recoveredRuns.map((run) => run.id),
+          { signal: recoveryController.signal },
+        )
+        if (workflowCheckpointRecovery.completion === 'cancelled') return
+        if (workflowCheckpointRecovery.failedCount > 0) initialErrors += 1
+        const workspaceReceiptRecovery = await recoverConversationWorkspaceWritebackReceipts(
+          recoveredRuns,
+          { signal: recoveryController.signal },
+        )
+        if (workspaceReceiptRecovery.status === 'cancelled') return
+        if (
+          workspaceReceiptRecovery.ambiguousReceiptCount > 0
+          || workspaceReceiptRecovery.failedReceiptCount > 0
+        ) {
+          initialErrors += 1
+        }
+        const taskRecovery = await recoverVNextInterruptedTasks()
+        if (!taskRecovery.ok) throw new Error(taskRecovery.error.message)
+      } catch {
+        initialErrors += 1
+      }
       initI18n(useSettingsStore.getState().settings.language)
 
       if (mounted) {
-        // 优化：不再在启动时初始化 contextStore (会加载 AI 模型)
-        // AI 模型现在采用延迟加载，仅在首次使用时加载
-        void safeBootstrap(st('bootstrap.localDatabase'), async () => {
-          await localDataStore.initialize()
-          // 移除: await initializeContextStore()
-          // Context store 将在首次需要时通过 lazyEmbedding 自动初始化
-        }).catch(() => {
-          setState((current) => ({ ...current, errorCount: current.errorCount + 1 }))
-        })
         void safeBootstrap(st('bootstrap.stagedApkCleanup'), async () => {
           await clearStagedApkDownloads()
         }).catch(() => {
@@ -70,6 +118,8 @@ export function useBootstrap() {
     void load()
     return () => {
       mounted = false
+      recoveryController.abort()
+      cancelAllConversationAssistantDetachedWork()
     }
   }, [loadChats, loadSettings])
 

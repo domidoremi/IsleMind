@@ -1,6 +1,6 @@
 import AsyncStorage from '@react-native-async-storage/async-storage'
 import * as FileSystem from 'expo-file-system/legacy'
-import type { Settings } from '@/types'
+import type { Settings } from '@/types/settingsContracts'
 
 const SCHEMA = 'islemind.runtime-log.v1'
 const DEFAULT_MAX_BYTES = 1048576

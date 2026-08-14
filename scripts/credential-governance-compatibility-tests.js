@@ -13,7 +13,17 @@ const {
   CREDENTIAL_GOVERNANCE_COMPATIBILITY_EVAL_SCHEMA,
   CREDENTIAL_GOVERNANCE_COMPATIBILITY_FIXTURE_IDS,
   runCredentialGovernanceCompatibilityEvaluation,
-} = require('../src/services/credentialGovernanceCompatibilityEvaluation.ts')
+} = require('../src/modules/providers/testing/credentialGovernanceCompatibilityEvaluation.ts')
+const {
+  SecureKeyValueStorageError,
+  createVerifiedSecureKeyValueStorage,
+} = require('../src/core/index.ts')
+const {
+  ProviderCredentialStorageError,
+  createProviderCredentialStorage,
+  providerCredentialGroupStorageKey,
+  providerCredentialStorageKey,
+} = require('../src/modules/providers/index.ts')
 
 function registerTypeScriptSupport() {
   if (require.extensions['.ts']?.isCredentialGovernanceCompatibilityHook) return
@@ -96,7 +106,248 @@ function assertSourceMatches(source, pattern, label) {
   assert.ok(pattern.test(source), label)
 }
 
-function run() {
+function createMemorySecureStorage(initialEntries = []) {
+  const values = new Map(initialEntries)
+  const faults = {
+    getItem: null,
+    setItem: null,
+    removeItem: null,
+  }
+  const calls = []
+
+  function readFault(operation, key, value) {
+    const fault = faults[operation]
+    if (!fault) return null
+    return typeof fault === 'function' ? fault({ key, value }) : fault
+  }
+
+  return {
+    values,
+    faults,
+    calls,
+    port: {
+      async getItem(key) {
+        calls.push({ operation: 'read', key })
+        const fault = readFault('getItem', key)
+        if (fault) throw fault
+        return values.get(key) ?? null
+      },
+      async setItem(key, value) {
+        calls.push({ operation: 'write', key })
+        const fault = readFault('setItem', key, value)
+        if (fault) throw fault
+        values.set(key, value)
+      },
+      async removeItem(key) {
+        calls.push({ operation: 'delete', key })
+        const fault = readFault('removeItem', key)
+        if (fault) throw fault
+        values.delete(key)
+      },
+    },
+  }
+}
+
+async function captureRejected(action, label) {
+  try {
+    await action()
+  } catch (error) {
+    return error
+  }
+  assert.fail(label)
+}
+
+function assertRedactedError(error, { code, scope, operation, secret, platformText }, label) {
+  assert.ok(
+    error instanceof SecureKeyValueStorageError || error instanceof ProviderCredentialStorageError,
+    label + ' returns a typed storage error',
+  )
+  assert.equal(error.code, code, label + ' preserves the stable error code')
+  if (scope !== undefined) assert.equal(error.scope, scope, label + ' preserves the credential scope')
+  if (operation !== undefined) assert.equal(error.operation, operation, label + ' preserves the secure operation')
+  const projected = String(error) + '\n' + JSON.stringify(error)
+  if (secret) assert.equal(projected.includes(secret), false, label + ' does not return secret text')
+  if (platformText) assert.equal(projected.includes(platformText), false, label + ' does not return platform error text')
+}
+
+async function assertVerifiedSecureStorageBehavior() {
+  const fixture = createMemorySecureStorage()
+  const storage = createVerifiedSecureKeyValueStorage(fixture.port)
+  await storage.setItem('verified-key', 'verified-secret')
+  assert.equal(await storage.getItem('verified-key'), 'verified-secret', 'verified secure storage rereads a successful write')
+  await storage.removeItem('verified-key')
+  assert.equal(await storage.getItem('verified-key'), null, 'verified secure storage rereads a successful delete')
+  assert.deepEqual(
+    fixture.calls.map((call) => call.operation),
+    ['write', 'read', 'read', 'delete', 'read', 'read'],
+    'verified secure storage serializes each mutation with an exact reread',
+  )
+
+  const platformText = 'native-secure-store-platform-detail'
+  const secret = 'credential-that-must-stay-redacted'
+  for (const testCase of [
+    {
+      operation: 'read',
+      fault: 'getItem',
+      expectedCode: 'read_failed',
+      action: (candidate) => candidate.getItem('read-fault-key'),
+    },
+    {
+      operation: 'write',
+      fault: 'setItem',
+      expectedCode: 'write_failed',
+      action: (candidate) => candidate.setItem('write-fault-key', secret),
+    },
+    {
+      operation: 'delete',
+      fault: 'removeItem',
+      expectedCode: 'delete_failed',
+      action: (candidate) => candidate.removeItem('delete-fault-key'),
+    },
+  ]) {
+    const failed = createMemorySecureStorage([['delete-fault-key', secret]])
+    failed.faults[testCase.fault] = new Error(platformText)
+    const error = await captureRejected(
+      () => testCase.action(createVerifiedSecureKeyValueStorage(failed.port)),
+      testCase.operation + ' fault must reject',
+    )
+    assertRedactedError(error, {
+      code: testCase.expectedCode,
+      operation: testCase.operation,
+      secret,
+      platformText,
+    }, 'secure ' + testCase.operation + ' fault')
+  }
+
+  const writeVerificationPort = {
+    getItem: async () => null,
+    setItem: async () => undefined,
+    removeItem: async () => undefined,
+  }
+  const writeVerificationError = await captureRejected(
+    () => createVerifiedSecureKeyValueStorage(writeVerificationPort).setItem('verification-key', secret),
+    'unpersisted secure write must reject',
+  )
+  assertRedactedError(writeVerificationError, {
+    code: 'verification_failed',
+    operation: 'write',
+    secret,
+  }, 'secure write verification mismatch')
+
+  const deleteVerificationPort = {
+    getItem: async () => secret,
+    setItem: async () => undefined,
+    removeItem: async () => undefined,
+  }
+  const deleteVerificationError = await captureRejected(
+    () => createVerifiedSecureKeyValueStorage(deleteVerificationPort).removeItem('verification-key'),
+    'undeleted secure item must reject',
+  )
+  assertRedactedError(deleteVerificationError, {
+    code: 'verification_failed',
+    operation: 'delete',
+    secret,
+  }, 'secure delete verification mismatch')
+}
+
+async function assertProviderCredentialStorageBehavior() {
+  assert.equal(
+    providerCredentialStorageKey('provider-main'),
+    'islemind.key.provider-main',
+    'provider credential storage preserves the historical provider key name',
+  )
+  assert.equal(
+    providerCredentialGroupStorageKey('provider-main', 'group-primary'),
+    'islemind.key.provider-main.group-primary',
+    'provider credential storage preserves the historical group key name',
+  )
+  assert.equal(
+    providerCredentialStorageKey('provider/compatible'),
+    'islemind.key.provider_compatible',
+    'provider credential storage preserves historical sanitized-key behavior',
+  )
+
+  const fixture = createMemorySecureStorage()
+  const credentials = createProviderCredentialStorage(createVerifiedSecureKeyValueStorage(fixture.port))
+  await credentials.setProviderCredential('provider-main', 'provider-secret')
+  await credentials.setCredentialGroupCredential('provider-main', 'group-primary', 'group-secret')
+  assert.equal(await credentials.getProviderCredential('provider-main'), 'provider-secret', 'provider credential write is verified and readable')
+  assert.equal(await credentials.getCredentialGroupCredential('provider-main', 'group-primary'), 'group-secret', 'group credential write is verified and readable')
+  await credentials.deleteProviderCredential('provider-main')
+  await credentials.deleteCredentialGroupCredential('provider-main', 'group-primary')
+  assert.equal(await credentials.getProviderCredential('provider-main'), null, 'provider credential delete is verified')
+  assert.equal(await credentials.getCredentialGroupCredential('provider-main', 'group-primary'), null, 'group credential delete is verified')
+
+  const collision = await captureRejected(
+    () => credentials.applyMutations([
+      { providerId: 'provider/a', credential: 'first-secret' },
+      { providerId: 'provider?a', credential: 'second-secret' },
+    ]),
+    'sanitized provider-key collision must reject',
+  )
+  assertRedactedError(collision, {
+    code: 'invalid_identity',
+    scope: 'replacement',
+    secret: 'second-secret',
+  }, 'sanitized provider-key collision')
+
+  const providerKey = providerCredentialStorageKey('rollback-provider')
+  const groupKey = providerCredentialGroupStorageKey('rollback-provider', 'late-group')
+  const rollbackFixture = createMemorySecureStorage([
+    [providerKey, 'old-provider-secret'],
+    [groupKey, 'old-group-secret'],
+  ])
+  const platformText = 'provider-platform-write-detail'
+  rollbackFixture.faults.setItem = ({ key, value }) => {
+    if (key === groupKey && value === 'new-group-secret') {
+      rollbackFixture.faults.setItem = null
+      return new Error(platformText)
+    }
+    return null
+  }
+  const rollbackCredentials = createProviderCredentialStorage(
+    createVerifiedSecureKeyValueStorage(rollbackFixture.port),
+  )
+  const rollbackError = await captureRejected(
+    () => rollbackCredentials.applyMutations([
+      { providerId: 'rollback-provider', credential: 'new-provider-secret' },
+      { providerId: 'rollback-provider', groupId: 'late-group', credential: 'new-group-secret' },
+    ]),
+    'later provider credential failure must reject',
+  )
+  assertRedactedError(rollbackError, {
+    code: 'write_failed',
+    scope: 'replacement',
+    secret: 'new-group-secret',
+    platformText,
+  }, 'provider credential rollback')
+  assert.equal(rollbackFixture.values.get(providerKey), 'old-provider-secret', 'provider credential rollback restores the earlier mutation')
+  assert.equal(rollbackFixture.values.get(groupKey), 'old-group-secret', 'provider credential rollback restores the failed key snapshot')
+
+  const rollbackFailureFixture = createMemorySecureStorage([
+    [providerKey, 'old-provider-secret'],
+    [groupKey, 'old-group-secret'],
+  ])
+  rollbackFailureFixture.faults.setItem = ({ key }) => key === groupKey ? new Error(platformText) : null
+  const rollbackFailureCredentials = createProviderCredentialStorage(
+    createVerifiedSecureKeyValueStorage(rollbackFailureFixture.port),
+  )
+  const rollbackFailure = await captureRejected(
+    () => rollbackFailureCredentials.applyMutations([
+      { providerId: 'rollback-provider', credential: 'new-provider-secret' },
+      { providerId: 'rollback-provider', groupId: 'late-group', credential: 'new-group-secret' },
+    ]),
+    'provider credential rollback failure must reject',
+  )
+  assertRedactedError(rollbackFailure, {
+    code: 'rollback_failed',
+    scope: 'replacement',
+    secret: 'new-group-secret',
+    platformText,
+  }, 'provider credential rollback failure')
+}
+
+async function run() {
   assert.equal(
     CREDENTIAL_GOVERNANCE_COMPATIBILITY_EVAL_SCHEMA,
     'islemind.credential-governance-compatibility-eval.v1',
@@ -206,40 +457,55 @@ function run() {
     'missing-observability-consent',
   ])
 
-  const secureStorageSource = readSource('src/services/secureStorage.ts')
+  const secureStorageSource = readSource('src/platform/secureStorage/expoSecureKeyValueStorage.ts')
+  assertSourceIncludes(secureStorageSource, 'createExpoSecureKeyValueStoragePort', 'Platform owns the concrete secure-storage adapter')
   assertSourceIncludes(secureStorageSource, 'SecureStore.setItemAsync', 'native secure storage writes through SecureStore')
-  assertSourceIncludes(secureStorageSource, "const WEB_PREFIX = '@islemind/secure/'", 'web fallback uses a namespaced secure key prefix')
+  assertSourceIncludes(secureStorageSource, "'@islemind/secure/'", 'web fallback preserves the namespaced secure key prefix')
 
-  const secureKeySource = readSource('src/services/ai/secureKey.ts')
-  assertSourceIncludes(secureKeySource, 'secureProviderKey(providerId: string)', 'provider secure-key helper exists')
-  assertSourceIncludes(secureKeySource, 'secureProviderGroupKey(providerId: string, groupId: string)', 'credential group secure-key helper exists')
-  assertSourceIncludes(secureKeySource, 'clearKnownSearchSecureKeys', 'search secure-key cleanup helper exists')
-  assertSourceIncludes(secureKeySource, 'clearKnownObservabilitySecureKeys', 'observability secure-key cleanup helper exists')
+  const providerCredentialStorageSource = readSource('src/modules/providers/providerCredentialStorage.ts')
+  assertSourceIncludes(providerCredentialStorageSource, 'providerCredentialStorageKey', 'Providers owns stable provider secure-key derivation')
+  assertSourceIncludes(providerCredentialStorageSource, 'providerCredentialGroupStorageKey', 'Providers owns stable credential-group key derivation')
+  assertSourceIncludes(providerCredentialStorageSource, 'replaceCredentials', 'Providers owns replacement semantics for imported credentials')
+  assertSourceIncludes(providerCredentialStorageSource, "'rollback_failed'", 'Providers reports failed rollback without raw platform errors')
 
-  const credentialSource = readSource('src/services/ai/providerCredentials.ts')
-  assertSourceIncludes(credentialSource, 'chooseCredentialForModel', 'model-scoped credential selection exists')
-  assertSourceIncludes(credentialSource, 'availableModels.includes(upstreamModel)', 'credential selection checks upstream model availability')
-  assertSourceIncludes(credentialSource, 'excludedCredentialGroupIds', 'credential selection supports excluded groups')
-  assertSourceIncludes(credentialSource, 'updateCredentialGroupHealth', 'credential health updates exist')
-  assertSourceIncludes(credentialSource, 'failureCount', 'credential health tracks failure count')
+  const credentialCompositionSource = readSource('src/bootstrap/secureCredentialStorage.ts')
+  assertSourceIncludes(credentialCompositionSource, 'createExpoSecureKeyValueStoragePort', 'bootstrap composes the platform secure-storage adapter')
+  assertSourceIncludes(credentialCompositionSource, 'clearKnownSearchSecureKeys', 'bootstrap owns search secure-key cleanup')
+  assertSourceIncludes(credentialCompositionSource, 'clearKnownObservabilitySecureKeys', 'bootstrap owns observability secure-key cleanup')
 
-  const storageSource = readSource('src/services/storage.ts')
-  assertSourceIncludes(storageSource, 'apiKey: \'\',', 'portable provider export strips provider API keys')
-  assertSourceIncludes(storageSource, 'persistImportedProviderSecrets', 'full restore persists imported provider secrets through secure helpers')
-  assertSourceIncludes(storageSource, 'setSecureCredentialGroupKey', 'restore moves credential group keys into secure storage')
-  assertSourceIncludes(storageSource, 'clearKnownObservabilitySecureKeys', 'restore/reset cleanup clears observability secure keys')
-  assertSourceIncludes(storageSource, 'clearKnownSearchSecureKeys', 'restore/reset cleanup clears search secure keys')
+  const credentialSource = readSource('src/modules/providers/providerCredentials.ts')
+  assertSourceIncludes(credentialSource, 'selectProviderCredential', 'target model-scoped credential selection exists')
+  assertSourceIncludes(credentialSource, 'availableModels.includes(upstreamModelId)', 'target credential selection checks upstream model availability')
+  assertSourceIncludes(credentialSource, 'excludedCredentialIds', 'target credential selection supports excluded groups')
+  assertSourceIncludes(credentialSource, 'updateProviderCredentialHealth', 'target credential health updates exist')
+  assertSourceIncludes(credentialSource, 'failureCount', 'target credential health tracks failure count')
 
+  const portableResetSource = readSource('src/bootstrap/portableDataReset.ts')
+  const portablePayloadSource = readSource('src/modules/data-management/application/portableDataPayload.ts')
+  const portableImportRecoverySource = readSource('src/bootstrap/portableImportRecovery.ts')
+  assertSourceIncludes(portablePayloadSource, 'apiKey: \'\',', 'portable provider export strips provider API keys')
+  assertSourceIncludes(portableImportRecoverySource, 'createSecureSidecar(item.sourceRef, item.sourceRaw)', 'full restore durably prepares provider credential before-images')
+  assertSourceIncludes(portableImportRecoverySource, 'createSecureSidecar(item.targetRef, item.targetRaw)', 'full restore durably prepares imported provider credentials')
+  assertSourceIncludes(portableImportRecoverySource, 'providerCredentialStorage.applyMutations(providerMutations)', 'restore replaces provider and group credentials through the Providers API')
+  assertSourceIncludes(portableImportRecoverySource, '[...KNOWN_SEARCH_SECURE_KEYS, OBSERVABILITY_SINK_API_KEY]', 'restore includes search and observability keys in verified secure-state recovery')
+  assertSourceIncludes(portableResetSource, 'clearKnownObservabilitySecureKeys', 'reset cleanup clears observability secure keys')
+  assertSourceIncludes(portableResetSource, 'clearKnownSearchSecureKeys', 'reset cleanup clears search secure keys')
   const settingsSource = readSource('src/store/settingsStore.ts')
   assertSourceIncludes(settingsSource, 'setObservabilitySinkApiKey', 'observability sink key setter exists')
   assertSourceIncludes(settingsSource, 'observabilitySinkApiKeyConfigured', 'observability sink stores configured state instead of raw key state')
   assertSourceIncludes(settingsSource, 'observabilitySinkUserOptIn: false', 'observability sink defaults to no user opt-in')
   assertSourceIncludes(settingsSource, 'observabilitySinkWorkspaceConsent: false', 'observability sink defaults to no workspace consent')
-  assertSourceIncludes(settingsSource, 'deleteSecureItem(OBSERVABILITY_SINK_API_KEY)', 'clear-all removes observability sink key')
+  assertSourceIncludes(settingsSource, 'providerCredentialStorage.applyMutations', 'provider settings mutations use the rollback-capable Providers API')
+  assertSourceIncludes(settingsSource, 'secureKeyValueStorage.removeItem(OBSERVABILITY_SINK_API_KEY)', 'clear-all removes the observability sink key through verified storage')
 
-  const proxyPolicySource = readSource('src/services/ai/policy/proxyPolicy.ts')
+  await assertVerifiedSecureStorageBehavior()
+  await assertProviderCredentialStorageBehavior()
+
+  const proxyPolicySource = readSource('src/modules/providers/providerProxyPolicy.ts')
+  const proxyPolicyBindingSource = readSource('src/bootstrap/providerProxyPolicy.ts')
   const urlSafetySource = readSource('src/utils/networkUrlSafety.ts')
-  assertSourceIncludes(proxyPolicySource, 'safeHttpUrl', 'proxy policy uses URL safety helper')
+  assertSourceIncludes(proxyPolicySource, 'dependencies.safeHttpUrl', 'target proxy policy uses an injected URL safety port')
+  assertSourceIncludes(proxyPolicyBindingSource, 'createProviderProxyPolicy({ safeHttpUrl })', 'bootstrap binds the concrete URL safety helper to the target proxy policy')
   assertSourceIncludes(urlSafetySource, 'parsed.username || parsed.password', 'URL safety helper rejects userinfo credentials')
 
   const runtimeLogSource = readSource('src/services/runtimeLog.ts')
@@ -254,6 +520,11 @@ function run() {
   console.log('Credential governance compatibility tests passed')
 }
 
-if (require.main === module) run()
+if (require.main === module) {
+  run().catch((error) => {
+    console.error(error)
+    process.exitCode = 1
+  })
+}
 
 module.exports = { run }

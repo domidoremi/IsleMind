@@ -1,21 +1,33 @@
 import { create } from 'zustand'
-import { getModelConfig, getProviderConfigIssue, XIAOMI_MIMO_PAYG_BASE_URL, getXiaomiMimoOfficialBaseUrl, sanitizeProviderBaseUrl } from '@/types'
-import type { Settings, AIProvider, Language, ProviderCredentialGroup, ThemeId, ThemeMode } from '@/types'
-import { loadData, saveData } from '@/services/storage'
-import { deleteSecureItem, getSecureItem, setSecureItem } from '@/services/secureStorage'
-import { applyProviderPreset, detectProviderPreset, getProviderPreset, normalizeProviderSyncPolicy } from '@/services/ai/providerRegistry'
-import { normalizeProviderCredentialGroups } from '@/services/ai/providerCredentials'
-import { legacySearchModeForProvider, resolveSearchProvider } from '@/services/searchPolicy'
+import { AppState } from 'react-native'
+import { getModelConfig } from '@/types/modelCatalog'
+import { getProviderConfigIssue, XIAOMI_MIMO_PAYG_BASE_URL, getXiaomiMimoOfficialBaseUrl, sanitizeProviderBaseUrl } from '@/types/providerBaseUrls'
+import type { AIProvider, ProviderCredentialGroup } from '@/types/providerContracts'
+import type { Settings, Language, ThemeId, ThemeMode } from '@/types/settingsContracts'
+import {
+  loadPersistedProviderMetadata,
+  loadPersistedSettings,
+  savePersistedProviderMetadata,
+  savePersistedSettings,
+} from '@/presentation/features/settings/settingsStorePersistenceCommand'
+import {
+  OBSERVABILITY_SINK_API_KEY,
+  providerCredentialStorage,
+  secureKeyValueStorage,
+} from '@/bootstrap/secureCredentialStorage'
+import { applyProviderPreset, detectProviderPreset, getProviderPreset, normalizeProviderSyncPolicy } from '@/bootstrap/providerRegistry'
+import { normalizeProviderClientCompatibilityMode, normalizeProviderCredentialGroups, normalizeProviderPresetId, normalizeProviderPresetSelection, type ProviderCredentialMutation } from '@/modules/providers'
+import { legacySearchModeForProvider, resolveSearchProvider } from '@/modules/integrations'
 import { clearHistoricalInjectedProviderModels, getProviderPreferredModel, hasRemoteProviderModelEvidence, isProviderConversationReady, normalizeProviderModelAliases } from '@/utils/providerModels'
 import { buildProviderModelConfigsForStorage, hasOversizedProviderModelStorage, pruneCredentialGroupModelsForStorage, pruneProviderModelsForStorage } from '@/utils/providerModelStorage'
-import { getPolicyPreferredProviderModel, providerHasPolicyAllowedModel } from '@/services/ai/policy/providerModelAccess'
+import { getPolicyPreferredProviderModel, providerHasPolicyAllowedModel } from '@/bootstrap/providerModelAccess'
 import { st } from '@/i18n/service'
 import { getSystemLanguage, setServiceLanguage } from '@/i18n/service'
 import { clearLanguagePreferenceSource, loadLanguagePreferenceSource, resolveEffectiveLanguage, saveLanguagePreferenceSource } from '@/i18n/languagePreference'
 import { normalizeThemeId } from '@/theme/colors'
-import { sanitizeSettingsUrlFields } from '@/services/settingsUrlPolicy'
-import { removeProviderHealthRecordsByProviderId, clearProviderHealthSnapshot } from '@/services/ai/providerHealthStore'
-import { invalidateAllCompactStates, invalidateCompactStatesByProvider } from '@/services/ai/compact/compactStateStore'
+import { normalizeSettingsIdentityPreferences, normalizeSettingsThemeAccent, normalizeSettingsThemeFamily, normalizeSettingsThemeMode, sanitizeSettingsUrlFields } from '@/modules/settings'
+import { removeProviderHealthRecordsByProviderId, clearProviderHealthSnapshot } from '@/bootstrap/providerHealthRepository'
+import { invalidateAllCompactStates, invalidateCompactStatesByProvider } from '@/bootstrap/providerCompactStateRepository'
 
 interface SettingsState {
   settings: Settings
@@ -25,6 +37,7 @@ interface SettingsState {
   updateSettings: (updates: Partial<Settings>) => void
   setTheme: (theme: ThemeMode) => void
   setThemeId: (themeId: ThemeId) => void
+  setThemeAccent: (themeAccent: string | undefined) => void
   setLanguage: (language: Language) => void
   addProvider: (provider: AIProvider) => Promise<void>
   addProviders: (providers: AIProvider[], options?: AddProvidersOptions) => Promise<void>
@@ -68,6 +81,7 @@ interface AddProvidersProgress {
 interface AddProvidersOptions {
   onProgress?: (progress: AddProvidersProgress) => void
   yieldEvery?: number
+  persist?: 'immediate' | 'deferred'
 }
 
 interface ProviderUpdateOptions {
@@ -82,6 +96,9 @@ interface ProviderPatch {
 const defaultSettings: Settings = {
   theme: 'system',
   themeId: 'minimal',
+  themeAccent: undefined,
+  assistantDisplayName: undefined,
+  modelDisplayAliases: undefined,
   language: 'zh-CN',
   defaultProvider: null,
   fontSize: 16,
@@ -89,10 +106,10 @@ const defaultSettings: Settings = {
   systemStatusNotificationsEnabled: false,
   defaultTemperature: undefined,
   defaultMaxTokens: undefined,
-  memoryEnabled: true,
-  knowledgeEnabled: true,
+  memoryEnabled: false,
+  knowledgeEnabled: false,
   webSearchEnabled: true,
-  webSearchMode: 'native',
+  webSearchMode: 'tavily',
   knowledgeTopK: 4,
   memoryTopK: 4,
   ragMode: 'hybrid',
@@ -109,7 +126,7 @@ const defaultSettings: Settings = {
   ragCrossEncoderEnabled: true,
   ragColbertEnabled: true,
   ragLlmlinguaEnabled: true,
-  searchProvider: 'native',
+  searchProvider: 'islemind',
   autoUpdateCheckEnabled: true,
   providerCatalogVersion: 1,
   skillsEnabled: true,
@@ -122,7 +139,7 @@ const defaultSettings: Settings = {
   agentWorkflowAllowDestructiveTools: 'confirm',
   agentWorkflowOutputCharLimit: 4800,
   transportMode: 'auto',
-  remoteCompactMode: 'off',
+  remoteCompactMode: 'auto',
   remoteCompactThreshold: 0.8,
   remoteCompactThresholdTokens: 200000,
   payloadPolicyMode: 'warn',
@@ -193,27 +210,23 @@ const PROVIDER_PERSISTENCE_DEBOUNCE_MS = 900
 let pendingProviderPersistenceSnapshot: AIProvider[] | null = null
 let providerPersistenceTimer: ReturnType<typeof setTimeout> | null = null
 let providerPersistenceQueue = Promise.resolve()
-
-function secureProviderKey(id: string): string {
-  return `islemind.key.${id.replace(/[^a-zA-Z0-9._-]/g, '_')}`
-}
-
-function secureProviderGroupKey(providerId: string, groupId: string): string {
-  return `islemind.key.${providerId.replace(/[^a-zA-Z0-9._-]/g, '_')}.${groupId.replace(/[^a-zA-Z0-9._-]/g, '_')}`
-}
+let latestProviderPersistence = Promise.resolve()
 
 const TAVILY_KEY = 'islemind.key.tavily'
 const GOOGLE_SEARCH_KEY = 'islemind.key.google-search'
 const BING_SEARCH_KEY = 'islemind.key.bing-search'
 const CUSTOM_SEARCH_KEY = 'islemind.key.custom-search'
-const OBSERVABILITY_SINK_API_KEY = 'islemind.key.observability-sink'
 
 async function setSecureKey(key: string, value: string): Promise<void> {
   if (value) {
-    await setSecureItem(key, value)
+    await secureKeyValueStorage.setItem(key, value)
   } else {
-    await deleteSecureItem(key)
+    await secureKeyValueStorage.removeItem(key)
   }
+}
+
+function persistSettingsSnapshot(settings: Settings): void {
+  void savePersistedSettings(settings)
 }
 
 function persistProvidersSnapshot(providers: AIProvider[], mode: ProviderUpdateOptions['persist'] = 'immediate'): void {
@@ -221,7 +234,7 @@ function persistProvidersSnapshot(providers: AIProvider[], mode: ProviderUpdateO
     pendingProviderPersistenceSnapshot = providers
     if (providerPersistenceTimer) clearTimeout(providerPersistenceTimer)
     providerPersistenceTimer = setTimeout(() => {
-      void flushPendingProviderPersistence()
+      void flushPendingProviderPersistence().catch(() => undefined)
     }, PROVIDER_PERSISTENCE_DEBOUNCE_MS)
     return
   }
@@ -244,13 +257,14 @@ async function flushPendingProviderPersistence(snapshot?: AIProvider[]): Promise
     await enqueueProviderPersistence(nextSnapshot)
     return
   }
-  await providerPersistenceQueue
+  await latestProviderPersistence
 }
 
 function enqueueProviderPersistence(providers: AIProvider[]): Promise<void> {
-  providerPersistenceQueue = providerPersistenceQueue.then(() => saveData('PROVIDERS', providers))
-  void providerPersistenceQueue
-  return providerPersistenceQueue
+  const write = providerPersistenceQueue.then(() => savePersistedProviderMetadata(providers))
+  providerPersistenceQueue = write.catch(() => undefined)
+  latestProviderPersistence = write
+  return write
 }
 
 export const useSettingsStore = create<SettingsState>((set, get) => ({
@@ -259,25 +273,31 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
 
   load: async () => {
     const [settings, providers, languageSource, observabilitySinkApiKey] = await Promise.all([
-      loadData<Settings>('SETTINGS'),
-      loadData<AIProvider[]>('PROVIDERS'),
+      loadPersistedSettings(),
+      loadPersistedProviderMetadata(),
       loadLanguagePreferenceSource(),
-      getSecureItem(OBSERVABILITY_SINK_API_KEY),
+      secureKeyValueStorage.getItem(OBSERVABILITY_SINK_API_KEY),
     ])
     const storedSettings = stripLegacySettingsFields(settings ? { ...defaultSettings, ...settings } : defaultSettings)
-    const rawSettings = sanitizeSettingsUrlFields(storedSettings)
+    const urlSettings = sanitizeSettingsUrlFields(storedSettings)
+    const rawSettings = normalizeSettingsIdentityPreferences(urlSettings)
     const effectiveLanguage = resolveEffectiveLanguage(rawSettings.language, languageSource, getSystemLanguage())
     const resolvedSearchProvider = resolveSearchProvider(rawSettings)
     const resetCatalog = (rawSettings.providerCatalogVersion ?? PROVIDER_CATALOG_VERSION) < PROVIDER_CATALOG_VERSION
+    const savedProviders = providers ? [...providers] : []
     if (resetCatalog) {
-      await clearProviderCatalogSecrets(providers ?? [])
+      await clearProviderCatalogSecrets(savedProviders)
     }
     const normalizedThemeId = normalizeThemeId(rawSettings.themeId)
+    const normalizedThemeMode = normalizeSettingsThemeMode(rawSettings.theme) ?? defaultSettings.theme
+    const normalizedThemeAccent = normalizeSettingsThemeAccent(rawSettings.themeAccent)
     const observabilitySinkApiKeyConfigured = !!observabilitySinkApiKey?.trim()
     const mergedSettings = sanitizeSettingsUrlFields({
       ...rawSettings,
+      theme: normalizedThemeMode,
       language: effectiveLanguage,
       themeId: normalizedThemeId,
+      themeAccent: normalizedThemeAccent,
       providerCatalogVersion: PROVIDER_CATALOG_VERSION,
       defaultProvider: resetCatalog ? null : rawSettings.defaultProvider,
       observabilitySinkApiKeyConfigured,
@@ -285,8 +305,13 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
       webSearchMode: legacySearchModeForProvider(resolvedSearchProvider),
       webSearchEnabled: resolvedSearchProvider !== 'off',
     })
-    const savedProviders = providers ?? []
     const mergedProviders = resetCatalog ? [] : mergeProviders(savedProviders)
+    const providerIdentityMetadataMigrated = savedProviders.some((provider, index) => {
+      const normalized = mergedProviders[index]
+      return provider.presetId !== normalized?.presetId
+        || provider.detectedPresetId !== normalized?.detectedPresetId
+        || provider.wireProtocol !== normalized?.wireProtocol
+    })
     const defaultProvider = mergedProviders.some((provider) => provider.id === mergedSettings.defaultProvider)
       ? mergedSettings.defaultProvider
       : null
@@ -296,27 +321,39 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
     })
     setServiceLanguage(effectiveLanguage)
     const themeIdMigrated = rawSettings.themeId !== normalizedThemeId
-    const settingsUrlMigrated = rawSettings !== storedSettings
+    const themeModeMigrated = rawSettings.theme !== normalizedThemeMode
+    const themeAccentMigrated = rawSettings.themeAccent !== normalizedThemeAccent
+    const settingsUrlMigrated = urlSettings !== storedSettings
+    const settingsIdentityMigrated = rawSettings !== urlSettings
     const observabilitySecretStateMigrated = rawSettings.observabilitySinkApiKeyConfigured !== observabilitySinkApiKeyConfigured
-    if (resetCatalog || themeIdMigrated || settingsUrlMigrated || observabilitySecretStateMigrated) {
-      saveData('SETTINGS', { ...mergedSettings, defaultProvider: resetCatalog ? null : defaultProvider })
+    if (resetCatalog || themeModeMigrated || themeIdMigrated || themeAccentMigrated || settingsUrlMigrated || settingsIdentityMigrated || observabilitySecretStateMigrated) {
+      persistSettingsSnapshot({ ...mergedSettings, defaultProvider: resetCatalog ? null : defaultProvider })
     }
     if (resetCatalog) {
       persistProvidersSnapshot([])
-    } else if (savedProviders.some(hasOversizedProviderModelStorage)) {
+    } else if (providerIdentityMetadataMigrated || savedProviders.some(hasOversizedProviderModelStorage)) {
       persistProvidersSnapshot(mergedProviders, 'deferred')
     }
   },
 
   updateSettings: (updates: Partial<Settings>) => {
     set((state) => {
-      const draft = { ...state.settings, ...updates }
+      const hasThemeAccentUpdate = Object.prototype.hasOwnProperty.call(updates, 'themeAccent')
+      const hasThemeModeUpdate = Object.prototype.hasOwnProperty.call(updates, 'theme')
+      const hasThemeFamilyUpdate = Object.prototype.hasOwnProperty.call(updates, 'themeId')
+      const draft = normalizeSettingsIdentityPreferences({
+        ...state.settings,
+        ...updates,
+        ...(hasThemeModeUpdate ? { theme: normalizeSettingsThemeMode(updates.theme) ?? state.settings.theme } : {}),
+        ...(hasThemeFamilyUpdate ? { themeId: normalizeSettingsThemeFamily(updates.themeId) ?? state.settings.themeId } : {}),
+        ...(hasThemeAccentUpdate ? { themeAccent: normalizeSettingsThemeAccent(updates.themeAccent) } : {}),
+      })
       const resolved = updates.searchProvider ?? (
         updates.webSearchMode || updates.webSearchEnabled !== undefined
           ? resolveSearchProvider(draft)
           : draft.searchProvider
       )
-      const nextSearchProvider = updates.webSearchEnabled === true && resolved === 'off' ? 'native' : resolved
+      const nextSearchProvider = updates.webSearchEnabled === true && resolved === 'off' ? 'islemind' : resolved
       const updated = sanitizeSettingsUrlFields(nextSearchProvider
         ? {
             ...draft,
@@ -325,7 +362,7 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
             webSearchEnabled: nextSearchProvider !== 'off',
           }
         : draft)
-      saveData('SETTINGS', updated)
+      persistSettingsSnapshot(updated)
       return { settings: updated }
     })
   },
@@ -338,6 +375,10 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
     get().updateSettings({ themeId })
   },
 
+  setThemeAccent: (themeAccent: string | undefined) => {
+    get().updateSettings({ themeAccent: normalizeSettingsThemeAccent(themeAccent) })
+  },
+
   setLanguage: (language: Language) => {
     void saveLanguagePreferenceSource('user')
     setServiceLanguage(language)
@@ -345,10 +386,7 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
   },
 
   addProvider: async (provider: AIProvider) => {
-    if (provider.apiKey) {
-      await setSecureItem(secureProviderKey(provider.id), provider.apiKey)
-    }
-    await persistCredentialGroupKeys(provider.id, provider.credentialGroups)
+    await providerCredentialStorage.applyMutations(providerCredentialMutationsForAdd(provider))
     set((state) => {
       const updated = [normalizeProvider({ ...provider, apiKey: '' } as AIProvider), ...state.providers]
       persistProvidersSnapshot(updated)
@@ -360,18 +398,8 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
   },
 
   updateProvider: async (id: string, updates: Partial<AIProvider>, options?: ProviderUpdateOptions) => {
-    if (updates.apiKey) {
-      await setSecureItem(secureProviderKey(id), updates.apiKey)
-    }
-    if (updates.credentialGroups) {
-      const previous = get().providers.find((provider) => provider.id === id)?.credentialGroups ?? []
-      const nextIds = new Set(updates.credentialGroups.map((group) => group.id))
-      await Promise.all(previous
-        .filter((group) => !nextIds.has(group.id))
-        .map((group) => deleteSecureItem(secureProviderGroupKey(id, group.id)))
-      )
-      await persistCredentialGroupKeys(id, updates.credentialGroups)
-    }
+    const previous = get().providers.find((provider) => provider.id === id)
+    await providerCredentialStorage.applyMutations(providerCredentialMutationsForUpdate(id, updates, previous))
     set((state) => {
       const updated = state.providers.map((p) =>
         p.id === id ? normalizeProvider({ ...p, ...updates, apiKey: '' } as AIProvider) : p
@@ -390,20 +418,15 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
     if (!mergedPatches.size) return
 
     const currentProviders = get().providers
+    const credentialMutations: ProviderCredentialMutation[] = []
     for (const [id, updates] of mergedPatches) {
-      if (updates.apiKey) {
-        await setSecureItem(secureProviderKey(id), updates.apiKey)
-      }
-      if (updates.credentialGroups) {
-        const previous = currentProviders.find((provider) => provider.id === id)?.credentialGroups ?? []
-        const nextIds = new Set(updates.credentialGroups.map((group) => group.id))
-        await Promise.all(previous
-          .filter((group) => !nextIds.has(group.id))
-          .map((group) => deleteSecureItem(secureProviderGroupKey(id, group.id)))
-        )
-        await persistCredentialGroupKeys(id, updates.credentialGroups)
-      }
+      credentialMutations.push(...providerCredentialMutationsForUpdate(
+        id,
+        updates,
+        currentProviders.find((provider) => provider.id === id),
+      ))
     }
+    await providerCredentialStorage.applyMutations(credentialMutations)
 
     set((state) => {
       const updated = state.providers.map((provider) => {
@@ -421,12 +444,11 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
     const yieldEvery = normalizeYieldEvery(options?.yieldEvery)
     options?.onProgress?.({ completed: 0, total })
     await yieldToUi()
+    await providerCredentialStorage.applyMutations(
+      providers.flatMap(providerCredentialMutationsForAdd),
+    )
     for (let index = 0; index < providers.length; index += 1) {
       const provider = providers[index]
-      if (provider.apiKey) {
-        await setSecureItem(secureProviderKey(provider.id), provider.apiKey)
-      }
-      await persistCredentialGroupKeys(provider.id, provider.credentialGroups, { shouldYield: true, yieldEvery })
       const completed = index + 1
       if (completed === 1 || completed === total || completed % yieldEvery === 0) {
         options?.onProgress?.({ completed, total, currentProviderName: provider.name })
@@ -441,8 +463,8 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
       const updated = [...normalized, ...state.providers.filter((provider) => !existingIds.has(provider.id))]
       const defaultProvider = state.settings.defaultProvider ?? normalized[0]?.id ?? null
       const settings = sanitizeSettingsUrlFields({ ...state.settings, defaultProvider })
-      persistProvidersSnapshot(updated)
-      saveData('SETTINGS', settings)
+      persistProvidersSnapshot(updated, options?.persist)
+      persistSettingsSnapshot(settings)
       return { providers: updated, settings }
     })
   },
@@ -451,7 +473,10 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
     const uniqueIds = Array.from(new Set(ids))
     if (!uniqueIds.length) return
     if (updates.apiKey || updates.credentialGroups) {
-      await Promise.all(uniqueIds.map((id) => get().updateProvider(id, updates, options)))
+      await get().updateProviderPatches(
+        uniqueIds.map((id) => ({ id, updates })),
+        options,
+      )
       return
     }
     const targetIds = new Set(uniqueIds)
@@ -503,7 +528,7 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
         ? state.settings
         : { ...state.settings, defaultProvider })
       persistProvidersSnapshot(updated)
-      saveData('SETTINGS', settings)
+      persistSettingsSnapshot(settings)
       return {
         providers: updated,
         settings,
@@ -513,14 +538,14 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
 
   clearAllProviders: async () => {
     const allProviders = get().providers
-    await Promise.all(allProviders.map(async (provider) => {
-      await deleteSecureItem(secureProviderKey(provider.id))
-      await Promise.all((provider.credentialGroups ?? []).map((group) => deleteSecureItem(secureProviderGroupKey(provider.id, group.id))))
-    }).concat([clearProviderRuntimeState()]))
+    await providerCredentialStorage.applyMutations(
+      allProviders.flatMap(providerCredentialDeletionMutations),
+    )
+    await clearProviderRuntimeState()
     set((state) => {
       const settings = sanitizeSettingsUrlFields({ ...state.settings, defaultProvider: null })
       persistProvidersSnapshot([])
-      saveData('SETTINGS', settings)
+      persistSettingsSnapshot(settings)
       return {
         providers: [],
         settings,
@@ -554,7 +579,7 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
         ? state.settings
         : { ...state.settings, defaultProvider })
       persistProvidersSnapshot(updated)
-      saveData('SETTINGS', settings)
+      persistSettingsSnapshot(settings)
       return { providers: updated, settings }
     })
     return invalidProviders.length
@@ -562,26 +587,26 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
 
   setProviderApiKey: async (id: string, apiKey: string) => {
     if (apiKey) {
-      await setSecureItem(secureProviderKey(id), apiKey)
+      await providerCredentialStorage.setProviderCredential(id, apiKey)
     } else {
-      await deleteSecureItem(secureProviderKey(id))
+      await providerCredentialStorage.deleteProviderCredential(id)
     }
   },
 
   getSecureApiKey: async (id: string) => {
-    return getSecureItem(secureProviderKey(id))
+    return providerCredentialStorage.getProviderCredential(id)
   },
 
   setProviderCredentialGroupKey: async (providerId: string, groupId: string, apiKey: string) => {
     if (apiKey) {
-      await setSecureItem(secureProviderGroupKey(providerId, groupId), apiKey)
+      await providerCredentialStorage.setCredentialGroupCredential(providerId, groupId, apiKey)
     } else {
-      await deleteSecureItem(secureProviderGroupKey(providerId, groupId))
+      await providerCredentialStorage.deleteCredentialGroupCredential(providerId, groupId)
     }
   },
 
   getProviderCredentialGroupKey: async (providerId: string, groupId: string) => {
-    return getSecureItem(secureProviderGroupKey(providerId, groupId))
+    return providerCredentialStorage.getCredentialGroupCredential(providerId, groupId)
   },
 
   updateProviderCredentialGroupHealth: async (providerId: string, groupId: string | undefined, ok: boolean, options?: ProviderUpdateOptions) => {
@@ -609,38 +634,34 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
   },
 
   setTavilyApiKey: async (apiKey: string) => {
-    if (apiKey) {
-      await setSecureItem(TAVILY_KEY, apiKey)
-    } else {
-      await deleteSecureItem(TAVILY_KEY)
-    }
+    await setSecureKey(TAVILY_KEY, apiKey)
   },
 
   getTavilyApiKey: async () => {
-    return getSecureItem(TAVILY_KEY)
+    return secureKeyValueStorage.getItem(TAVILY_KEY)
   },
 
   setGoogleSearchApiKey: async (apiKey: string) => setSecureKey(GOOGLE_SEARCH_KEY, apiKey),
-  getGoogleSearchApiKey: async () => getSecureItem(GOOGLE_SEARCH_KEY),
+  getGoogleSearchApiKey: async () => secureKeyValueStorage.getItem(GOOGLE_SEARCH_KEY),
   setBingSearchApiKey: async (apiKey: string) => setSecureKey(BING_SEARCH_KEY, apiKey),
-  getBingSearchApiKey: async () => getSecureItem(BING_SEARCH_KEY),
+  getBingSearchApiKey: async () => secureKeyValueStorage.getItem(BING_SEARCH_KEY),
   setCustomSearchApiKey: async (apiKey: string) => setSecureKey(CUSTOM_SEARCH_KEY, apiKey),
-  getCustomSearchApiKey: async () => getSecureItem(CUSTOM_SEARCH_KEY),
+  getCustomSearchApiKey: async () => secureKeyValueStorage.getItem(CUSTOM_SEARCH_KEY),
   setObservabilitySinkApiKey: async (apiKey: string) => {
     const trimmed = apiKey.trim()
     await setSecureKey(OBSERVABILITY_SINK_API_KEY, trimmed)
-    const stored = await getSecureItem(OBSERVABILITY_SINK_API_KEY)
+    const stored = await secureKeyValueStorage.getItem(OBSERVABILITY_SINK_API_KEY)
     get().updateSettings({ observabilitySinkApiKeyConfigured: !!stored?.trim() })
   },
-  getObservabilitySinkApiKey: async () => getSecureItem(OBSERVABILITY_SINK_API_KEY),
+  getObservabilitySinkApiKey: async () => secureKeyValueStorage.getItem(OBSERVABILITY_SINK_API_KEY),
 
   hydrateProviderKey: async (id: string) => {
     const provider = get().providers.find((item) => item.id === id)
     if (!provider) return null
-    const apiKey = await getSecureItem(secureProviderKey(id))
+    const apiKey = await providerCredentialStorage.getProviderCredential(id)
     const credentialGroups = await Promise.all((provider.credentialGroups ?? []).map(async (group) => ({
       ...group,
-      apiKey: await getSecureItem(secureProviderGroupKey(id, group.id)) ?? group.apiKey ?? '',
+      apiKey: await providerCredentialStorage.getCredentialGroupCredential(id, group.id) ?? group.apiKey ?? '',
     })))
     const primaryGroupKey = credentialGroups.find((group) => group.enabled && group.apiKey)?.apiKey
     return normalizeProviderCredentialGroups({ ...provider, apiKey: apiKey ?? primaryGroupKey ?? '', credentialGroups })
@@ -670,25 +691,31 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
     const providers = get().providers
     const providerIds = new Set([...LEGACY_DEFAULT_PROVIDER_IDS, ...providers.map((provider) => provider.id)])
     await Promise.all([
-      ...Array.from(providerIds).map((id) => deleteSecureItem(secureProviderKey(id))),
-      deleteSecureItem(TAVILY_KEY),
-      deleteSecureItem(GOOGLE_SEARCH_KEY),
-      deleteSecureItem(BING_SEARCH_KEY),
-      deleteSecureItem(CUSTOM_SEARCH_KEY),
-      deleteSecureItem(OBSERVABILITY_SINK_API_KEY),
-      ...providers.flatMap((provider) => (provider.credentialGroups ?? []).map((group) => deleteSecureItem(secureProviderGroupKey(provider.id, group.id)))),
+      providerCredentialStorage.applyMutations([
+        ...Array.from(providerIds).map((providerId) => ({ providerId, credential: null })),
+        ...providers.flatMap((provider) => (provider.credentialGroups ?? []).map((group) => ({
+          providerId: provider.id,
+          groupId: group.id,
+          credential: null,
+        }))),
+      ]),
+      secureKeyValueStorage.removeItem(TAVILY_KEY),
+      secureKeyValueStorage.removeItem(GOOGLE_SEARCH_KEY),
+      secureKeyValueStorage.removeItem(BING_SEARCH_KEY),
+      secureKeyValueStorage.removeItem(CUSTOM_SEARCH_KEY),
+      secureKeyValueStorage.removeItem(OBSERVABILITY_SINK_API_KEY),
       clearProviderRuntimeState(),
       clearLanguagePreferenceSource(),
     ])
     setServiceLanguage(resetLanguage)
-    saveData('SETTINGS', resetSettings)
+    persistSettingsSnapshot(resetSettings)
     const resetProviders: AIProvider[] = []
     persistProvidersSnapshot(resetProviders)
     set({ settings: resetSettings, providers: resetProviders })
   },
 }))
 
-function mergeProviders(saved: AIProvider[]): AIProvider[] {
+function mergeProviders(saved: readonly AIProvider[]): AIProvider[] {
   return saved.map((provider) => normalizeProvider({ ...provider, apiKey: '' } as AIProvider))
 }
 
@@ -709,8 +736,17 @@ function normalizeProvider(provider: AIProvider): AIProvider {
   const manualModels = normalizeProviderManualModels(provider, models)
   const modelAliases = normalizeProviderModelAliases(provider)
   const baseUrl = normalizeProviderBaseUrl(provider)
-  const detectedPresetId = provider.detectedPresetId ?? detectProviderPreset({ baseUrl, apiKey: provider.apiKey, name: provider.name }).presetId
-  const presetId = provider.presetId ?? (provider.id === 'custom-openai' ? 'custom-openai-compatible' : detectedPresetId)
+  const detected = provider.detectedPresetId
+    ? { presetId: provider.detectedPresetId, wireProtocol: provider.wireProtocol }
+    : detectProviderPreset({ baseUrl, apiKey: provider.apiKey, name: provider.name })
+  const selection = normalizeProviderPresetSelection({
+    presetId: provider.presetId ?? (provider.id === 'custom-openai' ? 'custom-endpoint' : detected.presetId),
+    detectedPresetId: provider.detectedPresetId,
+    baseUrl,
+    wireProtocol: provider.wireProtocol ?? detected.wireProtocol,
+  })
+  const presetId = selection.presetId
+  const detectedPresetId = provider.detectedPresetId ? normalizeProviderPresetId(provider.detectedPresetId) : detected.presetId
   const preset = getProviderPreset(presetId)
   const credentialGroups = sanitizeCredentialGroups(provider.credentialGroups, { ...provider, models, manualModels, modelAliases } as AIProvider)
   const normalized = applyProviderPreset({
@@ -728,7 +764,12 @@ function normalizeProvider(provider: AIProvider): AIProvider {
     modelAliases,
     credentialMode: provider.type === 'xiaomi-mimo' ? provider.credentialMode ?? 'token-plan' : provider.credentialMode,
     tokenPlanRegion: provider.type === 'xiaomi-mimo' ? provider.tokenPlanRegion ?? 'cn' : provider.tokenPlanRegion,
-    wireProtocol: provider.type === 'xiaomi-mimo' ? provider.wireProtocol ?? 'openai-compatible' : provider.wireProtocol,
+    wireProtocol: presetId === 'custom-endpoint'
+      ? selection.wireProtocol
+      : provider.type === 'xiaomi-mimo'
+        ? provider.wireProtocol ?? 'openai-compatible'
+        : undefined,
+    clientCompatibilityProfile: normalizeProviderClientCompatibilityMode(provider.clientCompatibilityProfile),
     credentialGroups,
     modelConfigs: buildProviderModelConfigsForStorage({ ...provider, credentialGroups }, models, manualModels, modelAliases),
     lastTestStatus: provider.lastTestStatus ?? 'idle',
@@ -765,29 +806,53 @@ function normalizeProviderBaseUrl(provider: AIProvider): string | undefined {
   return baseUrl
 }
 
-async function persistCredentialGroupKeys(
+function providerCredentialMutationsForAdd(provider: AIProvider): ProviderCredentialMutation[] {
+  return [
+    ...(provider.apiKey ? [{ providerId: provider.id, credential: provider.apiKey }] : []),
+    ...(provider.credentialGroups ?? [])
+      .filter((group) => Boolean(group.apiKey))
+      .map((group) => ({
+        providerId: provider.id,
+        groupId: group.id,
+        credential: group.apiKey as string,
+      })),
+  ]
+}
+
+function providerCredentialMutationsForUpdate(
   providerId: string,
-  groups: ProviderCredentialGroup[] | undefined,
-  options?: { shouldYield?: boolean; yieldEvery?: number }
-): Promise<void> {
-  if (!options?.shouldYield) {
-    await Promise.all((groups ?? []).map(async (group) => {
-      if (!group.apiKey) return
-      await setSecureItem(secureProviderGroupKey(providerId, group.id), group.apiKey)
-    }))
-    return
+  updates: Partial<AIProvider>,
+  previous: AIProvider | undefined,
+): ProviderCredentialMutation[] {
+  const mutations: ProviderCredentialMutation[] = []
+  if (updates.apiKey) {
+    mutations.push({ providerId, credential: updates.apiKey })
   }
-  const yieldEvery = normalizeYieldEvery(options.yieldEvery)
-  const groupsWithKeys = (groups ?? []).filter((group) => !!group.apiKey)
-  for (let index = 0; index < groupsWithKeys.length; index += 1) {
-    const group = groupsWithKeys[index]
-    if (!group.apiKey) continue
-    await setSecureItem(secureProviderGroupKey(providerId, group.id), group.apiKey)
-    const completed = index + 1
-    if (completed === groupsWithKeys.length || completed % yieldEvery === 0) {
-      await yieldToUi()
+  if (!updates.credentialGroups) return mutations
+
+  const nextIds = new Set(updates.credentialGroups.map((group) => group.id))
+  for (const group of previous?.credentialGroups ?? []) {
+    if (!nextIds.has(group.id)) {
+      mutations.push({ providerId, groupId: group.id, credential: null })
     }
   }
+  for (const group of updates.credentialGroups) {
+    if (group.apiKey) {
+      mutations.push({ providerId, groupId: group.id, credential: group.apiKey })
+    }
+  }
+  return mutations
+}
+
+function providerCredentialDeletionMutations(provider: AIProvider): ProviderCredentialMutation[] {
+  return [
+    { providerId: provider.id, credential: null },
+    ...(provider.credentialGroups ?? []).map((group) => ({
+      providerId: provider.id,
+      groupId: group.id,
+      credential: null,
+    })),
+  ]
 }
 
 function normalizeYieldEvery(value: number | undefined): number {
@@ -795,7 +860,23 @@ function normalizeYieldEvery(value: number | undefined): number {
 }
 
 async function yieldToUi(): Promise<void> {
-  await new Promise<void>((resolve) => setTimeout(resolve, 0))
+  if (AppState.currentState !== 'active') return
+  await new Promise<void>((resolve) => {
+    let settled = false
+    let timer: ReturnType<typeof setTimeout> | null = null
+    let appStateSubscription: { remove: () => void } | null = null
+    const settle = () => {
+      if (settled) return
+      settled = true
+      if (timer) clearTimeout(timer)
+      appStateSubscription?.remove()
+      resolve()
+    }
+    appStateSubscription = AppState.addEventListener('change', (state) => {
+      if (state !== 'active') settle()
+    })
+    timer = setTimeout(settle, 0)
+  })
 }
 
 async function collectInvalidProviders(
@@ -813,16 +894,19 @@ async function collectInvalidProviders(
 
 async function clearProviderCatalogSecrets(providers: AIProvider[]): Promise<void> {
   const ids = new Set([...LEGACY_DEFAULT_PROVIDER_IDS, ...providers.map((provider) => provider.id)])
-  await Promise.all([
-    ...Array.from(ids).map((id) => deleteSecureItem(secureProviderKey(id))),
-    ...providers.flatMap((provider) => (provider.credentialGroups ?? []).map((group) => deleteSecureItem(secureProviderGroupKey(provider.id, group.id)))),
+  await providerCredentialStorage.applyMutations([
+    ...Array.from(ids).map((providerId) => ({ providerId, credential: null })),
+    ...providers.flatMap((provider) => (provider.credentialGroups ?? []).map((group) => ({
+      providerId: provider.id,
+      groupId: group.id,
+      credential: null,
+    }))),
   ])
 }
 
 async function clearProviderArtifacts(provider: AIProvider, reason: string): Promise<void> {
+  await providerCredentialStorage.applyMutations(providerCredentialDeletionMutations(provider))
   await Promise.all([
-    deleteSecureItem(secureProviderKey(provider.id)),
-    ...(provider.credentialGroups ?? []).map((group) => deleteSecureItem(secureProviderGroupKey(provider.id, group.id))),
     removeProviderHealthRecordsByProviderId(provider.id),
     invalidateCompactStatesByProvider(provider.id, reason),
   ])

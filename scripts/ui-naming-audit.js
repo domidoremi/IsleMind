@@ -83,6 +83,10 @@ const requiredExports = [
   'IsleCheckbox',
   'IsleTabs',
   'IsleChip',
+  'IsleTag',
+  'IsleSkeleton',
+  'IsleImage',
+  'IsleBackTop',
   'IsleListItem',
   'IsleSheet',
   'IsleMetric',
@@ -96,6 +100,10 @@ const exportSources = [
   'src/components/ui/isle/Primitives.tsx',
   'src/components/ui/isle/Dialog.tsx',
   'src/components/ui/isle/Pressable.tsx',
+  'src/components/ui/isle/Tag.tsx',
+  'src/components/ui/isle/Skeleton.tsx',
+  'src/components/ui/isle/Image.tsx',
+  'src/components/ui/isle/BackTop.tsx',
 ]
 const exportText = exportSources.map((source) => fs.readFileSync(path.join(root, source), 'utf8')).join('\n')
 for (const name of requiredExports) {

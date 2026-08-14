@@ -1,10 +1,20 @@
-import type { AIProvider, Conversation, Message, RetrievalSource, Settings } from '@/types'
-import { extractMemories, importKnowledgePlainText, retrieveContext, searchKnowledgeAgenticIndexes, searchKnowledgeHybrid, searchWeb } from '@/services/context'
-import { addMemory, searchKnowledge, searchMemories } from '@/services/contextStore'
-import { listRagEmbeddingJobs } from '@/services/ragEvaluation'
-import { SEARCH_DIAGNOSTIC_QUERY, resolveSearchProvider } from '@/services/searchPolicy'
-import { getPolicyPreferredProviderModel } from '@/services/ai/policy/providerModelAccess'
-
+import type { Conversation, Message } from '@/types/chatContracts'
+import type { RetrievalSource } from '@/types/contextContracts'
+import type { AIProvider } from '@/types/providerContracts'
+import type { Settings } from '@/types/settingsContracts'
+import { retrieveConversationKnowledgeContext } from '@/bootstrap/knowledgeContextRuntime'
+import { extractConversationMemories } from '@/bootstrap/knowledgeMemoryExtraction'
+import { importKnowledgePlainText } from '@/bootstrap/knowledgeDocumentImportRuntime'
+import { searchWeb } from '@/bootstrap/webSearchProviderRuntime'
+import { deleteKnowledgeDocumentRecords, knowledgeRepository } from '@/bootstrap/knowledgeRepository'
+import {
+  searchAgenticKnowledgeWithScope,
+  searchKnowledgeFts,
+  searchKnowledgeWithFallback,
+} from '@/bootstrap/knowledgeRetrievalRuntime'
+import { listRagEmbeddingJobs } from '@/bootstrap/knowledgeRagEvaluation'
+import { SEARCH_DIAGNOSTIC_QUERY, resolveSearchProvider } from '@/modules/integrations'
+import { getPolicyPreferredProviderModel } from '@/bootstrap/providerModelAccess'
 export interface ContextSelfTestStep {
   name: string
   status: 'ok' | 'warn' | 'fail'
@@ -17,6 +27,7 @@ export interface RunContextSelfTestInput {
   getTavilyApiKey: () => Promise<string | null>
   t: (key: string, options?: Record<string, unknown>) => string
   onStep?: (step: ContextSelfTestStep) => void
+  signal?: AbortSignal
 }
 
 export interface RunContextSelfTestResult {
@@ -26,28 +37,58 @@ export interface RunContextSelfTestResult {
   fail: number
 }
 
+async function searchSelfTestMemories(
+  query: string,
+  limit: number,
+  statuses: Array<'pending' | 'active'> = ['active'],
+  signal?: AbortSignal,
+) {
+  const hits = await knowledgeRepository.searchMemories({ query, limit, statuses, signal })
+  return hits.map((hit) => ({ ...hit, excerpt: hit.content }))
+}
+
 export async function runContextSelfTest(input: RunContextSelfTestInput): Promise<RunContextSelfTestResult> {
   const steps: ContextSelfTestStep[] = []
   const canary = `islemind_canary_${Date.now()}`
+  const autoMemoryCanary = `autotest_${Date.now().toString(36)}`
+  const conversationId = `self-test-${canary}`
+  const knowledgeTitle = `Self test ${canary}`
+  let manualMemoryId: string | undefined
 
   const pushStep = (step: ContextSelfTestStep) => {
     steps.push(step)
     input.onStep?.(step)
   }
 
+  const [existingDocuments, existingMemories] = await Promise.all([
+    knowledgeRepository.listDocuments({ signal: input.signal }),
+    knowledgeRepository.listMemories({ signal: input.signal }),
+  ])
+  const existingDocumentIds = new Set(existingDocuments.map((document) => document.id))
+  const existingMemoryIds = new Set(existingMemories.map((memory) => memory.id))
+
+  try {
   const knowledgeText = [
     `IsleMind context self-test marker: ${canary}.`,
     `The RAG answer for ${canary} is aurora-lantern.`,
     'This text is intentionally local-only and should be retrievable by SQLite FTS or hybrid retrieval.',
   ].join(' ')
-  const importResult = await importKnowledgePlainText(`Self test ${canary}`, knowledgeText, input.primaryProvider ?? undefined)
+  const importResult = await importKnowledgePlainText(
+    knowledgeTitle,
+    knowledgeText,
+    input.primaryProvider ?? undefined,
+    { signal: input.signal ?? new AbortController().signal },
+  )
   pushStep({
     name: input.t('contextPanel.selfTest.knowledgeWrite'),
     status: importResult.ok ? 'ok' : 'fail',
     detail: importResult.message,
   })
 
-  const knowledgeHits = await searchKnowledge(`${canary} aurora-lantern`, 3)
+  const knowledgeHits = filterSelfTestHits(
+    await searchKnowledgeFts(`${canary} aurora-lantern`, 3, { signal: input.signal }),
+    canary,
+  )
   pushStep(buildHitStep({
     name: input.t('contextPanel.selfTest.knowledgeFts'),
     hits: knowledgeHits,
@@ -56,13 +97,16 @@ export async function runContextSelfTest(input: RunContextSelfTestInput): Promis
     t: input.t,
   }))
 
-  const hybridKnowledgeHits = await searchKnowledgeHybrid(`${canary} aurora-lantern`, {
+  const hybridKnowledgeHits = filterSelfTestHits(await searchKnowledgeWithFallback({
+    query: `${canary} aurora-lantern`,
     limit: 3,
+    ragMode: 'hybrid',
     embeddingMode: input.settings.embeddingMode ?? 'hybrid',
     localEmbeddingModelId: input.settings.localEmbeddingModelId,
     localEmbeddingModelSource: input.settings.localEmbeddingModelSource,
     ...(input.primaryProvider ? { provider: input.primaryProvider } : {}),
-  })
+    signal: input.signal,
+  }), canary)
   pushStep(buildHitStep({
     name: input.t('contextPanel.selfTest.knowledgeHybrid'),
     hits: hybridKnowledgeHits,
@@ -71,10 +115,12 @@ export async function runContextSelfTest(input: RunContextSelfTestInput): Promis
     t: input.t,
   }))
 
-  const agenticKnowledgeHits = await searchKnowledgeAgenticIndexes(`${canary} aurora-lantern`, {
+  const agenticKnowledgeHits = filterSelfTestHits(await searchAgenticKnowledgeWithScope({
+    query: `${canary} aurora-lantern`,
     limit: 3,
     techniques: ['raptor', 'graphrag', 'colbert'],
-  })
+    signal: input.signal,
+  }), canary)
   pushStep(buildHitStep({
     name: input.t('contextPanel.selfTest.knowledgeAgentic'),
     hits: agenticKnowledgeHits,
@@ -84,8 +130,13 @@ export async function runContextSelfTest(input: RunContextSelfTestInput): Promis
   }))
 
   const memoryContent = `User preference: ${canary} preferred answer = mint-echo`
-  await addMemory(memoryContent, undefined, 'active')
-  const memoryHits = await searchMemories(`${canary} mint-echo`, 3)
+  const manualMemory = await knowledgeRepository.saveMemory(
+    { content: memoryContent, status: 'active', sourceKind: 'manual', confidence: 1 },
+    { signal: input.signal },
+  )
+  manualMemoryId = manualMemory.id
+  const memoryHits = (await searchSelfTestMemories(`${canary} mint-echo`, 3, ['active'], input.signal))
+    .filter((hit) => hit.content.includes(canary))
   pushStep({
     name: input.t('contextPanel.selfTest.memoryWriteSearch'),
     status: memoryHits.length ? 'ok' : 'fail',
@@ -94,40 +145,49 @@ export async function runContextSelfTest(input: RunContextSelfTestInput): Promis
       : input.t('contextPanel.selfTest.memoryMiss'),
   })
 
-  const autoMemoryCanary = `autotest_${Date.now().toString(36)}`
   const primaryModel = input.primaryProvider ? getPolicyPreferredProviderModel(input.primaryProvider, input.settings) : undefined
-  const extracted = await extractMemories(
-    `self-test-${canary}`,
-    [
-      {
-        id: `self-test-user-${canary}`,
-        role: 'user',
-        content: `My ${autoMemoryCanary} is velvet-river. Remember this fact for related questions.`,
-        timestamp: Date.now(),
-        status: 'done',
-      },
-      {
-        id: `self-test-assistant-${canary}`,
-        role: 'assistant',
-        content: 'I will reference this long-term fact when needed.',
-        timestamp: Date.now(),
-        status: 'done',
-      },
-    ],
-    input.primaryProvider ?? undefined,
-    primaryModel
-  )
-  const extractedHits = await searchMemories(`${autoMemoryCanary} velvet-river`, 5, ['pending', 'active'])
-  pushStep({
-    name: input.t('contextPanel.selfTest.autoMemory'),
-    status: extracted.length && extractedHits.length ? 'ok' : 'fail',
-    detail: extracted.length && extractedHits.length
-      ? input.t('contextPanel.selfTest.extractedHit', { count: extracted.length, first: extractedHits[0]?.excerpt ?? extracted[0] })
-      : input.t('contextPanel.selfTest.extractedMiss', { count: extracted.length, hits: extractedHits.length }),
-  })
+  if (input.settings.memoryEnabled !== true) {
+    pushStep({
+      name: input.t('contextPanel.selfTest.autoMemory'),
+      status: 'warn',
+      detail: input.t('contextPanel.selfTest.disabledSkip'),
+    })
+  } else {
+    const extracted = await extractConversationMemories(
+      conversationId,
+      [
+        {
+          id: `self-test-user-${canary}`,
+          role: 'user',
+          content: `My ${autoMemoryCanary} is velvet-river. Remember this fact for related questions.`,
+          timestamp: Date.now(),
+          status: 'done',
+        },
+        {
+          id: `self-test-assistant-${canary}`,
+          role: 'assistant',
+          content: 'I will reference this long-term fact when needed.',
+          timestamp: Date.now(),
+          status: 'done',
+        },
+      ],
+      input.primaryProvider ?? undefined,
+      primaryModel,
+      input.signal,
+    )
+    const extractedHits = (await searchSelfTestMemories(`${autoMemoryCanary} velvet-river`, 5, ['pending', 'active'], input.signal))
+      .filter((hit) => hit.content.includes(autoMemoryCanary))
+    pushStep({
+      name: input.t('contextPanel.selfTest.autoMemory'),
+      status: extracted.length && extractedHits.length ? 'ok' : 'fail',
+      detail: extracted.length && extractedHits.length
+        ? input.t('contextPanel.selfTest.extractedHit', { count: extracted.length, first: extractedHits[0]?.excerpt ?? extracted[0] })
+        : input.t('contextPanel.selfTest.extractedMiss', { count: extracted.length, hits: extractedHits.length }),
+    })
+  }
 
   const conversation: Conversation = {
-    id: `self-test-${canary}`,
+    id: conversationId,
     title: 'Context self-test',
     providerId: input.primaryProvider?.id ?? 'self-test',
     model: primaryModel ?? 'self-test-model',
@@ -146,14 +206,30 @@ export async function runContextSelfTest(input: RunContextSelfTestInput): Promis
     timestamp: Date.now(),
     status: 'done',
   }
-  const context = await retrieveContext(conversation, message)
-  const memoryCount = context.sources.filter((source) => source.type === 'memory').length
-  const knowledgeCount = context.sources.filter((source) => source.type === 'knowledge').length
-  pushStep({
-    name: input.t('contextPanel.selfTest.chatContext'),
-    status: memoryCount > 0 && knowledgeCount > 0 ? 'ok' : 'fail',
-    detail: input.t('contextPanel.selfTest.contextHits', { total: context.sources.length, memories: memoryCount, knowledge: knowledgeCount }),
-  })
+  const memoryContextEnabled = input.settings.memoryEnabled === true
+  const knowledgeContextEnabled = input.settings.knowledgeEnabled === true && (input.settings.ragMode ?? 'hybrid') !== 'off'
+  if (!memoryContextEnabled && !knowledgeContextEnabled) {
+    pushStep({
+      name: input.t('contextPanel.selfTest.chatContext'),
+      status: 'warn',
+      detail: input.t('contextPanel.selfTest.chatContextSkip'),
+    })
+  } else {
+    const context = await retrieveConversationKnowledgeContext(
+      conversation,
+      message,
+      input.signal ?? new AbortController().signal,
+    )
+    const memoryCount = context.sources.filter((source) => source.type === 'memory' && source.content.includes(canary)).length
+    const knowledgeCount = context.sources.filter((source) => source.type === 'knowledge' && source.content.includes(canary)).length
+    const expectedContextFound = (!memoryContextEnabled || memoryCount > 0)
+      && (!knowledgeContextEnabled || knowledgeCount > 0)
+    pushStep({
+      name: input.t('contextPanel.selfTest.chatContext'),
+      status: expectedContextFound ? 'ok' : 'fail',
+      detail: input.t('contextPanel.selfTest.contextHits', { total: context.sources.length, memories: memoryCount, knowledge: knowledgeCount }),
+    })
+  }
 
   const tavilyKey = await input.getTavilyApiKey()
   const searchProvider = resolveSearchProvider(input.settings)
@@ -171,7 +247,7 @@ export async function runContextSelfTest(input: RunContextSelfTestInput): Promis
     })
   } else {
     try {
-      const webHits = await searchWeb(SEARCH_DIAGNOSTIC_QUERY, 3)
+      const webHits = await searchWeb(SEARCH_DIAGNOSTIC_QUERY, 3, { signal: input.signal })
       pushStep({
         name: input.t('contextPanel.selfTest.webAdapter'),
         status: webHits.length ? 'ok' : 'fail',
@@ -180,6 +256,7 @@ export async function runContextSelfTest(input: RunContextSelfTestInput): Promis
           : input.t('contextPanel.selfTest.webNoResults'),
       })
     } catch (error) {
+      if (error instanceof Error && error.name === 'AbortError') throw error
       pushStep({
         name: input.t('contextPanel.selfTest.tavilySearch'),
         status: 'fail',
@@ -198,6 +275,26 @@ export async function runContextSelfTest(input: RunContextSelfTestInput): Promis
       failed: jobs.filter((job) => job.status === 'error').length,
     }),
   })
+  } finally {
+    const cleanup = await cleanupContextSelfTestArtifacts({
+      canary,
+      autoMemoryCanary,
+      conversationId,
+      knowledgeTitle,
+      manualMemoryId,
+      existingDocumentIds,
+      existingMemoryIds,
+    })
+    if (!input.signal?.aborted) {
+      pushStep({
+        name: input.t('contextPanel.selfTest.cleanup'),
+        status: cleanup.failed ? 'fail' : 'ok',
+        detail: input.t(cleanup.failed ? 'contextPanel.selfTest.cleanupFailed' : 'contextPanel.selfTest.cleanupComplete', {
+          count: cleanup.failed || cleanup.removed,
+        }),
+      })
+    }
+  }
 
   return {
     steps,
@@ -205,6 +302,61 @@ export async function runContextSelfTest(input: RunContextSelfTestInput): Promis
     warn: steps.filter((step) => step.status === 'warn').length,
     fail: steps.filter((step) => step.status === 'fail').length,
   }
+}
+
+async function cleanupContextSelfTestArtifacts(input: {
+  canary: string
+  autoMemoryCanary: string
+  conversationId: string
+  knowledgeTitle: string
+  manualMemoryId?: string
+  existingDocumentIds: ReadonlySet<string>
+  existingMemoryIds: ReadonlySet<string>
+}): Promise<{ removed: number; failed: number }> {
+  const cleanupSignal = new AbortController().signal
+  let removed = 0
+  let failed = 0
+  try {
+    const [documents, memories] = await Promise.all([
+      knowledgeRepository.listDocuments({ signal: cleanupSignal }),
+      knowledgeRepository.listMemories({ signal: cleanupSignal }),
+    ])
+    const documentIds = documents
+      .filter((document) => !input.existingDocumentIds.has(document.id) && document.title === input.knowledgeTitle)
+      .map((document) => document.id)
+    const memoryIds = memories
+      .filter((memory) => !input.existingMemoryIds.has(memory.id) && (
+        memory.id === input.manualMemoryId
+        || memory.conversationId === input.conversationId
+        || memory.content.includes(input.canary)
+        || memory.content.includes(input.autoMemoryCanary)
+      ))
+      .map((memory) => memory.id)
+
+    for (const documentId of documentIds) {
+      try {
+        await deleteKnowledgeDocumentRecords(documentId)
+        removed += 1
+      } catch {
+        failed += 1
+      }
+    }
+    for (const memoryId of memoryIds) {
+      try {
+        await knowledgeRepository.deleteMemory(memoryId, { signal: cleanupSignal })
+        removed += 1
+      } catch {
+        failed += 1
+      }
+    }
+  } catch {
+    failed += 1
+  }
+  return { removed, failed }
+}
+
+function filterSelfTestHits(hits: RetrievalSource[], marker: string): RetrievalSource[] {
+  return hits.filter((hit) => hit.content.includes(marker) || hit.title?.includes(marker) || hit.excerpt?.includes(marker))
 }
 
 function buildHitStep(input: {

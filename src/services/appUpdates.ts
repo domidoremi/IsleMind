@@ -4,11 +4,17 @@ import * as Application from 'expo-application'
 import * as FileSystem from 'expo-file-system/legacy'
 import * as IntentLauncher from 'expo-intent-launcher'
 import { st } from '@/i18n/service'
-import { sha256File } from '@/services/localEmbeddingModels'
+import { sha256LocalModelFile } from '@/bootstrap/localModelFileIntegrity'
+import {
+  fetchGithubTaggedAndroidReleaseSnapshot,
+  fetchLatestGithubTagVersionSnapshot,
+  GithubReleaseChannelError,
+  type GithubTagVersionSnapshot,
+  type GithubTaggedAndroidReleaseSnapshot,
+} from '@/platform/native/githubReleaseChannel'
 import { appendRuntimeLog, readStoredRuntimeLogOptions } from '@/services/runtimeLog'
 import { discardDownloadedApk, markDownloadedApkForCleanup } from '@/services/apkInstallCache'
 import { safeHttpUrl } from '@/utils/networkUrlSafety'
-
 export type ApkUpdateStatus = 'available' | 'unavailable' | 'downloaded' | 'unsupported' | 'error'
 export type ApkUpdateReason = 'network' | 'rate_limited' | 'manifest_invalid' | 'checksum_mismatch' | 'installer_failed'
 export type ApkAssetVariant = 'no-model' | 'with-model-small' | 'universal'
@@ -74,8 +80,6 @@ export interface ApkInstallOptions {
   onProgress?: (progress: ApkInstallProgress) => void
 }
 
-export const APK_UPDATE_MANIFEST_URL = 'https://raw.githubusercontent.com/domidoremi/IsleMind/main/updates/android.json'
-const GITHUB_RELEASE_API = 'https://api.github.com/repos/domidoremi/IsleMind/releases/latest'
 const APK_MIME_TYPE = 'application/vnd.android.package-archive'
 const ANDROID_GRANT_READ_URI_PERMISSION = 1
 export const APK_AUTO_CHECK_INTERVAL_MS = 24 * 60 * 60 * 1000
@@ -129,20 +133,20 @@ export async function checkLatestApkRelease(): Promise<ApkUpdateResult> {
 
   try {
     const snapshot = getVersionSnapshot()
-    const release = await fetchLatestRelease(snapshot)
-    if (!release) {
-      const result = { status: 'unavailable', message: st('updates.noInstallableApk') } satisfies ApkUpdateResult
+    const tag = await fetchLatestGithubTagVersionSnapshot()
+    if (compareReleaseToSnapshot({ version: tag.versionName, versionCode: tag.versionCode }, snapshot) <= 0) {
+      const currentVersion = normalizeVersion(snapshot.appVersion)
+      const result = {
+        status: 'unavailable',
+        message: st('updates.alreadyLatest', { version: currentVersion }),
+      } satisfies ApkUpdateResult
       await logAppUpdateEvent('check', result)
       return result
     }
 
-    const currentVersion = normalizeVersion(snapshot.appVersion)
-    if (compareReleaseToSnapshot(release, snapshot) <= 0) {
-      const result = {
-        status: 'unavailable',
-        message: st('updates.alreadyLatest', { version: currentVersion }),
-        release,
-      } satisfies ApkUpdateResult
+    const release = await fetchLatestRelease(tag)
+    if (!release) {
+      const result = { status: 'unavailable', message: st('updates.noInstallableApk') } satisfies ApkUpdateResult
       await logAppUpdateEvent('check', result)
       return result
     }
@@ -253,91 +257,60 @@ export async function downloadAndOpenApkInstaller(release: ApkReleaseInfo, optio
   }
 }
 
-async function fetchLatestRelease(snapshot?: VersionSnapshot): Promise<ApkReleaseInfo | null> {
-  let manifestRelease: ApkReleaseInfo | null
-  try {
-    manifestRelease = await fetchLatestManifestRelease()
-  } catch (error) {
-    if (getUpdateReason(error) === 'manifest_invalid') throw error
-    return fetchLatestGithubRelease()
-  }
-
-  if (!manifestRelease) return fetchLatestGithubRelease()
-
-  const manifestComparison = snapshot ? compareReleaseToSnapshot(manifestRelease, snapshot) : 1
-  if (manifestComparison > 0) return manifestRelease
-
-  try {
-    const githubRelease = await fetchLatestGithubRelease()
-    if (githubRelease && snapshot && compareReleaseToSnapshot(githubRelease, snapshot) > 0) return githubRelease
-  } catch (error) {
-    if (manifestComparison < 0) throw error
-  }
-
-  return manifestRelease
+// Compatibility orchestration only. The GitHub transport lives in platform/native;
+// delete this bridge when the update use case moves behind a Settings-owned port.
+async function fetchLatestRelease(tag: GithubTagVersionSnapshot): Promise<ApkReleaseInfo | null> {
+  const taggedRelease = await fetchGithubTaggedAndroidReleaseSnapshot(tag)
+  return normalizeGithubTaggedRelease(taggedRelease, getSupportedCpuArchitectures())
 }
 
-async function fetchLatestManifestRelease(): Promise<ApkReleaseInfo | null> {
-  const response = await fetch(APK_UPDATE_MANIFEST_URL, {
-    headers: {
-      Accept: 'application/json',
-    },
+function normalizeGithubTaggedRelease(
+  taggedRelease: GithubTaggedAndroidReleaseSnapshot,
+  supportedCpuArchitectures: readonly string[],
+): ApkReleaseInfo | null {
+  if (!taggedRelease.assets.length) return null
+
+  const manifest = parseApkUpdateManifest(taggedRelease.manifest)
+  const manifestVersion = normalizeVersion(manifest.versionName)
+  const taggedVersion = normalizeVersion(taggedRelease.tag.versionName)
+  if (manifestVersion !== taggedVersion) {
+    throw createUpdateError('manifest_invalid', `Tagged app version ${taggedVersion} does not match update manifest ${manifestVersion}`)
+  }
+  if (manifest.versionCode !== taggedRelease.tag.versionCode) {
+    throw createUpdateError(
+      'manifest_invalid',
+      `Tagged app versionCode ${taggedRelease.tag.versionCode} does not match update manifest ${manifest.versionCode}`,
+    )
+  }
+
+  const releaseAssets = new Map(
+    taggedRelease.assets
+      .map((asset) => {
+        const url = safeHttpUrl(asset.url)
+        return url ? [asset.name, url] as const : null
+      })
+      .filter((asset): asset is readonly [string, string] => Boolean(asset)),
+  )
+  const installableAssets = manifest.assets.flatMap((asset) => {
+    const releaseUrl = releaseAssets.get(asset.name)
+    return releaseUrl ? [{ ...asset, url: releaseUrl }] : []
   })
-  if (!response.ok) {
-    throw createUpdateError(reasonForHttpStatus(response.status), `Update manifest ${response.status}`)
-  }
-
-  let payload: unknown
-  try {
-    payload = await response.json()
-  } catch (error) {
-    throw createUpdateError('manifest_invalid', formatError(error))
-  }
-
-  return normalizeApkUpdateManifest(payload, getSupportedCpuArchitectures())
-}
-
-async function fetchLatestGithubRelease(): Promise<ApkReleaseInfo | null> {
-  const response = await fetch(GITHUB_RELEASE_API, {
-    headers: {
-      Accept: 'application/vnd.github+json',
-    },
-  })
-  if (!response.ok) {
-    throw createUpdateError(reasonForHttpStatus(response.status), `GitHub API ${response.status}`)
-  }
-
-  const payload = await response.json() as {
-    tag_name?: string
-    name?: string
-    html_url?: string
-    published_at?: string | null
-    assets?: Array<{
-      name?: string
-      browser_download_url?: string
-      content_type?: string
-      size?: number
-    }>
-  }
-
-  const assets = payload.assets
-    ?.map((item) => normalizeGithubAsset(item))
-    .filter((item): item is ApkManifestAsset => Boolean(item)) ?? []
-  const asset = selectApkAsset(assets, getSupportedCpuArchitectures())
-
+  const asset = selectApkAsset(installableAssets, supportedCpuArchitectures)
   if (!asset) return null
 
   return {
-    version: normalizeVersion(payload.tag_name ?? payload.name ?? '0.0.0'),
-    tagName: payload.tag_name ?? '',
-    name: payload.name ?? payload.tag_name ?? 'IsleMind Release',
-    htmlUrl: payload.html_url ?? 'https://github.com/domidoremi/IsleMind/releases/latest',
+    version: taggedVersion,
+    versionCode: taggedRelease.tag.versionCode,
+    tagName: taggedRelease.tag.tagName,
+    name: taggedRelease.tag.name,
+    htmlUrl: taggedRelease.tag.htmlUrl,
     apkUrl: asset.url,
     apkName: asset.name,
-    publishedAt: payload.published_at ?? null,
+    publishedAt: manifest.publishedAt ?? taggedRelease.tag.publishedAt,
+    sha256: asset.sha256,
+    sizeBytes: asset.sizeBytes,
     abi: asset.abi,
     variant: asset.variant,
-    sizeBytes: asset.sizeBytes,
   }
 }
 
@@ -388,18 +361,6 @@ function parseManifestAsset(payload: unknown): ApkManifestAsset {
   return { abi, variant, name, url, sha256, sizeBytes }
 }
 
-function normalizeGithubAsset(asset: { name?: string; browser_download_url?: string; size?: number }): ApkManifestAsset | null {
-  const url = safeHttpUrl(asset.browser_download_url)
-  if (!asset.name?.toLowerCase().endsWith('.apk') || !url) return null
-  return {
-    abi: inferApkAbi(asset.name),
-    variant: inferApkVariant(asset.name),
-    name: asset.name,
-    url,
-    sizeBytes: readOptionalPositiveInteger(asset.size),
-  }
-}
-
 function selectApkAsset(assets: readonly ApkManifestAsset[], supportedCpuArchitectures: readonly string[]): ApkManifestAsset | null {
   const candidates = assets.filter((asset) => asset.url && asset.name)
   if (!candidates.length) return null
@@ -439,7 +400,7 @@ function getSupportedCpuArchitectures(): string[] {
   return Array.isArray(architectures) ? normalizeSupportedAbis(architectures.map((item) => String(item))) : []
 }
 
-function compareReleaseToSnapshot(release: ApkReleaseInfo, snapshot: VersionSnapshot): number {
+function compareReleaseToSnapshot(release: Pick<ApkReleaseInfo, 'version' | 'versionCode'>, snapshot: VersionSnapshot): number {
   const releaseCode = readOptionalPositiveInteger(release.versionCode)
   const currentCode = readOptionalPositiveInteger(Number.parseInt(snapshot.buildVersion, 10))
   if (releaseCode != null && currentCode != null) return releaseCode - currentCode
@@ -472,7 +433,7 @@ async function verifyDownloadedApk(release: ApkReleaseInfo, uri: string): Promis
   }
 
   if (release.sha256) {
-    const actualSha256 = await sha256File(uri)
+    const actualSha256 = await sha256LocalModelFile(uri)
     if (actualSha256.toLowerCase() !== release.sha256.toLowerCase()) {
       await discardDownloadedApk(uri)
       return {
@@ -509,11 +470,18 @@ async function downloadApkWithProgress(
     const result = await download.downloadAsync()
     if (result) return result
   }
-  return FileSystem.downloadAsync(apkUrl, localUri)
-}
-
-function reasonForHttpStatus(status: number): ApkUpdateReason {
-  return status === 403 || status === 429 ? 'rate_limited' : 'network'
+  const result = await FileSystem.downloadAsync(apkUrl, localUri)
+  if (result.status >= 200 && result.status < 300 && release.sizeBytes != null) {
+    options.onProgress?.({
+      stage: 'downloading',
+      release,
+      localUri,
+      bytesWritten: release.sizeBytes,
+      bytesExpected: release.sizeBytes,
+      percent: 100,
+    })
+  }
+  return result
 }
 
 function createUpdateError(reason: ApkUpdateReason, message: string): ApkUpdateError {
@@ -521,6 +489,7 @@ function createUpdateError(reason: ApkUpdateReason, message: string): ApkUpdateE
 }
 
 function getUpdateReason(error: unknown): ApkUpdateReason | undefined {
+  if (error instanceof GithubReleaseChannelError) return error.reason
   return error instanceof ApkUpdateError ? error.reason : undefined
 }
 
@@ -634,25 +603,6 @@ function apkNameFromUrl(url: string): string {
   } catch {
     return 'IsleMind.apk'
   }
-}
-
-function inferApkAbi(name: string): string {
-  const lower = name.toLowerCase()
-  if (lower.includes('arm64-v8a')) return 'arm64-v8a'
-  if (lower.includes('armeabi-v7a')) return 'armeabi-v7a'
-  if (lower.includes('universal-64')) return 'universal-64'
-  if (lower.includes('universal')) return 'universal'
-  if (lower.includes('x86_64')) return 'x86_64'
-  if (lower.includes('x86')) return 'x86'
-  return 'universal-64'
-}
-
-function inferApkVariant(name: string): ApkAssetVariant {
-  const lower = name.toLowerCase()
-  if (lower.includes('with-model-small') || lower.includes('with-model')) return 'with-model-small'
-  if (lower.includes('no-model')) return 'no-model'
-  if (lower.includes('universal')) return 'universal'
-  return 'no-model'
 }
 
 function formatError(error: unknown): string {

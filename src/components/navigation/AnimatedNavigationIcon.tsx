@@ -1,9 +1,5 @@
 import { StyleSheet, View } from 'react-native'
-import { MotiView } from 'moti'
-import { useMotionPreference } from '@/hooks/useMotionPreference'
-import { motionTokens } from '@/theme/animation'
 import { AppIcon, appIconStroke, type AppIconName } from '@/components/ui/AppIcon'
-
 export type NavigationGlyph =
   | 'back'
   | 'home'
@@ -30,7 +26,7 @@ interface AnimatedNavigationIconProps {
 }
 
 const navigationGlyphIcons: Record<NavigationGlyph, AppIconName> = {
-  back: 'back-next',
+  back: 'back-previous',
   home: 'home',
   history: 'history',
   'new-chat': 'new-chat',
@@ -48,27 +44,21 @@ const navigationGlyphIcons: Record<NavigationGlyph, AppIconName> = {
 }
 
 export function AnimatedNavigationIcon({ glyph, active = false, color, accentColor = color, size = 22 }: AnimatedNavigationIconProps) {
-  const motion = useMotionPreference()
-  const play = active && motion === 'full'
   const iconName = navigationGlyphIcons[glyph]
   const iconColor = active ? accentColor : color
 
   return (
-    <View pointerEvents="none" style={{ width: size, height: size }}>
-      <MotiView
-        animate={play ? { scale: [1, 1.08, 1], rotate: glyph === 'back' ? ['0deg', '-8deg', '0deg'] : '0deg' } : { scale: 1, rotate: '0deg' }}
-        transition={play ? { type: 'timing', duration: motionTokens.duration.normal } : { type: 'timing', duration: 1 }}
-        style={styles.iconLayer}
-      >
+    <View style={{ width: size, height: size, pointerEvents: 'none' }}>
+      <View style={styles.iconLayer}>
         <AppIcon name={iconName} color={iconColor} size={size} strokeWidth={appIconStroke.strong} />
-      </MotiView>
+      </View>
     </View>
   )
 }
 
 const styles = StyleSheet.create({
   iconLayer: {
-    ...StyleSheet.absoluteFillObject,
+    ...StyleSheet.absoluteFill,
     alignItems: 'center',
     justifyContent: 'center',
   },

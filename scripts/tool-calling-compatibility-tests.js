@@ -6,6 +6,8 @@ const ts = require('typescript')
 
 const root = path.resolve(__dirname, '..')
 const originalResolve = Module._resolveFilename
+const targetEvaluatorPath = path.join(root, 'src/modules/integrations/testing/toolCallingCompatibilityEvaluation.ts')
+const retiredServiceEvaluatorPath = path.join(root, 'src/services/toolCallingCompatibilityEvaluation.ts')
 
 registerTypeScriptSupport()
 
@@ -13,7 +15,7 @@ const {
   TOOL_CALLING_COMPATIBILITY_EVAL_SCHEMA,
   TOOL_CALLING_COMPATIBILITY_FIXTURE_IDS,
   runToolCallingCompatibilityEvaluation,
-} = require('../src/services/toolCallingCompatibilityEvaluation.ts')
+} = require('../src/modules/integrations/testing/toolCallingCompatibilityEvaluation.ts')
 
 function registerTypeScriptSupport() {
   if (require.extensions['.ts']?.isToolCallingCompatibilityHook) return
@@ -73,6 +75,8 @@ function assertBlocked(item, codes) {
 }
 
 function run() {
+  assert.equal(fs.existsSync(targetEvaluatorPath), true, 'Integrations owns the private tool-calling compatibility evaluator')
+  assert.equal(fs.existsSync(retiredServiceEvaluatorPath), false, 'the service-owned tool-calling compatibility evaluator stays deleted')
   assert.equal(TOOL_CALLING_COMPATIBILITY_EVAL_SCHEMA, 'islemind.tool-calling-compatibility-eval.v1', 'tool calling schema is versioned')
   assert.deepEqual(
     TOOL_CALLING_COMPATIBILITY_FIXTURE_IDS,

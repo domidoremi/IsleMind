@@ -1,7 +1,6 @@
 import type { ActivationJobItemState } from '@/store/activationJobStore'
-import type { ProviderActivationStageEvent } from '@/services/providerActivation'
-import type { AIProvider } from '@/types'
-
+import type { ProviderActivationStageEvent } from '@/modules/providers'
+import type { AIProvider } from '@/types/providerContracts'
 export type ProviderActivationJobMode = 'single' | 'batch' | 'all'
 
 export interface ProviderActivationRuntimePolicy {

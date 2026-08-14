@@ -47,6 +47,7 @@ emulator-screenshots/
 test-evidence/
 emulator-evidence/
 logcat/
+/output/
 *.log
 *.logcat
 *.uia.xml

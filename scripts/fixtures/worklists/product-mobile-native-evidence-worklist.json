@@ -1,0 +1,274 @@
+{
+  "schema": "islemind.product-mobile-native-evidence-worklist.v1",
+  "status": "pending-chat-only-recapture",
+  "updatedAt": "2026-07-25",
+  "purpose": "Track the native Android/ADB screenshot proof still required after browser-rendered mobile viewport evidence.",
+  "observedBlockers": [
+    "the existing captured result contains removed Agent and Tavern product screens and is stale until a Chat-only native recapture completes",
+    "native Chat toolbox and boundary-status interactions require a connected ADB device"
+  ],
+  "webEvidenceIsNotNativeProof": true,
+  "nativeResultPath": "test-evidence/qa/product-mobile-native-adb-results.json",
+  "nativeScreenshotDirectory": "test-evidence/qa/product-mobile-native-adb/",
+  "collectorCommand": "bun run test:product-mobile-native-evidence:collect",
+  "requiredCaptures": [
+    {
+      "id": "history-320",
+      "route": "/conversations",
+      "mode": "history",
+      "targetViewportDp": "320x568",
+      "settleBeforeScreenshotMs": 9000,
+      "dismissBeforeScreenshotUiText": [
+        [
+          "定位当前对话",
+          "Scroll to current",
+          "現在の会話"
+        ]
+      ],
+      "mustFindUiText": [
+        [
+          "搜索对话",
+          "Search chats",
+          "チャットを検索"
+        ],
+        [
+          "对话",
+          "Chats",
+          "チャット"
+        ]
+      ],
+      "mustNotFindUiText": [
+        [
+          "定位当前对话",
+          "Scroll to current",
+          "現在の会話"
+        ],
+        [
+          "正在启动 IsleMind",
+          "Starting IsleMind",
+          "IsleMind を起動中"
+        ]
+      ],
+      "mustVerify": [
+        "History/Chat/Settings navigation remains visible",
+        "unified history exposes no Agent or Tavern product-mode filters",
+        "search and empty history states remain readable"
+      ],
+      "status": "pending-native-recapture"
+    },
+    {
+      "id": "chat-320",
+      "route": "/",
+      "mode": "chat",
+      "targetViewportDp": "320x568",
+      "nativeUiFallbackTarget": "chat",
+      "mustFindUiText": [
+        [
+          "询问任何问题",
+          "Ask anything",
+          "なんでも聞いて"
+        ],
+        [
+          "输入消息",
+          "Message input",
+          "メッセージを入力"
+        ]
+      ],
+      "mustNotFindUiText": [
+        [
+          "定位当前对话",
+          "Scroll to current",
+          "現在の会話"
+        ],
+        [
+          "正在启动 IsleMind",
+          "Starting IsleMind",
+          "IsleMind を起動中"
+        ]
+      ],
+      "mustVerify": [
+        "the Chat-only workspace fits without product-mode selection cards",
+        "composer and toolbox affordances remain visible",
+        "the primary message workflow stays readable at 320dp"
+      ],
+      "status": "pending-native-recapture"
+    },
+    {
+      "id": "chat-toolbox-320",
+      "route": "/",
+      "mode": "chat",
+      "targetViewportDp": "320x568",
+      "nativeUiFallbackTarget": "chat",
+      "interaction": "open-toolbox",
+      "tapUiText": [
+        "工具",
+        "Tools",
+        "ツール"
+      ],
+      "preInteractionMustFindUiText": [
+        [
+          "询问任何问题",
+          "Ask anything",
+          "なんでも聞いて"
+        ],
+        [
+          "输入消息",
+          "Message input",
+          "メッセージを入力"
+        ]
+      ],
+      "mustFindUiText": [
+        [
+          "快捷操作",
+          "Quick actions",
+          "クイック操作"
+        ],
+        [
+          "收起快捷栏",
+          "Collapse quick bar",
+          "クイックバーを閉じる"
+        ]
+      ],
+      "mustNotFindUiText": [
+        [
+          "定位当前对话",
+          "Scroll to current",
+          "現在の会話"
+        ],
+        [
+          "正在启动 IsleMind",
+          "Starting IsleMind",
+          "IsleMind を起動中"
+        ]
+      ],
+      "mustVerify": [
+        "the toolbox trigger remains inside the 320dp viewport",
+        "the toolbox panel opens above the composer without clipping",
+        "toolbox action rows retain usable native touch targets"
+      ],
+      "status": "pending-native-recapture"
+    }
+  ],
+  "requiredInteractionProofs": [
+    {
+      "id": "boundary-status-chat-320",
+      "status": "pending-native-recapture",
+      "captureId": "chat-320",
+      "route": "/",
+      "mode": "chat",
+      "targetViewportDp": "320x568",
+      "trigger": "tap compact mode boundary card",
+      "tapUiText": [
+        "会话记忆",
+        "Conversation memory",
+        "会話メモリ"
+      ],
+      "mustFindUiTextAfterTap": [
+        [
+          "会话记忆",
+          "Conversation memory",
+          "会話メモリ"
+        ],
+        [
+          "记忆：",
+          "Memory:",
+          "メモリ:"
+        ],
+        [
+          "媒体",
+          "Media",
+          "メディア"
+        ],
+        [
+          "0/6"
+        ],
+        [
+          "服务商证据",
+          "provider evidence",
+          "プロバイダー証跡"
+        ],
+        [
+          "原生证明",
+          "native proof",
+          "ネイティブ証跡"
+        ]
+      ],
+      "mustVerify": [
+        "boundary status notice opens from the compact one-row card",
+        "memory/media/generation status remains readable at 320dp",
+        "provider, memory, or input-tool actions require confirmation before navigation",
+        "future generation gate readiness ratio is visible in the native status explanation",
+        "future generation gate names are visible in the native status explanation"
+      ]
+    }
+  ],
+  "resultAcceptance": {
+    "schema": "islemind.product-mobile-native-adb-results.v1",
+    "runnerMustMention": "ADB",
+    "allowedStatuses": [
+      "blocked-no-adb-device",
+      "blocked-unsupported-adb-viewport",
+      "blocked-native-ui-verification",
+      "captured"
+    ],
+    "requiresDeviceMetadata": [
+      "serial",
+      "model",
+      "apiLevel",
+      "densityDpi",
+      "physicalWidthPx",
+      "physicalHeightPx",
+      "widthPx",
+      "heightPx",
+      "widthDp",
+      "heightDp"
+    ],
+    "requiresPerCapture": [
+      "id",
+      "route",
+      "mode",
+      "targetViewportDp",
+      "routeLaunchOk",
+      "focusedPackage",
+      "screenshot",
+      "screenshotDimensionsPx",
+      "screenshotMatchesDeviceViewport",
+      "actualViewportPx",
+      "actualViewportDp",
+      "uiHierarchyMatched",
+      "uiTextEvidence",
+      "transientUiAbsent",
+      "absentUiTextEvidence",
+      "dismissedUiTextActions",
+      "captureInteractionActions",
+      "navigationFallbackUsed",
+      "navigationFallbackTarget",
+      "navigationActions",
+      "verified",
+      "logcatFatalErrors",
+      "primaryControlsClipped"
+    ],
+    "mustKeepScreenshotsInside": "test-evidence/qa/product-mobile-native-adb/",
+    "mustRecordScreenshotDimensions": true,
+    "mustMatchScreenshotDimensionsToDeviceViewport": true,
+    "mustRecordFocusedAppPackage": true,
+    "mustRecordNoFatalLogcatErrors": true,
+    "mustRecordNoClippedPrimaryControls": true,
+    "requiresInteractionProofsBeforeClaimingBoundaryStatusActions": true,
+    "allowedInteractionProofStatuses": [
+      "pending-native-recapture",
+      "blocked-native-ui-verification",
+      "captured"
+    ],
+    "requiresPerInteractionProof": [
+      "id",
+      "captureId",
+      "status",
+      "route",
+      "mode",
+      "targetViewportDp",
+      "trigger",
+      "mustVerify"
+    ]
+  }
+}

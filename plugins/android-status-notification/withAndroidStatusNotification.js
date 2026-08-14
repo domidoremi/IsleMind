@@ -10,8 +10,12 @@ const moduleFiles = [
 const manifestPermissions = [
   'android.permission.POST_NOTIFICATIONS',
   'android.permission.POST_PROMOTED_NOTIFICATIONS',
+  'android.permission.FOREGROUND_SERVICE',
+  'android.permission.FOREGROUND_SERVICE_DATA_SYNC',
 ]
 const packageRegistration = 'add(AndroidStatusNotificationPackage())'
+const foregroundServiceName = '.AndroidStatusNotificationService'
+const statusIconFile = 'ic_islemind_status.xml'
 
 function renderNativeModuleTemplate(file, appPackage) {
   const source = fs.readFileSync(path.join(pluginRoot, file), 'utf8')
@@ -33,6 +37,19 @@ function withAndroidStatusNotification(config) {
     for (const permission of manifestPermissions) {
       if (!permissions.some((item) => item.$?.['android:name'] === permission)) {
         permissions.push({ $: { 'android:name': permission } })
+      }
+    }
+    const application = manifest.application?.[0]
+    if (application) {
+      application.service = application.service || []
+      if (!application.service.some((item) => item.$?.['android:name'] === foregroundServiceName)) {
+        application.service.push({
+          $: {
+            'android:name': foregroundServiceName,
+            'android:exported': 'false',
+            'android:foregroundServiceType': 'dataSync',
+          },
+        })
       }
     }
     return mod
@@ -70,10 +87,13 @@ function withAndroidStatusNotification(config) {
     }
     const packagePath = appPackage.split('.')
     const javaDir = path.join(mod.modRequest.platformProjectRoot, 'app', 'src', 'main', 'java', ...packagePath)
+    const drawableDir = path.join(mod.modRequest.platformProjectRoot, 'app', 'src', 'main', 'res', 'drawable')
     fs.mkdirSync(javaDir, { recursive: true })
+    fs.mkdirSync(drawableDir, { recursive: true })
     for (const file of moduleFiles) {
       writeFileIfChanged(path.join(javaDir, file), renderNativeModuleTemplate(file, appPackage))
     }
+    writeFileIfChanged(path.join(drawableDir, statusIconFile), fs.readFileSync(path.join(pluginRoot, statusIconFile), 'utf8'))
     return mod
   }])
 

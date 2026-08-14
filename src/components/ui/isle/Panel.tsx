@@ -1,8 +1,7 @@
 import type { PropsWithChildren } from 'react'
-import { StyleSheet, View, type StyleProp, type ViewStyle } from 'react-native'
+import { Platform, StyleSheet, View, type StyleProp, type ViewStyle } from 'react-native'
 import { useAppTheme } from '@/hooks/useAppTheme'
 import { IsleCard } from './IsleKit'
-
 export type IsleMaterial = 'paper' | 'raised' | 'muted' | 'glass' | 'chrome' | 'field' | 'transparent'
 
 interface IslePanelProps extends PropsWithChildren {
@@ -29,7 +28,8 @@ export function IslePanel({
 }: IslePanelProps) {
   const { colors } = useAppTheme()
   const resolvedMaterial = material ?? (blur ? 'glass' : 'paper')
-  const resolvedRadius = radius ?? colors.ui.radius.panel
+  const resolvedRadius = Math.min(radius ?? colors.ui.radius.panel, colors.ui.radius.panel)
+  const ornamented = colors.ui.limeRoad && colors.ui.ornamented
   const backgroundColor = panelBackground(resolvedMaterial, colors)
   const borderColor = panelBorder(resolvedMaterial, colors)
   void intensity
@@ -39,11 +39,16 @@ export function IslePanel({
       borderColor,
       borderRadius: resolvedRadius,
       backgroundColor,
-      shadowColor: colors.shadowTint,
-      shadowOpacity: elevated && colors.ui.cartoon ? colors.ui.card.shadowOpacity : 0,
-      shadowRadius: elevated && colors.ui.cartoon ? (interactive ? colors.ui.card.shadowRadius + 4 : colors.ui.card.shadowRadius) : 0,
-      shadowOffset: { width: 0, height: elevated && colors.ui.cartoon ? (interactive ? colors.ui.card.shadowOffset + 2 : colors.ui.card.shadowOffset) : 0 },
-      elevation: elevated && colors.ui.cartoon && colors.ui.card.shadowOpacity > 0 ? (interactive ? 3 : 1) : 0,
+      ...Platform.select<ViewStyle>({
+        web: { boxShadow: 'none' },
+        default: {
+          shadowColor: colors.shadowTint,
+          shadowOpacity: 0,
+          shadowRadius: 0,
+          shadowOffset: { width: 0, height: 0 },
+          elevation: 0,
+        },
+      }),
     },
     style,
   ]
@@ -51,7 +56,7 @@ export function IslePanel({
   if (resolvedMaterial === 'paper' || resolvedMaterial === 'raised' || resolvedMaterial === 'muted' || resolvedMaterial === 'glass' || resolvedMaterial === 'chrome') {
     return (
       <IsleCard
-        type={resolvedMaterial === 'muted' ? 'dashed' : resolvedMaterial === 'paper' && colors.ui.cartoon ? 'title' : 'default'}
+        type="default"
         style={panelStyle}
         contentStyle={contentStyle}
       >
@@ -73,9 +78,9 @@ const styles = StyleSheet.create({
 function panelBackground(material: IsleMaterial, colors: ReturnType<typeof useAppTheme>['colors']) {
   switch (material) {
     case 'raised':
-      return colors.ui.cartoon ? colors.ui.semantic.surface.base : colors.ui.semantic.surface.base
+      return colors.ui.limeRoad ? colors.ui.semantic.surface.base : colors.ui.semantic.surface.base
     case 'muted':
-      return colors.ui.cartoon ? colors.ui.semantic.surface.muted : colors.ui.semantic.surface.muted
+      return colors.ui.limeRoad ? colors.ui.semantic.surface.muted : colors.ui.semantic.surface.muted
     case 'glass':
       return colors.ui.semantic.surface.base
     case 'chrome':
@@ -86,13 +91,13 @@ function panelBackground(material: IsleMaterial, colors: ReturnType<typeof useAp
       return 'transparent'
     case 'paper':
     default:
-      return colors.ui.cartoon ? colors.ui.semantic.surface.base : colors.ui.semantic.surface.base
+      return colors.ui.limeRoad ? colors.ui.semantic.surface.base : colors.ui.semantic.surface.base
   }
 }
 
 function panelBorder(material: IsleMaterial, colors: ReturnType<typeof useAppTheme>['colors']) {
   if (material === 'transparent') return 'transparent'
-  if (colors.ui.cartoon) {
+  if (colors.ui.limeRoad) {
     return material === 'paper' || material === 'raised' ? colors.material.stroke : colors.material.strokeStrong
   }
   if (material === 'field') return colors.ui.input.border

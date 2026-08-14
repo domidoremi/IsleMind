@@ -1,14 +1,18 @@
 import { NativeModules, Platform } from 'react-native'
 import * as FileSystem from 'expo-file-system/legacy'
 import * as IntentLauncher from 'expo-intent-launcher'
-import type { ProcessTrace, ToolContentBlock } from '@/types'
-import type { AgentToolManifest, AgentToolResult } from '@/services/agent/agentToolTypes'
-import { clampAgentOutput, createAgentTrace, redactSensitiveText } from '@/services/agent/agentTrace'
+import {
+  normalizeExternalToolExecutionResult,
+  type ConversationToolCatalogManifest as ConversationToolManifest,
+  type ExternalToolExecutionResult,
+  type ExternalToolObservationErrorCode,
+  type ExternalToolObservationStatus,
+} from '@/modules/integrations'
+import { clampTraceText, redactSensitiveText } from '@/core'
 import { appendRuntimeLog, type RuntimeLogOptions } from '@/services/runtimeLog'
 import { isAllowedAndroidApkUri } from '@/services/androidUriPolicy'
 import { openAndroidStatusNotificationSettings, type AndroidStatusNotificationSettingsTarget } from '@/services/androidStatusNotification'
 import { st } from '@/i18n/service'
-
 export type AndroidFileOperationAction = 'mkdir' | 'move' | 'copy' | 'rename'
 export type AndroidFileConflictPolicy = 'skip' | 'rename'
 
@@ -95,10 +99,10 @@ interface AndroidOperationAudit {
   auditId: string
   toolId: string
   toolName: string
-  source: AgentToolManifest['source']
-  permission: AgentToolManifest['permission']
+  source: ConversationToolManifest['source']
+  permission: ConversationToolManifest['permission']
   operationKind: string
-  status: AgentToolResult['status']
+  status: ExternalToolObservationStatus
   ok: boolean
   startedAt: number
   completedAt: number
@@ -121,7 +125,7 @@ interface AndroidOperationAudit {
   failureCount?: number
   partialFailure?: boolean
   failedOperationId?: string
-  errorCode?: AgentToolResult['errorCode']
+  errorCode?: ExternalToolObservationErrorCode
   failureReason?: string
 }
 
@@ -139,8 +143,8 @@ const ANDROID_FILE_TOOL_METADATA = {
   permanentDeleteSupported: false,
 }
 
-export function listAndroidDeviceToolManifests(): AgentToolManifest[] {
-  return [
+export function listAndroidDeviceToolManifests(): ConversationToolManifest[] {
+  const manifests: ConversationToolManifest[] = [
     {
       id: 'android:files.request_directory_access',
       source: 'android',
@@ -354,15 +358,24 @@ export function listAndroidDeviceToolManifests(): AgentToolManifest[] {
       metadata: { androidOnly: true, requiresExternalConfirmation: true, backgroundReliable: false },
     },
   ]
+  const runtimeAvailable = Platform.OS === 'android'
+  return manifests.map((manifest) => ({
+    ...manifest,
+    enabled: runtimeAvailable && manifest.enabled,
+    metadata: {
+      ...(manifest.metadata ?? {}),
+      runtimeAvailable,
+    },
+  }))
 }
 
 export async function executeAndroidDeviceTool(
-  tool: AgentToolManifest,
+  tool: ConversationToolManifest,
   args: Record<string, unknown> = {},
   options: AndroidDeviceToolOptions = {}
-): Promise<AgentToolResult> {
+): Promise<ExternalToolExecutionResult> {
   const startedAt = Date.now()
-  let result: AgentToolResult
+  let result: ExternalToolExecutionResult
   try {
     throwIfAndroidToolCancelled(options.signal)
     const execution = await runAndroidTool(tool.name, args, options)
@@ -1535,7 +1548,7 @@ function throwAndroidApplyPartialFailure(
     operationId: failedOperation.id,
     action: failedOperation.action,
     errorCode: failure.errorCode,
-    message: clampAgentOutput(redactSensitiveText(failure.message), 500),
+    message: clampTraceText(redactSensitiveText(failure.message), 500),
   }
   const payload = {
     mode: undo ? 'undo' : 'apply',
@@ -1566,34 +1579,48 @@ function throwAndroidApplyPartialFailure(
 }
 
 function buildToolResult(
-  tool: AgentToolManifest,
+  tool: ConversationToolManifest,
   ok: boolean,
-  status: AgentToolResult['status'],
+  status: ExternalToolObservationStatus,
   output: string,
   startedAt: number,
   metadata: Record<string, unknown> = {},
-  errorCode?: AgentToolResult['errorCode']
-): AgentToolResult {
+  errorCode?: ExternalToolObservationErrorCode
+): ExternalToolExecutionResult {
   const completedAt = Date.now()
-  const safeOutput = clampAgentOutput(redactSensitiveText(output), 4800)
+  const safeOutput = clampTraceText(redactSensitiveText(output), 4800)
   const resultMetadata = {
     ...metadata,
     androidOperationAudit: buildAndroidOperationAudit(tool, ok, status, startedAt, completedAt, metadata, errorCode, safeOutput),
   }
-  const block: ToolContentBlock = { type: 'text', text: safeOutput }
-  return {
+  return normalizeExternalToolExecutionResult({
+    toolId: tool.id,
+    source: tool.source,
+    name: tool.name,
     ok,
     status,
     output: safeOutput,
-    blocks: [block],
-    trace: androidToolTrace(tool, status, safeOutput, startedAt, completedAt, resultMetadata, errorCode),
+    blocks: [{ type: 'text', text: safeOutput }],
+    diagnostic: {
+      content: safeOutput,
+      status: status === 'done' ? 'done' : status === 'skipped' ? 'skipped' : 'error',
+      startedAt,
+      completedAt,
+      metadata: {
+        toolId: tool.id,
+        source: tool.source,
+        permission: tool.permission,
+        errorCode,
+        ...resultMetadata,
+      },
+    },
     errorCode,
     metadata: resultMetadata,
-  }
+  })
 }
 
-function recordAndroidOperationAudit(result: AgentToolResult, options: RuntimeLogOptions | undefined): void {
-  const audit = result.metadata?.androidOperationAudit
+function recordAndroidOperationAudit(result: ExternalToolExecutionResult, options: RuntimeLogOptions | undefined): void {
+  const audit = result.observation.metadata?.androidOperationAudit
   if (!audit || typeof audit !== 'object' || Array.isArray(audit)) return
   void appendRuntimeLog('android.operation.audit', compactAndroidOperationAuditLogRecord(audit as Record<string, unknown>), options)
 }
@@ -1637,41 +1664,14 @@ function compactAndroidOperationAuditLogRecord(audit: Record<string, unknown>): 
   return record
 }
 
-function androidToolTrace(
-  tool: AgentToolManifest,
-  status: AgentToolResult['status'],
-  content: string,
-  startedAt: number,
-  completedAt: number,
-  metadata: Record<string, unknown>,
-  errorCode?: AgentToolResult['errorCode']
-): ProcessTrace {
-  return createAgentTrace({
-    id: `android-tool-${tool.id}-${startedAt}`,
-    type: 'tool',
-    title: `Android ${tool.name}`,
-    content,
-    status: status === 'done' ? 'done' : status === 'skipped' ? 'skipped' : 'error',
-    startedAt,
-    completedAt,
-    metadata: {
-      toolId: tool.id,
-      source: tool.source,
-      permission: tool.permission,
-      errorCode,
-      ...metadata,
-    },
-  })
-}
-
 function buildAndroidOperationAudit(
-  tool: AgentToolManifest,
+  tool: ConversationToolManifest,
   ok: boolean,
-  status: AgentToolResult['status'],
+  status: ExternalToolObservationStatus,
   startedAt: number,
   completedAt: number,
   metadata: Record<string, unknown>,
-  errorCode: AgentToolResult['errorCode'] | undefined,
+  errorCode: ExternalToolObservationErrorCode | undefined,
   safeOutput: string
 ): AndroidOperationAudit {
   const toolMetadata = tool.metadata ?? {}
@@ -1688,7 +1688,7 @@ function buildAndroidOperationAudit(
   const skippedCount = readAuditNumber(metadata.skipped)
   const failureCount = readAuditNumber(metadata.failureCount)
   const failedOperationId = typeof metadata.failedOperationId === 'string' && metadata.failedOperationId.trim()
-    ? clampAgentOutput(redactSensitiveText(metadata.failedOperationId), 120)
+    ? clampTraceText(redactSensitiveText(metadata.failedOperationId), 120)
     : undefined
   return {
     auditId: `android-audit-${Math.abs(hashString(`${tool.id}:${startedAt}:${status}`)).toString(36)}`,
@@ -1721,7 +1721,7 @@ function buildAndroidOperationAudit(
     partialFailure: readAuditBoolean(metadata.partialFailure),
     failedOperationId,
     errorCode,
-    failureReason: ok ? undefined : clampAgentOutput(safeOutput, 240),
+    failureReason: ok ? undefined : clampTraceText(safeOutput, 240),
   }
 }
 
@@ -1776,10 +1776,10 @@ function androidAuditScope(toolName: string): string {
 
 function androidConfirmationState(
   ok: boolean,
-  permission: AgentToolManifest['permission'],
+  permission: ConversationToolManifest['permission'],
   visibleActionRequired: boolean,
   externalConfirmationRequired: boolean,
-  errorCode: AgentToolResult['errorCode'] | undefined
+  errorCode: ExternalToolObservationErrorCode | undefined
 ): string {
   if (!ok && errorCode === 'cancelled') return 'cancelled'
   if (!ok && errorCode === 'permission_required') return 'blocked-permission-required'
@@ -1800,14 +1800,14 @@ function readAuditNumber(value: unknown): number | undefined {
 }
 
 function androidToolError(
-  errorCode: AgentToolResult['errorCode'],
+  errorCode: ExternalToolObservationErrorCode,
   message: string,
-  status: AgentToolResult['status'] = 'error',
+  status: ExternalToolObservationStatus = 'error',
   metadata: Record<string, unknown> = {}
 ): Error {
   const error = new Error(message) as Error & {
-    androidToolStatus?: AgentToolResult['status']
-    androidToolErrorCode?: AgentToolResult['errorCode']
+    androidToolStatus?: ExternalToolObservationStatus
+    androidToolErrorCode?: ExternalToolObservationErrorCode
     androidToolMetadata?: Record<string, unknown>
   }
   error.androidToolStatus = status
@@ -1818,13 +1818,13 @@ function androidToolError(
 
 function normalizeAndroidToolError(error: unknown): {
   message: string
-  status: AgentToolResult['status']
-  errorCode: AgentToolResult['errorCode']
+  status: ExternalToolObservationStatus
+  errorCode: ExternalToolObservationErrorCode
   metadata: Record<string, unknown>
 } {
   const shaped = error as {
-    androidToolStatus?: AgentToolResult['status']
-    androidToolErrorCode?: AgentToolResult['errorCode']
+    androidToolStatus?: ExternalToolObservationStatus
+    androidToolErrorCode?: ExternalToolObservationErrorCode
     androidToolMetadata?: Record<string, unknown>
   }
   return {

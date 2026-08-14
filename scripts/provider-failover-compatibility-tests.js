@@ -6,22 +6,22 @@ const ts = require('typescript')
 
 const root = path.resolve(__dirname, '..')
 const originalResolve = Module._resolveFilename
-const originalLoad = Module._load
 
 registerTypeScriptSupport()
 
 const {
   PROVIDER_FAILOVER_DECISION_SCHEMA,
+  buildProviderFallbackDecisionEvent,
   classifyProviderFailure,
   resolveFailoverDecision,
-} = require('../src/services/ai/providerFailover.ts')
+} = require('../src/modules/providers/index.ts')
 const {
   fallbackProvidersForRequest,
   providerForRuntimeFallback,
   requiredFallbackCapabilities,
   retryAfterMsFromFailure,
   routeForRuntimeFallback,
-} = require('../src/services/ai/providerRuntimeFallback.ts')
+} = require('../src/modules/providers/index.ts')
 
 function registerTypeScriptSupport() {
   if (require.extensions['.ts']?.isProviderFailoverCompatibilityHook) return
@@ -31,15 +31,6 @@ function registerTypeScriptSupport() {
       return originalResolve.call(this, path.join(root, 'src', request.slice(2)), parent, isMain, options)
     }
     return originalResolve.call(this, request, parent, isMain, options)
-  }
-
-  Module._load = function loadWithMocks(request, parent, isMain) {
-    if (request === '@/services/attachmentContract') {
-      return {
-        filterSendableAttachments: (attachments) => Array.isArray(attachments) ? attachments.filter((item) => item?.sendable !== false) : [],
-      }
-    }
-    return originalLoad.call(this, request, parent, isMain)
   }
 
   const hook = function compileTypeScript(module, filename) {
@@ -133,6 +124,20 @@ function run() {
   assert.equal(classifyProviderFailure({ errorCode: 'ECONNRESET' }).trigger, 'network_error', 'network error codes are classified')
   assert.equal(classifyProviderFailure({ payloadRejected: true }).retryable, false, 'payload errors are not retryable')
   assert.equal(classifyProviderFailure({ safetyRefusal: true }).retryable, false, 'safety refusals are not retryable')
+  assert.deepEqual(
+    classifyProviderFailure({ emptyResponse: true }),
+    { trigger: 'empty_response', retryable: true, source: 'explicit', evidence: { status: undefined, errorName: undefined, errorCode: undefined } },
+    'empty model responses are explicit retryable failures',
+  )
+
+  const emptyResponseDecision = resolveFailoverDecision({
+    policy: { mode: 'same-provider' },
+    trigger: 'empty_response',
+    original: route(),
+    candidates: [route({ model: 'backup-model' })],
+  })
+  assert.equal(emptyResponseDecision.eligible, true, 'empty responses allow same-provider model failover')
+  assert.equal(emptyResponseDecision.selected.model, 'backup-model', 'empty responses select the eligible same-provider backup')
 
   const selectedDecision = resolveFailoverDecision({
     policy: { mode: 'capability-equivalent', preserveRegion: true, maxCostTier: 'medium' },
@@ -162,6 +167,23 @@ function run() {
   assert.ok(selectedDecision.rejectedCandidates.some((item) => item.reason === 'region_changed'), 'region changes are rejected when region preservation is enabled')
   assert.ok(selectedDecision.rejectedCandidates.some((item) => item.reason === 'cost_tier_exceeded'), 'cost-tier overages are rejected')
   assertNoSecret(selectedDecision, 'failover decision')
+
+  const fallbackEvent = buildProviderFallbackDecisionEvent({
+    conversationId: 'conversation-fallback',
+    providerId: 'primary',
+    model: 'strong-model',
+    requestedModel: 'requested-model',
+  }, {
+    classification: classifyProviderFailure({ status: 429 }),
+    decision: selectedDecision,
+    candidateEvidence: { route: 'fallback', apiKey: 'sk-event-secret' },
+    rejectedCandidates: Array.from({ length: 105 }, (_, index) => ({ index, authorization: 'Bearer secret' })),
+  })
+  assert.equal(fallbackEvent.data.rejectedCandidateCount, 105, 'fallback event preserves the full rejected-candidate count')
+  assert.equal(fallbackEvent.legacyData.rejectedCandidates.length, 100, 'fallback event bounds legacy rejected-candidate evidence')
+  assert.equal(fallbackEvent.data.candidateEvidence.apiKey, '[redacted]', 'fallback event redacts candidate-evidence secrets')
+  assert.equal(fallbackEvent.legacyData.rejectedCandidates[0].authorization, '[redacted]', 'fallback event redacts rejected-candidate secrets')
+  assert.equal(fallbackEvent.legacyData.conversationId, 'conversation-fallback', 'fallback event preserves legacy conversation identity')
 
   const offDecision = resolveFailoverDecision({
     policy: { mode: 'off' },
@@ -218,9 +240,9 @@ function run() {
     structuredOutput: { type: 'json_schema', name: 'result', schema: { type: 'object' } },
     webSearchMode: 'native',
     attachments: [
-      { id: 'image', type: 'image', uri: 'file://image.png' },
-      { id: 'pdf', type: 'pdf', uri: 'file://report.pdf' },
-      { id: 'blocked', type: 'image', uri: 'file://blocked.png', sendable: false },
+      { id: 'image', type: 'image', uri: 'file://image.png', base64: 'aW1n' },
+      { id: 'pdf', type: 'pdf', uri: 'file://report.pdf', base64: 'cGRm' },
+      { id: 'metadata-only', type: 'image', uri: 'file://metadata-only.png' },
     ],
   }
   assert.deepEqual(
@@ -238,17 +260,19 @@ function run() {
   const fallbackRoute = routeForRuntimeFallback(request, 'group-primary')
   assertNoSecret(fallbackRoute, 'runtime fallback route')
 
-  const providerFailoverSource = readSource('src/services/ai/providerFailover.ts')
+  const providerFailoverSource = readSource('src/modules/providers/providerFailoverPolicy.ts')
   assert.ok(providerFailoverSource.includes('PROVIDER_FAILOVER_DECISION_SCHEMA'), 'provider failover source declares the decision schema')
   assert.ok(providerFailoverSource.includes('ALLOWED_TRIGGERS'), 'provider failover source keeps a finite retryable-trigger set')
   assert.ok(providerFailoverSource.includes('stream_already_started'), 'provider failover source blocks unsafe stream-started failover')
   assert.ok(providerFailoverSource.includes('cross_provider_confirmation_required'), 'provider failover source preserves user confirmation for cross-provider ask mode')
   assert.ok(providerFailoverSource.includes('capability_mismatch'), 'provider failover source rejects capability mismatch')
   assert.ok(providerFailoverSource.includes('cost_tier_exceeded'), 'provider failover source enforces cost ceilings')
+  assert.equal(fs.existsSync(path.join(root, 'src/services/ai/providerFailover.ts')), false, 'legacy provider failover facade is deleted after target policy migration')
 
-  const providerRuntimeFallbackSource = readSource('src/services/ai/providerRuntimeFallback.ts')
-  assert.ok(providerRuntimeFallbackSource.includes('filterSendableAttachments'), 'runtime fallback capabilities ignore unsendable attachments')
+  const providerRuntimeFallbackSource = readSource('src/modules/providers/providerRuntimeFallback.ts')
+  assert.ok(providerRuntimeFallbackSource.includes('selectProviderRequestAttachments'), 'runtime fallback capabilities use target payload admission')
   assert.ok(providerRuntimeFallbackSource.includes('retryAfterMsFromFailure'), 'runtime fallback has bounded retry-after policy')
+  assert.equal(fs.existsSync(path.join(root, 'src/services/ai/providerRuntimeFallback.ts')), false, 'legacy runtime fallback facade is deleted after consumer migration')
 
   console.log('Provider failover compatibility tests passed')
 }

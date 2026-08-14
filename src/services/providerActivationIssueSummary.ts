@@ -1,10 +1,10 @@
 import { st } from '@/i18n/service'
-
 export interface ProviderActivationIssueInput {
   providerName: string
   hadCredential: boolean
   missingToken: boolean
   modelCount: number
+  ready?: boolean
   testOk: boolean
   failures: Array<{ code?: string; message: string }>
 }
@@ -23,7 +23,7 @@ export function summarizeProviderActivationIssueGroups(results: ProviderActivati
   const providerNameLimit = Math.max(1, Math.floor(options.providerNameLimit ?? 4))
   const groups = new Map<string, { count: number; message: string; names: string[] }>()
   for (const item of results) {
-    if (item.testOk) continue
+    if (item.ready || item.testOk) continue
     const message = resolveActivationIssueMessage(item)
     const key = activationIssueGroupKey(item, message)
     const current = groups.get(key) ?? { count: 0, message, names: [] }

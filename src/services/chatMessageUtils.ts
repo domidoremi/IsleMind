@@ -1,5 +1,5 @@
-import type { Message, RetrievalSource } from '@/types'
-
+import type { Message } from '@/types/chatContracts'
+import type { RetrievalSource } from '@/types/contextContracts'
 export type ChatMessageCitation = NonNullable<Message['citations']>[number]
 
 export function normalizeUserContent(content: string): string {

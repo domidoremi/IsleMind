@@ -36,20 +36,39 @@ const colors = read('src/theme/colors.ts')
 const themeHook = read('src/hooks/useAppTheme.ts')
 const settingsStore = read('src/store/settingsStore.ts')
 const preferencesRoute = read('app/settings/preferences.tsx')
-const architectureAudit = read('docs/architecture/theme-system-liquid-glass-audit.md')
-const appActionPolicy = read('src/services/appActionPolicy.ts')
-const appCommandRouter = read('src/services/appCommandRouter.ts')
-const builtinToolRegistry = read('src/services/builtinToolRegistry.ts')
+const settingsActionContracts = read('src/modules/settings/contracts.ts')
+const settingsAppearance = read('src/modules/settings/appearance.ts')
+const applicationBuiltinCatalog = read('src/modules/integrations/conversationToolCatalog.ts')
 const chatWorkspace = read('src/components/chat/ChatWorkspace.tsx')
+const chatSetupWorkspace = read('src/components/chat/ChatSetupWorkspace.tsx')
+const chatStatusBanners = read('src/components/chat/ChatStatusBanners.tsx')
+const chatChromeSurfaces = read('src/components/chat/chatChromeSurfaces.ts')
+const floatingChrome = read('src/components/chat/FloatingChrome.tsx')
+const chatPersistentHeader = read('src/components/chat/ChatPersistentHeader.tsx')
+const floatingComposer = read('src/components/chat/FloatingComposer.tsx')
+const floatingControlOrb = read('src/components/chat/FloatingControlOrb.tsx')
 const composer = read('src/components/chat/Composer.tsx')
 const optionsPanel = read('src/components/chat/ChatOptionsPanel.tsx')
 const conversationsScreen = read('src/components/main/ConversationsScreenContent.tsx')
 const conversationRow = read('src/components/conversations/ConversationRow.tsx')
 const mainPagerShell = read('src/components/main/MainPagerShell.tsx')
+const themeMotion = read('src/theme/themeMotion.ts')
+const motionFrame = read('src/components/ui/isle/ThemeMotion.tsx')
+const settingsScreen = read('src/components/main/SettingsScreenContent.tsx')
+const chatAiConfiguration = read('src/components/chat/ChatAiConfigurationSheet.tsx')
+const chatEmptyState = read('src/components/chat/ChatEmptyState.tsx')
+const chatActiveExperience = read('src/components/chat/theme-experiences/ChatActiveThemeExperience.tsx')
+const chatSetupExperience = read('src/components/chat/theme-experiences/ChatSetupThemeExperience.tsx')
+const chatEmptyExperience = read('src/components/chat/theme-experiences/ChatEmptyStateExperience.tsx')
+const chatThemeSurfaces = read('src/components/chat/theme-surfaces/ChatThemeSurfaces.tsx')
+const historyPresentation = read('src/components/main/history/HistoryPresentation.tsx')
+const isleBackground = read('src/components/ui/isle/Background.tsx')
+const messageBubble = read('src/components/chat/MessageBubble.tsx')
 const messageContent = read('src/components/chat/MessageContent.tsx')
 const apiKeyPanel = read('src/components/settings/ApiKeyPanel.tsx')
 const contextPanel = read('src/components/settings/ContextPanel.tsx')
 const mcpSettings = read('src/components/settings/McpSettingsContent.tsx')
+const mcpSettingsExperiences = read('src/components/settings/theme-experiences/McpSettingsExperiences.tsx')
 const preferenceSettings = read('src/components/settings/PreferenceSettingsContent.tsx')
 const sourceRoute = read('app/source.tsx')
 const chip = read('src/components/ui/isle/Chip.tsx')
@@ -60,7 +79,6 @@ const dialog = read('src/components/ui/isle/Dialog.tsx')
 const isleKit = read('src/components/ui/isle/IsleKit.tsx')
 const appIcon = read('src/components/ui/AppIcon.tsx')
 const providerSettings = read('src/components/providers/ProviderSettingsContent.tsx')
-const activationProgressBanner = read('src/components/providers/ActivationProgressBanner.tsx')
 const emptyState = read('src/components/ui/isle/EmptyState.tsx')
 const globalCss = read('src/global.css')
 const repoSource = collectRepoSource('app') + collectRepoSource('src')
@@ -71,36 +89,69 @@ check(
   releaseGate.issues.join('; ') || 'theme release gate should pass package/file checks',
 )
 check(
-  'glass tokens remain semantic and canonical',
-  /family: 'glass'/.test(colors) && /semantic:\s*semanticUi\('glass'/.test(colors) && /DEFAULT_THEME_ID: ThemeId = 'minimal'/.test(colors),
-  'glass should stay a semantic family and minimal should remain default',
+  'markdown tokens are canonical while legacy families normalize safely',
+  /family: 'markdown'/.test(colors)
+    && /semantic:\s*semanticUi\('markdown'/.test(colors)
+    && /if \(value === 'glass'\) return 'markdown'/.test(settingsAppearance)
+    && /if \(value === 'cartoon' \|\| value === 'island'\) return 'lime-road'/.test(settingsAppearance)
+    && /normalizeSettingsThemeFamily\(value\) \?\? DEFAULT_THEME_ID/.test(colors)
+    && /DEFAULT_THEME_ID: ThemeId = 'minimal'/.test(colors),
+  'markdown, lime-road, and minimal should be the runtime families while legacy values remain load-compatible',
 )
 check(
-  'cartoon control tokens keep tactile depth restrained',
-  /primaryShadowOpacity: dark \? 0\.12 : 0\.08/.test(colors)
-    && /secondaryShadowOpacity: dark \? 0\.04 : 0\.025/.test(colors)
-    && /shadowOpacity: dark \? 0\.06 : 0\.04/.test(colors),
-  'cartoon controls should stay tactile without restoring the old heavy shadow stack',
+  'lime-road control tokens keep tactile depth restrained',
+  /primaryShadowOpacity: dark \? 0\.08 : 0\.04/.test(colors)
+    && /secondaryShadowOpacity: dark \? 0\.025 : 0\.015/.test(colors)
+    && /shadowOpacity: dark \? 0\.04 : 0\.025/.test(colors),
+  'lime-road controls should stay tactile without restoring the old heavy shadow stack',
+)
+check(
+  'theme families own materially different experience grammars',
+  /layout: 'editorial'[\s\S]*?navigation: 'route'[\s\S]*?background: 'road'[\s\S]*?transition: 'travel'/.test(colors)
+    && /layout: 'quiet'[\s\S]*?navigation: 'quiet'[\s\S]*?background: 'plain'[\s\S]*?transition: 'fade'/.test(colors)
+    && /layout: 'document'[\s\S]*?navigation: 'document'[\s\S]*?background: 'document'[\s\S]*?transition: 'cut'/.test(colors),
+  'theme families should change the product composition and motion grammar, not only primitive colors and radii',
+)
+check(
+  'experience grammar reaches the live shell and theme previews',
+  !/MainPagerExperience|ThemeNavigationDrawer|AppTopBar|shellNavigation/.test(mainPagerShell)
+    && /colors\.ui\.experience\.background/.test(mainPagerShell)
+    && /road-cinema/.test(themeMotion)
+    && /experienceBackground = colors\.ui\.experience\.background/.test(isleBackground)
+    && /function ThemeFamilyPreview/.test(settingsScreen)
+    && /getColors\(mode, themeId/.test(settingsScreen)
+    && /ChatActiveThemeExperience/.test(chatActiveExperience)
+    && /ChatSetupThemeExperience/.test(chatSetupExperience)
+    && /ChatEmptyStateExperience/.test(chatEmptyState + chatEmptyExperience)
+    && /ChatAiConfigurationSheet/.test(floatingChrome)
+    && /chat-ai-configuration-panel/.test(chatAiConfiguration)
+    && /chat-ai-provider-connection-section/.test(optionsPanel)
+    && /chat-ai-model-selection-section/.test(optionsPanel)
+    && /chat-ai-reasoning-section/.test(optionsPanel)
+    && /chat-composer-surface-minimal/.test(chatThemeSurfaces)
+    && /chat-composer-surface-lime-road/.test(chatThemeSurfaces)
+    && /chat-composer-surface-markdown/.test(chatThemeSurfaces),
+  'navigation, static page composition, background composition, theme selection, and the chat entry should project family identity without automatic entrance motion',
 )
 check(
   'weak control states use semantic tokens instead of global opacity',
   /disabledForeground: string/.test(colors)
     && /placeholderForeground: string/.test(colors)
     && /disabledOpacity: number/.test(colors)
-    && /disabledForeground: dark \? '#c8d0d5' : '#566872'/.test(colors)
-    && /placeholderForeground: dark \? '#98a6b0' : '#72848d'/.test(colors)
+    && /disabledForeground: dark \? '#8C959F' : '#59636E'/.test(colors)
+    && /placeholderForeground: dark \? '#8C959F' : '#6E7781'/.test(colors)
     && /disabledOpacity: 1/.test(colors),
-  'disabled and placeholder states should stay readable through semantic tokens, especially in glass light mode',
+  'disabled and placeholder states should stay readable through semantic tokens, especially in Markdown light mode',
 )
 check(
   'legacy island normalization still survives in runtime settings',
-  /if \(value === 'island'\) return 'cartoon'/.test(colors) && /normalizeThemeId\(rawSettings\.themeId\)/.test(settingsStore),
-  'persisted island values must keep normalizing to cartoon',
+  /if \(value === 'cartoon' \|\| value === 'island'\) return 'lime-road'/.test(settingsAppearance) && /normalizeThemeId\(rawSettings\.themeId\)/.test(settingsStore),
+  'persisted cartoon/island values must keep normalizing to lime-road',
 )
 check(
   'useAppTheme keeps family booleans for high-flow consumers',
-  /isGlass: themeId === 'glass'/.test(themeHook) && /isCartoon: themeId === 'cartoon'/.test(themeHook) && /isMinimal: themeId === 'minimal'/.test(themeHook),
-  'chat and settings surfaces branch on these booleans',
+  /isMarkdown: themeId === 'markdown'/.test(themeHook) && /isGlass: false as const/.test(themeHook) && /isLimeRoad: themeId === 'lime-road'/.test(themeHook) && /isMinimal: themeId === 'minimal'/.test(themeHook),
+  'canonical families stay explicit and Markdown must not enter legacy Glass-only branches',
 )
 check(
   'preferences route still mounts the preference settings surface',
@@ -108,39 +159,56 @@ check(
   'the named preferences route should still resolve to the settings preference content shell',
 )
 check(
-  'architecture audit records rn-fallback and chosen high-traffic chat flow',
-  /Expo Router \+ React Native \+ TypeScript/.test(architectureAudit) && /main chat flow/.test(architectureAudit) && /rn-fallback/.test(architectureAudit) && /do not claim `glassEffect`/.test(architectureAudit),
-  'the repo should carry a durable audit artifact for the native boundary and chosen flow',
+  'theme app actions recognize the three canonical families',
+  /SETTINGS_THEME_FAMILIES = \['minimal', 'lime-road', 'markdown'\] as const/.test(settingsActionContracts),
+  'structured Settings actions should stay aligned with the canonical theme families',
 )
 check(
-  'theme app actions and local commands recognize the three canonical families',
-  /THEME_IDS: ThemeId\[\] = \['minimal', 'glass', 'cartoon'\]/.test(appActionPolicy) && /return 'glass'/.test(appCommandRouter) && /return 'cartoon'/.test(appCommandRouter),
-  'local action and command routing should stay aligned with the canonical theme families',
+  'builtin tools keep compatibility aliases while exposing the new families',
+  /enum: \['minimal', 'lime-road', 'markdown', 'cartoon', 'glass', 'island'\]/.test(applicationBuiltinCatalog) && /glass requests map to markdown/.test(applicationBuiltinCatalog),
+  'builtins should remain compatible with old glass/island requests without reviving them as runtime themes',
 )
 check(
-  'builtin tools keep the compatibility island input while exposing the new families',
-  /enum: \['minimal', 'glass', 'cartoon', 'island'\]/.test(builtinToolRegistry) && /Legacy island requests map to cartoon/.test(builtinToolRegistry),
-  'builtins should remain compatible with old island requests without reviving island as a runtime theme',
-)
-check(
-  'chat workspace top chrome uses SwiftUI-like semantic glass surfaces',
-  /semantic\.chrome\.toolbar/.test(chatWorkspace) && /actionBar\.itemBackground/.test(chatWorkspace) && /actionBar\.itemActiveBackground/.test(chatWorkspace) && /topChromeItemSurface = isGlass \? colors\.ui\.actionBar\.itemBackground : colors\.ui\.cartoon \? colors\.ui\.semantic\.surface\.muted/.test(chatWorkspace),
-  'top toolbar and icon items should use semantic chrome + action bar tokens',
+  'chat workspace uses one theme-owned persistent header',
+  /ChatPersistentHeader/.test(floatingChrome)
+    && /ChatPersistentHeader/.test(chatSetupWorkspace)
+    && /ChatChromeThemeSurface/.test(chatPersistentHeader)
+    && /themeId=\{themeId\}/.test(chatPersistentHeader)
+    && /chat-chrome-surface-minimal/.test(chatThemeSurfaces)
+    && /chat-chrome-surface-lime-road/.test(chatThemeSurfaces)
+    && /chat-chrome-surface-markdown/.test(chatThemeSurfaces)
+    && /semantic\.chrome\.toolbar/.test(chatThemeSurfaces),
+  'active and setup Chat should share persistent controls while each theme retains its own surface composition',
 )
 check(
   'chat quick panels and health banner use glass chrome containers',
-  /panelChromeSurface = isGlass \? colors\.ui\.semantic\.chrome\.background/.test(chatWorkspace) && /backgroundColor: isGlass \? colors\.ui\.semantic\.chrome\.background/.test(chatWorkspace) && /\? colors\.ui\.actionBar\.itemBackground/.test(chatWorkspace) && /resolveChatChromeSurface[\s\S]*?colors\.ui\.cartoon \? colors\.ui\.semantic\.surface\.base/.test(chatWorkspace),
+  /panelChromeSurface = isGlass \? colors\.ui\.semantic\.chrome\.background/.test(floatingComposer)
+    && (/backgroundColor: isGlass \? colors\.ui\.semantic\.chrome\.background/.test(chatWorkspace)
+      || /backgroundColor: isGlass \? colors\.ui\.semantic\.chrome\.background/.test(chatStatusBanners)
+      || /backgroundColor: resolveChatChromeSurface\(colors, isGlass\)/.test(chatStatusBanners))
+    && /\? colors\.ui\.actionBar\.itemBackground/.test(floatingComposer)
+    && /resolveChatChromeSurface[\s\S]*?colors\.ui\.limeRoad \? colors\.ui\.semantic\.surface\.base/.test(chatChromeSurfaces),
   'quick panels and health banner should avoid heavy card styling in glass mode',
 )
 check(
   'conversation search shell and floating controls use glass chrome shells',
-  /searchShellBackground = isGlass \? colors\.ui\.semantic\.chrome\.background/.test(conversationsScreen) && /searchShellBorder = isGlass \? colors\.ui\.semantic\.chrome\.border/.test(conversationsScreen) && /floatingSecondarySurface = isGlass \? colors\.ui\.actionBar\.itemBackground/.test(conversationsScreen),
-  'high-frequency conversation controls should use semantic chrome shells',
+  /HistoryHeaderFrame/.test(conversationsScreen)
+    && /themeId=\{themeId\}/.test(conversationsScreen)
+    && /ChatControlTriggerThemeSurface/.test(floatingControlOrb)
+    && /chat-control-trigger-surface-minimal/.test(chatThemeSurfaces)
+    && /chat-control-trigger-surface-lime-road/.test(chatThemeSurfaces)
+    && /chat-control-trigger-surface-markdown/.test(chatThemeSurfaces),
+  'high-frequency history and conversation controls should use theme-owned compositions',
 )
 check(
-  'conversation rows use glass chrome instead of standalone cards',
-  /rowPanelMaterial = isGlass \? 'chrome' : 'paper'/.test(conversationRow) && /rowPanelBackground = isGlass \? \(active \? colors\.ui\.semantic\.surface\.overlay : colors\.ui\.semantic\.chrome\.background\).*?colors\.ui\.cartoon \? colors\.ui\.semantic\.surface\.base/.test(conversationRow),
-  'conversation list rows should read like system chrome when glass is active',
+  'conversation rows stay list-like instead of standalone cards',
+  !conversationRow.includes('<IslePanel')
+    && /HistoryRowFrame/.test(conversationRow)
+    && /history-row-experience-minimal/.test(historyPresentation)
+    && /history-row-experience-lime-road/.test(historyPresentation)
+    && /history-row-experience-markdown/.test(historyPresentation)
+    && /borderBottomWidth: StyleSheet\.hairlineWidth/.test(historyPresentation),
+  'conversation history rows should use theme-owned continuous/list or route/document frames',
 )
 check(
   'supporting Isle controls are glass-aware',
@@ -148,7 +216,7 @@ check(
   'chips and dialogs should share the same glass control language',
 )
 check(
-  'cartoon icon roles preserve neutral utility affordances',
+  'lime-road icon roles preserve neutral utility affordances',
   /delete: 'danger'/.test(appIcon)
     && !/close: 'danger'/.test(appIcon)
     && !/power: 'danger'/.test(appIcon)
@@ -159,7 +227,7 @@ check(
   'only truly destructive icons should be force-colored; neutral utility icons should keep their caller-provided contrast color',
 )
 check(
-  'cartoon icon role coloring respects explicit contrast colors',
+  'lime-road icon role coloring respects explicit contrast colors',
   /function isExplicitIconColor/.test(appIcon)
     && /requestedColor === colors\.text/.test(appIcon)
     && /requestedColor === colors\.textSecondary/.test(appIcon)
@@ -168,17 +236,17 @@ check(
     && /if \(isExplicitIconColor\(requestedColor, colors\)\) return requestedColor/.test(appIcon)
     && /name="search-check" color=\{colors\.textTertiary\}/.test(apiKeyPanel)
     && /name="reasoning" color=\{colors\.text\}/.test(contextPanel)
-    && /name="spark" color=\{colors\.text\}/.test(preferenceSettings)
+    && /name="shield" color=\{colors\.text\}/.test(preferenceSettings)
     && /name="shield" color=\{colors\.text\}/.test(mcpSettings)
     && /name="toggle-on" color=\{colors\.textSecondary\}/.test(read('src/components/settings/SkillSettingsContent.tsx')),
-  'inactive or explicitly semantic icons should not be recolored by cartoon role defaults',
+  'inactive or explicitly semantic icons should not be recolored by lime-road role defaults',
 )
 check(
   'AppIcon forwards caller fill for selected and stop states',
   /fill,\s*\n\s*style,/.test(appIcon)
     && /fill=\{fill \?\? 'none'\}/.test(appIcon)
     && /name="star"[\s\S]*fill=\{isDefault \? colors\.ui\.control\.primaryForeground : 'transparent'\}/.test(apiKeyPanel)
-    && /name="stop"[\s\S]*fill=\{colors\.ui\.control\.primaryForeground\}/.test(chatWorkspace),
+    && /name="stop"[\s\S]*fill=\{colors\.ui\.control\.primaryForeground\}/.test(floatingComposer),
   'selected stars and stop controls should render filled icons instead of silently dropping fill props',
 )
 check(
@@ -186,11 +254,12 @@ check(
   /const tableBackground = palette\.glass \? palette\.ui\.semantic\.chrome\.background : palette\.ui\.semantic\.surface\.base/.test(isleKit)
     && /const frameBackground = palette\.glass \? palette\.ui\.semantic\.chrome\.background : palette\.ui\.semantic\.surface\.base/.test(isleKit)
     && /const phoneSurface = palette\.glass \? palette\.ui\.semantic\.chrome\.background : palette\.ui\.semantic\.surface\.base/.test(isleKit)
-    && /const titleShadowOpacity = palette\.cartoon \? \(palette\.isDark \? 0\.08 : 0\.05\) : 0/.test(isleKit),
+    && /const ornamentedTitle = palette\.limeRoad && palette\.ui\.ornamented/.test(isleKit)
+    && /const titleShadowOpacity = ornamentedTitle \? \(palette\.isDark \? 0\.08 : 0\.05\) : 0/.test(isleKit),
   'table, time, phone, and title chrome should stay quieter than the primary content layer',
 )
 check(
-  'web fallback still exposes glass and cartoon family selectors',
+  'web fallback keeps only the documented legacy family selectors',
   /data-theme-id='glass'/.test(globalCss) && /data-theme-id='cartoon'/.test(globalCss) && /data-theme-id='island'/.test(globalCss),
   'web fallback should cover all runtime families plus the island alias',
 )
@@ -206,17 +275,17 @@ check(
 )
 check(
   'chat options panel stays aligned with glass chrome tokens',
-  /panelSurface = sheetMode \? sheetMaterial\.surface : isGlass \? colors\.ui\.semantic\.chrome\.background/.test(optionsPanel) && /panelChrome = sheetMode \? sheetMaterial\.chrome : isGlass \? colors\.ui\.semantic\.chrome\.toolbar/.test(optionsPanel) && /actionSurface = isGlass \? colors\.ui\.actionBar\.itemBackground/.test(optionsPanel) && /isCartoon \? colors\.ui\.semantic\.surface\.base/.test(optionsPanel),
+  /panelSurface = sheetMode \? sheetMaterial\.surface : isGlass \? colors\.ui\.semantic\.chrome\.background/.test(optionsPanel) && /panelChrome = sheetMode \? sheetMaterial\.chrome : isGlass \? colors\.ui\.semantic\.chrome\.toolbar/.test(optionsPanel) && /actionSurface = isGlass \? colors\.ui\.actionBar\.itemBackground/.test(optionsPanel) && /isLimeRoad \? colors\.ui\.semantic\.surface\.base/.test(optionsPanel),
   'popover/sheet chrome should keep sharing the same control language',
 )
 check(
-  'chat composer uses semantic surfaces instead of cartoon default cards',
-  /raisedSurface = colors\.ui\.glass \? colors\.ui\.semantic\.chrome\.background : colors\.ui\.cartoon \? colors\.ui\.semantic\.surface\.base/.test(composer) && /utilitySurface = colors\.ui\.glass \? colors\.ui\.actionBar\.itemBackground : colors\.ui\.cartoon \? colors\.ui\.semantic\.surface\.muted/.test(composer) && /chipSurface = colors\.ui\.glass \? colors\.ui\.actionBar\.itemBackground : colors\.ui\.cartoon \? colors\.ui\.semantic\.surface\.base/.test(composer),
-  'composer shell, utility actions, and chips should not reintroduce cartoon default card fills',
+  'chat composer uses semantic surfaces instead of lime-road default cards',
+  /raisedSurface = colors\.ui\.glass \? colors\.ui\.semantic\.chrome\.background : colors\.ui\.limeRoad \? colors\.ui\.semantic\.surface\.base/.test(composer) && /utilitySurface = colors\.ui\.glass \? colors\.ui\.actionBar\.itemBackground : colors\.ui\.limeRoad \? colors\.ui\.semantic\.surface\.muted/.test(composer) && /chipSurface = colors\.ui\.glass \? colors\.ui\.actionBar\.itemBackground : colors\.ui\.limeRoad \? colors\.ui\.semantic\.surface\.base/.test(composer),
+  'composer shell, utility actions, and chips should not reintroduce decorative default card fills',
 )
 check(
   'composer and shared controls keep weak states light but readable',
-  /const composerShadowOpacity = colors\.ui\.cartoon/.test(composer)
+  /const composerShadowOpacity = 0/.test(composer)
     && /shadowRadius: focused \? 12 : 6/.test(composer)
     && /placeholderTextColor=\{colors\.ui\.input\.placeholderForeground\}/.test(composer)
     && /backgroundColor: canSend \? colors\.ui\.control\.primaryBackground : colors\.ui\.control\.disabledBackground/.test(composer)
@@ -241,24 +310,51 @@ check(
 )
 check(
   'message action lock uses disabled chrome without dimming the icon row',
-  /backgroundColor: disabled \? colors\.ui\.control\.disabledBackground : idleBackground/.test(read('src/components/chat/MessageBubble.tsx'))
-    && /borderColor: disabled \? colors\.ui\.control\.disabledBorder : idleBorder/.test(read('src/components/chat/MessageBubble.tsx'))
-    && !/opacity: disabled \? 0\.58 : 1/.test(read('src/components/chat/MessageBubble.tsx')),
-  'locked action buttons should stay visible without turning the whole action row translucent',
+  /backgroundColor: locked\n\s*\? colors\.ui\.control\.disabledBackground\n\s*: colors\.ui\.control\.primaryBackground/.test(messageBubble)
+    && /borderColor: locked\n\s*\? colors\.ui\.control\.disabledBorder\n\s*: colors\.ui\.control\.primaryBorder/.test(messageBubble)
+    && !/opacity: locked/.test(messageBubble),
+  'locked confirmation actions should stay visible through semantic disabled chrome without opacity dimming',
 )
 check(
-  'shared Isle primitives keep cartoon surfaces soft by default',
-  /return colors\.ui\.cartoon \? colors\.ui\.semantic\.surface\.base : colors\.ui\.semantic\.surface\.base/.test(panel) && /colors\.ui\.cartoon\s*\?\s*colors\.ui\.semantic\.surface\.base/.test(chip) && /colors\.ui\.cartoon\s*\?\s*colors\.ui\.semantic\.surface\.base/.test(controls) && /colors\.ui\.cartoon\s*\?\s*colors\.ui\.semantic\.surface\.base/.test(primitives),
-  'shared panels, chips, metrics, and list items should use semantic base/muted surfaces in cartoon mode',
+  'ambient loading indicators stop looping outside full motion',
+  messageBubble.includes("transition={{ loop: motion === 'full', type: 'timing', duration: motion === 'full' ? 512 : 1")
+    && messageBubble.includes("transition={{ loop: motion === 'full', type: 'timing', duration: motion === 'full' ? 768 : 1")
+    && messageBubble.includes("const shimmer = active && motion === 'full'")
+    && messageBubble.includes('loop: shimmer')
+    && messageBubble.includes("'.'.repeat(motion === 'none' ? 3 : dotCount)")
+    && !messageBubble.includes('function ProcessSpinner')
+    && sourceRoute.includes("transition={{ loop: motion === 'full', type: 'timing', duration: motion === 'full' ? 864 : 1")
+    && sourceRoute.includes("transition={{ loop: motion === 'full', type: 'timing', duration: motion === 'full' ? 768 : 1"),
+  'status shimmer, typing, cursor, source skeleton, and source loading loops must render stable reduced-motion states',
 )
 check(
-  'main pager shell keeps the transition wash light and surface-first',
-  /backgroundIntensity=\{settingsTransitionActive \? 1\.04 : page === 'home' \? 0\.88 : 0\.96\}/.test(mainPagerShell) && /stopOpacity=\{0\.02\}/.test(mainPagerShell) && /stopOpacity=\{0\.14\}/.test(mainPagerShell),
-  'pager chrome should stay lighter than a full scene wash',
+  'shared Isle primitives keep lime-road surfaces soft by default',
+  /case 'raised':[\s\S]*?return colors\.ui\.limeRoad \? colors\.ui\.semantic\.surface\.base : colors\.ui\.semantic\.surface\.base/.test(panel)
+    && /ornamented[\s\S]*?colors\.ui\.semantic\.surface\.base[\s\S]*?colors\.ui\.semantic\.surface\.muted/.test(chip)
+    && /const backgroundColor = colors\.ui\.limeRoad\s*\?\s*colors\.ui\.semantic\.surface\.base/.test(controls)
+    && /const toggleSurface = active[\s\S]*?colors\.ui\.limeRoad[\s\S]*?colors\.ui\.semantic\.surface\.base/.test(primitives)
+    && /const itemBackground = danger[\s\S]*?colors\.ui\.limeRoad[\s\S]*?colors\.ui\.semantic\.surface\.base/.test(primitives),
+  'shared panels, chips, metrics, and list items should use semantic base/muted surfaces in Lime Road mode',
+)
+check(
+  'page-owned navigation preserves family composition without a global shell',
+  /const backgroundMode: IsleBackgroundMode = colors\.ui\.experience\.background === 'road'/.test(mainPagerShell)
+    && /colors\.ui\.experience\.background === 'document'/.test(mainPagerShell)
+    && /backgroundIntensity=\{0\.96\}/.test(mainPagerShell)
+    && /colors\.ui\.experience\.background === 'plain' \? colors\.background\.surfaceCanvas : 'transparent'/.test(mainPagerShell)
+    && /chat-setup-experience-minimal/.test(chatSetupExperience)
+    && /chat-setup-experience-lime-road/.test(chatSetupExperience)
+    && /chat-setup-experience-markdown/.test(chatSetupExperience)
+    && [/function MinimalSetupExperience[\s\S]*?\{chrome\}/, /function LimeRoadSetupExperience[\s\S]*?\{chrome\}/, /function MarkdownSetupExperience[\s\S]*?\{chrome\}/].every((pattern) => pattern.test(chatSetupExperience))
+    && /HistoryHeaderFrame/.test(conversationsScreen)
+    && /<SettingsOverviewExperience/.test(settingsScreen)
+    && !/MainPagerExperience|ThemeNavigationDrawer|AppTopBar|shellNavigation/.test(mainPagerShell)
+    && !/stopOpacity/.test(mainPagerShell),
+  'page headers and family-owned backgrounds should replace the retired drawer and masthead shell',
 )
 check(
   'message content rich cards stay secondary to plain content',
-  /richCardSurface: colors\.ui\.glass \? colors\.ui\.actionBar\.itemBackground : colors\.ui\.cartoon \? colors\.ui\.semantic\.surface\.muted : colors\.ui\.semantic\.surface\.muted/.test(messageContent) && /blockRaisedSurface: colors\.ui\.glass \? colors\.ui\.semantic\.chrome\.background : colors\.ui\.cartoon \? colors\.ui\.semantic\.surface\.base/.test(messageContent) && /fontSize: 10\.5/.test(messageContent),
+  /richCardSurface: colors\.ui\.glass \? colors\.ui\.actionBar\.itemBackground : colors\.ui\.limeRoad \? colors\.ui\.semantic\.surface\.muted : colors\.ui\.semantic\.surface\.muted/.test(messageContent) && /blockRaisedSurface: colors\.ui\.glass \? colors\.ui\.semantic\.chrome\.background : colors\.ui\.limeRoad \? colors\.ui\.semantic\.surface\.base/.test(messageContent) && /fontSize: 10\.5/.test(messageContent),
   'rich blocks should read lighter than primary message text',
 )
 check(
@@ -268,49 +364,66 @@ check(
 )
 check(
   'conversation search shell stays muted in non-glass modes',
-  /searchShellBackground = isGlass \? colors\.ui\.semantic\.chrome\.background : colors\.ui\.cartoon \? colors\.ui\.semantic\.surface\.muted : colors\.ui\.semantic\.surface\.muted/.test(conversationsScreen),
-  'search chrome should not reintroduce a heavy default card',
+  /HistoryHeaderFrame/.test(conversationsScreen)
+    && /history-header-experience-minimal/.test(historyPresentation)
+    && /history-header-experience-lime-road/.test(historyPresentation)
+    && /history-header-experience-markdown/.test(historyPresentation),
+  'search chrome should be owned by the selected history experience rather than a single shared shell',
 )
 check(
   'api key settings surfaces stay on muted secondary layers',
-  /backgroundColor: colors\.ui\.glass \? colors\.ui\.semantic\.chrome\.background : colors\.ui\.cartoon \? colors\.ui\.semantic\.surface\.muted : colors\.ui\.semantic\.surface\.muted/.test(apiKeyPanel) && /quietControlSurface\(colors, active\)[\s\S]*?colors\.ui\.semantic\.surface\.muted/.test(apiKeyPanel) && /backgroundColor: colors\.ui\.glass \? colors\.ui\.actionBar\.itemBackground : colors\.ui\.cartoon \? colors\.ui\.semantic\.surface\.muted : colors\.ui\.semantic\.surface\.muted/.test(apiKeyPanel),
+  /backgroundColor: colors\.ui\.glass \? colors\.ui\.semantic\.chrome\.background : colors\.ui\.limeRoad \? colors\.ui\.semantic\.surface\.muted : colors\.ui\.semantic\.surface\.muted/.test(apiKeyPanel)
+    && /function quietControlSurface[\s\S]*?colors\.ui\.semantic\.surface\.muted/.test(apiKeyPanel)
+    && /backgroundColor: colors\.ui\.glass \? colors\.ui\.actionBar\.itemBackground : colors\.ui\.semantic\.surface\.muted/.test(apiKeyPanel)
+    && /const backgroundColor = toneToken\?\.background \?\? \(colors\.ui\.glass \? colors\.ui\.actionBar\.itemBackground : colors\.ui\.semantic\.surface\.muted\)/.test(apiKeyPanel),
   'provider configuration should avoid reverting to default card surfaces for secondary settings chrome',
 )
 check(
   'context assets and local capability cards stay visually secondary',
-  /backgroundColor: colors\.ui\.glass \? colors\.ui\.semantic\.chrome\.background : colors\.ui\.cartoon \? colors\.ui\.semantic\.surface\.base : colors\.ui\.semantic\.surface\.base/.test(contextPanel) && /assetCardSurface\(colors, active \? colors\.ui\.control\.primaryBorder : colors\.ui\.tone\.warning\.border\)/.test(contextPanel) && /backgroundColor: colors\.ui\.glass \? colors\.ui\.actionBar\.itemBackground : colors\.ui\.cartoon \? colors\.ui\.semantic\.surface\.muted : colors\.ui\.semantic\.surface\.base/.test(contextPanel),
+  /backgroundColor: colors\.ui\.glass \? colors\.ui\.semantic\.chrome\.background : colors\.ui\.limeRoad \? colors\.ui\.semantic\.surface\.base : colors\.ui\.semantic\.surface\.base/.test(contextPanel) && /assetCardSurface\(colors, active \? colors\.ui\.control\.primaryBorder : colors\.ui\.tone\.warning\.border\)/.test(contextPanel) && /backgroundColor: colors\.ui\.glass \? colors\.ui\.actionBar\.itemBackground : colors\.ui\.limeRoad \? colors\.ui\.semantic\.surface\.muted : colors\.ui\.semantic\.surface\.base/.test(contextPanel),
   'knowledge, memory, and local capability cards should keep muted surfaces with semantic borders',
 )
 check(
-  'settings foldouts use semantic surfaces in cartoon mode',
-  /return colors\.ui\.cartoon \? colors\.ui\.semantic\.surface\.base : isGlass \? colors\.ui\.semantic\.chrome\.background/.test(settingsStore + read('src/components/main/SettingsScreenContent.tsx')) && /backgroundColor: colors\.ui\.cartoon \? colors\.ui\.semantic\.surface\.muted : colors\.ui\.glass \? colors\.ui\.actionBar\.itemBackground/.test(read('src/components/main/SettingsScreenContent.tsx')),
-  'settings foldout bodies, cards, and theme selectors should not fall back to cartoon card fills',
+  'settings foldouts use semantic surfaces in Lime Road mode',
+  /return colors\.ui\.limeRoad \? colors\.ui\.semantic\.surface\.base : isGlass \? colors\.ui\.semantic\.chrome\.background/.test(settingsStore + read('src/components/main/SettingsScreenContent.tsx')) && /backgroundColor: colors\.ui\.limeRoad \? colors\.ui\.semantic\.surface\.muted : colors\.ui\.glass \? colors\.ui\.actionBar\.itemBackground/.test(read('src/components/main/SettingsScreenContent.tsx')),
+  'settings foldout bodies, cards, and theme selectors should not fall back to decorative card fills',
 )
 check(
   'provider settings chrome stays on semantic surfaces instead of heavy cards',
-  /const chromeSurface = colors\.ui\.cartoon \? colors\.ui\.semantic\.surface\.base : colors\.ui\.glass \? colors\.ui\.semantic\.chrome\.background : colors\.ui\.semantic\.surface\.base/.test(providerSettings)
-    && /const mutedSurface = colors\.ui\.cartoon \? colors\.ui\.semantic\.surface\.muted : colors\.ui\.glass \? colors\.ui\.actionBar\.itemBackground : colors\.ui\.semantic\.surface\.muted/.test(providerSettings)
-    && /const raisedSurface = colors\.ui\.cartoon \? colors\.ui\.semantic\.surface\.base : colors\.ui\.glass \? colors\.ui\.semantic\.surface\.overlay : colors\.ui\.semantic\.surface\.base/.test(providerSettings)
-    && /shadowOpacity: colors\.ui\.cartoon \? Math\.min\(colors\.ui\.card\.shadowOpacity, 0\.08\) : 0/.test(providerSettings),
+  /function resolveProviderChrome/.test(providerSettings)
+    && /const chromeSurface = colors\.ui\.limeRoad \? colors\.ui\.semantic\.surface\.base : colors\.ui\.glass \? colors\.ui\.semantic\.chrome\.background : colors\.ui\.semantic\.surface\.base/.test(providerSettings)
+    && /const mutedSurface = colors\.ui\.limeRoad \? colors\.ui\.semantic\.surface\.muted : colors\.ui\.glass \? colors\.ui\.actionBar\.itemBackground : colors\.ui\.semantic\.surface\.muted/.test(providerSettings)
+    && /const raisedSurface = colors\.ui\.limeRoad \? colors\.ui\.semantic\.surface\.base : colors\.ui\.glass \? colors\.ui\.semantic\.surface\.overlay : colors\.ui\.semantic\.surface\.base/.test(providerSettings)
+    && /backgroundColor: chromeSurface/.test(providerSettings)
+    && /shadowOpacity: 0/.test(providerSettings),
   'provider management should keep chrome/material hierarchy without falling back to decorative cards',
 )
 check(
-  'provider activation banners keep lightweight semantic chrome',
-  /backgroundColor: colors\.ui\.glass \? colors\.ui\.semantic\.chrome\.background : colors\.ui\.cartoon \? colors\.ui\.semantic\.surface\.base : colors\.ui\.semantic\.surface\.base/.test(activationProgressBanner)
-    && /shadowOpacity: colors\.ui\.cartoon \? Math\.min\(colors\.ui\.card\.shadowOpacity, 0\.05\) : 0/.test(activationProgressBanner),
+  'provider activation progress keeps lightweight semantic chrome',
+  /function ActivationProgressCard/.test(providerSettings)
+    && /backgroundColor: chromeSurface/.test(providerSettings)
+    && /borderColor: chromeBorder/.test(providerSettings)
+    && /shadowOpacity: 0/.test(providerSettings),
   'activation progress chrome should stay readable and light across theme families',
 )
 check(
   'source reader skeleton and empty states stay on secondary surfaces',
   /const skeletonSurface = colors\.ui\.glass \? colors\.ui\.actionBar\.itemBackground : colors\.ui\.semantic\.surface\.muted/.test(sourceRoute)
-    && /shadowOpacity: colors\.ui\.cartoon \? 0\.06 : 0/.test(emptyState),
+    && /shadowOpacity: 0/.test(emptyState),
   'loading and empty surfaces should remain quieter than live content',
 )
 check(
-  'mcp settings server cards use restrained cartoon depth',
-  /shadowOpacity: colors\.ui\.cartoon \? Math\.min\(colors\.ui\.card\.shadowOpacity, 0\.04\) : 0/.test(mcpSettings)
-    && /shadowRadius: colors\.ui\.cartoon \? Math\.max\(2, colors\.ui\.card\.shadowRadius - 4\) : 0/.test(mcpSettings),
-  'MCP management cards should keep clear grouping without reintroducing heavy card treatment',
+  'mcp settings separates quiet, route, and document server geometries while keeping restrained detail depth',
+  /const cardSurface = colors\.ui\.glass \? colors\.ui\.semantic\.chrome\.background : colors\.ui\.semantic\.surface\.base/.test(mcpSettings)
+    && /const mutedSurface = colors\.ui\.glass \? colors\.ui\.actionBar\.itemBackground : colors\.ui\.semantic\.surface\.muted/.test(mcpSettings)
+    && /mcp-server-catalog-minimal/.test(mcpSettingsExperiences)
+    && /mcp-server-catalog-lime-road/.test(mcpSettingsExperiences)
+    && /mcp-server-catalog-markdown/.test(mcpSettingsExperiences)
+    && /const enabledSurface = '#198754'/.test(mcpSettingsExperiences)
+    && !/aspectRatio: 1/.test(mcpSettings)
+    && /shadowOpacity: 0/.test(mcpSettings)
+    && /shadowRadius: 0/.test(mcpSettings),
+  'MCP should leave the legacy shared square grid while management details keep light semantic grouping',
 )
 
 const failures = checks.filter((item) => !item.ok)

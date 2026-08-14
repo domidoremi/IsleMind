@@ -1,7 +1,6 @@
-import { getModelConfig } from '@/types'
-import type { AIProvider, ModelAlias, ProviderCredentialGroup } from '@/types'
+import { getModelConfig } from '@/types/modelCatalog'
+import type { AIProvider, ModelAlias, ProviderCredentialGroup } from '@/types/providerContracts'
 import { normalizeModelId } from '@/utils/modelReasoning'
-
 export type ModelQuickGroup =
   | 'all'
   | 'gpt'
@@ -73,10 +72,12 @@ export function hasRemoteProviderModelEvidence(provider: AIProvider): boolean {
 }
 
 export function clearHistoricalInjectedProviderModels(provider: AIProvider): string[] {
+  if (provider.lastModelSyncStatus === 'ok') return uniqueModels(provider.models ?? [])
   return clearHistoricalInjectedModelList(provider.models ?? [], provider)
 }
 
 export function clearHistoricalInjectedGroupModels(group: ProviderCredentialGroup, provider?: AIProvider): string[] {
+  if (group.lastModelSyncStatus === 'ok') return uniqueModels(group.availableModels ?? [])
   return clearHistoricalInjectedModelList(group.availableModels ?? [], provider)
 }
 
@@ -236,7 +237,7 @@ export function inferModelFamily(provider: AIProvider | undefined, model: string
 export function isProviderConversationReady(provider: AIProvider): boolean {
   return provider.id !== 'local-setup' &&
     provider.enabled &&
-    provider.lastTestStatus === 'ok' &&
+    provider.lastTestStatus !== 'bad' &&
     !!getProviderPreferredModel(provider)
 }
 
