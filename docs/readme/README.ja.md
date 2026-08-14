@@ -1,85 +1,147 @@
 <p align="center">
-  <img src="../../assets/icon.png" width="120" height="120" alt="IsleMind app icon">
+  <img src="../../assets/icon.png" width="120" height="120" alt="IsleMind アプリアイコン">
 </p>
 
 <h1 align="center">IsleMind</h1>
 
 <p align="center">
-  プライベートなプロバイダー設定、知識支援チャット、個人コンテキスト、構造化された作業成果物のためのローカルファーストなモバイル AI ワークスペースです。
+  ローカルファーストで、プロバイダーを自分で管理できる Android AI ワークスペース。
 </p>
 
 <p align="center">
-  <a href="../../README.md">简体中文</a> | <a href="README.en.md">English</a> | 日本語
+  <a href="../../README.md">简体中文</a> · <a href="README.en.md">English</a> · 日本語
 </p>
 
 <p align="center">
-  <a href="https://github.com/domidoremi/IsleMind/releases/latest">最新 APK</a>
+  <strong>現在のバージョン：1.0.15（Android versionCode 115）</strong><br>
+  <a href="https://github.com/domidoremi/IsleMind/releases">バージョンと更新履歴</a>
 </p>
 
-## 能力境界
+> [!IMPORTANT]
+> 現在の GitHub Release では APK、チェックサムファイル、その他のビルド成果物を公開していません。Release はソースコードのバージョンを示し、そのバージョンに対応する変更を記録するためのものです。アプリを実行する場合は、ソースからローカルでビルドしてください。
 
-IsleMind は、会話、設定、コンテキスト索引、Agentic RAG 索引、プロバイダー設定を既定で端末上に保存します。データの端末外送信は、次のユーザー操作をトリガー条件とします。
+## IsleMind とは
 
-- ユーザーが設定済み AI プロバイダーを選択し、推論、embedding、文字起こし、音声、またはモデル検出を実行する。
-- ユーザーが JSON データをエクスポートまたはインポートする。
-- ユーザーがローカル RAG モデルをダウンロード、検証、または有効化する。
-- ユーザーが Android システムインストーラー経由で GitHub Release APK をインストールする。
+IsleMind は、モデルプロバイダー、会話データ、作業コンテキストを自分で管理したいユーザー向けのアプリです。ホスト型 AI アカウントを提供するのではなく、プロバイダー設定、チャット、知識検索、タスク実行、成果物の受け渡しを一つのモバイルワークスペースにまとめます。
 
-SecureStore に保存されたプロバイダー Key は JSON エクスポートへ書き込まれません。既定 APK はモデル重みを同梱しません。ローカルモデルは、内蔵 catalog またはユーザーが明示的に選択したダウンロードフローから取得する必要があります。
+現在の主要な開発・検証対象は **Android** です。リポジトリには Expo の iOS 設定も残していますが、iOS 版を公開済み、または実機回帰テスト済みとは表明していません。
 
-## ユーザー経路
+## 主な機能
 
-| シナリオ | 既定動作 | 出力 |
-| --- | --- | --- |
-| プロバイダー設定 | ユーザーが API Key、Base URL、モデル、能力スイッチを入力する | チャット、モデル検出、ランタイム診断で使用できるプロバイダー設定 |
-| チャット開始 | アプリが現在のセッション、個人コンテキスト、知識検索結果、モデル設定を読み取る | AI 応答、引用、token 使用記録、コピー可能な内容 |
-| 知識インポート | Agentic RAG が分割、索引化、ハイブリッド検索、ローカル rerank を実行する | 参照可能な知識索引と検索証拠 |
-| 作業成果物生成 | アプリがモデル応答を構造化された納品内容へ変換する | 品質ゲート、実行可能なアクション、コピー可能な引き継ぎ、継続プロンプト |
-| Android 更新 | アプリが GitHub Release APK を確認し、システムインストーラーを開く | ユーザー確認後のコールドアップデート |
+- **プロバイダーとモデル**：API Key、Base URL、プロトコル、モデル、機能スイッチを設定できます。OpenAI、Anthropic、Gemini、xAI、DeepSeek、Qwen、GLM、および OpenAI/Anthropic 互換エンドポイントのプリセットを用意しています。
+- **会話ワークスペース**：複数会話、ストリーミング応答、推論状態、引用、添付、コピー可能な内容を管理し、処理中・成功・失敗を明示します。
+- **知識とコンテキスト**：知識文書、個人メモリ、会話コンテキスト、検索インデックスを端末側で管理し、ローカルモデルが利用できない場合も診断可能なフォールバックを維持します。
+- **タスクとワークフロー**：長い作業を追跡可能なステップに分け、キャンセル、復旧、ツール認可、実行証拠の境界を保持します。
+- **構造化された作業成果物**：モデル応答を納品可能な内容へ整理し、品質ゲート、実行可能なアクション、コピー可能な引き継ぎ、継続プロンプトを提供します。
+- **システムフィードバック**：アプリ内 Toast/Banner、状態レイヤー、Android 通知を使い、重要な操作が無通知で成功・失敗しないようにします。
 
-## ダウンロードと APK 変体
+## プライバシーとネットワーク境界
 
-[GitHub Releases](https://github.com/domidoremi/IsleMind/releases/latest) から Android APK をダウンロードしてください。
+会話、設定、知識インデックス、個人コンテキスト、プロバイダー設定は既定で端末内に保存されます。次のユーザー操作では外部リクエストが発生する場合があります。
 
-ローカルモデル変体：
+- ユーザーが選択した AI プロバイダーへの推論、モデル検出、embedding、文字起こし、音声リクエスト。
+- ユーザーが明示的に選択したローカルモデルリソースのダウンロード。
+- GitHub 上のリモートバージョン確認。
+- ユーザーが明示的に有効化したネットワークツールまたは連携機能の実行。
 
-- `no-model`: 既定ビルド。ローカルモデルファイルを同梱しません。
-- `with-model-small`: ローカル embedding 用に `all-MiniLM-L6-v2` を同梱します。
+プロバイダー認証情報はセキュアストレージに保存され、ポータブル JSON エクスポートには書き込まれません。Issue、ログ、スクリーンショットを公開する前に、API Key、トークン、非公開 Base URL、個人情報を必ず除去してください。
 
-Android アーキテクチャ変体：
+## Android をソースから実行する
 
-- `arm64-v8a`: 64-bit ARM 端末。
-- `x86_64`: 64-bit x86 端末。
-- `universal-64`: 64-bit ARM と 64-bit x86 のネイティブライブラリを含みます。
-- `armeabi-v7a-legacy`: 旧 32-bit ARM 端末専用です。
+### 必要な環境
 
-`no-model` APK をインストールしている場合でも、アプリ内のローカルモデル画面から RAG モデルをダウンロード、検証、有効化できます。
+- [Bun 1.3.14](https://bun.sh/)（`bun.lock` が唯一の依存関係ロックファイル）
+- Node.js（プロジェクトスクリプトと Expo CLI エントリーポイントで使用）
+- JDK 17
+- Android SDK、Platform Tools、ADB
+- Android エミュレーター、または USB デバッグを有効にした実機
 
-## リスク制御
+### インストールと起動
 
-- プロバイダーリクエストはユーザー設定から発火する必要があります。利用可能なプロバイダーがない場合、アプリはローカル設定状態を維持します。
-- ローカルモデルが欠落または利用不可の場合、検索は hash embedding へフォールバックします。
-- Android 更新には Android システムインストーラーの確認が必要です。アプリは APK をサイレントに置き換えません。
-- `universal-64` は `arm64-v8a` と `x86_64` を含みます。`armeabi-v7a-legacy` は旧 32-bit 端末を対象とし、Android 16 の 64-bit page-size 検証対象ではありません。
+```powershell
+git clone https://github.com/domidoremi/IsleMind.git
+cd IsleMind
+bun install
+bun run doctor
+```
 
-## 失敗時の動作
+Android 実機を接続した後：
 
-- AI プロバイダーが到達不能、Key が無効、または要求された能力に未対応の場合、チャットランタイムはユーザー入力を破棄せず、診断可能な状態を返す必要があります。
-- RAG モデルファイルが欠落している場合、ローカルモデル画面はダウンロードと検証の入口を保持し、検索フローはフォールバック経路を保持する必要があります。
-- APK ダウンロードが失敗した場合、インストール済みバージョンは変更されません。インストールの有効化にはシステムインストーラーの確認が必要です。
+```powershell
+adb devices
+adb reverse tcp:8081 tcp:8081
+bun run android --device <device-name> --no-bundler
+```
 
-## 資産と帰属表示
+別のターミナルで Metro を起動します：
 
-- Isle UI は `animal-island-ui` に着想を得た React Native 適配実装です。上流プロジェクトは `guokaigdg` により公開され、CC BY-NC 4.0 ライセンスです。IsleMind は上流の React DOM パッケージ、CSS、フォント、画像アセットを同梱しません：<https://github.com/guokaigdg/animal-island-ui>。
-- 既定 APK はモデル重みを含みません。任意モデルは `assets/models/catalog.json` に記録され、出典と attribution は `assets/models/NOTICE.md` に記録されています。
-- アプリアイコン源画像は `assets/brand/source/isle-pet-preview-base.png` に保存されています。生成資産は黄色背景を削除し、`assets/` と Android launcher リソースディレクトリへ出力します。
+```powershell
+bun run start --localhost
+```
 
-## 技術スタック
+USB のリバースポート転送を使用しない場合は、現在のネットワークから端末がアクセスできる開発サーバーアドレスを設定してください。
 
-- アプリ実行環境：[Expo SDK](https://docs.expo.dev/)、[React Native](https://reactnative.dev/)、[React](https://react.dev/)、[Expo Router](https://docs.expo.dev/router/introduction/)、[TypeScript](https://www.typescriptlang.org/)。
-- モバイル対象：[Android APK](https://developer.android.com/build/building-cmdline)、[EAS](https://docs.expo.dev/eas/) 設定、[Expo iOS metadata](https://docs.expo.dev/versions/latest/config/app/)。
-- UI とモーション：[NativeWind](https://www.nativewind.dev/)、[Tailwind CSS](https://tailwindcss.com/)、[Isle UI](../../src/components/ui/isle/README.md)、[lucide-react-native](https://lucide.dev/)、[moti](https://moti.fyi/)、[React Native Reanimated](https://docs.swmansion.com/react-native-reanimated/)、[Gesture Handler](https://docs.swmansion.com/react-native-gesture-handler/)、[Safe Area Context](https://github.com/AppAndFlow/react-native-safe-area-context)、[Screens](https://github.com/software-mansion/react-native-screens)、[SVG](https://github.com/software-mansion/react-native-svg)、[Expo Blur](https://docs.expo.dev/versions/latest/sdk/blur-view/)。
-- ローカル保存と端末 API：[AsyncStorage](https://react-native-async-storage.github.io/async-storage/)、[Expo SecureStore](https://docs.expo.dev/versions/latest/sdk/securestore/)、[Expo SQLite](https://docs.expo.dev/versions/latest/sdk/sqlite/)、[Expo FileSystem](https://docs.expo.dev/versions/latest/sdk/filesystem/)、[Expo Document Picker](https://docs.expo.dev/versions/latest/sdk/document-picker/)、[Expo Image Picker](https://docs.expo.dev/versions/latest/sdk/imagepicker/)、[Expo Clipboard](https://docs.expo.dev/versions/latest/sdk/clipboard/)、[Expo Sharing](https://docs.expo.dev/versions/latest/sdk/sharing/)、[Expo Application](https://docs.expo.dev/versions/latest/sdk/application/)、[Expo Constants](https://docs.expo.dev/versions/latest/sdk/constants/)、[Expo Haptics](https://docs.expo.dev/versions/latest/sdk/haptics/)、[Expo Audio](https://docs.expo.dev/versions/latest/sdk/audio/)、[Expo Speech](https://docs.expo.dev/versions/latest/sdk/speech/)。
-- AI プロバイダー実行環境：[OpenAI](https://platform.openai.com/docs/)、[Anthropic](https://docs.anthropic.com/)、[Google Gemini](https://ai.google.dev/gemini-api/docs)、[Xiaomi MiMo](https://mimo.mi.com/)、[DeepSeek](https://api-docs.deepseek.com/)、[DashScope/Qwen](https://www.alibabacloud.com/help/en/model-studio/use-qwen-by-calling-api)、[Zhipu/GLM](https://docs.bigmodel.cn/)、[xAI](https://docs.x.ai/)、[OpenRouter](https://openrouter.ai/docs/api/reference)、[NewAPI](https://docs.newapi.pro/)、[OneAPI](https://github.com/songquanpeng/one-api)、[Sub2API](https://sub2api.info/) などのプリセット。インターフェース層では別途 [OpenAI API 互換プロトコル](https://platform.openai.com/docs/api-reference) とカスタム互換エンドポイントをサポートします。
-- 検索とローカルモデル：Agentic RAG、[ONNX Runtime React Native](https://onnxruntime.ai/docs/get-started/with-javascript/react-native.html)、[local embedding model catalog](../../assets/models/catalog.json)、モデルダウンロード検証、[Xenova](https://huggingface.co/Xenova) と [BAAI](https://huggingface.co/BAAI) のモデルソース、hash embedding fallback。
-- 多言語：[i18next](https://www.i18next.com/)、[React i18next](https://react.i18next.com/)、[Expo Localization](https://docs.expo.dev/versions/latest/sdk/localization/)、`zh-CN`、`en`、`ja` リソースファイル。
+## 検証
+
+変更範囲に対応するチェックを少なくとも実行してください：
+
+```powershell
+bun run type-check
+bun run test:provider-intelligence
+bun run test:architecture-boundary
+bun run test:vnext-architecture-contract
+```
+
+Android UI、ネイティブプラグイン、通知、ファイルシステム、パッケージングを変更した場合は、エミュレーターまたは実機での対象別検証も必要です。ソースチェックだけでは実機証拠の代わりになりません。
+
+## アーキテクチャ
+
+IsleMind は vNext 境界へ段階的に移行しています：
+
+```text
+app/               Expo Router のルートとページ入口
+src/modules/       ビジネス所有者ごとのドメイン／アプリケーションモジュール
+src/core/          モジュール間で共有する純粋な契約
+src/platform/      再利用可能なプラットフォーム基盤
+src/bootstrap/     Composition Root と具体アダプターのバインド
+src/presentation/  プレゼンテーションコントローラーと ViewModel
+src/components/    React Native コンポーネント
+plugins/           Expo／Android ネイティブ設定プラグイン
+assets/            ランタイム資産、ブランドソース、モデルカタログ
+scripts/           検証、監査、ビルド、証拠収集スクリプト
+```
+
+アーキテクチャを変更する前に、次の文書を確認してください：
+
+- [vNext アーキテクチャ・リファクタリング計画](../architecture/islemind-vnext-architecture-refactor-plan.md)
+- [vNext モジュール公開 API](../architecture/vnext-module-public-api.md)
+- [現在の vNext 移行状況](../architecture/vnext-migration-status.md)
+
+新しいビジネス動作は所有元の `src/modules/<owner>/` に実装します。モジュール間 import は所有モジュールの公開エントリーポイントだけを使用してください。具体アダプターは `src/bootstrap/` でバインドし、`src/services/` は削除条件が明確な旧互換境界としてのみ扱います。
+
+## バージョンと Release
+
+- プロジェクトでは単一の [Semantic Versioning](https://semver.org/) バージョンを使用します。
+- `package.json`、`app.json`、Git Tag は一致させ、Tag は `vX.Y.Z` 形式にします。
+- `0.x.x` は初期の段階的プレリリース、`1.x.x` 以降は正式版を表します。
+- 各 GitHub Release には、そのバージョンの実際の変更に対応する更新履歴を記載します。
+- 現在の GitHub Release はソース版のマーカーのみを公開し、APK、チェックサム、その他のビルド成果物は添付しません。
+- バージョン更新によって、インストール済みアプリのローカル会話、知識、メモリ、プロバイダー設定を意図的に消去しません。永続化移行がある場合は別途明記します。
+
+## リポジトリの整理方針
+
+- 製品コード、文書、ランタイム資産は `src/`、`docs/`、`assets/` に置き、リポジトリ直下へ一時スクリーンショットやエクスポートを置かないでください。
+- ローカルログ、テストレポート、Playwright 出力、スクリーンショット、APK、AAB、一時証拠は ignore 対象の場所に保存します。
+- API Key、署名鍵、トークン、非公開設定、機密情報を含む端末ログ、ダウンロードキャッシュをコミットしないでください。
+- 資産を削除する前に、ランタイム、ビルドスクリプト、文書から参照されていないことを確認します。保存すべきデザインソースは、明確に命名した `assets/brand/source/` に置きます。
+- 依存関係のインストールには Bun を使い、他のパッケージマネージャーのロックファイルを生成・コミットしないでください。
+
+## 資産とクレジット
+
+- Isle UI は [animal-island-ui](https://github.com/guokaigdg/animal-island-ui) の React Native 向け適応実装です。上流は `guokaigdg` により CC BY-NC 4.0 で公開されています。IsleMind は上流の React DOM パッケージ、CSS、フォント、画像資産を直接同梱しません。
+- 任意のローカルモデルは [assets/models/catalog.json](../../assets/models/catalog.json) に記録し、出典とクレジットは [assets/models/NOTICE.md](../../assets/models/NOTICE.md) に記載しています。
+- 現在のブランドソースは `assets/brand/source/`、ランタイム用の生成資産は `assets/brand/generated/` と Expo アイコン用パスに配置しています。
+
+## コントリビューション
+
+報告を作成する前に既存の [Issues](https://github.com/domidoremi/IsleMind/issues) を検索してください。再現手順、プラットフォーム／端末、アプリバージョン、機密情報を除去したログを含めてください。アーキテクチャや永続化を変更する場合は、互換性、移行、ロールバック境界も説明してください。

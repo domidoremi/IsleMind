@@ -1,91 +1,147 @@
 <p align="center">
-  <img src="assets/icon.png" width="120" height="120" alt="IsleMind app icon">
+  <img src="assets/icon.png" width="120" height="120" alt="IsleMind 应用图标">
 </p>
 
 <h1 align="center">IsleMind</h1>
 
 <p align="center">
-  本地优先的移动 AI 工作区，用于私有服务商配置、知识辅助对话、个人上下文和结构化工作产物。
+  本地优先、服务商可控的 Android AI 工作区。
 </p>
 
 <p align="center">
-  简体中文 | <a href="docs/readme/README.en.md">English</a> | <a href="docs/readme/README.ja.md">日本語</a>
+  简体中文 · <a href="docs/readme/README.en.md">English</a> · <a href="docs/readme/README.ja.md">日本語</a>
 </p>
 
 <p align="center">
-  <a href="https://github.com/domidoremi/IsleMind/releases/latest">最新 APK</a>
+  <strong>当前版本：1.0.15（Android versionCode 115）</strong><br>
+  <a href="https://github.com/domidoremi/IsleMind/releases">版本与更新日志</a>
 </p>
 
-## 能力边界
+> [!IMPORTANT]
+> 当前 GitHub Release 不提供 APK、校验文件或其他构建产物。Release 仅用于标记源码版本并记录对应更新；如需运行应用，请在本地从源码构建。
 
-IsleMind 默认在设备上保存对话、设置、上下文索引、Agentic RAG 索引和服务商配置。数据离开本机必须由以下动作触发：
+## IsleMind 是什么
 
-- 用户选择已配置的 AI 服务商并发起推理、embedding、转录、语音或模型发现请求。
-- 用户导出或导入 JSON 数据。
-- 用户下载、校验或启用本地 RAG 模型。
-- 用户通过 Android 系统安装器安装 GitHub Release APK。
+IsleMind 面向希望自行掌控模型服务商、对话数据和工作上下文的用户。它不提供托管式 AI 账号，而是将服务商配置、聊天、知识检索、任务运行和结果交付组织在同一个移动工作区中。
 
-SecureStore 中的服务商 Key 不会写入 JSON 导出文件。默认 APK 不内置模型权重；本地模型必须来自内置 catalog 或用户明确选择的下载流程。
+当前以 **Android** 作为主要开发和验证平台。仓库保留 Expo iOS 配置，但不宣称已经完成 iOS 发布或真机回归验证。
 
-## 用户路径
+## 核心能力
 
-| 场景 | 默认行为 | 输出 |
-| --- | --- | --- |
-| 配置服务商 | 用户输入 API Key、Base URL、模型和能力开关 | 可用于对话、模型发现和运行时诊断的服务商配置 |
-| 发起对话 | 应用读取当前会话、个人上下文、知识检索结果和模型设置 | AI 回复、引用信息、token 使用记录和可复制内容 |
-| 导入知识 | Agentic RAG 执行分块、索引、混合检索和本地 rerank | 可引用的知识索引和检索证据 |
-| 生成工作产物 | 应用将模型回复整理为结构化交付内容 | 质量门槛、可执行行动、复制交接和继续提示 |
-| 更新 Android 版本 | 应用检查 GitHub Release APK 并打开系统安装器 | 用户确认后的冷更新安装 |
+- **服务商与模型**：配置 API Key、Base URL、协议、模型与能力开关；支持 OpenAI、Anthropic、Gemini、xAI、DeepSeek、Qwen、GLM 及 OpenAI/Anthropic 兼容端点。
+- **对话工作区**：管理多会话、流式回复、推理状态、引用、附件和可复制内容，并保留明确的运行中、成功与失败反馈。
+- **知识与上下文**：在设备侧管理知识文档、个人记忆、对话上下文和检索索引；本地模型不可用时保留可诊断的降级路径。
+- **任务与工作流**：把长任务拆分为可跟踪步骤，保留取消、恢复、工具授权和执行证据边界。
+- **结构化工作产物**：将模型回复整理为可交付内容，包含质量门槛、可执行行动、复制交接和继续提示。
+- **系统级反馈**：通过应用内 Toast/Banner、状态层和 Android 通知呈现关键操作状态，避免静默成功或静默失败。
 
-## 下载与 APK 变体
+## 隐私与网络边界
 
-从 [GitHub Releases](https://github.com/domidoremi/IsleMind/releases/latest) 下载 Android APK。
+对话、设置、知识索引、个人上下文和服务商配置默认保存在本机。以下行为会产生由用户动作触发的外部请求：
 
-本地模型变体：
+- 向用户选定的 AI 服务商发送推理、模型发现、embedding、转录或语音请求。
+- 下载用户明确选择的本地模型资源。
+- 检查 GitHub 远端版本。
+- 执行用户明确启用的网络工具或集成。
 
-- `no-model`：默认构建，不内置本地模型文件。
-- `with-model-small`：内置 `all-MiniLM-L6-v2`，用于本地 embedding。
+服务商密钥存放在安全存储中，不写入便携 JSON 导出。提交 Issue、日志或截图前，请主动移除 API Key、令牌、私有 Base URL 和个人内容。
 
-Android 架构变体：
+## 从源码运行 Android
 
-- `arm64-v8a`：64 位 ARM 设备。
-- `x86_64`：64 位 x86 设备。
-- `universal-64`：同时包含 64 位 ARM 和 64 位 x86 原生库。
-- `armeabi-v7a-legacy`：面向旧 32 位 ARM 设备。
+### 环境要求
 
-如果已安装 `no-model` APK，应用内本地模型页面仍可下载、校验并启用 RAG 模型。
+- [Bun 1.3.14](https://bun.sh/)（仓库以 `bun.lock` 为唯一依赖锁文件）
+- Node.js（项目脚本和 Expo CLI 入口需要）
+- JDK 17
+- Android SDK、Platform Tools 与 ADB
+- Android 模拟器或已开启 USB 调试的真机
 
-## 风险控制
+### 安装与启动
 
-- 服务商请求必须由用户配置触发；没有可用服务商时，应用必须保持在本地配置状态。
-- 本地模型缺失或不可用时，检索能力会回退到 hash embedding 路径。
-- Android 更新必须通过系统安装器确认；应用不会静默替换 APK。
-- `universal-64` 包含 `arm64-v8a` 和 `x86_64`。`armeabi-v7a-legacy` 面向旧 32 位设备，不参与 Android 16 的 64 位 page-size 验证。
+```powershell
+git clone https://github.com/domidoremi/IsleMind.git
+cd IsleMind
+bun install
+bun run doctor
+```
 
-## 失败行为
+连接 Android 真机后：
 
-- AI 服务商不可达、Key 无效或模型能力不匹配时，对话运行时必须返回可诊断状态，而不是丢弃用户输入。
-- RAG 模型文件缺失时，本地模型页面必须保留下载和校验入口；检索流程必须保留降级路径。
-- APK 下载失败时，已安装版本必须保持不变；安装生效必须经过系统安装器确认。
+```powershell
+adb devices
+adb reverse tcp:8081 tcp:8081
+bun run android --device <设备名称> --no-bundler
+```
 
-## 架构与维护
+在另一个终端启动 Metro：
 
-- [vNext 架构重构计划](docs/architecture/islemind-vnext-architecture-refactor-plan.md)：目标边界、运行时内核、迁移顺序和完成条件。
-- [vNext 模块公共 API](docs/architecture/vnext-module-public-api.md)：允许的跨模块导入面。
-- [vNext 当前迁移状态](docs/architecture/vnext-migration-status.md)：可运行路径、兼容层、删除队列和最新验证。
+```powershell
+bun run start --localhost
+```
+
+如果不使用 USB 反向端口，请根据 Expo/Metro 所在网络配置设备可访问的开发服务器地址。
+
+## 验证
+
+修改代码后，至少运行与变更范围相匹配的检查：
+
+```powershell
+bun run type-check
+bun run test:provider-intelligence
+bun run test:architecture-boundary
+bun run test:vnext-architecture-contract
+```
+
+Android UI、原生插件、通知、文件系统或打包行为的变更，还需要在模拟器或真机上进行聚焦验证。源码检查不能替代设备证据。
+
+## 架构
+
+IsleMind 正在按 vNext 边界渐进迁移：
+
+```text
+app/               Expo Router 路由与页面入口
+src/modules/       按业务所有者划分的领域与应用模块
+src/core/          跨模块共享的纯契约
+src/platform/      可复用平台基础设施
+src/bootstrap/     组合根与具体适配器绑定
+src/presentation/  展示层控制器与视图模型
+src/components/    React Native 组件
+plugins/           Expo/Android 原生配置插件
+assets/            运行时资源、品牌源文件与模型清单
+scripts/           验证、审计、构建和证据脚本
+```
+
+架构变更前请先阅读：
+
+- [vNext 架构重构计划](docs/architecture/islemind-vnext-architecture-refactor-plan.md)
+- [vNext 模块公共 API](docs/architecture/vnext-module-public-api.md)
+- [vNext 当前迁移状态](docs/architecture/vnext-migration-status.md)
+
+新业务行为应进入对应的 `src/modules/<owner>/`；跨模块依赖只能通过所有者模块的公共入口。具体适配器由 `src/bootstrap/` 绑定，`src/services/` 仅作为有明确删除条件的旧兼容边界。
+
+## 版本与发布
+
+- 项目使用单一 [Semantic Versioning](https://semver.org/) 版本号。
+- `package.json`、`app.json` 与 Git Tag 必须保持一致；Tag 格式为 `vX.Y.Z`。
+- `0.x.x` 用于早期渐进式预发布标记，`1.x.x` 起用于正式版本。
+- 每个 GitHub Release 必须包含与该版本实际变更对应的更新日志。
+- 当前 GitHub Release 只发布源码版本标记，不上传 APK、校验文件或其他构建产物。
+- 版本更新不会主动清除已经安装应用中的本地对话、知识库、记忆或服务商配置；涉及持久化迁移时必须单独说明。
+
+## 仓库卫生
+
+- 产品代码、文档和运行时资源分别放入 `src/`、`docs/` 与 `assets/`，不要把临时截图或导出文件放在仓库根目录。
+- 本地日志、测试报告、Playwright 输出、截图、APK、AAB 和临时证据应留在已忽略目录中。
+- 不提交 API Key、签名密钥、令牌、私有配置、设备日志中的敏感内容或下载缓存。
+- 删除资源前必须先确认运行时、构建脚本和文档均无引用；需要保留的设计源文件应进入明确命名的 `assets/brand/source/`。
+- 使用 Bun 安装依赖，不生成或提交其他包管理器锁文件。
 
 ## 资源与署名
 
-- Isle UI 是 `animal-island-ui` 的 React Native 适配实现。上游项目由 `guokaigdg` 发布，许可证为 CC BY-NC 4.0；IsleMind 不内置上游 React DOM 包、CSS、字体或图片资产：<https://github.com/guokaigdg/animal-island-ui>。
-- 默认 APK 不包含模型权重。可选模型记录在 `assets/models/catalog.json`，来源与署名说明记录在 `assets/models/NOTICE.md`。
-- 应用图标源图保存为 `assets/brand/source/isle-pet-preview-base.png`。生成资产会去除黄色背景，并输出到 `assets/` 与 Android launcher 资源目录。
+- Isle UI 是 [animal-island-ui](https://github.com/guokaigdg/animal-island-ui) 的 React Native 适配实现。上游项目由 `guokaigdg` 发布并采用 CC BY-NC 4.0；IsleMind 不直接打包其 React DOM、CSS、字体或图片资产。
+- 可选本地模型记录在 [assets/models/catalog.json](assets/models/catalog.json)，来源与署名见 [assets/models/NOTICE.md](assets/models/NOTICE.md)。
+- 当前品牌源文件位于 `assets/brand/source/`，运行时生成资源位于 `assets/brand/generated/` 和 Expo 图标路径。
 
-## 技术栈
+## 参与项目
 
-- 应用运行时：[Expo SDK](https://docs.expo.dev/)、[React Native](https://reactnative.dev/)、[React](https://react.dev/)、[Expo Router](https://docs.expo.dev/router/introduction/)、[TypeScript](https://www.typescriptlang.org/)。
-- 移动目标：[Android APK](https://developer.android.com/build/building-cmdline)、[EAS](https://docs.expo.dev/eas/) 配置、[Expo iOS metadata](https://docs.expo.dev/versions/latest/config/app/)。
-- UI 与动效：[NativeWind](https://www.nativewind.dev/)、[Tailwind CSS](https://tailwindcss.com/)、[Isle UI](src/components/ui/isle/README.md)、[lucide-react-native](https://lucide.dev/)、[moti](https://moti.fyi/)、[React Native Reanimated](https://docs.swmansion.com/react-native-reanimated/)、[Gesture Handler](https://docs.swmansion.com/react-native-gesture-handler/)、[Safe Area Context](https://github.com/AppAndFlow/react-native-safe-area-context)、[Screens](https://github.com/software-mansion/react-native-screens)、[SVG](https://github.com/software-mansion/react-native-svg)、[Expo Blur](https://docs.expo.dev/versions/latest/sdk/blur-view/)。
-- 本地存储与设备 API：[AsyncStorage](https://react-native-async-storage.github.io/async-storage/)、[Expo SecureStore](https://docs.expo.dev/versions/latest/sdk/securestore/)、[Expo SQLite](https://docs.expo.dev/versions/latest/sdk/sqlite/)、[Expo FileSystem](https://docs.expo.dev/versions/latest/sdk/filesystem/)、[Expo Document Picker](https://docs.expo.dev/versions/latest/sdk/document-picker/)、[Expo Image Picker](https://docs.expo.dev/versions/latest/sdk/imagepicker/)、[Expo Clipboard](https://docs.expo.dev/versions/latest/sdk/clipboard/)、[Expo Sharing](https://docs.expo.dev/versions/latest/sdk/sharing/)、[Expo Application](https://docs.expo.dev/versions/latest/sdk/application/)、[Expo Constants](https://docs.expo.dev/versions/latest/sdk/constants/)、[Expo Haptics](https://docs.expo.dev/versions/latest/sdk/haptics/)、[Expo Audio](https://docs.expo.dev/versions/latest/sdk/audio/)、[Expo Speech](https://docs.expo.dev/versions/latest/sdk/speech/)。
-- AI 服务商运行时：[OpenAI](https://platform.openai.com/docs/)、[Anthropic](https://docs.anthropic.com/)、[Google Gemini](https://ai.google.dev/gemini-api/docs/)、[Xiaomi MiMo](https://mimo.mi.com/)、[DeepSeek](https://api-docs.deepseek.com/)、[DashScope/Qwen](https://www.alibabacloud.com/help/en/model-studio/use-qwen-by-calling-api)、[Zhipu/GLM](https://docs.bigmodel.cn/)、[xAI](https://docs.x.ai/)、[OpenRouter](https://openrouter.ai/docs/api/reference)、[NewAPI](https://docs.newapi.pro/)、[OneAPI](https://github.com/songquanpeng/one-api)、[Sub2API](https://sub2api.info/) 等预设；接口层另行支持 [OpenAI API 兼容协议](https://platform.openai.com/docs/api-reference) 与自定义兼容端点。
-- 检索与本地模型：Agentic RAG、[ONNX Runtime React Native](https://onnxruntime.ai/docs/get-started/with-javascript/react-native.html)、[local embedding model catalog](assets/models/catalog.json)、模型下载校验、[Xenova](https://huggingface.co/Xenova) 与 [BAAI](https://huggingface.co/BAAI) 模型来源、hash embedding fallback。
-- 多语言：[i18next](https://www.i18next.com/)、[React i18next](https://react.i18next.com/)、[Expo Localization](https://docs.expo.dev/versions/latest/sdk/localization/)、`zh-CN`、`en`、`ja` 资源文件。
+提交问题前，请先搜索现有 [Issues](https://github.com/domidoremi/IsleMind/issues)，并提供可复现步骤、平台/设备、应用版本和经过脱敏的日志。涉及架构或持久化的修改应同时说明兼容性、迁移与回退边界。
