@@ -3362,19 +3362,15 @@ function assertReleaseVersionsAligned() {
   const readmeChecks = [
     {
       file: 'README.md',
-      markers: ['结构化工作产物', '质量门槛', '复制交接', '继续提示'],
+      markers: ['结构化工作产物', '质量门槛', '复制交接', '继续提示', '当前 GitHub Release 不提供 APK、校验文件或其他构建产物。'],
     },
     {
       file: 'docs/readme/README.en.md',
-      markers: ['structured work artifacts', 'Quality gates', 'copyable handoffs', 'continuation prompts'],
-    },
-    {
-      file: 'docs/readme/README.zh-CN.md',
-      markers: ['结构化工作产物', '质量门槛', '复制交接', '继续提示'],
+      markers: ['structured work artifacts', 'Quality gates', 'copyable handoffs', 'continuation prompts', 'Current GitHub Releases do not publish APKs, checksum files, or other build artifacts.'],
     },
     {
       file: 'docs/readme/README.ja.md',
-      markers: ['構造化された作業成果物', '品質ゲート', 'コピー可能な引き継ぎ', '継続プロンプト'],
+      markers: ['構造化された作業成果物', '品質ゲート', 'コピー可能な引き継ぎ', '継続プロンプト', '現在の GitHub Release では APK、チェックサムファイル、その他のビルド成果物を公開していません。'],
     },
   ]
   for (const { file, markers } of readmeChecks) {

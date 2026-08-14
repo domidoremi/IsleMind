@@ -46,8 +46,14 @@ test-screenshots/
 emulator-screenshots/
 test-evidence/
 emulator-evidence/
+/.playwright-cli/
+/playwright-report/
+/test-results/
 logcat/
 /output/
+/*.png
+/-geometry
+/scripts/{console.error(e)
 *.log
 *.logcat
 *.uia.xml
