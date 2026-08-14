@@ -1,7 +1,8 @@
-import type { Message, ProcessTrace } from '@/types'
+import type { Message } from '@/types/chatContracts'
+import type { ProcessTrace } from '@/core'
 import { st } from '@/i18n/service'
-import { clampAgentOutput, redactSensitiveText } from '@/services/agent/agentTrace'
-import { WORK_ARTIFACT_WORKFLOW_CONTRACT } from '@/services/agent/workArtifactWorkflow'
+import { clampTraceText, redactSensitiveText } from '@/core'
+import { WORK_ARTIFACT_WORKFLOW_CONTRACT } from '@/modules/integrations'
 
 const TRACE_COPY_CONTENT_LIMIT = 2400
 const TRACE_DISPLAY_TITLE_LIMIT = 160
@@ -62,19 +63,26 @@ export function normalizeTraceStatuses(traces: ProcessTrace[], messageStatus: Me
 
 export function summarizeTraces(traces: ProcessTrace[], messageStatus: Message['status']): TraceSummary {
   const normalized = normalizeTraceStatuses(traces, messageStatus)
-  const done = normalized.filter((trace) => trace.status === 'done').length
-  const errors = normalized.filter((trace) => trace.status === 'error').length
-  const skipped = normalized.filter((trace) => trace.status === 'skipped').length
-  const cancelled = normalized.filter((trace) => trace.status === 'cancelled').length
-  const running = normalized.filter((trace) => trace.status === 'running' || trace.status === 'pending').length
+  const counts = countTraceStatuses(normalized)
   const label = [
-    running ? st('trace.summary.running', { count: running }) : '',
-    done ? st('trace.summary.done', { count: done }) : '',
-    errors ? st('trace.summary.errors', { count: errors }) : '',
-    cancelled ? st('trace.summary.cancelled', { count: cancelled }) : '',
-    skipped ? st('trace.summary.skipped', { count: skipped }) : '',
+    counts.running ? st('trace.summary.running', { count: counts.running }) : '',
+    counts.done ? st('trace.summary.done', { count: counts.done }) : '',
+    counts.errors ? st('trace.summary.errors', { count: counts.errors }) : '',
+    counts.cancelled ? st('trace.summary.cancelled', { count: counts.cancelled }) : '',
+    counts.skipped ? st('trace.summary.skipped', { count: counts.skipped }) : '',
   ].filter(Boolean).join(' · ') || st('trace.noProcess')
-  return { total: normalized.length, done, errors, skipped, cancelled, running, label }
+  return { total: normalized.length, ...counts, label }
+}
+
+function countTraceStatuses(traces: ProcessTrace[]): Pick<TraceSummary, 'done' | 'errors' | 'skipped' | 'cancelled' | 'running'> {
+  return traces.reduce((counts, trace) => {
+    if (trace.status === 'done') counts.done += 1
+    else if (trace.status === 'error') counts.errors += 1
+    else if (trace.status === 'skipped') counts.skipped += 1
+    else if (trace.status === 'cancelled') counts.cancelled += 1
+    else if (trace.status === 'running' || trace.status === 'pending') counts.running += 1
+    return counts
+  }, { done: 0, errors: 0, skipped: 0, cancelled: 0, running: 0 })
 }
 
 export function getActiveTraceTitle(traces: ProcessTrace[], messageStatus: Message['status']): string {
@@ -94,9 +102,14 @@ export function getActiveTraceStageLabel(traces: ProcessTrace[], messageStatus: 
 
 export function selectActiveProcessTrace(traces: ProcessTrace[], messageStatus: Message['status']): ProcessTrace | undefined {
   const normalized = normalizeTraceStatuses(traces, messageStatus)
-  const activeTraces = normalized.filter((trace) => trace.status === 'running' || trace.status === 'pending')
-  if (!activeTraces.length) return undefined
-  return [...activeTraces].reverse().find((trace) => !isGenericModelActivityTrace(trace)) ?? activeTraces[activeTraces.length - 1]
+  let fallback: ProcessTrace | undefined
+  for (let index = normalized.length - 1; index >= 0; index -= 1) {
+    const trace = normalized[index]
+    if (!trace || (trace.status !== 'running' && trace.status !== 'pending')) continue
+    fallback ??= trace
+    if (!isGenericModelActivityTrace(trace)) return trace
+  }
+  return fallback
 }
 
 export function traceActivityStageLabel(trace: ProcessTrace): string {
@@ -311,6 +324,7 @@ function toolMetaSummary(metadata: Record<string, unknown>): string {
       : '',
     permissionMetaSummary(metadata),
     allowReasonMetaSummary(metadata),
+    permissionEvidenceMetaSummary(metadata),
     stepTitleMetaSummary(metadata),
   ])
 }
@@ -623,17 +637,17 @@ export function formatProcessTraceForCopy(trace: ProcessTrace): string {
   const content = trace.content?.trim()
   return [
     safeDetails ? `${header} [${safeDetails}]` : header,
-    content ? clampAgentOutput(redactSensitiveText(content), TRACE_COPY_CONTENT_LIMIT) : '',
+    content ? clampTraceText(redactSensitiveText(content), TRACE_COPY_CONTENT_LIMIT) : '',
   ].filter(Boolean).join('\n')
 }
 
 export function safeProcessTraceTitle(trace: ProcessTrace): string {
-  return clampAgentOutput(redactSensitiveText(trace.title), TRACE_DISPLAY_TITLE_LIMIT).replace(/\n\[output truncated\]$/, '')
+  return clampTraceText(redactSensitiveText(trace.title), TRACE_DISPLAY_TITLE_LIMIT).replace(/\n\[output truncated\]$/, '')
 }
 
 export function safeProcessTraceContent(trace: ProcessTrace, limit = TRACE_DISPLAY_CONTENT_LIMIT): string {
   const content = trace.content?.trim()
-  return content ? clampAgentOutput(redactSensitiveText(content), limit) : ''
+  return content ? clampTraceText(redactSensitiveText(content), limit) : ''
 }
 
 export function formatProcessTraceForDisplay(trace: ProcessTrace, contentLimit = TRACE_DISPLAY_CONTENT_LIMIT): { title: string; content: string } {
@@ -916,16 +930,16 @@ function isRawProviderNativeToolTrace(metadata: Record<string, unknown>): boolea
 }
 
 function allowReasonMetaSummary(metadata: Record<string, unknown>): string {
-  if (metadata.allowReason === 'visible-action' && metadata.intentVisible === true) {
+  if ((metadata.allowReason === 'visible-action' || metadata.allowReason === 'evidence-backed-visible-action') && metadata.intentVisible === true) {
     return st('trace.meta.allowVisibleAction')
   }
   if (metadata.allowReason === 'user-confirmed' && metadata.userConfirmed === true) {
     return st('trace.meta.allowUserConfirmed')
   }
-  if (metadata.allowReason === 'policy-allow-read-write') {
+  if (metadata.allowReason === 'policy-allow-read-write' || metadata.allowReason === 'evidence-backed-read-write') {
     return st('trace.meta.allowPolicyReadWrite')
   }
-  if (metadata.allowReason === 'policy-allow-destructive') {
+  if (metadata.allowReason === 'policy-allow-destructive' || metadata.allowReason === 'evidence-backed-destructive') {
     return st('trace.meta.allowPolicyDestructive')
   }
   if (metadata.allowReason === 'read-only-allowed') {
@@ -936,8 +950,26 @@ function allowReasonMetaSummary(metadata: Record<string, unknown>): string {
     : ''
 }
 
+function permissionEvidenceMetaSummary(metadata: Record<string, unknown>): string {
+  const elevated = metadata.permission === 'read-write' || metadata.permission === 'destructive'
+  return joinTraceMetaParts([
+    elevated && metadata.evidenceReady === false
+      ? st('trace.meta.permissionEvidenceMissing', undefined, 'Evidence missing')
+      : '',
+    metadata.evidenceReady === true && typeof metadata.evidenceSourceCount === 'number'
+      ? st('trace.meta.permissionEvidenceSources', { count: metadata.evidenceSourceCount }, 'Evidence sources: {{count}}')
+      : '',
+    metadata.evidenceReady === true && typeof metadata.evidenceReliableSourceCount === 'number'
+      ? st('trace.meta.permissionReliableEvidenceSources', { count: metadata.evidenceReliableSourceCount }, 'Reliable evidence sources: {{count}}')
+      : '',
+    typeof metadata.evidenceSummary === 'string' && metadata.evidenceSummary.trim()
+      ? st('trace.meta.permissionEvidenceSummary', { value: safeTraceMetadataText(metadata.evidenceSummary, 120) }, 'Evidence: {{value}}')
+      : '',
+  ])
+}
+
 function safeTraceMetadataText(value: string, limit = 80): string {
-  return clampAgentOutput(redactSensitiveText(value.trim()), limit)
+  return clampTraceText(redactSensitiveText(value.trim()), limit)
 }
 
 function finitePositiveNumber(value: unknown): number | undefined {
@@ -1015,7 +1047,7 @@ function asTraceRecord(value: unknown): Record<string, unknown> | undefined {
 
 function safeTraceText(value: unknown, fallback: string): string {
   if (typeof value !== 'string' || !value.trim()) return fallback
-  return clampAgentOutput(redactSensitiveText(value), 64)
+  return clampTraceText(redactSensitiveText(value), 64)
 }
 
 function auditCountPart(value: unknown, key: string): string {

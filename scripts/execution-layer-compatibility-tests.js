@@ -13,7 +13,7 @@ const {
   EXECUTION_LAYER_COMPATIBILITY_EVAL_SCHEMA,
   EXECUTION_LAYER_COMPATIBILITY_FIXTURE_IDS,
   runExecutionLayerCompatibilityEvaluation,
-} = require('../src/services/executionLayerCompatibilityEvaluation.ts')
+} = require('../src/modules/integrations/testing/executionLayerCompatibilityEvaluation.ts')
 
 function registerTypeScriptSupport() {
   if (require.extensions['.ts']?.isExecutionLayerCompatibilityHook) return

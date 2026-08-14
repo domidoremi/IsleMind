@@ -1,6 +1,5 @@
 import * as ImageManipulator from 'expo-image-manipulator'
 import * as FileSystem from 'expo-file-system/legacy'
-
 export interface CompressionOptions {
   maxWidth?: number
   maxHeight?: number

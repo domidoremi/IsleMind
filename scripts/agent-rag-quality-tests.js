@@ -15,11 +15,12 @@ const {
   RAG_RETRIEVAL_BENCHMARK_CASES,
   RAG_RETRIEVAL_EVAL_SCHEMA,
   RAG_RETRIEVAL_MODES,
+  createConversationRagRuntime,
   runRagRetrievalBenchmark,
-} = require('../src/services/ragEvaluation.ts')
+} = require('../src/modules/knowledge/index.ts')
 
 const requiredRagCases = [
-  'runAgenticWorkflow()',
+  'runWorkflow()',
   'rag:context_pack',
   'evidence_insufficient',
   'profileSource tool-request',
@@ -62,14 +63,11 @@ function registerTypeScriptSupport() {
         },
       }
     }
-    if (request === '@/services/localEmbeddingModels') {
+    if (request === '@/bootstrap/localModelRuntime') {
       return {
         resolveActiveLocalEmbeddingModel: async () => null,
         markLocalEmbeddingModelFailure: async () => {},
       }
-    }
-    if (request === '@/services/lazyEmbedding') {
-      return { lazyEmbedding: { embed: async () => [] } }
     }
     if (request === '@/services/runtimeHealthLog') {
       return { logContextOperation: async () => {} }
@@ -124,10 +122,111 @@ function assertModeMatrix(item) {
   }
 }
 
+async function runConversationRagRuntimeAdapterChecks() {
+  assert.equal(typeof createConversationRagRuntime, 'function', 'Knowledge public API exposes the conversation RAG runtime adapter')
+  assert.equal(fs.existsSync(path.join(root, 'src/modules/knowledge/application/conversationRagRuntime.ts')), true, 'the neutral conversation RAG runtime is present')
+  assert.equal(fs.existsSync(path.join(root, 'src/modules/knowledge/application/agentRagRuntime.ts')), false, 'the Agent-named Knowledge RAG runtime stays deleted')
+  assert.equal(fs.existsSync(path.join(root, 'src/services/agent/agentRagRuntime.ts')), false, 'covered Agent RAG service stays deleted')
+  assert.equal(fs.existsSync(path.join(root, 'src/services/agent/index.ts')), false, 'the obsolete Agent service barrel stays deleted')
+
+  const settings = Object.freeze({
+    language: 'en',
+    ragMode: 'agentic',
+    ragProfile: 'deep',
+    ragQueryRewriteEnabled: true,
+    ragHydeEnabled: true,
+    ragFlareEnabled: true,
+    ragRaptorEnabled: true,
+    ragGraphEnabled: true,
+    ragCrossEncoderEnabled: true,
+    ragColbertEnabled: true,
+    ragLlmlinguaEnabled: true,
+  })
+  const memorySource = Object.freeze({ id: 'memory-1', type: 'memory', title: 'Memory', content: 'Stable remembered evidence.' })
+  const memorySources = Object.freeze([memorySource])
+  const controller = new AbortController()
+  const retrievalCalls = []
+  let tick = 0
+  const runtime = createConversationRagRuntime({
+    settings,
+    conversationTitle: 'Factory title',
+    systemPrompt: 'Factory prompt',
+    memorySources,
+    retrieveKnowledge: async (query, limit, options) => {
+      retrievalCalls.push({ kind: 'knowledge', query, limit, signal: options?.signal })
+      return [{ id: `knowledge-${retrievalCalls.length}`, type: 'knowledge', title: 'Knowledge', content: 'Retrieved source evidence.' }]
+    },
+    retrieveAgentic: async (query, plan, limit, options) => {
+      retrievalCalls.push({ kind: 'agentic', query, limit, signal: options?.signal, profile: plan.profile, profileReason: plan.profileReason })
+      return [{ id: 'agentic-1', type: 'knowledge', title: 'Agentic', content: 'Agentic source evidence.' }]
+    },
+    now: () => 1940000000000 + tick++ * 7,
+  })
+  const request = Object.freeze({
+    query: 'Which evidence is available?',
+    conversationTitle: 'Request title',
+    systemPrompt: 'Request prompt',
+    profile: 'deep',
+    profileReason: 'tool-request',
+    tokenBudget: 900,
+    maxContextItems: 3,
+  })
+  const pack = await runtime.buildContextPack(request, { signal: controller.signal })
+  assert.ok(pack.sources.length > 0, 'Knowledge-owned conversation RAG adapter produces a runnable context pack')
+  assert.ok(retrievalCalls.some((call) => call.kind === 'knowledge'), 'conversation RAG adapter invokes knowledge retrieval')
+  assert.ok(retrievalCalls.some((call) => call.kind === 'agentic'), 'conversation RAG adapter invokes agentic retrieval')
+  assert.ok(retrievalCalls.every((call) => call.signal === controller.signal), 'conversation RAG adapter propagates the exact cancellation signal to every retrieval callback')
+  const agenticCall = retrievalCalls.find((call) => call.kind === 'agentic')
+  assert.equal(agenticCall.profile, 'deep', 'conversation RAG adapter preserves the requested profile')
+  assert.equal(agenticCall.profileReason, 'tool-request', 'conversation RAG adapter preserves the requested profile reason')
+  assert.equal(pack.quality.tokenBudget, 900, 'conversation RAG adapter preserves the requested token budget')
+  assert.deepEqual(request, {
+    query: 'Which evidence is available?',
+    conversationTitle: 'Request title',
+    systemPrompt: 'Request prompt',
+    profile: 'deep',
+    profileReason: 'tool-request',
+    tokenBudget: 900,
+    maxContextItems: 3,
+  }, 'conversation RAG adapter does not mutate the request')
+  assert.deepEqual(memorySources, [memorySource], 'conversation RAG adapter does not mutate memory sources')
+
+  const aborted = new AbortController()
+  aborted.abort('cancel-rag-adapter')
+  let cancelledRetrievalCalls = 0
+  const cancelledRuntime = createConversationRagRuntime({
+    settings,
+    retrieveKnowledge: async () => {
+      cancelledRetrievalCalls += 1
+      return []
+    },
+  })
+  await assert.rejects(
+    () => cancelledRuntime.buildContextPack({ query: 'cancelled' }, { signal: aborted.signal }),
+    (error) => error?.name === 'AbortError' && error?.message === 'RAG retrieval was cancelled.',
+    'pre-aborted conversation RAG work fails with the established cancellation error',
+  )
+  assert.equal(cancelledRetrievalCalls, 0, 'pre-aborted conversation RAG work performs no retrieval')
+}
+
 async function run() {
+  const conversationChatWorkflowRuntimeSource = fs.readFileSync(path.join(root, 'src/modules/tasks/application/conversationChatWorkflowRuntimePolicy.ts'), 'utf8')
+  const providerToolRuntimeSource = fs.readFileSync(path.join(root, 'src/bootstrap/conversationProviderToolTurnRuntime.ts'), 'utf8')
+  assert.ok(
+    conversationChatWorkflowRuntimeSource.includes('retrieveContext(contextConversation, draftMessage, options?.signal)'),
+    'Agent context retrieval propagates the exact task cancellation signal to the underlying knowledge operation'
+  )
+  assert.ok(
+    providerToolRuntimeSource.includes('searchAgentKnowledge(') &&
+      providerToolRuntimeSource.includes('options?.signal,') &&
+      providerToolRuntimeSource.includes('searchAgenticKnowledgeWithScope({') &&
+      providerToolRuntimeSource.includes('signal: options?.signal,'),
+    'provider-native Chat RAG propagates the exact signal through both Knowledge retrieval paths'
+  )
   assert.ok(requiredRagCases.includes('rag:context_pack'), 'agent RAG contract covers context pack traces')
   assert.ok(requiredRagCases.includes('evidence_insufficient'), 'agent RAG contract covers evidence repair gating')
   assert.ok(requiredRagCases.includes('fallbackReasons'), 'agent RAG contract covers fallback reason evidence')
+  await runConversationRagRuntimeAdapterChecks()
   assert.equal(RAG_RETRIEVAL_EVAL_SCHEMA, 'islemind.rag-retrieval-eval.v1', 'RAG retrieval eval schema is versioned')
   assert.deepEqual(RAG_RETRIEVAL_MODES, ['baseline', 'hybrid', 'agentic'], 'RAG retrieval eval compares baseline, hybrid, and agentic modes')
 

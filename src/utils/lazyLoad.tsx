@@ -1,6 +1,7 @@
 import { Suspense, lazy, ComponentType } from 'react'
-import { View, ActivityIndicator } from 'react-native'
+import { View } from 'react-native'
 import { useAppTheme } from '@/hooks/useAppTheme'
+import { HighFrameSpinner } from '@/components/ui/HighFrameSpinner'
 
 /**
  * 懒加载加载指示器
@@ -11,13 +12,13 @@ function LazyLoadingFallback() {
   return (
     <View
       style={{
-        flex: 1,
+        minHeight: 72,
         justifyContent: 'center',
         alignItems: 'center',
-        backgroundColor: colors.surface,
+        backgroundColor: 'transparent',
       }}
     >
-      <ActivityIndicator size="large" color={colors.ui.icon.accentForeground} />
+      <HighFrameSpinner color={colors.ui.icon.accentForeground} size={22} strokeWidth={2.2} />
     </View>
   )
 }
@@ -48,27 +49,16 @@ export function createLazyComponent<T extends ComponentType<any>>(
 }
 
 /**
- * 预加载组件
+ * Compatibility wrapper for existing Settings routes.
  *
- * 在用户可能需要之前预先加载组件
+ * Expo Router evaluates every route module while building its route tree.
+ * Starting the import here would eagerly fetch every Settings bundle at once,
+ * so loading must remain owned by React.lazy when the route actually renders.
  *
- * @param importFn - 动态导入函数
- */
-export function preloadComponent(importFn: () => Promise<{ default: any }>) {
-  importFn().catch((error) => {
-    console.warn('[Lazy] Failed to preload component:', error)
-  })
-}
-
-/**
- * 带预加载的懒加载组件
- *
- * 在组件首次渲染时立即开始预加载
+ * Delete this alias after callers migrate to createLazyComponent.
  */
 export function createLazyComponentWithPreload<T extends ComponentType<any>>(
   importFn: () => Promise<{ default: T }>
 ): T {
-  // 立即开始预加载
-  preloadComponent(importFn)
   return createLazyComponent(importFn)
 }

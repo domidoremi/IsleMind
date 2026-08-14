@@ -1,6 +1,5 @@
-import type { SkillDefinition, SkillVariable } from '@/types'
-import { redactSensitiveText } from '@/services/agent/agentTrace'
-
+import type { SkillDefinition, SkillVariable } from '@/types/skillContracts'
+import { redactSensitiveText } from '@/core'
 export function sanitizeSkillForPortable(skill: SkillDefinition): SkillDefinition {
   const tags = skill.tags.map(redactSensitiveText)
   return {

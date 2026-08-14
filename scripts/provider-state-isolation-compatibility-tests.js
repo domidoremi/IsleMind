@@ -13,7 +13,7 @@ const {
   PROVIDER_STATE_ISOLATION_COMPATIBILITY_EVAL_SCHEMA,
   PROVIDER_STATE_ISOLATION_COMPATIBILITY_FIXTURE_IDS,
   runProviderStateIsolationCompatibilityEvaluation,
-} = require('../src/services/providerStateIsolationCompatibilityEvaluation.ts')
+} = require('../src/modules/providers/testing/providerStateIsolationCompatibilityEvaluation.ts')
 
 function registerTypeScriptSupport() {
   if (require.extensions['.ts']?.isProviderStateIsolationCompatibilityHook) return
@@ -181,7 +181,7 @@ function run() {
     'unbounded-session-state',
   ])
 
-  const sessionAffinitySource = readSource('src/services/ai/providerSessionAffinity.ts')
+  const sessionAffinitySource = readSource('src/modules/providers/providerSessionAffinity.ts')
   assertSourceIncludes(sessionAffinitySource, 'providerId,', 'session affinity key includes provider id')
   assertSourceIncludes(sessionAffinitySource, 'model,', 'session affinity key includes model')
   assertSourceIncludes(sessionAffinitySource, "conversationId ?? 'global'", 'session affinity key includes conversation id')
@@ -193,36 +193,49 @@ function run() {
   assertSourceIncludes(sessionAffinitySource, 'model_mismatch', 'session affinity rejects model mismatch')
   assertSourceIncludes(sessionAffinitySource, 'credential_group_cooling_down', 'session affinity rejects cooling-down credentials')
   assertSourceIncludes(sessionAffinitySource, 'sessionAffinityFailureShouldInvalidate', 'session affinity invalidates quota and health failures')
+  assertSourceIncludes(sessionAffinitySource, 'upstreamModel: string', 'session affinity requires explicit upstream model identity')
+  assertSourceIncludes(sessionAffinitySource, 'availableModels.includes(upstreamModel)', 'session affinity admits credential groups through resolved upstream model availability')
+  assert.equal(sessionAffinitySource.includes("@/utils/providerModels"), false, 'target session affinity has no legacy provider-model utility dependency')
 
-  const compactStateSource = readSource('src/services/ai/compact/compactStateStore.ts')
+  const compactStateSource = readSource('src/modules/providers/providerCompactStateRepository.ts')
+  const compactStateBindingSource = readSource('src/bootstrap/providerCompactStateRepository.ts')
   assertSourceIncludes(compactStateSource, 'WHERE conversationId = ? AND providerId = ? AND model = ?', 'compact state lookup scopes conversation provider and model')
   assertSourceIncludes(compactStateSource, "status = 'active'", 'compact state lookup requires active status')
   assertSourceIncludes(compactStateSource, 'expiresAt IS NULL OR expiresAt > ?', 'compact state lookup rejects expired rows')
   assertSourceIncludes(compactStateSource, 'invalidateCompactStatesByProvider', 'compact state can invalidate provider-scoped state')
+  assertSourceIncludes(compactStateBindingSource, 'createProviderCompactStateRepository', 'bootstrap owns the compact-state repository singleton')
+  assert.equal(fs.existsSync(path.join(root, 'src/services/ai/compact/compactStateStore.ts')), false, 'legacy compact-state store stays deleted')
 
-  const remoteCompactSource = readSource('src/services/chatRemoteCompactUtils.ts')
-  assertSourceIncludes(remoteCompactSource, 'providerId: input.record.providerId', 'remote compact state records provider id')
-  assertSourceIncludes(remoteCompactSource, 'model: input.record.model', 'remote compact state records model')
+  const remoteCompactSource = readSource('src/modules/providers/providerRemoteCompactLifecycle.ts')
+  const remoteCompactBindingSource = readSource('src/bootstrap/providerRemoteCompactLifecycle.ts')
+  assertSourceIncludes(remoteCompactSource, 'providerId: record.providerId', 'remote compact state records provider id')
+  assertSourceIncludes(remoteCompactSource, 'model: record.model', 'remote compact state records model')
   assertSourceIncludes(remoteCompactSource, 'previousResponseId: input.previousResponseId', 'remote compact state records previous response id')
   assertSourceIncludes(remoteCompactSource, 'contextFragmentIdentitiesJson', 'remote compact state records source fragment identity summary')
+  assertSourceIncludes(remoteCompactBindingSource, 'createProviderRemoteCompactLifecycle', 'bootstrap owns remote compact lifecycle composition')
+  assert.equal(fs.existsSync(path.join(root, 'src/services/chatRemoteCompactUtils.ts')), false, 'legacy Chat remote compact helper stays deleted')
 
-  const pipelineSource = readSource('src/services/ai/providerRuntimePipeline.ts')
+  const pipelineSource = readSource('src/bootstrap/providerRuntimePipeline.ts')
   assertSourceIncludes(pipelineSource, 'sessionAffinityEnabled', 'runtime pipeline gates session affinity by settings')
   assertSourceIncludes(pipelineSource, 'deriveSessionAffinityKey', 'runtime pipeline derives session affinity keys')
   assertSourceIncludes(pipelineSource, 'chooseCredentialForModel', 'runtime pipeline chooses credential after affinity resolution')
+  assertSourceIncludes(pipelineSource, 'const upstreamModel = resolveProviderModelAlias', 'runtime pipeline resolves provider aliases before affinity admission')
+  assertSourceIncludes(pipelineSource, 'resolveSessionAffinityBinding({', 'runtime pipeline delegates affinity admission to the target policy')
+  assertSourceIncludes(pipelineSource, 'upstreamModel,', 'runtime pipeline supplies the resolved upstream model to affinity admission')
   assertSourceIncludes(pipelineSource, 'provider.route.snapshot.created', 'runtime pipeline emits route snapshot audit event')
   assertSourceIncludes(pipelineSource, "strategy: 'runtime-log-redaction-v1'", 'route snapshot records redaction strategy')
 
-  const executorSource = readSource('src/services/ai/providerRuntimeExecutor.ts')
+  const executorSource = readSource('src/bootstrap/providerRuntimeExecutor.ts')
   assertSourceIncludes(executorSource, "policy: { mode: 'same-provider' }", 'runtime fallback uses same-provider policy')
   assertSourceIncludes(executorSource, 'selectedProviderId !== input.req.provider.id', 'session affinity rotation rejects cross-provider fallback')
   assertSourceIncludes(executorSource, 'session.affinity.invalidated', 'runtime executor emits affinity invalidation event')
   assertSourceIncludes(executorSource, 'session.affinity.rotated', 'runtime executor emits affinity rotation event')
   assertSourceIncludes(executorSource, 'mergeOpenAIResponseReplayItems', 'runtime executor merges provider response replay items')
-  assertSourceIncludes(executorSource, 'acquireSessionLease', 'runtime executor acquires scoped session lease')
+  assertSourceIncludes(executorSource, 'acquireProviderSessionLease', 'runtime executor acquires a bootstrap-scoped session lease')
   assertSourceIncludes(executorSource, 'provider.id}:${runtimeReq.model}:${effectiveReq.conversationId', 'session lease key includes provider model and conversation')
+  assertSourceIncludes(executorSource, 'signal: input.controller.signal', 'queued session lease acquisition propagates request cancellation')
 
-  const modelRoutingSource = readSource('src/services/modelRoutingCompatibilityEvaluation.ts')
+  const modelRoutingSource = readSource('src/modules/providers/testing/modelRoutingCompatibilityEvaluation.ts')
   assertSourceIncludes(modelRoutingSource, 'blocked-cross-provider-state-replay', 'model routing gate blocks cross-provider state replay')
 
   console.log('Provider state isolation compatibility tests passed')

@@ -15,7 +15,7 @@ const {
   RAG_RETRIEVAL_EVAL_SCHEMA,
   RAG_RETRIEVAL_MODES,
   runRagRetrievalBenchmark,
-} = require('../src/services/ragEvaluation.ts')
+} = require('../src/modules/knowledge/index.ts')
 
 function registerTypeScriptSupport() {
   if (require.extensions['.ts']?.isRagRetrievalEvalHook) return
@@ -40,14 +40,11 @@ function registerTypeScriptSupport() {
         },
       }
     }
-    if (request === '@/services/localEmbeddingModels') {
+    if (request === '@/bootstrap/localModelRuntime') {
       return {
         resolveActiveLocalEmbeddingModel: async () => null,
         markLocalEmbeddingModelFailure: async () => {},
       }
-    }
-    if (request === '@/services/lazyEmbedding') {
-      return { lazyEmbedding: { embed: async () => [] } }
     }
     if (request === '@/services/runtimeHealthLog') {
       return { logContextOperation: async () => {} }
@@ -172,7 +169,7 @@ async function run() {
   assert.ok(benchmark.modeSummaries.agentic.averageRecall >= benchmark.modeSummaries.baseline.averageRecall, 'agentic average recall stays at least baseline')
   assert.ok(benchmark.modeSummaries.agentic.averageCitationCoverage >= benchmark.modeSummaries.baseline.averageCitationCoverage, 'agentic citation coverage stays at least baseline')
 
-  const ragEvaluationSource = readSource('src/services/ragEvaluation.ts')
+  const ragEvaluationSource = readSource('src/modules/knowledge/application/ragEvaluation.ts')
   assertSourceIncludes(ragEvaluationSource, "RAG_RETRIEVAL_EVAL_SCHEMA = 'islemind.rag-retrieval-eval.v1'", 'RAG eval schema is source-declared')
   assertSourceIncludes(ragEvaluationSource, "RAG_RETRIEVAL_MODES = ['baseline', 'hybrid', 'agentic']", 'RAG eval modes are source-declared')
   assertSourceIncludes(ragEvaluationSource, 'RAG_RETRIEVAL_BENCHMARK_CASES', 'RAG benchmark cases are registered in source')
@@ -184,7 +181,7 @@ async function run() {
   assertSourceIncludes(ragEvaluationSource, 'minAverageRecall', 'RAG benchmark quality gate records recall threshold')
   assertSourceIncludes(ragEvaluationSource, 'minCitationCoverage', 'RAG benchmark quality gate records citation threshold')
 
-  const ragRuntimeSource = readSource('src/services/rag.ts')
+  const ragRuntimeSource = readSource('src/modules/knowledge/application/ragOrchestration.ts')
   assertSourceIncludes(ragRuntimeSource, 'ragMode=off', 'RAG runtime records off-mode fallback')
   assertSourceIncludes(ragRuntimeSource, 'fallbackReasons', 'RAG runtime records fallback reasons')
   assertSourceIncludes(ragRuntimeSource, 'citationCoverage', 'RAG runtime computes citation coverage')

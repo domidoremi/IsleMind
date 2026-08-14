@@ -1,0 +1,201 @@
+{
+  "schema": "islemind.product-mobile-web-render-evidence-worklist.v1",
+  "status": "blocked-no-web-render-evidence",
+  "webEvidenceIsNotNativeProof": true,
+  "resultPath": "test-evidence/qa/product-mobile-web-render-results.json",
+  "screenshotDirectory": "test-evidence/qa/product-mobile-web-render/",
+  "collectorCommand": "bun run test:product-mobile-web-render-evidence:collect -- --base-url <Expo Web URL>",
+  "observedBlockers": [
+    "test-evidence/qa/product-mobile-web-render-results.json is gitignored and may be absent until Expo Web + Playwright capture runs",
+    "captured results containing Agent or Tavern product screens predate the Chat-only routing contract and remain stale until recaptured",
+    "Expo Web must be running and Playwright must be available before captured web viewport evidence can be claimed",
+    "native device/ADB proof is separate and must stay covered by product-mobile-native-evidence"
+  ],
+  "requiredCaptures": [
+    {
+      "id": "history-320",
+      "route": "/conversations",
+      "mode": "history",
+      "viewport": "320x568",
+      "screenshotName": "islemind-history-320.png",
+      "verified": [
+        "unified history has no product-mode filters",
+        "search and empty history remain readable"
+      ]
+    },
+    {
+      "id": "chat-320",
+      "route": "/",
+      "mode": "chat",
+      "viewport": "320x568",
+      "screenshotName": "islemind-chat-320.png",
+      "verified": [
+        "borderless mode introduction",
+        "single starter action",
+        "composer visible"
+      ]
+    },
+    {
+      "id": "chat-toolbox-320",
+      "route": "/",
+      "mode": "chat",
+      "viewport": "320x568",
+      "screenshotName": "islemind-chat-toolbox-320.png",
+      "interaction": "open-toolbox",
+      "verified": [
+        "toolbox trigger",
+        "toolbox panel",
+        "44px action rows",
+        "composer remains visible"
+      ]
+    }
+  ],
+  "appearanceRequiredCaptures": [
+    {
+      "id": "appearance-minimal-light-320",
+      "route": "/settings",
+      "mode": "settings",
+      "viewport": "320x568",
+      "screenshotName": "islemind-appearance-minimal-light-320.png",
+      "verified": ["Minimalist", "Light", "radio roles", "custom controls in viewport"],
+      "appearance": { "family": "minimal", "mode": "light", "accentId": "default" }
+    },
+    {
+      "id": "appearance-minimal-light-360",
+      "route": "/settings",
+      "mode": "settings",
+      "viewport": "360x640",
+      "screenshotName": "islemind-appearance-minimal-light-360.png",
+      "verified": ["Minimalist", "Light", "radio roles", "custom controls in viewport"],
+      "appearance": { "family": "minimal", "mode": "light", "accentId": "default" }
+    },
+    {
+      "id": "appearance-minimal-dark-320",
+      "route": "/settings",
+      "mode": "settings",
+      "viewport": "320x568",
+      "screenshotName": "islemind-appearance-minimal-dark-320.png",
+      "verified": ["Minimalist", "Dark", "radio roles", "custom controls in viewport"],
+      "appearance": { "family": "minimal", "mode": "dark", "accentId": "default" }
+    },
+    {
+      "id": "appearance-minimal-dark-360",
+      "route": "/settings",
+      "mode": "settings",
+      "viewport": "360x640",
+      "screenshotName": "islemind-appearance-minimal-dark-360.png",
+      "verified": ["Minimalist", "Dark", "radio roles", "custom controls in viewport"],
+      "appearance": { "family": "minimal", "mode": "dark", "accentId": "default" }
+    },
+    {
+      "id": "appearance-lime-road-light-320",
+      "route": "/settings",
+      "mode": "settings",
+      "viewport": "320x568",
+      "screenshotName": "islemind-appearance-lime-road-light-320.png",
+      "verified": ["Lime Road", "Light", "radio roles", "custom controls in viewport"],
+      "appearance": { "family": "lime-road", "mode": "light", "accentId": "default" }
+    },
+    {
+      "id": "appearance-lime-road-light-360",
+      "route": "/settings",
+      "mode": "settings",
+      "viewport": "360x640",
+      "screenshotName": "islemind-appearance-lime-road-light-360.png",
+      "verified": ["Lime Road", "Light", "radio roles", "custom controls in viewport"],
+      "appearance": { "family": "lime-road", "mode": "light", "accentId": "default" }
+    },
+    {
+      "id": "appearance-lime-road-dark-320",
+      "route": "/settings",
+      "mode": "settings",
+      "viewport": "320x568",
+      "screenshotName": "islemind-appearance-lime-road-dark-320.png",
+      "verified": ["Lime Road", "Dark", "radio roles", "custom controls in viewport"],
+      "appearance": { "family": "lime-road", "mode": "dark", "accentId": "default" }
+    },
+    {
+      "id": "appearance-lime-road-dark-360",
+      "route": "/settings",
+      "mode": "settings",
+      "viewport": "360x640",
+      "screenshotName": "islemind-appearance-lime-road-dark-360.png",
+      "verified": ["Lime Road", "Dark", "radio roles", "custom controls in viewport"],
+      "appearance": { "family": "lime-road", "mode": "dark", "accentId": "default" }
+    },
+    {
+      "id": "appearance-markdown-light-320",
+      "route": "/settings",
+      "mode": "settings",
+      "viewport": "320x568",
+      "screenshotName": "islemind-appearance-markdown-light-320.png",
+      "verified": ["Markdown", "Light", "radio roles", "custom controls in viewport"],
+      "appearance": { "family": "markdown", "mode": "light", "accentId": "default" }
+    },
+    {
+      "id": "appearance-markdown-light-360",
+      "route": "/settings",
+      "mode": "settings",
+      "viewport": "360x640",
+      "screenshotName": "islemind-appearance-markdown-light-360.png",
+      "verified": ["Markdown", "Light", "radio roles", "custom controls in viewport"],
+      "appearance": { "family": "markdown", "mode": "light", "accentId": "default" }
+    },
+    {
+      "id": "appearance-markdown-dark-320",
+      "route": "/settings",
+      "mode": "settings",
+      "viewport": "320x568",
+      "screenshotName": "islemind-appearance-markdown-dark-320.png",
+      "verified": ["Markdown", "Dark", "radio roles", "custom controls in viewport"],
+      "appearance": { "family": "markdown", "mode": "dark", "accentId": "default" }
+    },
+    {
+      "id": "appearance-markdown-dark-360",
+      "route": "/settings",
+      "mode": "settings",
+      "viewport": "360x640",
+      "screenshotName": "islemind-appearance-markdown-dark-360.png",
+      "verified": ["Markdown", "Dark", "radio roles", "custom controls in viewport"],
+      "appearance": { "family": "markdown", "mode": "dark", "accentId": "default" }
+    },
+    {
+      "id": "appearance-markdown-dark-custom-indigo-360",
+      "route": "/settings",
+      "mode": "settings",
+      "viewport": "360x640",
+      "screenshotName": "islemind-appearance-markdown-dark-custom-indigo-360.png",
+      "verified": ["Markdown", "Dark", "custom indigo", "radio roles", "custom controls in viewport"],
+      "appearance": { "family": "markdown", "mode": "dark", "accentId": "custom", "accent": "#4455B7" }
+    }
+  ],
+  "resultAcceptance": {
+    "schema": "islemind.product-mobile-web-render-results.v1",
+    "runnerMustMention": "Expo Web + Playwright",
+    "noteMustMention": "native device/ADB evidence remains separate",
+    "allowedStatuses": [
+      "blocked-no-web-render-evidence",
+      "blocked-missing-playwright",
+      "blocked-web-render-verification",
+      "captured"
+    ],
+    "requiresPerCapture": [
+      "id",
+      "route",
+      "mode",
+      "viewport",
+      "screenshot",
+      "screenshotDimensions",
+      "consoleErrors",
+      "verified"
+    ],
+    "requiresPerAppearanceCapture": [
+      "appearance",
+      "appearance.radioGroups",
+      "appearance.customControls"
+    ],
+    "mustRecordConsoleErrors": true,
+    "mustRecordScreenshotDimensions": true,
+    "mustRecordFixedDuringRun": true
+  }
+}

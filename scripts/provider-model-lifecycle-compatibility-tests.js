@@ -13,7 +13,7 @@ const {
   PROVIDER_MODEL_LIFECYCLE_COMPATIBILITY_EVAL_SCHEMA,
   PROVIDER_MODEL_LIFECYCLE_COMPATIBILITY_FIXTURE_IDS,
   runProviderModelLifecycleCompatibilityEvaluation,
-} = require('../src/services/providerModelLifecycleCompatibilityEvaluation.ts')
+} = require('../src/modules/providers/testing/providerModelLifecycleCompatibilityEvaluation.ts')
 
 function registerTypeScriptSupport() {
   if (require.extensions['.ts']?.isProviderModelLifecycleCompatibilityHook) return

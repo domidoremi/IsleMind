@@ -1,8 +1,9 @@
-import type { ChatRequest } from '@/services/ai/base'
-import type { McpToolRequest } from '@/services/mcpToolRequest'
-import type { ResolvedMcpTool } from '@/services/chatMcpContextUtils'
+import type { ProviderRuntimeChatRequest } from '@/modules/providers'
+import type { McpToolRequest, ResolvedMcpConversationTool } from '@/modules/integrations'
 import { stripMcpCallBlocks } from '@/services/chatToolResultUtils'
+import type { McpServerConfig } from '@/types/mcpContracts'
 
+type ResolvedMcpTool = ResolvedMcpConversationTool<McpServerConfig>
 export function buildMcpToolRevisionSystemPrompt(systemPrompt: string): string {
   return [
     systemPrompt,
@@ -11,13 +12,13 @@ export function buildMcpToolRevisionSystemPrompt(systemPrompt: string): string {
 }
 
 export function buildMcpToolRevisionMessages(input: {
-  messages: ChatRequest['messages']
+  messages: ProviderRuntimeChatRequest['messages']
   firstOutput: string
   request: McpToolRequest
   tool: ResolvedMcpTool
   toolOutput: string
   ok: boolean
-}): ChatRequest['messages'] {
+}): ProviderRuntimeChatRequest['messages'] {
   return [
     ...input.messages,
     { role: 'assistant', content: stripMcpCallBlocks(input.firstOutput) },

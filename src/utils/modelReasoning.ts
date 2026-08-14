@@ -1,8 +1,8 @@
-import { getModelConfig } from '@/types'
-import type { AIProvider, ReasoningEffort } from '@/types'
-import { getProviderCompatibilityEvidenceForProvider, providerCompatibilityCapabilityCanBeSentForProvider } from '@/services/ai/providerCompatibilityContract'
+import type { ReasoningEffort } from '@/core'
+import { getModelConfig } from '@/types/modelCatalog'
+import type { AIProvider } from '@/types/providerContracts'
+import { getProviderCompatibilityEvidenceForProvider, providerCompatibilityCapabilityCanBeSentForProvider } from '@/modules/providers'
 import { normalizeModelId as normalizeSharedModelId } from '@/utils/modelId'
-
 export type ReasoningControlValue = ReasoningEffort | 'default'
 
 export function getReasoningEffortOptions(provider: AIProvider | undefined, model: string | undefined): ReasoningEffort[] {

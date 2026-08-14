@@ -11,6 +11,7 @@ const defaultProviderRuntimeAndroidEvidenceRoot = path.resolve(__dirname, '..')
 const requiredProviderRuntimeAndroidScenarios = [
   'provider-settings-route',
   'provider-import-keyboard',
+  'provider-activation',
   'chat-model-switch',
   'blocked-model-recovery',
   'runtime-fallback-trace',
@@ -20,6 +21,22 @@ const requiredProviderRuntimeAndroidScenarios = [
 ]
 
 const requiredProviderRuntimeAndroidEvidenceKeys = ['png', 'uia']
+const providerRuntimeActivationEvidencePaths = Object.freeze({
+  progress: Object.freeze({
+    png: `${providerRuntimeAndroidEvidenceDirRelativePath}/provider-activation-progress.png`,
+    uia: `${providerRuntimeAndroidEvidenceDirRelativePath}/provider-activation-progress.uia.xml`,
+  }),
+  result: Object.freeze({
+    png: `${providerRuntimeAndroidEvidenceDirRelativePath}/provider-activation-result.png`,
+    uia: `${providerRuntimeAndroidEvidenceDirRelativePath}/provider-activation-result.uia.xml`,
+  }),
+})
+const providerRuntimeRestartRecoveryEvidencePath = `${providerRuntimeAndroidEvidenceDirRelativePath}/provider-runtime-restart-durable.json`
+const providerRuntimeRestartRecoveryConversationId = 'qa-provider-runtime-recovery'
+const providerRuntimeRestartRecoveryVisibleEvidencePaths = Object.freeze({
+  png: `${providerRuntimeAndroidEvidenceDirRelativePath}/provider-runtime-restart-restored.png`,
+  uia: `${providerRuntimeAndroidEvidenceDirRelativePath}/provider-runtime-restart-restored.uia.xml`,
+})
 
 function validateProviderRuntimeAndroidEvidencePath(root, value) {
   if (!value || typeof value !== 'string') return 'missing'
@@ -37,6 +54,7 @@ function validateProviderRuntimeSensitiveData(sensitiveData, options = {}) {
   const requiredPaths = options.requiredPaths ?? [
     providerRuntimeAndroidResultRelativePath,
     providerRuntimeAndroidRunLogRelativePath,
+    providerRuntimeRestartRecoveryEvidencePath,
   ]
   const validatePath = options.validatePath === false
     ? null
@@ -114,6 +132,159 @@ function validateProviderRuntimeKeyboardState(state, options = {}) {
 
 function isProviderRuntimeKeyboardStatePassing(state, options = {}) {
   return validateProviderRuntimeKeyboardState(state, options).length === 0
+}
+
+function validateProviderRuntimeActivationEvidence(evidence, options = {}) {
+  const validatePath = resolveProviderRuntimeEvidenceValidator(options)
+  const scenarioLabel = options.scenarioLabel ?? 'Provider Runtime Android scenario provider-activation'
+  const issues = []
+  if (!evidence || typeof evidence !== 'object' || Array.isArray(evidence)) {
+    return [`${scenarioLabel} does not record activationEvidence`]
+  }
+  for (const phase of ['progress', 'result']) {
+    const phaseEvidence = evidence[phase]
+    const phaseLabel = `${scenarioLabel} ${phase} evidence`
+    if (!phaseEvidence || typeof phaseEvidence !== 'object' || Array.isArray(phaseEvidence)) {
+      issues.push(`${phaseLabel} is missing`)
+      continue
+    }
+    if (phaseEvidence.visible !== true) issues.push(`${phaseLabel} does not prove visible=true`)
+    for (const key of requiredProviderRuntimeAndroidEvidenceKeys) {
+      const expectedPath = providerRuntimeActivationEvidencePaths[phase][key]
+      const value = phaseEvidence[key]
+      if (value !== expectedPath) {
+        issues.push(`${phaseLabel} ${key} is ${value ?? 'missing'}, expected ${expectedPath}`)
+        continue
+      }
+      if (validatePath) {
+        const evidenceIssue = validatePath(value)
+        if (evidenceIssue) issues.push(`${phaseLabel} referenced ${key} evidence is ${evidenceIssue}`)
+      }
+    }
+  }
+  return issues
+}
+
+function isProviderRuntimeActivationEvidencePassing(evidence, options = {}) {
+  return validateProviderRuntimeActivationEvidence(evidence, options).length === 0
+}
+
+function validateProviderRuntimeRestartRecoveryEvidence(evidence, options = {}) {
+  const validatePath = resolveProviderRuntimeEvidenceValidator(options)
+  const scenarioLabel = options.scenarioLabel ?? 'Provider Runtime Android scenario restart-recovery'
+  const issues = []
+  if (!evidence || typeof evidence !== 'object' || Array.isArray(evidence)) {
+    return [`${scenarioLabel} does not record restartRecoveryEvidence`]
+  }
+  if (evidence.proofKind === 'visible-release-recovery') {
+    issues.push(...validateProviderRuntimeGeneratedAt(evidence.capturedAt, `${scenarioLabel} visible release state`))
+    if (evidence.conversationId !== providerRuntimeRestartRecoveryConversationId) {
+      issues.push(`${scenarioLabel} visible release state conversationId is ${evidence.conversationId ?? 'missing'}, expected ${providerRuntimeRestartRecoveryConversationId}`)
+    }
+    if (evidence.requestMatched !== true) issues.push(`${scenarioLabel} visible release state does not match the request sentinel`)
+    if (evidence.responseMatched !== true) issues.push(`${scenarioLabel} visible release state does not match the response sentinel`)
+    if (evidence.forceStopPerformed !== true) issues.push(`${scenarioLabel} visible release state does not prove force-stop`)
+    if (evidence.relaunchPerformed !== true) issues.push(`${scenarioLabel} visible release state does not prove relaunch`)
+    if (evidence.privateStorageInspection !== 'unavailable-on-nondebuggable-release') {
+      issues.push(`${scenarioLabel} visible release state does not record the non-debuggable private-storage boundary`)
+    }
+    for (const key of requiredProviderRuntimeAndroidEvidenceKeys) {
+      const expectedPath = providerRuntimeRestartRecoveryVisibleEvidencePaths[key]
+      const value = evidence[key]
+      if (value !== expectedPath) {
+        issues.push(`${scenarioLabel} visible release ${key} is ${value ?? 'missing'}, expected ${expectedPath}`)
+      } else if (validatePath) {
+        const evidenceIssue = validatePath(value)
+        if (evidenceIssue) issues.push(`${scenarioLabel} visible release ${key} evidence is ${evidenceIssue}`)
+      }
+    }
+    return issues
+  }
+  if (evidence.proofKind && evidence.proofKind !== 'durable-linked-state') {
+    issues.push(`${scenarioLabel} durable proofKind is invalid`)
+  }
+  if (evidence.evidence !== providerRuntimeRestartRecoveryEvidencePath) {
+    issues.push(`${scenarioLabel} durable evidence is ${evidence.evidence ?? 'missing'}, expected ${providerRuntimeRestartRecoveryEvidencePath}`)
+  } else if (validatePath) {
+    const evidenceIssue = validatePath(evidence.evidence)
+    if (evidenceIssue) issues.push(`${scenarioLabel} durable evidence is ${evidenceIssue}`)
+  }
+  issues.push(...validateProviderRuntimeGeneratedAt(evidence.capturedAt, `${scenarioLabel} durable state`))
+
+  const conversationId = typeof evidence.conversationId === 'string' ? evidence.conversationId.trim() : ''
+  if (!conversationId) issues.push(`${scenarioLabel} durable state conversationId is missing`)
+  else if (conversationId !== providerRuntimeRestartRecoveryConversationId) {
+    issues.push(`${scenarioLabel} durable state conversationId is ${conversationId}, expected ${providerRuntimeRestartRecoveryConversationId}`)
+  }
+  const conversation = evidence.conversation
+  if (!conversation || typeof conversation !== 'object' || Array.isArray(conversation)) {
+    issues.push(`${scenarioLabel} durable state conversation is missing`)
+  } else if (conversation.id !== conversationId) {
+    issues.push(`${scenarioLabel} durable state conversation id does not match conversationId`)
+  }
+
+  const userMessage = evidence.userMessage
+  if (!userMessage || typeof userMessage !== 'object' || Array.isArray(userMessage)) {
+    issues.push(`${scenarioLabel} durable state user message is missing`)
+  } else {
+    if (!userMessage.id) issues.push(`${scenarioLabel} durable state user message id is missing`)
+    if (userMessage.role !== 'user') issues.push(`${scenarioLabel} durable state user message is not user`)
+    if (userMessage.contentMatched !== true) issues.push(`${scenarioLabel} durable state user message does not match the fixture sentinel`)
+  }
+
+  const assistantMessage = evidence.assistantMessage
+  if (!assistantMessage || typeof assistantMessage !== 'object' || Array.isArray(assistantMessage)) {
+    issues.push(`${scenarioLabel} durable state assistant message is missing`)
+  } else {
+    if (!assistantMessage.id) issues.push(`${scenarioLabel} durable state assistant message id is missing`)
+    if (assistantMessage.role !== 'assistant') issues.push(`${scenarioLabel} durable state assistant message is not assistant`)
+    if (assistantMessage.status !== 'done') issues.push(`${scenarioLabel} durable state assistant message is not done`)
+    if (assistantMessage.contentMatched !== true) issues.push(`${scenarioLabel} durable state assistant message does not match the completion sentinel`)
+  }
+
+  const run = evidence.run
+  if (!run || typeof run !== 'object' || Array.isArray(run)) {
+    issues.push(`${scenarioLabel} durable state assistant run is missing`)
+  } else {
+    if (!run.id) issues.push(`${scenarioLabel} durable state assistant run id is missing`)
+    if (run.kind !== 'chat') issues.push(`${scenarioLabel} durable state assistant run is not chat`)
+    if (run.conversationId !== conversationId) issues.push(`${scenarioLabel} durable state assistant run conversation id does not match`)
+    if (!run.providerId) issues.push(`${scenarioLabel} durable state assistant run provider id is missing`)
+    if (!run.model) issues.push(`${scenarioLabel} durable state assistant run model is missing`)
+    if (run.status !== 'succeeded') issues.push(`${scenarioLabel} durable state assistant run is not succeeded`)
+    if (!Number.isFinite(run.completedAt)) issues.push(`${scenarioLabel} durable state assistant run completedAt is missing`)
+    if (!Number.isInteger(run.journalSequence) || run.journalSequence < 1) {
+      issues.push(`${scenarioLabel} durable state assistant run journalSequence is missing`)
+    }
+    if (!run.responseMessageId || run.responseMessageId !== assistantMessage?.id) {
+      issues.push(`${scenarioLabel} durable state assistant run response message does not match assistant message`)
+    }
+    if (run.outputMatched !== true) issues.push(`${scenarioLabel} durable state assistant run output does not match the completion sentinel`)
+  }
+
+  const journal = evidence.journal
+  if (!Array.isArray(journal) || !journal.length) {
+    issues.push(`${scenarioLabel} durable state journal is missing`)
+  } else {
+    const terminalEntry = journal.find((entry) => (
+      entry
+      && entry.runId === run?.id
+      && entry.type === 'run.succeeded'
+      && Number.isInteger(entry.sequence)
+      && entry.sequence > 0
+      && Number.isFinite(entry.occurredAt)
+    ))
+    if (!terminalEntry) {
+      issues.push(`${scenarioLabel} durable state journal has no linked terminal run.succeeded entry`)
+    } else if (Number.isInteger(run?.journalSequence) && terminalEntry.sequence !== run.journalSequence) {
+      issues.push(`${scenarioLabel} durable state terminal journal sequence does not match assistant run`)
+    }
+  }
+  return issues
+}
+
+function isProviderRuntimeRestartRecoveryEvidencePassing(evidence, options = {}) {
+  return validateProviderRuntimeRestartRecoveryEvidence(evidence, options).length === 0
 }
 
 function resolveProviderRuntimeEvidenceValidator(options) {
@@ -204,6 +375,12 @@ function validateProviderRuntimeScenario(id, scenario, options = {}) {
     const keyboardStateIssues = validateProviderRuntimeKeyboardState(scenario.keyboardState, options)
     for (const issue of keyboardStateIssues) issues.push(`${scenarioLabel} ${issue}`)
   }
+  if (id === 'provider-activation') {
+    issues.push(...validateProviderRuntimeActivationEvidence(scenario.activationEvidence, options))
+  }
+  if (id === 'restart-recovery') {
+    issues.push(...validateProviderRuntimeRestartRecoveryEvidence(scenario.restartRecoveryEvidence, options))
+  }
   return issues
 }
 
@@ -224,10 +401,17 @@ function collectProviderRuntimeAndroidResultContractIssues(result, options = {})
         options.root ?? defaultProviderRuntimeAndroidEvidenceRoot,
         value,
       ))
+  const restartRecoveryScenario = Array.isArray(result.scenarios)
+    ? result.scenarios.find((scenario) => scenario?.id === 'restart-recovery')
+    : null
+  const restartRecoveryRequiredPath = restartRecoveryScenario?.restartRecoveryEvidence?.proofKind === 'visible-release-recovery'
+    ? providerRuntimeRestartRecoveryVisibleEvidencePaths.uia
+    : providerRuntimeRestartRecoveryEvidencePath
   const sensitiveDataOptions = {
     requiredPaths: options.requiredPaths ?? [
       options.resultPath ?? providerRuntimeAndroidResultRelativePath,
       options.runLogPath ?? providerRuntimeAndroidRunLogRelativePath,
+      restartRecoveryRequiredPath,
     ],
     root: options.root,
     validatePath,
@@ -512,11 +696,19 @@ module.exports = {
   providerRuntimeAndroidRunLogRelativePath,
   requiredProviderRuntimeAndroidScenarios,
   requiredProviderRuntimeAndroidEvidenceKeys,
+  providerRuntimeActivationEvidencePaths,
+  providerRuntimeRestartRecoveryEvidencePath,
+  providerRuntimeRestartRecoveryConversationId,
+  providerRuntimeRestartRecoveryVisibleEvidencePaths,
   validateProviderRuntimeAndroidEvidencePath,
   validateProviderRuntimeSensitiveData,
   isProviderRuntimeSensitiveDataPassing,
   validateProviderRuntimeKeyboardState,
   isProviderRuntimeKeyboardStatePassing,
+  validateProviderRuntimeActivationEvidence,
+  isProviderRuntimeActivationEvidencePassing,
+  validateProviderRuntimeRestartRecoveryEvidence,
+  isProviderRuntimeRestartRecoveryEvidencePassing,
   validateProviderRuntimeScenarioState,
   isProviderRuntimeScenarioStatePassing,
   validateProviderRuntimeScenarioEvidence,

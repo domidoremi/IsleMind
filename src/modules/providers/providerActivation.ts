@@ -1,0 +1,846 @@
+import type { Settings } from '@/types/settingsContracts'
+import type { AIProvider, ProviderOperationCode } from '@/types/providerContracts'
+import type { ProviderModelTestEvidenceResult } from './providerModelTestEvidence'
+import { projectProviderModelTestHealth } from './providerModelTestHealthProjection'
+import type { ProviderOperationResult } from './providerOperationResult'
+
+const ACTIVATION_TEST_MODELS_PER_CREDENTIAL = 3
+const ACTIVATION_RETRY_DELAY_MS = 450
+
+export type ProviderActivationAccessSettings = Pick<
+  Settings,
+  'providerAllowlist' | 'providerBlocklist' | 'modelAllowlist' | 'modelBlocklist'
+>
+
+export interface ProviderActivationOptions {
+  enable?: boolean
+  testModels?: boolean
+  testModel?: string
+  checkParameters?: boolean
+  accessSettings?: ProviderActivationAccessSettings
+  maxTestCandidates?: number
+  modelSyncTimeoutMs?: number
+  modelTestTimeoutMs?: number
+  signal?: AbortSignal
+}
+
+export interface ProviderActivationResult {
+  providerId: string
+  providerName: string
+  enabled: boolean
+  hadCredential: boolean
+  synced: boolean
+  syncAttempted: boolean
+  modelCount: number
+  syncedGroups: number
+  missingToken: boolean
+  ready: boolean
+  tested: boolean
+  testOk: boolean
+  testModel?: string
+  testGroupId?: string
+  messages: string[]
+  failures: ProviderActivationFailure[]
+}
+
+export interface ProviderActivationFailure {
+  providerName: string
+  groupLabel?: string
+  model?: string
+  code?: ProviderOperationCode
+  message: string
+}
+
+export interface ProviderActivationStageEvent {
+  providerId: string
+  providerName: string
+  stage: 'enabled' | 'syncing' | 'testing' | 'done' | 'failed'
+  message: string
+  tone: 'mint' | 'amber' | 'danger'
+}
+
+export interface ProviderActivationOperationOptions {
+  signal?: AbortSignal
+}
+
+export interface ProviderActivationPorts {
+  updateProvider(
+    id: string,
+    updates: Partial<AIProvider>,
+    options?: ProviderActivationOperationOptions,
+  ): Promise<void>
+  hydrateProviderKey(
+    id: string,
+    options?: ProviderActivationOperationOptions,
+  ): Promise<AIProvider | null>
+  updateProviderCredentialGroupHealth(
+    providerId: string,
+    groupId: string | undefined,
+    ok: boolean,
+    options?: ProviderActivationOperationOptions,
+  ): Promise<void>
+  delay?(ms: number, options?: ProviderActivationOperationOptions): Promise<void> | void
+  onStage?(event: ProviderActivationStageEvent): void
+}
+
+export interface ProviderActivationDependencies {
+  translate(key: string, values?: ProviderActivationTranslationValues): string
+  synchronizeProviderCredentials(
+    provider: AIProvider,
+    options?: { timeoutMs?: number; signal?: AbortSignal },
+  ): Promise<ProviderOperationResult<AIProvider>>
+  testProviderModel(
+    provider: AIProvider,
+    model: string,
+    apiKey: string,
+    options?: { checkParameters?: boolean; timeoutMs?: number; signal?: AbortSignal },
+  ): Promise<ProviderOperationResult<ProviderModelTestEvidenceResult>>
+  getAvailableModels(provider: AIProvider): string[]
+  getManualModels(provider: AIProvider): string[]
+  getPreferredModel(provider: AIProvider): string | undefined
+  isChatCompatibleModel(provider: AIProvider, model: string): boolean
+  isModelAllowed(
+    provider: AIProvider,
+    model: string,
+    settings?: ProviderActivationAccessSettings,
+  ): boolean
+  now?: () => number
+}
+
+export type ProviderActivationTranslationValues = Record<
+  string,
+  string | number | boolean | null | undefined
+>
+
+export interface ProviderActivation {
+  activateProviderWithHealthCheck(
+    provider: AIProvider,
+    ports: ProviderActivationPorts,
+    options?: Omit<ProviderActivationOptions, 'enable' | 'testModels'>,
+  ): Promise<ProviderActivationResult>
+  syncAndTestProvider(
+    provider: AIProvider,
+    ports: ProviderActivationPorts,
+    options?: ProviderActivationOptions,
+  ): Promise<ProviderActivationResult>
+  buildTestCandidates(
+    provider: AIProvider,
+    requestedModel?: string,
+    settings?: ProviderActivationAccessSettings,
+  ): ProviderActivationTestCandidate[]
+  summarize(results: ProviderActivationResult[]): ProviderActivationSummary
+}
+
+export interface ProviderActivationTestCandidate {
+  groupId?: string
+  groupLabel?: string
+  apiKey: string
+  model: string
+}
+
+export interface ProviderActivationSummary {
+  tone: 'mint' | 'amber' | 'danger'
+  message: string
+}
+
+/** Owns provider activation, credential synchronization, readiness probing, and status projection. */
+export function createProviderActivation(
+  dependencies: ProviderActivationDependencies,
+): ProviderActivation {
+  const translate = dependencies.translate
+
+  async function activateProviderWithHealthCheck(
+    provider: AIProvider,
+    ports: ProviderActivationPorts,
+    options: Omit<ProviderActivationOptions, 'enable' | 'testModels'> = {},
+  ): Promise<ProviderActivationResult> {
+    return syncAndTestProvider(provider, ports, {
+      ...options,
+      enable: true,
+      testModels: true,
+    })
+  }
+
+  async function syncAndTestProvider(
+    provider: AIProvider,
+    ports: ProviderActivationPorts,
+    options: ProviderActivationOptions = {},
+  ): Promise<ProviderActivationResult> {
+    throwIfProviderActivationAborted(options.signal)
+    try {
+      return await runProviderActivation(provider, ports, options)
+    } catch (error) {
+      rethrowProviderActivationCancellation(error, options.signal)
+      throw error
+    }
+  }
+
+  async function runProviderActivation(
+    provider: AIProvider,
+    ports: ProviderActivationPorts,
+    options: ProviderActivationOptions,
+  ): Promise<ProviderActivationResult> {
+    const operation = activationOperation(options.signal)
+    if (options.enable && !provider.enabled) {
+      await updateProvider(ports, provider.id, { enabled: true }, operation)
+      emitStage(ports, {
+        providerId: provider.id,
+        providerName: provider.name,
+        stage: 'enabled',
+        message: translate('providerActivation.stageEnabled', { name: provider.name }),
+        tone: 'mint',
+      }, options.signal)
+    }
+
+    throwIfProviderActivationAborted(options.signal)
+    const initial = await ports.hydrateProviderKey(provider.id, operation)
+    throwIfProviderActivationAborted(options.signal)
+    const result: ProviderActivationResult = {
+      providerId: provider.id,
+      providerName: provider.name,
+      enabled: options.enable ? true : initial?.enabled ?? provider.enabled,
+      hadCredential: hasAnyCredential(initial ?? provider),
+      synced: false,
+      syncAttempted: false,
+      modelCount: countPolicyAllowedAvailableModels(initial ?? provider, options.accessSettings),
+      syncedGroups: 0,
+      missingToken: false,
+      ready: false,
+      tested: false,
+      testOk: false,
+      messages: [],
+      failures: [],
+    }
+
+    if (!initial) {
+      pushFailure(result, translate('providerActivation.providerMissing'))
+      emitStage(ports, {
+        providerId: provider.id,
+        providerName: provider.name,
+        stage: 'failed',
+        message: translate('providerActivation.stageProviderMissing', { name: provider.name }),
+        tone: 'danger',
+      }, options.signal)
+      return result
+    }
+
+    let current = initial
+    if (!result.hadCredential) {
+      result.missingToken = true
+      pushFailure(result, translate('providerActivation.missingToken'))
+      await updateProvider(ports, provider.id, {
+        lastModelSyncStatus: 'bad',
+        lastModelSyncMessage: translate('providerActivation.missingToken'),
+        lastModelSyncCode: 'missing_key',
+        lastTestStatus: 'idle',
+        lastTestModel: undefined,
+        lastTestMessage: undefined,
+        lastTestCode: undefined,
+        lastModelTestCapabilityChecks: undefined,
+      }, operation)
+      emitStage(ports, {
+        providerId: provider.id,
+        providerName: provider.name,
+        stage: 'failed',
+        message: translate('providerActivation.stageMissingToken', { name: provider.name }),
+        tone: 'amber',
+      }, options.signal)
+      return result
+    }
+
+    result.syncAttempted = true
+    emitStage(ports, {
+      providerId: provider.id,
+      providerName: provider.name,
+      stage: 'syncing',
+      message: translate('providerActivation.stageSyncing', { name: provider.name }),
+      tone: 'mint',
+    }, options.signal)
+    const sync = await dependencies.synchronizeProviderCredentials(current, {
+      timeoutMs: options.modelSyncTimeoutMs,
+      ...(options.signal ? { signal: options.signal } : {}),
+    })
+    throwIfProviderActivationAborted(options.signal)
+    if (sync.data) {
+      await updateProvider(ports, provider.id, sync.data, operation)
+      const hydrated = await ports.hydrateProviderKey(provider.id, operation)
+      throwIfProviderActivationAborted(options.signal)
+      current = hydrated ?? sync.data
+      result.modelCount = countPolicyAllowedAvailableModels(current, options.accessSettings)
+      result.syncedGroups = countSyncedGroups(current, options.accessSettings)
+    }
+    result.synced = sync.ok && result.syncedGroups > 0 && result.modelCount > 0
+    if (!sync.ok || !result.synced) {
+      collectSyncFailures(result, current, sync.message)
+    }
+
+    if (options.testModels !== true) {
+      const preferredModel = dependencies.getPreferredModel(current)
+      if (!preferredModel) {
+        pushFailure(result, translate('providerActivation.noModels'), { code: 'empty_models' })
+        await clearLastModelTest(ports, provider.id, undefined, operation)
+        emitStage(ports, {
+          providerId: provider.id,
+          providerName: provider.name,
+          stage: 'failed',
+          message: translate('providerActivation.stageNoModels', { name: provider.name }),
+          tone: 'amber',
+        }, options.signal)
+        return result
+      }
+      const skippedMessage = translate('providerActivation.modelTestSkipped', { model: preferredModel })
+      result.ready = result.enabled && result.failures.length === 0
+      await clearLastModelTest(ports, provider.id, skippedMessage, operation)
+      emitStage(ports, {
+        providerId: provider.id,
+        providerName: provider.name,
+        stage: result.ready ? 'done' : 'failed',
+        message: result.ready
+          ? translate('providerActivation.stageReadyWithoutTest', { name: provider.name, model: preferredModel })
+          : translate('providerActivation.stageFailed', { name: provider.name }),
+        tone: result.ready ? 'mint' : 'amber',
+      }, options.signal)
+      return result
+    }
+
+    const candidates = limitActivationCandidates(
+      buildTestCandidates(current, options.testModel, options.accessSettings),
+      options.maxTestCandidates,
+    )
+    if (!candidates.length) {
+      pushFailure(result, translate('providerActivation.noModels'), { code: 'empty_models' })
+      await clearLastModelTest(ports, provider.id, undefined, operation)
+      emitStage(ports, {
+        providerId: provider.id,
+        providerName: provider.name,
+        stage: 'failed',
+        message: translate('providerActivation.stageNoModels', { name: provider.name }),
+        tone: 'amber',
+      }, options.signal)
+      return result
+    }
+
+    emitStage(ports, {
+      providerId: provider.id,
+      providerName: provider.name,
+      stage: 'testing',
+      message: translate('providerActivation.stageTesting', { name: provider.name }),
+      tone: 'mint',
+    }, options.signal)
+    let lastCapabilityChecks: AIProvider['lastModelTestCapabilityChecks'] | undefined
+    for (const [index, candidate] of candidates.entries()) {
+      throwIfProviderActivationAborted(options.signal)
+      const test = await dependencies.testProviderModel(
+        current,
+        candidate.model,
+        candidate.apiKey,
+        {
+          checkParameters: options.checkParameters,
+          timeoutMs: options.modelTestTimeoutMs,
+          ...(options.signal ? { signal: options.signal } : {}),
+        },
+      )
+      throwIfProviderActivationAborted(options.signal)
+      const health = projectProviderModelTestHealth(test)
+      if (health.credentialGroupHealth !== undefined) {
+        await ports.updateProviderCredentialGroupHealth(
+          provider.id,
+          test.credentialGroupId ?? candidate.groupId,
+          health.credentialGroupHealth,
+          operation,
+        )
+        throwIfProviderActivationAborted(options.signal)
+      }
+      lastCapabilityChecks = test.data?.capabilityChecks ?? lastCapabilityChecks
+      result.tested = true
+      if (test.ok) {
+        result.testOk = true
+        result.ready = true
+        result.testModel = candidate.model
+        result.testGroupId = test.credentialGroupId ?? candidate.groupId
+        await updateProvider(ports, provider.id, {
+          lastTestStatus: 'ok',
+          lastTestedAt: (dependencies.now ?? Date.now)(),
+          lastTestModel: candidate.model,
+          lastTestMessage: test.message,
+          lastTestCode: test.code,
+          lastModelTestCapabilityChecks: test.data?.capabilityChecks,
+        }, operation)
+        emitStage(ports, {
+          providerId: provider.id,
+          providerName: provider.name,
+          stage: 'done',
+          message: translate('providerActivation.stageDone', { name: provider.name, model: candidate.model }),
+          tone: 'mint',
+        }, options.signal)
+        return result
+      }
+
+      pushFailure(result, test.message, {
+        code: test.code,
+        groupLabel: candidate.groupLabel,
+        model: candidate.model,
+      })
+      if (test.code === 'rate_limited') break
+      if (index < candidates.length - 1) {
+        await waitForProviderActivationRetry(ports, ACTIVATION_RETRY_DELAY_MS, options.signal)
+      }
+    }
+
+    throwIfProviderActivationAborted(options.signal)
+    const lastFailure = result.failures.at(-1)
+    const health = projectProviderModelTestHealth({
+      ok: false,
+      code: lastFailure?.code ?? 'unknown',
+    })
+    await updateProvider(ports, provider.id, {
+      lastTestStatus: health.lastTestStatus,
+      lastTestedAt: (dependencies.now ?? Date.now)(),
+      lastTestModel: undefined,
+      lastTestMessage: dedupeMessages(result.failures.map((item) => item.message)).slice(0, 3).join('\n') || translate('providerActivation.noModels'),
+      lastTestCode: lastFailure?.code ?? 'unknown',
+      lastModelTestCapabilityChecks: lastCapabilityChecks,
+    }, operation)
+    emitStage(ports, {
+      providerId: provider.id,
+      providerName: provider.name,
+      stage: 'failed',
+      message: translate('providerActivation.stageFailed', { name: provider.name }),
+      tone: 'danger',
+    }, options.signal)
+    return result
+  }
+
+  function buildTestCandidates(
+    provider: AIProvider,
+    requestedModel?: string,
+    settings?: ProviderActivationAccessSettings,
+  ): ProviderActivationTestCandidate[] {
+    const enabledGroups = provider.credentialGroups?.filter(
+      (group) => group.enabled && group.apiKey?.trim(),
+    ) ?? []
+    const testModel = requestedModel?.trim()
+    if (testModel && dependencies.isModelAllowed(provider, testModel, settings)) {
+      if (enabledGroups.length) {
+        return dedupeCandidates(enabledGroups.map((group) => ({
+          groupId: group.id,
+          groupLabel: group.label,
+          apiKey: group.apiKey!.trim(),
+          model: testModel,
+        })))
+      }
+      if (provider.apiKey?.trim()) return [{ apiKey: provider.apiKey.trim(), model: testModel }]
+    }
+
+    const syncedGroups = enabledGroups.filter((group) => group.lastModelSyncStatus === 'ok')
+    const candidates = syncedGroups.flatMap((group) => {
+      const models = selectActivationTestModels(provider, group.availableModels ?? [], settings)
+      return models.map((model) => ({
+        groupId: group.id,
+        groupLabel: group.label,
+        apiKey: group.apiKey!.trim(),
+        model,
+      }))
+    })
+    if (candidates.length) return dedupeCandidates(candidates)
+
+    const manualModels = selectActivationTestModels(
+      provider,
+      dependencies.getManualModels(provider),
+      settings,
+    )
+    if (manualModels.length) {
+      if (enabledGroups.length) {
+        return dedupeCandidates(enabledGroups.flatMap((group) => manualModels.map((model) => ({
+          groupId: group.id,
+          groupLabel: group.label,
+          apiKey: group.apiKey!.trim(),
+          model,
+        }))))
+      }
+      if (provider.apiKey?.trim()) {
+        return manualModels.map((model) => ({ apiKey: provider.apiKey.trim(), model }))
+      }
+    }
+
+    if (
+      !enabledGroups.length &&
+      provider.apiKey?.trim() &&
+      provider.lastModelSyncStatus === 'ok' &&
+      provider.models.length
+    ) {
+      return selectActivationTestModels(provider, provider.models, settings)
+        .map((model) => ({ apiKey: provider.apiKey.trim(), model }))
+    }
+    return []
+  }
+
+  function selectActivationTestModels(
+    provider: AIProvider,
+    models: string[],
+    settings?: ProviderActivationAccessSettings,
+  ): string[] {
+    const allowed = models.filter((model) =>
+      dependencies.isChatCompatibleModel(provider, model) &&
+      dependencies.isModelAllowed(provider, model, settings),
+    )
+    if (!allowed.length) return []
+    const preferred = [
+      provider.lastTestStatus === 'ok' ? provider.lastTestModel : undefined,
+      dependencies.getPreferredModel(provider),
+      ...dependencies.getManualModels(provider),
+    ]
+      .filter((model): model is string => !!model?.trim())
+      .filter((model) => allowed.includes(model))
+    return uniqueModels([...preferred, ...allowed]).slice(0, ACTIVATION_TEST_MODELS_PER_CREDENTIAL)
+  }
+
+  function countSyncedGroups(
+    provider: AIProvider,
+    settings?: ProviderActivationAccessSettings,
+  ): number {
+    return provider.credentialGroups?.filter((group) =>
+      group.enabled &&
+      group.lastModelSyncStatus === 'ok' &&
+      (group.availableModels ?? []).some((model) =>
+        dependencies.isModelAllowed(provider, model, settings),
+      )
+    ).length ?? 0
+  }
+
+  function countPolicyAllowedAvailableModels(
+    provider: AIProvider,
+    settings?: ProviderActivationAccessSettings,
+  ): number {
+    return dependencies.getAvailableModels(provider).filter((model) =>
+      dependencies.isModelAllowed(provider, model, settings),
+    ).length
+  }
+
+  function collectSyncFailures(
+    result: ProviderActivationResult,
+    provider: AIProvider,
+    fallbackMessage: string,
+  ): void {
+    const groups = provider.credentialGroups?.filter((group) => group.enabled) ?? []
+    const failedGroups = groups.filter((group) => group.lastModelSyncStatus === 'bad')
+    if (!failedGroups.length) {
+      pushFailure(result, fallbackMessage)
+      return
+    }
+    for (const group of failedGroups) {
+      pushFailure(result, group.lastModelSyncMessage || fallbackMessage, {
+        groupLabel: group.label,
+        code: group.lastModelSyncCode ?? 'unknown',
+      })
+    }
+  }
+
+  function summarize(results: ProviderActivationResult[]): ProviderActivationSummary {
+    const enabled = results.filter((item) => item.enabled).length
+    const synced = results.filter((item) => item.synced).length
+    const ready = results.filter((item) => isProviderActivationReady(item)).length
+    const missingTokens = results.filter((item) => item.missingToken || !item.hadCredential)
+    const noModels = results.filter((item) =>
+      item.hadCredential && !isProviderActivationReady(item) && !item.modelCount,
+    )
+    const failed = results.filter((item) =>
+      item.failures.length &&
+      !isProviderActivationReady(item) &&
+      !missingTokens.includes(item) &&
+      !noModels.includes(item),
+    )
+    const parts = [
+      translate('providerActivation.summary', {
+        target: results.length,
+        enabled,
+        synced,
+        tested: ready,
+        noModels: noModels.length,
+        failed: failed.length,
+      }),
+    ]
+    if (missingTokens.length) {
+      parts.push(translate('providerActivation.missingTokens', { names: names(missingTokens) }))
+    }
+    if (noModels.length) {
+      parts.push(translate('providerActivation.noModelsFor', { names: names(noModels) }))
+    }
+    if (failed.length) {
+      const details = summarizeFailureGroups(failed)
+      const shown = details.slice(0, 3)
+      const remaining = Math.max(
+        0,
+        failed.length - shown.reduce((sum, item) => sum + item.count, 0),
+      )
+      parts.push([
+        shown.map((item) => item.line).join('\n'),
+        remaining ? translate('providerActivation.moreFailures', { count: remaining }) : '',
+      ].filter(Boolean).join('\n'))
+    }
+    const hasUsableProgress = ready > 0
+    return {
+      tone: failed.length || missingTokens.length || noModels.length
+        ? hasUsableProgress ? 'amber' : 'danger'
+        : 'mint',
+      message: parts.join('\n'),
+    }
+  }
+
+  function summarizeFailureGroups(
+    items: ProviderActivationResult[],
+  ): Array<{ line: string; count: number }> {
+    const groups = new Map<string, { count: number; message: string; names: string[] }>()
+    for (const item of items) {
+      const failure = item.failures.at(-1)
+      const message = failure?.message?.trim() || translate('providerActivation.stageFailed', {
+        name: item.providerName,
+      })
+      const key = `${failure?.code ?? 'unknown'}:${message}`
+      const current = groups.get(key) ?? { count: 0, message, names: [] }
+      current.count += 1
+      current.names.push(item.providerName)
+      groups.set(key, current)
+    }
+    return Array.from(groups.values())
+      .sort((left, right) => right.count - left.count || left.message.localeCompare(right.message))
+      .map((group) => {
+        const shownNames = group.names.slice(0, 3)
+        const remaining = Math.max(0, group.names.length - shownNames.length)
+        const namesText = remaining
+          ? `${shownNames.join(', ')} +${remaining}`
+          : shownNames.join(', ')
+        return {
+          count: group.count,
+          line: translate('providerActivation.failureGroup', {
+            count: group.count,
+            message: group.message,
+            names: namesText,
+          }),
+        }
+      })
+  }
+
+  return {
+    activateProviderWithHealthCheck,
+    syncAndTestProvider,
+    buildTestCandidates,
+    summarize,
+  }
+}
+
+export function isProviderActivationReady(
+  result: Pick<
+    ProviderActivationResult,
+    'ready' | 'testOk' | 'enabled' | 'hadCredential' | 'missingToken' | 'modelCount' | 'failures'
+  >,
+): boolean {
+  return result.ready === true ||
+    result.testOk ||
+    (
+      result.enabled &&
+      result.hadCredential &&
+      !result.missingToken &&
+      result.modelCount > 0 &&
+      result.failures.length === 0
+    )
+}
+
+function activationOperation(signal: AbortSignal | undefined): ProviderActivationOperationOptions {
+  return signal ? { signal } : {}
+}
+
+async function updateProvider(
+  ports: ProviderActivationPorts,
+  providerId: string,
+  updates: Partial<AIProvider>,
+  operation: ProviderActivationOperationOptions,
+): Promise<void> {
+  throwIfProviderActivationAborted(operation.signal)
+  await ports.updateProvider(providerId, updates, operation)
+  throwIfProviderActivationAborted(operation.signal)
+}
+
+async function clearLastModelTest(
+  ports: ProviderActivationPorts,
+  providerId: string,
+  message: string | undefined,
+  operation: ProviderActivationOperationOptions,
+): Promise<void> {
+  await updateProvider(ports, providerId, {
+    lastTestStatus: 'idle',
+    lastTestModel: undefined,
+    lastTestMessage: message,
+    lastTestCode: undefined,
+    lastModelTestCapabilityChecks: undefined,
+  }, operation)
+}
+
+function emitStage(
+  ports: ProviderActivationPorts,
+  event: ProviderActivationStageEvent,
+  signal: AbortSignal | undefined,
+): void {
+  throwIfProviderActivationAborted(signal)
+  ports.onStage?.(event)
+  throwIfProviderActivationAborted(signal)
+}
+
+async function waitForProviderActivationRetry(
+  ports: ProviderActivationPorts,
+  ms: number,
+  signal: AbortSignal | undefined,
+): Promise<void> {
+  throwIfProviderActivationAborted(signal)
+  const operation = activationOperation(signal)
+  if (!ports.delay) {
+    await cancellableDelay(ms, signal)
+    return
+  }
+  const pending = Promise.resolve(ports.delay(ms, operation))
+  await awaitProviderActivationWork(pending, signal)
+  throwIfProviderActivationAborted(signal)
+}
+
+function cancellableDelay(ms: number, signal: AbortSignal | undefined): Promise<void> {
+  if (!signal) return new Promise((resolve) => setTimeout(resolve, ms))
+  return new Promise((resolve, reject) => {
+    let timeout: ReturnType<typeof setTimeout> | undefined
+    const onAbort = () => {
+      if (timeout !== undefined) clearTimeout(timeout)
+      signal.removeEventListener('abort', onAbort)
+      reject(createProviderActivationAbortError(signal.reason))
+    }
+    signal.addEventListener('abort', onAbort, { once: true })
+    if (signal.aborted) {
+      onAbort()
+      return
+    }
+    timeout = setTimeout(() => {
+      signal.removeEventListener('abort', onAbort)
+      resolve()
+    }, ms)
+  })
+}
+
+function awaitProviderActivationWork<T>(promise: Promise<T>, signal: AbortSignal | undefined): Promise<T> {
+  if (!signal) return promise
+  return new Promise<T>((resolve, reject) => {
+    let settled = false
+    const finish = (action: () => void) => {
+      if (settled) return
+      settled = true
+      signal.removeEventListener('abort', onAbort)
+      action()
+    }
+    const onAbort = () => finish(() => reject(createProviderActivationAbortError(signal.reason)))
+    signal.addEventListener('abort', onAbort, { once: true })
+    if (signal.aborted) {
+      onAbort()
+      return
+    }
+    promise.then(
+      (value) => finish(() => resolve(value)),
+      (error) => finish(() => reject(error)),
+    )
+  })
+}
+
+function limitActivationCandidates<T>(candidates: T[], maxCandidates?: number): T[] {
+  if (maxCandidates === undefined || !Number.isFinite(maxCandidates)) return candidates
+  return candidates.slice(0, Math.max(1, Math.floor(maxCandidates)))
+}
+
+function dedupeCandidates(
+  candidates: ProviderActivationTestCandidate[],
+): ProviderActivationTestCandidate[] {
+  const seen = new Set<string>()
+  return candidates.filter((candidate) => {
+    const key = `${candidate.groupId ?? candidate.apiKey}:${candidate.model}`
+    if (seen.has(key)) return false
+    seen.add(key)
+    return true
+  })
+}
+
+function uniqueModels(models: string[]): string[] {
+  const seen = new Set<string>()
+  return models.filter((model) => {
+    const key = model.trim()
+    if (!key || seen.has(key)) return false
+    seen.add(key)
+    return true
+  })
+}
+
+function hasAnyCredential(provider: AIProvider): boolean {
+  return !!provider.apiKey?.trim() || !!provider.credentialGroups?.some(
+    (group) => group.enabled && group.apiKey?.trim(),
+  )
+}
+
+function names(items: ProviderActivationResult[]): string {
+  return items.map((item) => item.providerName).join(', ')
+}
+
+function pushFailure(
+  result: ProviderActivationResult,
+  message: string,
+  options: { groupLabel?: string; model?: string; code?: ProviderOperationCode } = {},
+): void {
+  const cleaned = cleanFailureMessage(message, result.providerName)
+  result.messages.push(cleaned)
+  result.failures.push({
+    providerName: result.providerName,
+    groupLabel: options.groupLabel,
+    model: options.model,
+    code: options.code,
+    message: cleaned,
+  })
+}
+
+function dedupeMessages(messages: string[]): string[] {
+  const seen = new Set<string>()
+  return messages
+    .map((item) => item.trim())
+    .filter((item) => {
+      if (!item || seen.has(item)) return false
+      seen.add(item)
+      return true
+    })
+}
+
+function cleanFailureMessage(message: string, providerName: string): string {
+  return message
+    .replace(/^模型测试[:：]\s*/i, '')
+    .replace(new RegExp(`^${escapeRegExp(providerName)}[:：]\\s*`), '')
+    .trim()
+}
+
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+}
+
+function throwIfProviderActivationAborted(signal: AbortSignal | undefined): void {
+  if (signal?.aborted) throw createProviderActivationAbortError(signal.reason)
+}
+
+function rethrowProviderActivationCancellation(error: unknown, signal: AbortSignal | undefined): void {
+  if (signal?.aborted || isAbortError(error)) {
+    throw createProviderActivationAbortError(signal?.reason ?? error)
+  }
+}
+
+function isAbortError(error: unknown): boolean {
+  return !!error && typeof error === 'object' && 'name' in error && error.name === 'AbortError'
+}
+
+function createProviderActivationAbortError(reason: unknown): Error {
+  if (reason instanceof Error && reason.name === 'AbortError') return reason
+  const message = reason instanceof Error && reason.message
+    ? reason.message
+    : 'Provider activation was cancelled'
+  const error = new Error(message)
+  error.name = 'AbortError'
+  return error
+}

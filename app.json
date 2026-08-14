@@ -2,11 +2,10 @@
   "expo": {
     "name": "IsleMind",
     "slug": "islemind",
-    "version": "1.0.13",
+    "version": "1.0.14",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
     "userInterfaceStyle": "automatic",
-    "newArchEnabled": true,
     "scheme": "islemind",
     "ios": {
       "supportsTablet": true,
@@ -17,8 +16,7 @@
     },
     "android": {
       "package": "com.islemind.app",
-      "versionCode": 113,
-      "softwareKeyboardLayoutMode": "resize",
+      "versionCode": 114,
       "permissions": [
         "android.permission.REQUEST_INSTALL_PACKAGES",
         "android.permission.POST_NOTIFICATIONS",
@@ -36,7 +34,6 @@
         "foregroundImage": "./assets/adaptive-foreground.png",
         "backgroundColor": "#1F73FF"
       },
-      "edgeToEdgeEnabled": true,
       "predictiveBackGestureEnabled": false
     },
     "plugins": [
@@ -58,8 +55,11 @@
       ],
       "expo-audio",
       "expo-asset",
+      "./plugins/android-soft-input-mode/withAndroidSoftInputMode",
       "./plugins/android-status-notification/withAndroidStatusNotification",
-      "./plugins/android-device-tools/withAndroidDeviceTools"
+      "./plugins/android-device-tools/withAndroidDeviceTools",
+      "./plugins/android-trusted-web-fetch/withAndroidTrustedWebFetch",
+      "./plugins/android-static-launch/withAndroidStaticLaunch"
     ],
     "extra": {
       "router": {},

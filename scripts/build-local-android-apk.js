@@ -8,6 +8,7 @@ const { writeReleaseSourceSnapshot } = require('./release-freshness-contract')
 
 const projectRoot = path.resolve(__dirname, '..')
 const androidDir = path.join(projectRoot, 'android')
+const onnxruntimeAndroidDir = path.join(projectRoot, 'node_modules', 'onnxruntime-react-native', 'android')
 const androidManifestPath = path.join(androidDir, 'app', 'src', 'main', 'AndroidManifest.xml')
 const outputDir = path.join(projectRoot, apkOutputDirName)
 const packageJson = require(path.join(projectRoot, 'package.json'))
@@ -15,6 +16,14 @@ const apkOutputWaitMs = 10 * 60 * 1000
 const apkOutputPollMs = 2000
 const gradleNativeRetryAttempts = 3
 const preferredCmakeVersions = ['3.22.1', '4.1.2']
+const preferredAndroidJdkMajor = 17
+const preferredAndroidJdkHomes = [
+  process.env.ISLEMIND_ANDROID_JAVA_HOME,
+  path.join('G:\\', 'dev', 'managers', 'mise', 'data', 'installs', 'java', '17.0.2'),
+  'C:\\Program Files\\Android\\Android Studio\\jbr',
+  'C:\\Program Files\\Eclipse Adoptium\\jdk-17',
+  'C:\\Program Files\\Java\\jdk-17',
+].filter(Boolean)
 const releaseBuildPasses = [
   {
     label: 'universal-64',
@@ -117,6 +126,55 @@ function gradleCommand() {
   return process.platform === 'win32' ? 'gradlew.bat' : './gradlew'
 }
 
+function javaExecutable(javaHome) {
+  return path.join(javaHome, 'bin', process.platform === 'win32' ? 'java.exe' : 'java')
+}
+
+function parseJavaMajor(versionText) {
+  const match = String(versionText || '').match(/version\s+"(\d+)(?:\.(\d+))?/)
+  if (!match) return null
+  const first = Number.parseInt(match[1], 10)
+  const second = Number.parseInt(match[2] || '', 10)
+  if (!Number.isFinite(first)) return null
+  return first === 1 && Number.isFinite(second) ? second : first
+}
+
+function detectJavaMajor(javaHome) {
+  if (!javaHome) return null
+  const java = javaExecutable(javaHome)
+  if (!fs.existsSync(java)) return null
+  const result = spawnSync(java, ['-version'], {
+    cwd: projectRoot,
+    encoding: 'utf8',
+    shell: false,
+  })
+  if (result.error || result.status !== 0) return null
+  return parseJavaMajor(`${result.stderr || ''}\n${result.stdout || ''}`)
+}
+
+function selectAndroidJavaHome() {
+  const explicitJavaHome = process.env.ISLEMIND_ANDROID_JAVA_HOME
+  if (explicitJavaHome) {
+    const explicitMajor = detectJavaMajor(explicitJavaHome)
+    if (explicitMajor === preferredAndroidJdkMajor) return explicitJavaHome
+    throw new Error(`ISLEMIND_ANDROID_JAVA_HOME must point to a Java ${preferredAndroidJdkMajor} JDK for Android builds; detected ${explicitMajor ?? 'no runnable java'} at ${explicitJavaHome}.`)
+  }
+  const currentMajor = detectJavaMajor(process.env.JAVA_HOME)
+  if (currentMajor === preferredAndroidJdkMajor) return process.env.JAVA_HOME
+  for (const candidate of preferredAndroidJdkHomes) {
+    const major = detectJavaMajor(candidate)
+    if (major === preferredAndroidJdkMajor) return candidate
+  }
+  throw new Error(`Android builds require Java ${preferredAndroidJdkMajor}. Current JAVA_HOME detected ${currentMajor ?? 'no runnable java'} at ${process.env.JAVA_HOME || '<unset>'}; set ISLEMIND_ANDROID_JAVA_HOME to a Java ${preferredAndroidJdkMajor} JDK.`)
+}
+
+function envPathKey(env) {
+  if (Object.prototype.hasOwnProperty.call(env, 'Path')) return 'Path'
+  if (Object.prototype.hasOwnProperty.call(env, 'PATH')) return 'PATH'
+  const existing = Object.keys(env).find((key) => key.toLowerCase() === 'path')
+  return existing || 'PATH'
+}
+
 function childEnv(overrides = {}) {
   const env = { ...process.env, ...overrides }
   if (!Object.prototype.hasOwnProperty.call(overrides, 'FORCE_COLOR')) {
@@ -131,8 +189,20 @@ function childEnv(overrides = {}) {
   return env
 }
 
+function androidBuildEnv(overrides = {}) {
+  const javaHome = selectAndroidJavaHome()
+  const env = childEnv({ ...overrides })
+  if (javaHome) {
+    env.JAVA_HOME = javaHome
+    const javaBin = path.join(javaHome, 'bin')
+    const pathKey = envPathKey(env)
+    env[pathKey] = `${javaBin}${path.delimiter}${env[pathKey] || ''}`
+  }
+  return env
+}
+
 function releaseEnv(overrides = {}) {
-  return childEnv({ NODE_ENV: 'production', ...overrides })
+  return androidBuildEnv({ NODE_ENV: 'production', ...overrides })
 }
 
 function run(command, args, options = {}) {
@@ -186,6 +256,8 @@ function isRetryableRemoveError(error) {
 function removeNativeBuildOutputs(buildType) {
   const dirs = [
     path.join(androidDir, 'app', '.cxx'),
+    path.join(onnxruntimeAndroidDir, '.cxx'),
+    path.join(onnxruntimeAndroidDir, 'build'),
     path.join(androidDir, 'app', 'build', 'intermediates', 'merged_native_libs', buildType),
     path.join(androidDir, 'app', 'build', 'intermediates', 'stripped_native_libs', buildType),
     path.join(androidDir, 'app', 'build', 'intermediates', 'incremental', `package${capitalizeBuildType(buildType)}`),
@@ -211,7 +283,7 @@ function runGradleAssembleWithNativeRetry(args, env) {
   let lastError = null
   for (let attempt = 1; attempt <= gradleNativeRetryAttempts; attempt += 1) {
     try {
-      run(gradleCommand(), args, { cwd: androidDir, env })
+      run(gradleCommand(), args, { cwd: androidDir, env: androidBuildEnv(env) })
       return
     } catch (error) {
       lastError = error
@@ -406,7 +478,7 @@ function buildVariant(variant, args) {
   run(commandName('node'), ['scripts/prepare-model-bundle.js', '--variant', variant])
   if (args.clean) {
     removeDir(path.join(androidDir, 'app', '.cxx'))
-    run(gradleCommand(), ['clean', '--no-daemon'], { cwd: androidDir })
+    run(gradleCommand(), ['clean', '--no-daemon'], { cwd: androidDir, env: androidBuildEnv() })
   }
   const passes = args.buildType === 'release'
     ? releaseBuildPasses
@@ -428,6 +500,7 @@ function buildVariant(variant, args) {
       `-PislemindEnableAbiSplits=${pass.enableAbiSplits ?? 'true'}`,
       `-PislemindUniversalApk=${pass.universalApk}`,
       `-PreactNativeArchitectures=${pass.reactNativeArchitectures}`,
+      '-PhermesEnabled=true',
     ], {
       ...(args.buildType === 'release' ? { NODE_ENV: 'production' } : {}),
       ISLEMIND_MODEL_BUNDLE: variant,

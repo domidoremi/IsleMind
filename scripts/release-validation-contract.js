@@ -17,6 +17,7 @@ function validateReleaseProvenance(provenance, options = {}) {
   validateReleaseExpectedConfig(provenance.expected, issues, { appPackageName })
   validateReleaseInstalledPackage(provenance.installed, provenance.expected, issues, {
     expectedAbi: inferReleaseApkArch(provenance.apk),
+    expectedApkSha256: provenance.apk?.sha256,
   })
   validateReleaseSourceFreshness(provenance.sourceFreshness, issues, {
     stalePrefix: 'Source/resource file',
@@ -39,6 +40,7 @@ function validateCurrentApkSmokeResult(result, options = {}) {
   })
   validateReleaseInstalledPackage(result.installed, expected, issues, {
     expectedAbi: inferReleaseApkArch(result.apk),
+    expectedApkSha256: result.apk?.sha256,
   })
   if (!result.launch?.ok) issues.push('Current APK launch smoke did not prove a running app without fatal log lines.')
   if (result.launch?.fatalLog?.fatal) issues.push('Current APK launch log contains fatal app lines.')
@@ -72,6 +74,7 @@ function validateReleaseExpectedConfig(expected, issues, options = {}) {
 
 function validateReleaseInstalledPackage(installed, expected, issues, options = {}) {
   const expectedAbi = options.expectedAbi || defaultReleaseSmokeArch
+  const expectedApkSha256 = options.expectedApkSha256 || null
   if (!installed) {
     issues.push('Installed package provenance was not collected from an Android device or valid cache.')
     return
@@ -80,6 +83,13 @@ function validateReleaseInstalledPackage(installed, expected, issues, options = 
   if (expected?.expoVersion && installed.versionName !== expected.expoVersion) issues.push(`Installed versionName ${installed.versionName ?? 'missing'} does not match app.json version ${expected.expoVersion}.`)
   if (expected?.androidVersionCode != null && installed.versionCode !== expected.androidVersionCode) issues.push(`Installed versionCode ${installed.versionCode ?? 'missing'} does not match app.json android.versionCode ${expected.androidVersionCode}.`)
   if (expected?.androidPackage && !String(installed.packagePath ?? '').includes(expected.androidPackage)) issues.push(`Installed package path does not include expected Android package ${expected.androidPackage}.`)
+  if (expectedApkSha256) {
+    if (!installed.packageSha256) {
+      issues.push('Installed package SHA256 was not collected from the device APK.')
+    } else if (installed.packageSha256 !== expectedApkSha256) {
+      issues.push(`Installed package SHA256 ${installed.packageSha256} does not match current APK SHA256 ${expectedApkSha256}.`)
+    }
+  }
   if (!isInstalledAbiCompatible(installed.primaryCpuAbi, expectedAbi)) {
     issues.push(`Installed primaryCpuAbi is ${installed.primaryCpuAbi ?? 'missing'}, expected ${formatExpectedAbi(expectedAbi)}.`)
   }

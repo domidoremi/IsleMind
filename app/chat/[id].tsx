@@ -3,14 +3,13 @@ import { Text, View } from 'react-native'
 import { router, useLocalSearchParams } from 'expo-router'
 import { useTranslation } from 'react-i18next'
 import { ChatWorkspace, type RuntimeRepairIntent } from '@/components/chat/ChatWorkspace'
-import { AnimatedNavigationTrigger } from '@/components/navigation/AnimatedNavigationTrigger'
 import { AppIcon, appIconStroke } from '@/components/ui/AppIcon'
-import { IsleEmptyState } from '@/components/ui/isle'
-import { IsleHeader } from '@/components/ui/isle'
-import { IsleScreen } from '@/components/ui/isle'
+import { IsleButton } from '@/components/ui/isle'
 import { useAppTheme } from '@/hooks/useAppTheme'
 import { useChatStore } from '@/store/chatStore'
-import type { Conversation, Message, ProcessTrace } from '@/types'
+import type { Conversation, Message } from '@/types/chatContracts'
+import type { ProcessTrace } from '@/core'
+import { ThemeDetailFrame } from '@/presentation/app-shell/ThemeDetailFrame'
 
 interface RuntimeRepairChatParams {
   id?: string | string[]
@@ -89,28 +88,38 @@ export default function ConversationDeepLinkScreen() {
   }
 
   return (
-    <IsleScreen padded={false} background="focus">
-      <View style={{ paddingHorizontal: 12, paddingTop: 8, paddingBottom: 8 }}>
-        <IsleHeader
-          title={t('conversation.unavailable')}
-          subtitle={id || t('conversation.missingId')}
-          leading={
-            <AnimatedNavigationTrigger variant="iconButton" label={t('common.back')} glyph="back" onNavigate={() => router.back()} color={colors.text} />
-          }
-        />
-      </View>
-      <View style={{ flex: 1, paddingHorizontal: 20, justifyContent: 'center' }}>
-        <IsleEmptyState
-          title={t('conversation.notFound')}
-          actionLabel={t('conversation.viewHistory')}
-          actionGlyph="history"
-          onAction={() => router.push('/conversations')}
-        />
-        <View style={{ alignItems: 'center', marginTop: 12 }}>
-          <AppIcon name="message" color={colors.textTertiary} size={22} strokeWidth={appIconStroke.fine} />
+    <ThemeDetailFrame
+      kind="missing-chat"
+      title={t('conversation.unavailable')}
+      subtitle={id || t('conversation.missingId')}
+      onBack={() => router.back()}
+      backLabel={t('common.back')}
+    >
+      {colors.ui.family === 'lime-road' ? (
+        <View testID="missing-chat-lime-road" style={{ flex: 1, paddingHorizontal: 24, justifyContent: 'center', alignItems: 'flex-start' }}>
+          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 12 }}>
+            <View style={{ width: 48, height: 48, borderRadius: 8, alignItems: 'center', justifyContent: 'center', backgroundColor: colors.ui.icon.accentBackground }}>
+              <AppIcon name="conversation" color={colors.ui.icon.accentForeground} size={25} strokeWidth={appIconStroke.strong} />
+            </View>
+            <Text style={{ flex: 1, color: colors.text, fontSize: 26, lineHeight: 31, fontWeight: '900' }}>{t('conversation.notFound')}</Text>
+          </View>
+          <IsleButton label={t('conversation.viewHistory')} tone="primary" onPress={() => router.push('/conversations')} style={{ marginTop: 24 }} />
         </View>
-      </View>
-    </IsleScreen>
+      ) : colors.ui.family === 'markdown' ? (
+        <View testID="missing-chat-markdown" style={{ flex: 1, marginHorizontal: 24, marginTop: 42, paddingLeft: 18, borderLeftWidth: 2, borderLeftColor: colors.ui.section.divider }}>
+          <View style={{ width: 42, height: 42, alignItems: 'center', justifyContent: 'center', backgroundColor: colors.ui.semantic.surface.muted }}>
+            <AppIcon name="conversation" color={colors.ui.control.link} size={22} strokeWidth={appIconStroke.strong} />
+          </View>
+          <Text style={{ color: colors.text, fontSize: 20, lineHeight: 28, fontWeight: '800', marginTop: 18 }}>{t('conversation.notFound')}</Text>
+          <IsleButton label={t('conversation.viewHistory')} tone="default" onPress={() => router.push('/conversations')} style={{ marginTop: 22, alignSelf: 'flex-start' }} />
+        </View>
+      ) : (
+        <View testID="missing-chat-minimal" style={{ flex: 1, paddingHorizontal: 28, justifyContent: 'center', alignItems: 'center' }}>
+          <Text style={{ color: colors.text, fontSize: 21, lineHeight: 28, fontWeight: '800', textAlign: 'center' }}>{t('conversation.notFound')}</Text>
+          <IsleButton label={t('conversation.viewHistory')} tone="primary" onPress={() => router.push('/conversations')} style={{ marginTop: 20 }} />
+        </View>
+      )}
+    </ThemeDetailFrame>
   )
 }
 

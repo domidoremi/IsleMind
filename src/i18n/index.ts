@@ -1,13 +1,11 @@
 import { getLocales } from 'expo-localization'
 import i18n from 'i18next'
 import { initReactI18next } from 'react-i18next'
-import type { Language } from '@/types'
-
+import type { Language } from '@/types/settingsContracts'
 import en from './resources/en.json'
 import ja from './resources/ja.json'
 import zhCN from './resources/zh-CN.json'
 import { setServiceLanguage, setSystemLanguage } from './service'
-
 export { i18n }
 
 export function detectLanguage(): Language {

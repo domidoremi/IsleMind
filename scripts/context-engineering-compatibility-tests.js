@@ -13,7 +13,7 @@ const {
   CONTEXT_ENGINEERING_COMPATIBILITY_EVAL_SCHEMA,
   CONTEXT_ENGINEERING_COMPATIBILITY_FIXTURE_IDS,
   runContextEngineeringCompatibilityEvaluation,
-} = require('../src/services/contextEngineeringCompatibilityEvaluation.ts')
+} = require('../src/modules/assistant-runtime/testing/contextEngineeringCompatibilityEvaluation.ts')
 
 function registerTypeScriptSupport() {
   if (require.extensions['.ts']?.isContextEngineeringCompatibilityHook) return
@@ -72,6 +72,11 @@ function assertBlocked(item, codes) {
 }
 
 function run() {
+  const targetEvaluatorPath = path.join(root, 'src', 'modules', 'assistant-runtime', 'testing', 'contextEngineeringCompatibilityEvaluation.ts')
+  const retiredEvaluatorPath = path.join(root, 'src', 'services', 'contextEngineeringCompatibilityEvaluation.ts')
+  assert.equal(fs.existsSync(targetEvaluatorPath), true, 'context engineering evaluator is privately Assistant Runtime-owned')
+  assert.equal(fs.existsSync(retiredEvaluatorPath), false, 'service-owned context engineering evaluator stays deleted')
+
   assert.equal(CONTEXT_ENGINEERING_COMPATIBILITY_EVAL_SCHEMA, 'islemind.context-engineering-compatibility-eval.v1', 'context engineering schema is versioned')
   assert.deepEqual(
     CONTEXT_ENGINEERING_COMPATIBILITY_FIXTURE_IDS,

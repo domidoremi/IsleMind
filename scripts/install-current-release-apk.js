@@ -2,7 +2,12 @@ const fs = require('node:fs')
 const path = require('node:path')
 const crypto = require('node:crypto')
 const { execFileSync } = require('node:child_process')
-const { resolveApkArtifactPath, defaultReleaseSmokeArch, defaultReleaseSmokeVariant } = require('./release-artifact-contract')
+const {
+  resolveApkArtifactPath,
+  defaultReleaseSmokeArch,
+  defaultReleaseSmokeVariant,
+  resolveReleaseArchForAndroidAbi,
+} = require('./release-artifact-contract')
 const { cleanInstallState, defaultReleaseAppPackageName } = require('./release-validation-contract')
 
 const root = path.resolve(__dirname, '..')
@@ -24,11 +29,12 @@ function main() {
   }
 
   const version = packageJson.version || appJson?.expo?.version
+  const deviceAbi = readDeviceAbi(device)
   const apkPath = process.env.QA_APK_PATH
     ? path.resolve(root, process.env.QA_APK_PATH)
     : resolveApkArtifactPath(root, {
         version,
-        arch: process.env.QA_APK_ARCH || defaultReleaseSmokeArch,
+        arch: process.env.QA_APK_ARCH || resolveReleaseArchForAndroidAbi(deviceAbi) || defaultReleaseSmokeArch,
         variant: process.env.QA_APK_VARIANT || defaultReleaseSmokeVariant,
       })
 
@@ -50,7 +56,8 @@ function main() {
     maxBuffer: 10 * 1024 * 1024,
   })
   console.log(output.trim() || `Installed ${relative(apkPath)} to ${device}.`)
-  const installed = readInstalledPackageInfo(device, appPackageName)
+  const installed = readInstalledPackageInfo(device, appPackageName, deviceAbi)
+  const apkSha256 = sha256File(apkPath)
   const result = {
     generatedAt: new Date().toISOString(),
     device,
@@ -58,7 +65,7 @@ function main() {
     appPackageName,
     apk: {
       path: relative(apkPath),
-      sha256: sha256File(apkPath),
+      sha256: apkSha256,
       sidecarSha256: readSha256Sidecar(apkPath),
       sizeBytes: fs.statSync(apkPath).size,
       modifiedAt: fs.statSync(apkPath).mtime.toISOString(),
@@ -74,6 +81,12 @@ function main() {
     installed,
   }
   fs.writeFileSync(outputPath, `${JSON.stringify(result, null, 2)}\n`, 'utf8')
+  if (!installed?.packageSha256) {
+    throw new Error('Installed package SHA256 could not be calculated from the device APK.')
+  }
+  if (installed.packageSha256 !== apkSha256) {
+    throw new Error(`Installed package SHA256 ${installed.packageSha256} does not match ${relative(apkPath)} SHA256 ${apkSha256}.`)
+  }
 }
 
 function cleanUninstall(device, packageName) {
@@ -132,15 +145,20 @@ function runAdb(args) {
   }
 }
 
-function readInstalledPackageInfo(device, packageName) {
+function readDeviceAbi(device) {
+  return runAdb(['-s', device, 'shell', 'getprop', 'ro.product.cpu.abi'])?.trim() ?? null
+}
+
+function readInstalledPackageInfo(device, packageName, knownDeviceAbi = null) {
   const packageDump = runAdb(['-s', device, 'shell', 'dumpsys', 'package', packageName])
   if (!packageDump || /Unable to find package|not found/i.test(packageDump)) return null
   const packagePath = runAdb(['-s', device, 'shell', 'pm', 'path', packageName])?.trim() ?? null
-  const deviceAbi = runAdb(['-s', device, 'shell', 'getprop', 'ro.product.cpu.abi'])?.trim() ?? null
+  const deviceAbi = knownDeviceAbi || readDeviceAbi(device)
   const info = {
     deviceSerial: device,
     deviceAbi,
     packagePath,
+    packageSha256: readInstalledPackageSha256(device, packagePath),
     versionName: matchFirst(packageDump, /versionName=([^\s]+)/),
     versionCode: toNumber(matchFirst(packageDump, /versionCode=(\d+)/)),
     primaryCpuAbi: matchFirst(packageDump, /primaryCpuAbi=([^\s]+)/),
@@ -149,6 +167,16 @@ function readInstalledPackageInfo(device, packageName) {
   }
   Object.assign(info, cleanInstallState(info.firstInstallTime, info.lastUpdateTime))
   return info
+}
+
+function readInstalledPackageSha256(device, packagePath) {
+  const remotePath = String(packagePath ?? '')
+    .split(/\r?\n/)
+    .map((value) => value.replace(/^package:/, '').trim())
+    .find(Boolean)
+  if (!remotePath) return null
+  const output = runAdb(['-s', device, 'shell', 'sha256sum', remotePath])?.trim() ?? ''
+  return output.match(/^([a-fA-F0-9]{64})\b/)?.[1]?.toLowerCase() ?? null
 }
 
 function sha256File(file) {

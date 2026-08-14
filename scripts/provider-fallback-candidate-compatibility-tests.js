@@ -6,15 +6,42 @@ const ts = require('typescript')
 
 const root = path.resolve(__dirname, '..')
 const originalResolve = Module._resolveFilename
-const originalLoad = Module._load
 
 registerTypeScriptSupport()
 
 const {
   PROVIDER_FALLBACK_CANDIDATE_BUILD_SCHEMA,
-  buildProviderFallbackCandidates,
-} = require('../src/services/ai/providerFallbackCandidates.ts')
-const { providerHealthKey } = require('../src/services/ai/providerHealth.ts')
+  createProviderFallbackCandidateBuilder,
+} = require('../src/modules/providers/index.ts')
+const { providerHealthKey } = require('../src/modules/providers/index.ts')
+
+const buildProviderFallbackCandidates = createProviderFallbackCandidateBuilder({
+  projectModel(provider, model) {
+    const config = provider.modelConfigs?.find((item) => item.id === model) ?? { source: 'manual' }
+    const declared = provider.modelCapabilityMap?.[model] ?? provider.defaultModelCapabilities ?? {}
+    const capabilities = ['text']
+    if (declared.image && allows(provider, 'vision', provider.capabilities?.vision === true)) capabilities.push('image')
+    if (declared.file && allows(provider, 'files', provider.capabilities?.files === true)) capabilities.push('file')
+    if (declared.audio && allows(provider, 'audio', provider.capabilities?.audioInput === true)) capabilities.push('audio')
+    if (declared.video) capabilities.push('video')
+    if (declared.reasoning && allows(provider, 'reasoning', provider.capabilities?.reasoningEffort === true)) capabilities.push('reasoning')
+    if (declared.streaming !== false && allows(provider, 'streaming', provider.capabilities?.streaming === true)) capabilities.push('streaming')
+    if (declared.tools && allows(provider, 'tools', provider.capabilities?.nativeTools === true)) capabilities.push('tools')
+    if (declared.structured_output) capabilities.push('structured_output')
+    if (allows(provider, 'nativeSearch', provider.capabilities?.nativeSearch === true)) capabilities.push('native_search')
+    return {
+      deprecated: config.deprecated === true,
+      source: config.source,
+      upstreamModel: provider.aliasMap?.[model] ?? model,
+      family: provider.family ?? provider.type ?? 'openai-compatible',
+      capabilities,
+    }
+  },
+})
+
+function allows(provider, behavior, explicitDeclaration) {
+  return explicitDeclaration === true || provider.allowedBehaviors?.includes(behavior) === true
+}
 
 function registerTypeScriptSupport() {
   if (require.extensions['.ts']?.isProviderFallbackCandidateCompatibilityHook) return
@@ -24,49 +51,6 @@ function registerTypeScriptSupport() {
       return originalResolve.call(this, path.join(root, 'src', request.slice(2)), parent, isMain, options)
     }
     return originalResolve.call(this, request, parent, isMain, options)
-  }
-
-  Module._load = function loadWithMocks(request, parent, isMain) {
-    if (request === '@/types') {
-      return {
-        getModelConfig: (model, providerType, configs = []) => configs.find((item) => item.id === model) ?? { id: model, source: 'manual' },
-      }
-    }
-    if (request === '@/services/ai/providerConformance') {
-      return {
-        resolveProviderCapabilityManifest: ({ provider, model }) => {
-          const capabilities = provider.modelCapabilityMap?.[model] ?? provider.defaultModelCapabilities ?? {}
-          return {
-            family: provider.family ?? provider.type ?? 'openai-compatible',
-            modalities: {
-              input: {
-                image: Boolean(capabilities.image),
-                file: Boolean(capabilities.file),
-                audio: Boolean(capabilities.audio),
-                video: Boolean(capabilities.video),
-              },
-            },
-            reasoning: { supported: Boolean(capabilities.reasoning) },
-            transport: { streaming: capabilities.streaming !== false },
-            tools: { supported: Boolean(capabilities.tools) },
-            structuredOutput: { appRequestControl: Boolean(capabilities.structured_output) },
-          }
-        },
-      }
-    }
-    if (request === '@/services/ai/providerCompatibilityContract') {
-      return {
-        providerCompatibilityCapabilityCanBeSentForProvider: (provider, behavior, explicitDeclaration) => (
-          explicitDeclaration === true || provider.allowedBehaviors?.includes(behavior) === true
-        ),
-      }
-    }
-    if (request === '@/utils/providerModels') {
-      return {
-        resolveProviderModelAlias: (provider, model) => provider.aliasMap?.[model] ?? model,
-      }
-    }
-    return originalLoad.call(this, request, parent, isMain)
   }
 
   const hook = function compileTypeScript(module, filename) {
@@ -248,14 +232,15 @@ function run() {
   })
   assert.equal(includeDisabledResult.candidates.length, 2, 'fallback candidate builder can include disabled providers and credentials when explicitly requested')
 
-  const fallbackCandidateSource = readSource('src/services/ai/providerFallbackCandidates.ts')
+  const fallbackCandidateSource = readSource('src/modules/providers/providerFallbackCandidates.ts')
   assert.ok(fallbackCandidateSource.includes('PROVIDER_FALLBACK_CANDIDATE_BUILD_SCHEMA'), 'fallback candidate source declares the build schema')
   assert.ok(fallbackCandidateSource.includes('maxModelsPerProvider ?? 20'), 'fallback candidate source caps per-provider model expansion')
-  assert.ok(fallbackCandidateSource.includes('config.deprecated === true'), 'fallback candidate source rejects deprecated models')
-  assert.ok(fallbackCandidateSource.includes('providerFallbackContractAllows'), 'fallback candidate source uses compatibility-contract gates')
+  assert.ok(fallbackCandidateSource.includes('projection.deprecated'), 'fallback candidate source rejects models marked deprecated by its projection port')
+  assert.ok(fallbackCandidateSource.includes('dependencies.projectModel'), 'fallback candidate source receives model compatibility projection through an explicit port')
   assert.ok(fallbackCandidateSource.includes('credentialCanUseModel'), 'fallback candidate source scopes credentials to available models')
   assert.ok(fallbackCandidateSource.includes('annotateFailoverCandidatesWithHealth'), 'fallback candidate source carries provider health annotations')
   assert.ok(fallbackCandidateSource.includes('dedupeCandidates'), 'fallback candidate source deduplicates routes')
+  assert.equal(fs.existsSync(path.join(root, 'src/services/ai/providerFallbackCandidates.ts')), false, 'legacy fallback candidate facade is deleted after target factory migration')
 
   console.log('Provider fallback candidate compatibility tests passed')
 }

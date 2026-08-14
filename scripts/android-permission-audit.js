@@ -6,15 +6,14 @@ const { runArchitectureContractSmoke } = require('./architecture-contract-smoke'
 const root = path.resolve(__dirname, '..')
 const appJsonPath = path.join(root, 'app.json')
 const manifestPath = path.join(root, 'android', 'app', 'src', 'main', 'AndroidManifest.xml')
-const capabilityBoundaryPath = path.join(root, 'src', 'services', 'agent', 'androidCapabilityBoundary.ts')
 
-const ANDROID_ALLOWED_DECLARED_PERMISSIONS = [
+const REQUIRED_APP_PERMISSIONS = [
   'android.permission.REQUEST_INSTALL_PACKAGES',
   'android.permission.POST_NOTIFICATIONS',
   'com.android.alarm.permission.SET_ALARM',
 ]
 
-const ANDROID_BLOCKED_SHARED_STORAGE_PERMISSIONS = [
+const REQUIRED_BLOCKED_PERMISSIONS = [
   'android.permission.READ_EXTERNAL_STORAGE',
   'android.permission.WRITE_EXTERNAL_STORAGE',
   'android.permission.READ_MEDIA_IMAGES',
@@ -23,7 +22,7 @@ const ANDROID_BLOCKED_SHARED_STORAGE_PERMISSIONS = [
   'android.permission.ACCESS_MEDIA_LOCATION',
 ]
 
-const ANDROID_FORBIDDEN_DECLARED_PERMISSIONS = [
+const FORBIDDEN_ACTIVE_PERMISSIONS = [
   'android.permission.MANAGE_EXTERNAL_STORAGE',
   'android.permission.MANAGE_MEDIA',
   'android.permission.INSTALL_PACKAGES',
@@ -36,60 +35,78 @@ const ANDROID_FORBIDDEN_DECLARED_PERMISSIONS = [
   'android.permission.WRITE_CALENDAR',
 ]
 
-function run() {
+function collectAndroidPermissionState() {
   const appJson = JSON.parse(fs.readFileSync(appJsonPath, 'utf8'))
   const manifestText = fs.readFileSync(manifestPath, 'utf8')
-  const capabilityBoundaryText = fs.readFileSync(capabilityBoundaryPath, 'utf8')
-
-  const appPermissions = appJson?.expo?.android?.permissions ?? []
-  const blockedPermissions = appJson?.expo?.android?.blockedPermissions ?? []
-  const declaredManifestPermissions = extractManifestPermissions(manifestText)
-
-  for (const permission of ANDROID_ALLOWED_DECLARED_PERMISSIONS) {
-    assert.ok(appPermissions.includes(permission), `app.json android.permissions must include ${permission}.`)
-    assert.ok(declaredManifestPermissions.has(permission), `AndroidManifest must declare ${permission}.`)
+  const manifestEntries = extractManifestPermissionEntries(manifestText)
+  const appPermissions = new Set(appJson?.expo?.android?.permissions ?? [])
+  const blockedPermissions = new Set(appJson?.expo?.android?.blockedPermissions ?? [])
+  const activeManifestPermissions = new Set(manifestEntries.filter((entry) => !entry.removed).map((entry) => entry.name))
+  const removedManifestPermissions = new Set(manifestEntries.filter((entry) => entry.removed).map((entry) => entry.name))
+  return {
+    appJson,
+    manifestText,
+    manifestEntries,
+    appPermissions,
+    blockedPermissions,
+    activeManifestPermissions,
+    removedManifestPermissions,
+    allowedDeclared: REQUIRED_APP_PERMISSIONS.filter((permission) => appPermissions.has(permission) && activeManifestPermissions.has(permission)),
+    blockedDeclared: REQUIRED_BLOCKED_PERMISSIONS.filter((permission) => blockedPermissions.has(permission) && removedManifestPermissions.has(permission)),
+    forbiddenDeclared: FORBIDDEN_ACTIVE_PERMISSIONS.filter((permission) => appPermissions.has(permission) || activeManifestPermissions.has(permission)),
   }
+}
 
-  for (const permission of ANDROID_BLOCKED_SHARED_STORAGE_PERMISSIONS) {
-    assert.ok(blockedPermissions.includes(permission), `app.json blockedPermissions must include ${permission}.`)
-    assert.ok(
-      new RegExp(`<uses-permission[^>]+android:name="${escapeRegExp(permission)}"[^>]+tools:node="remove"`, 'm').test(manifestText),
-      `AndroidManifest must remove blocked permission ${permission} with tools:node="remove".`
-    )
-  }
+function assertAndroidPermissionState(state) {
+  assert.deepEqual([...state.appPermissions], REQUIRED_APP_PERMISSIONS, 'app.json keeps the minimal Android permission allowlist.')
+  assert.deepEqual([...state.blockedPermissions], REQUIRED_BLOCKED_PERMISSIONS, 'app.json keeps all shared-storage permissions blocked.')
 
-  for (const permission of ANDROID_FORBIDDEN_DECLARED_PERMISSIONS) {
-    assert.ok(!appPermissions.includes(permission), `app.json must not declare forbidden permission ${permission}.`)
-    assert.ok(!declaredManifestPermissions.has(permission), `AndroidManifest must not declare forbidden permission ${permission}.`)
+  for (const permission of REQUIRED_APP_PERMISSIONS) {
+    assert.ok(state.activeManifestPermissions.has(permission), `AndroidManifest must actively declare ${permission}.`)
+    assert.ok(!state.blockedPermissions.has(permission), `${permission} cannot be both allowed and blocked.`)
   }
+  for (const permission of REQUIRED_BLOCKED_PERMISSIONS) {
+    assert.ok(state.removedManifestPermissions.has(permission), `AndroidManifest must remove ${permission} with tools:node="remove".`)
+    assert.ok(!state.activeManifestPermissions.has(permission), `AndroidManifest must not actively declare blocked permission ${permission}.`)
+  }
+  assert.deepEqual(state.forbiddenDeclared, [], 'Privileged install/delete, broad storage, exact-alarm, and calendar permissions stay undeclared.')
+}
 
-  for (const permission of [...ANDROID_ALLOWED_DECLARED_PERMISSIONS, ...ANDROID_BLOCKED_SHARED_STORAGE_PERMISSIONS, ...ANDROID_FORBIDDEN_DECLARED_PERMISSIONS]) {
-    assert.ok(capabilityBoundaryText.includes(permission), `Android capability boundary source must include ${permission}.`)
-  }
+function run() {
+  const state = collectAndroidPermissionState()
+  assertAndroidPermissionState(state)
 
   runArchitectureContractSmoke({
     label: 'Android permission audit',
     checkIds: ['agentic-workflow-engine-boundary', 'audit-evidence-boundary'],
   })
 
-  console.log(`Android permission audit passed (${declaredManifestPermissions.size} manifest permissions checked).`)
+  console.log(`Android permission audit passed (${state.activeManifestPermissions.size} active manifest permissions checked).`)
+}
+
+function extractManifestPermissionEntries(text) {
+  return [...String(text).matchAll(/<uses-permission\b([^>]*)\/>/g)].map((match) => {
+    const attributes = match[1]
+    return {
+      name: attributes.match(/android:name="([^"]+)"/)?.[1] ?? '',
+      removed: /tools:node="remove"/.test(attributes),
+    }
+  }).filter((entry) => entry.name)
 }
 
 function extractManifestPermissions(text) {
-  const permissions = new Set()
-  for (const match of String(text).matchAll(/<uses-permission\b[^>]*android:name="([^"]+)"/g)) {
-    permissions.add(match[1])
-  }
-  return permissions
+  return new Set(extractManifestPermissionEntries(text).map((entry) => entry.name))
 }
-
-function escapeRegExp(value) {
-  return String(value).replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
-}
-
-if (require.main === module) run()
 
 module.exports = {
+  FORBIDDEN_ACTIVE_PERMISSIONS,
+  REQUIRED_APP_PERMISSIONS,
+  REQUIRED_BLOCKED_PERMISSIONS,
+  assertAndroidPermissionState,
+  collectAndroidPermissionState,
+  extractManifestPermissionEntries,
   extractManifestPermissions,
   run,
 }
+
+if (require.main === module) run()

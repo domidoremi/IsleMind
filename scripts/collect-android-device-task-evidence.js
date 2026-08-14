@@ -2,12 +2,18 @@ const assert = require('node:assert/strict')
 const fs = require('node:fs')
 const path = require('node:path')
 const { execFileSync } = require('node:child_process')
+const {
+  assertAndroidPermissionState,
+  collectAndroidPermissionState,
+  extractManifestPermissions,
+} = require('./android-permission-audit')
+const {
+  assertAndroidCapabilityBoundary,
+  collectAndroidCapabilitySources,
+} = require('./android-capability-boundary-audit')
 
 const root = path.resolve(__dirname, '..')
 const outputPath = path.join(root, 'test-evidence', 'qa', 'android-device-task-evidence.json')
-const appJsonPath = path.join(root, 'app.json')
-const manifestPath = path.join(root, 'android', 'app', 'src', 'main', 'AndroidManifest.xml')
-const capabilityBoundaryPath = path.join(root, 'src', 'services', 'agent', 'androidCapabilityBoundary.ts')
 const androidDeviceToolTemplateModulePath = path.join(root, 'plugins', 'android-device-tools', 'AndroidDeviceToolsModule.kt')
 const androidDeviceToolTemplatePackagePath = path.join(root, 'plugins', 'android-device-tools', 'AndroidDeviceToolsPackage.kt')
 const androidDeviceToolGeneratedModulePath = path.join(root, 'android', 'app', 'src', 'main', 'java', 'com', 'islemind', 'app', 'AndroidDeviceToolsModule.kt')
@@ -19,43 +25,22 @@ const ADB_RESOLVER_TIMEOUT_MS = ADB_DEFAULT_TIMEOUT_MS
 const ADB_PACKAGE_QUERY_TIMEOUT_MS = ADB_DEFAULT_TIMEOUT_MS
 const ADB_PACKAGE_DUMP_TIMEOUT_MS = ADB_DEFAULT_TIMEOUT_MS
 
-const ANDROID_ALLOWED_DECLARED_PERMISSIONS = [
-  'android.permission.REQUEST_INSTALL_PACKAGES',
-  'android.permission.POST_NOTIFICATIONS',
-  'com.android.alarm.permission.SET_ALARM',
-]
-
-const ANDROID_BLOCKED_SHARED_STORAGE_PERMISSIONS = [
-  'android.permission.READ_EXTERNAL_STORAGE',
-  'android.permission.WRITE_EXTERNAL_STORAGE',
-  'android.permission.READ_MEDIA_IMAGES',
-  'android.permission.READ_MEDIA_VIDEO',
-  'android.permission.READ_MEDIA_AUDIO',
-  'android.permission.ACCESS_MEDIA_LOCATION',
-]
-
-const ANDROID_FORBIDDEN_DECLARED_PERMISSIONS = [
-  'android.permission.MANAGE_EXTERNAL_STORAGE',
-  'android.permission.MANAGE_MEDIA',
-  'android.permission.INSTALL_PACKAGES',
-  'android.permission.UPDATE_PACKAGES_WITHOUT_USER_ACTION',
-  'android.permission.DELETE_PACKAGES',
-  'android.permission.REQUEST_DELETE_PACKAGES',
-  'android.permission.SCHEDULE_EXACT_ALARM',
-  'android.permission.USE_EXACT_ALARM',
-  'android.permission.READ_CALENDAR',
-  'android.permission.WRITE_CALENDAR',
-]
+const { tasks: androidTasks } = collectAndroidCapabilitySources()
 
 const taskTemplateOrder = [
   {
     id: 'download-directory-access',
     title: 'Scoped Android Download directory picker access',
+    workflowId: androidTasks.ANDROID_DOWNLOAD_ORGANIZE_WORKFLOW_ID,
+    requiredToolIds: ['android:files.request_directory_access', 'android:files.scan'],
     evidence: ['SAF directory picker intent resolver', 'user-selected SAF tree only'],
   },
   {
     id: 'saf-file-apply-undo',
     title: 'Visible Android SAF apply/undo handoff',
+    workflowId: androidTasks.ANDROID_DOWNLOAD_ORGANIZE_WORKFLOW_ID,
+    requiredToolIds: ['android:files.apply_operations', 'android:files.undo_operations'],
+    auxiliaryToolIds: ['android:files.undo_operations'],
     evidence: ['android.files.undo_operations audit contract', 'visible confirmation-only file undo path'],
     manualFollowUp:
       'Grant a Download SAF tree in the app, preview file operations, apply a move, then verify the visible Android undo entry, android.files.undo_operations tool name, Undo operations JSON, pending visible confirmation for undo, confirmed operationKind=file-undo audit, confirmationState=visible-action-recorded, and deleteSupported=false.',
@@ -63,26 +48,36 @@ const taskTemplateOrder = [
   {
     id: 'saf-file-copy-rename',
     title: 'Scoped SAF copy and rename preview/apply flow',
+    workflowId: androidTasks.ANDROID_FILE_COPY_RENAME_WORKFLOW_ID,
+    requiredToolIds: ['android:files.preview_operations', 'android:files.apply_operations'],
     evidence: ['preview-only before write', 'visible confirmation gate for copy or rename'],
   },
   {
     id: 'apk-installer-handoff',
     title: 'Android system APK installer handoff',
+    workflowId: androidTasks.ANDROID_APK_INSTALL_WORKFLOW_ID,
+    requiredToolIds: ['android:apk.inspect', 'android:apk.open_installer'],
     evidence: ['REQUEST_INSTALL_PACKAGES declaration', 'installer handoff remains system-confirmed only'],
   },
   {
     id: 'alarm-intent-create-request',
     title: 'Android system alarm creation request',
+    workflowId: androidTasks.ANDROID_ALARM_WORKFLOW_ID,
+    requiredToolIds: ['android:alarm.open_create_intent'],
     evidence: ['SET_ALARM permission declaration', 'SET_ALARM resolver', 'exact alarm permission remains unsupported'],
   },
   {
     id: 'calendar-todo-handoff',
     title: 'Android Calendar insert UI handoff',
+    workflowId: androidTasks.ANDROID_CALENDAR_TODO_WORKFLOW_ID,
+    requiredToolIds: ['android:reminder.open_create_todo'],
     evidence: ['INSERT calendar resolver', 'calendar read/write permissions remain undeclared'],
   },
   {
     id: 'app-cache-cleanup',
     title: 'IsleMind app-cache-only cleanup',
+    workflowId: androidTasks.ANDROID_APP_CACHE_CLEANUP_WORKFLOW_ID,
+    requiredToolIds: ['android:storage.propose_cleanup', 'android:storage.clear_app_cache'],
     evidence: ['app-cache only scope', 'full phone cleaner remains unsupported'],
   },
 ]
@@ -176,22 +171,21 @@ async function main() {
   const result = createBaseResult(selectedDevice)
 
   try {
-    const appJson = JSON.parse(fs.readFileSync(appJsonPath, 'utf8'))
-    const manifestText = fs.readFileSync(manifestPath, 'utf8')
-    const capabilityBoundaryText = fs.readFileSync(capabilityBoundaryPath, 'utf8')
-    const manifestPermissions = extractManifestPermissions(manifestText)
-    const packageName = appJson?.expo?.android?.package ?? 'com.islemind.app'
-    const appPermissions = appJson?.expo?.android?.permissions ?? []
-    const blockedPermissions = appJson?.expo?.android?.blockedPermissions ?? []
+    const permissionState = collectAndroidPermissionState()
+    assertAndroidPermissionState(permissionState)
+    await assertAndroidCapabilityBoundary()
+    const packageName = permissionState.appJson?.expo?.android?.package ?? 'com.islemind.app'
 
     result.permissions = {
-      allowedDeclared: [...ANDROID_ALLOWED_DECLARED_PERMISSIONS].filter((permission) => appPermissions.includes(permission) || manifestPermissions.has(permission)),
-      blockedDeclared: [...ANDROID_BLOCKED_SHARED_STORAGE_PERMISSIONS].filter((permission) => blockedPermissions.includes(permission)),
-      forbiddenDeclared: [...ANDROID_FORBIDDEN_DECLARED_PERMISSIONS].filter((permission) => appPermissions.includes(permission) || manifestPermissions.has(permission)),
+      allowedDeclared: permissionState.allowedDeclared,
+      blockedDeclared: permissionState.blockedDeclared,
+      forbiddenDeclared: permissionState.forbiddenDeclared,
     }
     result.contractChecks = {
-      capabilityBoundaryPresent: capabilityBoundaryText.includes('islemind.android.capability-boundary.v1'),
-      runtimeExecutorPresent: capabilityBoundaryText.includes('islemind-android-app-runtime'),
+      canonicalWorkflowCatalogAligned: true,
+      integrationsToolCatalogAligned: true,
+      runtimeAuditVerified: true,
+      nativePluginScoped: true,
     }
     result.nativeModule = collectNativeModuleState()
 
@@ -229,6 +223,7 @@ async function main() {
   } catch (error) {
     result.status = 'blocked'
     result.blockedReason = error instanceof Error ? error.message : String(error)
+    result.contractIssues = [result.blockedReason]
     result.tasks = taskTemplateOrder.map((task) => ({
       id: task.id,
       title: task.title,
@@ -237,7 +232,6 @@ async function main() {
     }))
   }
 
-  result.contractIssues = []
   writeResult(result)
   if (result.status !== 'collected') process.exitCode = 1
 }
@@ -326,6 +320,7 @@ function collectNativeModuleState() {
     'copyDocument',
     'moveDocument',
     'renameDocument',
+    'publishPortableJsonFileToDownloads',
   ].map((method) => [method, templateModule.includes(`${method}(`) && generatedModule.includes(`${method}(`)]))
   return {
     present: true,
@@ -445,24 +440,11 @@ function resolverFromProbeSection(value) {
   }
 }
 
-function workflowIdsForTask(taskId) {
-  const workflowMap = {
-    'download-directory-access': ['agent-workflow-android-download-organize'],
-    'saf-file-apply-undo': ['agent-workflow-android-download-organize'],
-    'saf-file-copy-rename': ['agent-workflow-android-file-copy-rename'],
-    'apk-installer-handoff': ['agent-workflow-android-apk-install'],
-    'alarm-intent-create-request': ['agent-workflow-android-alarm'],
-    'calendar-todo-handoff': ['agent-workflow-android-calendar-todo'],
-    'app-cache-cleanup': ['agent-workflow-android-app-cache-cleanup'],
-  }
-  return workflowMap[taskId] ?? []
-}
-
 function buildTaskState(task, resolvers) {
   const base = {
     id: task.id,
     title: task.title,
-    workflowIds: workflowIdsForTask(task.id),
+    workflowIds: [task.workflowId],
     evidence: task.evidence,
     manualFollowUp: task.manualFollowUp,
   }
@@ -500,14 +482,6 @@ function alarmResolverAvailable(resolvers) {
     resolvers?.alarmShow?.available === true ||
     resolvers?.alarmAppCategory?.available === true ||
     resolvers?.alarmDeskClockLauncher?.available === true
-}
-
-function extractManifestPermissions(text) {
-  const permissions = new Set()
-  for (const match of String(text).matchAll(/<uses-permission\b[^>]*android:name="([^"]+)"/g)) {
-    permissions.add(match[1])
-  }
-  return permissions
 }
 
 function runCommand(command, args, timeoutMs = ADB_DEFAULT_TIMEOUT_MS) {
@@ -670,13 +644,6 @@ function readDeviceArg() {
   return deviceWithEquals ? deviceWithEquals.split('=').slice(1).join('=') : null
 }
 
-if (require.main === module) {
-  main().catch((error) => {
-    console.error(error instanceof Error ? error.stack || error.message : String(error))
-    process.exitCode = 1
-  })
-}
-
 module.exports = {
   createBaseResult,
   extractManifestPermissions,
@@ -685,4 +652,12 @@ module.exports = {
   resolveDevice,
   resolverFromProbeSection,
   runSelfTest,
+  taskTemplateOrder,
+}
+
+if (require.main === module) {
+  main().catch((error) => {
+    console.error(error instanceof Error ? error.stack || error.message : String(error))
+    process.exitCode = 1
+  })
 }

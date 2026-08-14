@@ -21,7 +21,7 @@ const {
   emitPluginManifestCatalogSnapshotEvent,
   validatePluginManifest,
 } = require('../src/services/pluginManifest.ts')
-const { createAgentWorkflowDefinition } = require('../src/services/agent/agentWorkflowDefinitions.ts')
+const { workflowDefinitionPolicy } = require('../src/bootstrap/workflowDefinitions.ts')
 
 function registerTypeScriptSupport() {
   if (require.extensions['.ts']?.isPluginManifestCompatibilityHook) return
@@ -34,8 +34,8 @@ function registerTypeScriptSupport() {
   }
 
   Module._load = function loadWithMocks(request, parent, isMain) {
-    if (request === '@/services/mcp') return { listMcpServers: async () => [] }
-    if (request === '@/services/skills') return { listSkills: async () => [] }
+    if (request === '@/bootstrap/mcpCatalog') return { listMcpServers: async () => [] }
+    if (request === '@/bootstrap/conversationSkills') return { listSkills: async () => [] }
     if (request === '@/services/runtimeEvents') {
       return {
         emitRuntimeEvent: async (input) => ({
@@ -96,7 +96,7 @@ async function run() {
     'plugin hook points are explicit and finite',
   )
 
-  const workflow = createAgentWorkflowDefinition({
+  const workflow = workflowDefinitionPolicy.create({
     id: 'workflow-plugin-review',
     name: 'Plugin review workflow',
     description: 'Represent imported workflow skills in a plugin manifest.',
@@ -135,6 +135,46 @@ async function run() {
   const workflowManifestValidation = validatePluginManifest(workflowManifest)
   assert.equal(workflowManifestValidation.ok, true, `workflow plugin manifest validates: ${workflowManifestValidation.errors.join('; ')}`)
 
+  const legacyWorkflow = structuredClone(workflow)
+  legacyWorkflow.schema = 'islemind.agent.workflow.v1'
+  const legacyWorkflowSkill = {
+    ...workflowSkill,
+    systemPrompt: `Workflow definition:\n${JSON.stringify(legacyWorkflow, null, 2)}`,
+  }
+  const legacyWorkflowSkillBefore = JSON.stringify(legacyWorkflowSkill)
+  const legacyWorkflowManifest = createPluginManifestFromWorkflowSkill(legacyWorkflowSkill, 5679)
+  assert.equal(legacyWorkflowManifest.skills[0].workflow.schema, 'islemind.workflow.v2', 'plugin projection normalizes nested legacy workflows to v2')
+  assert.equal(legacyWorkflowManifest.enabled, false, 'legacy workflow plugin projection remains disabled for review')
+  assert.equal(JSON.stringify(legacyWorkflowSkill), legacyWorkflowSkillBefore, 'legacy workflow plugin projection does not mutate persisted skill input')
+  assert.equal(validatePluginManifest(legacyWorkflowManifest).ok, true, 'canonical plugin projection from a legacy workflow validates')
+
+  for (const fixture of [
+    {
+      label: 'unknown nested workflow schema',
+      workflow: { ...structuredClone(workflow), schema: 'islemind.workflow.v999' },
+    },
+    {
+      label: 'string nested workflow enabled value',
+      workflow: { ...structuredClone(workflow), enabled: 'false' },
+    },
+    {
+      label: 'malformed nested workflow list',
+      workflow: { ...structuredClone(workflow), triggerHints: 'not-an-array' },
+    },
+  ]) {
+    const malformedSkill = {
+      ...workflowSkill,
+      systemPrompt: `Workflow definition:\n${JSON.stringify(fixture.workflow, null, 2)}`,
+    }
+    let malformedManifest
+    assert.doesNotThrow(() => {
+      malformedManifest = createPluginManifestFromWorkflowSkill(malformedSkill, 5680)
+    }, `${fixture.label} never escapes plugin admission`)
+    const malformedValidation = validatePluginManifest(malformedManifest)
+    assert.equal(malformedValidation.ok, false, `${fixture.label} invalidates the plugin manifest`)
+    assert.equal(malformedValidation.sanitized?.enabled, false, `${fixture.label} cannot enable a plugin manifest`)
+  }
+
   const hookManifestValidation = validatePluginManifest({
     schema: PLUGIN_MANIFEST_SCHEMA,
     id: 'plugin:hook-review',
@@ -165,6 +205,118 @@ async function run() {
   assert.equal(hookManifestValidation.sanitized.hooks[0].execution, 'noop', 'plugin hooks record no-op execution until review')
   assert.ok(hookManifestValidation.warnings.some((warning) => warning.includes('disabled')), 'plugin manifest warns when hooks request execution')
   assert.equal(hookManifestValidation.sanitized.mcp[0].permission, 'read-only', 'plugin MCP references remain permission-bound')
+
+  const commandManifestValidation = validatePluginManifest({
+    schema: PLUGIN_MANIFEST_SCHEMA,
+    id: 'plugin:command-contract',
+    name: 'Command contract',
+    version: '1.0.0',
+    enabled: true,
+    permissions: ['read-write'],
+    requiredCapabilities: ['plugin-command'],
+    review: { state: 'approved', summary: 'reviewed' },
+    commands: [{
+      id: 'command:create-note',
+      name: 'Create note',
+      command: 'notes.create',
+      permission: 'read-write',
+      inputSchema: {
+        type: 'object',
+        additionalProperties: false,
+        description: 'Provider-only schema fields are not part of the local invocation contract.',
+        properties: {
+          title: { type: 'string', minLength: 1, maxLength: 120, pattern: '^[A-Za-z0-9 _-]+$' },
+          tags: { type: 'array', maxItems: 4, items: { type: 'string', enum: ['work', 'personal'] } },
+        },
+        required: ['title'],
+      },
+    }],
+  })
+  assert.equal(commandManifestValidation.ok, true, `plugin command manifest validates: ${commandManifestValidation.errors.join('; ')}`)
+  assert.equal(commandManifestValidation.sanitized.commands[0].command, 'notes.create', 'plugin command manifests preserve the declared command target')
+  assert.equal(commandManifestValidation.sanitized.commands[0].inputSchema.type, 'object', 'plugin command schemas retain object roots compatible with Agent tool validation')
+  assert.deepEqual(commandManifestValidation.sanitized.commands[0].inputSchema.required, ['title'], 'plugin command schemas retain declared required arguments')
+  assert.equal(commandManifestValidation.sanitized.commands[0].inputSchema.description, undefined, 'plugin command schemas discard unsupported validation fields')
+  assert.ok(commandManifestValidation.warnings.some((warning) => warning.includes('description')), 'plugin command manifests report unsupported schema fields')
+
+  const missingCommandValidation = validatePluginManifest({
+    schema: PLUGIN_MANIFEST_SCHEMA,
+    id: 'plugin:missing-command',
+    name: 'Missing command',
+    version: '1.0.0',
+    enabled: true,
+    review: { state: 'approved' },
+    commands: [{ id: 'command:missing', name: 'Missing command', command: ' ' }],
+  })
+  assert.equal(missingCommandValidation.ok, false, 'plugin command manifests reject empty command targets')
+  assert.ok(missingCommandValidation.errors.some((error) => error.includes('command is required')), 'plugin command manifests require a command target')
+
+  const malformedCommandSchemaValidation = validatePluginManifest({
+    schema: PLUGIN_MANIFEST_SCHEMA,
+    id: 'plugin:malformed-command-schema',
+    name: 'Malformed command schema',
+    version: '1.0.0',
+    enabled: true,
+    review: { state: 'approved' },
+    commands: [{
+      id: 'command:malformed',
+      name: 'Malformed command',
+      command: 'notes.create',
+      inputSchema: { type: 'string' },
+    }],
+  })
+  assert.equal(malformedCommandSchemaValidation.ok, false, 'plugin command manifests reject non-object input schema roots')
+  assert.ok(malformedCommandSchemaValidation.errors.some((error) => error.includes('object root')), 'plugin command manifests explain the required input schema root')
+
+  const unknownRequiredCommandSchemaValidation = validatePluginManifest({
+    schema: PLUGIN_MANIFEST_SCHEMA,
+    id: 'plugin:unknown-command-required',
+    name: 'Unknown command required',
+    version: '1.0.0',
+    enabled: true,
+    review: { state: 'approved' },
+    commands: [{
+      id: 'command:unknown-required',
+      name: 'Unknown required',
+      command: 'notes.create',
+      inputSchema: {
+        type: 'object',
+        properties: { title: { type: 'string' } },
+        required: ['missing'],
+      },
+    }],
+  })
+  assert.equal(unknownRequiredCommandSchemaValidation.ok, false, 'plugin command schemas reject undeclared required arguments')
+  assert.ok(unknownRequiredCommandSchemaValidation.errors.some((error) => error.includes('must reference a declared property')), 'plugin command schemas identify undeclared required arguments')
+
+  const oversizedCommandProperties = Object.fromEntries(Array.from({ length: 40 }, (_, index) => [`field${index}`, {
+    type: 'string',
+    enum: Array.from({ length: 20 }, (__, enumIndex) => `option-${index}-${enumIndex}-${'x'.repeat(12)}`),
+    pattern: `^${'x'.repeat(220)}$`,
+  }]))
+  const boundedCommandSchemaValidation = validatePluginManifest({
+    schema: PLUGIN_MANIFEST_SCHEMA,
+    id: 'plugin:bounded-command-schema',
+    name: 'Bounded command schema',
+    version: '1.0.0',
+    enabled: true,
+    review: { state: 'approved' },
+    commands: [{
+      id: 'command:bounded',
+      name: 'Bounded command',
+      command: 'notes.create',
+      inputSchema: {
+        type: 'object',
+        properties: oversizedCommandProperties,
+      },
+    }],
+  })
+  assert.equal(boundedCommandSchemaValidation.ok, true, `bounded plugin command schemas remain safe after sanitization: ${boundedCommandSchemaValidation.errors.join('; ')}`)
+  const boundedSchema = boundedCommandSchemaValidation.sanitized.commands[0].inputSchema
+  assert.ok(Object.keys(boundedSchema.properties).length <= 32, 'plugin command schema sanitization bounds declared property counts')
+  assert.ok(boundedSchema.properties.field0.enum.length <= 16, 'plugin command schema sanitization bounds enum alternatives')
+  assert.ok(boundedSchema.properties.field0.pattern.length <= 160, 'plugin command schema sanitization bounds regex pattern length')
+  assert.ok(boundedCommandSchemaValidation.warnings.some((warning) => warning.includes('truncated')), 'plugin command schema sanitization records bounded-field warnings')
 
   const mcpServerForPluginManifest = {
     id: 'mcp-plugin-review',
@@ -255,6 +407,8 @@ async function run() {
   const pluginManifestSource = readSource('src/services/pluginManifest.ts')
   assertSourceIncludes(pluginManifestSource, 'CATALOG_ENTRY_LIMIT = 80', 'plugin catalog has an entry limit')
   assertSourceIncludes(pluginManifestSource, 'CATALOG_RUNTIME_CAPABILITY_LIMIT = 12', 'plugin catalog has a runtime capability limit')
+  assertSourceIncludes(pluginManifestSource, 'PLUGIN_COMMAND_SCHEMA_PROPERTY_LIMIT = 32', 'plugin command schemas have a property-count limit')
+  assertSourceIncludes(pluginManifestSource, 'validatePluginCommandInputSchema', 'plugin command schemas validate invocation arguments before command hosts use them')
   assertSourceIncludes(pluginManifestSource, "execution: 'noop'", 'plugin hooks remain no-op by default')
   assertSourceIncludes(pluginManifestSource, 'emitPluginManifestCatalogSnapshotEvent', 'plugin catalog can emit typed runtime events')
 

@@ -1,18 +1,30 @@
 const fs = require('node:fs')
+const crypto = require('node:crypto')
 const http = require('node:http')
 const path = require('node:path')
 const { execFileSync } = require('node:child_process')
 const { Worker, isMainThread, parentPort, workerData } = require('node:worker_threads')
 const { resolveApkArtifactPath, defaultReleaseSmokeVariant } = require('./release-artifact-contract')
 const { defaultReleaseAppPackageName } = require('./release-validation-contract')
+const {
+  createLocalModelDownloadResultFixture,
+  validateLocalModelDownloadResult,
+} = require('./local-model-download-result-contract')
+const {
+  createLocalModelCorruptMirrorRowsFixture,
+  validateLocalModelCorruptMirrorRows,
+} = require('./local-model-corrupt-mirror-log-contract')
 
 const root = path.resolve(__dirname, '..')
 const evidenceDir = path.join(root, 'test-evidence', 'qa')
 const smokeDir = path.join(evidenceDir, 'local-model-android')
 const appPackageName = defaultReleaseAppPackageName
-const explicitDeviceRequested = Boolean(process.env.QA_DEVICE_SERIAL)
-const defaultDevice = process.env.QA_DEVICE_SERIAL || 'emulator-5554'
+const requestedDevice = String(process.env.QA_DEVICE_SERIAL ?? '').trim()
 const modelId = 'all-MiniLM-L6-v2'
+const ragSectionLabels = ['RAG retrieval mode', 'RAG 检索模式']
+const localModelSectionLabels = ['Local models', '本地模型']
+const localModelControlLabels = ['Download mirror', '下载镜像源']
+const localModelDownloadedLabels = ['模型已下载', 'Downloaded', 'Model downloaded']
 const modelRoot = path.join(root, 'assets', 'models', modelId)
 const rawDownloadResultPath = path.join(evidenceDir, 'raw-settings-context-local-model-download-emulator-results.json')
 const rawCorruptLogPath = path.join(evidenceDir, 'raw-local-model-corrupt-mirror-requests.jsonl')
@@ -20,7 +32,7 @@ const outputPath = path.join(evidenceDir, 'local-model-android-evidence-results.
 
 if (!isMainThread) {
   runMirrorWorker()
-} else {
+} else if (require.main === module) {
   main().catch((error) => {
     console.error(error?.stack ?? error?.message ?? String(error))
     process.exitCode = 1
@@ -28,11 +40,23 @@ if (!isMainThread) {
 }
 
 async function main() {
+  if (process.argv.includes('--self-test')) {
+    runSelfTest()
+    return
+  }
+
+  if (!requestedDevice) {
+    throw new Error('QA_DEVICE_SERIAL is required and must name an Android emulator for local-model evidence.')
+  }
+  const device = resolveDevice(requestedDevice)
+  if (!device) {
+    throw new Error(`QA_DEVICE_SERIAL=${requestedDevice} is not a connected Android emulator.`)
+  }
+
   fs.mkdirSync(smokeDir, { recursive: true })
   fs.mkdirSync(evidenceDir, { recursive: true })
   fs.writeFileSync(rawCorruptLogPath, '', 'utf8')
 
-  const device = resolveDevice(defaultDevice, { strict: explicitDeviceRequested })
   const result = {
     generatedAt: new Date().toISOString(),
     device,
@@ -44,7 +68,6 @@ async function main() {
     errors: [],
   }
 
-  if (!device) throw new Error('No connected adb device was found for local-model Android evidence.')
   result.apk = cleanInstallCurrentApk(device)
 
   result.corrupt = await runScenario(device, {
@@ -62,17 +85,91 @@ async function main() {
     cleanInstallBeforeRun: false,
   })
 
-  const downloadResult = buildDownloadResult(result.success)
+  const downloadResult = buildDownloadResult(result.success, result.apk, device)
+  const corruptRows = readJsonl(rawCorruptLogPath)
+  const issues = collectEvidenceIssues({
+    downloadResult,
+    corruptRows,
+    success: result.success,
+    corrupt: result.corrupt,
+  })
+  result.errors.push(...issues)
   fs.writeFileSync(rawDownloadResultPath, `${JSON.stringify(downloadResult, null, 2)}\n`, 'utf8')
   fs.writeFileSync(outputPath, `${JSON.stringify(result, null, 2)}\n`, 'utf8')
 
-  const corruptRows = readJsonl(rawCorruptLogPath)
-  const passed = result.success?.downloaded === true
-    && result.success?.finalRowEnabled === true
-    && corruptRows.some((row) => row.relative === 'config.json')
-    && corruptRows.some((row) => row.relative === 'special_tokens_map.json')
+  const passed = issues.length === 0
   console.log(`${passed ? 'Local-model Android evidence passed' : 'Local-model Android evidence failed'}: ${relative(outputPath)}, ${relative(rawDownloadResultPath)}, ${relative(rawCorruptLogPath)}`)
+  for (const issue of issues) console.error(issue)
   if (!passed) process.exitCode = 1
+}
+
+function runSelfTest() {
+  const serials = ['dadaa813', 'emulator-5554']
+  const isFixtureEmulator = (serial) => serial.startsWith('emulator-')
+  if (selectEmulatorDevice(serials, 'dadaa813', isFixtureEmulator) !== null) {
+    throw new Error('Local-model collector self-test selected a physical device.')
+  }
+  if (selectEmulatorDevice(['dadaa813'], '', isFixtureEmulator) !== null) {
+    throw new Error('Local-model collector self-test allowed implicit physical-device fallback.')
+  }
+  if (selectEmulatorDevice(serials, 'emulator-5554', isFixtureEmulator) !== 'emulator-5554') {
+    throw new Error('Local-model collector self-test did not select the requested emulator.')
+  }
+  if (buildDeviceMirrorUrl(54321) !== 'http://127.0.0.1:54321') {
+    throw new Error('Local-model collector self-test did not isolate the mirror through device loopback.')
+  }
+  if (!hasAnyText('<node text="Model downloaded" />', localModelDownloadedLabels)) {
+    throw new Error('Local-model collector self-test did not recognize the English success dialog.')
+  }
+
+  const scrollableNode = '<node text="" class="android.widget.ScrollView" scrollable="true" bounds="[0,66][1080,2334]" />'
+  const collapsedContext = `<hierarchy>${scrollableNode}<node text="RAG retrieval mode" class="android.widget.Button" clickable="true" enabled="true" bounds="[33,682][1047,798]" /></hierarchy>`
+  const expandedRag = `<hierarchy>${scrollableNode}<node text="Local models" class="android.widget.Button" clickable="true" enabled="true" bounds="[33,1620][1047,1740]" /></hierarchy>`
+  const expandedLocalModels = `<hierarchy>${scrollableNode}<node text="Download mirror" class="android.widget.TextView" enabled="true" bounds="[33,980][1047,1030]" /><node text="For example https://hf-mirror.com" hint="For example https://hf-mirror.com" class="android.widget.EditText" enabled="true" bounds="[33,1040][1047,1160]" /></hierarchy>`
+  const enteredMirrorUrl = 'http://10.0.2.2:54321'
+  const enteredLocalModels = `<hierarchy>${scrollableNode}<node text="Download mirror" class="android.widget.TextView" enabled="true" bounds="[33,980][1047,1030]" /><node text="${enteredMirrorUrl}" hint="For example https://hf-mirror.com" class="android.widget.EditText" enabled="true" bounds="[33,1040][1047,1160]" /></hierarchy>`
+  const navigationState = { ragOpened: false, localModelsOpened: false }
+  if (planLocalModelSettingsNavigation(collapsedContext, navigationState) !== 'tap-rag') {
+    throw new Error('Local-model collector self-test did not open the RAG disclosure first.')
+  }
+  navigationState.ragOpened = true
+  if (planLocalModelSettingsNavigation(expandedRag, navigationState) !== 'tap-local-models') {
+    throw new Error('Local-model collector self-test did not open the local-model disclosure second.')
+  }
+  navigationState.localModelsOpened = true
+  if (planLocalModelSettingsNavigation(expandedLocalModels, navigationState) !== 'ready') {
+    throw new Error('Local-model collector self-test did not recognize the expanded mirror controls.')
+  }
+  if (hasEditableValue(expandedLocalModels, enteredMirrorUrl) || !hasEditableValue(enteredLocalModels, enteredMirrorUrl)) {
+    throw new Error('Local-model collector self-test did not distinguish a placeholder from an entered mirror URL.')
+  }
+  const swipe = resolveSwipeGesture(collapsedContext)
+  if (swipe.x !== 540 || swipe.startY <= swipe.endY || swipe.startY >= 2334 || swipe.endY <= 66) {
+    throw new Error('Local-model collector self-test did not derive a bounded emulator swipe gesture.')
+  }
+
+  const issues = collectEvidenceIssues({
+    downloadResult: createLocalModelDownloadResultFixture(),
+    corruptRows: createLocalModelCorruptMirrorRowsFixture(),
+    success: { downloaded: true, finalRowEnabled: true, errors: [] },
+    corrupt: { errors: [] },
+  })
+  if (issues.length) {
+    throw new Error(`Local-model collector self-test rejected valid fixture evidence: ${issues.join(', ')}`)
+  }
+  console.log('Local-model Android evidence collector self-test passed.')
+}
+
+function collectEvidenceIssues(input) {
+  const issues = [
+    ...validateLocalModelDownloadResult(input.downloadResult),
+    ...validateLocalModelCorruptMirrorRows(input.corruptRows),
+  ]
+  if (input.success?.downloaded !== true) issues.push('Successful local-model scenario did not prove a completed download.')
+  if (input.success?.finalRowEnabled !== true) issues.push('Successful local-model scenario did not prove the final enabled row.')
+  for (const error of input.success?.errors ?? []) issues.push(`Successful local-model scenario error: ${error}`)
+  for (const error of input.corrupt?.errors ?? []) issues.push(`Corrupt local-model scenario error: ${error}`)
+  return issues
 }
 
 async function runScenario(device, options) {
@@ -94,16 +191,15 @@ async function runScenario(device, options) {
   }
 
   try {
-    const mirrorUrl = buildDeviceMirrorUrl(device, mirror.port)
+    const mirrorUrl = buildDeviceMirrorUrl(mirror.port)
     scenario.mirror = {
       emulatorUrl: mirrorUrl,
       hostPort: mirror.port,
       mode: options.mode,
     }
-    if (!isEmulatorDevice(device)) {
-      runCommand('adb', ['-s', device, 'reverse', `tcp:${mirror.port}`, `tcp:${mirror.port}`])
-      reversedPort = mirror.port
-    }
+    const reverseResult = runCommand('adb', ['-s', device, 'reverse', `tcp:${mirror.port}`, `tcp:${mirror.port}`])
+    if (reverseResult === null) throw new Error('Could not establish the local-model ADB reverse mirror lease.')
+    reversedPort = mirror.port
     if (process.env.QA_LOCAL_MODEL_KEEP_NETWORK !== '1') disableExternalNetwork(device)
 
     forceStop(device)
@@ -114,6 +210,12 @@ async function runScenario(device, options) {
     const mirrorSet = setMirrorUrl(device, mirrorUrl, `${options.capturePrefix}-mirror`)
     scenario.captures.mirrorSetPng = mirrorSet.capture.png
     scenario.captures.mirrorSetUia = mirrorSet.capture.uia
+    scenario.captures.mirrorTypedPng = mirrorSet.typedCapture?.png ?? null
+    scenario.captures.mirrorTypedUia = mirrorSet.typedCapture?.uia ?? null
+    scenario.captures.mirrorReloadedContextPng = mirrorSet.reloadedContext?.png ?? null
+    scenario.captures.mirrorReloadedContextUia = mirrorSet.reloadedContext?.uia ?? null
+    scenario.captures.mirrorReloadedSettingsPng = mirrorSet.capture.png
+    scenario.captures.mirrorReloadedSettingsUia = mirrorSet.capture.uia
     scenario.mirror.inputTapped = mirrorSet.tapped
 
     const confirm = openDownloadConfirm(device, `${options.capturePrefix}-download`)
@@ -140,7 +242,7 @@ async function runScenario(device, options) {
       scenario.captures.verifyPng = verify.png
       scenario.captures.verifyUia = verify.uia
 
-      const successDialog = waitForAnyText(device, ['模型已下载', 'Downloaded'], `${options.capturePrefix}-success-dialog`, 60, 1000)
+      const successDialog = waitForAnyText(device, localModelDownloadedLabels, `${options.capturePrefix}-success-dialog`, 60, 1000)
       scenario.observations.push(observation('success-dialog', successDialog))
       scenario.captures.successDialogPng = successDialog.png
       scenario.captures.successDialogUia = successDialog.uia
@@ -151,7 +253,7 @@ async function runScenario(device, options) {
       scenario.observations.push(observation('final-row', finalRow))
       scenario.captures.finalRowPng = finalRow.png
       scenario.captures.finalRowUia = finalRow.uia
-      scenario.downloaded = hasAnyText(successDialog.uiaText, ['模型已下载', 'Downloaded']) || hasModelStatus(finalRow.uiaText, ['已启用', 'Enabled'])
+      scenario.downloaded = hasAnyText(successDialog.uiaText, localModelDownloadedLabels) || hasModelStatus(finalRow.uiaText, ['已启用', 'Enabled'])
       scenario.finalRowEnabled = hasModelStatus(finalRow.uiaText, ['已启用', 'Enabled'])
     } else {
       const failed = waitForAnyText(device, ['模型下载失败', '失败详情', '校验失败', 'download failed', 'corrupt mirror fixture'], 'local-model-corrupt-download-after', 24, 800)
@@ -177,11 +279,22 @@ async function runScenario(device, options) {
   return scenario
 }
 
-function buildDownloadResult(success) {
+function buildDownloadResult(success, apk, device) {
   return {
     schema: 'islemind.local-model-download-result.v1',
     generatedAt: new Date().toISOString(),
     startedFromFreshInstall: true,
+    device: {
+      serial: device,
+      emulator: true,
+      abi: apk?.deviceAbi ?? '',
+    },
+    apk: {
+      path: apk?.path ?? '',
+      sha256: apk?.sha256 ?? '',
+      arch: apk?.arch ?? '',
+      variant: apk?.variant ?? '',
+    },
     mirror: {
       emulatorUrl: success?.mirror?.emulatorUrl ?? '',
       model: modelId,
@@ -213,22 +326,88 @@ function waitForSettingsContext(device, captureName) {
 }
 
 function setMirrorUrl(device, mirrorUrl, capturePrefix) {
-  let capture = captureStep(device, `${capturePrefix}-0`)
+  let capture = openLocalModelSettings(device, `${capturePrefix}-settings`)
   for (let index = 0; index < 14; index += 1) {
     const tapped = tapEditable(device, capture.uiaText, ['下载镜像源', 'Download mirror', 'Mirror', 'https://hf-mirror.com'])
     if (tapped) {
-      sleep(600)
-      inputText(device, mirrorUrl)
-      sleep(900)
+      sleep(1100)
+      const entered = replaceFocusedEditableText(device, mirrorUrl, `${capturePrefix}-typed`)
+      if (!entered) throw new Error('Could not enter the local-model mirror URL.')
       runCommand('adb', ['-s', device, 'shell', 'input', 'keyevent', '4'])
       sleep(800)
-      return { tapped: true, capture: captureStep(device, `${capturePrefix}-entered`) }
+      const enteredCapture = captureStep(device, `${capturePrefix}-entered`)
+      if (!hasEditableValue(enteredCapture.uiaText, mirrorUrl)) {
+        throw new Error('Local-model mirror URL did not persist after keyboard dismissal.')
+      }
+      forceStop(device)
+      sleep(900)
+      const reloadedContext = waitForSettingsContext(device, `${capturePrefix}-reloaded-context`)
+      const reloadedSettings = openLocalModelSettings(device, `${capturePrefix}-reloaded-settings`)
+      if (!hasEditableValue(reloadedSettings.uiaText, mirrorUrl)) {
+        throw new Error('Local-model mirror URL did not survive app restart.')
+      }
+      return {
+        tapped: true,
+        capture: reloadedSettings,
+        typedCapture: enteredCapture,
+        reloadedContext,
+      }
     }
-    swipeUp(device)
+    swipeUp(device, capture.uiaText)
     sleep(450)
     capture = captureStep(device, `${capturePrefix}-${index + 1}`)
   }
   return { tapped: false, capture }
+}
+
+function replaceFocusedEditableText(device, value, capturePrefix) {
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    runCommand('adb', ['-s', device, 'shell', 'input', 'keycombination', 'KEYCODE_CTRL_LEFT', 'KEYCODE_A'])
+    runCommand('adb', ['-s', device, 'shell', 'input', 'keyevent', 'KEYCODE_DEL'])
+    sleep(250)
+    inputText(device, value)
+    sleep(1100)
+    const capture = captureStep(device, `${capturePrefix}-${attempt + 1}`)
+    if (hasEditableValue(capture.uiaText, value)) return true
+    sleep(650)
+  }
+  return false
+}
+
+function hasEditableValue(uiaText, value) {
+  return parseNodes(uiaText).some((node) => node.className.includes('EditText') && node.text === value)
+}
+
+function openLocalModelSettings(device, capturePrefix) {
+  const state = { ragOpened: false, localModelsOpened: false }
+  let capture = captureStep(device, `${capturePrefix}-0`)
+  for (let index = 0; index < 24; index += 1) {
+    const action = planLocalModelSettingsNavigation(capture.uiaText, state)
+    if (action === 'ready') return capture
+    if (action === 'tap-rag') {
+      if (!tapText(device, capture.uiaText, ragSectionLabels)) {
+        throw new Error('Could not open RAG settings for local-model evidence.')
+      }
+      state.ragOpened = true
+    } else if (action === 'tap-local-models') {
+      if (!tapText(device, capture.uiaText, localModelSectionLabels)) {
+        throw new Error('Could not open local-model settings for evidence.')
+      }
+      state.localModelsOpened = true
+    } else {
+      swipeUp(device, capture.uiaText)
+    }
+    sleep(550)
+    capture = captureStep(device, `${capturePrefix}-${index + 1}`)
+  }
+  throw new Error('Could not reach local-model mirror controls.')
+}
+
+function planLocalModelSettingsNavigation(uiaText, state) {
+  if (hasAnyText(uiaText, localModelControlLabels)) return 'ready'
+  if (!state.ragOpened && hasAnyText(uiaText, ragSectionLabels)) return 'tap-rag'
+  if (!state.localModelsOpened && hasAnyText(uiaText, localModelSectionLabels)) return 'tap-local-models'
+  return 'swipe'
 }
 
 function openDownloadConfirm(device, capturePrefix) {
@@ -238,7 +417,7 @@ function openDownloadConfirm(device, capturePrefix) {
       sleep(900)
       return captureStep(device, `${capturePrefix}-confirm`)
     }
-    swipeUp(device)
+    swipeUp(device, capture.uiaText)
     sleep(450)
     capture = captureStep(device, `${capturePrefix}-${index + 1}`)
   }
@@ -393,7 +572,8 @@ function requestRelativePath(url) {
 }
 
 function cleanInstallCurrentApk(device) {
-  const apkPath = resolveCurrentApkPath(device)
+  const descriptor = resolveCurrentApkDescriptor(device)
+  const apkPath = descriptor.path
   runCommand('adb', ['-s', device, 'uninstall', appPackageName], { timeout: 120000 })
   const installOutput = execFileSync('adb', ['-s', device, 'install', apkPath], {
     cwd: root,
@@ -404,25 +584,31 @@ function cleanInstallCurrentApk(device) {
   }).trim()
   return {
     path: relative(apkPath),
+    sha256: sha256File(apkPath),
+    arch: descriptor.arch,
+    variant: descriptor.variant,
+    deviceAbi: descriptor.deviceAbi,
     installOutput,
     startedFromFreshInstall: true,
   }
 }
 
-function resolveCurrentApkPath(device) {
-  if (process.env.QA_APK_PATH) return path.resolve(root, process.env.QA_APK_PATH)
+function resolveCurrentApkDescriptor(device) {
   const packageJson = JSON.parse(fs.readFileSync(path.join(root, 'package.json'), 'utf8'))
-  const arch = process.env.QA_APK_ARCH || readDeviceAbi(device) || 'arm64-v8a'
+  const deviceAbi = readDeviceAbi(device) || ''
+  const arch = process.env.QA_APK_ARCH || deviceAbi || 'arm64-v8a'
   const variant = process.env.QA_APK_VARIANT || defaultReleaseSmokeVariant
-  return resolveApkArtifactPath(root, { version: packageJson.version, arch, variant })
+  const resolvedPath = process.env.QA_APK_PATH
+    ? path.resolve(root, process.env.QA_APK_PATH)
+    : resolveApkArtifactPath(root, { version: packageJson.version, arch, variant })
+  return { path: resolvedPath, arch, variant, deviceAbi }
 }
 
 function readDeviceAbi(device) {
   return runCommand('adb', ['-s', device, 'shell', 'getprop', 'ro.product.cpu.abi'])?.trim() ?? null
 }
 
-function buildDeviceMirrorUrl(device, port) {
-  if (isEmulatorDevice(device)) return `http://10.0.2.2:${port}`
+function buildDeviceMirrorUrl(port) {
   return `http://127.0.0.1:${port}`
 }
 
@@ -450,16 +636,26 @@ function restoreNetworkState(device, state) {
   runCommand('adb', ['-s', device, 'shell', 'svc', 'data', state.dataEnabled ? 'enable' : 'disable'])
 }
 
-function resolveDevice(requested, options = {}) {
+function resolveDevice(requested) {
   const output = runCommand('adb', ['devices']) ?? ''
   const serials = output
     .split(/\r?\n/)
     .map((line) => line.trim().split(/\s+/))
     .filter(([serial, state]) => serial && state === 'device')
     .map(([serial]) => serial)
-  if (serials.includes(requested)) return requested
-  if (options.strict) return null
-  return serials[0] ?? null
+  return selectEmulatorDevice(serials, requested, isEmulatorDevice)
+}
+
+function selectEmulatorDevice(serials, requested, emulatorPredicate) {
+  const normalizedRequested = String(requested ?? '').trim()
+  if (!normalizedRequested || !serials.includes(normalizedRequested)) return null
+  return emulatorPredicate(normalizedRequested) ? normalizedRequested : null
+}
+
+function sha256File(file) {
+  const hash = crypto.createHash('sha256')
+  hash.update(fs.readFileSync(file))
+  return hash.digest('hex')
 }
 
 function captureStep(device, name) {
@@ -558,6 +754,7 @@ function parseNodes(uiaText) {
       enabled: matchFirst(tag, /enabled="([^"]+)"/) !== 'false',
       focused: matchFirst(tag, /focused="([^"]+)"/) === 'true',
       clickable: matchFirst(tag, /clickable="([^"]+)"/) === 'true',
+      scrollable: matchFirst(tag, /scrollable="([^"]+)"/) === 'true',
     })
   }
   return nodes
@@ -588,8 +785,25 @@ function tapBoundsCenter(device, bounds) {
   runCommand('adb', ['-s', device, 'shell', 'input', 'tap', String(Math.round((box.left + box.right) / 2)), String(Math.round((box.top + box.bottom) / 2))])
 }
 
-function swipeUp(device) {
-  runCommand('adb', ['-s', device, 'shell', 'input', 'swipe', '540', '1780', '540', '620', '430'])
+function resolveSwipeGesture(uiaText) {
+  const scrollableBounds = parseNodes(uiaText)
+    .filter((node) => node.scrollable)
+    .map((node) => parseBounds(node.bounds))
+    .filter(Boolean)
+    .sort((left, right) => boundsArea(right) - boundsArea(left))[0]
+  if (!scrollableBounds) return { x: 540, startY: 1780, endY: 620 }
+  const height = scrollableBounds.bottom - scrollableBounds.top
+  const verticalInset = Math.max(96, Math.round(height * 0.16))
+  return {
+    x: Math.round((scrollableBounds.left + scrollableBounds.right) / 2),
+    startY: scrollableBounds.bottom - verticalInset,
+    endY: scrollableBounds.top + verticalInset,
+  }
+}
+
+function swipeUp(device, uiaText) {
+  const gesture = resolveSwipeGesture(uiaText)
+  runCommand('adb', ['-s', device, 'shell', 'input', 'swipe', String(gesture.x), String(gesture.startY), String(gesture.x), String(gesture.endY), '430'])
 }
 
 function inputText(device, value) {
@@ -675,4 +889,11 @@ function sleep(ms) {
 
 function relative(file) {
   return path.relative(root, file).replace(/\\/g, '/')
+}
+
+module.exports = {
+  buildDownloadResult,
+  collectEvidenceIssues,
+  resolveCurrentApkDescriptor,
+  selectEmulatorDevice,
 }

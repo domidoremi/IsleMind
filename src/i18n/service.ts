@@ -1,4 +1,4 @@
-import type { Language } from '@/types'
+import type { Language } from '@/types/settingsContracts'
 import en from './resources/en.json'
 import ja from './resources/ja.json'
 import zhCN from './resources/zh-CN.json'

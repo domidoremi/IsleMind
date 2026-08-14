@@ -1,5 +1,4 @@
-import type { Attachment } from '@/types'
-
+import type { Attachment } from '@/types/chatContracts'
 export function attachmentHasPayload(attachment: Attachment | null | undefined): attachment is Attachment & { base64: string } {
   return typeof attachment?.base64 === 'string' && attachment.base64.length > 0
 }

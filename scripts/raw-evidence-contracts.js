@@ -1,5 +1,6 @@
 const fs = require('node:fs')
 const path = require('node:path')
+const crypto = require('node:crypto')
 const {
   createSettingsKnowledgeSelfTestFixture,
   validateSettingsKnowledgeSelfTestResult,
@@ -20,7 +21,7 @@ const {
 const root = path.resolve(__dirname, '..')
 const evidenceDir = path.join(root, 'test-evidence', 'qa')
 const rawEvidenceContractResultsName = 'raw-evidence-contract-results.json'
-const rawEvidenceContractResultsSchema = 'islemind.qa-raw-evidence-contract-results.v1'
+const rawEvidenceContractResultsSchema = 'islemind.qa-raw-evidence-contract-results.v2'
 const outputPath = path.join(evidenceDir, rawEvidenceContractResultsName)
 
 const contracts = [
@@ -75,9 +76,24 @@ function main() {
 
 function runSelfTest() {
   for (const contract of contracts) {
-    const issues = contract.validate(contract.fixture())
+    const fixture = contract.fixture()
+    const issues = contract.validate(fixture)
     if (issues.length) {
       throw new Error(`${contract.name} rejected fixture: ${issues.join(', ')}`)
+    }
+    const fixtureBuffer = canonicalEvidenceBuffer(fixture, contract.format)
+    const provenance = createSourceProvenance(fixtureBuffer, {
+      mtime: new Date('2026-01-01T00:00:00.000Z'),
+      mtimeMs: Date.parse('2026-01-01T00:00:00.000Z'),
+    }, fixture, contract.format)
+    if (!/^[a-f0-9]{64}$/.test(provenance.sourceSha256)) {
+      throw new Error(`${contract.name} did not produce a source SHA-256.`)
+    }
+    if (provenance.sourceSha256 !== provenance.canonicalSha256) {
+      throw new Error(`${contract.name} canonical fixture digest did not match its source digest.`)
+    }
+    if (!Number.isFinite(provenance.modifiedAtMs)) {
+      throw new Error(`${contract.name} did not produce a numeric source modification timestamp.`)
     }
   }
   console.log('Raw evidence contract self-test passed.')
@@ -93,13 +109,20 @@ function validateContractSource(contract) {
       issues: [`Missing raw evidence source ${contract.source}.`],
     }
   }
+  let sourceBuffer = null
+  let sourceStat = null
   try {
-    const data = contract.format === 'jsonl' ? readJsonl(file) : JSON.parse(fs.readFileSync(file, 'utf8'))
+    sourceBuffer = fs.readFileSync(file)
+    sourceStat = fs.statSync(file)
+    const data = contract.format === 'jsonl'
+      ? parseJsonl(sourceBuffer.toString('utf8'))
+      : JSON.parse(sourceBuffer.toString('utf8'))
     const issues = contract.validate(data)
     return {
       name: contract.name,
       source: contract.source,
       status: issues.length ? 'failed' : 'passed',
+      provenance: createSourceProvenance(sourceBuffer, sourceStat, data, contract.format),
       issues,
     }
   } catch (error) {
@@ -107,17 +130,48 @@ function validateContractSource(contract) {
       name: contract.name,
       source: contract.source,
       status: 'parse-failed',
+      ...(sourceBuffer && sourceStat
+        ? { provenance: createSourceProvenance(sourceBuffer, sourceStat, null, contract.format) }
+        : {}),
       issues: [`Could not parse ${contract.source}: ${error.message}`],
     }
   }
 }
 
-function readJsonl(file) {
-  return fs.readFileSync(file, 'utf8')
+function parseJsonl(text) {
+  return text
     .split(/\r?\n/)
     .map((line) => line.trim())
     .filter(Boolean)
     .map((line) => JSON.parse(line))
+}
+
+function createSourceProvenance(sourceBuffer, sourceStat, data, format) {
+  return {
+    sourceSha256: sha256Buffer(sourceBuffer),
+    canonicalSha256: data == null ? null : canonicalEvidenceSha256(data, format),
+    sizeBytes: sourceBuffer.length,
+    modifiedAt: sourceStat.mtime.toISOString(),
+    modifiedAtMs: sourceStat.mtimeMs,
+    recordCount: data == null ? null : format === 'jsonl' ? data.length : 1,
+  }
+}
+
+function canonicalEvidenceSha256(data, format) {
+  return sha256Buffer(canonicalEvidenceBuffer(data, format))
+}
+
+function canonicalEvidenceBuffer(data, format) {
+  const text = format === 'jsonl'
+    ? `${data.map((row) => JSON.stringify(row)).join('\n')}\n`
+    : JSON.stringify(data)
+  return Buffer.from(text, 'utf8')
+}
+
+function sha256Buffer(buffer) {
+  const hash = crypto.createHash('sha256')
+  hash.update(buffer)
+  return hash.digest('hex')
 }
 
 function summarizeResults(results) {
@@ -133,10 +187,14 @@ function relative(file) {
   return path.relative(root, file).replace(/\\/g, '/')
 }
 
-main()
+if (require.main === module) main()
 
 module.exports = {
+  canonicalEvidenceBuffer,
+  canonicalEvidenceSha256,
   contracts,
+  createSourceProvenance,
   rawEvidenceContractResultsName,
   rawEvidenceContractResultsSchema,
+  sha256Buffer,
 }

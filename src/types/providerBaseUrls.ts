@@ -4,8 +4,7 @@ import type {
   ProviderCredentialMode,
   ProviderRegion,
   ProviderWireProtocol,
-} from './index'
-
+} from './providerContracts'
 export const XIAOMI_MIMO_PAYG_BASE_URL = 'https://api.xiaomimimo.com/v1'
 export const XIAOMI_MIMO_TOKEN_PLAN_BASE_URLS: Record<ProviderRegion, string> = {
   cn: 'https://token-plan-cn.xiaomimimo.com/v1',
@@ -42,7 +41,7 @@ export function getXiaomiMimoOfficialBaseUrl(
   return mode === 'token-plan' ? XIAOMI_MIMO_TOKEN_PLAN_BASE_URLS[region] : XIAOMI_MIMO_PAYG_BASE_URL
 }
 
-export function getProviderOfficialBaseUrl(provider: Pick<AIProvider, 'type' | 'credentialMode' | 'tokenPlanRegion' | 'wireProtocol'>): string {
+export function getProviderOfficialBaseUrl(provider: Pick<AIProvider, 'type' | 'credentialMode' | 'tokenPlanRegion' | 'wireProtocol'>): string | undefined {
   switch (provider.type) {
     case 'openai':
       return 'https://api.openai.com/v1'
@@ -53,12 +52,14 @@ export function getProviderOfficialBaseUrl(provider: Pick<AIProvider, 'type' | '
     case 'xiaomi-mimo':
       return getXiaomiMimoOfficialBaseUrl(provider.credentialMode ?? 'token-plan', provider.tokenPlanRegion ?? 'cn', provider.wireProtocol ?? 'openai-compatible')
     case 'openai-compatible':
-      return 'https://api.openai.com/v1'
+      // Compatibility is a wire adapter, not a vendor identity. It has no
+      // official endpoint and must never silently route to OpenAI.
+      return undefined
   }
 }
 
 export function getProviderEffectiveBaseUrl(provider: Pick<AIProvider, 'type' | 'baseUrl' | 'credentialMode' | 'tokenPlanRegion' | 'wireProtocol'>): string {
-  return provider.baseUrl?.trim() || getProviderOfficialBaseUrl(provider)
+  return provider.baseUrl?.trim() || getProviderOfficialBaseUrl(provider) || ''
 }
 
 export function hasCustomProviderBaseUrl(provider: Pick<AIProvider, 'baseUrl'>): boolean {
@@ -79,15 +80,23 @@ export function sanitizeProviderBaseUrl(value: string | undefined): string | und
 
 export function isHttpProviderBaseUrl(provider: Pick<AIProvider, 'type' | 'baseUrl' | 'credentialMode' | 'tokenPlanRegion' | 'wireProtocol'>): boolean {
   const baseUrl = getProviderEffectiveBaseUrl(provider)
+  if (!baseUrl) return false
   try {
     const parsed = new URL(baseUrl)
     return (parsed.protocol === 'http:' || parsed.protocol === 'https:') && !parsed.username && !parsed.password
   } catch {
-    return !hasCustomProviderBaseUrl(provider)
+    return false
   }
 }
 
 export function getProviderConfigIssue(provider: Pick<AIProvider, 'type' | 'baseUrl' | 'credentialMode' | 'tokenPlanRegion' | 'wireProtocol'>, apiKey = ''): ProviderConfigIssue | null {
+  if (!getProviderEffectiveBaseUrl(provider)) {
+    return {
+      code: 'bad_base_url',
+      messageKey: 'providerIssue.missingBaseUrl',
+      message: 'providerIssue.missingBaseUrl',
+    }
+  }
   if (hasCustomProviderBaseUrl(provider) && !isHttpProviderBaseUrl(provider)) {
     return {
       code: 'bad_base_url',

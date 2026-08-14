@@ -1,33 +1,53 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
-import { ActivityIndicator, Platform, ScrollView, StyleSheet, Text, View, useWindowDimensions, type ViewStyle } from 'react-native'
+import { Platform, ScrollView, StyleSheet, Text, TextInput, View, useWindowDimensions, type ViewStyle } from 'react-native'
 import { router, usePathname } from 'expo-router'
 import * as Clipboard from 'expo-clipboard'
 import * as Sharing from 'expo-sharing'
 import { AnimatePresence, MotiView } from 'moti'
 import { useTranslation } from 'react-i18next'
-import { AnimatedNavigationTrigger, type NavigationGlyph } from '@/components/navigation/AnimatedNavigationTrigger'
-import { AppIcon, appIconStroke } from '@/components/ui/AppIcon'
+import { AnimatedNavigationTrigger } from '@/components/navigation/AnimatedNavigationTrigger'
+import { AppIcon, appIconStroke, type AppIconName } from '@/components/ui/AppIcon'
+import { HighFrameSpinner } from '@/components/ui/HighFrameSpinner'
 import { IslePressable } from '@/components/ui/isle'
 import { IsleChip } from '@/components/ui/isle'
 import { IsleButton } from '@/components/ui/isle'
-import { IsleDisclosure, IsleField, IsleHeader, IsleSection, IsleToggle } from '@/components/ui/isle'
-import { IsleMetric } from '@/components/ui/isle'
+import { IsleProgress } from '@/components/ui/isle'
+import { IsleDisclosure, IsleField, IsleToggle } from '@/components/ui/isle'
+import { SettingsSummaryStrip, type SettingsSummaryItem } from '@/components/settings/SettingsSummaryStrip'
+import {
+  LimeRoadSettingsOverviewExperience,
+  MarkdownSettingsOverviewExperience,
+  MinimalSettingsOverviewExperience,
+} from '@/components/settings/theme-experiences/SettingsOverviewExperiences'
+import {
+  SettingsControlCatalog,
+  SettingsControlNavigation,
+  type SettingsControlView,
+} from '@/components/settings/theme-experiences/SettingsControlCatalogExperiences'
 import { useAppTheme } from '@/hooks/useAppTheme'
 import { useSettingsStore } from '@/store/settingsStore'
 import { useChatStore } from '@/store/chatStore'
-import { exportToJsonFile, importFromJsonFileDetailed } from '@/services/portableData'
-import { formatImportSizeLimit, MAX_IMPORT_JSON_FILE_BYTES } from '@/services/fileImportGuards'
+import type { PortableDataExportOptions, PortableDataExportResult } from '@/modules/data-management'
+import {
+  clearPortableApplicationData,
+  exportPortableDataToJsonFile,
+  importPortableDataFromJsonFile,
+} from '@/presentation/features/settings/portableDataCommand'
+import { formatImportSizeLimit, MAX_IMPORT_JSON_FILE_BYTES } from '@/platform/native/boundedImportFile'
 import { checkLatestApkRelease, downloadAndOpenApkInstaller, formatApkSizeBytes, formatUpdateCheckTime, getVersionSnapshot, shouldRecordApkUpdateCheck, type ApkInstallProgress, type ApkInstallProgressStage, type ApkReleaseInfo } from '@/services/appUpdates'
 import { useIsleDialog } from '@/components/ui/isle'
-import { resolveSearchProvider, searchProviderLabel } from '@/services/searchPolicy'
+import { resolveSearchProvider } from '@/modules/integrations'
+import { searchProviderLabel } from '@/presentation/features/settings/searchProviderPresentation'
+import { resolveProviderDisplayName } from '@/presentation/features/settings/providerPresentation'
 import { clearRuntimeLog, getRuntimeLogInfo, getRuntimeLogPath, readRuntimeLogText } from '@/services/runtimeLog'
 import { buildRuntimeDiagnosticsSummary, type RuntimeDiagnosticsSummary } from '@/services/runtimeDiagnostics'
 import { emitPluginManifestCatalogSnapshotEvent, loadPluginManifestCatalogSnapshot, type PluginManifestCatalogSnapshot } from '@/services/pluginManifest'
 import { changeAppLanguage } from '@/i18n'
-import type { BedrockCacheTtl, Language, ObservabilitySinkHighFrequencyExportMode, ObservabilitySinkMode, ObservabilitySinkTarget, PayloadPolicyMode, ProxyMode, RemoteCompactMode, ThemeId, ThemeMode, UpstreamTransportMode } from '@/types'
+import type { BedrockCacheTtl, Language, ObservabilitySinkHighFrequencyExportMode, ObservabilitySinkMode, ObservabilitySinkTarget, PayloadPolicyMode, ProxyMode, RemoteCompactMode, ThemeId, ThemeMode, UpstreamTransportMode } from '@/types/settingsContracts'
 import { useMotionPreference } from '@/hooks/useMotionPreference'
 import { motionTokens } from '@/theme/animation'
-import { androidStatusNotificationsAvailable, clearAndroidStatusNotification, getAndroidStatusNotificationPermissionStatus, openAndroidStatusNotificationSettings, requestAndroidStatusNotificationPermission, type AndroidStatusNotificationPermissionStatus, type AndroidStatusNotificationSettingsTarget } from '@/services/androidStatusNotification'
+import { getColors, normalizeThemeAccent } from '@/theme/colors'
+import { androidStatusNotificationsAvailable, clearAndroidStatusNotification, getAndroidStatusNotificationPermissionStatus, openAndroidStatusNotificationSettings, requestAndroidStatusNotificationPermission, updateAndroidStatusNotification, type AndroidStatusNotificationPermissionStatus, type AndroidStatusNotificationSettingsTarget } from '@/services/androidStatusNotification'
 
 const LANGUAGE_OPTIONS: { id: Language; label: string; detail: string }[] = [
   { id: 'zh-CN', label: '简体中文', detail: '中文界面' },
@@ -35,15 +55,43 @@ const LANGUAGE_OPTIONS: { id: Language; label: string; detail: string }[] = [
   { id: 'ja', label: '日本語', detail: '日本語 UI' },
 ]
 
+function summarizeTavernExportAudit(result: PortableDataExportResult) {
+  const scopedAudits = Object.values(result.tavernSnapshotAudits ?? {})
+  const audits = scopedAudits
+  return audits.reduce(
+    (summary, audit) => ({
+      hidden: summary.hidden + audit.hiddenRelationshipMemoryOmitted,
+      privatePending: summary.privatePending + audit.hiddenPendingRelationshipMemoryCandidateOmitted,
+      pending: summary.pending + audit.pendingWritebackOmitted,
+      summaries: summary.summaries + audit.pendingSummaryDraftOmitted,
+      characters: summary.characters + audit.pendingCharacterDraftOmitted,
+      lore: summary.lore + audit.pendingLorebookDraftOmitted,
+      memories: summary.memories + audit.pendingRelationshipMemoryCandidateOmitted,
+      scenes: summary.scenes + audit.pendingSceneChangeOmitted,
+    }),
+    { hidden: 0, privatePending: 0, pending: 0, summaries: 0, characters: 0, lore: 0, memories: 0, scenes: 0 }
+  )
+}
+
 const THEME_FAMILY_OPTIONS: { id: ThemeId; labelKey: string; detailKey: string }[] = [
   { id: 'minimal', labelKey: 'settings.themeMinimal', detailKey: 'settings.themeMinimalDescription' },
-  { id: 'glass', labelKey: 'settings.themeGlass', detailKey: 'settings.themeGlassDescription' },
-  { id: 'cartoon', labelKey: 'settings.themeCartoon', detailKey: 'settings.themeCartoonDescription' },
+  { id: 'lime-road', labelKey: 'settings.themeLimeRoad', detailKey: 'settings.themeLimeRoadDescription' },
+  { id: 'markdown', labelKey: 'settings.themeMarkdown', detailKey: 'settings.themeMarkdownDescription' },
 ]
 
+const THEME_ACCENT_OPTIONS = [
+  { id: 'default', color: undefined, labelKey: 'settings.themeAccentDefault' },
+  { id: 'teal', color: '#0F766E', labelKey: 'settings.themeAccentTeal' },
+  { id: 'indigo', color: '#4F46A5', labelKey: 'settings.themeAccentIndigo' },
+  { id: 'coral', color: '#B94B3F', labelKey: 'settings.themeAccentCoral' },
+  { id: 'amber', color: '#A96A12', labelKey: 'settings.themeAccentAmber' },
+] as const
+
 const settingsChipPressableStyle = { minHeight: 44, justifyContent: 'center' as const }
-const themeModeCardHeight = 82
+const themeModeCardHeight = 58
 type ApkUpdateUiStage = 'checking' | ApkInstallProgressStage
+const APK_UPDATE_BANNER_ID = 'apk-update-progress'
+const APK_UPDATE_FEEDBACK_CLEAR_DELAY_MS = 12_000
 
 function updateStageLabelKey(stage: ApkUpdateUiStage): string {
   if (stage === 'checking') return 'settings.checkingUpdate'
@@ -101,7 +149,7 @@ const CACHE_TTL_OPTIONS: { value: BedrockCacheTtl; labelKey: string }[] = [
 ]
 
 function featureToggleIconColor(colors: ReturnType<typeof useAppTheme>['colors'], active: boolean): string {
-  return active ? colors.ui.control.primaryForeground : colors.ui.icon.accentForeground
+  return active ? colors.ui.icon.accentForeground : colors.textTertiary
 }
 
 const describeSystemStatusNotification = (
@@ -118,22 +166,32 @@ const describeSystemStatusNotification = (
   return t('settings.systemStatusNotificationsStatusPromotedUnknown')
 }
 
-type SettingsAdvancedGroup = 'diagnostics' | 'governance' | 'updates' | 'danger'
+type SettingsAdvancedGroup = 'appearance' | 'data' | 'advanced' | 'diagnostics' | 'governance' | 'updates' | 'danger'
+type SettingsGovernanceGroup = 'routing' | 'workflow' | 'observability' | 'runtimeLimits' | 'requestShaping' | 'accessRules'
+interface SettingsControlEntry {
+  key: string
+  title: string
+  detail: string
+  icon: AppIconName
+  active?: boolean
+  tone?: 'default' | 'warning' | 'danger'
+  onPress: () => void
+}
 type RuntimeRepairTask = RuntimeDiagnosticsSummary['timeline']['repairPlan']['tasks'][number]
 type RuntimeRepairSettingsRoute = '/settings/providers' | '/settings/context' | '/settings/mcp' | '/settings/skills'
 
 function resolveSettingsFoldoutSurface(colors: ReturnType<typeof useAppTheme>['colors'], isGlass: boolean, variant: 'base' | 'muted' = 'base') {
   if (variant === 'muted') {
-    return colors.ui.cartoon ? colors.ui.semantic.surface.muted : isGlass ? colors.ui.actionBar.itemBackground : colors.ui.semantic.surface.muted
+    return colors.ui.limeRoad ? colors.ui.semantic.surface.muted : isGlass ? colors.ui.actionBar.itemBackground : colors.ui.semantic.surface.muted
   }
-  return colors.ui.cartoon ? colors.ui.semantic.surface.base : isGlass ? colors.ui.semantic.chrome.background : colors.ui.semantic.surface.muted
+  return colors.ui.limeRoad ? colors.ui.semantic.surface.base : isGlass ? colors.ui.semantic.chrome.background : colors.ui.semantic.surface.muted
 }
 
 function resolveSettingsFoldoutBorder(colors: ReturnType<typeof useAppTheme>['colors'], isGlass: boolean) {
-  return colors.ui.cartoon ? colors.material.stroke : isGlass ? colors.ui.actionBar.itemBorder : colors.ui.semantic.chrome.border
+  return colors.ui.limeRoad ? colors.material.stroke : isGlass ? colors.ui.actionBar.itemBorder : colors.ui.semantic.chrome.border
 }
 
-export function SettingsScreenContent({ active = true, onHome }: { active?: boolean; onHome?: () => void } = {}) {
+export function SettingsScreenContent({ active = true, shellNavigation = false, onHome }: { active?: boolean; shellNavigation?: boolean; onHome?: () => void } = {}) {
   const { colors } = useAppTheme()
   const motion = useMotionPreference()
   const { t } = useTranslation()
@@ -141,12 +199,15 @@ export function SettingsScreenContent({ active = true, onHome }: { active?: bool
   const dialog = useIsleDialog()
   const { width } = useWindowDimensions()
   const narrowLayout = width < 430
+  const actionCompact = width < 360
+  const settingsPageBottomPadding = shellNavigation ? 72 : 56
   const pairedFieldRowStyle = { flexDirection: narrowLayout ? 'column' : 'row', gap: 10 } as const
   const pairedFieldStyle = narrowLayout ? undefined : { flex: 1, minWidth: 0 }
   const providers = useSettingsStore((state) => state.providers)
   const settings = useSettingsStore((state) => state.settings)
   const setTheme = useSettingsStore((state) => state.setTheme)
   const setThemeId = useSettingsStore((state) => state.setThemeId)
+  const setThemeAccent = useSettingsStore((state) => state.setThemeAccent)
   const setLanguage = useSettingsStore((state) => state.setLanguage)
   const updateSettings = useSettingsStore((state) => state.updateSettings)
   const resetSettings = useSettingsStore((state) => state.clearAll)
@@ -154,6 +215,8 @@ export function SettingsScreenContent({ active = true, onHome }: { active?: bool
   const setObservabilitySinkApiKey = useSettingsStore((state) => state.setObservabilitySinkApiKey)
   const clearChats = useChatStore((state) => state.clearAll)
   const scrollRef = useRef<ScrollView>(null)
+  const revealedSystemPanelRef = useRef<SettingsAdvancedGroup | null>(null)
+  const apkUpdateFeedbackClearTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const [apkUpdateStage, setApkUpdateStage] = useState<ApkUpdateUiStage | null>(null)
   const [activeApkRelease, setActiveApkRelease] = useState<ApkReleaseInfo | null>(null)
   const [apkInstallProgress, setApkInstallProgress] = useState<ApkInstallProgress | null>(null)
@@ -161,39 +224,66 @@ export function SettingsScreenContent({ active = true, onHome }: { active?: bool
   const [pluginCatalog, setPluginCatalog] = useState<PluginManifestCatalogSnapshot | null>(null)
   const [refreshingDiagnostics, setRefreshingDiagnostics] = useState(false)
   const [observabilitySinkApiKeyDraft, setObservabilitySinkApiKeyDraft] = useState('')
+  const [themeAccentDraft, setThemeAccentDraft] = useState(settings.themeAccent ?? '')
   const [savingObservabilitySinkApiKey, setSavingObservabilitySinkApiKey] = useState(false)
   const [systemStatusNotificationStatus, setSystemStatusNotificationStatus] = useState<AndroidStatusNotificationPermissionStatus | null>(null)
+  const [diagnosticDetailsOpen, setDiagnosticDetailsOpen] = useState(false)
+  const [controlView, setControlView] = useState<SettingsControlView | null>('ai')
+  const [settingsSearch, setSettingsSearch] = useState('')
   const [expandedGroups, setExpandedGroups] = useState<Record<SettingsAdvancedGroup, boolean>>({
+    appearance: false,
+    data: false,
+    advanced: false,
     diagnostics: false,
     governance: false,
     updates: false,
     danger: false,
   })
+  const [expandedGovernanceGroups, setExpandedGovernanceGroups] = useState<Record<SettingsGovernanceGroup, boolean>>({
+    routing: false,
+    workflow: false,
+    observability: false,
+    runtimeLimits: false,
+    requestShaping: false,
+    accessRules: false,
+  })
+  const activeSystemPanel: SettingsAdvancedGroup | null = expandedGroups.appearance
+    ? 'appearance'
+    : expandedGroups.data
+      ? 'data'
+      : expandedGroups.diagnostics
+        ? 'diagnostics'
+        : expandedGroups.governance
+          ? 'governance'
+          : expandedGroups.updates
+            ? 'updates'
+            : expandedGroups.danger
+              ? 'danger'
+              : expandedGroups.advanced
+                ? 'advanced'
+                : null
   const enabledProviders = providers.filter((provider) => provider.enabled).length
   const defaultProvider = providers.find((provider) => provider.id === settings.defaultProvider)
+  const defaultProviderDisplayName = defaultProvider ? resolveProviderDisplayName(defaultProvider, t('providerSettings.customProvider')) : undefined
   const version = getVersionSnapshot()
   const searchProvider = resolveSearchProvider(settings)
   const activeThemeId = settings.themeId ?? 'minimal'
-  const subtleBorderWidth = colors.ui.cartoon ? 1 : StyleSheet.hairlineWidth
-  const foldoutBodyStyle = { marginTop: 8, borderRadius: colors.ui.radius.panel, padding: 11, backgroundColor: resolveSettingsFoldoutSurface(colors, colors.ui.glass), borderWidth: subtleBorderWidth, borderColor: resolveSettingsFoldoutBorder(colors, colors.ui.glass), gap: 10 }
-  const settingsGridSectionStyle = (basis: number): ViewStyle => ({
-    flexGrow: 1,
-    flexShrink: 1,
-    flexBasis: narrowLayout ? '100%' : basis,
-    minWidth: 0,
-  })
+  const activeCustomThemeAccent = Boolean(settings.themeAccent && !THEME_ACCENT_OPTIONS.some((item) => item.color === settings.themeAccent))
+  const normalizedThemeAccentDraft = normalizeThemeAccent(themeAccentDraft)
+  const subtleBorderWidth = colors.ui.limeRoad ? 1 : StyleSheet.hairlineWidth
+  const foldoutBodyStyle = { marginTop: 12, paddingHorizontal: 0, paddingVertical: 2, gap: 12 }
   const foldoutCardStyle = (gap = 10): ViewStyle => ({
-    borderRadius: colors.ui.radius.card,
+    borderRadius: Math.min(colors.ui.radius.card, 8),
     padding: 10,
-    backgroundColor: colors.ui.cartoon ? colors.ui.semantic.surface.muted : colors.ui.glass ? colors.ui.actionBar.itemBackground : colors.ui.semantic.surface.muted,
+    backgroundColor: colors.ui.limeRoad ? colors.ui.semantic.surface.muted : colors.ui.glass ? colors.ui.actionBar.itemBackground : colors.ui.semantic.surface.muted,
     borderWidth: subtleBorderWidth,
-    borderColor: colors.ui.cartoon ? colors.material.stroke : colors.ui.glass ? colors.ui.actionBar.itemBorder : colors.ui.semantic.chrome.border,
+    borderColor: colors.ui.limeRoad ? colors.material.stroke : colors.ui.glass ? colors.ui.actionBar.itemBorder : colors.ui.semantic.chrome.border,
     gap,
   })
-  const foldoutMotion = motion === 'full'
-    ? { type: 'spring' as const, ...motionTokens.spring.gentle }
-    : { type: 'timing' as const, duration: 1 }
+  const foldoutMotion = { type: 'timing' as const, duration: motion === 'full' ? motionTokens.duration.fast : 1 }
   const diagnosticRows = useMemo(() => diagnostics ? buildDiagnosticRows(diagnostics, t, pluginCatalog) : [], [diagnostics, pluginCatalog, t])
+  const diagnosticAttentionRows = diagnosticRows.filter((row) => row.tone === 'amber' || row.tone === 'danger').length
+  const diagnosticDetailsVisible = diagnosticDetailsOpen || diagnosticAttentionRows > 0
   const systemStatusNotificationDescription = useMemo(
     () => describeSystemStatusNotification(systemStatusNotificationStatus, t),
     [systemStatusNotificationStatus, t]
@@ -211,6 +301,183 @@ export function SettingsScreenContent({ active = true, onHome }: { active?: bool
       ? formatApkUpdateProgressDetail(apkUpdateStage, activeApkRelease, apkInstallProgress, t)
       : t('settings.apkUpdateProgressChecking')
     : null
+  const updateProgressPercent = apkUpdateStage === 'downloading' ? apkInstallProgress?.percent ?? 0 : 0
+  const updateProgressIndeterminate = apkUpdateStage != null && (
+    apkUpdateStage !== 'downloading' || apkInstallProgress?.percent == null
+  )
+  const providerHealthSummary = defaultProvider
+    ? [
+        defaultProviderDisplayName,
+        defaultProvider.lastTestStatus === 'ok'
+          ? t('settings.runtimeDiagnosticsReady')
+        : defaultProvider.lastTestStatus === 'bad'
+            ? t('settings.disabled')
+            : t('settings.enabled'),
+      ].join(' · ')
+    : t('settings.noDefault')
+  const appearanceSummary = [
+    t(THEME_FAMILY_OPTIONS.find((item) => item.id === activeThemeId)?.labelKey ?? 'settings.themeMinimal'),
+    settings.theme === 'system' ? t('settings.themeSystem') : settings.theme === 'dark' ? t('settings.themeDark') : t('settings.themeLight'),
+    settings.themeAccent ? settings.themeAccent : t('settings.themeAccentDefault'),
+    LANGUAGE_OPTIONS.find((item) => item.id === settings.language)?.label ?? settings.language,
+  ].join(' · ')
+
+  useEffect(() => {
+    setThemeAccentDraft(settings.themeAccent ?? '')
+  }, [settings.themeAccent])
+  const advancedSummary = [
+    diagnostics?.timeline.repairPlan.taskCount ? `${t('settings.runtimeRepairTasks')} ${diagnostics.timeline.repairPlan.taskCount}` : null,
+    settings.runtimeLogEnabled ? t('settings.runtimeLogEnabled') : null,
+    settings.autoUpdateCheckEnabled ?? true ? t('settings.autoEnabled') : t('settings.autoDisabled'),
+  ].filter(Boolean).join(' · ')
+  const settingsAttentionItems: SettingsSummaryItem[] = []
+  if (diagnostics?.timeline.repairPlan.taskCount) {
+    settingsAttentionItems.push({
+      key: 'advanced',
+      label: t('settings.runtimeDiagnostics'),
+      value: `${diagnostics.timeline.repairPlan.taskCount} ${t('settings.runtimeRepairTasks')}`,
+      detail: advancedSummary || t('settings.runtimeDiagnosticsSubtitle'),
+      icon: <AppIcon name="settings-sliders" color={colors.textTertiary} size={15} />,
+      tone: 'amber',
+    })
+  }
+  const aiControlEntries: SettingsControlEntry[] = [
+    {
+      key: 'providers',
+      title: t('settings.quickProviderModel'),
+      detail: providerHealthSummary,
+      icon: 'provider-key',
+      active: Boolean(defaultProvider),
+      tone: defaultProvider ? 'default' : 'warning',
+      onPress: () => router.push('/settings/providers'),
+    },
+    {
+      key: 'usage',
+      title: t('usage.title'),
+      detail: t('usage.settingsSummary'),
+      icon: 'chart',
+      onPress: () => router.push('/settings/usage'),
+    },
+    {
+      key: 'preferences',
+      title: t('settings.preferences'),
+      detail: t('settings.preferencesDescription'),
+      icon: 'preferences-sliders',
+      onPress: () => router.push('/settings/preferences'),
+    },
+    {
+      key: 'memory',
+      title: t('settings.memory'),
+      detail: `${settings.memoryEnabled ? t('settings.enabledState') : t('settings.disabledState')} · ${t('settings.memoryDescription')}`,
+      icon: 'memory-brain',
+      active: settings.memoryEnabled,
+      onPress: () => router.push('/settings/memory'),
+    },
+    {
+      key: 'knowledge',
+      title: t('settings.knowledge'),
+      detail: `${settings.knowledgeEnabled ? t('settings.enabledState') : t('settings.disabledState')} · ${t('settings.knowledgeDescription')}`,
+      icon: 'knowledge-database',
+      active: settings.knowledgeEnabled,
+      onPress: () => router.push('/settings/knowledge'),
+    },
+    {
+      key: 'context',
+      title: t('settings.context'),
+      detail: t('settings.contextDescription'),
+      icon: 'context-globe',
+      onPress: () => router.push('/settings/context'),
+    },
+    {
+      key: 'skills',
+      title: t('settings.skills'),
+      detail: t('settings.skillsDescription'),
+      icon: 'skills-sparkles',
+      active: settings.skillsEnabled ?? true,
+      onPress: () => router.push('/settings/skills'),
+    },
+    {
+      key: 'mcp',
+      title: t('settings.mcp'),
+      detail: t('settings.mcpDescription'),
+      icon: 'mcp-network',
+      active: settings.mcpEnabled ?? true,
+      onPress: () => router.push('/settings/mcp'),
+    },
+  ]
+  const systemControlEntries: SettingsControlEntry[] = [
+    {
+      key: 'appearance',
+      title: t('settings.quickAppearanceLanguage'),
+      detail: appearanceSummary,
+      icon: 'preferences-sliders',
+      active: expandedGroups.appearance,
+      onPress: () => activateSystemPanel('appearance'),
+    },
+    {
+      key: 'data',
+      title: t('settings.importExport'),
+      detail: t('settings.importExportSummary'),
+      icon: 'download',
+      active: expandedGroups.data,
+      onPress: () => activateSystemPanel('data'),
+    },
+    {
+      key: 'diagnostics',
+      title: t('settings.runtimeDiagnostics'),
+      detail: advancedSummary || t('settings.runtimeDiagnosticsSubtitle'),
+      icon: 'activity',
+      active: expandedGroups.diagnostics,
+      tone: diagnostics?.timeline.repairPlan.taskCount ? 'warning' : 'default',
+      onPress: () => activateSystemPanel('diagnostics'),
+    },
+    {
+      key: 'governance',
+      title: t('settings.upstreamGovernance'),
+      detail: t('settings.upstreamGovernanceSubtitle'),
+      icon: 'shield',
+      active: expandedGroups.governance,
+      onPress: () => activateSystemPanel('governance'),
+    },
+    {
+      key: 'updates',
+      title: t('settings.updates'),
+      detail: `${version.appVersion} (${version.buildVersion})`,
+      icon: 'device',
+      active: expandedGroups.updates,
+      onPress: () => activateSystemPanel('updates'),
+    },
+    {
+      key: 'advanced',
+      title: t('settings.advancedInterfaceSettings'),
+      detail: advancedSummary || t('settings.upstreamGovernanceSubtitle'),
+      icon: 'settings-sliders',
+      active: expandedGroups.advanced && !expandedGroups.diagnostics && !expandedGroups.governance && !expandedGroups.updates && !expandedGroups.danger,
+      onPress: () => activateSystemPanel('advanced'),
+    },
+    {
+      key: 'danger',
+      title: t('settings.dangerZone'),
+      detail: `${t('settings.clearChats')} · ${t('settings.resetSettings')} · ${t('settings.clearData')}`,
+      icon: 'delete',
+      active: expandedGroups.danger,
+      tone: 'danger',
+      onPress: () => activateSystemPanel('danger'),
+    },
+  ]
+  const normalizedSettingsSearch = settingsSearch.trim().toLocaleLowerCase()
+  const visibleControlEntries = (controlView === 'ai' ? aiControlEntries : controlView === 'system' ? systemControlEntries : []).filter((entry) => {
+    if (!normalizedSettingsSearch) return true
+    return `${entry.title} ${entry.detail}`.toLocaleLowerCase().includes(normalizedSettingsSearch)
+  })
+  const focusedControlEntries = controlView === 'system' && activeSystemPanel
+    ? visibleControlEntries.filter((entry) => entry.key === activeSystemPanel)
+    : visibleControlEntries
+  const SettingsOverviewExperience = colors.ui.experience.navigation === 'route'
+    ? LimeRoadSettingsOverviewExperience
+    : colors.ui.experience.navigation === 'document'
+      ? MarkdownSettingsOverviewExperience
+      : MinimalSettingsOverviewExperience
 
   useEffect(() => {
     if (!active) return
@@ -245,13 +512,29 @@ export function SettingsScreenContent({ active = true, onHome }: { active?: bool
     void refreshRuntimeDiagnostics()
   }, [active, expandedGroups.diagnostics, diagnostics, refreshingDiagnostics])
 
-  async function exportJson() {
-    const uri = await exportToJsonFile()
-    dialog.notice({ title: t('settings.exportDone'), message: t('settings.exportDoneMessage', { uri }), tone: 'mint' })
+  async function exportJson(options: PortableDataExportOptions = {}) {
+    const result = await exportPortableDataToJsonFile(options)
+    const tavernAudit = summarizeTavernExportAudit(result)
+    const tavernAuditMessage = tavernAudit.hidden || tavernAudit.privatePending || tavernAudit.pending
+      ? `\n\n${t('settings.exportTavernAuditNotice', tavernAudit)}`
+      : ''
+    dialog.notice({ title: t('settings.exportDone'), message: `${t('settings.exportDoneMessage', { uri: result.publicUri ?? result.uri })}${tavernAuditMessage}`, tone: 'mint' })
+  }
+
+  async function exportPrivateTavernJson() {
+    const confirmed = await dialog.confirm({
+      title: t('settings.exportTavernPrivateTitle'),
+      message: t('settings.exportTavernPrivateMessage'),
+      confirmLabel: t('settings.exportTavernPrivateConfirm'),
+      cancelLabel: t('common.cancel'),
+      tone: 'amber',
+    })
+    if (!confirmed) return
+    await exportJson({ tavern: { includeHiddenMemory: true, includePendingWritebacks: true } })
   }
 
   async function importJson() {
-    const result = await importFromJsonFileDetailed()
+    const result = await importPortableDataFromJsonFile()
     if (result.ok && result.kind === 'mem0') {
       const reviewNow = await dialog.confirm({
         title: t('settings.importDone'),
@@ -268,6 +551,19 @@ export function SettingsScreenContent({ active = true, onHome }: { active?: bool
       message: importResultMessage(result, t),
       tone: result.ok ? 'mint' : 'amber',
     })
+  }
+
+  async function clearAllAppData() {
+    try {
+      await clearPortableApplicationData()
+      dialog.toast({ title: t('settings.clearData'), tone: 'amber' })
+    } catch (error) {
+      dialog.toast({
+        title: t('settings.clearData'),
+        message: error instanceof Error ? error.message : String(error),
+        tone: 'danger',
+      })
+    }
   }
 
   function confirmClearChats() {
@@ -332,11 +628,88 @@ export function SettingsScreenContent({ active = true, onHome }: { active?: bool
     }
   }
 
+  function cancelApkUpdateFeedbackClear() {
+    if (!apkUpdateFeedbackClearTimerRef.current) return
+    clearTimeout(apkUpdateFeedbackClearTimerRef.current)
+    apkUpdateFeedbackClearTimerRef.current = null
+  }
+
+  function dismissApkUpdateFeedback() {
+    cancelApkUpdateFeedbackClear()
+    dialog.dismissBanner(APK_UPDATE_BANNER_ID)
+    void clearAndroidStatusNotification()
+  }
+
+  function publishApkUpdateProgress(
+    stage: ApkUpdateUiStage,
+    release: ApkReleaseInfo | null = null,
+    progress: ApkInstallProgress | null = null,
+  ) {
+    cancelApkUpdateFeedbackClear()
+    const title = t(updateStageLabelKey(stage))
+    const detail = release
+      ? formatApkUpdateProgressDetail(stage, release, progress, t)
+      : t('settings.apkUpdateProgressChecking')
+    const determinate = stage === 'downloading' && progress?.percent != null
+    const percent = determinate ? Math.min(100, Math.max(0, progress.percent ?? 0)) : 0
+    dialog.banner({
+      id: APK_UPDATE_BANNER_ID,
+      title,
+      message: detail,
+      tone: stage === 'checking' ? 'default' : stage === 'opening-installer' ? 'mint' : 'amber',
+    })
+    void updateAndroidStatusNotification({
+      state: 'running',
+      title,
+      message: detail,
+      shortText: determinate ? `${percent}%` : title,
+      deepLink: 'islemind://settings',
+      progress: determinate ? percent / 100 : 0,
+      indeterminate: !determinate,
+      ongoing: true,
+      requestPromotedOngoing: stage !== 'checking',
+      foregroundService: stage !== 'checking',
+    })
+  }
+
+  function publishApkUpdateTerminalFeedback(options: {
+    title: string
+    message: string
+    tone: 'mint' | 'amber' | 'danger'
+    installFlow?: boolean
+  }) {
+    cancelApkUpdateFeedbackClear()
+    dialog.banner({
+      id: APK_UPDATE_BANNER_ID,
+      title: options.title,
+      message: options.message,
+      tone: options.tone,
+    })
+    void updateAndroidStatusNotification({
+      state: options.tone === 'danger' ? 'error' : 'completed',
+      title: options.title,
+      message: options.message,
+      shortText: options.title,
+      deepLink: 'islemind://settings',
+      progress: options.tone === 'mint' ? 1 : undefined,
+      indeterminate: false,
+      ongoing: false,
+      requestPromotedOngoing: false,
+      foregroundService: options.installFlow === true,
+    })
+    apkUpdateFeedbackClearTimerRef.current = setTimeout(() => {
+      apkUpdateFeedbackClearTimerRef.current = null
+      dialog.dismissBanner(APK_UPDATE_BANNER_ID)
+      void clearAndroidStatusNotification()
+    }, APK_UPDATE_FEEDBACK_CLEAR_DELAY_MS)
+  }
+
   async function checkApkUpdate() {
     if (updatingApk) return
     setApkUpdateStage('checking')
     setActiveApkRelease(null)
     setApkInstallProgress(null)
+    publishApkUpdateProgress('checking')
     try {
       const result = await checkLatestApkRelease()
       if (shouldRecordApkUpdateCheck(result)) {
@@ -351,22 +724,36 @@ export function SettingsScreenContent({ active = true, onHome }: { active?: bool
           message,
           tone: result.status === 'error' ? 'danger' : result.status === 'unsupported' ? 'amber' : 'mint',
         })
+        publishApkUpdateTerminalFeedback({
+          title: result.status === 'error' ? t('settings.apkCheckFailed') : t('settings.noNewApk'),
+          message,
+          tone: result.status === 'error' ? 'danger' : result.status === 'unsupported' ? 'amber' : 'mint',
+        })
         return
       }
       setActiveApkRelease(result.release)
+      dismissApkUpdateFeedback()
       const confirmed = await confirmApkInstall(result.release)
-      if (!confirmed) return
+      if (!confirmed) {
+        dismissApkUpdateFeedback()
+        return
+      }
       const installResult = await downloadAndOpenApkInstaller(result.release, {
         onProgress: (progress) => {
           setActiveApkRelease(progress.release)
           setApkUpdateStage(progress.stage)
           setApkInstallProgress(progress)
+          publishApkUpdateProgress(progress.stage, progress.release, progress)
         },
       })
-      dialog.notice({
-        title: installResult.status === 'downloaded' ? t('settings.installerOpened') : t('settings.apkUpdateFailed'),
+      const terminalTitle = installResult.status === 'downloaded' ? t('settings.installerOpened') : t('settings.apkUpdateFailed')
+      const terminalTone = installResult.status === 'downloaded' ? 'mint' : 'danger'
+      dialog.notice({ title: terminalTitle, message: installResult.message, tone: terminalTone })
+      publishApkUpdateTerminalFeedback({
+        title: terminalTitle,
         message: installResult.message,
-        tone: installResult.status === 'downloaded' ? 'mint' : 'danger',
+        tone: terminalTone,
+        installFlow: true,
       })
     } finally {
       setApkUpdateStage(null)
@@ -472,6 +859,57 @@ export function SettingsScreenContent({ active = true, onHome }: { active?: bool
 
   function toggleExpandedGroup(group: SettingsAdvancedGroup) {
     setExpandedGroups((current) => ({ ...current, [group]: !current[group] }))
+  }
+
+  function activateSystemPanel(group: SettingsAdvancedGroup) {
+    revealedSystemPanelRef.current = null
+    setControlView('system')
+    setExpandedGroups((current) => {
+      const empty: Record<SettingsAdvancedGroup, boolean> = {
+        appearance: false,
+        data: false,
+        advanced: false,
+        diagnostics: false,
+        governance: false,
+        updates: false,
+        danger: false,
+      }
+      const nestedAdvancedOpen = current.diagnostics || current.governance || current.updates || current.danger
+      const active = group === 'advanced' ? current.advanced && !nestedAdvancedOpen : current[group]
+      if (active) return empty
+      if (group === 'appearance' || group === 'data') return { ...empty, [group]: true }
+      return { ...empty, advanced: true, [group]: true }
+    })
+  }
+
+  function toggleControlView(nextView: SettingsControlView) {
+    revealedSystemPanelRef.current = null
+    if (controlView === nextView) {
+      setControlView(null)
+      setExpandedGroups({
+        appearance: false,
+        data: false,
+        advanced: false,
+        diagnostics: false,
+        governance: false,
+        updates: false,
+        danger: false,
+      })
+      return
+    }
+    setControlView(nextView)
+  }
+
+  function revealSystemPanel(group: SettingsAdvancedGroup, y: number) {
+    if (revealedSystemPanelRef.current === group) return
+    revealedSystemPanelRef.current = group
+    requestAnimationFrame(() => {
+      scrollRef.current?.scrollTo({ y: Math.max(0, y - 12), animated: motion === 'full' })
+    })
+  }
+
+  function toggleExpandedGovernanceGroup(group: SettingsGovernanceGroup) {
+    setExpandedGovernanceGroups((current) => ({ ...current, [group]: !current[group] }))
   }
 
   function openRuntimeRepairTask(task: RuntimeRepairTask) {
@@ -640,71 +1078,248 @@ export function SettingsScreenContent({ active = true, onHome }: { active?: bool
   }
 
   return (
-    <ScrollView ref={scrollRef} keyboardShouldPersistTaps="handled" removeClippedSubviews={Platform.OS === 'android'} contentContainerStyle={{ paddingHorizontal: 16, paddingTop: 8, paddingBottom: 120 }}>
-      <IsleHeader
+    <ScrollView ref={scrollRef} keyboardShouldPersistTaps="handled" removeClippedSubviews={Platform.OS === 'android'} contentContainerStyle={{ paddingHorizontal: narrowLayout ? 12 : 16, paddingTop: shellNavigation ? 10 : 8, paddingBottom: settingsPageBottomPadding }}>
+      <View style={{ width: '100%', maxWidth: 860, alignSelf: 'center' }}>
+      <SettingsOverviewExperience
         title={t('settings.title')}
-        leading={
-          onHome ? (
-            <AnimatedNavigationTrigger variant="iconButton" label={t('common.home')} size="lg" glyph="home" onNavigate={onHome} color={colors.text} />
-          ) : undefined
-        }
+        compact={narrowLayout}
+        embedded={shellNavigation}
+        searchLabel={t('settings.search')}
+        controlLabel={controlView === 'ai' ? t('settings.controlAi') : controlView === 'system' ? t('settings.controlSystem') : t('settings.title')}
+        leading={!shellNavigation ? (
+          <AnimatedNavigationTrigger
+            variant="iconButton"
+            label={t('common.backToChat')}
+            size="md"
+            glyph="back"
+            onNavigate={() => {
+              if (onHome) onHome()
+              else router.replace('/')
+            }}
+            color={colors.text}
+          />
+        ) : undefined}
+        status={(
+          <View style={{ paddingHorizontal: 2, flexDirection: 'row', alignItems: 'center', gap: 10 }}>
+            <View style={{ width: 9, height: 9, borderRadius: 5, backgroundColor: defaultProvider ? colors.ui.tone.success.foreground : colors.ui.tone.warning.foreground }} />
+            <View style={{ flex: 1, minWidth: 0 }}>
+              <Text numberOfLines={1} style={{ color: colors.text, fontSize: 13, lineHeight: 18, fontWeight: '800', includeFontPadding: false }}>
+                {defaultProviderDisplayName ?? t('settings.noDefault')}
+              </Text>
+              <Text numberOfLines={1} style={{ marginTop: 1, color: colors.textTertiary, fontSize: 11, lineHeight: 15, fontWeight: '600', includeFontPadding: false }}>
+                {`${t('settings.enabled')} ${enabledProviders}/${providers.length} · ${searchProvider !== 'off' ? `${t('settings.search')} ${searchProviderLabel(searchProvider)}` : t('settings.searchOff')}`}
+              </Text>
+            </View>
+          </View>
+        )}
+        attention={settingsAttentionItems.length ? <SettingsSummaryStrip items={settingsAttentionItems} /> : undefined}
+        search={(
+          <View style={{ minHeight: 44, borderRadius: Math.min(colors.ui.radius.controlLarge, 8), paddingHorizontal: 12, flexDirection: 'row', alignItems: 'center', gap: 9, backgroundColor: colors.ui.input.background, borderWidth: subtleBorderWidth, borderColor: colors.ui.input.border }}>
+            <AppIcon name="search" color={colors.textTertiary} size={16} />
+            <TextInput
+              value={settingsSearch}
+              onChangeText={setSettingsSearch}
+              placeholder={t('settings.controlSearchPlaceholder')}
+              placeholderTextColor={colors.textTertiary}
+              autoCapitalize="none"
+              autoCorrect={false}
+              returnKeyType="search"
+              style={{ flex: 1, minWidth: 0, minHeight: 42, padding: 0, color: colors.text, fontSize: 13, lineHeight: 18, fontWeight: '700', includeFontPadding: false }}
+            />
+            {settingsSearch ? (
+              <IslePressable haptic accessibilityLabel={t('common.clearSearch')} onPress={() => setSettingsSearch('')} style={{ width: 32, height: 32, borderRadius: 8, alignItems: 'center', justifyContent: 'center' }}>
+                <AppIcon name="close" color={colors.textSecondary} size={15} />
+              </IslePressable>
+            ) : null}
+          </View>
+        )}
+        tabs={<SettingsControlNavigation value={controlView} onChange={toggleControlView} />}
+        catalog={controlView ? (
+          <AnimatePresence exitBeforeEnter>
+            <MotiView
+              key={`settings-control-catalog-${controlView}`}
+              from={motion === 'full' ? { opacity: 0, translateY: 6 } : { opacity: 0 }}
+              animate={{ opacity: 1, translateY: 0 }}
+              exit={motion === 'full' ? { opacity: 0, translateY: -4 } : { opacity: 0 }}
+              transition={foldoutMotion}
+            >
+              <SettingsControlCatalog entries={focusedControlEntries} compact={activeSystemPanel ? false : narrowLayout} />
+            </MotiView>
+          </AnimatePresence>
+        ) : undefined}
+        emptyState={controlView && !focusedControlEntries.length ? (
+          <Text style={{ paddingVertical: 18, textAlign: 'center', color: colors.textTertiary, fontSize: 12, lineHeight: 17, fontWeight: '700' }}>{t('settings.controlSearchEmpty')}</Text>
+        ) : undefined}
       />
-      <View style={{ flexDirection: 'row', gap: 8, flexWrap: 'wrap', marginTop: 10 }}>
-        <IsleMetric label={`${t('settings.enabled')} ${enabledProviders}`} />
-        <IsleMetric label={defaultProvider ? `${t('settings.default')} ${defaultProvider.name}` : t('settings.noDefault')} />
-        <IsleMetric label={searchProvider !== 'off' ? `${t('settings.search')} ${searchProviderLabel(searchProvider)}` : t('settings.searchOff')} />
-      </View>
 
-      <SettingsSectionTitle>{t('settings.aiSettings')}</SettingsSectionTitle>
-      <IsleSection style={{ marginTop: 8 }}>
-        <View style={{ gap: 8 }}>
-          <SettingLink title={t('settings.providerManagement')} description={`${enabledProviders} ${t('settings.enabled')} · ${providers.length} ${t('settings.providers')}`} glyph="provider-key" onPress={() => router.push('/settings/providers')} />
-          <SettingLink title={t('settings.context')} description={t('settings.contextDescription')} glyph="context-globe" onPress={() => router.push('/settings/context')} />
-          <SettingLink title={t('settings.memory')} description={t('settings.memoryDescription')} glyph="memory-brain" onPress={() => router.push('/settings/memory')} />
-          <SettingLink title={t('settings.knowledge')} description={t('settings.knowledgeDescription')} glyph="knowledge-database" onPress={() => router.push('/settings/knowledge')} />
-          <SettingLink title={t('settings.preferences')} description={t('settings.preferencesDescription')} glyph="preferences-sliders" onPress={() => router.push('/settings/preferences')} />
-          <SettingLink title={t('settings.skills')} description={t('settings.skillsDescription')} glyph="skills-sparkles" onPress={() => router.push('/settings/skills')} />
-          <SettingLink title={t('settings.mcp')} description={t('settings.mcpDescription')} glyph="mcp-network" onPress={() => router.push('/settings/mcp')} />
-        </View>
-      </IsleSection>
+      <AnimatePresence>
+      {controlView === 'system' && expandedGroups.appearance ? (
+        <MotiView
+          key="appearance-foldout"
+          onLayout={(event) => activeSystemPanel ? revealSystemPanel(activeSystemPanel, event.nativeEvent.layout.y) : undefined}
+          testID="settings-appearance-foldout"
+          from={motion === 'full' ? { opacity: 0, translateY: 8 } : { opacity: 0 }}
+          animate={{ opacity: 1, translateY: 0 }}
+          exit={motion === 'full' ? { opacity: 0, translateY: -4 } : { opacity: 0 }}
+          transition={foldoutMotion}
+          style={foldoutBodyStyle}
+        >
+          <SettingsInlineLabel
+            title={t('settings.themeFamily')}
+            detail={t('settings.themeFamilyCurrent', { value: t(THEME_FAMILY_OPTIONS.find((item) => item.id === activeThemeId)?.labelKey ?? 'settings.themeMinimal') })}
+          />
+          <View testID="settings-theme-family-group" accessibilityRole="radiogroup" accessibilityLabel={t('settings.themeFamily')} style={{ flexDirection: 'row', gap: 8, flexWrap: 'wrap' }}>
+            {THEME_FAMILY_OPTIONS.map((item) => (
+              <ThemeFamilyCard
+                key={item.id}
+                themeId={item.id}
+                label={t(item.labelKey)}
+                detail={t(item.detailKey)}
+                active={activeThemeId === item.id}
+                compact={actionCompact}
+                onPress={() => setThemeId(item.id)}
+                testID={`settings-theme-family-${item.id}`}
+              />
+            ))}
+          </View>
+          <SettingsInlineLabel
+            title={t('settings.themeMode')}
+            detail={t('settings.themeModeCurrent', { value: settings.theme === 'system' ? t('settings.themeSystem') : settings.theme === 'dark' ? t('settings.themeDark') : t('settings.themeLight') })}
+          />
+          <View testID="settings-theme-mode-group" accessibilityRole="radiogroup" accessibilityLabel={t('settings.themeMode')} style={{ flexDirection: actionCompact ? 'column' : 'row', gap: 8 }}>
+            {(['light', 'dark', 'system'] satisfies ThemeMode[]).map((item) => (
+              <ThemeModeCard
+                key={item}
+                label={item === 'system' ? t('settings.themeSystem') : item === 'dark' ? t('settings.themeDark') : t('settings.themeLight')}
+                active={settings.theme === item}
+                onPress={() => setTheme(item)}
+                testID={`settings-theme-mode-${item}`}
+              />
+            ))}
+          </View>
+          <SettingsInlineLabel
+            title={t('settings.themeAccent')}
+            detail={settings.themeAccent ?? t('settings.themeAccentDefault')}
+          />
+          <View testID="settings-theme-accent-group" accessibilityRole="radiogroup" accessibilityLabel={t('settings.themeAccent')} style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8 }}>
+            {THEME_ACCENT_OPTIONS.map((item) => (
+              <ThemeAccentSwatch
+                key={item.id}
+                label={t(item.labelKey)}
+                color={item.color}
+                active={item.color === undefined ? !settings.themeAccent : settings.themeAccent === item.color}
+                onPress={() => setThemeAccent(item.color)}
+                testID={`settings-theme-accent-${item.id}`}
+              />
+            ))}
+            <ThemeAccentSwatch
+              label={t('settings.themeAccentCustom')}
+              color={activeCustomThemeAccent ? settings.themeAccent : normalizedThemeAccentDraft}
+              active={activeCustomThemeAccent}
+              disabled={!activeCustomThemeAccent && !normalizedThemeAccentDraft}
+              onPress={() => {
+                if (normalizedThemeAccentDraft) setThemeAccent(normalizedThemeAccentDraft)
+              }}
+              testID="settings-theme-accent-custom"
+            />
+          </View>
+          <View style={{ flexDirection: actionCompact ? 'column' : 'row', gap: 8, alignItems: actionCompact ? 'stretch' : 'flex-end' }}>
+            <IsleField
+              label={t('settings.themeAccentCustom')}
+              note={themeAccentDraft.trim() && !normalizeThemeAccent(themeAccentDraft) ? t('settings.themeAccentInvalid') : t('settings.themeAccentCustomHint')}
+              style={actionCompact ? undefined : { flex: 1, minWidth: 0 }}
+              inputProps={{
+                value: themeAccentDraft,
+                onChangeText: setThemeAccentDraft,
+                autoCapitalize: 'characters',
+                autoCorrect: false,
+                placeholder: '#4963A6',
+                testID: 'settings-theme-accent-input',
+              }}
+            />
+            <IsleButton
+              label={t('settings.themeAccentApply')}
+              icon={<AppIcon name="check" color={colors.ui.control.primaryForeground} size={15} />}
+              tone="primary"
+              disabled={!normalizeThemeAccent(themeAccentDraft)}
+              testID="settings-theme-accent-apply"
+              onPress={() => {
+                const normalized = normalizeThemeAccent(themeAccentDraft)
+                if (normalized) setThemeAccent(normalized)
+              }}
+              style={actionCompact ? { alignSelf: 'stretch', minHeight: 44 } : { minWidth: 112, minHeight: 44 }}
+            />
+          </View>
+          <SettingsInlineLabel
+            title={t('settings.language')}
+            detail={t('settings.languageCurrent', { value: LANGUAGE_OPTIONS.find((item) => item.id === settings.language)?.label ?? settings.language })}
+          />
+          <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8 }}>
+            {LANGUAGE_OPTIONS.map((item) => (
+              <IslePressable key={item.id} haptic accessibilityLabel={item.label} accessibilityState={{ selected: settings.language === item.id }} onPress={() => void chooseLanguage(item.id)} style={settingsChipPressableStyle}>
+                <IsleChip active={settings.language === item.id}>{settings.language === item.id ? t('settings.current') : item.label}</IsleChip>
+              </IslePressable>
+            ))}
+          </View>
+        </MotiView>
+      ) : null}
+      </AnimatePresence>
 
-      <SettingsSectionTitle>{t('settings.basicFeatures')}</SettingsSectionTitle>
-      <IsleSection style={{ marginTop: 8 }}>
-        <View style={{ gap: 10 }}>
-          <IsleToggle
-            icon={<AppIcon name="reasoning" color={featureToggleIconColor(colors, !!settings.memoryEnabled)} size={18} strokeWidth={appIconStroke.bold} />}
-            title={t('settings.longMemory')}
-            active={!!settings.memoryEnabled}
-            onPress={() => updateSettings({ memoryEnabled: !settings.memoryEnabled })}
-          />
-          <IsleToggle
-            icon={<AppIcon name="knowledge" color={featureToggleIconColor(colors, !!settings.knowledgeEnabled)} size={18} strokeWidth={appIconStroke.bold} />}
-            title={t('settings.localKnowledge')}
-            active={!!settings.knowledgeEnabled}
-            onPress={() => updateSettings({ knowledgeEnabled: !settings.knowledgeEnabled })}
-          />
-          <IsleToggle
-            icon={<AppIcon name="globe" color={featureToggleIconColor(colors, !!settings.webSearchEnabled)} size={18} strokeWidth={appIconStroke.bold} />}
-            title={t('settings.webSearch')}
-            active={!!settings.webSearchEnabled}
-            onPress={() => updateSettings({ webSearchEnabled: !settings.webSearchEnabled })}
-          />
-          <IsleToggle
+      {controlView === 'system' ? (
+      <>
+      <AnimatePresence>
+        {expandedGroups.data ? (
+          <MotiView
+            key="data-transfer-foldout"
+            onLayout={(event) => activeSystemPanel ? revealSystemPanel(activeSystemPanel, event.nativeEvent.layout.y) : undefined}
+            from={motion === 'full' ? { opacity: 0, translateY: 8 } : { opacity: 0 }}
+            animate={{ opacity: 1, translateY: 0 }}
+            exit={motion === 'full' ? { opacity: 0, translateY: -4 } : { opacity: 0 }}
+            transition={foldoutMotion}
+            style={foldoutBodyStyle}
+          >
+            <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8 }}>
+              <DataButton label={t('settings.exportJson')} icon={<AppIcon name="download" color={colors.ui.control.primaryForeground} size={18} />} onPress={() => void exportJson()} />
+              <DataButton label={t('settings.exportTavernPrivateJson')} icon={<AppIcon name="shield" color={colors.ui.control.primaryForeground} size={18} />} onPress={() => void exportPrivateTavernJson()} />
+              <DataButton label={t('settings.importJson')} icon={<AppIcon name="upload" color={colors.ui.control.primaryForeground} size={18} />} onPress={() => void importJson()} />
+            </View>
+            <Text style={{ color: colors.textTertiary, fontSize: 12, fontWeight: '700', lineHeight: 18 }}>
+              {t('settings.importExportDescription')}
+            </Text>
+          </MotiView>
+        ) : null}
+      </AnimatePresence>
+
+      <AnimatePresence>
+        {expandedGroups.advanced ? (
+          <MotiView
+            key="advanced-settings-foldout"
+            onLayout={(event) => activeSystemPanel ? revealSystemPanel(activeSystemPanel, event.nativeEvent.layout.y) : undefined}
+            from={motion === 'full' ? { opacity: 0, translateY: 8 } : { opacity: 0 }}
+            animate={{ opacity: 1, translateY: 0 }}
+            exit={motion === 'full' ? { opacity: 0, translateY: -4 } : { opacity: 0 }}
+            transition={foldoutMotion}
+            style={{ gap: 8 }}
+          >
+        {!expandedGroups.diagnostics && !expandedGroups.governance && !expandedGroups.updates && !expandedGroups.danger ? (
+        <View style={foldoutBodyStyle}>
+          <SettingsToggleRow
             icon={<AppIcon name="activity" color={featureToggleIconColor(colors, settings.systemStatusNotificationsEnabled === true)} size={18} strokeWidth={appIconStroke.bold} />}
             title={t('settings.systemStatusNotifications')}
             description={systemStatusNotificationDescription}
             active={settings.systemStatusNotificationsEnabled === true}
             onPress={() => void toggleSystemStatusNotifications()}
+            first
           />
           {showSystemStatusNotificationSettingsAction || showPromotedNotificationSettingsAction ? (
-            <View style={{ flexDirection: narrowLayout ? 'column' : 'row', flexWrap: 'wrap', gap: 8, paddingTop: 2 }}>
+            <View style={{ flexDirection: actionCompact ? 'column' : 'row', flexWrap: actionCompact ? 'nowrap' : 'wrap', gap: 8, paddingTop: 2, alignItems: actionCompact ? 'stretch' : 'center' }}>
               {showSystemStatusNotificationSettingsAction ? (
                 <IsleButton
                   compact
                   label={t('settings.systemStatusNotificationsOpenSettings')}
                   icon={<AppIcon name="settings" color={colors.textSecondary} size={14} />}
                   onPress={() => void openSystemStatusNotificationSettings('notifications')}
-                  style={narrowLayout ? { alignSelf: 'stretch' } : { alignSelf: 'flex-start', minWidth: 0 }}
+                  style={actionCompact ? { alignSelf: 'stretch' } : { alignSelf: 'flex-start', minWidth: 0 }}
                 />
               ) : null}
               {showPromotedNotificationSettingsAction ? (
@@ -713,101 +1328,53 @@ export function SettingsScreenContent({ active = true, onHome }: { active?: bool
                   label={t('settings.systemStatusNotificationsOpenPromotedSettings')}
                   icon={<AppIcon name="settings" color={colors.textSecondary} size={14} />}
                   onPress={() => void openSystemStatusNotificationSettings('promoted')}
-                  style={narrowLayout ? { alignSelf: 'stretch' } : { alignSelf: 'flex-start', minWidth: 0 }}
+                  style={actionCompact ? { alignSelf: 'stretch' } : { alignSelf: 'flex-start', minWidth: 0 }}
                 />
               ) : null}
             </View>
           ) : null}
         </View>
-      </IsleSection>
-
-      <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 12, marginTop: 14 }}>
-        <IsleSection title={t('settings.themeFamily')} style={settingsGridSectionStyle(220)} contentStyle={{ padding: 12 }}>
-          <View style={{ flexDirection: 'row', gap: 8, flexWrap: 'wrap' }}>
-            {THEME_FAMILY_OPTIONS.map((item) => (
-              <ThemeFamilyCard
-                key={item.id}
-                label={t(item.labelKey)}
-                detail={t(item.detailKey)}
-                active={activeThemeId === item.id}
-                onPress={() => setThemeId(item.id)}
-              />
-            ))}
-          </View>
-        </IsleSection>
-        <IsleSection title={t('settings.themeMode')} style={settingsGridSectionStyle(160)} contentStyle={{ padding: 12 }}>
-          <View style={{ gap: 8 }}>
-            <View style={{ flexDirection: 'row' }}>
-              <ThemeModeCard
-                label={t('settings.themeSystem')}
-                active={settings.theme === 'system'}
-                onPress={() => setTheme('system')}
-              />
-            </View>
-            <View style={{ flexDirection: 'row', gap: 8 }}>
-              {(['dark', 'light'] satisfies ThemeMode[]).map((item) => (
-                <ThemeModeCard
-                  key={item}
-                  label={item === 'dark' ? t('settings.themeDark') : t('settings.themeLight')}
-                  active={settings.theme === item}
-                  onPress={() => setTheme(item)}
-                />
-              ))}
-            </View>
-          </View>
-        </IsleSection>
-        <IsleSection title={t('settings.language')} style={settingsGridSectionStyle(160)} contentStyle={{ padding: 12 }}>
-          <View style={{ gap: 8 }}>
-            {LANGUAGE_OPTIONS.map((item) => (
-              <IslePressable key={item.id} haptic onPress={() => void chooseLanguage(item.id)} style={settingsChipPressableStyle}>
-                <IsleChip active={settings.language === item.id}>{settings.language === item.id ? t('settings.current') : item.label}</IsleChip>
-              </IslePressable>
-            ))}
-          </View>
-        </IsleSection>
-      </View>
-
-      <SettingsSectionTitle>{t('settings.importExport')}</SettingsSectionTitle>
-      <IsleSection style={{ marginTop: 8 }}>
-        <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 12 }}>
-          <DataButton label={t('settings.exportJson')} icon={<AppIcon name="download" color={colors.ui.control.primaryForeground} size={18} />} onPress={() => void exportJson()} />
-          <DataButton label={t('settings.importJson')} icon={<AppIcon name="upload" color={colors.ui.control.primaryForeground} size={18} />} onPress={() => void importJson()} />
-        </View>
-        <Text style={{ marginTop: 10, color: colors.textTertiary, fontSize: 12, fontWeight: '700', lineHeight: 18 }}>
-          {t('settings.importExportDescription')}
-        </Text>
-      </IsleSection>
-
-      <View style={{ gap: 8, marginTop: 14 }}>
-        <IsleDisclosure
-          title={t('settings.runtimeDiagnostics')}
-          summary={t('settings.runtimeDiagnosticsSubtitle')}
-          expanded={expandedGroups.diagnostics}
-          onPress={() => toggleExpandedGroup('diagnostics')}
-        />
+        ) : null}
         <AnimatePresence>
         {expandedGroups.diagnostics ? (
           <MotiView
             key="diagnostics-foldout"
-            from={motion === 'full' ? { opacity: 0, translateY: 8, scale: 0.985 } : { opacity: 0 }}
-            animate={{ opacity: 1, translateY: 0, scale: 1 }}
-            exit={motion === 'full' ? { opacity: 0, translateY: -4, scale: 0.985 } : { opacity: 0 }}
+            from={motion === 'full' ? { opacity: 0, translateY: 8 } : { opacity: 0 }}
+            animate={{ opacity: 1, translateY: 0 }}
+            exit={motion === 'full' ? { opacity: 0, translateY: -4 } : { opacity: 0 }}
             transition={foldoutMotion}
             style={foldoutBodyStyle}
           >
             <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8 }}>
               <IsleChip tone={diagnostics?.providers.degraded ? 'amber' : 'mint'}>{diagnostics ? t('settings.runtimeDiagnosticsReady') : t('settings.runtimeDiagnosticsLoading')}</IsleChip>
             </View>
-            <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8 }}>
-              {diagnosticRows.map((row) => (
-                <DiagnosticPill key={row.key} label={row.label} value={row.value} tone={row.tone} />
-              ))}
-            </View>
+            <IsleDisclosure
+              title={t('settings.runtimeDiagnosticDetails')}
+              summary={t('settings.runtimeDiagnosticDetailsSummary', { count: diagnosticRows.length, attention: diagnosticAttentionRows })}
+              expanded={diagnosticDetailsVisible}
+              onPress={() => setDiagnosticDetailsOpen((value) => !value)}
+            />
+            <AnimatePresence>
+            {diagnosticDetailsVisible ? (
+              <MotiView
+                key="runtime-diagnostic-details-foldout"
+                from={motion === 'full' ? { opacity: 0, translateY: 8 } : { opacity: 0 }}
+                animate={{ opacity: 1, translateY: 0 }}
+                exit={motion === 'full' ? { opacity: 0, translateY: -4 } : { opacity: 0 }}
+                transition={foldoutMotion}
+                style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8 }}
+              >
+                {diagnosticRows.map((row) => (
+                  <DiagnosticPill key={row.key} label={row.label} value={row.value} tone={row.tone} />
+                ))}
+              </MotiView>
+            ) : null}
+            </AnimatePresence>
             {diagnostics?.timeline.repairPlan.tasks.length ? (
               <RuntimeRepairTaskActions repairPlan={diagnostics.timeline.repairPlan} onOpenTask={openRuntimeRepairTask} />
             ) : null}
             <View style={foldoutCardStyle(7)}>
-              <Text style={{ color: colors.text, fontSize: 13, fontWeight: '900' }}>{t('settings.runtimeLogFile')}</Text>
+              <Text style={{ color: colors.text, fontSize: 13, fontWeight: '800' }}>{t('settings.runtimeLogFile')}</Text>
               <Text selectable numberOfLines={2} style={{ color: colors.textSecondary, fontSize: 11, lineHeight: 16, fontWeight: '800' }}>
                 {diagnostics?.log.path ?? getRuntimeLogPath()}
               </Text>
@@ -825,60 +1392,137 @@ export function SettingsScreenContent({ active = true, onHome }: { active?: bool
         ) : null}
         </AnimatePresence>
 
-        <IsleDisclosure
-          title={t('settings.upstreamGovernance')}
-          summary={t('settings.upstreamGovernanceSubtitle')}
-          expanded={expandedGroups.governance}
-          onPress={() => toggleExpandedGroup('governance')}
-        />
         <AnimatePresence>
         {expandedGroups.governance ? (
           <MotiView
             key="governance-foldout"
-            from={motion === 'full' ? { opacity: 0, translateY: 8, scale: 0.985 } : { opacity: 0 }}
-            animate={{ opacity: 1, translateY: 0, scale: 1 }}
-            exit={motion === 'full' ? { opacity: 0, translateY: -4, scale: 0.985 } : { opacity: 0 }}
+            from={motion === 'full' ? { opacity: 0, translateY: 8 } : { opacity: 0 }}
+            animate={{ opacity: 1, translateY: 0 }}
+            exit={motion === 'full' ? { opacity: 0, translateY: -4 } : { opacity: 0 }}
             transition={foldoutMotion}
             style={foldoutBodyStyle}
           >
-          <SegmentedSetting
-            label={t('settings.transportMode')}
-            options={TRANSPORT_OPTIONS}
-            value={settings.transportMode ?? 'auto'}
-            onChange={(transportMode) => updateSettings({ transportMode })}
+          <IsleDisclosure
+            title={t('settings.governanceRouting')}
+            summary={t('settings.governanceRoutingSummary', {
+              transport: t(`settings.transport${(settings.transportMode ?? 'auto') === 'http' ? 'Http' : (settings.transportMode ?? 'auto') === 'websocket' ? 'WebSocket' : 'Auto'}`),
+              compact: t(`settings.compact${(settings.remoteCompactMode ?? 'auto') === 'required' ? 'Required' : (settings.remoteCompactMode ?? 'auto') === 'auto' ? 'Auto' : 'Off'}`),
+              payload: t(`settings.payload${(settings.payloadPolicyMode ?? 'warn') === 'off' ? 'Off' : (settings.payloadPolicyMode ?? 'warn') === 'warn' ? 'Warn' : 'Block'}`),
+              proxy: t(`settings.proxy${(settings.proxyMode ?? 'off') === 'custom-base-url' ? 'CustomBaseUrl' : (settings.proxyMode ?? 'off') === 'system-detected' ? 'SystemDetected' : 'Off'}`),
+            })}
+            expanded={expandedGovernanceGroups.routing}
+            onPress={() => toggleExpandedGovernanceGroup('routing')}
           />
-          <SegmentedSetting
-            label={t('settings.remoteCompactMode')}
-            options={REMOTE_COMPACT_OPTIONS}
-            value={settings.remoteCompactMode ?? 'off'}
-            onChange={(remoteCompactMode) => updateSettings({ remoteCompactMode })}
+          {expandedGovernanceGroups.routing ? (
+          <MotiView
+            key="governance-routing-foldout"
+            from={motion === 'full' ? { opacity: 0, translateY: 8 } : { opacity: 0 }}
+            animate={{ opacity: 1, translateY: 0 }}
+            exit={motion === 'full' ? { opacity: 0, translateY: -4 } : { opacity: 0 }}
+            transition={foldoutMotion}
+            style={foldoutCardStyle()}
+          >
+            <SegmentedSetting
+              label={t('settings.transportMode')}
+              options={TRANSPORT_OPTIONS}
+              value={settings.transportMode ?? 'auto'}
+              onChange={(transportMode) => updateSettings({ transportMode })}
+            />
+            <SegmentedSetting
+              label={t('settings.remoteCompactMode')}
+              options={REMOTE_COMPACT_OPTIONS}
+              value={settings.remoteCompactMode ?? 'auto'}
+              onChange={(remoteCompactMode) => updateSettings({ remoteCompactMode })}
+            />
+            <View style={pairedFieldRowStyle}>
+              <IsleField
+                label={t('settings.remoteCompactThreshold')}
+                note={t('settings.remoteCompactThresholdNote')}
+                inputProps={{
+                  value: String(settings.remoteCompactThreshold ?? 0.8),
+                  onChangeText: updateRemoteCompactThreshold,
+                  keyboardType: 'decimal-pad',
+                }}
+                style={pairedFieldStyle}
+              />
+              <IsleField
+                label={t('settings.remoteCompactThresholdTokens')}
+                note={t('settings.remoteCompactThresholdTokensNote')}
+                inputProps={{
+                  value: String(settings.remoteCompactThresholdTokens ?? 200000),
+                  onChangeText: (value) => updatePositiveInteger('remoteCompactThresholdTokens', value, 200000, 1024, 4000000),
+                  keyboardType: 'number-pad',
+                }}
+                style={pairedFieldStyle}
+              />
+            </View>
+            <SegmentedSetting
+              label={t('settings.payloadPolicyMode')}
+              options={PAYLOAD_POLICY_OPTIONS}
+              value={settings.payloadPolicyMode ?? 'warn'}
+              onChange={(payloadPolicyMode) => updateSettings({ payloadPolicyMode })}
+            />
+            <View style={foldoutCardStyle(8)}>
+              <Text style={{ color: colors.text, fontSize: 13, fontWeight: '800' }}>{t('settings.policySummary')}</Text>
+              <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 7 }}>
+                <IsleChip tone={(settings.payloadPolicyMode ?? 'warn') === 'block' ? 'amber' : 'default'}>
+                  {t('settings.policyPayloadSummary', { mode: t(`settings.payload${(settings.payloadPolicyMode ?? 'warn') === 'off' ? 'Off' : (settings.payloadPolicyMode ?? 'warn') === 'warn' ? 'Warn' : 'Block'}`) })}
+                </IsleChip>
+                <IsleChip tone="default">{t('settings.policyBuiltInRules', { count: 4 })}</IsleChip>
+                <IsleChip tone={(settings.providerBlocklist?.length ?? 0) || (settings.modelBlocklist?.length ?? 0) ? 'amber' : 'default'}>
+                  {t('settings.policyBlockRules', { count: (settings.providerBlocklist?.length ?? 0) + (settings.modelBlocklist?.length ?? 0) })}
+                </IsleChip>
+                <IsleChip tone={(settings.providerAllowlist?.length ?? 0) || (settings.modelAllowlist?.length ?? 0) ? 'mint' : 'default'}>
+                  {t('settings.policyAllowRules', { count: (settings.providerAllowlist?.length ?? 0) + (settings.modelAllowlist?.length ?? 0) })}
+                </IsleChip>
+              </View>
+              <Text style={{ color: colors.textTertiary, fontSize: 11, lineHeight: 16, fontWeight: '800' }}>{t('settings.policySummaryNote')}</Text>
+            </View>
+            <SegmentedSetting
+              label={t('settings.proxyMode')}
+              options={PROXY_OPTIONS}
+              value={settings.proxyMode ?? 'off'}
+              onChange={(proxyMode) => updateSettings({ proxyMode })}
+            />
+            <IsleField
+              label={t('settings.proxyBaseUrl')}
+              note={t('settings.proxyBaseUrlNote')}
+              inputProps={{
+                value: settings.proxyBaseUrl ?? '',
+                onChangeText: (proxyBaseUrl) => updateSettings({ proxyBaseUrl }),
+                placeholder: 'https://proxy.example/upstream',
+                autoCapitalize: 'none',
+                autoCorrect: false,
+              }}
+            />
+            <View style={foldoutCardStyle(6)}>
+              <Text style={{ color: colors.text, fontSize: 13, fontWeight: '800' }}>{t('settings.compactExecutionPolicy')}</Text>
+              <Text style={{ color: colors.textSecondary, fontSize: 11, lineHeight: 16, fontWeight: '800' }}>
+                {t('settings.compactExecutionPolicyNote')}
+              </Text>
+            </View>
+          </MotiView>
+          ) : null}
+          <IsleDisclosure
+            title={t('preferences.agentWorkflow')}
+            summary={t('settings.governanceWorkflowSummary', {
+              steps: settings.agentWorkflowMaxSteps ?? 3,
+              tools: settings.agentWorkflowMaxToolCallsPerStep ?? 1,
+              limit: settings.agentWorkflowOutputCharLimit ?? 4800,
+            })}
+            expanded={expandedGovernanceGroups.workflow}
+            onPress={() => toggleExpandedGovernanceGroup('workflow')}
           />
-          <IsleField
-            label={t('settings.remoteCompactThreshold')}
-            note={t('settings.remoteCompactThresholdNote')}
-            inputProps={{
-              value: String(settings.remoteCompactThreshold ?? 0.8),
-              onChangeText: updateRemoteCompactThreshold,
-              keyboardType: 'decimal-pad',
-            }}
-          />
-          <IsleField
-            label={t('settings.remoteCompactThresholdTokens')}
-            note={t('settings.remoteCompactThresholdTokensNote')}
-            inputProps={{
-              value: String(settings.remoteCompactThresholdTokens ?? 200000),
-              onChangeText: (value) => updatePositiveInteger('remoteCompactThresholdTokens', value, 200000, 1024, 4000000),
-              keyboardType: 'number-pad',
-            }}
-          />
-          <View style={foldoutCardStyle(6)}>
-            <Text style={{ color: colors.text, fontSize: 13, fontWeight: '900' }}>{t('settings.compactExecutionPolicy')}</Text>
-            <Text style={{ color: colors.textSecondary, fontSize: 11, lineHeight: 16, fontWeight: '800' }}>
-              {t('settings.compactExecutionPolicyNote')}
-            </Text>
-          </View>
-          <View style={foldoutCardStyle()}>
-            <Text style={{ color: colors.text, fontSize: 13, fontWeight: '900' }}>{t('preferences.agentWorkflow')}</Text>
+          {expandedGovernanceGroups.workflow ? (
+          <MotiView
+            key="governance-workflow-foldout"
+            from={motion === 'full' ? { opacity: 0, translateY: 8 } : { opacity: 0 }}
+            animate={{ opacity: 1, translateY: 0 }}
+            exit={motion === 'full' ? { opacity: 0, translateY: -4 } : { opacity: 0 }}
+            transition={foldoutMotion}
+            style={foldoutCardStyle()}
+          >
+            <Text style={{ color: colors.text, fontSize: 13, fontWeight: '800' }}>{t('preferences.agentWorkflow')}</Text>
             <Text style={{ color: colors.textSecondary, fontSize: 11, lineHeight: 16, fontWeight: '800' }}>
               {t('preferences.agentWorkflowSubtitle')}
             </Text>
@@ -936,48 +1580,27 @@ export function SettingsScreenContent({ active = true, onHome }: { active?: bool
                 onPress={() => updateSettings({ agentWorkflowAllowDestructiveTools: (settings.agentWorkflowAllowDestructiveTools ?? 'confirm') === 'confirm' ? false : 'confirm' })}
               />
             </View>
-          </View>
-          <SegmentedSetting
-            label={t('settings.payloadPolicyMode')}
-            options={PAYLOAD_POLICY_OPTIONS}
-            value={settings.payloadPolicyMode ?? 'warn'}
-            onChange={(payloadPolicyMode) => updateSettings({ payloadPolicyMode })}
+          </MotiView>
+          ) : null}
+          <IsleDisclosure
+            title={t('settings.observabilitySinkSettings')}
+            summary={t('settings.governanceObservabilitySummary', {
+              mode: t(`settings.observabilitySink${(settings.observabilitySinkMode ?? 'off') === 'off' ? 'Off' : (settings.observabilitySinkMode ?? 'off') === 'local-only' ? 'LocalOnly' : 'External'}`),
+              target: t(`settings.observabilitySinkTarget${(settings.observabilitySinkTarget ?? 'opentelemetry') === 'opentelemetry' ? 'OpenTelemetry' : (settings.observabilitySinkTarget ?? 'opentelemetry') === 'langfuse' ? 'Langfuse' : 'Phoenix'}`),
+            })}
+            expanded={expandedGovernanceGroups.observability}
+            onPress={() => toggleExpandedGovernanceGroup('observability')}
           />
-          <View style={foldoutCardStyle(8)}>
-            <Text style={{ color: colors.text, fontSize: 13, fontWeight: '900' }}>{t('settings.policySummary')}</Text>
-            <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 7 }}>
-              <IsleChip tone={(settings.payloadPolicyMode ?? 'warn') === 'block' ? 'amber' : 'default'}>
-                {t('settings.policyPayloadSummary', { mode: t(`settings.payload${(settings.payloadPolicyMode ?? 'warn') === 'off' ? 'Off' : (settings.payloadPolicyMode ?? 'warn') === 'warn' ? 'Warn' : 'Block'}`) })}
-              </IsleChip>
-              <IsleChip tone="default">{t('settings.policyBuiltInRules', { count: 4 })}</IsleChip>
-              <IsleChip tone={(settings.providerBlocklist?.length ?? 0) || (settings.modelBlocklist?.length ?? 0) ? 'amber' : 'default'}>
-                {t('settings.policyBlockRules', { count: (settings.providerBlocklist?.length ?? 0) + (settings.modelBlocklist?.length ?? 0) })}
-              </IsleChip>
-              <IsleChip tone={(settings.providerAllowlist?.length ?? 0) || (settings.modelAllowlist?.length ?? 0) ? 'mint' : 'default'}>
-                {t('settings.policyAllowRules', { count: (settings.providerAllowlist?.length ?? 0) + (settings.modelAllowlist?.length ?? 0) })}
-              </IsleChip>
-            </View>
-            <Text style={{ color: colors.textTertiary, fontSize: 11, lineHeight: 16, fontWeight: '800' }}>{t('settings.policySummaryNote')}</Text>
-          </View>
-          <SegmentedSetting
-            label={t('settings.proxyMode')}
-            options={PROXY_OPTIONS}
-            value={settings.proxyMode ?? 'off'}
-            onChange={(proxyMode) => updateSettings({ proxyMode })}
-          />
-          <IsleField
-            label={t('settings.proxyBaseUrl')}
-            note={t('settings.proxyBaseUrlNote')}
-            inputProps={{
-              value: settings.proxyBaseUrl ?? '',
-              onChangeText: (proxyBaseUrl) => updateSettings({ proxyBaseUrl }),
-              placeholder: 'https://proxy.example/upstream',
-              autoCapitalize: 'none',
-              autoCorrect: false,
-            }}
-          />
-          <View style={foldoutCardStyle()}>
-            <Text style={{ color: colors.text, fontSize: 13, fontWeight: '900' }}>{t('settings.observabilitySinkSettings')}</Text>
+          {expandedGovernanceGroups.observability ? (
+          <MotiView
+            key="governance-observability-foldout"
+            from={motion === 'full' ? { opacity: 0, translateY: 8 } : { opacity: 0 }}
+            animate={{ opacity: 1, translateY: 0 }}
+            exit={motion === 'full' ? { opacity: 0, translateY: -4 } : { opacity: 0 }}
+            transition={foldoutMotion}
+            style={foldoutCardStyle()}
+          >
+            <Text style={{ color: colors.text, fontSize: 13, fontWeight: '800' }}>{t('settings.observabilitySinkSettings')}</Text>
             <SegmentedSetting
               label={t('settings.observabilitySinkMode')}
               options={OBSERVABILITY_SINK_MODE_OPTIONS}
@@ -1076,179 +1699,220 @@ export function SettingsScreenContent({ active = true, onHome }: { active?: bool
                 onPress={() => updateSettings({ observabilitySinkDevelopmentOnly: settings.observabilitySinkDevelopmentOnly !== true })}
               />
             </View>
-          </View>
-          <View style={pairedFieldRowStyle}>
-            <IsleField
-              label={t('settings.sessionConcurrencyLimit')}
-              inputProps={{
-                value: String(settings.sessionConcurrencyLimit ?? 1),
-                onChangeText: (value) => updatePositiveInteger('sessionConcurrencyLimit', value, 1, 1, 8),
-                keyboardType: 'number-pad',
-              }}
-              style={pairedFieldStyle}
-            />
-            <IsleField
-              label={t('settings.sessionQueueTimeoutMs')}
-              inputProps={{
-                value: String(settings.sessionQueueTimeoutMs ?? 1500),
-                onChangeText: (value) => updatePositiveInteger('sessionQueueTimeoutMs', value, 1500, 0, 30000),
-                keyboardType: 'number-pad',
-              }}
-              style={pairedFieldStyle}
-            />
-          </View>
-          <View style={foldoutCardStyle()}>
-            <Text style={{ color: colors.text, fontSize: 13, fontWeight: '900' }}>{t('settings.sessionAffinitySettings')}</Text>
-            <IsleToggle
-              icon={<AppIcon name="provider-key" color={colors.text} size={18} />}
-              title={t('settings.sessionAffinityEnabled')}
-              description={t('settings.sessionAffinityEnabledDescription')}
-              active={settings.sessionAffinityEnabled === true}
-              onPress={() => updateSettings({ sessionAffinityEnabled: settings.sessionAffinityEnabled !== true })}
-            />
-            <IsleField
-              label={t('settings.sessionAffinityTtlMs')}
-              note={t('settings.sessionAffinityTtlMsNote')}
-              inputProps={{
-                value: String(settings.sessionAffinityTtlMs ?? 1800000),
-                onChangeText: (value) => updatePositiveInteger('sessionAffinityTtlMs', value, 1800000, 60000, 86400000),
-                keyboardType: 'number-pad',
-              }}
-            />
-          </View>
-          <View style={foldoutCardStyle()}>
-            <Text style={{ color: colors.text, fontSize: 13, fontWeight: '900' }}>{t('settings.retryTimeoutSettings')}</Text>
+          </MotiView>
+          ) : null}
+          <IsleDisclosure
+            title={t('settings.governanceRuntimeLimits')}
+            summary={t('settings.governanceRuntimeLimitsSummary', {
+              concurrency: settings.sessionConcurrencyLimit ?? 1,
+              timeout: settings.upstreamRequestTimeoutMs ?? 60000,
+              retries: settings.upstreamMaxRetries ?? 1,
+            })}
+            expanded={expandedGovernanceGroups.runtimeLimits}
+            onPress={() => toggleExpandedGovernanceGroup('runtimeLimits')}
+          />
+          {expandedGovernanceGroups.runtimeLimits ? (
+          <MotiView
+            key="governance-runtime-limits-foldout"
+            from={motion === 'full' ? { opacity: 0, translateY: 8 } : { opacity: 0 }}
+            animate={{ opacity: 1, translateY: 0 }}
+            exit={motion === 'full' ? { opacity: 0, translateY: -4 } : { opacity: 0 }}
+            transition={foldoutMotion}
+            style={{ gap: 10 }}
+          >
             <View style={pairedFieldRowStyle}>
               <IsleField
-                label={t('settings.upstreamRequestTimeoutMs')}
+                label={t('settings.sessionConcurrencyLimit')}
                 inputProps={{
-                  value: String(settings.upstreamRequestTimeoutMs ?? 60000),
-                  onChangeText: (value) => updatePositiveInteger('upstreamRequestTimeoutMs', value, 60000, 5000, 300000),
+                  value: String(settings.sessionConcurrencyLimit ?? 1),
+                  onChangeText: (value) => updatePositiveInteger('sessionConcurrencyLimit', value, 1, 1, 8),
                   keyboardType: 'number-pad',
                 }}
                 style={pairedFieldStyle}
               />
               <IsleField
-                label={t('settings.upstreamMaxRetries')}
+                label={t('settings.sessionQueueTimeoutMs')}
                 inputProps={{
-                  value: String(settings.upstreamMaxRetries ?? 1),
-                  onChangeText: (value) => updatePositiveInteger('upstreamMaxRetries', value, 1, 0, 5),
+                  value: String(settings.sessionQueueTimeoutMs ?? 1500),
+                  onChangeText: (value) => updatePositiveInteger('sessionQueueTimeoutMs', value, 1500, 0, 30000),
                   keyboardType: 'number-pad',
                 }}
                 style={pairedFieldStyle}
               />
             </View>
-            <IsleToggle
-              title={t('settings.upstreamCircuitBreakerEnabled')}
-              active={settings.upstreamCircuitBreakerEnabled !== false}
-              onPress={() => updateSettings({ upstreamCircuitBreakerEnabled: settings.upstreamCircuitBreakerEnabled === false })}
-            />
-            <View style={pairedFieldRowStyle}>
-              <IsleField
-                label={t('settings.upstreamCircuitBreakerFailureThreshold')}
-                inputProps={{
-                  value: String(settings.upstreamCircuitBreakerFailureThreshold ?? 3),
-                  onChangeText: (value) => updatePositiveInteger('upstreamCircuitBreakerFailureThreshold', value, 3, 1, 20),
-                  keyboardType: 'number-pad',
-                }}
-                style={pairedFieldStyle}
+            <View style={foldoutCardStyle()}>
+              <Text style={{ color: colors.text, fontSize: 13, fontWeight: '800' }}>{t('settings.sessionAffinitySettings')}</Text>
+              <IsleToggle
+                icon={<AppIcon name="provider-key" color={colors.text} size={18} />}
+                title={t('settings.sessionAffinityEnabled')}
+                description={t('settings.sessionAffinityEnabledDescription')}
+                active={settings.sessionAffinityEnabled === true}
+                onPress={() => updateSettings({ sessionAffinityEnabled: settings.sessionAffinityEnabled !== true })}
               />
               <IsleField
-                label={t('settings.upstreamCircuitBreakerCooldownMs')}
+                label={t('settings.sessionAffinityTtlMs')}
+                note={t('settings.sessionAffinityTtlMsNote')}
                 inputProps={{
-                  value: String(settings.upstreamCircuitBreakerCooldownMs ?? 60000),
-                  onChangeText: (value) => updatePositiveInteger('upstreamCircuitBreakerCooldownMs', value, 60000, 1000, 3600000),
+                  value: String(settings.sessionAffinityTtlMs ?? 1800000),
+                  onChangeText: (value) => updatePositiveInteger('sessionAffinityTtlMs', value, 1800000, 60000, 86400000),
                   keyboardType: 'number-pad',
                 }}
-                style={pairedFieldStyle}
               />
             </View>
-          </View>
-          <View style={foldoutCardStyle()}>
-            <Text style={{ color: colors.text, fontSize: 13, fontWeight: '900' }}>{t('settings.rectificationSettings')}</Text>
-            <IsleToggle title={t('settings.requestRectificationEnabled')} active={settings.requestRectificationEnabled !== false} onPress={() => updateSettings({ requestRectificationEnabled: settings.requestRectificationEnabled === false })} />
-            <IsleToggle title={t('settings.anthropicThinkingSignatureRectificationEnabled')} active={settings.anthropicThinkingSignatureRectificationEnabled !== false} onPress={() => updateSettings({ anthropicThinkingSignatureRectificationEnabled: settings.anthropicThinkingSignatureRectificationEnabled === false })} />
-            <IsleToggle title={t('settings.anthropicThinkingBudgetRectificationEnabled')} active={settings.anthropicThinkingBudgetRectificationEnabled !== false} onPress={() => updateSettings({ anthropicThinkingBudgetRectificationEnabled: settings.anthropicThinkingBudgetRectificationEnabled === false })} />
-          </View>
-          <View style={foldoutCardStyle()}>
-            <Text style={{ color: colors.text, fontSize: 13, fontWeight: '900' }}>{t('settings.bedrockOptimizerSettings')}</Text>
-            <IsleToggle title={t('settings.bedrockRequestOptimizerEnabled')} active={settings.bedrockRequestOptimizerEnabled === true} onPress={() => updateSettings({ bedrockRequestOptimizerEnabled: settings.bedrockRequestOptimizerEnabled !== true })} />
-            <IsleToggle title={t('settings.thinkingOptimizerEnabled')} active={settings.thinkingOptimizerEnabled === true} onPress={() => updateSettings({ thinkingOptimizerEnabled: settings.thinkingOptimizerEnabled !== true })} />
-            <IsleToggle title={t('settings.cacheInjectionEnabled')} active={settings.cacheInjectionEnabled === true} onPress={() => updateSettings({ cacheInjectionEnabled: settings.cacheInjectionEnabled !== true })} />
-            <SegmentedSetting label={t('settings.cacheTtl')} options={CACHE_TTL_OPTIONS} value={settings.cacheTtl ?? 'default'} onChange={(cacheTtl) => updateSettings({ cacheTtl })} />
-          </View>
-          <View style={foldoutCardStyle()}>
-            <Text style={{ color: colors.text, fontSize: 13, fontWeight: '900' }}>{t('settings.modelTestSettings')}</Text>
+            <View style={foldoutCardStyle()}>
+              <Text style={{ color: colors.text, fontSize: 13, fontWeight: '800' }}>{t('settings.retryTimeoutSettings')}</Text>
+              <View style={pairedFieldRowStyle}>
+                <IsleField
+                  label={t('settings.upstreamRequestTimeoutMs')}
+                  inputProps={{
+                    value: String(settings.upstreamRequestTimeoutMs ?? 60000),
+                    onChangeText: (value) => updatePositiveInteger('upstreamRequestTimeoutMs', value, 60000, 5000, 300000),
+                    keyboardType: 'number-pad',
+                  }}
+                  style={pairedFieldStyle}
+                />
+                <IsleField
+                  label={t('settings.upstreamMaxRetries')}
+                  inputProps={{
+                    value: String(settings.upstreamMaxRetries ?? 1),
+                    onChangeText: (value) => updatePositiveInteger('upstreamMaxRetries', value, 1, 0, 5),
+                    keyboardType: 'number-pad',
+                  }}
+                  style={pairedFieldStyle}
+                />
+              </View>
+              <IsleToggle
+                title={t('settings.upstreamCircuitBreakerEnabled')}
+                active={settings.upstreamCircuitBreakerEnabled !== false}
+                onPress={() => updateSettings({ upstreamCircuitBreakerEnabled: settings.upstreamCircuitBreakerEnabled === false })}
+              />
+              <View style={pairedFieldRowStyle}>
+                <IsleField
+                  label={t('settings.upstreamCircuitBreakerFailureThreshold')}
+                  inputProps={{
+                    value: String(settings.upstreamCircuitBreakerFailureThreshold ?? 3),
+                    onChangeText: (value) => updatePositiveInteger('upstreamCircuitBreakerFailureThreshold', value, 3, 1, 20),
+                    keyboardType: 'number-pad',
+                  }}
+                  style={pairedFieldStyle}
+                />
+                <IsleField
+                  label={t('settings.upstreamCircuitBreakerCooldownMs')}
+                  inputProps={{
+                    value: String(settings.upstreamCircuitBreakerCooldownMs ?? 60000),
+                    onChangeText: (value) => updatePositiveInteger('upstreamCircuitBreakerCooldownMs', value, 60000, 1000, 3600000),
+                    keyboardType: 'number-pad',
+                  }}
+                  style={pairedFieldStyle}
+                />
+              </View>
+            </View>
+          </MotiView>
+          ) : null}
+          <IsleDisclosure
+            title={t('settings.governanceRequestShaping')}
+            summary={t('settings.governanceRequestShapingSummary', {
+              rectification: settings.requestRectificationEnabled !== false ? t('settings.enabledState') : t('settings.disabledState'),
+              cache: settings.cacheInjectionEnabled === true ? t('settings.enabledState') : t('settings.disabledState'),
+            })}
+            expanded={expandedGovernanceGroups.requestShaping}
+            onPress={() => toggleExpandedGovernanceGroup('requestShaping')}
+          />
+          {expandedGovernanceGroups.requestShaping ? (
+          <MotiView
+            key="governance-request-shaping-foldout"
+            from={motion === 'full' ? { opacity: 0, translateY: 8 } : { opacity: 0 }}
+            animate={{ opacity: 1, translateY: 0 }}
+            exit={motion === 'full' ? { opacity: 0, translateY: -4 } : { opacity: 0 }}
+            transition={foldoutMotion}
+            style={{ gap: 10 }}
+          >
+            <View style={foldoutCardStyle()}>
+              <Text style={{ color: colors.text, fontSize: 13, fontWeight: '800' }}>{t('settings.rectificationSettings')}</Text>
+              <IsleToggle title={t('settings.requestRectificationEnabled')} active={settings.requestRectificationEnabled !== false} onPress={() => updateSettings({ requestRectificationEnabled: settings.requestRectificationEnabled === false })} />
+              <IsleToggle title={t('settings.anthropicThinkingSignatureRectificationEnabled')} active={settings.anthropicThinkingSignatureRectificationEnabled !== false} onPress={() => updateSettings({ anthropicThinkingSignatureRectificationEnabled: settings.anthropicThinkingSignatureRectificationEnabled === false })} />
+              <IsleToggle title={t('settings.anthropicThinkingBudgetRectificationEnabled')} active={settings.anthropicThinkingBudgetRectificationEnabled !== false} onPress={() => updateSettings({ anthropicThinkingBudgetRectificationEnabled: settings.anthropicThinkingBudgetRectificationEnabled === false })} />
+            </View>
+            <View style={foldoutCardStyle()}>
+              <Text style={{ color: colors.text, fontSize: 13, fontWeight: '800' }}>{t('settings.bedrockOptimizerSettings')}</Text>
+              <IsleToggle title={t('settings.bedrockRequestOptimizerEnabled')} active={settings.bedrockRequestOptimizerEnabled === true} onPress={() => updateSettings({ bedrockRequestOptimizerEnabled: settings.bedrockRequestOptimizerEnabled !== true })} />
+              <IsleToggle title={t('settings.thinkingOptimizerEnabled')} active={settings.thinkingOptimizerEnabled === true} onPress={() => updateSettings({ thinkingOptimizerEnabled: settings.thinkingOptimizerEnabled !== true })} />
+              <IsleToggle title={t('settings.cacheInjectionEnabled')} active={settings.cacheInjectionEnabled === true} onPress={() => updateSettings({ cacheInjectionEnabled: settings.cacheInjectionEnabled !== true })} />
+              <SegmentedSetting label={t('settings.cacheTtl')} options={CACHE_TTL_OPTIONS} value={settings.cacheTtl ?? 'default'} onChange={(cacheTtl) => updateSettings({ cacheTtl })} />
+            </View>
+          </MotiView>
+          ) : null}
+          <IsleDisclosure
+            title={t('settings.governanceAccessAndLogs')}
+            summary={t('settings.governanceAccessAndLogsSummary', {
+              log: settings.runtimeLogEnabled === true ? t('settings.runtimeDiagnosticLogOn') : t('settings.runtimeDiagnosticLogOff'),
+              allow: (settings.providerAllowlist?.length ?? 0) + (settings.modelAllowlist?.length ?? 0),
+              block: (settings.providerBlocklist?.length ?? 0) + (settings.modelBlocklist?.length ?? 0),
+            })}
+            expanded={expandedGovernanceGroups.accessRules}
+            onPress={() => toggleExpandedGovernanceGroup('accessRules')}
+          />
+          {expandedGovernanceGroups.accessRules ? (
+          <MotiView
+            key="governance-access-rules-foldout"
+            from={motion === 'full' ? { opacity: 0, translateY: 8 } : { opacity: 0 }}
+            animate={{ opacity: 1, translateY: 0 }}
+            exit={motion === 'full' ? { opacity: 0, translateY: -4 } : { opacity: 0 }}
+            transition={foldoutMotion}
+            style={foldoutCardStyle()}
+          >
+            <IsleToggle
+              title={t('settings.runtimeLogEnabled')}
+              description={t('settings.runtimeLogDescription', { path: getRuntimeLogPath() })}
+              active={settings.runtimeLogEnabled === true}
+              onPress={() => updateSettings({ runtimeLogEnabled: settings.runtimeLogEnabled !== true })}
+            />
             <IsleField
-              label={t('settings.modelTestModel')}
-              note={t('settings.modelTestModelNote')}
+              label={t('settings.runtimeLogMaxBytes')}
+              note={t('settings.runtimeLogMaxBytesNote')}
               inputProps={{
-                value: settings.modelTestModel ?? '',
-                onChangeText: (modelTestModel) => updateSettings({ modelTestModel }),
-                autoCapitalize: 'none',
-                autoCorrect: false,
+                value: String(settings.runtimeLogMaxBytes ?? 1048576),
+                onChangeText: (value) => updatePositiveInteger('runtimeLogMaxBytes', value, 1048576, 4096, 10485760),
+                keyboardType: 'number-pad',
               }}
             />
-            <IsleToggle title={t('settings.modelTestCheckParameters')} active={settings.modelTestCheckParameters !== false} onPress={() => updateSettings({ modelTestCheckParameters: settings.modelTestCheckParameters === false })} />
-          </View>
-          <IsleToggle
-            title={t('settings.runtimeLogEnabled')}
-            description={t('settings.runtimeLogDescription', { path: getRuntimeLogPath() })}
-            active={settings.runtimeLogEnabled === true}
-            onPress={() => updateSettings({ runtimeLogEnabled: settings.runtimeLogEnabled !== true })}
-          />
-          <IsleField
-            label={t('settings.runtimeLogMaxBytes')}
-            note={t('settings.runtimeLogMaxBytesNote')}
-            inputProps={{
-              value: String(settings.runtimeLogMaxBytes ?? 1048576),
-              onChangeText: (value) => updatePositiveInteger('runtimeLogMaxBytes', value, 1048576, 4096, 10485760),
-              keyboardType: 'number-pad',
-            }}
-          />
-          <View style={{ gap: 10 }}>
             <IsleField
               label={t('settings.providerAllowlist')}
               note={t('settings.listRuleNote')}
-              inputProps={{ value: joinSettingsList(settings.providerAllowlist), onChangeText: (value) => updateSettingsList('providerAllowlist', value), autoCapitalize: 'none', autoCorrect: false, multiline: true, style: { minHeight: 54, maxHeight: 96 } }}
+              inputProps={{ value: joinSettingsList(settings.providerAllowlist), onChangeText: (value) => updateSettingsList('providerAllowlist', value), autoCapitalize: 'none', autoCorrect: false, multiline: true, style: { minHeight: 48, maxHeight: 88 } }}
             />
             <IsleField
               label={t('settings.providerBlocklist')}
               note={t('settings.blocklistNote')}
-              inputProps={{ value: joinSettingsList(settings.providerBlocklist), onChangeText: (value) => updateSettingsList('providerBlocklist', value), autoCapitalize: 'none', autoCorrect: false, multiline: true, style: { minHeight: 54, maxHeight: 96 } }}
+              inputProps={{ value: joinSettingsList(settings.providerBlocklist), onChangeText: (value) => updateSettingsList('providerBlocklist', value), autoCapitalize: 'none', autoCorrect: false, multiline: true, style: { minHeight: 48, maxHeight: 88 } }}
             />
             <IsleField
               label={t('settings.modelAllowlist')}
               note={t('settings.listRuleNote')}
-              inputProps={{ value: joinSettingsList(settings.modelAllowlist), onChangeText: (value) => updateSettingsList('modelAllowlist', value), autoCapitalize: 'none', autoCorrect: false, multiline: true, style: { minHeight: 54, maxHeight: 96 } }}
+              inputProps={{ value: joinSettingsList(settings.modelAllowlist), onChangeText: (value) => updateSettingsList('modelAllowlist', value), autoCapitalize: 'none', autoCorrect: false, multiline: true, style: { minHeight: 48, maxHeight: 88 } }}
             />
             <IsleField
               label={t('settings.modelBlocklist')}
               note={t('settings.blocklistNote')}
-            inputProps={{ value: joinSettingsList(settings.modelBlocklist), onChangeText: (value) => updateSettingsList('modelBlocklist', value), autoCapitalize: 'none', autoCorrect: false, multiline: true, style: { minHeight: 54, maxHeight: 96 } }}
+            inputProps={{ value: joinSettingsList(settings.modelBlocklist), onChangeText: (value) => updateSettingsList('modelBlocklist', value), autoCapitalize: 'none', autoCorrect: false, multiline: true, style: { minHeight: 48, maxHeight: 88 } }}
             />
-          </View>
+          </MotiView>
+          ) : null}
         </MotiView>
         ) : null}
         </AnimatePresence>
 
-        <IsleDisclosure
-          title={t('settings.updates')}
-          summary={`${version.appVersion} (${version.buildVersion}) · ${formatUpdateCheckTime(settings.lastApkUpdateCheckAt)}`}
-          expanded={expandedGroups.updates}
-          onPress={() => toggleExpandedGroup('updates')}
-        />
         <AnimatePresence>
         {expandedGroups.updates ? (
           <MotiView
             key="updates-foldout"
-            from={motion === 'full' ? { opacity: 0, translateY: 8, scale: 0.985 } : { opacity: 0 }}
-            animate={{ opacity: 1, translateY: 0, scale: 1 }}
-            exit={motion === 'full' ? { opacity: 0, translateY: -4, scale: 0.985 } : { opacity: 0 }}
+            from={motion === 'full' ? { opacity: 0, translateY: 8 } : { opacity: 0 }}
+            animate={{ opacity: 1, translateY: 0 }}
+            exit={motion === 'full' ? { opacity: 0, translateY: -4 } : { opacity: 0 }}
             transition={foldoutMotion}
             style={foldoutBodyStyle}
           >
-            <View style={{ borderRadius: colors.ui.radius.card, padding: 13, backgroundColor: resolveSettingsFoldoutSurface(colors, colors.ui.glass, 'muted'), borderWidth: subtleBorderWidth, borderColor: resolveSettingsFoldoutBorder(colors, colors.ui.glass) }}>
+            <View style={{ borderRadius: Math.min(colors.ui.radius.card, 8), padding: 10, backgroundColor: resolveSettingsFoldoutSurface(colors, colors.ui.glass, 'muted'), borderWidth: subtleBorderWidth, borderColor: resolveSettingsFoldoutBorder(colors, colors.ui.glass) }}>
               <VersionRow label={t('settings.appVersion')} value={`${version.appVersion} (${version.buildVersion})`} />
               <VersionRow label={t('settings.lastCheck')} value={formatUpdateCheckTime(settings.lastApkUpdateCheckAt)} />
             </View>
@@ -1256,7 +1920,7 @@ export function SettingsScreenContent({ active = true, onHome }: { active?: bool
               <View style={{ flexGrow: 1, flexShrink: 1, flexBasis: narrowLayout ? '100%' : '45%', minWidth: 0 }}>
                 <DataButton
                   label={updateActionLabel}
-                  icon={updatingApk ? <ActivityIndicator color={colors.ui.control.primaryForeground} size="small" /> : <AppIcon name="device" color={colors.ui.control.primaryForeground} size={18} />}
+                  icon={updatingApk ? <HighFrameSpinner color={colors.ui.control.primaryForeground} size={16} /> : <AppIcon name="device" color={colors.ui.control.primaryForeground} size={18} />}
                   onPress={() => void checkApkUpdate()}
                   disabled={updatingApk}
                 />
@@ -1271,8 +1935,16 @@ export function SettingsScreenContent({ active = true, onHome }: { active?: bool
               </View>
             </View>
             {updateProgressDetail ? (
-              <View style={{ borderRadius: colors.ui.radius.card, padding: 11, backgroundColor: resolveSettingsFoldoutSurface(colors, colors.ui.glass, 'muted'), borderWidth: subtleBorderWidth, borderColor: resolveSettingsFoldoutBorder(colors, colors.ui.glass) }}>
-                <Text style={{ color: colors.text, fontSize: 12, lineHeight: 17, fontWeight: '900' }}>{updateActionLabel}</Text>
+              <View style={{ borderRadius: Math.min(colors.ui.radius.card, 8), padding: 10, backgroundColor: resolveSettingsFoldoutSurface(colors, colors.ui.glass, 'muted'), borderWidth: subtleBorderWidth, borderColor: resolveSettingsFoldoutBorder(colors, colors.ui.glass) }}>
+                <Text style={{ color: colors.text, fontSize: 12, lineHeight: 17, fontWeight: '800' }}>{updateActionLabel}</Text>
+                <IsleProgress
+                  percent={updateProgressPercent}
+                  size="small"
+                  showInfo={!updateProgressIndeterminate}
+                  infoPosition="right"
+                  indeterminate={updateProgressIndeterminate}
+                  style={{ marginTop: 8 }}
+                />
                 <Text style={{ marginTop: 4, color: colors.textSecondary, fontSize: 11, lineHeight: 16, fontWeight: '700' }}>{updateProgressDetail}</Text>
               </View>
             ) : null}
@@ -1280,36 +1952,50 @@ export function SettingsScreenContent({ active = true, onHome }: { active?: bool
         ) : null}
         </AnimatePresence>
 
-        <IsleDisclosure
-          title={t('settings.dangerZone')}
-          expanded={expandedGroups.danger}
-          onPress={() => toggleExpandedGroup('danger')}
-          danger
-        />
         <AnimatePresence>
         {expandedGroups.danger ? (
           <MotiView
             key="danger-foldout"
-            from={motion === 'full' ? { opacity: 0, translateY: 8, scale: 0.985 } : { opacity: 0 }}
-            animate={{ opacity: 1, translateY: 0, scale: 1 }}
-            exit={motion === 'full' ? { opacity: 0, translateY: -4, scale: 0.985 } : { opacity: 0 }}
+            from={motion === 'full' ? { opacity: 0, translateY: 8 } : { opacity: 0 }}
+            animate={{ opacity: 1, translateY: 0 }}
+            exit={motion === 'full' ? { opacity: 0, translateY: -4 } : { opacity: 0 }}
             transition={foldoutMotion}
             style={foldoutBodyStyle}
           >
-            <View style={{ flexDirection: 'row', gap: 12 }}>
+            <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8 }}>
               <DangerButton label={t('settings.clearChats')} icon={<AppIcon name="delete" color={colors.ui.control.dangerForeground} size={18} />} onPress={confirmClearChats} />
               <DangerButton label={t('settings.resetSettings')} icon={<AppIcon name="retry" color={colors.ui.control.dangerForeground} size={18} />} onPress={confirmResetSettings} />
+              <DangerButton label={t('settings.clearData')} icon={<AppIcon name="delete" color={colors.ui.control.dangerForeground} size={18} />} onPress={() => void dialog.confirm({
+                title: t('settings.clearData'),
+                message: t('settings.clearDataConfirm'),
+                tone: 'danger',
+                confirmLabel: t('settings.clearData'),
+                cancelLabel: t('common.cancel'),
+              }).then((confirmed) => {
+                if (confirmed) void clearAllAppData()
+              })} />
             </View>
           </MotiView>
         ) : null}
         </AnimatePresence>
+          </MotiView>
+        ) : null}
+        </AnimatePresence>
+      </>
+      ) : null}
       </View>
     </ScrollView>
   )
 }
 
-function SettingLink({ title, description, glyph, onPress }: { title: string; description: string; glyph: NavigationGlyph; onPress: () => void }) {
-  return <AnimatedNavigationTrigger variant="listItem" title={title} description={description} glyph={glyph} onNavigate={onPress} />
+function SettingsInlineLabel({ title, detail }: { title: string; detail: string }) {
+  const { colors } = useAppTheme()
+  return (
+    <View style={{ paddingTop: 2 }}>
+      <Text numberOfLines={1} style={{ color: colors.text, fontSize: 13, lineHeight: 18, fontWeight: '700', includeFontPadding: false, textAlignVertical: 'center' }}>{title}</Text>
+      <Text numberOfLines={2} style={{ color: colors.textTertiary, fontSize: 11, lineHeight: 15, marginTop: 2, fontWeight: '500', includeFontPadding: false, textAlignVertical: 'center' }}>{detail}</Text>
+    </View>
+  )
 }
 
 function RuntimeRepairTaskActions({
@@ -1322,14 +2008,14 @@ function RuntimeRepairTaskActions({
   const { colors } = useAppTheme()
   const { width } = useWindowDimensions()
   const { t } = useTranslation()
-  const compact = width < 430
+  const actionCompact = width < 360
   const visibleTasks = repairPlan.tasks.slice(0, 4)
   return (
-    <View style={{ borderRadius: colors.ui.radius.card, padding: 10, backgroundColor: colors.ui.cartoon ? colors.ui.semantic.surface.muted : colors.ui.glass ? colors.ui.actionBar.itemBackground : colors.ui.semantic.surface.muted, borderWidth: colors.ui.cartoon ? 1 : StyleSheet.hairlineWidth, borderColor: colors.ui.cartoon ? colors.material.stroke : colors.ui.glass ? colors.ui.actionBar.itemBorder : colors.ui.semantic.chrome.border, gap: 9 }}>
+    <View style={{ borderRadius: Math.min(colors.ui.radius.card, 8), padding: 10, backgroundColor: colors.ui.limeRoad ? colors.ui.semantic.surface.muted : colors.ui.glass ? colors.ui.actionBar.itemBackground : colors.ui.semantic.surface.muted, borderWidth: colors.ui.limeRoad ? 1 : StyleSheet.hairlineWidth, borderColor: colors.ui.limeRoad ? colors.material.stroke : colors.ui.glass ? colors.ui.actionBar.itemBorder : colors.ui.semantic.chrome.border, gap: 9 }}>
       <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
         <AppIcon name="tools" color={colors.textSecondary} size={16} />
         <View style={{ flex: 1, minWidth: 0 }}>
-          <Text numberOfLines={1} style={{ color: colors.text, fontSize: 13, lineHeight: 18, fontWeight: '900', includeFontPadding: false, textAlignVertical: 'center' }}>{t('settings.runtimeRepairTasks')}</Text>
+          <Text numberOfLines={1} style={{ color: colors.text, fontSize: 13, lineHeight: 18, fontWeight: '800', includeFontPadding: false, textAlignVertical: 'center' }}>{t('settings.runtimeRepairTasks')}</Text>
           <Text numberOfLines={2} style={{ color: colors.textTertiary, fontSize: 11, lineHeight: 16, fontWeight: '800', marginTop: 2, includeFontPadding: false, textAlignVertical: 'center' }}>
             {t('settings.runtimeRepairTasksValue', {
               count: repairPlan.taskCount,
@@ -1339,7 +2025,7 @@ function RuntimeRepairTaskActions({
           </Text>
         </View>
       </View>
-      <View style={{ flexDirection: compact ? 'column' : 'row', flexWrap: compact ? 'nowrap' : 'wrap', gap: 8, alignItems: compact ? 'stretch' : 'center' }}>
+      <View style={{ flexDirection: actionCompact ? 'column' : 'row', flexWrap: actionCompact ? 'nowrap' : 'wrap', gap: 8, alignItems: actionCompact ? 'stretch' : 'center' }}>
         {visibleTasks.map((task) => {
           const tone = runtimeRepairTaskButtonTone(task)
           return (
@@ -1350,7 +2036,7 @@ function RuntimeRepairTaskActions({
               tone={tone}
               icon={<AppIcon name={runtimeRepairTaskIconName(task.target.kind)} color={runtimeRepairTaskIconColor(colors, tone)} size={14} />}
               onPress={() => onOpenTask(task)}
-              style={{ flexGrow: 1, flexShrink: 1, flexBasis: compact ? '100%' : '47%', minWidth: 0, alignSelf: 'stretch' }}
+              style={{ flexGrow: 1, flexShrink: 1, flexBasis: actionCompact ? '100%' : '47%', minWidth: 0, alignSelf: 'stretch' }}
               textStyle={{ textAlign: 'center' }}
             />
           )
@@ -1360,92 +2046,159 @@ function RuntimeRepairTaskActions({
   )
 }
 
-function SettingsSectionTitle({ children }: { children: string }) {
+function SettingsToggleRow({
+  title,
+  description,
+  active,
+  icon,
+  onPress,
+  first = false,
+}: {
+  title: string
+  description?: string
+  active: boolean
+  icon?: ReactNode
+  onPress: () => void
+  first?: boolean
+}) {
   const { colors } = useAppTheme()
+  const motion = useMotionPreference()
+  const dividerColor = colors.ui.limeRoad ? colors.material.stroke : colors.ui.semantic.chrome.border
   return (
-    <View
-      style={{
-        marginTop: 18,
-        minHeight: 30,
-        flexDirection: 'row',
-        alignItems: 'center',
-        gap: 9,
-        paddingHorizontal: 0,
-      }}
-    >
-      <View style={{ width: 3, height: 16, borderRadius: colors.ui.radius.chip, backgroundColor: colors.ui.section.marker }} />
-      <Text
-        accessibilityRole="header"
-        numberOfLines={1}
+    <IslePressable haptic accessibilityRole="switch" accessibilityLabel={description ? `${title}. ${description}` : title} accessibilityState={{ checked: active }} onPress={onPress} style={{ borderRadius: Math.min(colors.ui.radius.controlMiddle, 8) }}>
+      <MotiView
+        animate={{ backgroundColor: 'transparent' }}
+        transition={motion === 'full' ? { type: 'timing', duration: motionTokens.duration.fast } : { type: 'timing', duration: 1 }}
         style={{
-          flexShrink: 1,
-          minWidth: 0,
-          color: colors.ui.section.title,
-          fontSize: 14,
-          lineHeight: 19,
-          fontWeight: '900',
-          includeFontPadding: false,
-          textAlignVertical: 'center',
+          minHeight: description ? 60 : 50,
+          paddingVertical: description ? 9 : 7,
+          flexDirection: 'row',
+          alignItems: 'center',
+          gap: 10,
+          borderTopWidth: first ? 0 : StyleSheet.hairlineWidth,
+          borderTopColor: dividerColor,
         }}
       >
-        {children}
-      </Text>
-      <View style={{ flex: 1, height: 1, borderRadius: colors.ui.radius.chip, backgroundColor: colors.ui.section.divider }} />
-    </View>
+        {icon ? (
+          <View style={{ width: 28, height: 34, alignItems: 'center', justifyContent: 'center' }}>
+            {icon}
+          </View>
+        ) : null}
+        <View style={{ flex: 1, minWidth: 0, justifyContent: 'center' }}>
+          <Text numberOfLines={1} style={{ color: colors.text, fontSize: 15, lineHeight: 21, fontWeight: '700', includeFontPadding: false, textAlignVertical: 'center' }}>
+            {title}
+          </Text>
+          {description ? (
+            <Text numberOfLines={3} style={{ color: colors.textTertiary, fontSize: 12, lineHeight: 17, marginTop: 3, fontWeight: '500', includeFontPadding: false, textAlignVertical: 'center' }}>
+              {description}
+            </Text>
+          ) : null}
+        </View>
+        <View accessible={false} pointerEvents="none" style={{ height: 34, justifyContent: 'center' }}>
+          <SettingsMiniSwitch active={active} />
+        </View>
+      </MotiView>
+    </IslePressable>
+  )
+}
+
+function SettingsMiniSwitch({ active }: { active: boolean }) {
+  const { colors } = useAppTheme()
+  const motion = useMotionPreference()
+  const switchTokens = colors.ui.switch
+  const width = 48
+  const height = 28
+  const thumbInset = 3
+  const knob = height - thumbInset * 2
+  const thumbTravel = width - knob - thumbInset * 2
+  return (
+    <MotiView
+      accessible={false}
+      style={{
+        width,
+        height,
+        borderRadius: height / 2,
+        alignItems: 'flex-start',
+        justifyContent: 'center',
+      }}
+    >
+      <MotiView
+        animate={{
+          backgroundColor: active ? switchTokens.trackOn : switchTokens.trackOff,
+          borderColor: active ? switchTokens.trackOnBorder : switchTokens.trackOffBorder,
+        }}
+        transition={motion === 'full' ? { type: 'timing', duration: motionTokens.duration.fast } : { type: 'timing', duration: 1 }}
+        style={{ position: 'absolute', top: 0, right: 0, bottom: 0, left: 0, borderRadius: height / 2, borderWidth: colors.ui.limeRoad ? 1 : StyleSheet.hairlineWidth }}
+      />
+      <MotiView
+        animate={{ translateX: active ? thumbTravel : 0 }}
+        transition={{ type: 'timing', duration: motion === 'full' ? motionTokens.duration.fast : 1 }}
+        style={{
+          position: 'absolute',
+          top: thumbInset,
+          left: thumbInset,
+          width: knob,
+          height: knob,
+          borderRadius: knob / 2,
+          backgroundColor: switchTokens.thumb,
+          borderWidth: StyleSheet.hairlineWidth,
+          borderColor: active ? switchTokens.thumbOnBorder : switchTokens.thumbOffBorder,
+        }}
+      />
+    </MotiView>
   )
 }
 
 function ThemeFamilyCard({
+  themeId,
   label,
   detail,
   active,
+  compact,
   onPress,
+  testID,
 }: {
+  themeId: ThemeId
   label: string
   detail: string
   active: boolean
+  compact: boolean
   onPress: () => void
+  testID: string
 }) {
-  const { colors } = useAppTheme()
+  const { colors, mode, themeAccent } = useAppTheme()
   const motion = useMotionPreference()
-  const activeBackground = colors.ui.control.primaryBackground
-  const activeForeground = colors.ui.control.primaryForeground
-  const activeBorder = colors.ui.control.primaryBorder
-  const subtleBorderWidth = colors.ui.cartoon ? 1 : StyleSheet.hairlineWidth
-  const inactiveBackground = colors.ui.cartoon ? colors.ui.semantic.surface.muted : colors.ui.glass ? colors.ui.actionBar.itemBackground : colors.ui.semantic.surface.muted
-  const inactiveBorder = colors.ui.cartoon ? colors.material.stroke : colors.ui.glass ? colors.ui.actionBar.itemBorder : colors.ui.semantic.chrome.border
-  const previewBackground = active ? colors.highlight : colors.ui.glass ? colors.ui.semantic.surface.overlay : colors.ui.semantic.surface.base
+  const previewColors = getColors(mode, themeId, undefined, themeAccent)
+  const activeBorder = colors.ui.control.primaryBackground
+  const subtleBorderWidth = colors.ui.limeRoad ? 1 : StyleSheet.hairlineWidth
+  const inactiveBackground = colors.ui.limeRoad ? colors.ui.semantic.surface.muted : colors.ui.glass ? colors.ui.actionBar.itemBackground : colors.ui.semantic.surface.muted
+  const inactiveBorder = colors.ui.limeRoad ? colors.material.stroke : colors.ui.glass ? colors.ui.actionBar.itemBorder : colors.ui.semantic.chrome.border
   return (
-    <IslePressable haptic onPress={onPress} style={{ flexGrow: 1, flexShrink: 1, flexBasis: '47%', minWidth: 0, minHeight: 88 }}>
+    <IslePressable haptic testID={testID} accessibilityRole="radio" accessibilityLabel={`${label}. ${detail}`} accessibilityState={{ checked: active }} aria-checked={active} onPress={onPress} style={{ flexGrow: 1, flexShrink: 1, flexBasis: compact ? '100%' : '47%', minWidth: 0, minHeight: 116 }}>
       <MotiView
         animate={{
-          backgroundColor: active ? activeBackground : inactiveBackground,
+          backgroundColor: active ? colors.ui.semantic.surface.base : inactiveBackground,
           borderColor: active ? activeBorder : inactiveBorder,
-          scale: active ? 1.006 : 1,
         }}
-        transition={motion === 'full' ? { type: 'spring', ...motionTokens.spring.gentle } : { type: 'timing', duration: 1 }}
+        transition={{ type: 'timing', duration: motion === 'full' ? motionTokens.duration.fast : 1 }}
         style={{
-          minHeight: 84,
-          borderRadius: colors.ui.radius.card,
-          padding: 9,
-          justifyContent: 'center',
-          borderWidth: subtleBorderWidth,
-          gap: 5,
+          minHeight: 116,
+          borderRadius: Math.min(colors.ui.radius.card, 8),
+          padding: 8,
+          borderWidth: active ? 2 : subtleBorderWidth,
+          gap: 7,
         }}
       >
+        <ThemeFamilyPreview themeId={themeId} colors={previewColors} />
         <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
-            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 3, padding: 3, borderRadius: colors.ui.radius.controlSmall, backgroundColor: previewBackground }}>
-              <View style={{ width: 12, height: 12, borderRadius: 6, backgroundColor: active ? activeForeground : colors.ui.icon.accentForeground }} />
-              <View style={{ width: 12, height: 12, borderRadius: 6, backgroundColor: active ? colors.ui.tone.neutral.background : colors.ui.tone.warning.foreground }} />
-            </View>
-          <Text numberOfLines={1} style={{ flex: 1, minWidth: 0, color: active ? activeForeground : colors.text, fontSize: 14, lineHeight: 19, fontWeight: '900' }}>
+          <Text numberOfLines={1} style={{ flex: 1, minWidth: 0, color: colors.text, fontSize: 13, lineHeight: 18, fontWeight: '800' }}>
             {label}
           </Text>
-          <View style={{ width: 18, height: 18, borderRadius: 9, alignItems: 'center', justifyContent: 'center', backgroundColor: previewBackground, borderWidth: subtleBorderWidth, borderColor: active ? colors.ui.control.primaryBorder : inactiveBorder }}>
-            <View style={{ width: 7, height: 7, borderRadius: 4, backgroundColor: active ? activeForeground : 'transparent' }} />
+          <View style={{ width: 20, height: 20, borderRadius: 5, alignItems: 'center', justifyContent: 'center', backgroundColor: active ? colors.ui.control.primaryBackground : 'transparent', borderWidth: subtleBorderWidth, borderColor: active ? colors.ui.control.primaryBorder : inactiveBorder }}>
+            {active ? <AppIcon name="check" color={colors.ui.control.primaryForeground} size={13} strokeWidth={appIconStroke.bold} /> : null}
           </View>
         </View>
-        <Text numberOfLines={2} style={{ color: active ? activeForeground : colors.textSecondary, fontSize: 11, lineHeight: 16, fontWeight: '800', opacity: active ? 0.82 : 1 }}>
+        <Text numberOfLines={2} style={{ color: colors.textSecondary, fontSize: 10.5, lineHeight: 15, fontWeight: '600' }}>
           {detail}
         </Text>
       </MotiView>
@@ -1453,24 +2206,66 @@ function ThemeFamilyCard({
   )
 }
 
-function ThemeModeCard({ label, active, onPress }: { label: string; active: boolean; onPress: () => void }) {
+function ThemeFamilyPreview({ themeId, colors }: { themeId: ThemeId; colors: ReturnType<typeof getColors> }) {
+  const editorial = colors.ui.experience.layout === 'editorial'
+  const document = colors.ui.experience.layout === 'document'
+
+  return (
+    <View
+      accessibilityElementsHidden
+      importantForAccessibility="no-hide-descendants"
+      style={{
+        height: 58,
+        overflow: 'hidden',
+        position: 'relative',
+        borderRadius: Math.min(colors.ui.radius.panel, 6),
+        backgroundColor: colors.background.canvas,
+        borderWidth: 1,
+        borderColor: colors.ui.semantic.chrome.border,
+      }}
+    >
+      {editorial ? <View style={{ position: 'absolute', top: 0, right: 0, left: 0, height: 20, backgroundColor: colors.skyWash }} /> : null}
+      {document ? <View style={{ position: 'absolute', top: 0, bottom: 0, left: 16, width: 1, backgroundColor: colors.ui.section.divider }} /> : null}
+      <View style={{ height: 15, paddingHorizontal: 7, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
+        <View style={{ width: editorial ? 26 : 20, height: 3, backgroundColor: colors.ui.section.title }} />
+        <View style={{ flexDirection: 'row', gap: 3 }}>
+          <View style={{ width: 5, height: 5, borderRadius: document ? 1 : 3, backgroundColor: colors.ui.icon.accentForeground }} />
+          <View style={{ width: 5, height: 5, borderRadius: document ? 1 : 3, backgroundColor: colors.ui.tone.warning.foreground }} />
+        </View>
+      </View>
+      <View style={{ flex: 1, paddingLeft: document ? 23 : 8, paddingRight: 8, paddingTop: 4, gap: 4 }}>
+        <View style={{ width: '66%', height: 4, backgroundColor: colors.text, opacity: 0.78 }} />
+        <View style={{ width: '88%', height: 3, backgroundColor: colors.textSecondary, opacity: 0.4 }} />
+        <View style={{ width: '52%', height: 3, backgroundColor: colors.textSecondary, opacity: 0.28 }} />
+      </View>
+      {editorial ? (
+        <View style={{ position: 'absolute', right: 8, bottom: 8, left: 8, height: 2, backgroundColor: colors.primary }}>
+          <View style={{ position: 'absolute', right: 18, top: -4, width: 10, height: 10, borderRadius: 5, backgroundColor: colors.accent, borderWidth: 2, borderColor: colors.primary }} />
+        </View>
+      ) : null}
+      <View style={{ position: 'absolute', right: 7, bottom: 6, width: document ? 26 : 32, height: 9, borderRadius: document ? 1 : 4, backgroundColor: colors.ui.control.primaryBackground }} />
+      <View style={{ position: 'absolute', left: 7, bottom: 6, width: themeId === 'minimal' ? 18 : 10, height: 9, borderRadius: document ? 1 : 4, backgroundColor: colors.ui.semantic.surface.muted }} />
+    </View>
+  )
+}
+
+function ThemeModeCard({ label, active, onPress, testID }: { label: string; active: boolean; onPress: () => void; testID: string }) {
   const { colors } = useAppTheme()
   const motion = useMotionPreference()
-  const subtleBorderWidth = colors.ui.cartoon ? 1 : StyleSheet.hairlineWidth
-  const inactiveBackground = colors.ui.cartoon ? colors.ui.semantic.surface.muted : colors.ui.glass ? colors.ui.actionBar.itemBackground : colors.ui.semantic.surface.muted
-  const inactiveBorder = colors.ui.cartoon ? colors.material.stroke : colors.ui.glass ? colors.ui.actionBar.itemBorder : colors.ui.semantic.chrome.border
+  const subtleBorderWidth = colors.ui.limeRoad ? 1 : StyleSheet.hairlineWidth
+  const inactiveBackground = colors.ui.limeRoad ? colors.ui.semantic.surface.muted : colors.ui.glass ? colors.ui.actionBar.itemBackground : colors.ui.semantic.surface.muted
+  const inactiveBorder = colors.ui.limeRoad ? colors.material.stroke : colors.ui.glass ? colors.ui.actionBar.itemBorder : colors.ui.semantic.chrome.border
   return (
-    <IslePressable haptic onPress={onPress} style={{ flex: 1, minWidth: 0, minHeight: themeModeCardHeight }}>
+    <IslePressable haptic testID={testID} accessibilityRole="radio" accessibilityLabel={label} accessibilityState={{ checked: active }} aria-checked={active} onPress={onPress} style={{ flex: 1, minWidth: 0, minHeight: themeModeCardHeight }}>
       <MotiView
         animate={{
           backgroundColor: active ? colors.ui.control.primaryBackground : inactiveBackground,
           borderColor: active ? colors.ui.control.primaryBorder : inactiveBorder,
-          scale: active ? 1.006 : 1,
         }}
-        transition={motion === 'full' ? { type: 'spring', ...motionTokens.spring.gentle } : { type: 'timing', duration: 1 }}
+        transition={{ type: 'timing', duration: motion === 'full' ? motionTokens.duration.fast : 1 }}
         style={{
           minHeight: themeModeCardHeight,
-          borderRadius: colors.ui.radius.card,
+          borderRadius: Math.min(colors.ui.radius.card, 8),
           alignItems: 'center',
           justifyContent: 'center',
           borderWidth: subtleBorderWidth,
@@ -1484,9 +2279,53 @@ function ThemeModeCard({ label, active, onPress }: { label: string; active: bool
             <View style={{ flex: 1, backgroundColor: active ? colors.highlight : colors.ui.glass ? colors.ui.semantic.surface.overlay : colors.ui.semantic.surface.muted }} />
           </View>
         </View>
-        <Text numberOfLines={1} style={{ color: active ? colors.ui.control.primaryForeground : colors.textSecondary, fontSize: 13, lineHeight: 18, fontWeight: '900', includeFontPadding: false, textAlignVertical: 'center' }}>
+        <Text numberOfLines={1} style={{ color: active ? colors.ui.control.primaryForeground : colors.textSecondary, fontSize: 13, lineHeight: 18, fontWeight: '700', includeFontPadding: false, textAlignVertical: 'center' }}>
           {label}
         </Text>
+      </MotiView>
+    </IslePressable>
+  )
+}
+
+function ThemeAccentSwatch({
+  label,
+  color,
+  active,
+  disabled = false,
+  onPress,
+  testID,
+}: {
+  label: string
+  color?: string
+  active: boolean
+  disabled?: boolean
+  onPress: () => void
+  testID: string
+}) {
+  const { colors } = useAppTheme()
+  const motion = useMotionPreference()
+  const borderColor = active ? colors.ui.control.primaryBorder : colors.ui.semantic.chrome.border
+  return (
+    <IslePressable
+      haptic
+      testID={testID}
+      accessibilityRole="radio"
+      accessibilityLabel={label}
+      accessibilityState={{ checked: active }}
+      aria-checked={active}
+      disabled={disabled}
+      onPress={onPress}
+      style={{ minWidth: 62, minHeight: 46, flexGrow: 1, flexBasis: '17%' }}
+    >
+      <MotiView
+        animate={{ backgroundColor: active ? colors.ui.semantic.surface.raised : colors.ui.semantic.surface.muted, borderColor }}
+        transition={{ type: 'timing', duration: motion === 'full' ? motionTokens.duration.fast : 1 }}
+        style={{ minHeight: 46, borderRadius: Math.min(colors.ui.radius.controlMiddle, 8), borderWidth: active ? 2 : StyleSheet.hairlineWidth, alignItems: 'center', justifyContent: 'center', gap: 4, paddingHorizontal: 8 }}
+      >
+        <View style={{ width: 24, height: 24, borderRadius: 12, backgroundColor: color ?? colors.ui.control.primaryBackground, borderWidth: 2, borderColor: color ? 'rgba(255,255,255,0.7)' : colors.ui.semantic.chrome.border, overflow: 'hidden' }}>
+          {color === undefined ? <View style={{ position: 'absolute', top: 0, right: 0, bottom: 0, left: 12, backgroundColor: colors.ui.semantic.surface.base }} /> : null}
+        </View>
+        <Text numberOfLines={1} style={{ color: colors.textSecondary, fontSize: 10, lineHeight: 13, fontWeight: '600' }}>{label}</Text>
       </MotiView>
     </IslePressable>
   )
@@ -1506,11 +2345,11 @@ function SegmentedSetting<T extends string>({
   const { colors } = useAppTheme()
   const { t } = useTranslation()
   return (
-    <View>
-      <Text style={{ color: colors.text, fontSize: 13, lineHeight: 18, fontWeight: '900', marginBottom: 7, includeFontPadding: false, textAlignVertical: 'center' }}>{label}</Text>
+    <View accessibilityRole="radiogroup" accessibilityLabel={label}>
+      <Text style={{ color: colors.text, fontSize: 13, lineHeight: 18, fontWeight: '700', marginBottom: 7, includeFontPadding: false, textAlignVertical: 'center' }}>{label}</Text>
       <View style={{ flexDirection: 'row', gap: 8, flexWrap: 'wrap' }}>
         {options.map((option) => (
-          <IslePressable key={option.value} haptic onPress={() => onChange(option.value)} style={settingsChipPressableStyle}>
+          <IslePressable key={option.value} haptic accessibilityRole="radio" accessibilityLabel={t(option.labelKey)} accessibilityState={{ checked: option.value === value }} onPress={() => onChange(option.value)} style={settingsChipPressableStyle}>
             <IsleChip active={option.value === value}>{t(option.labelKey)}</IsleChip>
           </IslePressable>
         ))}
@@ -1594,6 +2433,7 @@ function buildDiagnosticRows(
         local: diagnostics.compact.localCompressionCount,
         fallback: diagnostics.compact.localFallbackCount,
         ready: diagnostics.compact.readyProviders,
+        capable: diagnostics.compact.capableProviders,
         saved: diagnostics.compact.estimatedSavedTokens,
         localSaved: diagnostics.compact.localEstimatedSavedTokens,
         localRatio: formatCompactRatio(diagnostics.compact.localAverageCompressionRatio),
@@ -1680,7 +2520,7 @@ function buildDiagnosticRows(
       value: t('settings.runtimeDiagnosticTimelineValue', {
         total: diagnostics.timeline.counts.total,
         provider: diagnostics.timeline.counts.byStage.provider,
-        context: diagnostics.timeline.counts.byStage.context,
+        contextCount: diagnostics.timeline.counts.byStage.context,
         compact: diagnostics.timeline.counts.byStage.compact,
         plugin: diagnostics.timeline.counts.byStage.plugin,
         tool: diagnostics.timeline.counts.byStage.tool,
@@ -1862,6 +2702,22 @@ function buildDiagnosticRows(
       tone: diagnostics.compatibility.capabilityStatusExamples.requiresLiveKey.length ? 'amber' : 'default',
     },
     {
+      key: 'media-generation-evidence',
+      label: t('settings.runtimeDiagnosticMediaGeneration'),
+      value: t('settings.runtimeDiagnosticMediaGenerationValue', {
+        sourceBacked: diagnostics.mediaGeneration.sourceBackedModels,
+        overclaims: diagnostics.mediaGeneration.unsafeProviderWideDeclarations,
+        inferred: diagnostics.mediaGeneration.inferredOnlyModels,
+        ready: diagnostics.mediaGeneration.maxReady,
+        total: diagnostics.mediaGeneration.total,
+        proofCaptured: diagnostics.mediaGeneration.adapterProofWorklist.capturedRows,
+        proofRows: diagnostics.mediaGeneration.adapterProofWorklist.rowCount,
+        proofBlocked: diagnostics.mediaGeneration.adapterProofWorklist.blockedRows,
+        examples: formatMediaGenerationExamples(diagnostics.mediaGeneration.examples, t),
+      }),
+      tone: diagnostics.mediaGeneration.adapterProofWorklist.defaultEnablementBlocked || diagnostics.mediaGeneration.unsafeProviderWideDeclarations || diagnostics.mediaGeneration.inferredOnlyModels || diagnostics.mediaGeneration.sourceBackedModels ? 'amber' : 'default',
+    },
+    {
       key: 'log',
       label: t('settings.runtimeDiagnosticLog'),
       value: diagnostics.log.enabled ? t('settings.runtimeDiagnosticLogOn') : t('settings.runtimeDiagnosticLogOff'),
@@ -1919,6 +2775,19 @@ function formatCapabilityStatusExamples(
     const reason = t(`settings.runtimeDiagnosticCapabilityReason.${example.limitationReason}`)
     const path = t(`settings.runtimeDiagnosticCapabilityPath.${example.degradationPath}`)
     return `${provider}:${example.capability} ${reason}/${path}${gate}`
+  }).join(' · ')
+}
+
+function formatMediaGenerationExamples(
+  examples: RuntimeDiagnosticsSummary['mediaGeneration']['examples'],
+  t: ReturnType<typeof useTranslation>['t']
+): string {
+  if (!examples.length) return t('settings.runtimeDiagnosticCapabilityEvidenceNone')
+  return examples.slice(0, 3).map((example) => {
+    const provider = example.providerName || example.providerId || 'provider'
+    const source = t(`settings.runtimeDiagnosticMediaGenerationSource.${example.source}`)
+    const kind = t(`settings.runtimeDiagnosticMediaGenerationKind.${example.kind}`)
+    return `${provider}:${example.model}:${kind} ${source} ${example.ready}/${example.total}`
   }).join(' · ')
 }
 
@@ -2148,10 +3017,10 @@ function DiagnosticPill({ label, value, tone }: { label: string; value: string; 
       ? colors.ui.tone.danger
       : colors.ui.tone.neutral
   return (
-    <View style={{ minHeight: 64, minWidth: 0, flexGrow: 1, flexShrink: 1, flexBasis: compact ? '100%' : '47%', borderRadius: colors.ui.radius.card, padding: 10, backgroundColor: toneToken.background, borderWidth: colors.ui.cartoon ? 1 : StyleSheet.hairlineWidth, borderColor: toneToken.border }}>
+    <View style={{ minHeight: 58, minWidth: 0, flexGrow: 1, flexShrink: 1, flexBasis: compact ? '100%' : '47%', borderRadius: Math.min(colors.ui.radius.card, 8), padding: 9, backgroundColor: toneToken.background, borderWidth: colors.ui.limeRoad ? 1 : StyleSheet.hairlineWidth, borderColor: toneToken.border }}>
       <View style={{ flexDirection: 'row', alignItems: 'center', gap: 7 }}>
         <View style={{ width: 8, height: 8, borderRadius: 4, backgroundColor: toneToken.foreground }} />
-        <Text numberOfLines={1} style={{ flex: 1, minWidth: 0, color: colors.text, fontSize: 12, lineHeight: 16, fontWeight: '900', includeFontPadding: false, textAlignVertical: 'center' }}>{label}</Text>
+        <Text numberOfLines={1} style={{ flex: 1, minWidth: 0, color: colors.text, fontSize: 12, lineHeight: 16, fontWeight: '800', includeFontPadding: false, textAlignVertical: 'center' }}>{label}</Text>
       </View>
       <Text numberOfLines={2} style={{ color: colors.textSecondary, fontSize: 11, lineHeight: 16, fontWeight: '800', marginTop: 5, includeFontPadding: false, textAlignVertical: 'center' }}>{value}</Text>
     </View>
@@ -2159,12 +3028,16 @@ function DiagnosticPill({ label, value, tone }: { label: string; value: string; 
 }
 
 function importResultMessage(
-  result: Awaited<ReturnType<typeof importFromJsonFileDetailed>>,
+  result: Awaited<ReturnType<typeof importPortableDataFromJsonFile>>,
   t: ReturnType<typeof useTranslation>['t']
 ): string {
   if (!result.ok && result.reason === 'file_too_large') {
     return `${t('error.fileTooLarge')} (${formatImportSizeLimit(MAX_IMPORT_JSON_FILE_BYTES)})`
   }
+  if (!result.ok && result.reason === 'picker_failed') return t('settings.importPickerFailedMessage')
+  if (!result.ok && result.reason === 'read_failed') return t('settings.importReadFailedMessage')
+  if (!result.ok && result.reason === 'invalid_json') return t('settings.importInvalidJsonMessage')
+  if (!result.ok && result.reason === 'persistence_failed') return t('settings.importPersistenceFailedMessage')
   if (!result.ok) return t('settings.importSkippedMessage')
   if (result.kind === 'mem0') return t('settings.importMem0DoneMessage', { count: result.memories })
   return t('settings.importDoneMessage')
@@ -2174,7 +3047,7 @@ function VersionRow({ label, value }: { label: string; value: string }) {
   const { colors } = useAppTheme()
   return (
     <View style={{ minHeight: 28, flexDirection: 'row', alignItems: 'center', gap: 10 }}>
-      <Text numberOfLines={2} style={{ color: colors.textTertiary, fontSize: 11, lineHeight: 16, fontWeight: '900', flexBasis: '34%', minWidth: 0, maxWidth: '42%', flexShrink: 1, includeFontPadding: false, textAlignVertical: 'center' }}>{label}</Text>
+      <Text numberOfLines={2} style={{ color: colors.textTertiary, fontSize: 11, lineHeight: 16, fontWeight: '700', flexBasis: '34%', minWidth: 0, maxWidth: '42%', flexShrink: 1, includeFontPadding: false, textAlignVertical: 'center' }}>{label}</Text>
       <Text numberOfLines={1} style={{ color: colors.text, fontSize: 12, lineHeight: 17, fontWeight: '800', flex: 1, minWidth: 0, includeFontPadding: false, textAlignVertical: 'center' }}>{value}</Text>
     </View>
   )
@@ -2190,7 +3063,7 @@ function DataButton({ label, icon, onPress, disabled = false }: { label: string;
       block
       onPress={onPress}
       disabled={disabled}
-      style={{ flexGrow: 1, flexShrink: 1, flexBasis: '47%', minWidth: 0, alignSelf: 'stretch', minHeight: 54, borderRadius: colors.ui.radius.controlLarge, justifyContent: 'center', paddingHorizontal: 16 }}
+      style={{ flexGrow: 1, flexShrink: 1, flexBasis: '47%', minWidth: 0, alignSelf: 'stretch', minHeight: 48, borderRadius: Math.min(colors.ui.radius.controlLarge, 8), justifyContent: 'center', paddingHorizontal: 14 }}
       textStyle={{ textAlign: 'center', textAlignVertical: 'center' }}
     />
   )
@@ -2198,5 +3071,5 @@ function DataButton({ label, icon, onPress, disabled = false }: { label: string;
 
 function DangerButton({ label, icon, onPress }: { label: string; icon: ReactNode; onPress: () => void }) {
   const { colors } = useAppTheme()
-  return <IsleButton label={label} icon={icon} tone="danger" onPress={onPress} style={{ flexGrow: 1, flexShrink: 1, flexBasis: '47%', minWidth: 0, minHeight: 54, borderRadius: colors.ui.radius.controlLarge }} />
+  return <IsleButton label={label} icon={icon} tone="danger" onPress={onPress} style={{ flexGrow: 1, flexShrink: 1, flexBasis: '47%', minWidth: 0, minHeight: 48, borderRadius: Math.min(colors.ui.radius.controlLarge, 8) }} />
 }

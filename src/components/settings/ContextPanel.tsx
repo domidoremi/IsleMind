@@ -1,19 +1,17 @@
-import { useEffect, useState, type ReactNode } from 'react'
+import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { StyleSheet, Text, View, useWindowDimensions } from 'react-native'
 import { MotiView } from 'moti'
 import { useTranslation } from 'react-i18next'
 import { AppIcon } from '@/components/ui/AppIcon'
-import type { AIProvider, KnowledgeDocument, LocalRagModelCapability, MemoryItem, RagEvaluationLog, RagIndexingJobStatus, Settings } from '@/types'
-import { importKnowledgeFile, importKnowledgePlainText } from '@/services/context'
+import type { KnowledgeDocument, LocalRagModelCapability, MemoryItem, RagEvaluationLog, RagIndexingJobStatus } from '@/types/contextContracts'
+import type { AIProvider } from '@/types/providerContracts'
+import type { Settings } from '@/types/settingsContracts'
+import { importKnowledgeFile, importKnowledgePlainText } from '@/bootstrap/knowledgeDocumentImportRuntime'
 import {
-  clearKnowledge,
-  clearMemories,
-  deleteKnowledgeDocument,
-  deleteMemory,
-  listKnowledgeDocuments,
-  listMemories,
-  updateMemoryStatus,
-} from '@/services/contextStore'
+  clearKnowledgeRecords,
+  deleteKnowledgeDocumentRecords,
+  knowledgeRepository,
+} from '@/bootstrap/knowledgeRepository'
 import {
   deleteDownloadedLocalEmbeddingModel,
   downloadLocalEmbeddingModel,
@@ -21,19 +19,25 @@ import {
   listLocalEmbeddingModelViews,
   type LocalEmbeddingDownloadProgress,
   type LocalEmbeddingModelView,
-} from '@/services/localEmbeddingModels'
-import { clearRagQueryCaches, listRagEmbeddingJobs, loadRagDebugSnapshot, loadRagEmbeddingJobSummary, rebuildRagKnowledgeEmbeddings, runRagGoldEvaluation, type RagEvaluationRun } from '@/services/ragEvaluation'
+} from '@/bootstrap/localModelRuntime'
+import { clearRagQueryCaches, listRagEmbeddingJobs, loadRagDebugSnapshot, loadRagEmbeddingJobSummary, rebuildRagKnowledgeEmbeddings, runRagGoldEvaluation } from '@/bootstrap/knowledgeRagEvaluation'
+import {
+  isDownloadableLocalModel,
+  localCapabilityEnabled,
+  splitLocalModelViews,
+  type RagEvaluationRun,
+} from '@/modules/knowledge'
 import { useAppTheme } from '@/hooks/useAppTheme'
 import { useSettingsStore } from '@/store/settingsStore'
-import { SEARCH_DIAGNOSTIC_QUERY, SEARCH_PROVIDER_CREDENTIAL_FIELDS, SEARCH_PROVIDER_OPTIONS, legacySearchModeForProvider, resolveSearchProvider, searchProviderLabel } from '@/services/searchPolicy'
+import { SEARCH_DIAGNOSTIC_QUERY, SEARCH_PROVIDER_OPTIONS, legacySearchModeForProvider, resolveSearchProvider } from '@/modules/integrations'
+import { SEARCH_PROVIDER_CREDENTIAL_FIELDS, searchProviderCredentialPresentation, searchProviderLabel } from '@/presentation/features/settings/searchProviderPresentation'
 import { filterAndSortKnowledgeDocuments, filterAndSortMemories, hasKnowledgeAssetFilters, hasMemoryAssetFilters, knowledgeAssetEmptyMessage, memoryAssetEmptyMessage, type KnowledgeSortMode, type KnowledgeStatusFocus, type MemorySortMode, type MemoryStatusFocus } from '@/services/contextAssetFilters'
 import { capabilityLabel, formatKnowledgeMeta, formatMemoryMeta, memoryReviewFocusKey } from '@/services/contextAssetFormatters'
-import { isDownloadableLocalModel, localCapabilityEnabled, splitLocalModelViews } from '@/services/contextLocalModelRules'
 import { IslePressable } from '@/components/ui/isle'
 import { IsleChip } from '@/components/ui/isle'
-import { IsleField, IsleSection, IsleToggle } from '@/components/ui/isle'
+import { IsleField, IsleProgress, IsleToggle } from '@/components/ui/isle'
 import { useIsleDialog } from '@/components/ui/isle'
-import { getPolicyPreferredProviderModel } from '@/services/ai/policy/providerModelAccess'
+import { getPolicyPreferredProviderModel } from '@/bootstrap/providerModelAccess'
 import { filterPendingMemoriesForReview, buildMemoryReviewSummary, type MemoryReviewQueueFocus } from '@/utils/memoryReview'
 import { buildKnowledgeRecoverySummary } from '@/utils/knowledgeRecovery'
 import { useMotionPreference } from '@/hooks/useMotionPreference'
@@ -42,6 +46,12 @@ import { KnowledgeImportSection } from '@/components/settings/KnowledgeImportSec
 import { runContextSelfTest as runContextSelfTestScenario, type ContextSelfTestStep } from '@/services/contextSelfTest'
 import { ContextDiagnosticsSection } from '@/components/settings/ContextDiagnosticsSection'
 import { MemoryReviewSection } from '@/components/settings/MemoryReviewSection'
+import { SettingsSummaryStrip, type SettingsSummaryItem } from '@/components/settings/SettingsSummaryStrip'
+import {
+  LimeRoadContextSettingsLead,
+  MarkdownContextSettingsLead,
+  MinimalContextSettingsLead,
+} from '@/components/settings/theme-experiences/ContextSettingsExperiences'
 
 interface ContextPanelProps {
   providers: AIProvider[]
@@ -75,36 +85,49 @@ const itemRowActionStyle = {
 const memoryPreviewLimit = 6
 const knowledgePreviewLimit = 6
 
+async function listMemories(statuses: MemoryItem['status'][]): Promise<MemoryItem[]> {
+  return (await knowledgeRepository.listMemories({ statuses })).map(({ schema: _schema, ...memory }) => memory)
+}
+
+async function listKnowledgeDocuments(): Promise<KnowledgeDocument[]> {
+  return (await knowledgeRepository.listDocuments()).map(({ schema: _schema, ...document }) => document)
+}
+
+const updateMemoryStatus = (id: string, status: MemoryItem['status']) => knowledgeRepository.updateMemoryStatus(id, status)
+const deleteMemory = (id: string) => knowledgeRepository.deleteMemory(id)
+const clearMemories = () => knowledgeRepository.clearMemories()
+const deleteKnowledgeDocument = (id: string) => deleteKnowledgeDocumentRecords(id)
+const clearKnowledge = () => clearKnowledgeRecords()
+
 function primaryActionSurface(colors: ReturnType<typeof useAppTheme>['colors']) {
   return {
     backgroundColor: colors.ui.control.primaryBackground,
-    borderWidth: colors.ui.cartoon ? 1 : StyleSheet.hairlineWidth,
+    borderWidth: colors.ui.limeRoad ? 1 : StyleSheet.hairlineWidth,
     borderColor: colors.ui.control.primaryBorder,
-    borderRadius: colors.ui.radius.controlLarge,
+    borderRadius: Math.min(colors.ui.radius.controlLarge, 8),
   }
 }
 
 function secondaryActionSurface(colors: ReturnType<typeof useAppTheme>['colors']) {
   return {
-    backgroundColor: colors.ui.glass ? colors.ui.actionBar.itemBackground : colors.ui.cartoon ? colors.ui.semantic.surface.muted : colors.ui.semantic.surface.muted,
-    borderWidth: colors.ui.cartoon ? 1 : StyleSheet.hairlineWidth,
-    borderColor: colors.ui.glass ? colors.ui.actionBar.itemBorder : colors.ui.cartoon ? colors.material.stroke : colors.ui.semantic.chrome.border,
-    borderRadius: colors.ui.radius.controlLarge,
+    backgroundColor: colors.ui.glass ? colors.ui.actionBar.itemBackground : colors.ui.limeRoad ? colors.ui.semantic.surface.muted : colors.ui.semantic.surface.muted,
+    borderWidth: colors.ui.limeRoad ? 1 : StyleSheet.hairlineWidth,
+    borderColor: colors.ui.glass ? colors.ui.actionBar.itemBorder : colors.ui.limeRoad ? colors.material.stroke : colors.ui.semantic.chrome.border,
+    borderRadius: Math.min(colors.ui.radius.controlLarge, 8),
   }
 }
 
 function rowActionSurface(colors: ReturnType<typeof useAppTheme>['colors']) {
   return {
-    backgroundColor: colors.ui.glass ? colors.ui.actionBar.itemBackground : colors.ui.cartoon ? colors.ui.semantic.surface.muted : colors.ui.semantic.surface.base,
-    borderWidth: colors.ui.cartoon ? 1 : StyleSheet.hairlineWidth,
-    borderColor: colors.ui.glass ? colors.ui.actionBar.itemBorder : colors.ui.cartoon ? colors.material.stroke : colors.ui.semantic.chrome.border,
-    borderRadius: colors.ui.radius.controlMiddle,
+    backgroundColor: colors.ui.glass ? colors.ui.actionBar.itemBackground : colors.ui.limeRoad ? colors.ui.semantic.surface.muted : colors.ui.semantic.surface.base,
+    borderWidth: colors.ui.limeRoad ? 1 : StyleSheet.hairlineWidth,
+    borderColor: colors.ui.glass ? colors.ui.actionBar.itemBorder : colors.ui.limeRoad ? colors.material.stroke : colors.ui.semantic.chrome.border,
+    borderRadius: Math.min(colors.ui.radius.controlMiddle, 8),
   }
 }
 
 function assetCardSurface(colors: ReturnType<typeof useAppTheme>['colors'], borderColor = colors.material.stroke) {
-  const shadowOpacity = colors.ui.cartoon ? colors.ui.card.shadowOpacity : 0
-  const resolvedBorderColor = colors.ui.cartoon
+  const resolvedBorderColor = colors.ui.limeRoad
     ? borderColor
     : borderColor === colors.material.stroke
       ? colors.ui.glass
@@ -112,23 +135,44 @@ function assetCardSurface(colors: ReturnType<typeof useAppTheme>['colors'], bord
         : colors.ui.semantic.chrome.border
       : borderColor
   return {
-    borderRadius: colors.ui.radius.card,
-    backgroundColor: colors.ui.glass ? colors.ui.semantic.chrome.background : colors.ui.cartoon ? colors.ui.semantic.surface.base : colors.ui.semantic.surface.base,
-    borderWidth: colors.ui.cartoon ? 1 : StyleSheet.hairlineWidth,
+    borderRadius: Math.min(colors.ui.radius.card, 8),
+    backgroundColor: colors.ui.glass ? colors.ui.semantic.chrome.background : colors.ui.limeRoad ? colors.ui.semantic.surface.base : colors.ui.semantic.surface.base,
+    borderWidth: colors.ui.limeRoad ? 1 : StyleSheet.hairlineWidth,
     borderColor: resolvedBorderColor,
     shadowColor: colors.ui.control.shadow,
-    shadowOpacity: shadowOpacity > 0 ? Math.min(shadowOpacity, 0.05) : 0,
-    shadowRadius: colors.ui.cartoon ? Math.max(1, colors.ui.card.shadowRadius - 6) : 0,
-    shadowOffset: { width: 0, height: colors.ui.cartoon ? Math.max(1, colors.ui.card.shadowOffset - 3) : 0 },
-    elevation: colors.ui.cartoon && shadowOpacity > 0 ? 1 : 0,
+    shadowOpacity: 0,
+    shadowRadius: 0,
+    shadowOffset: { width: 0, height: 0 },
+    elevation: 0,
   }
 }
 
+function countMemoryStatuses(memories: MemoryItem[]) {
+  return memories.reduce((counts, memory) => {
+    if (memory.status === 'pending') counts.pending += 1
+    else if (memory.status === 'active') counts.active += 1
+    else if (memory.status === 'disabled') counts.disabled += 1
+    return counts
+  }, { pending: 0, active: 0, disabled: 0 })
+}
+
+function countKnowledgeStatuses(documents: KnowledgeDocument[]) {
+  return documents.reduce((counts, document) => {
+    if (document.status === 'extracting') counts.indexing += 1
+    else if (document.status === 'error') counts.failed += 1
+    else if (document.status === 'ready' && document.chunkCount > 0) counts.ready += 1
+    else if (document.status === 'ready') counts.empty += 1
+    return counts
+  }, { ready: 0, indexing: 0, failed: 0, empty: 0 })
+}
+
 export function ContextPanel({ providers, section = 'all', focus }: ContextPanelProps) {
-  const { colors } = useAppTheme()
+  const { colors, themeId } = useAppTheme()
   const { t } = useTranslation()
   const dialog = useIsleDialog()
   const motion = useMotionPreference()
+  const { width } = useWindowDimensions()
+  const compact = width < 390
   void providers
   const settings = useSettingsStore((state) => state.settings)
   const updateSettings = useSettingsStore((state) => state.updateSettings)
@@ -158,7 +202,9 @@ export function ContextPanel({ providers, section = 'all', focus }: ContextPanel
   const [downloadProgress, setDownloadProgress] = useState<LocalEmbeddingDownloadProgress | null>(null)
   const [rebuilding, setRebuilding] = useState(false)
   const [importing, setImporting] = useState(false)
+  const importControllerRef = useRef<AbortController | null>(null)
   const [selfTesting, setSelfTesting] = useState(false)
+  const selfTestControllerRef = useRef<AbortController | null>(null)
   const [confirmingMemories, setConfirmingMemories] = useState(false)
   const [showAllMemories, setShowAllMemories] = useState(false)
   const [showAllKnowledge, setShowAllKnowledge] = useState(false)
@@ -172,47 +218,124 @@ export function ContextPanel({ providers, section = 'all', focus }: ContextPanel
   const [selfTestResult, setSelfTestResult] = useState<SelfTestResult | null>(null)
   const [plainTitle, setPlainTitle] = useState('')
   const [plainText, setPlainText] = useState('')
+  const [activeContextSection, setActiveContextSection] = useState<'search' | 'rag' | 'credentials' | null>(null)
+  const [ragTechniquesOpen, setRagTechniquesOpen] = useState(false)
+  const [localModelsOpen, setLocalModelsOpen] = useState(false)
+  const [knowledgeToolsOpen, setKnowledgeToolsOpen] = useState(false)
   const showContext = section === 'all' || section === 'context'
   const showMemory = section === 'all' || section === 'memory'
   const showKnowledge = section === 'all' || section === 'knowledge'
   const shouldPromoteKnowledgeImport = showKnowledge && section === 'knowledge' && focus === 'import'
-  const pendingMemories = memories.filter((memory) => memory.status === 'pending')
-  const memoryReviewSummary = buildMemoryReviewSummary(memories)
-  const memoryStatusCounts = {
-    pending: pendingMemories.length,
-    active: memories.filter((memory) => memory.status === 'active').length,
-    disabled: memories.filter((memory) => memory.status === 'disabled').length,
-  }
-  const knowledgeStatusCounts = {
-    ready: documents.filter((document) => document.status === 'ready' && document.chunkCount > 0).length,
-    indexing: documents.filter((document) => document.status === 'extracting').length,
-    failed: documents.filter((document) => document.status === 'error').length,
-    empty: documents.filter((document) => document.status === 'ready' && document.chunkCount <= 0).length,
-  }
-  const knowledgeRecoverySummary = buildKnowledgeRecoverySummary(documents, indexingJobs)
-  const sortedMemories = filterAndSortMemories(memories, {
+  const pendingMemories = useMemo(() => memories.filter((memory) => memory.status === 'pending'), [memories])
+  const memoryReviewSummary = useMemo(() => buildMemoryReviewSummary(memories), [memories])
+  const memoryStatusCounts = useMemo(() => countMemoryStatuses(memories), [memories])
+  const knowledgeStatusCounts = useMemo(() => countKnowledgeStatuses(documents), [documents])
+  const knowledgeRecoverySummary = useMemo(() => buildKnowledgeRecoverySummary(documents, indexingJobs), [documents, indexingJobs])
+  const sortedMemories = useMemo(() => filterAndSortMemories(memories, {
     statusFocus: memoryStatusFocus,
     reviewFocus: memoryReviewFocus,
     filter: memoryFilter,
     sortMode: memorySortMode,
-  })
-  const sortedDocuments = filterAndSortKnowledgeDocuments(documents, {
+  }), [memories, memoryFilter, memoryReviewFocus, memorySortMode, memoryStatusFocus])
+  const sortedDocuments = useMemo(() => filterAndSortKnowledgeDocuments(documents, {
     statusFocus: knowledgeStatusFocus,
     filter: knowledgeFilter,
     sortMode: knowledgeSortMode,
-  })
+  }), [documents, knowledgeFilter, knowledgeSortMode, knowledgeStatusFocus])
+
+  useEffect(() => () => {
+    importControllerRef.current?.abort()
+    importControllerRef.current = null
+    selfTestControllerRef.current?.abort()
+    selfTestControllerRef.current = null
+  }, [])
   const filteredMemories = sortedMemories
   const filteredDocuments = sortedDocuments
   const visibleMemories = showAllMemories ? sortedMemories : sortedMemories.slice(0, memoryPreviewLimit)
   const visibleDocuments = showAllKnowledge ? sortedDocuments : sortedDocuments.slice(0, knowledgePreviewLimit)
   const hasMemoryFilters = hasMemoryAssetFilters(memoryStatusFocus, memoryReviewFocus, memoryFilter)
   const hasKnowledgeFilters = hasKnowledgeAssetFilters(knowledgeStatusFocus, knowledgeFilter)
-  const filteredPendingMemories = sortedMemories.filter((memory) => memory.status === 'pending')
+  const filteredPendingMemories = useMemo(() => sortedMemories.filter((memory) => memory.status === 'pending'), [sortedMemories])
   const canConfirmFilteredMemories = hasMemoryFilters && filteredPendingMemories.length > 0 && filteredPendingMemories.length < pendingMemories.length
   const canRejectFilteredMemories = (hasMemoryFilters || memoryReviewFocus !== 'all') && filteredPendingMemories.length > 0
   const memoryEmptyMessage = memoryAssetEmptyMessage(memoryStatusFocus, memoryFilter, t)
   const knowledgeEmptyMessage = knowledgeAssetEmptyMessage(knowledgeStatusFocus, knowledgeFilter, t)
-  const { downloadable: downloadableLocalModels, planned: plannedLocalCapabilities } = splitLocalModelViews(localModels)
+  const { downloadable: downloadableLocalModels, planned: plannedLocalCapabilities } = useMemo(() => splitLocalModelViews(localModels), [localModels])
+  const searchProvider = resolveSearchProvider(settings)
+  const searchCredentialPresentation = searchProviderCredentialPresentation(searchProvider)
+  const searchCredentialsAvailable = searchCredentialPresentation.fields.length > 0
+    || searchCredentialPresentation.showEndpoint
+    || searchCredentialPresentation.showBearerKey
+  const searchCredentialsConfiguredCount = [
+    ...searchCredentialPresentation.fields.map((field) => searchCredentialFieldValue(field.id)),
+    ...(searchCredentialPresentation.showEndpoint ? [settings.customSearchEndpoint] : []),
+    ...(searchCredentialPresentation.showBearerKey ? [customSearchKey] : []),
+  ].filter((value) => value?.trim()).length
+  const searchProviderOpen = activeContextSection === 'search'
+  const searchCredentialsExpanded = activeContextSection === 'credentials'
+  const ragSettingsExpanded = activeContextSection === 'rag'
+  const ragSettingsSummary = [
+    (settings.ragMode ?? 'hybrid') === 'hybrid' ? t('contextPanel.ragHybrid') : (settings.ragMode ?? 'hybrid') === 'fts' ? t('contextPanel.ragFts') : t('contextPanel.ragOff'),
+    t(`contextPanel.ragProfiles.${settings.ragProfile ?? 'balanced'}`),
+    (settings.embeddingMode ?? 'hybrid') === 'hybrid' ? t('contextPanel.embeddingHybrid') : (settings.embeddingMode ?? 'hybrid') === 'provider' ? t('contextPanel.embeddingProvider') : t('contextPanel.embeddingLocal'),
+  ].join(' · ')
+  const enabledTechniqueCount = [
+    settings.ragQueryRewriteEnabled !== false,
+    settings.ragHydeEnabled !== false,
+    settings.ragFlareEnabled !== false,
+    settings.ragCrossEncoderEnabled !== false,
+    settings.ragLlmlinguaEnabled !== false,
+    settings.ragRaptorEnabled !== false,
+    settings.ragGraphEnabled !== false,
+    settings.ragColbertEnabled !== false,
+  ].filter(Boolean).length
+  const activeLocalModelCount = localModels.filter((model) => model.active).length
+  const contextSummaryItems: SettingsSummaryItem[] = [
+    ...(showMemory && (memories.length || memoryStatusCounts.pending || !settings.memoryEnabled) ? [{
+      key: 'memory',
+      label: t('settings.longMemory'),
+      value: String(memoryStatusCounts.active),
+      detail: `${t('contextPanel.memoryPendingCount')} ${memoryStatusCounts.pending} · ${t('contextPanel.memoryDisabledCount')} ${memoryStatusCounts.disabled}`,
+      icon: <AppIcon name="memory-brain" color={colors.textTertiary} size={15} />,
+      tone: settings.memoryEnabled ? 'mint' as const : 'default' as const,
+    }] : []),
+    ...(showKnowledge && (documents.length || knowledgeStatusCounts.failed || knowledgeStatusCounts.empty || !settings.knowledgeEnabled) ? [{
+      key: 'knowledge',
+      label: t('settings.localKnowledge'),
+      value: String(knowledgeStatusCounts.ready),
+      detail: `${t('contextPanel.knowledgeStatusIndexing')} ${knowledgeStatusCounts.indexing} · ${t('contextPanel.knowledgeStatusFailed')} ${knowledgeStatusCounts.failed}`,
+      icon: <AppIcon name="knowledge-database" color={colors.textTertiary} size={15} />,
+      tone: knowledgeStatusCounts.failed ? 'danger' as const : settings.knowledgeEnabled ? 'mint' as const : 'default' as const,
+    }] : []),
+    ...(showContext && (settings.webSearchEnabled || searchProvider !== 'off' || searchCredentialsConfiguredCount > 0) ? [{
+      key: 'search',
+      label: t('settings.webSearch'),
+      value: searchProvider === 'off' ? t('settings.searchOff') : searchProviderLabel(searchProvider),
+      detail: settings.webSearchEnabled ? t('settings.enabledState') : t('settings.disabledState'),
+      icon: <AppIcon name="context-globe" color={colors.textTertiary} size={15} />,
+      tone: settings.webSearchEnabled && searchProvider !== 'off' ? 'mint' as const : 'amber' as const,
+    }] : []),
+    ...(showContext && ((settings.ragMode ?? 'hybrid') !== 'hybrid' || activeLocalModelCount > 0 || enabledTechniqueCount < 8 || Boolean(embeddingJobs?.running) || Boolean(embeddingJobs?.error)) ? [{
+      key: 'rag',
+      label: t('contextPanel.ragMode'),
+      value: (settings.ragMode ?? 'hybrid') === 'hybrid' ? t('contextPanel.ragHybrid') : (settings.ragMode ?? 'hybrid') === 'fts' ? t('contextPanel.ragFts') : t('contextPanel.ragOff'),
+      detail: t('contextPanel.overviewRagDetail', { count: enabledTechniqueCount, models: activeLocalModelCount }),
+      icon: <AppIcon name="search-check" color={colors.textTertiary} size={15} />,
+      tone: (settings.ragMode ?? 'hybrid') === 'off' ? 'amber' as const : 'mint' as const,
+    }] : []),
+  ]
+  const knowledgeToolsVisible = knowledgeToolsOpen || hasKnowledgeFilters || knowledgeStatusCounts.failed > 0 || knowledgeStatusCounts.empty > 0 || knowledgeRecoverySummary.recoverableDocuments > 0 || knowledgeRecoverySummary.failedJobs > 0
+  const subtleBorderWidth = colors.ui.limeRoad ? 1 : StyleSheet.hairlineWidth
+  const foldoutPanelStyle = {
+    borderRadius: themeId === 'markdown' ? 4 : Math.min(colors.ui.radius.card, 8),
+    padding: compact ? 10 : 11,
+    backgroundColor: themeId === 'minimal' ? 'transparent' : colors.ui.semantic.surface.muted,
+    borderWidth: themeId === 'minimal' ? 0 : subtleBorderWidth,
+    borderTopWidth: themeId === 'minimal' ? StyleSheet.hairlineWidth : undefined,
+    borderBottomWidth: themeId === 'minimal' ? StyleSheet.hairlineWidth : undefined,
+    borderLeftWidth: themeId === 'markdown' ? 3 : undefined,
+    borderColor: themeId === 'lime-road' ? colors.material.stroke : colors.ui.semantic.chrome.border,
+  } as const
 
   async function refresh() {
     const [memoryItems, documentItems, jobs, debug] = await Promise.all([
@@ -324,7 +447,17 @@ export function ContextPanel({ providers, section = 'all', focus }: ContextPanel
       setCustomSearchApiKey(customSearchKey.trim()),
     ])
     setSaved(true)
-    setTimeout(() => setSaved(false), 1400)
+    setTimeout(() => setSaved(false), 1408)
+  }
+
+  function toggleContextSection(sectionId: 'search' | 'rag' | 'credentials') {
+    setActiveContextSection((current) => current === sectionId ? null : sectionId)
+  }
+
+  function selectSearchProvider(provider: typeof SEARCH_PROVIDER_OPTIONS[number]) {
+    updateSettings({ searchProvider: provider, webSearchMode: legacySearchModeForProvider(provider), webSearchEnabled: provider !== 'off' })
+    const credentials = searchProviderCredentialPresentation(provider)
+    setActiveContextSection(credentials.fields.length || credentials.showEndpoint || credentials.showBearerKey ? 'credentials' : 'search')
   }
 
   function searchCredentialFieldValue(fieldId: typeof SEARCH_PROVIDER_CREDENTIAL_FIELDS[number]['id']): string {
@@ -354,33 +487,55 @@ export function ContextPanel({ providers, section = 'all', focus }: ContextPanel
   }
 
   async function importFile() {
+    if (importControllerRef.current) return
+    const controller = new AbortController()
+    importControllerRef.current = controller
     setImporting(true)
     try {
       const provider = await getPrimaryConfiguredProvider()
+      if (controller.signal.aborted) return
       const model = provider ? getPolicyPreferredProviderModel(provider, settings) : undefined
-      const result = await importKnowledgeFile(provider ?? undefined, model)
+      const result = await importKnowledgeFile(provider ?? undefined, model, { signal: controller.signal })
       dialog.toast({ title: result.ok ? t('contextPanel.knowledgeUpdated') : t('settings.importSkipped'), message: result.message, tone: result.ok ? 'mint' : 'amber' })
       await refresh()
+    } catch (error) {
+      if (controller.signal.aborted || (error instanceof Error && error.name === 'AbortError')) return
+      throw error
     } finally {
-      setImporting(false)
+      if (importControllerRef.current === controller) {
+        importControllerRef.current = null
+        if (!controller.signal.aborted) setImporting(false)
+      }
     }
   }
 
   async function importPlainText() {
+    if (importControllerRef.current) return
+    const controller = new AbortController()
+    importControllerRef.current = controller
     setImporting(true)
     try {
       const provider = await getPrimaryConfiguredProvider()
-      const result = await importKnowledgePlainText(plainTitle, plainText, provider ?? undefined)
+      if (controller.signal.aborted) return
+      const result = await importKnowledgePlainText(plainTitle, plainText, provider ?? undefined, { signal: controller.signal })
       dialog.toast({ title: result.ok ? t('contextPanel.knowledgeUpdated') : t('settings.importSkipped'), message: result.message, tone: result.ok ? 'mint' : 'amber' })
       if (result.ok) setPlainText('')
       await refresh()
+    } catch (error) {
+      if (controller.signal.aborted || (error instanceof Error && error.name === 'AbortError')) return
+      throw error
     } finally {
-      setImporting(false)
+      if (importControllerRef.current === controller) {
+        importControllerRef.current = null
+        if (!controller.signal.aborted) setImporting(false)
+      }
     }
   }
 
   async function runContextSelfTest() {
     if (selfTesting) return
+    const controller = new AbortController()
+    selfTestControllerRef.current = controller
     setSelfTesting(true)
     try {
       const result = await runContextSelfTestScenario({
@@ -388,6 +543,7 @@ export function ContextPanel({ providers, section = 'all', focus }: ContextPanel
         primaryProvider: await getPrimaryConfiguredProvider(),
         getTavilyApiKey,
         t,
+        signal: controller.signal,
         onStep: (step: ContextSelfTestStep) => setSelfTestResult((current) => ({
           ranAt: current?.ranAt ?? Date.now(),
           steps: [...(current?.steps ?? []), step],
@@ -400,6 +556,7 @@ export function ContextPanel({ providers, section = 'all', focus }: ContextPanel
       })
       await refresh()
     } catch (error) {
+      if (controller.signal.aborted) return
       setSelfTestResult((current) => ({
         ranAt: current?.ranAt ?? Date.now(),
         steps: [
@@ -417,7 +574,10 @@ export function ContextPanel({ providers, section = 'all', focus }: ContextPanel
         tone: 'danger',
       })
     } finally {
-      setSelfTesting(false)
+      if (selfTestControllerRef.current === controller) {
+        selfTestControllerRef.current = null
+        if (!controller.signal.aborted) setSelfTesting(false)
+      }
     }
   }
 
@@ -550,46 +710,101 @@ export function ContextPanel({ providers, section = 'all', focus }: ContextPanel
     />
   ) : null
 
+  const summary = contextSummaryItems.length ? <SettingsSummaryStrip items={contextSummaryItems} /> : undefined
+  const toggles = (
+      <View style={{ gap: themeId === 'minimal' ? 0 : 8, marginTop: themeId === 'minimal' ? 0 : 10 }}>
+        {showMemory ? (
+          <IsleToggle
+            icon={<AppIcon name="reasoning" color={colors.text} size={18} />}
+            title={t('settings.longMemory')}
+            active={!!settings.memoryEnabled}
+            onPress={() => updateSettings({ memoryEnabled: !settings.memoryEnabled })}
+          />
+        ) : null}
+        {showKnowledge ? (
+          <IsleToggle
+            icon={<AppIcon name="knowledge" color={colors.text} size={18} />}
+            title={t('settings.localKnowledge')}
+            active={!!settings.knowledgeEnabled}
+            onPress={() => updateSettings({ knowledgeEnabled: !settings.knowledgeEnabled })}
+          />
+        ) : null}
+        {showContext ? (
+          <IsleToggle
+            icon={<AppIcon name="globe" color={colors.text} size={18} />}
+            title={t('settings.webSearch')}
+            active={!!settings.webSearchEnabled}
+            onPress={() => updateSettings({ webSearchEnabled: !settings.webSearchEnabled })}
+          />
+        ) : null}
+      </View>
+  )
+  const Lead = themeId === 'lime-road'
+    ? LimeRoadContextSettingsLead
+    : themeId === 'markdown'
+      ? MarkdownContextSettingsLead
+      : MinimalContextSettingsLead
   return (
-    <View style={{ paddingBottom: showKnowledge ? 96 : 0 }}>
-      {showMemory ? (
-        <IsleToggle
-          icon={<AppIcon name="reasoning" color={colors.text} size={18} />}
-          title={t('settings.longMemory')}
-          active={!!settings.memoryEnabled}
-          onPress={() => updateSettings({ memoryEnabled: !settings.memoryEnabled })}
-        />
-      ) : null}
-      {showKnowledge ? (
-        <IsleToggle
-          icon={<AppIcon name="knowledge" color={colors.text} size={18} />}
-          title={t('settings.localKnowledge')}
-          active={!!settings.knowledgeEnabled}
-          onPress={() => updateSettings({ knowledgeEnabled: !settings.knowledgeEnabled })}
-        />
-      ) : null}
-      {showContext ? (
-        <IsleToggle
-          icon={<AppIcon name="globe" color={colors.text} size={18} />}
-          title={t('settings.webSearch')}
-          active={!!settings.webSearchEnabled}
-          onPress={() => updateSettings({ webSearchEnabled: !settings.webSearchEnabled })}
-        />
-      ) : null}
+    <View style={{ paddingBottom: showKnowledge ? 12 : 0 }}>
+      <Lead section={section} summary={summary} toggles={toggles} compact={compact} />
 
       {showContext ? (
-        <View style={{ flexDirection: 'row', gap: 8, flexWrap: 'wrap', marginTop: 10 }}>
-          {SEARCH_PROVIDER_OPTIONS.map((mode) => (
-            <IslePressable key={mode} haptic onPress={() => updateSettings({ searchProvider: mode, webSearchMode: legacySearchModeForProvider(mode), webSearchEnabled: mode !== 'off' })} style={contextChipPressableStyle}>
-              <IsleChip active={resolveSearchProvider(settings) === mode}>{searchProviderLabel(mode)}</IsleChip>
-            </IslePressable>
-          ))}
+        <View style={{ marginTop: 10 }}>
+        <IslePressable
+          haptic
+          accessibilityRole="button"
+          accessibilityLabel={`${t('settings.search')}. ${searchProviderLabel(searchProvider)}`}
+          accessibilityState={{ expanded: searchProviderOpen }}
+          onPress={() => toggleContextSection('search')}
+            style={{ minHeight: 40, paddingHorizontal: 12, flexDirection: 'row', alignItems: 'center', gap: 8, ...secondaryActionSurface(colors) }}
+          >
+            <AppIcon name="context-globe" color={colors.textTertiary} size={16} />
+            <View style={{ flex: 1, minWidth: 0 }}>
+              <Text numberOfLines={1} style={{ color: colors.textSecondary, fontSize: 13, lineHeight: 17, fontWeight: '800' }}>{t('settings.search')}</Text>
+              <Text numberOfLines={1} style={{ color: colors.textTertiary, fontSize: 11, lineHeight: 15, marginTop: 1 }}>{searchProviderLabel(searchProvider)} · {settings.webSearchEnabled ? t('settings.enabledState') : t('settings.disabledState')}</Text>
+            </View>
+            <MotiView animate={{ rotate: searchProviderOpen ? '180deg' : '0deg' }} transition={{ type: 'timing', duration: 160 }}>
+              <AppIcon name="collapse" color={colors.textTertiary} size={16} />
+            </MotiView>
+          </IslePressable>
+          {searchProviderOpen ? (
+            <MotiView from={{ opacity: 0, translateY: -6 }} animate={{ opacity: 1, translateY: 0 }} transition={{ type: 'timing', duration: 144 }}>
+              <View style={{ flexDirection: 'row', gap: 8, flexWrap: 'wrap', marginTop: 10 }}>
+                {SEARCH_PROVIDER_OPTIONS.map((mode) => (
+                  <IslePressable key={mode} haptic accessibilityLabel={searchProviderLabel(mode)} accessibilityState={{ selected: searchProvider === mode }} onPress={() => selectSearchProvider(mode)} style={contextChipPressableStyle}>
+                    <IsleChip active={searchProvider === mode}>{searchProviderLabel(mode)}</IsleChip>
+                  </IslePressable>
+                ))}
+              </View>
+            </MotiView>
+          ) : null}
         </View>
       ) : null}
 
       {shouldPromoteKnowledgeImport ? knowledgeImportControls : null}
 
-      {showContext ? <IsleSection title={t('contextPanel.ragMode')} material="raised" style={{ marginTop: 12 }}>
+      {showContext ? (
+        <View style={{ marginTop: 10 }}>
+        <IslePressable
+          haptic
+          accessibilityRole="button"
+          accessibilityLabel={`${t('contextPanel.ragMode')}. ${ragSettingsSummary}`}
+          accessibilityState={{ expanded: ragSettingsExpanded }}
+          onPress={() => toggleContextSection('rag')}
+            style={{ minHeight: 42, paddingHorizontal: 12, flexDirection: 'row', alignItems: 'center', gap: 8, ...secondaryActionSurface(colors) }}
+          >
+            <AppIcon name="search-check" color={colors.textTertiary} size={16} />
+            <View style={{ flex: 1, minWidth: 0 }}>
+              <Text numberOfLines={1} style={{ color: colors.textSecondary, fontSize: 13, lineHeight: 17, fontWeight: '800' }}>{t('contextPanel.ragMode')}</Text>
+              <Text numberOfLines={1} style={{ color: colors.textTertiary, fontSize: 11, lineHeight: 15, marginTop: 1 }}>{ragSettingsSummary}</Text>
+            </View>
+            <MotiView animate={{ rotate: ragSettingsExpanded ? '180deg' : '0deg' }} transition={{ type: 'timing', duration: 160 }}>
+              <AppIcon name="collapse" color={colors.textTertiary} size={16} />
+            </MotiView>
+          </IslePressable>
+          {ragSettingsExpanded ? (
+            <MotiView from={{ opacity: 0, translateY: -6 }} animate={{ opacity: 1, translateY: 0 }} transition={{ type: 'timing', duration: 144 }} style={{ marginTop: 8, ...foldoutPanelStyle }}>
+              <ContextFoldoutHeader title={t('contextPanel.ragMode')} detail={ragSettingsSummary} />
         {embeddingJobs ? (
           <Text style={{ color: embeddingJobs.error ? colors.ui.tone.warning.foreground : colors.textTertiary, fontSize: 11, lineHeight: 16, marginTop: 6 }}>
             {t('contextPanel.embeddingStatus', { running: embeddingJobs.running, failed: embeddingJobs.error })}
@@ -597,132 +812,168 @@ export function ContextPanel({ providers, section = 'all', focus }: ContextPanel
         ) : null}
         <View style={{ flexDirection: 'row', gap: 8, flexWrap: 'wrap', marginTop: 10 }}>
           {(['hybrid', 'fts', 'off'] as const).map((mode) => (
-            <IslePressable key={mode} haptic onPress={() => updateSettings({ ragMode: mode })} style={contextChipPressableStyle}>
+            <IslePressable key={mode} haptic accessibilityLabel={mode === 'hybrid' ? t('contextPanel.ragHybrid') : mode === 'fts' ? t('contextPanel.ragFts') : t('contextPanel.ragOff')} accessibilityState={{ selected: (settings.ragMode ?? 'hybrid') === mode }} onPress={() => updateSettings({ ragMode: mode })} style={contextChipPressableStyle}>
               <IsleChip active={(settings.ragMode ?? 'hybrid') === mode}>{mode === 'hybrid' ? t('contextPanel.ragHybrid') : mode === 'fts' ? t('contextPanel.ragFts') : t('contextPanel.ragOff')}</IsleChip>
             </IslePressable>
           ))}
         </View>
-        <Text style={{ color: colors.text, fontSize: 15, fontWeight: '800', marginTop: 14 }}>{t('contextPanel.ragProfile')}</Text>
+        <Text style={{ color: colors.text, fontSize: 14, fontWeight: '800', marginTop: 10 }}>{t('contextPanel.ragProfile')}</Text>
         <View style={{ flexDirection: 'row', gap: 8, flexWrap: 'wrap', marginTop: 10 }}>
           {(['fast', 'balanced', 'deep', 'offline'] as const).map((profile) => (
-            <IslePressable key={profile} haptic onPress={() => updateSettings({ ragProfile: profile })} style={contextChipPressableStyle}>
+            <IslePressable key={profile} haptic accessibilityLabel={t(`contextPanel.ragProfiles.${profile}`)} accessibilityState={{ selected: (settings.ragProfile ?? 'balanced') === profile }} onPress={() => updateSettings({ ragProfile: profile })} style={contextChipPressableStyle}>
               <IsleChip active={(settings.ragProfile ?? 'balanced') === profile}>{t(`contextPanel.ragProfiles.${profile}`)}</IsleChip>
             </IslePressable>
           ))}
         </View>
-        <Text style={{ color: colors.text, fontSize: 15, fontWeight: '800', marginTop: 14 }}>{t('contextPanel.agenticTechniques')}</Text>
-        <Text style={{ color: colors.textTertiary, fontSize: 11, lineHeight: 16, marginTop: 4 }}>
-          {t('contextPanel.agenticTechniquesHelp')}
-        </Text>
-        <View style={{ flexDirection: 'row', gap: 8, flexWrap: 'wrap', marginTop: 10 }}>
-          {[
-            ['ragQueryRewriteEnabled', 'queryRewrite'],
-            ['ragHydeEnabled', 'hyde'],
-            ['ragFlareEnabled', 'flare'],
-            ['ragCrossEncoderEnabled', 'crossEncoder'],
-            ['ragLlmlinguaEnabled', 'llmlingua'],
-            ['ragRaptorEnabled', 'raptor'],
-            ['ragGraphEnabled', 'graph'],
-            ['ragColbertEnabled', 'colbert'],
-          ].map(([key, label]) => {
-            const settingKey = key as keyof Pick<Settings, 'ragQueryRewriteEnabled' | 'ragHydeEnabled' | 'ragFlareEnabled' | 'ragCrossEncoderEnabled' | 'ragLlmlinguaEnabled' | 'ragRaptorEnabled' | 'ragGraphEnabled' | 'ragColbertEnabled'>
-            return (
-            <IslePressable key={key} haptic onPress={() => updateSettings({ [settingKey]: !settings[settingKey] })} style={contextChipPressableStyle}>
-              <IsleChip active={settings[settingKey] !== false}>{t(`contextPanel.techniques.${label}`)}</IsleChip>
-            </IslePressable>
-            )
-          })}
-        </View>
-        <Text style={{ color: colors.text, fontSize: 15, fontWeight: '800', marginTop: 14 }}>{t('contextPanel.embeddingStrategy')}</Text>
+        <IslePressable
+          haptic
+          accessibilityRole="button"
+          accessibilityLabel={`${t('contextPanel.agenticTechniques')}. ${t('contextPanel.agenticTechniquesCollapsedDetail', { count: enabledTechniqueCount })}`}
+          accessibilityState={{ expanded: ragTechniquesOpen }}
+          onPress={() => setRagTechniquesOpen((value) => !value)}
+          style={{ marginTop: 10, minHeight: 40, paddingHorizontal: 12, flexDirection: 'row', alignItems: 'center', gap: 8, ...secondaryActionSurface(colors) }}
+        >
+          <AppIcon name="workflow" color={colors.textTertiary} size={16} />
+          <View style={{ flex: 1, minWidth: 0 }}>
+            <Text numberOfLines={1} style={{ color: colors.textSecondary, fontSize: 13, lineHeight: 17, fontWeight: '800' }}>{t('contextPanel.agenticTechniques')}</Text>
+            <Text numberOfLines={1} style={{ color: colors.textTertiary, fontSize: 11, lineHeight: 15, marginTop: 1 }}>{t('contextPanel.agenticTechniquesCollapsedDetail', { count: enabledTechniqueCount })}</Text>
+          </View>
+          <MotiView animate={{ rotate: ragTechniquesOpen ? '180deg' : '0deg' }} transition={{ type: 'timing', duration: 160 }}>
+            <AppIcon name="collapse" color={colors.textTertiary} size={16} />
+          </MotiView>
+        </IslePressable>
+        {ragTechniquesOpen ? (
+          <MotiView from={{ opacity: 0, translateY: -6 }} animate={{ opacity: 1, translateY: 0 }} transition={{ type: 'timing', duration: 144 }}>
+            <Text style={{ color: colors.textTertiary, fontSize: 11, lineHeight: 16, marginTop: 10 }}>
+              {t('contextPanel.agenticTechniquesHelp')}
+            </Text>
+            <View style={{ flexDirection: 'row', gap: 8, flexWrap: 'wrap', marginTop: 10 }}>
+              {[
+                ['ragQueryRewriteEnabled', 'queryRewrite'],
+                ['ragHydeEnabled', 'hyde'],
+                ['ragFlareEnabled', 'flare'],
+                ['ragCrossEncoderEnabled', 'crossEncoder'],
+                ['ragLlmlinguaEnabled', 'llmlingua'],
+                ['ragRaptorEnabled', 'raptor'],
+                ['ragGraphEnabled', 'graph'],
+                ['ragColbertEnabled', 'colbert'],
+              ].map(([key, label]) => {
+                const settingKey = key as keyof Pick<Settings, 'ragQueryRewriteEnabled' | 'ragHydeEnabled' | 'ragFlareEnabled' | 'ragCrossEncoderEnabled' | 'ragLlmlinguaEnabled' | 'ragRaptorEnabled' | 'ragGraphEnabled' | 'ragColbertEnabled'>
+                const active = settings[settingKey] !== false
+                return (
+                <IslePressable key={key} haptic accessibilityRole="checkbox" accessibilityLabel={t(`contextPanel.techniques.${label}`)} accessibilityState={{ checked: active }} onPress={() => updateSettings({ [settingKey]: !settings[settingKey] })} style={contextChipPressableStyle}>
+                  <IsleChip active={active}>{t(`contextPanel.techniques.${label}`)}</IsleChip>
+                </IslePressable>
+                )
+              })}
+            </View>
+          </MotiView>
+        ) : null}
+        <Text style={{ color: colors.text, fontSize: 14, fontWeight: '800', marginTop: 10 }}>{t('contextPanel.embeddingStrategy')}</Text>
         <View style={{ flexDirection: 'row', gap: 8, flexWrap: 'wrap', marginTop: 10 }}>
           {(['hybrid', 'provider', 'local'] as const).map((mode) => (
-            <IslePressable key={mode} haptic onPress={() => updateSettings({ embeddingMode: mode })} style={contextChipPressableStyle}>
+            <IslePressable key={mode} haptic accessibilityLabel={mode === 'hybrid' ? t('contextPanel.embeddingHybrid') : mode === 'provider' ? t('contextPanel.embeddingProvider') : t('contextPanel.embeddingLocal')} accessibilityState={{ selected: (settings.embeddingMode ?? 'hybrid') === mode }} onPress={() => updateSettings({ embeddingMode: mode })} style={contextChipPressableStyle}>
               <IsleChip active={(settings.embeddingMode ?? 'hybrid') === mode}>{mode === 'hybrid' ? t('contextPanel.embeddingHybrid') : mode === 'provider' ? t('contextPanel.embeddingProvider') : t('contextPanel.embeddingLocal')}</IsleChip>
             </IslePressable>
           ))}
         </View>
-        <View style={{ marginTop: 14 }}>
-          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
-            <AppIcon name="device" color={colors.text} size={17} />
-            <Text style={{ color: colors.text, fontSize: 15, fontWeight: '900', flex: 1, minWidth: 0 }}>{t('contextPanel.localModel.title')}</Text>
-          </View>
-          <Text style={{ color: colors.textTertiary, fontSize: 11, lineHeight: 16, marginTop: 4 }}>
-            {t('contextPanel.localModel.priority')}
-          </Text>
-          <Text style={{ color: colors.textTertiary, fontSize: 11, lineHeight: 16, marginTop: 4 }}>
-            {t('contextPanel.localModel.capabilityNotice')}
-          </Text>
-          <IsleField
-            label={t('contextPanel.localModel.mirrorBaseUrl')}
-            note={t('contextPanel.localModel.mirrorHelp')}
-            style={{ marginTop: 10 }}
-            inputProps={{
-              value: settings.localModelDownloadMirrorBaseUrl ?? '',
-              onChangeText: (localModelDownloadMirrorBaseUrl) => updateSettings({ localModelDownloadMirrorBaseUrl }),
-              autoCapitalize: 'none',
-              autoCorrect: false,
-              placeholder: t('contextPanel.localModel.mirrorPlaceholder'),
-            }}
-          />
-          <View style={{ marginTop: 10, gap: 12 }}>
-            {downloadableLocalModels.length ? (
-              <View style={{ gap: 8 }}>
-                <Text style={{ color: colors.textTertiary, fontSize: 11, fontWeight: '900' }}>{t('contextPanel.localModel.downloadableModels')}</Text>
-                {downloadableLocalModels.map((view, index) => (
-                  <MotiView
-                    key={view.model.id}
-                    from={motion === 'full' ? { opacity: 0, translateY: 8 } : { opacity: 0 }}
-                    animate={{ opacity: 1, translateY: 0 }}
-                    transition={motion === 'full'
-                      ? { type: 'spring', ...motionTokens.spring.gentle, delay: Math.min(index * 24, 120) }
-                      : { type: 'timing', duration: motionTokens.duration.fast }}
-                  >
-                    <LocalModelRow
-                      view={view}
-                      busy={modelBusyId === view.model.id}
-                      progress={downloadProgress?.modelId === view.model.id ? downloadProgress : undefined}
-                      onDownload={() => void downloadModel(view)}
-                      onDetails={() => showLocalModelDetails(view)}
-                      onEnable={() => void enableLocalModel(view)}
-                      onDelete={() => void deleteModel(view)}
-                    />
-                  </MotiView>
-                ))}
-              </View>
-            ) : (
-              <Text style={{ color: colors.textTertiary, fontSize: 12, lineHeight: 17 }}>{t('contextPanel.localModel.noDownloadableModels')}</Text>
-            )}
-            {plannedLocalCapabilities.length ? (
-              <View style={{ gap: 8 }}>
-                <Text style={{ color: colors.textTertiary, fontSize: 11, fontWeight: '900' }}>{t('contextPanel.localModel.capabilityStatus')}</Text>
-                <Text style={{ color: colors.textTertiary, fontSize: 11, lineHeight: 16 }}>{t('contextPanel.localModel.capabilityStatusHelp')}</Text>
-                {plannedLocalCapabilities.map((view) => (
-                  <LocalCapabilityRow
-                    key={view.model.id}
-                    view={view}
-                    settings={settings}
-                    onDetails={() => showLocalModelDetails(view)}
-                  />
-                ))}
-              </View>
-            ) : null}
-          </View>
-          <IslePressable
-            haptic
-            onPress={() => void rebuildIndex()}
-            disabled={rebuilding}
-            style={{ marginTop: 10, minHeight: 44, ...secondaryActionSurface(colors), alignItems: 'center', justifyContent: 'center', opacity: rebuilding ? 0.65 : 1 }}
-          >
-            <Text style={{ color: colors.textSecondary, fontSize: 13, fontWeight: '800' }}>{rebuilding ? t('contextPanel.localModel.rebuilding') : t('contextPanel.localModel.rebuildIndex')}</Text>
-          </IslePressable>
-        </View>
         <IslePressable
           haptic
+          accessibilityRole="button"
+          accessibilityLabel={`${t('contextPanel.localModel.title')}. ${t('contextPanel.localModel.collapsedDetail', { active: activeLocalModelCount, downloadable: downloadableLocalModels.length, planned: plannedLocalCapabilities.length })}`}
+          accessibilityState={{ expanded: localModelsOpen }}
+          onPress={() => setLocalModelsOpen((value) => !value)}
+          style={{ marginTop: 10, minHeight: 40, paddingHorizontal: 12, flexDirection: 'row', alignItems: 'center', gap: 8, ...secondaryActionSurface(colors) }}
+        >
+          <AppIcon name="device" color={colors.textTertiary} size={16} />
+          <View style={{ flex: 1, minWidth: 0 }}>
+            <Text numberOfLines={1} style={{ color: colors.textSecondary, fontSize: 13, lineHeight: 17, fontWeight: '800' }}>{t('contextPanel.localModel.title')}</Text>
+            <Text numberOfLines={1} style={{ color: colors.textTertiary, fontSize: 11, lineHeight: 15, marginTop: 1 }}>{t('contextPanel.localModel.collapsedDetail', { active: activeLocalModelCount, downloadable: downloadableLocalModels.length, planned: plannedLocalCapabilities.length })}</Text>
+          </View>
+          <MotiView animate={{ rotate: localModelsOpen ? '180deg' : '0deg' }} transition={{ type: 'timing', duration: 160 }}>
+            <AppIcon name="collapse" color={colors.textTertiary} size={16} />
+          </MotiView>
+        </IslePressable>
+        {localModelsOpen ? (
+          <MotiView from={{ opacity: 0, translateY: -6 }} animate={{ opacity: 1, translateY: 0 }} transition={{ type: 'timing', duration: 144 }} style={{ marginTop: 10 }}>
+            <Text style={{ color: colors.textTertiary, fontSize: 11, lineHeight: 16 }}>
+              {t('contextPanel.localModel.priority')}
+            </Text>
+            <Text style={{ color: colors.textTertiary, fontSize: 11, lineHeight: 16, marginTop: 4 }}>
+              {t('contextPanel.localModel.capabilityNotice')}
+            </Text>
+            <IsleField
+              label={t('contextPanel.localModel.mirrorBaseUrl')}
+              note={t('contextPanel.localModel.mirrorHelp')}
+              style={{ marginTop: 10 }}
+              inputProps={{
+                value: settings.localModelDownloadMirrorBaseUrl ?? '',
+                onChangeText: (localModelDownloadMirrorBaseUrl) => updateSettings({ localModelDownloadMirrorBaseUrl }),
+                autoCapitalize: 'none',
+                autoCorrect: false,
+                placeholder: t('contextPanel.localModel.mirrorPlaceholder'),
+              }}
+            />
+            <View style={{ marginTop: 10, gap: 10 }}>
+              {downloadableLocalModels.length ? (
+                <View style={{ gap: 8 }}>
+                  <Text style={{ color: colors.textTertiary, fontSize: 11, fontWeight: '700' }}>{t('contextPanel.localModel.downloadableModels')}</Text>
+                  {downloadableLocalModels.map((view, index) => (
+                    <MotiView
+                      key={view.model.id}
+                      from={motion === 'full' ? { opacity: 0, translateY: 8 } : { opacity: 0 }}
+                      animate={{ opacity: 1, translateY: 0 }}
+                      transition={{ type: 'timing', duration: motion === 'full' ? motionTokens.duration.fast : 1, delay: motion === 'full' ? Math.min(index * 24, 120) : 0 }}
+                    >
+                      <LocalModelRow
+                        view={view}
+                        busy={modelBusyId === view.model.id}
+                        progress={downloadProgress?.modelId === view.model.id ? downloadProgress : undefined}
+                        onDownload={() => void downloadModel(view)}
+                        onDetails={() => showLocalModelDetails(view)}
+                        onEnable={() => void enableLocalModel(view)}
+                        onDelete={() => void deleteModel(view)}
+                      />
+                    </MotiView>
+                  ))}
+                </View>
+              ) : (
+                <Text style={{ color: colors.textTertiary, fontSize: 12, lineHeight: 17 }}>{t('contextPanel.localModel.noDownloadableModels')}</Text>
+              )}
+              {plannedLocalCapabilities.length ? (
+                <View style={{ gap: 8 }}>
+                  <Text style={{ color: colors.textTertiary, fontSize: 11, fontWeight: '700' }}>{t('contextPanel.localModel.capabilityStatus')}</Text>
+                  <Text style={{ color: colors.textTertiary, fontSize: 11, lineHeight: 16 }}>{t('contextPanel.localModel.capabilityStatusHelp')}</Text>
+                  {plannedLocalCapabilities.map((view) => (
+                    <LocalCapabilityRow
+                      key={view.model.id}
+                      view={view}
+                      settings={settings}
+                      onDetails={() => showLocalModelDetails(view)}
+                    />
+                  ))}
+                </View>
+              ) : null}
+            </View>
+            <IslePressable
+              haptic
+              accessibilityLabel={rebuilding ? t('contextPanel.localModel.rebuilding') : t('contextPanel.localModel.rebuildIndex')}
+              onPress={() => void rebuildIndex()}
+              disabled={rebuilding}
+              style={{ marginTop: 10, minHeight: 44, ...secondaryActionSurface(colors), alignItems: 'center', justifyContent: 'center', opacity: rebuilding ? 0.65 : 1 }}
+            >
+              <Text style={{ color: colors.textSecondary, fontSize: 13, fontWeight: '800' }}>{rebuilding ? t('contextPanel.localModel.rebuilding') : t('contextPanel.localModel.rebuildIndex')}</Text>
+            </IslePressable>
+          </MotiView>
+        ) : null}
+        <IslePressable
+          haptic
+          accessibilityLabel={t('contextPanel.clearRagCache')}
           onPress={async () => {
             await clearRagQueryCaches()
             dialog.notice({ title: t('contextPanel.cacheCleared'), message: t('contextPanel.cacheClearedMessage'), tone: 'mint' })
           }}
-          style={{ ...fullWidthActionStyle, ...secondaryActionSurface(colors), marginTop: 12 }}
+          style={{ ...fullWidthActionStyle, ...secondaryActionSurface(colors), marginTop: 10 }}
         >
           <Text style={{ color: colors.textSecondary, fontSize: 13, fontWeight: '800' }}>{t('contextPanel.clearRagCache')}</Text>
         </IslePressable>
@@ -738,24 +989,48 @@ export function ContextPanel({ providers, section = 'all', focus }: ContextPanel
           primaryActionStyle={{ ...fullWidthActionStyle, ...primaryActionSurface(colors) }}
           assetCardSurface={(borderColor) => assetCardSurface(colors, borderColor)}
         />
-      </IsleSection> : null}
+            </MotiView>
+          ) : null}
+        </View>
+      ) : null}
 
-      {showContext ? <IsleSection title={t('contextPanel.searchApi')} material="raised" style={{ marginTop: 12 }}>
-        {SEARCH_PROVIDER_CREDENTIAL_FIELDS.map((field) => (
-          <IsleField key={field.id} label={field.label} style={{ marginTop: 10 }} inputProps={{ value: searchCredentialFieldValue(field.id), onChangeText: searchCredentialFieldUpdater(field.id), secureTextEntry: field.secureTextEntry, autoCapitalize: 'none', autoCorrect: false, placeholder: field.placeholder }} />
-        ))}
-        <IsleField label={t('contextPanel.customSearchEndpoint')} style={{ marginTop: 10 }} inputProps={{ value: settings.customSearchEndpoint ?? '', onChangeText: (customSearchEndpoint) => updateSettings({ customSearchEndpoint }), autoCapitalize: 'none', autoCorrect: false, placeholder: 'https://search.example.com?q={query}&limit={limit}' }} />
-        <IsleField label={t('contextPanel.customSearchKey')} style={{ marginTop: 10 }} inputProps={{ value: customSearchKey, onChangeText: setCustomSearchKey, secureTextEntry: true, autoCapitalize: 'none', autoCorrect: false, placeholder: t('contextPanel.optionalBearerKey') }} />
-        <IslePressable haptic onPress={saveTavilyKey} style={{ ...fullWidthActionStyle, ...primaryActionSurface(colors), marginTop: 10 }}>
-          <Text style={{ color: colors.ui.control.primaryForeground, fontSize: 14, fontWeight: '800' }}>{saved ? t('common.saved') : t('contextPanel.saveSearchConfig')}</Text>
-        </IslePressable>
-      </IsleSection> : null}
+      {showContext && searchCredentialsAvailable ? <View style={{ marginTop: 10 }}>
+        <ContextDisclosureRow
+          title={t('contextPanel.searchApi')}
+          detail={`${searchProviderLabel(searchProvider)} · ${searchCredentialsConfiguredCount
+            ? t('contextPanel.searchApiActiveDetail', { count: searchCredentialsConfiguredCount })
+            : t('contextPanel.searchApiCollapsedDetail')}`}
+          icon={<AppIcon name="key" color={colors.textTertiary} size={15} />}
+          open={searchCredentialsExpanded}
+          onPress={() => toggleContextSection('credentials')}
+        />
+        {searchCredentialsExpanded ? (
+          <MotiView from={{ opacity: 0, translateY: -6 }} animate={{ opacity: 1, translateY: 0 }} transition={{ type: 'timing', duration: 144 }} style={{ marginTop: 8, ...foldoutPanelStyle }}>
+            <ContextFoldoutHeader
+              title={searchProviderLabel(searchProvider)}
+              detail={searchCredentialsConfiguredCount
+                ? t('contextPanel.searchApiActiveDetail', { count: searchCredentialsConfiguredCount })
+                : t('contextPanel.searchApiCollapsedDetail')}
+            />
+            {searchCredentialPresentation.fields.map((field) => (
+              <IsleField key={field.id} label={field.label} style={{ marginTop: 10 }} inputProps={{ value: searchCredentialFieldValue(field.id), onChangeText: searchCredentialFieldUpdater(field.id), secureTextEntry: field.secureTextEntry, autoCapitalize: 'none', autoCorrect: false, placeholder: field.placeholder }} />
+            ))}
+            {searchCredentialPresentation.showEndpoint ? <IsleField label={t('contextPanel.customSearchEndpoint')} style={{ marginTop: 10 }} inputProps={{ value: settings.customSearchEndpoint ?? '', onChangeText: (customSearchEndpoint) => updateSettings({ customSearchEndpoint }), autoCapitalize: 'none', autoCorrect: false, placeholder: 'https://search.example.com?q={query}&limit={limit}' }} /> : null}
+            {searchCredentialPresentation.showBearerKey ? <IsleField label={t('contextPanel.customSearchKey')} style={{ marginTop: 10 }} inputProps={{ value: customSearchKey, onChangeText: setCustomSearchKey, secureTextEntry: true, autoCapitalize: 'none', autoCorrect: false, placeholder: t('contextPanel.optionalBearerKey') }} /> : null}
+            <IslePressable haptic accessibilityLabel={saved ? t('common.saved') : t('contextPanel.saveSearchConfig')} onPress={saveTavilyKey} style={{ ...fullWidthActionStyle, ...primaryActionSurface(colors), marginTop: 10 }}>
+              <Text style={{ color: colors.ui.control.primaryForeground, fontSize: 14, fontWeight: '800' }}>{saved ? t('common.saved') : t('contextPanel.saveSearchConfig')}</Text>
+            </IslePressable>
+          </MotiView>
+        ) : null}
+      </View> : null}
 
       {!shouldPromoteKnowledgeImport ? knowledgeImportControls : null}
 
       {showMemory ? <ContextList
         title={t('contextPanel.memoryCount', { count: memories.length })}
         empty={t('contextPanel.noMemories')}
+        emptyDetail={t('contextPanel.noMemoriesDetail')}
+        emptyVisible={!memories.length}
         onClear={async () => {
           await clearMemories()
           resetMemoryAssetView()
@@ -822,6 +1097,8 @@ export function ContextPanel({ providers, section = 'all', focus }: ContextPanel
       {showKnowledge ? <ContextList
         title={t('contextPanel.knowledgeCount', { count: documents.length })}
         empty={t('contextPanel.noKnowledgeFiles')}
+        emptyDetail={t('contextPanel.noKnowledgeFilesDetail')}
+        emptyVisible={!documents.length}
         onClear={async () => {
           await clearKnowledge()
           resetKnowledgeAssetView()
@@ -829,98 +1106,107 @@ export function ContextPanel({ providers, section = 'all', focus }: ContextPanel
         }}
       >
         {documents.length ? (
-          <View testID="knowledge-readiness-summary" style={{ flexDirection: 'row', gap: 8, flexWrap: 'wrap', marginBottom: 10 }}>
-            <DebugStat label={t('contextPanel.knowledgeReadyCount')} value={String(knowledgeStatusCounts.ready)} />
-            <DebugStat label={t('contextPanel.knowledgeIndexingCount')} value={String(knowledgeStatusCounts.indexing)} />
-            <DebugStat label={t('contextPanel.knowledgeFailedCount')} value={String(knowledgeStatusCounts.failed)} />
-            <DebugStat label={t('contextPanel.knowledgeEmptyCount')} value={String(knowledgeStatusCounts.empty)} />
-          </View>
-        ) : null}
-        {documents.length ? (
-          <View testID="knowledge-status-focus" style={{ flexDirection: 'row', gap: 8, flexWrap: 'wrap', marginBottom: 10 }}>
-            {([
-              ['all', t('contextPanel.statusFocusAll', { count: documents.length })],
-              ['ready', t('contextPanel.statusFocusReady', { count: knowledgeStatusCounts.ready })],
-              ['extracting', t('contextPanel.statusFocusIndexing', { count: knowledgeStatusCounts.indexing })],
-              ['error', t('contextPanel.statusFocusFailed', { count: knowledgeStatusCounts.failed })],
-              ['empty', t('contextPanel.statusFocusEmpty', { count: knowledgeStatusCounts.empty })],
-            ] satisfies Array<[KnowledgeStatusFocus, string]>).map(([status, label]) => (
-              <IslePressable key={status} haptic onPress={() => setKnowledgeStatusFocus(status)} style={contextChipPressableStyle}>
-                <IsleChip active={knowledgeStatusFocus === status}>{label}</IsleChip>
-              </IslePressable>
-            ))}
-          </View>
-        ) : null}
-        {knowledgeStatusCounts.failed || knowledgeStatusCounts.empty ? (
-          <Text testID="knowledge-readiness-warning" style={{ color: knowledgeStatusCounts.failed ? colors.ui.tone.danger.foreground : colors.ui.tone.warning.foreground, fontSize: 12, lineHeight: 17, marginBottom: 10 }}>
-            {knowledgeStatusCounts.failed && knowledgeStatusCounts.empty
-              ? t('contextPanel.knowledgeReadinessWarning', { failed: knowledgeStatusCounts.failed, empty: knowledgeStatusCounts.empty })
-              : knowledgeStatusCounts.failed
-                ? t('contextPanel.knowledgeFailedWarning', { failed: knowledgeStatusCounts.failed })
-                : t('contextPanel.knowledgeEmptyWarning', { empty: knowledgeStatusCounts.empty })}
-          </Text>
-        ) : null}
-        {knowledgeRecoverySummary.recoverableDocuments || knowledgeRecoverySummary.failedJobs ? (
-          <View testID="knowledge-recovery-summary" style={{ marginBottom: 10, padding: 12, ...assetCardSurface(colors, knowledgeRecoverySummary.failedDocuments || knowledgeRecoverySummary.failedJobs ? colors.ui.tone.danger.border : colors.ui.tone.warning.border) }}>
-            <Text style={{ color: colors.text, fontSize: 13, fontWeight: '900' }}>{t('contextPanel.knowledgeRecoveryTitle')}</Text>
-            <Text style={{ color: colors.textTertiary, fontSize: 11, lineHeight: 16, marginTop: 4 }}>
-              {t('contextPanel.knowledgeRecoverySummary', {
-                failed: knowledgeRecoverySummary.failedDocuments,
-                empty: knowledgeRecoverySummary.emptyDocuments,
-                jobs: knowledgeRecoverySummary.failedJobs,
-              })}
-            </Text>
-            {knowledgeRecoverySummary.lastError ? (
-              <Text numberOfLines={2} style={{ color: colors.ui.tone.danger.foreground, fontSize: 11, lineHeight: 16, marginTop: 6 }}>
-                {t('contextPanel.knowledgeRecoveryLastError', { error: knowledgeRecoverySummary.lastError })}
-              </Text>
+          <>
+            <ContextDisclosureRow
+              title={t('contextPanel.knowledgeTools')}
+              detail={hasKnowledgeFilters
+                ? t('contextPanel.knowledgeFilterSummary', { count: filteredDocuments.length, total: documents.length })
+                : t('contextPanel.knowledgeToolsCollapsedDetail', { ready: knowledgeStatusCounts.ready, failed: knowledgeStatusCounts.failed, empty: knowledgeStatusCounts.empty })}
+              icon={<AppIcon name="filter" color={colors.textTertiary} size={15} />}
+              open={knowledgeToolsVisible}
+              onPress={() => setKnowledgeToolsOpen((value) => !value)}
+            />
+            {knowledgeToolsVisible ? (
+              <MotiView from={{ opacity: 0, translateY: -6 }} animate={{ opacity: 1, translateY: 0 }} transition={{ type: 'timing', duration: 144 }} style={{ marginTop: 10 }}>
+                <View testID="knowledge-readiness-summary" style={{ flexDirection: 'row', gap: 8, flexWrap: 'wrap', marginBottom: 10 }}>
+                  <DebugStat label={t('contextPanel.knowledgeReadyCount')} value={String(knowledgeStatusCounts.ready)} />
+                  <DebugStat label={t('contextPanel.knowledgeIndexingCount')} value={String(knowledgeStatusCounts.indexing)} />
+                  <DebugStat label={t('contextPanel.knowledgeFailedCount')} value={String(knowledgeStatusCounts.failed)} />
+                  <DebugStat label={t('contextPanel.knowledgeEmptyCount')} value={String(knowledgeStatusCounts.empty)} />
+                </View>
+                <View testID="knowledge-status-focus" style={{ flexDirection: 'row', gap: 8, flexWrap: 'wrap', marginBottom: 10 }}>
+                  {([
+                    ['all', t('contextPanel.statusFocusAll', { count: documents.length })],
+                    ['ready', t('contextPanel.statusFocusReady', { count: knowledgeStatusCounts.ready })],
+                    ['extracting', t('contextPanel.statusFocusIndexing', { count: knowledgeStatusCounts.indexing })],
+                    ['error', t('contextPanel.statusFocusFailed', { count: knowledgeStatusCounts.failed })],
+                    ['empty', t('contextPanel.statusFocusEmpty', { count: knowledgeStatusCounts.empty })],
+                  ] satisfies Array<[KnowledgeStatusFocus, string]>).map(([status, label]) => (
+                    <IslePressable key={status} haptic accessibilityLabel={label} accessibilityState={{ selected: knowledgeStatusFocus === status }} onPress={() => setKnowledgeStatusFocus(status)} style={contextChipPressableStyle}>
+                      <IsleChip active={knowledgeStatusFocus === status}>{label}</IsleChip>
+                    </IslePressable>
+                  ))}
+                </View>
+                {knowledgeStatusCounts.failed || knowledgeStatusCounts.empty ? (
+                  <Text testID="knowledge-readiness-warning" style={{ color: knowledgeStatusCounts.failed ? colors.ui.tone.danger.foreground : colors.ui.tone.warning.foreground, fontSize: 12, lineHeight: 17, marginBottom: 10 }}>
+                    {knowledgeStatusCounts.failed && knowledgeStatusCounts.empty
+                      ? t('contextPanel.knowledgeReadinessWarning', { failed: knowledgeStatusCounts.failed, empty: knowledgeStatusCounts.empty })
+                      : knowledgeStatusCounts.failed
+                        ? t('contextPanel.knowledgeFailedWarning', { failed: knowledgeStatusCounts.failed })
+                        : t('contextPanel.knowledgeEmptyWarning', { empty: knowledgeStatusCounts.empty })}
+                  </Text>
+                ) : null}
+                {knowledgeRecoverySummary.recoverableDocuments || knowledgeRecoverySummary.failedJobs ? (
+                  <View testID="knowledge-recovery-summary" style={{ marginBottom: 10, padding: 10, ...assetCardSurface(colors, knowledgeRecoverySummary.failedDocuments || knowledgeRecoverySummary.failedJobs ? colors.ui.tone.danger.border : colors.ui.tone.warning.border) }}>
+                    <Text style={{ color: colors.text, fontSize: 13, fontWeight: '800' }}>{t('contextPanel.knowledgeRecoveryTitle')}</Text>
+                    <Text style={{ color: colors.textTertiary, fontSize: 11, lineHeight: 16, marginTop: 4 }}>
+                      {t('contextPanel.knowledgeRecoverySummary', {
+                        failed: knowledgeRecoverySummary.failedDocuments,
+                        empty: knowledgeRecoverySummary.emptyDocuments,
+                        jobs: knowledgeRecoverySummary.failedJobs,
+                      })}
+                    </Text>
+                    {knowledgeRecoverySummary.lastError ? (
+                      <Text numberOfLines={2} style={{ color: colors.ui.tone.danger.foreground, fontSize: 11, lineHeight: 16, marginTop: 6 }}>
+                        {t('contextPanel.knowledgeRecoveryLastError', { error: knowledgeRecoverySummary.lastError })}
+                      </Text>
+                    ) : null}
+                    <View style={{ flexDirection: 'row', gap: 8, flexWrap: 'wrap', marginTop: 10 }}>
+                      {knowledgeRecoverySummary.failedDocuments ? (
+                        <IslePressable haptic accessibilityLabel={t('contextPanel.knowledgeRecoveryShowFailed')} onPress={() => focusKnowledgeRecovery('error')} style={{ ...itemRowActionStyle, ...rowActionSurface(colors) }}>
+                          <Text style={{ color: colors.ui.tone.danger.foreground, fontSize: 12, fontWeight: '800' }}>{t('contextPanel.knowledgeRecoveryShowFailed')}</Text>
+                        </IslePressable>
+                      ) : null}
+                      {knowledgeRecoverySummary.emptyDocuments ? (
+                        <IslePressable haptic accessibilityLabel={t('contextPanel.knowledgeRecoveryShowEmpty')} onPress={() => focusKnowledgeRecovery('empty')} style={{ ...itemRowActionStyle, ...rowActionSurface(colors) }}>
+                          <Text style={{ color: colors.ui.tone.warning.foreground, fontSize: 12, fontWeight: '800' }}>{t('contextPanel.knowledgeRecoveryShowEmpty')}</Text>
+                        </IslePressable>
+                      ) : null}
+                      <IslePressable haptic accessibilityLabel={rebuilding ? t('contextPanel.localModel.rebuilding') : t('contextPanel.knowledgeRecoveryRebuild')} accessibilityState={rebuilding ? { busy: true } : undefined} onPress={() => void rebuildIndex()} disabled={rebuilding} style={{ ...itemRowActionStyle, ...primaryActionSurface(colors), opacity: rebuilding ? 0.65 : 1 }}>
+                        <Text style={{ color: colors.ui.control.primaryForeground, fontSize: 12, fontWeight: '800' }}>{rebuilding ? t('contextPanel.localModel.rebuilding') : t('contextPanel.knowledgeRecoveryRebuild')}</Text>
+                      </IslePressable>
+                    </View>
+                  </View>
+                ) : null}
+                <IsleField
+                  label={t('contextPanel.knowledgeFilter')}
+                  style={{ marginBottom: 10 }}
+                  inputProps={{
+                    value: knowledgeFilter,
+                    onChangeText: setKnowledgeFilter,
+                    autoCapitalize: 'none',
+                    autoCorrect: false,
+                    placeholder: t('contextPanel.knowledgeFilterPlaceholder'),
+                  }}
+                />
+                <View testID="knowledge-sort-mode" style={{ marginBottom: 10 }}>
+                  <Text style={{ color: colors.textTertiary, fontSize: 11, fontWeight: '700', marginBottom: 6 }}>{t('contextPanel.knowledgeSort')}</Text>
+                  <View style={{ flexDirection: 'row', gap: 8, flexWrap: 'wrap' }}>
+                    {([
+                      ['updated', t('contextPanel.knowledgeSortUpdated')],
+                      ['needsReview', t('contextPanel.knowledgeSortNeedsReview')],
+                      ['chunks', t('contextPanel.knowledgeSortChunks')],
+                      ['title', t('contextPanel.knowledgeSortTitle')],
+                    ] satisfies Array<[KnowledgeSortMode, string]>).map(([mode, label]) => (
+                      <IslePressable key={mode} haptic accessibilityLabel={label} accessibilityState={{ selected: knowledgeSortMode === mode }} onPress={() => setKnowledgeSortMode(mode)} style={contextChipPressableStyle}>
+                        <IsleChip active={knowledgeSortMode === mode}>{label}</IsleChip>
+                      </IslePressable>
+                    ))}
+                  </View>
+                </View>
+              </MotiView>
             ) : null}
-            <View style={{ flexDirection: 'row', gap: 8, flexWrap: 'wrap', marginTop: 10 }}>
-              {knowledgeRecoverySummary.failedDocuments ? (
-                <IslePressable haptic onPress={() => focusKnowledgeRecovery('error')} style={{ ...itemRowActionStyle, ...rowActionSurface(colors) }}>
-                  <Text style={{ color: colors.ui.tone.danger.foreground, fontSize: 12, fontWeight: '900' }}>{t('contextPanel.knowledgeRecoveryShowFailed')}</Text>
-                </IslePressable>
-              ) : null}
-              {knowledgeRecoverySummary.emptyDocuments ? (
-                <IslePressable haptic onPress={() => focusKnowledgeRecovery('empty')} style={{ ...itemRowActionStyle, ...rowActionSurface(colors) }}>
-                  <Text style={{ color: colors.ui.tone.warning.foreground, fontSize: 12, fontWeight: '900' }}>{t('contextPanel.knowledgeRecoveryShowEmpty')}</Text>
-                </IslePressable>
-              ) : null}
-              <IslePressable haptic onPress={() => void rebuildIndex()} disabled={rebuilding} style={{ ...itemRowActionStyle, ...primaryActionSurface(colors), opacity: rebuilding ? 0.65 : 1 }}>
-                <Text style={{ color: colors.ui.control.primaryForeground, fontSize: 12, fontWeight: '900' }}>{rebuilding ? t('contextPanel.localModel.rebuilding') : t('contextPanel.knowledgeRecoveryRebuild')}</Text>
-              </IslePressable>
-            </View>
-          </View>
-        ) : null}
-        {documents.length ? (
-          <IsleField
-            label={t('contextPanel.knowledgeFilter')}
-            style={{ marginBottom: 10 }}
-            inputProps={{
-              value: knowledgeFilter,
-              onChangeText: setKnowledgeFilter,
-              autoCapitalize: 'none',
-              autoCorrect: false,
-              placeholder: t('contextPanel.knowledgeFilterPlaceholder'),
-            }}
-          />
-        ) : null}
-        {documents.length ? (
-          <View testID="knowledge-sort-mode" style={{ marginBottom: 10 }}>
-            <Text style={{ color: colors.textTertiary, fontSize: 11, fontWeight: '900', marginBottom: 6 }}>{t('contextPanel.knowledgeSort')}</Text>
-            <View style={{ flexDirection: 'row', gap: 8, flexWrap: 'wrap' }}>
-              {([
-                ['updated', t('contextPanel.knowledgeSortUpdated')],
-                ['needsReview', t('contextPanel.knowledgeSortNeedsReview')],
-                ['chunks', t('contextPanel.knowledgeSortChunks')],
-                ['title', t('contextPanel.knowledgeSortTitle')],
-              ] satisfies Array<[KnowledgeSortMode, string]>).map(([mode, label]) => (
-                <IslePressable key={mode} haptic onPress={() => setKnowledgeSortMode(mode)} style={contextChipPressableStyle}>
-                  <IsleChip active={knowledgeSortMode === mode}>{label}</IsleChip>
-                </IslePressable>
-              ))}
-            </View>
-          </View>
+          </>
         ) : null}
         {hasKnowledgeFilters ? (
           <View testID="knowledge-filter-summary" style={{ flexDirection: 'row', alignItems: 'center', gap: 10, marginBottom: 10 }}>
@@ -937,7 +1223,7 @@ export function ContextPanel({ providers, section = 'all', focus }: ContextPanel
               accessibilityLabel={t('contextPanel.clearKnowledgeFilters')}
               style={{ ...itemRowActionStyle, ...rowActionSurface(colors) }}
             >
-              <Text style={{ color: colors.textSecondary, fontSize: 12, fontWeight: '900' }}>{t('contextPanel.clearKnowledgeFilters')}</Text>
+              <Text style={{ color: colors.textSecondary, fontSize: 12, fontWeight: '800' }}>{t('contextPanel.clearKnowledgeFilters')}</Text>
             </IslePressable>
           </View>
         ) : null}
@@ -984,10 +1270,74 @@ export function ContextPanel({ providers, section = 'all', focus }: ContextPanel
   )
 }
 
-function ContextList({ title, empty, children, onClear }: { title: string; empty: string; children: React.ReactNode; onClear: () => Promise<void> }) {
+function ContextFoldoutHeader({ title, detail }: { title: string; detail?: string }) {
   const { colors } = useAppTheme()
+  return (
+    <View style={{ marginBottom: 10 }}>
+      <Text numberOfLines={1} style={{ color: colors.text, fontSize: 13, lineHeight: 17, fontWeight: '800', includeFontPadding: false }}>
+        {title}
+      </Text>
+      {detail ? (
+        <Text numberOfLines={1} style={{ color: colors.textTertiary, fontSize: 11, lineHeight: 15, marginTop: 2, fontWeight: '700', includeFontPadding: false }}>
+          {detail}
+        </Text>
+      ) : null}
+    </View>
+  )
+}
+
+function ContextDisclosureRow({ title, detail, icon, open, onPress }: { title: string; detail: string; icon: ReactNode; open: boolean; onPress: () => void }) {
+  const { colors, themeId } = useAppTheme()
+  if (themeId === 'minimal') {
+    return (
+      <IslePressable haptic accessibilityRole="button" accessibilityLabel={`${title}. ${detail}`} accessibilityState={{ expanded: open }} onPress={onPress} style={{ minHeight: 50, paddingVertical: 7, flexDirection: 'row', alignItems: 'center', gap: 9, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: colors.ui.semantic.chrome.border }}>
+        <View style={{ flex: 1, minWidth: 0 }}>
+          <Text numberOfLines={1} style={{ color: colors.text, fontSize: 12.5, lineHeight: 17, fontWeight: '700' }}>{title}</Text>
+          <Text numberOfLines={1} style={{ color: colors.textTertiary, fontSize: 10.5, lineHeight: 14, marginTop: 1, fontWeight: '500' }}>{detail}</Text>
+        </View>
+        <Text style={{ color: colors.textTertiary, fontSize: 13, lineHeight: 17, fontWeight: '800' }}>{open ? '−' : '+'}</Text>
+      </IslePressable>
+    )
+  }
+  if (themeId === 'markdown') {
+    return (
+      <IslePressable haptic accessibilityRole="button" accessibilityLabel={`${title}. ${detail}`} accessibilityState={{ expanded: open }} onPress={onPress} style={{ minHeight: 48, paddingHorizontal: 9, flexDirection: 'row', alignItems: 'center', gap: 8, backgroundColor: open ? colors.ui.semantic.surface.base : colors.ui.semantic.surface.muted, borderWidth: StyleSheet.hairlineWidth, borderColor: colors.ui.section.divider, borderRadius: 4 }}>
+        {icon}
+        <View style={{ flex: 1, minWidth: 0 }}>
+          <Text numberOfLines={1} style={{ color: colors.text, fontSize: 11.5, lineHeight: 16, fontWeight: '800' }}>{title}</Text>
+          <Text numberOfLines={1} style={{ color: colors.textTertiary, fontSize: 9.5, lineHeight: 13, marginTop: 1, fontWeight: '500' }}>{detail}</Text>
+        </View>
+      </IslePressable>
+    )
+  }
+  return (
+    <IslePressable
+      haptic
+      accessibilityRole="button"
+      accessibilityLabel={`${title}. ${detail}`}
+      accessibilityState={{ expanded: open }}
+      onPress={onPress}
+      style={{ minHeight: 40, paddingHorizontal: 12, flexDirection: 'row', alignItems: 'center', gap: 8, ...secondaryActionSurface(colors) }}
+    >
+      {icon}
+      <View style={{ flex: 1, minWidth: 0 }}>
+        <Text numberOfLines={1} style={{ color: colors.textSecondary, fontSize: 13, lineHeight: 17, fontWeight: '800' }}>{title}</Text>
+        <Text numberOfLines={1} style={{ color: colors.textTertiary, fontSize: 11, lineHeight: 15, marginTop: 1 }}>{detail}</Text>
+      </View>
+      <MotiView animate={{ rotate: open ? '180deg' : '0deg' }} transition={{ type: 'timing', duration: 160 }}>
+        <AppIcon name="collapse" color={colors.textTertiary} size={16} />
+      </MotiView>
+    </IslePressable>
+  )
+}
+
+function ContextList({ title, empty, emptyDetail, emptyVisible = false, children, onClear }: { title: string; empty: string; emptyDetail?: string; emptyVisible?: boolean; children: React.ReactNode; onClear: () => Promise<void> }) {
+  const { colors, themeId } = useAppTheme()
   const dialog = useIsleDialog()
   const { t } = useTranslation()
+  const subtleBorderWidth = colors.ui.limeRoad ? 1 : StyleSheet.hairlineWidth
+  const borderColor = colors.ui.glass ? colors.ui.actionBar.itemBorder : colors.ui.limeRoad ? colors.material.stroke : colors.ui.semantic.chrome.border
+  const emptySurface = colors.ui.glass ? colors.ui.actionBar.itemBackground : colors.ui.semantic.surface.muted
   function confirmClear() {
     void dialog.confirm({
       title: t('contextPanel.clearTitle', { title }),
@@ -999,19 +1349,67 @@ function ContextList({ title, empty, children, onClear }: { title: string; empty
       if (confirmed) void onClear()
     })
   }
+  if (themeId === 'minimal') {
+    return (
+      <View style={{ marginTop: 16 }}>
+        <View style={{ minHeight: 44, flexDirection: 'row', alignItems: 'center', gap: 10, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: colors.ui.semantic.chrome.border }}>
+          <Text numberOfLines={1} style={{ flex: 1, minWidth: 0, color: colors.text, fontSize: 13, lineHeight: 18, fontWeight: '800' }}>{title}</Text>
+          <IslePressable onPress={confirmClear} disabled={emptyVisible} accessibilityLabel={t('contextPanel.clearTitle', { title })} style={{ minWidth: 44, minHeight: 44, alignItems: 'flex-end', justifyContent: 'center', opacity: emptyVisible ? 0.45 : 1 }}>
+            <Text style={{ color: colors.ui.tone.danger.foreground, fontSize: 10.5, lineHeight: 14, fontWeight: '800' }}>{t('contextPanel.clear')}</Text>
+          </IslePressable>
+        </View>
+        {emptyVisible ? (
+          <View style={{ minHeight: emptyDetail ? 58 : 44, paddingVertical: 9, justifyContent: 'center', borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: colors.ui.semantic.chrome.border }}>
+            <Text style={{ color: colors.textSecondary, fontSize: 12, lineHeight: 17, fontWeight: '700' }}>{empty}</Text>
+            {emptyDetail ? <Text numberOfLines={2} style={{ color: colors.textTertiary, fontSize: 10.5, lineHeight: 15, marginTop: 2, fontWeight: '500' }}>{emptyDetail}</Text> : null}
+          </View>
+        ) : children}
+      </View>
+    )
+  }
+  if (themeId === 'markdown') {
+    return (
+      <View style={{ marginTop: 16, gap: 8 }}>
+        <View style={{ minHeight: 44, flexDirection: 'row', alignItems: 'center', gap: 10, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: colors.ui.section.divider }}>
+          <Text numberOfLines={1} style={{ flex: 1, minWidth: 0, color: colors.text, fontSize: 14, lineHeight: 19, fontWeight: '800' }}>{title}</Text>
+          <IslePressable onPress={confirmClear} disabled={emptyVisible} accessibilityLabel={t('contextPanel.clearTitle', { title })} style={{ minWidth: 44, minHeight: 44, alignItems: 'flex-end', justifyContent: 'center', opacity: emptyVisible ? 0.45 : 1 }}>
+            <Text style={{ color: colors.ui.tone.danger.foreground, fontSize: 10, lineHeight: 14, fontWeight: '800' }}>{t('contextPanel.clear')}</Text>
+          </IslePressable>
+        </View>
+        {emptyVisible ? (
+          <View style={{ minHeight: emptyDetail ? 58 : 44, paddingHorizontal: 10, paddingVertical: 8, justifyContent: 'center', backgroundColor: colors.ui.semantic.surface.muted, borderLeftWidth: 3, borderLeftColor: colors.ui.section.divider }}>
+            <Text style={{ color: colors.textSecondary, fontSize: 11.5, lineHeight: 16, fontWeight: '700' }}>{empty}</Text>
+            {emptyDetail ? <Text numberOfLines={2} style={{ color: colors.textTertiary, fontSize: 10.5, lineHeight: 15, marginTop: 2, fontWeight: '500' }}>{emptyDetail}</Text> : null}
+          </View>
+        ) : children}
+      </View>
+    )
+  }
   return (
-    <View style={{ marginTop: 18 }}>
-      <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 }}>
-        <Text style={{ color: colors.text, fontSize: 16, fontWeight: '800' }}>{title}</Text>
+    <View style={{ marginTop: 10, gap: 7 }}>
+      <View style={{ minHeight: 44, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 10, paddingHorizontal: 2 }}>
+        <View style={{ flex: 1, minWidth: 0, justifyContent: 'center' }}>
+          <Text numberOfLines={1} style={{ color: colors.text, fontSize: 14, lineHeight: 18, fontWeight: '800', includeFontPadding: false, textAlignVertical: 'center' }}>{title}</Text>
+        </View>
         <IslePressable
           onPress={confirmClear}
+          disabled={emptyVisible}
           accessibilityLabel={t('contextPanel.clearTitle', { title })}
-          style={{ width: 44, height: 44, borderRadius: colors.ui.radius.controlLarge, alignItems: 'center', justifyContent: 'center', backgroundColor: colors.ui.tone.danger.background, borderWidth: colors.ui.cartoon ? 1 : StyleSheet.hairlineWidth, borderColor: colors.ui.tone.danger.border }}
+          style={{ width: 44, height: 44, borderRadius: Math.min(colors.ui.radius.controlLarge, 8), alignItems: 'center', justifyContent: 'center', backgroundColor: colors.ui.tone.danger.background, borderWidth: colors.ui.limeRoad ? 1 : StyleSheet.hairlineWidth, borderColor: colors.ui.tone.danger.border, opacity: emptyVisible ? 0.45 : 1 }}
         >
           <AppIcon name="delete" color={colors.ui.tone.danger.foreground} size={15} />
         </IslePressable>
       </View>
-      {children || <Text style={{ color: colors.textSecondary, fontSize: 13 }}>{empty}</Text>}
+      {emptyVisible ? (
+        <View style={{ minHeight: emptyDetail ? 58 : 44, borderRadius: Math.min(colors.ui.radius.card, 8), paddingHorizontal: 9, paddingVertical: 8, justifyContent: 'center', backgroundColor: emptySurface, borderWidth: subtleBorderWidth, borderColor }}>
+          <Text style={{ color: colors.textSecondary, fontSize: 12, lineHeight: 17, fontWeight: '800', includeFontPadding: false }}>{empty}</Text>
+          {emptyDetail ? (
+            <Text numberOfLines={2} style={{ color: colors.textTertiary, fontSize: 11, lineHeight: 16, marginTop: 2, fontWeight: '700', includeFontPadding: false }}>
+              {emptyDetail}
+            </Text>
+          ) : null}
+        </View>
+      ) : children}
     </View>
   )
 }
@@ -1059,18 +1457,18 @@ function LocalModelRow({ view, busy, progress, onDownload, onDetails, onEnable, 
       })
     : ''
   return (
-    <View style={{ padding: 12, ...assetCardSurface(colors, view.active ? colors.ui.control.primaryBorder : colors.material.stroke) }}>
+    <View style={{ padding: 10, ...assetCardSurface(colors, view.active ? colors.ui.control.primaryBorder : colors.material.stroke) }}>
       <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
-        <View style={{ width: 34, height: 34, borderRadius: colors.ui.radius.controlMiddle, alignItems: 'center', justifyContent: 'center', backgroundColor: view.active ? colors.ui.control.primaryBackground : colors.ui.icon.accentBackground }}>
+        <View style={{ width: 34, height: 34, borderRadius: Math.min(colors.ui.radius.controlMiddle, 8), alignItems: 'center', justifyContent: 'center', backgroundColor: view.active ? colors.ui.control.primaryBackground : colors.ui.icon.accentBackground }}>
           {view.active ? <AppIcon name="check" color={colors.ui.control.primaryForeground} size={16} /> : <AppIcon name="device" color={colors.textTertiary} size={16} />}
         </View>
         <View style={{ flex: 1, minWidth: 0 }}>
-          <Text numberOfLines={1} style={{ color: colors.text, fontSize: 13, fontWeight: '900' }}>{view.model.name}</Text>
+          <Text numberOfLines={1} style={{ color: colors.text, fontSize: 13, fontWeight: '800' }}>{view.model.name}</Text>
           <Text numberOfLines={2} style={{ color: colors.textSecondary, fontSize: 11, lineHeight: 16, marginTop: 2 }}>
             {modelMeta}
           </Text>
         </View>
-        <Text style={{ color: view.active ? colors.ui.control.link : colors.textTertiary, fontSize: 11, fontWeight: '900' }}>{statusLabel}</Text>
+        <Text style={{ color: view.active ? colors.ui.control.link : colors.textTertiary, fontSize: 11, fontWeight: '800' }}>{statusLabel}</Text>
       </View>
       <Text numberOfLines={2} style={{ color: colors.textTertiary, fontSize: 11, lineHeight: 16, marginTop: 8 }}>{view.model.useCase}</Text>
       <Text numberOfLines={2} style={{ color: colors.textTertiary, fontSize: 10, lineHeight: 15, marginTop: 6 }}>
@@ -1078,9 +1476,7 @@ function LocalModelRow({ view, busy, progress, onDownload, onDetails, onEnable, 
       </Text>
       {progress ? (
         <View style={{ marginTop: 10, gap: 6 }}>
-          <View style={{ height: 6, borderRadius: colors.ui.radius.chip, overflow: 'hidden', backgroundColor: colors.ui.section.divider }}>
-            <View style={{ width: `${Math.max(2, progressPercent)}%`, height: '100%', borderRadius: colors.ui.radius.chip, backgroundColor: colors.ui.control.primaryBackground }} />
-          </View>
+          <IsleProgress percent={progressPercent} size="small" showInfo={false} fillColor={colors.ui.control.primaryBackground} />
           <Text numberOfLines={2} style={{ color: colors.textSecondary, fontSize: 11, lineHeight: 16, fontWeight: '800' }}>
             {progressText}
           </Text>
@@ -1093,24 +1489,24 @@ function LocalModelRow({ view, busy, progress, onDownload, onDetails, onEnable, 
       ) : null}
       <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginTop: 10 }}>
         {!view.downloaded && !view.bundled && downloadable ? (
-          <IslePressable haptic disabled={busy} onPress={onDownload} style={{ ...localModelActionStyle, ...primaryActionSurface(colors), flexDirection: 'row', gap: 6, opacity: busy ? 0.65 : 1 }}>
+          <IslePressable haptic disabled={busy} accessibilityLabel={t('contextPanel.localModel.download')} accessibilityState={busy ? { busy: true } : undefined} onPress={onDownload} style={{ ...localModelActionStyle, ...primaryActionSurface(colors), flexDirection: 'row', gap: 6, opacity: busy ? 0.65 : 1 }}>
             <AppIcon name="download" color={colors.ui.control.primaryForeground} size={13} />
-            <Text style={{ color: colors.ui.control.primaryForeground, fontSize: 12, fontWeight: '900' }}>{busy && progress ? `${progress.percent}%` : busy ? t('contextPanel.localModel.downloading') : t('contextPanel.localModel.download')}</Text>
+            <Text style={{ color: colors.ui.control.primaryForeground, fontSize: 12, fontWeight: '800' }}>{busy && progress ? `${progress.percent}%` : busy ? t('contextPanel.localModel.downloading') : t('contextPanel.localModel.download')}</Text>
           </IslePressable>
         ) : null}
         {!downloadable ? (
           <IslePressable haptic onPress={onDetails} accessibilityLabel={t('contextPanel.localModel.detailsFor', { name: view.model.name })} style={{ ...localModelActionStyle, ...rowActionSurface(colors) }}>
-            <Text style={{ color: colors.textSecondary, fontSize: 12, fontWeight: '900' }}>{t('contextPanel.localModel.details')}</Text>
+            <Text style={{ color: colors.textSecondary, fontSize: 12, fontWeight: '800' }}>{t('contextPanel.localModel.details')}</Text>
           </IslePressable>
         ) : null}
         {canEnable && !view.active ? (
-          <IslePressable haptic disabled={busy} onPress={onEnable} style={{ ...localModelActionStyle, ...rowActionSurface(colors), opacity: busy ? 0.65 : 1 }}>
-            <Text style={{ color: colors.textSecondary, fontSize: 12, fontWeight: '900' }}>{t('contextPanel.localModel.enable')}</Text>
+          <IslePressable haptic disabled={busy} accessibilityLabel={t('contextPanel.localModel.enable')} accessibilityState={busy ? { busy: true } : undefined} onPress={onEnable} style={{ ...localModelActionStyle, ...rowActionSurface(colors), opacity: busy ? 0.65 : 1 }}>
+            <Text style={{ color: colors.textSecondary, fontSize: 12, fontWeight: '800' }}>{t('contextPanel.localModel.enable')}</Text>
           </IslePressable>
         ) : null}
         {view.downloaded ? (
-          <IslePressable haptic disabled={busy} onPress={onDelete} style={{ ...localModelActionStyle, ...rowActionSurface(colors), opacity: busy ? 0.65 : 1 }}>
-            <Text style={{ color: colors.ui.tone.danger.foreground, fontSize: 12, fontWeight: '900' }}>{t('common.delete')}</Text>
+          <IslePressable haptic disabled={busy} accessibilityLabel={t('common.delete')} accessibilityState={busy ? { busy: true } : undefined} onPress={onDelete} style={{ ...localModelActionStyle, ...rowActionSurface(colors), opacity: busy ? 0.65 : 1 }}>
+            <Text style={{ color: colors.ui.tone.danger.foreground, fontSize: 12, fontWeight: '800' }}>{t('common.delete')}</Text>
           </IslePressable>
         ) : null}
       </View>
@@ -1134,13 +1530,13 @@ function LocalCapabilityRow({ view, settings, onDetails }: {
     view.model.maxTokens ? t('contextPanel.localModel.maxTokens', { count: view.model.maxTokens }) : '',
   ].filter(Boolean).join(' · ')
   return (
-    <View style={{ padding: 12, ...assetCardSurface(colors, active ? colors.ui.control.primaryBorder : colors.ui.tone.warning.border) }}>
+    <View style={{ padding: 10, ...assetCardSurface(colors, active ? colors.ui.control.primaryBorder : colors.ui.tone.warning.border) }}>
       <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
-        <View style={{ width: 34, height: 34, borderRadius: colors.ui.radius.controlMiddle, alignItems: 'center', justifyContent: 'center', backgroundColor: active ? colors.ui.control.primaryBackground : colors.ui.tone.warning.background }}>
+        <View style={{ width: 34, height: 34, borderRadius: Math.min(colors.ui.radius.controlMiddle, 8), alignItems: 'center', justifyContent: 'center', backgroundColor: active ? colors.ui.control.primaryBackground : colors.ui.tone.warning.background }}>
           {active ? <AppIcon name="check" color={colors.ui.control.primaryForeground} size={16} /> : <AppIcon name="device" color={colors.ui.tone.warning.foreground} size={16} />}
         </View>
         <View style={{ flex: 1, minWidth: 0 }}>
-          <Text numberOfLines={1} style={{ color: colors.text, fontSize: 13, fontWeight: '900' }}>{view.model.name}</Text>
+          <Text numberOfLines={1} style={{ color: colors.text, fontSize: 13, fontWeight: '800' }}>{view.model.name}</Text>
           <Text numberOfLines={2} style={{ color: colors.textSecondary, fontSize: 11, lineHeight: 16, marginTop: 2 }}>
             {modelMeta}
           </Text>
@@ -1158,7 +1554,7 @@ function LocalCapabilityRow({ view, settings, onDetails }: {
       </Text>
       <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginTop: 10 }}>
         <IslePressable haptic onPress={onDetails} accessibilityLabel={t('contextPanel.localModel.detailsFor', { name: view.model.name })} style={{ ...localModelActionStyle, ...rowActionSurface(colors) }}>
-          <Text style={{ color: colors.textSecondary, fontSize: 12, fontWeight: '900' }}>{t('contextPanel.localModel.details')}</Text>
+          <Text style={{ color: colors.textSecondary, fontSize: 12, fontWeight: '800' }}>{t('contextPanel.localModel.details')}</Text>
         </IslePressable>
       </View>
     </View>
@@ -1176,7 +1572,7 @@ interface ItemRowProps {
 }
 
 function ItemRow({ title, description, meta, deleteName, trailing, onToggle, onDelete }: ItemRowProps) {
-  const { colors } = useAppTheme()
+  const { colors, themeId } = useAppTheme()
   const { t } = useTranslation()
   const dialog = useIsleDialog()
 
@@ -1191,18 +1587,44 @@ function ItemRow({ title, description, meta, deleteName, trailing, onToggle, onD
     if (confirmed) await onDelete()
   }
 
+  if (themeId === 'minimal') {
+    return (
+      <View style={{ paddingVertical: 10, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: colors.ui.semantic.chrome.border }}>
+        <Text style={{ color: colors.text, fontSize: 13, lineHeight: 18, fontWeight: '800' }}>{title}</Text>
+        <Text numberOfLines={2} style={{ color: colors.textSecondary, fontSize: 11.5, lineHeight: 16, marginTop: 3 }}>{description}</Text>
+        {meta ? <Text numberOfLines={1} style={{ color: colors.textTertiary, fontSize: 10.5, lineHeight: 14, marginTop: 4 }}>{meta}</Text> : null}
+        <View style={{ flexDirection: 'row', gap: 12, marginTop: 8, flexWrap: 'wrap' }}>
+          {trailing && onToggle ? <IslePressable accessibilityLabel={trailing} onPress={() => void onToggle()} style={{ minHeight: 44, justifyContent: 'center' }}><Text style={{ color: colors.textSecondary, fontSize: 10.5, fontWeight: '800' }}>{trailing}</Text></IslePressable> : null}
+          <IslePressable accessibilityLabel={t('common.delete')} onPress={() => void confirmDelete()} style={{ minHeight: 44, justifyContent: 'center' }}><Text style={{ color: colors.ui.tone.danger.foreground, fontSize: 10.5, fontWeight: '800' }}>{t('common.delete')}</Text></IslePressable>
+        </View>
+      </View>
+    )
+  }
+  if (themeId === 'markdown') {
+    return (
+      <View style={{ paddingHorizontal: 9, paddingVertical: 9, marginBottom: 6, backgroundColor: colors.ui.semantic.surface.muted, borderLeftWidth: 3, borderLeftColor: colors.ui.section.divider }}>
+        <Text style={{ color: colors.text, fontSize: 11.5, lineHeight: 16, fontWeight: '800' }}>{`- ${title}`}</Text>
+        <Text numberOfLines={2} style={{ color: colors.textSecondary, fontSize: 10.5, lineHeight: 15, marginTop: 3 }}>{description}</Text>
+        {meta ? <Text numberOfLines={1} style={{ color: colors.textTertiary, fontSize: 9.5, lineHeight: 13, marginTop: 4 }}>{`  ${meta}`}</Text> : null}
+        <View style={{ flexDirection: 'row', gap: 12, marginTop: 7, flexWrap: 'wrap' }}>
+          {trailing && onToggle ? <IslePressable accessibilityLabel={trailing} onPress={() => void onToggle()} style={{ minHeight: 44, justifyContent: 'center' }}><Text style={{ color: colors.textSecondary, fontSize: 9.5, fontWeight: '800' }}>{`toggle(${trailing})`}</Text></IslePressable> : null}
+          <IslePressable accessibilityLabel={t('common.delete')} onPress={() => void confirmDelete()} style={{ minHeight: 44, justifyContent: 'center' }}><Text style={{ color: colors.ui.tone.danger.foreground, fontSize: 9.5, fontWeight: '800' }}>delete()</Text></IslePressable>
+        </View>
+      </View>
+    )
+  }
   return (
-    <View style={{ padding: 12, marginBottom: 8, ...assetCardSurface(colors) }}>
+    <View style={{ padding: 10, marginBottom: 8, ...assetCardSurface(colors) }}>
       <Text style={{ color: colors.text, fontSize: 14, fontWeight: '800' }}>{title}</Text>
       <Text numberOfLines={3} style={{ color: colors.textSecondary, fontSize: 12, lineHeight: 17, marginTop: 4 }}>{description}</Text>
       {meta ? <Text numberOfLines={2} style={{ color: colors.textTertiary, fontSize: 11, lineHeight: 16, marginTop: 6 }}>{meta}</Text> : null}
       <View style={{ flexDirection: 'row', gap: 8, marginTop: 10, flexWrap: 'wrap' }}>
         {trailing && onToggle ? (
-          <IslePressable onPress={() => void onToggle()} style={{ ...itemRowActionStyle, ...rowActionSurface(colors) }}>
+          <IslePressable accessibilityLabel={trailing} onPress={() => void onToggle()} style={{ ...itemRowActionStyle, ...rowActionSurface(colors) }}>
             <Text style={{ color: colors.textSecondary, fontSize: 12, fontWeight: '800' }}>{trailing}</Text>
           </IslePressable>
         ) : null}
-        <IslePressable onPress={() => void confirmDelete()} style={{ ...itemRowActionStyle, ...rowActionSurface(colors) }}>
+        <IslePressable accessibilityLabel={t('common.delete')} onPress={() => void confirmDelete()} style={{ ...itemRowActionStyle, ...rowActionSurface(colors) }}>
           <Text style={{ color: colors.ui.tone.danger.foreground, fontSize: 12, fontWeight: '800' }}>{t('common.delete')}</Text>
         </IslePressable>
       </View>
@@ -1211,12 +1633,27 @@ function ItemRow({ title, description, meta, deleteName, trailing, onToggle, onD
 }
 
 function DebugStat({ label, value }: { label: string; value: string }) {
-  const { colors } = useAppTheme()
+  const { colors, themeId } = useAppTheme()
   const { width } = useWindowDimensions()
   const statMinWidth = width < 390 ? 64 : 74
+  if (themeId === 'minimal') {
+    return (
+      <View style={{ minHeight: 34, minWidth: statMinWidth, paddingHorizontal: 4, justifyContent: 'center', borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: colors.ui.semantic.chrome.border }}>
+        <Text style={{ color: colors.text, fontSize: 12, fontWeight: '800' }}>{value}</Text>
+        <Text numberOfLines={1} style={{ color: colors.textTertiary, fontSize: 9.5, fontWeight: '600' }}>{label}</Text>
+      </View>
+    )
+  }
+  if (themeId === 'markdown') {
+    return (
+      <View style={{ minHeight: 34, minWidth: statMinWidth, paddingHorizontal: 8, justifyContent: 'center', backgroundColor: colors.ui.semantic.surface.muted, borderLeftWidth: 2, borderLeftColor: colors.ui.section.divider }}>
+        <Text numberOfLines={1} style={{ color: colors.textSecondary, fontSize: 9.5, fontWeight: '700' }}>{`${label}: ${value}`}</Text>
+      </View>
+    )
+  }
   return (
     <View style={{ minHeight: 34, minWidth: statMinWidth, paddingHorizontal: 10, alignItems: 'center', justifyContent: 'center', ...rowActionSurface(colors) }}>
-      <Text style={{ color: colors.text, fontSize: 12, fontWeight: '900' }}>{value}</Text>
+      <Text style={{ color: colors.text, fontSize: 12, fontWeight: '800' }}>{value}</Text>
       <Text numberOfLines={1} style={{ color: colors.textTertiary, fontSize: 10, fontWeight: '800' }}>{label}</Text>
     </View>
   )

@@ -2,7 +2,6 @@ import { NativeModules, PermissionsAndroid, Platform } from 'react-native'
 import * as Application from 'expo-application'
 import * as IntentLauncher from 'expo-intent-launcher'
 import { useSettingsStore } from '@/store/settingsStore'
-
 export type AndroidStatusNotificationState = 'generating' | 'running' | 'error' | 'completed'
 
 export interface AndroidStatusNotificationPayload {
@@ -16,6 +15,7 @@ export interface AndroidStatusNotificationPayload {
   indeterminate?: boolean
   ongoing?: boolean
   requestPromotedOngoing?: boolean
+  foregroundService?: boolean
 }
 
 interface AndroidStatusNotificationModule {
@@ -27,7 +27,7 @@ interface AndroidStatusNotificationModule {
 export interface AndroidStatusNotificationPermissionStatus {
   available: boolean
   granted: boolean
-  backgroundReliable: false
+  backgroundReliable: boolean
   androidApiLevel?: number
   promotedNotificationsAvailable?: boolean
   canPostPromotedNotifications?: boolean | null
@@ -38,7 +38,8 @@ export interface AndroidStatusNotificationPermissionStatus {
 export interface AndroidStatusNotificationResult {
   shown: boolean
   reason: 'shown' | 'cleared' | 'disabled' | 'unavailable' | 'permission_denied' | string
-  backgroundReliable: false
+  backgroundReliable: boolean
+  foregroundServiceStarted?: boolean
   promotedOngoingRequested?: boolean
   promotedNotificationState?: 'not_requested' | 'unsupported_api' | 'requested' | 'blocked' | string
   canPostPromotedNotifications?: boolean | null
@@ -72,10 +73,7 @@ export async function getAndroidStatusNotificationPermissionStatus(): Promise<An
   }
 
   try {
-    return {
-      ...(await nativeModule.getPermissionStatus()),
-      backgroundReliable: false,
-    }
+    return await nativeModule.getPermissionStatus()
   } catch (error) {
     return permissionStatusFallback(true, 'native_error', error)
   }
@@ -111,7 +109,7 @@ export async function requestAndroidStatusNotificationPermission(rationale: {
 
 export async function updateAndroidStatusNotification(payload: AndroidStatusNotificationPayload): Promise<AndroidStatusNotificationResult> {
   if (!androidStatusNotificationsAvailable() || !nativeModule) return { shown: false, reason: 'unavailable', backgroundReliable: false }
-  if (useSettingsStore.getState().settings.systemStatusNotificationsEnabled !== true) return { shown: false, reason: 'disabled', backgroundReliable: false }
+  if (useSettingsStore.getState().settings.systemStatusNotificationsEnabled !== true && payload.foregroundService !== true) return { shown: false, reason: 'disabled', backgroundReliable: false }
 
   const permission = await getAndroidStatusNotificationPermissionStatus()
   if (!permission.granted) {
@@ -164,10 +162,8 @@ function androidApiLevel(): number {
 
 async function safeNativeStatusCall(action: () => Promise<AndroidStatusNotificationResult>): Promise<AndroidStatusNotificationResult> {
   try {
-    return {
-      ...(await action()),
-      backgroundReliable: false,
-    }
+    const result = await action()
+    return { ...result, backgroundReliable: result.backgroundReliable === true }
   } catch (error) {
     return {
       shown: false,

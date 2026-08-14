@@ -1,7 +1,6 @@
-import type { AIModel, AIProvider, ModelAlias, ProviderCredentialGroup } from '@/types'
-import { getModelConfig } from '@/types'
+import type { AIModel, AIProvider, ModelAlias, ProviderCredentialGroup } from '@/types/providerContracts'
+import { getModelConfig } from '@/types/modelCatalog'
 import { clearHistoricalInjectedGroupModels, clearHistoricalInjectedProviderModels } from '@/utils/providerModels'
-
 export const PROVIDER_REMOTE_MODEL_STORAGE_LIMIT = 256
 export const PROVIDER_CREDENTIAL_GROUP_MODEL_STORAGE_LIMIT = 256
 export const PROVIDER_MODEL_CONFIG_STORAGE_LIMIT = 256

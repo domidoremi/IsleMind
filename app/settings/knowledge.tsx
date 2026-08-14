@@ -1,11 +1,11 @@
 import { useLocalSearchParams } from 'expo-router'
 import { useTranslation } from 'react-i18next'
-import { createLazyComponent } from '@/utils/lazyLoad'
+import { createLazyComponentWithPreload } from '@/utils/lazyLoad'
 import { SettingsPageShell } from '@/components/settings/SettingsPageShell'
 import { useSettingsStore } from '@/store/settingsStore'
 
 // 懒加载知识面板组件
-const ContextPanel = createLazyComponent(
+const ContextPanel = createLazyComponentWithPreload(
   () => import('@/components/settings/ContextPanel').then((module) => ({ default: module.ContextPanel }))
 )
 

@@ -13,8 +13,22 @@ const {
   PROVIDER_REQUEST_SHAPING_COMPATIBILITY_EVAL_SCHEMA,
   PROVIDER_REQUEST_SHAPING_COMPATIBILITY_FIXTURE_IDS,
   runProviderRequestShapingCompatibilityEvaluation,
-} = require('../src/services/providerRequestShapingCompatibilityEvaluation.ts')
-
+} = require('../src/modules/providers/testing/providerRequestShapingCompatibilityEvaluation.ts')
+const {
+  createProviderConversationNativeSearchAdmission,
+  resolveOpenAIResponsesWebSearchToolPolicy,
+} = require('../src/modules/providers/index.ts')
+const {
+  conversationProviderNativeSearchAdmission,
+  providerSupportsNativeSearch,
+} = require('../src/bootstrap/conversationProviderNativeSearchAdmission.ts')
+const {
+  getProviderModelCapabilityStatus,
+  providerModelCapabilityCanBeSent,
+} = require('../src/bootstrap/providerCapabilityMatrix.ts')
+const {
+  openAIResponsesNativeWebSearchTool,
+} = require('../src/bootstrap/providerRequestPolicies.ts')
 function registerTypeScriptSupport() {
   if (require.extensions['.ts']?.isProviderRequestShapingCompatibilityHook) return
 
@@ -102,6 +116,7 @@ function run() {
       'token-max-output-normalization',
       'relay-manual-capability-declaration',
       'visible-downgrade-unsupported-search',
+      'visible-downgrade-compatible-builtin-search-overclaim',
       'blocked-unsupported-reasoning-field',
       'blocked-unsupported-tool-field',
       'blocked-unsupported-multimodal-field',
@@ -197,6 +212,16 @@ function run() {
   assert.ok(searchFallback.policy.removedFields.includes('web_search_preview'), 'unsupported search field is removed')
   assert.equal(searchFallback.policy.downgradeVisible, true, 'unsupported search downgrade is visible')
 
+  const builtinSearchOverclaim = diagnostic(evaluation, 'visible-downgrade-compatible-builtin-search-overclaim')
+  assertDegraded(builtinSearchOverclaim)
+  assert.equal(builtinSearchOverclaim.policy.modelMetadataDeclared, true, 'compatible builtin-search overclaim starts from optimistic model metadata')
+  assert.equal(builtinSearchOverclaim.policy.fallbackShape, 'openai-chat-completions', 'compatible builtin-search overclaim falls back to chat')
+  assert.ok(builtinSearchOverclaim.policy.removedFields.includes('web_search_preview'), 'compatible builtin-search overclaim removes OpenAI builtin search')
+  assert.equal(builtinSearchOverclaim.policy.downgradeVisible, true, 'compatible builtin-search overclaim downgrade is visible')
+
+  assertConversationNativeSearchAdmissionPolicy()
+  assertOpenAIResponsesBuiltinSearchPolicy()
+
   assertBlocked(diagnostic(evaluation, 'blocked-unsupported-reasoning-field'), ['unsupported-reasoning-field'])
   assertBlocked(diagnostic(evaluation, 'blocked-unsupported-tool-field'), ['unsupported-tool-field', 'malformed-tool-schema'])
   assertBlocked(diagnostic(evaluation, 'blocked-unsupported-multimodal-field'), ['unsupported-multimodal-field'])
@@ -215,6 +240,312 @@ function run() {
   assertBlocked(diagnostic(evaluation, 'blocked-cross-provider-cache-state'), ['missing-cache-scope', 'cross-provider-state'])
 
   console.log('Provider request shaping compatibility tests passed')
+}
+
+function assertConversationNativeSearchAdmissionPolicy() {
+  const calls = []
+  let providerClaimed = true
+  let modelSupported = true
+  const admission = createProviderConversationNativeSearchAdmission({
+    providerSupportsNativeSearch(providerInput, modelInput) {
+      calls.push([providerInput, modelInput])
+      return modelInput ? modelSupported : providerClaimed
+    },
+  })
+  const providerInput = Object.freeze({
+    id: 'conversation-native-search',
+    type: 'openai',
+    name: 'Conversation native search',
+    apiKey: 'test-key',
+    baseUrl: 'https://api.example.com/v1',
+    models: Object.freeze(['search-model']),
+    modelConfigs: Object.freeze([]),
+    capabilities: Object.freeze({ nativeSearch: true }),
+    enabled: true,
+  })
+  const modelInput = Object.freeze({ id: 'search-model', chatCompatible: true, preferredEndpoint: 'responses' })
+  const before = JSON.stringify({ providerInput, modelInput })
+
+  calls.length = 0
+  assert.deepEqual(admission.admit({
+    provider: providerInput,
+    modelConfig: modelInput,
+    requestedMode: 'native',
+    hasAttachments: false,
+  }), {
+    kind: 'admitted',
+    webSearchMode: 'native',
+    requestedMode: 'native',
+    nativeSearchSupported: true,
+    displayState: 'requested',
+  }, 'supported native search is admitted for an attachment-free conversation')
+  assert.deepEqual(calls, [[providerInput, undefined], [providerInput, modelInput]], 'conversation admission evaluates provider support before exact model support')
+
+  calls.length = 0
+  assert.deepEqual(admission.admit({
+    provider: providerInput,
+    modelConfig: modelInput,
+    requestedMode: 'native',
+    hasAttachments: true,
+  }), {
+    kind: 'skipped',
+    webSearchMode: 'off',
+    requestedMode: 'native',
+    nativeSearchSupported: true,
+    displayState: 'attachments_blocked',
+  }, 'attachments suppress otherwise-supported native search')
+
+  providerClaimed = false
+  calls.length = 0
+  assert.deepEqual(admission.admit({
+    provider: providerInput,
+    modelConfig: modelInput,
+    requestedMode: 'native',
+    hasAttachments: false,
+  }), {
+    kind: 'skipped',
+    webSearchMode: 'off',
+    requestedMode: 'native',
+    nativeSearchSupported: false,
+    displayState: 'disabled',
+    reason: 'provider_native_search_unclaimed',
+  }, 'unclaimed provider search preserves its exact compatibility reason')
+  assert.deepEqual(calls, [[providerInput, undefined]], 'unclaimed provider support short-circuits model evaluation')
+
+  providerClaimed = true
+  modelSupported = false
+  calls.length = 0
+  assert.deepEqual(admission.admit({
+    provider: providerInput,
+    modelConfig: modelInput,
+    requestedMode: 'native',
+    hasAttachments: false,
+  }), {
+    kind: 'skipped',
+    webSearchMode: 'off',
+    requestedMode: 'native',
+    nativeSearchSupported: false,
+    displayState: 'disabled',
+    reason: 'provider_native_search_model_unsupported',
+  }, 'model-rejected native search preserves its exact compatibility reason')
+  assert.deepEqual(admission.admit({
+    provider: providerInput,
+    modelConfig: modelInput,
+    requestedMode: 'native',
+    hasAttachments: true,
+  }), {
+    kind: 'skipped',
+    webSearchMode: 'off',
+    requestedMode: 'native',
+    nativeSearchSupported: false,
+    displayState: 'attachments_blocked',
+    reason: 'provider_native_search_model_unsupported',
+  }, 'attachment display suppression and model compatibility evidence remain separate')
+
+  modelSupported = true
+  for (const requestedMode of ['off', 'tavily', 'google', 'bing', 'custom']) {
+    assert.deepEqual(admission.admit({
+      provider: providerInput,
+      modelConfig: modelInput,
+      requestedMode,
+      hasAttachments: false,
+    }), {
+      kind: 'skipped',
+      webSearchMode: 'off',
+      requestedMode,
+      nativeSearchSupported: true,
+      displayState: 'disabled',
+    }, `${requestedMode} preserves exact requested identity without enabling provider-native search`)
+  }
+  assert.equal(JSON.stringify({ providerInput, modelInput }), before, 'conversation native-search admission does not mutate frozen provider or model inputs')
+}
+
+function assertOpenAIResponsesBuiltinSearchPolicy() {
+  const geminiRelay = provider({
+    id: 'gemini-compatible-relay',
+    name: 'Gemini compatible relay',
+    baseUrl: 'https://relay.example/google-gemini',
+    capabilities: { responsesApi: true, nativeSearch: true },
+    model: modelConfig('google/gemini-2.5-pro', { supportedParameters: ['web_search_preview'], preferredEndpoint: 'responses' }),
+  })
+  assert.equal(
+    resolveOpenAIResponsesWebSearchToolPolicy(geminiRelay, 'google/gemini-2.5-pro').reason,
+    'gemini_compatible_route_rejects_openai_builtin_search',
+    'Gemini-compatible routes do not inherit OpenAI Responses builtin search',
+  )
+  assert.equal(openAIResponsesNativeWebSearchTool(geminiRelay, 'google/gemini-2.5-pro'), undefined, 'Gemini-compatible builtin search is omitted before send')
+  assert.equal(providerSupportsNativeSearch(geminiRelay), true, 'Gemini-compatible relay can still claim provider-level native search')
+  assert.equal(providerSupportsNativeSearch(geminiRelay, geminiRelay.modelConfigs[0]), false, 'Gemini-compatible relay native search is blocked for the incompatible model route')
+  assert.deepEqual(conversationProviderNativeSearchAdmission.admit({
+    provider: geminiRelay,
+    modelConfig: geminiRelay.modelConfigs[0],
+    requestedMode: 'native',
+    hasAttachments: false,
+  }), {
+    kind: 'skipped',
+    webSearchMode: 'off',
+    requestedMode: 'native',
+    nativeSearchSupported: false,
+    displayState: 'disabled',
+    reason: 'provider_native_search_model_unsupported',
+  }, 'bootstrap-composed conversation admission applies the target provider/model support policy')
+  assert.equal(providerModelCapabilityCanBeSent(geminiRelay, 'google/gemini-2.5-pro', 'nativeSearch'), false, 'Gemini-compatible nativeSearch send policy blocks builtin search overclaim')
+  assert.equal(
+    getProviderModelCapabilityStatus(geminiRelay, 'google/gemini-2.5-pro', 'nativeSearch')?.status,
+    'unsupported',
+    'Gemini-compatible nativeSearch matrix exposes unsupported status for builtin-search overclaim',
+  )
+
+  const qwenCoderRelay = provider({
+    id: 'qwen3-coder-relay',
+    name: 'Qwen3 Coder Relay',
+    capabilities: { responsesApi: true, nativeSearch: true },
+    model: modelConfig('qwen3-coder-plus', { supportedParameters: ['web_search_preview'], preferredEndpoint: 'responses' }),
+  })
+  assert.equal(
+    resolveOpenAIResponsesWebSearchToolPolicy(qwenCoderRelay, 'qwen3-coder-plus').reason,
+    'qwen3_coder_route_rejects_openai_builtin_search',
+    'Qwen3-Coder routes block OpenAI Responses builtin search',
+  )
+  assert.equal(openAIResponsesNativeWebSearchTool(qwenCoderRelay, 'qwen3-coder-plus'), undefined, 'Qwen3-Coder builtin search is omitted before send')
+
+  const dashScopeQwen = provider({
+    id: 'dashscope-compatible',
+    name: 'DashScope compatible',
+    presetId: 'dashscope',
+    baseUrl: 'https://dashscope.aliyuncs.com/compatible-mode/v1',
+    capabilities: { responsesApi: true, nativeSearch: true },
+    model: modelConfig('qwen-plus', { supportedParameters: ['web_search_preview'], preferredEndpoint: 'responses' }),
+  })
+  assert.equal(
+    resolveOpenAIResponsesWebSearchToolPolicy(dashScopeQwen, 'qwen-plus').allowed,
+    true,
+    'Generic Qwen routes are not blocked by the Qwen3-Coder-specific search policy',
+  )
+
+  const qwenCoderLegacy = provider({
+    id: 'dashscope-legacy-coder',
+    name: 'DashScope legacy coder',
+    presetId: 'dashscope',
+    baseUrl: 'https://dashscope.aliyuncs.com/compatible-mode/v1',
+    capabilities: { responsesApi: true, nativeSearch: true },
+    model: modelConfig('qwen-coder-plus', { supportedParameters: ['web_search_preview'], preferredEndpoint: 'responses' }),
+  })
+  assert.equal(
+    resolveOpenAIResponsesWebSearchToolPolicy(qwenCoderLegacy, 'qwen-coder-plus').allowed,
+    true,
+    'Qwen coder names without the Qwen3-Coder route identity keep the default search policy',
+  )
+
+  const mimoRelay = provider({
+    id: 'mimo-vendor-relay',
+    name: 'Vendor relay',
+    capabilities: { responsesApi: true, nativeSearch: true },
+    model: modelConfig('xiaomi/mimo-v2.5-pro', { supportedParameters: ['web_search_preview'], preferredEndpoint: 'responses' }),
+  })
+  assert.equal(
+    resolveOpenAIResponsesWebSearchToolPolicy(mimoRelay, 'xiaomi/mimo-v2.5-pro').reason,
+    'mimo_compatible_route_requires_provider_native_search_shape',
+    'MiMo vendor-prefixed model routes use provider-native search shape instead of OpenAI builtin search',
+  )
+  assert.equal(openAIResponsesNativeWebSearchTool(mimoRelay, 'xiaomi/mimo-v2.5-pro'), undefined, 'MiMo-compatible builtin search is omitted before send')
+
+  const longCatRelay = provider({
+    id: 'longcat-vendor-relay',
+    name: 'Vendor relay',
+    capabilities: { responsesApi: true, nativeSearch: true },
+    model: modelConfig('longcat/longcat-flash-chat', { supportedParameters: ['web_search_preview'], preferredEndpoint: 'responses' }),
+  })
+  assert.equal(
+    resolveOpenAIResponsesWebSearchToolPolicy(longCatRelay, 'longcat/longcat-flash-chat').reason,
+    'longcat_compatible_route_rejects_openai_builtin_search',
+    'LongCat vendor-prefixed model routes block OpenAI Responses builtin search',
+  )
+
+  const namedRelay = provider({
+    id: 'xiaomi-labeled-relay',
+    name: 'Xiaomi labeled relay',
+    baseUrl: 'https://relay.example/v1',
+    capabilities: { responsesApi: true, nativeSearch: true },
+    model: modelConfig('gpt-4o-search', { supportedParameters: ['web_search_preview'], preferredEndpoint: 'responses' }),
+  })
+  assert.equal(
+    resolveOpenAIResponsesWebSearchToolPolicy(namedRelay, 'gpt-4o-search').allowed,
+    true,
+    'Provider labels alone do not disable OpenAI Responses builtin search without host, preset, or selected-model route evidence',
+  )
+  assert.deepEqual(openAIResponsesNativeWebSearchTool(namedRelay, 'gpt-4o-search'), { type: 'web_search_preview' }, 'label-only relays can still opt into Responses builtin search')
+
+  const miniMaxRelay = provider({
+    id: 'minimax-relay',
+    name: 'MiniMax',
+    presetId: 'minimax',
+    capabilities: { responsesApi: true, nativeSearch: true },
+    model: modelConfig('MiniMax-M3', { supportedParameters: ['web_search_preview'], preferredEndpoint: 'responses' }),
+  })
+  assert.equal(
+    resolveOpenAIResponsesWebSearchToolPolicy(miniMaxRelay, 'MiniMax-M3').reason,
+    'known_family_rejects_openai_builtin_search',
+    'MiniMax routes block OpenAI Responses builtin search',
+  )
+  assert.equal(openAIResponsesNativeWebSearchTool(miniMaxRelay, 'MiniMax-M3'), undefined, 'MiniMax builtin search is omitted before send')
+
+  const xaiProvider = provider({
+    id: 'xai',
+    name: 'xAI',
+    presetId: 'xai',
+    baseUrl: 'https://api.x.ai/v1',
+    capabilities: { responsesApi: true, nativeSearch: true },
+    model: modelConfig('grok-4', { supportedParameters: ['web_search'], preferredEndpoint: 'responses' }),
+  })
+  assert.equal(resolveOpenAIResponsesWebSearchToolPolicy(xaiProvider, 'grok-4').allowed, true, 'xAI keeps documented OpenAI Responses search')
+  assert.deepEqual(openAIResponsesNativeWebSearchTool(xaiProvider, 'grok-4'), { type: 'web_search' }, 'xAI emits provider-specific web_search')
+  assert.equal(providerSupportsNativeSearch(xaiProvider, xaiProvider.modelConfigs[0]), true, 'xAI model-aware native search remains supported')
+  assert.equal(providerModelCapabilityCanBeSent(xaiProvider, 'grok-4', 'nativeSearch'), true, 'xAI nativeSearch remains sendable')
+
+  const manualRelay = provider({
+    id: 'manual-relay',
+    name: 'Manual relay',
+    presetId: 'custom-endpoint',
+    wireProtocol: 'openai-compatible',
+    capabilities: { responsesApi: true, nativeSearch: true },
+    model: modelConfig('manual-search-model', { supportedParameters: ['web_search_preview'], preferredEndpoint: 'responses' }),
+  })
+  assert.equal(resolveOpenAIResponsesWebSearchToolPolicy(manualRelay, 'manual-search-model').allowed, true, 'manual relay is not blocked without a known incompatible family')
+  assert.deepEqual(openAIResponsesNativeWebSearchTool(manualRelay, 'manual-search-model'), { type: 'web_search_preview' }, 'manual relay can still opt into Responses builtin search')
+}
+
+function provider(input) {
+  return {
+    id: input.id,
+    type: 'openai-compatible',
+    presetId: input.presetId,
+    name: input.name,
+    apiKey: 'test-key',
+    baseUrl: input.baseUrl,
+    models: [input.model.id],
+    modelConfigs: [input.model],
+    capabilities: input.capabilities,
+    enabled: true,
+  }
+}
+
+function modelConfig(id, overrides = {}) {
+  return {
+    id,
+    name: id,
+    provider: 'openai-compatible',
+    contextWindow: 128000,
+    maxTokens: 128000,
+    maxOutputTokens: 8192,
+    defaultMaxTokens: 1024,
+    supportsVision: false,
+    supportsFiles: false,
+    supportsTools: true,
+    supportsStreaming: true,
+    source: 'remote',
+    ...overrides,
+  }
 }
 
 if (require.main === module) run()

@@ -5,7 +5,7 @@ function createSettingsKnowledgeSelfTestFixture() {
   return {
     schema: settingsKnowledgeSelfTestSchema,
     generatedAt: '2026-01-01T00:00:00.000Z',
-    route: 'settings/knowledge',
+    route: 'settings/context',
     summaryDialog: {
       title: '自检完成',
       summary: '通过 7，失败 0，需配置 1',
@@ -27,9 +27,19 @@ function createSettingsKnowledgeSelfTestFixture() {
 function validateSettingsKnowledgeSelfTestResult(result) {
   const issues = []
   if (!result || typeof result !== 'object' || Array.isArray(result)) return ['Settings Knowledge self-test result is not an object.']
+  if (result.schema !== settingsKnowledgeSelfTestSchema) {
+    issues.push(`Settings Knowledge self-test schema must be ${settingsKnowledgeSelfTestSchema}.`)
+  }
+  if (result.route !== 'settings/context') {
+    issues.push('Settings Knowledge self-test route must be settings/context.')
+  }
 
   const steps = Array.isArray(result.steps) ? result.steps : []
   if (!steps.length) issues.push('Settings Knowledge self-test result does not record steps.')
+  const invalidSteps = steps.filter((step) => (
+    !String(step?.name ?? '').trim() || !['通过', '需配置', '失败'].includes(String(step?.status ?? '').trim())
+  ))
+  if (invalidSteps.length) issues.push('Settings Knowledge self-test steps must have a name and normalized status.')
 
   const failingSteps = steps.filter((step) => isFailingStatus(step?.status))
   if (failingSteps.length) {
@@ -41,7 +51,7 @@ function validateSettingsKnowledgeSelfTestResult(result) {
     issues.push(`Settings Knowledge self-test expected at least 6 passing steps, got ${passingCount}.`)
   }
 
-  const webSearch = steps.find((step) => String(step?.name ?? '').includes('联网搜索'))
+  const webSearch = steps.find((step) => String(step?.name ?? '') === '联网搜索')
   if (!webSearch || !isNeedsConfigurationStatus(webSearch.status)) {
     issues.push('Settings Knowledge self-test must include a 联网搜索 needs-configuration warning.')
   }

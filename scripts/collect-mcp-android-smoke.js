@@ -4,6 +4,12 @@ const path = require('node:path')
 const { execFileSync } = require('node:child_process')
 const { Worker, isMainThread, parentPort, workerData } = require('node:worker_threads')
 const { defaultReleaseAppPackageName } = require('./release-validation-contract')
+const {
+  mcpAndroidSmokeSchema,
+  requiredMcpMethods,
+  validateMcpAndroidSmokeResult,
+  validateMcpOnlineRequestRows,
+} = require('./mcp-android-smoke-contract')
 
 const root = path.resolve(__dirname, '..')
 const evidenceDir = path.join(root, 'test-evidence', 'qa')
@@ -15,7 +21,7 @@ const defaultDevice = process.env.QA_DEVICE_SERIAL || 'emulator-5554'
 
 if (!isMainThread) {
   runMockMcpWorker()
-} else {
+} else if (require.main === module) {
   main()
 }
 
@@ -26,7 +32,9 @@ function main() {
   const device = resolveDevice(defaultDevice)
   const runToken = Date.now().toString(36).slice(-6).toUpperCase()
   const result = {
+    schema: mcpAndroidSmokeSchema,
     generatedAt: new Date().toISOString(),
+    runToken,
     device,
     builtInServer: { status: 'unknown', png: null, uia: null },
     offlineServer: {
@@ -65,7 +73,7 @@ function main() {
     runOfflineScenario(device, result)
     forceStop(device)
 
-    worker = startMockMcpServer(requestLogPath)
+    worker = startMockMcpServer(requestLogPath, runToken)
     result.externalOnlineServer.emulatorUrl = `http://10.0.2.2:${worker.port}/mcp`
     result.externalOnlineServer.deviceUrl = buildDeviceLoopbackUrl(device, worker.port)
     if (!isEmulatorDevice(device)) {
@@ -74,9 +82,10 @@ function main() {
     }
     runOnlineScenario(device, result)
     result.externalOnlineServer.methods = readJsonl(requestLogPath).map((row) => row.payload?.method).filter(Boolean)
-    const requiredMethods = ['resources/list', 'prompts/list', 'tools/list', 'initialize']
-    const onlinePassed = requiredMethods.every((method) => result.externalOnlineServer.methods.includes(method))
+    const onlinePassed = requiredMcpMethods.every((method) => result.externalOnlineServer.methods.includes(method))
       && result.externalOnlineServer.captures.syncSucceeded === true
+      && result.externalOnlineServer.captures.toggleSucceeded === true
+      && result.externalOnlineServer.captures.deleteConfirmed === true
     result.externalOnlineServer.status = onlinePassed ? 'passed' : 'failed'
   } catch (error) {
     result.errors.push(error?.message ?? String(error))
@@ -87,8 +96,13 @@ function main() {
 
   fs.writeFileSync(outputPath, `${JSON.stringify(result, null, 2)}\n`, 'utf8')
   console.log(`MCP Android smoke wrote ${relative(outputPath)} and ${relative(requestLogPath)}.`)
-  if (!isMcpResultPassing(result)) {
-    console.error(`MCP Android smoke failed: ${summarizeMcpFailures(result).join('; ')}`)
+  const requestRows = readJsonl(requestLogPath)
+  const contractIssues = [
+    ...validateMcpAndroidSmokeResult(result),
+    ...validateMcpOnlineRequestRows(requestRows, { runToken }),
+  ]
+  if (contractIssues.length) {
+    console.error(`MCP Android smoke failed: ${contractIssues.join('; ')}`)
     process.exitCode = 1
   }
 }
@@ -144,7 +158,11 @@ function runOfflineScenario(device, result) {
   result.offlineServer.captures.deleteConfirmUia = deleted.confirm.uia
   result.offlineServer.captures.deletedPng = deleted.after.png
   result.offlineServer.captures.deletedUia = deleted.after.uia
-  result.offlineServer.captures.deleteConfirmed = deleted.confirmVisible && deleted.deleted
+  result.offlineServer.captures.deleteTapped = deleted.deleteTapped
+  result.offlineServer.captures.deleteConfirmVisible = deleted.confirmVisible
+  result.offlineServer.captures.confirmed = deleted.confirmed
+  result.offlineServer.captures.deleted = deleted.deleted
+  result.offlineServer.captures.deleteConfirmed = deleted.confirmVisible && deleted.confirmed && deleted.deleted
 }
 
 function runOnlineScenario(device, result) {
@@ -183,6 +201,10 @@ function runOnlineScenario(device, result) {
   sleep(800)
   const toggled = captureStep(device, 'settings-mcp-online-toggle-disabled')
   result.externalOnlineServer.captures.toggleTapped = toggleTapped
+  result.externalOnlineServer.captures.toggleSucceeded = toggleTapped
+    && !hasErrorBoundary(toggled.uiaText)
+    && hasAnyText(toggled.uiaText, [result.externalOnlineServer.name])
+    && hasAnyText(toggled.uiaText, ['关闭', 'Disabled', 'Off'])
   result.externalOnlineServer.captures.togglePng = toggled.png
   result.externalOnlineServer.captures.toggleUia = toggled.uia
 
@@ -191,13 +213,24 @@ function runOnlineScenario(device, result) {
   result.externalOnlineServer.captures.deleteConfirmUia = deleted.confirm.uia
   result.externalOnlineServer.captures.deletedPng = deleted.after.png
   result.externalOnlineServer.captures.deletedUia = deleted.after.uia
-  result.externalOnlineServer.captures.deleteConfirmed = deleted.deleted
+  result.externalOnlineServer.captures.deleteTapped = deleted.deleteTapped
+  result.externalOnlineServer.captures.deleteConfirmVisible = deleted.confirmVisible
+  result.externalOnlineServer.captures.confirmed = deleted.confirmed
+  result.externalOnlineServer.captures.deleted = deleted.deleted
+  result.externalOnlineServer.captures.deleteConfirmed = deleted.confirmVisible && deleted.confirmed && deleted.deleted
 }
 
 function addServerThroughUi(device, { name, url, keyboardCaptureName, addedCaptureName }) {
   openUrl(device, 'islemind://settings/mcp')
   sleep(1800)
   let capture = waitForText(device, ['添加 MCP Server', 'Add MCP', 'Server URL'], `${keyboardCaptureName}-before`, 6)
+  if (usableEditableCount(capture.uiaText) < 2) {
+    const disclosureTapped = tapText(device, capture.uiaText, ['添加 MCP Server', 'Add MCP Server', 'Add MCP'])
+    if (disclosureTapped) {
+      sleep(700)
+      capture = waitForUsableEditables(device, `${keyboardCaptureName}-form`, 8)
+    }
+  }
   const nameTapped = tapEditableAtIndex(device, capture.uiaText, 0)
   if (nameTapped) {
     sleep(300)
@@ -218,7 +251,13 @@ function addServerThroughUi(device, { name, url, keyboardCaptureName, addedCaptu
   runCommand('adb', ['-s', device, 'shell', 'input', 'keyevent', '4'])
   sleep(900)
   let addCapture = captureStep(device, `${addedCaptureName}-before-add`)
-  const addTapped = tapText(device, addCapture.uiaText, ['添加', 'Add'])
+  let addTapped = tapText(device, addCapture.uiaText, ['添加', 'Add'])
+  for (let index = 1; !addTapped && index <= 5; index += 1) {
+    swipeUp(device)
+    sleep(450)
+    addCapture = captureStep(device, `${addedCaptureName}-before-add-${index}`)
+    addTapped = tapText(device, addCapture.uiaText, ['添加', 'Add'])
+  }
   sleep(1700)
   let added = captureStep(device, addedCaptureName)
   if (!hasAnyText(added.uiaText, [name])) {
@@ -245,7 +284,9 @@ function deleteServerThroughUi(device, serverName, prefix) {
   return {
     confirm,
     after,
+    deleteTapped,
     confirmVisible,
+    confirmed,
     deleted: confirmed && !hasAnyText(after.uiaText, [serverName]) && !hasErrorBoundary(after.uiaText),
   }
 }
@@ -267,14 +308,24 @@ function waitForText(device, labels, captureName, maxAttempts, intervalMs = 700)
   return capture
 }
 
+function waitForUsableEditables(device, captureName, maxAttempts, intervalMs = 550) {
+  let capture = captureStep(device, captureName)
+  for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
+    if (usableEditableCount(capture.uiaText) >= 2) return capture
+    sleep(intervalMs)
+    capture = captureStep(device, captureName)
+  }
+  return capture
+}
+
 function scrollToText(device, labels, capturePrefix, maxScrolls) {
   let capture = captureStep(device, `${capturePrefix}-0`)
-  if (hasAnyText(capture.uiaText, labels)) return capture
+  if (hasUsableText(capture.uiaText, labels)) return capture
   for (let index = 1; index <= maxScrolls; index += 1) {
     swipeUp(device)
     sleep(550)
     capture = captureStep(device, `${capturePrefix}-${index}`)
-    if (hasAnyText(capture.uiaText, labels)) return capture
+    if (hasUsableText(capture.uiaText, labels)) return capture
   }
   return capture
 }
@@ -282,53 +333,57 @@ function scrollToText(device, labels, capturePrefix, maxScrolls) {
 function tapText(device, uiaText, labels) {
   const node = findTappableTextNode(parseNodes(uiaText), labels)
   if (!node) return false
-  tapBoundsCenter(device, node.bounds)
-  return true
+  return tapBoundsCenter(device, node.bounds)
 }
 
 function tapActionNearText(device, uiaText, anchorLabels, actionLabels) {
   const nodes = parseNodes(uiaText)
-  const anchor = nodes.find((node) => textMatchesAny(node, anchorLabels))
+  const anchor = nodes.find((node) => node.enabled && isUsableBounds(node.bounds) && textMatchesAny(node, anchorLabels))
   const anchorBounds = parseBounds(anchor?.bounds)
+  if (!anchorBounds) return false
+  const container = nodes
+    .filter((node) => node.enabled && node.clickable && isUsableBounds(node.bounds))
+    .map((node) => ({ node, bounds: parseBounds(node.bounds) }))
+    .filter(({ bounds }) => bounds && boundsContains(bounds, anchorBounds))
+    .sort((left, right) => boundsArea(left.bounds) - boundsArea(right.bounds))[0]
+  const scope = container?.bounds
   const candidates = nodes
-    .filter((node) => node.enabled && textMatchesAny(node, actionLabels))
+    .filter((node) => node.enabled && isUsableBounds(node.bounds) && textMatchesAny(node, actionLabels))
     .map((node) => ({ node, bounds: parseBounds(node.bounds) }))
     .filter(({ bounds }) => bounds)
-    .filter(({ bounds }) => !anchorBounds || bounds.top >= anchorBounds.top - 20)
+    .filter(({ bounds }) => bounds.top >= anchorBounds.top - 20)
+    .filter(({ bounds }) => !scope || boundsContains(scope, bounds))
     .sort((left, right) => {
       if (!anchorBounds) return left.bounds.top - right.bounds.top
       return Math.abs(left.bounds.top - anchorBounds.top) - Math.abs(right.bounds.top - anchorBounds.top)
     })
-  const candidate = candidates[0]?.node ?? findTappableTextNode(nodes, actionLabels)
+  const candidate = candidates[0]?.node
   if (!candidate) return false
-  tapBoundsCenter(device, candidate.bounds)
-  return true
+  return tapBoundsCenter(device, candidate.bounds)
 }
 
 function tapEditableAtIndex(device, uiaText, index) {
-  const editables = parseNodes(uiaText).filter((node) => node.enabled && node.className.includes('EditText'))
+  const editables = parseNodes(uiaText).filter((node) => node.enabled && isUsableBounds(node.bounds) && node.className.includes('EditText'))
   const node = editables[index]
   if (!node) return false
-  tapBoundsCenter(device, node.bounds)
-  return true
+  return tapBoundsCenter(device, node.bounds)
 }
 
 function tapEditableNearLabel(device, uiaText, labels) {
   const nodes = parseNodes(uiaText)
-  const editables = nodes.filter((node) => node.enabled && node.className.includes('EditText'))
-  const labelNode = nodes.find((node) => textMatchesAny(node, labels))
+  const editables = nodes.filter((node) => node.enabled && isUsableBounds(node.bounds) && node.className.includes('EditText'))
+  const labelNode = nodes.find((node) => node.enabled && isUsableBounds(node.bounds) && textMatchesAny(node, labels))
   const labelBounds = parseBounds(labelNode?.bounds)
   const candidate = editables
     .map((node) => ({ node, bounds: parseBounds(node.bounds) }))
     .filter(({ bounds }) => bounds && (!labelBounds || bounds.top >= labelBounds.top - 12))
     .sort((left, right) => left.bounds.top - right.bounds.top)[0]?.node
   if (!candidate) return false
-  tapBoundsCenter(device, candidate.bounds)
-  return true
+  return tapBoundsCenter(device, candidate.bounds)
 }
 
 function findTappableTextNode(nodes, labels) {
-  const clickable = nodes.filter((item) => item.enabled && item.clickable)
+  const clickable = nodes.filter((item) => item.enabled && item.clickable && isUsableBounds(item.bounds))
   for (const label of labels) {
     const exactClickable = clickable.find((item) => item.text === label || item.contentDesc === label)
     if (exactClickable) return exactClickable
@@ -336,9 +391,9 @@ function findTappableTextNode(nodes, labels) {
   const containingClickable = clickable.find((item) => textMatchesAny(item, labels))
   if (containingClickable) return containingClickable
 
-  const visibleLabel = nodes.find((item) => item.enabled && textMatchesAny(item, labels))
+  const visibleLabel = nodes.find((item) => item.enabled && isUsableBounds(item.bounds) && textMatchesAny(item, labels))
   const visibleBounds = parseBounds(visibleLabel?.bounds)
-  if (!visibleBounds) return visibleLabel ?? null
+  if (!visibleBounds) return null
   return clickable
     .map((item) => ({ item, bounds: parseBounds(item.bounds) }))
     .filter(({ bounds }) => bounds && boundsContains(bounds, visibleBounds))
@@ -368,9 +423,20 @@ function captureStep(device, name) {
 
 function captureFileWithRetry(device, remotePath, localPath, captureRemote) {
   for (let attempt = 0; attempt < 3; attempt += 1) {
-    captureRemote()
-    runCommand('adb', ['-s', device, 'pull', remotePath, localPath])
-    if (fs.existsSync(localPath) && fs.statSync(localPath).size > 0) return true
+    const stagingPath = `${localPath}.${process.pid}.${Date.now()}.${attempt}.tmp`
+    runCommand('adb', ['-s', device, 'shell', 'rm', '-f', remotePath])
+    try {
+      const captured = captureRemote()
+      const pulled = captured !== null
+        && runCommand('adb', ['-s', device, 'pull', remotePath, stagingPath]) !== null
+      if (pulled && fs.existsSync(stagingPath) && fs.statSync(stagingPath).size > 0) {
+        fs.copyFileSync(stagingPath, localPath)
+        return true
+      }
+    } finally {
+      fs.rmSync(stagingPath, { force: true })
+      runCommand('adb', ['-s', device, 'shell', 'rm', '-f', remotePath])
+    }
     sleep(350 + attempt * 350)
   }
   return false
@@ -416,10 +482,24 @@ function boundsArea(bounds) {
   return Math.max(0, bounds.right - bounds.left) * Math.max(0, bounds.bottom - bounds.top)
 }
 
+function isUsableBounds(boundsText) {
+  const bounds = parseBounds(boundsText)
+  return Boolean(bounds && bounds.right > bounds.left && bounds.bottom > bounds.top)
+}
+
+function hasUsableText(uiaText, labels) {
+  return parseNodes(uiaText).some((node) => node.enabled && isUsableBounds(node.bounds) && textMatchesAny(node, labels))
+}
+
+function usableEditableCount(uiaText) {
+  return parseNodes(uiaText).filter((node) => node.enabled && isUsableBounds(node.bounds) && node.className.includes('EditText')).length
+}
+
 function tapBoundsCenter(device, bounds) {
   const box = parseBounds(bounds)
-  if (!box) return
+  if (!box || box.right <= box.left || box.bottom <= box.top) return false
   runCommand('adb', ['-s', device, 'shell', 'input', 'tap', String(Math.round((box.left + box.right) / 2)), String(Math.round((box.top + box.bottom) / 2))])
+  return true
 }
 
 function swipeUp(device) {
@@ -482,10 +562,10 @@ function runCommand(command, args) {
   }
 }
 
-function startMockMcpServer(logPath) {
+function startMockMcpServer(logPath, runToken) {
   const stateBuffer = new SharedArrayBuffer(3 * Int32Array.BYTES_PER_ELEMENT)
   const state = new Int32Array(stateBuffer)
-  const instance = new Worker(__filename, { workerData: { logPath, stateBuffer } })
+  const instance = new Worker(__filename, { workerData: { logPath, runToken, stateBuffer } })
   Atomics.wait(state, 1, 0, 5000)
   if (Atomics.load(state, 1) !== 1) {
     instance.terminate()
@@ -510,11 +590,22 @@ function runMockMcpWorker() {
       } catch {
         payload = { parseError: true, raw: body }
       }
-      fs.appendFileSync(workerData.logPath, `${JSON.stringify({ receivedAt, method: request.method, url: request.url, payload })}\n`, 'utf8')
       const method = payload?.method
       const result = mockMcpResult(method)
-      response.writeHead(200, { 'Content-Type': 'application/json' })
-      response.end(JSON.stringify({ jsonrpc: '2.0', id: payload?.id ?? 1, result }))
+      const responsePayload = { jsonrpc: '2.0', ...(payload?.id === undefined ? {} : { id: payload.id }), result }
+      const status = 200
+      response.writeHead(status, { 'Content-Type': 'application/json' })
+      response.end(JSON.stringify(responsePayload))
+      fs.appendFileSync(workerData.logPath, `${JSON.stringify({
+        schema: mcpAndroidSmokeSchema,
+        runToken: workerData.runToken,
+        receivedAt,
+        method: request.method,
+        url: `http://${request.headers.host}${request.url}`,
+        status,
+        payload,
+        response: responsePayload,
+      })}\n`, 'utf8')
     })
   })
   server.on('error', () => {
@@ -563,32 +654,13 @@ function readJsonl(file) {
   return fs.readFileSync(file, 'utf8')
     .split(/\r?\n/)
     .filter((line) => line.trim())
-    .map((line) => {
+    .map((line, index) => {
       try {
         return JSON.parse(line)
-      } catch {
-        return null
+      } catch (error) {
+        throw new Error(`MCP request log line ${index + 1} is invalid JSON: ${error.message}`)
       }
     })
-    .filter(Boolean)
-}
-
-function isMcpResultPassing(result) {
-  return result.builtInServer?.status === '已连接'
-    && (result.offlineServer?.checks ?? []).every((check) => check.status === 'passed')
-    && result.externalOnlineServer?.status === 'passed'
-    && !result.errors.length
-}
-
-function summarizeMcpFailures(result) {
-  const failures = []
-  if (result.builtInServer?.status !== '已连接') failures.push('built-in server status was not 已连接')
-  for (const check of result.offlineServer?.checks ?? []) {
-    if (check.status !== 'passed') failures.push(`${check.name}=${check.status}`)
-  }
-  if (result.externalOnlineServer?.status !== 'passed') failures.push(`online=${result.externalOnlineServer?.status ?? 'missing'}`)
-  if (result.errors.length) failures.push(...result.errors)
-  return failures
 }
 
 function hasAnyText(text, values) {
@@ -596,7 +668,7 @@ function hasAnyText(text, values) {
 }
 
 function hasServerCardText(uiaText, serverName) {
-  return parseNodes(uiaText).some((node) => node.text === serverName && !node.className.includes('EditText'))
+  return parseNodes(uiaText).some((node) => node.enabled && isUsableBounds(node.bounds) && textMatchesAny(node, [serverName]) && !node.className.includes('EditText'))
 }
 
 function textMatchesAny(node, labels) {
@@ -636,4 +708,10 @@ function sleep(ms) {
 
 function relative(file) {
   return path.relative(root, file).replace(/\\/g, '/')
+}
+
+module.exports = {
+  hasUsableText,
+  isUsableBounds,
+  usableEditableCount,
 }

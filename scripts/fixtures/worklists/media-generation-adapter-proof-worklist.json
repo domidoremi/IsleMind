@@ -1,0 +1,182 @@
+{
+  "schema": "islemind.media-generation-adapter-proof-worklist.v1",
+  "status": "pending",
+  "updatedAt": "2026-07-07",
+  "purpose": "Track the remaining proof required before IsleMind can expose image/video generation as an executable mobile action.",
+  "gateIdsSource": "src/presentation/features/chat/chatMultimodalPolicy.ts#CHAT_MEDIA_GENERATION_ADAPTER_GATE_IDS",
+  "contractSource": "src/services/mediaGenerationContract.ts",
+  "defaultEnablementInvariant": {
+    "adapterImplementedFlag": "MEDIA_GENERATION_ADAPTER_IMPLEMENTED",
+    "expectedFlagValueUntilAllRowsCaptured": false,
+    "composerExecutionActionAllowed": false,
+    "diagnosticSurfacesAllowed": [
+      "composer locked capability notice",
+      "mode boundary explanation",
+      "settings runtime diagnostics",
+      "provider settings disabled-adapter drill-down"
+    ],
+    "mustNotClaimDefaultReadinessUntil": [
+      "every proof row status is captured",
+      "MEDIA_GENERATION_ADAPTER_IMPLEMENTED is true",
+      "native mobile generation UI proof is captured on device",
+      "artifact manifest, retention cleanup, and cancellation semantics are covered by runtime evidence"
+    ]
+  },
+  "allowedStatuses": [
+    "pending",
+    "blocked",
+    "captured"
+  ],
+  "proofRows": [
+    {
+      "id": "provider-capability-evidence-source-backed-model",
+      "gateId": "provider-capability-evidence",
+      "status": "pending",
+      "proofType": "source-backed-provider-model-metadata",
+      "requiredEvidence": [
+        "model-level image/video generation metadata",
+        "sourceUrl for the provider/model capability claim",
+        "verifiedAt date for the provider/model capability claim",
+        "test coverage proving provider-wide and inferred-only claims stay blocked"
+      ],
+      "acceptanceCriteria": [
+        "source-backed model metadata can advance only provider-capability-evidence",
+        "provider-wide imageGeneration/videoGeneration declarations remain unsafe overclaims",
+        "inferred-only generation metadata remains blocked",
+        "default readiness is at most 1/6 when this is the only captured proof"
+      ],
+      "commands": [
+        "bun run test:media-generation-contract"
+      ]
+    },
+    {
+      "id": "generation-adapter-implementation-proof",
+      "gateId": "generation-adapter",
+      "status": "blocked",
+      "proofType": "adapter-implementation",
+      "requiredEvidence": [
+        "provider-specific generation request adapter",
+        "normalized progress, success, cancellation, and error states",
+        "feature-gated executable plan replacing the disabled adapter plan",
+        "no raw prompt, provider URI, or base64 payload persistence outside the artifact manifest rules"
+      ],
+      "acceptanceCriteria": [
+        "MEDIA_GENERATION_ADAPTER_IMPLEMENTED remains false while this row is blocked",
+        "buildDisabledMediaGenerationAdapterPlan keeps canExecute false while this row is blocked",
+        "no composer image/video generation execution action is exposed before this row is captured"
+      ],
+      "commands": [
+        "bun run test:media-generation-contract",
+        "bun run test:multimodal-workflow-compatibility"
+      ]
+    },
+    {
+      "id": "artifact-manifest-runtime-proof",
+      "gateId": "artifact-manifest",
+      "status": "pending",
+      "proofType": "runtime-artifact-manifest",
+      "requiredEvidence": [
+        "real generated image artifact manifest",
+        "real generated video artifact manifest when video generation is targeted",
+        "localUri storage only",
+        "byte-size and dimension budgets",
+        "promptDigest without rawPrompt or base64Data",
+        "audit event id, native proof id, and full gate id checklist"
+      ],
+      "acceptanceCriteria": [
+        "valid runtime artifacts satisfy MEDIA_GENERATION_ARTIFACT_MANIFEST_SCHEMA",
+        "unsafe manifests keep artifact-manifest blocked",
+        "artifact manifests do not imply default readiness without cleanup, cancellation, native proof, provider evidence, and adapter implementation"
+      ],
+      "commands": [
+        "bun run test:media-generation-contract",
+        "bun run test:multimodal-workflow-compatibility"
+      ]
+    },
+    {
+      "id": "retention-cleanup-runtime-proof",
+      "gateId": "retention-cleanup",
+      "status": "pending",
+      "proofType": "privacy-retention-runtime-proof",
+      "requiredEvidence": [
+        "ephemeral generated artifact cleanup is scheduled or completed",
+        "user-saved generated artifact retention is explicit and does not require cleanup",
+        "temporary provider payloads and raw provider URIs are not retained",
+        "cleanup evidence links back to the generated artifact manifest"
+      ],
+      "acceptanceCriteria": [
+        "ephemeral artifacts without expiresAt and cleanupState stay blocked",
+        "user-saved artifacts require cleanupState not-required",
+        "runtime privacy-retention checks cover generated artifact cleanup before default enablement"
+      ],
+      "commands": [
+        "bun run test:media-generation-contract",
+        "bun run test:runtime-privacy-retention-compatibility"
+      ]
+    },
+    {
+      "id": "cancellation-semantics-runtime-proof",
+      "gateId": "cancellation-semantics",
+      "status": "pending",
+      "proofType": "runtime-cancellation-proof",
+      "requiredEvidence": [
+        "AbortController or equivalent cancellation handle is linked to each generation request",
+        "mobile cancel action stops the provider request or records provider non-cancellability explicitly",
+        "partial artifacts are either cleaned up or recorded as cancelled artifacts",
+        "artifact manifest records requestId, cancellation state, and cancellation linkage"
+      ],
+      "acceptanceCriteria": [
+        "manifests without abortControllerLinked stay blocked",
+        "cancelled requests do not leave orphaned temporary generated media",
+        "generation cannot be default-enabled without visible mobile cancellation semantics"
+      ],
+      "commands": [
+        "bun run test:media-generation-contract"
+      ]
+    },
+    {
+      "id": "native-generation-ui-proof",
+      "gateId": "native-mobile-proof",
+      "status": "pending",
+      "proofType": "adb-native-ui-proof",
+      "requiredEvidence": [
+        "ADB screenshot proof for the generation UI before default enablement",
+        "320dp Chat generation request/progress/cancel state is readable and unclipped",
+        "360dp Agent generation request/progress/cancel/evidence state is readable and unclipped",
+        "native result records package focus, viewport metadata, screenshot dimensions, and zero fatal logcat errors"
+      ],
+      "acceptanceCriteria": [
+        "current boundary-status native proof is not treated as generation execution proof",
+        "native proof stays pending until an actual generation UI surface exists behind the completed gates",
+        "no composer image/video generation execution action is exposed before this proof is captured"
+      ],
+      "commands": [
+        "bun run test:product-mobile-native-evidence:collect",
+        "bun run test:product-mobile-native-evidence"
+      ]
+    }
+  ],
+  "acceptance": {
+    "mustRepresentAllGateIds": [
+      "provider-capability-evidence",
+      "generation-adapter",
+      "artifact-manifest",
+      "retention-cleanup",
+      "cancellation-semantics",
+      "native-mobile-proof"
+    ],
+    "minimumVerificationBeforeDefaultEnablement": [
+      "bun run test:media-generation-contract",
+      "bun run test:multimodal-workflow-compatibility",
+      "bun run test:runtime-privacy-retention-compatibility",
+      "bun run test:product-mobile-native-evidence",
+      "bun run type-check"
+    ],
+    "mustNotExposeBeforeAllProofRowsCaptured": [
+      "composer image generation button",
+      "composer video generation button",
+      "automatic generation execution from locked capability notices",
+      "provider settings generation execution action"
+    ]
+  }
+}

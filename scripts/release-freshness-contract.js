@@ -3,7 +3,19 @@ const path = require('node:path')
 const crypto = require('node:crypto')
 
 const releaseFreshnessToleranceMs = 2000
-const releaseSourceExtensions = new Set(['.ts', '.tsx', '.js', '.jsx'])
+const releaseSourceExtensions = new Set(['.ts', '.tsx', '.js', '.jsx', '.kt'])
+const releaseBuildInputPaths = [
+  'package.json',
+  'bun.lock',
+  'babel.config.js',
+  'metro.config.js',
+  'tailwind.config.js',
+  'scripts/build-and-validate-local-android-apk.js',
+  'scripts/build-local-android-apk.js',
+  'scripts/configure-android-release.js',
+  'scripts/prepare-model-bundle.js',
+  'scripts/release-freshness-contract.js',
+]
 
 function collectReleaseSourceFreshness(root, apk) {
   const normalizedApk = normalizeApkEvidence(root, apk)
@@ -83,6 +95,7 @@ function collectReleaseInputFiles(root) {
   const roots = [
     path.join(root, 'app'),
     path.join(root, 'src'),
+    path.join(root, 'plugins'),
     path.join(root, 'assets', 'models'),
   ]
   const files = [
@@ -91,6 +104,7 @@ function collectReleaseInputFiles(root) {
     path.join(root, 'assets', 'adaptive-icon.png'),
     path.join(root, 'assets', 'adaptive-foreground.png'),
     path.join(root, 'assets', 'favicon.png'),
+    ...releaseBuildInputPaths.map((file) => path.join(root, file)),
   ]
   for (const dir of roots) {
     for (const file of listFiles(dir)) {
@@ -258,6 +272,7 @@ module.exports = {
   collectReleaseSourceFreshness,
   findNewestReleaseInput,
   releaseFreshnessToleranceMs,
+  releaseBuildInputPaths,
   releaseSourceExtensions,
   writeReleaseSourceSnapshot,
 }

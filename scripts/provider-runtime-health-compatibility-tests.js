@@ -13,21 +13,23 @@ registerTypeScriptSupport()
 
 const {
   PROVIDER_RUNTIME_HEALTH_VIEW_SCHEMA,
+  PROVIDER_HEALTH_SNAPSHOT_VERSION,
+  PROVIDER_HEALTH_STORAGE_KEY,
+  normalizeProviderHealthSnapshot,
+  providerHealthKey,
+} = require('../src/modules/providers/index.ts')
+const {
   providerRuntimeHealthRoute,
   recordProviderRuntimeFailure,
   recordProviderRuntimeRouteFailure,
   recordProviderRuntimeRouteSuccess,
   recordProviderRuntimeSuccess,
   resolveProviderRuntimeHealthView,
-} = require('../src/services/ai/providerRuntimeHealth.ts')
+} = require('../src/bootstrap/providerRuntimeHealth.ts')
 const {
-  PROVIDER_HEALTH_SNAPSHOT_VERSION,
-  PROVIDER_HEALTH_STORAGE_KEY,
   loadProviderHealthSnapshot,
-  normalizeProviderHealthSnapshot,
   saveProviderHealthRecords,
-} = require('../src/services/ai/providerHealthStore.ts')
-const { providerHealthKey } = require('../src/services/ai/providerHealth.ts')
+} = require('../src/bootstrap/providerHealthRepository.ts')
 
 function registerTypeScriptSupport() {
   if (require.extensions['.ts']?.isProviderRuntimeHealthCompatibilityHook) return
@@ -52,11 +54,6 @@ function registerTypeScriptSupport() {
             memoryStorage.delete(key)
           },
         },
-      }
-    }
-    if (request === '@/services/attachmentContract') {
-      return {
-        filterSendableAttachments: (attachments) => Array.isArray(attachments) ? attachments.filter((item) => item?.sendable !== false) : [],
       }
     }
     return originalLoad.call(this, request, parent, isMain)
@@ -103,8 +100,9 @@ function createRequest(overrides = {}) {
     providerToolDeclarations: [{ name: 'lookup' }],
     webSearchMode: 'native',
     attachments: [
-      { id: 'image-1', type: 'image', name: 'image.png', uri: 'file://image.png' },
-      { id: 'file-1', type: 'pdf', name: 'report.pdf', uri: 'file://report.pdf' },
+      { id: 'image-1', type: 'image', name: 'image.png', uri: 'file://image.png', base64: 'aW1n' },
+      { id: 'file-1', type: 'pdf', name: 'report.pdf', uri: 'file://report.pdf', base64: 'cGRm' },
+      { id: 'metadata-only', type: 'image', name: 'metadata.png', uri: 'file://metadata.png' },
     ],
     ...overrides,
   }
@@ -171,6 +169,19 @@ async function run() {
   assert.equal(successView.circuitOpenUntilMs, undefined, 'runtime success clears circuit expiry')
   assert.equal(storedSnapshot().records.some((record) => JSON.stringify(record).includes('sk-provider-health-secret')), false, 'runtime health snapshots omit provider secrets')
 
+  const emptyRoute = providerRuntimeHealthRoute(createRequest({ model: 'empty-model' }), 'group-primary')
+  const emptyClassification = await recordProviderRuntimeFailure({
+    req: createRequest({ model: 'empty-model' }),
+    credentialGroupId: 'group-primary',
+    nowMs: 71000,
+    emptyResponse: true,
+  })
+  assert.equal(emptyClassification.trigger, 'empty_response', 'runtime health classifies a parsed empty completion explicitly')
+  const emptyView = await resolveProviderRuntimeHealthView(emptyRoute, 71001)
+  assert.equal(emptyView.status, 'cooldown', 'empty completion marks only the affected model route unhealthy')
+  assert.equal(emptyView.cooldownUntilMs, 101000, 'empty completion uses a finite model-route cooldown')
+  assert.equal(storedSnapshot().records.find((record) => record.model === 'empty-model').lastFailureTrigger, 'empty_response', 'empty completion persists typed health evidence')
+
   await saveProviderHealthRecords([
     ...storedSnapshot().records,
     { providerId: 'provider-health-main', status: 'healthy', successes: 4, failures: 0, consecutiveFailures: 0, lastSuccessAtMs: 70002 },
@@ -199,16 +210,22 @@ async function run() {
   await saveProviderHealthRecords(normalized.records, { nowMs: 100 })
   assert.equal((await loadProviderHealthSnapshot({ nowMs: 100 })).records.length, 2, 'saved provider health snapshots round-trip through bounded storage')
 
-  const providerRuntimeHealthSource = readSource('src/services/ai/providerRuntimeHealth.ts')
+  const providerRuntimeHealthSource = readSource('src/modules/providers/providerRuntimeHealth.ts')
+  const providerRuntimeHealthBindingSource = readSource('src/bootstrap/providerRuntimeHealth.ts')
   assert.ok(providerRuntimeHealthSource.includes('PROVIDER_RUNTIME_HEALTH_VIEW_SCHEMA'), 'runtime health source declares the view schema')
   assert.ok(providerRuntimeHealthSource.includes('retryAfterMsFromFailure'), 'runtime health source applies retry-after cooldown policy')
   assert.ok(providerRuntimeHealthSource.includes('providerHealthActiveStatus'), 'runtime health source resolves active cooldown and circuit states')
   assert.ok(providerRuntimeHealthSource.includes('catch'), 'runtime health telemetry is isolated from provider execution failures')
+  assert.ok(providerRuntimeHealthBindingSource.includes('createProviderRuntimeHealth(providerHealthRepository)'), 'bootstrap binds runtime health orchestration to concrete persistence')
+  assert.equal(fs.existsSync(path.join(root, 'src/services/ai/providerRuntimeHealth.ts')), false, 'legacy provider runtime health service is removed')
 
-  const providerHealthStoreSource = readSource('src/services/ai/providerHealthStore.ts')
-  assert.ok(providerHealthStoreSource.includes('DEFAULT_MAX_RECORDS = 500'), 'provider health store caps record count')
-  assert.ok(providerHealthStoreSource.includes('DEFAULT_MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000'), 'provider health store caps record age')
-  assert.ok(providerHealthStoreSource.includes('removeProviderHealthRecordsByProviderId'), 'provider health store supports provider-scoped cleanup')
+  const providerHealthRepositorySource = readSource('src/modules/providers/providerHealthRepository.ts')
+  const providerHealthBindingSource = readSource('src/bootstrap/providerHealthRepository.ts')
+  assert.ok(providerHealthRepositorySource.includes('DEFAULT_MAX_RECORDS = 500'), 'provider health repository caps record count')
+  assert.ok(providerHealthRepositorySource.includes('DEFAULT_MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000'), 'provider health repository caps record age')
+  assert.ok(providerHealthRepositorySource.includes('removeByProviderId'), 'provider health repository supports provider-scoped cleanup')
+  assert.ok(providerHealthBindingSource.includes('createProviderHealthRepository(AsyncStorage)'), 'bootstrap binds provider health persistence to AsyncStorage')
+  assert.equal(fs.existsSync(path.join(root, 'src/services/ai/providerHealthStore.ts')), false, 'legacy provider health store is removed')
 
   console.log('Provider runtime health compatibility tests passed')
 }

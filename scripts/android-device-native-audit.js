@@ -38,6 +38,7 @@ function run() {
     'copyDocument(',
     'moveDocument(',
     'renameDocument(',
+    'publishPortableJsonFileToDownloads(',
     'Only Android SAF tree URIs are supported.',
   ]) {
     assert.ok(moduleText.includes(snippet), `Plugin AndroidDeviceToolsModule.kt must include ${snippet}.`)

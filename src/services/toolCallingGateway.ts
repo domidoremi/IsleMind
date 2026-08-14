@@ -1,10 +1,8 @@
-import type { AIProvider, ProcessTrace } from '@/types'
-import type { AgentProviderToolAdapterResult } from '@/services/agent/agentProviderToolAdapter'
-import type { ProviderStructuredOutputRequest } from '@/services/ai/providerConformance'
-import type { ProviderStructuredOutputPlan } from '@/services/ai/providerRouter'
+import type { AIProvider } from '@/types/providerContracts'
+import type { ProcessTrace } from '@/core'
+import type { ProviderNativeToolDeclarationResult, ProviderStructuredOutputPlan, ProviderStructuredOutputRequest } from '@/modules/providers'
 import type { ProviderNativeToolSupportDecision } from '@/services/chatProviderNativeToolUtils'
 import { emitRuntimeEvent } from '@/services/runtimeEvents'
-
 export const TOOL_CALLING_GATEWAY_OUTCOME_SCHEMA = 'islemind.tool-calling-gateway-outcome.v1'
 
 export type ToolCallingGatewayOutcomeStatus = 'ready' | 'skipped'
@@ -37,7 +35,7 @@ export interface ToolCallingGatewayOutcome {
   providerNative: {
     supported: boolean
     reason?: ProviderNativeToolSupportDecision['reason']
-    target?: AgentProviderToolAdapterResult['target']
+    target?: ProviderNativeToolDeclarationResult['target']
     declaredToolCount: number
     skippedToolCount: number
     maxToolCallsPerStep?: number
@@ -60,7 +58,7 @@ export interface BuildToolCallingGatewayOutcomeInput {
   mcpPrompt?: string
   nativeToolSupport: ProviderNativeToolSupportDecision
   providerToolContext?: {
-    adapter: Pick<AgentProviderToolAdapterResult, 'target' | 'tools' | 'skipped'>
+    adapter: Pick<ProviderNativeToolDeclarationResult, 'target' | 'tools' | 'skipped'>
     limits: { maxToolCallsPerStep: number }
   }
   structuredOutput?: ProviderStructuredOutputRequest

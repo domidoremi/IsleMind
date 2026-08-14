@@ -1,9 +1,9 @@
 import { useTranslation } from 'react-i18next'
 import { SettingsPageShell } from '@/components/settings/SettingsPageShell'
-import { createLazyComponent } from '@/utils/lazyLoad'
+import { createLazyComponentWithPreload } from '@/utils/lazyLoad'
 
 // 懒加载 MCP 设置内容
-const McpSettingsContent = createLazyComponent(
+const McpSettingsContent = createLazyComponentWithPreload(
   () => import('@/components/settings/McpSettingsContent').then((module) => ({ default: module.McpSettingsContent }))
 )
 
