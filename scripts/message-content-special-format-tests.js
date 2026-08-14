@@ -49,11 +49,11 @@ assert.equal(
 )
 assert.equal(looksLikeUserAgentText('IsleMind'), true, 'the historical bare IsleMind UA is recognized as client text')
 for (const value of [
-  'IsleMind/1.0.14',
-  'codex_cli_rs/0.147.0 (Android; mobile) IsleMind/1.0.14',
-  'Codex Desktop/0.147.0 (Android; mobile) IsleMind/1.0.14',
-  'claude-code/2.1.229 (cli; IsleMind/1.0.14)',
-  'Grok/xAI (compatible; IsleMind/1.0.14)',
+  'IsleMind/1.0.15',
+  'codex_cli_rs/0.147.0 (Android; mobile) IsleMind/1.0.15',
+  'Codex Desktop/0.147.0 (Android; mobile) IsleMind/1.0.15',
+  'claude-code/2.1.229 (cli; IsleMind/1.0.15)',
+  'Grok/xAI (compatible; IsleMind/1.0.15)',
 ]) {
   assert.equal(looksLikeUserAgentText(value), true, `${value} is recognized from generic client-UA syntax`)
 }

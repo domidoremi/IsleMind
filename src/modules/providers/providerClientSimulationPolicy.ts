@@ -46,20 +46,20 @@ export interface ProviderClientSimulationDecision {
 }
 
 const CLIENT_USER_AGENTS: Record<ProviderClientSimulationProfileId, string> = {
-  islemind: 'IsleMind/1.0.14',
-  'codex-cli': 'codex_cli_rs/0.147.0 (Android; mobile) IsleMind/1.0.14',
-  'codex-desktop': 'Codex Desktop/0.147.0 (Android; mobile) IsleMind/1.0.14',
-  'claude-code': 'claude-code/2.1.229 (cli; IsleMind/1.0.14)',
-  'claude-code-desktop': 'claude-code/2.1.229 (desktop; IsleMind/1.0.14)',
+  islemind: 'IsleMind/1.0.15',
+  'codex-cli': 'codex_cli_rs/0.147.0 (Android; mobile) IsleMind/1.0.15',
+  'codex-desktop': 'Codex Desktop/0.147.0 (Android; mobile) IsleMind/1.0.15',
+  'claude-code': 'claude-code/2.1.229 (cli; IsleMind/1.0.15)',
+  'claude-code-desktop': 'claude-code/2.1.229 (desktop; IsleMind/1.0.15)',
   // Grok Build 1.0.3 official binary evidence: grok-pager + grok-shell,
   // Windows x86_64, and the matching client version/identifier headers.
   'grok-build': 'grok-pager/1.0.3 grok-shell/1.0.3 (windows; x86_64)',
-  'openai-api': 'OpenAI-API/1.0 (IsleMind/1.0.14)',
-  'anthropic-api': 'Anthropic-API/1.0 (IsleMind/1.0.14)',
+  'openai-api': 'OpenAI-API/1.0 (IsleMind/1.0.15)',
+  'anthropic-api': 'Anthropic-API/1.0 (IsleMind/1.0.15)',
   // These suppliers publish OpenAI-compatible HTTP APIs but no canonical CLI
   // telemetry contract. Keep the compatibility target explicit and honest.
-  'deepseek-api': 'DeepSeek-API/1.0 (IsleMind/1.0.14)',
-  'glm-api': 'GLM-API/1.0 (IsleMind/1.0.14)',
+  'deepseek-api': 'DeepSeek-API/1.0 (IsleMind/1.0.15)',
+  'glm-api': 'GLM-API/1.0 (IsleMind/1.0.15)',
 }
 
 const GROK_SHELL_VERSION = '1.0.3'

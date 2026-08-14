@@ -2854,27 +2854,27 @@ function testProviderHeaderPolicy(providerModule) {
   assert.deepEqual(providerModule.getProviderRequestHeaders(openAIProvider, { model: 'gpt-5.6-codex' }), {
     'Content-Type': 'application/json',
     Authorization: 'Bearer openai-key',
-    'User-Agent': 'codex_cli_rs/0.147.0 (Android; mobile) IsleMind/1.0.14',
+    'User-Agent': 'codex_cli_rs/0.147.0 (Android; mobile) IsleMind/1.0.15',
   }, 'the selected Codex model automatically selects the Codex client UA')
   assert.equal(
     providerModule.getProviderRequestHeaders({ ...openAIProvider, clientCompatibilityProfile: 'codex-desktop' }, { model: 'gpt-5.6' })['User-Agent'],
-    'Codex Desktop/0.147.0 (Android; mobile) IsleMind/1.0.14',
+    'Codex Desktop/0.147.0 (Android; mobile) IsleMind/1.0.15',
     'an explicit compatible provider profile overrides automatic provider identity',
   )
   assert.equal(
     providerModule.getProviderRequestHeaders({ ...openAIProvider, clientCompatibilityProfile: 'islemind' }, { model: 'gpt-5.6-codex' })['User-Agent'],
-    'IsleMind/1.0.14',
+    'IsleMind/1.0.15',
     'the explicit IsleMind profile disables branded provider inference',
   )
   assert.equal(
     providerModule.getProviderRequestHeaders({ ...openAIProvider, clientCompatibilityProfile: 'claude-code' }, { model: 'gpt-5.6-codex' })['User-Agent'],
-    'IsleMind/1.0.14',
+    'IsleMind/1.0.15',
     'a protocol-incompatible forced profile fails closed without selecting another branded profile',
   )
   for (const model of ['gpt-5.6-sol', 'gpt-5.6-terra', 'gpt-5.6-luna']) {
     assert.equal(
       providerModule.getProviderRequestHeaders(openAIProvider, { model })['User-Agent'],
-      'OpenAI-API/1.0 (IsleMind/1.0.14)',
+      'OpenAI-API/1.0 (IsleMind/1.0.15)',
       `${model} selects the OpenAI client profile from its model family`,
     )
   }
@@ -2923,7 +2923,7 @@ function testProviderHeaderPolicy(providerModule) {
     'Content-Type': 'application/json',
     'x-api-key': 'anthropic-key',
     'anthropic-version': '2023-06-01',
-    'User-Agent': 'claude-code/2.1.229 (cli; IsleMind/1.0.14)',
+    'User-Agent': 'claude-code/2.1.229 (cli; IsleMind/1.0.15)',
   }, 'selected Claude models preserve provider headers and automatically select the Claude client UA')
   const bedrockProvider = {
     id: 'aws-bedrock',
@@ -2946,7 +2946,7 @@ function testProviderHeaderPolicy(providerModule) {
     body: { messages: [{ role: 'user', content: 'hello' }], max_tokens: 32 },
     now: new Date('2026-08-13T00:00:00Z'),
   })
-  assert.equal(signedBedrockRequest.headers['User-Agent'], 'claude-code/2.1.229 (cli; IsleMind/1.0.14)', 'direct Bedrock receives the selected Claude model UA before signing')
+  assert.equal(signedBedrockRequest.headers['User-Agent'], 'claude-code/2.1.229 (cli; IsleMind/1.0.15)', 'direct Bedrock receives the selected Claude model UA before signing')
   assert.match(signedBedrockRequest.headers.Authorization, /SignedHeaders=[^,]*user-agent/, 'direct Bedrock signs the User-Agent header')
 
   const root = path.join(__dirname, '..')
