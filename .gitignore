@@ -29,11 +29,8 @@ yarn-debug.*
 yarn-error.*
 
 # local agent/runtime artifacts
-.codex/android-validation/
-.codex/downloaded-artifacts/
-.codex/hatch-pet/
-.codex/reference/
-.codex/tmp/
+/.agents/
+/.codex/
 artifacts/
 .claude/
 .gitnexus/
