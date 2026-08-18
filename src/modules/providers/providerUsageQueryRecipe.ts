@@ -4,6 +4,8 @@ import { parseProviderRetryAfterMs } from './providerProbe'
 import { applyProviderClientSimulationHeaders } from './providerClientSimulationPolicy'
 
 export const PROVIDER_USAGE_QUERY_RECIPE_SCHEMA = 'islemind.provider-usage-query-recipe.v1' as const
+export const PROVIDER_USAGE_QUERY_CONFIGURATION_SCHEMA = 'islemind.provider-usage-query-configuration.v1' as const
+export const PROVIDER_USAGE_QUERY_CONFIGURATION_MAX_RECIPES = 8
 
 const DEFAULT_TIMEOUT_MS = 5_000
 const DEFAULT_MAX_RESPONSE_BYTES = 64 * 1024
@@ -27,6 +29,8 @@ export interface ProviderUsageQueryExtraction {
   limit?: string | readonly string[]
   used?: string | readonly string[]
   resetAt?: string | readonly string[]
+  unit?: string | readonly string[]
+  isValid?: string | readonly string[]
 }
 
 export const PROVIDER_USAGE_QUERY_EXAMPLE = `{
@@ -56,6 +60,8 @@ export const PROVIDER_USAGE_QUERY_EXAMPLE_RECIPE: ProviderUsageQueryRecipe = {
   path: '/v1/usage',
   extract: {
     remaining: ['/remaining', '/quota/remaining', '/balance'],
+    unit: ['/unit', '/quota/unit', '/currency'],
+    isValid: ['/is_active', '/isValid', '/valid'],
   },
 }
 
@@ -75,6 +81,12 @@ export interface ProviderUsageQueryRecipe {
   maxResponseBytes?: number
   maxJsonDepth?: number
   maxJsonNodes?: number
+}
+
+export interface ProviderUsageQueryConfiguration {
+  schema: typeof PROVIDER_USAGE_QUERY_CONFIGURATION_SCHEMA
+  enabled: boolean
+  recipes: readonly ProviderUsageQueryRecipe[]
 }
 
 export type ProviderUsageQueryRecipeV1 = ProviderUsageQueryRecipe
@@ -104,6 +116,8 @@ export interface ProviderUsageQueryResult {
   used?: number
   resetAt?: string | number
   exhausted?: boolean
+  unit?: string
+  isValid?: boolean
 }
 
 export interface ProviderUsageQueryRecipeDependencies {
@@ -219,6 +233,8 @@ export function createProviderUsageQueryRecipeExecutor(
       const limit = extractOptionalUsageNumber(value, recipe.extract.limit, 'limit')
       const used = extractOptionalUsageNumber(value, recipe.extract.used, 'used')
       const resetAt = extractOptionalUsageReset(value, recipe.extract.resetAt)
+      const unit = extractOptionalUsageText(value, recipe.extract.unit)
+      const isValid = extractOptionalUsageBoolean(value, recipe.extract.isValid)
       return {
         endpoint,
         status: response.status,
@@ -226,6 +242,8 @@ export function createProviderUsageQueryRecipeExecutor(
         ...(limit === undefined ? {} : { limit }),
         ...(used === undefined ? {} : { used }),
         ...(resetAt === undefined ? {} : { resetAt }),
+        ...(unit === undefined ? {} : { unit }),
+        ...(isValid === undefined ? {} : { isValid }),
       }
     },
   }
@@ -322,6 +340,8 @@ export function validateProviderUsageQueryRecipe(
     extraction.limit,
     extraction.used,
     extraction.resetAt,
+    extraction.unit,
+    extraction.isValid,
   ]
   const pointerCandidates = pointerFields.flatMap(
     (value) => value === undefined ? [] : typeof value === 'string' ? [value] : [...value],
@@ -333,6 +353,140 @@ export function validateProviderUsageQueryRecipe(
   boundedInteger(recipe.maxJsonDepth, DEFAULT_MAX_JSON_DEPTH, 1, DEFAULT_MAX_JSON_DEPTH)
   boundedInteger(recipe.maxJsonNodes, DEFAULT_MAX_JSON_NODES, 1, DEFAULT_MAX_JSON_NODES)
   return recipe
+}
+
+/**
+ * Normalizes persisted provider metadata. Invalid or legacy-shaped input fails
+ * closed to a disabled custom query without affecting built-in usage discovery.
+ */
+export function normalizeProviderUsageQueryConfiguration(
+  input: unknown,
+): ProviderUsageQueryConfiguration {
+  if (
+    !isPlainRecord(input)
+    || input.schema !== PROVIDER_USAGE_QUERY_CONFIGURATION_SCHEMA
+    || !Array.isArray(input.recipes)
+    || input.recipes.length > PROVIDER_USAGE_QUERY_CONFIGURATION_MAX_RECIPES
+  ) return disabledProviderUsageQueryConfiguration()
+
+  try {
+    const recipes = input.recipes.map((recipe) => canonicalCustomUsageQueryRecipe(recipe))
+    return {
+      schema: PROVIDER_USAGE_QUERY_CONFIGURATION_SCHEMA,
+      enabled: input.enabled === true && recipes.length > 0,
+      recipes,
+    }
+  } catch {
+    return disabledProviderUsageQueryConfiguration()
+  }
+}
+
+/** Keeps absent legacy metadata absent while replacing malformed input safely. */
+export function sanitizeProviderUsageQueryConfiguration(
+  input: unknown,
+): ProviderUsageQueryConfiguration | undefined {
+  return input === undefined
+    ? undefined
+    : normalizeProviderUsageQueryConfiguration(input)
+}
+
+/** Parses the safe JSON object-or-array accepted by the provider settings UI. */
+export function parseProviderUsageQueryRecipesText(
+  text: string,
+): readonly ProviderUsageQueryRecipe[] {
+  let parsed: unknown
+  try {
+    parsed = JSON.parse(text)
+  } catch {
+    throw recipeError('invalid_recipe', 'Provider usage query configuration must be valid JSON')
+  }
+  const entries = Array.isArray(parsed) ? parsed : [parsed]
+  if (!entries.length || entries.length > PROVIDER_USAGE_QUERY_CONFIGURATION_MAX_RECIPES) {
+    throw recipeError(
+      'invalid_recipe',
+      `Provider usage query configuration must contain 1-${PROVIDER_USAGE_QUERY_CONFIGURATION_MAX_RECIPES} recipes`,
+    )
+  }
+  return entries.map((recipe) => canonicalCustomUsageQueryRecipe(recipe))
+}
+
+export function createProviderUsageQueryConfiguration(
+  enabled: boolean,
+  recipes: readonly ProviderUsageQueryRecipe[],
+): ProviderUsageQueryConfiguration {
+  if (recipes.length > PROVIDER_USAGE_QUERY_CONFIGURATION_MAX_RECIPES) {
+    throw recipeError('invalid_recipe', 'Provider usage query configuration contains too many recipes')
+  }
+  const normalizedRecipes = recipes.map((recipe) => canonicalCustomUsageQueryRecipe(recipe))
+  if (enabled && !normalizedRecipes.length) {
+    throw recipeError('invalid_recipe', 'An enabled provider usage query requires at least one recipe')
+  }
+  return {
+    schema: PROVIDER_USAGE_QUERY_CONFIGURATION_SCHEMA,
+    enabled,
+    recipes: normalizedRecipes,
+  }
+}
+
+export function providerUsageQueryConfigurationFingerprint(input: unknown): string {
+  const normalized = normalizeProviderUsageQueryConfiguration(input)
+  const serialized = JSON.stringify(normalized)
+  let hash = 2_166_136_261
+  for (let index = 0; index < serialized.length; index += 1) {
+    hash ^= serialized.charCodeAt(index)
+    hash = Math.imul(hash, 16_777_619)
+  }
+  return `${normalized.enabled ? '1' : '0'}:${normalized.recipes.length}:${(hash >>> 0).toString(36)}`
+}
+
+function disabledProviderUsageQueryConfiguration(): ProviderUsageQueryConfiguration {
+  return {
+    schema: PROVIDER_USAGE_QUERY_CONFIGURATION_SCHEMA,
+    enabled: false,
+    recipes: [],
+  }
+}
+
+function canonicalCustomUsageQueryRecipe(input: unknown): ProviderUsageQueryRecipe {
+  const recipe = validateProviderUsageQueryRecipe(input as ProviderUsageQueryRecipe)
+  if (/^[a-z][a-z\d+.-]*:/i.test(recipe.path.trim()) || recipe.credentialRef !== undefined) {
+    throw recipeError('cross_origin', 'Custom provider usage queries must use a relative provider path')
+  }
+  return {
+    schema: PROVIDER_USAGE_QUERY_RECIPE_SCHEMA,
+    method: recipe.method,
+    path: recipe.path.trim(),
+    ...(recipe.headers === undefined ? {} : { headers: { ...recipe.headers } }),
+    ...(recipe.body === undefined ? {} : { body: cloneUsageRecipeJsonValue(recipe.body) }),
+    extract: cloneUsageQueryExtraction(recipe.extract),
+    ...(recipe.timeoutMs === undefined ? {} : { timeoutMs: recipe.timeoutMs }),
+    ...(recipe.maxResponseBytes === undefined ? {} : { maxResponseBytes: recipe.maxResponseBytes }),
+    ...(recipe.maxJsonDepth === undefined ? {} : { maxJsonDepth: recipe.maxJsonDepth }),
+    ...(recipe.maxJsonNodes === undefined ? {} : { maxJsonNodes: recipe.maxJsonNodes }),
+  }
+}
+
+function cloneUsageQueryExtraction(extract: ProviderUsageQueryExtraction): ProviderUsageQueryExtraction {
+  const clonePointer = (value: string | readonly string[] | undefined) =>
+    Array.isArray(value) ? [...value] : value
+  return {
+    ...(extract.remaining === undefined ? {} : { remaining: clonePointer(extract.remaining) }),
+    ...(extract.limit === undefined ? {} : { limit: clonePointer(extract.limit) }),
+    ...(extract.used === undefined ? {} : { used: clonePointer(extract.used) }),
+    ...(extract.resetAt === undefined ? {} : { resetAt: clonePointer(extract.resetAt) }),
+    ...(extract.unit === undefined ? {} : { unit: clonePointer(extract.unit) }),
+    ...(extract.isValid === undefined ? {} : { isValid: clonePointer(extract.isValid) }),
+  }
+}
+
+function cloneUsageRecipeJsonValue(value: ProviderUsageRecipeJsonValue): ProviderUsageRecipeJsonValue {
+  if (Array.isArray(value)) return value.map(cloneUsageRecipeJsonValue)
+  if (isPlainRecord(value)) {
+    return Object.fromEntries(
+      Object.entries(value).map(([key, entry]) => [key, cloneUsageRecipeJsonValue(entry as ProviderUsageRecipeJsonValue)]),
+    )
+  }
+  return value
 }
 
 export function resolveProviderUsageEndpoint(
@@ -461,35 +615,66 @@ function extractOptionalUsageNumber(
   field: string,
 ): number | undefined {
   if (pointer === undefined) return undefined
-  const extracted = extractFirstProviderUsageValue(value, pointer)
-  const numeric = typeof extracted === 'number'
-    ? extracted
-    : typeof extracted === 'string' && extracted.trim() !== ''
-      ? Number(extracted)
-      : Number.NaN
-  if (!Number.isFinite(numeric) || numeric < 0) {
-    throw recipeError('extracted_value_invalid', `Provider usage ${field} value is invalid`)
+  let found = false
+  for (const candidatePointer of providerUsagePointerList(pointer)) {
+    const extracted = extractProviderUsageJsonPointer(value, candidatePointer)
+    if (extracted === undefined || extracted === null) continue
+    found = true
+    const numeric = typeof extracted === 'number'
+      ? extracted
+      : typeof extracted === 'string' && extracted.trim() !== ''
+        ? Number(extracted)
+        : Number.NaN
+    if (Number.isFinite(numeric) && numeric >= 0) return numeric
   }
-  return numeric
+  if (!found) return undefined
+  throw recipeError('extracted_value_invalid', `Provider usage ${field} value is invalid`)
 }
 
 function extractOptionalUsageReset(value: unknown, pointer: string | readonly string[] | undefined): string | number | undefined {
   if (pointer === undefined) return undefined
-  const extracted = extractFirstProviderUsageValue(value, pointer)
-  if (typeof extracted === 'number' && Number.isFinite(extracted)) return extracted
-  if (typeof extracted === 'string' && extracted.trim() && extracted.length <= 256) return extracted
-  throw recipeError('extracted_value_invalid', 'Provider usage resetAt value is invalid')
-}
-
-function extractFirstProviderUsageValue(
-  value: unknown,
-  pointers: string | readonly string[],
-): unknown {
-  for (const pointer of typeof pointers === 'string' ? [pointers] : pointers) {
-    const extracted = extractProviderUsageJsonPointer(value, pointer)
-    if (extracted !== undefined && extracted !== null) return extracted
+  for (const candidatePointer of providerUsagePointerList(pointer)) {
+    const extracted = extractProviderUsageJsonPointer(value, candidatePointer)
+    if (extracted === undefined || extracted === null) continue
+    if (typeof extracted === 'number' && Number.isFinite(extracted)) return extracted
+    if (typeof extracted === 'string' && extracted.trim() && extracted.length <= 256) return extracted
   }
   return undefined
+}
+
+function extractOptionalUsageText(
+  value: unknown,
+  pointer: string | readonly string[] | undefined,
+): string | undefined {
+  if (pointer === undefined) return undefined
+  for (const candidatePointer of providerUsagePointerList(pointer)) {
+    const extracted = extractProviderUsageJsonPointer(value, candidatePointer)
+    if (extracted === undefined || extracted === null) continue
+    if (typeof extracted !== 'string' || extracted.trim().length > 32) continue
+    const normalized = extracted.trim()
+    if (normalized) return normalized
+  }
+  return undefined
+}
+
+function extractOptionalUsageBoolean(
+  value: unknown,
+  pointer: string | readonly string[] | undefined,
+): boolean | undefined {
+  if (pointer === undefined) return undefined
+  for (const candidatePointer of providerUsagePointerList(pointer)) {
+    const extracted = extractProviderUsageJsonPointer(value, candidatePointer)
+    if (extracted === undefined || extracted === null) continue
+    if (typeof extracted === 'boolean') return extracted
+    if (typeof extracted === 'string' && /^(?:true|false)$/i.test(extracted.trim())) {
+      return extracted.trim().toLowerCase() === 'true'
+    }
+  }
+  return undefined
+}
+
+function providerUsagePointerList(pointer: string | readonly string[]): readonly string[] {
+  return typeof pointer === 'string' ? [pointer] : pointer
 }
 
 function stringifyStaticJson(value: ProviderUsageRecipeJsonValue): string {

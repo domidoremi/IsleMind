@@ -132,9 +132,10 @@ export function IsleImage({
         statusBarTranslucent
       >
         <StatusBar style="light" />
-        <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center', paddingTop: insets.top + 16, paddingRight: 16, paddingBottom: insets.bottom + 16, paddingLeft: 16 }}>
+        <View accessibilityViewIsModal style={{ flex: 1, alignItems: 'center', justifyContent: 'center', paddingTop: insets.top + 16, paddingRight: 16, paddingBottom: insets.bottom + 16, paddingLeft: 16 }}>
           <IsleOverlayPressable
-            accessibilityLabel={closePreviewAccessibilityLabel ?? t('common.closeImagePreview')}
+            accessible={false}
+            accessibilityRole="none"
             onPress={() => setPreviewOpen(false)}
             style={{ position: 'absolute', top: 0, right: 0, bottom: 0, left: 0, backgroundColor: colors.backdrop }}
           />

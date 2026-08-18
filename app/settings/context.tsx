@@ -1,10 +1,10 @@
-import { createLazyComponentWithPreload } from '@/utils/lazyLoad'
+import { createLazyComponent } from '@/utils/lazyLoad'
 import { SettingsPageShell } from '@/components/settings/SettingsPageShell'
 import { useSettingsStore } from '@/store/settingsStore'
 import { useTranslation } from 'react-i18next'
 
 // 懒加载上下文面板组件
-const ContextPanel = createLazyComponentWithPreload(
+const ContextPanel = createLazyComponent(
   () => import('@/components/settings/ContextPanel').then((module) => ({ default: module.ContextPanel }))
 )
 

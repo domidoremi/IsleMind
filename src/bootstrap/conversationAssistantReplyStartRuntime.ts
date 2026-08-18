@@ -1,4 +1,5 @@
 import { createAssistantConversationReplyStartRuntime } from '@/modules/assistant-runtime'
+import { filterSendableAttachments } from '@/modules/conversations'
 import { conversationAssistantContextAcquisitionRuntime } from '@/bootstrap/conversationAssistantContextAcquisitionRuntime'
 import { projectConversationAssistantFailure } from '@/bootstrap/conversationAssistantMessageProjection'
 import { conversationAssistantPlainChatHandoffRuntime } from '@/bootstrap/conversationAssistantPlainChatHandoffRuntime'
@@ -16,7 +17,6 @@ import {
   conversationAssistantWorkspaceWritebackHandoffRuntime,
 } from '@/bootstrap/tavernWorkspace'
 import { st } from '@/i18n/service'
-import { filterSendableAttachments } from '@/services/attachmentContract'
 import { useChatStore } from '@/store/chatStore'
 import { useSettingsStore } from '@/store/settingsStore'
 

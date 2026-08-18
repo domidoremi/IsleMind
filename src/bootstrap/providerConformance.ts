@@ -1,6 +1,6 @@
 import { createProviderConformancePolicy } from '@/modules/providers'
+import { filterSendableAttachments } from '@/modules/conversations'
 import { hardenProviderRequestBody } from '@/bootstrap/providerRequestHardening'
-import { filterSendableAttachments } from '@/services/attachmentContract'
 import { getModelConfig } from '@/types/modelCatalog'
 import * as reasoning from '@/utils/modelReasoning'
 

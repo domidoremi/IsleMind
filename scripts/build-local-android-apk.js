@@ -5,6 +5,7 @@ const { spawnSync } = require('node:child_process')
 const { normalizeVariant, supportedVariants } = require('./model-catalog')
 const { apkOutputDirName, formatApkArtifactName } = require('./release-artifact-contract')
 const { writeReleaseSourceSnapshot } = require('./release-freshness-contract')
+const { resolveAndroidReleaseOptimization } = require('./android-release-build-contract')
 
 const projectRoot = path.resolve(__dirname, '..')
 const androidDir = path.join(projectRoot, 'android')
@@ -71,6 +72,7 @@ function parseArgs(argv) {
     runChecks: false,
     installDevice: '',
     releaseArch: '',
+    optimizeRelease: false,
   }
   for (let index = 0; index < argv.length; index += 1) {
     const item = argv[index]
@@ -99,6 +101,8 @@ function parseArgs(argv) {
       index += 1
     } else if (item.startsWith('--release-arch=')) {
       args.releaseArch = item.slice('--release-arch='.length)
+    } else if (item === '--optimize-release') {
+      args.optimizeRelease = true
     }
   }
   args.variant = args.variant === 'all' ? 'all' : normalizeVariant(args.variant)
@@ -108,6 +112,7 @@ function parseArgs(argv) {
   if (!['debug', 'release'].includes(args.buildType)) {
     throw new Error(`Unsupported build type "${args.buildType}".`)
   }
+  resolveAndroidReleaseOptimization(args)
   if (args.releaseArch && args.buildType !== 'release') {
     throw new Error('--release-arch can only be used with --release.')
   }
@@ -462,7 +467,10 @@ function assertReleaseOutputs(outputs, variant, pass) {
   }
 }
 
-function prepareAndroidProjectForRelease() {
+function prepareAndroidProjectForRelease(args) {
+  const releaseOptimization = resolveAndroidReleaseOptimization(args)
+  console.warn('Local release APKs are QA artifacts signed with the Android debug certificate. Do not publish them as production releases.')
+  console.warn(`R8 and resource shrinking: ${releaseOptimization.enabled ? 'enabled for explicit QA validation' : 'disabled until exact-current device validation passes'}.`)
   const env = releaseEnv()
   run(commandName('node'), ['scripts/patch-onnxruntime-16kb.js'], { env })
   run(commandName('node'), ['node_modules/expo/bin/cli', 'prebuild', '--platform', 'android'], { env })
@@ -474,6 +482,7 @@ function prepareAndroidProjectForRelease() {
 
 function buildVariant(variant, args) {
   const assembleTask = args.buildType === 'release' ? 'assembleRelease' : 'assembleDebug'
+  const releaseOptimization = resolveAndroidReleaseOptimization(args)
   run(commandName('node'), ['scripts/patch-onnxruntime-16kb.js'])
   run(commandName('node'), ['scripts/prepare-model-bundle.js', '--variant', variant])
   if (args.clean) {
@@ -501,6 +510,7 @@ function buildVariant(variant, args) {
       `-PislemindUniversalApk=${pass.universalApk}`,
       `-PreactNativeArchitectures=${pass.reactNativeArchitectures}`,
       '-PhermesEnabled=true',
+      ...releaseOptimization.gradleArgs,
     ], {
       ...(args.buildType === 'release' ? { NODE_ENV: 'production' } : {}),
       ISLEMIND_MODEL_BUNDLE: variant,
@@ -510,7 +520,7 @@ function buildVariant(variant, args) {
   }
   if (args.buildType === 'release') {
     const sixtyFourBitOutputs = outputs.filter((output) => !path.basename(output).includes('armeabi-v7a-legacy'))
-    run(commandName('node'), ['scripts/validate-android-16kb-apk.js', ...sixtyFourBitOutputs])
+    run(commandName('node'), ['scripts/validate-android-16kb-apk.js', '--strict', ...sixtyFourBitOutputs])
   }
   return outputs
 }
@@ -526,7 +536,7 @@ function main() {
     throw new Error('android directory does not exist. Run expo prebuild before local native APK builds.')
   }
   if (args.buildType === 'release') {
-    prepareAndroidProjectForRelease()
+    prepareAndroidProjectForRelease(args)
   }
   if (args.runChecks) {
     run(commandName('bun'), ['run', 'type-check'])

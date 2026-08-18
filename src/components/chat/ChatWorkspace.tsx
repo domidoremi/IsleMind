@@ -14,7 +14,7 @@ import { useMainPagerGestureLock } from '@/components/main/MainPagerGestureLock'
 import { useChatStore } from '@/store/chatStore'
 import { useSettingsStore } from '@/store/settingsStore'
 import { sendConversationMessage as sendMessage } from '@/presentation/features/conversations/conversationMessageCommand'
-import { getConversationMetrics } from '@/services/conversationMetrics'
+import { getConversationMetrics } from '@/modules/conversations'
 import type { ConversationChatWorkflowRuntimeRequestedOutput } from '@/modules/tasks'
 import type { Attachment, Conversation, Message } from '@/types/chatContracts'
 import { resolveProviderModelAlias } from '@/utils/providerModels'
@@ -34,7 +34,6 @@ import {
 import { useChatComposerSourceState } from './chatComposerSourceState'
 import { useChatSetupWorkspaceState } from './chatSetupWorkspaceState'
 import { useChatCompressionToast } from './chatCompressionToast'
-import { useChatSystemStatusNotification } from './chatSystemStatusNotification'
 import { findLatestCompressionSummary, type CompressionSummary } from './compressionSummary'
 import type { RuntimeRepairIntent } from './RuntimeRepairIntentCard'
 import type { ComposerPanel } from './FloatingComposer'
@@ -95,7 +94,7 @@ export function ChatWorkspace({ conversation, active = true, showBack = false, e
   const updateConversation = useChatStore((state) => state.updateConversation)
   const switchConversationModel = useChatStore((state) => state.switchConversationModel)
   const removeMessage = useChatStore((state) => state.removeMessage)
-  const createConversation = useChatStore((state) => state.create)
+  const createConversation = useChatStore((state) => state.createDraft)
   const selectConversation = useChatStore((state) => state.select)
   const providers = useSettingsStore((state) => state.providers)
   const settings = useSettingsStore((state) => state.settings)
@@ -113,7 +112,6 @@ export function ChatWorkspace({ conversation, active = true, showBack = false, e
   const [pendingStreamingMessage, setPendingStreamingMessage] = useState<PendingStreamingMessage | null>(null)
   const [intentDraft, setIntentDraft] = useState<IntentDraft | null>(null)
   const [composerPanel, setComposerPanel] = useState<ComposerPanel>(null)
-  const [controlOrbOpen, setControlOrbOpen] = useState(false)
   const [composerOutputMode, setComposerOutputMode] = useState<ConversationChatWorkflowRuntimeRequestedOutput>(initialRequestedOutputMode)
   const [quickStartDraft, setQuickStartDraft] = useState<ComposerDraftPayload | null>(null)
   const quickStartSequence = useRef(0)
@@ -179,6 +177,19 @@ export function ChatWorkspace({ conversation, active = true, showBack = false, e
     keepChromeExpanded,
     showOptions,
   })
+  const applyQuickStartDraft = useCallback((draft: string, attachments: Attachment[] = [], restoreIfEmpty = false) => {
+    if (!draft.trim() && attachments.length === 0) return
+    quickStartSequence.current += 1
+    setQuickStartDraft({
+      content: draft,
+      key: `composer-draft-${quickStartSequence.current}`,
+      attachments: attachments.length > 0 ? attachments : undefined,
+      restoreIfEmpty,
+    })
+    setShowOptions(false)
+    setComposerPanel(null)
+    markChromeActive()
+  }, [markChromeActive])
   const setupState = useChatSetupWorkspaceState({
     active,
     applyQuickStartDraft,
@@ -260,23 +271,38 @@ export function ChatWorkspace({ conversation, active = true, showBack = false, e
         : isStreaming
           ? 'active'
           : 'idle'
-  const goHistory = onHistory ?? (() => router.push('/conversations'))
-  const goSettings = onSettings ?? (() => router.push('/settings'))
-  const startNewConversation = useCallback(() => {
-    const nextProvider = provider ?? setupState.homeProvider
-    const nextModel = runtimeConversation?.model ?? setupState.setupConversation.model
-    if (!nextProvider || nextModel === 'setup-model') {
-      setComposerPanel(null)
-      setShowOptions(true)
-      markChromeActive()
+  const goHistory = useCallback(() => {
+    if (onHistory) {
+      onHistory()
       return
     }
-    const id = createConversation(nextProvider.id, nextModel)
-    selectConversation(id)
+    router.push('/conversations')
+  }, [onHistory])
+  const goSettings = useCallback(() => {
+    if (onSettings) {
+      onSettings()
+      return
+    }
+    router.push('/settings')
+  }, [onSettings])
+  const goBack = useCallback(() => {
+    if (showBack && onHistory) {
+      onHistory()
+      return
+    }
+    if (router.canGoBack()) {
+      router.back()
+      return
+    }
+    goHistory()
+  }, [goHistory, onHistory, showBack])
+  const startNewConversation = useCallback(() => {
+    selectConversation(null)
     setShowOptions(false)
     setComposerPanel(null)
     markChromeActive()
-  }, [createConversation, markChromeActive, provider, runtimeConversation, selectConversation, setupState.homeProvider, setupState.setupConversation.model])
+    router.replace('/')
+  }, [markChromeActive, selectConversation])
   const goProviders = () => pushChatSettingsRoute('/settings/providers')
   const goMemoryReview = () => pushChatSettingsRoute('/settings/memory', { focus: 'review' })
   const goKnowledge = () => pushChatSettingsRoute('/settings/knowledge', { focus: 'import' })
@@ -292,41 +318,12 @@ export function ChatWorkspace({ conversation, active = true, showBack = false, e
 
   useChatCompressionToast({ active, compression: latestCompression, dialog, t })
 
-  useChatSystemStatusNotification({
-    active,
-    activityLabel,
-    conversationId: runtimeConversationId,
-    conversationTitle: runtimeConversationTitle,
-    enabled: settings.systemStatusNotificationsEnabled === true,
-    isStreaming,
-    lastMessage,
-    messages: runtimeConversation?.messages,
-    streamingMessage,
-    t,
-    managedByGlobal: true,
-  })
-
-  function applyQuickStartDraft(draft: string, attachments: Attachment[] = [], restoreIfEmpty = false) {
-    if (!draft.trim() && attachments.length === 0) return
-    quickStartSequence.current += 1
-    setQuickStartDraft({
-      content: draft,
-      key: `composer-draft-${quickStartSequence.current}`,
-      attachments: attachments.length > 0 ? attachments : undefined,
-      restoreIfEmpty,
-    })
-    setShowOptions(false)
-    setComposerPanel(null)
-    markChromeActive()
-  }
-
   function applyChatStarter(starter: ChatStarterDefinition) {
     applyQuickStartDraft(t(starter.promptKey), [], true)
   }
 
   const collapseQuickTools = useCallback(() => {
     setComposerPanel(null)
-    setControlOrbOpen(false)
   }, [])
 
   function toggleComposerOutputMode() {
@@ -343,13 +340,12 @@ export function ChatWorkspace({ conversation, active = true, showBack = false, e
   const { overlayLocked: workspaceOverlayLocked } = useChatWorkspaceOverlayNavigation({
     active,
     composerPanel,
-    controlOrbOpen,
     intentDraft,
     keyboardVisible,
     onCloseWorkspaceReview: workspaceReview.sheetProps.onClose,
+    onUnhandledAndroidBack: showBack ? goBack : undefined,
     onRestoreIntentDraft: applyQuickStartDraft,
     setComposerPanel,
-    setControlOrbOpen,
     setIntentDraft,
     setPagerGestureLocked,
     setShowOptions,
@@ -393,7 +389,6 @@ export function ChatWorkspace({ conversation, active = true, showBack = false, e
         composerOutputMode={composerOutputMode}
         composerPanel={composerPanel}
         composerReferences={composerReferences}
-        controlOrbOpen={controlOrbOpen}
         effectiveInitialAttachments={effectiveInitialAttachments}
         effectiveInitialDraft={effectiveInitialDraft}
         effectiveInitialDraftKey={effectiveInitialDraftKey}
@@ -420,7 +415,6 @@ export function ChatWorkspace({ conversation, active = true, showBack = false, e
         setComposerFocused={setComposerFocused}
         setComposerHeight={setComposerHeight}
         setComposerPanel={setComposerPanel}
-        setControlOrbOpen={setControlOrbOpen}
         setPagerGestureLocked={setPagerGestureLocked}
         setShowOptions={setShowOptions}
         settingsTransitionActive={settingsTransitionActive}
@@ -502,8 +496,6 @@ export function ChatWorkspace({ conversation, active = true, showBack = false, e
       setProviderHealth={setProviderHealth}
       composerPanel={composerPanel}
       setComposerPanel={setComposerPanel}
-      controlOrbOpen={controlOrbOpen}
-      setControlOrbOpen={setControlOrbOpen}
       setComposerHeight={setComposerHeight}
       collapseQuickTools={collapseQuickTools}
       motion={chatMotion}

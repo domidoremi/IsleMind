@@ -1,4 +1,4 @@
-import { useCallback } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 
 import { sendConversationMessage as sendMessage } from '@/presentation/features/conversations/conversationMessageCommand'
 import { useChatStore } from '@/store/chatStore'
@@ -7,6 +7,8 @@ import type { ChatActiveWorkspaceActions } from './chatActiveWorkspaceActions'
 import type { ChatActiveWorkspaceProps } from './chatActiveWorkspaceTypes'
 import { useChatStreamingSubmitActions } from './chatStreamingIntentActions'
 import { useRuntimeRepairIntentActions } from './runtimeRepairIntentActions'
+
+const SYSTEM_PROMPT_PERSIST_DEBOUNCE_MS = 400
 
 type ScrollToLatestMessage = (
   animated?: boolean,
@@ -53,13 +55,12 @@ type ChatActiveComposerDockBaseProps = Pick<ChatActiveWorkspaceProps,
   | 'setPagerGestureLocked'
   | 'showOptions'
   | 'setShowOptions'
-  | 'controlOrbOpen'
-  | 'setControlOrbOpen'
   | 'keyboardVisible'
   | 'setComposerFocused'
   | 'setChromeCollapsed'
   | 'onApplyStarter'
   | 'goKnowledge'
+  | 'openWorkspaceReview'
 >
 
 export interface ChatActiveComposerDockProps extends ChatActiveComposerDockBaseProps {
@@ -85,8 +86,6 @@ type ChatActiveComposerDockStateProps = Pick<ChatActiveComposerDockProps,
   | 'setPagerGestureLocked'
   | 'showOptions'
   | 'setShowOptions'
-  | 'controlOrbOpen'
-  | 'setControlOrbOpen'
   | 'keyboardVisible'
   | 'setComposerFocused'
   | 'setChromeCollapsed'
@@ -111,8 +110,6 @@ export function useChatActiveComposerDockState({
   setPagerGestureLocked,
   showOptions,
   setShowOptions,
-  controlOrbOpen,
-  setControlOrbOpen,
   keyboardVisible,
   setComposerFocused,
   setChromeCollapsed,
@@ -120,6 +117,27 @@ export function useChatActiveComposerDockState({
   safeStopMessage,
   scrollToLatestMessage,
 }: ChatActiveComposerDockStateProps) {
+  const [systemPromptDraft, setSystemPromptDraft] = useState(activeConversation.systemPrompt)
+  const systemPromptDraftRef = useRef({ conversationId: activeConversation.id, value: activeConversation.systemPrompt })
+  const systemPromptPersistTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const flushSystemPrompt = useCallback(() => {
+    if (systemPromptPersistTimerRef.current) {
+      clearTimeout(systemPromptPersistTimerRef.current)
+      systemPromptPersistTimerRef.current = null
+    }
+    const pending = systemPromptDraftRef.current
+    const persisted = useChatStore.getState().conversations.find((item) => item.id === pending.conversationId)?.systemPrompt
+    if (persisted !== pending.value) updateConversation(pending.conversationId, { systemPrompt: pending.value })
+  }, [updateConversation])
+
+  useEffect(() => {
+    flushSystemPrompt()
+    systemPromptDraftRef.current = { conversationId: activeConversation.id, value: activeConversation.systemPrompt }
+    setSystemPromptDraft(activeConversation.systemPrompt)
+  }, [activeConversation.id, activeConversation.systemPrompt, flushSystemPrompt])
+
+  useEffect(() => () => flushSystemPrompt(), [flushSystemPrompt])
+
   const closeRuntimeRepairOverlays = useCallback(() => {
     setComposerPanel(null)
     setShowOptions(false)
@@ -156,7 +174,10 @@ export function useChatActiveComposerDockState({
   })
 
   const handleClearPending = useCallback(() => setPendingStreamingMessage(null), [setPendingStreamingMessage])
-  const handleInputBlur = useCallback(() => setComposerFocused(false), [setComposerFocused])
+  const handleInputBlur = useCallback(() => {
+    flushSystemPrompt()
+    setComposerFocused(false)
+  }, [flushSystemPrompt, setComposerFocused])
   const handleInputFocus = useCallback(() => {
     collapseQuickTools()
     setComposerFocused(true)
@@ -166,11 +187,10 @@ export function useChatActiveComposerDockState({
   const handleInteract = useCallback(() => {
     setPagerGestureLocked?.(true)
     if (showOptions) setShowOptions(false)
-    if (controlOrbOpen) setControlOrbOpen(false)
-  }, [controlOrbOpen, setControlOrbOpen, setPagerGestureLocked, setShowOptions, showOptions])
+  }, [setPagerGestureLocked, setShowOptions, showOptions])
   const handleInteractEnd = useCallback(() => {
-    if (!showOptions && !composerPanel && !keyboardVisible && !controlOrbOpen) setPagerGestureLocked?.(false)
-  }, [composerPanel, controlOrbOpen, keyboardVisible, setPagerGestureLocked, showOptions])
+    if (!showOptions && !composerPanel && !keyboardVisible) setPagerGestureLocked?.(false)
+  }, [composerPanel, keyboardVisible, setPagerGestureLocked, showOptions])
   const handleOpenModelPicker = useCallback(() => {
     markChromeActive()
     setComposerPanel(null)
@@ -180,17 +200,25 @@ export function useChatActiveComposerDockState({
     updateConversation(activeConversation.id, { reasoningEffort })
   }, [activeConversation.id, updateConversation])
   const handleSend = useCallback((...args: Parameters<typeof submit>) => {
+    flushSystemPrompt()
     collapseQuickTools()
     return submit(...args)
-  }, [collapseQuickTools, submit])
+  }, [collapseQuickTools, flushSystemPrompt, submit])
   const handleSendWhileStreaming = useCallback((...args: Parameters<typeof submitWhileStreaming>) => {
+    flushSystemPrompt()
     collapseQuickTools()
     return submitWhileStreaming(...args)
-  }, [collapseQuickTools, submitWhileStreaming])
+  }, [collapseQuickTools, flushSystemPrompt, submitWhileStreaming])
   const handleStop = useCallback(() => safeStopMessage(activeConversation.id), [activeConversation.id, safeStopMessage])
   const handleSystemPromptChange = useCallback((systemPrompt: string) => {
-    updateConversation(activeConversation.id, { systemPrompt })
-  }, [activeConversation.id, updateConversation])
+    systemPromptDraftRef.current = { conversationId: activeConversation.id, value: systemPrompt }
+    setSystemPromptDraft(systemPrompt)
+    if (systemPromptPersistTimerRef.current) clearTimeout(systemPromptPersistTimerRef.current)
+    systemPromptPersistTimerRef.current = setTimeout(() => {
+      systemPromptPersistTimerRef.current = null
+      flushSystemPrompt()
+    }, SYSTEM_PROMPT_PERSIST_DEBOUNCE_MS)
+  }, [activeConversation.id, flushSystemPrompt])
 
   return {
     applyRuntimeRepairIntentDraft,
@@ -208,6 +236,7 @@ export function useChatActiveComposerDockState({
     handleSendWhileStreaming,
     handleStop,
     handleSystemPromptChange,
+    systemPrompt: systemPromptDraft,
     runtimeRepairSubmitKey,
     sendRuntimeRepairIntent,
     visibleRuntimeRepairIntent,

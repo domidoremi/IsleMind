@@ -7,8 +7,7 @@ import type { TFunction } from 'i18next'
 import { useTranslation } from 'react-i18next'
 import { useAppTheme } from '@/hooks/useAppTheme'
 import { AppIcon, appIconStroke } from '@/components/ui/AppIcon'
-import { IslePressable } from '@/components/ui/isle'
-import { IslePanel } from '@/components/ui/isle'
+import { ISLE_MIN_TOUCH_TARGET, IslePanel, IslePressable } from '@/components/ui/isle'
 import { shouldPromotePlainDelimitedRows } from './messageContentTablePromotion'
 import {
   hasComplexDisplayFormulaStructure,
@@ -41,12 +40,12 @@ const DATA_LANGUAGES = new Set(['json', 'jsonc', 'yaml', 'yml', 'csv', 'tsv', 'c
 const CJK_TEXT_PATTERN = /[\u3040-\u30ff\u3400-\u9fff\uf900-\ufaff\uac00-\ud7af]/
 const LATEX_FORMULA_COMMAND_PATTERN = /\\(?:to|frac|sqrt|sum|int|lim|prod|Delta|pi|theta|alpha|beta|gamma|lambda|mu|sigma|omega|left|right|cdot|times|leq|geq|neq|approx|infty)\b/
 const FORMULA_IDENTIFIER_BASE_PATTERN = /^(?:[A-Za-z]{1,3}|alpha|beta|gamma|theta|lambda|sigma|omega|delta|Delta)$/i
-const RICH_BLOCK_ACTION_HIT_SLOP = { top: 8, right: 8, bottom: 8, left: 8 }
 const RICH_BLOCK_COPY_FEEDBACK_MS = 1300
 const DIAGRAM_PREVIEW_NODE_LIMIT = 8
 const DIAGRAM_PREVIEW_EDGE_LIMIT = 6
 const STACKED_TABLE_COLUMN_THRESHOLD = 4
 const MARKDOWN_RENDER_CHAR_LIMIT = 12000
+const MARKDOWN_RENDER_EXPANSION_CHAR_COUNT = 12000
 const DATA_PREVIEW_CHAR_LIMIT = 12000
 const SOURCE_LINE_RENDER_LIMIT = 220
 const TABLE_ROW_RENDER_LIMIT = 80
@@ -147,7 +146,7 @@ function maxTableColumnCount(rows: string[][]): number {
   return rows.reduce((max, row) => Math.max(max, row.length), 1)
 }
 
-export const MessageContent = memo(function MessageContent({ content, isUser = false, isStreaming = false, selectionEnabled = true }: MessageContentProps) {
+export const MessageContent = memo(function MessageContent({ content, isUser = false, isStreaming = false, onLayoutChangeRequest, selectionEnabled = true }: MessageContentProps) {
   const { t } = useTranslation()
   const { colors, themeId } = useAppTheme()
   const segments = useMemo(() => safeParseRichContent(content, t, isStreaming), [content, isStreaming, t])
@@ -155,7 +154,7 @@ export const MessageContent = memo(function MessageContent({ content, isUser = f
   return (
     <MessageContentThemeSurface themeId={themeId} colors={colors} isUser={isUser}>
       {segments.map((segment) => {
-        if (segment.type === 'markdown') return <RichMarkdown key={segment.id} content={segment.content} isUser={isUser} isStreaming={isStreaming} selectionEnabled={selectionEnabled} />
+        if (segment.type === 'markdown') return <RichMarkdown key={segment.id} content={segment.content} isUser={isUser} isStreaming={isStreaming} onLayoutChangeRequest={onLayoutChangeRequest} selectionEnabled={selectionEnabled} />
         if (segment.type === 'table') {
           return (
             <TableBlockCard
@@ -199,9 +198,22 @@ function safeParseRichContent(content: string, t: TFunction, isStreaming: boolea
   }
 }
 
-function RichMarkdown({ content, isUser, isStreaming, selectionEnabled }: { content: string; isUser: boolean; isStreaming: boolean; selectionEnabled: boolean }) {
+function RichMarkdown({
+  content,
+  isUser,
+  isStreaming,
+  onLayoutChangeRequest,
+  selectionEnabled,
+}: {
+  content: string
+  isUser: boolean
+  isStreaming: boolean
+  onLayoutChangeRequest?: () => void
+  selectionEnabled: boolean
+}) {
   const { t } = useTranslation()
   const { colors } = useAppTheme()
+  const [expansion, setExpansion] = useState<{ content: string; charLimit: number } | null>(null)
   const markdownRules = useMemo(() => createMarkdownRenderRules(selectionEnabled), [selectionEnabled])
   const userMessage = colors.ui.message
   const assistantSurfaces = resolveAssistantRichSurfaces(colors)
@@ -238,10 +250,22 @@ function RichMarkdown({ content, isUser, isStreaming, selectionEnabled }: { cont
     )
   }
 
-  const hiddenCharCount = Math.max(0, content.length - MARKDOWN_RENDER_CHAR_LIMIT)
+  const expandedCharLimit = expansion?.content === content ? expansion.charLimit : MARKDOWN_RENDER_CHAR_LIMIT
+  const visibleCharCount = Math.min(content.length, expandedCharLimit)
+  const hiddenCharCount = Math.max(0, content.length - visibleCharCount)
+  const expanded = visibleCharCount > MARKDOWN_RENDER_CHAR_LIMIT
   const visibleContent = hiddenCharCount > 0
-    ? `${content.slice(0, MARKDOWN_RENDER_CHAR_LIMIT).trimEnd()}\n\n…`
+    ? `${content.slice(0, visibleCharCount).trimEnd()}\n\n…`
     : content
+  const discloseMore = () => {
+    setExpansion((current) => {
+      const currentLimit = current?.content === content ? current.charLimit : MARKDOWN_RENDER_CHAR_LIMIT
+      return hiddenCharCount > 0
+        ? { content, charLimit: Math.min(content.length, currentLimit + MARKDOWN_RENDER_EXPANSION_CHAR_COUNT) }
+        : null
+    })
+    requestAnimationFrame(() => onLayoutChangeRequest?.())
+  }
 
   return (
     <View style={{ maxWidth: '100%', overflow: 'hidden' }}>
@@ -352,6 +376,23 @@ function RichMarkdown({ content, isUser, isStreaming, selectionEnabled }: { cont
         <Text style={{ color: isUser ? userMessage.userForeground : colors.textTertiary, fontSize: 11, lineHeight: 16, fontWeight: '800', marginTop: 4 }}>
           {t('messageContent.truncatedMarkdownContent', { count: hiddenCharCount })}
         </Text>
+      ) : null}
+      {hiddenCharCount > 0 || expanded ? (
+        <IslePressable
+          haptic
+          accessibilityRole="button"
+          accessibilityLabel={hiddenCharCount > 0 ? t('common.expand') : t('common.collapse')}
+          accessibilityHint={hiddenCharCount > 0 ? t('messageContent.truncatedMarkdownContent', { count: hiddenCharCount }) : undefined}
+          onPress={discloseMore}
+          style={{ alignSelf: 'flex-start', minHeight: ISLE_MIN_TOUCH_TARGET, justifyContent: 'center' }}
+        >
+          <View style={{ minHeight: ISLE_MIN_TOUCH_TARGET, flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+            <AppIcon name={hiddenCharCount > 0 ? 'arrow-down' : 'arrow-up'} color={isUser ? userMessage.userForeground : colors.textSecondary} size={15} strokeWidth={appIconStroke.strong} />
+            <Text style={{ color: isUser ? userMessage.userForeground : colors.textSecondary, fontSize: 12, lineHeight: 17, fontWeight: '800' }}>
+              {hiddenCharCount > 0 ? t('common.expand') : t('common.collapse')}
+            </Text>
+          </View>
+        </IslePressable>
       ) : null}
     </View>
   )
@@ -590,7 +631,7 @@ function TableBlockCard({
     )
   })
   const tableMinWidth = columnWidths.reduce((total, columnWidth) => total + columnWidth, 0)
-  const shouldStackRows = false
+  const shouldStackRows = width < 380 && columnCount >= STACKED_TABLE_COLUMN_THRESHOLD
   const headers = normalizedRows[0] ?? []
   const bodyRows = normalizedRows.slice(1)
   const tableGrid = (
@@ -1126,9 +1167,8 @@ function CardHeader({
             onPress={runAction(action)}
             accessibilityLabel={displayLabel}
             accessibilityHint={accessibilityHint}
-            hitSlop={RICH_BLOCK_ACTION_HIT_SLOP}
             style={{
-              minHeight: 32,
+              minHeight: ISLE_MIN_TOUCH_TARGET,
               borderRadius: colors.ui.radius.controlMiddle,
               paddingHorizontal: 8,
               flexDirection: 'row',

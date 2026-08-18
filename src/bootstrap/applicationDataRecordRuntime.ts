@@ -4,6 +4,7 @@ export const APPLICATION_DATA_STORAGE_KEYS = Object.freeze({
   SETTINGS: '@islemind/settings',
   PROVIDERS: '@islemind/providers',
   ACTIVE_CONVERSATION: '@islemind/active-conversation',
+  COMPOSER_DRAFTS: '@islemind/composer-drafts',
   SKILLS: '@islemind/skills',
   MCP_SERVERS: '@islemind/mcp-servers',
   TOOLCHAIN_REGISTERED_CATALOG: '@islemind/toolchain-registered-catalog',

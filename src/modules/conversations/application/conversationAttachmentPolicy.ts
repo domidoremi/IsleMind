@@ -1,13 +1,18 @@
 import type { Attachment } from '@/types/chatContracts'
-export function attachmentHasPayload(attachment: Attachment | null | undefined): attachment is Attachment & { base64: string } {
+
+export function attachmentHasPayload(
+  attachment: Attachment | null | undefined,
+): attachment is Attachment & { base64: string } {
   return typeof attachment?.base64 === 'string' && attachment.base64.length > 0
 }
 
-export function filterSendableAttachments(attachments: Attachment[] | undefined): Attachment[] {
+export function filterSendableAttachments(
+  attachments: Attachment[] | undefined,
+): Attachment[] {
   return (attachments ?? []).filter(attachmentHasPayload)
 }
 
-export function sanitizeAttachmentForPersistence(attachment: Attachment): Attachment {
+function sanitizeAttachmentForPersistence(attachment: Attachment): Attachment {
   return {
     ...attachment,
     uri: isPersistableAttachmentUri(attachment.uri) ? attachment.uri : '',
@@ -15,7 +20,9 @@ export function sanitizeAttachmentForPersistence(attachment: Attachment): Attach
   }
 }
 
-export function sanitizeAttachmentsForPersistence(attachments: Attachment[] | undefined): Attachment[] | undefined {
+export function sanitizeAttachmentsForPersistence(
+  attachments: Attachment[] | undefined,
+): Attachment[] | undefined {
   if (!attachments?.length) return undefined
   return attachments.map(sanitizeAttachmentForPersistence)
 }

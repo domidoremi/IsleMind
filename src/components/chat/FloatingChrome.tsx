@@ -5,7 +5,7 @@ import { useAppTheme } from '@/hooks/useAppTheme'
 import type { useMotionPreference } from '@/hooks/useMotionPreference'
 import type { Conversation } from '@/types/chatContracts'
 import type { AIProvider } from '@/types/providerContracts'
-import type { ConversationMetrics } from '@/services/conversationMetrics'
+import type { ConversationMetrics } from '@/modules/conversations'
 
 import type { ModelAccessSettings } from './chatModelSelection'
 import { getProviderHeaderState } from './conversationHeaderState'

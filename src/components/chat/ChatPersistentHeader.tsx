@@ -4,7 +4,7 @@ import { useTranslation } from 'react-i18next'
 
 import { AnimatedNavigationTrigger, type NavigationGlyph } from '@/components/navigation/AnimatedNavigationTrigger'
 import { AppIcon, appIconStroke } from '@/components/ui/AppIcon'
-import { IsleOverlayPressable } from '@/components/ui/isle'
+import { ISLE_MIN_TOUCH_TARGET, IsleOverlayPressable } from '@/components/ui/isle'
 import type { useAppTheme } from '@/hooks/useAppTheme'
 import type { ThemeId } from '@/types/settingsContracts'
 
@@ -49,9 +49,9 @@ export function ChatPersistentHeader({
   const { t } = useTranslation()
   const iconStyle: StyleProp<ViewStyle> = [
     {
-      width: 38,
-      height: 38,
-      borderRadius: Math.min(colors.ui.radius.controlMiddle, 8),
+      width: ISLE_MIN_TOUCH_TARGET,
+      height: ISLE_MIN_TOUCH_TARGET,
+      borderRadius: colors.ui.radius.controlMiddle,
       backgroundColor: 'transparent',
       borderWidth: 0,
       shadowOpacity: 0,
@@ -60,55 +60,53 @@ export function ChatPersistentHeader({
     leadingIconStyle,
   ]
   const actionStyle: StyleProp<ViewStyle> = {
-    width: 38,
-    height: 38,
-    borderRadius: Math.min(colors.ui.radius.controlMiddle, 8),
+    width: ISLE_MIN_TOUCH_TARGET,
+    height: ISLE_MIN_TOUCH_TARGET,
+    borderRadius: colors.ui.radius.controlMiddle,
     backgroundColor: 'transparent',
     borderWidth: 0,
     shadowOpacity: 0,
     elevation: 0,
   }
+  const titleSafeInset = ISLE_MIN_TOUCH_TARGET * 2 + 12
 
   return (
     <ChatChromeThemeSurface themeId={themeId} colors={colors} alertBorder={alertBorder} onLayout={onLayout}>
-      <View style={{ minHeight: 44, flexDirection: 'row', alignItems: 'center', gap: 3, paddingHorizontal: 8 }}>
-        <View style={{ minWidth: 0, flexDirection: 'row', alignItems: 'center', flexShrink: 0 }}>
+      <View style={{ minHeight: 52, position: 'relative', flexDirection: 'row', alignItems: 'center', paddingHorizontal: 10 }}>
+        <View style={{ width: ISLE_MIN_TOUCH_TARGET, height: ISLE_MIN_TOUCH_TARGET, flexShrink: 0, alignItems: 'center', justifyContent: 'center' }}>
           <AnimatedNavigationTrigger
             variant="iconButton"
             label={leadingLabel}
             glyph={leadingGlyph}
             onNavigate={onLeadingPress}
-            color={colors.text}
+            color={colors.textSecondary}
             style={iconStyle}
           />
-          <Text numberOfLines={1} style={{ maxWidth: 52, marginLeft: -1, color: colors.textSecondary, fontSize: 11.5, lineHeight: 16, fontWeight: '700', includeFontPadding: false }}>
-            {leadingLabel}
-          </Text>
         </View>
-        <View style={{ flex: 1, minWidth: 0, minHeight: 38, justifyContent: 'center', paddingHorizontal: 7 }}>
-          <Text numberOfLines={1} ellipsizeMode="tail" style={{ color: colors.text, fontSize: 15, lineHeight: 20, fontWeight: '700', includeFontPadding: false }}>
+        <View pointerEvents="none" style={{ position: 'absolute', top: 0, right: titleSafeInset, bottom: 0, left: titleSafeInset, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 8 }}>
+          <Text accessibilityRole="header" numberOfLines={1} ellipsizeMode="tail" style={{ maxWidth: '100%', color: colors.text, fontSize: 16, lineHeight: 21, fontWeight: '700', includeFontPadding: false, textAlign: 'center' }}>
             {title}
           </Text>
         </View>
-        {trailingContent}
-        <IsleOverlayPressable
-          onPress={onNewConversation}
-          accessibilityRole="button"
-          accessibilityLabel={t('chat.newConversation')}
-          hitSlop={8}
-          style={[actionStyle, { alignItems: 'center', justifyContent: 'center' }]}
-        >
-          <AppIcon name="new-chat" color={colors.text} size={19} strokeWidth={appIconStroke.strong} />
-        </IsleOverlayPressable>
-        <IsleOverlayPressable
-          onPress={onSettings}
-          accessibilityRole="button"
-          accessibilityLabel={t('settings.title')}
-          hitSlop={8}
-          style={settingsTransitionActive ? { ...actionStyle, alignItems: 'center', justifyContent: 'center', backgroundColor: colors.ui.actionBar.itemActiveBackground } : [actionStyle, { alignItems: 'center', justifyContent: 'center' }]}
-        >
-          <AppIcon name="settings" color={colors.text} size={19} strokeWidth={appIconStroke.strong} />
-        </IsleOverlayPressable>
+        <View style={{ marginLeft: 'auto', flexDirection: 'row', alignItems: 'center', gap: 2 }}>
+          {trailingContent}
+          <IsleOverlayPressable
+            onPress={onNewConversation}
+            accessibilityRole="button"
+            accessibilityLabel={t('chat.newConversation')}
+            style={[actionStyle, { alignItems: 'center', justifyContent: 'center' }]}
+          >
+            <AppIcon name="new-chat" color={colors.textSecondary} size={19} strokeWidth={appIconStroke.regular} />
+          </IsleOverlayPressable>
+          <IsleOverlayPressable
+            onPress={onSettings}
+            accessibilityRole="button"
+            accessibilityLabel={t('settings.title')}
+            style={settingsTransitionActive ? { ...actionStyle, alignItems: 'center', justifyContent: 'center', backgroundColor: colors.ui.actionBar.itemActiveBackground } : [actionStyle, { alignItems: 'center', justifyContent: 'center' }]}
+          >
+            <AppIcon name="settings" color={colors.textSecondary} size={19} strokeWidth={appIconStroke.regular} />
+          </IsleOverlayPressable>
+        </View>
       </View>
     </ChatChromeThemeSurface>
   )

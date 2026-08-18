@@ -27,10 +27,14 @@ import {
   type ChatMediaGenerationAdapterGateId,
   type ChatMultimodalPolicy,
 } from '@/presentation/features/chat/chatMultimodalPolicy'
-import { resolveProductMobileLayout } from '@/presentation/layout/productMobileLayout'
+import {
+  resolveProductMobileChatSetupLayout,
+  resolveProductMobileLayout,
+} from '@/presentation/layout/productMobileLayout'
 import type { Attachment } from '@/types/chatContracts'
 
 import { ChatEmptyStateExperience } from './theme-experiences/ChatEmptyStateExperience'
+import { shouldRenderChatSetupBoundaryStatus } from './chatSetupBoundaryVisibility'
 
 export interface ChatBoundaryMemoryStatus {
   active: number
@@ -197,10 +201,16 @@ function ChatEmptyStateIntro({
   title,
   description,
   maxWidth,
+  compactLandscape = false,
+  showDecoration = true,
+  showDescription = true,
 }: {
   title: string
   description?: string
   maxWidth: number
+  compactLandscape?: boolean
+  showDecoration?: boolean
+  showDescription?: boolean
 }) {
   const { colors } = useAppTheme()
   const accessibilityLabel = description ? `${title}. ${description}` : title
@@ -215,19 +225,19 @@ function ChatEmptyStateIntro({
           width: '100%',
           maxWidth,
           alignSelf: 'center',
-          gap: 8,
+          gap: compactLandscape ? 0 : 8,
         }}
       >
-        <View style={{ minHeight: 88, flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+        <View style={{ minHeight: compactLandscape ? 0 : 88, flexDirection: 'row', alignItems: 'center', gap: 8 }}>
           <View style={{ flex: 1, minWidth: 0 }}>
             <Text
-              numberOfLines={2}
+              numberOfLines={compactLandscape ? 1 : 2}
               adjustsFontSizeToFit
               minimumFontScale={0.82}
               style={{
                 color: colors.text,
-                fontSize: 24,
-                lineHeight: 29,
+                fontSize: compactLandscape ? 21 : 24,
+                lineHeight: compactLandscape ? 25 : 29,
                 fontWeight: '900',
                 textAlign: 'left',
                 includeFontPadding: false,
@@ -235,14 +245,20 @@ function ChatEmptyStateIntro({
             >
               {title}
             </Text>
-            <View style={{ marginTop: 8, width: 54, height: 3, backgroundColor: colors.primary }} />
+            {showDecoration ? (
+              <View style={{ marginTop: 8, width: 54, height: 3, backgroundColor: colors.primary }} />
+            ) : null}
           </View>
-          <View>
-            <LimeRoadCompanionMark />
-          </View>
+          {showDecoration ? (
+            <View>
+              <LimeRoadCompanionMark />
+            </View>
+          ) : null}
         </View>
-        {description ? (
-          <Text style={{ maxWidth: Math.max(180, maxWidth - 24), color: colors.textSecondary, fontSize: 12.5, lineHeight: 19, fontWeight: '600', textAlign: 'left', includeFontPadding: false }}>
+        {description && showDescription ? (
+          <Text
+            style={{ maxWidth: Math.max(180, maxWidth - 24), color: colors.textSecondary, fontSize: 12.5, lineHeight: 19, fontWeight: '600', textAlign: 'left', includeFontPadding: false }}
+          >
             {description}
           </Text>
         ) : null}
@@ -260,22 +276,27 @@ function ChatEmptyStateIntro({
         maxWidth,
         alignSelf: 'center',
         alignItems: 'center',
-        gap: 6,
+        gap: compactLandscape ? 3 : 6,
       }}
     >
-      <View accessibilityElementsHidden importantForAccessibility="no-hide-descendants">
-        {colors.ui.limeRoad ? (
-          <LimeRoadCompanionMark />
-        ) : (
-          <AppIcon
-            name={CHAT_BOUNDARY.glyph}
-            color={colors.ui.icon.accentForeground}
-            size={20}
-            strokeWidth={appIconStroke.fine}
-          />
-        )}
-      </View>
+      {showDecoration ? (
+        <View accessibilityElementsHidden importantForAccessibility="no-hide-descendants">
+          {colors.ui.limeRoad ? (
+            <LimeRoadCompanionMark />
+          ) : (
+            <AppIcon
+              name={CHAT_BOUNDARY.glyph}
+              color={colors.ui.icon.accentForeground}
+              size={20}
+              strokeWidth={appIconStroke.fine}
+            />
+          )}
+        </View>
+      ) : null}
       <Text
+        numberOfLines={compactLandscape ? 1 : undefined}
+        adjustsFontSizeToFit={compactLandscape}
+        minimumFontScale={0.82}
         style={{
           color: colors.text,
           fontSize: 19,
@@ -287,7 +308,7 @@ function ChatEmptyStateIntro({
       >
         {title}
       </Text>
-      {description ? (
+      {description && showDescription ? (
         <Text
           style={{
             color: colors.textSecondary,
@@ -390,8 +411,9 @@ export function ChatSetupEmptyState({
   onAction?: () => void
 }) {
   const { colors, themeId } = useAppTheme()
-  const { width } = useWindowDimensions()
+  const { width, height } = useWindowDimensions()
   const starterLayout = resolveProductMobileLayout(width).starter
+  const setupLayout = resolveProductMobileChatSetupLayout(width, height)
   const navigation = useNavigationTrigger(onAction ?? (() => undefined))
   const primaryStarter = resolveChatEmptyStateProjection({
     multimodalPolicy,
@@ -401,6 +423,7 @@ export function ChatSetupEmptyState({
     canOpenTools: !!onOpenTools,
   }).primaryStarter
   const showAction = !!actionLabel && !!glyph && !!onAction
+  const showBoundaryStatus = shouldRenderChatSetupBoundaryStatus(multimodalPolicy)
 
   return (
     <ChatEmptyStateExperience
@@ -412,15 +435,20 @@ export function ChatSetupEmptyState({
         title={title}
         description={description}
         maxWidth={starterLayout.setupContentMaxWidth}
+        compactLandscape={setupLayout.compactLandscape}
+        showDecoration={setupLayout.showIntroDecoration}
+        showDescription={setupLayout.showIntroDescription}
       />}
-      boundary={<ChatBoundaryStatusAction
-        multimodalPolicy={multimodalPolicy}
-        memoryStatus={memoryStatus}
-        onInspectProvider={onInspectProvider}
-        onOpenMemory={onOpenMemory}
-        onOpenTools={onOpenTools}
-        maxWidth={starterLayout.setupContentMaxWidth}
-      />}
+      boundary={showBoundaryStatus ? (
+        <ChatBoundaryStatusAction
+          multimodalPolicy={multimodalPolicy}
+          memoryStatus={memoryStatus}
+          onInspectProvider={onInspectProvider}
+          onOpenMemory={onOpenMemory}
+          onOpenTools={onOpenTools}
+          maxWidth={starterLayout.setupContentMaxWidth}
+        />
+      ) : null}
       starter={primaryStarter && onStarter ? (
         <ChatStarterAction
           starter={primaryStarter}

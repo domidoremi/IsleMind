@@ -7,6 +7,7 @@ import type { Settings, Language, ThemeId, ThemeMode } from '@/types/settingsCon
 import {
   loadPersistedProviderMetadata,
   loadPersistedSettings,
+  flushPersistedSettings,
   savePersistedProviderMetadata,
   savePersistedSettings,
 } from '@/presentation/features/settings/settingsStorePersistenceCommand'
@@ -16,7 +17,7 @@ import {
   secureKeyValueStorage,
 } from '@/bootstrap/secureCredentialStorage'
 import { applyProviderPreset, detectProviderPreset, getProviderPreset, normalizeProviderSyncPolicy } from '@/bootstrap/providerRegistry'
-import { normalizeProviderClientCompatibilityMode, normalizeProviderCredentialGroups, normalizeProviderPresetId, normalizeProviderPresetSelection, type ProviderCredentialMutation } from '@/modules/providers'
+import { normalizeProviderClientCompatibilityMode, normalizeProviderCredentialGroups, normalizeProviderPresetId, normalizeProviderPresetSelection, sanitizeProviderUsageQueryConfiguration, type ProviderCredentialMutation } from '@/modules/providers'
 import { legacySearchModeForProvider, resolveSearchProvider } from '@/modules/integrations'
 import { clearHistoricalInjectedProviderModels, getProviderPreferredModel, hasRemoteProviderModelEvidence, isProviderConversationReady, normalizeProviderModelAliases } from '@/utils/providerModels'
 import { buildProviderModelConfigsForStorage, hasOversizedProviderModelStorage, pruneCredentialGroupModelsForStorage, pruneProviderModelsForStorage } from '@/utils/providerModelStorage'
@@ -652,6 +653,7 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
     await setSecureKey(OBSERVABILITY_SINK_API_KEY, trimmed)
     const stored = await secureKeyValueStorage.getItem(OBSERVABILITY_SINK_API_KEY)
     get().updateSettings({ observabilitySinkApiKeyConfigured: !!stored?.trim() })
+    await flushPersistedSettings()
   },
   getObservabilitySinkApiKey: async () => secureKeyValueStorage.getItem(OBSERVABILITY_SINK_API_KEY),
 
@@ -708,10 +710,12 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
       clearLanguagePreferenceSource(),
     ])
     setServiceLanguage(resetLanguage)
-    persistSettingsSnapshot(resetSettings)
     const resetProviders: AIProvider[] = []
-    persistProvidersSnapshot(resetProviders)
     set({ settings: resetSettings, providers: resetProviders })
+    await Promise.all([
+      savePersistedSettings(resetSettings),
+      flushPendingProviderPersistence(resetProviders),
+    ])
   },
 }))
 
@@ -770,6 +774,7 @@ function normalizeProvider(provider: AIProvider): AIProvider {
         ? provider.wireProtocol ?? 'openai-compatible'
         : undefined,
     clientCompatibilityProfile: normalizeProviderClientCompatibilityMode(provider.clientCompatibilityProfile),
+    usageQueryConfiguration: sanitizeProviderUsageQueryConfiguration(provider.usageQueryConfiguration),
     credentialGroups,
     modelConfigs: buildProviderModelConfigsForStorage({ ...provider, credentialGroups }, models, manualModels, modelAliases),
     lastTestStatus: provider.lastTestStatus ?? 'idle',

@@ -17,8 +17,13 @@ import { st } from '@/i18n/service'
 import { resolveProviderModelAliasAccess } from '@/bootstrap/providerModelAccess'
 import { getReasoningEffortOptions } from '@/utils/modelReasoning'
 import { resolveProviderModelAlias } from '@/utils/providerModels'
-import { sanitizeProcessTraceForBoundary, sanitizeProcessTracesForBoundary } from '@/core'
-import { sanitizeAttachmentsForPersistence } from '@/services/attachmentContract'
+import {
+  clampTraceText,
+  redactSensitiveText,
+  sanitizeProcessTraceForBoundary,
+  sanitizeProcessTracesForBoundary,
+} from '@/core'
+import { sanitizeAttachmentsForPersistence } from '@/modules/conversations'
 import { abortAllStreams, abortStream } from '@/services/chatStreamLifecycle'
 import { sanitizeMessageInternalOutput } from '@/services/chatInternalOutputGuard'
 import { PROVIDER_PLATFORM_DEFAULT_TEMPERATURE } from '@/modules/providers'
@@ -157,16 +162,50 @@ function updateContainsGenerationParameterPatch(updates: Partial<Conversation>):
     GENERATION_PARAMETER_KEYS.some((key) => hasOwnProperty(updates, key))
 }
 
+function buildConversationRecord(providerId: string, model: string): Conversation {
+  const { settings, providers } = useSettingsStore.getState()
+  const provider = providers.find((item) => item.id === providerId)
+  const upstreamModel = provider ? resolveProviderModelAlias(provider, model) : model
+  const modelConfig = getModelConfig(upstreamModel, provider?.type, provider?.modelConfigs)
+  const reasoningOptions = getReasoningEffortOptions(provider, upstreamModel)
+  const defaultReasoningEffort = selectSupportedReasoningEffort(DEFAULT_CONVERSATION_REASONING_EFFORT, reasoningOptions)
+  const parameterRanges = resolveConversationGenerationParameterRanges({
+    provider,
+    model: upstreamModel,
+    reasoningEffort: defaultReasoningEffort,
+    modelConfig,
+  })
+  const now = Date.now()
+  return {
+    id: generateId(),
+    title: '',
+    providerId,
+    model,
+    providerModelMode: 'inherited',
+    systemPrompt: '',
+    temperature: resolveConversationDefaultTemperature(settings, parameterRanges),
+    topP: resolveConversationGenerationParameterDefault('topP', parameterRanges) ?? 1,
+    reasoningEffort: defaultReasoningEffort,
+    maxTokens: resolveConversationDefaultMaxTokens(settings, parameterRanges),
+    generationParameterOverrides: {},
+    messages: [],
+    createdAt: now,
+    updatedAt: now,
+  }
+}
+
 interface ChatState {
   conversations: Conversation[]
+  draftConversationIds: ReadonlySet<string>
   currentId: string | null
   isLoading: boolean
   error: string | null
 
   load: () => Promise<void>
   create: (providerId: string, model: string) => string
+  createDraft: (providerId: string, model: string) => string
   createLocalSetupConversation: () => string
-  select: (id: string) => void
+  select: (id: string | null) => void
   delete: (id: string) => void
   rename: (id: string, title: string) => void
   updateConversation: (id: string, updates: Partial<Conversation>) => void
@@ -197,6 +236,7 @@ const GENERATION_PARAMETER_KEYS = ['temperature', 'topP', 'topK', 'maxTokens'] a
 
 export const useChatStore = create<ChatState>((set, get) => ({
   conversations: [],
+  draftConversationIds: new Set<string>(),
   currentId: null,
   isLoading: false,
   error: null,
@@ -210,6 +250,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
       const selectedId = resolveLoadedActiveConversationId(conversations, currentId)
       set({
         conversations,
+        draftConversationIds: new Set<string>(),
         currentId: selectedId,
         isLoading: false,
       })
@@ -217,47 +258,35 @@ export const useChatStore = create<ChatState>((set, get) => ({
       return
     }
 
-    set({ conversations: [], currentId: null, isLoading: false })
+    set({ conversations: [], draftConversationIds: new Set<string>(), currentId: null, isLoading: false })
     await writeActiveConversationSelection(null)
     void hydrateSqliteConversationsInBackground()
   },
 
   create: (providerId: string, model: string) => {
-    const id = generateId()
-    const { settings, providers } = useSettingsStore.getState()
-    const provider = providers.find((item) => item.id === providerId)
-    const upstreamModel = provider ? resolveProviderModelAlias(provider, model) : model
-    const modelConfig = getModelConfig(upstreamModel, provider?.type, provider?.modelConfigs)
-    const reasoningOptions = getReasoningEffortOptions(provider, upstreamModel)
-    const defaultReasoningEffort = selectSupportedReasoningEffort(DEFAULT_CONVERSATION_REASONING_EFFORT, reasoningOptions)
-    const parameterRanges = resolveConversationGenerationParameterRanges({
-      provider,
-      model: upstreamModel,
-      reasoningEffort: defaultReasoningEffort,
-      modelConfig,
-    })
-    const conversation: Conversation = {
-      id,
-      title: '',
-      providerId,
-      model,
-      providerModelMode: 'inherited',
-      systemPrompt: '',
-      temperature: resolveConversationDefaultTemperature(settings, parameterRanges),
-      topP: resolveConversationGenerationParameterDefault('topP', parameterRanges) ?? 1,
-      reasoningEffort: defaultReasoningEffort,
-      maxTokens: resolveConversationDefaultMaxTokens(settings, parameterRanges),
-      generationParameterOverrides: {},
-      messages: [],
-      createdAt: Date.now(),
-      updatedAt: Date.now(),
-    }
-    conversation.maxTokens = resolveConversationDefaultMaxTokens(settings, parameterRanges)
+    const conversation = buildConversationRecord(providerId, model)
+    const id = conversation.id
     set((state) => {
       const updated = [conversation, ...state.conversations]
-      void persistConversations(updated)
+      void persistConversations(updated, state.draftConversationIds)
       void writeActiveConversationSelection(id)
       return { conversations: updated, currentId: id }
+    })
+    return id
+  },
+
+  createDraft: (providerId: string, model: string) => {
+    const conversation = buildConversationRecord(providerId, model)
+    const id = conversation.id
+    set((state) => {
+      const updatedDraftConversationIds = new Set(state.draftConversationIds)
+      updatedDraftConversationIds.add(id)
+      const updated = [conversation, ...state.conversations]
+      return {
+        conversations: updated,
+        draftConversationIds: updatedDraftConversationIds,
+        currentId: id,
+      }
     })
     return id
   },
@@ -280,16 +309,26 @@ export const useChatStore = create<ChatState>((set, get) => ({
     }
     set((state) => {
       const updated = [conversation, ...state.conversations]
-      void persistConversations(updated)
+      void persistConversations(updated, state.draftConversationIds)
       void writeActiveConversationSelection(id)
       return { conversations: updated, currentId: id }
     })
     return id
   },
 
-  select: (id: string) => {
-    set({ currentId: id })
-    void writeActiveConversationSelection(id)
+  select: (id: string | null) => {
+    set((state) => {
+      if (!state.draftConversationIds.size || (id !== null && state.draftConversationIds.has(id))) {
+        return { currentId: id }
+      }
+      const conversations = state.conversations.filter((conversation) => !state.draftConversationIds.has(conversation.id))
+      return {
+        conversations,
+        draftConversationIds: new Set<string>(),
+        currentId: id,
+      }
+    })
+    if (id === null || !get().draftConversationIds.has(id)) void writeActiveConversationSelection(id)
   },
 
   delete: (id: string) => {
@@ -297,11 +336,14 @@ export const useChatStore = create<ChatState>((set, get) => ({
     abortStream(id)
     set((state) => {
       const updated = state.conversations.filter((c) => c.id !== id)
-      void persistConversations(updated)
+      const draftConversationIds = new Set(state.draftConversationIds)
+      draftConversationIds.delete(id)
+      void persistConversations(updated, draftConversationIds)
       const nextCurrentId = state.currentId === id ? updated[0]?.id ?? null : state.currentId
       void writeActiveConversationSelection(nextCurrentId)
       return {
         conversations: updated,
+        draftConversationIds,
         currentId: nextCurrentId,
       }
     })
@@ -312,7 +354,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
       const updated = state.conversations.map((c) =>
         c.id === id ? { ...c, title, updatedAt: Date.now() } : c
       )
-      void persistConversations(updated)
+      if (!state.draftConversationIds.has(id)) void persistConversationRecord(updated, id)
       return { conversations: updated }
     })
   },
@@ -333,7 +375,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
         }
         return next
       })
-      void persistConversations(updated)
+      if (!state.draftConversationIds.has(id)) void persistConversationRecord(updated, id)
       return { conversations: updated }
     })
   },
@@ -420,7 +462,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
         }
         return nextConversation
       })
-      void persistConversations(updated)
+      if (!state.draftConversationIds.has(id)) void persistConversationRecord(updated, id)
       return { conversations: updated }
     })
     return true
@@ -436,7 +478,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
           updatedAt: Date.now(),
         }
       })
-      void persistConversations(updated)
+      void persistConversationRecord(updated, convId)
       return { conversations: updated }
     })
   },
@@ -452,13 +494,15 @@ export const useChatStore = create<ChatState>((set, get) => ({
           updatedAt: Date.now(),
         }
       })
-      void persistConversations(updated)
+      void persistConversationRecord(updated, convId)
       return { conversations: updated }
     })
   },
 
   addMessage: (convId: string, message: Message) => {
     set((state) => {
+      const draftConversationIds = new Set(state.draftConversationIds)
+      const wasDraft = draftConversationIds.delete(convId)
       const updated = state.conversations.map((c) => {
         if (c.id !== convId) return c
         const firstUserMsg = c.messages.length === 0 && message.role === 'user'
@@ -469,8 +513,16 @@ export const useChatStore = create<ChatState>((set, get) => ({
           updatedAt: Date.now(),
         }
       })
-      void persistConversations(updated)
-      return { conversations: updated }
+      const persistence = persistConversationRecord(updated, convId)
+      if (wasDraft) {
+        void persistence
+          .then(() => {
+            if (get().currentId !== convId) return
+            return writeActiveConversationSelection(convId)
+          })
+          .catch(() => undefined)
+      }
+      return { conversations: updated, draftConversationIds: wasDraft ? draftConversationIds : state.draftConversationIds }
     })
   },
 
@@ -487,7 +539,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
           updatedAt: Date.now(),
         }
       })
-      void persistConversations(updated)
+      void persistConversationRecord(updated, convId)
       return { conversations: updated }
     })
   },
@@ -522,7 +574,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
       if (shouldDebouncePersist) {
         scheduleStreamingPersist(get, convId, msgId)
       } else {
-        void persistConversations(updated)
+        void persistConversationRecord(updated, convId)
       }
       return { conversations: updated }
     })
@@ -570,11 +622,12 @@ export const useChatStore = create<ChatState>((set, get) => ({
     abortAllStreams()
     set({
       conversations: [],
+      draftConversationIds: new Set<string>(),
       currentId: null,
       error: null,
     })
     void writeActiveConversationSelection(null)
-    void persistConversations([])
+    void persistConversations([], new Set<string>())
   },
 
   importData: (conversations: Conversation[]) => {
@@ -584,11 +637,12 @@ export const useChatStore = create<ChatState>((set, get) => ({
     const currentId = cleaned[0]?.id ?? null
     set({
       conversations: cleaned,
+      draftConversationIds: new Set<string>(),
       currentId,
       error: null,
     })
     void writeActiveConversationSelection(currentId)
-    void persistConversations(cleaned)
+    void persistConversations(cleaned, new Set<string>())
   },
 
   getCurrent: () => {
@@ -693,22 +747,41 @@ async function flushStreamingPersist(getState: () => ChatState, convId: string, 
   await persistStreamingConversationQueued(getState().conversations, convId)
 }
 
-async function persistConversationsQueued(conversations: Conversation[]): Promise<void> {
-  await persistConversations(conversations)
-}
-
-async function persistStreamingConversationQueued(
+function persistStreamingConversationQueued(
   conversations: Conversation[],
   convId: string,
 ): Promise<void> {
-  const snapshot = sanitizeConversationsForPersistence(conversations)
-  const conversation = snapshot.find((item) => item.id === convId)
-  if (conversation) await saveConversationRecord(conversation)
+  return persistConversationRecord(conversations, convId)
 }
 
-async function persistConversations(conversations: Conversation[]): Promise<void> {
+function persistConversationRecord(
+  conversations: Conversation[],
+  convId: string,
+): Promise<void> {
+  const sourceConversation = conversations.find((item) => item.id === convId)
+  if (!sourceConversation) return Promise.resolve()
+  const [conversation] = sanitizeConversationsForPersistence([sourceConversation])
+  return trackConversationPersistence(saveConversationRecord(conversation))
+}
+
+function persistConversations(
+  conversations: Conversation[],
+  draftConversationIds: ReadonlySet<string> = useChatStore.getState().draftConversationIds,
+): Promise<void> {
   const snapshot = sanitizeConversationsForPersistence(conversations)
-  await replaceConversationRecords(snapshot)
+    .filter((conversation) => !draftConversationIds.has(conversation.id))
+  return trackConversationPersistence(replaceConversationRecords(snapshot))
+}
+
+function trackConversationPersistence(operation: Promise<void>): Promise<void> {
+  const reported = operation.catch((error: unknown) => {
+    const detail = error instanceof Error ? error.message : st('error.unknownError')
+    const safeDetail = clampTraceText(redactSensitiveText(detail), 240) || st('error.unknownError')
+    useChatStore.getState().setError(st('storage.sqliteSyncFailed', { message: safeDetail }))
+    throw error
+  })
+  void reported.catch(() => undefined)
+  return reported
 }
 
 function prepareConversationsForStore(conversations: Conversation[]): Conversation[] {
@@ -722,7 +795,9 @@ async function hydrateSqliteConversationsInBackground(): Promise<void> {
     const conversations = prepareConversationsForStore([...sqliteData])
     const currentId = await readActiveConversationSelection()
     const selectedId = resolveLoadedActiveConversationId(conversations, currentId)
-    useChatStore.setState({ conversations, currentId: selectedId })
+    const currentState = useChatStore.getState()
+    if (currentState.conversations.length > 0 || currentState.draftConversationIds.size > 0) return
+    useChatStore.setState({ conversations, draftConversationIds: new Set<string>(), currentId: selectedId })
     void writeActiveConversationSelection(selectedId)
   } catch (error) {
     const message = error instanceof Error ? error.message : st('error.unknownError')

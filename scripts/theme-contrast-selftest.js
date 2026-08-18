@@ -159,6 +159,19 @@ if (normalizeThemeAccent('#abc') !== '#AABBCC' || normalizeThemeAccent('not-a-co
   throw new Error('theme accent normalization rejected a valid shorthand or accepted invalid input')
 }
 
+for (const mode of ['light', 'dark']) {
+  const theme = themePalettes.markdown[mode]
+  const expectedSurfaces = [
+    theme.ui.semantic.surface.canvas,
+    theme.ui.semantic.surface.base,
+    theme.ui.semantic.surface.muted,
+  ]
+  const compatibilitySurfaces = [theme.surface, theme.surfaceSecondary, theme.surfaceTertiary]
+  if (compatibilitySurfaces.some((value, index) => value !== expectedSurfaces[index])) {
+    throw new Error(`markdown/${mode} compatibility surfaces diverge from the semantic canvas`)
+  }
+}
+
 const failures = []
 for (const [label, theme, fg, bg, minRatio] of checks) {
   const ratio = visibleContrast(theme, fg, bg)

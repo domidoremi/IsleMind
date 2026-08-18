@@ -6,7 +6,7 @@ const root = path.resolve(__dirname, '..')
 const worklistPath = path.join(root, 'scripts/fixtures/worklists/product-mobile-native-evidence-worklist.json')
 const evidencePath = path.join(root, 'test-evidence/qa/product-mobile-native-adb-results.json')
 
-const REQUIRED_CAPTURE_IDS = ['history-320', 'chat-320', 'chat-toolbox-320']
+const REQUIRED_CAPTURE_IDS = ['history-320', 'chat-320', 'chat-composer-tools-320']
 const REQUIRED_INTERACTION_PROOF_IDS = ['boundary-status-chat-320']
 const MOBILE_VIEWPORT_MIN_DP = 320
 const MOBILE_VIEWPORT_MAX_DP = 393
@@ -66,7 +66,7 @@ function assertWorklist(worklist) {
   assert.deepEqual(
     captures.map((capture) => capture.id),
     REQUIRED_CAPTURE_IDS,
-    'native worklist covers unified History, Chat, and Chat toolbox captures in stable order',
+    'native worklist covers unified History, Chat, and Composer tools captures in stable order',
   )
 
   for (const capture of captures) {
@@ -77,10 +77,10 @@ function assertWorklist(worklist) {
     assert.ok(Array.isArray(capture.mustFindUiText) && capture.mustFindUiText.length >= 1, `${capture.id} records native UI text probes`)
     assert.ok(Array.isArray(capture.mustNotFindUiText) && capture.mustNotFindUiText.length >= 1, `${capture.id} records transient UI text blockers`)
     assert.ok(Array.isArray(capture.mustVerify) && capture.mustVerify.length >= 3, `${capture.id} records concrete visual checks`)
-    if (capture.interaction === 'open-toolbox') {
-      assert.ok(Array.isArray(capture.tapUiText) && capture.tapUiText.length >= 1, `${capture.id} records toolbox trigger text`)
+    if (capture.interaction === 'open-composer-tools') {
+      assert.ok(Array.isArray(capture.tapUiText) && capture.tapUiText.length >= 1, `${capture.id} records Composer tools trigger text`)
       assert.ok(Array.isArray(capture.preInteractionMustFindUiText) && capture.preInteractionMustFindUiText.length >= 1, `${capture.id} records the pre-interaction Chat surface`)
-      assert.ok(capture.mustFindUiText.flat().some((value) => /Quick actions|快捷操作|クイック操作/.test(value)), `${capture.id} verifies the opened toolbox panel`)
+      assert.ok(capture.mustFindUiText.flat().some((value) => /Workspace review|工作区审核|ワークスペース確認/.test(value)), `${capture.id} verifies the opened Composer tools panel`)
     }
   }
 
@@ -190,7 +190,7 @@ function assertBlockedNativeDeviceEvidenceResult(result) {
   assert.ok(result.device && typeof result.device === 'object', 'blocked native device result records device metadata')
   assert.ok(Array.isArray(result.errors) && result.errors.length > 0, 'blocked native device result records the blocking reason')
   assert.ok(
-    result.status !== 'blocked-native-ui-verification' || /expected native UI text|transient or blocking native UI text|toolbox trigger|unsupported interaction/.test(JSON.stringify(result.errors)),
+    result.status !== 'blocked-native-ui-verification' || /expected native UI text|transient or blocking native UI text|Composer tools trigger|unsupported interaction/.test(JSON.stringify(result.errors)),
     'blocked native UI verification records the missing expected UI text or visible transient blocker',
   )
 }
@@ -230,7 +230,7 @@ function assertNativeEvidenceResult(result, worklist) {
     assert.ok(Array.isArray(capture.absentUiTextEvidence), `${expected.id} records absent transient UI text groups`)
     assert.ok(Array.isArray(capture.dismissedUiTextActions), `${expected.id} records transient UI dismiss actions`)
     assert.ok(Array.isArray(capture.captureInteractionActions), `${expected.id} records capture interaction actions`)
-    if (expected.interaction === 'open-toolbox') {
+    if (expected.interaction === 'open-composer-tools') {
       assert.ok(capture.captureInteractionActions.length > 0, `${expected.id} records the toolbox-opening interaction`)
     } else {
       assert.deepEqual(capture.captureInteractionActions, [], `${expected.id} does not invent a capture interaction`)
@@ -376,7 +376,7 @@ function assertPlanRecordsNativeGate() {
   assert.ok(collector.includes('uiHierarchyMatched'), 'native collector records UI hierarchy route verification')
   assert.ok(collector.includes('navigateToChatViaNativeUi'), 'native collector can use audited Chat-only native UI fallback navigation')
   assert.equal(collector.includes('navigateToProductModeViaNativeUi'), false, 'native collector does not restore Agent or Tavern mode-wheel navigation')
-  assert.ok(collector.includes('applyCaptureInteraction') && collector.includes("capture.interaction !== 'open-toolbox'"), 'native collector performs only the declared Chat toolbox capture interaction')
+  assert.ok(collector.includes('applyCaptureInteraction') && collector.includes("capture.interaction !== 'open-composer-tools'"), 'native collector performs only the declared Composer tools capture interaction')
   assert.ok(collector.includes('navigationFallbackUsed'), 'native collector records whether fallback navigation was needed')
   assert.ok(collector.includes('interactionProofs') && collector.includes('pending-native-recapture'), 'native collector records pending interaction proof status when taps are not recaptured')
   assert.ok(collector.includes('captureNativeInteractionProofs') && collector.includes('mustFindUiTextAfterTap'), 'native collector can capture boundary status tap interaction proofs')

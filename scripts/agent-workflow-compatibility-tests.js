@@ -3111,7 +3111,7 @@ function loadOrchestratorWithCheckpointSession(createSession, options = {}) {
     if (request === './workflowSkills' || request === '@/bootstrap/workflowSkills') {
       return { collectWorkflowRagProfileRequirements: () => [] }
     }
-    if (request === '@/services/androidUriPolicy') return { sanitizeAndroidApkUri: (value) => value }
+    if (request === '@/platform/native/androidUriPolicy') return { sanitizeAndroidApkUri: (value) => value }
     if (request === './workflowDefinitions' || request === '@/bootstrap/workflowDefinitions') {
       return {
         workflowDefinitionPolicy: {

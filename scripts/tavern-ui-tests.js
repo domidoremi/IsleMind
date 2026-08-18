@@ -88,9 +88,10 @@ function run() {
   assertHas(nativeIntentSource, "['/agent', '/companion', '/tavern'].includes(pathname)", 'historical path intents redirect into Chat')
 
   const chatWorkspaceSource = readSource('src/components/chat/ChatWorkspace.tsx')
+  const chatSetupWorkspaceSource = readSource('src/components/chat/ChatSetupWorkspace.tsx')
+  const floatingComposerSource = readSource('src/components/chat/FloatingComposer.tsx')
   const reviewSheetSource = readSource('src/components/chat/ChatWorkspaceReviewSheet.tsx')
   const reviewStateSource = readSource('src/components/chat/chatWorkspaceReviewState.ts')
-  const controlOrbSource = readSource('src/components/chat/chatControlOrbActions.ts')
   const reviewControllerSource = readSource('src/presentation/features/conversations/chatWorkspaceReviewController.ts')
   const reviewProjectionSource = readSource('src/presentation/features/conversations/chatWorkspaceReviewProjection.ts')
   const reviewCommandSource = readSource('src/presentation/features/conversations/chatWorkspaceReviewCommand.ts')
@@ -98,13 +99,9 @@ function run() {
   const workspaceBootstrapSource = readSource('src/bootstrap/tavernWorkspace.ts')
   const workspaceEntrySource = readSource('src/modules/workspaces/index.ts')
 
-  assertHas(controlOrbSource, "key: 'workspace-review'", 'the active Chat toolbox exposes workspace review')
-  assertHas(controlOrbSource, "label: t('chat.workspaceReviewToolbox')", 'the Chat workspace-review action is localized')
-  const setupActions = controlOrbSource.slice(
-    controlOrbSource.indexOf('export function buildSetupControlOrbActions'),
-    controlOrbSource.indexOf('export function buildActiveControlOrbActions'),
-  )
-  assert.equal(setupActions.includes("key: 'workspace-review'"), false, 'setup without a conversation exposes no workspace review')
+  assertHas(floatingComposerSource, "label={t('chat.workspaceReviewToolbox')}", 'the Composer toolbox exposes localized workspace review')
+  assertHas(floatingComposerSource, 'onOpenWorkspaceReview?.()', 'the Composer toolbox dispatches workspace review through an explicit callback')
+  assert.equal(chatSetupWorkspaceSource.includes('onOpenWorkspaceReview='), false, 'setup without a conversation exposes no workspace review')
   assertHas(chatWorkspaceSource, 'useChatWorkspaceReviewState({', 'active Chat owns workspace-review state')
   assertHas(chatWorkspaceSource, '<ChatWorkspaceReviewSheet {...workspaceReview.sheetProps} />', 'active Chat renders workspace review')
   assert.ok(chatWorkspaceSource.indexOf('<ChatWorkspaceReviewSheet') > chatWorkspaceSource.indexOf('if (!conversation)'), 'workspace review mounts only for an active conversation')

@@ -14,6 +14,8 @@ export interface SettingsStorePersistence {
 }
 
 let persistence: SettingsStorePersistence | undefined
+let settingsMutationTail: Promise<void> = Promise.resolve()
+let latestSettingsMutation: Promise<void> = Promise.resolve()
 
 export function bindSettingsStorePersistence(nextPersistence: SettingsStorePersistence): void {
   if (!persistence) {
@@ -34,7 +36,12 @@ export function loadPersistedSettings(): Promise<Partial<Settings> | null> {
 }
 
 export function savePersistedSettings(settings: Settings): Promise<void> {
-  return requirePersistence().settings.save(settings)
+  const boundPersistence = requirePersistence()
+  return enqueueSettingsMutation(() => boundPersistence.settings.save(settings))
+}
+
+export function flushPersistedSettings(): Promise<void> {
+  return latestSettingsMutation
 }
 
 export function loadPersistedProviderMetadata(): Promise<readonly AIProvider[] | null> {
@@ -48,4 +55,11 @@ export function savePersistedProviderMetadata(providers: readonly AIProvider[]):
 function requirePersistence(): SettingsStorePersistence {
   if (!persistence) throw new Error(SETTINGS_STORE_PERSISTENCE_UNINITIALIZED_ERROR)
   return persistence
+}
+
+function enqueueSettingsMutation(operation: () => Promise<void>): Promise<void> {
+  const result = settingsMutationTail.then(operation, operation)
+  settingsMutationTail = result.catch(() => undefined)
+  latestSettingsMutation = result
+  return result
 }

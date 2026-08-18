@@ -1380,11 +1380,12 @@ async function getDefaultTaskBoundToolRuntime(): Promise<TaskBoundToolRuntime> {
 }
 
 async function loadDefaultDependencies(): Promise<TaskBoundToolRuntimeDependencies> {
-  const [mcp, mcpCatalog, settings, android] = await Promise.all([
+  const [mcp, mcpCatalog, settings, android, androidStatusNotification] = await Promise.all([
     import('@/bootstrap/mcpExecutionRuntime'),
     import('@/bootstrap/mcpCatalog'),
     import('@/presentation/features/settings/settingsActionCommand'),
     import('@/services/androidDeviceTools'),
+    import('@/bootstrap/androidStatusNotification'),
   ])
   const catalogSources: ConversationToolCatalogSourcePorts = {
     builtinServerId: mcpCatalog.BUILTIN_SERVER_ID,
@@ -1464,6 +1465,7 @@ async function loadDefaultDependencies(): Promise<TaskBoundToolRuntimeDependenci
         return await android.executeAndroidDeviceTool(tool, argumentsValue, {
           signal: options.signal,
           runtimeLog: options.runtimeLog,
+          openStatusNotificationSettings: androidStatusNotification.openAndroidStatusNotificationSettings,
         })
       } catch (error) {
         return externalBoundaryFailure(

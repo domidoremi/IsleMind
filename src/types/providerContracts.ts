@@ -229,4 +229,6 @@ export interface AIProvider {
   lastTestMessage?: string
   lastTestCode?: ProviderOperationCode
   lastModelTestCapabilityChecks?: ProviderModelTestCapabilityCheck[]
+  /** Provider-owned persisted data. Validate through the Providers module before use. */
+  usageQueryConfiguration?: unknown
 }

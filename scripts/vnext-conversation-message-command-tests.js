@@ -2486,8 +2486,8 @@ function testProductionMessageRuntimeBoundary() {
   const workspaceReceiptRecoveryIndex = bootstrapSource.indexOf('await recoverConversationWorkspaceWritebackReceipts')
   const taskRecoveryIndex = bootstrapSource.indexOf('await recoverVNextInterruptedTasks')
   const readyIndex = bootstrapSource.indexOf('ready: true')
+  const deferredRecoveryDispatchIndex = bootstrapSource.indexOf('void recoverDeferredRuntimeState()')
   assert.ok(initializationIndex >= 0, 'application startup explicitly initializes the conversation runtime binding')
-  assert.ok(initializationIndex < runRecoveryIndex, 'runtime binding initializes before unified Chat run recovery')
   assert.ok(runRecoveryIndex < checkpointRecoveryIndex, 'Chat run recovery precedes exact-run workflow checkpoint reconciliation')
   assert.ok(checkpointRecoveryIndex < workspaceReceiptRecoveryIndex, 'workflow checkpoint dispositions are recovered before workspace receipt reconciliation')
   assert.ok(workspaceReceiptRecoveryIndex < taskRecoveryIndex, 'workspace receipt reconciliation precedes passive durable task recovery')
@@ -2497,6 +2497,7 @@ function testProductionMessageRuntimeBoundary() {
     'startup forwards only the exact recovered Chat run identities and recovery signal to checkpoint reconciliation',
   )
   assert.ok(initializationIndex < readyIndex, 'runtime binding initializes before the app becomes ready')
+  assert.ok(deferredRecoveryDispatchIndex > readyIndex, 'non-blocking runtime recovery is dispatched after the app becomes ready')
   assert.equal(bootstrapSource.includes('recoverVNextAgentRuns'), false, 'startup has no separate Agent recovery pass')
 
   const structuredGateIndex = replyDispatchControllerSource.indexOf('const startsStructuredWorkflow')

@@ -8,10 +8,7 @@ import { MotiView } from 'moti'
 import { useTranslation } from 'react-i18next'
 import type { TFunction } from 'i18next'
 import { AppIcon } from '@/components/ui/AppIcon'
-import { IsleButton } from '@/components/ui/isle'
-import { useIsleDialog } from '@/components/ui/isle'
-import { IsleField, IsleListItem, IslePressable } from '@/components/ui/isle'
-import { IsleChip } from '@/components/ui/isle'
+import { ISLE_MIN_TOUCH_TARGET, IsleButton, IsleChip, IsleField, IsleListItem, IslePressable, useIsleDialog } from '@/components/ui/isle'
 import { useAppTheme } from '@/hooks/useAppTheme'
 import { SettingsSummaryStrip } from '@/components/settings/SettingsSummaryStrip'
 import {
@@ -893,7 +890,7 @@ function SkillDisclosureRow({ title, detail, icon, open, tone, onPress }: { titl
       accessibilityLabel={`${title}. ${detail}`}
       accessibilityState={{ expanded: open }}
       onPress={onPress}
-      style={{ minHeight: 42, borderRadius: Math.min(colors.ui.radius.controlLarge, 8), paddingHorizontal: 12, flexDirection: 'row', alignItems: 'center', gap: 8, backgroundColor, borderWidth: colors.ui.limeRoad ? 1 : StyleSheet.hairlineWidth, borderColor }}
+      style={{ minHeight: ISLE_MIN_TOUCH_TARGET, borderRadius: Math.min(colors.ui.radius.controlLarge, 8), paddingHorizontal: 12, flexDirection: 'row', alignItems: 'center', gap: 8, backgroundColor, borderWidth: colors.ui.limeRoad ? 1 : StyleSheet.hairlineWidth, borderColor }}
     >
       {icon}
       <View style={{ flex: 1, minWidth: 0 }}>

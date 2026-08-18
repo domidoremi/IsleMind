@@ -7,8 +7,8 @@ import type { ComposerCommand } from '@/components/chat/Composer'
 import type { useAppTheme } from '@/hooks/useAppTheme'
 import type { useMotionPreference } from '@/hooks/useMotionPreference'
 import type { ConversationChatWorkflowRuntimeRequestedOutput } from '@/modules/tasks'
+import type { ConversationMetrics } from '@/modules/conversations'
 import type { useSettingsStore } from '@/store/settingsStore'
-import type { ConversationMetrics } from '@/services/conversationMetrics'
 import type { Attachment, CommandReference, Conversation, Message } from '@/types/chatContracts'
 import type { AIProvider } from '@/types/providerContracts'
 import type { ChatMultimodalPolicy } from '@/presentation/features/chat/chatMultimodalPolicy'
@@ -86,8 +86,6 @@ export interface ChatActiveWorkspaceProps {
   setProviderHealth: Dispatch<SetStateAction<ConversationHealth | null>>
   composerPanel: ComposerPanel
   setComposerPanel: Dispatch<SetStateAction<ComposerPanel>>
-  controlOrbOpen: boolean
-  setControlOrbOpen: Dispatch<SetStateAction<boolean>>
   setComposerHeight: Dispatch<SetStateAction<number>>
   collapseQuickTools: () => void
   motion: ReturnType<typeof useMotionPreference>

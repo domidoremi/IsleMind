@@ -9,12 +9,16 @@ const releaseBuildInputPaths = [
   'bun.lock',
   'babel.config.js',
   'metro.config.js',
-  'tailwind.config.js',
+  'scripts/android-release-build-contract.js',
+  'scripts/android-release-signing-contract.js',
   'scripts/build-and-validate-local-android-apk.js',
   'scripts/build-local-android-apk.js',
   'scripts/configure-android-release.js',
   'scripts/prepare-model-bundle.js',
+  'scripts/release-apk-paths.js',
   'scripts/release-freshness-contract.js',
+  'scripts/validate-android-release-signing.js',
+  'scripts/write-release-source-snapshots.js',
 ]
 
 function collectReleaseSourceFreshness(root, apk) {

@@ -32,7 +32,6 @@ function run() {
   const persistentHeader = read('src/components/chat/ChatPersistentHeader.tsx')
   const aiConfiguration = read('src/components/chat/ChatAiConfigurationSheet.tsx')
   const chatOptionsPanel = read('src/components/chat/ChatOptionsPanel.tsx')
-  const floatingOrb = read('src/components/chat/FloatingControlOrb.tsx')
   const messageBubble = read('src/components/chat/MessageBubble.tsx')
   const messageContent = read('src/components/chat/MessageContent.tsx')
   const historyScreen = read('src/components/main/ConversationsScreenContent.tsx')
@@ -51,7 +50,7 @@ function run() {
   const skillContent = read('src/components/settings/SkillSettingsContent.tsx')
   const contextExperiences = read('src/components/settings/theme-experiences/ContextSettingsExperiences.tsx')
   const contextContent = read('src/components/settings/ContextPanel.tsx')
-  const sourceRoute = read('app/source.tsx')
+  const sourceRoute = read('src/presentation/features/conversations/SourceDetailScreen.tsx')
   const missingChatRoute = read('app/chat/[id].tsx')
   const providersRoute = read('app/settings/providers.tsx')
   const providerExperiences = read('src/components/providers/theme-experiences/ProviderSettingsExperiences.tsx')
@@ -157,10 +156,10 @@ function run() {
     /LIME ROAD|ROUTE ENTRY|CHECKPOINT 02|PERSONAL ROUTE|\d\d STOPS|CURRENT STOP|NEXT STOP|document: preferences|\.config\b|CHAT\.md|CONVERSATION\.md|README/,
     'repeated workflow surfaces use real product labels instead of campaign or pseudo-document copy',
   )
-  assert.ok(activeView.includes('showFloatingControlOrb={false}'), 'page-level Chat chrome remains visible instead of delegating navigation to the floating orb')
+  assert.ok(!activeView.includes('showFloatingControlOrb') && !chatSurfaces.includes('ControlTriggerSurface'), 'page-level Chat chrome stays visible and retired floating-orb surfaces stay deleted')
   assert.ok(persistentHeader.includes('chat.newConversation') && floatingChrome.includes('onOpenModelPicker') && setupWorkspace.includes('onModelPress={openAiConfiguration}'), 'Chat header exposes persistent new-conversation and unified AI configuration actions')
 
-  for (const surface of ['composer', 'chrome', 'control-panel', 'control-trigger', 'message', 'message-content']) {
+  for (const surface of ['composer', 'chrome', 'message', 'message-content']) {
     assertAll(chatSurfaces, [
       `chat-${surface}-surface-minimal`,
       `chat-${surface}-surface-lime-road`,
@@ -170,7 +169,6 @@ function run() {
   assertAll(floatingComposer, ['ChatComposerThemeSurface', 'themeId={themeId}'], 'live composer uses theme surface dispatcher')
   assertAll(persistentHeader, ['ChatChromeThemeSurface', 'themeId={themeId}'], 'shared persistent chrome uses the theme surface dispatcher')
   assert.ok(floatingChrome.includes('<ChatPersistentHeader') && setupWorkspace.includes('<ChatPersistentHeader'), 'active and setup Chat share one persistent header authority')
-  assertAll(floatingOrb, ['ChatControlPanelThemeSurface', 'ChatControlTriggerThemeSurface'], 'live control orb uses theme surface dispatchers')
   assertAll(messageBubble, ['MessageBubbleThemeSurface', 'themeId={themeId}'], 'live message bubble uses theme surface dispatcher')
   assertAll(messageContent, ['MessageContentThemeSurface', 'themeId={themeId}'], 'live message content uses theme surface dispatcher')
 
@@ -291,9 +289,10 @@ function run() {
     'MinimalProviderSettingsExperience',
     'LimeRoadProviderSettingsExperience',
     'MarkdownProviderSettingsExperience',
-    'experience={colors.ui.family}',
+    "const ProviderSettingsExperience = colors.ui.family === 'lime-road'",
+    "colors.ui.family === 'markdown'",
     'providerAttentionItems.length ?',
-  ], 'Provider controller dispatches theme-owned composition and list geometry')
+  ], 'Provider controller dispatches theme-owned composition and theme-aware list geometry')
   assert.doesNotMatch(providerContent, /providers\/\$\{provider\.id\}\.yml|> providers: \[\]/, 'Provider states do not expose pseudo registry files or data literals')
   assertAll(providerGrid, [
     "experience = 'lime-road'",

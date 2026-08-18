@@ -43,13 +43,12 @@ export function ChatActiveComposerDock({
   setPagerGestureLocked,
   showOptions,
   setShowOptions,
-  controlOrbOpen,
-  setControlOrbOpen,
   keyboardVisible,
   setComposerFocused,
   setChromeCollapsed,
   onApplyStarter,
   goKnowledge,
+  openWorkspaceReview,
   rememberCommandReference,
   safeStopMessage,
   scrollToLatestMessage,
@@ -70,6 +69,7 @@ export function ChatActiveComposerDock({
     handleSendWhileStreaming,
     handleStop,
     handleSystemPromptChange,
+    systemPrompt,
     runtimeRepairSubmitKey,
     sendRuntimeRepairIntent,
     visibleRuntimeRepairIntent,
@@ -89,8 +89,6 @@ export function ChatActiveComposerDock({
     setPagerGestureLocked,
     showOptions,
     setShowOptions,
-    controlOrbOpen,
-    setControlOrbOpen,
     keyboardVisible,
     setComposerFocused,
     setChromeCollapsed,
@@ -105,6 +103,7 @@ export function ChatActiveComposerDock({
         <StreamingIntentSheet
           draft={intentDraft}
           insets={insets}
+          keyboardLift={keyboardLift}
           onCancel={cancelStreamingIntent}
           onChoose={(intent) => void applyStreamingIntent(intent)}
         />
@@ -130,13 +129,14 @@ export function ChatActiveComposerDock({
         showReasoningControl={modeShowReasoningControl}
         showOutputControl={modeShowOutputControl}
         onReasoningChange={handleReasoningChange}
-        systemPrompt={activeConversation.systemPrompt}
+        systemPrompt={systemPrompt}
         onSystemPromptChange={handleSystemPromptChange}
         inputPlaceholder={modeComposerPlaceholder}
         systemPromptPlaceholder={modeSystemPromptPlaceholder}
         onOpenModelPicker={handleOpenModelPicker}
         onOpenReasoningPicker={handleOpenModelPicker}
         onOpenKnowledge={goKnowledge}
+        onOpenWorkspaceReview={openWorkspaceReview}
         onToggleRequestedOutput={onToggleComposerOutputMode}
         outputModeLocked={modeOutputLocked}
         onClearPending={handleClearPending}

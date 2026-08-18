@@ -15,7 +15,7 @@ import { useAppTheme } from '@/hooks/useAppTheme'
 import { useSettingsStore } from '@/store/settingsStore'
 import { AppIcon } from '@/components/ui/AppIcon'
 import { HighFrameSpinner } from '@/components/ui/HighFrameSpinner'
-import { IslePressable } from '@/components/ui/isle'
+import { ISLE_MIN_TOUCH_TARGET, IslePressable } from '@/components/ui/isle'
 import { IsleChip } from '@/components/ui/isle'
 import { IsleButton } from '@/components/ui/isle'
 import { IsleField } from '@/components/ui/isle'
@@ -566,7 +566,7 @@ export function ApiKeyPanel({
       }, style]}
     >
       {!hideHeader ? (
-        <IslePressable haptic accessibilityRole="button" accessibilityLabel={`${providerDisplayName}. ${provider.baseUrl || t('providerSettings.baseUrl')}`} accessibilityState={{ expanded }} onPress={() => setPanelExpanded(!expanded)} style={{ minHeight: 40, flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+        <IslePressable haptic accessibilityRole="button" accessibilityLabel={`${providerDisplayName}. ${provider.baseUrl || t('providerSettings.baseUrl')}`} accessibilityState={{ expanded }} onPress={() => setPanelExpanded(!expanded)} style={{ minHeight: ISLE_MIN_TOUCH_TARGET, flexDirection: 'row', alignItems: 'center', gap: 8 }}>
           <View style={{ width: 36, height: 36, borderRadius: Math.min(colors.ui.radius.controlMiddle, 8), alignItems: 'center', justifyContent: 'center', backgroundColor: colors.ui.icon.accentBackground }}>
             {provider.presetId === 'newapi' || provider.presetId === 'sub2api' ? <AppIcon name="spark" color={colors.ui.icon.accentForeground} size={18} /> : <AppIcon name="key" color={colors.ui.icon.accentForeground} size={18} />}
           </View>
@@ -774,7 +774,7 @@ export function ApiKeyPanel({
               accessibilityLabel={t('apiKeyPanel.addTokens')}
               accessibilityState={{ expanded: credentialEditorExpanded }}
               onPress={() => setCredentialEditorOpen((value) => !value)}
-              style={{ minHeight: 40, borderRadius: Math.min(colors.ui.radius.controlLarge, 8), paddingHorizontal: 12, flexDirection: 'row', alignItems: 'center', gap: 8, backgroundColor: colors.ui.glass ? colors.ui.actionBar.itemBackground : colors.ui.semantic.surface.muted, borderWidth: colors.ui.limeRoad ? 1 : StyleSheet.hairlineWidth, borderColor: colors.ui.glass ? colors.ui.actionBar.itemBorder : colors.ui.semantic.chrome.border }}
+              style={{ minHeight: ISLE_MIN_TOUCH_TARGET, borderRadius: Math.min(colors.ui.radius.controlLarge, 8), paddingHorizontal: 12, flexDirection: 'row', alignItems: 'center', gap: 8, backgroundColor: colors.ui.glass ? colors.ui.actionBar.itemBackground : colors.ui.semantic.surface.muted, borderWidth: colors.ui.limeRoad ? 1 : StyleSheet.hairlineWidth, borderColor: colors.ui.glass ? colors.ui.actionBar.itemBorder : colors.ui.semantic.chrome.border }}
             >
               <AppIcon name="add" color={colors.textTertiary} size={15} />
               <View style={{ flex: 1, minWidth: 0 }}>
@@ -868,7 +868,7 @@ export function ApiKeyPanel({
                       accessibilityLabel={modelEvidenceOpen ? t('apiKeyPanel.hideCompatibilityDetails') : t('apiKeyPanel.showCompatibilityDetails')}
                       accessibilityState={{ expanded: modelEvidenceOpen }}
                       onPress={() => setModelEvidenceOpen((value) => !value)}
-                      style={{ minHeight: 40, borderRadius: Math.min(colors.ui.radius.controlLarge, 8), paddingHorizontal: 12, flexDirection: 'row', alignItems: 'center', gap: 8, backgroundColor: colors.ui.glass ? colors.ui.actionBar.itemBackground : colors.ui.semantic.surface.muted, borderWidth: colors.ui.limeRoad ? 1 : StyleSheet.hairlineWidth, borderColor: colors.ui.glass ? colors.ui.actionBar.itemBorder : colors.ui.limeRoad ? colors.material.stroke : colors.ui.semantic.chrome.border }}
+                      style={{ minHeight: ISLE_MIN_TOUCH_TARGET, borderRadius: Math.min(colors.ui.radius.controlLarge, 8), paddingHorizontal: 12, flexDirection: 'row', alignItems: 'center', gap: 8, backgroundColor: colors.ui.glass ? colors.ui.actionBar.itemBackground : colors.ui.semantic.surface.muted, borderWidth: colors.ui.limeRoad ? 1 : StyleSheet.hairlineWidth, borderColor: colors.ui.glass ? colors.ui.actionBar.itemBorder : colors.ui.limeRoad ? colors.material.stroke : colors.ui.semantic.chrome.border }}
                     >
                       <AppIcon name="list-check" color={colors.textTertiary} size={15} />
                       <View style={{ flex: 1, minWidth: 0 }}>
@@ -1024,7 +1024,7 @@ function ProviderWorkspaceTabs({
 function ChoiceButton({ label, active, onPress }: { label: string; active: boolean; onPress: () => void }) {
   const { colors } = useAppTheme()
   return (
-    <IslePressable haptic accessibilityLabel={label} accessibilityState={{ selected: active }} onPress={onPress} style={{ minHeight: 40, borderRadius: Math.min(colors.ui.radius.controlLarge, 8), paddingHorizontal: 12, alignItems: 'center', justifyContent: 'center', ...quietControlSurface(colors, active) }}>
+    <IslePressable haptic accessibilityLabel={label} accessibilityState={{ selected: active }} onPress={onPress} style={{ minHeight: ISLE_MIN_TOUCH_TARGET, borderRadius: Math.min(colors.ui.radius.controlLarge, 8), paddingHorizontal: 12, alignItems: 'center', justifyContent: 'center', ...quietControlSurface(colors, active) }}>
       <Text numberOfLines={1} style={{ color: active ? colors.ui.control.primaryForeground : colors.textSecondary, fontSize: 11, lineHeight: 15, fontWeight: '800', includeFontPadding: false }}>{label}</Text>
     </IslePressable>
   )
@@ -1070,7 +1070,7 @@ function CompactDisclosureRow({
       accessibilityLabel={`${title}. ${detail}`}
       accessibilityState={{ expanded: open }}
       onPress={onPress}
-      style={{ minHeight: 40, borderRadius: Math.min(colors.ui.radius.controlLarge, 8), paddingHorizontal: 12, flexDirection: 'row', alignItems: 'center', gap: 8, backgroundColor, borderWidth: colors.ui.limeRoad ? 1 : StyleSheet.hairlineWidth, borderColor }}
+      style={{ minHeight: ISLE_MIN_TOUCH_TARGET, borderRadius: Math.min(colors.ui.radius.controlLarge, 8), paddingHorizontal: 12, flexDirection: 'row', alignItems: 'center', gap: 8, backgroundColor, borderWidth: colors.ui.limeRoad ? 1 : StyleSheet.hairlineWidth, borderColor }}
     >
       {icon}
       <View style={{ flex: 1, minWidth: 0 }}>
@@ -1243,7 +1243,7 @@ function ModelAliasEditor({ aliases, models, onChange }: { aliases: ModelAlias[]
             placeholderTextColor={colors.textTertiary}
             autoCapitalize="none"
             autoCorrect={false}
-            style={{ minHeight: 42, borderRadius: Math.min(colors.ui.radius.field, 8), paddingHorizontal: 11, color: colors.text, backgroundColor: colors.ui.input.background, borderWidth: colors.ui.limeRoad ? 1 : StyleSheet.hairlineWidth, borderColor: colors.ui.input.border, fontSize: 12.5, fontWeight: '700' }}
+            style={{ minHeight: ISLE_MIN_TOUCH_TARGET, borderRadius: Math.min(colors.ui.radius.field, 8), paddingHorizontal: 11, color: colors.text, backgroundColor: colors.ui.input.background, borderWidth: colors.ui.limeRoad ? 1 : StyleSheet.hairlineWidth, borderColor: colors.ui.input.border, fontSize: 12.5, fontWeight: '700' }}
           />
           <TextInput
             value={entry.model}
@@ -1252,7 +1252,7 @@ function ModelAliasEditor({ aliases, models, onChange }: { aliases: ModelAlias[]
             placeholderTextColor={colors.textTertiary}
             autoCapitalize="none"
             autoCorrect={false}
-            style={{ minHeight: 42, borderRadius: Math.min(colors.ui.radius.field, 8), paddingHorizontal: 11, color: colors.text, backgroundColor: colors.ui.input.background, borderWidth: colors.ui.limeRoad ? 1 : StyleSheet.hairlineWidth, borderColor: colors.ui.input.border, fontSize: 12.5, fontWeight: '700' }}
+            style={{ minHeight: ISLE_MIN_TOUCH_TARGET, borderRadius: Math.min(colors.ui.radius.field, 8), paddingHorizontal: 11, color: colors.text, backgroundColor: colors.ui.input.background, borderWidth: colors.ui.limeRoad ? 1 : StyleSheet.hairlineWidth, borderColor: colors.ui.input.border, fontSize: 12.5, fontWeight: '700' }}
           />
           <View style={{ flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', gap: 7 }}>
             {models.slice(0, 5).map((model) => (
@@ -1524,7 +1524,7 @@ function CapabilityToggle({ label, active, onPress }: { label: string; active: b
       accessibilityState={{ checked: active }}
       onPress={onPress}
       style={{
-        minHeight: 38,
+        minHeight: ISLE_MIN_TOUCH_TARGET,
         borderRadius: Math.min(colors.ui.radius.controlMiddle, 8),
         paddingHorizontal: 11,
         flexDirection: 'row',
@@ -1566,7 +1566,7 @@ function IconIsleChip({ label, children, tone, onPress }: { label: string; child
   const { colors } = useAppTheme()
   const toneToken = tone === 'mint' ? colors.ui.tone.success : tone === 'danger' ? colors.ui.tone.danger : colors.ui.tone.neutral
   return (
-    <IslePressable haptic accessibilityLabel={label} onPress={onPress} style={{ width: 42, height: 42, borderRadius: Math.min(colors.ui.radius.controlMiddle, 8), alignItems: 'center', justifyContent: 'center', backgroundColor: colors.ui.glass ? colors.ui.actionBar.itemBackground : toneToken.background, borderWidth: colors.ui.limeRoad ? 1 : StyleSheet.hairlineWidth, borderColor: colors.ui.glass ? colors.ui.actionBar.itemBorder : toneToken.border }}>
+    <IslePressable haptic accessibilityLabel={label} onPress={onPress} style={{ width: ISLE_MIN_TOUCH_TARGET, height: ISLE_MIN_TOUCH_TARGET, borderRadius: Math.min(colors.ui.radius.controlMiddle, 8), alignItems: 'center', justifyContent: 'center', backgroundColor: colors.ui.glass ? colors.ui.actionBar.itemBackground : toneToken.background, borderWidth: colors.ui.limeRoad ? 1 : StyleSheet.hairlineWidth, borderColor: colors.ui.glass ? colors.ui.actionBar.itemBorder : toneToken.border }}>
       {children}
     </IslePressable>
   )
@@ -1575,7 +1575,7 @@ function IconIsleChip({ label, children, tone, onPress }: { label: string; child
 function MiniAction({ label, children, active = false, disabled = false, onPress }: { label: string; children: ReactNode; active?: boolean; disabled?: boolean; onPress: () => void }) {
   const { colors } = useAppTheme()
   return (
-    <IslePressable haptic accessibilityLabel={label} accessibilityState={{ selected: active, disabled }} disabled={disabled} onPress={onPress} style={{ minHeight: 40, borderRadius: Math.min(colors.ui.radius.controlLarge, 8), paddingHorizontal: 12, flexDirection: 'row', alignItems: 'center', gap: 5, ...quietControlSurface(colors, active), opacity: disabled ? 0.5 : 1 }}>
+    <IslePressable haptic accessibilityLabel={label} accessibilityState={{ selected: active, disabled }} disabled={disabled} onPress={onPress} style={{ minHeight: ISLE_MIN_TOUCH_TARGET, borderRadius: Math.min(colors.ui.radius.controlLarge, 8), paddingHorizontal: 12, flexDirection: 'row', alignItems: 'center', gap: 5, ...quietControlSurface(colors, active), opacity: disabled ? 0.5 : 1 }}>
       {children}
       <Text numberOfLines={1} style={{ color: active ? colors.ui.control.primaryForeground : colors.textSecondary, fontSize: 12, lineHeight: 16, fontWeight: '800', includeFontPadding: false }}>{label}</Text>
     </IslePressable>

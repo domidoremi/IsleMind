@@ -1,4 +1,4 @@
-import * as SQLite from 'expo-sqlite'
+import type * as SQLite from 'expo-sqlite'
 import type {
   SqliteDatabase,
   SqliteDatabaseProvider,
@@ -102,6 +102,7 @@ export async function applySqliteMigrations(
 async function openDatabase(name: string): Promise<SqliteDatabase> {
   const supportsExclusiveTransactions = typeof document === 'undefined'
   return enqueueDatabaseOperation(name, async () => {
+    const SQLite = require('expo-sqlite') as typeof import('expo-sqlite')
     // Each provider owns its connection. The adapter exposes no raw prepared
     // statements, so Expo's close-time sweep is redundant and unsafe for FTS5.
     const database = await SQLite.openDatabaseAsync(name, {

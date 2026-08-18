@@ -16,6 +16,10 @@ const {
 } = require('../src/modules/conversations/testing/productExperienceCompatibilityEvaluation.ts')
 const { shouldPromotePlainDelimitedRows } = require('../src/components/chat/messageContentTablePromotion.ts')
 const { sanitizeInternalChatOutputText } = require('../src/services/chatInternalOutputGuard.ts')
+const {
+  matchesSettingsControlSearch,
+  normalizeSettingsControlSearch,
+} = require('../src/presentation/features/settings/settingsControlSearch.ts')
 
 function registerTypeScriptSupport() {
   if (require.extensions['.ts']?.isProductExperienceCompatibilityHook) return
@@ -226,6 +230,34 @@ function assertSourceIntegration() {
   assert.ok(providerSettingsSource.includes('providerAttentionItems.length ?'), 'provider settings hides overview chips unless a provider state needs attention')
   assert.ok(providerSettingsSource.includes('providers.length > 3 || listToolsActive'), 'provider settings hides search and sort tools until the provider list needs them')
   assert.ok(providerSettingsSource.includes('providers.length > 1 || batchActionsActive'), 'provider settings hides batch controls for single-provider setups')
+  assert.equal((providerSettingsSource.match(/<IsleOverlayPressable accessible=\{false\} accessibilityRole="none"/g) ?? []).length, 2, 'provider add and import sheets keep touch-dismiss backdrops out of the accessibility tree')
+  assert.doesNotMatch(providerSettingsSource, /<IsleOverlayPressable accessibilityLabel=\{t\('dialog\.close'\)\} accessibilityRole="button" onPress=\{(?:closeWithoutSubmit|onClose)\}/, 'provider sheets do not announce duplicate backdrop close buttons alongside their visible close controls')
+  assert.match(providerSettingsSource, /function ProviderFormModal[\s\S]*?<View\s+accessibilityViewIsModal\s+style=\{\{ maxHeight: sheetMaxHeight[\s\S]*?function countLogicalTextLines/, 'provider add sheet isolates screen-reader focus inside the modal surface')
+  assert.match(providerSettingsSource, /function ProviderImportModal[\s\S]*?<View\s+accessibilityViewIsModal\s+style=\{\{[\s\S]*?function clipboardReadFailureMessage/, 'provider import sheet isolates screen-reader focus inside the modal surface')
+  const chatAiConfigurationSource = fs.readFileSync(path.join(root, 'src/components/chat/ChatAiConfigurationSheet.tsx'), 'utf8')
+  assert.match(chatAiConfigurationSource, /<Pressable[\s\S]*?accessible=\{false\}[\s\S]*?accessibilityRole="none"[\s\S]*?onPress=\{closeCurrentView\}[\s\S]*?backgroundColor: colors\.backdrop/, 'AI configuration keeps its touch-dismiss backdrop out of the accessibility tree')
+  assert.doesNotMatch(chatAiConfigurationSource, /accessibilityLabel=\{t\('dialog\.closeLayer'\)\}/, 'AI configuration announces only its visible close control')
+  assert.match(chatAiConfigurationSource, /<View testID="chat-ai-configuration-panel" accessibilityViewIsModal/, 'AI configuration isolates screen-reader focus inside the modal surface')
+  assert.match(providerSettingsSource, /<Pressable accessible=\{false\} accessibilityRole="none" onPress=\{\(\) => void requestSheetClose\(\)\}/, 'provider detail keeps its touch-dismiss backdrop out of the accessibility tree')
+  assert.match(providerSettingsSource, /<View accessibilityViewIsModal style=\{\{ flex: 1, justifyContent: 'flex-end' \}\}>/, 'provider detail isolates screen-reader focus inside the modal surface')
+  const floatingComposerSource = fs.readFileSync(path.join(root, 'src/components/chat/FloatingComposer.tsx'), 'utf8')
+  assert.match(floatingComposerSource, /function ReasoningPickerPopover[\s\S]*?<Pressable accessible=\{false\} accessibilityRole="none" onPress=\{onClose\}/, 'reasoning selection announces only its visible close control')
+  assert.match(floatingComposerSource, /function ReasoningPickerPopover[\s\S]*?<View accessibilityViewIsModal/, 'reasoning selection isolates screen-reader focus inside the modal surface')
+  const workspaceReviewSource = fs.readFileSync(path.join(root, 'src/components/chat/ChatWorkspaceReviewSheet.tsx'), 'utf8')
+  assert.match(workspaceReviewSource, /<IsleOverlayPressable[\s\S]*?accessible=\{false\}[\s\S]*?accessibilityRole="none"[\s\S]*?onPress=\{onClose\}/, 'workspace review announces only its visible close control')
+  assert.match(workspaceReviewSource, /<MotiView[\s\S]*?accessibilityViewIsModal[\s\S]*?testID="chat-workspace-review-sheet"/, 'workspace review isolates screen-reader focus inside the modal surface')
+  const messageActionSource = fs.readFileSync(path.join(root, 'src/components/chat/MessageBubble.tsx'), 'utf8')
+  assert.match(messageActionSource, /function MessageActionSheet[\s\S]*?<Pressable[\s\S]*?accessible=\{false\}[\s\S]*?accessibilityRole="none"[\s\S]*?onPress=\{onClose\}/, 'message actions announce only the sheet close control')
+  assert.match(messageActionSource, /testID="message-action-sheet"[\s\S]*?accessibilityRole="menu"[\s\S]*?accessibilityViewIsModal/, 'message actions isolate screen-reader focus inside the modal menu')
+  const usageStatisticsSource = fs.readFileSync(path.join(root, 'src/components/settings/UsageStatisticsContent.tsx'), 'utf8')
+  assert.match(usageStatisticsSource, /function UsageSheet[\s\S]*?<Pressable accessible=\{false\} accessibilityRole="none" style=\{StyleSheet\.absoluteFill\} onPress=\{onClose\}/, 'usage sheets announce only their visible close control')
+  assert.match(usageStatisticsSource, /function UsageSheet[\s\S]*?<MotiView[\s\S]*?accessibilityViewIsModal/, 'usage sheets isolate screen-reader focus inside the modal surface')
+  const isleKitSource = fs.readFileSync(path.join(root, 'src/components/ui/isle/IsleKit.tsx'), 'utf8')
+  assert.match(isleKitSource, /export function IsleModal[\s\S]*?accessible=\{false\}[\s\S]*?accessibilityRole="none"[\s\S]*?backgroundColor: palette\.colors\.backdrop/, 'shared IsleModal keeps its optional touch-dismiss mask out of the accessibility tree')
+  assert.match(isleKitSource, /export function IsleModal[\s\S]*?<View accessibilityViewIsModal style=/, 'shared IsleModal isolates screen-reader focus inside the modal surface')
+  const isleImageSource = fs.readFileSync(path.join(root, 'src/components/ui/isle/Image.tsx'), 'utf8')
+  assert.match(isleImageSource, /<IsleOverlayPressable[\s\S]*?accessible=\{false\}[\s\S]*?accessibilityRole="none"[\s\S]*?setPreviewOpen\(false\)/, 'image preview announces only its visible close control')
+  assert.match(isleImageSource, /<Modal[\s\S]*?<View accessibilityViewIsModal style=/, 'image preview isolates screen-reader focus inside the modal surface')
 
   const providerPanelSource = fs.readFileSync(path.join(root, 'src/components/settings/ApiKeyPanel.tsx'), 'utf8')
   assert.ok(
@@ -238,6 +270,7 @@ function assertSourceIntegration() {
   )
 
   const settingsScreenSource = fs.readFileSync(path.join(root, 'src/components/main/SettingsScreenContent.tsx'), 'utf8')
+  const runtimeDiagnosticsDetailsSource = fs.readFileSync(path.join(root, 'src/components/settings/RuntimeDiagnosticsDetails.tsx'), 'utf8')
   const settingsControlExperienceSource = fs.readFileSync(path.join(root, 'src/components/settings/theme-experiences/SettingsControlCatalogExperiences.tsx'), 'utf8')
   assert.ok(
     settingsScreenSource.includes('SettingsControlNavigation') &&
@@ -248,10 +281,46 @@ function assertSourceIntegration() {
     'settings home keeps searchable AI and system control views while each theme owns its directory geometry'
   )
   assert.ok(settingsScreenSource.includes("t('settings.controlSearchPlaceholder')"), 'settings home exposes one search entry for settings and capabilities')
+  assert.match(settingsScreenSource, /const aiSearchMatches = aiControlEntries\.filter[\s\S]*matchesSettingsControlSearch[\s\S]*const systemSearchMatches = systemControlEntries\.filter[\s\S]*controlView === 'ai' && !aiSearchMatches\.length && systemSearchMatches\.length/, 'settings search can move between AI and system control catalogs when the active tab has no match')
+  assert.match(settingsScreenSource, /const focusedControlEntries = normalizedSettingsSearch\s*\?\s*visibleControlEntries/, 'settings search results are not hidden by an already expanded system panel')
+  for (const routeFieldKey of [
+    'providerSettings.protocol.title',
+    'usage.totalTokens',
+    'preferences.generationSubtitle',
+    'contextPanel.memoryReviewQueue',
+    'contextPanel.importKnowledgeFile',
+    'contextPanel.ragMode',
+    'skills.workflowTemplates',
+    'mcp.addServer',
+    'settings.themeAccent',
+    'settings.exportJson',
+    'settings.runtimeLogFile',
+    'settings.proxyBaseUrl',
+    'settings.checkApk',
+    'settings.systemStatusNotifications',
+  ]) {
+    assert.ok(settingsScreenSource.includes(`t('${routeFieldKey}')`) || settingsScreenSource.includes(`t('${routeFieldKey}',`), `settings search indexes ${routeFieldKey}`)
+  }
+  const contextSearchEntry = {
+    title: 'Context',
+    detail: 'Retrieval, search, checks',
+    searchTerms: ['RAG retrieval mode', 'Web search'],
+  }
+  assert.equal(matchesSettingsControlSearch(contextSearchEntry, normalizeSettingsControlSearch('  RAG RETRIEVAL  ')), true, 'settings route metadata matches a normalized child-field query')
+  assert.equal(matchesSettingsControlSearch(contextSearchEntry, normalizeSettingsControlSearch('MCP Server')), false, 'settings route metadata does not leak unrelated routes into results')
+  const sourceScreenSource = fs.readFileSync(path.join(root, 'src/presentation/features/conversations/SourceDetailScreen.tsx'), 'utf8')
+  assert.match(sourceScreenSource, /const conversation = useChatStore\(\(state\) => state\.conversations\.find\(\(item\) => item\.id === conversationId\)\)/, 'Source reader subscribes only to the requested conversation')
+  assert.doesNotMatch(sourceScreenSource, /const conversations = useChatStore\(\(state\) => state\.conversations\)/, 'unrelated conversation updates do not rerender the Source reader')
   assert.ok(settingsScreenSource.includes('settingsAttentionItems.length ?'), 'settings status chips stay hidden unless attention is needed')
-  assert.ok(settingsScreenSource.includes('runtimeDiagnosticMediaGeneration') && settingsScreenSource.includes('adapterProofWorklist'), 'settings diagnostics expose media generation readiness as proof counts only')
+  assert.ok(runtimeDiagnosticsDetailsSource.includes('runtimeDiagnosticMediaGeneration') && runtimeDiagnosticsDetailsSource.includes('adapterProofWorklist'), 'settings diagnostics expose media generation readiness as proof counts only')
   assert.ok(!settingsScreenSource.includes('function SettingsQuickLink'), 'settings home removes the old arrow-row settings directory')
   assert.ok(!settingsScreenSource.includes('expandedAppearanceGroups'), 'appearance settings no longer require nested disclosure taps')
+  assert.ok(settingsScreenSource.includes('CommittedSettingsField'), 'high-frequency Settings inputs isolate drafts from the full Settings screen render')
+  assert.match(settingsScreenSource, /value=\{String\(settings\.remoteCompactThreshold \?\? 0\.8\)\}[\s\S]*onCommit=\{updateRemoteCompactThreshold\}/, 'remote compact threshold commits only after draft normalization')
+  assert.doesNotMatch(settingsScreenSource, /onChangeText: updateRemoteCompactThreshold/, 'remote compact threshold does not persist on every keypress')
+  assert.doesNotMatch(settingsScreenSource, /onChangeText: \(proxyBaseUrl\) => updateSettings/, 'proxy URL does not persist on every keypress')
+  assert.doesNotMatch(settingsScreenSource, /onChangeText: \(observabilitySinkEndpointUrl\) => updateSettings/, 'observability endpoint does not persist on every keypress')
+  assert.match(settingsScreenSource, /commitOnSubmit=\{false\}[\s\S]*normalize=\{normalizeSettingsListDraft\}/, 'allow and block lists commit normalized drafts on blur without treating newline as submit')
 
   const preferenceSettingsSource = fs.readFileSync(path.join(root, 'src/components/settings/PreferenceSettingsContent.tsx'), 'utf8')
   assert.ok(!preferenceSettingsSource.includes('SettingsSummaryStrip'), 'preference settings avoid duplicate overview chips above the actual controls')
@@ -292,13 +361,36 @@ function assertSourceIntegration() {
 
   const chatWorkspaceSource = fs.readFileSync(path.join(root, 'src/components/chat/ChatWorkspace.tsx'), 'utf8')
   const chatSetupWorkspaceSource = fs.readFileSync(path.join(root, 'src/components/chat/ChatSetupWorkspace.tsx'), 'utf8')
+  const chatActiveComposerDockSource = fs.readFileSync(path.join(root, 'src/components/chat/ChatActiveComposerDock.tsx'), 'utf8')
   const chatActiveMessageVirtualListSource = fs.readFileSync(path.join(root, 'src/components/chat/ChatActiveMessageVirtualList.tsx'), 'utf8')
+  const chatActiveMessageItemSource = fs.readFileSync(path.join(root, 'src/components/chat/ChatActiveMessageItem.tsx'), 'utf8')
+  const chatActiveWorkspaceActionsSource = fs.readFileSync(path.join(root, 'src/components/chat/chatActiveWorkspaceActions.ts'), 'utf8')
   const chatActiveMessageEmptyStateSource = fs.readFileSync(path.join(root, 'src/components/chat/ChatActiveMessageEmptyState.tsx'), 'utf8')
   const chatEmptyStateSource = fs.readFileSync(path.join(root, 'src/components/chat/ChatEmptyState.tsx'), 'utf8')
+  const streamingIntentSheetSource = fs.readFileSync(path.join(root, 'src/components/chat/StreamingIntentSheet.tsx'), 'utf8')
   assert.ok(chatWorkspaceSource.includes('resolveChatMultimodalPolicy') && chatWorkspaceSource.includes('runtimeMultimodalPolicy'), 'chat workspace gates media entry points by product mode and current provider/model')
   assert.ok(chatWorkspaceSource.includes('resolveChatAssistantDisplayName') && chatWorkspaceSource.includes('namedComposerPlaceholder'), 'Chat empty and composer copy resolve the optional assistant display name')
   assert.ok(chatWorkspaceSource.includes('getMessageActivityLabel(streamingMessage, t, assistantDisplayName)'), 'Chat accessibility and system activity projection use the same resolved assistant identity')
-  assert.match(chatSetupWorkspaceSource, /<ScrollView[\s\S]*?keyboardShouldPersistTaps="handled"[\s\S]*?contentContainerStyle=\{\{[\s\S]*?flexGrow: 1,[\s\S]*?alignItems: 'center',[\s\S]*?justifyContent: 'center',[\s\S]*?paddingTop:[\s\S]*?paddingBottom: composerBottomInset \+ keyboardLift,/, 'setup empty state centers inside the safe keyboard-aware message region and retains scroll fallback')
+  assert.match(chatWorkspaceSource, /const applyQuickStartDraft = useCallback\([\s\S]*?\}, \[markChromeActive\]\)/, 'Chat keeps the high-fanout Composer draft callback stable across workspace state changes')
+  assert.match(chatActiveMessageVirtualListSource, /actionSheetActive=\{activeActionMessageId === message\.id\}/, 'message actions project global menu state into a per-row boolean')
+  assert.doesNotMatch(chatActiveMessageVirtualListSource, /<ChatActiveMessageItem[\s\S]*?activeActionMessageId=\{activeActionMessageId\}/, 'message cells never receive the global action message id')
+  assert.match(chatActiveMessageItemSource, /export const ChatActiveMessageItem = memo\(function ChatActiveMessageItem/, 'message cells skip parent-driven renders when their row inputs are unchanged')
+  assert.match(chatActiveMessageItemSource, /activeActionMessageId=\{actionSheetActive \? message\.id : null\}/, 'message cells preserve the controlled MessageBubble action contract')
+  assert.match(chatActiveMessageItemSource, /retryConversationMessage\([\s\S]*?catch\(\(\) => \{[\s\S]*?chat\.retryFailed[\s\S]*?chat\.retryFailedMessage/, 'message retry failures remain visible and localized')
+  assert.match(chatActiveMessageItemSource, /regenerateLastConversationAssistant\([\s\S]*?catch\(\(\) => \{[\s\S]*?chat\.regenerateFailed[\s\S]*?chat\.regenerateFailedMessage/, 'message regeneration failures remain visible and localized')
+  for (const actionName of ['safeStopMessage', 'repairAgentEvidenceFromMessage', 'confirmActionFromMessage']) {
+    assert.match(chatActiveWorkspaceActionsSource, new RegExp(`const ${actionName} = useCallback\\(`), `message action dependency ${actionName} stays referentially stable`)
+  }
+  const chatWorkspaceLifecycleSource = fs.readFileSync(path.join(root, 'src/components/chat/chatWorkspaceLifecycleState.ts'), 'utf8')
+  assert.match(chatWorkspaceLifecycleSource, /function reportConversationRecoveryFailure\([\s\S]*useChatStore\.getState\(\)\.setError\(st\('storage\.sqliteRestoreFailed'/, 'conversation recovery failures reach the existing visible Chat error state')
+  assert.doesNotMatch(chatWorkspaceLifecycleSource, /recoverStaleConversationMessages\([^)]*\)\.catch\(\(\) => \{\}\)/, 'conversation recovery never silently swallows activation or foreground failures')
+  const providerHealthStateSource = fs.readFileSync(path.join(root, 'src/components/chat/chatWorkspaceProviderHealthState.ts'), 'utf8')
+  assert.match(providerHealthStateSource, /setProviderHealth\(null\)[\s\S]*resolveConversationHealth\([\s\S]*\.catch\(\(\) => \{[\s\S]*code: 'unknown'/, 'provider health clears stale conversation state and visibly projects resolution failures')
+  assert.match(chatSetupWorkspaceSource, /const setupContentTopPadding = setupLayout\.compactLandscape[\s\S]*?setupHeaderBottom \+ setupLayout\.contentHeaderGap[\s\S]*?: Math\.max\(setupHeaderBottom, compactViewport \? 68 : 80\)/, 'setup empty state derives short-landscape clearance from the shared mobile layout policy')
+  assert.match(chatSetupWorkspaceSource, /<ScrollView[\s\S]*?keyboardShouldPersistTaps="handled"[\s\S]*?contentContainerStyle=\{\{[\s\S]*?flexGrow: 1,[\s\S]*?alignItems: 'center',[\s\S]*?justifyContent: setupLayout\.compactLandscape \? 'flex-start' : 'center',[\s\S]*?paddingTop: setupContentTopPadding,[\s\S]*?paddingBottom: composerBottomInset \+ keyboardLift,/, 'setup empty state centers normally, clears themed Composer chrome in short landscape, and retains keyboard-aware scroll fallback')
+  assert.ok(chatActiveComposerDockSource.includes('<StreamingIntentSheet') && chatActiveComposerDockSource.includes('keyboardLift={keyboardLift}'), 'the active composer forwards the current keyboard lift to the streaming-intent sheet')
+  assert.match(streamingIntentSheetSource, /const bottomOffset = Math\.max\(0, keyboardLift\) \+ Math\.max\(insets\.bottom, 10\) \+ 106/, 'the streaming-intent sheet remains above the keyboard and bottom safe area')
+  assert.match(streamingIntentSheetSource, /function IntentAction\([\s\S]*accessibilityRole="button"[\s\S]*accessibilityHint=\{description\}[\s\S]*numberOfLines=\{2\}/, 'streaming-intent actions expose button semantics, descriptive hints, and bounded two-line copy')
   assert.ok(chatActiveMessageVirtualListSource.includes('paddingTop: conversation.messages.length ? 0 : emptyConversationTopPadding'), 'the active message list owns the empty-state top inset')
   assert.match(chatActiveMessageVirtualListSource, /const emptyConversationMinHeight = Math\.max\(\s*0,\s*viewportHeight - emptyConversationTopPadding - messageListBottomPadding,\s*\)/, 'the active empty state derives a stable minimum height from the available message region')
   assert.ok(chatActiveMessageVirtualListSource.includes('minHeight={emptyConversationMinHeight}') && !chatActiveMessageVirtualListSource.includes('topPadding={emptyConversationTopPadding}'), 'the active message list passes available height without duplicating its top inset')
@@ -321,11 +413,23 @@ function assertSourceIntegration() {
 
   const composerSource = fs.readFileSync(path.join(root, 'src/components/chat/Composer.tsx'), 'utf8')
   assert.ok(composerSource.includes('multimodalPolicy?.unavailableCount') && composerSource.includes('hasBlockedAttachment'), 'composer exposes capability-aware media controls and blocks unsupported draft attachments')
+  assert.match(composerSource, /const attachment = await picker\(\)[\s\S]*?if \(attachment\) \{[\s\S]*?markDraftChanged\(\)[\s\S]*?setAttachments\(\(items\) => \[\.\.\.items, attachment\]\)[\s\S]*?\}[\s\S]*?catch \{[\s\S]*?dialog\.toast\(\{[\s\S]*?chat\.attachmentPickerFailed[\s\S]*?chat\.attachmentPickerFailedMessage/, 'composer keeps intentional picker cancellation quiet while surfacing real picker failures')
   assert.ok(!composerSource.includes('getChatMediaGenerationGateMetadata') && !composerSource.includes('generationGateSummary'), 'composer omits the removed visible future-generation gate paragraph')
   assert.ok(!composerSource.includes('generationReadinessSummary') && !composerSource.includes('multimodalCapabilityNoticeWithGenerationGate'), 'composer leaves readiness ratios in the action-triggered boundary explanation')
   for (const forbiddenAction of ['onGenerateImage', 'onGenerateVideo', 'generateImage', 'generateVideo']) {
     assert.ok(!composerSource.includes(forbiddenAction), `composer does not expose ${forbiddenAction} while generation is diagnostic-only`)
   }
+  const composerSourceState = fs.readFileSync(path.join(root, 'src/components/chat/chatComposerSourceState.tsx'), 'utf8')
+  const composerSourceCache = fs.readFileSync(path.join(root, 'src/components/chat/chatComposerSourceCache.ts'), 'utf8')
+  assert.match(composerSourceState, /sourceLoadPromiseRef\.current \?\?= loadComposerSourceSnapshot\([\s\S]*loadSkills: listSkills[\s\S]*loadDocuments: listComposerKnowledgeDocuments[\s\S]*loadMemories: listComposerMemories/, 'composer sources share one failure-bounded load per mounted Chat lifecycle')
+  assert.match(composerSourceCache, /const controller = new AbortController\(\)[\s\S]*loadOptional[\s\S]*Promise\.all\([\s\S]*loaders\.loadSkills[\s\S]*loaders\.loadDocuments\(controller\.signal\)[\s\S]*loaders\.loadMemories\(controller\.signal\)/, 'composer source reads fail open per optional source behind one shared cancellation boundary')
+  assert.match(composerSourceCache, /let inFlight: ComposerSourceLoadEntry \| null = null[\s\S]*const entry = inFlight \?\? startComposerSourceLoad\(loaders\)/, 'concurrent Chat surfaces coalesce composer source reads')
+  assert.match(composerSourceCache, /cacheGeneration \+= 1[\s\S]*previous\?\.controller\.abort\(\)[\s\S]*generation === cacheGeneration/, 'cache invalidation aborts stale work and fences late results')
+  assert.match(composerSourceCache, /COMPOSER_SOURCE_CACHE_TTL_MS[\s\S]*cache = \{ expiresAt:/, 'composer source reads reuse a bounded short-lived snapshot')
+  assert.match(composerSourceState, /invalidateComposerSourceCache\(\)[\s\S]*setSkills/, 'skill refreshes invalidate the shared composer source snapshot')
+  assert.match(composerSourceState, /if \(!active\) return[\s\S]*const controller = new AbortController\(\)[\s\S]*if \(cancelled \|\| controller\.signal\.aborted\) return/, 'inactive Chat defers applying an in-flight source snapshot until the page is active')
+  assert.match(composerSourceState, /return \(\) => \{[\s\S]*controller\.abort\(\)[\s\S]*sourceLoadPromiseRef\.current = null/, 'inactive Chat detaches its source-load subscriber and can refresh on the next activation')
+  assert.match(composerSourceState, /const composerCommands = useMemo\([\s\S]*!active[\s\S]*const composerReferences = useMemo\([\s\S]*!active/, 'inactive Chat skips rebuilding command and reference projections')
 
   const multimodalPolicySource = fs.readFileSync(path.join(root, 'src/presentation/features/chat/chatMultimodalPolicy.ts'), 'utf8')
   assert.ok(multimodalPolicySource.includes('resolveProviderCapabilityManifest'), 'multimodal product policy derives image/file support from provider capability manifests')
@@ -358,13 +462,36 @@ function assertSourceIntegration() {
 
   const messageContentSource = fs.readFileSync(path.join(root, 'src/components/chat/MessageContent.tsx'), 'utf8')
   assert.ok(messageContentSource.includes('MARKDOWN_RENDER_CHAR_LIMIT'), 'rich message content bounds long markdown rendering')
+  assert.match(messageContentSource, /MARKDOWN_RENDER_EXPANSION_CHAR_COUNT[\s\S]*Math\.min\(content\.length, currentLimit \+ MARKDOWN_RENDER_EXPANSION_CHAR_COUNT\)/, 'completed markdown expands in bounded increments instead of staying permanently truncated or rendering an unbounded payload')
+  assert.match(messageContentSource, /hiddenCharCount > 0 \|\| expanded[\s\S]*accessibilityRole="button"[\s\S]*common\.expand[\s\S]*common\.collapse[\s\S]*minHeight: ISLE_MIN_TOUCH_TARGET/, 'long markdown exposes accessible expand and collapse controls through the shared touch target')
+  assert.match(messageContentSource, /requestAnimationFrame\(\(\) => onLayoutChangeRequest\?\.\(\)\)/, 'markdown disclosure asks the virtual list to remeasure after its height changes')
   assert.ok(messageContentSource.includes('STREAMING_MARKDOWN_RENDER_CHAR_LIMIT'), 'streaming message content bounds plain-text rendering during token growth')
   assert.ok(messageContentSource.includes('DATA_PREVIEW_CHAR_LIMIT'), 'rich message content bounds large data preview rendering')
   assert.ok(messageContentSource.includes('SOURCE_LINE_RENDER_LIMIT'), 'rich message content bounds source-line rendering for large blocks')
   assert.ok(messageContentSource.includes('TABLE_ROW_RENDER_LIMIT'), 'rich message content bounds large table row rendering')
+  assert.match(messageContentSource, /const shouldStackRows = width < 380 && columnCount >= STACKED_TABLE_COLUMN_THRESHOLD[\s\S]*\{shouldStackRows \? \([\s\S]*<StackedTableRows/, 'narrow screens stack tables with four or more columns while compact tables keep horizontal grid rendering')
   assert.ok(messageContentSource.includes('createBoundedDataPreview'), 'rich data previews truncate before expensive full rendering')
   assert.ok(messageContentSource.includes('truncatedDataPreview'), 'rich data previews explain bounded rendering')
   assert.ok(messageContentSource.includes('parseDelimitedTablePreview'), 'rich delimited table parsing is bounded for large data blocks')
+  const dialogSource = fs.readFileSync(path.join(root, 'src/components/ui/isle/Dialog.tsx'), 'utf8')
+  assert.match(dialogSource, /const dialogMaxHeight = Math\.max\(240, height - modalPaddingTop - modalPaddingBottom\)[\s\S]*paddingTop: modalPaddingTop,[\s\S]*paddingBottom: modalPaddingBottom,[\s\S]*maxHeight: dialogMaxHeight/, 'shared dialogs stay inside the current viewport and both safe-area edges')
+  assert.ok(dialogSource.includes("behavior={Platform.OS === 'ios' ? 'padding' : 'height'}"), 'shared dialogs avoid the keyboard on iOS and Android')
+  assert.ok(dialogSource.includes('accessibilityViewIsModal'), 'shared dialogs expose modal accessibility containment')
+  assert.match(dialogSource, /<Pressable[\s\S]*?accessible=\{false\}[\s\S]*?accessibilityRole="none"[\s\S]*?onPress=\{\(\) => closeDialog\(false\)\}[\s\S]*?backgroundColor: colors\.backdrop/, 'the touch-dismiss backdrop stays out of the accessibility tree because every dialog exposes explicit close and action controls')
+  assert.doesNotMatch(dialogSource, /<Pressable[\s\S]*?accessibilityLabel=\{t\('dialog\.closeLayer'\)\}[\s\S]*?closeDialog\(false\)/, 'shared dialogs do not announce an unreachable duplicate backdrop close button')
+  assert.equal((dialogSource.match(/<DialogScrollableContent/g) ?? []).length, 3, 'all three theme dialogs keep long content scrollable above fixed actions')
+  assert.match(dialogSource, /function DialogScrollableContent[\s\S]*keyboardDismissMode="on-drag"[\s\S]*keyboardShouldPersistTaps="handled"[\s\S]*style=\{\{ flexShrink: 1 \}\}/, 'dialog content scrolls without blocking embedded form controls')
+  assert.match(dialogSource, /resolveAppFeedbackTimeout\(durationMs, AccessibilityInfo\)[\s\S]*setTimeout\(\(\) => dismissToast\(toast\.id\), recommendedDurationMs\)/, 'toast dismissal resolves the system accessibility timeout before scheduling dismissal')
+  assert.doesNotMatch(dialogSource, /AccessibilityInfo\.getRecommendedTimeoutMillis\(/, 'the Dialog provider does not directly call an optional platform accessibility method')
+  const appFeedbackTimeoutSource = fs.readFileSync(path.join(root, 'src/components/ui/appFeedbackTimeout.ts'), 'utf8')
+  assert.ok(
+    appFeedbackTimeoutSource.includes("typeof resolveRecommendedTimeout !== 'function'") &&
+    appFeedbackTimeoutSource.includes('resolveRecommendedTimeout.call(accessibilityInfo, durationMs)') &&
+    appFeedbackTimeoutSource.includes('isValidRecommendedTimeout(recommendedTimeout) ? recommendedTimeout : durationMs') &&
+    appFeedbackTimeoutSource.includes('catch {') &&
+    appFeedbackTimeoutSource.includes('return durationMs'),
+    'toast accessibility timeouts preserve receiver binding and fail closed to the requested duration',
+  )
   assert.equal(
     shouldPromotePlainDelimitedRows([
       ['The search tool failed to find the requested documentation', 'as it returned only irrelevant dictionary definitions.'],
@@ -406,6 +533,15 @@ function assertSourceIntegration() {
   assert.ok(contextPanelSource.includes('useMemo(() => filterAndSortMemories'), 'context panel memoizes filtered memory views')
   assert.ok(contextPanelSource.includes('contextSummaryItems.length ?'), 'context settings hides overview chips until context, memory, or knowledge state is meaningful')
   assert.ok(contextPanelSource.includes("searchCredentialsConfiguredCount > 0"), 'context settings treats configured search credentials as a meaningful summary trigger')
+  const searchConfigSaveSource = contextPanelSource.match(/async function saveTavilyKey\(\) \{[\s\S]*?\n  \}/)?.[0] ?? ''
+  assert.ok(searchConfigSaveSource.includes('googleSearchCxDraft.trim()') && searchConfigSaveSource.includes('customSearchEndpointDraft.trim()'), 'search configuration trims local non-secret drafts at explicit save time')
+  assert.ok(searchConfigSaveSource.includes("updateSettings(settingsUpdates)"), 'search configuration commits non-secret drafts through one explicit Settings update')
+  assert.doesNotMatch(contextPanelSource, /onChangeText: \(customSearchEndpoint\) => updateSettings/, 'custom search endpoint input does not persist the complete Settings snapshot per keypress')
+  assert.doesNotMatch(contextPanelSource, /case 'googleSearchCx':[\s\S]{0,160}updateSettings/, 'Google CX input does not persist the complete Settings snapshot per keypress')
+  assert.match(contextPanelSource, /useEffect\(\(\) => setCustomSearchEndpointDraft\(settings\.customSearchEndpoint \?\? ''\), \[settings\.customSearchEndpoint\]\)/, 'custom search endpoint draft follows imported and reset Settings values')
+  assert.match(contextPanelSource, /function commitLocalModelMirror\(\) \{[\s\S]*?updateSettings\(\{ localModelDownloadMirrorBaseUrl: nextMirrorBaseUrl \}\)/, 'local-model mirror configuration commits one normalized Settings update')
+  assert.match(contextPanelSource, /value: localModelMirrorDraft,[\s\S]{0,240}onChangeText: setLocalModelMirrorDraft,[\s\S]{0,240}onBlur: commitLocalModelMirror,[\s\S]{0,240}onSubmitEditing: commitLocalModelMirror/, 'local-model mirror input keeps a draft and commits on blur or keyboard submission')
+  assert.doesNotMatch(contextPanelSource, /onChangeText: \(localModelDownloadMirrorBaseUrl\) => updateSettings/, 'local-model mirror input does not persist the complete Settings snapshot per keypress')
   assert.match(contextPanelSource, /function ContextList\([\s\S]*?minHeight: 44,[\s\S]*?style=\{\{ width: 44, height: 44,/, 'context knowledge and memory clear controls reserve explicit 44dp rows and hit targets')
 
   const resetSource = fs.readFileSync(path.join(root, 'src/bootstrap/portableDataReset.ts'), 'utf8')

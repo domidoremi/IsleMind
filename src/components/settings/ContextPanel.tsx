@@ -33,15 +33,13 @@ import { SEARCH_DIAGNOSTIC_QUERY, SEARCH_PROVIDER_OPTIONS, legacySearchModeForPr
 import { SEARCH_PROVIDER_CREDENTIAL_FIELDS, searchProviderCredentialPresentation, searchProviderLabel } from '@/presentation/features/settings/searchProviderPresentation'
 import { filterAndSortKnowledgeDocuments, filterAndSortMemories, hasKnowledgeAssetFilters, hasMemoryAssetFilters, knowledgeAssetEmptyMessage, memoryAssetEmptyMessage, type KnowledgeSortMode, type KnowledgeStatusFocus, type MemorySortMode, type MemoryStatusFocus } from '@/services/contextAssetFilters'
 import { capabilityLabel, formatKnowledgeMeta, formatMemoryMeta, memoryReviewFocusKey } from '@/services/contextAssetFormatters'
-import { IslePressable } from '@/components/ui/isle'
-import { IsleChip } from '@/components/ui/isle'
-import { IsleField, IsleProgress, IsleToggle } from '@/components/ui/isle'
-import { useIsleDialog } from '@/components/ui/isle'
+import { ISLE_MIN_TOUCH_TARGET, IsleChip, IsleField, IslePressable, IsleProgress, IsleToggle, useIsleDialog } from '@/components/ui/isle'
 import { getPolicyPreferredProviderModel } from '@/bootstrap/providerModelAccess'
 import { filterPendingMemoriesForReview, buildMemoryReviewSummary, type MemoryReviewQueueFocus } from '@/utils/memoryReview'
 import { buildKnowledgeRecoverySummary } from '@/utils/knowledgeRecovery'
 import { useMotionPreference } from '@/hooks/useMotionPreference'
 import { motionTokens } from '@/theme/animation'
+import { flushPersistedSettings } from '@/presentation/features/settings/settingsStorePersistenceCommand'
 import { KnowledgeImportSection } from '@/components/settings/KnowledgeImportSection'
 import { runContextSelfTest as runContextSelfTestScenario, type ContextSelfTestStep } from '@/services/contextSelfTest'
 import { ContextDiagnosticsSection } from '@/components/settings/ContextDiagnosticsSection'
@@ -189,7 +187,11 @@ export function ContextPanel({ providers, section = 'all', focus }: ContextPanel
   const [googleSearchKey, setGoogleSearchKey] = useState('')
   const [bingSearchKey, setBingSearchKey] = useState('')
   const [customSearchKey, setCustomSearchKey] = useState('')
+  const [googleSearchCxDraft, setGoogleSearchCxDraft] = useState(settings.googleSearchCx ?? '')
+  const [customSearchEndpointDraft, setCustomSearchEndpointDraft] = useState(settings.customSearchEndpoint ?? '')
+  const [localModelMirrorDraft, setLocalModelMirrorDraft] = useState(settings.localModelDownloadMirrorBaseUrl ?? '')
   const [saved, setSaved] = useState(false)
+  const savedResetTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const [memories, setMemories] = useState<MemoryItem[]>([])
   const [documents, setDocuments] = useState<KnowledgeDocument[]>([])
   const [embeddingJobs, setEmbeddingJobs] = useState<{ running: number; error: number } | null>(null)
@@ -248,7 +250,12 @@ export function ContextPanel({ providers, section = 'all', focus }: ContextPanel
     importControllerRef.current = null
     selfTestControllerRef.current?.abort()
     selfTestControllerRef.current = null
+    if (savedResetTimerRef.current) clearTimeout(savedResetTimerRef.current)
+    savedResetTimerRef.current = null
   }, [])
+  useEffect(() => setGoogleSearchCxDraft(settings.googleSearchCx ?? ''), [settings.googleSearchCx])
+  useEffect(() => setCustomSearchEndpointDraft(settings.customSearchEndpoint ?? ''), [settings.customSearchEndpoint])
+  useEffect(() => setLocalModelMirrorDraft(settings.localModelDownloadMirrorBaseUrl ?? ''), [settings.localModelDownloadMirrorBaseUrl])
   const filteredMemories = sortedMemories
   const filteredDocuments = sortedDocuments
   const visibleMemories = showAllMemories ? sortedMemories : sortedMemories.slice(0, memoryPreviewLimit)
@@ -268,7 +275,7 @@ export function ContextPanel({ providers, section = 'all', focus }: ContextPanel
     || searchCredentialPresentation.showBearerKey
   const searchCredentialsConfiguredCount = [
     ...searchCredentialPresentation.fields.map((field) => searchCredentialFieldValue(field.id)),
-    ...(searchCredentialPresentation.showEndpoint ? [settings.customSearchEndpoint] : []),
+    ...(searchCredentialPresentation.showEndpoint ? [customSearchEndpointDraft] : []),
     ...(searchCredentialPresentation.showBearerKey ? [customSearchKey] : []),
   ].filter((value) => value?.trim()).length
   const searchProviderOpen = activeContextSection === 'search'
@@ -440,14 +447,40 @@ export function ContextPanel({ providers, section = 'all', focus }: ContextPanel
   }, [focus, section])
 
   async function saveTavilyKey() {
+    const nextGoogleSearchCx = googleSearchCxDraft.trim()
+    const nextCustomSearchEndpoint = customSearchEndpointDraft.trim()
     await Promise.all([
       setTavilyApiKey(tavilyKey.trim()),
       setGoogleSearchApiKey(googleSearchKey.trim()),
       setBingSearchApiKey(bingSearchKey.trim()),
       setCustomSearchApiKey(customSearchKey.trim()),
     ])
+    const settingsUpdates: Partial<Pick<Settings, 'googleSearchCx' | 'customSearchEndpoint'>> = {}
+    if ((settings.googleSearchCx ?? '') !== nextGoogleSearchCx) settingsUpdates.googleSearchCx = nextGoogleSearchCx
+    if ((settings.customSearchEndpoint ?? '') !== nextCustomSearchEndpoint) settingsUpdates.customSearchEndpoint = nextCustomSearchEndpoint
+    if (Object.keys(settingsUpdates).length) {
+      updateSettings(settingsUpdates)
+      await flushPersistedSettings()
+    }
+
+    if (savedResetTimerRef.current) clearTimeout(savedResetTimerRef.current)
     setSaved(true)
-    setTimeout(() => setSaved(false), 1408)
+    savedResetTimerRef.current = setTimeout(() => {
+      savedResetTimerRef.current = null
+      setSaved(false)
+    }, 1408)
+  }
+
+  function commitLocalModelMirror() {
+    const nextMirrorBaseUrl = localModelMirrorDraft.trim()
+    if ((settings.localModelDownloadMirrorBaseUrl ?? '') === nextMirrorBaseUrl) return
+    updateSettings({ localModelDownloadMirrorBaseUrl: nextMirrorBaseUrl })
+  }
+
+  function markSearchConfigEdited() {
+    if (savedResetTimerRef.current) clearTimeout(savedResetTimerRef.current)
+    savedResetTimerRef.current = null
+    setSaved(false)
   }
 
   function toggleContextSection(sectionId: 'search' | 'rag' | 'credentials') {
@@ -467,7 +500,7 @@ export function ContextPanel({ providers, section = 'all', focus }: ContextPanel
       case 'googleSearchApiKey':
         return googleSearchKey
       case 'googleSearchCx':
-        return settings.googleSearchCx ?? ''
+        return googleSearchCxDraft
       case 'bingSearchApiKey':
         return bingSearchKey
     }
@@ -476,13 +509,25 @@ export function ContextPanel({ providers, section = 'all', focus }: ContextPanel
   function searchCredentialFieldUpdater(fieldId: typeof SEARCH_PROVIDER_CREDENTIAL_FIELDS[number]['id']): (value: string) => void {
     switch (fieldId) {
       case 'tavilyApiKey':
-        return setTavilyKey
+        return (value) => {
+          markSearchConfigEdited()
+          setTavilyKey(value)
+        }
       case 'googleSearchApiKey':
-        return setGoogleSearchKey
+        return (value) => {
+          markSearchConfigEdited()
+          setGoogleSearchKey(value)
+        }
       case 'googleSearchCx':
-        return (googleSearchCx) => updateSettings({ googleSearchCx })
+        return (value) => {
+          markSearchConfigEdited()
+          setGoogleSearchCxDraft(value)
+        }
       case 'bingSearchApiKey':
-        return setBingSearchKey
+        return (value) => {
+          markSearchConfigEdited()
+          setBingSearchKey(value)
+        }
     }
   }
 
@@ -756,7 +801,7 @@ export function ContextPanel({ providers, section = 'all', focus }: ContextPanel
           accessibilityLabel={`${t('settings.search')}. ${searchProviderLabel(searchProvider)}`}
           accessibilityState={{ expanded: searchProviderOpen }}
           onPress={() => toggleContextSection('search')}
-            style={{ minHeight: 40, paddingHorizontal: 12, flexDirection: 'row', alignItems: 'center', gap: 8, ...secondaryActionSurface(colors) }}
+            style={{ minHeight: ISLE_MIN_TOUCH_TARGET, paddingHorizontal: 12, flexDirection: 'row', alignItems: 'center', gap: 8, ...secondaryActionSurface(colors) }}
           >
             <AppIcon name="context-globe" color={colors.textTertiary} size={16} />
             <View style={{ flex: 1, minWidth: 0 }}>
@@ -791,7 +836,7 @@ export function ContextPanel({ providers, section = 'all', focus }: ContextPanel
           accessibilityLabel={`${t('contextPanel.ragMode')}. ${ragSettingsSummary}`}
           accessibilityState={{ expanded: ragSettingsExpanded }}
           onPress={() => toggleContextSection('rag')}
-            style={{ minHeight: 42, paddingHorizontal: 12, flexDirection: 'row', alignItems: 'center', gap: 8, ...secondaryActionSurface(colors) }}
+            style={{ minHeight: ISLE_MIN_TOUCH_TARGET, paddingHorizontal: 12, flexDirection: 'row', alignItems: 'center', gap: 8, ...secondaryActionSurface(colors) }}
           >
             <AppIcon name="search-check" color={colors.textTertiary} size={16} />
             <View style={{ flex: 1, minWidth: 0 }}>
@@ -831,7 +876,7 @@ export function ContextPanel({ providers, section = 'all', focus }: ContextPanel
           accessibilityLabel={`${t('contextPanel.agenticTechniques')}. ${t('contextPanel.agenticTechniquesCollapsedDetail', { count: enabledTechniqueCount })}`}
           accessibilityState={{ expanded: ragTechniquesOpen }}
           onPress={() => setRagTechniquesOpen((value) => !value)}
-          style={{ marginTop: 10, minHeight: 40, paddingHorizontal: 12, flexDirection: 'row', alignItems: 'center', gap: 8, ...secondaryActionSurface(colors) }}
+          style={{ marginTop: 10, minHeight: ISLE_MIN_TOUCH_TARGET, paddingHorizontal: 12, flexDirection: 'row', alignItems: 'center', gap: 8, ...secondaryActionSurface(colors) }}
         >
           <AppIcon name="workflow" color={colors.textTertiary} size={16} />
           <View style={{ flex: 1, minWidth: 0 }}>
@@ -883,7 +928,7 @@ export function ContextPanel({ providers, section = 'all', focus }: ContextPanel
           accessibilityLabel={`${t('contextPanel.localModel.title')}. ${t('contextPanel.localModel.collapsedDetail', { active: activeLocalModelCount, downloadable: downloadableLocalModels.length, planned: plannedLocalCapabilities.length })}`}
           accessibilityState={{ expanded: localModelsOpen }}
           onPress={() => setLocalModelsOpen((value) => !value)}
-          style={{ marginTop: 10, minHeight: 40, paddingHorizontal: 12, flexDirection: 'row', alignItems: 'center', gap: 8, ...secondaryActionSurface(colors) }}
+          style={{ marginTop: 10, minHeight: ISLE_MIN_TOUCH_TARGET, paddingHorizontal: 12, flexDirection: 'row', alignItems: 'center', gap: 8, ...secondaryActionSurface(colors) }}
         >
           <AppIcon name="device" color={colors.textTertiary} size={16} />
           <View style={{ flex: 1, minWidth: 0 }}>
@@ -907,8 +952,11 @@ export function ContextPanel({ providers, section = 'all', focus }: ContextPanel
               note={t('contextPanel.localModel.mirrorHelp')}
               style={{ marginTop: 10 }}
               inputProps={{
-                value: settings.localModelDownloadMirrorBaseUrl ?? '',
-                onChangeText: (localModelDownloadMirrorBaseUrl) => updateSettings({ localModelDownloadMirrorBaseUrl }),
+                value: localModelMirrorDraft,
+                onChangeText: setLocalModelMirrorDraft,
+                onBlur: commitLocalModelMirror,
+                onSubmitEditing: commitLocalModelMirror,
+                returnKeyType: 'done',
                 autoCapitalize: 'none',
                 autoCorrect: false,
                 placeholder: t('contextPanel.localModel.mirrorPlaceholder'),
@@ -1015,8 +1063,8 @@ export function ContextPanel({ providers, section = 'all', focus }: ContextPanel
             {searchCredentialPresentation.fields.map((field) => (
               <IsleField key={field.id} label={field.label} style={{ marginTop: 10 }} inputProps={{ value: searchCredentialFieldValue(field.id), onChangeText: searchCredentialFieldUpdater(field.id), secureTextEntry: field.secureTextEntry, autoCapitalize: 'none', autoCorrect: false, placeholder: field.placeholder }} />
             ))}
-            {searchCredentialPresentation.showEndpoint ? <IsleField label={t('contextPanel.customSearchEndpoint')} style={{ marginTop: 10 }} inputProps={{ value: settings.customSearchEndpoint ?? '', onChangeText: (customSearchEndpoint) => updateSettings({ customSearchEndpoint }), autoCapitalize: 'none', autoCorrect: false, placeholder: 'https://search.example.com?q={query}&limit={limit}' }} /> : null}
-            {searchCredentialPresentation.showBearerKey ? <IsleField label={t('contextPanel.customSearchKey')} style={{ marginTop: 10 }} inputProps={{ value: customSearchKey, onChangeText: setCustomSearchKey, secureTextEntry: true, autoCapitalize: 'none', autoCorrect: false, placeholder: t('contextPanel.optionalBearerKey') }} /> : null}
+            {searchCredentialPresentation.showEndpoint ? <IsleField label={t('contextPanel.customSearchEndpoint')} style={{ marginTop: 10 }} inputProps={{ value: customSearchEndpointDraft, onChangeText: (value) => { markSearchConfigEdited(); setCustomSearchEndpointDraft(value) }, autoCapitalize: 'none', autoCorrect: false, placeholder: 'https://search.example.com?q={query}&limit={limit}' }} /> : null}
+            {searchCredentialPresentation.showBearerKey ? <IsleField label={t('contextPanel.customSearchKey')} style={{ marginTop: 10 }} inputProps={{ value: customSearchKey, onChangeText: (value) => { markSearchConfigEdited(); setCustomSearchKey(value) }, secureTextEntry: true, autoCapitalize: 'none', autoCorrect: false, placeholder: t('contextPanel.optionalBearerKey') }} /> : null}
             <IslePressable haptic accessibilityLabel={saved ? t('common.saved') : t('contextPanel.saveSearchConfig')} onPress={saveTavilyKey} style={{ ...fullWidthActionStyle, ...primaryActionSurface(colors), marginTop: 10 }}>
               <Text style={{ color: colors.ui.control.primaryForeground, fontSize: 14, fontWeight: '800' }}>{saved ? t('common.saved') : t('contextPanel.saveSearchConfig')}</Text>
             </IslePressable>
@@ -1317,7 +1365,7 @@ function ContextDisclosureRow({ title, detail, icon, open, onPress }: { title: s
       accessibilityLabel={`${title}. ${detail}`}
       accessibilityState={{ expanded: open }}
       onPress={onPress}
-      style={{ minHeight: 40, paddingHorizontal: 12, flexDirection: 'row', alignItems: 'center', gap: 8, ...secondaryActionSurface(colors) }}
+      style={{ minHeight: ISLE_MIN_TOUCH_TARGET, paddingHorizontal: 12, flexDirection: 'row', alignItems: 'center', gap: 8, ...secondaryActionSurface(colors) }}
     >
       {icon}
       <View style={{ flex: 1, minWidth: 0 }}>

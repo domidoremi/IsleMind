@@ -149,15 +149,16 @@ export function useChatStreamingSubmitActions({
   }, [scrollToLatestMessage])
 
   const submit = useCallback(async (content: string, attachments: Attachment[]) => {
+    const latestConversation = getLatestConversation(conversation.id) ?? conversation
     await sendActiveChatMessage({
       attachments,
       content,
-      conversation,
+      conversation: latestConversation,
       requestedOutput,
       scrollToLatestMessage,
       sendMessage,
     })
-  }, [conversation, requestedOutput, scrollToLatestMessage, sendMessage])
+  }, [conversation, getLatestConversation, requestedOutput, scrollToLatestMessage, sendMessage])
 
   const submitWhileStreaming = useCallback((content: string, attachments: Attachment[]) => {
     setIntentDraft(createStreamingIntentDraft({ content, attachments, requestedOutput }))

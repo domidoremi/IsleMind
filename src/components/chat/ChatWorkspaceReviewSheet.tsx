@@ -1,9 +1,11 @@
 import { ActivityIndicator, Modal, ScrollView, StyleSheet, Text, View, useWindowDimensions } from 'react-native'
+import { MotiView } from 'moti'
 import { useSafeAreaInsets } from 'react-native-safe-area-context'
 
 import { AppIcon, appIconStroke, type AppIconName } from '@/components/ui/AppIcon'
-import { IsleOverlayPressable, IslePressable } from '@/components/ui/isle'
+import { ISLE_MIN_TOUCH_TARGET, IsleOverlayPressable, IslePressable } from '@/components/ui/isle'
 import { useAppTheme } from '@/hooks/useAppTheme'
+import { useMotionPreference } from '@/hooks/useMotionPreference'
 
 import {
   presentChatWorkspaceReview,
@@ -97,6 +99,7 @@ export function ChatWorkspaceReviewSheet({
   onCancelConfirmation,
 }: ChatWorkspaceReviewSheetProps) {
   const { colors, isGlass } = useAppTheme()
+  const motion = useMotionPreference()
   const insets = useSafeAreaInsets()
   const { height, width } = useWindowDimensions()
   const presentation = projection ? presentChatWorkspaceReview(projection) : null
@@ -150,12 +153,15 @@ export function ChatWorkspaceReviewSheet({
     >
       <View style={styles.modalRoot}>
         <IsleOverlayPressable
-          accessibilityLabel={labels.close}
-          accessibilityHint={labels.closeHint}
+          accessible={false}
+          accessibilityRole="none"
           onPress={onClose}
           style={[StyleSheet.absoluteFill, { backgroundColor: colors.backdrop }]}
         />
-        <View
+        <MotiView
+          from={motion === 'full' ? { opacity: 0, translateY: 18 } : { opacity: 1, translateY: 0 }}
+          animate={{ opacity: 1, translateY: 0 }}
+          transition={{ type: 'timing', duration: motion === 'full' ? 180 : 0 }}
           accessibilityViewIsModal
           style={{
             width: sheetWidth,
@@ -322,7 +328,7 @@ export function ChatWorkspaceReviewSheet({
               </View>
             ) : null}
           </View>
-        </View>
+        </MotiView>
       </View>
     </Modal>
   )
@@ -507,7 +513,7 @@ function ActionButton({
       onPress={onPress}
       style={{
         minWidth: 88,
-        height: 40,
+        height: ISLE_MIN_TOUCH_TARGET,
         borderRadius: Math.min(colors.ui.radius.controlMiddle, 8),
         paddingHorizontal: 11,
         flexDirection: 'row',

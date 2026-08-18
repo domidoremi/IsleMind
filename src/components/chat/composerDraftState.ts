@@ -12,6 +12,12 @@ export type ComposerInitialDraftDecision =
     attachments: Attachment[]
   }
 
+export interface BlockedComposerDraftRecovery {
+  content: string
+  attachments: Attachment[]
+  restoreIfEmpty: true
+}
+
 export function resolveComposerInitialDraft(input: {
   initialDraft?: string
   initialDraftKey?: ComposerDraftKey
@@ -42,6 +48,18 @@ export function resolveAppliedInitialDraftKeyAfterSuccessfulSend(
   return currentInitialDraftKey !== undefined && appliedInitialDraftKey === currentInitialDraftKey
     ? undefined
     : appliedInitialDraftKey
+}
+
+export function resolveBlockedComposerDraftRecovery(
+  content: string,
+  attachments: Attachment[],
+): BlockedComposerDraftRecovery | null {
+  if (!content.trim() && attachments.length === 0) return null
+  return {
+    content,
+    attachments: [...attachments],
+    restoreIfEmpty: true,
+  }
 }
 
 export function restoreRejectedComposerText(currentContent: string, sentContent: string): string {

@@ -22,51 +22,60 @@ interface HomeScreenContentProps {
 export function HomeScreenContent({ active = true, embedded = false, initialDraft, initialDraftKey, restoreInitialDraftIfEmpty, requestedOutputMode = 'auto', shellNavigation = false, topChromeInset = 0, showSetupEmptyState = true, settingsTransitionActive = false, onHistory, onSettings }: HomeScreenContentProps) {
   const conversations = useChatStore((state) => state.conversations)
   const currentId = useChatStore((state) => state.currentId)
-  const create = useChatStore((state) => state.create)
   const select = useChatStore((state) => state.select)
   const settings = useSettingsStore((state) => state.settings)
   const defaultProvider = settings.defaultProvider
   const getConfiguredProviders = useSettingsStore((state) => state.getConfiguredProviders)
   const [configuredProviderIds, setConfiguredProviderIds] = useState<string[] | null>(null)
   const activeConversation = useMemo(
-    () => conversations.find((item) => item.id === currentId) ?? conversations[0] ?? null,
+    () => conversations.find((item) => item.id === currentId) ?? null,
     [conversations, currentId]
   )
 
   useEffect(() => {
     if (!active) return
+
+    // The setup workspace is an in-memory draft until the first valid send.
+    // Do not create a persisted empty conversation just because Home mounted.
+    if (!activeConversation) {
+      setConfiguredProviderIds(null)
+      return
+    }
+
+    if (activeConversation && activeConversation.providerId !== 'local-setup') {
+      if (activeConversation.id !== currentId) {
+        select(activeConversation.id)
+      }
+      return
+    }
+
     let mounted = true
-    void getConfiguredProviders().then((configuredProviders) => {
-      if (!mounted) return
-      setConfiguredProviderIds(configuredProviders.map((provider) => provider.id))
+    setConfiguredProviderIds(null)
+    void getConfiguredProviders()
+      .then((configuredProviders) => {
+        if (!mounted) return
+        setConfiguredProviderIds(configuredProviders.map((provider) => provider.id))
 
-      const primary =
-        configuredProviders.find((provider) => provider.id === defaultProvider) ??
-        configuredProviders[0] ??
-        null
+        const primary =
+          configuredProviders.find((provider) => provider.id === defaultProvider) ??
+          configuredProviders[0] ??
+          null
 
-      if (activeConversation && activeConversation.providerId !== 'local-setup') {
-        if (activeConversation.id !== currentId) {
-          select(activeConversation.id)
+        const model = primary ? getPolicyPreferredProviderModel(primary, settings) : undefined
+        if (!primary || !model) return
+
+        const existing = conversations.find(
+          (conversation) =>
+            conversation.providerId === primary.id &&
+            conversation.model === model
+        )
+        if (existing) {
+          select(existing.id)
         }
-        return
-      }
-
-      const model = primary ? getPolicyPreferredProviderModel(primary, settings) : undefined
-      if (!primary || !model) return
-
-      const existing = conversations.find(
-        (conversation) =>
-          conversation.providerId === primary.id &&
-          conversation.model === model
-      )
-      if (existing) {
-        select(existing.id)
-      } else {
-        const id = create(primary.id, model)
-        select(id)
-      }
-    })
+      })
+      .catch(() => {
+        if (mounted) setConfiguredProviderIds([])
+      })
     return () => {
       mounted = false
     }
@@ -76,7 +85,6 @@ export function HomeScreenContent({ active = true, embedded = false, initialDraf
     activeConversation?.model,
     conversations.length,
     currentId,
-    create,
     defaultProvider,
     getConfiguredProviders,
     select,

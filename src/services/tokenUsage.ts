@@ -1,5 +1,5 @@
 import type { Message, MessageUsage } from '@/types/chatContracts'
-import { filterSendableAttachments } from '@/services/attachmentContract'
+import { filterSendableAttachments } from '@/modules/conversations'
 
 const CJK_RE = /[\u3400-\u9fff\u3040-\u30ff\uac00-\ud7af]/g
 const WORD_RE = /[A-Za-z0-9_]+(?:[-'][A-Za-z0-9_]+)*/g
@@ -29,16 +29,6 @@ export function buildEstimatedUsage(inputMessages: Pick<Message, 'role' | 'conte
     totalTokens: inputTokens + outputTokens,
     source: 'estimated',
   }
-}
-
-export function mergeUsageWithEstimate(usage: MessageUsage | undefined, inputMessages: Pick<Message, 'role' | 'content' | 'attachments'>[], outputText: string): MessageUsage {
-  if (usage?.source === 'provider') {
-    return {
-      ...usage,
-      totalTokens: usage.totalTokens ?? (usage.inputTokens ?? 0) + (usage.outputTokens ?? 0),
-    }
-  }
-  return buildEstimatedUsage(inputMessages, outputText)
 }
 
 function estimateAttachmentTokens(size: number): number {

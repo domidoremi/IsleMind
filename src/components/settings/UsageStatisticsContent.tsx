@@ -16,7 +16,7 @@ import { FlashList } from '@shopify/flash-list'
 import { MotiView } from 'moti'
 
 import { AppIcon, type AppIconName } from '@/components/ui/AppIcon'
-import { IsleButton, IsleChip, IslePressable, IsleToggle } from '@/components/ui/isle'
+import { ISLE_MIN_TOUCH_TARGET, IsleButton, IsleChip, IslePressable, IsleToggle } from '@/components/ui/isle'
 import { useAppTheme } from '@/hooks/useAppTheme'
 import { useMotionPreference } from '@/hooks/useMotionPreference'
 
@@ -935,7 +935,7 @@ function UsageSheet({ visible, title, closeLabel, onClose, children, keyboardAwa
   const motion = useMotionPreference()
   const content = (
     <View style={styles.modalFrame}>
-      <Pressable style={StyleSheet.absoluteFill} accessibilityRole="button" accessibilityLabel={closeLabel} onPress={onClose} />
+      <Pressable accessible={false} accessibilityRole="none" style={StyleSheet.absoluteFill} onPress={onClose} />
       <MotiView
         from={motion === 'full' ? { opacity: 0, translateY: 16 } : { opacity: 1, translateY: 0 }}
         animate={{ opacity: 1, translateY: 0 }}
@@ -968,7 +968,7 @@ function OptionChips({ label, emptyLabel, options, value, onChange }: { label: s
       {options.length ? (
         <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.optionChips}>
           {options.map((option) => (
-            <IslePressable key={option.value} accessibilityRole="radio" accessibilityLabel={option.label} accessibilityState={{ selected: value === option.value, checked: value === option.value }} onPress={() => onChange(option.value)}>
+            <IslePressable key={option.value} accessibilityRole="radio" accessibilityLabel={option.label} accessibilityState={{ selected: value === option.value, checked: value === option.value }} onPress={() => onChange(option.value)} style={{ minHeight: ISLE_MIN_TOUCH_TARGET, justifyContent: 'center' }}>
               <IsleChip active={value === option.value}>{option.label}</IsleChip>
             </IslePressable>
           ))}
@@ -1247,7 +1247,7 @@ const styles = StyleSheet.create({
   tabButton: {
     flex: 1,
     minWidth: 0,
-    minHeight: 36,
+    minHeight: ISLE_MIN_TOUCH_TARGET,
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',

@@ -25,6 +25,7 @@ import {
   providerCredentialStorage,
 } from './secureCredentialStorage'
 import { clearTavernSnapshot } from './tavernWorkspace'
+import { clearConversationComposerDraftPersistence } from './conversationComposerDrafts'
 
 interface PortableDataResetSnapshot {
   providers: readonly AIProvider[]
@@ -41,6 +42,10 @@ export const portableDataResetRuntime = createPortableDataResetRuntime<PortableD
     return { providers: await readApplicationDataRecord<AIProvider[]>('PROVIDERS') ?? [] }
   },
   participants: [
+    {
+      id: 'conversation-composer-drafts',
+      clear: clearConversationComposerDraftPersistence,
+    },
     {
       id: 'language-preference',
       clear: async () => clearLanguagePreferenceSource(),

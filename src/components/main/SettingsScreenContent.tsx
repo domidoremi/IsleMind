@@ -1,19 +1,20 @@
-import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
+import { memo, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { Platform, ScrollView, StyleSheet, Text, TextInput, View, useWindowDimensions, type ViewStyle } from 'react-native'
-import { router, usePathname } from 'expo-router'
-import * as Clipboard from 'expo-clipboard'
-import * as Sharing from 'expo-sharing'
+import { router } from 'expo-router'
+import * as Application from 'expo-application'
+import Constants from 'expo-constants'
 import { AnimatePresence, MotiView } from 'moti'
 import { useTranslation } from 'react-i18next'
 import { AnimatedNavigationTrigger } from '@/components/navigation/AnimatedNavigationTrigger'
 import { AppIcon, appIconStroke, type AppIconName } from '@/components/ui/AppIcon'
 import { HighFrameSpinner } from '@/components/ui/HighFrameSpinner'
-import { IslePressable } from '@/components/ui/isle'
+import { ISLE_MIN_TOUCH_TARGET, IslePressable } from '@/components/ui/isle'
 import { IsleChip } from '@/components/ui/isle'
 import { IsleButton } from '@/components/ui/isle'
 import { IsleProgress } from '@/components/ui/isle'
 import { IsleDisclosure, IsleField, IsleToggle } from '@/components/ui/isle'
 import { SettingsSummaryStrip, type SettingsSummaryItem } from '@/components/settings/SettingsSummaryStrip'
+import { CommittedSettingsField } from '@/components/settings/CommittedSettingsField'
 import {
   LimeRoadSettingsOverviewExperience,
   MarkdownSettingsOverviewExperience,
@@ -26,7 +27,6 @@ import {
 } from '@/components/settings/theme-experiences/SettingsControlCatalogExperiences'
 import { useAppTheme } from '@/hooks/useAppTheme'
 import { useSettingsStore } from '@/store/settingsStore'
-import { useChatStore } from '@/store/chatStore'
 import type { PortableDataExportOptions, PortableDataExportResult } from '@/modules/data-management'
 import {
   clearPortableApplicationData,
@@ -34,20 +34,25 @@ import {
   importPortableDataFromJsonFile,
 } from '@/presentation/features/settings/portableDataCommand'
 import { formatImportSizeLimit, MAX_IMPORT_JSON_FILE_BYTES } from '@/platform/native/boundedImportFile'
-import { checkLatestApkRelease, downloadAndOpenApkInstaller, formatApkSizeBytes, formatUpdateCheckTime, getVersionSnapshot, shouldRecordApkUpdateCheck, type ApkInstallProgress, type ApkInstallProgressStage, type ApkReleaseInfo } from '@/services/appUpdates'
+import type { ApkInstallProgress, ApkInstallProgressStage, ApkReleaseInfo } from '@/services/appUpdates'
 import { useIsleDialog } from '@/components/ui/isle'
 import { resolveSearchProvider } from '@/modules/integrations'
 import { searchProviderLabel } from '@/presentation/features/settings/searchProviderPresentation'
+import {
+  matchesSettingsControlSearch,
+  normalizeSettingsControlSearch,
+  type SettingsControlSearchDocument,
+} from '@/presentation/features/settings/settingsControlSearch'
 import { resolveProviderDisplayName } from '@/presentation/features/settings/providerPresentation'
-import { clearRuntimeLog, getRuntimeLogInfo, getRuntimeLogPath, readRuntimeLogText } from '@/services/runtimeLog'
-import { buildRuntimeDiagnosticsSummary, type RuntimeDiagnosticsSummary } from '@/services/runtimeDiagnostics'
-import { emitPluginManifestCatalogSnapshotEvent, loadPluginManifestCatalogSnapshot, type PluginManifestCatalogSnapshot } from '@/services/pluginManifest'
+import type { RuntimeDiagnosticsSummary } from '@/services/runtimeDiagnostics'
+import type { PluginManifestCatalogSnapshot } from '@/services/pluginManifest'
 import { changeAppLanguage } from '@/i18n'
 import type { BedrockCacheTtl, Language, ObservabilitySinkHighFrequencyExportMode, ObservabilitySinkMode, ObservabilitySinkTarget, PayloadPolicyMode, ProxyMode, RemoteCompactMode, ThemeId, ThemeMode, UpstreamTransportMode } from '@/types/settingsContracts'
 import { useMotionPreference } from '@/hooks/useMotionPreference'
 import { motionTokens } from '@/theme/animation'
+import { createLazyComponent } from '@/utils/lazyLoad'
 import { getColors, normalizeThemeAccent } from '@/theme/colors'
-import { androidStatusNotificationsAvailable, clearAndroidStatusNotification, getAndroidStatusNotificationPermissionStatus, openAndroidStatusNotificationSettings, requestAndroidStatusNotificationPermission, updateAndroidStatusNotification, type AndroidStatusNotificationPermissionStatus, type AndroidStatusNotificationSettingsTarget } from '@/services/androidStatusNotification'
+import type { AndroidStatusNotificationPermissionStatus, AndroidStatusNotificationSettingsTarget } from '@/bootstrap/androidStatusNotification'
 
 const LANGUAGE_OPTIONS: { id: Language; label: string; detail: string }[] = [
   { id: 'zh-CN', label: '简体中文', detail: '中文界面' },
@@ -92,6 +97,60 @@ const themeModeCardHeight = 58
 type ApkUpdateUiStage = 'checking' | ApkInstallProgressStage
 const APK_UPDATE_BANNER_ID = 'apk-update-progress'
 const APK_UPDATE_FEEDBACK_CLEAR_DELAY_MS = 12_000
+
+const RuntimeDiagnosticsDetails = createLazyComponent(
+  () => import('@/components/settings/RuntimeDiagnosticsDetails')
+    .then((module) => ({ default: module.RuntimeDiagnosticsDetails })),
+)
+
+type AndroidStatusNotificationModule = typeof import('@/bootstrap/androidStatusNotification')
+let androidStatusNotificationModulePromise: Promise<AndroidStatusNotificationModule> | undefined
+
+function loadAndroidStatusNotification(): Promise<AndroidStatusNotificationModule> {
+  androidStatusNotificationModulePromise ??= import('@/bootstrap/androidStatusNotification')
+  return androidStatusNotificationModulePromise
+}
+
+function getSettingsVersionSnapshot(): { appVersion: string; buildVersion: string } {
+  return {
+    appVersion: Application.nativeApplicationVersion ?? Constants.expoConfig?.version ?? '1.0.0',
+    buildVersion: Application.nativeBuildVersion ?? String(Constants.platform?.android?.versionCode ?? '1'),
+  }
+}
+
+function formatSettingsUpdateCheckTime(value: number | undefined, t: ReturnType<typeof useTranslation>['t']): string {
+  if (!value) return t('updates.never')
+  try {
+    return new Date(value).toLocaleString()
+  } catch {
+    return t('updates.unknown')
+  }
+}
+
+function formatSettingsApkSizeBytes(sizeBytes: number | undefined, unknownLabel: string): string {
+  if (sizeBytes == null || !Number.isFinite(sizeBytes) || sizeBytes < 0) return unknownLabel
+  if (sizeBytes >= 1024 * 1024) return `${(sizeBytes / 1024 / 1024).toFixed(1)} MB`
+  if (sizeBytes >= 1024) return `${(sizeBytes / 1024).toFixed(1)} KB`
+  return `${sizeBytes} B`
+}
+
+function normalizeBoundedIntegerDraft(value: string, fallback: number, min: number, max: number): string {
+  const parsed = Number.parseInt(value, 10)
+  return String(Number.isFinite(parsed) ? Math.max(min, Math.min(max, parsed)) : fallback)
+}
+
+function normalizeRemoteCompactThresholdDraft(value: string): string {
+  const parsed = Number.parseFloat(value)
+  return String(Number.isFinite(parsed) ? Math.max(0.1, Math.min(2, parsed)) : 0.8)
+}
+
+function normalizeTrimmedDraft(value: string): string {
+  return value.trim()
+}
+
+function normalizeSettingsListDraft(value: string): string {
+  return joinSettingsList(parseSettingsList(value))
+}
 
 function updateStageLabelKey(stage: ApkUpdateUiStage): string {
   if (stage === 'checking') return 'settings.checkingUpdate'
@@ -168,10 +227,8 @@ const describeSystemStatusNotification = (
 
 type SettingsAdvancedGroup = 'appearance' | 'data' | 'advanced' | 'diagnostics' | 'governance' | 'updates' | 'danger'
 type SettingsGovernanceGroup = 'routing' | 'workflow' | 'observability' | 'runtimeLimits' | 'requestShaping' | 'accessRules'
-interface SettingsControlEntry {
+interface SettingsControlEntry extends SettingsControlSearchDocument {
   key: string
-  title: string
-  detail: string
   icon: AppIconName
   active?: boolean
   tone?: 'default' | 'warning' | 'danger'
@@ -179,6 +236,17 @@ interface SettingsControlEntry {
 }
 type RuntimeRepairTask = RuntimeDiagnosticsSummary['timeline']['repairPlan']['tasks'][number]
 type RuntimeRepairSettingsRoute = '/settings/providers' | '/settings/context' | '/settings/mcp' | '/settings/skills'
+type SettingsChildRoute = RuntimeRepairSettingsRoute | '/settings/usage' | '/settings/preferences' | '/settings/memory' | '/settings/knowledge'
+
+function pushSettingsChildRoute(pathname: SettingsChildRoute, params?: Record<string, string>) {
+  router.push({
+    pathname,
+    params: {
+      ...params,
+      returnTo: 'settings',
+    },
+  })
+}
 
 function resolveSettingsFoldoutSurface(colors: ReturnType<typeof useAppTheme>['colors'], isGlass: boolean, variant: 'base' | 'muted' = 'base') {
   if (variant === 'muted') {
@@ -191,11 +259,10 @@ function resolveSettingsFoldoutBorder(colors: ReturnType<typeof useAppTheme>['co
   return colors.ui.limeRoad ? colors.material.stroke : isGlass ? colors.ui.actionBar.itemBorder : colors.ui.semantic.chrome.border
 }
 
-export function SettingsScreenContent({ active = true, shellNavigation = false, onHome }: { active?: boolean; shellNavigation?: boolean; onHome?: () => void } = {}) {
+export const SettingsScreenContent = memo(function SettingsScreenContent({ shellNavigation = false, onHome }: { shellNavigation?: boolean; onHome?: () => void } = {}) {
   const { colors } = useAppTheme()
   const motion = useMotionPreference()
   const { t } = useTranslation()
-  const pathname = usePathname()
   const dialog = useIsleDialog()
   const { width } = useWindowDimensions()
   const narrowLayout = width < 430
@@ -213,21 +280,22 @@ export function SettingsScreenContent({ active = true, shellNavigation = false, 
   const resetSettings = useSettingsStore((state) => state.clearAll)
   const getObservabilitySinkApiKey = useSettingsStore((state) => state.getObservabilitySinkApiKey)
   const setObservabilitySinkApiKey = useSettingsStore((state) => state.setObservabilitySinkApiKey)
-  const clearChats = useChatStore((state) => state.clearAll)
   const scrollRef = useRef<ScrollView>(null)
   const revealedSystemPanelRef = useRef<SettingsAdvancedGroup | null>(null)
   const apkUpdateFeedbackClearTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const diagnosticsRefreshInFlightRef = useRef(false)
   const [apkUpdateStage, setApkUpdateStage] = useState<ApkUpdateUiStage | null>(null)
   const [activeApkRelease, setActiveApkRelease] = useState<ApkReleaseInfo | null>(null)
   const [apkInstallProgress, setApkInstallProgress] = useState<ApkInstallProgress | null>(null)
   const [diagnostics, setDiagnostics] = useState<RuntimeDiagnosticsSummary | null>(null)
   const [pluginCatalog, setPluginCatalog] = useState<PluginManifestCatalogSnapshot | null>(null)
   const [refreshingDiagnostics, setRefreshingDiagnostics] = useState(false)
+  const [diagnosticDetailsOpen, setDiagnosticDetailsOpen] = useState(false)
   const [observabilitySinkApiKeyDraft, setObservabilitySinkApiKeyDraft] = useState('')
   const [themeAccentDraft, setThemeAccentDraft] = useState(settings.themeAccent ?? '')
   const [savingObservabilitySinkApiKey, setSavingObservabilitySinkApiKey] = useState(false)
+  const [runtimeLogPath, setRuntimeLogPath] = useState<string | null>(null)
   const [systemStatusNotificationStatus, setSystemStatusNotificationStatus] = useState<AndroidStatusNotificationPermissionStatus | null>(null)
-  const [diagnosticDetailsOpen, setDiagnosticDetailsOpen] = useState(false)
   const [controlView, setControlView] = useState<SettingsControlView | null>('ai')
   const [settingsSearch, setSettingsSearch] = useState('')
   const [expandedGroups, setExpandedGroups] = useState<Record<SettingsAdvancedGroup, boolean>>({
@@ -265,7 +333,7 @@ export function SettingsScreenContent({ active = true, shellNavigation = false, 
   const enabledProviders = providers.filter((provider) => provider.enabled).length
   const defaultProvider = providers.find((provider) => provider.id === settings.defaultProvider)
   const defaultProviderDisplayName = defaultProvider ? resolveProviderDisplayName(defaultProvider, t('providerSettings.customProvider')) : undefined
-  const version = getVersionSnapshot()
+  const version = getSettingsVersionSnapshot()
   const searchProvider = resolveSearchProvider(settings)
   const activeThemeId = settings.themeId ?? 'minimal'
   const activeCustomThemeAccent = Boolean(settings.themeAccent && !THEME_ACCENT_OPTIONS.some((item) => item.color === settings.themeAccent))
@@ -281,9 +349,6 @@ export function SettingsScreenContent({ active = true, shellNavigation = false, 
     gap,
   })
   const foldoutMotion = { type: 'timing' as const, duration: motion === 'full' ? motionTokens.duration.fast : 1 }
-  const diagnosticRows = useMemo(() => diagnostics ? buildDiagnosticRows(diagnostics, t, pluginCatalog) : [], [diagnostics, pluginCatalog, t])
-  const diagnosticAttentionRows = diagnosticRows.filter((row) => row.tone === 'amber' || row.tone === 'danger').length
-  const diagnosticDetailsVisible = diagnosticDetailsOpen || diagnosticAttentionRows > 0
   const systemStatusNotificationDescription = useMemo(
     () => describeSystemStatusNotification(systemStatusNotificationStatus, t),
     [systemStatusNotificationStatus, t]
@@ -330,13 +395,19 @@ export function SettingsScreenContent({ active = true, shellNavigation = false, 
     settings.runtimeLogEnabled ? t('settings.runtimeLogEnabled') : null,
     settings.autoUpdateCheckEnabled ?? true ? t('settings.autoEnabled') : t('settings.autoDisabled'),
   ].filter(Boolean).join(' · ')
+  const diagnosticsSummary = diagnostics
+    ? [
+        diagnostics.timeline.repairPlan.taskCount ? `${t('settings.runtimeRepairTasks')} ${diagnostics.timeline.repairPlan.taskCount}` : null,
+        t('settings.runtimeDiagnosticsReady'),
+      ].filter(Boolean).join(' · ')
+    : t('settings.runtimeDiagnosticsIdle')
   const settingsAttentionItems: SettingsSummaryItem[] = []
   if (diagnostics?.timeline.repairPlan.taskCount) {
     settingsAttentionItems.push({
       key: 'advanced',
       label: t('settings.runtimeDiagnostics'),
       value: `${diagnostics.timeline.repairPlan.taskCount} ${t('settings.runtimeRepairTasks')}`,
-      detail: advancedSummary || t('settings.runtimeDiagnosticsSubtitle'),
+      detail: diagnosticsSummary,
       icon: <AppIcon name="settings-sliders" color={colors.textTertiary} size={15} />,
       tone: 'amber',
     })
@@ -346,63 +417,125 @@ export function SettingsScreenContent({ active = true, shellNavigation = false, 
       key: 'providers',
       title: t('settings.quickProviderModel'),
       detail: providerHealthSummary,
+      searchTerms: [
+        t('settings.providerManagement'),
+        t('settings.default'),
+        t('settings.models'),
+        t('settings.addProvider'),
+        t('providerSettings.batchImportProviders'),
+        t('providerSettings.baseUrl'),
+        t('providerSettings.tokens'),
+        t('providerSettings.protocol.title'),
+      ],
       icon: 'provider-key',
       active: Boolean(defaultProvider),
       tone: defaultProvider ? 'default' : 'warning',
-      onPress: () => router.push('/settings/providers'),
+      onPress: () => pushSettingsChildRoute('/settings/providers'),
     },
     {
       key: 'usage',
       title: t('usage.title'),
       detail: t('usage.settingsSummary'),
+      searchTerms: [
+        t('usage.requests'),
+        t('usage.totalTokens'),
+        t('usage.estimatedCost'),
+        t('usage.averageLatency'),
+        t('usage.providerStatistics'),
+        t('usage.modelStatistics'),
+      ],
       icon: 'chart',
-      onPress: () => router.push('/settings/usage'),
+      onPress: () => pushSettingsChildRoute('/settings/usage'),
     },
     {
       key: 'preferences',
       title: t('settings.preferences'),
       detail: t('settings.preferencesDescription'),
+      searchTerms: [
+        t('preferences.identity'),
+        t('preferences.generation'),
+        t('preferences.generationSubtitle'),
+        t('preferences.interaction'),
+        t('preferences.agentWorkflow'),
+        t('chat.temperature'),
+        t('chat.maxTokens'),
+        t('settings.haptics'),
+      ],
       icon: 'preferences-sliders',
-      onPress: () => router.push('/settings/preferences'),
+      onPress: () => pushSettingsChildRoute('/settings/preferences'),
     },
     {
       key: 'memory',
       title: t('settings.memory'),
       detail: `${settings.memoryEnabled ? t('settings.enabledState') : t('settings.disabledState')} · ${t('settings.memoryDescription')}`,
+      searchTerms: [
+        t('settings.longMemory'),
+        t('contextPanel.memoryReviewQueue'),
+        t('contextPanel.pendingMemory'),
+        t('contextPanel.confirmPendingMemories', { count: 0 }),
+        t('contextPanel.memoryFilters'),
+      ],
       icon: 'memory-brain',
       active: settings.memoryEnabled,
-      onPress: () => router.push('/settings/memory'),
+      onPress: () => pushSettingsChildRoute('/settings/memory'),
     },
     {
       key: 'knowledge',
       title: t('settings.knowledge'),
       detail: `${settings.knowledgeEnabled ? t('settings.enabledState') : t('settings.disabledState')} · ${t('settings.knowledgeDescription')}`,
+      searchTerms: [
+        t('settings.localKnowledge'),
+        t('contextPanel.importKnowledgeFile'),
+        t('contextPanel.pasteTextKnowledge'),
+        t('contextPanel.knowledgeRecoveryTitle'),
+      ],
       icon: 'knowledge-database',
       active: settings.knowledgeEnabled,
-      onPress: () => router.push('/settings/knowledge'),
+      onPress: () => pushSettingsChildRoute('/settings/knowledge'),
     },
     {
       key: 'context',
       title: t('settings.context'),
       detail: t('settings.contextDescription'),
+      searchTerms: [
+        t('contextPanel.ragMode'),
+        t('settings.webSearch'),
+        t('contextPanel.searchApi'),
+        t('contextPanel.embeddingStrategy'),
+        t('contextPanel.runSelfTest'),
+      ],
       icon: 'context-globe',
-      onPress: () => router.push('/settings/context'),
+      onPress: () => pushSettingsChildRoute('/settings/context'),
     },
     {
       key: 'skills',
       title: t('settings.skills'),
       detail: t('settings.skillsDescription'),
+      searchTerms: [
+        t('skills.systemPrompt'),
+        t('skills.model'),
+        t('skills.temperature'),
+        t('skills.knowledgeSources'),
+        t('skills.workflowTemplates'),
+      ],
       icon: 'skills-sparkles',
       active: settings.skillsEnabled ?? true,
-      onPress: () => router.push('/settings/skills'),
+      onPress: () => pushSettingsChildRoute('/settings/skills'),
     },
     {
       key: 'mcp',
       title: t('settings.mcp'),
       detail: t('settings.mcpDescription'),
+      searchTerms: [
+        t('mcp.addServer'),
+        t('mcp.toolsTitle', { count: 0 }),
+        t('mcp.promptsTitle', { count: 0 }),
+        t('mcp.resourcesTitle', { count: 0 }),
+        t('mcp.presetsTitle'),
+      ],
       icon: 'mcp-network',
       active: settings.mcpEnabled ?? true,
-      onPress: () => router.push('/settings/mcp'),
+      onPress: () => pushSettingsChildRoute('/settings/mcp'),
     },
   ]
   const systemControlEntries: SettingsControlEntry[] = [
@@ -410,6 +543,13 @@ export function SettingsScreenContent({ active = true, shellNavigation = false, 
       key: 'appearance',
       title: t('settings.quickAppearanceLanguage'),
       detail: appearanceSummary,
+      searchTerms: [
+        t('settings.themeFamily'),
+        t('settings.themeMode'),
+        t('settings.themeAccent'),
+        t('settings.themeAccentCustom'),
+        t('settings.language'),
+      ],
       icon: 'preferences-sliders',
       active: expandedGroups.appearance,
       onPress: () => activateSystemPanel('appearance'),
@@ -418,6 +558,11 @@ export function SettingsScreenContent({ active = true, shellNavigation = false, 
       key: 'data',
       title: t('settings.importExport'),
       detail: t('settings.importExportSummary'),
+      searchTerms: [
+        t('settings.exportJson'),
+        t('settings.exportTavernPrivateJson'),
+        t('settings.importJson'),
+      ],
       icon: 'download',
       active: expandedGroups.data,
       onPress: () => activateSystemPanel('data'),
@@ -425,7 +570,13 @@ export function SettingsScreenContent({ active = true, shellNavigation = false, 
     {
       key: 'diagnostics',
       title: t('settings.runtimeDiagnostics'),
-      detail: advancedSummary || t('settings.runtimeDiagnosticsSubtitle'),
+      detail: diagnosticsSummary,
+      searchTerms: [
+        t('settings.runtimeDiagnosticDetails'),
+        t('settings.runtimeRepairTasks'),
+        t('settings.runtimeLogFile'),
+        t('settings.runtimeDiagnosticsRefresh'),
+      ],
       icon: 'activity',
       active: expandedGroups.diagnostics,
       tone: diagnostics?.timeline.repairPlan.taskCount ? 'warning' : 'default',
@@ -435,6 +586,16 @@ export function SettingsScreenContent({ active = true, shellNavigation = false, 
       key: 'governance',
       title: t('settings.upstreamGovernance'),
       detail: t('settings.upstreamGovernanceSubtitle'),
+      searchTerms: [
+        t('settings.governanceRouting'),
+        t('settings.transportMode'),
+        t('settings.remoteCompactMode'),
+        t('settings.proxyBaseUrl'),
+        t('settings.observabilitySinkSettings'),
+        t('settings.governanceRuntimeLimits'),
+        t('settings.governanceRequestShaping'),
+        t('settings.governanceAccessAndLogs'),
+      ],
       icon: 'shield',
       active: expandedGroups.governance,
       onPress: () => activateSystemPanel('governance'),
@@ -443,6 +604,12 @@ export function SettingsScreenContent({ active = true, shellNavigation = false, 
       key: 'updates',
       title: t('settings.updates'),
       detail: `${version.appVersion} (${version.buildVersion})`,
+      searchTerms: [
+        t('settings.checkApk'),
+        t('settings.autoCheck'),
+        t('settings.appVersion'),
+        t('settings.lastCheck'),
+      ],
       icon: 'device',
       active: expandedGroups.updates,
       onPress: () => activateSystemPanel('updates'),
@@ -451,6 +618,10 @@ export function SettingsScreenContent({ active = true, shellNavigation = false, 
       key: 'advanced',
       title: t('settings.advancedInterfaceSettings'),
       detail: advancedSummary || t('settings.upstreamGovernanceSubtitle'),
+      searchTerms: [
+        t('settings.systemStatusNotifications'),
+        t('settings.systemStatusNotificationsDescription'),
+      ],
       icon: 'settings-sliders',
       active: expandedGroups.advanced && !expandedGroups.diagnostics && !expandedGroups.governance && !expandedGroups.updates && !expandedGroups.danger,
       onPress: () => activateSystemPanel('advanced'),
@@ -465,39 +636,50 @@ export function SettingsScreenContent({ active = true, shellNavigation = false, 
       onPress: () => activateSystemPanel('danger'),
     },
   ]
-  const normalizedSettingsSearch = settingsSearch.trim().toLocaleLowerCase()
-  const visibleControlEntries = (controlView === 'ai' ? aiControlEntries : controlView === 'system' ? systemControlEntries : []).filter((entry) => {
-    if (!normalizedSettingsSearch) return true
-    return `${entry.title} ${entry.detail}`.toLocaleLowerCase().includes(normalizedSettingsSearch)
-  })
-  const focusedControlEntries = controlView === 'system' && activeSystemPanel
+  const normalizedSettingsSearch = normalizeSettingsControlSearch(settingsSearch)
+  const aiSearchMatches = aiControlEntries.filter((entry) => matchesSettingsControlSearch(entry, normalizedSettingsSearch))
+  const systemSearchMatches = systemControlEntries.filter((entry) => matchesSettingsControlSearch(entry, normalizedSettingsSearch))
+  const visibleControlEntries = controlView === 'ai' ? aiSearchMatches : controlView === 'system' ? systemSearchMatches : []
+  const focusedControlEntries = normalizedSettingsSearch
+    ? visibleControlEntries
+    : controlView === 'system' && activeSystemPanel
     ? visibleControlEntries.filter((entry) => entry.key === activeSystemPanel)
     : visibleControlEntries
   const SettingsOverviewExperience = colors.ui.experience.navigation === 'route'
     ? LimeRoadSettingsOverviewExperience
-    : colors.ui.experience.navigation === 'document'
-      ? MarkdownSettingsOverviewExperience
-      : MinimalSettingsOverviewExperience
+      : colors.ui.experience.navigation === 'document'
+        ? MarkdownSettingsOverviewExperience
+        : MinimalSettingsOverviewExperience
 
   useEffect(() => {
-    if (!active) return
-    scrollRef.current?.scrollTo({ y: 0, animated: false })
-  }, [active])
+    if (!normalizedSettingsSearch || !controlView) return
+    if (controlView === 'ai' && !aiSearchMatches.length && systemSearchMatches.length) {
+      setControlView('system')
+      return
+    }
+    if (controlView === 'system' && !systemSearchMatches.length && aiSearchMatches.length) {
+      setControlView('ai')
+    }
+  }, [aiSearchMatches.length, controlView, normalizedSettingsSearch, systemSearchMatches.length])
 
   useEffect(() => {
-    if (!active || pathname !== '/settings') return
-    requestAnimationFrame(() => {
-      scrollRef.current?.scrollTo({ y: 0, animated: false })
-    })
-  }, [active, pathname])
-
-  useEffect(() => {
-    if (!active) return
+    if (!expandedGroups.advanced) return
     void refreshSystemStatusNotificationStatus()
-  }, [active, settings.systemStatusNotificationsEnabled])
+  }, [expandedGroups.advanced, settings.systemStatusNotificationsEnabled])
 
   useEffect(() => {
-    if (!active) return
+    if (!expandedGovernanceGroups.accessRules && !expandedGroups.diagnostics) return
+    let cancelled = false
+    void import('@/services/runtimeLog').then(({ getRuntimeLogPath }) => {
+      if (!cancelled) setRuntimeLogPath(getRuntimeLogPath())
+    })
+    return () => {
+      cancelled = true
+    }
+  }, [expandedGovernanceGroups.accessRules, expandedGroups.diagnostics])
+
+  useEffect(() => {
+    if (!expandedGroups.governance || !expandedGovernanceGroups.observability) return
     let cancelled = false
     void getObservabilitySinkApiKey().then((apiKey) => {
       if (!cancelled) setObservabilitySinkApiKeyDraft(apiKey ?? '')
@@ -505,12 +687,7 @@ export function SettingsScreenContent({ active = true, shellNavigation = false, 
     return () => {
       cancelled = true
     }
-  }, [active, getObservabilitySinkApiKey])
-
-  useEffect(() => {
-    if (!active || !expandedGroups.diagnostics || diagnostics || refreshingDiagnostics) return
-    void refreshRuntimeDiagnostics()
-  }, [active, expandedGroups.diagnostics, diagnostics, refreshingDiagnostics])
+  }, [expandedGovernanceGroups.observability, expandedGroups.governance, getObservabilitySinkApiKey])
 
   async function exportJson(options: PortableDataExportOptions = {}) {
     const result = await exportPortableDataToJsonFile(options)
@@ -543,7 +720,7 @@ export function SettingsScreenContent({ active = true, shellNavigation = false, 
         cancelLabel: t('settings.reviewImportedMemoriesLater'),
         tone: 'mint',
       })
-      if (reviewNow) router.push('/settings/memory?focus=review')
+      if (reviewNow) pushSettingsChildRoute('/settings/memory', { focus: 'review' })
       return
     }
     dialog.notice({
@@ -573,8 +750,16 @@ export function SettingsScreenContent({ active = true, shellNavigation = false, 
       tone: 'danger',
       confirmLabel: t('settings.clear'),
       cancelLabel: t('common.cancel'),
-    }).then((confirmed) => {
-      if (confirmed) clearChats()
+    }).then(async (confirmed) => {
+      if (!confirmed) return
+      const { useChatStore } = await import('@/store/chatStore')
+      useChatStore.getState().clearAll()
+    }).catch((error) => {
+      dialog.toast({
+        title: t('settings.clearChats'),
+        message: error instanceof Error ? error.message : String(error),
+        tone: 'danger',
+      })
     })
   }
 
@@ -637,7 +822,9 @@ export function SettingsScreenContent({ active = true, shellNavigation = false, 
   function dismissApkUpdateFeedback() {
     cancelApkUpdateFeedbackClear()
     dialog.dismissBanner(APK_UPDATE_BANNER_ID)
-    void clearAndroidStatusNotification()
+    void loadAndroidStatusNotification()
+      .then(({ clearAndroidStatusNotification }) => clearAndroidStatusNotification())
+      .catch(() => undefined)
   }
 
   function publishApkUpdateProgress(
@@ -658,18 +845,20 @@ export function SettingsScreenContent({ active = true, shellNavigation = false, 
       message: detail,
       tone: stage === 'checking' ? 'default' : stage === 'opening-installer' ? 'mint' : 'amber',
     })
-    void updateAndroidStatusNotification({
-      state: 'running',
-      title,
-      message: detail,
-      shortText: determinate ? `${percent}%` : title,
-      deepLink: 'islemind://settings',
-      progress: determinate ? percent / 100 : 0,
-      indeterminate: !determinate,
-      ongoing: true,
-      requestPromotedOngoing: stage !== 'checking',
-      foregroundService: stage !== 'checking',
-    })
+    void loadAndroidStatusNotification()
+      .then(({ updateAndroidStatusNotification }) => updateAndroidStatusNotification({
+        state: 'running',
+        title,
+        message: detail,
+        shortText: determinate ? `${percent}%` : title,
+        deepLink: 'islemind://settings',
+        progress: determinate ? percent / 100 : 0,
+        indeterminate: !determinate,
+        ongoing: true,
+        requestPromotedOngoing: stage !== 'checking',
+        foregroundService: stage !== 'checking',
+      }, { enabled: settings.systemStatusNotificationsEnabled === true }))
+      .catch(() => undefined)
   }
 
   function publishApkUpdateTerminalFeedback(options: {
@@ -685,22 +874,26 @@ export function SettingsScreenContent({ active = true, shellNavigation = false, 
       message: options.message,
       tone: options.tone,
     })
-    void updateAndroidStatusNotification({
-      state: options.tone === 'danger' ? 'error' : 'completed',
-      title: options.title,
-      message: options.message,
-      shortText: options.title,
-      deepLink: 'islemind://settings',
-      progress: options.tone === 'mint' ? 1 : undefined,
-      indeterminate: false,
-      ongoing: false,
-      requestPromotedOngoing: false,
-      foregroundService: options.installFlow === true,
-    })
+    void loadAndroidStatusNotification()
+      .then(({ updateAndroidStatusNotification }) => updateAndroidStatusNotification({
+        state: options.tone === 'danger' ? 'error' : 'completed',
+        title: options.title,
+        message: options.message,
+        shortText: options.title,
+        deepLink: 'islemind://settings',
+        progress: options.tone === 'mint' ? 1 : undefined,
+        indeterminate: false,
+        ongoing: false,
+        requestPromotedOngoing: false,
+        foregroundService: options.installFlow === true,
+      }, { enabled: settings.systemStatusNotificationsEnabled === true }))
+      .catch(() => undefined)
     apkUpdateFeedbackClearTimerRef.current = setTimeout(() => {
       apkUpdateFeedbackClearTimerRef.current = null
       dialog.dismissBanner(APK_UPDATE_BANNER_ID)
-      void clearAndroidStatusNotification()
+      void loadAndroidStatusNotification()
+        .then(({ clearAndroidStatusNotification }) => clearAndroidStatusNotification())
+        .catch(() => undefined)
     }, APK_UPDATE_FEEDBACK_CLEAR_DELAY_MS)
   }
 
@@ -711,8 +904,9 @@ export function SettingsScreenContent({ active = true, shellNavigation = false, 
     setApkInstallProgress(null)
     publishApkUpdateProgress('checking')
     try {
+      const { checkLatestApkRelease, downloadAndOpenApkInstaller } = await import('@/services/appUpdates')
       const result = await checkLatestApkRelease()
-      if (shouldRecordApkUpdateCheck(result)) {
+      if (result.status === 'available' || result.status === 'unavailable') {
         updateSettings({ lastApkUpdateCheckAt: Date.now() })
       }
       if (result.status !== 'available' || !result.release) {
@@ -775,7 +969,7 @@ export function SettingsScreenContent({ active = true, shellNavigation = false, 
         release.versionCode ? { label: t('settings.apkBuildCode', { code: release.versionCode }) } : null,
         release.abi ? { label: t('settings.apkArchitecture', { abi: release.abi }) } : null,
         variantLabel ? { label: variantLabel } : null,
-        release.sizeBytes ? { label: t('settings.apkSize', { size: formatApkSizeBytes(release.sizeBytes) }) } : null,
+        release.sizeBytes ? { label: t('settings.apkSize', { size: formatSettingsApkSizeBytes(release.sizeBytes, t('updates.unknown')) }) } : null,
         { label: release.tagName || release.name },
       ].filter((chip): chip is { label: string; tone?: 'mint' } => Boolean(chip)),
     })
@@ -791,13 +985,16 @@ export function SettingsScreenContent({ active = true, shellNavigation = false, 
     const next = settings.systemStatusNotificationsEnabled !== true
     if (!next) {
       updateSettings({ systemStatusNotificationsEnabled: false })
-      void clearAndroidStatusNotification()
+      void loadAndroidStatusNotification()
+        .then(({ clearAndroidStatusNotification }) => clearAndroidStatusNotification())
+        .catch(() => undefined)
       void refreshSystemStatusNotificationStatus()
       dialog.toast({ title: t('settings.systemStatusNotificationsOff'), tone: 'amber' })
       return
     }
 
-    if (!androidStatusNotificationsAvailable()) {
+    const androidStatusNotification = await loadAndroidStatusNotification().catch(() => null)
+    if (!androidStatusNotification || !androidStatusNotification.androidStatusNotificationsAvailable()) {
       updateSettings({ systemStatusNotificationsEnabled: false })
       void refreshSystemStatusNotificationStatus()
       dialog.toast({
@@ -808,7 +1005,7 @@ export function SettingsScreenContent({ active = true, shellNavigation = false, 
       return
     }
 
-    const permission = await requestAndroidStatusNotificationPermission({
+    const permission = await androidStatusNotification.requestAndroidStatusNotificationPermission({
       title: t('settings.systemStatusNotificationsPermissionTitle'),
       message: t('settings.systemStatusNotificationsPermissionMessage'),
       buttonPositive: t('common.confirm'),
@@ -831,7 +1028,10 @@ export function SettingsScreenContent({ active = true, shellNavigation = false, 
   }
 
   async function openSystemStatusNotificationSettings(target: AndroidStatusNotificationSettingsTarget) {
-    const result = await openAndroidStatusNotificationSettings(target)
+    const androidStatusNotification = await loadAndroidStatusNotification().catch(() => null)
+    const result = androidStatusNotification
+      ? await androidStatusNotification.openAndroidStatusNotificationSettings(target)
+      : { opened: false, target, reason: 'unavailable' as const }
     if (!result.opened) {
       dialog.toast({
         title: t('settings.systemStatusNotificationsSettingsUnavailable'),
@@ -852,7 +1052,10 @@ export function SettingsScreenContent({ active = true, shellNavigation = false, 
   }
 
   async function refreshSystemStatusNotificationStatus() {
-    const status = await getAndroidStatusNotificationPermissionStatus()
+    const androidStatusNotification = await loadAndroidStatusNotification().catch(() => null)
+    const status = androidStatusNotification
+      ? await androidStatusNotification.getAndroidStatusNotificationPermissionStatus()
+      : { available: false, granted: false, backgroundReliable: false, reason: 'unavailable' as const }
     setSystemStatusNotificationStatus(status)
     return status
   }
@@ -884,19 +1087,8 @@ export function SettingsScreenContent({ active = true, shellNavigation = false, 
 
   function toggleControlView(nextView: SettingsControlView) {
     revealedSystemPanelRef.current = null
-    if (controlView === nextView) {
-      setControlView(null)
-      setExpandedGroups({
-        appearance: false,
-        data: false,
-        advanced: false,
-        diagnostics: false,
-        governance: false,
-        updates: false,
-        danger: false,
-      })
-      return
-    }
+    // A tab is a stable navigation state, not a collapsible toggle.
+    // Keeping the active tab mounted preserves discoverability and tab semantics.
     setControlView(nextView)
   }
 
@@ -939,22 +1131,27 @@ export function SettingsScreenContent({ active = true, shellNavigation = false, 
         })
         return
       case 'retry-chat':
-        openRuntimeRepairChat(task)
+        void openRuntimeRepairChat(task)
         return
     }
   }
 
   function openRuntimeRepairSettingsRoute(pathname: RuntimeRepairSettingsRoute, task: RuntimeRepairTask) {
-    router.push({ pathname, params: runtimeRepairRouteParams(task) })
+    pushSettingsChildRoute(pathname, runtimeRepairRouteParams(task))
   }
 
-  function openRuntimeRepairChat(task: RuntimeRepairTask) {
+  async function openRuntimeRepairChat(task: RuntimeRepairTask) {
     const conversationId = task.target.conversationId
-    const { conversations, select } = useChatStore.getState()
-    if (conversationId && conversations.some((conversation) => conversation.id === conversationId)) {
-      select(conversationId)
-      router.push({ pathname: '/chat/[id]', params: { id: conversationId, ...runtimeRepairRouteParams(task) } })
-      return
+    try {
+      const { useChatStore } = await import('@/store/chatStore')
+      const { conversations, select } = useChatStore.getState()
+      if (conversationId && conversations.some((conversation) => conversation.id === conversationId)) {
+        select(conversationId)
+        router.push({ pathname: '/chat/[id]', params: { id: conversationId, returnTo: 'settings', ...runtimeRepairRouteParams(task) } })
+        return
+      }
+    } catch {
+      // The same unavailable state handles a deferred module load failure.
     }
     router.push('/')
     dialog.toast({
@@ -1010,10 +1207,14 @@ export function SettingsScreenContent({ active = true, shellNavigation = false, 
   }
 
   async function refreshRuntimeDiagnostics() {
+    if (diagnosticsRefreshInFlightRef.current) return
+    diagnosticsRefreshInFlightRef.current = true
     setRefreshingDiagnostics(true)
     try {
+      const { emitPluginManifestCatalogSnapshotEvent, loadPluginManifestCatalogSnapshot } = await import('@/services/pluginManifest')
       const catalog = await loadPluginManifestCatalogSnapshot()
       await emitPluginManifestCatalogSnapshotEvent(catalog, 'settings-diagnostics-refresh')
+      const { buildRuntimeDiagnosticsSummary } = await import('@/services/runtimeDiagnostics')
       const summary = await buildRuntimeDiagnosticsSummary({ providers, settings })
       setDiagnostics(summary)
       setPluginCatalog(catalog)
@@ -1025,11 +1226,16 @@ export function SettingsScreenContent({ active = true, shellNavigation = false, 
       })
     } finally {
       setRefreshingDiagnostics(false)
+      diagnosticsRefreshInFlightRef.current = false
     }
   }
 
   async function copyRuntimeLogTail() {
     try {
+      const [{ readRuntimeLogText }, Clipboard] = await Promise.all([
+        import('@/services/runtimeLog'),
+        import('expo-clipboard'),
+      ])
       const text = await readRuntimeLogText()
       await Clipboard.setStringAsync(text || t('settings.runtimeLogEmpty'))
       dialog.toast({ title: t('settings.runtimeLogCopied'), tone: 'mint' })
@@ -1044,6 +1250,10 @@ export function SettingsScreenContent({ active = true, shellNavigation = false, 
 
   async function shareRuntimeLogFile() {
     try {
+      const [{ getRuntimeLogInfo }, Sharing] = await Promise.all([
+        import('@/services/runtimeLog'),
+        import('expo-sharing'),
+      ])
       const logInfo = await getRuntimeLogInfo()
       if (!logInfo.exists || logInfo.size <= 0) {
         await copyRuntimeLogTail()
@@ -1065,6 +1275,7 @@ export function SettingsScreenContent({ active = true, shellNavigation = false, 
 
   async function clearRuntimeLogFile() {
     try {
+      const { clearRuntimeLog } = await import('@/services/runtimeLog')
       await clearRuntimeLog()
       await refreshRuntimeDiagnostics()
       dialog.toast({ title: t('settings.runtimeLogCleared'), tone: 'amber' })
@@ -1124,10 +1335,10 @@ export function SettingsScreenContent({ active = true, shellNavigation = false, 
               autoCapitalize="none"
               autoCorrect={false}
               returnKeyType="search"
-              style={{ flex: 1, minWidth: 0, minHeight: 42, padding: 0, color: colors.text, fontSize: 13, lineHeight: 18, fontWeight: '700', includeFontPadding: false }}
+              style={{ flex: 1, minWidth: 0, minHeight: ISLE_MIN_TOUCH_TARGET, padding: 0, color: colors.text, fontSize: 13, lineHeight: 18, fontWeight: '700', includeFontPadding: false }}
             />
             {settingsSearch ? (
-              <IslePressable haptic accessibilityLabel={t('common.clearSearch')} onPress={() => setSettingsSearch('')} style={{ width: 32, height: 32, borderRadius: 8, alignItems: 'center', justifyContent: 'center' }}>
+              <IslePressable haptic accessibilityRole="button" accessibilityLabel={t('common.clearSearch')} onPress={() => setSettingsSearch('')} style={{ width: 44, height: 44, borderRadius: 8, alignItems: 'center', justifyContent: 'center' }}>
                 <AppIcon name="close" color={colors.textSecondary} size={15} />
               </IslePressable>
             ) : null}
@@ -1345,38 +1556,49 @@ export function SettingsScreenContent({ active = true, shellNavigation = false, 
             transition={foldoutMotion}
             style={foldoutBodyStyle}
           >
-            <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8 }}>
-              <IsleChip tone={diagnostics?.providers.degraded ? 'amber' : 'mint'}>{diagnostics ? t('settings.runtimeDiagnosticsReady') : t('settings.runtimeDiagnosticsLoading')}</IsleChip>
-            </View>
-            <IsleDisclosure
-              title={t('settings.runtimeDiagnosticDetails')}
-              summary={t('settings.runtimeDiagnosticDetailsSummary', { count: diagnosticRows.length, attention: diagnosticAttentionRows })}
-              expanded={diagnosticDetailsVisible}
-              onPress={() => setDiagnosticDetailsOpen((value) => !value)}
-            />
-            <AnimatePresence>
-            {diagnosticDetailsVisible ? (
-              <MotiView
-                key="runtime-diagnostic-details-foldout"
-                from={motion === 'full' ? { opacity: 0, translateY: 8 } : { opacity: 0 }}
-                animate={{ opacity: 1, translateY: 0 }}
-                exit={motion === 'full' ? { opacity: 0, translateY: -4 } : { opacity: 0 }}
-                transition={foldoutMotion}
-                style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8 }}
-              >
-                {diagnosticRows.map((row) => (
-                  <DiagnosticPill key={row.key} label={row.label} value={row.value} tone={row.tone} />
-                ))}
-              </MotiView>
-            ) : null}
-            </AnimatePresence>
+            {diagnostics ? (
+              <>
+                <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8 }}>
+                  <IsleChip tone={diagnostics.providers.degraded ? 'amber' : 'mint'}>
+                    {t('settings.runtimeDiagnosticsReady')}
+                  </IsleChip>
+                </View>
+                <IsleDisclosure
+                  title={t('settings.runtimeDiagnosticDetails')}
+                  summary={t('settings.runtimeDiagnosticsReady')}
+                  expanded={diagnosticDetailsOpen}
+                  onPress={() => setDiagnosticDetailsOpen((open) => !open)}
+                />
+                {diagnosticDetailsOpen ? (
+                  <RuntimeDiagnosticsDetails
+                    diagnostics={diagnostics}
+                    pluginCatalog={pluginCatalog}
+                  />
+                ) : null}
+              </>
+            ) : (
+              <View style={foldoutCardStyle(8)}>
+                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+                  <IsleChip tone={refreshingDiagnostics ? 'amber' : 'default'}>
+                    {refreshingDiagnostics ? t('settings.runtimeDiagnosticsRefreshing') : t('settings.runtimeDiagnosticsIdle')}
+                  </IsleChip>
+                </View>
+                <IsleButton
+                  label={refreshingDiagnostics ? t('settings.runtimeDiagnosticsRefreshing') : t('settings.runtimeDiagnosticsRun')}
+                  compact
+                  disabled={refreshingDiagnostics}
+                  icon={<AppIcon name="activity" color={colors.ui.control.primaryForeground} size={15} />}
+                  onPress={() => void refreshRuntimeDiagnostics()}
+                />
+              </View>
+            )}
             {diagnostics?.timeline.repairPlan.tasks.length ? (
               <RuntimeRepairTaskActions repairPlan={diagnostics.timeline.repairPlan} onOpenTask={openRuntimeRepairTask} />
             ) : null}
             <View style={foldoutCardStyle(7)}>
               <Text style={{ color: colors.text, fontSize: 13, fontWeight: '800' }}>{t('settings.runtimeLogFile')}</Text>
               <Text selectable numberOfLines={2} style={{ color: colors.textSecondary, fontSize: 11, lineHeight: 16, fontWeight: '800' }}>
-                {diagnostics?.log.path ?? getRuntimeLogPath()}
+                {diagnostics?.log.path ?? runtimeLogPath ?? '—'}
               </Text>
               <Text style={{ color: colors.textTertiary, fontSize: 11, lineHeight: 16, fontWeight: '800' }}>
                 {t('settings.runtimeLogState', { size: diagnostics?.log.size ?? 0, max: diagnostics?.log.maxBytes ?? settings.runtimeLogMaxBytes ?? 1048576 })}
@@ -1435,24 +1657,22 @@ export function SettingsScreenContent({ active = true, shellNavigation = false, 
               onChange={(remoteCompactMode) => updateSettings({ remoteCompactMode })}
             />
             <View style={pairedFieldRowStyle}>
-              <IsleField
+              <CommittedSettingsField
                 label={t('settings.remoteCompactThreshold')}
                 note={t('settings.remoteCompactThresholdNote')}
-                inputProps={{
-                  value: String(settings.remoteCompactThreshold ?? 0.8),
-                  onChangeText: updateRemoteCompactThreshold,
-                  keyboardType: 'decimal-pad',
-                }}
+                value={String(settings.remoteCompactThreshold ?? 0.8)}
+                normalize={normalizeRemoteCompactThresholdDraft}
+                onCommit={updateRemoteCompactThreshold}
+                inputProps={{ keyboardType: 'decimal-pad' }}
                 style={pairedFieldStyle}
               />
-              <IsleField
+              <CommittedSettingsField
                 label={t('settings.remoteCompactThresholdTokens')}
                 note={t('settings.remoteCompactThresholdTokensNote')}
-                inputProps={{
-                  value: String(settings.remoteCompactThresholdTokens ?? 200000),
-                  onChangeText: (value) => updatePositiveInteger('remoteCompactThresholdTokens', value, 200000, 1024, 4000000),
-                  keyboardType: 'number-pad',
-                }}
+                value={String(settings.remoteCompactThresholdTokens ?? 200000)}
+                normalize={(value) => normalizeBoundedIntegerDraft(value, 200000, 1024, 4000000)}
+                onCommit={(value) => updatePositiveInteger('remoteCompactThresholdTokens', value, 200000, 1024, 4000000)}
+                inputProps={{ keyboardType: 'number-pad' }}
                 style={pairedFieldStyle}
               />
             </View>
@@ -1484,12 +1704,13 @@ export function SettingsScreenContent({ active = true, shellNavigation = false, 
               value={settings.proxyMode ?? 'off'}
               onChange={(proxyMode) => updateSettings({ proxyMode })}
             />
-            <IsleField
+            <CommittedSettingsField
               label={t('settings.proxyBaseUrl')}
               note={t('settings.proxyBaseUrlNote')}
+              value={settings.proxyBaseUrl ?? ''}
+              normalize={normalizeTrimmedDraft}
+              onCommit={(proxyBaseUrl) => updateSettings({ proxyBaseUrl })}
               inputProps={{
-                value: settings.proxyBaseUrl ?? '',
-                onChangeText: (proxyBaseUrl) => updateSettings({ proxyBaseUrl }),
                 placeholder: 'https://proxy.example/upstream',
                 autoCapitalize: 'none',
                 autoCorrect: false,
@@ -1527,35 +1748,32 @@ export function SettingsScreenContent({ active = true, shellNavigation = false, 
               {t('preferences.agentWorkflowSubtitle')}
             </Text>
             <View style={pairedFieldRowStyle}>
-              <IsleField
+              <CommittedSettingsField
                 label={t('preferences.agentWorkflowMaxSteps')}
                 note={t('preferences.agentWorkflowMaxStepsNote')}
-                inputProps={{
-                  value: String(settings.agentWorkflowMaxSteps ?? 3),
-                  onChangeText: (value) => updatePositiveInteger('agentWorkflowMaxSteps', value, 3, 1, 8),
-                  keyboardType: 'number-pad',
-                }}
+                value={String(settings.agentWorkflowMaxSteps ?? 3)}
+                normalize={(value) => normalizeBoundedIntegerDraft(value, 3, 1, 8)}
+                onCommit={(value) => updatePositiveInteger('agentWorkflowMaxSteps', value, 3, 1, 8)}
+                inputProps={{ keyboardType: 'number-pad' }}
                 style={pairedFieldStyle}
               />
-              <IsleField
+              <CommittedSettingsField
                 label={t('preferences.agentWorkflowMaxToolCalls')}
                 note={t('preferences.agentWorkflowMaxToolCallsNote')}
-                inputProps={{
-                  value: String(settings.agentWorkflowMaxToolCallsPerStep ?? 1),
-                  onChangeText: (value) => updatePositiveInteger('agentWorkflowMaxToolCallsPerStep', value, 1, 1, 3),
-                  keyboardType: 'number-pad',
-                }}
+                value={String(settings.agentWorkflowMaxToolCallsPerStep ?? 1)}
+                normalize={(value) => normalizeBoundedIntegerDraft(value, 1, 1, 3)}
+                onCommit={(value) => updatePositiveInteger('agentWorkflowMaxToolCallsPerStep', value, 1, 1, 3)}
+                inputProps={{ keyboardType: 'number-pad' }}
                 style={pairedFieldStyle}
               />
             </View>
-            <IsleField
+            <CommittedSettingsField
               label={t('preferences.agentWorkflowOutputLimit')}
               note={t('preferences.agentWorkflowOutputLimitNote')}
-              inputProps={{
-                value: String(settings.agentWorkflowOutputCharLimit ?? 4800),
-                onChangeText: (value) => updatePositiveInteger('agentWorkflowOutputCharLimit', value, 4800, 512, 12000),
-                keyboardType: 'number-pad',
-              }}
+              value={String(settings.agentWorkflowOutputCharLimit ?? 4800)}
+              normalize={(value) => normalizeBoundedIntegerDraft(value, 4800, 512, 12000)}
+              onCommit={(value) => updatePositiveInteger('agentWorkflowOutputCharLimit', value, 4800, 512, 12000)}
+              inputProps={{ keyboardType: 'number-pad' }}
             />
             <View style={{ gap: 10 }}>
               <IsleToggle
@@ -1613,12 +1831,13 @@ export function SettingsScreenContent({ active = true, shellNavigation = false, 
               value={settings.observabilitySinkTarget ?? 'opentelemetry'}
               onChange={(observabilitySinkTarget) => updateSettings({ observabilitySinkTarget })}
             />
-            <IsleField
+            <CommittedSettingsField
               label={t('settings.observabilitySinkEndpointUrl')}
               note={t('settings.observabilitySinkEndpointUrlNote')}
+              value={settings.observabilitySinkEndpointUrl ?? ''}
+              normalize={normalizeTrimmedDraft}
+              onCommit={(observabilitySinkEndpointUrl) => updateSettings({ observabilitySinkEndpointUrl })}
               inputProps={{
-                value: settings.observabilitySinkEndpointUrl ?? '',
-                onChangeText: (observabilitySinkEndpointUrl) => updateSettings({ observabilitySinkEndpointUrl }),
                 placeholder: 'https://otel.example/v1/traces',
                 autoCapitalize: 'none',
                 autoCorrect: false,
@@ -1631,22 +1850,20 @@ export function SettingsScreenContent({ active = true, shellNavigation = false, 
               onChange={(observabilitySinkHighFrequencyExportMode) => updateSettings({ observabilitySinkHighFrequencyExportMode })}
             />
             <View style={pairedFieldRowStyle}>
-              <IsleField
+              <CommittedSettingsField
                 label={t('settings.observabilitySinkAttributeLimit')}
-                inputProps={{
-                  value: String(settings.observabilitySinkAttributeLimit ?? 48),
-                  onChangeText: (value) => updatePositiveInteger('observabilitySinkAttributeLimit', value, 48, 1, 64),
-                  keyboardType: 'number-pad',
-                }}
+                value={String(settings.observabilitySinkAttributeLimit ?? 48)}
+                normalize={(value) => normalizeBoundedIntegerDraft(value, 48, 1, 64)}
+                onCommit={(value) => updatePositiveInteger('observabilitySinkAttributeLimit', value, 48, 1, 64)}
+                inputProps={{ keyboardType: 'number-pad' }}
                 style={pairedFieldStyle}
               />
-              <IsleField
+              <CommittedSettingsField
                 label={t('settings.observabilitySinkAttributeStringLimit')}
-                inputProps={{
-                  value: String(settings.observabilitySinkAttributeStringLimit ?? 160),
-                  onChangeText: (value) => updatePositiveInteger('observabilitySinkAttributeStringLimit', value, 160, 1, 512),
-                  keyboardType: 'number-pad',
-                }}
+                value={String(settings.observabilitySinkAttributeStringLimit ?? 160)}
+                normalize={(value) => normalizeBoundedIntegerDraft(value, 160, 1, 512)}
+                onCommit={(value) => updatePositiveInteger('observabilitySinkAttributeStringLimit', value, 160, 1, 512)}
+                inputProps={{ keyboardType: 'number-pad' }}
                 style={pairedFieldStyle}
               />
             </View>
@@ -1721,22 +1938,20 @@ export function SettingsScreenContent({ active = true, shellNavigation = false, 
             style={{ gap: 10 }}
           >
             <View style={pairedFieldRowStyle}>
-              <IsleField
+              <CommittedSettingsField
                 label={t('settings.sessionConcurrencyLimit')}
-                inputProps={{
-                  value: String(settings.sessionConcurrencyLimit ?? 1),
-                  onChangeText: (value) => updatePositiveInteger('sessionConcurrencyLimit', value, 1, 1, 8),
-                  keyboardType: 'number-pad',
-                }}
+                value={String(settings.sessionConcurrencyLimit ?? 1)}
+                normalize={(value) => normalizeBoundedIntegerDraft(value, 1, 1, 8)}
+                onCommit={(value) => updatePositiveInteger('sessionConcurrencyLimit', value, 1, 1, 8)}
+                inputProps={{ keyboardType: 'number-pad' }}
                 style={pairedFieldStyle}
               />
-              <IsleField
+              <CommittedSettingsField
                 label={t('settings.sessionQueueTimeoutMs')}
-                inputProps={{
-                  value: String(settings.sessionQueueTimeoutMs ?? 1500),
-                  onChangeText: (value) => updatePositiveInteger('sessionQueueTimeoutMs', value, 1500, 0, 30000),
-                  keyboardType: 'number-pad',
-                }}
+                value={String(settings.sessionQueueTimeoutMs ?? 1500)}
+                normalize={(value) => normalizeBoundedIntegerDraft(value, 1500, 0, 30000)}
+                onCommit={(value) => updatePositiveInteger('sessionQueueTimeoutMs', value, 1500, 0, 30000)}
+                inputProps={{ keyboardType: 'number-pad' }}
                 style={pairedFieldStyle}
               />
             </View>
@@ -1749,35 +1964,32 @@ export function SettingsScreenContent({ active = true, shellNavigation = false, 
                 active={settings.sessionAffinityEnabled === true}
                 onPress={() => updateSettings({ sessionAffinityEnabled: settings.sessionAffinityEnabled !== true })}
               />
-              <IsleField
+              <CommittedSettingsField
                 label={t('settings.sessionAffinityTtlMs')}
                 note={t('settings.sessionAffinityTtlMsNote')}
-                inputProps={{
-                  value: String(settings.sessionAffinityTtlMs ?? 1800000),
-                  onChangeText: (value) => updatePositiveInteger('sessionAffinityTtlMs', value, 1800000, 60000, 86400000),
-                  keyboardType: 'number-pad',
-                }}
+                value={String(settings.sessionAffinityTtlMs ?? 1800000)}
+                normalize={(value) => normalizeBoundedIntegerDraft(value, 1800000, 60000, 86400000)}
+                onCommit={(value) => updatePositiveInteger('sessionAffinityTtlMs', value, 1800000, 60000, 86400000)}
+                inputProps={{ keyboardType: 'number-pad' }}
               />
             </View>
             <View style={foldoutCardStyle()}>
               <Text style={{ color: colors.text, fontSize: 13, fontWeight: '800' }}>{t('settings.retryTimeoutSettings')}</Text>
               <View style={pairedFieldRowStyle}>
-                <IsleField
+                <CommittedSettingsField
                   label={t('settings.upstreamRequestTimeoutMs')}
-                  inputProps={{
-                    value: String(settings.upstreamRequestTimeoutMs ?? 60000),
-                    onChangeText: (value) => updatePositiveInteger('upstreamRequestTimeoutMs', value, 60000, 5000, 300000),
-                    keyboardType: 'number-pad',
-                  }}
+                  value={String(settings.upstreamRequestTimeoutMs ?? 60000)}
+                  normalize={(value) => normalizeBoundedIntegerDraft(value, 60000, 5000, 300000)}
+                  onCommit={(value) => updatePositiveInteger('upstreamRequestTimeoutMs', value, 60000, 5000, 300000)}
+                  inputProps={{ keyboardType: 'number-pad' }}
                   style={pairedFieldStyle}
                 />
-                <IsleField
+                <CommittedSettingsField
                   label={t('settings.upstreamMaxRetries')}
-                  inputProps={{
-                    value: String(settings.upstreamMaxRetries ?? 1),
-                    onChangeText: (value) => updatePositiveInteger('upstreamMaxRetries', value, 1, 0, 5),
-                    keyboardType: 'number-pad',
-                  }}
+                  value={String(settings.upstreamMaxRetries ?? 1)}
+                  normalize={(value) => normalizeBoundedIntegerDraft(value, 1, 0, 5)}
+                  onCommit={(value) => updatePositiveInteger('upstreamMaxRetries', value, 1, 0, 5)}
+                  inputProps={{ keyboardType: 'number-pad' }}
                   style={pairedFieldStyle}
                 />
               </View>
@@ -1787,22 +1999,20 @@ export function SettingsScreenContent({ active = true, shellNavigation = false, 
                 onPress={() => updateSettings({ upstreamCircuitBreakerEnabled: settings.upstreamCircuitBreakerEnabled === false })}
               />
               <View style={pairedFieldRowStyle}>
-                <IsleField
+                <CommittedSettingsField
                   label={t('settings.upstreamCircuitBreakerFailureThreshold')}
-                  inputProps={{
-                    value: String(settings.upstreamCircuitBreakerFailureThreshold ?? 3),
-                    onChangeText: (value) => updatePositiveInteger('upstreamCircuitBreakerFailureThreshold', value, 3, 1, 20),
-                    keyboardType: 'number-pad',
-                  }}
+                  value={String(settings.upstreamCircuitBreakerFailureThreshold ?? 3)}
+                  normalize={(value) => normalizeBoundedIntegerDraft(value, 3, 1, 20)}
+                  onCommit={(value) => updatePositiveInteger('upstreamCircuitBreakerFailureThreshold', value, 3, 1, 20)}
+                  inputProps={{ keyboardType: 'number-pad' }}
                   style={pairedFieldStyle}
                 />
-                <IsleField
+                <CommittedSettingsField
                   label={t('settings.upstreamCircuitBreakerCooldownMs')}
-                  inputProps={{
-                    value: String(settings.upstreamCircuitBreakerCooldownMs ?? 60000),
-                    onChangeText: (value) => updatePositiveInteger('upstreamCircuitBreakerCooldownMs', value, 60000, 1000, 3600000),
-                    keyboardType: 'number-pad',
-                  }}
+                  value={String(settings.upstreamCircuitBreakerCooldownMs ?? 60000)}
+                  normalize={(value) => normalizeBoundedIntegerDraft(value, 60000, 1000, 3600000)}
+                  onCommit={(value) => updatePositiveInteger('upstreamCircuitBreakerCooldownMs', value, 60000, 1000, 3600000)}
+                  inputProps={{ keyboardType: 'number-pad' }}
                   style={pairedFieldStyle}
                 />
               </View>
@@ -1863,38 +2073,53 @@ export function SettingsScreenContent({ active = true, shellNavigation = false, 
           >
             <IsleToggle
               title={t('settings.runtimeLogEnabled')}
-              description={t('settings.runtimeLogDescription', { path: getRuntimeLogPath() })}
+              description={t('settings.runtimeLogDescription', { path: runtimeLogPath ?? '—' })}
               active={settings.runtimeLogEnabled === true}
               onPress={() => updateSettings({ runtimeLogEnabled: settings.runtimeLogEnabled !== true })}
             />
-            <IsleField
+            <CommittedSettingsField
               label={t('settings.runtimeLogMaxBytes')}
               note={t('settings.runtimeLogMaxBytesNote')}
-              inputProps={{
-                value: String(settings.runtimeLogMaxBytes ?? 1048576),
-                onChangeText: (value) => updatePositiveInteger('runtimeLogMaxBytes', value, 1048576, 4096, 10485760),
-                keyboardType: 'number-pad',
-              }}
+              value={String(settings.runtimeLogMaxBytes ?? 1048576)}
+              normalize={(value) => normalizeBoundedIntegerDraft(value, 1048576, 4096, 10485760)}
+              onCommit={(value) => updatePositiveInteger('runtimeLogMaxBytes', value, 1048576, 4096, 10485760)}
+              inputProps={{ keyboardType: 'number-pad' }}
             />
-            <IsleField
+            <CommittedSettingsField
               label={t('settings.providerAllowlist')}
               note={t('settings.listRuleNote')}
-              inputProps={{ value: joinSettingsList(settings.providerAllowlist), onChangeText: (value) => updateSettingsList('providerAllowlist', value), autoCapitalize: 'none', autoCorrect: false, multiline: true, style: { minHeight: 48, maxHeight: 88 } }}
+              value={joinSettingsList(settings.providerAllowlist)}
+              normalize={normalizeSettingsListDraft}
+              onCommit={(value) => updateSettingsList('providerAllowlist', value)}
+              commitOnSubmit={false}
+              inputProps={{ autoCapitalize: 'none', autoCorrect: false, multiline: true, style: { minHeight: 48, maxHeight: 88 } }}
             />
-            <IsleField
+            <CommittedSettingsField
               label={t('settings.providerBlocklist')}
               note={t('settings.blocklistNote')}
-              inputProps={{ value: joinSettingsList(settings.providerBlocklist), onChangeText: (value) => updateSettingsList('providerBlocklist', value), autoCapitalize: 'none', autoCorrect: false, multiline: true, style: { minHeight: 48, maxHeight: 88 } }}
+              value={joinSettingsList(settings.providerBlocklist)}
+              normalize={normalizeSettingsListDraft}
+              onCommit={(value) => updateSettingsList('providerBlocklist', value)}
+              commitOnSubmit={false}
+              inputProps={{ autoCapitalize: 'none', autoCorrect: false, multiline: true, style: { minHeight: 48, maxHeight: 88 } }}
             />
-            <IsleField
+            <CommittedSettingsField
               label={t('settings.modelAllowlist')}
               note={t('settings.listRuleNote')}
-              inputProps={{ value: joinSettingsList(settings.modelAllowlist), onChangeText: (value) => updateSettingsList('modelAllowlist', value), autoCapitalize: 'none', autoCorrect: false, multiline: true, style: { minHeight: 48, maxHeight: 88 } }}
+              value={joinSettingsList(settings.modelAllowlist)}
+              normalize={normalizeSettingsListDraft}
+              onCommit={(value) => updateSettingsList('modelAllowlist', value)}
+              commitOnSubmit={false}
+              inputProps={{ autoCapitalize: 'none', autoCorrect: false, multiline: true, style: { minHeight: 48, maxHeight: 88 } }}
             />
-            <IsleField
+            <CommittedSettingsField
               label={t('settings.modelBlocklist')}
               note={t('settings.blocklistNote')}
-            inputProps={{ value: joinSettingsList(settings.modelBlocklist), onChangeText: (value) => updateSettingsList('modelBlocklist', value), autoCapitalize: 'none', autoCorrect: false, multiline: true, style: { minHeight: 48, maxHeight: 88 } }}
+              value={joinSettingsList(settings.modelBlocklist)}
+              normalize={normalizeSettingsListDraft}
+              onCommit={(value) => updateSettingsList('modelBlocklist', value)}
+              commitOnSubmit={false}
+              inputProps={{ autoCapitalize: 'none', autoCorrect: false, multiline: true, style: { minHeight: 48, maxHeight: 88 } }}
             />
           </MotiView>
           ) : null}
@@ -1914,7 +2139,7 @@ export function SettingsScreenContent({ active = true, shellNavigation = false, 
           >
             <View style={{ borderRadius: Math.min(colors.ui.radius.card, 8), padding: 10, backgroundColor: resolveSettingsFoldoutSurface(colors, colors.ui.glass, 'muted'), borderWidth: subtleBorderWidth, borderColor: resolveSettingsFoldoutBorder(colors, colors.ui.glass) }}>
               <VersionRow label={t('settings.appVersion')} value={`${version.appVersion} (${version.buildVersion})`} />
-              <VersionRow label={t('settings.lastCheck')} value={formatUpdateCheckTime(settings.lastApkUpdateCheckAt)} />
+              <VersionRow label={t('settings.lastCheck')} value={formatSettingsUpdateCheckTime(settings.lastApkUpdateCheckAt, t)} />
             </View>
             <View style={{ flexDirection: 'row', flexWrap: 'wrap', alignItems: 'stretch', gap: 10 }}>
               <View style={{ flexGrow: 1, flexShrink: 1, flexBasis: narrowLayout ? '100%' : '45%', minWidth: 0 }}>
@@ -1986,7 +2211,7 @@ export function SettingsScreenContent({ active = true, shellNavigation = false, 
       </View>
     </ScrollView>
   )
-}
+})
 
 function SettingsInlineLabel({ title, detail }: { title: string; detail: string }) {
   const { colors } = useAppTheme()
@@ -2378,10 +2603,10 @@ function formatApkUpdateProgressDetail(
   t: ReturnType<typeof useTranslation>['t']
 ): string {
   const stageLabel = t(updateStageLabelKey(stage))
-  const releaseSize = release.sizeBytes ? formatApkSizeBytes(release.sizeBytes) : t('updates.unknown')
+  const releaseSize = release.sizeBytes ? formatSettingsApkSizeBytes(release.sizeBytes, t('updates.unknown')) : t('updates.unknown')
   if (stage === 'downloading' && progress?.bytesWritten != null) {
-    const written = formatApkSizeBytes(progress.bytesWritten)
-    const expected = progress.bytesExpected ? formatApkSizeBytes(progress.bytesExpected) : releaseSize
+    const written = formatSettingsApkSizeBytes(progress.bytesWritten, t('updates.unknown'))
+    const expected = progress.bytesExpected ? formatSettingsApkSizeBytes(progress.bytesExpected, t('updates.unknown')) : releaseSize
     const percent = progress.percent != null ? `${progress.percent}% · ` : ''
     return t('settings.apkUpdateDownloadProgressDetail', {
       stage: stageLabel,
@@ -2394,547 +2619,6 @@ function formatApkUpdateProgressDetail(
     name: release.apkName,
     size: releaseSize,
   })
-}
-
-function buildDiagnosticRows(
-  diagnostics: RuntimeDiagnosticsSummary,
-  t: ReturnType<typeof useTranslation>['t'],
-  pluginCatalog?: PluginManifestCatalogSnapshot | null
-): Array<{ key: string; label: string; value: string; tone: 'mint' | 'amber' | 'danger' | 'default' }> {
-  const rows: Array<{ key: string; label: string; value: string; tone: 'mint' | 'amber' | 'danger' | 'default' }> = [
-    {
-      key: 'responses',
-      label: t('settings.runtimeDiagnosticResponses'),
-      value: t('settings.runtimeDiagnosticResponsesValue', {
-        ready: diagnostics.responses.readyProviders,
-        capable: diagnostics.responses.capableProviders,
-        active: Object.keys(diagnostics.responses.activeProtocols).length,
-      }),
-      tone: diagnostics.responses.readyProviders ? 'mint' : diagnostics.responses.capableProviders ? 'amber' : 'default',
-    },
-    {
-      key: 'websocket',
-      label: t('settings.runtimeDiagnosticWebSocket'),
-      value: t('settings.runtimeDiagnosticWebSocketValue', {
-        mode: t(`settings.transport${diagnostics.websocket.mode === 'auto' ? 'Auto' : diagnostics.websocket.mode === 'http' ? 'Http' : 'WebSocket'}`),
-        ready: diagnostics.websocket.readyProviders,
-        capable: diagnostics.websocket.capableProviders,
-        fallback: diagnostics.websocket.fallbackCount,
-      }),
-      tone: diagnostics.websocket.mode === 'websocket' && !diagnostics.websocket.readyProviders ? 'amber' : 'mint',
-    },
-    {
-      key: 'compact',
-      label: t('settings.runtimeDiagnosticCompact'),
-      value: t('settings.runtimeDiagnosticCompactValue', {
-        mode: t(`settings.compact${diagnostics.compact.mode === 'off' ? 'Off' : diagnostics.compact.mode === 'auto' ? 'Auto' : 'Required'}`),
-        count: diagnostics.compact.requestCount,
-        remote: diagnostics.compact.remoteRequestCount,
-        local: diagnostics.compact.localCompressionCount,
-        fallback: diagnostics.compact.localFallbackCount,
-        ready: diagnostics.compact.readyProviders,
-        capable: diagnostics.compact.capableProviders,
-        saved: diagnostics.compact.estimatedSavedTokens,
-        localSaved: diagnostics.compact.localEstimatedSavedTokens,
-        localRatio: formatCompactRatio(diagnostics.compact.localAverageCompressionRatio),
-        fallbackReasons: [
-          diagnostics.compact.fallbackReasons.belowThreshold ? t('settings.runtimeDiagnosticCompactReasonBelowThreshold', { count: diagnostics.compact.fallbackReasons.belowThreshold }) : null,
-          diagnostics.compact.fallbackReasons.providerCapabilityMissing ? t('settings.runtimeDiagnosticCompactReasonCapabilityMissing', { count: diagnostics.compact.fallbackReasons.providerCapabilityMissing }) : null,
-          diagnostics.compact.fallbackReasons.disabled ? t('settings.runtimeDiagnosticCompactReasonDisabled', { count: diagnostics.compact.fallbackReasons.disabled }) : null,
-        ].filter(Boolean).join(' · '),
-      }),
-      tone: diagnostics.compact.failureCount ? 'amber' : 'mint',
-    },
-    {
-      key: 'context-control-plane',
-      label: t('settings.runtimeDiagnosticContextControlPlane'),
-      value: t('settings.runtimeDiagnosticContextControlPlaneValue', {
-        planned: diagnostics.contextControlPlane.planned,
-        compact: diagnostics.contextControlPlane.compactDecided,
-        capped: diagnostics.contextControlPlane.cappedFragments,
-        cache: diagnostics.contextControlPlane.cacheDiagnostics,
-        rewrite: diagnostics.contextControlPlane.fullRewriteDetected,
-        unbounded: diagnostics.contextControlPlane.unboundedBlocked,
-        manifest: diagnostics.contextControlPlane.manifests,
-        manifestIssues: diagnostics.contextControlPlane.manifestIssues,
-        examples: formatContextControlPlaneExamples(diagnostics.contextControlPlane.recentExamples, t),
-      }),
-      tone: diagnostics.contextControlPlane.unboundedBlocked || diagnostics.contextControlPlane.fullRewriteDetected || diagnostics.contextControlPlane.manifestIssues ? 'amber' : diagnostics.contextControlPlane.planned ? 'mint' : 'default',
-    },
-    {
-      key: 'policy',
-      label: t('settings.runtimeDiagnosticPolicy'),
-      value: t('settings.runtimeDiagnosticPolicyValue', {
-        payload: t(`settings.payload${diagnostics.policy.payloadMode === 'off' ? 'Off' : diagnostics.policy.payloadMode === 'warn' ? 'Warn' : 'Block'}`),
-        rules: diagnostics.policy.providerAllowRules + diagnostics.policy.providerBlockRules + diagnostics.policy.modelAllowRules + diagnostics.policy.modelBlockRules,
-      }),
-      tone: diagnostics.policy.payloadMode === 'block' ? 'amber' : 'default',
-    },
-    {
-      key: 'rectification',
-      label: t('settings.runtimeDiagnosticRectification'),
-      value: t('settings.runtimeDiagnosticRectificationValue', {
-        total: diagnostics.rectification.total,
-        retrying: diagnostics.rectification.retrying,
-        success: diagnostics.rectification.success,
-        failed: diagnostics.rectification.failed,
-        examples: formatRectificationExamples(diagnostics.rectification.recentExamples, t),
-      }),
-      tone: diagnostics.rectification.failed ? 'amber' : diagnostics.rectification.success ? 'mint' : 'default',
-    },
-    {
-      key: 'provider-health',
-      label: t('settings.runtimeDiagnosticProviderHealth'),
-      value: t('settings.runtimeDiagnosticProviderHealthValue', {
-        cooldown: diagnostics.providerHealth.cooldown,
-        circuit: diagnostics.providerHealth.circuitOpen,
-        quota: diagnostics.providerHealth.quotaExhausted,
-        credential: diagnostics.providerHealth.credentialUnhealthy,
-        examples: formatProviderHealthExamples(diagnostics.providerHealth.recentExamples, t),
-      }),
-      tone: diagnostics.providerHealth.circuitOpen || diagnostics.providerHealth.quotaExhausted || diagnostics.providerHealth.credentialUnhealthy ? 'amber' : diagnostics.providerHealth.cooldown ? 'default' : 'mint',
-    },
-    {
-      key: 'session-affinity',
-      label: t('settings.runtimeDiagnosticSessionAffinity'),
-      value: t('settings.runtimeDiagnosticSessionAffinityValue', {
-        resolved: diagnostics.sessionAffinity.resolved,
-        bound: diagnostics.sessionAffinity.bound,
-        invalidated: diagnostics.sessionAffinity.invalidated,
-        rotated: diagnostics.sessionAffinity.rotated,
-        examples: formatSessionAffinityExamples(diagnostics.sessionAffinity.recentExamples, t),
-      }),
-      tone: diagnostics.sessionAffinity.invalidated || diagnostics.sessionAffinity.rotated ? 'amber' : diagnostics.sessionAffinity.bound ? 'mint' : 'default',
-    },
-    {
-      key: 'request-examples',
-      label: t('settings.runtimeDiagnosticRequestExamples'),
-      value: t('settings.runtimeDiagnosticRequestExamplesValue', {
-        examples: formatRequestExamples(diagnostics.requestExamples, t),
-      }),
-      tone: diagnostics.requestExamples.some((example) => example.kind === 'conformance_block' || example.kind === 'fallback') ? 'amber' : diagnostics.requestExamples.length ? 'mint' : 'default',
-    },
-    {
-      key: 'runtime-timeline',
-      label: t('settings.runtimeDiagnosticTimeline'),
-      value: t('settings.runtimeDiagnosticTimelineValue', {
-        total: diagnostics.timeline.counts.total,
-        provider: diagnostics.timeline.counts.byStage.provider,
-        contextCount: diagnostics.timeline.counts.byStage.context,
-        compact: diagnostics.timeline.counts.byStage.compact,
-        plugin: diagnostics.timeline.counts.byStage.plugin,
-        tool: diagnostics.timeline.counts.byStage.tool,
-        session: diagnostics.timeline.counts.byStage.session,
-        blocked: diagnostics.timeline.counts.byStatus.blocked,
-        error: diagnostics.timeline.counts.byStatus.error,
-        running: diagnostics.timeline.counts.byStatus.running,
-        issues: diagnostics.timeline.issues.length,
-        repairs: diagnostics.timeline.repairPlan.taskCount,
-        examples: formatRuntimeTimelineExamples(diagnostics.timeline.entries, t),
-        issueExamples: formatRuntimeTimelineIssues(diagnostics.timeline.issues, t),
-        repairExamples: formatRuntimeTimelineRepairTasks(diagnostics.timeline.repairPlan, t),
-      }),
-      tone: diagnostics.timeline.issues.some((issue) => issue.severity === 'critical') || diagnostics.timeline.counts.byStatus.error
-        ? 'danger'
-        : diagnostics.timeline.issues.some((issue) => issue.severity === 'warning') || diagnostics.timeline.counts.byStatus.blocked
-          ? 'amber'
-          : diagnostics.timeline.counts.total ? 'mint' : 'default',
-    },
-    {
-      key: 'runtime-performance',
-      label: t('settings.runtimeDiagnosticPerformance'),
-      value: t('settings.runtimeDiagnosticPerformanceValue', {
-        duration: diagnostics.performance.buildDurationMs,
-        tail: diagnostics.performance.logTailBytes,
-        parsed: diagnostics.performance.parsedLogEntries,
-        rawParsed: diagnostics.performance.rawParsedLogEntries,
-        logLimit: diagnostics.performance.logEntryLimit,
-        merged: diagnostics.performance.mergedLogEntries,
-        memory: diagnostics.performance.memoryEventEntries,
-        timeline: diagnostics.performance.timelineInputEvents,
-        timelineLimit: diagnostics.performance.timelineEventLimit,
-      }),
-      tone: diagnostics.performance.parsedLogEntryLimitApplied || diagnostics.performance.timelineInputEvents >= diagnostics.performance.timelineEventLimit || diagnostics.performance.buildDurationMs > 750
-        ? 'amber'
-        : diagnostics.performance.mergedLogEntries ? 'mint' : 'default',
-    },
-    {
-      key: 'observability',
-      label: t('settings.runtimeDiagnosticObservability'),
-      value: t('settings.runtimeDiagnosticObservabilityValue', {
-        mode: t(`settings.runtimeDiagnosticObservabilityMode.${diagnostics.observability.mode}`),
-        network: diagnostics.observability.networkExportAllowed ? t('settings.runtimeDiagnosticObservabilityAllowed') : t('settings.runtimeDiagnosticObservabilityBlocked'),
-        local: diagnostics.observability.localDiagnosticsAllowed ? t('settings.runtimeDiagnosticObservabilityAllowed') : t('settings.runtimeDiagnosticObservabilityBlocked'),
-        endpoint: t(`settings.runtimeDiagnosticObservabilityEndpoint.${diagnostics.observability.endpointKind}`),
-        highFrequency: t(`settings.runtimeDiagnosticObservabilityHighFrequency.${diagnostics.observability.highFrequencyExportMode}`),
-        attr: diagnostics.observability.effectiveAttributeLimit,
-        string: diagnostics.observability.effectiveAttributeStringLimit,
-        preview: t(`settings.runtimeDiagnosticObservabilityPreviewStatus.${diagnostics.observability.previewStatus}`),
-        events: diagnostics.observability.previewEventCount,
-        eventLimit: diagnostics.observability.previewEventLimit,
-        spans: diagnostics.observability.previewSpanCount,
-        failures: formatObservabilityPreviewFailures(diagnostics.observability.previewFailureCodes, t),
-        blocks: formatObservabilityPolicyBlockReasons(diagnostics.observability.blockReasons, t),
-        warnings: formatObservabilityPolicyWarnings(diagnostics.observability.warnings, t),
-      }),
-      tone: diagnostics.observability.networkExportAllowed ? 'mint' : diagnostics.observability.localDiagnosticsAllowed ? 'amber' : 'default',
-    },
-    ...(pluginCatalog
-      ? [{
-          key: 'plugin-catalog',
-          label: t('settings.runtimeDiagnosticPluginCatalog'),
-          value: t('settings.runtimeDiagnosticPluginCatalogValue', {
-            total: pluginCatalog.counts.total,
-            valid: pluginCatalog.counts.valid,
-            invalid: pluginCatalog.counts.invalid,
-            enabled: pluginCatalog.counts.enabled,
-            hooks: pluginCatalog.counts.hooks,
-            noop: pluginCatalog.counts.noopHooks,
-            executable: pluginCatalog.counts.executableHooks,
-            approved: pluginCatalog.reviewStates.approved,
-            unreviewed: pluginCatalog.reviewStates.unreviewed,
-            capabilities: formatPluginCatalogCapabilities(pluginCatalog.requiredCapabilities, t),
-          }),
-          tone: pluginCatalog.counts.executableHooks || pluginCatalog.counts.invalid
-            ? 'danger'
-            : pluginCatalog.reviewStates.unreviewed || pluginCatalog.counts.warnings
-              ? 'amber'
-              : pluginCatalog.counts.total ? 'mint' : 'default',
-        } as const]
-      : []),
-    {
-      key: 'proxy',
-      label: t('settings.runtimeDiagnosticProxy'),
-      value: [
-        t(`settings.runtimeProxyReason.${diagnostics.proxy.reason}`),
-        ...diagnostics.proxy.warnings.map((warning) => t(`settings.runtimeProxyWarning.${warning}`)),
-      ].filter(Boolean).join(' · '),
-      tone: diagnostics.proxy.reason === 'invalid_custom_base_url' ? 'danger' : diagnostics.proxy.warnings.length ? 'amber' : diagnostics.proxy.applied ? 'mint' : 'default',
-    },
-    {
-      key: 'providers',
-      label: t('settings.runtimeDiagnosticProviders'),
-      value: t('settings.runtimeDiagnosticProvidersValue', {
-        ready: diagnostics.providers.ready,
-        enabled: diagnostics.providers.enabled,
-        alias: diagnostics.providers.aliasProviders,
-      }),
-      tone: diagnostics.providers.degraded ? 'amber' : 'mint',
-    },
-    {
-      key: 'provider-coverage',
-      label: t('settings.runtimeDiagnosticProviderCoverage'),
-      value: t('settings.runtimeDiagnosticProviderCoverageValue', {
-        official: diagnostics.capabilityMatrix.hostingProfiles.official,
-        aggregator: diagnostics.capabilityMatrix.hostingProfiles.aggregator,
-        relay: diagnostics.capabilityMatrix.hostingProfiles.relay,
-        local: diagnostics.capabilityMatrix.hostingProfiles['local-runtime'],
-        hosted: diagnostics.capabilityMatrix.hostingProfiles['cloud-hosted'],
-      }),
-      tone: diagnostics.capabilityMatrix.hostingProfiles['cloud-hosted'] ? 'amber' : 'mint',
-    },
-    {
-      key: 'provider-support',
-      label: t('settings.runtimeDiagnosticProviderSupport'),
-      value: t('settings.runtimeDiagnosticProviderSupportValue', {
-        full: diagnostics.capabilityMatrix.supportLevels.full,
-        partial: diagnostics.capabilityMatrix.supportLevels.partial,
-        planned: diagnostics.capabilityMatrix.supportLevels.planned,
-        hosted: diagnostics.capabilityMatrix.hostedGapProviders,
-        modelList: diagnostics.capabilityMatrix.genericModelListSuppressedProviders,
-      }),
-      tone: diagnostics.capabilityMatrix.plannedProviders ? 'amber' : diagnostics.capabilityMatrix.partialProviders ? 'default' : 'mint',
-    },
-    {
-      key: 'provider-support-evidence',
-      label: t('settings.runtimeDiagnosticProviderSupportEvidence'),
-      value: t('settings.runtimeDiagnosticProviderSupportEvidenceValue', {
-        planned: formatCapabilityMatrixExamples(diagnostics.capabilityMatrix.statusExamples.planned, t),
-        partial: formatCapabilityMatrixExamples(diagnostics.capabilityMatrix.statusExamples.partial, t),
-      }),
-      tone: diagnostics.capabilityMatrix.statusExamples.planned.length ? 'amber' : 'default',
-    },
-    {
-      key: 'provider-contract',
-      label: t('settings.runtimeDiagnosticProviderContract'),
-      value: t('settings.runtimeDiagnosticProviderContractValue', {
-        ready: diagnostics.compatibility.conformanceReadyProviders,
-        mapped: diagnostics.compatibility.docsMappedProviders,
-        live: diagnostics.compatibility.needsLiveSmokeProviders,
-        reference: diagnostics.compatibility.protocolReferenceProviders,
-        gates: diagnostics.compatibility.liveSmokeGateCount,
-        logged: diagnostics.compatibility.loggedEvents,
-      }),
-      tone: diagnostics.compatibility.needsLiveSmokeProviders || diagnostics.compatibility.docsMappedProviders ? 'amber' : 'mint',
-    },
-    {
-      key: 'provider-capability-status',
-      label: t('settings.runtimeDiagnosticCapabilityStatus'),
-      value: t('settings.runtimeDiagnosticCapabilityStatusValue', {
-        supported: diagnostics.compatibility.capabilityStatuses.supported,
-        partial: diagnostics.compatibility.capabilityStatuses.partial,
-        unsupported: diagnostics.compatibility.capabilityStatuses.unsupported,
-        live: diagnostics.compatibility.capabilityStatuses.requiresLiveKey,
-        docs: diagnostics.compatibility.capabilityStatuses.docsChanged,
-      }),
-      tone: diagnostics.compatibility.capabilityStatuses.docsChanged || diagnostics.compatibility.capabilityStatuses.requiresLiveKey ? 'amber' : 'default',
-    },
-    {
-      key: 'provider-capability-send-policy',
-      label: t('settings.runtimeDiagnosticCapabilitySendPolicy'),
-      value: t('settings.runtimeDiagnosticCapabilitySendPolicyValue', {
-        contract: diagnostics.compatibility.capabilitySendSources.contract,
-        identity: diagnostics.compatibility.capabilitySendSources.provider_identity,
-        declared: diagnostics.compatibility.capabilitySendSources.explicit_declaration,
-        blocked: diagnostics.compatibility.capabilitySendSources.blocked,
-        examples: formatCapabilitySendPolicyExamples(diagnostics.compatibility.capabilitySendPolicyExamples.explicit_declaration, t),
-      }),
-      tone: diagnostics.compatibility.capabilitySendSources.explicit_declaration ? 'amber' : 'default',
-    },
-    {
-      key: 'provider-capability-evidence',
-      label: t('settings.runtimeDiagnosticCapabilityEvidence'),
-      value: t('settings.runtimeDiagnosticCapabilityEvidenceValue', {
-        unsupported: formatCapabilityStatusExamples(diagnostics.compatibility.capabilityStatusExamples.unsupported, t),
-        live: formatCapabilityStatusExamples(diagnostics.compatibility.capabilityStatusExamples.requiresLiveKey, t),
-        partial: formatCapabilityStatusExamples(diagnostics.compatibility.capabilityStatusExamples.partial, t),
-      }),
-      tone: diagnostics.compatibility.capabilityStatusExamples.requiresLiveKey.length ? 'amber' : 'default',
-    },
-    {
-      key: 'media-generation-evidence',
-      label: t('settings.runtimeDiagnosticMediaGeneration'),
-      value: t('settings.runtimeDiagnosticMediaGenerationValue', {
-        sourceBacked: diagnostics.mediaGeneration.sourceBackedModels,
-        overclaims: diagnostics.mediaGeneration.unsafeProviderWideDeclarations,
-        inferred: diagnostics.mediaGeneration.inferredOnlyModels,
-        ready: diagnostics.mediaGeneration.maxReady,
-        total: diagnostics.mediaGeneration.total,
-        proofCaptured: diagnostics.mediaGeneration.adapterProofWorklist.capturedRows,
-        proofRows: diagnostics.mediaGeneration.adapterProofWorklist.rowCount,
-        proofBlocked: diagnostics.mediaGeneration.adapterProofWorklist.blockedRows,
-        examples: formatMediaGenerationExamples(diagnostics.mediaGeneration.examples, t),
-      }),
-      tone: diagnostics.mediaGeneration.adapterProofWorklist.defaultEnablementBlocked || diagnostics.mediaGeneration.unsafeProviderWideDeclarations || diagnostics.mediaGeneration.inferredOnlyModels || diagnostics.mediaGeneration.sourceBackedModels ? 'amber' : 'default',
-    },
-    {
-      key: 'log',
-      label: t('settings.runtimeDiagnosticLog'),
-      value: diagnostics.log.enabled ? t('settings.runtimeDiagnosticLogOn') : t('settings.runtimeDiagnosticLogOff'),
-      tone: diagnostics.log.enabled ? 'mint' : 'default',
-    },
-  ]
-  return rows
-}
-
-function formatCompactRatio(value: number): string {
-  if (!Number.isFinite(value) || value <= 0) return '0%'
-  return `${Math.round(value * 100)}%`
-}
-
-function formatPluginCatalogCapabilities(capabilities: Record<string, number>, t: ReturnType<typeof useTranslation>['t']): string {
-  const examples = Object.entries(capabilities)
-    .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
-    .slice(0, 4)
-  if (!examples.length) return t('settings.runtimeDiagnosticCapabilityEvidenceNone')
-  return examples.map(([capability, count]) => `${capability} ${count}`).join(' · ')
-}
-
-function formatObservabilityPolicyBlockReasons(
-  reasons: RuntimeDiagnosticsSummary['observability']['blockReasons'],
-  t: ReturnType<typeof useTranslation>['t']
-): string {
-  if (!reasons.length) return t('settings.runtimeDiagnosticCapabilityEvidenceNone')
-  return reasons.slice(0, 4).map((reason) => t(`settings.runtimeDiagnosticObservabilityBlockReason.${reason}`)).join(' · ')
-}
-
-function formatObservabilityPolicyWarnings(
-  warnings: RuntimeDiagnosticsSummary['observability']['warnings'],
-  t: ReturnType<typeof useTranslation>['t']
-): string {
-  if (!warnings.length) return t('settings.runtimeDiagnosticCapabilityEvidenceNone')
-  return warnings.slice(0, 3).map((warning) => t(`settings.runtimeDiagnosticObservabilityWarning.${warning}`)).join(' · ')
-}
-
-function formatObservabilityPreviewFailures(
-  failureCodes: RuntimeDiagnosticsSummary['observability']['previewFailureCodes'],
-  t: ReturnType<typeof useTranslation>['t']
-): string {
-  if (!failureCodes.length) return t('settings.runtimeDiagnosticObservabilityPreviewFailuresNone')
-  return failureCodes.slice(0, 3).join(' · ')
-}
-
-function formatCapabilityStatusExamples(
-  examples: RuntimeDiagnosticsSummary['compatibility']['capabilityStatusExamples'][keyof RuntimeDiagnosticsSummary['compatibility']['capabilityStatusExamples']],
-  t: ReturnType<typeof useTranslation>['t']
-): string {
-  if (!examples.length) return t('settings.runtimeDiagnosticCapabilityEvidenceNone')
-  return examples.slice(0, 2).map((example) => {
-    const provider = example.providerName || example.providerId || example.compatibilityId
-    const gate = example.liveSmokeGates[0] ? `/${example.liveSmokeGates[0]}` : ''
-    const reason = t(`settings.runtimeDiagnosticCapabilityReason.${example.limitationReason}`)
-    const path = t(`settings.runtimeDiagnosticCapabilityPath.${example.degradationPath}`)
-    return `${provider}:${example.capability} ${reason}/${path}${gate}`
-  }).join(' · ')
-}
-
-function formatMediaGenerationExamples(
-  examples: RuntimeDiagnosticsSummary['mediaGeneration']['examples'],
-  t: ReturnType<typeof useTranslation>['t']
-): string {
-  if (!examples.length) return t('settings.runtimeDiagnosticCapabilityEvidenceNone')
-  return examples.slice(0, 3).map((example) => {
-    const provider = example.providerName || example.providerId || 'provider'
-    const source = t(`settings.runtimeDiagnosticMediaGenerationSource.${example.source}`)
-    const kind = t(`settings.runtimeDiagnosticMediaGenerationKind.${example.kind}`)
-    return `${provider}:${example.model}:${kind} ${source} ${example.ready}/${example.total}`
-  }).join(' · ')
-}
-
-function formatCapabilitySendPolicyExamples(
-  examples: RuntimeDiagnosticsSummary['compatibility']['capabilitySendPolicyExamples'][keyof RuntimeDiagnosticsSummary['compatibility']['capabilitySendPolicyExamples']],
-  t: ReturnType<typeof useTranslation>['t']
-): string {
-  if (!examples.length) return t('settings.runtimeDiagnosticCapabilityEvidenceNone')
-  return examples.slice(0, 2).map((example) => {
-    const provider = example.providerName || example.providerId || example.compatibilityId
-    const source = t(`settings.runtimeDiagnosticCapabilitySendSource.${example.sendSource}`)
-    const path = t(`settings.runtimeDiagnosticCapabilityPath.${example.degradationPath}`)
-    return `${provider}:${example.capability} ${source}/${path}`
-  }).join(' · ')
-}
-
-function formatCapabilityMatrixExamples(
-  examples: RuntimeDiagnosticsSummary['capabilityMatrix']['statusExamples'][keyof RuntimeDiagnosticsSummary['capabilityMatrix']['statusExamples']],
-  t: ReturnType<typeof useTranslation>['t']
-): string {
-  if (!examples.length) return t('settings.runtimeDiagnosticCapabilityEvidenceNone')
-  return examples.slice(0, 2).map((example) => {
-    const provider = example.providerName || example.providerId || example.compatibilityId
-    const contract = example.contractStatus ? `/${example.contractStatus}` : ''
-    const reason = example.limitationReason ? t(`settings.runtimeDiagnosticCapabilityReason.${example.limitationReason}`) : example.reason
-    const path = example.degradationPath ? `/${t(`settings.runtimeDiagnosticCapabilityPath.${example.degradationPath}`)}` : ''
-    return `${provider}:${example.area} ${example.level}${contract} ${reason}${path}`
-  }).join(' · ')
-}
-
-function formatRectificationExamples(
-  examples: RuntimeDiagnosticsSummary['rectification']['recentExamples'],
-  t: ReturnType<typeof useTranslation>['t']
-): string {
-  if (!examples.length) return t('settings.runtimeDiagnosticCapabilityEvidenceNone')
-  return examples.slice(0, 2).map((example) => {
-    const provider = example.providerId || example.model || 'provider'
-    const fields = [...example.failedFields.slice(0, 2), ...example.removedFields.slice(0, 2), ...example.retainedFields.slice(0, 2)]
-    const fieldLabel = fields.length ? `:${Array.from(new Set(fields)).join('/')}` : ''
-    const status = example.status ? `/${example.status}` : ''
-    return `${provider}:${example.kind} ${example.result}${status}${fieldLabel}`
-  }).join(' · ')
-}
-
-function formatProviderHealthExamples(
-  examples: RuntimeDiagnosticsSummary['providerHealth']['recentExamples'],
-  t: ReturnType<typeof useTranslation>['t']
-): string {
-  if (!examples.length) return t('settings.runtimeDiagnosticCapabilityEvidenceNone')
-  return examples.slice(0, 2).map((example) => {
-    const provider = example.providerId || example.model || 'provider'
-    const group = example.credentialGroupId ? `/${example.credentialGroupId}` : ''
-    const trigger = example.trigger ? `/${example.trigger}` : ''
-    const status = example.status ? `/${example.status}` : ''
-    return `${provider}${group} ${t(`settings.runtimeDiagnosticProviderHealthReason.${example.reason}`)}${trigger}${status}`
-  }).join(' · ')
-}
-
-function formatSessionAffinityExamples(
-  examples: RuntimeDiagnosticsSummary['sessionAffinity']['recentExamples'],
-  t: ReturnType<typeof useTranslation>['t']
-): string {
-  if (!examples.length) return t('settings.runtimeDiagnosticCapabilityEvidenceNone')
-  return examples.slice(0, 2).map((example) => {
-    const provider = example.providerId || example.model || 'provider'
-    const group = example.toGroupId || example.credentialGroupId || example.fromGroupId
-    const groupLabel = group ? `/${group}` : ''
-    const trigger = example.trigger ? `/${example.trigger}` : ''
-    const status = example.upstreamStatus ? `/${example.upstreamStatus}` : ''
-    return `${provider}${groupLabel} ${t(`settings.runtimeDiagnosticSessionAffinityStatus.${example.status}`)}${trigger}${status}`
-  }).join(' · ')
-}
-
-function formatContextControlPlaneExamples(
-  examples: RuntimeDiagnosticsSummary['contextControlPlane']['recentExamples'],
-  t: ReturnType<typeof useTranslation>['t']
-): string {
-  if (!examples.length) return t('settings.runtimeDiagnosticCapabilityEvidenceNone')
-  return examples.slice(0, 2).map((example) => {
-    const provider = example.providerId || example.model || 'context'
-    if (example.event === 'context.compact.decided') {
-      return `${provider} compact ${example.compactMode ?? 'unknown'}/${example.compactEnabled ? 'on' : 'off'}/${example.compactReason ?? 'unknown'}`
-    }
-    const manifest = example.contextManifestSchema ? `/manifest ${example.contextManifestFailureCodes?.length ?? 0}` : ''
-    return `${provider} fragments ${example.fragmentCount ?? 0}/capped ${example.cappedFragmentCount ?? 0}/cache ${example.cacheDiagnosticCount ?? 0}${manifest}`
-  }).join(' · ')
-}
-
-function formatRequestExamples(
-  examples: RuntimeDiagnosticsSummary['requestExamples'],
-  t: ReturnType<typeof useTranslation>['t']
-): string {
-  if (!examples.length) return t('settings.runtimeDiagnosticCapabilityEvidenceNone')
-  return examples.slice(0, 3).map((example) => {
-    const provider = [example.providerId, example.model].filter(Boolean).join('/') || 'request'
-    const label = t(`settings.runtimeDiagnosticRequestExampleKind.${example.kind}`)
-    const detail = [
-      example.protocol,
-      example.status,
-      example.reason,
-      example.trigger,
-      example.selectedProviderId ? `${example.selectedProviderId}${example.selectedModel ? `/${example.selectedModel}` : ''}` : undefined,
-    ].filter(Boolean).join('/')
-    return detail ? `${provider} ${label}:${detail}` : `${provider} ${label}`
-  }).join(' · ')
-}
-
-function formatRuntimeTimelineExamples(
-  entries: RuntimeDiagnosticsSummary['timeline']['entries'],
-  t: ReturnType<typeof useTranslation>['t']
-): string {
-  if (!entries.length) return t('settings.runtimeDiagnosticCapabilityEvidenceNone')
-  return entries.slice(-3).reverse().map((entry) => {
-    const stage = t(`settings.runtimeDiagnosticTimelineStage.${entry.stage}`)
-    const status = t(`settings.runtimeDiagnosticTimelineStatus.${entry.status}`)
-    const scope = [entry.providerId, entry.model].filter(Boolean).join('/') || entry.conversationId || entry.event
-    return `${stage}/${status} ${scope}:${entry.event}`
-  }).join(' · ')
-}
-
-function formatRuntimeTimelineIssues(
-  issues: RuntimeDiagnosticsSummary['timeline']['issues'],
-  t: ReturnType<typeof useTranslation>['t']
-): string {
-  if (!issues.length) return t('settings.runtimeDiagnosticCapabilityEvidenceNone')
-  return issues.slice(0, 3).map((issue) => {
-    const label = t(`settings.runtimeDiagnosticTimelineIssue.${issue.code}`)
-    const severity = t(`settings.runtimeDiagnosticTimelineSeverity.${issue.severity}`)
-    const nextAction = t(`settings.runtimeDiagnosticTimelineNextAction.${issue.nextAction}`)
-    const target = t(`settings.runtimeDiagnosticTimelineActionTarget.${issue.actionTarget.kind}`)
-    const scope = [issue.providerId, issue.model].filter(Boolean).join('/') || issue.event
-    return `${severity} ${label} ${scope} x${issue.count} -> ${nextAction} @ ${target}`
-  }).join(' · ')
-}
-
-function formatRuntimeTimelineRepairTasks(
-  repairPlan: RuntimeDiagnosticsSummary['timeline']['repairPlan'],
-  t: ReturnType<typeof useTranslation>['t']
-): string {
-  if (!repairPlan.tasks.length) return t('settings.runtimeDiagnosticCapabilityEvidenceNone')
-  return repairPlan.tasks.slice(0, 3).map((task) => {
-    const severity = t(`settings.runtimeDiagnosticTimelineSeverity.${task.severity}`)
-    const action = t(`settings.runtimeDiagnosticTimelineNextAction.${task.action}`)
-    const target = t(`settings.runtimeDiagnosticTimelineActionTarget.${task.target.kind}`)
-    const scope = [task.target.providerId, task.target.model].filter(Boolean).join('/') || task.target.conversationId || task.target.event
-    return `${severity} ${action} @ ${target} ${scope} x${task.eventCount}`
-  }).join(' · ')
 }
 
 function formatRuntimeRepairTaskButtonLabel(
@@ -3003,28 +2687,6 @@ function runtimeRepairTaskIconName(kind: RuntimeRepairTask['target']['kind']) {
     case 'retry-chat':
       return 'message'
   }
-}
-
-function DiagnosticPill({ label, value, tone }: { label: string; value: string; tone: 'mint' | 'amber' | 'danger' | 'default' }) {
-  const { colors } = useAppTheme()
-  const { width } = useWindowDimensions()
-  const compact = width < 390
-  const toneToken = tone === 'mint'
-    ? colors.ui.tone.success
-    : tone === 'amber'
-      ? colors.ui.tone.warning
-      : tone === 'danger'
-      ? colors.ui.tone.danger
-      : colors.ui.tone.neutral
-  return (
-    <View style={{ minHeight: 58, minWidth: 0, flexGrow: 1, flexShrink: 1, flexBasis: compact ? '100%' : '47%', borderRadius: Math.min(colors.ui.radius.card, 8), padding: 9, backgroundColor: toneToken.background, borderWidth: colors.ui.limeRoad ? 1 : StyleSheet.hairlineWidth, borderColor: toneToken.border }}>
-      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 7 }}>
-        <View style={{ width: 8, height: 8, borderRadius: 4, backgroundColor: toneToken.foreground }} />
-        <Text numberOfLines={1} style={{ flex: 1, minWidth: 0, color: colors.text, fontSize: 12, lineHeight: 16, fontWeight: '800', includeFontPadding: false, textAlignVertical: 'center' }}>{label}</Text>
-      </View>
-      <Text numberOfLines={2} style={{ color: colors.textSecondary, fontSize: 11, lineHeight: 16, fontWeight: '800', marginTop: 5, includeFontPadding: false, textAlignVertical: 'center' }}>{value}</Text>
-    </View>
-  )
 }
 
 function importResultMessage(

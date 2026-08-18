@@ -1329,6 +1329,9 @@ const minimalDark: AppPalette = {
 
 const markdownLight: AppPalette = {
   ...minimalLight,
+  surface: '#F6F8FA',
+  surfaceSecondary: '#FFFFFF',
+  surfaceTertiary: '#EFF2F5',
   primary: '#315A73',
   primaryForeground: '#FFFFFF',
   secondary: '#59636E',
@@ -1432,6 +1435,9 @@ const markdownLight: AppPalette = {
 
 const markdownDark: AppPalette = {
   ...minimalDark,
+  surface: '#0D1117',
+  surfaceSecondary: '#161B22',
+  surfaceTertiary: '#1F242C',
   primary: '#58A6FF',
   primaryForeground: '#0D1117',
   secondary: '#B1BAC4',

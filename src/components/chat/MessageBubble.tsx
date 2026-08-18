@@ -13,7 +13,7 @@ import type { Message } from '@/types/chatContracts'
 import type { ProcessTrace } from '@/core'
 import { useAppTheme } from '@/hooks/useAppTheme'
 import { AppIcon, appIconStroke, type AppIconName } from '@/components/ui/AppIcon'
-import { IslePressable } from '@/components/ui/isle'
+import { ISLE_MIN_TOUCH_TARGET, IslePressable } from '@/components/ui/isle'
 import { useSettingsStore } from '@/store/settingsStore'
 import { mergeMessageWithStreamingTraceSnapshot, useChatStreamingStore } from '@/store/chatStreamingStore'
 import { MessageContent } from './MessageContent'
@@ -39,6 +39,7 @@ import { extractTaggedThinkingOutputText, sanitizeInternalChatOutputText } from 
 import { summarizeWorkArtifact } from '@/utils/workArtifact'
 import { resolveChatAssistantDisplayName } from './chatIdentityPresentation'
 import { getAssistantThinkingLabel } from './messageActivityPreview'
+import { createProcessTraceSignature } from './messageTraceSignature'
 
 const STREAMING_LAYOUT_TEXT_STEP = 160
 const STREAMING_RENDER_TEXT_STEP = 32
@@ -177,19 +178,31 @@ function MessageBubbleComponent({
     },
     [displayMessage.reasoning, displayMessage.retrievalTrace, displayMessage.toolCalls, taggedThinkingText, taggedThinkingTrace]
   )
+  const processCanExpand = !isUser && processTraces.some(hasExpandableThinkingContent)
+  const hasVisibleAssistantReply = !isUser && Boolean(renderedDisplayText.trim())
+  const processNeedsAttention = !isUser && processTraces.some((trace) =>
+    shouldKeepBlockingProcessTraceVisible(trace, message.status)
+  )
+  // Live, interrupted, or actionable work stays explicit. Once a successful
+  // reply is visible, redundant terminal status disappears; meaningful model
+  // thinking remains available through a compact disclosure instead.
   const processLayerVisible = !isUser && (
     isStreamingContent ||
     showThinkingStatus ||
-    processTraces.some(hasExpandableThinkingContent) ||
+    message.status === 'error' ||
+    message.status === 'cancelled' ||
+    (message.status === 'done' && !hasVisibleAssistantReply) ||
+    processCanExpand ||
     processTraces.some(isActiveProcessTrace) ||
-    processTraces.some((trace) => shouldKeepBlockingProcessTraceVisible(trace, message.status)) ||
-    processTraces.some(isAgentWorkflowWaitingTrace)
+    processNeedsAttention
   )
+  const processHasDetails = processLayerVisible
   const bubbleMaxWidth = useMemo(
-    () => resolveMessageBubbleMaxWidth(renderedDisplayText, isUser, processLayerVisible, windowWidth, displayFormulaLayout),
-    [displayFormulaLayout, renderedDisplayText, isUser, processLayerVisible, windowWidth]
+    () => resolveMessageBubbleMaxWidth(renderedDisplayText, isUser, processHasDetails, windowWidth, displayFormulaLayout),
+    [displayFormulaLayout, renderedDisplayText, isUser, processHasDetails, windowWidth]
   )
-  const bubbleUsesAvailableWidth = displayFormulaLayout || (!isUser && (
+  const processWidthClaim = processHasDetails || hasWideMessageContent(renderedDisplayText)
+  const bubbleUsesAvailableWidth = displayFormulaLayout || (!isUser && processWidthClaim && (
     processLayerVisible || hasWideMessageContent(renderedDisplayText)
   ))
   const processTextLength = useMemo(() => processTraces.reduce((total, trace) => {
@@ -197,7 +210,6 @@ function MessageBubbleComponent({
     return total + display.title.length + display.content.length
   }, 0), [processTraces])
   const processLayoutStep = isStreamingContent ? Math.floor(processTextLength / STREAMING_LAYOUT_TEXT_STEP) : 0
-  const processCanExpand = !isUser && processTraces.some(hasExpandableThinkingContent)
   const canCopyProcessTrace = !isUser && processTraces.length > 0 && !!onCopyProcessTrace
   const processMaxHeight = Math.min(230, viewportHeight * 0.34)
   const actionBarOpen = activeActionMessageId === undefined ? localActionsOpen : activeActionMessageId === message.id
@@ -305,7 +317,7 @@ function MessageBubbleComponent({
   const bubbleGesture = Gesture.Exclusive(longPressBubble, tapBubble)
 
   function handleBubbleLayout() {
-    if (isStreamingContent || processLayerVisible || hasDefaultWorkArtifactActions) onLayoutChangeRequest?.()
+    if (isStreamingContent || processExpanded || hasDefaultWorkArtifactActions) onLayoutChangeRequest?.()
   }
 
   return (
@@ -358,6 +370,7 @@ function MessageBubbleComponent({
                 trailingActionSpace={false}
                 motion={motion}
                 writingResponse={isStreamingContent && !!renderedDisplayText.trim()}
+                compactSettled={message.status === 'done' && hasVisibleAssistantReply && !processNeedsAttention}
               />
             ) : null}
             <GestureDetector gesture={bubbleGesture}>
@@ -645,7 +658,7 @@ function MessageSourceLink({ conversationId, message }: { conversationId: string
       })}
       style={{
         alignSelf: 'flex-start',
-        minHeight: 34,
+        minHeight: ISLE_MIN_TOUCH_TARGET,
         marginTop: 9,
         borderRadius: colors.ui.radius.controlSmall,
         paddingHorizontal: 10,
@@ -676,6 +689,7 @@ function MessageProcessLayer({
   trailingActionSpace = false,
   motion,
   writingResponse,
+  compactSettled,
 }: {
   message: Message
   traces: ProcessTrace[]
@@ -687,14 +701,26 @@ function MessageProcessLayer({
   trailingActionSpace?: boolean
   motion: MotionIntensity
   writingResponse: boolean
+  compactSettled: boolean
 }) {
   const { colors, isGlass } = useAppTheme()
   const actionChrome = resolveMessageActionChrome(colors, isGlass)
   const { t } = useTranslation()
   const active = message.status === 'streaming' || message.status === 'sending'
   const processStatusLabel = processLayerLabel(message, traces, t, writingResponse, assistantDisplayName)
-  const showStatusLabel = active || message.status === 'error' || message.status === 'cancelled'
-  const inlinePreview = !writingResponse && active ? activeProcessInlinePreview(traces) : ''
+  if (compactSettled && canExpand) {
+    return (
+      <SettledThinkingDisclosure
+        message={message}
+        traces={traces}
+        expanded={expanded}
+        maxHeight={maxHeight}
+        onToggle={onToggle}
+        motion={motion}
+      />
+    )
+  }
+  const showStatusLabel = true
   const emphasizedStatus = message.status === 'cancelled' || traces.some(isAgentWorkflowWaitingTrace)
   const processAccessibilityLabel = canExpand
     ? expanded
@@ -710,7 +736,7 @@ function MessageProcessLayer({
       : undefined
   const tone =
     message.status === 'error'
-      ? colors.textTertiary
+      ? colors.ui.tone.danger.foreground
         : message.status === 'cancelled'
           ? colors.ui.tone.warning.foreground
           : active
@@ -718,7 +744,7 @@ function MessageProcessLayer({
             : colors.textTertiary
   const statusBackground =
     message.status === 'error'
-      ? actionChrome.itemSurface
+      ? colors.ui.tone.danger.background
       : message.status === 'cancelled'
         ? colors.ui.tone.warning.background
         : active
@@ -726,16 +752,24 @@ function MessageProcessLayer({
           : actionChrome.itemSurface
   const statusBorder =
     message.status === 'error'
-      ? actionChrome.itemBorder
+      ? colors.ui.tone.danger.border
       : message.status === 'cancelled'
         ? colors.ui.tone.warning.border
-        : active
-          ? colors.ui.tone.info.border
-          : actionChrome.itemBorder
+      : active
+        ? colors.ui.tone.info.border
+        : actionChrome.itemBorder
+  const statusIcon: AppIconName = message.status === 'error'
+    ? 'warning'
+    : message.status === 'cancelled'
+      ? 'stop'
+      : active
+        ? 'spark'
+        : 'check'
 
   return (
-    <View style={{ marginBottom: 8, minWidth: showStatusLabel ? 176 : undefined }}>
+    <View style={{ marginBottom: 10, minWidth: showStatusLabel ? 176 : undefined }}>
       <IslePressable
+        testID="message-model-status"
         haptic
         disabled={!canExpand}
         onPress={onToggle}
@@ -745,30 +779,47 @@ function MessageProcessLayer({
         accessibilityState={processAccessibilityState}
         accessibilityValue={canExpand ? { text: processStatusLabel } : undefined}
         style={{
-          minHeight: 26,
+          minHeight: ISLE_MIN_TOUCH_TARGET,
           flexDirection: 'row',
           alignItems: 'center',
-          gap: 0,
+          gap: 8,
           alignSelf: 'flex-start',
           width: '100%',
           maxWidth: '100%',
           borderRadius: colors.ui.radius.controlSmall,
-          paddingVertical: emphasizedStatus ? 5 : 2,
-          paddingHorizontal: emphasizedStatus ? 8 : 0,
-          paddingRight: emphasizedStatus && trailingActionSpace ? 48 : emphasizedStatus ? 8 : 0,
-          backgroundColor: emphasizedStatus ? statusBackground : 'transparent',
-          borderWidth: emphasizedStatus ? 1 : 0,
-          borderColor: emphasizedStatus ? statusBorder : 'transparent',
+          paddingVertical: emphasizedStatus ? 6 : 5,
+          paddingHorizontal: 8,
+          paddingRight: emphasizedStatus && trailingActionSpace ? 48 : 8,
+          backgroundColor: statusBackground,
+          borderWidth: StyleSheet.hairlineWidth,
+          borderColor: statusBorder,
         }}
       >
-        <View style={{ flexGrow: showStatusLabel ? 1 : 0, flexBasis: showStatusLabel ? 0 : 'auto', flexShrink: 1, minWidth: 0 }}>
+        <View
+          accessible={false}
+          style={{
+            width: 24,
+            height: 24,
+            borderRadius: colors.ui.radius.controlSmall,
+            alignItems: 'center',
+            justifyContent: 'center',
+            backgroundColor: active ? colors.ui.tone.info.border : colors.ui.semantic.surface.base,
+          }}
+        >
+          <AppIcon name={statusIcon} color={tone} size={14} strokeWidth={appIconStroke.strong} />
+        </View>
+        <View style={{ flex: 1, flexShrink: 1, minWidth: 0 }}>
+          <Text
+            numberOfLines={1}
+            style={{ color: tone, fontSize: 10, lineHeight: 13, fontWeight: '800', letterSpacing: 0.2 }}
+          >
+            {t('messageBubble.modelStatus', { defaultValue: '模型状态' })}
+          </Text>
           <View
             key={writingResponse ? 'writing' : active ? 'active-process' : 'settled-process'}
-            style={{ flexDirection: 'row', alignItems: 'center', gap: 8, minHeight: 16 }}
+            style={{ flexDirection: 'row', alignItems: 'center', minHeight: 16 }}
           >
-            {showStatusLabel ? (
-              <AnimatedProcessStatusText active={active} label={processStatusLabel} tone={tone} motion={motion} />
-            ) : null}
+            <AnimatedProcessStatusText active={active} label={processStatusLabel} tone={tone} motion={motion} />
           </View>
         </View>
         {canExpand ? (
@@ -777,13 +828,59 @@ function MessageProcessLayer({
           </MotiView>
         ) : null}
       </IslePressable>
-      {inlinePreview ? (
-        <InlineProcessPreview
-          preview={inlinePreview}
-          tone={tone}
-        />
-      ) : null}
       {expanded && canExpand ? <MessageProcessPanel message={message} traces={traces} maxHeight={maxHeight} motion={motion} /> : null}
+    </View>
+  )
+}
+
+function SettledThinkingDisclosure({
+  message,
+  traces,
+  expanded,
+  maxHeight,
+  onToggle,
+  motion,
+}: {
+  message: Message
+  traces: ProcessTrace[]
+  expanded: boolean
+  maxHeight: number
+  onToggle: () => void
+  motion: MotionIntensity
+}) {
+  const { colors } = useAppTheme()
+  const { t } = useTranslation()
+  const label = settledThinkingDisclosureLabel(message, traces, t)
+
+  return (
+    <View style={{ marginBottom: expanded ? 8 : 4 }}>
+      <IslePressable
+        testID="message-thinking-disclosure"
+        haptic
+        onPress={onToggle}
+        accessibilityRole="button"
+        accessibilityLabel={expanded ? t('messageBubble.collapseThinking') : t('messageBubble.expandThinking')}
+        accessibilityState={{ expanded }}
+        accessibilityValue={{ text: label }}
+        style={{
+          minHeight: ISLE_MIN_TOUCH_TARGET,
+          maxWidth: '100%',
+          alignSelf: 'flex-start',
+          flexDirection: 'row',
+          alignItems: 'center',
+          gap: 6,
+          paddingHorizontal: 2,
+        }}
+      >
+        <AppIcon name="reasoning" color={colors.textTertiary} size={13} strokeWidth={appIconStroke.strong} />
+        <Text numberOfLines={1} style={{ flexShrink: 1, color: colors.textTertiary, fontSize: 11, lineHeight: 15, fontWeight: '700' }}>
+          {label}
+        </Text>
+        <MotiView animate={{ rotate: expanded ? '90deg' : '0deg' }} transition={{ type: 'timing', duration: motion === 'full' ? 112 : 1, easing: Easing.out(Easing.cubic) }}>
+          <AppIcon name="back-next" color={colors.textTertiary} size={12} strokeWidth={appIconStroke.strong} />
+        </MotiView>
+      </IslePressable>
+      {expanded ? <MessageProcessPanel message={message} traces={traces} maxHeight={maxHeight} motion={motion} /> : null}
     </View>
   )
 }
@@ -837,6 +934,7 @@ function AnimatedProcessStatusText({ active, label, tone, motion }: { active: bo
 
 function MessageProcessPanel({ message, traces, maxHeight, motion }: { message: Message; traces: ProcessTrace[]; maxHeight: number; motion: MotionIntensity }) {
   const { colors, isGlass } = useAppTheme()
+  const { t } = useTranslation()
   const scrollRef = useRef<ScrollView>(null)
   const thinkingSummaries = collectThinkingSummaries(traces)
   const contentLength = thinkingSummaries.reduce((total, summary) => total + summary.length, 0)
@@ -848,6 +946,7 @@ function MessageProcessPanel({ message, traces, maxHeight, motion }: { message: 
 
   return (
     <View
+      testID="message-thinking-panel"
       style={{
         marginTop: 7,
         borderTopWidth: StyleSheet.hairlineWidth,
@@ -855,6 +954,17 @@ function MessageProcessPanel({ message, traces, maxHeight, motion }: { message: 
         paddingTop: 8,
       }}
     >
+      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 7 }}>
+        <AppIcon name="reasoning" color={colors.ui.icon.accentForeground} size={13} strokeWidth={appIconStroke.strong} />
+        <Text style={{ color: colors.textSecondary, fontSize: 11, lineHeight: 15, fontWeight: '800' }}>
+          {t('messageBubble.thinkingDetails', { defaultValue: '思考过程' })}
+        </Text>
+        {running ? (
+          <Text style={{ color: colors.textTertiary, fontSize: 10, lineHeight: 14, fontWeight: '700' }}>
+            {t('chat.generating', { defaultValue: '生成中' })}
+          </Text>
+        ) : null}
+      </View>
       <ScrollView ref={scrollRef} nestedScrollEnabled showsVerticalScrollIndicator={contentLength > 360 || thinkingSummaries.length > 2} style={{ maxHeight }}>
         {thinkingSummaries.length ? (
           <View style={{ gap: 8 }}>
@@ -868,20 +978,6 @@ function MessageProcessPanel({ message, traces, maxHeight, motion }: { message: 
           <TypingDots motion={motion} />
         ) : null}
       </ScrollView>
-    </View>
-  )
-}
-
-function InlineProcessPreview({ preview, tone }: { preview: string; tone: string }) {
-  return (
-    <View style={{ marginTop: 2, paddingRight: 4 }}>
-      <Text
-        numberOfLines={2}
-        ellipsizeMode="tail"
-        style={{ color: tone, opacity: 0.72, fontSize: 11, lineHeight: 16, fontWeight: '700' }}
-      >
-        {preview}
-      </Text>
     </View>
   )
 }
@@ -959,6 +1055,12 @@ function thinkingDoneLabel(message: Message, traces: ProcessTrace[], t: TFunctio
   }
   if (hasThinking) return translateMessageBubbleLabel(t, 'messageBubble.completed', '已完成')
   return translateMessageBubbleLabel(t, 'messageBubble.completed', '已完成')
+}
+
+function settledThinkingDisclosureLabel(message: Message, traces: ProcessTrace[], t: TFunction): string {
+  const title = t('messageBubble.thinkingDetails', { defaultValue: '思考过程' })
+  const durationMs = resolveThinkingDurationMs(message, traces)
+  return durationMs ? `${title} · ${formatDuration(durationMs)}` : title
 }
 
 function settledProcessStageLabel(message: Message, traces: ProcessTrace[], t: TFunction): string {
@@ -1148,16 +1250,6 @@ function collectThinkingSummaries(traces: ProcessTrace[]): string[] {
   return summaries
 }
 
-function activeProcessInlinePreview(traces: ProcessTrace[]): string {
-  const activeTrace = [...traces].reverse().find((trace) => isActiveProcessTrace(trace) && hasDisplayableThinkingContent(trace))
-  const fallbackTrace = activeTrace ?? [...traces].reverse().find(hasDisplayableThinkingContent)
-  if (!fallbackTrace) return ''
-  const content = formatProcessTraceForDisplay(fallbackTrace, 220).content
-  if (!content) return ''
-  const summary = `${traceStageLabel(fallbackTrace)} · ${content}`
-  return clampTraceText(redactSensitiveText(summary.trim()), 180).replace(/\s+/g, ' ')
-}
-
 function processTraceOperationName(trace: ProcessTrace, fallback: string): string {
   const metadata = trace.metadata ?? {}
   const candidates = [
@@ -1341,7 +1433,8 @@ function MessageActionSheet({
     >
       <View style={{ flex: 1, justifyContent: 'flex-end', paddingHorizontal: width < 380 ? 10 : 16, paddingBottom: Math.max(insets.bottom, 10) }}>
         <Pressable
-          accessibilityLabel={t('messageBubble.closeActions')}
+          accessible={false}
+          accessibilityRole="none"
           onPress={onClose}
           style={{ position: 'absolute', top: 0, right: 0, bottom: 0, left: 0, backgroundColor: colors.backdrop }}
         />
@@ -1349,6 +1442,7 @@ function MessageActionSheet({
           testID="message-action-sheet"
           accessibilityRole="menu"
           accessibilityLabel={t('messageBubble.actions')}
+          accessibilityViewIsModal
           style={{
             width: '100%',
             maxWidth: MESSAGE_ACTION_SHEET_MAX_WIDTH,
@@ -1751,9 +1845,7 @@ const areMessagesEqual = (
 }
 
 function processTraceSignature(message: Message): string {
-  return collectVisibleProcessTraces(message)
-    .map((trace) => `${trace.id}:${trace.type}:${trace.status}:${trace.title}:${trace.content?.length ?? 0}:${trace.completedAt ?? ''}`)
-    .join('|')
+  return createProcessTraceSignature(collectVisibleProcessTraces(message))
 }
 
 /**

@@ -264,13 +264,14 @@ function run() {
   assertSourceIncludes(portableImportRecoverySource, "kind: 'secure_key', secureKey, target: null", 'portable import clears auxiliary secrets through its secure-state participant')
   assertSourceIncludes(portablePayloadSource, 'observabilitySinkApiKeyConfigured: false', 'import restore resets observability key configured state')
 
-  const observabilitySource = readSource('src/services/observabilityCompatibilityEvaluation.ts')
+  const observabilitySource = readSource('src/modules/diagnostics/application/observabilitySink.ts')
+  const observabilityCompatibilitySource = readSource('src/modules/diagnostics/testing/observabilityCompatibilityEvaluation.ts')
   assertSourceIncludes(observabilitySource, 'missing-user-opt-in', 'observability policy blocks missing user opt-in')
   assertSourceIncludes(observabilitySource, 'missing-workspace-consent', 'observability policy blocks missing workspace consent')
   assertSourceIncludes(observabilitySource, 'raw-payload-export-blocked', 'observability policy blocks raw payload export')
   assertSourceIncludes(observabilitySource, 'per-event-high-frequency-blocked', 'observability policy blocks per-event high-frequency export')
   assertSourceIncludes(observabilitySource, 'observability-sink-redaction-v1', 'observability sink uses an explicit redaction strategy')
-  assertSourceIncludes(observabilitySource, 'networkCallsAllowed: false', 'observability adapter payload remains dry-run and non-networked')
+  assertSourceIncludes(observabilityCompatibilitySource, 'networkCallsAllowed: false', 'observability adapter payload remains dry-run and non-networked')
 
   const mediaGenerationSource = readSource('src/services/mediaGenerationContract.ts')
   const mediaGenerationCoreSource = readSource('src/core/mediaGenerationContracts.ts')

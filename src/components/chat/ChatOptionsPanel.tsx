@@ -5,9 +5,7 @@ import type { TFunction } from 'i18next'
 import { useTranslation } from 'react-i18next'
 import { AppIcon, appIconStroke, type AppIconName } from '@/components/ui/AppIcon'
 import { acceptNumericDraft, commitNumericDraft, type NumericDraftKind, type NumericDraftRange } from '@/components/ui/numericDraft'
-import { IslePanel } from '@/components/ui/isle'
-import { IsleChip } from '@/components/ui/isle'
-import { IslePressable } from '@/components/ui/isle'
+import { ISLE_MIN_TOUCH_TARGET, IsleChip, IslePanel, IslePressable } from '@/components/ui/isle'
 import { useAppTheme } from '@/hooks/useAppTheme'
 import { useChatStore } from '@/store/chatStore'
 import { useSettingsStore } from '@/store/settingsStore'
@@ -356,7 +354,7 @@ export function ChatOptionsPanel({
               accessibilityRole="button"
               accessibilityLabel={currentProvider ? t('settings.providerManagement') : t('chat.connectProvider')}
               hitSlop={MODEL_MENU_ACTION_HIT_SLOP}
-              style={{ minHeight: 40, borderRadius: controlRadius, paddingHorizontal: 12, alignItems: 'center', justifyContent: 'center', backgroundColor: currentProvider ? panelSurface : colors.ui.control.primaryBackground, borderWidth: subtleBorderWidth, borderColor: currentProvider ? actionBorder : colors.ui.control.primaryBorder }}
+              style={{ minHeight: ISLE_MIN_TOUCH_TARGET, borderRadius: controlRadius, paddingHorizontal: 12, alignItems: 'center', justifyContent: 'center', backgroundColor: currentProvider ? panelSurface : colors.ui.control.primaryBackground, borderWidth: subtleBorderWidth, borderColor: currentProvider ? actionBorder : colors.ui.control.primaryBorder }}
             >
               <Text style={{ color: currentProvider ? colors.textSecondary : colors.ui.control.primaryForeground, fontSize: 11, fontWeight: '900' }}>
                 {currentProvider ? t('settings.providerManagement') : t('chat.connectProvider')}
@@ -390,6 +388,7 @@ export function ChatOptionsPanel({
                     accessibilityHint={t('chat.selectProviderAccessibilityHint', { provider: resolveProviderDisplayName(item, providerFallbackName) })}
                     accessibilityState={{ selected: selectedProvider?.id === item.id }}
                     hitSlop={MODEL_MENU_CHIP_HIT_SLOP}
+                    style={{ minHeight: ISLE_MIN_TOUCH_TARGET, justifyContent: 'center' }}
                   >
                     <PickerChip
                       active={selectedProvider?.id === item.id}
@@ -434,6 +433,7 @@ export function ChatOptionsPanel({
                             accessibilityHint={t('chat.selectModelAccessibilityHint', { provider: selectedProvider ? resolveProviderDisplayName(selectedProvider, providerFallbackName) : t('chat.notSelected'), model: `${model.name} · ${model.id}` })}
                             accessibilityState={{ selected: selectedProviderIsCurrent && conversation.model === model.id }}
                             hitSlop={MODEL_MENU_CHIP_HIT_SLOP}
+                            style={{ minHeight: ISLE_MIN_TOUCH_TARGET, justifyContent: 'center' }}
                           >
                             <PickerChip
                               active={selectedProviderIsCurrent && conversation.model === model.id}
@@ -588,6 +588,7 @@ export function ChatOptionsPanel({
                     accessibilityHint={t('chat.reasoningEffortAccessibilityHint', { value: t(`chat.reasoningEffort.${effort}`) })}
                     accessibilityState={{ selected: selectedReasoningControlValue === effort }}
                     hitSlop={MODEL_MENU_CHIP_HIT_SLOP}
+                    style={{ minHeight: ISLE_MIN_TOUCH_TARGET, justifyContent: 'center' }}
                   >
                     <IsleChip active={selectedReasoningControlValue === effort}>{t(`chat.reasoningEffort.${effort}`)}</IsleChip>
                   </IslePressable>
@@ -873,8 +874,7 @@ function ParamInput({
             }}
             accessibilityLabel={resetLabel}
             accessibilityHint={automaticLabel}
-            hitSlop={6}
-            style={{ width: 24, height: 24, alignItems: 'center', justifyContent: 'center' }}
+            style={{ width: ISLE_MIN_TOUCH_TARGET, height: ISLE_MIN_TOUCH_TARGET, alignItems: 'center', justifyContent: 'center' }}
           >
             <AppIcon name="undo" color={colors.textTertiary} size={14} />
           </IslePressable>
