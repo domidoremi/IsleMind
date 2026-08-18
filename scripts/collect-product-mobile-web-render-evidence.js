@@ -1074,26 +1074,26 @@ async function prepareAppearanceCapture(page, expected) {
 }
 
 async function prepareInteractionCapture(page, expected) {
-  if (expected.interaction !== 'open-toolbox') return undefined
-  const trigger = page.getByTestId('chat-floating-toolbox-trigger')
+  if (expected.interaction !== 'open-composer-tools') return undefined
+  const trigger = page.getByTestId('chat-composer-tools-trigger')
   await trigger.waitFor({ state: 'visible' })
   await trigger.click()
-  const panel = page.getByTestId('chat-floating-toolbox-panel')
+  const panel = page.getByTestId('chat-composer-tools-panel')
   await panel.waitFor({ state: 'visible' })
   await waitForStableBounds(panel)
   const expanded = await trigger.getAttribute('aria-expanded')
-  if (expanded !== 'true') throw new Error('Toolbox trigger must expose aria-expanded=true after opening')
+  if (expanded !== 'true') throw new Error('Composer tools trigger must expose aria-expanded=true after opening')
   const actions = panel.getByRole('button')
   const actionCount = await actions.count()
-  if (!actionCount) throw new Error('Toolbox panel must render at least one action')
+  if (!actionCount) throw new Error('Composer tools panel must render at least one action')
   const firstActionBounds = await actions.first().boundingBox()
   const viewport = page.viewportSize()
-  if (!firstActionBounds || !viewport) throw new Error('Toolbox first action has no rendered bounds')
+  if (!firstActionBounds || !viewport) throw new Error('Composer tools first action has no rendered bounds')
   return {
     kind: expected.interaction,
     expanded: true,
-    trigger: await inspectViewportBounds(page, 'chat-floating-toolbox-trigger'),
-    panel: await inspectViewportBounds(page, 'chat-floating-toolbox-panel'),
+    trigger: await inspectViewportBounds(page, 'chat-composer-tools-trigger'),
+    panel: await inspectViewportBounds(page, 'chat-composer-tools-panel'),
     actionCount,
     firstAction: {
       ...firstActionBounds,
@@ -1101,6 +1101,33 @@ async function prepareInteractionCapture(page, expected) {
       withinViewport: firstActionBounds.x >= 0 && firstActionBounds.y >= 0 && firstActionBounds.x + firstActionBounds.width <= viewport.width && firstActionBounds.y + firstActionBounds.height <= viewport.height,
     },
   }
+}
+
+async function waitForProductCaptureSurface(page, expected, timeoutMs) {
+  const testId = expected.mode === 'history'
+    ? 'conversation-history-screen'
+    : expected.mode === 'chat'
+      ? 'chat-composer-tools-trigger'
+      : expected.mode === 'settings'
+        ? 'settings-control-tab-system'
+        : null
+  if (testId) {
+    const surface = page.getByTestId(testId)
+    await surface.waitFor({ state: 'visible', timeout: timeoutMs })
+    await page.waitForFunction((id) => {
+      let element = document.querySelector(`[data-testid="${id}"]`)
+      if (!element) return false
+      while (element) {
+        const opacity = Number.parseFloat(getComputedStyle(element).opacity)
+        if (Number.isFinite(opacity) && opacity < 0.99) return false
+        element = element.parentElement
+      }
+      return true
+    }, testId, { timeout: timeoutMs })
+    await waitForStableBounds(surface)
+    return
+  }
+  await page.waitForFunction(() => (document.body?.innerText.trim().length ?? 0) > 0, undefined, { timeout: timeoutMs })
 }
 
 async function waitForStableBounds(locator) {
@@ -1146,7 +1173,10 @@ async function collect(options) {
     return { result, written }
   }
 
-  const browser = await playwright.chromium.launch()
+  const selectedBrowser = resolveBrowserExecutable(options.browser)
+  const browser = await playwright.chromium.launch(
+    selectedBrowser.executable ? { executablePath: selectedBrowser.executable } : undefined,
+  )
   const captures = []
   const errors = []
   try {
@@ -1173,8 +1203,8 @@ async function collect(options) {
       fs.mkdirSync(path.dirname(screenshotPath), { recursive: true })
 
       try {
-        await page.goto(routeUrl, { waitUntil: 'networkidle', timeout: options.timeoutMs })
-        await page.waitForFunction(() => (document.body?.innerText.trim().length ?? 0) > 20, undefined, { timeout: options.timeoutMs })
+        await page.goto(routeUrl, { waitUntil: 'domcontentloaded', timeout: options.timeoutMs })
+        await waitForProductCaptureSurface(page, expected, options.timeoutMs)
         const appearance = await prepareAppearanceCapture(page, expected)
         const interaction = await prepareInteractionCapture(page, expected)
         await page.screenshot({ path: screenshotPath, fullPage: false })

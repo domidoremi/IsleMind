@@ -8,6 +8,7 @@ import {
   normalizeProviderPresetSelection,
   normalizeProviderPresetId,
   normalizeProviderClientCompatibilityMode,
+  sanitizeProviderUsageQueryConfiguration,
   sanitizeProviderPortableExportUrl,
 } from '@/modules/providers'
 import {
@@ -795,6 +796,9 @@ function normalizeProvider(provider: AIProvider): AIProvider {
         : undefined,
     clientCompatibilityProfile: normalizeProviderClientCompatibilityMode(
       provider.clientCompatibilityProfile,
+    ),
+    usageQueryConfiguration: sanitizeProviderUsageQueryConfiguration(
+      provider.usageQueryConfiguration,
     ),
     modelConfigs: buildProviderModelConfigsForStorage(
       provider,

@@ -2,10 +2,8 @@ import { StyleSheet, Text, View } from 'react-native'
 import { useTranslation } from 'react-i18next'
 
 import { AppIcon, appIconStroke } from '@/components/ui/AppIcon'
-import { IslePressable } from '@/components/ui/isle'
+import { ISLE_MIN_TOUCH_TARGET, IslePressable } from '@/components/ui/isle'
 import { useAppTheme } from '@/hooks/useAppTheme'
-
-const QUICK_START_ACTION_HIT_SLOP = { top: 8, right: 8, bottom: 8, left: 8 }
 
 export function ProgramErrorBanner({
   title,
@@ -57,10 +55,9 @@ export function ProgramErrorBanner({
           accessibilityRole="button"
           accessibilityLabel={t('chat.programErrorDismissAccessibilityLabel')}
           onPress={onDismiss}
-          hitSlop={QUICK_START_ACTION_HIT_SLOP}
           style={{
-            width: 30,
-            height: 30,
+            width: ISLE_MIN_TOUCH_TARGET,
+            height: ISLE_MIN_TOUCH_TARGET,
             borderRadius: colors.ui.radius.controlMiddle,
             alignItems: 'center',
             justifyContent: 'center',

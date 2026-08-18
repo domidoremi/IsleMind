@@ -1,5 +1,3 @@
-import { router } from 'expo-router'
-
 import type { ChatOptionsPanel } from './ChatOptionsPanel'
 import { FloatingChrome } from './FloatingChrome'
 import type { ChatActiveWorkspaceProps } from './chatActiveWorkspaceTypes'
@@ -43,11 +41,9 @@ export interface ChatActiveChromeLayerProps extends ChatActiveChromeLayerBasePro
   onNewConversation: () => void
   onDraftChange: NonNullable<Parameters<typeof ChatOptionsPanel>[0]['onDraftChange']>
   onSwitchModel: Parameters<typeof ChatOptionsPanel>[0]['onSwitchModel']
-  showFloatingControlOrb: boolean
 }
 
 export function ChatActiveChromeLayer({
-  showFloatingControlOrb,
   colors,
   visualTopInset,
   insets,
@@ -109,7 +105,7 @@ export function ChatActiveChromeLayer({
           setShowOptions(false)
           return
         }
-        return showBack ? router.back() : goHistory()
+        goHistory()
       }}
       showBack={showBack}
       shellNavigation={shellNavigation}

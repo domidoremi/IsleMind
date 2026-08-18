@@ -71,9 +71,21 @@ export function useChatWorkspaceProviderHealthState({
   useEffect(() => {
     if (!active) return
     let mounted = true
-    void resolveConversationHealth(runtimeConversation, providers, hydrateProviderKey, t, modelAccessSettings).then((health) => {
-      if (mounted) setProviderHealth(health)
-    })
+    setProviderHealth(null)
+    void resolveConversationHealth(runtimeConversation, providers, hydrateProviderKey, t, modelAccessSettings)
+      .then((health) => {
+        if (mounted) setProviderHealth(health)
+      })
+      .catch(() => {
+        if (!mounted) return
+        setProviderHealth({
+          code: 'unknown',
+          title: t('chat.conversationConfigIssue'),
+          description: t('chat.sendMessageUnavailableAccessibilityHint'),
+          inheritedExpired: false,
+          providerId: provider?.id ?? runtimeConversation?.providerId,
+        })
+      })
     return () => {
       mounted = false
     }

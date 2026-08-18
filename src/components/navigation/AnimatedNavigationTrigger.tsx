@@ -21,6 +21,7 @@ export function useNavigationTrigger(onNavigate: NavigateHandler, options: Navig
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const mountedRef = useRef(true)
   const runningRef = useRef(false)
+  const runIdRef = useRef(0)
   const [active, setActive] = useState(false)
   const [running, setRunning] = useState(false)
 
@@ -32,32 +33,61 @@ export function useNavigationTrigger(onNavigate: NavigateHandler, options: Navig
     mountedRef.current = true
     return () => {
       mountedRef.current = false
-      if (timerRef.current) clearTimeout(timerRef.current)
+      runIdRef.current += 1
+      runningRef.current = false
+      if (timerRef.current !== null) clearTimeout(timerRef.current)
+      timerRef.current = null
     }
   }, [])
 
-  const finish = useCallback(() => {
+  const clearTimer = useCallback(() => {
+    if (timerRef.current === null) return
+    clearTimeout(timerRef.current)
+    timerRef.current = null
+  }, [])
+
+  const finish = useCallback((runId: number) => {
+    if (runIdRef.current !== runId) return
+    clearTimer()
     runningRef.current = false
     if (!mountedRef.current) return
     setRunning(false)
     setActive(false)
-  }, [])
+  }, [clearTimer])
 
   const trigger = useCallback(() => {
     if (runningRef.current) return
 
-    if (motion !== 'full') {
-      void Promise.resolve(navigateRef.current())
+    const runId = runIdRef.current + 1
+    runIdRef.current = runId
+    runningRef.current = true
+    setRunning(true)
+    if (motion === 'full') setActive(true)
+
+    let navigationResult: void | Promise<void>
+    try {
+      // Navigation is the primary action; the icon feedback runs alongside it.
+      navigationResult = navigateRef.current()
+    } catch {
+      finish(runId)
       return
     }
 
-    runningRef.current = true
-    setRunning(true)
-    setActive(true)
-    timerRef.current = setTimeout(() => {
-      timerRef.current = null
-      Promise.resolve(navigateRef.current()).finally(finish)
-    }, durationMs)
+    if (motion === 'full') {
+      if (mountedRef.current && runIdRef.current === runId) {
+        timerRef.current = setTimeout(() => finish(runId), durationMs)
+      }
+      // A rejected transition must not leave the trigger permanently busy.
+      void Promise.resolve(navigationResult).catch(() => finish(runId))
+      return
+    }
+
+    // Reduced motion has no artificial delay, but still fences rapid duplicate taps
+    // while an async navigation transition is in flight.
+    void Promise.resolve(navigationResult).then(
+      () => finish(runId),
+      () => finish(runId),
+    )
   }, [durationMs, finish, motion])
 
   return { active, running, trigger }

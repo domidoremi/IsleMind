@@ -22,6 +22,7 @@ import { PressableScale } from '@/components/ui/PressableScale'
 import { useAppTheme } from '@/hooks/useAppTheme'
 import { useMotionPreference } from '@/hooks/useMotionPreference'
 import { motionTokens } from '@/theme/animation'
+import { resolveMinimumTouchTargetHeight } from './touchTarget'
 export type IsleButtonType = 'primary' | 'default' | 'dashed' | 'text' | 'link'
 export type IsleButtonSize = 'small' | 'middle' | 'large'
 export type IsleInputSize = 'small' | 'middle' | 'large'
@@ -60,6 +61,9 @@ export type IsleTitleVariant = 'ribbon' | 'cloud'
 export type IsleProgressSize = 'small' | 'middle' | 'large'
 export type IsleProgressInfoPosition = 'inside' | 'right' | 'top'
 export type IsleTimeType = 'hud' | 'game'
+
+export const ISLE_MIN_TOUCH_TARGET = 44
+const ISLE_INPUT_CLEAR_BUTTON_SIZE = 26
 
 export interface IsleTimeProps {
   type?: IsleTimeType
@@ -254,6 +258,8 @@ export function IsleButton({
   const buttonAccessibilityState = loading
     ? { ...accessibilityState, busy: true }
     : accessibilityState
+  const flattenedStyle = StyleSheet.flatten(style)
+  const minimumButtonHeight = resolveMinimumTouchTargetHeight(height, flattenedStyle, ISLE_MIN_TOUCH_TARGET)
   return (
     <PressableScale
       haptic
@@ -266,7 +272,6 @@ export function IsleButton({
       style={[
         {
           alignSelf: block ? 'stretch' : 'flex-start',
-          minHeight: height,
           borderRadius: controlRadius(size, palette),
           paddingHorizontal: size === 'small' ? 12 : size === 'large' ? 18 : 14,
           flexDirection: 'row',
@@ -290,6 +295,7 @@ export function IsleButton({
           }),
         },
         style,
+        { minHeight: minimumButtonHeight },
       ]}
     >
       {loading || icon ? (
@@ -379,7 +385,7 @@ export function IsleInput({
         transition={{ type: 'timing', duration: motion === 'full' ? motionTokens.duration.fast : 1 }}
         style={{
           height: multilineShellHeight,
-          minHeight: multiline ? 76 : height,
+          minHeight: multiline ? 76 : Math.max(height, ISLE_MIN_TOUCH_TARGET),
           maxHeight: multiline ? multilineMaxHeight : undefined,
           borderRadius: multiline ? palette.ui.radius.field : controlRadius(size, palette),
           paddingHorizontal: size === 'large' ? 16 : 12,
@@ -444,8 +450,10 @@ export function IsleInput({
             if (!controlled) setUncontrolledValue('')
             onChangeText?.('')
             onClear?.()
-          }} style={{ width: 26, height: 26, borderRadius: Math.min(palette.ui.radius.controlSmall, 8), alignItems: 'center', justifyContent: 'center', backgroundColor: clearButtonBackground }}>
-            <AppIcon name="close" color={palette.secondary} size={13} />
+          }} style={{ width: ISLE_MIN_TOUCH_TARGET, height: ISLE_MIN_TOUCH_TARGET, alignItems: 'center', justifyContent: 'center' }}>
+            <View style={{ width: ISLE_INPUT_CLEAR_BUTTON_SIZE, height: ISLE_INPUT_CLEAR_BUTTON_SIZE, borderRadius: Math.min(palette.ui.radius.controlSmall, 8), alignItems: 'center', justifyContent: 'center', backgroundColor: clearButtonBackground }}>
+              <AppIcon name="close" color={palette.secondary} size={13} />
+            </View>
           </PressableScale>
         ) : suffix ? suffix : null}
       </MotiView>
@@ -480,6 +488,9 @@ export function IsleSwitch({
   const disabledStyle = disabledContentStyle(palette)
   const width = size === 'small' ? 38 : 52
   const height = size === 'small' ? 20 : 28
+  const touchWidth = Math.max(width, ISLE_MIN_TOUCH_TARGET)
+  const trackLeft = (touchWidth - width) / 2
+  const trackTop = (ISLE_MIN_TOUCH_TARGET - height) / 2
   const borderWidth = palette.limeRoad ? 1 : StyleSheet.hairlineWidth
   const thumbInset = size === 'small' ? 3 : 3
   const knob = height - thumbInset * 2
@@ -499,17 +510,11 @@ export function IsleSwitch({
       accessibilityRole="switch"
       accessibilityState={loading ? { checked: active, busy: true } : { checked: active }}
       style={{
-        width,
-        height,
-        borderRadius: height / 2,
+        width: touchWidth,
+        height: ISLE_MIN_TOUCH_TARGET,
         alignItems: 'flex-start',
         justifyContent: 'center',
-        backgroundColor: disabled ? disabledStyle.backgroundColor : active ? switchTokens.trackOn : switchTokens.trackOff,
         opacity: 1,
-        shadowColor: active ? switchTokens.trackOnBorder : switchTokens.trackOffBorder,
-        shadowOpacity: 0,
-        shadowRadius: 0,
-        shadowOffset: { width: 0, height: 0 },
       }}
     >
       <MotiView
@@ -518,33 +523,34 @@ export function IsleSwitch({
           borderColor: disabled ? disabledStyle.borderColor : active ? switchTokens.trackOnBorder : switchTokens.trackOffBorder,
         }}
         transition={motion === 'full' ? { type: 'timing', duration: motionTokens.duration.fast } : { type: 'timing', duration: 1 }}
-        style={{ position: 'absolute', top: 0, right: 0, bottom: 0, left: 0, borderRadius: height / 2, borderWidth }}
-      />
-      <MotiView
-        animate={{ translateX: active ? thumbTravel : 0 }}
-        transition={{ type: 'timing', duration: motion === 'full' ? motionTokens.duration.fast : 1 }}
-        style={{
-          position: 'absolute',
-          top: thumbInset,
-          left: thumbInset,
-          width: knob,
-          height: knob,
-          borderRadius: knob / 2,
-          backgroundColor: disabled ? palette.ui.semantic.surface.base : switchTokens.thumb,
-          borderWidth: StyleSheet.hairlineWidth,
-          borderColor: disabled ? disabledStyle.borderColor : active ? switchTokens.thumbOnBorder : switchTokens.thumbOffBorder,
-          shadowColor: 'transparent',
-          shadowOpacity: 0,
-          shadowRadius: 0,
-          shadowOffset: { width: 0, height: 0 },
-          elevation: 0,
-        }}
-      />
-      {checkedChildren || unCheckedChildren ? (
-        <Text style={{ position: 'absolute', top: 0, bottom: 0, left: active ? 7 : knob + thumbInset + 4, right: active ? knob + thumbInset + 4 : 7, color: switchTextColor, fontSize: 10, lineHeight: height, fontWeight: '800', textAlign: active ? 'left' : 'right', includeFontPadding: false, textAlignVertical: 'center' }}>
-          {active ? checkedChildren : unCheckedChildren}
-        </Text>
-      ) : null}
+        style={{ position: 'absolute', top: trackTop, left: trackLeft, width, height, borderRadius: height / 2, borderWidth }}
+      >
+        <MotiView
+          animate={{ translateX: active ? thumbTravel : 0 }}
+          transition={{ type: 'timing', duration: motion === 'full' ? motionTokens.duration.fast : 1 }}
+          style={{
+            position: 'absolute',
+            top: thumbInset,
+            left: thumbInset,
+            width: knob,
+            height: knob,
+            borderRadius: knob / 2,
+            backgroundColor: disabled ? palette.ui.semantic.surface.base : switchTokens.thumb,
+            borderWidth: StyleSheet.hairlineWidth,
+            borderColor: disabled ? disabledStyle.borderColor : active ? switchTokens.thumbOnBorder : switchTokens.thumbOffBorder,
+            shadowColor: 'transparent',
+            shadowOpacity: 0,
+            shadowRadius: 0,
+            shadowOffset: { width: 0, height: 0 },
+            elevation: 0,
+          }}
+        />
+        {checkedChildren || unCheckedChildren ? (
+          <Text style={{ position: 'absolute', top: 0, bottom: 0, left: active ? 7 : knob + thumbInset + 4, right: active ? knob + thumbInset + 4 : 7, color: switchTextColor, fontSize: 10, lineHeight: height, fontWeight: '800', textAlign: active ? 'left' : 'right', includeFontPadding: false, textAlignVertical: 'center' }}>
+            {active ? checkedChildren : unCheckedChildren}
+          </Text>
+        ) : null}
+      </MotiView>
     </PressableScale>
   )
 }
@@ -852,7 +858,7 @@ export function IsleCollapse({
   const questionLabel = typeof question === 'string' || typeof question === 'number' ? String(question) : undefined
   return (
     <IsleCard type="dashed" style={disabled ? { borderColor: disabledStyle.borderColor } : undefined}>
-      <PressableScale haptic disabled={disabled} onPress={() => setExpanded((value) => !value)} accessibilityLabel={questionLabel} accessibilityState={{ expanded }} style={{ minHeight: 34, flexDirection: 'row', alignItems: 'center', gap: 10 }}>
+      <PressableScale haptic disabled={disabled} onPress={() => setExpanded((value) => !value)} accessibilityLabel={questionLabel} accessibilityState={{ expanded }} style={{ minHeight: ISLE_MIN_TOUCH_TARGET, flexDirection: 'row', alignItems: 'center', gap: 10 }}>
         <View style={{ width: 28, height: 28, borderRadius: Math.min(palette.ui.radius.controlSmall, 8), alignItems: 'center', justifyContent: 'center', backgroundColor: controlBackground, borderWidth: disabled ? StyleSheet.hairlineWidth : 0, borderColor: controlBorder }}>
           <Text style={{ color: controlForeground, fontSize: 18, lineHeight: 22, fontWeight: '800', includeFontPadding: false, textAlignVertical: 'center' }}>{expanded ? '-' : '+'}</Text>
         </View>
@@ -907,10 +913,11 @@ export function IsleModal({
   const titleLabel = typeof title === 'string' ? title : undefined
   return (
     <Modal transparent visible={open} animationType="fade" statusBarTranslucent onRequestClose={onClose}>
-      <View style={{ flex: 1, justifyContent: 'center', padding: 20 }}>
+      <View accessibilityViewIsModal style={{ flex: 1, justifyContent: 'center', padding: 20 }}>
         <Pressable
           onPress={maskClosable ? onClose : undefined}
           accessible={false}
+          accessibilityRole="none"
           style={{ position: 'absolute', top: 0, right: 0, bottom: 0, left: 0, backgroundColor: palette.colors.backdrop }}
         />
         <MotiView
@@ -1088,7 +1095,7 @@ export function IsleSelect({ options, value, placeholder = 'Select', disabled = 
                       onChange?.(option.value)
                       setOpen(false)
                     }}
-                    style={{ minHeight: 34, borderRadius: Math.min(palette.ui.radius.controlSmall, 8), paddingHorizontal: 10, justifyContent: 'center' }}
+                    style={{ minHeight: ISLE_MIN_TOUCH_TARGET, borderRadius: Math.min(palette.ui.radius.controlSmall, 8), paddingHorizontal: 10, justifyContent: 'center' }}
                   >
                       <MotiView
                         animate={{ backgroundColor: optionDisabled ? disabledStyle.backgroundColor : optionActive ? activeOptionBackground : 'transparent' }}

@@ -1,4 +1,4 @@
-import { type Dispatch, type SetStateAction } from 'react'
+import { memo, type Dispatch, type SetStateAction } from 'react'
 import { useTranslation } from 'react-i18next'
 import { MotiView } from 'moti'
 
@@ -35,7 +35,7 @@ export interface ChatActiveMessageItemProps {
   viewportHeight: number
   provider: AIProvider | undefined
   regenerableAssistantId?: string
-  activeActionMessageId: string | null
+  actionSheetActive: boolean
   onActionMessageChange: Dispatch<SetStateAction<string | null>>
   multiSelectActive: boolean
   selected: boolean
@@ -54,7 +54,7 @@ export interface ChatActiveMessageItemProps {
   isRewinding?: boolean
 }
 
-export function ChatActiveMessageItem({
+export const ChatActiveMessageItem = memo(function ChatActiveMessageItem({
   conversationId,
   message,
   index,
@@ -62,7 +62,7 @@ export function ChatActiveMessageItem({
   viewportHeight,
   provider,
   regenerableAssistantId,
-  activeActionMessageId,
+  actionSheetActive,
   onActionMessageChange,
   multiSelectActive,
   selected,
@@ -97,7 +97,7 @@ export function ChatActiveMessageItem({
         motion={motion}
         viewportHeight={viewportHeight}
         isLastAssistant={message.id === regenerableAssistantId}
-        activeActionMessageId={activeActionMessageId}
+        activeActionMessageId={actionSheetActive ? message.id : null}
         onActionMessageChange={onActionMessageChange}
         multiSelectActive={multiSelectActive}
         selected={selected}
@@ -118,8 +118,22 @@ export function ChatActiveMessageItem({
           refreshSkills,
           t,
         })}
-        onRetry={(item) => void retryConversationMessage(conversationId, item.id).catch(() => {})}
-        onRegenerate={() => void regenerateLastConversationAssistant(conversationId).catch(() => {})}
+        onRetry={(item) => void retryConversationMessage(conversationId, item.id).catch(() => {
+          dialog.toast({
+            title: t('chat.retryFailed'),
+            message: t('chat.retryFailedMessage'),
+            tone: 'danger',
+            dedupeKey: 'chat-retry-failed',
+          })
+        })}
+        onRegenerate={() => void regenerateLastConversationAssistant(conversationId).catch(() => {
+          dialog.toast({
+            title: t('chat.regenerateFailed'),
+            message: t('chat.regenerateFailedMessage'),
+            tone: 'danger',
+            dedupeKey: 'chat-regenerate-failed',
+          })
+        })}
         onSpeak={(item) => void speakText(item.responseText ?? item.content, provider)}
         onQuote={quoteMessage}
         onEdit={editUserMessage}
@@ -129,4 +143,4 @@ export function ChatActiveMessageItem({
       />
     </MotiView>
   )
-}
+})

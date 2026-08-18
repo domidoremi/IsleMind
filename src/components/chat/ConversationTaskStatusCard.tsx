@@ -1,4 +1,4 @@
-import { StyleSheet, Text, View } from 'react-native'
+import { ActivityIndicator, StyleSheet, Text, View } from 'react-native'
 import { useTranslation } from 'react-i18next'
 
 import { AppIcon, appIconStroke, type AppIconName } from '@/components/ui/AppIcon'
@@ -19,6 +19,7 @@ export function ConversationTaskStatusCard(props: {
   message?: Message
   topOffset: number
   compact: boolean
+  cancelling: boolean
   onCancel: () => void
   onRepairAgentEvidence?: (message: Message) => void
   onConfirmAction?: (message: Message) => void
@@ -36,6 +37,7 @@ function SharedTaskStatusCard({
   message,
   topOffset,
   compact,
+  cancelling,
   onCancel,
   onRepairAgentEvidence,
   onConfirmAction,
@@ -45,6 +47,7 @@ function SharedTaskStatusCard({
   message?: Message
   topOffset: number
   compact: boolean
+  cancelling: boolean
   onCancel: () => void
   onRepairAgentEvidence?: (message: Message) => void
   onConfirmAction?: (message: Message) => void
@@ -177,26 +180,7 @@ function SharedTaskStatusCard({
                 </View>
               ) : null}
             </View>
-            <IslePressable
-              haptic
-              accessibilityRole="button"
-              accessibilityLabel={t('chat.taskCardCancel')}
-              accessibilityHint={t('chat.taskCardCancelHint')}
-              hitSlop={QUICK_TOOL_HIT_SLOP}
-              onPress={onCancel}
-              style={{
-                width: compact ? 32 : 34,
-                height: compact ? 32 : 34,
-                borderRadius: colors.ui.radius.controlLarge,
-                alignItems: 'center',
-                justifyContent: 'center',
-                backgroundColor: colors.ui.tone.danger.background,
-                borderWidth: StyleSheet.hairlineWidth,
-                borderColor: colors.ui.tone.danger.border,
-              }}
-            >
-              <AppIcon name="stop" color={colors.ui.tone.danger.foreground} size={compact ? 11 : 12} strokeWidth={appIconStroke.bold} fill={colors.ui.tone.danger.foreground} />
-            </IslePressable>
+            <TaskCancelButton onCancel={onCancel} compact={compact} cancelling={cancelling} />
           </View>
         </View>
       </View>
@@ -210,6 +194,7 @@ type TaskStatusCardProps = {
   message?: Message
   topOffset: number
   compact: boolean
+  cancelling: boolean
   onCancel: () => void
   onRepairAgentEvidence?: (message: Message) => void
   onConfirmAction?: (message: Message) => void
@@ -273,7 +258,7 @@ function MinimalTaskStatusCard(props: TaskStatusCardProps) {
             <Text numberOfLines={1} style={{ marginTop: 2, color: colors.textSecondary, fontSize: 9.5, lineHeight: 12, fontWeight: '700' }}>{projection.statusDetail}</Text>
             {projection.showEvidenceRow ? <TaskEvidenceRow projection={projection} compact onRepairAgentEvidence={props.onRepairAgentEvidence} onConfirmAction={props.onConfirmAction} /> : null}
           </View>
-          <TaskCancelButton onCancel={props.onCancel} compact />
+          <TaskCancelButton onCancel={props.onCancel} compact cancelling={props.cancelling} />
         </View>
       </View>
     </View>
@@ -300,7 +285,7 @@ function LimeRoadTaskStatusCard(props: TaskStatusCardProps) {
             <Text numberOfLines={1} style={{ marginTop: 2, color: colors.textSecondary, fontSize: 9.5, lineHeight: 12, fontWeight: '700' }}>{projection.statusDetail}</Text>
             {projection.showEvidenceRow ? <TaskEvidenceRow projection={projection} compact onRepairAgentEvidence={props.onRepairAgentEvidence} onConfirmAction={props.onConfirmAction} /> : null}
           </View>
-          <TaskCancelButton onCancel={props.onCancel} compact tone={tone} />
+          <TaskCancelButton onCancel={props.onCancel} compact cancelling={props.cancelling} />
         </View>
       </View>
     </View>
@@ -327,7 +312,7 @@ function MarkdownTaskStatusCard(props: TaskStatusCardProps) {
             <Text numberOfLines={1} style={{ marginTop: 2, color: colors.textSecondary, fontSize: 9.5, lineHeight: 12, fontWeight: '600' }}>{projection.statusDetail}</Text>
             {projection.showEvidenceRow ? <TaskEvidenceRow projection={projection} compact onRepairAgentEvidence={props.onRepairAgentEvidence} onConfirmAction={props.onConfirmAction} /> : null}
           </View>
-          <TaskCancelButton onCancel={props.onCancel} compact tone={tone} />
+          <TaskCancelButton onCancel={props.onCancel} compact cancelling={props.cancelling} />
         </View>
       </View>
     </View>
@@ -345,19 +330,26 @@ function TaskEvidenceRow({ projection, compact, onRepairAgentEvidence, onConfirm
   )
 }
 
-function TaskCancelButton({ onCancel, compact, route = false, document = false, tone }: { onCancel: () => void; compact: boolean; route?: boolean; document?: boolean; tone?: ReturnType<typeof useAppTheme>['colors']['ui']['tone']['warning'] }) {
+function TaskCancelButton({ onCancel, compact, cancelling }: { onCancel: () => void; compact: boolean; cancelling: boolean }) {
   const { colors } = useAppTheme()
-  const resolvedTone = tone ?? colors.ui.tone.danger
+  const { t } = useTranslation()
   return (
     <IslePressable
-      haptic
+      haptic={!cancelling}
+      disabled={cancelling}
       accessibilityRole="button"
-      accessibilityLabel={useTranslation().t('chat.taskCardCancel')}
-      accessibilityHint={useTranslation().t('chat.taskCardCancelHint')}
+      accessibilityLabel={t('chat.taskCardCancel')}
+      accessibilityHint={t('chat.taskCardCancelHint')}
+      accessibilityState={cancelling ? { busy: true, disabled: true } : undefined}
+      hitSlop={QUICK_TOOL_HIT_SLOP}
       onPress={onCancel}
-      style={{ width: compact ? 34 : 36, height: compact ? 34 : 36, alignSelf: route ? 'stretch' : document ? 'center' : 'center', borderRadius: document ? 0 : route ? 0 : colors.ui.radius.controlLarge, alignItems: 'center', justifyContent: 'center', backgroundColor: route ? resolvedTone.foreground : colors.ui.tone.danger.background, borderWidth: StyleSheet.hairlineWidth, borderColor: route ? resolvedTone.foreground : colors.ui.tone.danger.border }}
+      style={{ width: compact ? 34 : 36, height: compact ? 34 : 36, alignSelf: 'center', borderRadius: colors.ui.radius.controlLarge, alignItems: 'center', justifyContent: 'center', backgroundColor: colors.ui.tone.danger.background, borderWidth: StyleSheet.hairlineWidth, borderColor: colors.ui.tone.danger.border }}
     >
-      <AppIcon name="stop" color={route ? colors.ui.control.dangerForeground : colors.ui.tone.danger.foreground} size={compact ? 11 : 12} strokeWidth={appIconStroke.bold} fill={route ? colors.ui.control.dangerForeground : colors.ui.tone.danger.foreground} />
+      {cancelling ? (
+        <ActivityIndicator color={colors.ui.tone.danger.foreground} size="small" />
+      ) : (
+        <AppIcon name="stop" color={colors.ui.tone.danger.foreground} size={compact ? 11 : 12} strokeWidth={appIconStroke.bold} fill={colors.ui.tone.danger.foreground} />
+      )}
     </IslePressable>
   )
 }

@@ -10,8 +10,11 @@ import {
 } from '@/modules/integrations'
 import { clampTraceText, redactSensitiveText } from '@/core'
 import { appendRuntimeLog, type RuntimeLogOptions } from '@/services/runtimeLog'
-import { isAllowedAndroidApkUri } from '@/services/androidUriPolicy'
-import { openAndroidStatusNotificationSettings, type AndroidStatusNotificationSettingsTarget } from '@/services/androidStatusNotification'
+import { isAllowedAndroidApkUri } from '@/platform/native/androidUriPolicy'
+import type {
+  AndroidStatusNotificationSettingsResult,
+  AndroidStatusNotificationSettingsTarget,
+} from '@/platform/native/androidStatusNotification'
 import { st } from '@/i18n/service'
 export type AndroidFileOperationAction = 'mkdir' | 'move' | 'copy' | 'rename'
 export type AndroidFileConflictPolicy = 'skip' | 'rename'
@@ -93,6 +96,9 @@ interface AndroidToolExecution {
 export interface AndroidDeviceToolOptions {
   signal?: AbortSignal
   runtimeLog?: RuntimeLogOptions
+  openStatusNotificationSettings?: (
+    target: AndroidStatusNotificationSettingsTarget,
+  ) => Promise<AndroidStatusNotificationSettingsResult>
 }
 
 interface AndroidOperationAudit {
@@ -436,7 +442,7 @@ async function runAndroidTool(toolName: string, args: Record<string, unknown>, o
       execution = openReminderTool(args)
       break
     case 'android.notifications.open_settings':
-      execution = openNotificationSettingsTool(args)
+      execution = openNotificationSettingsTool(args, options.openStatusNotificationSettings)
       break
     default:
       throw androidToolError('tool_unavailable', `${toolName} is not an Android device tool.`, 'skipped')
@@ -1032,10 +1038,21 @@ async function openReminderTool(args: Record<string, unknown>): Promise<AndroidT
   })
 }
 
-async function openNotificationSettingsTool(args: Record<string, unknown>): Promise<AndroidToolExecution> {
+async function openNotificationSettingsTool(
+  args: Record<string, unknown>,
+  openSettings: AndroidDeviceToolOptions['openStatusNotificationSettings'],
+): Promise<AndroidToolExecution> {
   assertAndroid()
   const target: AndroidStatusNotificationSettingsTarget = args.target === 'promoted' ? 'promoted' : 'notifications'
-  const result = await openAndroidStatusNotificationSettings(target)
+  if (!openSettings) {
+    throw androidToolError(
+      'tool_unavailable',
+      'Android notification settings are not bound to the task runtime.',
+      'skipped',
+      { target, requiresExternalConfirmation: true, backgroundReliable: false },
+    )
+  }
+  const result = await openSettings(target)
   if (!result.opened) {
     const message = target === 'promoted' && result.reason === 'unsupported_api'
       ? 'Promoted notification settings are unavailable on this Android version.'

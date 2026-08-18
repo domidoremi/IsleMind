@@ -6,7 +6,7 @@ const root = path.resolve(__dirname, '..')
 const worklistPath = path.join(root, 'scripts/fixtures/worklists/product-mobile-web-render-evidence-worklist.json')
 const evidencePath = path.join(root, 'test-evidence/qa/product-mobile-web-render-results.json')
 
-const REQUIRED_CAPTURE_IDS = ['history-320', 'chat-320', 'chat-toolbox-320']
+const REQUIRED_CAPTURE_IDS = ['history-320', 'chat-320', 'chat-composer-tools-320']
 const REQUIRED_CAPTURES = [
   {
     id: 'history-320',
@@ -23,12 +23,12 @@ const REQUIRED_CAPTURES = [
     verifiedNeedles: ['borderless mode introduction', 'single starter action', 'composer visible'],
   },
   {
-    id: 'chat-toolbox-320',
+    id: 'chat-composer-tools-320',
     route: '/',
     viewport: '320x568',
-    screenshotName: 'islemind-chat-toolbox-320.png',
-    interaction: 'open-toolbox',
-    verifiedNeedles: ['toolbox trigger', 'toolbox panel', '44px action rows', 'composer remains visible'],
+    screenshotName: 'islemind-chat-composer-tools-320.png',
+    interaction: 'open-composer-tools',
+    verifiedNeedles: ['Composer tools trigger', 'Composer tools panel', '44px contextual actions', 'composer remains visible'],
   },
 ]
 
@@ -142,7 +142,7 @@ function assertWorklist(worklist) {
   assert.deepEqual(
     captures.map((capture) => capture.id),
     REQUIRED_CAPTURE_IDS,
-    'web render worklist covers unified History, Chat, and toolbox captures in stable order',
+    'web render worklist covers unified History, Chat, and Composer tools captures in stable order',
   )
   for (const expected of REQUIRED_CAPTURES) {
     const capture = captures.find((item) => item.id === expected.id)
@@ -242,14 +242,20 @@ function assertStaleCapturedWebRenderEvidenceResult(result, worklist) {
   assert.equal(result.status, 'captured', 'stale web evidence is a formerly captured result, not current proof')
   assert.ok(Array.isArray(result.captures) && result.captures.length > 0, 'stale web evidence contains the obsolete capture set')
   assert.equal(capturedResultMatchesWorklist(result, worklist), false, 'stale web evidence cannot match the current Chat-only worklist')
+  const captureIds = result.captures.map((capture) => capture.id)
+  const hasRemovedProductCapture = captureIds.includes('agent-360') || captureIds.includes('tavern-390')
+  const hasRetiredToolboxCapture = captureIds.includes('chat-toolbox-320')
   assert.ok(
-    result.captures.some((capture) => capture.id === 'agent-360' || capture.id === 'tavern-390'),
-    'stale web evidence is attributable to removed Agent or Tavern product captures',
+    hasRemovedProductCapture || hasRetiredToolboxCapture,
+    'stale web evidence is attributable to a known removed product or toolbox capture',
   )
-  assert.ok(
-    JSON.stringify(worklist.observedBlockers ?? []).includes('predate the Chat-only routing contract'),
-    'the worklist explicitly records why the old captured result is stale',
-  )
+  const blockerText = JSON.stringify(worklist.observedBlockers ?? [])
+  if (hasRemovedProductCapture) {
+    assert.ok(blockerText.includes('predate the Chat-only routing contract'), 'the worklist records why removed product captures are stale')
+  }
+  if (hasRetiredToolboxCapture) {
+    assert.ok(blockerText.includes('predate the Composer-owned tools contract'), 'the worklist records why the retired floating toolbox capture is stale')
+  }
 }
 
 function assertCapturedWebRenderEvidenceResult(result, worklist) {
@@ -274,15 +280,15 @@ function assertCapturedWebRenderEvidenceResult(result, worklist) {
     for (const needle of expected.verifiedNeedles) {
       assert.ok(verified.includes(needle), `${expected.route} verified notes include ${needle}`)
     }
-    if (expected.interaction === 'open-toolbox') {
-      assert.equal(capture.interaction?.kind, 'open-toolbox', 'toolbox capture records the performed interaction')
-      assert.equal(capture.interaction?.expanded, true, 'toolbox capture records the expanded state')
-      assertViewportBounds(capture.interaction?.trigger, expected.viewport, 'toolbox trigger')
-      assertViewportBounds(capture.interaction?.panel, expected.viewport, 'toolbox panel')
-      assertViewportBounds(capture.interaction?.firstAction, expected.viewport, 'toolbox first action')
-      assert.ok(capture.interaction.trigger.width >= 44 && capture.interaction.trigger.height >= 44, 'toolbox trigger meets the 44px target')
-      assert.ok(capture.interaction.actionCount >= 6, 'toolbox capture records the complete common action set')
-      assert.ok(capture.interaction.firstAction.height >= 44, 'toolbox action rows meet the 44px target')
+    if (expected.interaction === 'open-composer-tools') {
+      assert.equal(capture.interaction?.kind, 'open-composer-tools', 'Composer tools capture records the performed interaction')
+      assert.equal(capture.interaction?.expanded, true, 'Composer tools capture records the expanded state')
+      assertViewportBounds(capture.interaction?.trigger, expected.viewport, 'Composer tools trigger')
+      assertViewportBounds(capture.interaction?.panel, expected.viewport, 'Composer tools panel')
+      assertViewportBounds(capture.interaction?.firstAction, expected.viewport, 'Composer tools first action')
+      assert.ok(capture.interaction.trigger.width >= 44 && capture.interaction.trigger.height >= 44, 'Composer tools trigger meets the 44px target')
+      assert.ok(capture.interaction.actionCount >= 3, 'Composer tools capture records the contextual action set')
+      assert.ok(capture.interaction.firstAction.height >= 44, 'Composer tool actions meet the 44px target')
     }
   }
 
@@ -376,19 +382,19 @@ function assertSourceSetupBoundary() {
   const chatWorkspaceSource = read('src/components/chat/ChatWorkspace.tsx')
   const homeSource = read('src/components/main/HomeScreenContent.tsx')
   const nativeIntentSource = read('app/+native-intent.tsx')
-  const toolboxSource = read('src/components/chat/FloatingControlOrb.tsx')
+  const floatingComposerSource = read('src/components/chat/FloatingComposer.tsx')
+  const composerControlsSource = read('src/components/chat/FloatingComposerControls.tsx')
   assert.ok(chatWorkspaceSource.includes('showSetupEmptyState = true'), 'ChatWorkspace keeps generic setup visible by default')
   assert.ok(homeSource.includes('showSetupEmptyState={showSetupEmptyState}'), 'HomeScreenContent passes setup visibility to ChatWorkspace')
   assert.equal(fs.existsSync(path.join(root, 'app/agent.tsx')), false, 'the legacy /agent product route stays deleted')
   assert.equal(fs.existsSync(path.join(root, 'app/companion.tsx')), false, 'the legacy /companion product route stays deleted')
   assert.ok(nativeIntentSource.includes("host === 'agent'") && nativeIntentSource.includes("host === 'companion' || host === 'tavern'"), 'legacy Agent, Companion, and Tavern native intents redirect into Chat')
-  assert.ok(toolboxSource.includes('testID="chat-floating-toolbox-trigger"'), 'toolbox render evidence has a stable trigger target')
-  assert.ok(toolboxSource.includes('testID="chat-floating-toolbox-panel"'), 'toolbox render evidence has a stable panel target')
-  assert.ok(toolboxSource.includes('QUICK_TOOL_ROW_MIN_HEIGHT = 44'), 'toolbox action rows retain the 44px touch target')
-  assert.ok(toolboxSource.includes('QUICK_TOOL_PANEL_TOP_CLEARANCE = 64'), 'toolbox panel reserves short-screen top navigation clearance')
-  assert.doesNotMatch(toolboxSource, /style=\{\(\{ pressed \}\) => \(\{[\s\S]*?flexDirection: 'row'/, 'toolbox rows avoid function-valued web styles that collapse row layout')
+  assert.ok(floatingComposerSource.includes('testID="chat-composer-tools-trigger"'), 'Composer tools evidence has a stable trigger target')
+  assert.ok(floatingComposerSource.includes('testID="chat-composer-tools-panel"'), 'Composer tools evidence has a stable panel target')
+  assert.ok(composerControlsSource.includes('const controlSize = 44') && composerControlsSource.includes('hitSlop={QUICK_TOOL_HIT_SLOP}'), 'Composer contextual actions retain a physical 44px target with expanded hit area')
+  assert.equal(fs.existsSync(path.join(root, 'src/components/chat/FloatingControlOrb.tsx')), false, 'retired floating toolbox stays deleted')
   const collectorSource = read('scripts/collect-product-mobile-web-render-evidence.js')
-  assert.ok(collectorSource.includes('await waitForStableBounds(panel)'), 'toolbox evidence waits for the opening animation to settle before measuring touch targets')
+  assert.ok(collectorSource.includes('await waitForStableBounds(panel)'), 'Composer tools evidence waits for the opening animation to settle before measuring touch targets')
   assert.ok(collectorSource.includes("storageEvidenceOnly: false"), 'web collector owns a bounded storage-evidence-only mode')
   assert.ok(collectorSource.includes('createAsyncStorageTavernWorkspacePort'), 'browser storage evidence bundles the production AsyncStorage Tavern adapter')
   assert.ok(collectorSource.includes("browser: 'chrome'"), 'browser storage evidence retains Chrome as its compatibility default')

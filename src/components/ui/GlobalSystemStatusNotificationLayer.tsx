@@ -1,22 +1,49 @@
 import { useEffect, useMemo, useRef } from 'react'
 import { useTranslation } from 'react-i18next'
 
-import { clearAndroidStatusNotification, updateAndroidStatusNotification } from '@/services/androidStatusNotification'
+import { clearAndroidStatusNotification, updateAndroidStatusNotification } from '@/bootstrap/androidStatusNotification'
 import { useChatStore } from '@/store/chatStore'
 import { useChatStreamingStore } from '@/store/chatStreamingStore'
 import { useSettingsStore } from '@/store/settingsStore'
 import { previewSystemStatusMessage } from '@/components/chat/messageActivityPreview'
 import { getMessageActivityLabel } from '@/components/chat/messageActivityPreview'
 import { resolveGlobalGenerationStatus } from './globalGenerationStatusState'
+import {
+  createSystemStatusNotificationDispatcher,
+  type SystemStatusNotificationDispatcher,
+} from './systemStatusNotificationDispatch'
 
 const SYSTEM_STATUS_NOTIFICATION_CLEAR_DELAY_MS = 12_000
 
 /** Owns Chat system notification lifecycle independently of the currently visible route. */
 export function GlobalSystemStatusNotificationLayer() {
+  const enabled = useSettingsStore((state) => state.settings.systemStatusNotificationsEnabled === true)
+  const enabledRef = useRef(enabled)
+  const wasEnabledRef = useRef(enabled)
+  enabledRef.current = enabled
+  const notificationDispatcher = useMemo(() => createSystemStatusNotificationDispatcher({
+    update: (payload) => updateAndroidStatusNotification(payload, { enabled: enabledRef.current }),
+    clear: clearAndroidStatusNotification,
+  }), [])
+
+  useEffect(() => {
+    if (wasEnabledRef.current && !enabled) void notificationDispatcher.clear()
+    wasEnabledRef.current = enabled
+  }, [enabled, notificationDispatcher])
+
+  return enabled
+    ? <EnabledSystemStatusNotificationLayer notificationDispatcher={notificationDispatcher} />
+    : null
+}
+
+function EnabledSystemStatusNotificationLayer({
+  notificationDispatcher,
+}: {
+  notificationDispatcher: SystemStatusNotificationDispatcher
+}) {
   const { t } = useTranslation()
   const conversations = useChatStore((state) => state.conversations)
   const activeStreams = useChatStreamingStore((state) => state.activeStreams)
-  const enabled = useSettingsStore((state) => state.settings.systemStatusNotificationsEnabled === true)
   const activeStatus = useMemo(() => resolveGlobalGenerationStatus(conversations, activeStreams), [activeStreams, conversations])
   const tracked = useRef<{ conversationId: string; messageId: string; title: string } | null>(null)
   const clearTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
@@ -27,19 +54,13 @@ export function GlobalSystemStatusNotificationLayer() {
       clearTimer.current = null
     }
 
-    if (!enabled) {
-      tracked.current = null
-      void clearAndroidStatusNotification()
-      return
-    }
-
     if (activeStatus) {
       const conversation = conversations.find((item) => item.id === activeStatus.conversationId)
       const message = conversation?.messages.find((item) => item.id === activeStatus.messageId)
       const title = activeStatus.conversationTitle || t('conversation.untitled')
       const activity = message ? getMessageActivityLabel(message, t) : t('chat.generating')
       tracked.current = { conversationId: activeStatus.conversationId, messageId: activeStatus.messageId, title }
-      void updateAndroidStatusNotification({
+      void notificationDispatcher.update({
         state: 'generating',
         title: t('chat.systemStatusGeneratingTitle'),
         message: t('chat.systemStatusGeneratingMessage', { conversation: title, activity }),
@@ -57,7 +78,12 @@ export function GlobalSystemStatusNotificationLayer() {
     if (!previous) return
     const conversation = conversations.find((item) => item.id === previous.conversationId)
     const completedMessage = conversation?.messages.find((item) => item.id === previous.messageId)
-    if (!completedMessage || completedMessage.status === 'sending' || completedMessage.status === 'streaming') return
+    if (!completedMessage) {
+      tracked.current = null
+      void notificationDispatcher.clear()
+      return
+    }
+    if (completedMessage.status === 'sending' || completedMessage.status === 'streaming') return
 
     const terminal = completedMessage.status === 'error'
       ? 'error'
@@ -76,7 +102,7 @@ export function GlobalSystemStatusNotificationLayer() {
         ? t('chat.systemStatusStoppedMessage', { conversation: previous.title, preview })
         : t('chat.systemStatusCompletedMessage', { conversation: previous.title, preview })
 
-    void updateAndroidStatusNotification({
+    void notificationDispatcher.update({
       state: terminal === 'error' ? 'error' : 'completed',
       title: statusTitle,
       message,
@@ -90,9 +116,9 @@ export function GlobalSystemStatusNotificationLayer() {
     tracked.current = null
     clearTimer.current = setTimeout(() => {
       clearTimer.current = null
-      void clearAndroidStatusNotification()
+      void notificationDispatcher.clear()
     }, SYSTEM_STATUS_NOTIFICATION_CLEAR_DELAY_MS)
-  }, [activeStatus, conversations, enabled, t])
+  }, [activeStatus, conversations, notificationDispatcher, t])
 
   useEffect(() => () => {
     if (clearTimer.current) clearTimeout(clearTimer.current)

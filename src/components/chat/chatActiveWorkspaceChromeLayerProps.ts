@@ -39,12 +39,10 @@ export function buildChatActiveChromeLayerProps({
   },
   layoutState: {
     collapseChrome,
-    showFloatingControlOrb,
   },
   setChromeHeight,
 }: ChatActiveWorkspaceViewProps): ChatActiveChromeLayerProps {
   return {
-    showFloatingControlOrb,
     colors,
     visualTopInset,
     insets,

@@ -1,10 +1,11 @@
-import { useEffect, useRef, useState, type ReactNode } from 'react'
+import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react'
 import { BackHandler, findNodeHandle, Keyboard, Platform, ScrollView, TextInput, useWindowDimensions } from 'react-native'
-import { router, usePathname } from 'expo-router'
+import { router, useLocalSearchParams, usePathname } from 'expo-router'
 import { useTranslation } from 'react-i18next'
 import { AnimatedNavigationTrigger } from '@/components/navigation/AnimatedNavigationTrigger'
 import { IsleScreen } from '@/components/ui/isle'
 import { useAppTheme } from '@/hooks/useAppTheme'
+import { resolveSettingsChildReturnAction } from '@/presentation/app-shell/routeReturnPolicy'
 import {
   LimeRoadSettingsPageExperience,
   MarkdownSettingsPageExperience,
@@ -24,10 +25,19 @@ export function SettingsPageShell({
   const { colors } = useAppTheme()
   const { t } = useTranslation()
   const pathname = usePathname()
+  const params = useLocalSearchParams<{ returnTo?: string | string[] }>()
   const { width } = useWindowDimensions()
   const compact = width < 430
   const scrollRef = useRef<ScrollView>(null)
   const [keyboardHeight, setKeyboardHeight] = useState(0)
+  const returnToSettings = useCallback(() => {
+    const action = resolveSettingsChildReturnAction(params.returnTo, router.canGoBack())
+    if (action.kind === 'back') {
+      router.back()
+      return
+    }
+    router.replace(action.pathname)
+  }, [params.returnTo])
 
   function scrollFocusedInputAboveKeyboard() {
     requestAnimationFrame(() => {
@@ -74,11 +84,15 @@ export function SettingsPageShell({
   useEffect(() => {
     if (Platform.OS !== 'android' || pathname === '/settings') return
     const subscription = BackHandler.addEventListener('hardwareBackPress', () => {
-      router.replace('/settings')
+      if (keyboardHeight > 0) {
+        Keyboard.dismiss()
+        return true
+      }
+      returnToSettings()
       return true
     })
     return () => subscription.remove()
-  }, [pathname])
+  }, [keyboardHeight, pathname, returnToSettings])
 
   useEffect(() => {
     scrollRef.current?.scrollTo({ y: 0, animated: false })
@@ -90,7 +104,7 @@ export function SettingsPageShell({
       ? MarkdownSettingsPageExperience
       : MinimalSettingsPageExperience
   const leading = (
-    <AnimatedNavigationTrigger variant="iconButton" label={t('common.back')} size="sm" glyph="back" onNavigate={() => router.replace('/settings')} color={colors.text} />
+    <AnimatedNavigationTrigger variant="iconButton" label={t('common.back')} size="sm" glyph="back" onNavigate={returnToSettings} color={colors.text} />
   )
 
   return (

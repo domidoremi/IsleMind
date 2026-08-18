@@ -39,10 +39,10 @@ export function ChatActiveWorkspaceView(props: ChatActiveWorkspaceViewProps) {
           compactViewport={compactViewport}
           documentTitle={conversation.title}
           documentMetadata={`${conversation.messages.length} · ${conversation.model}`}
-          chrome={<ChatActiveChromeLayer {...chromeLayerProps} showFloatingControlOrb={false} />}
+          chrome={<ChatActiveChromeLayer {...chromeLayerProps} />}
           status={<ChatActiveStatusLayer {...statusLayerProps} />}
           messageList={<ChatActiveMessageList {...messageListProps} />}
-          controls={<ChatActiveControlsLayer {...controlsLayerProps} showFloatingControlOrb={false} />}
+          controls={<ChatActiveControlsLayer {...controlsLayerProps} />}
           composer={<ChatActiveComposerDock {...composerDockProps} />}
         />
       </View>

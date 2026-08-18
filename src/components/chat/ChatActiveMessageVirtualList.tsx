@@ -151,7 +151,7 @@ export function ChatActiveMessageVirtualList({
           viewportHeight={viewportHeight}
           provider={provider}
           regenerableAssistantId={regenerableAssistantId}
-          activeActionMessageId={activeActionMessageId}
+          actionSheetActive={activeActionMessageId === message.id}
           onActionMessageChange={setActiveActionMessageId}
           multiSelectActive={multiSelectActive}
           selected={selectedMessageIds.has(message.id)}

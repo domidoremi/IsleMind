@@ -50,7 +50,6 @@ logcat/
 /output/
 /*.png
 /-geometry
-/scripts/{console.error(e)
 *.log
 *.logcat
 *.uia.xml

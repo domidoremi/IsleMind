@@ -7,6 +7,12 @@ export function pushChatSettingsRoute(pathname: ChatSettingsRoutePath, params?: 
     ? requestAnimationFrame
     : (callback: (timestamp: number) => void) => setTimeout(() => callback(Date.now()), 0)
   defer(() => {
-    router.push(params ? { pathname, params } : { pathname })
+    router.push({
+      pathname,
+      params: {
+        ...params,
+        returnTo: 'chat',
+      },
+    })
   })
 }

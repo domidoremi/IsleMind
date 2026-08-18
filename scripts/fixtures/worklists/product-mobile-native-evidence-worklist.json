@@ -88,18 +88,18 @@
       ],
       "mustVerify": [
         "the Chat-only workspace fits without product-mode selection cards",
-        "composer and toolbox affordances remain visible",
+        "composer and its tools affordance remain visible",
         "the primary message workflow stays readable at 320dp"
       ],
       "status": "pending-native-recapture"
     },
     {
-      "id": "chat-toolbox-320",
+      "id": "chat-composer-tools-320",
       "route": "/",
       "mode": "chat",
       "targetViewportDp": "320x568",
       "nativeUiFallbackTarget": "chat",
-      "interaction": "open-toolbox",
+      "interaction": "open-composer-tools",
       "tapUiText": [
         "工具",
         "Tools",
@@ -119,14 +119,14 @@
       ],
       "mustFindUiText": [
         [
-          "快捷操作",
-          "Quick actions",
-          "クイック操作"
+          "输出",
+          "Output",
+          "出力"
         ],
         [
-          "收起快捷栏",
-          "Collapse quick bar",
-          "クイックバーを閉じる"
+          "工作区审核",
+          "Workspace review",
+          "ワークスペース確認"
         ]
       ],
       "mustNotFindUiText": [
@@ -142,9 +142,9 @@
         ]
       ],
       "mustVerify": [
-        "the toolbox trigger remains inside the 320dp viewport",
-        "the toolbox panel opens above the composer without clipping",
-        "toolbox action rows retain usable native touch targets"
+        "the Composer tools trigger remains inside the 320dp viewport",
+        "the Composer tools panel opens above the input without clipping",
+        "contextual action rows retain usable native touch targets"
       ],
       "status": "pending-native-recapture"
     }

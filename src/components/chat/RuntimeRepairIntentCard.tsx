@@ -2,10 +2,8 @@ import { StyleSheet, Text, View } from 'react-native'
 import { useTranslation } from 'react-i18next'
 
 import { AppIcon, type AppIconName } from '@/components/ui/AppIcon'
-import { IslePressable } from '@/components/ui/isle'
+import { ISLE_MIN_TOUCH_TARGET, IslePressable } from '@/components/ui/isle'
 import { useAppTheme } from '@/hooks/useAppTheme'
-
-const RUNTIME_REPAIR_ACTION_HIT_SLOP = { top: 8, right: 6, bottom: 8, left: 6 }
 
 export interface RuntimeRepairIntent {
   key: string
@@ -108,9 +106,8 @@ function RuntimeRepairIntentButton({
       onPress={onPress}
       accessibilityRole="button"
       accessibilityLabel={label}
-      hitSlop={RUNTIME_REPAIR_ACTION_HIT_SLOP}
       style={{
-        minHeight: 36,
+        minHeight: ISLE_MIN_TOUCH_TARGET,
         flexGrow: primary ? 1.4 : 1,
         flexShrink: 1,
         flexBasis: primary ? '42%' : '26%',

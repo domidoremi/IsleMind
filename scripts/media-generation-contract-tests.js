@@ -362,11 +362,11 @@ function assertSourceIntegration() {
   assert.ok(runtimeDiagnosticsSource.includes('adapterProofWorklist'), 'runtime diagnostics exposes adapter proof worklist counts in the summary')
   assert.ok(runtimeDiagnosticsSource.includes('mediaGeneration:'), 'runtime diagnostics exposes media generation evidence in the summary')
 
-  const settingsScreenSource = fs.readFileSync(path.join(root, 'src/components/main/SettingsScreenContent.tsx'), 'utf8')
-  assert.ok(settingsScreenSource.includes('runtimeDiagnosticMediaGeneration'), 'settings diagnostics renders the media generation evidence row')
-  assert.ok(settingsScreenSource.includes('diagnostics.mediaGeneration.sourceBackedModels'), 'settings diagnostics reads source-backed generation evidence counts')
-  assert.ok(settingsScreenSource.includes('diagnostics.mediaGeneration.adapterProofWorklist'), 'settings diagnostics reads proof worklist counts only')
-  assert.ok(settingsScreenSource.includes('formatMediaGenerationExamples'), 'settings diagnostics formats generation evidence examples without enabling generation')
+  const runtimeDiagnosticsDetailsSource = fs.readFileSync(path.join(root, 'src/components/settings/RuntimeDiagnosticsDetails.tsx'), 'utf8')
+  assert.ok(runtimeDiagnosticsDetailsSource.includes('runtimeDiagnosticMediaGeneration'), 'settings diagnostics renders the media generation evidence row')
+  assert.ok(runtimeDiagnosticsDetailsSource.includes('diagnostics.mediaGeneration.sourceBackedModels'), 'settings diagnostics reads source-backed generation evidence counts')
+  assert.ok(runtimeDiagnosticsDetailsSource.includes('diagnostics.mediaGeneration.adapterProofWorklist'), 'settings diagnostics reads proof worklist counts only')
+  assert.ok(runtimeDiagnosticsDetailsSource.includes('formatMediaGenerationExamples'), 'settings diagnostics formats generation evidence examples without enabling generation')
 
   const composerSource = fs.readFileSync(path.join(root, 'src/components/chat/Composer.tsx'), 'utf8')
   assert.ok(!composerSource.includes('buildDisabledMediaGenerationAdapterPlan'), 'composer keeps future generation diagnostic-only and does not build execution plans')

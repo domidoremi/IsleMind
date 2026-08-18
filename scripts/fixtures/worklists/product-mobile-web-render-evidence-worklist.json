@@ -8,6 +8,7 @@
   "observedBlockers": [
     "test-evidence/qa/product-mobile-web-render-results.json is gitignored and may be absent until Expo Web + Playwright capture runs",
     "captured results containing Agent or Tavern product screens predate the Chat-only routing contract and remain stale until recaptured",
+    "captured results containing chat-toolbox-320 predate the Composer-owned tools contract and remain stale until chat-composer-tools-320 is recaptured",
     "Expo Web must be running and Playwright must be available before captured web viewport evidence can be claimed",
     "native device/ADB proof is separate and must stay covered by product-mobile-native-evidence"
   ],
@@ -36,16 +37,16 @@
       ]
     },
     {
-      "id": "chat-toolbox-320",
+      "id": "chat-composer-tools-320",
       "route": "/",
       "mode": "chat",
       "viewport": "320x568",
-      "screenshotName": "islemind-chat-toolbox-320.png",
-      "interaction": "open-toolbox",
+      "screenshotName": "islemind-chat-composer-tools-320.png",
+      "interaction": "open-composer-tools",
       "verified": [
-        "toolbox trigger",
-        "toolbox panel",
-        "44px action rows",
+        "Composer tools trigger",
+        "Composer tools panel",
+        "44px contextual actions",
         "composer remains visible"
       ]
     }

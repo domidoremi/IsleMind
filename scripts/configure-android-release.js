@@ -161,14 +161,22 @@ if (!skipSigning && !source.includes('ISLEMIND_UPLOAD_STORE_FILE')) {
   if (!signingConfigs) throw new Error('Could not find signingConfigs block in android/app/build.gradle.')
   const releaseSigningConfig = `
         release {
-            if (project.hasProperty('ISLEMIND_UPLOAD_STORE_FILE')) {
-                storeFile file(ISLEMIND_UPLOAD_STORE_FILE)
-                storePassword ISLEMIND_UPLOAD_STORE_PASSWORD
-                keyAlias ISLEMIND_UPLOAD_KEY_ALIAS
-                keyPassword ISLEMIND_UPLOAD_KEY_PASSWORD
-            } else {
-                throw new GradleException("Missing IsleMind Android release signing properties.")
+            def requiredSigningProperties = [
+                'ISLEMIND_UPLOAD_STORE_FILE',
+                'ISLEMIND_UPLOAD_STORE_PASSWORD',
+                'ISLEMIND_UPLOAD_KEY_ALIAS',
+                'ISLEMIND_UPLOAD_KEY_PASSWORD',
+            ]
+            def missingSigningProperties = requiredSigningProperties.findAll { propertyName ->
+                !project.hasProperty(propertyName) || project.property(propertyName).toString().trim().isEmpty()
             }
+            if (!missingSigningProperties.isEmpty()) {
+                throw new GradleException("Missing IsleMind Android release signing properties: " + missingSigningProperties.join(', '))
+            }
+            storeFile file(project.property('ISLEMIND_UPLOAD_STORE_FILE'))
+            storePassword project.property('ISLEMIND_UPLOAD_STORE_PASSWORD')
+            keyAlias project.property('ISLEMIND_UPLOAD_KEY_ALIAS')
+            keyPassword project.property('ISLEMIND_UPLOAD_KEY_PASSWORD')
         }
 `
   source = `${source.slice(0, signingConfigs.bodyStart)}${releaseSigningConfig}${source.slice(signingConfigs.bodyStart)}`

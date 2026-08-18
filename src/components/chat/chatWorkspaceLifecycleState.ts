@@ -1,8 +1,10 @@
 import { useEffect, useRef, type Dispatch, type MutableRefObject, type RefObject, type SetStateAction } from 'react'
-import { AppState, BackHandler, Platform, type AppStateStatus } from 'react-native'
+import { AppState, BackHandler, Keyboard, Platform, type AppStateStatus } from 'react-native'
 import type { FlashListRef } from '@shopify/flash-list'
 
+import { st } from '@/i18n/service'
 import { recoverStaleConversationMessages } from '@/presentation/features/conversations/conversationControlCommand'
+import { useChatStore } from '@/store/chatStore'
 import type { Attachment, Message } from '@/types/chatContracts'
 
 import type { ComposerPanel } from './FloatingComposer'
@@ -10,6 +12,13 @@ import { AUTO_SCROLL_DELAY_MS } from './chatWorkspaceConstants'
 import type { IntentDraft } from './chatStreamingIntentActions'
 
 type ApplyQuickStartDraft = (draft: string, attachments?: Attachment[], restoreIfEmpty?: boolean) => void
+
+function reportConversationRecoveryFailure(error: unknown): void {
+  const message = error instanceof Error && error.message.trim()
+    ? error.message
+    : st('error.unknownError')
+  useChatStore.getState().setError(st('storage.sqliteRestoreFailed', { message }))
+}
 
 export interface ChatWorkspaceConversationRecoveryOptions {
   active: boolean
@@ -24,12 +33,11 @@ export interface ChatWorkspaceOverlayNavigationState {
 export interface ChatWorkspaceOverlayNavigationOptions {
   active: boolean
   composerPanel: ComposerPanel
-  controlOrbOpen: boolean
   intentDraft: IntentDraft | null
   keyboardVisible: boolean
+  onUnhandledAndroidBack?: () => void
   onRestoreIntentDraft: ApplyQuickStartDraft
   setComposerPanel: Dispatch<SetStateAction<ComposerPanel>>
-  setControlOrbOpen: Dispatch<SetStateAction<boolean>>
   setIntentDraft: (draft: IntentDraft | null) => void
   setPagerGestureLocked?: (locked: boolean) => void
   setShowOptions: Dispatch<SetStateAction<boolean>>
@@ -74,13 +82,12 @@ export function useChatWorkspaceAutoScroll({
 
 export function resolveWorkspaceOverlayLocked({
   composerPanel,
-  controlOrbOpen,
   intentDraft,
   keyboardVisible,
   showOptions,
   workspaceReviewOpen,
-}: Pick<ChatWorkspaceOverlayNavigationOptions, 'composerPanel' | 'controlOrbOpen' | 'intentDraft' | 'keyboardVisible' | 'showOptions' | 'workspaceReviewOpen'>): boolean {
-  return showOptions || !!composerPanel || keyboardVisible || !!intentDraft || controlOrbOpen || workspaceReviewOpen
+}: Pick<ChatWorkspaceOverlayNavigationOptions, 'composerPanel' | 'intentDraft' | 'keyboardVisible' | 'showOptions' | 'workspaceReviewOpen'>): boolean {
+  return showOptions || !!composerPanel || keyboardVisible || !!intentDraft || workspaceReviewOpen
 }
 
 export function useChatWorkspaceConversationRecovery({
@@ -94,7 +101,7 @@ export function useChatWorkspaceConversationRecovery({
     if (!active) return
     if (!conversationId) return
     onConversationActivated()
-    void recoverStaleConversationMessages(conversationId).catch(() => {})
+    void recoverStaleConversationMessages(conversationId).catch(reportConversationRecoveryFailure)
   }, [active, conversationId, onConversationActivated])
 
   useEffect(() => {
@@ -105,7 +112,7 @@ export function useChatWorkspaceConversationRecovery({
       const previousState = appStateRef.current
       appStateRef.current = nextState
       if (nextState !== 'active' || previousState === 'active') return
-      void recoverStaleConversationMessages(activeConversationId).catch(() => {})
+      void recoverStaleConversationMessages(activeConversationId).catch(reportConversationRecoveryFailure)
     })
     return () => subscription.remove()
   }, [active, conversationId])
@@ -114,13 +121,12 @@ export function useChatWorkspaceConversationRecovery({
 export function useChatWorkspaceOverlayNavigation({
   active,
   composerPanel,
-  controlOrbOpen,
   intentDraft,
   keyboardVisible,
   onCloseWorkspaceReview,
+  onUnhandledAndroidBack,
   onRestoreIntentDraft,
   setComposerPanel,
-  setControlOrbOpen,
   setIntentDraft,
   setPagerGestureLocked,
   setShowOptions,
@@ -129,7 +135,6 @@ export function useChatWorkspaceOverlayNavigation({
 }: ChatWorkspaceOverlayNavigationOptions): ChatWorkspaceOverlayNavigationState {
   const overlayLocked = resolveWorkspaceOverlayLocked({
     composerPanel,
-    controlOrbOpen,
     intentDraft,
     keyboardVisible,
     showOptions,
@@ -157,10 +162,6 @@ export function useChatWorkspaceOverlayNavigation({
         setShowOptions(false)
         return true
       }
-      if (controlOrbOpen) {
-        setControlOrbOpen(false)
-        return true
-      }
       if (composerPanel) {
         setComposerPanel(null)
         return true
@@ -170,18 +171,26 @@ export function useChatWorkspaceOverlayNavigation({
         setIntentDraft(null)
         return true
       }
+      if (keyboardVisible) {
+        Keyboard.dismiss()
+        return true
+      }
+      if (onUnhandledAndroidBack) {
+        onUnhandledAndroidBack()
+        return true
+      }
       return false
     })
     return () => subscription.remove()
   }, [
     active,
     composerPanel,
-    controlOrbOpen,
     intentDraft,
+    keyboardVisible,
     onCloseWorkspaceReview,
+    onUnhandledAndroidBack,
     onRestoreIntentDraft,
     setComposerPanel,
-    setControlOrbOpen,
     setIntentDraft,
     setShowOptions,
     showOptions,

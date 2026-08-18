@@ -3,10 +3,7 @@ import { StyleSheet, Text, View, useWindowDimensions } from 'react-native'
 import { MotiView } from 'moti'
 import { useTranslation } from 'react-i18next'
 import { AppIcon } from '@/components/ui/AppIcon'
-import { IsleButton } from '@/components/ui/isle'
-import { useIsleDialog } from '@/components/ui/isle'
-import { IsleField, IsleListItem, IslePressable, IsleToggle } from '@/components/ui/isle'
-import { IsleChip } from '@/components/ui/isle'
+import { ISLE_MIN_TOUCH_TARGET, IsleButton, IsleChip, IsleField, IsleListItem, IslePressable, IsleToggle, useIsleDialog } from '@/components/ui/isle'
 import { useAppTheme } from '@/hooks/useAppTheme'
 import { listMcpServers, refreshMcpManifest, saveMcpServers, upsertMcpServer } from '@/bootstrap/mcpCatalog'
 import {
@@ -506,7 +503,7 @@ function McpDisclosureRow({ title, detail, icon, open, onPress }: { title: strin
       accessibilityLabel={`${title}. ${detail}`}
       accessibilityState={{ expanded: open }}
       onPress={onPress}
-      style={{ minHeight: 42, borderRadius: Math.min(colors.ui.radius.controlLarge, 8), paddingHorizontal: 12, flexDirection: 'row', alignItems: 'center', gap: 8, backgroundColor: colors.ui.glass ? colors.ui.actionBar.itemBackground : colors.ui.semantic.surface.muted, borderWidth: colors.ui.limeRoad ? 1 : StyleSheet.hairlineWidth, borderColor: colors.ui.glass ? colors.ui.actionBar.itemBorder : colors.ui.semantic.chrome.border }}
+      style={{ minHeight: ISLE_MIN_TOUCH_TARGET, borderRadius: Math.min(colors.ui.radius.controlLarge, 8), paddingHorizontal: 12, flexDirection: 'row', alignItems: 'center', gap: 8, backgroundColor: colors.ui.glass ? colors.ui.actionBar.itemBackground : colors.ui.semantic.surface.muted, borderWidth: colors.ui.limeRoad ? 1 : StyleSheet.hairlineWidth, borderColor: colors.ui.glass ? colors.ui.actionBar.itemBorder : colors.ui.semantic.chrome.border }}
     >
       {icon}
       <View style={{ flex: 1, minWidth: 0 }}>

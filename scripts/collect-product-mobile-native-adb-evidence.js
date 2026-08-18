@@ -399,12 +399,12 @@ function tapRatio(device, deviceMetadata, xRatio, yRatio) {
 
 function applyCaptureInteraction(device, capture, deviceMetadata) {
   if (!capture.interaction) return []
-  if (capture.interaction !== 'open-toolbox') {
+  if (capture.interaction !== 'open-composer-tools') {
     throw blockedUiVerificationError(`capture ${capture.id} requests unsupported interaction ${capture.interaction}`)
   }
   const hierarchy = readUiHierarchy(device)
   const bounds = findFirstUiTokenBounds(hierarchy, capture.tapUiText)
-  if (!bounds) throw blockedUiVerificationError(`capture ${capture.id} could not find the Chat toolbox trigger`)
+  if (!bounds) throw blockedUiVerificationError(`capture ${capture.id} could not find the Composer tools trigger`)
   tapPoint(device, deviceMetadata, Math.round((bounds.left + bounds.right) / 2), Math.round((bounds.top + bounds.bottom) / 2))
   return [`tap-ui-text:${bounds.matched}`]
 }

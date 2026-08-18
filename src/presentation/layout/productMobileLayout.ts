@@ -31,6 +31,23 @@ export interface ProductMobileStarterLayout {
   statusPillGlyphSize: number
 }
 
+export interface ProductMobileChatSetupLayout {
+  compactLandscape: boolean
+  contentHeaderGap: number
+  showIntroDecoration: boolean
+  showIntroDescription: boolean
+}
+
+export interface ProductMobileChatConfigurationSheetLayoutInput {
+  safeAreaTop?: number
+}
+
+export interface ProductMobileChatConfigurationSheetLayout {
+  height: number
+  availableHeight: number
+  compact: boolean
+}
+
 export interface ProductMobileComposerLayoutInput {
   composerHeight?: number
   safeAreaBottom?: number
@@ -134,6 +151,7 @@ export interface ProductMobileLayout {
 
 const MIN_TOUCH_TARGET = 44
 export const PRODUCT_MOBILE_COMPOSER_COLLAPSED_MIN_HEIGHT = 112
+export const PRODUCT_MOBILE_COMPOSER_COMPACT_BREAKPOINT = 400
 const PRODUCT_MOBILE_COMPOSER_BOTTOM_EXTRA = 4
 const PRODUCT_MOBILE_COMPOSER_INNER_BOTTOM_EXTRA = 6
 const PRODUCT_MOBILE_COMPOSER_INNER_TOP_PADDING = 2
@@ -155,6 +173,11 @@ const PRODUCT_MOBILE_SETUP_INTRO_HEIGHT = 102
 const PRODUCT_MOBILE_EMPTY_STATE_ACTION_ROW_HEIGHT = 44
 const PRODUCT_MOBILE_EMPTY_STATE_SECTION_GAP = 10
 const PRODUCT_MOBILE_BOUNDARY_ACTION_HEIGHT = 44
+const PRODUCT_MOBILE_CHAT_SETUP_COMPACT_LANDSCAPE_MAX_HEIGHT = 360
+const PRODUCT_MOBILE_CHAT_SETUP_COMPACT_HEADER_GAP = 4
+const PRODUCT_MOBILE_CHAT_CONFIGURATION_SHEET_MIN_HEIGHT = 360
+const PRODUCT_MOBILE_CHAT_CONFIGURATION_SHEET_HEIGHT_RATIO = 0.92
+const PRODUCT_MOBILE_CHAT_CONFIGURATION_SHEET_TOP_GAP = 12
 const PRODUCT_MOBILE_COMPOSER_TOOL_PANEL_TOP_PADDING = 10
 const PRODUCT_MOBILE_COMPOSER_TOOL_PANEL_HORIZONTAL_PADDING = 12
 const PRODUCT_MOBILE_COMPOSER_TOOL_TITLE_HEIGHT = 14
@@ -211,6 +234,70 @@ export function resolveProductMobileLayout(viewportWidth: number): ProductMobile
       actionMinWidth: Math.max(132, Math.min(148, width * 0.38)),
       statusPillGlyphSize: tight ? 8.5 : 9,
     },
+  }
+}
+
+export function resolveProductMobileChatSetupLayout(
+  viewportWidth: number,
+  viewportHeight: number,
+): ProductMobileChatSetupLayout {
+  const width = normalizeViewportExtent(
+    viewportWidth,
+    PRODUCT_MOBILE_LAYOUT_AUDIT_VIEWPORTS[0],
+  )
+  const height = normalizeViewportExtent(
+    viewportHeight,
+    PRODUCT_MOBILE_VISUAL_AUDIT_HEIGHTS[1],
+  )
+  const compactLandscape =
+    width > height &&
+    height <= PRODUCT_MOBILE_CHAT_SETUP_COMPACT_LANDSCAPE_MAX_HEIGHT
+
+  return {
+    compactLandscape,
+    contentHeaderGap: compactLandscape
+      ? PRODUCT_MOBILE_CHAT_SETUP_COMPACT_HEADER_GAP
+      : 0,
+    showIntroDecoration: !compactLandscape,
+    showIntroDescription: !compactLandscape,
+  }
+}
+
+export function resolveProductMobileChatConfigurationSheetLayout(
+  viewportHeight: number,
+  input: ProductMobileChatConfigurationSheetLayoutInput = {},
+): ProductMobileChatConfigurationSheetLayout {
+  const height = normalizeViewportExtent(
+    viewportHeight,
+    PRODUCT_MOBILE_VISUAL_AUDIT_HEIGHTS[1],
+  )
+  const safeAreaTop = Number.isFinite(input.safeAreaTop)
+    ? Math.max(0, Math.round(input.safeAreaTop ?? 0))
+    : 0
+  const topClearance = Math.max(
+    PRODUCT_MOBILE_CHAT_CONFIGURATION_SHEET_TOP_GAP,
+    safeAreaTop,
+  )
+  const availableHeight = Math.max(
+    1,
+    height - Math.min(topClearance, height - 1),
+  )
+  const compact = availableHeight < PRODUCT_MOBILE_CHAT_CONFIGURATION_SHEET_MIN_HEIGHT
+  const preferredHeight = Math.round(
+    height * PRODUCT_MOBILE_CHAT_CONFIGURATION_SHEET_HEIGHT_RATIO,
+  )
+  const minimumHeight = Math.min(
+    PRODUCT_MOBILE_CHAT_CONFIGURATION_SHEET_MIN_HEIGHT,
+    availableHeight,
+  )
+
+  return {
+    height: Math.min(
+      availableHeight,
+      Math.max(minimumHeight, preferredHeight),
+    ),
+    availableHeight,
+    compact,
   }
 }
 
@@ -398,4 +485,9 @@ function normalizeViewportWidth(value: number): number {
 function normalizeViewportHeight(value: number | undefined): number {
   if (!Number.isFinite(value) || !value || value <= 0) return PRODUCT_MOBILE_VISUAL_AUDIT_HEIGHTS[1]
   return Math.max(PRODUCT_MOBILE_VISUAL_AUDIT_HEIGHTS[0], Math.round(value))
+}
+
+function normalizeViewportExtent(value: number, fallback: number): number {
+  if (!Number.isFinite(value) || value <= 0) return fallback
+  return Math.max(1, Math.round(value))
 }

@@ -5,12 +5,11 @@ import { AppIcon, appIconStroke, type AppIconName } from '@/components/ui/AppIco
 import type { Attachment, CommandReference } from '@/types/chatContracts'
 import { pickDocument, pickImage, takePhoto } from '@/services/attachment'
 import { useAppTheme } from '@/hooks/useAppTheme'
-import { IslePressable } from '@/components/ui/isle'
-import { IslePanel } from '@/components/ui/isle'
+import { ISLE_MIN_TOUCH_TARGET, IslePanel, IslePressable, useIsleDialog } from '@/components/ui/isle'
 import { HighFrameSpinner } from '@/components/ui/HighFrameSpinner'
 import { normalizeSearchText } from '@/utils/text'
 import { type ChatMultimodalEntry, type ChatMultimodalPolicy } from '@/presentation/features/chat/chatMultimodalPolicy'
-import { resolveProductMobileComposerToolsLayout } from '@/presentation/layout/productMobileLayout'
+import { PRODUCT_MOBILE_COMPOSER_COMPACT_BREAKPOINT, resolveProductMobileComposerToolsLayout } from '@/presentation/layout/productMobileLayout'
 import {
   resolveAppliedInitialDraftKeyAfterSuccessfulSend,
   resolveComposerInitialDraft,
@@ -20,6 +19,7 @@ import {
 } from './composerDraftState'
 import { appendComposerVoiceTranscript, composerVoiceIsBusy, formatComposerVoiceDuration, type ComposerVoiceState } from './composerVoiceState'
 import { useComposerVoiceInput } from './useComposerVoiceInput'
+import { useComposerDraftPersistence } from './useComposerDraftPersistence'
 export interface ComposerCommand {
   id: string
   label: string
@@ -36,6 +36,7 @@ interface ComposerProps {
   initialDraftKey?: string | number
   initialAttachments?: Attachment[]
   restoreInitialDraftIfEmpty?: boolean
+  draftPersistenceKey?: string
   externalSubmitKey?: string | number
   commands?: ComposerCommand[]
   references?: CommandReference[]
@@ -58,13 +59,12 @@ interface ComposerProps {
 }
 
 const COMPOSER_CONTROL_HIT_SLOP = { top: 8, right: 8, bottom: 8, left: 8 }
-const COMPOSER_PILL_HIT_SLOP = { top: 10, right: 8, bottom: 10, left: 8 }
 const COMPOSER_MAX_LENGTH = 12000
-const COMPOSER_INPUT_MIN_HEIGHT = 52
+const COMPOSER_INPUT_MIN_HEIGHT = 48
 const COMPOSER_INPUT_LINE_HEIGHT = 22
-const COMPOSER_INPUT_VERTICAL_PADDING = 10
+const COMPOSER_INPUT_VERTICAL_PADDING = 8
 const COMPOSER_INPUT_MAX_LINES = 6
-const COMPOSER_DOCK_CONTROL_SIZE = 44
+const COMPOSER_DOCK_CONTROL_SIZE = ISLE_MIN_TOUCH_TARGET
 const COMPOSER_INPUT_WEB_SCROLLBAR_PROPS = Platform.OS === 'web'
   ? ({ className: 'composer-input-no-scrollbar' } as Record<string, unknown>)
   : undefined
@@ -77,6 +77,7 @@ export function Composer({
   initialDraftKey,
   initialAttachments,
   restoreInitialDraftIfEmpty = false,
+  draftPersistenceKey,
   externalSubmitKey,
   commands = [],
   references = [],
@@ -99,6 +100,7 @@ export function Composer({
 }: ComposerProps) {
   const { colors, isGlass } = useAppTheme()
   const { t } = useTranslation()
+  const dialog = useIsleDialog()
   const { width: composerWindowWidth } = useWindowDimensions()
   const [content, setContent] = useState('')
   const [attachments, setAttachments] = useState<Attachment[]>([])
@@ -109,9 +111,23 @@ export function Composer({
   const [consumedDraftKey, setConsumedDraftKey] = useState<string | number | undefined>(undefined)
   const [appliedInitialDraftKey, setAppliedInitialDraftKey] = useState<string | number | undefined>(undefined)
   const consumedExternalSubmitKey = useRef<string | number | undefined>(undefined)
+  const {
+    markChanged: markDraftChanged,
+    flush: flushDraft,
+    clear: clearDraft,
+  } = useComposerDraftPersistence({
+    persistenceKey: draftPersistenceKey,
+    content,
+    attachments,
+    sending,
+    skipHydration: !!initialDraft?.trim() || (initialAttachments?.length ?? 0) > 0,
+    setContent,
+    setAttachments,
+  })
   const appendVoiceTranscript = useCallback((transcript: string) => {
+    markDraftChanged()
     setContent((draft) => appendComposerVoiceTranscript(draft, transcript))
-  }, [])
+  }, [markDraftChanged])
   const voiceInput = useComposerVoiceInput({
     enabled: !disabled && isMultimodalEntryAvailable('voice'),
     onTranscript: appendVoiceTranscript,
@@ -189,7 +205,6 @@ export function Composer({
   const subtleBorderWidth = colors.ui.limeRoad ? 1 : StyleSheet.hairlineWidth
   const raisedSurface = colors.ui.glass ? colors.ui.semantic.chrome.background : colors.ui.limeRoad ? colors.ui.semantic.surface.base : colors.ui.semantic.surface.base
   const raisedBorder = colors.ui.glass ? colors.ui.actionBar.itemBorder : colors.ui.limeRoad ? colors.material.stroke : colors.ui.semantic.chrome.border
-  const utilitySurface = colors.ui.glass ? colors.ui.actionBar.itemBackground : colors.ui.limeRoad ? colors.ui.semantic.surface.muted : colors.ui.semantic.surface.muted
   const chipSurface = colors.ui.glass ? colors.ui.actionBar.itemBackground : colors.ui.limeRoad ? colors.ui.semantic.surface.base : colors.ui.semantic.surface.base
   const chipBorder = colors.ui.glass ? colors.ui.actionBar.itemBorder : colors.ui.limeRoad ? colors.material.stroke : colors.ui.semantic.chrome.border
   const shellBorder = colors.ui.limeRoad
@@ -197,11 +212,11 @@ export function Composer({
     : colors.ui.glass
       ? colors.ui.actionBar.border
       : colors.ui.semantic.chrome.border
-  const compactComposer = composerWindowWidth < 390
+  const compactComposer = composerWindowWidth < PRODUCT_MOBILE_COMPOSER_COMPACT_BREAKPOINT
   const attachmentLabelMaxWidth = Math.max(108, Math.min(compactComposer ? 132 : 180, composerWindowWidth * 0.42))
   const utilityControlWidth = COMPOSER_DOCK_CONTROL_SIZE
   const sendButtonSize = COMPOSER_DOCK_CONTROL_SIZE
-  const showSendAction = !streaming || hasSendableDraft || sending
+  const showSendAction = streaming || hasSendableDraft || sending
   const toolsLayout = resolveProductMobileComposerToolsLayout(composerWindowWidth, {
     entryCount: 5 + (onOpenKnowledge ? 1 : 0),
     unavailableEntryCount: (multimodalPolicy?.unavailableCount ?? 0) + (multimodalPolicy?.generationUnavailableCount ?? 0),
@@ -221,11 +236,12 @@ export function Composer({
     if (decision.kind === 'ignore') return
     if (decision.kind === 'preserve-current') return
 
+    markDraftChanged()
     setConsumedDraftKey(decision.draftKey)
     setContent(decision.content)
     if (decision.attachments.length > 0) setAttachments(decision.attachments)
     setAppliedInitialDraftKey(decision.draftKey)
-  }, [attachments.length, consumedDraftKey, content, initialAttachments, initialDraft, initialDraftKey, restoreInitialDraftIfEmpty])
+  }, [attachments.length, consumedDraftKey, content, initialAttachments, initialDraft, initialDraftKey, markDraftChanged, restoreInitialDraftIfEmpty])
 
   useEffect(() => {
     const admittedSubmitKey = resolveExternalSubmitKey({
@@ -261,8 +277,18 @@ export function Composer({
     if (!isMultimodalEntryAvailable(entry)) return
     try {
       const attachment = await picker()
-      if (attachment) setAttachments((items) => [...items, attachment])
+      if (attachment) {
+        markDraftChanged()
+        setAttachments((items) => [...items, attachment])
+      }
     } catch {
+      // Picker APIs resolve with null for an intentional cancellation; only rejected operations reach this feedback path.
+      dialog.toast({
+        title: t('chat.attachmentPickerFailed'),
+        message: t('chat.attachmentPickerFailedMessage'),
+        tone: 'danger',
+        dedupeKey: 'chat-attachment-picker-failed',
+      })
     }
   }
 
@@ -273,6 +299,7 @@ export function Composer({
 
   function openCommandEntry() {
     closeUtilities()
+    markDraftChanged()
     setContent((value) => value.trim() ? `${value} /` : '/')
   }
 
@@ -285,6 +312,8 @@ export function Composer({
     if (!canSend) return
     const text = content
     const files = attachments
+    const persistenceKeyAtSubmit = draftPersistenceKey
+    void flushDraft(text, files)
     setSending(true)
     setContent('')
     setAttachments([])
@@ -298,7 +327,9 @@ export function Composer({
       if (nextAppliedInitialDraftKey !== appliedInitialDraftKey) {
         setAppliedInitialDraftKey(nextAppliedInitialDraftKey)
       }
+      void clearDraft(persistenceKeyAtSubmit)
     } catch {
+      markDraftChanged()
       setContent((current) => restoreRejectedComposerText(current, text))
       setAttachments((current) => restoreRejectedComposerAttachments(current, files))
     } finally {
@@ -311,6 +342,7 @@ export function Composer({
     const before = content.slice(0, trigger.start)
     const after = content.slice(trigger.end)
     const spacer = next && after && !/^\s/.test(after) ? ' ' : ''
+    markDraftChanged()
     setContent(`${before}${next}${spacer}${after}`.replace(/[ \t]+\n/g, '\n'))
   }
 
@@ -345,16 +377,20 @@ export function Composer({
           {attachments.map((item) => (
             <IslePressable
               key={item.id}
-              onPress={() => setAttachments((files) => files.filter((file) => file.id !== item.id))}
+              onPress={() => {
+                markDraftChanged()
+                setAttachments((files) => files.filter((file) => file.id !== item.id))
+              }}
               accessibilityRole="button"
               accessibilityLabel={t('chat.removeAttachment', { name: item.name })}
               accessibilityHint={t('chat.removeAttachmentAccessibilityHint', { name: item.name })}
-              hitSlop={COMPOSER_PILL_HIT_SLOP}
-              style={{ paddingHorizontal: 10, height: 28, borderRadius: chipRadius, backgroundColor: chipSurface, borderWidth: subtleBorderWidth, borderColor: chipBorder, justifyContent: 'center' }}
+              style={{ minHeight: ISLE_MIN_TOUCH_TARGET, justifyContent: 'center' }}
             >
-              <Text numberOfLines={1} style={{ color: colors.textSecondary, fontSize: 11, fontWeight: '700', maxWidth: attachmentLabelMaxWidth }}>
-                {item.name}
-              </Text>
+              <View style={{ paddingHorizontal: 10, height: 28, borderRadius: chipRadius, backgroundColor: chipSurface, borderWidth: subtleBorderWidth, borderColor: chipBorder, justifyContent: 'center' }}>
+                <Text numberOfLines={1} style={{ color: colors.textSecondary, fontSize: 11, fontWeight: '700', maxWidth: attachmentLabelMaxWidth }}>
+                  {item.name}
+                </Text>
+              </View>
             </IslePressable>
           ))}
         </View>
@@ -405,11 +441,10 @@ export function Composer({
           accessibilityHint={t('chat.clearPendingAccessibilityHint')}
           accessibilityValue={{ text: pendingNotice }}
           accessibilityLiveRegion="polite"
-          hitSlop={COMPOSER_PILL_HIT_SLOP}
           style={{
             marginHorizontal: 10,
             marginTop: 10,
-            minHeight: 30,
+            minHeight: ISLE_MIN_TOUCH_TARGET,
             borderRadius: compactControlRadius,
             paddingHorizontal: 11,
             alignItems: 'center',
@@ -464,11 +499,14 @@ export function Composer({
           </View>
         </View>
       ) : null}
-      <View style={{ paddingHorizontal: 12, paddingTop: 8, paddingBottom: 2 }}>
+      <View style={{ paddingHorizontal: 12, paddingTop: 6, paddingBottom: 0 }}>
         <View style={{ minHeight: COMPOSER_INPUT_MIN_HEIGHT, justifyContent: 'center' }}>
           <TextInput
             value={content}
-            onChangeText={setContent}
+            onChangeText={(value) => {
+              markDraftChanged()
+              setContent(value)
+            }}
             multiline={multilineInput}
             scrollEnabled={multilineInput}
             {...COMPOSER_INPUT_WEB_SCROLLBAR_PROPS}
@@ -515,7 +553,7 @@ export function Composer({
           />
         </View>
       </View>
-      <View style={{ minHeight: 54, flexDirection: 'row', alignItems: 'center', paddingHorizontal: 8, paddingTop: 2, paddingBottom: bottomAccessory ? 4 : 8, gap: 6 }}>
+      <View style={{ minHeight: 48, flexDirection: 'row', alignItems: 'center', paddingHorizontal: 8, paddingTop: 0, paddingBottom: bottomAccessory ? 4 : 6, gap: 2 }}>
         {leadingAccessory ? <View style={{ flexShrink: 1, minWidth: 0 }}>{leadingAccessory}</View> : null}
         {showInlineUtilities ? (
           <IslePressable
@@ -532,8 +570,8 @@ export function Composer({
               alignItems: 'center',
               justifyContent: 'center',
               borderRadius: compactControlRadius,
-              backgroundColor: attachmentsOpen ? colors.ui.control.primaryBackground : utilitySurface,
-              borderWidth: subtleBorderWidth,
+              backgroundColor: attachmentsOpen ? colors.ui.actionBar.itemActiveBackground : 'transparent',
+              borderWidth: attachmentsOpen ? subtleBorderWidth : 0,
               borderColor: attachmentsOpen ? colors.ui.control.primaryBorder : raisedBorder,
             }}
           >
@@ -554,8 +592,8 @@ export function Composer({
               borderRadius: compactControlRadius,
               alignItems: 'center',
               justifyContent: 'center',
-              backgroundColor: utilitySurface,
-              borderWidth: subtleBorderWidth,
+              backgroundColor: 'transparent',
+              borderWidth: 0,
               borderColor: raisedBorder,
             }}
           >
@@ -578,13 +616,14 @@ export function Composer({
             alignItems: 'center',
             justifyContent: 'center',
             borderRadius: compactControlRadius,
-            backgroundColor: recording ? colors.ui.tone.danger.foreground : !isMultimodalEntryAvailable('voice') ? colors.ui.control.disabledBackground : utilitySurface,
-            borderWidth: subtleBorderWidth,
-            borderColor: recording ? colors.ui.tone.danger.border : !isMultimodalEntryAvailable('voice') ? colors.ui.control.disabledBorder : raisedBorder,
+            backgroundColor: recording ? colors.ui.tone.danger.background : 'transparent',
+            borderWidth: recording ? subtleBorderWidth : 0,
+            borderColor: recording ? colors.ui.tone.danger.border : 'transparent',
+            opacity: voiceControlDisabled ? 0.5 : 1,
           }}
-        >
-          <AppIcon name="microphone" color={recording ? colors.ui.control.dangerForeground : isMultimodalEntryAvailable('voice') ? colors.textSecondary : colors.ui.control.disabledForeground} size={16} />
-        </IslePressable>
+          >
+            <AppIcon name="microphone" color={recording ? colors.ui.tone.danger.foreground : isMultimodalEntryAvailable('voice') ? colors.textSecondary : colors.ui.control.disabledForeground} size={16} />
+          </IslePressable>
         {trailingAccessory ? <View style={{ flexShrink: 0 }}>{trailingAccessory}</View> : null}
         {showSendAction ? (
           <IslePressable
@@ -955,8 +994,8 @@ function AttachmentChip({ label, accessibilityHint, active = false, disabled = f
         flexDirection: 'row',
         alignItems: 'center',
         gap: 6,
-        backgroundColor: disabled ? colors.ui.control.disabledBackground : active ? colors.ui.tone.danger.background : idleBackground,
-        borderWidth: colors.ui.limeRoad ? 1 : StyleSheet.hairlineWidth,
+        backgroundColor: disabled ? 'transparent' : active ? colors.ui.tone.danger.background : idleBackground,
+        borderWidth: disabled || colors.ui.limeRoad ? 1 : StyleSheet.hairlineWidth,
         borderColor: disabled ? colors.ui.control.disabledBorder : active ? colors.ui.tone.danger.border : idleBorder,
       }}
     >

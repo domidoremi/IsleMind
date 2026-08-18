@@ -3,17 +3,18 @@ import { getColors, normalizeThemeId, resolveThemeMode } from '@/theme/colors'
 import { useSettingsStore } from '@/store/settingsStore'
 export function useAppTheme() {
   const systemScheme = useColorScheme()
-  const settings = useSettingsStore((state) => state.settings)
-  const resolvedTheme = resolveThemeMode(settings.theme, systemScheme === 'unspecified' ? null : systemScheme)
-  const themeId = normalizeThemeId(settings.themeId)
-  const themeAccent = settings.themeAccent
+  const themeMode = useSettingsStore((state) => state.settings.theme)
+  const storedThemeId = useSettingsStore((state) => state.settings.themeId)
+  const themeAccent = useSettingsStore((state) => state.settings.themeAccent)
+  const resolvedTheme = resolveThemeMode(themeMode, systemScheme === 'unspecified' ? null : systemScheme)
+  const themeId = normalizeThemeId(storedThemeId)
   const palette = getColors(resolvedTheme, themeId, undefined, themeAccent)
 
   return {
     colors: palette,
     isDark: resolvedTheme === 'dark',
     mode: resolvedTheme,
-    themeMode: settings.theme,
+    themeMode,
     themeId,
     themeAccent,
     isMinimal: themeId === 'minimal',

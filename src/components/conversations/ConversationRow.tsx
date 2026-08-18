@@ -79,15 +79,11 @@ export const ConversationRow = memo(function ConversationRow({ conversation, ind
   const rowStatusTone = lastMessage ? conversationRowStatusTone(lastMessage.status) : undefined
   const rowStatusToken = rowStatusTone ? colors.ui.tone[rowStatusTone] : undefined
   const rowTimestamp = getConversationUpdatedTimestamp(conversation)
-  const conversationTokens = useMemo(() => sumConversationTokens(conversation), [conversation.messages])
-  const rowMeta = useMemo(() => [
-    t('conversation.rowMeta', {
-      model: modelLabel ?? getModelName(conversation.model),
-      messageLabel: formatConversationMessageCount(conversation.messages.length, t),
-      time: formatConversationUpdatedAt(rowTimestamp, now, t),
-    }),
-    conversationTokens > 0 ? t('conversation.rowUsageTokens', { value: formatCompactTokenCount(conversationTokens) }) : null,
-  ].filter(Boolean).join(' · '), [conversation.messages.length, conversation.model, conversationTokens, modelLabel, now, rowTimestamp, t])
+  const rowMeta = useMemo(() => t('conversation.rowMeta', {
+    model: modelLabel ?? getModelName(conversation.model),
+    messageLabel: formatConversationMessageCount(conversation.messages.length, t),
+    time: formatConversationUpdatedAt(rowTimestamp, now, t),
+  }), [conversation.messages.length, conversation.model, modelLabel, now, rowTimestamp, t])
   const rowStatusMeta = rowStatusLabel ? t('conversation.rowStatusMeta', { status: rowStatusLabel, meta: rowMeta }) : rowMeta
   const rowAccessibilityMeta = active ? t('conversation.rowActiveMeta', { meta: rowStatusMeta }) : rowStatusMeta
   const rowAccessibilityValue = useMemo(() => t('conversation.rowAccessibilityValue', {
@@ -142,7 +138,7 @@ export const ConversationRow = memo(function ConversationRow({ conversation, ind
       return
     }
     select(conversation.id)
-    router.push({ pathname: '/chat/[id]', params: { id: conversation.id } })
+    router.push({ pathname: '/chat/[id]', params: { id: conversation.id, returnTo: 'history' } })
   })
   const rowBusy = deleteConfirming || opening || openPending
   const rowTemporarilyBlocked = interactionDisabled
@@ -488,23 +484,6 @@ function areConversationRowConversationsEqual(previous: Conversation, next: Conv
       previousLastMessage?.usage?.inputTokens === nextLastMessage?.usage?.inputTokens &&
       previousLastMessage?.usage?.outputTokens === nextLastMessage?.usage?.outputTokens
   )
-}
-
-function sumConversationTokens(conversation: Conversation): number {
-  return conversation.messages.reduce((total, message) => {
-    const usage = message.usage
-    const tokens = usage?.totalTokens ?? [usage?.inputTokens, usage?.outputTokens, usage?.reasoningTokens]
-      .filter((value): value is number => typeof value === 'number' && Number.isFinite(value) && value > 0)
-      .reduce((sum, value) => sum + value, 0)
-    return total + (tokens || message.tokenCount || 0)
-  }, 0)
-}
-
-function formatCompactTokenCount(value: number): string {
-  if (value >= 1_000_000) return `${Math.round(value / 100_000) / 10}M`
-  if (value >= 10_000) return `${Math.round(value / 1_000)}K`
-  if (value >= 1_000) return `${Math.round(value / 100) / 10}K`
-  return String(Math.round(value))
 }
 
 function previewConversationMessage(content: string): string {

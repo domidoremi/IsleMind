@@ -1504,7 +1504,7 @@ const {
 } = require('../src/presentation/features/settings/searchProviderPresentation.ts')
 const { buildProviderActivationTestCandidatesForTest, summarizeProviderActivation, syncAndTestProvider } = require('../src/bootstrap/providerActivationRuntime.ts')
 const { ACTIVATION_STAGE_PROGRESS, activationItemProgress, aggregateActivationItems, createActivationItems, patchActivationItem, resolveProviderActivationRuntimePolicy } = require('../src/services/providerActivationJob.ts')
-const { compareProviders, filterAndSortProviders, groupProviderSettingsCards, providerMatchesModelFilter } = require('../src/services/providerSettingsList.ts')
+const { compareProviders, filterAndSortProviders, groupProviderSettingsCards, providerMatchesModelFilter } = require('../src/bootstrap/providerSettingsList.ts')
 const {
   clearHistoricalInjectedProviderModels,
   clearHistoricalInjectedGroupModels,
@@ -1520,7 +1520,7 @@ const {
 const { parseModelEntries } = require('../src/utils/text.ts')
 const { summarizeWorkArtifact } = require('../src/utils/workArtifact.ts')
 const { isAllowedWebViewNavigation, safeHttpUrl } = require('../src/utils/sourceUrlSafety.ts')
-const { isAllowedAndroidApkUriForTest, sanitizeAndroidApkUriForTest } = require('../src/services/androidUriPolicy.ts')
+const { isAllowedAndroidApkUri, sanitizeAndroidApkUri } = require('../src/platform/native/androidUriPolicy.ts')
 const { getReasoningEffortOptions, providerSupportsReasoning } = require('../src/utils/modelReasoning.ts')
 const { buildSystemPrompt } = require('../src/services/promptEngineering.ts')
 const {
@@ -1665,8 +1665,10 @@ const { pickDocument, pickImage, takePhoto } = require('../src/services/attachme
 const {
   attachmentHasPayload,
   filterSendableAttachments,
+  getConversationMetrics,
   sanitizeAttachmentsForPersistence,
-} = require('../src/services/attachmentContract.ts')
+  usageFromMetrics,
+} = require('../src/modules/conversations/index.ts')
 const { conversationPersistence } = require('../src/bootstrap/conversationPersistence.ts')
 const {
   initializeConversationStorePersistence,
@@ -1723,6 +1725,7 @@ const {
 } = require('../src/bootstrap/tavernWorkspace.ts')
 const { buildEstimatedUsage, estimateMessageTokens, estimateTextTokens } = require('../src/services/tokenUsage.ts')
 const { useChatStore } = require('../src/store/chatStore.ts')
+const { flushPersistedSettings } = require('../src/presentation/features/settings/settingsStorePersistenceCommand.ts')
 const { useSettingsStore } = require('../src/store/settingsStore.ts')
 const conversationMemoryExtractionRuntime = require('../src/bootstrap/conversationMemoryExtractionRuntime.ts')
 const knowledgeMemoryExtraction = require('../src/bootstrap/knowledgeMemoryExtraction.ts')
@@ -3184,7 +3187,7 @@ function assertReleaseVersionsAligned() {
   const chatWorkspaceConstantsSource = fs.readFileSync(path.join(root, 'src/components/chat/chatWorkspaceConstants.ts'), 'utf8')
   const floatingChromeSource = fs.readFileSync(path.join(root, 'src/components/chat/FloatingChrome.tsx'), 'utf8')
   assert.ok(
-    chatWorkspaceSource.includes("@/services/conversationMetrics"),
+    chatWorkspaceSource.includes("@/modules/conversations"),
     'ChatWorkspace reads conversation metrics through the pure metrics boundary'
   )
   assert.ok(
@@ -3256,8 +3259,7 @@ function assertReleaseVersionsAligned() {
     'message virtual list does not disable FlashList recycling on Android'
   )
   assertProviderModelFamilyBehavior()
-  const conversationMetrics = require('../src/services/conversationMetrics.ts')
-  const metricFixture = conversationMetrics.getConversationMetrics({
+  const metricFixture = getConversationMetrics({
     id: 'metric-conversation',
     title: 'Metric fixture',
     providerId: 'mock',
@@ -3275,7 +3277,7 @@ function assertReleaseVersionsAligned() {
     'pure conversation metrics preserve token, duration, message, and citation totals'
   )
   assert.deepEqual(
-    conversationMetrics.usageFromMetrics(metricFixture),
+    usageFromMetrics(metricFixture),
     { inputTokens: 8, outputTokens: 7, reasoningTokens: 2, totalTokens: 15, source: 'estimated' },
     'pure conversation metrics still convert back to MessageUsage'
   )
@@ -4124,7 +4126,7 @@ async function assertRuntimeDiagnosticsBehavior() {
   await clearRuntimeLog()
   clearRuntimeEventHistoryForTest()
   const runtimeDiagnosticsSource = fs.readFileSync(path.join(root, 'src/services/runtimeDiagnostics.ts'), 'utf8')
-  const observabilityCompatibilitySource = fs.readFileSync(path.join(root, 'src/services/observabilityCompatibilityEvaluation.ts'), 'utf8')
+  const observabilityCompatibilitySource = fs.readFileSync(path.join(root, 'src/modules/diagnostics/testing/observabilityCompatibilityEvaluation.ts'), 'utf8')
   const settingsTypeSource = fs.readFileSync(path.join(root, 'src/types/settingsContracts.ts'), 'utf8')
   const typesFacadeSource = fs.readFileSync(path.join(root, 'src/types/index.ts'), 'utf8')
   const settingsStoreSource = fs.readFileSync(path.join(root, 'src/store/settingsStore.ts'), 'utf8')
@@ -5178,7 +5180,9 @@ async function assertRuntimeDiagnosticsBehavior() {
 
 async function assertRuntimeDiagnosticsFailurePath() {
   const settingsScreenSource = fs.readFileSync(path.join(root, 'src/components/main/SettingsScreenContent.tsx'), 'utf8')
+  const runtimeDiagnosticsDetailsSource = fs.readFileSync(path.join(root, 'src/components/settings/RuntimeDiagnosticsDetails.tsx'), 'utf8')
   const chatDeepLinkSource = fs.readFileSync(path.join(root, 'app/chat/[id].tsx'), 'utf8')
+  const runtimeRepairWorkspaceSource = fs.readFileSync(path.join(root, 'src/presentation/features/conversations/RuntimeRepairConversationWorkspace.tsx'), 'utf8')
   const chatWorkspaceSource = fs.readFileSync(path.join(root, 'src/components/chat/ChatWorkspace.tsx'), 'utf8')
   const chatActiveComposerDockSource = fs.readFileSync(path.join(root, 'src/components/chat/ChatActiveComposerDock.tsx'), 'utf8')
   const runtimeRepairIntentActionsSource = fs.readFileSync(path.join(root, 'src/components/chat/runtimeRepairIntentActions.ts'), 'utf8')
@@ -5195,38 +5199,38 @@ async function assertRuntimeDiagnosticsFailurePath() {
   assert.ok(settingsScreenSource.includes('runtimeLogCopyFailed'), 'settings diagnostics exposes copy failure feedback')
   assert.ok(settingsScreenSource.includes('runtimeLogShareFailed'), 'settings diagnostics exposes share failure feedback')
   assert.ok(settingsScreenSource.includes('runtimeLogClearFailed'), 'settings diagnostics exposes clear failure feedback')
-  assert.ok(settingsScreenSource.includes('runtimeDiagnosticProviderContract'), 'settings diagnostics exposes provider compatibility contract summary')
-  assert.ok(settingsScreenSource.includes('runtimeDiagnosticProviderSupportEvidence'), 'settings diagnostics exposes provider capability matrix evidence examples')
-  assert.ok(settingsScreenSource.includes('diagnostics.capabilityMatrix.statusExamples.partial'), 'settings diagnostics reads provider capability matrix partial examples')
-  assert.ok(settingsScreenSource.includes('formatCapabilityMatrixExamples'), 'settings diagnostics formats provider capability matrix examples')
-  assert.ok(settingsScreenSource.includes('diagnostics.rectification.total'), 'settings diagnostics reads request rectification runtime log counts')
-  assert.ok(settingsScreenSource.includes('formatRectificationExamples'), 'settings diagnostics formats request rectification examples')
-  assert.ok(settingsScreenSource.includes('diagnostics.providerHealth.quotaExhausted'), 'settings diagnostics reads quota-aware provider health buckets')
-  assert.ok(settingsScreenSource.includes('formatProviderHealthExamples'), 'settings diagnostics formats provider health examples')
-  assert.ok(settingsScreenSource.includes('diagnostics.sessionAffinity.rotated'), 'settings diagnostics reads session affinity rotation summaries')
-  assert.ok(settingsScreenSource.includes('formatSessionAffinityExamples'), 'settings diagnostics formats session affinity examples')
-  assert.ok(settingsScreenSource.includes('diagnostics.contextControlPlane.cacheDiagnostics'), 'settings diagnostics reads context control-plane cache diagnostic counts')
-  assert.ok(settingsScreenSource.includes('formatContextControlPlaneExamples'), 'settings diagnostics formats context control-plane examples')
-  assert.ok(settingsScreenSource.includes('diagnostics.requestExamples'), 'settings diagnostics reads request-level runtime examples')
-  assert.ok(settingsScreenSource.includes('formatRequestExamples'), 'settings diagnostics formats request-level runtime examples')
-  assert.ok(settingsScreenSource.includes('runtimeDiagnosticTimeline'), 'settings diagnostics exposes the unified runtime timeline')
-  assert.ok(settingsScreenSource.includes('diagnostics.timeline.counts.byStage.provider'), 'settings diagnostics reads runtime timeline stage counts')
-  assert.ok(settingsScreenSource.includes('diagnostics.timeline.counts.byStage.plugin'), 'settings diagnostics reads plugin timeline stage counts')
-  assert.ok(settingsScreenSource.includes('diagnostics.timeline.counts.byStatus.error'), 'settings diagnostics reads runtime timeline status counts')
-  assert.ok(settingsScreenSource.includes('formatRuntimeTimelineExamples'), 'settings diagnostics formats runtime timeline examples')
-  assert.ok(settingsScreenSource.includes('diagnostics.timeline.issues.length'), 'settings diagnostics reads runtime timeline issue counts')
-  assert.ok(settingsScreenSource.includes('diagnostics.timeline.repairPlan.taskCount'), 'settings diagnostics reads runtime timeline repair task counts')
-  assert.ok(settingsScreenSource.includes('formatRuntimeTimelineIssues'), 'settings diagnostics formats runtime timeline issues')
-  assert.ok(settingsScreenSource.includes('formatRuntimeTimelineRepairTasks'), 'settings diagnostics formats runtime timeline repair tasks')
-  assert.ok(settingsScreenSource.includes('runtimeDiagnosticPerformance'), 'settings diagnostics exposes runtime diagnostics performance budgets')
-  assert.ok(settingsScreenSource.includes('diagnostics.performance.buildDurationMs'), 'settings diagnostics reads runtime diagnostics build duration metadata')
-  assert.ok(settingsScreenSource.includes('diagnostics.performance.parsedLogEntryLimitApplied'), 'settings diagnostics surfaces parsed log entry budget pressure')
-  assert.ok(settingsScreenSource.includes('diagnostics.performance.timelineInputEvents'), 'settings diagnostics reads timeline input budget usage')
-  assert.ok(settingsScreenSource.includes('runtimeDiagnosticObservability'), 'settings diagnostics exposes observability sink policy state')
-  assert.ok(settingsScreenSource.includes('diagnostics.observability.networkExportAllowed'), 'settings diagnostics reads observability network export policy state')
-  assert.ok(settingsScreenSource.includes('diagnostics.observability.previewStatus'), 'settings diagnostics reads observability sink preview status')
-  assert.ok(settingsScreenSource.includes('formatObservabilityPreviewFailures'), 'settings diagnostics formats observability preview failure codes')
-  assert.ok(settingsScreenSource.includes('formatObservabilityPolicyBlockReasons'), 'settings diagnostics formats observability policy block reasons')
+  assert.ok(runtimeDiagnosticsDetailsSource.includes('runtimeDiagnosticProviderContract'), 'settings diagnostics exposes provider compatibility contract summary')
+  assert.ok(runtimeDiagnosticsDetailsSource.includes('runtimeDiagnosticProviderSupportEvidence'), 'settings diagnostics exposes provider capability matrix evidence examples')
+  assert.ok(runtimeDiagnosticsDetailsSource.includes('diagnostics.capabilityMatrix.statusExamples.partial'), 'settings diagnostics reads provider capability matrix partial examples')
+  assert.ok(runtimeDiagnosticsDetailsSource.includes('formatCapabilityMatrixExamples'), 'settings diagnostics formats provider capability matrix examples')
+  assert.ok(runtimeDiagnosticsDetailsSource.includes('diagnostics.rectification.total'), 'settings diagnostics reads request rectification runtime log counts')
+  assert.ok(runtimeDiagnosticsDetailsSource.includes('formatRectificationExamples'), 'settings diagnostics formats request rectification examples')
+  assert.ok(runtimeDiagnosticsDetailsSource.includes('diagnostics.providerHealth.quotaExhausted'), 'settings diagnostics reads quota-aware provider health buckets')
+  assert.ok(runtimeDiagnosticsDetailsSource.includes('formatProviderHealthExamples'), 'settings diagnostics formats provider health examples')
+  assert.ok(runtimeDiagnosticsDetailsSource.includes('diagnostics.sessionAffinity.rotated'), 'settings diagnostics reads session affinity rotation summaries')
+  assert.ok(runtimeDiagnosticsDetailsSource.includes('formatSessionAffinityExamples'), 'settings diagnostics formats session affinity examples')
+  assert.ok(runtimeDiagnosticsDetailsSource.includes('diagnostics.contextControlPlane.cacheDiagnostics'), 'settings diagnostics reads context control-plane cache diagnostic counts')
+  assert.ok(runtimeDiagnosticsDetailsSource.includes('formatContextControlPlaneExamples'), 'settings diagnostics formats context control-plane examples')
+  assert.ok(runtimeDiagnosticsDetailsSource.includes('diagnostics.requestExamples'), 'settings diagnostics reads request-level runtime examples')
+  assert.ok(runtimeDiagnosticsDetailsSource.includes('formatRequestExamples'), 'settings diagnostics formats request-level runtime examples')
+  assert.ok(runtimeDiagnosticsDetailsSource.includes('runtimeDiagnosticTimeline'), 'settings diagnostics exposes the unified runtime timeline')
+  assert.ok(runtimeDiagnosticsDetailsSource.includes('diagnostics.timeline.counts.byStage.provider'), 'settings diagnostics reads runtime timeline stage counts')
+  assert.ok(runtimeDiagnosticsDetailsSource.includes('diagnostics.timeline.counts.byStage.plugin'), 'settings diagnostics reads plugin timeline stage counts')
+  assert.ok(runtimeDiagnosticsDetailsSource.includes('diagnostics.timeline.counts.byStatus.error'), 'settings diagnostics reads runtime timeline status counts')
+  assert.ok(runtimeDiagnosticsDetailsSource.includes('formatRuntimeTimelineExamples'), 'settings diagnostics formats runtime timeline examples')
+  assert.ok(runtimeDiagnosticsDetailsSource.includes('diagnostics.timeline.issues.length'), 'settings diagnostics reads runtime timeline issue counts')
+  assert.ok(runtimeDiagnosticsDetailsSource.includes('diagnostics.timeline.repairPlan.taskCount'), 'settings diagnostics reads runtime timeline repair task counts')
+  assert.ok(runtimeDiagnosticsDetailsSource.includes('formatRuntimeTimelineIssues'), 'settings diagnostics formats runtime timeline issues')
+  assert.ok(runtimeDiagnosticsDetailsSource.includes('formatRuntimeTimelineRepairTasks'), 'settings diagnostics formats runtime timeline repair tasks')
+  assert.ok(runtimeDiagnosticsDetailsSource.includes('runtimeDiagnosticPerformance'), 'settings diagnostics exposes runtime diagnostics performance budgets')
+  assert.ok(runtimeDiagnosticsDetailsSource.includes('diagnostics.performance.buildDurationMs'), 'settings diagnostics reads runtime diagnostics build duration metadata')
+  assert.ok(runtimeDiagnosticsDetailsSource.includes('diagnostics.performance.parsedLogEntryLimitApplied'), 'settings diagnostics surfaces parsed log entry budget pressure')
+  assert.ok(runtimeDiagnosticsDetailsSource.includes('diagnostics.performance.timelineInputEvents'), 'settings diagnostics reads timeline input budget usage')
+  assert.ok(runtimeDiagnosticsDetailsSource.includes('runtimeDiagnosticObservability'), 'settings diagnostics exposes observability sink policy state')
+  assert.ok(runtimeDiagnosticsDetailsSource.includes('diagnostics.observability.networkExportAllowed'), 'settings diagnostics reads observability network export policy state')
+  assert.ok(runtimeDiagnosticsDetailsSource.includes('diagnostics.observability.previewStatus'), 'settings diagnostics reads observability sink preview status')
+  assert.ok(runtimeDiagnosticsDetailsSource.includes('formatObservabilityPreviewFailures'), 'settings diagnostics formats observability preview failure codes')
+  assert.ok(runtimeDiagnosticsDetailsSource.includes('formatObservabilityPolicyBlockReasons'), 'settings diagnostics formats observability policy block reasons')
   assert.ok(settingsScreenSource.includes('OBSERVABILITY_SINK_MODE_OPTIONS'), 'settings governance exposes observability export mode choices')
   assert.ok(settingsScreenSource.includes('observabilitySinkEndpointUrl'), 'settings governance exposes observability sink endpoint configuration')
   assert.ok(settingsScreenSource.includes('getObservabilitySinkApiKey'), 'settings governance loads observability sink API keys from secure storage')
@@ -5247,29 +5251,31 @@ async function assertRuntimeDiagnosticsFailurePath() {
   assert.ok(settingsScreenSource.includes('latestEventId: task.latestEventId'), 'settings diagnostics passes the latest runtime event id into retry repair chat links')
   assert.ok(settingsScreenSource.includes('summary: task.summary'), 'settings diagnostics passes repair summaries into retry repair chat links')
   assert.ok(settingsScreenSource.includes('governance: true'), 'settings diagnostics opens governance controls for compact and session-affinity repairs')
-  assert.ok(chatDeepLinkSource.includes('buildRuntimeRepairIntent'), 'chat deep links build retry intents from runtime repair params')
-  assert.ok(chatDeepLinkSource.includes('RUNTIME_REPAIR_REPLAY_PAYLOAD_SCHEMA'), 'chat deep links define a stable runtime repair replay payload schema')
-  assert.ok(chatDeepLinkSource.includes('buildRuntimeRepairReplayPayloadJson'), 'chat deep links build machine-readable runtime repair replay payloads')
-  assert.ok(chatDeepLinkSource.includes('buildRuntimeRepairReplaySteps'), 'chat deep links build machine-readable runtime repair replay steps')
-  assert.ok(chatDeepLinkSource.includes('preserve_user_intent'), 'chat deep links keep original user intent as the first repair replay step')
-  assert.ok(chatDeepLinkSource.includes('retry_and_report_blocker'), 'chat deep links make retry and blocker reporting an explicit repair replay step')
-  assert.ok(chatDeepLinkSource.includes('chat.runtimeRepairRetryPrompt'), 'chat deep links seed localized runtime repair retry prompts')
-  assert.ok(chatDeepLinkSource.includes('findRuntimeRepairReplayContext'), 'chat deep links enrich repair retry drafts with conversation replay context')
-  assert.ok(chatDeepLinkSource.includes('previousUserMessage'), 'chat deep links include the previous user request in repair retry drafts')
-  assert.ok(chatDeepLinkSource.includes('failureSummary'), 'chat deep links include failure summaries in repair retry drafts')
-  assert.ok(chatDeepLinkSource.includes('routeParamList(params.issueCodes)'), 'chat deep links parse structured runtime repair issue codes')
-  assert.ok(chatDeepLinkSource.includes('routeParamList(params.sourceEventIds)'), 'chat deep links parse runtime repair source event ids')
-  assert.ok(chatDeepLinkSource.includes('latestEventId = routeParamText(params.latestEventId)'), 'chat deep links parse latest runtime repair event ids')
-  assert.ok(chatDeepLinkSource.includes('routeParamPositiveInteger(params.eventCount'), 'chat deep links parse bounded runtime repair event counts')
-  assert.ok(chatDeepLinkSource.includes('severity: severity ?'), 'chat deep links add runtime repair severity labels to retry prompts')
-  assert.ok(chatDeepLinkSource.includes('payloadJson'), 'chat deep links inject structured runtime repair payload JSON into retry prompts')
-  assert.ok(chatDeepLinkSource.includes('repairSteps'), 'chat deep links include bounded repair steps in structured replay payloads')
-  assert.ok(chatDeepLinkSource.includes('isRuntimeRepairFailureMessage'), 'chat deep links identify failed assistant turns for repair replay')
-  assert.ok(chatDeepLinkSource.includes('truncateRuntimeRepairText'), 'chat deep links bound repair replay context text')
-  assert.ok(chatDeepLinkSource.includes("routeParamText(params.source) !== 'runtime-repair'"), 'chat deep links gate repair draft seeding to runtime repair links')
+  assert.ok(chatDeepLinkSource.includes("routeParamText(params.source) === 'runtime-repair'"), 'chat deep links gate the lazy repair workspace to runtime repair links')
+  assert.ok(chatDeepLinkSource.includes("import('@/presentation/features/conversations/RuntimeRepairConversationWorkspace')"), 'chat deep links defer runtime repair replay construction')
+  assert.ok(runtimeRepairWorkspaceSource.includes('buildRuntimeRepairIntent'), 'runtime repair deep links build retry intents from runtime repair params')
+  assert.ok(runtimeRepairWorkspaceSource.includes('RUNTIME_REPAIR_REPLAY_PAYLOAD_SCHEMA'), 'runtime repair deep links define a stable replay payload schema')
+  assert.ok(runtimeRepairWorkspaceSource.includes('buildRuntimeRepairReplayPayloadJson'), 'runtime repair deep links build machine-readable replay payloads')
+  assert.ok(runtimeRepairWorkspaceSource.includes('buildRuntimeRepairReplaySteps'), 'runtime repair deep links build machine-readable replay steps')
+  assert.ok(runtimeRepairWorkspaceSource.includes('preserve_user_intent'), 'runtime repair deep links keep original user intent as the first replay step')
+  assert.ok(runtimeRepairWorkspaceSource.includes('retry_and_report_blocker'), 'runtime repair deep links make retry and blocker reporting an explicit replay step')
+  assert.ok(runtimeRepairWorkspaceSource.includes('chat.runtimeRepairRetryPrompt'), 'runtime repair deep links seed localized retry prompts')
+  assert.ok(runtimeRepairWorkspaceSource.includes('findRuntimeRepairReplayContext'), 'runtime repair deep links enrich retry drafts with conversation replay context')
+  assert.ok(runtimeRepairWorkspaceSource.includes('previousUserMessage'), 'runtime repair deep links include the previous user request in retry drafts')
+  assert.ok(runtimeRepairWorkspaceSource.includes('failureSummary'), 'runtime repair deep links include failure summaries in retry drafts')
+  assert.ok(runtimeRepairWorkspaceSource.includes('routeParamList(params.issueCodes)'), 'runtime repair deep links parse structured issue codes')
+  assert.ok(runtimeRepairWorkspaceSource.includes('routeParamList(params.sourceEventIds)'), 'runtime repair deep links parse source event ids')
+  assert.ok(runtimeRepairWorkspaceSource.includes('latestEventId = routeParamText(params.latestEventId)'), 'runtime repair deep links parse latest event ids')
+  assert.ok(runtimeRepairWorkspaceSource.includes('routeParamPositiveInteger(params.eventCount'), 'runtime repair deep links parse bounded event counts')
+  assert.ok(runtimeRepairWorkspaceSource.includes('severity: severity ?'), 'runtime repair deep links add severity labels to retry prompts')
+  assert.ok(runtimeRepairWorkspaceSource.includes('payloadJson'), 'runtime repair deep links inject structured payload JSON into retry prompts')
+  assert.ok(runtimeRepairWorkspaceSource.includes('repairSteps'), 'runtime repair deep links include bounded steps in structured replay payloads')
+  assert.ok(runtimeRepairWorkspaceSource.includes('isRuntimeRepairFailureMessage'), 'runtime repair deep links identify failed assistant turns for replay')
+  assert.ok(runtimeRepairWorkspaceSource.includes('truncateRuntimeRepairText'), 'runtime repair deep links bound replay context text')
+  assert.ok(runtimeRepairWorkspaceSource.includes("routeParamText(params.source) !== 'runtime-repair'"), 'runtime repair intent construction remains fail-closed')
   assert.ok(chatWorkspaceSource.includes('restoreInitialDraftIfEmpty?: boolean'), 'chat workspace exposes draft restoration guards to deep links')
-  assert.ok(chatDeepLinkSource.includes('restoreInitialDraftIfEmpty'), 'runtime repair chat deep links avoid overwriting non-empty composer drafts')
-  assert.ok(chatDeepLinkSource.includes('runtimeRepairIntent={runtimeRepairIntent}'), 'runtime repair chat deep links pass visible repair intents into the chat workspace')
+  assert.ok(runtimeRepairWorkspaceSource.includes('restoreInitialDraftIfEmpty'), 'runtime repair chat deep links avoid overwriting non-empty composer drafts')
+  assert.ok(runtimeRepairWorkspaceSource.includes('runtimeRepairIntent={runtimeRepairIntent}'), 'runtime repair chat deep links pass visible repair intents into the chat workspace')
   assert.ok(chatActiveComposerDockSource.includes('runtimeRepairIntent={visibleRuntimeRepairIntent}') && floatingComposerSource.includes('RuntimeRepairIntentCard'), 'chat Composer dock renders visible runtime repair replay intents')
   assert.ok(runtimeRepairIntentCardSource.includes('runtimeRepairIntentMeta'), 'runtime repair intent card renders structured runtime repair intent metadata')
   assert.ok(runtimeRepairIntentCardSource.includes('intent.issueCodes'), 'runtime repair intent card renders runtime repair intent issue codes')
@@ -5287,11 +5293,11 @@ async function assertRuntimeDiagnosticsFailurePath() {
   assert.ok(!runtimeRepairReplayEventsSource.includes('payloadJson: intent.payloadJson'), 'runtime repair telemetry omits full payload JSON')
   assert.ok(composerSource.includes('externalSubmitKey?: string | number'), 'composer exposes a bounded external submit trigger for repair replay')
   assert.ok(composerSource.includes('consumedExternalSubmitKey'), 'composer consumes external submit keys only once')
-  assert.ok(settingsScreenSource.includes('issue.nextAction'), 'settings diagnostics formats runtime timeline next actions')
-  assert.ok(settingsScreenSource.includes('issue.actionTarget.kind'), 'settings diagnostics formats runtime timeline action targets')
+  assert.ok(runtimeDiagnosticsDetailsSource.includes('issue.nextAction'), 'settings diagnostics formats runtime timeline next actions')
+  assert.ok(runtimeDiagnosticsDetailsSource.includes('issue.actionTarget.kind'), 'settings diagnostics formats runtime timeline action targets')
   assert.ok(settingsScreenSource.includes('settings.sessionAffinityEnabled === true'), 'settings governance exposes the session-affinity enablement control')
   assert.ok(settingsScreenSource.includes("updatePositiveInteger('sessionAffinityTtlMs'"), 'settings governance exposes the session-affinity TTL control')
-  assert.ok(settingsScreenSource.includes("issue.severity === 'critical'"), 'settings diagnostics promotes critical runtime timeline issues')
+  assert.ok(runtimeDiagnosticsDetailsSource.includes("issue.severity === 'critical'"), 'settings diagnostics promotes critical runtime timeline issues')
   assert.ok(providerSettingsContentSource.includes('buildRuntimeDiagnosticsSummary({ providers, settings })'), 'provider settings loads bounded runtime diagnostics summaries')
   assert.ok(providerSettingsContentSource.includes('runtimeDetailByProviderId'), 'provider settings maps runtime diagnostics by provider id')
   assert.ok(providerSettingsContentSource.includes('runtimeDetail={selectedProvider ? runtimeDetailByProviderId.get(selectedProvider.id) : undefined}'), 'provider settings routes runtime diagnostics into the selected provider details')
@@ -5301,7 +5307,7 @@ async function assertRuntimeDiagnosticsFailurePath() {
   assert.ok(apiKeyPanelSource.includes('runtimeCredentialHealthValue'), 'API key panel formats credential group health diagnostics')
   assert.ok(apiKeyPanelSource.includes('runtimeSessionAffinityValue'), 'API key panel formats session affinity diagnostics')
   assert.ok(apiKeyPanelSource.includes('runtimeUnavailableValue'), 'API key panel formats last unavailable reason diagnostics')
-  assert.ok(settingsScreenSource.includes('diagnostics.proxy.warnings'), 'settings diagnostics surfaces custom proxy sticky-routing warnings')
+  assert.ok(runtimeDiagnosticsDetailsSource.includes('diagnostics.proxy.warnings'), 'settings diagnostics surfaces custom proxy sticky-routing warnings')
   assert.ok(apiKeyPanelSource.includes('summarizeProviderCapabilityMatrixDetails(provider, matrix)'), 'API key panel provider summary includes contract-aware capability matrix detail')
   assert.ok(apiKeyPanelSource.includes('ModelCapabilityEvidencePanel'), 'API key panel renders model-level capability evidence diagnostics')
   assert.ok(apiKeyPanelSource.includes('buildProviderModelCapabilityMatrix(provider, modelId)'), 'API key panel builds diagnostics from provider/model capability evidence')
@@ -5311,18 +5317,18 @@ async function assertRuntimeDiagnosticsFailurePath() {
   assert.ok(apiKeyPanelSource.includes('ModelCapabilityEvidencePanel'), 'API key panel keeps catalog-derived model capability evidence without triggering model health tests')
   assert.ok(!providerSettingsContentSource.includes('summarizeProviderCapabilityMatrixDetails(provider'), 'provider settings list keeps capability-matrix diagnostics in the expanded API key panel instead of duplicating them in compact rows')
   assert.ok(runtimeDiagnosticsSource.includes('modelCapabilityStatusExamples'), 'runtime diagnostics exposes sampled provider/model capability evidence')
-  assert.ok(settingsScreenSource.includes('diagnostics.compatibility.liveSmokeGateCount'), 'settings diagnostics reads provider compatibility gate counts')
-  assert.ok(settingsScreenSource.includes('runtimeDiagnosticCapabilityStatus'), 'settings diagnostics exposes provider compatibility capability status summary')
-  assert.ok(settingsScreenSource.includes('diagnostics.compatibility.capabilityStatuses.supported'), 'settings diagnostics reads provider compatibility capability status counts')
-  assert.ok(settingsScreenSource.includes('runtimeDiagnosticCapabilitySendPolicy'), 'settings diagnostics exposes provider compatibility send policy summary')
-  assert.ok(settingsScreenSource.includes('diagnostics.compatibility.capabilitySendSources.contract'), 'settings diagnostics reads provider compatibility send policy source counts')
-  assert.ok(settingsScreenSource.includes('formatCapabilitySendPolicyExamples'), 'settings diagnostics formats provider compatibility send policy examples')
-  assert.ok(settingsScreenSource.includes('example.sendSource'), 'settings diagnostics formats provider compatibility send policy sources')
-  assert.ok(settingsScreenSource.includes('runtimeDiagnosticCapabilityEvidence'), 'settings diagnostics exposes provider compatibility evidence examples')
-  assert.ok(settingsScreenSource.includes('diagnostics.compatibility.capabilityStatusExamples.unsupported'), 'settings diagnostics reads provider compatibility capability examples')
-  assert.ok(settingsScreenSource.includes('formatCapabilityStatusExamples'), 'settings diagnostics formats provider compatibility capability examples')
-  assert.ok(settingsScreenSource.includes('example.limitationReason'), 'settings diagnostics formats provider compatibility limitation reasons')
-  assert.ok(settingsScreenSource.includes('example.degradationPath'), 'settings diagnostics formats provider compatibility degradation paths')
+  assert.ok(runtimeDiagnosticsDetailsSource.includes('diagnostics.compatibility.liveSmokeGateCount'), 'settings diagnostics reads provider compatibility gate counts')
+  assert.ok(runtimeDiagnosticsDetailsSource.includes('runtimeDiagnosticCapabilityStatus'), 'settings diagnostics exposes provider compatibility capability status summary')
+  assert.ok(runtimeDiagnosticsDetailsSource.includes('diagnostics.compatibility.capabilityStatuses.supported'), 'settings diagnostics reads provider compatibility capability status counts')
+  assert.ok(runtimeDiagnosticsDetailsSource.includes('runtimeDiagnosticCapabilitySendPolicy'), 'settings diagnostics exposes provider compatibility send policy summary')
+  assert.ok(runtimeDiagnosticsDetailsSource.includes('diagnostics.compatibility.capabilitySendSources.contract'), 'settings diagnostics reads provider compatibility send policy source counts')
+  assert.ok(runtimeDiagnosticsDetailsSource.includes('formatCapabilitySendPolicyExamples'), 'settings diagnostics formats provider compatibility send policy examples')
+  assert.ok(runtimeDiagnosticsDetailsSource.includes('example.sendSource'), 'settings diagnostics formats provider compatibility send policy sources')
+  assert.ok(runtimeDiagnosticsDetailsSource.includes('runtimeDiagnosticCapabilityEvidence'), 'settings diagnostics exposes provider compatibility evidence examples')
+  assert.ok(runtimeDiagnosticsDetailsSource.includes('diagnostics.compatibility.capabilityStatusExamples.unsupported'), 'settings diagnostics reads provider compatibility capability examples')
+  assert.ok(runtimeDiagnosticsDetailsSource.includes('formatCapabilityStatusExamples'), 'settings diagnostics formats provider compatibility capability examples')
+  assert.ok(runtimeDiagnosticsDetailsSource.includes('example.limitationReason'), 'settings diagnostics formats provider compatibility limitation reasons')
+  assert.ok(runtimeDiagnosticsDetailsSource.includes('example.degradationPath'), 'settings diagnostics formats provider compatibility degradation paths')
   assert.equal(fs.existsSync(path.join(root, 'src/services/ai/providerCompatibilityContract.ts')), false, 'legacy provider compatibility facade is deleted after all production consumers migrate')
   assert.ok(providerCompatibilityCatalogSource.includes('export function explainProviderCompatibilityCapabilityStatus'), 'target provider compatibility catalog owns capability explanation mapping')
   assert.ok(runtimeDiagnosticsSource.includes('explainProviderCompatibilityCapabilityStatus'), 'runtime diagnostics consumes provider compatibility explanation mapping')
@@ -5648,9 +5654,10 @@ async function assertPluginManifestBehavior() {
   assert.ok(skillSettingsRouteSource.includes('routeParamPositiveInteger(params.eventCount)'), 'skills settings route parses plugin repair event counts')
   assert.ok(skillSettingsRouteSource.includes('pluginManifestFocus={pluginManifestFocus}'), 'skills settings route passes plugin manifest focus into settings content')
   const settingsScreenSource = fs.readFileSync(path.join(root, 'src/components/main/SettingsScreenContent.tsx'), 'utf8')
+  const runtimeDiagnosticsDetailsSource = fs.readFileSync(path.join(root, 'src/components/settings/RuntimeDiagnosticsDetails.tsx'), 'utf8')
   assert.ok(settingsScreenSource.includes('loadPluginManifestCatalogSnapshot'), 'settings diagnostics loads the plugin manifest catalog snapshot')
   assert.ok(settingsScreenSource.includes('emitPluginManifestCatalogSnapshotEvent'), 'settings diagnostics emits bounded plugin catalog runtime events')
-  assert.ok(settingsScreenSource.includes('runtimeDiagnosticPluginCatalog'), 'settings diagnostics surfaces plugin catalog counts')
+  assert.ok(runtimeDiagnosticsDetailsSource.includes('runtimeDiagnosticPluginCatalog'), 'settings diagnostics surfaces plugin catalog counts')
   const mcpSettingsSource = fs.readFileSync(path.join(root, 'src/components/settings/McpSettingsContent.tsx'), 'utf8')
   assert.ok(mcpSettingsSource.includes('createPluginManifestFromMcpServer'), 'MCP settings builds plugin manifest previews for server references')
   assert.ok(mcpSettingsSource.includes('validatePluginManifest'), 'MCP settings validates plugin manifest previews before displaying review state')
@@ -6637,14 +6644,14 @@ function assertProviderClientSimulationBehavior() {
   )
 
   const cases = [
-    [openAIProvider, 'gpt-5.6', 'openai-api', 'OpenAI-API/1.0 (IsleMind/1.0.15)'],
-    [openAIProvider, 'gpt-5.6-codex', 'codex-cli', 'codex_cli_rs/0.147.0 (Android; mobile) IsleMind/1.0.15'],
+    [openAIProvider, 'gpt-5.6', 'openai-api', 'OpenAI-API/1.0 (IsleMind/1.0.16)'],
+    [openAIProvider, 'gpt-5.6-codex', 'codex-cli', 'codex_cli_rs/0.147.0 (Android; mobile) IsleMind/1.0.16'],
     [openAIProvider, 'grok-4.6', 'grok-build', 'grok-pager/1.0.3 grok-shell/1.0.3 (windows; x86_64)'],
-    [compatibleProvider, 'claude-sonnet-4-20250514', 'claude-code', 'claude-code/2.1.229 (cli; IsleMind/1.0.15)'],
-    [compatibleProvider, 'deepseek-chat', 'deepseek-api', 'DeepSeek-API/1.0 (IsleMind/1.0.15)'],
-    [compatibleProvider, 'glm-4.6', 'glm-api', 'GLM-API/1.0 (IsleMind/1.0.15)'],
-    [{ ...openAIProvider, id: 'codex-desktop' }, 'custom-model', 'codex-desktop', 'Codex Desktop/0.147.0 (Android; mobile) IsleMind/1.0.15'],
-    [{ ...anthropicProvider, name: 'Claude Code Desktop' }, 'custom-model', 'claude-code-desktop', 'claude-code/2.1.229 (desktop; IsleMind/1.0.15)'],
+    [compatibleProvider, 'claude-sonnet-4-20250514', 'claude-code', 'claude-code/2.1.229 (cli; IsleMind/1.0.16)'],
+    [compatibleProvider, 'deepseek-chat', 'deepseek-api', 'DeepSeek-API/1.0 (IsleMind/1.0.16)'],
+    [compatibleProvider, 'glm-4.6', 'glm-api', 'GLM-API/1.0 (IsleMind/1.0.16)'],
+    [{ ...openAIProvider, id: 'codex-desktop' }, 'custom-model', 'codex-desktop', 'Codex Desktop/0.147.0 (Android; mobile) IsleMind/1.0.16'],
+    [{ ...anthropicProvider, name: 'Claude Code Desktop' }, 'custom-model', 'claude-code-desktop', 'claude-code/2.1.229 (desktop; IsleMind/1.0.16)'],
     [{ ...compatibleProvider, id: 'grok-build' }, 'custom-model', 'grok-build', 'grok-pager/1.0.3 grok-shell/1.0.3 (windows; x86_64)'],
   ]
 
@@ -6671,14 +6678,14 @@ function assertProviderClientSimulationBehavior() {
     model: 'gpt-5.6',
   })
   assert.equal(explicitProfile.profileId, 'codex-desktop', 'explicit compatible profiles override automatic provider identity')
-  assert.equal(explicitProfile.userAgent, 'Codex Desktop/0.147.0 (Android; mobile) IsleMind/1.0.15', 'explicit Codex Desktop profiles use the versioned client shape')
+  assert.equal(explicitProfile.userAgent, 'Codex Desktop/0.147.0 (Android; mobile) IsleMind/1.0.16', 'explicit Codex Desktop profiles use the versioned client shape')
   assert.equal(explicitProfile.match, 'explicit-profile', 'explicit compatible profiles remain distinguishable in diagnostics')
   const explicitIsleMind = resolveProviderClientSimulationPolicy({
     provider: { ...openAIProvider, clientCompatibilityProfile: 'islemind' },
     model: 'gpt-5.6-codex',
   })
   assert.equal(explicitIsleMind.profileId, 'islemind', 'the IsleMind override disables branded provider inference')
-  assert.equal(explicitIsleMind.userAgent, 'IsleMind/1.0.15', 'the explicit IsleMind profile remains versioned and stable')
+  assert.equal(explicitIsleMind.userAgent, 'IsleMind/1.0.16', 'the explicit IsleMind profile remains versioned and stable')
   assert.equal(explicitIsleMind.match, 'explicit-islemind', 'the IsleMind override remains distinguishable in diagnostics')
   const incompatibleProfile = resolveProviderClientSimulationPolicy({
     provider: { ...openAIProvider, clientCompatibilityProfile: 'claude-code' },
@@ -6711,7 +6718,7 @@ function assertProviderClientSimulationBehavior() {
     canonicalApiKeyHeaders,
     {
       Authorization: `Bearer ${FAKE_KEY_A}`,
-      'User-Agent': 'codex_cli_rs/0.147.0 (Android; mobile) IsleMind/1.0.15',
+      'User-Agent': 'codex_cli_rs/0.147.0 (Android; mobile) IsleMind/1.0.16',
     },
     'model-driven client simulation replaces caller identity and removes stale Grok OAuth headers on API-key requests',
   )
@@ -6742,7 +6749,7 @@ function assertProviderClientSimulationBehavior() {
     {
       'Content-Type': 'application/json',
       Authorization: `Bearer ${FAKE_KEY_A}`,
-      'User-Agent': 'codex_cli_rs/0.147.0 (Android; mobile) IsleMind/1.0.15',
+      'User-Agent': 'codex_cli_rs/0.147.0 (Android; mobile) IsleMind/1.0.16',
     },
     'selected Codex models automatically use the Codex client UA',
   )
@@ -6756,7 +6763,7 @@ function assertProviderClientSimulationBehavior() {
       'x-api-key': FAKE_KEY_A,
       'anthropic-version': '2023-06-01',
       'anthropic-beta': ANTHROPIC_COMPACTION_BETA,
-      'User-Agent': 'claude-code/2.1.229 (cli; IsleMind/1.0.15)',
+      'User-Agent': 'claude-code/2.1.229 (cli; IsleMind/1.0.16)',
     },
     'selected Claude models automatically use the Claude client UA while preserving provider headers',
   )
@@ -6764,7 +6771,7 @@ function assertProviderClientSimulationBehavior() {
   const providerCatalogBefore = JSON.stringify({ models: compatibleProvider.models, manualModels: compatibleProvider.manualModels })
   const firstModelHeaders = getProviderRequestHeaders(compatibleProvider, { model: 'gpt-5.6-codex' })
   const fallbackModelHeaders = getProviderRequestHeaders(compatibleProvider, { model: 'grok-build-fast' })
-  assert.equal(firstModelHeaders['User-Agent'], 'codex_cli_rs/0.147.0 (Android; mobile) IsleMind/1.0.15', 'initial model selection uses the matching Codex client identity')
+  assert.equal(firstModelHeaders['User-Agent'], 'codex_cli_rs/0.147.0 (Android; mobile) IsleMind/1.0.16', 'initial model selection uses the matching Codex client identity')
   assert.equal(fallbackModelHeaders['User-Agent'], 'grok-pager/1.0.3 grok-shell/1.0.3 (windows; x86_64)', 'fallback model selection recomputes the matching model UA')
   assert.equal(firstModelHeaders.Authorization, fallbackModelHeaders.Authorization, 'model switching preserves provider authentication')
   assert.equal(JSON.stringify({ models: compatibleProvider.models, manualModels: compatibleProvider.manualModels }), providerCatalogBefore, 'client profile selection does not mutate provider model records')
@@ -6787,7 +6794,7 @@ function assertProviderClientSimulationBehavior() {
     body: { messages: [{ role: 'user', content: 'hello' }], max_tokens: 32 },
     now: new Date('2026-08-13T00:00:00Z'),
   })
-  assert.equal(signedBedrockRequest.headers['User-Agent'], 'claude-code/2.1.229 (cli; IsleMind/1.0.15)', 'direct Bedrock adds the selected Claude model UA before signing')
+  assert.equal(signedBedrockRequest.headers['User-Agent'], 'claude-code/2.1.229 (cli; IsleMind/1.0.16)', 'direct Bedrock adds the selected Claude model UA before signing')
   assert.match(signedBedrockRequest.headers.Authorization, /SignedHeaders=[^,]*user-agent/, 'direct Bedrock includes User-Agent in SigV4 SignedHeaders')
 
   const pipelineSource = fs.readFileSync(path.join(root, 'src/bootstrap/providerRuntimePipeline.ts'), 'utf8')
@@ -9635,6 +9642,7 @@ async function assertProviderStoreLifecycleBehavior() {
     observabilitySinkEndpointUrl: 'https://trace-user:trace-pass@observe.example/v1/traces',
     proxyBaseUrl: 'islemind://proxy',
   })
+  await flushPersistedSettings()
   assert.equal(useSettingsStore.getState().settings.customSearchEndpoint, '', 'settings store strips embedded-credential custom search endpoints before keeping them in memory')
   assert.equal(useSettingsStore.getState().settings.localModelDownloadMirrorBaseUrl, '', 'settings store strips non-web local-model mirror URLs before keeping them in memory')
   assert.equal(useSettingsStore.getState().settings.observabilitySinkEndpointUrl, '', 'settings store strips embedded-credential observability sink endpoints before keeping them in memory')
@@ -9739,6 +9747,34 @@ async function assertProviderStoreLifecycleBehavior() {
   assert.equal(useChatStore.getState().currentId, null, 'a confirmed empty load clears stale in-memory selection')
   assert.equal(await loadData('ACTIVE_CONVERSATION'), null, 'a confirmed empty load persists a null active selection')
   assert.equal(memoryStorage.get(legacyActiveConversationByModeKey), legacyActiveConversationByModeValue, 'active-selection load validation leaves the legacy by-mode blob untouched')
+
+  const abandonedDraftId = useChatStore.getState().createDraft('draft-provider', 'draft-model')
+  await new Promise((resolve) => setTimeout(resolve, 0))
+  assert.equal(useChatStore.getState().draftConversationIds.has(abandonedDraftId), true, 'a setup send starts as an explicit in-memory draft')
+  assert.equal((await conversationPersistence.loadAll()).some((item) => item.id === abandonedDraftId), false, 'an untouched setup draft is absent from durable history')
+  assert.equal(await loadData('ACTIVE_CONVERSATION'), null, 'an untouched setup draft does not replace the durable active selection')
+  useChatStore.getState().select(null)
+  assert.equal(useChatStore.getState().conversations.some((item) => item.id === abandonedDraftId), false, 'starting over discards an abandoned in-memory draft')
+
+  const promotedDraftId = useChatStore.getState().createDraft('draft-provider', 'draft-model')
+  useChatStore.getState().updateConversation(promotedDraftId, { systemPrompt: 'Keep this draft private until send.' })
+  await new Promise((resolve) => setTimeout(resolve, 0))
+  assert.equal((await conversationPersistence.loadAll()).some((item) => item.id === promotedDraftId), false, 'draft options remain in memory before the first message')
+  useChatStore.getState().addMessage(promotedDraftId, {
+    id: 'draft-first-user-message',
+    role: 'user',
+    content: 'Promote this conversation.',
+    timestamp: 30,
+    status: 'done',
+  })
+  await new Promise((resolve) => setTimeout(resolve, 0))
+  const promotedConversation = (await conversationPersistence.loadAll()).find((item) => item.id === promotedDraftId)
+  assert.equal(useChatStore.getState().draftConversationIds.has(promotedDraftId), false, 'the first user projection promotes the setup draft once')
+  assert.equal(promotedConversation?.messages.length, 1, 'promotion persists the first user message with the conversation')
+  assert.equal(promotedConversation?.systemPrompt, 'Keep this draft private until send.', 'promotion persists the accumulated setup options')
+  assert.equal(await loadData('ACTIVE_CONVERSATION'), promotedDraftId, 'promotion persists the active selection after the first message')
+  useChatStore.getState().clearAll()
+  await new Promise((resolve) => setTimeout(resolve, 0))
 
   const localSetupConversationId = useChatStore.getState().createLocalSetupConversation('agent')
   assert.equal(useChatStore.getState().getCurrent()?.id, localSetupConversationId, 'chat store selects the local setup conversation')
@@ -10669,6 +10705,10 @@ async function assertClearAllDataBehavior() {
     updatedAt: 1,
   }])
   memoryStorage.set('@islemind/active-conversation', JSON.stringify('clear-all-conversation'))
+  memoryStorage.set('@islemind/composer-drafts', JSON.stringify({
+    schema: 'islemind.composer-drafts.v1',
+    drafts: [{ key: 'clear-all-conversation', content: 'Clear all should remove this draft.', updatedAt: Date.now() }],
+  }))
   memoryStorage.set('@islemind/provider-health', JSON.stringify({
     version: 1,
     updatedAtMs: 1,
@@ -10756,6 +10796,7 @@ async function assertClearAllDataBehavior() {
   assert.equal(await loadData('SKILLS'), null, 'clearAllData removes persisted skills')
   assert.equal(await loadData('MCP_SERVERS'), null, 'clearAllData removes persisted MCP servers')
   assert.equal(memoryStorage.get('@islemind/active-conversation'), undefined, 'clearAllData removes the active conversation pointer')
+  assert.equal(memoryStorage.get('@islemind/composer-drafts'), undefined, 'clearAllData removes persisted Composer drafts')
   assert.equal(memoryStorage.get('@islemind/provider-health'), undefined, 'clearAllData removes persisted provider health snapshots')
   assert.equal(memoryStorage.get('@islemind/local-embedding-models'), undefined, 'clearAllData removes persisted local embedding model state')
   assert.equal(secureStorage.get('islemind.key.clear-all-provider'), undefined, 'clearAllData removes provider secure keys')
@@ -10822,12 +10863,12 @@ async function assertApkUpdateBehavior() {
   assert.equal(selectedManifestRelease.apkName, 'IsleMind-0.0.7-arm64-v8a-no-model.apk', 'APK manifest selects the device arm64 no-model asset')
   assert.equal(selectedManifestRelease.versionCode, 7, 'APK manifest preserves Android versionCode')
   assert.equal(selectedManifestRelease.sha256, '3'.repeat(64), 'APK manifest preserves selected asset checksum')
-  assert.equal(isAllowedAndroidApkUriForTest('file:///tmp/IsleMind-0.0.7.apk'), true, 'Android APK URI policy allows explicit file APK URIs')
-  assert.equal(isAllowedAndroidApkUriForTest('content://downloads/document/IsleMind-0.0.7.apk'), true, 'Android APK URI policy allows content URIs whose document path is an APK')
-  assert.equal(isAllowedAndroidApkUriForTest('content://downloads/document/report.pdf'), false, 'Android APK URI policy rejects non-APK content document URIs')
-  assert.equal(isAllowedAndroidApkUriForTest('content://com.android.externalstorage.documents/tree/Download'), false, 'Android APK URI policy rejects SAF tree grants as installer APK input')
-  assert.equal(sanitizeAndroidApkUriForTest('  content://downloads/document/app.apk  '), 'content://downloads/document/app.apk', 'Android APK URI policy trims accepted APK URIs')
-  assert.equal(sanitizeAndroidApkUriForTest('https://example.test/app.apk'), undefined, 'Android APK URI policy rejects remote APK URLs for system-installer handoff')
+  assert.equal(isAllowedAndroidApkUri('file:///tmp/IsleMind-0.0.7.apk'), true, 'Android APK URI policy allows explicit file APK URIs')
+  assert.equal(isAllowedAndroidApkUri('content://downloads/document/IsleMind-0.0.7.apk'), true, 'Android APK URI policy allows content URIs whose document path is an APK')
+  assert.equal(isAllowedAndroidApkUri('content://downloads/document/report.pdf'), false, 'Android APK URI policy rejects non-APK content document URIs')
+  assert.equal(isAllowedAndroidApkUri('content://com.android.externalstorage.documents/tree/Download'), false, 'Android APK URI policy rejects SAF tree grants as installer APK input')
+  assert.equal(sanitizeAndroidApkUri('  content://downloads/document/app.apk  '), 'content://downloads/document/app.apk', 'Android APK URI policy trims accepted APK URIs')
+  assert.equal(sanitizeAndroidApkUri('https://example.test/app.apk'), undefined, 'Android APK URI policy rejects remote APK URLs for system-installer handoff')
   assert.throws(
     () => normalizeApkUpdateManifestForTest({
       ...apkManifestFixture,
@@ -10878,9 +10919,9 @@ async function assertApkUpdateBehavior() {
         apkName: 'app.apk',
         publishedAt: null,
       },
-      { appVersion: '1.0.15', buildVersion: '115', updateMode: 'apk', hotUpdateMode: 'disabled' }
+      { appVersion: '1.0.16', buildVersion: '116', updateMode: 'apk', hotUpdateMode: 'disabled' }
     ) < 0,
-    'published 1.0.13 build 113 is never offered to a 1.0.15 build 115 client'
+    'published 1.0.13 build 113 is never offered to a 1.0.16 build 116 client'
   )
   assert.equal(shouldRecordApkUpdateCheck({ status: 'available', message: '' }), true, 'available update checks update the last-check timestamp')
   assert.equal(shouldRecordApkUpdateCheck({ status: 'unavailable', message: '' }), true, 'unavailable update checks update the last-check timestamp')
@@ -10960,7 +11001,7 @@ async function assertApkUpdateBehavior() {
 
   resetLocalModelFileMocks()
   reactNativePlatform.OS = 'android'
-  expoNativeApplicationVersion = '1.0.15'
+  expoNativeApplicationVersion = '1.0.16'
   expoNativeBuildVersion = '115'
   const olderTagFetchUrls = []
   const originalFetchForOlderTag = global.fetch
@@ -14975,7 +15016,7 @@ async function assertProviderProbeAndUsageQueryIntegrationBehavior() {
     async request(input, init, timeoutMs) {
       usageRequests += 1
       observedUsageRequest = { endpoint: String(input), init, timeoutMs }
-      return new Response(JSON.stringify({ quota: { remaining: 7, limit: 10, used: 3 } }), {
+      return new Response(JSON.stringify({ quota: { remaining: 7, limit: 10, used: 3 }, unit: 'USD', is_active: true }), {
         status: 200,
         headers: { 'content-type': 'application/json' },
       })
@@ -15005,6 +15046,8 @@ async function assertProviderProbeAndUsageQueryIntegrationBehavior() {
         remaining: '/quota/remaining',
         limit: '/quota/limit',
         used: '/quota/used',
+        unit: '/unit',
+        isValid: '/is_active',
       }),
     }),
   })
@@ -15014,6 +15057,8 @@ async function assertProviderProbeAndUsageQueryIntegrationBehavior() {
     { remaining: 7, limit: 10, used: 3 },
     'bounded usage recipe extracts normalized quota values',
   )
+  assert.equal(usageResult.unit, 'USD', 'bounded usage recipe extracts the provider usage unit')
+  assert.equal(usageResult.isValid, true, 'bounded usage recipe extracts provider validity state')
   assert.equal(observedUsageRequest.endpoint, 'https://provider.example/v1/usage')
   assert.equal(observedUsageRequest.init.headers.Authorization, 'Bearer usage-secret')
   assert.equal(observedUsageRequest.init.headers['User-Agent'], 'grok-pager/1.0.3 grok-shell/1.0.3 (windows; x86_64)')
@@ -15030,6 +15075,16 @@ async function assertProviderProbeAndUsageQueryIntegrationBehavior() {
   })
   assert.equal(fallbackUsage.remaining, 7, 'data-only usage recipe executes fallback JSON Pointer candidates without eval')
 
+  const usedOnlyUsage = await usageExecutor.query({
+    ...usageInput,
+    recipe: {
+      ...usageInput.recipe,
+      extract: { used: '/quota/used' },
+    },
+  })
+  assert.equal(usedOnlyUsage.used, 3, 'usage recipes accept responses that expose used without remaining')
+  assert.equal(usedOnlyUsage.remaining, undefined, 'missing optional usage fields remain undefined')
+
   let now = 10_000
   const quotaCache = createProviderUsageQuotaSnapshotPort(usageExecutor, {
     now: () => now,
@@ -15037,10 +15092,10 @@ async function assertProviderProbeAndUsageQueryIntegrationBehavior() {
   const firstSnapshot = await quotaCache.get('probe-provider', usageInput)
   const cachedSnapshot = await quotaCache.get('probe-provider', usageInput)
   assert.equal(firstSnapshot, cachedSnapshot, 'quota snapshot cache preserves identity during the 15-minute TTL')
-  assert.equal(usageRequests, 3, 'two direct usage recipes plus one cached snapshot refresh reach the provider')
+  assert.equal(usageRequests, 4, 'direct usage recipes plus the first cached snapshot refresh reach the provider')
   now = firstSnapshot.expiresAt + 1
   await quotaCache.get('probe-provider', usageInput)
-  assert.equal(usageRequests, 4, 'quota cache refreshes only after its bounded TTL expires')
+  assert.equal(usageRequests, 5, 'quota cache refreshes only after its bounded TTL expires')
 
   await assert.rejects(
     usageExecutor.query({
@@ -22457,9 +22512,10 @@ async function run() {
   assert.equal(st('messageBubble.copyWorkArtifact'), '复制工作产物', 'Chinese message actions expose work artifact copy')
   assert.equal(st('messageBubble.continueWorkArtifact'), '继续这项工作', 'Chinese message actions expose work artifact continuation')
   const settingsScreenSource = fs.readFileSync(path.join(root, 'src/components/main/SettingsScreenContent.tsx'), 'utf8')
-  assert.ok(settingsScreenSource.includes('localSaved: diagnostics.compact.localEstimatedSavedTokens'), 'settings diagnostics surfaces local compact saved-token totals')
-  assert.ok(settingsScreenSource.includes('localRatio: formatCompactRatio(diagnostics.compact.localAverageCompressionRatio)'), 'settings diagnostics surfaces local compact average ratio')
-  assert.ok(settingsScreenSource.includes('function formatCompactRatio'), 'settings diagnostics formats local compact ratio for display')
+  const runtimeDiagnosticsDetailsSource = fs.readFileSync(path.join(root, 'src/components/settings/RuntimeDiagnosticsDetails.tsx'), 'utf8')
+  assert.ok(runtimeDiagnosticsDetailsSource.includes('localSaved: diagnostics.compact.localEstimatedSavedTokens'), 'settings diagnostics surfaces local compact saved-token totals')
+  assert.ok(runtimeDiagnosticsDetailsSource.includes('localRatio: formatCompactRatio(diagnostics.compact.localAverageCompressionRatio)'), 'settings diagnostics surfaces local compact average ratio')
+  assert.ok(runtimeDiagnosticsDetailsSource.includes('function formatCompactRatio'), 'settings diagnostics formats local compact ratio for display')
   for (const locale of ['en', 'zh-CN', 'ja']) {
     const localeSource = fs.readFileSync(path.join(root, 'src/i18n/resources', `${locale}.json`), 'utf8')
     assert.ok(localeSource.includes('{{localSaved}}'), `${locale} compact diagnostics includes localSaved placeholder`)
@@ -22880,7 +22936,7 @@ https://gateway.example/messages`
   assert.equal(probed.wireProtocol, 'openai-compatible')
   assert.equal(probeCalls.length, 1, 'network probe stops after first successful protocol')
   assert.equal(probed.endpoint, 'https://unknown.example/v1/models', 'provider probe result exposes endpoint without credential material')
-  assert.equal(probeCalls[0].headers['User-Agent'], 'IsleMind/1.0.15', 'custom registry probes use the same provider-scoped UA policy as runtime discovery')
+  assert.equal(probeCalls[0].headers['User-Agent'], 'IsleMind/1.0.16', 'custom registry probes use the same provider-scoped UA policy as runtime discovery')
 
   const rootNewApiProbeCalls = []
   const rootNewApiProbe = await probeProviderPreset(
@@ -22919,7 +22975,7 @@ https://gateway.example/messages`
   assert.equal(googleProbe.ok, true, 'provider probe calls Google model listing with documented header auth')
   assert.equal(googleProbe.endpoint, 'https://generativelanguage.googleapis.com/v1beta/models', 'provider probe diagnostics keep Google credentials out of URLs')
   assert.equal(googleProbeCalls[2].headers['x-goog-api-key'], 'google-probe-secret', 'provider probe sends the Google API key through x-goog-api-key')
-  assert.equal(googleProbeCalls[2].headers['User-Agent'], 'IsleMind/1.0.15', 'Google registry probes use the canonical IsleMind client identity')
+  assert.equal(googleProbeCalls[2].headers['User-Agent'], 'IsleMind/1.0.16', 'Google registry probes use the canonical IsleMind client identity')
   assert.doesNotMatch(googleProbeCalls[2].url, /google-probe-secret|[?&]key=/, 'provider probe never places the Google API key in the request URL')
 
   const githubProbeCalls = []
@@ -22941,7 +22997,7 @@ https://gateway.example/messages`
   assert.equal(githubProbeCalls[0].headers.Authorization, 'Bearer github-probe-token', 'GitHub Models catalog probe preserves Bearer auth')
   assert.equal(githubProbeCalls[0].headers.Accept, 'application/vnd.github+json', 'GitHub Models catalog probe sends the documented media type')
   assert.equal(githubProbeCalls[0].headers['X-GitHub-Api-Version'], '2022-11-28', 'GitHub Models catalog probe sends the documented API version')
-  assert.equal(githubProbeCalls[0].headers['User-Agent'], 'IsleMind/1.0.15', 'GitHub Models registry probes preserve the canonical client identity')
+  assert.equal(githubProbeCalls[0].headers['User-Agent'], 'IsleMind/1.0.16', 'GitHub Models registry probes preserve the canonical client identity')
 
   const failedProbe = await probeProviderPreset(
     { baseUrl: 'https://unknown.example/v1', [API_KEY_FIELD]: 'token-probe-fake' },
@@ -23776,11 +23832,18 @@ https://gateway.example/messages`
     { ...providerListFixtures[0], presetId: 'openai' },
     { ...providerListFixtures[1], presetId: 'openai' },
     { ...providerListFixtures[2], presetId: 'deepseek' },
+    { ...providerListFixtures[0], id: 'x666-openai', name: 'x666 OpenAI', baseUrl: 'https://x666.me/v1', presetId: 'custom-endpoint', wireProtocol: 'openai-compatible' },
+    { ...providerListFixtures[0], id: 'x666-anthropic', name: 'x666 Anthropic', baseUrl: 'https://X666.ME/anthropic', presetId: 'custom-endpoint', wireProtocol: 'anthropic-compatible' },
   ])
   assert.deepEqual(groupedProviderCards.map((group) => [group.id, group.providers.map((provider) => provider.id)]), [
     ['preset:openai', ['alpha', 'beta']],
     ['preset:deepseek', ['gamma']],
+    ['endpoint:x666.me', ['x666-openai', 'x666-anthropic']],
   ], 'provider settings visually group same-supplier cards while preserving each configured provider record')
+  const x666Group = groupedProviderCards.find((group) => group.id === 'endpoint:x666.me')
+  assert.ok(x666Group, 'provider settings merge same-host suppliers regardless of protocol or path')
+  assert.equal(x666Group.label, 'x666.me', 'merged supplier cards keep the normalized host label')
+  assert.deepEqual(x666Group.providers.map((provider) => provider.id), ['x666-openai', 'x666-anthropic'])
   assert.equal(providerMatchesModelFilter(providerListFixtures[0], 'gpt-4o'), true, 'provider settings filter matches policy-visible model ids')
   assert.deepEqual(
     filterAndSortProviders(providerListFixtures, { filter: 'gpt-5', sortMode: 'manual', usageByProvider: new Map() }).map((provider) => provider.id),
@@ -34290,7 +34353,6 @@ function assertChatTopChromeBehavior() {
   const chatActiveChromeLayerSource = fs.readFileSync(path.join(root, 'src/components/chat/ChatActiveChromeLayer.tsx'), 'utf8')
   const chatActiveWorkspaceChromeLayerPropsSource = fs.readFileSync(path.join(root, 'src/components/chat/chatActiveWorkspaceChromeLayerProps.ts'), 'utf8')
   const chatActiveWorkspaceLayoutStateSource = fs.readFileSync(path.join(root, 'src/components/chat/chatActiveWorkspaceLayoutState.ts'), 'utf8')
-  const chatControlOrbActionsSource = fs.readFileSync(path.join(root, 'src/components/chat/chatControlOrbActions.ts'), 'utf8')
   const chatFloatingChromeStateSource = fs.readFileSync(path.join(root, 'src/components/chat/chatFloatingChromeState.ts'), 'utf8')
   const chatMessageListScrollStateSource = fs.readFileSync(path.join(root, 'src/components/chat/chatMessageListScrollState.ts'), 'utf8')
   const floatingChromeSource = fs.readFileSync(path.join(root, 'src/components/chat/FloatingChrome.tsx'), 'utf8')
@@ -34394,12 +34456,16 @@ function assertChatActivityStatusBehavior() {
     'message process layer keeps live thinking progress labels while reply text streams'
   )
   assert.ok(
-    messageBubbleSource.includes('<ProcessAnchor active={active} kind={visualKind} tone={tone} motion={motion} />') &&
+    messageBubbleSource.includes('testID="message-model-status"') &&
+      messageBubbleSource.includes('messageBubble.modelStatus') &&
+      messageBubbleSource.includes('<AppIcon name={statusIcon}') &&
       messageBubbleSource.includes('<AnimatedProcessStatusText active={active} label={processStatusLabel} tone={tone} motion={motion} />') &&
       messageBubbleSource.includes('accessibilityLiveRegion="polite"') &&
       messageBubbleSource.includes('loop: shimmer') &&
+      !messageBubbleSource.includes('<ProcessAnchor') &&
+      !messageBubbleSource.includes('activeProcessInlinePreview') &&
       !messageBubbleSource.includes('function ThinkingStatusText'),
-    'message process layer uses one accessible shimmer status for thinking, tools, search, retrieval, and writing'
+    'message process layer keeps active and actionable work behind one labelled accessible status row without restoring the retired circular indicator'
   )
   assert.ok(
     messageBubbleSource.includes('scrollRef.current?.scrollToEnd') &&
@@ -34431,10 +34497,14 @@ function assertChatCompletedProcessBehavior() {
   const chatWorkspaceSource = fs.readFileSync(path.join(root, 'src/components/chat/ChatWorkspace.tsx'), 'utf8')
   const floatingComposerControlsSource = fs.readFileSync(path.join(root, 'src/components/chat/FloatingComposerControls.tsx'), 'utf8')
   assert.ok(
-    messageBubbleSource.includes('processTraces.some((trace) => shouldKeepBlockingProcessTraceVisible(trace, message.status))') &&
-      messageBubbleSource.includes("messageStatus === 'streaming' || messageStatus === 'sending'") &&
-      messageBubbleSource.includes('const processCanExpand = !isUser && processTraces.some(hasExpandableThinkingContent)'),
-    'settled assistant process layers do not persist retrieval-only status after generation completes'
+    messageBubbleSource.includes('const hasVisibleAssistantReply = !isUser && Boolean(renderedDisplayText.trim())') &&
+      messageBubbleSource.includes("(message.status === 'done' && !hasVisibleAssistantReply)") &&
+      messageBubbleSource.includes('const processNeedsAttention = !isUser') &&
+      messageBubbleSource.includes('const processCanExpand = !isUser && processTraces.some(hasExpandableThinkingContent)') &&
+      messageBubbleSource.includes("compactSettled={message.status === 'done' && hasVisibleAssistantReply && !processNeedsAttention}") &&
+      messageBubbleSource.includes('testID="message-thinking-disclosure"') &&
+      messageBubbleSource.includes('testID="message-thinking-panel"'),
+    'a visible successful reply drops redundant terminal status while meaningful thinking remains available through a compact disclosure'
   )
   assert.ok(
     messageBubbleSource.includes('function collectThinkingSummaries') &&
@@ -40732,7 +40802,7 @@ function assertRuntimeControlPlanePlanAudit() {
   assert.equal(fs.existsSync(path.join(root, 'src/services/ai/compact/compactStateStore.ts')), false, 'legacy compact-state store stays deleted')
 
   const runtimeDiagnosticsSource = fs.readFileSync(path.join(root, 'src/services/runtimeDiagnostics.ts'), 'utf8')
-  const observabilityCompatibilitySource = fs.readFileSync(path.join(root, 'src/services/observabilityCompatibilityEvaluation.ts'), 'utf8')
+  const observabilityCompatibilitySource = fs.readFileSync(path.join(root, 'src/modules/diagnostics/testing/observabilityCompatibilityEvaluation.ts'), 'utf8')
   const runtimeTimelineSource = fs.readFileSync(path.join(root, 'src/services/runtimeTimeline.ts'), 'utf8')
   assert.ok(runtimeDiagnosticsSource.includes('RUNTIME_DIAGNOSTICS_LOG_TAIL_BYTES'), 'runtime diagnostics reads a bounded log tail')
   assert.ok(runtimeDiagnosticsSource.includes('RUNTIME_DIAGNOSTICS_LOG_ENTRY_LIMIT'), 'runtime diagnostics caps parsed log entries')
@@ -40796,17 +40866,18 @@ function assertRuntimeControlPlanePlanAudit() {
   assert.ok(pluginManifestSource.includes('createPluginManifestFromMcpServer'), 'plugin manifest represents MCP server references')
   assert.ok(pluginManifestSource.includes("execution: 'noop'"), 'plugin hooks remain no-op by default')
   const settingsScreenSource = fs.readFileSync(path.join(root, 'src/components/main/SettingsScreenContent.tsx'), 'utf8')
-  assert.ok(settingsScreenSource.includes('runtimeDiagnosticPluginCatalog'), 'settings diagnostics surfaces plugin catalog snapshots')
-  assert.ok(settingsScreenSource.includes('runtimeDiagnosticPerformance'), 'settings diagnostics surfaces runtime diagnostics performance budgets')
-  assert.ok(settingsScreenSource.includes('runtimeDiagnosticObservability'), 'settings diagnostics surfaces observability sink policy metadata')
-  assert.ok(settingsScreenSource.includes('diagnostics.observability.previewStatus'), 'settings diagnostics surfaces observability sink preview status')
-  assert.ok(settingsScreenSource.includes('manifestIssues'), 'settings diagnostics surfaces context manifest issue counts')
+  const runtimeDiagnosticsDetailsSource = fs.readFileSync(path.join(root, 'src/components/settings/RuntimeDiagnosticsDetails.tsx'), 'utf8')
+  assert.ok(runtimeDiagnosticsDetailsSource.includes('runtimeDiagnosticPluginCatalog'), 'settings diagnostics surfaces plugin catalog snapshots')
+  assert.ok(runtimeDiagnosticsDetailsSource.includes('runtimeDiagnosticPerformance'), 'settings diagnostics surfaces runtime diagnostics performance budgets')
+  assert.ok(runtimeDiagnosticsDetailsSource.includes('runtimeDiagnosticObservability'), 'settings diagnostics surfaces observability sink policy metadata')
+  assert.ok(runtimeDiagnosticsDetailsSource.includes('diagnostics.observability.previewStatus'), 'settings diagnostics surfaces observability sink preview status')
+  assert.ok(runtimeDiagnosticsDetailsSource.includes('manifestIssues'), 'settings diagnostics surfaces context manifest issue counts')
   assert.ok(settingsScreenSource.includes('OBSERVABILITY_SINK_TARGET_OPTIONS'), 'settings governance surfaces observability sink target choices')
   assert.ok(settingsScreenSource.includes('observabilitySinkEndpointUrl'), 'settings governance persists observability sink endpoint choices')
   assert.ok(settingsScreenSource.includes('getObservabilitySinkApiKey'), 'settings governance loads observability sink API keys from secure storage')
   assert.ok(settingsScreenSource.includes('setObservabilitySinkApiKey'), 'settings governance saves observability sink API keys through secure storage')
-  assert.ok(settingsScreenSource.includes('formatObservabilityPreviewFailures'), 'settings diagnostics summarizes observability preview failures')
-  assert.ok(settingsScreenSource.includes('formatObservabilityPolicyBlockReasons'), 'settings diagnostics summarizes observability policy block reasons')
+  assert.ok(runtimeDiagnosticsDetailsSource.includes('formatObservabilityPreviewFailures'), 'settings diagnostics summarizes observability preview failures')
+  assert.ok(runtimeDiagnosticsDetailsSource.includes('formatObservabilityPolicyBlockReasons'), 'settings diagnostics summarizes observability policy block reasons')
   assert.ok(settingsScreenSource.includes('emitPluginManifestCatalogSnapshotEvent'), 'settings diagnostics emits plugin catalog snapshots as typed events')
   assert.ok(
     settingsScreenSource.indexOf('await emitPluginManifestCatalogSnapshotEvent') < settingsScreenSource.indexOf('buildRuntimeDiagnosticsSummary({ providers, settings })'),
