@@ -17,7 +17,7 @@ const knowledgeMemoryScope = 'knowledge-memory'
 const sessionOptionsScope = 'session-options'
 const sessionOptionsRequiredCaptureNames = Object.freeze([
   'home-session-options-start',
-  'home-session-options-orb-open',
+  'home-session-options-configuration-open',
   'home-session-options-panel',
 ])
 const knowledgeMemoryRequiredCaptureNames = Object.freeze([
@@ -503,7 +503,7 @@ function captureHomeSessionOptions(device, result) {
     return
   }
   sleep(900)
-  captureAndAssertStable(device, result, 'home-session-options-orb-open', {
+  captureAndAssertStable(device, result, 'home-session-options-configuration-open', {
     packageName: appPackageName,
     includeAny: [
       ['供应商', 'Providers', 'プロバイダー'],

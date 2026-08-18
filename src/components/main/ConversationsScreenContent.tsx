@@ -3,14 +3,13 @@ import { useCallback, useDeferredValue, useEffect, useMemo, useRef, useState } f
 import { AppState, Keyboard, KeyboardAvoidingView, Platform, StyleSheet, Text, TextInput, View, useWindowDimensions, type NativeScrollEvent, type NativeSyntheticEvent, type ViewToken } from 'react-native'
 import { FlashList, type FlashListRef } from '@shopify/flash-list'
 import { AppIcon, appIconStroke } from '@/components/ui/AppIcon'
-import { IsleHeader, IslePressable, useIsleDialog } from '@/components/ui/isle'
+import { ISLE_MIN_TOUCH_TARGET, IsleHeader, IslePressable, useIsleDialog } from '@/components/ui/isle'
 import { ConversationRow } from '@/components/conversations/ConversationRow'
 import { useMainPagerGestureLock } from './MainPagerGestureLock'
 import { useAppTheme } from '@/hooks/useAppTheme'
 import { useChatStore } from '@/store/chatStore'
 import { useSettingsStore } from '@/store/settingsStore'
 import { normalizeSearchText } from '@/utils/text'
-import { getPolicyPreferredProviderModel } from '@/bootstrap/providerModelAccess'
 import { getProviderDisplayModel } from '@/utils/providerModels'
 import type { Conversation } from '@/types/chatContracts'
 import { useTranslation } from 'react-i18next'
@@ -24,7 +23,6 @@ interface ConversationsScreenContentProps {
   active?: boolean
   shellNavigation?: boolean
   onHome?: () => void
-  onSettings?: () => void
 }
 
 const SEARCH_FIRST_MESSAGE_LIMIT = 2
@@ -41,7 +39,7 @@ const LIST_WINDOW_SIZE = 7
 const LIST_DRAW_DISTANCE = 1600
 const LIST_END_FEEDBACK_MIN_COUNT = LIST_INITIAL_RENDER_COUNT + 1
 const SCROLL_TOP_ACTION_OFFSET = 360
-const SCROLL_TOP_ACTION_SIZE = 44
+const SCROLL_TOP_ACTION_SIZE = ISLE_MIN_TOUCH_TARGET
 const FLOATING_HISTORY_ACTION_GAP = 10
 const SCROLL_TOP_ACTION_CLEARANCE = 12
 const SCROLL_TOP_ACTION_LOCK_MS = 416
@@ -113,7 +111,7 @@ interface VisibleConversationRange {
   searchActive: boolean
 }
 
-export function ConversationsScreenContent({ active = true, shellNavigation = false, onHome, onSettings }: ConversationsScreenContentProps) {
+export function ConversationsScreenContent({ active = true, shellNavigation = false, onHome }: ConversationsScreenContentProps) {
   const { colors, themeId } = useAppTheme()
   const { t } = useTranslation()
   const dialog = useIsleDialog()
@@ -153,13 +151,15 @@ export function ConversationsScreenContent({ active = true, shellNavigation = fa
     dangerForeground: colors.ui.tone.danger.foreground,
     dangerBorder: colors.ui.tone.danger.border,
   }), [colors])
-  const conversations = useChatStore((state) => state.conversations)
+  const storedConversations = useChatStore((state) => state.conversations)
+  const draftConversationIds = useChatStore((state) => state.draftConversationIds)
+  const conversations = useMemo(
+    () => storedConversations.filter((conversation) => !draftConversationIds.has(conversation.id)),
+    [draftConversationIds, storedConversations]
+  )
   const currentId = useChatStore((state) => state.currentId)
-  const create = useChatStore((state) => state.create)
   const select = useChatStore((state) => state.select)
-  const settings = useSettingsStore((state) => state.settings)
   const providers = useSettingsStore((state) => state.providers)
-  const getPrimaryConfiguredProvider = useSettingsStore((state) => state.getPrimaryConfiguredProvider)
   const listRef = useRef<FlashListRef<Conversation>>(null)
   const searchInputRef = useRef<TextInput>(null)
   const scrollTopActionVisible = useRef(false)
@@ -194,14 +194,11 @@ export function ConversationsScreenContent({ active = true, shellNavigation = fa
   const listInteractionReleaseGuardMsRef = useRef(LIST_TAP_AFTER_USER_SCROLL_GUARD_MS)
   const lastBlockedFeedbackAtRef = useRef(0)
   const pendingRelativeTimeRefreshRef = useRef(false)
-  const creatingConversationRef = useRef(false)
-  const mountedRef = useRef(true)
   const [query, setQuery] = useState('')
   const [showScrollTopAction, setShowScrollTopAction] = useState(false)
   const [scrollTopActionLocked, setScrollTopActionLocked] = useState(false)
   const [showCurrentConversationAction, setShowCurrentConversationAction] = useState(false)
   const [currentConversationActionLocked, setCurrentConversationActionLocked] = useState(false)
-  const [creatingConversation, setCreatingConversation] = useState(false)
   const [searchInputFocused, setSearchInputFocused] = useState(false)
   const [visibleConversationRange, setVisibleConversationRange] = useState<VisibleConversationRange | null>(null)
   const [relativeTimeNow, setRelativeTimeNow] = useState(() => Date.now())
@@ -246,18 +243,18 @@ export function ConversationsScreenContent({ active = true, shellNavigation = fa
   )
   const conversationSearchIndexState = useMemo<ConversationSearchIndexState>(
     () => {
-      if (!deferredSearchReady) return { index: [], source: null }
+      if (!active || !deferredSearchReady) return { index: [], source: null }
       return {
         index: conversations.map((conversation) => buildConversationSearchIndexItem(conversation, providerById)),
         source: conversations,
       }
     },
-    [conversations, deferredSearchReady, providerById]
+    [active, conversations, deferredSearchReady, providerById]
   )
   const conversationSearchIndex = conversationSearchIndexState.index
   const { filteredConversations, searchMatchByConversationId } = useMemo(() => {
     const searchMatches = new Map<string, ConversationSearchMatchPresentation>()
-    if (!deferredNormalizedQuery) return { filteredConversations: conversations, searchMatchByConversationId: searchMatches }
+    if (!active || !deferredNormalizedQuery) return { filteredConversations: conversations, searchMatchByConversationId: searchMatches }
     const searchResults = getRankedConversationSearchResults(conversationSearchIndex, deferredNormalizedQuery)
     for (const result of searchResults) {
       const fieldLabel = t(conversationSearchFieldLabelKey(result.match.key))
@@ -275,7 +272,7 @@ export function ConversationsScreenContent({ active = true, shellNavigation = fa
       filteredConversations: searchResults.map((result) => result.conversation),
       searchMatchByConversationId: searchMatches,
     }
-  }, [conversationSearchIndex, conversations, deferredNormalizedQuery, t])
+  }, [active, conversationSearchIndex, conversations, deferredNormalizedQuery, t])
   const conversationListExtraData = useMemo(
     () => ({ currentId, relativeTimeNow, searchActive, searchMatchByConversationId, searchPending, themeId }),
     [currentId, relativeTimeNow, searchActive, searchMatchByConversationId, searchPending, themeId]
@@ -631,9 +628,7 @@ export function ConversationsScreenContent({ active = true, shellNavigation = fa
   }, [clearListInteractionFailsafeTimer, clearListInteractionReleaseTimer, lockPagerGestureForHistory, releaseListInteraction])
 
   useEffect(() => {
-    mountedRef.current = true
     return () => {
-      mountedRef.current = false
       listInteractionGuardUntilRef.current = 0
       clearScrollToIndexRetry()
       clearActiveConversationScrollFrame()
@@ -674,7 +669,7 @@ export function ConversationsScreenContent({ active = true, shellNavigation = fa
   }, [active, lockPagerGestureForHistory, releasePagerGestureForHistory, searchInputFocused])
 
   useEffect(() => {
-    if (!conversations.length) return undefined
+    if (!active || !conversations.length) return undefined
     requestRelativeTimeRefresh()
     const timer = setInterval(requestRelativeTimeRefresh, RELATIVE_TIME_REFRESH_MS)
     const appStateSubscription = AppState.addEventListener('change', (state) => {
@@ -684,11 +679,14 @@ export function ConversationsScreenContent({ active = true, shellNavigation = fa
       clearInterval(timer)
       appStateSubscription.remove()
     }
-  }, [conversations.length, requestRelativeTimeRefresh])
+  }, [active, conversations.length, requestRelativeTimeRefresh])
 
   const navigateToChat = useCallback((conversationId?: string) => {
     if (conversationId) {
-      router.push(`/chat/${encodeURIComponent(conversationId)}`)
+      router.push({
+        pathname: '/chat/[id]',
+        params: { id: conversationId, returnTo: 'history' },
+      })
       return
     }
     if (onHome) {
@@ -698,37 +696,13 @@ export function ConversationsScreenContent({ active = true, shellNavigation = fa
     router.push('/')
   }, [onHome])
 
-  const createConversation = useCallback(async () => {
-    if (creatingConversationRef.current) return
+  const createConversation = useCallback(() => {
     Keyboard.dismiss()
     setSearchInputFocused(false)
-    creatingConversationRef.current = true
-    setCreatingConversation(true)
-    try {
-      const provider = await getPrimaryConfiguredProvider()
-      const model = provider ? getPolicyPreferredProviderModel(provider, settings) : undefined
-      if (!provider || !model) {
-        dialog.toast({
-          title: provider ? t('chat.noAvailableModels') : t('chat.noProviderConnected'),
-          message: provider ? t('chat.syncModelsBeforeChat') : t('chat.configureProviderBeforeChat'),
-          tone: 'amber',
-          position: 'bottom',
-          durationMs: 3600,
-        })
-        if (onSettings) onSettings()
-        else router.push('/settings')
-        return
-      }
-      const id = create(provider.id, model)
-      select(id)
-      requestCurrentConversationReveal()
-      if (hasRawSearchInput) resetSearchAfterConversationOpen()
-      navigateToChat(id)
-    } finally {
-      creatingConversationRef.current = false
-      if (mountedRef.current) setCreatingConversation(false)
-    }
-  }, [create, dialog, getPrimaryConfiguredProvider, hasRawSearchInput, navigateToChat, onSettings, requestCurrentConversationReveal, resetSearchAfterConversationOpen, select, settings, t])
+    select(null)
+    if (hasRawSearchInput) resetSearchAfterConversationOpen()
+    navigateToChat()
+  }, [hasRawSearchInput, navigateToChat, resetSearchAfterConversationOpen, select])
 
   const openConversation = useCallback((id: string) => {
     Keyboard.dismiss()
@@ -1107,12 +1081,10 @@ export function ConversationsScreenContent({ active = true, shellNavigation = fa
       </View>
       <AnimatedNavigationTrigger
         variant="iconButton"
-        label={newConversationLabel}
-        glyph="new-chat"
-        onNavigate={createConversation}
-        externalActive={creatingConversation}
-        disabled={creatingConversation}
-        color={colors.ui.control.primaryForeground}
+         label={newConversationLabel}
+         glyph="new-chat"
+         onNavigate={createConversation}
+         color={colors.ui.control.primaryForeground}
         style={{
           width: 44,
           height: 44,
@@ -1141,12 +1113,10 @@ export function ConversationsScreenContent({ active = true, shellNavigation = fa
       trailing={
         <AnimatedNavigationTrigger
           variant="iconButton"
-          label={newConversationLabel}
-          glyph="new-chat"
-          onNavigate={createConversation}
-          externalActive={creatingConversation}
-          disabled={creatingConversation}
-          color={colors.ui.control.primaryForeground}
+           label={newConversationLabel}
+           glyph="new-chat"
+           onNavigate={createConversation}
+           color={colors.ui.control.primaryForeground}
           style={{
             width: primaryActionSize,
             height: primaryActionSize,
@@ -1219,10 +1189,9 @@ export function ConversationsScreenContent({ active = true, shellNavigation = fa
               accessibilityRole="button"
               accessibilityLabel={t('common.clearSearch')}
               accessibilityHint={t('common.clearSearchHint')}
-              hitSlop={ICON_ACTION_HIT_SLOP}
               style={{
-                width: 36,
-                height: 36,
+                width: ISLE_MIN_TOUCH_TARGET,
+                height: ISLE_MIN_TOUCH_TARGET,
                 borderRadius: 8,
                 alignItems: 'center',
                 justifyContent: 'center',
@@ -1255,7 +1224,7 @@ export function ConversationsScreenContent({ active = true, shellNavigation = fa
   ) : null
 
   return (
-    <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined} style={{ flex: 1 }}>
+    <KeyboardAvoidingView testID="conversation-history-screen" behavior={Platform.OS === 'ios' ? 'padding' : undefined} style={{ flex: 1 }}>
       <HistoryHeaderFrame
         themeId={themeId}
         tokens={historyVisualTokens}
@@ -1323,11 +1292,6 @@ export function ConversationsScreenContent({ active = true, shellNavigation = fa
                 tokens={historyVisualTokens}
                 kind="history-empty"
                 title={t('conversation.emptyHistory')}
-                actionLabel={shellNavigation ? undefined : newConversationLabel}
-                actionGlyph={shellNavigation ? undefined : 'new-chat'}
-                actionBusy={creatingConversation}
-                actionDisabled={creatingConversation}
-                onAction={shellNavigation ? undefined : () => void createConversation()}
               />
             )
         }

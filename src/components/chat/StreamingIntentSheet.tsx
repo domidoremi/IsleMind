@@ -15,11 +15,13 @@ export type StreamingInputIntent = 'guide' | 'queue' | 'interrupt'
 export function StreamingIntentSheet({
   draft,
   insets,
+  keyboardLift,
   onCancel,
   onChoose,
 }: {
   draft: { content: string; attachments: Attachment[] }
   insets: EdgeInsets
+  keyboardLift: number
   onCancel: () => void
   onChoose: (intent: StreamingInputIntent) => void
 }) {
@@ -30,8 +32,9 @@ export function StreamingIntentSheet({
   const compact = width < 390
   const dismissSurface = isGlass ? colors.ui.actionBar.itemBackground : colors.ui.limeRoad ? colors.ui.semantic.surface.muted : colors.ui.semantic.surface.muted
   const dismissBorder = colors.ui.limeRoad ? colors.material.stroke : isGlass ? colors.ui.actionBar.itemBorder : colors.ui.semantic.chrome.border
+  const bottomOffset = Math.max(0, keyboardLift) + Math.max(insets.bottom, 10) + 106
   return (
-    <View pointerEvents="box-none" style={{ position: 'absolute', left: 0, right: 0, bottom: Math.max(insets.bottom, 10) + 106, zIndex: 55, paddingHorizontal: 14 }}>
+    <View pointerEvents="box-none" style={{ position: 'absolute', left: 0, right: 0, bottom: bottomOffset, zIndex: 55, paddingHorizontal: 14 }}>
       <IsleSheet>
           <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
             <View style={{ flex: 1 }}>
@@ -43,6 +46,7 @@ export function StreamingIntentSheet({
             <IslePressable
               haptic
               onPress={onCancel}
+              accessibilityRole="button"
               accessibilityLabel={t('chat.cancelStreamingIntent')}
               style={{ width: 44, height: 44, borderRadius: colors.ui.radius.controlLarge, alignItems: 'center', justifyContent: 'center', backgroundColor: dismissSurface, borderWidth: colors.ui.limeRoad ? 1 : StyleSheet.hairlineWidth, borderColor: dismissBorder }}
             >
@@ -87,7 +91,9 @@ function IntentAction({
     <IslePressable
       haptic
       onPress={onPress}
+      accessibilityRole="button"
       accessibilityLabel={label}
+      accessibilityHint={description}
       style={{
         flexGrow: 1,
         flexShrink: 1,
@@ -106,7 +112,7 @@ function IntentAction({
         {children}
         <Text numberOfLines={1} style={{ flex: 1, minWidth: 0, color: danger ? colors.ui.tone.danger.foreground : colors.text, fontSize: 13, fontWeight: '800' }}>{label}</Text>
       </View>
-      <Text numberOfLines={1} style={{ color: colors.textTertiary, fontSize: 10, fontWeight: '800', marginTop: 4 }}>
+      <Text numberOfLines={2} style={{ color: colors.textTertiary, fontSize: 10, lineHeight: 14, fontWeight: '800', marginTop: 4 }}>
         {description}
       </Text>
     </IslePressable>

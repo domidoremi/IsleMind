@@ -14,20 +14,26 @@ const {
   OBSERVABILITY_FIXTURE_IDS,
   OBSERVABILITY_REFERENCE_STACKS,
   OBSERVABILITY_SINK_ADAPTER_PAYLOAD_SCHEMA,
+  buildObservabilitySinkAdapterPayload,
+  buildObservabilityFixtureFromRuntimeEvents,
+  buildObservabilitySinkExportPreview,
+  evaluateObservabilityFixture,
+  runObservabilityCompatibilityEvaluation,
+} = require('../src/modules/diagnostics/testing/observabilityCompatibilityEvaluation.ts')
+const {
   OBSERVABILITY_SINK_EXPORT_SCHEMA,
   OBSERVABILITY_SINK_POLICY_SCHEMA,
   OBSERVABILITY_SINK_PREVIEW_SCHEMA,
   OBSERVABILITY_SINK_TARGETS,
-  buildObservabilitySinkAdapterPayload,
-  buildObservabilityFixtureFromRuntimeEvents,
   buildObservabilitySinkExportBatch,
-  buildObservabilitySinkExportPreview,
   evaluateObservabilitySinkPolicy,
-  evaluateObservabilityFixture,
   runtimeEventToObservabilitySpanKind,
-  runObservabilityCompatibilityEvaluation,
-} = require('../src/services/observabilityCompatibilityEvaluation.ts')
-const { RUNTIME_EVENT_SCHEMA } = require('../src/services/runtimeEventContract.ts')
+} = require('../src/modules/diagnostics/application/observabilitySink.ts')
+const {
+  RUNTIME_EVENT_SCHEMA,
+  shouldNotifyRuntimeEventSubscribers,
+  shouldPersistRuntimeEvent,
+} = require('../src/services/runtimeEventContract.ts')
 
 function registerTypeScriptSupport() {
   if (require.extensions['.ts']?.isObservabilityCompatibilityHook) return
@@ -78,7 +84,30 @@ function assertBasicEnvelope(item) {
   assertCleanPrivacy(item)
 }
 
+function assertProductionObservabilityBoundary() {
+  const runtimeDiagnosticsSource = fs.readFileSync(path.join(root, 'src/services/runtimeDiagnostics.ts'), 'utf8')
+  const diagnosticsIndexSource = fs.readFileSync(path.join(root, 'src/modules/diagnostics/index.ts'), 'utf8')
+  const productionSinkSource = fs.readFileSync(path.join(root, 'src/modules/diagnostics/application/observabilitySink.ts'), 'utf8')
+  const targetEvaluatorPath = path.join(root, 'src/modules/diagnostics/testing/observabilityCompatibilityEvaluation.ts')
+  const retiredEvaluatorPath = path.join(root, 'src/services/observabilityCompatibilityEvaluation.ts')
+
+  assert.equal(fs.existsSync(targetEvaluatorPath), true, 'observability evaluator is privately Diagnostics-owned')
+  assert.equal(fs.existsSync(retiredEvaluatorPath), false, 'service-owned observability evaluator stays deleted')
+  const compatibilitySource = fs.readFileSync(targetEvaluatorPath, 'utf8')
+  assert.ok(runtimeDiagnosticsSource.includes("from '@/modules/diagnostics'"), 'runtime diagnostics consumes the Diagnostics public API')
+  assert.ok(!runtimeDiagnosticsSource.includes("@/services/observabilityCompatibilityEvaluation"), 'runtime diagnostics does not pull compatibility fixtures into production')
+  assert.ok(diagnosticsIndexSource.includes("export * from './application/observabilitySink'"), 'Diagnostics publicly exports the production sink contract')
+  assert.ok(!diagnosticsIndexSource.includes('testing/observabilityCompatibilityEvaluation'), 'Diagnostics does not publish test fixtures or dry-run adapter evaluation')
+  assert.ok(!productionSinkSource.includes('OBSERVABILITY_COMPATIBILITY_FIXTURES'), 'production sink contract excludes compatibility fixtures')
+  assert.ok(!productionSinkSource.includes('provider-fallback-trace'), 'production sink contract excludes fixture payloads')
+  assert.ok(!productionSinkSource.includes('OBSERVABILITY_SINK_ADAPTER_PAYLOAD_SCHEMA'), 'production sink contract excludes dry-run adapter evaluation')
+  assert.ok(compatibilitySource.includes("from '../application/observabilitySink'"), 'private evaluator delegates production behavior to Diagnostics application code')
+  assert.ok(!compatibilitySource.includes("@/services/runtimeEventContract"), 'private evaluator does not depend on the legacy runtime-event service')
+  assert.ok(!compatibilitySource.includes("@/services/runtimeEvents"), 'private evaluator accepts normalized Diagnostics events instead of legacy service envelopes')
+}
+
 function run() {
+  assertProductionObservabilityBoundary()
   assert.equal(OBSERVABILITY_COMPATIBILITY_EVAL_SCHEMA, 'islemind.observability-compatibility-eval.v1', 'observability schema is versioned')
   assert.deepEqual(OBSERVABILITY_REFERENCE_STACKS, ['langfuse', 'phoenix', 'opentelemetry', 'promptfoo', 'deepeval'], 'observability gate tracks production reference stacks')
   assert.deepEqual(
@@ -556,6 +585,11 @@ function runtimeEvent(id, ts, input) {
     redaction: {
       applied: true,
       strategy: 'runtime-log-redaction-v1',
+    },
+    expectedSchema: RUNTIME_EVENT_SCHEMA,
+    persistence: {
+      persisted: shouldPersistRuntimeEvent(input.event),
+      notifiesSubscribers: shouldNotifyRuntimeEventSubscribers(input.event),
     },
   }
 }

@@ -10,6 +10,3 @@ export function isAllowedAndroidApkUri(uri: string | undefined): boolean {
 export function sanitizeAndroidApkUri(uri: string | undefined): string | undefined {
   return isAllowedAndroidApkUri(uri) ? uri?.trim() : undefined
 }
-
-export const isAllowedAndroidApkUriForTest = isAllowedAndroidApkUri
-export const sanitizeAndroidApkUriForTest = sanitizeAndroidApkUri

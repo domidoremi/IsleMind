@@ -17,8 +17,11 @@ const originalResolve = Module._resolveFilename
 registerTypeScriptSupport()
 
 const {
+  PRODUCT_MOBILE_COMPOSER_COMPACT_BREAKPOINT,
   PRODUCT_MOBILE_LAYOUT_AUDIT_VIEWPORTS,
   PRODUCT_MOBILE_VISUAL_AUDIT_HEIGHTS,
+  resolveProductMobileChatConfigurationSheetLayout,
+  resolveProductMobileChatSetupLayout,
   resolveProductMobileLayout,
   resolveProductMobileComposerLayout,
   resolveProductMobileComposerToolsLayout,
@@ -63,17 +66,28 @@ function assertPagerTransitionSourceContract() {
   const switchToSource = source.match(/function switchTo\(next: MainPagerPage\) \{[\s\S]*?\n  \}/)?.[0] ?? ''
 
   assert.match(source, /const MAIN_PAGER_PATH_BY_PAGE:[\s\S]*history: '\/conversations'[\s\S]*home: '\/'[\s\S]*settings: '\/settings'/, 'pager centralizes compatible aliases')
-  assert.match(source, /pages\.map\(\(item, index\) => \([\s\S]*?<PagerPage key=\{item\.id\} active=\{item\.id === page\}[\s\S]*?pageIndex=\{index\}[\s\S]*?\{item\.node\}[\s\S]*?<\/PagerPage>/, 'all three page trees stay mounted while the active wrapper changes')
-  assert.match(switchToSource, /if \(next !== page\) setPage\(next\)/, 'tab intent changes active state directly')
-  assert.doesNotMatch(source, /mountedPageChildren|transitionRequest|readinessToken|handlePagerPageReady|requestPagerPageChild|withTiming|withSpring|GestureDetector|Animated\.View/, 'pager avoids lazy mounting and animated native reparenting')
-  assert.match(source, /importantForAccessibility=\{active \? 'auto' : 'no-hide-descendants'\}[\s\S]*pointerEvents=\{active \? 'auto' : 'none'\}[\s\S]*opacity: active \? 1 : 0/, 'inactive pages remain mounted but hidden from touch and accessibility')
+  assert.match(source, /const resolvedInitialPage = routePage \?\? initialPage[\s\S]*const \[page, setPage\] = useState<MainPagerPage>\(resolvedInitialPage\)/, 'top-level aliases seed one durable pager instance instead of becoming a second live navigation authority')
+  assert.match(source, /useState<ReadonlySet<MainPagerPage>>[\s\S]*new Set\(\[resolvedInitialPage\]\)/, 'pager mounts only the route-resolved first page')
+  assert.match(source, /if \(!mountedPages\.has\(item\.id\) && item\.id !== page\) return null[\s\S]*?<PagerPage[\s\S]*?active=\{active\}[\s\S]*?direction=\{direction\}[\s\S]*?\{item\.node\}[\s\S]*?<\/PagerPage>/, 'visited pages stay mounted while unvisited heavy trees remain deferred')
+  assert.match(switchToSource, /setMountedPages\([\s\S]*setPreviousPage\(page\)[\s\S]*setTransitionDirection\([\s\S]*if \(next === 'home' && pathname !== MAIN_PAGER_PATH_BY_PAGE\.home\)[\s\S]*router\.replace\(MAIN_PAGER_PATH_BY_PAGE\.home\)[\s\S]*setPage\(next\)/, 'top-level intent switches the retained pager locally and normalizes only compatibility-alias returns')
+  assert.doesNotMatch(switchToSource, /router\.(?:push|dismissTo)/, 'ordinary top-level navigation does not create or destroy duplicate native stack screens')
+  assert.doesNotMatch(source, /transitionRequest|readinessToken|handlePagerPageReady|requestPagerPageChild|withTiming|withSpring|GestureDetector|Animated\.View/, 'pager avoids readiness handshakes and feature-owned animation primitives')
+  assert.match(source, /<IsleMotionFrame[\s\S]*role="page"[\s\S]*direction=\{direction\}[\s\S]*importantForAccessibility=\{active \? 'auto' : 'no-hide-descendants'\}[\s\S]*pointerEvents=\{active \? 'auto' : 'none'\}/, 'semantic page motion preserves touch and accessibility isolation')
   assert.doesNotMatch(source, /MainPagerExperience|AppTopBar|ThemeNavigationDrawer|shellNavigation/, 'pager does not own global header chrome or navigation drawers')
   assert.doesNotMatch(source, /accessibilityRole="tablist"|accessibilityRole="tab"/, 'the main header does not restore a full-width segmented tab control')
   assert.match(source, /styles\.opaqueFallback[\s\S]*colors\.background\.surfaceCanvas/, 'pager has an opaque semantic fallback')
-  assert.match(source, /<HomeScreenContent[\s\S]*?active=\{page === 'home'\}/, 'Home work follows settled active state')
+  assert.match(source, /<RetainedHomeScreenContent[\s\S]*?active=\{page === 'home'\}/, 'Home work follows settled active state')
+  assert.match(source, /const showHome = useCallback\(\(\) => switchToRef\.current\('home'\), \[\]\)[\s\S]*const showHistory = useCallback[\s\S]*const showSettings = useCallback/, 'retained pages receive stable navigation callbacks')
+  assert.doesNotMatch(source, /import \{ (?:ConversationsScreenContent|SettingsScreenContent) \} from '\.\/(?:ConversationsScreenContent|SettingsScreenContent)'/, 'unvisited History and Settings modules stay out of the synchronous Chat startup graph')
+  assert.match(source, /const LazyConversationsScreenContent = createLazyComponent\([\s\S]*import\('\.\/ConversationsScreenContent'\)[\s\S]*const LazySettingsScreenContent = createLazyComponent\([\s\S]*import\('\.\/SettingsScreenContent'\)/, 'History and Settings begin loading only when their retained page first renders')
+  assert.match(source, /const RetainedConversationsScreenContent = memo\(LazyConversationsScreenContent\)[\s\S]*const RetainedHomeScreenContent = memo\(HomeScreenContent\)[\s\S]*const RetainedSettingsScreenContent = memo\(LazySettingsScreenContent\)/, 'retained pager boundaries skip parent-only updates after their modules load')
+  assert.match(source, /<RetainedConversationsScreenContent[\s\S]*active=\{page === 'history'\}[\s\S]*onHome=\{showHome\}[\s\S]*<RetainedHomeScreenContent[\s\S]*active=\{page === 'home'\}/, 'pager renders its heavy retained pages through the memoized boundaries')
+  assert.match(source, /<RetainedSettingsScreenContent onHome=\{showHome\} \/>/, 'the retained Settings tree does not re-render for pager visibility changes')
 }
 
 function run() {
+  assertPagerTransitionSourceContract()
+
   const idleListExtraData = buildMessageListExtraData({
     activeActionMessageId: null,
     isStreaming: false,
@@ -107,10 +121,64 @@ function run() {
     [320, 360, 390],
     'mobile layout audit covers the required 320-390px viewports',
   )
+  assert.equal(393 < PRODUCT_MOBILE_COMPOSER_COMPACT_BREAKPOINT, true, 'common 393dp Android devices use the compact Composer control rail')
+  assert.equal(400 < PRODUCT_MOBILE_COMPOSER_COMPACT_BREAKPOINT, false, '400dp and wider Composer layouts keep labeled secondary controls')
   assert.deepEqual(
     PRODUCT_MOBILE_VISUAL_AUDIT_HEIGHTS,
     [568, 640, 844],
     'mobile visual audit covers short, common, and tall mobile heights',
+  )
+
+  assert.deepEqual(
+    resolveProductMobileChatSetupLayout(568, 320),
+    {
+      compactLandscape: true,
+      contentHeaderGap: 4,
+      showIntroDecoration: false,
+      showIntroDescription: false,
+    },
+    'short landscape setup removes only decorative density and starts below the persistent header',
+  )
+  assert.deepEqual(
+    resolveProductMobileChatSetupLayout(320, 568),
+    {
+      compactLandscape: false,
+      contentHeaderGap: 0,
+      showIntroDecoration: true,
+      showIntroDescription: true,
+    },
+    'portrait setup preserves the full empty-state presentation',
+  )
+  assert.equal(resolveProductMobileChatSetupLayout(640, 360).compactLandscape, true, '360px-high landscape uses the compact setup boundary')
+  assert.equal(resolveProductMobileChatSetupLayout(640, 361).compactLandscape, false, 'taller landscape keeps the full setup presentation')
+  assert.equal(resolveProductMobileChatSetupLayout(360, 360).compactLandscape, false, 'square viewports do not opt into landscape-only compaction')
+
+  assert.deepEqual(
+    resolveProductMobileChatConfigurationSheetLayout(320),
+    {
+      height: 308,
+      availableHeight: 308,
+      compact: true,
+    },
+    'short landscape AI configuration stays fully inside the viewport instead of enforcing an off-screen minimum',
+  )
+  assert.deepEqual(
+    resolveProductMobileChatConfigurationSheetLayout(320, { safeAreaTop: 44 }),
+    {
+      height: 276,
+      availableHeight: 276,
+      compact: true,
+    },
+    'short landscape AI configuration preserves the physical top safe area',
+  )
+  assert.deepEqual(
+    resolveProductMobileChatConfigurationSheetLayout(568),
+    {
+      height: 523,
+      availableHeight: 556,
+      compact: false,
+    },
+    'portrait AI configuration keeps the established near-full-height sheet rhythm',
   )
 
   for (const width of PRODUCT_MOBILE_LAYOUT_AUDIT_VIEWPORTS) {
@@ -225,13 +293,25 @@ function run() {
 }
 
 function assertSourceIntegration() {
+  const appConfig = JSON.parse(fs.readFileSync(path.join(root, 'app.json'), 'utf8'))
   const mainPagerSource = fs.readFileSync(path.join(root, 'src/components/main/MainPagerShell.tsx'), 'utf8')
   const historyScreenSource = fs.readFileSync(path.join(root, 'src/components/main/ConversationsScreenContent.tsx'), 'utf8')
+  assert.match(historyScreenSource, /if \(!active \|\| !deferredSearchReady\) return \{ index: \[\], source: null \}/, 'inactive History does not build a full-text search index in the background')
   const chatHeaderSource = fs.readFileSync(path.join(root, 'src/components/chat/FloatingChrome.tsx'), 'utf8')
   const chatPersistentHeaderSource = fs.readFileSync(path.join(root, 'src/components/chat/ChatPersistentHeader.tsx'), 'utf8')
   const chatSetupSource = fs.readFileSync(path.join(root, 'src/components/chat/ChatSetupWorkspace.tsx'), 'utf8')
   const chatAiConfigurationSource = fs.readFileSync(path.join(root, 'src/components/chat/ChatAiConfigurationSheet.tsx'), 'utf8')
   const settingsScreenSource = fs.readFileSync(path.join(root, 'src/components/main/SettingsScreenContent.tsx'), 'utf8')
+  const runtimeDiagnosticsDetailsSource = fs.readFileSync(path.join(root, 'src/components/settings/RuntimeDiagnosticsDetails.tsx'), 'utf8')
+  const providerSettingsRouteSource = fs.readFileSync(path.join(root, 'app/settings/providers.tsx'), 'utf8')
+  const usageSettingsRouteSource = fs.readFileSync(path.join(root, 'app/settings/usage.tsx'), 'utf8')
+  const lazyLoadSource = fs.readFileSync(path.join(root, 'src/utils/lazyLoad.tsx'), 'utf8')
+  const apiKeyPanelSource = fs.readFileSync(path.join(root, 'src/components/settings/ApiKeyPanel.tsx'), 'utf8')
+  const usageStatisticsSource = fs.readFileSync(path.join(root, 'src/components/settings/UsageStatisticsContent.tsx'), 'utf8')
+  const mcpSettingsSource = fs.readFileSync(path.join(root, 'src/components/settings/McpSettingsContent.tsx'), 'utf8')
+  const isleKitSource = fs.readFileSync(path.join(root, 'src/components/ui/isle/IsleKit.tsx'), 'utf8')
+  assert.equal(appConfig.expo.orientation, 'default', 'Expo enables portrait and landscape instead of locking the product to one orientation')
+  assert.equal(appConfig.expo.web?.favicon, './assets/favicon.png', 'Expo Web publishes the branded favicon instead of producing a first-load 404')
   assert.doesNotMatch(mainPagerSource, /MainPagerExperience|AppTopBar|ThemeNavigationDrawer|shellNavigation/, 'main pager owns no global top bar or navigation drawer')
   assert.ok(mainPagerSource.includes("type MainPagerPage = 'history' | 'home' | 'settings'"), 'main pager exposes only History, Chat, and Settings pages')
   assert.ok(mainPagerSource.includes("const PAGE_SEQUENCE: readonly MainPagerPage[] = ['history', 'home', 'settings']"), 'main pager keeps a compact three-page sequence')
@@ -239,24 +319,57 @@ function assertSourceIntegration() {
     assert.equal(mainPagerSource.includes(forbiddenMarker), false, `main pager does not restore ${forbiddenMarker}`)
   }
   assert.ok(historyScreenSource.includes('common.backToChat') && historyScreenSource.includes('conversation.title') && historyScreenSource.includes('chat.newConversation'), 'History owns return, title, search, and new conversation actions')
+  const historyEmptyStateSource = historyScreenSource.match(/kind="history-empty"[\s\S]*?\/>/)?.[0] ?? ''
+  assert.doesNotMatch(historyEmptyStateSource, /actionLabel|actionGlyph|onAction/, 'History empty state does not duplicate the persistent new-conversation action')
   assert.ok(settingsScreenSource.includes('common.backToChat') && settingsScreenSource.includes("searchLabel={t('settings.search')}"), 'Settings owns return, title, and search actions')
   assert.ok(chatHeaderSource.includes("t('conversation.title')") && chatPersistentHeaderSource.includes('chat.newConversation') && chatPersistentHeaderSource.includes('settings.title'), 'Chat owns the conversation entry, new conversation, and settings header actions')
+  assert.match(chatPersistentHeaderSource, /width: ISLE_MIN_TOUCH_TARGET,[\s\S]*height: ISLE_MIN_TOUCH_TARGET/, 'Chat header navigation exposes physical 44dp controls')
   assert.ok(chatHeaderSource.includes('onOpenModelPicker') && chatHeaderSource.includes('<ChatAiConfigurationSheet') && chatSetupSource.includes('<ChatAiConfigurationSheet') && chatAiConfigurationSource.includes('chat-ai-configuration-panel'), 'Chat model triggers reach one unified AI configuration sheet')
+  assert.ok(chatAiConfigurationSource.includes('resolveProductMobileChatConfigurationSheetLayout') && chatAiConfigurationSource.includes('height: sheetLayout.height') && chatAiConfigurationSource.includes("maxHeight: '100%'") && chatAiConfigurationSource.includes('<KeyboardAvoidingView'), 'AI configuration uses shared viewport-safe sheet geometry and keyboard-aware containment')
+  assert.match(chatAiConfigurationSource, /function handleRequestClose\(\)[\s\S]*Platform\.OS === 'android' && Keyboard\.isVisible\(\)[\s\S]*Keyboard\.dismiss\(\)[\s\S]*return[\s\S]*closeCurrentView\(\)[\s\S]*onRequestClose=\{handleRequestClose\}/, 'Android Back dismisses the active keyboard before leaving the AI configuration flow')
+  assert.ok(chatAiConfigurationSource.includes('if (!visible) return null'), 'closed AI configuration avoids mounting its provider and model management trees')
+  assert.match(chatAiConfigurationSource, /createLazyComponent\([\s\S]*import\('@\/components\/providers\/ProviderSettingsContent'\)/, 'Chat defers the heavy provider manager until provider onboarding is opened')
+  assert.match(providerSettingsRouteSource, /createLazyComponent\([\s\S]*import\('@\/components\/providers\/ProviderSettingsContent'\)/, 'the Provider route does not evaluate its heavy content while Expo Router builds the route tree')
+  assert.match(usageSettingsRouteSource, /createLazyComponent\([\s\S]*import\('@\/components\/settings\/UsageStatisticsScreen'\)/, 'the Usage route does not evaluate statistics storage and export code before navigation')
+  assert.match(lazyLoadSource, /accessibilityRole="progressbar"[\s\S]*accessibilityLabel=\{t\('common\.loading'\)\}/, 'deferred screens announce a localized loading state')
   assert.ok(mainPagerSource.includes("importantForAccessibility={active ? 'auto' : 'no-hide-descendants'}"), 'inactive pager pages are hidden from accessibility')
   assert.ok(mainPagerSource.includes("pointerEvents={active ? 'auto' : 'none'}"), 'inactive pager pages do not intercept touches')
   assert.ok(mainPagerSource.includes('aria-hidden={!active}'), 'web pager pages expose hidden state for inactive pages')
   assert.match(mainPagerSource, /const MAIN_PAGER_PATH_BY_PAGE:[\s\S]*history: '\/conversations'[\s\S]*home: '\/'[\s\S]*settings: '\/settings'/, 'pager centralizes all three compatible top-level aliases')
-  assert.match(settingsScreenSource, /runtimeDiagnosticCompactValue[\s\S]{0,1000}capable: diagnostics\.compact\.capableProviders/, 'runtime diagnostics interpolate compact capable-provider counts')
+  assert.match(runtimeDiagnosticsDetailsSource, /runtimeDiagnosticCompactValue[\s\S]{0,1000}capable: diagnostics\.compact\.capableProviders/, 'runtime diagnostics interpolate compact capable-provider counts')
   assert.match(settingsScreenSource, /function SettingsToggleRow[\s\S]{0,1800}<Text numberOfLines=\{3\}/, 'advanced notification details retain three readable mobile lines')
+  assert.match(settingsScreenSource, /accessibilityLabel=\{t\('common\.clearSearch'\)\}[\s\S]{0,220}style=\{\{ width: 44, height: 44,/, 'Settings search exposes a physical 44dp clear action')
+  assert.match(settingsScreenSource, /controlSearchPlaceholder[\s\S]*minHeight: ISLE_MIN_TOUCH_TARGET/, 'Settings search input exposes a physical 44dp target')
+  assert.match(apiKeyPanelSource, /function ChoiceButton[\s\S]*minHeight: ISLE_MIN_TOUCH_TARGET/, 'provider model choices expose physical 44dp targets')
+  assert.match(apiKeyPanelSource, /function CapabilityToggle[\s\S]*minHeight: ISLE_MIN_TOUCH_TARGET/, 'provider capability toggles expose physical 44dp targets')
+  assert.match(apiKeyPanelSource, /function IconIsleChip[\s\S]*width: ISLE_MIN_TOUCH_TARGET[\s\S]*height: ISLE_MIN_TOUCH_TARGET/, 'provider credential icon actions expose physical 44dp targets')
+  assert.match(apiKeyPanelSource, /placeholder=\{t\('apiKeyPanel\.aliasDisplayName'\)\}[\s\S]{0,500}minHeight: ISLE_MIN_TOUCH_TARGET[\s\S]{0,800}placeholder=\{t\('apiKeyPanel\.aliasTargetModel'\)\}[\s\S]{0,500}minHeight: ISLE_MIN_TOUCH_TARGET/, 'provider alias inputs expose physical 44dp targets')
+  assert.doesNotMatch(settingsScreenSource, /accessibilityLabel=\{t\('common\.clearSearch'\)\}[^>]*hitSlop=/, 'Settings search does not rely on invisible hit slop around a smaller clear node')
+  assert.match(usageStatisticsSource, /tabButton: \{[\s\S]*minHeight: ISLE_MIN_TOUCH_TARGET/, 'usage tabs expose physical 44dp targets')
+  assert.match(usageStatisticsSource, /function OptionChips[\s\S]*minHeight: ISLE_MIN_TOUCH_TARGET/, 'usage filter chips expose physical 44dp targets')
+  assert.match(mcpSettingsSource, /function McpDisclosureRow[\s\S]*minHeight: ISLE_MIN_TOUCH_TARGET/, 'MCP disclosure rows expose physical 44dp targets')
+  assert.ok(isleKitSource.includes('export const ISLE_MIN_TOUCH_TARGET = 44'), 'shared controls expose one canonical 44dp touch target')
+  assert.match(isleKitSource, /export function IsleButton\([\s\S]*const minimumButtonHeight = resolveMinimumTouchTargetHeight\(height, flattenedStyle, ISLE_MIN_TOUCH_TARGET\)/, 'shared buttons resolve a physical 44dp minimum target after flattening feature styles')
+  assert.match(isleKitSource, /style,\s*\{ minHeight: minimumButtonHeight \}/, 'shared buttons apply the resolved minimum after feature styles so compact overrides cannot shrink the target')
+  assert.match(isleKitSource, /export function IsleInput\([\s\S]*minHeight: multiline \? 76 : Math\.max\(height, ISLE_MIN_TOUCH_TARGET\)/, 'single-line input shells expose a physical 44dp minimum target')
+  assert.match(isleKitSource, /ISLE_INPUT_CLEAR_BUTTON_SIZE = 26[\s\S]*width: ISLE_MIN_TOUCH_TARGET, height: ISLE_MIN_TOUCH_TARGET[\s\S]*width: ISLE_INPUT_CLEAR_BUTTON_SIZE, height: ISLE_INPUT_CLEAR_BUTTON_SIZE/, 'input clear actions wrap a compact visual icon in a physical 44dp control')
+  assert.match(isleKitSource, /export function IsleSwitch\([\s\S]*const touchWidth = Math\.max\(width, ISLE_MIN_TOUCH_TARGET\)[\s\S]*width: touchWidth,[\s\S]*height: ISLE_MIN_TOUCH_TARGET[\s\S]*top: trackTop, left: trackLeft, width, height/, 'shared switches preserve compact track geometry inside a physical 44dp control')
+  assert.match(isleKitSource, /export function IsleCollapse\([\s\S]*minHeight: ISLE_MIN_TOUCH_TARGET/, 'shared collapse headers expose a physical 44dp target')
+  assert.match(isleKitSource, /export function IsleSelect\([\s\S]*style=\{\{ minHeight: ISLE_MIN_TOUCH_TARGET/, 'shared select options expose a physical 44dp target')
 
   const switchToSource = mainPagerSource.match(/function switchTo\(next: MainPagerPage\) \{[\s\S]*?\n  \}/)?.[0] ?? ''
-  assert.match(switchToSource, /if \(next !== page\) setPage\(next\)/, 'navigation intent changes the active page directly')
-  assert.match(mainPagerSource, /pages\.map\(\(item\) => \([\s\S]*?<PagerPage[\s\S]*?key=\{item\.id\}[\s\S]*?active=\{item\.id === page\}[\s\S]*?\{item\.node\}[\s\S]*?<\/PagerPage>/, 'all page trees stay mounted across static page switches')
-  assert.doesNotMatch(mainPagerSource, /mountedPageChildren|transitionRequest|readinessToken|handlePagerPageReady|requestPagerPageChild|withTiming|withSpring|GestureDetector|Animated\.View/, 'pager avoids lazy mounting and animated native reparenting')
+  assert.match(switchToSource, /setMountedPages\([\s\S]*setPreviousPage\(page\)[\s\S]*setTransitionDirection\([\s\S]*if \(next === 'home' && pathname !== MAIN_PAGER_PATH_BY_PAGE\.home\)[\s\S]*router\.replace\(MAIN_PAGER_PATH_BY_PAGE\.home\)[\s\S]*setPage\(next\)/, 'navigation intent preserves one native screen, visited-page state, and safe alias-to-Chat normalization')
+  assert.doesNotMatch(switchToSource, /router\.(?:push|dismissTo)/, 'ordinary pager switches do not churn native route screens')
+  assert.match(mainPagerSource, /if \(!mountedPages\.has\(item\.id\) && item\.id !== page\) return null[\s\S]*?<PagerPage[\s\S]*?key=\{item\.id\}[\s\S]*?active=\{active\}[\s\S]*?direction=\{direction\}[\s\S]*?\{item\.node\}[\s\S]*?<\/PagerPage>/, 'visited page trees retain state while unvisited pages stay out of the initial render')
+  assert.doesNotMatch(mainPagerSource, /transitionRequest|readinessToken|handlePagerPageReady|requestPagerPageChild|withTiming|withSpring|GestureDetector|Animated\.View/, 'pager uses the semantic motion wrapper instead of feature-owned animation primitives')
   assert.match(mainPagerSource, /styles\.opaqueFallback[\s\S]*colors\.background\.surfaceCanvas/, 'pager keeps an opaque semantic fallback behind moving pages')
-  assert.match(mainPagerSource, /<HomeScreenContent[\s\S]*?active=\{page === 'home'\}/, 'Home refresh work follows the settled active page, not the visual target')
-  assert.match(mainPagerSource, /<ConversationsScreenContent[\s\S]*onHome=\{\(\) => switchTo\('home'\)\}/, 'History keeps its direct Home-return action')
-  assert.match(mainPagerSource, /<SettingsScreenContent[\s\S]*onHome=\{\(\) => switchTo\('home'\)\}/, 'Settings keeps its direct Home-return action')
+  assert.match(mainPagerSource, /<RetainedHomeScreenContent[\s\S]*?active=\{page === 'home'\}/, 'Home refresh work follows the settled active page, not the visual target')
+  assert.match(mainPagerSource, /<RetainedConversationsScreenContent[\s\S]*onHome=\{showHome\}/, 'History keeps its direct Home-return action')
+  assert.match(mainPagerSource, /<RetainedSettingsScreenContent onHome=\{showHome\} \/>/, 'Settings keeps a stable direct Home-return action without visibility-driven re-renders')
+  assert.match(settingsScreenSource, /export const SettingsScreenContent = memo\(function SettingsScreenContent/, 'the retained Settings tree memoizes parent-only pager updates')
+  assert.doesNotMatch(settingsScreenSource, /usePathname|scrollRef\.current\?\.scrollTo\(\{ y: 0, animated: false \}\)/, 'returning to Settings preserves scroll context instead of forcing duplicate top resets')
+  assert.match(settingsScreenSource, /if \(!expandedGroups\.advanced\) return[\s\S]*refreshSystemStatusNotificationStatus/, 'native notification status loads only when its panel is disclosed')
+  assert.match(settingsScreenSource, /if \(!expandedGroups\.governance \|\| !expandedGovernanceGroups\.observability\) return[\s\S]*getObservabilitySinkApiKey/, 'secure observability credentials load only when their disclosure is visible')
 
   const chatWorkspaceSource = fs.readFileSync(path.join(root, 'src/components/chat/ChatWorkspace.tsx'), 'utf8')
   const chatActiveWorkspaceSource = fs.readFileSync(path.join(root, 'src/components/chat/ChatActiveWorkspace.tsx'), 'utf8')
@@ -280,20 +393,21 @@ function assertSourceIntegration() {
   const chatActiveWorkspaceControllersSource = fs.readFileSync(path.join(root, 'src/components/chat/chatActiveWorkspaceControllers.ts'), 'utf8')
   const chatActiveWorkspaceLayoutSource = fs.readFileSync(path.join(root, 'src/components/chat/chatActiveWorkspaceLayoutState.ts'), 'utf8')
   const chatSetupWorkspaceSource = fs.readFileSync(path.join(root, 'src/components/chat/ChatSetupWorkspace.tsx'), 'utf8')
-  const chatWorkspaceConstantsSource = fs.readFileSync(path.join(root, 'src/components/chat/chatWorkspaceConstants.ts'), 'utf8')
   const chatWorkspaceKeyboardSource = fs.readFileSync(path.join(root, 'src/components/chat/chatWorkspaceKeyboard.ts'), 'utf8')
   const chatEmptyStateSource = fs.readFileSync(path.join(root, 'src/components/chat/ChatEmptyState.tsx'), 'utf8')
   const floatingComposerSource = fs.readFileSync(path.join(root, 'src/components/chat/FloatingComposer.tsx'), 'utf8')
+  const programErrorBannerSource = fs.readFileSync(path.join(root, 'src/components/chat/ProgramErrorBanner.tsx'), 'utf8')
   const floatingChromeSource = fs.readFileSync(path.join(root, 'src/components/chat/FloatingChrome.tsx'), 'utf8')
   const persistentHeaderSource = fs.readFileSync(path.join(root, 'src/components/chat/ChatPersistentHeader.tsx'), 'utf8')
   const floatingChromeStateSource = fs.readFileSync(path.join(root, 'src/components/chat/chatFloatingChromeState.ts'), 'utf8')
   const chatOptionsSource = fs.readFileSync(path.join(root, 'src/components/chat/ChatOptionsPanel.tsx'), 'utf8')
+  const runtimeRepairIntentSource = fs.readFileSync(path.join(root, 'src/components/chat/RuntimeRepairIntentCard.tsx'), 'utf8')
   const messageBubbleSource = fs.readFileSync(path.join(root, 'src/components/chat/MessageBubble.tsx'), 'utf8')
-  const floatingControlOrbSource = fs.readFileSync(path.join(root, 'src/components/chat/FloatingControlOrb.tsx'), 'utf8')
+  const messageContentSource = fs.readFileSync(path.join(root, 'src/components/chat/MessageContent.tsx'), 'utf8')
   const emptyStateSource = fs.readFileSync(path.join(root, 'src/components/ui/isle/EmptyState.tsx'), 'utf8')
   const globalGenerationStatusSource = fs.readFileSync(path.join(root, 'src/components/ui/GlobalGenerationStatusLayer.tsx'), 'utf8')
   const providerSettingsSource = fs.readFileSync(path.join(root, 'src/components/providers/ProviderSettingsContent.tsx'), 'utf8')
-  const sourceRouteSource = fs.readFileSync(path.join(root, 'app/source.tsx'), 'utf8')
+  const sourceDetailScreenSource = fs.readFileSync(path.join(root, 'src/presentation/features/conversations/SourceDetailScreen.tsx'), 'utf8')
   assert.ok(chatActiveWorkspaceSource.includes("from './chatActiveWorkspaceControllers'") && chatActiveWorkspaceControllersSource.includes("from './chatActiveWorkspaceLayoutState'") && chatActiveWorkspaceLayoutSource.includes("from '@/presentation/layout/productMobileLayout'"), 'chat active workspace imports shared mobile layout metrics through the active controller and layout helpers')
   assert.ok(chatActiveWorkspaceViewSource.includes("from './chatActiveWorkspaceLayerProps'") && chatActiveWorkspaceViewSource.includes("from './chatActiveWorkspaceLayerPropTypes'") && chatActiveWorkspaceLayerPropsSource.includes("from './chatActiveWorkspaceChromeLayerProps'") && chatActiveWorkspaceLayerPropsSource.includes("from './chatActiveWorkspaceComposerDockProps'") && chatActiveWorkspaceLayerPropsSource.includes("from './chatActiveWorkspaceControlsLayerProps'") && chatActiveWorkspaceLayerPropsSource.includes("from './chatActiveWorkspaceMessageListProps'") && chatActiveWorkspaceLayerPropsSource.includes("from './chatActiveWorkspaceStatusLayerProps'") && chatActiveWorkspaceLayerPropsSource.includes("from './chatActiveWorkspaceLayerPropTypes'") && chatActiveWorkspaceLayerPropsSource.includes('messageListProps') && chatActiveWorkspaceLayerPropsSource.includes('composerDockProps') && chatActiveWorkspaceLayerPropTypesSource.includes('ChatActiveWorkspaceLayerProps') && chatActiveWorkspaceChromeLayerPropsSource.includes('buildChatActiveChromeLayerProps') && chatActiveWorkspaceComposerDockPropsSource.includes('buildChatActiveComposerDockProps') && chatActiveWorkspaceStatusLayerPropsSource.includes('buildChatActiveStatusLayerProps') && chatActiveWorkspaceMessageListPropsSource.includes('buildChatActiveMessageListProps') && chatActiveWorkspaceControlsLayerPropsSource.includes('buildChatActiveControlsLayerProps'), 'chat active workspace groups layer prop projection behind dedicated per-layer helpers')
   assert.ok(chatWorkspaceSource.includes("from './chatWorkspaceKeyboard'") && chatWorkspaceKeyboardSource.includes("from '@/presentation/layout/productMobileLayout'"), 'chat workspace keyboard helper imports shared composer layout metrics')
@@ -301,8 +415,20 @@ function assertSourceIntegration() {
   assert.ok(floatingComposerSource.includes("from '@/presentation/layout/productMobileLayout'"), 'floating composer imports shared mobile layout metrics')
   assert.ok(chatWorkspaceKeyboardSource.includes('resolveProductMobileComposerLayout(windowWidth'), 'chat workspace keyboard helper uses shared composer clearance metrics')
   assert.ok(floatingComposerSource.includes('resolveProductMobileComposerLayout(composerWindowWidth'), 'floating composer resolves its own safe-area layout metrics')
-  assert.ok(floatingComposerSource.includes('resolveChatModelDisplayName') && persistentHeaderSource.includes('numberOfLines={1}'), 'custom model labels retain the existing one-line mobile truncation boundary')
+  assert.match(programErrorBannerSource, /programErrorDismissAccessibilityLabel[\s\S]*width: ISLE_MIN_TOUCH_TARGET[\s\S]*height: ISLE_MIN_TOUCH_TARGET/, 'program error dismissal exposes a real 44dp accessibility target')
+  assert.ok(floatingComposerSource.includes('minHeight: ISLE_MIN_TOUCH_TARGET') && floatingComposerSource.includes('height: ISLE_MIN_TOUCH_TARGET'), 'composer context and panel actions use the shared physical touch target')
+  assert.ok(floatingComposerSource.includes('resolveChatModelDisplayName') && floatingComposerSource.includes('ellipsizeMode="middle"') && persistentHeaderSource.includes('numberOfLines={1}'), 'custom model labels retain a bounded one-line mobile presentation while preserving a useful model suffix')
+  assert.ok(floatingComposerSource.includes('composerWindowWidth < PRODUCT_MOBILE_COMPOSER_COMPACT_BREAKPOINT') && floatingComposerSource.includes('iconOnly={reasoningSelectorIconOnly}'), 'narrow Composer keeps reasoning access as a compact icon control instead of compressing the model identity')
+  assert.match(floatingComposerSource, /const modelStatusLabel = provider[\s\S]*resolveChatModelDisplayName[\s\S]*t\('chat\.configure'\)[\s\S]*const modelStatusAccessibilityLabel = provider[\s\S]*t\('chat\.configureProviders'\)/, 'setup Composer uses a compact localized action while preserving a descriptive accessibility label')
   assert.ok(chatOptionsSource.includes('SETTINGS_IDENTITY_DISPLAY_NAME_MAX_LENGTH') && chatOptionsSource.includes('numberOfLines={1}'), 'model alias editing stays bounded and canonical identity text truncates on narrow screens')
+  assert.match(chatOptionsSource, /selectProviderAccessibilityHint[\s\S]*minHeight: ISLE_MIN_TOUCH_TARGET[\s\S]*selectModelAccessibilityHint[\s\S]*minHeight: ISLE_MIN_TOUCH_TARGET/, 'AI configuration provider and model chips expose physical 44dp targets')
+  assert.match(runtimeRepairIntentSource, /function RuntimeRepairIntentButton[\s\S]*minHeight: ISLE_MIN_TOUCH_TARGET/, 'runtime repair actions expose physical 44dp targets')
+  assert.match(providerSettingsSource, /placeholder=\{t\('providerSettings\.filterModels'\)\}[\s\S]{0,500}minHeight: ISLE_MIN_TOUCH_TARGET/, 'provider model search exposes a physical 44dp input target')
+  assert.match(providerSettingsSource, /accessibilityLabel=\{t\('common\.clearSearch'\)\}[\s\S]{0,300}width: ISLE_MIN_TOUCH_TARGET[\s\S]*height: ISLE_MIN_TOUCH_TARGET/, 'provider model search clear action exposes a physical 44dp target')
+  assert.match(providerSettingsSource, /function ChoiceIsleChip[\s\S]*minHeight: ISLE_MIN_TOUCH_TARGET/, 'provider filter choices expose physical 44dp targets')
+  assert.match(providerSettingsSource, /advancedInterfaceSettings[\s\S]{0,500}minHeight: ISLE_MIN_TOUCH_TARGET/, 'provider advanced settings disclosure exposes a physical 44dp target')
+  assert.match(messageBubbleSource, /function MessageSourceLink[\s\S]*minHeight: ISLE_MIN_TOUCH_TARGET/, 'message source links expose physical 44dp targets')
+  assert.match(messageBubbleSource, /function MessageProcessLayer[\s\S]*minHeight: ISLE_MIN_TOUCH_TARGET/, 'message process disclosures expose physical 44dp targets')
   assert.ok(messageBubbleSource.includes('getAssistantThinkingLabel') && messageBubbleSource.includes('numberOfLines={1}'), 'named assistant activity reuses the bounded single-line process status on mobile')
   assert.equal(messageBubbleSource.includes('<ProcessAnchor'), false, 'reply process status does not render the retired circular anchor')
   assert.equal(messageBubbleSource.includes('function ProcessSpinner'), false, 'reply process status does not retain the circular spinner implementation')
@@ -310,7 +436,7 @@ function assertSourceIntegration() {
   assert.doesNotMatch(emptyStateSource, /from=\{\{|<MotiView/, 'empty states render immediately without automatic mount animation')
   assert.doesNotMatch(globalGenerationStatusSource, /from=|<AnimatePresence|<MotiView/, 'global generation status renders immediately without entrance or exit animation')
   assert.doesNotMatch(providerSettingsSource, /from=\{\{ opacity: 0, translateY: (?:6|8|32) \}\}/, 'provider progress cards and modal shells do not restore automatic mount animation')
-  assert.doesNotMatch(sourceRouteSource, /from=\{\{ opacity: motion === 'full'/, 'source loading indicators pulse without a first-mount fade')
+  assert.doesNotMatch(sourceDetailScreenSource, /from=\{\{ opacity: motion === 'full'/, 'source loading indicators pulse without a first-mount fade')
   assert.ok(messageBubbleSource.includes("'.'.repeat(motion === 'none' ? 3 : dotCount)") && messageBubbleSource.includes('setInterval(() =>') && messageBubbleSource.includes('loop: shimmer'), 'reply process labels share dynamic dots and a motion-aware shimmer')
   assert.ok(messageBubbleSource.includes('const bubbleUsesAvailableWidth = displayFormulaLayout || (!isUser') && messageBubbleSource.includes('processLayerVisible || hasWideMessageContent(renderedDisplayText)') && messageBubbleSource.includes('width: bubbleUsesAvailableWidth ? bubbleMaxWidth : undefined'), 'wide assistant Markdown and process content claims its available mobile width while short assistant and user bubbles remain compact')
   assert.ok(messageBubbleSource.includes("!isStreamingContent && message.status !== 'cancelled'"), 'an empty cancelled assistant turn relies on its stopped status instead of rendering the empty-response failure copy')
@@ -322,7 +448,8 @@ function assertSourceIntegration() {
   assert.equal(chatActiveMessageFeedStateSource.includes("from '@/product/modeHandoff'"), false, 'message feed state does not restore product-mode handoff derivation')
   assert.ok(chatWorkspaceSource.includes('composerLayout.messageListBottomPadding'), 'message list bottom padding clears composer through shared metrics')
   assert.ok(floatingComposerSource.includes('composerLayout.innerBottomPadding'), 'floating composer safe-area padding uses shared metrics')
-  assert.ok(chatSetupWorkspaceSource.includes('paddingTop: Math.max(visualTopInset + topChromeInset + 48'), 'Chat setup reserves only its page-local header inset')
+  assert.ok(chatSetupWorkspaceSource.includes('resolveProductMobileChatSetupLayout') && chatSetupWorkspaceSource.includes("justifyContent: setupLayout.compactLandscape ? 'flex-start' : 'center'") && chatSetupWorkspaceSource.includes('setupHeaderBottom + setupLayout.contentHeaderGap'), 'short landscape Chat setup starts below local header chrome instead of centering its CTA behind Composer')
+  assert.ok(chatEmptyStateSource.includes('showDecoration={setupLayout.showIntroDecoration}') && chatEmptyStateSource.includes('showDescription={setupLayout.showIntroDescription}'), 'short landscape setup removes visual-only intro density while retaining the full accessible description')
   assert.ok(chatActiveMessageListSource.includes("from './ChatActiveMessageFeed'") && chatActiveMessageFeedSource.includes("from './ChatActiveMessageVirtualList'") && chatActiveMessageVirtualListSource.includes("from './ChatActiveMessageItem'") && chatActiveMessageItemSource.includes("from './MessageBubble'"), 'message bubble actions stay behind the active message feed, virtual list, and item surfaces')
   assert.ok(chatActiveMessageVirtualListSource.includes("from './ChatActiveMessageEmptyState'") && chatActiveMessageEmptyStateSource.includes("from './ChatEmptyState'"), 'empty conversation rendering stays behind the active message virtual-list and Chat empty-state surfaces')
   assert.ok(chatActiveMessageListSource.includes("from './ChatActiveNavigationRail'") && chatActiveNavigationRailSource.includes("from './ConversationNavigationRail'"), 'assistant navigation rail stays behind the active navigation surface')
@@ -330,17 +457,17 @@ function assertSourceIntegration() {
   assert.ok(chatEmptyStateSource.includes('starterLayout.setupContentMaxWidth'), 'setup empty state uses shared starter width')
   assert.ok(chatEmptyStateSource.includes('starterLayout.emptyContentMaxWidth'), 'conversation empty state uses shared starter width')
   assert.doesNotMatch(chatEmptyStateSource, /ProductInteractionMode|PRODUCT_MODE_SHOW_EMPTY_STATE_CONTENT|\bagent\b|\bcompanion\b/, 'Chat empty-state layout has no historical mode branch')
-  assert.ok(chatActiveWorkspaceLayoutSource.includes("from './chatWorkspaceConstants'"), 'active Chat retains shared layout constants')
+  assert.ok(chatActiveWorkspaceLayoutSource.includes("from './FloatingChrome'") && chatActiveWorkspaceLayoutSource.includes("from './chatNoticeLayout'"), 'active Chat retains shared chrome and notice layout metrics')
   assert.ok(chatActiveWorkspaceViewSource.includes("from './ChatActiveChromeLayer'") && chatActiveChromeLayerSource.includes("from './FloatingChrome'") && floatingChromeSource.includes('export function FloatingChrome'), 'full top provider chrome stays behind reusable active chrome and floating chrome components')
   assert.ok(floatingChromeSource.includes('export const FLOATING_CHROME_SAFE_AREA_GAP = 0') && floatingChromeSource.includes('<ChatPersistentHeader'), 'floating chrome meets the parent safe area without adding a second visual gap and delegates controls to the persistent header')
   assert.ok(floatingChromeStateSource.includes('const chromeCollapsed = false') && !floatingChromeStateSource.includes('setTimeout('), 'Chat header remains visible across idle, streaming, focus, and scroll state changes')
-  assert.ok(chatActiveWorkspaceViewSource.includes('showFloatingControlOrb={false}') && chatActiveChromeLayerSource.includes('onNewConversation'), 'Chat header remains visible and owns navigation actions')
+  assert.ok(chatActiveChromeLayerSource.includes('onNewConversation') && !chatActiveWorkspaceViewSource.includes('showFloatingControlOrb') && !chatActiveControlsLayerSource.includes('FloatingControlOrb'), 'Chat header remains visible while Composer owns the only toolbox entry')
   assert.ok(chatActiveControlsLayerSource.includes("from './MessageMultiSelectBar'"), 'active multi-select controls stay behind the controls layer instead of the active shell')
   assert.ok(chatEmptyStateSource.includes('maxWidth={starterLayout.emptyContentMaxWidth}'), 'Chat entry actions share the mobile content width budget')
   assert.ok(chatEmptyStateSource.includes('starterLayout.statusPillGlyphSize'), 'Chat readiness action glyph uses the shared mobile size budget')
   assert.ok(chatEmptyStateSource.includes('projection.accessibility.minimumTouchTarget'), 'Chat readiness rendering consumes its tested 44dp touch-target projection')
   assert.ok(chatSetupWorkspaceSource.includes('multimodalPolicy={setupState.setupMultimodalPolicy}'), 'setup Chat boundary displays provider/media readiness')
-  assert.ok(chatSetupWorkspaceSource.includes('onInspectProvider={openAiConfiguration}') && chatSetupWorkspaceSource.includes('<ChatAiConfigurationSheet'), 'setup Chat opens provider configuration in the unified AI panel')
+  assert.ok(chatSetupWorkspaceSource.includes('onInspectProvider={openAiConfiguration}') && chatSetupWorkspaceSource.includes('<ChatAiConfigurationSheet') && chatSetupWorkspaceSource.includes("initialView={setupNeedsConfiguration ? 'providers' : 'configuration'}") && chatSetupWorkspaceSource.includes('autoOpenProviderAdd={!setupState.hasEnabledProvider}'), 'setup Chat opens the first useful provider or model view in the unified AI panel')
   assert.doesNotMatch(floatingComposerSource, /modelOpen|QuickChoiceButton|buildModelQuickOptions/, 'composer does not duplicate provider/model selection outside the AI configuration sheet')
   assert.ok(chatActiveWorkspaceMessageListPropsSource.includes('multimodalPolicy') && chatActiveMessageFeedSource.includes('multimodalPolicy={multimodalPolicy}') && chatActiveMessageEmptyStateSource.includes('multimodalPolicy={multimodalPolicy}'), 'empty conversation boundary displays provider/media readiness')
   assert.ok(chatEmptyStateSource.includes('onInspectProvider={onProviders}'), 'empty compact boundary routes provider-fixable gaps without adding another card')
@@ -349,6 +476,7 @@ function assertSourceIntegration() {
   assert.ok(chatSetupWorkspaceSource.includes('memoryStatus={boundaryMemoryStatus}') && chatActiveWorkspaceMessageListPropsSource.includes('memoryStatus') && chatActiveMessageFeedSource.includes('memoryStatus={memoryStatus}'), 'compact boundary receives source-level memory status without a tall drawer')
 
   const composerSource = fs.readFileSync(path.join(root, 'src/components/chat/Composer.tsx'), 'utf8')
+  const chatWorkspaceReviewSheetSource = fs.readFileSync(path.join(root, 'src/components/chat/ChatWorkspaceReviewSheet.tsx'), 'utf8')
   assert.ok(composerSource.includes('resolveProductMobileComposerToolsLayout'), 'composer imports shared expanded tool-panel layout metrics')
   assert.ok(composerSource.includes('toolsLayout.chipMinWidth'), 'composer tool chips use shared min-width budget')
   assert.ok(composerSource.includes('toolsLayout.chipGap'), 'composer tool rows use shared gap budget')
@@ -360,11 +488,19 @@ function assertSourceIntegration() {
       composerSource.includes('voiceInput.stop()'),
     'composer separates the full-width draft from stable lower dock actions',
   )
-  assert.ok(composerSource.includes('COMPOSER_DOCK_CONTROL_SIZE = 44'), 'composer dock actions retain explicit 44dp touch geometry')
+  assert.ok(composerSource.includes('COMPOSER_DOCK_CONTROL_SIZE = ISLE_MIN_TOUCH_TARGET'), 'composer dock actions consume the shared 44dp touch geometry')
+  assert.ok(composerSource.includes('composerWindowWidth < PRODUCT_MOBILE_COMPOSER_COMPACT_BREAKPOINT'), 'composer attachment density shares the tested compact breakpoint with its context rail')
+  assert.ok(composerSource.includes('const showSendAction = streaming || hasSendableDraft || sending'), 'empty Composer does not reserve a disabled send button beside the voice entry')
+  assert.match(composerSource, /removeAttachment[\s\S]*minHeight: ISLE_MIN_TOUCH_TARGET[\s\S]*height: 28/, 'attachment removal keeps a compact visual chip inside a real 44dp target')
+  assert.match(composerSource, /clearPendingAccessibilityHint[\s\S]*minHeight: ISLE_MIN_TOUCH_TARGET/, 'pending-message dismissal exposes a real 44dp target')
+  assert.match(messageContentSource, /function CardHeader[\s\S]*minHeight: ISLE_MIN_TOUCH_TARGET/, 'rich-content copy actions expose physical 44dp targets')
+  assert.match(chatOptionsSource, /accessibilityLabel=\{resetLabel\}[\s\S]*width: ISLE_MIN_TOUCH_TARGET[\s\S]*height: ISLE_MIN_TOUCH_TARGET/, 'generation parameter reset exposes a real 44dp target')
+  assert.match(chatWorkspaceReviewSheetSource, /function ActionButton[\s\S]*height: ISLE_MIN_TOUCH_TARGET/, 'workspace review actions expose a real 44dp target')
 
   const conversationRowSource = fs.readFileSync(path.join(root, 'src/components/conversations/ConversationRow.tsx'), 'utf8')
   const historyPresentationSource = fs.readFileSync(path.join(root, 'src/components/main/history/HistoryPresentation.tsx'), 'utf8')
   assert.equal(conversationRowSource.includes("@/presentation/features/chat/chatPresentationCatalog"), false, 'history rows cannot import the active Chat presentation catalog')
+  assert.doesNotMatch(conversationRowSource, /sumConversationTokens|formatCompactTokenCount|conversation\.rowUsageTokens/, 'history rows do not scan entire transcripts or render low-value token totals')
   assert.ok(historyPresentationSource.includes("flexWrap: 'wrap'"), 'history metadata can wrap instead of overflowing narrow rows')
   assert.equal(conversationRowSource.includes('<IslePanel'), false, 'history rows render as a continuous list instead of repeated cards')
   assert.ok(historyPresentationSource.includes('history-row-experience-minimal') && historyPresentationSource.includes('history-row-experience-lime-road') && historyPresentationSource.includes('history-row-experience-markdown'), 'history rows use theme-specific composition frames')
@@ -378,6 +514,7 @@ function assertSourceIntegration() {
   assert.equal(conversationsScreenSource.includes('firstSearchResultActionHasMatch'), false, 'history search does not add a redundant inline open-result button')
   assert.ok(conversationsScreenSource.includes("t('conversation.historyCount', { count: conversations.length })") && conversationsScreenSource.includes("fontSize: 13, lineHeight: 18, fontWeight: '600'"), 'embedded history relies on the shell title and keeps only a compact count row')
   assert.ok(conversationsScreenSource.includes('width: SCROLL_TOP_ACTION_SIZE') && conversationsScreenSource.includes('accessibilityValue={currentConversationActionAccessibilityValue}'), 'current-conversation navigation is an icon-sized control with its position retained for accessibility')
+  assert.match(conversationsScreenSource, /accessibilityLabel=\{t\('common\.clearSearch'\)\}[\s\S]*width: ISLE_MIN_TOUCH_TARGET[\s\S]*height: ISLE_MIN_TOUCH_TARGET/, 'history search dismissal exposes a real 44dp target')
   assert.ok(conversationsScreenSource.includes('!listInteractionActiveRef.current'), 'history current-conversation floating action stays hidden during programmatic scroll/reveal')
   assert.ok(conversationsScreenSource.includes('setCurrentConversationActionVisibility(false)'), 'history current-conversation floating action can be suppressed before native evidence screenshots')
 }

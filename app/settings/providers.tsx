@@ -1,31 +1,35 @@
 import { useCallback, useEffect, useState } from 'react'
 import { BackHandler, Platform, View } from 'react-native'
-import { router } from 'expo-router'
+import { router, useLocalSearchParams } from 'expo-router'
 import type { IsleBackgroundState } from '@/components/ui/isle'
-import ProviderSettingsContent from '@/components/providers/ProviderSettingsContent'
 import { ThemeDetailFrame } from '@/presentation/app-shell/ThemeDetailFrame'
+import { resolveSettingsChildReturnAction } from '@/presentation/app-shell/routeReturnPolicy'
+import { createLazyComponent } from '@/utils/lazyLoad'
+
+const ProviderSettingsContent = createLazyComponent(
+  () => import('@/components/providers/ProviderSettingsContent').then((module) => ({ default: module.ProviderSettingsContent })),
+)
 
 export default function ProviderSettingsScreen() {
   const [backgroundState, setBackgroundState] = useState<IsleBackgroundState>('idle')
-  const closeProviderSettings = useCallback(() => {
-    router.replace('/settings')
-  }, [])
+  const params = useLocalSearchParams<{ returnTo?: string | string[] }>()
   const navigateBackFromProviderSettings = useCallback(() => {
-    if (router.canGoBack()) {
+    const action = resolveSettingsChildReturnAction(params.returnTo, router.canGoBack())
+    if (action.kind === 'back') {
       router.back()
       return
     }
-    router.replace('/settings')
-  }, [])
+    router.replace(action.pathname)
+  }, [params.returnTo])
 
   useEffect(() => {
     if (Platform.OS !== 'android') return undefined
     const subscription = BackHandler.addEventListener('hardwareBackPress', () => {
-      closeProviderSettings()
+      navigateBackFromProviderSettings()
       return true
     })
     return () => subscription.remove()
-  }, [closeProviderSettings])
+  }, [navigateBackFromProviderSettings])
 
   return (
     <ThemeDetailFrame

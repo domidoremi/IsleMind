@@ -1,6 +1,6 @@
 import type { ReactNode } from 'react'
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react'
-import { Modal, Pressable, StyleSheet, Text, View, useWindowDimensions } from 'react-native'
+import { AccessibilityInfo, KeyboardAvoidingView, Modal, Platform, Pressable, ScrollView, StyleSheet, Text, View, useWindowDimensions, type StyleProp, type ViewStyle } from 'react-native'
 import { AnimatePresence, MotiView } from 'moti'
 import { useTranslation } from 'react-i18next'
 import { useSafeAreaInsets } from 'react-native-safe-area-context'
@@ -17,6 +17,7 @@ import {
   type AppFeedbackOptions,
   type AppFeedbackTone,
 } from '@/components/ui/appFeedbackState'
+import { resolveAppFeedbackTimeout } from '@/components/ui/appFeedbackTimeout'
 import { useAppTheme } from '@/hooks/useAppTheme'
 import { useMotionPreference } from '@/hooks/useMotionPreference'
 
@@ -109,9 +110,12 @@ export function IsleDialogProvider({ children, updateNotice }: { children: React
   const motion = useMotionPreference()
   const { t } = useTranslation()
   const insets = useSafeAreaInsets()
-  const { width } = useWindowDimensions()
+  const { height, width } = useWindowDimensions()
   const modalPaddingHorizontal = width < 380 ? 14 : 18
+  const modalPaddingTop = Math.max(insets.top, 12)
+  const modalPaddingBottom = Math.max(insets.bottom, 12)
   const dialogMaxWidth = Math.min(460, Math.max(240, width - modalPaddingHorizontal * 2))
+  const dialogMaxHeight = Math.max(240, height - modalPaddingTop - modalPaddingBottom)
   const routeDialog = colors.ui.family === 'lime-road'
   const toastMaxWidth = Math.min(420, Math.max(240, width - 32))
   const [dialogQueue, setDialogQueue] = useState<DialogState[]>([])
@@ -183,8 +187,17 @@ export function IsleDialogProvider({ children, updateNotice }: { children: React
     if (!toast) return undefined
     const durationMs = toast.durationMs ?? defaultToastDuration(toast)
     if (durationMs <= 0) return undefined
-    const timer = setTimeout(() => dismissToast(toast.id), durationMs)
-    return () => clearTimeout(timer)
+    let cancelled = false
+    let timer: ReturnType<typeof setTimeout> | undefined
+    void resolveAppFeedbackTimeout(durationMs, AccessibilityInfo)
+      .then((recommendedDurationMs) => {
+        if (cancelled) return
+        timer = setTimeout(() => dismissToast(toast.id), recommendedDurationMs)
+      })
+    return () => {
+      cancelled = true
+      if (timer) clearTimeout(timer)
+    }
   }, [dismissToast, toast])
 
   useEffect(() => {
@@ -208,16 +221,19 @@ export function IsleDialogProvider({ children, updateNotice }: { children: React
         statusBarTranslucent
       >
         <StatusBar style="light" />
-        <View
+        <KeyboardAvoidingView
+          behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
           style={{
             flex: 1,
             justifyContent: routeDialog ? 'flex-end' : 'center',
             paddingHorizontal: modalPaddingHorizontal,
-            paddingBottom: routeDialog ? Math.max(insets.bottom, 12) : 0,
+            paddingTop: modalPaddingTop,
+            paddingBottom: modalPaddingBottom,
           }}
         >
           <Pressable
-            accessibilityLabel={t('dialog.closeLayer')}
+            accessible={false}
+            accessibilityRole="none"
             onPress={() => closeDialog(false)}
             style={{ position: 'absolute', top: 0, right: 0, bottom: 0, left: 0, backgroundColor: colors.backdrop }}
           />
@@ -227,12 +243,14 @@ export function IsleDialogProvider({ children, updateNotice }: { children: React
               from={motion === 'full' ? { opacity: 0, translateY: routeDialog ? 28 : 10 } : { opacity: 1, translateY: 0 }}
               animate={{ opacity: 1, translateY: 0 }}
               transition={{ type: 'timing', duration: motion === 'full' ? (routeDialog ? 188 : 144) : 1 }}
-              style={{ width: '100%', maxWidth: routeDialog ? Math.min(520, width - modalPaddingHorizontal * 2) : dialogMaxWidth, alignSelf: 'center' }}
+              style={{ width: '100%', maxWidth: routeDialog ? Math.min(520, width - modalPaddingHorizontal * 2) : dialogMaxWidth, maxHeight: dialogMaxHeight, alignSelf: 'center' }}
             >
-              <ThemeDialogSurface dialog={dialog} onClose={closeDialog} />
+              <View accessibilityViewIsModal style={{ maxHeight: '100%' }}>
+                <ThemeDialogSurface dialog={dialog} onClose={closeDialog} />
+              </View>
             </MotiView>
           ) : null}
-        </View>
+        </KeyboardAvoidingView>
       </Modal>
       <AppBannerViewport
         banners={banners}
@@ -469,35 +487,38 @@ function MinimalDialogSurface({ dialog, onClose }: { dialog: DialogState; onClos
       testID="dialog-experience-minimal"
       accessibilityRole="alert"
       style={{
+        maxHeight: '100%',
+        overflow: 'hidden',
         borderRadius: 12,
         borderWidth: StyleSheet.hairlineWidth,
         borderColor: material.border,
         backgroundColor: colors.ui.semantic.surface.base,
-        padding: 16,
       }}
     >
-      <View style={{ flexDirection: 'row', alignItems: 'flex-start', gap: 11 }}>
-        <View style={{ width: 3, minHeight: 48, alignSelf: 'stretch', borderRadius: 2, backgroundColor: tone.foreground }} />
-        <View style={{ flex: 1, minWidth: 0 }}>
-          <Text style={{ color: colors.text, fontSize: 18, lineHeight: 23, fontWeight: '800' }}>{dialog.title}</Text>
-          {dialog.message ? (
-            <Text style={{ color: colors.textSecondary, fontSize: 13, lineHeight: 19, marginTop: 6 }}>{dialog.message}</Text>
-          ) : null}
+      <DialogScrollableContent contentStyle={{ paddingHorizontal: 16, paddingTop: 16 }}>
+        <View style={{ flexDirection: 'row', alignItems: 'flex-start', gap: 11 }}>
+          <View style={{ width: 3, minHeight: 48, alignSelf: 'stretch', borderRadius: 2, backgroundColor: tone.foreground }} />
+          <View style={{ flex: 1, minWidth: 0 }}>
+            <Text style={{ color: colors.text, fontSize: 18, lineHeight: 23, fontWeight: '800' }}>{dialog.title}</Text>
+            {dialog.message ? (
+              <Text style={{ color: colors.textSecondary, fontSize: 13, lineHeight: 19, marginTop: 6 }}>{dialog.message}</Text>
+            ) : null}
+          </View>
+          <DialogCloseButton onPress={() => onClose(false)} />
         </View>
-        <DialogCloseButton onPress={() => onClose(false)} />
-      </View>
-      {dialog.chips?.length ? (
-        <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 7, marginTop: 14 }}>
-          {dialog.chips.map((chip, index) => <DialogChip key={`${chip.label}-${index}`} chip={chip} />)}
-        </View>
-      ) : null}
-      {dialog.renderBody ? <View style={{ marginTop: 14 }}>{dialog.renderBody()}</View> : null}
-      {dialog.metrics?.length ? (
-        <View style={{ gap: 6, marginTop: 14 }}>
-          {dialog.metrics.map((metric, index) => <DialogMetricRow key={`${metric.label}-${index}`} metric={metric} />)}
-        </View>
-      ) : null}
-      <View style={{ flexDirection: 'row', justifyContent: 'flex-end', gap: 8, marginTop: 16 }}>
+        {dialog.chips?.length ? (
+          <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 7, marginTop: 14 }}>
+            {dialog.chips.map((chip, index) => <DialogChip key={`${chip.label}-${index}`} chip={chip} />)}
+          </View>
+        ) : null}
+        {dialog.renderBody ? <View style={{ marginTop: 14 }}>{dialog.renderBody()}</View> : null}
+        {dialog.metrics?.length ? (
+          <View style={{ gap: 6, marginTop: 14 }}>
+            {dialog.metrics.map((metric, index) => <DialogMetricRow key={`${metric.label}-${index}`} metric={metric} />)}
+          </View>
+        ) : null}
+      </DialogScrollableContent>
+      <View style={{ flexDirection: 'row', justifyContent: 'flex-end', gap: 8, padding: 16 }}>
         {dialog.kind === 'confirm' ? (
           <IsleButton
             label={dialog.cancelLabel ?? t('common.cancel')}
@@ -522,20 +543,20 @@ function LimeRoadDialogSurface({ dialog, onClose }: { dialog: DialogState; onClo
   const material = colors.material.sheet
   const tone = dialogToneToken(colors, dialog.tone === 'default' || !dialog.tone ? 'info' : dialog.tone)
   return (
-    <View testID="dialog-experience-lime-road">
+    <View testID="dialog-experience-lime-road" accessibilityRole="alert" style={{ maxHeight: '100%' }}>
       <IslePanel
         material="chrome"
         elevated
         radius={4}
-        style={{ backgroundColor: material.surface, borderColor: colors.material.strokeStrong }}
-        contentStyle={{ padding: 0, backgroundColor: colors.ui.semantic.surface.base }}
+        style={{ maxHeight: '100%', backgroundColor: material.surface, borderColor: colors.material.strokeStrong }}
+        contentStyle={{ maxHeight: '100%', padding: 0, backgroundColor: colors.ui.semantic.surface.base }}
       >
       <View style={{ height: 4, backgroundColor: colors.primary }} />
-      <View style={{ padding: 16, borderLeftWidth: 3, borderLeftColor: tone.foreground }}>
-        <View style={{ flexDirection: 'row', alignItems: 'flex-start', gap: 10 }}>
-          <Text style={{ flex: 1, minWidth: 0, color: colors.text, fontSize: 21, lineHeight: 26, fontWeight: '900' }}>{dialog.title}</Text>
-          <DialogCloseButton onPress={() => onClose(false)} compact />
-        </View>
+      <DialogScrollableContent contentStyle={{ padding: 16, borderLeftWidth: 3, borderLeftColor: tone.foreground }}>
+          <View style={{ flexDirection: 'row', alignItems: 'flex-start', gap: 10 }}>
+            <Text style={{ flex: 1, minWidth: 0, color: colors.text, fontSize: 21, lineHeight: 26, fontWeight: '900' }}>{dialog.title}</Text>
+            <DialogCloseButton onPress={() => onClose(false)} compact />
+          </View>
           {dialog.message ? (
             <Text style={{ color: colors.textSecondary, fontSize: 13, lineHeight: 20, marginTop: 7, fontWeight: '700' }}>{dialog.message}</Text>
           ) : null}
@@ -550,7 +571,7 @@ function LimeRoadDialogSurface({ dialog, onClose }: { dialog: DialogState; onClo
             </View>
           ) : null}
           {dialog.renderBody ? <View style={{ marginTop: 13 }}>{dialog.renderBody()}</View> : null}
-      </View>
+      </DialogScrollableContent>
       <View style={{ padding: 12, flexDirection: 'row', gap: 9, borderTopWidth: 1, borderTopColor: colors.material.stroke, backgroundColor: material.chrome }}>
         {dialog.kind === 'confirm' ? (
           <IsleButton label={dialog.cancelLabel ?? t('common.cancel')} onPress={() => onClose(false)} style={{ flex: 0.82, minWidth: 0, borderRadius: 3 }} />
@@ -575,9 +596,9 @@ function MarkdownDialogSurface({ dialog, onClose }: { dialog: DialogState; onClo
     <View
       testID="dialog-experience-markdown"
       accessibilityRole="alert"
-      style={{ borderWidth: 1, borderColor: colors.material.strokeStrong, backgroundColor: colors.ui.semantic.surface.base }}
+      style={{ maxHeight: '100%', overflow: 'hidden', borderWidth: 1, borderColor: colors.material.strokeStrong, backgroundColor: colors.ui.semantic.surface.base }}
     >
-      <View style={{ paddingHorizontal: 15, paddingTop: 14, paddingBottom: 16 }}>
+      <DialogScrollableContent contentStyle={{ paddingHorizontal: 15, paddingTop: 14, paddingBottom: 16 }}>
         <View style={{ flexDirection: 'row', alignItems: 'flex-start', gap: 10, paddingBottom: 9, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: colors.material.stroke }}>
           <Text style={{ flex: 1, minWidth: 0, color: colors.text, fontSize: 20, lineHeight: 26, fontWeight: '900' }}>{dialog.title}</Text>
           <DialogCloseButton onPress={() => onClose(false)} compact />
@@ -598,19 +619,34 @@ function MarkdownDialogSurface({ dialog, onClose }: { dialog: DialogState; onClo
           </View>
         ) : null}
         {dialog.renderBody ? <View style={{ marginTop: 14 }}>{dialog.renderBody()}</View> : null}
-      </View>
+      </DialogScrollableContent>
       <View style={{ paddingHorizontal: 12, paddingVertical: 11, flexDirection: 'row', gap: 8, borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: colors.material.stroke, backgroundColor: material.chrome }}>
+        {dialog.kind === 'confirm' ? (
+          <IsleButton label={dialog.cancelLabel ?? t('common.cancel')} onPress={() => onClose(false)} style={{ flex: 0.85, minWidth: 0, borderRadius: 0 }} />
+        ) : null}
         <IsleButton
           label={dialog.kind === 'confirm' ? dialog.confirmLabel ?? t('common.confirm') : dialog.actionLabel ?? t('dialog.ok')}
           tone={dialogActionTone(dialog)}
           onPress={() => onClose(true)}
           style={{ flex: 1.15, minWidth: 0, borderRadius: 0 }}
         />
-        {dialog.kind === 'confirm' ? (
-          <IsleButton label={dialog.cancelLabel ?? t('common.cancel')} onPress={() => onClose(false)} style={{ flex: 0.85, minWidth: 0, borderRadius: 0 }} />
-        ) : null}
       </View>
     </View>
+  )
+}
+
+function DialogScrollableContent({ children, contentStyle }: { children: ReactNode; contentStyle: StyleProp<ViewStyle> }) {
+  return (
+    <ScrollView
+      bounces={false}
+      keyboardDismissMode="on-drag"
+      keyboardShouldPersistTaps="handled"
+      showsVerticalScrollIndicator={false}
+      style={{ flexShrink: 1 }}
+      contentContainerStyle={contentStyle}
+    >
+      {children}
+    </ScrollView>
   )
 }
 

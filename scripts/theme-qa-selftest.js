@@ -46,7 +46,6 @@ const chatChromeSurfaces = read('src/components/chat/chatChromeSurfaces.ts')
 const floatingChrome = read('src/components/chat/FloatingChrome.tsx')
 const chatPersistentHeader = read('src/components/chat/ChatPersistentHeader.tsx')
 const floatingComposer = read('src/components/chat/FloatingComposer.tsx')
-const floatingControlOrb = read('src/components/chat/FloatingControlOrb.tsx')
 const composer = read('src/components/chat/Composer.tsx')
 const optionsPanel = read('src/components/chat/ChatOptionsPanel.tsx')
 const conversationsScreen = read('src/components/main/ConversationsScreenContent.tsx')
@@ -70,7 +69,7 @@ const contextPanel = read('src/components/settings/ContextPanel.tsx')
 const mcpSettings = read('src/components/settings/McpSettingsContent.tsx')
 const mcpSettingsExperiences = read('src/components/settings/theme-experiences/McpSettingsExperiences.tsx')
 const preferenceSettings = read('src/components/settings/PreferenceSettingsContent.tsx')
-const sourceRoute = read('app/source.tsx')
+const sourceRoute = read('src/presentation/features/conversations/SourceDetailScreen.tsx')
 const chip = read('src/components/ui/isle/Chip.tsx')
 const controls = read('src/components/ui/isle/Controls.tsx')
 const panel = read('src/components/ui/isle/Panel.tsx')
@@ -191,13 +190,11 @@ check(
   'quick panels and health banner should avoid heavy card styling in glass mode',
 )
 check(
-  'conversation search shell and floating controls use glass chrome shells',
+  'conversation search shell and persistent controls use theme-owned chrome',
   /HistoryHeaderFrame/.test(conversationsScreen)
     && /themeId=\{themeId\}/.test(conversationsScreen)
-    && /ChatControlTriggerThemeSurface/.test(floatingControlOrb)
-    && /chat-control-trigger-surface-minimal/.test(chatThemeSurfaces)
-    && /chat-control-trigger-surface-lime-road/.test(chatThemeSurfaces)
-    && /chat-control-trigger-surface-markdown/.test(chatThemeSurfaces),
+    && /ComposerToolButton/.test(floatingComposer)
+    && /ChatChromeThemeSurface/.test(chatPersistentHeader),
   'high-frequency history and conversation controls should use theme-owned compositions',
 )
 check(
@@ -280,8 +277,11 @@ check(
 )
 check(
   'chat composer uses semantic surfaces instead of lime-road default cards',
-  /raisedSurface = colors\.ui\.glass \? colors\.ui\.semantic\.chrome\.background : colors\.ui\.limeRoad \? colors\.ui\.semantic\.surface\.base/.test(composer) && /utilitySurface = colors\.ui\.glass \? colors\.ui\.actionBar\.itemBackground : colors\.ui\.limeRoad \? colors\.ui\.semantic\.surface\.muted/.test(composer) && /chipSurface = colors\.ui\.glass \? colors\.ui\.actionBar\.itemBackground : colors\.ui\.limeRoad \? colors\.ui\.semantic\.surface\.base/.test(composer),
-  'composer shell, utility actions, and chips should not reintroduce decorative default card fills',
+  /raisedSurface = colors\.ui\.glass \? colors\.ui\.semantic\.chrome\.background : colors\.ui\.limeRoad \? colors\.ui\.semantic\.surface\.base/.test(composer)
+    && /chipSurface = colors\.ui\.glass \? colors\.ui\.actionBar\.itemBackground : colors\.ui\.limeRoad \? colors\.ui\.semantic\.surface\.base/.test(composer)
+    && /backgroundColor: attachmentsOpen \? colors\.ui\.actionBar\.itemActiveBackground : 'transparent'/.test(composer)
+    && /backgroundColor: recording \? colors\.ui\.tone\.danger\.background : 'transparent'/.test(composer),
+  'composer shell and chips should keep semantic surfaces while idle utilities stay transparent and active states remain explicit',
 )
 check(
   'composer and shared controls keep weak states light but readable',
@@ -290,6 +290,8 @@ check(
     && /placeholderTextColor=\{colors\.ui\.input\.placeholderForeground\}/.test(composer)
     && /backgroundColor: canSend \? colors\.ui\.control\.primaryBackground : colors\.ui\.control\.disabledBackground/.test(composer)
     && /color=\{canSend \? colors\.ui\.control\.primaryForeground : colors\.ui\.control\.disabledForeground\}/.test(composer)
+    && /backgroundColor: disabled \? 'transparent'/.test(composer)
+    && /activeSurface="quiet"/.test(floatingComposer)
     && /placeholderTextColor=\{input\.placeholderForeground\}/.test(isleKit)
     && /color: disabled \? input\.disabledForeground : palette\.colors\.text/.test(isleKit)
     && /opacity: disabled \? disabledStyle\.opacity : 1/.test(isleKit),
@@ -323,8 +325,8 @@ check(
     && messageBubble.includes('loop: shimmer')
     && messageBubble.includes("'.'.repeat(motion === 'none' ? 3 : dotCount)")
     && !messageBubble.includes('function ProcessSpinner')
-    && sourceRoute.includes("transition={{ loop: motion === 'full', type: 'timing', duration: motion === 'full' ? 864 : 1")
-    && sourceRoute.includes("transition={{ loop: motion === 'full', type: 'timing', duration: motion === 'full' ? 768 : 1"),
+    && !sourceRoute.includes('MotiView')
+    && !sourceRoute.includes('useMotionPreference'),
   'status shimmer, typing, cursor, source skeleton, and source loading loops must render stable reduced-motion states',
 )
 check(

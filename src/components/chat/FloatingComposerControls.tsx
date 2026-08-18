@@ -18,6 +18,8 @@ export function ComposerToolButton({
   accessibilityHint,
   accessibilityState,
   active,
+  activeSurface = 'strong',
+  testID,
   iconOnly = false,
   compact = false,
   maxWidth,
@@ -36,6 +38,8 @@ export function ComposerToolButton({
     expanded?: boolean
   }
   active: boolean
+  activeSurface?: 'strong' | 'quiet'
+  testID?: string
   iconOnly?: boolean
   compact?: boolean
   maxWidth?: number
@@ -49,9 +53,12 @@ export function ComposerToolButton({
   const itemSurface = isGlass ? colors.ui.actionBar.itemBackground : colors.ui.limeRoad ? colors.ui.semantic.surface.muted : colors.ui.semantic.surface.muted
   const itemBorder = colors.ui.limeRoad ? colors.material.stroke : isGlass ? colors.ui.actionBar.itemBorder : colors.ui.semantic.chrome.border
   const subtleBorderWidth = colors.ui.limeRoad ? 1 : StyleSheet.hairlineWidth
-  const controlSize = iconOnly ? 40 : 44
+  const controlSize = 44
+  const activeBackground = activeSurface === 'quiet' ? colors.ui.actionBar.itemActiveBackground : colors.ui.control.primaryBackground
+  const activeForeground = activeSurface === 'quiet' ? colors.ui.icon.accentForeground : colors.ui.control.primaryForeground
   return (
     <IslePressable
+      testID={testID}
       haptic
       disabled={disabled}
       onPress={onPress}
@@ -59,12 +66,13 @@ export function ComposerToolButton({
       accessibilityLabel={accessibilityLabel}
       accessibilityHint={accessibilityHint}
       accessibilityState={accessibilityState ?? (active || disabled ? { selected: active, disabled: disabled || undefined } : undefined)}
+      aria-expanded={accessibilityState?.expanded}
       hitSlop={QUICK_TOOL_HIT_SLOP}
       style={{ width: iconOnly ? controlSize : undefined, flexGrow: iconOnly ? 0 : 1, flexShrink: iconOnly ? 0 : 1, flexBasis: iconOnly ? undefined : 0, maxWidth, minHeight: controlSize, borderRadius: colors.ui.radius.controlLarge }}
     >
       <MotiView
         animate={{
-          backgroundColor: active ? colors.ui.control.primaryBackground : iconOnly ? 'transparent' : itemSurface,
+          backgroundColor: active ? activeBackground : iconOnly || compact ? 'transparent' : itemSurface,
           borderColor: active ? colors.ui.control.primaryBorder : iconOnly ? 'transparent' : itemBorder,
           translateY: 0,
         }}
@@ -86,9 +94,9 @@ export function ComposerToolButton({
         {children}
         {iconOnly ? null : (
           <View style={{ minWidth: 0, flexShrink: 1, maxWidth: stateLabel ? (compact ? 54 : 82) : (compact ? 62 : 104) }}>
-            <Text numberOfLines={1} style={{ color: active ? colors.ui.control.primaryForeground : colors.textSecondary, fontSize: compact ? 10.5 : 11, lineHeight: 14, fontWeight: '800', includeFontPadding: false, textAlignVertical: 'center' }}>{label}</Text>
+            <Text numberOfLines={1} style={{ color: active ? activeForeground : colors.textSecondary, fontSize: compact ? 10.5 : 11, lineHeight: 14, fontWeight: '800', includeFontPadding: false, textAlignVertical: 'center' }}>{label}</Text>
             {stateLabel ? (
-              <Text numberOfLines={1} ellipsizeMode="tail" style={{ color: active ? colors.ui.control.primaryForeground : colors.textTertiary, fontSize: compact ? 9.5 : 10, lineHeight: 13, fontWeight: '800', includeFontPadding: false, textAlignVertical: 'center', opacity: active ? 0.82 : 1 }}>
+              <Text numberOfLines={1} ellipsizeMode="tail" style={{ color: active ? activeForeground : colors.textTertiary, fontSize: compact ? 9.5 : 10, lineHeight: 13, fontWeight: '800', includeFontPadding: false, textAlignVertical: 'center', opacity: active ? 0.82 : 1 }}>
                 {stateLabel}
               </Text>
             ) : null}

@@ -1,4 +1,4 @@
-import { ScrollView, View } from 'react-native'
+import { ScrollView, View, useWindowDimensions } from 'react-native'
 import { useTranslation } from 'react-i18next'
 import type { Dispatch, SetStateAction } from 'react'
 import type { EdgeInsets } from 'react-native-safe-area-context'
@@ -7,6 +7,7 @@ import type { IsleBackgroundState } from '@/components/ui/isle'
 import { useAppTheme } from '@/hooks/useAppTheme'
 import type { MotionIntensity } from '@/hooks/useMotionPreference'
 import type { ConversationChatWorkflowRuntimeRequestedOutput } from '@/modules/tasks'
+import { resolveProductMobileChatSetupLayout } from '@/presentation/layout/productMobileLayout'
 import type { Attachment, CommandReference } from '@/types/chatContracts'
 import { CHAT_PRESENTATION_CATALOG, type ChatStarterDefinition } from '@/presentation/features/chat/chatPresentationCatalog'
 
@@ -22,6 +23,8 @@ import { ChatSetupEmptyState, type ChatBoundaryMemoryStatus } from './ChatEmptyS
 import type { CompressionSummary } from './compressionSummary'
 import { ChatSetupThemeExperience } from './theme-experiences/ChatSetupThemeExperience'
 
+const CHAT_SETUP_HEADER_HEIGHT = 48
+
 interface ChatSetupWorkspaceProps {
   backgroundState: IsleBackgroundState
   boundaryMemoryStatus: ChatBoundaryMemoryStatus
@@ -33,7 +36,6 @@ interface ChatSetupWorkspaceProps {
   composerOutputMode: ConversationChatWorkflowRuntimeRequestedOutput
   composerPanel: ComposerPanel
   composerReferences: CommandReference[]
-  controlOrbOpen: boolean
   effectiveInitialAttachments?: Attachment[]
   effectiveInitialDraft?: string
   effectiveInitialDraftKey?: string | number
@@ -60,7 +62,6 @@ interface ChatSetupWorkspaceProps {
   setComposerFocused: Dispatch<SetStateAction<boolean>>
   setComposerHeight: Dispatch<SetStateAction<number>>
   setComposerPanel: Dispatch<SetStateAction<ComposerPanel>>
-  setControlOrbOpen: Dispatch<SetStateAction<boolean>>
   setPagerGestureLocked?: (locked: boolean) => void
   setShowOptions: Dispatch<SetStateAction<boolean>>
   settingsTransitionActive: boolean
@@ -82,7 +83,6 @@ export function ChatSetupWorkspace({
   composerOutputMode,
   composerPanel,
   composerReferences,
-  controlOrbOpen,
   effectiveInitialAttachments,
   effectiveInitialDraft,
   effectiveInitialDraftKey,
@@ -108,7 +108,6 @@ export function ChatSetupWorkspace({
   setComposerFocused,
   setComposerHeight,
   setComposerPanel,
-  setControlOrbOpen,
   setPagerGestureLocked,
   setShowOptions,
   settingsTransitionActive,
@@ -120,11 +119,31 @@ export function ChatSetupWorkspace({
 }: ChatSetupWorkspaceProps) {
   const { colors, themeId } = useAppTheme()
   const { t } = useTranslation()
+  const { width: setupViewportWidth, height: setupViewportHeight } = useWindowDimensions()
+  const setupLayout = resolveProductMobileChatSetupLayout(
+    setupViewportWidth,
+    setupViewportHeight,
+  )
+  const setupHeaderBottom = visualTopInset + topChromeInset + CHAT_SETUP_HEADER_HEIGHT
+  const setupContentTopPadding = setupLayout.compactLandscape
+    ? setupHeaderBottom + setupLayout.contentHeaderGap
+    : Math.max(setupHeaderBottom, compactViewport ? 68 : 80)
   const chatSystemPromptPlaceholder = t(CHAT_PRESENTATION_CATALOG.systemPromptPlaceholderKey)
   const openAiConfiguration = () => {
     collapseQuickTools()
     setupState.openSetupAiConfiguration()
   }
+  const setupNeedsConfiguration = !setupState.hasAvailableModel
+  const setupDescription = setupState.hasAvailableModel
+    ? t(CHAT_PRESENTATION_CATALOG.setupDescriptionKey)
+    : setupState.hasEnabledProvider
+      ? t('chat.syncModelsBeforeChat')
+      : t('chat.firstRunProviderSetupDescription')
+  const setupActionLabel = setupNeedsConfiguration
+    ? setupState.hasEnabledProvider
+      ? t('chat.configureProviders')
+      : t('chat.connectProvider')
+    : undefined
 
   const setupStatus = latestCompression?.metadata ? (
           <View pointerEvents="box-none" style={{ position: 'absolute', top: visualTopInset + topChromeInset + 38, left: 0, right: 0, zIndex: 44, paddingHorizontal: 14 }}>
@@ -163,25 +182,25 @@ export function ChatSetupWorkspace({
             contentContainerStyle={{
               flexGrow: 1,
               alignItems: 'center',
-              justifyContent: 'center',
+              justifyContent: setupLayout.compactLandscape ? 'flex-start' : 'center',
               paddingHorizontal: 20,
-              paddingTop: Math.max(visualTopInset + topChromeInset + 48, compactViewport ? 68 : 80),
+              paddingTop: setupContentTopPadding,
               paddingBottom: composerBottomInset + keyboardLift,
             }}
           >
             <ChatSetupEmptyState
               title={setupState.hasAvailableModel ? chatEmptyTitle : setupState.emptyHeaderTitle}
-              description={setupState.hasAvailableModel ? t(CHAT_PRESENTATION_CATALOG.setupDescriptionKey) : setupState.hasEnabledProvider ? t('chat.syncModelsBeforeChat') : undefined}
-              actionLabel={undefined}
-              actionHint={undefined}
-              glyph={undefined}
+              description={setupDescription}
+              actionLabel={setupActionLabel}
+              actionHint={setupNeedsConfiguration ? t('chat.configureProvidersAccessibilityHint') : undefined}
+              glyph={setupNeedsConfiguration ? 'provider-key' : undefined}
               multimodalPolicy={setupState.setupMultimodalPolicy}
               memoryStatus={boundaryMemoryStatus}
               onInspectProvider={openAiConfiguration}
               onOpenMemory={goMemoryReview}
               onOpenTools={() => setComposerPanel('more')}
               onStarter={setupState.hasAvailableModel ? onStarter : undefined}
-              onAction={undefined}
+              onAction={setupNeedsConfiguration ? openAiConfiguration : undefined}
             />
           </ScrollView>
         ) : (
@@ -232,10 +251,9 @@ export function ChatSetupWorkspace({
           onInteract={() => {
             setPagerGestureLocked?.(true)
             if (showOptions) setShowOptions(false)
-            if (controlOrbOpen) setControlOrbOpen(false)
           }}
           onInteractEnd={() => {
-            if (!showOptions && !composerPanel && !keyboardVisible && !controlOrbOpen) setPagerGestureLocked?.(false)
+            if (!showOptions && !composerPanel && !keyboardVisible) setPagerGestureLocked?.(false)
           }}
           onInputFocus={() => {
             collapseQuickTools()
@@ -270,6 +288,8 @@ export function ChatSetupWorkspace({
       </ChatScreenFrame>
       <ChatAiConfigurationSheet
         visible={showOptions}
+        initialView={setupNeedsConfiguration ? 'providers' : 'configuration'}
+        autoOpenProviderAdd={!setupState.hasEnabledProvider}
         scope="essential"
         conversation={setupState.setupConversation}
         provider={setupState.homeProvider}

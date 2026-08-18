@@ -9,6 +9,7 @@ const appJsonPath = path.join(root, 'app.json')
 const manifestPath = path.join(root, 'android', 'app', 'src', 'main', 'AndroidManifest.xml')
 const modulePath = path.join(root, 'plugins', 'android-status-notification', 'AndroidStatusNotificationModule.kt')
 const requestedDeviceArg = readDeviceArg()
+const adbCommand = readCliArg('--adb') || 'adb'
 const explicitDeviceRequested = Boolean(requestedDeviceArg || process.env.QA_DEVICE_SERIAL)
 const defaultDevice = requestedDeviceArg || process.env.QA_DEVICE_SERIAL || 'emulator-5554'
 const selfTest = process.argv.includes('--self-test')
@@ -28,15 +29,24 @@ function main() {
     const manifestText = fs.readFileSync(manifestPath, 'utf8')
     const moduleText = fs.readFileSync(modulePath, 'utf8')
     const packageName = appJson?.expo?.android?.package ?? defaultAppPackageName
+    result.androidApiLevel = readAndroidApiLevel(selectedDevice?.serial)
+    const postNotificationsRequired = (result.androidApiLevel ?? 0) >= 33
+    const postPromotedNotificationsRequired = (result.androidApiLevel ?? 0) >= 36
+    const postNotificationsGranted = readPermissionGrant(selectedDevice?.serial, packageName, 'android.permission.POST_NOTIFICATIONS')
+    const postPromotedNotificationsGranted = readPermissionGrant(selectedDevice?.serial, packageName, 'android.permission.POST_PROMOTED_NOTIFICATIONS')
     result.package = readInstalledPackageInfo(selectedDevice?.serial, packageName)
     result.permissions = {
       postNotifications: {
         declared: manifestText.includes('android.permission.POST_NOTIFICATIONS'),
-        granted: readPermissionGrant(selectedDevice?.serial, packageName, 'android.permission.POST_NOTIFICATIONS'),
+        required: postNotificationsRequired,
+        granted: postNotificationsGranted,
+        effective: !postNotificationsRequired || postNotificationsGranted,
       },
       postPromotedNotifications: {
         declared: manifestText.includes('android.permission.POST_PROMOTED_NOTIFICATIONS'),
-        granted: false,
+        required: postPromotedNotificationsRequired,
+        granted: postPromotedNotificationsGranted,
+        effective: !postPromotedNotificationsRequired || postPromotedNotificationsGranted,
       },
     }
     result.settingsIntents = {
@@ -86,6 +96,7 @@ function createBaseResult(deviceSerial) {
     generatedAt: new Date().toISOString(),
     status: 'blocked',
     device: deviceSerial,
+    androidApiLevel: null,
     package: null,
     permissions: null,
     appOps: null,
@@ -119,7 +130,7 @@ function createBaseResult(deviceSerial) {
 }
 
 function listDevices() {
-  const output = runCommand('adb', ['devices', '-l']) ?? ''
+  const output = runCommand(adbCommand, ['devices', '-l']) ?? ''
   return output
     .split(/\r?\n/)
     .map((line) => line.trim())
@@ -143,8 +154,8 @@ function resolveDevice(requested, options = {}) {
 
 function readInstalledPackageInfo(device, packageName) {
   if (!device) return null
-  const packageDump = runCommand('adb', ['-s', device, 'shell', 'dumpsys', 'package', packageName]) ?? ''
-  const packagePath = runCommand('adb', ['-s', device, 'shell', 'pm', 'path', packageName])?.trim() ?? ''
+  const packageDump = runCommand(adbCommand, ['-s', device, 'shell', 'dumpsys', 'package', packageName]) ?? ''
+  const packagePath = runCommand(adbCommand, ['-s', device, 'shell', 'pm', 'path', packageName])?.trim() ?? ''
   return {
     installed: Boolean(packagePath),
     packagePath: packagePath || null,
@@ -153,9 +164,14 @@ function readInstalledPackageInfo(device, packageName) {
   }
 }
 
+function readAndroidApiLevel(device) {
+  if (!device) return null
+  return toNumber(runCommand(adbCommand, ['-s', device, 'shell', 'getprop', 'ro.build.version.sdk'])?.trim() ?? null)
+}
+
 function resolveIntent(device, args) {
   if (!device) return { available: false, resolver: null }
-  const output = runCommand('adb', ['-s', device, 'shell', 'cmd', 'package', ...args])
+  const output = runCommand(adbCommand, ['-s', device, 'shell', 'cmd', 'package', ...args])
   const text = String(output ?? '').trim()
   return {
     available: Boolean(text && !/No activity found/i.test(text)),
@@ -165,13 +181,13 @@ function resolveIntent(device, args) {
 
 function readPermissionGrant(device, packageName, permission) {
   if (!device) return false
-  const dump = runCommand('adb', ['-s', device, 'shell', 'dumpsys', 'package', packageName]) ?? ''
+  const dump = runCommand(adbCommand, ['-s', device, 'shell', 'dumpsys', 'package', packageName]) ?? ''
   return new RegExp(`${escapeRegExp(permission)}:\\s+granted=true`).test(dump)
 }
 
 function readAppOps(device, packageName, op) {
   if (!device) return null
-  return runCommand('adb', ['-s', device, 'shell', 'cmd', 'appops', 'get', packageName, op])?.trim() ?? null
+  return runCommand(adbCommand, ['-s', device, 'shell', 'cmd', 'appops', 'get', packageName, op])?.trim() ?? null
 }
 
 function runCommand(command, args) {
@@ -214,10 +230,11 @@ function relative(file) {
 function runSelfTest() {
   const fixture = createBaseResult('emulator-5554')
   fixture.status = 'collected'
+  fixture.androidApiLevel = 35
   fixture.package = { installed: true }
   fixture.permissions = {
-    postNotifications: { declared: true, granted: true },
-    postPromotedNotifications: { declared: true, granted: false },
+    postNotifications: { declared: true, required: true, granted: true, effective: true },
+    postPromotedNotifications: { declared: true, required: false, granted: false, effective: true },
   }
   fixture.appOps = { postNotification: { raw: 'POST_NOTIFICATION: allow' } }
   fixture.settingsIntents = { appNotificationSettings: { available: true } }
@@ -233,10 +250,14 @@ function runSelfTest() {
 }
 
 function readDeviceArg() {
-  const index = process.argv.indexOf('--device')
+  return readCliArg('--device')
+}
+
+function readCliArg(name) {
+  const index = process.argv.indexOf(name)
   if (index >= 0 && process.argv[index + 1]) return process.argv[index + 1]
-  const deviceWithEquals = process.argv.find((value) => value.startsWith('--device='))
-  return deviceWithEquals ? deviceWithEquals.split('=').slice(1).join('=') : null
+  const valueWithEquals = process.argv.find((value) => value.startsWith(`${name}=`))
+  return valueWithEquals ? valueWithEquals.split('=').slice(1).join('=') : null
 }
 
 if (require.main === module) main()

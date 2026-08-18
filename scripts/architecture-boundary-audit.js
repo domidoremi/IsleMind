@@ -1288,6 +1288,7 @@ const requiredContracts = [
       'src/components/settings/SkillSettingsContent.tsx',
       'app/settings/skills.tsx',
       'app/source.tsx',
+      'src/presentation/features/conversations/SourceDetailScreen.tsx',
       'src/i18n/resources/en.json',
       'src/i18n/resources/zh-CN.json',
       'src/i18n/resources/ja.json',
@@ -2010,12 +2011,12 @@ const requiredContracts = [
       ['src/presentation/features/conversations/conversationStorePersistenceCommand.ts', /bindConversationStorePersistence\([^]*?loadConversationRecords\(\)[^]*?readActiveConversationSelection\(\)[^]*?writeActiveConversationSelection\([^]*?requirePersistence\(\)/],
       ['src/bootstrap/conversationStorePersistence.ts', /Object\.freeze<ConversationStorePersistencePort>\(\{[^]*?loadRecords:[^]*?readActiveSelection:[^]*?writeActiveSelection:[^]*?bindConversationStorePersistence\(conversationStorePersistence\)/],
       ['src/hooks/useBootstrap.ts', /initializeConversationStorePersistence\(\)[^]*?safeBootstrap\(st\('bootstrap\.chatData'\), loadChats\)/],
-      ['src/store/chatStore.ts', /interface ChatState \{[^]*?currentId: string \| null[^]*?select: \(id: string\) => void/],
+      ['src/store/chatStore.ts', /interface ChatState \{[^]*?currentId: string \| null[^]*?select: \(id: string \| null\) => void/],
       ['src/store/chatStore.ts', /readActiveConversationSelection\(\)[^]*?resolveLoadedActiveConversationId\(conversations, currentId\)/],
-      ['src/store/chatStore.ts', /set\(\{ conversations: \[\], currentId: null, isLoading: false \}\)[^]*?await writeActiveConversationSelection\(null\)/],
+      ['src/store/chatStore.ts', /set\(\{ conversations: \[\], draftConversationIds: new Set<string>\(\), currentId: null, isLoading: false \}\)[^]*?await writeActiveConversationSelection\(null\)/],
       ['src/components/chat/ChatWorkspace.tsx', /import \{[^}]*CHAT_PRESENTATION_CATALOG[^}]*\} from ['"]@\/presentation\/features\/chat\/chatPresentationCatalog['"][^]*?export function ChatWorkspace\([^]*?CHAT_PRESENTATION_CATALOG\.systemPromptPlaceholderKey/],
       ['src/components/main/HomeScreenContent.tsx', /const currentId = useChatStore\(\(state\) => state\.currentId\)[^]*?const select = useChatStore\(\(state\) => state\.select\)[^]*?conversations\.find\(\(item\) => item\.id === currentId\)[^]*?<ChatWorkspace/],
-      ['src/components/main/ConversationsScreenContent.tsx', /const currentId = useChatStore\(\(state\) => state\.currentId\)[^]*?const select = useChatStore\(\(state\) => state\.select\)[^]*?const id = create\(provider\.id, model\)[^]*?select\(id\)[^]*?const openConversation[^]*?select\(id\)/],
+      ['src/components/main/ConversationsScreenContent.tsx', /const currentId = useChatStore\(\(state\) => state\.currentId\)[^]*?const select = useChatStore\(\(state\) => state\.select\)[^]*?const createConversation = useCallback\(\(\) => \{[^]*?select\(null\)[^]*?navigateToChat\(\)[^]*?const openConversation[^]*?select\(id\)/],
       ['app/chat/[id].tsx', /select\(conversation\.id\)[^]*?<ChatWorkspace/],
       ['src/presentation/features/conversations/conversationMessageActionCommand.ts', /startWorkflowReply: startConfirmedConversationWorkflowReplyRuntime/],
       ['src/modules/assistant-runtime/contracts.ts', /interface AssistantRun \{[^]*?kind: 'chat'/],
@@ -2348,41 +2349,41 @@ const requiredContracts = [
       ['app/settings/skills.tsx', /routeParamPositiveInteger\(params\.eventCount\)/],
       ['app/settings/skills.tsx', /focusKey=\{focusKey\}/],
       ['app/settings/skills.tsx', /pluginManifestFocus=\{pluginManifestFocus\}/],
-      ['app/source.tsx', /function buildProcessTraceGroups/],
-      ['app/source.tsx', /const order: ProcessTraceGroupKey\[\] = \['agentPlan', 'context', 'search', 'toolActivity', 'agentSynthesis', 'agentRecovery', 'other'\]/],
-      ['app/source.tsx', /function isAgentRecoveryTrace/],
-      ['app/source.tsx', /function isWorkflowRecoveryEnvelope/],
-      ['app/source.tsx', /!isWorkflowRecoveryEnvelope\(trace\)/],
-      ['app/source.tsx', /isAgentIntentTrace\(trace\) \|\| isAgentPlanTrace\(trace\)/],
-      ['app/source.tsx', /isAgentWorkflowEnvelopeTrace\(trace\)/],
-      ['app/source.tsx', /isCompletedWorkArtifactFollowUpTrace\(trace\)/],
-      ['app/source.tsx', /metadata\.contract === WORK_ARTIFACT_WORKFLOW_CONTRACT/],
-      ['app/source.tsx', /isCancelledWorkflowTrace\(trace\)/],
-      ['app/source.tsx', /function isCancelledWorkflowTrace/],
-      ['app/source.tsx', /trace\.status === 'cancelled'/],
-      ['app/source.tsx', /metadata\.failureCode === 'cancelled'/],
-      ['app/source.tsx', /t\('source\.agentRecovery'\)/],
-      ['app/source.tsx', /metadata\.failureNextStep/],
-      ['app/source.tsx', /metadata\.cancelledContinuationPrompt/],
-      ['app/source.tsx', /pendingReason === 'permission_required'/],
-      ['app/source.tsx', /metadata\.reason === 'workflow-selection-ambiguous'/],
-      ['app/source.tsx', /metadata\.reason === 'workflow-invalid'/],
-      ['app/source.tsx', /collectVisibleProcessTraces\(message\)/],
-      ['app/source.tsx', /buildSourceProcessTraceCopyText\(traces\)/],
-      ['app/source.tsx', /function buildSourceProcessTraceCopyText\(traces: ProcessTrace\[\]\)/],
-      ['app/source.tsx', /!trace\.metadata\?\.hiddenSignature && Boolean\(trace\.title \|\| trace\.content\)/],
-      ['app/source.tsx', /\.map\(formatProcessTraceForCopy\)/],
-      ['app/source.tsx', /formatProcessTraceForDisplay\(trace\)/],
-      ['app/source.tsx', /metadataSummaryForTrace\(trace\)/],
-      ['app/source.tsx', /const metaLineCount = traceMetadataLineCount\(trace\)/],
-      ['app/source.tsx', /numberOfLines=\{metaLineCount\}/],
-      ['app/source.tsx', /function traceMetadataLineCount/],
-      ['app/source.tsx', /hasTrustedWorkflowTraceContext\(trace\)/],
-      ['app/source.tsx', /function hasTrustedWorkflowTraceContext/],
-      ['app/source.tsx', /isAgentPlanTrace\(trace\) \|\| isAgentWorkflowEnvelopeTrace\(trace\) \|\| isCompletedWorkArtifactFollowUpTrace\(trace\)/],
-      ['app/source.tsx', /hasWorkflowTraceContext\(trace\)/],
-      ['app/source.tsx', /function hasWorkflowTraceContext/],
-      ['app/source.tsx', /function hasPendingActionWorkflowTraceContext/],
+      ['src/presentation/features/conversations/SourceDetailScreen.tsx', /function buildProcessTraceGroups/],
+      ['src/presentation/features/conversations/SourceDetailScreen.tsx', /const order: ProcessTraceGroupKey\[\] = \['agentPlan', 'context', 'search', 'toolActivity', 'agentSynthesis', 'agentRecovery', 'other'\]/],
+      ['src/presentation/features/conversations/SourceDetailScreen.tsx', /function isAgentRecoveryTrace/],
+      ['src/presentation/features/conversations/SourceDetailScreen.tsx', /function isWorkflowRecoveryEnvelope/],
+      ['src/presentation/features/conversations/SourceDetailScreen.tsx', /!isWorkflowRecoveryEnvelope\(trace\)/],
+      ['src/presentation/features/conversations/SourceDetailScreen.tsx', /isAgentIntentTrace\(trace\) \|\| isAgentPlanTrace\(trace\)/],
+      ['src/presentation/features/conversations/SourceDetailScreen.tsx', /isAgentWorkflowEnvelopeTrace\(trace\)/],
+      ['src/presentation/features/conversations/SourceDetailScreen.tsx', /isCompletedWorkArtifactFollowUpTrace\(trace\)/],
+      ['src/presentation/features/conversations/SourceDetailScreen.tsx', /metadata\.contract === WORK_ARTIFACT_WORKFLOW_CONTRACT/],
+      ['src/presentation/features/conversations/SourceDetailScreen.tsx', /isCancelledWorkflowTrace\(trace\)/],
+      ['src/presentation/features/conversations/SourceDetailScreen.tsx', /function isCancelledWorkflowTrace/],
+      ['src/presentation/features/conversations/SourceDetailScreen.tsx', /trace\.status === 'cancelled'/],
+      ['src/presentation/features/conversations/SourceDetailScreen.tsx', /metadata\.failureCode === 'cancelled'/],
+      ['src/presentation/features/conversations/SourceDetailScreen.tsx', /t\('source\.agentRecovery'\)/],
+      ['src/presentation/features/conversations/SourceDetailScreen.tsx', /metadata\.failureNextStep/],
+      ['src/presentation/features/conversations/SourceDetailScreen.tsx', /metadata\.cancelledContinuationPrompt/],
+      ['src/presentation/features/conversations/SourceDetailScreen.tsx', /pendingReason === 'permission_required'/],
+      ['src/presentation/features/conversations/SourceDetailScreen.tsx', /metadata\.reason === 'workflow-selection-ambiguous'/],
+      ['src/presentation/features/conversations/SourceDetailScreen.tsx', /metadata\.reason === 'workflow-invalid'/],
+      ['src/presentation/features/conversations/SourceDetailScreen.tsx', /collectVisibleProcessTraces\(message\)/],
+      ['src/presentation/features/conversations/SourceDetailScreen.tsx', /buildSourceProcessTraceCopyText\(traces\)/],
+      ['src/presentation/features/conversations/SourceDetailScreen.tsx', /function buildSourceProcessTraceCopyText\(traces: ProcessTrace\[\]\)/],
+      ['src/presentation/features/conversations/SourceDetailScreen.tsx', /!trace\.metadata\?\.hiddenSignature && Boolean\(trace\.title \|\| trace\.content\)/],
+      ['src/presentation/features/conversations/SourceDetailScreen.tsx', /\.map\(formatProcessTraceForCopy\)/],
+      ['src/presentation/features/conversations/SourceDetailScreen.tsx', /formatProcessTraceForDisplay\(trace\)/],
+      ['src/presentation/features/conversations/SourceDetailScreen.tsx', /metadataSummaryForTrace\(trace\)/],
+      ['src/presentation/features/conversations/SourceDetailScreen.tsx', /const metaLineCount = traceMetadataLineCount\(trace\)/],
+      ['src/presentation/features/conversations/SourceDetailScreen.tsx', /numberOfLines=\{metaLineCount\}/],
+      ['src/presentation/features/conversations/SourceDetailScreen.tsx', /function traceMetadataLineCount/],
+      ['src/presentation/features/conversations/SourceDetailScreen.tsx', /hasTrustedWorkflowTraceContext\(trace\)/],
+      ['src/presentation/features/conversations/SourceDetailScreen.tsx', /function hasTrustedWorkflowTraceContext/],
+      ['src/presentation/features/conversations/SourceDetailScreen.tsx', /isAgentPlanTrace\(trace\) \|\| isAgentWorkflowEnvelopeTrace\(trace\) \|\| isCompletedWorkArtifactFollowUpTrace\(trace\)/],
+      ['src/presentation/features/conversations/SourceDetailScreen.tsx', /hasWorkflowTraceContext\(trace\)/],
+      ['src/presentation/features/conversations/SourceDetailScreen.tsx', /function hasWorkflowTraceContext/],
+      ['src/presentation/features/conversations/SourceDetailScreen.tsx', /function hasPendingActionWorkflowTraceContext/],
       ['src/modules/data-management/application/portableDataPayload.ts', /function normalizeTraces/],
       ['src/modules/data-management/application/portableDataPayload.ts', /conversations\.map\(normalizeConversation\)/],
       ['scripts/agent-tool-policy-tests.js', /resolveWorkflowRunLimitsFromSettings\(testSettings\)/],
@@ -2532,6 +2533,7 @@ const requiredContracts = [
       ['src/presentation/features/conversations/conversationMessageRuntimeBinding.ts', /\b(?:AgentToolCatalogManifest|listAgentToolManifests|resolveAgentTool|listConversationAgentToolManifestsRuntime|resolveConversationAgentToolRuntime|CONVERSATION_AGENT_TOOL_CATALOG_UNINITIALIZED_ERROR)\b|conversation_agent_tool_catalog_not_bound/],
       ['src/presentation/features/conversations/conversationMessageActionCommand.ts', /\b(?:AgentToolCatalogManifest|listConversationAgentToolManifestsRuntime|resolveConversationAgentToolRuntime)\b/],
       ['app/chat/[id].tsx', /resolveConversationProductMode|\bconst productMode\s*=|<ChatWorkspace[^>]*\bproductMode=|\b(?:modeCurrentIds|selectForMode|getCurrentForMode)\b/],
+      ['src/presentation/features/conversations/RuntimeRepairConversationWorkspace.tsx', /resolveConversationProductMode|\bconst productMode\s*=|<ChatWorkspace[^>]*\bproductMode=|\b(?:modeCurrentIds|selectForMode|getCurrentForMode)\b/],
       ['src/presentation/features/conversations/conversationWorkflowSkillSaveController.ts', /ConversationAgentWorkflowSave|SaveConversationAgentWorkflow|createConversationAgentWorkflowSaveController/],
       ['src/presentation/features/conversations/conversationMessageRuntimeBinding.ts', /CONVERSATION_AGENT_WORKFLOW_SKILL_UNINITIALIZED_ERROR|saveApprovedConversationAgentWorkflowSkillRuntime|saveApprovedAgentWorkflowSkillSuggestion/],
       ['src/presentation/features/conversations/conversationMessageActionCommand.ts', /conversationAgentWorkflowSaveController|createConversationAgentWorkflowSaveController|saveConversationAgentWorkflowSkillFromMessage|saveApprovedConversationAgentWorkflowSkillRuntime/],
@@ -2619,7 +2621,7 @@ const requiredContracts = [
       ['src/bootstrap/taskBoundToolRuntime.ts', /from ['"]@\/services\/agent\/workArtifactWorkflow['"]/],
       ['src/presentation/features/conversations/workflowMessageActionSelectors.ts', /from ['"]@\/services\/agent\/workArtifactWorkflow['"]/],
       ['src/components/chat/tracePresentation.ts', /from ['"]@\/services\/agent\/workArtifactWorkflow['"]/],
-      ['app/source.tsx', /from ['"]@\/services\/agent\/workArtifactWorkflow['"]/],
+      ['src/presentation/features/conversations/SourceDetailScreen.tsx', /from ['"]@\/services\/agent\/workArtifactWorkflow['"]/],
       ['src/modules/tasks/application/workflowOrchestrator.ts', /@\/(?:services|bootstrap|platform|presentation)\//],
       ['src/modules/tasks/application/workflowOrchestrator.ts', /\b(?:AgentWorkflowOrchestratorInput|AgentWorkflowStepRuntimeDependencyInput|AgentWorkflowOrchestratorDependencies|AgentWorkflowOrchestrator|createAgentWorkflowOrchestrator)\b|agentWorkflowOrchestrator/],
       ['src/modules/tasks/index.ts', /agentWorkflowOrchestrator|createAgentWorkflowOrchestrator|\bAgentWorkflowOrchestrator\w*\b/],
@@ -2808,7 +2810,9 @@ const requiredContracts = [
       'src/services/runtimeDiagnostics.ts',
       'src/services/pluginManifest.ts',
       'src/components/main/SettingsScreenContent.tsx',
+      'src/components/settings/RuntimeDiagnosticsDetails.tsx',
       'src/components/chat/runtimeRepairReplayEvents.ts',
+      'src/presentation/features/conversations/RuntimeRepairConversationWorkspace.tsx',
       'package.json',
     ],
     requiredMarkers: [
@@ -2863,20 +2867,21 @@ const requiredContracts = [
       ['src/services/pluginManifest.ts', /execution: 'noop'/],
       ['src/components/main/SettingsScreenContent.tsx', /loadPluginManifestCatalogSnapshot/],
       ['src/components/main/SettingsScreenContent.tsx', /emitPluginManifestCatalogSnapshotEvent/],
-      ['src/components/main/SettingsScreenContent.tsx', /runtimeDiagnosticPluginCatalog/],
-      ['src/components/main/SettingsScreenContent.tsx', /runtimeDiagnosticPerformance/],
+      ['src/components/settings/RuntimeDiagnosticsDetails.tsx', /runtimeDiagnosticPluginCatalog/],
+      ['src/components/settings/RuntimeDiagnosticsDetails.tsx', /runtimeDiagnosticPerformance/],
       ['app/settings/skills.tsx', /runtimeRepairTarget === 'plugin-settings'/],
       ['src/components/settings/SkillSettingsContent.tsx', /pluginManifestRepairTarget/],
       ['src/services/runtimeEventContract.ts', /plugin\.catalog\.snapshot\.created/],
       ['src/components/main/SettingsScreenContent.tsx', /RuntimeRepairTaskActions/],
       ['src/components/main/SettingsScreenContent.tsx', /openRuntimeRepairTask/],
       ['src/components/main/SettingsScreenContent.tsx', /sessionAffinityEnabled/],
-      ['app/chat/[id].tsx', /buildRuntimeRepairIntent/],
-      ['app/chat/[id].tsx', /RUNTIME_REPAIR_REPLAY_PAYLOAD_SCHEMA/],
-      ['app/chat/[id].tsx', /buildRuntimeRepairReplayPayloadJson/],
-      ['app/chat/[id].tsx', /buildRuntimeRepairReplaySteps/],
-      ['app/chat/[id].tsx', /runtimeRepairRetryPrompt/],
-      ['app/chat/[id].tsx', /findRuntimeRepairReplayContext/],
+      ['src/presentation/features/conversations/RuntimeRepairConversationWorkspace.tsx', /export function RuntimeRepairConversationWorkspace/],
+      ['src/presentation/features/conversations/RuntimeRepairConversationWorkspace.tsx', /buildRuntimeRepairIntent/],
+      ['src/presentation/features/conversations/RuntimeRepairConversationWorkspace.tsx', /RUNTIME_REPAIR_REPLAY_PAYLOAD_SCHEMA/],
+      ['src/presentation/features/conversations/RuntimeRepairConversationWorkspace.tsx', /buildRuntimeRepairReplayPayloadJson/],
+      ['src/presentation/features/conversations/RuntimeRepairConversationWorkspace.tsx', /buildRuntimeRepairReplaySteps/],
+      ['src/presentation/features/conversations/RuntimeRepairConversationWorkspace.tsx', /runtimeRepairRetryPrompt/],
+      ['src/presentation/features/conversations/RuntimeRepairConversationWorkspace.tsx', /findRuntimeRepairReplayContext/],
       ['src/components/chat/FloatingComposer.tsx', /from ['"]\.\/RuntimeRepairIntentCard['"]/],
       ['src/components/chat/RuntimeRepairIntentCard.tsx', /export function RuntimeRepairIntentCard/],
       ['src/components/chat/ChatActiveComposerDock.tsx', /externalSubmitKey=\{runtimeRepairSubmitKey\}/],
@@ -3482,31 +3487,10 @@ const chatWorkspaceExtractionContracts = [
   {
     helperFile: 'src/components/chat/chatWorkspaceConstants.ts',
     importSource: './chatWorkspaceConstants',
-    consumerFile: 'src/components/chat/chatActiveWorkspaceLayoutState.ts',
-    consumerLabel: 'chatActiveWorkspaceLayoutState',
-    localDefinitionFile: 'src/components/chat/ChatWorkspace.tsx',
-    localDefinitionLabel: 'ChatWorkspace',
-    exportedHelpers: [
-      'AUTO_SCROLL_DELAY_MS',
-      'DEFAULT_SETUP_REASONING_EFFORT',
-      'MODEL_VALIDATION_LOOKUP_LIMIT',
-      'CHAT_USES_FLOATING_CONTROL_ORB',
-    ],
-    consumerHelpers: [
-      'CHAT_USES_FLOATING_CONTROL_ORB',
-    ],
-    localDefinitionHelpers: [
-      'AUTO_SCROLL_DELAY_MS',
-      'DEFAULT_SETUP_REASONING_EFFORT',
-      'MODEL_VALIDATION_LOOKUP_LIMIT',
-      'CHAT_USES_FLOATING_CONTROL_ORB',
-    ],
-  },
-  {
-    helperFile: 'src/components/chat/chatWorkspaceConstants.ts',
-    importSource: './chatWorkspaceConstants',
     consumerFile: 'src/components/chat/chatWorkspaceLifecycleState.ts',
     consumerLabel: 'chatWorkspaceLifecycleState',
+    localDefinitionFile: 'src/components/chat/ChatWorkspace.tsx',
+    localDefinitionLabel: 'ChatWorkspace',
     exportedHelpers: [
       'AUTO_SCROLL_DELAY_MS',
     ],
@@ -3516,6 +3500,8 @@ const chatWorkspaceExtractionContracts = [
     importSource: './chatWorkspaceConstants',
     consumerFile: 'src/components/chat/chatSetupWorkspaceState.ts',
     consumerLabel: 'chatSetupWorkspaceState',
+    localDefinitionFile: 'src/components/chat/ChatWorkspace.tsx',
+    localDefinitionLabel: 'ChatWorkspace',
     exportedHelpers: [
       'DEFAULT_SETUP_REASONING_EFFORT',
       'MODEL_VALIDATION_LOOKUP_LIMIT',
@@ -3526,6 +3512,8 @@ const chatWorkspaceExtractionContracts = [
     importSource: './chatWorkspaceConstants',
     consumerFile: 'src/components/chat/chatMessageListScrollState.ts',
     consumerLabel: 'chatMessageListScrollState',
+    localDefinitionFile: 'src/components/chat/ChatWorkspace.tsx',
+    localDefinitionLabel: 'ChatWorkspace',
     exportedHelpers: [
       'AUTO_SCROLL_DELAY_MS',
       'CONVERSATION_NAVIGATION_IDLE_HIDE_DELAY_MS',
@@ -4280,13 +4268,6 @@ const chatWorkspaceExtractionContracts = [
     ],
   },
   {
-    helperFile: 'src/components/chat/chatSystemStatusNotification.ts',
-    importSource: './chatSystemStatusNotification',
-    exportedHelpers: [
-      'useChatSystemStatusNotification',
-    ],
-  },
-  {
     helperFile: 'src/components/chat/runtimeRepairReplayEvents.ts',
     importSource: './runtimeRepairReplayEvents',
     consumerFile: 'src/components/chat/runtimeRepairIntentActions.ts',
@@ -4617,15 +4598,6 @@ const chatWorkspaceExtractionContracts = [
     consumerLabel: 'StreamingIntentSheet',
     exportedHelpers: [
       'previewPendingText',
-    ],
-  },
-  {
-    helperFile: 'src/components/chat/messageActivityPreview.ts',
-    importSource: './messageActivityPreview',
-    consumerFile: 'src/components/chat/chatSystemStatusNotification.ts',
-    consumerLabel: 'chatSystemStatusNotification',
-    exportedHelpers: [
-      'previewSystemStatusMessage',
     ],
   },
   {
@@ -4966,49 +4938,6 @@ const chatWorkspaceExtractionContracts = [
     ],
     localDefinitionHelpers: [
       'useChatFloatingChromeState',
-    ],
-  },
-  {
-    helperFile: 'src/components/chat/FloatingControlOrb.tsx',
-    importSource: './FloatingControlOrb',
-    consumerFile: 'src/components/chat/ChatActiveControlsLayer.tsx',
-    consumerLabel: 'ChatActiveControlsLayer',
-    localDefinitionFile: 'src/components/chat/ChatWorkspace.tsx',
-    localDefinitionLabel: 'ChatWorkspace',
-    localDefinitionFiles: [
-      ['src/components/chat/ChatActiveWorkspace.tsx', 'ChatActiveWorkspace'],
-    ],
-    exportedHelpers: [
-      'FLOATING_CONTROL_ORB_GAP',
-      'FloatingControlOrb',
-    ],
-  },
-  {
-    helperFile: 'src/components/chat/chatControlOrbActions.ts',
-    importSource: './chatControlOrbActions',
-    consumerFile: 'src/components/chat/chatActiveWorkspaceLayoutState.ts',
-    consumerLabel: 'chatActiveWorkspaceLayoutState',
-    localDefinitionFile: 'src/components/chat/ChatWorkspace.tsx',
-    localDefinitionLabel: 'ChatWorkspace',
-    exportedHelpers: [
-      'buildActiveControlOrbActions',
-      'buildSetupControlOrbActions',
-    ],
-    consumerHelpers: [
-      'buildActiveControlOrbActions',
-    ],
-    localDefinitionHelpers: [
-      'buildActiveControlOrbActions',
-      'buildSetupControlOrbActions',
-    ],
-  },
-  {
-    helperFile: 'src/components/chat/FloatingControlOrb.tsx',
-    importSource: './FloatingControlOrb',
-    consumerFile: 'src/components/chat/chatControlOrbActions.ts',
-    consumerLabel: 'chatControlOrbActions',
-    exportedHelpers: [
-      'FloatingControlOrbAction',
     ],
   },
   {
@@ -10415,7 +10344,7 @@ function runArchitectureBoundaryAuditSelfTest() {
 
     const chatWorkspacePath = path.join(tempRoot, 'src', 'components', 'chat', 'ChatWorkspace.tsx')
     const originalChatWorkspace = fs.readFileSync(chatWorkspacePath, 'utf8')
-    fs.writeFileSync(chatWorkspacePath, `${originalChatWorkspace}\nfunction useChatComposerSourceState() { return null }\nfunction useChatSetupWorkspaceState() { return null }\nfunction ActiveChatWorkspace() { return null }\nfunction buildChatActiveWorkspaceLayerProps() { return null }\nfunction buildChatActiveComposerDockProps() { return null }\nfunction buildChatActiveChromeLayerProps() { return null }\nfunction buildChatActiveStatusLayerProps() { return null }\nfunction buildChatActiveMessageListProps() { return null }\nfunction buildChatActiveControlsLayerProps() { return null }\nfunction ChatActiveMessageList() { return null }\nfunction ChatActiveMessageFeed() { return null }\nfunction ChatActiveMessageItem() { return null }\nfunction ChatActiveChromeLayer() { return null }\nfunction ChatActiveComposerDock() { return null }\nfunction ChatActiveControlsLayer() { return null }\nfunction useChatActiveWorkspaceActions() { return null }\nfunction useChatActiveWorkspaceLayoutState() { return null }\nfunction useChatFloatingChromeState() { return null }\nfunction useChatWorkspaceAutoScroll() { return null }\nfunction useChatWorkspaceConversationRecovery() { return null }\nfunction useChatWorkspaceOverlayNavigation() { return null }\nfunction resolveWorkspaceOverlayLocked() { return false }\nfunction useChatWorkspaceProviderHealthState() { return null }\nfunction buildProviderHealthCacheKey() { return 'none' }\nfunction buildComposerCommands() { return [] }\nfunction pushChatSettingsRoute() { return null }\nfunction resolveFloatingNoticeTopOffset() { return 0 }\nconst FLOATING_NOTICE_TOP_GAP = 8\nconst AUTO_SCROLL_DELAY_MS = 96\nconst CONVERSATION_NAVIGATION_IDLE_HIDE_DELAY_MS = 1504\nconst CONVERSATION_NAVIGATION_INTERACTION_HIDE_DELAY_MS = 2200\nconst CONVERSATION_NAVIGATION_PROGRAMMATIC_LOCK_MS = 260\nconst DEFAULT_SETUP_REASONING_EFFORT = 'low'\nconst LONG_MESSAGE_LIST_ANIMATION_THRESHOLD = 48\nconst MESSAGE_LIST_ANDROID_DRAW_DISTANCE_MIN = 1600\nconst MESSAGE_LIST_MOMENTUM_ELIGIBILITY_MS = 240\nconst MESSAGE_LIST_TOUCH_PAGER_GESTURE_RELEASE_DELAY_MS = 112\nconst MODEL_VALIDATION_LOOKUP_LIMIT = 64\nconst CHAT_USES_FLOATING_CONTROL_ORB = true\nconst QUICK_START_ACTION_HIT_SLOP = { top: 8, right: 8, bottom: 8, left: 8 }\nconst USER_SCROLL_PAUSE_THRESHOLD = 72\nfunction ChatScreenFrame() { return null }\nfunction renderConversationHeaderSpacer() { return null }\nfunction buildMessageListAccessibility() { return null }\nfunction buildMessageListExtraData() { return null }\nfunction resolveMessageListDrawDistance() { return null }\nfunction resolveMessageListMotion() { return null }\nfunction cancelProductModeTask() { return null }\nfunction useProductModeTaskStatus() { return null }\nfunction handoffMessageToProductMode() { return null }\nfunction useRuntimeRepairIntentActions() { return null }\nfunction useChatWorkspaceKeyboardState() { return null }\nfunction useChatSystemStatusNotification() { return null }\nfunction useChatCompressionToast() { return null }\nfunction useChatMessageSelectionController() { return null }\nfunction useChatMessageListScrollController() { return null }\nfunction copyChatMessageText() { return null }\nfunction deleteChatMessageWithConfirmation() { return null }\nfunction pickModelAccessSettings() { return null }\nfunction testConversationHeaderModel() { return null }\nfunction SkillVariableDialogBody() { return null }\nfunction buildPendingStreamingNotice() { return '' }\nfunction ConversationHealthBanner() { return null }\nfunction CompressionBanner() { return null }\nfunction MessageMultiSelectBar() { return null }\nfunction ConversationNavigationRail() { return null }\nfunction StreamingIntentSheet() { return null }\nfunction applyStreamingIntentDraft() { return true }\nfunction ProductModeTaskStatusCard() { return null }\nfunction ComposerToolButton() { return null }\nfunction ReasoningToolIcon() { return null }\nfunction QuickChoiceButton() { return null }\nfunction FloatingComposer() { return null }\nfunction FloatingChrome() { return null }\nconst FLOATING_CHROME_SAFE_AREA_GAP = 4\nfunction FloatingControlOrb() { return null }\nfunction buildActiveControlOrbActions() { return [] }\nfunction ChatSetupEmptyState() { return null }\n`, 'utf8')
+    fs.writeFileSync(chatWorkspacePath, `${originalChatWorkspace}\nfunction useChatComposerSourceState() { return null }\nfunction useChatSetupWorkspaceState() { return null }\nfunction ActiveChatWorkspace() { return null }\nfunction buildChatActiveWorkspaceLayerProps() { return null }\nfunction buildChatActiveComposerDockProps() { return null }\nfunction buildChatActiveChromeLayerProps() { return null }\nfunction buildChatActiveStatusLayerProps() { return null }\nfunction buildChatActiveMessageListProps() { return null }\nfunction buildChatActiveControlsLayerProps() { return null }\nfunction ChatActiveMessageList() { return null }\nfunction ChatActiveMessageFeed() { return null }\nfunction ChatActiveMessageItem() { return null }\nfunction ChatActiveChromeLayer() { return null }\nfunction ChatActiveComposerDock() { return null }\nfunction ChatActiveControlsLayer() { return null }\nfunction useChatActiveWorkspaceActions() { return null }\nfunction useChatActiveWorkspaceLayoutState() { return null }\nfunction useChatFloatingChromeState() { return null }\nfunction useChatWorkspaceAutoScroll() { return null }\nfunction useChatWorkspaceConversationRecovery() { return null }\nfunction useChatWorkspaceOverlayNavigation() { return null }\nfunction resolveWorkspaceOverlayLocked() { return false }\nfunction useChatWorkspaceProviderHealthState() { return null }\nfunction buildProviderHealthCacheKey() { return 'none' }\nfunction buildComposerCommands() { return [] }\nfunction pushChatSettingsRoute() { return null }\nfunction resolveFloatingNoticeTopOffset() { return 0 }\nconst FLOATING_NOTICE_TOP_GAP = 8\nconst AUTO_SCROLL_DELAY_MS = 96\nconst CONVERSATION_NAVIGATION_IDLE_HIDE_DELAY_MS = 1504\nconst CONVERSATION_NAVIGATION_INTERACTION_HIDE_DELAY_MS = 2200\nconst CONVERSATION_NAVIGATION_PROGRAMMATIC_LOCK_MS = 260\nconst DEFAULT_SETUP_REASONING_EFFORT = 'low'\nconst LONG_MESSAGE_LIST_ANIMATION_THRESHOLD = 48\nconst MESSAGE_LIST_ANDROID_DRAW_DISTANCE_MIN = 1600\nconst MESSAGE_LIST_MOMENTUM_ELIGIBILITY_MS = 240\nconst MESSAGE_LIST_TOUCH_PAGER_GESTURE_RELEASE_DELAY_MS = 112\nconst MODEL_VALIDATION_LOOKUP_LIMIT = 64\nconst QUICK_START_ACTION_HIT_SLOP = { top: 8, right: 8, bottom: 8, left: 8 }\nconst USER_SCROLL_PAUSE_THRESHOLD = 72\nfunction ChatScreenFrame() { return null }\nfunction renderConversationHeaderSpacer() { return null }\nfunction buildMessageListAccessibility() { return null }\nfunction buildMessageListExtraData() { return null }\nfunction resolveMessageListDrawDistance() { return null }\nfunction resolveMessageListMotion() { return null }\nfunction cancelProductModeTask() { return null }\nfunction useProductModeTaskStatus() { return null }\nfunction handoffMessageToProductMode() { return null }\nfunction useRuntimeRepairIntentActions() { return null }\nfunction useChatWorkspaceKeyboardState() { return null }\nfunction useChatCompressionToast() { return null }\nfunction useChatMessageSelectionController() { return null }\nfunction useChatMessageListScrollController() { return null }\nfunction copyChatMessageText() { return null }\nfunction deleteChatMessageWithConfirmation() { return null }\nfunction pickModelAccessSettings() { return null }\nfunction testConversationHeaderModel() { return null }\nfunction SkillVariableDialogBody() { return null }\nfunction buildPendingStreamingNotice() { return '' }\nfunction ConversationHealthBanner() { return null }\nfunction CompressionBanner() { return null }\nfunction MessageMultiSelectBar() { return null }\nfunction ConversationNavigationRail() { return null }\nfunction StreamingIntentSheet() { return null }\nfunction applyStreamingIntentDraft() { return true }\nfunction ProductModeTaskStatusCard() { return null }\nfunction ComposerToolButton() { return null }\nfunction ReasoningToolIcon() { return null }\nfunction QuickChoiceButton() { return null }\nfunction FloatingComposer() { return null }\nfunction FloatingChrome() { return null }\nconst FLOATING_CHROME_SAFE_AREA_GAP = 4\nfunction ChatSetupEmptyState() { return null }\n`, 'utf8')
     fs.appendFileSync(chatWorkspacePath, '\nfunction cancelConversationTask() { return null }\nfunction useConversationTaskStatus() { return null }\nfunction ConversationTaskStatusCard() { return null }\n', 'utf8')
     const duplicateHelperResult = collectArchitectureBoundaryAudit(tempRoot)
     assert.ok(
@@ -10559,10 +10488,6 @@ function runArchitectureBoundaryAuditSelfTest() {
       'architecture audit self-test blocks ChatWorkspace keyboard-state hook extraction regression'
     )
     assert.ok(
-      duplicateHelperResult.blockingIssues.some((item) => item.checkId === 'chat-workspace-extraction-boundary' && /ChatWorkspace defines local useChatSystemStatusNotification/.test(item.issue)),
-      'architecture audit self-test blocks ChatWorkspace system status notification hook extraction regression'
-    )
-    assert.ok(
       duplicateHelperResult.blockingIssues.some((item) => item.checkId === 'chat-workspace-extraction-boundary' && /ChatWorkspace defines local useChatCompressionToast/.test(item.issue)),
       'architecture audit self-test blocks ChatWorkspace compression toast hook extraction regression'
     )
@@ -10625,14 +10550,6 @@ function runArchitectureBoundaryAuditSelfTest() {
     assert.ok(
       duplicateHelperResult.blockingIssues.some((item) => item.checkId === 'chat-workspace-extraction-boundary' && /ChatWorkspace defines local FLOATING_CHROME_SAFE_AREA_GAP/.test(item.issue)),
       'architecture audit self-test blocks ChatWorkspace floating chrome layout constant extraction regression'
-    )
-    assert.ok(
-      duplicateHelperResult.blockingIssues.some((item) => item.checkId === 'chat-workspace-extraction-boundary' && /ChatWorkspace defines local FloatingControlOrb/.test(item.issue)),
-      'architecture audit self-test blocks ChatWorkspace floating control orb extraction regression'
-    )
-    assert.ok(
-      duplicateHelperResult.blockingIssues.some((item) => item.checkId === 'chat-workspace-extraction-boundary' && /ChatWorkspace defines local buildActiveControlOrbActions/.test(item.issue)),
-      'architecture audit self-test blocks ChatWorkspace control orb action extraction regression'
     )
     assert.ok(
       duplicateHelperResult.blockingIssues.some((item) => item.checkId === 'chat-workspace-extraction-boundary' && /ChatWorkspace defines local ChatSetupEmptyState/.test(item.issue)),
@@ -10920,15 +10837,11 @@ function runArchitectureBoundaryAuditSelfTest() {
 
     const chatActiveControlsLayerPath = path.join(tempRoot, 'src', 'components', 'chat', 'ChatActiveControlsLayer.tsx')
     const originalChatActiveControlsLayer = fs.readFileSync(chatActiveControlsLayerPath, 'utf8')
-    fs.writeFileSync(chatActiveControlsLayerPath, `${originalChatActiveControlsLayer}\nfunction MessageMultiSelectBar() { return null }\nfunction FloatingControlOrb() { return null }\n`, 'utf8')
+    fs.writeFileSync(chatActiveControlsLayerPath, `${originalChatActiveControlsLayer}\nfunction MessageMultiSelectBar() { return null }\n`, 'utf8')
     const controlsLayerDuplicateHelperResult = collectArchitectureBoundaryAudit(tempRoot)
     assert.ok(
       controlsLayerDuplicateHelperResult.blockingIssues.some((item) => item.checkId === 'chat-workspace-extraction-boundary' && /ChatActiveControlsLayer defines local MessageMultiSelectBar/.test(item.issue)),
       'architecture audit self-test blocks active controls layer multi-select regression'
-    )
-    assert.ok(
-      controlsLayerDuplicateHelperResult.blockingIssues.some((item) => item.checkId === 'chat-workspace-extraction-boundary' && /ChatActiveControlsLayer defines local FloatingControlOrb/.test(item.issue)),
-      'architecture audit self-test blocks active controls layer floating orb regression'
     )
     fs.writeFileSync(chatActiveControlsLayerPath, originalChatActiveControlsLayer, 'utf8')
 
@@ -10956,7 +10869,7 @@ function runArchitectureBoundaryAuditSelfTest() {
 
     const floatingComposerPath = path.join(tempRoot, 'src', 'components', 'chat', 'FloatingComposer.tsx')
     const originalFloatingComposer = fs.readFileSync(floatingComposerPath, 'utf8')
-    fs.writeFileSync(floatingComposerPath, `${originalFloatingComposer}\nfunction RuntimeRepairIntentCard() { return null }\nfunction ComposerToolButton() { return null }\nfunction buildModelQuickOptions() { return [] }\n`, 'utf8')
+    fs.writeFileSync(floatingComposerPath, `${originalFloatingComposer}\nfunction RuntimeRepairIntentCard() { return null }\nfunction ComposerToolButton() { return null }\n`, 'utf8')
     const floatingComposerDuplicateHelperResult = collectArchitectureBoundaryAudit(tempRoot)
     assert.ok(
       floatingComposerDuplicateHelperResult.blockingIssues.some((item) => item.checkId === 'chat-workspace-extraction-boundary' && /FloatingComposer defines local RuntimeRepairIntentCard/.test(item.issue)),
@@ -10965,10 +10878,6 @@ function runArchitectureBoundaryAuditSelfTest() {
     assert.ok(
       floatingComposerDuplicateHelperResult.blockingIssues.some((item) => item.checkId === 'chat-workspace-extraction-boundary' && /FloatingComposer defines local ComposerToolButton/.test(item.issue)),
       'architecture audit self-test blocks nested floating composer control extraction regression'
-    )
-    assert.ok(
-      floatingComposerDuplicateHelperResult.blockingIssues.some((item) => item.checkId === 'chat-workspace-extraction-boundary' && /FloatingComposer defines local buildModelQuickOptions/.test(item.issue)),
-      'architecture audit self-test blocks nested floating composer model selection extraction regression'
     )
     fs.writeFileSync(floatingComposerPath, originalFloatingComposer, 'utf8')
 
@@ -10991,16 +10900,6 @@ function runArchitectureBoundaryAuditSelfTest() {
       'architecture audit self-test blocks nested ChatWorkspace helper extraction regression'
     )
     fs.writeFileSync(conversationTaskStatusCardPath, originalConversationTaskStatusCard, 'utf8')
-
-    const chatSystemStatusNotificationPath = path.join(tempRoot, 'src', 'components', 'chat', 'chatSystemStatusNotification.ts')
-    const originalChatSystemStatusNotification = fs.readFileSync(chatSystemStatusNotificationPath, 'utf8')
-    fs.writeFileSync(chatSystemStatusNotificationPath, `${originalChatSystemStatusNotification}\nfunction previewSystemStatusMessage() { return '' }\n`, 'utf8')
-    const systemStatusDuplicateHelperResult = collectArchitectureBoundaryAudit(tempRoot)
-    assert.ok(
-      systemStatusDuplicateHelperResult.blockingIssues.some((item) => item.checkId === 'chat-workspace-extraction-boundary' && /chatSystemStatusNotification defines local previewSystemStatusMessage/.test(item.issue)),
-      'architecture audit self-test blocks nested system status notification preview extraction regression'
-    )
-    fs.writeFileSync(chatSystemStatusNotificationPath, originalChatSystemStatusNotification, 'utf8')
 
     const chatCompressionToastPath = path.join(tempRoot, 'src', 'components', 'chat', 'chatCompressionToast.ts')
     const originalChatCompressionToast = fs.readFileSync(chatCompressionToastPath, 'utf8')
@@ -11065,7 +10964,6 @@ function writeArchitectureBoundarySelfTestFixture(projectRoot) {
         "import { findLatestCompressionSummary, type CompressionSummary } from './compressionSummary'",
         "import { CompressionBanner, ConversationHealthBanner } from './ChatStatusBanners'",
         "import { buildPendingStreamingNotice, getMessageActivityLabel } from './messageActivityPreview'",
-        "import { useChatSystemStatusNotification } from './chatSystemStatusNotification'",
         "import { useRuntimeRepairIntentActions } from './runtimeRepairIntentActions'",
         "import { ChatScreenFrame, renderConversationHeaderSpacer } from './chatScreenFrame'",
         "import { MessageMultiSelectBar } from './MessageMultiSelectBar'",
@@ -11076,7 +10974,6 @@ function writeArchitectureBoundarySelfTestFixture(projectRoot) {
         "import { FloatingChrome } from './FloatingChrome'",
         "import { useChatFloatingChromeState } from './chatFloatingChromeState'",
         "import { FloatingComposer, type ComposerPanel } from './FloatingComposer'",
-        "import { FLOATING_CONTROL_ORB_GAP, FloatingControlOrb } from './FloatingControlOrb'",
         "import { ChatConversationEmptyState, ChatSetupEmptyState, type ChatBoundaryMemoryStatus } from './ChatEmptyState'",
         "import { buildAssistantNavigationItems, buildMessageScrollViewport, createEmptyMessageScrollViewport, getMessageItemType, shouldReplaceMessageScrollViewport, type AssistantNavigationItem, type AssistantNavigationScrollOptions, type MessageScrollViewport } from './messageListNavigation'",
         "import { ProgramErrorBanner } from './ProgramErrorBanner'",
@@ -11101,8 +10998,7 @@ function writeArchitectureBoundarySelfTestFixture(projectRoot) {
         '  activeActions.safeStopMessage(conversation.id)',
         '  useChatWorkspaceKeyboardState({ active: true, windowHeight: 720, windowWidth: 390, safeAreaBottom: 0 })',
         '  useChatWorkspaceAutoScroll({ active: true, autoStickToBottom, keyboardLift: 0, listRef, messageSignature: "empty" })',
-        '  const layoutState = useChatActiveWorkspaceLayoutState({ activeWindowWidth: 390, chromeHeight: 0, controlOrbOpen: false, goMemoryReview, goProviders, goSettings, markChromeActive, providerHealth: null, setChromeCollapsed, setChromeHeight, setComposerPanel, setControlOrbOpen, setShowOptions, showOptions: false, t, testingHeader: false, topChromeInset: 0, visualTopInset: 0 })',
-        '  useChatSystemStatusNotification({ active: true, activityLabel: "", enabled: true, isStreaming: false, t })',
+        '  const layoutState = useChatActiveWorkspaceLayoutState({ activeWindowWidth: 390, chromeHeight: 0, composerPanel: null, providerHealth: null, setChromeCollapsed, setChromeHeight, setComposerPanel, setShowOptions, showOptions: false, topChromeInset: 0, visualTopInset: 0 })',
         '  const messageSelectionController = useChatMessageSelectionController({ conversation, dialog, onApplyStarter, safeStopMessage, setActiveActionMessageId, t, updateConversation })',
         '  messageSelectionController.quoteMessage(message)',
         '  messageSelectionController.editUserMessage(message)',
@@ -11158,9 +11054,6 @@ function writeArchitectureBoundarySelfTestFixture(projectRoot) {
         '  const conversationTaskState = useConversationTaskStatus({ conversation })',
         '  cancelConversationTask({ conversation, stopStreaming: () => undefined, task: conversationTaskState.conversationTasks[0] })',
         '  const chrome = <FloatingChrome colors={colors} visualTopInset={0} collapsed={false} streaming={false} showOptions={false} mobileViewport={false} conversation={conversation} provider={provider} providerHealth={null} metrics={metrics} onBack={() => undefined} showBack={false} shellNavigation={false} topChromeInset={chromeDelay} onRestore={() => undefined} onCollapse={() => undefined} onSettings={() => undefined} onOpenModelPicker={() => undefined} testingHeader={false} switchableProviders={[]} onLayoutHeight={() => undefined} motion="none" modelAccessSettings={modelAccessSettings} settingsTransitionActive={false} />',
-        '  const activeOrbActions = layoutState.controlOrbActions',
-        '  const orbGap = FLOATING_CONTROL_ORB_GAP',
-        '  const orb = <FloatingControlOrb actions={activeOrbActions} bottomOffset={orbGap} open={false} onOpenChange={() => undefined} />',
         '  const chatBoundaryMemoryStatus = {} as ChatBoundaryMemoryStatus',
         '  const chatEmptyStateTitle = "Chat"',
         '  const setupEmptyState = <ChatSetupEmptyState title={chatEmptyStateTitle} multimodalPolicy={multimodalPolicy} memoryStatus={chatBoundaryMemoryStatus} />',
@@ -11222,12 +11115,11 @@ function writeArchitectureBoundarySelfTestFixture(projectRoot) {
         "import { ChatConversationEmptyState, type ChatBoundaryMemoryStatus } from './ChatEmptyState'",
         "import { ConversationTaskStatusCard } from './ConversationTaskStatusCard'",
         "import { FloatingComposer, type ComposerPanel } from './FloatingComposer'",
-        "import { FLOATING_CONTROL_ORB_GAP, FloatingControlOrb } from './FloatingControlOrb'",
         'export function ChatActiveWorkspaceView(props: ChatActiveWorkspaceViewProps) {',
         '  const composerOutputMode = "auto"',
         '  const layerProps = buildChatActiveWorkspaceLayerProps(props)',
         '  const activeMessageList = <ChatActiveMessageList conversation={conversation} />',
-        '  const chromeLayer = <ChatActiveChromeLayer showFloatingControlOrb={false} colors={colors} conversation={conversation} collapseChrome={() => undefined} onLayoutHeight={() => undefined} />',
+        '  const chromeLayer = <ChatActiveChromeLayer colors={colors} conversation={conversation} collapseChrome={() => undefined} onLayoutHeight={() => undefined} />',
         '  const composerDock = <ChatActiveComposerDock conversation={conversation} confirmSwitchModel={activeActions.confirmSwitchModel} />',
         '  const statusLayer = <ChatActiveStatusLayer conversation={conversation} activeConversationTaskCount={1} chromeHeight={0} providerHealthTopOffset={0} confirmActionFromMessage={activeActions.confirmActionFromMessage} repairAgentEvidenceFromMessage={activeActions.repairAgentEvidenceFromMessage} safeStopMessage={activeActions.safeStopMessage} testHeaderModel={activeActions.testHeaderModel} />',
         '  copyChatMessageText({ dialog, message, t })',
@@ -11245,7 +11137,7 @@ function writeArchitectureBoundarySelfTestFixture(projectRoot) {
         '  const listDrawDistance = resolveMessageListDrawDistance("android", 720)',
         '  const listExtraData = buildMessageListExtraData({ activeActionMessageId: null, messageListMotion: listMotion, conversationTasks: [], multiSelectActive: false, regenerableAssistantId: undefined, selectedMessageSignature: "" })',
         '  const listAccessibility = buildMessageListAccessibility({ activityLabel: "", isStreaming: false, messageCount: 0, t })',
-        '  const controlsLayer = <ChatActiveControlsLayer composerBottomInset={0} controlOrbActions={layoutState.controlOrbActions} controlOrbOpen={false} keyboardLift={0} messageSelectionController={messageSelectionController} setControlOrbOpen={() => undefined} showFloatingControlOrb={true} />',
+        '  const controlsLayer = <ChatActiveControlsLayer composerBottomInset={0} keyboardLift={0} messageSelectionController={messageSelectionController} />',
         '  const rail = <ConversationNavigationRail items={[]} activeIndex={0} visible={true} topOffset={0} bottomOffset={0} onSelect={() => undefined} onInteractionStart={() => undefined} onInteractionEnd={() => undefined} />',
         '  const streamingIntent = "guide"',
         '  const streamingSheet = <StreamingIntentSheet text="pending" pendingText="queued" onSelect={(intent) => streamingIntent || intent} />',
@@ -11256,9 +11148,7 @@ function writeArchitectureBoundarySelfTestFixture(projectRoot) {
         '  const runtimeRepairSubmitKey = "repair"',
         '  const composerPanel = null as ComposerPanel',
         '  const element = <FloatingComposer panel={composerPanel} requestedOutput={composerOutputMode} externalSubmitKey={runtimeRepairSubmitKey} />',
-        '  const activeOrbActions = layoutState.controlOrbActions',
         '  const frame = <ChatScreenFrame embedded={false} backgroundState={backgroundState} compactViewport={false} />',
-        '  const orb = <FloatingControlOrb actions={[]} bottomOffset={FLOATING_CONTROL_ORB_GAP} open={false} onOpenChange={() => undefined} />',
         '  const messageSelection = <MessageMultiSelectBar count={1} bottomOffset={0} onCancel={() => undefined} onCopy={() => undefined} onExport={() => undefined} onDelete={() => undefined} />',
         '  return frame',
         '}',
@@ -11320,7 +11210,7 @@ function writeArchitectureBoundarySelfTestFixture(projectRoot) {
         "import type { ChatActiveChromeLayerProps } from './ChatActiveChromeLayer'",
         "import type { ChatActiveWorkspaceViewProps } from './chatActiveWorkspaceLayerPropTypes'",
         'export function buildChatActiveChromeLayerProps(props: ChatActiveWorkspaceViewProps): ChatActiveChromeLayerProps {',
-        '  return { conversation: props.conversation, showFloatingControlOrb: props.layoutState.showFloatingControlOrb }',
+        '  return { conversation: props.conversation }',
         '}',
       ].join('\n'),
     ],
@@ -11350,7 +11240,7 @@ function writeArchitectureBoundarySelfTestFixture(projectRoot) {
         "import type { ChatActiveControlsLayerProps } from './ChatActiveControlsLayer'",
         "import type { ChatActiveWorkspaceViewProps } from './chatActiveWorkspaceLayerPropTypes'",
         'export function buildChatActiveControlsLayerProps(props: ChatActiveWorkspaceViewProps): ChatActiveControlsLayerProps {',
-        '  return { composerBottomInset: props.composerBottomInset, controlOrbActions: props.layoutState.controlOrbActions }',
+        '  return { composerBottomInset: props.composerBottomInset }',
         '}',
       ].join('\n'),
     ],
@@ -11365,7 +11255,7 @@ function writeArchitectureBoundarySelfTestFixture(projectRoot) {
         "import type { ChatActiveWorkspaceProps } from './chatActiveWorkspaceTypes'",
         'export function useChatActiveWorkspaceControllers(props: ChatActiveWorkspaceProps) {',
         '  const activeActions = useChatActiveWorkspaceActions({ activeConversation: conversation, dialog, goSettings, hydrateProviderKey, modelAccessSettings, onApplyStarter, setProviderHealth, setShowOptions, setTestingHeader, settings, switchConversationModel, t, testingHeader: false, updateConversation, updateProvider })',
-        '  const layoutState = useChatActiveWorkspaceLayoutState({ activeWindowWidth: 390, chromeHeight: 0, controlOrbOpen: false, goMemoryReview, goProviders, goSettings, markChromeActive, providerHealth: null, setChromeCollapsed, setChromeHeight, setComposerPanel, setControlOrbOpen, setShowOptions, showOptions: false, t, testingHeader: false, topChromeInset: 0, visualTopInset: 0 })',
+        '  const layoutState = useChatActiveWorkspaceLayoutState({ activeWindowWidth: 390, chromeHeight: 0, composerPanel: null, providerHealth: null, setChromeCollapsed, setChromeHeight, setComposerPanel, setShowOptions, showOptions: false, topChromeInset: 0, visualTopInset: 0 })',
         '  const messageSelectionController = useChatMessageSelectionController({ conversation, dialog, onApplyStarter, safeStopMessage: activeActions.safeStopMessage, setActiveActionMessageId, t, updateConversation })',
         '  const scrollController = useChatMessageListScrollController({ activeActionMessageId: null, autoStickToBottom, chromeCollapsed: false, collapseChrome: layoutState.collapseChrome, conversationId: conversation.id, lastScrollOffset, listRef, messageListBottomPadding: 0, messageListTopInset: layoutState.messageListTopInset, messages, onCloseOverlays: layoutState.closeOptionsFromBackground, pagerGesturePersistentlyLocked: false, setActiveActionMessageId, setPagerGestureLocked })',
         '  const conversationTaskState = useConversationTaskStatus({ conversation })',
@@ -11378,11 +11268,8 @@ function writeArchitectureBoundarySelfTestFixture(projectRoot) {
       [
         "import { FloatingChrome } from './FloatingChrome'",
         "import type { ChatActiveWorkspaceProps } from './chatActiveWorkspaceTypes'",
-        'export interface ChatActiveChromeLayerProps extends Pick<ChatActiveWorkspaceProps, "colors"> {',
-        '  showFloatingControlOrb: boolean',
-        '}',
+        'export interface ChatActiveChromeLayerProps extends Pick<ChatActiveWorkspaceProps, "colors"> {}',
         'export function ChatActiveChromeLayer() {',
-        '  if (showFloatingControlOrb) return null',
         '  const chrome = <FloatingChrome colors={colors} visualTopInset={0} collapsed={false} streaming={false} showOptions={false} mobileViewport={false} conversation={conversation} provider={provider} providerHealth={null} metrics={metrics} onBack={() => undefined} showBack={false} shellNavigation={false} topChromeInset={0} onRestore={() => undefined} onCollapse={() => undefined} onSettings={() => undefined} onOpenModelPicker={() => undefined} testingHeader={false} switchableProviders={[]} onLayoutHeight={() => undefined} motion="none" modelAccessSettings={modelAccessSettings} settingsTransitionActive={false} />',
         '  return chrome',
         '}',
@@ -11439,16 +11326,12 @@ function writeArchitectureBoundarySelfTestFixture(projectRoot) {
     [
       'src/components/chat/ChatActiveControlsLayer.tsx',
       [
-        "import { FLOATING_CONTROL_ORB_GAP, FloatingControlOrb, type FloatingControlOrbAction } from './FloatingControlOrb'",
         "import { MessageMultiSelectBar } from './MessageMultiSelectBar'",
         "import type { ChatActiveWorkspaceProps } from './chatActiveWorkspaceTypes'",
-        'export interface ChatActiveControlsLayerProps extends Pick<ChatActiveWorkspaceProps, "composerBottomInset"> {',
-        '  controlOrbActions: FloatingControlOrbAction[]',
-        '}',
+        'export interface ChatActiveControlsLayerProps extends Pick<ChatActiveWorkspaceProps, "composerBottomInset"> {}',
         'export function ChatActiveControlsLayer() {',
         '  const messageSelection = <MessageMultiSelectBar count={1} bottomOffset={0} onCancel={() => undefined} onCopy={() => undefined} onExport={() => undefined} onDelete={() => undefined} />',
-        '  const orb = <FloatingControlOrb actions={[]} bottomOffset={FLOATING_CONTROL_ORB_GAP} open={false} onOpenChange={() => undefined} />',
-        '  return orb',
+        '  return messageSelection',
         '}',
       ].join('\n'),
     ],
@@ -11666,23 +11549,19 @@ function writeArchitectureBoundarySelfTestFixture(projectRoot) {
         'export const MESSAGE_LIST_MOMENTUM_ELIGIBILITY_MS = 240',
         'export const MESSAGE_LIST_TOUCH_PAGER_GESTURE_RELEASE_DELAY_MS = 112',
         'export const MODEL_VALIDATION_LOOKUP_LIMIT = 64',
-        'export const CHAT_USES_FLOATING_CONTROL_ORB = true',
         'export const USER_SCROLL_PAUSE_THRESHOLD = 72',
       ].join('\n'),
     ],
     [
       'src/components/chat/chatActiveWorkspaceLayoutState.ts',
-      [
-        "import { resolveProductMobileMessageListLayout } from '@/presentation/layout/productMobileLayout'",
-        "import { FLOATING_CHROME_SAFE_AREA_GAP } from './FloatingChrome'",
-        "import { buildActiveControlOrbActions } from './chatControlOrbActions'",
-        "import { FLOATING_NOTICE_TOP_GAP, resolveFloatingNoticeTopOffset } from './chatNoticeLayout'",
-        "import { CHAT_USES_FLOATING_CONTROL_ORB } from './chatWorkspaceConstants'",
-        'export function useChatActiveWorkspaceLayoutState() {',
-        '  const topOffset = resolveFloatingNoticeTopOffset({ visualTopInset: 0, topChromeInset: 0, chromeSafeAreaGap: FLOATING_CHROME_SAFE_AREA_GAP, hasLocalChrome: true })',
-        '  const layout = resolveProductMobileMessageListLayout(390, { topChromeInset: 0, chromeHeight: 0 })',
-        '  const controlOrbActions = buildActiveControlOrbActions()',
-        '  return { controlOrbActions, providerHealthTopOffset: Math.max(topOffset, FLOATING_NOTICE_TOP_GAP), showFloatingControlOrb: CHAT_USES_FLOATING_CONTROL_ORB, messageListLayout: layout, messageListTopInset: layout.topInset }',
+        [
+          "import { resolveProductMobileMessageListLayout } from '@/presentation/layout/productMobileLayout'",
+          "import { FLOATING_CHROME_SAFE_AREA_GAP } from './FloatingChrome'",
+          "import { FLOATING_NOTICE_TOP_GAP, resolveFloatingNoticeTopOffset } from './chatNoticeLayout'",
+          'export function useChatActiveWorkspaceLayoutState() {',
+          '  const topOffset = resolveFloatingNoticeTopOffset({ visualTopInset: 0, topChromeInset: 0, chromeSafeAreaGap: FLOATING_CHROME_SAFE_AREA_GAP, hasLocalChrome: true })',
+          '  const layout = resolveProductMobileMessageListLayout(390, { topChromeInset: 0, chromeHeight: 0 })',
+          '  return { providerHealthTopOffset: Math.max(topOffset, FLOATING_NOTICE_TOP_GAP), messageListLayout: layout, messageListTopInset: layout.topInset }',
         '}',
       ].join('\n'),
     ],
@@ -11843,8 +11722,10 @@ function writeArchitectureBoundarySelfTestFixture(projectRoot) {
         'export function ConversationsScreenContent() {',
         '  const currentId = useChatStore((state) => state.currentId)',
         '  const select = useChatStore((state) => state.select)',
-        '  const id = create(provider.id, model)',
-        '  select(id)',
+        '  const createConversation = useCallback(() => {',
+        '    select(null)',
+        '    navigateToChat()',
+        '  }, [select])',
         '  const openConversation = () => select(id)',
         '  return id',
         '}',
@@ -11852,19 +11733,17 @@ function writeArchitectureBoundarySelfTestFixture(projectRoot) {
     ],
     [
       'src/components/chat/ChatSetupWorkspace.tsx',
-      [
-        "import { CompressionBanner } from './ChatStatusBanners'",
-        "import { buildSetupControlOrbActions } from './chatControlOrbActions'",
-        "import { CHAT_USES_FLOATING_CONTROL_ORB, QUICK_START_ACTION_HIT_SLOP } from './chatWorkspaceConstants'",
-        "import { ChatSetupEmptyState, type ChatBoundaryMemoryStatus } from './ChatEmptyState'",
-        "import type { ChatSetupWorkspaceState } from './chatSetupWorkspaceState'",
+        [
+          "import { CompressionBanner } from './ChatStatusBanners'",
+          "import { QUICK_START_ACTION_HIT_SLOP } from './chatWorkspaceConstants'",
+          "import { ChatSetupEmptyState, type ChatBoundaryMemoryStatus } from './ChatEmptyState'",
+          "import type { ChatSetupWorkspaceState } from './chatSetupWorkspaceState'",
         'export function ChatSetupWorkspace() {',
         '  const state = {} as ChatSetupWorkspaceState',
-        '  const memory = {} as ChatBoundaryMemoryStatus',
-        '  const banner = <CompressionBanner compression={{}} onOpenDetails={() => undefined} />',
-        '  const empty = <ChatSetupEmptyState title="Chat" multimodalPolicy={policy} memoryStatus={memory} />',
-        '  const actions = buildSetupControlOrbActions({ goMemoryReview, goProviders, goSettings, openSetupFullModelPanel: state.openSetupFullModelPanel, setComposerPanel, setControlOrbOpen, t })',
-        '  return `${CHAT_USES_FLOATING_CONTROL_ORB}${QUICK_START_ACTION_HIT_SLOP.top}${banner}${empty}${actions}`',
+          '  const memory = {} as ChatBoundaryMemoryStatus',
+          '  const banner = <CompressionBanner compression={{}} onOpenDetails={() => undefined} />',
+          '  const empty = <ChatSetupEmptyState title="Chat" multimodalPolicy={policy} memoryStatus={memory} />',
+          '  return `${QUICK_START_ACTION_HIT_SLOP.top}${banner}${empty}${state.openSetupFullModelPanel}`',
         '}',
       ].join('\n'),
     ],
@@ -11961,15 +11840,6 @@ function writeArchitectureBoundarySelfTestFixture(projectRoot) {
         'export function getMessageActivityLabel() {}',
         'export function previewPendingText() {}',
         'export function previewSystemStatusMessage() {}',
-      ].join('\n'),
-    ],
-    [
-      'src/components/chat/chatSystemStatusNotification.ts',
-      [
-        "import { previewSystemStatusMessage } from './messageActivityPreview'",
-        'export function useChatSystemStatusNotification() {',
-        '  previewSystemStatusMessage(message, t)',
-        '}',
       ].join('\n'),
     ],
     [
@@ -12114,22 +11984,6 @@ function writeArchitectureBoundarySelfTestFixture(projectRoot) {
       ].join('\n'),
     ],
     [
-      'src/components/chat/FloatingControlOrb.tsx',
-      [
-        'export const FLOATING_CONTROL_ORB_GAP = 8',
-        'export interface FloatingControlOrbAction {}',
-        'export function FloatingControlOrb() { return null }',
-      ].join('\n'),
-    ],
-    [
-      'src/components/chat/chatControlOrbActions.ts',
-      [
-        "import { type FloatingControlOrbAction } from './FloatingControlOrb'",
-        'export function buildActiveControlOrbActions(): FloatingControlOrbAction[] { return [] }',
-        'export function buildSetupControlOrbActions(): FloatingControlOrbAction[] { return [] }',
-      ].join('\n'),
-    ],
-    [
       'src/components/chat/chatChromeSurfaces.ts',
       [
         'export function resolveChatChromeBorder() {}',
@@ -12175,15 +12029,12 @@ function writeArchitectureBoundarySelfTestFixture(projectRoot) {
     [
       'src/components/chat/FloatingComposer.tsx',
       [
-        "import { buildModelQuickOptions, type ModelAccessSettings } from './chatModelSelection'",
         "import { ComposerToolButton, QuickChoiceButton, ReasoningToolIcon } from './FloatingComposerControls'",
         "import { RuntimeRepairIntentCard, type RuntimeRepairIntent } from './RuntimeRepairIntentCard'",
         "export type ComposerPanel = 'model' | 'reasoning' | 'prompt' | 'more' | null",
         'export function FloatingComposer() {',
         "  const outputLabel = t('chat.quickOutput')",
-        '  const settings = {} as ModelAccessSettings',
         '  const intent = {} as RuntimeRepairIntent',
-        '  buildModelQuickOptions([], settings)',
         '  ComposerToolButton()',
         '  QuickChoiceButton()',
         '  ReasoningToolIcon()',
@@ -12256,7 +12107,7 @@ function writeArchitectureBoundarySelfTestFixture(projectRoot) {
         '  isAgentWorkflowEnvelopeTrace(trace)',
         "  const reviewWithContext = t('messageBubble.reviewWorkflowSettingsWithContext')",
         "  const review = t('messageBubble.reviewWorkflowSettings')",
-        '  const button = <ActionIconButton label={reviewWorkflowSettingsLabel} />',
+        "  const button = action('workflow-settings', reviewWorkflowSettingsLabel, 'settings-sliders', onConfigure)",
         '  const canUndo = hasAndroidUndoFollowUp(processTraces)',
         '  function hasAndroidUndoFollowUp(traces) { return traces.some(isAndroidUndoFollowUpTrace) }',
         '  function isAndroidUndoFollowUpTrace(trace) { return isWorkflowAndroidUndoFollowUpTrace(trace) && metadata.androidUndoRequiresVisibleConfirmation === true }',
@@ -13108,11 +12959,11 @@ function writeArchitectureBoundarySelfTestFixture(projectRoot) {
       [
         'interface ChatState {',
         'currentId: string | null',
-        'select: (id: string) => void',
+        'select: (id: string | null) => void',
         '}',
         'const currentId = await readActiveConversationSelection()',
         'resolveLoadedActiveConversationId(conversations, currentId)',
-        'set({ conversations: [], currentId: null, isLoading: false })',
+        'set({ conversations: [], draftConversationIds: new Set<string>(), currentId: null, isLoading: false })',
         'await writeActiveConversationSelection(null)',
         'delete: (id: string) => {',
         'cancelConversationAssistantDetachedWork(id)',
@@ -15858,12 +15709,17 @@ function writeArchitectureBoundarySelfTestFixture(projectRoot) {
         "updatePositiveInteger('agentWorkflowMaxSteps', value, 3, 1, 8)",
         "updatePositiveInteger('agentWorkflowMaxToolCallsPerStep', value, 1, 1, 3)",
         "updatePositiveInteger('agentWorkflowOutputCharLimit', value, 4800, 512, 12000)",
-        'runtimeDiagnosticTimeline',
         'RuntimeRepairTaskActions',
         'function openRuntimeRepairTask() {}',
         'settings.sessionAffinityEnabled === true',
         'loadPluginManifestCatalogSnapshot',
         'emitPluginManifestCatalogSnapshotEvent',
+      ].join('\n'),
+    ],
+    [
+      'src/components/settings/RuntimeDiagnosticsDetails.tsx',
+      [
+        'runtimeDiagnosticTimeline',
         'runtimeDiagnosticPluginCatalog',
         'runtimeDiagnosticPerformance',
       ].join('\n'),
@@ -15949,6 +15805,10 @@ function writeArchitectureBoundarySelfTestFixture(projectRoot) {
     ],
     [
       'app/source.tsx',
+      "import { createLazyComponent } from '@/utils/lazyLoad'\nexport default createLazyComponent(() => import('@/presentation/features/conversations/SourceDetailScreen'))\n",
+    ],
+    [
+      'src/presentation/features/conversations/SourceDetailScreen.tsx',
       [
         "const recoveryLabel = t('source.agentRecovery')",
         'function buildProcessTraceGroups() {}',
@@ -16254,7 +16114,16 @@ function writeArchitectureBoundarySelfTestFixture(projectRoot) {
       'app/chat/[id].tsx',
       [
         'select(conversation.id)',
+        "const RuntimeRepairConversationWorkspace = createLazyComponent(() => import('@/presentation/features/conversations/RuntimeRepairConversationWorkspace'))",
+        "const isRuntimeRepair = routeParamText(params.source) === 'runtime-repair'",
+        '<RuntimeRepairConversationWorkspace />',
         '<ChatWorkspace />',
+      ].join('\n'),
+    ],
+    [
+      'src/presentation/features/conversations/RuntimeRepairConversationWorkspace.tsx',
+      [
+        'export function RuntimeRepairConversationWorkspace() {}',
         'function buildRuntimeRepairIntent() {}',
         'const RUNTIME_REPAIR_REPLAY_PAYLOAD_SCHEMA = "islemind.runtime-repair.replay.v1"',
         'function buildRuntimeRepairReplayPayloadJson() {}',

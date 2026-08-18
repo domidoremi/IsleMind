@@ -4,7 +4,10 @@ import {
   type ProviderCompactStateDatabase,
 } from '@/modules/providers'
 import { scheduleSqliteDatabaseOperation } from '@/platform/storage'
-import { shouldUseSqliteWebFallback, sqliteWebFallbackDb } from '@/services/sqliteFallback'
+import {
+  shouldUseSqliteWebFallback,
+  sqliteWebFallbackDb,
+} from '@/platform/storage/sqliteFallback'
 
 export type { CompactStateRecord } from '@/modules/providers'
 

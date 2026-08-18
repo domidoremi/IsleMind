@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { View } from 'react-native'
 import { useTranslation } from 'react-i18next'
 
@@ -57,6 +57,8 @@ export function ChatActiveStatusLayer({
   const { t } = useTranslation()
   const conversationError = useChatStore((state) => state.error)
   const setError = useChatStore((state) => state.setError)
+  const cancellingTaskIdRef = useRef<string | null>(null)
+  const [cancellingTaskId, setCancellingTaskId] = useState<string | null>(null)
   const incomingProgramError = conversationError && !isConversationErrorProjected(activeConversation, conversationError)
     ? conversationError
     : null
@@ -72,6 +74,35 @@ export function ChatActiveStatusLayer({
     const dismissedError = programError
     setProgramError(null)
     if (dismissedError && conversationError === dismissedError) setError(null)
+  }
+
+  function reportTaskCancellationFailure() {
+    const message = t('chat.stopFailedMessage')
+    setProgramError(message)
+    setError(message)
+  }
+
+  async function cancelPrimaryConversationTask() {
+    const task = primaryConversationTask
+    if (!task || cancellingTaskIdRef.current) return
+
+    cancellingTaskIdRef.current = task.id
+    setCancellingTaskId(task.id)
+    try {
+      const outcome = await cancelConversationTask({
+        conversation: activeConversation,
+        stopStreaming: safeStopMessage,
+        task,
+      })
+      if (outcome === 'failed') reportTaskCancellationFailure()
+    } catch {
+      reportTaskCancellationFailure()
+    } finally {
+      if (cancellingTaskIdRef.current === task.id) {
+        cancellingTaskIdRef.current = null
+        setCancellingTaskId(null)
+      }
+    }
   }
 
   return (
@@ -93,13 +124,8 @@ export function ChatActiveStatusLayer({
           message={primaryConversationTaskMessage}
           topOffset={Math.max(providerHealthTopOffset, chromeAwareTopOffset)}
           compact={compactViewport}
-          onCancel={() => {
-            void cancelConversationTask({
-              conversation: activeConversation,
-              stopStreaming: safeStopMessage,
-              task: primaryConversationTask,
-            })
-          }}
+          cancelling={cancellingTaskId === primaryConversationTask.id}
+          onCancel={cancelPrimaryConversationTask}
           onRepairAgentEvidence={repairAgentEvidenceFromMessage}
           onConfirmAction={confirmActionFromMessage}
         />

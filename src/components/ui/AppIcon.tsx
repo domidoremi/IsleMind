@@ -1,97 +1,94 @@
 import type { ComponentType } from 'react'
 import type { StyleProp, TextStyle } from 'react-native'
 import type { LucideProps } from 'lucide-react-native'
-import {
-  Activity,
-  ArrowDown,
-  ArrowUp,
-  ArrowRight,
-  AtSign,
-  BookOpenText,
-  Bot,
-  Brain,
-  BrainCircuit,
-  BrainCog,
-  Camera,
-  ChartNoAxesColumnIncreasing,
-  Check,
-  ChevronDown,
-  ChevronLeft,
-  ChevronRight,
-  CircleStop,
-  ClipboardPaste,
-  Cloud,
-  Compass,
-  Copy,
-  Cpu,
-  DatabaseZap,
-  Download,
-  Earth,
-  Ellipsis,
-  ExternalLink,
-  FileText,
-  GitBranch,
-  GripVertical,
-  HeartPulse,
-  History,
-  House,
-  Image,
-  Import,
-  Info,
-  Key,
-  KeySquare,
-  Layers,
-  Leaf,
-  ListChecks,
-  LoaderCircle,
-  Menu,
-  Lock,
-  Map,
-  MessageSquare,
-  MessageSquarePlus,
-  MessagesSquare,
-  Mic,
-  Moon,
-  Network,
-  NotebookPen,
-  PanelBottom,
-  PanelLeft,
-  PanelsTopLeft,
-  Paperclip,
-  Plus,
-  Power,
-  RefreshCw,
-  Search,
-  SearchCheck,
-  SendHorizontal,
-  Settings2,
-  Shield,
-  ShoppingBag,
-  Sigma,
-  Slash,
-  SlidersHorizontal,
-  SlidersVertical,
-  Smartphone,
-  Sparkles,
-  Split,
-  SquarePen,
-  SquareTerminal,
-  Star,
-  Sun,
-  Table2,
-  Terminal,
-  ToggleLeft,
-  ToggleRight,
-  Trash2,
-  TriangleAlert,
-  Undo2,
-  Upload,
-  Volume2,
-  Workflow,
-  Wrench,
-  X,
-  Zap,
-} from 'lucide-react-native'
+import Activity from 'lucide-react-native/icons/activity'
+import ArrowDown from 'lucide-react-native/icons/arrow-down'
+import ArrowRight from 'lucide-react-native/icons/arrow-right'
+import ArrowUp from 'lucide-react-native/icons/arrow-up'
+import AtSign from 'lucide-react-native/icons/at-sign'
+import BookOpenText from 'lucide-react-native/icons/book-open-text'
+import Bot from 'lucide-react-native/icons/bot'
+import Brain from 'lucide-react-native/icons/brain'
+import BrainCircuit from 'lucide-react-native/icons/brain-circuit'
+import BrainCog from 'lucide-react-native/icons/brain-cog'
+import Camera from 'lucide-react-native/icons/camera'
+import ChartNoAxesColumnIncreasing from 'lucide-react-native/icons/chart-no-axes-column-increasing'
+import Check from 'lucide-react-native/icons/check'
+import ChevronDown from 'lucide-react-native/icons/chevron-down'
+import ChevronLeft from 'lucide-react-native/icons/chevron-left'
+import ChevronRight from 'lucide-react-native/icons/chevron-right'
+import CircleStop from 'lucide-react-native/icons/circle-stop'
+import ClipboardPaste from 'lucide-react-native/icons/clipboard-paste'
+import Cloud from 'lucide-react-native/icons/cloud'
+import Compass from 'lucide-react-native/icons/compass'
+import Copy from 'lucide-react-native/icons/copy'
+import Cpu from 'lucide-react-native/icons/cpu'
+import DatabaseZap from 'lucide-react-native/icons/database-zap'
+import Download from 'lucide-react-native/icons/download'
+import Earth from 'lucide-react-native/icons/earth'
+import Ellipsis from 'lucide-react-native/icons/ellipsis'
+import ExternalLink from 'lucide-react-native/icons/external-link'
+import FileText from 'lucide-react-native/icons/file-text'
+import GitBranch from 'lucide-react-native/icons/git-branch'
+import GripVertical from 'lucide-react-native/icons/grip-vertical'
+import HeartPulse from 'lucide-react-native/icons/heart-pulse'
+import History from 'lucide-react-native/icons/rotate-ccw-clock'
+import House from 'lucide-react-native/icons/house'
+import Image from 'lucide-react-native/icons/image'
+import Import from 'lucide-react-native/icons/import'
+import Info from 'lucide-react-native/icons/info'
+import Key from 'lucide-react-native/icons/key'
+import KeySquare from 'lucide-react-native/icons/key-square'
+import Layers from 'lucide-react-native/icons/layers'
+import Leaf from 'lucide-react-native/icons/leaf'
+import ListChecks from 'lucide-react-native/icons/list-checks'
+import LoaderCircle from 'lucide-react-native/icons/loader-circle'
+import Lock from 'lucide-react-native/icons/lock'
+import Map from 'lucide-react-native/icons/map'
+import Menu from 'lucide-react-native/icons/menu'
+import MessageSquare from 'lucide-react-native/icons/message-square'
+import MessageSquarePlus from 'lucide-react-native/icons/message-square-plus'
+import MessagesSquare from 'lucide-react-native/icons/messages-square'
+import Mic from 'lucide-react-native/icons/mic'
+import Moon from 'lucide-react-native/icons/moon'
+import Network from 'lucide-react-native/icons/network'
+import NotebookPen from 'lucide-react-native/icons/notebook-pen'
+import PanelBottom from 'lucide-react-native/icons/panel-bottom'
+import PanelLeft from 'lucide-react-native/icons/panel-left'
+import Paperclip from 'lucide-react-native/icons/paperclip'
+import Plus from 'lucide-react-native/icons/plus'
+import Power from 'lucide-react-native/icons/power'
+import RefreshCw from 'lucide-react-native/icons/refresh-cw'
+import Search from 'lucide-react-native/icons/search'
+import SearchCheck from 'lucide-react-native/icons/search-check'
+import SendHorizontal from 'lucide-react-native/icons/send-horizontal'
+import Settings2 from 'lucide-react-native/icons/settings-2'
+import Shield from 'lucide-react-native/icons/shield'
+import ShoppingBag from 'lucide-react-native/icons/shopping-bag'
+import Sigma from 'lucide-react-native/icons/sigma'
+import Slash from 'lucide-react-native/icons/slash'
+import SlidersHorizontal from 'lucide-react-native/icons/sliders-horizontal'
+import SlidersVertical from 'lucide-react-native/icons/sliders-vertical'
+import Smartphone from 'lucide-react-native/icons/smartphone'
+import Sparkles from 'lucide-react-native/icons/sparkles'
+import Split from 'lucide-react-native/icons/split'
+import SquarePen from 'lucide-react-native/icons/square-pen'
+import SquareTerminal from 'lucide-react-native/icons/square-terminal'
+import Star from 'lucide-react-native/icons/star'
+import Sun from 'lucide-react-native/icons/sun'
+import Table2 from 'lucide-react-native/icons/table-2'
+import Terminal from 'lucide-react-native/icons/terminal'
+import ToggleLeft from 'lucide-react-native/icons/toggle-left'
+import ToggleRight from 'lucide-react-native/icons/toggle-right'
+import Trash2 from 'lucide-react-native/icons/trash-2'
+import TriangleAlert from 'lucide-react-native/icons/triangle-alert'
+import Undo2 from 'lucide-react-native/icons/undo-2'
+import Upload from 'lucide-react-native/icons/upload'
+import Volume2 from 'lucide-react-native/icons/volume-2'
+import Workflow from 'lucide-react-native/icons/workflow'
+import Wrench from 'lucide-react-native/icons/wrench'
+import X from 'lucide-react-native/icons/x'
+import Zap from 'lucide-react-native/icons/zap'
 import { useAppTheme } from '@/hooks/useAppTheme'
 
 type LucideIcon = ComponentType<LucideProps>

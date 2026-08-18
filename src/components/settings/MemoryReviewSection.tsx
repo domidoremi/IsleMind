@@ -2,7 +2,7 @@ import { useState, type ReactNode } from 'react'
 import { Text, View } from 'react-native'
 import { MotiView } from 'moti'
 import { useTranslation } from 'react-i18next'
-import { IsleChip, IsleField, IslePressable } from '@/components/ui/isle'
+import { ISLE_MIN_TOUCH_TARGET, IsleChip, IsleField, IslePressable } from '@/components/ui/isle'
 import { AppIcon } from '@/components/ui/AppIcon'
 import { useAppTheme } from '@/hooks/useAppTheme'
 import { formatMemoryMeta, memoryReviewFocusKey } from '@/services/contextAssetFormatters'
@@ -124,7 +124,7 @@ export function MemoryReviewSection({
             accessibilityState={{ expanded: reviewVisible }}
             onPress={() => setReviewOpen((value) => !value)}
             testID="memory-review-disclosure"
-            style={{ minHeight: 40, flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 8, paddingHorizontal: 12, ...secondaryActionSurface() }}
+            style={{ minHeight: ISLE_MIN_TOUCH_TARGET, flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 8, paddingHorizontal: 12, ...secondaryActionSurface() }}
           >
             <AppIcon name="memory-brain" color={colors.textTertiary} size={15} />
             <View style={{ flex: 1, minWidth: 0 }}>
@@ -235,7 +235,7 @@ export function MemoryReviewSection({
             accessibilityState={{ expanded: filtersVisible }}
             onPress={() => setFiltersOpen((value) => !value)}
             testID="memory-filter-disclosure"
-            style={{ minHeight: 40, flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 8 }}
+            style={{ minHeight: ISLE_MIN_TOUCH_TARGET, flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 8 }}
           >
             <AppIcon name="filter" color={colors.textTertiary} size={15} />
             <View style={{ flex: 1, minWidth: 0 }}>

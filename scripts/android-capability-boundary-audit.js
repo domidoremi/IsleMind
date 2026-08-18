@@ -178,6 +178,21 @@ async function assertRuntimeAuditBoundary({ androidTools, toolManifests }) {
   assert.equal(runtimeAuditEntries.length, 1, 'Android execution must append exactly one runtime audit record.')
   assert.equal(runtimeAuditEntries[0].event, 'android.operation.audit')
   assert.equal(runtimeAuditEntries[0].data.toolId, scanTool.id)
+
+  const notificationTool = toolManifests.find((tool) => tool.id === 'android:notifications.open_settings')
+  assert.ok(notificationTool, 'Android notification settings manifest is required for the injected-port probe.')
+  let openedTarget = null
+  const notificationResult = await androidTools.executeAndroidDeviceTool(notificationTool, { target: 'promoted' }, {
+    runtimeLog: { enabled: true },
+    openStatusNotificationSettings: async (target) => {
+      openedTarget = target
+      return { opened: true, target, reason: 'opened' }
+    },
+  })
+  assert.equal(notificationResult.observation.ok, true, 'The task runtime can inject the admitted notification settings port.')
+  assert.equal(openedTarget, 'promoted', 'The injected notification settings port receives the normalized target.')
+  assert.equal(notificationResult.observation.metadata?.androidOperationAudit?.operationKind, 'notification-settings-intent')
+  assert.equal(runtimeAuditEntries.length, 2, 'The injected notification settings execution appends one audit record.')
 }
 
 function assertNativePluginBoundary() {
@@ -272,9 +287,6 @@ function registerTypeScriptSupport() {
           return Promise.resolve()
         },
       }
-    }
-    if (request === '@/services/androidStatusNotification') {
-      return { openAndroidStatusNotificationSettings: async () => undefined }
     }
     return originalLoad.call(this, request, parent, isMain)
   }

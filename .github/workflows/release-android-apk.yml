@@ -17,10 +17,6 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 90
     env:
-      ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
-      ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
-      ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
-      ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
       REQUESTED_TAG: ${{ github.event.inputs.tag }}
     steps:
       - name: Checkout
@@ -63,10 +59,15 @@ jobs:
 
       - name: Check Android signing secrets
         shell: bash
+        env:
+          ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          ORG_GRADLE_PROJECT_ISLEMIND_UPLOAD_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          ORG_GRADLE_PROJECT_ISLEMIND_UPLOAD_STORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          ORG_GRADLE_PROJECT_ISLEMIND_UPLOAD_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
         run: |
           set -euo pipefail
           missing=0
-          for name in ANDROID_KEYSTORE_BASE64 ANDROID_KEY_ALIAS ANDROID_KEYSTORE_PASSWORD ANDROID_KEY_PASSWORD; do
+          for name in ANDROID_KEYSTORE_BASE64 ORG_GRADLE_PROJECT_ISLEMIND_UPLOAD_KEY_ALIAS ORG_GRADLE_PROJECT_ISLEMIND_UPLOAD_STORE_PASSWORD ORG_GRADLE_PROJECT_ISLEMIND_UPLOAD_KEY_PASSWORD; do
             if [ -z "${!name:-}" ]; then
               echo "::error::$name is required for installable release APKs."
               missing=1
@@ -85,6 +86,7 @@ jobs:
       - name: Release quality contracts
         run: |
           bun run test:release-readiness-compatibility
+          bun run test:android-release-hardening
           bun run test:runtime-budget-governance-compatibility
           bun run test:runtime-privacy-retention-compatibility
 
@@ -99,19 +101,20 @@ jobs:
 
       - name: Configure release signing and ABI splits
         shell: bash
+        env:
+          ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
         run: |
           set -euo pipefail
-          echo "$ANDROID_KEYSTORE_BASE64" | base64 --decode > android/app/islemind-release.keystore
-          {
-            echo "ISLEMIND_UPLOAD_STORE_FILE=islemind-release.keystore"
-            echo "ISLEMIND_UPLOAD_KEY_ALIAS=$ANDROID_KEY_ALIAS"
-            echo "ISLEMIND_UPLOAD_STORE_PASSWORD=$ANDROID_KEYSTORE_PASSWORD"
-            echo "ISLEMIND_UPLOAD_KEY_PASSWORD=$ANDROID_KEY_PASSWORD"
-          } >> android/gradle.properties
+          printf '%s' "$ANDROID_KEYSTORE_BASE64" | base64 --decode > android/app/islemind-release.keystore
           bun scripts/configure-android-release.js
 
       - name: Build release APKs
         shell: bash
+        env:
+          ORG_GRADLE_PROJECT_ISLEMIND_UPLOAD_STORE_FILE: islemind-release.keystore
+          ORG_GRADLE_PROJECT_ISLEMIND_UPLOAD_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          ORG_GRADLE_PROJECT_ISLEMIND_UPLOAD_STORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          ORG_GRADLE_PROJECT_ISLEMIND_UPLOAD_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
         run: |
           set -euo pipefail
           VERSION="${{ steps.meta.outputs.version }}"
@@ -126,7 +129,9 @@ jobs:
             for build_pass in "universal-64:arm64-v8a,x86_64" "arm64-v8a:arm64-v8a" "x86_64:x86_64" "armeabi-v7a-legacy:armeabi-v7a"; do
               IFS=':' read -r arch abi_filters <<< "$build_pass"
               rm -rf android/app/.cxx android/app/build/outputs/apk/release
-              (cd android && ISLEMIND_MODEL_BUNDLE="$model_variant" EXPO_PUBLIC_ISLEMIND_MODEL_BUNDLE="$model_variant" ./gradlew assembleRelease --rerun-tasks --no-daemon --stacktrace -PislemindAbiFilters="$abi_filters" -PislemindEnableAbiSplits=false -PislemindUniversalApk=false -PreactNativeArchitectures="$abi_filters")
+              # Keep R8/resource shrinking on the explicit local QA path until an exact-current
+              # physical-device regression pass covers startup, recovery, keyboard, themes, and memory.
+              (cd android && ISLEMIND_MODEL_BUNDLE="$model_variant" EXPO_PUBLIC_ISLEMIND_MODEL_BUNDLE="$model_variant" ./gradlew assembleRelease --rerun-tasks --no-daemon --stacktrace -PislemindAbiFilters="$abi_filters" -PislemindEnableAbiSplits=false -PislemindUniversalApk=false -PreactNativeArchitectures="$abi_filters" -PhermesEnabled=true)
               shopt -s nullglob
               apks=(android/app/build/outputs/apk/release/*.apk)
               if [ "${#apks[@]}" -ne 1 ]; then
@@ -152,7 +157,18 @@ jobs:
             echo "::error::Expected 8 APK assets, found $count."
             exit 1
           fi
-          bun scripts/validate-android-16kb-apk.js dist-apk/*-universal-64-*.apk dist-apk/*-arm64-v8a-*.apk dist-apk/*-x86_64-*.apk
+          bun scripts/validate-android-16kb-apk.js --strict dist-apk/*-universal-64-*.apk dist-apk/*-arm64-v8a-*.apk dist-apk/*-x86_64-*.apk
+
+      - name: Remove decoded signing keystore
+        if: always()
+        shell: bash
+        run: rm -f android/app/islemind-release.keystore
+
+      - name: Validate release signing
+        run: bun scripts/validate-android-release-signing.js dist-apk/*.apk
+
+      - name: Write release source snapshots
+        run: bun scripts/write-release-source-snapshots.js dist-apk/*.apk
 
       - name: Upload APK artifact
         uses: actions/upload-artifact@v7

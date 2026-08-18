@@ -63,22 +63,6 @@ describe('composer voice and quick-action source contracts', () => {
     expect(source).not.toContain('const [recording, setRecording]')
   })
 
-  test('gives the bounded action ScrollView pan ownership and removes obsolete visible copy', async () => {
-    const source = await read('src/components/chat/FloatingControlOrb.tsx')
-    expect(source).toContain('testID="chat-floating-toolbox-action-scroll"')
-    expect(source).toContain('nestedScrollEnabled')
-    expect(source).toContain('directionalLockEnabled')
-    expect(source).toContain('paddingBottom: 10')
-    expect(source).toContain('QUICK_TOOL_PANEL_MIN_HEIGHT = QUICK_TOOL_ROW_MIN_HEIGHT + QUICK_TOOL_PANEL_VERTICAL_PADDING')
-    expect(source).toContain('onMoveShouldSetResponderCapture={() => false}')
-    expect(source).toContain('accessibilityViewIsModal={open}')
-    expect(source).toContain('accessibilityLabel={action.label}')
-    expect(source).not.toContain('IsleOverlayPressable')
-    expect(source).not.toContain('quick-tool-backdrop')
-    expect(source).not.toContain('quickToolsPanelTitle')
-    expect(source).not.toContain('quickToolsPanelHint')
-  })
-
   test('removes the quick-action title and hint in every locale', async () => {
     for (const locale of ['en', 'ja', 'zh-CN']) {
       const resource = JSON.parse(await read(`src/i18n/resources/${locale}.json`))

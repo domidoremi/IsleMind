@@ -1,14 +1,24 @@
-import { useEffect, useState } from 'react'
+import { memo, useCallback, useEffect, useRef, useState } from 'react'
 import { BackHandler, StyleSheet, View } from 'react-native'
-import { usePathname } from 'expo-router'
+import { router, usePathname } from 'expo-router'
 
-import { IsleScreen, type IsleBackgroundMode, type IsleBackgroundState } from '@/components/ui/isle'
+import { IsleMotionFrame, IsleScreen, type IsleBackgroundMode, type IsleBackgroundState } from '@/components/ui/isle'
 import { useAppTheme } from '@/hooks/useAppTheme'
+import type { ThemeMotionDirection } from '@/theme/themeMotion'
+import { createLazyComponent } from '@/utils/lazyLoad'
 
-import { ConversationsScreenContent } from './ConversationsScreenContent'
 import { HomeScreenContent } from './HomeScreenContent'
 import { MainPagerGestureLockProvider, useMainPagerGestureLock } from './MainPagerGestureLock'
-import { SettingsScreenContent } from './SettingsScreenContent'
+
+const LazyConversationsScreenContent = createLazyComponent(
+  () => import('./ConversationsScreenContent').then((module) => ({ default: module.ConversationsScreenContent })),
+)
+const LazySettingsScreenContent = createLazyComponent(
+  () => import('./SettingsScreenContent').then((module) => ({ default: module.SettingsScreenContent })),
+)
+const RetainedConversationsScreenContent = memo(LazyConversationsScreenContent)
+const RetainedHomeScreenContent = memo(HomeScreenContent)
+const RetainedSettingsScreenContent = memo(LazySettingsScreenContent)
 
 export type MainPagerPage = 'history' | 'home' | 'settings'
 
@@ -39,6 +49,16 @@ function MainPagerShellInner({ initialPage = 'home' }: MainPagerShellProps) {
   const routePage = resolveMainPagerPage(pathname)
   const resolvedInitialPage = routePage ?? initialPage
   const [page, setPage] = useState<MainPagerPage>(resolvedInitialPage)
+  const [mountedPages, setMountedPages] = useState<ReadonlySet<MainPagerPage>>(
+    () => new Set([resolvedInitialPage]),
+  )
+  const [previousPage, setPreviousPage] = useState<MainPagerPage | null>(null)
+  const [transitionDirection, setTransitionDirection] = useState<ThemeMotionDirection>('neutral')
+  const switchToRef = useRef<(next: MainPagerPage) => void>(() => undefined)
+  switchToRef.current = switchTo
+  const showHome = useCallback(() => switchToRef.current('home'), [])
+  const showHistory = useCallback(() => switchToRef.current('history'), [])
+  const showSettings = useCallback(() => switchToRef.current('settings'), [])
   const backgroundMode: IsleBackgroundMode = colors.ui.experience.background === 'road'
     ? 'surface'
     : colors.ui.experience.background === 'document'
@@ -50,40 +70,31 @@ function MainPagerShellInner({ initialPage = 'home' }: MainPagerShellProps) {
     {
       id: 'history' as const,
       node: (
-        <ConversationsScreenContent
+        <RetainedConversationsScreenContent
           active={page === 'history'}
-          onHome={() => switchTo('home')}
-          onSettings={() => switchTo('settings')}
+          onHome={showHome}
         />
       ),
     },
     {
       id: 'home' as const,
       node: (
-        <HomeScreenContent
+        <RetainedHomeScreenContent
           active={page === 'home'}
           embedded
           settingsTransitionActive={false}
-          onHistory={() => switchTo('history')}
-          onSettings={() => switchTo('settings')}
+          onHistory={showHistory}
+          onSettings={showSettings}
         />
       ),
     },
     {
       id: 'settings' as const,
       node: (
-        <SettingsScreenContent
-          active={page === 'settings'}
-          onHome={() => switchTo('home')}
-        />
+        <RetainedSettingsScreenContent onHome={showHome} />
       ),
     },
   ]
-
-  useEffect(() => {
-    const nextPage = resolveMainPagerPage(pathname) ?? initialPage
-    if (nextPage !== page) setPage(nextPage)
-  }, [initialPage, pathname])
 
   useEffect(() => {
     const subscription = BackHandler.addEventListener('hardwareBackPress', () => {
@@ -95,53 +106,82 @@ function MainPagerShellInner({ initialPage = 'home' }: MainPagerShellProps) {
     return () => subscription.remove()
   }, [page, pathname])
 
-  function switchTo(next: MainPagerPage) {
-    if (next !== page) setPage(next)
-  }
-
   return (
     <IsleScreen padded={false} background={backgroundMode} backgroundState={backgroundState} backgroundIntensity={0.96}>
       <View pointerEvents="none" style={[styles.opaqueFallback, { backgroundColor: colors.ui.experience.background === 'plain' ? colors.background.surfaceCanvas : 'transparent' }]} />
       <View style={{ flex: 1, overflow: 'hidden' }}>
-        {pages.map((item) => (
-          <PagerPage
-            key={item.id}
-            active={item.id === page}
-          >
-            {item.node}
-          </PagerPage>
-        ))}
+        {pages.map((item) => {
+          if (!mountedPages.has(item.id) && item.id !== page) return null
+          const active = item.id === page
+          const direction = active
+            ? transitionDirection
+            : item.id === previousPage
+              ? reverseMainPagerDirection(transitionDirection)
+              : 'neutral'
+
+          return (
+            <PagerPage
+              key={item.id}
+              active={active}
+              direction={direction}
+            >
+              {item.node}
+            </PagerPage>
+          )
+        })}
       </View>
     </IsleScreen>
   )
+
+  function switchTo(next: MainPagerPage) {
+    if (next === page) return
+    setMountedPages((current) => current.has(next) ? current : new Set(current).add(next))
+    setPreviousPage(page)
+    setTransitionDirection(resolveMainPagerDirection(page, next))
+    if (next === 'home' && pathname !== MAIN_PAGER_PATH_BY_PAGE.home) {
+      router.replace(MAIN_PAGER_PATH_BY_PAGE.home)
+      return
+    }
+    setPage(next)
+  }
 }
 
 function PagerPage({
   active,
   children,
+  direction,
 }: {
   active: boolean
   children: React.ReactNode
+  direction: ThemeMotionDirection
 }) {
   return (
-    <View
+    <IsleMotionFrame
+      role="page"
+      active={active}
+      direction={direction}
       aria-hidden={!active}
       accessibilityElementsHidden={!active}
       importantForAccessibility={active ? 'auto' : 'no-hide-descendants'}
       pointerEvents={active ? 'auto' : 'none'}
-      style={{
-        position: 'absolute',
-        top: 0,
-        right: 0,
-        bottom: 0,
-        left: 0,
-        opacity: active ? 1 : 0,
-        zIndex: active ? 2 : 1,
-      }}
+      style={[styles.page, { zIndex: active ? 2 : 1 }]}
     >
       {children}
-    </View>
+    </IsleMotionFrame>
   )
+}
+
+function resolveMainPagerDirection(current: MainPagerPage, next: MainPagerPage): ThemeMotionDirection {
+  const currentIndex = PAGE_SEQUENCE.indexOf(current)
+  const nextIndex = PAGE_SEQUENCE.indexOf(next)
+  if (currentIndex === nextIndex) return 'neutral'
+  return nextIndex > currentIndex ? 'forward' : 'backward'
+}
+
+function reverseMainPagerDirection(direction: ThemeMotionDirection): ThemeMotionDirection {
+  if (direction === 'forward') return 'backward'
+  if (direction === 'backward') return 'forward'
+  return 'neutral'
 }
 
 function resolveMainPagerPage(pathname: string): MainPagerPage | null {
@@ -154,6 +194,9 @@ function isMainPagerTopLevelPath(pathname: string): boolean {
 
 const styles = StyleSheet.create({
   opaqueFallback: {
+    ...StyleSheet.absoluteFill,
+  },
+  page: {
     ...StyleSheet.absoluteFill,
   },
 })

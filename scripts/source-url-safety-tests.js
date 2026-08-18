@@ -61,7 +61,7 @@ function run() {
   assert.deepEqual(webViewOriginWhitelist('https://example.com/source'), ['https://example.com'], 'WebView origin whitelist is source-host scoped')
   assert.deepEqual(webViewOriginWhitelist('http://example.com/source'), ['http://example.com', 'https://example.com'], 'HTTP source previews may upgrade to HTTPS on the same host')
 
-  const sourceScreen = fs.readFileSync(path.join(root, 'app/source.tsx'), 'utf8')
+  const sourceScreen = fs.readFileSync(path.join(root, 'src/presentation/features/conversations/SourceDetailScreen.tsx'), 'utf8')
   assert.ok(sourceScreen.includes('originWhitelist={webViewOriginWhitelist(url)}'), 'source WebView uses host-scoped origin whitelist')
   assert.ok(sourceScreen.includes('isAllowedWebViewNavigation(request.url, url)'), 'source WebView checks navigation against source URL')
 

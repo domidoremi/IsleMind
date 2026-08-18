@@ -48,3 +48,15 @@ export function resolveProviderDisplayName(provider: ProviderIdentityInput, fall
   if (configuredName && !hasGenericProviderName(provider)) return configuredName
   return resolveProviderEndpointHost(provider.baseUrl) ?? fallbackName
 }
+
+export function resolveProviderSupplierDisclosure(
+  configurationCount: number,
+  expanded: boolean,
+  batchMode: boolean,
+): { expandable: boolean; showConfigurations: boolean } {
+  const expandable = configurationCount > 1
+  return {
+    expandable,
+    showConfigurations: batchMode || (expandable && expanded),
+  }
+}

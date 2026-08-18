@@ -23,6 +23,7 @@ import {
   DEFAULT_SETUP_REASONING_EFFORT,
   MODEL_VALIDATION_LOOKUP_LIMIT,
 } from './chatWorkspaceConstants'
+import { resolveBlockedComposerDraftRecovery } from './composerDraftState'
 import {
   MODEL_QUICK_OPTION_PROVIDER_LIMIT as CHAT_MODEL_QUICK_OPTION_PROVIDER_LIMIT,
   buildExplicitGenerationParameterOverridePatch,
@@ -166,7 +167,32 @@ export function useChatSetupWorkspaceState({
     hasLocalChrome: !shellNavigation,
   })
 
+  const showNoAvailableModelsFeedback = () => dialog.toast({
+    title: t('chat.noAvailableModels'),
+    message: t('chat.syncModelsBeforeChat'),
+    tone: 'amber',
+    actionLabel: t('chat.configureProviders'),
+    onAction: openSetupAiConfiguration,
+    dedupeKey: 'chat-setup-model-unavailable',
+  })
+
+  const showNoProviderFeedback = () => dialog.toast({
+    title: t('chat.noProviderConnected'),
+    message: t('chat.configureProviderBeforeChat'),
+    tone: 'amber',
+    position: 'top',
+    topOffset: setupNoticeTopOffset(),
+    actionLabel: t('chat.configureProviders'),
+    onAction: openSetupAiConfiguration,
+    dedupeKey: 'chat-setup-provider-required',
+  })
+
   async function submitSetup(content: string, attachments: Attachment[]) {
+    const blockedDraft = resolveBlockedComposerDraftRecovery(content, attachments)
+    const restoreBlockedDraft = () => {
+      if (!blockedDraft) return
+      applyQuickStartDraft(blockedDraft.content, blockedDraft.attachments, blockedDraft.restoreIfEmpty)
+    }
     const currentSettings = useSettingsStore.getState().settings
     const currentAccessSettings = pickModelAccessSettings(currentSettings)
     const readyProvider = homeProvider ?? pickReadyProviderForNewConversation(
@@ -176,17 +202,21 @@ export function useChatSetupWorkspaceState({
       hasProviderModelAccessRules(currentAccessSettings),
     )
     if (!readyProvider) {
-      if (content.trim()) applyQuickStartDraft(content)
+      restoreBlockedDraft()
       if (hasEnabledProvider && !hasAvailableModel) {
-        dialog.toast({ title: t('chat.noAvailableModels'), message: t('chat.syncModelsBeforeChat'), tone: 'amber' })
+        showNoAvailableModelsFeedback()
         return
       }
-      dialog.toast({ title: t('chat.noProviderConnected'), message: t('chat.configureProviderBeforeChat'), tone: 'amber', position: 'top', topOffset: setupNoticeTopOffset(), durationMs: 3200 })
+      showNoProviderFeedback()
       return
     }
     const providerModels = getPolicyAllowedProviderModels(readyProvider, currentAccessSettings, { limit: MODEL_VALIDATION_LOOKUP_LIMIT })
     const model = providerModels.includes(setupModel) ? setupModel : getPolicyPreferredProviderModel(readyProvider, currentAccessSettings)
-    if (!model) return
+    if (!model) {
+      restoreBlockedDraft()
+      showNoAvailableModelsFeedback()
+      return
+    }
     const nextSetupConversation = createSetupConversationShell(readyProvider, model, setupReasoningEffort, setupSystemPrompt, setupTemperature, setupParameterOverrides)
     const id = createConversation(readyProvider.id, model)
     updateConversation(id, {
@@ -199,8 +229,16 @@ export function useChatSetupWorkspaceState({
       generationParameterOverrides: buildExplicitGenerationParameterOverridePatch(nextSetupConversation.generationParameterOverrides),
     })
     const nextConversation = useChatStore.getState().conversations.find((item) => item.id === id)
-    if (nextConversation) {
-      await sendMessage({ conversation: { ...nextConversation, ...nextSetupConversation, id: nextConversation.id, title: nextConversation.title, messages: nextConversation.messages, createdAt: nextConversation.createdAt, updatedAt: nextConversation.updatedAt }, content, attachments, requestedOutput: composerOutputMode })
+    if (!nextConversation) {
+      restoreBlockedDraft()
+      useChatStore.getState().select(null)
+      return
+    }
+    await sendMessage({ conversation: { ...nextConversation, ...nextSetupConversation, id: nextConversation.id, title: nextConversation.title, messages: nextConversation.messages, createdAt: nextConversation.createdAt, updatedAt: nextConversation.updatedAt }, content, attachments, requestedOutput: composerOutputMode })
+    const currentState = useChatStore.getState()
+    if (currentState.currentId === id && currentState.draftConversationIds.has(id)) {
+      restoreBlockedDraft()
+      currentState.select(null)
     }
   }
 

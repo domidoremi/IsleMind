@@ -13,7 +13,7 @@
 </p>
 
 <p align="center">
-  <strong>1.0.15 · Android 115</strong><br>
+  <strong>1.0.16 · Android 116</strong><br>
   <a href="https://github.com/domidoremi/IsleMind/releases">バージョン履歴</a>
 </p>
 

@@ -897,7 +897,8 @@ async function testPortableDataApplication(dataManagementModule, commandModule) 
   assert.match(payloadBootstrapSource, /createPortableDataPayloadRuntime\(\{[\s\S]*records:[\s\S]*conversations:[\s\S]*knowledge:[\s\S]*workspaces:[\s\S]*recovery:/, 'bootstrap composes every concrete portable payload dependency')
   assert.match(resetSource, /export function createPortableDataResetRuntime<[\s\S]*dependencies\.prepare\(\)[\s\S]*Promise\.all\([\s\S]*participant\.clear\(snapshot\)/, 'Data Management owns reset preparation and participant sequencing')
   assert.match(resetBootstrapSource, /createPortableDataResetRuntime<[\s\S]*participants:[\s\S]*raw-application-records[\s\S]*provider-credentials[\s\S]*observability-credentials/, 'bootstrap composes the concrete reset participants')
-  assert.match(applicationRecordPlatformSource, /createAsyncStorageApplicationRecordStorage[\s\S]*storage\.getItem[\s\S]*storage\.setItem[\s\S]*storage\.removeItem[\s\S]*storage\.multiRemove/, 'Platform Storage owns the reusable AsyncStorage record effects')
+  assert.match(applicationRecordPlatformSource, /createAsyncStorageApplicationRecordStorage[\s\S]*storage \?\?= loadDefaultAsyncStorage\(\)[\s\S]*resolveStorage\(\)\.getItem[\s\S]*resolveStorage\(\)\.setItem[\s\S]*resolveStorage\(\)\.removeItem[\s\S]*resolveStorage\(\)\.multiRemove/, 'Platform Storage owns lazy, injectable AsyncStorage record effects')
+  assert.doesNotMatch(applicationRecordPlatformSource, /^import .*@react-native-async-storage\/async-storage/m, 'Platform Storage does not evaluate the native AsyncStorage package until the default adapter is used')
   assert.match(applicationRecordBootstrapSource, /APPLICATION_DATA_STORAGE_KEYS[\s\S]*createApplicationDataRecordRuntime[\s\S]*readApplicationDataRecord[\s\S]*writeApplicationDataRecord[\s\S]*loadApplicationDataRecord<[\s\S]*saveApplicationDataRecord<[\s\S]*removeRawApplicationDataRecords/, 'bootstrap owns strict application-record access, compatibility reporting, and reset bulk removal')
   assert.match(conversationSkillSource, /export interface ConversationSkillRecordPort[\s\S]*export function createConversationSkillPolicy[\s\S]*export function createConversationSkillRepository[\s\S]*export function createConversationSkillApplication/, 'Conversations owns skill projection and its persistence port')
   assert.match(conversationSkillSource, /let mutationTail = Promise\.resolve\(\)[\s\S]*const result = mutationTail\.then\(operation, operation\)[\s\S]*const skills = await listSkills\(\)[\s\S]*await writeNormalized/, 'Conversation skill record mutations serialize read-modify-write effects')
@@ -2854,27 +2855,27 @@ function testProviderHeaderPolicy(providerModule) {
   assert.deepEqual(providerModule.getProviderRequestHeaders(openAIProvider, { model: 'gpt-5.6-codex' }), {
     'Content-Type': 'application/json',
     Authorization: 'Bearer openai-key',
-    'User-Agent': 'codex_cli_rs/0.147.0 (Android; mobile) IsleMind/1.0.15',
+    'User-Agent': 'codex_cli_rs/0.147.0 (Android; mobile) IsleMind/1.0.16',
   }, 'the selected Codex model automatically selects the Codex client UA')
   assert.equal(
     providerModule.getProviderRequestHeaders({ ...openAIProvider, clientCompatibilityProfile: 'codex-desktop' }, { model: 'gpt-5.6' })['User-Agent'],
-    'Codex Desktop/0.147.0 (Android; mobile) IsleMind/1.0.15',
+    'Codex Desktop/0.147.0 (Android; mobile) IsleMind/1.0.16',
     'an explicit compatible provider profile overrides automatic provider identity',
   )
   assert.equal(
     providerModule.getProviderRequestHeaders({ ...openAIProvider, clientCompatibilityProfile: 'islemind' }, { model: 'gpt-5.6-codex' })['User-Agent'],
-    'IsleMind/1.0.15',
+    'IsleMind/1.0.16',
     'the explicit IsleMind profile disables branded provider inference',
   )
   assert.equal(
     providerModule.getProviderRequestHeaders({ ...openAIProvider, clientCompatibilityProfile: 'claude-code' }, { model: 'gpt-5.6-codex' })['User-Agent'],
-    'IsleMind/1.0.15',
+    'IsleMind/1.0.16',
     'a protocol-incompatible forced profile fails closed without selecting another branded profile',
   )
   for (const model of ['gpt-5.6-sol', 'gpt-5.6-terra', 'gpt-5.6-luna']) {
     assert.equal(
       providerModule.getProviderRequestHeaders(openAIProvider, { model })['User-Agent'],
-      'OpenAI-API/1.0 (IsleMind/1.0.15)',
+      'OpenAI-API/1.0 (IsleMind/1.0.16)',
       `${model} selects the OpenAI client profile from its model family`,
     )
   }
@@ -2923,7 +2924,7 @@ function testProviderHeaderPolicy(providerModule) {
     'Content-Type': 'application/json',
     'x-api-key': 'anthropic-key',
     'anthropic-version': '2023-06-01',
-    'User-Agent': 'claude-code/2.1.229 (cli; IsleMind/1.0.15)',
+    'User-Agent': 'claude-code/2.1.229 (cli; IsleMind/1.0.16)',
   }, 'selected Claude models preserve provider headers and automatically select the Claude client UA')
   const bedrockProvider = {
     id: 'aws-bedrock',
@@ -2946,7 +2947,7 @@ function testProviderHeaderPolicy(providerModule) {
     body: { messages: [{ role: 'user', content: 'hello' }], max_tokens: 32 },
     now: new Date('2026-08-13T00:00:00Z'),
   })
-  assert.equal(signedBedrockRequest.headers['User-Agent'], 'claude-code/2.1.229 (cli; IsleMind/1.0.15)', 'direct Bedrock receives the selected Claude model UA before signing')
+  assert.equal(signedBedrockRequest.headers['User-Agent'], 'claude-code/2.1.229 (cli; IsleMind/1.0.16)', 'direct Bedrock receives the selected Claude model UA before signing')
   assert.match(signedBedrockRequest.headers.Authorization, /SignedHeaders=[^,]*user-agent/, 'direct Bedrock signs the User-Agent header')
 
   const root = path.join(__dirname, '..')

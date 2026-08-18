@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { TFunction } from 'i18next'
 
 import type { ComposerCommand } from '@/components/chat/Composer'
@@ -14,18 +14,19 @@ import type { SettingsModelDisplayAlias } from '@/types/settingsContracts'
 import type { SkillDefinition } from '@/types/skillContracts'
 
 import { buildComposerCommands, buildComposerReferences, collectSkillVariableDefaults } from './chatComposerData'
+import { invalidateComposerSourceCache, loadComposerSourceSnapshot, type ComposerSourceSnapshot } from './chatComposerSourceCache'
 import { type ModelAccessSettings } from './chatModelSelection'
 import { SkillVariableDialogBody } from './SkillVariableDialogBody'
 
 type ComposerSourceDialog = ReturnType<typeof useIsleDialog>
 type ApplyStarterDraft = (draft: string, attachments?: Attachment[], restoreIfEmpty?: boolean) => void
 
-async function listComposerKnowledgeDocuments() {
-  return (await knowledgeRepository.listDocuments()).map(({ schema: _schema, ...document }) => document)
+async function listComposerKnowledgeDocuments(signal?: AbortSignal) {
+  return (await knowledgeRepository.listDocuments({ signal })).map(({ schema: _schema, ...document }) => document)
 }
 
-async function listComposerMemories(): Promise<MemoryItem[]> {
-  return (await knowledgeRepository.listMemories({ statuses: ['active', 'pending'] }))
+async function listComposerMemories(signal?: AbortSignal): Promise<MemoryItem[]> {
+  return (await knowledgeRepository.listMemories({ statuses: ['active', 'pending'], signal }))
     .map(({ schema: _schema, ...memory }) => memory)
 }
 
@@ -76,6 +77,8 @@ export function useChatComposerSourceState({
   const [skills, setSkills] = useState<SkillDefinition[]>([])
   const [knowledgeDocuments, setKnowledgeDocuments] = useState<Awaited<ReturnType<typeof listComposerKnowledgeDocuments>>>([])
   const [memoryItems, setMemoryItems] = useState<MemoryItem[]>([])
+  const sourceLoadPromiseRef = useRef<Promise<ComposerSourceSnapshot> | null>(null)
+  const skillsCommitRevisionRef = useRef(0)
   const selectableSkills = useMemo(() => skills.filter(isSkillSelectableWithWorkflowSkillState), [skills])
 
   const collectSkillVariableValues = useCallback(async (nextSkills: SkillDefinition[]): Promise<Record<string, string | number | boolean> | null> => {
@@ -142,16 +145,23 @@ export function useChatComposerSourceState({
       tags: ['language', 'zh-CN'],
       priority: 10,
     }))
+    skillsCommitRevisionRef.current += 1
+    invalidateComposerSourceCache()
     setSkills((items) => [skill, ...items.filter((item) => item.id !== skill.id)])
     await applySkillToActiveConversation([skill])
   }, [applySkillToActiveConversation, t])
 
   const refreshSkills = useCallback(async () => {
-    setSkills(await listSkills())
+    const nextSkills = await listSkills()
+    skillsCommitRevisionRef.current += 1
+    invalidateComposerSourceCache()
+    setSkills(nextSkills)
   }, [])
 
   const composerCommands = useMemo(
-    () => (settings.commandPaletteEnabled ?? true) ? buildComposerCommands({
+    () => !active
+      ? []
+      : (settings.commandPaletteEnabled ?? true) ? buildComposerCommands({
       skills: (settings.skillsEnabled ?? true) ? selectableSkills : [],
       t,
       onOpenKnowledge,
@@ -160,6 +170,7 @@ export function useChatComposerSourceState({
       onCreateDefaultSkill: () => void createDefaultSkill(),
     }) : [],
     [
+      active,
       applySkillToActiveConversation,
       createDefaultSkill,
       onOpenKnowledge,
@@ -172,7 +183,7 @@ export function useChatComposerSourceState({
   )
 
   const composerReferences = useMemo(
-    () => buildComposerReferences({
+    () => !active ? [] : buildComposerReferences({
       providers,
       skills: selectableSkills,
       knowledgeDocuments,
@@ -182,26 +193,33 @@ export function useChatComposerSourceState({
       providerFallbackName: t('providerSettings.customProvider'),
       hasRules: modelAccessHasRules || hasProviderModelAccessRules(modelAccessSettings),
     }),
-    [knowledgeDocuments, memoryItems, modelAccessHasRules, modelAccessSettings, providers, selectableSkills, settings.modelDisplayAliases, t]
+    [active, knowledgeDocuments, memoryItems, modelAccessHasRules, modelAccessSettings, providers, selectableSkills, settings.modelDisplayAliases, t]
   )
 
   useEffect(() => {
     if (!active) return
-    let mounted = true
-    async function loadComposerSources() {
-      const [skillItems, documents, memories] = await Promise.all([
-        listSkills(),
-        listComposerKnowledgeDocuments().catch(() => []),
-        listComposerMemories().catch(() => []),
-      ])
-      if (!mounted) return
-      setSkills(skillItems)
+    let cancelled = false
+    const controller = new AbortController()
+    const skillsRevisionAtLoadStart = skillsCommitRevisionRef.current
+    const loadPromise = sourceLoadPromiseRef.current ??= loadComposerSourceSnapshot({
+      loadSkills: listSkills,
+      loadDocuments: listComposerKnowledgeDocuments,
+      loadMemories: listComposerMemories,
+    }, controller.signal)
+    void loadPromise.then(({ skills, documents, memories }) => {
+      if (cancelled || controller.signal.aborted) return
+      if (skillsCommitRevisionRef.current === skillsRevisionAtLoadStart) setSkills(skills)
       setKnowledgeDocuments(documents)
       setMemoryItems(memories)
-    }
-    void loadComposerSources()
+    }).catch(() => {
+      if (!cancelled && sourceLoadPromiseRef.current === loadPromise) sourceLoadPromiseRef.current = null
+    })
     return () => {
-      mounted = false
+      cancelled = true
+      controller.abort()
+      if (sourceLoadPromiseRef.current === loadPromise) {
+        sourceLoadPromiseRef.current = null
+      }
     }
   }, [active])
 

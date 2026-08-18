@@ -1,6 +1,3 @@
-import AsyncStorage from '@react-native-async-storage/async-storage'
-import * as Crypto from 'expo-crypto'
-
 import {
   parsePortableImportRecoveryEnvelope,
   type PortableImportRecoveryEnvelopeV1,
@@ -16,15 +13,16 @@ const MAX_ENVELOPE_CHARACTERS = 64 * 1024
 const MAX_BLOB_CHARACTERS = 64 * 1024 * 1024
 const IDENTIFIER_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,159}$/
 const fallbackLockTails = new Map<string, Promise<void>>()
+let resolvedDefaultAsyncStorage: PortableImportRecoveryStorageAdapter | undefined
 const defaultAsyncStorageAdapter: PortableImportRecoveryStorageAdapter = {
   async getItem(key) {
-    return AsyncStorage.getItem(key)
+    return resolveDefaultAsyncStorage().getItem(key)
   },
   async setItem(key, value) {
-    await AsyncStorage.setItem(key, value)
+    await resolveDefaultAsyncStorage().setItem(key, value)
   },
   async removeItem(key) {
-    await AsyncStorage.removeItem(key)
+    await resolveDefaultAsyncStorage().removeItem(key)
   },
 }
 
@@ -247,12 +245,22 @@ export function createAsyncStoragePortableImportRecoveryStore(
 }
 
 export async function digestPortableImportRecoveryValue(value: string): Promise<string> {
+  const Crypto = require('expo-crypto') as typeof import('expo-crypto')
   const digest = await Crypto.digestStringAsync(
     Crypto.CryptoDigestAlgorithm.SHA256,
     value,
     { encoding: Crypto.CryptoEncoding.HEX },
   )
   return `sha256:${digest.toLowerCase()}`
+}
+
+function resolveDefaultAsyncStorage(): PortableImportRecoveryStorageAdapter {
+  if (resolvedDefaultAsyncStorage) return resolvedDefaultAsyncStorage
+  const loaded = require('@react-native-async-storage/async-storage') as {
+    default?: PortableImportRecoveryStorageAdapter
+  } & Partial<PortableImportRecoveryStorageAdapter>
+  resolvedDefaultAsyncStorage = loaded.default ?? loaded as PortableImportRecoveryStorageAdapter
+  return resolvedDefaultAsyncStorage
 }
 
 function recoveryBlobKey(operationId: string, participantId: string): string {

@@ -1,7 +1,15 @@
 import type { AIProvider } from '@/types/providerContracts'
 import type { Settings } from '@/types/settingsContracts'
 import { getRuntimeLogInfo, readRuntimeLogText, type RuntimeLogEntry, type RuntimeLogInfo } from '@/services/runtimeLog'
-import { RUNTIME_EVENT_HISTORY_LIMIT, RUNTIME_EVENT_SCHEMA, getRuntimeEventHistory, runtimeLogEventForRuntimeEvent, type RuntimeEventEnvelope } from '@/services/runtimeEvents'
+import {
+  RUNTIME_EVENT_HISTORY_LIMIT,
+  RUNTIME_EVENT_SCHEMA,
+  getRuntimeEventHistory,
+  runtimeLogEventForRuntimeEvent,
+  shouldNotifyRuntimeEventSubscribers,
+  shouldPersistRuntimeEvent,
+  type RuntimeEventEnvelope,
+} from '@/services/runtimeEvents'
 import { buildRuntimeTimelineSnapshot, type RuntimeTimelineSnapshot } from '@/services/runtimeTimeline'
 import { listCompactUsageRecords } from '@/bootstrap/providerCompactUsage'
 import {
@@ -15,8 +23,9 @@ import {
   type ObservabilitySinkMode,
   type ObservabilitySinkPolicyBlockReason,
   type ObservabilitySinkPolicyWarning,
+  type ObservabilityRuntimeEvent,
   type ObservabilitySinkTarget,
-} from '@/services/observabilityCompatibilityEvaluation'
+} from '@/modules/diagnostics'
 import { safeHttpUrl } from '@/utils/networkUrlSafety'
 import {
   buildProviderCapabilityMatrix,
@@ -609,7 +618,7 @@ function buildRuntimeDiagnosticsObservabilitySummary(
     highFrequencyExportMode: settings.observabilitySinkHighFrequencyExportMode ?? 'coalesced',
   } as const
   const decision = evaluateObservabilitySinkPolicy(policyInput)
-  const preview = buildObservabilitySinkExportPreview(events, {
+  const preview = buildObservabilitySinkExportPreview(events.map(projectRuntimeDiagnosticsObservabilityEvent), {
     ...policyInput,
     eventLimit: RUNTIME_DIAGNOSTICS_OBSERVABILITY_PREVIEW_EVENT_LIMIT,
   })
@@ -637,6 +646,17 @@ function buildRuntimeDiagnosticsObservabilitySummary(
     previewAttributeLimitAppliedCount: preview.diagnostic?.attributeLimitAppliedCount ?? 0,
     previewHighFrequencySuppressionCount: preview.diagnostic?.highFrequencySuppressionCount ?? 0,
     previewSourceEventIdCount: preview.diagnostic?.sourceEventIdCount ?? 0,
+  }
+}
+
+function projectRuntimeDiagnosticsObservabilityEvent(event: RuntimeEventEnvelope): ObservabilityRuntimeEvent {
+  return {
+    ...event,
+    expectedSchema: RUNTIME_EVENT_SCHEMA,
+    persistence: {
+      persisted: shouldPersistRuntimeEvent(event.event),
+      notifiesSubscribers: shouldNotifyRuntimeEventSubscribers(event.event),
+    },
   }
 }
 

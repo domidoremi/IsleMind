@@ -450,7 +450,8 @@ const androidDeviceTaskUndoContractSnippets = [
 ]
 const androidStatusNotificationRuntimeInputs = [
   'app.json',
-  'src/services/androidStatusNotification.ts',
+  'src/platform/native/androidStatusNotification.ts',
+  'src/bootstrap/androidStatusNotification.ts',
   'plugins/android-status-notification/AndroidStatusNotificationModule.kt',
   'plugins/android-status-notification/AndroidStatusNotificationPackage.kt',
   'plugins/android-status-notification/withAndroidStatusNotification.js',
@@ -907,7 +908,7 @@ function collectReactNativeDebugOverlayRegions(nodes) {
 
 function isReactNativeDebugOverlayText(node) {
   const label = `${node.text ?? ''} ${node['content-desc'] ?? ''}`
-  return /Open debugger to view warnings/i.test(label)
+  return /Open debugger to view warnings|Uncaught \(in promise,\s*id:\s*\d+\)/i.test(label)
 }
 
 function isWithinReactNativeDebugOverlay(node, regions) {
@@ -7500,7 +7501,7 @@ function runAndroidStatusNotificationReleaseGateSelfTest(tempRoot) {
     throw new Error(`Android status notification evidence self-test missed send-then-background failure behavior boundary: ${invalidSendThenBackgroundIssues.join(', ')}`)
   }
 
-  const updatedInput = path.join(releaseRoot, 'src', 'services', 'androidStatusNotification.ts')
+  const updatedInput = path.join(releaseRoot, 'src', 'platform', 'native', 'androidStatusNotification.ts')
   fs.utimesSync(updatedInput, new Date('2026-01-01T00:01:00.000Z'), new Date('2026-01-01T00:01:00.000Z'))
   const staleIssues = collectAndroidStatusNotificationEvidenceIssues(validEvidence, { evidenceFile, freshnessRoot: releaseRoot })
   if (!staleIssues.some((issue) => issue.includes('evidence is stale'))) {
@@ -7864,6 +7865,8 @@ function runRuntimeDebugOverlaySelfTest(tempRoot) {
     '<?xml version="1.0" encoding="UTF-8"?>',
     '<hierarchy>',
     '<node class="android.widget.FrameLayout" package="com.islemind.app" clickable="false" text="" content-desc="" bounds="[0,0][320,320]">',
+    '<node class="android.widget.TextView" package="com.islemind.app" clickable="false" text="" content-desc="2, Uncaught (in promise, id: 1) Error: native promise rejected" bounds="[10,150][260,190]" />',
+    '<node class="android.view.ViewGroup" package="com.islemind.app" clickable="true" text="" content-desc="" bounds="[265,150][305,190]" />',
     '<node class="android.widget.TextView" package="com.islemind.app" clickable="false" text="Open debugger to view warnings." content-desc="" bounds="[10,220][260,260]" />',
     '<node class="android.view.ViewGroup" package="com.islemind.app" clickable="true" text="" content-desc="" bounds="[265,220][305,260]" />',
     '<node class="android.widget.Button" package="com.islemind.app" clickable="true" text="" content-desc="" bounds="[20,40][60,80]" />',
@@ -7875,7 +7878,7 @@ function runRuntimeDebugOverlaySelfTest(tempRoot) {
   ].join(''), 'utf8')
 
   const snapshot = auditUiaSnapshot(file, null)
-  if (debugOverlayNodes(snapshot).length !== 1) throw new Error(`Runtime debug overlay self-test expected one debug overlay node, got ${debugOverlayNodes(snapshot).length}.`)
+  if (debugOverlayNodes(snapshot).length !== 2) throw new Error(`Runtime debug overlay self-test expected two debug overlay nodes, got ${debugOverlayNodes(snapshot).length}.`)
   if (appUnlabeledNodes(snapshot).length !== 1) throw new Error(`Runtime debug overlay self-test expected one product unlabeled node, got ${appUnlabeledNodes(snapshot).length}.`)
   if (externalUnlabeledNodes(snapshot).length !== 1) throw new Error(`Runtime debug overlay self-test expected one external unlabeled node, got ${externalUnlabeledNodes(snapshot).length}.`)
   if (snapshot.smallTargets.length !== 1) throw new Error(`Runtime debug overlay self-test expected one product small touch target, got ${snapshot.smallTargets.length}.`)
@@ -7883,7 +7886,7 @@ function runRuntimeDebugOverlaySelfTest(tempRoot) {
   if (snapshot.invalidBoundsTargets.length !== 0) throw new Error(`Runtime debug overlay self-test expected zero blocking invalid-bounds targets, got ${snapshot.invalidBoundsTargets.length}.`)
   if (snapshot.collapsedHiddenTargets.length !== 1) throw new Error(`Runtime debug overlay self-test expected one collapsed hidden target, got ${snapshot.collapsedHiddenTargets.length}.`)
   const totals = summarizeUiaSnapshots([snapshot])
-  if (totals.debugOverlayCount !== 1) throw new Error(`Runtime debug overlay self-test expected one summarized debug overlay node, got ${totals.debugOverlayCount}.`)
+  if (totals.debugOverlayCount !== 2) throw new Error(`Runtime debug overlay self-test expected two summarized debug overlay nodes, got ${totals.debugOverlayCount}.`)
   if (totals.collapsedHiddenCount !== 1) throw new Error(`Runtime debug overlay self-test expected one summarized collapsed hidden node, got ${totals.collapsedHiddenCount}.`)
   console.log('Runtime debug overlay self-test passed (development warning nodes classified separately).')
 }

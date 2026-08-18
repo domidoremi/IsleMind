@@ -8,7 +8,7 @@ import { summarizeProviderActivationIssueGroups } from '@/services/providerActiv
 import { ACTIVATION_STAGE_PROGRESS, aggregateActivationItems, createActivationItems, patchActivationItem, resolveProviderActivationRuntimePolicy, type ActivationItemPatch } from '@/services/providerActivationJob'
 import { resolveActivationJobProgress, useActivationJobStore, type ActivationJobItemState, type ActivationJobState } from '@/store/activationJobStore'
 import { useSettingsStore } from '@/store/settingsStore'
-import { clearAndroidStatusNotification, updateAndroidStatusNotification } from '@/services/androidStatusNotification'
+import { clearAndroidStatusNotification, updateAndroidStatusNotification } from '@/bootstrap/androidStatusNotification'
 import type { AIProvider } from '@/types/providerContracts'
 export type ProviderActivationMode = 'single' | 'batch' | 'all'
 

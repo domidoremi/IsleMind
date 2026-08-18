@@ -1,7 +1,8 @@
-import type { Dispatch, SetStateAction } from 'react'
+import { useCallback, type Dispatch, type SetStateAction } from 'react'
 import type { TFunction } from 'i18next'
 
 import { stopConversationMessage } from '@/presentation/features/conversations/conversationControlCommand'
+import { useChatStore } from '@/store/chatStore'
 import type { Attachment, CommandReference, Conversation, Message } from '@/types/chatContracts'
 import type { AIProvider } from '@/types/providerContracts'
 
@@ -32,7 +33,7 @@ export interface ChatActiveWorkspaceActions {
   confirmSwitchModel: (nextProvider: AIProvider, nextModel: string) => void
   rememberCommandReference: (reference: CommandReference) => void
   repairAgentEvidenceFromMessage: (item: Message) => void
-  safeStopMessage: (conversationId: string) => void
+  safeStopMessage: (conversationId: string) => boolean
 }
 
 export function useChatActiveWorkspaceActions({
@@ -45,12 +46,15 @@ export function useChatActiveWorkspaceActions({
   t,
   updateConversation,
 }: ChatActiveWorkspaceActionOptions): ChatActiveWorkspaceActions {
-  function safeStopMessage(conversationId: string) {
+  const safeStopMessage = useCallback((conversationId: string) => {
     try {
       stopConversationMessage(conversationId)
+      return true
     } catch {
+      useChatStore.getState().setError(t('chat.stopFailedMessage'))
+      return false
     }
-  }
+  }, [t])
 
   function rememberCommandReference(reference: CommandReference) {
     const existing = activeConversation.commandRefs ?? []
@@ -72,13 +76,13 @@ export function useChatActiveWorkspaceActions({
     })
   }
 
-  function repairAgentEvidenceFromMessage(item: Message) {
+  const repairAgentEvidenceFromMessage = useCallback((item: Message) => {
     repairAgentEvidenceDraft({ dialog, message: item, onApplyStarter, t })
-  }
+  }, [dialog, onApplyStarter, t])
 
-  function confirmActionFromMessage(item: Message) {
+  const confirmActionFromMessage = useCallback((item: Message) => {
     confirmActionForMessage({ conversationId: activeConversation.id, dialog, message: item, t })
-  }
+  }, [activeConversation.id, dialog, t])
 
   return {
     confirmActionFromMessage,

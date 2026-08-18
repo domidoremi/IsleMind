@@ -16,7 +16,10 @@ const {
 } = require('../src/modules/providers/testing/providerPerformanceGuards.ts')
 const { createProviderActivationPatchBuffer } = require('../src/modules/providers/providerActivationPatchBuffer.ts')
 const providerModelAccess = require('../src/bootstrap/providerModelAccess.ts')
-const providerSettingsList = require('../src/services/providerSettingsList.ts')
+const providerSettingsList = {
+  ...require('../src/modules/providers/providerSettingsList.ts'),
+  ...require('../src/bootstrap/providerSettingsList.ts'),
+}
 const providerActivationIssueSummary = require('../src/services/providerActivationIssueSummary.ts')
 
 function registerTypeScriptSupport() {
@@ -95,11 +98,22 @@ async function run() {
   assertSourceIncludes('src/services/runtimeDiagnostics.ts', 'RUNTIME_DIAGNOSTICS_PROVIDER_HEAVY_LIMIT', 'runtime diagnostics caps heavy provider scans')
   assertSourceIncludes('src/components/providers/ProviderSettingsContent.tsx', 'RUNTIME_DIAGNOSTICS_DEBOUNCE_MS', 'provider settings debounces runtime diagnostics')
   assertSourceIncludes('src/components/providers/ProviderSettingsContent.tsx', 'PROVIDER_RUNTIME_DIAGNOSTICS_AUTO_MODEL_ENTRY_LIMIT', 'provider settings skips automatic diagnostics for imported catalogs')
-  assertSourceIncludes('src/services/providerSettingsList.ts', 'buildProviderSettingsSearchIndex', 'provider settings caches normalized provider search text')
-  assertSourceIncludes('src/services/providerSettingsList.ts', 'PROVIDER_SETTINGS_SEARCH_FIELD_SAMPLE_LIMIT', 'provider settings bounds normalized search-index field samples')
-  assertSourceIncludes('src/services/providerSettingsList.ts', 'providerSourceModelMatchesFilter', 'provider settings keeps source-model fallback matching when bounded search index misses')
-  assertSourceIncludes('src/services/providerSettingsList.ts', 'resolveProviderModelAliasAccess', 'provider settings source-model fallback keeps model policy scope')
-  assertSourceExcludes('src/services/providerSettingsList.ts', '.flatMap((model) => [model.id, model.name])', 'provider settings search fallback avoids allocating full model-config value arrays')
+  assertSourceExcludes('src/components/providers/ProviderSettingsContent.tsx', "import { buildRuntimeDiagnosticsSummary", 'provider settings does not evaluate runtime diagnostics at module load')
+  assertSourceIncludes('src/components/providers/ProviderSettingsContent.tsx', "await import('@/services/runtimeDiagnostics')", 'provider settings loads runtime diagnostics only after debounce and current-run admission')
+  assertSourceExcludes('src/components/main/SettingsScreenContent.tsx', "import { buildRuntimeDiagnosticsSummary", 'settings does not evaluate runtime diagnostics at module load')
+  assertSourceIncludes('src/components/main/SettingsScreenContent.tsx', "await import('@/services/runtimeDiagnostics')", 'settings loads runtime diagnostics only when the diagnostics surface refreshes')
+  assertSourceIncludes('src/modules/providers/providerSettingsList.ts', 'buildProviderSettingsSearchIndex', 'provider settings caches normalized provider search text')
+  assertSourceIncludes('src/modules/providers/providerSettingsList.ts', 'PROVIDER_SETTINGS_SEARCH_FIELD_SAMPLE_LIMIT', 'provider settings bounds normalized search-index field samples')
+  assertSourceIncludes('src/modules/providers/providerSettingsList.ts', 'providerSourceModelMatchesFilter', 'provider settings keeps source-model fallback matching when bounded search index misses')
+  assertSourceIncludes('src/modules/providers/providerSettingsList.ts', 'resolveProviderModelAliasAccess', 'provider settings source-model fallback keeps model policy scope')
+  assertSourceExcludes('src/modules/providers/providerSettingsList.ts', '.flatMap((model) => [model.id, model.name])', 'provider settings search fallback avoids allocating full model-config value arrays')
+  assertSourceIncludes('src/modules/providers/providerSettingsList.ts', 'createProviderSettingsList', 'provider settings projection exposes a dependency-injected Providers factory')
+  assertSourceIncludes('src/modules/providers/index.ts', "export * from './providerSettingsList'", 'provider settings projection is published through the Providers API')
+  assertSourceIncludes('src/bootstrap/providerSettingsList.ts', 'createProviderSettingsList(PROVIDER_MODEL_ACCESS_POLICY)', 'bootstrap binds provider settings projection to the shared model-access policy')
+  const providerSettingsListModulePath = path.join(root, 'src', 'modules', 'providers', 'providerSettingsList.ts')
+  assert.equal(fs.existsSync(providerSettingsListModulePath), true, 'provider settings projection has a Providers-owned implementation')
+  const legacyProviderSettingsListPath = path.join(root, 'src', 'services', 'providerSettingsList.ts')
+  assert.equal(fs.existsSync(legacyProviderSettingsListPath), false, 'legacy provider settings projection is deleted after cutover')
   assertSourceIncludes('src/components/providers/ProviderSettingsContent.tsx', 'providerPolicyCacheRequired', 'provider settings avoids policy cache on default route mount')
   assertSourceIncludes('src/components/providers/ProviderSettingsContent.tsx', 'PROVIDER_MANUAL_SORT_RAIL_PROVIDER_LIMIT', 'provider settings gates drag rails on heavy imported lists')
   assertSourceIncludes('src/components/providers/ProviderSettingsContent.tsx', 'PROVIDER_DETAILS_DEFER_PROVIDER_LIMIT', 'provider settings defers heavy inline detail mount on imported lists')
@@ -130,7 +144,7 @@ async function run() {
   assertSourceIncludes('src/components/providers/useProviderActivationJob.ts', 'hydrateProviderForActivation', 'batch provider activation hydrates against pending coalesced patches')
   assertSourceIncludes('src/components/providers/useProviderActivationJob.ts', 'ACTIVATION_PROVIDER_PATCH_FLUSH_LIMIT', 'batch provider activation has an explicit patch flush bound')
   assertSourceIncludes('src/components/providers/useProviderActivationJob.ts', 'foregroundService: true', 'batch provider activation publishes a foreground-service progress notification')
-  assertSourceIncludes('src/components/providers/useProviderActivationJob.ts', 'await publishProviderActivationStatusNotification(initialActivationJob, t)', 'batch provider activation starts its foreground-service notification before network work')
+  assertSourceIncludes('src/components/providers/useProviderActivationJob.ts', 'await publishProviderActivationStatusNotification(initialActivationJob, t, settings.systemStatusNotificationsEnabled === true)', 'batch provider activation starts its foreground-service notification before network work')
   await assertActivationPatchBufferKeepsCredentialGroupHealth()
   await assertActivationPatchBufferSerializesFlushes()
   await assertActivationPatchBufferPreAbortPerformsNoIo()

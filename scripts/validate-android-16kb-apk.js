@@ -3,6 +3,7 @@ const os = require('node:os')
 const path = require('node:path')
 const zlib = require('node:zlib')
 const { spawnSync } = require('node:child_process')
+const { resolveReleaseApkPaths } = require('./release-apk-paths')
 
 const projectRoot = path.resolve(__dirname, '..')
 const distDir = path.join(projectRoot, 'dist-apk')
@@ -10,42 +11,18 @@ const SIXTEEN_KB = 0x4000
 
 function parseArgs(argv) {
   const args = {
-    apkPaths: [],
     strict: false,
   }
+  const apkArgs = []
   for (const item of argv) {
     if (item === '--strict') {
       args.strict = true
-    } else if (item.includes('*')) {
-      args.apkPaths.push(...expandSimpleGlob(item))
     } else {
-      args.apkPaths.push(item)
+      apkArgs.push(item)
     }
   }
-  if (!args.apkPaths.length && fs.existsSync(distDir)) {
-    args.apkPaths = fs.readdirSync(distDir)
-      .filter((name) => name.endsWith('.apk'))
-      .map((name) => path.join(distDir, name))
-  }
-  args.apkPaths = [...new Set(args.apkPaths.map((apk) => path.resolve(projectRoot, apk)))]
+  args.apkPaths = resolveReleaseApkPaths(apkArgs, { projectRoot, defaultDir: distDir })
   return args
-}
-
-function expandSimpleGlob(pattern) {
-  const normalized = pattern.replace(/\\/g, '/')
-  const slash = normalized.lastIndexOf('/')
-  const dir = slash >= 0 ? normalized.slice(0, slash) : '.'
-  const base = slash >= 0 ? normalized.slice(slash + 1) : normalized
-  const regex = new RegExp(`^${base.split('*').map(escapeRegex).join('.*')}$`)
-  const absoluteDir = path.resolve(projectRoot, dir)
-  if (!fs.existsSync(absoluteDir)) return []
-  return fs.readdirSync(absoluteDir)
-    .filter((name) => regex.test(name))
-    .map((name) => path.join(absoluteDir, name))
-}
-
-function escapeRegex(value) {
-  return value.replace(/[|\\{}()[\]^$+?.]/g, '\\$&')
 }
 
 function findZipalign() {

@@ -1,5 +1,3 @@
-import AsyncStorage from '@react-native-async-storage/async-storage'
-
 export interface AsyncStorageApplicationRecordAdapter {
   getItem(key: string): Promise<string | null>
   setItem(key: string, value: string): Promise<void>
@@ -15,12 +13,21 @@ export interface ApplicationRecordStoragePort {
 }
 
 export function createAsyncStorageApplicationRecordStorage(
-  storage: AsyncStorageApplicationRecordAdapter = AsyncStorage,
+  storage?: AsyncStorageApplicationRecordAdapter,
 ): ApplicationRecordStoragePort {
+  const resolveStorage = () => storage ??= loadDefaultAsyncStorage()
+
   return Object.freeze({
-    read: (key: string) => storage.getItem(key),
-    write: (key: string, value: string) => storage.setItem(key, value),
-    remove: (key: string) => storage.removeItem(key),
-    removeMany: (keys: readonly string[]) => storage.multiRemove([...keys]),
+    read: (key: string) => resolveStorage().getItem(key),
+    write: (key: string, value: string) => resolveStorage().setItem(key, value),
+    remove: (key: string) => resolveStorage().removeItem(key),
+    removeMany: (keys: readonly string[]) => resolveStorage().multiRemove([...keys]),
   })
+}
+
+function loadDefaultAsyncStorage(): AsyncStorageApplicationRecordAdapter {
+  const loaded = require('@react-native-async-storage/async-storage') as {
+    default?: AsyncStorageApplicationRecordAdapter
+  } & Partial<AsyncStorageApplicationRecordAdapter>
+  return loaded.default ?? loaded as AsyncStorageApplicationRecordAdapter
 }

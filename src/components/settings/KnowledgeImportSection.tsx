@@ -3,7 +3,7 @@ import { StyleSheet, Text, View } from 'react-native'
 import { MotiView } from 'moti'
 import { useTranslation } from 'react-i18next'
 import { AppIcon } from '@/components/ui/AppIcon'
-import { IsleField, IslePressable } from '@/components/ui/isle'
+import { ISLE_MIN_TOUCH_TARGET, IsleField, IslePressable } from '@/components/ui/isle'
 import { useAppTheme } from '@/hooks/useAppTheme'
 
 interface KnowledgeImportSectionProps {
@@ -74,7 +74,7 @@ export function KnowledgeImportSection({
         onPress={() => setPasteOpen((value) => !value)}
         style={{
           marginTop: 10,
-          minHeight: 42,
+          minHeight: ISLE_MIN_TOUCH_TARGET,
           borderRadius: Math.min(colors.ui.radius.controlLarge, 8),
           paddingHorizontal: 12,
           flexDirection: 'row',

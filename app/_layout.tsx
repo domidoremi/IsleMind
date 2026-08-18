@@ -1,5 +1,5 @@
 import '../src/devLogFilters'
-import '../src/global.css'
+import '../src/theme/webGlobalStyles'
 import 'react-native-gesture-handler'
 import * as Clipboard from 'expo-clipboard'
 import type { ErrorBoundaryProps, NativeStackNavigationOptions } from 'expo-router'
@@ -12,6 +12,7 @@ import { useTranslation } from 'react-i18next'
 import { AnimatedNavigationIcon } from '@/components/navigation/AnimatedNavigationIcon'
 import { useNavigationTrigger } from '@/components/navigation/AnimatedNavigationTrigger'
 import { AppIcon, appIconStroke } from '@/components/ui/AppIcon'
+import { AppStatusSurface } from '@/components/ui/AppStatusSurface'
 import { useBootstrap } from '@/hooks/useBootstrap'
 import { useAppTheme } from '@/hooks/useAppTheme'
 import { IsleScreen } from '@/components/ui/isle'
@@ -59,7 +60,7 @@ export default function RootLayout() {
             <Stack.Screen name="settings/providers" options={{ ...stackTransitionOptions, ...SETTINGS_PROVIDER_SCREEN_OPTIONS }} />
           </Stack>
         ) : (
-          <BootFallback />
+          <BootFallback status={boot.status} failure={boot.failure} onRetry={boot.retry} />
         )}
         {boot.ready ? <GlobalSystemStatusNotificationLayer /> : null}
         {boot.ready ? <GlobalGenerationStatusLayer /> : null}
@@ -68,9 +69,40 @@ export default function RootLayout() {
   )
 }
 
-function BootFallback() {
+function BootFallback({
+  status,
+  failure,
+  onRetry,
+}: {
+  status: ReturnType<typeof useBootstrap>['status']
+  failure: ReturnType<typeof useBootstrap>['failure']
+  onRetry: ReturnType<typeof useBootstrap>['retry']
+}) {
   const { colors } = useAppTheme()
   const { t } = useTranslation()
+
+  if (status === 'blocked' && failure) {
+    return (
+      <SafeAreaView style={{ flex: 1, backgroundColor: colors.surface }}>
+        <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 18 }}>
+          <AppStatusSurface
+            title={t('app.pageUnavailable')}
+            tone="danger"
+            icon="warning"
+            accessibilityRole="alert"
+            accessibilityLiveRegion="assertive"
+            message={failure.message}
+            detail={t('app.pageUnavailableReference', { reference: failure.reference })}
+            actionLabel={t('common.retry')}
+            onAction={onRetry}
+            selectableMessage
+            style={{ width: '100%', maxWidth: 520 }}
+          />
+        </View>
+      </SafeAreaView>
+    )
+  }
+
   return (
     <SafeAreaView style={{ flex: 1, backgroundColor: colors.surface }}>
       <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 24 }}>

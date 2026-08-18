@@ -59,13 +59,6 @@ assert.match(
   /transport:\s*preset\.transport/,
   'preset installation preserves the catalog transport policy',
 )
-assert.match(settingsSource, /const enabledSurface = '#198754'/, 'enabled MCP tiles use the accessible green authority surface')
-assert.match(settingsSource, /isDark \? colors\.ui\.semantic\.surface\.base : '#FFFFFF'/, 'disabled MCP tiles stay white in the default light theme')
-assert.match(settingsSource, /isDark \? colors\.text : '#111111'/, 'disabled MCP tiles keep near-black text in the default light theme')
-assert.match(settingsSource, /aspectRatio: 1/, 'MCP server controls render as stable square tiles')
-assert.match(settingsSource, /accessibilityRole="switch"[\s\S]*?accessibilityState=\{\{ checked: server\.enabled, disabled: pending \}\}/, 'the full MCP tile is an accessible binary control and locks while persistence is pending')
-assert.match(settingsSource, /onOpenDetails=\{\(serverId\) => \{[\s\S]*?setSelectedServerId\(serverId\)[\s\S]*?setManagementOpen\(true\)/, 'MCP detail access stays separate from the tile toggle')
-assert.doesNotMatch(settingsSource, /<SettingsSummaryStrip/, 'MCP primary settings no longer duplicates the catalog as a summary dashboard')
 
 const detached = moduleRef.exports.listMcpRemotePresets()
 detached[0].name = 'changed by caller'

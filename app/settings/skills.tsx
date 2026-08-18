@@ -2,10 +2,10 @@ import { useLocalSearchParams } from 'expo-router'
 import { useTranslation } from 'react-i18next'
 import { SettingsPageShell } from '@/components/settings/SettingsPageShell'
 import { type PluginManifestSettingsFocus, type WorkflowSettingsFocus } from '@/components/settings/SkillSettingsContent'
-import { createLazyComponentWithPreload } from '@/utils/lazyLoad'
+import { createLazyComponent } from '@/utils/lazyLoad'
 
 // 懒加载技能设置内容
-const SkillSettingsContent = createLazyComponentWithPreload(
+const SkillSettingsContent = createLazyComponent(
   () => import('@/components/settings/SkillSettingsContent').then((module) => ({ default: module.SkillSettingsContent }))
 )
 

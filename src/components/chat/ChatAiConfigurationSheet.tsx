@@ -1,20 +1,34 @@
 import { useEffect, useState } from 'react'
-import { Modal, Pressable, StyleSheet, View, useWindowDimensions } from 'react-native'
-import { useTranslation } from 'react-i18next'
+import { Keyboard, KeyboardAvoidingView, Modal, Platform, Pressable, StyleSheet, View, useWindowDimensions } from 'react-native'
 import { useSafeAreaInsets } from 'react-native-safe-area-context'
 
-import { ProviderSettingsContent } from '@/components/providers/ProviderSettingsContent'
 import { useAppTheme } from '@/hooks/useAppTheme'
+import { resolveProductMobileChatConfigurationSheetLayout } from '@/presentation/layout/productMobileLayout'
 import type { Conversation } from '@/types/chatContracts'
 import type { AIProvider } from '@/types/providerContracts'
+import { createLazyComponent, LazyLoadingFallback } from '@/utils/lazyLoad'
 
 import type { ModelAccessSettings } from './chatModelSelection'
-import { ChatOptionsPanel } from './ChatOptionsPanel'
+
+const ProviderSettingsContent = createLazyComponent(
+  () => import('@/components/providers/ProviderSettingsContent').then((module) => ({ default: module.ProviderSettingsContent })),
+  {
+    renderFallback: (props) => (
+      <LazyLoadingFallback onDismiss={props.onClose} />
+    ),
+  },
+)
+
+const ChatOptionsPanel = createLazyComponent(
+  () => import('@/components/chat/ChatOptionsPanel').then((module) => ({ default: module.ChatOptionsPanel })),
+)
 
 type ConversationDraftPatch = Partial<Pick<Conversation, 'temperature' | 'topP' | 'topK' | 'reasoningEffort' | 'maxTokens' | 'generationParameterOverrides'>>
 
 interface ChatAiConfigurationSheetProps {
   visible: boolean
+  initialView?: 'configuration' | 'providers'
+  autoOpenProviderAdd?: boolean
   conversation: Conversation
   provider: AIProvider | undefined
   switchableProviders: AIProvider[]
@@ -28,6 +42,8 @@ interface ChatAiConfigurationSheetProps {
 
 export function ChatAiConfigurationSheet({
   visible,
+  initialView = 'configuration',
+  autoOpenProviderAdd,
   conversation,
   provider,
   switchableProviders,
@@ -39,23 +55,34 @@ export function ChatAiConfigurationSheet({
   onClose,
 }: ChatAiConfigurationSheetProps) {
   const { colors } = useAppTheme()
-  const { t } = useTranslation()
   const insets = useSafeAreaInsets()
   const { height } = useWindowDimensions()
-  const [view, setView] = useState<'configuration' | 'providers'>('configuration')
+  const [view, setView] = useState<'configuration' | 'providers'>(initialView)
   const subtleBorderWidth = colors.ui.limeRoad ? 1 : StyleSheet.hairlineWidth
-  const sheetHeight = Math.max(360, Math.min(height - Math.max(insets.top, 12), Math.round(height * 0.92)))
+  const sheetLayout = resolveProductMobileChatConfigurationSheetLayout(height, {
+    safeAreaTop: insets.top,
+  })
 
   useEffect(() => {
-    if (!visible) setView('configuration')
-  }, [visible])
+    if (!visible) setView(initialView)
+  }, [initialView, visible])
+
+  if (!visible) return null
 
   function closeCurrentView() {
-    if (view === 'providers') {
+    if (view === 'providers' && initialView !== 'providers') {
       setView('configuration')
       return
     }
     onClose()
+  }
+
+  function handleRequestClose() {
+    if (Platform.OS === 'android' && Keyboard.isVisible()) {
+      Keyboard.dismiss()
+      return
+    }
+    closeCurrentView()
   }
 
   return (
@@ -65,55 +92,61 @@ export function ChatAiConfigurationSheet({
       animationType="none"
       statusBarTranslucent
       navigationBarTranslucent
-      onRequestClose={closeCurrentView}
+      onRequestClose={handleRequestClose}
     >
-      <View testID="chat-ai-configuration-panel" accessibilityViewIsModal style={{ flex: 1, justifyContent: 'flex-end' }}>
+      <View testID="chat-ai-configuration-panel" accessibilityViewIsModal style={{ flex: 1 }}>
         <Pressable
-          accessibilityRole="button"
-          accessibilityLabel={t('dialog.closeLayer')}
+          accessible={false}
+          accessibilityRole="none"
           onPress={closeCurrentView}
           style={[StyleSheet.absoluteFill, { backgroundColor: colors.backdrop }]}
         />
-        <View
-          style={{
-            height: sheetHeight,
-            overflow: 'hidden',
-            borderTopLeftRadius: colors.ui.radius.modal,
-            borderTopRightRadius: colors.ui.radius.modal,
-            backgroundColor: colors.material.sheet.surface,
-            borderWidth: subtleBorderWidth,
-            borderBottomWidth: 0,
-            borderColor: colors.material.sheet.border,
-          }}
+        <KeyboardAvoidingView
+          behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+          style={{ flex: 1, justifyContent: 'flex-end' }}
         >
-          {view === 'providers' ? (
-            <View testID="chat-ai-provider-management-panel" style={{ flex: 1 }}>
-              <ProviderSettingsContent
+          <View
+            style={{
+              height: sheetLayout.height,
+              maxHeight: '100%',
+              overflow: 'hidden',
+              borderTopLeftRadius: colors.ui.radius.modal,
+              borderTopRightRadius: colors.ui.radius.modal,
+              backgroundColor: colors.material.sheet.surface,
+              borderWidth: subtleBorderWidth,
+              borderBottomWidth: 0,
+              borderColor: colors.material.sheet.border,
+            }}
+          >
+            {view === 'providers' ? (
+              <View testID="chat-ai-provider-management-panel" style={{ flex: 1 }}>
+                <ProviderSettingsContent
+                  embedded
+                  autoOpenAdd={autoOpenProviderAdd ?? switchableProviders.length === 0}
+                  onProviderConnected={() => setView('configuration')}
+                  onClose={closeCurrentView}
+                />
+              </View>
+            ) : (
+              <ChatOptionsPanel
                 embedded
-                autoOpenAdd={switchableProviders.length === 0}
-                onProviderConnected={() => setView('configuration')}
-                onClose={() => setView('configuration')}
+                placement="sheet"
+                scope={scope}
+                conversation={conversation}
+                provider={provider}
+                switchableProviders={switchableProviders}
+                colors={colors}
+                maxHeight={sheetLayout.height}
+                settings={settings}
+                onSwitchModel={onSwitchModel}
+                onCopyLink={onCopyLink}
+                onManageProviders={() => setView('providers')}
+                onClose={onClose}
+                onDraftChange={onDraftChange}
               />
-            </View>
-          ) : (
-            <ChatOptionsPanel
-              embedded
-              placement="sheet"
-              scope={scope}
-              conversation={conversation}
-              provider={provider}
-              switchableProviders={switchableProviders}
-              colors={colors}
-              maxHeight={sheetHeight}
-              settings={settings}
-              onSwitchModel={onSwitchModel}
-              onCopyLink={onCopyLink}
-              onManageProviders={() => setView('providers')}
-              onClose={onClose}
-              onDraftChange={onDraftChange}
-            />
-          )}
-        </View>
+            )}
+          </View>
+        </KeyboardAvoidingView>
       </View>
     </Modal>
   )

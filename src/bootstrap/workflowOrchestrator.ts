@@ -23,7 +23,7 @@ import {
   formatToolRequestIdentity,
   type ConversationToolCatalogManifest,
 } from '@/modules/integrations'
-import { sanitizeAndroidApkUri } from '@/services/androidUriPolicy'
+import { sanitizeAndroidApkUri } from '@/platform/native/androidUriPolicy'
 
 import { resolveWorkflowRagEvidencePause } from './workflowRagEvidence'
 import {
