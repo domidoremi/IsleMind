@@ -1,6 +1,7 @@
 import {
   createSettingsActionUseCase,
   isSettingsActionName,
+  normalizeSettingsThemeFamily,
   type AppSettingsSnapshot,
   type SettingsActionErrorCode,
   type SettingsActionName,
@@ -80,7 +81,7 @@ function getSettingsSnapshot(): AppSettingsSnapshot {
   const settings = useSettingsStore.getState().settings
   return {
     theme: settings.theme,
-    themeId: settings.themeId,
+    themeId: normalizeSettingsThemeFamily(settings.themeId) ?? 'minimal',
     themeAccent: settings.themeAccent,
     language: settings.language,
     memoryEnabled: settings.memoryEnabled,

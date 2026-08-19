@@ -86,6 +86,7 @@ export function getOpenAIChatMaxTokensField(req: OpenAIRequestInput): 'max_compl
   if (providerMatches(req.provider, 'moonshot', /moonshot|kimi/i)) return 'max_completion_tokens'
   if (providerMatches(req.provider, 'xai', /(^|[-_./])xai($|[-_./])|grok|api\.x\.ai/i)) return 'max_completion_tokens'
   if (providerMatches(req.provider, 'cerebras', /cerebras|api\.cerebras\.ai/i)) return 'max_completion_tokens'
+  if (/^gemini(?:[-_/]|$)/i.test(req.model) || providerMatches(req.provider, 'google', /gemini|generativelanguage\.googleapis\.com/i)) return 'max_completion_tokens'
   if (providerMatches(req.provider, 'together', /together|api\.together\.(ai|xyz)/i)) return 'max_tokens'
   if (providerMatches(req.provider, 'fireworks', /fireworks|api\.fireworks\.ai/i)) return 'max_tokens'
   return 'max_tokens'

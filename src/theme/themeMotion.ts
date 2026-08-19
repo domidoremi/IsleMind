@@ -1,9 +1,10 @@
 import type { MotionIntensity } from '@/hooks/useMotionPreference'
-import type { ThemeId } from '@/types/settingsContracts'
+import type { CanonicalThemeId, ThemeId } from '@/types/settingsContracts'
+import { normalizeThemeId } from './colors'
 
-export type ThemeFoundation = 'minimal' | 'animal-island' | 'document'
+export type ThemeFoundation = 'minimal' | 'monet' | 'material' | 'liquid-glass' | 'animal-island' | 'document'
 export type ThemeSeasonalLayer = 'none' | 'summer-road'
-export type ThemeMotionProfileId = 'quiet' | 'road-cinema' | 'document-cut'
+export type ThemeMotionProfileId = 'quiet' | 'monet-breathe' | 'material-shared-axis' | 'glass-refraction'
 export type ThemeMotionRole = 'page' | 'section' | 'scenic' | 'accent' | 'overlay'
 export type ThemeMotionDirection = 'forward' | 'backward' | 'neutral'
 export type AnimalIslandUiThemeSupport = 'supported' | 'fused'
@@ -90,46 +91,61 @@ export const THEME_EXPERIENCE_EXTENSIONS = {
     animalIslandUi: 'supported',
     motion: {
       id: 'quiet',
-      page: sequence(frame(0, 4), frame(0, 4), 176, 0, true),
-      section: sequence(frame(0, 0, 6), frame(0, 0, -3), 184, 22),
-      scenic: sequence(frame(0, 0, 4), frame(0), 208, 26),
-      accent: sequence(frame(0, 0, 0, 0.97), frame(0), 168, 20),
-      overlay: sequence(frame(0, 0, 4, 0.995), frame(0, 0, 2), 184, 0),
+      page: sequence(frame(0, 2), frame(0, 2), 144, 0, true),
+      section: sequence(frame(0, 0, 3), frame(0), 136, 12),
+      scenic: sequence(frame(0), frame(0), 144, 12),
+      accent: sequence(frame(0), frame(0), 112, 8),
+      overlay: sequence(frame(0), frame(0), 160, 0),
       camera: { panX: 4, panY: 0, scaleFrom: 1 },
       ambient: { parallaxX: 0, parallaxY: 0, scale: 1, durationMs: 0 },
     },
   },
-  'lime-road': {
-    foundation: 'animal-island',
-    seasonalLayer: 'summer-road',
-    animalIslandUi: 'fused',
-    motion: {
-      id: 'road-cinema',
-      page: sequence(frame(0, 28, 0, 0.975), frame(0, 34, 0, 1.015), 320, 0, true),
-      section: sequence(frame(0, 0, 14, 0.99), frame(0, 0, -7, 1.005), 256, 30),
-      scenic: sequence(frame(0, 18, 8, 0.94), frame(0, 12, -4, 1.02), 384, 34, true),
-      accent: sequence(frame(0, 0, 4, 0.86), frame(0, 0, -2, 1.02), 224, 28),
-      overlay: sequence(frame(0, 0, 10, 0.98), frame(0, 0, 6, 0.99), 248, 0),
-      camera: { panX: 28, panY: 8, scaleFrom: 0.975 },
-      ambient: { parallaxX: 18, parallaxY: 10, scale: 1.035, durationMs: 5120 },
-    },
-  },
-  markdown: {
-    foundation: 'document',
+  monet: {
+    foundation: 'monet',
     seasonalLayer: 'none',
     animalIslandUi: 'supported',
     motion: {
-      id: 'document-cut',
-      page: sequence(frame(0, 8), frame(0, 8), 112, 0, true),
-      section: sequence(frame(0, 0, 4), frame(0, 0, -2), 128, 12),
-      scenic: sequence(frame(0), frame(0), 104, 10),
-      accent: sequence(frame(0, 0, 0, 0.99), frame(0), 96, 8),
-      overlay: sequence(frame(0, 0, 2), frame(0), 112, 0),
-      camera: { panX: 8, panY: 0, scaleFrom: 1 },
+      id: 'monet-breathe',
+      page: sequence(frame(0, 10, 2, 0.99), frame(0, 8, -2, 1.005), 320, 0, true),
+      section: sequence(frame(0, 0, 8, 0.995), frame(0, 0, -4), 280, 24),
+      scenic: sequence(frame(0, 8, 5, 0.98), frame(0, 5, -2, 1.008), 360, 28, true),
+      accent: sequence(frame(0, 0, 2, 0.96), frame(0), 220, 20),
+      overlay: sequence(frame(0, 0, 6, 0.99), frame(0, 0, 3), 260, 0),
+      camera: { panX: 10, panY: 5, scaleFrom: 0.99 },
+      ambient: { parallaxX: 4, parallaxY: 3, scale: 1.01, durationMs: 6400 },
+    },
+  },
+  material: {
+    foundation: 'material',
+    seasonalLayer: 'none',
+    animalIslandUi: 'supported',
+    motion: {
+      id: 'material-shared-axis',
+      page: sequence(frame(0, 16, 0, 0.96), frame(0, 12, 0, 1.04), 300, 0, true),
+      section: sequence(frame(0, 0, 8), frame(0, 0, -4), 240, 18),
+      scenic: sequence(frame(0, 0, 4), frame(0), 220, 16),
+      accent: sequence(frame(0, 0, 0, 0.92), frame(0), 180, 14),
+      overlay: sequence(frame(0, 0, 10, 0.98), frame(0, 0, 5, 0.99), 240, 0),
+      camera: { panX: 16, panY: 0, scaleFrom: 0.96 },
       ambient: { parallaxX: 0, parallaxY: 0, scale: 1, durationMs: 0 },
     },
   },
-} as const satisfies Record<ThemeId, ThemeExperienceExtension>
+  'liquid-glass': {
+    foundation: 'liquid-glass',
+    seasonalLayer: 'none',
+    animalIslandUi: 'supported',
+    motion: {
+      id: 'glass-refraction',
+      page: sequence(frame(0, 12, 5, 0.985), frame(0, 10, -3, 1.008), 340, 0, true),
+      section: sequence(frame(0, 0, 7, 0.99), frame(0, 0, -3), 280, 20),
+      scenic: sequence(frame(0, 6, 4, 0.98), frame(0, 4, -2, 1.006), 320, 22, true),
+      accent: sequence(frame(0, 0, 1, 0.94), frame(0), 200, 16),
+      overlay: sequence(frame(0, 0, 12, 0.98), frame(0, 0, 5, 0.99), 300, 0),
+      camera: { panX: 12, panY: 5, scaleFrom: 0.985 },
+      ambient: { parallaxX: 3, parallaxY: 2, scale: 1.008, durationMs: 7200 },
+    },
+  },
+} as const satisfies Record<CanonicalThemeId, ThemeExperienceExtension>
 
 export function resolveThemeMotion({
   themeId,
@@ -164,7 +180,7 @@ export function resolveThemeMotion({
     }
   }
 
-  const profile = THEME_EXPERIENCE_EXTENSIONS[themeId].motion
+  const profile = THEME_EXPERIENCE_EXTENSIONS[normalizeThemeId(themeId)].motion
   const motion = profile[role]
   const directionMultiplier = direction === 'forward' ? 1 : direction === 'backward' ? -1 : 0
   const resolveFrame = (token: ThemeMotionFrameToken): ThemeMotionState => ({

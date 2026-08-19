@@ -8,9 +8,10 @@ export function normalizeSettingsThemeMode(value: unknown): SettingsThemeMode | 
 }
 
 export function normalizeSettingsThemeFamily(value: unknown): SettingsThemeFamily | undefined {
-  if (value === 'cartoon' || value === 'island') return 'lime-road'
-  if (value === 'glass') return 'markdown'
-  return value === 'minimal' || value === 'lime-road' || value === 'markdown' ? value : undefined
+  if (value === 'lime-road' || value === 'cartoon' || value === 'island') return 'monet'
+  if (value === 'markdown' || value === 'material-3' || value === 'material3') return 'material'
+  if (value === 'glass' || value === 'liquid') return 'liquid-glass'
+  return value === 'minimal' || value === 'monet' || value === 'material' || value === 'liquid-glass' ? value : undefined
 }
 
 export function normalizeSettingsThemeAccent(value: unknown): string | undefined {

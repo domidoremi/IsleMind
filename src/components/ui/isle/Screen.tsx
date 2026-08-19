@@ -1,7 +1,6 @@
 import type { PropsWithChildren } from 'react'
-import { View, type ViewStyle } from 'react-native'
+import { StatusBar as NativeStatusBar, View, type ViewStyle } from 'react-native'
 import { SafeAreaView, type Edges } from 'react-native-safe-area-context'
-import { StatusBar } from 'expo-status-bar'
 import { IsleBackground, resolveBackgroundCanvas, type IsleBackgroundMode, type IsleBackgroundState } from './Background'
 import { useAppTheme } from '@/hooks/useAppTheme'
 
@@ -20,7 +19,11 @@ export function IsleScreen({ children, padded = true, style, background = 'defau
 
   return (
     <SafeAreaView edges={edges} style={{ flex: 1, backgroundColor: canvas }}>
-      <StatusBar style={isDark ? 'light' : 'dark'} />
+      <NativeStatusBar
+        barStyle={isDark ? 'light-content' : 'dark-content'}
+        backgroundColor={canvas}
+        translucent={false}
+      />
       <View
         style={[
           {

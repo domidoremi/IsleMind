@@ -1,5 +1,8 @@
 export type ThemeMode = 'light' | 'dark' | 'system'
-export type ThemeId = 'minimal' | 'lime-road' | 'markdown'
+/** Canonical product theme families. Legacy values remain input-only aliases. */
+export type CanonicalThemeId = 'minimal' | 'monet' | 'material' | 'liquid-glass'
+export type LegacyThemeId = 'lime-road' | 'markdown' | 'cartoon' | 'island' | 'glass' | 'material-3' | 'material3' | 'liquid'
+export type ThemeId = CanonicalThemeId | LegacyThemeId
 export type Language = 'zh-CN' | 'en' | 'ja'
 export type UpstreamTransportMode = 'auto' | 'http' | 'websocket'
 export type RemoteCompactMode = 'off' | 'auto' | 'required'

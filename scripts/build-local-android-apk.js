@@ -473,11 +473,15 @@ function prepareAndroidProjectForRelease(args) {
   console.warn(`R8 and resource shrinking: ${releaseOptimization.enabled ? 'enabled for explicit QA validation' : 'disabled until exact-current device validation passes'}.`)
   const env = releaseEnv()
   run(commandName('node'), ['scripts/patch-onnxruntime-16kb.js'], { env })
-  run(commandName('node'), ['node_modules/expo/bin/cli', 'prebuild', '--platform', 'android'], { env })
-  ensureAndroidLocalProperties()
+  prepareAndroidProject(env)
   allowReleaseCleartextTraffic()
   run(commandName('node'), ['scripts/patch-onnxruntime-16kb.js'], { env })
   run(commandName('node'), ['scripts/configure-android-release.js', '--skip-signing'], { env })
+}
+
+function prepareAndroidProject(env) {
+  run(commandName('node'), ['node_modules/expo/bin/cli', 'prebuild', '--platform', 'android'], { env })
+  ensureAndroidLocalProperties()
 }
 
 function buildVariant(variant, args) {
@@ -537,6 +541,8 @@ function main() {
   }
   if (args.buildType === 'release') {
     prepareAndroidProjectForRelease(args)
+  } else {
+    prepareAndroidProject(androidBuildEnv())
   }
   if (args.runChecks) {
     run(commandName('bun'), ['run', 'type-check'])

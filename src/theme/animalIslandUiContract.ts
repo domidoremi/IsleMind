@@ -1,12 +1,13 @@
-import type { ThemeId } from '@/types/settingsContracts'
+import type { CanonicalThemeId } from '@/types/settingsContracts'
 
 import { THEME_EXPERIENCE_EXTENSIONS, type AnimalIslandUiThemeSupport } from './themeMotion'
 
 const themeSupport = {
   minimal: THEME_EXPERIENCE_EXTENSIONS.minimal.animalIslandUi,
-  'lime-road': THEME_EXPERIENCE_EXTENSIONS['lime-road'].animalIslandUi,
-  markdown: THEME_EXPERIENCE_EXTENSIONS.markdown.animalIslandUi,
-} as const satisfies Record<ThemeId, AnimalIslandUiThemeSupport>
+  monet: THEME_EXPERIENCE_EXTENSIONS.monet.animalIslandUi,
+  material: THEME_EXPERIENCE_EXTENSIONS.material.animalIslandUi,
+  'liquid-glass': THEME_EXPERIENCE_EXTENSIONS['liquid-glass'].animalIslandUi,
+} as const satisfies Record<CanonicalThemeId, AnimalIslandUiThemeSupport>
 
 export const ANIMAL_ISLAND_UI_CONTRACT = {
   packageName: 'animal-island-ui',

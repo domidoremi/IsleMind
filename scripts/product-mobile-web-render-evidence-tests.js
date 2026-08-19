@@ -37,14 +37,18 @@ const REQUIRED_APPEARANCE_CAPTURES = [
   ['minimal', 'light', '360x640'],
   ['minimal', 'dark', '320x568'],
   ['minimal', 'dark', '360x640'],
-  ['lime-road', 'light', '320x568'],
-  ['lime-road', 'light', '360x640'],
-  ['lime-road', 'dark', '320x568'],
-  ['lime-road', 'dark', '360x640'],
-  ['markdown', 'light', '320x568'],
-  ['markdown', 'light', '360x640'],
-  ['markdown', 'dark', '320x568'],
-  ['markdown', 'dark', '360x640'],
+  ['monet', 'light', '320x568'],
+  ['monet', 'light', '360x640'],
+  ['monet', 'dark', '320x568'],
+  ['monet', 'dark', '360x640'],
+  ['material', 'light', '320x568'],
+  ['material', 'light', '360x640'],
+  ['material', 'dark', '320x568'],
+  ['material', 'dark', '360x640'],
+  ['liquid-glass', 'light', '320x568'],
+  ['liquid-glass', 'light', '360x640'],
+  ['liquid-glass', 'dark', '320x568'],
+  ['liquid-glass', 'dark', '360x640'],
 ].map(([family, mode, viewport]) => {
   const width = viewport.split('x')[0]
   const id = `appearance-${family}-${mode}-${width}`
@@ -58,18 +62,20 @@ const REQUIRED_APPEARANCE_CAPTURES = [
     verifiedNeedles: [familyLabel(family), modeLabel(mode), 'radio roles', 'custom controls in viewport'],
   }
 }).concat({
-  id: 'appearance-markdown-dark-custom-indigo-360',
+  id: 'appearance-liquid-glass-dark-custom-indigo-360',
   route: '/settings',
   mode: 'settings',
   viewport: '360x640',
-  screenshotName: 'islemind-appearance-markdown-dark-custom-indigo-360.png',
-  appearance: { family: 'markdown', mode: 'dark', accentId: 'custom', accent: '#4455B7' },
-  verifiedNeedles: ['Markdown', 'Dark', 'custom indigo', 'radio roles', 'custom controls in viewport'],
+  screenshotName: 'islemind-appearance-liquid-glass-dark-custom-indigo-360.png',
+  appearance: { family: 'liquid-glass', mode: 'dark', accentId: 'custom', accent: '#4455B7' },
+  verifiedNeedles: ['Liquid Glass', 'Dark', 'custom indigo', 'radio roles', 'custom controls in viewport'],
 })
 
 function familyLabel(family) {
   if (family === 'minimal') return 'Minimalist'
-  if (family === 'lime-road') return 'Lime Road'
+  if (family === 'monet') return 'Monet'
+  if (family === 'material') return 'Material 3'
+  if (family === 'liquid-glass') return 'Liquid Glass'
   return family[0].toUpperCase() + family.slice(1)
 }
 

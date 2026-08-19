@@ -1,5 +1,6 @@
 import { useColorScheme } from 'react-native'
-import { getColors, normalizeThemeId, resolveThemeMode } from '@/theme/colors'
+import { getColors, normalizeThemeId, resolveThemeMode, resolveThemePresentationId } from '@/theme/colors'
+import { resolveThemeDesignTokens } from '@/theme/themeTokens'
 import { useSettingsStore } from '@/store/settingsStore'
 export function useAppTheme() {
   const systemScheme = useColorScheme()
@@ -7,21 +8,27 @@ export function useAppTheme() {
   const storedThemeId = useSettingsStore((state) => state.settings.themeId)
   const themeAccent = useSettingsStore((state) => state.settings.themeAccent)
   const resolvedTheme = resolveThemeMode(themeMode, systemScheme === 'unspecified' ? null : systemScheme)
-  const themeId = normalizeThemeId(storedThemeId)
-  const palette = getColors(resolvedTheme, themeId, undefined, themeAccent)
+  const canonicalThemeId = normalizeThemeId(storedThemeId)
+  const themeId = resolveThemePresentationId(canonicalThemeId)
+  const palette = getColors(resolvedTheme, canonicalThemeId, undefined, themeAccent)
+  const design = palette.design ?? resolveThemeDesignTokens(canonicalThemeId, resolvedTheme)
 
   return {
     colors: palette,
+    design,
     isDark: resolvedTheme === 'dark',
     mode: resolvedTheme,
     themeMode,
+    canonicalThemeId,
+    // Compatibility projection for untouched theme composition dispatchers.
     themeId,
     themeAccent,
-    isMinimal: themeId === 'minimal',
-    isMarkdown: themeId === 'markdown',
-    // Keep the property until untouched presentation consumers migrate, but
-    // no canonical family should enter former Glass-only branches.
-    isGlass: false as const,
-    isLimeRoad: themeId === 'lime-road',
+    isMinimal: canonicalThemeId === 'minimal',
+    isMonet: canonicalThemeId === 'monet',
+    isMaterial: canonicalThemeId === 'material',
+    isLiquidGlass: canonicalThemeId === 'liquid-glass',
+    isMarkdown: canonicalThemeId === 'material',
+    isGlass: canonicalThemeId === 'liquid-glass',
+    isLimeRoad: canonicalThemeId === 'monet',
   }
 }
