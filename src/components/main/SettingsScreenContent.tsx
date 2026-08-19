@@ -47,7 +47,7 @@ import { resolveProviderDisplayName } from '@/presentation/features/settings/pro
 import type { RuntimeDiagnosticsSummary } from '@/services/runtimeDiagnostics'
 import type { PluginManifestCatalogSnapshot } from '@/services/pluginManifest'
 import { changeAppLanguage } from '@/i18n'
-import type { BedrockCacheTtl, Language, ObservabilitySinkHighFrequencyExportMode, ObservabilitySinkMode, ObservabilitySinkTarget, PayloadPolicyMode, ProxyMode, RemoteCompactMode, ThemeId, ThemeMode, UpstreamTransportMode } from '@/types/settingsContracts'
+import type { BedrockCacheTtl, CanonicalThemeId, Language, ObservabilitySinkHighFrequencyExportMode, ObservabilitySinkMode, ObservabilitySinkTarget, PayloadPolicyMode, ProxyMode, RemoteCompactMode, ThemeMode, UpstreamTransportMode } from '@/types/settingsContracts'
 import { useMotionPreference } from '@/hooks/useMotionPreference'
 import { motionTokens } from '@/theme/animation'
 import { createLazyComponent } from '@/utils/lazyLoad'
@@ -78,10 +78,11 @@ function summarizeTavernExportAudit(result: PortableDataExportResult) {
   )
 }
 
-const THEME_FAMILY_OPTIONS: { id: ThemeId; labelKey: string; detailKey: string }[] = [
+const THEME_FAMILY_OPTIONS: { id: CanonicalThemeId; labelKey: string; detailKey: string }[] = [
   { id: 'minimal', labelKey: 'settings.themeMinimal', detailKey: 'settings.themeMinimalDescription' },
-  { id: 'lime-road', labelKey: 'settings.themeLimeRoad', detailKey: 'settings.themeLimeRoadDescription' },
-  { id: 'markdown', labelKey: 'settings.themeMarkdown', detailKey: 'settings.themeMarkdownDescription' },
+  { id: 'monet', labelKey: 'settings.themeMonet', detailKey: 'settings.themeMonetDescription' },
+  { id: 'material', labelKey: 'settings.themeMaterial', detailKey: 'settings.themeMaterialDescription' },
+  { id: 'liquid-glass', labelKey: 'settings.themeLiquidGlass', detailKey: 'settings.themeLiquidGlassDescription' },
 ]
 
 const THEME_ACCENT_OPTIONS = [
@@ -260,7 +261,7 @@ function resolveSettingsFoldoutBorder(colors: ReturnType<typeof useAppTheme>['co
 }
 
 export const SettingsScreenContent = memo(function SettingsScreenContent({ shellNavigation = false, onHome }: { shellNavigation?: boolean; onHome?: () => void } = {}) {
-  const { colors } = useAppTheme()
+  const { colors, canonicalThemeId } = useAppTheme()
   const motion = useMotionPreference()
   const { t } = useTranslation()
   const dialog = useIsleDialog()
@@ -335,7 +336,7 @@ export const SettingsScreenContent = memo(function SettingsScreenContent({ shell
   const defaultProviderDisplayName = defaultProvider ? resolveProviderDisplayName(defaultProvider, t('providerSettings.customProvider')) : undefined
   const version = getSettingsVersionSnapshot()
   const searchProvider = resolveSearchProvider(settings)
-  const activeThemeId = settings.themeId ?? 'minimal'
+  const activeThemeId = canonicalThemeId
   const activeCustomThemeAccent = Boolean(settings.themeAccent && !THEME_ACCENT_OPTIONS.some((item) => item.color === settings.themeAccent))
   const normalizedThemeAccentDraft = normalizeThemeAccent(themeAccentDraft)
   const subtleBorderWidth = colors.ui.limeRoad ? 1 : StyleSheet.hairlineWidth
@@ -2383,7 +2384,7 @@ function ThemeFamilyCard({
   onPress,
   testID,
 }: {
-  themeId: ThemeId
+  themeId: CanonicalThemeId
   label: string
   detail: string
   active: boolean
@@ -2431,9 +2432,10 @@ function ThemeFamilyCard({
   )
 }
 
-function ThemeFamilyPreview({ themeId, colors }: { themeId: ThemeId; colors: ReturnType<typeof getColors> }) {
+function ThemeFamilyPreview({ themeId, colors }: { themeId: CanonicalThemeId; colors: ReturnType<typeof getColors> }) {
   const editorial = colors.ui.experience.layout === 'editorial'
-  const document = colors.ui.experience.layout === 'document'
+  const material = colors.ui.experience.layout === 'structured'
+  const glass = colors.ui.experience.layout === 'layered'
 
   return (
     <View
@@ -2443,22 +2445,23 @@ function ThemeFamilyPreview({ themeId, colors }: { themeId: ThemeId; colors: Ret
         height: 58,
         overflow: 'hidden',
         position: 'relative',
-        borderRadius: Math.min(colors.ui.radius.panel, 6),
+        borderRadius: Math.min(colors.ui.radius.panel, glass ? 8 : 6),
         backgroundColor: colors.background.canvas,
         borderWidth: 1,
         borderColor: colors.ui.semantic.chrome.border,
       }}
     >
       {editorial ? <View style={{ position: 'absolute', top: 0, right: 0, left: 0, height: 20, backgroundColor: colors.skyWash }} /> : null}
-      {document ? <View style={{ position: 'absolute', top: 0, bottom: 0, left: 16, width: 1, backgroundColor: colors.ui.section.divider }} /> : null}
+      {material ? <View style={{ position: 'absolute', top: 7, right: 7, bottom: 7, left: 7, borderRadius: 6, backgroundColor: colors.ui.semantic.surface.muted }} /> : null}
+      {glass ? <View style={{ position: 'absolute', top: 5, right: 5, bottom: 5, left: 5, borderRadius: 8, backgroundColor: colors.ui.semantic.surface.overlay, borderWidth: 1, borderColor: colors.ui.semantic.chrome.border }} /> : null}
       <View style={{ height: 15, paddingHorizontal: 7, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
         <View style={{ width: editorial ? 26 : 20, height: 3, backgroundColor: colors.ui.section.title }} />
         <View style={{ flexDirection: 'row', gap: 3 }}>
-          <View style={{ width: 5, height: 5, borderRadius: document ? 1 : 3, backgroundColor: colors.ui.icon.accentForeground }} />
-          <View style={{ width: 5, height: 5, borderRadius: document ? 1 : 3, backgroundColor: colors.ui.tone.warning.foreground }} />
+          <View style={{ width: 5, height: 5, borderRadius: material ? 3 : 2, backgroundColor: colors.ui.icon.accentForeground }} />
+          <View style={{ width: 5, height: 5, borderRadius: material ? 3 : 2, backgroundColor: colors.ui.tone.warning.foreground }} />
         </View>
       </View>
-      <View style={{ flex: 1, paddingLeft: document ? 23 : 8, paddingRight: 8, paddingTop: 4, gap: 4 }}>
+      <View style={{ flex: 1, paddingHorizontal: glass ? 12 : 8, paddingTop: 4, gap: 4 }}>
         <View style={{ width: '66%', height: 4, backgroundColor: colors.text, opacity: 0.78 }} />
         <View style={{ width: '88%', height: 3, backgroundColor: colors.textSecondary, opacity: 0.4 }} />
         <View style={{ width: '52%', height: 3, backgroundColor: colors.textSecondary, opacity: 0.28 }} />
@@ -2468,8 +2471,8 @@ function ThemeFamilyPreview({ themeId, colors }: { themeId: ThemeId; colors: Ret
           <View style={{ position: 'absolute', right: 18, top: -4, width: 10, height: 10, borderRadius: 5, backgroundColor: colors.accent, borderWidth: 2, borderColor: colors.primary }} />
         </View>
       ) : null}
-      <View style={{ position: 'absolute', right: 7, bottom: 6, width: document ? 26 : 32, height: 9, borderRadius: document ? 1 : 4, backgroundColor: colors.ui.control.primaryBackground }} />
-      <View style={{ position: 'absolute', left: 7, bottom: 6, width: themeId === 'minimal' ? 18 : 10, height: 9, borderRadius: document ? 1 : 4, backgroundColor: colors.ui.semantic.surface.muted }} />
+      <View style={{ position: 'absolute', right: 7, bottom: 6, width: material ? 26 : 32, height: 9, borderRadius: material ? 5 : glass ? 7 : 4, backgroundColor: colors.ui.control.primaryBackground }} />
+      <View style={{ position: 'absolute', left: 7, bottom: 6, width: themeId === 'minimal' ? 18 : 10, height: 9, borderRadius: material ? 5 : glass ? 7 : 4, backgroundColor: colors.ui.semantic.surface.muted }} />
     </View>
   )
 }

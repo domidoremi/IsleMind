@@ -7686,6 +7686,11 @@ async function assertUpstreamGovernanceBehavior() {
     'max_tokens',
     'OpenAI request helper keeps generic compatible max-token field'
   )
+  assert.equal(
+    getOpenAIChatMaxTokensField({ provider: { id: 'gemini-relay', type: 'openai-compatible', name: 'Generic relay', apiKey: FAKE_KEY_A, models: ['gemini-2.5-flash'], enabled: true }, model: 'gemini-2.5-flash' }),
+    'max_completion_tokens',
+    'OpenAI-compatible Gemini relays use the upstream max_completion_tokens field'
+  )
   assert.deepEqual(
     openAICompatibleAttachmentPart({ id: 'att-image', type: 'image', uri: 'file://image.png', name: 'image.png', mimeType: 'image/png', size: 12, base64: 'aW1n' }),
     { type: 'image_url', image_url: { url: 'data:image/png;base64,aW1n', detail: 'auto' } },

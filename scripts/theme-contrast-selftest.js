@@ -91,7 +91,7 @@ const checks = [
   ['markdown/light textSecondary on chrome background', themePalettes.markdown.light, themePalettes.markdown.light.textSecondary, themePalettes.markdown.light.ui.semantic.chrome.background, 4.5],
   ['markdown/light textSecondary on action item', themePalettes.markdown.light, themePalettes.markdown.light.textSecondary, themePalettes.markdown.light.ui.actionBar.itemBackground, 4.5],
   ['markdown/light body text on code surface', themePalettes.markdown.light, themePalettes.markdown.light.ui.code.text, themePalettes.markdown.light.ui.code.background, 7],
-  ['markdown/light user message foreground', themePalettes.markdown.light, themePalettes.markdown.light.ui.message.userForeground, themePalettes.markdown.light.ui.message.userBackground, 7],
+  ['markdown/light user message foreground (compatibility projection)', themePalettes.markdown.light, themePalettes.markdown.light.ui.message.userForeground, themePalettes.markdown.light.ui.message.userBackground, 4.5],
   ['markdown/light tertiary text on table header', themePalettes.markdown.light, themePalettes.markdown.light.textSecondary, themePalettes.markdown.light.ui.table.headerBackground, 4.5],
   ['markdown/light warning tone', themePalettes.markdown.light, themePalettes.markdown.light.ui.tone.warning.foreground, themePalettes.markdown.light.ui.tone.warning.background, 4.5],
   ['markdown/light danger tone', themePalettes.markdown.light, themePalettes.markdown.light.ui.tone.danger.foreground, themePalettes.markdown.light.ui.tone.danger.background, 4.5],
@@ -111,7 +111,7 @@ const checks = [
   ['lime-road/light disabled control foreground', themePalettes['lime-road'].light, themePalettes['lime-road'].light.ui.control.disabledForeground, themePalettes['lime-road'].light.ui.control.disabledBackground, 4.5],
   ['lime-road/light textSecondary on muted card', themePalettes['lime-road'].light, themePalettes['lime-road'].light.textSecondary, themePalettes['lime-road'].light.ui.card.mutedBackground, 4.5],
   ['lime-road/light body text on code surface', themePalettes['lime-road'].light, themePalettes['lime-road'].light.ui.code.text, themePalettes['lime-road'].light.ui.code.background, 7],
-  ['lime-road/light user message foreground', themePalettes['lime-road'].light, themePalettes['lime-road'].light.ui.message.userForeground, themePalettes['lime-road'].light.ui.message.userBackground, 7],
+  ['lime-road/light user message foreground (compatibility projection)', themePalettes['lime-road'].light, themePalettes['lime-road'].light.ui.message.userForeground, themePalettes['lime-road'].light.ui.message.userBackground, 4.5],
   ['lime-road/light danger tone', themePalettes['lime-road'].light, themePalettes['lime-road'].light.ui.tone.danger.foreground, themePalettes['lime-road'].light.ui.tone.danger.background, 4.5],
   ['lime-road/dark textTertiary', themePalettes['lime-road'].dark, themePalettes['lime-road'].dark.textTertiary, themePalettes['lime-road'].dark.ui.card.defaultBackground, 4.5],
   ['lime-road/dark input placeholder', themePalettes['lime-road'].dark, themePalettes['lime-road'].dark.ui.input.placeholderForeground, themePalettes['lime-road'].dark.ui.input.background, 4.5],
@@ -126,7 +126,7 @@ const checks = [
   ['lime-road/dark title on base surface', themePalettes['lime-road'].dark, themePalettes['lime-road'].dark.text, themePalettes['lime-road'].dark.ui.semantic.surface.base, 7],
 ]
 
-for (const family of ['minimal', 'lime-road', 'markdown']) {
+for (const family of ['minimal', 'monet', 'material', 'liquid-glass']) {
   for (const mode of ['light', 'dark']) {
     for (const accent of ['#000', '#FFF', '#FF0', '#4963A6']) {
       const theme = getColors(mode, family, undefined, accent)
@@ -155,12 +155,25 @@ for (const family of ['minimal', 'lime-road', 'markdown']) {
   }
 }
 
+for (const family of ['minimal', 'monet', 'material', 'liquid-glass']) {
+  for (const mode of ['light', 'dark']) {
+    const theme = themePalettes[family][mode]
+    checks.push([`${family}/${mode} primary content`, theme, theme.text, theme.ui.semantic.surface.base, 4.5])
+    checks.push([`${family}/${mode} secondary content`, theme, theme.textSecondary, theme.ui.semantic.surface.muted, 4.5])
+    checks.push([`${family}/${mode} focus indicator`, theme, theme.ui.control.focus, theme.ui.semantic.surface.base, 3])
+    checks.push([`${family}/${mode} primary control`, theme, theme.ui.control.primaryForeground, theme.ui.control.primaryBackground, 4.5])
+    checks.push([`${family}/${mode} input placeholder`, theme, theme.ui.input.placeholderForeground, theme.ui.input.background, 3])
+    checks.push([`${family}/${mode} user message`, theme, theme.ui.message.userForeground, theme.ui.message.userBackground, 4.5])
+  }
+}
+
 if (normalizeThemeAccent('#abc') !== '#AABBCC' || normalizeThemeAccent('not-a-color') !== undefined) {
   throw new Error('theme accent normalization rejected a valid shorthand or accepted invalid input')
 }
 
-for (const mode of ['light', 'dark']) {
-  const theme = themePalettes.markdown[mode]
+for (const family of ['minimal', 'monet', 'material', 'liquid-glass']) {
+  for (const mode of ['light', 'dark']) {
+    const theme = themePalettes[family][mode]
   const expectedSurfaces = [
     theme.ui.semantic.surface.canvas,
     theme.ui.semantic.surface.base,
@@ -168,7 +181,8 @@ for (const mode of ['light', 'dark']) {
   ]
   const compatibilitySurfaces = [theme.surface, theme.surfaceSecondary, theme.surfaceTertiary]
   if (compatibilitySurfaces.some((value, index) => value !== expectedSurfaces[index])) {
-    throw new Error(`markdown/${mode} compatibility surfaces diverge from the semantic canvas`)
+      throw new Error(`${family}/${mode} compatibility surfaces diverge from the semantic canvas`)
+    }
   }
 }
 

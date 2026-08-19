@@ -80,7 +80,7 @@ function assertPagerReleaseSourceContract() {
   assert.doesNotMatch(pagerSource, /MainPagerExperience|ThemeNavigationDrawer|AppTopBar|shellNavigation/, 'the pager owns no global top bar, drawer, or hidden shell navigation authority')
   assert.match(pagerSource, /<IsleMotionFrame[\s\S]*role="page"[\s\S]*direction=\{direction\}[\s\S]*importantForAccessibility=\{active \? 'auto' : 'no-hide-descendants'\}[\s\S]*pointerEvents=\{active \? 'auto' : 'none'\}/, 'inactive routes keep semantic motion without intercepting input or accessibility')
   assert.doesNotMatch(pagerSource, /transitionRequest|readinessToken|handlePagerPageReady|requestPagerPageChild|withTiming|withSpring|GestureDetector|Animated\.View/, 'route navigation avoids readiness handshakes and feature-owned animation primitives')
-  assert.match(pagerSource, /styles\.opaqueFallback[\s\S]*colors\.background\.surfaceCanvas/, 'the route pager has an opaque fallback')
+  assert.match(pagerSource, /styles\.opaqueFallback[\s\S]*colors\.background\.canvas/, 'the route pager has an opaque canvas fallback that matches the immersive screen')
   assert.match(chatActiveChromeSource, /if \(showOptions\)[\s\S]*setShowOptions\(false\)[\s\S]*goHistory\(\)/, 'the direct Chat header delegates Back to the workspace return authority after closing local options')
   assert.doesNotMatch(chatActiveChromeSource, /router\.canGoBack\(\)|router\.back\(\)/, 'the direct Chat chrome does not create a second history-stack return authority')
   assert.match(chatDeepLinkSource, /resolveConversationReturnAction\(params\.returnTo, router\.canGoBack\(\)\)[\s\S]*action\.kind === 'back'[\s\S]*router\.back\(\)[\s\S]*router\.replace\(action\.pathname\)/, 'Chat deep links resolve an explicit safe parent before navigating')
@@ -385,9 +385,18 @@ function assertSourceIntegration() {
   assert.ok(settingsCollectorSource.includes('stagingPath') && settingsCollectorSource.includes('fs.copyFileSync(stagingPath, localPath)'), 'settings captures publish only a fresh staged adb pull')
   assert.ok(settingsCollectorSource.includes('box.right <= box.left') && settingsCollectorSource.includes('box.bottom <= box.top'), 'settings interactions reject zero-area accessibility bounds')
   assert.ok(
-    ['appearance-minimal-light', 'appearance-lime-road-dark', 'appearance-markdown-light', 'appearance-markdown-dark-custom-indigo']
+    [
+      'appearance-minimal-light',
+      'appearance-minimal-dark',
+      'appearance-monet-light',
+      'appearance-monet-dark',
+      'appearance-material-light',
+      'appearance-material-dark',
+      'appearance-liquid-glass-light',
+      'appearance-liquid-glass-dark-custom-indigo',
+    ]
       .every((step) => settingsCollectorSource.includes(step)),
-    'settings native evidence retains the representative Minimalist, Lime Road, Markdown, light/dark, and custom-accent matrix',
+    'settings native evidence retains every canonical family in light/dark plus a custom-accent matrix row',
   )
   assert.ok(settingsCollectorSource.includes("custom: '#4455B7'") && settingsCollectorSource.includes('collectThemeLocaleContractIssues'), 'settings native evidence validates the exact custom accent and fails closed on incomplete Appearance rows')
   const settingsCollector = require(path.join(root, 'scripts/collect-settings-state-android.js'))
@@ -1070,7 +1079,7 @@ function assertSourceIntegration() {
   assert.ok(['chat-ai-configuration-panel', '<ChatOptionsPanel', '<ProviderSettingsContent'].every((marker) => chatAiConfigurationSource.includes(marker)), 'one Chat AI sheet composes essential configuration and provider onboarding')
   assert.ok(['chat-ai-provider-connection-section', 'chat-ai-model-selection-section', 'chat-ai-reasoning-section'].every((marker) => chatOptionsPanelSource.includes(marker)), 'the AI sheet exposes provider, model, and reasoning sections from existing state')
   assert.doesNotMatch(mainPagerSource, /function PageHeaderAction/, 'the retired shared PageHeaderAction tree is not restored')
-  assert.match(mainPagerSource, /styles\.opaqueFallback[\s\S]*colors\.background\.surfaceCanvas/, 'the pager keeps an opaque semantic fallback behind every transition')
+  assert.match(mainPagerSource, /styles\.opaqueFallback[\s\S]*colors\.background\.canvas/, 'the pager keeps an opaque canvas fallback behind every transition')
 
   const homeContentSource = fs.readFileSync(path.join(root, 'src/components/main/HomeScreenContent.tsx'), 'utf8')
   assert.match(homeContentSource, /<ChatWorkspace[\s\S]*active=\{active\}/, 'Home passes the requested active state directly into the Chat workspace')

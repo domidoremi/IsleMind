@@ -1,5 +1,5 @@
 import { memo, useCallback, useEffect, useRef, useState } from 'react'
-import { BackHandler, StyleSheet, View } from 'react-native'
+import { BackHandler, Platform, StyleSheet, View } from 'react-native'
 import { router, usePathname } from 'expo-router'
 
 import { IsleMotionFrame, IsleScreen, type IsleBackgroundMode, type IsleBackgroundState } from '@/components/ui/isle'
@@ -108,7 +108,7 @@ function MainPagerShellInner({ initialPage = 'home' }: MainPagerShellProps) {
 
   return (
     <IsleScreen padded={false} background={backgroundMode} backgroundState={backgroundState} backgroundIntensity={0.96}>
-      <View pointerEvents="none" style={[styles.opaqueFallback, { backgroundColor: colors.ui.experience.background === 'plain' ? colors.background.surfaceCanvas : 'transparent' }]} />
+      <View pointerEvents="none" style={[styles.opaqueFallback, { backgroundColor: colors.ui.experience.background === 'plain' ? colors.background.canvas : 'transparent' }]} />
       <View style={{ flex: 1, overflow: 'hidden' }}>
         {pages.map((item) => {
           if (!mountedPages.has(item.id) && item.id !== page) return null
@@ -135,6 +135,7 @@ function MainPagerShellInner({ initialPage = 'home' }: MainPagerShellProps) {
 
   function switchTo(next: MainPagerPage) {
     if (next === page) return
+    blurActivePagerFocus()
     setMountedPages((current) => current.has(next) ? current : new Set(current).add(next))
     setPreviousPage(page)
     setTransitionDirection(resolveMainPagerDirection(page, next))
@@ -144,6 +145,19 @@ function MainPagerShellInner({ initialPage = 'home' }: MainPagerShellProps) {
     }
     setPage(next)
   }
+}
+
+function blurActivePagerFocus(): void {
+  if (Platform.OS !== 'web') return
+  const documentRef = (globalThis as typeof globalThis & {
+    document?: {
+      activeElement?: { blur?: () => void } | null
+      body?: unknown
+    }
+  }).document
+  const activeElement = documentRef?.activeElement
+  if (!activeElement || activeElement === documentRef?.body) return
+  activeElement.blur?.()
 }
 
 function PagerPage({

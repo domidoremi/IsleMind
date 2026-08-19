@@ -29,7 +29,9 @@ export type {
 } from './contextContracts'
 export type {
   BedrockCacheTtl,
+  CanonicalThemeId,
   Language,
+  LegacyThemeId,
   ObservabilitySinkHighFrequencyExportMode,
   ObservabilitySinkMode,
   ObservabilitySinkTarget,

@@ -967,7 +967,7 @@ function readPngDimensions(filePath) {
 function assertAppearanceDefinition(expected) {
   const appearance = expected.appearance
   if (!appearance) return
-  if (!['minimal', 'lime-road', 'markdown'].includes(appearance.family)) {
+  if (!['minimal', 'monet', 'material', 'liquid-glass'].includes(appearance.family)) {
     throw new Error(`Appearance capture ${expected.id} has an invalid family`)
   }
   if (!['light', 'dark', 'system'].includes(appearance.mode)) {
@@ -1259,8 +1259,8 @@ function selfTest() {
   if (!Array.isArray(worklist.requiredCaptures) || worklist.requiredCaptures.length !== 3) {
     throw new Error('Web render worklist must define three Chat-only required captures')
   }
-  if (!Array.isArray(worklist.appearanceRequiredCaptures) || worklist.appearanceRequiredCaptures.length !== 13) {
-    throw new Error('Web render worklist must define thirteen required appearance captures')
+  if (!Array.isArray(worklist.appearanceRequiredCaptures) || worklist.appearanceRequiredCaptures.length !== 17) {
+    throw new Error('Web render worklist must define seventeen required appearance captures')
   }
   const defaultBrowserOptions = parseArgs([])
   const edgeBrowserOptions = parseArgs(['--browser', 'edge'])

@@ -26,20 +26,44 @@ const appearanceThemeLocaleCases = [
     accent: { value: 'default', labels: ['主题默认', 'Theme default', 'テーマ既定'] },
   },
   {
-    Step: 'appearance-lime-road-dark',
-    family: { value: 'lime-road', labels: ['酸橙公路', 'Lime Road', 'ライム・ロード'] },
+    Step: 'appearance-minimal-dark',
+    family: { value: 'minimal', labels: ['极简主题', 'Minimal', 'ミニマル'] },
     mode: { value: 'dark', labels: ['深色', 'Dark', 'ダーク'] },
     accent: { value: 'default', labels: ['主题默认', 'Theme default', 'テーマ既定'] },
   },
   {
-    Step: 'appearance-markdown-light',
-    family: { value: 'markdown', labels: ['Markdown'] },
+    Step: 'appearance-monet-light',
+    family: { value: 'monet', labels: ['莫奈主题', 'Monet', 'モネ'] },
     mode: { value: 'light', labels: ['浅色', 'Light', 'ライト'] },
     accent: { value: 'default', labels: ['主题默认', 'Theme default', 'テーマ既定'] },
   },
   {
-    Step: 'appearance-markdown-dark-custom-indigo',
-    family: { value: 'markdown', labels: ['Markdown'] },
+    Step: 'appearance-monet-dark',
+    family: { value: 'monet', labels: ['莫奈主题', 'Monet', 'モネ'] },
+    mode: { value: 'dark', labels: ['深色', 'Dark', 'ダーク'] },
+    accent: { value: 'default', labels: ['主题默认', 'Theme default', 'テーマ既定'] },
+  },
+  {
+    Step: 'appearance-material-light',
+    family: { value: 'material', labels: ['Material 3'] },
+    mode: { value: 'light', labels: ['浅色', 'Light', 'ライト'] },
+    accent: { value: 'default', labels: ['主题默认', 'Theme default', 'テーマ既定'] },
+  },
+  {
+    Step: 'appearance-material-dark',
+    family: { value: 'material', labels: ['Material 3'] },
+    mode: { value: 'dark', labels: ['深色', 'Dark', 'ダーク'] },
+    accent: { value: 'default', labels: ['主题默认', 'Theme default', 'テーマ既定'] },
+  },
+  {
+    Step: 'appearance-liquid-glass-light',
+    family: { value: 'liquid-glass', labels: ['液态玻璃', 'Liquid Glass', 'リキッドグラス'] },
+    mode: { value: 'light', labels: ['浅色', 'Light', 'ライト'] },
+    accent: { value: 'default', labels: ['主题默认', 'Theme default', 'テーマ既定'] },
+  },
+  {
+    Step: 'appearance-liquid-glass-dark-custom-indigo',
+    family: { value: 'liquid-glass', labels: ['液态玻璃', 'Liquid Glass', 'リキッドグラス'] },
     mode: { value: 'dark', labels: ['深色', 'Dark', 'ダーク'] },
     accent: { value: 'custom', labels: ['自定义颜色', 'Custom color', 'カスタムカラー'], custom: '#4455B7' },
   },
@@ -269,7 +293,7 @@ function selectAppearanceChoice(device, choice, capturePrefix, options = {}) {
 }
 
 function appearanceChoiceResourceId(choice) {
-  if (['minimal', 'lime-road', 'markdown'].includes(choice.value)) return `settings-theme-family-${choice.value}`
+  if (['minimal', 'monet', 'material', 'liquid-glass'].includes(choice.value)) return `settings-theme-family-${choice.value}`
   if (['light', 'dark', 'system'].includes(choice.value)) return `settings-theme-mode-${choice.value}`
   return `settings-theme-accent-${choice.value}`
 }
@@ -558,12 +582,12 @@ function runThemeLocaleContractSelfTest() {
   if (positiveIssues.length) {
     throw new Error(`Theme/locale collector self-test rejected the positive fixture: ${positiveIssues.join(', ')}`)
   }
-  const missingAppearance = rows.filter((row) => row.Step !== 'appearance-lime-road-dark')
+  const missingAppearance = rows.filter((row) => row.Step !== 'appearance-monet-dark')
   const missingIssues = collectThemeLocaleContractIssues(missingAppearance)
-  if (!missingIssues.some((issue) => issue.includes('appearance-lime-road-dark'))) {
-    throw new Error('Theme/locale collector self-test accepted a missing Lime Road/dark appearance result.')
+  if (!missingIssues.some((issue) => issue.includes('appearance-monet-dark'))) {
+    throw new Error('Theme/locale collector self-test accepted a missing Monet/dark appearance result.')
   }
-  const invalidCustom = rows.map((row) => row.Step === 'appearance-markdown-dark-custom-indigo'
+  const invalidCustom = rows.map((row) => row.Step === 'appearance-liquid-glass-dark-custom-indigo'
     ? { ...row, customAccentInputValue: '#4455B8' }
     : row)
   const customIssues = collectThemeLocaleContractIssues(invalidCustom)

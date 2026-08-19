@@ -64,7 +64,7 @@ function run() {
     /themeLimeRoad(?:Tagline)?|直到大地变成一颗酸橙|酸橙公路|\.toLowerCase\(\)\}\.md/,
     'runtime navigation expresses Lime Road through composition instead of campaign copy',
   )
-  assert.ok(zhLocale.includes('"themeLimeRoad"'), 'the settings theme selector retains a localized Lime Road label')
+  assertAll(zhLocale, ['"themeMinimal"', '"themeMonet"', '"themeMaterial"', '"themeLiquidGlass"'], 'the settings theme selector localizes all canonical families')
   assertAll(pager, [
     "const PAGE_SEQUENCE: readonly MainPagerPage[] = ['history', 'home', 'settings']",
     '<IsleMotionFrame',
@@ -77,16 +77,19 @@ function run() {
   assert.equal(pager.includes('persistentTopBarOffset'), false, 'pages own their navigation height without a shared top-bar spacer')
 
   assertAll(themeMotion, [
-    "foundation: 'animal-island'",
-    "seasonalLayer: 'summer-road'",
-    "id: 'road-cinema'",
+    "foundation: 'minimal'",
+    "foundation: 'monet'",
+    "foundation: 'material'",
+    "foundation: 'liquid-glass'",
+    "id: 'monet-breathe'",
     "id: 'quiet'",
-    "id: 'document-cut'",
+    "id: 'material-shared-axis'",
+    "id: 'glass-refraction'",
     "intensity === 'reduced'",
     "intensity === 'none'",
-    'parallaxX: 18',
+    'parallaxX: 4',
     "role: ThemeMotionRole",
-  ], 'theme registry owns foundation, seasonal, camera, and reduced-motion contracts')
+  ], 'theme registry owns four family profiles, camera, and reduced-motion contracts')
   assertAll(motionFrame, [
     'export function IsleMotionFrame',
     'resolveThemeMotion({',

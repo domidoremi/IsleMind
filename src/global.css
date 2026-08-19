@@ -576,7 +576,7 @@
   --color-surface: #f7f7f2;
   --color-surfaceSecondary: #ffffff;
   --color-surfaceTertiary: #eceae3;
-  --color-primary: #234f46;
+  --color-primary: #1f5b50;
   --color-primaryForeground: #ffffff;
   --color-secondary: #64748b;
   --color-accent: #b7791f;
@@ -614,7 +614,7 @@
   --color-sheetBody: #ffffff;
   --color-sheetBorder: rgba(25, 27, 29, 0.18);
   --color-sheetDivider: rgba(25, 27, 29, 0.1);
-  --color-controlPrimaryBackground: #234f46;
+  --color-controlPrimaryBackground: #1f5b50;
   --color-controlPrimaryForeground: #ffffff;
   --color-controlDangerForeground: #ffffff;
   --color-controlPrimaryBorder: rgba(35, 79, 70, 0.34);
@@ -626,8 +626,8 @@
   --color-sectionMarker: #234f46;
   --color-sectionTitle: #191b1d;
   --color-sectionDivider: rgba(25, 27, 29, 0.12);
-  --color-iconAccentBackground: #dcebe6;
-  --color-iconAccentForeground: #173a34;
+  --color-iconAccentBackground: #d4ede5;
+  --color-iconAccentForeground: #10352e;
   --color-inputBackground: #ffffff;
   --color-inputBackgroundFocused: #ffffff;
   --color-inputDisabledBackground: #eeede8;
@@ -724,7 +724,7 @@
   --color-surface: #090a0b;
   --color-surfaceSecondary: #111416;
   --color-surfaceTertiary: #1b2023;
-  --color-primary: #9fd8ca;
+  --color-primary: #a8dccb;
   --color-primaryForeground: #0b0d0e;
   --color-secondary: #88949b;
   --color-accent: #d0a15a;
@@ -762,7 +762,7 @@
   --color-sheetBody: #111416;
   --color-sheetBorder: rgba(232, 236, 238, 0.18);
   --color-sheetDivider: rgba(232, 236, 238, 0.1);
-  --color-controlPrimaryBackground: #d7f0e8;
+  --color-controlPrimaryBackground: #a8dccb;
   --color-controlPrimaryForeground: #0b0d0e;
   --color-controlDangerForeground: #0b0d0e;
   --color-controlPrimaryBorder: rgba(215, 240, 232, 0.58);
@@ -774,8 +774,8 @@
   --color-sectionMarker: #d7f0e8;
   --color-sectionTitle: #e8ecee;
   --color-sectionDivider: rgba(232, 236, 238, 0.12);
-  --color-iconAccentBackground: #1f2a2d;
-  --color-iconAccentForeground: #d7f0e8;
+  --color-iconAccentBackground: #174a3e;
+  --color-iconAccentForeground: #c8f3e5;
   --color-inputBackground: #141719;
   --color-inputBackgroundFocused: #171b1d;
   --color-inputDisabledBackground: #1b2023;
@@ -1094,4 +1094,400 @@
   --theme-markdown-enabled: 1;
   --theme-glass-enabled: 0;
   --theme-lime-road-enabled: 0;
+}
+
+/* Canonical vNext prepaint fallbacks. Legacy ids above remain load-compatible;
+   these selectors make the four persisted families visible before hydration. */
+:root[data-theme-id='monet'][data-theme-mode='light'],
+:root[data-theme-id='lime-road'][data-theme-mode='light'],
+:root[data-theme-id='cartoon'][data-theme-mode='light'],
+:root[data-theme-id='island'][data-theme-mode='light'] {
+  color-scheme: light;
+  --color-surface: #f4f6f2;
+  --color-surfaceSecondary: #fffef9;
+  --color-surfaceTertiary: #dcebe6;
+  --color-primary: #2f6e68;
+  --color-primaryForeground: #ffffff;
+  --color-secondary: #557c91;
+  --color-accent: #a85e43;
+  --color-border: #c8d8d2;
+  --color-borderStrong: #7f9b91;
+  --color-text: #17201d;
+  --color-textSecondary: #52615b;
+  --color-textTertiary: #52615b;
+  --color-backdrop: rgba(21, 35, 49, 0.42);
+  --color-materialCanvas: #f4f6f2;
+  --color-materialPaper: #fffef9;
+  --color-materialPaperRaised: #fffdf7;
+  --color-materialPaperPressed: #dcebe6;
+  --color-materialChrome: #fffef9;
+  --color-materialField: #fffef9;
+  --color-materialStroke: #c8d8d2;
+  --color-materialStrokeStrong: #7f9b91;
+  --color-controlPrimaryBackground: #2f6e68;
+  --color-controlPrimaryForeground: #ffffff;
+  --color-controlPrimaryBorder: #7f9b91;
+  --color-controlDefaultBackground: #dcebe6;
+  --color-controlLink: #2f6e68;
+  --color-controlFocus: #b24c3a;
+  --color-iconAccentBackground: #cfe8df;
+  --color-iconAccentForeground: #153d3a;
+  --color-semanticSurfaceCanvas: #f4f6f2;
+  --color-semanticSurfaceBase: #fffef9;
+  --color-semanticSurfaceRaised: #fffdf7;
+  --color-semanticSurfaceMuted: #dcebe6;
+  --color-semanticSurfaceOverlay: #fffdf7;
+  --color-semanticContentPrimary: #17201d;
+  --color-semanticContentSecondary: #52615b;
+  --color-semanticChromeBackground: #fffef9;
+  --color-semanticChromeBorder: #c8d8d2;
+  --color-semanticChromeToolbar: #cfe8df;
+  --color-semanticControlBackground: #2f6e68;
+  --color-semanticControlForeground: #ffffff;
+  --color-semanticControlBorder: #7f9b91;
+  --color-semanticControlFocus: #b24c3a;
+  --background-canvas: #f4f6f2;
+  --background-surfaceCanvas: #fffef9;
+  --theme-family: monet;
+  --theme-canonical-family: monet;
+  --theme-markdown-enabled: 0;
+  --theme-glass-enabled: 0;
+  --theme-lime-road-enabled: 1;
+  --theme-blur-enabled: 0;
+  --theme-blur-radius: 0rem;
+  --theme-ornament-opacity: 1;
+}
+
+:root[data-theme-id='monet'][data-theme-mode='dark'],
+:root[data-theme-id='lime-road'][data-theme-mode='dark'],
+:root[data-theme-id='cartoon'][data-theme-mode='dark'],
+:root[data-theme-id='island'][data-theme-mode='dark'] {
+  color-scheme: dark;
+  --color-surface: #101918;
+  --color-surfaceSecondary: #182522;
+  --color-surfaceTertiary: #304840;
+  --color-primary: #9dd6c8;
+  --color-primaryForeground: #123c35;
+  --color-secondary: #a8c8d5;
+  --color-accent: #f1aa8a;
+  --color-border: #455f56;
+  --color-borderStrong: #78968a;
+  --color-text: #ecf4f0;
+  --color-textSecondary: #b7c7c0;
+  --color-textTertiary: #b7c7c0;
+  --color-backdrop: rgba(0, 0, 0, 0.58);
+  --color-materialCanvas: #101918;
+  --color-materialPaper: #182522;
+  --color-materialPaperRaised: #2b3d37;
+  --color-materialPaperPressed: #304840;
+  --color-materialChrome: #182522;
+  --color-materialField: #182522;
+  --color-materialStroke: #455f56;
+  --color-materialStrokeStrong: #78968a;
+  --color-controlPrimaryBackground: #9dd6c8;
+  --color-controlPrimaryForeground: #123c35;
+  --color-controlPrimaryBorder: #78968a;
+  --color-controlDefaultBackground: #304840;
+  --color-controlLink: #9dd6c8;
+  --color-controlFocus: #f4b39b;
+  --color-iconAccentBackground: #28564a;
+  --color-iconAccentForeground: #c6efe2;
+  --color-semanticSurfaceCanvas: #101918;
+  --color-semanticSurfaceBase: #182522;
+  --color-semanticSurfaceRaised: #2b3d37;
+  --color-semanticSurfaceMuted: #304840;
+  --color-semanticSurfaceOverlay: #2b3d37;
+  --color-semanticContentPrimary: #ecf4f0;
+  --color-semanticContentSecondary: #b7c7c0;
+  --color-semanticChromeBackground: #182522;
+  --color-semanticChromeBorder: #455f56;
+  --color-semanticChromeToolbar: #28564a;
+  --color-semanticControlBackground: #9dd6c8;
+  --color-semanticControlForeground: #123c35;
+  --color-semanticControlBorder: #78968a;
+  --color-semanticControlFocus: #f4b39b;
+  --background-canvas: #101918;
+  --background-surfaceCanvas: #182522;
+  --theme-family: monet;
+  --theme-canonical-family: monet;
+  --theme-markdown-enabled: 0;
+  --theme-glass-enabled: 0;
+  --theme-lime-road-enabled: 1;
+  --theme-blur-enabled: 0;
+  --theme-blur-radius: 0rem;
+  --theme-ornament-opacity: 1;
+}
+
+:root[data-theme-id='material'][data-theme-mode='light'],
+:root[data-theme-id='markdown'][data-theme-mode='light'],
+:root[data-theme-id='material-3'][data-theme-mode='light'],
+:root[data-theme-id='material3'][data-theme-mode='light'] {
+  color-scheme: light;
+  --color-surface: #fffbfe;
+  --color-surfaceSecondary: #fffbfe;
+  --color-surfaceTertiary: #e8def8;
+  --color-primary: #6750a4;
+  --color-primaryForeground: #ffffff;
+  --color-secondary: #625b71;
+  --color-accent: #7d5260;
+  --color-border: #79747e;
+  --color-borderStrong: #49454f;
+  --color-text: #1d1b20;
+  --color-textSecondary: #49454f;
+  --color-textTertiary: #49454f;
+  --color-backdrop: rgba(29, 27, 32, 0.24);
+  --color-materialCanvas: #fffbfe;
+  --color-materialPaper: #fffbfe;
+  --color-materialPaperRaised: #f7f2fa;
+  --color-materialPaperPressed: #e8def8;
+  --color-materialChrome: #f3edf7;
+  --color-materialField: #fffbfe;
+  --color-materialStroke: #79747e;
+  --color-materialStrokeStrong: #49454f;
+  --color-controlPrimaryBackground: #6750a4;
+  --color-controlPrimaryForeground: #ffffff;
+  --color-controlPrimaryBorder: #49454f;
+  --color-controlDefaultBackground: #e8def8;
+  --color-controlLink: #6750a4;
+  --color-controlFocus: #6750a4;
+  --color-iconAccentBackground: #eaddff;
+  --color-iconAccentForeground: #21005d;
+  --color-semanticSurfaceCanvas: #fffbfe;
+  --color-semanticSurfaceBase: #fffbfe;
+  --color-semanticSurfaceRaised: #f7f2fa;
+  --color-semanticSurfaceMuted: #e8def8;
+  --color-semanticSurfaceOverlay: #f7f2fa;
+  --color-semanticContentPrimary: #1d1b20;
+  --color-semanticContentSecondary: #49454f;
+  --color-semanticChromeBackground: #f3edf7;
+  --color-semanticChromeBorder: #79747e;
+  --color-semanticChromeToolbar: #eaddff;
+  --color-semanticControlBackground: #6750a4;
+  --color-semanticControlForeground: #ffffff;
+  --color-semanticControlBorder: #49454f;
+  --color-semanticControlFocus: #6750a4;
+  --background-canvas: #fffbfe;
+  --background-surfaceCanvas: #fffbfe;
+  --theme-family: material;
+  --theme-canonical-family: material;
+  --theme-markdown-enabled: 1;
+  --theme-glass-enabled: 0;
+  --theme-lime-road-enabled: 0;
+  --theme-blur-enabled: 0;
+  --theme-blur-radius: 0rem;
+  --theme-ornament-opacity: 0;
+}
+
+:root[data-theme-id='material'][data-theme-mode='dark'],
+:root[data-theme-id='markdown'][data-theme-mode='dark'],
+:root[data-theme-id='material-3'][data-theme-mode='dark'],
+:root[data-theme-id='material3'][data-theme-mode='dark'] {
+  color-scheme: dark;
+  --color-surface: #1c1b1f;
+  --color-surfaceSecondary: #1c1b1f;
+  --color-surfaceTertiary: #49454f;
+  --color-primary: #d0bcff;
+  --color-primaryForeground: #381e72;
+  --color-secondary: #ccc2dc;
+  --color-accent: #efb8c8;
+  --color-border: #938f99;
+  --color-borderStrong: #cac4d0;
+  --color-text: #e6e1e5;
+  --color-textSecondary: #cac4d0;
+  --color-textTertiary: #cac4d0;
+  --color-backdrop: rgba(0, 0, 0, 0.58);
+  --color-materialCanvas: #1c1b1f;
+  --color-materialPaper: #1c1b1f;
+  --color-materialPaperRaised: #2b2930;
+  --color-materialPaperPressed: #49454f;
+  --color-materialChrome: #211f26;
+  --color-materialField: #1c1b1f;
+  --color-materialStroke: #938f99;
+  --color-materialStrokeStrong: #cac4d0;
+  --color-controlPrimaryBackground: #d0bcff;
+  --color-controlPrimaryForeground: #381e72;
+  --color-controlPrimaryBorder: #cac4d0;
+  --color-controlDefaultBackground: #4f378b;
+  --color-controlLink: #d0bcff;
+  --color-controlFocus: #d0bcff;
+  --color-iconAccentBackground: #4f378b;
+  --color-iconAccentForeground: #eaddff;
+  --color-semanticSurfaceCanvas: #1c1b1f;
+  --color-semanticSurfaceBase: #1c1b1f;
+  --color-semanticSurfaceRaised: #2b2930;
+  --color-semanticSurfaceMuted: #49454f;
+  --color-semanticSurfaceOverlay: #2b2930;
+  --color-semanticContentPrimary: #e6e1e5;
+  --color-semanticContentSecondary: #cac4d0;
+  --color-semanticChromeBackground: #211f26;
+  --color-semanticChromeBorder: #938f99;
+  --color-semanticChromeToolbar: #4f378b;
+  --color-semanticControlBackground: #d0bcff;
+  --color-semanticControlForeground: #381e72;
+  --color-semanticControlBorder: #cac4d0;
+  --color-semanticControlFocus: #d0bcff;
+  --background-canvas: #1c1b1f;
+  --background-surfaceCanvas: #1c1b1f;
+  --theme-family: material;
+  --theme-canonical-family: material;
+  --theme-markdown-enabled: 1;
+  --theme-glass-enabled: 0;
+  --theme-lime-road-enabled: 0;
+  --theme-blur-enabled: 0;
+  --theme-blur-radius: 0rem;
+  --theme-ornament-opacity: 0;
+}
+
+:root[data-theme-id='liquid-glass'][data-theme-mode='light'],
+:root[data-theme-id='glass'][data-theme-mode='light'],
+:root[data-theme-id='liquid'][data-theme-mode='light'] {
+  color-scheme: light;
+  --color-surface: #eaf2f8;
+  --color-surfaceSecondary: #f8fbfd;
+  --color-surfaceTertiary: #d9e6ee;
+  --color-primary: #155e87;
+  --color-primaryForeground: #ffffff;
+  --color-secondary: #576b80;
+  --color-accent: #9a4f43;
+  --color-border: rgba(255, 255, 255, 0.66);
+  --color-borderStrong: rgba(34, 73, 103, 0.48);
+  --color-text: #152331;
+  --color-textSecondary: #43586a;
+  --color-textTertiary: #43586a;
+  --color-backdrop: rgba(21, 35, 49, 0.34);
+  --color-materialCanvas: #eaf2f8;
+  --color-materialPaper: #f8fbfd;
+  --color-materialPaperRaised: #ffffff;
+  --color-materialPaperPressed: #d9e6ee;
+  --color-materialChrome: rgba(255, 255, 255, 0.88);
+  --color-materialField: #f8fbfd;
+  --color-materialStroke: rgba(255, 255, 255, 0.66);
+  --color-materialStrokeStrong: rgba(34, 73, 103, 0.48);
+  --color-controlPrimaryBackground: #155e87;
+  --color-controlPrimaryForeground: #ffffff;
+  --color-controlPrimaryBorder: rgba(34, 73, 103, 0.48);
+  --color-controlDefaultBackground: rgba(218, 232, 244, 0.72);
+  --color-controlLink: #155e87;
+  --color-controlFocus: #0d6e9e;
+  --color-iconAccentBackground: rgba(139, 205, 237, 0.56);
+  --color-iconAccentForeground: #0a3047;
+  --color-semanticSurfaceCanvas: #eaf2f8;
+  --color-semanticSurfaceBase: #f8fbfd;
+  --color-semanticSurfaceRaised: #ffffff;
+  --color-semanticSurfaceMuted: #d9e6ee;
+  --color-semanticSurfaceOverlay: rgba(255, 255, 255, 0.88);
+  --color-semanticContentPrimary: #152331;
+  --color-semanticContentSecondary: #43586a;
+  --color-semanticChromeBackground: rgba(255, 255, 255, 0.88);
+  --color-semanticChromeBorder: rgba(34, 73, 103, 0.48);
+  --color-semanticChromeToolbar: rgba(139, 205, 237, 0.56);
+  --color-semanticControlBackground: #155e87;
+  --color-semanticControlForeground: #ffffff;
+  --color-semanticControlBorder: rgba(34, 73, 103, 0.48);
+  --color-semanticControlFocus: #0d6e9e;
+  --background-canvas: #eaf2f8;
+  --background-surfaceCanvas: #f8fbfd;
+  --theme-family: liquid-glass;
+  --theme-canonical-family: liquid-glass;
+  --theme-markdown-enabled: 0;
+  --theme-glass-enabled: 1;
+  --theme-lime-road-enabled: 0;
+  --theme-blur-enabled: 1;
+  --theme-blur-radius: 1.375rem;
+  --theme-blur-max-layers: 1;
+  --theme-ornament-opacity: 1;
+}
+
+:root[data-theme-id='liquid-glass'][data-theme-mode='dark'],
+:root[data-theme-id='glass'][data-theme-mode='dark'],
+:root[data-theme-id='liquid'][data-theme-mode='dark'] {
+  color-scheme: dark;
+  --color-surface: #0d1722;
+  --color-surfaceSecondary: #192b3b;
+  --color-surfaceTertiary: #334e63;
+  --color-primary: #8ed0f0;
+  --color-primaryForeground: #07344d;
+  --color-secondary: #b7cedc;
+  --color-accent: #ffb5a8;
+  --color-border: rgba(219, 243, 255, 0.32);
+  --color-borderStrong: rgba(219, 243, 255, 0.62);
+  --color-text: #eff8ff;
+  --color-textSecondary: #b8cddc;
+  --color-textTertiary: #b8cddc;
+  --color-backdrop: rgba(0, 0, 0, 0.62);
+  --color-materialCanvas: #0d1722;
+  --color-materialPaper: #192b3b;
+  --color-materialPaperRaised: #2e4a62;
+  --color-materialPaperPressed: #334e63;
+  --color-materialChrome: rgba(22, 39, 54, 0.92);
+  --color-materialField: #192b3b;
+  --color-materialStroke: rgba(219, 243, 255, 0.32);
+  --color-materialStrokeStrong: rgba(219, 243, 255, 0.62);
+  --color-controlPrimaryBackground: #8ed0f0;
+  --color-controlPrimaryForeground: #07344d;
+  --color-controlPrimaryBorder: rgba(219, 243, 255, 0.62);
+  --color-controlDefaultBackground: rgba(75, 102, 122, 0.74);
+  --color-controlLink: #8ed0f0;
+  --color-controlFocus: #b4e9ff;
+  --color-iconAccentBackground: rgba(55, 113, 145, 0.72);
+  --color-iconAccentForeground: #d7f1ff;
+  --color-semanticSurfaceCanvas: #0d1722;
+  --color-semanticSurfaceBase: #192b3b;
+  --color-semanticSurfaceRaised: #2e4a62;
+  --color-semanticSurfaceMuted: #334e63;
+  --color-semanticSurfaceOverlay: rgba(22, 39, 54, 0.92);
+  --color-semanticContentPrimary: #eff8ff;
+  --color-semanticContentSecondary: #b8cddc;
+  --color-semanticChromeBackground: rgba(22, 39, 54, 0.92);
+  --color-semanticChromeBorder: rgba(219, 243, 255, 0.62);
+  --color-semanticChromeToolbar: rgba(55, 113, 145, 0.72);
+  --color-semanticControlBackground: #8ed0f0;
+  --color-semanticControlForeground: #07344d;
+  --color-semanticControlBorder: rgba(219, 243, 255, 0.62);
+  --color-semanticControlFocus: #b4e9ff;
+  --background-canvas: #0d1722;
+  --background-surfaceCanvas: #192b3b;
+  --theme-family: liquid-glass;
+  --theme-canonical-family: liquid-glass;
+  --theme-markdown-enabled: 0;
+  --theme-glass-enabled: 1;
+  --theme-lime-road-enabled: 0;
+  --theme-blur-enabled: 1;
+  --theme-blur-radius: 1.375rem;
+  --theme-blur-max-layers: 1;
+  --theme-ornament-opacity: 1;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    scroll-behavior: auto !important;
+    transition-duration: 0.001ms !important;
+  }
+}
+
+@media (forced-colors: active), (prefers-contrast: more) {
+  :root {
+    --theme-blur-enabled: 0;
+    --theme-blur-radius: 0rem;
+    --theme-backdrop-filter: none;
+  }
+
+  :root[data-theme-id='liquid-glass'] {
+    --color-semanticSurfaceOverlay: Canvas;
+    --color-semanticChromeBackground: Canvas;
+    --color-semanticChromeBorder: ButtonText;
+  }
+}
+
+@supports not (backdrop-filter: blur(1px)) {
+  :root[data-theme-id='liquid-glass'] {
+    --theme-blur-enabled: 0;
+    --theme-backdrop-filter: none;
+    --color-semanticSurfaceOverlay: var(--color-semanticSurfaceRaised);
+    --color-semanticChromeBackground: var(--color-semanticSurfaceRaised);
+  }
 }

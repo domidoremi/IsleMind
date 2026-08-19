@@ -1,0 +1,91 @@
+<!DOCTYPE html>
+<html lang="%LANG_ISO_CODE%">
+  <head>
+    <meta charset="utf-8" />
+    <meta http-equiv="X-UA-Compatible" content="IE=edge" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, shrink-to-fit=no" />
+    <title>%WEB_TITLE%</title>
+    <script>
+      (function prepaintIsleMindTheme() {
+        var root = document.documentElement;
+        var family = 'minimal';
+        var preference = 'light';
+        var aliases = {
+          'lime-road': 'monet',
+          cartoon: 'monet',
+          island: 'monet',
+          markdown: 'material',
+          'material-3': 'material',
+          material3: 'material',
+          glass: 'liquid-glass',
+          liquid: 'liquid-glass'
+        };
+        try {
+          var persisted = JSON.parse(window.localStorage.getItem('@islemind/settings') || '{}');
+          var candidateFamily = aliases[persisted.themeId] || persisted.themeId;
+          if (candidateFamily === 'minimal' || candidateFamily === 'monet' || candidateFamily === 'material' || candidateFamily === 'liquid-glass') {
+            family = candidateFamily;
+          }
+          if (persisted.theme === 'light' || persisted.theme === 'dark' || persisted.theme === 'system') {
+            preference = persisted.theme;
+          }
+          var accent = typeof persisted.themeAccent === 'string' && /^#?(?:[0-9a-f]{3}|[0-9a-f]{6})$/i.test(persisted.themeAccent.trim())
+            ? persisted.themeAccent.trim().replace(/^#/, '').toUpperCase()
+            : '';
+          if (accent.length === 3) {
+            accent = accent.split('').map(function (part) { return part + part; }).join('');
+          }
+          root.setAttribute('data-theme-custom-accent', accent ? 'true' : 'false');
+          if (accent) root.style.setProperty('--prepaint-accent', '#' + accent);
+        } catch (_error) {
+          root.setAttribute('data-theme-custom-accent', 'false');
+        }
+        var mode = preference === 'system'
+          ? (window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light')
+          : preference;
+        var palette = {
+          'minimal:light': ['#F8FAF9', '#17201D'],
+          'minimal:dark': ['#101513', '#ECF4F0'],
+          'monet:light': ['#F4F6F2', '#17201D'],
+          'monet:dark': ['#101918', '#ECF4F0'],
+          'material:light': ['#FFFBFE', '#1D1B20'],
+          'material:dark': ['#1C1B1F', '#E6E1E5'],
+          'liquid-glass:light': ['#EAF2F8', '#152331'],
+          'liquid-glass:dark': ['#0D1722', '#EFF8FF']
+        }[family + ':' + mode];
+        root.setAttribute('data-theme-id', family);
+        root.setAttribute('data-theme-family', family);
+        root.setAttribute('data-theme-mode', mode);
+        root.setAttribute('data-theme-mode-preference', preference);
+        root.setAttribute('data-theme-prepaint', 'v1');
+        root.style.setProperty('color-scheme', mode);
+        root.style.setProperty('--prepaint-canvas', palette[0]);
+        root.style.setProperty('--prepaint-content', palette[1]);
+      })();
+    </script>
+    <style id="expo-reset">
+      html,
+      body {
+        height: 100%;
+        margin: 0;
+        background: var(--prepaint-canvas, #F8FAF9);
+        color: var(--prepaint-content, #17201D);
+      }
+      body {
+        overflow: hidden;
+      }
+      #root {
+        display: flex;
+        height: 100%;
+        flex: 1;
+      }
+      html[data-theme-prepaint='v1']:not([data-theme-ready='true']) #root {
+        visibility: hidden;
+      }
+    </style>
+  </head>
+  <body>
+    <noscript>You need to enable JavaScript to run this app.</noscript>
+    <div id="root"></div>
+  </body>
+</html>

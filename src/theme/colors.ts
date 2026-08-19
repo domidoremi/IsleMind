@@ -1,5 +1,6 @@
-import type { ThemeId, ThemeMode } from '@/types/settingsContracts'
+import type { CanonicalThemeId, ThemeId, ThemeMode } from '@/types/settingsContracts'
 import { normalizeSettingsThemeAccent, normalizeSettingsThemeFamily, normalizeSettingsThemeMode } from '@/modules/settings'
+import { resolveThemeDesignTokens, type ThemeDesignTokens, type ThemeFamily } from './themeTokens'
 export type ResolvedThemeMode = Exclude<ThemeMode, 'system'>
 
 export type ThemeCardColor =
@@ -23,10 +24,10 @@ export type ThemeBackgroundMode = 'plain' | 'ambient' | 'focus' | 'surface'
 export type ThemeBackgroundMotion = 'none' | 'subtle' | 'full'
 
 export interface ThemeExperienceTokens {
-  layout: 'quiet' | 'editorial' | 'document'
-  navigation: 'quiet' | 'route' | 'document'
-  background: 'plain' | 'road' | 'document'
-  transition: 'fade' | 'travel' | 'cut'
+  layout: 'quiet' | 'editorial' | 'document' | 'structured' | 'layered'
+  navigation: 'quiet' | 'route' | 'document' | 'material' | 'glass'
+  background: 'plain' | 'road' | 'document' | 'tonal' | 'glass'
+  transition: 'fade' | 'travel' | 'cut' | 'shared-axis' | 'fluid'
   density: 'airy' | 'balanced' | 'compact'
 }
 
@@ -65,13 +66,19 @@ export interface ThemeBackgroundTokens {
 
 interface ThemeUiTokens {
   family: ThemeId
+  /** Canonical family used by new presentation code. */
+  canonicalFamily?: CanonicalThemeId
   minimal: boolean
   markdown: boolean
   /** @deprecated Compatibility flag for older presentation consumers. */
   glass: boolean
   limeRoad: boolean
+  /** Canonical feature flags; legacy flags above remain migration-only. */
+  monet?: boolean
+  material?: boolean
+  liquidGlass?: boolean
   ornamented: boolean
-  ambient: 'lime-road' | 'markdown' | 'plain'
+  ambient: 'lime-road' | 'markdown' | 'plain' | 'monet' | 'material' | 'liquid-glass'
   experience: ThemeExperienceTokens
   semantic: {
     surface: {
@@ -307,6 +314,8 @@ export interface AppPalette {
   }
   cardColors: CardColorMap
   ui: ThemeUiTokens
+  /** Complete reference/system/component token snapshot for new consumers. */
+  design?: ThemeDesignTokens
 }
 
 // Lime-road palette: paper, cobalt route ink, acid markers, coral notes, and warm earth.
@@ -1539,21 +1548,355 @@ const markdownDark: AppPalette = {
   ui: markdownUi('dark'),
 }
 
-export const DEFAULT_THEME_ID: ThemeId = 'minimal'
-export const themeIds = ['minimal', 'lime-road', 'markdown'] as const satisfies readonly ThemeId[]
+function projectDesignPalette(
+  base: AppPalette,
+  family: ThemeFamily,
+  mode: ResolvedThemeMode,
+): AppPalette {
+  const design = resolveThemeDesignTokens(family, mode)
+  const color = design.semantic.color
+  const component = design.component
+  const radius = design.semantic.radius
+  const elevation = design.semantic.elevation
+  const dark = mode === 'dark'
+  const monet = family === 'monet'
+  const material = family === 'material'
+  const liquidGlass = family === 'liquid-glass'
+  const minimal = family === 'minimal'
+  const presentationFamily: ThemePresentationId = monet ? 'lime-road' : material ? 'markdown' : 'minimal'
+  const experience: ThemeExperienceTokens = minimal
+    ? { layout: 'quiet', navigation: 'quiet', background: 'plain', transition: 'fade', density: 'compact' }
+    : monet
+      ? { layout: 'editorial', navigation: 'route', background: 'road', transition: 'travel', density: 'airy' }
+      : material
+        ? { layout: 'structured', navigation: 'material', background: 'tonal', transition: 'shared-axis', density: 'compact' }
+        : { layout: 'layered', navigation: 'glass', background: 'glass', transition: 'fluid', density: 'balanced' }
+  const backgroundMode: ThemeBackgroundMode = minimal ? 'plain' : material ? 'surface' : 'ambient'
+  const softShadowOpacity = elevation.shadowOpacity * 0.55
+  const mediumShadowOpacity = elevation.shadowOpacity * 0.78
+
+  return {
+    ...base,
+    surface: color.canvas,
+    surfaceSecondary: color.surface,
+    surfaceTertiary: color.surfaceMuted,
+    primary: color.primary,
+    primaryForeground: color.onPrimary,
+    secondary: color.secondary,
+    accent: color.tertiary,
+    border: color.border,
+    borderStrong: color.borderStrong,
+    text: color.onSurface,
+    textSecondary: color.onSurfaceMuted,
+    textTertiary: color.onSurfaceMuted,
+    success: color.success,
+    warning: color.warning,
+    error: color.error,
+    backdrop: dark ? 'rgba(0, 0, 0, 0.58)' : 'rgba(21, 35, 49, 0.42)',
+    island: color.surface,
+    islandRaised: color.surfaceElevated,
+    islandMuted: color.surfaceMuted,
+    glass: color.surfaceOverlay,
+    mintSoft: color.primaryContainer,
+    amberSoft: color.secondaryContainer,
+    skySoft: color.surfaceContainer,
+    shadowTint: elevation.shadowColor,
+    paper: color.surface,
+    paperDeep: color.surfaceContainer,
+    paperWarm: color.secondaryContainer,
+    creamInk: color.onSurface,
+    mint: color.primary,
+    mintPressed: color.primary,
+    mintWash: color.primaryContainer,
+    amber: color.tertiary,
+    amberPressed: color.tertiary,
+    amberWash: color.secondaryContainer,
+    coral: color.error,
+    coralWash: color.surfaceMuted,
+    sky: color.secondary,
+    skyWash: color.secondaryContainer,
+    overlay: dark ? 'rgba(0, 0, 0, 0.58)' : 'rgba(21, 35, 49, 0.42)',
+    scrim: dark ? 'rgba(0, 0, 0, 0.24)' : 'rgba(255, 255, 255, 0.2)',
+    pressed: color.selection,
+    disabled: color.onSurfaceMuted,
+    highlight: color.selection,
+    background: {
+      ...base.background,
+      defaultMode: backgroundMode,
+      canvas: color.canvas,
+      focusCanvas: color.surfaceContainer,
+      surfaceCanvas: color.surface,
+      mist: {
+        primary: color.primaryContainer,
+        secondary: color.secondaryContainer,
+        warm: color.tertiary,
+        coolOpacity: monet ? 0.2 : liquidGlass ? 0.14 : 0,
+        warmOpacity: monet ? 0.12 : liquidGlass ? 0.06 : 0,
+        focusOpacity: monet ? 0.12 : liquidGlass ? 0.08 : 0,
+        surfaceOpacity: monet ? 0.08 : liquidGlass ? 0.06 : 0,
+      },
+      trace: {
+        primary: color.primary,
+        secondary: color.secondary,
+        accent: color.tertiary,
+        opacity: monet ? 0.18 : liquidGlass ? 0.08 : 0,
+        focusOpacity: monet ? 0.12 : liquidGlass ? 0.06 : 0,
+        surfaceOpacity: monet ? 0.1 : liquidGlass ? 0.05 : 0,
+      },
+      grid: color.divider,
+      scrim: dark ? 'rgba(0, 0, 0, 0.18)' : 'rgba(255, 255, 255, 0.12)',
+      motion: minimal || material ? 'none' : 'subtle',
+    },
+    material: {
+      canvas: color.canvas,
+      paper: color.surface,
+      paperRaised: color.surfaceElevated,
+      paperPressed: color.surfaceMuted,
+      glass: color.surfaceOverlay,
+      chrome: component.navigation.background,
+      field: component.field.background,
+      stroke: color.border,
+      strokeStrong: color.borderStrong,
+      sheet: {
+        surface: component.panel.background,
+        chrome: component.navigation.background,
+        body: liquidGlass ? color.surfaceElevated : color.surface,
+        border: color.borderStrong,
+        divider: color.divider,
+      },
+    },
+    status: {
+      info: color.info,
+      success: color.success,
+      warning: color.warning,
+      danger: color.error,
+      idle: color.onSurfaceMuted,
+    },
+    shadow: {
+      color: elevation.shadowColor,
+      softOpacity: softShadowOpacity,
+      mediumOpacity: mediumShadowOpacity,
+      strongOpacity: elevation.shadowOpacity,
+    },
+    ui: {
+      ...base.ui,
+      family: presentationFamily,
+      canonicalFamily: family,
+      minimal,
+      markdown: material,
+      glass: liquidGlass,
+      limeRoad: monet,
+      monet,
+      material,
+      liquidGlass,
+      ornamented: monet || liquidGlass,
+      ambient: minimal ? 'plain' : family,
+      experience,
+      semantic: {
+        surface: {
+          canvas: color.canvas,
+          base: color.surface,
+          raised: color.surfaceElevated,
+          muted: color.surfaceMuted,
+          overlay: color.surfaceOverlay,
+        },
+        content: {
+          primary: color.onSurface,
+          secondary: color.onSurfaceMuted,
+          tertiary: color.onSurfaceMuted,
+          inverse: color.onPrimary,
+        },
+        chrome: {
+          background: component.navigation.background,
+          border: component.navigation.border,
+          toolbar: component.navigation.activeBackground,
+          sheet: component.panel.background,
+        },
+        control: {
+          background: component.button.primaryBackground,
+          foreground: component.button.primaryForeground,
+          border: color.borderStrong,
+          focus: color.focus,
+        },
+        feedback: {
+          success: { background: color.surfaceMuted, foreground: color.success, border: color.success },
+          warning: { background: color.secondaryContainer, foreground: color.warning, border: color.warning },
+          danger: { background: color.surfaceMuted, foreground: color.error, border: color.error },
+          info: { background: color.secondaryContainer, foreground: color.info, border: color.info },
+        },
+      },
+      section: {
+        marker: color.tertiary,
+        title: color.onSurface,
+        divider: color.divider,
+      },
+      icon: {
+        accentBackground: color.primaryContainer,
+        accentForeground: color.onPrimaryContainer,
+      },
+      tone: {
+        success: { background: color.surfaceMuted, foreground: color.success, border: color.success },
+        warning: { background: color.secondaryContainer, foreground: color.warning, border: color.warning },
+        danger: { background: color.surfaceMuted, foreground: color.error, border: color.error },
+        info: { background: color.secondaryContainer, foreground: color.info, border: color.info },
+        neutral: { background: color.surfaceContainer, foreground: color.onSurfaceMuted, border: color.border },
+        ink: { background: color.primary, foreground: color.onPrimary, border: color.borderStrong },
+      },
+      radius: {
+        card: radius.large,
+        titleCard: radius.extraLarge,
+        panel: radius.large,
+        modal: radius.extraLarge,
+        field: radius.medium,
+        chip: radius.pill,
+        controlSmall: radius.small,
+        controlMiddle: radius.medium,
+        controlLarge: radius.large,
+      },
+      control: {
+        ...base.ui.control,
+        primaryBackground: component.button.primaryBackground,
+        primaryForeground: component.button.primaryForeground,
+        dangerForeground: color.onPrimary,
+        primaryBorder: color.borderStrong,
+        defaultBackground: component.button.secondaryBackground,
+        disabledBackground: component.button.disabledBackground,
+        disabledForeground: component.button.disabledForeground,
+        disabledBorder: color.border,
+        disabledOpacity: 1,
+        link: color.primary,
+        focus: color.focus,
+        shadow: elevation.shadowColor,
+        dangerShadow: elevation.shadowColor,
+        primaryShadowOpacity: elevation.shadowOpacity,
+        primaryShadowRadius: elevation.shadowBlur,
+        primaryShadowOffset: elevation.shadowOffsetY,
+        secondaryShadowOpacity: softShadowOpacity,
+        secondaryShadowRadius: Math.max(0, Math.round(elevation.shadowBlur * 0.6)),
+        secondaryShadowOffset: Math.max(0, Math.round(elevation.shadowOffsetY * 0.6)),
+      },
+      input: {
+        background: component.field.background,
+        backgroundFocused: component.field.backgroundFocused,
+        disabledBackground: color.surfaceMuted,
+        disabledForeground: color.onSurfaceMuted,
+        placeholderForeground: component.field.placeholder,
+        border: component.field.border,
+        focus: component.field.focus,
+        shadow: elevation.shadowColor,
+        shadowOpacity: softShadowOpacity,
+        shadowRadius: Math.max(0, Math.round(elevation.shadowBlur * 0.5)),
+      },
+      switch: {
+        trackOn: color.primary,
+        trackOff: color.surfaceMuted,
+        trackOnBorder: color.borderStrong,
+        trackOffBorder: color.border,
+        thumb: color.surfaceElevated,
+        thumbOnBorder: color.onPrimary,
+        thumbOffBorder: color.borderStrong,
+        shadowOpacity: softShadowOpacity,
+      },
+      card: {
+        defaultBackground: component.panel.background,
+        mutedBackground: color.surfaceContainer,
+        shadowOpacity: softShadowOpacity,
+        shadowRadius: elevation.shadowBlur,
+        shadowOffset: elevation.shadowOffsetY,
+      },
+      composer: {
+        shellBackground: liquidGlass ? color.surfaceOverlay : color.surface,
+        shellFocusedBackground: color.surfaceElevated,
+        toolbarBackground: component.navigation.activeBackground,
+        toolbarBorder: color.border,
+        statusBackground: color.surfaceMuted,
+        statusForeground: color.onSurfaceMuted,
+      },
+      actionBar: {
+        background: component.navigation.background,
+        border: component.navigation.border,
+        itemBackground: color.surfaceContainer,
+        itemBorder: color.border,
+        itemActiveBackground: color.primaryContainer,
+      },
+      message: {
+        userBackground: component.message.userBackground,
+        userForeground: component.message.userForeground,
+        userBorder: component.message.border,
+        userActionBackground: color.selection,
+        userActionForeground: component.message.userForeground,
+      },
+      code: {
+        background: dark ? '#0D1722' : '#162733',
+        border: dark ? '#385061' : '#385061',
+        text: '#F2F7F9',
+      },
+      table: { headerBackground: color.surfaceContainer },
+      loading: {
+        background: color.primaryContainer,
+        border: color.primary,
+        dot: color.onPrimaryContainer,
+      },
+      time: { border: color.border, divider: color.divider },
+    },
+    design,
+  }
+}
+
+export const DEFAULT_THEME_ID: CanonicalThemeId = 'minimal'
+export const themeIds = ['minimal', 'monet', 'material', 'liquid-glass'] as const satisfies readonly CanonicalThemeId[]
 
 export const themePalettes: Record<ThemeId, Record<ResolvedThemeMode, AppPalette>> = {
   minimal: {
-    light: minimalLight,
-    dark: minimalDark,
+    light: projectDesignPalette(minimalLight, 'minimal', 'light'),
+    dark: projectDesignPalette(minimalDark, 'minimal', 'dark'),
   },
+  monet: {
+    light: projectDesignPalette(limeRoadLight, 'monet', 'light'),
+    dark: projectDesignPalette(limeRoadDark, 'monet', 'dark'),
+  },
+  material: {
+    light: projectDesignPalette(markdownLight, 'material', 'light'),
+    dark: projectDesignPalette(markdownDark, 'material', 'dark'),
+  },
+  'liquid-glass': {
+    light: projectDesignPalette(minimalLight, 'liquid-glass', 'light'),
+    dark: projectDesignPalette(minimalDark, 'liquid-glass', 'dark'),
+  },
+  // Compatibility aliases are never emitted by normalizeThemeId. Keeping the
+  // projections makes old imports and persisted screenshots lossless while
+  // Settings rewrites them to the canonical family on load.
   'lime-road': {
-    light: limeRoadLight,
-    dark: limeRoadDark,
+    light: projectDesignPalette(limeRoadLight, 'monet', 'light'),
+    dark: projectDesignPalette(limeRoadDark, 'monet', 'dark'),
   },
   markdown: {
-    light: markdownLight,
-    dark: markdownDark,
+    light: projectDesignPalette(markdownLight, 'material', 'light'),
+    dark: projectDesignPalette(markdownDark, 'material', 'dark'),
+  },
+  cartoon: {
+    light: projectDesignPalette(limeRoadLight, 'monet', 'light'),
+    dark: projectDesignPalette(limeRoadDark, 'monet', 'dark'),
+  },
+  island: {
+    light: projectDesignPalette(limeRoadLight, 'monet', 'light'),
+    dark: projectDesignPalette(limeRoadDark, 'monet', 'dark'),
+  },
+  glass: {
+    light: projectDesignPalette(minimalLight, 'liquid-glass', 'light'),
+    dark: projectDesignPalette(minimalDark, 'liquid-glass', 'dark'),
+  },
+  'material-3': {
+    light: projectDesignPalette(markdownLight, 'material', 'light'),
+    dark: projectDesignPalette(markdownDark, 'material', 'dark'),
+  },
+  material3: {
+    light: projectDesignPalette(markdownLight, 'material', 'light'),
+    dark: projectDesignPalette(markdownDark, 'material', 'dark'),
+  },
+  liquid: {
+    light: projectDesignPalette(minimalLight, 'liquid-glass', 'light'),
+    dark: projectDesignPalette(minimalDark, 'liquid-glass', 'dark'),
   },
 }
 
@@ -1561,11 +1904,24 @@ export const themePalettes: Record<ThemeId, Record<ResolvedThemeMode, AppPalette
 export const colors = themePalettes.minimal
 
 export function isThemeId(value: unknown): value is ThemeId {
-  return value === 'minimal' || value === 'lime-road' || value === 'markdown'
+  return typeof value === 'string' && value in themePalettes
 }
 
-export function normalizeThemeId(value: unknown): ThemeId {
+export function normalizeThemeId(value: unknown): CanonicalThemeId {
   return normalizeSettingsThemeFamily(value) ?? DEFAULT_THEME_ID
+}
+
+export type ThemePresentationId = 'minimal' | 'lime-road' | 'markdown'
+
+/**
+ * Temporary projection for legacy composition dispatchers. New presentation
+ * code must branch on design behavior/tokens or canonicalThemeId instead.
+ */
+export function resolveThemePresentationId(value: unknown): ThemePresentationId {
+  const canonical = normalizeThemeId(value)
+  if (canonical === 'monet') return 'lime-road'
+  if (canonical === 'material') return 'markdown'
+  return 'minimal'
 }
 
 export function resolveThemeMode(theme: unknown, systemScheme?: 'light' | 'dark' | null): ResolvedThemeMode {
@@ -1606,6 +1962,51 @@ function applyThemeAccent(base: AppPalette, accent: string, mode: ResolvedThemeM
   const pressed = mixHex(accent, foreground === '#FFFFFF' ? '#000000' : '#FFFFFF', 0.16)
   const wash = rgba(accent, mode === 'dark' ? 0.18 : 0.11)
   const border = rgba(accent, mode === 'dark' ? 0.52 : 0.38)
+  const readableAccentOnWash = ensureContrast(foreground, wash, mode)
+  const design = base.design
+    ? {
+        ...base.design,
+        reference: {
+          ...base.design.reference,
+          accent,
+        },
+        semantic: {
+          ...base.design.semantic,
+          color: {
+            ...base.design.semantic.color,
+            primary: accent,
+            onPrimary: foreground,
+            primaryContainer: wash,
+            onPrimaryContainer: readableAccentOnWash,
+            focus: readableAccent,
+            selection: wash,
+          },
+        },
+        component: {
+          ...base.design.component,
+          button: {
+            ...base.design.component.button,
+            primaryBackground: accent,
+            primaryForeground: foreground,
+            stateLayer: accent,
+          },
+          field: {
+            ...base.design.component.field,
+            focus: readableAccent,
+          },
+          navigation: {
+            ...base.design.component.navigation,
+            activeBackground: wash,
+            activeForeground: readableAccentOnWash,
+          },
+          message: {
+            ...base.design.component.message,
+            userBackground: accent,
+            userForeground: foreground,
+          },
+        },
+      }
+    : undefined
 
   return {
     ...base,
@@ -1681,6 +2082,7 @@ function applyThemeAccent(base: AppPalette, accent: string, mode: ResolvedThemeM
         dot: readableAccent,
       },
     },
+    design,
   }
 }
 
