@@ -114,9 +114,14 @@ function testAppearanceNormalization(settingsModule) {
   assert.equal(settingsModule.normalizeSettingsThemeMode('dark'), 'dark')
   assert.equal(settingsModule.normalizeSettingsThemeMode('system'), 'system')
   assert.equal(settingsModule.normalizeSettingsThemeMode('sepia'), undefined, 'unknown persisted modes fail closed')
-  assert.equal(settingsModule.normalizeSettingsThemeFamily('glass'), 'markdown')
-  assert.equal(settingsModule.normalizeSettingsThemeFamily('cartoon'), 'lime-road')
-  assert.equal(settingsModule.normalizeSettingsThemeFamily('island'), 'lime-road')
+  assert.equal(settingsModule.normalizeSettingsThemeFamily('minimal'), 'minimal')
+  assert.equal(settingsModule.normalizeSettingsThemeFamily('monet'), 'monet')
+  assert.equal(settingsModule.normalizeSettingsThemeFamily('material'), 'material')
+  assert.equal(settingsModule.normalizeSettingsThemeFamily('liquid-glass'), 'liquid-glass')
+  assert.equal(settingsModule.normalizeSettingsThemeFamily('glass'), 'liquid-glass')
+  assert.equal(settingsModule.normalizeSettingsThemeFamily('cartoon'), 'monet')
+  assert.equal(settingsModule.normalizeSettingsThemeFamily('island'), 'monet')
+  assert.equal(settingsModule.normalizeSettingsThemeFamily('markdown'), 'material')
 }
 
 function createFixture(settingsModule) {
@@ -183,12 +188,12 @@ async function testMutations(fixture) {
   const family = await fixture.useCase.execute({ name: 'set_theme_family', arguments: { family: 'island' } })
   assert.equal(family.ok, true)
   if (!family.ok) throw new Error(family.error.message)
-  assert.deepEqual(family.value, { action: 'set_theme_family', themeFamily: 'lime-road' }, 'the target module migrates the island compatibility input to Lime Road')
+  assert.deepEqual(family.value, { action: 'set_theme_family', themeFamily: 'monet' }, 'the target module migrates the island compatibility input to Monet')
 
   const legacyFamily = await fixture.useCase.execute({ name: 'set_theme_family', arguments: { family: 'glass' } })
   assert.equal(legacyFamily.ok, true)
   if (!legacyFamily.ok) throw new Error(legacyFamily.error.message)
-  assert.deepEqual(legacyFamily.value, { action: 'set_theme_family', themeFamily: 'markdown' }, 'the target module migrates legacy glass requests to Markdown')
+  assert.deepEqual(legacyFamily.value, { action: 'set_theme_family', themeFamily: 'liquid-glass' }, 'the target module migrates legacy glass requests to Liquid Glass')
 
   const accent = await fixture.useCase.execute({ name: 'set_theme_accent', arguments: { color: '#4f6' } })
   assert.equal(accent.ok, true)
@@ -211,8 +216,8 @@ async function testMutations(fixture) {
   assert.deepEqual(feature.value, { action: 'set_feature_flag', flag: 'webSearchEnabled', enabled: false })
   assert.deepEqual(fixture.calls, [
     ['theme', 'dark'],
-    ['themeFamily', 'lime-road'],
-    ['themeFamily', 'markdown'],
+    ['themeFamily', 'monet'],
+    ['themeFamily', 'liquid-glass'],
     ['themeAccent', '#44FF66'],
     ['themeAccent', undefined],
     ['language', 'en'],

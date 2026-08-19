@@ -89,85 +89,121 @@
       "appearance": { "family": "minimal", "mode": "dark", "accentId": "default" }
     },
     {
-      "id": "appearance-lime-road-light-320",
+      "id": "appearance-monet-light-320",
       "route": "/settings",
       "mode": "settings",
       "viewport": "320x568",
-      "screenshotName": "islemind-appearance-lime-road-light-320.png",
-      "verified": ["Lime Road", "Light", "radio roles", "custom controls in viewport"],
-      "appearance": { "family": "lime-road", "mode": "light", "accentId": "default" }
+      "screenshotName": "islemind-appearance-monet-light-320.png",
+      "verified": ["Monet", "Light", "radio roles", "custom controls in viewport"],
+      "appearance": { "family": "monet", "mode": "light", "accentId": "default" }
     },
     {
-      "id": "appearance-lime-road-light-360",
+      "id": "appearance-monet-light-360",
       "route": "/settings",
       "mode": "settings",
       "viewport": "360x640",
-      "screenshotName": "islemind-appearance-lime-road-light-360.png",
-      "verified": ["Lime Road", "Light", "radio roles", "custom controls in viewport"],
-      "appearance": { "family": "lime-road", "mode": "light", "accentId": "default" }
+      "screenshotName": "islemind-appearance-monet-light-360.png",
+      "verified": ["Monet", "Light", "radio roles", "custom controls in viewport"],
+      "appearance": { "family": "monet", "mode": "light", "accentId": "default" }
     },
     {
-      "id": "appearance-lime-road-dark-320",
+      "id": "appearance-monet-dark-320",
       "route": "/settings",
       "mode": "settings",
       "viewport": "320x568",
-      "screenshotName": "islemind-appearance-lime-road-dark-320.png",
-      "verified": ["Lime Road", "Dark", "radio roles", "custom controls in viewport"],
-      "appearance": { "family": "lime-road", "mode": "dark", "accentId": "default" }
+      "screenshotName": "islemind-appearance-monet-dark-320.png",
+      "verified": ["Monet", "Dark", "radio roles", "custom controls in viewport"],
+      "appearance": { "family": "monet", "mode": "dark", "accentId": "default" }
     },
     {
-      "id": "appearance-lime-road-dark-360",
+      "id": "appearance-monet-dark-360",
       "route": "/settings",
       "mode": "settings",
       "viewport": "360x640",
-      "screenshotName": "islemind-appearance-lime-road-dark-360.png",
-      "verified": ["Lime Road", "Dark", "radio roles", "custom controls in viewport"],
-      "appearance": { "family": "lime-road", "mode": "dark", "accentId": "default" }
+      "screenshotName": "islemind-appearance-monet-dark-360.png",
+      "verified": ["Monet", "Dark", "radio roles", "custom controls in viewport"],
+      "appearance": { "family": "monet", "mode": "dark", "accentId": "default" }
     },
     {
-      "id": "appearance-markdown-light-320",
+      "id": "appearance-material-light-320",
       "route": "/settings",
       "mode": "settings",
       "viewport": "320x568",
-      "screenshotName": "islemind-appearance-markdown-light-320.png",
-      "verified": ["Markdown", "Light", "radio roles", "custom controls in viewport"],
-      "appearance": { "family": "markdown", "mode": "light", "accentId": "default" }
+      "screenshotName": "islemind-appearance-material-light-320.png",
+      "verified": ["Material 3", "Light", "radio roles", "custom controls in viewport"],
+      "appearance": { "family": "material", "mode": "light", "accentId": "default" }
     },
     {
-      "id": "appearance-markdown-light-360",
+      "id": "appearance-material-light-360",
       "route": "/settings",
       "mode": "settings",
       "viewport": "360x640",
-      "screenshotName": "islemind-appearance-markdown-light-360.png",
-      "verified": ["Markdown", "Light", "radio roles", "custom controls in viewport"],
-      "appearance": { "family": "markdown", "mode": "light", "accentId": "default" }
+      "screenshotName": "islemind-appearance-material-light-360.png",
+      "verified": ["Material 3", "Light", "radio roles", "custom controls in viewport"],
+      "appearance": { "family": "material", "mode": "light", "accentId": "default" }
     },
     {
-      "id": "appearance-markdown-dark-320",
+      "id": "appearance-material-dark-320",
       "route": "/settings",
       "mode": "settings",
       "viewport": "320x568",
-      "screenshotName": "islemind-appearance-markdown-dark-320.png",
-      "verified": ["Markdown", "Dark", "radio roles", "custom controls in viewport"],
-      "appearance": { "family": "markdown", "mode": "dark", "accentId": "default" }
+      "screenshotName": "islemind-appearance-material-dark-320.png",
+      "verified": ["Material 3", "Dark", "radio roles", "custom controls in viewport"],
+      "appearance": { "family": "material", "mode": "dark", "accentId": "default" }
     },
     {
-      "id": "appearance-markdown-dark-360",
+      "id": "appearance-material-dark-360",
       "route": "/settings",
       "mode": "settings",
       "viewport": "360x640",
-      "screenshotName": "islemind-appearance-markdown-dark-360.png",
-      "verified": ["Markdown", "Dark", "radio roles", "custom controls in viewport"],
-      "appearance": { "family": "markdown", "mode": "dark", "accentId": "default" }
+      "screenshotName": "islemind-appearance-material-dark-360.png",
+      "verified": ["Material 3", "Dark", "radio roles", "custom controls in viewport"],
+      "appearance": { "family": "material", "mode": "dark", "accentId": "default" }
     },
     {
-      "id": "appearance-markdown-dark-custom-indigo-360",
+      "id": "appearance-liquid-glass-light-320",
+      "route": "/settings",
+      "mode": "settings",
+      "viewport": "320x568",
+      "screenshotName": "islemind-appearance-liquid-glass-light-320.png",
+      "verified": ["Liquid Glass", "Light", "radio roles", "custom controls in viewport"],
+      "appearance": { "family": "liquid-glass", "mode": "light", "accentId": "default" }
+    },
+    {
+      "id": "appearance-liquid-glass-light-360",
       "route": "/settings",
       "mode": "settings",
       "viewport": "360x640",
-      "screenshotName": "islemind-appearance-markdown-dark-custom-indigo-360.png",
-      "verified": ["Markdown", "Dark", "custom indigo", "radio roles", "custom controls in viewport"],
-      "appearance": { "family": "markdown", "mode": "dark", "accentId": "custom", "accent": "#4455B7" }
+      "screenshotName": "islemind-appearance-liquid-glass-light-360.png",
+      "verified": ["Liquid Glass", "Light", "radio roles", "custom controls in viewport"],
+      "appearance": { "family": "liquid-glass", "mode": "light", "accentId": "default" }
+    },
+    {
+      "id": "appearance-liquid-glass-dark-320",
+      "route": "/settings",
+      "mode": "settings",
+      "viewport": "320x568",
+      "screenshotName": "islemind-appearance-liquid-glass-dark-320.png",
+      "verified": ["Liquid Glass", "Dark", "radio roles", "custom controls in viewport"],
+      "appearance": { "family": "liquid-glass", "mode": "dark", "accentId": "default" }
+    },
+    {
+      "id": "appearance-liquid-glass-dark-360",
+      "route": "/settings",
+      "mode": "settings",
+      "viewport": "360x640",
+      "screenshotName": "islemind-appearance-liquid-glass-dark-360.png",
+      "verified": ["Liquid Glass", "Dark", "radio roles", "custom controls in viewport"],
+      "appearance": { "family": "liquid-glass", "mode": "dark", "accentId": "default" }
+    },
+    {
+      "id": "appearance-liquid-glass-dark-custom-indigo-360",
+      "route": "/settings",
+      "mode": "settings",
+      "viewport": "360x640",
+      "screenshotName": "islemind-appearance-liquid-glass-dark-custom-indigo-360.png",
+      "verified": ["Liquid Glass", "Dark", "custom indigo", "radio roles", "custom controls in viewport"],
+      "appearance": { "family": "liquid-glass", "mode": "dark", "accentId": "custom", "accent": "#4455B7" }
     }
   ],
   "resultAcceptance": {

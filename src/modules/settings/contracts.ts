@@ -15,7 +15,7 @@ export const SETTINGS_THEME_MODES = ['light', 'dark', 'system'] as const
 
 export type SettingsThemeMode = typeof SETTINGS_THEME_MODES[number]
 
-export const SETTINGS_THEME_FAMILIES = ['minimal', 'lime-road', 'markdown'] as const
+export const SETTINGS_THEME_FAMILIES = ['minimal', 'monet', 'material', 'liquid-glass'] as const
 
 export type SettingsThemeFamily = typeof SETTINGS_THEME_FAMILIES[number]
 

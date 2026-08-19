@@ -95,7 +95,7 @@ interface ProviderPatch {
 }
 
 const defaultSettings: Settings = {
-  theme: 'system',
+  theme: 'light',
   themeId: 'minimal',
   themeAccent: undefined,
   assistantDisplayName: undefined,

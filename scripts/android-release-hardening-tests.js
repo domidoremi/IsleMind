@@ -106,6 +106,16 @@ V2 Signer: certificate SHA-256 digest: ${releaseDigest}
     /validate-android-16kb-apk\.js', '--strict', \.\.\.sixtyFourBitOutputs/,
     'every direct local release build runs strict 16 KB validation',
   )
+  assert.match(
+    localBuildSource,
+    /function prepareAndroidProject\(env\) \{[\s\S]*?prebuild', '--platform', 'android'[\s\S]*?ensureAndroidLocalProperties\(\)/,
+    'the shared Android preparation refreshes generated version metadata before Gradle runs',
+  )
+  assert.match(
+    localBuildSource,
+    /if \(args\.buildType === 'release'\) \{[\s\S]*?prepareAndroidProjectForRelease\(args\)[\s\S]*?\} else \{[\s\S]*?prepareAndroidProject\(androidBuildEnv\(\)\)/,
+    'debug builds refresh the generated Android project instead of reusing stale ignored native files',
+  )
 
   const configureSource = fs.readFileSync(path.join(root, 'scripts', 'configure-android-release.js'), 'utf8')
   for (const property of [

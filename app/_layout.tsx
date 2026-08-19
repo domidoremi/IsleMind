@@ -32,13 +32,20 @@ const SETTINGS_PROVIDER_SCREEN_OPTIONS: NativeStackNavigationOptions = {
 
 export default function RootLayout() {
   const boot = useBootstrap()
-  const { colors, mode, themeId, themeAccent } = useAppTheme()
+  const { canonicalThemeId, colors, design, mode, themeAccent } = useAppTheme()
   const { t } = useTranslation()
   const params = useGlobalSearchParams<{ qaUpdateNotice?: string | string[] }>()
   const qaUpdateVersion = firstQueryParam(params.qaUpdateNotice)
   const qaUpdateMessage = qaUpdateVersion ? t('updates.available', { version: qaUpdateVersion === '1' ? 'QA' : qaUpdateVersion }) : null
   const stackTransitionOptions = resolveStackTransitionOptions()
-  useWebThemeBridge({ colors, mode, themeId, themeAccent })
+  useWebThemeBridge({
+    canonicalThemeId,
+    colors,
+    design,
+    mode,
+    ready: boot.status !== 'loading',
+    themeAccent,
+  })
 
   return (
     <GestureHandlerRootView style={{ flex: 1, backgroundColor: colors.surface }}>
@@ -136,16 +143,30 @@ type WebDocumentLike = {
   documentElement?: WebThemeRoot
 }
 
-function useWebThemeBridge({ colors, mode, themeId, themeAccent }: Pick<ReturnType<typeof useAppTheme>, 'colors' | 'mode' | 'themeId' | 'themeAccent'>) {
+function useWebThemeBridge({
+  canonicalThemeId,
+  colors,
+  design,
+  mode,
+  ready,
+  themeAccent,
+}: Pick<ReturnType<typeof useAppTheme>, 'canonicalThemeId' | 'colors' | 'design' | 'mode' | 'themeAccent'> & { ready: boolean }) {
   useEffect(() => {
-    if (Platform.OS !== 'web') return
+    if (Platform.OS !== 'web' || !ready) return
     const documentRef = (globalThis as typeof globalThis & { document?: WebDocumentLike }).document
     const root = documentRef?.documentElement
     if (!root) return
 
-    root.setAttribute('data-theme-id', themeId)
+    root.setAttribute('data-theme-id', canonicalThemeId)
     root.setAttribute('data-theme-mode', mode)
-    root.setAttribute('data-theme-family', colors.ui.family)
+    root.setAttribute('data-theme-family', canonicalThemeId)
+    // Canonical identity drives Web selectors; the legacy projection remains
+    // available to untouched native composition dispatchers.
+    root.setAttribute('data-theme-presentation-id', canonicalThemeId)
+    root.setAttribute('data-theme-legacy-presentation-id', colors.ui.family)
+    root.setAttribute('data-theme-monet', canonicalThemeId === 'monet' ? 'true' : 'false')
+    root.setAttribute('data-theme-material', canonicalThemeId === 'material' ? 'true' : 'false')
+    root.setAttribute('data-theme-liquid-glass', canonicalThemeId === 'liquid-glass' ? 'true' : 'false')
     root.setAttribute('data-theme-markdown', colors.ui.markdown ? 'true' : 'false')
     root.setAttribute('data-theme-glass', colors.ui.glass ? 'true' : 'false')
     root.setAttribute('data-theme-lime-road', colors.ui.limeRoad ? 'true' : 'false')
@@ -270,7 +291,9 @@ function useWebThemeBridge({ colors, mode, themeId, themeAccent }: Pick<ReturnTy
       ['--color-semanticControlForeground', colors.ui.semantic.control.foreground],
       ['--color-semanticControlBorder', colors.ui.semantic.control.border],
       ['--color-semanticControlFocus', colors.ui.semantic.control.focus],
-      ['--theme-family', colors.ui.family],
+      ['--theme-family', canonicalThemeId],
+      ['--theme-legacy-family', colors.ui.family],
+      ['--theme-canonical-family', canonicalThemeId],
       ['--theme-markdown-enabled', colors.ui.markdown ? '1' : '0'],
       ['--theme-glass-enabled', colors.ui.glass ? '1' : '0'],
       ['--theme-lime-road-enabled', colors.ui.limeRoad ? '1' : '0'],
@@ -308,12 +331,44 @@ function useWebThemeBridge({ colors, mode, themeId, themeAccent }: Pick<ReturnTy
       ['--theme-cardShadowRadius', `${colors.ui.card.shadowRadius / 16}rem`],
       ['--theme-cardShadowOffset', `${colors.ui.card.shadowOffset / 16}rem`],
       ['--theme-ornament-opacity', colors.ui.ornamented ? '1' : '0'],
+      ['--theme-font-display-size', `${design.semantic.typography.display.fontSize / 16}rem`],
+      ['--theme-font-display-line-height', `${design.semantic.typography.display.lineHeight / 16}rem`],
+      ['--theme-font-headline-size', `${design.semantic.typography.headline.fontSize / 16}rem`],
+      ['--theme-font-title-size', `${design.semantic.typography.title.fontSize / 16}rem`],
+      ['--theme-font-body-size', `${design.semantic.typography.body.fontSize / 16}rem`],
+      ['--theme-font-body-line-height', `${design.semantic.typography.body.lineHeight / 16}rem`],
+      ['--theme-font-label-size', `${design.semantic.typography.label.fontSize / 16}rem`],
+      ['--theme-font-caption-size', `${design.semantic.typography.caption.fontSize / 16}rem`],
+      ['--theme-font-code-size', `${design.semantic.typography.code.fontSize / 16}rem`],
+      ['--theme-space-xs', `${design.semantic.spacing.xs / 16}rem`],
+      ['--theme-space-sm', `${design.semantic.spacing.sm / 16}rem`],
+      ['--theme-space-md', `${design.semantic.spacing.md / 16}rem`],
+      ['--theme-space-lg', `${design.semantic.spacing.lg / 16}rem`],
+      ['--theme-space-xl', `${design.semantic.spacing.xl / 16}rem`],
+      ['--theme-space-section', `${design.semantic.spacing.section / 16}rem`],
+      ['--theme-elevation-1', String(design.semantic.elevation.level1)],
+      ['--theme-elevation-2', String(design.semantic.elevation.level2)],
+      ['--theme-elevation-3', String(design.semantic.elevation.level3)],
+      ['--theme-motion-interaction', `${design.semantic.motion.interaction}ms`],
+      ['--theme-motion-panel', `${design.semantic.motion.panel}ms`],
+      ['--theme-motion-page', `${design.semantic.motion.page}ms`],
+      ['--theme-state-hover-opacity', String(design.semantic.motion.stateLayerOpacity.hover)],
+      ['--theme-state-focus-opacity', String(design.semantic.motion.stateLayerOpacity.focus)],
+      ['--theme-state-press-opacity', String(design.semantic.motion.stateLayerOpacity.press)],
+      ['--theme-blur-enabled', design.semantic.blur.enabled ? '1' : '0'],
+      ['--theme-blur-radius', `${design.semantic.blur.radius / 16}rem`],
+      ['--theme-blur-material', design.semantic.blur.material],
+      ['--theme-blur-max-layers', String(design.semantic.blur.maxLayersPerRegion)],
+      ['--theme-blur-dimming-opacity', String(design.semantic.blur.dimmingOpacity)],
+      ['--theme-backdrop-filter', design.semantic.blur.enabled ? `blur(${design.semantic.blur.radius / 16}rem) saturate(1.18)` : 'none'],
+      ['color-scheme', mode],
     ]
 
     for (const [name, value] of variables) {
       root.style.setProperty(name, value)
     }
-  }, [colors, mode, themeAccent, themeId])
+    root.setAttribute('data-theme-ready', 'true')
+  }, [canonicalThemeId, colors, design, mode, ready, themeAccent])
 }
 
 function firstQueryParam(value?: string | string[]): string | undefined {

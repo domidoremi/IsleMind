@@ -88,14 +88,14 @@ check(
   releaseGate.issues.join('; ') || 'theme release gate should pass package/file checks',
 )
 check(
-  'markdown tokens are canonical while legacy families normalize safely',
-  /family: 'markdown'/.test(colors)
-    && /semantic:\s*semanticUi\('markdown'/.test(colors)
-    && /if \(value === 'glass'\) return 'markdown'/.test(settingsAppearance)
-    && /if \(value === 'cartoon' \|\| value === 'island'\) return 'lime-road'/.test(settingsAppearance)
+  'four canonical tokens normalize legacy families safely',
+  /canonicalFamily: family/.test(colors)
+    && /value === 'glass' \|\| value === 'liquid'\) return 'liquid-glass'/.test(settingsAppearance)
+    && /value === 'lime-road' \|\| value === 'cartoon' \|\| value === 'island'\) return 'monet'/.test(settingsAppearance)
+    && /value === 'markdown' \|\| value === 'material-3' \|\| value === 'material3'\) return 'material'/.test(settingsAppearance)
     && /normalizeSettingsThemeFamily\(value\) \?\? DEFAULT_THEME_ID/.test(colors)
-    && /DEFAULT_THEME_ID: ThemeId = 'minimal'/.test(colors),
-  'markdown, lime-road, and minimal should be the runtime families while legacy values remain load-compatible',
+    && /DEFAULT_THEME_ID: CanonicalThemeId = 'minimal'/.test(colors),
+  'minimal, Monet, Material, and Liquid Glass are the runtime families while legacy values remain load-compatible',
 )
 check(
   'lime-road control tokens keep tactile depth restrained',
@@ -108,14 +108,17 @@ check(
   'theme families own materially different experience grammars',
   /layout: 'editorial'[\s\S]*?navigation: 'route'[\s\S]*?background: 'road'[\s\S]*?transition: 'travel'/.test(colors)
     && /layout: 'quiet'[\s\S]*?navigation: 'quiet'[\s\S]*?background: 'plain'[\s\S]*?transition: 'fade'/.test(colors)
-    && /layout: 'document'[\s\S]*?navigation: 'document'[\s\S]*?background: 'document'[\s\S]*?transition: 'cut'/.test(colors),
+    && /layout: 'structured'[\s\S]*?navigation: 'material'[\s\S]*?background: 'tonal'[\s\S]*?transition: 'shared-axis'/.test(colors)
+    && /layout: 'layered'[\s\S]*?navigation: 'glass'[\s\S]*?background: 'glass'[\s\S]*?transition: 'fluid'/.test(colors),
   'theme families should change the product composition and motion grammar, not only primitive colors and radii',
 )
 check(
   'experience grammar reaches the live shell and theme previews',
   !/MainPagerExperience|ThemeNavigationDrawer|AppTopBar|shellNavigation/.test(mainPagerShell)
     && /colors\.ui\.experience\.background/.test(mainPagerShell)
-    && /road-cinema/.test(themeMotion)
+    && /monet-breathe/.test(themeMotion)
+    && /material-shared-axis/.test(themeMotion)
+    && /glass-refraction/.test(themeMotion)
     && /experienceBackground = colors\.ui\.experience\.background/.test(isleBackground)
     && /function ThemeFamilyPreview/.test(settingsScreen)
     && /getColors\(mode, themeId/.test(settingsScreen)
@@ -129,7 +132,8 @@ check(
     && /chat-ai-reasoning-section/.test(optionsPanel)
     && /chat-composer-surface-minimal/.test(chatThemeSurfaces)
     && /chat-composer-surface-lime-road/.test(chatThemeSurfaces)
-    && /chat-composer-surface-markdown/.test(chatThemeSurfaces),
+    && /chat-composer-surface-markdown/.test(chatThemeSurfaces)
+    && /themeId: ThemeId/.test(chatThemeSurfaces),
   'navigation, static page composition, background composition, theme selection, and the chat entry should project family identity without automatic entrance motion',
 )
 check(
@@ -144,13 +148,13 @@ check(
 )
 check(
   'legacy island normalization still survives in runtime settings',
-  /if \(value === 'cartoon' \|\| value === 'island'\) return 'lime-road'/.test(settingsAppearance) && /normalizeThemeId\(rawSettings\.themeId\)/.test(settingsStore),
-  'persisted cartoon/island values must keep normalizing to lime-road',
+  /value === 'lime-road' \|\| value === 'cartoon' \|\| value === 'island'\) return 'monet'/.test(settingsAppearance) && /normalizeThemeId\(rawSettings\.themeId\)/.test(settingsStore),
+  'persisted legacy Monet aliases must keep normalizing to Monet',
 )
 check(
   'useAppTheme keeps family booleans for high-flow consumers',
-  /isMarkdown: themeId === 'markdown'/.test(themeHook) && /isGlass: false as const/.test(themeHook) && /isLimeRoad: themeId === 'lime-road'/.test(themeHook) && /isMinimal: themeId === 'minimal'/.test(themeHook),
-  'canonical families stay explicit and Markdown must not enter legacy Glass-only branches',
+  /isMonet: canonicalThemeId === 'monet'/.test(themeHook) && /isMaterial: canonicalThemeId === 'material'/.test(themeHook) && /isLiquidGlass: canonicalThemeId === 'liquid-glass'/.test(themeHook) && /isMinimal: canonicalThemeId === 'minimal'/.test(themeHook),
+  'canonical families stay explicit while legacy presentation projections remain separate',
 )
 check(
   'preferences route still mounts the preference settings surface',
@@ -158,14 +162,14 @@ check(
   'the named preferences route should still resolve to the settings preference content shell',
 )
 check(
-  'theme app actions recognize the three canonical families',
-  /SETTINGS_THEME_FAMILIES = \['minimal', 'lime-road', 'markdown'\] as const/.test(settingsActionContracts),
+  'theme app actions recognize the four canonical families',
+  /SETTINGS_THEME_FAMILIES = \['minimal', 'monet', 'material', 'liquid-glass'\] as const/.test(settingsActionContracts),
   'structured Settings actions should stay aligned with the canonical theme families',
 )
 check(
   'builtin tools keep compatibility aliases while exposing the new families',
-  /enum: \['minimal', 'lime-road', 'markdown', 'cartoon', 'glass', 'island'\]/.test(applicationBuiltinCatalog) && /glass requests map to markdown/.test(applicationBuiltinCatalog),
-  'builtins should remain compatible with old glass/island requests without reviving them as runtime themes',
+  /enum: \['minimal', 'monet', 'material', 'liquid-glass', 'lime-road', 'markdown', 'cartoon', 'island', 'glass', 'material-3', 'material3', 'liquid'\]/.test(applicationBuiltinCatalog) && /Legacy .*migrated to the matching canonical family/.test(applicationBuiltinCatalog),
+  'builtins should remain compatible with old values without reviving them as runtime themes',
 )
 check(
   'chat workspace uses one theme-owned persistent header',
@@ -343,7 +347,7 @@ check(
   /const backgroundMode: IsleBackgroundMode = colors\.ui\.experience\.background === 'road'/.test(mainPagerShell)
     && /colors\.ui\.experience\.background === 'document'/.test(mainPagerShell)
     && /backgroundIntensity=\{0\.96\}/.test(mainPagerShell)
-    && /colors\.ui\.experience\.background === 'plain' \? colors\.background\.surfaceCanvas : 'transparent'/.test(mainPagerShell)
+    && /colors\.ui\.experience\.background === 'plain' \? colors\.background\.canvas : 'transparent'/.test(mainPagerShell)
     && /chat-setup-experience-minimal/.test(chatSetupExperience)
     && /chat-setup-experience-lime-road/.test(chatSetupExperience)
     && /chat-setup-experience-markdown/.test(chatSetupExperience)

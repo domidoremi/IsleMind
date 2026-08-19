@@ -1,6 +1,6 @@
 {
   "name": "islemind",
-  "version": "1.0.16",
+  "version": "1.0.17",
   "packageManager": "bun@1.3.14",
   "main": "expo-router/entry",
   "bin": {
@@ -138,6 +138,7 @@
     "test:theme-system:source": "node scripts/verify-theme-web-render.js --source-only",
     "test:theme-contrast": "bun scripts/theme-contrast-selftest.js",
     "test:theme-system:qa": "node scripts/qa-coverage-audit.js --self-test=theme-system",
+    "test:theme-prepaint": "node scripts/theme-prepaint-tests.js",
     "test:theme-experience-structure": "node scripts/theme-experience-structure-tests.js",
     "theme:sync-global-css": "node scripts/verify-theme-web-render.js --sync-global-css",
     "theme:sync-release-gate-row": "node scripts/theme-release-gate-specs.js --sync-matrix-row",
