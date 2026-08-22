@@ -2,7 +2,7 @@ import { useState, type ReactNode } from 'react'
 import { Text, View } from 'react-native'
 import { MotiView } from 'moti'
 import { useTranslation } from 'react-i18next'
-import { ISLE_MIN_TOUCH_TARGET, IsleChip, IsleField, IslePressable } from '@/components/ui/isle'
+import { ISLE_MIN_TOUCH_TARGET, IsleChip, IsleField, IslePressable, ThemeExpressionRegion } from '@/components/ui/isle'
 import { AppIcon } from '@/components/ui/AppIcon'
 import { useAppTheme } from '@/hooks/useAppTheme'
 import { formatMemoryMeta, memoryReviewFocusKey } from '@/services/contextAssetFormatters'
@@ -107,7 +107,7 @@ export function MemoryReviewSection({
   const averageConfidenceLabel = memoryReviewSummary.averageConfidence === undefined ? '-' : `${Math.round(memoryReviewSummary.averageConfidence * 100)}%`
 
   return (
-    <>
+    <ThemeExpressionRegion componentId="memory">
       {memories.length ? (
         <View testID="memory-lifecycle-summary" style={{ flexDirection: 'row', gap: 8, flexWrap: 'wrap', marginBottom: 10 }}>
           {renderDebugStat(t('contextPanel.memoryPendingCount'), String(memoryStatusCounts.pending))}
@@ -351,6 +351,6 @@ export function MemoryReviewSection({
           </Text>
         </IslePressable>
       ) : null}
-    </>
+    </ThemeExpressionRegion>
   )
 }

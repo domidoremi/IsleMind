@@ -14,9 +14,10 @@ import {
 import { createPluginManifestFromMcpServer, validatePluginManifest } from '@/services/pluginManifest'
 import type { McpPromptManifest, McpResourceManifest, McpServerConfig, McpToolManifest } from '@/types/mcpContracts'
 import {
-  LimeRoadMcpSettingsExperience,
-  MarkdownMcpSettingsExperience,
+  LiquidGlassMcpSettingsExperience,
+  MaterialMcpSettingsExperience,
   MinimalMcpSettingsExperience,
+  MonetMcpSettingsExperience,
 } from '@/components/settings/theme-experiences/McpSettingsExperiences'
 
 const DEFAULT_TTL_MS = 6 * 60 * 60 * 1000
@@ -30,7 +31,7 @@ function hostFromUrl(value: string): string {
 }
 
 export function McpSettingsContent() {
-  const { colors, themeId } = useAppTheme()
+  const { colors, canonicalThemeId } = useAppTheme()
   const { t } = useTranslation()
   const dialog = useIsleDialog()
   const { width } = useWindowDimensions()
@@ -190,7 +191,7 @@ export function McpSettingsContent() {
             setManagementOpen((current) => !current)
             setSelectedServerId(null)
           }}
-          style={{ width: 44, height: 44, borderRadius: themeId === 'markdown' ? 4 : 8, alignItems: 'center', justifyContent: 'center', backgroundColor: themeId === 'minimal' ? 'transparent' : colors.ui.semantic.surface.muted, borderWidth: themeId === 'minimal' ? 0 : subtleBorderWidth, borderColor: colors.ui.semantic.chrome.border }}
+          style={{ width: 44, height: 44, borderRadius: canonicalThemeId === 'material' ? 4 : canonicalThemeId === 'liquid-glass' ? colors.ui.radius.controlLarge : 8, alignItems: 'center', justifyContent: 'center', backgroundColor: canonicalThemeId === 'minimal' ? 'transparent' : colors.ui.semantic.surface.muted, borderWidth: canonicalThemeId === 'minimal' ? 0 : subtleBorderWidth, borderColor: colors.ui.semantic.chrome.border }}
         >
           <AppIcon name={managementOpen ? 'close' : 'settings'} color={colors.textSecondary} size={18} />
         </IslePressable>
@@ -273,9 +274,9 @@ export function McpSettingsContent() {
                   ) : null}
     </>
   ) : null
-  const managementSections = themeId === 'markdown'
+  const managementSections = canonicalThemeId === 'material'
     ? <>{builtInSection}{addSection}{presetsSection}</>
-    : themeId === 'minimal'
+    : canonicalThemeId === 'minimal'
       ? <>{addSection}{presetsSection}{builtInSection}</>
       : <>{presetsSection}{addSection}{builtInSection}</>
   const management = (
@@ -285,11 +286,13 @@ export function McpSettingsContent() {
       ) : managementSections}
     </MotiView>
   )
-  const Experience = themeId === 'lime-road'
-    ? LimeRoadMcpSettingsExperience
-    : themeId === 'markdown'
-      ? MarkdownMcpSettingsExperience
-      : MinimalMcpSettingsExperience
+  const Experience = canonicalThemeId === 'monet'
+    ? MonetMcpSettingsExperience
+    : canonicalThemeId === 'material'
+      ? MaterialMcpSettingsExperience
+      : canonicalThemeId === 'liquid-glass'
+        ? LiquidGlassMcpSettingsExperience
+        : MinimalMcpSettingsExperience
   return (
     <Experience
       managementOpen={managementOpen}

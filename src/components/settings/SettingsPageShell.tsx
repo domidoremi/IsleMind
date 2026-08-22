@@ -7,9 +7,10 @@ import { IsleScreen } from '@/components/ui/isle'
 import { useAppTheme } from '@/hooks/useAppTheme'
 import { resolveSettingsChildReturnAction } from '@/presentation/app-shell/routeReturnPolicy'
 import {
-  LimeRoadSettingsPageExperience,
-  MarkdownSettingsPageExperience,
+  LiquidGlassSettingsPageExperience,
+  MaterialSettingsPageExperience,
   MinimalSettingsPageExperience,
+  MonetSettingsPageExperience,
 } from '@/components/settings/theme-experiences/SettingsPageExperiences'
 export function SettingsPageShell({
   title,
@@ -22,7 +23,7 @@ export function SettingsPageShell({
   children: ReactNode
   focusKey?: string
 }) {
-  const { colors } = useAppTheme()
+  const { colors, canonicalThemeId } = useAppTheme()
   const { t } = useTranslation()
   const pathname = usePathname()
   const params = useLocalSearchParams<{ returnTo?: string | string[] }>()
@@ -98,11 +99,13 @@ export function SettingsPageShell({
     scrollRef.current?.scrollTo({ y: 0, animated: false })
   }, [focusKey])
 
-  const Experience = colors.ui.experience.navigation === 'route'
-    ? LimeRoadSettingsPageExperience
-    : colors.ui.experience.navigation === 'document'
-      ? MarkdownSettingsPageExperience
-      : MinimalSettingsPageExperience
+  const Experience = canonicalThemeId === 'monet'
+    ? MonetSettingsPageExperience
+    : canonicalThemeId === 'material'
+      ? MaterialSettingsPageExperience
+      : canonicalThemeId === 'liquid-glass'
+        ? LiquidGlassSettingsPageExperience
+        : MinimalSettingsPageExperience
   const leading = (
     <AnimatedNavigationTrigger variant="iconButton" label={t('common.back')} size="sm" glyph="back" onNavigate={returnToSettings} color={colors.text} />
   )

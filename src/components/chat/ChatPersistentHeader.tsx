@@ -6,14 +6,14 @@ import { AnimatedNavigationTrigger, type NavigationGlyph } from '@/components/na
 import { AppIcon, appIconStroke } from '@/components/ui/AppIcon'
 import { ISLE_MIN_TOUCH_TARGET, IsleOverlayPressable } from '@/components/ui/isle'
 import type { useAppTheme } from '@/hooks/useAppTheme'
-import type { ThemeId } from '@/types/settingsContracts'
+import type { CanonicalThemeId } from '@/types/settingsContracts'
 
 import { ChatChromeThemeSurface } from './theme-surfaces/ChatThemeSurfaces'
 
 type HeaderColors = ReturnType<typeof useAppTheme>['colors']
 
 export interface ChatPersistentHeaderProps {
-  themeId: ThemeId
+  themeId: CanonicalThemeId
   colors: HeaderColors
   title: string
   leadingGlyph: NavigationGlyph

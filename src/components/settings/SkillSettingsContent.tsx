@@ -12,9 +12,10 @@ import { ISLE_MIN_TOUCH_TARGET, IsleButton, IsleChip, IsleField, IsleListItem, I
 import { useAppTheme } from '@/hooks/useAppTheme'
 import { SettingsSummaryStrip } from '@/components/settings/SettingsSummaryStrip'
 import {
-  LimeRoadSkillSettingsLead,
-  MarkdownSkillSettingsLead,
+  LiquidGlassSkillSettingsLead,
+  MaterialSkillSettingsLead,
   MinimalSkillSettingsLead,
+  MonetSkillSettingsLead,
 } from '@/components/settings/theme-experiences/SkillSettingsExperiences'
 import { createBaseSkill, deleteSkill, exportSkill, importSkill, listSkills, upsertSkill } from '@/presentation/features/conversations/conversationSkillCommand'
 import { androidWorkflowCatalog } from '@/bootstrap/androidWorkflowCatalog'
@@ -79,7 +80,7 @@ interface SkillSettingsContentProps {
 }
 
 export function SkillSettingsContent({ workflowFocus, pluginManifestFocus }: SkillSettingsContentProps = {}) {
-  const { colors, themeId } = useAppTheme()
+  const { colors, canonicalThemeId } = useAppTheme()
   const { t } = useTranslation()
   const dialog = useIsleDialog()
   const { width } = useWindowDimensions()
@@ -90,14 +91,14 @@ export function SkillSettingsContent({ workflowFocus, pluginManifestFocus }: Ski
   const fieldFlexStyle = compact ? undefined : { flex: 1, minWidth: 0 }
   const actionButtonStyle = actionCompact ? { alignSelf: 'stretch' as const } : { flexGrow: 1, flexShrink: 1, flexBasis: '47%' as const, minWidth: 0 }
   const foldoutPanelStyle = {
-    borderRadius: themeId === 'markdown' ? 4 : Math.min(colors.ui.radius.card, 8),
+    borderRadius: canonicalThemeId === 'material' ? 4 : canonicalThemeId === 'liquid-glass' ? colors.ui.radius.panel : Math.min(colors.ui.radius.card, 8),
     padding: compact ? 10 : 11,
-    backgroundColor: themeId === 'minimal' ? 'transparent' : colors.ui.semantic.surface.muted,
-    borderWidth: themeId === 'minimal' ? 0 : subtleBorderWidth,
-    borderTopWidth: themeId === 'minimal' ? StyleSheet.hairlineWidth : undefined,
-    borderBottomWidth: themeId === 'minimal' ? StyleSheet.hairlineWidth : undefined,
-    borderLeftWidth: themeId === 'markdown' ? 3 : undefined,
-    borderColor: themeId === 'lime-road' ? colors.material.stroke : colors.ui.semantic.chrome.border,
+    backgroundColor: canonicalThemeId === 'minimal' ? 'transparent' : colors.ui.semantic.surface.muted,
+    borderWidth: canonicalThemeId === 'minimal' ? 0 : subtleBorderWidth,
+    borderTopWidth: canonicalThemeId === 'minimal' ? StyleSheet.hairlineWidth : undefined,
+    borderBottomWidth: canonicalThemeId === 'minimal' ? StyleSheet.hairlineWidth : undefined,
+    borderLeftWidth: canonicalThemeId === 'material' ? 3 : undefined,
+    borderColor: canonicalThemeId === 'monet' ? colors.material.stroke : colors.ui.semantic.chrome.border,
   } as const
   const [skills, setSkills] = useState<SkillDefinition[]>([])
   const [toolchainCatalog, setToolchainCatalog] = useState<ToolchainControlPlaneCatalogSnapshot | null>(null)
@@ -509,11 +510,13 @@ export function SkillSettingsContent({ workflowFocus, pluginManifestFocus }: Ski
     },
   ]
   const summary = <SettingsSummaryStrip items={summaryItems} />
-  const Lead = themeId === 'lime-road'
-    ? LimeRoadSkillSettingsLead
-    : themeId === 'markdown'
-      ? MarkdownSkillSettingsLead
-      : MinimalSkillSettingsLead
+  const Lead = canonicalThemeId === 'monet'
+    ? MonetSkillSettingsLead
+    : canonicalThemeId === 'material'
+      ? MaterialSkillSettingsLead
+      : canonicalThemeId === 'liquid-glass'
+        ? LiquidGlassSkillSettingsLead
+        : MinimalSkillSettingsLead
   return (
     <View style={{ gap: 10 }}>
       <Lead
@@ -820,9 +823,9 @@ function SkillFoldoutHeader({ title, description }: { title: string; description
 }
 
 function SkillEmptyRow({ icon, label, detail }: { icon: ReactNode; label: string; detail?: string }) {
-  const { colors, themeId } = useAppTheme()
-  const borderColor = colors.ui.glass ? colors.ui.actionBar.itemBorder : colors.ui.limeRoad ? colors.material.stroke : colors.ui.semantic.chrome.border
-  if (themeId === 'minimal') {
+  const { colors, canonicalThemeId } = useAppTheme()
+  const borderColor = canonicalThemeId === 'liquid-glass' ? colors.ui.actionBar.itemBorder : canonicalThemeId === 'monet' ? colors.material.stroke : colors.ui.semantic.chrome.border
+  if (canonicalThemeId === 'minimal') {
     return (
       <View style={{ minHeight: detail ? 58 : 44, paddingVertical: 8, flexDirection: 'row', alignItems: 'center', gap: 8, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: colors.ui.semantic.chrome.border }}>
         <View style={{ width: 8, height: 8, borderRadius: 4, backgroundColor: colors.ui.semantic.chrome.border }} />
@@ -833,7 +836,7 @@ function SkillEmptyRow({ icon, label, detail }: { icon: ReactNode; label: string
       </View>
     )
   }
-  if (themeId === 'markdown') {
+  if (canonicalThemeId === 'material') {
     return (
       <View style={{ minHeight: detail ? 58 : 44, paddingHorizontal: 9, paddingVertical: 8, backgroundColor: colors.ui.semantic.surface.muted, borderLeftWidth: 3, borderLeftColor: colors.ui.section.divider }}>
         <Text style={{ color: colors.textSecondary, fontSize: 11.5, lineHeight: 16, fontWeight: '700' }}>{label}</Text>
@@ -841,8 +844,21 @@ function SkillEmptyRow({ icon, label, detail }: { icon: ReactNode; label: string
       </View>
     )
   }
+  if (canonicalThemeId === 'liquid-glass') {
+    return (
+      <View style={{ minHeight: detail ? 64 : 48, borderRadius: colors.ui.radius.panel, paddingHorizontal: 12, paddingVertical: 10, flexDirection: 'row', alignItems: 'center', gap: 9, backgroundColor: colors.ui.actionBar.itemBackground, borderWidth: 1, borderColor: colors.ui.actionBar.itemBorder }}>
+        {icon}
+        <View style={{ flex: 1, minWidth: 0 }}>
+          <Text numberOfLines={1} style={{ color: colors.textSecondary, fontSize: 12, lineHeight: 17, fontWeight: '800', includeFontPadding: false }}>
+            {label}
+          </Text>
+          {detail ? <Text numberOfLines={2} style={{ color: colors.textTertiary, fontSize: 11, lineHeight: 16, marginTop: 2, fontWeight: '600', includeFontPadding: false }}>{detail}</Text> : null}
+        </View>
+      </View>
+    )
+  }
   return (
-    <View style={{ minHeight: detail ? 60 : 44, borderRadius: Math.min(colors.ui.radius.card, 8), paddingHorizontal: 10, paddingVertical: 8, flexDirection: 'row', alignItems: 'center', gap: 8, backgroundColor: colors.ui.glass ? colors.ui.actionBar.itemBackground : colors.ui.semantic.surface.muted, borderWidth: colors.ui.limeRoad ? 1 : StyleSheet.hairlineWidth, borderColor }}>
+    <View style={{ minHeight: detail ? 60 : 44, borderRadius: Math.min(colors.ui.radius.card, 8), paddingHorizontal: 10, paddingVertical: 8, flexDirection: 'row', alignItems: 'center', gap: 8, backgroundColor: colors.ui.semantic.surface.muted, borderWidth: 1, borderColor }}>
       {icon}
       <View style={{ flex: 1, minWidth: 0 }}>
         <Text numberOfLines={1} style={{ color: colors.textSecondary, fontSize: 12, lineHeight: 17, fontWeight: '800', includeFontPadding: false }}>
@@ -859,11 +875,11 @@ function SkillEmptyRow({ icon, label, detail }: { icon: ReactNode; label: string
 }
 
 function SkillDisclosureRow({ title, detail, icon, open, tone, onPress }: { title: string; detail: string; icon: ReactNode; open: boolean; tone?: 'amber'; onPress: () => void }) {
-  const { colors, themeId } = useAppTheme()
-  const borderColor = tone === 'amber' ? colors.ui.tone.warning.border : colors.ui.glass ? colors.ui.actionBar.itemBorder : colors.ui.semantic.chrome.border
-  const backgroundColor = tone === 'amber' ? colors.ui.tone.warning.background : colors.ui.glass ? colors.ui.actionBar.itemBackground : colors.ui.semantic.surface.muted
+  const { colors, canonicalThemeId } = useAppTheme()
+  const borderColor = tone === 'amber' ? colors.ui.tone.warning.border : canonicalThemeId === 'liquid-glass' ? colors.ui.actionBar.itemBorder : colors.ui.semantic.chrome.border
+  const backgroundColor = tone === 'amber' ? colors.ui.tone.warning.background : canonicalThemeId === 'liquid-glass' ? colors.ui.actionBar.itemBackground : colors.ui.semantic.surface.muted
   const textColor = tone === 'amber' ? colors.ui.tone.warning.foreground : colors.textSecondary
-  if (themeId === 'minimal') {
+  if (canonicalThemeId === 'minimal') {
     return (
       <IslePressable haptic accessibilityRole="button" accessibilityLabel={`${title}. ${detail}`} accessibilityState={{ expanded: open }} onPress={onPress} style={{ minHeight: 48, paddingVertical: 7, flexDirection: 'row', alignItems: 'center', gap: 9, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: tone === 'amber' ? colors.ui.tone.warning.border : colors.ui.semantic.chrome.border }}>
         <Text numberOfLines={1} style={{ flex: 1, minWidth: 0, color: tone === 'amber' ? colors.ui.tone.warning.foreground : colors.text, fontSize: 12.5, lineHeight: 17, fontWeight: '700' }}>{title}</Text>
@@ -872,7 +888,7 @@ function SkillDisclosureRow({ title, detail, icon, open, tone, onPress }: { titl
       </IslePressable>
     )
   }
-  if (themeId === 'markdown') {
+  if (canonicalThemeId === 'material') {
     return (
       <IslePressable haptic accessibilityRole="button" accessibilityLabel={`${title}. ${detail}`} accessibilityState={{ expanded: open }} onPress={onPress} style={{ minHeight: 46, paddingHorizontal: 9, flexDirection: 'row', alignItems: 'center', gap: 8, backgroundColor: open ? colors.ui.semantic.surface.base : colors.ui.semantic.surface.muted, borderWidth: StyleSheet.hairlineWidth, borderColor: tone === 'amber' ? colors.ui.tone.warning.border : colors.ui.section.divider, borderRadius: 4 }}>
         <Text style={{ color: tone === 'amber' ? colors.ui.tone.warning.foreground : colors.textTertiary, fontSize: 10.5, lineHeight: 14, fontWeight: '900' }}>{open ? '[-]' : '[+]'}</Text>
@@ -883,6 +899,27 @@ function SkillDisclosureRow({ title, detail, icon, open, tone, onPress }: { titl
       </IslePressable>
     )
   }
+  if (canonicalThemeId === 'liquid-glass') {
+    return (
+      <IslePressable
+        haptic
+        accessibilityRole="button"
+        accessibilityLabel={`${title}. ${detail}`}
+        accessibilityState={{ expanded: open }}
+        onPress={onPress}
+        style={{ minHeight: ISLE_MIN_TOUCH_TARGET, borderRadius: colors.ui.radius.controlLarge, paddingHorizontal: 12, flexDirection: 'row', alignItems: 'center', gap: 9, backgroundColor: tone === 'amber' ? colors.ui.tone.warning.background : colors.ui.actionBar.itemBackground, borderWidth: 1, borderColor }}
+      >
+        {icon}
+        <View style={{ flex: 1, minWidth: 0 }}>
+          <Text numberOfLines={1} style={{ color: textColor, fontSize: 13, lineHeight: 17, fontWeight: '800' }}>{title}</Text>
+          <Text numberOfLines={1} style={{ color: colors.textTertiary, fontSize: 11, lineHeight: 15, marginTop: 1 }}>{detail}</Text>
+        </View>
+        <MotiView animate={{ rotate: open ? '180deg' : '0deg' }} transition={{ type: 'timing', duration: 160 }}>
+          <AppIcon name="collapse" color={colors.textTertiary} size={16} />
+        </MotiView>
+      </IslePressable>
+    )
+  }
   return (
     <IslePressable
       haptic
@@ -890,7 +927,7 @@ function SkillDisclosureRow({ title, detail, icon, open, tone, onPress }: { titl
       accessibilityLabel={`${title}. ${detail}`}
       accessibilityState={{ expanded: open }}
       onPress={onPress}
-      style={{ minHeight: ISLE_MIN_TOUCH_TARGET, borderRadius: Math.min(colors.ui.radius.controlLarge, 8), paddingHorizontal: 12, flexDirection: 'row', alignItems: 'center', gap: 8, backgroundColor, borderWidth: colors.ui.limeRoad ? 1 : StyleSheet.hairlineWidth, borderColor }}
+      style={{ minHeight: ISLE_MIN_TOUCH_TARGET, borderRadius: Math.min(colors.ui.radius.controlLarge, 8), paddingHorizontal: 12, flexDirection: 'row', alignItems: 'center', gap: 8, backgroundColor, borderWidth: 1, borderColor }}
     >
       {icon}
       <View style={{ flex: 1, minWidth: 0 }}>

@@ -41,9 +41,10 @@ import { useProviderUsageSnapshots, type ProviderUsageSnapshot, type ProviderUsa
 import { ProviderUsageQueryEditor } from '@/components/providers/ProviderUsageQueryEditor'
 import { PROVIDER_CARD_DETAIL_MAX_WIDTH } from '@/components/providers/ProviderCardGrid'
 import {
-  LimeRoadProviderSettingsExperience,
-  MarkdownProviderSettingsExperience,
+  LiquidGlassProviderSettingsExperience,
+  MaterialProviderSettingsExperience,
   MinimalProviderSettingsExperience,
+  MonetProviderSettingsExperience,
 } from '@/components/providers/theme-experiences/ProviderSettingsExperiences'
 import type { RuntimeDiagnosticsProviderDetail, RuntimeDiagnosticsSummary } from '@/services/runtimeDiagnostics'
 import { clearAndroidStatusNotification, updateAndroidStatusNotification } from '@/bootstrap/androidStatusNotification'
@@ -168,7 +169,7 @@ interface ProviderSettingsContentProps {
 }
 
 export function ProviderSettingsContent({ embedded = false, autoOpenAdd = false, onClose, onProviderConnected, onBackgroundStateChange }: ProviderSettingsContentProps) {
-  const { colors } = useAppTheme()
+  const { colors, canonicalThemeId } = useAppTheme()
   const { t } = useTranslation()
   const dialog = useIsleDialog()
   const motion = useMotionPreference()
@@ -711,11 +712,13 @@ export function ProviderSettingsContent({ embedded = false, autoOpenAdd = false,
     )
   }
 
-  const ProviderSettingsExperience = colors.ui.family === 'lime-road'
-    ? LimeRoadProviderSettingsExperience
-    : colors.ui.family === 'markdown'
-      ? MarkdownProviderSettingsExperience
-      : MinimalProviderSettingsExperience
+  const ProviderSettingsExperience = canonicalThemeId === 'monet'
+    ? MonetProviderSettingsExperience
+    : canonicalThemeId === 'material'
+      ? MaterialProviderSettingsExperience
+      : canonicalThemeId === 'liquid-glass'
+        ? LiquidGlassProviderSettingsExperience
+        : MinimalProviderSettingsExperience
   const providerAttention = providerAttentionItems.length ? <SettingsSummaryStrip items={providerAttentionItems} /> : undefined
   const providerActivation = activationJob
     ? <ActivationProgressCard job={activationJob} onDismiss={clearActivationJob} />

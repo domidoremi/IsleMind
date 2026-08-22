@@ -255,3 +255,51 @@ export function MarkdownProviderSettingsExperience({
     </View>
   )
 }
+
+function CanonicalProviderSettingsExperience({
+  family,
+  props,
+}: {
+  family: 'monet' | 'material' | 'liquid-glass'
+  props: ProviderSettingsExperienceProps
+}) {
+  const { colors, design } = useAppTheme()
+  const glass = family === 'liquid-glass'
+  const material = family === 'material'
+  return (
+    <View testID={`provider-settings-experience-${family}`} style={{ width: '100%', maxWidth: family === 'monet' ? 980 : 920, alignSelf: 'center', gap: design.semantic.spacing.md }}>
+      <View style={{ minHeight: material ? 72 : 64, padding: glass ? 12 : 8, borderRadius: glass ? design.semantic.radius.extraLarge : material ? design.semantic.radius.extraLarge : 0, backgroundColor: glass ? colors.ui.semantic.chrome.background : material ? colors.ui.semantic.surface.muted : colors.ui.semantic.surface.base, borderWidth: glass || material ? 1 : 0, borderBottomWidth: glass || material ? 1 : StyleSheet.hairlineWidth, borderColor: colors.ui.semantic.chrome.border, flexDirection: 'row', alignItems: 'center', gap: 10 }}>
+        <ProviderBack label={props.backLabel} onPress={props.onBack} variant={glass || material ? 'route' : 'quiet'} />
+        <View style={{ flex: 1, minWidth: 0 }}>
+          <Text accessibilityRole="header" numberOfLines={1} style={{ color: colors.text, fontSize: design.semantic.typography.headline.fontSize, lineHeight: design.semantic.typography.headline.lineHeight, fontWeight: design.semantic.typography.headline.fontWeight }}>{props.title}</Text>
+          {!props.compact ? <Text numberOfLines={1} style={{ marginTop: 2, color: colors.textSecondary, fontSize: design.semantic.typography.caption.fontSize, lineHeight: design.semantic.typography.caption.lineHeight }}>{props.subtitle}</Text> : null}
+        </View>
+        <ProviderCommand label={props.addLabel} icon="add" onPress={props.onAdd} variant={glass ? 'ticket' : material ? 'ticket' : 'quiet'} />
+        {!props.compact ? <ProviderCommand label={props.importLabel} icon="import" onPress={props.onImport} variant={glass ? 'ticket' : material ? 'ticket' : 'quiet'} /> : null}
+      </View>
+      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10, paddingHorizontal: material ? 14 : 4, minHeight: 42, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: colors.ui.semantic.chrome.border }}>
+        <Text style={{ color: colors.textSecondary, fontSize: design.semantic.typography.label.fontSize, fontWeight: '700' }}>{props.enabledSummary}</Text>
+        <View style={{ width: 1, height: 14, backgroundColor: colors.ui.semantic.chrome.border }} />
+        <Text style={{ flex: 1, minWidth: 0, color: colors.textTertiary, fontSize: design.semantic.typography.caption.fontSize }}>{props.visibleSummary}</Text>
+      </View>
+      {props.attention ? <View>{props.attention}</View> : null}
+      {props.activation ? <View>{props.activation}</View> : null}
+      {props.tools ? <View>{props.tools}</View> : null}
+      <View style={{ padding: glass ? 12 : material ? 8 : 0, borderRadius: glass ? design.semantic.radius.extraLarge : material ? design.semantic.radius.extraLarge : 0, backgroundColor: glass ? colors.ui.semantic.chrome.background : material ? colors.ui.semantic.surface.muted : 'transparent', borderWidth: glass || material ? 1 : 0, borderColor: colors.ui.semantic.chrome.border, shadowColor: glass ? design.semantic.elevation.shadowColor : undefined, shadowOpacity: glass ? design.semantic.elevation.shadowOpacity : 0, shadowRadius: glass ? design.semantic.elevation.shadowBlur : 0, shadowOffset: glass ? { width: 0, height: design.semantic.elevation.shadowOffsetY } : undefined, elevation: glass ? design.semantic.elevation.level2 : 0 }}>
+        {props.children}
+      </View>
+    </View>
+  )
+}
+
+export function MonetProviderSettingsExperience(props: ProviderSettingsExperienceProps) {
+  return <CanonicalProviderSettingsExperience family="monet" props={props} />
+}
+
+export function MaterialProviderSettingsExperience(props: ProviderSettingsExperienceProps) {
+  return <CanonicalProviderSettingsExperience family="material" props={props} />
+}
+
+export function LiquidGlassProviderSettingsExperience(props: ProviderSettingsExperienceProps) {
+  return <CanonicalProviderSettingsExperience family="liquid-glass" props={props} />
+}

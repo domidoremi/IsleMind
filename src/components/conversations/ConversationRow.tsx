@@ -14,7 +14,7 @@ import { IslePressable } from '@/components/ui/isle'
 import { useMotionPreference } from '@/hooks/useMotionPreference'
 import { motionTokens } from '@/theme/animation'
 import { useIsleDialog } from '@/components/ui/isle'
-import type { ThemeId } from '@/types/settingsContracts'
+import type { CanonicalThemeId } from '@/types/settingsContracts'
 import { HistoryRowContent, HistoryRowFrame, type HistoryVisualTokens } from '@/components/main/history/HistoryPresentation'
 
 const ROW_MESSAGE_PREVIEW_LIMIT = 180
@@ -30,7 +30,7 @@ const ROW_OPEN_PENDING_RELEASE_MS = 700
 interface ConversationRowProps {
   conversation: Conversation
   index: number
-  themeId: ThemeId
+  themeId: CanonicalThemeId
   active?: boolean
   interactionDisabled?: boolean
   now?: number
@@ -46,7 +46,7 @@ interface ConversationRowProps {
 }
 
 export const ConversationRow = memo(function ConversationRow({ conversation, index, themeId, active = false, interactionDisabled = false, now = Date.now(), isInteractionBlocked, onInteractionBlocked, modelLabel, onOpen, onRenameFocus, onLayoutHeight, searchMatchSummary, searchMatchFieldLabel, searchMatchAccessibilitySummary }: ConversationRowProps) {
-  const { colors } = useAppTheme()
+  const { colors, canonicalThemeId } = useAppTheme()
   const { t } = useTranslation()
   const motion = useMotionPreference()
   const { width } = useWindowDimensions()
@@ -298,7 +298,7 @@ export const ConversationRow = memo(function ConversationRow({ conversation, ind
       style={{ marginBottom: ROW_CONTAINER_BOTTOM_SPACING }}
     >
       <HistoryRowFrame
-        themeId={themeId}
+        themeId={canonicalThemeId}
         tokens={historyVisualTokens}
         compact={compact}
         index={index}
@@ -330,7 +330,7 @@ export const ConversationRow = memo(function ConversationRow({ conversation, ind
                 blurOnSubmit
                 style={{
                   color: colors.text,
-                  fontSize: historyRenameInputFontSize(themeId),
+                  fontSize: historyRenameInputFontSize(canonicalThemeId),
                   fontWeight: '700',
                   minHeight: 46,
                   paddingHorizontal: 0,
@@ -340,7 +340,7 @@ export const ConversationRow = memo(function ConversationRow({ conversation, ind
               />
             ) : (
               <HistoryRowContent
-                themeId={themeId}
+                themeId={canonicalThemeId}
                 tokens={historyVisualTokens}
                 title={displayTitle}
                 preview={lastMessagePreview}
@@ -515,12 +515,14 @@ function formatConversationMessageCount(count: number, t: TFunction): string {
   return t(count === 1 ? 'conversation.messageCountOne' : 'conversation.messageCountOther', { count })
 }
 
-function historyRenameInputFontSize(themeId: ThemeId): number {
+function historyRenameInputFontSize(themeId: CanonicalThemeId): number {
   switch (themeId) {
-    case 'markdown':
-      return 14.5
-    case 'lime-road':
-    case 'minimal':
+    case 'material':
+      return 15
+    case 'monet':
+      return 16
+    case 'liquid-glass':
+      return 15.5
     default:
       return 15.5
   }

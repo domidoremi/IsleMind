@@ -113,7 +113,9 @@ const defaultSettings: Settings = {
   webSearchMode: 'tavily',
   knowledgeTopK: 4,
   memoryTopK: 4,
-  ragMode: 'hybrid',
+  // FTS5 is the offline, deterministic baseline. Hybrid/vector retrieval is
+  // admitted only by an explicit advanced retrieval plan or user setting.
+  ragMode: 'fts',
   embeddingMode: 'hybrid',
   localEmbeddingModelId: undefined,
   localEmbeddingModelSource: 'none',

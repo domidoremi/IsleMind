@@ -44,7 +44,9 @@ export function IsleMotionFrame({
   const appTheme = useAppTheme()
   const preferredMotion = useMotionPreference()
   const resolved = resolveThemeMotion({
-    themeId: themeId ?? appTheme.themeId,
+    // New motion consumers default to the four-family runtime identity. The
+    // optional prop preserves legacy callers that intentionally pass an alias.
+    themeId: themeId ?? appTheme.canonicalThemeId,
     role,
     intensity: motion ?? preferredMotion,
     direction,

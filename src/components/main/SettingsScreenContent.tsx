@@ -8,7 +8,7 @@ import { useTranslation } from 'react-i18next'
 import { AnimatedNavigationTrigger } from '@/components/navigation/AnimatedNavigationTrigger'
 import { AppIcon, appIconStroke, type AppIconName } from '@/components/ui/AppIcon'
 import { HighFrameSpinner } from '@/components/ui/HighFrameSpinner'
-import { ISLE_MIN_TOUCH_TARGET, IslePressable } from '@/components/ui/isle'
+import { ISLE_MIN_TOUCH_TARGET, IslePressable, IsleSearchField } from '@/components/ui/isle'
 import { IsleChip } from '@/components/ui/isle'
 import { IsleButton } from '@/components/ui/isle'
 import { IsleProgress } from '@/components/ui/isle'
@@ -16,9 +16,10 @@ import { IsleDisclosure, IsleField, IsleToggle } from '@/components/ui/isle'
 import { SettingsSummaryStrip, type SettingsSummaryItem } from '@/components/settings/SettingsSummaryStrip'
 import { CommittedSettingsField } from '@/components/settings/CommittedSettingsField'
 import {
-  LimeRoadSettingsOverviewExperience,
-  MarkdownSettingsOverviewExperience,
+  LiquidGlassSettingsOverviewExperience,
+  MaterialSettingsOverviewExperience,
   MinimalSettingsOverviewExperience,
+  MonetSettingsOverviewExperience,
 } from '@/components/settings/theme-experiences/SettingsOverviewExperiences'
 import {
   SettingsControlCatalog,
@@ -50,6 +51,7 @@ import { changeAppLanguage } from '@/i18n'
 import type { BedrockCacheTtl, CanonicalThemeId, Language, ObservabilitySinkHighFrequencyExportMode, ObservabilitySinkMode, ObservabilitySinkTarget, PayloadPolicyMode, ProxyMode, RemoteCompactMode, ThemeMode, UpstreamTransportMode } from '@/types/settingsContracts'
 import { useMotionPreference } from '@/hooks/useMotionPreference'
 import { motionTokens } from '@/theme/animation'
+import { resolveThemeComponentExpression, resolveThemeExpression } from '@/theme/themeExpression'
 import { createLazyComponent } from '@/utils/lazyLoad'
 import { getColors, normalizeThemeAccent } from '@/theme/colors'
 import type { AndroidStatusNotificationPermissionStatus, AndroidStatusNotificationSettingsTarget } from '@/bootstrap/androidStatusNotification'
@@ -646,10 +648,12 @@ export const SettingsScreenContent = memo(function SettingsScreenContent({ shell
     : controlView === 'system' && activeSystemPanel
     ? visibleControlEntries.filter((entry) => entry.key === activeSystemPanel)
     : visibleControlEntries
-  const SettingsOverviewExperience = colors.ui.experience.navigation === 'route'
-    ? LimeRoadSettingsOverviewExperience
-      : colors.ui.experience.navigation === 'document'
-        ? MarkdownSettingsOverviewExperience
+  const SettingsOverviewExperience = canonicalThemeId === 'monet'
+    ? MonetSettingsOverviewExperience
+    : canonicalThemeId === 'material'
+      ? MaterialSettingsOverviewExperience
+      : canonicalThemeId === 'liquid-glass'
+        ? LiquidGlassSettingsOverviewExperience
         : MinimalSettingsOverviewExperience
 
   useEffect(() => {
@@ -1326,24 +1330,19 @@ export const SettingsScreenContent = memo(function SettingsScreenContent({ shell
         )}
         attention={settingsAttentionItems.length ? <SettingsSummaryStrip items={settingsAttentionItems} /> : undefined}
         search={(
-          <View style={{ minHeight: 44, borderRadius: Math.min(colors.ui.radius.controlLarge, 8), paddingHorizontal: 12, flexDirection: 'row', alignItems: 'center', gap: 9, backgroundColor: colors.ui.input.background, borderWidth: subtleBorderWidth, borderColor: colors.ui.input.border }}>
-            <AppIcon name="search" color={colors.textTertiary} size={16} />
-            <TextInput
-              value={settingsSearch}
-              onChangeText={setSettingsSearch}
-              placeholder={t('settings.controlSearchPlaceholder')}
-              placeholderTextColor={colors.textTertiary}
-              autoCapitalize="none"
-              autoCorrect={false}
-              returnKeyType="search"
-              style={{ flex: 1, minWidth: 0, minHeight: ISLE_MIN_TOUCH_TARGET, padding: 0, color: colors.text, fontSize: 13, lineHeight: 18, fontWeight: '700', includeFontPadding: false }}
-            />
-            {settingsSearch ? (
-              <IslePressable haptic accessibilityRole="button" accessibilityLabel={t('common.clearSearch')} onPress={() => setSettingsSearch('')} style={{ width: 44, height: 44, borderRadius: 8, alignItems: 'center', justifyContent: 'center' }}>
-                <AppIcon name="close" color={colors.textSecondary} size={15} />
-              </IslePressable>
-            ) : null}
-          </View>
+          <IsleSearchField
+            value={settingsSearch}
+            onChangeText={setSettingsSearch}
+            placeholder={t('settings.controlSearchPlaceholder')}
+            autoCapitalize="none"
+            autoCorrect={false}
+            returnKeyType="search"
+            accessibilityLabel={t('settings.controlSearchPlaceholder')}
+            clearAccessibilityLabel={t('common.clearSearch')}
+            clearAccessibilityHint={t('common.clearSearchHint')}
+            onClear={() => setSettingsSearch('')}
+            compact
+          />
         )}
         tabs={<SettingsControlNavigation value={controlView} onChange={toggleControlView} />}
         catalog={controlView ? (
@@ -2375,6 +2374,76 @@ function SettingsMiniSwitch({ active }: { active: boolean }) {
   )
 }
 
+function ThemeRadioMark({ active, disabled = false, size = 20 }: { active: boolean; disabled?: boolean; size?: number }) {
+  const { colors, canonicalThemeId } = useAppTheme()
+  const motion = useMotionPreference()
+  const radioExpression = resolveThemeComponentExpression(canonicalThemeId, 'radio')
+  const themeExpression = resolveThemeExpression(canonicalThemeId)
+  const radius = radioExpression.shape === 'angular'
+    ? 2
+    : radioExpression.shape === 'soft'
+      ? Math.round(size * 0.42)
+      : size / 2
+  const innerWidth = radioExpression.motion === 'precision' ? Math.max(7, size - 9) : Math.round(size * 0.46)
+  const innerHeight = radioExpression.motion === 'precision' ? 3 : Math.round(size * 0.46)
+  const selectedColor = disabled
+    ? colors.ui.control.disabledForeground
+    : radioExpression.motion === 'organic'
+      ? colors.ui.icon.accentForeground
+      : radioExpression.motion === 'fluid'
+        ? colors.ui.control.primaryForeground
+        : colors.ui.control.primaryBackground
+  const backgroundColor = disabled
+    ? colors.ui.control.disabledBackground
+    : radioExpression.surface === 'atmosphere'
+      ? colors.ui.icon.accentBackground
+      : radioExpression.surface === 'lens'
+        ? colors.ui.semantic.chrome.background
+        : 'transparent'
+  const borderColor = disabled
+    ? colors.ui.control.disabledBorder
+    : active
+      ? colors.ui.control.primaryBorder
+      : radioExpression.surface === 'lens'
+        ? colors.ui.actionBar.itemBorder
+        : colors.ui.semantic.chrome.border
+  const duration = motion === 'full' ? themeExpression.motion.duration.interaction : 1
+  const indicatorScale = motion === 'full' ? (active ? 1 : 0.45) : 1
+
+  return (
+    <MotiView
+      accessible={false}
+      pointerEvents="none"
+      importantForAccessibility="no-hide-descendants"
+      animate={{ backgroundColor, borderColor, opacity: disabled ? 0.58 : 1 }}
+      transition={{ type: 'timing', duration }}
+      style={{
+        width: size,
+        height: size,
+        borderRadius: radius,
+        alignItems: 'center',
+        justifyContent: 'center',
+        borderWidth: radioExpression.border === 'outline' || radioExpression.border === 'edge-highlight' ? 1.5 : StyleSheet.hairlineWidth,
+        overflow: 'hidden',
+      }}
+    >
+      <MotiView
+        animate={{ opacity: active ? 1 : 0, scale: indicatorScale }}
+        transition={{ type: 'timing', duration }}
+        style={{
+          width: innerWidth,
+          height: innerHeight,
+          borderRadius: radioExpression.motion === 'precision' ? 0 : innerWidth / 2,
+          backgroundColor: selectedColor,
+        }}
+      />
+      {active && radioExpression.motion === 'fluid' ? (
+        <View style={{ position: 'absolute', top: 3, right: 4, width: 4, height: 2, borderRadius: 2, backgroundColor: colors.ui.control.primaryForeground, opacity: 0.58 }} />
+      ) : null}
+    </MotiView>
+  )
+}
+
 function ThemeFamilyCard({
   themeId,
   label,
@@ -2392,27 +2461,52 @@ function ThemeFamilyCard({
   onPress: () => void
   testID: string
 }) {
-  const { colors, mode, themeAccent } = useAppTheme()
+  const { colors, mode, themeAccent, canonicalThemeId } = useAppTheme()
   const motion = useMotionPreference()
   const previewColors = getColors(mode, themeId, undefined, themeAccent)
+  const radioExpression = resolveThemeComponentExpression(canonicalThemeId, 'radio')
+  const themeExpression = resolveThemeExpression(canonicalThemeId)
   const activeBorder = colors.ui.control.primaryBackground
-  const subtleBorderWidth = colors.ui.limeRoad ? 1 : StyleSheet.hairlineWidth
-  const inactiveBackground = colors.ui.limeRoad ? colors.ui.semantic.surface.muted : colors.ui.glass ? colors.ui.actionBar.itemBackground : colors.ui.semantic.surface.muted
-  const inactiveBorder = colors.ui.limeRoad ? colors.material.stroke : colors.ui.glass ? colors.ui.actionBar.itemBorder : colors.ui.semantic.chrome.border
+  const subtleBorderWidth = radioExpression.border === 'outline' || radioExpression.border === 'edge-highlight' ? 1 : StyleSheet.hairlineWidth
+  const inactiveBackground = radioExpression.surface === 'boundary'
+    ? 'transparent'
+    : radioExpression.surface === 'atmosphere'
+      ? colors.ui.semantic.surface.base
+      : radioExpression.surface === 'tonal'
+        ? colors.ui.semantic.surface.muted
+        : colors.ui.semantic.chrome.background
+  const inactiveBorder = radioExpression.surface === 'atmosphere'
+    ? colors.ui.control.focus
+    : radioExpression.surface === 'lens'
+      ? colors.ui.actionBar.itemBorder
+      : colors.ui.semantic.chrome.border
+  const cardRadius = radioExpression.shape === 'angular'
+    ? 2
+    : radioExpression.shape === 'soft'
+      ? 18
+      : radioExpression.shape === 'material'
+        ? 12
+        : 22
+  const selectionDuration = motion === 'full' ? themeExpression.motion.duration.interaction : 1
   return (
     <IslePressable haptic testID={testID} accessibilityRole="radio" accessibilityLabel={`${label}. ${detail}`} accessibilityState={{ checked: active }} aria-checked={active} onPress={onPress} style={{ flexGrow: 1, flexShrink: 1, flexBasis: compact ? '100%' : '47%', minWidth: 0, minHeight: 116 }}>
       <MotiView
         animate={{
-          backgroundColor: active ? colors.ui.semantic.surface.base : inactiveBackground,
+          backgroundColor: active && radioExpression.surface !== 'boundary' ? colors.ui.semantic.surface.raised : inactiveBackground,
           borderColor: active ? activeBorder : inactiveBorder,
         }}
-        transition={{ type: 'timing', duration: motion === 'full' ? motionTokens.duration.fast : 1 }}
+        transition={{ type: 'timing', duration: selectionDuration }}
         style={{
           minHeight: 116,
-          borderRadius: Math.min(colors.ui.radius.card, 8),
-          padding: 8,
+          borderRadius: cardRadius,
+          padding: radioExpression.density === 'compact' ? 8 : 10,
           borderWidth: active ? 2 : subtleBorderWidth,
           gap: 7,
+          shadowColor: colors.shadowTint,
+          shadowOpacity: radioExpression.elevation === 'layered' ? 0.12 : radioExpression.elevation === 'low' || radioExpression.elevation === 'tonal' ? 0.05 : 0,
+          shadowRadius: radioExpression.elevation === 'layered' ? 12 : radioExpression.elevation === 'none' ? 0 : 7,
+          shadowOffset: { width: 0, height: radioExpression.elevation === 'none' ? 0 : 3 },
+          elevation: radioExpression.elevation === 'layered' ? 2 : radioExpression.elevation === 'none' ? 0 : 1,
         }}
       >
         <ThemeFamilyPreview themeId={themeId} colors={previewColors} />
@@ -2420,9 +2514,7 @@ function ThemeFamilyCard({
           <Text numberOfLines={1} style={{ flex: 1, minWidth: 0, color: colors.text, fontSize: 13, lineHeight: 18, fontWeight: '800' }}>
             {label}
           </Text>
-          <View style={{ width: 20, height: 20, borderRadius: 5, alignItems: 'center', justifyContent: 'center', backgroundColor: active ? colors.ui.control.primaryBackground : 'transparent', borderWidth: subtleBorderWidth, borderColor: active ? colors.ui.control.primaryBorder : inactiveBorder }}>
-            {active ? <AppIcon name="check" color={colors.ui.control.primaryForeground} size={13} strokeWidth={appIconStroke.bold} /> : null}
-          </View>
+          <ThemeRadioMark active={active} />
         </View>
         <Text numberOfLines={2} style={{ color: colors.textSecondary, fontSize: 10.5, lineHeight: 15, fontWeight: '600' }}>
           {detail}
@@ -2478,29 +2570,52 @@ function ThemeFamilyPreview({ themeId, colors }: { themeId: CanonicalThemeId; co
 }
 
 function ThemeModeCard({ label, active, onPress, testID }: { label: string; active: boolean; onPress: () => void; testID: string }) {
-  const { colors } = useAppTheme()
+  const { colors, canonicalThemeId } = useAppTheme()
   const motion = useMotionPreference()
-  const subtleBorderWidth = colors.ui.limeRoad ? 1 : StyleSheet.hairlineWidth
-  const inactiveBackground = colors.ui.limeRoad ? colors.ui.semantic.surface.muted : colors.ui.glass ? colors.ui.actionBar.itemBackground : colors.ui.semantic.surface.muted
-  const inactiveBorder = colors.ui.limeRoad ? colors.material.stroke : colors.ui.glass ? colors.ui.actionBar.itemBorder : colors.ui.semantic.chrome.border
+  const radioExpression = resolveThemeComponentExpression(canonicalThemeId, 'radio')
+  const themeExpression = resolveThemeExpression(canonicalThemeId)
+  const subtleBorderWidth = radioExpression.border === 'outline' || radioExpression.border === 'edge-highlight' ? 1 : StyleSheet.hairlineWidth
+  const inactiveBackground = radioExpression.surface === 'boundary'
+    ? 'transparent'
+    : radioExpression.surface === 'atmosphere'
+      ? colors.ui.semantic.surface.base
+      : radioExpression.surface === 'tonal'
+        ? colors.ui.semantic.surface.muted
+        : colors.ui.semantic.chrome.background
+  const inactiveBorder = radioExpression.surface === 'atmosphere'
+    ? colors.ui.control.focus
+    : radioExpression.surface === 'lens'
+      ? colors.ui.actionBar.itemBorder
+      : colors.ui.semantic.chrome.border
+  const cardRadius = radioExpression.shape === 'angular'
+    ? 2
+    : radioExpression.shape === 'soft'
+      ? 16
+      : radioExpression.shape === 'material'
+        ? 12
+        : 20
   return (
     <IslePressable haptic testID={testID} accessibilityRole="radio" accessibilityLabel={label} accessibilityState={{ checked: active }} aria-checked={active} onPress={onPress} style={{ flex: 1, minWidth: 0, minHeight: themeModeCardHeight }}>
       <MotiView
         animate={{
-          backgroundColor: active ? colors.ui.control.primaryBackground : inactiveBackground,
+          backgroundColor: active && radioExpression.surface === 'boundary' ? colors.ui.semantic.surface.base : active ? colors.ui.control.primaryBackground : inactiveBackground,
           borderColor: active ? colors.ui.control.primaryBorder : inactiveBorder,
         }}
-        transition={{ type: 'timing', duration: motion === 'full' ? motionTokens.duration.fast : 1 }}
+        transition={{ type: 'timing', duration: motion === 'full' ? themeExpression.motion.duration.interaction : 1 }}
         style={{
           minHeight: themeModeCardHeight,
-          borderRadius: Math.min(colors.ui.radius.card, 8),
+          borderRadius: cardRadius,
           alignItems: 'center',
           justifyContent: 'center',
           borderWidth: subtleBorderWidth,
           paddingHorizontal: 10,
           gap: 6,
+          overflow: 'hidden',
         }}
       >
+        <View style={{ position: 'absolute', top: 8, right: 8 }}>
+          <ThemeRadioMark active={active} size={18} />
+        </View>
         <View style={{ width: 38, height: 16, borderRadius: 8, overflow: 'hidden', borderWidth: subtleBorderWidth, borderColor: active ? colors.ui.control.primaryBorder : inactiveBorder }}>
           <View style={{ flex: 1, flexDirection: 'row' }}>
             <View style={{ flex: 1, backgroundColor: active ? colors.ui.control.primaryForeground : colors.ui.input.background }} />
@@ -2530,9 +2645,29 @@ function ThemeAccentSwatch({
   onPress: () => void
   testID: string
 }) {
-  const { colors } = useAppTheme()
+  const { colors, canonicalThemeId } = useAppTheme()
   const motion = useMotionPreference()
-  const borderColor = active ? colors.ui.control.primaryBorder : colors.ui.semantic.chrome.border
+  const radioExpression = resolveThemeComponentExpression(canonicalThemeId, 'radio')
+  const themeExpression = resolveThemeExpression(canonicalThemeId)
+  const borderColor = active
+    ? colors.ui.control.primaryBorder
+    : radioExpression.surface === 'atmosphere'
+      ? colors.ui.control.focus
+      : radioExpression.surface === 'lens'
+        ? colors.ui.actionBar.itemBorder
+        : colors.ui.semantic.chrome.border
+  const swatchRadius = radioExpression.shape === 'angular'
+    ? 2
+    : radioExpression.shape === 'soft'
+      ? 14
+      : radioExpression.shape === 'material'
+        ? 12
+        : 18
+  const inactiveBackground = radioExpression.surface === 'boundary'
+    ? 'transparent'
+    : radioExpression.surface === 'lens'
+      ? colors.ui.semantic.chrome.background
+      : colors.ui.semantic.surface.muted
   return (
     <IslePressable
       haptic
@@ -2546,10 +2681,13 @@ function ThemeAccentSwatch({
       style={{ minWidth: 62, minHeight: 46, flexGrow: 1, flexBasis: '17%' }}
     >
       <MotiView
-        animate={{ backgroundColor: active ? colors.ui.semantic.surface.raised : colors.ui.semantic.surface.muted, borderColor }}
-        transition={{ type: 'timing', duration: motion === 'full' ? motionTokens.duration.fast : 1 }}
-        style={{ minHeight: 46, borderRadius: Math.min(colors.ui.radius.controlMiddle, 8), borderWidth: active ? 2 : StyleSheet.hairlineWidth, alignItems: 'center', justifyContent: 'center', gap: 4, paddingHorizontal: 8 }}
+        animate={{ backgroundColor: active ? colors.ui.semantic.surface.raised : inactiveBackground, borderColor }}
+        transition={{ type: 'timing', duration: motion === 'full' ? themeExpression.motion.duration.interaction : 1 }}
+        style={{ minHeight: 46, borderRadius: swatchRadius, borderWidth: active ? 2 : radioExpression.border === 'outline' || radioExpression.border === 'edge-highlight' ? 1 : StyleSheet.hairlineWidth, alignItems: 'center', justifyContent: 'center', gap: 4, paddingHorizontal: 8, overflow: 'hidden' }}
       >
+        <View style={{ position: 'absolute', top: 4, right: 4 }}>
+          <ThemeRadioMark active={active} disabled={disabled} size={15} />
+        </View>
         <View style={{ width: 24, height: 24, borderRadius: 12, backgroundColor: color ?? colors.ui.control.primaryBackground, borderWidth: 2, borderColor: color ? 'rgba(255,255,255,0.7)' : colors.ui.semantic.chrome.border, overflow: 'hidden' }}>
           {color === undefined ? <View style={{ position: 'absolute', top: 0, right: 0, bottom: 0, left: 12, backgroundColor: colors.ui.semantic.surface.base }} /> : null}
         </View>
@@ -2570,15 +2708,25 @@ function SegmentedSetting<T extends string>({
   value: T
   onChange: (value: T) => void
 }) {
-  const { colors } = useAppTheme()
+  const { colors, canonicalThemeId } = useAppTheme()
   const { t } = useTranslation()
+  const radioExpression = resolveThemeComponentExpression(canonicalThemeId, 'radio')
+  const optionGap = radioExpression.density === 'airy' ? 9 : 6
+  const chipRadius = radioExpression.shape === 'angular'
+    ? 2
+    : radioExpression.shape === 'soft'
+      ? 14
+      : radioExpression.shape === 'material'
+        ? colors.ui.radius.controlMiddle
+        : colors.ui.radius.chip
   return (
     <View accessibilityRole="radiogroup" accessibilityLabel={label}>
       <Text style={{ color: colors.text, fontSize: 13, lineHeight: 18, fontWeight: '700', marginBottom: 7, includeFontPadding: false, textAlignVertical: 'center' }}>{label}</Text>
       <View style={{ flexDirection: 'row', gap: 8, flexWrap: 'wrap' }}>
         {options.map((option) => (
-          <IslePressable key={option.value} haptic accessibilityRole="radio" accessibilityLabel={t(option.labelKey)} accessibilityState={{ checked: option.value === value }} onPress={() => onChange(option.value)} style={settingsChipPressableStyle}>
-            <IsleChip active={option.value === value}>{t(option.labelKey)}</IsleChip>
+          <IslePressable key={option.value} haptic accessibilityRole="radio" accessibilityLabel={t(option.labelKey)} accessibilityState={{ checked: option.value === value }} onPress={() => onChange(option.value)} style={[settingsChipPressableStyle, { flexDirection: 'row', alignItems: 'center', gap: optionGap }]}>
+            <ThemeRadioMark active={option.value === value} size={16} />
+            <IsleChip active={option.value === value} style={{ borderRadius: chipRadius }}>{t(option.labelKey)}</IsleChip>
           </IslePressable>
         ))}
       </View>
