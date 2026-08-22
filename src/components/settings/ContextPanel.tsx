@@ -46,9 +46,10 @@ import { ContextDiagnosticsSection } from '@/components/settings/ContextDiagnost
 import { MemoryReviewSection } from '@/components/settings/MemoryReviewSection'
 import { SettingsSummaryStrip, type SettingsSummaryItem } from '@/components/settings/SettingsSummaryStrip'
 import {
-  LimeRoadContextSettingsLead,
-  MarkdownContextSettingsLead,
+  LiquidGlassContextSettingsLead,
+  MaterialContextSettingsLead,
   MinimalContextSettingsLead,
+  MonetContextSettingsLead,
 } from '@/components/settings/theme-experiences/ContextSettingsExperiences'
 
 interface ContextPanelProps {
@@ -165,7 +166,7 @@ function countKnowledgeStatuses(documents: KnowledgeDocument[]) {
 }
 
 export function ContextPanel({ providers, section = 'all', focus }: ContextPanelProps) {
-  const { colors, themeId } = useAppTheme()
+  const { colors, canonicalThemeId } = useAppTheme()
   const { t } = useTranslation()
   const dialog = useIsleDialog()
   const motion = useMotionPreference()
@@ -332,16 +333,27 @@ export function ContextPanel({ providers, section = 'all', focus }: ContextPanel
     }] : []),
   ]
   const knowledgeToolsVisible = knowledgeToolsOpen || hasKnowledgeFilters || knowledgeStatusCounts.failed > 0 || knowledgeStatusCounts.empty > 0 || knowledgeRecoverySummary.recoverableDocuments > 0 || knowledgeRecoverySummary.failedJobs > 0
-  const subtleBorderWidth = colors.ui.limeRoad ? 1 : StyleSheet.hairlineWidth
+  const isMinimal = canonicalThemeId === 'minimal'
+  const isMaterial = canonicalThemeId === 'material'
+  const isMonet = canonicalThemeId === 'monet'
+  const isLiquidGlass = canonicalThemeId === 'liquid-glass'
+  const subtleBorderWidth = isMinimal ? StyleSheet.hairlineWidth : 1
   const foldoutPanelStyle = {
-    borderRadius: themeId === 'markdown' ? 4 : Math.min(colors.ui.radius.card, 8),
+    borderRadius: isMaterial ? 4 : isLiquidGlass ? colors.ui.radius.panel : Math.min(colors.ui.radius.card, 8),
     padding: compact ? 10 : 11,
-    backgroundColor: themeId === 'minimal' ? 'transparent' : colors.ui.semantic.surface.muted,
-    borderWidth: themeId === 'minimal' ? 0 : subtleBorderWidth,
-    borderTopWidth: themeId === 'minimal' ? StyleSheet.hairlineWidth : undefined,
-    borderBottomWidth: themeId === 'minimal' ? StyleSheet.hairlineWidth : undefined,
-    borderLeftWidth: themeId === 'markdown' ? 3 : undefined,
-    borderColor: themeId === 'lime-road' ? colors.material.stroke : colors.ui.semantic.chrome.border,
+    backgroundColor: isMinimal ? 'transparent' : isLiquidGlass ? colors.ui.actionBar.itemBackground : colors.ui.semantic.surface.muted,
+    borderWidth: isMinimal ? 0 : subtleBorderWidth,
+    borderTopWidth: isMinimal ? StyleSheet.hairlineWidth : undefined,
+    borderBottomWidth: isMinimal ? StyleSheet.hairlineWidth : undefined,
+    borderLeftWidth: isMaterial ? 3 : undefined,
+    borderColor: isLiquidGlass ? colors.ui.actionBar.itemBorder : isMaterial ? colors.ui.section.divider : isMonet ? colors.material.stroke : colors.ui.semantic.chrome.border,
+    ...(isLiquidGlass ? {
+      shadowColor: colors.ui.control.shadow,
+      shadowOpacity: 0.16,
+      shadowRadius: 16,
+      shadowOffset: { width: 0, height: 6 },
+      elevation: 2,
+    } : {}),
   } as const
 
   async function refresh() {
@@ -757,7 +769,7 @@ export function ContextPanel({ providers, section = 'all', focus }: ContextPanel
 
   const summary = contextSummaryItems.length ? <SettingsSummaryStrip items={contextSummaryItems} /> : undefined
   const toggles = (
-      <View style={{ gap: themeId === 'minimal' ? 0 : 8, marginTop: themeId === 'minimal' ? 0 : 10 }}>
+      <View style={{ gap: isMinimal ? 0 : 8, marginTop: isMinimal ? 0 : 10 }}>
         {showMemory ? (
           <IsleToggle
             icon={<AppIcon name="reasoning" color={colors.text} size={18} />}
@@ -784,11 +796,13 @@ export function ContextPanel({ providers, section = 'all', focus }: ContextPanel
         ) : null}
       </View>
   )
-  const Lead = themeId === 'lime-road'
-    ? LimeRoadContextSettingsLead
-    : themeId === 'markdown'
-      ? MarkdownContextSettingsLead
-      : MinimalContextSettingsLead
+  const Lead = canonicalThemeId === 'monet'
+    ? MonetContextSettingsLead
+    : canonicalThemeId === 'material'
+      ? MaterialContextSettingsLead
+      : canonicalThemeId === 'liquid-glass'
+        ? LiquidGlassContextSettingsLead
+        : MinimalContextSettingsLead
   return (
     <View style={{ paddingBottom: showKnowledge ? 12 : 0 }}>
       <Lead section={section} summary={summary} toggles={toggles} compact={compact} />
@@ -1335,8 +1349,8 @@ function ContextFoldoutHeader({ title, detail }: { title: string; detail?: strin
 }
 
 function ContextDisclosureRow({ title, detail, icon, open, onPress }: { title: string; detail: string; icon: ReactNode; open: boolean; onPress: () => void }) {
-  const { colors, themeId } = useAppTheme()
-  if (themeId === 'minimal') {
+  const { colors, canonicalThemeId } = useAppTheme()
+  if (canonicalThemeId === 'minimal') {
     return (
       <IslePressable haptic accessibilityRole="button" accessibilityLabel={`${title}. ${detail}`} accessibilityState={{ expanded: open }} onPress={onPress} style={{ minHeight: 50, paddingVertical: 7, flexDirection: 'row', alignItems: 'center', gap: 9, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: colors.ui.semantic.chrome.border }}>
         <View style={{ flex: 1, minWidth: 0 }}>
@@ -1347,7 +1361,7 @@ function ContextDisclosureRow({ title, detail, icon, open, onPress }: { title: s
       </IslePressable>
     )
   }
-  if (themeId === 'markdown') {
+  if (canonicalThemeId === 'material') {
     return (
       <IslePressable haptic accessibilityRole="button" accessibilityLabel={`${title}. ${detail}`} accessibilityState={{ expanded: open }} onPress={onPress} style={{ minHeight: 48, paddingHorizontal: 9, flexDirection: 'row', alignItems: 'center', gap: 8, backgroundColor: open ? colors.ui.semantic.surface.base : colors.ui.semantic.surface.muted, borderWidth: StyleSheet.hairlineWidth, borderColor: colors.ui.section.divider, borderRadius: 4 }}>
         {icon}
@@ -1355,6 +1369,27 @@ function ContextDisclosureRow({ title, detail, icon, open, onPress }: { title: s
           <Text numberOfLines={1} style={{ color: colors.text, fontSize: 11.5, lineHeight: 16, fontWeight: '800' }}>{title}</Text>
           <Text numberOfLines={1} style={{ color: colors.textTertiary, fontSize: 9.5, lineHeight: 13, marginTop: 1, fontWeight: '500' }}>{detail}</Text>
         </View>
+      </IslePressable>
+    )
+  }
+  if (canonicalThemeId === 'liquid-glass') {
+    return (
+      <IslePressable
+        haptic
+        accessibilityRole="button"
+        accessibilityLabel={`${title}. ${detail}`}
+        accessibilityState={{ expanded: open }}
+        onPress={onPress}
+        style={{ minHeight: ISLE_MIN_TOUCH_TARGET, paddingHorizontal: 12, flexDirection: 'row', alignItems: 'center', gap: 9, backgroundColor: colors.ui.actionBar.itemBackground, borderWidth: 1, borderColor: colors.ui.actionBar.itemBorder, borderRadius: colors.ui.radius.controlLarge, shadowColor: colors.ui.control.shadow, shadowOpacity: 0.14, shadowRadius: 12, shadowOffset: { width: 0, height: 4 }, elevation: 1 }}
+      >
+        {icon}
+        <View style={{ flex: 1, minWidth: 0 }}>
+          <Text numberOfLines={1} style={{ color: colors.textSecondary, fontSize: 13, lineHeight: 17, fontWeight: '800' }}>{title}</Text>
+          <Text numberOfLines={1} style={{ color: colors.textTertiary, fontSize: 11, lineHeight: 15, marginTop: 1 }}>{detail}</Text>
+        </View>
+        <MotiView animate={{ rotate: open ? '180deg' : '0deg' }} transition={{ type: 'timing', duration: 160 }}>
+          <AppIcon name="collapse" color={colors.textTertiary} size={16} />
+        </MotiView>
       </IslePressable>
     )
   }
@@ -1380,12 +1415,15 @@ function ContextDisclosureRow({ title, detail, icon, open, onPress }: { title: s
 }
 
 function ContextList({ title, empty, emptyDetail, emptyVisible = false, children, onClear }: { title: string; empty: string; emptyDetail?: string; emptyVisible?: boolean; children: React.ReactNode; onClear: () => Promise<void> }) {
-  const { colors, themeId } = useAppTheme()
+  const { colors, canonicalThemeId } = useAppTheme()
   const dialog = useIsleDialog()
   const { t } = useTranslation()
-  const subtleBorderWidth = colors.ui.limeRoad ? 1 : StyleSheet.hairlineWidth
-  const borderColor = colors.ui.glass ? colors.ui.actionBar.itemBorder : colors.ui.limeRoad ? colors.material.stroke : colors.ui.semantic.chrome.border
-  const emptySurface = colors.ui.glass ? colors.ui.actionBar.itemBackground : colors.ui.semantic.surface.muted
+  const isMinimal = canonicalThemeId === 'minimal'
+  const isMaterial = canonicalThemeId === 'material'
+  const isLiquidGlass = canonicalThemeId === 'liquid-glass'
+  const subtleBorderWidth = isMinimal ? StyleSheet.hairlineWidth : 1
+  const borderColor = isLiquidGlass ? colors.ui.actionBar.itemBorder : canonicalThemeId === 'monet' ? colors.material.stroke : colors.ui.semantic.chrome.border
+  const emptySurface = isLiquidGlass ? colors.ui.actionBar.itemBackground : colors.ui.semantic.surface.muted
   function confirmClear() {
     void dialog.confirm({
       title: t('contextPanel.clearTitle', { title }),
@@ -1397,7 +1435,7 @@ function ContextList({ title, empty, emptyDetail, emptyVisible = false, children
       if (confirmed) void onClear()
     })
   }
-  if (themeId === 'minimal') {
+  if (isMinimal) {
     return (
       <View style={{ marginTop: 16 }}>
         <View style={{ minHeight: 44, flexDirection: 'row', alignItems: 'center', gap: 10, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: colors.ui.semantic.chrome.border }}>
@@ -1415,7 +1453,7 @@ function ContextList({ title, empty, emptyDetail, emptyVisible = false, children
       </View>
     )
   }
-  if (themeId === 'markdown') {
+  if (isMaterial) {
     return (
       <View style={{ marginTop: 16, gap: 8 }}>
         <View style={{ minHeight: 44, flexDirection: 'row', alignItems: 'center', gap: 10, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: colors.ui.section.divider }}>
@@ -1433,6 +1471,24 @@ function ContextList({ title, empty, emptyDetail, emptyVisible = false, children
       </View>
     )
   }
+  if (isLiquidGlass) {
+    return (
+      <View style={{ marginTop: 12, gap: 8 }}>
+        <View style={{ minHeight: 46, flexDirection: 'row', alignItems: 'center', gap: 10, paddingHorizontal: 2 }}>
+          <Text numberOfLines={1} style={{ flex: 1, minWidth: 0, color: colors.text, fontSize: 14, lineHeight: 19, fontWeight: '800' }}>{title}</Text>
+          <IslePressable onPress={confirmClear} disabled={emptyVisible} accessibilityLabel={t('contextPanel.clearTitle', { title })} style={{ width: 44, height: 44, borderRadius: colors.ui.radius.controlLarge, alignItems: 'center', justifyContent: 'center', backgroundColor: colors.ui.tone.danger.background, borderWidth: 1, borderColor: colors.ui.tone.danger.border, opacity: emptyVisible ? 0.45 : 1 }}>
+            <AppIcon name="delete" color={colors.ui.tone.danger.foreground} size={15} />
+          </IslePressable>
+        </View>
+        {emptyVisible ? (
+          <View style={{ minHeight: emptyDetail ? 64 : 48, borderRadius: colors.ui.radius.panel, paddingHorizontal: 12, paddingVertical: 10, justifyContent: 'center', backgroundColor: emptySurface, borderWidth: 1, borderColor, shadowColor: colors.ui.control.shadow, shadowOpacity: 0.14, shadowRadius: 14, shadowOffset: { width: 0, height: 5 }, elevation: 1 }}>
+            <Text style={{ color: colors.textSecondary, fontSize: 12, lineHeight: 17, fontWeight: '800', includeFontPadding: false }}>{empty}</Text>
+            {emptyDetail ? <Text numberOfLines={2} style={{ color: colors.textTertiary, fontSize: 11, lineHeight: 16, marginTop: 2, fontWeight: '600', includeFontPadding: false }}>{emptyDetail}</Text> : null}
+          </View>
+        ) : children}
+      </View>
+    )
+  }
   return (
     <View style={{ marginTop: 10, gap: 7 }}>
       <View style={{ minHeight: 44, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 10, paddingHorizontal: 2 }}>
@@ -1443,7 +1499,7 @@ function ContextList({ title, empty, emptyDetail, emptyVisible = false, children
           onPress={confirmClear}
           disabled={emptyVisible}
           accessibilityLabel={t('contextPanel.clearTitle', { title })}
-          style={{ width: 44, height: 44, borderRadius: Math.min(colors.ui.radius.controlLarge, 8), alignItems: 'center', justifyContent: 'center', backgroundColor: colors.ui.tone.danger.background, borderWidth: colors.ui.limeRoad ? 1 : StyleSheet.hairlineWidth, borderColor: colors.ui.tone.danger.border, opacity: emptyVisible ? 0.45 : 1 }}
+          style={{ width: 44, height: 44, borderRadius: Math.min(colors.ui.radius.controlLarge, 8), alignItems: 'center', justifyContent: 'center', backgroundColor: colors.ui.tone.danger.background, borderWidth: 1, borderColor: colors.ui.tone.danger.border, opacity: emptyVisible ? 0.45 : 1 }}
         >
           <AppIcon name="delete" color={colors.ui.tone.danger.foreground} size={15} />
         </IslePressable>
@@ -1620,7 +1676,7 @@ interface ItemRowProps {
 }
 
 function ItemRow({ title, description, meta, deleteName, trailing, onToggle, onDelete }: ItemRowProps) {
-  const { colors, themeId } = useAppTheme()
+  const { colors, canonicalThemeId } = useAppTheme()
   const { t } = useTranslation()
   const dialog = useIsleDialog()
 
@@ -1635,7 +1691,7 @@ function ItemRow({ title, description, meta, deleteName, trailing, onToggle, onD
     if (confirmed) await onDelete()
   }
 
-  if (themeId === 'minimal') {
+  if (canonicalThemeId === 'minimal') {
     return (
       <View style={{ paddingVertical: 10, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: colors.ui.semantic.chrome.border }}>
         <Text style={{ color: colors.text, fontSize: 13, lineHeight: 18, fontWeight: '800' }}>{title}</Text>
@@ -1648,7 +1704,7 @@ function ItemRow({ title, description, meta, deleteName, trailing, onToggle, onD
       </View>
     )
   }
-  if (themeId === 'markdown') {
+  if (canonicalThemeId === 'material') {
     return (
       <View style={{ paddingHorizontal: 9, paddingVertical: 9, marginBottom: 6, backgroundColor: colors.ui.semantic.surface.muted, borderLeftWidth: 3, borderLeftColor: colors.ui.section.divider }}>
         <Text style={{ color: colors.text, fontSize: 11.5, lineHeight: 16, fontWeight: '800' }}>{`- ${title}`}</Text>
@@ -1657,6 +1713,25 @@ function ItemRow({ title, description, meta, deleteName, trailing, onToggle, onD
         <View style={{ flexDirection: 'row', gap: 12, marginTop: 7, flexWrap: 'wrap' }}>
           {trailing && onToggle ? <IslePressable accessibilityLabel={trailing} onPress={() => void onToggle()} style={{ minHeight: 44, justifyContent: 'center' }}><Text style={{ color: colors.textSecondary, fontSize: 9.5, fontWeight: '800' }}>{`toggle(${trailing})`}</Text></IslePressable> : null}
           <IslePressable accessibilityLabel={t('common.delete')} onPress={() => void confirmDelete()} style={{ minHeight: 44, justifyContent: 'center' }}><Text style={{ color: colors.ui.tone.danger.foreground, fontSize: 9.5, fontWeight: '800' }}>delete()</Text></IslePressable>
+        </View>
+      </View>
+    )
+  }
+  if (canonicalThemeId === 'liquid-glass') {
+    return (
+      <View style={{ padding: 12, marginBottom: 9, borderRadius: colors.ui.radius.panel, backgroundColor: colors.ui.actionBar.itemBackground, borderWidth: 1, borderColor: colors.ui.actionBar.itemBorder, shadowColor: colors.ui.control.shadow, shadowOpacity: 0.14, shadowRadius: 14, shadowOffset: { width: 0, height: 5 }, elevation: 1 }}>
+        <Text style={{ color: colors.text, fontSize: 14, fontWeight: '800' }}>{title}</Text>
+        <Text numberOfLines={3} style={{ color: colors.textSecondary, fontSize: 12, lineHeight: 17, marginTop: 4 }}>{description}</Text>
+        {meta ? <Text numberOfLines={2} style={{ color: colors.textTertiary, fontSize: 11, lineHeight: 16, marginTop: 6 }}>{meta}</Text> : null}
+        <View style={{ flexDirection: 'row', gap: 8, marginTop: 10, flexWrap: 'wrap' }}>
+          {trailing && onToggle ? (
+            <IslePressable accessibilityLabel={trailing} onPress={() => void onToggle()} style={{ ...itemRowActionStyle, backgroundColor: colors.ui.actionBar.itemBackground, borderWidth: 1, borderColor: colors.ui.actionBar.itemBorder, borderRadius: colors.ui.radius.controlMiddle }}>
+              <Text style={{ color: colors.textSecondary, fontSize: 12, fontWeight: '800' }}>{trailing}</Text>
+            </IslePressable>
+          ) : null}
+          <IslePressable accessibilityLabel={t('common.delete')} onPress={() => void confirmDelete()} style={{ ...itemRowActionStyle, backgroundColor: colors.ui.tone.danger.background, borderWidth: 1, borderColor: colors.ui.tone.danger.border, borderRadius: colors.ui.radius.controlMiddle }}>
+            <Text style={{ color: colors.ui.tone.danger.foreground, fontSize: 12, fontWeight: '800' }}>{t('common.delete')}</Text>
+          </IslePressable>
         </View>
       </View>
     )
@@ -1681,10 +1756,10 @@ function ItemRow({ title, description, meta, deleteName, trailing, onToggle, onD
 }
 
 function DebugStat({ label, value }: { label: string; value: string }) {
-  const { colors, themeId } = useAppTheme()
+  const { colors, canonicalThemeId } = useAppTheme()
   const { width } = useWindowDimensions()
   const statMinWidth = width < 390 ? 64 : 74
-  if (themeId === 'minimal') {
+  if (canonicalThemeId === 'minimal') {
     return (
       <View style={{ minHeight: 34, minWidth: statMinWidth, paddingHorizontal: 4, justifyContent: 'center', borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: colors.ui.semantic.chrome.border }}>
         <Text style={{ color: colors.text, fontSize: 12, fontWeight: '800' }}>{value}</Text>
@@ -1692,10 +1767,18 @@ function DebugStat({ label, value }: { label: string; value: string }) {
       </View>
     )
   }
-  if (themeId === 'markdown') {
+  if (canonicalThemeId === 'material') {
     return (
       <View style={{ minHeight: 34, minWidth: statMinWidth, paddingHorizontal: 8, justifyContent: 'center', backgroundColor: colors.ui.semantic.surface.muted, borderLeftWidth: 2, borderLeftColor: colors.ui.section.divider }}>
         <Text numberOfLines={1} style={{ color: colors.textSecondary, fontSize: 9.5, fontWeight: '700' }}>{`${label}: ${value}`}</Text>
+      </View>
+    )
+  }
+  if (canonicalThemeId === 'liquid-glass') {
+    return (
+      <View style={{ minHeight: 38, minWidth: statMinWidth, paddingHorizontal: 10, alignItems: 'center', justifyContent: 'center', borderRadius: colors.ui.radius.controlMiddle, backgroundColor: colors.ui.actionBar.itemBackground, borderWidth: 1, borderColor: colors.ui.actionBar.itemBorder }}>
+        <Text style={{ color: colors.text, fontSize: 12, fontWeight: '800' }}>{value}</Text>
+        <Text numberOfLines={1} style={{ color: colors.textTertiary, fontSize: 10, fontWeight: '800' }}>{label}</Text>
       </View>
     )
   }

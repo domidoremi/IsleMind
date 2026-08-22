@@ -30,7 +30,17 @@ export function ThemeDetailFrame({
   headerMode = 'full',
   children,
 }: ThemeDetailFrameProps) {
-  const { colors } = useAppTheme()
+  const { colors, canonicalThemeId } = useAppTheme()
+
+  if (canonicalThemeId === 'monet') {
+    return <MonetDetailFrame {...{ kind, title, subtitle, onBack, backLabel, leadingIcon, actions, backgroundState, headerMode, children }} />
+  }
+  if (canonicalThemeId === 'material') {
+    return <MaterialDetailFrame {...{ kind, title, subtitle, onBack, backLabel, leadingIcon, actions, backgroundState, headerMode, children }} />
+  }
+  if (canonicalThemeId === 'liquid-glass') {
+    return <LiquidGlassDetailFrame {...{ kind, title, subtitle, onBack, backLabel, leadingIcon, actions, backgroundState, headerMode, children }} />
+  }
 
   if (colors.ui.family === 'lime-road') {
     return (
@@ -91,6 +101,76 @@ export function ThemeDetailFrame({
   )
 }
 
+function MonetDetailFrame(props: ThemeDetailFrameProps) {
+  const { colors } = useAppTheme()
+  return (
+    <IsleScreen padded={false} background={props.kind === 'source' ? 'focus' : 'surface'} backgroundState={props.backgroundState}>
+      <View style={styles.monetFrame} testID={`theme-detail-monet-${props.kind}`}>
+        {props.headerMode === 'full' ? (
+          <View style={[styles.monetHeader, { backgroundColor: colors.ui.semantic.surface.base, borderBottomColor: colors.ui.semantic.chrome.border }]}>
+            <IslePressable accessibilityRole="button" accessibilityLabel={props.backLabel} onPress={props.onBack} style={styles.routeBack}>
+              <AppIcon name={props.leadingIcon ?? 'back-previous'} color={colors.text} size={18} strokeWidth={appIconStroke.strong} />
+            </IslePressable>
+            <View style={styles.routeHeaderText}>
+              <Text numberOfLines={1} style={[styles.monetTitle, { color: colors.text }]}>{props.title}</Text>
+              {props.subtitle ? <Text numberOfLines={1} style={[styles.routeSubtitle, { color: colors.textSecondary }]}>{props.subtitle}</Text> : null}
+            </View>
+            {props.actions}
+          </View>
+        ) : null}
+        <View pointerEvents="none" accessibilityElementsHidden importantForAccessibility="no-hide-descendants" style={[styles.monetWash, { backgroundColor: colors.ui.semantic.surface.muted }]} />
+        <View style={styles.monetContent}>{props.children}</View>
+      </View>
+    </IsleScreen>
+  )
+}
+
+function MaterialDetailFrame(props: ThemeDetailFrameProps) {
+  const { colors } = useAppTheme()
+  return (
+    <IsleScreen padded={false} background={props.kind === 'source' ? 'focus' : 'surface'} backgroundState={props.backgroundState}>
+      <View style={styles.materialFrame} testID={`theme-detail-material-${props.kind}`}>
+        {props.headerMode === 'full' ? (
+          <View style={[styles.materialHeader, { backgroundColor: colors.ui.semantic.chrome.background, borderBottomColor: colors.ui.semantic.chrome.border }]}>
+            <IslePressable accessibilityRole="button" accessibilityLabel={props.backLabel} onPress={props.onBack} style={styles.routeBack}>
+              <AppIcon name={props.leadingIcon ?? 'back-previous'} color={colors.textSecondary} size={18} strokeWidth={appIconStroke.strong} />
+            </IslePressable>
+            <View style={styles.routeHeaderText}>
+              <Text numberOfLines={1} style={[styles.materialTitle, { color: colors.text }]}>{props.title}</Text>
+              {props.subtitle ? <Text numberOfLines={1} style={[styles.routeSubtitle, { color: colors.textSecondary }]}>{props.subtitle}</Text> : null}
+            </View>
+            {props.actions}
+          </View>
+        ) : null}
+        <View style={[styles.materialContent, { backgroundColor: colors.ui.semantic.surface.muted }]}>{props.children}</View>
+      </View>
+    </IsleScreen>
+  )
+}
+
+function LiquidGlassDetailFrame(props: ThemeDetailFrameProps) {
+  const { colors } = useAppTheme()
+  return (
+    <IsleScreen padded={false} background={props.kind === 'source' ? 'focus' : 'surface'} backgroundState={props.backgroundState}>
+      <View style={styles.glassFrame} testID={`theme-detail-liquid-glass-${props.kind}`}>
+        {props.headerMode === 'full' ? (
+          <View style={[styles.glassHeader, { backgroundColor: colors.ui.semantic.chrome.background, borderColor: colors.ui.semantic.chrome.border }]}>
+            <IslePressable accessibilityRole="button" accessibilityLabel={props.backLabel} onPress={props.onBack} style={styles.routeBack}>
+              <AppIcon name={props.leadingIcon ?? 'back-previous'} color={colors.text} size={18} strokeWidth={appIconStroke.strong} />
+            </IslePressable>
+            <View style={styles.routeHeaderText}>
+              <Text numberOfLines={1} style={[styles.glassTitle, { color: colors.text }]}>{props.title}</Text>
+              {props.subtitle ? <Text numberOfLines={1} style={[styles.routeSubtitle, { color: colors.textSecondary }]}>{props.subtitle}</Text> : null}
+            </View>
+            {props.actions}
+          </View>
+        ) : null}
+        <View style={[styles.glassContent, { backgroundColor: colors.ui.semantic.surface.canvas }]}>{props.children}</View>
+      </View>
+    </IsleScreen>
+  )
+}
+
 const styles = StyleSheet.create({
   routeFrame: { flex: 1 },
   routeHeader: { minHeight: 58, paddingHorizontal: 12, paddingVertical: 7, borderBottomWidth: 1, flexDirection: 'row', alignItems: 'center', gap: 8 },
@@ -115,4 +195,17 @@ const styles = StyleSheet.create({
   minimalTitle: { fontSize: 18, lineHeight: 23, fontWeight: '800' },
   minimalSubtitle: { fontSize: 11, lineHeight: 15, marginTop: 1 },
   minimalContent: { flex: 1, minHeight: 0 },
+  monetFrame: { flex: 1, overflow: 'hidden' },
+  monetHeader: { minHeight: 62, paddingHorizontal: 10, paddingVertical: 8, borderBottomWidth: 1, flexDirection: 'row', alignItems: 'center', gap: 8 },
+  monetTitle: { fontSize: 19, lineHeight: 25, fontWeight: '700' },
+  monetWash: { position: 'absolute', top: 0, right: -24, width: 220, height: 150, borderBottomLeftRadius: 110, opacity: 0.28 },
+  monetContent: { flex: 1, minHeight: 0, paddingHorizontal: 8 },
+  materialFrame: { flex: 1, overflow: 'hidden' },
+  materialHeader: { minHeight: 64, paddingHorizontal: 8, paddingVertical: 8, borderBottomWidth: 1, flexDirection: 'row', alignItems: 'center', gap: 8 },
+  materialTitle: { fontSize: 18, lineHeight: 24, fontWeight: '600' },
+  materialContent: { flex: 1, minHeight: 0, paddingHorizontal: 8, paddingTop: 8 },
+  glassFrame: { flex: 1, overflow: 'hidden' },
+  glassHeader: { minHeight: 62, marginHorizontal: 6, marginTop: 6, paddingHorizontal: 8, paddingVertical: 7, borderRadius: 26, borderWidth: 1, flexDirection: 'row', alignItems: 'center', gap: 8 },
+  glassTitle: { fontSize: 18, lineHeight: 24, fontWeight: '700' },
+  glassContent: { flex: 1, minHeight: 0, marginTop: 10, borderRadius: 26, overflow: 'hidden' },
 })

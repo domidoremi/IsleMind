@@ -410,7 +410,7 @@ export function ChatSetupEmptyState({
   onStarter?: (starter: ChatStarterDefinition) => void
   onAction?: () => void
 }) {
-  const { colors, themeId } = useAppTheme()
+  const { colors, canonicalThemeId } = useAppTheme()
   const { width, height } = useWindowDimensions()
   const starterLayout = resolveProductMobileLayout(width).starter
   const setupLayout = resolveProductMobileChatSetupLayout(width, height)
@@ -427,7 +427,7 @@ export function ChatSetupEmptyState({
 
   return (
     <ChatEmptyStateExperience
-      themeId={themeId}
+      themeId={canonicalThemeId}
       colors={colors}
       title={title}
       context="setup"
@@ -730,7 +730,7 @@ export function ChatConversationEmptyState({
   minHeight: number
 }) {
   const { t } = useTranslation()
-  const { colors, themeId } = useAppTheme()
+  const { colors, canonicalThemeId } = useAppTheme()
   const { width } = useWindowDimensions()
   const starterLayout = resolveProductMobileLayout(width).starter
   const primaryStarter = resolveChatEmptyStateProjection({
@@ -753,7 +753,7 @@ export function ChatConversationEmptyState({
       }}
     >
       <ChatEmptyStateExperience
-        themeId={themeId}
+        themeId={canonicalThemeId}
         colors={colors}
         title={title}
         context="conversation"

@@ -3,7 +3,7 @@ import { StyleSheet, Text, View } from 'react-native'
 import { MotiView } from 'moti'
 import { useTranslation } from 'react-i18next'
 import { AppIcon } from '@/components/ui/AppIcon'
-import { ISLE_MIN_TOUCH_TARGET, IsleField, IslePressable } from '@/components/ui/isle'
+import { ISLE_MIN_TOUCH_TARGET, IsleField, IslePressable, ThemeExpressionRegion } from '@/components/ui/isle'
 import { useAppTheme } from '@/hooks/useAppTheme'
 
 interface KnowledgeImportSectionProps {
@@ -38,7 +38,7 @@ export function KnowledgeImportSection({
   } as const
 
   return (
-    <>
+    <ThemeExpressionRegion componentId="knowledge">
       <IslePressable
         haptic
         accessibilityRole="button"
@@ -145,7 +145,7 @@ export function KnowledgeImportSection({
           </IslePressable>
         </MotiView>
       ) : null}
-    </>
+    </ThemeExpressionRegion>
   )
 }
 

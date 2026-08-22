@@ -1,6 +1,6 @@
 import type { ReactNode } from 'react'
 import { StyleSheet, Text, View, type ViewStyle } from 'react-native'
-import type { ThemeId } from '@/types/settingsContracts'
+import type { CanonicalThemeId } from '@/types/settingsContracts'
 import type { NavigationGlyph } from '@/components/navigation/AnimatedNavigationIcon'
 import { IsleEmptyState } from '@/components/ui/isle'
 
@@ -24,7 +24,7 @@ export interface HistoryVisualTokens {
 export type HistoryEmptyStateKind = 'search-pending' | 'search-empty' | 'history-empty'
 
 interface HistoryEmptyStateFrameProps {
-  themeId: ThemeId
+  themeId: CanonicalThemeId
   tokens: HistoryVisualTokens
   kind: HistoryEmptyStateKind
   title: string
@@ -66,17 +66,25 @@ export function HistoryEmptyStateFrame({
     />
   )
 
-  if (themeId === 'lime-road') {
+  if (themeId === 'monet') {
     return (
-      <View testID={`history-empty-experience-lime-road-${kind}`} style={[styles.themeEmptySurface, styles.routeEmptySurface, { borderLeftColor: tokens.accent }]}>
+      <View testID={`history-empty-experience-monet-${kind}`} style={[styles.themeEmptySurface, styles.monetEmptySurface, { borderLeftColor: tokens.accent, backgroundColor: tokens.surfaceMuted }]}>
         {empty}
       </View>
     )
   }
 
-  if (themeId === 'markdown') {
+  if (themeId === 'material') {
     return (
-      <View testID={`history-empty-experience-markdown-${kind}`} style={[styles.themeEmptySurface, styles.documentEmptySurface, { borderLeftColor: tokens.borderStrong }]}>
+      <View testID={`history-empty-experience-material-${kind}`} style={[styles.themeEmptySurface, styles.materialEmptySurface, { borderColor: tokens.borderStrong, backgroundColor: tokens.surfaceMuted }]}>
+        {empty}
+      </View>
+    )
+  }
+
+  if (themeId === 'liquid-glass') {
+    return (
+      <View testID={`history-empty-experience-liquid-glass-${kind}`} style={[styles.themeEmptySurface, styles.glassEmptySurface, { borderColor: tokens.accentBorder, backgroundColor: tokens.surface }]}>
         {empty}
       </View>
     )
@@ -86,7 +94,7 @@ export function HistoryEmptyStateFrame({
 }
 
 interface HistoryHeaderFrameProps {
-  themeId: ThemeId
+  themeId: CanonicalThemeId
   tokens: HistoryVisualTokens
   compact: boolean
   shellNavigation: boolean
@@ -105,20 +113,30 @@ interface HistoryHeaderFrameProps {
  */
 export function HistoryHeaderFrame({ themeId, tokens, compact, shellNavigation, conversationCount: _conversationCount, sectionLabel: _sectionLabel, documentPath: _documentPath, header, search, summary }: HistoryHeaderFrameProps) {
   switch (themeId) {
-    case 'lime-road':
+    case 'monet':
       return (
-        <View testID="history-header-experience-lime-road" style={[styles.headerBase, { paddingHorizontal: compact ? 14 : 16, paddingTop: shellNavigation ? 8 : 12, paddingBottom: shellNavigation ? 10 : 14 }]}>
-          <View style={[styles.routeHeaderFocus, { borderLeftColor: tokens.accent }]}>
+        <View testID="history-header-experience-monet" style={[styles.headerBase, { paddingHorizontal: compact ? 14 : 16, paddingTop: shellNavigation ? 8 : 12, paddingBottom: shellNavigation ? 10 : 14 }]}>
+          <View style={[styles.monetHeaderFocus, { borderLeftColor: tokens.accent, backgroundColor: tokens.surfaceMuted }]}>
             {header}
             <View style={styles.headerSearch}>{search}</View>
           </View>
           {summary}
         </View>
       )
-    case 'markdown':
+    case 'material':
       return (
-        <View testID="history-header-experience-markdown" style={[styles.headerBase, { paddingHorizontal: compact ? 14 : 16, paddingTop: shellNavigation ? 8 : 12, paddingBottom: shellNavigation ? 10 : 14 }]}>
-          <View style={[styles.documentHeaderFocus, { borderBottomColor: tokens.border }]}>
+        <View testID="history-header-experience-material" style={[styles.headerBase, { paddingHorizontal: compact ? 14 : 16, paddingTop: shellNavigation ? 8 : 12, paddingBottom: shellNavigation ? 10 : 14 }]}>
+          <View style={[styles.materialHeaderFocus, { borderColor: tokens.border, backgroundColor: tokens.surfaceMuted }]}>
+            {header}
+            <View style={styles.headerSearch}>{search}</View>
+          </View>
+          {summary}
+        </View>
+      )
+    case 'liquid-glass':
+      return (
+        <View testID="history-header-experience-liquid-glass" style={[styles.headerBase, { paddingHorizontal: compact ? 14 : 16, paddingTop: shellNavigation ? 8 : 12, paddingBottom: shellNavigation ? 10 : 14 }]}>
+          <View style={[styles.glassHeaderFocus, { borderColor: tokens.accentBorder, backgroundColor: tokens.surface }]}>
             {header}
             <View style={styles.headerSearch}>{search}</View>
           </View>
@@ -138,7 +156,7 @@ export function HistoryHeaderFrame({ themeId, tokens, compact, shellNavigation, 
 }
 
 interface HistoryRowFrameProps {
-  themeId: ThemeId
+  themeId: CanonicalThemeId
   tokens: HistoryVisualTokens
   compact: boolean
   index: number
@@ -152,9 +170,9 @@ interface HistoryRowFrameProps {
 export function HistoryRowFrame({ themeId, tokens, compact, index: _index, active, content, actions, expandedActions, style }: HistoryRowFrameProps) {
   const compactStyle = compact ? styles.compactRow : undefined
   switch (themeId) {
-    case 'lime-road':
+    case 'monet':
       return (
-        <View testID="history-row-experience-lime-road" style={[styles.rowBase, styles.routeRow, compactStyle, { backgroundColor: active ? tokens.surfaceMuted : 'transparent', borderBottomColor: tokens.border, borderLeftColor: active ? tokens.accent : 'transparent' }, style]}>
+        <View testID="history-row-experience-monet" style={[styles.rowBase, styles.monetRow, compactStyle, { backgroundColor: active ? tokens.surfaceMuted : tokens.surface, borderBottomColor: tokens.border, borderLeftColor: active ? tokens.accent : 'transparent' }, style]}>
           <View style={styles.rowBody}>
             <View style={styles.rowMainLine}>
               {content}
@@ -164,9 +182,21 @@ export function HistoryRowFrame({ themeId, tokens, compact, index: _index, activ
           </View>
         </View>
       )
-    case 'markdown':
+    case 'material':
       return (
-        <View testID="history-row-experience-markdown" style={[styles.rowBase, styles.documentRow, compactStyle, { borderBottomColor: tokens.border }, style]}>
+        <View testID="history-row-experience-material" style={[styles.rowBase, styles.materialRow, compactStyle, { backgroundColor: active ? tokens.surfaceMuted : tokens.surface, borderBottomColor: tokens.border, borderColor: active ? tokens.accent : tokens.border }, style]}>
+          <View style={styles.rowBody}>
+            <View style={styles.rowMainLine}>
+              {content}
+              {actions}
+            </View>
+            {expandedActions}
+          </View>
+        </View>
+      )
+    case 'liquid-glass':
+      return (
+        <View testID="history-row-experience-liquid-glass" style={[styles.rowBase, styles.glassRow, compactStyle, { backgroundColor: active ? tokens.surfaceMuted : tokens.surface, borderBottomColor: tokens.border, borderColor: active ? tokens.accent : tokens.border }, style]}>
           <View style={styles.rowBody}>
             <View style={styles.rowMainLine}>
               {content}
@@ -191,7 +221,7 @@ export function HistoryRowFrame({ themeId, tokens, compact, index: _index, activ
 }
 
 interface HistoryRowContentProps {
-  themeId: ThemeId
+  themeId: CanonicalThemeId
   tokens: HistoryVisualTokens
   title: string
   preview: string
@@ -205,19 +235,19 @@ interface HistoryRowContentProps {
 }
 
 export function HistoryRowContent({ themeId, tokens, title, preview, meta, active, activeLabel, searchMatchSummary, searchMatchFieldLabel, statusLabel, statusColor }: HistoryRowContentProps) {
-  const searchMatchStyle = themeId === 'lime-road' ? styles.routeSearchMatch : themeId === 'markdown' ? styles.documentSearchMatch : styles.quietSearchMatch
+  const searchMatchStyle = themeId === 'monet' ? styles.monetSearchMatch : themeId === 'material' ? styles.materialSearchMatch : themeId === 'liquid-glass' ? styles.glassSearchMatch : styles.quietSearchMatch
   return (
     <>
-      <Text numberOfLines={1} style={[styles.rowTitle, themeId === 'markdown' ? styles.documentRowTitle : undefined, { color: tokens.text, fontWeight: active ? '800' : '700' }]}>{title}</Text>
+      <Text numberOfLines={1} style={[styles.rowTitle, themeId === 'material' ? styles.materialRowTitle : themeId === 'liquid-glass' ? styles.glassRowTitle : undefined, { color: tokens.text, fontWeight: active ? '800' : '700' }]}>{title}</Text>
       {searchMatchSummary && searchMatchFieldLabel ? (
         <View style={searchMatchStyle}>
           <Text numberOfLines={1} style={[styles.searchMatchLabel, { color: tokens.accent }]}>{searchMatchFieldLabel}</Text>
           <Text numberOfLines={2} style={[styles.rowPreview, styles.searchMatchPreview, { color: tokens.textSecondary }]}>{searchMatchSummary}</Text>
         </View>
       ) : (
-        <Text numberOfLines={themeId === 'markdown' ? 1 : 2} style={[styles.rowPreview, themeId === 'markdown' ? styles.documentPreview : undefined, { color: tokens.textSecondary }]}>{preview}</Text>
+        <Text numberOfLines={themeId === 'material' ? 1 : 2} style={[styles.rowPreview, themeId === 'material' ? styles.materialPreview : undefined, { color: tokens.textSecondary }]}>{preview}</Text>
       )}
-      <HistoryRowMetadata tokens={tokens} meta={meta} active={active} activeLabel={activeLabel} statusLabel={statusLabel} statusColor={statusColor} compact={themeId === 'markdown'} />
+      <HistoryRowMetadata tokens={tokens} meta={meta} active={active} activeLabel={activeLabel} statusLabel={statusLabel} statusColor={statusColor} compact={themeId === 'material'} />
     </>
   )
 }
@@ -250,6 +280,21 @@ const styles = StyleSheet.create({
   routeHeaderFocus: {
     paddingLeft: 10,
     borderLeftWidth: 3,
+  },
+  monetHeaderFocus: {
+    padding: 10,
+    borderLeftWidth: 3,
+    borderRadius: 14,
+  },
+  materialHeaderFocus: {
+    padding: 12,
+    borderRadius: 20,
+    borderWidth: StyleSheet.hairlineWidth,
+  },
+  glassHeaderFocus: {
+    padding: 12,
+    borderRadius: 24,
+    borderWidth: 1,
   },
   documentHeaderFocus: {
     paddingBottom: 8,
@@ -349,6 +394,28 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'stretch',
   },
+  monetRow: {
+    minHeight: 92,
+    paddingVertical: 15,
+    paddingHorizontal: 10,
+    borderLeftWidth: 3,
+  },
+  materialRow: {
+    minHeight: 82,
+    paddingVertical: 12,
+    paddingHorizontal: 14,
+    borderRadius: 18,
+    borderWidth: StyleSheet.hairlineWidth,
+    marginBottom: 6,
+  },
+  glassRow: {
+    minHeight: 88,
+    paddingVertical: 13,
+    paddingHorizontal: 14,
+    borderRadius: 22,
+    borderWidth: 1,
+    marginBottom: 8,
+  },
   documentRow: {
     minHeight: 78,
     paddingVertical: 11,
@@ -404,6 +471,14 @@ const styles = StyleSheet.create({
   documentRowTitle: {
     fontSize: 14.5,
   },
+  materialRowTitle: {
+    fontSize: 15,
+    fontWeight: '600',
+  },
+  glassRowTitle: {
+    fontSize: 15.5,
+    fontWeight: '600',
+  },
   rowPreview: {
     minWidth: 0,
     flexShrink: 1,
@@ -415,6 +490,9 @@ const styles = StyleSheet.create({
   },
   documentPreview: {
     marginTop: 3,
+  },
+  materialPreview: {
+    marginTop: 5,
   },
   quietSearchMatch: {
     flexDirection: 'row',
@@ -430,6 +508,28 @@ const styles = StyleSheet.create({
     marginTop: 6,
     minWidth: 0,
     paddingLeft: 8,
+  },
+  monetSearchMatch: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: 6,
+    marginTop: 6,
+    minWidth: 0,
+    paddingLeft: 8,
+  },
+  materialSearchMatch: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: 6,
+    marginTop: 5,
+    minWidth: 0,
+  },
+  glassSearchMatch: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: 7,
+    marginTop: 6,
+    minWidth: 0,
   },
   documentSearchMatch: {
     flexDirection: 'row',
@@ -489,6 +589,24 @@ const styles = StyleSheet.create({
   documentEmptySurface: {
     borderLeftWidth: 2,
     paddingLeft: 8,
+  },
+  monetEmptySurface: {
+    borderLeftWidth: 3,
+    paddingLeft: 10,
+    borderRadius: 18,
+    overflow: 'hidden',
+  },
+  materialEmptySurface: {
+    borderWidth: 1,
+    borderRadius: 22,
+    paddingHorizontal: 8,
+    overflow: 'hidden',
+  },
+  glassEmptySurface: {
+    borderWidth: 1,
+    borderRadius: 26,
+    paddingHorizontal: 10,
+    overflow: 'hidden',
   },
   routeEmptyRoot: {
     flex: 1,

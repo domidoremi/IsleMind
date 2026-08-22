@@ -44,3 +44,33 @@ export function MarkdownSkillSettingsLead({ saved, workflows, enabledWorkflows, 
     </View>
   )
 }
+
+export function MonetSkillSettingsLead({ summary }: SkillSettingsLeadProps) {
+  const { colors, design } = useAppTheme()
+  return (
+    <View testID="skill-settings-experience-monet" style={{ paddingVertical: design.semantic.spacing.md, paddingHorizontal: design.semantic.spacing.sm, borderLeftWidth: 3, borderLeftColor: colors.primary, backgroundColor: colors.ui.semantic.surface.muted }}>
+      {summary}
+    </View>
+  )
+}
+
+export function MaterialSkillSettingsLead({ saved, workflows, enabledWorkflows, templates, review }: SkillSettingsLeadProps) {
+  const { colors, design } = useAppTheme()
+  return (
+    <View testID="skill-settings-experience-material" style={{ minHeight: 56, paddingHorizontal: design.semantic.spacing.lg, paddingVertical: design.semantic.spacing.sm, flexDirection: 'row', alignItems: 'center', flexWrap: 'wrap', gap: design.semantic.spacing.sm, borderRadius: design.semantic.radius.extraLarge, backgroundColor: colors.ui.semantic.surface.muted, borderWidth: StyleSheet.hairlineWidth, borderColor: colors.ui.semantic.chrome.border }}>
+      <Text style={{ color: colors.text, fontSize: design.semantic.typography.title.fontSize, fontWeight: '500' }}>{`${saved} skills`}</Text>
+      <Text style={{ color: colors.textSecondary, fontSize: design.semantic.typography.label.fontSize }}>{`${enabledWorkflows}/${workflows} workflows`}</Text>
+      <Text style={{ color: colors.textSecondary, fontSize: design.semantic.typography.label.fontSize }}>{`${templates} templates`}</Text>
+      {review ? <Text style={{ color: colors.ui.tone.warning.foreground, fontSize: design.semantic.typography.label.fontSize, fontWeight: '700' }}>{`${review} review`}</Text> : null}
+    </View>
+  )
+}
+
+export function LiquidGlassSkillSettingsLead({ summary }: SkillSettingsLeadProps) {
+  const { colors, design } = useAppTheme()
+  return (
+    <View testID="skill-settings-experience-liquid-glass" style={{ padding: design.semantic.spacing.md, borderRadius: design.semantic.radius.extraLarge, backgroundColor: colors.ui.semantic.chrome.background, borderWidth: 1, borderColor: colors.ui.semantic.chrome.border, shadowColor: design.semantic.elevation.shadowColor, shadowOpacity: design.semantic.elevation.shadowOpacity, shadowRadius: design.semantic.elevation.shadowBlur, shadowOffset: { width: 0, height: design.semantic.elevation.shadowOffsetY }, elevation: design.semantic.elevation.level2 }}>
+      {summary}
+    </View>
+  )
+}

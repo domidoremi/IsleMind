@@ -8,6 +8,8 @@ import { useTranslation } from 'react-i18next'
 import { useAppTheme } from '@/hooks/useAppTheme'
 import { AppIcon, appIconStroke } from '@/components/ui/AppIcon'
 import { ISLE_MIN_TOUCH_TARGET, IslePanel, IslePressable } from '@/components/ui/isle'
+import { ThemeExpressionSurface } from '@/components/ui/isle/ThemeExpressionSurface'
+import { resolveThemeComponentExpression } from '@/theme/themeExpression'
 import { shouldPromotePlainDelimitedRows } from './messageContentTablePromotion'
 import {
   hasComplexDisplayFormulaStructure,
@@ -148,13 +150,19 @@ function maxTableColumnCount(rows: string[][]): number {
 
 export const MessageContent = memo(function MessageContent({ content, isUser = false, isStreaming = false, onLayoutChangeRequest, selectionEnabled = true }: MessageContentProps) {
   const { t } = useTranslation()
-  const { colors, themeId } = useAppTheme()
+  const { colors, canonicalThemeId } = useAppTheme()
   const segments = useMemo(() => safeParseRichContent(content, t, isStreaming), [content, isStreaming, t])
 
   return (
-    <MessageContentThemeSurface themeId={themeId} colors={colors} isUser={isUser}>
+    <MessageContentThemeSurface themeId={canonicalThemeId} colors={colors} isUser={isUser}>
       {segments.map((segment) => {
-        if (segment.type === 'markdown') return <RichMarkdown key={segment.id} content={segment.content} isUser={isUser} isStreaming={isStreaming} onLayoutChangeRequest={onLayoutChangeRequest} selectionEnabled={selectionEnabled} />
+        if (segment.type === 'markdown') {
+          return (
+            <ThemeExpressionSurface key={segment.id} family={canonicalThemeId} colors={colors} kind="markdown" isUser={isUser}>
+              <RichMarkdown content={segment.content} isUser={isUser} isStreaming={isStreaming} onLayoutChangeRequest={onLayoutChangeRequest} selectionEnabled={selectionEnabled} />
+            </ThemeExpressionSurface>
+          )
+        }
         if (segment.type === 'table') {
           return (
             <TableBlockCard
@@ -172,7 +180,11 @@ export const MessageContent = memo(function MessageContent({ content, isUser = f
         if (segment.type === 'formula') return <FormulaBlockCard key={segment.id} content={segment.content} isUser={isUser} selectionEnabled={selectionEnabled} />
         if (segment.type === 'diagram') return <DiagramBlockCard key={segment.id} content={segment.content} language={segment.language} isUser={isUser} />
         if (segment.type === 'data') return <DataBlockCard key={segment.id} content={segment.content} language={segment.language} title={segment.title} isUser={isUser} selectionEnabled={selectionEnabled} />
-        return <CodeBlockCard key={segment.id} content={segment.content} language={segment.language} isUser={isUser} />
+        return (
+          <ThemeExpressionSurface key={segment.id} family={canonicalThemeId} colors={colors} kind="code-block" isUser={isUser}>
+            <CodeBlockCard content={segment.content} language={segment.language} isUser={isUser} />
+          </ThemeExpressionSurface>
+        )
       })}
     </MessageContentThemeSurface>
   )
@@ -1073,22 +1085,32 @@ function normalizeDiagramNodeLabel(label: string): string {
 }
 
 function RichCard({ isUser, children }: { isUser: boolean; children: ReactNode }) {
-  const { colors } = useAppTheme()
+  const { colors, canonicalThemeId } = useAppTheme()
   const userMessage = colors.ui.message
   const assistantSurfaces = resolveAssistantRichSurfaces(colors)
+  const expression = resolveThemeComponentExpression(canonicalThemeId, 'codeBlock')
+  const isMinimal = canonicalThemeId === 'minimal'
+  const isMonet = canonicalThemeId === 'monet'
+  const isMaterial = canonicalThemeId === 'material'
+  const radius = isMinimal ? 2 : isMonet ? 18 : isMaterial ? 12 : 20
+  const contentPadding = isMinimal ? 3 : isMonet ? 10 : isMaterial ? 8 : 9
+  const material = isMinimal ? 'transparent' : isMonet ? 'paper' : isMaterial ? 'raised' : 'chrome'
   return (
     <IslePanel
       elevated={!isUser && colors.ui.limeRoad}
-      material={isUser ? 'transparent' : colors.ui.limeRoad ? 'raised' : 'paper'}
-      contentStyle={{ padding: 7, width: '100%' }}
+      material={isUser ? 'transparent' : material}
+      contentStyle={{ padding: contentPadding, width: '100%' }}
       style={{
         alignSelf: 'stretch',
         width: '100%',
         maxWidth: '100%',
         minWidth: 0,
-        borderRadius: colors.ui.radius.card,
+        borderRadius: radius,
         backgroundColor: isUser ? userMessage.userActionBackground : assistantSurfaces.richCardSurface,
         borderColor: isUser ? userMessage.userActionBackground : assistantSurfaces.blockBorder,
+        borderWidth: isUser || isMinimal ? 0 : expression.border === 'edge-highlight' ? 1 : StyleSheet.hairlineWidth,
+        ...(isMonet ? { alignSelf: 'flex-start', width: '96%', marginLeft: 8, borderTopLeftRadius: 22, borderBottomRightRadius: 26 } : null),
+        ...(isMaterial ? { borderRadius: 12, paddingHorizontal: 2 } : null),
       }}
     >
       {children}

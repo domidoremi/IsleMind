@@ -1,9 +1,10 @@
 import type { ReactNode } from 'react'
-import { View, type DimensionValue, type StyleProp, type ViewStyle } from 'react-native'
+import { StyleSheet, View, type DimensionValue, type StyleProp, type ViewStyle } from 'react-native'
 import { MotiView } from 'moti'
 import { useAppTheme } from '@/hooks/useAppTheme'
 import { useMotionPreference } from '@/hooks/useMotionPreference'
 import { motionTokens } from '@/theme/animation'
+import { resolveThemeComponentExpression } from '@/theme/themeExpression'
 
 export type IsleSkeletonVariant = 'text' | 'circle' | 'rect' | 'paragraph'
 export type IsleSkeletonControlSize = 'small' | 'middle' | 'large'
@@ -33,27 +34,73 @@ export function IsleSkeleton({
   children,
   style,
 }: IsleSkeletonProps) {
-  const { colors } = useAppTheme()
+  const { colors, canonicalThemeId } = useAppTheme()
   const motion = useMotionPreference()
 
   if (!loading) return <>{children}</>
 
   const animated = active && motion === 'full'
+  const expression = resolveThemeComponentExpression(canonicalThemeId, 'skeleton')
+  const grammar = expression.motion
   const skeletonColor = colors.ui.semantic.surface.muted
   const highlightColor = colors.ui.icon.accentBackground
   const skeleton = (itemStyle: StyleProp<ViewStyle>, key?: number) => (
-    <MotiView
-      key={key}
-      accessible={false}
-      accessibilityElementsHidden
-      importantForAccessibility="no-hide-descendants"
-      from={{ opacity: animated ? 0.46 : 1, backgroundColor: skeletonColor }}
-      animate={{ opacity: animated ? 0.86 : 1, backgroundColor: animated ? highlightColor : skeletonColor }}
-      transition={animated
-        ? { loop: true, type: 'timing', duration: motionTokens.duration.slow * 4 }
-        : { type: 'timing', duration: 1 }}
-      style={itemStyle}
-    />
+    <View key={key} style={itemStyle}>
+      <MotiView
+        testID={key === undefined ? `theme-skeleton-${canonicalThemeId}` : undefined}
+        accessible={false}
+        accessibilityElementsHidden
+        importantForAccessibility="no-hide-descendants"
+        from={{
+          opacity: animated ? grammar === 'precision' ? 0.72 : grammar === 'organic' ? 0.42 : grammar === 'material' ? 0.58 : 0.48 : 1,
+          backgroundColor: skeletonColor,
+          translateX: 0,
+          scaleX: 1,
+        }}
+        animate={{
+          opacity: animated ? grammar === 'precision' ? 0.92 : grammar === 'organic' ? 0.84 : grammar === 'material' ? 0.9 : 0.88 : 1,
+          backgroundColor: animated && grammar !== 'precision' ? highlightColor : skeletonColor,
+          translateX: animated && grammar === 'organic' ? 3 : animated && grammar === 'fluid' ? 2 : 0,
+          scaleX: animated && grammar === 'material' ? 0.985 : 1,
+        }}
+        transition={animated
+          ? {
+              loop: true,
+              type: 'timing',
+              duration: grammar === 'precision'
+                ? motionTokens.duration.slow * 2
+                : grammar === 'organic'
+                  ? motionTokens.duration.slow * 5
+                  : grammar === 'material'
+                    ? motionTokens.duration.slow * 3
+                    : motionTokens.duration.slow * 4,
+            }
+          : { type: 'timing', duration: 1 }}
+        style={{
+          width: '100%',
+          height: '100%',
+          borderRadius: expression.shape === 'angular'
+            ? 1
+            : expression.shape === 'material'
+              ? colors.ui.radius.controlSmall
+              : expression.shape === 'capsule'
+                ? 999
+                : colors.ui.radius.controlLarge,
+          borderWidth: grammar === 'material' ? StyleSheet.hairlineWidth : 0,
+          borderColor: grammar === 'material' ? colors.ui.semantic.chrome.border : 'transparent',
+          shadowColor: grammar === 'fluid' ? colors.shadowTint : undefined,
+          shadowOpacity: grammar === 'fluid' ? 0.1 : 0,
+          shadowRadius: grammar === 'fluid' ? 8 : 0,
+          shadowOffset: { width: 0, height: 3 },
+          elevation: grammar === 'fluid' ? 1 : 0,
+          overflow: 'hidden',
+        }}
+      >
+        {grammar === 'fluid' ? (
+          <View style={{ position: 'absolute', top: 1, right: 10, left: 10, height: StyleSheet.hairlineWidth, backgroundColor: colors.ui.control.primaryForeground, opacity: 0.36 }} />
+        ) : null}
+      </MotiView>
+    </View>
   )
 
   if (variant === 'paragraph') {
@@ -69,7 +116,7 @@ export function IsleSkeleton({
           width: widths[index] ?? widths[widths.length - 1] ?? '100%',
           height: typeof height === 'number' ? height : 14,
           maxWidth: '100%',
-          borderRadius: colors.ui.radius.controlSmall,
+          borderRadius: expression.shape === 'angular' ? 1 : expression.shape === 'capsule' ? 999 : colors.ui.radius.controlSmall,
         }, index))}
       </View>
     )
@@ -83,7 +130,15 @@ export function IsleSkeleton({
       width: itemWidth,
       height: itemHeight,
       maxWidth: '100%',
-      borderRadius: variant === 'circle' ? 999 : variant === 'rect' ? colors.ui.radius.card : colors.ui.radius.controlSmall,
+      borderRadius: variant === 'circle'
+        ? 999
+        : expression.shape === 'angular'
+          ? 1
+          : expression.shape === 'capsule'
+            ? 999
+            : variant === 'rect'
+              ? colors.ui.radius.card
+              : colors.ui.radius.controlSmall,
     },
     style,
   ])

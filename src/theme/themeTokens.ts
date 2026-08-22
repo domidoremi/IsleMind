@@ -551,8 +551,8 @@ function makeTokens(family: ThemeFamily, mode: ThemeTokenMode): ThemeDesignToken
     : isMaterial
       ? { level0: 0, level1: 1, level2: 3, level3: 6, level4: 8, level5: 12, shadowColor: '#1D1B20', shadowOpacity: 0.18, shadowBlur: 12, shadowOffsetY: 4, tonalSurface: true }
       : isGlass
-        ? { level0: 0, level1: 2, level2: 6, level3: 12, level4: 18, level5: 24, shadowColor: '#12344A', shadowOpacity: 0.2, shadowBlur: 24, shadowOffsetY: 8, tonalSurface: false }
-        : { level0: 0, level1: 1, level2: 3, level3: 6, level4: 10, level5: 14, shadowColor: '#527B73', shadowOpacity: 0.12, shadowBlur: 18, shadowOffsetY: 5, tonalSurface: false }
+        ? { level0: 0, level1: 1, level2: 4, level3: 8, level4: 12, level5: 16, shadowColor: '#12344A', shadowOpacity: 0.12, shadowBlur: 14, shadowOffsetY: 5, tonalSurface: false }
+        : { level0: 0, level1: 1, level2: 3, level3: 5, level4: 8, level5: 12, shadowColor: '#527B73', shadowOpacity: 0.06, shadowBlur: 10, shadowOffsetY: 3, tonalSurface: false }
   const motion: ThemeMotionTokens = family === 'minimal'
     ? { instant: 0, interaction: 80, emphasis: 120, panel: 180, page: 180, easing: 'standard', stateLayerOpacity: { hover: 0.06, focus: 0.1, press: 0.1, drag: 0.16 }, reducedMotion: 'opacity-only' }
     : isMaterial
@@ -579,11 +579,11 @@ function makeTokens(family: ThemeFamily, mode: ThemeTokenMode): ThemeDesignToken
       motion,
       blur: {
         enabled: isGlass,
-        radius: isGlass ? 22 : 0,
+         radius: isGlass ? 12 : 0,
         material: isGlass ? 'regular' : 'none',
         maxLayersPerRegion: isGlass ? 1 : 0,
         fallback: isGlass ? 'opaque' : isMaterial ? 'tonal' : 'opaque',
-        dimmingOpacity: isGlass ? 0.35 : 0,
+         dimmingOpacity: isGlass ? 0.24 : 0,
       },
     },
     component: componentsFor(family, colors, radius),
