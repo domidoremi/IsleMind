@@ -97,6 +97,34 @@ function run() {
     'repeated packing is deterministic',
   )
 
+  const accountingPolicy = createContextPackingPolicy({
+    estimateTextTokens: (text) => text.length,
+    estimateMessageTokens: (messages) => messages.reduce((total, message) => total + message.content.length, 0),
+    estimateReasoningReserve: () => 0,
+  })
+  const accountingContext = 'c'.repeat(300)
+  const accountingPacked = accountingPolicy.packChatMessages({
+    messages: Array.from({ length: 12 }, (_, index) => ({
+      role: index % 2 ? 'assistant' : 'user',
+      content: 'm'.repeat(100),
+    })),
+    contextPrompt: accountingContext,
+    systemPrompt: 's'.repeat(20),
+    modelContextWindow: 1200,
+    maxOutputTokens: 100,
+  })
+  const summaryPrompt = accountingPacked.contextPrompt.slice(accountingContext.length + 2)
+  assert.ok(summaryPrompt.startsWith('历史摘要\n'), 'compressed context keeps a separately attributable history summary')
+  assert.equal(
+    accountingPacked.estimatedInputTokens,
+    accountingPacked.messageTokens + summaryPrompt.length,
+    'compressed input accounting charges the base context only through fixedTokens',
+  )
+  assert.ok(
+    accountingPacked.fixedTokens + accountingPacked.estimatedInputTokens <= accountingPacked.modelBudgetTokens,
+    'compressed input accounting stays inside the complete model budget',
+  )
+
   const reservedPolicy = createContextPackingPolicy({
     estimateMessageTokens,
     estimateTextTokens,
