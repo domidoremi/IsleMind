@@ -304,6 +304,7 @@ function assertSourceIntegration() {
   const chatSetupSource = fs.readFileSync(path.join(root, 'src/components/chat/ChatSetupWorkspace.tsx'), 'utf8')
   const chatAiConfigurationSource = fs.readFileSync(path.join(root, 'src/components/chat/ChatAiConfigurationSheet.tsx'), 'utf8')
   const settingsScreenSource = fs.readFileSync(path.join(root, 'src/components/main/SettingsScreenContent.tsx'), 'utf8')
+  const searchFieldSource = fs.readFileSync(path.join(root, 'src/components/ui/isle/SearchField.tsx'), 'utf8')
   const runtimeDiagnosticsDetailsSource = fs.readFileSync(path.join(root, 'src/components/settings/RuntimeDiagnosticsDetails.tsx'), 'utf8')
   const providerSettingsRouteSource = fs.readFileSync(path.join(root, 'app/settings/providers.tsx'), 'utf8')
   const usageSettingsRouteSource = fs.readFileSync(path.join(root, 'app/settings/usage.tsx'), 'utf8')
@@ -340,20 +341,20 @@ function assertSourceIntegration() {
   assert.match(mainPagerSource, /const MAIN_PAGER_PATH_BY_PAGE:[\s\S]*history: '\/conversations'[\s\S]*home: '\/'[\s\S]*settings: '\/settings'/, 'pager centralizes all three compatible top-level aliases')
   assert.match(runtimeDiagnosticsDetailsSource, /runtimeDiagnosticCompactValue[\s\S]{0,1000}capable: diagnostics\.compact\.capableProviders/, 'runtime diagnostics interpolate compact capable-provider counts')
   assert.match(settingsScreenSource, /function SettingsToggleRow[\s\S]{0,1800}<Text numberOfLines=\{3\}/, 'advanced notification details retain three readable mobile lines')
-  assert.match(settingsScreenSource, /accessibilityLabel=\{t\('common\.clearSearch'\)\}[\s\S]{0,220}style=\{\{ width: 44, height: 44,/, 'Settings search exposes a physical 44dp clear action')
-  assert.match(settingsScreenSource, /controlSearchPlaceholder[\s\S]*minHeight: ISLE_MIN_TOUCH_TARGET/, 'Settings search input exposes a physical 44dp target')
+  assert.ok(settingsScreenSource.includes('<IsleSearchField') && searchFieldSource.includes('style={{ width: 44, height: 44'), 'Settings search exposes a shared physical 44dp clear action')
+  assert.ok(settingsScreenSource.includes('controlSearchPlaceholder') && searchFieldSource.includes('minHeight: 44'), 'Settings search input exposes a physical 44dp target')
   assert.match(apiKeyPanelSource, /function ChoiceButton[\s\S]*minHeight: ISLE_MIN_TOUCH_TARGET/, 'provider model choices expose physical 44dp targets')
   assert.match(apiKeyPanelSource, /function CapabilityToggle[\s\S]*minHeight: ISLE_MIN_TOUCH_TARGET/, 'provider capability toggles expose physical 44dp targets')
   assert.match(apiKeyPanelSource, /function IconIsleChip[\s\S]*width: ISLE_MIN_TOUCH_TARGET[\s\S]*height: ISLE_MIN_TOUCH_TARGET/, 'provider credential icon actions expose physical 44dp targets')
   assert.match(apiKeyPanelSource, /placeholder=\{t\('apiKeyPanel\.aliasDisplayName'\)\}[\s\S]{0,500}minHeight: ISLE_MIN_TOUCH_TARGET[\s\S]{0,800}placeholder=\{t\('apiKeyPanel\.aliasTargetModel'\)\}[\s\S]{0,500}minHeight: ISLE_MIN_TOUCH_TARGET/, 'provider alias inputs expose physical 44dp targets')
-  assert.doesNotMatch(settingsScreenSource, /accessibilityLabel=\{t\('common\.clearSearch'\)\}[^>]*hitSlop=/, 'Settings search does not rely on invisible hit slop around a smaller clear node')
+  assert.doesNotMatch(searchFieldSource, /clearAccessibilityLabel[^>]*hitSlop=/, 'Settings search does not rely on invisible hit slop around a smaller clear node')
   assert.match(usageStatisticsSource, /tabButton: \{[\s\S]*minHeight: ISLE_MIN_TOUCH_TARGET/, 'usage tabs expose physical 44dp targets')
   assert.match(usageStatisticsSource, /function OptionChips[\s\S]*minHeight: ISLE_MIN_TOUCH_TARGET/, 'usage filter chips expose physical 44dp targets')
   assert.match(mcpSettingsSource, /function McpDisclosureRow[\s\S]*minHeight: ISLE_MIN_TOUCH_TARGET/, 'MCP disclosure rows expose physical 44dp targets')
   assert.ok(isleKitSource.includes('export const ISLE_MIN_TOUCH_TARGET = 44'), 'shared controls expose one canonical 44dp touch target')
   assert.match(isleKitSource, /export function IsleButton\([\s\S]*const minimumButtonHeight = resolveMinimumTouchTargetHeight\(height, flattenedStyle, ISLE_MIN_TOUCH_TARGET\)/, 'shared buttons resolve a physical 44dp minimum target after flattening feature styles')
   assert.match(isleKitSource, /style,\s*\{ minHeight: minimumButtonHeight \}/, 'shared buttons apply the resolved minimum after feature styles so compact overrides cannot shrink the target')
-  assert.match(isleKitSource, /export function IsleInput\([\s\S]*minHeight: multiline \? 76 : Math\.max\(height, ISLE_MIN_TOUCH_TARGET\)/, 'single-line input shells expose a physical 44dp minimum target')
+  assert.match(isleKitSource, /export function IsleInput\([\s\S]*const inputMinimumHeight = multiline \? 76 : Math\.max\(height, ISLE_MIN_TOUCH_TARGET\)[\s\S]*minHeight: Math\.max\(inputMinimumHeight, fieldTokens\?\.minHeight \?\? inputMinimumHeight\)/, 'single-line input shells expose a physical 44dp minimum before applying a larger theme-owned field height')
   assert.match(isleKitSource, /ISLE_INPUT_CLEAR_BUTTON_SIZE = 26[\s\S]*width: ISLE_MIN_TOUCH_TARGET, height: ISLE_MIN_TOUCH_TARGET[\s\S]*width: ISLE_INPUT_CLEAR_BUTTON_SIZE, height: ISLE_INPUT_CLEAR_BUTTON_SIZE/, 'input clear actions wrap a compact visual icon in a physical 44dp control')
   assert.match(isleKitSource, /export function IsleSwitch\([\s\S]*const touchWidth = Math\.max\(width, ISLE_MIN_TOUCH_TARGET\)[\s\S]*width: touchWidth,[\s\S]*height: ISLE_MIN_TOUCH_TARGET[\s\S]*top: trackTop, left: trackLeft, width, height/, 'shared switches preserve compact track geometry inside a physical 44dp control')
   assert.match(isleKitSource, /export function IsleCollapse\([\s\S]*minHeight: ISLE_MIN_TOUCH_TARGET/, 'shared collapse headers expose a physical 44dp target')
@@ -439,7 +440,15 @@ function assertSourceIntegration() {
   assert.doesNotMatch(globalGenerationStatusSource, /from=|<AnimatePresence|<MotiView/, 'global generation status renders immediately without entrance or exit animation')
   assert.doesNotMatch(providerSettingsSource, /from=\{\{ opacity: 0, translateY: (?:6|8|32) \}\}/, 'provider progress cards and modal shells do not restore automatic mount animation')
   assert.doesNotMatch(sourceDetailScreenSource, /from=\{\{ opacity: motion === 'full'/, 'source loading indicators pulse without a first-mount fade')
-  assert.ok(messageBubbleSource.includes("'.'.repeat(motion === 'none' ? 3 : dotCount)") && messageBubbleSource.includes('setInterval(() =>') && messageBubbleSource.includes('loop: shimmer'), 'reply process labels share dynamic dots and a motion-aware shimmer')
+  assert.ok(
+    messageBubbleSource.includes("grammar === 'precision'") &&
+      messageBubbleSource.includes("grammar === 'material'") &&
+      messageBubbleSource.includes("'.'.repeat(motion === 'full' ? dotCount : 3)") &&
+      messageBubbleSource.includes('setInterval(() =>') &&
+      messageBubbleSource.includes("const shimmer = active && motion === 'full' && grammar !== 'precision'") &&
+      messageBubbleSource.includes('loop: shimmer'),
+    'reply process labels preserve theme-specific precision, Material, organic, and fluid status motion',
+  )
   assert.ok(messageBubbleSource.includes('const bubbleUsesAvailableWidth = displayFormulaLayout || (!isUser') && messageBubbleSource.includes('processLayerVisible || hasWideMessageContent(renderedDisplayText)') && messageBubbleSource.includes('width: bubbleUsesAvailableWidth ? bubbleMaxWidth : undefined'), 'wide assistant Markdown and process content claims its available mobile width while short assistant and user bubbles remain compact')
   assert.ok(messageBubbleSource.includes("!isStreamingContent && message.status !== 'cancelled'"), 'an empty cancelled assistant turn relies on its stopped status instead of rendering the empty-response failure copy')
   assert.ok(messageBubbleSource.includes('minWidth: showStatusLabel ? 176 : undefined'), 'terminal process status and token text retain enough width to avoid truncating the stopped label')
@@ -493,7 +502,7 @@ function assertSourceIntegration() {
   assert.ok(composerSource.includes('COMPOSER_DOCK_CONTROL_SIZE = ISLE_MIN_TOUCH_TARGET'), 'composer dock actions consume the shared 44dp touch geometry')
   assert.ok(composerSource.includes('composerWindowWidth < PRODUCT_MOBILE_COMPOSER_COMPACT_BREAKPOINT'), 'composer attachment density shares the tested compact breakpoint with its context rail')
   assert.ok(composerSource.includes('const showSendAction = streaming || hasSendableDraft || sending'), 'empty Composer does not reserve a disabled send button beside the voice entry')
-  assert.match(composerSource, /removeAttachment[\s\S]*minHeight: ISLE_MIN_TOUCH_TARGET[\s\S]*height: 28/, 'attachment removal keeps a compact visual chip inside a real 44dp target')
+  assert.match(composerSource, /removeAttachment[\s\S]*minHeight: ISLE_MIN_TOUCH_TARGET[\s\S]*composer-attachment-\$\{canonicalThemeId\}[\s\S]*minHeight: attachmentGrammar === 'precision' \? 26 : 30/, 'attachment removal keeps a themed compact visual chip inside a real 44dp target')
   assert.match(composerSource, /clearPendingAccessibilityHint[\s\S]*minHeight: ISLE_MIN_TOUCH_TARGET/, 'pending-message dismissal exposes a real 44dp target')
   assert.match(messageContentSource, /function CardHeader[\s\S]*minHeight: ISLE_MIN_TOUCH_TARGET/, 'rich-content copy actions expose physical 44dp targets')
   assert.match(chatOptionsSource, /accessibilityLabel=\{resetLabel\}[\s\S]*width: ISLE_MIN_TOUCH_TARGET[\s\S]*height: ISLE_MIN_TOUCH_TARGET/, 'generation parameter reset exposes a real 44dp target')
@@ -505,7 +514,7 @@ function assertSourceIntegration() {
   assert.doesNotMatch(conversationRowSource, /sumConversationTokens|formatCompactTokenCount|conversation\.rowUsageTokens/, 'history rows do not scan entire transcripts or render low-value token totals')
   assert.ok(historyPresentationSource.includes("flexWrap: 'wrap'"), 'history metadata can wrap instead of overflowing narrow rows')
   assert.equal(conversationRowSource.includes('<IslePanel'), false, 'history rows render as a continuous list instead of repeated cards')
-  assert.ok(historyPresentationSource.includes('history-row-experience-minimal') && historyPresentationSource.includes('history-row-experience-lime-road') && historyPresentationSource.includes('history-row-experience-markdown'), 'history rows use theme-specific composition frames')
+  assert.ok(['minimal', 'monet', 'material', 'liquid-glass'].every((family) => historyPresentationSource.includes(`history-row-experience-${family}`)), 'history rows use all four canonical theme-specific composition frames')
   assert.ok(conversationRowSource.includes("name={actionsOpen ? 'close' : 'more'}"), 'rename and delete stay behind one contextual action entry')
 
   const conversationsScreenSource = fs.readFileSync(path.join(root, 'src/components/main/ConversationsScreenContent.tsx'), 'utf8')
@@ -516,7 +525,7 @@ function assertSourceIntegration() {
   assert.equal(conversationsScreenSource.includes('firstSearchResultActionHasMatch'), false, 'history search does not add a redundant inline open-result button')
   assert.ok(conversationsScreenSource.includes("t('conversation.historyCount', { count: conversations.length })") && conversationsScreenSource.includes("fontSize: 13, lineHeight: 18, fontWeight: '600'"), 'embedded history relies on the shell title and keeps only a compact count row')
   assert.ok(conversationsScreenSource.includes('width: SCROLL_TOP_ACTION_SIZE') && conversationsScreenSource.includes('accessibilityValue={currentConversationActionAccessibilityValue}'), 'current-conversation navigation is an icon-sized control with its position retained for accessibility')
-  assert.match(conversationsScreenSource, /accessibilityLabel=\{t\('common\.clearSearch'\)\}[\s\S]*width: ISLE_MIN_TOUCH_TARGET[\s\S]*height: ISLE_MIN_TOUCH_TARGET/, 'history search dismissal exposes a real 44dp target')
+  assert.ok(conversationsScreenSource.includes('<IsleSearchField') && searchFieldSource.includes('style={{ width: 44, height: 44'), 'history search dismissal exposes a shared real 44dp target')
   assert.ok(conversationsScreenSource.includes('!listInteractionActiveRef.current'), 'history current-conversation floating action stays hidden during programmatic scroll/reveal')
   assert.ok(conversationsScreenSource.includes('setCurrentConversationActionVisibility(false)'), 'history current-conversation floating action can be suppressed before native evidence screenshots')
 }

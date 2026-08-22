@@ -100,8 +100,10 @@ async function run() {
   const updateConversationSource = chatStoreImplementationSource.match(/updateConversation: \(id: string, updates: Partial<Conversation>\) => \{[\s\S]*?\n  \},\n\n  switchConversationModel:/)?.[0] ?? ''
   assert.ok(updateConversationSource.includes('persistConversationRecord(updated, id)'), 'single-conversation settings persist through the record upsert path')
   assert.equal(updateConversationSource.includes('persistConversations(updated)'), false, 'single-conversation settings do not replace the complete conversation table')
+  const switchConversationModelSource = chatStoreImplementationSource.match(/switchConversationModel: \([\s\S]*?\n  \},\n\n  removeMessage:/)?.[0] ?? ''
+  assert.ok(switchConversationModelSource.includes('persistConversationRecord(updated, id)'), 'provider/model changes retain the explicit full-save compatibility barrier')
+  assert.equal(switchConversationModelSource.includes('persistConversations(updated'), false, 'provider/model changes do not replace the complete conversation table')
   for (const [methodName, nextMethodName, conversationId] of [
-    ['switchConversationModel', 'removeMessage', 'id'],
     ['removeMessage', 'trimAfterMessage', 'convId'],
     ['trimAfterMessage', 'addMessage', 'convId'],
     ['addMessage', 'updateMessage', 'convId'],
@@ -109,7 +111,7 @@ async function run() {
     ['upsertMessageTrace', 'appendContent', 'convId'],
   ]) {
     const methodSource = chatStoreImplementationSource.match(new RegExp(`${methodName}: \\([\\s\\S]*?\\n  \\},\\n\\n  ${nextMethodName}:`))?.[0] ?? ''
-    assert.ok(methodSource.includes(`persistConversationRecord(updated, ${conversationId})`), `${methodName} persists only its changed conversation record`)
+    assert.ok(methodSource.includes(`persistConversationRecord(updated, ${conversationId})`), `${methodName} persists its changed messages through the record upsert path`)
     assert.equal(methodSource.includes('persistConversations(updated'), false, `${methodName} does not replace the complete conversation table`)
   }
   assert.match(chatStoreSource, /function persistConversationRecord\([\s\S]*?conversations\.find\(\(item\) => item\.id === convId\)[\s\S]*?sanitizeConversationsForPersistence\(\[sourceConversation\]\)[\s\S]*?saveConversationRecord\(conversation\)/, 'record persistence locates and sanitizes only the selected conversation')
@@ -126,8 +128,8 @@ async function run() {
   assert.ok(chatStoreSource.includes("createDraft: (providerId: string, model: string)"), 'new Chat sessions can stay in memory until the first message is projected')
   const createDraftSource = chatStoreImplementationSource.match(/createDraft: \(providerId: string, model: string\) => \{[\s\S]*?\n  \},\n\n  createLocalSetupConversation:/)?.[0] ?? ''
   assert.equal(/persistConversation|writeActiveConversationSelection/.test(createDraftSource), false, 'an empty Chat draft has no durable record or active-selection write')
-  assert.match(chatStoreSource, /addMessage:[\s\S]*?draftConversationIds\.delete\(convId\)[\s\S]*?persistConversationRecord\(updated, convId\)/, 'the first message promotes and upserts only its in-memory draft before persistence')
-  assert.match(chatStoreSource, /addMessage:[\s\S]*?persistConversationRecord\(updated, convId\)[\s\S]*?\.then\(\(\) => \{[\s\S]*?get\(\)\.currentId !== convId[\s\S]*?writeActiveConversationSelection\(convId\)/, 'draft promotion commits its durable selection only after the record succeeds and remains current')
+  assert.match(chatStoreSource, /addMessage:[\s\S]*?draftConversationIds\.delete\(convId\)[\s\S]*?persistConversationRecord\(updated, convId\)/, 'the first message promotes and upserts only its in-memory draft through record persistence')
+  assert.match(chatStoreSource, /addMessage:[\s\S]*?persistConversationRecord\(updated, convId\)[\s\S]*?\.then\(\(\) => \{[\s\S]*?get\(\)\.currentId !== convId[\s\S]*?writeActiveConversationSelection\(convId\)/, 'draft promotion commits its durable selection only after the record save succeeds and remains current')
   assert.match(chatStoreSource, /function persistConversations\([\s\S]*?\.filter\(\(conversation\) => !draftConversationIds\.has\(conversation\.id\)\)/, 'full-table persistence excludes every in-memory draft')
   assert.ok(chatStoreSource.includes("createLocalSetupConversation: () => string"), 'setup conversation creation accepts no historical mode authority')
   assert.equal(chatStoreSource.includes('productMode'), false, 'conversation persistence carries no historical mode field')

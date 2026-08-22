@@ -42,7 +42,27 @@ Module._load = function loadWithMcpCatalogFakes(request, parent, isMain) {
   }
   if (conversationMcpBootstrapFakes) {
     const fakes = conversationMcpBootstrapFakes
-    if (request === '@/modules/assistant-runtime') return { createAssistantMcpToolTurnRuntime }
+    if (request === '@/modules/assistant-runtime') return {
+      createAssistantMcpToolTurnRuntime,
+      createAssistantConversationProviderStreamingRuntime: () => ({
+        async start() {
+          throw new Error('Primary provider streaming is outside the MCP compatibility harness.')
+        },
+      }),
+      createAssistantStreamProjectionPolicy: (dependencies) => ({
+        start(identity) {
+          return {
+            pushText(text) {
+              if (text) dependencies.appendContent({ ...identity, text })
+            },
+            pushTrace(trace) {
+              dependencies.upsertTrace({ ...identity, trace })
+            },
+            flush() {},
+          }
+        },
+      }),
+    }
     if (request === '@/bootstrap/workflowToolCallTrace') return { buildWorkflowToolCallTraceMetadata: (input) => input }
     if (request === '@/bootstrap/workflowSearchToolAdmission') return { shouldExposeLocalSearchTool: () => true }
     if (request === '@/bootstrap/taskBoundToolRuntime') return {
@@ -1151,13 +1171,13 @@ async function runConversationMcpBootstrapIntegrationTest() {
   const streamLifecycleSource = fs.readFileSync(path.join(root, 'src/modules/assistant-runtime/application/assistantConversationStreamLifecycleRuntime.ts'), 'utf8')
   const streamLifecycleBootstrapSource = fs.readFileSync(path.join(root, 'src/bootstrap/conversationAssistantStreamLifecycleRuntime.ts'), 'utf8')
   const assistantReplyStartSource = fs.readFileSync(path.join(root, 'src/modules/assistant-runtime/application/assistantConversationReplyStartRuntime.ts'), 'utf8')
-  const providerTurnIndex = finalizationSource.indexOf('dependencies.reviseWithProviderTools')
   const mcpTurnIndex = finalizationSource.indexOf('dependencies.reviseWithMcpTools')
-  assert.ok(providerTurnIndex >= 0 && providerTurnIndex < mcpTurnIndex, 'target finalization preserves provider-tool-before-MCP execution order')
+  assert.ok(mcpTurnIndex >= 0, 'target finalization keeps MCP revision in the finalization runtime')
+  assert.doesNotMatch(finalizationSource, /dependencies\.reviseWithProviderTools/, 'provider-native continuation no longer runs through finalization')
   const mcpIntegration = finalizationSource.slice(mcpTurnIndex, mcpTurnIndex + 1600)
-  assert.ok(mcpIntegration.includes('firstOutput: finalOutput'), 'target finalization hands provider-revised output to the MCP runtime')
+  assert.ok(mcpIntegration.includes('firstOutput: finalOutput'), 'target finalization hands the canonical streamed output to the MCP runtime')
   assert.ok(mcpIntegration.includes('dependencies.mergeUsage(finalResult.usage, revision.usage)'), 'target finalization merges MCP synthesis usage into the selected result')
-  assert.match(streamLifecycleSource, /await dependencies\.finalize\(\{/, 'Assistant Runtime lifecycle delegates completion to the target finalizer')
+  assert.match(streamLifecycleSource, /return dependencies\.finalize\(\{/, 'Assistant Runtime lifecycle delegates completion to the target finalizer and preserves its receipt')
   assert.match(streamLifecycleBootstrapSource, /finalize: conversationAssistantFinalizationRuntime\.finalize/, 'bootstrap binds lifecycle completion to the target finalizer')
   assert.doesNotMatch(assistantReplyStartSource, /createConversationMcpToolTurnRuntime|reviseWithMcpTools/, 'target reply startup cannot restore direct MCP revision coordination')
 }

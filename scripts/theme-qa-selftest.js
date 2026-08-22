@@ -60,6 +60,7 @@ const chatActiveExperience = read('src/components/chat/theme-experiences/ChatAct
 const chatSetupExperience = read('src/components/chat/theme-experiences/ChatSetupThemeExperience.tsx')
 const chatEmptyExperience = read('src/components/chat/theme-experiences/ChatEmptyStateExperience.tsx')
 const chatThemeSurfaces = read('src/components/chat/theme-surfaces/ChatThemeSurfaces.tsx')
+const themeExpressionSurface = read('src/components/ui/isle/ThemeExpressionSurface.tsx')
 const historyPresentation = read('src/components/main/history/HistoryPresentation.tsx')
 const isleBackground = read('src/components/ui/isle/Background.tsx')
 const messageBubble = read('src/components/chat/MessageBubble.tsx')
@@ -129,11 +130,12 @@ check(
     && /chat-ai-configuration-panel/.test(chatAiConfiguration)
     && /chat-ai-provider-connection-section/.test(optionsPanel)
     && /chat-ai-model-selection-section/.test(optionsPanel)
-    && /chat-ai-reasoning-section/.test(optionsPanel)
-    && /chat-composer-surface-minimal/.test(chatThemeSurfaces)
-    && /chat-composer-surface-lime-road/.test(chatThemeSurfaces)
-    && /chat-composer-surface-markdown/.test(chatThemeSurfaces)
-    && /themeId: ThemeId/.test(chatThemeSurfaces),
+     && /chat-ai-reasoning-section/.test(optionsPanel)
+     && /chat-composer-surface-minimal/.test(chatThemeSurfaces)
+     && /chat-composer-surface-monet/.test(chatThemeSurfaces)
+     && /chat-composer-surface-material/.test(chatThemeSurfaces)
+     && /chat-composer-surface-liquid-glass/.test(chatThemeSurfaces)
+     && /themeId: CanonicalThemeId/.test(chatThemeSurfaces),
   'navigation, static page composition, background composition, theme selection, and the chat entry should project family identity without automatic entrance motion',
 )
 check(
@@ -178,9 +180,12 @@ check(
     && /ChatChromeThemeSurface/.test(chatPersistentHeader)
     && /themeId=\{themeId\}/.test(chatPersistentHeader)
     && /chat-chrome-surface-minimal/.test(chatThemeSurfaces)
-    && /chat-chrome-surface-lime-road/.test(chatThemeSurfaces)
-    && /chat-chrome-surface-markdown/.test(chatThemeSurfaces)
-    && /semantic\.chrome\.toolbar/.test(chatThemeSurfaces),
+    && /chat-chrome-surface-monet/.test(chatThemeSurfaces)
+    && /chat-chrome-surface-material/.test(chatThemeSurfaces)
+    && /chat-chrome-surface-liquid-glass/.test(chatThemeSurfaces)
+    && /ThemeExpressionSurface/.test(chatThemeSurfaces)
+    && /const RENDERERS: Record<CanonicalThemeId, Renderer>/.test(themeExpressionSurface)
+    && /props\.colors\.ui\.semantic\.chrome\.border/.test(themeExpressionSurface),
   'active and setup Chat should share persistent controls while each theme retains its own surface composition',
 )
 check(
@@ -193,22 +198,23 @@ check(
     && /resolveChatChromeSurface[\s\S]*?colors\.ui\.limeRoad \? colors\.ui\.semantic\.surface\.base/.test(chatChromeSurfaces),
   'quick panels and health banner should avoid heavy card styling in glass mode',
 )
-check(
-  'conversation search shell and persistent controls use theme-owned chrome',
-  /HistoryHeaderFrame/.test(conversationsScreen)
-    && /themeId=\{themeId\}/.test(conversationsScreen)
-    && /ComposerToolButton/.test(floatingComposer)
-    && /ChatChromeThemeSurface/.test(chatPersistentHeader),
+ check(
+   'conversation search shell and persistent controls use theme-owned chrome',
+   /HistoryHeaderFrame/.test(conversationsScreen)
+     && /themeId=\{canonicalThemeId\}/.test(conversationsScreen)
+     && /ComposerToolButton/.test(floatingComposer)
+     && /ChatChromeThemeSurface/.test(chatPersistentHeader),
   'high-frequency history and conversation controls should use theme-owned compositions',
 )
 check(
   'conversation rows stay list-like instead of standalone cards',
-  !conversationRow.includes('<IslePanel')
-    && /HistoryRowFrame/.test(conversationRow)
-    && /history-row-experience-minimal/.test(historyPresentation)
-    && /history-row-experience-lime-road/.test(historyPresentation)
-    && /history-row-experience-markdown/.test(historyPresentation)
-    && /borderBottomWidth: StyleSheet\.hairlineWidth/.test(historyPresentation),
+   !conversationRow.includes('<IslePanel')
+     && /HistoryRowFrame/.test(conversationRow)
+     && /history-row-experience-minimal/.test(historyPresentation)
+     && /history-row-experience-monet/.test(historyPresentation)
+     && /history-row-experience-material/.test(historyPresentation)
+     && /history-row-experience-liquid-glass/.test(historyPresentation)
+     && /borderBottomWidth: StyleSheet\.hairlineWidth/.test(historyPresentation),
   'conversation history rows should use theme-owned continuous/list or route/document frames',
 )
 check(
@@ -323,11 +329,11 @@ check(
 )
 check(
   'ambient loading indicators stop looping outside full motion',
-  messageBubble.includes("transition={{ loop: motion === 'full', type: 'timing', duration: motion === 'full' ? 512 : 1")
-    && messageBubble.includes("transition={{ loop: motion === 'full', type: 'timing', duration: motion === 'full' ? 768 : 1")
-    && messageBubble.includes("const shimmer = active && motion === 'full'")
+  (messageBubble.match(/loop: motion === 'full'/g) ?? []).length >= 5
+    && messageBubble.includes("const shimmer = active && motion === 'full' && grammar !== 'precision'")
     && messageBubble.includes('loop: shimmer')
-    && messageBubble.includes("'.'.repeat(motion === 'none' ? 3 : dotCount)")
+    && messageBubble.includes("'.'.repeat(motion === 'full' ? dotCount : 3)")
+    && messageBubble.includes("scrollToEnd({ animated: running && motion === 'full' })")
     && !messageBubble.includes('function ProcessSpinner')
     && !sourceRoute.includes('MotiView')
     && !sourceRoute.includes('useMotionPreference'),
@@ -344,14 +350,21 @@ check(
 )
 check(
   'page-owned navigation preserves family composition without a global shell',
-  /const backgroundMode: IsleBackgroundMode = colors\.ui\.experience\.background === 'road'/.test(mainPagerShell)
+  /const backgroundMode: IsleBackgroundMode = colors\.ui\.experience\.background === 'plain'/.test(mainPagerShell)
+    && /colors\.ui\.experience\.background === 'tonal'/.test(mainPagerShell)
     && /colors\.ui\.experience\.background === 'document'/.test(mainPagerShell)
-    && /backgroundIntensity=\{0\.96\}/.test(mainPagerShell)
-    && /colors\.ui\.experience\.background === 'plain' \? colors\.background\.canvas : 'transparent'/.test(mainPagerShell)
-    && /chat-setup-experience-minimal/.test(chatSetupExperience)
-    && /chat-setup-experience-lime-road/.test(chatSetupExperience)
-    && /chat-setup-experience-markdown/.test(chatSetupExperience)
-    && [/function MinimalSetupExperience[\s\S]*?\{chrome\}/, /function LimeRoadSetupExperience[\s\S]*?\{chrome\}/, /function MarkdownSetupExperience[\s\S]*?\{chrome\}/].every((pattern) => pattern.test(chatSetupExperience))
+    && /colors\.ui\.experience\.background === 'glass'/.test(mainPagerShell)
+     && /backgroundIntensity=\{0\.96\}/.test(mainPagerShell)
+     && /colors\.ui\.experience\.background === 'plain' \? colors\.background\.canvas : 'transparent'/.test(mainPagerShell)
+     && /testID="theme-background-road"/.test(isleBackground)
+     && /testID="theme-background-tonal"/.test(isleBackground)
+     && /testID="theme-background-glass"/.test(isleBackground)
+     && /motion === 'full'[\s\S]*?colors\.background\.motion !== 'none'[\s\S]*?state === 'idle' \|\| state === 'active'/.test(isleBackground)
+     && /chat-setup-experience-minimal/.test(chatSetupExperience)
+     && /chat-setup-experience-monet/.test(chatSetupExperience)
+     && /chat-setup-experience-material/.test(chatSetupExperience)
+     && /chat-setup-experience-liquid-glass/.test(chatSetupExperience)
+     && [/function MinimalSetupExperience[\s\S]*?\{chrome\}/, /function MonetSetupExperience[\s\S]*?\{chrome\}/, /function MaterialSetupExperience[\s\S]*?\{chrome\}/, /function LiquidGlassSetupExperience[\s\S]*?\{chrome\}/].every((pattern) => pattern.test(chatSetupExperience))
     && /HistoryHeaderFrame/.test(conversationsScreen)
     && /<SettingsOverviewExperience/.test(settingsScreen)
     && !/MainPagerExperience|ThemeNavigationDrawer|AppTopBar|shellNavigation/.test(mainPagerShell)
@@ -369,11 +382,12 @@ check(
   'tables, summaries, and diagrams should stay visually secondary',
 )
 check(
-  'conversation search shell stays muted in non-glass modes',
-  /HistoryHeaderFrame/.test(conversationsScreen)
-    && /history-header-experience-minimal/.test(historyPresentation)
-    && /history-header-experience-lime-road/.test(historyPresentation)
-    && /history-header-experience-markdown/.test(historyPresentation),
+   'conversation search shell stays muted in non-glass modes',
+   /HistoryHeaderFrame/.test(conversationsScreen)
+     && /history-header-experience-minimal/.test(historyPresentation)
+     && /history-header-experience-monet/.test(historyPresentation)
+     && /history-header-experience-material/.test(historyPresentation)
+     && /history-header-experience-liquid-glass/.test(historyPresentation),
   'search chrome should be owned by the selected history experience rather than a single shared shell',
 )
 check(
@@ -415,8 +429,9 @@ check(
 check(
   'source reader skeleton and empty states stay on secondary surfaces',
   /const skeletonSurface = colors\.ui\.glass \? colors\.ui\.actionBar\.itemBackground : colors\.ui\.semantic\.surface\.muted/.test(sourceRoute)
-    && /shadowOpacity: 0/.test(emptyState),
-  'loading and empty surfaces should remain quieter than live content',
+    && /resolveThemeComponentExpression\(canonicalThemeId, 'emptyState'\)/.test(emptyState)
+    && /shadowOpacity: glass \? 0\.16 : monet \? 0\.08 : 0/.test(emptyState),
+  'loading and empty surfaces should remain quieter than live content while retaining bounded Monet and Glass depth identity',
 )
 check(
   'mcp settings separates quiet, route, and document server geometries while keeping restrained detail depth',
