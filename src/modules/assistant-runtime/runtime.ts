@@ -1,13 +1,33 @@
 import {
   createAssistantRunId,
   err,
+  freezeChatRequest,
   ok,
   type AssistantRunId,
+  type ChatReasoningReplayPart,
+  type ChatToolCallProviderMetadata,
   type JsonRecord,
   type StreamEvent,
 } from '@/core'
+import {
+  ASSISTANT_ACTIVITY_REQUEST_EVIDENCE_SCHEMA,
+  ASSISTANT_ACTIVITY_CONTINUATION_IDENTITY_SCHEMA,
+  ASSISTANT_RUN_ACTIVITY_REQUEST_SNAPSHOT_SCHEMA,
+  ASSISTANT_RUN_REQUEST_SNAPSHOT_SCHEMA,
+  cloneAssistantContextPlanReceipt,
+  isAssistantContextPlanReceipt,
+} from './contracts'
+import {
+  buildAssistantCapabilityRevision,
+  buildAssistantRequestHash,
+  isAssistantRequestHash,
+} from './application/requestIdentity'
 import type {
+  AssistantActivityRequestEvidence,
+  AssistantActivityContinuationIdentity,
+  AssistantContextPlanReceipt,
   AssistantRun,
+  AssistantRunCapturedRequestSnapshot,
   AssistantRunProjection,
   AssistantActivityExecutionResult,
   AssistantRuntime,
@@ -24,6 +44,7 @@ import type {
 const DEFAULT_MAX_OUTPUT_CHARS = 100_000
 const JOURNAL_TEXT_LIMIT = 4_096
 const JOURNAL_LABEL_LIMIT = 512
+const ACTIVITY_REQUEST_EVIDENCE_MAX_BYTES = 4 * 1024 * 1024
 
 class PersistenceFailure extends Error {
   constructor() {
@@ -73,10 +94,28 @@ export function createAssistantRuntime(dependencies: AssistantRuntimeDependencie
         return err('persistence_failed', 'The assistant run could not be loaded.', { retryable: true })
       }
 
+      let request: StartAssistantRunInput['request']
+      let contextReceipt: AssistantContextPlanReceipt | undefined
+      try {
+        request = freezeChatRequest(
+          input.modelOperationSession && !input.cancellationSignal?.aborted
+            ? input.modelOperationSession.prepareRequest(input.request)
+            : input.request,
+        )
+        contextReceipt = input.contextReceipt
+          ? freezeContextPlanReceipt(input.contextReceipt)
+          : undefined
+      } catch {
+        return err('provider_failed', 'The provider-neutral request could not be frozen.', {
+          retryable: true,
+          details: { runId },
+        })
+      }
+
       const active: ActiveRun = {
         controller: new AbortController(),
         now: dependencies.clock.now,
-        run: createQueuedRun(runId, input, dependencies.clock.now()),
+        run: createQueuedRun(runId, { ...input, request }, dependencies.clock.now()),
         outputText: '',
         streamEventCount: 0,
         cancellationRequested: false,
@@ -85,11 +124,11 @@ export function createAssistantRuntime(dependencies: AssistantRuntimeDependencie
       }
       try {
         await record(active, 'run.created', {
-          conversationId: input.request.conversationId,
+          conversationId: request.conversationId,
           contextSnapshotId: input.context.id,
-          providerId: input.request.providerId,
+          providerId: request.providerId,
           ...(input.responseMessageId ? { responseMessageId: input.responseMessageId } : {}),
-        })
+        }, {}, request, contextReceipt)
         activeRuns.set(runId, active)
         attachExternalCancellation(active, input.cancellationSignal)
         if (active.cancellationRequested || active.controller.signal.aborted) {
@@ -106,11 +145,10 @@ export function createAssistantRuntime(dependencies: AssistantRuntimeDependencie
 
         return await runProviderTurns(
           active,
-          input.request,
+          request,
           input.providerGatewayOptions,
           input.modelOperationSession,
           0,
-          true,
         )
       } catch (error) {
         if (error instanceof PersistenceFailure) {
@@ -169,6 +207,18 @@ export function createAssistantRuntime(dependencies: AssistantRuntimeDependencie
         return err('persistence_failed', 'The assistant run could not be loaded.', { retryable: true })
       }
 
+      let requestEvidence: AssistantActivityRequestEvidence | undefined
+      try {
+        requestEvidence = input.requestEvidence
+          ? freezeActivityRequestEvidence(input.requestEvidence, input)
+          : undefined
+      } catch {
+        return err('activity_failed', 'The Chat activity request evidence could not be frozen.', {
+          retryable: false,
+          details: { runId },
+        })
+      }
+
       const active: ActiveRun = {
         controller: new AbortController(),
         now: dependencies.clock.now,
@@ -185,7 +235,7 @@ export function createAssistantRuntime(dependencies: AssistantRuntimeDependencie
           contextSnapshotId: input.context.id,
           executionKind: input.kind,
           ...(input.responseMessageId ? { responseMessageId: input.responseMessageId } : {}),
-        })
+        }, {}, requestEvidence)
         activeRuns.set(runId, active)
         attachExternalCancellation(active, input.cancellationSignal)
         if (active.cancellationRequested || active.controller.signal.aborted) {
@@ -200,10 +250,73 @@ export function createAssistantRuntime(dependencies: AssistantRuntimeDependencie
           startedAt: dependencies.clock.now(),
         })
 
+        let checkpointStreamEventTail = Promise.resolve()
+        let checkpointStreamEventFailure: unknown
+        const checkpointStreamEvent = (event: StreamEvent): Promise<void> => {
+          const next = checkpointStreamEventTail.then(async () => {
+            if (checkpointStreamEventFailure || active.cancellationRequested || active.controller.signal.aborted) {
+              return
+            }
+            applyStreamEvent(active, event, maxOutputChars)
+            await record(active, 'stream.event', journalDataForStreamEvent(event), {
+              checkpoint: {
+                outputText: active.outputText,
+                streamEventCount: active.streamEventCount,
+              },
+            })
+          }).catch((error) => {
+            checkpointStreamEventFailure = error
+            throw error
+          })
+          checkpointStreamEventTail = next.then(
+            () => undefined,
+            () => undefined,
+          )
+          return next
+        }
+        const checkpointTextDelta = (text: string): Promise<void> => {
+          if (typeof text !== 'string' || !text) return Promise.resolve()
+          return checkpointStreamEvent({ type: 'text-delta', text })
+        }
+
         let execution: AssistantActivityExecutionResult
         try {
-          execution = await input.executor.execute({ run: active.run, signal: active.controller.signal })
-        } catch {
+          execution = await input.executor.execute({
+            run: active.run,
+            signal: active.controller.signal,
+            checkpointStreamEvent,
+            checkpointTextDelta,
+            async continueProviderTurns(continuation) {
+              const initialEventCount = active.streamEventCount
+              const outcome = await continueActivityProviderTurns(
+                active,
+                continuation.request,
+                continuation.session,
+                continuation.calls,
+                continuation.reasoningReplay,
+                continuation.outputText,
+                continuation.stream,
+                continuation.onStreamEvent,
+              )
+              return {
+                outputText: outcome,
+                eventCount: active.streamEventCount - initialEventCount,
+              }
+            },
+          })
+          await checkpointStreamEventTail
+          if (checkpointStreamEventFailure) throw checkpointStreamEventFailure
+        } catch (error) {
+          if (error instanceof PersistenceFailure) {
+            return err('persistence_failed', 'The assistant run could not be checkpointed.', { retryable: true })
+          }
+          if (active.failure) {
+            const failed = await finishFailed(active, active.failure.code, active.failure.message)
+            return err(active.failure.code, active.failure.message, {
+              retryable: false,
+              details: { runId: failed.id },
+            })
+          }
           if (active.cancellationRequested || active.controller.signal.aborted) {
             const cancelled = await finishCancelled(active)
             return err('cancelled', 'The assistant run was cancelled.', {
@@ -218,6 +331,13 @@ export function createAssistantRuntime(dependencies: AssistantRuntimeDependencie
           })
         }
 
+        if (active.failure) {
+          const failed = await finishFailed(active, active.failure.code, active.failure.message)
+          return err(active.failure.code, active.failure.message, {
+            retryable: false,
+            details: { runId: failed.id },
+          })
+        }
         if (active.cancellationRequested || active.controller.signal.aborted) {
           const cancelled = await finishCancelled(active)
           return err('cancelled', 'The assistant run was cancelled.', {
@@ -234,8 +354,8 @@ export function createAssistantRuntime(dependencies: AssistantRuntimeDependencie
             details: { runId: failed.id },
           })
         }
-        active.outputText = normalized.outputText
-        active.streamEventCount = normalized.eventCount
+        if (normalized.outputText !== undefined) active.outputText = normalized.outputText
+        if (normalized.eventCount !== undefined) active.streamEventCount = normalized.eventCount
         if (active.outputText.length > maxOutputChars) {
           const failed = await finishFailed(active, 'output_limit_exceeded', 'The assistant activity output exceeded the configured run limit.')
           return err('output_limit_exceeded', failed.failure?.message ?? 'The assistant activity output exceeded the configured run limit.', {
@@ -377,11 +497,10 @@ export function createAssistantRuntime(dependencies: AssistantRuntimeDependencie
         await recordModelOperationSelection(active, resumed)
         return await runProviderTurns(
           active,
-          resumed.request,
+          freezeChatRequest(resumed.request),
           input.providerGatewayOptions,
           input.session,
           pending.stepIndex + 1,
-          false,
         )
       } catch (error) {
         if (error instanceof PersistenceFailure) {
@@ -451,6 +570,24 @@ export function createAssistantRuntime(dependencies: AssistantRuntimeDependencie
       const recovered: AssistantRun[] = []
       for (const run of recoverableRuns) {
         if (activeRuns.has(run.id)) continue
+        let continuation: AssistantActivityContinuationIdentity | undefined
+        let requestSnapshotIdentity:
+          | { readonly requestHash: string; readonly capabilityRevision: string }
+          | undefined
+        try {
+          continuation = findOpenProviderContinuation(
+            await dependencies.persistence.list(run.id),
+          )
+          const requestSnapshot = await dependencies.persistence.getRequestSnapshot(run.id)
+          if (requestSnapshot?.requestHash && requestSnapshot.capabilityRevision) {
+            requestSnapshotIdentity = {
+              requestHash: requestSnapshot.requestHash,
+              capabilityRevision: requestSnapshot.capabilityRevision,
+            }
+          }
+        } catch {
+          return err('persistence_failed', 'Interrupted assistant run evidence could not be loaded for recovery.', { retryable: true })
+        }
         const active: ActiveRun = {
           controller: new AbortController(),
           now: dependencies.clock.now,
@@ -465,13 +602,24 @@ export function createAssistantRuntime(dependencies: AssistantRuntimeDependencie
             recovery: 'interrupted_after_restart',
             outputLength: active.outputText.length,
             streamEventCount: active.streamEventCount,
+            ...(continuation ? {
+              continuationId: continuation.id,
+              continuationStepIndex: continuation.stepIndex,
+              continuationMode: continuation.mode,
+            } : {}),
+            ...(requestSnapshotIdentity ? {
+              requestSnapshotIdentity,
+            } : {}),
           }, {
             status: 'failed',
             completedAt: dependencies.clock.now(),
             pendingModelOperation: undefined,
             failure: {
               code: 'interrupted',
-              message: 'The assistant run was interrupted before completion and was safely recovered.',
+              message: continuation
+                ? 'The assistant run was interrupted during a provider continuation and was safely recovered for a new turn only.'
+                : 'The assistant run was interrupted before completion and was safely recovered.',
+              ...(continuation ? { continuation } : {}),
             },
           }))
         } catch {
@@ -488,11 +636,8 @@ export function createAssistantRuntime(dependencies: AssistantRuntimeDependencie
     providerGatewayOptions: StartAssistantRunInput['providerGatewayOptions'],
     modelOperationSession: AssistantModelOperationSession | undefined,
     initialStepIndex: number,
-    prepareInitialRequest: boolean,
   ): Promise<ReturnType<AssistantRuntime['execute']> extends Promise<infer TResult> ? TResult : never> {
-    let request = prepareInitialRequest && modelOperationSession
-      ? modelOperationSession.prepareRequest(initialRequest)
-      : initialRequest
+    let request = initialRequest
     let stepIndex = initialStepIndex
 
     while (true) {
@@ -501,8 +646,9 @@ export function createAssistantRuntime(dependencies: AssistantRuntimeDependencie
         callId: string
         name: string
         arguments: JsonRecord
-        providerMetadata?: JsonRecord
+        providerMetadata?: ChatToolCallProviderMetadata
       }> = []
+      let reasoningReplay: readonly ChatReasoningReplayPart[] = Object.freeze([])
       for await (const event of dependencies.providerGateway.stream(request, {
         signal: active.controller.signal,
         ...(providerGatewayOptions ?? {}),
@@ -525,6 +671,15 @@ export function createAssistantRuntime(dependencies: AssistantRuntimeDependencie
             arguments: event.arguments ?? {},
             ...(event.providerMetadata ? { providerMetadata: event.providerMetadata } : {}),
           })
+        }
+        if (event.type === 'provider-continuation-state') {
+          if (
+            event.binding.providerId !== active.run.providerId
+            || event.binding.model !== active.run.model
+          ) {
+            throw new Error('The provider continuation state does not match the selected route.')
+          }
+          reasoningReplay = freezeReasoningReplay(event.reasoningReplay)
         }
         applyStreamEvent(active, event, maxOutputChars)
         await record(active, 'stream.event', journalDataForStreamEvent(event), {
@@ -552,11 +707,22 @@ export function createAssistantRuntime(dependencies: AssistantRuntimeDependencie
       }
       if (!modelOperationSession) return ok(await finishSucceeded(active))
 
+      request = freezeChatRequest({
+        ...request,
+        providerId: active.run.providerId,
+        model: active.run.model,
+        providerStateBinding: {
+          providerId: active.run.providerId,
+          model: active.run.model,
+        },
+      })
+
       const outcome = await modelOperationSession.evaluateTurn({
         run: active.run,
         request,
         outputText: active.outputText.slice(outputStart),
         calls: Object.freeze(calls),
+        reasoningReplay,
         stepIndex,
         signal: active.controller.signal,
       })
@@ -588,7 +754,98 @@ export function createAssistantRuntime(dependencies: AssistantRuntimeDependencie
       }
 
       await recordModelOperationSelection(active, outcome)
-      request = outcome.request
+      request = freezeChatRequest(outcome.request)
+      stepIndex += 1
+    }
+  }
+
+  async function continueActivityProviderTurns(
+    active: ActiveRun,
+    initialRequest: StartAssistantRunInput['request'],
+    modelOperationSession: AssistantModelOperationSession,
+    initialCalls: readonly {
+      callId: string
+      name: string
+      arguments: JsonRecord
+      providerMetadata?: ChatToolCallProviderMetadata
+    }[],
+    initialReasoningReplay: readonly ChatReasoningReplayPart[],
+    initialOutputText: string,
+    stream: import('@/modules/providers').ProviderAdapter['stream'],
+    onStreamEvent?: (event: StreamEvent) => void,
+  ): Promise<string> {
+    let request = freezeChatRequest(initialRequest)
+    let stepIndex = 0
+    let calls = Object.freeze([...initialCalls])
+    let reasoningReplay = freezeReasoningReplay(initialReasoningReplay)
+    let outputText = initialOutputText
+
+    while (true) {
+      const outcome = await modelOperationSession.evaluateTurn({
+        run: active.run,
+        request,
+        outputText,
+        calls,
+        reasoningReplay,
+        stepIndex,
+        signal: active.controller.signal,
+      })
+      if (outcome.kind === 'no-operation') {
+        return outputText
+      }
+      if (outcome.kind === 'awaiting-confirmation') {
+        throw new Error('Rich Chat cannot suspend for model-operation confirmation.')
+      }
+      await recordModelOperationSelection(active, outcome)
+      if (outcome.kind === 'cancelled' || active.controller.signal.aborted) {
+        throw new DOMException('The assistant run was cancelled.', 'AbortError')
+      }
+
+      const continuation = createActivityContinuationIdentity(
+        active,
+        outcome.request,
+        stepIndex,
+      )
+      await record(active, 'provider-continuation.started', continuationJournalData(continuation))
+      request = freezeChatRequest(outcome.request)
+      calls = Object.freeze([])
+      reasoningReplay = Object.freeze([])
+      outputText = ''
+      // Rich callback text before the tool call is provider narration, not the
+      // final answer. Start each canonical continuation with a fresh visible
+      // output accumulator so it cannot leak into the terminal response.
+      active.outputText = ''
+      for await (const event of stream(request, { signal: active.controller.signal })) {
+        if (active.controller.signal.aborted) break
+        if (event.type === 'tool-call') {
+          calls = Object.freeze([...calls, {
+            callId: event.toolCallId,
+            name: event.toolName,
+            arguments: event.arguments ?? {},
+            ...(event.providerMetadata ? { providerMetadata: event.providerMetadata } : {}),
+          }])
+        }
+        if (event.type === 'provider-continuation-state') {
+          if (event.binding.providerId !== active.run.providerId || event.binding.model !== active.run.model) {
+            throw new Error('The provider continuation state does not match the selected route.')
+          }
+          reasoningReplay = freezeReasoningReplay(event.reasoningReplay)
+        }
+        applyStreamEvent(active, event, maxOutputChars)
+        outputText = active.outputText
+        await record(active, 'stream.event', journalDataForStreamEvent(event), {
+          checkpoint: {
+            outputText: active.outputText,
+            streamEventCount: active.streamEventCount,
+          },
+        })
+        onStreamEvent?.(event)
+        if (active.failure) throw new Error(active.failure.message)
+      }
+      if (active.controller.signal.aborted) {
+        throw new DOMException('The assistant run was cancelled.', 'AbortError')
+      }
+      await record(active, 'provider-continuation.completed', continuationJournalData(continuation))
       stepIndex += 1
     }
   }
@@ -613,6 +870,8 @@ export function createAssistantRuntime(dependencies: AssistantRuntimeDependencie
     type: RunJournalEventType,
     data: JsonRecord,
     patch: Partial<AssistantRun> = {},
+    capturedRequest?: StartAssistantRunInput['request'] | AssistantActivityRequestEvidence,
+    contextReceipt?: AssistantContextPlanReceipt,
   ): Promise<AssistantRun> {
     return enqueue(active, async () => {
       const entry: RunJournalEntry = {
@@ -629,7 +888,10 @@ export function createAssistantRuntime(dependencies: AssistantRuntimeDependencie
           ...patch,
           journalSequence: entry.sequence,
         }
-        await dependencies.persistence.appendAndSave(entry, next)
+        const requestSnapshot = capturedRequest
+          ? createCapturedRequestSnapshot(next.id, entry.occurredAt, capturedRequest, contextReceipt)
+          : undefined
+        await dependencies.persistence.appendAndSave(entry, next, requestSnapshot)
         active.run = next
         await projectPersistedRun(active, next, entry)
         return next
@@ -770,15 +1032,15 @@ function createQueuedActivityRun(
 
 function normalizeActivityExecution(
   value: AssistantActivityExecutionResult,
-): { outputText: string; eventCount: number; outcome: 'succeeded' | 'failed'; failureMessage?: string } | undefined {
+): { outputText?: string; eventCount?: number; outcome: 'succeeded' | 'failed'; failureMessage?: string } | undefined {
   if (!value || typeof value !== 'object') return undefined
   if (value.outputText !== undefined && typeof value.outputText !== 'string') return undefined
   if (value.eventCount !== undefined && (!Number.isSafeInteger(value.eventCount) || value.eventCount < 0)) return undefined
   if (value.outcome !== undefined && value.outcome !== 'succeeded' && value.outcome !== 'failed') return undefined
   if (value.failureMessage !== undefined && (typeof value.failureMessage !== 'string' || value.failureMessage.length > 2_000)) return undefined
   return {
-    outputText: value.outputText ?? '',
-    eventCount: value.eventCount ?? 0,
+    ...(value.outputText !== undefined ? { outputText: value.outputText } : {}),
+    ...(value.eventCount !== undefined ? { eventCount: value.eventCount } : {}),
     outcome: value.outcome ?? 'succeeded',
     ...(value.failureMessage?.trim() ? { failureMessage: value.failureMessage.trim() } : {}),
   }
@@ -836,6 +1098,15 @@ function journalDataForStreamEvent(event: StreamEvent): JsonRecord {
       toolName: truncate(event.toolName, JOURNAL_LABEL_LIMIT),
     }
   }
+  if (event.type === 'provider-continuation-state') {
+    return {
+      eventType: event.type,
+      providerId: truncate(event.binding.providerId, JOURNAL_LABEL_LIMIT),
+      model: truncate(event.binding.model, JOURNAL_LABEL_LIMIT),
+      replayCount: event.reasoningReplay?.length ?? 0,
+      replayKinds: (event.reasoningReplay ?? []).map((part) => part.kind),
+    }
+  }
   if (event.type === 'usage') {
     return {
       eventType: event.type,
@@ -848,10 +1119,123 @@ function journalDataForStreamEvent(event: StreamEvent): JsonRecord {
       ...(typeof event.reasoningTokens === 'number' ? { reasoningTokens: event.reasoningTokens } : {}),
     }
   }
+  if (event.type === 'trace') {
+    return {
+      eventType: event.type,
+      traceId: truncate(event.traceId, JOURNAL_LABEL_LIMIT),
+      traceType: truncate(event.traceType, JOURNAL_LABEL_LIMIT),
+      traceStatus: truncate(event.traceStatus, JOURNAL_LABEL_LIMIT),
+      ...(event.title ? { title: truncate(event.title, JOURNAL_LABEL_LIMIT) } : {}),
+    }
+  }
   return {
     eventType: event.type,
     code: truncate(event.code, JOURNAL_LABEL_LIMIT),
   }
+}
+
+function createActivityContinuationIdentity(
+  active: ActiveRun,
+  request: StartAssistantRunInput['request'],
+  stepIndex: number,
+): AssistantActivityContinuationIdentity {
+  const requestHash = buildAssistantRequestHash(request)
+  return Object.freeze({
+    schema: ASSISTANT_ACTIVITY_CONTINUATION_IDENTITY_SCHEMA,
+    id: `assistant-continuation:${buildAssistantRequestHash({
+      runId: active.run.id,
+      sequence: active.run.journalSequence + 1,
+      stepIndex,
+      requestHash,
+    })}`,
+    phase: 'provider-turn',
+    providerId: request.providerId,
+    model: request.model,
+    requestHash,
+    stepIndex,
+    mode: continuationMode(request),
+    resume: 'new-turn-only',
+  })
+}
+
+function continuationMode(
+  request: StartAssistantRunInput['request'],
+): AssistantActivityContinuationIdentity['mode'] {
+  return request.messages.some((message) => (
+    message.role === 'assistant' && Boolean(message.toolCalls?.length)
+  )) ? 'native' : 'structured'
+}
+
+function continuationJournalData(
+  identity: AssistantActivityContinuationIdentity,
+): JsonRecord {
+  return { ...identity }
+}
+
+function findOpenProviderContinuation(
+  entries: readonly RunJournalEntry[],
+): AssistantActivityContinuationIdentity | undefined {
+  const open = new Map<string, { identity: AssistantActivityContinuationIdentity; sequence: number }>()
+  for (const entry of entries) {
+    if (entry.type === 'provider-continuation.started') {
+      const identity = parseActivityContinuationIdentity(entry.data)
+      if (identity) open.set(identity.id, { identity, sequence: entry.sequence })
+      continue
+    }
+    if (entry.type !== 'provider-continuation.completed') continue
+    const identity = parseActivityContinuationIdentity(entry.data)
+    if (!identity) continue
+    const started = open.get(identity.id)
+    if (started && sameActivityContinuationIdentity(started.identity, identity)) {
+      open.delete(identity.id)
+    }
+  }
+  let latest: { identity: AssistantActivityContinuationIdentity; sequence: number } | undefined
+  for (const candidate of open.values()) {
+    if (!latest || candidate.sequence > latest.sequence) latest = candidate
+  }
+  return latest?.identity
+}
+
+function parseActivityContinuationIdentity(
+  value: JsonRecord | undefined,
+): AssistantActivityContinuationIdentity | undefined {
+  if (!value || Object.keys(value).length !== 9 ||
+    value.schema !== ASSISTANT_ACTIVITY_CONTINUATION_IDENTITY_SCHEMA ||
+    value.phase !== 'provider-turn' || value.resume !== 'new-turn-only' ||
+    (value.mode !== 'native' && value.mode !== 'structured') ||
+    !isBoundedIdentity(value.id) || !isBoundedIdentity(value.providerId) ||
+    !isBoundedIdentity(value.model) || !isAssistantRequestHash(value.requestHash) ||
+    typeof value.stepIndex !== 'number' || !Number.isSafeInteger(value.stepIndex) ||
+    value.stepIndex < 0 || value.stepIndex > 1_000_000) {
+    return undefined
+  }
+  return Object.freeze({
+    schema: ASSISTANT_ACTIVITY_CONTINUATION_IDENTITY_SCHEMA,
+    id: value.id,
+    phase: 'provider-turn',
+    providerId: value.providerId,
+    model: value.model,
+    requestHash: value.requestHash,
+    stepIndex: value.stepIndex,
+    mode: value.mode,
+    resume: 'new-turn-only',
+  })
+}
+
+function sameActivityContinuationIdentity(
+  left: AssistantActivityContinuationIdentity,
+  right: AssistantActivityContinuationIdentity,
+): boolean {
+  return left.schema === right.schema
+    && left.id === right.id
+    && left.phase === right.phase
+    && left.providerId === right.providerId
+    && left.model === right.model
+    && left.requestHash === right.requestHash
+    && left.stepIndex === right.stepIndex
+    && left.mode === right.mode
+    && left.resume === right.resume
 }
 
 function normalizeMaxOutputChars(value: number | undefined): number {
@@ -861,4 +1245,117 @@ function normalizeMaxOutputChars(value: number | undefined): number {
 
 function truncate(value: string, limit: number): string {
   return value.length <= limit ? value : `${value.slice(0, limit)}…`
+}
+
+function createCapturedRequestSnapshot(
+  runId: AssistantRunId,
+  capturedAt: number,
+  request: StartAssistantRunInput['request'] | AssistantActivityRequestEvidence,
+  contextReceipt?: AssistantContextPlanReceipt,
+): AssistantRunCapturedRequestSnapshot {
+  const capabilityRevision = buildAssistantCapabilityRevision(
+    request.schema === ASSISTANT_ACTIVITY_REQUEST_EVIDENCE_SCHEMA
+      ? request.payload
+      : request,
+  )
+  const requestHash = buildAssistantRequestHash(request)
+  if (request.schema === ASSISTANT_ACTIVITY_REQUEST_EVIDENCE_SCHEMA) {
+    return {
+      schema: ASSISTANT_RUN_ACTIVITY_REQUEST_SNAPSHOT_SCHEMA,
+      runId,
+      capturedAt,
+      request,
+      capabilityRevision,
+      requestHash,
+    }
+  }
+  return {
+    schema: ASSISTANT_RUN_REQUEST_SNAPSHOT_SCHEMA,
+    runId,
+    capturedAt,
+    request,
+    capabilityRevision,
+    requestHash,
+    ...(contextReceipt ? { contextReceipt } : {}),
+  }
+}
+
+function freezeContextPlanReceipt(
+  receipt: AssistantContextPlanReceipt,
+): AssistantContextPlanReceipt {
+  return deepFreeze(cloneAssistantContextPlanReceipt(receipt))
+}
+
+function freezeActivityRequestEvidence(
+  evidence: AssistantActivityRequestEvidence,
+  input: StartAssistantActivityRunInput,
+): AssistantActivityRequestEvidence {
+  const serialized = JSON.stringify(evidence)
+  if (
+    typeof serialized !== 'string'
+    || serialized.length > ACTIVITY_REQUEST_EVIDENCE_MAX_BYTES
+  ) {
+    throw new Error('The activity request evidence is not serializable.')
+  }
+  const frozen = deepFreeze(JSON.parse(serialized)) as unknown
+  if (
+    !isAssistantActivityRequestEvidence(frozen)
+    || frozen.conversationId !== input.conversationId
+    || frozen.providerId !== input.providerId
+    || frozen.model !== input.model
+  ) {
+    throw new Error('The activity request evidence identity is invalid.')
+  }
+  return frozen
+}
+
+function isAssistantActivityRequestEvidence(
+  value: unknown,
+): value is AssistantActivityRequestEvidence {
+  if (!isJsonRecord(value)) return false
+  return value.schema === ASSISTANT_ACTIVITY_REQUEST_EVIDENCE_SCHEMA
+    && isBoundedIdentity(value.conversationId)
+    && isBoundedIdentity(value.providerId)
+    && isBoundedIdentity(value.model)
+    && isJsonRecord(value.payload)
+    && Array.isArray(value.redactedFields)
+    && value.redactedFields.length <= 512
+    && value.redactedFields.every((field) => (
+      typeof field === 'string' && field.length > 0 && field.length <= 512
+    ))
+    && (value.contextReceipt === undefined || isAssistantContextPlanReceipt(value.contextReceipt))
+}
+
+function isBoundedIdentity(value: unknown): value is string {
+  return typeof value === 'string' && value.length > 0 && value.length <= 320
+}
+
+function isJsonRecord(value: unknown): value is JsonRecord {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return false
+  return Object.values(value as Record<string, unknown>).every(isJsonValue)
+}
+
+function isJsonValue(value: unknown): boolean {
+  if (value === null || typeof value === 'string' || typeof value === 'boolean') return true
+  if (typeof value === 'number') return Number.isFinite(value)
+  if (Array.isArray(value)) return value.every(isJsonValue)
+  return isJsonRecord(value)
+}
+
+function freezeReasoningReplay(
+  replay: readonly ChatReasoningReplayPart[] | undefined,
+): readonly ChatReasoningReplayPart[] {
+  if (!replay?.length) return Object.freeze([])
+  return Object.freeze(replay.map((part) => Object.freeze({
+    ...part,
+    ...(part.kind === 'encrypted' && part.summary
+      ? { summary: Object.freeze([...part.summary]) }
+      : {}),
+  })))
+}
+
+function deepFreeze<Value>(value: Value): Value {
+  if (!value || typeof value !== 'object' || Object.isFrozen(value)) return value
+  for (const child of Object.values(value as Record<string, unknown>)) deepFreeze(child)
+  return Object.freeze(value)
 }

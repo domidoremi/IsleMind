@@ -3,10 +3,13 @@ import {
   type AssistantRunId,
   type IdGenerator,
   type Result,
+  type StreamEvent,
 } from '@/core'
 
 import type {
+  AssistantActivityRequestEvidence,
   AssistantActivityExecutionResult,
+  AssistantActivityExecutionInput,
   AssistantRun,
   AssistantRunProjection,
   AssistantRuntimeErrorCode,
@@ -28,6 +31,9 @@ export type AssistantConversationDurableExecutionStartedPublication =
 export interface AssistantConversationDurableExecutionCallbackInput<TStarted> {
   readonly run: AssistantRun
   readonly signal: AbortSignal
+  readonly checkpointStreamEvent?: (event: StreamEvent) => Promise<void>
+  readonly checkpointTextDelta?: (text: string) => Promise<void>
+  readonly continueProviderTurns?: AssistantActivityExecutionInput['continueProviderTurns']
   readonly started: (
     value: TStarted,
   ) => AssistantConversationDurableExecutionStartedPublication
@@ -39,6 +45,7 @@ export interface AssistantConversationDurableExecutionInput<TStarted> {
   readonly responseMessageId: string
   readonly providerId: string
   readonly model: string
+  readonly requestEvidence?: AssistantActivityRequestEvidence
   readonly context: ContextSnapshot
   readonly workspaceWritebackHandoff?: AssistantConversationWorkspaceWritebackHandoff
   readonly cancellationSignal?: AbortSignal
@@ -109,6 +116,7 @@ export function createAssistantConversationDurableExecutionRuntime(
       responseMessageId: input.responseMessageId,
       providerId: input.providerId,
       model: input.model,
+      requestEvidence: input.requestEvidence,
       context: input.context,
       ...(input.workspaceWritebackHandoff
         ? { workspaceWritebackHandoff: input.workspaceWritebackHandoff }
@@ -116,7 +124,7 @@ export function createAssistantConversationDurableExecutionRuntime(
       cancellationSignal: input.cancellationSignal,
       onPersisted: input.onPersisted,
       executor: {
-        async execute({ run, signal }) {
+        async execute({ run, signal, checkpointStreamEvent, checkpointTextDelta, continueProviderTurns }) {
           const started = (
             value: TStarted,
           ): AssistantConversationDurableExecutionStartedPublication => {
@@ -140,7 +148,14 @@ export function createAssistantConversationDurableExecutionRuntime(
           }
 
           try {
-            return await input.execute({ run, signal, started })
+            return await input.execute({
+              run,
+              signal,
+              started,
+              checkpointStreamEvent,
+              checkpointTextDelta,
+              continueProviderTurns,
+            })
           } finally {
             if (publicationState === 'open') {
               publicationState = 'execution_settled'

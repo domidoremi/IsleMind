@@ -3,7 +3,7 @@
  * concrete parsing, task, trace, localization, and provider adapters.
  */
 
-import type { ProcessTrace, ToolContentBlock } from '@/core'
+import type { ProcessTrace, StreamEvent, ToolContentBlock } from '@/core'
 
 export type AssistantMcpToolPermission = 'read-only' | 'read-write' | 'destructive'
 
@@ -122,6 +122,7 @@ export interface AssistantMcpToolTurnInput<
   tools: readonly TResolved[]
   manifests?: readonly AssistantTaggedToolManifestLike[]
   signal: AbortSignal
+  onStreamEvent?: (event: StreamEvent) => void
 }
 
 export interface AssistantMcpToolTurnRuntimeDependencies<
@@ -376,6 +377,7 @@ export function createAssistantMcpToolTurnRuntime<
         sessionId: input.conversation.id,
         settings: currentSettings,
         remoteCompactEligible: false,
+        onStreamEvent: input.onStreamEvent,
       })
       const revisionText = dependencies.sanitizeAnswer(revision.text)
       if (revisionText.trim()) return { text: revisionText, usage: revision.usage }

@@ -209,8 +209,9 @@ export function createContextPackingPolicy<
       Math.floor(input.modelContextWindow * INPUT_CONTEXT_RATIO) -
         reservedOutputTokens,
     );
+    const baseContextPrompt = input.contextPrompt ?? "";
     const fixedTokens = dependencies.estimateTextTokens(
-      [input.systemPrompt, input.contextPrompt].filter(Boolean).join("\n\n"),
+      [input.systemPrompt, baseContextPrompt].filter(Boolean).join("\n\n"),
     );
     const budgetTokens = Math.max(256, modelBudget - fixedTokens);
     const cleanMessages = input.messages
@@ -233,7 +234,7 @@ export function createContextPackingPolicy<
     ) {
       return {
         messages: selected.map(toRequestMessage),
-        contextPrompt: input.contextPrompt ?? "",
+        contextPrompt: baseContextPrompt,
         estimatedInputTokens,
         budgetTokens,
         trimmedCount: 0,
@@ -271,31 +272,30 @@ export function createContextPackingPolicy<
     const selectedTokens = dependencies.estimateMessageTokens(selected);
     const summaryBudget = Math.max(
       80,
-      budgetTokens -
-        selectedTokens -
-        dependencies.estimateTextTokens(input.contextPrompt ?? "") -
-        24,
+      budgetTokens - selectedTokens - 24,
     );
     const summary = summarizeMessages(
       trimmed,
       summaryBudget,
       dependencies.estimateTextTokens,
     );
+    const summaryPrompt = summary.text ? `历史摘要\n${summary.text}` : "";
     const contextPrompt = [
-      input.contextPrompt,
-      summary.text ? `历史摘要\n${summary.text}` : "",
+      baseContextPrompt,
+      summaryPrompt,
     ]
       .filter(Boolean)
       .join("\n\n");
+    const summaryPromptTokens = dependencies.estimateTextTokens(summaryPrompt);
     estimatedInputTokens =
       dependencies.estimateMessageTokens(selected) +
-      dependencies.estimateTextTokens(contextPrompt);
+      summaryPromptTokens;
 
     while (estimatedInputTokens > budgetTokens && selected.length > 1) {
       selected = selected.slice(1);
       estimatedInputTokens =
         dependencies.estimateMessageTokens(selected) +
-        dependencies.estimateTextTokens(contextPrompt);
+        summaryPromptTokens;
     }
 
     let truncatedSourceTokens = 0;
@@ -310,9 +310,7 @@ export function createContextPackingPolicy<
             selected[0].content,
             Math.max(
               128,
-              budgetTokens -
-                dependencies.estimateTextTokens(contextPrompt) -
-                12,
+              budgetTokens - summaryPromptTokens - 12,
             ),
             dependencies.estimateTextTokens,
           ),
@@ -321,7 +319,7 @@ export function createContextPackingPolicy<
       truncatedCompressedTokens = dependencies.estimateMessageTokens(selected);
       estimatedInputTokens =
         dependencies.estimateMessageTokens(selected) +
-        dependencies.estimateTextTokens(contextPrompt);
+        summaryPromptTokens;
     }
     const summaryTokens = dependencies.estimateTextTokens(summary.text);
     const sourceTokens = trimmedTokens + truncatedSourceTokens;

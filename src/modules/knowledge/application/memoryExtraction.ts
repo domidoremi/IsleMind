@@ -1,9 +1,11 @@
 import type { MemoryCandidateMessage } from '../domain/memoryCandidatePolicy'
 import {
-  extractDeterministicMemoryCandidates,
+  extractDeterministicStructuredMemoryCandidates,
   isUsefulMemoryCandidate,
   normalizeMemoryCandidateText,
+  parseMemoryCandidateFact,
 } from '../domain/memoryCandidatePolicy'
+import { LOCAL_USER_MEMORY_SCOPE_ID } from '../contracts'
 import type { MemoryCandidatePersistenceUseCase } from './memoryCandidatePersistence'
 
 export interface MemoryExtractionInput {
@@ -40,7 +42,7 @@ export function createMemoryExtractionUseCase(
         .join('\n')
       if (!recent) return []
 
-      const deterministicItems = extractDeterministicMemoryCandidates(input.messages)
+      const deterministicItems = extractDeterministicStructuredMemoryCandidates(input.messages)
       let modelItems: string[] = []
       if (input.modelExtraction) {
         try {
@@ -56,20 +58,29 @@ export function createMemoryExtractionUseCase(
       }
 
       throwIfMemoryExtractionAborted(input.signal)
+      const modelSourceMessageIds = input.messages
+        .filter((message) => message.role === 'user' && message.status === 'done' && message.id?.trim())
+        .slice(-6)
+        .map((message) => message.id!.trim())
       return persistence.persist({
         conversationId: input.conversationId,
+        scope: { kind: 'user', id: LOCAL_USER_MEMORY_SCOPE_ID },
         candidates: [
-          ...deterministicItems.map((content) => ({
-            content,
+          ...deterministicItems.map((candidate) => ({
+            ...candidate,
             sourceKind: 'deterministic' as const,
             sourceDetail: input.sourceDetails.deterministic,
             confidence: 0.82,
+            sensitivity: 'normal' as const,
           })),
           ...modelItems.map((content) => ({
             content,
+            ...parseMemoryCandidateFact(content),
             sourceKind: 'model' as const,
             sourceDetail: input.sourceDetails.model,
+            sourceMessageIds: modelSourceMessageIds,
             confidence: 0.68,
+            sensitivity: 'normal' as const,
           })),
         ],
         cancellationSignal: input.signal,

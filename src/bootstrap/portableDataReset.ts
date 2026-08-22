@@ -1,4 +1,6 @@
 import { createPortableDataResetRuntime } from '@/modules/data-management'
+import { createSqliteAssistantRunPersistence } from '@/modules/assistant-runtime'
+import { createExpoSqliteDatabaseProvider } from '@/platform/storage'
 import type { AIProvider } from '@/types/providerContracts'
 import {
   APPLICATION_DATA_STORAGE_KEYS,
@@ -31,6 +33,10 @@ interface PortableDataResetSnapshot {
   providers: readonly AIProvider[]
 }
 
+const assistantRunPersistence = createSqliteAssistantRunPersistence(
+  createExpoSqliteDatabaseProvider(),
+)
+
 const RESET_RAW_STORAGE_KEYS = Object.freeze([
   ...Object.values(APPLICATION_DATA_STORAGE_KEYS),
   '@islemind/provider-health',
@@ -57,6 +63,10 @@ export const portableDataResetRuntime = createPortableDataResetRuntime<PortableD
     {
       id: 'conversations',
       clear: async () => conversationPersistence.clear(),
+    },
+    {
+      id: 'assistant-runs',
+      clear: async () => assistantRunPersistence.clear(),
     },
     {
       id: 'provider-health',

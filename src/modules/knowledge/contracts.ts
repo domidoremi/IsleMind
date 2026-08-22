@@ -59,16 +59,32 @@ export interface KnowledgeContextRetrieverDependencies {
 
 export type MemoryCandidateSourceKind = 'deterministic' | 'model'
 
+export const LOCAL_USER_MEMORY_SCOPE_ID = 'local-user'
+
+export type KnowledgeMemoryScopeKind = 'user' | 'conversation'
+export type KnowledgeMemorySensitivity = 'normal' | 'sensitive'
+
+export interface KnowledgeMemoryScope {
+  kind: KnowledgeMemoryScopeKind
+  id: string
+}
+
 export interface MemoryCandidateRecord {
   content: string
 }
 
 export interface PendingMemoryCandidate {
   conversationId: string
+  scope?: KnowledgeMemoryScope
   content: string
+  subject?: string
+  key?: string
+  value?: string
   sourceKind: MemoryCandidateSourceKind
   sourceDetail: string
+  sourceMessageIds?: readonly string[]
   confidence: number
+  sensitivity?: KnowledgeMemorySensitivity
 }
 
 export interface KnowledgeRepositoryOperationOptions {
@@ -88,7 +104,7 @@ export const KNOWLEDGE_MEMORY_RECORD_SCHEMA = 'islemind.knowledge-memory-record.
 export const KNOWLEDGE_DOCUMENT_RECORD_SCHEMA = 'islemind.knowledge-document-record.v1'
 export const KNOWLEDGE_CHUNK_RECORD_SCHEMA = 'islemind.knowledge-chunk-record.v1'
 
-export type KnowledgeMemoryStatus = 'pending' | 'active' | 'disabled'
+export type KnowledgeMemoryStatus = 'pending' | 'active' | 'superseded' | 'disabled'
 export type KnowledgeMemorySourceKind = 'manual' | 'deterministic' | 'model' | 'imported' | 'legacy'
 
 /**
@@ -100,11 +116,22 @@ export interface KnowledgeMemoryRecord extends MemoryCandidateRecord {
   schema: typeof KNOWLEDGE_MEMORY_RECORD_SCHEMA
   id: string
   status: KnowledgeMemoryStatus
+  scope: KnowledgeMemoryScope
+  subject?: string
+  key?: string
+  value?: string
+  sensitivity: KnowledgeMemorySensitivity
+  sourceMessageIds: readonly string[]
+  validFrom?: number
+  validUntil?: number
+  supersedesId?: string
+  conflictWithId?: string
   conversationId?: string
   sourceKind: KnowledgeMemorySourceKind
   sourceDetail?: string
   confidence?: number
   lastHitAt?: number
+  lastConfirmedAt?: number
   createdAt: number
   updatedAt: number
 }
@@ -113,17 +140,28 @@ export interface KnowledgeMemoryWrite {
   id?: string
   content: string
   status: KnowledgeMemoryStatus
+  scope?: KnowledgeMemoryScope
+  subject?: string
+  key?: string
+  value?: string
+  sensitivity?: KnowledgeMemorySensitivity
+  sourceMessageIds?: readonly string[]
+  validFrom?: number
+  validUntil?: number
+  supersedesId?: string
+  conflictWithId?: string
   conversationId?: string
   sourceKind: KnowledgeMemorySourceKind
   sourceDetail?: string
   confidence?: number
   lastHitAt?: number
+  lastConfirmedAt?: number
   createdAt?: number
   updatedAt?: number
 }
 
-export interface KnowledgeMemoryListInput extends KnowledgeRepositoryOperationOptions {
-  statuses?: readonly KnowledgeMemoryStatus[]
+export interface KnowledgeMemoryListInput<Status extends KnowledgeMemoryStatus = KnowledgeMemoryStatus> extends KnowledgeRepositoryOperationOptions {
+  statuses?: readonly Status[]
 }
 
 export interface KnowledgeMemorySearchHit extends KnowledgeMemoryRecord {
@@ -134,6 +172,7 @@ export interface KnowledgeMemorySearchInput extends KnowledgeRepositoryOperation
   query: string
   limit: number
   statuses: readonly KnowledgeMemoryStatus[]
+  scopes?: readonly KnowledgeMemoryScope[]
 }
 
 export interface KnowledgeRepositorySnapshot {
@@ -143,7 +182,9 @@ export interface KnowledgeRepositorySnapshot {
 }
 
 export interface KnowledgeMemoryRepository extends MemoryCandidateRepository {
-  listMemories(input?: KnowledgeMemoryListInput): Promise<readonly KnowledgeMemoryRecord[]>
+  listMemories<const Status extends KnowledgeMemoryStatus = KnowledgeMemoryStatus>(
+    input?: KnowledgeMemoryListInput<Status>,
+  ): Promise<readonly (KnowledgeMemoryRecord & { status: Status })[]>
   saveMemory(
     input: KnowledgeMemoryWrite,
     options?: KnowledgeRepositoryOperationOptions,

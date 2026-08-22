@@ -12,6 +12,7 @@ import { conversationAssistantProviderToolAdmissionRuntime } from '@/bootstrap/c
 import { conversationAssistantReplySessionRuntime } from '@/bootstrap/conversationAssistantReplySessionRuntime'
 import { conversationAssistantRequestPlanningRuntime } from '@/bootstrap/conversationAssistantRequestPlanningRuntime'
 import { conversationAssistantStreamLifecycleRuntime } from '@/bootstrap/conversationAssistantStreamLifecycleRuntime'
+import { createConversationModelOperationSession } from '@/bootstrap/conversationModelOperationRuntime'
 import {
   conversationAssistantWorkspaceSourceRuntime,
   conversationAssistantWorkspaceWritebackHandoffRuntime,
@@ -82,6 +83,14 @@ export const conversationAssistantReplyStartRuntime =
     },
     getSettings() {
       return useSettingsStore.getState().settings
+    },
+    createModelOperationSession(input) {
+      return createConversationModelOperationSession({
+        conversation: input.conversation,
+        provider: input.provider,
+        settings: input.settings,
+        allowConfirmation: false,
+      })
     },
     filterSendableAttachments,
   })

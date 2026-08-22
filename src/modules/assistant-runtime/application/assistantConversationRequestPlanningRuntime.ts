@@ -284,6 +284,8 @@ export interface AssistantConversationRequestPlanningInput<
   readonly lastUserMessage?: { readonly content?: string }
   readonly providerToolCount: number
   readonly upstreamModel: string
+  /** The reply-owned signal must reach any model-backed planning effect. */
+  readonly signal: AbortSignal
 }
 
 export interface AssistantConversationRequestPlanningRuntimeEvent {
@@ -705,6 +707,7 @@ export function createAssistantConversationRequestPlanningRuntime<
         messages: transcript,
         contextPrompt: remoteCompactProbe.contextPrompt,
         settings: input.settings,
+        signal: input.signal,
         conversationId: input.conversationId,
       })
       applicationSummaryDurationMs = summaryResult.durationMs

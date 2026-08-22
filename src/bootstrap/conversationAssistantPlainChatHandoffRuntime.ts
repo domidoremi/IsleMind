@@ -4,7 +4,7 @@ import {
 import type { ProcessTrace } from '@/core'
 import { conversationAssistantDetachedWorkRegistry } from '@/bootstrap/conversationAssistantDetachedWorkRegistry'
 import { createVNextPlainChatRuntime } from '@/bootstrap/vnextConversationRuntime'
-import { conversationPersistence } from '@/bootstrap/conversationPersistence'
+import { saveConversationRecord } from '@/presentation/features/conversations/conversationStorePersistenceCommand'
 import { projectConversationAssistantFailure } from '@/bootstrap/conversationAssistantMessageProjection'
 import { runConversationMemoryExtraction } from '@/bootstrap/conversationMemoryExtractionRuntime'
 import {
@@ -46,7 +46,7 @@ export const conversationAssistantPlainChatHandoffRuntime =
         (message) => message.id === assistantMessageId,
       )?.status === 'cancelled'
     },
-    saveConversation: conversationPersistence.save,
+    saveConversation: saveConversationRecord,
     async startPlainChatRun(input) {
       const handle = await tryStartVNextPlainChatRun({
         ...input,

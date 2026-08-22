@@ -7,6 +7,7 @@ import {
 } from '@/platform/storage'
 import * as v from 'valibot'
 import {
+  LOCAL_USER_MEMORY_SCOPE_ID,
   KNOWLEDGE_CHUNK_RECORD_SCHEMA,
   KNOWLEDGE_DOCUMENT_RECORD_SCHEMA,
   KNOWLEDGE_MEMORY_RECORD_SCHEMA,
@@ -16,10 +17,14 @@ import {
   type KnowledgeEmbeddingProvider,
   type KnowledgeFtsSearchHit,
   type KnowledgeFtsSearchInput,
+  type KnowledgeMemoryListInput,
   type KnowledgeMemoryRecord,
+  type KnowledgeMemoryScope,
   type KnowledgeMemorySearchHit,
   type KnowledgeMemorySearchInput,
+  type KnowledgeMemorySensitivity,
   type KnowledgeMemorySourceKind,
+  type KnowledgeMemoryScopeKind,
   type KnowledgeMemoryStatus,
   type KnowledgeMemoryWrite,
   type KnowledgeRepository,
@@ -29,23 +34,46 @@ import {
 } from '../contracts'
 
 const MIGRATION_SCOPE = 'knowledge'
-const MIGRATION_VERSION = 2
+const MIGRATION_VERSION = 3
 const MAX_MEMORY_CONTENT_LENGTH = 4_000
+const MAX_MEMORY_FACT_FIELD_LENGTH = 512
+const MAX_MEMORY_SOURCE_MESSAGE_IDS = 64
 const MAX_DOCUMENT_TITLE_LENGTH = 512
 const MAX_DOCUMENT_SOURCE_LENGTH = 2_048
 const MAX_CHUNK_CONTENT_LENGTH = 24_000
 const MAX_METADATA_ITEMS = 64
 const MAX_FTS_QUERY_LENGTH = 16_384
 
+const MEMORY_SELECT_COLUMNS = `id, content, status, scopeKind, scopeId, subject, factKey, factValue,
+  sensitivity, sourceMessageIdsJson, validFrom, validUntil, supersedesId, conflictWithId,
+  conversationId, sourceKind, sourceDetail, confidence, lastHitAt, lastConfirmedAt, createdAt, updatedAt`
+const MEMORY_SEARCH_SELECT_COLUMNS = `memory.id, memory.content, memory.status, memory.scopeKind,
+  memory.scopeId, memory.subject, memory.factKey, memory.factValue, memory.sensitivity,
+  memory.sourceMessageIdsJson, memory.validFrom, memory.validUntil, memory.supersedesId,
+  memory.conflictWithId, memory.conversationId, memory.sourceKind, memory.sourceDetail,
+  memory.confidence, memory.lastHitAt, memory.lastConfirmedAt, memory.createdAt, memory.updatedAt`
+
 const memoryRowSchema = v.object({
   id: v.string(),
   content: v.string(),
   status: v.string(),
+  scopeKind: v.nullish(v.string()),
+  scopeId: v.nullish(v.string()),
+  subject: v.nullish(v.string()),
+  factKey: v.nullish(v.string()),
+  factValue: v.nullish(v.string()),
+  sensitivity: v.nullish(v.string()),
+  sourceMessageIdsJson: v.nullish(v.string()),
+  validFrom: v.nullish(v.number()),
+  validUntil: v.nullish(v.number()),
+  supersedesId: v.nullish(v.string()),
+  conflictWithId: v.nullish(v.string()),
   conversationId: v.nullish(v.string()),
   sourceKind: v.nullish(v.string()),
   sourceDetail: v.nullish(v.string()),
   confidence: v.nullish(v.number()),
   lastHitAt: v.nullish(v.number()),
+  lastConfirmedAt: v.nullish(v.number()),
   createdAt: v.number(),
   updatedAt: v.number(),
 })
@@ -158,18 +186,32 @@ export function createSqliteKnowledgeRepository(
         {
           scope: MIGRATION_SCOPE,
           version: MIGRATION_VERSION,
-          name: 'knowledge-memory-document-chunk-repository',
+          name: 'structured-memory-facts-and-scoped-retrieval',
           async up(transaction) {
             await transaction.exec(`
               CREATE TABLE IF NOT EXISTS memories (
                 id TEXT PRIMARY KEY NOT NULL,
                 content TEXT NOT NULL,
                 status TEXT NOT NULL,
+                scopeKind TEXT NOT NULL DEFAULT 'user',
+                scopeId TEXT NOT NULL DEFAULT '${LOCAL_USER_MEMORY_SCOPE_ID}',
+                subject TEXT,
+                normalizedSubject TEXT,
+                factKey TEXT,
+                normalizedKey TEXT,
+                factValue TEXT,
+                sensitivity TEXT NOT NULL DEFAULT 'normal',
+                sourceMessageIdsJson TEXT NOT NULL DEFAULT '[]',
+                validFrom INTEGER,
+                validUntil INTEGER,
+                supersedesId TEXT,
+                conflictWithId TEXT,
                 conversationId TEXT,
                 sourceKind TEXT,
                 sourceDetail TEXT,
                 confidence REAL,
                 lastHitAt INTEGER,
+                lastConfirmedAt INTEGER,
                 createdAt INTEGER NOT NULL,
                 updatedAt INTEGER NOT NULL
               );
@@ -211,6 +253,7 @@ export function createSqliteKnowledgeRepository(
               );
             `)
             await ensureLegacyColumns(transaction)
+            await ensureStructuredMemoryIntegrity(transaction)
             await ensureKnowledgeSearchTables(transaction, searchMode)
           },
         },
@@ -226,28 +269,33 @@ export function createSqliteKnowledgeRepository(
     return value
   }
 
-  async function listMemories(input: {
-    statuses?: readonly KnowledgeMemoryStatus[]
-    signal?: AbortSignal
-  } = {}): Promise<readonly KnowledgeMemoryRecord[]> {
+  async function listMemories<const Status extends KnowledgeMemoryStatus = KnowledgeMemoryStatus>(
+    input: KnowledgeMemoryListInput<Status> = {},
+  ): Promise<readonly (KnowledgeMemoryRecord & { status: Status })[]> {
     const statuses = normalizeMemoryStatuses(input.statuses)
     const placeholders = statuses.map(() => '?').join(', ')
     const rows = await (await database(input.signal)).getAll<Record<string, unknown>>(
-      `SELECT id, content, status, conversationId, sourceKind, sourceDetail, confidence, lastHitAt, createdAt, updatedAt
+      `SELECT ${MEMORY_SELECT_COLUMNS}
        FROM memories WHERE status IN (${placeholders}) ORDER BY updatedAt DESC`,
       statuses,
     )
     throwIfAborted(input.signal)
-    return rows.map(normalizeMemoryRow)
+    return rows.map(normalizeMemoryRow) as unknown as readonly (KnowledgeMemoryRecord & { status: Status })[]
   }
 
   async function saveMemory(
     input: KnowledgeMemoryWrite,
     operation: KnowledgeRepositoryOperationOptions = {},
   ): Promise<KnowledgeMemoryRecord> {
-    const record = normalizeMemoryWrite(input, clock, ids)
+    let record = normalizeMemoryWrite(input, clock, ids)
     const value = await database(operation.signal)
     await value.transaction(async (transaction) => {
+      record = await resolveMemoryWrite(
+        transaction,
+        record,
+        assertTimestamp(clock.now(), 'clock timestamp'),
+        operation.signal,
+      )
       await writeMemoryRecord(transaction, record, operation.signal)
     })
     throwIfAborted(operation.signal)
@@ -262,11 +310,43 @@ export function createSqliteKnowledgeRepository(
     const memoryId = normalizeIdentifier(id, 'memory id')
     const normalizedStatus = normalizeMemoryStatus(status)
     const value = await database(operation.signal)
-    await run(value,
-      'UPDATE memories SET status = ?, updatedAt = ? WHERE id = ?',
-      [normalizedStatus, clock.now(), memoryId],
-      operation.signal,
-    )
+    const now = assertTimestamp(clock.now(), 'clock timestamp')
+    await value.transaction(async (transaction) => {
+      const target = await readMemoryById(transaction, memoryId, operation.signal)
+      if (!target) {
+        await run(transaction,
+          'UPDATE memories SET status = ?, updatedAt = ? WHERE id = ?',
+          [normalizedStatus, now, memoryId],
+          operation.signal,
+        )
+        return
+      }
+      if (normalizedStatus !== 'active') {
+        await run(transaction,
+          'UPDATE memories SET status = ?, updatedAt = ? WHERE id = ?',
+          [normalizedStatus, now, memoryId],
+          operation.signal,
+        )
+        return
+      }
+
+      const active = await readActiveMemoryForLogicalKey(transaction, target, operation.signal)
+      if (active && active.id !== target.id) {
+        await writeMemoryRecord(transaction, {
+          ...active,
+          status: 'superseded',
+          updatedAt: now,
+        }, operation.signal)
+      }
+      const { conflictWithId: _conflictWithId, ...confirmed } = target
+      await writeMemoryRecord(transaction, {
+        ...confirmed,
+        status: 'active',
+        ...(active && active.id !== target.id ? { supersedesId: active.id } : {}),
+        lastConfirmedAt: now,
+        updatedAt: now,
+      }, operation.signal)
+    })
   }
 
   async function deleteMemory(id: string, operation: KnowledgeRepositoryOperationOptions = {}): Promise<void> {
@@ -297,36 +377,45 @@ export function createSqliteKnowledgeRepository(
     const limit = assertPositiveInteger(input.limit, 'memory search limit')
     const statuses = Array.from(new Set(input.statuses.map(normalizeMemoryStatus)))
     const placeholders = statuses.map(() => '?').join(', ')
+    const scopes = normalizeMemoryScopes(input.scopes)
+    const scopeClause = scopes.length
+      ? ` AND (${scopes.map(() => '(memory.scopeKind = ? AND memory.scopeId = ?)').join(' OR ')})`
+      : ''
+    const scopeParameters = scopes.flatMap((scope) => [scope.kind, scope.id])
     const searchTerms = tokenizeFtsQuery(query).slice(0, 16)
     const ftsQuery = buildFtsQuery(query)
     if (!ftsQuery || !searchTerms.length) return []
     const value = await database(input.signal)
     const candidateLimit = Math.max(limit * 4, limit)
+    const now = assertTimestamp(clock.now(), 'clock timestamp')
     const rows = searchMode === 'fts5'
       ? await value.getAll<Record<string, unknown>>(
-        `SELECT memory.id, memory.content, memory.status, memory.conversationId, memory.sourceKind,
-                memory.sourceDetail, memory.confidence, memory.lastHitAt, memory.createdAt, memory.updatedAt,
+        `SELECT ${MEMORY_SEARCH_SELECT_COLUMNS},
                 bm25(memory_fts) AS score
          FROM memory_fts
          JOIN memories AS memory ON memory.id = memory_fts.id
          WHERE memory_fts MATCH ? AND memory.status IN (${placeholders})
+           AND (memory.validFrom IS NULL OR memory.validFrom <= ?)
+           AND (memory.validUntil IS NULL OR memory.validUntil > ?)
+           ${scopeClause}
          LIMIT ?`,
-        [ftsQuery, ...statuses, candidateLimit],
+        [ftsQuery, ...statuses, now, now, ...scopeParameters, candidateLimit],
       )
       : await value.getAll<Record<string, unknown>>(
-        `SELECT memory.id, memory.content, memory.status, memory.conversationId, memory.sourceKind,
-                memory.sourceDetail, memory.confidence, memory.lastHitAt, memory.createdAt, memory.updatedAt,
+        `SELECT ${MEMORY_SEARCH_SELECT_COLUMNS},
                 0.0 AS score
          FROM memory_fts
          JOIN memories AS memory ON memory.id = memory_fts.id
          WHERE (${searchTerms.map(() => 'LOWER(memory_fts.content) LIKE ?').join(' OR ')})
            AND memory.status IN (${placeholders})
+           AND (memory.validFrom IS NULL OR memory.validFrom <= ?)
+           AND (memory.validUntil IS NULL OR memory.validUntil > ?)
+           ${scopeClause}
          ORDER BY memory.updatedAt DESC
          LIMIT ?`,
-        [...searchTerms.map(likeSearchPattern), ...statuses, candidateLimit],
+        [...searchTerms.map(likeSearchPattern), ...statuses, now, now, ...scopeParameters, candidateLimit],
       )
     throwIfAborted(input.signal)
-    const now = assertTimestamp(clock.now(), 'clock timestamp')
     const ranked = rows
       .map(normalizeMemorySearchRow)
       .sort((left, right) => memoryRankScore(left, now) - memoryRankScore(right, now))
@@ -335,12 +424,6 @@ export function createSqliteKnowledgeRepository(
       for (const memory of ranked) {
         await run(transaction, 'UPDATE memories SET lastHitAt = ? WHERE id = ?', [now, memory.id], input.signal)
       }
-      await run(
-        transaction,
-        "UPDATE memories SET status = 'disabled', updatedAt = ? WHERE status = 'active' AND COALESCE(lastHitAt, updatedAt, createdAt) < ?",
-        [now, now - 30 * 24 * 60 * 60 * 1000],
-        input.signal,
-      )
     })
     return ranked
   }
@@ -357,12 +440,16 @@ export function createSqliteKnowledgeRepository(
     const imported: KnowledgeMemoryRecord[] = []
     await value.transaction(async (transaction) => {
       const existingRows = await transaction.getAll<Record<string, unknown>>(
-        'SELECT id, content, status, conversationId, sourceKind, sourceDetail, confidence, lastHitAt, createdAt, updatedAt FROM memories',
+        `SELECT ${MEMORY_SELECT_COLUMNS} FROM memories`,
       )
       const records = existingRows.map(normalizeMemoryRow)
       for (const input of memories) {
         throwIfAborted(operation.signal)
-        const incoming = normalizeMemoryWrite(input, clock, ids)
+        const incoming = resolveMemoryCollectionWrite(
+          records,
+          normalizeMemoryWrite(input, clock, ids),
+          assertTimestamp(clock.now(), 'clock timestamp'),
+        )
         const duplicateIndex = findMemoryDuplicateIndex(records, incoming)
         const next = duplicateIndex < 0
           ? incoming
@@ -506,7 +593,7 @@ export function createSqliteKnowledgeRepository(
     const snapshot = await value.transaction(async (transaction) => {
       const [memoryRows, documentRows, chunkRows] = await Promise.all([
         transaction.getAll<Record<string, unknown>>(
-          `SELECT id, content, status, conversationId, sourceKind, sourceDetail, confidence, lastHitAt, createdAt, updatedAt
+          `SELECT ${MEMORY_SELECT_COLUMNS}
            FROM memories ORDER BY updatedAt DESC, id ASC`,
         ),
         transaction.getAll<Record<string, unknown>>(
@@ -638,7 +725,11 @@ export function createSqliteKnowledgeRepository(
     const chunks = snapshot.chunks.map(normalizeChunkRecord)
     const memories: KnowledgeMemoryRecord[] = []
     for (const input of snapshot.memories) {
-      const incoming = normalizeMemoryWrite(input, clock, ids)
+      const incoming = resolveMemoryCollectionWrite(
+        memories,
+        normalizeMemoryWrite(input, clock, ids),
+        assertTimestamp(clock.now(), 'clock timestamp'),
+      )
       const duplicateIndex = findMemoryDuplicateIndex(memories, incoming)
       if (duplicateIndex < 0) {
         memories.push(incoming)
@@ -662,6 +753,12 @@ export function createSqliteKnowledgeRepository(
       const memory = await saveMemory({
         content: candidate.content,
         status: 'pending',
+        scope: candidate.scope,
+        ...(candidate.subject === undefined ? {} : { subject: candidate.subject }),
+        ...(candidate.key === undefined ? {} : { key: candidate.key }),
+        ...(candidate.value === undefined ? {} : { value: candidate.value }),
+        sensitivity: candidate.sensitivity,
+        sourceMessageIds: candidate.sourceMessageIds,
         conversationId: candidate.conversationId,
         sourceKind: candidate.sourceKind,
         sourceDetail: candidate.sourceDetail,
@@ -693,11 +790,25 @@ export function createSqliteKnowledgeRepository(
 
 async function ensureLegacyColumns(database: SqliteExecutor): Promise<void> {
   await ensureColumns(database, 'memories', [
+    ['scopeKind', "TEXT NOT NULL DEFAULT 'user'"],
+    ['scopeId', `TEXT NOT NULL DEFAULT '${LOCAL_USER_MEMORY_SCOPE_ID}'`],
+    ['subject', 'TEXT'],
+    ['normalizedSubject', 'TEXT'],
+    ['factKey', 'TEXT'],
+    ['normalizedKey', 'TEXT'],
+    ['factValue', 'TEXT'],
+    ['sensitivity', "TEXT NOT NULL DEFAULT 'normal'"],
+    ['sourceMessageIdsJson', "TEXT NOT NULL DEFAULT '[]'"],
+    ['validFrom', 'INTEGER'],
+    ['validUntil', 'INTEGER'],
+    ['supersedesId', 'TEXT'],
+    ['conflictWithId', 'TEXT'],
     ['conversationId', 'TEXT'],
     ['sourceKind', 'TEXT'],
     ['sourceDetail', 'TEXT'],
     ['confidence', 'REAL'],
     ['lastHitAt', 'INTEGER'],
+    ['lastConfirmedAt', 'INTEGER'],
   ])
   await ensureColumns(database, 'knowledge_documents', [
     ['sourceUri', 'TEXT'],
@@ -720,6 +831,50 @@ async function ensureLegacyColumns(database: SqliteExecutor): Promise<void> {
     ['embeddingProvider', 'TEXT'],
     ['lastHitAt', 'INTEGER'],
   ])
+}
+
+async function ensureStructuredMemoryIntegrity(database: SqliteExecutor): Promise<void> {
+  await database.exec(`
+    UPDATE memories
+    SET scopeKind = CASE
+          WHEN conversationId IS NOT NULL AND TRIM(conversationId) <> '' THEN 'conversation'
+          ELSE 'user'
+        END,
+        scopeId = CASE
+          WHEN conversationId IS NOT NULL AND TRIM(conversationId) <> '' THEN conversationId
+          ELSE '${LOCAL_USER_MEMORY_SCOPE_ID}'
+        END;
+    UPDATE memories
+    SET status = 'pending'
+    WHERE status = 'active'
+      AND (subject IS NULL OR factKey IS NULL OR factValue IS NULL);
+    WITH ranked_active_facts AS (
+      SELECT id,
+             ROW_NUMBER() OVER (
+               PARTITION BY scopeKind, scopeId, normalizedSubject, normalizedKey
+               ORDER BY COALESCE(lastConfirmedAt, updatedAt, createdAt) DESC,
+                        updatedAt DESC,
+                        createdAt DESC,
+                        id DESC
+             ) AS fact_rank
+      FROM memories
+      WHERE status = 'active'
+        AND normalizedSubject IS NOT NULL
+        AND normalizedKey IS NOT NULL
+    )
+    UPDATE memories
+    SET status = 'superseded'
+    WHERE id IN (
+      SELECT id FROM ranked_active_facts WHERE fact_rank > 1
+    );
+    CREATE INDEX IF NOT EXISTS memories_scope_status_updated_idx
+      ON memories(scopeKind, scopeId, status, updatedAt DESC);
+    CREATE UNIQUE INDEX IF NOT EXISTS memories_active_logical_key_idx
+      ON memories(scopeKind, scopeId, normalizedSubject, normalizedKey)
+      WHERE status = 'active'
+        AND normalizedSubject IS NOT NULL
+        AND normalizedKey IS NOT NULL;
+  `)
 }
 
 async function ensureColumns(
@@ -751,26 +906,77 @@ async function writeMemoryRecord(
   record: KnowledgeMemoryRecord,
   signal: AbortSignal | undefined,
 ): Promise<void> {
+  const normalizedSubject = record.subject === undefined
+    ? null
+    : normalizeMemoryLogicalKey(record.subject, 'memory subject')
+  const normalizedKey = record.key === undefined
+    ? null
+    : normalizeMemoryLogicalKey(record.key, 'memory key')
   await run(database,
-    `INSERT OR REPLACE INTO memories (
-       id, content, status, conversationId, sourceKind, sourceDetail, confidence, lastHitAt, createdAt, updatedAt
-     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    `INSERT INTO memories (
+       id, content, status, scopeKind, scopeId, subject, normalizedSubject, factKey, normalizedKey,
+       factValue, sensitivity, sourceMessageIdsJson, validFrom, validUntil, supersedesId, conflictWithId,
+       conversationId, sourceKind, sourceDetail, confidence, lastHitAt, lastConfirmedAt, createdAt, updatedAt
+     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+     ON CONFLICT(id) DO UPDATE SET
+       content = excluded.content,
+       status = excluded.status,
+       scopeKind = excluded.scopeKind,
+       scopeId = excluded.scopeId,
+       subject = excluded.subject,
+       normalizedSubject = excluded.normalizedSubject,
+       factKey = excluded.factKey,
+       normalizedKey = excluded.normalizedKey,
+       factValue = excluded.factValue,
+       sensitivity = excluded.sensitivity,
+       sourceMessageIdsJson = excluded.sourceMessageIdsJson,
+       validFrom = excluded.validFrom,
+       validUntil = excluded.validUntil,
+       supersedesId = excluded.supersedesId,
+       conflictWithId = excluded.conflictWithId,
+       conversationId = excluded.conversationId,
+       sourceKind = excluded.sourceKind,
+       sourceDetail = excluded.sourceDetail,
+       confidence = excluded.confidence,
+       lastHitAt = excluded.lastHitAt,
+       lastConfirmedAt = excluded.lastConfirmedAt,
+       createdAt = excluded.createdAt,
+       updatedAt = excluded.updatedAt`,
     [
       record.id,
       record.content,
       record.status,
+      record.scope.kind,
+      record.scope.id,
+      record.subject ?? null,
+      normalizedSubject,
+      record.key ?? null,
+      normalizedKey,
+      record.value ?? null,
+      record.sensitivity,
+      JSON.stringify(record.sourceMessageIds),
+      record.validFrom ?? null,
+      record.validUntil ?? null,
+      record.supersedesId ?? null,
+      record.conflictWithId ?? null,
       record.conversationId ?? null,
       record.sourceKind,
       record.sourceDetail ?? null,
       record.confidence ?? null,
       record.lastHitAt ?? null,
+      record.lastConfirmedAt ?? null,
       record.createdAt,
       record.updatedAt,
     ],
     signal,
   )
   await run(database, 'DELETE FROM memory_fts WHERE id = ?', [record.id], signal)
-  await run(database, 'INSERT INTO memory_fts (id, content) VALUES (?, ?)', [record.id, record.content], signal)
+  await run(
+    database,
+    'INSERT INTO memory_fts (id, content) VALUES (?, ?)',
+    [record.id, memorySearchText(record)],
+    signal,
+  )
 }
 
 async function writeDocumentRecord(
@@ -851,18 +1057,258 @@ async function writeChunkRecord(
 
 function normalizeMemoryWrite(input: KnowledgeMemoryWrite, clock: Clock, ids: IdGenerator): KnowledgeMemoryRecord {
   const now = assertTimestamp(clock.now(), 'clock timestamp')
+  const scope = normalizeMemoryScopeInput(input.scope, input.conversationId)
   return normalizeMemoryRow({
     id: input.id ?? ids.next('memory'),
     content: input.content,
     status: input.status,
+    scopeKind: scope.kind,
+    scopeId: scope.id,
+    subject: input.subject,
+    factKey: input.key,
+    factValue: input.value,
+    sensitivity: input.sensitivity,
+    sourceMessageIdsJson: JSON.stringify(input.sourceMessageIds ?? []),
+    validFrom: input.validFrom,
+    validUntil: input.validUntil,
+    supersedesId: input.supersedesId,
+    conflictWithId: input.conflictWithId,
     conversationId: input.conversationId,
     sourceKind: input.sourceKind,
     sourceDetail: input.sourceDetail,
     confidence: input.confidence,
     lastHitAt: input.lastHitAt,
+    lastConfirmedAt: input.lastConfirmedAt,
     createdAt: input.createdAt ?? now,
     updatedAt: input.updatedAt ?? now,
   })
+}
+
+function normalizeMemoryScopeInput(
+  scope: KnowledgeMemoryScope | undefined,
+  conversationId: string | undefined,
+): KnowledgeMemoryScope {
+  if (scope) {
+    return normalizeMemoryScope(scope.kind, scope.id, conversationId)
+  }
+  const normalizedConversationId = conversationId?.trim()
+  return normalizedConversationId
+    ? { kind: 'conversation', id: normalizeIdentifier(normalizedConversationId, 'memory conversation scope id') }
+    : { kind: 'user', id: LOCAL_USER_MEMORY_SCOPE_ID }
+}
+
+function normalizeMemoryScopes(scopes: readonly KnowledgeMemoryScope[] | undefined): KnowledgeMemoryScope[] {
+  const byIdentity = new Map<string, KnowledgeMemoryScope>()
+  for (const scope of scopes ?? []) {
+    const normalized = normalizeMemoryScope(scope.kind, scope.id, undefined)
+    byIdentity.set(`${normalized.kind}:${normalized.id}`, normalized)
+  }
+  return Array.from(byIdentity.values())
+}
+
+function normalizeMemoryScope(
+  kind: string | null | undefined,
+  id: string | null | undefined,
+  conversationId: string | null | undefined,
+): KnowledgeMemoryScope {
+  if (kind === undefined || kind === null || !kind.trim()) {
+    const normalizedConversationId = typeof conversationId === 'string' ? conversationId.trim() : ''
+    return normalizedConversationId
+      ? { kind: 'conversation', id: normalizeIdentifier(normalizedConversationId, 'memory conversation scope id') }
+      : { kind: 'user', id: LOCAL_USER_MEMORY_SCOPE_ID }
+  }
+  if (kind !== 'user' && kind !== 'conversation') {
+    throw new KnowledgeRepositoryDataError('A memory scope kind is invalid.')
+  }
+  return {
+    kind,
+    id: normalizeIdentifier(id ?? '', 'memory scope id'),
+  }
+}
+
+function normalizeMemoryFactFields(
+  subject: string | null | undefined,
+  key: string | null | undefined,
+  value: string | null | undefined,
+): Pick<KnowledgeMemoryRecord, 'subject' | 'key' | 'value'> {
+  const normalizedSubject = optionalText(subject, 'memory subject', MAX_MEMORY_FACT_FIELD_LENGTH)
+  const normalizedKey = optionalText(key, 'memory key', MAX_MEMORY_FACT_FIELD_LENGTH)
+  const normalizedValue = optionalText(value, 'memory value', MAX_MEMORY_CONTENT_LENGTH)
+  const present = [normalizedSubject, normalizedKey, normalizedValue].filter((item) => item !== undefined).length
+  if (present === 0) return {}
+  if (present !== 3) throw new KnowledgeRepositoryDataError('A structured memory fact must include subject, key, and value.')
+  return {
+    subject: normalizedSubject,
+    key: normalizedKey,
+    value: normalizedValue,
+  }
+}
+
+function parseMemorySourceMessageIds(value: string | null | undefined): readonly string[] {
+  if (value === undefined || value === null || !value.trim()) return []
+  let parsed: unknown
+  try {
+    parsed = JSON.parse(value)
+  } catch {
+    throw new KnowledgeRepositoryDataError('Memory source message IDs are invalid.')
+  }
+  if (!Array.isArray(parsed) || parsed.length > MAX_MEMORY_SOURCE_MESSAGE_IDS) {
+    throw new KnowledgeRepositoryDataError('Memory source message IDs are invalid.')
+  }
+  return Array.from(new Set(parsed.map((item) => {
+    if (typeof item !== 'string') throw new KnowledgeRepositoryDataError('Memory source message IDs are invalid.')
+    return normalizeIdentifier(item, 'memory source message id')
+  })))
+}
+
+function normalizeMemorySensitivity(value: string | null | undefined): KnowledgeMemorySensitivity {
+  if (value === undefined || value === null || !value.trim()) return 'normal'
+  if (value === 'normal' || value === 'sensitive') return value
+  throw new KnowledgeRepositoryDataError('A memory sensitivity value is invalid.')
+}
+
+function normalizeMemoryLogicalKey(value: string, label: string): string {
+  const normalized = value.normalize('NFKC').trim().toLocaleLowerCase().replace(/[^\p{L}\p{N}]+/gu, '')
+  if (!normalized || normalized.length > MAX_MEMORY_FACT_FIELD_LENGTH) {
+    throw new KnowledgeRepositoryDataError(`The ${label} is invalid.`)
+  }
+  return normalized
+}
+
+function normalizeMemoryComparableValue(value: string): string {
+  return value.normalize('NFKC').replace(/\s+/g, ' ').trim().toLocaleLowerCase()
+}
+
+function sameMemoryLogicalValue(left: KnowledgeMemoryRecord, right: KnowledgeMemoryRecord): boolean {
+  if (!left.subject || !left.key || !right.subject || !right.key) return false
+  return left.scope.kind === right.scope.kind &&
+    left.scope.id === right.scope.id &&
+    normalizeMemoryLogicalKey(left.subject, 'memory subject') === normalizeMemoryLogicalKey(right.subject, 'memory subject') &&
+    normalizeMemoryLogicalKey(left.key, 'memory key') === normalizeMemoryLogicalKey(right.key, 'memory key') &&
+    normalizeMemoryComparableValue(left.value ?? '') === normalizeMemoryComparableValue(right.value ?? '')
+}
+
+function clearMemoryRelations(record: KnowledgeMemoryRecord): KnowledgeMemoryRecord {
+  const copy = { ...record }
+  delete copy.supersedesId
+  delete copy.conflictWithId
+  return copy
+}
+
+function memorySearchText(record: KnowledgeMemoryRecord): string {
+  return [record.content, record.subject, record.key, record.value].filter(Boolean).join('\n')
+}
+
+async function readMemoryById(
+  database: SqliteExecutor,
+  id: string,
+  signal: AbortSignal | undefined,
+): Promise<KnowledgeMemoryRecord | undefined> {
+  const row = await database.getFirst<Record<string, unknown>>(
+    `SELECT ${MEMORY_SELECT_COLUMNS} FROM memories WHERE id = ? LIMIT 1`,
+    [id],
+  )
+  throwIfAborted(signal)
+  return row ? normalizeMemoryRow(row) : undefined
+}
+
+async function readActiveMemoryForLogicalKey(
+  database: SqliteExecutor,
+  record: KnowledgeMemoryRecord,
+  signal: AbortSignal | undefined,
+): Promise<KnowledgeMemoryRecord | undefined> {
+  if (!record.subject || !record.key) return undefined
+  const row = await database.getFirst<Record<string, unknown>>(
+    `SELECT ${MEMORY_SELECT_COLUMNS}
+       FROM memories
+      WHERE status = 'active'
+        AND scopeKind = ?
+        AND scopeId = ?
+        AND normalizedSubject = ?
+        AND normalizedKey = ?
+        AND id <> ?
+      LIMIT 1`,
+    [
+      record.scope.kind,
+      record.scope.id,
+      normalizeMemoryLogicalKey(record.subject, 'memory subject'),
+      normalizeMemoryLogicalKey(record.key, 'memory key'),
+      record.id,
+    ],
+  )
+  throwIfAborted(signal)
+  return row ? normalizeMemoryRow(row) : undefined
+}
+
+async function resolveMemoryWrite(
+  database: SqliteExecutor,
+  incoming: KnowledgeMemoryRecord,
+  now: number,
+  signal: AbortSignal | undefined,
+): Promise<KnowledgeMemoryRecord> {
+  const active = await readActiveMemoryForLogicalKey(database, incoming, signal)
+  if (!active) return incoming
+  if (sameMemoryLogicalValue(active, incoming)) {
+    return mergeMemoryRecords(active, {
+      ...incoming,
+      status: 'active',
+      lastConfirmedAt: now,
+    }, now)
+  }
+  if (incoming.status === 'active' && incoming.supersedesId === active.id) {
+    await writeMemoryRecord(database, {
+      ...active,
+      status: 'superseded',
+      updatedAt: now,
+    }, signal)
+    return {
+      ...clearMemoryRelations(incoming),
+      status: 'active',
+      supersedesId: active.id,
+      lastConfirmedAt: now,
+      updatedAt: now,
+    }
+  }
+  return {
+    ...clearMemoryRelations(incoming),
+    status: 'pending',
+    conflictWithId: active.id,
+  }
+}
+
+function resolveMemoryCollectionWrite(
+  memories: KnowledgeMemoryRecord[],
+  incoming: KnowledgeMemoryRecord,
+  now: number,
+): KnowledgeMemoryRecord {
+  const activeIndex = incoming.subject && incoming.key
+    ? memories.findIndex((memory) => memory.status === 'active' && memory.id !== incoming.id && sameMemoryLogicalValue(memory, incoming))
+    : -1
+  if (activeIndex >= 0) {
+    const active = memories[activeIndex]
+    if (sameMemoryLogicalValue(active, incoming)) {
+      const merged = mergeMemoryRecords(active, { ...incoming, status: 'active', lastConfirmedAt: now }, now)
+      memories[activeIndex] = merged
+      return merged
+    }
+  }
+
+  const conflictingIndex = incoming.subject && incoming.key
+    ? memories.findIndex((memory) =>
+      memory.status === 'active' &&
+      memory.id !== incoming.id &&
+      memory.scope.kind === incoming.scope.kind &&
+      memory.scope.id === incoming.scope.id &&
+      normalizeMemoryLogicalKey(memory.subject ?? '', 'memory subject') === normalizeMemoryLogicalKey(incoming.subject!, 'memory subject') &&
+      normalizeMemoryLogicalKey(memory.key ?? '', 'memory key') === normalizeMemoryLogicalKey(incoming.key!, 'memory key'))
+    : -1
+  if (conflictingIndex < 0) return incoming
+  const active = memories[conflictingIndex]
+  if (incoming.status === 'active' && incoming.supersedesId === active.id) {
+    memories[conflictingIndex] = { ...active, status: 'superseded', updatedAt: now }
+    return { ...clearMemoryRelations(incoming), status: 'active', supersedesId: active.id, lastConfirmedAt: now, updatedAt: now }
+  }
+  return { ...clearMemoryRelations(incoming), status: 'pending', conflictWithId: active.id }
 }
 
 function normalizeMemoryRow(value: unknown): KnowledgeMemoryRecord {
@@ -870,16 +1316,33 @@ function normalizeMemoryRow(value: unknown): KnowledgeMemoryRecord {
   if (!parsed.success) throw new KnowledgeRepositoryDataError('A persisted memory record is invalid.')
   const row = parsed.output
   const sourceKind = normalizeMemorySourceKind(row.sourceKind)
+  const scope = normalizeMemoryScope(row.scopeKind, row.scopeId, row.conversationId)
+  const fact = normalizeMemoryFactFields(row.subject, row.factKey, row.factValue)
+  const sourceMessageIds = parseMemorySourceMessageIds(row.sourceMessageIdsJson)
+  const validFrom = optionalTimestamp(row.validFrom, 'memory valid-from timestamp')
+  const validUntil = optionalTimestamp(row.validUntil, 'memory valid-until timestamp')
+  if (validFrom !== undefined && validUntil !== undefined && validUntil <= validFrom) {
+    throw new KnowledgeRepositoryDataError('A memory validity interval is invalid.')
+  }
   return {
     schema: KNOWLEDGE_MEMORY_RECORD_SCHEMA,
     id: normalizeIdentifier(row.id, 'memory id'),
     content: normalizeMemoryContent(row.content),
     status: normalizeMemoryStatus(row.status),
+    scope,
+    ...fact,
+    sensitivity: normalizeMemorySensitivity(row.sensitivity),
+    sourceMessageIds,
+    ...(validFrom === undefined ? {} : { validFrom }),
+    ...(validUntil === undefined ? {} : { validUntil }),
+    ...(optionalText(row.supersedesId, 'memory superseded id', 256) === undefined ? {} : { supersedesId: optionalText(row.supersedesId, 'memory superseded id', 256) }),
+    ...(optionalText(row.conflictWithId, 'memory conflict id', 256) === undefined ? {} : { conflictWithId: optionalText(row.conflictWithId, 'memory conflict id', 256) }),
     ...(optionalText(row.conversationId, 'memory conversation id', 256) === undefined ? {} : { conversationId: optionalText(row.conversationId, 'memory conversation id', 256) }),
     sourceKind,
     ...(optionalText(row.sourceDetail, 'memory source detail', 512) === undefined ? {} : { sourceDetail: optionalText(row.sourceDetail, 'memory source detail', 512) }),
     ...(optionalConfidence(row.confidence) === undefined ? {} : { confidence: optionalConfidence(row.confidence) }),
     ...(optionalTimestamp(row.lastHitAt, 'memory last-hit timestamp') === undefined ? {} : { lastHitAt: optionalTimestamp(row.lastHitAt, 'memory last-hit timestamp') }),
+    ...(optionalTimestamp(row.lastConfirmedAt, 'memory last-confirmed timestamp') === undefined ? {} : { lastConfirmedAt: optionalTimestamp(row.lastConfirmedAt, 'memory last-confirmed timestamp') }),
     createdAt: assertTimestamp(row.createdAt, 'memory creation timestamp'),
     updatedAt: assertTimestamp(row.updatedAt, 'memory update timestamp'),
   }
@@ -910,7 +1373,11 @@ function findMemoryDuplicateIndex(
   if (byId >= 0) return byId
   let match = -1
   for (let index = 0; index < memories.length; index += 1) {
-    if (memories[index].content !== incoming.content) continue
+    const existing = memories[index]
+    if (!sameMemoryLogicalValue(existing, incoming)) {
+      if (existing.subject !== undefined || incoming.subject !== undefined || existing.key !== undefined || incoming.key !== undefined) continue
+      if (existing.content !== incoming.content) continue
+    }
     if (match < 0 || compareMemoryMergePriority(memories[index], memories[match]) < 0) match = index
   }
   return match
@@ -928,11 +1395,22 @@ function mergeMemoryRecords(
   now: number,
 ): KnowledgeMemoryRecord {
   const sourceKind = strongerMemorySourceKind(existing.sourceKind, incoming.sourceKind)
+  const sourceMessageIds = Array.from(new Set([...existing.sourceMessageIds, ...incoming.sourceMessageIds]))
   return {
     schema: KNOWLEDGE_MEMORY_RECORD_SCHEMA,
     id: existing.id,
     content: existing.content,
     status: mergeMemoryStatus(existing.status, incoming.status),
+    scope: existing.scope,
+    ...(existing.subject ?? incoming.subject ? { subject: existing.subject ?? incoming.subject } : {}),
+    ...(existing.key ?? incoming.key ? { key: existing.key ?? incoming.key } : {}),
+    ...(existing.value ?? incoming.value ? { value: existing.value ?? incoming.value } : {}),
+    sensitivity: existing.sensitivity === 'sensitive' || incoming.sensitivity === 'sensitive' ? 'sensitive' : 'normal',
+    sourceMessageIds,
+    ...(maxOptionalTimestamp(existing.validFrom, incoming.validFrom) === undefined ? {} : { validFrom: maxOptionalTimestamp(existing.validFrom, incoming.validFrom) }),
+    ...(maxOptionalTimestamp(existing.validUntil, incoming.validUntil) === undefined ? {} : { validUntil: maxOptionalTimestamp(existing.validUntil, incoming.validUntil) }),
+    ...(incoming.supersedesId ?? existing.supersedesId ? { supersedesId: incoming.supersedesId ?? existing.supersedesId } : {}),
+    ...(incoming.conflictWithId ?? existing.conflictWithId ? { conflictWithId: incoming.conflictWithId ?? existing.conflictWithId } : {}),
     ...(existing.conversationId ?? incoming.conversationId
       ? { conversationId: existing.conversationId ?? incoming.conversationId }
       : {}),
@@ -947,6 +1425,7 @@ function mergeMemoryRecords(
     ...(maxOptionalTimestamp(existing.lastHitAt, incoming.lastHitAt) === undefined
       ? {}
       : { lastHitAt: maxOptionalTimestamp(existing.lastHitAt, incoming.lastHitAt) }),
+    ...(maxOptionalTimestamp(existing.lastConfirmedAt, incoming.lastConfirmedAt) === undefined ? {} : { lastConfirmedAt: maxOptionalTimestamp(existing.lastConfirmedAt, incoming.lastConfirmedAt) }),
     createdAt: Math.min(existing.createdAt, incoming.createdAt),
     updatedAt: Math.max(existing.updatedAt, incoming.updatedAt, now),
   }
@@ -955,13 +1434,15 @@ function mergeMemoryRecords(
 function mergeMemoryStatus(left: KnowledgeMemoryStatus, right: KnowledgeMemoryStatus): KnowledgeMemoryStatus {
   if (left === 'active' || right === 'active') return 'active'
   if (left === 'pending' || right === 'pending') return 'pending'
+  if (left === 'superseded' || right === 'superseded') return 'superseded'
   return 'disabled'
 }
 
 function memoryStatusMergeRank(status: KnowledgeMemoryStatus): number {
   if (status === 'active') return 0
   if (status === 'pending') return 1
-  return 2
+  if (status === 'superseded') return 2
+  return 3
 }
 
 function strongerMemorySourceKind(
@@ -1133,12 +1614,12 @@ function validateDocumentBundle(
 }
 
 function normalizeMemoryStatuses(statuses: readonly KnowledgeMemoryStatus[] | undefined): KnowledgeMemoryStatus[] {
-  const input = statuses?.length ? statuses : ['pending', 'active', 'disabled']
+  const input = statuses?.length ? statuses : ['pending', 'active', 'superseded', 'disabled']
   return Array.from(new Set(input.map(normalizeMemoryStatus)))
 }
 
 function normalizeMemoryStatus(value: string): KnowledgeMemoryStatus {
-  if (value === 'pending' || value === 'active' || value === 'disabled') return value
+  if (value === 'pending' || value === 'active' || value === 'superseded' || value === 'disabled') return value
   throw new KnowledgeRepositoryDataError('A memory status is invalid.')
 }
 
@@ -1320,10 +1801,12 @@ async function ensureKnowledgeSearchTables(
       );
     `)
   await database.exec(`
+    DELETE FROM memory_fts;
     INSERT INTO memory_fts (id, content)
-    SELECT memory.id, memory.content
-    FROM memories AS memory
-    WHERE NOT EXISTS (SELECT 1 FROM memory_fts AS indexed WHERE indexed.id = memory.id);
+    SELECT memory.id,
+           memory.content || char(10) || coalesce(memory.subject, '') || char(10) ||
+           coalesce(memory.factKey, '') || char(10) || coalesce(memory.factValue, '')
+    FROM memories AS memory;
     INSERT INTO knowledge_fts (id, documentId, title, content)
     SELECT chunk.id, chunk.documentId, chunk.title, chunk.content
     FROM knowledge_chunks AS chunk

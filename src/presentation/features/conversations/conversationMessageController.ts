@@ -11,7 +11,7 @@ export interface ConversationMessageInput {
 
 export interface ConversationMessageStore {
   setError(error: string | null): void
-  addMessage(conversationId: string, message: Message): void
+  addMessage(conversationId: string, message: Message): void | Promise<void>
   getConversation(conversationId: string): Conversation | undefined
 }
 
@@ -55,7 +55,10 @@ export function createConversationMessageController(
       }
 
       dependencies.store.setError(null)
-      dependencies.store.addMessage(input.conversation.id, userMessage)
+      const durability = dependencies.store.addMessage(
+        input.conversation.id,
+        userMessage,
+      )
 
       const projectedConversation = dependencies.store.getConversation(input.conversation.id)
       if (!projectedConversation) throw new Error('conversation_user_projection_missing')
@@ -63,6 +66,11 @@ export function createConversationMessageController(
       if (projectedUserMessages.length !== 1 || projectedUserMessages[0] !== userMessage) {
         throw new Error('conversation_user_projection_missing')
       }
+
+      // The exact store mutation that accepted this user turn is the dispatch
+      // barrier. Provider effects cannot begin while that SQLite write is
+      // pending or after it has failed.
+      await durability
 
       await dependencies.dispatchLegacyMessage({
         conversation: projectedConversation,

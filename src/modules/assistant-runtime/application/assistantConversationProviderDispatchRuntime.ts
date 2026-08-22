@@ -2,6 +2,7 @@ import {
   resolveGenerationParameterSources,
   type GenerationParameterKey,
   type GenerationParameterSources,
+  type StreamEvent,
 } from '@/core'
 
 export interface AssistantConversationProviderDispatchProviderLike {
@@ -107,6 +108,8 @@ export interface AssistantConversationProviderDispatchInput<
   readonly remoteCompactFallback: TRemoteCompactFallback
   readonly previousResponseId: string | undefined
   readonly providerToolDeclarations: TProviderToolDeclarations | undefined
+  readonly onTextDelta?: (chunk: string) => void
+  readonly onStreamEvent?: (event: StreamEvent) => void
   readonly buildStreamLifecycle: (input: {
     readonly modelTraceId: string
     readonly request: AssistantConversationProviderDispatchRequest<
@@ -162,12 +165,18 @@ export interface AssistantConversationProviderDispatchRuntimeDependencies<
       TProviderToolDeclarations,
       TReasoningEffort
     >
+    readonly onTextDelta?: (chunk: string) => void
+    readonly onStreamEvent?: (event: StreamEvent) => void
   } & TStreamLifecycle): Promise<TStreamingOutcome>
 }
 
 export interface AssistantConversationProviderDispatched<TStreamingOutcome> {
   readonly kind: 'dispatched'
   readonly streamingOutcome: TStreamingOutcome
+}
+
+export interface AssistantConversationProviderPreparedDispatch<TProviderRequest> {
+  readonly request: TProviderRequest
 }
 
 /**
@@ -220,22 +229,76 @@ export function createAssistantConversationProviderDispatchRuntime<
     TReasoningEffort
   >
 
-  async function dispatch(
-    input: AssistantConversationProviderDispatchInput<
-      TConversation,
-      TProvider,
-      TSettings,
-      TAttachment,
-      TMessage,
-      TRetrievalSource,
-      TWebSearchMode,
-      TFallbackProviders,
-      TRemoteCompactFallback,
-      TProviderToolDeclarations,
-      TReasoningEffort,
-      TStreamLifecycle
-    >,
+  type DispatchInput = AssistantConversationProviderDispatchInput<
+    TConversation,
+    TProvider,
+    TSettings,
+    TAttachment,
+    TMessage,
+    TRetrievalSource,
+    TWebSearchMode,
+    TFallbackProviders,
+    TRemoteCompactFallback,
+    TProviderToolDeclarations,
+    TReasoningEffort,
+    TStreamLifecycle
+  >
+
+  function prepare(
+    input: DispatchInput,
+  ): AssistantConversationProviderPreparedDispatch<ProviderRequest> {
+    const snapshots = new WeakMap<object, unknown>()
+    const request: ProviderRequest = Object.freeze({
+      provider: snapshotPreparedValue(input.provider, snapshots),
+      model: input.runtimeConversation.model,
+      requestedModel: input.runtimeConversation.model,
+      systemPrompt: input.systemPrompt,
+      temperature: input.runtimeConversation.temperature,
+      topP: input.runtimeConversation.topP,
+      topK: input.runtimeConversation.topK,
+      reasoningEffort: input.runtimeConversation.reasoningEffort,
+      maxTokens: input.runtimeConversation.maxTokens,
+      generationParameterSources: snapshotPreparedValue(
+        resolveGenerationParameterSources({
+          values: input.runtimeConversation,
+          overrides: input.runtimeConversation.generationParameterOverrides,
+        }),
+        snapshots,
+      ),
+      attachments: snapshotPreparedValue(input.attachments, snapshots),
+      messages: snapshotPreparedValue(input.messages, snapshots),
+      contextPrompt: input.contextPrompt,
+      retrievalSources: snapshotPreparedValue(input.retrievalSources, snapshots),
+      webSearchMode: input.webSearchMode,
+      signal: input.requestController.signal,
+      conversationId: input.conversationId,
+      sessionId: input.conversationId,
+      settings: snapshotPreparedValue(input.settings, snapshots),
+      fallbackProviders: snapshotPreparedValue(input.fallbackProviders, snapshots),
+      remoteCompactEligible: input.remoteCompactEligible,
+      remoteCompactFallback: snapshotPreparedValue(input.remoteCompactFallback, snapshots),
+      previousResponseId: input.previousResponseId,
+      providerToolDeclarations: snapshotPreparedValue(
+        input.providerToolDeclarations,
+        snapshots,
+      ),
+    })
+    return Object.freeze({ request })
+  }
+
+  async function dispatchPrepared(
+    input: DispatchInput,
+    prepared: AssistantConversationProviderPreparedDispatch<ProviderRequest>,
   ): Promise<AssistantConversationProviderDispatched<TStreamingOutcome>> {
+    const { request } = prepared
+    if (
+      request.conversationId !== input.conversationId
+      || request.provider.id !== input.provider.id
+      || request.model !== input.runtimeConversation.model
+      || request.signal !== input.requestController.signal
+    ) {
+      throw new Error('The prepared provider request does not match the admitted Chat dispatch.')
+    }
     const modelTraceId = dependencies.generateTraceId('model')
     dependencies.recordTrace({
       conversationId: input.conversationId,
@@ -257,35 +320,6 @@ export function createAssistantConversationProviderDispatchRuntime<
       },
     })
 
-    const request: ProviderRequest = {
-      provider: input.provider,
-      model: input.runtimeConversation.model,
-      requestedModel: input.runtimeConversation.model,
-      systemPrompt: input.systemPrompt,
-      temperature: input.runtimeConversation.temperature,
-      topP: input.runtimeConversation.topP,
-      topK: input.runtimeConversation.topK,
-      reasoningEffort: input.runtimeConversation.reasoningEffort,
-      maxTokens: input.runtimeConversation.maxTokens,
-      generationParameterSources: resolveGenerationParameterSources({
-        values: input.runtimeConversation,
-        overrides: input.runtimeConversation.generationParameterOverrides,
-      }),
-      attachments: input.attachments,
-      messages: input.messages,
-      contextPrompt: input.contextPrompt,
-      retrievalSources: input.retrievalSources,
-      webSearchMode: input.webSearchMode,
-      signal: input.requestController.signal,
-      conversationId: input.conversationId,
-      sessionId: input.conversationId,
-      settings: input.settings,
-      fallbackProviders: input.fallbackProviders,
-      remoteCompactEligible: input.remoteCompactEligible,
-      remoteCompactFallback: input.remoteCompactFallback,
-      previousResponseId: input.previousResponseId,
-      providerToolDeclarations: input.providerToolDeclarations,
-    }
     const streamLifecycle = input.buildStreamLifecycle({
       modelTraceId,
       request,
@@ -296,6 +330,8 @@ export function createAssistantConversationProviderDispatchRuntime<
       assistantMessageId: input.assistantMessageId,
       requestController: input.requestController,
       request,
+      ...(input.onTextDelta ? { onTextDelta: input.onTextDelta } : {}),
+      ...(input.onStreamEvent ? { onStreamEvent: input.onStreamEvent } : {}),
     })
     return {
       kind: 'dispatched',
@@ -303,5 +339,43 @@ export function createAssistantConversationProviderDispatchRuntime<
     }
   }
 
-  return { dispatch }
+  async function dispatch(
+    input: DispatchInput,
+  ): Promise<AssistantConversationProviderDispatched<TStreamingOutcome>> {
+    return dispatchPrepared(input, prepare(input))
+  }
+
+  return { prepare, dispatchPrepared, dispatch }
+}
+
+function snapshotPreparedValue<Value>(
+  value: Value,
+  snapshots: WeakMap<object, unknown>,
+): Value {
+  if (value === null || typeof value !== 'object') return value
+
+  const source = value as object
+  const existing = snapshots.get(source)
+  if (existing !== undefined) return existing as Value
+
+  if (Array.isArray(value)) {
+    const snapshot: unknown[] = []
+    snapshots.set(source, snapshot)
+    for (const child of value) {
+      snapshot.push(snapshotPreparedValue(child, snapshots))
+    }
+    return Object.freeze(snapshot) as Value
+  }
+
+  const prototype = Object.getPrototypeOf(value)
+  if (prototype !== Object.prototype && prototype !== null) {
+    throw new Error('Prepared provider request data must use plain objects and arrays.')
+  }
+
+  const snapshot = Object.create(prototype) as Record<string, unknown>
+  snapshots.set(source, snapshot)
+  for (const [key, child] of Object.entries(value)) {
+    snapshot[key] = snapshotPreparedValue(child, snapshots)
+  }
+  return Object.freeze(snapshot) as Value
 }

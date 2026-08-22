@@ -24,7 +24,7 @@ const controller = createConversationMessageController({
       useChatStore.getState().setError(error)
     },
     addMessage(conversationId, message) {
-      useChatStore.getState().addMessage(conversationId, message)
+      return useChatStore.getState().addMessage(conversationId, message)
     },
     getConversation(conversationId) {
       return useChatStore.getState().conversations.find((conversation) => conversation.id === conversationId)

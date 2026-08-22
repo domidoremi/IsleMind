@@ -1,4 +1,4 @@
-import { asTaskId, type ChatRequest, type JsonRecord } from '@/core'
+import { asTaskId, freezeChatRequest, type ChatReasoningReplayPart, type ChatRequest, type ChatToolCallProviderMetadata, type JsonRecord } from '@/core'
 import {
   createFrozenModelOperationCatalog,
   createModelOperationTurnRuntime,
@@ -39,6 +39,8 @@ export interface ConversationModelOperationRuntimeInput {
   readonly conversation: Conversation
   readonly provider: AIProvider
   readonly settings: Settings
+  /** Rich callback activities cannot expose a resumable confirmation surface. */
+  readonly allowConfirmation?: boolean
 }
 
 interface PendingTaskReference extends JsonRecord {
@@ -49,6 +51,7 @@ interface CurrentTurn {
   readonly request: ChatRequest
   readonly outputText: string
   readonly nativeCallIds: ReadonlySet<string>
+  readonly reasoningReplay: readonly ChatReasoningReplayPart[]
 }
 
 export interface ConversationModelOperationSessionDependencies {
@@ -86,7 +89,18 @@ export async function createConversationModelOperationSession(
   if (!created.ok) throw new Error(created.message)
   if (created.catalog.snapshot.operations.length === 0) return undefined
 
-  const { snapshot, fallbackPrompt, manifests } = created.catalog
+  const { snapshot: createdSnapshot, fallbackPrompt } = created.catalog
+  const snapshot = input.allowConfirmation === false
+    ? {
+        ...createdSnapshot,
+        operations: createdSnapshot.operations.filter(
+          (operation) => operation.permission !== 'destructive' && !operation.requiresConfirmation,
+        ),
+      }
+    : createdSnapshot
+  if (snapshot.operations.length === 0) return undefined
+  const manifests = created.catalog.manifests.filter((manifest) =>
+    snapshot.operations.some((operation) => operation.id === manifest.id))
   const manifestById = new Map(manifests.map((manifest) => [manifest.id, manifest]))
   const providerNameByOperationId = new Map(
     snapshot.operations.map((operation) => [operation.id, providerOperationName(operation.id)]),
@@ -282,6 +296,7 @@ export async function createConversationModelOperationSession(
         request: turnInput.request,
         outputText: turnInput.outputText,
         nativeCallIds: new Set(turnInput.calls.map((call) => call.callId)),
+        reasoningReplay: turnInput.reasoningReplay,
       }
       const normalized = normalizeTurnCalls(
         snapshot,
@@ -325,11 +340,13 @@ export async function createConversationModelOperationSession(
             argumentDigest,
           })
         : undefined
-      if (!state || pending.schema !== 'islemind.pending-model-operation.v1' ||
+  if (!state || pending.schema !== 'islemind.pending-model-operation.v1' ||
         run.id !== pending.runId || pending.catalogRevision !== snapshot.revision ||
         pending.continuationRequest.conversationId !== input.conversation.id ||
-        pending.continuationRequest.providerId !== input.provider.id ||
-        pending.continuationRequest.model !== input.conversation.model ||
+        pending.continuationRequest.providerId !== run.providerId ||
+        pending.continuationRequest.model !== run.model ||
+        pending.continuationRequest.providerStateBinding?.providerId !== run.providerId ||
+        pending.continuationRequest.providerStateBinding?.model !== run.model ||
         pending.callId !== state.call.callId || pending.operationId !== state.call.operationId ||
         pending.catalogRevision !== state.catalogRevision || pending.argumentDigest !== state.argumentDigest ||
         pending.idempotencyKey !== state.idempotencyKey || pending.continuationToken !== state.continuationToken ||
@@ -350,6 +367,7 @@ export async function createConversationModelOperationSession(
         nativeCallIds: resumeInput.pending.continuationMode === 'native'
           ? new Set([resumeInput.pending.callId])
           : new Set(),
+        reasoningReplay: extractReasoningReplay(resumeInput.pending.continuationRequest),
       }
       const state = resumeInput.pending.continuationState as unknown as
         ModelOperationPendingConfirmationState<PendingTaskReference>
@@ -410,7 +428,7 @@ function toRuntimeCall(
   declaredName: string,
   argumentsValue: JsonRecord,
   catalogRevision = snapshot.revision,
-  providerMetadata?: JsonRecord,
+  providerMetadata?: ChatToolCallProviderMetadata,
 ): RuntimeModelOperationCall {
   const operation = snapshot.operations.find((candidate) => candidate.id === operationId)
   return Object.freeze({
@@ -441,7 +459,7 @@ function mapTurnOutcome(
       receipt: toJsonRecord(outcome.receipt),
     }
   }
-  const continuationRequest = cloneChatRequest(turn.request)
+  const continuationRequest = buildContinuationRequest(turn, outcome.receipt, outcome.state.call)
   const continuationMode: PendingModelOperation['continuationMode'] =
     turn.nativeCallIds.has(outcome.state.call.callId) ? 'native' : 'structured'
   const continuationState = toJsonRecord(outcome.state)
@@ -485,11 +503,12 @@ function buildContinuationRequest(
           id: `model-operation-call:${call.callId}`,
           role: 'assistant' as const,
           text: '',
+          ...(turn.reasoningReplay?.length ? { reasoningReplay: turn.reasoningReplay } : {}),
           toolCalls: [{
             callId: call.callId,
             name: call.declaredName,
             arguments: call.arguments as JsonRecord,
-            ...(call.providerMetadata ? { providerMetadata: call.providerMetadata as JsonRecord } : {}),
+            ...(call.providerMetadata ? { providerMetadata: call.providerMetadata as ChatToolCallProviderMetadata } : {}),
           }],
         },
         {
@@ -514,7 +533,14 @@ function buildContinuationRequest(
       ]
   return {
     ...turn.request,
-    messages: [...turn.request.messages, ...continuationMessages],
+    providerStateBinding: turn.request.providerStateBinding ?? {
+      providerId: turn.request.providerId,
+      model: turn.request.model,
+    },
+    messages: [
+      ...turn.request.messages.filter((message) => !continuationMessages.some((candidate) => candidate.id === message.id)),
+      ...continuationMessages,
+    ],
   }
 }
 
@@ -584,7 +610,12 @@ async function expireDeclinedModelOperationTask(
 }
 
 function cloneChatRequest(request: ChatRequest): ChatRequest {
-  return JSON.parse(JSON.stringify(request)) as ChatRequest
+  return freezeChatRequest(request)
+}
+
+function extractReasoningReplay(request: ChatRequest): readonly ChatReasoningReplayPart[] {
+  const assistant = [...request.messages].reverse().find((message) => message.role === 'assistant')
+  return assistant?.reasoningReplay ?? Object.freeze([])
 }
 
 function pendingContinuationDigestInput(
@@ -670,7 +701,7 @@ async function createModelOperationConversationRagRuntime(input: ConversationMod
       return searchKnowledgeWithFallback({
         query,
         limit,
-        ragMode: input.settings.ragMode === 'fts' ? 'fts' : 'hybrid',
+        ragMode: input.settings.ragMode === 'hybrid' && options?.mode === 'advanced' ? 'hybrid' : 'fts',
         embeddingMode: input.settings.embeddingMode ?? 'hybrid',
         localEmbeddingModelId: input.settings.localEmbeddingModelId,
         localEmbeddingModelSource: input.settings.localEmbeddingModelSource,

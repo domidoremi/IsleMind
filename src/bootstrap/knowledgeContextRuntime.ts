@@ -8,12 +8,14 @@ import {
   buildCompressedContextPrompt,
   buildFlareContextPrompt,
   buildKnowledgeScope,
+  LOCAL_USER_MEMORY_SCOPE_ID,
   runAgenticRag,
 } from '@/modules/knowledge'
 import { st } from '@/i18n/service'
 import { logContextOperation } from '@/services/runtimeHealthLog'
 import { useSettingsStore } from '@/store/settingsStore'
 import type { Conversation, Message } from '@/types/chatContracts'
+import type { Settings } from '@/types/settingsContracts'
 import type {
   RagEvaluationResult,
   RagQueryPlan,
@@ -22,6 +24,19 @@ import type {
 } from '@/types/contextContracts'
 
 const MAX_CONTEXT_ITEMS = 8
+
+/**
+ * Ordinary Chat stays on SQLite FTS unless the context plan explicitly
+ * admits an advanced retrieval pass (deep profile or advanced technique).
+ */
+export function resolveConversationKnowledgeRagMode(
+  settings: Pick<Settings, 'ragMode'>,
+  retrievalMode: 'baseline' | 'advanced' = 'baseline',
+): 'fts' | 'hybrid' {
+  if (settings.ragMode === 'off') return 'fts'
+  if (settings.ragMode === 'fts') return 'fts'
+  return retrievalMode === 'advanced' ? 'hybrid' : 'fts'
+}
 
 export interface RetrievedConversationKnowledgeContext {
   sources: RetrievalSource[]
@@ -68,13 +83,21 @@ export async function retrieveConversationKnowledgeContext(
   }
 
   const settings = useSettingsStore.getState().settings
-  const query = [draftMessage.content, conversation.title, conversation.systemPrompt]
+  // Retrieval intent is user/conversation-local. Never ship the private
+  // system prompt to an embedding or search adapter: it is instructions, not
+  // evidence about what the user is asking.
+  const query = [draftMessage.content, conversation.title]
     .filter(Boolean)
     .join('\n')
   let memorySources: RetrievalSource[]
   try {
     memorySources = settings.memoryEnabled
-      ? await searchMemorySources(query, settings.memoryTopK ?? 4, signal)
+      ? await searchMemorySources(
+        query,
+        settings.memoryTopK ?? 4,
+        conversation.id,
+        signal,
+      )
       : []
   } catch (error) {
     rethrowCancellation(error, signal)
@@ -111,7 +134,7 @@ export async function retrieveConversationKnowledgeContext(
       retrieveKnowledge: (variant, limit, options) => searchKnowledgeWithFallback({
         query: variant,
         limit,
-        ragMode: settings.ragMode === 'fts' ? 'fts' : 'hybrid',
+        ragMode: resolveConversationKnowledgeRagMode(settings, options?.mode),
         embeddingMode: settings.embeddingMode ?? 'hybrid',
         localEmbeddingModelId: settings.localEmbeddingModelId,
         localEmbeddingModelSource: settings.localEmbeddingModelSource,
@@ -183,6 +206,8 @@ export async function retrieveConversationFlareContext(input: {
     const hits = await searchKnowledgeWithFallback({
       query,
       limit,
+      // FLARE is an explicit supplemental pass, so retain the configured
+      // hybrid index even when the ordinary turn uses the FTS baseline.
       ragMode: settings.ragMode === 'fts' ? 'fts' : 'hybrid',
       embeddingMode: settings.embeddingMode ?? 'hybrid',
       localEmbeddingModelId: settings.localEmbeddingModelId,
@@ -260,6 +285,7 @@ function formatConversationContextPrompt(sources: RetrievalSource[]): string {
 async function searchMemorySources(
   query: string,
   limit: number,
+  conversationId: string,
   signal?: AbortSignal,
 ): Promise<RetrievalSource[]> {
   if (!query.trim() || limit <= 0) return []
@@ -267,6 +293,10 @@ async function searchMemorySources(
     query,
     limit,
     statuses: ['active'],
+    scopes: [
+      { kind: 'user', id: LOCAL_USER_MEMORY_SCOPE_ID },
+      { kind: 'conversation', id: conversationId },
+    ],
     signal,
   })
   throwIfCancelled(signal)

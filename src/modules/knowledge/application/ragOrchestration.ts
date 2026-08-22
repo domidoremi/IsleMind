@@ -15,6 +15,11 @@ export interface EmbeddingProvider {
 
 export interface RagRetrievalOptions {
   signal?: AbortSignal
+  /**
+   * Retrieval admission selected by the context plan. Baseline profiles stay
+   * on the canonical FTS path; advanced permits the optional hybrid/index path.
+   */
+  mode?: 'baseline' | 'advanced'
 }
 
 export interface AgenticRagOptions {
@@ -558,8 +563,8 @@ function resolveEnabledTechniques(settings: Settings, profile: RagProfile, compl
   if (settings.ragCrossEncoderEnabled !== false && deepEnough) techniques.push('cross-encoder')
   if (settings.ragQueryRewriteEnabled !== false && deepEnough) techniques.push('query-rewriting')
   if (settings.ragHydeEnabled !== false && deepEnough) techniques.push('hyde')
-  if (settings.ragRaptorEnabled !== false && (profile === 'deep' || complexity === 'complex')) techniques.push('raptor')
-  if (settings.ragGraphEnabled !== false && (profile === 'deep' || complexity === 'complex')) techniques.push('graphrag')
+  if (settings.ragRaptorEnabled !== false && profile === 'deep') techniques.push('raptor')
+  if (settings.ragGraphEnabled !== false && profile === 'deep') techniques.push('graphrag')
   if (settings.ragColbertEnabled !== false && profile === 'deep') techniques.push('colbert')
   if (settings.ragLlmlinguaEnabled !== false && deepEnough) techniques.push('llmlingua')
   if (settings.ragFlareEnabled !== false && deepEnough) techniques.push('flare')
@@ -616,7 +621,10 @@ async function retrieveRagCandidates(plan: RagQueryPlan, options: AgenticRagOpti
   ].map((item) => item.trim()).filter(Boolean)
   const perQueryLimit = Math.max(4, Math.ceil(plan.retrievalBudget / Math.max(1, variants.length)))
   const memoryCandidates = (options.memorySources ?? []).map((source, index) => toCandidate(source, 'memory', plan.query, index))
-  const retrievalOptions = options.signal ? { signal: options.signal } : undefined
+  const retrievalMode = shouldUseAdvancedIndexes(plan) ? 'advanced' as const : 'baseline' as const
+  const retrievalOptions = options.signal || retrievalMode === 'advanced'
+    ? { mode: retrievalMode, ...(options.signal ? { signal: options.signal } : {}) }
+    : { mode: retrievalMode }
   const batches = await Promise.all(variants.map(async (variant) => {
     throwIfAgenticRagCancelled(options.signal)
     const hits = await options.retrieveKnowledge(variant, perQueryLimit, retrievalOptions)
@@ -625,7 +633,7 @@ async function retrieveRagCandidates(plan: RagQueryPlan, options: AgenticRagOpti
     return hits.map((source, index) => toCandidate(source, origin, variant, index))
   }))
   throwIfAgenticRagCancelled(options.signal)
-  const advancedHits = options.retrieveAgentic
+  const advancedHits = shouldRetrieveAgentic(plan) && options.retrieveAgentic
     ? await options.retrieveAgentic(plan.query, plan, Math.max(4, Math.ceil(plan.retrievalBudget / 3)), retrievalOptions)
     : []
   throwIfAgenticRagCancelled(options.signal)
@@ -663,6 +671,16 @@ async function retrieveRagCandidates(plan: RagQueryPlan, options: AgenticRagOpti
       },
     }, options.now?.() ?? Date.now()),
   }
+}
+
+function shouldUseAdvancedIndexes(plan: RagQueryPlan): boolean {
+  return plan.profile === 'deep' || shouldRetrieveAgentic(plan)
+}
+
+function shouldRetrieveAgentic(plan: RagQueryPlan): boolean {
+  return plan.enabledTechniques.some((technique) => (
+    technique === 'raptor' || technique === 'graphrag' || technique === 'colbert'
+  ))
 }
 
 function resolveRerankStrategy(plan: RagQueryPlan): RagRerankResult['strategy'] {
