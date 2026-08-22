@@ -148,11 +148,13 @@ function run() {
   assert.ok(messageBubbleSource.includes('Gesture.LongPress()') && messageBubbleSource.includes('openActionBarFromLongPress'), 'message actions remain available from a message long press')
   assert.equal(messageBubbleSource.includes('AppIcon name="more"'), false, 'message bubbles do not expose a persistent top-right overflow button')
   assert.ok(
-    /function AnimatedProcessStatusText\(\{ active, label, tone, motion \}[\s\S]*?const shimmer = active && motion === 'full'[\s\S]*?setInterval\(\(\) =>[\s\S]*?loop: shimmer/.test(messageBubbleSource) &&
-      messageBubbleSource.includes("'.'.repeat(motion === 'none' ? 3 : dotCount)") &&
+    /function AnimatedProcessStatusText\(\{ active, label, tone, motion, grammar \}[\s\S]*?const shimmer = active && motion === 'full' && grammar !== 'precision'[\s\S]*?setInterval\(\(\) =>[\s\S]*?loop: shimmer/.test(messageBubbleSource) &&
+      messageBubbleSource.includes("grammar === 'precision'") &&
+      messageBubbleSource.includes("grammar === 'material'") &&
+      messageBubbleSource.includes("'.'.repeat(motion === 'full' ? dotCount : 3)") &&
       !messageBubbleSource.includes('function ProcessSpinner') &&
       !messageBubbleSource.includes('<ProcessAnchor'),
-    'all active reply stages share one reduced-motion-aware shimmer and dynamic-dot status without a circular anchor',
+    'active reply stages use theme-specific status motion, reduced-motion fallbacks, and no circular anchor',
   )
   assert.equal(messageBubbleSource.includes('function ThinkingStatusText'), false, 'thinking does not branch into a separate dot-only status style')
   assert.match(messageBubbleSource, /const MESSAGE_ACTION_PRIMARY_LIMIT = 5[\s\S]*const primaryActions = prioritizedActions\.slice\(0, MESSAGE_ACTION_PRIMARY_LIMIT\)/, 'message action sheet limits the primary view to five high-frequency commands')
@@ -479,7 +481,7 @@ function assertSourceIntegration() {
   assert.ok(dialogSource.includes('accessibilityViewIsModal'), 'shared dialogs expose modal accessibility containment')
   assert.match(dialogSource, /<Pressable[\s\S]*?accessible=\{false\}[\s\S]*?accessibilityRole="none"[\s\S]*?onPress=\{\(\) => closeDialog\(false\)\}[\s\S]*?backgroundColor: colors\.backdrop/, 'the touch-dismiss backdrop stays out of the accessibility tree because every dialog exposes explicit close and action controls')
   assert.doesNotMatch(dialogSource, /<Pressable[\s\S]*?accessibilityLabel=\{t\('dialog\.closeLayer'\)\}[\s\S]*?closeDialog\(false\)/, 'shared dialogs do not announce an unreachable duplicate backdrop close button')
-  assert.equal((dialogSource.match(/<DialogScrollableContent/g) ?? []).length, 3, 'all three theme dialogs keep long content scrollable above fixed actions')
+  assert.equal((dialogSource.match(/<DialogScrollableContent/g) ?? []).length, 4, 'all four canonical theme dialogs keep long content scrollable above fixed actions')
   assert.match(dialogSource, /function DialogScrollableContent[\s\S]*keyboardDismissMode="on-drag"[\s\S]*keyboardShouldPersistTaps="handled"[\s\S]*style=\{\{ flexShrink: 1 \}\}/, 'dialog content scrolls without blocking embedded form controls')
   assert.match(dialogSource, /resolveAppFeedbackTimeout\(durationMs, AccessibilityInfo\)[\s\S]*setTimeout\(\(\) => dismissToast\(toast\.id\), recommendedDurationMs\)/, 'toast dismissal resolves the system accessibility timeout before scheduling dismissal')
   assert.doesNotMatch(dialogSource, /AccessibilityInfo\.getRecommendedTimeoutMillis\(/, 'the Dialog provider does not directly call an optional platform accessibility method')

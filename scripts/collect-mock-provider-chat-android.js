@@ -5,6 +5,7 @@ const path = require('node:path')
 const { execFileSync } = require('node:child_process')
 const { Worker, isMainThread, parentPort, workerData } = require('node:worker_threads')
 const { defaultReleaseAppPackageName } = require('./release-validation-contract')
+const { readNormalizedConversationEvidence } = require('./conversation-sqlite-evidence')
 
 const root = path.resolve(__dirname, '..')
 const evidenceDir = path.join(root, 'test-evidence', 'qa')
@@ -1478,10 +1479,7 @@ function readLongContentDurableState(databasePath) {
           ORDER BY sequence ASC
         `).all(run.id)
       : []
-    const conversationRow = database.query(
-      'SELECT payloadJson FROM conversation_records WHERE id = ? LIMIT 1',
-    ).get(longContentConversationId)
-    const conversation = tryParseJson(conversationRow?.payloadJson)
+    const conversation = readNormalizedConversationEvidence(database, longContentConversationId)
     const messages = Array.isArray(conversation?.messages) ? conversation.messages : []
     const assistantMessage = messages.find((message) => message?.id === run?.responseMessageId)
       ?? [...messages].reverse().find((message) => message?.role === 'assistant')

@@ -1,5 +1,8 @@
 const assert = require('node:assert/strict')
+const fs = require('node:fs')
+const path = require('node:path')
 const { Database } = require('bun:sqlite')
+const { readNormalizedConversationEvidence } = require('./conversation-sqlite-evidence')
 
 async function main() {
   const core = await import('../src/core/index.ts')
@@ -7,18 +10,36 @@ async function main() {
   const conversationsModule = await import('../src/modules/conversations/index.ts')
   const knowledgeModule = await import('../src/modules/knowledge/index.ts')
   const providersModule = await import('../src/modules/providers/index.ts')
+  const conversationRuntimeModule = await import('../src/bootstrap/plainChatMessageIdentity.ts')
   assertConversationSnapshotContracts(core, conversationsModule)
+  assertStrictChatRequestValidation(core)
+  assertPlainMessageIdentityPreservation(conversationRuntimeModule)
+  assertContextPlanReceiptBuilder(runtimeModule)
+  assertGenericRuntimePreparationBoundary()
   await assertAssistantRunWorkspaceWritebackMigration(core, runtimeModule)
   await assertAssistantRunKindMigration(core, runtimeModule)
+  await assertConversationLegacyMigration(conversationsModule)
 
   const database = new Database(':memory:')
   try {
     const storage = createBunSqliteStorage(database)
-    await seedConversationTable(storage)
-    await seedConversation(storage, 'conversation-walking-skeleton')
+    const conversations = conversationsModule.createSqliteConversationRepository(storage)
+    await conversations.save({
+      id: 'conversation-walking-skeleton',
+      title: 'Walking skeleton',
+      providerId: 'walking-provider',
+      model: 'walking-model',
+      systemPrompt: 'Be concise.',
+      temperature: 0.2,
+      reasoningEffort: 'high',
+      maxTokens: 120,
+      generationParameterOverrides: {},
+      createdAt: 1,
+      updatedAt: 1,
+      messages: [{ id: 'message-1', role: 'user', content: 'Hello', status: 'done' }],
+    })
 
     const persistence = runtimeModule.createSqliteAssistantRunPersistence(storage)
-    const conversations = conversationsModule.createSqliteConversationRepository(storage)
     const persistedConversation = {
       id: 'conversation-persistence-contract',
       title: 'Persistence contract',
@@ -29,19 +50,91 @@ async function main() {
     }
     await conversations.save(persistedConversation)
     assert.equal((await conversations.loadAll())[0].id, persistedConversation.id)
+    const normalizedState = await storage.get()
+    const conversationColumns = await normalizedState.getAll(
+      'PRAGMA table_info(conversation_records)',
+    )
+    assert.equal(
+      conversationColumns.some((column) => column.name === 'payloadJson'),
+      false,
+      'fresh conversation databases have no payload mirror column',
+    )
+    const normalizedConversationState = await normalizedState.getFirst(
+      'SELECT conversationId, messageCount FROM conversation_record_state WHERE conversationId = ?',
+      [persistedConversation.id],
+    )
+    const normalizedMessages = await normalizedState.getAll(
+      'SELECT conversationId, id, ordinal, messageJson FROM conversation_message_records WHERE conversationId = ? ORDER BY ordinal',
+      [persistedConversation.id],
+    )
+    assert.deepEqual(normalizedConversationState, {
+      conversationId: persistedConversation.id,
+      messageCount: persistedConversation.messages.length,
+    }, 'conversation metadata is stored separately from message rows')
+    assert.deepEqual(normalizedMessages.map((row) => ({
+      conversationId: row.conversationId,
+      id: row.id,
+      ordinal: row.ordinal,
+    })), [{
+      conversationId: persistedConversation.id,
+      id: 'message-persistence',
+      ordinal: 0,
+    }], 'conversation messages are persisted as individually addressable rows')
+    const incrementallyUpdatedConversation = {
+      ...persistedConversation,
+      title: 'Incrementally updated',
+      updatedAt: 3,
+      messages: [
+        ...persistedConversation.messages,
+        { id: 'message-incremental', role: 'assistant', content: 'Only normalized rows change', status: 'done' },
+      ],
+    }
+    await conversations.save(incrementallyUpdatedConversation)
+    assert.deepEqual(
+      (await conversations.get(persistedConversation.id))?.messages.map((message) => message.id),
+      ['message-persistence', 'message-incremental'],
+      'normalized reads immediately expose incrementally persisted messages',
+    )
+    assert.deepEqual(
+      readNormalizedConversationEvidence(database, persistedConversation.id)?.messages.map((message) => message.id),
+      ['message-persistence', 'message-incremental'],
+      'Android evidence readers use the normalized conversation state and message rows',
+    )
     await conversations.replaceAll([persistedConversation])
     assert.deepEqual((await conversations.loadAll()).map((item) => item.id), [persistedConversation.id])
     await conversations.clear()
     assert.deepEqual(await conversations.loadAll(), [])
-    await seedConversation(storage, 'conversation-walking-skeleton')
+    await conversations.save({
+      id: 'conversation-walking-skeleton',
+      title: 'Walking skeleton',
+      providerId: 'walking-provider',
+      model: 'walking-model',
+      systemPrompt: 'Be concise.',
+      temperature: 0.2,
+      reasoningEffort: 'high',
+      maxTokens: 120,
+      generationParameterOverrides: {},
+      createdAt: 1,
+      updatedAt: 1,
+      messages: [{ id: 'message-1', role: 'user', content: 'Hello', status: 'done' }],
+    })
+    assert.ok(
+      await conversations.get('conversation-walking-skeleton'),
+      'the owner repository exposes the normalized runtime fixture before dispatch',
+    )
     const contextSnapshots = knowledgeModule.createSqliteContextSnapshotRepository(storage)
     const projections = []
+    let capturedRequestSnapshotAtRunCreated
     let now = 50_000
     const ids = { next: (prefix) => `${prefix}-${++now}` }
     const adapter = providersModule.createCallbackProviderAdapter({
       providerId: 'walking-provider',
       transport: {
         async start(request, callbacks) {
+          assert.ok(
+            capturedRequestSnapshotAtRunCreated,
+            'the exact provider-neutral request is durable before provider dispatch starts',
+          )
           capturedProviderRequest = request
           callbacks.onEvent({ type: 'text-delta', text: 'Persisted ' })
           callbacks.onEvent({ type: 'citation', citationId: 'source-1', title: 'Source' })
@@ -52,6 +145,7 @@ async function main() {
       },
     })
     let capturedProviderRequest
+    let capturedPreparation
     const assistantRuntime = runtimeModule.createAssistantRuntime({
       clock: { now: () => ++now },
       ids,
@@ -76,22 +170,46 @@ async function main() {
           },
         },
       }),
+      requestPreparation: {
+        prepare(input) {
+          capturedPreparation = input
+          return {
+            ...input.request,
+            requestedCapabilities: ['chat'],
+          }
+        },
+      },
     })
 
     const handle = useCase.start({
       conversationId: 'conversation-walking-skeleton',
       responseMessageId: 'assistant-message-1',
-      projection: (event) => projections.push(event),
+      projection: async (event) => {
+        projections.push(event)
+        if (event.journalEntry?.type === 'run.created') {
+          capturedRequestSnapshotAtRunCreated = await persistence.getRequestSnapshot(event.run.id)
+        }
+      },
     })
     const completed = await handle.completion
 
-    assert.equal(completed.ok, true, 'persisted conversation reaches the target runtime')
+    assert.equal(
+      completed.ok,
+      true,
+      `persisted conversation reaches the target runtime${completed.ok ? '' : ` (${completed.error.code}: ${completed.error.message})`}`,
+    )
     if (!completed.ok) throw new Error(completed.error.message)
     assert.equal(completed.value.status, 'succeeded')
     assert.equal(completed.value.kind, 'chat')
     assert.equal(completed.value.responseMessageId, 'assistant-message-1')
     assert.equal(completed.value.result.outputText, 'Persisted answer.')
     assert.equal(completed.value.checkpoint.outputText, 'Persisted answer.')
+    assert.equal(capturedPreparation?.request.messages[0].id, 'message-1')
+    assert.equal(
+      capturedPreparation?.assembledContext?.providerContext,
+      'Use the approved local context when relevant.',
+      'ConversationRun exposes the assembled context to the single request-preparation boundary',
+    )
     assert.equal(capturedProviderRequest.reasoningEffort, 'high', 'SQLite conversation reasoning survives Snapshot and ChatRequest projection')
     assert.deepEqual(
       capturedProviderRequest.generationParameterSources,
@@ -102,6 +220,47 @@ async function main() {
       capturedProviderRequest.systemPrompt,
       'Be concise.\n\nUse the approved local context when relevant.',
       'the provider receives the persisted, frozen context prompt rather than retrieving context itself',
+    )
+    assert.deepEqual(
+      capturedProviderRequest.requestedCapabilities,
+      ['chat'],
+      'the provider receives the final request-preparation result',
+    )
+    const requestSnapshot = await persistence.getRequestSnapshot(handle.runId)
+    assert.ok(requestSnapshot, 'the final provider-neutral request is inspectable from durable AssistantRun data')
+    assert.equal(requestSnapshot.schema, 'islemind.assistant-run-request-snapshot.v1')
+    assert.equal(requestSnapshot.runId, handle.runId)
+    assert.deepEqual(
+      requestSnapshot.request,
+      capturedProviderRequest,
+      'the durable request snapshot exactly matches the provider-neutral request dispatched by the gateway',
+    )
+    assert.equal(
+      requestSnapshot.requestHash,
+      runtimeModule.buildAssistantRequestHash(capturedProviderRequest),
+      'new canonical request snapshots retain a stable hash of the exact dispatched request',
+    )
+    assert.equal(
+      requestSnapshot.capabilityRevision,
+      runtimeModule.buildAssistantCapabilityRevision(capturedProviderRequest),
+      'new canonical request snapshots retain the capability revision used for planning',
+    )
+    assert.equal(runtimeModule.isAssistantRequestHash(requestSnapshot.requestHash), true)
+    assert.equal(runtimeModule.isAssistantCapabilityRevision(requestSnapshot.capabilityRevision), true)
+    assert.notEqual(
+      requestSnapshot.requestHash,
+      runtimeModule.buildAssistantRequestHash({
+        ...capturedProviderRequest,
+        messages: [{ ...capturedProviderRequest.messages[0], text: 'Changed request.' }],
+      }),
+      'request identity changes when the frozen provider-neutral request changes',
+    )
+    assert.equal(Object.isFrozen(requestSnapshot), true, 'decoded request snapshot evidence is immutable')
+    assert.equal(Object.isFrozen(requestSnapshot.request), true, 'decoded provider-neutral request is immutable')
+    assert.equal(
+      requestSnapshot.capturedAt,
+      (await persistence.list(handle.runId))[0].occurredAt,
+      'the request snapshot and run.created journal entry share one captured timestamp',
     )
     const contextSnapshot = await contextSnapshots.get(completed.value.contextSnapshotId)
     assert.equal(contextSnapshot?.conversationId, 'conversation-walking-skeleton')
@@ -118,8 +277,15 @@ async function main() {
       'projection receives only states that were committed with their journal entry',
     )
 
+    await assertPreparedModelOperationRequestSnapshot(
+      core,
+      runtimeModule,
+      providersModule,
+      persistence,
+      ids,
+    )
     await assertAtomicJournalAndRunState(core, persistence)
-    await assertChatActivityPersistence(core, assistantRuntime, persistence, storage)
+    await assertChatActivityPersistence(core, runtimeModule, assistantRuntime, persistence, storage)
     await assertChatActivityCancellationPreservesWorkspaceWritebackHandoff(
       core,
       assistantRuntime,
@@ -127,11 +293,375 @@ async function main() {
     )
     await assertAgentActivityCreationRejected(core, assistantRuntime, persistence)
     await assertRestartRecovery(core, runtimeModule, conversationsModule, providersModule, persistence, conversations, ids, now)
+    await assertAssistantRunResetCascade(persistence, storage)
   } finally {
     database.close()
   }
 
   console.log('vNext walking-skeleton integration tests passed')
+}
+
+function assertStrictChatRequestValidation(core) {
+  const base = {
+    schema: core.CHAT_REQUEST_SCHEMA,
+    conversationId: 'strict-request-conversation',
+    providerId: 'strict-request-provider',
+    model: 'strict-request-model',
+    messages: [{ id: 'strict-message', role: 'user', text: 'Validate this request.' }],
+    generationParameterSources: {},
+  }
+  assert.equal(core.isChatRequest(base), true, 'the canonical provider-neutral request fixture is accepted')
+  assert.equal(core.isChatRequest({ ...base, generationParameterSources: { temperature: 'unknown-source' } }), false, 'unknown generation parameter sources fail closed')
+  assert.equal(core.isChatRequest({ ...base, generationParameterSources: undefined }), false, 'missing generation parameter sources fail closed')
+  assert.equal(core.isChatRequest({ ...base, reasoningEffort: 'extreme' }), false, 'unknown reasoning effort fails closed')
+  assert.equal(core.isChatRequest({ ...base, unexpectedRootField: true }), false, 'unknown root request fields fail closed')
+  assert.equal(core.isChatRequest({
+    ...base,
+    messages: [{ ...base.messages[0], unexpectedMessageField: true }],
+  }), false, 'unknown message fields fail closed')
+  assert.equal(core.isChatRequest({
+    ...base,
+    messages: [{
+      id: 'strict-assistant-message',
+      role: 'assistant',
+      text: '',
+      toolCalls: [{ callId: 'strict-call', name: 'strict_tool', arguments: {}, unexpectedToolField: true }],
+    }],
+  }), false, 'unknown tool-call fields fail closed')
+  assert.equal(core.isChatRequest({
+    ...base,
+    messages: [{ id: 'strict-message', role: 'user', text: () => 'not JSON' }],
+  }), false, 'function values cannot cross the provider-neutral request boundary')
+  assert.equal(core.isChatRequest({
+    ...base,
+    generationParameterSources: { temperature: new AbortController().signal },
+  }), false, 'AbortSignal values cannot cross the provider-neutral request boundary')
+  assert.throws(() => core.freezeChatRequest({
+    ...base,
+    messages: [{ id: 'strict-message', role: 'user', text: () => 'not JSON' }],
+  }), /invalid/i, 'function values are rejected before request freezing')
+  const bound = core.freezeChatRequest({
+    ...base,
+    providerStateBinding: { providerId: base.providerId, model: base.model },
+  })
+  assert.equal(Object.isFrozen(bound), true, 'accepted requests are deeply frozen')
+  assert.equal(core.isChatRequest({
+    ...base,
+    providerStateBinding: { providerId: 'other-provider', model: base.model },
+  }), false, 'provider continuation bindings cannot diverge from request routing')
+}
+
+function assertGenericRuntimePreparationBoundary() {
+  const source = fs.readFileSync(
+    path.join(__dirname, '..', 'src', 'bootstrap', 'vnextConversationRuntime.ts'),
+    'utf8',
+  )
+  assert.match(
+    source,
+    /A bounded Chat request preparation policy is required for new turns\./,
+    'generic vNext runtime fails closed instead of dispatching an unplanned full history',
+  )
+  assert.match(
+    source,
+    /requestPreparation: createPlainChatRequestPreparation\(/,
+    'plain Chat runtime explicitly supplies the bounded preparation policy',
+  )
+}
+
+function assertPlainMessageIdentityPreservation(conversationRuntimeModule) {
+  const preserveMessageIdentity = conversationRuntimeModule.preserveMessageIdentity
+  assert.equal(typeof preserveMessageIdentity, 'function', 'Plain request preparation exposes its pure identity-preservation behavior to focused tests')
+
+  const duplicateSource = [
+    { id: 'user-first', role: 'user', text: 'same question' },
+    { id: 'assistant-first', role: 'assistant', text: 'same answer' },
+    { id: 'user-second', role: 'user', text: 'same question' },
+  ]
+  const duplicatePlanned = [
+    { role: 'user', content: 'same question' },
+    { role: 'assistant', content: 'same answer' },
+    { role: 'user', content: 'same question' },
+  ]
+  assert.deepEqual(
+    preserveMessageIdentity(duplicatePlanned, duplicateSource).map((message) => message.id),
+    ['user-first', 'assistant-first', 'user-second'],
+    'duplicate role/text turns retain their matching persisted IDs in order',
+  )
+
+  const sourceWithSystemAndTool = [
+    { id: 'system-1', role: 'system', text: 'hidden instruction' },
+    { id: 'user-latest', role: 'user', text: 'latest question' },
+    { id: 'tool-1', role: 'tool', text: 'tool output' },
+  ]
+  const plannedWithSummary = [
+    { role: 'assistant', content: 'Conversation summary.' },
+    { role: 'user', content: 'latest question' },
+  ]
+  const summarized = preserveMessageIdentity(plannedWithSummary, sourceWithSystemAndTool)
+  assert.deepEqual(
+    summarized.map((message) => ({ id: message.id, role: message.role, text: message.text })),
+    [
+      { id: 'planned-message-1', role: 'assistant', text: 'Conversation summary.' },
+      { id: 'user-latest', role: 'user', text: 'latest question' },
+    ],
+    'an inserted summary receives a stable synthetic ID while later source IDs survive filtered roles',
+  )
+
+  const generated = preserveMessageIdentity(
+    [
+      { role: 'user', content: 'new turn' },
+      { role: 'assistant', content: 'new response' },
+    ],
+    [],
+  )
+  assert.deepEqual(
+    generated.map((message) => message.id),
+    ['planned-message-1', 'planned-message-2'],
+    'newly planned messages use deterministic IDs within one request plan',
+  )
+  assert.deepEqual(
+    preserveMessageIdentity(
+      [
+        { role: 'user', content: 'new turn' },
+        { role: 'assistant', content: 'new response' },
+      ],
+      [],
+    ).map((message) => message.id),
+    generated.map((message) => message.id),
+    'synthetic IDs remain stable when the same plan is rebuilt',
+  )
+}
+
+function assertContextPlanReceiptBuilder(runtimeModule) {
+  const receipt = runtimeModule.buildAssistantContextPlanReceipt({
+    providerId: 'receipt-provider',
+    model: 'receipt-model',
+    plan: {
+      manifest: {
+        id: 'receipt-manifest',
+        budget: {
+          modelContextWindow: 8_192,
+          requestBudgetTokens: 6_000,
+          contextPromptTokens: 40,
+          estimatedInputTokens: 120,
+          fixedTokens: 20,
+          messageTokens: 60,
+          includedFragmentTokens: 40,
+          originalFragmentTokens: 80,
+          totalTokenCap: 100,
+          activeContextTokens: 120,
+          tokensUntilCompaction: 5_000,
+        },
+        failureCodes: ['context_budget_overrun'],
+        fragments: [{
+          fragmentId: 'receipt-fragment',
+          type: 'memory',
+          priority: 'high',
+          sourceId: 'memory-receipt',
+          decision: 'included',
+          tokenCap: 80,
+          estimatedTokens: 40,
+          originalEstimatedTokens: 80,
+          authority: 'user-private',
+          content: 'raw context must never enter a receipt',
+        }],
+      },
+      windowState: { activeContextTokens: 120, tokensUntilCompaction: 5_000 },
+    },
+    activePrompt: {
+      estimatedInputTokens: 120,
+      fixedTokens: 20,
+      messageTokens: 60,
+      compressionTriggered: true,
+      compressionMetadata: {
+        strategy: 'structured-v2',
+        triggerReason: 'message_budget_exceeded',
+        sourceMessageCount: 8,
+        keptMessageCount: 4,
+        sourceTokens: 240,
+        compressedTokens: 120,
+        estimatedSavedTokens: 120,
+        compressionRatio: 0.5,
+        summaryTokens: 32,
+        summarySectionCount: 4,
+      },
+    },
+  })
+  assert.equal(runtimeModule.isAssistantContextPlanReceipt(receipt), true)
+  assert.equal(receipt.sourceManifest[0]?.sourceId, 'memory-receipt')
+  assert.equal(JSON.stringify(receipt).includes('raw context must never enter a receipt'), false)
+  assert.equal(
+    runtimeModule.isAssistantContextPlanReceipt({ ...receipt, rawContext: 'must fail closed' }),
+    false,
+    'receipt validation rejects uncontracted raw-context fields',
+  )
+}
+
+async function assertAssistantRunResetCascade(persistence, storage) {
+  const database = await storage.get()
+  for (const table of [
+    'assistant_runs',
+    'assistant_run_journal',
+    'assistant_run_request_snapshots',
+  ]) {
+    const before = await database.getFirst(`SELECT COUNT(*) AS count FROM ${table}`)
+    assert.ok(Number(before?.count) > 0, `${table} contains durable run evidence before reset`)
+  }
+
+  await persistence.clear()
+
+  for (const table of [
+    'assistant_runs',
+    'assistant_run_journal',
+    'assistant_run_request_snapshots',
+  ]) {
+    const after = await database.getFirst(`SELECT COUNT(*) AS count FROM ${table}`)
+    assert.equal(Number(after?.count), 0, `${table} is cleared through the AssistantRun reset boundary`)
+  }
+}
+
+async function assertPreparedModelOperationRequestSnapshot(
+  core,
+  runtimeModule,
+  providersModule,
+  persistence,
+  ids,
+) {
+  const events = []
+  let now = 80_000
+  let dispatchedRequest
+  const providerId = 'prepared-request-provider'
+  const adapter = providersModule.createCallbackProviderAdapter({
+    providerId,
+    capabilities: ['chat', 'tools'],
+    transport: {
+      async start(request, callbacks) {
+        events.push('dispatch')
+        dispatchedRequest = request
+        callbacks.onEvent({ type: 'text-delta', text: 'Prepared request.' })
+        callbacks.onComplete()
+      },
+    },
+  })
+  const assistantRuntime = runtimeModule.createAssistantRuntime({
+    clock: { now: () => ++now },
+    ids,
+    providerGateway: providersModule.createProviderGateway([adapter]),
+    persistence,
+  })
+  const runId = core.asAssistantRunId('run-prepared-request-snapshot')
+  const contextReceipt = {
+    schema: 'islemind.assistant-context-plan-receipt.v1',
+    providerId,
+    model: 'prepared-request-model',
+    manifestId: 'context-manifest-fixture',
+    budget: {
+      modelContextWindow: 8_192,
+      requestBudgetTokens: 6_000,
+      contextPromptTokens: 40,
+      estimatedInputTokens: 120,
+      fixedTokens: 20,
+      messageTokens: 60,
+      includedFragmentTokens: 40,
+      originalFragmentTokens: 80,
+      totalTokenCap: 100,
+      activeContextTokens: 100,
+      tokensUntilCompaction: 5_000,
+    },
+    compression: {
+      triggered: true,
+      strategy: 'structured-v2',
+      triggerReason: 'message_budget_exceeded',
+      sourceMessageCount: 8,
+      keptMessageCount: 4,
+      sourceTokens: 240,
+      compressedTokens: 120,
+      estimatedSavedTokens: 120,
+      compressionRatio: 0.5,
+      summaryTokens: 32,
+      summarySectionCount: 4,
+    },
+    sourceManifest: [{
+      fragmentId: 'fragment-fixture',
+      type: 'memory',
+      priority: 'high',
+      sourceId: 'memory-fixture',
+      decision: 'included',
+      tokenCap: 80,
+      estimatedTokens: 40,
+      originalEstimatedTokens: 80,
+      authority: 'user-private',
+    }],
+    failureCodes: [],
+  }
+  const result = await assistantRuntime.execute({
+    runId,
+    request: {
+      schema: core.CHAT_REQUEST_SCHEMA,
+      conversationId: 'conversation-prepared-request',
+      providerId,
+      model: 'prepared-request-model',
+      messages: [{ id: 'prepared-message', role: 'user', text: 'Use the admitted operation.' }],
+      generationParameterSources: {},
+    },
+    context: {
+      schema: 'islemind.context-snapshot.v1',
+      id: core.asContextSnapshotId('context-prepared-request'),
+      createdAt: now,
+      conversationMessageIds: ['prepared-message'],
+      memoryIds: [],
+      knowledgeSourceIds: [],
+      attachmentIds: [],
+      approvedToolContextIds: [],
+    },
+    contextReceipt,
+    modelOperationSession: {
+      prepareRequest(request) {
+        events.push('prepare')
+        return {
+          ...request,
+          requestedCapabilities: ['tools'],
+          toolDefinitions: [{
+            operationId: 'builtin:fixture:read',
+            name: 'fixture_read',
+            description: 'Read the bounded fixture.',
+            inputSchema: { type: 'object', additionalProperties: false },
+            permission: 'read-only',
+          }],
+        }
+      },
+      async evaluateTurn() {
+        return { kind: 'no-operation' }
+      },
+      validatePending() {
+        return false
+      },
+      async resume() {
+        throw new Error('This fixture never resumes.')
+      },
+    },
+    async onPersisted(event) {
+      if (event.journalEntry.type !== 'run.created') return
+      events.push('run.created')
+      assert.ok(
+        await persistence.getRequestSnapshot(event.run.id),
+        'run.created projection observes the prepared request only after its atomic persistence',
+      )
+    },
+  })
+  assert.equal(result.ok, true, 'model-operation request preparation still reaches provider dispatch')
+  if (!result.ok) throw new Error(result.error.message)
+  const snapshot = await persistence.getRequestSnapshot(runId)
+  assert.ok(snapshot)
+  assert.deepEqual(snapshot.request, dispatchedRequest)
+  assert.deepEqual(snapshot.contextReceipt, contextReceipt)
+  assert.equal(Object.isFrozen(snapshot.contextReceipt), true)
+  assert.equal(snapshot.request.toolDefinitions?.[0]?.operationId, 'builtin:fixture:read')
+  assert.deepEqual(
+    events.slice(0, 3),
+    ['prepare', 'run.created', 'dispatch'],
+    'model-operation declarations are frozen and persisted before provider dispatch',
+  )
 }
 
 async function seedConversationTable(storage) {
@@ -148,27 +678,98 @@ async function seedConversationTable(storage) {
   `)
 }
 
-async function seedConversation(storage, id) {
-  const database = await storage.get()
-  const payload = {
-    schema: 'islemind.conversation-snapshot.v2',
-    id,
-    title: 'Walking skeleton',
-    providerId: 'walking-provider',
-    model: 'walking-model',
-    systemPrompt: 'Be concise.',
-    temperature: 0.2,
-    reasoningEffort: 'high',
-    maxTokens: 120,
-    generationParameterOverrides: {},
-    messages: [
-      { id: 'message-1', role: 'user', content: 'Hello', status: 'done' },
-    ],
+async function assertConversationLegacyMigration(conversationsModule) {
+  const database = new Database(':memory:')
+  try {
+    const storage = createBunSqliteStorage(database)
+    await seedConversationTable(storage)
+    const executor = await storage.get()
+    await executor.run(
+      'INSERT INTO conversation_records (id, title, providerId, model, updatedAt, payloadJson) VALUES (?, ?, ?, ?, ?, ?)',
+      [
+        'conversation-valid-legacy',
+        'Valid legacy',
+        'walking-provider',
+        'walking-model',
+        1,
+        JSON.stringify({
+          schema: conversationsModule.CONVERSATION_SNAPSHOT_SCHEMA,
+          id: 'conversation-valid-legacy',
+          title: 'Valid legacy',
+          providerId: 'walking-provider',
+          model: 'walking-model',
+          systemPrompt: '',
+          temperature: 0.7,
+          maxTokens: 512,
+          messages: [{
+            id: 'legacy-message',
+            role: 'user',
+            content: 'Migrated',
+            timestamp: 1,
+            status: 'done',
+          }],
+          createdAt: 1,
+          updatedAt: 1,
+        }),
+      ],
+    )
+    await executor.run(
+      'INSERT INTO conversation_records (id, title, providerId, model, updatedAt, payloadJson) VALUES (?, ?, ?, ?, ?, ?)',
+      ['conversation-invalid-legacy', 'Invalid legacy', 'walking-provider', 'walking-model', 2, '{not-json'],
+    )
+
+    const conversations = conversationsModule.createSqliteConversationRepository(storage)
+    const loaded = await conversations.loadAll()
+    assert.deepEqual(loaded.map((conversation) => conversation.id), ['conversation-valid-legacy'])
+    assert.deepEqual(
+      (await conversations.get('conversation-valid-legacy'))?.messages.map((message) => message.id),
+      ['legacy-message'],
+      'valid legacy rows migrate to normalized state and message rows during repository initialization',
+    )
+    const legacyColumns = await executor.getAll('PRAGMA table_info(conversation_records)')
+    assert.equal(
+      legacyColumns.some((column) => column.name === 'payloadJson'),
+      true,
+      'a malformed legacy row keeps the old payload column for a later lossless retry',
+    )
+    await assert.rejects(
+      () => conversations.get('conversation-invalid-legacy'),
+      /persisted conversation record is invalid/i,
+      'a malformed legacy row fails closed when addressed by id without blocking valid migration',
+    )
+    await assert.rejects(
+      () => conversations.loadReplacementSnapshot(),
+      /persisted conversation record is invalid/i,
+      'strict recovery rejects record/state coverage drift from an unmigrated legacy row',
+    )
+    await executor.run(
+      'DELETE FROM conversation_records WHERE id = ?',
+      ['conversation-invalid-legacy'],
+    )
+    const repairedConversations = conversationsModule.createSqliteConversationRepository(storage)
+    const recovered = await repairedConversations.loadReplacementSnapshot()
+    const repairedColumnsAfterRead = await executor.getAll('PRAGMA table_info(conversation_records)')
+    assert.equal(
+      repairedColumnsAfterRead.some((column) => column.name === 'payloadJson'),
+      false,
+      'a fresh repository retries the pending migration after the malformed row is removed',
+    )
+    assert.deepEqual(
+      recovered.map((conversation) => ({
+        id: conversation.id,
+        title: conversation.title,
+        messageIds: conversation.messages.map((message) => message.id),
+      })),
+      [{
+        id: 'conversation-valid-legacy',
+        title: 'Valid legacy',
+        messageIds: ['legacy-message'],
+      }],
+      'strict recovery returns the fully migrated legacy conversation from normalized rows',
+    )
+  } finally {
+    database.close()
   }
-  await database.run(
-    'INSERT INTO conversation_records (id, title, providerId, model, updatedAt, payloadJson) VALUES (?, ?, ?, ?, ?, ?)',
-    [id, payload.title, payload.providerId, payload.model, 1, JSON.stringify(payload)],
-  )
 }
 
 async function assertAssistantRunWorkspaceWritebackMigration(core, runtimeModule) {
@@ -265,6 +866,11 @@ async function assertLegacyAssistantRunWorkspaceWritebackMigration(
       'chat',
       `v${sourceVersion} AssistantRun rows preserve the historical default Chat kind`,
     )
+    assert.equal(
+      await persistence.getRequestSnapshot(legacyRunId),
+      undefined,
+      `v${sourceVersion} AssistantRun rows remain readable without inventing an exact request snapshot`,
+    )
     const columns = await executor.getAll('PRAGMA table_info(assistant_runs)')
     assert.ok(
       columns.some((column) => column.name === 'workspaceWritebackHandoffJson'),
@@ -275,6 +881,29 @@ async function assertLegacyAssistantRunWorkspaceWritebackMigration(
       ['assistant-runtime', 4],
     )
     assert.equal(migration?.name, 'workspace-writeback-handoff')
+    const requestSnapshotMigration = await executor.getFirst(
+      'SELECT name FROM platform_schema_migrations WHERE scope = ? AND version = ?',
+      ['assistant-runtime', 6],
+    )
+    assert.equal(requestSnapshotMigration?.name, 'exact-provider-neutral-request')
+    const requestSnapshotTable = await executor.getFirst(
+      "SELECT name FROM sqlite_master WHERE type = 'table' AND name = ?",
+      ['assistant_run_request_snapshots'],
+    )
+    assert.equal(requestSnapshotTable?.name, 'assistant_run_request_snapshots')
+    const requestSnapshotColumns = await executor.getAll('PRAGMA table_info(assistant_run_request_snapshots)')
+    assert.ok(
+      requestSnapshotColumns.some((column) => column.name === 'capabilityRevision') &&
+        requestSnapshotColumns.some((column) => column.name === 'requestHash'),
+      'the v8 migration adds nullable request identity evidence without rewriting legacy snapshots',
+    )
+    assert.equal(
+      (await executor.getFirst(
+        'SELECT name FROM platform_schema_migrations WHERE scope = ? AND version = ?',
+        ['assistant-runtime', 8],
+      ))?.name,
+      'request-identity-evidence',
+    )
   } finally {
     database.close()
   }
@@ -415,6 +1044,14 @@ async function assertAssistantRunKindMigration(core, runtimeModule) {
       ['assistant-runtime', 5],
     )
     assert.equal(migration?.name, 'chat-owned-run-kind')
+    assert.equal(
+      (await executor.getFirst(
+        'SELECT name FROM platform_schema_migrations WHERE scope = ? AND version = ?',
+        ['assistant-runtime', 6],
+      ))?.name,
+      'exact-provider-neutral-request',
+      'the request snapshot migration is additive after the inert v5 run-kind ledger entry',
+    )
 
     const lateLegacyRunId = core.asAssistantRunId('late-legacy-agent-run')
     await executor.run(
@@ -571,20 +1208,87 @@ async function assertAtomicJournalAndRunState(core, persistence) {
     type: 'run.created',
     occurredAt: 1,
   }
-  await persistence.appendAndSave(entry, { ...baseRun, journalSequence: 1 })
+  const requestSnapshot = {
+    schema: 'islemind.assistant-run-request-snapshot.v1',
+    runId,
+    capturedAt: entry.occurredAt,
+    request: {
+      schema: core.CHAT_REQUEST_SCHEMA,
+      conversationId: baseRun.conversationId,
+      providerId: baseRun.providerId,
+      model: baseRun.model,
+      messages: [{ id: 'message-atomic', role: 'user', text: 'Persist atomically.' }],
+      generationParameterSources: {},
+    },
+  }
+  await persistence.appendAndSave(entry, { ...baseRun, journalSequence: 1 }, requestSnapshot)
 
   await assert.rejects(
-    persistence.appendAndSave(entry, { ...baseRun, status: 'running', journalSequence: 1, startedAt: 2 }),
+    persistence.appendAndSave(
+      entry,
+      { ...baseRun, status: 'running', journalSequence: 1, startedAt: 2 },
+      requestSnapshot,
+    ),
     'a duplicate journal write fails inside the transaction',
   )
   const stored = await persistence.get(runId)
   assert.equal(stored.kind, 'chat', 'run envelopes retain the required Chat kind')
   assert.equal(stored.status, 'queued', 'a failed journal insert cannot leave a new run state behind')
   assert.equal(stored.journalSequence, 1)
+  assert.deepEqual(
+    await persistence.getRequestSnapshot(runId),
+    requestSnapshot,
+    'run.created atomically retains the original exact request when a duplicate transition rolls back',
+  )
 }
 
-async function assertChatActivityPersistence(core, assistantRuntime, persistence, storage) {
+async function assertChatActivityPersistence(core, runtimeModule, assistantRuntime, persistence, storage) {
   const runId = core.asAssistantRunId('run-chat-activity')
+  const activityContextReceipt = {
+    schema: 'islemind.assistant-context-plan-receipt.v1',
+    providerId: 'activity-provider',
+    model: 'activity-model',
+    budget: {
+      modelContextWindow: 4_096,
+      requestBudgetTokens: 3_000,
+      contextPromptTokens: 20,
+      estimatedInputTokens: 80,
+      fixedTokens: 10,
+      messageTokens: 50,
+      includedFragmentTokens: 20,
+      originalFragmentTokens: 20,
+      totalTokenCap: 20,
+      activeContextTokens: 70,
+      tokensUntilCompaction: 2_500,
+    },
+    compression: {
+      triggered: false,
+      strategy: 'none',
+      triggerReason: 'disabled_or_unneeded',
+      sourceMessageCount: 1,
+      keptMessageCount: 1,
+      sourceTokens: 50,
+      compressedTokens: 50,
+      estimatedSavedTokens: 0,
+      compressionRatio: 1,
+      summaryTokens: 0,
+      summarySectionCount: 0,
+    },
+    sourceManifest: [],
+    failureCodes: [],
+  }
+  const requestEvidence = Object.freeze({
+    schema: 'islemind.assistant-activity-request-evidence.v1',
+    conversationId: 'conversation-walking-skeleton',
+    providerId: 'activity-provider',
+    model: 'activity-model',
+    payload: Object.freeze({
+      provider: Object.freeze({ id: 'activity-provider', apiKey: '[redacted]' }),
+      messages: Object.freeze([Object.freeze({ role: 'user', content: 'Durable activity.' })]),
+    }),
+    redactedFields: Object.freeze(['$.provider.apiKey', '$.signal']),
+    contextReceipt: activityContextReceipt,
+  })
   const workspaceWritebackHandoff = createWorkspaceWritebackHandoff({
     runId,
     conversationId: 'conversation-walking-skeleton',
@@ -593,12 +1297,16 @@ async function assertChatActivityPersistence(core, assistantRuntime, persistence
   })
   const database = await storage.get()
   let runCreatedRow
+  let runCreatedRequestSnapshot
   const persistedTransitions = []
   const result = await assistantRuntime.executeActivity({
     runId,
     kind: 'chat',
     conversationId: 'conversation-walking-skeleton',
     responseMessageId: 'assistant-chat-message-1',
+    providerId: 'activity-provider',
+    model: 'activity-model',
+    requestEvidence,
     workspaceWritebackHandoff,
     context: {
       schema: 'islemind.context-snapshot.v1',
@@ -611,14 +1319,40 @@ async function assertChatActivityPersistence(core, assistantRuntime, persistence
       approvedToolContextIds: [],
     },
     executor: {
-      async execute({ run }) {
+      async execute({ run, checkpointStreamEvent, checkpointTextDelta }) {
         assert.equal(run.kind, 'chat')
         assert.equal(
           run.workspaceWritebackHandoff,
           workspaceWritebackHandoff,
           'the activity executor receives the exact handoff persisted with run.created',
         )
-        return { outputText: 'Durable Chat activity.', eventCount: 1 }
+        await checkpointStreamEvent?.({
+          type: 'citation',
+          citationId: 'activity-citation',
+          title: 'Durable citation',
+          url: 'https://example.com/source',
+        })
+        await checkpointTextDelta?.('Durable ')
+        await checkpointStreamEvent?.({
+          type: 'tool-call',
+          toolCallId: 'activity-tool-call',
+          toolName: 'read_workspace',
+        })
+        await checkpointStreamEvent?.({
+          type: 'usage',
+          inputTokens: 11,
+          outputTokens: 7,
+          totalTokens: 18,
+        })
+        await checkpointStreamEvent?.({
+          type: 'trace',
+          traceId: 'activity-trace',
+          traceType: 'system',
+          traceStatus: 'done',
+          title: 'Provider request',
+        })
+        await checkpointTextDelta?.('Chat activity.')
+        return {}
       },
     },
     async onPersisted(event) {
@@ -628,12 +1362,14 @@ async function assertChatActivityPersistence(core, assistantRuntime, persistence
         'SELECT workspaceWritebackHandoffJson FROM assistant_runs WHERE id = ?',
         [runId],
       )
+      runCreatedRequestSnapshot = await persistence.getRequestSnapshot(runId)
     },
   })
   assert.equal(result.ok, true, 'activity runs persist through the same SQLite journal')
   if (!result.ok) throw new Error(result.error.message)
   assert.equal(result.value.kind, 'chat')
   assert.equal(result.value.result?.outputText, 'Durable Chat activity.')
+  assert.equal(result.value.result?.streamEventCount, 6, 'activity checkpoints preserve every normalized durable stream event')
   assert.equal(
     persistedTransitions[0].run.workspaceWritebackHandoff,
     workspaceWritebackHandoff,
@@ -648,11 +1384,92 @@ async function assertChatActivityPersistence(core, assistantRuntime, persistence
     workspaceWritebackHandoff,
     'run.created atomically persists the full workspace handoff before projection',
   )
-  assert.deepEqual((await persistence.list(runId)).map((entry) => entry.type), [
+  assert.equal(
+    runCreatedRequestSnapshot?.schema,
+    'islemind.assistant-run-activity-request-snapshot.v1',
+    'run.created projects rich Chat request evidence only after atomic persistence',
+  )
+  assert.deepEqual(
+    runCreatedRequestSnapshot?.request,
+    requestEvidence,
+    'the activity snapshot retains the complete redacted provider-neutral request evidence',
+  )
+  assert.deepEqual(
+    runCreatedRequestSnapshot?.request.contextReceipt,
+    activityContextReceipt,
+    'rich Chat activity evidence retains the bounded context receipt without raw context text',
+  )
+  assert.equal(
+    runCreatedRequestSnapshot?.requestHash,
+    runtimeModule.buildAssistantRequestHash(requestEvidence),
+    'rich activity evidence retains a stable hash of its complete redacted envelope',
+  )
+  assert.equal(
+    runCreatedRequestSnapshot?.capabilityRevision,
+    runtimeModule.buildAssistantCapabilityRevision(requestEvidence.payload),
+    'rich activity evidence retains the capability revision derived from admitted request features',
+  )
+  assert.equal(Object.isFrozen(runCreatedRequestSnapshot), true)
+  assert.equal(Object.isFrozen(runCreatedRequestSnapshot?.request), true)
+  assert.equal(Object.isFrozen(runCreatedRequestSnapshot?.request.payload), true)
+  await database.run(
+    'UPDATE assistant_run_request_snapshots SET requestHash = ? WHERE runId = ?',
+    ['stable-v1:0000000000000000', runId],
+  )
+  await assert.rejects(
+    () => persistence.getRequestSnapshot(runId),
+    /assistant request hash does not match/i,
+    'durable request identity evidence is bound to the stored redacted request on read',
+  )
+  const activityJournal = await persistence.list(runId)
+  assert.deepEqual(activityJournal.map((entry) => entry.type), [
     'run.created',
     'run.started',
+    'stream.event',
+    'stream.event',
+    'stream.event',
+    'stream.event',
+    'stream.event',
+    'stream.event',
     'run.succeeded',
   ])
+  assert.deepEqual(
+    activityJournal.slice(2, 8).map((entry) => entry.data),
+    [
+      {
+        eventType: 'citation',
+        citationId: 'activity-citation',
+        title: 'Durable citation',
+        url: 'https://example.com/source',
+      },
+      { eventType: 'text-delta', text: 'Durable ' },
+      {
+        eventType: 'tool-call',
+        toolCallId: 'activity-tool-call',
+        toolName: 'read_workspace',
+      },
+      {
+        eventType: 'usage',
+        inputTokens: 11,
+        outputTokens: 7,
+        totalTokens: 18,
+      },
+      {
+        eventType: 'trace',
+        traceId: 'activity-trace',
+        traceType: 'system',
+        traceStatus: 'done',
+        title: 'Provider request',
+      },
+      { eventType: 'text-delta', text: 'Chat activity.' },
+    ],
+    'activity checkpoints journal bounded citation, text, tool, usage, and trace evidence',
+  )
+  assert.deepEqual(
+    persistedTransitions.at(-2).run.checkpoint,
+    { outputText: 'Durable Chat activity.', streamEventCount: 6 },
+    'the final normalized stream event atomically projects the accumulated checkpoint',
+  )
   const row = await database.getFirst(
     'SELECT kind, workspaceWritebackHandoffJson FROM assistant_runs WHERE id = ?',
     [runId],
@@ -666,6 +1483,42 @@ async function assertChatActivityPersistence(core, assistantRuntime, persistence
   const stored = await persistence.get(runId)
   assert.deepEqual(stored?.workspaceWritebackHandoff, workspaceWritebackHandoff)
   assert.equal(Object.isFrozen(stored?.workspaceWritebackHandoff), true, 'decoded workspace handoff evidence is immutable')
+
+  let invalidEvidenceExecutorCalls = 0
+  const invalidEvidenceRunId = core.asAssistantRunId('run-chat-activity-invalid-evidence')
+  const invalidEvidenceResult = await assistantRuntime.executeActivity({
+    runId: invalidEvidenceRunId,
+    kind: 'chat',
+    conversationId: 'conversation-walking-skeleton',
+    providerId: 'activity-provider',
+    model: 'activity-model',
+    requestEvidence: {
+      ...requestEvidence,
+      conversationId: 'different-conversation',
+    },
+    context: {
+      schema: 'islemind.context-snapshot.v1',
+      id: core.asContextSnapshotId('context-chat-activity-invalid-evidence'),
+      createdAt: 3,
+      conversationMessageIds: [],
+      memoryIds: [],
+      knowledgeSourceIds: [],
+      attachmentIds: [],
+      approvedToolContextIds: [],
+    },
+    executor: {
+      async execute() {
+        invalidEvidenceExecutorCalls += 1
+        return { outputText: 'must not execute' }
+      },
+    },
+  })
+  assert.equal(invalidEvidenceResult.ok, false, 'identity-mismatched activity evidence fails closed')
+  if (invalidEvidenceResult.ok) throw new Error('Expected invalid activity evidence to fail.')
+  assert.equal(invalidEvidenceResult.error.code, 'activity_failed')
+  assert.equal(invalidEvidenceExecutorCalls, 0)
+  assert.equal(await persistence.get(invalidEvidenceRunId), undefined)
+  assert.equal(await persistence.getRequestSnapshot(invalidEvidenceRunId), undefined)
 
   const validJson = row.workspaceWritebackHandoffJson
   const invalidHandoffs = [

@@ -61,9 +61,11 @@ async function main() {
   await testCancellation(core, runtimeModule, storeModule, providerModule)
   await testExternalCancellation(core, runtimeModule, storeModule, providerModule)
   await testRestartRecovery(core, runtimeModule, storeModule, providerModule)
+  await testRichContinuationRecoveryIdentity(core, runtimeModule, storeModule, providerModule, bootstrapModule)
   await testCallbackProviderAdapter(core, providerModule)
   await testProviderFallback(core, providerModule)
   await testRuntimeProviderFallbackRoute(core, runtimeModule, storeModule, providerModule)
+  await testMalformedProviderContinuationEvent(core, runtimeModule, storeModule, providerModule)
   await testProviderRuntimeAdapter(core, bootstrapModule)
   testSameProviderFallbackResolver(core, providerModule)
   testProviderHealthPolicy(providerModule)
@@ -92,6 +94,8 @@ async function main() {
   testAssistantConversationDetachedWorkRegistry(runtimeModule)
   await testConversationMemoryExtractionRuntime(knowledgeModule)
   await testSqliteKnowledgeRepository(knowledgeModule)
+  await testStructuredMemoryRepositorySemantics(knowledgeModule)
+  await testStructuredMemoryMigrationDeduplicates(knowledgeModule)
   await testKnowledgeDocumentImportUseCase(knowledgeModule)
   await testKnowledgeDocumentImporter(knowledgeModule)
   await testKnowledgeRetrievalUseCase(knowledgeModule)
@@ -108,6 +112,7 @@ async function main() {
   await testSettingsStorePersistence(settingsModule, providerModule, settingsStorePersistenceCommandModule)
   await testConversationSkillApplication(conversationModule, conversationSkillCommandModule)
   await testConversationStorePersistencePort(conversationStorePersistenceCommandModule)
+  await testConversationPagination(conversationModule)
   await testPortableDataPayloadRuntime(dataManagementModule)
   await testPortableDataResetRuntime(dataManagementModule)
   await testPortableDataApplication(dataManagementModule, portableDataCommandModule)
@@ -139,6 +144,14 @@ async function testConversationStorePersistencePort(commandModule) {
       calls.push(['load-records'])
       return records
     },
+    async loadPage(input) {
+      calls.push(['load-page', input])
+      return { conversations: [...records], hasMore: false }
+    },
+    async loadRecord(value) {
+      calls.push(['load-record', value])
+      return value === conversation.id ? conversation : undefined
+    },
     async saveRecord(value) {
       calls.push(['save-record', value])
     },
@@ -162,12 +175,16 @@ async function testConversationStorePersistencePort(commandModule) {
   commandModule.bindConversationStorePersistence(persistence)
   commandModule.bindConversationStorePersistence(persistence)
   assert.equal(await commandModule.loadConversationRecords(), records, 'conversation-store binding preserves record-list identity')
+  assert.deepEqual(await commandModule.loadConversationPage({ limit: 2 }), { conversations: [...records], hasMore: false }, 'conversation-store binding exposes bounded pages')
+  assert.equal(await commandModule.loadConversationRecord(conversation.id), conversation, 'conversation-store binding loads an addressed record')
   assert.equal(await commandModule.readActiveConversationSelection(), conversation.id, 'conversation-store binding preserves active selection')
   await commandModule.saveConversationRecord(conversation)
   await commandModule.replaceConversationRecords(records)
   await commandModule.writeActiveConversationSelection(null)
   assert.deepEqual(calls, [
     ['load-records'],
+    ['load-page', { limit: 2 }],
+    ['load-record', conversation.id],
     ['read-active-selection'],
     ['save-record', conversation],
     ['replace-records', records],
@@ -184,6 +201,59 @@ async function testConversationStorePersistencePort(commandModule) {
     new RegExp(commandModule.CONVERSATION_STORE_PERSISTENCE_UNINITIALIZED_ERROR),
     'conversation-store presentation reads fail closed after exact release',
   )
+}
+
+async function testConversationPagination(conversationModule) {
+  const database = new Database(':memory:')
+  try {
+    const repository = conversationModule.createSqliteConversationRepository(createBunSqliteProvider(database))
+    const conversations = Array.from({ length: 101 }, (_, index) => ({
+      id: `conversation-page-${String(index).padStart(3, '0')}`,
+      title: `Conversation ${index}`,
+      providerId: 'provider-fixture',
+      model: 'model-fixture',
+      providerModelMode: 'inherited',
+      systemPrompt: '',
+      temperature: 0.7,
+      maxTokens: 512,
+      messages: index === 100
+        ? [{ id: 'addressed-message', role: 'user', content: 'Addressed conversation', timestamp: 1 }]
+        : [],
+      createdAt: 10,
+      updatedAt: 20,
+    }))
+
+    await repository.replaceAll(conversations)
+    const firstPage = await repository.loadPage({ limit: 2 })
+    assert.deepEqual(
+      firstPage.conversations.map((conversation) => conversation.id),
+      ['conversation-page-000', 'conversation-page-001'],
+      'conversation pages use updatedAt descending and id ascending keyset order',
+    )
+    assert.equal(firstPage.hasMore, true, 'conversation pages report remaining records')
+    assert.ok(firstPage.nextCursor, 'conversation pages expose a cursor only when more records exist')
+
+    const secondPage = await repository.loadPage({ cursor: firstPage.nextCursor, limit: 2 })
+    assert.deepEqual(
+      secondPage.conversations.map((conversation) => conversation.id),
+      ['conversation-page-002', 'conversation-page-003'],
+      'conversation cursors advance without repeating the previous page',
+    )
+
+    const boundedPage = await repository.loadPage({ limit: 1000 })
+    assert.equal(boundedPage.conversations.length, 100, 'conversation page size is capped at the repository maximum')
+    assert.equal(boundedPage.hasMore, true, 'a capped page retains a cursor for the remaining record')
+
+    const addressed = await repository.loadRecord('conversation-page-100')
+    assert.equal(addressed?.messages[0]?.content, 'Addressed conversation', 'addressed conversation reads retain the complete message list')
+    await assert.rejects(
+      repository.loadPage({ cursor: 'malformed-cursor' }),
+      /persisted conversation record is invalid/i,
+      'malformed conversation cursors fail closed',
+    )
+  } finally {
+    database.close()
+  }
 }
 
 async function testConversationSkillApplication(conversationModule, commandModule) {
@@ -897,6 +967,7 @@ async function testPortableDataApplication(dataManagementModule, commandModule) 
   assert.match(payloadBootstrapSource, /createPortableDataPayloadRuntime\(\{[\s\S]*records:[\s\S]*conversations:[\s\S]*knowledge:[\s\S]*workspaces:[\s\S]*recovery:/, 'bootstrap composes every concrete portable payload dependency')
   assert.match(resetSource, /export function createPortableDataResetRuntime<[\s\S]*dependencies\.prepare\(\)[\s\S]*Promise\.all\([\s\S]*participant\.clear\(snapshot\)/, 'Data Management owns reset preparation and participant sequencing')
   assert.match(resetBootstrapSource, /createPortableDataResetRuntime<[\s\S]*participants:[\s\S]*raw-application-records[\s\S]*provider-credentials[\s\S]*observability-credentials/, 'bootstrap composes the concrete reset participants')
+  assert.match(resetBootstrapSource, /createSqliteAssistantRunPersistence\([\s\S]*createExpoSqliteDatabaseProvider\(\)[\s\S]*id:\s*'assistant-runs'[\s\S]*assistantRunPersistence\.clear\(\)/, 'portable reset clears AssistantRun rows through the owner persistence boundary so journals and exact request snapshots cascade')
   assert.match(applicationRecordPlatformSource, /createAsyncStorageApplicationRecordStorage[\s\S]*storage \?\?= loadDefaultAsyncStorage\(\)[\s\S]*resolveStorage\(\)\.getItem[\s\S]*resolveStorage\(\)\.setItem[\s\S]*resolveStorage\(\)\.removeItem[\s\S]*resolveStorage\(\)\.multiRemove/, 'Platform Storage owns lazy, injectable AsyncStorage record effects')
   assert.doesNotMatch(applicationRecordPlatformSource, /^import .*@react-native-async-storage\/async-storage/m, 'Platform Storage does not evaluate the native AsyncStorage package until the default adapter is used')
   assert.match(applicationRecordBootstrapSource, /APPLICATION_DATA_STORAGE_KEYS[\s\S]*createApplicationDataRecordRuntime[\s\S]*readApplicationDataRecord[\s\S]*writeApplicationDataRecord[\s\S]*loadApplicationDataRecord<[\s\S]*saveApplicationDataRecord<[\s\S]*removeRawApplicationDataRecords/, 'bootstrap owns strict application-record access, compatibility reporting, and reset bulk removal')
@@ -3159,6 +3230,7 @@ function request(core, providerId) {
     providerId,
     model: 'test-model',
     messages: [{ id: 'message-1', role: 'user', text: 'Hello' }],
+    generationParameterSources: {},
   }
 }
 
@@ -3611,6 +3683,7 @@ async function runBootstrapModelOperationCase(input) {
     model: modelId,
     messages: [{ id: 'message-1', role: 'user', text: 'Read the fixture.' }],
     systemPrompt: conversation.systemPrompt,
+    generationParameterSources: {},
   }
   const result = await assistantRuntime.execute({
     runId,
@@ -3983,10 +4056,23 @@ async function testBootstrapModelOperationConfirmation(
         providerRequests.push(providerRequest)
         if (providerTurn++ === 0) {
           yield {
+            type: 'provider-continuation-state',
+            binding: { providerId, model: modelId },
+            reasoningReplay: [
+              { kind: 'text', text: `private reasoning ${suffix}` },
+              { kind: 'encrypted', id: `encrypted-reasoning-${suffix}`, data: `opaque-state-${suffix}`, summary: ['bounded summary'] },
+            ],
+          }
+          yield {
             type: 'tool-call',
             toolCallId: `destructive-call-${suffix}`,
             toolName: providerRequest.toolDefinitions[0].name,
             arguments: { target: 'fixture' },
+            providerMetadata: {
+              providerCallId: `provider-call-${suffix}`,
+              providerCallIndex: 0,
+              thoughtSignature: `thought-signature-${suffix}`,
+            },
           }
           return
         }
@@ -4010,6 +4096,7 @@ async function testBootstrapModelOperationConfirmation(
         model: modelId,
         messages: [{ id: 'message-1', role: 'user', text: 'Destroy the fixture.' }],
         systemPrompt: conversation.systemPrompt,
+        generationParameterSources: {},
       },
       context: context(core, `context-model-operation-confirmation-${suffix}`),
       modelOperationSession: initialSession,
@@ -4027,6 +4114,11 @@ async function testBootstrapModelOperationConfirmation(
     )
     assert.equal(pending.value.pendingModelOperation.continuationRequest.systemPrompt, conversation.systemPrompt)
     assert.equal(pending.value.pendingModelOperation.continuationMode, 'native')
+    assert.deepEqual(
+      pending.value.pendingModelOperation.continuationRequest.providerStateBinding,
+      { providerId, model: modelId },
+      'a native pending continuation is bound to the provider/model that produced the tool call',
+    )
 
     const resumedSession = await createSession()
     assert.notEqual(resumedSession, initialSession, 'confirmation resume reconstructs a fresh provider-neutral session')
@@ -4060,6 +4152,60 @@ async function testBootstrapModelOperationConfirmation(
     assert.equal(resumed.value.status, 'succeeded')
     assert.equal(resumed.value.result.outputText, approved ? 'Confirmed final response.' : 'Rejected final response.')
     assert.equal(providerRequests.length, 2, 'confirmation resumes provider synthesis without repeating model selection')
+    const continuationProviderRequest = providerRequests[1]
+    assert.equal(continuationProviderRequest.providerId, providerId, 'native continuation cannot drift to a fallback provider')
+    assert.equal(continuationProviderRequest.model, modelId, 'native continuation cannot drift to a fallback model')
+    const replayedToolCallMessages = continuationProviderRequest.messages.filter((message) => (
+      message.role === 'assistant' && Array.isArray(message.toolCalls)
+    ))
+    const replayedToolResultMessages = continuationProviderRequest.messages.filter((message) => message.role === 'tool')
+    assert.equal(replayedToolCallMessages.length, 1, 'native continuation replays exactly one assistant tool-call message')
+    assert.equal(replayedToolCallMessages[0].toolCalls.length, 1, 'native continuation replays exactly one tool call')
+    assert.deepEqual(
+      replayedToolCallMessages[0].reasoningReplay,
+      [
+        { kind: 'text', text: `private reasoning ${suffix}` },
+        { kind: 'encrypted', id: `encrypted-reasoning-${suffix}`, data: `opaque-state-${suffix}`, summary: ['bounded summary'] },
+      ],
+      'native continuation preserves provider reasoning replay state',
+    )
+    assert.deepEqual(
+      replayedToolCallMessages[0].toolCalls[0].providerMetadata,
+      {
+        providerCallId: `provider-call-${suffix}`,
+        providerCallIndex: 0,
+        thoughtSignature: `thought-signature-${suffix}`,
+      },
+      'native continuation preserves provider-native tool-call metadata',
+    )
+    assert.equal(
+      replayedToolCallMessages[0].toolCalls[0].name,
+      continuationProviderRequest.toolDefinitions[0].name,
+      'the replayed native tool call retains the catalog-declared tool name',
+    )
+    assert.equal(replayedToolResultMessages.length, 1, 'native continuation replays exactly one tool-result message')
+    assert.equal(
+      replayedToolResultMessages[0].toolCallId,
+      replayedToolCallMessages[0].toolCalls[0].callId,
+      'the replayed tool result remains bound to the replayed native tool call',
+    )
+    const continuationJournalEntries = (await runStore.list(runId))
+      .filter((entry) => entry.type === 'stream.event' && entry.data?.eventType === 'provider-continuation-state')
+    assert.equal(continuationJournalEntries.length, 1, 'provider continuation state is journaled once as bounded evidence')
+    assert.deepEqual(
+      continuationJournalEntries[0].data,
+      {
+        eventType: 'provider-continuation-state',
+        providerId,
+        model: modelId,
+        replayCount: 2,
+        replayKinds: ['text', 'encrypted'],
+      },
+      'the durable continuation marker keeps only replay counts and kinds',
+    )
+    assert.equal(Object.hasOwn(continuationJournalEntries[0].data, 'reasoningReplay'), false)
+    assert.equal(JSON.stringify(continuationJournalEntries[0].data).includes('opaque-state'), false)
+    assert.equal(JSON.stringify(continuationJournalEntries[0].data).includes('private reasoning'), false)
     assert.equal(executionCount, approved ? 1 : 0)
     assert.deepEqual(
       executionRunIds,
@@ -4081,6 +4227,68 @@ async function testBootstrapModelOperationConfirmation(
       ? ['task.created', 'task.confirmed', 'task.started', 'task.succeeded']
       : ['task.created', 'task.expired'])
   }
+}
+
+async function testMalformedProviderContinuationEvent(core, runtimeModule, storeModule, providerModule) {
+  const providerId = 'malformed-continuation-provider'
+  const model = 'malformed-continuation-model'
+  let adapterCalls = 0
+  let toolCallEventsReached = 0
+  let evaluatedTurns = 0
+  const adapter = {
+    providerId,
+    capabilities: ['chat', 'tools'],
+    async *stream() {
+      adapterCalls += 1
+      yield {
+        type: 'provider-continuation-state',
+        binding: { providerId: 'unselected-provider', model: 'unselected-model' },
+        reasoningReplay: [{ kind: 'text', text: 'must never be accepted' }],
+      }
+      toolCallEventsReached += 1
+      yield {
+        type: 'tool-call',
+        toolCallId: 'should-not-be-consumed',
+        toolName: 'should_not_execute',
+        arguments: {},
+      }
+    },
+  }
+  const store = storeModule.createInMemoryRunStore()
+  let now = 260_000
+  const runtime = runtimeModule.createAssistantRuntime({
+    clock: { now: () => ++now },
+    ids: { next: (prefix) => `${prefix}-malformed-continuation` },
+    providerGateway: providerModule.createProviderGateway([adapter]),
+    persistence: store,
+  })
+  const result = await runtime.execute({
+    runId: core.asAssistantRunId('run-malformed-provider-continuation'),
+    request: {
+      ...request(core, providerId),
+      model,
+    },
+    context: context(core, 'context-malformed-provider-continuation'),
+    modelOperationSession: {
+      prepareRequest(value) { return value },
+      async evaluateTurn() {
+        evaluatedTurns += 1
+        return { kind: 'no-operation' }
+      },
+    },
+  })
+  assert.equal(result.ok, false, 'a provider continuation event with a mismatched binding fails closed')
+  if (result.ok) throw new Error('Expected malformed provider continuation rejection.')
+  assert.equal(result.error.code, 'provider_failed')
+  assert.equal(adapterCalls, 1, 'malformed continuation is rejected during the first provider turn')
+  assert.equal(toolCallEventsReached, 0, 'events after malformed continuation state are never consumed')
+  assert.equal(evaluatedTurns, 0, 'malformed continuation cannot reach model-operation evaluation or task admission')
+  assert.deepEqual(
+    (await store.list(core.asAssistantRunId('run-malformed-provider-continuation')))
+      .map((entry) => entry.type),
+    ['run.created', 'run.started', 'provider.route-selected', 'run.failed'],
+    'malformed continuation leaves no durable stream event or tool execution evidence',
+  )
 }
 
 async function testModelOperationTurnRuntimeBoundaries(runtimeModule) {
@@ -4441,6 +4649,32 @@ async function testRestartRecovery(core, runtimeModule, storeModule, providerMod
   }
   const { runtime, store } = createRuntime(runtimeModule, storeModule, providerModule, adapter)
   const runId = core.asAssistantRunId('run-recovery')
+  const recoveryRequest = request(core, adapter.providerId)
+  const recoveryRequestSnapshot = {
+    schema: runtimeModule.ASSISTANT_RUN_REQUEST_SNAPSHOT_SCHEMA,
+    runId,
+    capturedAt: 10_000,
+    request: recoveryRequest,
+    capabilityRevision: runtimeModule.buildAssistantCapabilityRevision(recoveryRequest),
+    requestHash: runtimeModule.buildAssistantRequestHash(recoveryRequest),
+  }
+  await store.appendAndSave({
+    schema: 'islemind.assistant-run-journal-entry.v1',
+    runId,
+    sequence: 1,
+    type: 'run.created',
+    occurredAt: 10_000,
+  }, {
+    id: runId,
+    kind: 'chat',
+    conversationId: 'conversation-1',
+    providerId: adapter.providerId,
+    model: 'test-model',
+    contextSnapshotId: core.asContextSnapshotId('context-recovery'),
+    status: 'queued',
+    createdAt: 10_000,
+    journalSequence: 1,
+  }, recoveryRequestSnapshot)
   await store.save({
     id: runId,
     kind: 'chat',
@@ -4457,13 +4691,6 @@ async function testRestartRecovery(core, runtimeModule, storeModule, providerMod
   await store.append({
     schema: 'islemind.assistant-run-journal-entry.v1',
     runId,
-    sequence: 1,
-    type: 'run.created',
-    occurredAt: 10_000,
-  })
-  await store.append({
-    schema: 'islemind.assistant-run-journal-entry.v1',
-    runId,
     sequence: 2,
     type: 'run.started',
     occurredAt: 10_001,
@@ -4476,11 +4703,309 @@ async function testRestartRecovery(core, runtimeModule, storeModule, providerMod
   assert.equal(recovery.value[0].status, 'failed')
   assert.equal(recovery.value[0].failure.code, 'interrupted')
   assert.equal(recovery.value[0].checkpoint.outputText, 'Checkpointed output')
-  assert.deepEqual((await store.list(runId)).map((entry) => entry.type), [
+  const recoveryEntries = await store.list(runId)
+  assert.equal(
+    recoveryEntries.at(-1).data.requestSnapshotIdentity.requestHash,
+    recoveryRequestSnapshot.requestHash,
+    'restart recovery carries the persisted request hash as diagnostic evidence',
+  )
+  assert.equal(
+    recoveryEntries.at(-1).data.requestSnapshotIdentity.capabilityRevision,
+    recoveryRequestSnapshot.capabilityRevision,
+    'restart recovery carries the persisted capability revision as diagnostic evidence',
+  )
+  assert.deepEqual(recoveryEntries.map((entry) => entry.type), [
     'run.created',
     'run.started',
     'run.failed',
   ])
+}
+
+async function testRichContinuationRecoveryIdentity(core, runtimeModule, storeModule, providerModule, bootstrapModule) {
+  const providerFamilies = [
+    {
+      key: 'openai',
+      type: 'openai',
+      assertNativeMessages(messages) {
+        assert.equal(messages.find((message) => message.role === 'assistant')?.toolCalls?.[0]?.id, 'openai-provider-call')
+        assert.equal(messages.find((message) => message.role === 'assistant')?.toolCalls?.[0]?.thoughtSignature, 'openai-thought')
+      },
+    },
+    {
+      key: 'anthropic',
+      type: 'anthropic',
+      assertNativeMessages(messages) {
+        assert.equal(messages.find((message) => message.role === 'assistant')?.content?.[0]?.toolUse?.id, 'anthropic-provider-call')
+        assert.equal(messages.find((message) => message.content?.[0]?.toolResult)?.content?.[0]?.toolResult?.tool_use_id, 'native-call-1')
+      },
+    },
+    {
+      key: 'google',
+      type: 'google',
+      assertNativeMessages(messages) {
+        assert.equal(messages.find((message) => message.role === 'assistant')?.content?.[0]?.thoughtSignature, 'google-thought')
+        assert.equal(messages.find((message) => message.content?.[0]?.functionResponse)?.content?.[0]?.functionResponse?.name, 'fixture_operation')
+      },
+    },
+  ]
+
+  for (const family of providerFamilies) {
+    for (const mode of ['native', 'structured']) {
+      const continuationProviderId = `rich-continuation-${family.key}-${mode}-provider`
+      const provider = {
+        id: continuationProviderId,
+        type: family.type,
+        enabled: true,
+        apiKey: '',
+        name: family.key,
+      }
+    const continuationStore = storeModule.createInMemoryRunStore()
+    let continuationNow = 20_000
+    let capturedRequest
+    const continuationAdapter = bootstrapModule.createProviderRuntimeAdapter({
+      provider,
+      streamChat: async (runtimeRequest, _onChunk, onDone) => {
+        capturedRequest = runtimeRequest
+        onDone({ text: `${family.key} ${mode} continuation complete` })
+        return { controller: new AbortController(), done: Promise.resolve() }
+      },
+    })
+    const continuationRuntime = runtimeModule.createAssistantRuntime({
+      clock: { now: () => ++continuationNow },
+      ids: { next: (prefix) => `${prefix}-${mode}` },
+      providerGateway: providerModule.createProviderGateway([]),
+      persistence: continuationStore,
+    })
+    const continuationRequest = request(core, continuationProviderId)
+    let evaluatedTurns = 0
+    const session = {
+      prepareRequest(value) { return value },
+      async evaluateTurn(input) {
+        evaluatedTurns += 1
+        if (input.stepIndex === 0) {
+          return {
+            kind: 'continue',
+            request: {
+              ...input.request,
+              systemPrompt: `rich-${mode}-continuation`,
+              messages: mode === 'native'
+                ? [...input.request.messages, {
+                    id: `${mode}-tool-call-message`,
+                    role: 'assistant',
+                    text: '',
+                    toolCalls: [{
+                      callId: 'native-call-1',
+                      name: 'fixture_operation',
+                      arguments: { value: mode },
+                      providerMetadata: {
+                        providerCallId: `${family.key}-provider-call`,
+                        thoughtSignature: `${family.key}-thought`,
+                      },
+                    }],
+                  }, {
+                    id: `${mode}-tool-result-message`,
+                    role: 'tool',
+                    text: '{"status":"succeeded"}',
+                    toolCallId: 'native-call-1',
+                    name: 'fixture_operation',
+                  }]
+                : input.request.messages,
+            },
+            receipt: { mode, stepIndex: input.stepIndex },
+          }
+        }
+        return { kind: 'no-operation' }
+      },
+      validatePending() { return false },
+      async resume() { return { kind: 'no-operation' } },
+    }
+    const result = await continuationRuntime.executeActivity({
+      runId: core.asAssistantRunId(`run-rich-continuation-${mode}`),
+      kind: 'chat',
+      conversationId: 'conversation-1',
+      providerId: continuationProviderId,
+      model: 'test-model',
+      context: context(core, `context-rich-continuation-${mode}`),
+      executor: {
+        async execute({ continueProviderTurns }) {
+          const continued = await continueProviderTurns({
+            request: continuationRequest,
+            session,
+            calls: mode === 'native' ? [{
+              callId: `${mode}-call-1`,
+              name: 'fixture_operation',
+              arguments: { value: mode },
+            }] : [],
+            reasoningReplay: [],
+            outputText: '',
+            stream: continuationAdapter.stream,
+          })
+          return { outputText: continued.outputText, eventCount: continued.eventCount }
+        },
+      },
+    })
+    assert.equal(result.ok, true, `${mode} rich continuation completes normally`)
+    if (!result.ok) throw new Error(result.error.message)
+    assert.equal(evaluatedTurns, 2, `${mode} continuation evaluates the initial and terminal turns`)
+    const entries = await continuationStore.list(result.value.id)
+    const started = entries.filter((entry) => entry.type === 'provider-continuation.started')
+    const completed = entries.filter((entry) => entry.type === 'provider-continuation.completed')
+    assert.equal(started.length, 1, `${mode} continuation records the nested provider turn start`)
+    assert.equal(completed.length, 1, `${mode} continuation records the nested provider turn completion`)
+    assert.equal(started[0].data.mode, mode, `${mode} marker preserves provider operation mode`)
+    assert.equal(started[0].data.providerId, continuationProviderId, `${family.key} marker preserves the selected provider route`)
+    assert.equal(started[0].data.model, 'test-model', `${family.key} marker preserves the selected model`)
+    assert.match(started[0].data.requestHash, /^stable-v1:[0-9a-f]{16}$/, `${family.key} marker carries a bounded request identity`)
+    assert.equal(started[0].data.resume, 'new-turn-only', `${family.key} marker is explicitly new-turn-only`)
+    assert.deepEqual(started.map((entry) => entry.data.id), completed.map((entry) => entry.data.id), `${mode} markers pair by bounded identity`)
+    const entryTypes = entries.map((entry) => entry.type)
+    assert.ok(entryTypes.indexOf('provider-continuation.started') < entryTypes.indexOf('stream.event'))
+    assert.ok(entryTypes.indexOf('stream.event') < entryTypes.indexOf('provider-continuation.completed'))
+    assert.ok(entryTypes.indexOf('provider-continuation.completed') < entryTypes.indexOf('run.succeeded'))
+    if (mode === 'native') family.assertNativeMessages(capturedRequest.messages)
+    }
+  }
+
+  const initialInterruptionStore = storeModule.createInMemoryRunStore()
+  let initialInterruptionNow = 25_000
+  const initialInterruptionRuntime = runtimeModule.createAssistantRuntime({
+    clock: { now: () => ++initialInterruptionNow },
+    ids: { next: (prefix) => `${prefix}-initial-interruption` },
+    providerGateway: providerModule.createProviderGateway([]),
+    persistence: initialInterruptionStore,
+  })
+  const initialInterruptionRunId = core.asAssistantRunId('run-rich-initial-interruption')
+  const initialInterruption = await initialInterruptionRuntime.executeActivity({
+    runId: initialInterruptionRunId,
+    kind: 'chat',
+    conversationId: 'conversation-1',
+    providerId: 'initial-interruption-provider',
+    model: 'test-model',
+    context: context(core, 'context-rich-initial-interruption'),
+    executor: { async execute() { throw new Error('initial provider stream interrupted') } },
+  })
+  assert.equal(initialInterruption.ok, false, 'an initial activity interruption remains a normal activity failure')
+  const initialInterruptionRun = await initialInterruptionStore.get(initialInterruptionRunId)
+  assert.equal(initialInterruptionRun.failure.continuation, undefined, 'an initial provider interruption does not claim a nested continuation')
+  assert.equal((await initialInterruptionStore.list(initialInterruptionRunId)).some((entry) => entry.type === 'provider-continuation.started'), false)
+
+  for (const [familyIndex, family] of providerFamilies.entries()) {
+    const providerId = `rich-continuation-recovery-${family.key}-provider`
+    const model = `${family.key}-model`
+    const runId = core.asAssistantRunId(`run-rich-continuation-recovery-${family.key}`)
+    const store = storeModule.createInMemoryRunStore()
+    let now = 30_000 + familyIndex * 1_000
+    let providerCalls = 0
+    const runtime = runtimeModule.createAssistantRuntime({
+      clock: { now: () => ++now },
+      ids: { next: (prefix) => `${prefix}-rich-continuation-recovery-${family.key}` },
+      providerGateway: providerModule.createProviderGateway([{
+        providerId,
+        async *stream() {
+          providerCalls += 1
+          throw new Error('recovery must never replay the interrupted rich continuation')
+        },
+      }]),
+      persistence: store,
+    })
+    const continuation = {
+      schema: runtimeModule.ASSISTANT_ACTIVITY_CONTINUATION_IDENTITY_SCHEMA,
+      id: `assistant-continuation:run-rich-continuation-recovery-${family.key}:0`,
+      phase: 'provider-turn',
+      providerId,
+      model,
+      requestHash: `stable-v1:${String(familyIndex + 1).padStart(16, '0')}`,
+      stepIndex: 0,
+      mode: family.key === 'anthropic' ? 'structured' : 'native',
+      resume: 'new-turn-only',
+    }
+    const hasMismatchedCompletion = familyIndex === 0
+    await store.save({
+      id: runId,
+      kind: 'chat',
+      conversationId: 'conversation-1',
+      providerId,
+      model,
+      contextSnapshotId: core.asContextSnapshotId(`context-rich-continuation-recovery-${family.key}`),
+      status: 'running',
+      createdAt: now,
+      startedAt: now + 1,
+      journalSequence: hasMismatchedCompletion ? 4 : 3,
+      checkpoint: { outputText: 'Partial rich answer', streamEventCount: 2 },
+    })
+    await store.append({ schema: 'islemind.assistant-run-journal-entry.v1', runId, sequence: 1, type: 'run.created', occurredAt: now })
+    await store.append({ schema: 'islemind.assistant-run-journal-entry.v1', runId, sequence: 2, type: 'run.started', occurredAt: now + 1 })
+    await store.append({ schema: 'islemind.assistant-run-journal-entry.v1', runId, sequence: 3, type: 'provider-continuation.started', occurredAt: now + 2, data: continuation })
+    if (hasMismatchedCompletion) {
+      await store.append({
+        schema: 'islemind.assistant-run-journal-entry.v1',
+        runId,
+        sequence: 4,
+        type: 'provider-continuation.completed',
+        occurredAt: now + 3,
+        data: { ...continuation, id: `${continuation.id}-different` },
+      })
+    }
+
+    const recovery = await runtime.recoverInterruptedRuns()
+    assert.equal(recovery.ok, true, `${family.key} continuation recovery terminalizes without replay`)
+    if (!recovery.ok) throw new Error(recovery.error.message)
+    assert.equal(providerCalls, 0, `${family.key} recovery never replays the provider stream`)
+    assert.equal(recovery.value[0].failure.continuation.providerId, providerId)
+    assert.equal(recovery.value[0].failure.continuation.model, model)
+    assert.equal(recovery.value[0].failure.continuation.requestHash, continuation.requestHash)
+    assert.equal(recovery.value[0].failure.continuation.mode, continuation.mode)
+    assert.equal(recovery.value[0].failure.continuation.resume, 'new-turn-only')
+    assert.deepEqual((await store.list(runId)).map((entry) => entry.type), [
+      'run.created',
+      'run.started',
+      'provider-continuation.started',
+      ...(hasMismatchedCompletion ? ['provider-continuation.completed'] : []),
+      'run.failed',
+    ])
+  }
+
+  const completedStore = storeModule.createInMemoryRunStore()
+  const completedRunId = core.asAssistantRunId('run-rich-continuation-completed-marker')
+  const completedProviderId = 'rich-continuation-completed-provider'
+  const completedContinuation = {
+    schema: runtimeModule.ASSISTANT_ACTIVITY_CONTINUATION_IDENTITY_SCHEMA,
+    id: 'assistant-continuation:run-rich-continuation-completed-marker:0',
+    phase: 'provider-turn',
+    providerId: completedProviderId,
+    model: 'completed-model',
+    requestHash: 'stable-v1:1111111111111111',
+    stepIndex: 0,
+    mode: 'native',
+    resume: 'new-turn-only',
+  }
+  await completedStore.save({
+    id: completedRunId,
+    kind: 'chat',
+    conversationId: 'conversation-1',
+    providerId: completedProviderId,
+    model: 'completed-model',
+    contextSnapshotId: core.asContextSnapshotId('context-rich-continuation-completed-marker'),
+    status: 'running',
+    createdAt: 32_000,
+    startedAt: 32_001,
+    journalSequence: 4,
+    checkpoint: { outputText: 'Partial rich answer', streamEventCount: 2 },
+  })
+  await completedStore.append({ schema: 'islemind.assistant-run-journal-entry.v1', runId: completedRunId, sequence: 1, type: 'run.created', occurredAt: 32_000 })
+  await completedStore.append({ schema: 'islemind.assistant-run-journal-entry.v1', runId: completedRunId, sequence: 2, type: 'run.started', occurredAt: 32_001 })
+  await completedStore.append({ schema: 'islemind.assistant-run-journal-entry.v1', runId: completedRunId, sequence: 3, type: 'provider-continuation.started', occurredAt: 32_002, data: completedContinuation })
+  await completedStore.append({ schema: 'islemind.assistant-run-journal-entry.v1', runId: completedRunId, sequence: 4, type: 'provider-continuation.completed', occurredAt: 32_003, data: completedContinuation })
+  const completedRuntime = runtimeModule.createAssistantRuntime({
+    clock: { now: () => 32_004 },
+    ids: { next: (prefix) => `${prefix}-completed-marker` },
+    providerGateway: providerModule.createProviderGateway([]),
+    persistence: completedStore,
+  })
+  const completedRecovery = await completedRuntime.recoverInterruptedRuns()
+  assert.equal(completedRecovery.ok, true, 'a paired continuation marker recovers without claiming an open continuation')
+  if (!completedRecovery.ok) throw new Error(completedRecovery.error.message)
+  assert.equal(completedRecovery.value[0].failure.continuation, undefined)
 }
 
 async function testCallbackProviderAdapter(core, providerModule) {
@@ -4661,6 +5186,58 @@ async function testRuntimeProviderFallbackRoute(core, runtimeModule, storeModule
     'stream.event',
     'run.succeeded',
   ])
+
+  let boundPrimaryCalls = 0
+  let boundFallbackCalls = 0
+  const boundPrimary = {
+    providerId: 'bound-primary-provider',
+    async *stream(providerRequest) {
+      boundPrimaryCalls += 1
+      assert.equal(providerRequest.model, 'bound-primary-model')
+      yield { type: 'text-delta', text: 'Bound route.' }
+    },
+  }
+  const boundFallback = {
+    providerId: 'bound-fallback-provider',
+    async *stream() {
+      boundFallbackCalls += 1
+      yield { type: 'text-delta', text: 'Fallback must not run.' }
+    },
+  }
+  const boundGateway = providerModule.createProviderGateway([boundPrimary, boundFallback])
+  const boundRequest = {
+    ...request(core, boundPrimary.providerId),
+    model: 'bound-primary-model',
+    providerStateBinding: {
+      providerId: boundPrimary.providerId,
+      model: 'bound-primary-model',
+    },
+  }
+  const boundEvents = []
+  for await (const event of boundGateway.stream(boundRequest, {
+    signal: new AbortController().signal,
+    fallbackRoutes: [{ providerId: boundFallback.providerId, model: 'bound-fallback-model' }],
+  })) {
+    boundEvents.push(event)
+  }
+  assert.deepEqual(boundEvents, [{ type: 'text-delta', text: 'Bound route.' }])
+  assert.equal(boundPrimaryCalls, 1, 'a bound continuation dispatches its original route')
+  assert.equal(boundFallbackCalls, 0, 'a bound continuation never evaluates fallback routes')
+
+  const malformedBoundRequest = {
+    ...boundRequest,
+    providerStateBinding: {
+      providerId: boundFallback.providerId,
+      model: 'bound-fallback-model',
+    },
+  }
+  await assert.rejects(async () => {
+    for await (const _event of boundGateway.stream(malformedBoundRequest, {
+      signal: new AbortController().signal,
+    })) {
+      // The malformed binding must fail before dispatch.
+    }
+  }, /continuation binding/i, 'a continuation with a mismatched provider/model binding fails closed')
 }
 
 async function testProviderRuntimeAdapter(core, bootstrapModule) {
@@ -4696,11 +5273,16 @@ async function testProviderRuntimeAdapter(core, bootstrapModule) {
     { type: 'text-delta', text: 'Runtime ' },
     { type: 'citation', citationId: 'citation-1', title: 'Source', url: 'https://example.test/source' },
     { type: 'text-delta', text: 'normalized.' },
+    {
+      type: 'provider-continuation-state',
+      binding: { providerId: provider.id, model: 'test-model' },
+      reasoningReplay: [],
+    },
     { type: 'tool-call', toolCallId: 'provider-tool-1', toolName: 'search_web', arguments: providerToolArguments },
     { type: 'usage', inputTokens: 3, outputTokens: 2 },
   ])
-  assert.notEqual(events[3].arguments, providerToolArguments, 'provider tool arguments are copied at the JSON boundary')
-  assert.notEqual(events[3].arguments.filters, providerToolArguments.filters, 'nested provider tool arguments are copied')
+  assert.notEqual(events[4].arguments, providerToolArguments, 'provider tool arguments are copied at the JSON boundary')
+  assert.notEqual(events[4].arguments.filters, providerToolArguments.filters, 'nested provider tool arguments are copied')
 
   const continuationRequest = {
     ...request(core, 'continuation-provider'),
@@ -4710,6 +5292,12 @@ async function testProviderRuntimeAdapter(core, bootstrapModule) {
         id: 'message-call',
         role: 'assistant',
         text: '',
+        reasoningReplay: [
+          { kind: 'text', text: 'provider-reasoning' },
+          { kind: 'encrypted', id: 'reasoning-item-1', data: 'encrypted-state', summary: ['summary'] },
+          { kind: 'thinking', text: 'anthropic-thinking', signature: 'anthropic-signature' },
+          { kind: 'redacted', data: 'anthropic-redacted' },
+        ],
         toolCalls: [{
           callId: 'provider-call-1',
           name: 'islemind_fixture_operation',
@@ -4735,6 +5323,13 @@ async function testProviderRuntimeAdapter(core, bootstrapModule) {
       assertMessages(messages) {
         assert.equal(messages[1].toolCalls[0].id, 'provider-native-call-1')
         assert.equal(messages[1].toolCalls[0].thoughtSignature, 'provider-thought-signature')
+        assert.equal(messages[1].reasoningContent, 'provider-reasoninganthropic-thinking')
+        assert.deepEqual(messages[1].responseItems, [{
+          type: 'reasoning',
+          id: 'reasoning-item-1',
+          encrypted_content: 'encrypted-state',
+          summary: [{ type: 'summary_text', text: 'summary' }],
+        }])
         assert.equal(messages[2].role, 'tool')
         assert.equal(messages[2].toolCallId, 'provider-call-1')
       },
@@ -4743,6 +5338,10 @@ async function testProviderRuntimeAdapter(core, bootstrapModule) {
       provider: { id: 'continuation-anthropic', type: 'anthropic', enabled: true, apiKey: '', name: 'Anthropic' },
       assertMessages(messages) {
         assert.equal(messages[1].content[0].toolUse.id, 'provider-native-call-1')
+        assert.deepEqual(messages[1].providerContentBlocks, [
+          { type: 'thinking', thinking: 'anthropic-thinking', signature: 'anthropic-signature' },
+          { type: 'redacted_thinking', data: 'anthropic-redacted' },
+        ])
         assert.equal(messages[2].role, 'user')
         assert.equal(messages[2].content[0].toolResult.tool_use_id, 'provider-call-1')
       },
@@ -4797,11 +5396,48 @@ async function testProviderRuntimeAdapter(core, bootstrapModule) {
   for await (const event of metadataAdapter.stream(request(core, provider.id), { signal: new AbortController().signal })) {
     metadataEvents.push(event)
   }
-  assert.deepEqual(metadataEvents[0].providerMetadata, {
+  assert.deepEqual(metadataEvents[1].providerMetadata, {
     providerCallId: 'provider-native-id',
     thoughtSignature: 'provider-native-signature',
     providerCallIndex: 2,
   }, 'provider-native replay metadata survives the normalized tool-call boundary')
+
+  const replayAdapter = bootstrapModule.createProviderRuntimeAdapter({
+    provider,
+    streamChat: async (_request, _onChunk, onDone) => {
+      onDone({
+        text: '',
+        reasoningContent: 'provider-reasoning',
+        responseItems: [{
+          type: 'reasoning',
+          id: 'reasoning-item-1',
+          encrypted_content: 'encrypted-state',
+          summary: [{ type: 'summary_text', text: 'summary' }],
+        }],
+        providerContentBlocks: [
+          { type: 'thinking', thinking: 'anthropic-thinking', signature: 'anthropic-signature' },
+          { type: 'redacted_thinking', data: 'anthropic-redacted' },
+        ],
+        providerToolCalls: [{ callId: 'provider-call-id', name: 'search_web', arguments: { query: 'fixture' } }],
+      })
+      return { controller: new AbortController(), done: Promise.resolve() }
+    },
+  })
+  const replayEvents = []
+  for await (const event of replayAdapter.stream(request(core, provider.id), { signal: new AbortController().signal })) {
+    replayEvents.push(event)
+  }
+  assert.deepEqual(replayEvents[0], {
+    type: 'provider-continuation-state',
+    binding: { providerId: provider.id, model: 'test-model' },
+    reasoningReplay: [
+      { kind: 'text', text: 'provider-reasoning' },
+      { kind: 'encrypted', id: 'reasoning-item-1', data: 'encrypted-state', summary: ['summary'] },
+      { kind: 'thinking', text: 'anthropic-thinking', signature: 'anthropic-signature' },
+      { kind: 'redacted', data: 'anthropic-redacted' },
+    ],
+  }, 'provider-native continuation state crosses the normalized runtime boundary before tool calls')
+  assert.equal(replayEvents[1].type, 'tool-call')
 
   const invalidArgumentsAdapter = bootstrapModule.createProviderRuntimeAdapter({
     provider,
@@ -5048,6 +5684,22 @@ async function testMemoryExtraction(knowledgeModule) {
   assert.equal(persisted[0].candidates[0].sourceKind, 'deterministic')
   assert.equal(persisted[0].candidates[0].confidence, 0.82)
 
+  const deterministicOnlyPersisted = []
+  const deterministicOnly = knowledgeModule.createMemoryExtractionUseCase({
+    async persist(input) {
+      deterministicOnlyPersisted.push(input)
+      return input.candidates.map((candidate) => candidate.content)
+    },
+  })
+  const deterministicOnlyResult = await deterministicOnly.extract({
+    conversationId: 'memory-extraction-deterministic-only',
+    messages: [{ role: 'user', status: 'done', content: '我喜欢简洁回答。' }],
+    memoryEnabled: true,
+    sourceDetails: { deterministic: 'deterministic', model: 'model' },
+  })
+  assert.deepEqual(deterministicOnlyResult, ['用户偏好：简洁回答'], 'credential-free extraction persists deterministic candidates')
+  assert.equal(deterministicOnlyPersisted[0].candidates[0].sourceKind, 'deterministic')
+
   let generateCalls = 0
   let persistCalls = 0
   const preAbortedController = new AbortController()
@@ -5253,24 +5905,25 @@ async function testConversationMemoryExtractionRuntime(runtimeModule) {
   assert.deepEqual(await skippedRuntime.run(disabledInput), {
     status: 'skipped',
     reason: 'memory_disabled',
-  }, 'memory-disabled admission takes precedence over provider availability')
+  }, 'memory-disabled admission skips extraction before any Knowledge work')
   assert.deepEqual(skippedProjections[0], {
     conversationId: 'memory-lifecycle-disabled',
     assistantMessageId: 'assistant-memory-disabled',
     transition: { status: 'skipped', reason: 'memory_disabled' },
   })
 
-  const unavailableInput = Object.freeze({
+  const noCredentialInput = Object.freeze({
     ...disabledInput,
-    conversationId: 'memory-lifecycle-provider-unavailable',
-    assistantMessageId: 'assistant-memory-provider-unavailable',
+    conversationId: 'memory-lifecycle-no-credential',
+    assistantMessageId: 'assistant-memory-no-credential',
     memoryEnabled: true,
   })
-  assert.deepEqual(await skippedRuntime.run(unavailableInput), {
-    status: 'skipped',
-    reason: 'provider_unavailable',
-  }, 'a provider is admitted only when Boolean(provider.apiKey) is true')
-  assert.equal(skippedExtractionCalls, 0, 'skipped extraction performs no provider or persistence work')
+  assert.deepEqual(await skippedRuntime.run(noCredentialInput), {
+    status: 'completed',
+    addedCount: 0,
+    items: [],
+  }, 'missing provider credentials do not suppress deterministic memory extraction')
+  assert.equal(skippedExtractionCalls, 1, 'credential-free extraction still invokes the Knowledge extractor')
 
   let resolveExtraction
   let capturedExtraction
@@ -5451,15 +6104,29 @@ async function testSqliteKnowledgeRepository(knowledgeModule) {
     fixture.calls.some((call) => call.kind === 'exec' && call.source.includes('ALTER TABLE memories ADD COLUMN sourceKind TEXT')),
     'the migration upgrades legacy memory tables before target repository access',
   )
-  const memoryInsert = fixture.calls.find((call) => call.kind === 'run' && call.source.includes('INSERT OR REPLACE INTO memories'))
+  const memoryInsert = fixture.calls.find((call) => call.kind === 'run' && call.source.includes('INSERT INTO memories'))
   assert.deepEqual(memoryInsert.parameters, [
     'memory-generated',
     'I prefer concise answers.',
     'pending',
+    'conversation',
+    'conversation-new',
+    null,
+    null,
+    null,
+    null,
+    null,
+    'normal',
+    '[]',
+    null,
+    null,
+    null,
+    null,
     'conversation-new',
     'deterministic',
     'completed user turn',
     0.84,
+    null,
     null,
     3_000,
     3_000,
@@ -5471,6 +6138,9 @@ async function testSqliteKnowledgeRepository(knowledgeModule) {
     id: 'memory-existing',
     content: 'Existing persisted preference',
     status: 'active',
+    scope: { kind: 'conversation', id: 'conversation-existing' },
+    sensitivity: 'normal',
+    sourceMessageIds: [],
     conversationId: 'conversation-existing',
     sourceKind: 'model',
     sourceDetail: 'model extraction',
@@ -5614,6 +6284,246 @@ async function testSqliteKnowledgeRepository(knowledgeModule) {
     'a cancelled repository operation does not begin database work',
   )
   assert.equal(cancelledFixture.calls.length, 0)
+}
+
+async function testStructuredMemoryRepositorySemantics(knowledgeModule) {
+  let now = 10_000
+  let sequence = 0
+  const database = new Database(':memory:')
+  try {
+    const repository = knowledgeModule.createSqliteKnowledgeRepository(
+      createBunSqliteProvider(database),
+      {
+        clock: { now: () => now },
+        ids: { next: (prefix) => `${prefix}-${++sequence}` },
+      },
+    )
+    const activePreference = {
+      content: 'Ada prefers concise replies.',
+      status: 'active',
+      scope: { kind: 'user', id: knowledgeModule.LOCAL_USER_MEMORY_SCOPE_ID },
+      subject: 'Ada',
+      key: 'reply style',
+      value: 'concise',
+      sourceKind: 'manual',
+      sourceMessageIds: ['message-one'],
+      confidence: 1,
+    }
+    const first = await repository.saveMemory(activePreference)
+    now += 10
+    const duplicate = await repository.saveMemory({
+      ...activePreference,
+      id: 'duplicate-preference',
+      content: 'Ada prefers concise replies when possible.',
+      sourceKind: 'deterministic',
+      sourceMessageIds: ['message-two'],
+      confidence: 0.82,
+    })
+    assert.equal(duplicate.id, first.id, 'same scoped logical fact and value merge into the canonical active record')
+    const afterMerge = await repository.listMemories({ statuses: ['active'] })
+    assert.equal(afterMerge.length, 1, 'same-value structured facts do not create a second active row')
+    assert.deepEqual(afterMerge[0].sourceMessageIds, ['message-one', 'message-two'], 'same-value merges retain all message evidence')
+
+    now += 10
+    const conflict = await repository.saveMemory({
+      ...activePreference,
+      id: 'conflicting-preference',
+      content: 'Ada now prefers detailed replies.',
+      value: 'detailed',
+      sourceKind: 'model',
+      sourceMessageIds: ['message-three'],
+      confidence: 0.68,
+    })
+    assert.equal(conflict.status, 'pending', 'a contradictory scoped fact remains pending review')
+    assert.equal(conflict.conflictWithId, first.id, 'a contradictory fact preserves the active fact it conflicts with')
+    assert.equal((await repository.listMemories({ statuses: ['active'] }))[0].value, 'concise', 'a conflicting candidate never replaces an active fact implicitly')
+
+    now += 10
+    const confirmed = await repository.saveMemory({
+      ...activePreference,
+      id: conflict.id,
+      content: 'Ada now prefers detailed replies.',
+      value: 'detailed',
+      status: 'active',
+      supersedesId: first.id,
+      sourceMessageIds: ['message-three', 'message-four'],
+      sourceKind: 'manual',
+    })
+    assert.equal(confirmed.status, 'active', 'an explicit confirmation promotes the conflicting fact')
+    assert.equal(confirmed.supersedesId, first.id, 'an explicit confirmation records the superseded active fact')
+    const allPreferenceStates = await repository.listMemories()
+    assert.equal(allPreferenceStates.find((memory) => memory.id === first.id)?.status, 'superseded', 'superseding a fact changes the prior active fact in the same transaction')
+    assert.equal(allPreferenceStates.find((memory) => memory.id === confirmed.id)?.status, 'active')
+
+    now += 10
+    const conversationScoped = await repository.saveMemory({
+      content: 'Only this conversation uses an exploratory tone.',
+      status: 'active',
+      scope: { kind: 'conversation', id: 'conversation-a' },
+      subject: 'conversation',
+      key: 'tone',
+      value: 'exploratory',
+      sourceKind: 'manual',
+      confidence: 1,
+    })
+    await repository.saveMemory({
+      content: 'Only another conversation uses a terse tone.',
+      status: 'active',
+      scope: { kind: 'conversation', id: 'conversation-b' },
+      subject: 'conversation',
+      key: 'tone',
+      value: 'terse',
+      sourceKind: 'manual',
+      confidence: 1,
+    })
+    await repository.saveMemory({
+      content: 'This expired memory must never enter retrieval.',
+      status: 'active',
+      scope: { kind: 'conversation', id: 'conversation-a' },
+      subject: 'conversation',
+      key: 'expired preference',
+      value: 'old',
+      validFrom: 1,
+      validUntil: now - 1,
+      sourceKind: 'manual',
+      confidence: 1,
+    })
+    const scopedHits = await repository.searchMemories({
+      query: 'conversation tone preference memory',
+      limit: 10,
+      statuses: ['active'],
+      scopes: [
+        { kind: 'user', id: knowledgeModule.LOCAL_USER_MEMORY_SCOPE_ID },
+        { kind: 'conversation', id: 'conversation-a' },
+      ],
+    })
+    assert.equal(scopedHits.some((memory) => memory.id === conversationScoped.id), true, 'memory retrieval includes the current conversation scope')
+    assert.equal(scopedHits.some((memory) => memory.scope.kind === 'conversation' && memory.scope.id === 'conversation-b'), false, 'memory retrieval excludes other conversation scopes')
+    assert.equal(scopedHits.some((memory) => memory.value === 'old'), false, 'memory retrieval excludes expired facts')
+
+    const portable = knowledgeModule.createPortableKnowledgeSnapshotService({
+      repository,
+      replaceSnapshot: repository.replaceSnapshot,
+      clock: { now: () => now },
+      fallbackChunkTitle: () => 'Imported knowledge',
+    })
+    const snapshot = await portable.exportSnapshot()
+    const exported = snapshot.memories.find((memory) => memory.id === confirmed.id)
+    assert.deepEqual(
+      {
+        scope: exported?.scope,
+        subject: exported?.subject,
+        key: exported?.key,
+        value: exported?.value,
+        sourceMessageIds: exported?.sourceMessageIds,
+        supersedesId: exported?.supersedesId,
+      },
+      {
+        scope: { kind: 'user', id: knowledgeModule.LOCAL_USER_MEMORY_SCOPE_ID },
+        subject: 'Ada',
+        key: 'reply style',
+        value: 'detailed',
+        sourceMessageIds: ['message-three', 'message-four'],
+        supersedesId: first.id,
+      },
+      'portable snapshots retain structured memory scope, fact fields, evidence, and supersession',
+    )
+
+    const restoreDatabase = new Database(':memory:')
+    try {
+      const restoredRepository = knowledgeModule.createSqliteKnowledgeRepository(
+        createBunSqliteProvider(restoreDatabase),
+        {
+          clock: { now: () => now },
+          ids: { next: (prefix) => `${prefix}-restore-${++sequence}` },
+        },
+      )
+      const restoredPortable = knowledgeModule.createPortableKnowledgeSnapshotService({
+        repository: restoredRepository,
+        replaceSnapshot: restoredRepository.replaceSnapshot,
+        clock: { now: () => now },
+        fallbackChunkTitle: () => 'Imported knowledge',
+      })
+      await restoredPortable.importSnapshot(snapshot)
+      const restored = await restoredRepository.listMemories({ statuses: ['active'] })
+      const restoredConfirmed = restored.find((memory) => memory.id === confirmed.id)
+      assert.deepEqual(
+        {
+          scope: restoredConfirmed?.scope,
+          subject: restoredConfirmed?.subject,
+          key: restoredConfirmed?.key,
+          value: restoredConfirmed?.value,
+          sourceMessageIds: restoredConfirmed?.sourceMessageIds,
+          supersedesId: restoredConfirmed?.supersedesId,
+        },
+        {
+          scope: { kind: 'user', id: knowledgeModule.LOCAL_USER_MEMORY_SCOPE_ID },
+          subject: 'Ada',
+          key: 'reply style',
+          value: 'detailed',
+          sourceMessageIds: ['message-three', 'message-four'],
+          supersedesId: first.id,
+        },
+        'portable snapshot round-trip restores structured memory fields exactly',
+      )
+    } finally {
+      restoreDatabase.close()
+    }
+  } finally {
+    database.close()
+  }
+}
+
+async function testStructuredMemoryMigrationDeduplicates(knowledgeModule) {
+  const database = new Database(':memory:')
+  try {
+    database.exec(`
+      CREATE TABLE memories (
+        id TEXT PRIMARY KEY NOT NULL,
+        content TEXT NOT NULL,
+        status TEXT NOT NULL,
+        scopeKind TEXT NOT NULL,
+        scopeId TEXT NOT NULL,
+        subject TEXT,
+        normalizedSubject TEXT,
+        factKey TEXT,
+        normalizedKey TEXT,
+        factValue TEXT,
+        sensitivity TEXT NOT NULL,
+        sourceMessageIdsJson TEXT NOT NULL,
+        validFrom INTEGER,
+        validUntil INTEGER,
+        supersedesId TEXT,
+        conflictWithId TEXT,
+        conversationId TEXT,
+        sourceKind TEXT,
+        sourceDetail TEXT,
+        confidence REAL,
+        lastHitAt INTEGER,
+        lastConfirmedAt INTEGER,
+        createdAt INTEGER NOT NULL,
+        updatedAt INTEGER NOT NULL
+      );
+      INSERT INTO memories (
+        id, content, status, scopeKind, scopeId, subject, normalizedSubject,
+        factKey, normalizedKey, factValue, sensitivity, sourceMessageIdsJson,
+        sourceKind, createdAt, updatedAt
+      ) VALUES
+        ('historical-old', 'Old historical value', 'active', 'user', 'local-user', 'Ada', 'ada', 'reply style', 'replystyle', 'concise', 'normal', '[]', 'legacy', 1, 100),
+        ('historical-new', 'New historical value', 'active', 'user', 'local-user', 'Ada', 'ada', 'reply style', 'replystyle', 'detailed', 'normal', '[]', 'legacy', 2, 200);
+    `)
+    const repository = knowledgeModule.createSqliteKnowledgeRepository(
+      createBunSqliteProvider(database),
+      { clock: { now: () => 300 } },
+    )
+    const memories = await repository.listMemories()
+    assert.equal(memories.find((memory) => memory.id === 'historical-new')?.status, 'active', 'migration keeps the newest historical active fact')
+    assert.equal(memories.find((memory) => memory.id === 'historical-old')?.status, 'superseded', 'migration demotes older duplicate active facts before creating the unique index')
+    const indexes = database.query("SELECT name FROM sqlite_master WHERE type = 'index' AND name = 'memories_active_logical_key_idx'").all()
+    assert.equal(indexes.length, 1, 'structured memory migration creates the active logical-key uniqueness index after cleanup')
+  } finally {
+    database.close()
+  }
 }
 
 function createKnowledgeSqliteFixture(rows = {}) {

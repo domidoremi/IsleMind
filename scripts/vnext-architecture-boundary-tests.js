@@ -10,6 +10,7 @@ const canonicalArchitectureDocuments = new Set([
   'docs/architecture/islemind-vnext-architecture-refactor-plan.md',
   'docs/architecture/vnext-module-public-api.md',
   'docs/architecture/vnext-migration-status.md',
+  'docs/architecture/conversation-knowledge-memory-modernization.md',
 ])
 const durableWorkspaceEvidenceContractPhrases = [
   '`AssistantRun` schema v4 persists the exact captured handoff atomically with `run.created` as strictly validated durable evidence only; it does not grant recovery authority.',

@@ -6,6 +6,7 @@ const { execFileSync } = require('node:child_process')
 const { Worker, isMainThread, parentPort, workerData } = require('node:worker_threads')
 const { resolveApkArtifactPath, defaultReleaseSmokeArch, defaultReleaseSmokeVariant } = require('./release-artifact-contract')
 const { cleanInstallState, defaultReleaseAppPackageName } = require('./release-validation-contract')
+const { readNormalizedConversationEvidence } = require('./conversation-sqlite-evidence')
 const { sensitiveEvidenceExtensions, sensitiveEvidencePatterns, collectSensitiveEvidenceHits, redactSensitiveEvidenceText } = require('./sensitive-evidence-contract')
 const {
   providerRuntimeAndroidSchema,
@@ -594,10 +595,7 @@ function readRestartRecoveryDurableState(databasePath) {
           ORDER BY sequence ASC
         `).all(run.id)
       : []
-    const conversationRow = database.query(
-      'SELECT payloadJson FROM conversation_records WHERE id = ? LIMIT 1',
-    ).get(recoveryConversationId)
-    const conversation = tryParseJson(conversationRow?.payloadJson)
+    const conversation = readNormalizedConversationEvidence(database, recoveryConversationId)
     const messages = Array.isArray(conversation?.messages) ? conversation.messages : []
     const userMessage = [...messages].reverse().find((message) => (
       message?.role === 'user' && String(message.content ?? '').includes(recoveryRequestMarker)

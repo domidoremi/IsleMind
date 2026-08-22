@@ -39,6 +39,7 @@ async function main() {
   await testTypedMessagesUseModelPath(commandModule)
   await testSettingsLikeTextUsesModelPath(commandModule)
   await testLegacyDelegation(commandModule)
+  await testUserMessageDurabilityPrecedesDispatch(commandModule)
   await testRuntimeDelegationAwaitsAndPropagates(commandModule)
   await testProjectedConversationFailClosed(commandModule)
   await testAttachmentAndEmptyInputBoundaries(commandModule)
@@ -1736,6 +1737,52 @@ async function testLegacyDelegation(commandModule) {
   ], 'model-first dispatch preserves error-clear, projection, snapshot-read, and runtime order')
 }
 
+async function testUserMessageDurabilityPrecedesDispatch(commandModule) {
+  let releaseDurability
+  const durabilityGate = new Promise((resolve) => {
+    releaseDurability = resolve
+  })
+  const fixture = createFixture(commandModule, {
+    addMessageDurability: () => durabilityGate,
+  })
+  let settled = false
+  const pending = fixture.command.send({
+    conversation: createConversation(),
+    content: 'Persist before dispatch.',
+  }).then(() => {
+    settled = true
+  })
+
+  await new Promise((resolve) => setImmediate(resolve))
+  assert.equal(settled, false, 'send remains pending while the accepted user message is not durable')
+  assert.equal(fixture.legacyInputs.length, 0, 'provider dispatch cannot begin before the exact user-message write settles')
+  assert.deepEqual(fixture.events, [
+    'error:null',
+    'add:message-1',
+    'get:conversation-1',
+  ], 'projection is verified synchronously while durable persistence remains the effect barrier')
+
+  releaseDurability()
+  await pending
+  assert.equal(settled, true)
+  assert.equal(fixture.legacyInputs.length, 1, 'provider dispatch starts once user durability is established')
+  assert.equal(fixture.events.at(-1), 'dispatch')
+
+  const persistenceFailure = new Error('user-message persistence failed')
+  const rejected = createFixture(commandModule, {
+    addMessageDurability: () => Promise.reject(persistenceFailure),
+  })
+  await assert.rejects(
+    rejected.command.send({
+      conversation: createConversation(),
+      content: 'Do not dispatch me.',
+    }),
+    (error) => error === persistenceFailure,
+    'the exact persistence failure remains visible to the sender',
+  )
+  assert.equal(rejected.legacyInputs.length, 0, 'a failed user-message write permanently fences provider dispatch for that turn')
+}
+
 async function testAttachmentAndEmptyInputBoundaries(commandModule) {
   const attachment = {
     id: 'attachment-1',
@@ -2558,6 +2605,7 @@ function createFixture(commandModule, options = {}) {
       addMessage(conversationId, message) {
         events.push(`add:${message.id}`)
         messages.push({ conversationId, message })
+        return options.addMessageDurability?.({ conversationId, message })
       },
       getConversation(conversationId) {
         events.push(`get:${conversationId}`)
