@@ -1,3 +1,4 @@
+import type { StreamEvent } from '@/core'
 import type { AssistantConversationWorkspaceWritebackHandoff } from './assistantConversationWorkspaceWritebackHandoffRuntime'
 
 export interface AssistantConversationStreamLifecycleProviderLike {
@@ -11,6 +12,7 @@ export interface AssistantConversationStreamLifecycleProviderErrorLike {
 export interface AssistantConversationStreamLifecycleCompletionContext {
   readonly requestController: AbortController
   readonly flush: () => void
+  readonly onStreamEvent?: (event: StreamEvent) => void
 }
 
 export interface AssistantConversationStreamLifecycleCapture<
@@ -87,6 +89,7 @@ export interface AssistantConversationStreamLifecycleFinalizationInput<
   readonly result: TCompletionResult
   readonly requestController: AbortController
   readonly chunkFlush: () => void
+  readonly onStreamEvent?: (event: StreamEvent) => void
 }
 
 export interface AssistantConversationStreamLifecycleFailureInput {
@@ -118,11 +121,12 @@ export interface AssistantConversationStreamLifecycleProviderFailureInput<
 export interface AssistantConversationStreamLifecycle<
   TCompletionResult,
   TProviderError,
+  TFinalizationResult = void,
 > {
   readonly complete: (
     result: TCompletionResult,
     lifecycle: AssistantConversationStreamLifecycleCompletionContext,
-  ) => Promise<void>
+  ) => Promise<TFinalizationResult>
   readonly completionFailed: (error: unknown) => void
   readonly providerFailed: (error: TProviderError) => void
   readonly startFailed: (error: unknown) => void
@@ -144,6 +148,7 @@ export interface AssistantConversationStreamLifecycleRuntimeDependencies<
   TRemoteCompactClassification,
   TContextWindowState,
   TContextFragment,
+  TFinalizationResult = unknown,
 > {
   finalize(input: AssistantConversationStreamLifecycleFinalizationInput<
     TCompletionResult,
@@ -160,7 +165,7 @@ export interface AssistantConversationStreamLifecycleRuntimeDependencies<
     TRemoteCompactClassification,
     TContextWindowState,
     TContextFragment
-  >): Promise<unknown>
+  >): Promise<TFinalizationResult>
   failProvider(input: AssistantConversationStreamLifecycleProviderFailureInput<
     TProviderError,
     TProviderSearchMode
@@ -193,6 +198,7 @@ export function createAssistantConversationStreamLifecycleRuntime<
   TRemoteCompactClassification,
   TContextWindowState,
   TContextFragment,
+  TFinalizationResult = unknown,
 >(
   dependencies: AssistantConversationStreamLifecycleRuntimeDependencies<
     TCompletionResult,
@@ -209,7 +215,8 @@ export function createAssistantConversationStreamLifecycleRuntime<
     TRemoteCompactCapabilityKind,
     TRemoteCompactClassification,
     TContextWindowState,
-    TContextFragment
+    TContextFragment,
+    TFinalizationResult
   >,
 ) {
   type Capture = AssistantConversationStreamLifecycleCapture<
@@ -230,10 +237,14 @@ export function createAssistantConversationStreamLifecycleRuntime<
 
   function build(
     input: Capture,
-  ): AssistantConversationStreamLifecycle<TCompletionResult, TProviderError> {
+  ): AssistantConversationStreamLifecycle<
+    TCompletionResult,
+    TProviderError,
+    TFinalizationResult
+  > {
     return {
       async complete(result, lifecycle) {
-        await dependencies.finalize({
+        return dependencies.finalize({
           conversationId: input.conversationId,
           assistantMessageId: input.assistantMessageId,
           result,
@@ -251,6 +262,7 @@ export function createAssistantConversationStreamLifecycleRuntime<
           workspaceWritebackHandoff: input.workspaceWritebackHandoff,
           requestController: lifecycle.requestController,
           chunkFlush: lifecycle.flush,
+          ...(lifecycle.onStreamEvent ? { onStreamEvent: lifecycle.onStreamEvent } : {}),
           upstreamModel: input.upstreamModel,
           remoteCompactEligible: input.remoteCompactEligible,
           remoteCompactMode: input.remoteCompactMode,

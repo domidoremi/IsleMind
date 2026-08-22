@@ -1,3 +1,5 @@
+import type { StreamEvent } from '@/core'
+
 export interface AssistantConversationProviderStreamHandle {
   readonly controller: AbortController
   readonly done: Promise<void>
@@ -52,16 +54,21 @@ export interface AssistantConversationProviderStreamingRuntimeInput<
   TCompletion,
   TProviderError,
   TCitations,
+  TTrace = unknown,
 > {
   readonly conversationId: string
   readonly assistantMessageId: string
   readonly request: TRequest
   readonly requestController: AbortController
+  readonly onTextDelta?: (chunk: string) => void
+  readonly onTrace?: (trace: TTrace) => void
+  readonly onStreamEvent?: (event: StreamEvent) => void
   readonly complete: (
     result: TCompletion,
     lifecycle: {
       readonly requestController: AbortController
       readonly flush: () => void
+      readonly onStreamEvent?: (event: StreamEvent) => void
     },
   ) => Promise<void>
   readonly completionFailed: (error: unknown) => void
@@ -114,7 +121,8 @@ export function createAssistantConversationProviderStreamingRuntime<
       TRequest,
       TCompletion,
       TProviderError,
-      TCitations
+      TCitations,
+      TTrace
     >,
   ): Promise<AssistantConversationProviderStreamingOutcome> {
     const projection = dependencies.createProjection({
@@ -137,12 +145,15 @@ export function createAssistantConversationProviderStreamingRuntime<
         input.request,
         (chunk) => {
           projection.pushText(chunk)
+          input.onTextDelta?.(chunk)
         },
         (result) => {
+          if (terminalCallbackStarted) return
           terminalCallbackStarted = true
           void input.complete(result, {
             requestController: input.requestController,
             flush,
+            ...(input.onStreamEvent ? { onStreamEvent: input.onStreamEvent } : {}),
           }).catch((error) => {
             flush()
             clearMatchingActiveStream(input.conversationId, input.assistantMessageId)
@@ -150,6 +161,7 @@ export function createAssistantConversationProviderStreamingRuntime<
           })
         },
         (error) => {
+          if (terminalCallbackStarted) return
           terminalCallbackStarted = true
           flush()
           clearMatchingActiveStream(input.conversationId, input.assistantMessageId)
@@ -160,6 +172,7 @@ export function createAssistantConversationProviderStreamingRuntime<
         },
         (trace) => {
           projection.pushTrace(trace)
+          input.onTrace?.(trace)
         },
       )
       providerController = handle.controller
@@ -217,7 +230,8 @@ export function createAssistantConversationProviderStreamingRuntime<
         TRequest,
         TCompletion,
         TProviderError,
-        TCitations
+        TCitations,
+        TTrace
       >,
       'conversationId' | 'assistantMessageId' | 'requestController'
     >,

@@ -1,4 +1,6 @@
 import type {
+  ConversationPage,
+  ConversationPageInput,
   ConversationStorePersistencePort,
 } from '@/modules/conversations'
 import type { Conversation } from '@/types/chatContracts'
@@ -32,6 +34,14 @@ export function releaseConversationStorePersistence(
 
 export function loadConversationRecords(): Promise<readonly Conversation[]> {
   return requirePersistence().loadRecords()
+}
+
+export function loadConversationPage(input?: ConversationPageInput): Promise<ConversationPage> {
+  return requirePersistence().loadPage(input)
+}
+
+export function loadConversationRecord(conversationId: string): Promise<Conversation | undefined> {
+  return requirePersistence().loadRecord(conversationId)
 }
 
 export function saveConversationRecord(conversation: Conversation): Promise<void> {

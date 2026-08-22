@@ -14,7 +14,12 @@ import type {
   ProviderRuntimeTraceCallback,
 } from '@/modules/providers'
 import type { MessageCitation } from '@/types/contextContracts'
-import type { ChatRequest as VNextChatRequest, JsonRecord, StreamEvent } from '@/core'
+import type {
+  ChatReasoningReplayPart,
+  ChatRequest as VNextChatRequest,
+  ChatToolCallProviderMetadata,
+  StreamEvent,
+} from '@/core'
 import {
   createCallbackProviderAdapter,
   createProviderCredentialSynchronization,
@@ -69,6 +74,7 @@ export type ProviderStreamChat = (
   onDone: ProviderRuntimeDoneCallback,
   onError: ProviderRuntimeErrorCallback,
   onCitations?: ProviderRuntimeCitationCallback,
+  onTrace?: ProviderRuntimeTraceCallback,
 ) => Promise<ProviderRuntimeStreamHandle>
 
 export function createProviderRuntimeAdapter(options: ProviderRuntimeAdapterOptions): ProviderAdapter {
@@ -103,16 +109,28 @@ export function createProviderRuntimeAdapter(options: ProviderRuntimeAdapterOpti
             (result) => {
               if (gatewayOptions.signal.aborted) return
               emitMissingFinalText(result, emittedText, callbacks.onEvent)
-              for (const [index, call] of (result.providerToolCalls ?? []).entries()) {
+              const toolCallEvents = (result.providerToolCalls ?? []).map((call, index): StreamEvent => {
                 const providerMetadata = modelOperationProviderMetadata(call)
-                callbacks.onEvent({
+                return {
                   type: 'tool-call',
                   toolCallId: call.callId || call.id || `tool-call-${index}`,
                   toolName: call.name,
                   arguments: parseToolArguments(call.arguments),
                   ...(providerMetadata ? { providerMetadata } : {}),
+                }
+              })
+              const reasoningReplay = toChatReasoningReplay(result)
+              if (reasoningReplay.length || toolCallEvents.length) {
+                callbacks.onEvent({
+                  type: 'provider-continuation-state',
+                  binding: {
+                    providerId: options.provider.id,
+                    model: request.model,
+                  },
+                  reasoningReplay,
                 })
               }
+              for (const event of toolCallEvents) callbacks.onEvent(event)
               if (result.usage) {
                 callbacks.onEvent({
                   type: 'usage',
@@ -135,6 +153,16 @@ export function createProviderRuntimeAdapter(options: ProviderRuntimeAdapterOpti
               for (const citation of citations) {
                 emitCitation(citation, seenCitations, callbacks.onEvent)
               }
+            },
+            (trace) => {
+              if (gatewayOptions.signal.aborted) return
+              callbacks.onEvent({
+                type: 'trace',
+                traceId: trace.id,
+                traceType: trace.type,
+                traceStatus: trace.status,
+                ...(trace.title ? { title: trace.title } : {}),
+              })
             },
           )
           if (gatewayOptions.signal.aborted) abort()
@@ -753,7 +781,7 @@ function resolveProviderStreamRuntime() {
   return providerStreamRuntimePromise
 }
 
-function toRuntimeChatRequest(
+export function toRuntimeChatRequest(
   options: ProviderRuntimeAdapterOptions,
   request: VNextChatRequest,
 ): ProviderRuntimeChatRequest {
@@ -786,6 +814,7 @@ function toProviderRuntimeMessages(
     if (message.role === 'system') return []
     if (usesAnthropicModelOperationMessages(provider)) {
       if (message.role === 'assistant' && message.toolCalls?.length) {
+        const replay = providerReplayFields(message.reasoningReplay)
         const content: ProviderContentPart[] = []
         if (message.text) content.push({ type: 'text', text: message.text })
         content.push(...message.toolCalls.map((call) => ({
@@ -797,7 +826,11 @@ function toProviderRuntimeMessages(
             input: call.arguments,
           },
         })))
-        return [{ role: 'assistant' as const, content }]
+        return [{
+          role: 'assistant' as const,
+          content,
+          ...(replay.providerContentBlocks?.length ? { providerContentBlocks: replay.providerContentBlocks } : {}),
+        }]
       }
       if (message.role === 'tool') {
         return [{
@@ -842,6 +875,7 @@ function toProviderRuntimeMessages(
     return [{
       role: message.role,
       content: message.text,
+      ...providerReplayFields(message.reasoningReplay),
       ...(message.toolCallId ? { toolCallId: message.toolCallId } : {}),
       ...(message.name ? { name: message.name } : {}),
       ...(message.toolCalls?.length ? {
@@ -877,14 +911,90 @@ function modelOperationProviderMetadata(call: {
   readonly id?: string
   readonly thoughtSignature?: string
   readonly index?: number
-}): JsonRecord | undefined {
-  const metadata: Record<string, string | number> = {}
-  if (call.id?.trim()) metadata.providerCallId = call.id
-  if (call.thoughtSignature?.trim()) metadata.thoughtSignature = call.thoughtSignature
-  if (typeof call.index === 'number' && Number.isSafeInteger(call.index) && call.index >= 0) {
-    metadata.providerCallIndex = call.index
+}): ChatToolCallProviderMetadata | undefined {
+  const metadata: ChatToolCallProviderMetadata = {
+    ...(call.id?.trim() ? { providerCallId: call.id } : {}),
+    ...(call.thoughtSignature?.trim() ? { thoughtSignature: call.thoughtSignature } : {}),
+    ...(typeof call.index === 'number' && Number.isSafeInteger(call.index) && call.index >= 0
+      ? { providerCallIndex: call.index }
+      : {}),
   }
   return Object.keys(metadata).length ? metadata : undefined
+}
+
+function providerReplayFields(
+  replay: readonly ChatReasoningReplayPart[] | undefined,
+): Pick<ProviderRuntimeChatMessage, 'reasoningContent' | 'responseItems' | 'providerContentBlocks'> {
+  if (!replay?.length) return {}
+  const reasoningContent = replay
+    .filter((part): part is Extract<ChatReasoningReplayPart, { kind: 'text' | 'thinking' }> => (
+      part.kind === 'text' || part.kind === 'thinking'
+    ))
+    .map((part) => part.text)
+    .filter(Boolean)
+    .join('')
+  const responseItems: Record<string, unknown>[] = replay
+    .flatMap((part) => part.kind === 'encrypted'
+      ? [{
+          type: 'reasoning',
+          id: part.id,
+          encrypted_content: part.data,
+          summary: (part.summary ?? []).map((text) => ({ type: 'summary_text', text })),
+        }]
+      : [])
+  const providerContentBlocks: Record<string, unknown>[] = []
+  for (const part of replay) {
+    if (part.kind === 'thinking') {
+      providerContentBlocks.push({
+        type: 'thinking',
+        thinking: part.text,
+        ...(part.signature ? { signature: part.signature } : {}),
+      })
+    }
+    if (part.kind === 'redacted') providerContentBlocks.push({ type: 'redacted_thinking', data: part.data })
+  }
+  return {
+    ...(reasoningContent ? { reasoningContent } : {}),
+    ...(responseItems.length ? { responseItems } : {}),
+    ...(providerContentBlocks.length ? { providerContentBlocks } : {}),
+  }
+}
+
+function toChatReasoningReplay(
+  result: ProviderRuntimeCompletionResult,
+): readonly ChatReasoningReplayPart[] {
+  const replay: ChatReasoningReplayPart[] = []
+  if (result.reasoningContent?.trim()) {
+    replay.push({ kind: 'text', text: result.reasoningContent })
+  }
+  for (const item of result.responseItems ?? []) {
+    if (item.type !== 'reasoning' || typeof item.id !== 'string' || typeof item.encrypted_content !== 'string') continue
+    const summary = Array.isArray(item.summary)
+      ? item.summary.flatMap((entry) => {
+          if (typeof entry === 'string') return [entry]
+          if (entry && typeof entry === 'object' && !Array.isArray(entry) && typeof entry.text === 'string') return [entry.text]
+          return []
+        })
+      : []
+    replay.push({
+      kind: 'encrypted',
+      id: item.id,
+      data: item.encrypted_content,
+      ...(summary.length ? { summary } : {}),
+    })
+  }
+  for (const block of result.providerContentBlocks ?? []) {
+    if (block.type === 'thinking' && typeof block.thinking === 'string') {
+      replay.push({
+        kind: 'thinking',
+        text: block.thinking,
+        ...(typeof block.signature === 'string' ? { signature: block.signature } : {}),
+      })
+    } else if (block.type === 'redacted_thinking' && typeof block.data === 'string') {
+      replay.push({ kind: 'redacted', data: block.data })
+    }
+  }
+  return replay.slice(0, 32)
 }
 
 function buildModelOperationDeclarations(

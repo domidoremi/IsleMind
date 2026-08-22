@@ -100,9 +100,7 @@ function buildMemoryExtractionTrace(input: {
     case 'skipped':
       return completeTrace({
         ...base,
-        content: input.transition.reason === 'memory_disabled'
-          ? st('chatRunner.trace.memoryExtractDisabled')
-          : st('chatRunner.trace.memoryExtractMissingKey'),
+        content: st('chatRunner.trace.memoryExtractDisabled'),
         status: 'skipped',
       })
   }

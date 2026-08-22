@@ -1,17 +1,33 @@
-import type { AssistantRunId } from '@/core'
+import {
+  freezeChatRequest,
+  isChatRequest,
+  type AssistantRunId,
+} from '@/core'
 import type {
   AssistantRun,
+  AssistantRunCapturedRequestSnapshot,
   AssistantRunPersistence,
   RunJournalEntry,
 } from '@/modules/assistant-runtime'
+import {
+  cloneAssistantContextPlanReceipt,
+  isAssistantContextPlanReceipt,
+} from '@/modules/assistant-runtime'
+import {
+  buildAssistantCapabilityRevision,
+  buildAssistantRequestHash,
+  isAssistantCapabilityRevision,
+  isAssistantRequestHash,
+} from '@/modules/assistant-runtime'
 
 export interface InMemoryRunStore extends AssistantRunPersistence {
-  clear(): void
+  clear(): Promise<void>
 }
 
 export function createInMemoryRunStore(): InMemoryRunStore {
   const runs = new Map<AssistantRunId, AssistantRun>()
   const entriesByRun = new Map<AssistantRunId, RunJournalEntry[]>()
+  const requestSnapshots = new Map<AssistantRunId, AssistantRunCapturedRequestSnapshot>()
 
   return {
     async get(runId) {
@@ -34,22 +50,44 @@ export function createInMemoryRunStore(): InMemoryRunStore {
       appendEntry(entriesByRun, entry)
     },
 
-    async appendAndSave(entry, run) {
+    async appendAndSave(entry, run, requestSnapshot) {
       if (entry.runId !== run.id || entry.sequence !== run.journalSequence) {
         throw new Error(`Run journal state is inconsistent for ${entry.runId}.`)
       }
       const storedRun = cloneRun(run)
+      const storedRequestSnapshot = requestSnapshot
+        ? cloneRequestSnapshot(requestSnapshot)
+        : undefined
+      if (storedRequestSnapshot && (
+        entry.type !== 'run.created' || entry.sequence !== 1 ||
+        storedRequestSnapshot.runId !== entry.runId ||
+        storedRequestSnapshot.capturedAt !== entry.occurredAt ||
+        storedRequestSnapshot.request.conversationId !== run.conversationId ||
+        storedRequestSnapshot.request.providerId !== run.providerId ||
+        storedRequestSnapshot.request.model !== run.model ||
+        !hasMatchingSnapshotSchema(storedRequestSnapshot) ||
+        requestSnapshots.has(entry.runId)
+      )) {
+        throw new Error(`Run request snapshot is inconsistent for ${entry.runId}.`)
+      }
       appendEntry(entriesByRun, entry)
       runs.set(storedRun.id, storedRun)
+      if (storedRequestSnapshot) requestSnapshots.set(storedRun.id, storedRequestSnapshot)
     },
 
     async list(runId) {
       return (entriesByRun.get(runId) ?? []).map(cloneEntry)
     },
 
-    clear() {
+    async getRequestSnapshot(runId) {
+      const snapshot = requestSnapshots.get(runId)
+      return snapshot ? cloneRequestSnapshot(snapshot) : undefined
+    },
+
+    async clear() {
       runs.clear()
       entriesByRun.clear()
+      requestSnapshots.clear()
     },
   }
 }
@@ -74,8 +112,29 @@ function cloneRun(run: AssistantRun): AssistantRun {
   return {
     ...run,
     ...(run.checkpoint ? { checkpoint: { ...run.checkpoint } } : {}),
+    ...(run.pendingModelOperation
+      ? { pendingModelOperation: clonePendingModelOperation(run.pendingModelOperation) }
+      : {}),
     ...(run.result ? { result: { ...run.result } } : {}),
-    ...(run.failure ? { failure: { ...run.failure } } : {}),
+    ...(run.failure ? {
+      failure: {
+        ...run.failure,
+        ...(run.failure.continuation
+          ? { continuation: { ...run.failure.continuation } }
+          : {}),
+      },
+    } : {}),
+  }
+}
+
+function clonePendingModelOperation(
+  pending: NonNullable<AssistantRun['pendingModelOperation']>,
+): NonNullable<AssistantRun['pendingModelOperation']> {
+  const cloned = JSON.parse(JSON.stringify(pending)) as typeof pending
+  return {
+    ...cloned,
+    continuationRequest: freezeChatRequest(cloned.continuationRequest),
+    continuationState: deepFreeze(cloned.continuationState),
   }
 }
 
@@ -84,4 +143,55 @@ function cloneEntry(entry: RunJournalEntry): RunJournalEntry {
     ...entry,
     ...(entry.data ? { data: { ...entry.data } } : {}),
   }
+}
+
+function cloneRequestSnapshot(
+  snapshot: AssistantRunCapturedRequestSnapshot,
+): AssistantRunCapturedRequestSnapshot {
+  const request = snapshot.schema === 'islemind.assistant-run-request-snapshot.v1'
+    ? freezeChatRequest(snapshot.request)
+    : JSON.parse(JSON.stringify(snapshot.request))
+  const contextReceipt = snapshot.schema === 'islemind.assistant-run-request-snapshot.v1'
+    ? snapshot.contextReceipt
+    : undefined
+  return Object.freeze({
+    ...snapshot,
+    request: deepFreeze(request),
+    ...(contextReceipt
+      ? { contextReceipt: deepFreeze(cloneAssistantContextPlanReceipt(contextReceipt)) }
+      : {}),
+  }) as AssistantRunCapturedRequestSnapshot
+}
+
+function hasMatchingSnapshotSchema(
+  snapshot: AssistantRunCapturedRequestSnapshot,
+): boolean {
+  const capabilityInput = snapshot.schema === 'islemind.assistant-run-activity-request-snapshot.v1'
+    ? snapshot.request.payload
+    : snapshot.request
+  const identityValid = (
+    (snapshot.capabilityRevision === undefined && snapshot.requestHash === undefined) ||
+    (
+      isAssistantCapabilityRevision(snapshot.capabilityRevision) &&
+      isAssistantRequestHash(snapshot.requestHash) &&
+      snapshot.capabilityRevision === buildAssistantCapabilityRevision(capabilityInput) &&
+      snapshot.requestHash === buildAssistantRequestHash(snapshot.request)
+    )
+  )
+  if (!identityValid) return false
+  return (
+    snapshot.schema === 'islemind.assistant-run-request-snapshot.v1'
+    && isChatRequest(snapshot.request)
+    && (snapshot.contextReceipt === undefined || isAssistantContextPlanReceipt(snapshot.contextReceipt))
+  ) || (
+    snapshot.schema === 'islemind.assistant-run-activity-request-snapshot.v1'
+    && snapshot.request.schema === 'islemind.assistant-activity-request-evidence.v1'
+    && (snapshot.request.contextReceipt === undefined || isAssistantContextPlanReceipt(snapshot.request.contextReceipt))
+  )
+}
+
+function deepFreeze<Value>(value: Value): Value {
+  if (!value || typeof value !== 'object' || Object.isFrozen(value)) return value
+  for (const child of Object.values(value as Record<string, unknown>)) deepFreeze(child)
+  return Object.freeze(value)
 }

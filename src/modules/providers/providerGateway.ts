@@ -36,6 +36,13 @@ export class ProviderRuntimeStreamUnavailableError extends Error {
   }
 }
 
+export class ProviderContinuationBindingError extends Error {
+  constructor(message = 'The provider continuation binding is invalid.') {
+    super(message)
+    this.name = 'ProviderContinuationBindingError'
+  }
+}
+
 export function createProviderGateway(
   adapters: readonly ProviderAdapter[],
   runtimeStream?: ProviderGatewayRuntimeStream,
@@ -86,6 +93,12 @@ async function* streamWithFallback(
   request: ChatRequest,
   options: ProviderGatewayOptions,
 ): AsyncIterable<StreamEvent> {
+  if (request.providerStateBinding && (
+    request.providerStateBinding.providerId !== request.providerId
+    || request.providerStateBinding.model !== request.model
+  )) {
+    throw new ProviderContinuationBindingError()
+  }
   const routes = uniqueRoutes(request, options)
   let lastError: unknown
 
@@ -137,6 +150,12 @@ function unsupportedCapabilities(request: ChatRequest, capabilities: readonly Pr
 }
 
 function uniqueRoutes(request: ChatRequest, options: ProviderGatewayOptions): ProviderFallbackRoute[] {
+  if (request.providerStateBinding) {
+    return [{
+      providerId: request.providerStateBinding.providerId,
+      model: request.providerStateBinding.model,
+    }]
+  }
   const fallbackRoutes = options.resolveFallbackRoutes?.(request) ?? options.fallbackRoutes ?? []
   const routes = [
     { providerId: request.providerId, model: request.model },

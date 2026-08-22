@@ -1,4 +1,6 @@
 import type { AssistantRunId } from '@/core'
+import type { AssistantContextPlanReceipt, AssistantModelOperationSession } from '../contracts'
+import { buildAssistantContextPlanReceipt } from './contextPlanReceipt'
 
 import type {
   AssistantConversationWorkspaceWritebackBindOutcome,
@@ -387,7 +389,7 @@ export interface AssistantConversationReplyStartRuntimeDependencies<
   readonly replySessionRuntime: {
     start(
       input: AssistantConversationReplyStartInput,
-    ): AssistantConversationReplyStartSessionOutcome<TConversation>
+    ): Promise<AssistantConversationReplyStartSessionOutcome<TConversation>>
   }
   readonly providerAdmissionRuntime: {
     admit(input: {
@@ -466,6 +468,7 @@ export interface AssistantConversationReplyStartRuntimeDependencies<
       readonly lastUserMessage?: TMessage
       readonly providerToolCount: number
       readonly upstreamModel: string
+      readonly signal: AbortSignal
     }): Promise<AssistantConversationReplyStartRequestPlanningOutcome<
       TRetrievalSources,
       TProviderWebSearchMode,
@@ -529,10 +532,12 @@ export interface AssistantConversationReplyStartRuntimeDependencies<
       readonly remoteCompactFallback: TRemoteCompactFallback | undefined
       readonly previousResponseId?: string
       readonly providerToolDeclarations?: TProviderToolDeclarations
+      readonly modelOperationSession?: AssistantModelOperationSession
       readonly sourceMessages: readonly TMessage[]
       readonly requestMessageId?: string
       readonly requestText: string
       readonly approvedToolContextIds: readonly string[]
+      readonly contextReceipt?: AssistantContextPlanReceipt
       readonly workspaceWritebackHandoff?: AssistantConversationWorkspaceWritebackHandoff
       readonly buildStreamLifecycle: (input: {
         readonly modelTraceId: string
@@ -547,6 +552,11 @@ export interface AssistantConversationReplyStartRuntimeDependencies<
   }
   getLatestConversation(conversationId: string): TConversation | undefined
   getSettings(): TSettings
+  createModelOperationSession?(input: {
+    readonly conversation: TRuntimeConversation
+    readonly provider: TProvider
+    readonly settings: TSettings
+  }): Promise<AssistantModelOperationSession | undefined>
   filterSendableAttachments(
     attachments: TAttachmentInput | undefined,
   ): TSendableAttachments
@@ -629,7 +639,7 @@ export function createAssistantConversationReplyStartRuntime<
   async function start(
     input: AssistantConversationReplyStartInput,
   ): Promise<AssistantConversationReplyStartOutcome> {
-    const session = dependencies.replySessionRuntime.start(input)
+    const session = await dependencies.replySessionRuntime.start(input)
     if (session.kind === 'missing') {
       return { kind: 'terminal', stage: 'reply_session', outcome: session }
     }
@@ -845,6 +855,13 @@ export function createAssistantConversationReplyStartRuntime<
         mcpContext,
       })
     const { providerToolContext } = providerToolAdmissionOutcome
+    const modelOperationSession = dependencies.createModelOperationSession
+      ? await dependencies.createModelOperationSession({
+          conversation: runtimeConversation,
+          provider,
+          settings,
+        })
+      : undefined
     const sourceMessages =
       latestConversation?.messages.filter(
         (message) => message.id !== assistantMessage.id,
@@ -869,6 +886,7 @@ export function createAssistantConversationReplyStartRuntime<
         lastUserMessage,
         providerToolCount: providerToolContext?.adapter.tools.length ?? 0,
         upstreamModel,
+        signal: requestController.signal,
       })
     if (requestPlanningOutcome.kind === 'failed') {
       return {
@@ -889,6 +907,12 @@ export function createAssistantConversationReplyStartRuntime<
       remoteCompactProbe,
       previousResponseId,
     } = requestPlanningOutcome
+    const contextReceipt = buildAssistantContextPlanReceipt({
+      providerId: provider.id,
+      model: upstreamModel,
+      plan: contextPlan,
+      activePrompt,
+    })
     const durableDispatchOutcome =
       await dependencies.durableDispatchRuntime.dispatch({
         runId,
@@ -913,10 +937,12 @@ export function createAssistantConversationReplyStartRuntime<
           ? previousResponseId
           : undefined,
         providerToolDeclarations: providerToolContext?.adapter.tools,
+        modelOperationSession,
         sourceMessages,
         requestMessageId: lastUserMessage?.id,
         requestText: lastUserMessage?.content ?? '',
         approvedToolContextIds: runtimeConversation.enabledTools ?? [],
+        contextReceipt,
         workspaceWritebackHandoff,
         buildStreamLifecycle({ modelTraceId }) {
           return dependencies.streamLifecycleRuntime.build({

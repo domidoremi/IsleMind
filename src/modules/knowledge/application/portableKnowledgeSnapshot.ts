@@ -2,15 +2,17 @@ import type { Clock } from '@/core'
 import type {
   KnowledgeChunk,
   KnowledgeDocument,
-  MemoryItem,
   MemorySourceKind,
 } from '@/types/contextContracts'
 import {
+  LOCAL_USER_MEMORY_SCOPE_ID,
   KNOWLEDGE_CHUNK_RECORD_SCHEMA,
   KNOWLEDGE_DOCUMENT_RECORD_SCHEMA,
   type KnowledgeChunkRecord,
   type KnowledgeDocumentRecord,
   type KnowledgeMemoryRecord,
+  type KnowledgeMemoryScope,
+  type KnowledgeMemorySensitivity,
   type KnowledgeMemorySourceKind,
   type KnowledgeMemoryStatus,
   type KnowledgeMemoryWrite,
@@ -22,9 +24,34 @@ import { buildKnowledgeChunkMetadata } from '../domain/knowledgeChunkMetadata'
 
 /** Portable backup DTO retained at the untrusted storage boundary. */
 export interface PortableKnowledgeSnapshot {
-  memories: MemoryItem[]
+  memories: PortableMemoryItem[]
   documents: KnowledgeDocument[]
   chunks: KnowledgeChunk[]
+}
+
+/** Untrusted portable representation; structured fields remain optional for legacy exports. */
+export interface PortableMemoryItem {
+  id: string
+  content: string
+  status: KnowledgeMemoryStatus
+  scope?: KnowledgeMemoryScope
+  subject?: string
+  key?: string
+  value?: string
+  sensitivity?: KnowledgeMemorySensitivity
+  sourceMessageIds?: string[]
+  validFrom?: number
+  validUntil?: number
+  supersedesId?: string
+  conflictWithId?: string
+  conversationId?: string
+  sourceKind?: KnowledgeMemorySourceKind
+  sourceDetail?: string
+  confidence?: number
+  lastHitAt?: number
+  lastConfirmedAt?: number
+  createdAt: number
+  updatedAt: number
 }
 
 export interface PortableKnowledgeSnapshotDependencies {
@@ -45,7 +72,7 @@ export interface PortableKnowledgeSnapshotService {
     options?: KnowledgeRepositoryOperationOptions,
   ): Promise<void>
   importMemoriesForReview(
-    memories: readonly MemoryItem[],
+    memories: readonly PortableMemoryItem[],
     options?: KnowledgeRepositoryOperationOptions,
   ): Promise<void>
 }
@@ -122,7 +149,7 @@ function prepareImportedKnowledgeSnapshot(
   }
 }
 
-function toImportedMemoryWrite(memory: Partial<MemoryItem>, now: number): KnowledgeMemoryWrite | undefined {
+function toImportedMemoryWrite(memory: Partial<PortableMemoryItem>, now: number): KnowledgeMemoryWrite | undefined {
   if (!memory.id) return undefined
   const content = normalizeText(memory.content ?? '')
   if (!content) return undefined
@@ -131,11 +158,22 @@ function toImportedMemoryWrite(memory: Partial<MemoryItem>, now: number): Knowle
     id: memory.id,
     content,
     status: normalizeMemoryStatus(memory.status),
+    ...(memory.scope ? { scope: normalizeMemoryScope(memory.scope, memory.conversationId) } : {}),
+    ...(optionalText(memory.subject) ? { subject: optionalText(memory.subject) } : {}),
+    ...(optionalText(memory.key) ? { key: optionalText(memory.key) } : {}),
+    ...(optionalText(memory.value) ? { value: optionalText(memory.value) } : {}),
+    sensitivity: normalizeMemorySensitivity(memory.sensitivity),
+    sourceMessageIds: normalizeSourceMessageIds(memory.sourceMessageIds),
+    ...(optionalTimestamp(memory.validFrom) === undefined ? {} : { validFrom: optionalTimestamp(memory.validFrom) }),
+    ...(optionalTimestamp(memory.validUntil) === undefined ? {} : { validUntil: optionalTimestamp(memory.validUntil) }),
+    ...(optionalText(memory.supersedesId) ? { supersedesId: optionalText(memory.supersedesId) } : {}),
+    ...(optionalText(memory.conflictWithId) ? { conflictWithId: optionalText(memory.conflictWithId) } : {}),
     ...(optionalText(memory.conversationId) ? { conversationId: optionalText(memory.conversationId) } : {}),
     sourceKind,
     ...(optionalText(memory.sourceDetail) ? { sourceDetail: optionalText(memory.sourceDetail) } : {}),
     confidence: normalizeConfidence(memory.confidence ?? defaultMemoryConfidence(sourceKind)),
     ...(optionalTimestamp(memory.lastHitAt) === undefined ? {} : { lastHitAt: optionalTimestamp(memory.lastHitAt) }),
+    ...(optionalTimestamp(memory.lastConfirmedAt) === undefined ? {} : { lastConfirmedAt: optionalTimestamp(memory.lastConfirmedAt) }),
     createdAt: timestamp(memory.createdAt, now),
     updatedAt: timestamp(memory.updatedAt, now),
   }
@@ -199,7 +237,7 @@ function toImportedChunkRecord(
   }
 }
 
-function toMemoryItem(record: KnowledgeMemoryWrite): MemoryItem {
+function toMemoryItem(record: KnowledgeMemoryWrite): PortableMemoryItem {
   if (!record.id || record.createdAt === undefined || record.updatedAt === undefined) {
     throw new TypeError('The coherent knowledge snapshot contains an incomplete memory record.')
   }
@@ -207,11 +245,22 @@ function toMemoryItem(record: KnowledgeMemoryWrite): MemoryItem {
     id: record.id,
     content: record.content,
     status: record.status,
+    ...(record.scope ? { scope: { ...record.scope } } : {}),
+    ...(record.subject ? { subject: record.subject } : {}),
+    ...(record.key ? { key: record.key } : {}),
+    ...(record.value ? { value: record.value } : {}),
+    ...(record.sensitivity ? { sensitivity: record.sensitivity } : {}),
+    ...(record.sourceMessageIds ? { sourceMessageIds: [...record.sourceMessageIds] } : {}),
+    ...(record.validFrom === undefined ? {} : { validFrom: record.validFrom }),
+    ...(record.validUntil === undefined ? {} : { validUntil: record.validUntil }),
+    ...(record.supersedesId ? { supersedesId: record.supersedesId } : {}),
+    ...(record.conflictWithId ? { conflictWithId: record.conflictWithId } : {}),
     ...(record.conversationId ? { conversationId: record.conversationId } : {}),
     sourceKind: record.sourceKind,
     ...(record.sourceDetail ? { sourceDetail: record.sourceDetail } : {}),
     ...(record.confidence === undefined ? {} : { confidence: record.confidence }),
     ...(record.lastHitAt === undefined ? {} : { lastHitAt: record.lastHitAt }),
+    ...(record.lastConfirmedAt === undefined ? {} : { lastConfirmedAt: record.lastConfirmedAt }),
     createdAt: record.createdAt,
     updatedAt: record.updatedAt,
   }
@@ -246,7 +295,34 @@ function normalizeMemorySourceKind(value: unknown): KnowledgeMemorySourceKind {
 }
 
 function normalizeMemoryStatus(value: unknown): KnowledgeMemoryStatus {
-  return value === 'active' || value === 'disabled' ? value : 'pending'
+  return value === 'active' || value === 'superseded' || value === 'disabled' ? value : 'pending'
+}
+
+function normalizeMemoryScope(
+  value: KnowledgeMemoryScope,
+  conversationId: string | undefined,
+): KnowledgeMemoryScope {
+  const candidate = value as unknown as Record<string, unknown>
+  const kind = candidate.kind === 'user' || candidate.kind === 'conversation' ? candidate.kind : undefined
+  const id = optionalText(typeof candidate.id === 'string' ? candidate.id : undefined)
+  if (kind && id) return { kind, id }
+  const fallbackConversationId = optionalText(conversationId)
+  return fallbackConversationId
+    ? { kind: 'conversation', id: fallbackConversationId }
+    : { kind: 'user', id: LOCAL_USER_MEMORY_SCOPE_ID }
+}
+
+function normalizeMemorySensitivity(value: unknown): KnowledgeMemorySensitivity {
+  return value === 'sensitive' ? 'sensitive' : 'normal'
+}
+
+function normalizeSourceMessageIds(value: readonly string[] | undefined): string[] {
+  if (!Array.isArray(value)) return []
+  return Array.from(new Set(value
+    .filter((item): item is string => typeof item === 'string')
+    .map((item) => optionalText(item))
+    .filter((item): item is string => Boolean(item))
+    .slice(0, 64)))
 }
 
 function normalizeConfidence(value: number | null | undefined): number | undefined {

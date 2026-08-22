@@ -33,7 +33,12 @@ export interface AssistantConversationReplySessionRuntimeDependencies<
   appendMessage(
     conversationId: string,
     message: AssistantConversationReplySessionMessage,
-  ): void
+  ): void | Promise<void>
+  projectAppendFailure?(input: {
+    readonly conversationId: string
+    readonly assistantMessageId: string
+    readonly error: unknown
+  }): void
   startConversationTaskActivity(
     activity: AssistantConversationReplySessionActivity,
     startedAt: number,
@@ -84,9 +89,9 @@ export function createAssistantConversationReplySessionRuntime<
     TConversation
   >,
 ) {
-  function start(
+  async function start(
     input: AssistantConversationReplySessionInput,
-  ): AssistantConversationReplySessionOutcome<TConversation> {
+  ): Promise<AssistantConversationReplySessionOutcome<TConversation>> {
     dependencies.stopConversationMessage(input.conversationId)
 
     const conversation = dependencies.getConversation(input.conversationId)
@@ -108,7 +113,22 @@ export function createAssistantConversationReplySessionRuntime<
       startedAt,
     }
 
-    dependencies.appendMessage(input.conversationId, message)
+    // The assistant placeholder is part of the durable turn boundary. The
+    // runtime must not admit a provider or start an effect until its exact
+    // store mutation has settled.
+    try {
+      await dependencies.appendMessage(input.conversationId, message)
+    } catch (error) {
+      // The local assistant projection already exists when its durable write
+      // fails. Give bootstrap one chance to terminalize that projection before
+      // propagating the exact persistence error to the caller.
+      dependencies.projectAppendFailure?.({
+        conversationId: input.conversationId,
+        assistantMessageId: message.id,
+        error,
+      })
+      throw error
+    }
     dependencies.startConversationTaskActivity({
       kind: 'chat-turn',
       conversationId: input.conversationId,

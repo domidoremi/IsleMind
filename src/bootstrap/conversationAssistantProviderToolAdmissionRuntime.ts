@@ -44,10 +44,7 @@ export const conversationAssistantProviderToolAdmissionRuntime =
   >({
     resolveSupport: resolveProviderNativeToolSupport,
     admitProviderTools(input) {
-      return createConversationProviderToolTurnRuntime({
-        conversationId: input.conversationId,
-        assistantMessageId: input.assistantMessageId,
-      }).admit({
+      return createConversationProviderToolTurnRuntime().admit({
         provider: input.provider,
         modelPreferredEndpoint: input.modelPreferredEndpoint,
         settings: input.settings,

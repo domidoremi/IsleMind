@@ -33,7 +33,11 @@ export interface ModelOperationCall {
   readonly catalogRevision: string
   readonly schemaRevision: string
   readonly arguments: Readonly<Record<string, unknown>>
-  readonly providerMetadata?: Readonly<Record<string, unknown>>
+  readonly providerMetadata?: {
+    readonly providerCallId?: string
+    readonly providerCallIndex?: number
+    readonly thoughtSignature?: string
+  }
 }
 
 export type ModelOperationReceiptStatus =

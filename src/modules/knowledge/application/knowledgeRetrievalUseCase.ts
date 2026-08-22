@@ -122,7 +122,7 @@ export function createKnowledgeRetrievalUseCase<
       } catch (error) {
         throwIfAborted(input.signal)
         const primaryFailure = input.ragMode === 'hybrid' ? 'hybrid_search_failed' : 'fts_search_failed'
-        await dependencies.report?.({
+        await reportBestEffort(dependencies.report, {
           status: 'error',
           detail: primaryFailure,
           reason: 'fallback_attempt',
@@ -131,7 +131,7 @@ export function createKnowledgeRetrievalUseCase<
         try {
           const fallback = await dependencies.searchFts(input.query, scopedLimit, { signal: input.signal })
           throwIfAborted(input.signal)
-          await dependencies.report?.({
+          await reportBestEffort(dependencies.report, {
             status: 'done',
             detail: 'fts_fallback_applied',
             reason: input.ragMode === 'hybrid' ? 'hybrid_search_failed' : 'primary_search_failed',
@@ -139,7 +139,7 @@ export function createKnowledgeRetrievalUseCase<
           return filterKnowledgeSources(fallback, input.knowledgeScope).slice(0, input.limit)
         } catch (fallbackError) {
           throwIfAborted(input.signal)
-          await dependencies.report?.({
+          await reportBestEffort(dependencies.report, {
             status: 'error',
             detail: 'fts_fallback_failed',
             reason: 'empty_result_fallback',
@@ -164,7 +164,7 @@ export function createKnowledgeRetrievalUseCase<
         return filterKnowledgeSources(sources, input.knowledgeScope).slice(0, input.limit)
       } catch (error) {
         throwIfAborted(input.signal)
-        await dependencies.report?.({
+        await reportBestEffort(dependencies.report, {
           status: 'error',
           detail: 'agentic_search_failed',
           reason: 'empty_result_fallback',
@@ -173,6 +173,18 @@ export function createKnowledgeRetrievalUseCase<
         return []
       }
     },
+  }
+}
+
+async function reportBestEffort(
+  report: KnowledgeRetrievalUseCaseDependencies<KnowledgeScopedSource>['report'],
+  event: KnowledgeRetrievalDiagnosticEvent,
+): Promise<void> {
+  if (!report) return
+  try {
+    await report(event)
+  } catch {
+    // Diagnostics must not change retrieval or suppress its fallback path.
   }
 }
 

@@ -1,3 +1,4 @@
+import type { StreamEvent } from '@/core'
 import type { AssistantConversationDetachedWorkLease } from './assistantConversationDetachedWorkRegistry'
 import type { AssistantConversationWorkspaceWritebackHandoff } from './assistantConversationWorkspaceWritebackHandoffRuntime'
 
@@ -179,33 +180,6 @@ export interface AssistantConversationRemoteCompactRecordBase<
   readonly contextFragments?: readonly TContextFragment[]
 }
 
-export interface AssistantConversationProviderToolRevisionInput<
-  TConversation,
-  TProvider,
-  TPackedMessage,
-  TProviderTools,
-  TProviderToolCall,
-  TContext,
-  TSettings,
-> {
-  readonly conversationId: string
-  readonly assistantMessageId: string
-  readonly provider: TProvider
-  readonly conversation: TConversation
-  readonly systemPrompt: string
-  readonly messages: readonly TPackedMessage[]
-  readonly baseContextPrompt: string
-  readonly firstOutput: string
-  readonly firstReasoningContent?: string
-  readonly firstResponseItems?: readonly unknown[]
-  readonly firstProviderContentBlocks?: readonly unknown[]
-  readonly providerTools?: TProviderTools
-  readonly calls: readonly TProviderToolCall[]
-  readonly context: TContext
-  readonly settings: TSettings
-  readonly signal: AbortSignal
-}
-
 export interface AssistantConversationMcpRevisionInput<
   TConversation,
   TProvider,
@@ -224,6 +198,7 @@ export interface AssistantConversationMcpRevisionInput<
   readonly tools: readonly TMcpTool[]
   readonly providerTools?: TProviderTools
   readonly signal: AbortSignal
+  readonly onStreamEvent?: (event: StreamEvent) => void
 }
 
 export interface AssistantConversationFinalizationRuntimeInput<
@@ -275,6 +250,7 @@ export interface AssistantConversationFinalizationRuntimeInput<
   readonly previousResponseId?: string
   readonly contextWindowState?: TContextWindowState
   readonly contextFragments?: readonly TContextFragment[]
+  readonly onStreamEvent?: (event: StreamEvent) => void
 }
 
 export interface AssistantConversationProviderFailureInput<TError> {
@@ -339,15 +315,6 @@ export interface AssistantConversationFinalizationRuntimeDependencies<
     readonly quality?: TQuality
   }): TVerification
   hasTaggedToolRequest?(output: string): boolean
-  reviseWithProviderTools(input: AssistantConversationProviderToolRevisionInput<
-    TConversation,
-    TProvider,
-    TPackedMessage,
-    TProviderTools,
-    TProviderToolCall,
-    TContext,
-    TSettings
-  >): Promise<AssistantConversationFinalizationRevision<TUsage> | null | undefined>
   reviseWithMcpTools(input: AssistantConversationMcpRevisionInput<
     TConversation,
     TProvider,
@@ -614,36 +581,6 @@ export function createAssistantConversationFinalizationRuntime<
     let finalCitations = firstCitations
     let supplementalSources: TSource[] = []
 
-    const providerToolCalls = input.result.providerToolCalls
-    if (providerToolCalls?.length && !input.requestController.signal.aborted) {
-      const revision = await dependencies.reviseWithProviderTools({
-        conversationId: input.conversationId,
-        assistantMessageId: input.assistantMessageId,
-        provider: input.provider,
-        conversation: input.runtimeConversation,
-        systemPrompt: input.systemPrompt,
-        messages: input.packedMessages,
-        baseContextPrompt: input.baseContextPrompt,
-        firstOutput: finalOutput,
-        firstReasoningContent: input.result.reasoningContent,
-        firstResponseItems: input.result.responseItems,
-        firstProviderContentBlocks: input.result.providerContentBlocks,
-        providerTools: input.providerTools,
-        calls: providerToolCalls,
-        context: input.context,
-        settings: dependencies.getSettings(),
-        signal: input.requestController.signal,
-      })
-      if (revision?.text.trim()) {
-        finalOutput = revision.text
-        finalResult = {
-          ...finalResult,
-          text: revision.text,
-          usage: dependencies.mergeUsage(finalResult.usage, revision.usage),
-        }
-      }
-    }
-
     const hasTaggedToolFallback = input.mcpTools.length > 0
       || (input.providerTools !== undefined && dependencies.hasTaggedToolRequest?.(finalOutput) === true)
     if (hasTaggedToolFallback && !input.requestController.signal.aborted) {
@@ -659,6 +596,7 @@ export function createAssistantConversationFinalizationRuntime<
         tools: input.mcpTools,
         providerTools: input.providerTools,
         signal: input.requestController.signal,
+        onStreamEvent: input.onStreamEvent,
       })
       if (revision?.text.trim()) {
         finalOutput = revision.text

@@ -28,7 +28,7 @@ import { conversationAssistantDetachedWorkRegistry } from '@/bootstrap/conversat
 import { conversationAssistantMessageProjection, commitConversationAssistantSuccessProjection, projectConversationAssistantFailure } from '@/bootstrap/conversationAssistantMessageProjection'
 import { runConversationMemoryExtraction } from '@/bootstrap/conversationMemoryExtractionRuntime'
 import { createConversationMcpToolTurnRuntime } from '@/bootstrap/conversationMcpToolTurnRuntime'
-import { createConversationProviderToolTurnRuntime, type ConversationProviderToolContext } from '@/bootstrap/conversationProviderToolTurnRuntime'
+import type { ConversationProviderToolContext } from '@/bootstrap/conversationProviderToolTurnRuntime'
 import { providerRemoteCompactLifecycle } from '@/bootstrap/providerRemoteCompactLifecycle'
 import { conversationRagFinalizationRuntime } from '@/bootstrap/conversationRagFinalizationRuntime'
 import { finalizeTavernChatWorkspaceWriteback } from '@/bootstrap/tavernWorkspace'
@@ -113,17 +113,11 @@ export const conversationAssistantFinalizationRuntime =
     hasTaggedToolRequest(output) {
       return parseMcpToolRequest(output) !== null
     },
-    reviseWithProviderTools(input) {
-      const runtime = createConversationProviderToolTurnRuntime({
-        conversationId: input.conversationId,
-        assistantMessageId: input.assistantMessageId,
-      })
-      return runtime.execute(input)
-    },
     reviseWithMcpTools(input) {
       const runtime = createConversationMcpToolTurnRuntime({
         conversationId: input.conversationId,
         assistantMessageId: input.assistantMessageId,
+        onStreamEvent: input.onStreamEvent,
       })
       return runtime.execute({
         ...input,
