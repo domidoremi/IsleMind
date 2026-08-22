@@ -89,7 +89,6 @@ bun run android --device <device-name> --no-bundler
 bun run type-check
 bun run test:provider-intelligence
 bun run test:product-mobile-layout
-bun run test:theme-system
 ```
 
 ## Assets and Attribution
